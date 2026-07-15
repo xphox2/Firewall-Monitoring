@@ -139,3 +139,131 @@ func TestInferLinks_TransitiveUnmanagedSwitchUnaffected(t *testing.T) {
 		t.Fatalf("unmanaged-switch link affected by suppression: %+v", links)
 	}
 }
+
+// The live DC2 network as it ACTUALLY reports (2026-07-14 snmpwalk): no
+// BRIDGE-MIB anywhere, no LLDP; OPNsense's ARP knows only FW1 (its gateway),
+// FW2's ARP knows only FW1. The FortiGate SSH bridge-FDB supplement provides
+// the missing per-member-port attribution as NAME-ONLY rows — with it, the
+// false OPNsense↔FW1 link is suppressed AND the true OPNsense↔FW2 link is
+// drawn from FW2's FDB alone.
+func TestInferLinks_SSHNameOnlyFDBSuppressesTransitive(t *testing.T) {
+	site := uint(1)
+	devs := []DeviceMeta{
+		{ID: 1, Name: "DC2-FW2", SiteID: &site, IPs: []string{"192.168.5.1"}},
+		{ID: 2, Name: "DC2-FW1", SiteID: &site, IPs: []string{"192.168.5.2"}},
+		{ID: 3, Name: "OPNsense", SiteID: &site, IPs: []string{"192.168.5.107"}},
+	}
+	ifaces := []Iface{
+		// FW2's switch member ports exist in interface stats by NAME.
+		{DeviceID: 1, IfIndex: 11, Name: "internal1", MAC: "AC:71:2E:6F:94:C8", Status: "up", TypeName: "ethernet"},
+		{DeviceID: 1, IfIndex: 13, Name: "internal3", MAC: "AC:71:2E:6F:94:CA", Status: "up", TypeName: "ethernet"},
+		{DeviceID: 2, IfIndex: 6, Name: "internal", MAC: "E0:23:FF:6A:E5:D8", Status: "up", TypeName: "bridge"},
+		{DeviceID: 3, IfIndex: 2, Name: "lan", MAC: "E8:F6:D7:00:10:5B", Status: "up", TypeName: "ethernet"},
+	}
+	ts := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	// SSH bridge FDB from FW2 only — name-only rows, no ifIndex.
+	fdb := []FDBRow{
+		{DeviceID: 1, IfName: "internal3", MAC: "e8:f6:d7:00:10:5b", Ts: ts}, // OPNsense on member port 3
+		{DeviceID: 1, IfName: "internal1", MAC: "e0:23:ff:6a:e5:d8", Ts: ts}, // FW1 on member port 1
+	}
+	// The ARP reality: OPNsense↔FW1 mutual (gateway traffic), FW2→FW1 only.
+	arp := []ARPRow{
+		{DeviceID: 3, IfIndex: 2, IP: "192.168.5.2", MAC: "e0:23:ff:6a:e5:d8", Ts: ts},
+		{DeviceID: 2, IfIndex: 6, IP: "192.168.5.107", MAC: "e8:f6:d7:00:10:5b", Ts: ts},
+		{DeviceID: 2, IfIndex: 6, IP: "192.168.5.1", MAC: "ac:71:2e:6f:94:c8", Ts: ts},
+		{DeviceID: 1, IfIndex: 15, IP: "192.168.5.2", MAC: "e0:23:ff:6a:e5:d8", Ts: ts},
+	}
+
+	links := InferLinks(devs, ifaces, fdb, arp, nil)
+	var gotOPNFW1, gotOPNFW2, gotFW1FW2 bool
+	for _, l := range links {
+		switch {
+		case (l.A == 2 && l.B == 3) || (l.A == 3 && l.B == 2):
+			gotOPNFW1 = true
+		case (l.A == 1 && l.B == 3) || (l.A == 3 && l.B == 1):
+			gotOPNFW2 = true
+			// FW2's side must carry the member port the MAC was learned on.
+			if l.A == 1 && l.AIfName != "internal3" {
+				t.Errorf("OPN↔FW2 FW2-side port = %q, want internal3", l.AIfName)
+			}
+		case (l.A == 1 && l.B == 2) || (l.A == 2 && l.B == 1):
+			gotFW1FW2 = true
+		}
+	}
+	if gotOPNFW1 {
+		t.Errorf("false transitive OPNsense↔FW1 link survived with SSH FDB present: %+v", links)
+	}
+	if !gotOPNFW2 {
+		t.Errorf("true OPNsense↔FW2 link missing (FW2's FDB sees OPNsense on internal3): %+v", links)
+	}
+	if !gotFW1FW2 {
+		t.Errorf("FW2↔FW1 link missing: %+v", links)
+	}
+}
+
+// The live DC2 evidence AFTER the user enabled LLDP on both FortiGates
+// (2026-07-14 snmpwalk): FW1 knows FW2 via LLDP (physical member port 23)
+// but knows OPNsense only via ARP (logical switch ifIndex 6) — DIFFERENT
+// port identities for the same wire, which is why suppression must compare
+// within a single tier: FW1's ARP sees both peers on ifIndex 6, and FW2's
+// LLDP distinguishes them (ports 3 vs 4).
+func TestInferLinks_MixedTierSuppression_LiveLLDPShape(t *testing.T) {
+	site := uint(1)
+	devs := []DeviceMeta{
+		{ID: 1, Name: "FW-TECHNICAL_LABS", SiteID: &site, IPs: []string{"192.168.5.1"}},
+		{ID: 2, Name: "FW-HOME.xphox.local", SiteID: &site, IPs: []string{"192.168.5.2"}},
+		{ID: 3, Name: "HOME-FW.xphox.local", SiteID: &site, IPs: []string{"192.168.5.107"}},
+	}
+	ifaces := []Iface{
+		{DeviceID: 1, IfIndex: 3, Name: "internal3", MAC: "AC:71:2E:6F:94:C8", Status: "up", TypeName: "ethernet"},
+		{DeviceID: 1, IfIndex: 4, Name: "internal4", MAC: "AC:71:2E:6F:94:C9", Status: "up", TypeName: "ethernet"},
+		{DeviceID: 2, IfIndex: 6, Name: "internal", MAC: "E0:23:FF:6A:E5:D8", Status: "up", TypeName: "bridge"},
+		{DeviceID: 2, IfIndex: 23, Name: "port23", MAC: "E0:23:FF:6A:E5:DA", Status: "up", TypeName: "ethernet"},
+		{DeviceID: 3, IfIndex: 2, Name: "dtsec1", MAC: "E8:F6:D7:00:10:5B", Status: "up", TypeName: "ethernet"},
+	}
+	ts := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	nbrs := []NeighborRow{
+		// FW2's LLDP: OPNsense on local port 3 (sysname match — the chassis
+		// ID is the neighbor's BASE MAC, one off from its port MAC, so
+		// ownership misses), FW1 on local port 4.
+		{DeviceID: 1, LocalIfIndex: 3, ChassisID: "e8:f6:d7:00:10:5a", PortID: "dtsec1", SysName: "HOME-FW", Ts: ts},
+		{DeviceID: 1, LocalIfIndex: 4, ChassisID: "e0:23:ff:6a:e5:d9", PortID: "internal1", SysName: "FW-HOME.xphox.local", Ts: ts},
+		// FW1's LLDP: FW2 on local port 23. NO OPNsense row (FW2 intercepts
+		// its LLDP frames).
+		{DeviceID: 2, LocalIfIndex: 23, ChassisID: "ac:71:2e:6f:94:ce", PortID: "internal1", SysName: "FW-TECHNICAL_LABS", Ts: ts},
+	}
+	arp := []ARPRow{
+		// FW1's ARP: BOTH peers on the logical switch interface 6.
+		{DeviceID: 2, IfIndex: 6, IP: "192.168.5.107", MAC: "e8:f6:d7:00:10:5b", Ts: ts},
+		{DeviceID: 2, IfIndex: 6, IP: "192.168.5.1", MAC: "ac:71:2e:6f:94:c8", Ts: ts},
+		// OPNsense's ARP: only its gateway FW1.
+		{DeviceID: 3, IfIndex: 2, IP: "192.168.5.2", MAC: "e0:23:ff:6a:e5:d8", Ts: ts},
+		// FW2's ARP: only FW1.
+		{DeviceID: 1, IfIndex: 15, IP: "192.168.5.2", MAC: "e0:23:ff:6a:e5:d8", Ts: ts},
+	}
+
+	links := InferLinks(devs, ifaces, nil, arp, nbrs)
+	var gotOPNFW1, gotOPNFW2, gotFW1FW2 bool
+	for _, l := range links {
+		switch {
+		case (l.A == 2 && l.B == 3) || (l.A == 3 && l.B == 2):
+			gotOPNFW1 = true
+		case (l.A == 1 && l.B == 3) || (l.A == 3 && l.B == 1):
+			gotOPNFW2 = true
+			if l.Method != MethodLLDP {
+				t.Errorf("OPN↔FW2 should be LLDP-confirmed, got %s", l.Method)
+			}
+		case (l.A == 1 && l.B == 2) || (l.A == 2 && l.B == 1):
+			gotFW1FW2 = true
+			if l.Method != MethodLLDP {
+				t.Errorf("FW2↔FW1 should be LLDP-confirmed, got %s", l.Method)
+			}
+		}
+	}
+	if gotOPNFW1 {
+		t.Errorf("false OPNsense↔FW1 link survived the mixed-tier evidence: %+v", links)
+	}
+	if !gotOPNFW2 || !gotFW1FW2 {
+		t.Errorf("physical links missing (OPN↔FW2=%v FW2↔FW1=%v): %+v", gotOPNFW2, gotFW1FW2, links)
+	}
+}

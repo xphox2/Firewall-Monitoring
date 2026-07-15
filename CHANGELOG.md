@@ -1,6 +1,17 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.96] - 2026-07-14
+
+### Fixed — name-only FDB rows now participate in link inference (FortiGate SSH bridge-FDB support)
+
+Completes the DC2 daisy-chain investigation: snmpwalks against the live devices showed **no BRIDGE-MIB and no LLDP on any of them**, and ARP alone cannot see an L2-only hop (OPNsense and DC2-FW2 never exchange L3 traffic, so neither is in the other's ARP cache) — the v0.11.95 transitive suppression had no evidence to fire on. Collector 1.3.16 adds the FortiGate SSH bridge-FDB supplement (`diagnose netlink brctl`), which reports MACs per member-port **name**; this release makes the inference consume those rows:
+
+- `l2infer.FDBRow` gains `IfName`; FDB port resolution now matches by name (like ARP already did) and the per-port accumulator keys on ifIndex+name so name-only ports can't collide.
+- With FW2's bridge FDB present, the false transitive OPNsense↔FW1 link is suppressed **from FW1's viewpoint** (FW1 sees OPNsense and FW2 through one port; FW2's FDB distinguishes them) — it works even though OPNsense never ARPs FW2 — and the true OPNsense↔FW2 link is drawn from FW2's FDB alone, carrying the member port name. Test pins the exact live-network evidence shape.
+- **Per-tier transitive suppression**: port IDENTITY differs across evidence tiers on the same device — a FortiGate reports ARP on the logical switch interface but LLDP/FDB on the physical member port — so the suppression's "same wire" comparison now runs within a single tier (and the middle device may prove its position with any tier). Live-verified shape: with LLDP enabled on both FortiGates, FW1 knows FW2 via LLDP (port 23) but OPNsense via ARP (ifIndex 6); FW1's ARP alone shows both peers on one interface, FW2's LLDP distinguishes them → false link suppressed, both physical links LLDP-confirmed. Test pins it.
+- Deploy BOTH: server 0.11.96 + collector 1.3.16. The map corrects itself within one topology cycle (~5 min) + one poller cycle.
+
 ## [0.11.95] - 2026-07-14
 
 ### Fixed — false transitive links through a MONITORED middle device (live-found on the DC2 daisy chain)

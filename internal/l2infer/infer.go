@@ -53,10 +53,13 @@ type Iface struct {
 	TypeName string // "ethernet"|"lag"|…
 }
 
-// FDBRow is one MAC-table entry reported by a device.
+// FDBRow is one MAC-table entry reported by a device. SSH-sourced rows
+// (FortiGate `diagnose netlink brctl`) carry the member port NAME instead of
+// an ifIndex.
 type FDBRow struct {
 	DeviceID uint
 	IfIndex  int
+	IfName   string
 	MAC      string
 	VLANID   int
 	Ts       time.Time
@@ -367,24 +370,33 @@ func pairKey(a, b uint) string {
 	return fmt.Sprintf("%d:%d", a, b)
 }
 
-// dirPortMap holds, per ORDERED (reporter, target) pair, the reporter's
-// best-tier local port toward the target — the input to transitive
-// suppression. First write wins, so filling in tier order (lldp local, fdb,
-// arp, then lldp REMOTE ports as the lowest-priority fallback for the far
-// side) keeps the strongest attribution.
-type dirPortMap map[uint]map[uint]portRef
+// dirPortMap holds, PER EVIDENCE TIER, the reporter's local port toward each
+// target — the input to transitive suppression. Tiers are kept separate
+// because port IDENTITY differs across them on the same device: a FortiGate
+// reports ARP on the logical switch interface but LLDP/FDB on the physical
+// member port, so a cross-tier "same port" comparison would never match even
+// when both attributions describe the same wire. Suppression therefore only
+// compares apples to apples (within one tier). First write per (tier,
+// reporter, target) wins; lldp REMOTE ports fill the far side of the lldp
+// tier as a fallback.
+type dirPortMap map[string]map[uint]map[uint]portRef
 
-func (m dirPortMap) add(reporter, target uint, p portRef) {
+func (m dirPortMap) add(tier string, reporter, target uint, p portRef) {
 	if !p.known() {
 		return
 	}
-	if m[reporter] == nil {
-		m[reporter] = map[uint]portRef{}
+	if m[tier] == nil {
+		m[tier] = map[uint]map[uint]portRef{}
 	}
-	if _, exists := m[reporter][target]; !exists {
-		m[reporter][target] = p
+	if m[tier][reporter] == nil {
+		m[tier][reporter] = map[uint]portRef{}
+	}
+	if _, exists := m[tier][reporter][target]; !exists {
+		m[tier][reporter][target] = p
 	}
 }
+
+var evidenceTiers = []string{TierLLDP, TierFDB, TierARP}
 
 // InferLinks derives port-to-port links between monitored same-site devices.
 // Deterministic: identical inputs yield identically ordered output.
@@ -395,15 +407,15 @@ func InferLinks(devs []DeviceMeta, ifaces []Iface, fdb []FDBRow, arp []ARPRow, n
 	fdbC := ix.fdbCandidates(fdb)
 	arpC := ix.arpCandidates(arp)
 
-	// Directional port attributions for transitive suppression.
+	// Directional port attributions for transitive suppression, per tier.
 	dir := dirPortMap{}
 	for _, cands := range [][]candidate{lldpC, fdbC, arpC} {
 		for i := range cands {
-			dir.add(cands[i].reporter, cands[i].target, cands[i].port)
+			dir.add(cands[i].tier, cands[i].reporter, cands[i].target, cands[i].port)
 		}
 	}
 	for i := range lldpC {
-		dir.add(lldpC[i].target, lldpC[i].reporter, lldpC[i].remotePort)
+		dir.add(TierLLDP, lldpC[i].target, lldpC[i].reporter, lldpC[i].remotePort)
 	}
 
 	perPair := map[string][]*Link{}
@@ -464,33 +476,48 @@ func InferLinks(devs []DeviceMeta, ifaces []Iface, fdb []FDBRow, arp []ARPRow, n
 // UNMANAGED switches are unaffected (no monitored b exists), and partial
 // data fails safe (missing port attributions → no suppression).
 func (ix *indexes) isTransitive(a, c uint, dir dirPortMap) bool {
-	behindVia := func(x, far uint) bool {
-		px := dir[x]
-		if px == nil {
-			return false
-		}
-		pxFar, ok := px[far]
-		if !ok {
-			return false
-		}
-		for b, pxb := range px {
-			if b == far {
-				continue
-			}
-			if _, monitored := ix.devices[b]; !monitored {
-				continue
-			}
-			if !samePort(pxFar, pxb) {
-				continue // x distinguishes b from far — b isn't on that wire
-			}
-			pb := dir[b]
+	// bDistinguishes: some tier of b's own evidence places x and far on
+	// DIFFERENT local ports — b provably forwards between them.
+	bDistinguishes := func(b, x, far uint) bool {
+		for _, tier := range evidenceTiers {
+			pb := dir[tier][b]
 			if pb == nil {
 				continue
 			}
 			pbx, okX := pb[x]
 			pbFar, okFar := pb[far]
 			if okX && okFar && !samePort(pbx, pbFar) {
-				return true // b forwards between x and far on distinct ports
+				return true
+			}
+		}
+		return false
+	}
+	// behindVia: within a SINGLE tier (port identities are only comparable
+	// within one), x sees both far and some monitored b down the same wire,
+	// and b distinguishes them.
+	behindVia := func(x, far uint) bool {
+		for _, tier := range evidenceTiers {
+			px := dir[tier][x]
+			if px == nil {
+				continue
+			}
+			pxFar, ok := px[far]
+			if !ok {
+				continue
+			}
+			for b, pxb := range px {
+				if b == far {
+					continue
+				}
+				if _, monitored := ix.devices[b]; !monitored {
+					continue
+				}
+				if !samePort(pxFar, pxb) {
+					continue // x distinguishes b from far — b isn't on that wire
+				}
+				if bDistinguishes(b, x, far) {
+					return true
+				}
 			}
 		}
 		return false
@@ -542,7 +569,7 @@ func (ix *indexes) fdbCandidates(fdb []FDBRow) []candidate {
 		refs   []EvidenceRef
 		anyRow bool
 	}
-	acc := map[string]map[int]*portStat{} // "reporter:target" → ifIndex → stats
+	acc := map[string]map[string]*portStat{} // "reporter:target" → portKey → stats
 	for _, row := range fdb {
 		mac := NormalizeMAC(row.MAC)
 		if mac == "" {
@@ -552,15 +579,16 @@ func (ix *indexes) fdbCandidates(fdb []FDBRow) []candidate {
 		if !ok || owner.deviceID == row.DeviceID || !ix.sameSite(row.DeviceID, owner.deviceID) {
 			continue
 		}
-		port := ix.resolvePort(row.DeviceID, row.IfIndex, "")
+		port := ix.resolvePort(row.DeviceID, row.IfIndex, row.IfName)
 		key := fmt.Sprintf("%d:%d", row.DeviceID, owner.deviceID)
+		portKey := fmt.Sprintf("%d:%s", port.ifIndex, strings.ToLower(port.name))
 		if acc[key] == nil {
-			acc[key] = map[int]*portStat{}
+			acc[key] = map[string]*portStat{}
 		}
-		st := acc[key][port.ifIndex]
+		st := acc[key][portKey]
 		if st == nil {
 			st = &portStat{port: port, macs: map[string]bool{}, vlans: map[int]bool{}}
-			acc[key][port.ifIndex] = st
+			acc[key][portKey] = st
 		}
 		st.anyRow = true
 		st.macs[mac] = true
