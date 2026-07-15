@@ -416,15 +416,21 @@
                 'width': 3, 'line-color': cssVar('--fwmon-text-mute', '#8b949e'), 'target-arrow-shape': 'none', 'opacity': 1
             }},
             // Tunnel bundle edges — thicker pipe
-            // text-events yes on every labeled edge: label text becomes part
-            // of the edge's CLICK TARGET instead of dead space covering it.
-            { selector: 'edge[edgeType="tunnel-bundle"]', style: { 'width': 4, 'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-mute', '#8b949e'), 'text-rotation': 'autorotate', 'text-margin-y': -10, 'text-events': 'yes' } },
+            // Collapsed edges are BARE LINES — type/tunnel names and port
+            // labels appear only on hover or selection (the legend + line
+            // color already convey the type; text was hiding the click
+            // target). Expanded sublanes keep permanent labels: expansion IS
+            // investigate mode. text-events yes makes shown label text part
+            // of the edge's click target.
+            { selector: 'edge[edgeType="tunnel-bundle"]', style: { 'width': 4 } },
+            { selector: 'edge.edge-hover[edgeType="tunnel-bundle"], edge:selected[edgeType="tunnel-bundle"]', style: { 'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-mute', '#8b949e'), 'text-rotation': 'autorotate', 'text-margin-y': -10, 'text-events': 'yes', 'text-background-color': cssVar('--fwmon-bg', '#0d1117'), 'text-background-opacity': 0.85, 'text-background-padding': '2px' } },
             // Direct bundle — one collapsed teal link per same-site pair; straight (not
             // parallel bezier) since it is now a single edge. Expands into sublanes on click.
-            { selector: 'edge[edgeType="direct-bundle"]', style: { 'width': 4, 'curve-style': 'straight', 'line-color': TYPE_COLORS.direct, 'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-mute', '#8b949e'), 'text-rotation': 'autorotate', 'text-margin-y': -10, 'text-events': 'yes',
-                // Port names live at each device's END of the edge (ownership
-                // is visual: the label touches the node that owns the port)
-                // and off the line's clickable midsection.
+            { selector: 'edge[edgeType="direct-bundle"]', style: { 'width': 4, 'curve-style': 'straight', 'line-color': TYPE_COLORS.direct } },
+            { selector: 'edge.edge-hover[edgeType="direct-bundle"], edge:selected[edgeType="direct-bundle"]', style: {
+                'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-mute', '#8b949e'), 'text-rotation': 'autorotate', 'text-margin-y': -10, 'text-events': 'yes',
+                // Port names at each device's END of the edge (ownership is
+                // visual: the label touches the node that owns the port).
                 'source-label': 'data(srcPort)', 'target-label': 'data(dstPort)',
                 'source-text-offset': 42, 'target-text-offset': 42,
                 'source-text-margin-y': -9, 'target-text-margin-y': -9,
@@ -619,6 +625,12 @@
     // ---- 1e. Event Handling ----
     function wireEvents(devices, vpnMap) {
         if (!cy) return;
+
+        // Hover reveals a collapsed edge's labels (type/tunnel name + port
+        // endpoints) — collapsed edges are bare lines otherwise. Touch
+        // devices get the same reveal via :selected on tap.
+        cy.on('mouseover', 'edge', function(evt) { evt.target.addClass('edge-hover'); });
+        cy.on('mouseout', 'edge', function(evt) { evt.target.removeClass('edge-hover'); });
 
         cy.on('tap', 'edge', function(evt) {
             var edge = evt.target;
