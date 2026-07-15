@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.98] - 2026-07-15
+
+### Changed — collapsed map links are bare lines; labels appear on hover/selection
+
+Live feedback: the always-on type names ("Ethernet, Software Switch, L2VLAN", tunnel names) cluttered the wire and sat over the clickable line — the legend and line color already convey the type.
+
+- Collapsed tunnel-bundles and direct-bundles render as plain lines. Hovering an edge (or tapping it — `:selected`) reveals its label and the port endpoint names; expanded sublanes keep permanent labels, since expansion is the investigate mode. The DOWN ✖ status marker is unchanged (it signals state, not a name).
+
 ## [0.11.97] - 2026-07-15
 
 ### Changed — port labels moved to the link ENDPOINTS; label text no longer blocks clicking links
