@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 
@@ -108,6 +109,26 @@ func TestGetConnectionDetail_RedactsDeviceSecrets(t *testing.T) {
 		if ct != "" && strings.Contains(body, ct) {
 			t.Errorf("detail response contains stored device secret ciphertext %q", ct)
 		}
+	}
+}
+
+// TestGetDevices_RedactsPreloadedProbeSecrets: GetAllDevices preloads each
+// device's assigned Probe, whose registration-key hash and TLS paths are
+// secret material — RedactDevice must mask the embedded probe exactly like
+// the probe endpoints do (the sibling of the connection-endpoint leak).
+func TestGetDevices_RedactsPreloadedProbeSecrets(t *testing.T) {
+	h, db := setupTestHandler(t)
+	_, _ = setupProbeAndDevice(t, db) // seeds a probe with a HASHED registration key + an assigned device
+
+	storedHash := database.HashProbeKey("test-key-abc123") // what setupProbeAndDevice stores at rest
+
+	w := doGetRequest(t, h.GetDevices, "/devices")
+	if w.Code != 200 {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if strings.Contains(body, storedHash) {
+		t.Errorf("device list response contains the probe registration-key hash")
 	}
 }
 

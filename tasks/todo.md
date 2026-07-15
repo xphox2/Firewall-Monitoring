@@ -1,3 +1,11 @@
+# Open follow-ups from PR #117 review (v0.11.100, 2026-07-15)
+
+- [ ] **TELEMETRY_STALE / degraded-collection alert.** Now that a successful ping bumps `last_polled`, a ping-reachable device whose SNMP/SSH collection dies (hung agent, rotated credentials) no longer fires DEVICE_OFFLINE — and `checkRelayedTelemetry`'s freshness gate skips stale metrics rather than alerting, so total telemetry loss is silent. Design a per-device "polled telemetry stale while device reachable" alert (plan-mode; likely an Event Rules source).
+- [ ] Spool-replay skew (pre-existing, minor): a collector draining hours of buffered batches after a server outage bumps `last_polled` to `now` per batch, holding a device that died mid-outage "online" for the drain window. If it ever bites: bump with the batch's max row timestamp clamped to now.
+- [ ] `ReceiveCommandResult` doesn't bump `last_polled` despite being device-targeted SSH evidence — revisit when the probe-command allow-list grows beyond `noop` (IPSec apply).
+
+---
+
 # Post-publish test plan — v0.11.16 on rust-01 (2026-07-03)
 
 Everything that changed since the last prod deploy needs a live check. Items marked

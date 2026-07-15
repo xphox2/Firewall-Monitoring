@@ -94,10 +94,14 @@ func (h *Handler) bumpDevicesOnline(deviceIDSet map[uint]struct{}, now time.Time
 	for id := range deviceIDSet {
 		ids = append(ids, id)
 	}
-	h.db.Gorm().Model(&models.Device{}).Where("id IN ?", ids).Updates(map[string]interface{}{
+	// A silently failing bump reproduces the exact DEVICE_OFFLINE flap this
+	// helper exists to prevent — log it so the failure is diagnosable.
+	if err := h.db.Gorm().Model(&models.Device{}).Where("id IN ?", ids).Updates(map[string]interface{}{
 		"status":      "online",
 		"last_polled": now,
-	})
+	}).Error; err != nil {
+		log.Printf("bumpDevicesOnline: failed to update %d device(s): %v", len(ids), err)
+	}
 }
 
 func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {

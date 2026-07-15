@@ -18,7 +18,9 @@ Connection responses preload the FULL source/dest Device rows, and four endpoint
 
 - `GET /admin/api/connections`, `GET /admin/api/connections/:id/detail`, `PUT /admin/api/connections/:id` (response echo), and the connections list inside `GET /admin/api/dashboard/all` now mask endpoint-device secrets via new `httputil.RedactConnection(s)` helpers (same masking as every other device GET; the existing write path already treats the mask as "unchanged").
 - `POST /admin/api/connections` drops client-supplied embedded device objects before create — GORM would otherwise upsert them as associations and echo them back. Endpoints are referenced by ID only.
-- Regression tests assert no stored ciphertext appears in any of the three response bodies.
+- Sibling leak found in the pre-merge review: device GETs preload the assigned Probe, whose registration-key hash and TLS paths went out unmasked. `RedactDevice` now masks the embedded probe like the probe endpoints do.
+- `bumpDevicesOnline` logs UPDATE failures (a silent failure would reproduce the exact flap this release fixes).
+- Regression tests assert no stored ciphertext appears in any of the connection response bodies, no probe key hash in the device list, that a device outside the sending probe's allowlist is never bumped, and that the passive sources stay bump-free.
 
 ## [0.11.99] - 2026-07-15
 

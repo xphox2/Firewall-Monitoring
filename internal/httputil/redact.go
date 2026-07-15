@@ -30,6 +30,12 @@ func RedactDevice(d *models.Device) {
 	if d.SSHPassword != "" {
 		d.SSHPassword = RedactedMask
 	}
+	// Device GETs preload the assigned Probe; its registration-key hash and
+	// TLS paths are secret material too — mask it exactly like the probe
+	// endpoints do (same policy: the mask, never plaintext OR ciphertext/hash).
+	if d.Probe != nil {
+		RedactProbe(d.Probe)
+	}
 }
 
 // RedactDevices masks SNMP secrets on a slice of devices.
