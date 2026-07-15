@@ -1,6 +1,7 @@
 package alerts
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -36,6 +37,47 @@ func TestCheckTelemetryStale_MaintenanceSuppresses(t *testing.T) {
 	}
 	if !strings.Contains(alert.Message, "no system vitals for 90m") {
 		t.Errorf("detail not embedded in message: %s", alert.Message)
+	}
+}
+
+// TestCheckTelemetryStale_DisabledPolicyNoRecoveryNoise (LC-12 parity with
+// CheckDeviceOffline): with the TELEMETRY_STALE rule disabled, the check must
+// produce NO alert row, NO in-memory active state, and NO "recovered"
+// companion when the condition later clears.
+func TestCheckTelemetryStale_DisabledPolicyNoRecoveryNoise(t *testing.T) {
+	am, db := newTestManager(t)
+	policy := models.AlertPolicy{
+		ID: 1, Name: "p", IsDefault: true,
+		Rules: []models.AlertRule{{PolicyID: 1, AlertType: "TELEMETRY_STALE", Enabled: false}},
+	}
+	installPolicyCache(am, &policy, nil)
+
+	dev := &models.Device{Name: "fw-d", IPAddress: "10.9.1.4"}
+	if err := db.Gorm().Create(dev).Error; err != nil {
+		t.Fatalf("create device: %v", err)
+	}
+
+	if err := am.CheckTelemetryStale(dev, "no system vitals for 90m"); err != nil {
+		t.Fatalf("CheckTelemetryStale: %v", err)
+	}
+	var n int64
+	db.Gorm().Model(&models.Alert{}).Count(&n)
+	if n != 0 {
+		t.Fatalf("disabled TELEMETRY_STALE saved %d alert rows, want 0", n)
+	}
+	am.mu.RLock()
+	active := am.activeAlerts[fmt.Sprintf("telemetry_stale_%d", dev.ID)]
+	am.mu.RUnlock()
+	if active {
+		t.Fatal("disabled TELEMETRY_STALE must not mark the key active")
+	}
+
+	am.CheckTelemetryRecovered(dev)
+	var companions int64
+	db.Gorm().Model(&models.Alert{}).
+		Where("alert_type = ?", "TELEMETRY_STALE_RESOLVED").Count(&companions)
+	if companions != 0 {
+		t.Fatalf("companion rows = %d, want 0 (no 'recovered' noise for a disabled type)", companions)
 	}
 }
 

@@ -83,6 +83,17 @@ func (p *Poller) evaluateTelemetryStale(in telemetryStaleInputs) {
 		threshold = 2 * in.staleAfter
 	}
 
+	// A failed signal query must freeze the evaluation, not feed it: with (say)
+	// the interface query errored, an alert held open by a stale interface
+	// signal would see empty staleParts + fresh vitals and send a false
+	// "recovered" notification — then re-fire when the query heals. Streaks
+	// keep their value (the condition didn't observably change), recovery and
+	// firing both wait for a cycle where both signals answered. The query
+	// error itself is already logged by checkRelayedTelemetry.
+	if !in.statusQueryOK || !in.ifaceQueryOK {
+		return
+	}
+
 	noVitalsRow := 0 // online devices with no vitals row in the whole lookback → skew log
 	for id, dev := range in.devByID {
 		eligible := dev.ProbeID != nil && dev.Status == "online"
@@ -95,7 +106,7 @@ func (p *Poller) evaluateTelemetryStale(in telemetryStaleInputs) {
 		}
 
 		var staleParts []string
-		if in.statusQueryOK && !in.freshStatus[id] {
+		if !in.freshStatus[id] {
 			if ts, ok := in.staleVitals[id]; ok && in.now.Sub(ts) >= threshold {
 				staleParts = append(staleParts, fmt.Sprintf("no system vitals for %s (last at %s)",
 					in.now.Sub(ts).Round(time.Minute), ts.Format("2006-01-02 15:04 MST")))
@@ -103,11 +114,9 @@ func (p *Poller) evaluateTelemetryStale(in telemetryStaleInputs) {
 				noVitalsRow++
 			}
 		}
-		if in.ifaceQueryOK {
-			if ts, ok := in.latestIface[id]; ok && in.now.Sub(ts) >= threshold {
-				staleParts = append(staleParts, fmt.Sprintf("no interface stats for %s (last at %s)",
-					in.now.Sub(ts).Round(time.Minute), ts.Format("2006-01-02 15:04 MST")))
-			}
+		if ts, ok := in.latestIface[id]; ok && in.now.Sub(ts) >= threshold {
+			staleParts = append(staleParts, fmt.Sprintf("no interface stats for %s (last at %s)",
+				in.now.Sub(ts).Round(time.Minute), ts.Format("2006-01-02 15:04 MST")))
 		}
 
 		if len(staleParts) == 0 {
@@ -131,11 +140,20 @@ func (p *Poller) evaluateTelemetryStale(in telemetryStaleInputs) {
 		}
 	}
 
+	// Prune streak entries for devices that left devByID entirely (deleted or
+	// disabled) — without this the map leaks, and a stale carried-over streak
+	// would defeat the debounce when a device is re-enabled.
+	for id := range p.telemetryStaleStreak {
+		if _, ok := in.devByID[id]; !ok {
+			delete(p.telemetryStaleStreak, id)
+		}
+	}
+
 	// Preserved visibility log (pre-v0.11.101 behavior): online devices with
 	// no vitals row AT ALL in the lookback can't alert (never produced the
 	// signal) — but a fleet-wide count here is the tell for collector NTP
 	// clock skew silently disabling every threshold check.
-	if in.statusQueryOK && noVitalsRow > 0 {
-		log.Printf("Telemetry check: %d online device(s) had no system_status within %v — ping-only devices, or collector NTP/clock skew", noVitalsRow, telemetryStaleLookback)
+	if noVitalsRow > 0 {
+		log.Printf("Telemetry check: %d online device(s) had no system_status within %v — ping-only devices, telemetry dead >%v, or collector NTP/clock skew", noVitalsRow, telemetryStaleLookback, telemetryStaleLookback)
 	}
 }

@@ -12,7 +12,7 @@ import (
 // eligible for TELEMETRY_STALE. Rows are seeded per test.
 func newStaleTestDevice(t *testing.T, p *Poller) *models.Device {
 	t.Helper()
-	_, db := p, p.db
+	db := p.db
 	site := &models.Site{Name: "stale-site"}
 	mustCreate(t, db, site)
 	probe := &models.Probe{Name: "stale-probe", SiteID: site.ID, RegistrationKey: "k", ApprovalStatus: "approved"}
@@ -253,6 +253,90 @@ func TestTelemetryStale_OfflineSupersedes(t *testing.T) {
 	}
 	if got := countAlerts(t, db, "TELEMETRY_STALE_RESOLVED", dev.ID); got != 0 {
 		t.Errorf("silent supersede wrote a _RESOLVED companion: %d (must be 0)", got)
+	}
+}
+
+// TestTelemetryStale_QueryFailureFreezes: a failed signal query must freeze
+// the evaluation — neither firing NOR recovering. The killer scenario: an
+// alert held open by a stale interface signal while vitals are fresh (the
+// FortiGate SSH case) must not send a false "recovered" notification on a
+// cycle where the interface query errored.
+func TestTelemetryStale_QueryFailureFreezes(t *testing.T) {
+	p, db := newTelemetryTestPoller(t)
+	dev := newStaleTestDevice(t, p)
+
+	// Fire via the interface signal (vitals fresh throughout).
+	mustCreate(t, db, &models.SystemStatus{DeviceID: dev.ID, Timestamp: time.Now(), CPUUsage: 10})
+	mustCreate(t, db, &models.InterfaceStats{DeviceID: dev.ID, Timestamp: time.Now().Add(-2 * time.Hour), Name: "port1", Index: 1, Status: "up", AdminStatus: "up"})
+	runCycles(p, []models.Device{*dev}, telemetryStaleCycles, nil)
+	if got := countAlerts(t, db, "TELEMETRY_STALE", dev.ID); got != 1 {
+		t.Fatalf("precondition: TELEMETRY_STALE = %d, want 1", got)
+	}
+
+	// Simulate a cycle where the interface query failed: fresh vitals visible,
+	// iface signal absent, ifaceQueryOK=false. Must not resolve the open row.
+	p.evaluateTelemetryStale(telemetryStaleInputs{
+		devByID:       map[uint]*models.Device{dev.ID: dev},
+		freshStatus:   map[uint]bool{dev.ID: true},
+		staleVitals:   map[uint]time.Time{},
+		latestIface:   map[uint]time.Time{},
+		statusQueryOK: true,
+		ifaceQueryOK:  false,
+		staleAfter:    telemetryStaleAfter,
+		now:           time.Now(),
+	})
+
+	var open int64
+	db.Gorm().Model(&models.Alert{}).
+		Where("alert_type = ? AND device_id = ? AND resolved_at IS NULL", "TELEMETRY_STALE", dev.ID).
+		Count(&open)
+	if open != 1 {
+		t.Errorf("open rows after iface-query failure = %d, want 1 (false recovery)", open)
+	}
+	if got := countAlerts(t, db, "TELEMETRY_STALE_RESOLVED", dev.ID); got != 0 {
+		t.Errorf("query failure sent a recovery companion: %d, want 0", got)
+	}
+	// The streak must survive the frozen cycle so the condition doesn't need
+	// to re-debounce from zero once the query heals.
+	if p.telemetryStaleStreak[dev.ID] < telemetryStaleCycles {
+		t.Errorf("streak reset by frozen cycle: %d", p.telemetryStaleStreak[dev.ID])
+	}
+}
+
+// TestTelemetryStale_StreakPrunedForGoneDevices: entries for devices no longer
+// in devByID (deleted/disabled) are pruned — no leak, and a re-enabled device
+// re-debounces from zero instead of firing on its first cycle back.
+func TestTelemetryStale_StreakPrunedForGoneDevices(t *testing.T) {
+	p, db := newTelemetryTestPoller(t)
+	dev := newStaleTestDevice(t, p)
+	mustCreate(t, db, &models.SystemStatus{DeviceID: dev.ID, Timestamp: time.Now().Add(-2 * time.Hour), CPUUsage: 10})
+
+	// Build up a partial streak, then disable the device.
+	runCycles(p, []models.Device{*dev}, telemetryStaleCycles-1, nil)
+	if p.telemetryStaleStreak[dev.ID] != telemetryStaleCycles-1 {
+		t.Fatalf("precondition: streak = %d", p.telemetryStaleStreak[dev.ID])
+	}
+	dev.Enabled = false
+	runCycles(p, []models.Device{*dev}, 1, nil)
+	if _, ok := p.telemetryStaleStreak[dev.ID]; ok {
+		t.Error("streak entry not pruned for a device absent from devByID")
+	}
+
+	// Re-enable: the first cycle back must NOT fire (debounce restarts).
+	dev.Enabled = true
+	runCycles(p, []models.Device{*dev}, 1, nil)
+	if got := countAlerts(t, db, "TELEMETRY_STALE", dev.ID); got != 0 {
+		t.Errorf("fired on first post-re-enable cycle: %d alerts", got)
+	}
+}
+
+// TestTelemetryStale_DefaultPinnedToAlertingPage: tripwire — the Alerting
+// page's read-through default in handlers_alert_policies.go
+// (alertGlobalDefaults) hardcodes 60 because handlers cannot import package
+// main. If this constant changes, update that map in the same commit.
+func TestTelemetryStale_DefaultPinnedToAlertingPage(t *testing.T) {
+	if telemetryStaleDefaultMinutes != 60 {
+		t.Fatalf("telemetryStaleDefaultMinutes = %d; update alertGlobalDefaults in internal/api/handlers/handlers_alert_policies.go to match, then this pin", telemetryStaleDefaultMinutes)
 	}
 }
 
