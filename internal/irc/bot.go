@@ -44,6 +44,56 @@ type Bot struct {
 	channels map[string]bool
 	mu       sync.RWMutex
 	quit     chan struct{}
+	// Exponential reconnect backoff (mu-guarded). failCount counts consecutive
+	// failed connections since the last successful registration (001);
+	// nextAttempt is the earliest time reconnectLoop may try again. Without
+	// this, a persistently failing server (expired TLS cert, dead host) was
+	// re-dialed in a tight loop — go-ircevent's Loop() reconnects with ZERO
+	// delay when the TCP dial succeeds but the connection dies right after
+	// (this version wraps tls.Client lazily, so an expired cert fails in the
+	// READ loop, not the dial), which produced ~3,500 log lines/min in prod.
+	failCount   int
+	nextAttempt time.Time
+}
+
+// Reconnect backoff bounds: first retry after ~30-60s (jittered), doubling to
+// a 15-minute ceiling. A healthy netsplit reconnect stays fast; a dead server
+// settles at 4 attempts/hour instead of a hot loop.
+const (
+	reconnectBackoffBase = 30 * time.Second
+	reconnectBackoffMax  = 15 * time.Minute
+)
+
+// noteConnectFailure records a failed connection attempt and schedules the
+// next one with jittered exponential backoff.
+func (b *Bot) noteConnectFailure() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.failCount++
+	delay := reconnectBackoffBase
+	for i := 1; i < b.failCount && delay < reconnectBackoffMax; i++ {
+		delay *= 2
+	}
+	if delay > reconnectBackoffMax {
+		delay = reconnectBackoffMax
+	}
+	b.nextAttempt = time.Now().Add(jitter(delay))
+}
+
+// resetBackoff clears the failure streak after a successful registration.
+func (b *Bot) resetBackoff() {
+	b.mu.Lock()
+	b.failCount = 0
+	b.nextAttempt = time.Time{}
+	b.mu.Unlock()
+}
+
+// reconnectDue reports whether the manager's reconnect sweep should attempt
+// this bot now: auto-reconnect enabled, not connected, and past the backoff.
+func (b *Bot) reconnectDue(now time.Time) bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.Server.AutoReconnect && b.Conn == nil && now.After(b.nextAttempt)
 }
 
 type Manager struct {
@@ -198,12 +248,10 @@ func (m *Manager) reconnectLoop() {
 		case <-m.quit:
 			return
 		case <-ticker.C:
+			now := time.Now()
 			m.mu.RLock()
 			for _, bot := range m.bots {
-				bot.mu.RLock()
-				needsReconnect := bot.Server.AutoReconnect && bot.Conn == nil
-				bot.mu.RUnlock()
-				if needsReconnect {
+				if bot.reconnectDue(now) {
 					m.wg.Add(1)
 					go func(b *Bot) {
 						defer logging.Recover("irc-bot") // REL-01
@@ -226,7 +274,13 @@ func (m *Manager) statusLoop() {
 		case <-m.quit:
 			return
 		case <-ticker.C:
-			m.sendAutoStatus()
+			// Per-tick containment: statusLoop runs under SafeGo, which does
+			// NOT restart a panicked goroutine — one tick's panic must not
+			// kill auto-status for the process lifetime.
+			func() {
+				defer logging.Recover("irc-status-tick")
+				m.sendAutoStatus()
+			}()
 		}
 	}
 }
@@ -311,10 +365,21 @@ func (m *Manager) sendAutoStatus() {
 		}
 
 		response := formatStatusResponse(status)
+		sendFailed := false
 		for _, line := range strings.Split(response, "\n") {
 			if line != "" {
-				t.conn.Privmsg(t.channel, line)
+				// safePrivmsg: the error watcher can Disconnect (closing the
+				// library's write channel) between the Connected() poll above
+				// and this send — that must skip the target, not panic.
+				if err := safePrivmsg(t.conn, t.channel, line); err != nil {
+					log.Printf("IRC: Auto-status send to %s failed: %v", t.channel, err)
+					sendFailed = true
+					break
+				}
 			}
+		}
+		if sendFailed {
+			continue // retry this channel on the next due tick
 		}
 
 		m.lastStatus[t.chID] = time.Now()
@@ -438,10 +503,45 @@ func (b *Bot) Start() {
 		b.mu.Lock()
 		b.Conn = nil
 		b.mu.Unlock()
+		b.noteConnectFailure()
 		return
 	}
 
-	logging.SafeGo("irc-conn-loop", conn.Loop) // REL-01
+	// Deliberately NOT conn.Loop(): the library's loop reconnects internally
+	// with ZERO delay whenever the TCP dial succeeds but the connection dies
+	// right after — this go-ircevent version defers the TLS handshake to the
+	// read loop (tls.Client, no explicit Handshake), so an expired/bad server
+	// cert becomes an infinite dial→fail hot loop (~3,500 log lines/min in
+	// prod). Instead: consume the FIRST error, tear the connection down, and
+	// hand reconnection to the manager's 30s sweep, which honors AutoReconnect
+	// and this bot's exponential backoff. conn.Quit() is avoided on purpose —
+	// its SendRaw can park forever on the dead write loop (the H5 hazard).
+	logging.SafeGo("irc-conn-loop", func() { // REL-01
+		err := <-conn.ErrorChan()
+		log.Printf("IRC: Connection to %s lost: %v", addr, err)
+		b.mu.Lock()
+		b.Conn = nil
+		b.mu.Unlock()
+		// Bookkeeping BEFORE Disconnect: on a half-open socket (writes fail,
+		// reads hang) Disconnect's Wait() can stall until the read deadline
+		// (Timeout+PingFreq ≈ 16 min) — the backoff bump and status write must
+		// not lag behind it, or a late "disconnected" would overwrite a status
+		// the sweep's successful reconnect wrote in the meantime.
+		// A bot being STOPPED (admin action / shutdown) also surfaces here as
+		// a read error after the QUIT — that's a teardown, not a failure.
+		select {
+		case <-b.quit:
+		default:
+			b.noteConnectFailure()
+			b.updateStatus("disconnected", err.Error())
+		}
+		// Disconnect stops the library's internal goroutines (close(end) +
+		// Wait) and closes the socket; its trailing ErrDisconnected push lands
+		// in the buffered (10) error channel of a conn nothing references.
+		// This watcher must remain the ONLY Disconnect caller for a conn — a
+		// second call would panic on the already-closed pwrite channel.
+		conn.Disconnect()
+	})
 }
 
 func (b *Bot) Stop() {
@@ -460,6 +560,9 @@ func (b *Bot) Stop() {
 }
 
 func (b *Bot) onConnected() {
+	// Successful registration ends the failure streak — the next drop retries
+	// fast again instead of inheriting a stale 15-minute backoff.
+	b.resetBackoff()
 	// M8: snapshot b.Conn under the lock — Stop/RestartBot nil it from admin
 	// handlers while this callback runs on a library goroutine.
 	b.mu.RLock()
@@ -1021,6 +1124,22 @@ func (tb *TestBot) Disconnect() {
 	}
 }
 
+// safePrivmsg sends one PRIVMSG, converting the send-on-closed-channel panic
+// into an error. The error watcher's conn.Disconnect() closes the library's
+// pwrite channel, so any caller holding a pre-teardown snapshot of the conn
+// (SendMessage, sendAutoStatus's lock-free send window) would otherwise panic
+// — and a panic inside statusLoop's SafeGo would kill auto-status for the
+// process lifetime (SafeGo contains, it does not restart).
+func safePrivmsg(conn *irc.Connection, target, message string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("connection torn down mid-send: %v", r)
+		}
+	}()
+	conn.Privmsg(target, message)
+	return nil
+}
+
 func (b *Bot) SendMessage(channel, message string) error {
 	b.mu.RLock()
 	conn := b.Conn
@@ -1030,8 +1149,7 @@ func (b *Bot) SendMessage(channel, message string) error {
 		return fmt.Errorf("not connected")
 	}
 
-	conn.Privmsg(channel, message)
-	return nil
+	return safePrivmsg(conn, channel, message)
 }
 
 func (b *Bot) SendAlert(channel, alertMsg string) error {
