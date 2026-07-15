@@ -1908,10 +1908,14 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) int {
 				// line between any two devices sharing an interface name (e.g.
 				// both FortiGates have a `bridge` "internal" and shared VLAN
 				// names), duplicating the real LLDP/FDB/ARP link. Same-site
-				// direct/switch links are now owned exclusively by the
-				// evidence-based L2 inference (detectL2Links); this detector
-				// keeps only vxlan/l3ipvlan, the true overlays that ride a
-				// verified VPN tunnel and cannot be seen by L2 evidence.
+				// direct/switch links now come ONLY from the evidence-based L2
+				// inference (detectL2Links), which classifies every confirmed
+				// same-site link as ethernet/lag (it does not emit l2vlan/
+				// bridge as distinct types) — so type fidelity is traded for
+				// evidence-backing, and a same-site VLAN/switch link with NO
+				// LLDP/FDB/ARP evidence is intentionally hidden (hide-
+				// unconfirmed). This detector keeps only vxlan/l3ipvlan, the
+				// true overlays that ride a verified VPN tunnel.
 				if connType == "l2vlan" || connType == "bridge" {
 					continue
 				}

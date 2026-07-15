@@ -318,7 +318,9 @@
                     matchMethod: bestMatchMethod(p.directs),
                     childConns: p.directs.slice(),
                     expanded: false,
-                    label: typeLabels.join(', '),
+                    // No center type label on the collapsed wire — the type
+                    // (Ethernet/Software Switch/L2VLAN) shows only on expand,
+                    // via the sublane labels. Ports ride the endpoint labels.
                     srcPort: srcPort, dstPort: dstPort
                 }});
             }
