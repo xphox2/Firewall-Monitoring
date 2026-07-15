@@ -9,13 +9,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// TestBuildPGXURL_UnixSocketHost is the regression for the silent pgxpool
+// TestBuildPGXDSN_UnixSocketHost is the regression for the silent pgxpool
 // downgrade: the single-container prod deployment sets DB_HOST to the unix
 // socket directory (/var/run/postgresql), which the old postgres:// URL form
 // mangled into database "run/postgresql:5432/firewall_mon" — the pool failed
 // its ping and SaveFlowSamples ran on the ~2x slower GORM fallback. The DSN
 // must parse to the same fields the GORM key=value DSN carries.
-func TestBuildPGXURL_UnixSocketHost(t *testing.T) {
+func TestBuildPGXDSN_UnixSocketHost(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Database.Host = "/var/run/postgresql"
 	cfg.Database.Port = 5432
@@ -25,7 +25,7 @@ func TestBuildPGXURL_UnixSocketHost(t *testing.T) {
 	cfg.Database.SSLMode = "disable"
 	cfg.Database.StatementTimeout = 30 * time.Second
 
-	pc, err := pgxpool.ParseConfig(buildPGXURL(cfg))
+	pc, err := pgxpool.ParseConfig(buildPGXDSN(cfg))
 	if err != nil {
 		t.Fatalf("ParseConfig: %v", err)
 	}
@@ -47,8 +47,32 @@ func TestBuildPGXURL_UnixSocketHost(t *testing.T) {
 	}
 }
 
-// TestBuildPGXURL_TCPHost: the ordinary host:port shape keeps working.
-func TestBuildPGXURL_TCPHost(t *testing.T) {
+// TestBuildPGXDSN_EmptyPassword: an empty password must be emitted as ”
+// — a bare `password=` mid-DSN makes the keyword-value parser consume the
+// following `dbname=...` token as the password and silently drop the dbname.
+func TestBuildPGXDSN_EmptyPassword(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Database.Host = "localhost"
+	cfg.Database.Port = 5432
+	cfg.Database.User = "fwmon"
+	cfg.Database.Password = ""
+	cfg.Database.Name = "firewall_mon"
+	cfg.Database.SSLMode = "disable"
+
+	pc, err := pgxpool.ParseConfig(buildPGXDSN(cfg))
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if pc.ConnConfig.Database != "firewall_mon" {
+		t.Errorf("Database = %q, want firewall_mon (empty password swallowed the dbname token)", pc.ConnConfig.Database)
+	}
+	if pc.ConnConfig.Password != "" {
+		t.Errorf("Password = %q, want empty", pc.ConnConfig.Password)
+	}
+}
+
+// TestBuildPGXDSN_TCPHost: the ordinary host:port shape keeps working.
+func TestBuildPGXDSN_TCPHost(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Database.Host = "db.example.internal"
 	cfg.Database.Port = 5433
@@ -57,7 +81,7 @@ func TestBuildPGXURL_TCPHost(t *testing.T) {
 	cfg.Database.Name = "firewall_mon"
 	cfg.Database.SSLMode = "require"
 
-	pc, err := pgxpool.ParseConfig(buildPGXURL(cfg))
+	pc, err := pgxpool.ParseConfig(buildPGXDSN(cfg))
 	if err != nil {
 		t.Fatalf("ParseConfig: %v", err)
 	}

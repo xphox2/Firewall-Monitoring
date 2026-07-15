@@ -77,6 +77,12 @@ func (d *Database) IsPostgres() bool {
 // pgQuote quotes a value for use in a PostgreSQL key=value DSN.
 // Wraps in single quotes and escapes embedded single quotes and backslashes.
 func pgQuote(s string) string {
+	// An empty value must be quoted: a bare `password=` mid-DSN makes the
+	// keyword-value parser consume the NEXT `key=value` token as the password
+	// and silently drop that key.
+	if s == "" {
+		return "''"
+	}
 	if !strings.ContainsAny(s, " '\\") {
 		return s
 	}
@@ -240,9 +246,7 @@ func Connect(cfg *config.Config) (*Database, error) {
 // never prevent the GORM connection from succeeding; the GORM path is the
 // historical baseline and the pgx path is a performance optimization.
 func openPGXPool(cfg *config.Config, maxOpen int) (*pgxpool.Pool, error) {
-	// Build a pgx URL-style DSN. pgx accepts both URL and libpq key=value
-	// formats; URL is cleaner here.
-	pgxCfg, err := pgxpool.ParseConfig(buildPGXURL(cfg))
+	pgxCfg, err := pgxpool.ParseConfig(buildPGXDSN(cfg))
 	if err != nil {
 		return nil, fmt.Errorf("pgxpool parse dsn: %w", err)
 	}
@@ -280,7 +284,7 @@ func openPGXPool(cfg *config.Config, maxOpen int) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-// buildPGXURL assembles a libpq key=value DSN from the cfg fields — the SAME
+// buildPGXDSN assembles a libpq key=value DSN from the cfg fields — the SAME
 // form (and the same pgQuote escaping) the GORM connection in Connect() uses,
 // so an address that works for GORM always works for pgx. The previous
 // postgres:// URL form broke on unix-socket hosts: the single-container prod
@@ -288,7 +292,7 @@ func openPGXPool(cfg *config.Config, maxOpen int) (*pgxpool.Pool, error) {
 // into database "run/postgresql:5432/firewall_mon" — the pool failed its ping
 // and SaveFlowSamples silently ran on the ~2x slower GORM fallback since the
 // pool was introduced.
-func buildPGXURL(cfg *config.Config) string {
+func buildPGXDSN(cfg *config.Config) string {
 	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 		cfg.Database.Host, cfg.Database.Port,
 		pgQuote(cfg.Database.User), pgQuote(cfg.Database.Password),

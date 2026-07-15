@@ -274,7 +274,13 @@ func (m *Manager) statusLoop() {
 		case <-m.quit:
 			return
 		case <-ticker.C:
-			m.sendAutoStatus()
+			// Per-tick containment: statusLoop runs under SafeGo, which does
+			// NOT restart a panicked goroutine — one tick's panic must not
+			// kill auto-status for the process lifetime.
+			func() {
+				defer logging.Recover("irc-status-tick")
+				m.sendAutoStatus()
+			}()
 		}
 	}
 }
@@ -359,10 +365,21 @@ func (m *Manager) sendAutoStatus() {
 		}
 
 		response := formatStatusResponse(status)
+		sendFailed := false
 		for _, line := range strings.Split(response, "\n") {
 			if line != "" {
-				t.conn.Privmsg(t.channel, line)
+				// safePrivmsg: the error watcher can Disconnect (closing the
+				// library's write channel) between the Connected() poll above
+				// and this send — that must skip the target, not panic.
+				if err := safePrivmsg(t.conn, t.channel, line); err != nil {
+					log.Printf("IRC: Auto-status send to %s failed: %v", t.channel, err)
+					sendFailed = true
+					break
+				}
 			}
+		}
+		if sendFailed {
+			continue // retry this channel on the next due tick
 		}
 
 		m.lastStatus[t.chID] = time.Now()
@@ -505,19 +522,25 @@ func (b *Bot) Start() {
 		b.mu.Lock()
 		b.Conn = nil
 		b.mu.Unlock()
-		// Disconnect stops the library's internal goroutines (close(end) +
-		// Wait) and closes the socket; its trailing ErrDisconnected push lands
-		// in the buffered (10) error channel of a conn nothing references.
-		conn.Disconnect()
+		// Bookkeeping BEFORE Disconnect: on a half-open socket (writes fail,
+		// reads hang) Disconnect's Wait() can stall until the read deadline
+		// (Timeout+PingFreq ≈ 16 min) — the backoff bump and status write must
+		// not lag behind it, or a late "disconnected" would overwrite a status
+		// the sweep's successful reconnect wrote in the meantime.
 		// A bot being STOPPED (admin action / shutdown) also surfaces here as
 		// a read error after the QUIT — that's a teardown, not a failure.
 		select {
 		case <-b.quit:
-			return
 		default:
+			b.noteConnectFailure()
+			b.updateStatus("disconnected", err.Error())
 		}
-		b.noteConnectFailure()
-		b.updateStatus("disconnected", err.Error())
+		// Disconnect stops the library's internal goroutines (close(end) +
+		// Wait) and closes the socket; its trailing ErrDisconnected push lands
+		// in the buffered (10) error channel of a conn nothing references.
+		// This watcher must remain the ONLY Disconnect caller for a conn — a
+		// second call would panic on the already-closed pwrite channel.
+		conn.Disconnect()
 	})
 }
 
@@ -1101,6 +1124,22 @@ func (tb *TestBot) Disconnect() {
 	}
 }
 
+// safePrivmsg sends one PRIVMSG, converting the send-on-closed-channel panic
+// into an error. The error watcher's conn.Disconnect() closes the library's
+// pwrite channel, so any caller holding a pre-teardown snapshot of the conn
+// (SendMessage, sendAutoStatus's lock-free send window) would otherwise panic
+// — and a panic inside statusLoop's SafeGo would kill auto-status for the
+// process lifetime (SafeGo contains, it does not restart).
+func safePrivmsg(conn *irc.Connection, target, message string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("connection torn down mid-send: %v", r)
+		}
+	}()
+	conn.Privmsg(target, message)
+	return nil
+}
+
 func (b *Bot) SendMessage(channel, message string) error {
 	b.mu.RLock()
 	conn := b.Conn
@@ -1110,8 +1149,7 @@ func (b *Bot) SendMessage(channel, message string) error {
 		return fmt.Errorf("not connected")
 	}
 
-	conn.Privmsg(channel, message)
-	return nil
+	return safePrivmsg(conn, channel, message)
 }
 
 func (b *Bot) SendAlert(channel, alertMsg string) error {
