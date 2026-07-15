@@ -318,7 +318,9 @@
                     matchMethod: bestMatchMethod(p.directs),
                     childConns: p.directs.slice(),
                     expanded: false,
-                    label: typeLabels.join(', '),
+                    // No center type label on the collapsed wire — the type
+                    // (Ethernet/Software Switch/L2VLAN) shows only on expand,
+                    // via the sublane labels. Ports ride the endpoint labels.
                     srcPort: srcPort, dstPort: dstPort
                 }});
             }
@@ -426,16 +428,19 @@
             { selector: 'edge.edge-hover[edgeType="tunnel-bundle"], edge:selected[edgeType="tunnel-bundle"]', style: { 'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-mute', '#8b949e'), 'text-rotation': 'autorotate', 'text-margin-y': -10, 'text-events': 'yes', 'text-background-color': cssVar('--fwmon-bg', '#0d1117'), 'text-background-opacity': 0.85, 'text-background-padding': '2px' } },
             // Direct bundle — one collapsed teal link per same-site pair; straight (not
             // parallel bezier) since it is now a single edge. Expands into sublanes on click.
-            { selector: 'edge[edgeType="direct-bundle"]', style: { 'width': 4, 'curve-style': 'straight', 'line-color': TYPE_COLORS.direct } },
-            { selector: 'edge.edge-hover[edgeType="direct-bundle"], edge:selected[edgeType="direct-bundle"]', style: {
-                'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-mute', '#8b949e'), 'text-rotation': 'autorotate', 'text-margin-y': -10, 'text-events': 'yes',
-                // Port names at each device's END of the edge (ownership is
-                // visual: the label touches the node that owns the port).
+            // Direct links: PORT names are ALWAYS shown as endpoint labels
+            // (at each device's end — ownership is visual and they sit off the
+            // clickable midsection). The connection TYPE name (Ethernet /
+            // Software Switch / L2VLAN) is NEVER on the collapsed wire — it
+            // appears only when the link is expanded (sublane labels below).
+            { selector: 'edge[edgeType="direct-bundle"]', style: {
+                'width': 4, 'curve-style': 'straight', 'line-color': TYPE_COLORS.direct,
                 'source-label': 'data(srcPort)', 'target-label': 'data(dstPort)',
+                'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-mute', '#8b949e'),
                 'source-text-offset': 42, 'target-text-offset': 42,
                 'source-text-margin-y': -9, 'target-text-margin-y': -9,
                 'text-background-color': cssVar('--fwmon-bg', '#0d1117'), 'text-background-opacity': 0.85,
-                'text-background-padding': '2px', 'text-background-shape': 'roundrectangle'
+                'text-background-padding': '2px', 'text-background-shape': 'roundrectangle', 'text-events': 'yes'
             } },
             // Direct connection edges — bezier so parallel same-pair direct links stack/offset instead of overlapping into one line
             { selector: 'edge[edgeType="connection"]', style: { 'curve-style': 'bezier', 'control-point-step-size': 18 } },

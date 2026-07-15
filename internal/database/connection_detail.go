@@ -220,10 +220,9 @@ func (d *Database) resolveConnectionInterfaces(conn *models.DeviceConnection) []
 			}
 			seen[key] = true
 			// Resolve the interface's IP + network so the UI can pair the two
-			// ends by the LAN segment that joins them (the detector's grouping key).
-			var addr models.InterfaceAddress
-			d.db.Where("device_id = ? AND if_index = ?", dv.id, st.Index).
-				Order("timestamp DESC").Limit(1).First(&addr)
+			// ends by the LAN segment that joins them (the detector's grouping
+			// key). Gated to the device's current poll — never a stale row.
+			addr := d.latestAddressForDeviceIf(dv.id, st.Index)
 
 			vlanID := st.VLANID
 			parent := ""
@@ -265,6 +264,31 @@ func (d *Database) latestInterfacesForDevice(deviceID uint) []models.InterfaceSt
 	var rows []models.InterfaceStats
 	d.db.Where("device_id = ? AND timestamp = ?", deviceID, latest.Timestamp).Find(&rows)
 	return rows
+}
+
+// latestAddressForDeviceIf returns the interface's IP from the device's most
+// recent ADDRESS poll only — never a historical row. Without this gate the
+// interface tab showed stale addresses (e.g. a FortiGate DMZ jack that used
+// to carry 10.10.10.x now has no IP, but an 18-day-old interface_addresses
+// row kept surfacing under a live link). Returns a zero-value address (empty
+// IP) when the interface has no address in the current poll — which is the
+// truthful state for an IP-less bridged/switch port.
+func (d *Database) latestAddressForDeviceIf(deviceID uint, ifIndex int) models.InterfaceAddress {
+	// Anchor on the device's latest INTERFACE poll, not its latest address
+	// poll: an interface that used to carry an IP and no longer does leaves
+	// its old interface_addresses row as the newest one (the table has no
+	// tombstone), so anchoring on the address table would keep returning it.
+	// The interface_stats poll is the authority on "seen now"; an address
+	// older than that poll (beyond intra-poll batch skew) is stale.
+	var latestIface models.InterfaceStats
+	if err := d.db.Where("device_id = ?", deviceID).Order("timestamp DESC").Limit(1).First(&latestIface).Error; err != nil {
+		return models.InterfaceAddress{}
+	}
+	cutoff := latestIface.Timestamp.Add(-15 * time.Minute)
+	var addr models.InterfaceAddress
+	d.db.Where("device_id = ? AND if_index = ? AND timestamp >= ?", deviceID, ifIndex, cutoff).
+		Order("timestamp DESC").Limit(1).First(&addr)
+	return addr
 }
 
 // buildOverlayInfo enriches an overlay (vxlan/l3ipvlan) connection with per-end
@@ -1306,9 +1330,9 @@ func (d *Database) resolveL2EndpointInterfaces(conn *models.DeviceConnection) []
 			continue
 		}
 
-		var addr models.InterfaceAddress
-		d.db.Where("device_id = ? AND if_index = ?", s.deviceID, match.Index).
-			Order("timestamp DESC").Limit(1).First(&addr)
+		// Gate to the device's CURRENT poll — a stale address must never
+		// surface on a live link (the 10.10.10.1-on-a-dmz-with-no-IP bug).
+		addr := d.latestAddressForDeviceIf(s.deviceID, match.Index)
 
 		deviceName := ""
 		if s.device != nil {

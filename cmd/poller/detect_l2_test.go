@@ -333,3 +333,37 @@ func TestUpsertAutoL2Connection_Semantics(t *testing.T) {
 		t.Fatalf("direction normalization wrong: %+v", norm)
 	}
 }
+
+// TestDetectOverlay_NoNameMatchL2VLANBridge is the live DC2 regression: the
+// overlay detector used to draw spurious l2vlan + bridge lines between two
+// same-site FortiGates purely because they share interface names (both have a
+// `bridge` "internal" and shared VLAN names), duplicating the real
+// LLDP-confirmed link. Same-site direct/switch links now come only from
+// evidence-based L2 inference; the overlay detector must create neither.
+func TestDetectOverlay_NoNameMatchL2VLANBridge(t *testing.T) {
+	p, db := newTestPoller(t)
+	site := l2TestSite(t, db)
+	fw1 := l2TestDevice(t, db, "DC2-FW1", "192.168.5.2", &site.ID)
+	fw2 := l2TestDevice(t, db, "DC2-FW2", "192.168.5.1", &site.ID)
+
+	now := time.Now()
+	// Both firewalls have a bridge "internal" and a shared-named VLAN — the
+	// exact shape that produced the false name_match lines.
+	if err := db.SaveInterfaceStats([]models.InterfaceStats{
+		{DeviceID: fw1.ID, Index: 6, Name: "internal", TypeName: "bridge", Status: "up", Timestamp: now},
+		{DeviceID: fw2.ID, Index: 15, Name: "internal", TypeName: "bridge", Status: "up", Timestamp: now},
+		{DeviceID: fw1.ID, Index: 31, Name: "vlan500", TypeName: "l2vlan", Status: "up", Timestamp: now},
+		{DeviceID: fw2.ID, Index: 18, Name: "vlan500", TypeName: "l2vlan", Status: "up", Timestamp: now},
+	}); err != nil {
+		t.Fatalf("save interfaces: %v", err)
+	}
+
+	p.detectOverlayConnections([]models.Device{fw1, fw2})
+
+	conns, _ := db.GetAllConnections()
+	for _, c := range conns {
+		if c.MatchMethod == "name_match" && (c.ConnectionType == "l2vlan" || c.ConnectionType == "bridge") {
+			t.Fatalf("overlay detector created a spurious name_match %s link: %+v", c.ConnectionType, c)
+		}
+	}
+}

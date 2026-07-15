@@ -314,3 +314,67 @@ func TestResolveL2EndpointInterfaces_NoCrossDeviceNameCollision(t *testing.T) {
 		t.Fatalf("endpoint interfaces missing (fw2:internal1=%v fw1:port23=%v): %+v", sawFW2Internal1, sawFW1Port23, detail.Interfaces)
 	}
 }
+
+// TestConnectionDetail_StaleAddressNotShown reproduces the live DC2 bug: FW2's
+// dmz (ifIndex 3) has NO IP in the current poll, but an 18-day-old
+// interface_addresses row carried 10.10.10.1 (which is actually FW1's dmz).
+// The interfaces tab must show the CURRENT state (no IP), never the stale row.
+func TestConnectionDetail_StaleAddressNotShown(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	site := &models.Site{Name: "DC2"}
+	if err := db.CreateSite(site); err != nil {
+		t.Fatalf("site: %v", err)
+	}
+	fw2 := models.Device{Name: "DC2-FW2", IPAddress: "192.168.5.1", Vendor: "fortigate", Enabled: true, SiteID: &site.ID}
+	opn := models.Device{Name: "OPNsense", IPAddress: "192.168.5.107", Vendor: "opnsense", Enabled: true, SiteID: &site.ID}
+	if err := db.CreateDevice(&fw2); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateDevice(&opn); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	old := now.Add(-18 * 24 * time.Hour)
+	// Current poll: FW2 dmz(3) present with NO address; dtsec1 on OPNsense has its IP.
+	if err := db.SaveInterfaceStats([]models.InterfaceStats{
+		{DeviceID: fw2.ID, Index: 3, Name: "dmz", TypeName: "ethernet", Status: "up", MACAddress: "AA:BB:CC:00:00:03", Timestamp: now},
+		{DeviceID: opn.ID, Index: 2, Name: "dtsec1", TypeName: "ethernet", Status: "up", MACAddress: "AA:BB:CC:00:01:02", Timestamp: now},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Address rows: a STALE 10.10.10.1 on FW2 dmz (old poll) + the current OPNsense IP.
+	if err := db.SaveInterfaceAddresses([]models.InterfaceAddress{
+		{DeviceID: fw2.ID, IfIndex: 3, IPAddress: "10.10.10.1", NetMask: "255.255.255.0", Timestamp: old},
+		{DeviceID: opn.ID, IfIndex: 2, IPAddress: "192.168.5.107", NetMask: "255.255.255.0", Timestamp: now},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.UpsertAutoL2Connection(L2LinkUpsert{
+		SourceID: fw2.ID, DestID: opn.ID, Status: "up", Name: "DC2-FW2:dmz ↔ OPNsense:dtsec1",
+		ConnType: "ethernet", MatchMethod: "lldp_neighbor",
+		SourceIfIndex: 3, SourceIfName: "dmz", DestIfIndex: 2, DestIfName: "dtsec1",
+		TunnelNames: "dmz, dtsec1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	conns, _ := db.GetAllConnections()
+	detail, err := db.GetConnectionDetail(conns[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range detail.Interfaces {
+		if r.DeviceID == fw2.ID {
+			if r.IPAddress == "10.10.10.1" {
+				t.Fatalf("stale 18-day-old address surfaced on DC2-FW2:dmz: %+v", r)
+			}
+			if r.IPAddress != "" {
+				t.Errorf("DC2-FW2:dmz should have NO IP in the current poll, got %q", r.IPAddress)
+			}
+		}
+		if r.DeviceID == opn.ID && r.IPAddress != "192.168.5.107" {
+			t.Errorf("OPNsense:dtsec1 current IP wrong: %q", r.IPAddress)
+		}
+	}
+}
