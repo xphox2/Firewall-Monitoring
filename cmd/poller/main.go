@@ -1725,15 +1725,6 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) int {
 		}
 	}
 
-	sameSite := func(devA, devB uint) bool {
-		da, oa := deviceByID[devA]
-		db, ob := deviceByID[devB]
-		if !oa || !ob || da.SiteID == nil || db.SiteID == nil {
-			return false
-		}
-		return *da.SiteID == *db.SiteID
-	}
-
 	// Build IP → device ID map for direct-link verification
 	ipToDeviceID := make(map[string]uint, len(devices)*4)
 	for i := range devices {
@@ -1911,15 +1902,21 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) int {
 				a, b := deviceList[i], deviceList[j]
 				connType := pairConnType(a.typeName, b.typeName)
 
-				// L2VLAN is ONLY allowed between same-site devices - never cross-site
-				isSameSite := sameSite(a.deviceID, b.deviceID)
+				// l2vlan/bridge are SAME-SITE DIRECT-family links. They used to
+				// be created here by pure interface-NAME matching (no port
+				// evidence) — which drew a spurious "L2VLAN" + "Software Switch"
+				// line between any two devices sharing an interface name (e.g.
+				// both FortiGates have a `bridge` "internal" and shared VLAN
+				// names), duplicating the real LLDP/FDB/ARP link. Same-site
+				// direct/switch links are now owned exclusively by the
+				// evidence-based L2 inference (detectL2Links); this detector
+				// keeps only vxlan/l3ipvlan, the true overlays that ride a
+				// verified VPN tunnel and cannot be seen by L2 evidence.
 				if connType == "l2vlan" || connType == "bridge" {
-					if !isSameSite {
-						continue // L2VLAN/bridge cannot cross sites
-					}
-					// Same-site L2VLAN/bridge - no VPN tunnel needed
-				} else if !hasDirectLink(a.deviceID, b.deviceID) {
-					// L3IPVLAN, VXLAN require VPN tunnel
+					continue
+				}
+				if !hasDirectLink(a.deviceID, b.deviceID) {
+					// L3IPVLAN, VXLAN require a verified VPN tunnel.
 					continue
 				}
 

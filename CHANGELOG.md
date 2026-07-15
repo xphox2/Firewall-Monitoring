@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.99] - 2026-07-15
+
+### Fixed — full connection-map review (three root causes found via live prod + device SNMP)
+
+Driven by a live investigation against the DC2 site (SSH to prod + SNMP walks of the real firewalls). The port-to-port LINKS were all correct (LLDP-confirmed); the problems were stale data, a legacy detector, and label placement:
+
+- **Stale interface addresses shown on the Interfaces tab.** The resolver read any historical `interface_addresses` row (`ORDER BY timestamp DESC`), so an 18-day-old address surfaced under a live link — e.g. DC2-FW2's `dmz` jack (no IP today) showed `10.10.10.1`, which is actually the *other* firewall's dmz. Address resolution is now anchored to the device's latest INTERFACE poll (not the latest address poll — an interface that lost its IP leaves its old address row as the newest, with no tombstone); addresses older than that poll are treated as gone. An IP-less bridged/switch port now correctly shows no IP.
+- **Legacy name-match guessing still drew duplicate links.** `detectOverlayConnections` created `l2vlan` + `bridge` lines between same-site devices purely because they shared an interface NAME (both FortiGates have a `bridge` "internal" and shared VLAN names) — no port evidence — duplicating the real LLDP link (you'd see Ethernet + Software Switch + L2VLAN between one device pair). Same-site direct/switch links are now owned exclusively by the evidence-based L2 inference; the overlay detector keeps only `vxlan`/`l3ipvlan` (true overlays riding a verified VPN tunnel). The stale duplicates self-sweep on the next poll cycle.
+- **Map labels.** Port names are now ALWAYS shown on the wire as endpoint labels (at each device's end); the connection TYPE name (Ethernet / Software Switch / L2VLAN) is never on the collapsed line — it appears only when the link is expanded. This replaces the v0.11.98 hover-to-reveal behavior.
+
+Tests pin all three against the real DC2 data shape (stale-address-not-shown, no name_match l2vlan/bridge, endpoint resolution).
+
 ## [0.11.98] - 2026-07-15
 
 ### Changed — collapsed map links are bare lines; labels appear on hover/selection
