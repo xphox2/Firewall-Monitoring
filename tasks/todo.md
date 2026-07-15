@@ -1,6 +1,6 @@
 # Open follow-ups from PR #117 review (v0.11.100, 2026-07-15)
 
-- [ ] **TELEMETRY_STALE / degraded-collection alert.** Now that a successful ping bumps `last_polled`, a ping-reachable device whose SNMP/SSH collection dies (hung agent, rotated credentials) no longer fires DEVICE_OFFLINE — and `checkRelayedTelemetry`'s freshness gate skips stale metrics rather than alerting, so total telemetry loss is silent. Design a per-device "polled telemetry stale while device reachable" alert (plan-mode; likely an Event Rules source).
+- [x] **TELEMETRY_STALE / degraded-collection alert.** SHIPPED v0.11.101 — two-signal (vitals + interface stats) staleness detection with 3-cycle debounce, admin threshold knob, silent DEVICE_OFFLINE supersede. Deliberately out of scope (future work): Event Rules source for device-lifecycle alerts (DEVICE_OFFLINE / TELEMETRY_STALE / PROBE_DATA_LAG all bypass event-rule suppression today); per-device observed-cadence adaptive thresholds; probe-wide clock-skew detector (uniform staleness across one probe's devices while data flows).
 - [ ] Spool-replay skew (pre-existing, minor): a collector draining hours of buffered batches after a server outage bumps `last_polled` to `now` per batch, holding a device that died mid-outage "online" for the drain window. If it ever bites: bump with the batch's max row timestamp clamped to now.
 - [ ] `ReceiveCommandResult` doesn't bump `last_polled` despite being device-targeted SSH evidence — revisit when the probe-command allow-list grows beyond `noop` (IPSec apply).
 

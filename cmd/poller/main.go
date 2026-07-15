@@ -70,6 +70,16 @@ type Poller struct {
 	// goroutine (leader-locked), so it needs no mutex.
 	feedMasterSeen  *bool
 	feedEnabledSeen map[string]bool
+
+	// telemetryStaleStreak counts consecutive monitoring cycles a device has
+	// satisfied the TELEMETRY_STALE condition. The alert fires only at
+	// telemetryStaleCycles — the debounce that absorbs poller-restart-after-
+	// outage storms (DB still says "online", rows outage-old), collector spool
+	// replay (replayed old pings bump last_polled to now while row timestamps
+	// stay old until the first live poll), and re-enabled devices' first cycle.
+	// Reset on condition-false; empty at process start by construction.
+	// Accessed only from the single leader-locked monitoring cycle — no mutex.
+	telemetryStaleStreak map[uint]int
 }
 
 // startThreatFeedSyncAsync runs the threat-feed sync off the poller's select
@@ -96,6 +106,8 @@ func NewPoller(cfg *config.Config, db *database.Database, am *alerts.AlertManage
 		prevIfaceStats: make(map[string]*models.InterfaceStats),
 		everUpChecked:  make(map[string]bool),
 		stopChan:       make(chan struct{}),
+
+		telemetryStaleStreak: make(map[uint]int),
 	}
 	// M30: pre-stamp the loop heartbeat so /readyz is ready during startup,
 	// before Start()'s first tick.
@@ -809,14 +821,25 @@ func (p *Poller) runMonitoringCycle() {
 	}
 	threshold := time.Now().Add(-staleAfter)
 	staleDevices, err := p.db.MarkStaleProbeDevicesOffline(threshold)
+	// justFlipped carries this cycle's online→offline transitions into
+	// checkRelayedTelemetry: the devices slice above was loaded PRE-sweep, so
+	// its Status fields still read "online" for these — without the set, a full
+	// device outage would fire DEVICE_OFFLINE and TELEMETRY_STALE in the same
+	// cycle.
+	justFlipped := make(map[uint]struct{})
 	if err != nil {
 		log.Printf("Stale device check error: %v", err)
 	} else if len(staleDevices) > 0 {
 		log.Printf("Marked %d probe-assigned device(s) offline (no data for >%v)", len(staleDevices), staleAfter)
 		for i := range staleDevices {
 			dev := &staleDevices[i]
+			justFlipped[dev.ID] = struct{}{}
 			if p.alertManager != nil {
 				p.alertManager.CheckDeviceOffline(dev)
+				// DEVICE_OFFLINE supersedes a degraded-collection alert: one
+				// failure, one open alert. Silent resolve (no "recovered"
+				// notification at the moment of total failure).
+				p.alertManager.AutoResolveTelemetryStale(dev.ID)
 				p.sendCriticalAlertEmail(dev, "DEVICE_OFFLINE",
 					fmt.Sprintf("Device %s (%s) is offline (no data from its probe for >%v)", dev.Name, dev.IPAddress, staleAfter))
 			}
@@ -867,7 +890,7 @@ func (p *Poller) runMonitoringCycle() {
 
 	// Telemetry alert checks over the latest collector-relayed rows — the
 	// re-home of the checks that lived inside the retired direct-poll path.
-	p.checkRelayedTelemetry(devices, staleAfter)
+	p.checkRelayedTelemetry(devices, staleAfter, justFlipped)
 
 	// Auto-detect connections — record cycle start BEFORE all detectors
 	// so the stale cleanup doesn't delete connections from the first detector.
@@ -920,11 +943,18 @@ func (p *Poller) runMonitoringCycle() {
 //     a bogus 0-delta into the spike sustain window. prevIfaceStats is
 //     overwritten only AFTER processing, and spike elapsed time comes from row
 //     timestamps, never time.Now().
-func (p *Poller) checkRelayedTelemetry(devices []models.Device, staleAfter time.Duration) {
+//
+// justFlipped is this cycle's set of devices the offline sweep just
+// transitioned online→offline — the devices slice was loaded pre-sweep, so
+// their Status fields still read "online" here; the TELEMETRY_STALE evaluation
+// must skip them (DEVICE_OFFLINE supersedes).
+func (p *Poller) checkRelayedTelemetry(devices []models.Device, staleAfter time.Duration, justFlipped map[uint]struct{}) {
 	if p.db == nil {
 		return
 	}
-	cutoff := time.Now().Add(-staleAfter)
+	now := time.Now()
+	cutoff := now.Add(-staleAfter)
+	lookback := now.Add(-telemetryStaleLookback)
 
 	// Only enabled devices are evaluated; rows from unknown/disabled devices
 	// are skipped (deleted devices keep orphaned telemetry by design).
@@ -936,11 +966,16 @@ func (p *Poller) checkRelayedTelemetry(devices []models.Device, staleAfter time.
 	}
 
 	// System status: CPU / memory / disk / session thresholds. The query is
-	// bounded to fresh rows in SQL, so the freshness gate is implicit here.
+	// widened to the TELEMETRY_STALE lookback so stale devices remain visible;
+	// only rows past the cutoff feed the threshold checks (same split the
+	// interface/VPN sections below have always used), so CheckSystemStatus and
+	// its no-data recovery guard never see a stale row. staleVitals records the
+	// last-seen timestamp of devices whose newest vitals row is stale.
 	freshStatus := make(map[uint]bool)
+	staleVitals := make(map[uint]time.Time)
 	statusQueryOK := false
 	if p.alertManager != nil {
-		statuses, err := p.db.GetAllLatestSystemStatuses(cutoff)
+		statuses, err := p.db.GetAllLatestSystemStatuses(lookback)
 		if err != nil {
 			log.Printf("Telemetry check: failed to get system statuses - %v", err)
 		} else {
@@ -949,6 +984,10 @@ func (p *Poller) checkRelayedTelemetry(devices []models.Device, staleAfter time.
 				dev, ok := devByID[statuses[i].DeviceID]
 				if !ok {
 					continue
+				}
+				if statuses[i].Timestamp.Before(cutoff) {
+					staleVitals[statuses[i].DeviceID] = statuses[i].Timestamp
+					continue // freshness gate: stale row, threshold checks skip it
 				}
 				freshStatus[statuses[i].DeviceID] = true
 				if err := p.alertManager.CheckSystemStatus(&statuses[i], dev.SiteID); err != nil {
@@ -959,18 +998,27 @@ func (p *Poller) checkRelayedTelemetry(devices []models.Device, staleAfter time.
 	}
 
 	// Interfaces: down/error/spike checks over the latest snapshot per device.
+	// latestIface additionally records each device's newest interface-stats
+	// timestamp within the lookback — TELEMETRY_STALE's second signal (SNMP
+	// dying kills interface stats on every vendor, even when a FortiGate's SSH
+	// perf writer keeps system_status fresh).
 	ifaces, err := p.db.GetAllLatestInterfaces()
+	ifaceQueryOK := err == nil
 	if err != nil {
 		log.Printf("Telemetry check: failed to get interfaces - %v", err)
 		ifaces = nil
 	}
+	latestIface := make(map[uint]time.Time)
 	ifacesByDevice := make(map[uint][]models.InterfaceStats)
 	for _, iface := range ifaces {
-		if iface.Timestamp.Before(cutoff) {
-			continue // freshness gate: stale snapshot, device stopped reporting
-		}
 		if _, ok := devByID[iface.DeviceID]; !ok {
 			continue
+		}
+		if !iface.Timestamp.Before(lookback) && iface.Timestamp.After(latestIface[iface.DeviceID]) {
+			latestIface[iface.DeviceID] = iface.Timestamp
+		}
+		if iface.Timestamp.Before(cutoff) {
+			continue // freshness gate: stale snapshot, device stopped reporting
 		}
 		ifacesByDevice[iface.DeviceID] = append(ifacesByDevice[iface.DeviceID], iface)
 	}
@@ -1095,22 +1143,20 @@ func (p *Poller) checkRelayedTelemetry(devices []models.Device, staleAfter time.
 		}
 	}
 
-	// Visibility: a device the server still considers online but for which no
-	// fresh telemetry exists means its rows were all excluded by the freshness
-	// gate — the likely cause is collector/server clock skew, which would
-	// silently disable every threshold check here. Surface it once per cycle
-	// rather than failing silent.
-	if statusQueryOK {
-		var stale int
-		for id, dev := range devByID {
-			if dev.Status == "online" && !freshStatus[id] {
-				stale++
-			}
-		}
-		if stale > 0 {
-			log.Printf("Telemetry check: %d online device(s) had no system_status within %v — check collector NTP/clock skew", stale, staleAfter)
-		}
-	}
+	// TELEMETRY_STALE: reachable-but-degraded detection over the signal
+	// timestamps collected above, plus the clock-skew visibility log for
+	// devices with no vitals row at all. See telemetrystale.go.
+	p.evaluateTelemetryStale(telemetryStaleInputs{
+		devByID:       devByID,
+		justFlipped:   justFlipped,
+		freshStatus:   freshStatus,
+		staleVitals:   staleVitals,
+		latestIface:   latestIface,
+		statusQueryOK: statusQueryOK,
+		ifaceQueryOK:  ifaceQueryOK,
+		staleAfter:    staleAfter,
+		now:           now,
+	})
 }
 
 // maxEverUpChecked caps the once-per-link dedup set so a churn of ephemeral

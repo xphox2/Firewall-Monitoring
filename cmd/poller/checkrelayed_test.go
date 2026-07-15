@@ -63,7 +63,7 @@ func TestCheckRelayedTelemetry_SystemStatusFresh(t *testing.T) {
 	mustCreate(t, db, dev)
 	mustCreate(t, db, &models.SystemStatus{DeviceID: dev.ID, Timestamp: time.Now(), CPUUsage: 95})
 
-	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter)
+	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter, nil)
 
 	if got := countAlerts(t, db, "CPU_HIGH", dev.ID); got != 1 {
 		t.Errorf("CPU_HIGH alerts = %d, want 1", got)
@@ -93,7 +93,7 @@ func TestCheckRelayedTelemetry_SystemStatusUsesDeviceSiteID(t *testing.T) {
 	// Load the policy/site-config cache the way runMonitoringCycle does.
 	p.alertManager.RefreshThresholds(db.Gorm())
 
-	p.checkRelayedTelemetry([]models.Device{*siteDev, *freeDev}, telemetryStaleAfter)
+	p.checkRelayedTelemetry([]models.Device{*siteDev, *freeDev}, telemetryStaleAfter, nil)
 
 	if got := countAlerts(t, db, "CPU_HIGH", siteDev.ID); got != 0 {
 		t.Errorf("site-override device: CPU_HIGH alerts = %d, want 0 (site threshold 99 > 95)", got)
@@ -116,7 +116,7 @@ func TestCheckRelayedTelemetry_StaleRowsIgnored(t *testing.T) {
 	mustCreate(t, db, &models.InterfaceStats{DeviceID: dev.ID, Timestamp: stale, Name: "port1", Index: 1, Status: "down", AdminStatus: "up"})
 	mustCreate(t, db, &models.VPNStatus{DeviceID: dev.ID, Timestamp: stale, TunnelName: "hq-vpn", Status: "down"})
 
-	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter)
+	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter, nil)
 
 	for _, at := range []string{"CPU_HIGH", "INTERFACE_DOWN", "VPN_TUNNEL_DOWN"} {
 		if got := countAlerts(t, db, at, dev.ID); got != 0 {
@@ -146,7 +146,7 @@ func TestCheckRelayedTelemetry_SameSampleGuard(t *testing.T) {
 	row := &models.InterfaceStats{DeviceID: dev.ID, Timestamp: t1, Name: "port1", Index: 1, Status: "up", AdminStatus: "up", InErrors: 5}
 	mustCreate(t, db, row)
 
-	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter)
+	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter, nil)
 
 	if got := countAlerts(t, db, "INTERFACE_ERRORS", dev.ID); got != 0 {
 		t.Errorf("INTERFACE_ERRORS alerts on same-timestamp snapshot = %d, want 0", got)
@@ -161,7 +161,7 @@ func TestCheckRelayedTelemetry_SameSampleGuard(t *testing.T) {
 		Update("timestamp", t2).Error; err != nil {
 		t.Fatalf("advance snapshot timestamp: %v", err)
 	}
-	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter)
+	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter, nil)
 
 	if got := countAlerts(t, db, "INTERFACE_ERRORS", dev.ID); got != 1 {
 		t.Errorf("INTERFACE_ERRORS alerts on new snapshot = %d, want 1", got)
@@ -182,7 +182,7 @@ func TestCheckRelayedTelemetry_InterfaceDown(t *testing.T) {
 	// Cycle 1: interface is up — records it as ever-up, fires nothing.
 	row := &models.InterfaceStats{DeviceID: dev.ID, Timestamp: time.Now().Add(-time.Minute), Name: "wan1", Index: 2, Status: "up", AdminStatus: "up"}
 	mustCreate(t, db, row)
-	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter)
+	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter, nil)
 	if got := countAlerts(t, db, "INTERFACE_DOWN", dev.ID); got != 0 {
 		t.Fatalf("INTERFACE_DOWN after up cycle = %d, want 0", got)
 	}
@@ -192,7 +192,7 @@ func TestCheckRelayedTelemetry_InterfaceDown(t *testing.T) {
 		Updates(map[string]interface{}{"status": "down", "timestamp": time.Now()}).Error; err != nil {
 		t.Fatalf("advance to down: %v", err)
 	}
-	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter)
+	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter, nil)
 	if got := countAlerts(t, db, "INTERFACE_DOWN", dev.ID); got != 1 {
 		t.Errorf("INTERFACE_DOWN alerts = %d, want 1", got)
 	}
@@ -211,7 +211,7 @@ func TestCheckRelayedTelemetry_InterfaceNeverUpNoAlert(t *testing.T) {
 	mustCreate(t, db, dev)
 	mustCreate(t, db, &models.InterfaceStats{DeviceID: dev.ID, Timestamp: time.Now(), Name: "dmz3", Index: 7, Status: "down", AdminStatus: "up"})
 
-	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter)
+	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter, nil)
 
 	if got := countAlerts(t, db, "INTERFACE_DOWN", dev.ID); got != 0 {
 		t.Errorf("INTERFACE_DOWN for a never-up port = %d, want 0", got)
@@ -230,7 +230,7 @@ func TestCheckRelayedTelemetry_NeverUpStaleAlertAutoResolved(t *testing.T) {
 	// Pre-existing stale/false open alert for this never-up port.
 	mustCreate(t, db, &models.Alert{DeviceID: dev.ID, AlertType: "INTERFACE_DOWN", MetricName: "interface_wan2", Timestamp: time.Now()})
 
-	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter)
+	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter, nil)
 
 	var open int64
 	db.Gorm().Model(&models.Alert{}).
@@ -240,7 +240,7 @@ func TestCheckRelayedTelemetry_NeverUpStaleAlertAutoResolved(t *testing.T) {
 		t.Errorf("stale false INTERFACE_DOWN not auto-resolved for a never-up port: %d still open", open)
 	}
 	// A second cycle must not resurrect it.
-	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter)
+	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter, nil)
 	db.Gorm().Model(&models.Alert{}).
 		Where("device_id = ? AND alert_type = ? AND resolved_at IS NULL", dev.ID, "INTERFACE_DOWN").
 		Count(&open)
@@ -267,7 +267,7 @@ func TestCheckRelayedTelemetry_RealLinkDownAcrossRestart(t *testing.T) {
 	preexisting := &models.Alert{DeviceID: dev.ID, AlertType: "INTERFACE_DOWN", MetricName: "interface_wan1", Timestamp: time.Now().Add(-time.Hour)}
 	mustCreate(t, db, preexisting)
 
-	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter)
+	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter, nil)
 
 	// The real link is recognized from counters and still has an OPEN alert
 	// (the pre-existing one was NOT auto-resolved).
@@ -290,7 +290,7 @@ func TestCheckRelayedTelemetry_VPNDown(t *testing.T) {
 	// Cycle 1: tunnel up — recorded ever-up, no alert.
 	row := &models.VPNStatus{DeviceID: dev.ID, Timestamp: time.Now().Add(-time.Minute), TunnelName: "branch-vpn", Status: "up"}
 	mustCreate(t, db, row)
-	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter)
+	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter, nil)
 	if got := countAlerts(t, db, "VPN_TUNNEL_DOWN", dev.ID); got != 0 {
 		t.Fatalf("VPN_TUNNEL_DOWN after up cycle = %d, want 0", got)
 	}
@@ -300,7 +300,7 @@ func TestCheckRelayedTelemetry_VPNDown(t *testing.T) {
 		Updates(map[string]interface{}{"status": "down", "timestamp": time.Now()}).Error; err != nil {
 		t.Fatalf("advance to down: %v", err)
 	}
-	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter)
+	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter, nil)
 	if got := countAlerts(t, db, "VPN_TUNNEL_DOWN", dev.ID); got != 1 {
 		t.Errorf("VPN_TUNNEL_DOWN alerts = %d, want 1", got)
 	}
@@ -314,7 +314,7 @@ func TestCheckRelayedTelemetry_VPNNeverUpNoAlert(t *testing.T) {
 	mustCreate(t, db, dev)
 	mustCreate(t, db, &models.VPNStatus{DeviceID: dev.ID, Timestamp: time.Now(), TunnelName: "idle-dialup", Status: "down"})
 
-	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter)
+	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter, nil)
 
 	if got := countAlerts(t, db, "VPN_TUNNEL_DOWN", dev.ID); got != 0 {
 		t.Errorf("VPN_TUNNEL_DOWN for a never-up tunnel = %d, want 0", got)
@@ -336,7 +336,7 @@ func TestCheckRelayedTelemetry_DisabledDeviceIgnored(t *testing.T) {
 	dev.Enabled = false
 	mustCreate(t, db, &models.SystemStatus{DeviceID: dev.ID, Timestamp: time.Now(), CPUUsage: 95})
 
-	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter)
+	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter, nil)
 
 	if got := countAlerts(t, db, "CPU_HIGH", dev.ID); got != 0 {
 		t.Errorf("CPU_HIGH alerts for disabled device = %d, want 0", got)

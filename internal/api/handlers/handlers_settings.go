@@ -111,6 +111,10 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		"spike_stddev_threshold":     true,
 		"spike_alert_enabled":        true,
 		"spike_min_duration_minutes": true,
+		// TELEMETRY_STALE threshold (v0.11.101): minutes of polled-telemetry
+		// silence on a still-reachable device before alerting; 0 disables.
+		// Read live by the poller each monitoring cycle.
+		"telemetry_stale_minutes": true,
 		// sFlow detection-engine thresholds (DB overrides the DETECT_* env;
 		// blank = fall back to env/built-in default). Read live by the poller.
 		"detect_port_scan_ports":      true,
@@ -178,6 +182,12 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			v, err := strconv.Atoi(s.Value)
 			if err != nil || v < 1 || v > 1440 {
 				c.JSON(http.StatusBadRequest, response.Error("Invalid value for spike_min_duration_minutes: must be 1-1440"))
+				return
+			}
+		case "telemetry_stale_minutes":
+			v, err := strconv.Atoi(s.Value)
+			if err != nil || v < 0 || v > 1440 {
+				c.JSON(http.StatusBadRequest, response.Error("Invalid value for telemetry_stale_minutes: must be 0-1440 (0 disables)"))
 				return
 			}
 		case "detect_port_scan_ports", "detect_super_spreader_hosts",

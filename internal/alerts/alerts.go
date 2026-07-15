@@ -86,6 +86,12 @@ type AlertManager struct {
 	// hot path never contends with am.mu.
 	ruleHits map[uint]*ruleHit
 	hitMu    sync.Mutex
+	// telemetryColdSwept marks devices whose TELEMETRY_STALE recovery has run
+	// its one-shot cold DB resolve this process (clears rows left open across a
+	// poller restart). After that, CheckTelemetryRecovered only does DB work
+	// when the alert is active in-process — keeping the healthy steady state at
+	// zero writes per cycle. mu-guarded; bounded by fleet size.
+	telemetryColdSwept map[uint]bool
 }
 
 // firedEntry pairs an alert with its resolved policy config for deferred
@@ -114,6 +120,7 @@ func NewAlertManager(cfg *config.Config, notif *notifier.Notifier, db *database.
 		stormSourcesDefault: 25, // matches the detect_security_storm_sources code default
 		alertCooldown:       5 * time.Minute,
 		stateOwned:          make(map[string]bool),
+		telemetryColdSwept:  make(map[uint]bool),
 	}
 }
 
@@ -1801,6 +1808,97 @@ func (am *AlertManager) CheckDeviceOnline(device *models.Device) {
 		fmt.Sprintf("Device %s (%s) is back online", device.Name, device.IPAddress), device.ID, device.SiteID)
 	// F12: recovery closes the device's incident with one summary notification.
 	am.closeIncident(device)
+}
+
+// CheckTelemetryStale fires when a device the collector can still reach (it
+// stays "online" via ping/other bumps) has stopped producing polled telemetry
+// — the silent failure mode opened by v0.11.100, where the freshness gate just
+// skips stale rows and every threshold check goes quiet. detail names the
+// stale signal(s) with their last-seen times (built by the poller, which holds
+// the row timestamps). The message hedges the diagnosis deliberately: a skewed
+// collector clock makes rows look stale while data flows, so asserting
+// "credentials broken" outright would be a confident wrong answer.
+func (am *AlertManager) CheckTelemetryStale(device *models.Device, detail string) error {
+	am.mu.Lock()
+	now := time.Now()
+	key := fmt.Sprintf("telemetry_stale_%d", device.ID)
+	resolved := am.resolveAlertConfig(device.ID, device.SiteID, models.AlertTypeTelemetryStale)
+	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
+	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
+	// LC-12: AlertEnabled gates the cooldown/active marking (see CheckDeviceOffline).
+	canSend := resolved.AlertEnabled && am.canAlertWithCooldown(key, now, cooldown)
+	if canSend {
+		am.recordCooldownLocked(key, now, cooldown)
+		am.markActiveLocked(key, now)
+	}
+	am.mu.Unlock()
+
+	if !canSend {
+		return nil
+	}
+
+	alert := models.Alert{
+		Timestamp: now,
+		DeviceID:  device.ID,
+		AlertType: models.AlertTypeTelemetryStale,
+		Severity:  resolved.Severity,
+		Message: fmt.Sprintf("Polled telemetry stale for %s (%s): %s. The device is still reachable by its collector — SNMP/SSH collection may be broken (credentials, agent, ACL), or the collector's clock is skewed.",
+			device.Name, device.IPAddress, detail),
+		MetricName: "telemetry",
+		PolicyID:   resolved.PolicyID,
+		Suppressed: resolved.InMaintenance,
+	}
+
+	// Cross-restart dedup: like DEVICE_OFFLINE this is a persistent-state
+	// alert — without the DB check a poller restart re-pages for every device
+	// still degraded.
+	if am.dbCooldownActive(device.ID, models.AlertTypeTelemetryStale, "telemetry", now, cooldown) {
+		return nil
+	}
+
+	am.saveAlert(&alert)
+	if !alert.Suppressed {
+		nc := BuildNotifyConfigFromResolved(resolved, globalNC)
+		if err := am.notify(&alert, nc); err != nil {
+			log.Printf("Failed to send telemetry stale alert: %v", err)
+		}
+	}
+	return nil
+}
+
+// CheckTelemetryRecovered resolves an open TELEMETRY_STALE when fresh polled
+// telemetry is arriving again. sendRecovery always runs two UPDATEs, so this
+// gates the call: only when the alert is active in this process, plus one
+// unconditional cold sweep per device per process lifetime to clear rows left
+// open across a restart.
+func (am *AlertManager) CheckTelemetryRecovered(device *models.Device) {
+	key := fmt.Sprintf("telemetry_stale_%d", device.ID)
+	am.mu.Lock()
+	active := am.activeAlerts[key]
+	swept := am.telemetryColdSwept[device.ID]
+	am.telemetryColdSwept[device.ID] = true
+	am.mu.Unlock()
+	if !active && swept {
+		return
+	}
+	am.sendRecovery(key, models.AlertTypeTelemetryStale, "telemetry",
+		fmt.Sprintf("Polled telemetry recovered for %s (%s)", device.Name, device.IPAddress),
+		device.ID, device.SiteID)
+}
+
+// AutoResolveTelemetryStale silently closes an open TELEMETRY_STALE when the
+// device transitions to fully offline — DEVICE_OFFLINE supersedes it and one
+// failure must not stay open as two alerts. Deliberately NOT sendRecovery:
+// that would email "telemetry recovered" at the exact moment of total device
+// failure (the key is active precisely in this scenario).
+func (am *AlertManager) AutoResolveTelemetryStale(deviceID uint) {
+	key := fmt.Sprintf("telemetry_stale_%d", deviceID)
+	am.mu.Lock()
+	delete(am.activeAlerts, key)
+	delete(am.fireStart, key)
+	am.mu.Unlock()
+	am.resolveOpenAlertRows(deviceID, models.AlertTypeTelemetryStale, "telemetry",
+		"Superseded by DEVICE_OFFLINE — the device stopped reporting entirely")
 }
 
 // CheckSSHHostKeyChanged fires a CRITICAL alert when a device's reported SSH
