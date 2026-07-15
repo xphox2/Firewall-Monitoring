@@ -3294,7 +3294,7 @@
         // Config & SSH integrity
         'CONFIG_CHANGE','SSH_HOST_KEY_CHANGED',
         // Probe pipeline health
-        'PROBE_DATA_LAG','PROBE_DATA_TRUNCATED',
+        'PROBE_DATA_LAG','PROBE_DATA_TRUNCATED','TELEMETRY_STALE',
         // HA cluster events
         'HA_HEARTBEAT_FAIL','HA_MEMBER_DOWN','HA_MEMBER_UP','HA_STATE_CHANGE','HA_SWITCH',
         // Syslog severity escalations

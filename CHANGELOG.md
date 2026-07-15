@@ -1,6 +1,19 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.101] - 2026-07-15
+
+### Added — TELEMETRY_STALE: degraded-collection alert for reachable devices
+
+v0.11.100 closed the DEVICE_OFFLINE flap but opened a blind spot: a device that still answers ping stays "online" while its SNMP/SSH collection silently dies — the freshness gate skips stale rows, so every threshold check just goes quiet. TELEMETRY_STALE restores visibility with the semantically correct alert: *device reachable, polled telemetry stopped arriving*.
+
+- **Two-signal detection**, evaluated each poller monitoring cycle at zero extra query cost: `system_status` (vitals) and `interface_stats` staleness — either fires. The interface signal is load-bearing: a FortiGate's SSH perf writer keeps vitals fresh through an SNMP outage (by design), while interface stats die with SNMP on every vendor.
+- A signal counts as stale only when the device produced it within the last 24h (ping-only devices with no SNMP/SSH never qualify) but its latest row exceeds the threshold.
+- **Threshold**: new admin setting `telemetry_stale_minutes` (Alerting page, default 60, 0 disables, clamped to ≥ 2× the offline-sweep window so DEVICE_OFFLINE always wins a full outage). The 60-min default sits above the FortiGate SSH perf cadence so an SNMP-dead/SSH-alive device fires once via the interface signal instead of fire/recover-cycling.
+- **3-consecutive-cycle debounce** absorbs poller-restart-after-outage storms, collector spool replay (old rows bumping `last_polled` to now), and re-enabled devices' first cycle.
+- **Supersede + recovery**: a device flipping fully offline silently resolves its open TELEMETRY_STALE (one failure, one alert — no "recovered" email at the moment of total failure); fresh telemetry resolves with the standard `_RESOLVED` companion. Restart-safe dedup, maintenance-window suppression, and per-type policy tuning (severity default `warning`, cooldown 30 min) all apply; the alert message names the stale signal(s) with last-seen times and hedges the diagnosis (credentials/agent/ACL — or collector clock skew).
+- Tests: 13-scenario poller detection matrix (fire, Signal-B-only, debounce reset, all not-eligible shapes, recovery, silent supersede, threshold setting), alerts-layer maintenance/restart-dedup/cold-sweep gating, settings validation.
+
 ## [0.11.100] - 2026-07-15
 
 ### Fixed — DEVICE_OFFLINE flap: all polled-telemetry relay handlers now bump `last_polled`

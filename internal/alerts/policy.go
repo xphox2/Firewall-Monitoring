@@ -464,6 +464,10 @@ func (am *AlertManager) globalThresholdForType(alertType models.AlertType) float
 // window. Operators can still override lower per policy/rule/site/device.
 func defaultCooldownForType(alertType models.AlertType) int {
 	switch alertType {
+	case models.AlertTypeTelemetryStale:
+		// Slow-burn condition (collection degraded, device itself up) — a 5-min
+		// re-fire cadence would nag; once per half hour keeps it visible.
+		return 30
 	case models.AlertTypeSFlowSecurity, models.AlertTypeSFlowSecurityDigest:
 		// v0.11.46: the consolidated security alert and its storm digest are the
 		// noisiest types (one per attacking source / per storm). A 6h re-fire
@@ -484,6 +488,9 @@ func defaultSeverityForType(alertType models.AlertType) models.Severity {
 		"SYSLOG_EMERGENCY", "SYSLOG_CRITICAL", "SSH_HOST_KEY_CHANGED":
 		return "critical"
 	case "SYSLOG_ALERT":
+		return "warning"
+	case "TELEMETRY_STALE":
+		// Degraded collection, not an outage — the device itself is up.
 		return "warning"
 	default:
 		return "warning"

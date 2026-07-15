@@ -350,11 +350,14 @@ func (h *Handler) alertGlobalDefaults(db database.Store) gin.H {
 		"spike_alert_enabled":        h.config.Alerts.SpikeAlertEnabled,
 		"spike_stddev_threshold":     h.config.Alerts.SpikeStdDevThreshold,
 		"spike_min_duration_minutes": h.config.Alerts.SpikeMinDurationMinutes,
+		// Code default matches telemetryStaleDefaultMinutes in cmd/poller.
+		"telemetry_stale_minutes": 60,
 	}
 	var settings []models.SystemSetting
 	db.Gorm().Where(`"key" IN ?`, []string{
 		"cpu_threshold", "memory_threshold", "disk_threshold", "session_threshold",
 		"spike_alert_enabled", "spike_stddev_threshold", "spike_min_duration_minutes",
+		"telemetry_stale_minutes",
 	}).Find(&settings)
 	for _, s := range settings {
 		if s.Value == "" {
@@ -365,7 +368,7 @@ func (h *Handler) alertGlobalDefaults(db database.Store) gin.H {
 			if v, err := strconv.ParseFloat(s.Value, 64); err == nil {
 				g[s.Key] = v
 			}
-		case "session_threshold", "spike_min_duration_minutes":
+		case "session_threshold", "spike_min_duration_minutes", "telemetry_stale_minutes":
 			if v, err := strconv.Atoi(s.Value); err == nil {
 				g[s.Key] = v
 			}

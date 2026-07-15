@@ -17,7 +17,8 @@
         disk_threshold: 'alerting-g-disk',
         session_threshold: 'alerting-g-sessions',
         spike_stddev_threshold: 'alerting-g-spike-stddev',
-        spike_min_duration_minutes: 'alerting-g-spike-min'
+        spike_min_duration_minutes: 'alerting-g-spike-min',
+        telemetry_stale_minutes: 'alerting-g-telemetry-stale'
     };
 
     var METRIC_LABEL = {
@@ -140,6 +141,7 @@
         if (spikeEnabled) settings.push({ key: 'spike_alert_enabled', value: String(spikeEnabled.checked), category: 'spike', type: 'bool' });
         pushNum('spike_stddev_threshold', 'spike');
         pushNum('spike_min_duration_minutes', 'spike');
+        pushNum('telemetry_stale_minutes', 'alerts');
 
         AC.apiFetch(API_BASE + '/settings', {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings)

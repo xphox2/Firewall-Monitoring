@@ -25,16 +25,21 @@ const (
 	AlertTypeTrafficSpike       AlertType = "TRAFFIC_SPIKE"
 	AlertTypeProbeDataLag       AlertType = "PROBE_DATA_LAG"
 	AlertTypeProbeDataTruncated AlertType = "PROBE_DATA_TRUNCATED"
-	AlertTypeLinkDown           AlertType = "LINK_DOWN" // generic SNMP linkDown trap
-	AlertTypeHAHeartbeatFail    AlertType = "HA_HEARTBEAT_FAIL"
-	AlertTypeHAMemberDown       AlertType = "HA_MEMBER_DOWN"
-	AlertTypeHAMemberUp         AlertType = "HA_MEMBER_UP"
-	AlertTypeHAStateChange      AlertType = "HA_STATE_CHANGE"
-	AlertTypeHASwitch           AlertType = "HA_SWITCH"
-	AlertTypeSyslogEmergency    AlertType = "SYSLOG_EMERGENCY"
-	AlertTypeSyslogCritical     AlertType = "SYSLOG_CRITICAL"
-	AlertTypeSyslogAlert        AlertType = "SYSLOG_ALERT"
-	AlertTypeSFlowAgentDrops    AlertType = "SFLOW_AGENT_DROPS"
+	// AlertTypeTelemetryStale (v0.11.101): a device the collector still reaches
+	// (ping keeps last_polled fresh, so no DEVICE_OFFLINE) whose polled
+	// SNMP/SSH telemetry stopped arriving — the degraded-collection state that
+	// went silent once the freshness gate learned to skip stale rows.
+	AlertTypeTelemetryStale  AlertType = "TELEMETRY_STALE"
+	AlertTypeLinkDown        AlertType = "LINK_DOWN" // generic SNMP linkDown trap
+	AlertTypeHAHeartbeatFail AlertType = "HA_HEARTBEAT_FAIL"
+	AlertTypeHAMemberDown    AlertType = "HA_MEMBER_DOWN"
+	AlertTypeHAMemberUp      AlertType = "HA_MEMBER_UP"
+	AlertTypeHAStateChange   AlertType = "HA_STATE_CHANGE"
+	AlertTypeHASwitch        AlertType = "HA_SWITCH"
+	AlertTypeSyslogEmergency AlertType = "SYSLOG_EMERGENCY"
+	AlertTypeSyslogCritical  AlertType = "SYSLOG_CRITICAL"
+	AlertTypeSyslogAlert     AlertType = "SYSLOG_ALERT"
+	AlertTypeSFlowAgentDrops AlertType = "SFLOW_AGENT_DROPS"
 	// sFlow detection-engine alert types (internal/detect, migration v13). The
 	// AlertType is always "SFLOW_" + the uppercased detector name; these consts
 	// document the set and back defaultSeverityForType / policy rules.
