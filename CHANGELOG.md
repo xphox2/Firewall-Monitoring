@@ -10,6 +10,13 @@ Live feedback from the DC2 validation: the combined center label ("dmz ↔ dtsec
 - **Map:** port names now render as Cytoscape `source-label`/`target-label` at each device's END of the edge — the label visually touches the node that owns the port, and the line's clickable midsection stays clear. Applied to single-link direct bundles and expanded sublanes (sublane center labels are back to the type only). All labeled edges get `text-events: yes`, so label text is part of the edge's click target instead of dead space covering it.
 - **NOC panel + connection page:** the port summary is device-qualified — `DC2-FW2:dmz ↔ OPNsense:dtsec1`, never a bare `dmz ↔ dtsec1`.
 
+### Fixed — Interfaces tab paired UNRELATED same-named interfaces across devices (mismatched IP mapping)
+
+Second live finding: FortiGates share hardware port names (`internal1`, `dmz`, …), and the legacy interface resolution matched the link's port-name list against BOTH endpoint devices — a FortiGate↔FortiGate link dragged the *other* box's same-named interface (with its unrelated IP/subnet, e.g. the 10.10.10.0/24 DMZ) into one segment card titled by whichever subnet the pairing heuristic picked.
+
+- Port-level (L2-inferred) connections now resolve interfaces **side-precisely**: source port on the source device, dest port on the dest device (ifIndex first, name fallback) — never a name lookup across the other device. Legacy rows keep the old name-list path.
+- The NOC panel renders those two endpoints as one "Link endpoints" card and skips the subnet/VLAN pairing heuristics — with an explicit note when the L3 subnets differ across the L2 link (truthful: e.g. an IP-less DMZ jack bridged into a LAN). Regression test pins the cross-device name-collision case.
+
 ## [0.11.96] - 2026-07-14
 
 ### Fixed — name-only FDB rows now participate in link inference (FortiGate SSH bridge-FDB support)

@@ -614,6 +614,26 @@
         const onSrc = f => f.device_id === srcId;
         const onDst = f => f.device_id === dstId;
 
+        // Port-level (L2-inferred) links: the API already resolved EXACTLY
+        // the two endpoint interfaces — render them as one link card and
+        // skip the subnet/VLAN pairing heuristics below (an L2 link can
+        // truthfully join interfaces in different subnets, or one with no
+        // IP at all — e.g. a FortiGate DMZ jack bridged into a LAN).
+        if (c.source_if_name || c.dest_if_name) {
+            const s = ifaces.filter(onSrc), dd = ifaces.filter(onDst);
+            const subnets = [...new Set(ifaces.map(f => f.subnet).filter(Boolean))];
+            const l3note = subnets.length > 1
+                ? `<span style="font-size:0.7rem;color:var(--fwmon-sig-warn);">L3 subnets differ across this L2 link (${subnets.map(x => window.escapeHtml(x)).join(' vs ')})</span>`
+                : (subnets.length === 1 ? `<span style="font-size:0.72rem;color:var(--fwmon-text-mute);">${window.escapeHtml(subnets[0])}</span>` : '');
+            const header = `
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+                    <span style="font-size:0.7rem;color:var(--fwmon-text-mute);text-transform:uppercase;letter-spacing:0.3px;">Link endpoints</span>
+                    ${l3note}
+                </div>`;
+            container.innerHTML = ifaceSegmentCard(header, srcName, dstName, s, dd, 'l2ends');
+            return;
+        }
+
         // Union-find: merge interfaces that are the same logical segment. Signals:
         //  - same normalized interface name (separator diffs / same name on both ends)
         //  - a sub-interface with its parent, but ONLY when the parent interface is
