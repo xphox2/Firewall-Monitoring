@@ -152,20 +152,3 @@ func (h *Handler) ReceiveTopologyNeighbors(c *gin.Context) {
 	log.Printf("Probe %d: saved %d/%d topology neighbors", probe.ID, len(filtered), len(neighbors))
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
-
-// bumpDevicesOnline marks the devices that sent data online with one batched
-// UPDATE (the ReceiveSystemStatuses `WHERE id IN` form — the right side of
-// the known partial last_polled coverage across relay handlers).
-func (h *Handler) bumpDevicesOnline(deviceIDSet map[uint]struct{}, now time.Time) {
-	if len(deviceIDSet) == 0 {
-		return
-	}
-	ids := make([]uint, 0, len(deviceIDSet))
-	for id := range deviceIDSet {
-		ids = append(ids, id)
-	}
-	h.db.Gorm().Model(&models.Device{}).Where("id IN ?", ids).Updates(map[string]interface{}{
-		"status":      "online",
-		"last_polled": now,
-	})
-}

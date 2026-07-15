@@ -117,6 +117,9 @@ func (h *Handler) GetDeviceConnections(c *gin.Context) {
 		return
 	}
 
+	// The preloaded endpoint devices carry encrypted credential columns —
+	// mask them like every other device GET (they leaked ciphertext before).
+	httputil.RedactConnections(connections)
 	c.JSON(http.StatusOK, response.Success(connections))
 }
 
@@ -131,6 +134,12 @@ func (h *Handler) CreateDeviceConnection(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
+
+	// Drop any client-supplied embedded device objects: GORM's Create would
+	// upsert them as associations, and the response would echo them back.
+	// Endpoints are referenced by ID only.
+	conn.SourceDevice = nil
+	conn.DestDevice = nil
 
 	// Validate required FK references
 	if conn.SourceDeviceID == 0 || conn.DestDeviceID == 0 {
@@ -262,6 +271,7 @@ func (h *Handler) UpdateDeviceConnection(c *gin.Context) {
 		c.JSON(http.StatusOK, response.Success(conn))
 		return
 	}
+	httputil.RedactConnection(&updated)
 	c.JSON(http.StatusOK, response.Success(updated))
 }
 
@@ -303,6 +313,7 @@ func (h *Handler) GetConnectionDetail(c *gin.Context) {
 		c.JSON(http.StatusNotFound, response.Error("Connection not found"))
 		return
 	}
+	httputil.RedactConnection(&detail.Connection)
 	c.JSON(http.StatusOK, response.Success(detail))
 }
 

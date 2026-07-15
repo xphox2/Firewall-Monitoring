@@ -39,6 +39,28 @@ func RedactDevices(devices []models.Device) {
 	}
 }
 
+// RedactConnection masks the credential secrets of a connection's preloaded
+// endpoint devices. Connection endpoints preload the FULL Device rows, and the
+// secret columns hold ciphertext at rest with no decrypt-on-load hook — so an
+// unredacted connection response ships every endpoint device's encrypted
+// SNMP/SSH credentials to the browser. Ciphertext is still secret material
+// (the policy for GET responses is the mask, never plaintext OR ciphertext).
+func RedactConnection(conn *models.DeviceConnection) {
+	if conn.SourceDevice != nil {
+		RedactDevice(conn.SourceDevice)
+	}
+	if conn.DestDevice != nil {
+		RedactDevice(conn.DestDevice)
+	}
+}
+
+// RedactConnections masks endpoint-device secrets on a slice of connections.
+func RedactConnections(conns []models.DeviceConnection) {
+	for i := range conns {
+		RedactConnection(&conns[i])
+	}
+}
+
 // RedactProbe masks sensitive paths on a single probe.
 func RedactProbe(p *models.Probe) {
 	p.TLSCertPath = RedactedMask
