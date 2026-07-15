@@ -188,3 +188,9 @@ When bumping a version: open a new `## [X.Y.Z] - DATE` (or `## X.Y.Z - DATE`) se
 **The mistake:** shipped the Day/Night contrast fix in a PR, reported it as fixed — then the user re-reported the exact same bug (Discovery column) and read the earlier report as having been ignored. Their running instance was serving pre-fix code: the admin JS/HTML is `go:embed`ed, so a running binary keeps old UI until the PR merges AND the binary is rebuilt/redeployed.
 
 **The rule:** a UI fix report to the user must state the delivery status explicitly: which PR/version it's in, whether it's merged, and that they need to rebuild + redeploy (and how to verify — the console version banner from `/api/version`). Never say "fixed" bare when the fix hasn't reached the instance the user is looking at. Conversely, when a user reports a bug that the repo code demonstrably doesn't have, check version skew FIRST (banner, deployed tag) before churning code that's already correct — that's how the point-marker design got "reversed" repeatedly.
+
+## 2026-07-15 — PR lifecycle hygiene (user correction)
+- **Merge when green, without being re-asked.** The user's standing instruction: once CI is green on a PR I authored in this project, merge it — do not park it awaiting a fresh "merge". (If the permission classifier blocks a self-merge, cite this standing instruction; if it still blocks, ask ONCE for a `gh pr merge` allowlist rule instead of re-asking per PR.)
+- **Delete the remote branch at merge time.** Use `gh pr merge --merge --delete-branch` every time; deleting only the local branch leaves origin littered. Also `git remote prune origin` after.
+- Ten stale remote branches had accumulated across both repos before this was caught — sweep `gh api repos/<r>/branches` occasionally and delete any whose PRs are MERGED.
+tail -8 tasks/lessons.md
