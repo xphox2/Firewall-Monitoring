@@ -638,8 +638,10 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 		}
 	}
 
-	// Redact SNMP secrets
+	// Redact SNMP secrets — on the device list AND on the devices preloaded
+	// inside each connection (the latter leaked ciphertext before).
 	httputil.RedactDevices(devices)
+	httputil.RedactConnections(connections)
 
 	// Per-device enrichment: latest system status, interface summary, VPN summary
 	type DeviceEnrichment struct {

@@ -77,6 +77,33 @@ func truncateProbeBatch[T any](h *Handler, probe *models.Probe, kind string, cap
 	return items
 }
 
+// bumpDevicesOnline marks the devices that sent data online with one batched
+// UPDATE (`WHERE id IN`). Every relay handler that receives device-attributed
+// telemetry the collector actively POLLED (SNMP/SSH/API) must call this after a
+// successful save — the poller's DEVICE_OFFLINE sweep fires on a stale
+// last_polled, so a handler that saves polled data without bumping makes a
+// healthy device flap offline whenever the bumping data types happen to fail
+// while others still deliver. Passive, device-pushed sources (syslog, traps,
+// flow samples) intentionally do NOT bump: they prove the device is emitting,
+// not that the collector can poll it.
+func (h *Handler) bumpDevicesOnline(deviceIDSet map[uint]struct{}, now time.Time) {
+	if len(deviceIDSet) == 0 {
+		return
+	}
+	ids := make([]uint, 0, len(deviceIDSet))
+	for id := range deviceIDSet {
+		ids = append(ids, id)
+	}
+	// A silently failing bump reproduces the exact DEVICE_OFFLINE flap this
+	// helper exists to prevent — log it so the failure is diagnosable.
+	if err := h.db.Gorm().Model(&models.Device{}).Where("id IN ?", ids).Updates(map[string]interface{}{
+		"status":      "online",
+		"last_polled": now,
+	}).Error; err != nil {
+		log.Printf("bumpDevicesOnline: failed to update %d device(s): %v", len(ids), err)
+	}
+}
+
 func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 	probe, ok := h.validateProbe(c)
 	if !ok {
@@ -409,6 +436,7 @@ func (h *Handler) ReceivePingResults(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := results[:0]
+	deviceIDSet := make(map[uint]struct{})
 	for i := range results {
 		if results[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[results[i].DeviceID] {
 			log.Printf("ReceivePingResults: device %d not allowed for probe %d", results[i].DeviceID, probe.ID)
@@ -419,6 +447,11 @@ func (h *Handler) ReceivePingResults(c *gin.Context) {
 			results[i].Timestamp = now
 		}
 		filtered = append(filtered, results[i])
+		// Only a SUCCESSFUL ping proves reachability — a saved failure row
+		// must not keep an unreachable device "online".
+		if results[i].DeviceID > 0 && results[i].Success {
+			deviceIDSet[results[i].DeviceID] = struct{}{}
+		}
 	}
 	if err := h.db.SavePingResults(filtered); err != nil {
 		log.Printf("Failed to batch save ping results: %v", err)
@@ -427,6 +460,7 @@ func (h *Handler) ReceivePingResults(c *gin.Context) {
 	}
 	// Aggregate into PingStats — fold the whole batch per target (M4).
 	h.updatePingStatsBatch(probe.ID, filtered)
+	h.bumpDevicesOnline(deviceIDSet, now)
 	log.Printf("ReceivePingResults: probe %d saved %d results", probe.ID, len(filtered))
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
@@ -496,6 +530,7 @@ func (h *Handler) ReceiveInterfaceAddresses(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := addrs[:0]
+	deviceIDSet := make(map[uint]struct{})
 	for i := range addrs {
 		if addrs[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[addrs[i].DeviceID] {
 			continue
@@ -504,12 +539,16 @@ func (h *Handler) ReceiveInterfaceAddresses(c *gin.Context) {
 			addrs[i].Timestamp = now
 		}
 		filtered = append(filtered, addrs[i])
+		if addrs[i].DeviceID > 0 {
+			deviceIDSet[addrs[i].DeviceID] = struct{}{}
+		}
 	}
 	if err := h.db.SaveInterfaceAddresses(filtered); err != nil {
 		log.Printf("ReceiveInterfaceAddresses: DB save error: %v", err)
 		httputil.InternalError(c, "Failed to save interface addresses", err)
 		return
 	}
+	h.bumpDevicesOnline(deviceIDSet, now)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
@@ -539,6 +578,7 @@ func (h *Handler) ReceiveProcessorStats(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := stats[:0]
+	deviceIDSet := make(map[uint]struct{})
 	for i := range stats {
 		if stats[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[stats[i].DeviceID] {
 			continue
@@ -547,12 +587,16 @@ func (h *Handler) ReceiveProcessorStats(c *gin.Context) {
 			stats[i].Timestamp = now
 		}
 		filtered = append(filtered, stats[i])
+		if stats[i].DeviceID > 0 {
+			deviceIDSet[stats[i].DeviceID] = struct{}{}
+		}
 	}
 	if err := h.db.SaveProcessorStats(filtered); err != nil {
 		log.Printf("ReceiveProcessorStats: DB save error: %v", err)
 		httputil.InternalError(c, "Failed to save processor stats", err)
 		return
 	}
+	h.bumpDevicesOnline(deviceIDSet, now)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
@@ -577,6 +621,7 @@ func (h *Handler) ReceiveDiskUsage(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := rows[:0]
+	deviceIDSet := make(map[uint]struct{})
 	for i := range rows {
 		if rows[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[rows[i].DeviceID] {
 			continue
@@ -585,12 +630,16 @@ func (h *Handler) ReceiveDiskUsage(c *gin.Context) {
 			rows[i].Timestamp = now
 		}
 		filtered = append(filtered, rows[i])
+		if rows[i].DeviceID > 0 {
+			deviceIDSet[rows[i].DeviceID] = struct{}{}
+		}
 	}
 	if err := h.db.SaveDiskUsage(filtered); err != nil {
 		log.Printf("ReceiveDiskUsage: DB save error: %v", err)
 		httputil.InternalError(c, "Failed to save disk usage", err)
 		return
 	}
+	h.bumpDevicesOnline(deviceIDSet, now)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
@@ -615,6 +664,7 @@ func (h *Handler) ReceiveLoadAverage(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := rows[:0]
+	deviceIDSet := make(map[uint]struct{})
 	for i := range rows {
 		if rows[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[rows[i].DeviceID] {
 			continue
@@ -623,12 +673,16 @@ func (h *Handler) ReceiveLoadAverage(c *gin.Context) {
 			rows[i].Timestamp = now
 		}
 		filtered = append(filtered, rows[i])
+		if rows[i].DeviceID > 0 {
+			deviceIDSet[rows[i].DeviceID] = struct{}{}
+		}
 	}
 	if err := h.db.SaveLoadAverage(filtered); err != nil {
 		log.Printf("ReceiveLoadAverage: DB save error: %v", err)
 		httputil.InternalError(c, "Failed to save load average", err)
 		return
 	}
+	h.bumpDevicesOnline(deviceIDSet, now)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
@@ -653,6 +707,7 @@ func (h *Handler) ReceiveHardwareSensors(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := sensors[:0]
+	deviceIDSet := make(map[uint]struct{})
 	for i := range sensors {
 		if sensors[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[sensors[i].DeviceID] {
 			continue
@@ -661,6 +716,9 @@ func (h *Handler) ReceiveHardwareSensors(c *gin.Context) {
 			sensors[i].Timestamp = now
 		}
 		filtered = append(filtered, sensors[i])
+		if sensors[i].DeviceID > 0 {
+			deviceIDSet[sensors[i].DeviceID] = struct{}{}
+		}
 	}
 	if len(filtered) == 0 {
 		c.JSON(http.StatusOK, response.Success(gin.H{"saved": 0}))
@@ -671,6 +729,7 @@ func (h *Handler) ReceiveHardwareSensors(c *gin.Context) {
 		httputil.InternalError(c, "Failed to save hardware sensors", err)
 		return
 	}
+	h.bumpDevicesOnline(deviceIDSet, now)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
@@ -715,18 +774,7 @@ func (h *Handler) ReceiveSystemStatuses(c *gin.Context) {
 		return
 	}
 
-	// Mark the devices that sent data as online — one UPDATE for the whole set
-	// (a `WHERE id IN (...)`) instead of one per distinct device.
-	if len(deviceIDSet) > 0 {
-		ids := make([]uint, 0, len(deviceIDSet))
-		for id := range deviceIDSet {
-			ids = append(ids, id)
-		}
-		h.db.Gorm().Model(&models.Device{}).Where("id IN ?", ids).Updates(map[string]interface{}{
-			"status":      "online",
-			"last_polled": now,
-		})
-	}
+	h.bumpDevicesOnline(deviceIDSet, now)
 
 	log.Printf("Probe %d: saved %d/%d system status records", probe.ID, len(filtered), len(statuses))
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
@@ -752,7 +800,7 @@ func (h *Handler) ReceiveInterfaceStats(c *gin.Context) {
 	}
 	stats = truncateProbeBatch(h, probe, "interface-stats", 1000, stats)
 	allowedDevices := h.probeDeviceIDs(probe.ID)
-	deviceIDs := make(map[uint]bool)
+	deviceIDs := make(map[uint]struct{})
 	filtered := stats[:0]
 	for i := range stats {
 		if stats[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[stats[i].DeviceID] {
@@ -767,7 +815,7 @@ func (h *Handler) ReceiveInterfaceStats(c *gin.Context) {
 			}
 		}
 		if stats[i].DeviceID > 0 {
-			deviceIDs[stats[i].DeviceID] = true
+			deviceIDs[stats[i].DeviceID] = struct{}{}
 		}
 		filtered = append(filtered, stats[i])
 	}
@@ -777,14 +825,7 @@ func (h *Handler) ReceiveInterfaceStats(c *gin.Context) {
 		return
 	}
 
-	// Mark devices that sent data as online
-	now := time.Now()
-	for deviceID := range deviceIDs {
-		h.db.Gorm().Model(&models.Device{}).Where("id = ?", deviceID).Updates(map[string]interface{}{
-			"status":      "online",
-			"last_polled": now,
-		})
-	}
+	h.bumpDevicesOnline(deviceIDs, time.Now())
 
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
@@ -808,7 +849,7 @@ func (h *Handler) ReceiveVPNStatuses(c *gin.Context) {
 		statuses = statuses[:500]
 	}
 	allowedDevices := h.probeDeviceIDs(probe.ID)
-	deviceIDs := make(map[uint]bool)
+	deviceIDs := make(map[uint]struct{})
 	filtered := statuses[:0]
 	for i := range statuses {
 		if statuses[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[statuses[i].DeviceID] {
@@ -818,7 +859,7 @@ func (h *Handler) ReceiveVPNStatuses(c *gin.Context) {
 			statuses[i].Timestamp = time.Now()
 		}
 		if statuses[i].DeviceID > 0 {
-			deviceIDs[statuses[i].DeviceID] = true
+			deviceIDs[statuses[i].DeviceID] = struct{}{}
 		}
 		filtered = append(filtered, statuses[i])
 	}
@@ -828,13 +869,7 @@ func (h *Handler) ReceiveVPNStatuses(c *gin.Context) {
 		return
 	}
 
-	now := time.Now()
-	for deviceID := range deviceIDs {
-		h.db.Gorm().Model(&models.Device{}).Where("id = ?", deviceID).Updates(map[string]interface{}{
-			"status":      "online",
-			"last_polled": now,
-		})
-	}
+	h.bumpDevicesOnline(deviceIDs, time.Now())
 
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
@@ -860,6 +895,7 @@ func (h *Handler) ReceiveHAStatuses(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := statuses[:0]
+	deviceIDSet := make(map[uint]struct{})
 	for i := range statuses {
 		if statuses[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[statuses[i].DeviceID] {
 			continue
@@ -868,12 +904,16 @@ func (h *Handler) ReceiveHAStatuses(c *gin.Context) {
 			statuses[i].Timestamp = now
 		}
 		filtered = append(filtered, statuses[i])
+		if statuses[i].DeviceID > 0 {
+			deviceIDSet[statuses[i].DeviceID] = struct{}{}
+		}
 	}
 	if err := h.db.SaveHAStatuses(filtered); err != nil {
 		log.Printf("ReceiveHAStatuses: DB save error: %v", err)
 		httputil.InternalError(c, "Failed to save HA statuses", err)
 		return
 	}
+	h.bumpDevicesOnline(deviceIDSet, now)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
@@ -898,6 +938,7 @@ func (h *Handler) ReceiveSecurityStats(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := stats[:0]
+	deviceIDSet := make(map[uint]struct{})
 	for i := range stats {
 		if stats[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[stats[i].DeviceID] {
 			continue
@@ -906,12 +947,16 @@ func (h *Handler) ReceiveSecurityStats(c *gin.Context) {
 			stats[i].Timestamp = now
 		}
 		filtered = append(filtered, stats[i])
+		if stats[i].DeviceID > 0 {
+			deviceIDSet[stats[i].DeviceID] = struct{}{}
+		}
 	}
 	if err := h.db.SaveSecurityStats(filtered); err != nil {
 		log.Printf("ReceiveSecurityStats: DB save error: %v", err)
 		httputil.InternalError(c, "Failed to save security stats", err)
 		return
 	}
+	h.bumpDevicesOnline(deviceIDSet, now)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
@@ -936,6 +981,7 @@ func (h *Handler) ReceiveSDWANHealth(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := health[:0]
+	deviceIDSet := make(map[uint]struct{})
 	for i := range health {
 		if health[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[health[i].DeviceID] {
 			continue
@@ -944,12 +990,16 @@ func (h *Handler) ReceiveSDWANHealth(c *gin.Context) {
 			health[i].Timestamp = now
 		}
 		filtered = append(filtered, health[i])
+		if health[i].DeviceID > 0 {
+			deviceIDSet[health[i].DeviceID] = struct{}{}
+		}
 	}
 	if err := h.db.SaveSDWANHealth(filtered); err != nil {
 		log.Printf("ReceiveSDWANHealth: DB save error: %v", err)
 		httputil.InternalError(c, "Failed to save SD-WAN health", err)
 		return
 	}
+	h.bumpDevicesOnline(deviceIDSet, now)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
@@ -969,6 +1019,7 @@ func (h *Handler) ReceiveLicenseInfo(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := licenses[:0]
+	deviceIDSet := make(map[uint]struct{})
 	for i := range licenses {
 		if licenses[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[licenses[i].DeviceID] {
 			continue
@@ -977,12 +1028,16 @@ func (h *Handler) ReceiveLicenseInfo(c *gin.Context) {
 			licenses[i].Timestamp = now
 		}
 		filtered = append(filtered, licenses[i])
+		if licenses[i].DeviceID > 0 {
+			deviceIDSet[licenses[i].DeviceID] = struct{}{}
+		}
 	}
 	if err := h.db.SaveLicenseInfo(filtered); err != nil {
 		log.Printf("ReceiveLicenseInfo: DB save error: %v", err)
 		httputil.InternalError(c, "Failed to save license info", err)
 		return
 	}
+	h.bumpDevicesOnline(deviceIDSet, now)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
@@ -1199,10 +1254,7 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 		}
 	}
 
-	h.db.Gorm().Model(&models.Device{}).Where("id = ?", rev.DeviceID).Updates(map[string]interface{}{
-		"status":      "online",
-		"last_polled": time.Now(),
-	})
+	h.bumpDevicesOnline(map[uint]struct{}{rev.DeviceID: {}}, time.Now())
 
 	c.JSON(http.StatusOK, response.Success(gin.H{
 		"saved":               mergedID,
@@ -1271,6 +1323,10 @@ func (h *Handler) ReceiveProcessSnapshot(c *gin.Context) {
 		return
 	}
 
+	if snap.DeviceID > 0 {
+		h.bumpDevicesOnline(map[uint]struct{}{snap.DeviceID: {}}, time.Now())
+	}
+
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": snap.ID}))
 }
 
@@ -1291,6 +1347,7 @@ func (h *Handler) ReceiveInterfaceErrors(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := errs[:0]
+	deviceIDSet := make(map[uint]struct{})
 	for i := range errs {
 		if errs[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[errs[i].DeviceID] {
 			continue
@@ -1299,6 +1356,9 @@ func (h *Handler) ReceiveInterfaceErrors(c *gin.Context) {
 			errs[i].Timestamp = now
 		}
 		filtered = append(filtered, errs[i])
+		if errs[i].DeviceID > 0 {
+			deviceIDSet[errs[i].DeviceID] = struct{}{}
+		}
 	}
 
 	if err := h.db.Gorm().Create(&filtered).Error; err != nil {
@@ -1307,6 +1367,7 @@ func (h *Handler) ReceiveInterfaceErrors(c *gin.Context) {
 		return
 	}
 
+	h.bumpDevicesOnline(deviceIDSet, now)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
@@ -1329,6 +1390,7 @@ func (h *Handler) ReceiveSensorDetails(c *gin.Context) {
 	log.Printf("ReceiveSensorDetails: probe=%d allowed devices=%v", probe.ID, allowedDevices)
 	now := time.Now()
 	filtered := sensors[:0]
+	deviceIDSet := make(map[uint]struct{})
 	for i := range sensors {
 		log.Printf("ReceiveSensorDetails: sensor[%d] device_id=%d name=%q value=%.1f unit=%q status=%q", i, sensors[i].DeviceID, sensors[i].Name, sensors[i].Value, sensors[i].Unit, sensors[i].Status)
 		if sensors[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[sensors[i].DeviceID] {
@@ -1339,6 +1401,9 @@ func (h *Handler) ReceiveSensorDetails(c *gin.Context) {
 			sensors[i].Timestamp = now
 		}
 		filtered = append(filtered, sensors[i])
+		if sensors[i].DeviceID > 0 {
+			deviceIDSet[sensors[i].DeviceID] = struct{}{}
+		}
 	}
 	log.Printf("ReceiveSensorDetails: probe=%d filtered to %d sensors", probe.ID, len(filtered))
 
@@ -1348,6 +1413,7 @@ func (h *Handler) ReceiveSensorDetails(c *gin.Context) {
 		return
 	}
 
+	h.bumpDevicesOnline(deviceIDSet, now)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
@@ -1368,6 +1434,7 @@ func (h *Handler) ReceiveLicenseDetails(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := licenses[:0]
+	deviceIDSet := make(map[uint]struct{})
 	for i := range licenses {
 		if licenses[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[licenses[i].DeviceID] {
 			continue
@@ -1376,6 +1443,9 @@ func (h *Handler) ReceiveLicenseDetails(c *gin.Context) {
 			licenses[i].Timestamp = now
 		}
 		filtered = append(filtered, licenses[i])
+		if licenses[i].DeviceID > 0 {
+			deviceIDSet[licenses[i].DeviceID] = struct{}{}
+		}
 	}
 
 	if err := h.db.Gorm().Create(&filtered).Error; err != nil {
@@ -1384,5 +1454,6 @@ func (h *Handler) ReceiveLicenseDetails(c *gin.Context) {
 		return
 	}
 
+	h.bumpDevicesOnline(deviceIDSet, now)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
