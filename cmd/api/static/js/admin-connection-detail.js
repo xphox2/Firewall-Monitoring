@@ -139,7 +139,7 @@
     // renderBridgeSubtitle: "port5 ↔ lan3 · LLDP confirmed · VLAN 10,20" under
     // the bridge for L2-inferred links. All values are network-controlled —
     // escaped.
-    function renderBridgeSubtitle(conn) {
+    function renderBridgeSubtitle(conn, srcName, dstName) {
         var el = document.getElementById('bridge-subtitle');
         if (!el) return;
         if (!conn.source_if_name && !conn.dest_if_name && !L2_METHOD_LABELS[conn.match_method]) {
@@ -148,8 +148,13 @@
         }
         var parts = [];
         if (conn.source_if_name || conn.dest_if_name) {
+            // Device-qualified so port ownership is unambiguous
+            // ("DC2-FW2:dmz ↔ OPNsense:dtsec1", never a bare "dmz").
+            var qual = function(dev, port) {
+                return '<span style="color:var(--fwmon-text-faint);font-weight:400;">' + AC.escapeHtml(dev || '?') + ':</span>' + AC.escapeHtml(port || '?');
+            };
             parts.push('<span style="font-family:\'JetBrains Mono\',monospace;font-weight:600;color:var(--fwmon-text);">' +
-                AC.escapeHtml(conn.source_if_name || '?') + ' &harr; ' + AC.escapeHtml(conn.dest_if_name || '?') + '</span>');
+                qual(srcName, conn.source_if_name) + ' &harr; ' + qual(dstName, conn.dest_if_name) + '</span>');
         }
         if (L2_METHOD_LABELS[conn.match_method]) {
             parts.push('<span class="badge info" style="font-size:0.7rem;">' + AC.escapeHtml(L2_METHOD_LABELS[conn.match_method]) + '</span>');
@@ -252,7 +257,7 @@
 
             document.title = srcName + ' - ' + dstName + ' | Connection Detail';
             renderBridge(srcName, dstName, conn.status, conn.connection_type);
-            renderBridgeSubtitle(conn);
+            renderBridgeSubtitle(conn, srcName, dstName);
 
             // Stat cards
             document.getElementById('stat-bytes-in').textContent = formatBytes(data.total_bytes_in);

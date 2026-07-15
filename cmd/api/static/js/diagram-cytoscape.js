@@ -53,16 +53,15 @@
         return TYPE_LABELS[type] || type;
     }
 
-    // portLabel renders an L2-inferred link's endpoint interfaces
-    // ("port2 ↔ lan1"; "port2 ↔ ?" when one side is unknown). Names are
-    // capped so small screens don't get label soup; "" when the link carries
-    // no port attribution (VPN/overlay rows).
-    function portLabel(c) {
-        function cap(s) { return s.length > 14 ? s.slice(0, 13) + '…' : s; }
-        var src = c.source_if_name || '';
-        var dst = c.dest_if_name || '';
-        if (!src && !dst) return '';
-        return cap(src || '?') + ' ↔ ' + cap(dst || '?');
+    // capPort truncates a port name for on-map endpoint labels. Port names
+    // are rendered as SOURCE/TARGET labels (at each device's end of the
+    // edge) rather than a combined center label — "dmz ↔ dtsec1" left
+    // ownership ambiguous (whose dmz?) and stacked text over the clickable
+    // line; an endpoint label visually belongs to the node it touches and
+    // keeps the line's midsection clear.
+    function capPort(s) {
+        if (!s) return '';
+        return s.length > 14 ? s.slice(0, 13) + '…' : s;
     }
 
     // bestMatchMethod: strongest L2 evidence tier among a bundle's members —
@@ -295,12 +294,21 @@
                 // the roll-up: an amber "evidence going quiet" reads differently
                 // from a red hard-down.
                 var bundleStatus = anyUp ? 'up' : (anyStale ? 'stale' : (anyDown ? 'down' : 'unknown'));
-                var bundleLabel = typeLabels.join(', ');
-                // Single-link bundles carry the port pair right on the map edge;
-                // multi-link bundles show ports on their expanded sublanes only.
+                // Single-link bundles carry the port pair as ENDPOINT labels
+                // (each port name at its own device's end — ownership is
+                // visual); multi-link bundles show ports on expanded sublanes.
+                var srcPort = '', dstPort = '';
                 if (p.directs.length === 1) {
-                    var pl = portLabel(p.directs[0]);
-                    if (pl) bundleLabel += '\n' + pl;
+                    var only = p.directs[0];
+                    // Bundle source/target follow p.srcId/p.dstId — align the
+                    // port fields with the connection's stored direction.
+                    if (only.source_device_id === p.srcId) {
+                        srcPort = capPort(only.source_if_name);
+                        dstPort = capPort(only.dest_if_name);
+                    } else {
+                        srcPort = capPort(only.dest_if_name);
+                        dstPort = capPort(only.source_if_name);
+                    }
                 }
                 elements.push({ group: 'edges', data: {
                     id: 'direct-' + key,
@@ -310,7 +318,8 @@
                     matchMethod: bestMatchMethod(p.directs),
                     childConns: p.directs.slice(),
                     expanded: false,
-                    label: bundleLabel
+                    label: typeLabels.join(', '),
+                    srcPort: srcPort, dstPort: dstPort
                 }});
             }
         });
@@ -407,10 +416,21 @@
                 'width': 3, 'line-color': cssVar('--fwmon-text-mute', '#8b949e'), 'target-arrow-shape': 'none', 'opacity': 1
             }},
             // Tunnel bundle edges — thicker pipe
-            { selector: 'edge[edgeType="tunnel-bundle"]', style: { 'width': 4, 'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-mute', '#8b949e'), 'text-rotation': 'autorotate', 'text-margin-y': -10 } },
+            // text-events yes on every labeled edge: label text becomes part
+            // of the edge's CLICK TARGET instead of dead space covering it.
+            { selector: 'edge[edgeType="tunnel-bundle"]', style: { 'width': 4, 'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-mute', '#8b949e'), 'text-rotation': 'autorotate', 'text-margin-y': -10, 'text-events': 'yes' } },
             // Direct bundle — one collapsed teal link per same-site pair; straight (not
             // parallel bezier) since it is now a single edge. Expands into sublanes on click.
-            { selector: 'edge[edgeType="direct-bundle"]', style: { 'width': 4, 'curve-style': 'straight', 'line-color': TYPE_COLORS.direct, 'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-mute', '#8b949e'), 'text-rotation': 'autorotate', 'text-margin-y': -10, 'text-wrap': 'wrap' } },
+            { selector: 'edge[edgeType="direct-bundle"]', style: { 'width': 4, 'curve-style': 'straight', 'line-color': TYPE_COLORS.direct, 'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-mute', '#8b949e'), 'text-rotation': 'autorotate', 'text-margin-y': -10, 'text-events': 'yes',
+                // Port names live at each device's END of the edge (ownership
+                // is visual: the label touches the node that owns the port)
+                // and off the line's clickable midsection.
+                'source-label': 'data(srcPort)', 'target-label': 'data(dstPort)',
+                'source-text-offset': 42, 'target-text-offset': 42,
+                'source-text-margin-y': -9, 'target-text-margin-y': -9,
+                'text-background-color': cssVar('--fwmon-bg', '#0d1117'), 'text-background-opacity': 0.85,
+                'text-background-padding': '2px', 'text-background-shape': 'roundrectangle'
+            } },
             // Direct connection edges — bezier so parallel same-pair direct links stack/offset instead of overlapping into one line
             { selector: 'edge[edgeType="connection"]', style: { 'curve-style': 'bezier', 'control-point-step-size': 18 } },
             // Connection type colors
@@ -441,7 +461,10 @@
             { selector: 'edge[edgeType="sublane"]', style: {
                 'width': 3, 'curve-style': 'unbundled-bezier',
                 'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-dim', '#c9d1d9'),
-                'text-rotation': 'autorotate', 'text-margin-y': -10,
+                'text-rotation': 'autorotate', 'text-margin-y': -10, 'text-events': 'yes',
+                'source-label': 'data(srcPort)', 'target-label': 'data(dstPort)',
+                'source-text-offset': 42, 'target-text-offset': 42,
+                'source-text-margin-y': -9, 'target-text-margin-y': -9,
                 'text-background-color': cssVar('--fwmon-bg', '#0d1117'), 'text-background-opacity': 0.8,
                 'text-background-padding': '2px'
             }},
@@ -744,18 +767,23 @@
             }
 
             var laneMethod = (connObj && connObj.match_method) || '';
+            // Endpoint port labels: sublane source/target mirror the bundle's
+            // dev-<srcId>/dev-<dstId>, and direct connections are normalized
+            // the same way, so source_if_name belongs at the lane's source.
+            var laneSrcPort = capPort(connObj && connObj.source_if_name);
+            var laneDstPort = capPort(connObj && connObj.dest_if_name);
             if (isCrossSite) {
                 cy.add({ group: 'edges', data: {
                     id: laneId + '-a', source: laneSrc, target: 'cloud-internet',
                     edgeType: 'sublane', connType: connType, status: status,
-                    matchMethod: laneMethod,
+                    matchMethod: laneMethod, srcPort: laneSrcPort, dstPort: '',
                     connObj: connObj, parentTunnel: tunnelId, label: labelText
                 }});
                 styleLane(laneId + '-a');
                 cy.add({ group: 'edges', data: {
                     id: laneId + '-b', source: 'cloud-internet', target: remoteDst,
                     edgeType: 'sublane', connType: connType, status: status,
-                    matchMethod: laneMethod,
+                    matchMethod: laneMethod, srcPort: '', dstPort: laneDstPort,
                     connObj: connObj, parentTunnel: tunnelId, label: ''
                 }});
                 // Mirror the offset on the other side so lanes fan outward symmetrically
@@ -768,7 +796,7 @@
                 cy.add({ group: 'edges', data: {
                     id: laneId, source: laneSrc, target: laneDst,
                     edgeType: 'sublane', connType: connType, status: status,
-                    matchMethod: laneMethod,
+                    matchMethod: laneMethod, srcPort: laneSrcPort, dstPort: laneDstPort,
                     connObj: connObj, parentTunnel: tunnelId, label: labelText
                 }});
                 styleLane(laneId);
@@ -789,17 +817,15 @@
         }
 
         // Child sublanes (overlays inside a tunnel, or each same-site direct
-        // link). Direct sublanes carry their port pair in the label; stale
-        // lanes get the warn color inline (styleLane's inline line-color
-        // outranks the stylesheet's stale selector).
+        // link). Ports render as endpoint labels (addSublane); the center
+        // label stays the type only, keeping the clickable midsection clear.
+        // Stale lanes get the warn color inline (styleLane's inline
+        // line-color outranks the stylesheet's stale selector).
         children.forEach(function(child, idx) {
-            var childLabel = getTypeLabel(child.connection_type);
-            var pl = portLabel(child);
-            if (pl) childLabel += ' ' + pl;
             var laneColor = child.status === 'stale'
                 ? cssVar('--fwmon-sig-warn', '#e7b53c')
                 : (TYPE_COLORS[child.connection_type] || '#8b949e');
-            addSublane(tunnelId + '-lane-' + child.id, child.connection_type, child.status, child, childLabel, laneColor, idx + carrierCount);
+            addSublane(tunnelId + '-lane-' + child.id, child.connection_type, child.status, child, getTypeLabel(child.connection_type), laneColor, idx + carrierCount);
         });
 
         // Restart particles to include new sublanes

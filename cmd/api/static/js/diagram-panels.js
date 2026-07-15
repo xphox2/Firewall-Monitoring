@@ -290,7 +290,7 @@
                 if (countLabel) countLabel.textContent = 'Interfaces';
                 document.getElementById('pkpi-tunnels').textContent = ifaces.length;
                 renderPanelInterfaceTab(ifaces, c, srcName, dstName);
-                renderPanelL2Evidence(c, data.evidence || []);
+                renderPanelL2Evidence(c, data.evidence || [], srcName, dstName);
                 if (p2Tab) p2Tab.style.display = 'none';
             } else if (family === 'overlay') {
                 // Overlay (VXLAN/L3VLAN): show config + SNMP-derived overlay
@@ -684,14 +684,16 @@
     // the discovery-evidence list around the interface cards in the direct
     // tab. EVERY rendered value is neighbor-/network-controlled (LLDP sysnames,
     // port strings, MACs) — all go through escapeHtml.
-    function renderPanelL2Evidence(c, evidence) {
+    function renderPanelL2Evidence(c, evidence, srcName, dstName) {
         const container = document.getElementById('ptab-tunnels');
         if (!container) return;
         const esc = window.escapeHtml;
 
-        // Summary line: port pair + method chip + VLANs (only for L2 links).
+        // Summary line: DEVICE-QUALIFIED port pair + method chip + VLANs —
+        // "dmz ↔ dtsec1" left ownership ambiguous (whose dmz?).
         if (c.source_if_name || c.dest_if_name || L2_METHOD_LABELS[c.match_method]) {
-            const ports = `${esc(c.source_if_name || '?')} <span style="color:#2dd4bf;">&harr;</span> ${esc(c.dest_if_name || '?')}`;
+            const side = (dev, port) => `<span style="color:var(--fwmon-text-faint);">${esc(dev || '?')}:</span>${esc(port || '?')}`;
+            const ports = `${side(srcName, c.source_if_name)} <span style="color:#2dd4bf;">&harr;</span> ${side(dstName, c.dest_if_name)}`;
             const chip = L2_METHOD_LABELS[c.match_method]
                 ? `<span class="badge info" style="font-size:0.68rem;">${esc(L2_METHOD_LABELS[c.match_method])}</span>` : '';
             const vlans = c.vlan_ids ? `<span style="font-size:0.72rem;color:var(--fwmon-text-mute);">VLAN ${esc(c.vlan_ids)}</span>` : '';
