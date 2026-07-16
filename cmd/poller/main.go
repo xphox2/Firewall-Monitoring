@@ -305,6 +305,17 @@ func detectConfigFromCfg(cfg *config.Config) detect.Config {
 		BeaconMaxAvgBytes:  cfg.Detect.BeaconMaxAvgBytes,
 		BeaconMaxCV:        cfg.Detect.BeaconMaxCV,
 		CapacityThreshold:  cfg.Detect.CapacityThreshold,
+
+		DDoSBps:                    cfg.Detect.DDoSBps,
+		DDoSPps:                    cfg.Detect.DDoSPps,
+		DDoSFps:                    cfg.Detect.DDoSFps,
+		DDoSPrefixBps:              cfg.Detect.DDoSPrefixBps,
+		DDoSPrefixPps:              cfg.Detect.DDoSPrefixPps,
+		DDoSPrefixFps:              cfg.Detect.DDoSPrefixFps,
+		SampRateMinRows:            cfg.Detect.SampRateMinRows,
+		DDoSVolumetricDisabled:     cfg.Detect.DDoSVolumetricDisabled,
+		DDoSPrefixDisabled:         cfg.Detect.DDoSPrefixDisabled,
+		SamplingRateChangeDisabled: cfg.Detect.SamplingRateChangeDisabled,
 	}
 }
 
@@ -355,6 +366,42 @@ func applyDetectSettings(base detect.Config, m map[string]string) detect.Config 
 	if v, err := strconv.ParseFloat(strings.TrimSpace(m["detect_capacity_threshold"]), 64); err == nil && v > 0 {
 		base.CapacityThreshold = v
 	}
+	if v, err := strconv.ParseInt(strings.TrimSpace(m["detect_ddos_bps"]), 10, 64); err == nil && v > 0 {
+		base.DDoSBps = v
+	}
+	if v, err := strconv.ParseInt(strings.TrimSpace(m["detect_ddos_pps"]), 10, 64); err == nil && v > 0 {
+		base.DDoSPps = v
+	}
+	if v, err := strconv.Atoi(strings.TrimSpace(m["detect_ddos_fps"])); err == nil && v > 0 {
+		base.DDoSFps = v
+	}
+	if v, err := strconv.ParseInt(strings.TrimSpace(m["detect_ddos_prefix_bps"]), 10, 64); err == nil && v > 0 {
+		base.DDoSPrefixBps = v
+	}
+	if v, err := strconv.ParseInt(strings.TrimSpace(m["detect_ddos_prefix_pps"]), 10, 64); err == nil && v > 0 {
+		base.DDoSPrefixPps = v
+	}
+	if v, err := strconv.Atoi(strings.TrimSpace(m["detect_ddos_prefix_fps"])); err == nil && v > 0 {
+		base.DDoSPrefixFps = v
+	}
+	if v, err := strconv.Atoi(strings.TrimSpace(m["detect_samprate_min_rows"])); err == nil && v > 0 {
+		base.SampRateMinRows = v
+	}
+	// Per-detector enable flags need a DEDICATED three-state parse — the
+	// numeric convention above treats <=0 as "fall through", which would eat
+	// the 0-means-disabled semantics. Truth table: DB "0" → disabled, DB "1"
+	// → enabled, DB blank/other → keep the env-derived base value.
+	applyEnabledFlag := func(key string, disabled *bool) {
+		switch strings.TrimSpace(m[key]) {
+		case "0":
+			*disabled = true
+		case "1":
+			*disabled = false
+		}
+	}
+	applyEnabledFlag("detect_ddos_volumetric_enabled", &base.DDoSVolumetricDisabled)
+	applyEnabledFlag("detect_ddos_prefix_enabled", &base.DDoSPrefixDisabled)
+	applyEnabledFlag("detect_sampling_rate_change_enabled", &base.SamplingRateChangeDisabled)
 	return base
 }
 
@@ -398,17 +445,45 @@ func (p *Poller) runFlowDetectionCycle() {
 		return
 	}
 
-	// Single feed: split into security detections (consolidated to ONE alert per
-	// source) and the rest (one alert per detection). Any detection that maps to
-	// an alert is linked (flow_detections.alert_id) so it drops off the sFlow
-	// detections card and appears only on the Alerts page.
-	securityBySrc := map[string][]*models.FlowDetection{}
+	// Single feed: split into security detections and the rest. Security
+	// detections are grouped by SUBJECT — the offending source for src-keyed
+	// detectors, the VICTIM address for victim-keyed detectors (detect.
+	// VictimKeyed; e.g. ddos_volumetric — their SrcAddr is empty, and grouping
+	// by it would collapse every victim into one degenerate "" group). The
+	// flow_security suppress rules run over ALL security detections (the
+	// Event-Rules hub stays the single silencing surface; for victim-keyed
+	// detections the rule's source_ip field matches the victim). After
+	// suppression, victim-keyed survivors route down the per-detection path
+	// (auto-derived SFLOW_<DETECTOR> alert types) and only src-keyed
+	// detections continue into the per-source SFLOW_SECURITY consolidation +
+	// storm digest. Any detection that maps to an alert is linked
+	// (flow_detections.alert_id) so it drops off the sFlow detections card.
+	securityBySubject := map[string][]*models.FlowDetection{}
 	var others []*models.FlowDetection
 	for _, d := range saved {
 		if d.Category == string(detect.CategorySecurity) {
-			securityBySrc[d.SrcAddr] = append(securityBySrc[d.SrcAddr], d)
+			subject := d.SrcAddr
+			if detect.VictimKeyed(d.Detector) {
+				subject = d.DstAddr
+			}
+			securityBySubject[subject] = append(securityBySubject[subject], d)
 		} else {
 			others = append(others, d)
+		}
+	}
+
+	p.applyFlowSecuritySuppressRules(securityBySubject)
+
+	// Post-suppression re-split: victim-keyed → per-detection path; the rest
+	// stays keyed by source for consolidation.
+	securityBySrc := map[string][]*models.FlowDetection{}
+	for subject, group := range securityBySubject {
+		for _, d := range group {
+			if detect.VictimKeyed(d.Detector) {
+				others = append(others, d)
+			} else {
+				securityBySrc[subject] = append(securityBySrc[subject], d)
+			}
 		}
 	}
 
@@ -429,15 +504,10 @@ func (p *Poller) runFlowDetectionCycle() {
 		link([]uint{d.ID}, alertID, d.Detector)
 	}
 
-	// Suppression + cross-source storm digest, applied to the security groups
-	// BEFORE the per-source loop:
-	//   1. flow_security SUPPRESS Event Rules (v0.11.93, the unified replacement for
-	//      Silence-Source): ack + drop matched detections so they neither alert nor
-	//      count toward a storm;
-	//   2. storms: bucket surviving security detections by (site, detector); any
-	//      bucket over its resolved threshold collapses into ONE digest alert, and
-	//      those detections are removed from the per-source groups.
-	p.applyFlowSecuritySuppressRules(securityBySrc)
+	// Cross-source storm digest over the surviving src-keyed groups: bucket by
+	// (site, detector); any bucket over its resolved threshold collapses into
+	// ONE digest alert, and those detections are removed from the per-source
+	// groups.
 	p.alertManager.SetStormSourcesDefault(p.db.GetIntSetting("detect_security_storm_sources", 25))
 	p.rollUpSecurityStorms(securityBySrc, link)
 

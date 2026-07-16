@@ -38,6 +38,26 @@ type DetectConfig struct {
 	BeaconMaxAvgBytes  int     // DETECT_BEACON_MAX_AVG_BYTES (default 1500)
 	BeaconMaxCV        float64 // DETECT_BEACON_MAX_CV (default 0.35)
 	CapacityThreshold  float64 // DETECT_CAPACITY_THRESHOLD — utilisation fraction (default 0.80)
+
+	// Tranche 4 Phase 1 — DDoS volumetric OR-thresholds (peak-minute, per
+	// victim; defaults follow FastNetMon community edition), prefix variant
+	// (<=0 inherits the per-host value), sampling-rate-change guard.
+	DDoSBps         int64 // DETECT_DDOS_BPS (default 1e9)
+	DDoSPps         int64 // DETECT_DDOS_PPS (default 20000)
+	DDoSFps         int   // DETECT_DDOS_FPS (default 3500; complete rows only)
+	DDoSPrefixBps   int64 // DETECT_DDOS_PREFIX_BPS
+	DDoSPrefixPps   int64 // DETECT_DDOS_PREFIX_PPS
+	DDoSPrefixFps   int   // DETECT_DDOS_PREFIX_FPS
+	SampRateMinRows int   // DETECT_SAMPRATE_MIN_ROWS (default 3)
+	// Per-detector kill switches, stored inverted (Disabled) so the zero value
+	// of DetectConfig keeps every detector ENABLED — a hand-constructed
+	// config.Config{} (tests, tools) must not silently disable detection. Set
+	// at load from the DETECT_*_ENABLED envs (default true). The detect_*
+	// env+DB layered pattern predates the admin-UI-only knob preference and is
+	// kept for consistency with the seven existing detector knobs.
+	DDoSVolumetricDisabled     bool // !DETECT_DDOS_VOLUMETRIC_ENABLED
+	DDoSPrefixDisabled         bool // !DETECT_DDOS_PREFIX_ENABLED
+	SamplingRateChangeDisabled bool // !DETECT_SAMPLING_RATE_CHANGE_ENABLED
 }
 
 // ThreatFeedConfig controls the optional auto-population of the threat-intel feed
@@ -442,6 +462,17 @@ func Load() *Config {
 			BeaconMaxAvgBytes:  getIntEnv("DETECT_BEACON_MAX_AVG_BYTES", 0),
 			BeaconMaxCV:        getFloatEnv("DETECT_BEACON_MAX_CV", 0),
 			CapacityThreshold:  getFloatEnv("DETECT_CAPACITY_THRESHOLD", 0),
+			DDoSBps:            int64(getIntEnv("DETECT_DDOS_BPS", 0)),
+			DDoSPps:            int64(getIntEnv("DETECT_DDOS_PPS", 0)),
+			DDoSFps:            getIntEnv("DETECT_DDOS_FPS", 0),
+			DDoSPrefixBps:      int64(getIntEnv("DETECT_DDOS_PREFIX_BPS", 0)),
+			DDoSPrefixPps:      int64(getIntEnv("DETECT_DDOS_PREFIX_PPS", 0)),
+			DDoSPrefixFps:      getIntEnv("DETECT_DDOS_PREFIX_FPS", 0),
+			SampRateMinRows:    getIntEnv("DETECT_SAMPRATE_MIN_ROWS", 0),
+
+			DDoSVolumetricDisabled:     !getBoolEnv("DETECT_DDOS_VOLUMETRIC_ENABLED", true),
+			DDoSPrefixDisabled:         !getBoolEnv("DETECT_DDOS_PREFIX_ENABLED", true),
+			SamplingRateChangeDisabled: !getBoolEnv("DETECT_SAMPLING_RATE_CHANGE_ENABLED", true),
 		},
 		ThreatFeed: ThreatFeedConfig{
 			Enabled:       getBoolEnv("THREAT_FEEDS_ENABLED", true),

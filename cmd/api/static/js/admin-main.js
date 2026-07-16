@@ -2551,7 +2551,17 @@
                 { key: 'detect_beacon_min_samples', label: 'C2 beacon — min flows', def: '8', step: '1' },
                 { key: 'detect_beacon_max_avg_bytes', label: 'C2 beacon — max avg bytes', def: '1500', step: '1' },
                 { key: 'detect_beacon_max_cv', label: 'C2 beacon — max interval CV (0-5)', def: '0.35', step: '0.01' },
-                { key: 'detect_capacity_threshold', label: 'Capacity — utilisation fraction (0-1)', def: '0.80', step: '0.01' }
+                { key: 'detect_capacity_threshold', label: 'Capacity — utilisation fraction (0-1)', def: '0.80', step: '0.01' },
+                { key: 'detect_ddos_bps', label: 'DDoS — bits/s per victim (peak minute)', def: '1000000000', step: '1' },
+                { key: 'detect_ddos_pps', label: 'DDoS — packets/s per victim', def: '20000', step: '1' },
+                { key: 'detect_ddos_fps', label: 'DDoS — flows/s per victim (NetFlow only)', def: '3500', step: '1' },
+                { key: 'detect_ddos_prefix_bps', label: 'DDoS prefix — bits/s per /24 (blank = per-host)', def: 'per-host', step: '1' },
+                { key: 'detect_ddos_prefix_pps', label: 'DDoS prefix — packets/s per /24', def: 'per-host', step: '1' },
+                { key: 'detect_ddos_prefix_fps', label: 'DDoS prefix — flows/s per /24', def: 'per-host', step: '1' },
+                { key: 'detect_samprate_min_rows', label: 'Sampling-rate guard — min rows per rate', def: '3', step: '1' },
+                { key: 'detect_ddos_volumetric_enabled', label: 'DDoS volumetric — enabled (1/0)', def: '1', step: '1' },
+                { key: 'detect_ddos_prefix_enabled', label: 'DDoS prefix — enabled (1/0)', def: '1', step: '1' },
+                { key: 'detect_sampling_rate_change_enabled', label: 'Sampling-rate guard — enabled (1/0)', def: '1', step: '1' }
             ].map(function(s) {
                 var found = settings.find(function(x) { return x.key === s.key; });
                 var savedVal = found ? found.value : '';
@@ -3304,6 +3314,8 @@
         // SFLOW_SECURITY_DIGEST is the cross-source storm rollup (v0.11.46; carries
         // the per-policy storm_sources threshold); the rest are operational detectors.
         'SFLOW_SECURITY','SFLOW_SECURITY_DIGEST','SFLOW_AGENT_DROPS','SFLOW_CLEARTEXT','SFLOW_UNEXPECTED_EGRESS','SFLOW_SAMPLING_BACKOFF','SFLOW_CAPACITY',
+        // Tranche 4 Phase 1: victim-keyed DDoS + sampling-rate guard
+        'SFLOW_DDOS_VOLUMETRIC','SFLOW_DDOS_PREFIX','SFLOW_SAMPLING_RATE_CHANGE',
         // Test fire
         'TEST_ALERT'
     ];

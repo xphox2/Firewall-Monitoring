@@ -29,6 +29,32 @@ func forwardedOnly(q *gorm.DB) *gorm.DB {
 	return q.Where("firewall_event <> ?", models.FirewallEventDenied)
 }
 
+// completeRows keeps only rows from complete (unsampled session-export)
+// sources: NetFlow v5/v9/IPFIX with sampling_rate 0 or 1. sFlow (flow_source
+// 0) is packet-sampled even at rate 1; FortiGate 7.6+ netflow-sample-rate>1
+// exports SAMPLED NetFlow and is correctly excluded by the rate test. The
+// collector's sampler-resolution chain never emits a rate <1 for live rows
+// (rateFor falls back to 1; v5 clamps 0→1), so <=1 is exact. Flow-count and
+// per-flow-timing math is only valid over these rows (T4-1).
+func completeRows(q *gorm.DB) *gorm.DB {
+	return q.Where("flow_source <> 0 AND sampling_rate <= 1")
+}
+
+// completeFlowsExpr is the SELECT-list twin of completeRows: counts the
+// complete rows inside a group so a mixed-corpus aggregate can gate fps math
+// per-metric without a second query.
+const completeFlowsExpr = "SUM(CASE WHEN flow_source <> 0 AND sampling_rate <= 1 THEN 1 ELSE 0 END)"
+
+// epochMinuteExpr returns a SQL expression bucketing `timestamp` into unix
+// epoch minutes, per dialect. detect stays a leaf package: gorm's
+// Dialector.Name() is the only dependency.
+func epochMinuteExpr(db *gorm.DB) string {
+	if db.Dialector.Name() == "sqlite" {
+		return "CAST(strftime('%s', timestamp) AS INTEGER) / 60"
+	}
+	return "CAST(FLOOR(EXTRACT(EPOCH FROM timestamp) / 60) AS BIGINT)"
+}
+
 // portLabels names the ports the policy detectors care about, for readable
 // messages without pulling in a full service registry.
 var portLabels = map[uint16]string{
@@ -243,14 +269,73 @@ func (d capacityDetector) Detect(w Window) ([]Detection, error) {
 		if pct >= 0.95 {
 			sev = "critical"
 		}
+		// T4-8 attribution: "the link is 83% full and here's who." One bounded
+		// query per SATURATED interface only (rare), so the common case adds
+		// zero queries to the cycle.
+		talkers, talkerText, sampled := capacityTopTalkers(w, r.DeviceID, r.OutputIfIndex, r.Bytes)
+		msg := fmt.Sprintf("Interface ifIndex %d at %.0f%% of link speed (%.0f Mbps of %d Mbps)", r.OutputIfIndex, pct*100, bps/1e6, speedBps/1_000_000)
+		if talkerText != "" {
+			msg += " — top talkers: " + talkerText
+		}
+		details := map[string]any{"if_index": r.OutputIfIndex, "bps": bps, "speed_bps": speedBps, "pct": pct * 100}
+		if len(talkers) > 0 {
+			details["top_talkers"] = talkers
+			details["estimate"] = sampled // byte shares from sFlow-sampled rows are estimates
+		}
 		out = append(out, Detection{
 			Detector: d.Name(), Category: d.Category(), Severity: sev,
 			DeviceID: r.DeviceID,
 			Score:    pct * 100,
-			Message:  fmt.Sprintf("Interface ifIndex %d at %.0f%% of link speed (%.0f Mbps of %d Mbps)", r.OutputIfIndex, pct*100, bps/1e6, speedBps/1_000_000),
+			Message:  msg,
 			DedupKey: fmt.Sprintf("capacity_%d_%d", r.DeviceID, r.OutputIfIndex),
-			Details:  map[string]any{"if_index": r.OutputIfIndex, "bps": bps, "speed_bps": speedBps, "pct": pct * 100},
+			Details:  details,
 		})
 	}
 	return out, nil
+}
+
+// capacityTopTalkers returns the top-3 (src,dst) pairs by bytes on a saturated
+// egress interface, with each pair's share of the interface's window bytes.
+func capacityTopTalkers(w Window, deviceID uint, ifIndex uint32, ifBytes uint64) (talkers []map[string]any, text string, sampled bool) {
+	if ifBytes == 0 {
+		return nil, "", false
+	}
+	type pairRow struct {
+		SrcAddr string
+		DstAddr string
+		B       uint64
+		Sampled int64
+	}
+	var rows []pairRow
+	if err := w.DB.Model(&models.FlowSample{}).
+		Where("timestamp >= ? AND timestamp < ?", w.Start, w.End).
+		Where("device_id = ? AND output_if_index = ?", deviceID, ifIndex).
+		Select("src_addr, dst_addr, SUM(bytes) as b, SUM(CASE WHEN flow_source = 0 THEN 1 ELSE 0 END) as sampled").
+		Group("src_addr, dst_addr").
+		Order("b DESC").Limit(3).Scan(&rows).Error; err != nil {
+		return nil, "", false
+	}
+	var parts []string
+	for _, r := range rows {
+		share := float64(r.B) * 100 / float64(ifBytes)
+		talkers = append(talkers, map[string]any{
+			"src": r.SrcAddr, "dst": r.DstAddr, "bytes": r.B, "share_pct": share,
+		})
+		parts = append(parts, fmt.Sprintf("%s → %s (%.0f%%)", r.SrcAddr, r.DstAddr, share))
+		if r.Sampled > 0 {
+			sampled = true
+		}
+	}
+	return talkers, joinComma(parts), sampled
+}
+
+func joinComma(parts []string) string {
+	out := ""
+	for i, p := range parts {
+		if i > 0 {
+			out += ", "
+		}
+		out += p
+	}
+	return out
 }

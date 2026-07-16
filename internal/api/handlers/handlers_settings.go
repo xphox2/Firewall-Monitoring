@@ -124,6 +124,19 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		"detect_beacon_max_avg_bytes": true,
 		"detect_beacon_max_cv":        true,
 		"detect_capacity_threshold":   true,
+		// Tranche 4 Phase 1 — DDoS volumetric/prefix thresholds + per-detector
+		// enable flags + sampling-rate-change guard. Same blank-falls-through
+		// semantics; the *_enabled keys are three-state (0/1/blank).
+		"detect_ddos_bps":                     true,
+		"detect_ddos_pps":                     true,
+		"detect_ddos_fps":                     true,
+		"detect_ddos_prefix_bps":              true,
+		"detect_ddos_prefix_pps":              true,
+		"detect_ddos_prefix_fps":              true,
+		"detect_samprate_min_rows":            true,
+		"detect_ddos_volumetric_enabled":      true,
+		"detect_ddos_prefix_enabled":          true,
+		"detect_sampling_rate_change_enabled": true,
 	}
 
 	secretKeys := settingsSecretKeys // v0.10.226: shared with GetSettings
@@ -190,9 +203,19 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, response.Error("Invalid value for telemetry_stale_minutes: must be 0-1440 (0 disables)"))
 				return
 			}
+		case "detect_ddos_volumetric_enabled", "detect_ddos_prefix_enabled",
+			"detect_sampling_rate_change_enabled":
+			// Three-state: blank = fall through to env/default; else 0 or 1.
+			if s.Value != "" && s.Value != "0" && s.Value != "1" {
+				c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("Invalid value for %s: must be 0, 1, or blank", s.Key)))
+				return
+			}
 		case "detect_port_scan_ports", "detect_super_spreader_hosts",
 			"detect_beacon_min_samples", "detect_beacon_max_avg_bytes",
-			"detect_data_exfil_bytes":
+			"detect_data_exfil_bytes",
+			"detect_ddos_bps", "detect_ddos_pps", "detect_ddos_fps",
+			"detect_ddos_prefix_bps", "detect_ddos_prefix_pps", "detect_ddos_prefix_fps",
+			"detect_samprate_min_rows":
 			// Blank = unset (poller falls back to env/default). Otherwise a
 			// positive integer.
 			if s.Value != "" {
