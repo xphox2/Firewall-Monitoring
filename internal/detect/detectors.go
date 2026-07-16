@@ -29,20 +29,15 @@ func forwardedOnly(q *gorm.DB) *gorm.DB {
 	return q.Where("firewall_event <> ?", models.FirewallEventDenied)
 }
 
-// completeRows keeps only rows from complete (unsampled session-export)
-// sources: NetFlow v5/v9/IPFIX with sampling_rate 0 or 1. sFlow (flow_source
-// 0) is packet-sampled even at rate 1; FortiGate 7.6+ netflow-sample-rate>1
-// exports SAMPLED NetFlow and is correctly excluded by the rate test. The
-// collector's sampler-resolution chain never emits a rate <1 for live rows
-// (rateFor falls back to 1; v5 clamps 0→1), so <=1 is exact. Flow-count and
-// per-flow-timing math is only valid over these rows (T4-1).
-func completeRows(q *gorm.DB) *gorm.DB {
-	return q.Where("flow_source <> 0 AND sampling_rate <= 1")
-}
-
-// completeFlowsExpr is the SELECT-list twin of completeRows: counts the
-// complete rows inside a group so a mixed-corpus aggregate can gate fps math
-// per-metric without a second query.
+// completeFlowsExpr counts the COMPLETE (unsampled session-export) rows inside
+// a GROUP BY so a mixed-corpus aggregate can gate flow-count (fps) math
+// per-metric without a second query: NetFlow v5/v9/IPFIX with sampling_rate 0
+// or 1. sFlow (flow_source 0) is packet-sampled even at rate 1; FortiGate 7.6+
+// netflow-sample-rate>1 exports SAMPLED NetFlow, excluded by the rate test.
+// The collector's sampler chain never emits a rate <1 for live rows (rateFor
+// falls back to 1; v5 clamps 0→1), so <=1 is exact. Flow-count and per-flow
+// timing are only valid over these rows (T4-1). Phase 2's denied-flow
+// detectors add the WHERE-clause twin (`completeRows`) with their first caller.
 const completeFlowsExpr = "SUM(CASE WHEN flow_source <> 0 AND sampling_rate <= 1 THEN 1 ELSE 0 END)"
 
 // epochMinuteExpr returns a SQL expression bucketing `timestamp` into unix
