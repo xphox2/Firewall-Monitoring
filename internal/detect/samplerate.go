@@ -44,13 +44,13 @@ type samplerRow struct {
 	C            int64
 }
 
-func (d samplingRateChangeDetector) rateSets(w Window, from, to interface{}, minRows int64) (map[samplerKey]map[uint32]bool, error) {
+func (d samplingRateChangeDetector) rateSets(w Window, from, to time.Time, minRows int64) (map[samplerKey]map[uint32]bool, error) {
 	var rows []samplerRow
 	if err := w.DB.Model(&models.FlowSample{}).
 		Where("timestamp >= ? AND timestamp < ?", from, to).
 		Select("device_id, flow_source, sampling_rate, COUNT(*) as c").
 		Group("device_id, flow_source, sampling_rate").
-		Limit(2000).Scan(&rows).Error; err != nil {
+		Order("c DESC").Limit(4000).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	sets := map[samplerKey]map[uint32]bool{}
@@ -73,8 +73,11 @@ func (d samplingRateChangeDetector) Detect(w Window) ([]Detection, error) {
 		return nil, nil
 	}
 	minRows := int64(cfg.SampRateMinRows)
-	curStart := w.End.Add(-15 * time.Minute)
-	prevStart := w.End.Add(-30 * time.Minute) // both windows inside the ~1h raw retention
+	// Two adjacent 15-minute windows, both inside the raw-retention ceiling
+	// (Window.Lookback clamps at 60m — the guarded way to reach past the cycle
+	// window without reading rolled-up rows).
+	curStart := w.Lookback(15 * time.Minute)
+	prevStart := w.Lookback(30 * time.Minute)
 
 	prev, err := d.rateSets(w, prevStart, curStart, minRows)
 	if err != nil {

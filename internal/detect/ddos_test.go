@@ -150,6 +150,41 @@ func TestDDoSVolumetric_ElephantSmearNoFinding(t *testing.T) {
 	}
 }
 
+// TestDDoSVolumetric_ElephantSmearWindowStraddle is the regression for the
+// review's MAJOR #1: a long flow whose flow_start PREDATES the window must be
+// redistributed at its TRUE average rate (divide by the full span), not
+// concentrated into the in-window minutes. A steady 500 Mb/s backup spanning
+// past the window edge must not read as a multi-Gb/s peak and false-fire.
+func TestDDoSVolumetric_ElephantSmearWindowStraddle(t *testing.T) {
+	db := database.NewDatabaseForTesting(t)
+	now := time.Now()
+	// 30-minute flow at a steady 500 Mb/s; window is the last 15 minutes, so
+	// the flow started 15 minutes before the window opened. Bytes over 30 min
+	// at 500 Mb/s = 500e6/8 * 1800 = 112.5 GB.
+	start := now.Add(-30 * time.Minute)
+	end := now.Add(-1 * time.Minute)
+	bytes := uint64(500_000_000) / 8 * 1740 // ~29 min span
+	seedFlow(t, db, models.FlowSample{
+		DeviceID: 1, Protocol: 6, SrcAddr: "198.51.100.9", DstAddr: "192.0.2.16", DstPort: 443,
+		Bytes: bytes, Packets: 80_000,
+		Direction: uint8(classify.DirInbound), FlowSource: models.FlowSourceNetFlowV9, SamplingRate: 1,
+		FlowStart: &start, FlowEnd: &end, Timestamp: end,
+	})
+
+	w := Window{Start: now.Add(-15 * time.Minute), End: now, DB: db.Gorm()}
+	// Threshold 800 Mb/s: the true 500 Mb/s rate is under it, but a
+	// clipped-span redistribution (bytes / in-window-minutes) would read ~1
+	// Gb/s and fire.
+	w.Config = Config{DDoSBps: 800_000_000, DDoSPps: 1_000_000, DDoSFps: 1_000_000}
+	got, err := ddosVolumetricDetector{}.Detect(w)
+	if err != nil {
+		t.Fatalf("detect: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("window-straddling elephant flow false-fired: peak_bps=%v", got[0].Details["peak_bps"])
+	}
+}
+
 // TestDDoSVolumetric_CriticalAtTwoTimes: ≥2x threshold escalates to critical.
 func TestDDoSVolumetric_CriticalAtTwoTimes(t *testing.T) {
 	db := database.NewDatabaseForTesting(t)
@@ -258,16 +293,144 @@ func TestDDoSPrefix_SuppressedWhenHostFired(t *testing.T) {
 	}
 }
 
-// TestPrefixOf covers the fold helper's shapes.
+// TestPrefixOf covers the fold helper's shapes, including compressed IPv6
+// forms (the review's MAJOR #2 was a LIKE pattern that over-matched these; the
+// implementation now matches by exact dst_addr IN, so prefixOf only needs to
+// fold consistently).
 func TestPrefixOf(t *testing.T) {
 	cases := map[string]string{
 		"192.0.2.77":      "192.0.2.0/24",
 		"2001:db8:1:2::5": "2001:db8:1:2::/64",
+		"2001:db8::5":     "2001:db8::/64", // compresses before the 4th group
+		"2001:db8:1:0::9": "2001:db8:1::/64",
 		"not-an-ip":       "",
 	}
 	for in, want := range cases {
 		if got := prefixOf(in); got != want {
 			t.Errorf("prefixOf(%q) = %q, want %q", in, got, want)
 		}
+	}
+	// Two addresses in DIFFERENT /64s that share a textual prefix must NOT
+	// fold together — the old LIKE pattern conflated these.
+	if prefixOf("2001:db8::1") == prefixOf("2001:db8:1:2::1") {
+		t.Error("distinct /64s folded to the same prefix")
+	}
+}
+
+// TestDDoSPrefix_IPv6DistinctSubnetsNotConflated is the regression for MAJOR
+// #2: a burst confined to ONE /64 must not pull in traffic from a sibling /64
+// that shares a textual prefix. With exact dst_addr IN matching this is
+// automatic; the test pins it against a LIKE-pattern regression.
+func TestDDoSPrefix_IPv6DistinctSubnetsNotConflated(t *testing.T) {
+	db := database.NewDatabaseForTesting(t)
+	now := time.Now()
+	at := now.Add(-3 * time.Minute)
+	// Attack: 40 hosts in 2001:db8:aaaa:1::/64, each 30 pps → 1200 pps.
+	for v := 1; v <= 40; v++ {
+		seedFlow(t, db, models.FlowSample{
+			DeviceID: 1, Protocol: 17,
+			SrcAddr: "203.0.113.5", DstAddr: fmt.Sprintf("2001:db8:aaaa:1::%d", v), DstPort: 53,
+			Bytes: 3000, Packets: 150,
+			Direction: uint8(classify.DirInbound), FlowSource: models.FlowSourceNetFlowV9, SamplingRate: 1,
+			Timestamp: at,
+		})
+	}
+	// Innocent heavy host in a DIFFERENT /64 that shares the "2001:db8:aaaa:"
+	// textual head — the old LIKE "2001:db8:aaaa:%" would have swept it in.
+	seedFlow(t, db, models.FlowSample{
+		DeviceID: 1, Protocol: 6,
+		SrcAddr: "203.0.113.6", DstAddr: "2001:db8:aaaa:2::9", DstPort: 443,
+		Bytes: 9_000_000_000, Packets: 5_000_000,
+		Direction: uint8(classify.DirInbound), FlowSource: models.FlowSourceNetFlowV9, SamplingRate: 1,
+		Timestamp: at,
+	})
+
+	w := fullWindow(now)
+	w.DB = db.Gorm()
+	w.Config = Config{DDoSBps: 1_000_000_000, DDoSPps: 100, DDoSFps: 1_000_000}
+
+	pfx, err := ddosPrefixDetector{}.Detect(w)
+	if err != nil {
+		t.Fatalf("detect: %v", err)
+	}
+	// The /1 attack /64 fires on pps; the innocent /64 has 1 host (no prefix).
+	var attackFound bool
+	for _, d := range pfx {
+		if d.DstAddr == "2001:db8:aaaa:1::/64" {
+			attackFound = true
+			// The attack /64's peak must reflect ONLY its own ~1200 pps, not
+			// the sibling host's traffic.
+			if pk, _ := d.Details["peak_pps"].(float64); pk > 100_000 {
+				t.Errorf("attack prefix peak_pps=%v — sibling /64 traffic leaked in", pk)
+			}
+		}
+		if d.DstAddr == "2001:db8:aaaa:2::/64" {
+			t.Error("innocent single-host /64 produced a prefix finding")
+		}
+	}
+	if !attackFound {
+		t.Fatalf("attack /64 did not fire; got %d findings", len(pfx))
+	}
+}
+
+// TestDDoSPrefix_BusyHostDoesNotBlindCarpet is the regression for MAJOR #3: a
+// /24 containing one merely-busy host (over the window floor but NOT a
+// per-host peak fire) plus a carpet-bomb spread over other hosts must still
+// produce the prefix finding — the suppression is now peak-based, not
+// window-floor-based.
+func TestDDoSPrefix_BusyHostDoesNotBlindCarpet(t *testing.T) {
+	db := database.NewDatabaseForTesting(t)
+	now := time.Now()
+	at := now.Add(-3 * time.Minute)
+	// Busy-but-not-attacking host: high WINDOW bytes spread evenly so its
+	// peak-minute never crosses the per-host bps threshold. 8 GB over the
+	// window in 15 one-minute slices = low per-minute rate.
+	for m := 0; m < 15; m++ {
+		seedFlow(t, db, models.FlowSample{
+			DeviceID: 1, Protocol: 6,
+			SrcAddr: "203.0.113.7", DstAddr: "192.0.2.100", DstPort: 443,
+			Bytes: 8_000_000_000 / 15, Packets: 50,
+			Direction: uint8(classify.DirInbound), FlowSource: models.FlowSourceNetFlowV9, SamplingRate: 1,
+			Timestamp: now.Add(-time.Duration(m+1) * time.Minute),
+		})
+	}
+	// Carpet bomb: 50 other hosts in the same /24, each 30 pps in one minute →
+	// 1500 pps for the /24, each host well under the per-host pps floor.
+	for v := 1; v <= 50; v++ {
+		seedFlow(t, db, models.FlowSample{
+			DeviceID: 1, Protocol: 17,
+			SrcAddr: "203.0.113.8", DstAddr: fmt.Sprintf("192.0.2.%d", v), DstPort: 53,
+			Bytes: 3000, Packets: 120,
+			Direction: uint8(classify.DirInbound), FlowSource: models.FlowSourceNetFlowV9, SamplingRate: 1,
+			Timestamp: at,
+		})
+	}
+
+	w := fullWindow(now)
+	w.DB = db.Gorm()
+	// Per-host: 1 Gb/s bps (busy host ~71 Mb/s peak stays under), 100 pps
+	// (each carpet host 30 pps stays under). Prefix pps threshold 100 → fires
+	// on the /24's 1500 pps.
+	w.Config = Config{DDoSBps: 1_000_000_000, DDoSPps: 100, DDoSFps: 1_000_000}
+
+	host, err := ddosVolumetricDetector{}.Detect(w)
+	if err != nil {
+		t.Fatalf("host detect: %v", err)
+	}
+	if len(host) != 0 {
+		t.Fatalf("busy host false-fired per-host: %+v", host[0].Details)
+	}
+	pfx, err := ddosPrefixDetector{}.Detect(w)
+	if err != nil {
+		t.Fatalf("prefix detect: %v", err)
+	}
+	found := false
+	for _, d := range pfx {
+		if d.DstAddr == "192.0.2.0/24" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("carpet bomb blinded by a busy (non-firing) host: %d findings", len(pfx))
 	}
 }

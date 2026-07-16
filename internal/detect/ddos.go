@@ -103,19 +103,26 @@ func stageACandidates(w Window, cfg Config, floorDiv int64, limit int) ([]ddosVi
 	return rows, err
 }
 
-// peakMinuteRates computes per-minute peaks for one victim (or a prefix LIKE
-// pattern), applying the elephant-smear correction: NetFlow stamps Timestamp
-// at flow END, so a long active-timeout record dumps its whole interval's
-// bytes into one minute — an 8-30x phantom spike for a legitimate transfer.
-// Long-span rows are redistributed uniformly across their [flow_start,
-// flow_end] ∩ window minutes before peaks are taken. (Moot for sFlow rows,
-// whose flow_start/flow_end are the sample instant.)
-func peakMinuteRates(w Window, dstPredicate string, dstArg string) (ddosPeaks, error) {
+// peakMinuteRates computes per-minute peaks for a set of victim addresses
+// (one for the per-host case, the prefix's member addresses for the prefix
+// case), applying the elephant-smear correction: NetFlow stamps Timestamp at
+// flow END, so a long active-timeout record dumps its whole interval's bytes
+// into one minute — an 8-30x phantom spike for a legitimate transfer. Long
+// rows are redistributed at their true average rate before peaks are taken.
+// (Moot for sFlow rows, whose flow_start/flow_end are the sample instant.)
+//
+// Matching is by exact `dst_addr IN` — never a textual LIKE, which for
+// zero-compressed IPv6 prefixes ("2001:db8::/64" → "2001:db8:%") would
+// over-match every sibling /64 and pollute the aggregation.
+func peakMinuteRates(w Window, dstAddrs []string) (ddosPeaks, error) {
+	if len(dstAddrs) == 0 {
+		return ddosPeaks{}, nil
+	}
 	minuteExpr := epochMinuteExpr(w.DB)
 	var buckets []ddosMinuteRow
 	if err := w.DB.Model(&models.FlowSample{}).
 		Where("timestamp >= ? AND timestamp < ?", w.Start, w.End).
-		Where(dstPredicate, dstArg).
+		Where("dst_addr IN ?", dstAddrs).
 		Where("direction IN ?", []int{int(classify.DirInbound), int(classify.DirExternal)}).
 		Where("scope_local = ?", false).
 		Select(minuteExpr + " as m, SUM(bytes) as bytes, SUM(packets) as packets, " + completeFlowsExpr + " as complete_flows").
@@ -134,7 +141,7 @@ func peakMinuteRates(w Window, dstPredicate string, dstArg string) (ddosPeaks, e
 	var smear []ddosSmearRow
 	if err := w.DB.Model(&models.FlowSample{}).
 		Where("timestamp >= ? AND timestamp < ?", w.Start, w.End).
-		Where(dstPredicate, dstArg).
+		Where("dst_addr IN ?", dstAddrs).
 		Where("direction IN ?", []int{int(classify.DirInbound), int(classify.DirExternal)}).
 		Where("scope_local = ?", false).
 		Where("flow_start IS NOT NULL AND flow_end IS NOT NULL").
@@ -151,8 +158,8 @@ func peakMinuteRates(w Window, dstPredicate string, dstArg string) (ddosPeaks, e
 		if span <= ddosSmearMinSpan {
 			continue
 		}
-		// Remove from the end-minute bucket, redistribute across span minutes
-		// clipped to the window.
+		// Remove the row's whole byte count from its end-minute bucket
+		// (NetFlow stamps Timestamp = flow_end, so the record landed there).
 		endMin := s.FlowEnd.Unix() / 60
 		if b, ok := byMinute[endMin]; ok {
 			if b.Bytes >= s.Bytes {
@@ -166,6 +173,18 @@ func peakMinuteRates(w Window, dstPredicate string, dstArg string) (ddosPeaks, e
 				b.Packets = 0
 			}
 		}
+		// Redistribute at the row's TRUE average rate: divide by the FULL span's
+		// minute count (not the window-clipped count), then add the per-minute
+		// share only to the minutes that fall inside the window. Dividing by the
+		// clipped count would concentrate a flow that predates the window into
+		// the in-window minutes — a steady 500 Mb/s backup spanning past the
+		// window edge would read as a multi-Gb/s "peak" and false-fire critical.
+		fullMinutes := s.FlowEnd.Unix()/60 - s.FlowStart.Unix()/60 + 1
+		if fullMinutes < 1 {
+			fullMinutes = 1
+		}
+		perMinB := s.Bytes / uint64(fullMinutes)
+		perMinP := s.Packets / uint64(fullMinutes)
 		start := *s.FlowStart
 		if start.Before(w.Start) {
 			start = w.Start
@@ -175,12 +194,6 @@ func peakMinuteRates(w Window, dstPredicate string, dstArg string) (ddosPeaks, e
 			end = w.End
 		}
 		firstMin, lastMin := start.Unix()/60, end.Unix()/60
-		n := lastMin - firstMin + 1
-		if n < 1 {
-			continue
-		}
-		perMinB := s.Bytes / uint64(n)
-		perMinP := s.Packets / uint64(n)
 		for m := firstMin; m <= lastMin; m++ {
 			b, ok := byMinute[m]
 			if !ok {
@@ -207,9 +220,12 @@ func peakMinuteRates(w Window, dstPredicate string, dstArg string) (ddosPeaks, e
 	return p, nil
 }
 
-// topSources returns the top source countries/counts for a victim predicate —
-// message enrichment only, one bounded GROUP BY.
-func topSources(w Window, dstPredicate string, dstArg string) (distinct int64, top []map[string]any) {
+// topSources returns the top source countries/counts for a set of victim
+// addresses — message enrichment only, one bounded GROUP BY.
+func topSources(w Window, dstAddrs []string) (distinct int64, top []map[string]any) {
+	if len(dstAddrs) == 0 {
+		return 0, nil
+	}
 	type srcRow struct {
 		SrcCountry string
 		Srcs       int64
@@ -217,8 +233,9 @@ func topSources(w Window, dstPredicate string, dstArg string) (distinct int64, t
 	var rows []srcRow
 	if err := w.DB.Model(&models.FlowSample{}).
 		Where("timestamp >= ? AND timestamp < ?", w.Start, w.End).
-		Where(dstPredicate, dstArg).
+		Where("dst_addr IN ?", dstAddrs).
 		Where("direction IN ?", []int{int(classify.DirInbound), int(classify.DirExternal)}).
+		Where("scope_local = ?", false).
 		Select("src_country, COUNT(DISTINCT src_addr) as srcs").
 		Group("src_country").
 		Order("srcs DESC").Limit(ddosTopSourcesInAlert).
@@ -295,6 +312,20 @@ type ddosVolumetricDetector struct{}
 func (ddosVolumetricDetector) Name() string       { return "ddos_volumetric" }
 func (ddosVolumetricDetector) Category() Category { return CategorySecurity }
 
+// firesPerHost reports whether a single victim crosses the per-host thresholds
+// on its peak-minute rates — the exact per-host fire condition. Shared by the
+// volumetric detector and the prefix detector's suppression (a prefix finding
+// is redundant only when a member host ACTUALLY fires per-host, not merely
+// crosses a window-sum floor).
+func firesPerHost(w Window, cfg Config, r ddosVictimRow) (bool, ddosPeaks, string, []string, error) {
+	peaks, err := peakMinuteRates(w, []string{r.DstAddr})
+	if err != nil {
+		return false, ddosPeaks{}, "", nil, err
+	}
+	sev, crossed := ddosEvaluate(peaks, r.Packets, r.CompleteFlows, cfg.DDoSBps, cfg.DDoSPps, cfg.DDoSFps)
+	return sev != "", peaks, sev, crossed, nil
+}
+
 func (d ddosVolumetricDetector) Detect(w Window) ([]Detection, error) {
 	cfg := w.Config.withDefaults()
 	if cfg.DDoSVolumetricDisabled {
@@ -306,15 +337,14 @@ func (d ddosVolumetricDetector) Detect(w Window) ([]Detection, error) {
 	}
 	var out []Detection
 	for _, r := range rows {
-		peaks, err := peakMinuteRates(w, "dst_addr = ?", r.DstAddr)
+		fired, peaks, sev, crossed, err := firesPerHost(w, cfg, r)
 		if err != nil {
 			return out, err
 		}
-		sev, crossed := ddosEvaluate(peaks, r.Packets, r.CompleteFlows, cfg.DDoSBps, cfg.DDoSPps, cfg.DDoSFps)
-		if sev == "" {
+		if !fired {
 			continue
 		}
-		distinct, top := topSources(w, "dst_addr = ?", r.DstAddr)
+		distinct, top := topSources(w, []string{r.DstAddr})
 		out = append(out, Detection{
 			Detector: d.Name(), Category: d.Category(), Severity: sev,
 			DeviceID: r.DeviceID, DstAddr: r.DstAddr,
@@ -337,6 +367,14 @@ func (d ddosVolumetricDetector) Detect(w Window) ([]Detection, error) {
 // prefixOf folds a victim address into its fixed aggregation prefix: /24 for
 // IPv4, /64 for IPv6 (RTBH/blackhole granularity; FastNetMon hostgroup
 // practice). Returns "" for unparseable addresses.
+//
+// IPv6 CAVEAT: the ÷1024 candidate-floor undercount bound is derived for IPv4
+// (a /24 has ≤256 hosts → a prefix at threshold T is observed at ≥0.75T). A
+// /64 has 2^64 hosts, so an attack that randomizes the low 64 bits gives every
+// dst one sub-floor row and can hide an unbounded fraction of T; IPv6 carpet
+// bombing with randomized interface IDs is therefore NOT reliably detected by
+// this per-dst-floor approach. IPv6 /64 aggregation here catches only attacks
+// concentrated on a handful of addresses. (Fleet is IPv4/sFlow today.)
 func prefixOf(addr string) string {
 	ip := net.ParseIP(addr)
 	if ip == nil {
@@ -346,18 +384,6 @@ func prefixOf(addr string) string {
 		return fmt.Sprintf("%d.%d.%d.0/24", v4[0], v4[1], v4[2])
 	}
 	return ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
-}
-
-// prefixLikePattern returns the sargable dst_addr LIKE pattern for a prefix
-// as produced by prefixOf (assumes ingest stores canonical textual form).
-func prefixLikePattern(prefix string) string {
-	if strings.HasSuffix(prefix, "/24") {
-		base := strings.TrimSuffix(prefix, ".0/24")
-		return base + ".%"
-	}
-	base := strings.TrimSuffix(prefix, "/64")
-	// net.IP.String() zero-compresses; the /64 network form ends in "::".
-	return strings.TrimSuffix(base, ":") + "%"
 }
 
 type ddosPrefixDetector struct{}
@@ -371,11 +397,8 @@ func (d ddosPrefixDetector) Detect(w Window) ([]Detection, error) {
 		return nil, nil
 	}
 	// Candidate pass with per-dst floors ÷1024 so a carpet-bombed subnet whose
-	// individual hosts sit far below the per-host threshold still surfaces.
-	// Undercount bound: a /24 has ≤256 hosts, so hosts below the ÷1024 floor
-	// can hide at most 256×(T/1024) = T/4 — a prefix genuinely at threshold is
-	// observed at ≥0.75T, hence the 0.75× fire comparison below (recorded in
-	// Details so the operator sees the estimator's honesty margin).
+	// individual hosts sit far below the per-host threshold still surfaces (see
+	// prefixOf for the IPv4 undercount bound and the IPv6 caveat).
 	rows, err := stageACandidates(w, cfg, ddosPrefixFloorDiv, ddosPrefixCandidates)
 	if err != nil {
 		return nil, err
@@ -385,8 +408,7 @@ func (d ddosPrefixDetector) Detect(w Window) ([]Detection, error) {
 		bytes, packets uint64
 		completeFlows  int64
 		deviceID       uint
-		hostFired      bool
-		hosts          int
+		members        []ddosVictimRow // for exact dst_addr IN matching + suppression
 	}
 	byPrefix := map[string]*prefixAgg{}
 	for _, r := range rows {
@@ -402,14 +424,9 @@ func (d ddosPrefixDetector) Detect(w Window) ([]Detection, error) {
 		a.bytes += r.Bytes
 		a.packets += r.Packets
 		a.completeFlows += r.CompleteFlows
-		a.hosts++
+		a.members = append(a.members, r)
 		if r.DeviceID > a.deviceID {
 			a.deviceID = r.DeviceID
-		}
-		// Suppression: if a single dst alone crossed the per-host minute floor,
-		// the per-host finding is strictly more actionable — skip its prefix.
-		if r.Bytes >= uint64(cfg.DDoSBps*60/8) || r.Packets >= uint64(cfg.DDoSPps*60) || r.CompleteFlows >= int64(cfg.DDoSFps)*60 {
-			a.hostFired = true
 		}
 	}
 
@@ -424,14 +441,42 @@ func (d ddosPrefixDetector) Detect(w Window) ([]Detection, error) {
 	var out []Detection
 	for _, pfx := range prefixes {
 		a := byPrefix[pfx]
-		if a.hostFired || a.hosts < 2 {
+		if len(a.members) < 2 {
 			continue // single-host events belong to ddos_volumetric
+		}
+		// Suppression: a prefix finding is redundant only when a member host
+		// ACTUALLY fires the per-host detector (a peak-based condition — a
+		// window-sum floor is necessary but not sufficient, so using it would
+		// blind the prefix to a real carpet-bomb whenever the /24 also held one
+		// merely-busy host). Only members crossing the per-host window floor
+		// are fire candidates, so this runs the per-host peak check for a small
+		// subset.
+		hostFired := false
+		for _, m := range a.members {
+			if m.Bytes < uint64(cfg.DDoSBps*60/8) && m.Packets < uint64(cfg.DDoSPps*60) && m.CompleteFlows < int64(cfg.DDoSFps)*60 {
+				continue // cannot fire per-host — skip the peak query
+			}
+			fired, _, _, _, err := firesPerHost(w, cfg, m)
+			if err != nil {
+				return out, err
+			}
+			if fired {
+				hostFired = true
+				break
+			}
+		}
+		if hostFired {
+			continue
 		}
 		// Cheap window-level pre-check before the per-minute query.
 		if a.bytes < windowFloor(cfg.DDoSPrefixBps/8) && a.packets < windowFloor(cfg.DDoSPrefixPps) && a.completeFlows < int64(float64(cfg.DDoSPrefixFps)*60*ddosPrefixFireFactor) {
 			continue
 		}
-		peaks, err := peakMinuteRates(w, "dst_addr LIKE ?", prefixLikePattern(pfx))
+		members := make([]string, len(a.members))
+		for i, m := range a.members {
+			members[i] = m.DstAddr
+		}
+		peaks, err := peakMinuteRates(w, members)
 		if err != nil {
 			return out, err
 		}
@@ -442,7 +487,7 @@ func (d ddosPrefixDetector) Detect(w Window) ([]Detection, error) {
 		if sev == "" {
 			continue
 		}
-		distinct, top := topSources(w, "dst_addr LIKE ?", prefixLikePattern(pfx))
+		distinct, top := topSources(w, members)
 		out = append(out, Detection{
 			Detector: d.Name(), Category: d.Category(), Severity: sev,
 			DeviceID: a.deviceID, DstAddr: pfx,
@@ -450,7 +495,7 @@ func (d ddosPrefixDetector) Detect(w Window) ([]Detection, error) {
 			Message:  ddosMessage("prefix "+pfx+" (carpet bombing)", peaks, crossed, distinct, top),
 			DedupKey: fmt.Sprintf("ddospfx_%s", pfx),
 			Details: map[string]any{
-				"prefix": pfx, "victim_hosts": a.hosts,
+				"prefix": pfx, "victim_hosts": len(a.members),
 				"peak_bps": peaks.bps, "peak_pps": peaks.pps, "peak_fps": peaks.fps,
 				"crossed": crossed, "fire_factor": ddosPrefixFireFactor,
 				"thresholds": map[string]any{"bps": cfg.DDoSPrefixBps, "pps": cfg.DDoSPrefixPps, "fps": cfg.DDoSPrefixFps},
