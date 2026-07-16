@@ -74,9 +74,9 @@ type Poller struct {
 	// telemetryStaleStreak counts consecutive monitoring cycles a device has
 	// satisfied the TELEMETRY_STALE condition. The alert fires only at
 	// telemetryStaleCycles — the debounce that absorbs poller-restart-after-
-	// outage storms (DB still says "online", rows outage-old), collector spool
-	// replay (replayed old pings bump last_polled to now while row timestamps
-	// stay old until the first live poll), and re-enabled devices' first cycle.
+	// outage storms (DB still says "online", rows outage-old) and re-enabled
+	// devices' first cycle. (Since v0.11.105 spool replay bumps last_polled
+	// with row timestamps, not now, so drain windows no longer feed this.)
 	// Reset on condition-false; empty at process start by construction.
 	// Accessed only from the single leader-locked monitoring cycle — no mutex.
 	telemetryStaleStreak map[uint]int

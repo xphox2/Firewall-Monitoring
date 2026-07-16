@@ -797,7 +797,7 @@ func (h *Handler) ReceiveCommandResult(c *gin.Context) {
 		return
 	}
 
-	applied, err := h.db.CompleteProbeCommand(probe.ID, req.CommandID, req.Status, req.Result)
+	cmd, applied, err := h.db.CompleteProbeCommand(probe.ID, req.CommandID, req.Status, req.Result)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, response.Error("Unknown command_id for this probe"))
@@ -806,6 +806,16 @@ func (h *Handler) ReceiveCommandResult(c *gin.Context) {
 		log.Printf("ReceiveCommandResult: probe %d command %s: %v", probe.ID, req.CommandID, err)
 		httputil.InternalError(c, "Failed to record command result", err)
 		return
+	}
+	// A first-time SUCCEEDED result for a command whose execution contacts the
+	// device (SSH/API) is reachability evidence, exactly like a successful
+	// poll. noop never qualifies (it completes inside the collector), and a
+	// failure never bumps — it may mean the device was unreachable. `now` is
+	// correct here (not a row timestamp): commands are never spooled and the
+	// TTL bounds staleness to minutes.
+	if applied && req.Status == database.ProbeCommandStatusSucceeded &&
+		cmd.DeviceID > 0 && database.ProbeCommandTouchesDevice(cmd.Type) {
+		h.bumpDevicesOnline(map[uint]time.Time{cmd.DeviceID: time.Now()}, time.Now())
 	}
 	log.Printf("ReceiveCommandResult: probe %d command %s -> %s (applied=%v)", probe.ID, req.CommandID, req.Status, applied)
 	c.JSON(http.StatusOK, response.Success(gin.H{"applied": applied}))
@@ -846,7 +856,7 @@ func (h *Handler) CreateProbeCommand(c *gin.Context) {
 	// Allow-list of enqueueable command types. Grows in later PRs
 	// (apply_ipsec/remove_ipsec/status_ipsec); rejecting everything else here
 	// keeps an unknown/mistyped command from sitting pending until expiry.
-	if req.Type != "noop" {
+	if req.Type != database.ProbeCommandTypeNoop {
 		c.JSON(http.StatusBadRequest, response.Error("Unsupported command type (PR-1 supports: noop)"))
 		return
 	}

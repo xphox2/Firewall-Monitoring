@@ -64,7 +64,7 @@ func (h *Handler) ReceiveTopologyEntries(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := entries[:0]
-	deviceIDSet := make(map[uint]struct{})
+	deviceTimes := make(map[uint]time.Time)
 	for i := range entries {
 		if entries[i].DeviceID == 0 {
 			continue // unattributed rows are junk under per-device replace semantics
@@ -86,7 +86,10 @@ func (h *Handler) ReceiveTopologyEntries(c *gin.Context) {
 			continue
 		}
 		filtered = append(filtered, entries[i])
-		deviceIDSet[entries[i].DeviceID] = struct{}{}
+		// Bump with now, not the entry timestamps: snapshots are never spooled
+		// (send-or-drop), so arrival IS collection time, and ARP/FDB timestamps
+		// are probe-controlled values with their own clamp above.
+		deviceTimes[entries[i].DeviceID] = now
 	}
 
 	if err := h.db.SaveTopologyEntriesSnapshot(filtered); err != nil {
@@ -95,7 +98,7 @@ func (h *Handler) ReceiveTopologyEntries(c *gin.Context) {
 		return
 	}
 
-	h.bumpDevicesOnline(deviceIDSet, now)
+	h.bumpDevicesOnline(deviceTimes, now)
 
 	log.Printf("Probe %d: saved %d/%d topology entries", probe.ID, len(filtered), len(entries))
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
@@ -121,7 +124,7 @@ func (h *Handler) ReceiveTopologyNeighbors(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := neighbors[:0]
-	deviceIDSet := make(map[uint]struct{})
+	deviceTimes := make(map[uint]time.Time)
 	for i := range neighbors {
 		if neighbors[i].DeviceID == 0 {
 			continue
@@ -138,7 +141,8 @@ func (h *Handler) ReceiveTopologyNeighbors(c *gin.Context) {
 		// macAddress — normalize so the inference's ownership join works.
 		neighbors[i].RemoteChassisID = normalizeTopologyMAC(neighbors[i].RemoteChassisID)
 		filtered = append(filtered, neighbors[i])
-		deviceIDSet[neighbors[i].DeviceID] = struct{}{}
+		// Bump with now — see ReceiveTopologyEntries: snapshots never spool.
+		deviceTimes[neighbors[i].DeviceID] = now
 	}
 
 	if err := h.db.SaveTopologyNeighborsSnapshot(filtered); err != nil {
@@ -147,7 +151,7 @@ func (h *Handler) ReceiveTopologyNeighbors(c *gin.Context) {
 		return
 	}
 
-	h.bumpDevicesOnline(deviceIDSet, now)
+	h.bumpDevicesOnline(deviceTimes, now)
 
 	log.Printf("Probe %d: saved %d/%d topology neighbors", probe.ID, len(filtered), len(neighbors))
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))

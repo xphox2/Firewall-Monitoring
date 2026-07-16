@@ -11,8 +11,8 @@ Umbrella plan lives at `~/.claude/plans/kind-wondering-wren.md`. Each phase = ow
 # Open follow-ups from PR #117 review (v0.11.100, 2026-07-15)
 
 - [x] **TELEMETRY_STALE / degraded-collection alert.** SHIPPED v0.11.101 — two-signal (vitals + interface stats) staleness detection with 3-cycle debounce, admin threshold knob, silent DEVICE_OFFLINE supersede. Deliberately out of scope (future work): Event Rules source for device-lifecycle alerts (DEVICE_OFFLINE / TELEMETRY_STALE / PROBE_DATA_LAG all bypass event-rule suppression today); per-device observed-cadence adaptive thresholds; probe-wide clock-skew detector (uniform staleness across one probe's devices while data flows).
-- [ ] Spool-replay skew (pre-existing, minor): a collector draining hours of buffered batches after a server outage bumps `last_polled` to `now` per batch, holding a device that died mid-outage "online" for the drain window. If it ever bites: bump with the batch's max row timestamp clamped to now.
-- [ ] `ReceiveCommandResult` doesn't bump `last_polled` despite being device-targeted SSH evidence — revisit when the probe-command allow-list grows beyond `noop` (IPSec apply).
+- [x] Spool-replay skew. RESOLVED v0.11.105: `bumpDevicesOnline` advances `last_polled` by each device's own freshest qualifying row timestamp (clamped to now, monotonic), and stale (>5 min) evidence advances the clock without re-onlining a swept device (no duplicate DEVICE_OFFLINE emails). Ping success rows only; per-device timestamps because a drained ping batch spans hours/devices. Topology snapshots keep now-semantics (never spooled).
+- [x] `ReceiveCommandResult` last_polled bump. RESOLVED v0.11.105: succeeded, first-applied, device-targeted results of a device-touching type bump via `ProbeCommandTouchesDevice` allow-list; `noop` is explicitly non-touching, so IPSec apply just opts in when it lands (`internal/database/probe_commands.go`).
 
 ---
 

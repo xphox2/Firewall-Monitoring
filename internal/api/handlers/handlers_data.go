@@ -77,30 +77,59 @@ func truncateProbeBatch[T any](h *Handler, probe *models.Probe, kind string, cap
 	return items
 }
 
-// bumpDevicesOnline marks the devices that sent data online with one batched
-// UPDATE (`WHERE id IN`). Every relay handler that receives device-attributed
-// telemetry the collector actively POLLED (SNMP/SSH/API) must call this after a
-// successful save — the poller's DEVICE_OFFLINE sweep fires on a stale
-// last_polled, so a handler that saves polled data without bumping makes a
-// healthy device flap offline whenever the bumping data types happen to fail
-// while others still deliver. Passive, device-pushed sources (syslog, traps,
-// flow samples) intentionally do NOT bump: they prove the device is emitting,
-// not that the collector can poll it.
-func (h *Handler) bumpDevicesOnline(deviceIDSet map[uint]struct{}, now time.Time) {
-	if len(deviceIDSet) == 0 {
-		return
+// bumpOnlineFreshness is how recent a device's freshest row must be for the
+// bump to also mark it online. Mirrors the offline sweep's threshold floor
+// (cmd/poller/main.go: max(3× poll interval, 5 min)); live rows arrive seconds
+// after collection regardless of poll cadence, so this never blocks a
+// legitimate re-online.
+const bumpOnlineFreshness = 5 * time.Minute
+
+// bumpDevicesOnline advances each device's last_polled to its freshest
+// qualifying row timestamp (clamped to now: zero/future → now) and marks the
+// device online ONLY when that evidence is fresh. Every relay handler that
+// receives device-attributed telemetry the collector actively POLLED
+// (SNMP/SSH/API) must call this after a successful save — the poller's
+// DEVICE_OFFLINE sweep fires on a stale last_polled, so a handler that saves
+// polled data without bumping makes a healthy device flap offline whenever the
+// bumping data types happen to fail while others still deliver. Passive,
+// device-pushed sources (syslog, traps, flow samples) intentionally do NOT
+// bump: they prove the device is emitting, not that the collector can poll it.
+//
+// Timestamps are per device and the update is monotonic (the WHERE guard):
+// after a server outage the collector drains hours of spooled batches while
+// live traffic interleaves, and one drained ping batch can span hours and many
+// devices — bumping with `now` (the pre-fix behavior) held a device that died
+// mid-outage "online" for the whole drain window, and a batch-wide timestamp
+// would let one device's fresh rows extend a dead sibling's evidence. Stale
+// evidence advances the clock but never revives a device: without the
+// freshness gate a drain batch would re-online a device the sweep already
+// flipped offline, and every re-flip sends a dedup-free critical email.
+// (The sweep's SELECT-then-UPDATE race can transiently leave a device offline
+// WITH fresh last_polled; the next fresh batch heals it.)
+func (h *Handler) bumpDevicesOnline(deviceTimes map[uint]time.Time, now time.Time) {
+	for id, ts := range deviceTimes {
+		if ts.IsZero() || ts.After(now) {
+			ts = now
+		}
+		updates := map[string]interface{}{"last_polled": ts}
+		if now.Sub(ts) < bumpOnlineFreshness {
+			updates["status"] = "online"
+		}
+		// A silently failing bump reproduces the exact DEVICE_OFFLINE flap this
+		// helper exists to prevent — log it so the failure is diagnosable.
+		if err := h.db.Gorm().Model(&models.Device{}).
+			Where("id = ? AND (last_polled IS NULL OR last_polled < ?)", id, ts).
+			Updates(updates).Error; err != nil {
+			log.Printf("bumpDevicesOnline: failed to update device %d: %v", id, err)
+		}
 	}
-	ids := make([]uint, 0, len(deviceIDSet))
-	for id := range deviceIDSet {
-		ids = append(ids, id)
-	}
-	// A silently failing bump reproduces the exact DEVICE_OFFLINE flap this
-	// helper exists to prevent — log it so the failure is diagnosable.
-	if err := h.db.Gorm().Model(&models.Device{}).Where("id IN ?", ids).Updates(map[string]interface{}{
-		"status":      "online",
-		"last_polled": now,
-	}).Error; err != nil {
-		log.Printf("bumpDevicesOnline: failed to update %d device(s): %v", len(ids), err)
+}
+
+// trackDeviceTime folds one qualifying row's (device, timestamp) into the
+// per-device freshest-evidence map bumpDevicesOnline consumes.
+func trackDeviceTime(deviceTimes map[uint]time.Time, deviceID uint, ts time.Time) {
+	if ts.After(deviceTimes[deviceID]) {
+		deviceTimes[deviceID] = ts
 	}
 }
 
@@ -436,7 +465,7 @@ func (h *Handler) ReceivePingResults(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := results[:0]
-	deviceIDSet := make(map[uint]struct{})
+	deviceTimes := make(map[uint]time.Time)
 	for i := range results {
 		if results[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[results[i].DeviceID] {
 			log.Printf("ReceivePingResults: device %d not allowed for probe %d", results[i].DeviceID, probe.ID)
@@ -448,9 +477,10 @@ func (h *Handler) ReceivePingResults(c *gin.Context) {
 		}
 		filtered = append(filtered, results[i])
 		// Only a SUCCESSFUL ping proves reachability — a saved failure row
-		// must not keep an unreachable device "online".
+		// must not keep an unreachable device "online", and a spooled failure
+		// newer than the last success must not extend its evidence either.
 		if results[i].DeviceID > 0 && results[i].Success {
-			deviceIDSet[results[i].DeviceID] = struct{}{}
+			trackDeviceTime(deviceTimes, results[i].DeviceID, results[i].Timestamp)
 		}
 	}
 	if err := h.db.SavePingResults(filtered); err != nil {
@@ -460,7 +490,7 @@ func (h *Handler) ReceivePingResults(c *gin.Context) {
 	}
 	// Aggregate into PingStats — fold the whole batch per target (M4).
 	h.updatePingStatsBatch(probe.ID, filtered)
-	h.bumpDevicesOnline(deviceIDSet, now)
+	h.bumpDevicesOnline(deviceTimes, now)
 	log.Printf("ReceivePingResults: probe %d saved %d results", probe.ID, len(filtered))
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
@@ -530,7 +560,7 @@ func (h *Handler) ReceiveInterfaceAddresses(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := addrs[:0]
-	deviceIDSet := make(map[uint]struct{})
+	deviceTimes := make(map[uint]time.Time)
 	for i := range addrs {
 		if addrs[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[addrs[i].DeviceID] {
 			continue
@@ -540,7 +570,7 @@ func (h *Handler) ReceiveInterfaceAddresses(c *gin.Context) {
 		}
 		filtered = append(filtered, addrs[i])
 		if addrs[i].DeviceID > 0 {
-			deviceIDSet[addrs[i].DeviceID] = struct{}{}
+			trackDeviceTime(deviceTimes, addrs[i].DeviceID, addrs[i].Timestamp)
 		}
 	}
 	if err := h.db.SaveInterfaceAddresses(filtered); err != nil {
@@ -548,7 +578,7 @@ func (h *Handler) ReceiveInterfaceAddresses(c *gin.Context) {
 		httputil.InternalError(c, "Failed to save interface addresses", err)
 		return
 	}
-	h.bumpDevicesOnline(deviceIDSet, now)
+	h.bumpDevicesOnline(deviceTimes, now)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
@@ -578,7 +608,7 @@ func (h *Handler) ReceiveProcessorStats(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := stats[:0]
-	deviceIDSet := make(map[uint]struct{})
+	deviceTimes := make(map[uint]time.Time)
 	for i := range stats {
 		if stats[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[stats[i].DeviceID] {
 			continue
@@ -588,7 +618,7 @@ func (h *Handler) ReceiveProcessorStats(c *gin.Context) {
 		}
 		filtered = append(filtered, stats[i])
 		if stats[i].DeviceID > 0 {
-			deviceIDSet[stats[i].DeviceID] = struct{}{}
+			trackDeviceTime(deviceTimes, stats[i].DeviceID, stats[i].Timestamp)
 		}
 	}
 	if err := h.db.SaveProcessorStats(filtered); err != nil {
@@ -596,7 +626,7 @@ func (h *Handler) ReceiveProcessorStats(c *gin.Context) {
 		httputil.InternalError(c, "Failed to save processor stats", err)
 		return
 	}
-	h.bumpDevicesOnline(deviceIDSet, now)
+	h.bumpDevicesOnline(deviceTimes, now)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
@@ -621,7 +651,7 @@ func (h *Handler) ReceiveDiskUsage(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := rows[:0]
-	deviceIDSet := make(map[uint]struct{})
+	deviceTimes := make(map[uint]time.Time)
 	for i := range rows {
 		if rows[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[rows[i].DeviceID] {
 			continue
@@ -631,7 +661,7 @@ func (h *Handler) ReceiveDiskUsage(c *gin.Context) {
 		}
 		filtered = append(filtered, rows[i])
 		if rows[i].DeviceID > 0 {
-			deviceIDSet[rows[i].DeviceID] = struct{}{}
+			trackDeviceTime(deviceTimes, rows[i].DeviceID, rows[i].Timestamp)
 		}
 	}
 	if err := h.db.SaveDiskUsage(filtered); err != nil {
@@ -639,7 +669,7 @@ func (h *Handler) ReceiveDiskUsage(c *gin.Context) {
 		httputil.InternalError(c, "Failed to save disk usage", err)
 		return
 	}
-	h.bumpDevicesOnline(deviceIDSet, now)
+	h.bumpDevicesOnline(deviceTimes, now)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
@@ -664,7 +694,7 @@ func (h *Handler) ReceiveLoadAverage(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := rows[:0]
-	deviceIDSet := make(map[uint]struct{})
+	deviceTimes := make(map[uint]time.Time)
 	for i := range rows {
 		if rows[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[rows[i].DeviceID] {
 			continue
@@ -674,7 +704,7 @@ func (h *Handler) ReceiveLoadAverage(c *gin.Context) {
 		}
 		filtered = append(filtered, rows[i])
 		if rows[i].DeviceID > 0 {
-			deviceIDSet[rows[i].DeviceID] = struct{}{}
+			trackDeviceTime(deviceTimes, rows[i].DeviceID, rows[i].Timestamp)
 		}
 	}
 	if err := h.db.SaveLoadAverage(filtered); err != nil {
@@ -682,7 +712,7 @@ func (h *Handler) ReceiveLoadAverage(c *gin.Context) {
 		httputil.InternalError(c, "Failed to save load average", err)
 		return
 	}
-	h.bumpDevicesOnline(deviceIDSet, now)
+	h.bumpDevicesOnline(deviceTimes, now)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
@@ -707,7 +737,7 @@ func (h *Handler) ReceiveHardwareSensors(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := sensors[:0]
-	deviceIDSet := make(map[uint]struct{})
+	deviceTimes := make(map[uint]time.Time)
 	for i := range sensors {
 		if sensors[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[sensors[i].DeviceID] {
 			continue
@@ -717,7 +747,7 @@ func (h *Handler) ReceiveHardwareSensors(c *gin.Context) {
 		}
 		filtered = append(filtered, sensors[i])
 		if sensors[i].DeviceID > 0 {
-			deviceIDSet[sensors[i].DeviceID] = struct{}{}
+			trackDeviceTime(deviceTimes, sensors[i].DeviceID, sensors[i].Timestamp)
 		}
 	}
 	if len(filtered) == 0 {
@@ -729,7 +759,7 @@ func (h *Handler) ReceiveHardwareSensors(c *gin.Context) {
 		httputil.InternalError(c, "Failed to save hardware sensors", err)
 		return
 	}
-	h.bumpDevicesOnline(deviceIDSet, now)
+	h.bumpDevicesOnline(deviceTimes, now)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
@@ -753,7 +783,7 @@ func (h *Handler) ReceiveSystemStatuses(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := statuses[:0]
-	deviceIDSet := make(map[uint]struct{})
+	deviceTimes := make(map[uint]time.Time)
 	for i := range statuses {
 		if statuses[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[statuses[i].DeviceID] {
 			continue // skip data for devices not assigned to this probe
@@ -763,7 +793,7 @@ func (h *Handler) ReceiveSystemStatuses(c *gin.Context) {
 		}
 		filtered = append(filtered, statuses[i])
 		if statuses[i].DeviceID > 0 {
-			deviceIDSet[statuses[i].DeviceID] = struct{}{}
+			trackDeviceTime(deviceTimes, statuses[i].DeviceID, statuses[i].Timestamp)
 		}
 	}
 
@@ -774,7 +804,7 @@ func (h *Handler) ReceiveSystemStatuses(c *gin.Context) {
 		return
 	}
 
-	h.bumpDevicesOnline(deviceIDSet, now)
+	h.bumpDevicesOnline(deviceTimes, now)
 
 	log.Printf("Probe %d: saved %d/%d system status records", probe.ID, len(filtered), len(statuses))
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
@@ -800,14 +830,15 @@ func (h *Handler) ReceiveInterfaceStats(c *gin.Context) {
 	}
 	stats = truncateProbeBatch(h, probe, "interface-stats", 1000, stats)
 	allowedDevices := h.probeDeviceIDs(probe.ID)
-	deviceIDs := make(map[uint]struct{})
+	now := time.Now()
+	deviceTimes := make(map[uint]time.Time)
 	filtered := stats[:0]
 	for i := range stats {
 		if stats[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[stats[i].DeviceID] {
 			continue
 		}
 		if stats[i].Timestamp.IsZero() {
-			stats[i].Timestamp = time.Now()
+			stats[i].Timestamp = now
 		}
 		if stats[i].TypeName == "" && stats[i].Type > 0 {
 			if name, ok := snmp.IfTypeNames[stats[i].Type]; ok {
@@ -815,7 +846,7 @@ func (h *Handler) ReceiveInterfaceStats(c *gin.Context) {
 			}
 		}
 		if stats[i].DeviceID > 0 {
-			deviceIDs[stats[i].DeviceID] = struct{}{}
+			trackDeviceTime(deviceTimes, stats[i].DeviceID, stats[i].Timestamp)
 		}
 		filtered = append(filtered, stats[i])
 	}
@@ -825,7 +856,7 @@ func (h *Handler) ReceiveInterfaceStats(c *gin.Context) {
 		return
 	}
 
-	h.bumpDevicesOnline(deviceIDs, time.Now())
+	h.bumpDevicesOnline(deviceTimes, now)
 
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
@@ -849,17 +880,18 @@ func (h *Handler) ReceiveVPNStatuses(c *gin.Context) {
 		statuses = statuses[:500]
 	}
 	allowedDevices := h.probeDeviceIDs(probe.ID)
-	deviceIDs := make(map[uint]struct{})
+	now := time.Now()
+	deviceTimes := make(map[uint]time.Time)
 	filtered := statuses[:0]
 	for i := range statuses {
 		if statuses[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[statuses[i].DeviceID] {
 			continue
 		}
 		if statuses[i].Timestamp.IsZero() {
-			statuses[i].Timestamp = time.Now()
+			statuses[i].Timestamp = now
 		}
 		if statuses[i].DeviceID > 0 {
-			deviceIDs[statuses[i].DeviceID] = struct{}{}
+			trackDeviceTime(deviceTimes, statuses[i].DeviceID, statuses[i].Timestamp)
 		}
 		filtered = append(filtered, statuses[i])
 	}
@@ -869,7 +901,7 @@ func (h *Handler) ReceiveVPNStatuses(c *gin.Context) {
 		return
 	}
 
-	h.bumpDevicesOnline(deviceIDs, time.Now())
+	h.bumpDevicesOnline(deviceTimes, now)
 
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
@@ -895,7 +927,7 @@ func (h *Handler) ReceiveHAStatuses(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := statuses[:0]
-	deviceIDSet := make(map[uint]struct{})
+	deviceTimes := make(map[uint]time.Time)
 	for i := range statuses {
 		if statuses[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[statuses[i].DeviceID] {
 			continue
@@ -905,7 +937,7 @@ func (h *Handler) ReceiveHAStatuses(c *gin.Context) {
 		}
 		filtered = append(filtered, statuses[i])
 		if statuses[i].DeviceID > 0 {
-			deviceIDSet[statuses[i].DeviceID] = struct{}{}
+			trackDeviceTime(deviceTimes, statuses[i].DeviceID, statuses[i].Timestamp)
 		}
 	}
 	if err := h.db.SaveHAStatuses(filtered); err != nil {
@@ -913,7 +945,7 @@ func (h *Handler) ReceiveHAStatuses(c *gin.Context) {
 		httputil.InternalError(c, "Failed to save HA statuses", err)
 		return
 	}
-	h.bumpDevicesOnline(deviceIDSet, now)
+	h.bumpDevicesOnline(deviceTimes, now)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
@@ -938,7 +970,7 @@ func (h *Handler) ReceiveSecurityStats(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := stats[:0]
-	deviceIDSet := make(map[uint]struct{})
+	deviceTimes := make(map[uint]time.Time)
 	for i := range stats {
 		if stats[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[stats[i].DeviceID] {
 			continue
@@ -948,7 +980,7 @@ func (h *Handler) ReceiveSecurityStats(c *gin.Context) {
 		}
 		filtered = append(filtered, stats[i])
 		if stats[i].DeviceID > 0 {
-			deviceIDSet[stats[i].DeviceID] = struct{}{}
+			trackDeviceTime(deviceTimes, stats[i].DeviceID, stats[i].Timestamp)
 		}
 	}
 	if err := h.db.SaveSecurityStats(filtered); err != nil {
@@ -956,7 +988,7 @@ func (h *Handler) ReceiveSecurityStats(c *gin.Context) {
 		httputil.InternalError(c, "Failed to save security stats", err)
 		return
 	}
-	h.bumpDevicesOnline(deviceIDSet, now)
+	h.bumpDevicesOnline(deviceTimes, now)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
@@ -981,7 +1013,7 @@ func (h *Handler) ReceiveSDWANHealth(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := health[:0]
-	deviceIDSet := make(map[uint]struct{})
+	deviceTimes := make(map[uint]time.Time)
 	for i := range health {
 		if health[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[health[i].DeviceID] {
 			continue
@@ -991,7 +1023,7 @@ func (h *Handler) ReceiveSDWANHealth(c *gin.Context) {
 		}
 		filtered = append(filtered, health[i])
 		if health[i].DeviceID > 0 {
-			deviceIDSet[health[i].DeviceID] = struct{}{}
+			trackDeviceTime(deviceTimes, health[i].DeviceID, health[i].Timestamp)
 		}
 	}
 	if err := h.db.SaveSDWANHealth(filtered); err != nil {
@@ -999,7 +1031,7 @@ func (h *Handler) ReceiveSDWANHealth(c *gin.Context) {
 		httputil.InternalError(c, "Failed to save SD-WAN health", err)
 		return
 	}
-	h.bumpDevicesOnline(deviceIDSet, now)
+	h.bumpDevicesOnline(deviceTimes, now)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
@@ -1019,7 +1051,7 @@ func (h *Handler) ReceiveLicenseInfo(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := licenses[:0]
-	deviceIDSet := make(map[uint]struct{})
+	deviceTimes := make(map[uint]time.Time)
 	for i := range licenses {
 		if licenses[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[licenses[i].DeviceID] {
 			continue
@@ -1029,7 +1061,7 @@ func (h *Handler) ReceiveLicenseInfo(c *gin.Context) {
 		}
 		filtered = append(filtered, licenses[i])
 		if licenses[i].DeviceID > 0 {
-			deviceIDSet[licenses[i].DeviceID] = struct{}{}
+			trackDeviceTime(deviceTimes, licenses[i].DeviceID, licenses[i].Timestamp)
 		}
 	}
 	if err := h.db.SaveLicenseInfo(filtered); err != nil {
@@ -1037,7 +1069,7 @@ func (h *Handler) ReceiveLicenseInfo(c *gin.Context) {
 		httputil.InternalError(c, "Failed to save license info", err)
 		return
 	}
-	h.bumpDevicesOnline(deviceIDSet, now)
+	h.bumpDevicesOnline(deviceTimes, now)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
@@ -1254,7 +1286,10 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 		}
 	}
 
-	h.bumpDevicesOnline(map[uint]struct{}{rev.DeviceID: {}}, time.Now())
+	// rev.Timestamp is this delivery's collection time — config revisions ride
+	// the AUDIT-054 retry queue, so a replayed hours-old backup must not count
+	// as fresh reachability evidence.
+	h.bumpDevicesOnline(map[uint]time.Time{rev.DeviceID: rev.Timestamp}, time.Now())
 
 	c.JSON(http.StatusOK, response.Success(gin.H{
 		"saved":               mergedID,
@@ -1324,7 +1359,7 @@ func (h *Handler) ReceiveProcessSnapshot(c *gin.Context) {
 	}
 
 	if snap.DeviceID > 0 {
-		h.bumpDevicesOnline(map[uint]struct{}{snap.DeviceID: {}}, time.Now())
+		h.bumpDevicesOnline(map[uint]time.Time{snap.DeviceID: snap.Timestamp}, time.Now())
 	}
 
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": snap.ID}))
@@ -1347,7 +1382,7 @@ func (h *Handler) ReceiveInterfaceErrors(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := errs[:0]
-	deviceIDSet := make(map[uint]struct{})
+	deviceTimes := make(map[uint]time.Time)
 	for i := range errs {
 		if errs[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[errs[i].DeviceID] {
 			continue
@@ -1357,7 +1392,7 @@ func (h *Handler) ReceiveInterfaceErrors(c *gin.Context) {
 		}
 		filtered = append(filtered, errs[i])
 		if errs[i].DeviceID > 0 {
-			deviceIDSet[errs[i].DeviceID] = struct{}{}
+			trackDeviceTime(deviceTimes, errs[i].DeviceID, errs[i].Timestamp)
 		}
 	}
 
@@ -1367,7 +1402,7 @@ func (h *Handler) ReceiveInterfaceErrors(c *gin.Context) {
 		return
 	}
 
-	h.bumpDevicesOnline(deviceIDSet, now)
+	h.bumpDevicesOnline(deviceTimes, now)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
@@ -1390,7 +1425,7 @@ func (h *Handler) ReceiveSensorDetails(c *gin.Context) {
 	log.Printf("ReceiveSensorDetails: probe=%d allowed devices=%v", probe.ID, allowedDevices)
 	now := time.Now()
 	filtered := sensors[:0]
-	deviceIDSet := make(map[uint]struct{})
+	deviceTimes := make(map[uint]time.Time)
 	for i := range sensors {
 		log.Printf("ReceiveSensorDetails: sensor[%d] device_id=%d name=%q value=%.1f unit=%q status=%q", i, sensors[i].DeviceID, sensors[i].Name, sensors[i].Value, sensors[i].Unit, sensors[i].Status)
 		if sensors[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[sensors[i].DeviceID] {
@@ -1402,7 +1437,7 @@ func (h *Handler) ReceiveSensorDetails(c *gin.Context) {
 		}
 		filtered = append(filtered, sensors[i])
 		if sensors[i].DeviceID > 0 {
-			deviceIDSet[sensors[i].DeviceID] = struct{}{}
+			trackDeviceTime(deviceTimes, sensors[i].DeviceID, sensors[i].Timestamp)
 		}
 	}
 	log.Printf("ReceiveSensorDetails: probe=%d filtered to %d sensors", probe.ID, len(filtered))
@@ -1413,7 +1448,7 @@ func (h *Handler) ReceiveSensorDetails(c *gin.Context) {
 		return
 	}
 
-	h.bumpDevicesOnline(deviceIDSet, now)
+	h.bumpDevicesOnline(deviceTimes, now)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
@@ -1434,7 +1469,7 @@ func (h *Handler) ReceiveLicenseDetails(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := licenses[:0]
-	deviceIDSet := make(map[uint]struct{})
+	deviceTimes := make(map[uint]time.Time)
 	for i := range licenses {
 		if licenses[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[licenses[i].DeviceID] {
 			continue
@@ -1444,7 +1479,7 @@ func (h *Handler) ReceiveLicenseDetails(c *gin.Context) {
 		}
 		filtered = append(filtered, licenses[i])
 		if licenses[i].DeviceID > 0 {
-			deviceIDSet[licenses[i].DeviceID] = struct{}{}
+			trackDeviceTime(deviceTimes, licenses[i].DeviceID, licenses[i].Timestamp)
 		}
 	}
 
@@ -1454,6 +1489,6 @@ func (h *Handler) ReceiveLicenseDetails(c *gin.Context) {
 		return
 	}
 
-	h.bumpDevicesOnline(deviceIDSet, now)
+	h.bumpDevicesOnline(deviceTimes, now)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }

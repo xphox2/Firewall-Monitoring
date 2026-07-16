@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/models"
@@ -188,6 +189,50 @@ func TestReceiveCommandResult_Idempotent(t *testing.T) {
 	}
 	if w := post(map[string]any{"status": "succeeded"}); w.Code != http.StatusBadRequest {
 		t.Errorf("missing command_id = %d, want 400", w.Code)
+	}
+}
+
+// TestReceiveCommandResult_NoopDoesNotBumpLastPolled pins the gate on the
+// command-result reachability bump: a succeeded command only bumps the target
+// device's last_polled when its type actually contacts the device
+// (ProbeCommandTouchesDevice). noop completes inside the collector without
+// touching any device, so even a succeeded device-targeted noop must leave
+// last_polled and status alone. (No device-touching type exists yet — IPSec
+// apply will be the first — so the positive path is unreachable end-to-end;
+// the gate's truth table is pinned in internal/database.)
+func TestReceiveCommandResult_NoopDoesNotBumpLastPolled(t *testing.T) {
+	h, db := setupTestHandler(t)
+	p := seedCommandProbe(t, db, "cmdbump", 4)
+	device := &models.Device{Name: "cmdbump-fw", IPAddress: "192.168.7.7", ProbeID: &p.ID}
+	if err := db.Gorm().Create(device).Error; err != nil {
+		t.Fatalf("create device: %v", err)
+	}
+	stale := time.Now().Add(-time.Hour)
+	if err := db.Gorm().Model(&models.Device{}).Where("id = ?", device.ID).
+		Updates(map[string]interface{}{"status": "offline", "last_polled": stale}).Error; err != nil {
+		t.Fatalf("seed device: %v", err)
+	}
+
+	cmd := &models.ProbeCommand{ProbeID: p.ID, DeviceID: device.ID, Type: database.ProbeCommandTypeNoop}
+	if err := db.EnqueueProbeCommand(cmd); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if got, _ := db.ClaimProbeCommands(p.ID); len(got) != 1 {
+		t.Fatalf("claim: %d, want 1", len(got))
+	}
+
+	body := map[string]any{"command_id": cmd.CommandID, "status": "succeeded", "result": "noop ok"}
+	if w := doTestRequest(t, h.ReceiveCommandResult, "POST", "/command-result", p.ID, p.RegistrationKey, body); w.Code != http.StatusOK {
+		t.Fatalf("result = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+
+	var dev models.Device
+	if err := db.Gorm().First(&dev, device.ID).Error; err != nil {
+		t.Fatalf("reload device: %v", err)
+	}
+	if dev.Status != "offline" || dev.LastPolled.After(stale.Add(time.Minute)) {
+		t.Errorf("succeeded noop bumped the device: status=%q last_polled=%v (want offline/%v)",
+			dev.Status, dev.LastPolled, stale)
 	}
 }
 
