@@ -1,6 +1,12 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.104] - 2026-07-16
+
+### Fixed — staticcheck U1000 on master (Tranche 4 Phase 1 follow-up)
+
+The Phase 1 merge (v0.11.103) reddened master's staticcheck gate: `completeRows` was added as a framework WHERE-scope helper but has no Phase 1 caller (the DDoS detectors gate fps math via the `completeFlowsExpr` SELECT twin, which IS used) — U1000 unused-function. Removed it; Phase 2's denied-flow detectors reintroduce it with their first caller. No behavior change. Because v0.11.103's CI failed, its Docker publish was skipped, so this is the first pullable image of the Phase 1 work. (Lesson: `staticcheck ./...` is a CI merge gate distinct from `go vet` — run it before pushing detector changes.)
+
 ## [0.11.103] - 2026-07-15
 
 ### Added — Tranche 4 Phase 1: DDoS detection, detector validity framework, sampling-rate guard

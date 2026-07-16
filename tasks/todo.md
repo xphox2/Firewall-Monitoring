@@ -1,3 +1,13 @@
+# Tranche 4 — Flow Detection Engine (in progress, 2026-07-15)
+
+Umbrella plan lives at `~/.claude/plans/kind-wondering-wren.md`. Each phase = own plan-mode + PR.
+
+- [x] **Phase 1** SHIPPED v0.11.103 (PR #120): detector validity framework (`completeRows`, `detectorValidity`, `Window.Lookback`), `ddos_volumetric` + `ddos_prefix` (victim-keyed, peak-minute, elephant-smear-corrected), `sampling_rate_change` guard, capacity top-talker attribution. Works on the current sFlow-only prod (bps/pps paths).
+- [ ] **Phase 0 (operator prerequisite, blocks Phases 2–3):** enable NetFlow v9 + `set ses-denied-traffic enable` on the FortiGates (collector IP, port 2055) so `flow_source IN (2,3)` and `firewall_event=3` rows appear. OPNsense flowd exports passed traffic only (no denied). **Go/no-go gate:** `SELECT flow_source, firewall_event, count(*) FROM flow_samples GROUP BY 1,2` on rust-01 must show NetFlow + denied rows before Phase 2 starts. Prod was 100% sFlow / firewall_event=0 as of 2026-07-15.
+- [ ] **Phase 2** (gated on Phase 0): denied-flow class — `deny_storm` (internal `direction IN (2,3)`; external `direction IN (1,4)` + dst-local scoping since a WAN-IP scan classifies DirExternal), `deny_storm_victim` (victim-keyed), `denied_then_allowed` (policy-gap). Defaults + algorithms in the umbrella plan.
+- [ ] **Phase 3** (gated on Phase 0, needs NetFlow timing): 60m flow-stitcher, `beacon` RITA upgrade (complete-only; existing `c2_beacon` gated to sFlow), `dns_tunnel` (rollup 48h baselines, flow-shape only — no DNS names exist), `long_flow`.
+- [ ] Deferred: T4-7 NSEL/NAT table (no ASA in fleet), T4-10 host-pair store, `ddos_entropy`, RITA 24h subscores, per-victim adaptive DDoS thresholds.
+
 # Open follow-ups from PR #117 review (v0.11.100, 2026-07-15)
 
 - [x] **TELEMETRY_STALE / degraded-collection alert.** SHIPPED v0.11.101 — two-signal (vitals + interface stats) staleness detection with 3-cycle debounce, admin threshold knob, silent DEVICE_OFFLINE supersede. Deliberately out of scope (future work): Event Rules source for device-lifecycle alerts (DEVICE_OFFLINE / TELEMETRY_STALE / PROBE_DATA_LAG all bypass event-rule suppression today); per-device observed-cadence adaptive thresholds; probe-wide clock-skew detector (uniform staleness across one probe's devices while data flows).
