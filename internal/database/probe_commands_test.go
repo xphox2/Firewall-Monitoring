@@ -206,6 +206,18 @@ func TestClaimProbeCommands_MaxAttemptsFails(t *testing.T) {
 	}
 }
 
+// TestProbeCommandTouchesDevice pins the reachability-evidence gate: noop is
+// explicitly non-touching (it never leaves the collector), and unknown types
+// default to false — a new command type must opt in to bumping last_polled.
+func TestProbeCommandTouchesDevice(t *testing.T) {
+	if ProbeCommandTouchesDevice(ProbeCommandTypeNoop) {
+		t.Error("noop must not count as device-reachability evidence")
+	}
+	if ProbeCommandTouchesDevice("some_future_type") {
+		t.Error("unknown command types must default to non-touching")
+	}
+}
+
 func TestCompleteProbeCommand_IdempotentByCommandID(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	cmd := seedCommand(t, d, 4, nil)
@@ -213,14 +225,19 @@ func TestCompleteProbeCommand_IdempotentByCommandID(t *testing.T) {
 		t.Fatalf("claim: %d, want 1", len(got))
 	}
 
-	applied, err := d.CompleteProbeCommand(4, cmd.CommandID, ProbeCommandStatusSucceeded, "ok")
+	gotCmd, applied, err := d.CompleteProbeCommand(4, cmd.CommandID, ProbeCommandStatusSucceeded, "ok")
 	if err != nil || !applied {
 		t.Fatalf("first result: applied=%v err=%v, want applied=true", applied, err)
+	}
+	// The completed row is returned so callers can act on DeviceID/Type
+	// (reachability evidence for device-touching commands).
+	if gotCmd.CommandID != cmd.CommandID || gotCmd.Type != cmd.Type {
+		t.Errorf("returned cmd = %s/%s, want %s/%s", gotCmd.CommandID, gotCmd.Type, cmd.CommandID, cmd.Type)
 	}
 
 	// Replay (collector retry / redelivery race): must be a NO-OP that keeps
 	// the first result — even a conflicting one.
-	applied, err = d.CompleteProbeCommand(4, cmd.CommandID, ProbeCommandStatusFailed, "late duplicate")
+	_, applied, err = d.CompleteProbeCommand(4, cmd.CommandID, ProbeCommandStatusFailed, "late duplicate")
 	if err != nil {
 		t.Fatalf("replay result: %v", err)
 	}
@@ -236,12 +253,12 @@ func TestCompleteProbeCommand_IdempotentByCommandID(t *testing.T) {
 	}
 
 	// Wrong probe scope: another probe cannot complete this command.
-	if _, err := d.CompleteProbeCommand(999, cmd.CommandID, ProbeCommandStatusSucceeded, ""); err == nil {
+	if _, _, err := d.CompleteProbeCommand(999, cmd.CommandID, ProbeCommandStatusSucceeded, ""); err == nil {
 		t.Error("completing another probe's command must error (record not found)")
 	}
 
 	// Invalid status is rejected.
-	if _, err := d.CompleteProbeCommand(4, cmd.CommandID, "running", ""); err == nil {
+	if _, _, err := d.CompleteProbeCommand(4, cmd.CommandID, "running", ""); err == nil {
 		t.Error("invalid result status must be rejected")
 	}
 }
@@ -307,7 +324,7 @@ func TestClaimProbeCommands_TerminalNotResurrected(t *testing.T) {
 	// Simulate a dispatched-then-redelivery-eligible command that then completes.
 	d.Gorm().Model(&models.ProbeCommand{}).Where("id = ?", cmd.ID).
 		Updates(map[string]interface{}{"status": ProbeCommandStatusDispatched, "updated_at": time.Now().Add(-time.Hour)})
-	if _, err := d.CompleteProbeCommand(13, cmd.CommandID, ProbeCommandStatusSucceeded, "done"); err != nil {
+	if _, _, err := d.CompleteProbeCommand(13, cmd.CommandID, ProbeCommandStatusSucceeded, "done"); err != nil {
 		t.Fatalf("CompleteProbeCommand: %v", err)
 	}
 

@@ -33,9 +33,9 @@ const (
 	// telemetryStaleCycles is the consecutive-cycle debounce: the condition
 	// must hold this many monitoring cycles before firing. Absorbs
 	// poller-restart-after-outage storms (DB still says "online", rows
-	// outage-old), collector spool replay (replayed old pings bump last_polled
-	// to now while row timestamps stay old until the first live poll), and
-	// re-enabled devices' first cycle.
+	// outage-old) and re-enabled devices' first cycle. (Since v0.11.105 spool
+	// replay bumps last_polled with row timestamps, not now, so drain windows
+	// no longer feed this.)
 	telemetryStaleCycles = 3
 	// telemetryStaleDefaultMinutes is the telemetry_stale_minutes setting
 	// default. It deliberately sits above the FortiGate SSH perf cadence

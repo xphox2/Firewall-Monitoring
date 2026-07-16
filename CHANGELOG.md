@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.105] - 2026-07-16
+
+### Fixed — spool-replay skew: last_polled now advances by row timestamps, per device (PR #117 follow-up)
+
+After a server outage, a collector drains hours of spooled batches and every relay handler bumped `devices.last_polled` to **now** per batch — so a device that died mid-outage was held "online" for the entire drain window and the DEVICE_OFFLINE sweep never saw it stale. `bumpDevicesOnline` now advances each device's `last_polled` to its **own freshest qualifying row timestamp** (collector stamps rows at collection time before spooling), clamped to now. Per-device timestamps matter: a drained ping batch is a FIFO window that can span hours and multiple devices, so a batch-wide value would let one device's fresh rows extend a dead sibling's evidence — and ping FAILURE rows never extend evidence (success-only, as before). The update is monotonic (`last_polled` never regresses when drain and live traffic interleave), and **stale evidence never revives a device**: rows older than 5 minutes advance the clock but don't flip an offline device back online, so a drain can't re-fire the sweep's dedup-free DEVICE_OFFLINE critical email per batch. Config revisions (AUDIT-054 retry queue) and process snapshots bump with their own collection timestamps; L2 topology snapshots keep now-semantics (never spooled, send-or-drop). Trade-off: a collector clock skewed behind the server by more than the sweep threshold could now false-offline its devices — but row timestamps already drive TELEMETRY_STALE and every chart, so NTP-sane clocks were already required. Bonus: the poller's recovery path no longer sends false "back online" notifications off drain bumps. Regression tests cover row-time bumps, monotonicity, stale-never-revives, and per-device ping isolation.
+
+### Added — succeeded probe commands count as reachability evidence (gated; PR #117 follow-up)
+
+`ReceiveCommandResult` now bumps the target device's `last_polled`/status when a command result is (a) first-time applied, (b) `succeeded`, (c) device-targeted, and (d) of a type that actually contacts the device (`ProbeCommandTouchesDevice` allow-list). `noop` — today's only command type — completes inside the collector without touching any device and is explicitly non-touching, so nothing bumps yet; the first real write command (IPSec apply) opts in by flipping its map entry. Failed results never bump (a failure can mean the device was unreachable, matching the ping success-only precedent). `CompleteProbeCommand` now returns the completed command row so the handler can act on its DeviceID/Type; new `ProbeCommandTypeNoop` const replaces the string literal in the enqueue allow-list.
+
 ## [0.11.104] - 2026-07-16
 
 ### Fixed — staticcheck U1000 on master (Tranche 4 Phase 1 follow-up)

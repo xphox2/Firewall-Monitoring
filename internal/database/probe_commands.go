@@ -30,6 +30,30 @@ const (
 	ProbeCommandStatusExpired    = "expired"
 )
 
+// Probe command types. The enqueue endpoint allow-lists these; the collector
+// refuses anything else.
+const (
+	// ProbeCommandTypeNoop proves the command channel round-trip: the
+	// collector completes it immediately WITHOUT contacting any device.
+	ProbeCommandTypeNoop = "noop"
+)
+
+// probeCommandDeviceTouching lists command types whose execution makes the
+// collector contact the target device (SSH/API) — i.e. whose succeeded result
+// is reachability evidence that should bump the device's last_polled. noop is
+// explicitly false (it never leaves the collector). A future write command
+// (IPSec apply) opts in here.
+var probeCommandDeviceTouching = map[string]bool{
+	ProbeCommandTypeNoop: false,
+}
+
+// ProbeCommandTouchesDevice reports whether a succeeded result for the given
+// command type counts as device-reachability evidence. Unknown types never do
+// until explicitly added to probeCommandDeviceTouching (fail-safe default).
+func ProbeCommandTouchesDevice(cmdType string) bool {
+	return probeCommandDeviceTouching[cmdType]
+}
+
 const (
 	// DefaultProbeCommandTTL bounds how long an undelivered/unreported command
 	// stays live. A stale write command (e.g. a future apply_ipsec) firing
@@ -188,17 +212,19 @@ func (d *Database) ClaimProbeCommands(probeID uint) ([]models.ProbeCommand, erro
 // idempotent by command_id: a replayed result for an already-terminal command
 // is a no-op (applied=false, no error), so collector retries and heartbeat
 // redelivery races can't corrupt state. The probeID scope means a probe can
-// only complete its OWN commands. status must be succeeded or failed.
-func (d *Database) CompleteProbeCommand(probeID uint, commandID, status, result string) (applied bool, err error) {
+// only complete its OWN commands. status must be succeeded or failed. The
+// completed command row is returned (Payload still encrypted) so the caller
+// can act on its DeviceID/Type — e.g. count a succeeded device-touching
+// command as reachability evidence.
+func (d *Database) CompleteProbeCommand(probeID uint, commandID, status, result string) (cmd models.ProbeCommand, applied bool, err error) {
 	if status != ProbeCommandStatusSucceeded && status != ProbeCommandStatusFailed {
-		return false, fmt.Errorf("invalid command result status %q", status)
+		return cmd, false, fmt.Errorf("invalid command result status %q", status)
 	}
 	if len(result) > probeCommandResultMaxLen {
 		result = result[:probeCommandResultMaxLen]
 	}
 
 	err = d.db.Transaction(func(tx *gorm.DB) error {
-		var cmd models.ProbeCommand
 		if e := tx.Where("command_id = ? AND probe_id = ?", commandID, probeID).
 			First(&cmd).Error; e != nil {
 			return e
@@ -216,7 +242,7 @@ func (d *Database) CompleteProbeCommand(probeID uint, commandID, status, result 
 		applied = true
 		return nil
 	})
-	return applied, err
+	return cmd, applied, err
 }
 
 // GetProbeCommands lists a probe's most recent commands (newest first) for the

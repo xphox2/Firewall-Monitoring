@@ -150,6 +150,149 @@ func TestRelayHandlers_PassiveSourcesDoNotBump(t *testing.T) {
 	}
 }
 
+// TestRelayHandlers_SpooledBatchUsesRowTimestamps is the regression for the
+// PR #117 spool-replay skew: a collector draining hours of buffered batches
+// after a server outage used to bump last_polled to NOW per batch, holding a
+// device that died mid-outage "online" for the whole drain window. The bump
+// must use the batch's own (per-device) row timestamps.
+func TestRelayHandlers_SpooledBatchUsesRowTimestamps(t *testing.T) {
+	h, db := setupTestHandler(t)
+	probe, device := setupProbeAndDevice(t, db)
+
+	// Last seen 4h ago but still "online": the server (and its sweep) was down.
+	seed := time.Now().Add(-4 * time.Hour)
+	if err := db.Gorm().Model(&models.Device{}).Where("id = ?", device.ID).
+		Updates(map[string]interface{}{"status": "online", "last_polled": seed}).Error; err != nil {
+		t.Fatalf("seed device: %v", err)
+	}
+
+	// A drained spool batch: rows collected 3h ago.
+	rowTime := time.Now().Add(-3 * time.Hour)
+	body := []map[string]interface{}{{"device_id": device.ID, "timestamp": rowTime}}
+	w := doTestRequest(t, h.ReceiveSystemStatuses, "POST", "/system-status", probe.ID, probe.RegistrationKey, body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+
+	var dev models.Device
+	if err := db.Gorm().First(&dev, device.ID).Error; err != nil {
+		t.Fatalf("reload device: %v", err)
+	}
+	if diff := dev.LastPolled.Sub(rowTime); diff < -time.Minute || diff > time.Minute {
+		t.Errorf("last_polled = %v, want ≈ the row time %v (not now)", dev.LastPolled, rowTime)
+	}
+
+	// Monotonic: an older spooled batch arriving later (drain interleaves with
+	// retries) must never drag last_polled backwards.
+	older := time.Now().Add(-3*time.Hour - 30*time.Minute)
+	body = []map[string]interface{}{{"device_id": device.ID, "timestamp": older}}
+	if w := doTestRequest(t, h.ReceiveSystemStatuses, "POST", "/system-status", probe.ID, probe.RegistrationKey, body); w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var dev2 models.Device
+	if err := db.Gorm().First(&dev2, device.ID).Error; err != nil {
+		t.Fatalf("reload device: %v", err)
+	}
+	if !dev2.LastPolled.Equal(dev.LastPolled) {
+		t.Errorf("last_polled regressed from %v to %v on an older batch", dev.LastPolled, dev2.LastPolled)
+	}
+}
+
+// TestRelayHandlers_StaleEvidenceNeverRevives: a drain batch whose rows are
+// older than the freshness window advances last_polled but must NOT flip an
+// offline device back online — each re-flip would cost a duplicate dedup-free
+// DEVICE_OFFLINE critical email when the sweep re-fires. Fresh rows still
+// re-online as before.
+func TestRelayHandlers_StaleEvidenceNeverRevives(t *testing.T) {
+	h, db := setupTestHandler(t)
+	probe, device := setupProbeAndDevice(t, db)
+
+	seed := time.Now().Add(-4 * time.Hour)
+	if err := db.Gorm().Model(&models.Device{}).Where("id = ?", device.ID).
+		Updates(map[string]interface{}{"status": "offline", "last_polled": seed}).Error; err != nil {
+		t.Fatalf("seed device: %v", err)
+	}
+
+	// Stale rows (3h old): clock advances, status must stay offline.
+	rowTime := time.Now().Add(-3 * time.Hour)
+	body := []map[string]interface{}{{"device_id": device.ID, "timestamp": rowTime}}
+	if w := doTestRequest(t, h.ReceiveSystemStatuses, "POST", "/system-status", probe.ID, probe.RegistrationKey, body); w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var dev models.Device
+	if err := db.Gorm().First(&dev, device.ID).Error; err != nil {
+		t.Fatalf("reload device: %v", err)
+	}
+	if dev.Status != "offline" {
+		t.Errorf("status = %q after stale-row batch, want offline (stale evidence must not revive)", dev.Status)
+	}
+	if diff := dev.LastPolled.Sub(rowTime); diff < -time.Minute || diff > time.Minute {
+		t.Errorf("last_polled = %v, want ≈ %v (clock still advances on stale evidence)", dev.LastPolled, rowTime)
+	}
+
+	// Fresh rows (zero timestamp → handler stamps now): device comes online.
+	body = []map[string]interface{}{{"device_id": device.ID}}
+	before := time.Now().Add(-time.Second)
+	if w := doTestRequest(t, h.ReceiveSystemStatuses, "POST", "/system-status", probe.ID, probe.RegistrationKey, body); w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var dev2 models.Device
+	if err := db.Gorm().First(&dev2, device.ID).Error; err != nil {
+		t.Fatalf("reload device: %v", err)
+	}
+	if dev2.Status != "online" || dev2.LastPolled.Before(before) {
+		t.Errorf("fresh batch did not re-online: status=%q last_polled=%v", dev2.Status, dev2.LastPolled)
+	}
+}
+
+// TestReceivePingResults_PerDeviceTimestamps pins the per-device evidence map:
+// one drained ping batch can span hours and multiple devices, so device A's
+// fresh success must not extend dead device B's evidence, and B's spooled
+// FAILURES newer than its last success must not extend it either.
+func TestReceivePingResults_PerDeviceTimestamps(t *testing.T) {
+	h, db := setupTestHandler(t)
+	probe, deviceA := setupProbeAndDevice(t, db)
+	deviceB := &models.Device{Name: "test-fw-b", IPAddress: "192.168.1.2", ProbeID: &probe.ID}
+	if err := db.Gorm().Create(deviceB).Error; err != nil {
+		t.Fatalf("create device B: %v", err)
+	}
+
+	seed := time.Now().Add(-4 * time.Hour)
+	for _, id := range []uint{deviceA.ID, deviceB.ID} {
+		if err := db.Gorm().Model(&models.Device{}).Where("id = ?", id).
+			Updates(map[string]interface{}{"status": "online", "last_polled": seed}).Error; err != nil {
+			t.Fatalf("seed device %d: %v", id, err)
+		}
+	}
+
+	bSuccess := time.Now().Add(-3 * time.Hour)
+	bFailure := time.Now().Add(-1 * time.Hour)
+	body := []map[string]interface{}{
+		{"device_id": deviceA.ID, "target_ip": deviceA.IPAddress, "success": true, "latency": 1.0},
+		{"device_id": deviceB.ID, "target_ip": deviceB.IPAddress, "success": true, "latency": 1.0, "timestamp": bSuccess},
+		{"device_id": deviceB.ID, "target_ip": deviceB.IPAddress, "success": false, "timestamp": bFailure},
+	}
+	before := time.Now().Add(-time.Second)
+	if w := doTestRequest(t, h.ReceivePingResults, "POST", "/pings", probe.ID, probe.RegistrationKey, body); w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+
+	var a, b models.Device
+	if err := db.Gorm().First(&a, deviceA.ID).Error; err != nil {
+		t.Fatalf("reload A: %v", err)
+	}
+	if err := db.Gorm().First(&b, deviceB.ID).Error; err != nil {
+		t.Fatalf("reload B: %v", err)
+	}
+	if a.Status != "online" || a.LastPolled.Before(before) {
+		t.Errorf("device A not bumped to now: status=%q last_polled=%v", a.Status, a.LastPolled)
+	}
+	if diff := b.LastPolled.Sub(bSuccess); diff < -time.Minute || diff > time.Minute {
+		t.Errorf("device B last_polled = %v, want ≈ its own last SUCCESS %v (not A's fresh row, not B's newer failure)",
+			b.LastPolled, bSuccess)
+	}
+}
+
 // TestReceivePingResults_OnlySuccessBumps: a successful ping proves the device
 // is reachable and bumps last_polled; a batch of FAILED pings must not keep an
 // unreachable device online.
