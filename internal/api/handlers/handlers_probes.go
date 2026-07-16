@@ -815,7 +815,8 @@ func (h *Handler) ReceiveCommandResult(c *gin.Context) {
 	// TTL bounds staleness to minutes.
 	if applied && req.Status == database.ProbeCommandStatusSucceeded &&
 		cmd.DeviceID > 0 && database.ProbeCommandTouchesDevice(cmd.Type) {
-		h.bumpDevicesOnline(map[uint]time.Time{cmd.DeviceID: time.Now()}, time.Now())
+		now := time.Now()
+		h.bumpDevicesOnline(map[uint]time.Time{cmd.DeviceID: now}, now)
 	}
 	log.Printf("ReceiveCommandResult: probe %d command %s -> %s (applied=%v)", probe.ID, req.CommandID, req.Status, applied)
 	c.JSON(http.StatusOK, response.Success(gin.H{"applied": applied}))
