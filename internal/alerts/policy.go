@@ -492,6 +492,11 @@ func defaultSeverityForType(alertType models.AlertType) models.Severity {
 	case "TELEMETRY_STALE":
 		// Degraded collection, not an outage — the device itself is up.
 		return "warning"
+	case "SFLOW_DDOS_VOLUMETRIC", "SFLOW_DDOS_PREFIX":
+		// An active volumetric flood is an availability emergency. The
+		// detector itself ladders warning→critical at 1×/2× threshold; this
+		// default governs the policy layer when no detector severity is set.
+		return "critical"
 	default:
 		return "warning"
 	}

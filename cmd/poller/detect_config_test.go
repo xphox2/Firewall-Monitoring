@@ -54,3 +54,59 @@ func TestApplyDetectSettings(t *testing.T) {
 		t.Errorf("empty settings map must leave base unchanged")
 	}
 }
+
+// TestApplyDetectSettings_Tranche4Knobs: the DDoS/sampling knobs follow the
+// same positive-overrides / blank-falls-through convention.
+func TestApplyDetectSettings_Tranche4Knobs(t *testing.T) {
+	base := detect.Config{DDoSBps: 1_000_000_000, DDoSPps: 20_000, DDoSFps: 3_500, SampRateMinRows: 3}
+	got := applyDetectSettings(base, map[string]string{
+		"detect_ddos_bps":          "500000000",
+		"detect_ddos_pps":          "",   // blank → base
+		"detect_ddos_fps":          "-5", // non-positive → base
+		"detect_ddos_prefix_pps":   "9000",
+		"detect_samprate_min_rows": "10",
+	})
+	if got.DDoSBps != 500_000_000 || got.DDoSPps != 20_000 || got.DDoSFps != 3_500 {
+		t.Errorf("ddos thresholds wrong: %+v", got)
+	}
+	if got.DDoSPrefixPps != 9000 || got.SampRateMinRows != 10 {
+		t.Errorf("prefix/samprate wrong: %+v", got)
+	}
+}
+
+// TestApplyDetectSettings_EnabledFlagsThreeState pins the dedicated parser for
+// detect_<name>_enabled: DB "0" disables, DB "1" enables, blank/other keeps
+// the env-derived base — the numeric "<=0 falls through" convention would
+// have eaten the 0-means-disabled semantics.
+func TestApplyDetectSettings_EnabledFlagsThreeState(t *testing.T) {
+	t.Run("db-0-disables", func(t *testing.T) {
+		got := applyDetectSettings(detect.Config{}, map[string]string{"detect_ddos_volumetric_enabled": "0"})
+		if !got.DDoSVolumetricDisabled {
+			t.Error("DB \"0\" must disable")
+		}
+	})
+	t.Run("db-1-enables-over-env-disable", func(t *testing.T) {
+		base := detect.Config{DDoSPrefixDisabled: true} // env said disabled
+		got := applyDetectSettings(base, map[string]string{"detect_ddos_prefix_enabled": "1"})
+		if got.DDoSPrefixDisabled {
+			t.Error("DB \"1\" must override an env-level disable")
+		}
+	})
+	t.Run("blank-keeps-env", func(t *testing.T) {
+		base := detect.Config{SamplingRateChangeDisabled: true}
+		got := applyDetectSettings(base, map[string]string{"detect_sampling_rate_change_enabled": ""})
+		if !got.SamplingRateChangeDisabled {
+			t.Error("blank must keep the env-derived value")
+		}
+		got = applyDetectSettings(detect.Config{}, map[string]string{})
+		if got.SamplingRateChangeDisabled {
+			t.Error("absent key must keep the (enabled) zero value")
+		}
+	})
+	t.Run("garbage-keeps-env", func(t *testing.T) {
+		got := applyDetectSettings(detect.Config{}, map[string]string{"detect_ddos_volumetric_enabled": "yes"})
+		if got.DDoSVolumetricDisabled {
+			t.Error("unparseable value must not disable")
+		}
+	})
+}

@@ -57,7 +57,14 @@ const (
 	// (botnet scan / known-bad ASN) they collapse into ONE digest per (site,
 	// detector) instead of N per-source alerts.
 	AlertTypeSFlowSecurityDigest AlertType = "SFLOW_SECURITY_DIGEST"
-	AlertTypeTestAlert           AlertType = "TEST_ALERT"
+	// Tranche 4 Phase 1 (v0.11.103): victim-keyed DDoS detections route down
+	// the per-detection alert path (not the per-source SFLOW_SECURITY
+	// consolidation — their subject is the VICTIM, not an offending source);
+	// SFLOW_SAMPLING_RATE_CHANGE guards the pre-multiplied-bytes contract.
+	AlertTypeSFlowDDoSVolumetric     AlertType = "SFLOW_DDOS_VOLUMETRIC"
+	AlertTypeSFlowDDoSPrefix         AlertType = "SFLOW_DDOS_PREFIX"
+	AlertTypeSFlowSamplingRateChange AlertType = "SFLOW_SAMPLING_RATE_CHANGE"
+	AlertTypeTestAlert               AlertType = "TEST_ALERT"
 	// Default alert types emitted by custom EventRules (migration v35). A rule
 	// may override alert_type to any value; these are the defaults so an operator
 	// rule that doesn't reuse an existing type still folds/filters coherently.
