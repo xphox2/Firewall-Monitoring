@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 
 	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/httputil"
@@ -326,18 +327,38 @@ func (h *Handler) GetConnectionTraffic(c *gin.Context) {
 	if !ok {
 		return
 	}
-	rangeStr := c.DefaultQuery("range", "24h")
-	validRanges := map[string]bool{"1h": true, "24h": true, "7d": true, "30d": true}
-	if !validRanges[rangeStr] {
-		rangeStr = "24h"
-	}
-	data, err := db.GetConnectionTraffic(id, rangeStr)
+	hours := parseTrafficRangeHours(c.DefaultQuery("range", "24"))
+	data, err := db.GetConnectionTraffic(id, hours)
 	if err != nil {
-		log.Printf("GetConnectionTraffic(%d, %s) error: %v", id, rangeStr, err)
+		// Log the parsed hours, not the raw query param (log-injection hygiene).
+		log.Printf("GetConnectionTraffic(%d, %gh) error: %v", id, hours, err)
 		httputil.InternalError(c, "Failed to get traffic data", err)
 		return
 	}
 	c.JSON(http.StatusOK, response.Success(data))
+}
+
+// parseTrafficRangeHours converts the connection-traffic range param to a
+// lookback in hours. Accepts the legacy launch tokens and numeric hours — the
+// values the detail page's range dropdown actually sends (0.25 … 8760); the
+// pre-fix whitelist recognized neither form the dropdown used, so every
+// selection silently served the 24h window. Invalid or non-positive input
+// falls back to 24; the DB layer clamps the ceiling to its maxChartWindow.
+func parseTrafficRangeHours(s string) float64 {
+	switch s {
+	case "1h":
+		return 1
+	case "24h":
+		return 24
+	case "7d":
+		return 168
+	case "30d":
+		return 720
+	}
+	if h, err := strconv.ParseFloat(s, 64); err == nil && h > 0 {
+		return h
+	}
+	return 24
 }
 
 func (h *Handler) GetVPNTunnelChart(c *gin.Context) {

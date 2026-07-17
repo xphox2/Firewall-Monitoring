@@ -76,7 +76,7 @@ func TestGetConnectionTraffic_DirectUsesInterfaceStats(t *testing.T) {
 	addr(1, 6, "10.0.6.1", "255.255.255.0")
 	addr(2, 5, "10.0.5.2", "255.255.255.0")
 
-	rows, err := d.GetConnectionTraffic(conn.ID, "24h")
+	rows, err := d.GetConnectionTraffic(conn.ID, 24)
 	if err != nil {
 		t.Fatalf("GetConnectionTraffic: %v", err)
 	}

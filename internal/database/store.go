@@ -127,7 +127,7 @@ type ConnectionStore interface {
 	GetConnectionEvents(srcDeviceID, dstDeviceID uint, hours int) ([]ConnectionEvent, error)
 	GetConnectionFlowStats(connID uint, hours int) (*ConnectionFlowResult, error)
 	GetConnectionStatuses() ([]map[string]interface{}, error)
-	GetConnectionTraffic(connID uint, rangeStr string) ([]VPNChartBucket, error)
+	GetConnectionTraffic(connID uint, hours float64) ([]VPNChartBucket, error)
 }
 
 // AlertStore covers alert acknowledgement, snooze, and notes.

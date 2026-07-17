@@ -729,18 +729,16 @@ func (d *Database) getConnectionTunnelNames(connID uint) (srcDeviceID, dstDevice
 	return
 }
 
-// rangeToHours maps the connection-traffic range presets to a lookback in hours.
-func rangeToHours(rangeStr string) int {
-	switch rangeStr {
-	case "1h":
-		return 1
-	case "7d":
-		return 168
-	case "30d":
-		return 720
-	default: // 24h
-		return 24
+// trafficWindow converts a connection-traffic lookback in hours to a bounded
+// duration with the chart layer's adaptive bucket unit. The maxChartWindow
+// clamp mirrors GetInterfaceChartWindow so a pathological hours value can't
+// bucket unbounded history.
+func trafficWindow(hours float64) (time.Duration, string) {
+	dur := time.Duration(hours * float64(time.Hour))
+	if dur <= 0 || dur > maxChartWindow {
+		dur = maxChartWindow
 	}
+	return dur, bucketUnitForWindow(dur)
 }
 
 // interfaceTrafficWindow aggregates per-interface chart buckets (from
@@ -760,7 +758,7 @@ func rangeToHours(rangeStr string) int {
 // summing across interfaces: consecutive-bucket difference, clamped at 0 for
 // counter resets/wraps, dropping each interface's first bucket (no baseline)
 // — the same semantics as the tunnel path's LAG() query.
-func (d *Database) interfaceTrafficWindow(refs []ConnInterfaceRef, rangeStr string) ([]VPNChartBucket, error) {
+func (d *Database) interfaceTrafficWindow(refs []ConnInterfaceRef, hours float64) ([]VPNChartBucket, error) {
 	if len(refs) == 0 {
 		return []VPNChartBucket{}, nil
 	}
@@ -770,8 +768,9 @@ func (d *Database) interfaceTrafficWindow(refs []ConnInterfaceRef, rangeStr stri
 	// (distinct physical ports with no parent/child link between them) survive and
 	// still sum — that IS the bond's aggregate throughput.
 	refs = dropOverlappingParents(refs)
+	dur, _ := trafficWindow(hours)
 	to := time.Now()
-	from := to.Add(-time.Duration(rangeToHours(rangeStr)) * time.Hour)
+	from := to.Add(-dur)
 
 	clamp := func(v float64) float64 {
 		if v < 0 {
@@ -813,7 +812,7 @@ func (d *Database) interfaceTrafficWindow(refs []ConnInterfaceRef, rangeStr stri
 // overlay and off-net connections aggregate vpn_status (overlays graph their
 // carrier tunnel, matched by peer remote IP); direct links aggregate
 // interface_stats for their member interfaces on one endpoint.
-func (d *Database) GetConnectionTraffic(connID uint, rangeStr string) ([]VPNChartBucket, error) {
+func (d *Database) GetConnectionTraffic(connID uint, hours float64) ([]VPNChartBucket, error) {
 	// Direct links graph interface_stats, not vpn_status.
 	var conn models.DeviceConnection
 	if err := d.db.Preload("SourceDevice").Preload("DestDevice").First(&conn, connID).Error; err != nil {
@@ -825,7 +824,7 @@ func (d *Database) GetConnectionTraffic(connID uint, rangeStr string) ([]VPNChar
 		if len(primary) == 0 {
 			primary = interfacesForDevice(refs, conn.DestDeviceID)
 		}
-		return d.interfaceTrafficWindow(primary, rangeStr)
+		return d.interfaceTrafficWindow(primary, hours)
 	}
 
 	srcDeviceID, dstDeviceID, srcTunnelNames, dstTunnelNames, err := d.getConnectionTunnelNames(connID)
@@ -833,24 +832,9 @@ func (d *Database) GetConnectionTraffic(connID uint, rangeStr string) ([]VPNChar
 		return nil, err
 	}
 
-	// Determine time params
-	var hours int
-	var bucketExpr string
-	switch rangeStr {
-	case "1h":
-		hours = 1
-		bucketExpr = d.dialect.TimeBucket("minute", "timestamp")
-	case "7d":
-		hours = 168
-		bucketExpr = d.dialect.TimeBucket("hour", "timestamp")
-	case "30d":
-		hours = 720
-		bucketExpr = d.dialect.TimeBucket("hour", "timestamp")
-	default:
-		hours = 24
-		bucketExpr = d.dialect.TimeBucket("minute", "timestamp")
-	}
-	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+	dur, bucketUnit := trafficWindow(hours)
+	bucketExpr := d.dialect.TimeBucket(bucketUnit, "timestamp")
+	cutoff := time.Now().Add(-dur)
 
 	// Aggregate ONE endpoint only. A VPN tunnel is reported at BOTH ends (each
 	// device counts the same bytes on its own tunnel interface), so summing
@@ -888,6 +872,22 @@ func (d *Database) GetConnectionTraffic(connID uint, rangeStr string) ([]VPNChar
 
 	// Use LAG() window function to compute per-sample deltas from cumulative SNMP counters.
 	// First row per partition (LAG is NULL) returns NULL and is filtered by the outer WHERE.
+	//
+	// Two data pathologies are neutralized before the window runs:
+	//  - Rows with BOTH byte counters zero are excluded: the collector's SSH
+	//    phase1/phase2 poll writes status-only rows (no counters) into the same
+	//    table as the SNMP counter rows. Left in the partition, each one reads
+	//    as a counter reset and the next real sample contributes the tunnel's
+	//    FULL lifetime bytes as one "delta" — the chart then dwarfs real
+	//    traffic and climbs forever as the counter grows. Same rationale as
+	//    vpnDeltaQuery's filter (charts.go).
+	//  - Byte-identical counter streams are collapsed: FortiGate can surface
+	//    ONE underlying counter under several tunnel names (observed live: 4
+	//    phase names to the same gateway, byte-identical every sample), and
+	//    summing those partitions multiplies real throughput by the duplicate
+	//    count. Rows identical in (device, timestamp, all four counters) merge
+	//    to one row keeping MIN(tunnel_name) as the partition key; tunnels with
+	//    genuinely distinct counters keep their own partitions and still sum.
 	query := fmt.Sprintf(`
 		SELECT bucket, SUM(delta_in) as in_bytes, SUM(delta_out) as out_bytes,
 		       SUM(delta_pin) as in_packets, SUM(delta_pout) as out_packets
@@ -905,8 +905,14 @@ func (d *Database) GetConnectionTraffic(connID uint, rangeStr string) ([]VPNChar
 				CASE WHEN LAG(packets_out) OVER w IS NULL THEN NULL
 					WHEN packets_out >= LAG(packets_out) OVER w THEN packets_out - LAG(packets_out) OVER w
 					ELSE packets_out END as delta_pout
-			FROM vpn_status
-			WHERE device_id IN (%s) AND tunnel_name IN (%s) AND timestamp > ?
+			FROM (
+				SELECT device_id, timestamp, bytes_in, bytes_out, packets_in, packets_out,
+					MIN(tunnel_name) AS tunnel_name
+				FROM vpn_status
+				WHERE device_id IN (%s) AND tunnel_name IN (%s) AND timestamp > ?
+					AND NOT (bytes_in = 0 AND bytes_out = 0)
+				GROUP BY device_id, timestamp, bytes_in, bytes_out, packets_in, packets_out
+			) AS samples
 			WINDOW w AS (PARTITION BY device_id, tunnel_name ORDER BY timestamp)
 		) AS deltas WHERE delta_in IS NOT NULL
 		GROUP BY bucket ORDER BY bucket ASC`,

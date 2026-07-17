@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.108] - 2026-07-17
+
+### Fixed — connection-detail traffic chart: climbing values, duplicate-stream inflation, dead range selector
+
+Three stacked defects on the connection Aggregate Bandwidth chart (reported on a VXLAN overlay at 7d/30d "just keeps climbing"), all root-caused against live production data:
+
+- **Zero-byte VPN status rows poisoned the LAG() delta math** (the climbing cause). `vpn_status` has two writers: the SNMP poll (per-minute cumulative counters) and the collector's SSH phase1/phase2 poll, which writes status-only rows with `bytes_in=0, bytes_out=0` every ~15 min. Inside the delta window each zero row read as a counter reset, so the next real sample contributed the tunnel's FULL lifetime counter (~181 GB on the reporting device) as one "delta" — hourly buckets showed 2,200–2,900 GB "transferred" and the series climbed forever as the counter grew. Both delta queries (`vpnDeltaQuery` behind the device/connection tunnel charts, and `GetConnectionTraffic`'s tunnel path) now exclude rows with both byte counters zero; a genuine counter reset is still handled by the existing reset clamp on the next nonzero sample.
+- **Byte-identical counter streams were summed.** FortiGate can surface one underlying tunnel counter under several names (observed live: 4 phase names to the same gateway, byte-identical at every sample); summing those partitions inflated real throughput 4×. Rows identical in (device, timestamp, all four counters) now collapse to one partition before the window runs; tunnels with genuinely distinct counters keep their own partitions and still sum.
+- **The range selector was entirely decorative.** The dropdown sends hour-numeric values (`0.25` … `8760`) but the endpoint whitelist only recognized `1h/24h/7d/30d` and coerced *every* dropdown value — including `24` — to the 24h window. The endpoint now parses numeric hours (legacy tokens stay valid), and the window uses the chart layer's adaptive bucketing (`bucketUnitForWindow`) with the existing 400-day cap, so all ten dropdown ranges return real data at sensible resolution.
+
+New regression tests pin all three fixes (zero-row exclusion on both query paths, duplicate-stream collapse with a distinct-stream control, hours parsing/clamping) plus a guardrail asserting every dropdown option value stays a server-valid hour count.
+
 ## [0.11.107] - 2026-07-17
 
 ### Added — Tranche 4 Phase 2: deny detectors (FortiGate syslog action="deny")
