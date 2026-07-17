@@ -6,12 +6,14 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"firewall-mon/internal/alerts"
 	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/classify"
 	"firewall-mon/internal/configdiff"
+	"firewall-mon/internal/deny"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/snmp"
@@ -208,7 +210,62 @@ func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 			}
 		}
 	}
+	// Tranche 4 Phase 2: project FortiGate action="deny" lines into denied_events
+	// for the deny detectors. deny.Project cheap-gates non-deny messages before
+	// any KV parse, so the majority stream is untouched on this hot path.
+	h.projectDeniedEvents(filtered)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
+}
+
+// denyPatternCacheTTL bounds how stale the block-policy pattern setting may be
+// on the ingest path (the setting is read from the DB, not this process's env).
+const denyPatternCacheTTL = 60 * time.Second
+
+// projectDeniedEvents derives DeniedEvent rows from a saved syslog batch and
+// bulk-inserts them. Only FortiGate deny lines project (deny.Project returns
+// false otherwise). Best-effort: a projection/insert failure is logged, never
+// fatal to syslog ingest.
+func (h *Handler) projectDeniedEvents(msgs []models.SyslogMessage) {
+	if len(msgs) == 0 || h.db == nil {
+		return
+	}
+	cfg := deny.PatternConfig{Pattern: h.denyPolicyPattern()}
+	events := make([]models.DeniedEvent, 0, len(msgs))
+	for i := range msgs {
+		if ev, ok := deny.Project(&msgs[i], &h.threatMatch, cfg); ok {
+			events = append(events, ev)
+		}
+	}
+	if len(events) == 0 {
+		return
+	}
+	if err := h.db.SaveDeniedEvents(events); err != nil {
+		log.Printf("projectDeniedEvents: save %d event(s): %v", len(events), err)
+	}
+}
+
+// denyPolicyPattern returns the block-policy-name glob, from the
+// detect_deny_policy_pattern admin setting when set, else the env/built-in
+// default. TTL-cached so the hot path doesn't hit the DB per batch.
+func (h *Handler) denyPolicyPattern() string {
+	now := time.Now()
+	h.mu.RLock()
+	if now.Before(h.denyPatternExpiry) {
+		p := h.denyPatternCached
+		h.mu.RUnlock()
+		return p
+	}
+	h.mu.RUnlock()
+
+	pattern := h.config.Detect.DenyPolicyPattern
+	if v, ok := h.db.GetSettingValue("detect_deny_policy_pattern"); ok {
+		pattern = strings.TrimSpace(v)
+	}
+	h.mu.Lock()
+	h.denyPatternCached = pattern
+	h.denyPatternExpiry = now.Add(denyPatternCacheTTL)
+	h.mu.Unlock()
+	return pattern
 }
 
 func (h *Handler) ReceiveTrapEvents(c *gin.Context) {

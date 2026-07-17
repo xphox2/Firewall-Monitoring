@@ -137,6 +137,18 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		"detect_ddos_volumetric_enabled":      true,
 		"detect_ddos_prefix_enabled":          true,
 		"detect_sampling_rate_change_enabled": true,
+		// Tranche 4 Phase 2 — deny detectors (syslog action="deny"). Numeric
+		// thresholds (blank-falls-through), three-state *_enabled flags, and the
+		// block-policy-name glob pattern (string).
+		"detect_deny_storm_min_denies":          true,
+		"detect_deny_storm_min_denies_internal": true,
+		"detect_deny_storm_victim_min_sources":  true,
+		"detect_deny_storm_victim_min_denies":   true,
+		"detect_denied_then_allowed_min":        true,
+		"detect_deny_storm_enabled":             true,
+		"detect_deny_storm_victim_enabled":      true,
+		"detect_denied_then_allowed_enabled":    true,
+		"detect_deny_policy_pattern":            true,
 	}
 
 	secretKeys := settingsSecretKeys // v0.10.226: shared with GetSettings
@@ -204,10 +216,19 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				return
 			}
 		case "detect_ddos_volumetric_enabled", "detect_ddos_prefix_enabled",
-			"detect_sampling_rate_change_enabled":
+			"detect_sampling_rate_change_enabled",
+			"detect_deny_storm_enabled", "detect_deny_storm_victim_enabled",
+			"detect_denied_then_allowed_enabled":
 			// Three-state: blank = fall through to env/default; else 0 or 1.
 			if s.Value != "" && s.Value != "0" && s.Value != "1" {
 				c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("Invalid value for %s: must be 0, 1, or blank", s.Key)))
+				return
+			}
+		case "detect_deny_policy_pattern":
+			// Block-policy-name GLOB (only '*' is special) — NOT a regexp, so no
+			// ReDoS surface on the ingest hot path. Just length-cap it.
+			if len(s.Value) > 128 {
+				c.JSON(http.StatusBadRequest, response.Error("Invalid value for detect_deny_policy_pattern: max 128 characters"))
 				return
 			}
 		case "detect_port_scan_ports", "detect_super_spreader_hosts",
@@ -215,7 +236,10 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			"detect_data_exfil_bytes",
 			"detect_ddos_bps", "detect_ddos_pps", "detect_ddos_fps",
 			"detect_ddos_prefix_bps", "detect_ddos_prefix_pps", "detect_ddos_prefix_fps",
-			"detect_samprate_min_rows":
+			"detect_samprate_min_rows",
+			"detect_deny_storm_min_denies", "detect_deny_storm_min_denies_internal",
+			"detect_deny_storm_victim_min_sources", "detect_deny_storm_victim_min_denies",
+			"detect_denied_then_allowed_min":
 			// Blank = unset (poller falls back to env/default). Otherwise a
 			// positive integer.
 			if s.Value != "" {

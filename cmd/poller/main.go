@@ -316,6 +316,15 @@ func detectConfigFromCfg(cfg *config.Config) detect.Config {
 		DDoSVolumetricDisabled:     cfg.Detect.DDoSVolumetricDisabled,
 		DDoSPrefixDisabled:         cfg.Detect.DDoSPrefixDisabled,
 		SamplingRateChangeDisabled: cfg.Detect.SamplingRateChangeDisabled,
+
+		DenyStormExternal:         cfg.Detect.DenyStormExternal,
+		DenyStormInternal:         cfg.Detect.DenyStormInternal,
+		DenyVictimSources:         cfg.Detect.DenyVictimSources,
+		DenyVictimCount:           cfg.Detect.DenyVictimCount,
+		DeniedThenAllowedMin:      cfg.Detect.DeniedThenAllowedMin,
+		DenyStormDisabled:         cfg.Detect.DenyStormDisabled,
+		DenyStormVictimDisabled:   cfg.Detect.DenyStormVictimDisabled,
+		DeniedThenAllowedDisabled: cfg.Detect.DeniedThenAllowedDisabled,
 	}
 }
 
@@ -387,6 +396,22 @@ func applyDetectSettings(base detect.Config, m map[string]string) detect.Config 
 	if v, err := strconv.Atoi(strings.TrimSpace(m["detect_samprate_min_rows"])); err == nil && v > 0 {
 		base.SampRateMinRows = v
 	}
+	// Tranche 4 Phase 2 deny detectors.
+	if v, err := strconv.Atoi(strings.TrimSpace(m["detect_deny_storm_min_denies"])); err == nil && v > 0 {
+		base.DenyStormExternal = v
+	}
+	if v, err := strconv.Atoi(strings.TrimSpace(m["detect_deny_storm_min_denies_internal"])); err == nil && v > 0 {
+		base.DenyStormInternal = v
+	}
+	if v, err := strconv.Atoi(strings.TrimSpace(m["detect_deny_storm_victim_min_sources"])); err == nil && v > 0 {
+		base.DenyVictimSources = v
+	}
+	if v, err := strconv.Atoi(strings.TrimSpace(m["detect_deny_storm_victim_min_denies"])); err == nil && v > 0 {
+		base.DenyVictimCount = v
+	}
+	if v, err := strconv.Atoi(strings.TrimSpace(m["detect_denied_then_allowed_min"])); err == nil && v > 0 {
+		base.DeniedThenAllowedMin = v
+	}
 	// Per-detector enable flags need a DEDICATED three-state parse — the
 	// numeric convention above treats <=0 as "fall through", which would eat
 	// the 0-means-disabled semantics. Truth table: DB "0" → disabled, DB "1"
@@ -402,6 +427,9 @@ func applyDetectSettings(base detect.Config, m map[string]string) detect.Config 
 	applyEnabledFlag("detect_ddos_volumetric_enabled", &base.DDoSVolumetricDisabled)
 	applyEnabledFlag("detect_ddos_prefix_enabled", &base.DDoSPrefixDisabled)
 	applyEnabledFlag("detect_sampling_rate_change_enabled", &base.SamplingRateChangeDisabled)
+	applyEnabledFlag("detect_deny_storm_enabled", &base.DenyStormDisabled)
+	applyEnabledFlag("detect_deny_storm_victim_enabled", &base.DenyStormVictimDisabled)
+	applyEnabledFlag("detect_denied_then_allowed_enabled", &base.DeniedThenAllowedDisabled)
 	return base
 }
 

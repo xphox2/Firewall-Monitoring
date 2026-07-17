@@ -64,7 +64,18 @@ const (
 	AlertTypeSFlowDDoSVolumetric     AlertType = "SFLOW_DDOS_VOLUMETRIC"
 	AlertTypeSFlowDDoSPrefix         AlertType = "SFLOW_DDOS_PREFIX"
 	AlertTypeSFlowSamplingRateChange AlertType = "SFLOW_SAMPLING_RATE_CHANGE"
-	AlertTypeTestAlert               AlertType = "TEST_ALERT"
+	// Tranche 4 Phase 2 (v0.11.107): deny detectors sourced from FortiGate
+	// syslog action="deny" logs (projected into denied_events), NOT NetFlow —
+	// FortiOS never exports blocked sessions via NetFlow. The SFLOW_ prefix is a
+	// detect-engine namespace label (defaultCooldownForType keys off it), not a
+	// transport claim. deny_storm (src-keyed) folds into SFLOW_SECURITY;
+	// SFLOW_DENY_STORM_VICTIM (victim-keyed) and SFLOW_DENIED_THEN_ALLOWED
+	// (policy) emit their own type. SFLOW_DENY_STORM is documented here for
+	// completeness but is never emitted independently.
+	AlertTypeSFlowDenyStorm         AlertType = "SFLOW_DENY_STORM"
+	AlertTypeSFlowDenyStormVictim   AlertType = "SFLOW_DENY_STORM_VICTIM"
+	AlertTypeSFlowDeniedThenAllowed AlertType = "SFLOW_DENIED_THEN_ALLOWED"
+	AlertTypeTestAlert              AlertType = "TEST_ALERT"
 	// Default alert types emitted by custom EventRules (migration v35). A rule
 	// may override alert_type to any value; these are the defaults so an operator
 	// rule that doesn't reuse an existing type still folds/filters coherently.
@@ -1137,6 +1148,77 @@ type SyslogMessage struct {
 }
 
 func (SyslogMessage) TableName() string { return "syslog_messages" }
+
+// DeniedEvent is a compact, indexed projection of a FortiGate syslog
+// action="deny" log line, written at ingest (internal/deny.Project) so the
+// Tranche 4 Phase 2 deny detectors run bounded GROUP-BY aggregations over clean
+// typed columns instead of regex-parsing the raw syslog_messages text (the
+// detect package is a leaf that cannot import the KV parser). This is the
+// direct analogue of flow_samples for sFlow. Monthly RANGE-partitioned on
+// timestamp; short retention (denied_events aged out in ~2 days — the longest
+// detector lookback is 60 min).
+type DeniedEvent struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	Timestamp time.Time `json:"timestamp" gorm:"index;index:idx_denied_device_ts,priority:2"`
+	DeviceID  uint      `json:"device_id" gorm:"index;index:idx_denied_device_ts,priority:1"`
+	ProbeID   uint      `json:"probe_id"`
+
+	SrcAddr  string `json:"src_addr" gorm:"index:idx_denied_src"`
+	DstAddr  string `json:"dst_addr" gorm:"index:idx_denied_dst"`
+	SrcPort  uint16 `json:"src_port" gorm:"type:integer"`
+	DstPort  uint16 `json:"dst_port" gorm:"type:integer"`
+	Protocol uint8  `json:"protocol"`
+
+	// SrcIntfRole is the FortiGate-authoritative direction oracle (srcintfrole):
+	// 0 unknown, 1 wan, 2 lan, 3 dmz, 4 undefined. Better than the flow CIDR
+	// guess (classify.Direction) — the deny_storm variants split on it.
+	SrcIntfRole uint8 `json:"src_intf_role" gorm:"default:0;not null"`
+	// Subtype separates local-in denies (traffic TO the firewall's own IPs) from
+	// transit/forward denies: 0 unknown, 1 local, 2 forward.
+	Subtype uint8 `json:"subtype" gorm:"default:0;not null"`
+	// FortiGate emits full country NAMES (e.g. "United States"), not ISO codes.
+	SrcCountry string `json:"src_country"`
+	DstCountry string `json:"dst_country"`
+
+	PolicyID   uint32 `json:"policy_id" gorm:"type:bigint"`
+	PolicyName string `json:"policy_name"`
+	Service    string `json:"service"`
+
+	// Signal is the projection provenance: 1 = action="deny", 2 = block-policy
+	// name pattern match on action="start" (the accept-log-drop scan convention).
+	Signal uint8 `json:"signal" gorm:"default:1;not null"`
+
+	// ThreatFlag mirrors FlowSample.ThreatFlag semantics for bits 0/1 only
+	// (bit0 = src known-bad IP, bit1 = dst known-bad IP). Syslog carries no ASN,
+	// so the ASN bits 2/8 are never set for denies.
+	ThreatFlag uint8     `json:"threat_flag" gorm:"default:0;not null"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+func (DeniedEvent) TableName() string { return "denied_events" }
+
+// FortiGate srcintfrole → DeniedEvent.SrcIntfRole enum. Kept in models so both
+// the projection (internal/deny) and detectors (internal/detect) agree.
+const (
+	IntfRoleUnknown   uint8 = 0
+	IntfRoleWAN       uint8 = 1
+	IntfRoleLAN       uint8 = 2
+	IntfRoleDMZ       uint8 = 3
+	IntfRoleUndefined uint8 = 4
+)
+
+// DeniedEvent.Subtype enum.
+const (
+	DenySubtypeUnknown uint8 = 0
+	DenySubtypeLocal   uint8 = 1
+	DenySubtypeForward uint8 = 2
+)
+
+// DeniedEvent.Signal enum.
+const (
+	DenySignalAction  uint8 = 1 // action="deny"
+	DenySignalPattern uint8 = 2 // action="start" on a block-policy-name match
+)
 
 type SyslogSummary struct {
 	ID             uint      `json:"id" gorm:"primaryKey"`

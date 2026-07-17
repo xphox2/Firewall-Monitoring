@@ -75,6 +75,7 @@ func (d *Database) migrateBaseline() error {
 		&models.ThreatIntel{},
 		&models.ThreatFeedStatus{},
 		&models.FlowInterfaceCounter{},
+		&models.DeniedEvent{},
 	}
 
 	// Migrate each model individually so one failure doesn't block others.
@@ -212,6 +213,7 @@ var partitionTables = []partitionDef{
 	{"syslog_summaries", "timestamp"},
 	{"trap_events", "timestamp"},
 	{"flow_samples", "timestamp"},
+	{"denied_events", "timestamp"},
 }
 
 // partitionModels maps each partitioned table to its GORM model so the
@@ -233,6 +235,7 @@ var partitionModels = map[string]interface{}{
 	"syslog_summaries": &models.SyslogSummary{},
 	"trap_events":      &models.TrapEvent{},
 	"flow_samples":     &models.FlowSample{},
+	"denied_events":    &models.DeniedEvent{},
 }
 
 // partitionIndex is one per-partition index to (re)create: the physical name
@@ -1903,5 +1906,46 @@ func (d *Database) migrateConnectionPortFields() error {
 		return fmt.Errorf("migrate v46 purge subnet_match connections: %w", res.Error)
 	}
 	log.Printf("migrate v46 connection_port_fields: columns ensured, purged %d subnet_match auto connection(s)", res.RowsAffected)
+	return nil
+}
+
+// migrateDeniedEventsTable (v47) creates the denied_events projection table
+// (Tranche 4 Phase 2 deny detectors) and — on Postgres — converts it to a
+// monthly RANGE-partitioned parent. Registering denied_events in
+// partitionTables/partitionModels is NOT enough on an existing prod DB: the v2
+// migration that runs convertEmptyTableToPartitioned has already been recorded
+// there and is skipped, so this migration must replicate that conversion for
+// the one new table. The convert is empty-table-only and idempotent (probes
+// pg_partitioned_table first), and RunMigrations runs before EnsurePartitions at
+// boot, so the monthly child partitions are created the same startup.
+func (d *Database) migrateDeniedEventsTable() error {
+	if err := d.db.AutoMigrate(&models.DeniedEvent{}); err != nil {
+		return fmt.Errorf("migrate v47 denied_events AutoMigrate: %w", err)
+	}
+	if !d.dialect.IsPostgres() {
+		return nil // SQLite test backend: plain table is fine
+	}
+	var isPartitioned bool
+	if err := d.db.Raw(`SELECT EXISTS (
+		SELECT 1 FROM pg_partitioned_table pt
+		JOIN pg_class c ON c.oid = pt.partrelid WHERE c.relname = ?)`,
+		"denied_events").Scan(&isPartitioned).Error; err != nil {
+		return fmt.Errorf("migrate v47 partition probe: %w", err)
+	}
+	if isPartitioned {
+		return nil // fresh install: v1 baseline + v2 already partitioned it
+	}
+	var hasRows bool
+	if err := d.db.Raw("SELECT EXISTS(SELECT 1 FROM denied_events LIMIT 1)").Scan(&hasRows).Error; err != nil {
+		return fmt.Errorf("migrate v47 row probe: %w", err)
+	}
+	if hasRows {
+		log.Printf("WARNING: migrate v47: denied_events has rows; NOT auto-partitioning. Convert in a maintenance window; until then cleanup uses batched DELETE.")
+		return nil
+	}
+	if err := d.convertEmptyTableToPartitioned("denied_events", "timestamp"); err != nil {
+		return fmt.Errorf("migrate v47 convert denied_events to partitioned: %w", err)
+	}
+	log.Printf("migrate v47 denied_events_table: created + converted to monthly RANGE-partitioned parent on timestamp")
 	return nil
 }

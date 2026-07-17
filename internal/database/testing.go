@@ -58,6 +58,7 @@ func NewDatabaseForTesting(t interface {
 		&models.ThreatIntel{},
 		&models.ThreatFeedStatus{},
 		&models.FlowInterfaceCounter{},
+		&models.DeniedEvent{},
 		&models.Alert{},
 		&models.AlertPolicy{},
 		&models.AlertRule{},

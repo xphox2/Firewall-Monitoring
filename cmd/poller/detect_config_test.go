@@ -74,6 +74,32 @@ func TestApplyDetectSettings_Tranche4Knobs(t *testing.T) {
 	}
 }
 
+// TestApplyDetectSettings_Phase2DenyKnobs pins the deny-detector numeric knobs
+// and the three-state enable flags.
+func TestApplyDetectSettings_Phase2DenyKnobs(t *testing.T) {
+	base := detect.Config{DenyStormExternal: 300, DenyStormInternal: 100, DenyVictimSources: 200}
+	got := applyDetectSettings(base, map[string]string{
+		"detect_deny_storm_min_denies":          "500",
+		"detect_deny_storm_min_denies_internal": "", // blank → base
+		"detect_deny_storm_victim_min_sources":  "50",
+		"detect_denied_then_allowed_min":        "3",
+		"detect_deny_storm_enabled":             "0", // disable
+		"detect_deny_storm_victim_enabled":      "1",
+	})
+	if got.DenyStormExternal != 500 || got.DenyStormInternal != 100 || got.DenyVictimSources != 50 {
+		t.Errorf("deny thresholds wrong: %+v", got)
+	}
+	if got.DeniedThenAllowedMin != 3 {
+		t.Errorf("denied_then_allowed_min = %d", got.DeniedThenAllowedMin)
+	}
+	if !got.DenyStormDisabled {
+		t.Error("detect_deny_storm_enabled=0 must disable")
+	}
+	if got.DenyStormVictimDisabled {
+		t.Error("detect_deny_storm_victim_enabled=1 must enable")
+	}
+}
+
 // TestApplyDetectSettings_EnabledFlagsThreeState pins the dedicated parser for
 // detect_<name>_enabled: DB "0" disables, DB "1" enables, blank/other keeps
 // the env-derived base — the numeric "<=0 falls through" convention would

@@ -223,6 +223,17 @@ func (d *Database) SaveSyslogMessages(msgs []models.SyslogMessage) error {
 	return batchInsertWithFallback(d.db, "syslog_messages", msgs)
 }
 
+// SaveDeniedEvents batch-inserts the Tranche 4 Phase 2 deny projection rows
+// (internal/deny.Project output). Volume is tiny (~11 rows/s fleet-wide), so it
+// mirrors SaveSyslogMessages' batchInsertWithFallback rather than the pgx-COPY
+// SaveFlowSamples path.
+func (d *Database) SaveDeniedEvents(events []models.DeniedEvent) error {
+	if len(events) == 0 {
+		return nil
+	}
+	return batchInsertWithFallback(d.db, "denied_events", events)
+}
+
 func (d *Database) GetSyslogMessages(limit int) ([]models.SyslogMessage, error) {
 	var messages []models.SyslogMessage
 	err := d.db.Order("timestamp DESC").Limit(limit).Find(&messages).Error

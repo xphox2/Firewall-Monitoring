@@ -682,8 +682,9 @@ const securityEventLinkLookback = 2 * time.Hour
 // can pick a single "winner" when several fire on the same source with equal
 // severity. Higher = more authoritative / higher-confidence.
 var securityDetectorPriority = map[string]int{
-	"threat_intel":   5,
-	"port_scan":      4,
+	"threat_intel":   6,
+	"port_scan":      5,
+	"deny_storm":     4, // blocked burst; port_scan (sees allowed probes too) outranks
 	"data_exfil":     3,
 	"super_spreader": 2,
 	"c2_beacon":      1,
