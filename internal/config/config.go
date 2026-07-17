@@ -58,6 +58,22 @@ type DetectConfig struct {
 	DDoSVolumetricDisabled     bool // !DETECT_DDOS_VOLUMETRIC_ENABLED
 	DDoSPrefixDisabled         bool // !DETECT_DDOS_PREFIX_ENABLED
 	SamplingRateChangeDisabled bool // !DETECT_SAMPLING_RATE_CHANGE_ENABLED
+
+	// Tranche 4 Phase 2 — deny detectors (syslog action="deny" → denied_events).
+	DenyStormExternal         int  // DETECT_DENY_STORM_MIN_DENIES — WAN-src denies/15m (default 300)
+	DenyStormInternal         int  // DETECT_DENY_STORM_MIN_DENIES_INTERNAL — LAN-src (default 100)
+	DenyVictimSources         int  // DETECT_DENY_STORM_VICTIM_MIN_SOURCES — distinct srcs/victim (default 200)
+	DenyVictimCount           int  // DETECT_DENY_STORM_VICTIM_MIN_DENIES — raw denies/victim (default 2000)
+	DeniedThenAllowedMin      int  // DETECT_DENIED_THEN_ALLOWED_MIN — prior denies before an allow (default 2)
+	DenyStormDisabled         bool // !DETECT_DENY_STORM_ENABLED
+	DenyStormVictimDisabled   bool // !DETECT_DENY_STORM_VICTIM_ENABLED
+	DeniedThenAllowedDisabled bool // !DETECT_DENIED_THEN_ALLOWED_ENABLED
+	// DenyPolicyPattern: block-policy-name glob whose action="start" sessions
+	// also count as denials (the accept-log-drop scan convention). Applied at
+	// syslog projection (internal/deny), overridable via the
+	// detect_deny_policy_pattern admin setting. Default matches the common
+	// IP_BLOCK* convention; empty disables.
+	DenyPolicyPattern string // DETECT_DENY_POLICY_PATTERN (default "IP_BLOCK*")
 }
 
 // ThreatFeedConfig controls the optional auto-population of the threat-intel feed
@@ -224,6 +240,11 @@ type RetentionConfig struct {
 	FlowRollupDays    int // flow_rollups     (default 365)
 	FlowDetectionDays int // flow_detections  (default 90)
 	AgentDropsDays    int // flow_agent_drops (default 30)
+	// Tranche 4 Phase 2: denied_events is a high-churn deny projection consumed
+	// by the deny detectors on a 60-min lookback; 2 days covers investigation
+	// without bloat. It is NOT the syslog retention (raw denies stay in
+	// syslog_messages under the syslog knobs).
+	DeniedEventDays int // denied_events   (default 2)
 	// LC-20 (2026-07-04 audit): the five per-poll status tables that had no
 	// retention path at all — every poll cycle (and every collector push)
 	// appended rows forever. vpn_status/ha_status/security_stats/sdwan_health
@@ -446,6 +467,7 @@ func Load() *Config {
 			FlowRollupDays:    getIntEnv("RETENTION_FLOW_ROLLUP_DAYS", 365),
 			FlowDetectionDays: getIntEnv("RETENTION_FLOW_DETECTION_DAYS", 90),
 			AgentDropsDays:    getIntEnv("RETENTION_AGENT_DROPS_DAYS", 30),
+			DeniedEventDays:   getIntEnv("RETENTION_DENIED_EVENT_DAYS", 2),
 			// LC-20 / LC-22 (2026-07-04 audit): see the field docs above.
 			VPNStatusDays:     getIntEnv("RETENTION_VPN_STATUS_DAYS", 0),
 			HAStatusDays:      getIntEnv("RETENTION_HA_STATUS_DAYS", 0),
@@ -473,6 +495,16 @@ func Load() *Config {
 			DDoSVolumetricDisabled:     !getBoolEnv("DETECT_DDOS_VOLUMETRIC_ENABLED", true),
 			DDoSPrefixDisabled:         !getBoolEnv("DETECT_DDOS_PREFIX_ENABLED", true),
 			SamplingRateChangeDisabled: !getBoolEnv("DETECT_SAMPLING_RATE_CHANGE_ENABLED", true),
+
+			DenyStormExternal:         getIntEnv("DETECT_DENY_STORM_MIN_DENIES", 0),
+			DenyStormInternal:         getIntEnv("DETECT_DENY_STORM_MIN_DENIES_INTERNAL", 0),
+			DenyVictimSources:         getIntEnv("DETECT_DENY_STORM_VICTIM_MIN_SOURCES", 0),
+			DenyVictimCount:           getIntEnv("DETECT_DENY_STORM_VICTIM_MIN_DENIES", 0),
+			DeniedThenAllowedMin:      getIntEnv("DETECT_DENIED_THEN_ALLOWED_MIN", 0),
+			DenyStormDisabled:         !getBoolEnv("DETECT_DENY_STORM_ENABLED", true),
+			DenyStormVictimDisabled:   !getBoolEnv("DETECT_DENY_STORM_VICTIM_ENABLED", true),
+			DeniedThenAllowedDisabled: !getBoolEnv("DETECT_DENIED_THEN_ALLOWED_ENABLED", true),
+			DenyPolicyPattern:         getEnv("DETECT_DENY_POLICY_PATTERN", "IP_BLOCK*"),
 		},
 		ThreatFeed: ThreatFeedConfig{
 			Enabled:       getBoolEnv("THREAT_FEEDS_ENABLED", true),

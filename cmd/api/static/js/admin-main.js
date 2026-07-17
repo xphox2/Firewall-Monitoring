@@ -2561,10 +2561,25 @@
                 { key: 'detect_samprate_min_rows', label: 'Sampling-rate guard — min rows per rate', def: '3', step: '1' },
                 { key: 'detect_ddos_volumetric_enabled', label: 'DDoS volumetric — enabled (1/0)', def: '1', step: '1' },
                 { key: 'detect_ddos_prefix_enabled', label: 'DDoS prefix — enabled (1/0)', def: '1', step: '1' },
-                { key: 'detect_sampling_rate_change_enabled', label: 'Sampling-rate guard — enabled (1/0)', def: '1', step: '1' }
+                { key: 'detect_sampling_rate_change_enabled', label: 'Sampling-rate guard — enabled (1/0)', def: '1', step: '1' },
+                // Tranche 4 Phase 2 — deny detectors (FortiGate syslog action="deny").
+                { key: 'detect_deny_storm_min_denies', label: 'Deny storm — external (WAN) denies/15m', def: '300', step: '1' },
+                { key: 'detect_deny_storm_min_denies_internal', label: 'Deny storm — internal (LAN) denies/15m', def: '100', step: '1' },
+                { key: 'detect_deny_storm_victim_min_sources', label: 'Deny storm victim — distinct sources', def: '200', step: '1' },
+                { key: 'detect_deny_storm_victim_min_denies', label: 'Deny storm victim — raw denies (OR)', def: '2000', step: '1' },
+                { key: 'detect_denied_then_allowed_min', label: 'Denied-then-allowed — prior denies', def: '2', step: '1' },
+                { key: 'detect_deny_storm_enabled', label: 'Deny storm — enabled (1/0)', def: '1', step: '1' },
+                { key: 'detect_deny_storm_victim_enabled', label: 'Deny storm victim — enabled (1/0)', def: '1', step: '1' },
+                { key: 'detect_denied_then_allowed_enabled', label: 'Denied-then-allowed — enabled (1/0)', def: '1', step: '1' },
+                { key: 'detect_deny_policy_pattern', label: 'Deny — block-policy name glob (e.g. IP_BLOCK*)', def: 'IP_BLOCK*', type: 'text' }
             ].map(function(s) {
                 var found = settings.find(function(x) { return x.key === s.key; });
                 var savedVal = found ? found.value : '';
+                if (s.type === 'text') {
+                    return '<div class="setting-item"><label>' + s.label + '</label>' +
+                        '<input type="text" name="' + s.key + '" value="' + escapeHtml(savedVal) +
+                        '" placeholder="default ' + s.def + '" maxlength="128"></div>';
+                }
                 return '<div class="setting-item"><label>' + s.label + '</label>' +
                     '<input type="number" name="' + s.key + '" value="' + escapeHtml(savedVal) +
                     '" placeholder="default ' + s.def + '" step="' + s.step + '" min="0"></div>';
@@ -3316,6 +3331,10 @@
         'SFLOW_SECURITY','SFLOW_SECURITY_DIGEST','SFLOW_AGENT_DROPS','SFLOW_CLEARTEXT','SFLOW_UNEXPECTED_EGRESS','SFLOW_SAMPLING_BACKOFF','SFLOW_CAPACITY',
         // Tranche 4 Phase 1: victim-keyed DDoS + sampling-rate guard
         'SFLOW_DDOS_VOLUMETRIC','SFLOW_DDOS_PREFIX','SFLOW_SAMPLING_RATE_CHANGE',
+        // Tranche 4 Phase 2: syslog-sourced deny detectors. deny_storm folds
+        // into SFLOW_SECURITY (not listed here — never emitted independently);
+        // the victim-keyed and policy-gap detectors emit their own type.
+        'SFLOW_DENY_STORM_VICTIM','SFLOW_DENIED_THEN_ALLOWED',
         // Test fire
         'TEST_ALERT'
     ];

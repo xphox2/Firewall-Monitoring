@@ -56,6 +56,11 @@ type Handler struct {
 	// agentDropsMu; bounded by maxTrackedDropAgents.
 	agentDropsMu   sync.Mutex
 	agentDropsLast map[string]uint64
+
+	// denyPatternCached is the TTL-cached block-policy-name glob used by the
+	// syslog-ingest deny projection (Tranche 4 Phase 2), guarded by h.mu.
+	denyPatternCached string
+	denyPatternExpiry time.Time
 }
 
 func NewHandler(cfg *config.Config, authManager *auth.AuthManager, db *database.Database) *Handler {

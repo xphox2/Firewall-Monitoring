@@ -224,6 +224,7 @@ type EventStatsStore interface {
 	// UI-managed settings read-through (v0.11.46 — no new env vars).
 	GetBoolSetting(key string, def bool) bool
 	GetIntSetting(key string, def int) int
+	GetSettingValue(key string) (string, bool)
 	GetNOCSnapshot(window time.Duration) (*NOCSnapshot, error)
 	GetNOCSnapshotFiltered(window time.Duration, filter NOCFilter) (*NOCSnapshot, error)
 	GetDeviceAlertSeverities() (map[uint]string, error)
@@ -261,6 +262,7 @@ type IngestStore interface {
 	SaveSDWANHealth(health []models.SDWANHealth) error
 	SaveSecurityStats(stats []models.SecurityStats) error
 	SaveSyslogMessages(msgs []models.SyslogMessage) error
+	SaveDeniedEvents(events []models.DeniedEvent) error
 	SaveSystemStatuses(statuses []models.SystemStatus) error
 	// SaveTopology*Snapshot REPLACE the device's rows per (device, type/
 	// protocol) scope — state tables, not time-series (see topology.go).

@@ -258,6 +258,7 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	trapDays := ret.Days(ret.TrapDays)
 	pingDays := ret.Days(ret.PingDays)
 	alertDays := ret.Days(ret.AlertDays)
+	denyDays := ret.Days(ret.DeniedEventDays)
 	defaultDays := ret.Days(0)
 
 	entries := []cleanupEntry{
@@ -316,6 +317,11 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		{&models.SecurityStats{}, "security_stats", statusFallback(ret.SecurityStatsDays, statusDays)},
 		{&models.SDWANHealth{}, "sdwan_health", statusFallback(ret.SDWANHealthDays, statusDays)},
 		{&models.LicenseInfo{}, "license_info", ret.Days(ret.LicenseInfoDays)},
+		// Tranche 4 Phase 2: denied_events deny projection — short window (the
+		// deny detectors only look back 60 min). Partitioned, but at a 2-day
+		// retention the monthly partition-drop rarely fires; the batched DELETE
+		// keeps it bounded.
+		{&models.DeniedEvent{}, "denied_events", denyDays},
 	}
 
 	for _, e := range entries {

@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.107] - 2026-07-17
+
+### Added — Tranche 4 Phase 2: deny detectors (FortiGate syslog action="deny")
+
+Three new flow-detection engine detectors that surface blocked-traffic patterns. Phase 0 proved FortiOS never exports denied sessions via NetFlow, so the source is FortiGate syslog `action="deny"` forward/local-in logs — projected at ingest into a new compact, indexed, monthly-partitioned `denied_events` table (migration v47, 2-day retention) so the detectors run bounded GROUP-BY aggregations over clean typed columns instead of regex-parsing the raw syslog text. Counts are EXACT (one logged line = one row; new `logged_events` detector-validity class). Projection reuses the FortiGate key=value parser and the threat-intel matcher, cheap-gating the non-deny syslog stream before any parse so the ingest hot path is untouched.
+
+- **`deny_storm`** (src-keyed security) — one source generating a burst of denials, split by the FortiGate-authoritative `srcintfrole` into external (WAN, default 300/15m) and internal (LAN, default 100/15m) variants. Escalates to critical on a threat-feed source. Folds into the consolidated `SFLOW_SECURITY` alert (it deduplicates with `port_scan` on the same source — one card, `port_scan` labels it since it also sees the allowed probes).
+- **`deny_storm_victim`** (victim-keyed) — one destination pounded from many distinct sources (default ≥200 sources OR ≥2000 denies/15m). Emits its own `SFLOW_DENY_STORM_VICTIM`; the victim address routes Event-Rule suppression.
+- **`denied_then_allowed`** (policy) — a (src,dst,port,proto) tuple denied ≥N times in the last hour and now ALLOWED (allows sourced from `flow_samples`, denies from `denied_events` in one tuple-IN query, no N+1) — a policy change opened a hole an attacker was probing. Emits its own `SFLOW_DENIED_THEN_ALLOWED`; critical on a sensitive dst port (SSH/RDP/SMB/DB). Recall caveat: a FortiGate on sampled NetFlow (`netflow-sample-rate>1`) can miss some allow tuples (false negatives, never wrong findings).
+- **Block-policy pattern** (`detect_deny_policy_pattern`, default `IP_BLOCK*`): FortiGates that log scan-blocking policies as `action="start"` (accept-log-drop convention) also project as denials (glob match, not regexp — no ReDoS). All thresholds and per-detector enable flags are admin-UI settings + env knobs (the established dual pattern).
+- Operator prerequisite for the internal/policy detectors: `set logtraffic all` on forward deny policies + `set fwpolicy-implicit-log enable` (external-scan detection works on local-in denies without it). The `SFLOW_` alert-type prefix is a detect-engine namespace label (drives the 15-min cooldown), not a transport claim.
+
+Server-only (deny logs already arrive via existing syslog ingest — no collector/wire change).
+
 ## [0.11.106] - 2026-07-17
 
 ### Changed — Tranche 4 Phase 0 verified live; Phase 2 denied-traffic source pivots from NetFlow to syslog (docs/roadmap only, no code)

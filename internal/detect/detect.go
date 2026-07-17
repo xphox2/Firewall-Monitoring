@@ -45,6 +45,12 @@ const (
 	// ValidityRateGated: mixed — volume thresholds on all rows; count-rate and
 	// packet-rate thresholds gated per-metric inside the detector.
 	ValidityRateGated ValidityClass = "rate_gated"
+	// ValidityLoggedEvents: one row per firewall-LOGGED event (FortiGate syslog
+	// action="deny", projected into denied_events). Counts are EXACT — no
+	// sampling multiply, no completeness gate. The only caveat is operational:
+	// visibility depends on the device's logtraffic policy (forward denies only
+	// exist once `logtraffic all` is enabled). Tranche 4 Phase 2.
+	ValidityLoggedEvents ValidityClass = "logged_events"
 )
 
 // detectorValidity classifies every Registry() detector. A guardrail test
@@ -64,6 +70,10 @@ var detectorValidity = map[string]ValidityClass{
 	"ddos_volumetric":      ValidityRateGated,
 	"ddos_prefix":          ValidityRateGated,
 	"sampling_rate_change": ValiditySampledOK, // inspects metadata, not traffic
+	// Tranche 4 Phase 2 — syslog-sourced deny detectors (exact logged-event counts).
+	"deny_storm":          ValidityLoggedEvents,
+	"deny_storm_victim":   ValidityLoggedEvents,
+	"denied_then_allowed": ValidityLoggedEvents,
 }
 
 // victimKeyed marks security detectors whose findings are keyed by the VICTIM
@@ -74,8 +84,9 @@ var detectorValidity = map[string]ValidityClass{
 // alert types. Event-rule suppression still applies: the rule-subject
 // source_ip field carries the victim address for these.
 var victimKeyed = map[string]bool{
-	"ddos_volumetric": true,
-	"ddos_prefix":     true,
+	"ddos_volumetric":   true,
+	"ddos_prefix":       true,
+	"deny_storm_victim": true, // subject is the flooded destination
 }
 
 // VictimKeyed reports whether a security detector's findings are victim-keyed.
@@ -144,6 +155,18 @@ type Config struct {
 	DDoSVolumetricDisabled     bool
 	DDoSPrefixDisabled         bool
 	SamplingRateChangeDisabled bool
+
+	// Tranche 4 Phase 2 — deny detectors (over denied_events, the FortiGate
+	// syslog action="deny" projection). Counts are EXACT (one logged line = one
+	// row); thresholds are the per-window floors above the deny baseline noise.
+	DenyStormExternal         int // WAN-src denies/15m from one src (default 300)
+	DenyStormInternal         int // LAN-src denies/15m from one src (default 100)
+	DenyVictimSources         int // distinct srcs onto one victim/15m (default 200)
+	DenyVictimCount           int // raw denies onto one victim/15m OR-threshold (default 2000)
+	DeniedThenAllowedMin      int // prior denies before an allow to flag a policy gap (default 2)
+	DenyStormDisabled         bool
+	DenyStormVictimDisabled   bool
+	DeniedThenAllowedDisabled bool
 }
 
 // withDefaults returns a copy with every unset (<=0) field filled from the
@@ -193,6 +216,21 @@ func (c Config) withDefaults() Config {
 	}
 	if c.SampRateMinRows <= 0 {
 		c.SampRateMinRows = defaultSampRateMinRows
+	}
+	if c.DenyStormExternal <= 0 {
+		c.DenyStormExternal = defaultDenyStormExternal
+	}
+	if c.DenyStormInternal <= 0 {
+		c.DenyStormInternal = defaultDenyStormInternal
+	}
+	if c.DenyVictimSources <= 0 {
+		c.DenyVictimSources = defaultDenyVictimSources
+	}
+	if c.DenyVictimCount <= 0 {
+		c.DenyVictimCount = defaultDenyVictimCount
+	}
+	if c.DeniedThenAllowedMin <= 0 {
+		c.DeniedThenAllowedMin = defaultDeniedThenAllowedMin
 	}
 	return c
 }
@@ -251,6 +289,10 @@ func Registry() []Detector {
 		ddosVolumetricDetector{},
 		ddosPrefixDetector{},
 		samplingRateChangeDetector{},
+		// Tranche 4 Phase 2 (deny.go) — syslog-sourced deny detectors:
+		denyStormDetector{},
+		denyStormVictimDetector{},
+		deniedThenAllowedDetector{},
 	}
 }
 
