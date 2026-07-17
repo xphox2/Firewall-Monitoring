@@ -327,11 +327,11 @@ func (h *Handler) GetConnectionTraffic(c *gin.Context) {
 	if !ok {
 		return
 	}
-	rangeStr := c.DefaultQuery("range", "24")
-	hours := parseTrafficRangeHours(rangeStr)
+	hours := parseTrafficRangeHours(c.DefaultQuery("range", "24"))
 	data, err := db.GetConnectionTraffic(id, hours)
 	if err != nil {
-		log.Printf("GetConnectionTraffic(%d, %s) error: %v", id, rangeStr, err)
+		// Log the parsed hours, not the raw query param (log-injection hygiene).
+		log.Printf("GetConnectionTraffic(%d, %gh) error: %v", id, hours, err)
 		httputil.InternalError(c, "Failed to get traffic data", err)
 		return
 	}
