@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.110] - 2026-07-17
+
+### Fixed — denied_then_allowed candidate-cap starvation + ingest-race hardening
+
+Follow-up to 0.11.109, from its adversarial review. The detector selected its 50 candidate tuples from `flow_samples` (sensitive-port-first, tie-break `dst_port` ASC — so Telnet 23 outranked RDP 3389) **before** deny history or the allow-evidence gate were known. A Telnet spray with >50 distinct gated scanner tuples consumed every slot and a genuine quiet-gap tuple was never even considered — permanently undetected while the spray lasted (pre-existing since the detector shipped; the 0.11.109 gate merely made the wasted slots visible).
+
+- The two-query candidate shape (flow candidates → deny IN-list probe → Go-side gate) is now **one SQL join**: per-tuple flow aggregates × per-tuple deny aggregates, with the evidence gate (`verdicted = 1 OR last_allow > last_deny + quiet margin`) evaluated in the WHERE over **all** tuples. `LIMIT 50` now caps *emitted findings* — an alert-volume guard on already-gated true positives that cannot starve anything — ordered sensitive-port-first, then most-denied-first. Net code shrink (the map join, tuple IN-list, and two result structs collapse into one query + one struct).
+- **Ingest-race hardening** (`denyAllowIngestGrace`, 60s): a denied packet reaches the DB twice — flow row (NetFlow) and deny row (syslog projection) — seconds apart on different pipes. If a scanner pauses past the 10-min quiet margin and resumes, its first flow row can land before its paired deny row; a detector cycle in that gap saw a "quiet" tuple with fresh traffic (observed transiently on prod during read-only verification). Flow rows younger than 60s no longer count as evidence, so the paired deny always arrives first and resets the quiet clock; a real policy gap fires at most a minute later.
+- Alerts now carry `Details["evidence"]` (`"verdict"` or `"quiet_gap"`) so operators can see why a finding fired. `sensitivePortFirstExpr` refactored to `sensitivePortCase(col)` for qualified column references inside the join.
+
+New regression tests: the spray-starvation scenario (60 gated Telnet tuples must not crowd out a genuine RDP gap — fails pre-fix), the 50-findings cap ordering (non-sensitive tuple loses the race), and the ingest-grace boundary (fresh flow not yet evidence; same tuple fires once the flow ages past the grace). The SQL gate remains mutation-pinned by the 0.11.109 tests.
+
 ## [0.11.109] - 2026-07-17
 
 ### Fixed — denied_then_allowed false-positive CRITICALs (verdict-less NetFlow read as "allows")
