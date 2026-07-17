@@ -1909,39 +1909,42 @@ func (d *Database) migrateConnectionPortFields() error {
 	return nil
 }
 
-// migrateDeniedEventsTable (v47) creates the denied_events projection table
-// (Tranche 4 Phase 2 deny detectors) and — on Postgres — converts it to a
-// monthly RANGE-partitioned parent. Registering denied_events in
-// partitionTables/partitionModels is NOT enough on an existing prod DB: the v2
-// migration that runs convertEmptyTableToPartitioned has already been recorded
-// there and is skipped, so this migration must replicate that conversion for
-// the one new table. The convert is empty-table-only and idempotent (probes
-// pg_partitioned_table first), and RunMigrations runs before EnsurePartitions at
-// boot, so the monthly child partitions are created the same startup.
+// migrateDeniedEventsTable (v47) ensures the denied_events projection table
+// (Tranche 4 Phase 2 deny detectors) exists and — on Postgres — is a monthly
+// RANGE-partitioned parent.
+//
+// Two install paths, distinguished by whether the table already exists:
+//   - FRESH install: v1 baseline created denied_events (it's in the baseline
+//     model list) and v2 (migratePartitionHighVolume) already converted it to
+//     a partitioned parent (it's in partitionTables). By the time v47 runs the
+//     table exists and is partitioned — so v47 must NOT AutoMigrate it again
+//     (GORM would try to alter `timestamp`, which is now in the composite PK,
+//     and Postgres rejects that: SQLSTATE 42P16). v47 no-ops.
+//   - EXISTING prod: v1/v2 ran long ago WITHOUT denied_events, so the table
+//     does not exist yet. v47 creates it empty and converts it, replicating
+//     what v2 does for a fresh install. RunMigrations runs before
+//     EnsurePartitions at boot, so the monthly child partitions get created the
+//     same startup.
 func (d *Database) migrateDeniedEventsTable() error {
+	if !d.dialect.IsPostgres() {
+		// SQLite test backend: a plain table (partitioning is a Postgres-only
+		// concept). Safe to AutoMigrate every run.
+		return d.db.AutoMigrate(&models.DeniedEvent{})
+	}
+	var exists bool
+	if err := d.db.Raw(`SELECT to_regclass('denied_events') IS NOT NULL`).Scan(&exists).Error; err != nil {
+		return fmt.Errorf("migrate v47 table-exists probe: %w", err)
+	}
+	if exists {
+		// Fresh install: v1 + v2 already built and partitioned it. Re-running
+		// AutoMigrate on the partitioned table would fail on the PK'd timestamp
+		// column, so leave it alone.
+		return nil
+	}
+	// Existing prod: create the empty table, then convert to partitioned so it
+	// matches a fresh install. Newly created ⇒ provably empty.
 	if err := d.db.AutoMigrate(&models.DeniedEvent{}); err != nil {
 		return fmt.Errorf("migrate v47 denied_events AutoMigrate: %w", err)
-	}
-	if !d.dialect.IsPostgres() {
-		return nil // SQLite test backend: plain table is fine
-	}
-	var isPartitioned bool
-	if err := d.db.Raw(`SELECT EXISTS (
-		SELECT 1 FROM pg_partitioned_table pt
-		JOIN pg_class c ON c.oid = pt.partrelid WHERE c.relname = ?)`,
-		"denied_events").Scan(&isPartitioned).Error; err != nil {
-		return fmt.Errorf("migrate v47 partition probe: %w", err)
-	}
-	if isPartitioned {
-		return nil // fresh install: v1 baseline + v2 already partitioned it
-	}
-	var hasRows bool
-	if err := d.db.Raw("SELECT EXISTS(SELECT 1 FROM denied_events LIMIT 1)").Scan(&hasRows).Error; err != nil {
-		return fmt.Errorf("migrate v47 row probe: %w", err)
-	}
-	if hasRows {
-		log.Printf("WARNING: migrate v47: denied_events has rows; NOT auto-partitioning. Convert in a maintenance window; until then cleanup uses batched DELETE.")
-		return nil
 	}
 	if err := d.convertEmptyTableToPartitioned("denied_events", "timestamp"); err != nil {
 		return fmt.Errorf("migrate v47 convert denied_events to partitioned: %w", err)
