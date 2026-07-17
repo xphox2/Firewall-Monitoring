@@ -271,3 +271,116 @@ func TestDeniedThenAllowed_QuietMarginBoundary(t *testing.T) {
 		t.Errorf("fired tuple src = %q, want 198.51.100.9 (the one whose denies stopped)", got[0].SrcAddr)
 	}
 }
+
+// TestDeniedThenAllowed_SprayCannotStarveGenuineGap pins the candidate-cap
+// starvation fix: gated scanner noise must not crowd a genuine gap out of the
+// detector. Pre-fix, candidates were the top-50 tuples by sensitive-port
+// ordering (tie-break dst_port ASC, so Telnet 23 outranked RDP 3389) chosen
+// BEFORE deny history or the evidence gate were known — 60 gated Telnet
+// tuples filled every slot and the real RDP gap was never even considered.
+// The gate now runs in SQL over ALL tuples and the LIMIT caps emitted
+// findings instead.
+func TestDeniedThenAllowed_SprayCannotStarveGenuineGap(t *testing.T) {
+	db := database.NewDatabaseForTesting(t)
+	now := time.Now()
+	// 60 distinct gated Telnet scanner tuples: denies still active (newest
+	// ~now), verdict-less flows co-occurring — none may fire, but pre-fix they
+	// consumed the whole candidate window.
+	for i := 0; i < 60; i++ {
+		src := fmt.Sprintf("203.0.113.%d", i+1)
+		for _, ago := range []time.Duration{20 * time.Minute, time.Minute} {
+			seedDeny(t, db, models.DeniedEvent{DeviceID: 1, SrcAddr: src, DstAddr: "66.179.9.152",
+				DstPort: 23, Protocol: 6, SrcIntfRole: models.IntfRoleWAN, Timestamp: now.Add(-ago)})
+		}
+		seedFlow(t, db, models.FlowSample{DeviceID: 1, SrcAddr: src, DstAddr: "66.179.9.152",
+			DstPort: 23, Protocol: 6, FirewallEvent: 0, Timestamp: now.Add(-90 * time.Second)})
+	}
+	// One genuine quiet-gap RDP tuple: denies stopped 25m ago, traffic still
+	// flowing 1m ago.
+	for i := 0; i < 2; i++ {
+		seedDeny(t, db, models.DeniedEvent{DeviceID: 1, SrcAddr: "198.51.100.10", DstAddr: "10.0.0.50",
+			DstPort: 3389, Protocol: 6, SrcIntfRole: models.IntfRoleWAN,
+			Timestamp: now.Add(-25 * time.Minute).Add(-time.Duration(i) * time.Second)})
+	}
+	seedFlow(t, db, models.FlowSample{DeviceID: 1, SrcAddr: "198.51.100.10", DstAddr: "10.0.0.50",
+		DstPort: 3389, Protocol: 6, FirewallEvent: 0, Timestamp: now.Add(-time.Minute)})
+
+	got, err := deniedThenAllowedDetector{}.Detect(denyWindow(db, denyTestConfig(), now))
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want exactly 1 detection (the RDP gap; spray is gated), got %d: %+v", len(got), got)
+	}
+	if got[0].SrcAddr != "198.51.100.10" || got[0].DstPort != 3389 {
+		t.Errorf("fired tuple = %s:%d, want 198.51.100.10 dst_port 3389", got[0].SrcAddr, got[0].DstPort)
+	}
+}
+
+// TestDeniedThenAllowed_FindingsCapAndOrdering: with more than 50 genuinely
+// gated findings, the 50-cap keeps sensitive-port tuples ahead of
+// non-sensitive ones.
+func TestDeniedThenAllowed_FindingsCapAndOrdering(t *testing.T) {
+	db := database.NewDatabaseForTesting(t)
+	now := time.Now()
+	seedGap := func(src string, port uint16) {
+		for i := 0; i < 2; i++ {
+			seedDeny(t, db, models.DeniedEvent{DeviceID: 1, SrcAddr: src, DstAddr: "10.0.0.60",
+				DstPort: port, Protocol: 6, SrcIntfRole: models.IntfRoleWAN,
+				Timestamp: now.Add(-25 * time.Minute).Add(-time.Duration(i) * time.Second)})
+		}
+		seedFlow(t, db, models.FlowSample{DeviceID: 1, SrcAddr: src, DstAddr: "10.0.0.60",
+			DstPort: port, Protocol: 6, FirewallEvent: 0, Timestamp: now.Add(-time.Minute)})
+	}
+	for i := 0; i < 51; i++ { // 51 sensitive (SMB) quiet gaps
+		seedGap(fmt.Sprintf("198.51.101.%d", i+1), 445)
+	}
+	seedGap("198.51.102.1", 8080) // 1 non-sensitive quiet gap — must lose the cap race
+
+	got, err := deniedThenAllowedDetector{}.Detect(denyWindow(db, denyTestConfig(), now))
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if len(got) != 50 {
+		t.Fatalf("want 50 findings (cap), got %d", len(got))
+	}
+	for _, g := range got {
+		if g.DstPort == 8080 {
+			t.Errorf("non-sensitive tuple made the cap ahead of sensitive ones: %+v", g)
+		}
+	}
+}
+
+// TestDeniedThenAllowed_IngestGraceExcludesFreshFlows pins denyAllowIngestGrace:
+// a flow row younger than the grace window is not yet allow-evidence (its
+// paired syslog deny may still be in flight — the resume-after-pause race),
+// while the same tuple fires once its flow evidence is older than the grace.
+func TestDeniedThenAllowed_IngestGraceExcludesFreshFlows(t *testing.T) {
+	db := database.NewDatabaseForTesting(t)
+	now := time.Now()
+	// Window ending exactly at now so the grace trim is observable.
+	w := Window{Start: now.Add(-15 * time.Minute), End: now, DB: db.Gorm(), Config: denyTestConfig()}
+
+	seed := func(src string, flowAgo time.Duration) {
+		for i := 0; i < 2; i++ {
+			seedDeny(t, db, models.DeniedEvent{DeviceID: 1, SrcAddr: src, DstAddr: "10.0.0.70",
+				DstPort: 445, Protocol: 6, SrcIntfRole: models.IntfRoleWAN,
+				Timestamp: now.Add(-15 * time.Minute).Add(-time.Duration(i) * time.Second)})
+		}
+		seedFlow(t, db, models.FlowSample{DeviceID: 1, SrcAddr: src, DstAddr: "10.0.0.70",
+			DstPort: 445, Protocol: 6, FirewallEvent: 0, Timestamp: now.Add(-flowAgo)})
+	}
+	seed("198.51.103.1", 10*time.Second) // flow inside the grace window -> not evidence yet
+	seed("198.51.103.2", 2*time.Minute)  // flow past the grace, denies quiet 13m -> fires
+
+	got, err := deniedThenAllowedDetector{}.Detect(w)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want exactly 1 detection (grace must exclude the fresh flow), got %d: %+v", len(got), got)
+	}
+	if got[0].SrcAddr != "198.51.103.2" {
+		t.Errorf("fired tuple src = %q, want 198.51.103.2", got[0].SrcAddr)
+	}
+}

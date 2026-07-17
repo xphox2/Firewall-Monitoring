@@ -44,6 +44,16 @@ const (
 // findings by more than one or two detector cycles.
 const denyAllowQuietMargin = 10 * time.Minute
 
+// denyAllowIngestGrace excludes the freshest flow rows from allow-evidence.
+// A denied packet reaches the DB twice — flow row (NetFlow) and deny row
+// (syslog projection) — on different pipes, seconds apart. If a scanner pauses
+// past the quiet margin and resumes, its first flow row can land before its
+// paired deny row; a detector cycle in that gap would see a "quiet" tuple with
+// fresh traffic and fire once (observed transiently on prod). Requiring flow
+// evidence to be at least this old lets the paired deny (if any) arrive and
+// reset the quiet clock; a real policy gap just fires up to a minute later.
+const denyAllowIngestGrace = time.Minute
+
 // denyThreatBad reports whether a deny threat bitfield marks the SOURCE as
 // known-bad. Only bits 0/1 are ever set for denies (syslog carries no ASN), so
 // bit 0 (src IP) is the source signal; there is no ASN escalation.
@@ -219,7 +229,7 @@ func (d denyStormVictimDetector) Detect(w Window) ([]Detection, error) {
 // folded into the source-consolidated SFLOW_SECURITY card — the subject is the
 // exposed path).
 //
-// Recall caveat: if a FortiGate runs NetFlow netflow-sample-rate>1, the step-1
+// Recall caveat: if a FortiGate runs NetFlow netflow-sample-rate>1, the
 // allow tuples in flow_samples are sampled → some real allows are missed (false
 // negatives), never wrong findings.
 type deniedThenAllowedDetector struct{}
@@ -232,85 +242,71 @@ func (d deniedThenAllowedDetector) Detect(w Window) ([]Detection, error) {
 	if cfg.DeniedThenAllowedDisabled {
 		return nil, nil
 	}
-	// Step 1: candidate ALLOW tuples seen this window (forwarded flows only),
-	// with the evidence columns the gate below needs: the tuple's newest flow
-	// timestamp and whether any row carried a positive session-lifecycle
-	// verdict (IE 233 Created/Deleted/Update).
-	type allowRow struct {
-		SrcAddr   string
-		DstAddr   string
-		DstPort   uint16
-		Protocol  uint8
-		DeviceID  uint
-		LastAllow int64 // epoch seconds (see epochSecondExpr)
-		Verdicted int
-	}
-	var allows []allowRow
-	verdictedExpr := fmt.Sprintf("MAX(CASE WHEN firewall_event IN (%d,%d,%d) THEN 1 ELSE 0 END) as verdicted",
-		models.FirewallEventCreated, models.FirewallEventDeleted, models.FirewallEventUpdate)
-	if err := forwardedOnly(w.DB.Model(&models.FlowSample{})).
-		Where("timestamp >= ? AND timestamp < ?", w.Start, w.End).
-		Select("src_addr, dst_addr, dst_port, protocol, MAX(device_id) as device_id, " +
-			"MAX(" + epochSecondExpr(w.DB) + ") as last_allow, " + verdictedExpr).
-		Group("src_addr, dst_addr, dst_port, protocol").
-		// Surface sensitive-port allows first so a real policy gap to SSH/RDP/SMB/
-		// DB isn't the tuple that gets dropped when a busy window has >50 distinct
-		// allowed tuples (bounded scan; the cap is a cost guard, not a filter).
-		Order(sensitivePortFirstExpr + ", dst_port").Limit(50).Scan(&allows).Error; err != nil {
-		return nil, err
-	}
-	if len(allows) == 0 {
-		return nil, nil
-	}
-	// Step 2: single query — which of those tuples were DENIED in the 60m
-	// lookback, at least DeniedThenAllowedMin times? (No per-tuple N+1.)
-	type key struct {
-		src, dst string
-		port     uint16
-		proto    uint8
-	}
-	tuples := make([]key, 0, len(allows))
-	seen := make(map[key]allowRow, len(allows))
-	for _, a := range allows {
-		k := key{a.SrcAddr, a.DstAddr, a.DstPort, a.Protocol}
-		if _, ok := seen[k]; !ok {
-			seen[k] = a
-			tuples = append(tuples, k)
-		}
-	}
-	// Build the IN-list of composite tuples. gorm supports a slice of value
-	// slices for a tuple IN on Postgres AND SQLite.
-	inVals := make([][]any, 0, len(tuples))
-	for _, t := range tuples {
-		inVals = append(inVals, []any{t.src, t.dst, t.port, t.proto})
-	}
-	type denyRow struct {
+	// One query: join the per-tuple flow aggregates (allow-evidence side)
+	// with the per-tuple deny aggregates and apply the evidence gate in SQL,
+	// so it is evaluated over ALL tuples. The LIMIT then caps EMITTED
+	// findings — an alert-volume guard on already-gated true positives —
+	// ordered sensitive-port-first, then most-denied-first. The pre-fix shape
+	// capped CANDIDATES before deny history or the gate were known, so >50
+	// gated scanner tuples (a Telnet spray; tie-break dst_port ASC even put
+	// port 23 ahead of 3389) starved genuine sensitive-port gaps out of the
+	// detector entirely.
+	epoch := epochSecondExpr(w.DB)
+	type gapRow struct {
 		SrcAddr     string
 		DstAddr     string
 		DstPort     uint16
 		Protocol    uint8
+		DeviceID    uint
+		Verdicted   int
 		PriorDenies int64
 		Threat      int
-		LastDeny    int64 // epoch seconds (see epochSecondExpr)
 	}
-	var denies []denyRow
-	if err := w.DB.Model(&models.DeniedEvent{}).
-		Where("timestamp >= ? AND timestamp < ?", w.Lookback(60*time.Minute), w.End).
-		Where("(src_addr, dst_addr, dst_port, protocol) IN ?", inVals).
-		Select("src_addr, dst_addr, dst_port, protocol, COUNT(*) as prior_denies, "+
-			"MAX(threat_flag) as threat, MAX("+epochSecondExpr(w.DB)+") as last_deny").
-		Group("src_addr, dst_addr, dst_port, protocol").
-		Having("COUNT(*) >= ?", cfg.DeniedThenAllowedMin).Scan(&denies).Error; err != nil {
+	query := fmt.Sprintf(`
+		SELECT a.src_addr, a.dst_addr, a.dst_port, a.protocol,
+		       a.device_id, a.verdicted, d.prior_denies, d.threat
+		FROM (
+			SELECT src_addr, dst_addr, dst_port, protocol,
+			       MAX(device_id) AS device_id,
+			       MAX(%s) AS last_allow,
+			       MAX(CASE WHEN firewall_event IN (%d,%d,%d) THEN 1 ELSE 0 END) AS verdicted
+			FROM flow_samples
+			WHERE timestamp >= ? AND timestamp < ? AND firewall_event <> %d
+			GROUP BY src_addr, dst_addr, dst_port, protocol
+		) a
+		JOIN (
+			SELECT src_addr, dst_addr, dst_port, protocol,
+			       COUNT(*) AS prior_denies, MAX(threat_flag) AS threat,
+			       MAX(%s) AS last_deny
+			FROM denied_events
+			WHERE timestamp >= ? AND timestamp < ?
+			GROUP BY src_addr, dst_addr, dst_port, protocol
+			HAVING COUNT(*) >= ?
+		) d ON d.src_addr = a.src_addr AND d.dst_addr = a.dst_addr
+		   AND d.dst_port = a.dst_port AND d.protocol = a.protocol
+		WHERE a.verdicted = 1 OR a.last_allow > d.last_deny + ?
+		ORDER BY %s, a.verdicted DESC, d.prior_denies DESC
+		LIMIT 50`,
+		epoch,
+		models.FirewallEventCreated, models.FirewallEventDeleted, models.FirewallEventUpdate,
+		models.FirewallEventDenied,
+		epoch,
+		sensitivePortCase("a.dst_port"))
+	var rows []gapRow
+	// Flow evidence stops denyAllowIngestGrace before the window edge (see the
+	// const); the deny lookback runs to the true edge so a freshly projected
+	// deny always outranks the flow row it was paired with.
+	if err := w.DB.Raw(query,
+		w.Start, w.End.Add(-denyAllowIngestGrace),
+		w.Lookback(60*time.Minute), w.End, cfg.DeniedThenAllowedMin,
+		int64(denyAllowQuietMargin/time.Second)).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
-	out := make([]Detection, 0, len(denies))
-	for _, r := range denies {
-		a := seen[key{r.SrcAddr, r.DstAddr, r.DstPort, r.Protocol}]
-		// Allow-evidence gate (see the detector comment): a positive IE 233
-		// verdict fires immediately; verdict-less flows only count once the
-		// tuple's denies have been quiet for denyAllowQuietMargin.
-		if a.Verdicted == 0 && a.LastAllow <= r.LastDeny+int64(denyAllowQuietMargin/time.Second) {
-			continue
+	out := make([]Detection, 0, len(rows))
+	for _, r := range rows {
+		evidence := "quiet_gap"
+		if r.Verdicted == 1 {
+			evidence = "verdict"
 		}
 		sensitive := portLabels[r.DstPort] != ""
 		sev := "warning"
@@ -323,7 +319,7 @@ func (d deniedThenAllowedDetector) Detect(w Window) ([]Detection, error) {
 		}
 		out = append(out, Detection{
 			Detector: d.Name(), Category: d.Category(), Severity: sev,
-			DeviceID: a.DeviceID, SrcAddr: r.SrcAddr, DstAddr: r.DstAddr,
+			DeviceID: r.DeviceID, SrcAddr: r.SrcAddr, DstAddr: r.DstAddr,
 			DstPort: r.DstPort, Protocol: r.Protocol, Score: float64(r.PriorDenies),
 			Message: fmt.Sprintf("Policy gap: %s→%s:%d%s was blocked %d× in the last hour, now ALLOWED — verify the rule change was intentional",
 				r.SrcAddr, r.DstAddr, r.DstPort, label, r.PriorDenies),
@@ -331,26 +327,27 @@ func (d deniedThenAllowedDetector) Detect(w Window) ([]Detection, error) {
 			Details: map[string]any{
 				"prior_denies": r.PriorDenies, "dst_port": r.DstPort,
 				"protocol": r.Protocol, "sensitive_port": sensitive,
+				"evidence": evidence,
 			},
 		})
 	}
 	return out, nil
 }
 
-// sensitivePortFirstExpr orders sensitive destination ports (the portLabels set
-// — SSH/Telnet/SMB/RDP/DB) ahead of everything else, so denied_then_allowed's
-// bounded candidate scan keeps the highest-risk allows when it caps at 50.
-var sensitivePortFirstExpr = func() string {
-	// Build "CASE WHEN dst_port IN (22,23,...) THEN 0 ELSE 1 END" from portLabels
-	// so it stays in sync with the sensitivity set the detector escalates on.
+// sensitivePortCase builds "CASE WHEN <col> IN (22,23,...) THEN 0 ELSE 1 END"
+// from portLabels, so ORDER BY puts sensitive destination ports (Telnet/SMB/
+// RDP/DB — the set the detector escalates on) ahead of everything else when
+// denied_then_allowed caps emitted findings at 50. Takes the column reference
+// so callers can qualify it inside a join.
+func sensitivePortCase(col string) string {
 	ports := make([]string, 0, len(portLabels))
 	for p := range portLabels {
 		ports = append(ports, fmt.Sprintf("%d", p))
 	}
 	// Deterministic order for a stable SQL string (map iteration is random).
 	sort.Strings(ports)
-	return "CASE WHEN dst_port IN (" + strings.Join(ports, ",") + ") THEN 0 ELSE 1 END"
-}()
+	return "CASE WHEN " + col + " IN (" + strings.Join(ports, ",") + ") THEN 0 ELSE 1 END"
+}
 
 func denySubtypeLabel(s uint8) string {
 	switch s {
