@@ -1,6 +1,12 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.106] - 2026-07-17
+
+### Changed — Tranche 4 Phase 0 verified live; Phase 2 denied-traffic source pivots from NetFlow to syslog (docs/roadmap only, no code)
+
+Live Phase 0 verification on prod: NetFlow v9 ingest confirmed end-to-end from the first FortiGate (26k+ records/15min, prefer-netflow dedup engaged). Verification also **disproved a roadmap premise**: FortiOS does not export blocked sessions via NetFlow — block sessions carry the `netflow-origin` flag in the session table (`ses-denied-traffic`), but the exporter never emits records for them (proven by a flat collector sequence-gap counter across a controlled denied-traffic window, with clean template counters, while allowed flows from the same host/interface exported in seconds). `firewall_event=3` denied rows are therefore ASA NSEL / Palo Alto territory only. The Phase 2 deny-detector class (`deny_storm`, `deny_storm_victim`, `denied_then_allowed`) pivots to FortiGate syslog `action=deny` forward logs as its input — prod already ingests 40k+ such messages per 2 hours with full tuples including WAN-inbound scan denies, which additionally removes the WAN NetFlow-sampler prerequisite for external deny detection. `tasks/todo.md` updated; Phase 2 requires a redesign session before implementation.
+
 ## [0.11.105] - 2026-07-16
 
 ### Fixed — spool-replay skew: last_polled now advances by row timestamps, per device (PR #117 follow-up)
