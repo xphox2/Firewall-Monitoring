@@ -50,6 +50,17 @@ func epochMinuteExpr(db *gorm.DB) string {
 	return "CAST(FLOOR(EXTRACT(EPOCH FROM timestamp) / 60) AS BIGINT)"
 }
 
+// epochSecondExpr is epochMinuteExpr's whole-second sibling. Aggregates over
+// it (MAX(...)) scan portably into int64 — scanning MAX(timestamp) directly
+// into time.Time breaks on the SQLite test backend, where an aggregate loses
+// the column's declared type and comes back as raw TEXT.
+func epochSecondExpr(db *gorm.DB) string {
+	if db.Dialector.Name() == "sqlite" {
+		return "CAST(strftime('%s', timestamp) AS INTEGER)"
+	}
+	return "CAST(FLOOR(EXTRACT(EPOCH FROM timestamp)) AS BIGINT)"
+}
+
 // portLabels names the ports the policy detectors care about, for readable
 // messages without pulling in a full service registry.
 var portLabels = map[uint16]string{

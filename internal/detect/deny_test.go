@@ -189,3 +189,85 @@ func TestDeniedThenAllowed_NoDenyHistory(t *testing.T) {
 		t.Fatalf("want 0 detections (deny history below min), got %+v", got)
 	}
 }
+
+// TestDeniedThenAllowed_ConcurrentDenies_NoFire pins the v0.11.107 prod
+// false-positive flood: FortiOS exports NetFlow records for DENIED traffic
+// with firewall_event=0, so verdict-less flow rows co-occur with the syslog
+// denies for the same scanner tuple. With denies still arriving inside the
+// quiet margin, no amount of verdict-less flow rows may fire the detector.
+// (This scenario produced "blocked 193x, now ALLOWED" CRITICALs pre-fix.)
+func TestDeniedThenAllowed_ConcurrentDenies_NoFire(t *testing.T) {
+	db := database.NewDatabaseForTesting(t)
+	now := time.Now()
+	// Denies spanning the lookback, the newest 1m ago (well inside the margin).
+	for _, ago := range []time.Duration{50 * time.Minute, 30 * time.Minute, 10 * time.Minute, time.Minute} {
+		seedDeny(t, db, models.DeniedEvent{DeviceID: 1, SrcAddr: "80.251.153.178", DstAddr: "66.179.9.152",
+			DstPort: 23, Protocol: 6, SrcIntfRole: models.IntfRoleWAN, Timestamp: now.Add(-ago)})
+	}
+	// The same denied traffic seen through the flow pipe: verdict-less rows
+	// throughout the window, newest also ~now.
+	for _, ago := range []time.Duration{12 * time.Minute, 6 * time.Minute, 30 * time.Second} {
+		seedFlow(t, db, models.FlowSample{DeviceID: 1, SrcAddr: "80.251.153.178", DstAddr: "66.179.9.152",
+			DstPort: 23, Protocol: 6, FirewallEvent: 0, Timestamp: now.Add(-ago)})
+	}
+	got, err := deniedThenAllowedDetector{}.Detect(denyWindow(db, denyTestConfig(), now))
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("want 0 detections (denies still active, flows verdict-less), got %+v", got)
+	}
+}
+
+// TestDeniedThenAllowed_PositiveVerdict_FiresDespiteActiveDenies: an exporter
+// that explicitly reports a session lifecycle event (IE 233 Created/Deleted/
+// Update) is real allow-evidence and fires immediately, even while denies for
+// the tuple are still arriving on another path.
+func TestDeniedThenAllowed_PositiveVerdict_FiresDespiteActiveDenies(t *testing.T) {
+	db := database.NewDatabaseForTesting(t)
+	now := time.Now()
+	for _, ago := range []time.Duration{20 * time.Minute, time.Minute} {
+		seedDeny(t, db, models.DeniedEvent{DeviceID: 1, SrcAddr: "198.51.100.7", DstAddr: "10.0.0.30",
+			DstPort: 3389, Protocol: 6, SrcIntfRole: models.IntfRoleWAN, Timestamp: now.Add(-ago)})
+	}
+	seedFlow(t, db, models.FlowSample{DeviceID: 1, SrcAddr: "198.51.100.7", DstAddr: "10.0.0.30",
+		DstPort: 3389, Protocol: 6, FirewallEvent: models.FirewallEventDeleted, Timestamp: now.Add(-30 * time.Second)})
+	got, err := deniedThenAllowedDetector{}.Detect(denyWindow(db, denyTestConfig(), now))
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 detection (positive verdict overrides quiet margin), got %+v", got)
+	}
+	if got[0].Severity != "critical" { // 3389 is sensitive
+		t.Errorf("want critical (RDP), got %q", got[0].Severity)
+	}
+}
+
+// TestDeniedThenAllowed_QuietMarginBoundary: verdict-less flow evidence counts
+// only once the tuple's denies have been quiet for denyAllowQuietMargin.
+func TestDeniedThenAllowed_QuietMarginBoundary(t *testing.T) {
+	db := database.NewDatabaseForTesting(t)
+	now := time.Now()
+	seed := func(src string, denyAgo time.Duration) {
+		for i := 0; i < 2; i++ { // min 2 denies
+			seedDeny(t, db, models.DeniedEvent{DeviceID: 1, SrcAddr: src, DstAddr: "10.0.0.40",
+				DstPort: 445, Protocol: 6, SrcIntfRole: models.IntfRoleWAN,
+				Timestamp: now.Add(-denyAgo).Add(-time.Duration(i) * time.Second)})
+		}
+		seedFlow(t, db, models.FlowSample{DeviceID: 1, SrcAddr: src, DstAddr: "10.0.0.40",
+			DstPort: 445, Protocol: 6, FirewallEvent: 0, Timestamp: now.Add(-time.Minute)})
+	}
+	seed("198.51.100.8", 5*time.Minute)  // denies quiet only 4m before the flow -> inside margin, no fire
+	seed("198.51.100.9", 25*time.Minute) // denies quiet 24m before the flow -> fires
+	got, err := deniedThenAllowedDetector{}.Detect(denyWindow(db, denyTestConfig(), now))
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want exactly 1 detection (only the quiet tuple), got %+v", got)
+	}
+	if got[0].SrcAddr != "198.51.100.9" {
+		t.Errorf("fired tuple src = %q, want 198.51.100.9 (the one whose denies stopped)", got[0].SrcAddr)
+	}
+}

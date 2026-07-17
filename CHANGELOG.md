@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.109] - 2026-07-17
+
+### Fixed — denied_then_allowed false-positive CRITICALs (verdict-less NetFlow read as "allows")
+
+Deployed 0.11.107 fired a burst of bogus `SFLOW_DENIED_THEN_ALLOWED` CRITICALs — Telnet scanner tuples reported as "blocked N×, now ALLOWED" while the denies were still arriving. Root cause, proven on live data: FortiOS exports NetFlow v9 records for **denied** traffic without the IE 233 marker (`firewall_event=0` — no verdict, sharpening the Phase 0 finding that FortiOS never *identifiably* exports denied sessions), and the detector treated any `firewall_event <> denied` flow row as allow-evidence — so it saw the same denied scans through both the syslog and flow pipes and called the flow-side copy an allow. One alerted tuple had 4,740 verdict-less flow rows and 239 syslog denies in the same hour.
+
+The detector now requires real allow-evidence per tuple, either:
+- **positive verdict** — ≥1 flow row with `firewall_event` Created/Deleted/Update (exporters that send IE 233: PAN, ASA NSEL); fires immediately, even alongside active denies; or
+- **temporal quiet gate** — the tuple's newest forwarded flow is >10 minutes after its newest deny: denials stopped, traffic still flows. Scanner noise can never satisfy this (when the scanner quits, both streams stop together), while a real policy change fires within a cycle or two.
+
+Same single-query shape (no N+1): the allow/deny aggregations gained `MAX(timestamp)` (as portable epoch seconds — new `epochSecondExpr`, sibling of `epochMinuteExpr`) and an IE-233 verdict flag. No new operator knobs; `detect_denied_then_allowed_min`/`_enabled` unchanged. Regression tests pin the concurrent-denies scenario (verified to fail pre-fix), the positive-verdict path, and the quiet-margin boundary.
+
 ## [0.11.108] - 2026-07-17
 
 ### Fixed — connection-detail traffic chart: climbing values, duplicate-stream inflation, dead range selector
