@@ -46,7 +46,7 @@ func TestGetConnectionTraffic_VPNSingleEndpoint(t *testing.T) {
 	seedTun(1, []uint64{100, 200, 300, 400}) // source: per-bucket deltas 100+100+100 = 300
 	seedTun(2, []uint64{100, 200, 300, 400}) // dest: identical — must NOT be added
 
-	rows, err := d.GetConnectionTraffic(conn.ID, "24h")
+	rows, err := d.GetConnectionTraffic(conn.ID, 24)
 	if err != nil {
 		t.Fatalf("GetConnectionTraffic: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestGetConnectionTraffic_DirectDropsOverlappingParent(t *testing.T) {
 		t.Fatalf("cfg: %v", err)
 	}
 
-	rows, err := d.GetConnectionTraffic(conn.ID, "24h")
+	rows, err := d.GetConnectionTraffic(conn.ID, 24)
 	if err != nil {
 		t.Fatalf("GetConnectionTraffic: %v", err)
 	}

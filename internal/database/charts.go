@@ -399,6 +399,14 @@ func (d *Database) GetVPNChartData(deviceID uint, tunnelName string, rangeStr st
 // (prod) and the modernc SQLite test backend — no dialect gating needed.
 // `vpnchart_window_audit043_test.go` exercises this path on SQLite and pins the
 // delta + reset-clamp math.
+//
+// Rows with BOTH byte counters zero are excluded from the window: vpn_status
+// has a second writer — the collector's SSH phase1/phase2 poll — whose rows
+// carry status/remote_ip but no counters. Inside a LAG partition each such row
+// reads as a counter reset, and the next real sample then contributes the FULL
+// cumulative counter as one "delta" (~the tunnel's lifetime bytes, every SSH
+// poll). A both-zero row carries no throughput information either way; a
+// genuine reset is still handled by the ELSE clamp on the next nonzero sample.
 func vpnDeltaQuery(bucketExpr, timeWhere string) string {
 	return fmt.Sprintf(`
 		SELECT bucket, SUM(delta_in) as in_bytes, SUM(delta_out) as out_bytes,
@@ -419,6 +427,7 @@ func vpnDeltaQuery(bucketExpr, timeWhere string) string {
 					ELSE packets_out END as delta_pout
 			FROM vpn_status
 			WHERE device_id = ? AND tunnel_name = ? AND %s
+				AND NOT (bytes_in = 0 AND bytes_out = 0)
 			WINDOW w AS (ORDER BY timestamp)
 		) AS deltas WHERE delta_in IS NOT NULL
 		GROUP BY bucket ORDER BY bucket ASC`, bucketExpr, timeWhere)
