@@ -285,7 +285,7 @@ func (d deniedThenAllowedDetector) Detect(w Window) ([]Detection, error) {
 		) d ON d.src_addr = a.src_addr AND d.dst_addr = a.dst_addr
 		   AND d.dst_port = a.dst_port AND d.protocol = a.protocol
 		WHERE a.verdicted = 1 OR a.last_allow > d.last_deny + ?
-		ORDER BY %s, d.prior_denies DESC
+		ORDER BY %s, a.verdicted DESC, d.prior_denies DESC
 		LIMIT 50`,
 		epoch,
 		models.FirewallEventCreated, models.FirewallEventDeleted, models.FirewallEventUpdate,
