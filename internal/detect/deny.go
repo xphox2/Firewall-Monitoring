@@ -11,7 +11,12 @@ import (
 
 // Tranche 4 Phase 2 — deny detectors over denied_events, the FortiGate syslog
 // action="deny" projection (internal/deny). Phase 0 proved FortiOS never
-// exports blocked sessions via NetFlow, so syslog is the only deny source.
+// exports blocked sessions IDENTIFIABLY via NetFlow, so syslog is the only
+// deny source. Live prod sharpened that finding (2026-07-17): FortiOS DOES
+// emit NetFlow v9 records for denied traffic — it just omits IE 233, so they
+// arrive as firewall_event=0 and are indistinguishable from forwarded flows.
+// Any detector treating verdict-less flow rows as allow-evidence will see the
+// same denied traffic through both pipes (see deniedThenAllowedDetector).
 // Counts here are EXACT (one logged line = one row) — see ValidityLoggedEvents.
 //
 // Thresholds are the per-15m-window floors above the deny baseline noise
@@ -26,6 +31,18 @@ const (
 	defaultDenyVictimCount      = 2000 // raw denies onto one victim/15m (OR-threshold)
 	defaultDeniedThenAllowedMin = 2    // prior denies before an allow to flag a policy gap
 )
+
+// denyAllowQuietMargin is how long a tuple's denies must have been quiet before
+// a verdict-less forwarded flow counts as allow-evidence for
+// denied_then_allowed. FortiOS exports NetFlow records for DENIED traffic with
+// firewall_event=0 (no IE 233), so a flow row co-occurring with active denies
+// is usually the deny itself seen through the flow pipe — only traffic that
+// KEEPS flowing after denials stop evidences a real policy change. This is
+// evidence hygiene, not an operator threshold, hence a const and not a Config
+// knob. It must comfortably exceed the deny-side ingest lag (syslog is
+// near-realtime; NetFlow exports on session end) without delaying real
+// findings by more than one or two detector cycles.
+const denyAllowQuietMargin = 10 * time.Minute
 
 // denyThreatBad reports whether a deny threat bitfield marks the SOURCE as
 // known-bad. Only bits 0/1 are ever set for denies (syslog carries no ASN), so
@@ -183,10 +200,24 @@ func (d denyStormVictimDetector) Detect(w Window) ([]Detection, error) {
 
 // deniedThenAllowedDetector flags a (src,dst,dport,proto) tuple that was DENIED
 // in the last hour and is now ALLOWED — a policy change opened a hole an
-// attacker was already probing. Allows come from flow_samples (forwarded, i.e.
-// firewall_event <> denied); denies from denied_events. CategoryPolicy so it
-// emits its own SFLOW_DENIED_THEN_ALLOWED alert (not folded into the source-
-// consolidated SFLOW_SECURITY card — the subject is the exposed path).
+// attacker was already probing. Denies come from denied_events; allow-evidence
+// comes from flow_samples, but a forwarded-looking row alone is NOT enough:
+// FortiOS exports NetFlow records for denied traffic with firewall_event=0
+// (no IE 233), so verdict-less rows co-occurring with active denies are the
+// denies themselves seen through the flow pipe (the v0.11.107 false-positive
+// flood: Telnet scanner tuples "blocked N×, now ALLOWED" while the denies were
+// still arriving). A tuple therefore fires only with real evidence, either:
+//   - positive verdict: ≥1 flow row with firewall_event Created/Deleted/Update
+//     — the exporter explicitly reported a session lifecycle event (PAN, ASA
+//     NSEL, FortiGates that send IE 233); or
+//   - temporal quiet gate: the tuple's newest forwarded flow is more than
+//     denyAllowQuietMargin AFTER its newest deny — denials stopped, traffic
+//     still flows. When a scanner gives up, both streams stop together, so
+//     verdict-less noise can never satisfy this.
+//
+// CategoryPolicy so it emits its own SFLOW_DENIED_THEN_ALLOWED alert (not
+// folded into the source-consolidated SFLOW_SECURITY card — the subject is the
+// exposed path).
 //
 // Recall caveat: if a FortiGate runs NetFlow netflow-sample-rate>1, the step-1
 // allow tuples in flow_samples are sampled → some real allows are missed (false
@@ -201,18 +232,26 @@ func (d deniedThenAllowedDetector) Detect(w Window) ([]Detection, error) {
 	if cfg.DeniedThenAllowedDisabled {
 		return nil, nil
 	}
-	// Step 1: candidate ALLOW tuples seen this window (forwarded flows only).
+	// Step 1: candidate ALLOW tuples seen this window (forwarded flows only),
+	// with the evidence columns the gate below needs: the tuple's newest flow
+	// timestamp and whether any row carried a positive session-lifecycle
+	// verdict (IE 233 Created/Deleted/Update).
 	type allowRow struct {
-		SrcAddr  string
-		DstAddr  string
-		DstPort  uint16
-		Protocol uint8
-		DeviceID uint
+		SrcAddr   string
+		DstAddr   string
+		DstPort   uint16
+		Protocol  uint8
+		DeviceID  uint
+		LastAllow int64 // epoch seconds (see epochSecondExpr)
+		Verdicted int
 	}
 	var allows []allowRow
+	verdictedExpr := fmt.Sprintf("MAX(CASE WHEN firewall_event IN (%d,%d,%d) THEN 1 ELSE 0 END) as verdicted",
+		models.FirewallEventCreated, models.FirewallEventDeleted, models.FirewallEventUpdate)
 	if err := forwardedOnly(w.DB.Model(&models.FlowSample{})).
 		Where("timestamp >= ? AND timestamp < ?", w.Start, w.End).
-		Select("src_addr, dst_addr, dst_port, protocol, MAX(device_id) as device_id").
+		Select("src_addr, dst_addr, dst_port, protocol, MAX(device_id) as device_id, " +
+			"MAX(" + epochSecondExpr(w.DB) + ") as last_allow, " + verdictedExpr).
 		Group("src_addr, dst_addr, dst_port, protocol").
 		// Surface sensitive-port allows first so a real policy gap to SSH/RDP/SMB/
 		// DB isn't the tuple that gets dropped when a busy window has >50 distinct
@@ -252,12 +291,14 @@ func (d deniedThenAllowedDetector) Detect(w Window) ([]Detection, error) {
 		Protocol    uint8
 		PriorDenies int64
 		Threat      int
+		LastDeny    int64 // epoch seconds (see epochSecondExpr)
 	}
 	var denies []denyRow
 	if err := w.DB.Model(&models.DeniedEvent{}).
 		Where("timestamp >= ? AND timestamp < ?", w.Lookback(60*time.Minute), w.End).
 		Where("(src_addr, dst_addr, dst_port, protocol) IN ?", inVals).
-		Select("src_addr, dst_addr, dst_port, protocol, COUNT(*) as prior_denies, MAX(threat_flag) as threat").
+		Select("src_addr, dst_addr, dst_port, protocol, COUNT(*) as prior_denies, "+
+			"MAX(threat_flag) as threat, MAX("+epochSecondExpr(w.DB)+") as last_deny").
 		Group("src_addr, dst_addr, dst_port, protocol").
 		Having("COUNT(*) >= ?", cfg.DeniedThenAllowedMin).Scan(&denies).Error; err != nil {
 		return nil, err
@@ -265,6 +306,12 @@ func (d deniedThenAllowedDetector) Detect(w Window) ([]Detection, error) {
 	out := make([]Detection, 0, len(denies))
 	for _, r := range denies {
 		a := seen[key{r.SrcAddr, r.DstAddr, r.DstPort, r.Protocol}]
+		// Allow-evidence gate (see the detector comment): a positive IE 233
+		// verdict fires immediately; verdict-less flows only count once the
+		// tuple's denies have been quiet for denyAllowQuietMargin.
+		if a.Verdicted == 0 && a.LastAllow <= r.LastDeny+int64(denyAllowQuietMargin/time.Second) {
+			continue
+		}
 		sensitive := portLabels[r.DstPort] != ""
 		sev := "warning"
 		if sensitive || denyThreatBad(r.Threat) {
