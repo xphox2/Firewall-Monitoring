@@ -2,6 +2,8 @@ package detect
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"firewall-mon/internal/models"
@@ -212,7 +214,10 @@ func (d deniedThenAllowedDetector) Detect(w Window) ([]Detection, error) {
 		Where("timestamp >= ? AND timestamp < ?", w.Start, w.End).
 		Select("src_addr, dst_addr, dst_port, protocol, MAX(device_id) as device_id").
 		Group("src_addr, dst_addr, dst_port, protocol").
-		Order("MAX(device_id)").Limit(50).Scan(&allows).Error; err != nil {
+		// Surface sensitive-port allows first so a real policy gap to SSH/RDP/SMB/
+		// DB isn't the tuple that gets dropped when a busy window has >50 distinct
+		// allowed tuples (bounded scan; the cap is a cost guard, not a filter).
+		Order(sensitivePortFirstExpr + ", dst_port").Limit(50).Scan(&allows).Error; err != nil {
 		return nil, err
 	}
 	if len(allows) == 0 {
@@ -284,6 +289,21 @@ func (d deniedThenAllowedDetector) Detect(w Window) ([]Detection, error) {
 	}
 	return out, nil
 }
+
+// sensitivePortFirstExpr orders sensitive destination ports (the portLabels set
+// — SSH/Telnet/SMB/RDP/DB) ahead of everything else, so denied_then_allowed's
+// bounded candidate scan keeps the highest-risk allows when it caps at 50.
+var sensitivePortFirstExpr = func() string {
+	// Build "CASE WHEN dst_port IN (22,23,...) THEN 0 ELSE 1 END" from portLabels
+	// so it stays in sync with the sensitivity set the detector escalates on.
+	ports := make([]string, 0, len(portLabels))
+	for p := range portLabels {
+		ports = append(ports, fmt.Sprintf("%d", p))
+	}
+	// Deterministic order for a stable SQL string (map iteration is random).
+	sort.Strings(ports)
+	return "CASE WHEN dst_port IN (" + strings.Join(ports, ",") + ") THEN 0 ELSE 1 END"
+}()
 
 func denySubtypeLabel(s uint8) string {
 	switch s {

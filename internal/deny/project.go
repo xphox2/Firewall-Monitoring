@@ -30,6 +30,17 @@ type PatternConfig struct {
 	Pattern string // case-insensitive glob, '*' wildcard; "" disables
 }
 
+// literal returns the fixed leading segment of the glob (before the first '*'),
+// used as a cheap substring pre-filter so an action="start" line only pays the
+// full KV parse when the block-policy name plausibly appears in it. "" when the
+// pattern starts with a wildcard (then every start line must be parsed).
+func (c PatternConfig) literal() string {
+	if i := strings.IndexByte(c.Pattern, '*'); i >= 0 {
+		return c.Pattern[:i]
+	}
+	return c.Pattern
+}
+
 // matches reports whether a policyname matches the block-policy glob. Only '*'
 // is special (prefix/suffix/substring). Case-insensitive. Not a regexp — no
 // ReDoS surface on the ingest hot path.
@@ -72,15 +83,28 @@ func globMatch(pattern, s string) bool {
 
 // hasDenySignal is the cheap pre-parse gate: only messages that could be a deny
 // pay the KV-parse cost, so the majority non-deny syslog stream is untouched on
-// the hot path.
+// the hot path. For the block-policy action="start" case we ALSO require the
+// pattern's literal prefix (e.g. "IP_BLOCK") to appear in the raw line, so a
+// device logging every session start (logtraffic-start) doesn't parse them all
+// — only the block-named ones. A wildcard-leading pattern has no literal, so it
+// falls back to parsing every start line (rare config).
 func hasDenySignal(message string, cfg PatternConfig) bool {
 	if strings.Contains(message, `action="deny"`) {
 		return true
 	}
 	if cfg.Pattern != "" && strings.Contains(message, `action="start"`) {
-		return true
+		if lit := cfg.literal(); lit == "" || containsFold(message, lit) {
+			return true
+		}
 	}
 	return false
+}
+
+// containsFold is a case-insensitive strings.Contains. It only runs on the
+// action="start" subset that already passed the literal Contains, so the
+// lowercase allocation is off the bulk hot path.
+func containsFold(s, substr string) bool {
+	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
 }
 
 // Project derives a DeniedEvent from a FortiGate syslog message, or ok=false if

@@ -504,7 +504,7 @@ func Load() *Config {
 			DenyStormDisabled:         !getBoolEnv("DETECT_DENY_STORM_ENABLED", true),
 			DenyStormVictimDisabled:   !getBoolEnv("DETECT_DENY_STORM_VICTIM_ENABLED", true),
 			DeniedThenAllowedDisabled: !getBoolEnv("DETECT_DENIED_THEN_ALLOWED_ENABLED", true),
-			DenyPolicyPattern:         getStringEnv("DETECT_DENY_POLICY_PATTERN", "IP_BLOCK*"),
+			DenyPolicyPattern:         getEnv("DETECT_DENY_POLICY_PATTERN", "IP_BLOCK*"),
 		},
 		ThreatFeed: ThreatFeedConfig{
 			Enabled:       getBoolEnv("THREAT_FEEDS_ENABLED", true),
@@ -826,15 +826,6 @@ func getFloatEnv(key string, defaultValue float64) float64 {
 		if floatVal, err := strconv.ParseFloat(value, 64); err == nil {
 			return floatVal
 		}
-	}
-	return defaultValue
-}
-
-// getStringEnv returns the env value if SET (including empty, so an operator can
-// explicitly disable a default by setting KEY=""), else the default.
-func getStringEnv(key, defaultValue string) string {
-	if value, exists := os.LookupEnv(key); exists {
-		return value
 	}
 	return defaultValue
 }

@@ -85,6 +85,26 @@ func TestProject_ThreatFlagBitsSrcDst(t *testing.T) {
 	}
 }
 
+// TestProject_StartGateLiteralPrefilter: an action="start" line whose policy
+// name can't match the pattern's literal prefix must be rejected WITHOUT the
+// pattern's glob having to run — and a non-block start line never projects.
+func TestProject_StartGateLiteralPrefilter(t *testing.T) {
+	cfg := PatternConfig{Pattern: "IP_BLOCK*"}
+	// A benign session-start with no IP_BLOCK anywhere — must not project.
+	benign := `subtype="forward" srcip=10.0.0.5 dstip=10.0.0.6 dstport=443 proto=6 action="start" policyname="ALLOW-WEB"`
+	if _, ok := Project(denyMsg(benign), nil, cfg); ok {
+		t.Error("benign session-start must not project under a block pattern")
+	}
+	if hasDenySignal(benign, cfg) {
+		t.Error("literal pre-filter should reject a start line with no IP_BLOCK token")
+	}
+	// The block-named start line passes the pre-filter and projects.
+	block := `subtype="forward" srcip=203.0.113.9 srcintfrole="wan" dstip=66.179.9.150 dstport=3389 proto=6 action="start" policyname="IP_BLOCK-2"`
+	if !hasDenySignal(block, cfg) {
+		t.Error("block-named start line must pass the pre-filter")
+	}
+}
+
 func TestGlobMatch(t *testing.T) {
 	cases := []struct {
 		pat, s string
