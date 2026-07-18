@@ -612,6 +612,7 @@ func clampDelta(cur, prev uint64) uint64 {
 // prevMap maps "deviceID_ifName" to the previous InterfaceStats for delta computation.
 func (am *AlertManager) CheckInterfaceErrors(interfaces []models.InterfaceStats, prevMap map[string]*models.InterfaceStats, siteID *uint) error {
 	var fired []firedEntry
+	var ruleHits []uint
 
 	am.mu.Lock()
 	now := time.Now()
@@ -634,6 +635,16 @@ func (am *AlertManager) CheckInterfaceErrors(interfaces []models.InterfaceStats,
 		if errorDelta > 0 {
 			resolved := am.resolveAlertConfig(iface.DeviceID, siteID, "INTERFACE_ERRORS")
 			if !resolved.AlertEnabled {
+				continue
+			}
+			// device-source Event Rule consult (v0.11.112): rules can scope on
+			// interface_name to mute one noisy port without losing the rest.
+			devRule, devSuppressed := am.consultDeviceRuleLocked("INTERFACE_ERRORS", iface.DeviceID, siteID,
+				string(resolved.Severity), map[string]string{"interface_name": iface.Name}, &resolved)
+			if devRule != nil {
+				ruleHits = append(ruleHits, devRule.id)
+			}
+			if devSuppressed {
 				continue
 			}
 			alertKey := fmt.Sprintf("iface_errors_%d_%s", iface.DeviceID, iface.Name)
@@ -659,6 +670,9 @@ func (am *AlertManager) CheckInterfaceErrors(interfaces []models.InterfaceStats,
 	}
 	am.mu.Unlock()
 
+	for _, id := range ruleHits {
+		am.RecordEventRuleHit(id)
+	}
 	am.dispatchFired(fired, globalNC, "interface error")
 	return nil
 }
@@ -1791,18 +1805,25 @@ func (am *AlertManager) CheckDeviceOffline(device *models.Device) error {
 	key := fmt.Sprintf("device_offline_%d", device.ID)
 	resolved := am.resolveAlertConfig(device.ID, device.SiteID, "DEVICE_OFFLINE")
 	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
+	// device-source Event Rule consult (v0.11.112): suppress mutes the fire
+	// (and skips active-marking, so no recovery notification either — a muted
+	// class is fully muted); alert-action overlays severity/policy/cooldown.
+	devRule, devSuppressed := am.consultDeviceRuleLocked("DEVICE_OFFLINE", device.ID, device.SiteID, string(resolved.Severity), nil, &resolved)
 	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
 	// LC-12: gate on AlertEnabled BEFORE marking the key active (mirrors
 	// CheckProbeDataFlow). Marking active with the rule disabled left
 	// activeAlerts[key] set, so recovery still sent a "back online"
 	// notification + _RESOLVED row for an alert type the operator disabled.
-	canSend := resolved.AlertEnabled && am.canAlertWithCooldown(key, now, cooldown)
+	canSend := !devSuppressed && resolved.AlertEnabled && am.canAlertWithCooldown(key, now, cooldown)
 	if canSend {
 		am.recordCooldownLocked(key, now, cooldown)
 		am.markActiveLocked(key, now)
 	}
 	am.mu.Unlock()
 
+	if devRule != nil {
+		am.RecordEventRuleHit(devRule.id)
+	}
 	if !canSend {
 		return nil
 	}
@@ -1868,15 +1889,21 @@ func (am *AlertManager) CheckTelemetryStale(device *models.Device, detail string
 	key := fmt.Sprintf("telemetry_stale_%d", device.ID)
 	resolved := am.resolveAlertConfig(device.ID, device.SiteID, models.AlertTypeTelemetryStale)
 	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
+	// device-source Event Rule consult (v0.11.112).
+	devRule, devSuppressed := am.consultDeviceRuleLocked(models.AlertTypeTelemetryStale, device.ID, device.SiteID,
+		string(resolved.Severity), map[string]string{"detail": detail}, &resolved)
 	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
 	// LC-12: AlertEnabled gates the cooldown/active marking (see CheckDeviceOffline).
-	canSend := resolved.AlertEnabled && am.canAlertWithCooldown(key, now, cooldown)
+	canSend := !devSuppressed && resolved.AlertEnabled && am.canAlertWithCooldown(key, now, cooldown)
 	if canSend {
 		am.recordCooldownLocked(key, now, cooldown)
 		am.markActiveLocked(key, now)
 	}
 	am.mu.Unlock()
 
+	if devRule != nil {
+		am.RecordEventRuleHit(devRule.id)
+	}
 	if !canSend {
 		return nil
 	}
@@ -1958,24 +1985,38 @@ func (am *AlertManager) CheckSSHHostKeyChanged(device *models.Device, newFP stri
 	key := fmt.Sprintf("ssh_host_key_%d_%s", device.ID, newFP)
 	resolved := am.resolveAlertConfig(device.ID, device.SiteID, "SSH_HOST_KEY_CHANGED")
 	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
+	// A new key that correlates with a recent HA failover is an expected event
+	// (cluster members present distinct host keys) — WARNING, not CRITICAL.
+	// Computed BEFORE the rule consult so severity-scoped rules match the
+	// severity the alert would actually carry.
+	severity := resolved.Severity
+	if haFailover {
+		severity = "warning"
+	}
+	// device-source Event Rule consult (v0.11.112): rules can scope on the new
+	// fingerprint (e.g. pre-approve a planned key rotation).
+	devRule, devSuppressed := am.consultDeviceRuleLocked("SSH_HOST_KEY_CHANGED", device.ID, device.SiteID,
+		string(severity), map[string]string{"fingerprint": newFP}, &resolved)
+	if devRule != nil && devRule.action == "alert" && devRule.severity != "" {
+		severity = devRule.severity // an explicit rule re-grade wins over the HA downgrade
+	}
 	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
 	// LC-12 sibling: AlertEnabled gates the cooldown recording too.
-	canSend := resolved.AlertEnabled && am.canAlertWithCooldown(key, now, cooldown)
+	canSend := !devSuppressed && resolved.AlertEnabled && am.canAlertWithCooldown(key, now, cooldown)
 	if canSend {
 		am.recordCooldownLocked(key, now, cooldown)
 	}
 	am.mu.Unlock()
 
+	if devRule != nil {
+		am.RecordEventRuleHit(devRule.id)
+	}
 	if !canSend {
 		return nil
 	}
 
-	// A new key that correlates with a recent HA failover is an expected event
-	// (cluster members present distinct host keys) — WARNING, not CRITICAL.
-	severity := resolved.Severity
 	message := fmt.Sprintf("SSH host key changed for device %s (%s): new fingerprint %s, with no matching HA failover. If this was not a planned change, treat the device admin credentials as exposed and rotate them.", device.Name, device.IPAddress, newFP)
 	if haFailover {
-		severity = "warning"
 		message = fmt.Sprintf("New SSH host key %s observed for device %s (%s), correlated with a recent HA failover — learned as a known cluster-member key.", newFP, device.Name, device.IPAddress)
 	}
 
@@ -2027,16 +2068,44 @@ func (am *AlertManager) CheckConfigRevision(deviceID uint, oldChecksum, newCheck
 		return
 	}
 	key := fmt.Sprintf("config_change_%d", deviceID)
-	cooldown := 60 * time.Minute
+
+	// Severity is computed from the configdiff classification BEFORE the rule
+	// consult so severity-scoped rules match what the alert would carry.
+	severity := configSeverityToAlert(info.Severity)
+	if !info.Attributed {
+		// No authenticated admin session matched this change — escalate one notch
+		// (message flag added below).
+		severity = escalateSeverity(severity)
+	}
 
 	am.mu.Lock()
 	now := time.Now()
-	canSend := am.canAlertWithCooldown(key, now, cooldown)
+	// v0.11.112: this path previously bypassed resolveAlertConfig entirely — no
+	// maintenance suppression, no per-type disable, fixed cooldown. It now
+	// resolves config for those gates; the 60-minute cooldown stays the type
+	// default so behavior without rules/policies is unchanged, with a matched
+	// device rule able to override it.
+	resolved := am.resolveAlertConfig(deviceID, device.SiteID, "CONFIG_CHANGE")
+	devRule, devSuppressed := am.consultDeviceRuleLocked("CONFIG_CHANGE", deviceID, device.SiteID,
+		string(severity), map[string]string{
+			"method": info.Method, "changed_by": info.ChangedBy, "impact": info.Impact,
+		}, &resolved)
+	if devRule != nil && devRule.action == "alert" && devRule.severity != "" {
+		severity = devRule.severity
+	}
+	cooldown := 60 * time.Minute
+	if devRule != nil && devRule.action == "alert" && devRule.cooldownMin != nil && *devRule.cooldownMin > 0 {
+		cooldown = time.Duration(*devRule.cooldownMin) * time.Minute
+	}
+	canSend := !devSuppressed && resolved.AlertEnabled && am.canAlertWithCooldown(key, now, cooldown)
 	if canSend {
 		am.recordCooldownLocked(key, now, cooldown)
 	}
 	am.mu.Unlock()
 
+	if devRule != nil {
+		am.RecordEventRuleHit(devRule.id)
+	}
 	if !canSend {
 		return
 	}
@@ -2049,7 +2118,6 @@ func (am *AlertManager) CheckConfigRevision(deviceID uint, oldChecksum, newCheck
 		newShort = newChecksum[:8]
 	}
 
-	severity := configSeverityToAlert(info.Severity)
 	who := "unknown user"
 	if info.ChangedBy != "" {
 		who = info.ChangedBy
@@ -2062,18 +2130,17 @@ func (am *AlertManager) CheckConfigRevision(deviceID uint, oldChecksum, newCheck
 		msg += ". Impact: " + info.Impact
 	}
 	if !info.Attributed {
-		// No authenticated admin session matched this change — escalate one notch
-		// and flag it as a possible out-of-band / unauthorized change.
-		severity = escalateSeverity(severity)
 		msg += " [no authenticated admin session found — possible out-of-band change]"
 	}
 
 	am.saveAlert(&models.Alert{
-		DeviceID:  deviceID,
-		AlertType: "CONFIG_CHANGE",
-		Severity:  severity,
-		Message:   msg,
-		Timestamp: time.Now(),
+		DeviceID:   deviceID,
+		AlertType:  "CONFIG_CHANGE",
+		Severity:   severity,
+		Message:    msg,
+		Timestamp:  now,
+		PolicyID:   resolved.PolicyID,
+		Suppressed: resolved.InMaintenance,
 	})
 }
 
@@ -2151,13 +2218,22 @@ func (am *AlertManager) CheckProbeDataFlow() error {
 		// unlocked, a latent data race with concurrent alert checks.
 		am.mu.Lock()
 		resolved := am.resolveAlertConfig(0, &probe.SiteID, "PROBE_DATA_LAG")
+		// device-source Event Rule consult (v0.11.112): device_id is 0 for
+		// probe-scoped alerts; rules scope on probe_id/probe_name (or site).
+		devRule, devSuppressed := am.consultDeviceRuleLocked("PROBE_DATA_LAG", 0, &probe.SiteID,
+			string(resolved.Severity), map[string]string{
+				"probe_id": strconv.FormatUint(uint64(probe.ID), 10), "probe_name": probe.Name,
+			}, &resolved)
 		cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
-		canSend := resolved.AlertEnabled && am.canAlertWithCooldown(key, now, cooldown)
+		canSend := !devSuppressed && resolved.AlertEnabled && am.canAlertWithCooldown(key, now, cooldown)
 		if canSend {
 			am.recordCooldownLocked(key, now, cooldown)
 			am.markActiveLocked(key, now)
 		}
 		am.mu.Unlock()
+		if devRule != nil {
+			am.RecordEventRuleHit(devRule.id)
+		}
 		if !canSend {
 			continue
 		}
@@ -2194,24 +2270,47 @@ func (am *AlertManager) RecordProbeDataTruncation(probeID uint, probeName string
 
 	key := fmt.Sprintf("probe_truncation_%d", probeID)
 	now := time.Now()
-	const cooldown = 5 * time.Minute
+	cooldown := 5 * time.Minute
 
 	// Anti-spam: at most one alert per probe per cooldown window. LC-26: the
 	// previous guard read a lastAlert key nothing ever wrote and returned early
 	// unless a prior alert was RECENT (inverted), so this alert could never fire.
 	am.mu.Lock()
-	if !am.canAlertWithCooldown(key, now, cooldown) {
+	// v0.11.112: this path previously bypassed resolveAlertConfig — no per-type
+	// disable, fixed severity/cooldown. The 5-minute cooldown and "warning"
+	// severity stay the type defaults so behavior without rules is unchanged.
+	resolved := am.resolveAlertConfig(0, nil, "PROBE_DATA_TRUNCATED")
+	severity := models.Severity("warning")
+	devRule, devSuppressed := am.consultDeviceRuleLocked("PROBE_DATA_TRUNCATED", 0, nil,
+		string(severity), map[string]string{
+			"probe_id": strconv.FormatUint(uint64(probeID), 10), "probe_name": probeName,
+		}, &resolved)
+	if devRule != nil && devRule.action == "alert" {
+		if devRule.severity != "" {
+			severity = devRule.severity
+		}
+		if devRule.cooldownMin != nil && *devRule.cooldownMin > 0 {
+			cooldown = time.Duration(*devRule.cooldownMin) * time.Minute
+		}
+	}
+	if devSuppressed || !resolved.AlertEnabled || !am.canAlertWithCooldown(key, now, cooldown) {
 		am.mu.Unlock()
+		if devRule != nil {
+			am.RecordEventRuleHit(devRule.id)
+		}
 		return
 	}
 	am.recordCooldownLocked(key, now, cooldown)
 	nc := notifier.SnapshotConfig(&am.config.Alerts)
 	am.mu.Unlock()
+	if devRule != nil {
+		am.RecordEventRuleHit(devRule.id)
+	}
 
 	alert := models.Alert{
 		Timestamp:  now,
 		AlertType:  "PROBE_DATA_TRUNCATED",
-		Severity:   "warning",
+		Severity:   severity,
 		Message:    fmt.Sprintf("Probe %s sent batch of %d items, kept %d (truncated %d) — possible misconfiguration", probeName, totalItems, retainedItems, totalItems-retainedItems),
 		MetricName: "probe_data_truncation",
 		ProbeID:    &probeID,

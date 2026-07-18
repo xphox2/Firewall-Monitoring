@@ -45,6 +45,8 @@ type SuggestInput struct {
 	// SourceAddr is the attacker/source IP for an sFlow-security alert; the
 	// flow_security suggestion matches on it (source_ip eq).
 	SourceAddr string
+	// ProbeID scopes a PROBE_DATA_* suggestion to the reporting probe.
+	ProbeID *uint
 }
 
 // SuggestedRule is the prefill the editor opens with. Fields mirror the
@@ -114,6 +116,12 @@ const suggestDefaultPriority = 10 // beats the priority-100 shipped alert seeds
 // SuggestRuleForAlert computes the suggestion. deviceScope wraps DeviceID as a
 // pointer only when > 0.
 func SuggestRuleForAlert(in SuggestInput) SuggestResult {
+	// A recovery companion targets its base class (see ruleSourceForAlertType):
+	// normalize here so the suggested rule's name/matcher name the type that
+	// actually fires.
+	if base, ok := strings.CutSuffix(string(in.AlertType), "_RESOLVED"); ok && base != "INCIDENT" {
+		in.AlertType = models.AlertType(base)
+	}
 	src := ruleSourceForAlertType(in.AlertType)
 	if src == "" {
 		reason, alt := unsupportedReason(in.AlertType)
@@ -190,6 +198,30 @@ func SuggestRuleForAlert(in SuggestInput) SuggestResult {
 				priority = 0
 			}
 		}
+	case "device":
+		// Device/probe health families: an event_type-scoped rule, device-scoped
+		// by default, narrowed to the family's natural resource when the alert
+		// carries one (interface for INTERFACE_ERRORS, probe for PROBE_DATA_*).
+		ev := deviceEventType(in.AlertType)
+		nodes := []matchNode{eqNode("event_type", ev)}
+		if in.DeviceName != "" {
+			effect = fmt.Sprintf("Suppress %s alerts on %s.", in.AlertType, in.DeviceName)
+		} else {
+			effect = fmt.Sprintf("Suppress %s alerts.", in.AlertType)
+		}
+		switch in.AlertType {
+		case models.AlertTypeInterfaceErrors:
+			if ifName := strings.TrimPrefix(in.MetricName, "interface_errors_"); ifName != "" && ifName != in.MetricName {
+				nodes = append(nodes, eqNode("interface_name", ifName))
+				effect = fmt.Sprintf("Suppress interface-error alerts for %s on %s.", ifName, in.DeviceName)
+			}
+		case models.AlertTypeProbeDataLag, models.AlertTypeProbeDataTruncated:
+			if in.ProbeID != nil {
+				nodes = append(nodes, eqNode("probe_id", fmt.Sprintf("%d", *in.ProbeID)))
+				effect = fmt.Sprintf("Suppress %s alerts for probe #%d.", in.AlertType, *in.ProbeID)
+			}
+		}
+		matchJSON = mustJSON(andOrSingle(nodes))
 	case "metric":
 		ev := metricEventType(in.AlertType)
 		matchJSON = mustJSON(eqNode("event_type", ev))
@@ -321,8 +353,15 @@ func IsRuleNameAlertType(at models.AlertType) bool {
 }
 
 // ruleSourceForAlertType maps an alert type to the rule source that can suppress
-// it, or "" if no evaluator consults rules for it.
+// it, or "" if no evaluator consults rules for it. A *_RESOLVED recovery
+// companion maps to its base type's source: rules gate the FIRE, and
+// sendRecovery only notifies when the fire was active, so a suppress built
+// from a recovery card correctly targets the class that fired. (Exceptions
+// with no base type — INCIDENT_RESOLVED — fall through to unsupported.)
 func ruleSourceForAlertType(at models.AlertType) string {
+	if base, ok := strings.CutSuffix(string(at), "_RESOLVED"); ok && base != "INCIDENT" {
+		at = models.AlertType(base)
+	}
 	switch at {
 	case models.AlertTypeCPUHigh, models.AlertTypeMemoryHigh, models.AlertTypeDiskHigh, models.AlertTypeSessionsHigh:
 		return "metric"
@@ -338,6 +377,10 @@ func ruleSourceForAlertType(at models.AlertType) string {
 		return "syslog"
 	case models.AlertTypeFlowRuleMatch:
 		return "flow"
+	case models.AlertTypeDeviceOffline, models.AlertTypeTelemetryStale, models.AlertTypeInterfaceErrors,
+		models.AlertTypeConfigChange, models.AlertTypeSSHHostKeyChanged,
+		models.AlertTypeProbeDataLag, models.AlertTypeProbeDataTruncated:
+		return "device"
 	}
 	// EVERY SFLOW_* type — the consolidated security card, per-detection
 	// policy/operational alerts, and any FUTURE detector (alert types are
@@ -365,6 +408,12 @@ func canonIPStr(s string) string {
 }
 
 func unsupportedReason(at models.AlertType) (reason, alternative string) {
+	switch at {
+	case models.AlertTypeTestAlert:
+		return "This is an operator-triggered test notification — there is no event class behind it to build a rule on.", ""
+	case "INCIDENT_RESOLVED":
+		return "This is the closing summary of an incident, not a rule-matchable event class. Rule the alert types that opened the incident instead.", ""
+	}
 	return "This alert type isn't matched by the Event Rule engine, so a rule wouldn't take effect. Use a maintenance window to mute it.", "maintenance"
 }
 

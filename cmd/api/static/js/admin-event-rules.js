@@ -37,6 +37,7 @@
         if (s === 'spike') return 'er-spike-field-hints';
         if (s === 'trap') return 'er-trap-field-hints';
         if (s === 'flow_security') return 'er-flowsec-field-hints';
+        if (s === 'device') return 'er-device-field-hints';
         return 'er-field-hints';
     }
 
@@ -512,7 +513,7 @@
     // logs, meaningless for live state/metric events) in favor of a note.
     function onSourceChange() {
         var src = $('er-source').value;
-        var isState = src === 'state', isMetric = src === 'metric', isSpike = src === 'spike', isTrap = src === 'trap', isFlowSec = src === 'flow_security';
+        var isState = src === 'state', isMetric = src === 'metric', isSpike = src === 'spike', isTrap = src === 'trap', isFlowSec = src === 'flow_security', isDevice = src === 'device';
         // Swap the field-hint datalist on every open condition row + the dedup field.
         var list = fieldHintsId();
         document.querySelectorAll('#er-conditions .er-cond-field').forEach(function (el) { el.setAttribute('list', list); });
@@ -520,7 +521,7 @@
         // Preview vs source-specific note. State/metric/spike/trap/flow_security all
         // evaluate live telemetry, not stored logs, so the syslog preview is
         // meaningless for them.
-        var noPreview = isState || isMetric || isSpike || isTrap || isFlowSec;
+        var noPreview = isState || isMetric || isSpike || isTrap || isFlowSec || isDevice;
         $('er-preview-btn').style.display = noPreview ? 'none' : '';
         $('er-preview-result').style.display = noPreview ? 'none' : '';
         $('er-state-preview-note').style.display = isState ? '' : 'none';
@@ -528,6 +529,7 @@
         $('er-spike-preview-note').style.display = isSpike ? '' : 'none';
         $('er-trap-preview-note').style.display = isTrap ? '' : 'none';
         $('er-flowsec-preview-note').style.display = isFlowSec ? '' : 'none';
+        $('er-device-preview-note').style.display = isDevice ? '' : 'none';
         if (noPreview) { $('er-preview-samples').style.display = 'none'; }
         // Spike rules ignore the per-rule cooldown (the detector paces episodes), so
         // hide that field for spike to avoid a dead knob.

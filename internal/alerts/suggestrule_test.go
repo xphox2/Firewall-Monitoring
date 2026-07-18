@@ -1,6 +1,8 @@
 package alerts
 
 import (
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -174,22 +176,89 @@ func TestSuggestRule_FlowSecurity(t *testing.T) {
 }
 
 func TestSuggestRule_Unsupported(t *testing.T) {
-	cases := []struct {
-		at  models.AlertType
-		alt string
-	}{
-		{models.AlertTypeDeviceOffline, "maintenance"},
-		{models.AlertTypeSSHHostKeyChanged, "maintenance"},
-		{models.AlertTypeProbeDataLag, "maintenance"},
-		{models.AlertTypeInterfaceErrors, "maintenance"},
-	}
-	for _, tc := range cases {
-		r := SuggestRuleForAlert(SuggestInput{AlertType: tc.at, DeviceID: 7})
+	// v0.11.112: the only remaining unsupported types are the two with no
+	// rule-matchable event class behind them — each with an honest reason.
+	for _, at := range []models.AlertType{models.AlertTypeTestAlert, "INCIDENT_RESOLVED"} {
+		r := SuggestRuleForAlert(SuggestInput{AlertType: at, DeviceID: 7})
 		if r.Supported {
-			t.Errorf("%s should be unsupported", tc.at)
+			t.Errorf("%s should be unsupported", at)
 		}
-		if r.Reason == "" || r.Alternative != tc.alt {
-			t.Errorf("%s: reason=%q alt=%q want alt %q", tc.at, r.Reason, r.Alternative, tc.alt)
+		if r.Reason == "" {
+			t.Errorf("%s: unsupported must carry an honest reason", at)
+		}
+	}
+}
+
+// TestSuggestRule_DeviceFamilies pins the v0.11.112 "device" source coverage:
+// every device/probe health family gets an event_type-scoped, device-scoped
+// suggestion, narrowed to its natural resource when the alert carries one.
+func TestSuggestRule_DeviceFamilies(t *testing.T) {
+	// Plain device family.
+	r := SuggestRuleForAlert(SuggestInput{AlertType: models.AlertTypeDeviceOffline, DeviceID: 7, DeviceName: "edge-1"})
+	if !r.Supported || r.Rule == nil || r.Rule.Source != "device" {
+		t.Fatalf("DEVICE_OFFLINE must map to the device source; got %+v", r)
+	}
+	if !strings.Contains(r.Rule.MatchJSON, "device_offline") {
+		t.Errorf("match should key on event_type=device_offline, got %s", r.Rule.MatchJSON)
+	}
+	if r.Rule.DeviceID == nil || *r.Rule.DeviceID != 7 {
+		t.Errorf("device suggestion should stay device-scoped, got %+v", r.Rule.DeviceID)
+	}
+
+	// Interface narrowing from MetricName.
+	r = SuggestRuleForAlert(SuggestInput{AlertType: models.AlertTypeInterfaceErrors, DeviceID: 7,
+		DeviceName: "edge-1", MetricName: "interface_errors_port5"})
+	if !r.Supported || !strings.Contains(r.Rule.MatchJSON, "interface_errors") || !strings.Contains(r.Rule.MatchJSON, "port5") {
+		t.Fatalf("INTERFACE_ERRORS must narrow to the interface, got %+v", r)
+	}
+
+	// Probe narrowing.
+	pid := uint(4)
+	r = SuggestRuleForAlert(SuggestInput{AlertType: models.AlertTypeProbeDataLag, ProbeID: &pid})
+	if !r.Supported || !strings.Contains(r.Rule.MatchJSON, "probe_data_lag") || !strings.Contains(r.Rule.MatchJSON, `"4"`) {
+		t.Fatalf("PROBE_DATA_LAG must narrow to the probe, got %+v", r)
+	}
+
+	// Recovery companion targets the base class.
+	r = SuggestRuleForAlert(SuggestInput{AlertType: "DEVICE_OFFLINE_RESOLVED", DeviceID: 7, DeviceName: "edge-1"})
+	if !r.Supported || r.Rule == nil || r.Rule.Source != "device" || !strings.Contains(r.Rule.MatchJSON, "device_offline") {
+		t.Fatalf("DEVICE_OFFLINE_RESOLVED must target the base class via the device source, got %+v", r)
+	}
+
+	// The remaining families all resolve to the device source.
+	for _, at := range []models.AlertType{models.AlertTypeTelemetryStale, models.AlertTypeConfigChange,
+		models.AlertTypeSSHHostKeyChanged, models.AlertTypeProbeDataTruncated} {
+		if got := SuggestRuleForAlert(SuggestInput{AlertType: at, DeviceID: 7, DeviceName: "d"}); !got.Supported || got.Rule.Source != "device" {
+			t.Errorf("%s must be supported via the device source, got %+v", at, got)
+		}
+	}
+}
+
+// TestRuleSource_CoversEveryAlertType is the "ALL alerts" guardrail: it parses
+// every AlertType constant out of internal/models/models.go and asserts each —
+// after *_RESOLVED normalization, minus the two documented no-event-class
+// exclusions — maps to a rule source. A future alert type shipped without rule
+// coverage fails CI here.
+func TestRuleSource_CoversEveryAlertType(t *testing.T) {
+	data, err := os.ReadFile("../models/models.go")
+	if err != nil {
+		// Fatal, not Skip: a rename/move of models.go must not silently vacate
+		// the "every alert is rule-suppressible" guardrail.
+		t.Fatalf("models.go not readable from the package dir (guardrail must not be skipped): %v", err)
+	}
+	re := regexp.MustCompile(`AlertType\s*=\s*"([A-Z0-9_]+)"`)
+	matches := re.FindAllStringSubmatch(string(data), -1)
+	if len(matches) < 20 {
+		t.Fatalf("suspiciously few AlertType constants parsed (%d) — regex or file moved?", len(matches))
+	}
+	excluded := map[string]bool{"TEST_ALERT": true, "INCIDENT_RESOLVED": true}
+	for _, m := range matches {
+		name := m[1]
+		if excluded[name] {
+			continue
+		}
+		if src := ruleSourceForAlertType(models.AlertType(name)); src == "" {
+			t.Errorf("alert type %s has NO rule source — every alert must be suppressible via Event Rules (add an evaluator mapping or a documented exclusion)", name)
 		}
 	}
 }
