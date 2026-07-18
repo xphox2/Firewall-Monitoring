@@ -238,3 +238,83 @@ func TestDeviceRule_ExpiryHonored(t *testing.T) {
 		t.Fatalf("an expired temp rule must not mute; got %d alerts", n)
 	}
 }
+
+// TestCheckSSHHostKeyChanged_HADowngradeVsRule pins the severity plumbing: a
+// severity-scoped device rule matches the severity the alert WOULD carry (the
+// HA-failover downgrade to warning), and an explicit rule re-grade wins over
+// the downgrade.
+func TestCheckSSHHostKeyChanged_HADowngradeVsRule(t *testing.T) {
+	am, db := newTestManager(t)
+	dev := &models.Device{Name: "edge-1", IPAddress: "10.0.0.1", Enabled: true}
+	if err := db.Gorm().Create(dev).Error; err != nil {
+		t.Fatal(err)
+	}
+	// Rule matches ONLY warning-severity host-key events (i.e. the HA-downgraded
+	// class) and re-grades them to critical.
+	addDeviceRule(t, am, db, "regrade HA key learns", "alert", "critical",
+		`{"op":"and","conditions":[{"op":"eq","field":"event_type","value":"ssh_host_key_changed"},{"op":"eq","field":"severity","value":"warning"}]}`, 50)
+
+	if err := am.CheckSSHHostKeyChanged(dev, "SHA256:aaa", true); err != nil {
+		t.Fatal(err)
+	}
+	var a models.Alert
+	if err := db.Gorm().Where("alert_type = ?", "SSH_HOST_KEY_CHANGED").First(&a).Error; err != nil {
+		t.Fatalf("alert must fire: %v", err)
+	}
+	if a.Severity != "critical" {
+		t.Errorf("rule re-grade must win over the HA downgrade: got %s want critical", a.Severity)
+	}
+
+	// Fingerprint-scoped suppress (pre-approving a planned rotation) mutes.
+	am2, db2 := newTestManager(t)
+	dev2 := &models.Device{Name: "edge-2", IPAddress: "10.0.0.2", Enabled: true}
+	if err := db2.Gorm().Create(dev2).Error; err != nil {
+		t.Fatal(err)
+	}
+	addDeviceRule(t, am2, db2, "approve planned rotation", "suppress", "",
+		`{"op":"eq","field":"fingerprint","value":"SHA256:planned"}`, 50)
+	if err := am2.CheckSSHHostKeyChanged(dev2, "SHA256:planned", false); err != nil {
+		t.Fatal(err)
+	}
+	var n int64
+	db2.Gorm().Model(&models.Alert{}).Where("alert_type = ?", "SSH_HOST_KEY_CHANGED").Count(&n)
+	if n != 0 {
+		t.Fatalf("fingerprint-scoped suppress must mute the planned rotation, found %d", n)
+	}
+}
+
+// TestCheckProbeDataFlow_DeviceScopedRuleIsolation pins the deviceID=0
+// semantics: a device-scoped rule must NOT match probe alerts; a global
+// event_type rule must.
+func TestCheckProbeDataFlow_DeviceScopedRuleIsolation(t *testing.T) {
+	run := func(t *testing.T, matchJSON string, scopeDevice *uint) int64 {
+		t.Helper()
+		am, db := newTestManager(t)
+		am.config.Alerts.ProbeDataLagAlertMinutes = 60
+		stale := time.Now().Add(-2 * time.Hour)
+		p := &models.Probe{Name: "lagging-probe", RegistrationKey: "dr-key", ApprovalStatus: "approved",
+			Enabled: true, LastDataReceived: stale}
+		if err := db.Gorm().Create(p).Error; err != nil {
+			t.Fatal(err)
+		}
+		r := &models.EventRule{Name: "probe rule", Enabled: true, Source: "device", Action: "suppress",
+			MatchJSON: matchJSON, Priority: 50, DeviceID: scopeDevice}
+		if err := db.CreateEventRule(r); err != nil {
+			t.Fatal(err)
+		}
+		am.RefreshEventRules(db)
+		if err := am.CheckProbeDataFlow(); err != nil {
+			t.Fatal(err)
+		}
+		var n int64
+		db.Gorm().Model(&models.Alert{}).Where("alert_type = ?", "PROBE_DATA_LAG").Count(&n)
+		return n
+	}
+	dev7 := uint(7)
+	if n := run(t, `{"op":"eq","field":"event_type","value":"probe_data_lag"}`, &dev7); n != 1 {
+		t.Errorf("a device-7-scoped rule must NOT mute probe alerts (device_id=0); got %d alerts, want 1", n)
+	}
+	if n := run(t, `{"op":"eq","field":"event_type","value":"probe_data_lag"}`, nil); n != 0 {
+		t.Errorf("a global event_type rule must mute probe alerts; got %d alerts, want 0", n)
+	}
+}

@@ -35,7 +35,7 @@ func validateEventRule(r *models.EventRule) string {
 		r.Source = "syslog"
 	}
 	if !validRuleSources[r.Source] {
-		return "Source must be syslog, flow, flow_security, state, metric, spike, trap, or any"
+		return "Source must be syslog, flow, flow_security, state, metric, spike, trap, device, or any"
 	}
 	// On CREATE, a temporary rule's expiry must be in the future (a past ExpiresAt
 	// would make the rule dead-on-arrival). On UPDATE we allow a past expiry: a rule

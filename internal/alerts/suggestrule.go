@@ -204,7 +204,11 @@ func SuggestRuleForAlert(in SuggestInput) SuggestResult {
 		// carries one (interface for INTERFACE_ERRORS, probe for PROBE_DATA_*).
 		ev := deviceEventType(in.AlertType)
 		nodes := []matchNode{eqNode("event_type", ev)}
-		effect = fmt.Sprintf("Suppress %s alerts on %s.", in.AlertType, in.DeviceName)
+		if in.DeviceName != "" {
+			effect = fmt.Sprintf("Suppress %s alerts on %s.", in.AlertType, in.DeviceName)
+		} else {
+			effect = fmt.Sprintf("Suppress %s alerts.", in.AlertType)
+		}
 		switch in.AlertType {
 		case models.AlertTypeInterfaceErrors:
 			if ifName := strings.TrimPrefix(in.MetricName, "interface_errors_"); ifName != "" && ifName != in.MetricName {

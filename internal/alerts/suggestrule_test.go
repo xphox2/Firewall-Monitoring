@@ -242,7 +242,9 @@ func TestSuggestRule_DeviceFamilies(t *testing.T) {
 func TestRuleSource_CoversEveryAlertType(t *testing.T) {
 	data, err := os.ReadFile("../models/models.go")
 	if err != nil {
-		t.Skipf("models.go not readable from the package dir: %v", err)
+		// Fatal, not Skip: a rename/move of models.go must not silently vacate
+		// the "every alert is rule-suppressible" guardrail.
+		t.Fatalf("models.go not readable from the package dir (guardrail must not be skipped): %v", err)
 	}
 	re := regexp.MustCompile(`AlertType\s*=\s*"([A-Z0-9_]+)"`)
 	matches := re.FindAllStringSubmatch(string(data), -1)
