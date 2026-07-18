@@ -160,6 +160,10 @@
     }
 
     function renderStats() {
+        // The landing stat tiles are FLEET-wide. A profile-filtered load must
+        // not write its partial counts into them (the grid owns them via
+        // FwmonEventProfiles.renderStats).
+        if (currentProfileId) return;
         var enabled = 0, suppress = 0, hits = 0;
         rules.forEach(function (r) {
             if (r.enabled) enabled++;
@@ -289,19 +293,33 @@
 
         // Profile (layer) select — v48. Default: the rule's own profile (edit),
         // the suggested profile (create-from-alert), else the profile the Rules
-        // tab is filtered to, else the Default profile.
+        // tab is filtered to, else the Default profile. The list comes LIVE
+        // from the profiles module when present — the prepare()-time snapshot
+        // goes stale the moment a profile is created/cloned/deleted, and a
+        // stale list would silently fall this select back to Default and
+        // RE-HOME the rule on save.
         var profSel = $('er-profile');
         if (profSel) {
-            profSel.innerHTML = profilesList.map(function (p) {
+            var plist = profilesList;
+            if (window.FwmonEventProfiles && window.FwmonEventProfiles.getProfiles) {
+                var live = window.FwmonEventProfiles.getProfiles();
+                if (live && live.length) { plist = live; profilesList = live; }
+            }
+            profSel.innerHTML = plist.map(function (p) {
                 return '<option value="' + esc(p.id) + '">' + esc(p.name) + (p.is_default ? ' (Default)' : '') + '</option>';
             }).join('') || '<option value="">Default</option>';
-            var defId = (profilesList.find(function (p) { return p.is_default; }) || {}).id || '';
+            var defId = (plist.find(function (p) { return p.is_default; }) || {}).id || '';
             var want = (r && r.profile_id) || currentProfileId || defId;
+            // Belt-and-braces: NEVER let a missing option silently re-home the
+            // rule to Default — synthesize an option for the rule's own layer.
+            if (want && !plist.some(function (p) { return String(p.id) === String(want); })) {
+                profSel.innerHTML += '<option value="' + esc(want) + '">Profile #' + esc(want) + '</option>';
+            }
             profSel.value = String(want);
             if (!profSel.value) profSel.value = String(defId);
             var ctx = $('er-profile-context');
             if (ctx) {
-                var chosen = profilesList.find(function (p) { return String(p.id) === profSel.value; });
+                var chosen = plist.find(function (p) { return String(p.id) === profSel.value; });
                 var cc = (chosen && chosen.counts) || {};
                 ctx.textContent = chosen && !chosen.is_default
                     ? ('“' + chosen.name + '” is assigned to ' + (cc.site_count || 0) + ' site(s) and ' + (cc.device_count || 0) + ' device(s); its rules run before lower layers.')
@@ -714,7 +732,7 @@
             if (!ok) return;
             AC.apiFetch(API + '/event-rules/' + id, { method: 'DELETE' }).then(function () {
                 AC.showSuccess('Rule deleted');
-                loadRules();
+                loadRules(currentProfileId, currentRuleFilter); // keep the profile view (bare loadRules resets to all)
             }).catch(function (err) { AC.showError('Delete failed: ' + err.message); });
         });
     }

@@ -4097,11 +4097,15 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(data)
             }).then(function() {
+                // No inner .catch: a swallowed failure here would let the chain
+                // fall through to the success toast (which REPLACES the error
+                // toast) — the operator would see "saved" for an assignment
+                // that never landed. Let the outer catch report it.
                 return apiFetch(API_BASE + '/devices/' + deviceId + '/event-profile', {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(epBody)
-                }).catch(function(e) { AC.showError('Event profile assignment failed: ' + e.message); });
+                });
             }).then(function() {
                 closeDeviceAlertModal();
                 loadDevices();

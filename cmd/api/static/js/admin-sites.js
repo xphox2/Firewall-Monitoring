@@ -255,9 +255,11 @@
         AC.apiFetch(API_BASE + '/sites/' + id + '/alert-config', {
             method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: data
         }).then(function() {
+            // No inner .catch (see the device dialog): a swallowed failure
+            // would surface the success toast over the error.
             return AC.apiFetch(API_BASE + '/sites/' + id + '/event-profile', {
                 method: 'PUT', body: { profile_id: epBody.profile_id }
-            }).catch(function(e) { AC.showError('Event profile assignment failed: ' + e.message); });
+            });
         }).then(function() {
             closeSiteAlertModal();
             AC.showSuccess('Site alert config saved');

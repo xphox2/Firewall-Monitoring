@@ -51,12 +51,24 @@
         Promise.all([loadProfiles(), loadRegistry(), window.FwmonEventRules.prepare()]).then(function () {
             if (forbidden) { renderForbidden(); return; }
             if (pending) {
-                // Create-from-alert lands in the suggested profile's Rules tab
-                // with the builder open (the suggester already picked the
-                // governing layer; the operator can still retarget).
+                // Create-from-alert lands in the target profile's Rules tab with
+                // the builder open. The editId (customize) path must WAIT for an
+                // UNFILTERED rules load — this is a fresh page load, and
+                // openRuleModal finds the firing rule in the in-memory list —
+                // then land in that rule's OWN profile. The modal opens BEFORE
+                // showDetail so the tab's async profile-filtered reload can't
+                // race the lookup.
+                if (pending.editId) {
+                    window.FwmonEventRules.loadRules(0).then(function () {
+                        var r = window.FwmonEventRules.getRules().find(function (x) { return x.id === pending.editId; });
+                        window.FwmonEventRules.openFromPrefill(pending);
+                        showDetail((r && r.profile_id) || (defaultProfile() || {}).id || 0, 'rules');
+                    });
+                    return;
+                }
                 var pid = (pending.rule && pending.rule.profile_id) || (defaultProfile() || {}).id || 0;
-                showDetail(pid, 'rules');
                 window.FwmonEventRules.openFromPrefill(pending);
+                showDetail(pid, 'rules');
                 return;
             }
             routeFromHash();
@@ -137,17 +149,13 @@
         if ($('ep-stat-profiles')) $('ep-stat-profiles').textContent = profiles.length;
         if ($('er-stat-total')) $('er-stat-total').textContent = rules;
         if ($('ep-stat-temp')) $('ep-stat-temp').textContent = temp;
-        // Suppress count needs the rule list; use the engine's cache when
-        // loaded, else fetch once (cheap — the rule table is tiny).
-        var all = window.FwmonEventRules.getRules();
-        var setSuppress = function (list) {
-            suppress = list.filter(function (r) { return r.action === 'suppress'; }).length;
+        // Suppress is FLEET-wide, so always fetch the unfiltered list — the
+        // engine's cache may hold one profile's rules after a Rules-tab visit,
+        // and a partial count here would silently lie on the landing page.
+        AC.apiFetch(API + '/event-rules').then(function (res) {
+            suppress = (res.data || []).filter(function (r) { return r.action === 'suppress'; }).length;
             if ($('er-stat-suppress')) $('er-stat-suppress').textContent = suppress;
-        };
-        if (all.length) { setSuppress(all); }
-        else {
-            AC.apiFetch(API + '/event-rules').then(function (res) { setSuppress(res.data || []); }).catch(function () { });
-        }
+        }).catch(function () { });
     }
 
     function renderMigrationBanner() {
@@ -211,6 +219,7 @@
     }
 
     function showDetailLoaded(id, tab) {
+        if (id !== currentId) collapsed = {}; // family-collapse state is per-profile
         currentId = id;
         currentTab = tab || 'toggles';
         setHash('#profile-' + id + '/' + currentTab);
@@ -246,11 +255,22 @@
             '</div>';
     }
 
+    // confirmDiscard gates navigation away from unsaved toggle edits (AC.confirm,
+    // not window.confirm — retired for a11y). Resolves true when safe to leave.
+    function confirmDiscard() {
+        if (!isDirty()) return Promise.resolve(true);
+        return AC.confirm('Discard unsaved toggle changes?', { title: 'Unsaved changes', confirmLabel: 'Discard', danger: true });
+    }
+
     function selectTab(tab, force) {
         if (!force && tab === currentTab) return;
-        if (currentTab === 'toggles' && tab !== 'toggles' && isDirty()) {
-            var go = window.confirm('Discard unsaved toggle changes?');
-            if (!go) return;
+        if (!force && currentTab === 'toggles' && tab !== 'toggles') {
+            confirmDiscard().then(function (ok) {
+                if (!ok) return;
+                workToggles = Object.assign({}, baseToggles);
+                selectTab(tab, true);
+            });
+            return;
         }
         currentTab = tab;
         setHash('#profile-' + currentId + '/' + tab);
@@ -298,14 +318,10 @@
         return workToggles[at] ? 'on' : 'off';
     }
 
-    // inheritHint: what an Inherit row resolves to. Site/device profile view
-    // can't know the full chain here (that's the effective view's job), so it
-    // names the Default profile's explicit row when one exists, else ON.
-    function inheritHint(at) {
-        var def = defaultProfile();
-        if (def && def.id === currentId) return ''; // root has no Inherit state
-        // We only know Default's rows after visiting it; keep the honest
-        // wording without fetching a second profile per render.
+    // inheritHint: the wording for an Inherit row. A non-root profile can't
+    // know the full chain locally (per-type resolution is the effective
+    // view's job), so this is deliberately a constant honest sentence.
+    function inheritHint() {
         return 'Inherits (Default decides; no rows anywhere = On)';
     }
 
@@ -346,7 +362,7 @@
             var body = rows.map(function (t) {
                 var st = stateOf(t.type);
                 var hint;
-                if (st === 'inherit') hint = '<span class="ep-row-hint">' + esc(inheritHint(t.type)) + '</span>';
+                if (st === 'inherit') hint = '<span class="ep-row-hint">' + esc(inheritHint()) + '</span>';
                 else hint = '<span class="ep-row-hint is-override">Overridden here — ' + (st === 'on' ? 'On' : 'Off') + '</span>';
                 if (isRoot && st === 'inherit') { st = 'on'; hint = '<span class="ep-row-hint">On (root default)</span>'; }
                 var seg = function (val, label) {
@@ -499,8 +515,10 @@
             .then(function (res) {
                 var cur = res.data && res.data.event_profile_id;
                 if (cur && cur !== currentId) {
+                    // Raw names — AC.confirm renders via textContent (esc() here
+                    // would double-escape "R&D" into "R&amp;D").
                     var from = profileById(cur);
-                    return AC.confirm('This ' + kind + ' currently uses profile “' + esc(from ? from.name : ('#' + cur)) + '”. Move it to “' + esc((profileById(currentId) || {}).name || '') + '”?',
+                    return AC.confirm('This ' + kind + ' currently uses profile “' + (from ? from.name : ('#' + cur)) + '”. Move it to “' + ((profileById(currentId) || {}).name || '') + '”?',
                         { title: 'Move ' + kind + '?', confirmLabel: 'Move' });
                 }
                 return true;
@@ -699,7 +717,7 @@
             var action = act.getAttribute('data-action');
             var id = parseInt(act.getAttribute('data-id') || '0', 10);
             if (action === 'ep-open') showDetail(id, 'toggles');
-            else if (action === 'ep-back') showGrid();
+            else if (action === 'ep-back') { confirmDiscard().then(function (ok) { if (ok) { workToggles = Object.assign({}, baseToggles); showGrid(); } }); }
             else if (action === 'ep-edit') openProfileModal('edit', id);
             else if (action === 'ep-clone') openProfileModal('clone', id);
             else if (action === 'ep-delete') deleteProfile(id);
