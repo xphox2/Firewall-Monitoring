@@ -8,15 +8,36 @@ import (
 )
 
 // RenderReportHTML renders a ReportModel into a single self-contained HTML
-// document using only email-safe HTML/CSS (tables + inline-styled divs, no
-// external assets and no image attachments). The output renders identically in
-// an email body, the admin panel iframe, and a browser print-to-PDF.
+// document using only email-safe HTML/CSS: a hybrid single-column 600px table
+// layout (MSO ghost tables for classic Outlook's Word engine), all critical
+// styles inline, and every color drawn from m.Theme — one template serves the
+// web preview and the email in both light and dark.
 func RenderReportHTML(m ReportModel) (string, error) {
+	if m.Theme.Name == "" {
+		// A zero-value theme would render every color empty — default to
+		// light rather than emit a colorless document.
+		m.Theme = ThemeByName("")
+	}
 	var buf bytes.Buffer
 	if err := reportTemplate.ExecuteTemplate(&buf, "report", m); err != nil {
 		return "", fmt.Errorf("render report: %w", err)
 	}
 	return buf.String(), nil
+}
+
+// msoOpen/msoClose are the Outlook "ghost table" conditional comments that
+// lock the layout to 600px in the Word rendering engine (classic Windows
+// Outlook ignores max-width on divs). They MUST be injected as template.HTML:
+// html/template discards HTML comments during rendering ("comments behave
+// like white space"), so writing <!--[if mso]> literally in the template
+// would silently strip the ghost tables from every email — verified against
+// the Go source, and pinned by TestReportHTMLWellFormed's MSO assertion.
+func msoOpen() template.HTML {
+	return template.HTML(`<!--[if mso | IE]><table role="presentation" width="600" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->`)
+}
+
+func msoClose() template.HTML {
+	return template.HTML(`<!--[if mso | IE]></td></tr></table><![endif]-->`)
 }
 
 var reportTemplate = template.Must(template.New("report").Funcs(template.FuncMap{
@@ -27,6 +48,12 @@ var reportTemplate = template.Must(template.New("report").Funcs(template.FuncMap
 	"fmtMinutes":            FormatMinutes,
 	"renderThroughputChart": RenderThroughputChart,
 	"renderCPUMemChart":     RenderCPUMemSVGChart,
+	"msoOpen":               msoOpen,
+	"msoClose":              msoClose,
+	// Font stacks as template funcs (template.CSS passes the quoted names
+	// through the style-attribute context unmangled).
+	"fontStack": func() template.CSS { return template.CSS(fontStack) },
+	"monoStack": func() template.CSS { return template.CSS(monoStack) },
 }).Parse(reportTemplateSrc))
 
 // gtColor returns pos when n > 0, otherwise zero — lets a KPI value (e.g.
@@ -55,374 +82,211 @@ func templateDict(pairs ...interface{}) (map[string]interface{}, error) {
 	return m, nil
 }
 
-// Design tokens (light "operations brief"): paper #ffffff on #eef1f5, navy
-// letterhead #15233b, ink #0f172a/#475569/#94a3b8, hairline #e6eaf1, data
-// accent #1e3a5f, status green/amber/red. Display = Georgia serif (title +
-// section heads), body = system sans, metrics = monospace. Email-safe: tables
-// + inline styles, no external assets, prints cleanly (dark ink on white).
+// fontStack / monoStack are the report's only typefaces. Segoe UI FIRST is
+// deliberate: classic Outlook's Word engine resolves the first font it knows
+// or falls back to Times New Roman — it does not walk the stack like a
+// browser. No web fonts: Gmail and Outlook never load them, and an
+// unrecognized @font-face is exactly what triggers the Times fallback.
+const fontStack = `'Segoe UI',-apple-system,Roboto,Helvetica,Arial,sans-serif`
+const monoStack = `Consolas,'SFMono-Regular',Menlo,'Courier New',monospace`
+
+// Design language: "flat instrument panel". One visual device per element —
+// a fill OR a hairline, never fill+ring+shadow stacks. No box-shadows, no
+// gradients, no SVG filters, no accent side-bars. All colors come from
+// ReportTheme (theme.go): off-white/charcoal surfaces, midtone accents,
+// never pure #ffffff/#000000 (survives Gmail/Outlook forced dark-mode
+// inversion). Layout: hybrid 600px single column, padding on <td> only,
+// tables with border-collapse:separate and hairlines on cells (the Word
+// engine mis-renders table-level collapse). border-radius is enhancement
+// only — classic Outlook renders square corners, and that is fine.
 const reportTemplateSrc = `
-{{define "report"}}<!DOCTYPE html>
+{{define "report"}}{{$t := .Theme}}<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="color-scheme" content="{{$t.ColorScheme}}">
+<meta name="supported-color-schemes" content="{{$t.ColorScheme}}">
 <title>Firewall Monitor — {{.Period}} Operations Report</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-  body { 
-    -webkit-text-size-adjust: 100%; 
-    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  }
-  details > summary { cursor:pointer; list-style:none; outline:none; }
-  details > summary::-webkit-details-marker { display:none; }
-  
-  /* Disclosure arrow transition */
-  details .details-arrow {
-    display: inline-block !important;
-    transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-    transform: rotate(-90deg);
-    color: #64748b;
-  }
-  details[open] .details-arrow {
-    transform: rotate(0deg);
-  }
-  .admin-preview .details-arrow {
-    color: #8b949e !important;
-  }
-  
-  /* Premium animations and hover effects in admin preview mode */
-  .admin-preview .kpi-cell,
-  .admin-preview .bw-card > div,
-  .admin-preview .device-block,
-  .admin-preview .mini-cell > div,
-  .admin-preview .spikegroup {
-    transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.22s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-  .admin-preview .kpi-cell:hover,
-  .admin-preview .bw-card > div:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
-  }
-  .admin-preview .device-block:hover {
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
-  }
-  .admin-preview .mini-cell > div:hover {
-    transform: translateY(-1px);
-    background-color: #2b303b !important;
-  }
-  .admin-preview .device-block summary {
-    transition: background-color 0.2s ease;
-  }
-  .admin-preview .device-block summary:hover {
-    background-color: #21262d !important;
-  }
-
-  /* Admin Panel dark theme native overrides */
-  body.admin-preview { 
-    background: #0d1117 !important; 
-    color: #c9d1d9 !important; 
-  }
-  .admin-preview .sheet { 
-    background: #161b22 !important; 
-    border-color: #30363d !important; 
-  }
-  .admin-preview .content-cell { 
-    border-color: #30363d !important; 
-  }
-  
-  /* Verdicts dark colors */
-  .admin-preview .verdict-crit { background: #2d1919 !important; border-left-color: #f85149 !important; border-bottom-color: #30363d !important; }
-  .admin-preview .verdict-crit div { color: #f87171 !important; }
-  .admin-preview .verdict-crit .verdict-detail { color: #fca5a5 !important; }
-  
-  .admin-preview .verdict-warn { background: #2d2419 !important; border-left-color: #d29922 !important; border-bottom-color: #30363d !important; }
-  .admin-preview .verdict-warn div { color: #fbbf24 !important; }
-  .admin-preview .verdict-warn .verdict-detail { color: #fcd34d !important; }
-  
-  .admin-preview .verdict-ok { background: #192d1f !important; border-left-color: #3fb950 !important; border-bottom-color: #30363d !important; }
-  .admin-preview .verdict-ok div { color: #34d399 !important; }
-  .admin-preview .verdict-ok .verdict-detail { color: #6ee7b7 !important; }
-
-  /* KPIs dark colors */
-  .admin-preview .kpi-cell { 
-    background: #21262d !important; 
-    border-color: #30363d !important; 
-  }
-  .admin-preview .kpi-cell .kpi-value { 
-    color: #f0f6fc !important; 
-  }
-  .admin-preview .kpi-cell .kpi-label { 
-    color: #8b949e !important; 
-  }
-  
-  /* Bandwidth & Traffic dark colors */
-  .admin-preview .bw-card > div { 
-    background: #21262d !important; 
-    border-color: #30363d !important; 
-  }
-  .admin-preview .bw-card div { 
-    color: #f0f6fc !important; 
-  }
-  .admin-preview .talker-text {
-    color: #c9d1d9 !important;
-  }
-  .admin-preview .talker-device {
-    color: #8b949e !important;
-  }
-  .admin-preview .talker-bar-bg {
-    background: #30363d !important;
-  }
-  .admin-preview .spikegroup {
-    background: #21262d !important;
-    border-color: #30363d !important;
-  }
-  .admin-preview .spikegroup .spike-text {
-    color: #c9d1d9 !important;
-  }
-  .admin-preview .spikegroup .spike-meta {
-    color: #8b949e !important;
-  }
-  
-  /* SVG Charts overrides */
-  .admin-preview .grid-line { stroke: #30363d !important; }
-  .admin-preview .axis-line { stroke: #30363d !important; }
-  .admin-preview .axis-label { fill: #8b949e !important; }
-  .admin-preview .trend-line { stroke: #58a6ff !important; }
-  .admin-preview .cpu-line { stroke: #f85149 !important; }
-  .admin-preview .mem-line { stroke: #58a6ff !important; }
-  .admin-preview .hover-slice:hover { fill: rgba(88, 166, 255, 0.08) !important; }
-
-  /* Device Cards dark colors */
-  .admin-preview .device-block {
-    background: #161b22 !important;
-    border-color: #30363d !important;
-  }
-  .admin-preview .device-block summary {
-    border-bottom-color: #30363d !important;
-    background: #161b22 !important;
-  }
-  .admin-preview .device-name {
-    color: #f0f6fc !important;
-  }
-  .admin-preview .device-ip {
-    color: #8b949e !important;
-  }
-  .admin-preview .status-online {
-    background: rgba(16, 185, 129, 0.15) !important;
-    color: #34d399 !important;
-    border-color: rgba(16, 185, 129, 0.25) !important;
-  }
-  .admin-preview .status-offline {
-    background: rgba(239, 68, 68, 0.15) !important;
-    color: #f87171 !important;
-    border-color: rgba(239, 68, 68, 0.25) !important;
-  }
-  .admin-preview .mini-cell > div {
-    background: #21262d !important;
-    border-color: #30363d !important;
-  }
-  .admin-preview .mini-value {
-    color: #f0f6fc !important;
-  }
-  .admin-preview .mini-label {
-    color: #8b949e !important;
-  }
-  .admin-preview .uptime-bar-bg {
-    background: #30363d !important;
-  }
-  .admin-preview .uptime-value {
-    color: #f0f6fc !important;
-  }
-  .admin-preview .spike-flow-src {
-    color: #c9d1d9 !important;
-  }
-  .admin-preview .spike-flow-proto {
-    background: #30363d !important;
-    color: #8b949e !important;
-  }
-  .admin-preview .spike-flow-bytes {
-    color: #f0f6fc !important;
-  }
-  .admin-preview .secthead {
-    border-left-color: #58a6ff !important;
-  }
-
-  /* Responsive and Print Media Rules */
-  @media only screen and (max-width: 600px) {
-    .sheet { width: 100% !important; border: none !important; border-radius: 0 !important; }
+  :root { color-scheme: {{$t.ColorScheme}}; }
+  body { -webkit-text-size-adjust: 100%; margin: 0; padding: 0; }
+  @media only screen and (max-width: 620px) {
+    .sheet { width: 100% !important; border-left: none !important; border-right: none !important; border-radius: 0 !important; }
     .content-cell { padding-left: 16px !important; padding-right: 16px !important; }
-    .kpi-cell { display: inline-block !important; width: 48% !important; margin: 1% !important; padding: 12px 4px !important; box-sizing: border-box; }
+    .kpi-cell { display: inline-block !important; width: 31% !important; margin: 1% 0.5% !important; box-sizing: border-box; }
     .kpi-spacer { display: none !important; }
-    .bw-card { display: block !important; width: 100% !important; margin-bottom: 12px !important; }
+    .bw-card { display: block !important; width: 100% !important; margin-bottom: 10px !important; }
     .bw-spacer { display: none !important; }
-    .mini-cell { display: inline-block !important; width: 48% !important; margin: 1% !important; box-sizing: border-box; }
+    .mini-cell { display: inline-block !important; width: 48% !important; margin: 1% 0.5% !important; box-sizing: border-box; }
     .mini-spacer { display: none !important; }
   }
-  
+  /* Outlook.com / Outlook-app partial-invert repair (best effort; ignored
+     elsewhere). Re-pins the load-bearing surfaces and inks. */
+  [data-ogsc] .ink { color: {{$t.Ink}} !important; }
+  [data-ogsc] .inkdim { color: {{$t.InkDim}} !important; }
+  [data-ogsb] .sheet { background-color: {{$t.Surface}} !important; }
+  [data-ogsb] .panel-fill { background-color: {{$t.Panel}} !important; }
+{{if .Collapsible}}
+  details > summary { cursor: pointer; list-style: none; outline: none; }
+  details > summary::-webkit-details-marker { display: none; }
+  details .details-arrow { display: inline-block !important; transition: transform 0.18s ease; transform: rotate(-90deg); color: {{$t.InkMute}}; }
+  details[open] .details-arrow { transform: rotate(0deg); }
+  .device-block summary { transition: background-color 0.15s ease; }
+  .device-block summary:hover { background-color: {{$t.Panel}} !important; }
   @media print {
-    body { background:#ffffff !important; color: #000000 !important; }
-    body.admin-preview { background:#ffffff !important; color: #000000 !important; }
-    .sheet { border:none !important; border-radius:0 !important; background: #ffffff !important; }
-    .admin-preview .sheet { background: #ffffff !important; border: none !important; }
-    .no-print { display:none !important; }
-    details { display:block !important; }
-    details > summary { display:none !important; }
-    .device-block { break-inside:avoid; page-break-inside:avoid; border: none !important; }
-    .admin-preview .device-block { border: none !important; background: #ffffff !important; border-radius: 0 !important; box-shadow: none !important; margin-bottom: 24px !important; }
-    .kpi-cell { background: #ffffff !important; border: 1px solid #cbd5e1 !important; }
-    .admin-preview .kpi-cell { background: #ffffff !important; border: 1px solid #cbd5e1 !important; }
-    .admin-preview .kpi-cell .kpi-value { color: #0f172a !important; }
-    .admin-preview .kpi-cell .kpi-label { color: #475569 !important; }
-    .admin-preview .bw-card > div { background: #ffffff !important; border: 1px solid #cbd5e1 !important; }
-    .admin-preview .bw-card div { color: #0f172a !important; }
-    .admin-preview .mini-cell > div { background: #ffffff !important; border: 1px solid #cbd5e1 !important; }
-    .admin-preview .mini-value { color: #0f172a !important; }
-    .admin-preview .mini-label { color: #475569 !important; }
-    .grid-line { stroke: #cbd5e1 !important; stroke-dasharray: 2,2 !important; }
-    .axis-line { stroke: #94a3b8 !important; }
-    .axis-label { fill: #475569 !important; }
-    .trend-line { stroke: #1e3a5f !important; }
+    /* Printing normalizes to paper regardless of preview theme: browsers
+       skip backgrounds by default, so a dark preview's light inks would
+       otherwise land invisible on white. Tokens are the LIGHT palette
+       (never pure white/black — the pure-hex invariant scans print rules
+       too). */
+    body, .sheet, .panel-fill, .device-block, details, summary { background: #fdfdfb !important; }
+    body, .ink, .kpi-value, .mini-value, .uptime-value, .spike-text, .talker-text, .device-name, .spike-flow-src, .spike-flow-bytes { color: #16242c !important; }
+    .inkdim, .kpi-label, .mini-label, .verdict-detail, .talker-device, .spike-meta, .device-ip, .spike-flow-proto { color: #4a5c66 !important; }
+    .sheet, .device-block { border-color: #d3dae3 !important; }
+    .grid-line, .axis-line { stroke: #dde3ea !important; }
+    .axis-label { fill: #5f6e79 !important; }
+    .no-print { display: none !important; }
+    details { display: block !important; }
+    details > summary { display: none !important; }
+    .device-block { break-inside: avoid; page-break-inside: avoid; }
   }
+{{end}}
 </style>
 </head>
-<body class="{{if .Collapsible}}admin-preview{{end}}" style="margin:0;padding:0;background:#f1f5f9;color:#0f172a;">
-<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:inherit;padding:28px 0;">
-<tr><td align="center">
-<table class="sheet" width="680" cellpadding="0" cellspacing="0" role="presentation" style="width:680px;max-width:680px;background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+<body style="margin:0;padding:0;background:{{$t.Canvas}};color:{{$t.Ink}};font-family:{{fontStack}};">
+<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:{{$t.Canvas}};">{{.StatusHeadline}} — {{.StatusDetail}}&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:{{$t.Canvas}};">
+<tr><td align="center" style="padding:24px 8px;">
+{{msoOpen}}
+<div style="max-width:600px;margin:0 auto;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="sheet" style="width:100%;max-width:600px;background:{{$t.Surface}};border:1px solid {{$t.Hairline}};border-radius:8px;overflow:hidden;">
 
-  <!-- Gradient Brand Accent Line -->
-  <tr><td style="background: linear-gradient(90deg, #4f46e5, #3b82f6, #10b981); height: 6px; line-height: 6px; font-size: 1px;">&nbsp;</td></tr>
+  <tr><td bgcolor="{{$t.Accent}}" style="background-color:{{$t.Accent}};height:3px;line-height:3px;font-size:1px;">&nbsp;</td></tr>
 
-  <!-- Letterhead -->
-  <tr><td class="content-cell" style="padding:32px 36px 20px;border-bottom:1px solid #f1f5f9;">
-    <table width="100%" cellpadding="0" cellspacing="0" role="presentation"><tr>
+  <tr><td class="content-cell" style="padding:26px 24px 18px;border-bottom:1px solid {{$t.Hairline}};">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
       <td style="vertical-align:top;">
-        <div style="font-size:11px;font-weight:700;color:#4f46e5;text-transform:uppercase;letter-spacing:1.8px;font-family:'Plus Jakarta Sans', sans-serif;">Firewall Monitor</div>
-        <div style="font-family:'Plus Jakarta Sans', sans-serif;font-size:26px;font-weight:800;color:#0f172a;letter-spacing:-0.5px;margin-top:6px;line-height:1.15;">{{.Period}} Operations Report</div>
-        <div style="font-size:13px;color:#64748b;margin-top:6px;font-weight:500;">{{.Date}} &middot; {{.Timezone}}</div>
+        <div style="font-family:{{fontStack}};font-size:11px;font-weight:700;color:{{$t.Accent}};text-transform:uppercase;letter-spacing:1.6px;">Firewall Monitor</div>
+        <div class="ink" style="font-family:{{fontStack}};font-size:22px;font-weight:700;color:{{$t.Ink}};letter-spacing:-0.3px;margin-top:5px;line-height:1.2;">{{.Period}} Operations Report</div>
+        <div class="inkdim" style="font-family:{{fontStack}};font-size:12.5px;color:{{$t.InkDim}};margin-top:5px;">{{.Date}} &middot; {{.Timezone}}</div>
       </td>
       <td align="right" style="vertical-align:top;white-space:nowrap;">
-        <span style="display:inline-block;background:#e0e7ff;color:#4338ca;border:1px solid #c7d2fe;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;font-family:'SFMono-Regular',Consolas,'Liberation Mono',monospace;letter-spacing:0.3px;">LAST {{.Hours}}H</span>
+        <span class="panel-fill" style="display:inline-block;background:{{$t.Panel}};color:{{$t.Accent}};border-radius:6px;padding:6px 11px;font-size:11px;font-weight:700;font-family:{{monoStack}};letter-spacing:0.3px;">LAST {{.Hours}}H</span>
       </td>
     </tr></table>
   </td></tr>
 
-  <!-- Status verdict band -->
   {{if eq .StatusLevel "crit"}}
-  <tr><td class="content-cell verdict-crit" style="background:#fef2f2;border-left:5px solid #ef4444;border-bottom:1px solid #fee2e2;padding:18px 36px;">
-    {{template "verdict" dict "Headline" .StatusHeadline "Detail" .StatusDetail "Dot" "#ef4444" "Text" "#991b1b"}}
+  <tr><td class="content-cell verdict-crit" bgcolor="{{$t.CritTint}}" style="background:{{$t.CritTint}};padding:16px 24px;border-bottom:1px solid {{$t.Hairline}};">
+    {{template "verdict" dict "T" $t "Headline" .StatusHeadline "Detail" .StatusDetail "Dot" $t.Crit "Text" $t.Crit}}
   </td></tr>
   {{else if eq .StatusLevel "warn"}}
-  <tr><td class="content-cell verdict-warn" style="background:#fffbeb;border-left:5px solid #f59e0b;border-bottom:1px solid #fef3c7;padding:18px 36px;">
-    {{template "verdict" dict "Headline" .StatusHeadline "Detail" .StatusDetail "Dot" "#f59e0b" "Text" "#9a3412"}}
+  <tr><td class="content-cell verdict-warn" bgcolor="{{$t.WarnTint}}" style="background:{{$t.WarnTint}};padding:16px 24px;border-bottom:1px solid {{$t.Hairline}};">
+    {{template "verdict" dict "T" $t "Headline" .StatusHeadline "Detail" .StatusDetail "Dot" $t.Warn "Text" $t.Warn}}
   </td></tr>
   {{else}}
-  <tr><td class="content-cell verdict-ok" style="background:#f0fdf4;border-left:5px solid #10b981;border-bottom:1px solid #dcfce7;padding:18px 36px;">
-    {{template "verdict" dict "Headline" .StatusHeadline "Detail" .StatusDetail "Dot" "#10b981" "Text" "#065f46"}}
+  <tr><td class="content-cell verdict-ok" bgcolor="{{$t.OkTint}}" style="background:{{$t.OkTint}};padding:16px 24px;border-bottom:1px solid {{$t.Hairline}};">
+    {{template "verdict" dict "T" $t "Headline" .StatusHeadline "Detail" .StatusDetail "Dot" $t.Ok "Text" $t.Ok}}
   </td></tr>
   {{end}}
 
-  <!-- Fleet KPI strip -->
-  <tr><td class="content-cell" style="padding:20px 36px;border-bottom:1px solid #f1f5f9;">
-    <table width="100%" cellpadding="0" cellspacing="0" role="presentation"><tr>
-      {{template "kpi" dict "Label" "Devices" "Value" (printf "%d" .TotalDevices) "Color" "#0f172a"}}
+  <tr><td class="content-cell" style="padding:18px 24px;border-bottom:1px solid {{$t.Hairline}};">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+      {{template "kpi" dict "T" $t "Label" "Devices" "Value" (printf "%d" .TotalDevices) "Color" $t.Ink}}
       <td class="kpi-spacer" width="2%"></td>
-      {{template "kpi" dict "Label" "Online" "Value" (printf "%d" .OnlineDevices) "Color" "#10b981"}}
+      {{template "kpi" dict "T" $t "Label" "Online" "Value" (printf "%d" .OnlineDevices) "Color" $t.Ok}}
       <td class="kpi-spacer" width="2%"></td>
-      {{template "kpi" dict "Label" "Offline" "Value" (printf "%d" .OfflineDevices) "Color" (gtColor .OfflineDevices "#ef4444" "#94a3b8")}}
+      {{template "kpi" dict "T" $t "Label" "Offline" "Value" (printf "%d" .OfflineDevices) "Color" (gtColor .OfflineDevices $t.Crit $t.InkMute)}}
       <td class="kpi-spacer" width="2%"></td>
-      {{template "kpi" dict "Label" (printf "Alerts %dh" .Hours) "Value" (printf "%d" .TotalAlerts) "Color" "#0f172a"}}
+      {{template "kpi" dict "T" $t "Label" (printf "Alerts %dh" .Hours) "Value" (printf "%d" .TotalAlerts) "Color" $t.Ink}}
       <td class="kpi-spacer" width="2%"></td>
-      {{template "kpi" dict "Label" "Critical" "Value" (printf "%d" .CriticalAlerts) "Color" (gtColor .CriticalAlerts "#ef4444" "#94a3b8")}}
+      {{template "kpi" dict "T" $t "Label" "Critical" "Value" (printf "%d" .CriticalAlerts) "Color" (gtColor .CriticalAlerts $t.Crit $t.InkMute)}}
       <td class="kpi-spacer" width="2%"></td>
-      {{template "kpi" dict "Label" "Uptime" "Value" (printf "%.2f%%" .FleetUptimePct) "Color" "#4f46e5"}}
+      {{template "kpi" dict "T" $t "Label" "Uptime" "Value" (printf "%.2f%%" .FleetUptimePct) "Color" $t.Accent}}
     </tr></table>
   </td></tr>
 
-  <!-- Bandwidth & Traffic -->
-  <tr><td class="content-cell" style="padding:24px 36px;border-bottom:1px solid #f1f5f9;">
-    {{template "secthead" "Bandwidth & Traffic"}}
-    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:12px;"><tr>
+  <tr><td class="content-cell" style="padding:22px 24px;border-bottom:1px solid {{$t.Hairline}};">
+    {{template "secthead" dict "T" $t "Text" "Bandwidth & Traffic"}}
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:10px;"><tr>
       <td width="49%" class="bw-card" style="vertical-align:top;">
-        <div style="border:1px solid #e2e8f0;background:#f8fafc;border-radius:10px;padding:16px 20px;">
-          <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:1px;font-weight:600;">Peak Throughput</div>
-          <div style="font-family:'SFMono-Regular',Consolas,'Liberation Mono',monospace;font-size:22px;font-weight:800;color:#1e3a5f;margin-top:6px;">{{.PeakThroughput}}</div>
-        </div>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td class="panel-fill" bgcolor="{{$t.Panel}}" style="background:{{$t.Panel}};border-radius:8px;padding:14px 18px;">
+          <div class="inkdim" style="font-family:{{fontStack}};font-size:10px;color:{{$t.InkDim}};text-transform:uppercase;letter-spacing:1px;font-weight:600;">Peak Throughput</div>
+          <div class="ink" style="font-family:{{monoStack}};font-size:20px;font-weight:700;color:{{$t.Ink}};margin-top:5px;">{{.PeakThroughput}}</div>
+        </td></tr></table>
       </td>
       <td width="2%" class="bw-spacer"></td>
       <td width="49%" class="bw-card" style="vertical-align:top;">
-        <div style="border:1px solid #e2e8f0;background:#f8fafc;border-radius:10px;padding:16px 20px;">
-          <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:1px;font-weight:600;">Total Transferred</div>
-          <div style="font-family:'SFMono-Regular',Consolas,'Liberation Mono',monospace;font-size:22px;font-weight:800;color:#0f172a;margin-top:6px;">{{.TotalTransfer}}</div>
-        </div>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td class="panel-fill" bgcolor="{{$t.Panel}}" style="background:{{$t.Panel}};border-radius:8px;padding:14px 18px;">
+          <div class="inkdim" style="font-family:{{fontStack}};font-size:10px;color:{{$t.InkDim}};text-transform:uppercase;letter-spacing:1px;font-weight:600;">Total Transferred</div>
+          <div class="ink" style="font-family:{{monoStack}};font-size:20px;font-weight:700;color:{{$t.Ink}};margin-top:5px;">{{.TotalTransfer}}</div>
+        </td></tr></table>
       </td>
     </tr></table>
 
     {{if .TopTalkers}}
-    {{template "eyebrow" "Top Talkers"}}
-    {{range .TopTalkers}}{{template "talker" .}}{{end}}
+    {{template "eyebrow" dict "T" $t "Text" "Top Talkers"}}
+    {{range .TopTalkers}}{{template "talker" dict "T" $t "D" .}}{{end}}
     {{else}}
-    <div style="font-size:12px;color:#64748b;margin-top:14px;font-style:italic;">No interface traffic recorded in this window.</div>
+    <div class="inkdim" style="font-family:{{fontStack}};font-size:12px;color:{{$t.InkDim}};margin-top:12px;font-style:italic;">No interface traffic recorded in this window.</div>
     {{end}}
 
     {{if .SpikeGroups}}
-    {{template "eyebrow" "Traffic Spikes"}}
-    <div style="font-size:12.5px;color:#475569;margin-bottom:12px;line-height:1.4;">
-      Detected <strong style="color:#0f172a;">{{.SpikeTotal}}</strong> throughput spike{{if ne .SpikeTotal 1}}s{{end}} on <strong style="color:#0f172a;">{{.SpikeIfaceCount}}</strong> interface{{if ne .SpikeIfaceCount 1}}s{{end}}
-      {{if .SpikeCritical}}<span style="color:#ef4444;font-weight:600;"> &middot; {{.SpikeCritical}} critical</span>{{end}}
-      {{if .SpikeWarning}}<span style="color:#d97706;font-weight:600;"> &middot; {{.SpikeWarning}} warning</span>{{end}}
+    {{template "eyebrow" dict "T" $t "Text" "Traffic Spikes"}}
+    <div class="inkdim" style="font-family:{{fontStack}};font-size:12.5px;color:{{$t.InkDim}};margin-bottom:10px;line-height:1.4;">
+      Detected <strong class="ink" style="color:{{$t.Ink}};">{{.SpikeTotal}}</strong> throughput spike{{if ne .SpikeTotal 1}}s{{end}} on <strong class="ink" style="color:{{$t.Ink}};">{{.SpikeIfaceCount}}</strong> interface{{if ne .SpikeIfaceCount 1}}s{{end}}
+      {{if .SpikeCritical}}<span style="color:{{$t.Crit}};font-weight:600;"> &middot; {{.SpikeCritical}} critical</span>{{end}}
+      {{if .SpikeWarning}}<span style="color:{{$t.Warn}};font-weight:600;"> &middot; {{.SpikeWarning}} warning</span>{{end}}
     </div>
-    {{range .SpikeGroups}}{{template "spikegroup" .}}{{end}}
-    {{if .SpikeMore}}<div style="font-size:11px;color:#64748b;margin-top:4px;font-style:italic;">+ {{.SpikeMore}} more interface{{if ne .SpikeMore 1}}s{{end}} with spikes</div>{{end}}
+    {{range .SpikeGroups}}{{template "spikegroup" dict "T" $t "D" .}}{{end}}
+    {{if .SpikeMore}}<div class="inkdim" style="font-family:{{fontStack}};font-size:11px;color:{{$t.InkDim}};margin-top:4px;font-style:italic;">+ {{.SpikeMore}} more interface{{if ne .SpikeMore 1}}s{{end}} with spikes</div>{{end}}
     {{end}}
   </td></tr>
 
-  <!-- Alert Activity Section -->
   {{if .HasAlerts}}
-  <tr><td class="content-cell" style="padding:24px 36px;border-bottom:1px solid #f1f5f9;">
-    {{template "secthead" "Alert Activity"}}
+  <tr><td class="content-cell" style="padding:22px 24px;border-bottom:1px solid {{$t.Hairline}};">
+    {{template "secthead" dict "T" $t "Text" "Alert Activity"}}
     {{if .IsEmail}}
-    <div style="font-size:12.5px;color:#475569;line-height:1.5;">
-      A total of <strong style="color:#0f172a;">{{.TotalAlerts}}</strong> alerts were recorded during this report window, including <span style="color:#ef4444;font-weight:600;">{{.CriticalAlerts}} critical</span> events.
+    <div class="inkdim" style="font-family:{{fontStack}};font-size:12.5px;color:{{$t.InkDim}};line-height:1.5;">
+      A total of <strong class="ink" style="color:{{$t.Ink}};">{{.TotalAlerts}}</strong> alerts were recorded during this report window, including <span style="color:{{$t.Crit}};font-weight:600;">{{.CriticalAlerts}} critical</span> events.
     </div>
-    <div style="font-size:11.5px;color:#64748b;margin-top:8px;font-style:italic;">
+    <div class="inkdim" style="font-family:{{fontStack}};font-size:11.5px;color:{{$t.InkMute}};margin-top:8px;font-style:italic;">
       Note: The interactive alert timeline graph is viewable in the Web Admin Console.
     </div>
     {{else}}
     <div style="width:100%;overflow-x:auto;">
-      {{renderAlertChart .AlertBuckets}}
+      {{renderAlertChart .AlertBuckets $t}}
     </div>
     {{end}}
   </td></tr>
   {{end}}
 
-  <!-- Operations (F05/F06): response times + noise leaderboard, 30d -->
   {{if .Ops}}
-  <tr><td class="content-cell" style="padding:24px 36px;border-bottom:1px solid #f1f5f9;">
-    {{template "secthead" "Operations (30 days)"}}
-    <div style="font-size:12.5px;color:#475569;line-height:1.7;">
-      Mean time to acknowledge: <strong style="color:#0f172a;">{{fmtMinutes .Ops.MTTAMinutes}}</strong>
-      <span style="color:#94a3b8;">({{.Ops.AckedCount}} operator-acknowledged)</span>
-      &nbsp;·&nbsp; Mean time to resolve: <strong style="color:#0f172a;">{{fmtMinutes .Ops.MTTRMinutes}}</strong>
-      <span style="color:#94a3b8;">({{.Ops.ResolvedCount}} resolved)</span>
+  <tr><td class="content-cell" style="padding:22px 24px;border-bottom:1px solid {{$t.Hairline}};">
+    {{template "secthead" dict "T" $t "Text" "Operations (30 days)"}}
+    <div class="inkdim" style="font-family:{{fontStack}};font-size:12.5px;color:{{$t.InkDim}};line-height:1.7;">
+      Mean time to acknowledge: <strong class="ink" style="color:{{$t.Ink}};">{{fmtMinutes .Ops.MTTAMinutes}}</strong>
+      <span style="color:{{$t.InkMute}};">({{.Ops.AckedCount}} operator-acknowledged)</span>
+      &nbsp;&middot;&nbsp; Mean time to resolve: <strong class="ink" style="color:{{$t.Ink}};">{{fmtMinutes .Ops.MTTRMinutes}}</strong>
+      <span style="color:{{$t.InkMute}};">({{.Ops.ResolvedCount}} resolved)</span>
     </div>
     {{if .Ops.Noise}}
-    <div style="font-size:12px;color:#334155;font-weight:600;margin-top:14px;margin-bottom:6px;">Noisiest alerts</div>
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;color:#475569;border-collapse:collapse;">
-      <tr style="color:#94a3b8;text-align:left;">
-        <th style="padding:4px 8px 4px 0;font-weight:600;">Alert</th>
-        <th style="padding:4px 8px;font-weight:600;">Device</th>
-        <th style="padding:4px 8px;font-weight:600;text-align:right;">Fires</th>
-        <th style="padding:4px 0 4px 8px;font-weight:600;text-align:right;">Suppressed</th>
+    <div class="ink" style="font-family:{{fontStack}};font-size:12px;color:{{$t.Ink}};font-weight:600;margin-top:14px;margin-bottom:6px;">Noisiest alerts</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-family:{{fontStack}};font-size:12px;color:{{$t.InkDim}};border-collapse:separate;border-spacing:0;">
+      <tr style="text-align:left;">
+        <th class="inkdim" style="padding:4px 8px 6px 0;font-weight:600;color:{{$t.InkMute}};border-bottom:1px solid {{$t.Hairline}};">Alert</th>
+        <th class="inkdim" style="padding:4px 8px 6px;font-weight:600;color:{{$t.InkMute}};border-bottom:1px solid {{$t.Hairline}};">Device</th>
+        <th class="inkdim" align="right" style="padding:4px 8px 6px;font-weight:600;text-align:right;color:{{$t.InkMute}};border-bottom:1px solid {{$t.Hairline}};">Fires</th>
+        <th class="inkdim" align="right" style="padding:4px 0 6px 8px;font-weight:600;text-align:right;color:{{$t.InkMute}};border-bottom:1px solid {{$t.Hairline}};">Suppressed</th>
       </tr>
       {{range .Ops.Noise}}
-      <tr style="border-top:1px solid #f1f5f9;">
-        <td style="padding:5px 8px 5px 0;font-family:ui-monospace,monospace;">{{.AlertType}}</td>
-        <td style="padding:5px 8px;">{{.DeviceName}}</td>
-        <td style="padding:5px 8px;text-align:right;font-weight:600;color:#0f172a;">{{.Count}}</td>
-        <td style="padding:5px 0 5px 8px;text-align:right;color:#94a3b8;">{{.Suppressed}}</td>
+      <tr>
+        <td style="padding:6px 8px 6px 0;font-family:{{monoStack}};border-bottom:1px solid {{$t.HairlineSoft}};">{{.AlertType}}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid {{$t.HairlineSoft}};">{{.DeviceName}}</td>
+        <td align="right" class="ink" style="padding:6px 8px;text-align:right;font-weight:600;color:{{$t.Ink}};border-bottom:1px solid {{$t.HairlineSoft}};">{{.Count}}</td>
+        <td align="right" style="padding:6px 0 6px 8px;text-align:right;color:{{$t.InkMute}};border-bottom:1px solid {{$t.HairlineSoft}};">{{.Suppressed}}</td>
       </tr>
       {{end}}
     </table>
@@ -430,188 +294,201 @@ const reportTemplateSrc = `
   </td></tr>
   {{end}}
 
-  <!-- Per-device detail -->
-  <tr><td class="content-cell" style="padding:24px 36px 12px;">
-    {{template "secthead" "Device Detail"}}
+  <tr><td class="content-cell" style="padding:22px 24px 10px;">
+    {{template "secthead" dict "T" $t "Text" "Device Detail"}}
     {{range .Devices}}
       {{if $.Collapsible}}
-      <details open class="device-block" style="display:block;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:0;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,0.02);">
-        <summary style="padding:16px 20px;border-bottom:1px solid #f1f5f9;">{{template "devhead" .}}</summary>
-        <div style="padding:16px 20px 20px;">{{template "devbody" .}}</div>
+      <details open class="device-block" style="display:block;background:{{$t.Surface}};border:1px solid {{$t.Hairline}};border-radius:8px;padding:0;margin-bottom:14px;">
+        <summary style="padding:14px 18px;border-bottom:1px solid {{$t.HairlineSoft}};">{{template "devhead" dict "T" $t "D" .}}</summary>
+        <div style="padding:14px 18px 18px;">{{template "devbody" dict "T" $t "D" .}}</div>
       </details>
       {{else}}
-      <div class="device-block" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,0.02);">
-        <div style="padding:16px 20px;border-bottom:1px solid #f1f5f9;">{{template "devhead" .}}</div>
-        <div style="padding:16px 20px 20px;">{{template "devbody" .}}</div>
-      </div>
+      {{/* Email branch: border + spacing live on <td>/spacer rows — the Word
+           engine drops div borders and margins. */}}
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="device-block">
+        <tr><td style="background:{{$t.Surface}};border:1px solid {{$t.Hairline}};border-radius:8px;padding:0;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr><td style="padding:14px 18px;border-bottom:1px solid {{$t.HairlineSoft}};">{{template "devhead" dict "T" $t "D" .}}</td></tr>
+            <tr><td style="padding:14px 18px 18px;">{{template "devbody" dict "T" $t "D" .}}</td></tr>
+          </table>
+        </td></tr>
+        <tr><td style="height:14px;line-height:14px;font-size:1px;">&nbsp;</td></tr>
+      </table>
       {{end}}
     {{end}}
   </td></tr>
 
-  <!-- Footer -->
-  <tr><td class="content-cell" style="padding:24px 36px 32px;border-top:1px solid #f1f5f9;text-align:center;">
+  <tr><td class="content-cell" style="padding:22px 24px 28px;border-top:1px solid {{$t.Hairline}};text-align:center;">
     {{if .IsEmail}}
-    <div style="margin-bottom:16px;font-size:12px;color:#64748b;line-height:1.5;">
-      To explore high-resolution interactive charts and drill down into sFlow traffic details, view this report in the <span style="color:#4f46e5;font-weight:600;">Firewall Monitor Web Console</span>.
+    <div class="inkdim" style="font-family:{{fontStack}};margin-bottom:14px;font-size:12px;color:{{$t.InkDim}};line-height:1.5;">
+      To explore high-resolution interactive charts and drill down into sFlow traffic details, view this report in the <span style="color:{{$t.Accent}};font-weight:600;">Firewall Monitor Web Console</span>.
     </div>
     {{end}}
-    <div style="font-size:11px;color:#94a3b8;font-weight:500;">Generated {{.GeneratedAt}} by Firewall Monitor{{if .Version}} &middot; v{{.Version}}{{end}}</div>
+    <div class="inkdim" style="font-family:{{fontStack}};font-size:11px;color:{{$t.InkMute}};">Generated {{.GeneratedAt}} by Firewall Monitor{{if .Version}} &middot; v{{.Version}}{{end}}</div>
   </td></tr>
 
 </table>
+</div>
+{{msoClose}}
 </td></tr>
 </table>
 </body>
 </html>{{end}}
 
-{{define "verdict"}}<table width="100%" cellpadding="0" cellspacing="0" role="presentation"><tr>
-  <td style="vertical-align:middle;width:24px;">
-    <span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:{{.Dot}};box-shadow:0 0 0 4px {{.Dot}}22;"></span>
+{{define "verdict"}}{{$t := .T}}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+  <td style="vertical-align:middle;width:22px;">
+    <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:{{.Dot}};font-size:1px;line-height:10px;">&nbsp;</span>
   </td>
   <td style="vertical-align:middle;">
-    <div style="font-family:'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;font-size:16px;font-weight:700;line-height:1.2;">{{.Headline}}</div>
-    <div style="font-size:12.5px;color:#475569;margin-top:3px;font-weight:500;" class="verdict-detail">{{.Detail}}</div>
+    <div style="font-family:{{fontStack}};font-size:16px;font-weight:700;line-height:1.25;color:{{.Text}};">{{.Headline}}</div>
+    <div class="verdict-detail inkdim" style="font-family:{{fontStack}};font-size:12.5px;color:{{$t.InkDim}};margin-top:3px;">{{.Detail}}</div>
   </td>
 </tr></table>{{end}}
 
-{{define "secthead"}}<div class="secthead" style="font-family:'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;font-size:14px;font-weight:700;color:#0f172a;text-transform:uppercase;letter-spacing:1px;margin:0 0 16px;border-left:3px solid #4f46e5;padding-left:10px;line-height:1.25;">{{.}}</div>{{end}}
+{{define "secthead"}}{{$t := .T}}<div class="secthead ink" style="font-family:{{fontStack}};font-size:12px;font-weight:700;color:{{$t.Ink}};text-transform:uppercase;letter-spacing:1.4px;margin:0 0 14px;padding-bottom:8px;border-bottom:1px solid {{$t.Hairline}};line-height:1.25;">{{.Text}}</div>{{end}}
 
-{{define "eyebrow"}}<div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:1px;font-weight:700;margin:22px 0 10px;">{{.}}</div>{{end}}
+{{define "eyebrow"}}{{$t := .T}}<div class="inkdim" style="font-family:{{fontStack}};font-size:10px;color:{{$t.InkDim}};text-transform:uppercase;letter-spacing:1px;font-weight:700;margin:20px 0 10px;">{{.Text}}</div>{{end}}
 
-{{define "kpi"}}<td class="kpi-cell" width="15%" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px 6px;text-align:center;vertical-align:top;">
-  <div class="kpi-value" style="font-family:'SFMono-Regular',Consolas,'Liberation Mono',monospace;font-size:20px;font-weight:800;color:{{.Color}};line-height:1.1;">{{.Value}}</div>
-  <div class="kpi-label" style="font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:0.8px;margin-top:6px;font-weight:600;">{{.Label}}</div>
+{{define "kpi"}}{{$t := .T}}<td class="kpi-cell panel-fill" width="15%" bgcolor="{{$t.Panel}}" style="background:{{$t.Panel}};border-radius:8px;padding:12px 4px;text-align:center;vertical-align:top;">
+  <div class="kpi-value" style="font-family:{{monoStack}};font-size:18px;font-weight:700;color:{{.Color}};line-height:1.1;">{{.Value}}</div>
+  <div class="kpi-label inkdim" style="font-family:{{fontStack}};font-size:9px;color:{{$t.InkDim}};text-transform:uppercase;letter-spacing:0.7px;margin-top:6px;font-weight:600;">{{.Label}}</div>
 </td>{{end}}
 
-{{define "talker"}}<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:8px;"><tr>
-  <td width="35%" style="font-size:12px;color:#334155;padding-right:10px;vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-    <strong class="talker-text" style="color:#1e293b;">{{.IfaceName}}</strong>{{if .DeviceName}} <span class="talker-device" style="color:#64748b;font-size:11px;">({{.DeviceName}})</span>{{end}}
+{{define "talker"}}{{$t := .T}}{{$d := .D}}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:8px;"><tr>
+  <td width="35%" style="font-family:{{fontStack}};font-size:12px;color:{{$t.InkDim}};padding-right:10px;vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+    <strong class="talker-text ink" style="color:{{$t.Ink}};">{{$d.IfaceName}}</strong>{{if $d.DeviceName}} <span class="talker-device inkdim" style="color:{{$t.InkDim}};font-size:11px;">({{$d.DeviceName}})</span>{{end}}
   </td>
   <td width="45%" style="vertical-align:middle;">
-    <div class="talker-bar-bg" style="background:#f1f5f9;border-radius:6px;height:10px;width:100%;overflow:hidden;">
-      <div style="background-color:#3b82f6;background-image:linear-gradient(90deg, #4f46e5, #3b82f6);height:10px;border-radius:6px;width:{{.BarPct}}%;"></div>
-    </div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+      {{if $d.BarPct}}<td width="{{$d.BarPct}}%" bgcolor="{{$t.Accent}}" style="background:{{$t.Accent}};height:8px;line-height:8px;font-size:1px;{{if lt $d.BarPct 100}}border-radius:4px 0 0 4px;{{else}}border-radius:4px;{{end}}">&nbsp;</td>{{end}}
+      {{if lt $d.BarPct 100}}<td bgcolor="{{$t.HairlineSoft}}" class="talker-bar-bg" style="background:{{$t.HairlineSoft}};height:8px;line-height:8px;font-size:1px;{{if not $d.BarPct}}border-radius:4px;{{else}}border-radius:0 4px 4px 0;{{end}}">&nbsp;</td>{{end}}
+    </tr></table>
   </td>
-  <td width="20%" align="right" style="font-size:12px;color:#0f172a;padding-left:10px;vertical-align:middle;white-space:nowrap;font-family:'SFMono-Regular',Consolas,'Liberation Mono',monospace;font-weight:600;">
-    {{.TotalHuman}}<span style="color:#64748b;font-size:10px;font-weight:400;"> &middot; {{.PeakHuman}} pk</span>
-  </td>
-</tr></table>{{end}}
-
-{{define "spikegroup"}}<table width="100%" cellpadding="0" cellspacing="0" role="presentation" class="spikegroup" style="margin-bottom:8px;border:1px solid #e2e8f0;border-left:4px solid {{if .IsCritical}}#ef4444{{else}}#f59e0b{{end}};background:#f8fafc;border-radius:8px;"><tr>
-  <td style="padding:10px 14px;vertical-align:middle;">
-    <span style="display:inline-block;background:{{if .IsCritical}}#fee2e2{{else}}#fef3c7{{end}};color:{{if .IsCritical}}#991b1b{{else}}#9a3412{{end}};border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;font-family:'SFMono-Regular',Consolas,'Liberation Mono',monospace;">{{.Count}}&times;</span>
-    <span class="spike-text" style="color:#1e293b;font-size:12.5px;font-weight:600;">&nbsp;{{.Interface}}</span>{{if .DeviceName}} <span class="spike-meta" style="color:#64748b;font-size:12px;">{{.DeviceName}}</span>{{end}}
-    {{if and .Critical (ne .Critical .Count)}}<span style="color:#ef4444;font-size:11px;font-weight:600;"> ({{.Critical}} critical)</span>{{end}}
-  </td>
-  <td align="right" class="spike-meta" style="padding:10px 14px;vertical-align:middle;font-size:11px;color:#64748b;white-space:nowrap;">
-    peak <span style="color:#0f172a;font-family:'SFMono-Regular',Consolas,'Liberation Mono',monospace;font-weight:600;">{{.PeakHuman}}</span>{{if .Window}} &middot; {{.Window}}{{end}}
+  <td width="20%" align="right" class="ink" style="font-size:12px;color:{{$t.Ink}};padding-left:10px;vertical-align:middle;white-space:nowrap;font-family:{{monoStack}};font-weight:600;">
+    {{$d.TotalHuman}}<span class="inkdim" style="color:{{$t.InkDim}};font-size:10px;font-weight:400;"> &middot; {{$d.PeakHuman}} pk</span>
   </td>
 </tr></table>{{end}}
 
-{{define "devhead"}}<table width="100%" cellpadding="0" cellspacing="0" role="presentation"><tr>
+{{define "spikegroup"}}{{$t := .T}}{{$d := .D}}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="spikegroup" style="margin-bottom:8px;"><tr>
+  <td class="panel-fill" bgcolor="{{$t.Panel}}" style="background:{{$t.Panel}};border-radius:8px;padding:0;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+      <td style="padding:9px 14px;vertical-align:middle;">
+        <span style="display:inline-block;background:{{if $d.IsCritical}}{{$t.CritTint}}{{else}}{{$t.WarnTint}}{{end}};color:{{if $d.IsCritical}}{{$t.Crit}}{{else}}{{$t.Warn}}{{end}};border-radius:5px;padding:2px 8px;font-size:11px;font-weight:700;font-family:{{monoStack}};">{{$d.Count}}&times;</span>
+        <span class="spike-text ink" style="font-family:{{fontStack}};color:{{$t.Ink}};font-size:12.5px;font-weight:600;">&nbsp;{{$d.Interface}}</span>{{if $d.DeviceName}} <span class="spike-meta inkdim" style="font-family:{{fontStack}};color:{{$t.InkDim}};font-size:12px;">{{$d.DeviceName}}</span>{{end}}
+        {{if and $d.Critical (ne $d.Critical $d.Count)}}<span style="color:{{$t.Crit}};font-size:11px;font-weight:600;"> ({{$d.Critical}} critical)</span>{{end}}
+      </td>
+      <td align="right" class="spike-meta inkdim" style="padding:9px 14px;vertical-align:middle;font-family:{{fontStack}};font-size:11px;color:{{$t.InkDim}};white-space:nowrap;">
+        peak <span class="ink" style="color:{{$t.Ink}};font-family:{{monoStack}};font-weight:600;">{{$d.PeakHuman}}</span>{{if $d.Window}} &middot; {{$d.Window}}{{end}}
+      </td>
+    </tr></table>
+  </td>
+</tr></table>{{end}}
+
+{{define "devhead"}}{{$t := .T}}{{$d := .D}}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
   <td style="vertical-align:middle;">
-    <span class="device-name" style="font-family:'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;font-size:15px;font-weight:700;color:#0f172a;">{{.Name}}</span>
-    {{if .Online}}
-    <span class="status-online" style="display:inline-block;background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;border-radius:20px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.5px;margin-left:8px;">ONLINE</span>
+    <span class="device-name ink" style="font-family:{{fontStack}};font-size:14px;font-weight:700;color:{{$t.Ink}};">{{$d.Name}}</span>
+    {{if $d.Online}}
+    <span class="status-online" style="display:inline-block;background:{{$t.OkTint}};color:{{$t.Ok}};border-radius:12px;padding:2px 10px;font-family:{{fontStack}};font-size:10px;font-weight:700;letter-spacing:0.5px;margin-left:8px;">ONLINE</span>
     {{else}}
-    <span class="status-offline" style="display:inline-block;background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;border-radius:20px;padding:2px 10px;font-size:10px;font-weight:700;letter-spacing:0.5px;margin-left:8px;">OFFLINE</span>
+    <span class="status-offline" style="display:inline-block;background:{{$t.CritTint}};color:{{$t.Crit}};border-radius:12px;padding:2px 10px;font-family:{{fontStack}};font-size:10px;font-weight:700;letter-spacing:0.5px;margin-left:8px;">OFFLINE</span>
     {{end}}
   </td>
-  <td align="right" class="device-ip" style="vertical-align:middle;font-size:12px;color:#64748b;font-family:'SFMono-Regular',Consolas,'Liberation Mono',monospace;font-weight:500;">
-    {{.IPAddress}}
-    <span class="details-arrow" style="display:none;margin-left:8px;font-size:10px;vertical-align:middle;">&#9660;</span>
+  <td align="right" class="device-ip inkdim" style="vertical-align:middle;font-size:12px;color:{{$t.InkDim}};font-family:{{monoStack}};">
+    {{$d.IPAddress}}
+    <span class="details-arrow" style="display:none;mso-hide:all;margin-left:8px;font-size:10px;vertical-align:middle;">&#9660;</span>
   </td>
 </tr></table>{{end}}
 
-{{define "devbody"}}
-<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-top:4px;"><tr>
-  {{template "mini" dict "Label" "CPU avg/max" "Value" (printf "%.0f / %.0f%%" .CPUAvg .CPUMax)}}
+{{define "devbody"}}{{$t := .T}}{{$d := .D}}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:2px;"><tr>
+  {{template "mini" dict "T" $t "Label" "CPU avg/max" "Value" (printf "%.0f / %.0f%%" $d.CPUAvg $d.CPUMax)}}
   <td class="mini-spacer" width="2%"></td>
-  {{template "mini" dict "Label" "Mem avg/max" "Value" (printf "%.0f / %.0f%%" .MemAvg .MemMax)}}
+  {{template "mini" dict "T" $t "Label" "Mem avg/max" "Value" (printf "%.0f / %.0f%%" $d.MemAvg $d.MemMax)}}
   <td class="mini-spacer" width="2%"></td>
-  {{template "mini" dict "Label" "Disk" "Value" (printf "%.0f%%" .DiskUsage)}}
+  {{template "mini" dict "T" $t "Label" "Disk" "Value" (printf "%.0f%%" $d.DiskUsage)}}
   <td class="mini-spacer" width="2%"></td>
-  {{template "mini" dict "Label" "Sessions" "Value" (printf "%d" .SessionCount)}}
+  {{template "mini" dict "T" $t "Label" "Sessions" "Value" (printf "%d" $d.SessionCount)}}
 </tr></table>
 
-<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-top:16px;"><tr>
-  <td style="vertical-align:middle;font-size:11px;color:#64748b;width:60px;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Uptime</td>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:14px;"><tr>
+  <td class="inkdim" style="vertical-align:middle;font-family:{{fontStack}};font-size:11px;color:{{$t.InkDim}};width:60px;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Uptime</td>
   <td style="vertical-align:middle;">
-    <div class="uptime-bar-bg" style="background:#e2e8f0;border-radius:6px;height:10px;width:100%;overflow:hidden;">
-      <div style="background-color:#10b981;background-image:linear-gradient(90deg, #10b981, #059669);height:10px;border-radius:6px;width:{{.UptimeBarPct}}%;"></div>
-    </div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+      {{if $d.UptimeBarPct}}<td width="{{$d.UptimeBarPct}}%" bgcolor="{{$t.Ok}}" style="background:{{$t.Ok}};height:8px;line-height:8px;font-size:1px;{{if lt $d.UptimeBarPct 100}}border-radius:4px 0 0 4px;{{else}}border-radius:4px;{{end}}">&nbsp;</td>{{end}}
+      {{if lt $d.UptimeBarPct 100}}<td bgcolor="{{$t.HairlineSoft}}" class="uptime-bar-bg" style="background:{{$t.HairlineSoft}};height:8px;line-height:8px;font-size:1px;{{if not $d.UptimeBarPct}}border-radius:4px;{{else}}border-radius:0 4px 4px 0;{{end}}">&nbsp;</td>{{end}}
+    </tr></table>
   </td>
-  <td align="right" class="uptime-value" style="vertical-align:middle;font-size:12px;color:#0f172a;padding-left:12px;width:64px;font-family:'SFMono-Regular',Consolas,'Liberation Mono',monospace;font-weight:600;">{{printf "%.2f%%" .UptimePct}}</td>
+  <td align="right" class="uptime-value ink" style="vertical-align:middle;font-size:12px;color:{{$t.Ink}};padding-left:12px;width:64px;font-family:{{monoStack}};font-weight:600;">{{printf "%.2f%%" $d.UptimePct}}</td>
 </tr></table>
 
-{{if .IsEmail}}
-  {{template "eyebrow" "Resource Trends"}}
-  <div style="font-size:12.5px;color:#475569;background:#ffffff;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;margin-bottom:8px;line-height:1.6;">
-    <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+{{if $d.IsEmail}}
+  {{template "eyebrow" dict "T" $t "Text" "Resource Trends"}}
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:8px;"><tr><td class="panel-fill" bgcolor="{{$t.Panel}}" style="background:{{$t.Panel}};border-radius:8px;padding:12px 16px;font-family:{{fontStack}};font-size:12.5px;color:{{$t.InkDim}};line-height:1.6;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
       <tr>
         <td style="padding:2px 0;">
-          <strong style="color:#0f172a;">CPU Usage:</strong> average <span style="font-family:'SFMono-Regular',Consolas,monospace;font-weight:600;color:#ef4444;">{{printf "%.1f%%" .CPUAvg}}</span>, peak <span style="font-family:'SFMono-Regular',Consolas,monospace;font-weight:600;color:#ef4444;">{{printf "%.1f%%" .CPUMax}}</span>
+          <strong class="ink" style="color:{{$t.Ink}};">CPU Usage:</strong> average <span style="font-family:{{monoStack}};font-weight:600;color:{{$t.SeriesCPU}};">{{printf "%.1f%%" $d.CPUAvg}}</span>, peak <span style="font-family:{{monoStack}};font-weight:600;color:{{$t.SeriesCPU}};">{{printf "%.1f%%" $d.CPUMax}}</span>
         </td>
       </tr>
       <tr>
-        <td style="padding:2px 0;border-top:1px solid #f1f5f9;">
-          <strong style="color:#0f172a;">Memory:</strong> average <span style="font-family:'SFMono-Regular',Consolas,monospace;font-weight:600;color:#2563eb;">{{printf "%.1f%%" .MemAvg}}</span>, peak <span style="font-family:'SFMono-Regular',Consolas,monospace;font-weight:600;color:#2563eb;">{{printf "%.1f%%" .MemMax}}</span>
+        <td style="padding:2px 0;border-top:1px solid {{$t.HairlineSoft}};">
+          <strong class="ink" style="color:{{$t.Ink}};">Memory:</strong> average <span style="font-family:{{monoStack}};font-weight:600;color:{{$t.SeriesMem}};">{{printf "%.1f%%" $d.MemAvg}}</span>, peak <span style="font-family:{{monoStack}};font-weight:600;color:{{$t.SeriesMem}};">{{printf "%.1f%%" $d.MemMax}}</span>
         </td>
       </tr>
-      {{if .Talkers}}
-        {{with (index .Talkers 0)}}
+      {{if $d.Talkers}}
+        {{with (index $d.Talkers 0)}}
         <tr>
-          <td style="padding:2px 0;border-top:1px solid #f1f5f9;">
-            <strong style="color:#0f172a;">Busiest Link ({{.IfaceName}}):</strong> <span style="font-family:'SFMono-Regular',Consolas,monospace;font-weight:600;color:#1e3a5f;">{{.TotalHuman}}</span> total, peak <span style="font-family:'SFMono-Regular',Consolas,monospace;font-weight:600;color:#1e3a5f;">{{.PeakHuman}}</span>
+          <td style="padding:2px 0;border-top:1px solid {{$t.HairlineSoft}};">
+            <strong class="ink" style="color:{{$t.Ink}};">Busiest Link ({{.IfaceName}}):</strong> <span style="font-family:{{monoStack}};font-weight:600;color:{{$t.SeriesAccent}};">{{.TotalHuman}}</span> total, peak <span style="font-family:{{monoStack}};font-weight:600;color:{{$t.SeriesAccent}};">{{.PeakHuman}}</span>
           </td>
         </tr>
         {{end}}
       {{end}}
     </table>
-  </div>
+  </td></tr></table>
 {{else}}
-  {{template "eyebrow" "CPU & Memory History"}}
+  {{template "eyebrow" dict "T" $t "Text" "CPU & Memory History"}}
   <div style="width:100%;overflow-x:auto;margin-bottom:8px;">
-    {{renderCPUMemChart . .Timezone}}
+    {{renderCPUMemChart $d $d.Timezone $t}}
   </div>
 
-  {{if .HasSparkline}}
-  {{template "eyebrow" "Throughput · Busiest Interface"}}
+  {{if $d.HasSparkline}}
+  {{template "eyebrow" dict "T" $t "Text" "Throughput · Busiest Interface"}}
   <div style="width:100%;overflow-x:auto;margin-bottom:8px;">
-    {{renderThroughputChart . .Timezone}}
+    {{renderThroughputChart $d $d.Timezone $t}}
   </div>
   {{end}}
 {{end}}
 
-{{if .Talkers}}
-{{template "eyebrow" "Interfaces"}}
-{{range .Talkers}}{{template "talker" .}}{{end}}
+{{if $d.Talkers}}
+{{template "eyebrow" dict "T" $t "Text" "Interfaces"}}
+{{range $d.Talkers}}{{template "talker" dict "T" $t "D" .}}{{end}}
 {{end}}
 
-{{if .Spikes}}
-{{template "eyebrow" "Traffic Spikes"}}
-{{range .Spikes}}{{template "spikegroup" .}}{{end}}
+{{if $d.Spikes}}
+{{template "eyebrow" dict "T" $t "Text" "Traffic Spikes"}}
+{{range $d.Spikes}}{{template "spikegroup" dict "T" $t "D" .}}{{end}}
 {{end}}
 
-{{if .SpikeFlows}}
-{{template "eyebrow" "Top Flows During Spikes (sampled)"}}
-{{range .SpikeFlows}}{{template "spikeflow" .}}{{end}}
+{{if $d.SpikeFlows}}
+{{template "eyebrow" dict "T" $t "Text" "Top Flows During Spikes (sampled)"}}
+{{range $d.SpikeFlows}}{{template "spikeflow" dict "T" $t "D" .}}{{end}}
 {{end}}
 {{end}}
 
-{{define "spikeflow"}}<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:6px;"><tr>
-  <td class="spike-flow-src" style="font-family:'SFMono-Regular',Consolas,'Liberation Mono',monospace;font-size:11.5px;color:#0f172a;vertical-align:middle;">
-    {{.Src}} <span style="color:#94a3b8;">&rarr;</span> {{.Dst}}
+{{define "spikeflow"}}{{$t := .T}}{{$d := .D}}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:6px;"><tr>
+  <td class="spike-flow-src ink" style="font-family:{{monoStack}};font-size:11.5px;color:{{$t.Ink}};vertical-align:middle;">
+    {{$d.Src}} <span style="color:{{$t.InkMute}};">&rarr;</span> {{$d.Dst}}
   </td>
-  <td align="right" style="font-size:11px;color:#64748b;white-space:nowrap;vertical-align:middle;padding-left:10px;">
-    <span class="spike-flow-proto" style="background:#f1f5f9;color:#475569;border-radius:4px;padding:1px 5px;font-weight:600;font-size:9.5px;text-transform:uppercase;margin-right:6px;">{{.Protocol}}</span> <span class="spike-flow-bytes" style="color:#0f172a;font-family:'SFMono-Regular',Consolas,'Liberation Mono',monospace;font-weight:600;">{{.BytesHuman}}</span>
+  <td align="right" style="font-family:{{fontStack}};font-size:11px;color:{{$t.InkDim}};white-space:nowrap;vertical-align:middle;padding-left:10px;">
+    <span class="spike-flow-proto panel-fill" style="background:{{$t.Panel}};color:{{$t.InkDim}};border-radius:4px;padding:1px 5px;font-weight:600;font-size:9.5px;text-transform:uppercase;margin-right:6px;">{{$d.Protocol}}</span> <span class="spike-flow-bytes ink" style="color:{{$t.Ink}};font-family:{{monoStack}};font-weight:600;">{{$d.BytesHuman}}</span>
   </td>
 </tr></table>{{end}}
 
-{{define "mini"}}<td class="mini-cell" width="23.5%" style="text-align:center;vertical-align:top;">
-  <div style="border:1px solid #e2e8f0;background:#ffffff;border-radius:8px;padding:12px 6px;">
-    <div class="mini-value" style="font-family:'SFMono-Regular',Consolas,'Liberation Mono',monospace;font-size:12px;font-weight:700;color:#0f172a;">{{.Value}}</div>
-    <div class="mini-label" style="font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:0.4px;margin-top:4px;font-weight:600;">{{.Label}}</div>
-  </div>
+{{define "mini"}}{{$t := .T}}<td class="mini-cell" width="23.5%" style="text-align:center;vertical-align:top;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td class="panel-fill" bgcolor="{{$t.Panel}}" style="background:{{$t.Panel}};border-radius:8px;padding:11px 4px;">
+    <div class="mini-value ink" style="font-family:{{monoStack}};font-size:12px;font-weight:700;color:{{$t.Ink}};">{{.Value}}</div>
+    <div class="mini-label inkdim" style="font-family:{{fontStack}};font-size:9px;color:{{$t.InkDim}};text-transform:uppercase;letter-spacing:0.4px;margin-top:4px;font-weight:600;">{{.Label}}</div>
+  </td></tr></table>
 </td>{{end}}
 `

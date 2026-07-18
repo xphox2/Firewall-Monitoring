@@ -7,27 +7,34 @@ import (
 	"time"
 )
 
-// safeID returns an HTML/CSS identifier safe for use in IDs and gradient names.
-func safeID(s string) string {
-	var sb strings.Builder
-	for _, r := range s {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
-			sb.WriteRune(r)
-		} else {
-			sb.WriteRune('-')
-		}
-	}
-	return sb.String()
+// svg_charts.go — inline SVG charts for the WEB render only (email gets text
+// tables today; PNG charts arrive via png_charts). Flat instrument-panel
+// style: no feDropShadow filters, no gradients — solid theme-colored lines
+// with a low-opacity solid area fill. All colors come from ReportTheme.
+
+// svgEmpty renders the themed "no data" placeholder.
+func svgEmpty(th ReportTheme, msg string) template.HTML {
+	return template.HTML(fmt.Sprintf(
+		`<div style="border: 1px dashed %s; border-radius: 6px; padding: 24px; text-align: center; color: %s; font-size: 12px;">%s</div>`,
+		th.Hairline, th.InkDim, msg))
 }
 
-// RenderAlertTimelineSVG renders the main fleet alert timeline as a beautiful SVG chart.
-func RenderAlertTimelineSVG(buckets []AlertBucket) template.HTML {
+// svgChartStyle emits the shared class styles for one chart, themed.
+func svgChartStyle(th ReportTheme, extra string) string {
+	return fmt.Sprintf(`
+		<style>
+			.grid-line { stroke: %s; stroke-width: 1; stroke-dasharray: 2,2; }
+			.axis-line { stroke: %s; stroke-width: 1; }
+			.axis-label { fill: %s; font-size: 12px; font-family: 'Segoe UI', -apple-system, Roboto, Helvetica, Arial, sans-serif; }
+			%s
+		</style>
+	`, th.ChartGrid, th.ChartGrid, th.ChartAxis, extra)
+}
+
+// RenderAlertTimelineSVG renders the fleet alert timeline as a flat SVG bar chart.
+func RenderAlertTimelineSVG(buckets []AlertBucket, th ReportTheme) template.HTML {
 	if len(buckets) == 0 {
-		return template.HTML(`
-			<div style="border: 1px dashed #cbd5e1; border-radius: 6px; padding: 30px; text-align: center; color: #64748b; font-size: 13px;">
-				No alerts recorded in this window.
-			</div>
-		`)
+		return svgEmpty(th, "No alerts recorded in this window.")
 	}
 
 	maxCount := 0
@@ -50,17 +57,10 @@ func RenderAlertTimelineSVG(buckets []AlertBucket) template.HTML {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf(`<svg width="100%%" height="%d" viewBox="0 0 %d %d" style="max-width: %dpx; display: block;" xmlns="http://www.w3.org/2000/svg">`, height, width, height, width))
 
-	// CSS styles for smooth hover effects
-	sb.WriteString(`
-		<style>
-			.grid-line { stroke: #e9edf2; stroke-width: 1; stroke-dasharray: 2,2; }
-			.axis-line { stroke: #cbd5e1; stroke-width: 1; }
-			.axis-label { fill: #64748b; font-size: 12px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+	sb.WriteString(svgChartStyle(th, `
 			.alert-bar { transition: fill-opacity 0.15s; cursor: pointer; }
-			.alert-bar:hover { fill-opacity: 0.85; }
-			.tooltip-trigger { fill: transparent; cursor: pointer; }
-		</style>
-	`)
+			.alert-bar:hover { fill-opacity: 0.8; }
+	`))
 
 	// 1. Gridlines
 	yMid := plotYStart + plotHeight/2
@@ -100,12 +100,11 @@ func RenderAlertTimelineSVG(buckets []AlertBucket) template.HTML {
 		}
 		by := float64(plotYEnd) - hVal
 
-		color := "#d97706" // warning amber
+		color := th.Warn
 		if b.Crit {
-			color = "#dc2626" // critical red
+			color = th.Crit
 		}
 
-		// Draw the bar with tooltip
 		sb.WriteString(fmt.Sprintf(`
 			<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="%s" rx="1.5" class="alert-bar">
 				<title>%s</title>
@@ -127,18 +126,14 @@ func RenderAlertTimelineSVG(buckets []AlertBucket) template.HTML {
 	return template.HTML(sb.String())
 }
 
-// RenderThroughputChart renders a beautiful area chart of interface throughput.
-func RenderThroughputChart(card DeviceCard, tz string) template.HTML {
+// RenderThroughputChart renders a flat area chart of interface throughput.
+func RenderThroughputChart(card DeviceCard, tz string, th ReportTheme) template.HTML {
 	// L8 of the 2026-07-01 audit: need >= 2 points. The X math divides by
 	// (nPoints-1), so a single-point series produced NaN path coordinates
 	// ("M NaN,NaN") — an invalid SVG path that browsers drop, breaking the
 	// report preview / print-to-PDF for that device until a second sample.
 	if len(card.SparklineRaw) < 2 {
-		return template.HTML(`
-			<div style="border: 1px dashed #cbd5e1; border-radius: 6px; padding: 20px; text-align: center; color: #64748b; font-size: 11px;">
-				No throughput statistics recorded.
-			</div>
-		`)
+		return svgEmpty(th, "No throughput statistics recorded.")
 	}
 
 	maxVal := 0.0
@@ -159,31 +154,15 @@ func RenderThroughputChart(card DeviceCard, tz string) template.HTML {
 	plotHeight := plotYEnd - plotYStart
 	nPoints := len(card.SparklineRaw)
 
-	idSafe := safeID(card.Name)
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf(`<svg width="100%%" height="%d" viewBox="0 0 %d %d" style="max-width: %dpx; display: block;" xmlns="http://www.w3.org/2000/svg">`, height, width, height, width))
 
-	// CSS and Gradients
-	sb.WriteString(fmt.Sprintf(`
-		<defs>
-			<linearGradient id="tf-grad-%s" x1="0%%" y1="0%%" x2="0%%" y2="100%%">
-				<stop offset="0%%" stop-color="#1e3a5f" stop-opacity="0.35"/>
-				<stop offset="100%%" stop-color="#1e3a5f" stop-opacity="0.0"/>
-			</linearGradient>
-			<filter id="shadow-%s" x="-10%%" y="-10%%" width="120%%" height="120%%">
-				<feDropShadow dx="0" dy="3.5" stdDeviation="2.5" flood-color="#1e3a5f" flood-opacity="0.2"/>
-			</filter>
-		</defs>
-		<style>
-			.grid-line { stroke: #e9edf2; stroke-width: 1; stroke-dasharray: 2,2; }
-			.axis-line { stroke: #cbd5e1; stroke-width: 1; }
-			.axis-label { fill: #64748b; font-size: 12px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-			.trend-line { stroke: #1e3a5f; stroke-width: 2.25; fill: none; stroke-linejoin: round; stroke-linecap: round; }
-			.trend-area { fill: url(#tf-grad-%s); }
+	sb.WriteString(svgChartStyle(th, fmt.Sprintf(`
+			.trend-line { stroke: %s; stroke-width: 2; fill: none; stroke-linejoin: round; stroke-linecap: round; }
+			.trend-area { fill: %s; fill-opacity: 0.08; }
 			.hover-slice { fill: transparent; cursor: crosshair; }
-			.hover-slice:hover { fill: rgba(15, 23, 42, 0.05); }
-		</style>
-	`, idSafe, idSafe, idSafe))
+			.hover-slice:hover { fill: %s; fill-opacity: 0.06; }
+	`, th.SeriesAccent, th.SeriesAccent, th.SeriesAccent)))
 
 	// 1. Gridlines
 	yMid := plotYStart + plotHeight/2
@@ -211,7 +190,7 @@ func RenderThroughputChart(card DeviceCard, tz string) template.HTML {
 	areaD := fmt.Sprintf("%s L %.2f,%d L %d,%d Z", lineD, float64(plotXStart)+float64(nPoints-1)*float64(plotWidth)/float64(nPoints-1), plotYEnd, plotXStart, plotYEnd)
 
 	sb.WriteString(fmt.Sprintf(`<path d="%s" class="trend-area" />`, areaD))
-	sb.WriteString(fmt.Sprintf(`<path d="%s" class="trend-line" filter="url(#shadow-%s)" />`, lineD, idSafe))
+	sb.WriteString(fmt.Sprintf(`<path d="%s" class="trend-line" />`, lineD))
 
 	// 4. Timezone-specific X-Axis labels
 	loc, err := time.LoadLocation(tz)
@@ -258,16 +237,12 @@ func RenderThroughputChart(card DeviceCard, tz string) template.HTML {
 	return template.HTML(sb.String())
 }
 
-// RenderCPUMemSVGChart renders a beautiful dual line chart for CPU and Memory history.
-func RenderCPUMemSVGChart(card DeviceCard, tz string) template.HTML {
+// RenderCPUMemSVGChart renders a flat dual line chart for CPU and Memory history.
+func RenderCPUMemSVGChart(card DeviceCard, tz string, th ReportTheme) template.HTML {
 	// L8: require >= 2 points in at least one series (the X math divides by
 	// nPoints-1; a 1-point max produces NaN path coordinates).
 	if len(card.CPUHistory) < 2 && len(card.MemHistory) < 2 {
-		return template.HTML(`
-			<div style="border: 1px dashed #cbd5e1; border-radius: 6px; padding: 20px; text-align: center; color: #64748b; font-size: 11px;">
-				No CPU/Memory statistics recorded.
-			</div>
-		`)
+		return svgEmpty(th, "No CPU/Memory statistics recorded.")
 	}
 
 	width := 640
@@ -284,40 +259,17 @@ func RenderCPUMemSVGChart(card DeviceCard, tz string) template.HTML {
 		nPoints = len(card.MemHistory)
 	}
 
-	idSafe := safeID(card.Name)
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf(`<svg width="100%%" height="%d" viewBox="0 0 %d %d" style="max-width: %dpx; display: block;" xmlns="http://www.w3.org/2000/svg">`, height, width, height, width))
 
-	// Gradients and CSS
-	sb.WriteString(fmt.Sprintf(`
-		<defs>
-			<linearGradient id="cpu-grad-%s" x1="0%%" y1="0%%" x2="0%%" y2="100%%">
-				<stop offset="0%%" stop-color="#dc2626" stop-opacity="0.15"/>
-				<stop offset="100%%" stop-color="#dc2626" stop-opacity="0.0"/>
-			</linearGradient>
-			<linearGradient id="mem-grad-%s" x1="0%%" y1="0%%" x2="0%%" y2="100%%">
-				<stop offset="0%%" stop-color="#2563eb" stop-opacity="0.15"/>
-				<stop offset="100%%" stop-color="#2563eb" stop-opacity="0.0"/>
-			</linearGradient>
-			<filter id="cpu-shadow-%s" x="-10%%" y="-10%%" width="120%%" height="120%%">
-				<feDropShadow dx="0" dy="3" stdDeviation="2.5" flood-color="#dc2626" flood-opacity="0.12"/>
-			</filter>
-			<filter id="mem-shadow-%s" x="-10%%" y="-10%%" width="120%%" height="120%%">
-				<feDropShadow dx="0" dy="3" stdDeviation="2.5" flood-color="#2563eb" flood-opacity="0.12"/>
-			</filter>
-		</defs>
-		<style>
-			.grid-line { stroke: #e9edf2; stroke-width: 1; stroke-dasharray: 2,2; }
-			.axis-line { stroke: #cbd5e1; stroke-width: 1; }
-			.axis-label { fill: #64748b; font-size: 12px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-			.cpu-line { stroke: #dc2626; stroke-width: 2.25; fill: none; stroke-linejoin: round; }
-			.cpu-area { fill: url(#cpu-grad-%s); }
-			.mem-line { stroke: #2563eb; stroke-width: 2.25; fill: none; stroke-linejoin: round; }
-			.mem-area { fill: url(#mem-grad-%s); }
+	sb.WriteString(svgChartStyle(th, fmt.Sprintf(`
+			.cpu-line { stroke: %s; stroke-width: 2; fill: none; stroke-linejoin: round; }
+			.cpu-area { fill: %s; fill-opacity: 0.08; }
+			.mem-line { stroke: %s; stroke-width: 2; fill: none; stroke-linejoin: round; }
+			.mem-area { fill: %s; fill-opacity: 0.08; }
 			.hover-slice { fill: transparent; cursor: crosshair; }
-			.hover-slice:hover { fill: rgba(15, 23, 42, 0.05); }
-		</style>
-	`, idSafe, idSafe, idSafe, idSafe, idSafe, idSafe))
+			.hover-slice:hover { fill: %s; fill-opacity: 0.06; }
+	`, th.SeriesCPU, th.SeriesCPU, th.SeriesMem, th.SeriesMem, th.SeriesAccent)))
 
 	// 1. Gridlines (at 0%, 50%, 100%)
 	yMid := plotYStart + plotHeight/2
@@ -344,7 +296,7 @@ func RenderCPUMemSVGChart(card DeviceCard, tz string) template.HTML {
 		cpuLineD := "M " + strings.Join(cpuPoints, " L ")
 		cpuAreaD := fmt.Sprintf("%s L %.2f,%d L %d,%d Z", cpuLineD, float64(plotXStart)+float64(len(card.CPUHistory)-1)*float64(plotWidth)/float64(len(card.CPUHistory)-1), plotYEnd, plotXStart, plotYEnd)
 		sb.WriteString(fmt.Sprintf(`<path d="%s" class="cpu-area" />`, cpuAreaD))
-		sb.WriteString(fmt.Sprintf(`<path d="%s" class="cpu-line" filter="url(#cpu-shadow-%s)" />`, cpuLineD, idSafe))
+		sb.WriteString(fmt.Sprintf(`<path d="%s" class="cpu-line" />`, cpuLineD))
 	}
 
 	// 4. Render Memory path
@@ -361,7 +313,7 @@ func RenderCPUMemSVGChart(card DeviceCard, tz string) template.HTML {
 		memLineD := "M " + strings.Join(memPoints, " L ")
 		memAreaD := fmt.Sprintf("%s L %.2f,%d L %d,%d Z", memLineD, float64(plotXStart)+float64(len(card.MemHistory)-1)*float64(plotWidth)/float64(len(card.MemHistory)-1), plotYEnd, plotXStart, plotYEnd)
 		sb.WriteString(fmt.Sprintf(`<path d="%s" class="mem-area" />`, memAreaD))
-		sb.WriteString(fmt.Sprintf(`<path d="%s" class="mem-line" filter="url(#mem-shadow-%s)" />`, memLineD, idSafe))
+		sb.WriteString(fmt.Sprintf(`<path d="%s" class="mem-line" />`, memLineD))
 	}
 
 	// 5. Timezone-specific X-Axis labels
@@ -419,13 +371,13 @@ func RenderCPUMemSVGChart(card DeviceCard, tz string) template.HTML {
 	legendY := plotYEnd + 34
 	sb.WriteString(fmt.Sprintf(`
 		<g transform="translate(%d, %d)">
-			<rect x="0" y="-6" width="12" height="4" fill="#dc2626" rx="1" />
+			<rect x="0" y="-6" width="12" height="4" fill="%s" rx="1" />
 			<text x="16" y="0" class="axis-label" alignment-baseline="middle">CPU Usage</text>
-			
-			<rect x="85" y="-6" width="12" height="4" fill="#2563eb" rx="1" />
+
+			<rect x="85" y="-6" width="12" height="4" fill="%s" rx="1" />
 			<text x="101" y="0" class="axis-label" alignment-baseline="middle">Memory Usage</text>
 		</g>
-	`, plotXStart, legendY))
+	`, plotXStart, legendY, th.SeriesCPU, th.SeriesMem))
 
 	sb.WriteString(`</svg>`)
 	return template.HTML(sb.String())

@@ -2149,8 +2149,13 @@ func (p *Poller) sendCriticalAlertEmail(device *models.Device, alertType, messag
 		Message:   message,
 	}
 
+	// Theme is read from the DB at send time — p.cfg.Alerts is env-frozen
+	// (never refreshed from system_settings), so a config-field read would
+	// silently ignore the admin-UI choice. Critical alerts are rare; one
+	// read per send is nothing. Missing/blank = light.
+	themeName, _ := p.db.GetSettingValue("report_email_theme")
 	recentHistory := report.GatherRecentHistory(p.db, device.ID)
-	subject, htmlBody, attachments, err := report.BuildCriticalAlertEmail(alert, device, recentHistory)
+	subject, htmlBody, attachments, err := report.BuildCriticalAlertEmail(alert, device, recentHistory, report.ThemeByName(themeName))
 	if err != nil {
 		log.Printf("Device %s: failed to build critical alert email - %v", device.Name, err)
 		return

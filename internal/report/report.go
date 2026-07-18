@@ -163,13 +163,16 @@ func (rs *ReportScheduler) generateAndSendReport(hours int) {
 		deviceData[i] = GatherDeviceData(rs.db, &devices[i], hours, pollInterval, spikeThreshold)
 	}
 
-	// Build report (single self-contained HTML body, no attachments)
+	// Build report (single self-contained HTML body, no attachments).
+	// Theme: the report_email_theme setting lands with the PNG-charts release;
+	// until then scheduled emails render light (identical default to before).
 	var subject, htmlBody string
 	ops := GatherOpsStats(rs.db) // F05/F06 Operations section
+	theme := ThemeByName(rs.emailThemeSetting())
 	if hours <= 24 {
-		subject, htmlBody, err = BuildReportWithOps(devices, deviceData, tz, 24, "Daily", "", false, ops)
+		subject, htmlBody, err = BuildReportWithOps(devices, deviceData, tz, 24, "Daily", "", false, ops, theme)
 	} else {
-		subject, htmlBody, err = BuildReportWithOps(devices, deviceData, tz, 168, "Weekly", "", false, ops)
+		subject, htmlBody, err = BuildReportWithOps(devices, deviceData, tz, 168, "Weekly", "", false, ops, theme)
 	}
 	if err != nil {
 		log.Printf("Report: failed to build report: %v", err)
@@ -186,6 +189,20 @@ func (rs *ReportScheduler) generateAndSendReport(hours int) {
 	} else {
 		log.Printf("Report: %dh report sent successfully to %s", hours, recipients)
 	}
+}
+
+// emailThemeSetting reads report_email_theme directly from the DB at send
+// time. Deliberately NOT part of RefreshSettings' key allowlist: a direct
+// read on the (rare) send avoids two documented cache landmines — the
+// hardcoded WHERE-IN list silently dropping unlisted keys, and the
+// blank-value skip making a cleared setting stick forever. Missing/blank =
+// light (ThemeByName's fallback).
+func (rs *ReportScheduler) emailThemeSetting() string {
+	if rs.db == nil {
+		return ""
+	}
+	v, _ := rs.db.GetSettingValue("report_email_theme")
+	return v
 }
 
 // RefreshSettings reads report-related settings from the database.

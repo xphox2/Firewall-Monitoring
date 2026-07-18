@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.116] - 2026-07-18
+
+### Changed — Report redesign part 1: flat themed template, Day/Night preview, email-client-correct layout
+
+The daily/weekly fleet report and the critical-alert email are rebuilt on a flat "instrument panel" visual system with first-class light/dark theming. Part 1 of 3 (part 2 = MIME/plaintext correctness, part 3 = PNG charts + the Email Theme setting UI).
+
+- **3D look removed everywhere**: card box-shadows, hover-lift transforms, SVG `feDropShadow` filters, gradient bars/strips, stacked border+accent-bar combinations, and the dot-halo ring are gone. One visual device per element: a Panel fill OR a hairline border, flat solid bars, tint-fill badges, uppercase hairline section heads.
+- **Real theme system** (`internal/report/theme.go`): a `ReportTheme` token struct (light + dark palettes aligned to the site's `--fwmon-*` tokens) feeds every color inline through ONE template — the old `.admin-preview !important` override block is deleted. Both themes are email-safe by construction: **no pure `#ffffff`/`#000000` anywhere** (survives Gmail iOS / classic Outlook forced dark-mode inversion; enforced by a CI regex), midtone accents, off-white/charcoal surfaces.
+- **Email-client-correct layout**: hybrid single-column 600px with **MSO ghost tables** so classic Outlook's Word engine holds the width — injected via `template.HTML` funcs because Go's `html/template` silently strips literal HTML comments (a CI test now pins that the `<!--[if mso` conditionals survive rendering). Single-scheme `color-scheme`/`supported-color-schemes` metas, hidden preheader with `mso-hide:all`, padding on `<td>` only, `border-collapse:separate` with per-cell hairlines (the Word engine mis-renders table-level collapse), Segoe-UI-first websafe font stack (the Google Fonts link is gone — Gmail/Outlook never loaded it and it risked Outlook's Times New Roman fallback).
+- **Web preview follows Day/Night**: the Reports page gains Light/Dark pills (defaulting to the SPA theme, live-updating on the theme switch), and `GET /admin/api/reports/preview` accepts `?theme=light|dark`. SVG charts (web-only) are de-3D'd and fully theme-tokened.
+- **Critical-alert email** rebuilt on the same 600px flat system with the crit-tinted verdict header and hairline detail table.
+- **Email theme plumbing (ahead of the part-3 UI)**: scheduled reports, Send Now, and critical alerts all resolve `report_email_theme` from the DB at send time (missing/blank = light, today's behavior). Reading at send time deliberately bypasses two settings-cache landmines: the scheduler's hardcoded key allowlist and its blank-value skip; the poller's env-frozen config copy is likewise not used. The Settings UI select arrives in part 3.
+- **Guardrail matrix**: the well-formed render test now runs {daily,weekly} × {email,web} × {light,dark} asserting MSO survival, both metas, the no-pure-hex invariant, zero shadows/gradients/filters/web-font loads, email `<style>` under Gmail's 16KB cap, and the email/web SVG split.
+
 ## [0.11.115] - 2026-07-18
 
 ### Added — Event Rule Profiles admin UI (completes the profile program)

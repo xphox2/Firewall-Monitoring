@@ -88,89 +88,163 @@ func TestReportHTMLWellFormed(t *testing.T) {
 
 	for _, hours := range []int{24, 168} { // hourly + daily alert bucketing
 		for _, collapsible := range []bool{false, true} {
-			m := buildRichModel(t, hours)
-			m.Collapsible = collapsible
-
-			out, err := RenderReportHTML(m)
-			if err != nil {
-				t.Fatalf("render (hours=%d collapsible=%v): %v", hours, collapsible, err)
-			}
-
-			label := func(s string) string {
-				return s + " [hours=" + itoa(hours) + " collapsible=" + btoa(collapsible) + "]"
-			}
-
-			// 1. No Go-template rendering artifacts. Each of these is a distinct
-			// failure mode: a nil field, a missing map key, a mis-typed printf,
-			// or html/template's "unsafe content" sanitizer sentinel.
-			for _, bad := range []string{"<no value>", "ZgotmplZ", "%!", "<nil>"} {
-				if strings.Contains(out, bad) {
-					t.Errorf("%s: contains template artifact %q", label("render"), bad)
+			for _, themeName := range []string{"light", "dark"} {
+				m := buildRichModel(t, hours)
+				m.Collapsible = collapsible
+				// Mirror BuildReportWithOps: non-collapsible = the email render
+				// (the branch that must stay SVG-free and Outlook-safe).
+				m.IsEmail = !collapsible
+				for i := range m.Devices {
+					m.Devices[i].IsEmail = m.IsEmail
 				}
-			}
+				m.Theme = ThemeByName(themeName)
 
-			// 2. Parses cleanly as an HTML5 document.
-			if _, err := html.Parse(strings.NewReader(out)); err != nil {
-				t.Errorf("%s: html.Parse failed: %v", label("parse"), err)
-			}
-
-			// 3. Document skeleton present exactly once.
-			for _, want := range []string{"<!DOCTYPE html>", "<html", "<head", "<body", "</html>"} {
-				if strings.Count(out, want) < 1 {
-					t.Errorf("%s: missing %q", label("skeleton"), want)
+				out, err := RenderReportHTML(m)
+				if err != nil {
+					t.Fatalf("render (hours=%d collapsible=%v theme=%s): %v", hours, collapsible, themeName, err)
 				}
-			}
 
-			// 4. Structural tag pairs balance.
-			assertBalanced(t, out, label, "table")
-			assertBalanced(t, out, label, "svg")
-			assertBalanced(t, out, label, "defs")
-			assertBalanced(t, out, label, "style")
-			assertBalanced(t, out, label, "g")
-			assertBalanced(t, out, label, "details")
+				label := func(s string) string {
+					return s + " [hours=" + itoa(hours) + " collapsible=" + btoa(collapsible) + " theme=" + themeName + "]"
+				}
 
-			// 5. Every embedded SVG fragment is well-formed XML (strict) if not IsEmail.
-			svgs := svgFragmentRe.FindAllString(out, -1)
-			if m.IsEmail {
-				if len(svgs) > 0 {
-					t.Errorf("%s: expected no <svg> charts in email report, found %d", label("svg"), len(svgs))
+				// 1. No Go-template rendering artifacts. Each of these is a distinct
+				// failure mode: a nil field, a missing map key, a mis-typed printf,
+				// or html/template's "unsafe content" sanitizer sentinel.
+				for _, bad := range []string{"<no value>", "ZgotmplZ", "%!", "<nil>"} {
+					if strings.Contains(out, bad) {
+						t.Errorf("%s: contains template artifact %q", label("render"), bad)
+					}
 				}
-			} else {
-				if len(svgs) == 0 {
-					t.Errorf("%s: expected at least one <svg> chart, found none", label("svg"))
+
+				// 2. Parses cleanly as an HTML5 document.
+				if _, err := html.Parse(strings.NewReader(out)); err != nil {
+					t.Errorf("%s: html.Parse failed: %v", label("parse"), err)
 				}
-				for i, frag := range svgs {
-					if err := xml.Unmarshal([]byte(frag), new(struct {
-						XMLName xml.Name
-					})); err != nil {
-						t.Errorf("%s: SVG fragment #%d is not well-formed XML: %v", label("svg-xml"), i, err)
+
+				// 3. Document skeleton present exactly once.
+				for _, want := range []string{"<!DOCTYPE html>", "<html", "<head", "<body", "</html>"} {
+					if strings.Count(out, want) < 1 {
+						t.Errorf("%s: missing %q", label("skeleton"), want)
+					}
+				}
+
+				// 4. Structural tag pairs balance.
+				assertBalanced(t, out, label, "table")
+				assertBalanced(t, out, label, "svg")
+				assertBalanced(t, out, label, "defs")
+				assertBalanced(t, out, label, "style")
+				assertBalanced(t, out, label, "g")
+				assertBalanced(t, out, label, "details")
+
+				// 5. Every embedded SVG fragment is well-formed XML (strict) if not IsEmail.
+				svgs := svgFragmentRe.FindAllString(out, -1)
+				if m.IsEmail {
+					if len(svgs) > 0 {
+						t.Errorf("%s: expected no <svg> charts in email report, found %d", label("svg"), len(svgs))
+					}
+				} else {
+					if len(svgs) == 0 {
+						t.Errorf("%s: expected at least one <svg> chart, found none", label("svg"))
+					}
+					for i, frag := range svgs {
+						if err := xml.Unmarshal([]byte(frag), new(struct {
+							XMLName xml.Name
+						})); err != nil {
+							t.Errorf("%s: SVG fragment #%d is not well-formed XML: %v", label("svg-xml"), i, err)
+						}
+					}
+				}
+
+				// 6. Email-safe: no images, no CID attachment references (PNG
+				// charts arrive in a later release and flip this deliberately).
+				if strings.Contains(out, "<img") || strings.Contains(out, "cid:") {
+					t.Errorf("%s: report must be image/CID-free", label("email-safe"))
+				}
+
+				// 7. Collapsible toggles the <details> wrapper exactly.
+				hasDetails := strings.Contains(out, "<details")
+				if hasDetails != collapsible {
+					t.Errorf("%s: <details> present=%v, want %v", label("collapsible"), hasDetails, collapsible)
+				}
+
+				// 8. Expected executive sections + data points rendered.
+				wantStrings := []string{
+					"Firewall Monitor", "Bandwidth &amp; Traffic", "Top Talkers",
+					"Traffic Spikes", "Alert Activity", "Device Detail",
+					"fw-edge-01", "ONLINE", "OFFLINE", "v0.10.408",
+				}
+				if m.IsEmail {
+					wantStrings = append(wantStrings, "Resource Trends")
+				} else {
+					wantStrings = append(wantStrings, "CPU &amp; Memory History")
+				}
+				for _, want := range wantStrings {
+					if !strings.Contains(out, want) {
+						t.Errorf("%s: missing section/datum %q", label("sections"), want)
+					}
+				}
+
+				// 9. MSO ghost tables SURVIVED rendering. html/template silently
+				// strips literal HTML comments, so the conditionals must arrive
+				// via the msoOpen/msoClose template.HTML funcs — without them,
+				// classic Outlook loses its 600px width lock with zero errors.
+				if !strings.Contains(out, "<!--[if mso") || !strings.Contains(out, "<![endif]-->") {
+					t.Errorf("%s: MSO conditional ghost tables missing from output (html/template comment-stripping regression)", label("mso"))
+				}
+
+				// 10. Fixed-scheme dark-mode metas present (both spellings).
+				for _, meta := range []string{`name="color-scheme"`, `name="supported-color-schemes"`} {
+					if !strings.Contains(out, meta) {
+						t.Errorf("%s: missing %s meta", label("metas"), meta)
+					}
+				}
+
+				// 11. Forced-inversion survival invariant: NO pure white/black
+				// anywhere (Gmail iOS / classic Outlook full-invert have zero
+				// developer hooks; off-white/charcoal survives, pure doesn't).
+				if loc := pureHexRe.FindString(out); loc != "" {
+					t.Errorf("%s: pure white/black hex %q in output — use theme off-white/charcoal tokens", label("pure-hex"), loc)
+				}
+
+				// 12. Flat design invariants: no shadows, no gradients, no
+				// SVG drop-shadow filters, no web-font loads.
+				for _, bad := range []string{"box-shadow", "feDropShadow", "linear-gradient", "fonts.googleapis.com"} {
+					if strings.Contains(out, bad) {
+						t.Errorf("%s: contains banned visual device %q (flat design)", label("flat"), bad)
+					}
+				}
+
+				// 13. Email head <style> stays within Gmail's 16KB cap.
+				if m.IsEmail {
+					if n := styleBytes(out); n >= 16*1024 {
+						t.Errorf("%s: email <style> block is %d bytes (Gmail drops >16KB)", label("style-budget"), n)
 					}
 				}
 			}
-
-			// 6. Email-safe: no images, no CID attachment references.
-			if strings.Contains(out, "<img") || strings.Contains(out, "cid:") {
-				t.Errorf("%s: report must be image/CID-free", label("email-safe"))
-			}
-
-			// 7. Collapsible toggles the <details> wrapper exactly.
-			hasDetails := strings.Contains(out, "<details")
-			if hasDetails != collapsible {
-				t.Errorf("%s: <details> present=%v, want %v", label("collapsible"), hasDetails, collapsible)
-			}
-
-			// 8. Expected executive sections + data points rendered.
-			for _, want := range []string{
-				"Firewall Monitor", "Bandwidth &amp; Traffic", "Top Talkers",
-				"Traffic Spikes", "Alert Activity", "Device Detail",
-				"fw-edge-01", "ONLINE", "OFFLINE", "v0.10.408",
-				"CPU &amp; Memory History",
-			} {
-				if !strings.Contains(out, want) {
-					t.Errorf("%s: missing section/datum %q", label("sections"), want)
-				}
-			}
 		}
+	}
+}
+
+// pureHexRe matches pure-white/black hex colors (with a guard so longer hex
+// values like #000814 don't false-positive).
+var pureHexRe = regexp.MustCompile(`(?i)#(?:ffffff|fff|000000|000)(?:[^0-9a-fA-F]|$)`)
+
+// styleBytes sums the byte length of all <style>…</style> blocks.
+func styleBytes(out string) int {
+	total := 0
+	rest := out
+	for {
+		i := strings.Index(rest, "<style")
+		if i < 0 {
+			return total
+		}
+		j := strings.Index(rest[i:], "</style>")
+		if j < 0 {
+			return total
+		}
+		total += j
+		rest = rest[i+j:]
 	}
 }
 

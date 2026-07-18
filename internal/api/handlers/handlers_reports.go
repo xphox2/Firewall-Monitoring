@@ -54,7 +54,8 @@ func (h *Handler) reportSpikeThreshold() float64 {
 // document. collapsible wraps per-device detail in <details> for the admin
 // preview. db is the request-scoped handle (AUDIT-032) so the heavy fleet-wide
 // data gather is cancelled if the operator navigates away mid-render.
-func (h *Handler) buildReportHTML(db database.Store, period string, collapsible bool) (subject, html string, err error) {
+// theme selects the light/dark token set (report.ThemeByName semantics).
+func (h *Handler) buildReportHTML(db database.Store, period string, collapsible bool, theme string) (subject, html string, err error) {
 	hours, label := reportWindow(period)
 	tz := h.reportTimezone()
 	spikeThreshold := h.reportSpikeThreshold()
@@ -89,7 +90,7 @@ func (h *Handler) buildReportHTML(db database.Store, period string, collapsible 
 	version := h.version
 	h.mu.RUnlock()
 
-	return report.BuildReportWithOps(devices, deviceData, tz, hours, label, version, collapsible, report.GatherOpsStats(cdb))
+	return report.BuildReportWithOps(devices, deviceData, tz, hours, label, version, collapsible, report.GatherOpsStats(cdb), report.ThemeByName(theme))
 }
 
 // PreviewReport renders the executive report as HTML for in-panel viewing.
@@ -102,7 +103,10 @@ func (h *Handler) PreviewReport(c *gin.Context) {
 	db := h.reqDB(c)
 
 	period := c.DefaultQuery("period", "daily")
-	subject, html, err := h.buildReportHTML(db, period, true)
+	// Default dark: the pre-theming preview was hardcoded dark, so a client
+	// that doesn't send ?theme= sees what it always saw.
+	theme := c.DefaultQuery("theme", "dark")
+	subject, html, err := h.buildReportHTML(db, period, true, theme)
 	if err != nil {
 		httputil.InternalError(c, "Failed to build report", err)
 		return
@@ -161,7 +165,8 @@ func (h *Handler) SendReportNow(c *gin.Context) {
 		}
 	}
 
-	subject, html, err := h.buildReportHTML(db, req.Period, false)
+	// Email theme: honors report_email_theme when set (missing/blank = light).
+	subject, html, err := h.buildReportHTML(db, req.Period, false, h.getNotificationSetting("report_email_theme"))
 	if err != nil {
 		httputil.InternalError(c, "Failed to build report", err)
 		return
