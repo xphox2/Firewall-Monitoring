@@ -166,13 +166,13 @@ func (rs *ReportScheduler) generateAndSendReport(hours int) {
 	// Build report (single self-contained HTML body, no attachments).
 	// Theme: the report_email_theme setting lands with the PNG-charts release;
 	// until then scheduled emails render light (identical default to before).
-	var subject, htmlBody string
+	var subject, htmlBody, textBody string
 	ops := GatherOpsStats(rs.db) // F05/F06 Operations section
 	theme := ThemeByName(rs.emailThemeSetting())
 	if hours <= 24 {
-		subject, htmlBody, err = BuildReportWithOps(devices, deviceData, tz, 24, "Daily", "", false, ops, theme)
+		subject, htmlBody, textBody, err = BuildReportWithOps(devices, deviceData, tz, 24, "Daily", "", false, ops, theme)
 	} else {
-		subject, htmlBody, err = BuildReportWithOps(devices, deviceData, tz, 168, "Weekly", "", false, ops, theme)
+		subject, htmlBody, textBody, err = BuildReportWithOps(devices, deviceData, tz, 168, "Weekly", "", false, ops, theme)
 	}
 	if err != nil {
 		log.Printf("Report: failed to build report: %v", err)
@@ -184,7 +184,7 @@ func (rs *ReportScheduler) generateAndSendReport(hours int) {
 	nc := notifier.SnapshotConfig(&rs.alertCfg)
 	rs.mu.RUnlock()
 
-	if err := rs.notifier.SendHTMLEmail(subject, htmlBody, nil, nc, recipients); err != nil {
+	if err := rs.notifier.SendHTMLEmail(subject, textBody, htmlBody, nil, nc, recipients); err != nil {
 		log.Printf("Report: failed to send report: %v", err)
 	} else {
 		log.Printf("Report: %dh report sent successfully to %s", hours, recipients)

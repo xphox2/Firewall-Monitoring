@@ -1,6 +1,19 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.117] - 2026-07-18
+
+### Changed — Report redesign part 2: correct MIME structure + plaintext alternative
+
+Every HTML email the system sends (scheduled reports, Send Now, critical alerts) now carries a proper text/plain alternative in the canonical MIME tree — better spam-filter standing, legible in plaintext-preferring clients and notification snippets, and screen-reader friendly. No visual change to the HTML rendering.
+
+- **`buildMIMEMessage`** extracted from `SendHTMLEmail` as a pure, unit-testable message assembler. Canonical tree (what Gmail's own composer emits): without images `multipart/alternative` (text/plain first, text/html last per RFC 2046 preference order); with images `multipart/related; type="multipart/alternative"` wrapping the alternative pair plus inline base64 PNG siblings (bracketed Content-ID, inline disposition, 76-col wrap).
+- **Uniform quoted-printable**: the no-attachment path previously sent raw 8bit HTML (v0.10.236); both text parts are now QP everywhere — removes the >998-char raw-line risk and matches the attachment path that carried the L7 audit fix.
+- **New `internal/report/plaintext.go`**: `RenderReportText` (verdict, KPIs, top talkers, spikes, MTTA/MTTR, one line per device) and `RenderCriticalAlertText` — generated from the report model, never scraped from HTML.
+- `SendHTMLEmail` gains a `textBody` parameter; `BuildReportWithOps` and `BuildCriticalAlertEmail` return the plaintext alongside the HTML; all three send paths (report scheduler, Send Report Now, poller critical-alert) pass it through. Blank textBody degrades to the legacy shapes for any future HTML-only caller.
+- Inline images now carry a `filename` on their inline disposition (softens Gmail's attachment-chip cosmetics for part 3's chart PNGs).
+- New `internal/notifier/mime_test.go` parses built messages with net/mail + mime/multipart (via `NextRawPart` — `NextPart` transparently QP-decodes and hides the CTE header) asserting the full tree, QP round-trips, bracketed CIDs, base64 fidelity, line-length discipline, and the CRLF header-injection guard; new `plaintext_test.go` pins the text renderer.
+
 ## [0.11.116] - 2026-07-18
 
 ### Changed — Report redesign part 1: flat themed template, Day/Night preview, email-client-correct layout

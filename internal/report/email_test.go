@@ -29,7 +29,7 @@ func TestBuildCriticalAlertEmail_SubjectSanitizesCRLF(t *testing.T) {
 		Timestamp:    time.Now(),
 	}
 
-	subject, _, _, err := BuildCriticalAlertEmail(alert, device, nil, ThemeByName(""))
+	subject, _, _, _, err := BuildCriticalAlertEmail(alert, device, nil, ThemeByName(""))
 	if err != nil {
 		t.Fatalf("BuildCriticalAlertEmail: %v", err)
 	}
