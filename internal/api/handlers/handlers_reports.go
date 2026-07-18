@@ -122,8 +122,11 @@ func (h *Handler) PreviewReport(c *gin.Context) {
 	}
 	if layout == "email" {
 		for _, att := range atts {
-			html = strings.ReplaceAll(html, "cid:"+att.ContentID,
-				"data:"+att.MIMEType+";base64,"+base64.StdEncoding.EncodeToString(att.Data))
+			// Boundary-safe: match through the attribute's closing quote —
+			// "cid:report_cpumem_1" is a string prefix of "…_10"/"…_11" and
+			// a bare-prefix ReplaceAll would corrupt those anchors.
+			html = strings.ReplaceAll(html, `cid:`+att.ContentID+`"`,
+				"data:"+att.MIMEType+";base64,"+base64.StdEncoding.EncodeToString(att.Data)+`"`)
 		}
 	}
 

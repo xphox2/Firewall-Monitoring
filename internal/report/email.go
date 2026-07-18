@@ -65,7 +65,9 @@ func BuildReportWithOps(devices []models.Device, deviceData []*DeviceReportData,
 	}
 
 	// Plaintext always covers the FULL fleet — rendered before any email
-	// device-section capping.
+	// device-section capping, and in the model's original device order (the
+	// email HTML reorders by attention priority; the text alternative is a
+	// fallback listing, so the divergence is deliberate).
 	text := RenderReportText(m)
 
 	var html string
@@ -129,7 +131,9 @@ func renderEmailWithCharts(m ReportModel) (string, []notifier.Attachment, error)
 	}
 	var charts []devChart
 	for i := range ordered {
-		if len(charts) == emailDeviceChartSlots {
+		if len(charts) == emailDeviceChartSlots || i >= emailDeviceCap {
+			// Positions past the starting cap can never hold a full section,
+			// so rendering their PNGs would be pure waste.
 			break
 		}
 		if png, err := RenderCPUMemPNG(ordered[i], m.Theme); err == nil && png != nil {

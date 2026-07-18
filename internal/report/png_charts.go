@@ -117,7 +117,7 @@ func RenderAlertTimelinePNG(buckets []AlertBucket, th ReportTheme) ([]byte, erro
 	if len(buckets) == 0 {
 		return nil, nil
 	}
-	total := 0
+	total, maxCount := 0, 0
 	bars := make([]chart.Value, 0, len(buckets))
 	// Label every bucket only when they fit; otherwise every 4th (24 hourly
 	// buckets at 1104px would collide).
@@ -127,6 +127,9 @@ func RenderAlertTimelinePNG(buckets []AlertBucket, th ReportTheme) ([]byte, erro
 	}
 	for i, b := range buckets {
 		total += b.Count
+		if b.Count > maxCount {
+			maxCount = b.Count
+		}
 		color := th.Warn
 		if b.Crit {
 			color = th.Crit
@@ -151,8 +154,11 @@ func RenderAlertTimelinePNG(buckets []AlertBucket, th ReportTheme) ([]byte, erro
 		Canvas:     chart.Style{FillColor: hexColor(th.ChartBG)},
 		XAxis:      pngAxisStyle(th),
 		YAxis: chart.YAxis{
-			Style:          pngAxisStyle(th),
-			TickStyle:      chart.Style{FontColor: hexColor(th.ChartAxis)},
+			Style:     pngAxisStyle(th),
+			TickStyle: chart.Style{FontColor: hexColor(th.ChartAxis)},
+			// Explicit range: go-chart errors on a zero-span value range,
+			// which every-bucket-equal-and-nonzero data would otherwise hit.
+			Range:          &chart.ContinuousRange{Min: 0, Max: float64(maxCount)},
 			GridMajorStyle: pngGridStyle(th),
 		},
 		BarWidth:   pngChartWidth / (len(buckets) + 6),
