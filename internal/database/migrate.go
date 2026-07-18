@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -2108,17 +2109,29 @@ func (d *Database) migrateEventRuleProfiles() error {
 	if hasDefaultPolicy {
 		profileForPolicy[defaultPolicy.ID] = defProfile.ID
 	}
+	// Iterate policies in ID order (not map order) and claim names through a
+	// deterministic candidate ladder — so a crash-and-rerun recomputes the
+	// SAME name per policy (FirstOrCreate then reuses), and two adversarially
+	// named policies can never silently merge into one profile.
+	orderedPids := make([]uint, 0, len(referenced))
 	for pid := range referenced {
 		if hasDefaultPolicy && pid == defaultPolicy.ID {
 			continue
 		}
+		orderedPids = append(orderedPids, pid)
+	}
+	sort.Slice(orderedPids, func(i, j int) bool { return orderedPids[i] < orderedPids[j] })
+	claimed := map[string]bool{defProfile.Name: true}
+	for _, pid := range orderedPids {
 		p := policyByID[pid]
 		name := p.Name
-		if name == defProfile.Name {
-			// Policy names are unique so this only happens when the default
-			// POLICY was renamed and a non-default one took "Default".
-			name = name + " (event profile)"
+		if claimed[name] {
+			name = p.Name + " (event profile)"
 		}
+		if claimed[name] {
+			name = fmt.Sprintf("%s #%d", p.Name, p.ID) // policy IDs are unique — always free
+		}
+		claimed[name] = true
 		var prof models.EventRuleProfile
 		if err := d.db.Where(models.EventRuleProfile{Name: name}).
 			Attrs(models.EventRuleProfile{Description: "Migrated from notification profile \"" + p.Name + "\" (v48): carries its per-type enable/disable state."}).

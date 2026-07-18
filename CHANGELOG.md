@@ -16,6 +16,7 @@ Event Rules become profile-based. A profile bundles (a) a sparse per-alert-type 
 - **Registry + guardrail**: `models.AllAlertTypes()` is the canonical alert-type registry ({type, family, description}) for the upcoming matrix UI; a CI test asserts set-equality against the `AlertType` constants (every new type must register or the build fails).
 - **Toggle propagation note**: toggle/assignment edits reach the poller and trap-receiver on their existing refresh cadence (same window as any notification-policy edit today); the API applies them immediately after each write.
 - **Rollback note**: rolling back to 0.11.112 is clean — the old resolver reads the untouched `AlertRule.Enabled` rows and ignores the new tables — UNLESS a Notification Profile's rules were re-saved under 0.11.113 (the forced-true write would re-enable that policy's previously disabled types on the old binary).
+- **Deploy sequencing (IMPORTANT)**: do NOT deploy 0.11.113 to production standalone — it ships no toggle management UI/API yet, so a per-type disable cannot be edited (the Notification Profile "Enabled" checkbox is already inert and will be removed in the UI release). Deploy together with the profile API + UI releases that follow.
 
 ## [0.11.112] - 2026-07-17
 

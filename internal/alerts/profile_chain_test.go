@@ -225,6 +225,32 @@ func TestRuleLayering_ZeroProfileIDIsDefaultLayer(t *testing.T) {
 	}
 }
 
+// Fidelity of the toggle gate's PLACEMENT: a toggled-off type must still
+// resolve with its policy channels attached (the gate sits AFTER
+// applyPolicyChannels, exactly where the retired AlertRule.Enabled consult
+// sat) — recovery paths route the PagerDuty/Opsgenie RESOLVE through these
+// channels after a mid-incident disable; stripping them would orphan the
+// stateful incident.
+func TestToggleOff_PolicyChannelsSurvive(t *testing.T) {
+	am, _ := newTestManager(t)
+	policy := models.AlertPolicy{ID: 1, Name: "pd", IsDefault: true, NotifyPagerDuty: true, NotifyEmail: true}
+	installPolicyCache(am, &policy, nil)
+	installDefaultProfileToggles(am, map[models.AlertType]bool{models.AlertTypeVPNTunnelDown: false})
+
+	am.mu.Lock()
+	resolved := am.resolveAlertConfig(5, nil, models.AlertTypeVPNTunnelDown)
+	am.mu.Unlock()
+	if resolved.AlertEnabled {
+		t.Fatal("toggle Off must gate the fire")
+	}
+	if resolved.PolicyID == nil || *resolved.PolicyID != 1 {
+		t.Fatal("toggled-off resolve must keep PolicyID (recovery channel routing)")
+	}
+	if !resolved.NotifyPagerDuty || !resolved.NotifyEmail {
+		t.Fatal("toggled-off resolve must keep policy channels — stripping them orphans stateful PagerDuty/Opsgenie incidents on mid-incident disables")
+	}
+}
+
 // Mid-flight toggle-off: an alert that fired while ON must still auto-resolve
 // and emit its recovery companion after the type is toggled Off (recovery
 // paths are deliberately ungated; only fires are).

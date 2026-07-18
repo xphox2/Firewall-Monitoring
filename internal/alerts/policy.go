@@ -199,14 +199,19 @@ func (am *AlertManager) RefreshPolicyCache(db *database.Database) {
 	// BOTH in ONE critical section: the old policy-swap-then-RefreshEventRules
 	// sequence took the lock twice, so a reader could observe new assignments
 	// against old rule partitions (torn window) — the profile chain walk made
-	// that inconsistency load-bearing, so it is closed here.
+	// that inconsistency load-bearing, so it is closed here. Same discipline on
+	// the ERROR path: if the engine load fails, keep the last-good PAIR (a new
+	// policy cache over old partitions would resurrect the tear — a freshly
+	// assigned device profile resolving into an empty partition).
 	st, stOK := am.loadEventRuleState(db)
+	if !stOK {
+		log.Printf("RefreshPolicyCache: event-rule engine load failed; keeping last-good policy cache + engine pair")
+		return
+	}
 
 	am.mu.Lock()
 	am.policyCache = cache
-	if stOK {
-		am.installEventRuleStateLocked(st)
-	}
+	am.installEventRuleStateLocked(st)
 	am.mu.Unlock()
 }
 
@@ -328,23 +333,6 @@ func (am *AlertManager) resolveAlertConfigProv(deviceID uint, siteID *uint, aler
 		return resolved
 	}
 
-	// v48 single-authority per-type kill switch: the Event Rule Profile chain
-	// decides whether this type may fire at all (device profile → site profile
-	// → Default; first explicit row wins; no row anywhere = ON). This replaces
-	// the retired AlertRule.Enabled consult — Notification Profiles now govern
-	// channels/severity/thresholds only. Early return matches the old disabled-
-	// rule short-circuit shape: recovery paths that resolve config for channel
-	// routing get PolicyActive=false and fall back to global delivery, exactly
-	// as a disabled AlertRule behaved mid-incident.
-	if on, layer := am.eventToggleLocked(deviceID, siteID, alertType); !on {
-		resolved.AlertEnabled = false
-		if prov != nil {
-			prov.AlertsDisabled = true
-			prov.ToggleLayer = layer
-		}
-		return resolved
-	}
-
 	// Resolve policy: device → site → default (shared helper, dangling-safe)
 	var policy *models.AlertPolicy
 	if pid := am.resolvedPolicyIDLocked(deviceID, siteID); pid != nil {
@@ -367,6 +355,26 @@ func (am *AlertManager) resolveAlertConfigProv(deviceID uint, siteID *uint, aler
 				break
 			}
 		}
+	}
+
+	// v48 single-authority per-type kill switch: the Event Rule Profile chain
+	// decides whether this type may fire at all (device profile → site profile
+	// → Default; first explicit row wins; no row anywhere = ON). Replaces the
+	// retired AlertRule.Enabled consult, and sits EXACTLY where that consult
+	// sat — AFTER applyPolicyChannels — so the returned config still carries
+	// PolicyID/channels/escalation. That placement is load-bearing: recovery
+	// paths (sendRecovery, spike/incident resolves) re-resolve config for
+	// CHANNEL routing after a mid-incident disable, and stripping channels
+	// here would orphan stateful PagerDuty/Opsgenie incidents (the resolve
+	// event would never dispatch) — a fidelity break from the old disabled-
+	// rule behavior.
+	if on, layer := am.eventToggleLocked(deviceID, siteID, alertType); !on {
+		resolved.AlertEnabled = false
+		if prov != nil {
+			prov.AlertsDisabled = true
+			prov.ToggleLayer = layer
+		}
+		return resolved
 	}
 
 	if rule != nil {

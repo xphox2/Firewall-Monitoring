@@ -501,7 +501,7 @@ type EventRule struct {
 	// without a DB NOT NULL so SQLite never needs a table rebuild. DeviceID/
 	// SiteID/VendorScope above narrow WITHIN a profile; ProfileID decides which
 	// layer of the Default > Site > Device chain the rule evaluates in.
-	ProfileID uint `json:"profile_id" gorm:"index;default:0"`
+	ProfileID uint `json:"profile_id" gorm:"index;not null;default:0"`
 	// MatchJSON is the serialized condition tree (AND/OR of field/op/value
 	// predicates). Compiled + prefilter-derived once on cache load.
 	MatchJSON string `json:"match_json" gorm:"type:text"`

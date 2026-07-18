@@ -24,7 +24,7 @@
     var METRIC_LABEL = {
         CPU_HIGH: 'CPU', MEMORY_HIGH: 'Memory', DISK_HIGH: 'Disk', SESSIONS_HIGH: 'Sessions'
     };
-    var SCOPE_LABEL = { device: 'Device', site: 'Site', policy: 'Profile', rule: 'Event Rule' };
+    var SCOPE_LABEL = { device: 'Device', site: 'Site', policy: 'Profile', rule: 'Event Rule', event_profile: 'Event Profile' };
 
     function el(id) { return document.getElementById(id); }
 
@@ -86,7 +86,12 @@
             var scope = SCOPE_LABEL[r.scope] || r.scope;
             var metric, value, note = '';
             if (r.kind === 'disabled') {
-                metric = '<span style="color:var(--fwmon-danger,#f85149);">All alerts disabled</span>';
+                // Device rows = the master off-switch; event_profile rows (v48)
+                // = one alert type toggled Off by a profile.
+                var what = (r.scope === 'event_profile' && r.alert_type)
+                    ? (r.alert_type + ' toggled off')
+                    : 'All alerts disabled';
+                metric = '<span style="color:var(--fwmon-danger,#f85149);">' + AC.escapeHtml(what) + '</span>';
                 value = '—';
             } else if (r.kind === 'custom') {
                 metric = 'Custom metric rule';

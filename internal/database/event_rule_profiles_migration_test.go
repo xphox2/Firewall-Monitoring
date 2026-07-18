@@ -59,6 +59,7 @@ func TestMigrateEventRuleProfiles_Fidelity(t *testing.T) {
 		{DeviceID: 1, PolicyID: &cleanPol.ID, AlertsEnabled: true},
 		{DeviceID: 2, PolicyID: &defPol.ID, AlertsEnabled: true},
 		{DeviceID: 4, PolicyID: uintPtr(999), AlertsEnabled: true},
+		{DeviceID: 5, PolicyID: nil, AlertsEnabled: true}, // inherit — must stay nil
 	} {
 		if err := db.db.Create(&c).Error; err != nil {
 			t.Fatalf("seed device cfg: %v", err)
@@ -158,6 +159,11 @@ func TestMigrateEventRuleProfiles_Fidelity(t *testing.T) {
 	}
 	if d4.EventProfileID != nil {
 		t.Errorf("dangling policy pin must stay nil, got %v", d4.EventProfileID)
+	}
+	var d5 models.DeviceAlertConfig
+	db.db.Where("device_id = ?", 5).First(&d5)
+	if d5.EventProfileID != nil {
+		t.Errorf("nil-PolicyID config must keep event_profile_id NULL (inherit), got %v", d5.EventProfileID)
 	}
 	var s10 models.SiteAlertConfig
 	db.db.Where("site_id = ?", 10).First(&s10)
