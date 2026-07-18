@@ -25,7 +25,7 @@ func TestEventRulesFullCoverageUI(t *testing.T) {
 	for _, pin := range []string{
 		`data-ep-customize`,                // matrix per-type Rule button + delegate
 		`event-rules/template?alert_type=`, // seed-deleted recreate path
-		`openRuleModal(null, pf)`,          // template prefill BYPASSES openFromPrefill
+		`openRuleModal(null, t.data`,       // template prefill BYPASSES openFromPrefill
 	} {
 		if !strings.Contains(profiles, pin) {
 			t.Errorf("admin-event-profiles.js lost %q — the matrix→rule bridge regressed", pin)
