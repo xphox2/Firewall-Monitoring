@@ -228,4 +228,53 @@ func TestBuildMIMEMessage_HeaderSanitized(t *testing.T) {
 	if !strings.Contains(msg.Header.Get("Subject"), "evil") {
 		t.Fatalf("subject mangled: %q", msg.Header.Get("Subject"))
 	}
+
+	// CRLF in an attachment ContentID must not forge part headers either.
+	raw, err = buildMIMEMessage("f@x.net", "t@x.net", "S", "T", `<img src="cid:c">`,
+		[]Attachment{{ContentID: "c\r\nX-Evil: 1", Data: []byte{1}, MIMEType: "image/png"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// SanitizeHeader strips the CR/LF so the payload stays INLINE in the
+	// Content-ID value (harmless); forged = it appears at start-of-line as
+	// its own header.
+	for _, line := range strings.Split(string(raw), "\r\n") {
+		if strings.HasPrefix(line, "X-Evil:") {
+			t.Fatal("ContentID CRLF injection forged a part header")
+		}
+	}
+}
+
+// TestBuildMIMEMessage_SubjectRFC2047 pins Q-encoding of non-ASCII subjects:
+// the raw header line must be pure ASCII, and a compliant decoder must
+// recover the original text. ASCII-only subjects pass through unencoded.
+func TestBuildMIMEMessage_SubjectRFC2047(t *testing.T) {
+	subject := "Firewall Monitor — Daily Report — 2026-07-18"
+	raw, err := buildMIMEMessage("f@x.net", "t@x.net", subject, "T", "<p>h</p>", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := parseMsg(t, raw)
+	got := msg.Header.Get("Subject")
+	for _, r := range got {
+		if r > 127 {
+			t.Fatalf("subject header carries raw non-ASCII: %q", got)
+		}
+	}
+	if !strings.Contains(got, "=?UTF-8?") {
+		t.Fatalf("non-ASCII subject not RFC 2047 encoded: %q", got)
+	}
+	dec := new(mime.WordDecoder)
+	decoded, err := dec.DecodeHeader(got)
+	if err != nil || decoded != subject {
+		t.Fatalf("round-trip failed: %q (err %v), want %q", decoded, err, subject)
+	}
+
+	raw, err = buildMIMEMessage("f@x.net", "t@x.net", "Plain ASCII subject", "T", "<p>h</p>", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parseMsg(t, raw).Header.Get("Subject"); got != "Plain ASCII subject" {
+		t.Fatalf("ASCII subject should pass through unencoded, got %q", got)
+	}
 }

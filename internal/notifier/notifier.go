@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
 	"mime/quotedprintable"
 	"net/http"
@@ -557,10 +558,13 @@ func writeInlineImages(w *multipart.Writer, attachments []Attachment) error {
 		h := make(textproto.MIMEHeader)
 		h.Set("Content-Type", att.MIMEType)
 		h.Set("Content-Transfer-Encoding", "base64")
+		// Sanitized: CIDs are currently hardcoded, but if one is ever derived
+		// from a device/interface name a CRLF must not forge part headers.
+		cid := SanitizeHeader(att.ContentID)
 		// Angle brackets in the header, none in the HTML's cid: reference —
 		// the exact-match pair every client requires.
-		h.Set("Content-ID", "<"+att.ContentID+">")
-		h.Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", att.ContentID+".png"))
+		h.Set("Content-ID", "<"+cid+">")
+		h.Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", cid+".png"))
 		part, err := w.CreatePart(h)
 		if err != nil {
 			return fmt.Errorf("create attachment part: %w", err)
@@ -601,7 +605,10 @@ func buildMIMEMessage(from, to, subject, textBody, htmlBody string, attachments 
 	writeTop := func(contentType string) {
 		fmt.Fprintf(&buf, "From: %s\r\n", sanitize(from))
 		fmt.Fprintf(&buf, "To: %s\r\n", sanitize(to))
-		fmt.Fprintf(&buf, "Subject: %s\r\n", sanitize(subject))
+		// Sanitize (strip CR/LF) THEN RFC 2047 Q-encode: subjects carry
+		// non-ASCII (em dashes, device names) which is 5322-non-conformant
+		// raw; QEncoding passes pure-ASCII strings through unchanged.
+		fmt.Fprintf(&buf, "Subject: %s\r\n", mime.QEncoding.Encode("UTF-8", sanitize(subject)))
 		fmt.Fprintf(&buf, "MIME-Version: 1.0\r\n")
 		fmt.Fprintf(&buf, "Content-Type: %s\r\n", contentType)
 	}

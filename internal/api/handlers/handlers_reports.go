@@ -55,8 +55,8 @@ func (h *Handler) reportSpikeThreshold() float64 {
 // preview. db is the request-scoped handle (AUDIT-032) so the heavy fleet-wide
 // data gather is cancelled if the operator navigates away mid-render.
 // theme selects the light/dark token set (report.ThemeByName semantics).
-// text is the model-generated text/plain alternative (blank-irrelevant for
-// the preview path, which only renders html).
+// text is the model-generated text/plain alternative; the preview path
+// discards it (it only renders html).
 func (h *Handler) buildReportHTML(db database.Store, period string, collapsible bool, theme string) (subject, html, text string, err error) {
 	hours, label := reportWindow(period)
 	tz := h.reportTimezone()
