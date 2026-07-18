@@ -31,12 +31,17 @@ type SuggestInput struct {
 	DeviceName string
 	Vendor     string          // device vendor, for syslog KV extraction
 	StateOwned map[string]bool // state_engine_owns snapshot (event_type -> owned)
-	// FiringRulePriority is the priority of the syslog rule named MetricName, if
-	// one is currently loaded; the suggestion sorts one above it so it wins.
+	// FiringRulePriority is the priority of the syslog/flow rule named
+	// MetricName, if one is currently loaded; the suggestion sorts one above it
+	// so it wins.
 	FiringRulePriority *int
-	// ExistingRuleID names the syslog rule that fired (so "customize" can open it
-	// directly instead of creating a near-duplicate).
+	// ExistingRuleID names the syslog/flow rule that fired (so "customize" can
+	// open it directly instead of creating a near-duplicate).
 	ExistingRuleID *uint
+	// FiringRuleMatchJSON is the firing flow rule's own matcher; a FLOW_RULE_MATCH
+	// suppress suggestion reuses it verbatim (one priority above), so the suppress
+	// rule claims exactly the events the firing rule would alert on.
+	FiringRuleMatchJSON string
 	// SourceAddr is the attacker/source IP for an sFlow-security alert; the
 	// flow_security suggestion matches on it (source_ip eq).
 	SourceAddr string
@@ -134,22 +139,57 @@ func SuggestRuleForAlert(in SuggestInput) SuggestResult {
 
 	switch src {
 	case "flow_security":
-		// A per-source security alert → suppress/customize that exact attacker IP.
-		// The storm DIGEST carries no single source; there the operator mutes each
-		// offender individually (per-offender "Suppress source" in the UI), so a
-		// digest-level blanket rule is deliberately NOT synthesized (it would blind
-		// brand-new attackers of that detector).
-		srcIP := canonIPStr(in.SourceAddr)
-		if srcIP == "" {
-			return SuggestResult{Supported: false,
-				Reason:      "This is a storm digest with many sources. Suppress individual offenders from the storm's list instead.",
-				Alternative: "per_source"}
+		if in.AlertType == models.AlertTypeSFlowSecurity || in.AlertType == models.AlertTypeSFlowSecurityDigest {
+			// A per-source security alert → suppress/customize that exact attacker
+			// IP. The storm DIGEST carries no single source; there the operator
+			// mutes each offender individually (per-offender "Suppress source" in
+			// the UI), so a digest-level blanket rule is deliberately NOT
+			// synthesized (it would blind brand-new attackers of that detector).
+			srcIP := canonIPStr(in.SourceAddr)
+			if srcIP == "" {
+				return SuggestResult{Supported: false,
+					Reason:      "This is a storm digest with many sources. Suppress individual offenders from the storm's list instead.",
+					Alternative: "per_source"}
+			}
+			matchJSON = mustJSON(eqNode("source_ip", srcIP))
+			effect = fmt.Sprintf("Suppress sFlow security events from %s.", srcIP)
+			expiresHours = 24 // temporary by default, like the old Silence
+			dev = nil         // match the source across devices (attribution is informational)
+			siteID = nil      // …and across sites — a source suppress is global, like the old Silence table
+			break
 		}
-		matchJSON = mustJSON(eqNode("source_ip", srcIP))
-		effect = fmt.Sprintf("Suppress sFlow security events from %s.", srcIP)
-		expiresHours = 24 // temporary by default, like the old Silence
-		dev = nil         // match the source across devices (attribution is informational)
-		siteID = nil      // …and across sites — a source suppress is global, like the old Silence table
+		// Per-detection alert (SFLOW_<DETECTOR>: cleartext, denied_then_allowed,
+		// ddos_volumetric, capacity, …) → a detector-scoped rule, narrowed to the
+		// alert's subject IP when it carries one, device-scoped by default so a
+		// mute on one edge doesn't blind the fleet.
+		detector := strings.ToLower(strings.TrimPrefix(string(in.AlertType), "SFLOW_"))
+		nodes := []matchNode{eqNode("detector", detector)}
+		if srcIP := canonIPStr(in.SourceAddr); srcIP != "" {
+			nodes = append(nodes, eqNode("source_ip", srcIP))
+			effect = fmt.Sprintf("Suppress %s detections for %s on %s.", detector, srcIP, in.DeviceName)
+			expiresHours = 24 // subject-scoped mutes default temporary, like the source suppress
+		} else {
+			effect = fmt.Sprintf("Suppress %s detections on %s.", detector, in.DeviceName)
+		}
+		matchJSON = mustJSON(andOrSingle(nodes))
+	case "flow":
+		// FLOW_RULE_MATCH: the alert came from a flow Event Rule; a suppress rule
+		// reuses the firing rule's own matcher one priority above it, so it claims
+		// exactly the events that rule would alert on. "Customize" opens the firing
+		// rule itself via ExistingRuleID (handled by the caller/UI).
+		if in.FiringRuleMatchJSON == "" {
+			return SuggestResult{Supported: false,
+				Reason:      "The flow rule that fired this alert is no longer loaded (renamed or deleted), so there is no matcher to build a suppression from. Create or edit a flow rule manually.",
+				Alternative: ""}
+		}
+		matchJSON = in.FiringRuleMatchJSON
+		effect = fmt.Sprintf("Suppress the flow events matched by rule %q (this suppress rule runs first).", in.MetricName)
+		if in.FiringRulePriority != nil {
+			priority = *in.FiringRulePriority - 1
+			if priority < 0 {
+				priority = 0
+			}
+		}
 	case "metric":
 		ev := metricEventType(in.AlertType)
 		matchJSON = mustJSON(eqNode("event_type", ev))
@@ -265,10 +305,19 @@ func boundedSubstring(s string, n int) string {
 }
 
 // IsSyslogRuleAlertType reports whether an alert type is served by the syslog
-// rule engine — the only case where alert.MetricName is a rule NAME (so the
+// rule engine — a case where alert.MetricName is a rule NAME (so the
 // handler must not treat a metric/state resource key as a rule name).
 func IsSyslogRuleAlertType(at models.AlertType) bool {
 	return ruleSourceForAlertType(at) == "syslog"
+}
+
+// IsRuleNameAlertType reports whether alert.MetricName carries the NAME of the
+// Event Rule that fired — true for the syslog rule engine AND the flow rule
+// engine (their fireEventAlert stamps the rule name into MetricName). The
+// handler uses this to look up the firing rule for priority/customize.
+func IsRuleNameAlertType(at models.AlertType) bool {
+	s := ruleSourceForAlertType(at)
+	return s == "syslog" || s == "flow"
 }
 
 // ruleSourceForAlertType maps an alert type to the rule source that can suppress
@@ -287,7 +336,16 @@ func ruleSourceForAlertType(at models.AlertType) string {
 	case models.AlertTypeSyslogEmergency, models.AlertTypeSyslogCritical, models.AlertTypeSyslogAlert,
 		models.AlertTypeLogRuleMatch:
 		return "syslog"
-	case models.AlertTypeSFlowSecurity, models.AlertTypeSFlowSecurityDigest:
+	case models.AlertTypeFlowRuleMatch:
+		return "flow"
+	}
+	// EVERY SFLOW_* type — the consolidated security card, per-detection
+	// policy/operational alerts, and any FUTURE detector (alert types are
+	// auto-derived as SFLOW_<UPPER(detector)>) — is served by the flow_security
+	// evaluator: the poller suppress pass and ProcessFlowDetection /
+	// ProcessSecurityEvent all consult it. Prefix-matched so a new detector is
+	// rule-suppressible on day one (guardrail-tested against detect.Registry()).
+	if strings.HasPrefix(string(at), "SFLOW_") {
 		return "flow_security"
 	}
 	return ""
@@ -307,9 +365,6 @@ func canonIPStr(s string) string {
 }
 
 func unsupportedReason(at models.AlertType) (reason, alternative string) {
-	if strings.HasPrefix(string(at), "SFLOW_") {
-		return "sFlow detections aren't matched by Event Rules. Tune the detector thresholds in Settings, or use a maintenance window.", "maintenance"
-	}
 	return "This alert type isn't matched by the Event Rule engine, so a rule wouldn't take effect. Use a maintenance window to mute it.", "maintenance"
 }
 

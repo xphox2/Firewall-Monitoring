@@ -342,3 +342,44 @@ func TestCheckRelayedTelemetry_DisabledDeviceIgnored(t *testing.T) {
 		t.Errorf("CPU_HIGH alerts for disabled device = %d, want 0", got)
 	}
 }
+
+// TestFlowSuppressPass_AcksPolicyDetections pins the v0.11.111 widening: the
+// poller's flow_security suppress pass runs over policy/operational detections
+// too — a matching suppress rule acks the detection (off the NOC card) and
+// removes it from the map before any alert is built. Pre-fix the pass only saw
+// security detections.
+func TestFlowSuppressPass_AcksPolicyDetections(t *testing.T) {
+	p, db := newTelemetryTestPoller(t)
+	rule := &models.EventRule{Name: "mute cleartext", Enabled: true, Source: "flow_security",
+		Action: "suppress", MatchJSON: `{"op":"eq","field":"detector","value":"cleartext"}`, Priority: 50}
+	mustCreate(t, db, rule)
+	p.alertManager.RefreshEventRules(db)
+
+	det := &models.FlowDetection{Detector: "cleartext", Category: "policy", Severity: "warning",
+		DeviceID: 1, SrcAddr: "10.0.0.5", DstAddr: "10.0.0.9", DstPort: 23,
+		DetectedAt: time.Now().UTC(), DedupKey: "clr_x"}
+	mustCreate(t, db, det)
+	keep := &models.FlowDetection{Detector: "unexpected_egress", Category: "policy", Severity: "warning",
+		DeviceID: 1, SrcAddr: "10.0.0.6", DetectedAt: time.Now().UTC(), DedupKey: "egr_x"}
+	mustCreate(t, db, keep)
+
+	bySubject := map[string][]*models.FlowDetection{
+		det.SrcAddr:  {det},
+		keep.SrcAddr: {keep},
+	}
+	p.applyFlowSecuritySuppressRules(bySubject)
+
+	if _, ok := bySubject[det.SrcAddr]; ok {
+		t.Error("suppressed policy detection must be removed from the map")
+	}
+	if _, ok := bySubject[keep.SrcAddr]; !ok {
+		t.Error("unmatched policy detection must survive the pass")
+	}
+	var got models.FlowDetection
+	if err := db.Gorm().First(&got, det.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !got.Acknowledged {
+		t.Error("suppressed policy detection must be acked off the NOC card")
+	}
+}

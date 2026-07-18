@@ -13,6 +13,7 @@ import (
 
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
+	"firewall-mon/internal/detect"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/notifier"
 
@@ -714,20 +715,55 @@ func (am *AlertManager) ProcessFlowDetection(det *models.FlowDetection, siteID *
 	alertType := models.AlertType("SFLOW_" + strings.ToUpper(det.Detector))
 	key := "flowdet_" + det.DedupKey
 	metric := "sflow_" + det.Detector
+	// The rule/alert subject: the offending source, or the victim for
+	// victim-keyed detectors (whose SrcAddr is empty/many). Persisted on the
+	// alert so flow_security rules and the suggested-rule endpoint have a
+	// source to match — parity with ProcessSecurityEvent.
+	subject := det.SrcAddr
+	if detect.VictimKeyed(det.Detector) {
+		subject = det.DstAddr
+	}
 
 	am.mu.Lock()
 	now := time.Now()
 	resolved := am.resolveAlertConfig(det.DeviceID, siteID, alertType)
 	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
 	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
+	// flow_security customize (parity with ProcessSecurityEvent): an
+	// alert-action Event Rule overrides severity/routing/cooldown; a suppress
+	// match mutes defensively (the poller pass normally drops it first).
+	// Consulted BEFORE the cooldown record so a suppressed detection doesn't
+	// burn the cooldown window for a later unsuppressed sibling.
+	effSite := siteID
+	if effSite == nil {
+		if m, ok := am.deviceMeta[det.DeviceID]; ok {
+			effSite = m.SiteID
+		}
+	}
+	fdRule := am.matchFlowSecurityRuleLocked(FlowSecFields(det, canonIPStr(subject), effSite), det.DeviceID, effSite)
+	suppressed := fdRule != nil && fdRule.action == "suppress"
+	var ruleSev models.Severity
+	if fdRule != nil && fdRule.action == "alert" {
+		ruleSev = fdRule.severity
+		if fdRule.policyID != nil {
+			resolved.PolicyID = fdRule.policyID
+			am.applyRulePolicy(&resolved, *fdRule.policyID)
+		}
+		if fdRule.cooldownMin != nil && *fdRule.cooldownMin > 0 {
+			cooldown = time.Duration(*fdRule.cooldownMin) * time.Minute
+		}
+	}
 	// LC-12 sibling: AlertEnabled gates the cooldown recording too.
-	canSend := resolved.AlertEnabled && am.canAlertWithCooldown(key, now, cooldown)
+	canSend := !suppressed && resolved.AlertEnabled && am.canAlertWithCooldown(key, now, cooldown)
 	if canSend {
 		am.recordCooldownLocked(key, now, cooldown)
 	}
 	am.mu.Unlock()
 
-	if !resolved.AlertEnabled {
+	if fdRule != nil {
+		am.RecordEventRuleHit(fdRule.id)
+	}
+	if suppressed || !resolved.AlertEnabled {
 		return 0, nil
 	}
 	if !canSend {
@@ -736,13 +772,19 @@ func (am *AlertManager) ProcessFlowDetection(det *models.FlowDetection, siteID *
 		return am.openAlertID(det.DeviceID, alertType, metric, now, cooldown), nil
 	}
 
-	// Explicit policy-rule severity overrides the detector's own (trap-path rule).
+	// Severity precedence (parity with ProcessSecurityEvent): the detector's
+	// own, then the type default, then an explicit policy-rule severity, then
+	// an explicit Event Rule severity last (the operator's most deliberate
+	// re-grade wins).
 	sev := models.Severity(det.Severity)
 	if sev == "" {
 		sev = resolved.Severity
 	}
 	if resolved.RuleSeverity != "" {
 		sev = resolved.RuleSeverity
+	}
+	if ruleSev != "" {
+		sev = ruleSev
 	}
 
 	alert := models.Alert{
@@ -755,6 +797,7 @@ func (am *AlertManager) ProcessFlowDetection(det *models.FlowDetection, siteID *
 		CurrentValue: det.Score,
 		PolicyID:     resolved.PolicyID,
 		Suppressed:   resolved.InMaintenance,
+		SourceAddr:   subject,
 	}
 
 	am.saveAlert(&alert)

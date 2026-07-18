@@ -1,6 +1,21 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.111] - 2026-07-17
+
+### Fixed — every sFlow alert type is now rule-suppressible/customizable
+
+`SFLOW_CLEARTEXT` (and most of the sFlow family) refused "Suppress with a rule" / "Customize" with "sFlow detections aren't matched by Event Rules" — violating the invariant that every alert must be manageable through the Event Rules hub. Only the consolidated `SFLOW_SECURITY`(+digest) path consulted `flow_security` rules; the per-detection path (`ProcessFlowDetection`: cleartext, unexpected_egress, denied_then_allowed, DDoS victims, capacity, sampling backoff/rate-change) never did, and the suggested-rule endpoint refused everything else.
+
+- **Poller**: the `flow_security` suppress pass now runs over ALL detections — security, policy and operational — before the routing split (previously security only). Suppressed detections are acked and dropped identically.
+- **`ProcessFlowDetection`**: consults the rule engine with parity to `ProcessSecurityEvent` — suppress mutes (defensively; before cooldown recording so a muted detection can't burn a sibling's window), alert-action overrides severity/policy/cooldown — and persists the detection's subject (source, or victim for victim-keyed detectors) onto `alert.SourceAddr` so rules and suggestions have an IP to match.
+- **Matcher fields** (`FlowSecFields`): `event_type` is now category-mapped — `security_event` UNCHANGED for back-compat with existing operator rules; policy/operational detections surface as `policy_event`/`operational_event` — plus new `dst_ip`/`dst_port`/`protocol` fields (omitted when absent) so a rule can target e.g. cleartext to one host:port.
+- **Suggested rules**: every `SFLOW_*` type (prefix-matched, so future detectors are covered on day one) maps to `flow_security`. Per-detection alerts get a detector-scoped, device-scoped suggestion, narrowed to the subject IP (24h temporary) when the alert carries one. `FLOW_RULE_MATCH` gains the same suggestion shape as its syslog twin (suppress reuses the firing flow rule's own matcher one priority above it; customize opens the firing rule) — forward-plumbing only for now, since the flow-source rule evaluator isn't wired yet and `FLOW_RULE_MATCH` alerts cannot currently be emitted.
+- **Scope note**: a pre-existing `source_ip` mute rule now also suppresses policy detections (cleartext/unexpected_egress/denied_then_allowed) from that source — the intended "mute this source" hub semantics; operational detectors carry no source and are unaffected.
+- **Fold guard** (pre-existing latent bug surfaced by this work): `FindOpenAlertForSource` — the security-event fold's open-alert lookup — followed the newest detection→alert link for a source with no category filter, so a policy detection's own alert (e.g. `SFLOW_CLEARTEXT`) could be handed to `ProcessSecurityEvent` and rewritten into a security event. The link lookup is now filtered to `category='security'`.
+- **UI**: the Event Rules source reads "sFlow detections (security / policy / operational)", field hints gain `dst_ip`/`dst_port`/`protocol`, and the builder note documents the new event_type values.
+- **Guardrail test**: iterates `detect.Registry()` asserting every registered detector's auto-derived alert type is rule-suppressible — a future detector shipped without rule coverage fails CI.
+
 ## [0.11.110] - 2026-07-17
 
 ### Fixed — denied_then_allowed candidate-cap starvation + ingest-race hardening
