@@ -227,6 +227,32 @@ func (d *Database) SetSiteEventProfile(siteID uint, profileID *uint) error {
 	return d.db.Create(&cfg).Error
 }
 
+// EventProfileAssignment is one live site/device assigned to a profile.
+type EventProfileAssignment struct {
+	ID   uint   `json:"id"`
+	Name string `json:"name"`
+}
+
+// GetEventProfileAssignments lists the LIVE sites and devices assigned to a
+// profile (join excludes orphaned config rows, mirroring the counts).
+func (d *Database) GetEventProfileAssignments(profileID uint) (sites, devices []EventProfileAssignment, err error) {
+	if err = d.db.Model(&models.SiteAlertConfig{}).
+		Select("sites.id, sites.name").
+		Joins("JOIN sites ON sites.id = site_alert_configs.site_id").
+		Where("site_alert_configs.event_profile_id = ?", profileID).
+		Order("sites.name asc").Scan(&sites).Error; err != nil {
+		return nil, nil, err
+	}
+	if err = d.db.Model(&models.DeviceAlertConfig{}).
+		Select("devices.id, devices.name").
+		Joins("JOIN devices ON devices.id = device_alert_configs.device_id").
+		Where("device_alert_configs.event_profile_id = ?", profileID).
+		Order("devices.name asc").Scan(&devices).Error; err != nil {
+		return nil, nil, err
+	}
+	return sites, devices, nil
+}
+
 // EventProfileCounts is the per-profile summary for the profile list.
 type EventProfileCounts struct {
 	RuleCount     int64 `json:"rule_count"`

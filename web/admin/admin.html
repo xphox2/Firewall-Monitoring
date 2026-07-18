@@ -197,7 +197,11 @@
            admin-shared.css so every admin page gets it. Only admin.html's
            page-specific mobile layout stays here. */
         @media (max-width: 768px) {
-            .main { padding: 16px; }
+            /* margin-left reset is load-bearing: this inline sheet comes AFTER
+               admin-shared.css, so its base `.main { margin-left: 240px }` wins
+               by document order over the shared mobile reset — without this,
+               every SPA page renders squeezed beside the hidden sidebar. */
+            .main { padding: 16px; margin-left: 0; }
             .page-header { flex-direction: column; align-items: flex-start; gap: 8px; }
             .page-header h1 { font-size: 1.25rem; }
             .stat-grid { grid-template-columns: repeat(2, 1fr); }
@@ -227,6 +231,7 @@
     <script defer src="/static/js/admin-reports.js"></script>
     <script defer src="/static/js/admin-threatintel.js"></script>
     <script defer src="/static/js/admin-event-rules.js"></script>
+    <script defer src="/static/js/admin-event-profiles.js"></script>
     <script defer src="/static/js/admin-alerting.js"></script>
     <script defer src="/static/js/admin-ipsec.js"></script>
     <script defer src="/static/js/admin-probes.js"></script>
@@ -893,34 +898,82 @@
             </div>
         </div>
 
-        <!-- Event Rules Page (v0.11.51 — FwmonEventRules in admin-event-rules.js) -->
+        <!-- Event Rules Page (v0.11.115 — profile-based: FwmonEventProfiles drives
+             the three in-page states; FwmonEventRules stays the rule table/builder
+             engine. Sub-state rides the hash via history.replaceState ONLY (the
+             SPA's popstate handler re-inits pages on Back, so pushState here would
+             clobber sub-state — same discipline as the Settings page). -->
         <div class="page" id="page-event-rules">
-            <div class="stat-grid stat-grid-4">
-                <div class="stat-card stat-card-accent">
-                    <div class="stat-icon">🧭</div>
-                    <div class="stat-content"><div class="stat-label">Total Rules</div><div class="stat-value accent" id="er-stat-total">--</div></div>
+            <!-- State A: profile grid landing -->
+            <div id="ep-grid-view">
+                <div id="ep-migration-banner" style="display:none"></div>
+                <div class="stat-grid stat-grid-4">
+                    <div class="stat-card stat-card-accent">
+                        <div class="stat-icon">🧭</div>
+                        <div class="stat-content"><div class="stat-label">Profiles</div><div class="stat-value accent" id="ep-stat-profiles">--</div></div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">📏</div>
+                        <div class="stat-content"><div class="stat-label">Rules</div><div class="stat-value" id="er-stat-total">--</div></div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">🔕</div>
+                        <div class="stat-content"><div class="stat-label">Suppress Rules</div><div class="stat-value" id="er-stat-suppress">--</div></div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">⏱️</div>
+                        <div class="stat-content"><div class="stat-label">Temporary</div><div class="stat-value" id="ep-stat-temp">--</div></div>
+                    </div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-icon">✅</div>
-                    <div class="stat-content"><div class="stat-label">Enabled</div><div class="stat-value" id="er-stat-enabled">--</div></div>
+                <div class="flex justify-between items-center mb-6 mt-4">
+                    <div>
+                        <h2 class="text-xl font-bold text-[#e6edf3] font-outfit">Event Profiles</h2>
+                        <p class="text-xs text-[#8b949e] mt-1">Per-alert-type toggles and match rules, resolved Default &gt; Site &gt; Device. Assign profiles to sites and devices; everything else inherits from Default.</p>
+                    </div>
+                    <div class="flex gap-2 items-center">
+                        <button class="btn secondary" id="ep-effective-btn" title="See exactly what fires for a device or site">🔍 Effective view</button>
+                        <button class="btn" id="ep-create-btn" data-min-role="admin">+ Create Profile</button>
+                    </div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-icon">🔕</div>
-                    <div class="stat-content"><div class="stat-label">Suppress Rules</div><div class="stat-value" id="er-stat-suppress">--</div></div>
+                <div id="ep-profile-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5"><!-- profile cards --></div>
+            </div>
+
+            <!-- State B: profile detail (Toggles | Rules | Assignments) -->
+            <div id="ep-detail-view" style="display:none">
+                <div id="ep-detail-header"><!-- header rendered by admin-event-profiles.js --></div>
+                <div class="settings-nav" id="ep-tabs" style="margin:12px 0">
+                    <button type="button" class="settings-nav-item active" data-ep-tab="toggles">Toggles</button>
+                    <button type="button" class="settings-nav-item" data-ep-tab="rules">Rules</button>
+                    <button type="button" class="settings-nav-item" data-ep-tab="assignments">Assignments</button>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-icon">🎯</div>
-                    <div class="stat-content"><div class="stat-label">Total Hits</div><div class="stat-value" id="er-stat-hits">--</div></div>
+                <div id="ep-tab-toggles">
+                    <div class="form-group" style="max-width:340px;margin-bottom:10px">
+                        <label for="ep-matrix-filter" style="font-size:0.78rem;color:var(--fwmon-text-faint)">Filter alert types</label>
+                        <input type="search" id="ep-matrix-filter" placeholder="e.g. VPN, SFLOW, disk…">
+                    </div>
+                    <div id="ep-matrix"><!-- toggle matrix --></div>
+                    <div id="ep-save-bar" class="ep-save-bar" style="display:none">
+                        <span id="ep-dirty-count"></span>
+                        <button class="btn secondary sm" id="ep-discard-btn">Discard</button>
+                        <button class="btn sm" id="ep-save-toggles-btn" data-min-role="admin">Save toggles</button>
+                    </div>
+                </div>
+                <div id="ep-tab-rules" style="display:none">
+                    <div class="flex justify-between items-center mb-4">
+                        <div id="ep-rules-filter" class="flex gap-2"><!-- filter chips --></div>
+                        <button class="btn" id="er-create-btn" data-min-role="admin">+ Add rule</button>
+                    </div>
+                    <div id="event-rules-table-wrap"><!-- table rendered by admin-event-rules.js --></div>
+                </div>
+                <div id="ep-tab-assignments" style="display:none">
+                    <div id="ep-assignments"><!-- assignment chip lists --></div>
                 </div>
             </div>
-            <div class="flex justify-between items-center mb-6 mt-4">
-                <div>
-                    <h2 class="text-xl font-bold text-[#e6edf3] font-outfit">Event Rules</h2>
-                    <p class="text-xs text-[#8b949e] mt-1">Match on extracted event fields (FortiGate subtype/level/logid/action…) to alert on specific messages or suppress noise.</p>
-                </div>
-                <button class="btn" id="er-create-btn" data-min-role="admin">+ Create Rule</button>
+
+            <!-- State C: effective view -->
+            <div id="ep-effective-view" style="display:none">
+                <div id="ep-effective-body"><!-- rendered by admin-event-profiles.js --></div>
             </div>
-            <div id="event-rules-table-wrap"><!-- table rendered by admin-event-rules.js --></div>
         </div>
 
         <!-- Maintenance Windows Page -->
@@ -2558,6 +2611,12 @@
                         <option value="">— Inherit from site/global —</option>
                     </select>
                 </div>
+                <div class="form-group">
+                    <label for="device-event-profile">Event Profile</label>
+                    <select id="device-event-profile">
+                        <option value="">— Inherit from site / Default —</option>
+                    </select>
+                </div>
                 <div style="border-top:1px solid var(--fwmon-border);margin:16px 0 12px;padding-top:12px;">
                     <label style="display:block;color:var(--fwmon-text-faint);font-size:0.82rem;font-weight:500;margin-bottom:4px;">Threshold Overrides</label>
                     <p style="color:var(--fwmon-text-faint);font-size:0.78rem;margin:0 0 10px;">Leave blank to inherit from policy/site/global defaults.</p>
@@ -2616,6 +2675,12 @@
                     <label for="site-alert-policy">Notification Profile</label>
                     <select id="site-alert-policy">
                         <option value="">— Inherit from global default —</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="site-event-profile">Event Profile</label>
+                    <select id="site-event-profile">
+                        <option value="">— Inherit from Default —</option>
                     </select>
                 </div>
                 <div style="border-top:1px solid var(--fwmon-border);margin:16px 0 12px;padding-top:12px;">
@@ -2910,6 +2975,34 @@
         <option value="interface_name"><option value="probe_id"><option value="probe_name">
         <option value="method"><option value="changed_by"><option value="impact"><option value="fingerprint"><option value="detail">
     </datalist>
+    <!-- Event Profile create/rename modal (v48). Small on purpose: toggles,
+         rules and assignments live in the in-page detail view, never a modal
+         (no modal-on-modal when the rule builder opens). -->
+    <div class="modal" id="event-profile-modal" role="dialog" aria-modal="true" aria-labelledby="event-profile-modal-title">
+        <div class="modal-content" style="max-width:460px">
+            <div class="modal-header">
+                <h2 id="event-profile-modal-title">Create Event Profile</h2>
+                <button class="modal-close" data-ep-close>&times;</button>
+            </div>
+            <form id="event-profile-form">
+                <input type="hidden" id="event-profile-id">
+                <input type="hidden" id="event-profile-mode">
+                <div class="form-group">
+                    <label for="ep-name">Profile Name *</label>
+                    <input type="text" id="ep-name" required autocomplete="one-time-code" placeholder="e.g. Branch Offices">
+                </div>
+                <div class="form-group">
+                    <label for="ep-description">Description</label>
+                    <input type="text" id="ep-description" autocomplete="one-time-code" placeholder="Optional">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn secondary" data-ep-close>Cancel</button>
+                    <button type="submit" class="btn" data-min-role="admin">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <div class="modal" id="event-rule-modal" role="dialog" aria-modal="true" aria-labelledby="event-rule-modal-title">
         <div class="modal-content">
             <div class="modal-header">
@@ -2921,9 +3014,13 @@
                 <div class="policy-section">
                     <div class="policy-section-header"><h3>Basics</h3></div>
                     <div class="policy-section-body">
+                        <div class="form-row form-row-2">
+                            <div class="form-group"><label for="er-profile">Profile (layer)</label><select id="er-profile"></select><div class="field-hint" id="er-profile-context">Rules evaluate in their profile's layer: Device &gt; Site &gt; Default.</div></div>
+                            <div class="form-group"></div>
+                        </div>
                         <div class="form-row form-row-3">
                             <div class="form-group"><label for="er-name">Rule Name *</label><input type="text" id="er-name" required autocomplete="one-time-code" placeholder="e.g. FortiGate VPN errors"></div>
-                            <div class="form-group"><label for="er-priority">Priority</label><input type="number" id="er-priority" value="100" min="0" max="10000"><div class="field-hint">Lower runs first.</div></div>
+                            <div class="form-group"><label for="er-priority">Priority</label><input type="number" id="er-priority" value="100" min="0" max="10000"><div class="field-hint">Lower runs first within this profile's layer; device-profile rules always run before site, before Default.</div></div>
                             <div class="form-group"><label for="er-enabled">Enabled</label><div><label class="channel-toggle"><input type="checkbox" id="er-enabled" checked> Rule is active</label></div></div>
                         </div>
                         <div class="form-row form-row-2">
@@ -2933,8 +3030,9 @@
                     </div>
                 </div>
                 <div class="policy-section">
-                    <div class="policy-section-header"><h3>Scope</h3></div>
+                    <div class="policy-section-header"><h3>Scope — narrow further (optional)</h3></div>
                     <div class="policy-section-body">
+                        <p class="field-hint" style="margin:0 0 8px">The profile's assignments already decide where this rule runs. Use these only to narrow it to a single vendor/device/site within the profile.</p>
                         <div class="form-row form-row-4">
                             <div class="form-group"><label for="er-source">Source</label><select id="er-source"><option value="syslog">Syslog</option><option value="flow">Flow</option><option value="state">State (interface / VPN up-down)</option><option value="metric">Metric (CPU / memory / disk / sessions)</option><option value="spike">Spike (traffic anomaly)</option><option value="trap">Trap (SNMP / HA)</option><option value="flow_security">sFlow detections (security / policy / operational)</option><option value="device">Device health (offline / telemetry / config / probe)</option><option value="any">Any</option></select></div>
                             <div class="form-group"><label for="er-vendor">Vendor</label><select id="er-vendor"></select></div>
@@ -3130,7 +3228,7 @@
                     <div class="policy-section-body policy-rules-body">
                         <div class="table-wrap">
                             <table id="policy-rules-table" class="policy-rules-table">
-                                <thead><tr><th>Alert Type</th><th>Enabled</th><th>Severity</th><th>Threshold</th><th title="Recovery band (hysteresis): auto-resolve only when the value drops below this. Blank = resolve at threshold.">Clear&nbsp;below</th><th title="static: fire at threshold. zscore: fire above the device's own baseline by K standard deviations.">Mode</th><th title="Deviation multiplier for zscore mode (blank = 3.0)">K</th><th>Email</th><th>Slack</th><th>Discord</th><th>Webhook</th><th>Cooldown</th></tr></thead>
+                                <thead><tr><th>Alert Type</th><th>Severity</th><th>Threshold</th><th title="Recovery band (hysteresis): auto-resolve only when the value drops below this. Blank = resolve at threshold.">Clear&nbsp;below</th><th title="static: fire at threshold. zscore: fire above the device's own baseline by K standard deviations.">Mode</th><th title="Deviation multiplier for zscore mode (blank = 3.0)">K</th><th>Email</th><th>Slack</th><th>Discord</th><th>Webhook</th><th>Cooldown</th></tr></thead>
                                 <tbody id="policy-rules-body"></tbody>
                             </table>
                         </div>

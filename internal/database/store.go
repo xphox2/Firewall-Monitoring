@@ -180,6 +180,7 @@ type AlertPolicyStore interface {
 	SetDeviceEventProfile(deviceID uint, profileID *uint) error
 	SetSiteEventProfile(siteID uint, profileID *uint) error
 	GetEventProfileCounts(defaultID uint) (map[uint]*EventProfileCounts, error)
+	GetEventProfileAssignments(profileID uint) (sites, devices []EventProfileAssignment, err error)
 }
 
 // MaintenanceWindowStore covers scheduled maintenance windows.

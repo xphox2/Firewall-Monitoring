@@ -1336,3 +1336,150 @@ html[data-role="operator"] [data-min-role="admin"] {
 .alert-eff-hint.is-override { color: var(--fwmon-text-dim); }
 .alert-eff-hint.is-rule { color: var(--fwmon-accent, var(--fwmon-text-dim)); }
 .alert-eff-hint.is-disabled { color: var(--fwmon-danger, var(--fwmon-text-dim)); }
+
+/* ============================================================
+ * Event Rule Profiles (v0.11.115) — profile grid, tri-state
+ * toggle matrix, save bar, effective view. Composes the
+ * chart-range-pill recipe for the segmented control, with
+ * explicit light-theme overrides (the pill's hover/active
+ * overlays are dark-tuned rgba and near-invisible on Day).
+ * ============================================================ */
+.ep-card {
+    background: var(--fwmon-card-bg);
+    border: 1px solid var(--fwmon-border);
+    border-radius: var(--fwmon-radius, 8px);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.ep-card.is-default { border-color: var(--fwmon-accent, #58a6ff); }
+.ep-card-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.ep-card-desc { color: var(--fwmon-text-faint); font-size: 0.8rem; min-height: 2.2em; }
+.ep-card-stats { display: flex; gap: 14px; font-size: 0.78rem; color: var(--fwmon-text-dim); }
+.ep-card-stats b { color: var(--fwmon-text); font-weight: 600; }
+.ep-card-footer { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--fwmon-border); padding-top: 8px; margin-top: auto; }
+.ep-card-assigned { font-size: 0.75rem; color: var(--fwmon-text-faint); }
+
+/* Tri-state segmented control (Inherit | On | Off). role=group with
+ * aria-pressed buttons; the Default profile renders two segments only. */
+.er-tri {
+    display: inline-flex;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--fwmon-border);
+    border-radius: 6px;
+    padding: 2px;
+    gap: 1px;
+    flex-shrink: 0;
+}
+.er-tri-seg {
+    appearance: none;
+    -webkit-appearance: none;
+    background: transparent;
+    border: none;
+    color: var(--fwmon-text-dim);
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.72rem;
+    font-weight: 500;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 80ms ease;
+    min-height: 26px;
+}
+.er-tri-seg:hover { color: var(--fwmon-text); background: var(--fwmon-hover, rgba(255,255,255,0.04)); }
+.er-tri-seg:focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.45); }
+.er-tri-seg.active { background: rgba(125, 211, 252, 0.12); color: var(--fwmon-series-1); box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.2); }
+.er-tri-seg.active.is-off { background: rgba(248, 81, 73, 0.12); color: var(--fwmon-sig-crit); box-shadow: inset 0 0 0 1px rgba(248, 81, 73, 0.25); }
+:root[data-theme="light"] .er-tri { background: rgba(0, 0, 0, 0.03); }
+:root[data-theme="light"] .er-tri-seg:hover { background: rgba(0, 0, 0, 0.06); }
+:root[data-theme="light"] .er-tri-seg.active { background: rgba(2, 132, 199, 0.12); }
+:root[data-theme="light"] .er-tri-seg.active.is-off { background: rgba(190, 30, 45, 0.10); }
+
+/* Matrix rows: badge + provenance hint + control. Wraps at <=768px so the
+ * segmented control gets a full-width touch row (never horizontal scroll). */
+.ep-matrix-group-head {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--fwmon-bg);
+    border-bottom: 1px solid var(--fwmon-border);
+    padding: 8px 4px 6px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    color: var(--fwmon-text-dim);
+    cursor: pointer;
+}
+.ep-matrix-group-head .ep-group-counts { font-weight: 400; text-transform: none; color: var(--fwmon-text-faint); }
+.ep-matrix-group-head .ep-group-bulk { margin-left: auto; display: flex; gap: 6px; }
+.ep-matrix-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 7px 4px;
+    border-bottom: 1px solid var(--fwmon-border);
+    flex-wrap: wrap;
+}
+.ep-matrix-row .ep-row-hint { color: var(--fwmon-text-faint); font-size: 0.75rem; flex: 1; min-width: 140px; }
+.ep-matrix-row .ep-row-hint.is-override { color: var(--fwmon-text-dim); }
+.ep-matrix-row .er-tri { margin-left: auto; }
+
+/* Dirty-save bar: sticky above the fold while editing toggles. */
+.ep-save-bar {
+    position: sticky;
+    bottom: 8px;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    justify-content: flex-end;
+    background: var(--fwmon-card-bg);
+    border: 1px solid var(--fwmon-accent, #58a6ff);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-top: 12px;
+}
+.ep-save-bar span { margin-right: auto; color: var(--fwmon-text-dim); font-size: 0.82rem; }
+
+/* Assignment chips. */
+.ep-chip-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 12px; }
+.ep-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--fwmon-card-bg);
+    border: 1px solid var(--fwmon-border);
+    border-radius: 999px;
+    padding: 3px 6px 3px 12px;
+    font-size: 0.78rem;
+}
+.ep-chip button { background: none; border: none; color: var(--fwmon-text-faint); cursor: pointer; font-size: 0.9rem; padding: 0 4px; }
+.ep-chip button:hover { color: var(--fwmon-sig-crit); }
+
+/* Effective-view layer badges. */
+.ep-layer-badge {
+    display: inline-block;
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.5px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--fwmon-border);
+    color: var(--fwmon-text-dim);
+}
+.ep-layer-badge.device { color: var(--fwmon-series-1); border-color: currentColor; }
+.ep-layer-badge.site { color: var(--fwmon-accent, #58a6ff); border-color: currentColor; }
+
+@media (max-width: 768px) {
+    .ep-matrix-row .er-tri { margin-left: 0; width: 100%; }
+    .ep-matrix-row .er-tri .er-tri-seg { flex: 1; min-height: 38px; }
+    .ep-matrix-group-head { flex-wrap: wrap; }
+    .ep-matrix-group-head .ep-group-bulk { margin-left: 0; width: 100%; }
+    .ep-save-bar { flex-wrap: wrap; }
+    .ep-card-footer { flex-wrap: wrap; gap: 8px; }
+}

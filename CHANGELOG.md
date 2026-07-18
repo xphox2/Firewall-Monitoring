@@ -1,6 +1,22 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.115] - 2026-07-18
+
+### Added — Event Rule Profiles admin UI (completes the profile program)
+
+The Event Rules page becomes profile-first — three in-page states driven by the new `admin-event-profiles.js`, with `admin-event-rules.js` staying the rule table/builder engine underneath. Completes the 0.11.113/114 program; with this release the per-type kill switches are fully manageable again (the interim "don't deploy standalone" constraint is lifted when deploying all three together).
+
+- **Profile grid landing**: cards (Default pinned with ROOT badge and "applies to everything" copy, undeletable) showing toggle/rule/temporary counts and live site/device assignment counts, with icon actions (rename ✎, clone ⧉, delete 🗑 with blast-radius confirm). One-time dismissible migration banner explains that existing rules now live in Default.
+- **Profile detail** (in-page, never a modal — no modal-on-modal with the rule builder): Toggles | Rules | Assignments tabs. Sub-state rides the hash (`#profile-<id>/<tab>`, `#effective`) via `history.replaceState` ONLY with a page-scoped hashchange listener — the SPA's popstate handler re-inits pages on Back, so deep links and reloads restore state while Back leaves the page (Settings-page discipline).
+- **Toggle matrix**: server-driven from `GET /admin/api/alert-types` (new alert types appear automatically as Inherit), grouped by family with sticky collapsible headers, per-family counts, bulk All-Inherit/All-Off (danger confirm with blast radius when bulk-Off hits the Default profile), search filter, and a segmented tri-state control (Inherit | On | Off; the Default profile renders two-state — it IS the root, and On = no stored row so future types stay on). Dirty-tracked sticky Save/Discard bar; sparse save (only non-Inherit rows travel); tab-switch prompts on unsaved changes; light-theme overrides for the segmented control (the base pill recipe was dark-tuned).
+- **Rules tab**: the existing rule table filtered to the profile with All/Alert/Suppress/Temporary/Disabled chips; the builder gains a "Profile (layer)" select with assignment context, the Scope section is retitled "narrow further (optional)" with copy separating profile assignment from rule scope, and the priority hint now says "within this profile's layer". Create-from-alert lands in the suggested profile with the builder open, shows the suggester's `scope_warning`, and flags any failed pre-selection.
+- **Assignments tab**: site/device chip lists over the same config columns the entity dialogs write (new `GET /admin/api/event-rule-profiles/:id/assignments` lists live members), searchable add pickers with a move-confirm when an entity already carries a different profile, ✕ to unassign. The Default profile shows explanatory copy instead of dead pickers. Entity side: the device and site alert-config dialogs gain an "Event Profile" select saved through the column-targeted endpoints.
+- **Effective coverage view**: pick a device or site → resolved chain (DEVICE → SITE → DEFAULT with links into each profile), every alert type's ON/OFF with the deciding layer, and the match rules that apply in true evaluation order with layer badges.
+- **Notification Profiles cleanup**: the per-type Enabled checkbox is REMOVED from the policy rules table (retired in 0.11.113 — the server force-trues the column, so the checkbox was a silent no-op); severity/threshold/channel columns unchanged.
+- **Mobile**: matrix rows wrap to full-width touch segments at ≤768px, cards/grids stack, no horizontal scroll introduced. Live-verified at 375×812 (grid, matrix edit+save, assignments, effective view).
+- **Fixed — SPA-wide mobile squeeze (pre-existing)**: admin.html's inline `.main { margin-left: 240px }` overrode the shared mobile-chrome reset by document order, so EVERY admin SPA page rendered ~145px wide beside the hidden sidebar on phones. The page's own ≤768px block now resets the margin — the whole SPA gets its full width back on mobile.
+
 ## [0.11.114] - 2026-07-18
 
 ### Added — Event Rule Profiles management API

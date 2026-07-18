@@ -45,6 +45,9 @@
     var devices = [];
     var sites = [];
     var policies = [];
+    var profilesList = [];   // event rule profiles (v48) for the builder's layer select
+    var currentProfileId = 0; // profile the rules view is filtered to (0 = all)
+    var currentRuleFilter = 'all';
     var wired = false;
     // When a rule is created from an sFlow-security alert, the alert id to ack once
     // the rule saves (the rule only drops the source from the next cycle, so the
@@ -57,14 +60,20 @@
     // ---- load + render ---------------------------------------------------
 
     function init() {
+        // Legacy standalone entry (pre-v48). The profiles module (FwmonEventProfiles)
+        // now drives the page and calls prepare()/loadRules()/openFromPrefill itself.
         if (!wired) { wire(); wired = true; }
-        // A "Create rule from alert" click on the Alerts page stashes a one-shot
-        // prefill and navigates here; open the editor once the device/site/rule
-        // lists are loaded (else a device-scoped suppress would save fleet-wide).
         var pending = takePendingPrefill();
         Promise.all([loadLists(), loadRules()]).then(function () {
             if (pending) openFromPrefill(pending);
         });
+    }
+
+    // prepare wires the module + loads the builder's lists WITHOUT rendering
+    // rules — the profiles module decides which profile's rules to show.
+    function prepare() {
+        if (!wired) { wire(); wired = true; }
+        return loadLists();
     }
 
     // takePendingPrefill reads + clears the one-shot handoff from the Alerts page.
@@ -94,22 +103,36 @@
         } else if (pf.site_id && String($('er-site').value) !== String(pf.site_id)) {
             AC.showError('Could not pre-select the site for this rule — set the scope manually before saving.');
         }
+        if (pf.profile_id && String($('er-profile') ? $('er-profile').value : '') !== String(pf.profile_id)) {
+            AC.showError('Could not pre-select the suggested profile — pick the layer manually before saving.');
+        }
+        // Layering honesty from the suggester (a Default-layer global mute can
+        // be out-ranked by another profile's alert rules).
+        if (pending.scope_warning) AC.showError(pending.scope_warning);
     }
 
     function loadLists() {
         return Promise.all([
             AC.apiFetch(API + '/devices').catch(function () { return { data: [] }; }),
             AC.apiFetch(API + '/sites').catch(function () { return { data: [] }; }),
-            AC.apiFetch(API + '/alert-policies').catch(function () { return { data: [] }; })
+            AC.apiFetch(API + '/alert-policies').catch(function () { return { data: [] }; }),
+            AC.apiFetch(API + '/event-rule-profiles').catch(function () { return { data: [] }; })
         ]).then(function (r) {
             devices = r[0].data || [];
             sites = r[1].data || [];
             policies = r[2].data || [];
+            profilesList = r[3].data || [];
         });
     }
 
-    function loadRules() {
-        return AC.apiFetch(API + '/event-rules').then(function (res) {
+    // loadRules loads + renders. profileId filters to one layer (0/undefined =
+    // all rules — the legacy standalone view); filter is the Rules-tab chip
+    // (all|alert|suppress|temp|disabled), applied client-side.
+    function loadRules(profileId, filter) {
+        currentProfileId = profileId || 0;
+        if (filter) currentRuleFilter = filter; else if (!profileId) currentRuleFilter = 'all';
+        var url = API + '/event-rules' + (currentProfileId ? ('?profile_id=' + currentProfileId) : '');
+        return AC.apiFetch(url).then(function (res) {
             rules = res.data || [];
             renderStats();
             renderTable();
@@ -137,6 +160,10 @@
     }
 
     function renderStats() {
+        // The landing stat tiles are FLEET-wide. A profile-filtered load must
+        // not write its partial counts into them (the grid owns them via
+        // FwmonEventProfiles.renderStats).
+        if (currentProfileId) return;
         var enabled = 0, suppress = 0, hits = 0;
         rules.forEach(function (r) {
             if (r.enabled) enabled++;
@@ -177,15 +204,28 @@
         return '<span class="badge" title="' + esc(r.expires_at) + '">in ' + label + '</span>';
     }
 
+    // ruleMatchesFilter applies the Rules-tab chip filter.
+    function ruleMatchesFilter(r) {
+        switch (currentRuleFilter) {
+            case 'alert': return r.action !== 'suppress';
+            case 'suppress': return r.action === 'suppress';
+            case 'temp': return !!r.expires_at;
+            case 'disabled': return !r.enabled;
+            default: return true;
+        }
+    }
+
     function renderTable() {
         var wrap = $('event-rules-table-wrap');
         if (!wrap) return;
-        if (!rules.length) {
+        var visible = rules.filter(ruleMatchesFilter);
+        if (!visible.length) {
             wrap.innerHTML = '<div class="empty-state" style="padding:32px;text-align:center;color:var(--fwmon-text-faint)">' +
-                'No event rules yet. Click “+ Create Rule”.</div>';
+                (rules.length ? 'No rules match this filter.' :
+                    'No rules in this profile yet — everything inherits from Default. Click “+ Add rule”.') + '</div>';
             return;
         }
-        var rows = rules.map(function (r) {
+        var rows = visible.map(function (r) {
             var actionBadge = r.action === 'suppress'
                 ? '<span class="badge" style="background:var(--fwmon-card-bg);color:var(--fwmon-text-faint)">suppress</span>'
                 : '<span class="badge">alert</span>';
@@ -250,6 +290,42 @@
         $('er-enabled').checked = r ? !!r.enabled : true;
         $('er-priority').value = r ? r.priority : 100;
         $('er-source').value = r ? (r.source || 'syslog') : 'syslog';
+
+        // Profile (layer) select — v48. Default: the rule's own profile (edit),
+        // the suggested profile (create-from-alert), else the profile the Rules
+        // tab is filtered to, else the Default profile. The list comes LIVE
+        // from the profiles module when present — the prepare()-time snapshot
+        // goes stale the moment a profile is created/cloned/deleted, and a
+        // stale list would silently fall this select back to Default and
+        // RE-HOME the rule on save.
+        var profSel = $('er-profile');
+        if (profSel) {
+            var plist = profilesList;
+            if (window.FwmonEventProfiles && window.FwmonEventProfiles.getProfiles) {
+                var live = window.FwmonEventProfiles.getProfiles();
+                if (live && live.length) { plist = live; profilesList = live; }
+            }
+            profSel.innerHTML = plist.map(function (p) {
+                return '<option value="' + esc(p.id) + '">' + esc(p.name) + (p.is_default ? ' (Default)' : '') + '</option>';
+            }).join('') || '<option value="">Default</option>';
+            var defId = (plist.find(function (p) { return p.is_default; }) || {}).id || '';
+            var want = (r && r.profile_id) || currentProfileId || defId;
+            // Belt-and-braces: NEVER let a missing option silently re-home the
+            // rule to Default — synthesize an option for the rule's own layer.
+            if (want && !plist.some(function (p) { return String(p.id) === String(want); })) {
+                profSel.innerHTML += '<option value="' + esc(want) + '">Profile #' + esc(want) + '</option>';
+            }
+            profSel.value = String(want);
+            if (!profSel.value) profSel.value = String(defId);
+            var ctx = $('er-profile-context');
+            if (ctx) {
+                var chosen = plist.find(function (p) { return String(p.id) === profSel.value; });
+                var cc = (chosen && chosen.counts) || {};
+                ctx.textContent = chosen && !chosen.is_default
+                    ? ('“' + chosen.name + '” is assigned to ' + (cc.site_count || 0) + ' site(s) and ' + (cc.device_count || 0) + ' device(s); its rules run before lower layers.')
+                    : 'Default-layer rules run last: any device/site profile rule can out-rank them.';
+            }
+        }
 
         fillSelect($('er-vendor'), VENDORS.map(function (v) { return { v: v, n: v }; }), 'Any vendor', 'v', 'n');
         $('er-vendor').value = r ? (r.vendor_scope || '') : '';
@@ -604,6 +680,7 @@
                 group_by: $('er-group-by').value.trim(),
                 cooldown_minutes: $('er-cooldown').value ? parseInt($('er-cooldown').value, 10) : null,
                 policy_id: $('er-policy').value ? parseInt($('er-policy').value, 10) : null,
+                profile_id: (function () { var el = $('er-profile'); var v = el ? parseInt(el.value, 10) : 0; return isNaN(v) ? 0 : v; })(),
                 dampen_json: dampenForSource(),
                 expires_at: (function () {
                     var h = parseInt($('er-expires').value, 10);
@@ -621,7 +698,7 @@
                     AC.apiFetch(API + '/alerts/' + ackId + '/acknowledge', { method: 'POST', body: { notes: 'Suppressed via Event Rule' } }).catch(function () { });
                 }
                 pendingAckAlertId = null;
-                loadRules();
+                loadRules(currentProfileId, currentRuleFilter);
             }).catch(function (err) { AC.showError('Save failed: ' + err.message); });
         });
     }
@@ -655,7 +732,7 @@
             if (!ok) return;
             AC.apiFetch(API + '/event-rules/' + id, { method: 'DELETE' }).then(function () {
                 AC.showSuccess('Rule deleted');
-                loadRules();
+                loadRules(currentProfileId, currentRuleFilter); // keep the profile view (bare loadRules resets to all)
             }).catch(function (err) { AC.showError('Delete failed: ' + err.message); });
         });
     }
@@ -699,5 +776,14 @@
         }
     }
 
-    window.FwmonEventRules = { init: init };
+    window.FwmonEventRules = {
+        init: init,
+        // v48 profile-view API for FwmonEventProfiles:
+        prepare: prepare,
+        loadRules: loadRules,
+        takePendingPrefill: takePendingPrefill,
+        openFromPrefill: openFromPrefill,
+        openRuleModal: openRuleModal,
+        getRules: function () { return rules; }
+    };
 })();

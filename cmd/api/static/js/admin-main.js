@@ -141,7 +141,7 @@
             case 'alerting': if (window.FwmonAlerting && window.FwmonAlerting.init) window.FwmonAlerting.init(); break;
             case 'ipsec': if (window.FwmonIPSec && window.FwmonIPSec.init) window.FwmonIPSec.init(); break;
             case 'alert-policies': loadAlertPolicies(); break;
-            case 'event-rules': if (window.FwmonEventRules && window.FwmonEventRules.init) window.FwmonEventRules.init(); break;
+            case 'event-rules': if (window.FwmonEventProfiles && window.FwmonEventProfiles.init) window.FwmonEventProfiles.init(); break;
             case 'probes': if (window.FwmonProbes && window.FwmonProbes.init) window.FwmonProbes.init(); break;
             case 'sites': if (window.FwmonSites && window.FwmonSites.init) window.FwmonSites.init(); break;
             case 'irc': if (window.FwmonIrc && window.FwmonIrc.init) window.FwmonIrc.init(); break;
@@ -2224,6 +2224,8 @@
                 return;
             }
             var stash = { action: mode === 'customize' ? 'alert' : 'suppress' };
+            // v48 layering honesty: surfaced by the builder on open.
+            if (d.scope_warning) stash.scope_warning = d.scope_warning;
             if (mode === 'customize' && d.existing_rule_id) {
                 stash.editId = d.existing_rule_id; // open the firing rule itself, not a near-duplicate
             } else {
@@ -3500,7 +3502,6 @@
 
         var html = ALERT_TYPES.map(function(type) {
             var r = ruleMap[type] || {};
-            var enabled = r.alert_type ? r.enabled : true;
             var severity = r.severity || '';
             var threshold = r.threshold || '';
             var clearThreshold = r.clear_threshold || '';
@@ -3521,9 +3522,11 @@
                 return '<select data-field="' + field + '" class="sm"><option value="" selected>Inherit</option><option value="true">On</option><option value="false">Off</option></select>';
             }
 
+            // v48: the per-type Enabled checkbox is RETIRED — on/off authority
+            // lives in Event Profile toggles (the server force-trues the column
+            // on save, so a checkbox here would be a silent no-op).
             return '<tr data-alert-type="' + type + '">' +
                 '<td style="font-size:12px">' + escapeHtml(type) + '</td>' +
-                '<td><input type="checkbox" data-field="enabled" ' + (enabled ? 'checked' : '') + '></td>' +
                 '<td><select data-field="severity" class="sm"><option value="">Inherit</option><option value="critical"' + (severity==='critical' ? ' selected' : '') + '>Critical</option><option value="warning"' + (severity==='warning' ? ' selected' : '') + '>Warning</option><option value="info"' + (severity==='info' ? ' selected' : '') + '>Info</option></select></td>' +
                 '<td><input type="number" data-field="threshold" value="' + threshold + '" step="0.1" class="sm" style="width:70px"></td>' +
                 '<td><input type="number" data-field="clear_threshold" value="' + clearThreshold + '" step="0.1" class="sm" style="width:70px" title="Recovery band (hysteresis): auto-resolve only below this. Blank/0 = resolve at threshold."></td>' +
@@ -3544,7 +3547,9 @@
         var rules = [];
         rows.forEach(function(row) {
             var type = row.dataset.alertType;
-            var enabled = row.querySelector('[data-field="enabled"]').checked;
+            // v48: Enabled is retired (Event Profile toggles own per-type on/off);
+            // the server forces true on save regardless.
+            var enabled = true;
             var severity = row.querySelector('[data-field="severity"]').value;
             var threshold = parseFloat(row.querySelector('[data-field="threshold"]').value) || 0;
             var clearThreshold = parseFloat(row.querySelector('[data-field="clear_threshold"]').value) || 0;
@@ -3970,13 +3975,17 @@
         // Load policies for dropdown
         var policySelect = document.getElementById('device-alert-policy');
         policySelect.innerHTML = '<option value="">— Inherit from site/global —</option>';
+        var epSelect = document.getElementById('device-event-profile');
+        if (epSelect) epSelect.innerHTML = '<option value="">— Inherit from site / Default —</option>';
 
         Promise.all([
             apiFetch(API_BASE + '/devices/' + deviceId + '/alert-config'),
-            apiFetch(API_BASE + '/alert-policies')
+            apiFetch(API_BASE + '/alert-policies'),
+            apiFetch(API_BASE + '/event-rule-profiles').catch(function() { return { data: [] }; })
         ]).then(function(results) {
             var configResp = results[0];
             var policiesResp = results[1];
+            var profilesResp = results[2];
 
             // Populate policy dropdown
             if (policiesResp && policiesResp.data) {
@@ -3987,12 +3996,24 @@
                     policySelect.appendChild(opt);
                 });
             }
+            // Populate event profile dropdown (v48) — Default is the implicit
+            // fallback, so only non-default profiles are explicit choices.
+            if (epSelect && profilesResp && profilesResp.data) {
+                profilesResp.data.forEach(function(p) {
+                    if (p.is_default) return;
+                    var opt = document.createElement('option');
+                    opt.value = p.id;
+                    opt.textContent = p.name;
+                    epSelect.appendChild(opt);
+                });
+            }
 
             // Populate config values
             if (configResp && configResp.data) {
                 var cfg = configResp.data;
                 document.getElementById('device-alert-enabled').checked = cfg.alerts_enabled !== false;
                 if (cfg.policy_id) policySelect.value = cfg.policy_id;
+                if (epSelect && cfg.event_profile_id) epSelect.value = cfg.event_profile_id;
                 if (cfg.cpu_threshold) document.getElementById('device-alert-cpu').value = cfg.cpu_threshold;
                 if (cfg.memory_threshold) document.getElementById('device-alert-memory').value = cfg.memory_threshold;
                 if (cfg.disk_threshold) document.getElementById('device-alert-disk').value = cfg.disk_threshold;
@@ -4066,10 +4087,25 @@
             data.session_threshold = sess !== '' ? parseInt(sess) : 0;
             data.cooldown_minutes = cool !== '' ? parseInt(cool) : 0;
 
+            // v48: the Event Profile assignment rides its own column-targeted
+            // endpoint (the alert-config PUT preserves it on omit).
+            var epSel = document.getElementById('device-event-profile');
+            var epBody = { profile_id: (epSel && epSel.value) ? parseInt(epSel.value, 10) : null };
+
             apiFetch(API_BASE + '/devices/' + deviceId + '/alert-config', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(data)
+            }).then(function() {
+                // No inner .catch: a swallowed failure here would let the chain
+                // fall through to the success toast (which REPLACES the error
+                // toast) — the operator would see "saved" for an assignment
+                // that never landed. Let the outer catch report it.
+                return apiFetch(API_BASE + '/devices/' + deviceId + '/event-profile', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(epBody)
+                });
             }).then(function() {
                 closeDeviceAlertModal();
                 loadDevices();

@@ -235,6 +235,39 @@ func TestGetEventProfileCounts_LiveJoinExcludesOrphans(t *testing.T) {
 	}
 }
 
+func TestGetEventProfileAssignments_LiveJoin(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	_, profID := seedProfileWorld(t, db)
+
+	if err := db.Gorm().Create(&models.Site{ID: 8, Name: "s8"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Gorm().Create(&models.Device{ID: 2, Name: "d2", IPAddress: "10.0.0.2"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetSiteEventProfile(8, &profID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetDeviceEventProfile(2, &profID); err != nil {
+		t.Fatal(err)
+	}
+	// Orphan: config row whose device no longer exists — must not list.
+	if err := db.Gorm().Create(&models.DeviceAlertConfig{DeviceID: 999, AlertsEnabled: true, EventProfileID: &profID}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	sites, devices, err := db.GetEventProfileAssignments(profID)
+	if err != nil {
+		t.Fatalf("assignments: %v", err)
+	}
+	if len(sites) != 1 || sites[0].Name != "s8" {
+		t.Errorf("sites = %+v, want [s8]", sites)
+	}
+	if len(devices) != 1 || devices[0].Name != "d2" {
+		t.Errorf("devices = %+v, want [d2] (orphaned config must not list)", devices)
+	}
+}
+
 func TestReplaceProfileToggles_FullSparseReplace(t *testing.T) {
 	db := NewDatabaseForTesting(t)
 	_, profID := seedProfileWorld(t, db)
