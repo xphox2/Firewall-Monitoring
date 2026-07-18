@@ -24,14 +24,16 @@ func BuildWeeklyReport(devices []models.Device, deviceData []*DeviceReportData, 
 // sends always-open blocks. Returns (subject, html, error). Renders in the
 // light theme — theme-aware callers use BuildReportWithOps.
 func BuildReport(devices []models.Device, deviceData []*DeviceReportData, tz string, hours int, period, version string, collapsible bool) (string, string, error) {
-	return BuildReportWithOps(devices, deviceData, tz, hours, period, version, collapsible, nil, ThemeByName(""))
+	subject, html, _, err := BuildReportWithOps(devices, deviceData, tz, hours, period, version, collapsible, nil, ThemeByName(""))
+	return subject, html, err
 }
 
 // BuildReportWithOps is BuildReport plus the F05/F06 Operations section
 // (nil ops = section omitted) and an explicit theme (v0.11.116 — the web
 // preview follows the SPA Day/Night choice; email follows the
-// report_email_theme setting).
-func BuildReportWithOps(devices []models.Device, deviceData []*DeviceReportData, tz string, hours int, period, version string, collapsible bool, ops *OpsStats, theme ReportTheme) (string, string, error) {
+// report_email_theme setting). Returns (subject, html, text, error); text is
+// the model-generated text/plain alternative (v0.11.117).
+func BuildReportWithOps(devices []models.Device, deviceData []*DeviceReportData, tz string, hours int, period, version string, collapsible bool, ops *OpsStats, theme ReportTheme) (string, string, string, error) {
 	m := BuildReportModel(devices, deviceData, tz, hours, period)
 	m.Ops = ops
 	m.Version = version
@@ -46,14 +48,14 @@ func BuildReportWithOps(devices []models.Device, deviceData []*DeviceReportData,
 	}
 	html, err := RenderReportHTML(m)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	loc, e := time.LoadLocation(tz)
 	if e != nil {
 		loc = time.UTC
 	}
 	subject := fmt.Sprintf("Firewall Monitor — %s Report — %s", period, time.Now().In(loc).Format("2006-01-02"))
-	return subject, html, nil
+	return subject, html, RenderReportText(m), nil
 }
 
 func buildReport(devices []models.Device, deviceData []*DeviceReportData, tz string, hours int, period, version string) (string, string, error) {
@@ -78,8 +80,10 @@ type CriticalAlertData struct {
 // BuildCriticalAlertEmail builds an HTML email for a critical alert, themed
 // with the same flat instrument-panel system as the fleet report. Callers
 // resolve the theme (the poller reads report_email_theme from the DB at send
-// time — its env-frozen config copy must NOT be the source).
-func BuildCriticalAlertEmail(alert *models.Alert, device *models.Device, recentHistory []models.SystemStatus, theme ReportTheme) (string, string, []notifier.Attachment, error) {
+// time — its env-frozen config copy must NOT be the source). Returns
+// (subject, html, text, attachments, error); text is the text/plain
+// alternative (v0.11.117).
+func BuildCriticalAlertEmail(alert *models.Alert, device *models.Device, recentHistory []models.SystemStatus, theme ReportTheme) (string, string, string, []notifier.Attachment, error) {
 	if theme.Name == "" {
 		theme = ThemeByName("")
 	}
@@ -117,12 +121,12 @@ func BuildCriticalAlertEmail(alert *models.Alert, device *models.Device, recentH
 
 	var buf bytes.Buffer
 	if err := criticalAlertTemplate.Execute(&buf, data); err != nil {
-		return "", "", nil, fmt.Errorf("render critical template: %w", err)
+		return "", "", "", nil, fmt.Errorf("render critical template: %w", err)
 	}
 
 	subject := fmt.Sprintf("[CRITICAL] %s — %s (%s)",
 		notifier.SanitizeHeader(string(alert.AlertType)),
 		notifier.SanitizeHeader(device.Name),
 		notifier.SanitizeHeader(device.IPAddress))
-	return subject, buf.String(), attachments, nil
+	return subject, buf.String(), RenderCriticalAlertText(data), attachments, nil
 }

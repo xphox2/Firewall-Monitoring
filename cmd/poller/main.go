@@ -2155,14 +2155,14 @@ func (p *Poller) sendCriticalAlertEmail(device *models.Device, alertType, messag
 	// read per send is nothing. Missing/blank = light.
 	themeName, _ := p.db.GetSettingValue("report_email_theme")
 	recentHistory := report.GatherRecentHistory(p.db, device.ID)
-	subject, htmlBody, attachments, err := report.BuildCriticalAlertEmail(alert, device, recentHistory, report.ThemeByName(themeName))
+	subject, htmlBody, textBody, attachments, err := report.BuildCriticalAlertEmail(alert, device, recentHistory, report.ThemeByName(themeName))
 	if err != nil {
 		log.Printf("Device %s: failed to build critical alert email - %v", device.Name, err)
 		return
 	}
 
 	recipients := p.cfg.Alerts.ReportRecipients
-	if err := p.notifier.SendHTMLEmail(subject, htmlBody, attachments, nc, recipients); err != nil {
+	if err := p.notifier.SendHTMLEmail(subject, textBody, htmlBody, attachments, nc, recipients); err != nil {
 		log.Printf("Device %s: failed to send critical alert email - %v", device.Name, err)
 	}
 }

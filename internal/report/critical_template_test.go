@@ -28,12 +28,15 @@ func TestCriticalAlertTemplate_ThemedAndEmailSafe(t *testing.T) {
 
 	for _, themeName := range []string{"light", "dark"} {
 		theme := ThemeByName(themeName)
-		subject, html, atts, err := BuildCriticalAlertEmail(alert, device, history, theme)
+		subject, html, text, atts, err := BuildCriticalAlertEmail(alert, device, history, theme)
 		if err != nil {
 			t.Fatalf("theme=%s: %v", themeName, err)
 		}
 		if !strings.Contains(subject, "[CRITICAL]") {
 			t.Errorf("theme=%s: subject lost its CRITICAL tag: %q", themeName, subject)
+		}
+		if strings.Contains(text, "<") || !strings.Contains(text, "fw-edge-01") || !strings.Contains(text, "cpu_usage") {
+			t.Errorf("theme=%s: plaintext alternative malformed: %q", themeName, text)
 		}
 		for _, bad := range []string{"<no value>", "ZgotmplZ", "%!", "<nil>"} {
 			if strings.Contains(html, bad) {

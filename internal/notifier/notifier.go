@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"mime/quotedprintable"
 	"net/http"
@@ -510,10 +511,164 @@ func (n *Notifier) postJSONWithHeaders(url string, payload interface{}, headers 
 	return nil
 }
 
-// SendHTMLEmail sends an HTML email with optional inline image attachments.
-// Builds a multipart/related MIME message with Content-ID references for images.
+// writeQPPart adds one quoted-printable text part to a multipart writer.
+func writeQPPart(w *multipart.Writer, contentType, body string) error {
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Type", contentType)
+	h.Set("Content-Transfer-Encoding", "quoted-printable")
+	part, err := w.CreatePart(h)
+	if err != nil {
+		return fmt.Errorf("create %s part: %w", contentType, err)
+	}
+	qp := quotedprintable.NewWriter(part)
+	if _, err := qp.Write([]byte(body)); err != nil {
+		return fmt.Errorf("write %s part: %w", contentType, err)
+	}
+	return qp.Close()
+}
+
+// writeAlternative adds a nested multipart/alternative (plaintext BEFORE
+// html — last child is the preferred rendering per RFC 2046).
+func writeAlternative(w *multipart.Writer, textBody, htmlBody string) error {
+	inner := multipart.NewWriter(io.Discard)
+	boundary := inner.Boundary()
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Type", fmt.Sprintf("multipart/alternative; boundary=%q", boundary))
+	part, err := w.CreatePart(h)
+	if err != nil {
+		return fmt.Errorf("create alternative part: %w", err)
+	}
+	alt := multipart.NewWriter(part)
+	if err := alt.SetBoundary(boundary); err != nil {
+		return err
+	}
+	if err := writeQPPart(alt, "text/plain; charset=UTF-8", textBody); err != nil {
+		return err
+	}
+	if err := writeQPPart(alt, "text/html; charset=UTF-8", htmlBody); err != nil {
+		return err
+	}
+	return alt.Close()
+}
+
+// writeInlineImages appends the CID image siblings under a multipart/related.
+func writeInlineImages(w *multipart.Writer, attachments []Attachment) error {
+	for _, att := range attachments {
+		h := make(textproto.MIMEHeader)
+		h.Set("Content-Type", att.MIMEType)
+		h.Set("Content-Transfer-Encoding", "base64")
+		// Angle brackets in the header, none in the HTML's cid: reference —
+		// the exact-match pair every client requires.
+		h.Set("Content-ID", "<"+att.ContentID+">")
+		h.Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", att.ContentID+".png"))
+		part, err := w.CreatePart(h)
+		if err != nil {
+			return fmt.Errorf("create attachment part: %w", err)
+		}
+		encoded := base64.StdEncoding.EncodeToString(att.Data)
+		// Write in 76-char lines per RFC 2045
+		for i := 0; i < len(encoded); i += 76 {
+			end := i + 76
+			if end > len(encoded) {
+				end = len(encoded)
+			}
+			part.Write([]byte(encoded[i:end]))
+			part.Write([]byte("\r\n"))
+		}
+	}
+	return nil
+}
+
+// buildMIMEMessage assembles the complete message bytes. The canonical tree
+// (RFC 2387; what Gmail's own composer emits):
+//
+//	with images:                          without images:
+//	multipart/related;                    multipart/alternative
+//	  type="multipart/alternative"          ├─ text/plain (QP)
+//	  ├─ multipart/alternative              └─ text/html  (QP)
+//	  │   ├─ text/plain (QP)
+//	  │   └─ text/html  (QP)
+//	  └─ image/png… (base64, Content-ID, inline)
+//
+// A blank textBody degrades to the pre-plaintext shapes (bare text/html, or
+// related-over-html). Both text parts are quoted-printable — the previous
+// no-attachment 8bit path (v0.10.236) is retired deliberately: uniform QP
+// removes the >998-char raw-line risk and matches the attachment path that
+// carried the L7 audit fix. Pure function; unit-tested by parsing the output.
+func buildMIMEMessage(from, to, subject, textBody, htmlBody string, attachments []Attachment) ([]byte, error) {
+	sanitize := SanitizeHeader
+	var buf bytes.Buffer
+	writeTop := func(contentType string) {
+		fmt.Fprintf(&buf, "From: %s\r\n", sanitize(from))
+		fmt.Fprintf(&buf, "To: %s\r\n", sanitize(to))
+		fmt.Fprintf(&buf, "Subject: %s\r\n", sanitize(subject))
+		fmt.Fprintf(&buf, "MIME-Version: 1.0\r\n")
+		fmt.Fprintf(&buf, "Content-Type: %s\r\n", contentType)
+	}
+
+	switch {
+	case len(attachments) == 0 && textBody == "":
+		writeTop("text/html; charset=UTF-8")
+		fmt.Fprintf(&buf, "Content-Transfer-Encoding: quoted-printable\r\n\r\n")
+		qp := quotedprintable.NewWriter(&buf)
+		if _, err := qp.Write([]byte(htmlBody)); err != nil {
+			return nil, fmt.Errorf("write html body: %w", err)
+		}
+		if err := qp.Close(); err != nil {
+			return nil, err
+		}
+
+	case len(attachments) == 0:
+		w := multipart.NewWriter(&buf)
+		writeTop(fmt.Sprintf("multipart/alternative; boundary=%q", w.Boundary()))
+		fmt.Fprintf(&buf, "\r\n")
+		if err := writeQPPart(w, "text/plain; charset=UTF-8", textBody); err != nil {
+			return nil, err
+		}
+		if err := writeQPPart(w, "text/html; charset=UTF-8", htmlBody); err != nil {
+			return nil, err
+		}
+		if err := w.Close(); err != nil {
+			return nil, err
+		}
+
+	default:
+		w := multipart.NewWriter(&buf)
+		if textBody == "" {
+			// Legacy shape: related directly over html + images.
+			writeTop(fmt.Sprintf("multipart/related; boundary=%q; type=\"text/html\"", w.Boundary()))
+			fmt.Fprintf(&buf, "\r\n")
+			if err := writeQPPart(w, "text/html; charset=UTF-8", htmlBody); err != nil {
+				return nil, err
+			}
+			if err := writeInlineImages(w, attachments); err != nil {
+				return nil, err
+			}
+			if err := w.Close(); err != nil {
+				return nil, err
+			}
+			break
+		}
+		writeTop(fmt.Sprintf("multipart/related; boundary=%q; type=\"multipart/alternative\"", w.Boundary()))
+		fmt.Fprintf(&buf, "\r\n")
+		if err := writeAlternative(w, textBody, htmlBody); err != nil {
+			return nil, err
+		}
+		if err := writeInlineImages(w, attachments); err != nil {
+			return nil, err
+		}
+		if err := w.Close(); err != nil {
+			return nil, err
+		}
+	}
+	return buf.Bytes(), nil
+}
+
+// SendHTMLEmail sends an HTML email with a plaintext alternative and optional
+// inline CID image attachments (multipart/related > multipart/alternative —
+// see buildMIMEMessage). textBody may be blank (legacy HTML-only shape).
 // If recipients is empty, falls back to nc.SMTPTo.
-func (n *Notifier) SendHTMLEmail(subject, htmlBody string, attachments []Attachment, nc NotifyConfig, recipients string) error {
+func (n *Notifier) SendHTMLEmail(subject, textBody, htmlBody string, attachments []Attachment, nc NotifyConfig, recipients string) error {
 	if nc.SMTPHost == "" {
 		return nil
 	}
@@ -528,83 +683,9 @@ func (n *Notifier) SendHTMLEmail(subject, htmlBody string, attachments []Attachm
 		return fmt.Errorf("no recipients configured")
 	}
 
-	// Sanitize header values via the package-level SanitizeHeader so the
-	// same rule applies to every caller (see also report.BuildCriticalAlertEmail).
-	sanitize := SanitizeHeader
-
-	var buf bytes.Buffer
-
-	if len(attachments) == 0 {
-		// No inline images → send a single text/html message instead of an
-		// empty multipart/related wrapper. Compliant clients then show one
-		// clean message with zero attachments (v0.10.236). UTF-8 HTML is sent
-		// 8bit, which every modern submission server (8BITMIME) accepts.
-		fmt.Fprintf(&buf, "From: %s\r\n", sanitize(nc.SMTPFrom))
-		fmt.Fprintf(&buf, "To: %s\r\n", sanitize(recipients))
-		fmt.Fprintf(&buf, "Subject: %s\r\n", sanitize(subject))
-		fmt.Fprintf(&buf, "MIME-Version: 1.0\r\n")
-		fmt.Fprintf(&buf, "Content-Type: text/html; charset=UTF-8\r\n")
-		fmt.Fprintf(&buf, "Content-Transfer-Encoding: 8bit\r\n")
-		fmt.Fprintf(&buf, "\r\n")
-		buf.WriteString(htmlBody)
-	} else {
-		writer := multipart.NewWriter(&buf)
-		boundary := writer.Boundary()
-
-		// Write top-level headers
-		buf.Reset()
-		fmt.Fprintf(&buf, "From: %s\r\n", sanitize(nc.SMTPFrom))
-		fmt.Fprintf(&buf, "To: %s\r\n", sanitize(recipients))
-		fmt.Fprintf(&buf, "Subject: %s\r\n", sanitize(subject))
-		fmt.Fprintf(&buf, "MIME-Version: 1.0\r\n")
-		fmt.Fprintf(&buf, "Content-Type: multipart/related; boundary=%q\r\n", boundary)
-		fmt.Fprintf(&buf, "\r\n")
-
-		// HTML part
-		htmlHeader := make(textproto.MIMEHeader)
-		htmlHeader.Set("Content-Type", "text/html; charset=UTF-8")
-		htmlHeader.Set("Content-Transfer-Encoding", "quoted-printable")
-		htmlPart, err := writer.CreatePart(htmlHeader)
-		if err != nil {
-			return fmt.Errorf("failed to create HTML part: %w", err)
-		}
-		// L7 of the 2026-07-01 audit: the part DECLARES quoted-printable but
-		// previously wrote the body RAW, so a compliant MTA/client QP-decoded it
-		// — mangling any `=XX` sequence (alert text like `threshold=90` decodes
-		// `=90` into a byte) and choking on raw 8-bit UTF-8 / >76-char lines.
-		// Actually QP-encode the body so it matches the declared encoding.
-		qp := quotedprintable.NewWriter(htmlPart)
-		if _, err := qp.Write([]byte(htmlBody)); err != nil {
-			return fmt.Errorf("failed to write HTML part: %w", err)
-		}
-		if err := qp.Close(); err != nil {
-			return fmt.Errorf("failed to finalize HTML part: %w", err)
-		}
-
-		// Inline image attachments
-		for _, att := range attachments {
-			attHeader := make(textproto.MIMEHeader)
-			attHeader.Set("Content-Type", att.MIMEType)
-			attHeader.Set("Content-Transfer-Encoding", "base64")
-			attHeader.Set("Content-ID", "<"+att.ContentID+">")
-			attHeader.Set("Content-Disposition", "inline")
-			part, err := writer.CreatePart(attHeader)
-			if err != nil {
-				return fmt.Errorf("failed to create attachment part: %w", err)
-			}
-			encoded := base64.StdEncoding.EncodeToString(att.Data)
-			// Write in 76-char lines per RFC 2045
-			for i := 0; i < len(encoded); i += 76 {
-				end := i + 76
-				if end > len(encoded) {
-					end = len(encoded)
-				}
-				part.Write([]byte(encoded[i:end]))
-				part.Write([]byte("\r\n"))
-			}
-		}
-
-		writer.Close()
+	msg, err := buildMIMEMessage(nc.SMTPFrom, recipients, subject, textBody, htmlBody, attachments)
+	if err != nil {
+		return err
 	}
 
 	addr := fmt.Sprintf("%s:%d", nc.SMTPHost, nc.SMTPPort)
@@ -621,7 +702,7 @@ func (n *Notifier) SendHTMLEmail(subject, htmlBody string, attachments []Attachm
 		recipientList[i] = strings.TrimSpace(recipientList[i])
 	}
 
-	if err := smtp.SendMail(addr, auth, nc.SMTPFrom, recipientList, buf.Bytes()); err != nil {
+	if err := smtp.SendMail(addr, auth, nc.SMTPFrom, recipientList, msg); err != nil {
 		return fmt.Errorf("failed to send HTML email: %w", err)
 	}
 	return nil
