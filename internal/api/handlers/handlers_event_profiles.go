@@ -343,6 +343,36 @@ func (h *Handler) SetSiteEventProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, response.Success(gin.H{"site_id": id, "profile_id": req.ProfileID}))
 }
 
+// GetEventProfileAssignments lists the live sites/devices assigned to a
+// profile — the Assignments tab's view over the same config columns the
+// entity-side selects write.
+func (h *Handler) GetEventProfileAssignments(c *gin.Context) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+	if _, err := db.GetEventRuleProfile(id); err != nil {
+		c.JSON(http.StatusNotFound, response.Error("Profile not found"))
+		return
+	}
+	sites, devices, err := db.GetEventProfileAssignments(id)
+	if err != nil {
+		httputil.InternalError(c, "Failed to load assignments", err)
+		return
+	}
+	if sites == nil {
+		sites = []database.EventProfileAssignment{}
+	}
+	if devices == nil {
+		devices = []database.EventProfileAssignment{}
+	}
+	c.JSON(http.StatusOK, response.Success(gin.H{"sites": sites, "devices": devices}))
+}
+
 // BatchAssignEventProfile assigns this profile to the listed sites/devices
 // (ADDITIVE — it never touches assignments not listed; removal goes through
 // the per-entity endpoints with profile_id null, so a stale batch can't

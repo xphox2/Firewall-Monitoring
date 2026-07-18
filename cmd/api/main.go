@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.114"
+const ServerVersion = "0.11.115"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -1043,6 +1043,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.DELETE("/api/event-rule-profiles/:id", handler.DeleteEventRuleProfile)
 		admin.POST("/api/event-rule-profiles/:id/clone", handler.CloneEventRuleProfile)
 		admin.PUT("/api/event-rule-profiles/:id/toggles", handler.PutProfileToggles)
+		admin.GET("/api/event-rule-profiles/:id/assignments", handler.GetEventProfileAssignments)
 		admin.PUT("/api/event-rule-profiles/:id/assignments", handler.BatchAssignEventProfile)
 		admin.GET("/api/alert-types", handler.ListAlertTypes)
 		admin.PUT("/api/devices/:id/event-profile", handler.SetDeviceEventProfile)

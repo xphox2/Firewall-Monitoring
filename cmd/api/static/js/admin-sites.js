@@ -160,12 +160,15 @@
         });
         var policySelect = document.getElementById('site-alert-policy');
         policySelect.innerHTML = '<option value="">— Inherit from global default —</option>';
+        var epSelect = document.getElementById('site-event-profile');
+        if (epSelect) epSelect.innerHTML = '<option value="">— Inherit from Default —</option>';
 
         Promise.all([
             AC.apiFetch(API_BASE + '/sites/' + id + '/alert-config'),
-            AC.apiFetch(API_BASE + '/alert-policies')
+            AC.apiFetch(API_BASE + '/alert-policies'),
+            AC.apiFetch(API_BASE + '/event-rule-profiles').catch(function() { return { data: [] }; })
         ]).then(function(results) {
-            var cfgResp = results[0], polResp = results[1];
+            var cfgResp = results[0], polResp = results[1], profResp = results[2];
             if (polResp && polResp.data) {
                 polResp.data.forEach(function(p) {
                     var opt = document.createElement('option');
@@ -173,9 +176,20 @@
                     policySelect.appendChild(opt);
                 });
             }
+            // Event profiles (v48): Default is the implicit fallback, so only
+            // non-default profiles are explicit choices.
+            if (epSelect && profResp && profResp.data) {
+                profResp.data.forEach(function(p) {
+                    if (p.is_default) return;
+                    var opt = document.createElement('option');
+                    opt.value = p.id; opt.textContent = p.name;
+                    epSelect.appendChild(opt);
+                });
+            }
             if (cfgResp && cfgResp.data) {
                 var cfg = cfgResp.data;
                 if (cfg.policy_id) policySelect.value = cfg.policy_id;
+                if (epSelect && cfg.event_profile_id) epSelect.value = cfg.event_profile_id;
                 if (cfg.cpu_threshold) document.getElementById('site-alert-cpu').value = cfg.cpu_threshold;
                 if (cfg.memory_threshold) document.getElementById('site-alert-memory').value = cfg.memory_threshold;
                 if (cfg.disk_threshold) document.getElementById('site-alert-disk').value = cfg.disk_threshold;
@@ -234,8 +248,16 @@
             // Tri-state: blank = inherit (null), a number (incl. 0) = explicit.
             storm_sources: stormRaw === '' ? null : parseInt(stormRaw)
         };
+        // v48: the Event Profile assignment rides its own column-targeted
+        // endpoint (the alert-config PUT preserves it on omit).
+        var epSel = document.getElementById('site-event-profile');
+        var epBody = { profile_id: (epSel && epSel.value) ? parseInt(epSel.value, 10) : null };
         AC.apiFetch(API_BASE + '/sites/' + id + '/alert-config', {
             method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: data
+        }).then(function() {
+            return AC.apiFetch(API_BASE + '/sites/' + id + '/event-profile', {
+                method: 'PUT', body: { profile_id: epBody.profile_id }
+            }).catch(function(e) { AC.showError('Event profile assignment failed: ' + e.message); });
         }).then(function() {
             closeSiteAlertModal();
             AC.showSuccess('Site alert config saved');
