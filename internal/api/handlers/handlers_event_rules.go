@@ -19,7 +19,7 @@ import (
 // tester reads raw syslog content.
 
 var (
-	validRuleSources = map[string]bool{"syslog": true, "flow": true, "flow_security": true, "any": true, "state": true, "metric": true, "spike": true, "trap": true}
+	validRuleSources = map[string]bool{"syslog": true, "flow": true, "flow_security": true, "any": true, "state": true, "metric": true, "spike": true, "trap": true, "device": true}
 	validRuleActions = map[string]bool{"alert": true, "suppress": true}
 )
 
