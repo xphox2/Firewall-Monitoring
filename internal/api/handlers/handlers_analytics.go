@@ -270,22 +270,75 @@ func (h *Handler) SuggestEventRuleForAlert(c *gin.Context) {
 			in.Vendor = d.Vendor
 		}
 	}
+	// v48 profile targeting context: the Default profile, the alert device's
+	// governing profile (chain head: device config → site config → Default),
+	// and per-profile names. Dangling assignments fall through like the
+	// fire-time resolver.
+	profileName := map[uint]string{}
+	if profiles, err := db.GetAllEventRuleProfiles(); err == nil {
+		for _, p := range profiles {
+			profileName[p.ID] = p.Name
+			if p.IsDefault {
+				in.DefaultProfileID = p.ID
+				in.DefaultProfileName = p.Name
+			}
+		}
+	}
+	in.GoverningProfileID, in.GoverningProfileName = in.DefaultProfileID, in.DefaultProfileName
+	governSet := false
+	if alert.DeviceID != 0 {
+		if cfg, err := db.GetDeviceAlertConfig(alert.DeviceID); err == nil && cfg.EventProfileID != nil {
+			if name, ok := profileName[*cfg.EventProfileID]; ok {
+				in.GoverningProfileID, in.GoverningProfileName = *cfg.EventProfileID, name
+				governSet = true
+			}
+		}
+	}
+	if !governSet && alert.SiteID != nil {
+		if cfg, err := db.GetSiteAlertConfig(*alert.SiteID); err == nil && cfg.EventProfileID != nil {
+			if name, ok := profileName[*cfg.EventProfileID]; ok {
+				in.GoverningProfileID, in.GoverningProfileName = *cfg.EventProfileID, name
+			}
+		}
+	}
+
 	// For syslog and flow rule-match alerts, the firing rule's name is stored in
 	// MetricName; find it so the suggestion out-prioritizes it (and, for flow,
 	// reuses its matcher) and "customize" can open it directly. Only for those —
 	// for metric/state/spike/trap, MetricName is a resource key
 	// ("cpu_usage"/"interface_port5"/…), which must NOT be treated as a rule name.
-	if alert.MetricName != "" && alerts.IsRuleNameAlertType(alert.AlertType) {
-		if rules, err := db.ListEventRules(); err == nil {
-			for i := range rules {
-				if rules[i].Name == alert.MetricName {
-					p := rules[i].Priority
-					rid := rules[i].ID
-					in.FiringRulePriority = &p
-					in.ExistingRuleID = &rid
-					in.FiringRuleMatchJSON = rules[i].MatchJSON
-					break
+	rules, rulesErr := db.ListEventRules()
+	if alert.MetricName != "" && alerts.IsRuleNameAlertType(alert.AlertType) && rulesErr == nil {
+		for i := range rules {
+			if rules[i].Name == alert.MetricName {
+				p := rules[i].Priority
+				rid := rules[i].ID
+				in.FiringRulePriority = &p
+				in.ExistingRuleID = &rid
+				in.FiringRuleMatchJSON = rules[i].MatchJSON
+				// Same-layer targeting: fold the 0-sentinel into Default.
+				fpid := rules[i].ProfileID
+				if fpid == 0 {
+					fpid = in.DefaultProfileID
 				}
+				in.FiringRuleProfileID = fpid
+				in.FiringRuleProfileName = profileName[fpid]
+				break
+			}
+		}
+	}
+	// Global source-mute honesty: warn when any non-default profile carries an
+	// enabled flow_security ALERT rule (its layer would run before a Default
+	// mute for devices it governs).
+	if rulesErr == nil {
+		for i := range rules {
+			pid := rules[i].ProfileID
+			if pid == 0 {
+				pid = in.DefaultProfileID
+			}
+			if rules[i].Enabled && rules[i].Source == "flow_security" && rules[i].Action == "alert" && pid != in.DefaultProfileID {
+				in.ScopeWarnFlowSec = true
+				break
 			}
 		}
 	}

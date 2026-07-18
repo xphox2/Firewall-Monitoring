@@ -252,9 +252,12 @@ func (d *Database) CreateEventRule(r *models.EventRule) error {
 // the metric threshold params, so omitting it silently drops every threshold /
 // dampening edit made through the editor.
 func (d *Database) UpdateEventRule(r *models.EventRule) error {
+	// profile_id is in the Select list (v48): the handler resolves absent/0 to
+	// the Default profile before calling, so an update can move a rule between
+	// layers but can never zero it out.
 	return d.db.Model(&models.EventRule{ID: r.ID}).Select(
 		"name", "description", "enabled", "priority", "source", "vendor_scope",
-		"device_id", "site_id", "match_json", "action", "alert_type", "severity",
+		"device_id", "site_id", "profile_id", "match_json", "action", "alert_type", "severity",
 		"group_by", "cooldown_minutes", "policy_id", "dampen_json", "expires_at", "updated_at",
 	).Updates(r).Error
 }

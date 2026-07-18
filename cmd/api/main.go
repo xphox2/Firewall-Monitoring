@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.113"
+const ServerVersion = "0.11.114"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -763,6 +763,19 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			"/admin/api/event-rules":      true,
 			"/admin/api/event-rules/:id":  true,
 			"/admin/api/event-rules/test": true,
+			// v48: event rule profiles — a toggle Off silences an alert type for
+			// a whole scope; same class as event rules. The registry, effective
+			// view and assignment endpoints ride along (assignment changes what
+			// gets suppressed where).
+			"/admin/api/event-rule-profiles":                 true,
+			"/admin/api/event-rule-profiles/:id":             true,
+			"/admin/api/event-rule-profiles/:id/clone":       true,
+			"/admin/api/event-rule-profiles/:id/toggles":     true,
+			"/admin/api/event-rule-profiles/:id/assignments": true,
+			"/admin/api/alert-types":                         true,
+			"/admin/api/devices/:id/event-profile":           true,
+			"/admin/api/sites/:id/event-profile":             true,
+			"/admin/api/event-config/effective":              true,
 			// Suggests a suppress/customize rule from an alert (rule creation is
 			// admin-only, and the syslog path reads raw log content) — admin-only.
 			"/admin/api/alerts/:id/suggested-rule": true,
@@ -1021,6 +1034,20 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.POST("/api/event-rules/test", handler.TestEventRule)
 		admin.PUT("/api/event-rules/:id", handler.UpdateEventRule)
 		admin.DELETE("/api/event-rules/:id", handler.DeleteEventRule)
+
+		// Event rule profiles (v48): Default > Site > Device toggle+rule chain.
+		admin.GET("/api/event-rule-profiles", handler.ListEventRuleProfiles)
+		admin.POST("/api/event-rule-profiles", handler.CreateEventRuleProfile)
+		admin.GET("/api/event-rule-profiles/:id", handler.GetEventRuleProfile)
+		admin.PUT("/api/event-rule-profiles/:id", handler.UpdateEventRuleProfile)
+		admin.DELETE("/api/event-rule-profiles/:id", handler.DeleteEventRuleProfile)
+		admin.POST("/api/event-rule-profiles/:id/clone", handler.CloneEventRuleProfile)
+		admin.PUT("/api/event-rule-profiles/:id/toggles", handler.PutProfileToggles)
+		admin.PUT("/api/event-rule-profiles/:id/assignments", handler.BatchAssignEventProfile)
+		admin.GET("/api/alert-types", handler.ListAlertTypes)
+		admin.PUT("/api/devices/:id/event-profile", handler.SetDeviceEventProfile)
+		admin.PUT("/api/sites/:id/event-profile", handler.SetSiteEventProfile)
+		admin.GET("/api/event-config/effective", handler.GetEffectiveEventConfig)
 
 		// Device/Site alert configs
 		admin.GET("/api/alert-config/effective", handler.GetEffectiveAlertConfig)

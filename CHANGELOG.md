@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.114] - 2026-07-18
+
+### Added — Event Rule Profiles management API
+
+The API layer over 0.11.113's profile backend (the admin UI follows next release). All routes admin-only; every write refreshes the API's resolver immediately.
+
+- **Profile CRUD + clone**: `GET/POST /admin/api/event-rule-profiles`, `GET/PUT/DELETE /admin/api/event-rule-profiles/:id`, `POST …/:id/clone`. The list payload carries live-joined counts (rules, temporary rules, toggle overrides/Offs, assigned sites/devices — orphaned config rows from deleted devices/sites are excluded, and `profile_id=0` sentinel rules fold into Default). Delete is transactional (unlike the legacy notification-policy delete): refuses the Default profile, NULLs every assignment, reassigns the profile's rules to Default, and drops its toggles atomically. Clone copies toggles AND rules (hit counts/seed markers reset, expiries kept) but never assignments — a clone is inert until assigned. The Default profile cannot be renamed.
+- **Toggle matrix**: `GET/PUT …/:id/toggles` — the PUT replaces the full SPARSE set (only non-Inherit rows travel; every row validated against the canonical registry, duplicates rejected). `GET /admin/api/alert-types` serves that registry (`{type, family, description}`) so the matrix and rule builder render from the server, never a hardcoded JS list.
+- **Assignments**: column-targeted `PUT /admin/api/devices/:id/event-profile` and `PUT /admin/api/sites/:id/event-profile` (`{profile_id: n|null}`, profile existence validated, sibling config fields untouched), plus additive batch `PUT …/:id/assignments` (`{site_ids, device_ids}` — removal always goes through the per-entity endpoints so a stale batch can't strip someone else's assignment).
+- **Effective view**: `GET /admin/api/event-config/effective?device_id=|site_id=` returns the resolved chain, every alert type's state + deciding layer (`device|site|default|implicit`), and the applicable rules in true evaluation order — computed by the SAME locked resolvers the firing path uses, never a reimplementation.
+- **Suggester profile targeting**: suggested suppress rules now carry `profile_id`/`profile_name`. Rule-name alerts (LOG/FLOW_RULE_MATCH and rule-emitted SYSLOG_*) target the FIRING rule's own profile — priority-1 out-ranking only works same-layer now that layer beats priority. Class suppressions target the head of the device's chain (un-shadowable). Global source-IP mutes target Default and return a `scope_warning` when a non-default profile carries flow-security alert rules that could out-layer them.
+- **Event rules API**: `GET /admin/api/event-rules?profile_id=` filters to one layer; create/update accept and validate `profile_id` (absent/0 → Default; unknown → 400) and updates can move a rule between profiles.
+- **Guardrails/tests**: admin-only route wiring test for all 12 new paths; transactional-delete/clone/counts/sparse-replace unit tests; column-targeted assignment test (sibling fields untouched); suggester targeting tests; effective-view resolution test; PG16 integration lane for the profile stack.
+
 ## [0.11.113] - 2026-07-18
 
 ### Added — Event Rule Profiles: Default > Site > Device inheritance (backend core)

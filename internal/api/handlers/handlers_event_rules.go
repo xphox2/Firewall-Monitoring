@@ -7,6 +7,7 @@ import (
 
 	"firewall-mon/internal/alerts"
 	"firewall-mon/internal/api/response"
+	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 
@@ -94,7 +95,42 @@ func (h *Handler) ListEventRules(c *gin.Context) {
 		httputil.InternalError(c, "Failed to list event rules", err)
 		return
 	}
+	// ?profile_id= filters to one profile's layer (v48). The 0-sentinel folds
+	// into the Default profile, so filtering by the Default ID also returns
+	// unstamped rows. In-memory filter — the rule table is tiny by design.
+	if pidRaw, ok := httputil.ParseUintQuery(c, "profile_id"); ok {
+		defaultID := uint(0)
+		if def, err := db.GetDefaultEventRuleProfile(); err == nil {
+			defaultID = def.ID
+		}
+		filtered := make([]models.EventRule, 0, len(rules))
+		for _, r := range rules {
+			pid := r.ProfileID
+			if pid == 0 {
+				pid = defaultID
+			}
+			if pid == pidRaw {
+				filtered = append(filtered, r)
+			}
+		}
+		rules = filtered
+	}
 	c.JSON(http.StatusOK, response.Success(rules))
+}
+
+// resolveRuleProfileID validates an incoming rule's profile assignment:
+// absent/0 → the Default profile; non-zero must exist.
+func resolveRuleProfileID(db database.Store, r *models.EventRule) string {
+	if r.ProfileID == 0 {
+		if def, err := db.GetDefaultEventRuleProfile(); err == nil {
+			r.ProfileID = def.ID
+		}
+		return "" // no Default profile yet (pre-seed boot) — 0-sentinel still maps to Default
+	}
+	if _, err := db.GetEventRuleProfile(r.ProfileID); err != nil {
+		return "Profile not found"
+	}
+	return ""
 }
 
 func (h *Handler) CreateEventRule(c *gin.Context) {
@@ -110,6 +146,10 @@ func (h *Handler) CreateEventRule(c *gin.Context) {
 	r.ID = 0
 	r.SeedVersion = 0 // operator-created rules are never seeds
 	if msg := validateEventRule(&r); msg != "" {
+		c.JSON(http.StatusBadRequest, response.Error(msg))
+		return
+	}
+	if msg := resolveRuleProfileID(db, &r); msg != "" {
 		c.JSON(http.StatusBadRequest, response.Error(msg))
 		return
 	}
@@ -136,6 +176,10 @@ func (h *Handler) UpdateEventRule(c *gin.Context) {
 	}
 	r.ID = id
 	if msg := validateEventRule(&r); msg != "" {
+		c.JSON(http.StatusBadRequest, response.Error(msg))
+		return
+	}
+	if msg := resolveRuleProfileID(db, &r); msg != "" {
 		c.JSON(http.StatusBadRequest, response.Error(msg))
 		return
 	}

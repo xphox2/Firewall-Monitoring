@@ -47,6 +47,25 @@ type SuggestInput struct {
 	SourceAddr string
 	// ProbeID scopes a PROBE_DATA_* suggestion to the reporting probe.
 	ProbeID *uint
+
+	// v48 profile targeting. Layer beats priority across profiles, so WHERE a
+	// suppress rule lands decides whether it can win:
+	//   - rule-name alerts target the FIRING RULE'S OWN profile (priority-1
+	//     out-ranking only works same-layer);
+	//   - class suppressions target the head of the device's chain (device
+	//     profile → site profile → Default — un-shadowable for that device);
+	//   - global source mutes target Default, with a warning when a
+	//     non-default profile could shadow them.
+	// 0 = unknown; the create handler folds 0 into Default.
+	FiringRuleProfileID   uint
+	FiringRuleProfileName string
+	GoverningProfileID    uint
+	GoverningProfileName  string
+	DefaultProfileID      uint
+	DefaultProfileName    string
+	// ScopeWarnFlowSec: a non-default profile carries enabled flow_security
+	// ALERT rules, so a Default-layer global mute can be out-layered there.
+	ScopeWarnFlowSec bool
 }
 
 // SuggestedRule is the prefill the editor opens with. Fields mirror the
@@ -66,6 +85,10 @@ type SuggestedRule struct {
 	// ExpiresHours prefills the "temporary rule" duration (0 = permanent). The
 	// suppress-a-source entry point defaults this to 24h — the old Silence default.
 	ExpiresHours int `json:"expires_hours,omitempty"`
+	// ProfileID/ProfileName target the layer the rule lands in (v48). 0 =
+	// Default. See SuggestInput's targeting rules for why this matters.
+	ProfileID   uint   `json:"profile_id"`
+	ProfileName string `json:"profile_name,omitempty"`
 }
 
 // SuggestResult is the endpoint payload.
@@ -76,6 +99,9 @@ type SuggestResult struct {
 	Alternative    string         `json:"alternative,omitempty"` // "silence_source" | "maintenance"
 	Effect         string         `json:"effect,omitempty"`
 	ExistingRuleID *uint          `json:"existing_rule_id,omitempty"`
+	// ScopeWarning surfaces a layering caveat (e.g. a global Default-layer
+	// mute that a non-default profile's alert rules could out-layer).
+	ScopeWarning string `json:"scope_warning,omitempty"`
 }
 
 // matchNode is a compiled-rule condition (mirrors CompileTestRule's schema).
@@ -144,6 +170,10 @@ func SuggestRuleForAlert(in SuggestInput) SuggestResult {
 	priority := suggestDefaultPriority
 	var matchJSON, dampen, effect string
 	expiresHours := 0
+	// Default target: the head of the device's chain — the layer whose rules
+	// run first, so the suppression cannot be out-layered for this device.
+	profileID, profileName := in.GoverningProfileID, in.GoverningProfileName
+	scopeWarning := ""
 
 	switch src {
 	case "flow_security":
@@ -164,6 +194,12 @@ func SuggestRuleForAlert(in SuggestInput) SuggestResult {
 			expiresHours = 24 // temporary by default, like the old Silence
 			dev = nil         // match the source across devices (attribution is informational)
 			siteID = nil      // …and across sites — a source suppress is global, like the old Silence table
+			// A GLOBAL mute belongs in the Default layer (a device/site profile
+			// would silently narrow it). Honest about the layering limitation:
+			profileID, profileName = in.DefaultProfileID, in.DefaultProfileName
+			if in.ScopeWarnFlowSec {
+				scopeWarning = "Another profile contains flow-security alert rules; devices governed by it evaluate that layer first, so this Default-layer mute may not cover them. Add the same suppress rule to that profile if needed."
+			}
 			break
 		}
 		// Per-detection alert (SFLOW_<DETECTOR>: cleartext, denied_then_allowed,
@@ -197,6 +233,11 @@ func SuggestRuleForAlert(in SuggestInput) SuggestResult {
 			if priority < 0 {
 				priority = 0
 			}
+		}
+		// Same-layer targeting: priority-1 out-ranking only works within the
+		// firing rule's own profile (layer beats priority across profiles).
+		if in.FiringRuleProfileID != 0 {
+			profileID, profileName = in.FiringRuleProfileID, in.FiringRuleProfileName
 		}
 	case "device":
 		// Device/probe health families: an event_type-scoped rule, device-scoped
@@ -268,6 +309,10 @@ func SuggestRuleForAlert(in SuggestInput) SuggestResult {
 				priority = 0
 			}
 		}
+		// Same-layer targeting (see the flow branch).
+		if in.FiringRuleProfileID != 0 {
+			profileID, profileName = in.FiringRuleProfileID, in.FiringRuleProfileName
+		}
 	}
 
 	return SuggestResult{
@@ -284,8 +329,11 @@ func SuggestRuleForAlert(in SuggestInput) SuggestResult {
 			DampenJSON:    dampen,
 			SuggestedName: name,
 			ExpiresHours:  expiresHours,
+			ProfileID:     profileID,
+			ProfileName:   profileName,
 		},
 		ExistingRuleID: in.ExistingRuleID,
+		ScopeWarning:   scopeWarning,
 	}
 }
 
