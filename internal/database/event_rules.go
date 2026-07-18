@@ -402,9 +402,27 @@ func (d *Database) GetEventRule(id uint) (*models.EventRule, error) {
 	return &r, nil
 }
 
-// CreateEventRule inserts a new rule.
+// CreateEventRule inserts a new rule. Same GORM trap as the seeder
+// (v0.11.119): Enabled:false is OMITTED from the INSERT (column default:true)
+// and the default is written back into the struct — even Select("*") doesn't
+// force it — so an operator creating a rule DISABLED (or recreating a
+// disabled template) would silently get an ENABLED rule. Capture intent
+// first, pin with an explicit update in the same transaction.
 func (d *Database) CreateEventRule(r *models.EventRule) error {
-	return d.db.Create(r).Error
+	wantDisabled := !r.Enabled
+	return d.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(r).Error; err != nil {
+			return err
+		}
+		if wantDisabled {
+			if err := tx.Model(&models.EventRule{}).Where("id = ?", r.ID).
+				Update("enabled", false).Error; err != nil {
+				return err
+			}
+			r.Enabled = false // undo GORM's default write-back for the caller
+		}
+		return nil
+	})
 }
 
 // UpdateEventRule persists edits to an existing rule. Uses a map-free struct
