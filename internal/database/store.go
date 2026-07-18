@@ -170,6 +170,16 @@ type AlertPolicyStore interface {
 	GetAllEventRuleProfiles() ([]models.EventRuleProfile, error)
 	GetAllEventRuleProfileToggles() ([]models.EventRuleProfileToggle, error)
 	GetDefaultEventRuleProfile() (*models.EventRuleProfile, error)
+	GetEventRuleProfile(id uint) (*models.EventRuleProfile, error)
+	CreateEventRuleProfile(p *models.EventRuleProfile) error
+	UpdateEventRuleProfile(p *models.EventRuleProfile) error
+	DeleteEventRuleProfile(id uint) error
+	CloneEventRuleProfile(id uint, newName string) (*models.EventRuleProfile, error)
+	GetProfileToggles(profileID uint) ([]models.EventRuleProfileToggle, error)
+	ReplaceProfileToggles(profileID uint, toggles []models.EventRuleProfileToggle) error
+	SetDeviceEventProfile(deviceID uint, profileID *uint) error
+	SetSiteEventProfile(siteID uint, profileID *uint) error
+	GetEventProfileCounts(defaultID uint) (map[uint]*EventProfileCounts, error)
 }
 
 // MaintenanceWindowStore covers scheduled maintenance windows.
