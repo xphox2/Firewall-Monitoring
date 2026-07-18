@@ -75,7 +75,9 @@ var themeLight = ReportTheme{
 
 	OkTint:   "#e6f2ec",
 	WarnTint: "#f6efdc",
-	CritTint: "#f8e9ea",
+	// CritTint is a shade lighter than the natural pick so Crit text on it
+	// clears WCAG AA 4.5:1 (#c8323a on #f9edee = 4.6:1; #f8e9ea was 4.49).
+	CritTint: "#f9edee",
 
 	ChartBG:   "#fafbfc",
 	ChartGrid: "#dde3ea",

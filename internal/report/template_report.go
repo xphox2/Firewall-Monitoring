@@ -136,7 +136,17 @@ const reportTemplateSrc = `
   .device-block summary { transition: background-color 0.15s ease; }
   .device-block summary:hover { background-color: {{$t.Panel}} !important; }
   @media print {
-    body { background: #fdfdfb !important; }
+    /* Printing normalizes to paper regardless of preview theme: browsers
+       skip backgrounds by default, so a dark preview's light inks would
+       otherwise land invisible on white. Tokens are the LIGHT palette
+       (never pure white/black — the pure-hex invariant scans print rules
+       too). */
+    body, .sheet, .panel-fill, .device-block, details, summary { background: #fdfdfb !important; }
+    body, .ink, .kpi-value, .mini-value, .uptime-value, .spike-text, .talker-text, .device-name, .spike-flow-src, .spike-flow-bytes { color: #16242c !important; }
+    .inkdim, .kpi-label, .mini-label, .verdict-detail, .talker-device, .spike-meta, .device-ip, .spike-flow-proto { color: #4a5c66 !important; }
+    .sheet, .device-block { border-color: #d3dae3 !important; }
+    .grid-line, .axis-line { stroke: #dde3ea !important; }
+    .axis-label { fill: #5f6e79 !important; }
     .no-print { display: none !important; }
     details { display: block !important; }
     details > summary { display: none !important; }
@@ -293,12 +303,17 @@ const reportTemplateSrc = `
         <div style="padding:14px 18px 18px;">{{template "devbody" dict "T" $t "D" .}}</div>
       </details>
       {{else}}
-      <div class="device-block" style="background:{{$t.Surface}};border:1px solid {{$t.Hairline}};border-radius:8px;margin-bottom:14px;">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-          <tr><td style="padding:14px 18px;border-bottom:1px solid {{$t.HairlineSoft}};">{{template "devhead" dict "T" $t "D" .}}</td></tr>
-          <tr><td style="padding:14px 18px 18px;">{{template "devbody" dict "T" $t "D" .}}</td></tr>
-        </table>
-      </div>
+      {{/* Email branch: border + spacing live on <td>/spacer rows — the Word
+           engine drops div borders and margins. */}}
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="device-block">
+        <tr><td style="background:{{$t.Surface}};border:1px solid {{$t.Hairline}};border-radius:8px;padding:0;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr><td style="padding:14px 18px;border-bottom:1px solid {{$t.HairlineSoft}};">{{template "devhead" dict "T" $t "D" .}}</td></tr>
+            <tr><td style="padding:14px 18px 18px;">{{template "devbody" dict "T" $t "D" .}}</td></tr>
+          </table>
+        </td></tr>
+        <tr><td style="height:14px;line-height:14px;font-size:1px;">&nbsp;</td></tr>
+      </table>
       {{end}}
     {{end}}
   </td></tr>
@@ -345,7 +360,7 @@ const reportTemplateSrc = `
   </td>
   <td width="45%" style="vertical-align:middle;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-      {{if $d.BarPct}}<td width="{{$d.BarPct}}%" bgcolor="{{$t.Accent}}" style="background:{{$t.Accent}};height:8px;line-height:8px;font-size:1px;border-radius:4px;">&nbsp;</td>{{end}}
+      {{if $d.BarPct}}<td width="{{$d.BarPct}}%" bgcolor="{{$t.Accent}}" style="background:{{$t.Accent}};height:8px;line-height:8px;font-size:1px;{{if lt $d.BarPct 100}}border-radius:4px 0 0 4px;{{else}}border-radius:4px;{{end}}">&nbsp;</td>{{end}}
       {{if lt $d.BarPct 100}}<td bgcolor="{{$t.HairlineSoft}}" class="talker-bar-bg" style="background:{{$t.HairlineSoft}};height:8px;line-height:8px;font-size:1px;{{if not $d.BarPct}}border-radius:4px;{{else}}border-radius:0 4px 4px 0;{{end}}">&nbsp;</td>{{end}}
     </tr></table>
   </td>
@@ -380,7 +395,7 @@ const reportTemplateSrc = `
   </td>
   <td align="right" class="device-ip inkdim" style="vertical-align:middle;font-size:12px;color:{{$t.InkDim}};font-family:{{monoStack}};">
     {{$d.IPAddress}}
-    <span class="details-arrow" style="display:none;margin-left:8px;font-size:10px;vertical-align:middle;">&#9660;</span>
+    <span class="details-arrow" style="display:none;mso-hide:all;margin-left:8px;font-size:10px;vertical-align:middle;">&#9660;</span>
   </td>
 </tr></table>{{end}}
 
@@ -399,7 +414,7 @@ const reportTemplateSrc = `
   <td class="inkdim" style="vertical-align:middle;font-family:{{fontStack}};font-size:11px;color:{{$t.InkDim}};width:60px;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Uptime</td>
   <td style="vertical-align:middle;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-      {{if $d.UptimeBarPct}}<td width="{{$d.UptimeBarPct}}%" bgcolor="{{$t.Ok}}" style="background:{{$t.Ok}};height:8px;line-height:8px;font-size:1px;border-radius:4px;">&nbsp;</td>{{end}}
+      {{if $d.UptimeBarPct}}<td width="{{$d.UptimeBarPct}}%" bgcolor="{{$t.Ok}}" style="background:{{$t.Ok}};height:8px;line-height:8px;font-size:1px;{{if lt $d.UptimeBarPct 100}}border-radius:4px 0 0 4px;{{else}}border-radius:4px;{{end}}">&nbsp;</td>{{end}}
       {{if lt $d.UptimeBarPct 100}}<td bgcolor="{{$t.HairlineSoft}}" class="uptime-bar-bg" style="background:{{$t.HairlineSoft}};height:8px;line-height:8px;font-size:1px;{{if not $d.UptimeBarPct}}border-radius:4px;{{else}}border-radius:0 4px 4px 0;{{end}}">&nbsp;</td>{{end}}
     </tr></table>
   </td>

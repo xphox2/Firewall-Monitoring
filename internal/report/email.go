@@ -98,8 +98,11 @@ func BuildCriticalAlertEmail(alert *models.Alert, device *models.Device, recentH
 
 	var attachments []notifier.Attachment
 
-	// Add recent CPU/mem chart if we have history
-	if len(recentHistory) > 0 {
+	// Add recent CPU/mem chart if we have history. Interim (until the themed
+	// PNG renderers land): the legacy chart is light-styled on a pure-white
+	// canvas, so a DARK-themed email suppresses it rather than embed a
+	// glaring white slab — the metric numbers are all in the detail table.
+	if len(recentHistory) > 0 && theme.Name != "dark" {
 		chartPNG, err := RenderCPUMemChart(recentHistory, fmt.Sprintf("%s — Recent Status", device.Name))
 		if err == nil && chartPNG != nil {
 			cid := "cpumem_critical"

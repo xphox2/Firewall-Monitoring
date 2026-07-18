@@ -159,10 +159,16 @@
             loadPreview();
         });
         // Follow the SPA Day/Night switch until the operator picks a pill.
+        // The reload only runs while the Reports page is VISIBLE — the
+        // listener is global and the fleet-wide report gather is expensive;
+        // a hidden page just marks itself stale for the next init().
         window.addEventListener('fwmon:themechange', function () {
             if (previewTheme) return; // explicit pill choice wins
             paintThemePills();
-            if (loadedOnce) loadPreview();
+            if (!loadedOnce) return;
+            var page = document.getElementById('page-reports');
+            if (page && page.classList.contains('active')) loadPreview();
+            else loadedOnce = false; // stale — init() refetches on next visit
         });
     }
 
