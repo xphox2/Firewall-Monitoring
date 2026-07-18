@@ -12,19 +12,6 @@ import (
 // style: no feDropShadow filters, no gradients — solid theme-colored lines
 // with a low-opacity solid area fill. All colors come from ReportTheme.
 
-// safeID returns an HTML/CSS identifier safe for use in IDs.
-func safeID(s string) string {
-	var sb strings.Builder
-	for _, r := range s {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
-			sb.WriteRune(r)
-		} else {
-			sb.WriteRune('-')
-		}
-	}
-	return sb.String()
-}
-
 // svgEmpty renders the themed "no data" placeholder.
 func svgEmpty(th ReportTheme, msg string) template.HTML {
 	return template.HTML(fmt.Sprintf(
