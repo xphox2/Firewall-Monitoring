@@ -124,13 +124,16 @@ func (m *matchExpr) eval(fields map[string]string) bool {
 
 // compiledRule is an EventRule ready for evaluation.
 type compiledRule struct {
-	id          uint
-	name        string
-	priority    int
-	source      string
-	vendor      string
-	deviceID    *uint
-	siteID      *uint
+	id       uint
+	name     string
+	priority int
+	source   string
+	vendor   string
+	deviceID *uint
+	siteID   *uint
+	// profileID is the owning Event Rule Profile (v48). 0 is the pinned
+	// Default sentinel — buildRuleEngine folds it into the Default partition.
+	profileID   uint
 	action      string
 	alertType   models.AlertType
 	severity    models.Severity
@@ -225,7 +228,8 @@ func compileRules(rules []models.EventRule) []compiledRule {
 		out = append(out, compiledRule{
 			id: src.ID, name: src.Name, priority: src.Priority, source: source,
 			vendor: src.VendorScope, deviceID: src.DeviceID, siteID: src.SiteID,
-			action: action, alertType: at, severity: src.Severity, groupBy: src.GroupBy,
+			profileID: src.ProfileID,
+			action:    action, alertType: at, severity: src.Severity, groupBy: src.GroupBy,
 			cooldownMin: src.CooldownMinutes, policyID: src.PolicyID, match: compileMatch(rm),
 			dampen: dp, expiresAt: src.ExpiresAt,
 		})
@@ -261,13 +265,142 @@ type ruleHit struct {
 	last  time.Time
 }
 
-// RefreshEventRules reloads + recompiles enabled rules and the device→vendor/site
-// map, and flushes accumulated hit counts. Called on the same cadence as
-// RefreshPolicyCache.
-func (am *AlertManager) RefreshEventRules(db *database.Database) {
-	if db == nil {
-		return
+// ruleEngine is the compiled rule set PARTITIONED by owning profile (v48).
+// Within a partition, rules keep the DB's priority-asc,id-asc order; ACROSS
+// partitions the per-event chain walk (device profile → site profile →
+// Default) decides precedence — layer beats priority. Installed by whole-map
+// swap, never mutated in place, so a snapshot of its slices stays valid after
+// the lock is released.
+type ruleEngine struct {
+	byProfile        map[uint][]compiledRule
+	defaultProfileID uint
+	total            int
+}
+
+// buildRuleEngine buckets compiled rules by profile. profileID 0 (the pinned
+// Default sentinel — rows written by a pre-v48 binary mid-rolling-restart, or
+// a test DB without profiles) folds into the Default partition, so a rule can
+// never silently detach from the chain.
+func buildRuleEngine(compiled []compiledRule, defaultProfileID uint) ruleEngine {
+	eng := ruleEngine{
+		byProfile:        make(map[uint][]compiledRule),
+		defaultProfileID: defaultProfileID,
+		total:            len(compiled),
 	}
+	for i := range compiled {
+		pid := compiled[i].profileID
+		if pid == 0 {
+			pid = defaultProfileID
+		}
+		eng.byProfile[pid] = append(eng.byProfile[pid], compiled[i])
+	}
+	return eng
+}
+
+// chainRules is one event's snapshot of the profile chain's partitions in
+// evaluation order (device profile → site profile → Default, deduped).
+// Snapshotting under am.mu and evaluating after release is safe: partitions
+// are immutable once installed.
+type chainRules struct {
+	slices [3][]compiledRule
+	n      int
+	total  int
+}
+
+// chainRulesLocked computes an event's profile chain from the policy cache
+// and snapshots the matching partitions. deviceID 0 skips the device layer;
+// nil siteID skips the site layer (callers pass their effective site — the
+// deviceMeta fallback every evaluator already applies). Dangling
+// EventProfileIDs fall through, mirroring resolvedPolicyIDLocked. The Default
+// partition ALWAYS anchors the chain. Caller holds am.mu (R or W).
+func (am *AlertManager) chainRulesLocked(deviceID uint, siteID *uint) chainRules {
+	var ch chainRules
+	eng := &am.eventRules
+	if eng.total == 0 {
+		return ch
+	}
+	pc := &am.policyCache
+	var ids [3]uint
+	n := 0
+	add := func(pid uint, mustExist bool) {
+		if mustExist && (pid == 0 || pc.eventProfiles[pid] == nil) {
+			return
+		}
+		for i := 0; i < n; i++ {
+			if ids[i] == pid {
+				return
+			}
+		}
+		ids[n] = pid
+		n++
+	}
+	if deviceID != 0 && pc.loaded {
+		if cfg := pc.deviceConfigs[deviceID]; cfg != nil && cfg.EventProfileID != nil {
+			add(*cfg.EventProfileID, true)
+		}
+	}
+	if siteID != nil && pc.loaded {
+		if cfg := pc.siteConfigs[*siteID]; cfg != nil && cfg.EventProfileID != nil {
+			add(*cfg.EventProfileID, true)
+		}
+	}
+	add(eng.defaultProfileID, false)
+	for i := 0; i < n; i++ {
+		ch.slices[i] = eng.byProfile[ids[i]]
+		ch.total += len(ch.slices[i])
+	}
+	ch.n = n
+	return ch
+}
+
+// firstMatch is the shared chain scan every evaluator funnels through: layer
+// beats priority (the walk drains a whole partition before the next); within
+// a partition rules run in priority-then-id order; the FIRST live, in-scope,
+// matching rule of ANY action wins and stops the walk (a high-priority alert
+// rule out-ranks a lower suppress in the same layer, exactly as before).
+//
+// admitAny=true is the syslog evaluator's contract — source="any" rules
+// legitimately fire there. Every other source passes false: their exact-
+// source guard is load-bearing (appliesTo alone admits "any", and a missing-
+// field neq evaluates true, so a broad "any" syslog-noise suppress rule would
+// otherwise silently eat security and telemetry events).
+func firstMatch(ch chainRules, source string, admitAny bool, vendor string, deviceID uint, siteID *uint, fields map[string]string, now time.Time) *compiledRule {
+	for li := 0; li < ch.n; li++ {
+		sl := ch.slices[li]
+		for i := range sl {
+			r := &sl[i]
+			if r.source != source && !(admitAny && r.source == "any") {
+				continue
+			}
+			if r.expired(now) {
+				continue
+			}
+			if !r.appliesTo(source, vendor, deviceID, siteID) {
+				continue
+			}
+			if !r.match.eval(fields) {
+				continue
+			}
+			return r
+		}
+	}
+	return nil
+}
+
+// eventRuleState is everything the engine refresh installs, built OUTSIDE the
+// lock so RefreshPolicyCache can swap the policy cache and the engine in ONE
+// critical section (the old swap-then-refresh sequence took the lock twice,
+// leaving a torn window where new assignments met old partitions).
+type eventRuleState struct {
+	engine          ruleEngine
+	meta            map[uint]database.DeviceRuleMeta
+	ownedCSV        string
+	anyMetricZScore bool
+}
+
+// loadEventRuleState does the engine's DB reads + compilation (no lock held).
+// ok=false means a read failed and the caller must keep the last-good state.
+func (am *AlertManager) loadEventRuleState(db *database.Database) (*eventRuleState, bool) {
 	am.flushEventRuleHits(db)
 	// Delete expired temporary rules promptly (every refresh, not just the nightly
 	// cleanup) so a lapsed "suppress for 24h" rule can't linger in the editor and
@@ -279,16 +412,24 @@ func (am *AlertManager) RefreshEventRules(db *database.Database) {
 	rules, err := db.GetEnabledEventRules()
 	if err != nil {
 		log.Printf("RefreshEventRules: load rules: %v", err)
-		return
+		return nil, false
 	}
 	meta, err := db.LoadDeviceRuleMeta()
 	if err != nil {
 		log.Printf("RefreshEventRules: load device meta: %v", err)
-		return
+		return nil, false
+	}
+	// Default profile ID for partitioning (0 when absent — tests / pre-seed
+	// boot — which keeps every rule in the byProfile[0] Default bucket).
+	defaultProfileID := uint(0)
+	if p, err := db.GetDefaultEventRuleProfile(); err == nil {
+		defaultProfileID = p.ID
 	}
 	compiled := compileRules(rules)
 	ownedCSV, _ := db.GetSettingValue(stateOwnedTypesSetting)
 	// Does any enabled metric rule opt into zscore? Extends the baseline gate.
+	// Computed over the FLAT compiled slice, before partitioning, so rules in
+	// every profile are seen.
 	anyMetricZScore := false
 	for i := range compiled {
 		if compiled[i].source == "metric" && compiled[i].dampen.Mode == "zscore" {
@@ -296,11 +437,36 @@ func (am *AlertManager) RefreshEventRules(db *database.Database) {
 			break
 		}
 	}
+	return &eventRuleState{
+		engine:          buildRuleEngine(compiled, defaultProfileID),
+		meta:            meta,
+		ownedCSV:        ownedCSV,
+		anyMetricZScore: anyMetricZScore,
+	}, true
+}
+
+// installEventRuleStateLocked swaps the engine state in. Caller holds am.mu.
+func (am *AlertManager) installEventRuleStateLocked(st *eventRuleState) {
+	am.eventRules = st.engine
+	am.deviceMeta = st.meta
+	am.setStateOwnedLocked(st.ownedCSV)
+	am.anyMetricZScoreRule = st.anyMetricZScore
+}
+
+// RefreshEventRules reloads + recompiles enabled rules and the device→vendor/site
+// map, and flushes accumulated hit counts. Standalone entry point (tests, and
+// any caller that only touched rules); RefreshPolicyCache instead installs the
+// same state inside its own single swap.
+func (am *AlertManager) RefreshEventRules(db *database.Database) {
+	if db == nil {
+		return
+	}
+	st, ok := am.loadEventRuleState(db)
+	if !ok {
+		return
+	}
 	am.mu.Lock()
-	am.eventRules = compiled
-	am.deviceMeta = meta
-	am.setStateOwnedLocked(ownedCSV)
-	am.anyMetricZScoreRule = anyMetricZScore
+	am.installEventRuleStateLocked(st)
 	am.mu.Unlock()
 }
 
@@ -340,16 +506,11 @@ func (am *AlertManager) flushEventRuleHits(db *database.Database) {
 // EvaluateSyslog runs the rule engine for one syslog message. It is the single
 // mechanism for syslog alerting (the legacy sev0-2 behavior ships as seed
 // rules). Returns after the first matching rule: a suppress drops the event, an
-// alert fires it.
+// alert fires it. Hot-path discipline preserved: the chain snapshot is taken
+// under one RLock and evaluated unlocked (partitions are immutable).
 func (am *AlertManager) EvaluateSyslog(msg *models.SyslogMessage, siteID *uint) error {
 	am.mu.RLock()
-	rules := am.eventRules
 	meta, hasMeta := am.deviceMeta[msg.DeviceID]
-	am.mu.RUnlock()
-	if len(rules) == 0 {
-		return nil // fast path: nothing to evaluate
-	}
-
 	vendor := "generic"
 	effSite := siteID
 	if msg.DeviceID != 0 && hasMeta {
@@ -360,27 +521,23 @@ func (am *AlertManager) EvaluateSyslog(msg *models.SyslogMessage, siteID *uint) 
 			effSite = meta.SiteID
 		}
 	}
+	ch := am.chainRulesLocked(msg.DeviceID, effSite)
+	am.mu.RUnlock()
+	if ch.total == 0 {
+		return nil // fast path: nothing on this chain to evaluate
+	}
 
 	fields := logfields.Fields(vendor, msg) // single extraction, shared across rules
 	now := time.Now()
-	for i := range rules {
-		r := &rules[i]
-		if r.expired(now) {
-			continue
-		}
-		if !r.appliesTo("syslog", vendor, msg.DeviceID, effSite) {
-			continue
-		}
-		if !r.match.eval(fields) {
-			continue
-		}
-		am.recordHit(r.id, now)
-		if r.action == "suppress" {
-			return nil // mute: short-circuit lower-priority rules
-		}
-		return am.fireEventAlert(r, msg, fields, effSite)
+	r := firstMatch(ch, "syslog", true, vendor, msg.DeviceID, effSite, fields, now)
+	if r == nil {
+		return nil
 	}
-	return nil
+	am.recordHit(r.id, now)
+	if r.action == "suppress" {
+		return nil // mute: short-circuit lower-priority rules
+	}
+	return am.fireEventAlert(r, msg, fields, effSite)
 }
 
 // fireEventAlert raises an alert for a matched alert-action rule, reusing the

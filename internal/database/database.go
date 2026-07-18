@@ -362,6 +362,11 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 	// Ensure a default alert policy exists
 	d.EnsureDefaultPolicy()
 
+	// Ensure the Default event rule profile exists (v48) BEFORE the rule
+	// seeder so seeds get stamped with its ID (migration v48 also creates it
+	// on upgrades; this covers fresh installs and is idempotent).
+	d.EnsureDefaultEventProfile()
+
 	// Seed the default event rules once (v35): the legacy syslog sev0-2 behavior
 	// now ships as rules, so this must run before syslog ingestion serves.
 	d.EnsureDefaultRules()

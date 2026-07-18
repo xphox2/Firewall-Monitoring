@@ -27,6 +27,16 @@ func installPolicyCache(am *AlertManager, policy *models.AlertPolicy, windows []
 	am.policyCache = pc
 }
 
+// installDefaultProfileToggles wires a Default event rule profile carrying the
+// given explicit toggle rows into an already-installed policy cache (v48 —
+// the per-type kill switch the retired AlertRule.Enabled used to be).
+func installDefaultProfileToggles(am *AlertManager, toggles map[models.AlertType]bool) {
+	def := &models.EventRuleProfile{ID: 1, Name: "Default", IsDefault: true}
+	am.policyCache.eventProfiles = map[uint]*models.EventRuleProfile{def.ID: def}
+	am.policyCache.defaultEventProfileID = def.ID
+	am.policyCache.eventToggles = map[uint]map[models.AlertType]bool{def.ID: toggles}
+}
+
 // TestCheckEscalations_SnoozedAlertDoesNotEscalate (LC-10): snooze is
 // "silence temporarily WITHOUT acking" — the escalation engine must not keep
 // paging for an alert the operator just snoozed, and must resume once the
@@ -102,10 +112,12 @@ func TestCheckEscalations_OpenIncidentAlertsSkipped(t *testing.T) {
 	}
 }
 
-// TestCheckDeviceOffline_DisabledPolicyNoRecoveryNoise (LC-12): with the
-// DEVICE_OFFLINE rule disabled, an offline device must produce NO alert row,
-// NO in-memory active state, and — critically — NO "back online" companion or
-// notification when it recovers.
+// TestCheckDeviceOffline_DisabledPolicyNoRecoveryNoise (LC-12; re-pinned on
+// the v48 toggle chain): with DEVICE_OFFLINE toggled Off in the Default event
+// profile, an offline device must produce NO alert row, NO in-memory active
+// state, and — critically — NO "back online" companion or notification when
+// it recovers. The stale AlertRule.Enabled=false row stays seeded to pin the
+// retirement: on its own it no longer disables anything (the toggle does).
 func TestCheckDeviceOffline_DisabledPolicyNoRecoveryNoise(t *testing.T) {
 	am, db := newTestManager(t)
 	policy := models.AlertPolicy{
@@ -113,6 +125,7 @@ func TestCheckDeviceOffline_DisabledPolicyNoRecoveryNoise(t *testing.T) {
 		Rules: []models.AlertRule{{PolicyID: 1, AlertType: "DEVICE_OFFLINE", Enabled: false}},
 	}
 	installPolicyCache(am, &policy, nil)
+	installDefaultProfileToggles(am, map[models.AlertType]bool{models.AlertTypeDeviceOffline: false})
 
 	dev := &models.Device{ID: 3, Name: "fw", IPAddress: "10.0.0.3"}
 	if err := am.CheckDeviceOffline(dev); err != nil {

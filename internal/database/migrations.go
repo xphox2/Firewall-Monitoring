@@ -96,6 +96,7 @@ var registeredMigrations = []migration{
 	{version: 45, name: "l2_topology_tables", run: (*Database).migrateL2TopologyTables},
 	{version: 46, name: "connection_port_fields", run: (*Database).migrateConnectionPortFields},
 	{version: 47, name: "denied_events_table", run: (*Database).migrateDeniedEventsTable},
+	{version: 48, name: "event_rule_profiles", run: (*Database).migrateEventRuleProfiles},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

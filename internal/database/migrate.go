@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -76,6 +77,8 @@ func (d *Database) migrateBaseline() error {
 		&models.ThreatFeedStatus{},
 		&models.FlowInterfaceCounter{},
 		&models.DeniedEvent{},
+		&models.EventRuleProfile{},
+		&models.EventRuleProfileToggle{},
 	}
 
 	// Migrate each model individually so one failure doesn't block others.
@@ -1950,5 +1953,211 @@ func (d *Database) migrateDeniedEventsTable() error {
 		return fmt.Errorf("migrate v47 convert denied_events to partitioned: %w", err)
 	}
 	log.Printf("migrate v47 denied_events_table: created + converted to monthly RANGE-partitioned parent on timestamp")
+	return nil
+}
+
+// migrateEventRuleProfiles (v48) introduces Event Rule Profiles — the
+// Default > Site > Device chain of per-alert-type toggles + rule layers — and
+// FAITHFULLY migrates the retired AlertRule.Enabled semantics into it.
+//
+// Fidelity invariant this is derived from: pre-v48 the SINGLE policy resolved
+// by device→site→default is TOTAL authority for per-type enablement (no
+// AlertRule blending across policies; EventRule.PolicyID pins channels only).
+// The toggle chain instead FALLS THROUGH on a missing row, so every migrated
+// profile must be DENSE over D (the set of types any referenced policy
+// disables): explicit On rows are what stop a lower layer's Off from leaking
+// through a layer that today shadows it. That includes the DEFAULT profile —
+// a device explicitly pinned to the default policy shadows its site's
+// disables today, so the pin is mirrored (EventProfileID → Default profile)
+// and the Default profile's explicit On rows must win at the device layer.
+// Types outside D stay sparse everywhere, preserving the "new alert type ⇒
+// Inherit ⇒ ON fleet-wide" contract.
+//
+// Idempotent throughout: AutoMigrate/IF NOT EXISTS DDL, FirstOrCreate
+// profiles+toggles, and assignment mirroring guarded on event_profile_id IS
+// NULL (a crash-and-rerun never clobbers state a completed step wrote).
+// When no referenced policy disables anything (D empty — the common install)
+// the migration creates only the Default profile and provably changes no
+// firing behavior.
+func (d *Database) migrateEventRuleProfiles() error {
+	// (a) New tables + columns. Errors propagate (fresh tables must exist);
+	// column adds use the IF NOT EXISTS / AutoMigrate idempotent patterns.
+	if err := d.db.AutoMigrate(&models.EventRuleProfile{}, &models.EventRuleProfileToggle{}); err != nil {
+		return fmt.Errorf("migrate v48 profile tables: %w", err)
+	}
+	if !d.dialect.IsPostgres() {
+		if err := d.db.AutoMigrate(&models.EventRule{}, &models.DeviceAlertConfig{}, &models.SiteAlertConfig{}); err != nil {
+			return fmt.Errorf("migrate v48 columns (sqlite): %w", err)
+		}
+	} else {
+		for _, s := range []string{
+			`ALTER TABLE event_rules ADD COLUMN IF NOT EXISTS profile_id bigint NOT NULL DEFAULT 0`,
+			`CREATE INDEX IF NOT EXISTS idx_event_rules_profile_id ON event_rules (profile_id)`,
+			`ALTER TABLE device_alert_configs ADD COLUMN IF NOT EXISTS event_profile_id bigint`,
+			`CREATE INDEX IF NOT EXISTS idx_device_alert_configs_event_profile_id ON device_alert_configs (event_profile_id)`,
+			`ALTER TABLE site_alert_configs ADD COLUMN IF NOT EXISTS event_profile_id bigint`,
+			`CREATE INDEX IF NOT EXISTS idx_site_alert_configs_event_profile_id ON site_alert_configs (event_profile_id)`,
+		} {
+			if err := d.execMaintenanceDDL(s); err != nil {
+				return fmt.Errorf("migrate v48 columns: %w", err)
+			}
+		}
+	}
+
+	// (b) Default profile — needed here for the backfill; EnsureDefaultEventProfile
+	// also runs at every startup for fresh installs.
+	d.EnsureDefaultEventProfile()
+	defProfile, err := d.GetDefaultEventRuleProfile()
+	if err != nil {
+		return fmt.Errorf("migrate v48 load default profile: %w", err)
+	}
+
+	// (c) Every pre-existing rule belongs to the Default layer. profile_id=0
+	// stays a pinned Default sentinel in the engine, so rows an old binary
+	// writes mid-rolling-restart still evaluate; this backfill just makes the
+	// stored state explicit.
+	if err := d.db.Exec(`UPDATE event_rules SET profile_id = ? WHERE profile_id = 0 OR profile_id IS NULL`, defProfile.ID).Error; err != nil {
+		return fmt.Errorf("migrate v48 backfill event_rules.profile_id: %w", err)
+	}
+
+	// (d) AlertRule.Enabled=false fidelity migration.
+	var defaultPolicy models.AlertPolicy
+	hasDefaultPolicy := d.db.Where("is_default = ?", true).First(&defaultPolicy).Error == nil
+
+	// referenced = default policy ∪ policies pinned by any device/site config.
+	// Dangling pins are skipped exactly like resolvedPolicyIDLocked falls
+	// through them at fire time.
+	var policies []models.AlertPolicy
+	if err := d.db.Find(&policies).Error; err != nil {
+		return fmt.Errorf("migrate v48 load policies: %w", err)
+	}
+	policyByID := map[uint]models.AlertPolicy{}
+	for _, p := range policies {
+		policyByID[p.ID] = p
+	}
+	referenced := map[uint]bool{}
+	if hasDefaultPolicy {
+		referenced[defaultPolicy.ID] = true
+	}
+	var devCfgs []models.DeviceAlertConfig
+	var siteCfgs []models.SiteAlertConfig
+	if err := d.db.Find(&devCfgs).Error; err != nil {
+		return fmt.Errorf("migrate v48 load device configs: %w", err)
+	}
+	if err := d.db.Find(&siteCfgs).Error; err != nil {
+		return fmt.Errorf("migrate v48 load site configs: %w", err)
+	}
+	for _, c := range devCfgs {
+		if c.PolicyID != nil {
+			if _, ok := policyByID[*c.PolicyID]; ok {
+				referenced[*c.PolicyID] = true
+			}
+		}
+	}
+	for _, c := range siteCfgs {
+		if c.PolicyID != nil {
+			if _, ok := policyByID[*c.PolicyID]; ok {
+				referenced[*c.PolicyID] = true
+			}
+		}
+	}
+
+	// D = types disabled in ANY referenced policy — read straight from
+	// alert_rules so UI-unrendered types are included (the old hardcoded JS
+	// list drifted; the DB is the only honest source).
+	disabledByPolicy := map[uint]map[models.AlertType]bool{}
+	dSet := map[models.AlertType]bool{}
+	var disabledRules []models.AlertRule
+	if err := d.db.Where("enabled = ?", false).Find(&disabledRules).Error; err != nil {
+		return fmt.Errorf("migrate v48 load disabled alert rules: %w", err)
+	}
+	for _, r := range disabledRules {
+		if !referenced[r.PolicyID] {
+			continue // policy assigned nowhere ⇒ its disables were already inert
+		}
+		if disabledByPolicy[r.PolicyID] == nil {
+			disabledByPolicy[r.PolicyID] = map[models.AlertType]bool{}
+		}
+		disabledByPolicy[r.PolicyID][r.AlertType] = true
+		dSet[r.AlertType] = true
+	}
+	if len(dSet) == 0 {
+		log.Printf("migrate v48 event_rule_profiles: tables + Default profile ready; no referenced policy disables any type — no toggles migrated (inert)")
+		return nil
+	}
+
+	ensureToggle := func(profileID uint, at models.AlertType, enabled bool) error {
+		var tg models.EventRuleProfileToggle
+		return d.db.Where(models.EventRuleProfileToggle{ProfileID: profileID, AlertType: at}).
+			Attrs(models.EventRuleProfileToggle{Enabled: enabled}).
+			FirstOrCreate(&tg).Error
+	}
+
+	// Dense-over-D rows for the Default profile (explicit On rows matter when
+	// a device/site pin points at Default — see the header comment).
+	for at := range dSet {
+		enabled := !(hasDefaultPolicy && disabledByPolicy[defaultPolicy.ID][at])
+		if err := ensureToggle(defProfile.ID, at, enabled); err != nil {
+			return fmt.Errorf("migrate v48 default toggles: %w", err)
+		}
+	}
+
+	// One profile per non-default referenced policy (INCLUDING clean ones —
+	// a clean pinned policy must still shadow a lower layer's Off rows),
+	// dense over D.
+	profileForPolicy := map[uint]uint{}
+	if hasDefaultPolicy {
+		profileForPolicy[defaultPolicy.ID] = defProfile.ID
+	}
+	// Iterate policies in ID order (not map order) and claim names through a
+	// deterministic candidate ladder — so a crash-and-rerun recomputes the
+	// SAME name per policy (FirstOrCreate then reuses), and two adversarially
+	// named policies can never silently merge into one profile.
+	orderedPids := make([]uint, 0, len(referenced))
+	for pid := range referenced {
+		if hasDefaultPolicy && pid == defaultPolicy.ID {
+			continue
+		}
+		orderedPids = append(orderedPids, pid)
+	}
+	sort.Slice(orderedPids, func(i, j int) bool { return orderedPids[i] < orderedPids[j] })
+	claimed := map[string]bool{defProfile.Name: true}
+	for _, pid := range orderedPids {
+		p := policyByID[pid]
+		name := p.Name
+		if claimed[name] {
+			name = p.Name + " (event profile)"
+		}
+		if claimed[name] {
+			name = fmt.Sprintf("%s #%d", p.Name, p.ID) // policy IDs are unique — always free
+		}
+		claimed[name] = true
+		var prof models.EventRuleProfile
+		if err := d.db.Where(models.EventRuleProfile{Name: name}).
+			Attrs(models.EventRuleProfile{Description: "Migrated from notification profile \"" + p.Name + "\" (v48): carries its per-type enable/disable state."}).
+			FirstOrCreate(&prof).Error; err != nil {
+			return fmt.Errorf("migrate v48 profile for policy %q: %w", p.Name, err)
+		}
+		profileForPolicy[pid] = prof.ID
+		for at := range dSet {
+			if err := ensureToggle(prof.ID, at, !disabledByPolicy[pid][at]); err != nil {
+				return fmt.Errorf("migrate v48 toggles for policy %q: %w", p.Name, err)
+			}
+		}
+	}
+
+	// Mirror assignments (default-policy pins included — that pin is what
+	// shadows a site's disables today). IS NULL guard = idempotent and never
+	// clobbers a post-migration operator change.
+	for pid, profID := range profileForPolicy {
+		if err := d.db.Exec(`UPDATE device_alert_configs SET event_profile_id = ? WHERE policy_id = ? AND event_profile_id IS NULL`, profID, pid).Error; err != nil {
+			return fmt.Errorf("migrate v48 mirror device assignments: %w", err)
+		}
+		if err := d.db.Exec(`UPDATE site_alert_configs SET event_profile_id = ? WHERE policy_id = ? AND event_profile_id IS NULL`, profID, pid).Error; err != nil {
+			return fmt.Errorf("migrate v48 mirror site assignments: %w", err)
+		}
+	}
+
+	log.Printf("migrate v48 event_rule_profiles: migrated %d disabled type(s) across %d referenced policy(ies) into dense profile toggles; assignments mirrored", len(dSet), len(referenced))
 	return nil
 }

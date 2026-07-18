@@ -166,6 +166,10 @@ type AlertPolicyStore interface {
 	UpdateEventRule(r *models.EventRule) error
 	DeleteEventRule(id uint) error
 	RecentSyslogForTest(limit int) ([]models.SyslogMessage, error)
+	// Event rule profiles (v48): the Default > Site > Device toggle+rule chain.
+	GetAllEventRuleProfiles() ([]models.EventRuleProfile, error)
+	GetAllEventRuleProfileToggles() ([]models.EventRuleProfileToggle, error)
+	GetDefaultEventRuleProfile() (*models.EventRuleProfile, error)
 }
 
 // MaintenanceWindowStore covers scheduled maintenance windows.

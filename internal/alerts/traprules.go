@@ -30,20 +30,7 @@ func (am *AlertManager) matchTrapRuleLocked(fields map[string]string, deviceID u
 	if m, ok := am.deviceMeta[deviceID]; ok && m.Vendor != "" {
 		vendor = m.Vendor
 	}
-	for i := range am.eventRules {
-		r := &am.eventRules[i]
-		if r.source != "trap" {
-			continue
-		}
-		if r.expired(time.Now()) {
-			continue
-		}
-		if !r.appliesTo("trap", vendor, deviceID, siteID) {
-			continue
-		}
-		if !r.match.eval(fields) {
-			continue
-		}
+	if r := firstMatch(am.chainRulesLocked(deviceID, siteID), "trap", false, vendor, deviceID, siteID, fields, time.Now()); r != nil {
 		return r.action, r, true
 	}
 	return "", nil, false

@@ -68,9 +68,10 @@ type AlertManager struct {
 	mu                  sync.RWMutex
 	alertCooldown       time.Duration
 	policyCache         PolicyCache
-	// Event-rule engine (migration v35): compiled enabled rules + the
+	// Event-rule engine (migration v35; profile-partitioned since v48): the
+	// compiled enabled rules bucketed by owning profile + the
 	// device→(vendor,site) map, both refreshed alongside policyCache under am.mu.
-	eventRules []compiledRule
+	eventRules ruleEngine
 	deviceMeta map[uint]database.DeviceRuleMeta
 	// stateOwned is the set of event_types the rule engine owns (from the
 	// `state_engine_owns` SystemSetting CSV). While a type is owned, its legacy

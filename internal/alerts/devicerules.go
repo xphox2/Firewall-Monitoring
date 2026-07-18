@@ -78,24 +78,7 @@ func (am *AlertManager) matchDeviceRuleLocked(fields map[string]string, deviceID
 	if m, ok := am.deviceMeta[deviceID]; ok && m.Vendor != "" {
 		vendor = m.Vendor
 	}
-	now := time.Now()
-	for i := range am.eventRules {
-		r := &am.eventRules[i]
-		if r.source != "device" {
-			continue
-		}
-		if r.expired(now) {
-			continue
-		}
-		if !r.appliesTo("device", vendor, deviceID, siteID) {
-			continue
-		}
-		if !r.match.eval(fields) {
-			continue
-		}
-		return r
-	}
-	return nil
+	return firstMatch(am.chainRulesLocked(deviceID, siteID), "device", false, vendor, deviceID, siteID, fields, time.Now())
 }
 
 // consultDeviceRuleLocked is the one-stop consult every device-family emitter

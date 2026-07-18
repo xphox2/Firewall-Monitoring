@@ -91,6 +91,9 @@ func NewDatabaseForTesting(t interface {
 		&models.FlowSourceSuppression{},
 		// Event-rule engine (v35+): rules.
 		&models.EventRule{},
+		// Event Rule Profiles (v48): profile + sparse toggle matrix.
+		&models.EventRuleProfile{},
+		&models.EventRuleProfileToggle{},
 	}
 
 	for _, m := range testModels {
