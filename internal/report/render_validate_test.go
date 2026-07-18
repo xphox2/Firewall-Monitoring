@@ -156,10 +156,11 @@ func TestReportHTMLWellFormed(t *testing.T) {
 					}
 				}
 
-				// 6. Email-safe: no images, no CID attachment references (PNG
-				// charts arrive in a later release and flip this deliberately).
+				// 6. No images or CID references UNLESS a chart CID was
+				// stamped by BuildReportWithOps (this render has none) — the
+				// email img path is covered by TestBuildReportEmailCharts.
 				if strings.Contains(out, "<img") || strings.Contains(out, "cid:") {
-					t.Errorf("%s: report must be image/CID-free", label("email-safe"))
+					t.Errorf("%s: report must be image/CID-free when no chart CIDs are stamped", label("email-safe"))
 				}
 
 				// 7. Collapsible toggles the <details> wrapper exactly.

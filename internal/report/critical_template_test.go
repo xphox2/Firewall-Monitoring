@@ -59,17 +59,13 @@ func TestCriticalAlertTemplate_ThemedAndEmailSafe(t *testing.T) {
 				t.Errorf("theme=%s: banned visual device %q", themeName, banned)
 			}
 		}
-		// Interim contract: the legacy light-styled PNG rides only in LIGHT
-		// emails; a dark email carries no chart until the themed renderers
-		// land (the numbers live in the detail table either way).
-		if themeName == "dark" {
-			if len(atts) != 0 || strings.Contains(html, "cid:") {
-				t.Errorf("dark critical email must not embed the legacy white chart (got %d attachments)", len(atts))
-			}
-		} else {
-			if len(atts) != 1 || !strings.Contains(html, "cid:cpumem_critical") {
-				t.Errorf("light critical email should embed the CPU/Mem chart (got %d attachments)", len(atts))
-			}
+		// v0.11.118: the themed PNG renderer serves BOTH themes — every
+		// critical email with ≥2 history points embeds the chart.
+		if len(atts) != 1 || !strings.Contains(html, "cid:cpumem_critical") {
+			t.Errorf("theme=%s: critical email should embed the themed CPU/Mem chart (got %d attachments)", themeName, len(atts))
+		}
+		if len(atts) == 1 && len(atts[0].Data) > 80*1024 {
+			t.Errorf("theme=%s: critical chart PNG too large: %d bytes (budget 80KB)", themeName, len(atts[0].Data))
 		}
 	}
 }

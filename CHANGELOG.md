@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.118] - 2026-07-18
+
+### Added — Report redesign part 3: themed PNG charts in email, Email Theme setting, email-layout preview
+
+Email reports now carry real charts. Part 3 of 3 completes the report redesign program (part 1 = flat themed template, part 2 = MIME/plaintext correctness).
+
+- **Themed PNG chart pipeline** (`internal/report/png_charts.go`, wcharczuk/go-chart): per-device CPU/Memory dual-line charts and a fleet alert-timeline bar chart, rendered at 2x (1104×400, displayed at 552px) for retina sharpness, with fully themed opaque backgrounds/grids/axes/series in both light and dark — inlined via CID (`multipart/related`, the tree part 2 built). The critical-alert email uses the same pipeline in both themes; the legacy light-only white-canvas renderer (and its interim dark-theme chart suppression) is deleted.
+- **Attention-priority email layout with a size-fit device cap**: email device sections are reordered offline → most alerts → highest CPU so what matters never falls below the fold; the top 6 drawable devices get charts; full sections start at 12 devices and shrink automatically until the quoted-printable HTML fits a 92KB budget (Gmail silently clips at ~102KB of encoded HTML). Overflow devices render as compact summary rows — every device always appears in both HTML and plaintext, and attachments whose section fell below the cap are dropped (no orphan image chips).
+- **`report_email_theme` setting end-to-end**: validated (`light`/`dark`) + allow-listed in the settings API, a new "Email Report Theme" select in Settings → Reports (always writes an explicit value), consumed at send time by the scheduler, Send Report Now, and the poller's critical-alert path (all shipped reading the DB in part 1).
+- **Email-layout preview**: the Reports page gains Web/Email pills; Email mode renders the exact recipient HTML (PNG charts, priority order, device cap) with `cid:` references swapped for `data:` URIs for the browser — validates the real email output with zero SMTP round-trips.
+- Tests: PNG decode/dimensions/opacity/size in both themes, attachment-anchor pairing with no orphans, priority-slot and cap/overflow pins, full-fleet plaintext coverage, and a CI budget test asserting the QP-encoded HTML of a 15-device rich fleet stays under 92KB.
+
 ## [0.11.117] - 2026-07-18
 
 ### Changed — Report redesign part 2: correct MIME structure + plaintext alternative

@@ -252,9 +252,13 @@ const reportTemplateSrc = `
     <div class="inkdim" style="font-family:{{fontStack}};font-size:12.5px;color:{{$t.InkDim}};line-height:1.5;">
       A total of <strong class="ink" style="color:{{$t.Ink}};">{{.TotalAlerts}}</strong> alerts were recorded during this report window, including <span style="color:{{$t.Crit}};font-weight:600;">{{.CriticalAlerts}} critical</span> events.
     </div>
+    {{if .AlertChartCID}}
+    <img src="cid:{{.AlertChartCID}}" width="552" alt="Alert timeline: {{.TotalAlerts}} alerts, {{.CriticalAlerts}} critical" border="0" style="width:100%;max-width:552px;height:auto !important;display:block;margin-top:12px;border-radius:6px;" />
+    {{else}}
     <div class="inkdim" style="font-family:{{fontStack}};font-size:11.5px;color:{{$t.InkMute}};margin-top:8px;font-style:italic;">
       Note: The interactive alert timeline graph is viewable in the Web Admin Console.
     </div>
+    {{end}}
     {{else}}
     <div style="width:100%;overflow-x:auto;">
       {{renderAlertChart .AlertBuckets $t}}
@@ -315,6 +319,29 @@ const reportTemplateSrc = `
         <tr><td style="height:14px;line-height:14px;font-size:1px;">&nbsp;</td></tr>
       </table>
       {{end}}
+    {{end}}
+    {{if .MoreDevices}}
+    {{/* Email overflow beyond the full-section cap: compact hairline rows
+         so every device still appears with its headline numbers. */}}
+    {{template "eyebrow" dict "T" $t "Text" (printf "%d more devices" (len .MoreDevices))}}
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-family:{{fontStack}};font-size:12px;color:{{$t.InkDim}};border-collapse:separate;border-spacing:0;">
+      <tr style="text-align:left;">
+        <th class="inkdim" style="padding:4px 8px 6px 0;font-weight:600;color:{{$t.InkMute}};border-bottom:1px solid {{$t.Hairline}};">Device</th>
+        <th class="inkdim" style="padding:4px 8px 6px;font-weight:600;color:{{$t.InkMute}};border-bottom:1px solid {{$t.Hairline}};">Status</th>
+        <th class="inkdim" align="right" style="padding:4px 8px 6px;font-weight:600;text-align:right;color:{{$t.InkMute}};border-bottom:1px solid {{$t.Hairline}};">CPU max</th>
+        <th class="inkdim" align="right" style="padding:4px 8px 6px;font-weight:600;text-align:right;color:{{$t.InkMute}};border-bottom:1px solid {{$t.Hairline}};">Mem max</th>
+        <th class="inkdim" align="right" style="padding:4px 0 6px 8px;font-weight:600;text-align:right;color:{{$t.InkMute}};border-bottom:1px solid {{$t.Hairline}};">Uptime</th>
+      </tr>
+      {{range .MoreDevices}}
+      <tr>
+        <td class="ink" style="padding:6px 8px 6px 0;color:{{$t.Ink}};font-weight:600;border-bottom:1px solid {{$t.HairlineSoft}};">{{.Name}} <span class="inkdim" style="font-family:{{monoStack}};font-weight:400;color:{{$t.InkMute}};">{{.IPAddress}}</span></td>
+        <td style="padding:6px 8px;border-bottom:1px solid {{$t.HairlineSoft}};">{{if .Online}}<span style="color:{{$t.Ok}};font-weight:600;">online</span>{{else}}<span style="color:{{$t.Crit}};font-weight:600;">OFFLINE</span>{{end}}</td>
+        <td align="right" style="padding:6px 8px;text-align:right;font-family:{{monoStack}};border-bottom:1px solid {{$t.HairlineSoft}};">{{printf "%.0f%%" .CPUMax}}</td>
+        <td align="right" style="padding:6px 8px;text-align:right;font-family:{{monoStack}};border-bottom:1px solid {{$t.HairlineSoft}};">{{printf "%.0f%%" .MemMax}}</td>
+        <td align="right" style="padding:6px 0 6px 8px;text-align:right;font-family:{{monoStack}};border-bottom:1px solid {{$t.HairlineSoft}};">{{printf "%.1f%%" .UptimePct}}</td>
+      </tr>
+      {{end}}
+    </table>
     {{end}}
   </td></tr>
 
@@ -422,6 +449,10 @@ const reportTemplateSrc = `
 </tr></table>
 
 {{if $d.IsEmail}}
+  {{if $d.ChartCID}}
+  {{template "eyebrow" dict "T" $t "Text" "CPU & Memory History"}}
+  <img src="cid:{{$d.ChartCID}}" width="552" alt="CPU and memory history for {{$d.Name}}: CPU peak {{printf "%.0f" $d.CPUMax}}%, memory peak {{printf "%.0f" $d.MemMax}}%" border="0" style="width:100%;max-width:552px;height:auto !important;display:block;margin-bottom:12px;border-radius:6px;" />
+  {{end}}
   {{template "eyebrow" dict "T" $t "Text" "Resource Trends"}}
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:8px;"><tr><td class="panel-fill" bgcolor="{{$t.Panel}}" style="background:{{$t.Panel}};border-radius:8px;padding:12px 16px;font-family:{{fontStack}};font-size:12.5px;color:{{$t.InkDim}};line-height:1.6;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">

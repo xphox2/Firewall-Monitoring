@@ -15,7 +15,7 @@ func TestReport_OpsSection_Renders(t *testing.T) {
 		AckedCount: 4, ResolvedCount: 6,
 		Noise: []NoiseRow{{AlertType: "CPU_HIGH", DeviceName: "fw-a", Count: 12, Suppressed: 3}},
 	}
-	_, html, _, err := BuildReportWithOps([]models.Device{}, nil, "UTC", 24, "Daily", "test", false, ops, ThemeByName(""))
+	_, html, _, _, err := BuildReportWithOps([]models.Device{}, nil, "UTC", 24, "Daily", "test", false, ops, ThemeByName(""))
 	if err != nil {
 		t.Fatalf("BuildReportWithOps: %v", err)
 	}

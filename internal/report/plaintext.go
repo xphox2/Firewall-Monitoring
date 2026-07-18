@@ -60,9 +60,9 @@ func RenderReportText(m ReportModel) string {
 		}
 	}
 
-	if len(m.Devices) > 0 {
+	if len(m.Devices) > 0 || len(m.MoreDevices) > 0 {
 		fmt.Fprintf(&b, "\r\nDEVICES\r\n%s\r\n", thin)
-		for _, d := range m.Devices {
+		for _, d := range append(append([]DeviceCard(nil), m.Devices...), m.MoreDevices...) {
 			status := "OFFLINE"
 			if d.Online {
 				status = "online"

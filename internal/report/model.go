@@ -57,6 +57,9 @@ type ReportModel struct {
 	// Alert timeline
 	AlertBuckets []AlertBucket
 	HasAlerts    bool
+	// AlertChartCID is set only for the email render when a fleet alert
+	// timeline PNG rides along (cid: reference); blank = HTML bars only.
+	AlertChartCID string
 
 	// Operations (F05/F06): response times + noise leaderboard over the
 	// trailing 30 days (independent of the report window — response metrics
@@ -65,6 +68,10 @@ type ReportModel struct {
 	Ops *OpsStats
 
 	Devices []DeviceCard
+	// MoreDevices carries the overflow when the EMAIL render caps full
+	// device sections (Gmail ~102KB clip); rendered as compact summary rows.
+	// Always empty for the web preview.
+	MoreDevices []DeviceCard
 }
 
 // TopTalker is one bar in a Top-Talkers chart (fleet- or device-level).
@@ -131,6 +138,9 @@ type DeviceCard struct {
 	SpikeFlows     []SpikeFlow // top sFlow conversations seen during this device's spikes
 	Timezone       string
 	IsEmail        bool // true when rendering for email body (hides SVGs)
+	// ChartCID is set only for the email render when this device won one of
+	// the bounded CPU/Mem PNG slots (cid: reference); blank = table only.
+	ChartCID string
 }
 
 // SpikeFlow is one sampled flow conversation observed on an interface during a

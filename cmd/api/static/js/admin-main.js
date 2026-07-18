@@ -2526,7 +2526,16 @@
                 return '<div class="setting-item"><label>' + s.label + '</label><input type="text" name="' + s.key + '" value="' + escapeHtml(savedVal) + '" placeholder="' + (s.placeholder || '') + '"></div>';
             }).join('') +
             '<div class="setting-item"><label>Daily Report Time (HH:MM)</label><select name="report_daily_time" class="report-time-select">' + reportTimeOptions + '</select></div>' +
-            '<div class="setting-item"><label>Weekly Report Day</label><select name="report_weekly_day" class="report-day-select"><option value="">-- Select --</option>' + reportDayOptions + '</select></div>';
+            '<div class="setting-item"><label>Weekly Report Day</label><select name="report_weekly_day" class="report-day-select"><option value="">-- Select --</option>' + reportDayOptions + '</select></div>' +
+            (function() {
+                // Email report theme (v0.11.118): always an explicit value so
+                // a saved choice never round-trips as blank.
+                var saved = (savedReportVals && savedReportVals['report_email_theme']) || 'light';
+                return '<div class="setting-item"><label>Email Report Theme</label><select name="report_email_theme">' +
+                    '<option value="light"' + (saved !== 'dark' ? ' selected' : '') + '>Light</option>' +
+                    '<option value="dark"' + (saved === 'dark' ? ' selected' : '') + '>Dark</option>' +
+                    '</select></div>';
+            })();
 
             // Spike detection settings — moved to the Alerting page (v0.11.87);
             // guard so this legacy render no-ops if the element is absent.
