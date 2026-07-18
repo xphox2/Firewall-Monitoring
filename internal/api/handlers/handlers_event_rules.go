@@ -121,6 +121,51 @@ func (h *Handler) ListEventRules(c *gin.Context) {
 	c.JSON(http.StatusOK, response.Success(rules))
 }
 
+// GetEventRuleTemplate returns the shipped default-rule definition for an
+// alert type as a builder-shaped prefill — the "seed was deleted → recreate a
+// fresh copy" path for the UPCOMING toggle-matrix per-type Rule button
+// (v0.11.120; this endpoint ships first). NOTE for that consumer: the prefill
+// carries the template's real enabled/action — openFromPrefill must NOT apply
+// its force-enable/force-suppress defaults, or the disabled-by-design
+// templates would go live on recreate.
+// GET /admin/api/event-rules/template?alert_type=X
+func (h *Handler) GetEventRuleTemplate(c *gin.Context) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+	at := models.AlertType(c.Query("alert_type"))
+	if at == "" {
+		c.JSON(http.StatusBadRequest, response.Error("alert_type is required"))
+		return
+	}
+	tpl, ok := db.DefaultRuleTemplate(at)
+	if !ok {
+		reason := "No shipped default rule exists for this alert type"
+		if at == models.AlertTypeSFlowAgentDrops {
+			reason = "SFLOW_AGENT_DROPS has no emitter yet — nothing produces this alert, so there is no rule to customize"
+		}
+		c.JSON(http.StatusNotFound, response.Error(reason))
+		return
+	}
+	defaultProfileID := uint(0)
+	if def, err := db.GetDefaultEventRuleProfile(); err == nil {
+		defaultProfileID = def.ID
+	}
+	c.JSON(http.StatusOK, response.Success(gin.H{
+		"name":        tpl.Name,
+		"description": tpl.Description,
+		"source":      tpl.Source,
+		"action":      tpl.Action,
+		"alert_type":  string(tpl.AlertType),
+		"priority":    tpl.Priority,
+		"match_json":  tpl.MatchJSON,
+		"dampen_json": tpl.DampenJSON,
+		"enabled":     tpl.Enabled,
+		"profile_id":  defaultProfileID,
+	}))
+}
+
 // resolveRuleProfileID validates an incoming rule's profile assignment:
 // absent/0 → the Default profile; non-zero must exist.
 func resolveRuleProfileID(db database.Store, r *models.EventRule) string {

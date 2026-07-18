@@ -51,11 +51,33 @@ func FlowSecFields(det *models.FlowDetection, srcCanon string, siteID *uint) map
 // "security_event" is a compatibility constant (shipped v0.11.93 — operator
 // rules exist against it); other categories map as "<category>_event", so a
 // future category is automatically matchable without a code change here.
+// "security_digest" is NOT produced here — the digest consult stamps it
+// explicitly (flowSecDigestFields) so operator security_event rules can never
+// accidentally govern digests.
 func flowEventType(category string) string {
 	if category == "" {
 		return "security_event"
 	}
 	return category + "_event"
+}
+
+// flowSecDigestFields is the matchable field set for a STORM DIGEST rollup
+// (ProcessSecurityDigest, v0.11.119). event_type is the dedicated
+// "security_digest" value — deliberately distinct from the per-detection
+// "security_event" so a suppress written against per-source cards doesn't
+// silently start muting digests (and vice versa). detector rides along, so a
+// detector-specific rule (e.g. deny_storm at priority 200) also governs that
+// detector's digests ahead of the broad digest rule (210) —
+// specific-beats-broad, intended.
+func flowSecDigestFields(detector string, siteID *uint) map[string]string {
+	f := map[string]string{
+		"event_type": "security_digest",
+		"detector":   detector,
+	}
+	if siteID != nil {
+		f["site_id"] = strconv.FormatUint(uint64(*siteID), 10)
+	}
+	return f
 }
 
 // matchFlowSecurityRuleLocked returns the first (priority-ordered) live

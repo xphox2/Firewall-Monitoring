@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.118"
+const ServerVersion = "0.11.119"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -760,9 +760,10 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			"/admin/api/threat-intel/storm-tuning":  true,
 			// v35: event-rule CRUD + tester. A suppress rule can silence security
 			// alerting, and the tester reads raw syslog content — admin-only.
-			"/admin/api/event-rules":      true,
-			"/admin/api/event-rules/:id":  true,
-			"/admin/api/event-rules/test": true,
+			"/admin/api/event-rules":          true,
+			"/admin/api/event-rules/:id":      true,
+			"/admin/api/event-rules/test":     true,
+			"/admin/api/event-rules/template": true,
 			// v48: event rule profiles — a toggle Off silences an alert type for
 			// a whole scope; same class as event rules. The registry, effective
 			// view and assignment endpoints ride along (assignment changes what
@@ -1030,6 +1031,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 
 		// Event rules (v35): unified vendor-aware alert/suppress rule engine.
 		admin.GET("/api/event-rules", handler.ListEventRules)
+		admin.GET("/api/event-rules/template", handler.GetEventRuleTemplate)
 		admin.POST("/api/event-rules", handler.CreateEventRule)
 		admin.POST("/api/event-rules/test", handler.TestEventRule)
 		admin.PUT("/api/event-rules/:id", handler.UpdateEventRule)
