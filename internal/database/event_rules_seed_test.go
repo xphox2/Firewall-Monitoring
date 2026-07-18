@@ -361,3 +361,45 @@ func TestEnsureDefaultRules_UpgradeMarker4To5(t *testing.T) {
 		t.Errorf("second boot changed rule count: %d → %d", before, after)
 	}
 }
+
+// TestCreateEventRule_DisabledPersists is the regression guard for the API
+// create path's GORM default:true trap (v0.11.120): a rule created with
+// Enabled=false — an operator's deliberately-disabled rule, or the recreate
+// path for a disabled template — must land disabled, and the caller's struct
+// must reflect it (GORM writes the column default back on Create).
+func TestCreateEventRule_DisabledPersists(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	r := &models.EventRule{Name: "disabled on create", Enabled: false,
+		Source: "syslog", Action: "alert",
+		MatchJSON: `{"op":"eq","field":"severity","value":"7"}`}
+	if err := d.CreateEventRule(r); err != nil {
+		t.Fatal(err)
+	}
+	if r.Enabled {
+		t.Error("caller's struct shows enabled=true after creating a disabled rule")
+	}
+	var got models.EventRule
+	if err := d.db.First(&got, r.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.Enabled {
+		t.Error("rule created with Enabled=false landed ENABLED (GORM default:true trap on the API path)")
+	}
+	// Enabled create still round-trips true.
+	r2 := &models.EventRule{Name: "enabled on create", Enabled: true,
+		Source: "syslog", Action: "alert",
+		MatchJSON: `{"op":"eq","field":"severity","value":"7"}`}
+	if err := d.CreateEventRule(r2); err != nil {
+		t.Fatal(err)
+	}
+	// Fresh dest: reusing `got` would leak its populated primary key into the
+	// WHERE clause (the classic GORM struct-reuse trap) and silently keep the
+	// old row's values.
+	var got2 models.EventRule
+	if err := d.db.First(&got2, r2.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !got2.Enabled {
+		t.Error("rule created with Enabled=true landed disabled")
+	}
+}

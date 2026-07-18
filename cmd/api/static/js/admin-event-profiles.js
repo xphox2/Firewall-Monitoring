@@ -372,9 +372,14 @@
                 };
                 var control = '<span class="er-tri" role="group" aria-label="' + esc(t.type) + ' state">' +
                     (isRoot ? '' : seg('inherit', 'Inherit')) + seg('on', 'On') + seg('off', 'Off') + '</span>';
+                // v0.11.120 bridge: every type's default rule is one click away
+                // — the rule is the customization surface (severity/cooldown/
+                // routing/scope), the toggle is only the kill-switch.
+                var ruleBtn = '<button type="button" class="btn secondary sm" data-ep-customize="' + esc(t.type) + '"' +
+                    ' title="Open this type\'s default rule (severity, cooldown, routing, scope)">Rule</button>';
                 return '<div class="ep-matrix-row">' +
                     '<span class="badge" title="' + esc(t.description || '') + '">' + esc(t.type) + '</span>' +
-                    hint + control + '</div>';
+                    hint + control + ruleBtn + '</div>';
             }).join('');
             return head + body;
         }).join('');
@@ -386,6 +391,54 @@
         var n = dirtyCount();
         $('ep-save-bar').style.display = n ? '' : 'none';
         if (n) $('ep-dirty-count').textContent = n + ' unsaved toggle change' + (n === 1 ? '' : 's');
+    }
+
+    // openCustomize (v0.11.120): the matrix's per-type Rule button. Prefers
+    // the CURRENT profile's own rule for the type (it out-ranks Default by
+    // layer, so editing Default from inside a site/device profile would be a
+    // silent no-op there), falling back to the Default seed — seeds first,
+    // then any alert-action rule, lowest priority/id. If the operator deleted
+    // the seed, prefills a fresh copy from the shipped template endpoint.
+    // ONE unfiltered load feeds both the pick and the modal lookup (a second
+    // fetch could silently go stale — loadRules swallows transient errors and
+    // resolves with the previous profile-filtered list). The modal opens
+    // BEFORE showDetail so the Rules tab's async profile-filtered reload
+    // can't race the in-memory lookup (same discipline as pending.editId).
+    function openCustomize(type) {
+        window.FwmonEventRules.loadRules(0).then(function () {
+            var all = window.FwmonEventRules.getRules() || [];
+            var defId = (defaultProfile() || {}).id || 0;
+            var pick = function (pid) {
+                var c = all.filter(function (r) {
+                    return (r.profile_id || defId) === pid && r.alert_type === type;
+                });
+                c.sort(function (a, b) {
+                    var seed = (b.seed_version > 0 ? 1 : 0) - (a.seed_version > 0 ? 1 : 0);
+                    if (seed) return seed;
+                    var act = (b.action === 'alert' ? 1 : 0) - (a.action === 'alert' ? 1 : 0);
+                    if (act) return act;
+                    return (a.priority - b.priority) || (a.id - b.id);
+                });
+                return c[0] || null;
+            };
+            var target = (currentId && currentId !== defId ? pick(currentId) : null) || pick(defId);
+            if (target) {
+                window.FwmonEventRules.openRuleModal(target.id);
+                showDetail(target.profile_id || defId, 'rules');
+                return;
+            }
+            // Seed deleted → fresh copy from the shipped template. Passed
+            // straight to openRuleModal (NOT openFromPrefill): the prefill
+            // must keep the template's REAL enabled/action so the
+            // disabled-by-design templates can't go live on recreate.
+            AC.apiFetch(API + '/event-rules/template?alert_type=' + encodeURIComponent(type)).then(function (t) {
+                window.FwmonEventRules.openRuleModal(null, t.data || {});
+                showDetail(defId, 'rules');
+            }).catch(function (err) {
+                // Honest dead-end for the documented exclusions (no emitter).
+                AC.showError(err.message || 'No default rule exists for this alert type.');
+            });
+        });
     }
 
     function setToggle(at, state) {
@@ -698,6 +751,18 @@
         if (page) page.addEventListener('click', function (ev) {
             var seg = ev.target.closest('[data-ep-seg]');
             if (seg) { setToggle(seg.getAttribute('data-ep-type'), seg.getAttribute('data-ep-seg')); return; }
+            var cust = ev.target.closest('[data-ep-customize]');
+            if (cust) {
+                var at = cust.getAttribute('data-ep-customize');
+                confirmDiscard().then(function (ok) {
+                    if (!ok) return;
+                    // Parity with selectTab/ep-back: a confirmed discard
+                    // resets the working toggle state.
+                    workToggles = Object.assign({}, baseToggles);
+                    openCustomize(at);
+                });
+                return;
+            }
             var bulk = ev.target.closest('[data-ep-bulk]');
             if (bulk) { bulkSet(bulk.getAttribute('data-ep-fam'), bulk.getAttribute('data-ep-bulk')); return; }
             var head = ev.target.closest('.ep-matrix-group-head');

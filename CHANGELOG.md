@@ -1,6 +1,17 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.120] - 2026-07-18
+
+### Added — Event Rules UI: per-type Rule button on the toggle matrix + source-grouped rules table
+
+Completes the full-coverage program (v0.11.119 seeded the rules; this release makes them reachable).
+
+- **Toggle matrix → rule bridge**: every alert-type row gains a "Rule" button that opens that type's default rule directly in the editor — severity, cooldown, routing, scope, and suppress are one click from the matrix (the toggle stays the kill-switch). Prefers the shipped seed, falls back to any Default-profile rule for the type, and if the seed was deleted, prefills a fresh copy from `GET /event-rules/template` — preserving the template's real enabled/action so the disabled-by-design templates can't go live on recreate. The excluded type (SFLOW_AGENT_DROPS) shows its honest no-emitter reason. Unsaved toggle edits are guarded by the existing discard confirm.
+- **Rules tab grouped by source**: the flat table (now ~40 rows in Default) groups into collapsible sections (Syslog / Flow rules / State / Metrics / Traffic spike / SNMP traps / Device & probe health / Flow security) with count badges, mirroring the matrix's family grouping. Filter chips operate within groups; collapse state resets per profile.
+- Shell guardrail pins the bridge, the template path, the openFromPrefill bypass (force-enable would activate disabled templates), the grouped table, and the dynamic alert-type select from v0.11.119.
+- Live-verified in the PG16 + Playwright harness: fresh install seeds 39 rules (23 gen-5, 4 correctly disabled, marker 5); all 38 matrix rows carry the button; bridge opens seeds with `alert_type` intact; grouped counts and collapse behave; deleted enabled seed recreates enabled, deleted disabled template recreates DISABLED.
+
 ## [0.11.119] - 2026-07-18
 
 ### Added — Full default Event Rule coverage: one editable rule per alert type (seed generation 5)

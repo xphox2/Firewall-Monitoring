@@ -152,6 +152,10 @@ func (h *Handler) GetEventRuleTemplate(c *gin.Context) {
 	if def, err := db.GetDefaultEventRuleProfile(); err == nil {
 		defaultProfileID = def.ID
 	}
+	// NOTE: this subset is lossless for every CURRENT seed carrying an
+	// AlertType — none set VendorScope/Severity/CooldownMinutes/GroupBy. A
+	// future seed generation that does must extend this serializer, or the
+	// recreate path silently drops those fields.
 	c.JSON(http.StatusOK, response.Success(gin.H{
 		"name":        tpl.Name,
 		"description": tpl.Description,
