@@ -70,9 +70,13 @@ type ConfigProvenance struct {
 	// (recovery still runs on the legacy band). RuleID/RuleName identify it.
 	SuppressedByRule bool
 	// AlertsDisabled is true when this scope is turned off — device
-	// AlertsEnabled=false OR a matched policy AlertRule is disabled — so the UI
-	// renders "alerts disabled here", never "inherits 0".
+	// AlertsEnabled=false OR an event-profile toggle turned the type Off — so
+	// the UI renders "alerts disabled here", never "inherits 0".
 	AlertsDisabled bool
+	// ToggleLayer names the profile-chain layer whose explicit Off row disabled
+	// the type ("device"|"site"|"default"; "" when AlertsDisabled came from the
+	// device master switch or nothing is disabled).
+	ToggleLayer string
 	// RuleID/RuleName identify a metric Event Rule that overrode or suppressed
 	// the effective config (0/"" when no rule participated).
 	RuleID   uint
@@ -88,6 +92,14 @@ type PolicyCache struct {
 	siteConfigs   map[uint]*models.SiteAlertConfig
 	windows       []models.MaintenanceWindow
 	defaultPolicy *models.AlertPolicy
+	// Event Rule Profiles (v48): the profile registry, the Default profile's
+	// ID (0 = none loaded), and the SPARSE per-profile toggle matrix (absence
+	// of an (alert_type) key = Inherit — that absence is what auto-enables new
+	// alert types everywhere). Consulted by eventToggleLocked and the rule
+	// engine's chain walk.
+	eventProfiles         map[uint]*models.EventRuleProfile
+	defaultEventProfileID uint
+	eventToggles          map[uint]map[models.AlertType]bool
 	// anyZScore is true when at least one rule uses Mode=zscore, so the
 	// baseline prefetch (a DB read) only ever runs on installs that opted in.
 	anyZScore bool
@@ -128,12 +140,26 @@ func (am *AlertManager) RefreshPolicyCache(db *database.Database) {
 		return
 	}
 
+	// Event Rule Profiles + sparse toggle matrix (v48).
+	profiles, err := db.GetAllEventRuleProfiles()
+	if err != nil {
+		log.Printf("RefreshPolicyCache: failed to load event rule profiles: %v", err)
+		return
+	}
+	toggles, err := db.GetAllEventRuleProfileToggles()
+	if err != nil {
+		log.Printf("RefreshPolicyCache: failed to load event profile toggles: %v", err)
+		return
+	}
+
 	cache := PolicyCache{
 		policies:      policies,
 		policyByID:    make(map[uint]*models.AlertPolicy, len(policies)),
 		deviceConfigs: make(map[uint]*models.DeviceAlertConfig, len(deviceConfigs)),
 		siteConfigs:   make(map[uint]*models.SiteAlertConfig, len(siteConfigs)),
 		windows:       windows,
+		eventProfiles: make(map[uint]*models.EventRuleProfile, len(profiles)),
+		eventToggles:  make(map[uint]map[models.AlertType]bool),
 		loaded:        true,
 	}
 
@@ -154,14 +180,85 @@ func (am *AlertManager) RefreshPolicyCache(db *database.Database) {
 	for i := range siteConfigs {
 		cache.siteConfigs[siteConfigs[i].SiteID] = &siteConfigs[i]
 	}
+	for i := range profiles {
+		cache.eventProfiles[profiles[i].ID] = &profiles[i]
+		if profiles[i].IsDefault {
+			cache.defaultEventProfileID = profiles[i].ID
+		}
+	}
+	for _, t := range toggles {
+		m := cache.eventToggles[t.ProfileID]
+		if m == nil {
+			m = make(map[models.AlertType]bool)
+			cache.eventToggles[t.ProfileID] = m
+		}
+		m[t.AlertType] = t.Enabled
+	}
+
+	// Build the event-rule engine state OUTSIDE the lock too, then install
+	// BOTH in ONE critical section: the old policy-swap-then-RefreshEventRules
+	// sequence took the lock twice, so a reader could observe new assignments
+	// against old rule partitions (torn window) — the profile chain walk made
+	// that inconsistency load-bearing, so it is closed here.
+	st, stOK := am.loadEventRuleState(db)
 
 	am.mu.Lock()
 	am.policyCache = cache
+	if stOK {
+		am.installEventRuleStateLocked(st)
+	}
 	am.mu.Unlock()
+}
 
-	// Reload the event-rule engine on the same cadence (v35). Kept after the
-	// policy swap so a rule's resolveAlertConfig sees the fresh policy cache.
-	am.RefreshEventRules(db)
+// eventToggleLocked resolves the per-type kill switch along the profile chain:
+// device profile → site profile → Default profile; the FIRST profile carrying
+// an explicit row for the type decides; no row anywhere = implicit ON (that
+// terminator is what auto-enables newly added alert types fleet-wide). The
+// second return names the deciding layer for provenance ("device"|"site"|
+// "default"; "" = implicit). siteID falls back to the device's cached site so
+// callers that don't thread a site still honor site profiles (evaluator
+// parity); deviceID 0 skips the device layer (digests, probe truncation,
+// unattributed threat-feed events are governable only from site/Default).
+// Dangling EventProfileIDs fall through, mirroring resolvedPolicyIDLocked.
+// Caller holds am.mu.
+func (am *AlertManager) eventToggleLocked(deviceID uint, siteID *uint, alertType models.AlertType) (bool, string) {
+	pc := &am.policyCache
+	if !pc.loaded {
+		return true, ""
+	}
+	effSite := siteID
+	if effSite == nil && deviceID != 0 {
+		if m, ok := am.deviceMeta[deviceID]; ok {
+			effSite = m.SiteID
+		}
+	}
+	lookup := func(profileID uint) (bool, bool) {
+		if pc.eventProfiles[profileID] == nil {
+			return false, false // dangling assignment → fall through
+		}
+		v, ok := pc.eventToggles[profileID][alertType]
+		return v, ok
+	}
+	if deviceID != 0 {
+		if cfg := pc.deviceConfigs[deviceID]; cfg != nil && cfg.EventProfileID != nil {
+			if v, ok := lookup(*cfg.EventProfileID); ok {
+				return v, "device"
+			}
+		}
+	}
+	if effSite != nil {
+		if cfg := pc.siteConfigs[*effSite]; cfg != nil && cfg.EventProfileID != nil {
+			if v, ok := lookup(*cfg.EventProfileID); ok {
+				return v, "site"
+			}
+		}
+	}
+	if pc.defaultEventProfileID != 0 {
+		if v, ok := lookup(pc.defaultEventProfileID); ok {
+			return v, "default"
+		}
+	}
+	return true, ""
 }
 
 // resolvedPolicyIDLocked returns the ID of the AlertPolicy that governs a
@@ -231,6 +328,23 @@ func (am *AlertManager) resolveAlertConfigProv(deviceID uint, siteID *uint, aler
 		return resolved
 	}
 
+	// v48 single-authority per-type kill switch: the Event Rule Profile chain
+	// decides whether this type may fire at all (device profile → site profile
+	// → Default; first explicit row wins; no row anywhere = ON). This replaces
+	// the retired AlertRule.Enabled consult — Notification Profiles now govern
+	// channels/severity/thresholds only. Early return matches the old disabled-
+	// rule short-circuit shape: recovery paths that resolve config for channel
+	// routing get PolicyActive=false and fall back to global delivery, exactly
+	// as a disabled AlertRule behaved mid-incident.
+	if on, layer := am.eventToggleLocked(deviceID, siteID, alertType); !on {
+		resolved.AlertEnabled = false
+		if prov != nil {
+			prov.AlertsDisabled = true
+			prov.ToggleLayer = layer
+		}
+		return resolved
+	}
+
 	// Resolve policy: device → site → default (shared helper, dangling-safe)
 	var policy *models.AlertPolicy
 	if pid := am.resolvedPolicyIDLocked(deviceID, siteID); pid != nil {
@@ -256,13 +370,10 @@ func (am *AlertManager) resolveAlertConfigProv(deviceID uint, siteID *uint, aler
 	}
 
 	if rule != nil {
-		if !rule.Enabled {
-			resolved.AlertEnabled = false
-			if prov != nil {
-				prov.AlertsDisabled = true
-			}
-			return resolved
-		}
+		// NOTE (v48): rule.Enabled is deliberately NOT consulted here anymore —
+		// per-type on/off authority moved to the event-profile toggle gate
+		// above. The column is retired (kept for rollback; forced true on
+		// every write by BatchUpsertAlertRules).
 		resolved.RuleMatched = true
 		if rule.Severity != "" {
 			resolved.Severity = rule.Severity

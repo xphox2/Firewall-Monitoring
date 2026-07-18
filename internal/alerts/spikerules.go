@@ -33,20 +33,7 @@ func spikeFields(deviceID uint, ifaceName, metric, vendor string) map[string]str
 // matchSpikeRuleLocked returns the first (priority-ordered) enabled spike rule
 // that applies + matches. Caller holds am.mu (read or write).
 func (am *AlertManager) matchSpikeRuleLocked(fields map[string]string, deviceID uint, siteID *uint) (action string, rule *compiledRule, matched bool) {
-	for i := range am.eventRules {
-		r := &am.eventRules[i]
-		if r.source != "spike" {
-			continue
-		}
-		if r.expired(time.Now()) {
-			continue
-		}
-		if !r.appliesTo("spike", fields["vendor"], deviceID, siteID) {
-			continue
-		}
-		if !r.match.eval(fields) {
-			continue
-		}
+	if r := firstMatch(am.chainRulesLocked(deviceID, siteID), "spike", false, fields["vendor"], deviceID, siteID, fields, time.Now()); r != nil {
 		return r.action, r, true
 	}
 	return "", nil, false
@@ -109,10 +96,18 @@ func (am *AlertManager) ProcessSpike(device *models.Device, iface *models.Interf
 
 	am.mu.Lock()
 	now := time.Now()
-	// resolveAlertConfig is consulted ONLY for maintenance + (rule-pinned) policy
-	// lookup — NOT for AlertEnabled gating or channel selection (spike never used
-	// the policy path; keep today's behavior).
+	// resolveAlertConfig supplies maintenance + (rule-pinned) policy lookup —
+	// and, since v48, the AlertEnabled gate: the event-profile toggle chain is
+	// the single per-type kill switch, and TRAFFIC_SPIKE is no longer the one
+	// type it cannot reach (previously spike's only off-switch was the global
+	// SpikeAlertEnabled flag). Channel selection still bypasses the policy
+	// path (global snapshot) exactly as before. ProcessSpikeResolve stays
+	// ungated so an open spike closes after a toggle-off.
 	resolved := am.resolveAlertConfig(device.ID, siteID, models.AlertTypeTrafficSpike)
+	if !resolved.AlertEnabled {
+		am.mu.Unlock()
+		return
+	}
 	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
 	nc := globalNC
 	sev := models.Severity(severity)

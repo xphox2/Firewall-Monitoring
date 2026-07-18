@@ -80,10 +80,14 @@ func (d *Database) BatchUpsertAlertRules(policyID uint, rules []models.AlertRule
 	if err := d.db.Where("policy_id = ?", policyID).Delete(&models.AlertRule{}).Error; err != nil {
 		return fmt.Errorf("batch upsert alert rules for policy %d: delete existing: %w", policyID, err)
 	}
-	// Insert new rules
+	// Insert new rules. Enabled is FORCED true (v48): per-type on/off authority
+	// moved to Event Rule Profile toggles and the resolver no longer consults
+	// AlertRule.Enabled — forcing it here stops a stale client payload from
+	// resurrecting retired false state (which a rollback binary WOULD honor).
 	for i := range rules {
 		rules[i].ID = 0
 		rules[i].PolicyID = policyID
+		rules[i].Enabled = true
 	}
 	if len(rules) > 0 {
 		return d.db.Create(&rules).Error

@@ -41,16 +41,15 @@ func TestCheckTelemetryStale_MaintenanceSuppresses(t *testing.T) {
 }
 
 // TestCheckTelemetryStale_DisabledPolicyNoRecoveryNoise (LC-12 parity with
-// CheckDeviceOffline): with the TELEMETRY_STALE rule disabled, the check must
-// produce NO alert row, NO in-memory active state, and NO "recovered"
-// companion when the condition later clears.
+// CheckDeviceOffline; re-pinned on the v48 toggle chain): with TELEMETRY_STALE
+// toggled Off in the Default event profile, the check must produce NO alert
+// row, NO in-memory active state, and NO "recovered" companion when the
+// condition later clears.
 func TestCheckTelemetryStale_DisabledPolicyNoRecoveryNoise(t *testing.T) {
 	am, db := newTestManager(t)
-	policy := models.AlertPolicy{
-		ID: 1, Name: "p", IsDefault: true,
-		Rules: []models.AlertRule{{PolicyID: 1, AlertType: "TELEMETRY_STALE", Enabled: false}},
-	}
+	policy := models.AlertPolicy{ID: 1, Name: "p", IsDefault: true}
 	installPolicyCache(am, &policy, nil)
+	installDefaultProfileToggles(am, map[models.AlertType]bool{models.AlertTypeTelemetryStale: false})
 
 	dev := &models.Device{Name: "fw-d", IPAddress: "10.9.1.4"}
 	if err := db.Gorm().Create(dev).Error; err != nil {

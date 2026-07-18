@@ -494,6 +494,14 @@ type EventRule struct {
 	VendorScope string `json:"vendor_scope"`
 	DeviceID    *uint  `json:"device_id" gorm:"index"`
 	SiteID      *uint  `json:"site_id" gorm:"index"`
+	// ProfileID is the owning EventRuleProfile (v48). 0 is a pinned sentinel for
+	// the Default profile — loaders and the compiler map 0 → Default, which keeps
+	// rows written by a pre-v48 binary during a rolling restart in the Default
+	// layer instead of silently dropping them. Deliberately uint (not *uint) and
+	// without a DB NOT NULL so SQLite never needs a table rebuild. DeviceID/
+	// SiteID/VendorScope above narrow WITHIN a profile; ProfileID decides which
+	// layer of the Default > Site > Device chain the rule evaluates in.
+	ProfileID uint `json:"profile_id" gorm:"index;default:0"`
 	// MatchJSON is the serialized condition tree (AND/OR of field/op/value
 	// predicates). Compiled + prefilter-derived once on cache load.
 	MatchJSON string `json:"match_json" gorm:"type:text"`
@@ -533,6 +541,39 @@ type EventRule struct {
 
 func (EventRule) TableName() string { return "event_rules" }
 
+// EventRuleProfile is a named bundle of per-alert-type toggles + EventRules
+// (v48), assignable to sites and devices via Device/SiteAlertConfig.
+// EventProfileID. Resolution walks Device > Site > Default: the Default
+// profile (IsDefault=true, undeletable) always anchors the chain, so a device
+// with no assignment anywhere is governed entirely by Default.
+type EventRuleProfile struct {
+	ID          uint      `json:"id" gorm:"primaryKey"`
+	Name        string    `json:"name" gorm:"uniqueIndex;not null"`
+	Description string    `json:"description"`
+	IsDefault   bool      `json:"is_default" gorm:"default:false;index"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+func (EventRuleProfile) TableName() string { return "event_rule_profiles" }
+
+// EventRuleProfileToggle is one explicit per-alert-type on/off row inside a
+// profile. The matrix is SPARSE: absence of a row means Inherit — the chain
+// falls through to the next layer and finally to an implicit ON. That absence
+// semantics is what auto-enables newly added alert types everywhere, so never
+// write "inherit" rows; delete them instead. AlertType values are validated
+// against models.AllAlertTypes().
+type EventRuleProfileToggle struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	ProfileID uint      `json:"profile_id" gorm:"uniqueIndex:idx_profile_alert_type,priority:1;not null"`
+	AlertType AlertType `json:"alert_type" gorm:"uniqueIndex:idx_profile_alert_type,priority:2;not null"`
+	Enabled   bool      `json:"enabled" gorm:"not null"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func (EventRuleProfileToggle) TableName() string { return "event_rule_profile_toggles" }
+
 // Incident (F12) groups the alert storm around a device outage: opened when
 // DEVICE_OFFLINE fires, it absorbs every subsequent alert for that device
 // (their notifications are muted — see AlertManager.dispatchFired) and closes
@@ -552,9 +593,13 @@ type Incident struct {
 func (Incident) TableName() string { return "incidents" }
 
 type DeviceAlertConfig struct {
-	ID               uint      `json:"id" gorm:"primaryKey"`
-	DeviceID         uint      `json:"device_id" gorm:"uniqueIndex;not null"`
-	PolicyID         *uint     `json:"policy_id" gorm:"index"`
+	ID       uint  `json:"id" gorm:"primaryKey"`
+	DeviceID uint  `json:"device_id" gorm:"uniqueIndex;not null"`
+	PolicyID *uint `json:"policy_id" gorm:"index"`
+	// EventProfileID assigns an EventRuleProfile to this device (v48).
+	// nil = inherit (site profile, then Default) — the same pointer semantics
+	// as PolicyID above.
+	EventProfileID   *uint     `json:"event_profile_id" gorm:"index"`
 	CPUThreshold     float64   `json:"cpu_threshold"`
 	MemoryThreshold  float64   `json:"memory_threshold"`
 	DiskThreshold    float64   `json:"disk_threshold"`
@@ -568,9 +613,12 @@ type DeviceAlertConfig struct {
 func (DeviceAlertConfig) TableName() string { return "device_alert_configs" }
 
 type SiteAlertConfig struct {
-	ID               uint    `json:"id" gorm:"primaryKey"`
-	SiteID           uint    `json:"site_id" gorm:"uniqueIndex;not null"`
-	PolicyID         *uint   `json:"policy_id" gorm:"index"`
+	ID       uint  `json:"id" gorm:"primaryKey"`
+	SiteID   uint  `json:"site_id" gorm:"uniqueIndex;not null"`
+	PolicyID *uint `json:"policy_id" gorm:"index"`
+	// EventProfileID assigns an EventRuleProfile to this site (v48).
+	// nil = inherit from the Default profile.
+	EventProfileID   *uint   `json:"event_profile_id" gorm:"index"`
 	CPUThreshold     float64 `json:"cpu_threshold"`
 	MemoryThreshold  float64 `json:"memory_threshold"`
 	DiskThreshold    float64 `json:"disk_threshold"`

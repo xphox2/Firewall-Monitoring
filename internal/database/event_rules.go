@@ -40,6 +40,13 @@ func (d *Database) EnsureDefaultRules() {
 			prevMarker = n
 		}
 	}
+	// Seeds live in the Default profile layer (v48). If the profile is somehow
+	// absent, ProfileID stays 0 — the pinned sentinel the engine maps to
+	// Default — so a seed can never silently detach from the chain.
+	var defaultProfileID uint
+	if p, err := d.GetDefaultEventRuleProfile(); err == nil {
+		defaultProfileID = p.ID
+	}
 	seedFailed := false
 	for _, r := range defaultEventRules() {
 		// Only seed rules NEWER than the last-applied marker. Re-inserting an older
@@ -49,6 +56,7 @@ func (d *Database) EnsureDefaultRules() {
 		if r.SeedVersion <= prevMarker {
 			continue
 		}
+		r.ProfileID = defaultProfileID
 		var count int64
 		d.db.Model(&models.EventRule{}).Where("name = ?", r.Name).Count(&count)
 		if count > 0 {

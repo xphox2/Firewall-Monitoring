@@ -89,20 +89,7 @@ func (am *AlertManager) matchMetricRuleLocked(fields map[string]string, deviceID
 	if m, ok := am.deviceMeta[deviceID]; ok && m.Vendor != "" {
 		vendor = m.Vendor
 	}
-	for i := range am.eventRules {
-		r := &am.eventRules[i]
-		if r.source != "metric" {
-			continue
-		}
-		if r.expired(time.Now()) {
-			continue
-		}
-		if !r.appliesTo("metric", vendor, deviceID, siteID) {
-			continue
-		}
-		if !r.match.eval(fields) {
-			continue
-		}
+	if r := firstMatch(am.chainRulesLocked(deviceID, siteID), "metric", false, vendor, deviceID, siteID, fields, time.Now()); r != nil {
 		return r.action, r, true
 	}
 	return "", nil, false

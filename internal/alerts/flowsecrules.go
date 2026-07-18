@@ -70,24 +70,7 @@ func (am *AlertManager) matchFlowSecurityRuleLocked(fields map[string]string, de
 	if m, ok := am.deviceMeta[deviceID]; ok && m.Vendor != "" {
 		vendor = m.Vendor
 	}
-	now := time.Now()
-	for i := range am.eventRules {
-		r := &am.eventRules[i]
-		if r.source != "flow_security" {
-			continue
-		}
-		if r.expired(now) {
-			continue
-		}
-		if !r.appliesTo("flow_security", vendor, deviceID, siteID) {
-			continue
-		}
-		if !r.match.eval(fields) {
-			continue
-		}
-		return r
-	}
-	return nil
+	return firstMatch(am.chainRulesLocked(deviceID, siteID), "flow_security", false, vendor, deviceID, siteID, fields, time.Now())
 }
 
 // MatchFlowSecurityRule is the poller-facing wrapper: it takes the read lock and

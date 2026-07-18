@@ -422,12 +422,31 @@ func (h *Handler) GetAlertConfigOverview(c *gin.Context) {
 				cfg.CPUThreshold, cfg.MemoryThreshold, cfg.DiskThreshold, cfg.SessionThreshold)...)
 		}
 	}
-	// Policy AlertRule thresholds (enabled, metric types only).
+	// Policy AlertRule thresholds (metric types only). NOTE (v48): r.Enabled is
+	// no longer consulted — the resolver ignores it (per-type on/off moved to
+	// event-profile toggles), so a stale disabled row's threshold DOES apply at
+	// fire time and must show here.
 	if policies, err := db.GetAlertPolicies(); err == nil {
 		for _, p := range policies {
 			for _, r := range p.Rules {
-				if r.Enabled && r.Threshold > 0 && alerts.IsMetricAlertType(r.AlertType) {
+				if r.Threshold > 0 && alerts.IsMetricAlertType(r.AlertType) {
 					rows = append(rows, alertOverrideRow{Scope: "policy", ScopeID: p.ID, ScopeName: p.Name, AlertType: r.AlertType, Value: r.Threshold, Kind: "threshold"})
+				}
+			}
+		}
+	}
+	// Event-profile toggle Offs (v48): the per-type kill switches. Surfaced
+	// explicitly so a type turned off by a profile is visible in the hub — the
+	// retired AlertRule.Enabled=false state was invisible here, a known gap.
+	if profiles, err := db.GetAllEventRuleProfiles(); err == nil {
+		profName := make(map[uint]string, len(profiles))
+		for _, p := range profiles {
+			profName[p.ID] = p.Name
+		}
+		if toggles, err := db.GetAllEventRuleProfileToggles(); err == nil {
+			for _, t := range toggles {
+				if !t.Enabled {
+					rows = append(rows, alertOverrideRow{Scope: "event_profile", ScopeID: t.ProfileID, ScopeName: profName[t.ProfileID], AlertType: t.AlertType, Kind: "disabled"})
 				}
 			}
 		}
