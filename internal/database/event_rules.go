@@ -69,18 +69,25 @@ func (d *Database) EnsureDefaultRules() {
 		// the insert and pinned with an explicit single-column Update after.
 		// Without this the disabled-by-design seeds (HA member up opt-in, the
 		// two custom-rule templates) land enabled and start alerting.
+		//
+		// The insert and the pin run in ONE transaction: if the pin fails (or
+		// the process dies between them), the insert rolls back too — a
+		// half-landed row would otherwise pass the name-dedup check on the
+		// retry boot and stay wrongly ENABLED forever (for a disabled suppress
+		// seed that's silent alert loss, the worst class).
 		wantDisabled := !r.Enabled
-		if err := d.db.Create(&r).Error; err != nil {
+		if err := d.db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Create(&r).Error; err != nil {
+				return err
+			}
+			if wantDisabled {
+				return tx.Model(&models.EventRule{}).Where("id = ?", r.ID).
+					Update("enabled", false).Error
+			}
+			return nil
+		}); err != nil {
 			log.Printf("EnsureDefaultRules: seed %q: %v", r.Name, err)
 			seedFailed = true
-			continue
-		}
-		if wantDisabled {
-			if err := d.db.Model(&models.EventRule{}).Where("id = ?", r.ID).
-				Update("enabled", false).Error; err != nil {
-				log.Printf("EnsureDefaultRules: disable seed %q: %v", r.Name, err)
-				seedFailed = true
-			}
 		}
 	}
 	// Do NOT advance the marker if any insert failed: the per-generation guard is
@@ -301,7 +308,7 @@ func defaultEventRules() []models.EventRule {
 			Enabled: true, Priority: 200, Source: "flow_security", Action: "alert",
 			AlertType: models.AlertTypeSFlowDDoSPrefix, SeedVersion: seedVerFullCoverage,
 			MatchJSON: `{"op":"eq","field":"detector","value":"ddos_prefix"}`},
-		{Name: "Default: Deny storm (per source)", Description: "Deny-storm detections consolidate into the SFLOW_SECURITY card; this rule governs the underlying detections (Suppress mutes them; severity applies when deny_storm wins the card).",
+		{Name: "Default: Deny storm (per source)", Description: "Deny-storm detections consolidate into the SFLOW_SECURITY card; this rule governs the underlying detections AND deny-storm digests (Suppress mutes both; severity applies when deny_storm wins the card).",
 			Enabled: true, Priority: 200, Source: "flow_security", Action: "alert",
 			AlertType: models.AlertTypeSFlowDenyStorm, SeedVersion: seedVerFullCoverage,
 			MatchJSON: `{"op":"eq","field":"detector","value":"deny_storm"}`},

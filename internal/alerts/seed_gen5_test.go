@@ -325,10 +325,17 @@ func TestSeedGen5_DigestConsult(t *testing.T) {
 		t.Errorf("digest suppress must ack the storm detections: %d/%d acked", acked, len(group))
 	}
 
-	// Severity-carrying digest rule re-grades (beat the suppress with priority).
+	// Suppress must NOT burn the cooldown: after disabling the mute, the SAME
+	// detector's next digest fires immediately (the suppress path returns
+	// before recordCooldownLocked).
 	if err := db.Gorm().Model(&models.EventRule{}).Where("name = ?", "op mute digests").
 		Update("enabled", false).Error; err != nil {
 		t.Fatal(err)
+	}
+	am.RefreshEventRules(db)
+	idRefire, err := am.ProcessSecurityDigest(nil, "super_spreader", mkGroup("198.19.0.", 6))
+	if err != nil || idRefire == 0 {
+		t.Fatalf("digest after un-suppressing must fire immediately (no burned cooldown): id=%d err=%v", idRefire, err)
 	}
 	if err := db.CreateEventRule(&models.EventRule{
 		Name: "op escalate digests", Enabled: true, Priority: 30,
