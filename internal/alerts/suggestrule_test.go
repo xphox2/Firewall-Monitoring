@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"firewall-mon/internal/detect"
 	"firewall-mon/internal/models"
 )
 
@@ -177,7 +178,6 @@ func TestSuggestRule_Unsupported(t *testing.T) {
 		at  models.AlertType
 		alt string
 	}{
-		{models.AlertTypeSFlowCapacity, "maintenance"},
 		{models.AlertTypeDeviceOffline, "maintenance"},
 		{models.AlertTypeSSHHostKeyChanged, "maintenance"},
 		{models.AlertTypeProbeDataLag, "maintenance"},
@@ -190,6 +190,95 @@ func TestSuggestRule_Unsupported(t *testing.T) {
 		}
 		if r.Reason == "" || r.Alternative != tc.alt {
 			t.Errorf("%s: reason=%q alt=%q want alt %q", tc.at, r.Reason, r.Alternative, tc.alt)
+		}
+	}
+}
+
+// TestSuggestRule_FlowDetectionTypes pins the v0.11.111 coverage extension:
+// EVERY per-detection SFLOW_* alert type gets a flow_security suggestion —
+// detector-scoped, narrowed to the subject IP when the alert carries one,
+// device-scoped by default.
+func TestSuggestRule_FlowDetectionTypes(t *testing.T) {
+	// Cleartext without a source: detector-scoped, device-scoped, permanent.
+	r := SuggestRuleForAlert(SuggestInput{AlertType: models.AlertTypeSFlowCleartext, DeviceID: 7, DeviceName: "edge-1"})
+	if !r.Supported || r.Rule == nil {
+		t.Fatalf("SFLOW_CLEARTEXT must be supported; got %+v", r)
+	}
+	if r.Rule.Source != "flow_security" {
+		t.Errorf("want source flow_security, got %s", r.Rule.Source)
+	}
+	if !strings.Contains(r.Rule.MatchJSON, `"detector"`) || !strings.Contains(r.Rule.MatchJSON, "cleartext") {
+		t.Errorf("match should key on detector=cleartext, got %s", r.Rule.MatchJSON)
+	}
+	if r.Rule.DeviceID == nil || *r.Rule.DeviceID != 7 {
+		t.Errorf("detector-scoped suggestion should stay device-scoped, got %+v", r.Rule.DeviceID)
+	}
+	if r.Rule.ExpiresHours != 0 {
+		t.Errorf("detector-only suppress should default permanent, got %dh", r.Rule.ExpiresHours)
+	}
+
+	// denied_then_allowed WITH a source: detector AND source_ip, 24h temporary.
+	r = SuggestRuleForAlert(SuggestInput{AlertType: models.AlertTypeSFlowDeniedThenAllowed, DeviceID: 3, SourceAddr: "172.69.130.140"})
+	if !r.Supported || r.Rule == nil {
+		t.Fatalf("SFLOW_DENIED_THEN_ALLOWED must be supported; got %+v", r)
+	}
+	if !strings.Contains(r.Rule.MatchJSON, "denied_then_allowed") || !strings.Contains(r.Rule.MatchJSON, "172.69.130.140") {
+		t.Errorf("match should key on detector+source_ip, got %s", r.Rule.MatchJSON)
+	}
+	if r.Rule.ExpiresHours != 24 {
+		t.Errorf("subject-scoped suppress should default to 24h temporary, got %d", r.Rule.ExpiresHours)
+	}
+
+	// Victim-keyed DDoS: alert.SourceAddr carries the victim; same shape.
+	r = SuggestRuleForAlert(SuggestInput{AlertType: models.AlertTypeSFlowDDoSVolumetric, DeviceID: 3, SourceAddr: "10.0.0.9"})
+	if !r.Supported || r.Rule == nil || !strings.Contains(r.Rule.MatchJSON, "ddos_volumetric") {
+		t.Fatalf("SFLOW_DDOS_VOLUMETRIC must be supported with a detector matcher; got %+v", r)
+	}
+}
+
+// TestSuggestRule_FlowRuleMatch pins the FLOW_RULE_MATCH path: the suppress
+// suggestion reuses the firing flow rule's matcher one priority above it, and
+// customize opens the firing rule via ExistingRuleID.
+func TestSuggestRule_FlowRuleMatch(t *testing.T) {
+	pri := 40
+	rid := uint(9)
+	r := SuggestRuleForAlert(SuggestInput{
+		AlertType: models.AlertTypeFlowRuleMatch, DeviceID: 7, MetricName: "Big transfers",
+		FiringRulePriority: &pri, ExistingRuleID: &rid,
+		FiringRuleMatchJSON: `{"op":"eq","field":"dst_port","value":"445"}`,
+	})
+	if !r.Supported || r.Rule == nil {
+		t.Fatalf("FLOW_RULE_MATCH with a loaded firing rule must be supported; got %+v", r)
+	}
+	if r.Rule.Source != "flow" || r.Rule.MatchJSON != `{"op":"eq","field":"dst_port","value":"445"}` {
+		t.Errorf("suppress must reuse the firing rule's matcher on source flow, got %s / %s", r.Rule.Source, r.Rule.MatchJSON)
+	}
+	if r.Rule.Priority != 39 {
+		t.Errorf("suppress must run one priority above the firing rule (39), got %d", r.Rule.Priority)
+	}
+	if r.ExistingRuleID == nil || *r.ExistingRuleID != 9 {
+		t.Errorf("customize must open the firing rule, got %+v", r.ExistingRuleID)
+	}
+	// Firing rule not loaded (renamed/deleted): no matcher to reuse.
+	nr := SuggestRuleForAlert(SuggestInput{AlertType: models.AlertTypeFlowRuleMatch, DeviceID: 7, MetricName: "gone"})
+	if nr.Supported {
+		t.Errorf("FLOW_RULE_MATCH without the firing rule should be unsupported, got %+v", nr)
+	}
+}
+
+// TestRuleSource_CoversEveryDetector is the "all alerts must be suppressible"
+// guardrail: every registered flow detector's auto-derived alert type
+// (SFLOW_<UPPER(name)>) must map to the flow_security rule source. A future
+// detector that would ship without rule coverage fails here.
+func TestRuleSource_CoversEveryDetector(t *testing.T) {
+	for _, d := range detect.Registry() {
+		at := models.AlertType("SFLOW_" + strings.ToUpper(d.Name()))
+		if got := ruleSourceForAlertType(at); got != "flow_security" {
+			t.Errorf("detector %q → alert type %s maps to rule source %q, want flow_security", d.Name(), at, got)
+		}
+		r := SuggestRuleForAlert(SuggestInput{AlertType: at, DeviceID: 1, DeviceName: "d"})
+		if !r.Supported {
+			t.Errorf("alert type %s must be rule-suppressible; got unsupported (%s)", at, r.Reason)
 		}
 	}
 }

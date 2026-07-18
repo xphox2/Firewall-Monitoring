@@ -269,11 +269,12 @@ func (h *Handler) SuggestEventRuleForAlert(c *gin.Context) {
 			in.Vendor = d.Vendor
 		}
 	}
-	// For syslog, the firing rule's name is stored in MetricName; find it so the
-	// suggestion out-prioritizes it and "customize" can open it directly. Only for
-	// syslog — for metric/state/spike/trap, MetricName is a resource key
+	// For syslog and flow rule-match alerts, the firing rule's name is stored in
+	// MetricName; find it so the suggestion out-prioritizes it (and, for flow,
+	// reuses its matcher) and "customize" can open it directly. Only for those —
+	// for metric/state/spike/trap, MetricName is a resource key
 	// ("cpu_usage"/"interface_port5"/…), which must NOT be treated as a rule name.
-	if alert.MetricName != "" && alerts.IsSyslogRuleAlertType(alert.AlertType) {
+	if alert.MetricName != "" && alerts.IsRuleNameAlertType(alert.AlertType) {
 		if rules, err := db.ListEventRules(); err == nil {
 			for i := range rules {
 				if rules[i].Name == alert.MetricName {
@@ -281,6 +282,7 @@ func (h *Handler) SuggestEventRuleForAlert(c *gin.Context) {
 					rid := rules[i].ID
 					in.FiringRulePriority = &p
 					in.ExistingRuleID = &rid
+					in.FiringRuleMatchJSON = rules[i].MatchJSON
 					break
 				}
 			}

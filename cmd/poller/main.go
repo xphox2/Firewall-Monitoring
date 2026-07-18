@@ -473,44 +473,40 @@ func (p *Poller) runFlowDetectionCycle() {
 		return
 	}
 
-	// Single feed: split into security detections and the rest. Security
-	// detections are grouped by SUBJECT — the offending source for src-keyed
-	// detectors, the VICTIM address for victim-keyed detectors (detect.
-	// VictimKeyed; e.g. ddos_volumetric — their SrcAddr is empty, and grouping
-	// by it would collapse every victim into one degenerate "" group). The
-	// flow_security suppress rules run over ALL security detections (the
-	// Event-Rules hub stays the single silencing surface; for victim-keyed
-	// detections the rule's source_ip field matches the victim). After
-	// suppression, victim-keyed survivors route down the per-detection path
-	// (auto-derived SFLOW_<DETECTOR> alert types) and only src-keyed
-	// detections continue into the per-source SFLOW_SECURITY consolidation +
-	// storm digest. Any detection that maps to an alert is linked
-	// (flow_detections.alert_id) so it drops off the sFlow detections card.
-	securityBySubject := map[string][]*models.FlowDetection{}
-	var others []*models.FlowDetection
+	// Single feed: the flow_security suppress rules run over ALL detections —
+	// security, policy AND operational — grouped by SUBJECT (the offending
+	// source for src-keyed detectors, the VICTIM address for victim-keyed ones
+	// per detect.VictimKeyed; e.g. ddos_volumetric — their SrcAddr is empty,
+	// and grouping by it would collapse every victim into one degenerate ""
+	// group). The Event-Rules hub is the single silencing surface for every
+	// SFLOW_* alert class. After suppression, survivors split: src-keyed
+	// SECURITY detections continue into the per-source SFLOW_SECURITY
+	// consolidation + storm digest; everything else (policy/operational +
+	// victim-keyed security) routes down the per-detection path (auto-derived
+	// SFLOW_<DETECTOR> alert types). Any detection that maps to an alert is
+	// linked (flow_detections.alert_id) so it drops off the sFlow detections
+	// card.
+	bySubject := map[string][]*models.FlowDetection{}
 	for _, d := range saved {
-		if d.Category == string(detect.CategorySecurity) {
-			subject := d.SrcAddr
-			if detect.VictimKeyed(d.Detector) {
-				subject = d.DstAddr
-			}
-			securityBySubject[subject] = append(securityBySubject[subject], d)
-		} else {
-			others = append(others, d)
+		subject := d.SrcAddr
+		if detect.VictimKeyed(d.Detector) {
+			subject = d.DstAddr
 		}
+		bySubject[subject] = append(bySubject[subject], d)
 	}
 
-	p.applyFlowSecuritySuppressRules(securityBySubject)
+	p.applyFlowSecuritySuppressRules(bySubject)
 
-	// Post-suppression re-split: victim-keyed → per-detection path; the rest
-	// stays keyed by source for consolidation.
+	// Post-suppression split: src-keyed security stays keyed by source for
+	// consolidation; the rest goes per-detection.
 	securityBySrc := map[string][]*models.FlowDetection{}
-	for subject, group := range securityBySubject {
+	var others []*models.FlowDetection
+	for subject, group := range bySubject {
 		for _, d := range group {
-			if detect.VictimKeyed(d.Detector) {
-				others = append(others, d)
-			} else {
+			if d.Category == string(detect.CategorySecurity) && !detect.VictimKeyed(d.Detector) {
 				securityBySrc[subject] = append(securityBySrc[subject], d)
+			} else {
+				others = append(others, d)
 			}
 		}
 	}
@@ -567,13 +563,14 @@ func canonIP(s string) string {
 	return s
 }
 
-// applyFlowSecuritySuppressRules mutes security detections matched by a
-// flow_security SUPPRESS Event Rule — the unified replacement for the retired
-// per-IP Silence-Source table. Matched PER DETECTION (a per-source group spans
-// devices + detectors): a detection whose first-match rule is a suppress rule is
-// acked (off the NOC card) and removed; a source is dropped from securityBySrc
-// only when ALL its detections are suppressed, so it neither alerts nor counts
-// toward a storm. Fails OPEN (nil manager / no matching rule → nothing muted).
+// applyFlowSecuritySuppressRules mutes detections (security, policy AND
+// operational) matched by a flow_security SUPPRESS Event Rule — the unified
+// replacement for the retired per-IP Silence-Source table. Matched PER
+// DETECTION (a per-subject group spans devices + detectors): a detection whose
+// first-match rule is a suppress rule is acked (off the NOC card) and removed;
+// a subject is dropped from the map only when ALL its detections are
+// suppressed, so it neither alerts nor counts toward a storm. Fails OPEN (nil
+// manager / no matching rule → nothing muted).
 func (p *Poller) applyFlowSecuritySuppressRules(securityBySrc map[string][]*models.FlowDetection) {
 	if p.alertManager == nil || len(securityBySrc) == 0 {
 		return

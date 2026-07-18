@@ -7,19 +7,26 @@ import (
 	"firewall-mon/internal/models"
 )
 
-// flow_security-source rule evaluator: makes consolidated sFlow SECURITY events
-// (port_scan/threat_intel/data_exfil/super_spreader/c2_beacon) first-class in the
-// Event Rule engine — a matching suppress rule mutes a source (the unified
-// replacement for the retired Silence-Source table), an alert rule overrides
-// severity/routing. Matched PER DETECTION: a per-source group spans multiple
-// devices + detectors, so the caller drops only the detections a suppress rule
-// claims (not the whole group).
+// flow_security-source rule evaluator: makes EVERY sFlow detection first-class
+// in the Event Rule engine — security (port_scan/threat_intel/…), policy
+// (cleartext/denied_then_allowed/…) and operational (capacity/backoff/…) alike.
+// A matching suppress rule mutes the detection (the unified replacement for the
+// retired Silence-Source table), an alert rule overrides severity/routing.
+// Matched PER DETECTION: a per-source group spans multiple devices + detectors,
+// so the caller drops only the detections a suppress rule claims (not the whole
+// group).
 
-// FlowSecFields is the matchable field set for one security detection. srcCanon is
-// the caller-canonicalized source address (IPv6 zero-compression normalized).
+// FlowSecFields is the matchable field set for one flow detection. srcCanon is
+// the caller-canonicalized SUBJECT address (SrcAddr for src-keyed detectors,
+// the victim DstAddr for victim-keyed ones; IPv6 zero-compression normalized).
+// event_type is category-mapped — "security_event" is UNCHANGED for security
+// detections so pre-existing operator rules keep matching; policy/operational
+// detections surface as "policy_event"/"operational_event". dst_ip/dst_port/
+// protocol are set only when the detection carries them, so a missing field
+// never phantom-matches an eq.
 func FlowSecFields(det *models.FlowDetection, srcCanon string, siteID *uint) map[string]string {
 	f := map[string]string{
-		"event_type": "security_event",
+		"event_type": flowEventType(det.Category),
 		"detector":   det.Detector,
 		"source_ip":  srcCanon,
 		"severity":   det.Severity,
@@ -28,7 +35,27 @@ func FlowSecFields(det *models.FlowDetection, srcCanon string, siteID *uint) map
 	if siteID != nil {
 		f["site_id"] = strconv.FormatUint(uint64(*siteID), 10)
 	}
+	if det.DstAddr != "" {
+		f["dst_ip"] = canonIPStr(det.DstAddr)
+	}
+	if det.DstPort != 0 {
+		f["dst_port"] = strconv.FormatUint(uint64(det.DstPort), 10)
+	}
+	if det.Protocol != 0 {
+		f["protocol"] = strconv.FormatUint(uint64(det.Protocol), 10)
+	}
 	return f
+}
+
+// flowEventType maps a detection category to its matcher event_type value.
+// "security_event" is a compatibility constant (shipped v0.11.93 — operator
+// rules exist against it); other categories map as "<category>_event", so a
+// future category is automatically matchable without a code change here.
+func flowEventType(category string) string {
+	if category == "" {
+		return "security_event"
+	}
+	return category + "_event"
 }
 
 // matchFlowSecurityRuleLocked returns the first (priority-ordered) live
