@@ -33,9 +33,15 @@ func TestEventRulesFullCoverageUI(t *testing.T) {
 	}
 	// The template prefill must never run through openFromPrefill, whose
 	// force-enable/force-suppress would flip the disabled-by-design templates
-	// live on recreate.
+	// live on recreate. Scan only openCustomize's BODY (up to the next
+	// top-level function) so a legitimate openFromPrefill call added later
+	// elsewhere in the file can't false-positive this pin.
 	if idx := strings.Index(profiles, "function openCustomize"); idx >= 0 {
-		if strings.Contains(profiles[idx:], "openFromPrefill(") {
+		body := profiles[idx:]
+		if end := strings.Index(body[1:], "\n    function "); end >= 0 {
+			body = body[:end+1]
+		}
+		if strings.Contains(body, "openFromPrefill(") {
 			t.Error("openCustomize must not route template prefills through openFromPrefill (force-enable would activate disabled templates)")
 		}
 	} else {
