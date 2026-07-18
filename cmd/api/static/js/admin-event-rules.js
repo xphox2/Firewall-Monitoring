@@ -116,13 +116,43 @@
             AC.apiFetch(API + '/devices').catch(function () { return { data: [] }; }),
             AC.apiFetch(API + '/sites').catch(function () { return { data: [] }; }),
             AC.apiFetch(API + '/alert-policies').catch(function () { return { data: [] }; }),
-            AC.apiFetch(API + '/event-rule-profiles').catch(function () { return { data: [] }; })
+            AC.apiFetch(API + '/event-rule-profiles').catch(function () { return { data: [] }; }),
+            AC.apiFetch(API + '/alert-types').catch(function () { return { data: [] }; })
         ]).then(function (r) {
             devices = r[0].data || [];
             sites = r[1].data || [];
             policies = r[2].data || [];
             profilesList = r[3].data || [];
+            rebuildAlertTypeSelect(r[4].data || []);
         });
+    }
+
+    // rebuildAlertTypeSelect replaces the hardcoded #er-alert-type options with
+    // the full registry, grouped by family (v0.11.119). The hardcoded HTML
+    // options survive as the fetch-failure fallback. Without this, editing a
+    // rule whose alert_type is missing from the list would render '' and
+    // silently BLANK alert_type on save (selectedIndex -1 on a <select>).
+    function rebuildAlertTypeSelect(registry) {
+        var sel = $('er-alert-type');
+        if (!sel || !registry.length) return;
+        var current = sel.value;
+        var byFamily = {};
+        var famOrder = [];
+        registry.forEach(function (t) {
+            var fam = t.family || 'Other';
+            if (!byFamily[fam]) { byFamily[fam] = []; famOrder.push(fam); }
+            byFamily[fam].push(t);
+        });
+        var html = '<option value="">Default (LOG_RULE_MATCH / FLOW_RULE_MATCH by source)</option>';
+        famOrder.forEach(function (fam) {
+            html += '<optgroup label="' + AC.escapeHtml(fam) + '">';
+            byFamily[fam].forEach(function (t) {
+                html += '<option value="' + AC.escapeHtml(t.type) + '">' + AC.escapeHtml(t.type) + '</option>';
+            });
+            html += '</optgroup>';
+        });
+        sel.innerHTML = html;
+        if (current) sel.value = current;
     }
 
     // loadRules loads + renders. profileId filters to one layer (0/undefined =

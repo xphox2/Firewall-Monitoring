@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.119] - 2026-07-18
+
+### Added — Full default Event Rule coverage: one editable rule per alert type (seed generation 5)
+
+Every alert type in the registry now ships with a Default-profile Event Rule, so each type is fully customizable (severity, cooldown, notification routing, scope, suppress) — not just toggleable on/off. Previously only 14 of 38 types had shipped rules; operators had to hand-create the rest.
+
+- **23 new seeded rules** (`internal/database/event_rules.go`, generation 5, `event_rules_seed_version` 4→5): 7 device-source (device offline, telemetry stale, interface errors, config change, SSH host key changed, probe data lag/truncated), 2 trap (HA state change; **HA member up ships DISABLED** — the trap parses as informational and the LC-14 gate treats a matching rule as an alerting opt-in, so enabling the rule IS the feature), 10 detector-specific flow-security rules (cleartext, unexpected egress, DDoS volumetric/prefix, deny storm + victim, denied-then-allowed, sampling backoff, capacity, sampling rate change), 2 broad flow-security rules (per-source security card, storm digest) at lower precedence than the detector rules, and 2 **disabled template rules** for the custom-rule output types (LOG_RULE_MATCH / FLOW_RULE_MATCH — placeholder matches, safe to enable after editing). SFLOW_AGENT_DROPS is the one documented exclusion (nothing emits it yet).
+- **All gen-5 rules ship behavior-neutral**: blank severity/cooldown/policy/dampen inherit the existing type defaults and settings — verified per evaluator by non-regression tests (identical alerts, identical dedup fold-in, operator suppress rules at the editor default priority 100 always outrank the seeds at 200/210). Existing operator rules are protected by name-dedup and never duplicated or resurrected.
+- **Storm digests now consult Event Rules** (`ProcessSecurityDigest`): a rule matching the new dedicated `security_digest` event type can suppress, re-grade, or re-route site-level digests. Deliberately distinct from `security_event` so per-source suppressions can't silently mute digests; a digest suppress also acknowledges the underlying storm detections. Detector-specific rules govern their own detector's digests ahead of the broad digest rule.
+- **`GET /admin/api/event-rules/template?alert_type=X`**: returns the shipped default-rule definition as a prefill — the recreate path when an operator deleted a seed (admin-only, honest 404 reason for the excluded type).
+- **Fixed: rule editor alert-type select was a stale hardcoded list** — editing a rule whose type wasn't in the 16 hardcoded options silently blanked `alert_type` on save. The select now rebuilds from the `/alert-types` registry grouped by family (hardcoded options remain as a fetch-failure fallback).
+- **Fixed: disabled-by-design seeds landed enabled** — GORM omits `Enabled:false` on insert (column default `true`) AND writes the default back into the struct, so the shipped disabled example suppress rule has been landing ENABLED on fresh installs since v0.11.49. The seeder now pins intent with an explicit post-insert update. Existing installs are not auto-corrected (the rule may have been deliberately kept); review "Suppress FortiGate forward-traffic warnings" if present.
+- Note: an operator rule deliberately saved at priority ≥200 in the Default profile would be outranked by the new always-matching seeds — check the effective view after upgrade if you use high-numbered priorities.
+
 ## [0.11.118] - 2026-07-18
 
 ### Added — Report redesign part 3: themed PNG charts in email, Email Theme setting, email-layout preview

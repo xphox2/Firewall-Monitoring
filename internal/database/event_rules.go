@@ -17,12 +17,13 @@ import (
 // on a version bump (M5). eventRuleSeedVersion is the highest generation and is
 // the value written to the marker.
 const (
-	seedVerSyslog    = 1 // legacy syslog sev0-2 + FortiGate examples
-	seedVerState     = 2 // interface/VPN down (Phase 1)
-	seedVerMetric    = 3 // CPU/mem/disk/session thresholds (Phase 2, inert)
-	seedVerTrapSpike = 4 // traffic spike + HA/LINK trap templates (Phase 3, inert)
+	seedVerSyslog       = 1 // legacy syslog sev0-2 + FortiGate examples
+	seedVerState        = 2 // interface/VPN down (Phase 1)
+	seedVerMetric       = 3 // CPU/mem/disk/session thresholds (Phase 2, inert)
+	seedVerTrapSpike    = 4 // traffic spike + HA/LINK trap templates (Phase 3, inert)
+	seedVerFullCoverage = 5 // one editable default rule per remaining alert type
 
-	eventRuleSeedVersion = seedVerTrapSpike
+	eventRuleSeedVersion = seedVerFullCoverage
 )
 
 // EnsureDefaultRules seeds the default event rules exactly once (guarded by a
@@ -62,9 +63,24 @@ func (d *Database) EnsureDefaultRules() {
 		if count > 0 {
 			continue
 		}
+		// GORM zero-value trap, twice over: Enabled:false is OMITTED on Create
+		// because the column carries default:true, AND Create writes the column
+		// default back into the struct — so the intent must be captured BEFORE
+		// the insert and pinned with an explicit single-column Update after.
+		// Without this the disabled-by-design seeds (HA member up opt-in, the
+		// two custom-rule templates) land enabled and start alerting.
+		wantDisabled := !r.Enabled
 		if err := d.db.Create(&r).Error; err != nil {
 			log.Printf("EnsureDefaultRules: seed %q: %v", r.Name, err)
 			seedFailed = true
+			continue
+		}
+		if wantDisabled {
+			if err := d.db.Model(&models.EventRule{}).Where("id = ?", r.ID).
+				Update("enabled", false).Error; err != nil {
+				log.Printf("EnsureDefaultRules: disable seed %q: %v", r.Name, err)
+				seedFailed = true
+			}
 		}
 	}
 	// Do NOT advance the marker if any insert failed: the per-generation guard is
@@ -210,7 +226,145 @@ func defaultEventRules() []models.EventRule {
 			Enabled: true, Priority: 100, Source: "trap", Action: "alert",
 			AlertType: models.AlertTypeLinkDown, SeedVersion: seedVerTrapSpike,
 			MatchJSON: `{"op":"eq","field":"trap_type","value":"LINK_DOWN"}`},
+
+		// ── Generation 5: full coverage ─────────────────────────────────────
+		// One editable default rule per remaining alert type, so EVERY type
+		// has a customization surface (severity/cooldown/routing/scope/
+		// suppress), not just the profile toggle. All gen-5 rules ship with
+		// blank overrides (severity ""/cooldown nil/policy nil/dampen "") —
+		// verified behavior-neutral per evaluator: the overlays guard every
+		// field and no non-syslog emitter reads GroupBy or the rule dedup key.
+		// Priority 200 (broad flow rules 210) so any operator rule at the
+		// editor default (100) or suggester default (10) always wins firstMatch.
+		// The only type with NO rule is SFLOW_AGENT_DROPS — it has no emitter
+		// anywhere yet; add its seed when one lands.
+
+		// device source — matches devicerules.go deviceEventType values.
+		{Name: "Default: Device offline", Description: "Fires when a device stops responding to the collector. Customize severity/cooldown/routing here, add site/device scope, or switch to Suppress to mute.",
+			Enabled: true, Priority: 200, Source: "device", Action: "alert",
+			AlertType: models.AlertTypeDeviceOffline, SeedVersion: seedVerFullCoverage,
+			MatchJSON: `{"op":"eq","field":"event_type","value":"device_offline"}`},
+		{Name: "Default: Telemetry stale", Description: "Device reachable but polled SNMP/SSH telemetry stopped arriving. Blank severity/cooldown inherit the type defaults (warning / 30m).",
+			Enabled: true, Priority: 200, Source: "device", Action: "alert",
+			AlertType: models.AlertTypeTelemetryStale, SeedVersion: seedVerFullCoverage,
+			MatchJSON: `{"op":"eq","field":"event_type","value":"telemetry_stale"}`},
+		{Name: "Default: Interface errors", Description: "Interface error/discard delta alert. Add an interface_name condition to mute or re-grade one noisy port.",
+			Enabled: true, Priority: 200, Source: "device", Action: "alert",
+			AlertType: models.AlertTypeInterfaceErrors, SeedVersion: seedVerFullCoverage,
+			MatchJSON: `{"op":"eq","field":"event_type","value":"interface_errors"}`},
+		{Name: "Default: Config change", Description: "Device configuration changed. Extra matchable fields: method, changed_by, impact.",
+			Enabled: true, Priority: 200, Source: "device", Action: "alert",
+			AlertType: models.AlertTypeConfigChange, SeedVersion: seedVerFullCoverage,
+			MatchJSON: `{"op":"eq","field":"event_type","value":"config_change"}`},
+		{Name: "Default: SSH host key changed", Description: "SSH host key changed (possible MITM or reinstall). Matchable field: fingerprint. Defaults to critical.",
+			Enabled: true, Priority: 200, Source: "device", Action: "alert",
+			AlertType: models.AlertTypeSSHHostKeyChanged, SeedVersion: seedVerFullCoverage,
+			MatchJSON: `{"op":"eq","field":"event_type","value":"ssh_host_key_changed"}`},
+		{Name: "Default: Probe data lag", Description: "Collector data arriving late for a probe. Governed by the Default/site layers only (no device attribution). Add a probe_id condition to scope one probe.",
+			Enabled: true, Priority: 200, Source: "device", Action: "alert",
+			AlertType: models.AlertTypeProbeDataLag, SeedVersion: seedVerFullCoverage,
+			MatchJSON: `{"op":"eq","field":"event_type","value":"probe_data_lag"}`},
+		{Name: "Default: Probe data truncated", Description: "Collector payload truncated. Governed by the Default layer ONLY — moving this rule to a site/device profile disables it. Matchable: probe_id, probe_name.",
+			Enabled: true, Priority: 200, Source: "device", Action: "alert",
+			AlertType: models.AlertTypeProbeDataTruncated, SeedVersion: seedVerFullCoverage,
+			MatchJSON: `{"op":"eq","field":"event_type","value":"probe_data_truncated"}`},
+
+		// trap source. HA_STATE_CHANGE parses as warning — an enabled blank
+		// rule is neutral. HA_MEMBER_UP parses as INFO: ProcessTrap's LC-14
+		// gate drops info/notice traps UNLESS a rule matches, so this seed
+		// MUST ship disabled — enabling it is the documented opt-in.
+		{Name: "Default: HA state change", Description: "HA state transition trap (warning). Customize severity/cooldown/routing here.",
+			Enabled: true, Priority: 200, Source: "trap", Action: "alert",
+			AlertType: models.AlertTypeHAStateChange, SeedVersion: seedVerFullCoverage,
+			MatchJSON: `{"op":"eq","field":"trap_type","value":"HA_STATE_CHANGE"}`},
+		{Name: "Default: HA member up", Description: "HA member rejoined (informational trap — muted by default). ENABLE this rule to opt the info-severity trap into alerting.",
+			Enabled: false, Priority: 200, Source: "trap", Action: "alert",
+			AlertType: models.AlertTypeHAMemberUp, SeedVersion: seedVerFullCoverage,
+			MatchJSON: `{"op":"eq","field":"trap_type","value":"HA_MEMBER_UP"}`},
+
+		// flow_security, detector-specific — match the detect registry Name()
+		// strings. Broad hit counters on these are per-detection (noisy by
+		// design); the rules are customize handles, not counters.
+		{Name: "Default: Cleartext protocol", Description: "Cleartext protocol where encryption is expected. Add source_ip/dst_port conditions to narrow; switch to Suppress to mute.",
+			Enabled: true, Priority: 200, Source: "flow_security", Action: "alert",
+			AlertType: models.AlertTypeSFlowCleartext, SeedVersion: seedVerFullCoverage,
+			MatchJSON: `{"op":"eq","field":"detector","value":"cleartext"}`},
+		{Name: "Default: Unexpected egress", Description: "Egress to an unexpected destination network. Add source_ip/dst conditions to narrow; switch to Suppress to mute.",
+			Enabled: true, Priority: 200, Source: "flow_security", Action: "alert",
+			AlertType: models.AlertTypeSFlowUnexpectedEgress, SeedVersion: seedVerFullCoverage,
+			MatchJSON: `{"op":"eq","field":"detector","value":"unexpected_egress"}`},
+		{Name: "Default: DDoS volumetric", Description: "Victim-keyed volumetric DDoS. source_ip carries the VICTIM address. Defaults to critical.",
+			Enabled: true, Priority: 200, Source: "flow_security", Action: "alert",
+			AlertType: models.AlertTypeSFlowDDoSVolumetric, SeedVersion: seedVerFullCoverage,
+			MatchJSON: `{"op":"eq","field":"detector","value":"ddos_volumetric"}`},
+		{Name: "Default: DDoS prefix", Description: "Victim-prefix-keyed DDoS. source_ip carries the victim prefix. Defaults to critical.",
+			Enabled: true, Priority: 200, Source: "flow_security", Action: "alert",
+			AlertType: models.AlertTypeSFlowDDoSPrefix, SeedVersion: seedVerFullCoverage,
+			MatchJSON: `{"op":"eq","field":"detector","value":"ddos_prefix"}`},
+		{Name: "Default: Deny storm (per source)", Description: "Deny-storm detections consolidate into the SFLOW_SECURITY card; this rule governs the underlying detections (Suppress mutes them; severity applies when deny_storm wins the card).",
+			Enabled: true, Priority: 200, Source: "flow_security", Action: "alert",
+			AlertType: models.AlertTypeSFlowDenyStorm, SeedVersion: seedVerFullCoverage,
+			MatchJSON: `{"op":"eq","field":"detector","value":"deny_storm"}`},
+		{Name: "Default: Deny storm victim", Description: "Victim-keyed deny storm (many sources denied hitting one target). source_ip carries the victim.",
+			Enabled: true, Priority: 200, Source: "flow_security", Action: "alert",
+			AlertType: models.AlertTypeSFlowDenyStormVictim, SeedVersion: seedVerFullCoverage,
+			MatchJSON: `{"op":"eq","field":"detector","value":"deny_storm_victim"}`},
+		{Name: "Default: Denied then allowed", Description: "A source that was denied later got an allow through a different policy. Matchable: source_ip, policy fields.",
+			Enabled: true, Priority: 200, Source: "flow_security", Action: "alert",
+			AlertType: models.AlertTypeSFlowDeniedThenAllowed, SeedVersion: seedVerFullCoverage,
+			MatchJSON: `{"op":"eq","field":"detector","value":"denied_then_allowed"}`},
+		{Name: "Default: sFlow sampling backoff", Description: "Agent raised its sampling rate under load (telemetry fidelity drop).",
+			Enabled: true, Priority: 200, Source: "flow_security", Action: "alert",
+			AlertType: models.AlertTypeSFlowSamplingBackoff, SeedVersion: seedVerFullCoverage,
+			MatchJSON: `{"op":"eq","field":"detector","value":"sampling_backoff"}`},
+		{Name: "Default: Flow capacity", Description: "Interface running near capacity per flow telemetry.",
+			Enabled: true, Priority: 200, Source: "flow_security", Action: "alert",
+			AlertType: models.AlertTypeSFlowCapacity, SeedVersion: seedVerFullCoverage,
+			MatchJSON: `{"op":"eq","field":"detector","value":"capacity"}`},
+		{Name: "Default: Sampling rate change", Description: "sFlow sampling rate changed on an agent (guards the pre-multiplied-bytes contract).",
+			Enabled: true, Priority: 200, Source: "flow_security", Action: "alert",
+			AlertType: models.AlertTypeSFlowSamplingRateChange, SeedVersion: seedVerFullCoverage,
+			MatchJSON: `{"op":"eq","field":"detector","value":"sampling_rate_change"}`},
+
+		// flow_security, broad — priority 210 so every detector-specific rule
+		// above (200) wins first. security_digest is stamped explicitly by the
+		// digest consult (never raw FlowSecFields) so security_event rules
+		// can't accidentally govern digests.
+		{Name: "Default: Security event (per-source card)", Description: "Per-source consolidated security card (port scan, threat intel, exfil, spreader, beacon, deny storm). Detector-specific rules above take precedence.",
+			Enabled: true, Priority: 210, Source: "flow_security", Action: "alert",
+			AlertType: models.AlertTypeSFlowSecurity, SeedVersion: seedVerFullCoverage,
+			MatchJSON: `{"op":"eq","field":"event_type","value":"security_event"}`},
+		{Name: "Default: Security storm digest", Description: "Cross-source storm rollup (one digest per site+detector per cycle). Suppress here mutes digests without touching per-source cards.",
+			Enabled: true, Priority: 210, Source: "flow_security", Action: "alert",
+			AlertType: models.AlertTypeSFlowSecurityDigest, SeedVersion: seedVerFullCoverage,
+			MatchJSON: `{"op":"eq","field":"event_type","value":"security_digest"}`},
+
+		// Custom-rule output templates — DISABLED. These types are emitted BY
+		// operator-authored rules, so a live seed would be circular; each
+		// template is a safe starting point (placeholder match that hits
+		// nothing until edited).
+		{Name: "Default: Custom log rule (template)", Description: "Template: enable and edit the match to build your own syslog rule; severity/cooldown set here apply to its LOG_RULE_MATCH alerts. The placeholder pattern matches nothing until you change it.",
+			Enabled: false, Priority: 200, Source: "syslog", Action: "alert",
+			AlertType: models.AlertTypeLogRuleMatch, SeedVersion: seedVerFullCoverage,
+			MatchJSON: `{"op":"contains","field":"message","value":"EDIT-THIS-PATTERN"}`},
+		{Name: "Default: Custom flow rule (template)", Description: "Template for a future flow-match rule. NOTE: the flow source has no live evaluator yet (forward-plumbing since v0.11.111) — enabling this does nothing until it lands.",
+			Enabled: false, Priority: 200, Source: "flow", Action: "alert",
+			AlertType: models.AlertTypeFlowRuleMatch, SeedVersion: seedVerFullCoverage,
+			MatchJSON: `{"op":"eq","field":"dst_port","value":"NEVER-MATCHES"}`},
 	}
+}
+
+// DefaultRuleTemplate returns the shipped seed definition for an alert type
+// (any generation) — the UI's "seed was deleted → prefill a fresh copy" path.
+// Single source of truth: the template is the same struct the seeder inserts.
+func (d *Database) DefaultRuleTemplate(at models.AlertType) (*models.EventRule, bool) {
+	for _, r := range defaultEventRules() {
+		if r.AlertType == at {
+			rule := r
+			return &rule, true
+		}
+	}
+	return nil, false
 }
 
 // event_rules.go — persistence for the unified, vendor-aware alert/suppress rule

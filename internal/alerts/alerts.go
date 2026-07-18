@@ -1062,6 +1062,49 @@ func (am *AlertManager) ProcessSecurityDigest(siteID *uint, detector string, gro
 	if resolved.RuleSeverity != "" {
 		newSev = resolved.RuleSeverity
 	}
+
+	// Digest rule consult (v0.11.119, parity with ProcessSecurityEvent's csRule
+	// block): a flow_security Event Rule matching the DEDICATED
+	// "security_digest" event_type governs the rollup. deviceID 0 → site+Default
+	// chain only (a whole-site rollup must not inherit one device's profile).
+	// Placed BEFORE FindOpenDigestAlert so a suppress touches no DB row, no
+	// cooldown state, no lastSeverity. applyRulePolicy reads the policy cache,
+	// so the overlay stays under the same RLock.
+	am.mu.RLock()
+	dgRule := am.matchFlowSecurityRuleLocked(flowSecDigestFields(detector, siteID), 0, siteID)
+	if dgRule != nil && dgRule.action == "alert" {
+		if dgRule.severity != "" {
+			newSev = dgRule.severity
+		}
+		if dgRule.policyID != nil {
+			resolved.PolicyID = dgRule.policyID
+			am.applyRulePolicy(&resolved, *dgRule.policyID)
+		}
+		if dgRule.cooldownMin != nil && *dgRule.cooldownMin > 0 {
+			cooldown = time.Duration(*dgRule.cooldownMin) * time.Minute
+		}
+	}
+	am.mu.RUnlock()
+	if dgRule != nil {
+		am.RecordEventRuleHit(dgRule.id)
+		if dgRule.action == "suppress" {
+			// Ack the storm detections (parity with the poller's per-detection
+			// suppress pass): rollUpSecurityStorms already removed them from the
+			// per-source path, so without the ack they'd linger unlinked and
+			// unacknowledged on the sFlow card.
+			ids := make([]uint, 0, len(group))
+			for _, det := range group {
+				ids = append(ids, det.ID)
+			}
+			if am.db != nil {
+				if err := am.db.AckFlowDetections(ids); err != nil {
+					log.Printf("digest suppress: ack %d detections: %v", len(ids), err)
+				}
+			}
+			return 0, nil
+		}
+	}
+
 	msg := buildDigestMessage(detector, distinct, group)
 
 	lookback := securityEventLinkLookback

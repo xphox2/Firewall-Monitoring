@@ -165,6 +165,7 @@ type AlertPolicyStore interface {
 	CreateEventRule(r *models.EventRule) error
 	UpdateEventRule(r *models.EventRule) error
 	DeleteEventRule(id uint) error
+	DefaultRuleTemplate(at models.AlertType) (*models.EventRule, bool)
 	RecentSyslogForTest(limit int) ([]models.SyslogMessage, error)
 	// Event rule profiles (v48): the Default > Site > Device toggle+rule chain.
 	GetAllEventRuleProfiles() ([]models.EventRuleProfile, error)

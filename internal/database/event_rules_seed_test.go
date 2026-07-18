@@ -63,8 +63,8 @@ func TestEnsureDefaultRules_SpikeTrapTemplatesInert(t *testing.T) {
 	if spikeCount != 1 {
 		t.Errorf("want 1 spike template, got %d", spikeCount)
 	}
-	if trapCount != 4 {
-		t.Errorf("want 4 trap templates, got %d", trapCount)
+	if trapCount != 6 {
+		t.Errorf("want 6 trap templates (4 gen-4 + 2 gen-5), got %d", trapCount)
 	}
 
 	// Ownership flag must NOT include traffic_spike or any trap type (compared
@@ -190,14 +190,14 @@ func TestEnsureDefaultRules_UpgradeMarker3To4(t *testing.T) {
 	d.db.Model(&models.EventRule{}).Where("source = ?", "spike").Count(&spikeCount)
 	d.db.Model(&models.EventRule{}).Where("source = ?", "trap").Count(&trapCount)
 	d.db.Model(&models.EventRule{}).Where("name = ?", "VPN tunnel down").Count(&vpnCount)
-	if spikeCount != 1 || trapCount != 4 {
-		t.Errorf("gen-4 rules not seeded on 3→4 upgrade: spike=%d trap=%d", spikeCount, trapCount)
+	if spikeCount != 1 || trapCount != 6 {
+		t.Errorf("gen-4+5 rules not seeded on 3→current upgrade: spike=%d trap=%d (want 1/6)", spikeCount, trapCount)
 	}
 	if vpnCount != 0 {
 		t.Error("operator-deleted gen-2 state seed was resurrected on the 3→4 upgrade")
 	}
-	if v, _ := d.GetSettingValue("event_rules_seed_version"); v != "4" {
-		t.Errorf("marker not advanced to 4, got %q", v)
+	if v, _ := d.GetSettingValue("event_rules_seed_version"); v != "5" {
+		t.Errorf("marker not advanced to 5, got %q", v)
 	}
 	if v, _ := d.GetSettingValue("state_engine_owns"); v != "interface_down" {
 		t.Errorf("ownership flag clobbered on upgrade: got %q", v)
@@ -278,5 +278,86 @@ func TestEnsureDefaultRules_OwnershipFlagNotClobbered(t *testing.T) {
 	d.EnsureDefaultRules()
 	if v, _ := d.GetSettingValue("state_engine_owns"); v != "vpn_tunnel_down" {
 		t.Errorf("ownership flag clobbered on bump: got %q, want operator's %q", v, "vpn_tunnel_down")
+	}
+}
+
+// TestEnsureDefaultRules_UpgradeMarker4To5 exercises the v0.11.119 upgrade: a
+// marker at "4" (all gen 1-4 rows present) must seed ONLY the 23 gen-5 rules,
+// leave a deleted gen-4 seed dead, skip a same-name operator rule untouched,
+// pin the disabled-by-design seeds to enabled=false (the GORM default:true
+// write-back trap), advance the marker to 5, and keep the ownership flag.
+func TestEnsureDefaultRules_UpgradeMarker4To5(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	d.EnsureDefaultEventProfile()
+	d.EnsureDefaultRules() // fresh: everything, marker=5
+
+	// Roll back to a gen-4 world: remove the gen-5 rows, set marker 4.
+	if err := d.db.Where("seed_version = ?", 5).Delete(&models.EventRule{}).Error; err != nil {
+		t.Fatalf("clear gen-5 rows: %v", err)
+	}
+	// Operator deleted a gen-4 trap seed before upgrading.
+	if err := d.db.Where("name = ?", "HA failover").Delete(&models.EventRule{}).Error; err != nil {
+		t.Fatalf("delete trap seed: %v", err)
+	}
+	// Operator hand-created a rule that collides with a gen-5 seed name.
+	op := &models.EventRule{Name: "Default: Device offline", Enabled: true, Priority: 7,
+		Source: "device", Action: "suppress", Description: "operator's own",
+		MatchJSON: `{"op":"eq","field":"event_type","value":"device_offline"}`}
+	if err := d.db.Create(op).Error; err != nil {
+		t.Fatalf("create operator rule: %v", err)
+	}
+	if err := d.UpsertSetting(&models.SystemSetting{Key: "event_rules_seed_version", Value: "4"}); err != nil {
+		t.Fatalf("set marker 4: %v", err)
+	}
+	if err := d.UpsertSetting(&models.SystemSetting{Key: "state_engine_owns", Value: "interface_down"}); err != nil {
+		t.Fatalf("edit flag: %v", err)
+	}
+
+	d.EnsureDefaultRules() // upgrade 4→5
+
+	var gen5 int64
+	d.db.Model(&models.EventRule{}).Where("seed_version = ?", 5).Count(&gen5)
+	if gen5 != 22 { // 23 minus the name-dedup'd "Default: Device offline"
+		t.Errorf("gen-5 rows after 4→5 upgrade = %d, want 22 (device-offline dedup'd)", gen5)
+	}
+	var haFailover int64
+	d.db.Model(&models.EventRule{}).Where("name = ?", "HA failover").Count(&haFailover)
+	if haFailover != 0 {
+		t.Error("operator-deleted gen-4 trap seed was resurrected on the 4→5 upgrade")
+	}
+	var gotOp models.EventRule
+	if err := d.db.First(&gotOp, op.ID).Error; err != nil {
+		t.Fatalf("operator rule vanished: %v", err)
+	}
+	if gotOp.Action != "suppress" || gotOp.Priority != 7 || gotOp.SeedVersion != 0 {
+		t.Errorf("same-name operator rule mutated by seeding: %+v", gotOp)
+	}
+	// Disabled-by-design gen-5 seeds must land enabled=false despite the
+	// default:true column (create-then-update pin).
+	for _, name := range []string{"Default: HA member up", "Default: Custom log rule (template)", "Default: Custom flow rule (template)"} {
+		var r models.EventRule
+		if err := d.db.Where("name = ?", name).First(&r).Error; err != nil {
+			t.Errorf("%s: missing after upgrade: %v", name, err)
+			continue
+		}
+		if r.Enabled {
+			t.Errorf("%s: must land DISABLED (GORM default-write-back trap)", name)
+		}
+	}
+	if v, _ := d.GetSettingValue("event_rules_seed_version"); v != "5" {
+		t.Errorf("marker not advanced to 5, got %q", v)
+	}
+	if v, _ := d.GetSettingValue("state_engine_owns"); v != "interface_down" {
+		t.Errorf("ownership flag clobbered on upgrade: got %q", v)
+	}
+
+	// Double boot: idempotent.
+	var before int64
+	d.db.Model(&models.EventRule{}).Count(&before)
+	d.EnsureDefaultRules()
+	var after int64
+	d.db.Model(&models.EventRule{}).Count(&after)
+	if before != after {
+		t.Errorf("second boot changed rule count: %d → %d", before, after)
 	}
 }
