@@ -59,8 +59,13 @@ func (d *Database) LinkFlowDetectionsToAlert(detectionIDs []uint, alertID uint) 
 // detector-agnostic (survives a change in which detector "wins" the event).
 func (d *Database) FindOpenAlertForSource(srcAddr string, since time.Time) (*models.Alert, error) {
 	var det models.FlowDetection
+	// category='security' guards the fold: policy/operational detections from
+	// the same source are ALSO linked to (their own per-detection) alerts, and
+	// without the filter the newest such link would hand ProcessSecurityEvent
+	// e.g. a SFLOW_CLEARTEXT alert to escalate/rewrite into a security event.
 	err := d.db.
-		Where("src_addr = ? AND alert_id IS NOT NULL AND detected_at >= ?", srcAddr, since.UTC()).
+		Where("src_addr = ? AND alert_id IS NOT NULL AND detected_at >= ? AND category = ?",
+			srcAddr, since.UTC(), "security").
 		Order("detected_at DESC").First(&det).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil

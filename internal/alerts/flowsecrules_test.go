@@ -191,3 +191,42 @@ func TestProcessFlowDetection_RuleSuppressAndCustomize(t *testing.T) {
 		t.Errorf("alert must carry the detection subject in SourceAddr, got %q", a.SourceAddr)
 	}
 }
+
+// TestSecurityFold_IgnoresPolicyLinkedAlerts pins the FindOpenAlertForSource
+// category guard: a policy detection (cleartext) from source X linked to its
+// own SFLOW_CLEARTEXT alert must NOT be handed to the security fold — else
+// ProcessSecurityEvent would escalate/rewrite the cleartext alert into a
+// security event.
+func TestSecurityFold_IgnoresPolicyLinkedAlerts(t *testing.T) {
+	_, db := newTestManager(t)
+	a := models.Alert{AlertType: "SFLOW_CLEARTEXT", Severity: "warning", Timestamp: time.Now()}
+	if err := db.Gorm().Create(&a).Error; err != nil {
+		t.Fatal(err)
+	}
+	det := models.FlowDetection{Detector: "cleartext", Category: "policy", SrcAddr: "10.0.0.5",
+		DetectedAt: time.Now().UTC(), AlertID: &a.ID} // UTC: ToModel stores UTC so the SQLite string-time range compare works
+	if err := db.Gorm().Create(&det).Error; err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.FindOpenAlertForSource("10.0.0.5", time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("FindOpenAlertForSource: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("policy-linked alert must not be returned for the security fold, got %+v", got)
+	}
+	// A security-category link from the same source IS returned.
+	sa := models.Alert{AlertType: "SFLOW_SECURITY", Severity: "warning", Timestamp: time.Now()}
+	if err := db.Gorm().Create(&sa).Error; err != nil {
+		t.Fatal(err)
+	}
+	sdet := models.FlowDetection{Detector: "port_scan", Category: "security", SrcAddr: "10.0.0.5",
+		DetectedAt: time.Now().UTC(), AlertID: &sa.ID}
+	if err := db.Gorm().Create(&sdet).Error; err != nil {
+		t.Fatal(err)
+	}
+	got, err = db.FindOpenAlertForSource("10.0.0.5", time.Now().Add(-time.Hour))
+	if err != nil || got == nil || got.ID != sa.ID {
+		t.Fatalf("security-linked alert must be returned; got %+v err %v", got, err)
+	}
+}
