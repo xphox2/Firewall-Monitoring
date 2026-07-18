@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"time"
 
 	"firewall-mon/internal/models"
 
@@ -152,6 +153,8 @@ func (d *Database) CloneEventRuleProfile(id uint, newName string) (*models.Event
 			r.SeedVersion = 0 // a cloned seed is operator-owned
 			r.HitCount = 0
 			r.LastHitAt = nil
+			r.CreatedAt = time.Time{} // fresh timestamps — a clone isn't as old as its source
+			r.UpdatedAt = time.Time{}
 			if err := tx.Create(&r).Error; err != nil {
 				return err
 			}

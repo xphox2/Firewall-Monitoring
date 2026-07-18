@@ -103,6 +103,9 @@ func (h *Handler) ListEventRules(c *gin.Context) {
 		if def, err := db.GetDefaultEventRuleProfile(); err == nil {
 			defaultID = def.ID
 		}
+		if pidRaw == 0 {
+			pidRaw = defaultID // 0-as-Default convention (SuggestedRule docs it)
+		}
 		filtered := make([]models.EventRule, 0, len(rules))
 		for _, r := range rules {
 			pid := r.ProfileID

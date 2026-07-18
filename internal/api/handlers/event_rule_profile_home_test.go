@@ -64,3 +64,46 @@ func TestUpdateEventRule_OmittedProfileIDPreservesLayer(t *testing.T) {
 		t.Fatalf("unknown profile must 400, got %d", code)
 	}
 }
+
+// M-fix regression: the suggester's governing-profile resolution must use the
+// DEVICE'S actual site (alert.SiteID is only stamped on device-less rollups),
+// or a class suppress for a device under a site profile would land in Default
+// where the site layer out-ranks it.
+func TestSuggestEventRule_GoverningProfileUsesDeviceSite(t *testing.T) {
+	h, db := setupTestHandler(t)
+	db.EnsureDefaultEventProfile()
+	siteProf := models.EventRuleProfile{Name: "SiteProf"}
+	if err := db.CreateEventRuleProfile(&siteProf); err != nil {
+		t.Fatal(err)
+	}
+	site := models.Site{Name: "branch-site"}
+	if err := db.Gorm().Create(&site).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetSiteEventProfile(site.ID, &siteProf.ID); err != nil {
+		t.Fatal(err)
+	}
+	dev := models.Device{Name: "fw-b", IPAddress: "10.2.2.2", Vendor: "fortigate", SiteID: &site.ID}
+	if err := db.Gorm().Create(&dev).Error; err != nil {
+		t.Fatal(err)
+	}
+	// Device-attributed alert: SiteID deliberately nil (only rollups carry it).
+	alert := models.Alert{DeviceID: dev.ID, AlertType: models.AlertTypeDeviceOffline,
+		Severity: "critical", Message: "offline", MetricName: "device_offline"}
+	if err := db.Gorm().Create(&alert).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest("GET", "/admin/api/alerts/1/suggested-rule", nil)
+	c.Params = gin.Params{{Key: "id", Value: fmt.Sprintf("%d", alert.ID)}}
+	h.SuggestEventRuleForAlert(c)
+	if rec.Code != 200 {
+		t.Fatalf("HTTP %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !bytes.Contains([]byte(body), []byte(`"profile_name":"SiteProf"`)) {
+		t.Fatalf("suggestion must target the device's SITE profile (chain head), got: %s", body)
+	}
+}

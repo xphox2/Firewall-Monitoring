@@ -265,10 +265,19 @@ func (h *Handler) SuggestEventRuleForAlert(c *gin.Context) {
 		ProbeID:    alert.ProbeID,
 		StateOwned: h.stateOwnedSet(db),
 	}
+	// deviceSiteID: the device's ACTUAL site. Alert.SiteID is stamped only on
+	// device-less site rollups (digests), so relying on it alone would hide
+	// the site layer for every device-attributed alert — and a class suppress
+	// would land in Default where the site profile out-layers it.
+	var deviceSiteID *uint
 	if alert.DeviceID != 0 {
 		if d, err := db.GetDevice(alert.DeviceID); err == nil && d != nil {
 			in.Vendor = d.Vendor
+			deviceSiteID = d.SiteID
 		}
+	}
+	if deviceSiteID == nil {
+		deviceSiteID = alert.SiteID
 	}
 	// v48 profile targeting context: the Default profile, the alert device's
 	// governing profile (chain head: device config → site config → Default),
@@ -294,8 +303,8 @@ func (h *Handler) SuggestEventRuleForAlert(c *gin.Context) {
 			}
 		}
 	}
-	if !governSet && alert.SiteID != nil {
-		if cfg, err := db.GetSiteAlertConfig(*alert.SiteID); err == nil && cfg.EventProfileID != nil {
+	if !governSet && deviceSiteID != nil {
+		if cfg, err := db.GetSiteAlertConfig(*deviceSiteID); err == nil && cfg.EventProfileID != nil {
 			if name, ok := profileName[*cfg.EventProfileID]; ok {
 				in.GoverningProfileID, in.GoverningProfileName = *cfg.EventProfileID, name
 			}
@@ -327,19 +336,25 @@ func (h *Handler) SuggestEventRuleForAlert(c *gin.Context) {
 			}
 		}
 	}
-	// Global source-mute honesty: warn when any non-default profile carries an
-	// enabled flow_security ALERT rule (its layer would run before a Default
-	// mute for devices it governs).
+	// Global source-mute honesty: warn when any non-default profile carries a
+	// LIVE (enabled, unexpired) flow_security ALERT rule — its layer would run
+	// before a Default mute for devices it governs. Expired temp rules are
+	// skipped so a lapsed 24h rule can't keep crying wolf.
 	if rulesErr == nil {
+		now := time.Now()
 		for i := range rules {
 			pid := rules[i].ProfileID
 			if pid == 0 {
 				pid = in.DefaultProfileID
 			}
-			if rules[i].Enabled && rules[i].Source == "flow_security" && rules[i].Action == "alert" && pid != in.DefaultProfileID {
-				in.ScopeWarnFlowSec = true
-				break
+			if !rules[i].Enabled || rules[i].Source != "flow_security" || rules[i].Action != "alert" || pid == in.DefaultProfileID {
+				continue
 			}
+			if rules[i].ExpiresAt != nil && !rules[i].ExpiresAt.After(now) {
+				continue
+			}
+			in.ScopeWarnFlowSec = true
+			break
 		}
 	}
 

@@ -49,8 +49,8 @@ func (h *Handler) ListEventRuleProfiles(c *gin.Context) {
 	rows := make([]eventProfileRow, 0, len(profiles))
 	for _, p := range profiles {
 		row := eventProfileRow{EventRuleProfile: p}
-		if c := counts[p.ID]; c != nil {
-			row.Counts = *c
+		if pc := counts[p.ID]; pc != nil {
+			row.Counts = *pc
 		}
 		rows = append(rows, row)
 	}
@@ -192,6 +192,10 @@ func (h *Handler) CloneEventRuleProfile(c *gin.Context) {
 	}
 	if msg := validateProfileName(req.Name); msg != "" {
 		c.JSON(http.StatusBadRequest, response.Error(msg))
+		return
+	}
+	if _, err := db.GetEventRuleProfile(id); err != nil {
+		c.JSON(http.StatusNotFound, response.Error("Profile not found"))
 		return
 	}
 	clone, err := db.CloneEventRuleProfile(id, strings.TrimSpace(req.Name))
@@ -364,13 +368,26 @@ func (h *Handler) BatchAssignEventProfile(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
-	pid := id
-	assigned := 0
+	// Validate the WHOLE list before writing anything (a mid-list 400 after
+	// partial writes would leave assignments half-applied), and refresh the
+	// resolver even on a write error so any assignments that DID land are
+	// live in this process, not stale until the next cadence tick.
 	for _, sid := range req.SiteIDs {
 		if _, err := db.GetSite(sid); err != nil {
 			c.JSON(http.StatusBadRequest, response.Error("Site not found"))
 			return
 		}
+	}
+	for _, did := range req.DeviceIDs {
+		if _, err := db.GetDevice(did); err != nil {
+			c.JSON(http.StatusBadRequest, response.Error("Device not found"))
+			return
+		}
+	}
+	defer h.refreshAlertConfigCache(db)
+	pid := id
+	assigned := 0
+	for _, sid := range req.SiteIDs {
 		if err := db.SetSiteEventProfile(sid, &pid); err != nil {
 			httputil.InternalError(c, "Failed to assign site", err)
 			return
@@ -378,17 +395,12 @@ func (h *Handler) BatchAssignEventProfile(c *gin.Context) {
 		assigned++
 	}
 	for _, did := range req.DeviceIDs {
-		if _, err := db.GetDevice(did); err != nil {
-			c.JSON(http.StatusBadRequest, response.Error("Device not found"))
-			return
-		}
 		if err := db.SetDeviceEventProfile(did, &pid); err != nil {
 			httputil.InternalError(c, "Failed to assign device", err)
 			return
 		}
 		assigned++
 	}
-	h.refreshAlertConfigCache(db)
 	c.JSON(http.StatusOK, response.Success(gin.H{"assigned": assigned}))
 }
 
