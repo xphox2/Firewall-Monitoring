@@ -159,6 +159,7 @@
     // all rules — the legacy standalone view); filter is the Rules-tab chip
     // (all|alert|suppress|temp|disabled), applied client-side.
     function loadRules(profileId, filter) {
+        if ((profileId || 0) !== currentProfileId) groupCollapsed = {}; // per-profile collapse discipline
         currentProfileId = profileId || 0;
         if (filter) currentRuleFilter = filter; else if (!profileId) currentRuleFilter = 'all';
         var url = API + '/event-rules' + (currentProfileId ? ('?profile_id=' + currentProfileId) : '');
@@ -245,6 +246,18 @@
         }
     }
 
+    // Rules-tab source grouping (v0.11.120): the Default profile now ships ~40
+    // rules, so the flat table groups by source with collapsible headers —
+    // mirroring the toggle matrix's family grouping. Collapse state is
+    // per-profile (reset in loadRules); filter chips apply INSIDE groups.
+    var groupCollapsed = {};
+    var GROUP_ORDER = ['syslog', 'any', 'flow', 'state', 'metric', 'spike', 'trap', 'device', 'flow_security'];
+    var GROUP_LABELS = {
+        syslog: 'Syslog', any: 'Any source', flow: 'Flow rules',
+        state: 'State (interfaces & VPN)', metric: 'Metrics', spike: 'Traffic spike',
+        trap: 'SNMP traps', device: 'Device & probe health', flow_security: 'Flow security'
+    };
+
     function renderTable() {
         var wrap = $('event-rules-table-wrap');
         if (!wrap) return;
@@ -255,7 +268,7 @@
                     'No rules in this profile yet — everything inherits from Default. Click “+ Add rule”.') + '</div>';
             return;
         }
-        var rows = visible.map(function (r) {
+        var rowHTML = function (r) {
             var actionBadge = r.action === 'suppress'
                 ? '<span class="badge" style="background:var(--fwmon-card-bg);color:var(--fwmon-text-faint)">suppress</span>'
                 : '<span class="badge">alert</span>';
@@ -277,7 +290,28 @@
                 '<button class="btn secondary sm" data-er-edit="' + r.id + '" data-min-role="admin">Edit</button> ' +
                 '<button class="btn danger sm" data-er-delete="' + r.id + '" data-min-role="admin">Delete</button>' +
                 '</td></tr>';
-        }).join('');
+        };
+
+        // Bucket by source in fixed order; unknown sources append at the end.
+        var buckets = {};
+        var order = [];
+        GROUP_ORDER.forEach(function (s) { buckets[s] = []; });
+        visible.forEach(function (r) {
+            var src = r.source || 'syslog';
+            if (!buckets[src]) { buckets[src] = []; order.push(src); }
+            buckets[src].push(r);
+        });
+        var rows = '';
+        GROUP_ORDER.concat(order).forEach(function (src) {
+            var group = buckets[src];
+            if (!group || !group.length) return;
+            var isCollapsed = !!groupCollapsed[src];
+            rows += '<tr class="er-group-head" data-er-group="' + esc(src) + '" style="cursor:pointer">' +
+                '<td colspan="11" style="background:var(--fwmon-card-bg);font-weight:600;padding:8px 10px">' +
+                (isCollapsed ? '▸' : '▾') + ' ' + esc(GROUP_LABELS[src] || src) +
+                ' <span style="color:var(--fwmon-text-faint);font-weight:400">(' + group.length + ')</span></td></tr>';
+            if (!isCollapsed) rows += group.map(rowHTML).join('');
+        });
         wrap.innerHTML = '<div class="table-wrap" style="overflow-x:auto"><table class="data-table">' +
             '<thead><tr><th>Pri</th><th>Name</th><th>Source</th><th>Vendor</th><th>Match</th><th>Action</th><th>Severity</th><th>Expires</th><th>Enabled</th><th>Hits</th><th></th></tr></thead>' +
             '<tbody>' + rows + '</tbody></table></div>';
@@ -794,6 +828,15 @@
         var wrap = $('event-rules-table-wrap');
         if (wrap) {
             wrap.addEventListener('click', function (ev) {
+                // Group header toggle first — a header click must never fall
+                // through to the row edit/delete handling.
+                var gh = ev.target.closest('[data-er-group]');
+                if (gh) {
+                    var src = gh.getAttribute('data-er-group');
+                    groupCollapsed[src] = !groupCollapsed[src];
+                    renderTable();
+                    return;
+                }
                 var t = ev.target.closest('[data-er-edit],[data-er-delete]');
                 if (!t) return;
                 if (t.hasAttribute('data-er-edit')) openRuleModal(parseInt(t.getAttribute('data-er-edit'), 10));
