@@ -16,6 +16,10 @@
     // the pills override per-preview. Emailed reports use the Email Theme
     // setting instead — the pills only change what YOU see here.
     var previewTheme = '';
+    // Preview layout (v0.11.118): 'web' = interactive (SVG charts,
+    // collapsibles); 'email' = the exact email HTML (PNG charts as data:
+    // URIs, device cap) for validating what recipients get.
+    var previewLayout = 'web';
 
     function period() {
         var sel = document.getElementById('report-period');
@@ -31,6 +35,9 @@
         var t = theme();
         document.querySelectorAll('#report-theme-pills .chart-range-pill').forEach(function (b) {
             b.classList.toggle('active', b.getAttribute('data-report-theme') === t);
+        });
+        document.querySelectorAll('#report-layout-pills .chart-range-pill').forEach(function (b) {
+            b.classList.toggle('active', b.getAttribute('data-report-layout') === previewLayout);
         });
     }
 
@@ -61,7 +68,7 @@
         setStatus('Loading…');
         // AdminCommon.apiFetch already parses JSON and returns the body object
         // (it calls res.json() internally) — do NOT call .json() again here.
-        AC.apiFetch('/admin/api/reports/preview?period=' + encodeURIComponent(period()) + '&theme=' + encodeURIComponent(theme()))
+        AC.apiFetch('/admin/api/reports/preview?period=' + encodeURIComponent(period()) + '&theme=' + encodeURIComponent(theme()) + '&layout=' + encodeURIComponent(previewLayout))
             .then(function (json) {
                 if (!json || !json.success || !json.data || !json.data.html) {
                     throw new Error((json && json.error) || 'Empty report');
@@ -155,6 +162,14 @@
             var b = ev.target.closest('[data-report-theme]');
             if (!b) return;
             previewTheme = b.getAttribute('data-report-theme');
+            paintThemePills();
+            loadPreview();
+        });
+        var layoutPills = document.getElementById('report-layout-pills');
+        if (layoutPills) layoutPills.addEventListener('click', function (ev) {
+            var b = ev.target.closest('[data-report-layout]');
+            if (!b) return;
+            previewLayout = b.getAttribute('data-report-layout');
             paintThemePills();
             loadPreview();
         });

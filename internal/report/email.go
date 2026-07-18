@@ -3,6 +3,8 @@ package report
 import (
 	"bytes"
 	"fmt"
+	"mime/quotedprintable"
+	"sort"
 	"time"
 
 	"firewall-mon/internal/models"
@@ -24,16 +26,31 @@ func BuildWeeklyReport(devices []models.Device, deviceData []*DeviceReportData, 
 // sends always-open blocks. Returns (subject, html, error). Renders in the
 // light theme — theme-aware callers use BuildReportWithOps.
 func BuildReport(devices []models.Device, deviceData []*DeviceReportData, tz string, hours int, period, version string, collapsible bool) (string, string, error) {
-	subject, html, _, err := BuildReportWithOps(devices, deviceData, tz, hours, period, version, collapsible, nil, ThemeByName(""))
+	subject, html, _, _, err := BuildReportWithOps(devices, deviceData, tz, hours, period, version, collapsible, nil, ThemeByName(""))
 	return subject, html, err
 }
+
+// emailDeviceChartSlots bounds the per-device CPU/Mem PNGs riding in one
+// email; emailDeviceCap bounds FULL device sections (overflow renders as
+// compact rows); emailQPBudget is the Gmail clip guard — Gmail clips at
+// ~102KB of TRANSFER-ENCODED HTML, so the fit loop measures the
+// quoted-printable bytes exactly as SendHTMLEmail encodes them. A rich
+// device card is ~11.5KB QP, so the cap alone can't guarantee the budget —
+// BuildReportWithOps shrinks the full-section count until it fits.
+const (
+	emailDeviceChartSlots = 6
+	emailDeviceCap        = 12
+	emailQPBudget         = 92 * 1024
+)
 
 // BuildReportWithOps is BuildReport plus the F05/F06 Operations section
 // (nil ops = section omitted) and an explicit theme (v0.11.116 — the web
 // preview follows the SPA Day/Night choice; email follows the
-// report_email_theme setting). Returns (subject, html, text, error); text is
-// the model-generated text/plain alternative (v0.11.117).
-func BuildReportWithOps(devices []models.Device, deviceData []*DeviceReportData, tz string, hours int, period, version string, collapsible bool, ops *OpsStats, theme ReportTheme) (string, string, string, error) {
+// report_email_theme setting). Returns (subject, html, text, attachments,
+// error); text is the model-generated text/plain alternative (v0.11.117);
+// attachments are the themed chart PNGs, produced ONLY for the email render
+// (v0.11.118) — the web preview keeps inline SVGs.
+func BuildReportWithOps(devices []models.Device, deviceData []*DeviceReportData, tz string, hours int, period, version string, collapsible bool, ops *OpsStats, theme ReportTheme) (string, string, string, []notifier.Attachment, error) {
 	m := BuildReportModel(devices, deviceData, tz, hours, period)
 	m.Ops = ops
 	m.Version = version
@@ -46,16 +63,121 @@ func BuildReportWithOps(devices []models.Device, deviceData []*DeviceReportData,
 	for i := range m.Devices {
 		m.Devices[i].IsEmail = m.IsEmail
 	}
-	html, err := RenderReportHTML(m)
+
+	// Plaintext always covers the FULL fleet — rendered before any email
+	// device-section capping.
+	text := RenderReportText(m)
+
+	var html string
+	var attachments []notifier.Attachment
+	var err error
+	if m.IsEmail {
+		html, attachments, err = renderEmailWithCharts(m)
+	} else {
+		html, err = RenderReportHTML(m)
+	}
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", nil, err
 	}
 	loc, e := time.LoadLocation(tz)
 	if e != nil {
 		loc = time.UTC
 	}
 	subject := fmt.Sprintf("Firewall Monitor — %s Report — %s", period, time.Now().In(loc).Format("2006-01-02"))
-	return subject, html, RenderReportText(m), nil
+	return subject, html, text, attachments, nil
+}
+
+// renderEmailWithCharts produces the email HTML + its themed PNG attachments:
+//
+//  1. Device sections are reordered by attention priority (offline → most
+//     alerts → highest CPU) so the devices an operator must see never fall
+//     below the fold or the cap.
+//  2. The top emailDeviceChartSlots drawable devices get CPU/Mem chart PNGs;
+//     the fleet alert timeline rides along when there were alerts.
+//  3. The full-section count starts at emailDeviceCap and SHRINKS until the
+//     quoted-printable HTML fits emailQPBudget (Gmail clips at ~102KB of
+//     encoded HTML with zero warning). Devices below the cap render as
+//     compact summary rows; attachments whose section fell below the cap are
+//     dropped so no orphan image chips appear.
+//
+// Chart failures degrade silently to the HTML tables, which always carry
+// every number.
+func renderEmailWithCharts(m ReportModel) (string, []notifier.Attachment, error) {
+	ordered := append([]DeviceCard(nil), m.Devices...)
+	sort.SliceStable(ordered, func(a, b int) bool {
+		if ordered[a].Online != ordered[b].Online {
+			return !ordered[a].Online // offline first
+		}
+		if ordered[a].AlertCount != ordered[b].AlertCount {
+			return ordered[a].AlertCount > ordered[b].AlertCount
+		}
+		return ordered[a].CPUMax > ordered[b].CPUMax
+	})
+
+	var alertAtt *notifier.Attachment
+	if m.HasAlerts {
+		if png, err := RenderAlertTimelinePNG(m.AlertBuckets, m.Theme); err == nil && png != nil {
+			alertAtt = &notifier.Attachment{ContentID: "report_alerts", Data: png, MIMEType: "image/png"}
+		}
+	}
+
+	// Pre-render chart candidates once; the fit loop below only decides how
+	// many survive.
+	type devChart struct {
+		pos int // position in ordered
+		png []byte
+	}
+	var charts []devChart
+	for i := range ordered {
+		if len(charts) == emailDeviceChartSlots {
+			break
+		}
+		if png, err := RenderCPUMemPNG(ordered[i], m.Theme); err == nil && png != nil {
+			charts = append(charts, devChart{pos: i, png: png})
+		}
+	}
+
+	capN := len(ordered)
+	if capN > emailDeviceCap {
+		capN = emailDeviceCap
+	}
+	for {
+		full := append([]DeviceCard(nil), ordered[:capN]...)
+		var atts []notifier.Attachment
+		if alertAtt != nil {
+			m.AlertChartCID = alertAtt.ContentID
+			atts = append(atts, *alertAtt)
+		}
+		for _, c := range charts {
+			if c.pos >= capN {
+				continue // compact row — no img anchor, so no attachment
+			}
+			cid := fmt.Sprintf("report_cpumem_%d", c.pos)
+			full[c.pos].ChartCID = cid
+			atts = append(atts, notifier.Attachment{ContentID: cid, Data: c.png, MIMEType: "image/png"})
+		}
+		m.Devices = full
+		m.MoreDevices = ordered[capN:]
+
+		html, err := RenderReportHTML(m)
+		if err != nil {
+			return "", nil, err
+		}
+		if qpEncodedLen(html) <= emailQPBudget || capN <= 1 {
+			return html, atts, nil
+		}
+		capN--
+	}
+}
+
+// qpEncodedLen measures the quoted-printable size of s — the bytes Gmail
+// actually counts against its clip threshold.
+func qpEncodedLen(s string) int {
+	var buf bytes.Buffer
+	w := quotedprintable.NewWriter(&buf)
+	_, _ = w.Write([]byte(s))
+	_ = w.Close()
+	return buf.Len()
 }
 
 func buildReport(devices []models.Device, deviceData []*DeviceReportData, tz string, hours int, period, version string) (string, string, error) {
@@ -102,21 +224,16 @@ func BuildCriticalAlertEmail(alert *models.Alert, device *models.Device, recentH
 
 	var attachments []notifier.Attachment
 
-	// Add recent CPU/mem chart if we have history. Interim (until the themed
-	// PNG renderers land): the legacy chart is light-styled on a pure-white
-	// canvas, so a DARK-themed email suppresses it rather than embed a
-	// glaring white slab — the metric numbers are all in the detail table.
-	if len(recentHistory) > 0 && theme.Name != "dark" {
-		chartPNG, err := RenderCPUMemChart(recentHistory, fmt.Sprintf("%s — Recent Status", device.Name))
-		if err == nil && chartPNG != nil {
-			cid := "cpumem_critical"
-			data.CPUMemChartCID = cid
-			attachments = append(attachments, notifier.Attachment{
-				ContentID: cid,
-				Data:      chartPNG,
-				MIMEType:  "image/png",
-			})
-		}
+	// Themed CPU/Mem chart (v0.11.118 — both themes; the old light-only
+	// legacy renderer and its dark-theme suppression are gone).
+	if chartPNG, err := RenderCPUMemHistoryPNG(recentHistory, theme); err == nil && chartPNG != nil {
+		cid := "cpumem_critical"
+		data.CPUMemChartCID = cid
+		attachments = append(attachments, notifier.Attachment{
+			ContentID: cid,
+			Data:      chartPNG,
+			MIMEType:  "image/png",
+		})
 	}
 
 	var buf bytes.Buffer

@@ -79,35 +79,39 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	}
 
 	allowedKeys := map[string]bool{
-		"cpu_threshold":              true,
-		"memory_threshold":           true,
-		"disk_threshold":             true,
-		"session_threshold":          true,
-		"email_enabled":              true,
-		"smtp_host":                  true,
-		"smtp_port":                  true,
-		"smtp_username":              true,
-		"smtp_password":              true,
-		"smtp_from":                  true,
-		"smtp_to":                    true,
-		"slack_webhook":              true,
-		"discord_webhook":            true,
-		"webhook_url":                true,
-		"webhook_secret":             true,
-		"pagerduty_routing_key":      true,
-		"opsgenie_api_key":           true,
-		"teams_webhook":              true,
-		"public_refresh_interval":    true,
-		"public_show_vpn":            true,
-		"public_show_connections":    true,
-		"public_interfaces":          true,
-		"display_timezone":           true,
-		"report_daily_enabled":       true,
-		"report_daily_time":          true,
-		"report_weekly_enabled":      true,
-		"report_weekly_day":          true,
-		"report_recipients":          true,
-		"report_timezone":            true,
+		"cpu_threshold":           true,
+		"memory_threshold":        true,
+		"disk_threshold":          true,
+		"session_threshold":       true,
+		"email_enabled":           true,
+		"smtp_host":               true,
+		"smtp_port":               true,
+		"smtp_username":           true,
+		"smtp_password":           true,
+		"smtp_from":               true,
+		"smtp_to":                 true,
+		"slack_webhook":           true,
+		"discord_webhook":         true,
+		"webhook_url":             true,
+		"webhook_secret":          true,
+		"pagerduty_routing_key":   true,
+		"opsgenie_api_key":        true,
+		"teams_webhook":           true,
+		"public_refresh_interval": true,
+		"public_show_vpn":         true,
+		"public_show_connections": true,
+		"public_interfaces":       true,
+		"display_timezone":        true,
+		"report_daily_enabled":    true,
+		"report_daily_time":       true,
+		"report_weekly_enabled":   true,
+		"report_weekly_day":       true,
+		"report_recipients":       true,
+		"report_timezone":         true,
+		// Email report theme (v0.11.118): light|dark for scheduled/Send Now
+		// reports + critical-alert emails. Read from the DB at send time
+		// (deliberately NOT via the scheduler's RefreshSettings cache).
+		"report_email_theme":         true,
 		"spike_stddev_threshold":     true,
 		"spike_alert_enabled":        true,
 		"spike_min_duration_minutes": true,
@@ -286,6 +290,11 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		case "report_timezone":
 			if len(s.Value) > 64 {
 				c.JSON(http.StatusBadRequest, response.Error("Invalid timezone value"))
+				return
+			}
+		case "report_email_theme":
+			if s.Value != "" && s.Value != "light" && s.Value != "dark" {
+				c.JSON(http.StatusBadRequest, response.Error("Invalid report_email_theme: must be light or dark"))
 				return
 			}
 		case "report_recipients":

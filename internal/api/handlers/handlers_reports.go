@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/base64"
 	"fmt"
 	"log"
 	"net/http"
@@ -55,9 +56,10 @@ func (h *Handler) reportSpikeThreshold() float64 {
 // preview. db is the request-scoped handle (AUDIT-032) so the heavy fleet-wide
 // data gather is cancelled if the operator navigates away mid-render.
 // theme selects the light/dark token set (report.ThemeByName semantics).
-// text is the model-generated text/plain alternative; the preview path
-// discards it (it only renders html).
-func (h *Handler) buildReportHTML(db database.Store, period string, collapsible bool, theme string) (subject, html, text string, err error) {
+// text is the model-generated text/plain alternative; atts are the themed
+// chart PNGs (email render only — collapsible=true yields none). The web
+// preview path discards both.
+func (h *Handler) buildReportHTML(db database.Store, period string, collapsible bool, theme string) (subject, html, text string, atts []notifier.Attachment, err error) {
 	hours, label := reportWindow(period)
 	tz := h.reportTimezone()
 	spikeThreshold := h.reportSpikeThreshold()
@@ -71,7 +73,7 @@ func (h *Handler) buildReportHTML(db database.Store, period string, collapsible 
 
 	devices, err := db.GetAllDevices()
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", nil, err
 	}
 
 	// The report subsystem (internal/report) reads a richer DB surface than the
@@ -80,7 +82,7 @@ func (h *Handler) buildReportHTML(db database.Store, period string, collapsible 
 	// that path; everything else here stays on the interface.
 	cdb, ok := db.(*database.Database)
 	if !ok {
-		return "", "", "", fmt.Errorf("report: concrete database backend unavailable")
+		return "", "", "", nil, fmt.Errorf("report: concrete database backend unavailable")
 	}
 
 	deviceData := make([]*report.DeviceReportData, len(devices))
@@ -108,10 +110,21 @@ func (h *Handler) PreviewReport(c *gin.Context) {
 	// Default dark: the pre-theming preview was hardcoded dark, so a client
 	// that doesn't send ?theme= sees what it always saw.
 	theme := c.DefaultQuery("theme", "dark")
-	subject, html, _, err := h.buildReportHTML(db, period, true, theme)
+	// layout=email renders the REAL email HTML (IsEmail=true, PNG charts,
+	// device cap) with cid: references swapped for data: URIs — browsers
+	// render those fine; only mail clients strip them. Validates the exact
+	// email output without an SMTP round-trip.
+	layout := c.DefaultQuery("layout", "web")
+	subject, html, _, atts, err := h.buildReportHTML(db, period, layout != "email", theme)
 	if err != nil {
 		httputil.InternalError(c, "Failed to build report", err)
 		return
+	}
+	if layout == "email" {
+		for _, att := range atts {
+			html = strings.ReplaceAll(html, "cid:"+att.ContentID,
+				"data:"+att.MIMEType+";base64,"+base64.StdEncoding.EncodeToString(att.Data))
+		}
 	}
 
 	c.JSON(http.StatusOK, response.Success(gin.H{
@@ -168,7 +181,7 @@ func (h *Handler) SendReportNow(c *gin.Context) {
 	}
 
 	// Email theme: honors report_email_theme when set (missing/blank = light).
-	subject, html, text, err := h.buildReportHTML(db, req.Period, false, h.getNotificationSetting("report_email_theme"))
+	subject, html, text, atts, err := h.buildReportHTML(db, req.Period, false, h.getNotificationSetting("report_email_theme"))
 	if err != nil {
 		httputil.InternalError(c, "Failed to build report", err)
 		return
@@ -184,7 +197,7 @@ func (h *Handler) SendReportNow(c *gin.Context) {
 		SMTPTo:       recipients,
 	}
 
-	if err := h.notifier.SendHTMLEmail(subject, text, html, nil, nc, recipients); err != nil {
+	if err := h.notifier.SendHTMLEmail(subject, text, html, atts, nc, recipients); err != nil {
 		log.Printf("Send report failed: %v", err)
 		c.JSON(http.StatusBadGateway, response.Error("Failed to send report: "+err.Error()))
 		return
