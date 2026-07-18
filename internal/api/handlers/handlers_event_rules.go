@@ -179,6 +179,15 @@ func (h *Handler) UpdateEventRule(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error(msg))
 		return
 	}
+	// A payload WITHOUT profile_id (binds as 0) must PRESERVE the rule's
+	// current layer — folding 0 to Default here would silently re-home a
+	// non-default rule on every edit from a client that doesn't send the
+	// field. Moving a rule to Default is expressed with Default's REAL id.
+	if r.ProfileID == 0 {
+		if existing, err := db.GetEventRule(id); err == nil {
+			r.ProfileID = existing.ProfileID
+		}
+	}
 	if msg := resolveRuleProfileID(db, &r); msg != "" {
 		c.JSON(http.StatusBadRequest, response.Error(msg))
 		return
