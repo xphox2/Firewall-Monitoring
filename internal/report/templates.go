@@ -2,62 +2,83 @@ package report
 
 import "html/template"
 
-// criticalAlertTemplate is the HTML template for critical alert emails.
-var criticalAlertTemplate = template.Must(template.New("critical").Parse(`<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"></head>
-<body style="margin:0;padding:0;font-family:Arial,Helvetica,sans-serif;background:#f4f4f4;">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f4;padding:20px 0;">
-<tr><td align="center">
-<table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;overflow:hidden;">
+// criticalAlertTemplate is the HTML template for critical alert emails —
+// the same flat instrument-panel system as the fleet report (theme.go
+// tokens, 600px hybrid single column, MSO ghost tables, td-only padding,
+// no shadows/gradients, no pure white/black). The ghost tables come from
+// the shared msoOpen/msoClose funcs because html/template strips literal
+// HTML comments.
+var criticalAlertTemplate = template.Must(template.New("critical").Funcs(template.FuncMap{
+	"msoOpen":   msoOpen,
+	"msoClose":  msoClose,
+	"fontStack": func() template.CSS { return template.CSS(fontStack) },
+	"monoStack": func() template.CSS { return template.CSS(monoStack) },
+}).Parse(`{{$t := .Theme}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="{{$t.ColorScheme}}">
+<meta name="supported-color-schemes" content="{{$t.ColorScheme}}">
+<style>
+  :root { color-scheme: {{$t.ColorScheme}}; }
+  body { -webkit-text-size-adjust: 100%; margin: 0; padding: 0; }
+  [data-ogsc] .ink { color: {{$t.Ink}} !important; }
+  [data-ogsc] .inkdim { color: {{$t.InkDim}} !important; }
+  [data-ogsb] .sheet { background-color: {{$t.Surface}} !important; }
+</style>
+</head>
+<body style="margin:0;padding:0;background:{{$t.Canvas}};color:{{$t.Ink}};font-family:{{fontStack}};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:{{$t.Canvas}};">
+<tr><td align="center" style="padding:24px 8px;">
+{{msoOpen}}
+<div style="max-width:600px;margin:0 auto;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="sheet" style="width:100%;max-width:600px;background:{{$t.Surface}};border:1px solid {{$t.Hairline}};border-radius:8px;overflow:hidden;">
 
-<!-- Header -->
-<tr><td style="background:#ea4335;padding:20px 30px;">
-  <h1 style="margin:0;color:#ffffff;font-size:22px;">⚠ Critical Alert</h1>
-  <p style="margin:5px 0 0;color:#f8c4c0;font-size:13px;">{{.Timestamp}}</p>
+<tr><td bgcolor="{{$t.Crit}}" style="background-color:{{$t.Crit}};height:3px;line-height:3px;font-size:1px;">&nbsp;</td></tr>
+
+<tr><td bgcolor="{{$t.CritTint}}" style="background:{{$t.CritTint}};padding:20px 24px;border-bottom:1px solid {{$t.Hairline}};">
+  <div style="font-family:{{fontStack}};font-size:11px;font-weight:700;color:{{$t.Crit}};text-transform:uppercase;letter-spacing:1.6px;">Critical Alert</div>
+  <div style="font-family:{{fontStack}};font-size:20px;font-weight:700;color:{{$t.Crit}};margin-top:5px;line-height:1.25;">{{.AlertType}}</div>
+  <div class="inkdim" style="font-family:{{monoStack}};font-size:12px;color:{{$t.InkDim}};margin-top:5px;">{{.Timestamp}}</div>
 </td></tr>
 
-<!-- Alert Details -->
-<tr><td style="padding:20px 30px;">
-  <table width="100%" cellpadding="8" cellspacing="0" style="border:1px solid #e0e0e0;border-radius:4px;font-size:13px;">
-  <tr style="background:#fce8e6;">
-    <td style="border-bottom:1px solid #e0e0e0;width:120px;"><strong>Alert Type</strong></td>
-    <td style="border-bottom:1px solid #e0e0e0;">{{.AlertType}}</td>
+<tr><td style="padding:20px 24px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-family:{{fontStack}};font-size:13px;border-collapse:separate;border-spacing:0;">
+  <tr>
+    <td class="inkdim" width="120" style="padding:8px 12px 8px 0;color:{{$t.InkDim}};font-weight:600;border-bottom:1px solid {{$t.HairlineSoft}};vertical-align:top;">Device</td>
+    <td class="ink" style="padding:8px 0;color:{{$t.Ink}};border-bottom:1px solid {{$t.HairlineSoft}};">{{.DeviceName}} <span class="inkdim" style="font-family:{{monoStack}};color:{{$t.InkDim}};">({{.DeviceIP}})</span></td>
   </tr>
   <tr>
-    <td style="border-bottom:1px solid #e0e0e0;"><strong>Device</strong></td>
-    <td style="border-bottom:1px solid #e0e0e0;">{{.DeviceName}} ({{.DeviceIP}})</td>
-  </tr>
-  <tr>
-    <td style="border-bottom:1px solid #e0e0e0;"><strong>Message</strong></td>
-    <td style="border-bottom:1px solid #e0e0e0;">{{.Message}}</td>
+    <td class="inkdim" style="padding:8px 12px 8px 0;color:{{$t.InkDim}};font-weight:600;border-bottom:1px solid {{$t.HairlineSoft}};vertical-align:top;">Message</td>
+    <td class="ink" style="padding:8px 0;color:{{$t.Ink}};border-bottom:1px solid {{$t.HairlineSoft}};">{{.Message}}</td>
   </tr>
   {{if .MetricName}}
   <tr>
-    <td style="border-bottom:1px solid #e0e0e0;"><strong>Metric</strong></td>
-    <td style="border-bottom:1px solid #e0e0e0;">{{.MetricName}}: {{printf "%.2f" .CurrentValue}} (threshold: {{printf "%.2f" .Threshold}})</td>
+    <td class="inkdim" style="padding:8px 12px 8px 0;color:{{$t.InkDim}};font-weight:600;border-bottom:1px solid {{$t.HairlineSoft}};vertical-align:top;">Metric</td>
+    <td class="ink" style="padding:8px 0;color:{{$t.Ink}};border-bottom:1px solid {{$t.HairlineSoft}};font-family:{{monoStack}};">{{.MetricName}}: {{printf "%.2f" .CurrentValue}} <span class="inkdim" style="color:{{$t.InkDim}};">(threshold {{printf "%.2f" .Threshold}})</span></td>
   </tr>
   {{end}}
   <tr>
-    <td><strong>Status</strong></td>
-    <td>{{.DeviceStatus}}</td>
+    <td class="inkdim" style="padding:8px 12px 8px 0;color:{{$t.InkDim}};font-weight:600;vertical-align:top;">Status</td>
+    <td class="ink" style="padding:8px 0;color:{{$t.Ink}};">{{.DeviceStatus}}</td>
   </tr>
   </table>
 </td></tr>
 
-<!-- CPU/Mem Chart if available -->
 {{if .CPUMemChartCID}}
-<tr><td style="padding:10px 30px;">
-  <img src="cid:{{.CPUMemChartCID}}" alt="Recent Status" style="max-width:100%;height:auto;" />
+<tr><td style="padding:0 24px 20px;">
+  <img src="cid:{{.CPUMemChartCID}}" width="552" alt="Recent CPU and memory trend for {{.DeviceName}}" border="0" style="width:100%;max-width:552px;height:auto !important;display:block;border-radius:6px;" />
 </td></tr>
 {{end}}
 
-<!-- Footer -->
-<tr><td style="padding:15px 30px;background:#f8f8f8;border-top:1px solid #e0e0e0;text-align:center;">
-  <p style="margin:0;font-size:11px;color:#999;">Generated by Firewall Monitor</p>
+<tr><td style="padding:16px 24px;border-top:1px solid {{$t.Hairline}};text-align:center;">
+  <div class="inkdim" style="font-family:{{fontStack}};font-size:11px;color:{{$t.InkMute}};">Generated by Firewall Monitor</div>
 </td></tr>
 
 </table>
+</div>
+{{msoClose}}
 </td></tr>
 </table>
 </body>

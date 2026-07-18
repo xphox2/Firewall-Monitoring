@@ -21,19 +21,26 @@ func BuildWeeklyReport(devices []models.Device, deviceData []*DeviceReportData, 
 
 // BuildReport renders a report HTML body + subject for the given window. The
 // collapsible flag wraps per-device detail in <details> (admin preview); email
-// sends always-open blocks. Returns (subject, html, error).
+// sends always-open blocks. Returns (subject, html, error). Renders in the
+// light theme — theme-aware callers use BuildReportWithOps.
 func BuildReport(devices []models.Device, deviceData []*DeviceReportData, tz string, hours int, period, version string, collapsible bool) (string, string, error) {
-	return BuildReportWithOps(devices, deviceData, tz, hours, period, version, collapsible, nil)
+	return BuildReportWithOps(devices, deviceData, tz, hours, period, version, collapsible, nil, ThemeByName(""))
 }
 
 // BuildReportWithOps is BuildReport plus the F05/F06 Operations section
-// (nil ops = section omitted).
-func BuildReportWithOps(devices []models.Device, deviceData []*DeviceReportData, tz string, hours int, period, version string, collapsible bool, ops *OpsStats) (string, string, error) {
+// (nil ops = section omitted) and an explicit theme (v0.11.116 — the web
+// preview follows the SPA Day/Night choice; email follows the
+// report_email_theme setting).
+func BuildReportWithOps(devices []models.Device, deviceData []*DeviceReportData, tz string, hours int, period, version string, collapsible bool, ops *OpsStats, theme ReportTheme) (string, string, error) {
 	m := BuildReportModel(devices, deviceData, tz, hours, period)
 	m.Ops = ops
 	m.Version = version
 	m.Collapsible = collapsible
 	m.IsEmail = !collapsible
+	m.Theme = theme
+	if m.Theme.Name == "" {
+		m.Theme = ThemeByName("") // zero-value guard: never render unthemed
+	}
 	for i := range m.Devices {
 		m.Devices[i].IsEmail = m.IsEmail
 	}
@@ -65,10 +72,17 @@ type CriticalAlertData struct {
 	Threshold      float64
 	DeviceStatus   string
 	CPUMemChartCID string
+	Theme          ReportTheme
 }
 
-// BuildCriticalAlertEmail builds an HTML email for a critical alert.
-func BuildCriticalAlertEmail(alert *models.Alert, device *models.Device, recentHistory []models.SystemStatus) (string, string, []notifier.Attachment, error) {
+// BuildCriticalAlertEmail builds an HTML email for a critical alert, themed
+// with the same flat instrument-panel system as the fleet report. Callers
+// resolve the theme (the poller reads report_email_theme from the DB at send
+// time — its env-frozen config copy must NOT be the source).
+func BuildCriticalAlertEmail(alert *models.Alert, device *models.Device, recentHistory []models.SystemStatus, theme ReportTheme) (string, string, []notifier.Attachment, error) {
+	if theme.Name == "" {
+		theme = ThemeByName("")
+	}
 	data := CriticalAlertData{
 		Timestamp:    alert.Timestamp.Format(time.RFC3339),
 		AlertType:    string(alert.AlertType),
@@ -79,6 +93,7 @@ func BuildCriticalAlertEmail(alert *models.Alert, device *models.Device, recentH
 		CurrentValue: alert.CurrentValue,
 		Threshold:    alert.Threshold,
 		DeviceStatus: device.Status,
+		Theme:        theme,
 	}
 
 	var attachments []notifier.Attachment

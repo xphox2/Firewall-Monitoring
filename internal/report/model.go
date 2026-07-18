@@ -22,6 +22,10 @@ type ReportModel struct {
 	Hours       int
 	Collapsible bool // admin preview wraps device detail in <details>
 	IsEmail     bool // true when rendering for email body (hides SVGs, uses mobile-optimized responsive layout)
+	// Theme supplies every color in the render (theme.go). The zero value is
+	// unusable — BuildReportWithOps always sets it (ThemeByName fallback =
+	// light), and RenderReportHTML callers in tests must too.
+	Theme ReportTheme
 
 	// Fleet KPIs
 	TotalDevices   int

@@ -12,10 +12,26 @@
     var bound = false;
     var loadedOnce = false;
     var lastHtml = '';
+    // Preview theme (v0.11.116): defaults to the SPA's Day/Night choice, and
+    // the pills override per-preview. Emailed reports use the Email Theme
+    // setting instead — the pills only change what YOU see here.
+    var previewTheme = '';
 
     function period() {
         var sel = document.getElementById('report-period');
         return sel ? sel.value : 'daily';
+    }
+
+    function theme() {
+        if (previewTheme) return previewTheme;
+        return (AC.getTheme && AC.getTheme() === 'light') ? 'light' : 'dark';
+    }
+
+    function paintThemePills() {
+        var t = theme();
+        document.querySelectorAll('#report-theme-pills .chart-range-pill').forEach(function (b) {
+            b.classList.toggle('active', b.getAttribute('data-report-theme') === t);
+        });
     }
 
     function setStatus(msg) {
@@ -45,7 +61,7 @@
         setStatus('Loading…');
         // AdminCommon.apiFetch already parses JSON and returns the body object
         // (it calls res.json() internally) — do NOT call .json() again here.
-        AC.apiFetch('/admin/api/reports/preview?period=' + encodeURIComponent(period()))
+        AC.apiFetch('/admin/api/reports/preview?period=' + encodeURIComponent(period()) + '&theme=' + encodeURIComponent(theme()))
             .then(function (json) {
                 if (!json || !json.success || !json.data || !json.data.html) {
                     throw new Error((json && json.error) || 'Empty report');
@@ -134,10 +150,25 @@
         if (dl) dl.addEventListener('click', downloadHtml);
         if (send) send.addEventListener('click', sendNow);
         if (sel) sel.addEventListener('change', function () { if (loadedOnce) loadPreview(); });
+        var pills = document.getElementById('report-theme-pills');
+        if (pills) pills.addEventListener('click', function (ev) {
+            var b = ev.target.closest('[data-report-theme]');
+            if (!b) return;
+            previewTheme = b.getAttribute('data-report-theme');
+            paintThemePills();
+            loadPreview();
+        });
+        // Follow the SPA Day/Night switch until the operator picks a pill.
+        window.addEventListener('fwmon:themechange', function () {
+            if (previewTheme) return; // explicit pill choice wins
+            paintThemePills();
+            if (loadedOnce) loadPreview();
+        });
     }
 
     function init() {
         bind();
+        paintThemePills();
         if (!loadedOnce) loadPreview();
     }
 

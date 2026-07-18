@@ -223,7 +223,7 @@ func TestSVGCharts(t *testing.T) {
 		{Label: "12:00", Count: 5, Crit: true, Tooltip: "Time: 12:00\nAlerts: 5 (Critical)"},
 		{Label: "13:00", Count: 2, Crit: false, Tooltip: "Time: 13:00\nAlerts: 2 (Warning)"},
 	}
-	alertSVG := RenderAlertTimelineSVG(buckets)
+	alertSVG := RenderAlertTimelineSVG(buckets, ThemeByName(""))
 	if !strings.Contains(string(alertSVG), "<svg") || !strings.Contains(string(alertSVG), "Critical") {
 		t.Error("RenderAlertTimelineSVG did not produce valid SVG with data")
 	}
@@ -234,7 +234,7 @@ func TestSVGCharts(t *testing.T) {
 		SparklineRaw:   []float64{1000000, 5000000, 2000000},
 		SparklineTimes: []time.Time{time.Now().Add(-10 * time.Minute), time.Now().Add(-5 * time.Minute), time.Now()},
 	}
-	tpSVG := RenderThroughputChart(card, "UTC")
+	tpSVG := RenderThroughputChart(card, "UTC", ThemeByName(""))
 	if !strings.Contains(string(tpSVG), "<svg") || !strings.Contains(string(tpSVG), "5.0 Mbps") {
 		t.Errorf("RenderThroughputChart failed, got: %s", tpSVG)
 	}
@@ -246,7 +246,7 @@ func TestSVGCharts(t *testing.T) {
 		MemHistory: []float64{40, 45, 50},
 		SysTimes:   []time.Time{time.Now().Add(-10 * time.Minute), time.Now().Add(-5 * time.Minute), time.Now()},
 	}
-	cpuMemSVG := RenderCPUMemSVGChart(cardCPUMem, "UTC")
+	cpuMemSVG := RenderCPUMemSVGChart(cardCPUMem, "UTC", ThemeByName(""))
 	if !strings.Contains(string(cpuMemSVG), "<svg") || !strings.Contains(string(cpuMemSVG), "CPU Usage") {
 		t.Errorf("RenderCPUMemSVGChart failed, got: %s", cpuMemSVG)
 	}
