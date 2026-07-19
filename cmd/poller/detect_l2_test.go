@@ -126,6 +126,62 @@ func TestDetectL2Links_NoSubnetGuess(t *testing.T) {
 	}
 }
 
+// l2ARPPairTest runs the shared-vs-P2P ARP scenario end-to-end: two same-site
+// devices, each with an ARP entry resolving the other's interface MAC/IP on
+// the given mask. wantConns is 0 for a shared multi-host subnet (v0.11.123
+// suppression — the DC2-FW1↔OPNsense case) and 1 for a genuine point-to-point
+// transit.
+func l2ARPPairTest(t *testing.T, mask string, wantConns int) {
+	t.Helper()
+	p, db := newTestPoller(t)
+	site := l2TestSite(t, db)
+	fw1 := l2TestDevice(t, db, "fw1", "10.0.0.1", &site.ID)
+	fw2 := l2TestDevice(t, db, "fw2", "10.0.0.2", &site.ID)
+
+	now := time.Now()
+	if err := db.SaveInterfaceStats([]models.InterfaceStats{
+		{DeviceID: fw1.ID, Index: 1, Name: "wan1", TypeName: "ethernet", Status: "up", MACAddress: "AA:BB:CC:00:10:01", Timestamp: now},
+		{DeviceID: fw2.ID, Index: 1, Name: "wan1", TypeName: "ethernet", Status: "up", MACAddress: "AA:BB:CC:00:20:01", Timestamp: now},
+	}); err != nil {
+		t.Fatalf("save interface stats: %v", err)
+	}
+	if err := db.SaveInterfaceAddresses([]models.InterfaceAddress{
+		{DeviceID: fw1.ID, IfIndex: 1, IPAddress: "10.0.0.1", NetMask: mask, Timestamp: now},
+		{DeviceID: fw2.ID, IfIndex: 1, IPAddress: "10.0.0.2", NetMask: mask, Timestamp: now},
+	}); err != nil {
+		t.Fatalf("save interface addresses: %v", err)
+	}
+	// ARP-only evidence: each device has resolved the other's interface IP+MAC
+	// (which always happens on a shared segment).
+	if err := db.SaveTopologyEntriesSnapshot([]models.TopologyEntry{
+		{DeviceID: fw1.ID, EntryType: "arp", IfIndex: 1, IPAddress: "10.0.0.2", MACAddress: "aa:bb:cc:00:20:01", Timestamp: now, Source: "snmp"},
+		{DeviceID: fw2.ID, EntryType: "arp", IfIndex: 1, IPAddress: "10.0.0.1", MACAddress: "aa:bb:cc:00:10:01", Timestamp: now, Source: "snmp"},
+	}); err != nil {
+		t.Fatalf("save topology: %v", err)
+	}
+
+	n, _ := p.detectL2Links([]models.Device{fw1, fw2})
+	if n != wantConns {
+		t.Fatalf("mask %s: detectL2Links created %d links, want %d", mask, n, wantConns)
+	}
+	conns, _ := db.GetAllConnections()
+	if len(conns) != wantConns {
+		t.Fatalf("mask %s: got %d connection rows, want %d", mask, len(conns), wantConns)
+	}
+}
+
+// TestDetectL2Links_SharedSubnetARPSuppressed: the exact reported bug —
+// DC2-FW1↔OPNsense on a shared /24 with ARP evidence draws NO edge.
+func TestDetectL2Links_SharedSubnetARPSuppressed(t *testing.T) {
+	l2ARPPairTest(t, "255.255.255.0", 0) // /24 → shared LAN → suppress
+}
+
+// TestDetectL2Links_P2PSubnetARPKept: a genuine /30 transit with the same ARP
+// evidence still yields the link.
+func TestDetectL2Links_P2PSubnetARPKept(t *testing.T) {
+	l2ARPPairTest(t, "255.255.255.252", 1) // /30 → point-to-point → keep
+}
+
 // TestDetectL2Links_CrossSiteIgnored: perfect FDB evidence across different
 // sites must not pair (same boundary as every other detector).
 func TestDetectL2Links_CrossSiteIgnored(t *testing.T) {
