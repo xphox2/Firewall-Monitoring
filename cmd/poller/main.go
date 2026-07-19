@@ -605,14 +605,21 @@ func (p *Poller) applyFlowSecuritySuppressRules(securityBySrc map[string][]*mode
 				ackIDs = append(ackIDs, d.ID)
 				continue
 			}
-			// Per-detector TOGGLE kill switch (v0.11.122): the consolidation
-			// erases sub-type identity (everything below fires as
-			// SFLOW_SECURITY), so a toggled-off registry sub-type — e.g.
-			// SFLOW_DENY_STORM → Off in the Default profile — was silently
-			// inert and only a suppress rule worked. Consult the detection's
-			// OWN type here, where per-detection granularity still exists.
-			// Detectors without a registry type (port_scan, threat_intel, …)
-			// have no toggle row anywhere and resolve ON — unchanged.
+			// Per-detector TOGGLE kill switch (v0.11.122). For the SRC-KEYED
+			// SECURITY subset the consolidation erases sub-type identity
+			// (those fire as SFLOW_SECURITY), so a toggled-off registry
+			// sub-type — e.g. SFLOW_DENY_STORM → Off in the Default profile —
+			// was silently inert and only a suppress rule worked. Consult the
+			// detection's OWN type here, where per-detection granularity
+			// still exists. Policy/operational/victim-keyed detections in
+			// this same loop fire as their own SFLOW_<DETECTOR> types and
+			// were already alert-gated downstream — for them this check adds
+			// suppress-parity ACKING (the detection leaves the NOC card, not
+			// just the alert stream). Detectors without a registry type
+			// (port_scan, threat_intel, …) have no toggle row anywhere and
+			// resolve ON — unchanged. The SFLOW_SECURITY MASTER toggle is
+			// deliberately NOT consulted here: it gates only the consolidated
+			// alert, so the card keeps sub-threshold signal.
 			if !p.alertManager.EventTypeToggledOn(d.DeviceID, site,
 				models.AlertType("SFLOW_"+strings.ToUpper(d.Detector))) {
 				ackIDs = append(ackIDs, d.ID)

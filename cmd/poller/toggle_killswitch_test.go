@@ -70,6 +70,34 @@ func TestFlowTogglePass_DropsToggledOffSubType(t *testing.T) {
 	}
 }
 
+// TestFlowTogglePass_MasterToggleDoesNotAckDetections: toggling the
+// SFLOW_SECURITY MASTER type Off gates only the consolidated ALERT
+// (ProcessSecurityEvent) — the poller pass must NOT ack/drop the underlying
+// detections, so the NOC card keeps sub-threshold signal. Guards against a
+// future "simplification" folding the master toggle into the per-detector
+// check.
+func TestFlowTogglePass_MasterToggleDoesNotAckDetections(t *testing.T) {
+	p, db := newTelemetryTestPoller(t)
+	installDefaultToggles(t, p, map[models.AlertType]bool{
+		models.AlertTypeSFlowSecurity: false, // master Off
+	})
+	scan := &models.FlowDetection{Detector: "port_scan", Category: "security", Severity: "warning",
+		DeviceID: 1, SrcAddr: "203.0.113.10", DetectedAt: time.Now().UTC(), DedupKey: "ps_m"}
+	mustCreate(t, db, scan)
+	bySubject := map[string][]*models.FlowDetection{scan.SrcAddr: {scan}}
+	p.applyFlowSecuritySuppressRules(bySubject)
+	if _, ok := bySubject[scan.SrcAddr]; !ok {
+		t.Error("master SFLOW_SECURITY toggle must not drop detections at the poller pass")
+	}
+	var got models.FlowDetection
+	if err := db.Gorm().First(&got, scan.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.Acknowledged {
+		t.Error("master toggle Off must not ack detections — the card keeps sub-threshold signal")
+	}
+}
+
 // TestFlowTogglePass_OnRowIsNoop: an explicit ON row (or no row) leaves
 // detections untouched — the pass only ever REMOVES work.
 func TestFlowTogglePass_OnRowIsNoop(t *testing.T) {
