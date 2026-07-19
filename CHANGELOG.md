@@ -1,6 +1,12 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.124] - 2026-07-19
+
+### Fixed — Static assets are cache-busted per build (deploys no longer serve stale JS/CSS)
+
+UI changes (the connection-map labels, report preview, etc.) could stay invisible after a deploy until a manual hard-reload: static assets shipped with bare `/static/...` URLs (both admin.html's `<script>`/`<link>` tags and the dynamically-injected map wrappers) and no build-keyed cache headers, so browsers heuristically cached them across releases. Every `/static` response now carries `Cache-Control: no-cache` plus an `ETag` keyed to the server version — within a version the browser revalidates cheaply (304), and a deploy bumps the version so the ETag misses and fresh assets load automatically. One middleware covers both templated and dynamically-loaded assets; no per-asset URL changes. (This is why the v0.11.123 horizontal-label fix appeared not to take on an already-updated server — the browser was running a cached older `diagram-cytoscape.js`.)
+
 ## [0.11.123] - 2026-07-19
 
 ### Fixed — Connection map: no false ARP links across a shared LAN + horizontal link labels

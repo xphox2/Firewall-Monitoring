@@ -37,7 +37,26 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.123"
+const ServerVersion = "0.11.124"
+
+// staticCacheBustMiddleware stamps /static responses with an ETag keyed to the
+// build version + Cache-Control:no-cache (v0.11.124), so a deploy always
+// serves fresh JS/CSS (bare asset URLs were being heuristically cached across
+// releases). Within a version a matching If-None-Match short-circuits to 304.
+func staticCacheBustMiddleware(version string) gin.HandlerFunc {
+	etag := `"fwmon-` + version + `"`
+	return func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/static/") {
+			c.Header("Cache-Control", "no-cache")
+			c.Header("ETag", etag)
+			if c.GetHeader("If-None-Match") == etag {
+				c.AbortWithStatus(http.StatusNotModified)
+				return
+			}
+		}
+		c.Next()
+	}
+}
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -568,6 +587,20 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	router.Use(middleware.BodySizeLimit(5 << 20)) // 5MB max request body
 	// Rate limiter applied per-group below instead of globally so authenticated
 	// admin users don't share buckets with unauthenticated requests.
+
+	// Cache-bust static assets by build version (v0.11.124). Assets ship with
+	// NO content hash in their URLs (admin.html's <script>/<link> tags AND the
+	// dynamically-injected map wrappers all use bare /static/... paths), so
+	// browsers heuristically cached them across deploys — a UI change stayed
+	// invisible until a manual hard-reload. Stamp every /static response with
+	// an ETag keyed to ServerVersion + Cache-Control:no-cache (always
+	// revalidate): within a version the browser gets a cheap 304, and a deploy
+	// bumps the version → ETag miss → fresh 200. One coarse ETag for all
+	// assets is intentional — a deploy is exactly the bust trigger, and it
+	// needs no per-file hashing (works for both the on-disk and embedded FS
+	// paths, whose file mtimes are unreliable). Registered BEFORE the /static
+	// handlers so the headers are set before StaticFS writes the body.
+	router.Use(staticCacheBustMiddleware(ServerVersion))
 
 	// Static assets: serve from ./cmd/api/static on disk if it exists (so a
 	// git pull + service restart picks up JS/CSS changes the same way it
