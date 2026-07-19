@@ -51,6 +51,11 @@ type Iface struct {
 	MAC      string // any case; normalized internally
 	Status   string // oper status "up"/"down"/…
 	TypeName string // "ethernet"|"lag"|…
+	// Networks are the IPv4 CIDRs configured on this interface ("10.0.0.0/30"),
+	// computed poller-side from the interface addresses' IP+netmask. Used to
+	// suppress the shared-subnet ARP false positive: an ARP entry on a
+	// multi-host subnet (a shared switch) is not a point-to-point cable.
+	Networks []string
 }
 
 // FDBRow is one MAC-table entry reported by a device. SSH-sourced rows
@@ -318,6 +323,71 @@ func (ix *indexes) resolvePort(dev uint, ifIndex int, name string) portRef {
 		}
 	}
 	return portRef{ifIndex, name}
+}
+
+// ifaceFor resolves the interface record from raw ARP/FDB evidence (name
+// preferred, then ifIndex — same order as resolvePort). Returns nil when the
+// interface isn't in the snapshot.
+func (ix *indexes) ifaceFor(dev uint, ifIndex int, name string) *Iface {
+	if name != "" {
+		if f, ok := ix.byName[dev][strings.ToLower(name)]; ok {
+			return f
+		}
+	}
+	if ifIndex > 0 {
+		if f, ok := ix.byIndex[dev][ifIndex]; ok {
+			return f
+		}
+	}
+	return nil
+}
+
+// arpOnSharedSubnet reports whether the ARP-observed interface on `dev` sits on
+// a multi-host subnet that CONTAINS the exact IP this ARP row resolved
+// (`resolvedIP`) — i.e. the two devices are on a shared segment, so the ARP
+// entry is not a point-to-point cable. Testing the resolved IP (not every IP
+// the target owns) is precise: a transit interface that also carries a
+// secondary multi-host address won't suppress a genuine /30 peer whose ARP IP
+// isn't in that secondary subnet. Conservative: unknown interface / no CIDR /
+// unparseable / unparseable IP → false (keep), so a genuine P2P link is never
+// dropped for lack of data.
+func (ix *indexes) arpOnSharedSubnet(dev uint, ifIndex int, name, resolvedIP string) bool {
+	f := ix.ifaceFor(dev, ifIndex, name)
+	if f == nil || len(f.Networks) == 0 {
+		return false
+	}
+	ip := net.ParseIP(strings.TrimSpace(resolvedIP))
+	if ip == nil {
+		return false
+	}
+	for _, cidr := range f.Networks {
+		_, ipnet, err := net.ParseCIDR(cidr)
+		if err != nil || !networkIsMultiHost(ipnet) {
+			continue
+		}
+		if ipnet.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// networkIsMultiHost reports whether an IPv4 network holds more than a
+// point-to-point pair — prefix ≤ /29 (≥ 6 usable hosts) is a shared segment;
+// /30 (2 usable), /31 (RFC 3021 P2P) and /32 are treated as point-to-point and
+// keep their ARP inference. A /0 (from a garbage 0.0.0.0 netmask on an
+// unnumbered/unassigned interface) is treated as UNKNOWN → not multi-host, so
+// bad data keeps rather than blanket-suppresses. IPv6 nets return false
+// (conservative keep).
+func networkIsMultiHost(ipnet *net.IPNet) bool {
+	if ipnet == nil || ipnet.IP.To4() == nil {
+		return false
+	}
+	ones, bits := ipnet.Mask.Size()
+	if bits != 32 || ones == 0 {
+		return false
+	}
+	return ones <= 29
 }
 
 // resolveNeighborDevice matches an LLDP/CDP neighbor row to a monitored
@@ -686,6 +756,18 @@ func (ix *indexes) arpCandidates(arp []ARPRow) []candidate {
 			}
 		}
 		if target == 0 || target == row.DeviceID || !ix.sameSite(row.DeviceID, target) {
+			continue
+		}
+		// Shared-subnet suppression (v0.11.123): an ARP entry proves the two
+		// devices share a broadcast domain, NOT a direct cable. If the
+		// interface this ARP row was seen on sits on a MULTI-HOST subnet that
+		// also contains the target's IP, they're both on a shared switch — a
+		// direct link would be a /30 or /31 point-to-point, never a /24. Drop
+		// the candidate (LLDP/FDB tiers are unaffected — they run separately
+		// and win by tierRank; a genuine P2P ARP link survives). This closes
+		// the same false-mesh class the subnet_match detector was removed for
+		// (v0.11.94), which leaked back through the ARP tier.
+		if ix.arpOnSharedSubnet(row.DeviceID, row.IfIndex, row.IfName, row.IP) {
 			continue
 		}
 		port := ix.resolvePort(row.DeviceID, row.IfIndex, row.IfName)

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"net"
 	"sort"
 	"strings"
 	"time"
@@ -120,9 +121,18 @@ func (p *Poller) detectL2Links(devices []models.Device) (count int, ok bool) {
 // and collects the (lowercased) monitored interface MACs for the FDB filter.
 func buildL2Inputs(devices []models.Device, ifaces []models.InterfaceStats, ifAddrs []models.InterfaceAddress) ([]l2infer.DeviceMeta, []l2infer.Iface, []string) {
 	ipsByDevice := map[uint][]string{}
+	// Per-interface IPv4 CIDRs (v0.11.123), so l2infer can tell a shared LAN
+	// from a point-to-point link when suppressing ARP false edges.
+	cidrsByDevIf := map[uint]map[int][]string{}
 	for _, a := range ifAddrs {
 		if a.IPAddress != "" {
 			ipsByDevice[a.DeviceID] = append(ipsByDevice[a.DeviceID], a.IPAddress)
+		}
+		if cidr := ifaceCIDR(a.IPAddress, a.NetMask); cidr != "" {
+			if cidrsByDevIf[a.DeviceID] == nil {
+				cidrsByDevIf[a.DeviceID] = map[int][]string{}
+			}
+			cidrsByDevIf[a.DeviceID][a.IfIndex] = append(cidrsByDevIf[a.DeviceID][a.IfIndex], cidr)
 		}
 	}
 
@@ -139,6 +149,10 @@ func buildL2Inputs(devices []models.Device, ifaces []models.InterfaceStats, ifAd
 	infIfaces := make([]l2infer.Iface, 0, len(ifaces))
 	macSet := map[string]bool{}
 	for _, f := range ifaces {
+		var nets []string
+		if m := cidrsByDevIf[f.DeviceID]; m != nil {
+			nets = m[f.Index]
+		}
 		infIfaces = append(infIfaces, l2infer.Iface{
 			DeviceID: f.DeviceID,
 			IfIndex:  f.Index,
@@ -146,6 +160,7 @@ func buildL2Inputs(devices []models.Device, ifaces []models.InterfaceStats, ifAd
 			MAC:      f.MACAddress,
 			Status:   f.Status,
 			TypeName: strings.ToLower(f.TypeName),
+			Networks: nets,
 		})
 		if mac := l2infer.NormalizeMAC(f.MACAddress); mac != "" && !l2infer.IsVirtualMAC(mac) {
 			macSet[mac] = true
@@ -157,6 +172,28 @@ func buildL2Inputs(devices []models.Device, ifaces []models.InterfaceStats, ifAd
 	}
 	sort.Strings(ownedMACs)
 	return devs, infIfaces, ownedMACs
+}
+
+// ifaceCIDR converts an interface IPv4 + dotted-decimal netmask into a
+// "network/prefix" CIDR (mirrors database.computeNetworkCIDR — replicated here
+// because the pure l2infer/poller path can't import the database package).
+// Returns "" for blank/IPv6/unparseable inputs.
+func ifaceCIDR(ipStr, maskStr string) string {
+	ip := net.ParseIP(strings.TrimSpace(ipStr))
+	mask := net.ParseIP(strings.TrimSpace(maskStr))
+	if ip == nil || mask == nil {
+		return ""
+	}
+	ip4, mask4 := ip.To4(), mask.To4()
+	if ip4 == nil || mask4 == nil {
+		return ""
+	}
+	m := net.IPMask(mask4)
+	ones, bits := m.Size()
+	if bits != 32 { // non-contiguous mask → Size() returns 0,0
+		return ""
+	}
+	return fmt.Sprintf("%s/%d", ip4.Mask(m).String(), ones)
 }
 
 func toFDBRows(entries []models.TopologyEntry) []l2infer.FDBRow {

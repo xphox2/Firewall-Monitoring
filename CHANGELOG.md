@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.123] - 2026-07-19
+
+### Fixed — Connection map: no false ARP links across a shared LAN + horizontal link labels
+
+- **Shared-subnet ARP false edge**: the map drew a (dashed, low-confidence) direct-ethernet link between two firewalls that merely share a LAN — each naturally has the other in its ARP table, but that's a shared switch, not a point-to-point cable. This is the same false-mesh class the `subnet_match` detector was removed for (v0.11.94), leaking back through the ARP inference tier. The L2 inference now receives per-interface subnet info (previously the netmask was dropped at the poller boundary) and suppresses an ARP-derived link when the two endpoints share a **multi-host** subnet (prefix ≤ /29). Genuine point-to-point ARP links (/30, /31) are kept, and LLDP/FDB-confirmed links are entirely unaffected (they win by tier). The stale false edge self-prunes on the next poll cycle — no migration or manual cleanup. Conservative on missing/IPv6 mask data (keeps the link rather than risk dropping a real one).
+- **Link labels are now horizontal**: port and connection-type labels on the map no longer rotate to run parallel with the line (they were hard to read and forced nodes apart to fit). They render upright at any edge angle, over their existing rounded background.
+- Tests: pure-inference matrix (shared /24 → no link; /30 & /31 → link; shared /24 + FDB/LLDP → link; target-outside-subnet → link) and end-to-end poller tests seeding real netmasks; a shell guardrail pins the horizontal-label styles.
+
 ## [0.11.122] - 2026-07-18
 
 ### Fixed — Event-profile toggle Off now actually stops every alert path (user-reported)

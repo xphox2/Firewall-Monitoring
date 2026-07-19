@@ -425,7 +425,7 @@
             // investigate mode. text-events yes makes shown label text part
             // of the edge's click target.
             { selector: 'edge[edgeType="tunnel-bundle"]', style: { 'width': 4 } },
-            { selector: 'edge.edge-hover[edgeType="tunnel-bundle"], edge:selected[edgeType="tunnel-bundle"]', style: { 'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-mute', '#8b949e'), 'text-rotation': 'autorotate', 'text-margin-y': -10, 'text-events': 'yes', 'text-background-color': cssVar('--fwmon-bg', '#0d1117'), 'text-background-opacity': 0.85, 'text-background-padding': '2px' } },
+            { selector: 'edge.edge-hover[edgeType="tunnel-bundle"], edge:selected[edgeType="tunnel-bundle"]', style: { 'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-mute', '#8b949e'), 'text-rotation': 'none', 'text-margin-y': -10, 'text-events': 'yes', 'text-background-color': cssVar('--fwmon-bg', '#0d1117'), 'text-background-opacity': 0.85, 'text-background-padding': '2px' } },
             // Direct bundle — one collapsed teal link per same-site pair; straight (not
             // parallel bezier) since it is now a single edge. Expands into sublanes on click.
             // Direct links: PORT names are ALWAYS shown as endpoint labels
@@ -437,6 +437,9 @@
                 'width': 4, 'curve-style': 'straight', 'line-color': TYPE_COLORS.direct,
                 'source-label': 'data(srcPort)', 'target-label': 'data(dstPort)',
                 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-mute', '#8b949e'),
+                // Port labels stay horizontal (v0.11.123) — readable at any edge
+                // angle and no longer forcing nodes apart to fit rotated text.
+                'source-text-rotation': 'none', 'target-text-rotation': 'none',
                 'source-text-offset': 42, 'target-text-offset': 42,
                 'source-text-margin-y': -9, 'target-text-margin-y': -9,
                 'text-background-color': cssVar('--fwmon-bg', '#0d1117'), 'text-background-opacity': 0.85,
@@ -472,8 +475,11 @@
             { selector: 'edge[edgeType="sublane"]', style: {
                 'width': 3, 'curve-style': 'unbundled-bezier',
                 'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-dim', '#c9d1d9'),
-                'text-rotation': 'autorotate', 'text-margin-y': -10, 'text-events': 'yes',
+                // Horizontal labels (v0.11.123): center type label + endpoint
+                // port labels all stay upright rather than rotating along the line.
+                'text-rotation': 'none', 'text-margin-y': -10, 'text-events': 'yes',
                 'source-label': 'data(srcPort)', 'target-label': 'data(dstPort)',
+                'source-text-rotation': 'none', 'target-text-rotation': 'none',
                 'source-text-offset': 42, 'target-text-offset': 42,
                 'source-text-margin-y': -9, 'target-text-margin-y': -9,
                 'text-background-color': cssVar('--fwmon-bg', '#0d1117'), 'text-background-opacity': 0.8,
