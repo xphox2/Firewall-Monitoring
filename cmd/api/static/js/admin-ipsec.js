@@ -60,6 +60,7 @@
                 '<td>' + esc(t.a_vendor || '?') + ' ↔ ' + esc(t.b_vendor || '?') + '</td>' +
                 '<td>' + statusBadge(t.status) + '</td>' +
                 '<td style="text-align:right;">' +
+                    '<button class="btn sm secondary" data-action="ipsec-preflight" data-min-role="admin" data-id="' + t.id + '" title="Read-only REST check — no device writes">Preflight</button> ' +
                     '<button class="btn sm secondary" data-action="ipsec-edit" data-min-role="admin" data-id="' + t.id + '">Edit</button> ' +
                     '<button class="btn sm danger" data-action="ipsec-delete" data-min-role="admin" data-id="' + t.id + '">Delete</button>' +
                 '</td></tr>';
@@ -449,7 +450,9 @@
             'ipsec-delete': function (el) { del(parseInt(el.dataset.id, 10)); },
             'ipsec-wizard-close': function () { AC.closeModal('ipsec-wizard-modal'); },
             'ipsec-preview': function () { preview(); },
-            'ipsec-save': function () { save(); }
+            'ipsec-save': function () { save(); },
+            'ipsec-preflight': function (el) { preflight(parseInt(el.dataset.id, 10)); },
+            'ipsec-preflight-close': function () { stopPreflightPoll(); AC.closeModal('ipsec-preflight-modal'); }
         });
         $('ipsec-dev-a').addEventListener('change', onDevicesChosen);
         $('ipsec-dev-b').addEventListener('change', onDevicesChosen);
@@ -491,6 +494,83 @@
             $('ipsec-pfs').checked = !!t.esp.pfs;
             $('ipsec-custom-crypto').style.display = '';
         }
+    }
+
+    // ---- deploy preflight (READ-ONLY) -----------------------------------
+    // Enqueue a per-end REST preflight, then poll the result and render it.
+    // No device writes happen — this only reads to check auth + collisions.
+    var preflightTimer = null;
+
+    function stopPreflightPoll() {
+        if (preflightTimer) { clearTimeout(preflightTimer); preflightTimer = null; }
+    }
+
+    function yn(v) { return v ? 'yes' : 'no'; }
+
+    function endReportHtml(e) {
+        var r = e.report;
+        var head = '<div style="font-weight:600;margin-bottom:4px;">End ' + (e.end === 0 ? 'A' : 'B') +
+            ' <span style="color:var(--fwmon-text-mute);font-weight:normal;">(device #' + esc(e.device_id) + ')</span> ' +
+            statusBadge(e.status) + '</div>';
+        if (!r) {
+            var note = e.status === 'none' ? 'not run yet' :
+                (e.status === 'pending' || e.status === 'dispatched') ? 'waiting for the collector…' :
+                (e.raw_result ? esc(e.raw_result) : 'no report');
+            return '<div class="card" style="padding:12px;">' + head + '<div style="color:var(--fwmon-text-mute);font-size:0.85rem;">' + note + '</div></div>';
+        }
+        function b(ok, warn, label) {
+            var cls = ok ? 'success' : (warn ? 'warning' : 'danger');
+            return '<span class="badge ' + cls + '" style="margin-right:6px;">' + esc(label) + '</span>';
+        }
+        var badges =
+            b(r.reachable, false, r.reachable ? 'reachable' : 'unreachable') +
+            b(r.auth_ok, false, r.auth_ok ? 'auth ok' : 'auth failed') +
+            (r.conflict ? b(false, false, 'name collision') :
+                (r.indeterminate ? b(false, true, 'collision check inconclusive') : b(true, false, 'no collision')));
+        var ver = r.os_version ? '<div style="font-size:0.82rem;color:var(--fwmon-text-mute);margin-top:4px;">version: ' + esc(r.os_version) + '</div>' : '';
+        var checks = (r.checks || []).map(function (c) {
+            var mark = c.collision ? '⚠ collision' : (c.indeterminate ? '? inconclusive' : (c.ok ? '✓' : '✗'));
+            return '<li style="font-family:monospace;font-size:0.78rem;color:var(--fwmon-text-mute);">' +
+                esc(mark) + ' ' + esc(c.check) + ' (HTTP ' + esc(c.status_code || 0) + ')' +
+                (c.note ? ' — ' + esc(c.note) : '') + '</li>';
+        }).join('');
+        return '<div class="card" style="padding:12px;">' + head +
+            '<div style="margin:6px 0;">' + badges + '</div>' + ver +
+            (checks ? '<ul style="margin:8px 0 0 0;padding-left:16px;">' + checks + '</ul>' : '') + '</div>';
+    }
+
+    function renderPreflightBody(data) {
+        var ends = (data && data.ends) || [];
+        $('ipsec-preflight-body').innerHTML =
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+            ends.map(endReportHtml).join('') + '</div>';
+    }
+
+    function pollPreflight(id, triesLeft) {
+        AC.apiFetch(API + '/ipsec/tunnels/' + id + '/preflight').then(function (r) {
+            var data = (r && r.data) || {};
+            renderPreflightBody(data);
+            var ends = data.ends || [];
+            var terminal = ends.length > 0 && ends.every(function (e) {
+                return e.status === 'succeeded' || e.status === 'failed' || e.status === 'expired';
+            });
+            if (!terminal && triesLeft > 0) {
+                preflightTimer = setTimeout(function () { pollPreflight(id, triesLeft - 1); }, 2000);
+            }
+        }).catch(function (e) {
+            $('ipsec-preflight-body').innerHTML = '<div class="card" style="padding:12px;color:var(--fwmon-sig-crit);">Failed to read preflight result: ' + esc(e.message) + '</div>';
+        });
+    }
+
+    function preflight(id) {
+        stopPreflightPoll();
+        $('ipsec-preflight-body').innerHTML = '<div class="card" style="padding:12px;color:var(--fwmon-text-mute);">Starting preflight…</div>';
+        AC.openModal('ipsec-preflight-modal');
+        AC.apiFetch(API + '/ipsec/tunnels/' + id + '/preflight', { method: 'POST' }).then(function () {
+            pollPreflight(id, 12); // ~24s of polling
+        }).catch(function (e) {
+            $('ipsec-preflight-body').innerHTML = '<div class="card" style="padding:12px;color:var(--fwmon-sig-crit);">Could not start preflight: ' + esc(e.message) + '</div>';
+        });
     }
 
     window.FwmonIPSec = { init: init };

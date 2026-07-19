@@ -1,6 +1,12 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.127] - 2026-07-19
+
+### Added — "Preflight" button on the IPSec Tunnels page
+
+Completes the PR-C1 UI: each saved tunnel row gets a **Preflight** button that runs the read-only deploy check from the browser. It POSTs `/ipsec/tunnels/:id/preflight` (one command per end), polls the result, and renders a per-end "Deploy Preflight" modal — reachability, auth, OS version, and name/config collision (or "inconclusive"), with the individual REST checks listed. No device is written. The modal states plainly that nothing on the device is changed; a missing collector/token surfaces as a clear message rather than a silent no-op.
+
 ## [0.11.126] - 2026-07-19
 
 ### Added — IPSec deploy preflight over vendor REST (read-only; no device writes)
