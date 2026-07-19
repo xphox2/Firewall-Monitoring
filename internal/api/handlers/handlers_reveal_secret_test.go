@@ -166,3 +166,16 @@ func TestRedactDevice_MasksSSHPassword(t *testing.T) {
 		t.Errorf("snmp_community = %q after redact, want mask", d.SNMPCommunity)
 	}
 }
+
+// TestRedactDevice_MasksAPIToken pins that the vendor REST API token (PR-C1) is
+// masked on every read path like the other device credentials.
+func TestRedactDevice_MasksAPIToken(t *testing.T) {
+	d := &models.Device{APIToken: "secret-bearer-token", APIPort: 8443}
+	httputil.RedactDevice(d)
+	if d.APIToken != httputil.RedactedMask {
+		t.Errorf("api_token = %q after redact, want %q", d.APIToken, httputil.RedactedMask)
+	}
+	if d.APIPort != 8443 {
+		t.Errorf("api_port = %d after redact, want 8443 (non-secret, unchanged)", d.APIPort)
+	}
+}

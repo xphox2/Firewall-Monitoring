@@ -36,6 +36,13 @@ const (
 	// ProbeCommandTypeNoop proves the command channel round-trip: the
 	// collector completes it immediately WITHOUT contacting any device.
 	ProbeCommandTypeNoop = "noop"
+
+	// ProbeCommandTypeIPSecPreflight is a READ-ONLY IPSec deploy preflight: the
+	// collector authenticates to the device's REST API and GETs the objects a
+	// deploy would create (name/VTI/connection collision checks), reporting a
+	// structured result. It performs NO device writes (PR-C1); the actual apply
+	// (apply_ipsec) is a later sub-phase.
+	ProbeCommandTypeIPSecPreflight = "ipsec_preflight"
 )
 
 // probeCommandDeviceTouching lists command types whose execution makes the
@@ -44,7 +51,8 @@ const (
 // explicitly false (it never leaves the collector). A future write command
 // (IPSec apply) opts in here.
 var probeCommandDeviceTouching = map[string]bool{
-	ProbeCommandTypeNoop: false,
+	ProbeCommandTypeNoop:           false,
+	ProbeCommandTypeIPSecPreflight: true, // a successful REST read proves reachability
 }
 
 // ProbeCommandTouchesDevice reports whether a succeeded result for the given
@@ -256,6 +264,23 @@ func (d *Database) GetProbeCommands(probeID uint, limit int) ([]models.ProbeComm
 	err := d.db.Where("probe_id = ?", probeID).
 		Order("id DESC").Limit(limit).Find(&cmds).Error
 	return cmds, err
+}
+
+// GetLatestCommandByDeviceType returns the most recent command of the given
+// type for a device (newest first), or nil if none exists. Payload stays
+// encrypted + json:"-"; the Result field (structured JSON the collector
+// returned) is plaintext and safe to surface. Used by the IPSec preflight GET.
+func (d *Database) GetLatestCommandByDeviceType(deviceID uint, cmdType string) (*models.ProbeCommand, error) {
+	var cmd models.ProbeCommand
+	err := d.db.Where("device_id = ? AND type = ?", deviceID, cmdType).
+		Order("id DESC").First(&cmd).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &cmd, nil
 }
 
 // ExpireStaleProbeCommands terminally expires every non-terminal command whose

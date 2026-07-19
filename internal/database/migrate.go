@@ -924,6 +924,14 @@ func (d *Database) migrateDeviceSSHHostKey() error {
 	return d.db.AutoMigrate(&models.Device{})
 }
 
+// migrateDeviceAPICredentials (v49) adds Device.api_token (encrypted vendor
+// REST credential for config automation) and Device.api_port (mgmt HTTPS port,
+// default 443). Additive nullable columns; AutoMigrate adds only what's
+// missing, so this is idempotent and safe on a populated database.
+func (d *Database) migrateDeviceAPICredentials() error {
+	return d.db.AutoMigrate(&models.Device{})
+}
+
 // migrateConfigRevisionAttribution (v5) adds the change-attribution columns
 // (changed_by, changed_from, change_method, attributed, attribution_checked) to
 // existing device_config_revisions tables. AutoMigrate only adds what's missing,

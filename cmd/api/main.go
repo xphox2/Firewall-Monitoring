@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.125"
+const ServerVersion = "0.11.126"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -914,6 +914,10 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.PUT("/api/ipsec/tunnels/:id", handler.UpdateIPSecTunnel)
 		admin.DELETE("/api/ipsec/tunnels/:id", handler.DeleteIPSecTunnel)
 		admin.GET("/api/ipsec/tunnels/:id/preview", handler.PreviewIPSecTunnel)
+		// Read-only deploy preflight (PR-C1): enqueue a per-end REST preflight to
+		// the collector (auth + collision GETs, NO writes) and poll the result.
+		admin.POST("/api/ipsec/tunnels/:id/preflight", handler.PreflightIPSecTunnel)
+		admin.GET("/api/ipsec/tunnels/:id/preflight", handler.GetIPSecPreflightResult)
 		// Read-only endpoint hints: the picked device's real interfaces + addresses
 		// so the wizard populates egress/LAN/subnets from live data (admin-only).
 		admin.GET("/api/devices/:id/ipsec-hints", handler.GetIPSecEndpointHints)

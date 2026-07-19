@@ -97,6 +97,7 @@ var registeredMigrations = []migration{
 	{version: 46, name: "connection_port_fields", run: (*Database).migrateConnectionPortFields},
 	{version: 47, name: "denied_events_table", run: (*Database).migrateDeniedEventsTable},
 	{version: 48, name: "event_rule_profiles", run: (*Database).migrateEventRuleProfiles},
+	{version: 49, name: "device_api_credentials", run: (*Database).migrateDeviceAPICredentials},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

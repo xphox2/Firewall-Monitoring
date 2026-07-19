@@ -241,6 +241,24 @@ type VendorDriver interface {
 	RenderRemove(v RenderView) (Artifact, error)
 	StatusProbe(v RenderView) []ProbeStep
 	ParseStatus(raw string) (TunnelStatus, error)
+	// PreflightProbe returns the READ-ONLY REST GETs the collector runs before a
+	// deploy: an auth/version check plus reads of the exact objects a deploy
+	// would create, so name/VTI/reqid collisions surface without any write. Each
+	// step's Path is checked against the collision-detection contract in the
+	// collector; steps are HTTP GETs only and MUST never mutate device state.
+	PreflightProbe(v RenderView) []PreflightStep
+}
+
+// PreflightStep is one read-only check the collector performs before a deploy.
+// Check names the semantic (auth / phase1 / phase2 / vti / connection) so the
+// collector can turn the raw GET result into a structured finding; ExpectAbsent
+// = a non-empty/200 result is a COLLISION (an object we intended to create
+// already exists), whereas the auth/version checks expect success.
+type PreflightStep struct {
+	Check        string `json:"check"`
+	Method       string `json:"method"`
+	Path         string `json:"path"`
+	ExpectAbsent bool   `json:"expect_absent"`
 }
 
 var (

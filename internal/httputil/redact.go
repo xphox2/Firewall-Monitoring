@@ -30,6 +30,9 @@ func RedactDevice(d *models.Device) {
 	if d.SSHPassword != "" {
 		d.SSHPassword = RedactedMask
 	}
+	if d.APIToken != "" {
+		d.APIToken = RedactedMask
+	}
 	// Device GETs preload the assigned Probe; its registration-key hash and
 	// TLS paths are secret material too — mask it exactly like the probe
 	// endpoints do (same policy: the mask, never plaintext OR ciphertext/hash).

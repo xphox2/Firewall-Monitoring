@@ -106,6 +106,7 @@ type ProbeStore interface {
 	ClaimProbeCommands(probeID uint) ([]models.ProbeCommand, error)
 	CompleteProbeCommand(probeID uint, commandID, status, result string) (models.ProbeCommand, bool, error)
 	GetProbeCommands(probeID uint, limit int) ([]models.ProbeCommand, error)
+	GetLatestCommandByDeviceType(deviceID uint, cmdType string) (*models.ProbeCommand, error)
 	ExpireStaleProbeCommands() (int64, error)
 	CancelProbeCommand(probeID uint, commandID string) (bool, error)
 }

@@ -1,6 +1,19 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.126] - 2026-07-19
+
+### Added — IPSec deploy preflight over vendor REST (read-only; no device writes)
+
+First sub-phase of the IPSec apply program (PR-C1). It stands up the REST transport and credential storage and adds a **read-only preflight** that authenticates to each firewall's management API and reads the objects a deploy would create — surfacing reachability, auth, and name/VTI/connection collisions **before** any write path exists. Nothing on a device is mutated.
+
+- **Encrypted API credentials on the device**: new `api_token` (encrypted at rest like `ssh_password`, redacted on every read, revealed only via the secure-reveal endpoint), `api_port` (default 443), and `api_insecure_tls` (default false — TLS is verified so the token can't be MITM'd; opt-in only for a self-signed mgmt cert on a trusted segment). Migration **v49** (additive `AutoMigrate`).
+- **Preflight command + endpoints**: new `ipsec_preflight` probe-command type (read-only, marked device-touching so a successful read counts as reachability). `POST /admin/api/ipsec/tunnels/:id/preflight` enqueues one per-end command to each device's collector (payload encrypted at rest, delivered over TLS, token never logged); `GET .../preflight` returns the structured per-end report. The generic command-enqueue endpoint stays `noop`-only — the typed preflight is built server-side from device creds + driver-generated GET paths, so a client can't craft arbitrary REST targets (SSRF).
+- **Driver preflight probes**: `VendorDriver.PreflightProbe` emits read-only `GET`s per vendor — FortiGate cmdb `phase1/phase2/system-interface` (named after the tunnel) + monitor status; OPNsense firmware status + IPsec connection search. All `Kind:http_api` GETs; no PSK in the payload (the token is the only secret).
+- Tests: driver preflight-probe shape (GET-only, collision flags); `api_token` redaction; `ipsec_preflight` device-touching gate.
+
+Deferred to PR-C2 (separate change): rendering `http_api` write steps, the deploy orchestrator + server-side `HasBlock` gate, peer `/32` route pinning, apply/verify/rollback, and the wizard "Preflight/Deploy" UI + device-form token field.
+
 ## [0.11.125] - 2026-07-19
 
 ### Fixed — Connection map: link labels centered on the wire, closer to each device (user-reported)
