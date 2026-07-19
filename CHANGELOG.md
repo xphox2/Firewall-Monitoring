@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.124] - 2026-07-19
+
+### Fixed — Connection map: link labels now read *across* the wire (user-reported)
+
+The v0.11.123 change made every link label screen-horizontal. That reads correctly on vertical (north/south) links — where horizontal text crosses the wire — but on horizontal (east/west) links the label then runs *along* the wire instead of across it, which is what the operator was actually reporting. The desired orientation is **perpendicular to each link** (the label crosses the wire): vertical on horizontal links, horizontal on vertical links, tilted across diagonal links.
+
+- Cytoscape offers only `none` (always screen-horizontal) and `autorotate` (always along the line), neither of which is perpendicular. Labels now use a per-edge numeric `data(labelAngle)` rotation computed as *edge angle ± 90°*, normalized to stay upright (never upside-down). This applies to the center type label and both endpoint port labels, on the collapsed direct/tunnel bundles and the expanded sublanes.
+- The angle is derived from model-space endpoint positions (independent of pan/zoom) and recomputed whenever geometry changes: after the layout settles, when a node is dragged, and when a bundle is expanded into sublanes.
+- Tests: the shell guardrail is rewritten to pin the perpendicular styles (`text-rotation`/`source-`/`target-text-rotation` = `data(labelAngle)`) and to fail if any word label regresses to `none` or `autorotate`.
+
 ## [0.11.123] - 2026-07-19
 
 ### Fixed — Connection map: no false ARP links across a shared LAN + horizontal link labels

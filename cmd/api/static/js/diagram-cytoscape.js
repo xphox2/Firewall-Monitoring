@@ -425,7 +425,7 @@
             // investigate mode. text-events yes makes shown label text part
             // of the edge's click target.
             { selector: 'edge[edgeType="tunnel-bundle"]', style: { 'width': 4 } },
-            { selector: 'edge.edge-hover[edgeType="tunnel-bundle"], edge:selected[edgeType="tunnel-bundle"]', style: { 'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-mute', '#8b949e'), 'text-rotation': 'none', 'text-margin-y': -10, 'text-events': 'yes', 'text-background-color': cssVar('--fwmon-bg', '#0d1117'), 'text-background-opacity': 0.85, 'text-background-padding': '2px' } },
+            { selector: 'edge.edge-hover[edgeType="tunnel-bundle"], edge:selected[edgeType="tunnel-bundle"]', style: { 'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-mute', '#8b949e'), 'text-rotation': 'data(labelAngle)', 'text-margin-y': -10, 'text-events': 'yes', 'text-background-color': cssVar('--fwmon-bg', '#0d1117'), 'text-background-opacity': 0.85, 'text-background-padding': '2px' } },
             // Direct bundle — one collapsed teal link per same-site pair; straight (not
             // parallel bezier) since it is now a single edge. Expands into sublanes on click.
             // Direct links: PORT names are ALWAYS shown as endpoint labels
@@ -437,9 +437,10 @@
                 'width': 4, 'curve-style': 'straight', 'line-color': TYPE_COLORS.direct,
                 'source-label': 'data(srcPort)', 'target-label': 'data(dstPort)',
                 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-mute', '#8b949e'),
-                // Port labels stay horizontal (v0.11.123) — readable at any edge
-                // angle and no longer forcing nodes apart to fit rotated text.
-                'source-text-rotation': 'none', 'target-text-rotation': 'none',
+                // Port labels read ACROSS the wire (perpendicular): vertical on
+                // horizontal links, horizontal on vertical links. data(labelAngle)
+                // is recomputed on layout/drag/expand (see refreshLabelAngles).
+                'source-text-rotation': 'data(labelAngle)', 'target-text-rotation': 'data(labelAngle)',
                 'source-text-offset': 42, 'target-text-offset': 42,
                 'source-text-margin-y': -9, 'target-text-margin-y': -9,
                 'text-background-color': cssVar('--fwmon-bg', '#0d1117'), 'text-background-opacity': 0.85,
@@ -475,11 +476,11 @@
             { selector: 'edge[edgeType="sublane"]', style: {
                 'width': 3, 'curve-style': 'unbundled-bezier',
                 'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-dim', '#c9d1d9'),
-                // Horizontal labels (v0.11.123): center type label + endpoint
-                // port labels all stay upright rather than rotating along the line.
-                'text-rotation': 'none', 'text-margin-y': -10, 'text-events': 'yes',
+                // Perpendicular labels: center type label + endpoint port labels
+                // read ACROSS the wire (see refreshLabelAngles / data(labelAngle)).
+                'text-rotation': 'data(labelAngle)', 'text-margin-y': -10, 'text-events': 'yes',
                 'source-label': 'data(srcPort)', 'target-label': 'data(dstPort)',
-                'source-text-rotation': 'none', 'target-text-rotation': 'none',
+                'source-text-rotation': 'data(labelAngle)', 'target-text-rotation': 'data(labelAngle)',
                 'source-text-offset': 42, 'target-text-offset': 42,
                 'source-text-margin-y': -9, 'target-text-margin-y': -9,
                 'text-background-color': cssVar('--fwmon-bg', '#0d1117'), 'text-background-opacity': 0.8,
@@ -515,6 +516,39 @@
                 'overlay-color': '#22d3ee', 'overlay-opacity': 0.28, 'overlay-padding': 8, 'z-index': 20
             }}
         ];
+    }
+
+    // ---- 1b-i. Perpendicular label rotation ----
+    // Link labels read ACROSS the wire (perpendicular), not along it and not
+    // always screen-horizontal: on a horizontal (E/W) link the label is
+    // vertical, on a vertical (N/S) link it is horizontal — it crosses the
+    // wire in both cases. Cytoscape only offers 'none' (always horizontal) and
+    // 'autorotate' (always along the line), so we feed a per-edge numeric angle
+    // via data(labelAngle) and recompute it whenever geometry changes.
+    //
+    // The angle is derived from model-space endpoint positions, so it is
+    // independent of pan/zoom. Straight edges are exact; curved sublane/tunnel
+    // edges use the straight src->tgt approximation (close enough at label
+    // scale). Normalised to (-pi/2, pi/2] so text is never upside-down.
+    function perpLabelAngle(edge) {
+        var s = edge.source().position(), t = edge.target().position();
+        var dx = t.x - s.x, dy = t.y - s.y;
+        if (dx === 0 && dy === 0) return 0;            // degenerate (same/unpositioned)
+        var a = Math.atan2(dy, dx) + Math.PI / 2;      // perpendicular to the edge
+        while (a > Math.PI / 2) a -= Math.PI;          // keep upright
+        while (a <= -Math.PI / 2) a += Math.PI;
+        return a;
+    }
+
+    // Recompute + store the perpendicular label angle for a set of edges.
+    // Batched so a bulk refresh triggers a single style/render pass.
+    function refreshLabelAngles(eles) {
+        if (!cy || !eles || eles.empty()) return;
+        cy.batch(function() {
+            eles.forEach(function(e) {
+                if (e.isEdge()) e.data('labelAngle', perpLabelAngle(e));
+            });
+        });
     }
 
     // ---- 1c. Layout ----
@@ -602,6 +636,11 @@
             return;
         }
         var elements = buildElements(devices, connections, siteMap, vpnMap, siteNames);
+        // Seed labelAngle on every edge so the data(labelAngle) rotation mapper
+        // has a value the moment the stylesheet is first applied (no "mapping
+        // without corresponding data" warnings); real angles are filled in by
+        // refreshLabelAngles once positions exist.
+        elements.forEach(function(el) { if (el.group === 'edges') el.data.labelAngle = 0; });
         var stylesheet = buildStylesheet();
         var layoutOpts = buildLayoutOptions(elements, siteMap);
 
@@ -613,10 +652,15 @@
         cy = cytoscape({ container: cyDiv, elements: elements, style: stylesheet, layout: layoutOpts,
             minZoom: 0.3, maxZoom: 3, wheelSensitivity: 0.3, boxSelectionEnabled: false });
 
+        // Seed perpendicular label angles before the first paint so the
+        // data(labelAngle) mapper always has a value; refreshed once the layout
+        // settles (final positions) and on every later geometry change.
+        refreshLabelAngles(cy.edges());
 
         applyFilters();
         wireEvents(devices, vpnMap);
         cy.one('layoutstop', function() {
+            refreshLabelAngles(cy.edges());   // final positions -> exact angles
             startParticles();
             applyAlertPulses();           // begin pulsing any already-alerting nodes
             if (pendingFocus) { var pf = pendingFocus; pendingFocus = null; focusNode(pf.kind, pf.id); }
@@ -642,6 +686,16 @@
         // devices get the same reveal via :selected on tap.
         cy.on('mouseover', 'edge', function(evt) { evt.target.addClass('edge-hover'); });
         cy.on('mouseout', 'edge', function(evt) { evt.target.removeClass('edge-hover'); });
+
+        // Dragging a node changes its links' angles — keep labels perpendicular.
+        cy.on('dragfree', 'node', function(evt) { refreshLabelAngles(evt.target.connectedEdges()); });
+
+        // Safety net: any edge added later gets a labelAngle so the mapper is
+        // never fed an undefined value (explicit refreshes still recompute it).
+        cy.on('add', 'edge', function(evt) {
+            var e = evt.target;
+            if (e.data('labelAngle') === undefined) e.data('labelAngle', perpLabelAngle(e));
+        });
 
         cy.on('tap', 'edge', function(evt) {
             var edge = evt.target;
@@ -850,6 +904,9 @@
                 : (TYPE_COLORS[child.connection_type] || '#8b949e');
             addSublane(tunnelId + '-lane-' + child.id, child.connection_type, child.status, child, getTypeLabel(child.connection_type), laneColor, idx + carrierCount);
         });
+
+        // Perpendicular angles for the freshly-added sublane edges
+        refreshLabelAngles(cy.edges('[parentTunnel="' + tunnelId + '"]'));
 
         // Restart particles to include new sublanes
         stopParticles();
