@@ -153,8 +153,12 @@ func parseBucketTime(s string) time.Time {
 	return time.Time{}
 }
 
-// GatherDeviceData collects all report data for a single device over the given hours.
-func GatherDeviceData(db *database.Database, device *models.Device, hours int, pollIntervalSec int, spikeThreshold float64) *DeviceReportData {
+// GatherDeviceData collects all report data for a single device over the given
+// hours. spikeFloorMbps is the absolute spike noise floor (v0.11.121, 0 =
+// disabled) applied to the report's spike detection exactly as the live
+// detector applies it.
+func GatherDeviceData(db *database.Database, device *models.Device, hours int, pollIntervalSec int, spikeThreshold, spikeFloorMbps float64) *DeviceReportData {
+	spikeFloorBps := spikeFloorMbps * 1e6
 	data := &DeviceReportData{}
 
 	// Get system status history
@@ -225,9 +229,9 @@ func GatherDeviceData(db *database.Database, device *models.Device, hours int, p
 				baseRange, baseBucket := baselineRange()
 				if bd, berr := db.GetInterfaceChartData(device.ID, ti.Index, baseRange); berr == nil {
 					_, _, _, bSeries, bTimes := computeTraffic(bd, baseBucket)
-					data.Spikes = detectSpikesTimeOfDay(bSeries, bTimes, hours, spikeThreshold, ti.Name)
+					data.Spikes = detectSpikesTimeOfDay(bSeries, bTimes, hours, spikeThreshold, ti.Name, spikeFloorBps)
 				} else {
-					data.Spikes = detectSpikesInSeries(series, times, spikeThreshold, ti.Name)
+					data.Spikes = detectSpikesInSeries(series, times, spikeThreshold, ti.Name, spikeFloorBps)
 				}
 
 				// Correlate spikes with sFlow: pull the top conversations on this

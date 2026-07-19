@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.121] - 2026-07-18
+
+### Changed — Traffic-spike alerts gain an absolute 1 Mbps noise floor
+
+Spike detection was pure z-score, so a ~90bps port "spiking" to 800bps alerted — statistically anomalous, operationally nothing. Both detection paths (the live poller detector and the fleet report's spike cards) now apply an absolute throughput floor.
+
+- **Two-clause floor, default 1 Mbps**: a spike alerts only if (a) the spike itself exceeds the floor AND (b) the interface's **busiest normal period** reaches the floor — qualification is deliberately by the port's seasonal PEAK, not the current time-of-day band, so a WAN port doing 50 Mbps by day still alerts on a genuine 3am surge while a dead port never alerts at all. Thin history falls back to the rolling mean; no history qualifies (a brand-new port's first real sustained surge isn't muted). Traffic dropping below the floor resolves an open spike alert.
+- **New Alerting-page knob "Spike min throughput (Mbps)"** (`spike_min_throughput_mbps`, default 1.0, **0 restores legacy pure z-score**). Live-refreshed like the other spike settings — with a deliberate `>= 0` parse guard so a saved 0 actually applies.
+- **Per-rule override**: spike Event Rules gain `min_throughput_mbps` in their dampening (rule editor input): blank = inherit the global floor, explicit 0 = disable for that rule's scope (deliberately-watched quiet port), >0 = override. Pointer-typed so the explicit 0 survives serialization.
+- Behavior change on upgrade: sub-1 Mbps interfaces stop producing spike alerts (and stop appearing in report spike cards) unless the floor is lowered/disabled. The seeded "Traffic spike" rule inherits and needs no changes.
+- Tests: dead-port suppression (the exact 90bps→800bps case), night-coverage pin, peak-qualifier suppression, floor-fail resolve, both report paths, three-way per-rule override semantics, floor-0 legacy equivalence.
+
 ## [0.11.120] - 2026-07-18
 
 ### Added — Event Rules UI: per-type Rule button on the toggle matrix + source-grouped rules table

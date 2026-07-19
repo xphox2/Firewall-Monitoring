@@ -149,6 +149,7 @@ func (rs *ReportScheduler) generateAndSendReport(hours int) {
 	rs.mu.RLock()
 	pollInterval := int(rs.cfg.SNMP.PollInterval.Seconds())
 	spikeThreshold := rs.alertCfg.SpikeStdDevThreshold
+	spikeFloorMbps := rs.alertCfg.SpikeMinThroughputMbps
 	tz := rs.alertCfg.ReportTimezone
 	recipients := rs.alertCfg.ReportRecipients
 	rs.mu.RUnlock()
@@ -160,7 +161,7 @@ func (rs *ReportScheduler) generateAndSendReport(hours int) {
 	// Gather data for each device
 	deviceData := make([]*DeviceReportData, len(devices))
 	for i := range devices {
-		deviceData[i] = GatherDeviceData(rs.db, &devices[i], hours, pollInterval, spikeThreshold)
+		deviceData[i] = GatherDeviceData(rs.db, &devices[i], hours, pollInterval, spikeThreshold, spikeFloorMbps)
 	}
 
 	// Build the report: HTML + plaintext alternative + themed chart PNGs
@@ -224,7 +225,7 @@ func (rs *ReportScheduler) RefreshSettings() {
 	if err := rs.db.Gorm().Table("system_settings").Where("\"key\" IN ?", []string{
 		"report_daily_enabled", "report_daily_time", "report_weekly_enabled",
 		"report_weekly_day", "report_recipients", "report_timezone",
-		"spike_stddev_threshold",
+		"spike_stddev_threshold", "spike_min_throughput_mbps",
 		"email_enabled", "smtp_host", "smtp_port", "smtp_username", "smtp_password",
 		"smtp_from", "smtp_to", "slack_webhook", "discord_webhook", "webhook_url",
 	}).Find(&settings).Error; err != nil {
@@ -255,6 +256,13 @@ func (rs *ReportScheduler) RefreshSettings() {
 		case "spike_stddev_threshold":
 			if v, err := strconv.ParseFloat(s.Value, 64); err == nil && v > 0 {
 				rs.alertCfg.SpikeStdDevThreshold = v
+			}
+		case "spike_min_throughput_mbps":
+			// >= 0: a saved 0 (floor disabled) must apply, not be skipped.
+			// (The blank-value skip above still holds — the UI always writes
+			// an explicit value.)
+			if v, err := strconv.ParseFloat(s.Value, 64); err == nil && v >= 0 {
+				rs.alertCfg.SpikeMinThroughputMbps = v
 			}
 		case "email_enabled":
 			rs.alertCfg.EmailEnabled = s.Value == "true"

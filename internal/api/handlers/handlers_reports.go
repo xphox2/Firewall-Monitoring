@@ -51,6 +51,22 @@ func (h *Handler) reportSpikeThreshold() float64 {
 	return 3.0
 }
 
+// reportSpikeFloorMbps resolves the absolute spike noise floor (v0.11.121)
+// from settings, falling back to config and finally the 1 Mbps default. The
+// `v != ""` + ParseFloat pattern is deliberately 0-safe: a saved 0 (floor
+// disabled) applies.
+func (h *Handler) reportSpikeFloorMbps() float64 {
+	if v := h.getNotificationSetting("spike_min_throughput_mbps"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 {
+			return f
+		}
+	}
+	if h.config != nil && h.config.Alerts.SpikeMinThroughputMbps >= 0 {
+		return h.config.Alerts.SpikeMinThroughputMbps
+	}
+	return 1.0
+}
+
 // buildReportHTML gathers fleet data and renders the report to a single HTML
 // document. collapsible wraps per-device detail in <details> for the admin
 // preview. db is the request-scoped handle (AUDIT-032) so the heavy fleet-wide
@@ -87,7 +103,7 @@ func (h *Handler) buildReportHTML(db database.Store, period string, collapsible 
 
 	deviceData := make([]*report.DeviceReportData, len(devices))
 	for i := range devices {
-		deviceData[i] = report.GatherDeviceData(cdb, &devices[i], hours, pollInterval, spikeThreshold)
+		deviceData[i] = report.GatherDeviceData(cdb, &devices[i], hours, pollInterval, spikeThreshold, h.reportSpikeFloorMbps())
 	}
 
 	h.mu.RLock()

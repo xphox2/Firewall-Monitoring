@@ -22,14 +22,14 @@ func TestSeasonalSpikeDetector_ProfileFetchDoesNotBlockOtherKeys(t *testing.T) {
 
 	slowDone := make(chan struct{})
 	go func() {
-		d.Observe("slow", time.Now(), 100, 3, time.Minute)
+		d.Observe("slow", time.Now(), 100, 3, time.Minute, 0)
 		close(slowDone)
 	}()
 	<-started
 
 	fastDone := make(chan struct{})
 	go func() {
-		d.Observe("fast", time.Now(), 100, 3, time.Minute)
+		d.Observe("fast", time.Now(), 100, 3, time.Minute, 0)
 		close(fastDone)
 	}()
 

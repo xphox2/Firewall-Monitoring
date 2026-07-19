@@ -834,6 +834,7 @@
                     <div class="form-row">
                         <div class="form-group"><label for="alerting-g-spike-stddev">Spike σ threshold</label><input type="number" id="alerting-g-spike-stddev" min="1" max="10" step="0.1"></div>
                         <div class="form-group"><label for="alerting-g-spike-min">Spike min duration (min)</label><input type="number" id="alerting-g-spike-min" min="1" max="1440" step="1"></div>
+                        <div class="form-group"><label for="alerting-g-spike-floor">Spike min throughput (Mbps)</label><input type="number" id="alerting-g-spike-floor" min="0" step="any"><div class="field-hint">No spike alert unless the interface's busiest normal period reaches this rate AND the spike exceeds it. 0 disables the floor.</div></div>
                     </div>
                 </div>
                 <div style="border-top:1px solid var(--fwmon-border);margin:14px 0 12px;padding-top:12px;">
@@ -3114,6 +3115,9 @@
                         <div class="form-row form-row-2">
                             <div class="form-group"><label for="er-spike-k">Sensitivity — Z-score K (σ multiplier)</label><input type="number" id="er-spike-k" min="0" step="any" placeholder="3"><div class="field-hint">Higher = less sensitive. Blank = 3.</div></div>
                             <div class="form-group"><label for="er-spike-duration">Sustain (minutes)</label><input type="number" id="er-spike-duration" min="0" max="1440" placeholder="15"><div class="field-hint">How long the spike must persist before alerting. Blank = 15.</div></div>
+                        </div>
+                        <div class="form-row form-row-2">
+                            <div class="form-group"><label for="er-spike-floor">Min throughput floor (Mbps)</label><input type="number" id="er-spike-floor" min="0" step="any"><div class="field-hint">Blank = inherit the global floor. 0 = disable the floor for this rule's scope (watch a deliberately quiet port). &gt;0 = override.</div></div>
                         </div>
                     </div>
                 </div>

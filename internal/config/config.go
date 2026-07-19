@@ -324,6 +324,10 @@ type AlertsConfig struct {
 	SpikeStdDevThreshold    float64
 	SpikeAlertEnabled       bool
 	SpikeMinDurationMinutes int // a real-time spike must persist this long before it alerts
+	// SpikeMinThroughputMbps is the absolute noise floor (v0.11.121): no spike
+	// alert unless the interface's busiest normal period reaches this rate AND
+	// the spike itself exceeds it. 0 disables the floor (legacy pure z-score).
+	SpikeMinThroughputMbps float64
 	// Incident-channel credentials (T2-5). Presence = configured, mirroring
 	// the Slack/Discord/webhook convention; per-policy flags gate routing.
 	PagerDutyRoutingKey string
@@ -562,6 +566,7 @@ func Load() *Config {
 			SpikeStdDevThreshold:     getFloatEnv("SPIKE_STDDEV_THRESHOLD", 3.0),
 			SpikeAlertEnabled:        getBoolEnv("SPIKE_ALERT_ENABLED", false),
 			SpikeMinDurationMinutes:  getIntEnv("SPIKE_MIN_DURATION_MINUTES", 15),
+			SpikeMinThroughputMbps:   getFloatEnv("SPIKE_MIN_THROUGHPUT_MBPS", 1.0),
 			FlapMaxFires:             getIntEnv("ALERT_FLAP_MAX_FIRES", 5),
 			FlapWindowMinutes:        getIntEnv("ALERT_FLAP_WINDOW_MINUTES", 60),
 			FlapMinActiveSeconds:     getIntEnv("ALERT_FLAP_MIN_ACTIVE_SECONDS", 120),

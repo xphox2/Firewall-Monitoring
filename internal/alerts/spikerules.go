@@ -54,11 +54,14 @@ func (am *AlertManager) spikeEffSiteVendorLocked(deviceID uint, siteID *uint) (e
 	return effSite, vendor
 }
 
-// SpikeParamsFor returns the effective detector params (stddev K + sustain window)
-// for a device's interface: the live spike SystemSettings by default (so an
-// operator-tuned k/min-duration is HONORED), overridden ONLY when a matching
-// enabled ALERT spike rule sets them. Called by the poller before Observe.
-func (am *AlertManager) SpikeParamsFor(deviceID uint, siteID *uint, ifaceName string) (k float64, minDur time.Duration) {
+// SpikeParamsFor returns the effective detector params (stddev K + sustain
+// window + throughput floor in bps) for a device's interface: the live spike
+// SystemSettings by default (so operator-tuned values are HONORED), overridden
+// ONLY when a matching enabled ALERT spike rule sets them. The floor override
+// is nil-checked, NOT >0 — an explicit per-rule 0 disables the floor for that
+// scope (a deliberately-watched quiet port). Called by the poller before
+// Observe.
+func (am *AlertManager) SpikeParamsFor(deviceID uint, siteID *uint, ifaceName string) (k float64, minDur time.Duration, minFloorBps float64) {
 	am.mu.RLock()
 	defer am.mu.RUnlock()
 	k = am.config.Alerts.SpikeStdDevThreshold
@@ -69,6 +72,10 @@ func (am *AlertManager) SpikeParamsFor(deviceID uint, siteID *uint, ifaceName st
 	if minMin <= 0 {
 		minMin = 15
 	}
+	floorMbps := am.config.Alerts.SpikeMinThroughputMbps
+	if floorMbps < 0 {
+		floorMbps = 0
+	}
 	effSite, vendor := am.spikeEffSiteVendorLocked(deviceID, siteID)
 	fields := spikeFields(deviceID, ifaceName, "traffic_"+ifaceName, vendor)
 	if action, rule, matched := am.matchSpikeRuleLocked(fields, deviceID, effSite); matched && action != "suppress" {
@@ -78,8 +85,11 @@ func (am *AlertManager) SpikeParamsFor(deviceID uint, siteID *uint, ifaceName st
 		if rule.dampen.MinDurationMinutes > 0 {
 			minMin = rule.dampen.MinDurationMinutes
 		}
+		if rule.dampen.MinThroughputMbps != nil {
+			floorMbps = *rule.dampen.MinThroughputMbps
+		}
 	}
-	return k, time.Duration(minMin) * time.Minute
+	return k, time.Duration(minMin) * time.Minute, floorMbps * 1e6
 }
 
 func spikeKey(deviceID uint, ifaceName string) string {

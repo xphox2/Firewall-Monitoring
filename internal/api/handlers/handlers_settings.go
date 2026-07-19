@@ -113,6 +113,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		// (deliberately NOT via the scheduler's RefreshSettings cache).
 		"report_email_theme":         true,
 		"spike_stddev_threshold":     true,
+		"spike_min_throughput_mbps":  true,
 		"spike_alert_enabled":        true,
 		"spike_min_duration_minutes": true,
 		// TELEMETRY_STALE threshold (v0.11.101): minutes of polled-telemetry
@@ -211,6 +212,13 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			v, err := strconv.Atoi(s.Value)
 			if err != nil || v < 1 || v > 1440 {
 				c.JSON(http.StatusBadRequest, response.Error("Invalid value for spike_min_duration_minutes: must be 1-1440"))
+				return
+			}
+		case "spike_min_throughput_mbps":
+			// 0 is VALID — it disables the absolute spike floor (legacy z-score).
+			v, err := strconv.ParseFloat(s.Value, 64)
+			if err != nil || v < 0 || v > 100000 {
+				c.JSON(http.StatusBadRequest, response.Error("Invalid value for spike_min_throughput_mbps: must be 0-100000 (0 disables the floor)"))
 				return
 			}
 		case "telemetry_stale_minutes":
@@ -431,7 +439,8 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	for _, s := range validSettings {
 		switch s.Key {
 		case "cpu_threshold", "memory_threshold", "disk_threshold", "session_threshold",
-			"spike_alert_enabled", "spike_stddev_threshold", "spike_min_duration_minutes":
+			"spike_alert_enabled", "spike_stddev_threshold", "spike_min_duration_minutes",
+			"spike_min_throughput_mbps":
 			refreshedAlerting = true
 		}
 	}
