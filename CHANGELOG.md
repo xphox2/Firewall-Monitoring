@@ -1,6 +1,17 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.125] - 2026-07-19
+
+### Fixed — Connection map: link labels centered on the wire, closer to each device (user-reported)
+
+Follow-up to the v0.11.124 perpendicular labels. Two placement tweaks:
+
+- **Centered on the link**: the port/type labels carried a perpendicular screen-space margin (`-9`/`-10`) that lifted them off the wire. Once a label is rotated 90° on an east/west link, that margin pushed it off to one side, reading as misaligned. The margin is now zero, so every label straddles (is centered on) its wire at any angle — its rounded background masks the line behind it.
+- **Closer to each device**: the endpoint port-label offset is reduced from 42 → 24, so labels sit near their device with a small clearance gap instead of far out toward the middle of the link.
+
+Both changes apply to collapsed direct bundles and expanded sublanes. Verified visually (headless Cytoscape via `FWDiagram.render`): vertical labels straddle horizontal links, horizontal labels straddle vertical links, each close to its device.
+
 ## [0.11.124] - 2026-07-19
 
 ### Fixed — Connection map: link labels now read *across* the wire (user-reported)
