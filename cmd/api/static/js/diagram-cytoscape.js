@@ -441,8 +441,12 @@
                 // horizontal links, horizontal on vertical links. data(labelAngle)
                 // is recomputed on layout/drag/expand (see refreshLabelAngles).
                 'source-text-rotation': 'data(labelAngle)', 'target-text-rotation': 'data(labelAngle)',
-                'source-text-offset': 42, 'target-text-offset': 42,
-                'source-text-margin-y': -9, 'target-text-margin-y': -9,
+                'source-text-offset': 24, 'target-text-offset': 24,
+                // Centered ON the wire (no perpendicular margin) so the label
+                // straddles the line at any angle — a screen-space margin-y
+                // pushed rotated E/W labels off to one side. Closer to each
+                // device (offset 24) with a small clearance gap.
+                'source-text-margin-y': 0, 'target-text-margin-y': 0,
                 'text-background-color': cssVar('--fwmon-bg', '#0d1117'), 'text-background-opacity': 0.85,
                 'text-background-padding': '2px', 'text-background-shape': 'roundrectangle', 'text-events': 'yes'
             } },
@@ -476,13 +480,15 @@
             { selector: 'edge[edgeType="sublane"]', style: {
                 'width': 3, 'curve-style': 'unbundled-bezier',
                 'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-dim', '#c9d1d9'),
-                // Perpendicular labels: center type label + endpoint port labels
-                // read ACROSS the wire (see refreshLabelAngles / data(labelAngle)).
-                'text-rotation': 'data(labelAngle)', 'text-margin-y': -10, 'text-events': 'yes',
+                // Perpendicular labels centered ON the wire (see labelAngle /
+                // refreshLabelAngles). No perpendicular margin — the label
+                // straddles the line at any angle; port labels sit close to
+                // each device (offset 24) with a small clearance gap.
+                'text-rotation': 'data(labelAngle)', 'text-margin-y': 0, 'text-events': 'yes',
                 'source-label': 'data(srcPort)', 'target-label': 'data(dstPort)',
                 'source-text-rotation': 'data(labelAngle)', 'target-text-rotation': 'data(labelAngle)',
-                'source-text-offset': 42, 'target-text-offset': 42,
-                'source-text-margin-y': -9, 'target-text-margin-y': -9,
+                'source-text-offset': 24, 'target-text-offset': 24,
+                'source-text-margin-y': 0, 'target-text-margin-y': 0,
                 'text-background-color': cssVar('--fwmon-bg', '#0d1117'), 'text-background-opacity': 0.8,
                 'text-background-padding': '2px'
             }},
