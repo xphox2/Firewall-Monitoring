@@ -111,3 +111,19 @@ func (am *AlertManager) MatchFlowSecurityRule(fields map[string]string, deviceID
 // RecordEventRuleHit records one match against a rule id (poller-facing; counts
 // flush to the DB on the next refresh).
 func (am *AlertManager) RecordEventRuleHit(id uint) { am.recordHit(id, time.Now()) }
+
+// EventTypeToggledOn reports whether an alert type is enabled by the event-
+// profile toggle chain (device → site → Default) for a scope. Public wrapper
+// over eventToggleLocked for callers OUTSIDE the resolveAlertConfig path —
+// notably the poller's flow-security consolidation (v0.11.122): src-keyed
+// security detections collapse into SFLOW_SECURITY before resolveAlertConfig
+// ever sees them, so a sub-type toggle (e.g. SFLOW_DENY_STORM → Off) was
+// silently inert; the poller now consults the DETECTION's own type here and
+// drops toggled-off detections before consolidation. Types with no toggle row
+// anywhere resolve ON (sparse-implicit-ON semantics).
+func (am *AlertManager) EventTypeToggledOn(deviceID uint, siteID *uint, at models.AlertType) bool {
+	am.mu.RLock()
+	defer am.mu.RUnlock()
+	enabled, _ := am.eventToggleLocked(deviceID, siteID, at)
+	return enabled
+}

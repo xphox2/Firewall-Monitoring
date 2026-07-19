@@ -605,6 +605,19 @@ func (p *Poller) applyFlowSecuritySuppressRules(securityBySrc map[string][]*mode
 				ackIDs = append(ackIDs, d.ID)
 				continue
 			}
+			// Per-detector TOGGLE kill switch (v0.11.122): the consolidation
+			// erases sub-type identity (everything below fires as
+			// SFLOW_SECURITY), so a toggled-off registry sub-type — e.g.
+			// SFLOW_DENY_STORM → Off in the Default profile — was silently
+			// inert and only a suppress rule worked. Consult the detection's
+			// OWN type here, where per-detection granularity still exists.
+			// Detectors without a registry type (port_scan, threat_intel, …)
+			// have no toggle row anywhere and resolve ON — unchanged.
+			if !p.alertManager.EventTypeToggledOn(d.DeviceID, site,
+				models.AlertType("SFLOW_"+strings.ToUpper(d.Detector))) {
+				ackIDs = append(ackIDs, d.ID)
+				continue
+			}
 			kept = append(kept, d)
 		}
 		if len(kept) == 0 {

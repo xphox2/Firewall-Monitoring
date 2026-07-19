@@ -87,7 +87,7 @@ func AllAlertTypes() []AlertTypeInfo {
 		{AlertTypeSFlowSecurityDigest, FamilyFlowSecurity, "Cross-source storm rollup for a detector"},
 		{AlertTypeSFlowDDoSVolumetric, FamilyFlowSecurity, "Victim-keyed volumetric DDoS detection"},
 		{AlertTypeSFlowDDoSPrefix, FamilyFlowSecurity, "Prefix-targeted DDoS detection"},
-		{AlertTypeSFlowDenyStorm, FamilyFlowSecurity, "Deny storm from one source (folds into SFLOW_SECURITY — toggle that type to govern it)"},
+		{AlertTypeSFlowDenyStorm, FamilyFlowSecurity, "Deny storm from one source (consolidates into the SFLOW_SECURITY card; toggling THIS type off drops deny-storm detections before consolidation)"},
 		{AlertTypeSFlowDenyStormVictim, FamilyFlowSecurity, "Deny storm aimed at one victim"},
 		{AlertTypeSFlowDeniedThenAllowed, FamilyFlowSecurity, "Denied traffic later allowed (possible policy gap)"},
 
