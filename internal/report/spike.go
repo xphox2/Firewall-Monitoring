@@ -48,7 +48,11 @@ func detectSpikesInSeries(values []float64, times []time.Time, stddevThreshold f
 	}
 
 	// Peak qualifier for the floor: the max rolling-window mean across the
-	// series is "what the port passes at its busiest normal period".
+	// series is "what the port passes at its busiest normal period". Windows
+	// containing spike samples count toward the max by design (same
+	// self-qualification trade-off as Observe's rolling fallback): a single
+	// bucket ≥ windowSize·floor can qualify an otherwise-dead series, and the
+	// resulting spike report is then a genuinely large surge.
 	maxWindowMean := 0.0
 	if minFloorBps > 0 {
 		for i := windowSize; i < len(values); i++ {
@@ -179,44 +183,42 @@ func (p *SeasonalProfile) Band(t time.Time) (mean, std float64, ok bool) {
 	return 0, 0, false
 }
 
-// MaxBandMean returns the highest per-(weekday,hour) mean across the profile
-// — "what the port passes at its busiest normal period" — considering only
-// buckets with enough samples to be meaningful. Falls back to the hour-only
-// buckets, returns 0 when no bucket qualifies (unknown). This is the
-// throughput-floor peak qualifier (v0.11.121): qualification is deliberately
-// by PEAK, not the current time-of-day band, so a big port that is quiet at
-// night keeps night-time spike coverage while a dead port never qualifies.
-func (p *SeasonalProfile) MaxBandMean() float64 {
+// MaxBandMean returns the highest qualifying bucket mean across the profile —
+// "what the port passes at its busiest normal period" — and whether ANY
+// bucket had enough samples to judge. Both bucket maps are considered and the
+// larger max wins: byHour aggregates 7× the samples, so on gappy history it
+// can qualify when no single (weekday,hour) bucket does — taking the max of
+// both errs toward NOT suppressing a real port. found=true with max 0 means
+// "this port verifiably passes nothing" (distinct from no-history, which the
+// caller sends to the rolling fallback). This is the throughput-floor peak
+// qualifier (v0.11.121): qualification is deliberately by PEAK, not the
+// current time-of-day band, so a big port that is quiet at night keeps
+// night-time spike coverage while a dead port never qualifies.
+func (p *SeasonalProfile) MaxBandMean() (float64, bool) {
 	if p == nil {
-		return 0
+		return 0, false
 	}
 	max := 0.0
 	found := false
-	for _, hm := range p.byWeekdayHour {
-		for _, samples := range hm {
-			if len(samples) < minSeasonalSamples {
-				continue
-			}
-			m, _ := meanStdDev(samples)
-			found = true
-			if m > max {
-				max = m
-			}
-		}
-	}
-	if found {
-		return max
-	}
-	for _, samples := range p.byHour {
+	scan := func(samples []float64) {
 		if len(samples) < minSeasonalSamples {
-			continue
+			return
 		}
 		m, _ := meanStdDev(samples)
+		found = true
 		if m > max {
 			max = m
 		}
 	}
-	return max
+	for _, hm := range p.byWeekdayHour {
+		for _, samples := range hm {
+			scan(samples)
+		}
+	}
+	for _, samples := range p.byHour {
+		scan(samples)
+	}
+	return max, found
 }
 
 // IsAnomalous reports whether bps is above the expected band for t, and the
@@ -352,17 +354,21 @@ func (d *SeasonalSpikeDetector) Observe(key string, now time.Time, bps, k float6
 	// Two clauses: the spike itself must exceed the floor (this is the one
 	// that kills the dead-port case), and the port must NORMALLY reach the
 	// floor at its busiest period (seasonal peak — NOT the current band, so a
-	// big port that's quiet at night keeps night coverage; rolling-mean
-	// fallback when the profile is thin; no history at all qualifies so a
-	// brand-new port's first genuine sustained surge isn't muted). A
-	// floor-fail takes the !anomalous branch below, which also RESOLVES an
-	// ongoing alert — traffic below the floor means the spike is over.
+	// big port that's quiet at night keeps night coverage). With NO judgeable
+	// seasonal history the rolling mean stands in — deliberately including
+	// the current/previous spike samples, so a brand-new port's first
+	// genuinely large sustained surge eventually self-qualifies instead of
+	// being muted forever (math note: against the rolling band itself,
+	// sub-(1+k²)·floor floods can never self-qualify — the mean crossing the
+	// floor un-anomalizes them first). A floor-fail takes the !anomalous
+	// branch below, which also RESOLVES an ongoing alert — traffic below the
+	// floor means the spike is over.
 	if anomalous && minFloorBps > 0 {
 		if bps < minFloorBps {
 			anomalous = false
-		} else if peak := st.profile.MaxBandMean(); peak > 0 {
+		} else if peak, known := st.profile.MaxBandMean(); known {
 			if peak < minFloorBps {
-				anomalous = false
+				anomalous = false // includes the verifiably-dead port (peak 0)
 			}
 		} else if rm, _, rok := rollingBand(st.recent); rok && rm < minFloorBps {
 			anomalous = false
@@ -454,10 +460,11 @@ func detectSpikesTimeOfDay(series []float64, times []time.Time, hours int, stdde
 
 	profile := BuildSeasonalProfile(priorVals, priorTimes)
 	// Throughput floor (v0.11.121): the port must reach the floor at its
-	// busiest normal period; peak==0 (no qualifying bucket) passes — unknown
-	// history must not suppress a real surge.
+	// busiest normal period. Unknown history (no qualifying bucket) passes —
+	// it must not suppress a real surge; a KNOWN peak below the floor
+	// (including a verifiably-dead 0) suppresses.
 	if minFloorBps > 0 {
-		if peak := profile.MaxBandMean(); peak > 0 && peak < minFloorBps {
+		if peak, known := profile.MaxBandMean(); known && peak < minFloorBps {
 			return nil
 		}
 	}

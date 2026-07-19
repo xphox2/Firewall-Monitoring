@@ -5,13 +5,15 @@ import (
 	"time"
 )
 
-// buildFloorProfile makes a week-long hourly seasonal profile: every hour at
-// dayMean except 0-5h at nightMean.
+// buildFloorProfile makes a THREE-week hourly seasonal profile (3 samples per
+// (weekday,hour) bucket — enough to qualify the PRIMARY byWeekdayHour path of
+// MaxBandMean, not just the byHour fallback): every hour at dayMean except
+// 0-5h at nightMean.
 func buildFloorProfile(dayMean, nightMean float64) *SeasonalProfile {
 	base := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	var bs []float64
 	var bt []time.Time
-	for i := 0; i < 7*24; i++ {
+	for i := 0; i < 3*7*24; i++ {
 		ts := base.Add(time.Duration(i) * time.Hour)
 		v := dayMean
 		if h := ts.Hour(); h < 6 {
@@ -93,17 +95,65 @@ func TestObserve_FloorFailResolvesOngoingAlert(t *testing.T) {
 	}
 }
 
-// TestMaxBandMean pins the peak qualifier's source: max per-bucket mean with
-// enough samples; nil-safe.
+// TestMaxBandMean pins the peak qualifier's source: max qualifying bucket
+// mean across BOTH maps; found distinguishes verifiably-dead (0, true) from
+// no-history (0, false); nil-safe.
 func TestMaxBandMean(t *testing.T) {
 	var nilP *SeasonalProfile
-	if got := nilP.MaxBandMean(); got != 0 {
-		t.Fatalf("nil profile MaxBandMean = %v, want 0", got)
+	if got, known := nilP.MaxBandMean(); got != 0 || known {
+		t.Fatalf("nil profile MaxBandMean = (%v,%v), want (0,false)", got, known)
 	}
+	// 3-week profile → weekday buckets qualify (primary path).
 	p := buildFloorProfile(50e6, 0.2e6)
-	got := p.MaxBandMean()
-	if got < 45e6 || got > 55e6 {
-		t.Fatalf("MaxBandMean = %v, want ~50e6 (the busiest period)", got)
+	got, known := p.MaxBandMean()
+	if !known || got < 45e6 || got > 55e6 {
+		t.Fatalf("MaxBandMean = (%v,%v), want ~50e6 known", got, known)
+	}
+	// Verifiably-dead port: exact-zero deltas → known peak 0 (NOT unknown).
+	dead := buildFloorProfile(0, 0)
+	got, known = dead.MaxBandMean()
+	if !known || got != 0 {
+		t.Fatalf("all-zero profile = (%v,%v), want (0,true) — dead is a KNOWN state", got, known)
+	}
+	// Single-week profile: weekday buckets have 1 sample (unqualified) but
+	// byHour aggregates 7 → the fallback map must still qualify the port.
+	base := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	var bs []float64
+	var bt []time.Time
+	for i := 0; i < 7*24; i++ {
+		bs = append(bs, 10e6+float64(i%3)*1e5)
+		bt = append(bt, base.Add(time.Duration(i)*time.Hour))
+	}
+	thin := BuildSeasonalProfile(bs, bt)
+	got, known = thin.MaxBandMean()
+	if !known || got < 9e6 {
+		t.Fatalf("thin profile must qualify via byHour: (%v,%v)", got, known)
+	}
+}
+
+// TestObserve_RollingFallbackFloor covers the no-seasonal-history branch: a
+// quiet rolling mean suppresses a >floor spike; a busy rolling mean lets it
+// through.
+func TestObserve_RollingFallbackFloor(t *testing.T) {
+	base := time.Date(2026, 6, 8, 0, 0, 0, 0, time.UTC)
+	// Quiet history (~90bps): a 5 Mbps sample must NOT fire (rolling mean
+	// far below the floor).
+	d := NewSeasonalSpikeDetector(time.Hour, 0, func(string) *SeasonalProfile { return nil })
+	for i := 0; i < 15; i++ {
+		if d.Observe("q", base.Add(time.Duration(i)*time.Minute), 90+float64(i%3), 2.0, 0, 1e6).Fire {
+			t.Fatalf("quiet history must not fire (i=%d)", i)
+		}
+	}
+	if dec := d.Observe("q", base.Add(20*time.Minute), 5e6, 2.0, 0, 1e6); dec.Fire {
+		t.Fatalf("thin-history quiet port: 5 Mbps spike must be floored, got %+v", dec)
+	}
+	// Busy history (~100 Mbps): a large spike fires through the floor.
+	d2 := NewSeasonalSpikeDetector(time.Hour, 0, func(string) *SeasonalProfile { return nil })
+	for i := 0; i < 15; i++ {
+		d2.Observe("b", base.Add(time.Duration(i)*time.Minute), 100e6+float64(i%3)*1e6, 2.0, 0, 1e6)
+	}
+	if dec := d2.Observe("b", base.Add(20*time.Minute), 5e9, 2.0, 0, 1e6); !dec.Fire {
+		t.Fatalf("busy thin-history port: large spike must fire through the floor, got %+v", dec)
 	}
 }
 
