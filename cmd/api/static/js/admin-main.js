@@ -2635,6 +2635,10 @@
 
     // revealSecretCtx holds which field/input the pending reveal targets.
     var revealSecretCtx = { field: '', targetId: '' };
+    // apiTokenRevealed: the API credential fields hold a revealed (unchanged)
+    // value — omit api_token on save unless the operator edits it. Reset on
+    // modal open/close and cleared by any edit to the API fields.
+    var apiTokenRevealed = false;
 
     function openRevealSecret(field, targetId) {
         var deviceId = document.getElementById('device-id').value;
@@ -2681,6 +2685,11 @@
                     input.value = secret;      // populate the (blank) field with the real value
                 }
             }
+            // Mark the API credential as revealed-but-untouched: on save it is
+            // kept as-is (omitted) unless the operator edits a field — so a
+            // revealed OPNsense "key:secret" (or a legacy colon-less token) never
+            // trips the "need both key and secret" guard on an unrelated save.
+            if (revealSecretCtx.field === 'api_token') apiTokenRevealed = true;
             AC.closeModal('reveal-secret-modal');
             AC.showSuccess('Value revealed — it will be re-saved unchanged unless you edit it.');
         }).catch(function(e) {
@@ -2694,6 +2703,7 @@
     // or closed. device-community is a text field by design; the rest are
     // password-typed.
     function resetSecretFields() {
+        apiTokenRevealed = false;
         [['device-community', 'text'], ['device-v3-auth-pass', 'password'],
          ['device-v3-priv-pass', 'password'], ['device-ssh-password', 'password'],
          ['device-api-token', 'password'], ['device-api-key', 'password'],
@@ -2801,6 +2811,12 @@
     if (vendorEl) {
         vendorEl.addEventListener('change', toggleApiFields);
     }
+    // Any edit to an API credential field means the revealed value was changed,
+    // so it must be persisted (clears the revealed-but-untouched flag).
+    ['device-api-token', 'device-api-key', 'device-api-secret'].forEach(function (fid) {
+        var el = document.getElementById(fid);
+        if (el) el.addEventListener('input', function () { apiTokenRevealed = false; });
+    });
 
     function testDeviceConnection(el) {
         var ip = document.getElementById('device-ip').value;
@@ -2908,7 +2924,11 @@
             data.api_port = parseInt(document.getElementById('device-api-port').value) || 443;
             data.api_insecure_tls = document.getElementById('device-api-insecure-tls').checked;
             var vendorSel = data.vendor;
-            if (vendorSel === 'fortigate') {
+            // A revealed-but-unedited credential is kept as-is: omit api_token so a
+            // save never re-derives (or blocks on) an unchanged value.
+            if (apiTokenRevealed) {
+                // keep current — send nothing
+            } else if (vendorSel === 'fortigate') {
                 var apiTok = document.getElementById('device-api-token').value;
                 if (apiTok && !/^\*+$/.test(apiTok)) data.api_token = apiTok;
             } else if (vendorSel === 'opnsense') {
