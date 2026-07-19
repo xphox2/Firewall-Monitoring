@@ -189,6 +189,17 @@ func (d driver) StatusProbe(v ipsec.RenderView) []ipsec.ProbeStep {
 	return []ipsec.ProbeStep{{Kind: ipsec.StepHTTPAPI, Method: "GET", Path: "/api/ipsec/sessions/searchPhase1"}}
 }
 
+// PreflightProbe emits read-only OPNsense REST GETs: firmware status (auth +
+// product version) and an IPsec connection search — the collector matches the
+// tunnel name/description against the results to detect a pre-existing
+// connection (collision) before any write. All GETs; nothing is mutated.
+func (d driver) PreflightProbe(v ipsec.RenderView) []ipsec.PreflightStep {
+	return []ipsec.PreflightStep{
+		{Check: "auth", Method: "GET", Path: "/api/core/firmware/status"},
+		{Check: "connection", Method: "GET", Path: "/api/ipsec/connections/searchConnection", ExpectAbsent: true},
+	}
+}
+
 func (d driver) ParseStatus(raw string) (ipsec.TunnelStatus, error) {
 	low := strings.ToLower(raw)
 	st := ipsec.TunnelStatus{IKE: ipsec.SAUnknown, Child: ipsec.SAUnknown}

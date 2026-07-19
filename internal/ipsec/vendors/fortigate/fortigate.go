@@ -169,6 +169,20 @@ func (d driver) StatusProbe(v ipsec.RenderView) []ipsec.ProbeStep {
 	}}
 }
 
+// PreflightProbe emits read-only FortiOS REST GETs: the monitor system-status
+// (auth + FortiOS version) and the cmdb objects Render would create — all named
+// after the tunnel — so a name/VTI collision is detected before any write. The
+// cmdb GETs return 404 when the object is absent (the healthy pre-deploy state).
+func (d driver) PreflightProbe(v ipsec.RenderView) []ipsec.PreflightStep {
+	name := v.Intent.Name
+	return []ipsec.PreflightStep{
+		{Check: "auth", Method: "GET", Path: "/api/v2/monitor/system/status"},
+		{Check: "phase1", Method: "GET", Path: "/api/v2/cmdb/vpn.ipsec/phase1-interface/" + name, ExpectAbsent: true},
+		{Check: "phase2", Method: "GET", Path: "/api/v2/cmdb/vpn.ipsec/phase2-interface/" + name, ExpectAbsent: true},
+		{Check: "vti", Method: "GET", Path: "/api/v2/cmdb/system/interface/" + name, ExpectAbsent: true},
+	}
+}
+
 func (d driver) ParseStatus(raw string) (ipsec.TunnelStatus, error) {
 	low := strings.ToLower(raw)
 	st := ipsec.TunnelStatus{IKE: ipsec.SAUnknown, Child: ipsec.SAUnknown}

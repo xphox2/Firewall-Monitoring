@@ -216,6 +216,9 @@ func TestProbeCommandTouchesDevice(t *testing.T) {
 	if ProbeCommandTouchesDevice("some_future_type") {
 		t.Error("unknown command types must default to non-touching")
 	}
+	if !ProbeCommandTouchesDevice(ProbeCommandTypeIPSecPreflight) {
+		t.Error("ipsec_preflight must count as device-reachability evidence (a successful REST read proves reachability)")
+	}
 }
 
 func TestCompleteProbeCommand_IdempotentByCommandID(t *testing.T) {

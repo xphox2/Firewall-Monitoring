@@ -195,6 +195,7 @@ func (d *Database) EncryptDeviceSecrets(dev *models.Device) {
 	dev.SNMPV3AuthPass = encryptField(dev.SNMPV3AuthPass, d.encKeys.current)
 	dev.SNMPV3PrivPass = encryptField(dev.SNMPV3PrivPass, d.encKeys.current)
 	dev.SSHPassword = encryptField(dev.SSHPassword, d.encKeys.current)
+	dev.APIToken = encryptField(dev.APIToken, d.encKeys.current)
 }
 
 // DecryptDeviceSecrets decrypts SNMP credential fields on a device.
@@ -203,6 +204,7 @@ func (d *Database) DecryptDeviceSecrets(dev *models.Device) {
 	dev.SNMPV3AuthPass = decryptFieldWithChain(dev.SNMPV3AuthPass, d.encKeys)
 	dev.SNMPV3PrivPass = decryptFieldWithChain(dev.SNMPV3PrivPass, d.encKeys)
 	dev.SSHPassword = decryptFieldWithChain(dev.SSHPassword, d.encKeys)
+	dev.APIToken = decryptFieldWithChain(dev.APIToken, d.encKeys)
 }
 
 // DecryptField decrypts a single string value from database storage.

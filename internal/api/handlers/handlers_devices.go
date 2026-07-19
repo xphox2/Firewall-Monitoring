@@ -147,6 +147,9 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 		"ssh_port":          true,
 		"ssh_poll_enabled":  true,
 		"ssh_poll_interval": true,
+		"api_token":         true,
+		"api_port":          true,
+		"api_insecure_tls":  true,
 	}
 
 	var updates map[string]interface{}
@@ -268,6 +271,18 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 		}
 	}
 
+	// api_token (vendor REST credential) is redacted on GET like ssh_password —
+	// same mask/empty = "leave unchanged" guard so a round-trip save never
+	// overwrites the real token with the mask.
+	if apiTok, ok := filteredUpdates["api_token"]; ok {
+		str, isStr := apiTok.(string)
+		if !isStr || str == "" || str == httputil.RedactedMask {
+			delete(filteredUpdates, "api_token")
+		} else {
+			filteredUpdates["api_token"] = db.EncryptField(str)
+		}
+	}
+
 	// Write via Model(&Device{}).Where(id) rather than Model(device). The
 	// `device` here was loaded by GetDevice, which Preload("Probe")/Preload(
 	// "Site") — so it carries loaded belongs-to associations. gorm's
@@ -318,6 +333,7 @@ var revealableDeviceSecrets = map[string]func(*models.Device) string{
 	"snmp_community":   func(d *models.Device) string { return d.SNMPCommunity },
 	"snmpv3_auth_pass": func(d *models.Device) string { return d.SNMPV3AuthPass },
 	"snmpv3_priv_pass": func(d *models.Device) string { return d.SNMPV3PrivPass },
+	"api_token":        func(d *models.Device) string { return d.APIToken },
 }
 
 // RevealDeviceSecret returns ONE decrypted device credential in plaintext, so an

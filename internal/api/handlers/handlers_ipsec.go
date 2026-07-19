@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -369,6 +370,175 @@ func (h *Handler) IPSecCapabilities(c *gin.Context) {
 		"allowed":  ipsec.Intersect(capA, capB),
 		"profiles": ipsec.Presets(),
 	}))
+}
+
+// --- IPSec deploy preflight (READ-ONLY; PR-C1) --------------------------------
+//
+// PreflightIPSecTunnel enqueues a read-only REST preflight command to EACH end's
+// collector: authenticate to the device API and GET the objects a deploy would
+// create (name/VTI/connection collisions) — WITHOUT writing anything. It is the
+// de-risking step before the apply saga (PR-C2). The API token is decrypted
+// server-side, placed in the command payload, and re-encrypted at rest by
+// EnqueueProbeCommand; it is delivered to the collector over TLS and never
+// logged. Returns the per-end command IDs; poll the GET below for results.
+
+// ipsecPreflightPayload is the JSON contract delivered to the collector. It
+// carries ONLY read-only GET steps (from the driver's PreflightProbe) — no PSK,
+// no write steps. The API token is the sole secret and rides the encrypted
+// command payload.
+type ipsecPreflightPayload struct {
+	TunnelID   uint   `json:"tunnel_id"`
+	TunnelName string `json:"tunnel_name"`
+	End        int    `json:"end"` // 0=A, 1=B
+	Vendor     string `json:"vendor"`
+	DeviceID   uint   `json:"device_id"`
+	BaseURL    string `json:"base_url"`
+	// APIToken is deliberately marshaled — the collector needs it to
+	// authenticate to the device API. This is not an API response: the payload
+	// is encrypted at rest by EnqueueProbeCommand (AES-256-GCM), delivered over
+	// TLS, and never logged. (The gosec G117 marshaled-secret finding is
+	// suppressed at the json.Marshal call site, where it is raised.)
+	APIToken    string                `json:"api_token"`
+	InsecureTLS bool                  `json:"insecure_tls"`
+	Steps       []ipsec.PreflightStep `json:"steps"`
+}
+
+type ipsecPreflightEnqueued struct {
+	End       int    `json:"end"`
+	DeviceID  uint   `json:"device_id"`
+	Vendor    string `json:"vendor"`
+	ProbeID   uint   `json:"probe_id"`
+	CommandID string `json:"command_id"`
+}
+
+func (h *Handler) PreflightIPSecTunnel(c *gin.Context) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+	m, err := db.GetIPSecTunnel(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, response.Error("Tunnel not found"))
+		return
+	}
+	intent, err := database.IPSecModelToIntent(m)
+	if err != nil {
+		httputil.InternalError(c, "Failed to decode tunnel", err)
+		return
+	}
+
+	// A tunnel always has exactly two ends (create/hydrate enforce it); guard
+	// defensively so a malformed stored intent can't panic the fixed-size index.
+	if len(intent.Ends) != 2 {
+		httputil.InternalError(c, "Malformed tunnel intent", fmt.Errorf("expected 2 ends, got %d", len(intent.Ends)))
+		return
+	}
+	deviceIDs := [2]uint{m.ADeviceID, m.BDeviceID}
+	enqueued := make([]ipsecPreflightEnqueued, 0, 2)
+	for i := range intent.Ends {
+		dev, derr := db.GetDevice(deviceIDs[i])
+		if derr != nil {
+			c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("end %c device (id %d) not found", 'A'+i, deviceIDs[i])))
+			return
+		}
+		if dev.ProbeID == nil || *dev.ProbeID == 0 {
+			c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("end %c (%s): device has no collector assigned — preflight runs from the collector", 'A'+i, dev.Name)))
+			return
+		}
+		if dev.APIToken == "" {
+			c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("end %c (%s): no API token set — add one on the device before preflight", 'A'+i, dev.Name)))
+			return
+		}
+		drv, ok := ipsec.Driver(intent.Ends[i].Vendor)
+		if !ok {
+			c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("end %c (%q): no IPSec driver", 'A'+i, intent.Ends[i].Vendor)))
+			return
+		}
+		port := dev.APIPort
+		if port == 0 {
+			port = 443
+		}
+		payload := ipsecPreflightPayload{
+			TunnelID:    m.ID,
+			TunnelName:  intent.Name,
+			End:         i,
+			Vendor:      intent.Ends[i].Vendor,
+			DeviceID:    dev.ID,
+			BaseURL:     fmt.Sprintf("https://%s:%d", dev.IPAddress, port),
+			APIToken:    dev.APIToken,
+			InsecureTLS: dev.APIInsecureTLS,
+			Steps:       drv.PreflightProbe(ipsec.ViewFor(intent, i)),
+		}
+		// api_token is intentionally marshaled here: this is the collector command
+		// payload (encrypted at rest by EnqueueProbeCommand, TLS-delivered, never
+		// an API response), not a client-facing object. (gosec G117 is excluded in
+		// CI — its inline #nosec is not honored for this rule.)
+		buf, merr := json.Marshal(payload)
+		if merr != nil {
+			httputil.InternalError(c, "Failed to build preflight payload", merr)
+			return
+		}
+		cmd := &models.ProbeCommand{
+			ProbeID:  *dev.ProbeID,
+			DeviceID: dev.ID,
+			Type:     database.ProbeCommandTypeIPSecPreflight,
+			Payload:  string(buf),
+		}
+		if eerr := db.EnqueueProbeCommand(cmd); eerr != nil {
+			httputil.InternalError(c, "Failed to enqueue preflight", eerr)
+			return
+		}
+		enqueued = append(enqueued, ipsecPreflightEnqueued{
+			End: i, DeviceID: dev.ID, Vendor: intent.Ends[i].Vendor, ProbeID: *dev.ProbeID, CommandID: cmd.CommandID,
+		})
+	}
+	c.JSON(http.StatusOK, response.Success(gin.H{"tunnel_id": m.ID, "commands": enqueued}))
+}
+
+// GetIPSecPreflightResult returns the latest preflight command status + result
+// for each of the tunnel's two ends, so the wizard can poll after enqueuing.
+// The collector returns a structured JSON report as the command Result; it is
+// passed through as an opaque object (no secrets — the report has no token/PSK).
+func (h *Handler) GetIPSecPreflightResult(c *gin.Context) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+	m, err := db.GetIPSecTunnel(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, response.Error("Tunnel not found"))
+		return
+	}
+	type endReport struct {
+		End       int             `json:"end"`
+		DeviceID  uint            `json:"device_id"`
+		Status    string          `json:"status"` // pending/dispatched/succeeded/failed/expired, or "none"
+		Report    json.RawMessage `json:"report"` // structured collector report (when succeeded)
+		RawResult string          `json:"raw_result,omitempty"`
+	}
+	out := make([]endReport, 0, 2)
+	for i, devID := range [2]uint{m.ADeviceID, m.BDeviceID} {
+		er := endReport{End: i, DeviceID: devID, Status: "none"}
+		cmd, cerr := db.GetLatestCommandByDeviceType(devID, database.ProbeCommandTypeIPSecPreflight)
+		if cerr == nil && cmd != nil {
+			er.Status = cmd.Status
+			if json.Valid([]byte(cmd.Result)) {
+				er.Report = json.RawMessage(cmd.Result)
+			} else if cmd.Result != "" {
+				er.RawResult = cmd.Result
+			}
+		}
+		out = append(out, er)
+	}
+	c.JSON(http.StatusOK, response.Success(gin.H{"tunnel_id": m.ID, "ends": out}))
 }
 
 // --- IPSec wizard "endpoint hints" (read-only) --------------------------------

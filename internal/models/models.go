@@ -749,6 +749,18 @@ type Device struct {
 	SSHPort         int    `json:"ssh_port" gorm:"default:22"`
 	SSHPollEnabled  bool   `json:"ssh_poll_enabled" gorm:"default:false"`
 	SSHPollInterval int    `json:"ssh_poll_interval" gorm:"default:900"`
+	// APIToken is the vendor REST-API credential used for config automation
+	// (IPSec apply/preflight), separate from the SSH/SNMP creds. FortiGate holds
+	// a Bearer token; OPNsense holds "key:secret". Encrypted at rest (like
+	// SSHPassword), redacted on every read path, and revealed only via the
+	// secure-reveal endpoint. APIPort is the management HTTPS port (default 443).
+	APIToken string `json:"api_token"`
+	APIPort  int    `json:"api_port" gorm:"default:443"`
+	// APIInsecureTLS skips TLS certificate verification for the vendor REST API.
+	// Default false (verify) — the API token would otherwise be exposed to a
+	// MITM on the collector↔device path. Set true ONLY for a box with a
+	// self-signed mgmt cert on a trusted segment (documented operator choice).
+	APIInsecureTLS bool `json:"api_insecure_tls" gorm:"default:false"`
 	// SSHHostKeys is the newline-joined set of known-good SSH host-key
 	// fingerprints ("SHA256:...") for this device. A device legitimately has
 	// more than one when it is a FortiGate HA cluster — each member presents its
