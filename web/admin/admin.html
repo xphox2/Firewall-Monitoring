@@ -2855,6 +2855,21 @@
         </div>
     </div>
 
+    <!-- IPSec Preflight Modal (READ-ONLY: auth + collision checks, no device writes) -->
+    <div class="modal" id="ipsec-preflight-modal" role="dialog" aria-modal="true" aria-labelledby="ipsec-preflight-title">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="ipsec-preflight-title">Deploy Preflight</h2>
+                <button class="modal-close" data-action="ipsec-preflight-close">&times;</button>
+            </div>
+            <p style="color:var(--fwmon-text-mute);font-size:0.85rem;margin:0 0 12px 0;">Read-only check — authenticates to each firewall's REST API and looks for name/config collisions. Nothing on the device is changed.</p>
+            <div id="ipsec-preflight-body"><!-- rendered by admin-ipsec.js --></div>
+            <div class="modal-footer">
+                <button type="button" class="btn secondary" data-action="ipsec-preflight-close">Close</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Connection Modal -->
     <div class="modal" id="connection-modal" role="dialog" aria-modal="true" aria-labelledby="connection-modal-title">
         <div class="modal-content">
