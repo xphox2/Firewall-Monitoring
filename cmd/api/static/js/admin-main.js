@@ -2621,7 +2621,8 @@
     // Show "leave blank to keep current" hints next to secret fields only when
     // editing (on a new device there is nothing to keep).
     function toggleSecretHints(isEdit) {
-        ['community-note', 'ssh-password-note', 'v3-auth-note', 'v3-priv-note'].forEach(function(noteId) {
+        ['community-note', 'ssh-password-note', 'v3-auth-note', 'v3-priv-note',
+         'api-token-note', 'api-key-note', 'api-secret-note'].forEach(function(noteId) {
             var el = document.getElementById(noteId);
             if (el) el.style.display = isEdit ? '' : 'none';
         });
@@ -2662,10 +2663,23 @@
             body: JSON.stringify({ password: pw, totp_code: totp.trim(), field: revealSecretCtx.field })
         }).then(function(resp) {
             var secret = resp && resp.data ? resp.data.secret : '';
-            var input = document.getElementById(revealSecretCtx.targetId);
-            if (input) {
-                input.type = 'text';       // show it
-                input.value = secret;      // populate the (blank) field with the real value
+            var vendor = document.getElementById('device-vendor').value;
+            if (revealSecretCtx.field === 'api_token' && vendor === 'opnsense') {
+                // The OPNsense credential is stored as "key:secret" — split it back
+                // into the two inputs so the operator sees both parts.
+                var sep = secret.indexOf(':');
+                var keyEl = document.getElementById('device-api-key');
+                var secEl = document.getElementById('device-api-secret');
+                var keyPart = sep >= 0 ? secret.slice(0, sep) : secret;
+                var secPart = sep >= 0 ? secret.slice(sep + 1) : '';
+                if (keyEl) { keyEl.type = 'text'; keyEl.value = keyPart; }
+                if (secEl) { secEl.type = 'text'; secEl.value = secPart; }
+            } else {
+                var input = document.getElementById(revealSecretCtx.targetId);
+                if (input) {
+                    input.type = 'text';       // show it
+                    input.value = secret;      // populate the (blank) field with the real value
+                }
             }
             AC.closeModal('reveal-secret-modal');
             AC.showSuccess('Value revealed — it will be re-saved unchanged unless you edit it.');
@@ -2681,7 +2695,9 @@
     // password-typed.
     function resetSecretFields() {
         [['device-community', 'text'], ['device-v3-auth-pass', 'password'],
-         ['device-v3-priv-pass', 'password'], ['device-ssh-password', 'password']].forEach(function(pair) {
+         ['device-v3-priv-pass', 'password'], ['device-ssh-password', 'password'],
+         ['device-api-token', 'password'], ['device-api-key', 'password'],
+         ['device-api-secret', 'password']].forEach(function(pair) {
             var el = document.getElementById(pair[0]);
             if (el) { el.value = ''; el.type = pair[1]; }
         });
@@ -2724,6 +2740,10 @@
             document.getElementById('device-ssh-port').value = d.ssh_port || 22;
             document.getElementById('device-ssh-poll-interval').value = d.ssh_poll_interval || 900;
             document.getElementById('device-ssh-poll-enabled').checked = d.ssh_poll_enabled === true;
+            // REST-API credentials: token/key/secret stay blank on edit (masked);
+            // port + TLS flag are non-secret and populated from the device.
+            document.getElementById('device-api-port').value = d.api_port || 443;
+            document.getElementById('device-api-insecure-tls').checked = d.api_insecure_tls === true;
         } else {
             document.getElementById('device-form').reset();
             document.getElementById('device-id').value = '';
@@ -2733,8 +2753,11 @@
             document.getElementById('device-wan-speed').value = '1000';
             document.getElementById('device-ssh-port').value = '22';
             document.getElementById('device-ssh-poll-interval').value = '900';
+            document.getElementById('device-api-port').value = '443';
+            document.getElementById('device-api-insecure-tls').checked = false;
         }
         toggleV3Fields();
+        toggleApiFields();
     }
 
     function closeDeviceModal() { resetSecretFields(); AC.closeModal('device-modal'); }
@@ -2749,6 +2772,34 @@
     var snmpVersionEl = document.getElementById('device-snmp-version');
     if (snmpVersionEl) {
         snmpVersionEl.addEventListener('change', toggleV3Fields);
+    }
+
+    // toggleApiFields shows the vendor-appropriate REST-API credential inputs.
+    // The transport is vendor-specific: FortiGate authenticates with a single
+    // Bearer token; OPNsense uses an API key + secret (HTTP basic). Vendors
+    // without a config-automation driver hide the whole section.
+    function toggleApiFields() {
+        var vendor = (document.getElementById('device-vendor').value || 'fortigate');
+        var section = document.getElementById('api-fields');
+        var fg = document.getElementById('api-fortigate-group');
+        var opn = document.getElementById('api-opnsense-group');
+        var hint = document.getElementById('api-hint');
+        var supported = vendor === 'fortigate' || vendor === 'opnsense';
+        if (section) section.style.display = supported ? '' : 'none';
+        if (fg) fg.style.display = vendor === 'fortigate' ? '' : 'none';
+        if (opn) opn.style.display = vendor === 'opnsense' ? '' : 'none';
+        if (hint) {
+            if (vendor === 'fortigate') {
+                hint.textContent = 'FortiGate: System → Administrators → Create New → REST API Admin. Paste the generated token; scope its trusthost to the collector.';
+            } else if (vendor === 'opnsense') {
+                hint.textContent = 'OPNsense: System → Access → Users → edit a user → add an API key. Paste the key and secret it generates.';
+            }
+        }
+    }
+
+    var vendorEl = document.getElementById('device-vendor');
+    if (vendorEl) {
+        vendorEl.addEventListener('change', toggleApiFields);
     }
 
     function testDeviceConnection(el) {
@@ -2849,6 +2900,31 @@
             data.ssh_port = parseInt(document.getElementById('device-ssh-port').value) || 22;
             data.ssh_poll_interval = parseInt(document.getElementById('device-ssh-poll-interval').value) || 900;
             data.ssh_poll_enabled = document.getElementById('device-ssh-poll-enabled').checked;
+
+            // REST-API config-automation credentials (vendor-specific shape).
+            // Non-secret settings are always sent; the token is sent only when the
+            // user entered a new value (blank/mask = keep current), like the other
+            // secrets. FortiGate = one Bearer token; OPNsense = key:secret.
+            data.api_port = parseInt(document.getElementById('device-api-port').value) || 443;
+            data.api_insecure_tls = document.getElementById('device-api-insecure-tls').checked;
+            var vendorSel = data.vendor;
+            if (vendorSel === 'fortigate') {
+                var apiTok = document.getElementById('device-api-token').value;
+                if (apiTok && !/^\*+$/.test(apiTok)) data.api_token = apiTok;
+            } else if (vendorSel === 'opnsense') {
+                var apiKey = document.getElementById('device-api-key').value;
+                var apiSecret = document.getElementById('device-api-secret').value;
+                var keyEntered = apiKey && !/^\*+$/.test(apiKey);
+                var secEntered = apiSecret && !/^\*+$/.test(apiSecret);
+                // Send the combined credential only when BOTH parts are present, so
+                // a half-entry never persists a broken "key:" / ":secret" token.
+                if (keyEntered && secEntered) {
+                    data.api_token = apiKey + ':' + apiSecret;
+                } else if (keyEntered || secEntered) {
+                    alert('OPNsense API access needs BOTH the key and the secret (or leave both blank to keep the current credential).');
+                    return;
+                }
+            }
 
             // SSH polling needs credentials, but on EDIT a blank password means
             // "keep the stored one" — never force re-entry just to save an
