@@ -75,6 +75,42 @@ func TestInferLinks_ARPTargetOutsideSubnetKept(t *testing.T) {
 	}
 }
 
+// TestInferLinks_ARPResolvedIPPrecision: a genuine /30 transit whose interface
+// ALSO carries a secondary multi-host /24 must keep the link — suppression
+// tests the exact resolved ARP IP (the /30 peer), not the target's unrelated
+// /24 address.
+func TestInferLinks_ARPResolvedIPPrecision(t *testing.T) {
+	devs := []DeviceMeta{
+		{ID: 1, Name: "fw-core", SiteID: &site1, IPs: []string{"10.0.0.1"}},
+		// target owns both the /30 peer IP and a /24 mgmt IP.
+		{ID: 2, Name: "opnsense", SiteID: &site1, IPs: []string{"10.0.0.2", "192.168.5.107"}},
+	}
+	ifaces := []Iface{
+		// reporter's transit port carries the /30 AND a secondary /24.
+		{DeviceID: 1, IfIndex: 5, Name: "port5", MAC: "AA:BB:CC:00:00:05", Status: "up", TypeName: "ethernet",
+			Networks: []string{"10.0.0.0/30", "192.168.5.0/24"}},
+		{DeviceID: 2, IfIndex: 3, Name: "dtsec1", MAC: "aa:bb:cc:00:01:03", Status: "up", TypeName: "ethernet",
+			Networks: []string{"10.0.0.0/30"}},
+	}
+	// ARP resolved the /30 peer IP — the real transit adjacency.
+	arp := []ARPRow{
+		{DeviceID: 1, IfIndex: 5, IP: "10.0.0.2", MAC: "aa:bb:cc:00:01:03", Ts: ts()},
+		{DeviceID: 2, IfIndex: 3, IP: "10.0.0.1", MAC: "aa:bb:cc:00:00:05", Ts: ts()},
+	}
+	if links := InferLinks(devs, ifaces, nil, arp, nil); len(links) != 1 {
+		t.Fatalf("P2P /30 with a secondary /24 must keep the link (resolved IP is the /30 peer), got %d: %+v", len(links), links)
+	}
+}
+
+// TestInferLinks_GarbageZeroMaskKept: a 0.0.0.0 netmask (→ /0) is garbage, not
+// a shared segment — it must not blanket-suppress ARP inference.
+func TestInferLinks_GarbageZeroMaskKept(t *testing.T) {
+	devs, ifaces, arp := arpPair("0.0.0.0/0", "0.0.0.0/0", "10.9.9.1", "10.9.9.2")
+	if links := InferLinks(devs, ifaces, nil, arp, nil); len(links) != 1 {
+		t.Fatalf("/0 garbage mask must keep the link, got %d: %+v", len(links), links)
+	}
+}
+
 // TestNetworkIsMultiHost pins the prefix boundary.
 func TestNetworkIsMultiHost(t *testing.T) {
 	mk := func(cidr string) bool {

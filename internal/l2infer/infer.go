@@ -343,17 +343,21 @@ func (ix *indexes) ifaceFor(dev uint, ifIndex int, name string) *Iface {
 }
 
 // arpOnSharedSubnet reports whether the ARP-observed interface on `dev` sits on
-// a multi-host subnet that also contains one of `target`'s IPs — i.e. the two
-// devices are on a shared segment, so the ARP entry is not a point-to-point
-// cable. Conservative: unknown interface / no CIDR / unparseable → false (keep
-// the candidate), so a genuine P2P link is never dropped for lack of data.
-func (ix *indexes) arpOnSharedSubnet(dev uint, ifIndex int, name string, target uint) bool {
+// a multi-host subnet that CONTAINS the exact IP this ARP row resolved
+// (`resolvedIP`) — i.e. the two devices are on a shared segment, so the ARP
+// entry is not a point-to-point cable. Testing the resolved IP (not every IP
+// the target owns) is precise: a transit interface that also carries a
+// secondary multi-host address won't suppress a genuine /30 peer whose ARP IP
+// isn't in that secondary subnet. Conservative: unknown interface / no CIDR /
+// unparseable / unparseable IP → false (keep), so a genuine P2P link is never
+// dropped for lack of data.
+func (ix *indexes) arpOnSharedSubnet(dev uint, ifIndex int, name, resolvedIP string) bool {
 	f := ix.ifaceFor(dev, ifIndex, name)
 	if f == nil || len(f.Networks) == 0 {
 		return false
 	}
-	targetIPs := ix.ipToID[target]
-	if len(targetIPs) == 0 {
+	ip := net.ParseIP(strings.TrimSpace(resolvedIP))
+	if ip == nil {
 		return false
 	}
 	for _, cidr := range f.Networks {
@@ -361,11 +365,8 @@ func (ix *indexes) arpOnSharedSubnet(dev uint, ifIndex int, name string, target 
 		if err != nil || !networkIsMultiHost(ipnet) {
 			continue
 		}
-		for ipStr := range targetIPs {
-			ip := net.ParseIP(strings.TrimSpace(ipStr))
-			if ip != nil && ipnet.Contains(ip) {
-				return true
-			}
+		if ipnet.Contains(ip) {
+			return true
 		}
 	}
 	return false
@@ -374,13 +375,16 @@ func (ix *indexes) arpOnSharedSubnet(dev uint, ifIndex int, name string, target 
 // networkIsMultiHost reports whether an IPv4 network holds more than a
 // point-to-point pair — prefix ≤ /29 (≥ 6 usable hosts) is a shared segment;
 // /30 (2 usable), /31 (RFC 3021 P2P) and /32 are treated as point-to-point and
-// keep their ARP inference. IPv6 nets return false (conservative keep).
+// keep their ARP inference. A /0 (from a garbage 0.0.0.0 netmask on an
+// unnumbered/unassigned interface) is treated as UNKNOWN → not multi-host, so
+// bad data keeps rather than blanket-suppresses. IPv6 nets return false
+// (conservative keep).
 func networkIsMultiHost(ipnet *net.IPNet) bool {
 	if ipnet == nil || ipnet.IP.To4() == nil {
 		return false
 	}
 	ones, bits := ipnet.Mask.Size()
-	if bits != 32 {
+	if bits != 32 || ones == 0 {
 		return false
 	}
 	return ones <= 29
@@ -763,7 +767,7 @@ func (ix *indexes) arpCandidates(arp []ARPRow) []candidate {
 		// and win by tierRank; a genuine P2P ARP link survives). This closes
 		// the same false-mesh class the subnet_match detector was removed for
 		// (v0.11.94), which leaked back through the ARP tier.
-		if ix.arpOnSharedSubnet(row.DeviceID, row.IfIndex, row.IfName, target) {
+		if ix.arpOnSharedSubnet(row.DeviceID, row.IfIndex, row.IfName, row.IP) {
 			continue
 		}
 		port := ix.resolvePort(row.DeviceID, row.IfIndex, row.IfName)
