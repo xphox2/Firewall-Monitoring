@@ -387,12 +387,17 @@ func (h *Handler) IPSecCapabilities(c *gin.Context) {
 // no write steps. The API token is the sole secret and rides the encrypted
 // command payload.
 type ipsecPreflightPayload struct {
-	TunnelID    uint                  `json:"tunnel_id"`
-	TunnelName  string                `json:"tunnel_name"`
-	End         int                   `json:"end"` // 0=A, 1=B
-	Vendor      string                `json:"vendor"`
-	DeviceID    uint                  `json:"device_id"`
-	BaseURL     string                `json:"base_url"`
+	TunnelID   uint   `json:"tunnel_id"`
+	TunnelName string `json:"tunnel_name"`
+	End        int    `json:"end"` // 0=A, 1=B
+	Vendor     string `json:"vendor"`
+	DeviceID   uint   `json:"device_id"`
+	BaseURL    string `json:"base_url"`
+	// APIToken is deliberately marshaled — the collector needs it to
+	// authenticate to the device API. This is not an API response: the payload
+	// is encrypted at rest by EnqueueProbeCommand (AES-256-GCM), delivered over
+	// TLS, and never logged. (The gosec G117 marshaled-secret finding is
+	// suppressed at the json.Marshal call site, where it is raised.)
 	APIToken    string                `json:"api_token"`
 	InsecureTLS bool                  `json:"insecure_tls"`
 	Steps       []ipsec.PreflightStep `json:"steps"`
@@ -426,6 +431,12 @@ func (h *Handler) PreflightIPSecTunnel(c *gin.Context) {
 		return
 	}
 
+	// A tunnel always has exactly two ends (create/hydrate enforce it); guard
+	// defensively so a malformed stored intent can't panic the fixed-size index.
+	if len(intent.Ends) != 2 {
+		httputil.InternalError(c, "Malformed tunnel intent", fmt.Errorf("expected 2 ends, got %d", len(intent.Ends)))
+		return
+	}
 	deviceIDs := [2]uint{m.ADeviceID, m.BDeviceID}
 	enqueued := make([]ipsecPreflightEnqueued, 0, 2)
 	for i := range intent.Ends {
@@ -462,6 +473,10 @@ func (h *Handler) PreflightIPSecTunnel(c *gin.Context) {
 			InsecureTLS: dev.APIInsecureTLS,
 			Steps:       drv.PreflightProbe(ipsec.ViewFor(intent, i)),
 		}
+		// api_token is intentionally marshaled here: this is the collector command
+		// payload (encrypted at rest by EnqueueProbeCommand, TLS-delivered, never
+		// an API response), not a client-facing object. (gosec G117 is excluded in
+		// CI — its inline #nosec is not honored for this rule.)
 		buf, merr := json.Marshal(payload)
 		if merr != nil {
 			httputil.InternalError(c, "Failed to build preflight payload", merr)

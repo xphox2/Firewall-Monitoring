@@ -126,7 +126,13 @@ jobs:
         #   G401/G501 crypto/md5        — non-crypto config-change fingerprint (see configdiff),
         #                                 kept as MD5 so an algorithm change doesn't false-fire
         #                                 a CONFIG_CHANGE alert on every device at upgrade
-        run: gosec -quiet -severity medium -exclude=G115,G124,G203,G304,G401,G501,G703 ./...
+        #   G117 marshaled-secret       — the IPSec preflight DELIBERATELY marshals the vendor
+        #                                 api_token into the collector command payload (encrypted
+        #                                 at rest + TLS-delivered, never an API response). Inline
+        #                                 #nosec is not honored for this rule. Secret-leak
+        #                                 protection here is json:"-" + RedactDevice + encrypt-
+        #                                 at-rest, not this heuristic key-name match.
+        run: gosec -quiet -severity medium -exclude=G115,G117,G124,G203,G304,G401,G501,G703 ./...
 
   integration-postgres:
     name: Integration (PostgreSQL)
