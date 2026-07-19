@@ -500,12 +500,20 @@
     // Enqueue a per-end REST preflight, then poll the result and render it.
     // No device writes happen — this only reads to check auth + collisions.
     var preflightTimer = null;
+    // Generation token: bumped on every start/close so a stale in-flight fetch
+    // or pending timer from a previous open (or another row) is dropped instead
+    // of rendering into / re-polling the now-closed-or-reused modal.
+    var preflightGen = 0;
 
     function stopPreflightPoll() {
+        preflightGen++;
         if (preflightTimer) { clearTimeout(preflightTimer); preflightTimer = null; }
     }
 
-    function yn(v) { return v ? 'yes' : 'no'; }
+    function preflightLive(gen) {
+        var m = $('ipsec-preflight-modal');
+        return gen === preflightGen && !!(m && m.classList.contains('active'));
+    }
 
     function endReportHtml(e) {
         var r = e.report;
@@ -522,11 +530,24 @@
             var cls = ok ? 'success' : (warn ? 'warning' : 'danger');
             return '<span class="badge ' + cls + '" style="margin-right:6px;">' + esc(label) + '</span>';
         }
+        // The collision verdict is only trustworthy once we actually reached the
+        // API and authenticated — otherwise the check never ran, so never show a
+        // reassuring green "no collision" on an unreachable/auth-failed end (the
+        // report's conflict/indeterminate are Go zero-values in that case).
+        var collisionBadge;
+        if (r.conflict) {
+            collisionBadge = b(false, false, 'name collision');
+        } else if (!r.reachable || !r.auth_ok) {
+            collisionBadge = b(false, true, 'collision check not run');
+        } else if (r.indeterminate) {
+            collisionBadge = b(false, true, 'collision check inconclusive');
+        } else {
+            collisionBadge = b(true, false, 'no collision');
+        }
         var badges =
             b(r.reachable, false, r.reachable ? 'reachable' : 'unreachable') +
             b(r.auth_ok, false, r.auth_ok ? 'auth ok' : 'auth failed') +
-            (r.conflict ? b(false, false, 'name collision') :
-                (r.indeterminate ? b(false, true, 'collision check inconclusive') : b(true, false, 'no collision')));
+            collisionBadge;
         var ver = r.os_version ? '<div style="font-size:0.82rem;color:var(--fwmon-text-mute);margin-top:4px;">version: ' + esc(r.os_version) + '</div>' : '';
         var checks = (r.checks || []).map(function (c) {
             var mark = c.collision ? '⚠ collision' : (c.indeterminate ? '? inconclusive' : (c.ok ? '✓' : '✗'));
@@ -546,8 +567,10 @@
             ends.map(endReportHtml).join('') + '</div>';
     }
 
-    function pollPreflight(id, triesLeft) {
+    function pollPreflight(id, triesLeft, gen) {
+        if (!preflightLive(gen)) return; // modal closed or superseded — stop
         AC.apiFetch(API + '/ipsec/tunnels/' + id + '/preflight').then(function (r) {
+            if (!preflightLive(gen)) return;
             var data = (r && r.data) || {};
             renderPreflightBody(data);
             var ends = data.ends || [];
@@ -555,20 +578,24 @@
                 return e.status === 'succeeded' || e.status === 'failed' || e.status === 'expired';
             });
             if (!terminal && triesLeft > 0) {
-                preflightTimer = setTimeout(function () { pollPreflight(id, triesLeft - 1); }, 2000);
+                preflightTimer = setTimeout(function () { pollPreflight(id, triesLeft - 1, gen); }, 2000);
             }
         }).catch(function (e) {
+            if (!preflightLive(gen)) return;
             $('ipsec-preflight-body').innerHTML = '<div class="card" style="padding:12px;color:var(--fwmon-sig-crit);">Failed to read preflight result: ' + esc(e.message) + '</div>';
         });
     }
 
     function preflight(id) {
-        stopPreflightPoll();
+        stopPreflightPoll();          // cancel any prior poll + invalidate its generation
+        var gen = preflightGen;       // this run's token (captured after the bump)
         $('ipsec-preflight-body').innerHTML = '<div class="card" style="padding:12px;color:var(--fwmon-text-mute);">Starting preflight…</div>';
         AC.openModal('ipsec-preflight-modal');
         AC.apiFetch(API + '/ipsec/tunnels/' + id + '/preflight', { method: 'POST' }).then(function () {
-            pollPreflight(id, 12); // ~24s of polling
+            if (gen !== preflightGen) return; // superseded/closed before the POST returned
+            pollPreflight(id, 12, gen); // ~24s of polling
         }).catch(function (e) {
+            if (!preflightLive(gen)) return;
             $('ipsec-preflight-body').innerHTML = '<div class="card" style="padding:12px;color:var(--fwmon-sig-crit);">Could not start preflight: ' + esc(e.message) + '</div>';
         });
     }

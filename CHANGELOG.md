@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.128] - 2026-07-19
+
+### Fixed — IPSec preflight UI: review findings from the adversarial pass
+
+Adversarial review of the v0.11.126/127 IPSec UI (device-form credentials + preflight button) found no security-critical defects; these three follow-ups fix the issues it did surface:
+
+- **Preflight polling now stops when the modal closes** (Escape/backdrop, not just the Close button) and is generation-guarded, so a stale in-flight fetch or pending timer from a prior open — or a second open on another tunnel row — can no longer keep polling or render into the wrong/closed modal.
+- **No misleading green "no collision"** — the collision verdict is only shown as clear when the end was actually reachable AND authenticated; an unreachable/auth-failed end now reads "collision check not run" instead of a reassuring green badge (the report's conflict/indeterminate are zero-values in that case).
+- **Revealed-but-unedited API credential is kept on save** — revealing an OPNsense `key:secret` (or a legacy colon-less token) and then saving an unrelated change no longer trips the "need both key and secret" guard; the credential is omitted (kept as-is) unless the operator edits a field.
+
 ## [0.11.127] - 2026-07-19
 
 ### Added — "Preflight" button on the IPSec Tunnels page
