@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.122] - 2026-07-18
+
+### Fixed — Event-profile toggle Off now actually stops every alert path (user-reported)
+
+Sliding an alert type Off in the Default profile's toggle matrix could leave alerts flowing — the operator had to write a suppress rule instead. A full audit of every alert-creation site found all 19 emitters correctly gated; the leaks were two type-identity/notify holes:
+
+- **Security-consolidation aliasing**: src-keyed security detections (deny storm, port scan, threat intel, exfil, spreader, beacon) collapse into the single `SFLOW_SECURITY` card BEFORE any per-type gate runs, so toggling a registry sub-type like `SFLOW_DENY_STORM` Off was silently inert — only a suppress rule (which matches per-detection) worked. The poller's pre-consolidation pass now consults each detection's OWN sub-type toggle via the profile chain and drops + acknowledges toggled-off detections (exact parity with suppress). Detectors without a registry sub-type keep their implicit-ON behavior and remain governed by the `SFLOW_SECURITY` toggle. The pass covers ALL detection categories (policy/operational/victim-keyed too), so a toggled-off type's detections are acknowledged off the NOC sFlow card — same as a suppress rule; if you want the card to keep showing a type you don't alert on, leave the toggle On and rely on notification routing instead.
+- **Ungated escalation re-notifies**: `CheckEscalations` re-sent notifications for already-open alerts without ever consulting the toggle chain — after toggling a type Off, its open alerts kept paging until acked. Escalations now honor the kill switch (and resume if the type is re-enabled).
+- New public `AlertManager.EventTypeToggledOn` wrapper (device → site → Default chain, sparse implicit-ON) backs both fixes; registry description for `SFLOW_DENY_STORM` updated.
+- Note: an explicit ON row in a device/site profile still deliberately overrides a Default Off (layer precedence — visible in the effective view). Migrated non-default profiles (v48) may carry dense explicit-ON rows; check the effective view if a Default Off seems ignored for one scope.
+- Tests: toggled-off sub-type dropped+acked pre-consolidation while unrelated detectors survive; explicit-ON no-op; SFLOW_SECURITY master toggle does NOT ack detections at the poller (card keeps signal, only the consolidated alert is gated); escalation stops on toggle-off and resumes on re-enable; wrapper sparse semantics.
+
 ## [0.11.121] - 2026-07-18
 
 ### Changed — Traffic-spike alerts gain an absolute 1 Mbps noise floor

@@ -2435,6 +2435,13 @@ func (am *AlertManager) CheckEscalations() {
 		if alert.IncidentID != nil && am.incidentFor(alert.DeviceID) == *alert.IncidentID {
 			continue
 		}
+		// Event-profile toggle gate (v0.11.122): escalation re-notifies were
+		// the one ungated notify path — an operator toggling a type Off kept
+		// receiving escalations for its already-open alerts. The toggle is
+		// the single per-type kill switch; honor it here too.
+		if !am.EventTypeToggledOn(alert.DeviceID, alert.SiteID, alert.AlertType) {
+			continue
+		}
 		policy, ok := escalationPolicies[*alert.PolicyID]
 		if !ok {
 			continue

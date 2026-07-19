@@ -298,3 +298,51 @@ func TestCheckInterfaceErrors_MessageClampsCounterResets(t *testing.T) {
 		t.Errorf("growing counter's delta wrong: %q", a.Message)
 	}
 }
+
+// TestCheckEscalations_ToggleOffStopsEscalation (v0.11.122): escalation
+// re-notifies were the one ungated notify path — after an operator toggled a
+// type Off, its already-open alerts kept escalating. The gate must honor the
+// profile-chain kill switch, and resume when the type is re-enabled.
+func TestCheckEscalations_ToggleOffStopsEscalation(t *testing.T) {
+	am, db := newTestManager(t)
+	policy := models.AlertPolicy{
+		ID: 1, Name: "esc", IsDefault: true,
+		EscalationEnabled: true, EscalationMinutes: 5, EscalationRepeat: 3,
+	}
+	installPolicyCache(am, &policy, nil)
+	installDefaultProfileToggles(am, map[models.AlertType]bool{"CPU_HIGH": false})
+
+	pid := uint(1)
+	alert := models.Alert{
+		Timestamp: time.Now().Add(-20 * time.Minute),
+		DeviceID:  5, AlertType: "CPU_HIGH", Severity: "warning",
+		Message: "cpu high", MetricName: "cpu_usage", PolicyID: &pid,
+	}
+	seedAlert(t, db, &alert)
+
+	am.CheckEscalations()
+	if got := getAlert(t, db, alert.ID); got.EscalationCount != 0 {
+		t.Fatalf("toggled-off type escalated: count = %d, want 0", got.EscalationCount)
+	}
+
+	// Slide it back On → escalation resumes.
+	installDefaultProfileToggles(am, map[models.AlertType]bool{"CPU_HIGH": true})
+	am.CheckEscalations()
+	if got := getAlert(t, db, alert.ID); got.EscalationCount == 0 {
+		t.Fatal("re-enabled type must escalate again, count stayed 0")
+	}
+}
+
+// TestEventTypeToggledOn pins the public wrapper's sparse semantics: explicit
+// Off row → false; absent row → true (implicit ON).
+func TestEventTypeToggledOn(t *testing.T) {
+	am, _ := newTestManager(t)
+	installPolicyCache(am, nil, nil)
+	installDefaultProfileToggles(am, map[models.AlertType]bool{"SFLOW_DENY_STORM": false})
+	if am.EventTypeToggledOn(1, nil, "SFLOW_DENY_STORM") {
+		t.Error("explicit Off row must resolve false")
+	}
+	if !am.EventTypeToggledOn(1, nil, "SFLOW_PORT_SCAN") {
+		t.Error("absent row must resolve true (implicit ON)")
+	}
+}
