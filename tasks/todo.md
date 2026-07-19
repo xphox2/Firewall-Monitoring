@@ -78,10 +78,10 @@ Everything that changed since the last prod deploy needs a live check. Items mar
 - [ ] `GET /admin/api/incidents` and `/admin/api/incidents/:id/alerts` return the story
 
 ## 10. MTTA/MTTR + noisiest alerts F05/F06
-- [ ] Reports page preview shows the new Operations section (renders even with sparse data)
+- [x] Reports page preview shows the new Operations section (renders even with sparse data)
 - [ ] After a few days of real acks: MTTA counts ONLY operator acks (auto-resolves excluded); MTTR includes them; recovery companions excluded
 - [ ] Noisiest-alerts top-10 (type × device) shows fire counts + how many were suppressed (maintenance/flap/incident)
-- [ ] Scheduled email report carries the same section
+- [x] Scheduled email report carries the same section
 
 ## 11. Settings page redesign (v0.11.14)
 - [ ] `/admin/settings` shows the vertical section nav (Account / Access / Alerting / Notifications / Reports / Display / Detection), Account active by default
