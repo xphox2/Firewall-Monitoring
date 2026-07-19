@@ -340,5 +340,8 @@ func ValidateSpikeDampenJSON(s string) string {
 	if dp.MinDurationMinutes < 0 {
 		return "dampen_json min_duration_minutes must be ≥ 0"
 	}
+	if dp.MinThroughputMbps != nil && *dp.MinThroughputMbps < 0 {
+		return "dampen_json min_throughput_mbps must be ≥ 0 (0 disables the floor for this scope)"
+	}
 	return ""
 }

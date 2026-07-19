@@ -107,7 +107,7 @@ func TestDetectSpikes_Invariants_AUDIT120(t *testing.T) {
 	const threshold = 3.0
 	prop := func(vals []float64) bool {
 		times := make([]time.Time, len(vals))
-		spikes := detectSpikesInSeries(vals, times, threshold, "eth0")
+		spikes := detectSpikesInSeries(vals, times, threshold, "eth0", 0)
 		for _, s := range spikes {
 			if !(s.Value > s.Mean) {
 				return false
@@ -136,10 +136,10 @@ func TestDetectSpikes_Invariants_AUDIT120(t *testing.T) {
 	}
 
 	// Degenerate inputs return nil regardless of content.
-	if got := detectSpikesInSeries([]float64{1, 2}, make([]time.Time, 2), threshold, "x"); got != nil {
+	if got := detectSpikesInSeries([]float64{1, 2}, make([]time.Time, 2), threshold, "x", 0); got != nil {
 		t.Errorf("len<3 should yield nil, got %v", got)
 	}
-	if got := detectSpikesInSeries([]float64{1, 2, 3, 4, 5}, make([]time.Time, 5), 0, "x"); got != nil {
+	if got := detectSpikesInSeries([]float64{1, 2, 3, 4, 5}, make([]time.Time, 5), 0, "x", 0); got != nil {
 		t.Errorf("non-positive threshold should yield nil, got %v", got)
 	}
 }

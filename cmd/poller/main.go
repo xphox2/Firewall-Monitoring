@@ -1191,8 +1191,8 @@ func (p *Poller) checkRelayedTelemetry(devices []models.Device, staleAfter time.
 				// Phase 4b: the detector params come from the matching spike rule (or
 				// the live spike settings), and fire/resolve route through the rule
 				// engine (scope/suppress/severity/policy + proper open/resolve).
-				k, minDur := p.alertManager.SpikeParamsFor(iface.DeviceID, device.SiteID, iface.Name)
-				dec := p.spikeDetector.Observe(fmt.Sprintf("%d:%d", iface.DeviceID, iface.Index), iface.Timestamp, bps, k, minDur)
+				k, minDur, minFloorBps := p.alertManager.SpikeParamsFor(iface.DeviceID, device.SiteID, iface.Name)
+				dec := p.spikeDetector.Observe(fmt.Sprintf("%d:%d", iface.DeviceID, iface.Index), iface.Timestamp, bps, k, minDur, minFloorBps)
 				switch {
 				case dec.Fire:
 					msg := fmt.Sprintf("Sustained traffic spike on %s: %s (typical ~%s for this time)", iface.Name, humanBps(dec.Value), humanBps(dec.Mean))

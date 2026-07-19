@@ -21,6 +21,10 @@ type TrafficSpike struct {
 
 // detectSpikesInSeries flags anomalies in a throughput (bps) series using a
 // rolling-window standard deviation. values[i] is aligned with times[i].
+// minFloorBps > 0 applies the absolute throughput floor (v0.11.121): a point
+// is never a spike unless it exceeds the floor AND the series' busiest
+// rolling-window mean reaches the floor (peak qualifier — a dead port whose
+// mean is 90bps must not alert on 800bps, which pure z-score would).
 //
 // v0.10.236: this replaces the old DetectTrafficSpikes, which ran std-dev
 // analysis directly on InterfaceChartBucket.InBytes+OutBytes — i.e. on a
@@ -29,7 +33,7 @@ type TrafficSpike struct {
 // making the old detector fire constantly and report meaningless byte counts.
 // The honest signal is the per-bucket throughput derived from counter deltas
 // (see computeTraffic in data.go), which is what we analyze here.
-func detectSpikesInSeries(values []float64, times []time.Time, stddevThreshold float64, ifName string) []TrafficSpike {
+func detectSpikesInSeries(values []float64, times []time.Time, stddevThreshold float64, ifName string, minFloorBps float64) []TrafficSpike {
 	if len(values) < 3 || stddevThreshold <= 0 {
 		return nil
 	}
@@ -43,6 +47,21 @@ func detectSpikesInSeries(values []float64, times []time.Time, stddevThreshold f
 		windowSize = 60
 	}
 
+	// Peak qualifier for the floor: the max rolling-window mean across the
+	// series is "what the port passes at its busiest normal period".
+	maxWindowMean := 0.0
+	if minFloorBps > 0 {
+		for i := windowSize; i < len(values); i++ {
+			m, _ := meanStdDev(values[i-windowSize : i])
+			if m > maxWindowMean {
+				maxWindowMean = m
+			}
+		}
+		if maxWindowMean < minFloorBps {
+			return nil // port never normally reaches the floor — no spikes
+		}
+	}
+
 	var spikes []TrafficSpike
 	for i := windowSize; i < len(values); i++ {
 		// Compute mean and stddev over the window preceding this point
@@ -50,6 +69,9 @@ func detectSpikesInSeries(values []float64, times []time.Time, stddevThreshold f
 		mean, stddev := meanStdDev(window)
 		if stddev == 0 {
 			continue
+		}
+		if minFloorBps > 0 && values[i] < minFloorBps {
+			continue // the spike itself must exceed the floor
 		}
 
 		if values[i] > mean+stddevThreshold*stddev {
@@ -157,6 +179,46 @@ func (p *SeasonalProfile) Band(t time.Time) (mean, std float64, ok bool) {
 	return 0, 0, false
 }
 
+// MaxBandMean returns the highest per-(weekday,hour) mean across the profile
+// — "what the port passes at its busiest normal period" — considering only
+// buckets with enough samples to be meaningful. Falls back to the hour-only
+// buckets, returns 0 when no bucket qualifies (unknown). This is the
+// throughput-floor peak qualifier (v0.11.121): qualification is deliberately
+// by PEAK, not the current time-of-day band, so a big port that is quiet at
+// night keeps night-time spike coverage while a dead port never qualifies.
+func (p *SeasonalProfile) MaxBandMean() float64 {
+	if p == nil {
+		return 0
+	}
+	max := 0.0
+	found := false
+	for _, hm := range p.byWeekdayHour {
+		for _, samples := range hm {
+			if len(samples) < minSeasonalSamples {
+				continue
+			}
+			m, _ := meanStdDev(samples)
+			found = true
+			if m > max {
+				max = m
+			}
+		}
+	}
+	if found {
+		return max
+	}
+	for _, samples := range p.byHour {
+		if len(samples) < minSeasonalSamples {
+			continue
+		}
+		m, _ := meanStdDev(samples)
+		if m > max {
+			max = m
+		}
+	}
+	return max
+}
+
 // IsAnomalous reports whether bps is above the expected band for t, and the
 // severity. k is the std-dev multiplier (threshold). Returns false when there
 // isn't enough history (Band not ok) or the band has zero spread.
@@ -229,8 +291,11 @@ func NewSeasonalSpikeDetector(refreshInterval, cooldown time.Duration, profileFo
 
 // Observe feeds one live throughput sample (bps) for key at time now. k is the
 // std-dev threshold; minDuration is how long a spike must persist before it
-// alerts. It returns at most one Fire or one Resolve per call.
-func (d *SeasonalSpikeDetector) Observe(key string, now time.Time, bps, k float64, minDuration time.Duration) SpikeDecision {
+// alerts; minFloorBps > 0 applies the absolute throughput floor (v0.11.121):
+// the sample must exceed the floor AND the interface's busiest normal period
+// (seasonal MaxBandMean, rolling-mean fallback on thin history) must reach it.
+// It returns at most one Fire or one Resolve per call.
+func (d *SeasonalSpikeDetector) Observe(key string, now time.Time, bps, k float64, minDuration time.Duration, minFloorBps float64) SpikeDecision {
 	d.mu.Lock()
 	st := d.states[key]
 	if st == nil {
@@ -279,6 +344,28 @@ func (d *SeasonalSpikeDetector) Observe(key string, now time.Time, bps, k float6
 			anomalous, severity = true, "critical"
 		case bps > mean+k*std:
 			anomalous, severity = true, "warning"
+		}
+	}
+
+	// Absolute throughput floor (v0.11.121). Pure z-score fires on a dead
+	// port's 90bps→800bps blip because mean+k·std is a tiny absolute number.
+	// Two clauses: the spike itself must exceed the floor (this is the one
+	// that kills the dead-port case), and the port must NORMALLY reach the
+	// floor at its busiest period (seasonal peak — NOT the current band, so a
+	// big port that's quiet at night keeps night coverage; rolling-mean
+	// fallback when the profile is thin; no history at all qualifies so a
+	// brand-new port's first genuine sustained surge isn't muted). A
+	// floor-fail takes the !anomalous branch below, which also RESOLVES an
+	// ongoing alert — traffic below the floor means the spike is over.
+	if anomalous && minFloorBps > 0 {
+		if bps < minFloorBps {
+			anomalous = false
+		} else if peak := st.profile.MaxBandMean(); peak > 0 {
+			if peak < minFloorBps {
+				anomalous = false
+			}
+		} else if rm, _, rok := rollingBand(st.recent); rok && rm < minFloorBps {
+			anomalous = false
 		}
 	}
 
@@ -332,7 +419,7 @@ func rollingBand(prior []float64) (mean, std float64, ok bool) {
 // (the window itself is excluded so a surge can't normalize against itself).
 // Falls back to the rolling-window detector when there isn't at least 3 days of
 // prior history to form a stable norm.
-func detectSpikesTimeOfDay(series []float64, times []time.Time, hours int, stddevThreshold float64, ifName string) []TrafficSpike {
+func detectSpikesTimeOfDay(series []float64, times []time.Time, hours int, stddevThreshold float64, ifName string, minFloorBps float64) []TrafficSpike {
 	if stddevThreshold <= 0 || len(series) < 3 || len(times) != len(series) {
 		return nil
 	}
@@ -362,12 +449,23 @@ func detectSpikesTimeOfDay(series []float64, times []time.Time, hours int, stdde
 	// Without enough prior history, fall back to the single-window detector on
 	// the report window so spikes are still surfaced on fresh installs.
 	if distinctDays(priorTimes) < 3 {
-		return detectSpikesInSeries(testVals, testTimes, stddevThreshold, ifName)
+		return detectSpikesInSeries(testVals, testTimes, stddevThreshold, ifName, minFloorBps)
 	}
 
 	profile := BuildSeasonalProfile(priorVals, priorTimes)
+	// Throughput floor (v0.11.121): the port must reach the floor at its
+	// busiest normal period; peak==0 (no qualifying bucket) passes — unknown
+	// history must not suppress a real surge.
+	if minFloorBps > 0 {
+		if peak := profile.MaxBandMean(); peak > 0 && peak < minFloorBps {
+			return nil
+		}
+	}
 	var spikes []TrafficSpike
 	for i, v := range testVals {
+		if minFloorBps > 0 && v < minFloorBps {
+			continue // the spike itself must exceed the floor
+		}
 		anom, sev := profile.IsAnomalous(testTimes[i], v, stddevThreshold)
 		if !anom {
 			continue

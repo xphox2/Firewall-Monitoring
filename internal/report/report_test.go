@@ -89,7 +89,7 @@ func TestDetectSpikesInSeries(t *testing.T) {
 	vals = append(vals, 50000) // obvious spike
 	times = append(times, base.Add(20*time.Minute))
 
-	spikes := detectSpikesInSeries(vals, times, 3.0, "wan1")
+	spikes := detectSpikesInSeries(vals, times, 3.0, "wan1", 0)
 	if len(spikes) == 0 {
 		t.Fatal("expected a spike to be detected")
 	}

@@ -48,7 +48,7 @@ func TestSpikeParamsFor_InheritsLiveSettings(t *testing.T) {
 	am.config.Alerts.SpikeStdDevThreshold = 5.0 // operator tuned k to 5
 	am.config.Alerts.SpikeMinDurationMinutes = 20
 	addSpikeRule(t, am, db, "alert", "", `{}`) // seed-shaped: no dampen
-	k, minDur := am.SpikeParamsFor(1, nil, "eth0")
+	k, minDur, _ := am.SpikeParamsFor(1, nil, "eth0")
 	if k != 5.0 {
 		t.Errorf("k should inherit live setting 5.0, got %v", k)
 	}
@@ -61,9 +61,63 @@ func TestSpikeParamsFor_RuleOverrides(t *testing.T) {
 	am, db := newTestManager(t)
 	am.config.Alerts.SpikeStdDevThreshold = 5.0
 	addSpikeRule(t, am, db, "alert", "", `{"stddev_k":8,"min_duration_minutes":30}`)
-	k, minDur := am.SpikeParamsFor(1, nil, "eth0")
+	k, minDur, _ := am.SpikeParamsFor(1, nil, "eth0")
 	if k != 8.0 || minDur.Minutes() != 30 {
 		t.Errorf("rule should override to k=8 min=30, got k=%v min=%v", k, minDur)
+	}
+}
+
+// TestSpikeParamsFor_ThroughputFloor pins the floor's three-way semantics
+// (v0.11.121): no dampen field = inherit the global setting; an EXPLICIT 0
+// disables the floor for the rule's scope (nil-checked, not >0 — the pointer
+// field exists precisely so 0 survives serialization); >0 overrides.
+func TestSpikeParamsFor_ThroughputFloor(t *testing.T) {
+	am, db := newTestManager(t)
+	am.config.Alerts.SpikeMinThroughputMbps = 1.0
+
+	// No rule → global 1.0 Mbps → 1e6 bps.
+	if _, _, floor := am.SpikeParamsFor(1, nil, "eth0"); floor != 1e6 {
+		t.Errorf("no rule: floor = %v, want 1e6 (global 1 Mbps)", floor)
+	}
+
+	// Rule with no floor field → inherit.
+	addSpikeRule(t, am, db, "alert", "", `{"stddev_k":8}`)
+	if _, _, floor := am.SpikeParamsFor(1, nil, "eth0"); floor != 1e6 {
+		t.Errorf("blank dampen floor: floor = %v, want inherited 1e6", floor)
+	}
+
+	// Explicit 0 → disable for scope.
+	if err := db.Gorm().Exec(`UPDATE event_rules SET dampen_json = ? WHERE source = 'spike'`,
+		`{"min_throughput_mbps":0}`).Error; err != nil {
+		t.Fatal(err)
+	}
+	am.RefreshEventRules(db)
+	if _, _, floor := am.SpikeParamsFor(1, nil, "eth0"); floor != 0 {
+		t.Errorf("explicit 0: floor = %v, want 0 (disabled for scope)", floor)
+	}
+
+	// Explicit 5 → override.
+	if err := db.Gorm().Exec(`UPDATE event_rules SET dampen_json = ? WHERE source = 'spike'`,
+		`{"min_throughput_mbps":5}`).Error; err != nil {
+		t.Fatal(err)
+	}
+	am.RefreshEventRules(db)
+	if _, _, floor := am.SpikeParamsFor(1, nil, "eth0"); floor != 5e6 {
+		t.Errorf("explicit 5: floor = %v, want 5e6", floor)
+	}
+}
+
+// TestValidateSpikeDampen_Floor: the editor validator accepts blank/0/positive
+// floors and rejects negatives.
+func TestValidateSpikeDampen_Floor(t *testing.T) {
+	if msg := ValidateSpikeDampenJSON(`{"min_throughput_mbps":0}`); msg != "" {
+		t.Errorf("explicit 0 must validate (disable-for-scope), got %q", msg)
+	}
+	if msg := ValidateSpikeDampenJSON(`{"min_throughput_mbps":2.5}`); msg != "" {
+		t.Errorf("2.5 must validate, got %q", msg)
+	}
+	if msg := ValidateSpikeDampenJSON(`{"min_throughput_mbps":-1}`); msg == "" {
+		t.Error("negative floor must be rejected")
 	}
 }
 

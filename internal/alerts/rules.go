@@ -171,6 +171,11 @@ type dampenParams struct {
 	// spike source
 	StddevK            float64 `json:"stddev_k,omitempty"`             // σ multiplier (0 = default 3)
 	MinDurationMinutes int     `json:"min_duration_minutes,omitempty"` // sustain window (0 = default 15)
+	// MinThroughputMbps is a POINTER: nil = inherit the global floor, an
+	// explicit 0 = disable the floor for this rule's scope (meaningful,
+	// unlike StddevK's 0), >0 = override. A value-typed float64 with
+	// omitempty could never serialize the explicit 0.
+	MinThroughputMbps *float64 `json:"min_throughput_mbps,omitempty"`
 }
 
 // appliesTo reports whether the rule is in scope for an event's source/vendor/

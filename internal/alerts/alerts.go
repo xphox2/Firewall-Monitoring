@@ -1470,6 +1470,7 @@ func (am *AlertManager) RefreshThresholds(db *gorm.DB) {
 		"report_daily_enabled", "report_daily_time", "report_weekly_enabled",
 		"report_weekly_day", "report_recipients", "report_timezone",
 		"spike_stddev_threshold", "spike_alert_enabled", "spike_min_duration_minutes",
+		"spike_min_throughput_mbps",
 	}).Find(&settings).Error; err != nil {
 		log.Printf("RefreshThresholds: failed to read settings: %v", err)
 		return
@@ -1576,6 +1577,12 @@ func (am *AlertManager) RefreshThresholds(db *gorm.DB) {
 		case "spike_min_duration_minutes":
 			if v, err := strconv.Atoi(s.Value); err == nil && v > 0 {
 				am.config.Alerts.SpikeMinDurationMinutes = v
+			}
+		case "spike_min_throughput_mbps":
+			// >= 0, NOT the sibling > 0 pattern: a saved 0 means "disable the
+			// floor" and must not be silently ignored.
+			if v, err := strconv.ParseFloat(s.Value, 64); err == nil && v >= 0 {
+				am.config.Alerts.SpikeMinThroughputMbps = v
 			}
 		}
 	}

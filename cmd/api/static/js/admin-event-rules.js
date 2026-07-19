@@ -490,28 +490,39 @@
     }
 
     // loadSpikeFromRule fills the spike inputs from a rule's dampen_json
-    // {stddev_k, min_duration_minutes}. Blank = the shipped defaults.
+    // {stddev_k, min_duration_minutes, min_throughput_mbps}. Blank = the
+    // shipped defaults; the floor's explicit 0 (disable) is preserved.
     function loadSpikeFromRule(r) {
-        var k = '', dur = '';
+        var k = '', dur = '', floor = '';
         if (r && r.dampen_json) {
             try {
                 var d = JSON.parse(r.dampen_json);
                 if (typeof d.stddev_k === 'number' && d.stddev_k > 0) k = d.stddev_k;
                 if (typeof d.min_duration_minutes === 'number' && d.min_duration_minutes > 0) dur = d.min_duration_minutes;
+                if (typeof d.min_throughput_mbps === 'number' && d.min_throughput_mbps >= 0) floor = d.min_throughput_mbps;
             } catch (e) { /* keep blanks on a malformed blob */ }
         }
         $('er-spike-k').value = k;
         $('er-spike-duration').value = dur;
+        var fl = $('er-spike-floor');
+        if (fl) fl.value = floor;
     }
 
     // collectSpikeDampen serializes the spike inputs. Blank fields are omitted so
-    // they inherit the detector defaults (k=3, sustain=15m).
+    // they inherit the detector defaults (k=3, sustain=15m, global floor). The
+    // floor serializes an EXPLICIT 0 — it means "disable the floor for this
+    // scope", unlike k/duration where 0 is meaningless.
     function collectSpikeDampen() {
         var out = {};
         var k = parseFloat($('er-spike-k').value);
         if (!isNaN(k) && k > 0) out.stddev_k = k;
         var dur = parseInt($('er-spike-duration').value, 10);
         if (!isNaN(dur) && dur > 0) out.min_duration_minutes = dur;
+        var fl = $('er-spike-floor');
+        if (fl && fl.value !== '') {
+            var floor = parseFloat(fl.value);
+            if (!isNaN(floor) && floor >= 0) out.min_throughput_mbps = floor;
+        }
         return JSON.stringify(out);
     }
 
