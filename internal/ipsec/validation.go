@@ -198,6 +198,18 @@ func validateSubnets(intent *TunnelIntent) []Finding {
 		fs = append(fs, Finding{SeverityBlock, "subnet_invalid", e})
 	}
 
+	// Cap protected subnets per end: FortiGate routes/policies use deterministic
+	// mkeys in a per-tunnel block (see allocation.go FGRouteKey/FGPolicyKey) that
+	// fits at most MaxProtectedSubnetsPerEnd routed subnets before the route keys
+	// would overrun the policy keys. Enforce it here so a too-large tunnel is
+	// blocked at validation, never silently overwriting its own policy on apply.
+	for i := range intent.Ends {
+		if n := len(intent.Ends[i].ProtectedSubnets); n > MaxProtectedSubnetsPerEnd {
+			fs = append(fs, Finding{SeverityBlock, "too_many_subnets",
+				fmt.Sprintf("%s has %d protected subnets — the maximum is %d (deterministic route/policy key allocation); split into multiple tunnels", endLabel(intent, i), n, MaxProtectedSubnetsPerEnd)})
+		}
+	}
+
 	// Overlap: the two sides must be disjoint (or 1:1 NAT — deferred past v1).
 	for _, na := range a {
 		for _, nb := range b {
@@ -236,12 +248,16 @@ func validateSubnets(intent *TunnelIntent) []Finding {
 					continue
 				}
 				// A specific routed subnet that contains the peer's own endpoint is
-				// safe ONLY if a host route to the peer via the WAN is pinned (real
-				// firewalls usually have one via the WAN default route; the apply
-				// path will pin a /32). Surface it as an acknowledgeable warning
-				// rather than a hard block so the operator can proceed.
+				// safe ONLY if a host route to the peer via the WAN is pinned. When
+				// THIS end supplies a WAN Gateway, the apply path renders that /32
+				// automatically (see the driver's peer-route step) — so the case is
+				// resolved and NO finding is raised. Without a Gateway it's an
+				// acknowledgeable warning (a WAN default route may already cover it).
+				if intent.Ends[i].Gateway != "" {
+					continue
+				}
 				fs = append(fs, Finding{SeverityWarn, "self_lockout",
-					fmt.Sprintf("protected subnet %s includes the peer's WAN endpoint %s — the tunnel carries LAN subnets, not the WAN; remove the WAN/transit network from the protected list (or pin a host route to the peer)", n.String(), peer.PeerIP)})
+					fmt.Sprintf("protected subnet %s includes the peer's WAN endpoint %s — set this end's WAN gateway to auto-pin a /32 host route to the peer, or remove the WAN/transit network from the protected list", n.String(), peer.PeerIP)})
 			}
 		}
 	}
@@ -265,6 +281,24 @@ func parseCIDRs(cidrs []string) (nets []*net.IPNet, errs []string) {
 }
 
 func netsOverlap(a, b *net.IPNet) bool { return a.Contains(b.IP) || b.Contains(a.IP) }
+
+// SubnetContainsIP reports whether any of the CIDR subnets contains ipStr. It
+// mirrors the self_lockout test above and is the single source both vendor
+// drivers use to decide whether a peer /32 host route must be pinned (so the
+// render condition and the validator can never drift).
+func SubnetContainsIP(subnets []string, ipStr string) bool {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+	nets, _ := parseCIDRs(subnets)
+	for _, n := range nets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
 
 // isAEAD reports whether an encryption algorithm carries its own integrity
 // (Galois/Counter mode), so a separate integrity algorithm is neither needed nor

@@ -152,6 +152,21 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 			api("Firewall pass rule for "+s, "POST", "/api/firewall/filter/addRule", rule),
 		)
 	}
+	// Conditional peer /32: when a routed (remote) subnet contains the peer's own
+	// WAN endpoint, pin a host route to it via the physical WAN so IKE/ESP to the
+	// peer isn't swallowed by the tunnel (self-lockout). OPNsense routes reference
+	// a gateway by NAME, so first create a WAN gateway object bound to the
+	// operator-supplied next-hop IP (tagged desc-peer to disambiguate from the VTI
+	// gateway), then the /32 route referencing it.
+	if local.Gateway != "" && ipsec.SubnetContainsIP(remote.ProtectedSubnets, remote.PeerIP) {
+		peerDesc := desc + "-peer"
+		pgw := jsonBody(map[string]any{"gateway": map[string]any{"description": peerDesc, "interface": local.EgressIface, "gateway": local.Gateway}})
+		proute := jsonBody(map[string]any{"route": map[string]any{"description": peerDesc, "network": remote.PeerIP + "/32", "gateway": peerDesc}})
+		steps = append(steps,
+			api("Peer WAN gateway (self-lockout /32 next-hop)", "POST", "/api/routing/settings/addGateway", pgw),
+			api("Peer /32 host route via WAN (self-lockout guard)", "POST", "/api/routes/routes/addroute", proute),
+		)
+	}
 	steps = append(steps, api("Apply IPsec configuration", "POST", "/api/ipsec/connections/reconfigure", "{}"))
 
 	return ipsec.Artifact{
@@ -166,10 +181,21 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 }
 
 func (d driver) RenderRemove(v ipsec.RenderView) (ipsec.Artifact, error) {
+	local, remote := v.Local(), v.Remote()
 	desc := v.Intent.Name
 	// Search-by-description then delete, reverse order. UUIDs are resolved live
 	// by the collector; here we express intent by the fwm-t<ID> description.
-	steps := []ipsec.ApplyStep{
+	var steps []ipsec.ApplyStep
+	// Peer /32 objects (tagged desc-peer) first, when Render would have created
+	// them — a distinct description so this delete can't reap the VTI gateway.
+	if local.Gateway != "" && ipsec.SubnetContainsIP(remote.ProtectedSubnets, remote.PeerIP) {
+		peerDesc := desc + "-peer"
+		steps = append(steps,
+			api("Delete peer /32 route", "POST", "/api/routes/routes/delroute", byDesc(peerDesc)),
+			api("Delete peer WAN gateway", "POST", "/api/routing/settings/delGateway", byDesc(peerDesc)),
+		)
+	}
+	steps = append(steps,
 		api("Delete firewall rule(s) by description "+desc, "POST", "/api/firewall/filter/delRule", byDesc(desc)),
 		api("Delete static route(s) by description", "POST", "/api/routes/routes/delroute", byDesc(desc)),
 		api("Delete gateway", "POST", "/api/routing/settings/delGateway", byDesc(desc)),
@@ -177,7 +203,7 @@ func (d driver) RenderRemove(v ipsec.RenderView) (ipsec.Artifact, error) {
 		api("Delete child + connection", "POST", "/api/ipsec/connections/delConnection", byDesc(desc)),
 		api("Delete pre-shared key", "POST", "/api/ipsec/pre_shared_keys/delItem", byDesc(desc)),
 		api("Apply IPsec configuration", "POST", "/api/ipsec/connections/reconfigure", "{}"),
-	}
+	)
 	return ipsec.Artifact{
 		Vendor: "opnsense", Kind: ipsec.ArtifactRemove, Steps: steps,
 		Checksum: ipsec.ChecksumSteps(steps), TemplateVersion: templateVersion,

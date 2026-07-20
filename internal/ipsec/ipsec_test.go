@@ -98,14 +98,34 @@ func TestFortiGate_RendersModernProposal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	all := allCLI(art)
+	// FortiGate now renders REST cmdb http_api steps (not SSH CLI): every step is
+	// an http_api call and no step carries CLI text.
+	sawPhase1POST := false
+	for _, s := range art.Steps {
+		if s.Kind != ipsec.StepHTTPAPI {
+			t.Errorf("fortigate step %q is %q, want http_api", s.Description, s.Kind)
+		}
+		if s.CLI != "" {
+			t.Errorf("fortigate step %q still has CLI text", s.Description)
+		}
+		if s.Method == "POST" && strings.Contains(s.Path, "/api/v2/cmdb/vpn.ipsec/phase1-interface") {
+			sawPhase1POST = true
+		}
+	}
+	if !sawPhase1POST {
+		t.Error("fortigate render missing POST to cmdb phase1-interface")
+	}
+	// The neutral proposal/crypto must survive the conversion into the cmdb JSON
+	// bodies (keys are json-sorted, values unquoted-spaces preserved).
+	all := allBodies(art)
 	for _, want := range []string{
-		`set proposal aes256gcm-prfsha384`, `set dhgrp 20`,
-		`set src-subnet 0.0.0.0 0.0.0.0`, `set type dynamic`, // peer B is dynamic
-		`set tcp-mss-sender 1350`, `set localid "fwm-t7-a"`, `set peerid "fwm-t7-b"`,
+		`"proposal":"aes256gcm-prfsha384"`, `"dhgrp":"20"`,
+		`"src-subnet":"0.0.0.0 0.0.0.0"`, `"type":"dynamic"`, // peer B is dynamic
+		`"tcp-mss-sender":1350`, `"localid":"fwm-t7-a"`, `"peerid":"fwm-t7-b"`,
+		`"add-route":"disable"`, `"net-device":"disable"`, `"peertype":"one"`,
 	} {
 		if !strings.Contains(all, want) {
-			t.Errorf("fortigate render missing %q", want)
+			t.Errorf("fortigate render missing %q\n--- bodies ---\n%s", want, all)
 		}
 	}
 }
@@ -256,15 +276,6 @@ func TestAllocateVTI_Deterministic(t *testing.T) {
 }
 
 // ---- helpers ----
-
-func allCLI(a ipsec.Artifact) string {
-	var b strings.Builder
-	for _, s := range a.Steps {
-		b.WriteString(s.CLI)
-		b.WriteByte('\n')
-	}
-	return b.String()
-}
 
 func allBodies(a ipsec.Artifact) string {
 	var b strings.Builder

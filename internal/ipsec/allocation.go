@@ -37,6 +37,45 @@ func AllocateVTI(tunnelID uint) (cidr, innerA, innerB string) {
 	return cidr, innerA, innerB
 }
 
+// FortiGate deterministic mkey allocation for fwm-managed router/static
+// (seq-num) and firewall/policy (policyid). FortiOS auto-assigns these numeric
+// keys, but a REST create can set them explicitly — so we choose them
+// deterministically from the tunnel ID and a RESERVED HIGH base, letting
+// RenderRemove DELETE exactly what Render created (stable across redeploys)
+// without a read-back. The base is high (well above the low IDs a production
+// box's existing routes/policies occupy) and each tunnel owns a stride-wide
+// block; routes live in [block, block+fgPolicyOffset) and the two policies at
+// block+fgPolicyOffset[..+1]. This bounds a tunnel at fgPolicyOffset (100)
+// route objects — 2*N+1 for N protected subnets, i.e. N up to ~49.
+//
+// COLLISION NOTE: a fixed mkey can still collide with an operator's existing
+// object in that high range. C2b's deploy MUST extend the preflight
+// collision-check to these seq-nums/policyids before any write ships; C2a only
+// renders them (no write), so a collision here is inert.
+const (
+	fgKeyBase      = 40000
+	fgKeyStride    = 200
+	fgPolicyOffset = 100
+)
+
+// MaxProtectedSubnetsPerEnd bounds a tunnel so its route keys never overrun the
+// policy keys: routes occupy indices 0..2N (N subnet routes + N blackholes + 1
+// optional peer /32), which must stay below fgPolicyOffset. Enforced in
+// validation (too_many_subnets).
+const MaxProtectedSubnetsPerEnd = (fgPolicyOffset - 1) / 2 // 49
+
+// FGRouteKey returns the router/static seq-num for the index-th fwm route of a
+// tunnel (subnet routes, then blackholes, then the optional peer /32).
+func FGRouteKey(tunnelID uint, index int) int {
+	return fgKeyBase + int(tunnelID)*fgKeyStride + index
+}
+
+// FGPolicyKey returns the firewall/policy policyid for the index-th fwm policy
+// (0 = LAN→tunnel, 1 = tunnel→LAN).
+func FGPolicyKey(tunnelID uint, index int) int {
+	return fgKeyBase + int(tunnelID)*fgKeyStride + fgPolicyOffset + index
+}
+
 // NextFree returns the smallest integer >= start that is not present in taken.
 // Used to allocate reqid / if_id / tunnel-number against the set already in use
 // on a device (read live in the refresh_state step).

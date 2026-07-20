@@ -1,6 +1,19 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.130] - 2026-07-19
+
+### Changed — IPSec: FortiGate renders REST, both drivers gain a conditional peer /32 (PR-C2a, no device writes)
+
+Groundwork for the apply saga (C2b) — pure rendering + validation, nothing is written to a device.
+
+- **FortiGate driver now renders the FortiOS REST `cmdb` API** (`http_api` POST/PUT/DELETE) instead of SSH-CLI text, matching the transport the preflight already proves against the box and giving structured, verifiable writes. Every phase1/phase2/interface field carries over; bodies use the correct cmdb shapes (arrays of `{name}`, `"ip mask"` strings). Routes/policies use **deterministic seq-num/policyid keys** from a reserved high base so `RenderRemove` deletes exactly what `Render` created — real DELETEs now, replacing the old comment stubs. The tunnel interface is reaped by the phase1 delete (no explicit interface delete). PSK-inclusive checksum unchanged.
+- **Conditional peer /32 host route** (both vendors): when a routed protected subnet contains the peer's own WAN endpoint (the self-lockout case), the driver pins a `/32` to the peer via the physical WAN — FortiGate `router/static gateway=<ip>`; OPNsense creates a WAN gateway object + route (its routes reference a gateway by name). Emitted only in that case.
+- **`EndpointSpec.Gateway`** (opaque IntentJSON, no migration) + an optional per-end "WAN gateway" field in the wizard, needed only for the /32 case (operator-entered — there's no route-table telemetry to auto-fill). Validation now **clears** the `self_lockout` warning when that end supplies a Gateway (the /32 will be pinned), and keeps the full-tunnel/default-route case a hard block.
+- Tests: FortiGate render/remove are REST-by-key; conditional /32 present/absent on both vendors; self_lockout cleared by a Gateway.
+
+Deferred to C2b (writes): the deploy/rollback saga, server-side `HasBlock` gate, collector write runner (checksum-verify → apply → verify → rollback), extending the preflight collision-check to the route/policy keys, and the live apply test.
+
 ## [0.11.129] - 2026-07-19
 
 ### Fixed — IPSec preflight: don't time out before the collector runs, and never spin forever
