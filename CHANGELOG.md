@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.129] - 2026-07-19
+
+### Improved — IPSec preflight modal shows live progress instead of a frozen "waiting"
+
+The preflight modal polled silently, so while a check was waiting on the collector it looked stuck. Now:
+
+- A **spinner** and a live **"attempt N of 12"** counter (top status line + per-end) so it's visibly working while polling.
+- When polling times out without a result, it shows a clear **"Waiting timed out — the collector hasn't picked this up yet"** message with a **"Check again"** button (re-runs the preflight), instead of silently stopping.
+- Terminal `failed`/`expired` ends with no parseable report now show the raw result rather than a bare "waiting" note.
+
 ## [0.11.128] - 2026-07-19
 
 ### Fixed — IPSec preflight UI: review findings from the adversarial pass

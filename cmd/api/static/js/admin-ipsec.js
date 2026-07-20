@@ -515,16 +515,30 @@
         return gen === preflightGen && !!(m && m.classList.contains('active'));
     }
 
-    function endReportHtml(e) {
+    var PREFLIGHT_MAX = 12; // ~24s of 2s polls
+
+    function endReportHtml(e, state) {
+        state = state || {};
         var r = e.report;
         var head = '<div style="font-weight:600;margin-bottom:4px;">End ' + (e.end === 0 ? 'A' : 'B') +
             ' <span style="color:var(--fwmon-text-mute);font-weight:normal;">(device #' + esc(e.device_id) + ')</span> ' +
             statusBadge(e.status) + '</div>';
         if (!r) {
-            var note = e.status === 'none' ? 'not run yet' :
-                (e.status === 'pending' || e.status === 'dispatched') ? 'waiting for the collector…' :
-                (e.raw_result ? esc(e.raw_result) : 'no report');
-            return '<div class="card" style="padding:12px;">' + head + '<div style="color:var(--fwmon-text-mute);font-size:0.85rem;">' + note + '</div></div>';
+            var body;
+            if (e.status === 'failed' || e.status === 'expired') {
+                // Terminal with no parseable report — show whatever came back.
+                body = '<div style="color:var(--fwmon-sig-crit);font-size:0.85rem;">' + (e.raw_result ? esc(e.raw_result) : 'no report returned') + '</div>';
+            } else if (state.exhausted) {
+                body = '<div style="color:var(--fwmon-sig-warn);font-size:0.85rem;">Waiting timed out — the collector hasn\'t picked this up yet. Confirm the device has a collector assigned and is online, then check again.</div>';
+            } else {
+                // Still waiting: a spinner + live progress so it never looks frozen.
+                body = '<div style="color:var(--fwmon-text-mute);font-size:0.85rem;display:flex;align-items:center;gap:8px;">' +
+                    '<span class="fwmon-spinner"></span>' +
+                    '<span>Waiting for the collector to run this check…' +
+                    (state.attempt ? ' <span style="color:var(--fwmon-text-faint);">(check ' + state.attempt + ' of ' + state.max + ')</span>' : '') +
+                    '</span></div>';
+            }
+            return '<div class="card" style="padding:12px;">' + head + body + '</div>';
         }
         function b(ok, warn, label) {
             var cls = ok ? 'success' : (warn ? 'warning' : 'danger');
@@ -560,25 +574,42 @@
             (checks ? '<ul style="margin:8px 0 0 0;padding-left:16px;">' + checks + '</ul>' : '') + '</div>';
     }
 
-    function renderPreflightBody(data) {
-        var ends = (data && data.ends) || [];
-        $('ipsec-preflight-body').innerHTML =
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-            ends.map(endReportHtml).join('') + '</div>';
+    // A top status line so activity is visible even before per-end data changes:
+    // a spinner while polling, a warn + "Check again" once waiting times out.
+    function preflightStatusLine(id, state) {
+        if (state.polling) {
+            return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;color:var(--fwmon-text-mute);font-size:0.85rem;">' +
+                '<span class="fwmon-spinner"></span><span>Checking for results… (attempt ' + state.attempt + ' of ' + state.max + ')</span></div>';
+        }
+        if (state.exhausted) {
+            return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">' +
+                '<span style="color:var(--fwmon-sig-warn);font-size:0.85rem;">No response yet — the collector may be offline or the command is still queued.</span>' +
+                '<button class="btn sm secondary" data-action="ipsec-preflight" data-min-role="admin" data-id="' + id + '">Check again</button></div>';
+        }
+        return '';
     }
 
-    function pollPreflight(id, triesLeft, gen) {
+    function renderPreflightBody(id, data, state) {
+        var ends = (data && data.ends) || [];
+        $('ipsec-preflight-body').innerHTML =
+            preflightStatusLine(id, state) +
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+            ends.map(function (e) { return endReportHtml(e, state); }).join('') + '</div>';
+    }
+
+    function pollPreflight(id, attempt, gen) {
         if (!preflightLive(gen)) return; // modal closed or superseded — stop
         AC.apiFetch(API + '/ipsec/tunnels/' + id + '/preflight').then(function (r) {
             if (!preflightLive(gen)) return;
             var data = (r && r.data) || {};
-            renderPreflightBody(data);
             var ends = data.ends || [];
             var terminal = ends.length > 0 && ends.every(function (e) {
                 return e.status === 'succeeded' || e.status === 'failed' || e.status === 'expired';
             });
-            if (!terminal && triesLeft > 0) {
-                preflightTimer = setTimeout(function () { pollPreflight(id, triesLeft - 1, gen); }, 2000);
+            var more = !terminal && attempt < PREFLIGHT_MAX;
+            renderPreflightBody(id, data, { attempt: attempt, max: PREFLIGHT_MAX, polling: more, exhausted: !terminal && !more });
+            if (more) {
+                preflightTimer = setTimeout(function () { pollPreflight(id, attempt + 1, gen); }, 2000);
             }
         }).catch(function (e) {
             if (!preflightLive(gen)) return;
@@ -589,11 +620,13 @@
     function preflight(id) {
         stopPreflightPoll();          // cancel any prior poll + invalidate its generation
         var gen = preflightGen;       // this run's token (captured after the bump)
-        $('ipsec-preflight-body').innerHTML = '<div class="card" style="padding:12px;color:var(--fwmon-text-mute);">Starting preflight…</div>';
+        $('ipsec-preflight-body').innerHTML =
+            '<div style="display:flex;align-items:center;gap:8px;color:var(--fwmon-text-mute);font-size:0.9rem;">' +
+            '<span class="fwmon-spinner"></span><span>Starting preflight…</span></div>';
         AC.openModal('ipsec-preflight-modal');
         AC.apiFetch(API + '/ipsec/tunnels/' + id + '/preflight', { method: 'POST' }).then(function () {
             if (gen !== preflightGen) return; // superseded/closed before the POST returned
-            pollPreflight(id, 12, gen); // ~24s of polling
+            pollPreflight(id, 1, gen);
         }).catch(function (e) {
             if (!preflightLive(gen)) return;
             $('ipsec-preflight-body').innerHTML = '<div class="card" style="padding:12px;color:var(--fwmon-sig-crit);">Could not start preflight: ' + esc(e.message) + '</div>';
