@@ -275,28 +275,25 @@ const (
 	ipsecStatusError          = "error"
 )
 
-// ipsecEditable reports whether a tunnel's intent may be replaced. Blocked while
-// deployed/deploying/rolling-back — the operator must roll back first.
-func ipsecEditable(m *models.IPSecTunnel) bool {
-	switch m.Status {
-	case ipsecStatusDeploying, ipsecStatusDegraded, ipsecStatusUp, ipsecStatusRollingBack, ipsecStatusRollbackFailed:
-		return false
-	}
-	return true
+// ipsecHasDeployRecord reports whether a tunnel still carries a deploy record —
+// i.e. device objects MAY be outstanding and only a rollback (which reverses the
+// stored snapshot) can safely remove them. A successful rollback clears it; a
+// pre-write failure (error before any enqueue) never wrote it. This is the single
+// source of truth for edit/delete safety — keying on status alone was unsafe
+// because editing a partially-deployed `error` tunnel reset it to `draft` (which
+// then allowed delete + blocked rollback, orphaning the device objects).
+func ipsecHasDeployRecord(m *models.IPSecTunnel) bool {
+	return strings.TrimSpace(m.DeployJSON) != ""
 }
 
-// ipsecDeletable reports whether a tunnel row may be removed: only when no device
-// objects can be outstanding — a clean draft/rolled-back tunnel, or an errored one
-// whose deploy record was never written / already cleared.
-func ipsecDeletable(m *models.IPSecTunnel) bool {
-	switch m.Status {
-	case ipsecStatusDraft, ipsecStatusRolledBack:
-		return true
-	case ipsecStatusError:
-		return strings.TrimSpace(m.DeployJSON) == ""
-	}
-	return false
-}
+// ipsecEditable / ipsecDeletable: an intent may be edited and the row deleted ONLY
+// when no deploy record is present. This blocks deploying/degraded/up/
+// rolling_back/rollback_failed (all carry a record) and a partially-deployed
+// `error` (record kept), while allowing draft, rolled_back (record cleared), and a
+// pre-write `error` (record never written). The operator's path out of a partial
+// deploy is Rollback, never Edit/Delete.
+func ipsecEditable(m *models.IPSecTunnel) bool  { return !ipsecHasDeployRecord(m) }
+func ipsecDeletable(m *models.IPSecTunnel) bool { return !ipsecHasDeployRecord(m) }
 
 // endPreview is one end's rendered config for the preview pane.
 type endPreview struct {

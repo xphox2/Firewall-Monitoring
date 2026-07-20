@@ -226,6 +226,61 @@ func TestDeployStatusPoll_SuccessAndTunnelScoped(t *testing.T) {
 	}
 }
 
+// TestEditDelete_BlockedByDeployRecord_EvenInErrorState guards against the
+// edit-laundering hole: a partially-deployed tunnel sits in `error` WITH a deploy
+// record; edit/delete must be refused (else editing resets it to draft, blocks
+// rollback, and permits deleting the only remove snapshot → orphaned objects),
+// while rollback stays available.
+func TestEditDelete_BlockedByDeployRecord_EvenInErrorState(t *testing.T) {
+	h, db := setupTestHandler(t)
+	probe, _ := setupProbeAndDevice(t, db)
+	devA := makeFortiDevice(t, db, probe.ID, "203.0.113.9")
+	devB := makeFortiDevice(t, db, probe.ID, "203.0.113.10")
+	id := createTunnelRow(t, db, "fortigate", "fortigate", devA.ID, devB.ID, 1)
+	if _, code := deployReq(t, h, id); code != http.StatusOK {
+		t.Fatalf("deploy = %d", code)
+	}
+	// Simulate a mid-write failure: the apply commands complete as failed
+	// (terminal, so the live-command guard clears) and status→error, but the
+	// deploy record is KEPT.
+	row, _ := db.GetIPSecTunnel(id)
+	if row.DeployJSON == "" {
+		t.Fatal("precondition: error state must retain the deploy record")
+	}
+	var st ipsec.DeployState
+	_ = json.Unmarshal([]byte(row.DeployJSON), &st)
+	for _, e := range st.Ends {
+		if _, _, err := db.CompleteProbeCommand(probe.ID, e.CommandID, "failed", "boom"); err != nil {
+			t.Fatalf("complete: %v", err)
+		}
+	}
+	if err := db.UpdateIPSecTunnelStatus(id, "error", "write failed mid-sequence"); err != nil {
+		t.Fatalf("set error: %v", err)
+	}
+
+	// Edit → 409 (must NOT launder to draft).
+	ce, recE := jsonReq(http.MethodPut, "/x", ipsecCreateBody())
+	ce.Params = gin.Params{{Key: "id", Value: strconv.Itoa(int(id))}}
+	h.UpdateIPSecTunnel(ce)
+	if recE.Code != http.StatusConflict {
+		t.Errorf("edit of error-with-deploy-record = %d, want 409", recE.Code)
+	}
+	// Delete → 409.
+	cd, recD := jsonReq(http.MethodDelete, "/x", "")
+	cd.Params = gin.Params{{Key: "id", Value: strconv.Itoa(int(id))}}
+	h.DeleteIPSecTunnel(cd)
+	if recD.Code != http.StatusConflict {
+		t.Errorf("delete of error-with-deploy-record = %d, want 409", recD.Code)
+	}
+	// Rollback → allowed (not 400/409) — the operator's real path out.
+	cr, recR := jsonReq(http.MethodPost, "/x", "")
+	cr.Params = gin.Params{{Key: "id", Value: strconv.Itoa(int(id))}}
+	h.RollbackIPSecTunnel(cr)
+	if recR.Code != http.StatusOK {
+		t.Errorf("rollback of error-with-deploy-record = %d, want 200", recR.Code)
+	}
+}
+
 func TestRollback_NothingDeployed_400(t *testing.T) {
 	h, db := setupTestHandler(t)
 	probe, _ := setupProbeAndDevice(t, db)

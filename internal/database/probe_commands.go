@@ -92,8 +92,13 @@ const (
 	ProbeCommandMaxAttempts = 5
 
 	// probeCommandResultMaxLen bounds the stored result text so a misbehaving
-	// collector can't bloat the table with megabytes of output per command.
-	probeCommandResultMaxLen = 10000
+	// collector can't bloat the table with megabytes of output per command. Sized
+	// to comfortably hold the largest legitimate structured report: an IPSec
+	// preflight or apply report at the maximum 49 protected subnets (~100+ per-
+	// object checks). Truncation mid-JSON would make a healthy report unparseable,
+	// so the cap must clear the real worst case — the apply/remove reports are also
+	// compacted collector-side (only non-OK steps listed) as defence in depth.
+	probeCommandResultMaxLen = 65536
 
 	// probeCommandClaimBatch caps how many commands one heartbeat response
 	// carries; the remainder rides the next heartbeat (60s later).
