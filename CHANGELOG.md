@@ -3,13 +3,13 @@ All notable changes to this project are documented in this file.
 
 ## [0.11.129] - 2026-07-19
 
-### Improved — IPSec preflight modal shows live progress instead of a frozen "waiting"
+### Fixed — IPSec preflight: don't time out before the collector runs, and never spin forever
 
-The preflight modal polled silently, so while a check was waiting on the collector it looked stuck. Now:
+The preflight modal polled for only ~24s, but the collector runs commands on its heartbeat (default 60s), so a check that actually **succeeded** showed as "timed out." It also polled silently, so waiting looked frozen. Now:
 
-- A **spinner** and a live **"attempt N of 12"** counter (top status line + per-end) so it's visibly working while polling.
-- When polling times out without a result, it shows a clear **"Waiting timed out — the collector hasn't picked this up yet"** message with a **"Check again"** button (re-runs the preflight), instead of silently stopping.
-- Terminal `failed`/`expired` ends with no parseable report now show the raw result rather than a bare "waiting" note.
+- **Polls for ~2.5 minutes** (well past the 60s heartbeat) with a **spinner** and a live **elapsed-time** counter ("Checking for results… 0:48"), and copy that sets the expectation ("the collector runs this on its next check-in, up to ~1 min"). A genuinely-succeeded check now surfaces its result instead of a false timeout.
+- Only after the real window elapses does it show **"No result after m:ss — the collector may be offline"** with a **"Check again"** button.
+- **A terminal end with an unparseable/empty report no longer spins forever** (adversarial-review finding): any `succeeded`/`failed`/`expired` end with no JSON report now shows the raw collector output (or a plain note), never the spinner.
 
 ## [0.11.128] - 2026-07-19
 
