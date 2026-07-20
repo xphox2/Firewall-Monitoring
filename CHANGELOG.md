@@ -1,6 +1,12 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.132] - 2026-07-20
+
+### Fixed — IPSec deploy modal: readable apply/verify badges + step count
+
+Small readability polish on the deploy/rollback status modal (C2b-1). The per-end result badges (`applied`, `verified`, `collision`) are now whitespace-separated so they render as distinct pills and copy as "applied verified" rather than "appliedverified". Added an `N/M steps ok` count beside the badges: because a successful deploy's report lists only non-OK steps (compact form), the count now confirms all writes/verifies passed (e.g. a fully-applied max-subnet tunnel shows the full step total) instead of an empty step list.
+
 ## [0.11.131] - 2026-07-19
 
 ### Added — IPSec deploy saga: FortiGate apply / verify / rollback (C2b-1, first real device writes)
