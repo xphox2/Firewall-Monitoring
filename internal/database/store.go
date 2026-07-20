@@ -78,7 +78,7 @@ type IPSecStore interface {
 	MarkIPSecTunnelDeployed(id uint, status, lastErr string) error
 	ClearIPSecDeployState(id uint, status, lastErr string) error
 	SetIPSecRollbackState(id uint, status, deployJSON string) error
-	TransitionIPSecDeploy(id uint, fromStatuses []string, toStatus, deployJSON string, cmds []*models.ProbeCommand) error
+	TransitionIPSecDeploy(id uint, fromStatuses []string, toStatus, lastErr, deployJSON string, setDeployedAt bool, cmds []*models.ProbeCommand) error
 	DeleteIPSecTunnel(id uint) error
 }
 

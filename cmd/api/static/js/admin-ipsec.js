@@ -57,8 +57,9 @@
     // (the server still enforces every rule with a 409).
     function canEdit(s) { return ['deploying', 'degraded', 'up', 'rolling_back', 'rollback_failed'].indexOf(s) === -1; }
     function canDelete(s) { return ['draft', 'rolled_back', 'error'].indexOf(s) !== -1; }
-    function canDeploy(s) { return ['draft', 'error', 'rolled_back'].indexOf(s) !== -1; }
+    function canDeploy(s) { return ['draft', 'rolled_back'].indexOf(s) !== -1; }
     function canRollback(s) { return ['degraded', 'up', 'error', 'rollback_failed'].indexOf(s) !== -1; }
+    function canReset(s) { return s === 'error' || s === 'rollback_failed'; }
     function inProgress(s) { return s === 'deploying' || s === 'rolling_back'; }
 
     function renderTunnels(list) {
@@ -78,6 +79,9 @@
             }
             if (canRollback(s)) {
                 btns += '<button class="btn sm warning" data-action="ipsec-rollback" data-min-role="admin" data-id="' + t.id + '" title="Removes the deployed config from the device">Rollback</button> ';
+            }
+            if (canReset(s)) {
+                btns += '<button class="btn sm secondary" data-action="ipsec-reset" data-min-role="admin" data-id="' + t.id + '" title="Clear Firewall-Mon\'s deploy record (device may still hold objects — verify manually)">Reset…</button> ';
             }
             btns += '<button class="btn sm secondary" data-action="ipsec-edit" data-min-role="admin" data-id="' + t.id + '"' + (canEdit(s) ? '' : ' disabled title="Roll back before editing"') + '>Edit</button> ' +
                 '<button class="btn sm danger" data-action="ipsec-delete" data-min-role="admin" data-id="' + t.id + '"' + (canDelete(s) ? '' : ' disabled title="Roll back before deleting"') + '>Delete</button>';
@@ -479,6 +483,7 @@
             'ipsec-preflight-close': function () { stopPreflightPoll(); AC.closeModal('ipsec-preflight-modal'); },
             'ipsec-deploy': function (el) { startDeploy(parseInt(el.dataset.id, 10)); },
             'ipsec-rollback': function (el) { startRollback(parseInt(el.dataset.id, 10)); },
+            'ipsec-reset': function (el) { resetDeploy(parseInt(el.dataset.id, 10)); },
             'ipsec-progress': function (el) { openDeployModal(parseInt(el.dataset.id, 10), el.dataset.op || 'deploy'); },
             'ipsec-deploy-close': function () { stopDeployPoll(); AC.closeModal('ipsec-deploy-modal'); loadTunnels(); }
         });
@@ -735,6 +740,20 @@
         });
     }
 
+    // resetDeploy force-clears a wedged deploy record (error/rollback_failed). It
+    // touches NO device — the operator acknowledges the device may still hold
+    // objects and must verify manually.
+    function resetDeploy(id) {
+        AC.confirm('Clear Firewall-Mon\'s deploy record for this tunnel? The device MAY still hold objects for it — this does NOT remove them; verify and remove them manually. Use this only when a rollback cannot complete (e.g. the collector was offline).',
+            { title: 'Reset deploy record?', confirmLabel: 'Clear record', danger: true }).then(function (ok) {
+            if (!ok) return;
+            AC.apiFetch(API + '/ipsec/tunnels/' + id + '/deploy/reset', { method: 'POST' }).then(function (r) {
+                AC.showSuccess((r && r.data && r.data.warning) || 'Deploy record cleared.');
+                stopDeployPoll(); AC.closeModal('ipsec-deploy-modal'); loadTunnels();
+            }).catch(function (e) { AC.showError('Reset failed: ' + e.message); });
+        });
+    }
+
     function openDeployModal(id, op) {
         stopDeployPoll();
         $('ipsec-deploy-title').textContent = (op === 'rollback') ? 'Roll Back Tunnel' : 'Deploy Tunnel';
@@ -823,11 +842,18 @@
         } else if (state.exhausted) {
             line = '<div style="color:var(--fwmon-sig-warn);font-size:0.85rem;margin-bottom:10px;">No terminal result after ' + esc(mmss(state.elapsedMs)) + ' — the collector may be offline or still queued. This modal will pick it up if you reopen “View progress”.</div>';
         } else {
-            var okStatus = (status === 'degraded' || status === 'up' || status === 'rolled_back');
-            line = '<div style="margin-bottom:10px;font-size:0.9rem;">Status: ' + statusBadge(status) +
+            // Contextual recovery actions. From error/rollback_failed a re-deploy is
+            // refused server-side (a deploy record exists) — the exits are Rollback
+            // (retry the reversal) and Reset (force-clear, device-may-hold-objects).
+            var actions = '';
+            if (status === 'error' || status === 'rollback_failed') {
+                actions = ' <button class="btn sm warning" data-action="ipsec-rollback" data-min-role="admin" data-id="' + id + '">Rollback</button>' +
+                    ' <button class="btn sm secondary" data-action="ipsec-reset" data-min-role="admin" data-id="' + id + '">Reset…</button>';
+            }
+            var autoLbl = (data && data.auto) ? ' <span class="badge info">automatic rollback</span>' : '';
+            line = '<div style="margin-bottom:10px;font-size:0.9rem;">Status: ' + statusBadge(status) + autoLbl +
                 (data && data.note ? ' <span style="color:var(--fwmon-text-mute);">— ' + esc(data.note) + '</span>' : '') +
-                (!okStatus && !state.polling ? ' <button class="btn sm ' + (op === 'rollback' ? 'warning' : 'primary') + '" data-action="ipsec-' + (op === 'rollback' ? 'rollback' : 'deploy') + '" data-min-role="admin" data-id="' + id + '">Retry</button>' : '') +
-                '</div>';
+                actions + '</div>';
         }
         var ends = (data && data.ends) || [];
         var endsHtml = ends.length

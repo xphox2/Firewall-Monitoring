@@ -168,6 +168,17 @@ const (
 // ApplyStep is one unit of config the collector applies. Exactly one of the CLI
 // or HTTP fields is populated per Kind. Description is human-facing (shown in
 // preview); it must never contain the PSK.
+//
+// CaptureAs and the <uuid:NAME> token convention support UUID-chained vendors
+// (OPNsense): a create step with CaptureAs="conn" means "after this returns 2xx,
+// read the device-assigned uuid from the response and register it under token
+// `conn`"; a later step referencing "<uuid:conn>" in its Path/Body has that token
+// substituted with the captured value BEFORE the request is sent. Both CaptureAs
+// and the substitution happen on the collector AFTER checksum-verify; neither is
+// part of ChecksumSteps (Description/CaptureAs are excluded), so the operator-
+// approved template is what is checksummed and only opaque device IDs fill the
+// documented placeholder slots. FortiGate uses neither (no tokens, no CaptureAs)
+// so its steps are byte-identical to before.
 type ApplyStep struct {
 	Kind        ApplyStepKind `json:"kind"`
 	Description string        `json:"description"`
@@ -179,6 +190,10 @@ type ApplyStep struct {
 	Method string `json:"method,omitempty"`
 	Path   string `json:"path,omitempty"`
 	Body   string `json:"body,omitempty"`
+
+	// CaptureAs names the token to bind to this create's returned device uuid
+	// (empty = capture nothing). NOT part of ChecksumSteps.
+	CaptureAs string `json:"capture_as,omitempty"`
 }
 
 // ArtifactKind labels what an Artifact does, for ordering + rollback.

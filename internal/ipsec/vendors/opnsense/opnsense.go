@@ -98,15 +98,15 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 		},
 	})
 	localAuth := jsonBody(map[string]any{
-		"local": map[string]any{"description": desc, "connection": "<conn-uuid>", "round": "0", "auth": "psk", "id": local.LocalID.Value},
+		"local": map[string]any{"description": desc, "connection": tokName(nameConn), "round": "0", "auth": "psk", "id": local.LocalID.Value},
 	})
 	remoteAuth := jsonBody(map[string]any{
-		"remote": map[string]any{"description": desc, "connection": "<conn-uuid>", "round": "0", "auth": "psk", "id": remote.LocalID.Value},
+		"remote": map[string]any{"description": desc, "connection": tokName(nameConn), "round": "0", "auth": "psk", "id": remote.LocalID.Value},
 	})
 	child := jsonBody(map[string]any{
 		"child": map[string]any{
 			"description":   desc,
-			"connection":    "<conn-uuid>",
+			"connection":    tokName(nameConn),
 			"mode":          "tunnel",
 			"policies":      "0", // route-based: Install Policies OFF
 			"reqid":         itoa(local.Reqid),
@@ -133,23 +133,27 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 		"gateway": map[string]any{"description": desc, "interface": "vti_" + desc, "gateway": remote.InnerIP},
 	})
 
+	// Every create step CaptureAs a token so the collector binds the device-
+	// assigned UUID; child bodies reference <uuid:conn>; RenderRemove deletes by
+	// the same tokens. Children are captured + explicitly deleted (cascade
+	// insurance — we do not trust delConnection to cascade local/remote/child).
 	steps := []ipsec.ApplyStep{
-		api("Create IPsec connection (IKE)", "POST", "/api/ipsec/connections/addConnection", conn),
-		api("Add local auth (PSK identity)", "POST", "/api/ipsec/connections/addLocal", localAuth),
-		api("Add remote auth (PSK identity)", "POST", "/api/ipsec/connections/addRemote", remoteAuth),
-		api("Add child SA (0/0 selectors, policies off, pinned reqid)", "POST", "/api/ipsec/connections/addChild", child),
-		api("Store pre-shared key", "POST", "/api/ipsec/pre_shared_keys/addItem", pskStep),
-		api("Create VTI (Virtual Tunnel Interface)", "POST", "/api/interfaces/vti_settings/addItem", vti),
-		api("Create gateway on the VTI", "POST", "/api/routing/settings/addGateway", gw),
+		apiCap("Create IPsec connection (IKE)", epConnAdd, conn, nameConn),
+		apiCap("Add local auth (PSK identity)", epLocalAdd, localAuth, nameLocal),
+		apiCap("Add remote auth (PSK identity)", epRemoteAdd, remoteAuth, nameRemote),
+		apiCap("Add child SA (0/0 selectors, policies off, pinned reqid)", epChildAdd, child, nameChild),
+		apiCap("Store pre-shared key", epPSKAdd, pskStep, namePSK),
+		apiCap("Create VTI (Virtual Tunnel Interface)", epVTIAdd, vti, nameVTI),
+		apiCap("Create gateway on the VTI", epGWAdd, gw, nameGW),
 	}
 	// static routes + a firewall pass rule per remote subnet (traffic is dropped
 	// without the rule — the classic OPNsense omission we auto-include).
-	for _, s := range remote.ProtectedSubnets {
+	for i, s := range remote.ProtectedSubnets {
 		route := jsonBody(map[string]any{"route": map[string]any{"description": desc, "network": s, "gateway": desc}})
 		rule := jsonBody(map[string]any{"rule": map[string]any{"description": desc, "action": "pass", "interface": "vti_" + desc, "source_net": "any", "destination_net": s}})
 		steps = append(steps,
-			api("Static route "+s+" via VTI", "POST", "/api/routes/routes/addroute", route),
-			api("Firewall pass rule for "+s, "POST", "/api/firewall/filter/addRule", rule),
+			apiCap("Static route "+s+" via VTI", epRouteAdd, route, nameRoute(i)),
+			apiCap("Firewall pass rule for "+s, epRuleAdd, rule, nameRule(i)),
 		)
 	}
 	// Conditional peer /32: when a routed (remote) subnet contains the peer's own
@@ -158,16 +162,21 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 	// a gateway by NAME, so first create a WAN gateway object bound to the
 	// operator-supplied next-hop IP (tagged desc-peer to disambiguate from the VTI
 	// gateway), then the /32 route referencing it.
-	if local.Gateway != "" && ipsec.SubnetContainsIP(remote.ProtectedSubnets, remote.PeerIP) {
+	if peerRouteNeeded(local, remote) {
 		peerDesc := desc + "-peer"
 		pgw := jsonBody(map[string]any{"gateway": map[string]any{"description": peerDesc, "interface": local.EgressIface, "gateway": local.Gateway}})
 		proute := jsonBody(map[string]any{"route": map[string]any{"description": peerDesc, "network": remote.PeerIP + "/32", "gateway": peerDesc}})
 		steps = append(steps,
-			api("Peer WAN gateway (self-lockout /32 next-hop)", "POST", "/api/routing/settings/addGateway", pgw),
-			api("Peer /32 host route via WAN (self-lockout guard)", "POST", "/api/routes/routes/addroute", proute),
+			apiCap("Peer WAN gateway (self-lockout /32 next-hop)", epGWAdd, pgw, nameGWPeer),
+			apiCap("Peer /32 host route via WAN (self-lockout guard)", epRouteAdd, proute, nameRoutePeer),
 		)
 	}
-	steps = append(steps, api("Apply IPsec configuration", "POST", "/api/ipsec/connections/reconfigure", "{}"))
+	// Per-subsystem activation. OPNsense stages object CRUD to config.xml and only
+	// activates on a per-subsystem apply/reconfigure. NOTE: these endpoints are
+	// UNVERIFIED against a live 26.1 box (the C2a render only had ipsec reconfigure)
+	// — confirm/adjust at the live exit gate; the saga machinery does not depend on
+	// which specific applies exist.
+	steps = append(steps, applySteps()...)
 
 	return ipsec.Artifact{
 		Vendor:          "opnsense",
@@ -183,31 +192,42 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 func (d driver) RenderRemove(v ipsec.RenderView) (ipsec.Artifact, error) {
 	local, remote := v.Local(), v.Remote()
 	desc := v.Intent.Name
-	// Search-by-description then delete, reverse order. UUIDs are resolved live
-	// by the collector; here we express intent by the fwm-t<ID> description.
+	// Delete by CAPTURED UUID (POST del<X>/<uuid:NAME>), reverse dependency order,
+	// reversing exactly the tokens Render captured. The collector substitutes each
+	// <uuid:NAME> from the server-stored map; a token with no stored UUID (object
+	// never created) is skipped. Idempotent: OPNsense returns 200 {"result":"not
+	// found"} for an already-gone UUID.
 	var steps []ipsec.ApplyStep
-	// Peer /32 objects (tagged desc-peer) first, when Render would have created
-	// them — a distinct description so this delete can't reap the VTI gateway.
-	if local.Gateway != "" && ipsec.SubnetContainsIP(remote.ProtectedSubnets, remote.PeerIP) {
-		peerDesc := desc + "-peer"
+	// Peer /32 objects first (route before its gateway).
+	if peerRouteNeeded(local, remote) {
 		steps = append(steps,
-			api("Delete peer /32 route", "POST", "/api/routes/routes/delroute", byDesc(peerDesc)),
-			api("Delete peer WAN gateway", "POST", "/api/routing/settings/delGateway", byDesc(peerDesc)),
+			delByUUID("Delete peer /32 route", epRouteDel, nameRoutePeer),
+			delByUUID("Delete peer WAN gateway", epGWDel, nameGWPeer),
+		)
+	}
+	// Rules + routes (reverse subnet order) before the gateway/VTI they reference.
+	for i := len(remote.ProtectedSubnets) - 1; i >= 0; i-- {
+		steps = append(steps,
+			delByUUID("Delete firewall pass rule", epRuleDel, nameRule(i)),
+			delByUUID("Delete static route", epRouteDel, nameRoute(i)),
 		)
 	}
 	steps = append(steps,
-		api("Delete firewall rule(s) by description "+desc, "POST", "/api/firewall/filter/delRule", byDesc(desc)),
-		api("Delete static route(s) by description", "POST", "/api/routes/routes/delroute", byDesc(desc)),
-		api("Delete gateway", "POST", "/api/routing/settings/delGateway", byDesc(desc)),
-		api("Delete VTI", "POST", "/api/interfaces/vti_settings/delItem", byDesc(desc)),
-		api("Delete child + connection", "POST", "/api/ipsec/connections/delConnection", byDesc(desc)),
-		api("Delete pre-shared key", "POST", "/api/ipsec/pre_shared_keys/delItem", byDesc(desc)),
-		api("Apply IPsec configuration", "POST", "/api/ipsec/connections/reconfigure", "{}"),
+		delByUUID("Delete gateway", epGWDel, nameGW),
+		delByUUID("Delete VTI", epVTIDel, nameVTI),
+		// Children before the connection (cascade insurance — do not assume
+		// delConnection reaps local/remote/child).
+		delByUUID("Delete child SA", epChildDel, nameChild),
+		delByUUID("Delete remote auth", epRemoteDel, nameRemote),
+		delByUUID("Delete local auth", epLocalDel, nameLocal),
+		delByUUID("Delete IPsec connection", epConnDel, nameConn),
+		delByUUID("Delete pre-shared key", epPSKDel, namePSK),
 	)
+	steps = append(steps, applySteps()...)
 	return ipsec.Artifact{
 		Vendor: "opnsense", Kind: ipsec.ArtifactRemove, Steps: steps,
 		Checksum: ipsec.ChecksumSteps(steps), TemplateVersion: templateVersion,
-		PreviewText: "Delete all fwm-t objects (connection, child, PSK, VTI, gateway, route, rule) matching description " + desc,
+		PreviewText: "Delete all fwm-t objects (connection, local/remote/child, PSK, VTI, gateway, route(s), rule(s)) by captured UUID for " + desc,
 	}, nil
 }
 
@@ -216,13 +236,26 @@ func (d driver) StatusProbe(v ipsec.RenderView) []ipsec.ProbeStep {
 }
 
 // PreflightProbe emits read-only OPNsense REST GETs: firmware status (auth +
-// product version) and an IPsec connection search — the collector matches the
-// tunnel name/description against the results to detect a pre-existing
-// connection (collision) before any write. All GETs; nothing is mutated.
+// product version) and a search over the FULL footprint the deploy creates
+// (connection, PSK, VTI, gateway, protected-subnet routes, firewall rules) — the
+// collector matches the `fwm-t<ID>` description against each result to detect a
+// collision before any write, and re-runs these post-write to VERIFY the objects
+// exist. All GETs; nothing is mutated.
+//
+// The conditional peer objects (`fwm-t<ID>-peer`) are deliberately verify-EXEMPT:
+// opnsenseRowsMatch is exact-equality on the tunnel description, so `-peer` rows
+// won't match, and they're the auxiliary self-lockout guard, not the tunnel
+// footprint — a create failure of a peer object is still caught by writeOK at
+// apply time.
 func (d driver) PreflightProbe(v ipsec.RenderView) []ipsec.PreflightStep {
 	return []ipsec.PreflightStep{
 		{Check: "auth", Method: "GET", Path: "/api/core/firmware/status"},
-		{Check: "connection", Method: "GET", Path: "/api/ipsec/connections/searchConnection", ExpectAbsent: true},
+		{Check: "connection", Method: "GET", Path: epConnSearch, ExpectAbsent: true},
+		{Check: "psk", Method: "GET", Path: epPSKSearch, ExpectAbsent: true},
+		{Check: "vti", Method: "GET", Path: epVTISearch, ExpectAbsent: true},
+		{Check: "gateway", Method: "GET", Path: epGWSearch, ExpectAbsent: true},
+		{Check: "route", Method: "GET", Path: epRouteSearch, ExpectAbsent: true},
+		{Check: "rule", Method: "GET", Path: epRuleSearch, ExpectAbsent: true},
 	}
 }
 
@@ -242,18 +275,112 @@ func (d driver) ParseStatus(raw string) (ipsec.TunnelStatus, error) {
 	return st, nil
 }
 
+// ---- UUID-chaining tokens + endpoints ----
+//
+// Each created object binds its device-assigned UUID to a base NAME (CaptureAs);
+// bodies/paths reference it as the token <uuid:NAME>. Render captures and
+// RenderRemove deletes by the SAME names (a parity test pins this).
+const (
+	nameConn      = "conn"
+	nameLocal     = "local"
+	nameRemote    = "remote"
+	nameChild     = "child"
+	namePSK       = "psk"
+	nameVTI       = "vti"
+	nameGW        = "gw"
+	nameGWPeer    = "gw_peer"
+	nameRoutePeer = "route_peer"
+)
+
+func tokName(n string) string { return "<uuid:" + n + ">" }
+func nameRoute(i int) string  { return fmt.Sprintf("route%d", i) }
+func nameRule(i int) string   { return fmt.Sprintf("rule%d", i) }
+
+// OPNsense REST MVC endpoints. add*/del* are POST; search* are GET. NOTE: the
+// per-subsystem apply/reconfigure endpoints (applySteps) and some del* verbs are
+// UNVERIFIED against a live 26.1 box (C2a only exercised connections/reconfigure)
+// and are the live-gate iteration items — the saga machinery does not depend on
+// their exact spelling.
+const (
+	epConnAdd   = "/api/ipsec/connections/addConnection"
+	epLocalAdd  = "/api/ipsec/connections/addLocal"
+	epRemoteAdd = "/api/ipsec/connections/addRemote"
+	epChildAdd  = "/api/ipsec/connections/addChild"
+	epPSKAdd    = "/api/ipsec/pre_shared_keys/addItem"
+	epVTIAdd    = "/api/interfaces/vti_settings/addItem"
+	epGWAdd     = "/api/routing/settings/addGateway"
+	epRouteAdd  = "/api/routes/routes/addroute"
+	epRuleAdd   = "/api/firewall/filter/addRule"
+
+	epConnDel   = "/api/ipsec/connections/delConnection"
+	epLocalDel  = "/api/ipsec/connections/delLocal"
+	epRemoteDel = "/api/ipsec/connections/delRemote"
+	epChildDel  = "/api/ipsec/connections/delChild"
+	epPSKDel    = "/api/ipsec/pre_shared_keys/delItem"
+	epVTIDel    = "/api/interfaces/vti_settings/delItem"
+	epGWDel     = "/api/routing/settings/delGateway"
+	epRouteDel  = "/api/routes/routes/delroute"
+	epRuleDel   = "/api/firewall/filter/delRule"
+
+	epConnSearch  = "/api/ipsec/connections/searchConnection"
+	epPSKSearch   = "/api/ipsec/pre_shared_keys/searchItem"
+	epVTISearch   = "/api/interfaces/vti_settings/searchItem"
+	epGWSearch    = "/api/routing/settings/searchGateway"
+	epRouteSearch = "/api/routes/routes/searchroute"
+	epRuleSearch  = "/api/firewall/filter/searchRule"
+)
+
+// applySteps activates staged config per subsystem (see the UNVERIFIED note
+// above). Shared by Render and RenderRemove so both leave the box consistent.
+func applySteps() []ipsec.ApplyStep {
+	return []ipsec.ApplyStep{
+		api("Apply IPsec configuration", "POST", "/api/ipsec/connections/reconfigure", "{}"),
+		api("Apply VTI interface", "POST", "/api/interfaces/vti_settings/reconfigure", "{}"),
+		api("Apply gateways", "POST", "/api/routing/settings/reconfigure", "{}"),
+		api("Apply static routes", "POST", "/api/routes/routes/reconfigure", "{}"),
+		api("Apply firewall rules", "POST", "/api/firewall/filter/apply", "{}"),
+	}
+}
+
+// peerRouteNeeded reports whether the conditional peer /32 self-lockout guard
+// renders: a Gateway is set AND a protected subnet contains the peer's WAN IP.
+func peerRouteNeeded(local, remote *ipsec.EndpointSpec) bool {
+	return local.Gateway != "" && ipsec.SubnetContainsIP(remote.ProtectedSubnets, remote.PeerIP)
+}
+
 // ---- helpers ----
 
 func api(desc, method, path, body string) ipsec.ApplyStep {
 	return ipsec.ApplyStep{Kind: ipsec.StepHTTPAPI, Description: desc, Method: method, Path: path, Body: body}
 }
 
-func jsonBody(m map[string]any) string {
-	b, _ := json.Marshal(m)
-	return string(b)
+// apiCap is a create step that captures its device-assigned uuid under NAME.
+func apiCap(desc, path, body, captureName string) ipsec.ApplyStep {
+	return ipsec.ApplyStep{Kind: ipsec.StepHTTPAPI, Description: desc, Method: "POST", Path: path, Body: body, CaptureAs: captureName}
 }
 
-func byDesc(desc string) string { return jsonBody(map[string]any{"description": desc}) }
+// delByUUID is a POST delete whose path ends in the <uuid:NAME> token the
+// collector substitutes from the stored capture map (skipped if unresolved).
+func delByUUID(desc, delPath, name string) ipsec.ApplyStep {
+	return ipsec.ApplyStep{Kind: ipsec.StepHTTPAPI, Description: desc, Method: "POST", Path: delPath + "/" + tokName(name)}
+}
+
+// jsonBody marshals a request body WITHOUT HTML-escaping, so a <uuid:NAME>
+// substitution token embedded in a string value survives as the literal
+// "<uuid:NAME>" (default json.Marshal would emit "<uuid:NAME>", which
+// the collector's substitute() — matching literal "<uuid:…>" — would never
+// resolve, aborting every apply). encoding/json still sorts map keys, so the
+// output stays deterministic (stable checksum). Encode appends a trailing
+// newline; trim it so the bytes match what the collector checksums.
+func jsonBody(m map[string]any) string {
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(m); err != nil {
+		return ""
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
 
 func boolStr(b bool) string {
 	if b {

@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.133] - 2026-07-20
+
+### Added — IPSec deploy saga: OPNsense apply, two-end deploy, auto-rollback (C2b-2a)
+
+Extends the deploy saga to a second vendor and both ends at once, with automatic compensating rollback. SA-liveness verification (`up`/`down`) remains C2b-2b; a fully-deployed tunnel still terminates at `degraded` ("both ends deployed and object-verified; SA liveness pending").
+
+- **OPNsense apply (UUID chaining)**: OPNsense's REST MVC assigns a UUID at create time that child objects must reference and that deletes must target. `ApplyStep` gains a non-checksummed `CaptureAs`, and a `<uuid:NAME>` token convention: the collector captures each created object's UUID and substitutes it into later steps' path/body **after** the checksum-verify (the checksum still pins the operator-approved placeholder template — FortiGate, which has no tokens, is byte-identical to before). The OPNsense driver now captures every created object, deletes by captured UUID (`del*/<uuid:NAME>`, POST, idempotent on `200 {"result":"not found"}`), emits per-subsystem apply calls, and its preflight/verify covers the full object footprint.
+- **Two-end deploy**: the FortiGate-only apply gate is lifted, so a FortiGate⇄OPNsense tunnel now writes both ends.
+- **Auto-rollback on partial failure**: when a deploy is terminal-bad but some end may have written, the server automatically enqueues a compensating rollback of every end (one guarded, one-shot transition) and marks the tunnel `rolling_back` (`RollbackState.Auto`). An end whose outcome is unknown with nothing captured is flagged so its clean-looking skip lands `rollback_failed` ("verify device") rather than a false `rolled_back`.
+- **Operator reset** (`POST /ipsec/tunnels/:id/deploy/reset`, admin, audited): clears a wedged deploy record (`error`/`rollback_failed` only, no live command) so the tunnel is deploy/edit/delete-able again — it touches no device and warns the operator to verify manually.
+- **Safety**: deploy is now refused (409) whenever a deploy record exists (roll back first) — a re-deploy can't clobber the captured-UUID map; the terminal poll is a single guarded write (no clobber race); operator free-text containing the reserved `<uuid:` token is rejected in validation.
+
 ## [0.11.132] - 2026-07-20
 
 ### Fixed — IPSec deploy modal: readable apply/verify badges + step count

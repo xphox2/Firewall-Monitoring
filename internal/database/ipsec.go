@@ -151,23 +151,29 @@ func (d *Database) SetIPSecRollbackState(id uint, status, deployJSON string) err
 }
 
 // TransitionIPSecDeploy atomically (1) UPDATEs the tunnel's status + last_error +
-// deploy_json, guarded on its current status being in fromStatuses (optimistic
-// lock — 0 rows affected ⇒ ErrIPSecConcurrentDeploy), and (2) enqueues each
-// command in the SAME transaction. Either all of it commits or none does, so a
-// status poll can never observe a deploy_json whose command rows don't exist yet,
-// and two concurrent deploys can't both pass the guard and double-write the
-// device. Used by both the deploy POST (→ deploying) and the rollback POST
-// (→ rolling_back). The caller pre-generates each cmd.CommandID and records it in
-// deployJSON before calling.
-func (d *Database) TransitionIPSecDeploy(id uint, fromStatuses []string, toStatus, deployJSON string, cmds []*models.ProbeCommand) error {
+// deploy_json (+ last_deployed_at when setDeployedAt), guarded on its current
+// status being in fromStatuses (optimistic lock — 0 rows affected ⇒
+// ErrIPSecConcurrentDeploy), and (2) enqueues each command in the SAME
+// transaction. Either all of it commits or none does, so a status poll can never
+// observe a deploy_json whose command rows don't exist yet, two concurrent
+// deploys can't both pass the guard and double-write, and every terminal poll
+// outcome (deploying/degraded/error/rolling_back) is exactly ONE guarded write —
+// the caller must NEVER chain a second status/deploy_json setter after this (that
+// reopens the terminal-write race). The caller pre-generates each cmd.CommandID
+// and records it in deployJSON before calling.
+func (d *Database) TransitionIPSecDeploy(id uint, fromStatuses []string, toStatus, lastErr, deployJSON string, setDeployedAt bool, cmds []*models.ProbeCommand) error {
 	return d.db.Transaction(func(tx *gorm.DB) error {
+		fields := map[string]interface{}{
+			"status":      toStatus,
+			"last_error":  lastErr,
+			"deploy_json": deployJSON,
+		}
+		if setDeployedAt {
+			fields["last_deployed_at"] = time.Now()
+		}
 		res := tx.Model(&models.IPSecTunnel{}).
 			Where("id = ? AND status IN ?", id, fromStatuses).
-			Updates(map[string]interface{}{
-				"status":      toStatus,
-				"last_error":  "",
-				"deploy_json": deployJSON,
-			})
+			Updates(fields)
 		if res.Error != nil {
 			return res.Error
 		}
