@@ -149,9 +149,11 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 	// Preview: the phase1 body is masked (it carries the PSK); everything else is
 	// shown verbatim (no secrets).
 	preview := make([]string, 0, len(steps))
-	for i, s := range steps {
+	for _, s := range steps {
 		body := s.Body
-		if i == 0 {
+		// Mask the phase1 body (it carries the PSK) — keyed on the step's identity,
+		// not its position, so a future reorder can't unmask the PSK in the preview.
+		if s.Method == "POST" && s.Path == cmdbPhase1 {
 			body = redact(p1json)
 		}
 		preview = append(preview, s.Method+" "+s.Path+"\n"+body)
@@ -323,8 +325,9 @@ func policySteps(tid uint, name, lan string) []ipsec.ApplyStep {
 
 // peerRouteNeeded reports whether a peer /32 host route must be pinned: a local
 // protected-subnet route would otherwise pull the peer's own WAN IP into the
-// tunnel (self-lockout). Requires a Gateway to point the /32 at; without one the
-// route can't be rendered (validation requires it in this case).
+// tunnel (self-lockout). Needs a Gateway to point the /32 at; without one the
+// route isn't rendered and validation raises a self_lockout WARNING (a WAN
+// default route may already cover the peer, so it's acknowledgeable, not a block).
 func peerRouteNeeded(local, remote *ipsec.EndpointSpec) bool {
 	return local.Gateway != "" && ipsec.SubnetContainsIP(remote.ProtectedSubnets, remote.PeerIP)
 }

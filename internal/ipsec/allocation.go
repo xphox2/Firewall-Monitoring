@@ -58,6 +58,12 @@ const (
 	fgPolicyOffset = 100
 )
 
+// MaxProtectedSubnetsPerEnd bounds a tunnel so its route keys never overrun the
+// policy keys: routes occupy indices 0..2N (N subnet routes + N blackholes + 1
+// optional peer /32), which must stay below fgPolicyOffset. Enforced in
+// validation (too_many_subnets).
+const MaxProtectedSubnetsPerEnd = (fgPolicyOffset - 1) / 2 // 49
+
 // FGRouteKey returns the router/static seq-num for the index-th fwm route of a
 // tunnel (subnet routes, then blackholes, then the optional peer /32).
 func FGRouteKey(tunnelID uint, index int) int {

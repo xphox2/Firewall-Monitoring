@@ -1,6 +1,7 @@
 package ipsec_test
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -109,6 +110,26 @@ func TestPeerRoute_ConditionalBothVendors(t *testing.T) {
 	}
 	if !strings.Contains(stepsText(oart), "-peer") {
 		t.Error("opnsense: peer objects should be tagged desc-peer")
+	}
+}
+
+// TestValidate_TooManySubnetsBlocks pins the deterministic-key cap: >Max
+// protected subnets on an end is a hard block (would overrun the policy keys).
+func TestValidate_TooManySubnetsBlocks(t *testing.T) {
+	c := [2]ipsec.CapabilityDescriptor{caps(t, "fortigate"), caps(t, "opnsense")}
+	over := canonicalIntent()
+	subs := make([]string, ipsec.MaxProtectedSubnetsPerEnd+1)
+	for i := range subs {
+		subs[i] = fmt.Sprintf("10.%d.0.0/24", i)
+	}
+	over.Ends[0].ProtectedSubnets = subs
+	if !hasCode(ipsec.Validate(over, c), "too_many_subnets") {
+		t.Errorf("expected too_many_subnets block at %d subnets", len(subs))
+	}
+	// Exactly Max is allowed.
+	over.Ends[0].ProtectedSubnets = subs[:ipsec.MaxProtectedSubnetsPerEnd]
+	if hasCode(ipsec.Validate(over, c), "too_many_subnets") {
+		t.Errorf("%d subnets should be allowed", ipsec.MaxProtectedSubnetsPerEnd)
 	}
 }
 

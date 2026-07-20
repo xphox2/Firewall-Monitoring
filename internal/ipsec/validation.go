@@ -198,6 +198,18 @@ func validateSubnets(intent *TunnelIntent) []Finding {
 		fs = append(fs, Finding{SeverityBlock, "subnet_invalid", e})
 	}
 
+	// Cap protected subnets per end: FortiGate routes/policies use deterministic
+	// mkeys in a per-tunnel block (see allocation.go FGRouteKey/FGPolicyKey) that
+	// fits at most MaxProtectedSubnetsPerEnd routed subnets before the route keys
+	// would overrun the policy keys. Enforce it here so a too-large tunnel is
+	// blocked at validation, never silently overwriting its own policy on apply.
+	for i := range intent.Ends {
+		if n := len(intent.Ends[i].ProtectedSubnets); n > MaxProtectedSubnetsPerEnd {
+			fs = append(fs, Finding{SeverityBlock, "too_many_subnets",
+				fmt.Sprintf("%s has %d protected subnets — the maximum is %d (deterministic route/policy key allocation); split into multiple tunnels", endLabel(intent, i), n, MaxProtectedSubnetsPerEnd)})
+		}
+	}
+
 	// Overlap: the two sides must be disjoint (or 1:1 NAT — deferred past v1).
 	for _, na := range a {
 		for _, nb := range b {
