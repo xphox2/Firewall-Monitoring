@@ -15,7 +15,8 @@ type DeployState struct {
 
 // DeployEndState records one deployed end: the apply command sent to its
 // collector and the exact steps (+ checksum) needed to reverse it. RemoveSteps
-// are body-less DELETEs, so this struct never contains the PSK.
+// are body-less DELETEs (FortiGate) or POST-by-<uuid:NAME> deletes (OPNsense), so
+// this struct never contains the PSK.
 type DeployEndState struct {
 	End            int         `json:"end"`
 	DeviceID       uint        `json:"device_id"`
@@ -23,11 +24,27 @@ type DeployEndState struct {
 	CommandID      string      `json:"command_id"`
 	RemoveSteps    []ApplyStep `json:"remove_steps"`
 	RemoveChecksum string      `json:"remove_checksum"`
+
+	// CapturedUUIDs maps a <uuid:NAME> token to the device-assigned UUID captured
+	// when this end applied (OPNsense; empty for FortiGate). Merged from the apply
+	// report at the terminal poll and used as the remove Substitutions so rollback
+	// can delete exactly the objects that were created. Persisted (deploy_json is
+	// never pruned) since the apply command result is pruned at 30d.
+	CapturedUUIDs map[string]string `json:"captured_uuids,omitempty"`
+
+	// RollbackUnproven marks an end whose apply outcome is UNKNOWN (command
+	// expired/lost/pruned) AND that captured no UUIDs — so its remove will skip
+	// every step and report clean, byte-indistinguishable from an end that
+	// genuinely wrote nothing. The rollback poll forces rollback_failed for a
+	// marked end ("verify device"), never a clean rolled_back.
+	RollbackUnproven bool `json:"rollback_unproven,omitempty"`
 }
 
 // RollbackState records the in-flight/last rollback so its terminal status is
-// poll-driven (never set at POST time).
+// poll-driven (never set at POST time). Auto is set when the server triggered a
+// compensating rollback after a partial/failed deploy (vs an operator POST).
 type RollbackState struct {
 	CommandIDs []string `json:"command_ids"`
 	StartedAt  string   `json:"started_at,omitempty"`
+	Auto       bool     `json:"auto,omitempty"`
 }

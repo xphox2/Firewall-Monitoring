@@ -632,13 +632,17 @@ type ipsecApplyPayload struct {
 	Steps          []ipsec.ApplyStep     `json:"steps"`
 	Checksum       string                `json:"checksum"`
 	CollisionSteps []ipsec.PreflightStep `json:"collision_steps,omitempty"`
+	// Substitutions resolves <uuid:NAME> tokens for a REMOVE (the UUIDs captured at
+	// apply, stored in the deploy record). Empty for apply (captured live) and for
+	// FortiGate (no tokens).
+	Substitutions map[string]string `json:"substitutions,omitempty"`
 }
 
-// ipsecApplyRunnerSupported reports whether the collector can APPLY this vendor in
-// C2b-1. Only FortiGate (named objects, explicit mkeys) is wired; OPNsense apply
-// (UUID chaining) is C2b-2. The collector independently rejects anything else.
+// ipsecApplyRunnerSupported reports whether the collector can APPLY this vendor.
+// FortiGate (named objects, explicit mkeys) shipped in C2b-1; OPNsense (UUID
+// chaining) in C2b-2a. The collector independently rejects anything else.
 func ipsecApplyRunnerSupported(vendor string) bool {
-	return vendor == "fortigate"
+	return vendor == "fortigate" || vendor == "opnsense"
 }
 
 // ipsecHasLiveCommand reports whether the tunnel's deploy record references any
@@ -733,17 +737,13 @@ func (h *Handler) DeployIPSecTunnel(c *gin.Context) {
 		return
 	}
 
-	// Concurrency guard: refuse while a prior apply/rollback command is live.
-	prev, perr := parseDeployState(m)
-	if perr != nil {
-		httputil.InternalError(c, "Failed to read deploy state", perr)
-		return
-	}
-	if live, lerr := ipsecHasLiveCommand(db, prev); lerr != nil {
-		httputil.InternalError(c, "Failed to check in-flight commands", lerr)
-		return
-	} else if live {
-		c.JSON(http.StatusConflict, response.Error("a deploy or rollback is already in progress for this tunnel"))
+	// Deploy is blocked while a deploy record exists (F4): a re-deploy would
+	// overwrite deploy_json and, for OPNsense, destroy the captured-UUID map that
+	// rollback needs → orphaned device objects. Roll back (which clears the record)
+	// before re-deploying. This also subsumes the in-flight guard (deploying/
+	// rolling_back always carry a record).
+	if ipsecHasDeployRecord(m) {
+		c.JSON(http.StatusConflict, response.Error(fmt.Sprintf("tunnel is %s with an active deploy record — roll back before re-deploying", m.Status)))
 		return
 	}
 
@@ -757,7 +757,7 @@ func (h *Handler) DeployIPSecTunnel(c *gin.Context) {
 	for i := range intent.Ends {
 		vendor := intent.Ends[i].Vendor
 		if !ipsecApplyRunnerSupported(vendor) {
-			continue // C2b-1: non-FortiGate ends are deferred to C2b-2
+			continue // no apply runner for this vendor (neither fortigate nor opnsense)
 		}
 		dev, derr := db.GetDevice(deviceIDs[i])
 		if derr != nil {
@@ -830,7 +830,7 @@ func (h *Handler) DeployIPSecTunnel(c *gin.Context) {
 		})
 	}
 	if len(preps) == 0 {
-		c.JSON(http.StatusBadRequest, response.Error("no deployable end — C2b-1 writes FortiGate ends only (OPNsense apply is C2b-2)"))
+		c.JSON(http.StatusBadRequest, response.Error("no deployable end — the tunnel has no FortiGate or OPNsense end with an apply runner"))
 		return
 	}
 
@@ -848,8 +848,10 @@ func (h *Handler) DeployIPSecTunnel(c *gin.Context) {
 		httputil.InternalError(c, "Failed to encode deploy state", merr)
 		return
 	}
-	fromStatuses := []string{ipsecStatusDraft, ipsecStatusError, ipsecStatusRolledBack}
-	if terr := db.TransitionIPSecDeploy(id, fromStatuses, ipsecStatusDeploying, string(blob), cmds); terr != nil {
+	// fromStatuses excludes error (deploy is now blocked whenever a record exists —
+	// F4 — so a re-deploy only ever starts from a clean draft/rolled_back).
+	fromStatuses := []string{ipsecStatusDraft, ipsecStatusRolledBack}
+	if terr := db.TransitionIPSecDeploy(id, fromStatuses, ipsecStatusDeploying, "", string(blob), false, cmds); terr != nil {
 		if errors.Is(terr, database.ErrIPSecConcurrentDeploy) {
 			c.JSON(http.StatusConflict, response.Error("tunnel is not in a deployable state (already deploying, deployed, or rolling back) — refresh and roll back first if needed"))
 			return
@@ -902,47 +904,59 @@ func (h *Handler) GetIPSecDeployResult(c *gin.Context) {
 	note := ""
 
 	if m.Status == ipsecStatusRollingBack && st != nil && st.Rollback != nil {
-		// Rollback in progress: terminal status is poll-driven from the remove commands.
+		// Rollback in progress: terminal status is poll-driven from the per-end
+		// remove commands (index-aligned with st.Ends) AND the RollbackUnproven
+		// markers — a marked end forces rollback_failed even on a clean-looking
+		// (all-skipped) remove report, because that skip proves nothing.
 		done, anyFail, msg := 0, false, ""
-		for _, cid := range st.Rollback.CommandIDs {
+		for i := range st.Ends {
+			e := st.Ends[i]
+			var cid string
+			if i < len(st.Rollback.CommandIDs) {
+				cid = st.Rollback.CommandIDs[i]
+			}
+			if cid == "" {
+				done++
+				anyFail, msg = true, firstNonEmpty(msg, "a rollback command was not recorded — verify the device")
+				continue
+			}
 			cmd, cerr := db.GetProbeCommandByCommandID(cid)
 			if cerr != nil {
 				httputil.InternalError(c, "Failed to read command", cerr)
 				return
 			}
 			if cmd == nil { // pruned/missing → terminal-unknown
-				anyFail, msg = true, "a rollback command result was lost — verify the device"
 				done++
+				anyFail, msg = true, firstNonEmpty(msg, "a rollback command result was lost — verify the device")
 				continue
 			}
 			switch cmd.Status {
 			case database.ProbeCommandStatusSucceeded:
 				done++
-				// A remove command "succeeds" even when it couldn't delete every
-				// object; the report's applied flag is the real signal.
 				var rv ipsecApplyReportView
-				if json.Unmarshal([]byte(cmd.Result), &rv) == nil {
-					if !rv.Applied {
-						anyFail, msg = true, firstNonEmpty(rv.Error, "some objects could not be removed")
-					}
-				} else {
-					anyFail, msg = true, "rollback report unparseable"
+				if json.Unmarshal([]byte(cmd.Result), &rv) != nil {
+					anyFail, msg = true, firstNonEmpty(msg, "rollback report unparseable")
+				} else if !rv.Applied {
+					anyFail, msg = true, firstNonEmpty(msg, rv.Error, "some objects could not be removed")
+				} else if e.RollbackUnproven {
+					anyFail, msg = true, firstNonEmpty(msg, fmt.Sprintf("end %c apply outcome was unknown and rollback could not prove the device is clean — verify manually", 'A'+e.End))
 				}
 			case database.ProbeCommandStatusFailed, database.ProbeCommandStatusExpired:
-				anyFail, msg, done = true, firstNonEmpty(cmd.Result, "rollback command failed"), done+1
+				done++
+				anyFail, msg = true, firstNonEmpty(msg, cmd.Result, "rollback command failed")
 			}
 		}
-		if done >= len(st.Rollback.CommandIDs) {
+		if done >= len(st.Ends) {
+			// One guarded write per terminal (never chain a second setter — F2).
 			if anyFail {
 				status = ipsecStatusRollbackFailed
-				_ = db.SetIPSecRollbackState(id, status, m.DeployJSON) // keep DeployJSON for retry
-				_ = db.UpdateIPSecTunnelStatus(id, status, msg)
+				_ = db.TransitionIPSecDeploy(id, []string{ipsecStatusRollingBack}, status, msg, m.DeployJSON, false, nil) // keep record for retry / reset
 			} else {
 				status = ipsecStatusRolledBack
-				_ = db.ClearIPSecDeployState(id, status, "")
+				_ = db.TransitionIPSecDeploy(id, []string{ipsecStatusRollingBack}, status, "", "", false, nil) // clear record
 			}
 		}
-		c.JSON(http.StatusOK, response.Success(gin.H{"tunnel_id": m.ID, "status": status, "op": "rollback"}))
+		c.JSON(http.StatusOK, response.Success(gin.H{"tunnel_id": m.ID, "status": status, "op": "rollback", "auto": st.Rollback.Auto}))
 		return
 	}
 
@@ -951,23 +965,26 @@ func (h *Handler) GetIPSecDeployResult(c *gin.Context) {
 		return
 	}
 
-	// A deploy end is "good" only when the COLLECTOR REPORT says it applied AND
-	// verified (a collision-abort or a mid-write failure is reported as a
-	// *succeeded command* carrying aborted/conflict — device-side outcomes are
-	// data, not command failures — so command status alone is not enough).
-	pending, anyBad, anyExpiredOrLost, anyConflict := false, false, false, false
+	// Classify each end from the COLLECTOR REPORT (a collision-abort or mid-write
+	// failure is a *succeeded command* carrying aborted/conflict — command status
+	// alone is not enough). Merge CapturedUUIDs from EVERY parseable report — a
+	// FAILED end's partial captures are exactly what a compensating rollback needs.
+	pending, anyGood, anyBad, allAbortedPreWrite := false, false, false, true
 	failMsg := ""
 	var collisions []string
-	for _, e := range st.Ends {
+	anyConflict := false
+	unknown := make([]bool, len(st.Ends)) // outcome not provable (missing/expired/failed-cmd/unparseable)
+	for i := range st.Ends {
+		e := &st.Ends[i] // pointer: merge captured UUIDs into st for persistence
 		er := endReport{End: e.End, DeviceID: e.DeviceID, Status: "none"}
 		cmd, cerr := db.GetProbeCommandByCommandID(e.CommandID)
 		if cerr != nil {
 			httputil.InternalError(c, "Failed to read command", cerr)
 			return
 		}
-		if cmd == nil { // pruned/missing while deploying → terminal-unknown
+		if cmd == nil { // pruned/missing while deploying → unknown (may have written)
 			er.Status = "missing"
-			anyExpiredOrLost = true
+			anyBad, allAbortedPreWrite, unknown[i] = true, false, true
 			out = append(out, er)
 			continue
 		}
@@ -979,45 +996,103 @@ func (h *Handler) GetIPSecDeployResult(c *gin.Context) {
 		}
 		switch cmd.Status {
 		case database.ProbeCommandStatusPending, database.ProbeCommandStatusDispatched:
-			pending = true
+			pending, allAbortedPreWrite = true, false
 		case database.ProbeCommandStatusExpired:
-			anyExpiredOrLost = true
+			anyBad, allAbortedPreWrite, unknown[i] = true, false, true
 		case database.ProbeCommandStatusFailed:
-			anyBad, failMsg = true, firstNonEmpty(cmd.Result, "apply command failed")
+			anyBad, allAbortedPreWrite, unknown[i] = true, false, true
+			failMsg = firstNonEmpty(failMsg, cmd.Result, "apply command failed")
 		case database.ProbeCommandStatusSucceeded:
 			var rv ipsecApplyReportView
-			if json.Unmarshal([]byte(cmd.Result), &rv) == nil {
-				if rv.Conflict {
-					anyConflict = true
-					collisions = append(collisions, rv.Collisions...)
-				}
-				if !(rv.Applied && rv.Verified) || rv.Aborted || rv.Conflict {
-					anyBad = true
-					failMsg = firstNonEmpty(failMsg, rv.Error, "apply did not complete")
-				}
-			} else {
-				anyBad = true // unparseable report from a "succeeded" command
+			if json.Unmarshal([]byte(cmd.Result), &rv) != nil {
+				anyBad, allAbortedPreWrite, unknown[i] = true, false, true
 				failMsg = firstNonEmpty(failMsg, "apply report unparseable")
+				break
+			}
+			if len(rv.CapturedUUIDs) > 0 {
+				if e.CapturedUUIDs == nil {
+					e.CapturedUUIDs = map[string]string{}
+				}
+				for k, v := range rv.CapturedUUIDs {
+					e.CapturedUUIDs[k] = v
+				}
+			}
+			if rv.Conflict {
+				anyConflict = true
+				collisions = append(collisions, rv.Collisions...)
+			}
+			if rv.Applied && rv.Verified && !rv.Aborted && !rv.Conflict {
+				anyGood, allAbortedPreWrite = true, false
+			} else {
+				anyBad = true
+				failMsg = firstNonEmpty(failMsg, rv.Error, "apply did not complete")
+				if !rv.Aborted { // applied-but-unverified / partial write ⇒ something was written
+					allAbortedPreWrite = false
+				}
 			}
 		}
 		out = append(out, er)
 	}
 
 	// Only transition a non-terminal tunnel; never regress an already-terminal one.
+	// Exactly ONE guarded write per outcome (F2).
 	if m.Status == ipsecStatusDeploying {
 		switch {
 		case pending:
 			// still deploying — no change
-		case anyBad:
-			status = ipsecStatusError
-			_ = db.UpdateIPSecTunnelStatus(id, status, failMsg)
-		case anyExpiredOrLost:
-			status = ipsecStatusError
-			_ = db.UpdateIPSecTunnelStatus(id, status, "a deploy command expired or its result was lost — the device MAY be partially configured; verify or roll back")
-		default:
+		case !anyBad && anyGood:
+			// every deployable end applied + object-verified (SA liveness = C2b-2b)
 			status = ipsecStatusDegraded
-			note = "FortiGate end deployed and verified; peer end deploy is pending (C2b-2)"
-			_ = db.MarkIPSecTunnelDeployed(id, status, "")
+			note = "both ends deployed and object-verified; SA liveness check pending (C2b-2b)"
+			blob, _ := json.Marshal(st)
+			_ = db.TransitionIPSecDeploy(id, []string{ipsecStatusDeploying}, status, "", string(blob), true, nil)
+		case allAbortedPreWrite:
+			// nothing was written on any end → keep the record; NO auto-rollback
+			// (there is nothing to reverse). Escape = operator rollback (clears it).
+			status = ipsecStatusError
+			blob, _ := json.Marshal(st)
+			_ = db.TransitionIPSecDeploy(id, []string{ipsecStatusDeploying}, status,
+				firstNonEmpty(failMsg, "deploy aborted before any write"), string(blob), false, nil)
+		default:
+			// partial / some end wrote but not all-good → AUTO-ROLLBACK (compensate).
+			// Mark unproven ends FIRST, to completion — the marker loop must not be
+			// cut short by a build failure below, or a later unknown OPNsense end
+			// would be left unmarked and a subsequent manual rollback would clear the
+			// record over possible orphans. Only OPNsense removes rely on captured
+			// UUIDs: an unknown-outcome OPNsense end with no captured UUIDs skips
+			// every delete and reports a false-clean. FortiGate's remove is
+			// self-proving (GET-before-DELETE by deterministic mkey), so an unknown
+			// FortiGate end is NOT unproven.
+			for i := range st.Ends {
+				if unknown[i] && st.Ends[i].Vendor == "opnsense" && len(st.Ends[i].CapturedUUIDs) == 0 {
+					st.Ends[i].RollbackUnproven = true
+				}
+			}
+			rbCmds := make([]*models.ProbeCommand, 0, len(st.Ends))
+			rbIDs := make([]string, 0, len(st.Ends))
+			buildErr := ""
+			for i := range st.Ends {
+				cmd, berr := ipsecBuildRemoveCmd(db, m.ID, m.Name, st.Ends[i])
+				if berr != nil {
+					buildErr = berr.Error()
+					break
+				}
+				rbCmds = append(rbCmds, cmd)
+				rbIDs = append(rbIDs, cmd.CommandID)
+			}
+			if buildErr != "" {
+				status = ipsecStatusError
+				blob, _ := json.Marshal(st)
+				_ = db.TransitionIPSecDeploy(id, []string{ipsecStatusDeploying}, status,
+					"deploy failed and the automatic rollback could not be built ("+buildErr+") — roll back manually", string(blob), false, nil)
+			} else {
+				st.Rollback = &ipsec.RollbackState{CommandIDs: rbIDs, StartedAt: time.Now().UTC().Format(time.RFC3339), Auto: true}
+				status = ipsecStatusRollingBack
+				note = "automatic rollback: a deploy end failed — reversing the tunnel"
+				blob, _ := json.Marshal(st)
+				_ = db.TransitionIPSecDeploy(id, []string{ipsecStatusDeploying}, status,
+					firstNonEmpty(failMsg, "deploy failed"), string(blob), false, rbCmds)
+			}
 		}
 	}
 
@@ -1030,12 +1105,13 @@ func (h *Handler) GetIPSecDeployResult(c *gin.Context) {
 // ipsecApplyReportView is the minimal shape of the collector's ApplyReport the
 // server needs to decide per-end success. It carries no secrets.
 type ipsecApplyReportView struct {
-	Applied    bool     `json:"applied"`
-	Verified   bool     `json:"verified"`
-	Aborted    bool     `json:"aborted"`
-	Conflict   bool     `json:"conflict"`
-	Collisions []string `json:"collisions"`
-	Error      string   `json:"error"`
+	Applied       bool              `json:"applied"`
+	Verified      bool              `json:"verified"`
+	Aborted       bool              `json:"aborted"`
+	Conflict      bool              `json:"conflict"`
+	Collisions    []string          `json:"collisions"`
+	Error         string            `json:"error"`
+	CapturedUUIDs map[string]string `json:"captured_uuids"`
 }
 
 // RollbackIPSecTunnel reverses a deploy from the stored per-end remove-steps
@@ -1075,49 +1151,14 @@ func (h *Handler) RollbackIPSecTunnel(c *gin.Context) {
 
 	cmds := make([]*models.ProbeCommand, 0, len(st.Ends))
 	rollbackIDs := make([]string, 0, len(st.Ends))
-	for _, e := range st.Ends {
-		dev, derr := db.GetDevice(e.DeviceID)
-		if derr != nil {
-			c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("end %c device (id %d) not found — cannot roll back", 'A'+e.End, e.DeviceID)))
+	for i := range st.Ends {
+		cmd, berr := ipsecBuildRemoveCmd(db, m.ID, m.Name, st.Ends[i])
+		if berr != nil {
+			c.JSON(http.StatusBadRequest, response.Error(berr.Error()))
 			return
 		}
-		if dev.ProbeID == nil || *dev.ProbeID == 0 {
-			c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("end %c (%s): device has no collector assigned", 'A'+e.End, dev.Name)))
-			return
-		}
-		port := dev.APIPort
-		if port == 0 {
-			port = 443
-		}
-		commandID := uuid.NewString()
-		payload := ipsecApplyPayload{
-			TunnelID:    m.ID,
-			TunnelName:  m.Name,
-			End:         e.End,
-			Vendor:      e.Vendor,
-			DeviceID:    dev.ID,
-			BaseURL:     fmt.Sprintf("https://%s:%d", dev.IPAddress, port),
-			Op:          "remove",
-			OwnerTag:    m.Name,
-			APIToken:    dev.APIToken,
-			InsecureTLS: dev.APIInsecureTLS,
-			Steps:       e.RemoveSteps,
-			Checksum:    e.RemoveChecksum,
-		}
-		// api_token marshaled intentionally (gosec G117 CI-excluded).
-		buf, merr := json.Marshal(payload)
-		if merr != nil {
-			httputil.InternalError(c, "Failed to build remove payload", merr)
-			return
-		}
-		cmds = append(cmds, &models.ProbeCommand{
-			ProbeID:   *dev.ProbeID,
-			DeviceID:  dev.ID,
-			CommandID: commandID,
-			Type:      database.ProbeCommandTypeIPSecRemove,
-			Payload:   string(buf),
-		})
-		rollbackIDs = append(rollbackIDs, commandID)
+		cmds = append(cmds, cmd)
+		rollbackIDs = append(rollbackIDs, cmd.CommandID)
 	}
 
 	st.Rollback = &ipsec.RollbackState{CommandIDs: rollbackIDs, StartedAt: time.Now().UTC().Format(time.RFC3339)}
@@ -1127,7 +1168,7 @@ func (h *Handler) RollbackIPSecTunnel(c *gin.Context) {
 		return
 	}
 	fromStatuses := []string{ipsecStatusDegraded, ipsecStatusUp, ipsecStatusError, ipsecStatusRollbackFailed}
-	if terr := db.TransitionIPSecDeploy(id, fromStatuses, ipsecStatusRollingBack, string(blob), cmds); terr != nil {
+	if terr := db.TransitionIPSecDeploy(id, fromStatuses, ipsecStatusRollingBack, "", string(blob), false, cmds); terr != nil {
 		if errors.Is(terr, database.ErrIPSecConcurrentDeploy) {
 			c.JSON(http.StatusConflict, response.Error("tunnel is not in a rollback-able state (nothing deployed, or a deploy/rollback is in progress)"))
 			return
@@ -1136,6 +1177,120 @@ func (h *Handler) RollbackIPSecTunnel(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, response.Success(gin.H{"tunnel_id": m.ID, "status": ipsecStatusRollingBack, "commands": rollbackIDs}))
+}
+
+// ipsecBuildRemoveCmd builds the remove_ipsec command for one deployed end from
+// its stored RemoveSteps snapshot + captured-UUID substitutions (empty for
+// FortiGate). Shared by manual RollbackIPSecTunnel and the poll's auto-rollback.
+func ipsecBuildRemoveCmd(db database.Store, tunnelID uint, tunnelName string, e ipsec.DeployEndState) (*models.ProbeCommand, error) {
+	dev, derr := db.GetDevice(e.DeviceID)
+	if derr != nil {
+		return nil, fmt.Errorf("end %c device (id %d) not found — cannot roll back", 'A'+e.End, e.DeviceID)
+	}
+	if dev.ProbeID == nil || *dev.ProbeID == 0 {
+		return nil, fmt.Errorf("end %c (%s): device has no collector assigned", 'A'+e.End, dev.Name)
+	}
+	port := dev.APIPort
+	if port == 0 {
+		port = 443
+	}
+	payload := ipsecApplyPayload{
+		TunnelID:      tunnelID,
+		TunnelName:    tunnelName,
+		End:           e.End,
+		Vendor:        e.Vendor,
+		DeviceID:      dev.ID,
+		BaseURL:       fmt.Sprintf("https://%s:%d", dev.IPAddress, port),
+		Op:            "remove",
+		OwnerTag:      tunnelName,
+		APIToken:      dev.APIToken,
+		InsecureTLS:   dev.APIInsecureTLS,
+		Steps:         e.RemoveSteps,
+		Checksum:      e.RemoveChecksum,
+		Substitutions: e.CapturedUUIDs, // resolve <uuid:NAME> deletes (OPNsense); nil for FortiGate
+	}
+	// api_token marshaled intentionally (gosec G117 CI-excluded).
+	buf, merr := json.Marshal(payload)
+	if merr != nil {
+		return nil, merr
+	}
+	return &models.ProbeCommand{
+		ProbeID:   *dev.ProbeID,
+		DeviceID:  dev.ID,
+		CommandID: uuid.NewString(),
+		Type:      database.ProbeCommandTypeIPSecRemove,
+		Payload:   string(buf),
+	}, nil
+}
+
+// ForceResetIPSecDeploy is the operator escape from a wedged deploy record: it
+// clears the record (→ draft) so the tunnel is deploy/edit/delete-able again.
+// Needed because a RollbackUnproven-forced rollback_failed can NEVER self-clear
+// (a retry re-skips and re-fails). It touches NO device — the operator explicitly
+// acknowledges the device may still hold objects and must verify manually. Allowed
+// ONLY from error/rollback_failed AND only when no command is in flight; audited.
+func (h *Handler) ForceResetIPSecDeploy(c *gin.Context) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+	m, err := db.GetIPSecTunnel(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, response.Error("Tunnel not found"))
+		return
+	}
+	if m.Status != ipsecStatusError && m.Status != ipsecStatusRollbackFailed {
+		c.JSON(http.StatusConflict, response.Error("reset is only allowed from error or rollback_failed — roll back a deployed tunnel instead of resetting it"))
+		return
+	}
+	st, perr := parseDeployState(m)
+	if perr != nil {
+		httputil.InternalError(c, "Failed to read deploy state", perr)
+		return
+	}
+	if live, lerr := ipsecHasLiveCommand(db, st); lerr != nil {
+		httputil.InternalError(c, "Failed to check in-flight commands", lerr)
+		return
+	} else if live {
+		c.JSON(http.StatusConflict, response.Error("a command is still in flight for this tunnel — wait for it to finish before resetting"))
+		return
+	}
+	// One guarded clear (deploy_json → "") from the record-bearing terminal states.
+	if terr := db.TransitionIPSecDeploy(id, []string{ipsecStatusError, ipsecStatusRollbackFailed}, ipsecStatusDraft, "", "", false, nil); terr != nil {
+		if errors.Is(terr, database.ErrIPSecConcurrentDeploy) {
+			c.JSON(http.StatusConflict, response.Error("tunnel state changed — refresh and retry"))
+			return
+		}
+		httputil.InternalError(c, "Failed to reset deploy record", terr)
+		return
+	}
+	// Forensic record: WHO force-cleared WHICH tunnel's deploy record (device state
+	// unverified). Best-effort — a log failure must not block the recovery.
+	usernameVal, _ := c.Get("username")
+	userIDVal, _ := c.Get("user_id")
+	usernameStr, _ := usernameVal.(string)
+	userID, _ := userIDVal.(uint)
+	if err := db.SaveAuditLog(&models.AuditLog{
+		CreatedAt: time.Now(),
+		Actor:     usernameStr,
+		ActorID:   userID,
+		Method:    "POST",
+		Action:    "ipsec_deploy_reset",
+		Target:    fmt.Sprintf("tunnel_id=%d prev_status=%s", m.ID, m.Status),
+		Status:    http.StatusOK,
+		IPAddress: c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
+	}); err != nil {
+		log.Printf("ipsec-deploy-reset: audit log write failed for tunnel %d by %s: %v", m.ID, usernameStr, err)
+	}
+	c.JSON(http.StatusOK, response.Success(gin.H{
+		"tunnel_id": m.ID, "status": ipsecStatusDraft,
+		"warning": "Firewall-Mon's deploy record was cleared. The device MAY still hold objects for this tunnel — verify and remove them manually.",
+	}))
 }
 
 func firstNonEmpty(vals ...string) string {

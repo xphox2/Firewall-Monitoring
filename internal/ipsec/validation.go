@@ -43,6 +43,20 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 	var fs []Finding
 	add := func(sev Severity, code, msg string) { fs = append(fs, Finding{sev, code, msg}) }
 
+	// Reserve the <uuid:NAME> substitution token: operator free-text that reaches a
+	// checksummed apply-step body (IKE identities, PSK) must not contain it, or the
+	// collector's UUID substitution would either splice into operator text or abort
+	// on a bogus token (F7).
+	if strings.Contains(intent.PSK, "<uuid:") {
+		add(SeverityBlock, "reserved_token", "the PSK must not contain the reserved substring \"<uuid:\"")
+	}
+	for i := range intent.Ends {
+		if strings.Contains(intent.Ends[i].LocalID.Value, "<uuid:") {
+			add(SeverityBlock, "reserved_token",
+				fmt.Sprintf("%s identity must not contain the reserved substring \"<uuid:\"", endLabel(intent, i)))
+		}
+	}
+
 	// --- capability intersection: both ends must support the chosen crypto/mode.
 	for i, c := range caps {
 		if !c.supportsIKE(intent.IKEVersion) {
