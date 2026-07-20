@@ -781,14 +781,20 @@
                 var cls = ok ? 'success' : (warn ? 'warning' : 'danger');
                 return '<span class="badge ' + cls + '" style="margin-right:6px;">' + esc(label) + '</span>';
             }
-            var badges = '';
+            var parts = [];
             if (r.op === 'remove') {
-                badges = badge(r.applied, false, r.applied ? 'removed' : 'remove incomplete');
+                parts.push(badge(r.applied, false, r.applied ? 'removed' : 'remove incomplete'));
             } else {
-                badges = badge(r.applied, false, r.applied ? 'applied' : (r.aborted ? 'aborted' : 'apply failed')) +
-                    badge(r.verified, !r.verified && r.applied, r.verified ? 'verified' : 'unverified');
-                if (r.conflict) badges += badge(false, true, 'collision');
+                parts.push(badge(r.applied, false, r.applied ? 'applied' : (r.aborted ? 'aborted' : 'apply failed')));
+                parts.push(badge(r.verified, !r.verified && r.applied, r.verified ? 'verified' : 'unverified'));
+                if (r.conflict) parts.push(badge(false, true, 'collision'));
             }
+            // Join with whitespace so adjacent pills are clearly separated (and copy
+            // as "applied verified", not "appliedverified").
+            var badges = parts.join(' ');
+            var counts = (typeof r.steps_ok === 'number' && typeof r.steps_total === 'number')
+                ? '<span style="font-size:0.8rem;color:var(--fwmon-text-mute);margin-left:4px;">' + esc(r.steps_ok) + '/' + esc(r.steps_total) + ' steps ok</span>'
+                : '';
             var steps = (r.steps || []).map(function (s) {
                 var mark = s.ok ? '✓' : '✗';
                 return '<li style="font-family:monospace;font-size:0.76rem;color:var(--fwmon-text-mute);">' +
@@ -796,7 +802,7 @@
                     (s.note ? ' — ' + esc(s.note) : '') + '</li>';
             }).join('');
             var err = r.error ? '<div style="font-size:0.82rem;color:var(--fwmon-sig-crit);margin-top:4px;">' + esc(r.error) + '</div>' : '';
-            body = '<div style="margin:6px 0;">' + badges + '</div>' + err +
+            body = '<div style="margin:6px 0;">' + badges + counts + '</div>' + err +
                 (steps ? '<ul style="margin:8px 0 0 0;padding-left:16px;">' + steps + '</ul>' : '');
         } else if (e.status === 'pending' || e.status === 'dispatched' || e.status === 'none') {
             body = '<div style="color:var(--fwmon-text-mute);font-size:0.85rem;display:flex;align-items:center;gap:8px;">' +
