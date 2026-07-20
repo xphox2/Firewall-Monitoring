@@ -117,6 +117,11 @@ type EndpointSpec struct {
 	PeerIP string `json:"peer_ip"`
 	// EgressIface is the WAN/outgoing interface the phase1 binds to.
 	EgressIface string `json:"egress_iface"`
+	// Gateway is this end's physical WAN next-hop IP. Used ONLY to pin a peer
+	// /32 host route when a protected subnet would otherwise pull the peer's WAN
+	// address into the tunnel (self-lockout). Empty unless that case applies;
+	// operator-supplied (there is no route-table telemetry to auto-fill it).
+	Gateway string `json:"gateway"`
 	// LANIface is the inside interface for firewall policy src/dst.
 	LANIface string `json:"lan_iface"`
 	// LocalID is this end's IKE identity (mirrored as the peer's Remote ID).

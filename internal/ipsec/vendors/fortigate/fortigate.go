@@ -1,23 +1,28 @@
-// Package fortigate renders the vendor-neutral IPSec intent to FortiOS CLI.
-// Route-based (interface-mode) IKEv2 site-to-site: a phase1-interface auto-
-// creates a tunnel interface, phase2 uses 0/0 selectors, and static routes +
-// firewall policies steer traffic. All objects are named/tagged `fwm-t<ID>` so
-// RenderRemove deletes exactly what Render created and nothing else.
+// Package fortigate renders the vendor-neutral IPSec intent to the FortiOS REST
+// cmdb API (route-based / interface-mode IKEv2 site-to-site). A
+// phase1-interface POST auto-creates the tunnel interface; phase2 uses 0/0
+// selectors; static routes + firewall policies steer traffic. All objects are
+// named/tagged `fwm-t<ID>` (and routes/policies use deterministic seq-num/
+// policyid keys, see internal/ipsec/allocation.go) so RenderRemove deletes
+// exactly what Render created and nothing else.
 //
-// FortiGate constraints encoded in the descriptor: phase1-interface names are
-// capped at 15 chars; GCM is IKEv2-only; the phase1 `proposal` appends the PRF
-// for AEAD ciphers. Fixtures are re-pinned to real FortiOS 7.6.7 output at the
-// PR-A exit gate.
+// Writes go over REST (POST to create a cmdb table object, PUT to update one by
+// mkey, DELETE by mkey) — the same transport the preflight already proves
+// against the live box. FortiGate constraints in the descriptor: phase1 names
+// cap at 15 chars; GCM is IKEv2-only; the phase1 `proposal` appends the PRF for
+// AEAD ciphers. Bodies are pinned to FortiOS 7.6.7 request shapes.
 package fortigate
 
 import (
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"firewall-mon/internal/ipsec"
 )
 
-const templateVersion = "fortios-v1"
+const templateVersion = "fortios-rest-v1"
 
 type driver struct{}
 
@@ -40,11 +45,19 @@ func (driver) Capabilities() ipsec.CapabilityDescriptor {
 		AutoObjects:            []string{"tunnel_interface", "static_route", "blackhole_route", "firewall_policy"},
 		SelectorModel:          ipsec.SelectorZero,
 		IDTypes:                []ipsec.IDType{ipsec.IDTypeIP, ipsec.IDTypeFQDN, ipsec.IDTypeKeyID},
-		PushTransport:          ipsec.PushSSHCLI,
-		RendererName:           "fortios_cli",
+		PushTransport:          ipsec.PushREST,
+		RendererName:           "fortios_rest",
 		TemplateVersion:        templateVersion,
 	}
 }
+
+const (
+	cmdbPhase1 = "/api/v2/cmdb/vpn.ipsec/phase1-interface"
+	cmdbPhase2 = "/api/v2/cmdb/vpn.ipsec/phase2-interface"
+	cmdbIface  = "/api/v2/cmdb/system/interface"
+	cmdbRoute  = "/api/v2/cmdb/router/static"
+	cmdbPolicy = "/api/v2/cmdb/firewall/policy"
+)
 
 func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 	in := v.Intent
@@ -61,99 +74,131 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 	}
 
 	// phase1-interface. A dynamic remote peer (RFC1918/behind-NAT initiator) is
-	// rendered as `set type dynamic` with no remote-gw; a static peer sets it.
-	var p1b strings.Builder
-	fmt.Fprintf(&p1b, "config vpn ipsec phase1-interface\n  edit \"%s\"\n", name)
-	if remote.Dynamic {
-		fmt.Fprintf(&p1b, "    set type dynamic\n")
-	} else {
-		fmt.Fprintf(&p1b, "    set type static\n    set remote-gw %s\n", remote.PeerIP)
+	// rendered as type=dynamic with no remote-gw; a static peer sets it. The PSK
+	// rides the body via the %PSK% placeholder (injected into the real step,
+	// masked in the preview) — validPSK guarantees it stays JSON-safe.
+	p1body := map[string]any{
+		"name":         name,
+		"interface":    local.EgressIface,
+		"ike-version":  ikeVer(in.IKEVersion),
+		"net-device":   "disable",
+		"proposal":     p1,
+		"dhgrp":        string(in.IKE.DH),
+		"peertype":     "one",
+		"localid-type": idType(local.LocalID.Type),
+		"localid":      local.LocalID.Value,
+		"peerid":       remote.LocalID.Value,
+		"add-route":    "disable",
+		"psksecret":    "%PSK%",
 	}
-	fmt.Fprintf(&p1b, "    set interface \"%s\"\n", local.EgressIface)
-	fmt.Fprintf(&p1b, "    set ike-version %s\n", ikeVer(in.IKEVersion))
-	fmt.Fprintf(&p1b, "    set net-device disable\n")
-	fmt.Fprintf(&p1b, "    set proposal %s\n    set dhgrp %s\n", p1, string(in.IKE.DH))
-	fmt.Fprintf(&p1b, "    set peertype one\n")
-	fmt.Fprintf(&p1b, "    set localid-type %s\n    set localid \"%s\"\n", idType(local.LocalID.Type), local.LocalID.Value)
-	fmt.Fprintf(&p1b, "    set peerid \"%s\"\n", remote.LocalID.Value)
+	if remote.Dynamic {
+		p1body["type"] = "dynamic"
+	} else {
+		p1body["type"] = "static"
+		p1body["remote-gw"] = remote.PeerIP
+	}
 	if in.IKELifetimeSecs > 0 {
-		fmt.Fprintf(&p1b, "    set keylife %d\n", in.IKELifetimeSecs)
+		p1body["keylife"] = in.IKELifetimeSecs
 	}
 	if in.DPD.DelaySecs > 0 {
-		fmt.Fprintf(&p1b, "    set dpd on-idle\n    set dpd-retryinterval %d\n", in.DPD.DelaySecs)
+		p1body["dpd"] = "on-idle"
+		p1body["dpd-retryinterval"] = in.DPD.DelaySecs
 	}
-	fmt.Fprintf(&p1b, "    set add-route disable\n")
-	// Quote the PSK; validation guarantees no embedded quote/backslash.
-	fmt.Fprintf(&p1b, "    set psksecret \"%s\"\n  next\nend", "%PSK%")
-	p1Block := p1b.String()
+	p1json := jsonBody(p1body)
 
 	// phase2-interface (0/0 selectors; routing steers traffic).
 	childLife := local.ChildLifetimeSecs
 	if childLife <= 0 {
 		childLife = 3600
 	}
-	var p2b strings.Builder
-	fmt.Fprintf(&p2b, "config vpn ipsec phase2-interface\n  edit \"%s\"\n", name)
-	fmt.Fprintf(&p2b, "    set phase1name \"%s\"\n    set proposal %s\n", name, p2)
+	p2body := map[string]any{
+		"name":           name,
+		"phase1name":     name,
+		"proposal":       p2,
+		"keylifeseconds": childLife,
+		"src-subnet":     "0.0.0.0 0.0.0.0",
+		"dst-subnet":     "0.0.0.0 0.0.0.0",
+	}
 	if in.ESP.PFS != ipsec.DHGroupNone {
-		fmt.Fprintf(&p2b, "    set pfs enable\n    set dhgrp %s\n", string(in.ESP.PFS))
+		p2body["pfs"] = "enable"
+		p2body["dhgrp"] = string(in.ESP.PFS)
 	} else {
-		fmt.Fprintf(&p2b, "    set pfs disable\n")
+		p2body["pfs"] = "disable"
 	}
-	fmt.Fprintf(&p2b, "    set keylifeseconds %d\n", childLife)
-	fmt.Fprintf(&p2b, "    set src-subnet 0.0.0.0 0.0.0.0\n    set dst-subnet 0.0.0.0 0.0.0.0\n  next\nend")
 
-	// tunnel-interface addressing + MSS clamp.
-	var ifb strings.Builder
-	fmt.Fprintf(&ifb, "config system interface\n  edit \"%s\"\n", name)
-	fmt.Fprintf(&ifb, "    set ip %s 255.255.255.255\n    set remote-ip %s 255.255.255.252\n", local.InnerIP, remote.InnerIP)
-	fmt.Fprintf(&ifb, "    set allowaccess ping\n")
+	// VTI addressing + MSS clamp — the interface is auto-created by the phase1
+	// POST, so PUT (update) it by name rather than POST.
+	ifbody := map[string]any{
+		"ip":          local.InnerIP + " 255.255.255.255",
+		"remote-ip":   remote.InnerIP + " 255.255.255.252",
+		"allowaccess": "ping",
+	}
 	if local.MSSClamp > 0 {
-		fmt.Fprintf(&ifb, "    set tcp-mss-sender %d\n    set tcp-mss-receiver %d\n", local.MSSClamp, local.MSSClamp)
+		ifbody["tcp-mss-sender"] = local.MSSClamp
+		ifbody["tcp-mss-receiver"] = local.MSSClamp
 	}
-	fmt.Fprintf(&ifb, "  next\nend")
-
-	// static + blackhole routes for the remote protected subnets.
-	routes := routeBlock(name, remote.ProtectedSubnets)
-
-	// firewall policies (LAN ⇄ tunnel).
-	pol := policyBlock(name, local.LANIface)
 
 	steps := []ipsec.ApplyStep{
-		cli("phase1-interface (IKE gateway)", inject(p1Block, in.PSK)),
-		cli("phase2-interface (child SA, 0/0 selectors)", p2b.String()),
-		cli("tunnel interface addressing"+mssNote(local.MSSClamp), ifb.String()),
-		cli("static + blackhole routes to remote subnets", routes),
-		cli("firewall policies (LAN ⇄ tunnel)", pol),
+		fgAPI("phase1-interface (IKE gateway)", "POST", cmdbPhase1, inject(p1json, in.PSK)),
+		fgAPI("phase2-interface (child SA, 0/0 selectors)", "POST", cmdbPhase2, jsonBody(p2body)),
+		fgAPI("tunnel interface addressing"+mssNote(local.MSSClamp), "PUT", cmdbIface+"/"+name, jsonBody(ifbody)),
 	}
-	preview := strings.Join([]string{redact(p1Block), p2b.String(), ifb.String(), routes, pol}, "\n\n")
+	steps = append(steps, routeSteps(in.ID, name, local, remote)...)
+	steps = append(steps, policySteps(in.ID, name, local.LANIface)...)
 
+	// Preview: the phase1 body is masked (it carries the PSK); everything else is
+	// shown verbatim (no secrets).
+	preview := make([]string, 0, len(steps))
+	for i, s := range steps {
+		body := s.Body
+		if i == 0 {
+			body = redact(p1json)
+		}
+		preview = append(preview, s.Method+" "+s.Path+"\n"+body)
+	}
+
+	auto := []string{"tunnel interface " + name, "static route(s)", "blackhole route(s) (distance 254)", "2 firewall policies"}
+	if peerRouteNeeded(local, remote) {
+		auto = append(auto, "peer /32 host route (self-lockout guard)")
+	}
 	return ipsec.Artifact{
 		Vendor:          "fortigate",
 		Kind:            ipsec.ArtifactApply,
 		Steps:           steps,
 		Checksum:        ipsec.ChecksumSteps(steps),
 		TemplateVersion: templateVersion,
-		PreviewText:     preview,
-		AutoObjects:     []string{"tunnel interface " + name, "static route(s)", "blackhole route(s) (distance 254)", "2 firewall policies"},
+		PreviewText:     strings.Join(preview, "\n\n"),
+		AutoObjects:     auto,
 	}, nil
 }
 
 func (d driver) RenderRemove(v ipsec.RenderView) (ipsec.Artifact, error) {
-	name := v.Intent.Name
-	// Reverse dependency order: policies + routes first, then phase2, then
-	// phase1 (FortiOS won't delete a referenced phase1), then the interface.
-	blocks := []struct{ desc, cli string }{
-		{"delete firewall policies", deletePolicies(name)},
-		{"delete routes", fmt.Sprintf("config router static\n  # (delete fwm routes by comment %q)\nend", name)},
-		{"delete phase2-interface", fmt.Sprintf("config vpn ipsec phase2-interface\n  delete \"%s\"\nend", name)},
-		{"delete phase1-interface", fmt.Sprintf("config vpn ipsec phase1-interface\n  delete \"%s\"\nend", name)},
-	}
+	in := v.Intent
+	local, remote := v.Local(), v.Remote()
+	name := in.Name
+
+	// Reverse dependency order: policies → routes → phase2 → phase1. The tunnel
+	// interface is owned by the phase1-interface and is reaped when phase1 is
+	// deleted, so there is NO explicit interface DELETE (it would 404 after, or
+	// be "in use" before). Deletes by the same deterministic mkeys Render used.
 	var steps []ipsec.ApplyStep
-	var preview []string
-	for _, b := range blocks {
-		steps = append(steps, cli(b.desc, b.cli))
-		preview = append(preview, b.cli)
+	// policies (index 1 then 0 — reverse of create)
+	steps = append(steps,
+		fgDelete("delete firewall policy (tunnel→LAN)", cmdbPolicy+"/"+itoa(ipsec.FGPolicyKey(in.ID, 1))),
+		fgDelete("delete firewall policy (LAN→tunnel)", cmdbPolicy+"/"+itoa(ipsec.FGPolicyKey(in.ID, 0))),
+	)
+	// routes (reverse creation order)
+	for i := routeCount(local, remote) - 1; i >= 0; i-- {
+		steps = append(steps, fgDelete("delete static route", cmdbRoute+"/"+itoa(ipsec.FGRouteKey(in.ID, i))))
+	}
+	steps = append(steps,
+		fgDelete("delete phase2-interface", cmdbPhase2+"/"+name),
+		fgDelete("delete phase1-interface (reaps the VTI)", cmdbPhase1+"/"+name),
+	)
+
+	preview := make([]string, 0, len(steps))
+	for _, s := range steps {
+		preview = append(preview, s.Method+" "+s.Path)
 	}
 	return ipsec.Artifact{
 		Vendor: "fortigate", Kind: ipsec.ArtifactRemove, Steps: steps,
@@ -164,8 +209,9 @@ func (d driver) RenderRemove(v ipsec.RenderView) (ipsec.Artifact, error) {
 
 func (d driver) StatusProbe(v ipsec.RenderView) []ipsec.ProbeStep {
 	return []ipsec.ProbeStep{{
-		Kind: ipsec.StepSSHCLI,
-		CLI:  fmt.Sprintf("get vpn ipsec tunnel name %s", v.Intent.Name),
+		Kind:   ipsec.StepHTTPAPI,
+		Method: "GET",
+		Path:   "/api/v2/monitor/vpn/ipsec?vdom=root",
 	}}
 }
 
@@ -177,24 +223,23 @@ func (d driver) PreflightProbe(v ipsec.RenderView) []ipsec.PreflightStep {
 	name := v.Intent.Name
 	return []ipsec.PreflightStep{
 		{Check: "auth", Method: "GET", Path: "/api/v2/monitor/system/status"},
-		{Check: "phase1", Method: "GET", Path: "/api/v2/cmdb/vpn.ipsec/phase1-interface/" + name, ExpectAbsent: true},
-		{Check: "phase2", Method: "GET", Path: "/api/v2/cmdb/vpn.ipsec/phase2-interface/" + name, ExpectAbsent: true},
-		{Check: "vti", Method: "GET", Path: "/api/v2/cmdb/system/interface/" + name, ExpectAbsent: true},
+		{Check: "phase1", Method: "GET", Path: cmdbPhase1 + "/" + name, ExpectAbsent: true},
+		{Check: "phase2", Method: "GET", Path: cmdbPhase2 + "/" + name, ExpectAbsent: true},
+		{Check: "vti", Method: "GET", Path: cmdbIface + "/" + name, ExpectAbsent: true},
 	}
 }
 
 func (d driver) ParseStatus(raw string) (ipsec.TunnelStatus, error) {
 	low := strings.ToLower(raw)
 	st := ipsec.TunnelStatus{IKE: ipsec.SAUnknown, Child: ipsec.SAUnknown}
-	// FortiGate `get vpn ipsec tunnel` reports "status: up/down" for the gateway
-	// and per-selector "status=up".
-	if strings.Contains(low, "status: up") || strings.Contains(low, "status=up") {
+	// FortiOS monitor/vpn/ipsec reports per-proxyid "status":"up"/"down" and a
+	// gateway "connected"/"down".
+	if strings.Contains(low, "\"connected\"") || strings.Contains(low, "\"status\":\"up\"") {
 		st.IKE = ipsec.SAUp
-	} else if strings.Contains(low, "status: down") || strings.Contains(low, "status=down") {
+	} else if strings.Contains(low, "\"down\"") {
 		st.IKE = ipsec.SADown
 	}
-	// A selector shown up implies a child SA.
-	if strings.Contains(low, "sa: ") && strings.Contains(low, "up") {
+	if strings.Contains(low, "\"status\":\"up\"") {
 		st.Child = ipsec.SAUp
 	} else {
 		st.Child = st.IKE
@@ -204,17 +249,92 @@ func (d driver) ParseStatus(raw string) (ipsec.TunnelStatus, error) {
 
 // ---- helpers ----
 
-func cli(desc, text string) ipsec.ApplyStep {
-	return ipsec.ApplyStep{Kind: ipsec.StepSSHCLI, Description: desc, CLI: text}
+func fgAPI(desc, method, path, body string) ipsec.ApplyStep {
+	return ipsec.ApplyStep{Kind: ipsec.StepHTTPAPI, Description: desc, Method: method, Path: path, Body: body}
+}
+
+func fgDelete(desc, path string) ipsec.ApplyStep {
+	return ipsec.ApplyStep{Kind: ipsec.StepHTTPAPI, Description: desc, Method: "DELETE", Path: path}
+}
+
+// jsonBody marshals a cmdb request body. encoding/json sorts map keys, so the
+// output is deterministic (stable checksum across renders).
+func jsonBody(m map[string]any) string {
+	b, _ := json.Marshal(m)
+	return string(b)
 }
 
 func inject(block, psk string) string { return strings.ReplaceAll(block, "%PSK%", psk) }
 func redact(block string) string      { return strings.ReplaceAll(block, "%PSK%", "********") }
+func itoa(n int) string               { return strconv.Itoa(n) }
 func mssNote(m int) string {
 	if m > 0 {
 		return " + MSS clamp"
 	}
 	return ""
+}
+
+// routeSteps builds the static-route POSTs: one per remote protected subnet via
+// the VTI, a blackhole per subnet (distance 254 — drop, don't leak, when the
+// tunnel is down), and the conditional peer /32 (see peerRouteNeeded). seq-nums
+// are the deterministic keys RenderRemove deletes.
+func routeSteps(tid uint, name string, local, remote *ipsec.EndpointSpec) []ipsec.ApplyStep {
+	var steps []ipsec.ApplyStep
+	idx := 0
+	for _, s := range remote.ProtectedSubnets {
+		steps = append(steps, fgAPI("static route "+s+" via tunnel", "POST", cmdbRoute, jsonBody(map[string]any{
+			"seq-num": ipsec.FGRouteKey(tid, idx), "dst": cidrToFGT(s), "device": name, "comment": name,
+		})))
+		idx++
+	}
+	for _, s := range remote.ProtectedSubnets {
+		steps = append(steps, fgAPI("blackhole route "+s+" (distance 254)", "POST", cmdbRoute, jsonBody(map[string]any{
+			"seq-num": ipsec.FGRouteKey(tid, idx), "dst": cidrToFGT(s), "blackhole": "enable", "distance": 254, "comment": name,
+		})))
+		idx++
+	}
+	if peerRouteNeeded(local, remote) {
+		steps = append(steps, fgAPI("peer /32 host route via WAN (self-lockout guard)", "POST", cmdbRoute, jsonBody(map[string]any{
+			"seq-num": ipsec.FGRouteKey(tid, idx), "dst": remote.PeerIP + " 255.255.255.255",
+			"gateway": local.Gateway, "device": local.EgressIface, "comment": name,
+		})))
+	}
+	return steps
+}
+
+func policySteps(tid uint, name, lan string) []ipsec.ApplyStep {
+	mkPolicy := func(id int, pname, srcintf, dstintf string) string {
+		return jsonBody(map[string]any{
+			"policyid": id, "name": pname,
+			"srcintf": []map[string]string{{"name": srcintf}},
+			"dstintf": []map[string]string{{"name": dstintf}},
+			"srcaddr": []map[string]string{{"name": "all"}},
+			"dstaddr": []map[string]string{{"name": "all"}},
+			"action":  "accept", "schedule": "always",
+			"service":  []map[string]string{{"name": "ALL"}},
+			"comments": name,
+		})
+	}
+	return []ipsec.ApplyStep{
+		fgAPI("firewall policy (LAN → tunnel)", "POST", cmdbPolicy, mkPolicy(ipsec.FGPolicyKey(tid, 0), name+"-out", lan, name)),
+		fgAPI("firewall policy (tunnel → LAN)", "POST", cmdbPolicy, mkPolicy(ipsec.FGPolicyKey(tid, 1), name+"-in", name, lan)),
+	}
+}
+
+// peerRouteNeeded reports whether a peer /32 host route must be pinned: a local
+// protected-subnet route would otherwise pull the peer's own WAN IP into the
+// tunnel (self-lockout). Requires a Gateway to point the /32 at; without one the
+// route can't be rendered (validation requires it in this case).
+func peerRouteNeeded(local, remote *ipsec.EndpointSpec) bool {
+	return local.Gateway != "" && ipsec.SubnetContainsIP(remote.ProtectedSubnets, remote.PeerIP)
+}
+
+func routeCount(local, remote *ipsec.EndpointSpec) int {
+	n := len(remote.ProtectedSubnets) * 2
+	if peerRouteNeeded(local, remote) {
+		n++
+	}
+	return n
 }
 
 func ikeVer(v ipsec.IKEVersion) string {
@@ -315,33 +435,6 @@ func prfToken(p ipsec.PRF) (string, error) {
 		return "prfsha256", nil
 	}
 	return "", fmt.Errorf("fortigate: unsupported prf %q", p)
-}
-
-func routeBlock(name string, subnets []string) string {
-	var b strings.Builder
-	b.WriteString("config router static\n")
-	for _, s := range subnets {
-		fmt.Fprintf(&b, "  edit 0\n    set dst %s\n    set device \"%s\"\n    set comment \"%s\"\n  next\n", cidrToFGT(s), name, name)
-	}
-	// blackhole (distance 254) so a tunnel-down state drops rather than leaks.
-	for _, s := range subnets {
-		fmt.Fprintf(&b, "  edit 0\n    set dst %s\n    set blackhole enable\n    set distance 254\n    set comment \"%s\"\n  next\n", cidrToFGT(s), name)
-	}
-	b.WriteString("end")
-	return b.String()
-}
-
-func policyBlock(name, lan string) string {
-	var b strings.Builder
-	b.WriteString("config firewall policy\n")
-	fmt.Fprintf(&b, "  edit 0\n    set name \"%s-out\"\n    set srcintf \"%s\"\n    set dstintf \"%s\"\n    set srcaddr all\n    set dstaddr all\n    set action accept\n    set schedule always\n    set service ALL\n  next\n", name, lan, name)
-	fmt.Fprintf(&b, "  edit 0\n    set name \"%s-in\"\n    set srcintf \"%s\"\n    set dstintf \"%s\"\n    set srcaddr all\n    set dstaddr all\n    set action accept\n    set schedule always\n    set service ALL\n  next\n", name, name, lan)
-	b.WriteString("end")
-	return b.String()
-}
-
-func deletePolicies(name string) string {
-	return fmt.Sprintf("config firewall policy\n  # (delete policies named %q-out / %q-in by name)\nend", name, name)
 }
 
 // cidrToFGT turns "10.0.0.0/24" into FortiGate "10.0.0.0 255.255.255.0".

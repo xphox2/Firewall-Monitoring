@@ -85,7 +85,7 @@
         $('ipsec-save-btn').disabled = true;
         $('ipsec-findings').innerHTML = '';
         $('ipsec-preview-panes').innerHTML = '';
-        ['a-subnets', 'a-id', 'b-subnets', 'b-id', 'psk',
+        ['a-subnets', 'a-id', 'b-subnets', 'b-id', 'a-gateway', 'b-gateway', 'psk',
             'a-egress-custom', 'a-lan-custom', 'b-egress-custom', 'b-lan-custom',
             'a-peer-custom', 'b-peer-custom'].forEach(function (f) { $('ipsec-' + f).value = ''; });
         ['a-egress', 'a-lan', 'b-egress', 'b-lan', 'a-peer', 'b-peer'].forEach(function (f) {
@@ -335,6 +335,7 @@
                 lan_iface: ifaceVal(pfx, 'lan'),
                 local_id: { type: 'keyid', value: $('ipsec-' + pfx + '-id').value.trim() },
                 protected_subnets: subnets('ipsec-' + pfx + '-subnets'),
+                gateway: $('ipsec-' + pfx + '-gateway').value.trim(),
                 child_lifetime_secs: life, mss_clamp: 1350
             };
         }
@@ -428,6 +429,7 @@
                 $('ipsec-a-subnets').value = (t.ends[0].protected_subnets || []).join('\n');
                 $('ipsec-b-subnets').value = (t.ends[1].protected_subnets || []).join('\n');
                 $('ipsec-a-id').value = (t.ends[0].local_id || {}).value || ''; $('ipsec-b-id').value = (t.ends[1].local_id || {}).value || '';
+                $('ipsec-a-gateway').value = t.ends[0].gateway || ''; $('ipsec-b-gateway').value = t.ends[1].gateway || '';
                 // PSK stays masked (unchanged on save); Save stays gated until preview.
                 lastPreviewOK = false; $('ipsec-save-btn').disabled = true;
             });
