@@ -1055,18 +1055,23 @@ func (h *Handler) GetIPSecDeployResult(c *gin.Context) {
 				firstNonEmpty(failMsg, "deploy aborted before any write"), string(blob), false, nil)
 		default:
 			// partial / some end wrote but not all-good → AUTO-ROLLBACK (compensate).
+			// Mark unproven ends FIRST, to completion — the marker loop must not be
+			// cut short by a build failure below, or a later unknown OPNsense end
+			// would be left unmarked and a subsequent manual rollback would clear the
+			// record over possible orphans. Only OPNsense removes rely on captured
+			// UUIDs: an unknown-outcome OPNsense end with no captured UUIDs skips
+			// every delete and reports a false-clean. FortiGate's remove is
+			// self-proving (GET-before-DELETE by deterministic mkey), so an unknown
+			// FortiGate end is NOT unproven.
+			for i := range st.Ends {
+				if unknown[i] && st.Ends[i].Vendor == "opnsense" && len(st.Ends[i].CapturedUUIDs) == 0 {
+					st.Ends[i].RollbackUnproven = true
+				}
+			}
 			rbCmds := make([]*models.ProbeCommand, 0, len(st.Ends))
 			rbIDs := make([]string, 0, len(st.Ends))
 			buildErr := ""
 			for i := range st.Ends {
-				// Only OPNsense removes rely on captured UUIDs — an unknown-outcome
-				// OPNsense end with no captured UUIDs will skip every delete and
-				// report a false-clean, so it can't prove device state. FortiGate's
-				// remove is self-proving (GET-before-DELETE by deterministic mkey),
-				// so an unknown FortiGate end is NOT unproven.
-				if unknown[i] && st.Ends[i].Vendor == "opnsense" && len(st.Ends[i].CapturedUUIDs) == 0 {
-					st.Ends[i].RollbackUnproven = true
-				}
 				cmd, berr := ipsecBuildRemoveCmd(db, m.ID, m.Name, st.Ends[i])
 				if berr != nil {
 					buildErr = berr.Error()
