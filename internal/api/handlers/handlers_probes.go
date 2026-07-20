@@ -854,11 +854,15 @@ func (h *Handler) CreateProbeCommand(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
-	// Allow-list of enqueueable command types. Grows in later PRs
-	// (apply_ipsec/remove_ipsec/status_ipsec); rejecting everything else here
-	// keeps an unknown/mistyped command from sitting pending until expiry.
+	// Allow-list of enqueueable command types — DELIBERATELY only `noop`. The
+	// IPSec write commands (apply_ipsec/remove_ipsec) must NEVER be added here:
+	// this endpoint takes a raw client-supplied Payload, so allowing a write type
+	// would be an authenticated write-SSRF proxy through the collector (arbitrary
+	// BaseURL + steps), bypassing HasBlock, the render provenance, and the
+	// checksum's meaning. Those commands are enqueued ONLY by the server-built
+	// deploy/rollback handlers (handlers_ipsec.go). A guardrail test pins this.
 	if req.Type != database.ProbeCommandTypeNoop {
-		c.JSON(http.StatusBadRequest, response.Error("Unsupported command type (PR-1 supports: noop)"))
+		c.JSON(http.StatusBadRequest, response.Error("Unsupported command type (only: noop)"))
 		return
 	}
 

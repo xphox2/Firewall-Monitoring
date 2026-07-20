@@ -1,6 +1,21 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.131] - 2026-07-19
+
+### Added — IPSec deploy saga: FortiGate apply / verify / rollback (C2b-1, first real device writes)
+
+The first sub-phase that WRITES configuration to a firewall. Operator-triggered deploy renders each FortiGate end's REST cmdb steps, enqueues an encrypted apply command to that end's collector (which checksum-verifies, collision-prechecks, writes, then verifies), and tracks progress with a per-deploy record persisted on the tunnel. Rollback reverses it from a stored snapshot. OPNsense apply and two-end verify-up remain deferred to C2b-2 (a FortiGate⇄OPNsense tunnel deploys its FortiGate end and reports `degraded`).
+
+- **New endpoints** (admin-only): `POST /ipsec/tunnels/:id/deploy` (renders + enqueues, gated on validation `HasBlock`, FortiGate ends only, 400 if none), `GET /ipsec/tunnels/:id/deploy` (tunnel-scoped status poll), `POST /ipsec/tunnels/:id/rollback` (reverse from the stored snapshot). The previously-ungated `.../preflight` route is back-filled into the admin allow-list.
+- **Per-deploy record** (`ipsec_tunnels.deploy_json`, migration v50; carries NO secrets): per-end apply command IDs + a body-less remove-steps snapshot. Deploy status is read from the exact per-end command IDs (never device+type, which bled across multiple tunnels on one firewall); rollback reverses the stored snapshot (so editing the intent after deploy can't orphan objects); a live command blocks a second deploy/rollback (409).
+- **Atomic deploy**: the deploy record + status→`deploying` + command enqueue commit in one transaction, guarded on the prior status (optimistic lock — a concurrent second deploy gets 409, never a double-write).
+- **Ownership-guarded rollback**: the collector GETs each object before deleting and skips anything whose FortiOS `comment`/`comments`/name isn't this tunnel's `fwm-t<ID>` tag, so a rollback can never delete a pre-existing operator object that shares a key. Deletes tolerate 404.
+- **Edit/delete guards**: a deployed/deploying/rolling-back tunnel must be rolled back before its intent can be edited or the row deleted (else device objects orphan).
+- **FortiGate `PreflightProbe`** now also reads the deterministic route/static and firewall/policy mkeys a deploy would create (collision precheck + post-write verify use the same keys `Render` writes; a test pins the parity).
+- **Deploy/Rollback UI**: tunnel-row Deploy (confirm + surfaces blocking findings first) and Rollback buttons, a poll-driven status modal, and a collision panel that distinguishes "our leftover → rollback then re-deploy" from "foreign object → resolve on the device".
+- Security: apply/remove command payloads (PSK-bearing) are encrypted at rest, TLS-delivered, never logged; the collector report carries only per-step op/path/status; the write command types are deliberately NOT enqueueable via the generic command endpoint (would be a write-SSRF).
+
 ## [0.11.130] - 2026-07-19
 
 ### Changed — IPSec: FortiGate renders REST, both drivers gain a conditional peer /32 (PR-C2a, no device writes)

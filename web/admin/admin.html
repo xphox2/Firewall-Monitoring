@@ -2874,6 +2874,21 @@
         </div>
     </div>
 
+    <!-- IPSec Deploy / Rollback status modal -->
+    <div class="modal" id="ipsec-deploy-modal" role="dialog" aria-modal="true" aria-labelledby="ipsec-deploy-title">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="ipsec-deploy-title">Deploy Tunnel</h2>
+                <button class="modal-close" data-action="ipsec-deploy-close">&times;</button>
+            </div>
+            <p id="ipsec-deploy-sub" style="color:var(--fwmon-text-mute);font-size:0.85rem;margin:0 0 12px 0;">Writes configuration to the firewall over its REST API, then verifies the objects exist.</p>
+            <div id="ipsec-deploy-body"><!-- rendered by admin-ipsec.js --></div>
+            <div class="modal-footer">
+                <button type="button" class="btn secondary" data-action="ipsec-deploy-close">Close</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Connection Modal -->
     <div class="modal" id="connection-modal" role="dialog" aria-modal="true" aria-labelledby="connection-modal-title">
         <div class="modal-content">

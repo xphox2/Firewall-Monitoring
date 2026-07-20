@@ -1083,8 +1083,8 @@ type IPSecTunnel struct {
 	ID      uint   `json:"id" gorm:"primaryKey"`
 	Name    string `json:"name" gorm:"uniqueIndex;not null"`
 	Enabled bool   `json:"enabled" gorm:"default:true"`
-	// Status: draft, deploying, verifying, up, down, degraded, rolled_back,
-	// rollback_failed, error.
+	// Status: draft, deploying, verifying, up, down, degraded, rolling_back,
+	// rolled_back, rollback_failed, error.
 	Status    string `json:"status" gorm:"default:draft;index"`
 	LastError string `json:"last_error" gorm:"type:text"`
 
@@ -1099,6 +1099,13 @@ type IPSecTunnel struct {
 	IntentJSON string `json:"-" gorm:"type:text"`
 	// PSK is encrypted at rest via the field crypto; json:"-" so it never leaks.
 	PSK string `json:"-" gorm:"type:text"`
+
+	// DeployJSON is the per-deploy record (ipsec deploy state): per-end apply
+	// command IDs + a body-less remove-steps snapshot (DELETE paths, NO PSK) +
+	// rollback command IDs. Written atomically with the apply/remove enqueue so a
+	// status poll can never see command IDs whose rows don't exist yet. Excluded
+	// from API JSON; carries no secrets.
+	DeployJSON string `json:"-" gorm:"type:text"`
 
 	LastDeployedAt *time.Time `json:"last_deployed_at"`
 	CreatedAt      time.Time  `json:"created_at"`

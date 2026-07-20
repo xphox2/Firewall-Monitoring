@@ -43,6 +43,17 @@ const (
 	// structured result. It performs NO device writes (PR-C1); the actual apply
 	// (apply_ipsec) is a later sub-phase.
 	ProbeCommandTypeIPSecPreflight = "ipsec_preflight"
+
+	// ProbeCommandTypeIPSecApply WRITES an IPSec tunnel end to the device: the
+	// collector verifies the artifact checksum, re-checks for collisions, executes
+	// the ordered REST cmdb steps, then verifies the objects are present. The
+	// encrypted payload carries the PSK-bearing steps; NEVER logged (C2b-1).
+	ProbeCommandTypeIPSecApply = "apply_ipsec"
+
+	// ProbeCommandTypeIPSecRemove reverses an apply from the stored remove-steps
+	// snapshot: the collector deletes each object by mkey (ownership-checked,
+	// 404-tolerant). Used by rollback.
+	ProbeCommandTypeIPSecRemove = "remove_ipsec"
 )
 
 // probeCommandDeviceTouching lists command types whose execution makes the
@@ -53,6 +64,8 @@ const (
 var probeCommandDeviceTouching = map[string]bool{
 	ProbeCommandTypeNoop:           false,
 	ProbeCommandTypeIPSecPreflight: true, // a successful REST read proves reachability
+	ProbeCommandTypeIPSecApply:     true, // a successful write proves reachability
+	ProbeCommandTypeIPSecRemove:    true,
 }
 
 // ProbeCommandTouchesDevice reports whether a succeeded result for the given
@@ -79,8 +92,13 @@ const (
 	ProbeCommandMaxAttempts = 5
 
 	// probeCommandResultMaxLen bounds the stored result text so a misbehaving
-	// collector can't bloat the table with megabytes of output per command.
-	probeCommandResultMaxLen = 10000
+	// collector can't bloat the table with megabytes of output per command. Sized
+	// to comfortably hold the largest legitimate structured report: an IPSec
+	// preflight or apply report at the maximum 49 protected subnets (~100+ per-
+	// object checks). Truncation mid-JSON would make a healthy report unparseable,
+	// so the cap must clear the real worst case — the apply/remove reports are also
+	// compacted collector-side (only non-OK steps listed) as defence in depth.
+	probeCommandResultMaxLen = 65536
 
 	// probeCommandClaimBatch caps how many commands one heartbeat response
 	// carries; the remainder rides the next heartbeat (60s later).
@@ -103,6 +121,16 @@ func probeCommandTerminal(status string) bool {
 // ID) but Payload on the caller's struct is left as the stored (encrypted)
 // form on purpose — read paths must go through ClaimProbeCommands.
 func (d *Database) EnqueueProbeCommand(cmd *models.ProbeCommand) error {
+	return d.enqueueProbeCommandTx(d.db, cmd)
+}
+
+// enqueueProbeCommandTx is the transactional core of EnqueueProbeCommand: it
+// runs against any *gorm.DB (the pool or an open transaction) so the IPSec
+// deploy/rollback path can persist the tunnel deploy record AND insert the
+// command rows atomically — a status poll can then never observe DeployJSON
+// command IDs whose rows don't exist yet. A preset cmd.CommandID is honored (the
+// deploy handler pre-generates IDs so it can record them before enqueue).
+func (d *Database) enqueueProbeCommandTx(tx *gorm.DB, cmd *models.ProbeCommand) error {
 	if cmd.ProbeID == 0 {
 		return errors.New("EnqueueProbeCommand: probe_id required")
 	}
@@ -118,7 +146,7 @@ func (d *Database) EnqueueProbeCommand(cmd *models.ProbeCommand) error {
 	cmd.Status = ProbeCommandStatusPending
 	cmd.Attempts = 0
 	cmd.Payload = d.EncryptField(cmd.Payload)
-	return d.db.Create(cmd).Error
+	return tx.Create(cmd).Error
 }
 
 // ClaimProbeCommands returns the commands to deliver on a heartbeat response
@@ -274,6 +302,24 @@ func (d *Database) GetLatestCommandByDeviceType(deviceID uint, cmdType string) (
 	var cmd models.ProbeCommand
 	err := d.db.Where("device_id = ? AND type = ?", deviceID, cmdType).
 		Order("id DESC").First(&cmd).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &cmd, nil
+}
+
+// GetProbeCommandByCommandID returns a command by its (globally unique) CommandID,
+// or nil if none exists. Payload stays encrypted + json:"-"; Status/Result are
+// safe to surface. Used by the IPSec deploy/rollback status poll, which reads the
+// exact per-end command IDs recorded on the tunnel's DeployJSON — tunnel-scoped,
+// unlike GetLatestCommandByDeviceType (which would return another tunnel's latest
+// command for the same device+type).
+func (d *Database) GetProbeCommandByCommandID(commandID string) (*models.ProbeCommand, error) {
+	var cmd models.ProbeCommand
+	err := d.db.Where("command_id = ?", commandID).First(&cmd).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}

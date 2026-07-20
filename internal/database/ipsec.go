@@ -2,11 +2,21 @@ package database
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"time"
 
 	"firewall-mon/internal/ipsec"
 	"firewall-mon/internal/models"
+
+	"gorm.io/gorm"
 )
+
+// ErrIPSecConcurrentDeploy is returned by TransitionIPSecDeploy when the tunnel's
+// status isn't in the expected set — i.e. a concurrent deploy/rollback already
+// moved it, or it's in a state that forbids the transition. Handlers map it to
+// HTTP 409 so a second concurrent deploy can't double-write the device.
+var ErrIPSecConcurrentDeploy = errors.New("ipsec: tunnel busy or not in a deployable state")
 
 // IPSec tunnel persistence for the provisioning wizard. The structured
 // vendor-neutral intent (ipsec.TunnelIntent) is stored as IntentJSON WITHOUT the
@@ -108,10 +118,69 @@ func (d *Database) UpdateIPSecTunnel(m *models.IPSecTunnel) error {
 }
 
 // UpdateIPSecTunnelStatus is the deploy-saga fast path: set status + last_error
-// (+ last_deployed_at when moving to a deployed state) without touching config.
+// without touching config or deploy state. Use MarkIPSecTunnelDeployed when a
+// transition to a deployed state must also stamp last_deployed_at.
 func (d *Database) UpdateIPSecTunnelStatus(id uint, status, lastErr string) error {
 	return d.db.Model(&models.IPSecTunnel{}).Where("id = ?", id).
 		Updates(map[string]interface{}{"status": status, "last_error": lastErr}).Error
+}
+
+// MarkIPSecTunnelDeployed sets status + last_error AND stamps last_deployed_at =
+// now — the deploy-succeeded path (fixes the old UpdateIPSecTunnelStatus, whose
+// doc claimed to set last_deployed_at but never did).
+func (d *Database) MarkIPSecTunnelDeployed(id uint, status, lastErr string) error {
+	now := time.Now()
+	return d.db.Model(&models.IPSecTunnel{}).Where("id = ?", id).
+		Updates(map[string]interface{}{"status": status, "last_error": lastErr, "last_deployed_at": now}).Error
+}
+
+// ClearIPSecDeployState sets status + last_error AND clears deploy_json — the
+// successful-rollback path, so the tunnel becomes eligible for edit/delete again
+// (the "delete-allowed-from-empty-deploy" rule).
+func (d *Database) ClearIPSecDeployState(id uint, status, lastErr string) error {
+	return d.db.Model(&models.IPSecTunnel{}).Where("id = ?", id).
+		Updates(map[string]interface{}{"status": status, "last_error": lastErr, "deploy_json": ""}).Error
+}
+
+// SetIPSecRollbackState updates status + deploy_json only (records the rollback
+// command IDs on an existing deploy record). Used when the rollback poll needs to
+// persist intermediate state without touching last_deployed_at.
+func (d *Database) SetIPSecRollbackState(id uint, status, deployJSON string) error {
+	return d.db.Model(&models.IPSecTunnel{}).Where("id = ?", id).
+		Updates(map[string]interface{}{"status": status, "deploy_json": deployJSON}).Error
+}
+
+// TransitionIPSecDeploy atomically (1) UPDATEs the tunnel's status + last_error +
+// deploy_json, guarded on its current status being in fromStatuses (optimistic
+// lock — 0 rows affected ⇒ ErrIPSecConcurrentDeploy), and (2) enqueues each
+// command in the SAME transaction. Either all of it commits or none does, so a
+// status poll can never observe a deploy_json whose command rows don't exist yet,
+// and two concurrent deploys can't both pass the guard and double-write the
+// device. Used by both the deploy POST (→ deploying) and the rollback POST
+// (→ rolling_back). The caller pre-generates each cmd.CommandID and records it in
+// deployJSON before calling.
+func (d *Database) TransitionIPSecDeploy(id uint, fromStatuses []string, toStatus, deployJSON string, cmds []*models.ProbeCommand) error {
+	return d.db.Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&models.IPSecTunnel{}).
+			Where("id = ? AND status IN ?", id, fromStatuses).
+			Updates(map[string]interface{}{
+				"status":      toStatus,
+				"last_error":  "",
+				"deploy_json": deployJSON,
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return ErrIPSecConcurrentDeploy
+		}
+		for _, cmd := range cmds {
+			if err := d.enqueueProbeCommandTx(tx, cmd); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // DeleteIPSecTunnel removes a tunnel row.

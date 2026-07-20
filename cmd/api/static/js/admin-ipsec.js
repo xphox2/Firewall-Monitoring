@@ -44,9 +44,22 @@
     }
 
     function statusBadge(s) {
-        var cls = { up: 'success', down: 'danger', error: 'danger', draft: 'info', deploying: 'warning' }[s] || 'info';
+        var cls = {
+            up: 'success', degraded: 'success', down: 'danger', error: 'danger',
+            rollback_failed: 'danger', draft: 'info', rolled_back: 'info',
+            deploying: 'warning', rolling_back: 'warning'
+        }[s] || 'info';
         return '<span class="badge ' + cls + '">' + esc(s || 'draft') + '</span>';
     }
+
+    // Row-action gating — mirrors the server's ipsecEditable/ipsecDeletable + the
+    // deploy/rollback source-status sets, so the UI doesn't offer dead-end clicks
+    // (the server still enforces every rule with a 409).
+    function canEdit(s) { return ['deploying', 'degraded', 'up', 'rolling_back', 'rollback_failed'].indexOf(s) === -1; }
+    function canDelete(s) { return ['draft', 'rolled_back', 'error'].indexOf(s) !== -1; }
+    function canDeploy(s) { return ['draft', 'error', 'rolled_back'].indexOf(s) !== -1; }
+    function canRollback(s) { return ['degraded', 'up', 'error', 'rollback_failed'].indexOf(s) !== -1; }
+    function inProgress(s) { return s === 'deploying' || s === 'rolling_back'; }
 
     function renderTunnels(list) {
         var wrap = $('ipsec-tunnels-wrap');
@@ -55,15 +68,24 @@
             return;
         }
         var rows = list.map(function (t) {
+            var s = t.status || 'draft';
+            var btns = '<button class="btn sm secondary" data-action="ipsec-preflight" data-min-role="admin" data-id="' + t.id + '" title="Read-only REST check — no device writes">Preflight</button> ';
+            if (inProgress(s)) {
+                btns += '<button class="btn sm secondary" data-action="ipsec-progress" data-min-role="admin" data-id="' + t.id + '" data-op="' + (s === 'rolling_back' ? 'rollback' : 'deploy') + '">View progress</button> ';
+            }
+            if (canDeploy(s)) {
+                btns += '<button class="btn sm primary" data-action="ipsec-deploy" data-min-role="admin" data-id="' + t.id + '" title="Writes config to the FortiGate device">Deploy</button> ';
+            }
+            if (canRollback(s)) {
+                btns += '<button class="btn sm warning" data-action="ipsec-rollback" data-min-role="admin" data-id="' + t.id + '" title="Removes the deployed config from the device">Rollback</button> ';
+            }
+            btns += '<button class="btn sm secondary" data-action="ipsec-edit" data-min-role="admin" data-id="' + t.id + '"' + (canEdit(s) ? '' : ' disabled title="Roll back before editing"') + '>Edit</button> ' +
+                '<button class="btn sm danger" data-action="ipsec-delete" data-min-role="admin" data-id="' + t.id + '"' + (canDelete(s) ? '' : ' disabled title="Roll back before deleting"') + '>Delete</button>';
             return '<tr>' +
                 '<td>' + esc(t.name || ('fwm-t' + t.id)) + '</td>' +
                 '<td>' + esc(t.a_vendor || '?') + ' ↔ ' + esc(t.b_vendor || '?') + '</td>' +
-                '<td>' + statusBadge(t.status) + '</td>' +
-                '<td style="text-align:right;">' +
-                    '<button class="btn sm secondary" data-action="ipsec-preflight" data-min-role="admin" data-id="' + t.id + '" title="Read-only REST check — no device writes">Preflight</button> ' +
-                    '<button class="btn sm secondary" data-action="ipsec-edit" data-min-role="admin" data-id="' + t.id + '">Edit</button> ' +
-                    '<button class="btn sm danger" data-action="ipsec-delete" data-min-role="admin" data-id="' + t.id + '">Delete</button>' +
-                '</td></tr>';
+                '<td>' + statusBadge(s) + '</td>' +
+                '<td style="text-align:right;">' + btns + '</td></tr>';
         }).join('');
         wrap.innerHTML = '<div style="overflow-x:auto;"><table class="fwmon-table">' +
             '<thead><tr><th>Name</th><th>Endpoints</th><th>Status</th><th></th></tr></thead>' +
@@ -454,7 +476,11 @@
             'ipsec-preview': function () { preview(); },
             'ipsec-save': function () { save(); },
             'ipsec-preflight': function (el) { preflight(parseInt(el.dataset.id, 10)); },
-            'ipsec-preflight-close': function () { stopPreflightPoll(); AC.closeModal('ipsec-preflight-modal'); }
+            'ipsec-preflight-close': function () { stopPreflightPoll(); AC.closeModal('ipsec-preflight-modal'); },
+            'ipsec-deploy': function (el) { startDeploy(parseInt(el.dataset.id, 10)); },
+            'ipsec-rollback': function (el) { startRollback(parseInt(el.dataset.id, 10)); },
+            'ipsec-progress': function (el) { openDeployModal(parseInt(el.dataset.id, 10), el.dataset.op || 'deploy'); },
+            'ipsec-deploy-close': function () { stopDeployPoll(); AC.closeModal('ipsec-deploy-modal'); loadTunnels(); }
         });
         $('ipsec-dev-a').addEventListener('change', onDevicesChosen);
         $('ipsec-dev-b').addEventListener('change', onDevicesChosen);
@@ -647,6 +673,178 @@
         }).catch(function (e) {
             if (!preflightLive(gen)) return;
             $('ipsec-preflight-body').innerHTML = '<div class="card" style="padding:12px;color:var(--fwmon-sig-crit);">Could not start preflight: ' + esc(e.message) + '</div>';
+        });
+    }
+
+    // ---- deploy / rollback (WRITES config) ------------------------------
+    // Deploy renders + enqueues per-end apply commands; the collector writes then
+    // verifies. Rollback removes from the stored snapshot. Both are poll-driven,
+    // mirroring the preflight machinery (generation token guards stale timers).
+    var deployTimer = null;
+    var deployGen = 0;
+    var DEPLOY_WINDOW_MS = 300000; // ~5 min — writes + verify GETs on a busy box
+    var DEPLOY_POLL_MS = 3000;
+
+    function stopDeployPoll() {
+        deployGen++;
+        if (deployTimer) { clearTimeout(deployTimer); deployTimer = null; }
+    }
+    function deployLive(gen) {
+        var m = $('ipsec-deploy-modal');
+        return gen === deployGen && !!(m && m.classList.contains('active'));
+    }
+
+    function startDeploy(id) {
+        // Surface blocking validation BEFORE writing — the server also 409s, but we
+        // want the operator to see exactly why and never fire a doomed deploy.
+        AC.apiFetch(API + '/ipsec/tunnels/' + id).then(function (r) {
+            var d = (r && r.data) || {};
+            var blocks = (d.validation || []).filter(function (f) { return f.severity === 'block'; });
+            if (blocks.length) {
+                AC.showError('Cannot deploy — resolve blocking findings first: ' +
+                    blocks.map(function (f) { return f.message; }).join('; '));
+                return;
+            }
+            AC.confirm('This WRITES IPSec configuration to the FortiGate device over its REST API. You can roll it back afterwards. Continue?',
+                { title: 'Deploy tunnel?', confirmLabel: 'Deploy', danger: false }).then(function (ok) {
+                if (!ok) return;
+                openDeployModal(id, 'deploy');
+                AC.apiFetch(API + '/ipsec/tunnels/' + id + '/deploy', { method: 'POST' }).then(function () {
+                    if (!deployLive(deployGen)) return;
+                    pollDeploy(id, deployGen, Date.now(), 'deploy');
+                }).catch(function (e) {
+                    if (!deployLive(deployGen)) return;
+                    $('ipsec-deploy-body').innerHTML = deployErrorCard('Could not start deploy: ' + esc(e.message));
+                });
+            });
+        }).catch(function (e) { AC.showError('Failed to load tunnel: ' + e.message); });
+    }
+
+    function startRollback(id) {
+        AC.confirm('This REMOVES the deployed IPSec configuration from the device (phase1/phase2, tunnel interface, routes and policies for this tunnel). Continue?',
+            { title: 'Roll back tunnel?', confirmLabel: 'Roll back', danger: true }).then(function (ok) {
+            if (!ok) return;
+            openDeployModal(id, 'rollback');
+            AC.apiFetch(API + '/ipsec/tunnels/' + id + '/rollback', { method: 'POST' }).then(function () {
+                if (!deployLive(deployGen)) return;
+                pollDeploy(id, deployGen, Date.now(), 'rollback');
+            }).catch(function (e) {
+                if (!deployLive(deployGen)) return;
+                $('ipsec-deploy-body').innerHTML = deployErrorCard('Could not start rollback: ' + esc(e.message));
+            });
+        });
+    }
+
+    function openDeployModal(id, op) {
+        stopDeployPoll();
+        $('ipsec-deploy-title').textContent = (op === 'rollback') ? 'Roll Back Tunnel' : 'Deploy Tunnel';
+        $('ipsec-deploy-sub').textContent = (op === 'rollback')
+            ? 'Removes the deployed configuration from the device (only objects tagged for this tunnel).'
+            : 'Writes configuration to the firewall over its REST API, then verifies the objects exist.';
+        $('ipsec-deploy-body').innerHTML =
+            '<div style="display:flex;align-items:center;gap:8px;color:var(--fwmon-text-mute);font-size:0.9rem;">' +
+            '<span class="fwmon-spinner"></span><span>Starting ' + esc(op) + '…</span></div>';
+        AC.openModal('ipsec-deploy-modal');
+        // A "View progress" open (op known, no POST) starts polling immediately.
+        pollDeploy(id, deployGen, Date.now(), op);
+    }
+
+    function deployErrorCard(html) {
+        return '<div class="card" style="padding:12px;color:var(--fwmon-sig-crit);">' + html + '</div>';
+    }
+
+    function deployTerminal(status) {
+        return ['degraded', 'up', 'error', 'rolled_back', 'rollback_failed'].indexOf(status) !== -1;
+    }
+
+    function collisionGuidance(data) {
+        if (!data || !data.conflict) return '';
+        var paths = (data.collisions || []).map(function (p) { return esc(p); }).join(', ');
+        return '<div class="card" style="padding:12px;border-left:3px solid var(--fwmon-sig-warn);margin-bottom:10px;">' +
+            '<div style="font-weight:600;color:var(--fwmon-sig-warn);margin-bottom:4px;">Object collision — nothing was written</div>' +
+            '<div style="font-size:0.85rem;color:var(--fwmon-text-mute);">One or more objects already exist at this tunnel\'s keys' +
+            (paths ? ' (<span style="font-family:monospace;">' + paths + '</span>)' : '') + '.' +
+            '<ul style="margin:8px 0 0 0;padding-left:16px;">' +
+            '<li><b>If they are ours</b> (a previous partial deploy): click <b>Rollback</b> first, then Deploy again.</li>' +
+            '<li><b>If they are not ours</b> (a pre-existing config the collector reported as foreign): do NOT roll back — resolve the conflicting object on the device, then retry.</li>' +
+            '</ul></div></div>';
+    }
+
+    function deployEndCard(e) {
+        var head = '<div style="font-weight:600;margin-bottom:4px;">End ' + (e.end === 0 ? 'A' : 'B') +
+            ' <span style="color:var(--fwmon-text-mute);font-weight:normal;">(device #' + esc(e.device_id) + ')</span> ' +
+            statusBadge(e.status) + '</div>';
+        var r = e.report;
+        var body;
+        if (r && typeof r === 'object') {
+            function badge(ok, warn, label) {
+                var cls = ok ? 'success' : (warn ? 'warning' : 'danger');
+                return '<span class="badge ' + cls + '" style="margin-right:6px;">' + esc(label) + '</span>';
+            }
+            var badges = '';
+            if (r.op === 'remove') {
+                badges = badge(r.applied, false, r.applied ? 'removed' : 'remove incomplete');
+            } else {
+                badges = badge(r.applied, false, r.applied ? 'applied' : (r.aborted ? 'aborted' : 'apply failed')) +
+                    badge(r.verified, !r.verified && r.applied, r.verified ? 'verified' : 'unverified');
+                if (r.conflict) badges += badge(false, true, 'collision');
+            }
+            var steps = (r.steps || []).map(function (s) {
+                var mark = s.ok ? '✓' : '✗';
+                return '<li style="font-family:monospace;font-size:0.76rem;color:var(--fwmon-text-mute);">' +
+                    esc(mark) + ' ' + esc(s.op) + ' ' + esc(s.path) + ' (HTTP ' + esc(s.status || 0) + ')' +
+                    (s.note ? ' — ' + esc(s.note) : '') + '</li>';
+            }).join('');
+            var err = r.error ? '<div style="font-size:0.82rem;color:var(--fwmon-sig-crit);margin-top:4px;">' + esc(r.error) + '</div>' : '';
+            body = '<div style="margin:6px 0;">' + badges + '</div>' + err +
+                (steps ? '<ul style="margin:8px 0 0 0;padding-left:16px;">' + steps + '</ul>' : '');
+        } else if (e.status === 'pending' || e.status === 'dispatched' || e.status === 'none') {
+            body = '<div style="color:var(--fwmon-text-mute);font-size:0.85rem;display:flex;align-items:center;gap:8px;">' +
+                '<span class="fwmon-spinner"></span><span>Waiting for the collector to run this…</span></div>';
+        } else {
+            body = '<div style="color:var(--fwmon-text-mute);font-size:0.85rem;">' + (e.raw_result ? esc(e.raw_result) : 'No report.') + '</div>';
+        }
+        return '<div class="card" style="padding:12px;">' + head + body + '</div>';
+    }
+
+    function renderDeployBody(id, data, state, op) {
+        var status = (data && data.status) || '';
+        var line;
+        if (state.polling) {
+            line = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;color:var(--fwmon-text-mute);font-size:0.85rem;">' +
+                '<span class="fwmon-spinner"></span><span>' + (op === 'rollback' ? 'Rolling back' : 'Deploying') + '… ' + esc(mmss(state.elapsedMs)) +
+                ' <span style="color:var(--fwmon-text-faint);">— the collector applies this on its next check-in (up to ~1 min)</span></span></div>';
+        } else if (state.exhausted) {
+            line = '<div style="color:var(--fwmon-sig-warn);font-size:0.85rem;margin-bottom:10px;">No terminal result after ' + esc(mmss(state.elapsedMs)) + ' — the collector may be offline or still queued. This modal will pick it up if you reopen “View progress”.</div>';
+        } else {
+            var okStatus = (status === 'degraded' || status === 'up' || status === 'rolled_back');
+            line = '<div style="margin-bottom:10px;font-size:0.9rem;">Status: ' + statusBadge(status) +
+                (data && data.note ? ' <span style="color:var(--fwmon-text-mute);">— ' + esc(data.note) + '</span>' : '') +
+                (!okStatus && !state.polling ? ' <button class="btn sm ' + (op === 'rollback' ? 'warning' : 'primary') + '" data-action="ipsec-' + (op === 'rollback' ? 'rollback' : 'deploy') + '" data-min-role="admin" data-id="' + id + '">Retry</button>' : '') +
+                '</div>';
+        }
+        var ends = (data && data.ends) || [];
+        var endsHtml = ends.length
+            ? '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' + ends.map(deployEndCard).join('') + '</div>'
+            : '';
+        $('ipsec-deploy-body').innerHTML = collisionGuidance(data) + line + endsHtml;
+    }
+
+    function pollDeploy(id, gen, startMs, op) {
+        if (!deployLive(gen)) return;
+        AC.apiFetch(API + '/ipsec/tunnels/' + id + '/deploy').then(function (r) {
+            if (!deployLive(gen)) return;
+            var data = (r && r.data) || {};
+            var elapsed = Date.now() - startMs;
+            var terminal = deployTerminal(data.status);
+            var more = !terminal && elapsed < DEPLOY_WINDOW_MS;
+            renderDeployBody(id, data, { elapsedMs: elapsed, polling: more, exhausted: !terminal && !more }, op);
+            if (more) {
+                deployTimer = setTimeout(function () { pollDeploy(id, gen, startMs, op); }, DEPLOY_POLL_MS);
+            }
+        }).catch(function (e) {
+            if (!deployLive(gen)) return;
+            $('ipsec-deploy-body').innerHTML = deployErrorCard('Failed to read status: ' + esc(e.message));
         });
     }
 

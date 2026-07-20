@@ -75,6 +75,10 @@ type IPSecStore interface {
 	ListIPSecTunnels() ([]models.IPSecTunnel, error)
 	UpdateIPSecTunnel(m *models.IPSecTunnel) error
 	UpdateIPSecTunnelStatus(id uint, status, lastErr string) error
+	MarkIPSecTunnelDeployed(id uint, status, lastErr string) error
+	ClearIPSecDeployState(id uint, status, lastErr string) error
+	SetIPSecRollbackState(id uint, status, deployJSON string) error
+	TransitionIPSecDeploy(id uint, fromStatuses []string, toStatus, deployJSON string, cmds []*models.ProbeCommand) error
 	DeleteIPSecTunnel(id uint) error
 }
 
@@ -107,6 +111,7 @@ type ProbeStore interface {
 	CompleteProbeCommand(probeID uint, commandID, status, result string) (models.ProbeCommand, bool, error)
 	GetProbeCommands(probeID uint, limit int) ([]models.ProbeCommand, error)
 	GetLatestCommandByDeviceType(deviceID uint, cmdType string) (*models.ProbeCommand, error)
+	GetProbeCommandByCommandID(commandID string) (*models.ProbeCommand, error)
 	ExpireStaleProbeCommands() (int64, error)
 	CancelProbeCommand(probeID uint, commandID string) (bool, error)
 }
