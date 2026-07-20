@@ -1718,6 +1718,15 @@ func (d *Database) migrateIPSecTunnels() error {
 	return d.db.AutoMigrate(&models.IPSecTunnel{})
 }
 
+// migrateIPSecTunnelDeployState (v50) adds ipsec_tunnels.deploy_json — the
+// per-deploy record (per-end apply command IDs + body-less remove-steps snapshot
+// + rollback command IDs; NO secrets) that makes deploy status tunnel-scoped and
+// rollback snapshot-driven. Additive text column, plain AutoMigrate (small,
+// unpartitioned), idempotent — same precedent as v40.
+func (d *Database) migrateIPSecTunnelDeployState() error {
+	return d.db.AutoMigrate(&models.IPSecTunnel{})
+}
+
 // migrateEventRuleDampenJSON (v41) adds event_rules.dampen_json — the per-source
 // dampening params blob backing the unified alerting-via-Event-Rules program.
 // Additive text column, plain AutoMigrate (event_rules is small, unpartitioned).

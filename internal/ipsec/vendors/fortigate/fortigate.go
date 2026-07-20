@@ -222,13 +222,29 @@ func (d driver) StatusProbe(v ipsec.RenderView) []ipsec.ProbeStep {
 // after the tunnel — so a name/VTI collision is detected before any write. The
 // cmdb GETs return 404 when the object is absent (the healthy pre-deploy state).
 func (d driver) PreflightProbe(v ipsec.RenderView) []ipsec.PreflightStep {
-	name := v.Intent.Name
-	return []ipsec.PreflightStep{
+	in := v.Intent
+	local, remote := v.Local(), v.Remote()
+	name := in.Name
+	steps := []ipsec.PreflightStep{
 		{Check: "auth", Method: "GET", Path: "/api/v2/monitor/system/status"},
 		{Check: "phase1", Method: "GET", Path: cmdbPhase1 + "/" + name, ExpectAbsent: true},
 		{Check: "phase2", Method: "GET", Path: cmdbPhase2 + "/" + name, ExpectAbsent: true},
 		{Check: "vti", Method: "GET", Path: cmdbIface + "/" + name, ExpectAbsent: true},
 	}
+	// The static-route seq-nums and policy IDs a deploy would create use the same
+	// deterministic keys Render/RenderRemove use, so the collision precheck reads
+	// the EXACT objects and the post-write verify counts them exactly (a test pins
+	// PreflightProbe's keys == Render's).
+	for i := 0; i < routeCount(local, remote); i++ {
+		steps = append(steps, ipsec.PreflightStep{
+			Check: "route", Method: "GET", Path: cmdbRoute + "/" + itoa(ipsec.FGRouteKey(in.ID, i)), ExpectAbsent: true,
+		})
+	}
+	steps = append(steps,
+		ipsec.PreflightStep{Check: "policy", Method: "GET", Path: cmdbPolicy + "/" + itoa(ipsec.FGPolicyKey(in.ID, 0)), ExpectAbsent: true},
+		ipsec.PreflightStep{Check: "policy", Method: "GET", Path: cmdbPolicy + "/" + itoa(ipsec.FGPolicyKey(in.ID, 1)), ExpectAbsent: true},
+	)
+	return steps
 }
 
 func (d driver) ParseStatus(raw string) (ipsec.TunnelStatus, error) {

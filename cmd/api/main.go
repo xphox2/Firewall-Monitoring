@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.130"
+const ServerVersion = "0.11.131"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -739,6 +739,13 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			"/admin/api/ipsec/tunnels":             true,
 			"/admin/api/ipsec/tunnels/:id":         true,
 			"/admin/api/ipsec/tunnels/:id/preview": true,
+			// Preflight + deploy saga touch device credentials (API token) and WRITE
+			// config — admin-only. RequireRole matches exact FullPath and defaults an
+			// unlisted POST to operator, so every one MUST be listed (the preflight
+			// entry back-fills a prior under-gating gap).
+			"/admin/api/ipsec/tunnels/:id/preflight": true,
+			"/admin/api/ipsec/tunnels/:id/deploy":    true,
+			"/admin/api/ipsec/tunnels/:id/rollback":  true,
 			// Wizard interface hints expose per-device addressing to the admin-only
 			// IPSec wizard; keep behind the same admin gate.
 			"/admin/api/devices/:id/ipsec-hints": true,
@@ -918,6 +925,12 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		// the collector (auth + collision GETs, NO writes) and poll the result.
 		admin.POST("/api/ipsec/tunnels/:id/preflight", handler.PreflightIPSecTunnel)
 		admin.GET("/api/ipsec/tunnels/:id/preflight", handler.GetIPSecPreflightResult)
+		// Deploy saga (C2b-1: WRITES config to the FortiGate end). Deploy renders +
+		// enqueues per-end apply commands; GET polls status; rollback reverses from
+		// the stored remove snapshot. All admin-only (in adminOnlyRoutes).
+		admin.POST("/api/ipsec/tunnels/:id/deploy", handler.DeployIPSecTunnel)
+		admin.GET("/api/ipsec/tunnels/:id/deploy", handler.GetIPSecDeployResult)
+		admin.POST("/api/ipsec/tunnels/:id/rollback", handler.RollbackIPSecTunnel)
 		// Read-only endpoint hints: the picked device's real interfaces + addresses
 		// so the wizard populates egress/LAN/subnets from live data (admin-only).
 		admin.GET("/api/devices/:id/ipsec-hints", handler.GetIPSecEndpointHints)
