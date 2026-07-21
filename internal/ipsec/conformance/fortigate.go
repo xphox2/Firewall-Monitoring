@@ -86,6 +86,10 @@ func init() {
 				"dhgrp":          {kind: enumRule, enum: keys(fgDHGroup)},
 				"keylifeseconds": {kind: intRange, min: 120, max: 172800},
 			},
+			"system/interface": {
+				// allowaccess is a space-separated list of management protocols.
+				"allowaccess": {kind: spaceEnum, enum: []string{"ping", "https", "ssh", "snmp", "http", "telnet", "fgfm", "radius-acct", "probe-response", "fabric", "ftm", "speed-test", "scim"}},
+			},
 			"router/static": {
 				"blackhole": {kind: enableDisable},
 				"distance":  {kind: intRange, min: 1, max: 255},

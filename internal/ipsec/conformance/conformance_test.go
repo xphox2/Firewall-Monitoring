@@ -105,11 +105,14 @@ func TestConformance_CatchesKnownBugs(t *testing.T) {
 	steps := []ipsec.ApplyStep{
 		{Kind: ipsec.StepHTTPAPI, Method: "POST", Path: "/api/ipsec/connections/addConnection",
 			Body: `{"connection":{"proposals":"aes256gcm16-prfsha384-ecp384","local_addrs":"%any","version":"2","unique":"replace"}}`},
+		// dpd_action=restart (strongSwan spelling) and a bare no-PFS esp_proposals
+		// `aes128gcm16` — both device-rejected; the latter is the PFS-off false-pass
+		// the adversarial review caught.
 		{Kind: ipsec.StepHTTPAPI, Method: "POST", Path: "/api/ipsec/connections/addChild",
-			Body: `{"child":{"dpd_action":"restart","esp_proposals":"aes256gcm16-ecp384","policies":"0"}}`},
+			Body: `{"child":{"dpd_action":"restart","esp_proposals":"aes128gcm16","policies":"0"}}`},
 	}
 	f := conformance.Validate("opnsense", steps)
-	want := map[string]bool{"proposals": false, "local_addrs": false, "dpd_action": false}
+	want := map[string]bool{"proposals": false, "local_addrs": false, "dpd_action": false, "esp_proposals": false}
 	for _, finding := range f {
 		if _, ok := want[finding.Field]; ok {
 			want[finding.Field] = true

@@ -21,6 +21,9 @@ var (
 		"x25519", "x448")
 )
 
+// opnAuth is the local/remote auth OptionValues set (Swanctl.xml).
+var opnAuth = []string{"psk", "pubkey", "eap-tls", "eap-mschapv2", "xauth-pam", "eap-radius"}
+
 func opnIsAEAD(enc string) bool {
 	return strings.Contains(enc, "gcm") || enc == "chacha20poly1305"
 }
@@ -43,31 +46,55 @@ func opnIKEProposal(s string) (bool, string) {
 	return true, ""
 }
 
-// opnESPProposal validates a phase-2 proposal: AEAD → enc[-dh]; CBC → enc-hash[-dh].
+// opnESPProposal validates a phase-2 proposal. The PFS-ON forms are the cross
+// product (AEAD → enc-dh; CBC → enc-hash-dh). The PFS-OFF (no-DH) forms are NOT
+// the full cross product: OPNsense's IPsecProposalField phase-2 loop always
+// appends a DH group, so the ONLY device-accepted bare proposals are the four
+// curated no-PFS entries — bare `aes256gcm16`, `chacha20poly1305`, `aes256-sha1`,
+// `aes256-sha256`. A render that emits any other bare token (e.g. `aes128gcm16`
+// or `aes256-sha384` when PFS is disabled) is rejected by the device, so the spec
+// must reject it too or the harness would false-pass the fwm-t3 bug class.
+var opnBareESP = set("aes256gcm16", "chacha20poly1305", "aes256-sha1", "aes256-sha256")
+
 func opnESPProposal(s string) (bool, string) {
 	parts := strings.Split(s, "-")
 	if len(parts) == 0 || !opnEnc[parts[0]] {
 		return false, "unknown cipher"
 	}
+	noPFS := "no-PFS proposal " + s + " is not device-accepted — only aes256gcm16/chacha20poly1305/aes256-sha1/aes256-sha256 are valid without a DH group"
 	if opnIsAEAD(parts[0]) {
-		if len(parts) > 2 {
+		switch len(parts) {
+		case 1: // PFS off
+			if opnBareESP[s] {
+				return true, ""
+			}
+			return false, noPFS
+		case 2: // PFS on: enc-dh
+			if !opnDH[parts[1]] {
+				return false, "unknown DH group " + parts[1]
+			}
+			return true, ""
+		default:
 			return false, "AEAD ESP proposal is enc[-dh]"
 		}
-		if len(parts) == 2 && !opnDH[parts[1]] {
-			return false, "unknown DH group " + parts[1]
+	}
+	switch len(parts) {
+	case 2: // CBC, PFS off: enc-hash
+		if opnBareESP[s] {
+			return true, ""
+		}
+		return false, noPFS
+	case 3: // CBC, PFS on: enc-hash-dh
+		if !opnHash[parts[1]] {
+			return false, "unknown hash " + parts[1]
+		}
+		if !opnDH[parts[2]] {
+			return false, "unknown DH group " + parts[2]
 		}
 		return true, ""
+	default:
+		return false, "CBC ESP proposal is enc-hash[-dh]"
 	}
-	if len(parts) < 2 || !opnHash[parts[1]] {
-		return false, "CBC ESP proposal needs a hash term"
-	}
-	if len(parts) == 3 && !opnDH[parts[2]] {
-		return false, "unknown DH group " + parts[2]
-	}
-	if len(parts) > 3 {
-		return false, "too many terms"
-	}
-	return true, ""
 }
 
 func init() {
@@ -89,16 +116,19 @@ func init() {
 			"connections/addChild": {
 				"enabled":       {kind: bool01},
 				"policies":      {kind: bool01},
+				"mode":          {kind: enumRule, enum: []string{"tunnel", "transport", "pass", "drop"}},
 				"dpd_action":    {kind: enumRule, enum: []string{"clear", "trap", "start"}},
-				"start_action":  {kind: enumRule, enum: []string{"none", "start", "trap"}},
+				"start_action":  {kind: enumRule, enum: []string{"none", "start", "trap", "route", "trap|start"}},
+				"close_action":  {kind: enumRule, enum: []string{"none", "trap", "start"}},
 				"esp_proposals": {kind: proposalESP},
 				"reqid":         {kind: intRange, min: 1, max: 65535},
 				"rekey_time":    {kind: intRange, min: 0, max: 500000},
 				"local_ts":      {kind: addressList},
 				"remote_ts":     {kind: addressList},
 			},
-			"connections/addLocal":  {"enabled": {kind: bool01}, "round": {kind: intRange, min: 0, max: 10}},
-			"connections/addRemote": {"enabled": {kind: bool01}, "round": {kind: intRange, min: 0, max: 10}},
+			// local/remote auth OptionValues from the Swanctl.xml model.
+			"connections/addLocal":  {"enabled": {kind: bool01}, "round": {kind: intRange, min: 0, max: 10}, "auth": {kind: enumRule, enum: opnAuth}},
+			"connections/addRemote": {"enabled": {kind: bool01}, "round": {kind: intRange, min: 0, max: 10}, "auth": {kind: enumRule, enum: opnAuth}},
 			"pre_shared_keys/addItem": {
 				"keyType": {kind: enumRule, enum: []string{"PSK", "EAP"}},
 			},

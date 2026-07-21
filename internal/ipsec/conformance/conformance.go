@@ -36,6 +36,7 @@ type ruleKind int
 const (
 	free          ruleKind = iota // unchecked (not used directly; omit the field instead)
 	enumRule                      // value ∈ Enum
+	spaceEnum                     // whitespace-separated list; every token ∈ Enum (FortiOS multi-value)
 	enableDisable                 // "enable" | "disable" (FortiOS booleans)
 	bool01                        // "0" | "1" (OPNsense stringified booleans)
 	intRange                      // integer in [Min, Max]
@@ -161,6 +162,12 @@ func (s *vendorSpec) checkValue(path, name, val string, rule fieldRule) (Finding
 	case enumRule:
 		if !contains(rule.enum, val) {
 			return mk("not in allowed set " + strings.Join(rule.enum, "|"))
+		}
+	case spaceEnum:
+		for _, tok := range strings.Fields(val) {
+			if !contains(rule.enum, tok) {
+				return mk("token " + tok + " not in allowed set " + strings.Join(rule.enum, "|"))
+			}
 		}
 	case enableDisable:
 		if val != "enable" && val != "disable" {

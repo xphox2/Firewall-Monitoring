@@ -10,6 +10,7 @@ All notable changes to this project are documented in this file.
 - **Per-vendor spec** (`conformance/{fortigate,opnsense}.go`) declares controlled-vocabulary field rules: enums (`dpd_action`, `unique`, `ike-version`, …), enable/disable + 0/1 booleans, integer ranges (rekey/keylife/DPD), address fields that reject `%any`, and the per-vendor proposal grammar (OPNsense bare-hash 3-part `enc-sha-dh`; FortiOS 2-part `enc-prfsha*` with separate `dhgrp`). OPNsense proposal token sets mirror the box's own `IPsecProposalField` generator.
 - **Full-matrix test** renders every crypto combination each vendor advertises in `Capabilities()` (288 per vendor — not just the 2 presets) and asserts zero conformance findings; a negative test proves the harness catches the three fwm-t3 bugs.
 - **Server pre-dispatch guard** (`handlers_ipsec.go`): a deploy whose render fails conformance is refused with the offending fields before any command is enqueued — a non-conformant render never reaches a device.
+- Specs hardened against the live OPNsense 26.1 models via adversarial review: the OPNsense ESP grammar now rejects device-invalid **no-PFS** bare proposals (only `aes256gcm16`/`chacha20poly1305`/`aes256-sha1`/`aes256-sha256` are accepted without a DH group — a reachable false-pass otherwise), and `start_action`/`close_action`/`mode`/`auth` enums and FortiGate `system/interface` `allowaccess` were added to close coverage gaps.
 
 
 
