@@ -953,7 +953,13 @@ func (h *Handler) GetIPSecDeployResult(c *gin.Context) {
 				_ = db.TransitionIPSecDeploy(id, []string{ipsecStatusRollingBack}, status, msg, m.DeployJSON, false, nil) // keep record for retry / reset
 			} else {
 				status = ipsecStatusRolledBack
-				_ = db.TransitionIPSecDeploy(id, []string{ipsecStatusRollingBack}, status, "", "", false, nil) // clear record
+				// Preserve WHY we rolled back. The deploy→rolling_back transition
+				// already stored the deploy-failure reason in last_error; carry it
+				// forward (the deploy_json record is still cleared) so the operator
+				// isn't left with a bare "rolled_back" and no cause.
+				reason := "rolled back — " + firstNonEmpty(m.LastError, "deploy failed")
+				log.Printf("ipsec-deploy: tunnel %d auto-rolled-back cleanly: %s", id, reason)
+				_ = db.TransitionIPSecDeploy(id, []string{ipsecStatusRollingBack}, status, reason, "", false, nil)
 			}
 		}
 		c.JSON(http.StatusOK, response.Success(gin.H{"tunnel_id": m.ID, "status": status, "op": "rollback", "auto": st.Rollback.Auto}))

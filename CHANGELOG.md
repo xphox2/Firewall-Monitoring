@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.135] - 2026-07-21
+
+### Fixed — IPSec OPNsense: valid IKE proposal + address tokens, and a preserved rollback reason
+
+A live FortiGate↔OPNsense deploy (fwm-t3) rolled back with an empty reason. Verified against the OPNsense 26.1 box's own model validators (`IPsecProposalField`, `IKEAddressField`): the FortiGate end applied cleanly but the OPNsense end's first write — `addConnection` — was rejected (HTTP 200, `result=failed`), so the tunnel auto-rolled-back correctly but silently.
+
+- **IKE proposal format** (`internal/ipsec/vendors/opnsense/opnsense.go`): the render emitted strongSwan-style `aes256gcm16-prfsha384-ecp384`, but OPNsense's `IPsecProposalField` allow-list accepts only a 3-part `enc-<hash>-dh` token with a **bare** `sha256/384/512` (no `prf` prefix; the non-GCM path also wrongly emitted a 4-part `enc-integ-prf-dh`). Now renders `aes256gcm16-sha384-ecp384`. The operator's crypto choice (aes256gcm16 / prfsha384 / DH20) is unchanged — only the token spelling OPNsense requires. `templateVersion` bumped to `opnsense-swanctl-v2`.
+- **Dynamic address token**: a dynamic end rendered `local_addrs = %any`, which `IKEAddressField` rejects (validates each entry as IP/subnet/hostname). Now left empty (strongSwan treats empty as `%any`).
+- **Preserved rollback reason** (`internal/api/handlers/handlers_ipsec.go`): the clean `rolled_back` transition overwrote `last_error` with `""`, discarding the deploy-failure reason already stored on the row. It now carries the reason forward (`rolled back — <reason>`) and logs it, so an auto-rollback is no longer a bare status with no cause.
+
 ## [0.11.134] - 2026-07-20
 
 ### Fixed — IPSec OPNsense render: correct route-based VTI API (live-gate fix)
