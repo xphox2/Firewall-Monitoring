@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.136] - 2026-07-21
+
+### Added — IPSec render conformance harness (prevents the fwm-t3 value-bug class)
+
+`fwm-t3` failed because the OPNsense render emitted value-level tokens the device rejects (`prfsha384` vs `sha384`, `%any` vs empty, `dpd_action=restart` vs `start`) — caught only by a live write that died at step 1 and masked the rest. New `internal/ipsec/conformance/` package validates every rendered write value against each vendor's accepted vocabulary, offline (Phase 1 of a 3-part harness).
+
+- **Per-vendor spec** (`conformance/{fortigate,opnsense}.go`) declares controlled-vocabulary field rules: enums (`dpd_action`, `unique`, `ike-version`, …), enable/disable + 0/1 booleans, integer ranges (rekey/keylife/DPD), address fields that reject `%any`, and the per-vendor proposal grammar (OPNsense bare-hash 3-part `enc-sha-dh`; FortiOS 2-part `enc-prfsha*` with separate `dhgrp`). OPNsense proposal token sets mirror the box's own `IPsecProposalField` generator.
+- **Full-matrix test** renders every crypto combination each vendor advertises in `Capabilities()` (288 per vendor — not just the 2 presets) and asserts zero conformance findings; a negative test proves the harness catches the three fwm-t3 bugs.
+- **Server pre-dispatch guard** (`handlers_ipsec.go`): a deploy whose render fails conformance is refused with the offending fields before any command is enqueued — a non-conformant render never reaches a device.
+
+
+
 ## [0.11.135] - 2026-07-21
 
 ### Fixed — IPSec OPNsense: valid IKE proposal + address tokens, and a preserved rollback reason
