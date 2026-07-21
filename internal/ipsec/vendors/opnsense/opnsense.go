@@ -130,7 +130,9 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 			"rekey_time":    itoa(childLife),
 			"start_action":  startAction(remote.Dynamic),
 			"close_action":  "start",
-			"dpd_action":    "restart",
+			// OPNsense's child dpd_action OptionField accepts only clear/trap/start
+			// — NOT strongSwan's "restart". "start" is OPNsense's re-initiate-on-DPD.
+			"dpd_action": "start",
 		},
 	})
 	// PSK: fields per the OPNsense IPsec.xml model — ident (local id), remote_ident

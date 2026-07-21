@@ -157,6 +157,14 @@ func TestOPNsense_RendersModernProposal(t *testing.T) {
 	if !strings.Contains(all, `"local_addrs":""`) {
 		t.Errorf("opnsense dynamic end should render empty local_addrs; got:\n%s", all)
 	}
+	// The child dpd_action must be an OPNsense OptionField value (clear/trap/start),
+	// never strongSwan's "restart" — which the model rejects with result=failed.
+	if strings.Contains(all, `"dpd_action":"restart"`) {
+		t.Errorf("opnsense child must not send dpd_action=restart; got:\n%s", all)
+	}
+	if !strings.Contains(all, `"dpd_action":"start"`) {
+		t.Errorf("opnsense child should render dpd_action=start; got:\n%s", all)
+	}
 }
 
 func TestResolveProfile_DemotesWhenUnsupported(t *testing.T) {
