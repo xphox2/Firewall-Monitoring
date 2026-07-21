@@ -12,6 +12,10 @@ A live FortiGate↔OPNsense deploy (fwm-t3) rolled back with an empty reason. Ve
 - **Child `dpd_action`**: sent strongSwan's `restart`, but OPNsense's `dpd_action` OptionField accepts only `clear`/`trap`/`start` — the addChild step (which never ran live because addConnection failed first) would have been the next rejection. Now `start` (OPNsense's re-initiate-on-DPD). Found by validating every render step against the live OPNsense 26.1 models.
 - **Preserved rollback reason** (`internal/api/handlers/handlers_ipsec.go`): the clean `rolled_back` transition overwrote `last_error` with `""`, discarding the deploy-failure reason already stored on the row. It now carries the reason forward (`rolled back — <reason>`) and logs it, so an auto-rollback is no longer a bare status with no cause.
 
+### Security
+
+- Bumped `golang.org/x/text` 0.38.0 → 0.39.0 for **GO-2026-5970** (infinite loop on invalid input), which the govulncheck gate flagged as reachable via `internal/database` normalization paths.
+
 ## [0.11.134] - 2026-07-20
 
 ### Fixed — IPSec OPNsense render: correct route-based VTI API (live-gate fix)
