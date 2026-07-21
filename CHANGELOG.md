@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.137] - 2026-07-21
+
+### Fixed — Admin error toasts are now sticky and copyable
+
+Deploy/validation errors surfaced via `AC.showError` auto-dismissed after 5s with no close button and no wrapping — a long IPSec deploy or conformance error flashed and vanished before the operator could read or copy it.
+
+- Error toasts now **persist until dismissed** (an explicit `duration` still wins for callers that want a transient error); success/info toasts keep their 5s auto-dismiss.
+- Every toast gains a **× close** button; errors (and any sticky toast) also get a **Copy** button, and the message text is selectable and wraps with a scroll cap (`max-height:40vh`) so long multi-finding errors are fully readable.
+
 ## [0.11.136] - 2026-07-21
 
 ### Added — IPSec render conformance harness (prevents the fwm-t3 value-bug class)

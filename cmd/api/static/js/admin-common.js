@@ -189,7 +189,11 @@
     }
 
     function showError(msg, duration) {
-        showToast(msg, 'error', duration);
+        // Errors persist until the operator dismisses them (duration 0) and are
+        // copyable — a 5s auto-dismissing toast was unreadable for long deploy/
+        // validation errors (the operator couldn't even select+copy in time).
+        // An explicit duration still wins for callers that want a transient error.
+        showToast(msg, 'error', duration === undefined ? 0 : duration);
     }
 
     function showSuccess(msg, duration) {
@@ -197,12 +201,12 @@
     }
 
     function showToast(msg, type, duration) {
-        duration = duration || 5000;
+        if (duration === undefined || duration === null) duration = 5000;
         var existing = document.querySelector('.toast-container');
         if (existing) existing.remove();
         var container = document.createElement('div');
         container.className = 'toast-container';
-        container.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:9999;';
+        container.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:9999;max-width:min(92vw,640px);';
         // a11y (v0.10.213, bundle B4): toasts are announced to screen readers.
         // Errors are assertive (interrupt); success/warning are polite (queued).
         // role=status + aria-live duplicates intentionally — Safari/iOS VO
@@ -217,18 +221,47 @@
         container.setAttribute('aria-atomic', 'true');
         var toast = document.createElement('div');
         toast.className = 'toast-message ' + (type || 'error');
-        toast.textContent = msg;
-        toast.style.cssText = 'padding:14px 24px;border-radius:8px;font-size:0.9rem;font-weight:500;box-shadow:0 4px 12px rgba(0,0,0,0.3);' +
+        toast.style.cssText = 'display:flex;align-items:flex-start;gap:12px;padding:14px 18px;border-radius:8px;font-size:0.9rem;font-weight:500;box-shadow:0 4px 12px rgba(0,0,0,0.3);' +
             (type === 'success' ? 'background:#3fb950;color:#fff;' : type === 'warning' ? 'background:#d2992a;color:#fff;' : 'background:#f85149;color:#fff;') +
             'animation:toastSlideIn 0.3s ease';
+        // Selectable + wrapping so a long deploy/validation/conformance error can be
+        // read and copied; max-height scrolls rather than running off-screen.
+        var text = document.createElement('span');
+        text.textContent = msg;
+        text.style.cssText = 'flex:1;white-space:pre-wrap;word-break:break-word;max-height:40vh;overflow:auto;user-select:text;-webkit-user-select:text;';
+        toast.appendChild(text);
+        var dismiss = function () {
+            toast.style.opacity = '0';
+            toast.style.transition = 'opacity 0.3s';
+            setTimeout(function () { container.remove(); }, 300);
+        };
+        // Sticky toasts (errors, or any non-auto-dismiss) get Copy + Close so the
+        // operator can capture the message instead of racing an auto-dismiss.
+        if (type === 'error' || duration <= 0) {
+            var copyBtn = document.createElement('button');
+            copyBtn.type = 'button';
+            copyBtn.textContent = 'Copy';
+            copyBtn.setAttribute('aria-label', 'Copy message');
+            copyBtn.style.cssText = 'flex:none;background:rgba(255,255,255,0.2);color:#fff;border:none;border-radius:5px;padding:3px 9px;font-size:0.78rem;font-weight:600;cursor:pointer;';
+            copyBtn.onclick = function () {
+                var done = function () { copyBtn.textContent = 'Copied'; setTimeout(function () { copyBtn.textContent = 'Copy'; }, 1500); };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(msg).then(done).catch(function () {});
+                }
+            };
+            toast.appendChild(copyBtn);
+        }
+        var close = document.createElement('button');
+        close.type = 'button';
+        close.textContent = '×';
+        close.setAttribute('aria-label', 'Dismiss');
+        close.style.cssText = 'flex:none;background:transparent;color:#fff;border:none;font-size:1.25rem;line-height:1;cursor:pointer;padding:0 2px;';
+        close.onclick = dismiss;
+        toast.appendChild(close);
         container.appendChild(toast);
         document.body.appendChild(container);
         if (duration > 0) {
-            setTimeout(function() {
-                toast.style.opacity = '0';
-                toast.style.transition = 'opacity 0.3s';
-                setTimeout(function() { container.remove(); }, 300);
-            }, duration);
+            setTimeout(dismiss, duration);
         }
     }
 
