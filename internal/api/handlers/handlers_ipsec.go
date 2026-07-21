@@ -633,6 +633,11 @@ type ipsecApplyPayload struct {
 	Steps          []ipsec.ApplyStep     `json:"steps"`
 	Checksum       string                `json:"checksum"`
 	CollisionSteps []ipsec.PreflightStep `json:"collision_steps,omitempty"`
+	// ValidationSpec is the vendor's conformance spec (conformance.MarshalSpec),
+	// so the collector re-validates every step's field VALUES before the first
+	// write and aborts with the full findings list — defense-in-depth for the
+	// server-side pre-dispatch guard, and it kills first-step failure masking.
+	ValidationSpec json.RawMessage `json:"validation_spec,omitempty"`
 	// Substitutions resolves <uuid:NAME> tokens for a REMOVE (the UUIDs captured at
 	// apply, stored in the deploy record). Empty for apply (captured live) and for
 	// FortiGate (no tokens).
@@ -822,6 +827,9 @@ func (h *Handler) DeployIPSecTunnel(c *gin.Context) {
 			Steps:          applyArt.Steps,
 			Checksum:       applyArt.Checksum,
 			CollisionSteps: drv.PreflightProbe(view),
+		}
+		if spec, ok := conformance.MarshalSpec(vendor); ok {
+			payload.ValidationSpec = spec
 		}
 		// api_token marshaled intentionally (see payload doc; gosec G117 CI-excluded).
 		buf, merr := json.Marshal(payload)

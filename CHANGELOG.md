@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.139] - 2026-07-21
+
+### Added — IPSec conformance harness Phase 2 (server): ship the spec to the collector
+
+The apply payload now carries the vendor's conformance spec so the collector can re-validate every step's field values before the first write (defense-in-depth for the server pre-dispatch guard; kills first-step failure masking). Server half of Phase 2.
+
+- `conformance.MarshalSpec(vendor)` serializes the per-vendor spec to JSON (field rules as data; proposal grammar as a vendor tag + token sets) — one source of truth, the collector enforces the same vocabulary the server rendered against.
+- `ipsecApplyPayload` gains an optional `validation_spec` field, populated in `DeployIPSecTunnel`. Backward compatible: an older collector ignores it.
+- A cross-repo `ParityCases` list pins the proposal grammar (the only reimplemented logic) so the server (func) and collector (data) evaluators can't drift.
+
 ## [0.11.138] - 2026-07-21
 
 ### Fixed — IPSec deploy failures now require explicit acknowledgement (no auto-skip)
