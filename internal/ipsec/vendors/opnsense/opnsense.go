@@ -4,12 +4,14 @@
 // is visible in the UI, captured by config.xml backup (keeping the mandatory-
 // backup gate honest), and survives configd regeneration.
 //
-// Route-based (VTI): a Virtual Tunnel Interface with a pinned reqid, a child
-// with 0/0 selectors and "Install Policies" OFF, plus a gateway, static route
-// and firewall pass rule (OPNsense drops tunnel traffic without an explicit
-// rule). All objects carry a `fwm-t<ID>` description for search-then-update
-// idempotency and RenderRemove. Fixtures re-pinned to real OPNsense 26.1 output
-// at the PR-A exit gate.
+// Route-based (VTI): an IPsec VTI (/api/ipsec/vti) with a pinned reqid, a child
+// with 0/0 selectors and "Install Policies" OFF; OPNsense auto-creates the
+// routed `ipsec<reqid>` interface on IPsec reconfigure, and a gateway + static
+// route (referencing it) steer the protected subnets. The VTI's `skip_fw` lets
+// tunnel traffic bypass the firewall (so no automation pass-rule is needed —
+// filtering rests on the peer end's policies). All objects carry a `fwm-t<ID>`
+// description; endpoints/fields verified against a live OPNsense 26.1 box + the
+// core API docs/models.
 package opnsense
 
 import (
@@ -38,9 +40,9 @@ func (driver) Capabilities() ipsec.CapabilityDescriptor {
 		PFS:         true,
 		MSSClamp:    true,
 
-		MaxTunnelNameLen:       0, // strongSwan connection names are unbounded
-		RequiresFirewallPolicy: true,
-		AutoObjects:            []string{"vti_interface", "gateway", "static_route", "firewall_rule"},
+		MaxTunnelNameLen:       0,    // strongSwan connection names are unbounded
+		RequiresFirewallPolicy: true, // satisfied via the VTI's skip_fw (not an explicit rule)
+		AutoObjects:            []string{"vti_interface (skip_fw)", "gateway", "static_route"},
 		SelectorModel:          ipsec.SelectorZero,
 		IDTypes:                []ipsec.IDType{ipsec.IDTypeIP, ipsec.IDTypeFQDN, ipsec.IDTypeKeyID},
 		PushTransport:          ipsec.PushREST,
@@ -141,7 +143,12 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 		"tunnel_local": local.InnerIP, "tunnel_remote": remote.InnerIP,
 		"remote": remote.PeerIP, "skip_fw": "1",
 	}
-	if !local.Dynamic {
+	// Set the outer local endpoint whenever we know this end's address. OPNsense
+	// only brings the if_ipsec device up (ifconfig … tunnel <local> <remote>) when
+	// BOTH endpoints are non-empty; omitting local (even for a Dynamic end that has
+	// a known PeerIP) yields a configured-but-dead interface. Dynamic = "the peer
+	// can't dial me", not "I don't know my own address".
+	if local.PeerIP != "" {
 		vtiFields["local"] = local.PeerIP
 	}
 	vti := jsonBody(map[string]any{"vti": vtiFields})
@@ -150,10 +157,13 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 		"gateway": map[string]any{"name": gwName, "descr": desc, "interface": vtiIface, "ipprotocol": "inet", "gateway": remote.InnerIP},
 	})
 
-	// Every create step CaptureAs a token so the collector binds the device-
-	// assigned UUID; child bodies reference <uuid:conn>; RenderRemove deletes by
-	// the same tokens. Children are captured + explicitly deleted (cascade
-	// insurance — we do not trust delConnection to cascade local/remote/child).
+	// Order is load-bearing (verified against OPNsense 26.1 internals): the IPsec
+	// objects + VTI are created, then IPsec is RECONFIGURED — that is what
+	// registers the auto-created `ipsec<reqid>` interface into the config, so the
+	// gateway (validated against existing interfaces) must come AFTER it. Then the
+	// gateway + routes, then the routing/routes applies. Every create step
+	// CaptureAs-binds its device UUID; child bodies reference <uuid:conn>;
+	// RenderRemove deletes by the same tokens (children explicitly, cascade-safe).
 	steps := []ipsec.ApplyStep{
 		apiCap("Create IPsec connection (IKE)", epConnAdd, conn, nameConn),
 		apiCap("Add local auth (PSK identity)", epLocalAdd, localAuth, nameLocal),
@@ -161,12 +171,14 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 		apiCap("Add child SA (0/0 selectors, policies off, pinned reqid)", epChildAdd, child, nameChild),
 		apiCap("Store pre-shared key", epPSKAdd, pskStep, namePSK),
 		apiCap("Create VTI (Virtual Tunnel Interface)", epVTIAdd, vti, nameVTI),
+		// Register ipsec<reqid> BEFORE the gateway that binds to it.
+		api("Apply IPsec configuration (register ipsec"+reqid+")", "POST", epIPsecReconfigure, "{}"),
 		apiCap("Create gateway on ipsec"+reqid, epGWAdd, gw, nameGW),
 	}
 	// A static route per remote subnet via the VTI gateway (referenced BY NAME).
 	// No firewall automation rule is needed — the VTI carries skip_fw.
 	for i, s := range remote.ProtectedSubnets {
-		route := jsonBody(map[string]any{"route": map[string]any{"description": desc, "network": s, "gateway": gwName}})
+		route := jsonBody(map[string]any{"route": map[string]any{"descr": desc, "network": s, "gateway": gwName}})
 		steps = append(steps,
 			apiCap("Static route "+s+" via "+gwName, epRouteAdd, route, nameRoute(i)),
 		)
@@ -181,18 +193,14 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 		peerDesc := desc + "-peer"
 		peerGwName := desc + "-peer-gw"
 		pgw := jsonBody(map[string]any{"gateway": map[string]any{"name": peerGwName, "descr": peerDesc, "interface": local.EgressIface, "ipprotocol": "inet", "gateway": local.Gateway}})
-		proute := jsonBody(map[string]any{"route": map[string]any{"description": peerDesc, "network": remote.PeerIP + "/32", "gateway": peerGwName}})
+		proute := jsonBody(map[string]any{"route": map[string]any{"descr": peerDesc, "network": remote.PeerIP + "/32", "gateway": peerGwName}})
 		steps = append(steps,
 			apiCap("Peer WAN gateway (self-lockout /32 next-hop)", epGWAdd, pgw, nameGWPeer),
 			apiCap("Peer /32 host route via WAN (self-lockout guard)", epRouteAdd, proute, nameRoutePeer),
 		)
 	}
-	// Per-subsystem activation. OPNsense stages object CRUD to config.xml and only
-	// activates on a per-subsystem apply/reconfigure. NOTE: these endpoints are
-	// UNVERIFIED against a live 26.1 box (the C2a render only had ipsec reconfigure)
-	// — confirm/adjust at the live exit gate; the saga machinery does not depend on
-	// which specific applies exist.
-	steps = append(steps, applySteps()...)
+	// Tail: apply gateways then routes (IPsec was already reconfigured above).
+	steps = append(steps, routingApplySteps()...)
 
 	return ipsec.Artifact{
 		Vendor:          "opnsense",
@@ -263,13 +271,20 @@ func (d driver) StatusProbe(v ipsec.RenderView) []ipsec.ProbeStep {
 // footprint — a create failure of a peer object is still caught by writeOK at
 // apply time.
 func (d driver) PreflightProbe(v ipsec.RenderView) []ipsec.PreflightStep {
+	// Collision/verify anchors are the IPsec objects (connection/psk/vti) — these
+	// are created together with the gateway/route, so a pre-existing fwm-t<ID>
+	// connection is the authoritative "already deployed" signal. The gateway and
+	// route searches are DELIBERATELY omitted: `routes/searchroute` loads the
+	// Routes model whose gateway field triggers the configd `interface gateways
+	// list` action, which caches for 20s; priming that (empty of our just-created
+	// gateway) here would make the deploy's own `addroute` validation reject the
+	// gateway. Not probing them keeps that cache cold so `addroute` sees a fresh,
+	// correct list.
 	return []ipsec.PreflightStep{
 		{Check: "auth", Method: "GET", Path: "/api/core/firmware/status"},
 		{Check: "connection", Method: "GET", Path: epConnSearch, ExpectAbsent: true},
 		{Check: "psk", Method: "GET", Path: epPSKSearch, ExpectAbsent: true},
 		{Check: "vti", Method: "GET", Path: epVTISearch, ExpectAbsent: true},
-		{Check: "gateway", Method: "GET", Path: epGWSearch, ExpectAbsent: true},
-		{Check: "route", Method: "GET", Path: epRouteSearch, ExpectAbsent: true},
 	}
 }
 
@@ -333,21 +348,31 @@ const (
 	epGWDel     = "/api/routing/settings/delGateway"
 	epRouteDel  = "/api/routes/routes/delroute"
 
-	epConnSearch  = "/api/ipsec/connections/searchConnection"
-	epPSKSearch   = "/api/ipsec/pre_shared_keys/searchItem"
-	epVTISearch   = "/api/ipsec/vti/search"
-	epGWSearch    = "/api/routing/settings/searchGateway"
-	epRouteSearch = "/api/routes/routes/searchroute"
+	epConnSearch = "/api/ipsec/connections/searchConnection"
+	epPSKSearch  = "/api/ipsec/pre_shared_keys/searchItem"
+	epVTISearch  = "/api/ipsec/vti/search"
+
+	epIPsecReconfigure   = "/api/ipsec/service/reconfigure"
+	epRoutingReconfigure = "/api/routing/settings/reconfigure"
+	epRoutesReconfigure  = "/api/routes/routes/reconfigure"
 )
 
-// applySteps activates staged config per subsystem. Order matters: IPsec first
-// (brings up the SA + the auto-created ipsec<reqid> interface the gateway rides),
-// then gateways, then routes. Endpoints verified on a live 26.1 box.
+// routingApplySteps applies gateways then routes (Render runs the IPsec
+// reconfigure inline, before the gateway, so the ipsec<reqid> interface exists).
+func routingApplySteps() []ipsec.ApplyStep {
+	return []ipsec.ApplyStep{
+		api("Apply gateways", "POST", epRoutingReconfigure, "{}"),
+		api("Apply static routes", "POST", epRoutesReconfigure, "{}"),
+	}
+}
+
+// applySteps applies every subsystem (IPsec → gateways → routes). Used by
+// RenderRemove, where ordering between them doesn't matter for teardown.
 func applySteps() []ipsec.ApplyStep {
 	return []ipsec.ApplyStep{
-		api("Apply IPsec configuration", "POST", "/api/ipsec/service/reconfigure", "{}"),
-		api("Apply gateways", "POST", "/api/routing/settings/reconfigure", "{}"),
-		api("Apply static routes", "POST", "/api/routes/routes/reconfigure", "{}"),
+		api("Apply IPsec configuration", "POST", epIPsecReconfigure, "{}"),
+		api("Apply gateways", "POST", epRoutingReconfigure, "{}"),
+		api("Apply static routes", "POST", epRoutesReconfigure, "{}"),
 	}
 }
 
