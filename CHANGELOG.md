@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.138] - 2026-07-21
+
+### Fixed — IPSec deploy failures now require explicit acknowledgement (no auto-skip)
+
+A failed/rolled-back deploy previously showed its reason only transiently, so an operator couldn't read or copy it before it scrolled past. The deploy modal now pins a **persistent failure banner** on any failure terminal (`error` / `rolled_back` / `rollback_failed`):
+
+- The banner stays on screen until the operator clicks **Acknowledge & Close** — it never auto-dismisses.
+- It aggregates every available reason — the top-level note, each end's `ApplyReport.error`, and each failing step's note (including the collector's OPNsense `validations` detail) — into one selectable, monospace block.
+- A **Copy** button copies the full reason to the clipboard.
+
 ## [0.11.137] - 2026-07-21
 
 ### Fixed — Admin error toasts are now sticky and copyable

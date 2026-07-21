@@ -485,7 +485,17 @@
             'ipsec-rollback': function (el) { startRollback(parseInt(el.dataset.id, 10)); },
             'ipsec-reset': function (el) { resetDeploy(parseInt(el.dataset.id, 10)); },
             'ipsec-progress': function (el) { openDeployModal(parseInt(el.dataset.id, 10), el.dataset.op || 'deploy'); },
-            'ipsec-deploy-close': function () { stopDeployPoll(); AC.closeModal('ipsec-deploy-modal'); loadTunnels(); }
+            'ipsec-deploy-close': function () { stopDeployPoll(); AC.closeModal('ipsec-deploy-modal'); loadTunnels(); },
+            // Explicit acknowledge on a FAILED deploy — the error stays on screen
+            // until the operator clicks this (it never auto-dismisses).
+            'ipsec-deploy-ack': function () { stopDeployPoll(); AC.closeModal('ipsec-deploy-modal'); loadTunnels(); },
+            'ipsec-deploy-copyerr': function () {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(lastDeployErrorText || '').then(function () {
+                        if (AC.showSuccess) AC.showSuccess('Error copied to clipboard.');
+                    }).catch(function () {});
+                }
+            }
         });
         $('ipsec-dev-a').addEventListener('change', onDevicesChosen);
         $('ipsec-dev-b').addEventListener('change', onDevicesChosen);
@@ -832,6 +842,48 @@
         return '<div class="card" style="padding:12px;">' + head + body + '</div>';
     }
 
+    // lastDeployErrorText holds the aggregated failure reason for the Copy button.
+    var lastDeployErrorText = '';
+
+    // deployFailureReason gathers every scrap of "why" from a terminal failure:
+    // the top-level note plus each end's report error and failing-step notes (the
+    // collector's ApplyReport, incl. OPNsense validation detail).
+    function deployFailureReason(data) {
+        var reasons = [];
+        if (data && data.note) reasons.push(data.note);
+        (data && data.ends || []).forEach(function (e) {
+            var lbl = 'End ' + (e.end === 0 ? 'A' : 'B');
+            var r = e.report;
+            if (r && typeof r === 'object') {
+                if (r.error) reasons.push(lbl + ': ' + r.error);
+                (r.steps || []).forEach(function (s) {
+                    if (!s.ok && s.note) reasons.push(lbl + ' · ' + s.op + ' ' + s.path + ': ' + s.note);
+                });
+            } else if (e.raw_result) {
+                reasons.push(lbl + ': ' + e.raw_result);
+            }
+        });
+        return reasons.join('\n');
+    }
+
+    // deployFailureBanner is a persistent, copyable stop-and-read panel shown on a
+    // failed terminal (error / rolled_back / rollback_failed). It NEVER auto-
+    // dismisses — the operator clears it with the explicit Acknowledge button.
+    function deployFailureBanner(data) {
+        var status = (data && data.status) || '';
+        var title = status === 'rolled_back' ? 'Deploy failed — automatically rolled back'
+            : status === 'rollback_failed' ? 'Rollback did not complete — the device may still hold objects'
+                : 'Deploy failed';
+        lastDeployErrorText = deployFailureReason(data) || 'No further detail was reported by the collector.';
+        return '<div class="card" style="padding:14px;border-left:4px solid var(--fwmon-sig-crit);margin-bottom:12px;">' +
+            '<div style="font-weight:700;color:var(--fwmon-sig-crit);margin-bottom:6px;">✕ ' + esc(title) + '</div>' +
+            '<div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:0.5px;color:var(--fwmon-text-faint);margin-bottom:4px;">Reason — stays here until you acknowledge</div>' +
+            '<pre style="white-space:pre-wrap;word-break:break-word;user-select:text;font-family:monospace;font-size:0.8rem;max-height:38vh;overflow:auto;margin:0 0 10px 0;background:var(--fwmon-surface-2,rgba(127,127,127,0.12));padding:10px;border-radius:6px;">' + esc(lastDeployErrorText) + '</pre>' +
+            '<button class="btn sm secondary" data-action="ipsec-deploy-copyerr" type="button">Copy</button> ' +
+            '<button class="btn sm primary" data-action="ipsec-deploy-ack" type="button">Acknowledge &amp; Close</button>' +
+            '</div>';
+    }
+
     function renderDeployBody(id, data, state, op) {
         var status = (data && data.status) || '';
         var line;
@@ -859,7 +911,12 @@
         var endsHtml = ends.length
             ? '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' + ends.map(deployEndCard).join('') + '</div>'
             : '';
-        $('ipsec-deploy-body').innerHTML = collisionGuidance(data) + line + endsHtml;
+        // On a FAILED terminal, pin a persistent, copyable, must-acknowledge banner
+        // at the top so the reason can't scroll/flash by.
+        var failed = !state.polling && !state.exhausted &&
+            (status === 'error' || status === 'rolled_back' || status === 'rollback_failed');
+        var banner = failed ? deployFailureBanner(data) : '';
+        $('ipsec-deploy-body').innerHTML = banner + collisionGuidance(data) + line + endsHtml;
     }
 
     function pollDeploy(id, gen, startMs, op) {
