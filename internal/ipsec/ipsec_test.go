@@ -137,14 +137,33 @@ func TestOPNsense_RendersModernProposal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(art.PreviewText, "aes256gcm16-prfsha384-ecp384") {
+	// OPNsense's IPsecProposalField accepts only the bare-hash 3-part IKE token
+	// (aes256gcm16-sha384-ecp384) — NOT strongSwan's "prfsha384" form, which the
+	// model rejects with result=failed.
+	if !strings.Contains(art.PreviewText, "aes256gcm16-sha384-ecp384") {
 		t.Errorf("opnsense preview missing modern IKE proposal; got:\n%s", art.PreviewText)
 	}
-	// End B is the initiator (start_action=start, %any local not needed) — but it
-	// dials a static peer A, so its remote_addrs is A's public IP.
 	all := allBodies(art)
+	// End B is the initiator but it dials a static peer A, so its remote_addrs is
+	// A's public IP.
 	if !strings.Contains(all, "66.179.9.155") {
 		t.Errorf("opnsense render should dial peer A's public IP")
+	}
+	// This end (B) is dynamic → local_addrs must be EMPTY, never the literal
+	// "%any" (IKEAddressField rejects %any). Guards the addConnection regression.
+	if strings.Contains(all, "%any") || strings.Contains(art.PreviewText, "%any") {
+		t.Errorf("opnsense render must not emit %%any for a dynamic end; got:\n%s", all)
+	}
+	if !strings.Contains(all, `"local_addrs":""`) {
+		t.Errorf("opnsense dynamic end should render empty local_addrs; got:\n%s", all)
+	}
+	// The child dpd_action must be an OPNsense OptionField value (clear/trap/start),
+	// never strongSwan's "restart" — which the model rejects with result=failed.
+	if strings.Contains(all, `"dpd_action":"restart"`) {
+		t.Errorf("opnsense child must not send dpd_action=restart; got:\n%s", all)
+	}
+	if !strings.Contains(all, `"dpd_action":"start"`) {
+		t.Errorf("opnsense child should render dpd_action=start; got:\n%s", all)
 	}
 }
 

@@ -22,7 +22,7 @@ import (
 	"firewall-mon/internal/ipsec"
 )
 
-const templateVersion = "opnsense-swanctl-v1"
+const templateVersion = "opnsense-swanctl-v2"
 
 type driver struct{}
 
@@ -75,13 +75,17 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 	if ikeLife <= 0 {
 		ikeLife = 86400
 	}
+	// A dynamic end has no reachable static address. OPNsense's IKEAddressField
+	// validates each entry as an IP/subnet/hostname and REJECTS the literal
+	// "%any"; the field is not Required, so leave it EMPTY — strongSwan treats an
+	// empty local/remote_addrs as %any.
 	localAddr := local.PeerIP
 	if local.Dynamic {
-		localAddr = "%any"
+		localAddr = ""
 	}
 	remoteAddr := remote.PeerIP
 	if remote.Dynamic {
-		remoteAddr = "%any"
+		remoteAddr = ""
 	}
 
 	// One connection with local/remote auth + a child. Route-based ⇒ 0/0
@@ -126,7 +130,9 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 			"rekey_time":    itoa(childLife),
 			"start_action":  startAction(remote.Dynamic),
 			"close_action":  "start",
-			"dpd_action":    "restart",
+			// OPNsense's child dpd_action OptionField accepts only clear/trap/start
+			// — NOT strongSwan's "restart". "start" is OPNsense's re-initiate-on-DPD.
+			"dpd_action": "start",
 		},
 	})
 	// PSK: fields per the OPNsense IPsec.xml model — ident (local id), remote_ident
@@ -443,7 +449,12 @@ func startAction(remoteDynamic bool) string {
 }
 
 // ikeProposal / espProposal map neutral tokens to strongSwan proposal strings
-// (e.g. aes256gcm16-prfsha384-ecp384, aes256gcm16-ecp384).
+// (e.g. aes256gcm16-sha384-ecp384, aes256gcm16-ecp384).
+//
+// OPNsense's IPsecProposalField accepts ONLY a 3-part enc-<hash>-dh IKE token
+// whose middle term is a BARE sha256/384/512 — never strongSwan's "prf" prefix,
+// and never a separate integ+prf pair. For AEAD/GCM ciphers that middle hash is
+// the PRF; for CBC it is the integrity algorithm.
 func ikeProposal(p ipsec.IKEProposal) (string, error) {
 	enc, err := encToken(p.Enc)
 	if err != nil {
@@ -453,22 +464,16 @@ func ikeProposal(p ipsec.IKEProposal) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	var hash string
 	if isGCM(p.Enc) {
-		prf, err := prfToken(p.PRF)
-		if err != nil {
-			return "", err
-		}
-		return strings.Join([]string{enc, prf, dh}, "-"), nil
+		hash, err = prfToken(p.PRF)
+	} else {
+		hash, err = integToken(p.Integ)
 	}
-	integ, err := integToken(p.Integ)
 	if err != nil {
 		return "", err
 	}
-	prf, err := prfToken(p.PRF)
-	if err != nil {
-		return "", err
-	}
-	return strings.Join([]string{enc, integ, prf, dh}, "-"), nil
+	return strings.Join([]string{enc, hash, dh}, "-"), nil
 }
 
 func espProposal(p ipsec.ESPProposal) (string, error) {
@@ -528,14 +533,17 @@ func integToken(i ipsec.Integrity) (string, error) {
 	return "", fmt.Errorf("opnsense: unsupported integrity %q", i)
 }
 
+// prfToken maps a PRF to OPNsense's BARE hash token (sha256/384/512). OPNsense's
+// proposal allow-list has no "prf"-prefixed variants — the middle term of an
+// AEAD IKE proposal (e.g. aes256gcm16-sha384-ecp384) IS the PRF, written bare.
 func prfToken(p ipsec.PRF) (string, error) {
 	switch p {
 	case ipsec.PRFSHA512:
-		return "prfsha512", nil
+		return "sha512", nil
 	case ipsec.PRFSHA384:
-		return "prfsha384", nil
+		return "sha384", nil
 	case ipsec.PRFSHA256:
-		return "prfsha256", nil
+		return "sha256", nil
 	}
 	return "", fmt.Errorf("opnsense: unsupported prf %q", p)
 }
