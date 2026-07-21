@@ -15,6 +15,7 @@ import (
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/ipsec"
+	"firewall-mon/internal/ipsec/conformance"
 	_ "firewall-mon/internal/ipsec/vendors" // register fortigate + opnsense drivers
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/netclass"
@@ -781,6 +782,20 @@ func (h *Handler) DeployIPSecTunnel(c *gin.Context) {
 		applyArt, rerr := drv.Render(view)
 		if rerr != nil {
 			c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("end %c (%s): render failed: %v", 'A'+i, vendor, rerr)))
+			return
+		}
+		// Pre-dispatch conformance guard: refuse to send a render whose field VALUES
+		// this vendor's device would reject (the fwm-t3 class). A non-conformant
+		// render never reaches a device — the operator gets the offending fields up
+		// front instead of a silent rollback.
+		if findings := conformance.Validate(vendor, applyArt.Steps); len(findings) > 0 {
+			msgs := make([]string, 0, len(findings))
+			for _, f := range findings {
+				msgs = append(msgs, f.String())
+			}
+			c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf(
+				"end %c (%s): render failed conformance (%d issue(s)): %s",
+				'A'+i, vendor, len(findings), strings.Join(msgs, "; "))))
 			return
 		}
 		removeArt, rrerr := drv.RenderRemove(view)
