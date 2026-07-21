@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.134] - 2026-07-20
+
+### Fixed — IPSec OPNsense render: correct route-based VTI API (live-gate fix)
+
+The C2b-2a OPNsense render used endpoints/fields that don't exist on a real OPNsense 26.1 box (it was never run live). Verified every endpoint against the box + the OPNsense core API docs/models and corrected the route-based (VTI) render:
+
+- **VTI**: was `/api/interfaces/vti_settings/{addItem,delItem,searchItem}` (404 — no such controller) → now the real `/api/ipsec/vti/{add, del/$uuid, search}`. VTI body corrected to the `Swanctl.xml` schema: `reqid` (links the child SA), `local`/`remote` (WAN endpoints), `tunnel_local`/`tunnel_remote` (inner addresses), `skip_fw`. This was the cause of the operator's "collision check inconclusive" (the `vti` search 404'd → indeterminate → apply aborted).
+- **Routed interface**: OPNsense auto-creates `ipsec<reqid>` from the VTI — the gateway now binds to that (deterministic, no read-back), far-end = the remote inner IP; static routes reference the gateway by name. Firewall-automation rules were dropped in favor of the VTI's `skip_fw` (no rule against an unassigned interface).
+- **Gateway** fields corrected to the `Gateways.xml` model (`name`/`descr`/`interface`/`ipprotocol`/`gateway`).
+- **PSK** fields corrected to the `IPsec.xml` model (`ident`/`remote_ident`/`keyType`/`Key`).
+- **IPsec apply**: `ipsec/connections/reconfigure` (404) → `ipsec/service/reconfigure`; per-subsystem applies (ipsec → gateways → routes) in dependency order.
+
+Collector unchanged — the capture/substitute engine executes whatever the server renders. FortiGate render untouched.
+
 ## [0.11.133] - 2026-07-20
 
 ### Added — IPSec deploy saga: OPNsense apply, two-end deploy, auto-rollback (C2b-2a)
