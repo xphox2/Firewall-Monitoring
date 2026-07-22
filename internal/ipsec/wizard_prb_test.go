@@ -71,8 +71,10 @@ func TestOPNsense_RekeyAndReqidFromIntent_PRB(t *testing.T) {
 	if !stepsContain(art.Steps, `"rekey_time":"28800"`) {
 		t.Fatal("connection rekey_time should reflect the intent's IKE lifetime")
 	}
-	if !stepsContain(art.Steps, `"reqid":"7"`) {
-		t.Fatal("child reqid should be pinned from the intent, not auto (0)")
+	// Policy-based children carry NO reqid (strongSwan allocates one; reqid only
+	// links a route-based VTI). Assert it's absent rather than pinned.
+	if stepsContain(art.Steps, `"reqid"`) {
+		t.Fatal("policy-based child must not carry a reqid")
 	}
 
 	in.IKELifetimeSecs = 0

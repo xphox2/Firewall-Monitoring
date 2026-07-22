@@ -19,7 +19,7 @@ import (
 func validPreviewIntent(psk string) ipsec.TunnelIntent {
 	m, _ := ipsec.PresetByName(ipsec.ProfileModern)
 	return ipsec.TunnelIntent{
-		Enabled: true, IKEVersion: m.IKEVersion, Mode: ipsec.ModeRouteBased,
+		Enabled: true, IKEVersion: m.IKEVersion, Mode: ipsec.ModePolicyBased, // FG⇄OPNsense ⇒ policy-based
 		IKE: m.IKE, ESP: m.ESP, IKELifetimeSecs: m.IKELifetimeSecs,
 		DPD: ipsec.DPD{DelaySecs: 30}, PSK: psk,
 		Ends: [2]ipsec.EndpointSpec{

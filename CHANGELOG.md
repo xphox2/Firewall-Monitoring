@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.141] - 2026-07-21
+
+### Added — Selectable IPSec tunnel mode (route-based / policy-based); OPNsense now fully deployable
+
+`fwm-t3` (FortiGate↔OPNsense) couldn't deploy: OPNsense route-based needs a gateway bound to an *assigned* interface, and OPNsense 26.1 has **no REST API to assign an interface** (verified on the live box). Policy-based avoids the VTI/gateway/interface entirely, so it's the automatable path.
+
+- **Per-tunnel `Mode`** is now an operator choice in the wizard (a "Tunnel mode" select, populated from the negotiated `caps.allowed.modes`; locked when only one mode is valid). FortiGate advertises **both** route-based and policy-based; OPNsense advertises **policy-based only** — so mode negotiation (`Intersect`) auto-resolves any FortiGate↔OPNsense tunnel to policy-based.
+- **OPNsense policy-based render** (`vendors/opnsense/opnsense.go`): child `policies=1` with the protected subnets as `local_ts`/`remote_ts` (kernel SPD install), no `reqid`; steps = connection/local/remote/child/PSK/reconfigure. Drops the VTI, gateway, static route, peer-`/32`, and interface assignment. Verified against the live `Swanctl.xml` model. (Decrypted traffic surfaces on the IPsec/`enc0` interface and is not auto-passed — a firewall rule may be needed for data-plane traffic, not for the tunnel to come up.)
+- **FortiGate policy-based render** (`vendors/fortigate/fortigate.go`): keeps the VTI + routes but narrows phase-2 to the SPECIFIC selectors (FortiOS 7.6 removed the legacy no-VTI `action=ipsec` mode), with one phase2-interface per (local×remote) subnet pair; `RenderRemove`/`PreflightProbe` enumerate the same pairs.
+- **Validation**: policy-based requires protected subnets on both ends (they are the selectors); the VTI-transit-subnet requirement stays gated to route-based.
+- **Conformance harness** exercises both modes across the full crypto matrix (FortiGate 576 / OPNsense 288 combos, all conformant).
+
 ## [0.11.140] - 2026-07-21
 
 ### Fixed — IPSec rollback banner now shows the ACTUAL failure reason (not "No further detail")

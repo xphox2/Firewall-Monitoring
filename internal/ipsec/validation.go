@@ -166,6 +166,17 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 		add(SeverityBlock, "vti_missing", "a route-based tunnel needs a VTI transit subnet")
 	}
 
+	// --- policy-based: the protected subnets ARE the traffic selectors, so each
+	// end must declare at least one (empty selectors = no tunneled traffic).
+	if intent.Mode == ModePolicyBased {
+		for i := range intent.Ends {
+			if len(intent.Ends[i].ProtectedSubnets) == 0 {
+				add(SeverityBlock, "selectors_missing",
+					fmt.Sprintf("%s: a policy-based tunnel needs at least one protected subnet (it is the traffic selector)", endLabel(intent, i)))
+			}
+		}
+	}
+
 	// --- protected-subnet linters (overlap + self-lockout).
 	fs = append(fs, validateSubnets(intent)...)
 

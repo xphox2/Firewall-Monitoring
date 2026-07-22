@@ -100,17 +100,10 @@ func TestPeerRoute_ConditionalBothVendors(t *testing.T) {
 		t.Error("fortigate: no gateway ⇒ no peer /32")
 	}
 
-	// OPNsense end (self=1): remote (end 0) subnet contains end 0's peer IP; end 1 gateway set.
-	opn := canonicalIntent()
-	opn.Ends[0].ProtectedSubnets = []string{"66.179.9.0/24"} // contains 66.179.9.155
-	opn.Ends[1].Gateway = "192.168.5.1"
-	oart := render(t, "opnsense", 1, opn)
-	if !strings.Contains(stepsText(oart), "66.179.9.155/32") || !strings.Contains(stepsText(oart), "192.168.5.1") {
-		t.Errorf("opnsense: expected peer /32 route + WAN gateway; got:\n%s", stepsText(oart))
-	}
-	if !strings.Contains(stepsText(oart), "-peer") {
-		t.Error("opnsense: peer objects should be tagged desc-peer")
-	}
+	// OPNsense is policy-based only (no VTI/gateway/route), so the self-lockout peer
+	// /32 route does not apply — strongSwan's kernel policies never route the peer's
+	// own WAN into the tunnel. The peer-route guard is a FortiGate (route-based)
+	// concern; the FortiGate assertions above cover it.
 }
 
 // TestValidate_TooManySubnetsBlocks pins the deterministic-key cap: >Max

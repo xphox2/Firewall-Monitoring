@@ -33,8 +33,13 @@ func createTunnelRow(t *testing.T, db *database.Database, vA, vB string, devA, d
 		subs = append(subs, "10."+strconv.Itoa(i)+".0.0/24")
 	}
 	m, _ := ipsec.PresetByName(ipsec.ProfileModern)
+	// OPNsense supports policy-based only; FortiGate⇄FortiGate can be route-based.
+	mode := ipsec.ModeRouteBased
+	if vA == "opnsense" || vB == "opnsense" {
+		mode = ipsec.ModePolicyBased
+	}
 	in := &ipsec.TunnelIntent{
-		Enabled: true, IKEVersion: m.IKEVersion, Mode: ipsec.ModeRouteBased,
+		Enabled: true, IKEVersion: m.IKEVersion, Mode: mode,
 		IKE: m.IKE, ESP: m.ESP, IKELifetimeSecs: m.IKELifetimeSecs, DPD: ipsec.DPD{DelaySecs: 30},
 		PSK: "abcDEF012345678901234567890XYZ",
 		Ends: [2]ipsec.EndpointSpec{

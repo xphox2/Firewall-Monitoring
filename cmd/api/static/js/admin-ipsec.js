@@ -318,8 +318,19 @@
         $(id).innerHTML = (arr || []).map(function (v) { return '<option value="' + esc(v) + '">' + esc(fmt ? fmt(v) : v) + '</option>'; }).join('');
     }
 
+    function modeLabel(v) {
+        return v === 'policy-based' ? 'Policy-based (specific selectors — no VTI)' : 'Route-based (VTI + routes)';
+    }
+
     function populateCustom() {
         var a = caps.allowed;
+        // Tunnel mode is negotiated: only modes BOTH ends support are offered. When
+        // just one is available (e.g. FortiGate↔OPNsense → policy-based), lock it.
+        fillSel('ipsec-mode', a.modes, modeLabel);
+        $('ipsec-mode').disabled = (a.modes || []).length <= 1;
+        $('ipsec-mode-note').textContent = (a.modes || []).length <= 1
+            ? 'This vendor pair supports ' + modeLabel(a.modes[0]).toLowerCase() + ' only.'
+            : '';
         fillSel('ipsec-ikever', a.ike_versions);
         fillSel('ipsec-enc', a.encryption);
         fillSel('ipsec-integ', [''].concat(a.integrity || []), function (v) { return v || '(none — required off for GCM)'; });
@@ -374,7 +385,7 @@
         else { lifeB = childLife * 2; } // A initiates, both static, or both dynamic → B longer
         return {
             id: parseInt($('ipsec-edit-id').value, 10) || 0,
-            enabled: true, ike_version: ikever, mode: 'route-based',
+            enabled: true, ike_version: ikever, mode: ($('ipsec-mode') && $('ipsec-mode').value) || 'route-based',
             ike: ike, esp: esp, ike_lifetime_secs: ikeLife,
             dpd: { delay_secs: 30, timeout_secs: 0 },
             psk: $('ipsec-psk').value, // blank = auto-generate on save
@@ -528,6 +539,7 @@
                 if (r.checked) r.dispatchEvent(new Event('change'));
             });
         }
+        if ($('ipsec-mode') && t.mode) $('ipsec-mode').value = t.mode; // mode is orthogonal to the crypto profile
         if (match) {
             pick(match.name);
         } else {
