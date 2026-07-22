@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.140] - 2026-07-21
+
+### Fixed — IPSec rollback banner now shows the ACTUAL failure reason (not "No further detail")
+
+The persistent failure banner (v0.11.138) paused correctly but showed "No further detail was reported by the collector" — because the real apply error (e.g. `addGateway` rejected) only exists on the `rolling_back` poll frame; once terminal `rolled_back`, the per-end reports flip to the (successful) *remove* results and the reason is gone.
+
+- **Frontend** (`admin-ipsec.js`): a module-scope `deployReasonSnapshot` captures the apply-failure detail (report error + each failing step's endpoint, e.g. `apply /api/routing/settings/addGateway`) on every poll (it rides the `rolling_back` frame), and the banner shows it on the terminal frame. Reset per-deploy in `openDeployModal`.
+- **Backend** (`handlers_ipsec.go`): the terminal rollback responses now emit the persisted reason as `note` — both the completion path (hoisted `termReason`; `m.LastError` is stale there) and the reopen/fresh-load fallback (`m.LastError`, correct there) — so a reopened "View progress" also shows the reason. `ipsecApplyReportView` gained a `steps` field so the persisted `last_error` names the failing endpoint, not just a generic message (`applyFailReason`).
+- Verified live (headless Playwright) on both the live-watch and the reopen paths: the banner shows the addGateway error and persists until Acknowledge.
+
 ## [0.11.139] - 2026-07-21
 
 ### Added — IPSec conformance harness Phase 2 (server): ship the spec to the collector

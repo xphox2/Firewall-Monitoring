@@ -969,10 +969,16 @@ func (h *Handler) GetIPSecDeployResult(c *gin.Context) {
 				anyFail, msg = true, firstNonEmpty(msg, cmd.Result, "rollback command failed")
 			}
 		}
+		// termReason is the reason surfaced to the UI on the terminal poll (as
+		// `note`), so the failure banner shows WHY it rolled back instead of "No
+		// further detail". Empty while still rolling back (the ends still carry the
+		// apply error the frontend snapshots).
+		termReason := ""
 		if done >= len(st.Ends) {
 			// One guarded write per terminal (never chain a second setter — F2).
 			if anyFail {
 				status = ipsecStatusRollbackFailed
+				termReason = msg
 				_ = db.TransitionIPSecDeploy(id, []string{ipsecStatusRollingBack}, status, msg, m.DeployJSON, false, nil) // keep record for retry / reset
 			} else {
 				status = ipsecStatusRolledBack
@@ -981,16 +987,20 @@ func (h *Handler) GetIPSecDeployResult(c *gin.Context) {
 				// forward (the deploy_json record is still cleared) so the operator
 				// isn't left with a bare "rolled_back" and no cause.
 				reason := "rolled back — " + firstNonEmpty(m.LastError, "deploy failed")
+				termReason = reason
 				log.Printf("ipsec-deploy: tunnel %d auto-rolled-back cleanly: %s", id, reason)
 				_ = db.TransitionIPSecDeploy(id, []string{ipsecStatusRollingBack}, status, reason, "", false, nil)
 			}
 		}
-		c.JSON(http.StatusOK, response.Success(gin.H{"tunnel_id": m.ID, "status": status, "op": "rollback", "auto": st.Rollback.Auto}))
+		c.JSON(http.StatusOK, response.Success(gin.H{"tunnel_id": m.ID, "status": status, "op": "rollback", "auto": st.Rollback.Auto, "note": termReason}))
 		return
 	}
 
 	if st == nil || len(st.Ends) == 0 {
-		c.JSON(http.StatusOK, response.Success(gin.H{"tunnel_id": m.ID, "status": status, "ends": out}))
+		// Reopen / fresh-load after a terminal transition: the deploy record was
+		// cleared, so there are no ends — surface the persisted last_error as the
+		// reason so the banner isn't blank.
+		c.JSON(http.StatusOK, response.Success(gin.H{"tunnel_id": m.ID, "status": status, "ends": out, "note": m.LastError}))
 		return
 	}
 
@@ -1054,7 +1064,7 @@ func (h *Handler) GetIPSecDeployResult(c *gin.Context) {
 				anyGood, allAbortedPreWrite = true, false
 			} else {
 				anyBad = true
-				failMsg = firstNonEmpty(failMsg, rv.Error, "apply did not complete")
+				failMsg = firstNonEmpty(failMsg, applyFailReason(rv), "apply did not complete")
 				if !rv.Aborted { // applied-but-unverified / partial write ⇒ something was written
 					allAbortedPreWrite = false
 				}
@@ -1134,13 +1144,46 @@ func (h *Handler) GetIPSecDeployResult(c *gin.Context) {
 // ipsecApplyReportView is the minimal shape of the collector's ApplyReport the
 // server needs to decide per-end success. It carries no secrets.
 type ipsecApplyReportView struct {
-	Applied       bool              `json:"applied"`
-	Verified      bool              `json:"verified"`
-	Aborted       bool              `json:"aborted"`
-	Conflict      bool              `json:"conflict"`
-	Collisions    []string          `json:"collisions"`
-	Error         string            `json:"error"`
-	CapturedUUIDs map[string]string `json:"captured_uuids"`
+	Applied       bool                 `json:"applied"`
+	Verified      bool                 `json:"verified"`
+	Aborted       bool                 `json:"aborted"`
+	Conflict      bool                 `json:"conflict"`
+	Collisions    []string             `json:"collisions"`
+	Error         string               `json:"error"`
+	CapturedUUIDs map[string]string    `json:"captured_uuids"`
+	Steps         []ipsecApplyStepView `json:"steps"`
+}
+
+type ipsecApplyStepView struct {
+	Op   string `json:"op"`
+	Path string `json:"path"`
+	Note string `json:"note"`
+	OK   bool   `json:"ok"`
+}
+
+// applyFailReason builds the deploy-failure reason from a report: the top-level
+// error plus the FIRST failing step's endpoint (e.g. addGateway), so the
+// persisted last_error names WHICH write the device rejected instead of only a
+// generic message. Older collectors that omit `steps` degrade to just the error.
+func applyFailReason(rv ipsecApplyReportView) string {
+	var step string
+	for _, s := range rv.Steps {
+		if !s.OK {
+			step = strings.TrimSpace(s.Op + " " + s.Path)
+			if s.Note != "" {
+				step = strings.TrimSpace(step + " — " + s.Note)
+			}
+			break
+		}
+	}
+	switch {
+	case rv.Error != "" && step != "":
+		return rv.Error + " [" + step + "]"
+	case step != "":
+		return step
+	default:
+		return rv.Error
+	}
 }
 
 // RollbackIPSecTunnel reverses a deploy from the stored per-end remove-steps
