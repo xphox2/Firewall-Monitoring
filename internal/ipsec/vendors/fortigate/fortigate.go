@@ -32,13 +32,17 @@ func (driver) Capabilities() ipsec.CapabilityDescriptor {
 	return ipsec.CapabilityDescriptor{
 		Vendor:      "fortigate",
 		IKEVersions: []ipsec.IKEVersion{ipsec.IKEv2, ipsec.IKEv1},
-		Modes:       []ipsec.Mode{ipsec.ModeRouteBased}, // v1 is route-based only (the driver renders VTI)
-		Encryption:  []ipsec.Encryption{ipsec.EncAES256GCM16, ipsec.EncAES128GCM16, ipsec.EncAES256CBC, ipsec.EncAES128CBC},
-		Integrity:   []ipsec.Integrity{ipsec.IntegritySHA512, ipsec.IntegritySHA384, ipsec.IntegritySHA256},
-		PRF:         []ipsec.PRF{ipsec.PRFSHA512, ipsec.PRFSHA384, ipsec.PRFSHA256},
-		DHGroups:    []ipsec.DHGroup{ipsec.DHGroup21, ipsec.DHGroup20, ipsec.DHGroup19, ipsec.DHGroup16, ipsec.DHGroup15, ipsec.DHGroup14},
-		PFS:         true,
-		MSSClamp:    true,
+		// Both modes: route-based = VTI + 0/0 phase2 selectors; policy-based = the
+		// same VTI but with SPECIFIC phase2 selectors (FortiOS 7.6 removed the legacy
+		// no-VTI action=ipsec mode). Policy-based is what interops with a policy-based
+		// OPNsense peer (matching specific selectors).
+		Modes:      []ipsec.Mode{ipsec.ModeRouteBased, ipsec.ModePolicyBased},
+		Encryption: []ipsec.Encryption{ipsec.EncAES256GCM16, ipsec.EncAES128GCM16, ipsec.EncAES256CBC, ipsec.EncAES128CBC},
+		Integrity:  []ipsec.Integrity{ipsec.IntegritySHA512, ipsec.IntegritySHA384, ipsec.IntegritySHA256},
+		PRF:        []ipsec.PRF{ipsec.PRFSHA512, ipsec.PRFSHA384, ipsec.PRFSHA256},
+		DHGroups:   []ipsec.DHGroup{ipsec.DHGroup21, ipsec.DHGroup20, ipsec.DHGroup19, ipsec.DHGroup16, ipsec.DHGroup15, ipsec.DHGroup14},
+		PFS:        true,
+		MSSClamp:   true,
 
 		MaxTunnelNameLen:       15,
 		RequiresFirewallPolicy: true,
@@ -106,24 +110,32 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 	}
 	p1json := jsonBody(p1body)
 
-	// phase2-interface (0/0 selectors; routing steers traffic).
+	// phase2-interface. Route-based ⇒ one phase2 with 0/0 selectors (routing steers
+	// traffic). Policy-based ⇒ one phase2 per (local×remote) subnet pair with the
+	// SPECIFIC selectors, so TSi/TSr match a policy-based (specific-selector) peer
+	// exactly. The VTI + routes stay either way (FortiOS 7.6 removed no-VTI mode).
 	childLife := local.ChildLifetimeSecs
 	if childLife <= 0 {
 		childLife = 3600
 	}
-	p2body := map[string]any{
-		"name":           name,
-		"phase1name":     name,
-		"proposal":       p2,
-		"keylifeseconds": childLife,
-		"src-subnet":     "0.0.0.0 0.0.0.0",
-		"dst-subnet":     "0.0.0.0 0.0.0.0",
-	}
+	pfsEnable, pfsGrp := "disable", ""
 	if in.ESP.PFS != ipsec.DHGroupNone {
-		p2body["pfs"] = "enable"
-		p2body["dhgrp"] = string(in.ESP.PFS)
-	} else {
-		p2body["pfs"] = "disable"
+		pfsEnable, pfsGrp = "enable", string(in.ESP.PFS)
+	}
+	mkPhase2 := func(mkey, src, dst string) ipsec.ApplyStep {
+		body := map[string]any{
+			"name":           mkey,
+			"phase1name":     name,
+			"proposal":       p2,
+			"keylifeseconds": childLife,
+			"src-subnet":     src,
+			"dst-subnet":     dst,
+			"pfs":            pfsEnable,
+		}
+		if pfsGrp != "" {
+			body["dhgrp"] = pfsGrp
+		}
+		return fgAPI("phase2-interface ("+src+" ↔ "+dst+")", "POST", cmdbPhase2, jsonBody(body))
 	}
 
 	// VTI addressing + MSS clamp — the interface is auto-created by the phase1
@@ -140,9 +152,11 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 
 	steps := []ipsec.ApplyStep{
 		fgAPI("phase1-interface (IKE gateway)", "POST", cmdbPhase1, inject(p1json, in.PSK)),
-		fgAPI("phase2-interface (child SA, 0/0 selectors)", "POST", cmdbPhase2, jsonBody(p2body)),
-		fgAPI("tunnel interface addressing"+mssNote(local.MSSClamp), "PUT", cmdbIface+"/"+name, jsonBody(ifbody)),
 	}
+	for _, p := range fgPhase2Pairs(name, in, local, remote) {
+		steps = append(steps, mkPhase2(p.mkey, p.src, p.dst))
+	}
+	steps = append(steps, fgAPI("tunnel interface addressing"+mssNote(local.MSSClamp), "PUT", cmdbIface+"/"+name, jsonBody(ifbody)))
 	steps = append(steps, routeSteps(in.ID, name, local, remote)...)
 	steps = append(steps, policySteps(in.ID, name, local.LANIface)...)
 
@@ -193,10 +207,12 @@ func (d driver) RenderRemove(v ipsec.RenderView) (ipsec.Artifact, error) {
 	for i := routeCount(local, remote) - 1; i >= 0; i-- {
 		steps = append(steps, fgDelete("delete static route", cmdbRoute+"/"+itoa(ipsec.FGRouteKey(in.ID, i))))
 	}
-	steps = append(steps,
-		fgDelete("delete phase2-interface", cmdbPhase2+"/"+name),
-		fgDelete("delete phase1-interface (reaps the VTI)", cmdbPhase1+"/"+name),
-	)
+	// phase2 objects (reverse of create) before phase1
+	pairs := fgPhase2Pairs(name, in, local, remote)
+	for i := len(pairs) - 1; i >= 0; i-- {
+		steps = append(steps, fgDelete("delete phase2-interface", cmdbPhase2+"/"+pairs[i].mkey))
+	}
+	steps = append(steps, fgDelete("delete phase1-interface (reaps the VTI)", cmdbPhase1+"/"+name))
 
 	preview := make([]string, 0, len(steps))
 	for _, s := range steps {
@@ -228,9 +244,11 @@ func (d driver) PreflightProbe(v ipsec.RenderView) []ipsec.PreflightStep {
 	steps := []ipsec.PreflightStep{
 		{Check: "auth", Method: "GET", Path: "/api/v2/monitor/system/status"},
 		{Check: "phase1", Method: "GET", Path: cmdbPhase1 + "/" + name, ExpectAbsent: true},
-		{Check: "phase2", Method: "GET", Path: cmdbPhase2 + "/" + name, ExpectAbsent: true},
-		{Check: "vti", Method: "GET", Path: cmdbIface + "/" + name, ExpectAbsent: true},
 	}
+	for _, p := range fgPhase2Pairs(name, in, local, remote) {
+		steps = append(steps, ipsec.PreflightStep{Check: "phase2", Method: "GET", Path: cmdbPhase2 + "/" + p.mkey, ExpectAbsent: true})
+	}
+	steps = append(steps, ipsec.PreflightStep{Check: "vti", Method: "GET", Path: cmdbIface + "/" + name, ExpectAbsent: true})
 	// The static-route seq-nums and policy IDs a deploy would create use the same
 	// deterministic keys Render/RenderRemove use, so the collision precheck reads
 	// the EXACT objects and the post-write verify counts them exactly (a test pins
@@ -354,6 +372,33 @@ func routeCount(local, remote *ipsec.EndpointSpec) int {
 		n++
 	}
 	return n
+}
+
+// fgPhase2Pair is one phase2-interface: its cmdb mkey (name) + FortiGate-format
+// selectors. RenderRemove/PreflightProbe enumerate the SAME pairs to stay in sync.
+type fgPhase2Pair struct{ mkey, src, dst string }
+
+// fgPhase2Pairs returns the phase2 objects for the tunnel. Route-based = one 0/0
+// pair keyed by the tunnel name. Policy-based = one pair per (local×remote)
+// protected-subnet, keyed `name` (first) then `name-<k>` — FortiGate holds a
+// single src/dst pair per phase2, so multiple selectors need multiple phase2s.
+func fgPhase2Pairs(name string, in *ipsec.TunnelIntent, local, remote *ipsec.EndpointSpec) []fgPhase2Pair {
+	if in.Mode != ipsec.ModePolicyBased || len(local.ProtectedSubnets) == 0 || len(remote.ProtectedSubnets) == 0 {
+		return []fgPhase2Pair{{name, "0.0.0.0 0.0.0.0", "0.0.0.0 0.0.0.0"}}
+	}
+	var pairs []fgPhase2Pair
+	idx := 0
+	for _, ls := range local.ProtectedSubnets {
+		for _, rs := range remote.ProtectedSubnets {
+			mkey := name
+			if idx > 0 {
+				mkey = fmt.Sprintf("%s-%d", name, idx)
+			}
+			pairs = append(pairs, fgPhase2Pair{mkey, cidrToFGT(ls), cidrToFGT(rs)})
+			idx++
+		}
+	}
+	return pairs
 }
 
 func ikeVer(v ipsec.IKEVersion) string {

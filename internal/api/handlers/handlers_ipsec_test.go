@@ -19,7 +19,7 @@ import (
 func ipsecCreateBody() string {
 	m, _ := ipsec.PresetByName(ipsec.ProfileModern)
 	in := ipsec.TunnelIntent{
-		Enabled: true, IKEVersion: m.IKEVersion, Mode: ipsec.ModeRouteBased,
+		Enabled: true, IKEVersion: m.IKEVersion, Mode: ipsec.ModePolicyBased, // FG⇄OPNsense ⇒ policy-based
 		IKE: m.IKE, ESP: m.ESP, IKELifetimeSecs: m.IKELifetimeSecs,
 		DPD: ipsec.DPD{DelaySecs: 30},
 		Ends: [2]ipsec.EndpointSpec{
@@ -60,8 +60,10 @@ func TestIPSec_CreateGetPreview(t *testing.T) {
 	if created.Intent.PSK != ipsecPSKMask {
 		t.Errorf("create response must mask the PSK, got %q", created.Intent.PSK)
 	}
-	if created.Intent.VTISubnet == "" || created.Intent.Ends[0].InnerIP == "" {
-		t.Errorf("VTI not hydrated: %+v", created.Intent)
+	// Policy-based ⇒ no VTI addressing is hydrated (hydrateDerived gates VTI on
+	// route-based). Confirm it's correctly absent.
+	if created.Intent.VTISubnet != "" || created.Intent.Ends[0].InnerIP != "" {
+		t.Errorf("policy-based intent must not hydrate VTI addressing: %+v", created.Intent)
 	}
 	if ipsec.HasBlock(created.Validation) {
 		t.Errorf("clean intent should have no validation blocks: %+v", created.Validation)

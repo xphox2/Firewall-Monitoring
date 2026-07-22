@@ -13,11 +13,11 @@ import (
 // so we can exercise a vendor's render across its FULL capability matrix. end0 is
 // static, end1 is dynamic — rendering both selves exercises both the static and
 // the dynamic (empty-address) code paths.
-func buildIntent(vendor string, ike ipsec.IKEProposal, esp ipsec.ESPProposal, ver ipsec.IKEVersion) *ipsec.TunnelIntent {
+func buildIntent(vendor string, ike ipsec.IKEProposal, esp ipsec.ESPProposal, ver ipsec.IKEVersion, mode ipsec.Mode) *ipsec.TunnelIntent {
 	_, innerA, innerB := ipsec.AllocateVTI(7)
 	return &ipsec.TunnelIntent{
 		ID: 7, Name: "fwm-t7", Enabled: true,
-		IKEVersion: ver, Mode: ipsec.ModeRouteBased,
+		IKEVersion: ver, Mode: mode,
 		IKE: ike, ESP: esp,
 		IKELifetimeSecs: 86400, DPD: ipsec.DPD{DelaySecs: 30},
 		PSK: "abcDEF012345678901234567890XYZ", VTISubnet: "169.254.1.28/30",
@@ -78,18 +78,20 @@ func TestConformance_FullCapabilityMatrix(t *testing.T) {
 					for _, cr := range variants {
 						ike := ipsec.IKEProposal{Enc: enc, Integ: cr.integ, PRF: cr.prf, DH: dh}
 						esp := ipsec.ESPProposal{Enc: enc, Integ: cr.integ, PFS: dh}
-						intent := buildIntent(vendor, ike, esp, ver)
-						for self := 0; self < 2; self++ {
-							art, err := drv.Render(ipsec.ViewFor(intent, self))
-							if err != nil {
-								t.Fatalf("%s render(self=%d) %v/%v/%v/%v ver=%v: %v",
-									vendor, self, enc, cr.integ, cr.prf, dh, ver, err)
+						for _, mode := range caps.Modes { // exercise every mode the vendor supports
+							intent := buildIntent(vendor, ike, esp, ver, mode)
+							for self := 0; self < 2; self++ {
+								art, err := drv.Render(ipsec.ViewFor(intent, self))
+								if err != nil {
+									t.Fatalf("%s render(self=%d) %v/%v/%v/%v ver=%v mode=%v: %v",
+										vendor, self, enc, cr.integ, cr.prf, dh, ver, mode, err)
+								}
+								if f := conformance.Validate(vendor, art.Steps); len(f) > 0 {
+									t.Errorf("%s NON-CONFORMANT enc=%v integ=%v prf=%v dh=%v ver=%v mode=%v self=%d:\n  %v",
+										vendor, enc, cr.integ, cr.prf, dh, ver, mode, self, findingsStr(f))
+								}
+								combos++
 							}
-							if f := conformance.Validate(vendor, art.Steps); len(f) > 0 {
-								t.Errorf("%s NON-CONFORMANT enc=%v integ=%v prf=%v dh=%v ver=%v self=%d:\n  %v",
-									vendor, enc, cr.integ, cr.prf, dh, ver, self, findingsStr(f))
-							}
-							combos++
 						}
 					}
 				}

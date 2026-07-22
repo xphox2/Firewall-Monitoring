@@ -17,7 +17,7 @@ func canonicalIntent() *ipsec.TunnelIntent {
 	return &ipsec.TunnelIntent{
 		ID: 7, Name: "fwm-t7", Enabled: true,
 		IKEVersion:      m.IKEVersion,
-		Mode:            ipsec.ModeRouteBased,
+		Mode:            ipsec.ModePolicyBased, // FortiGate⇄OPNsense: OPNsense supports policy-based only
 		IKE:             m.IKE,
 		ESP:             m.ESP,
 		IKELifetimeSecs: m.IKELifetimeSecs,
@@ -120,7 +120,10 @@ func TestFortiGate_RendersModernProposal(t *testing.T) {
 	all := allBodies(art)
 	for _, want := range []string{
 		`"proposal":"aes256gcm-prfsha384"`, `"dhgrp":"20"`,
-		`"src-subnet":"0.0.0.0 0.0.0.0"`, `"type":"dynamic"`, // peer B is dynamic
+		// canonicalIntent is policy-based ⇒ phase2 carries the SPECIFIC selectors,
+		// not 0/0 (end0 local subnet ↔ end1 remote subnet).
+		`"src-subnet":"10.10.10.0 255.255.255.0"`, `"dst-subnet":"192.168.50.0 255.255.255.0"`,
+		`"type":"dynamic"`, // peer B is dynamic
 		`"tcp-mss-sender":1350`, `"localid":"fwm-t7-a"`, `"peerid":"fwm-t7-b"`,
 		`"add-route":"disable"`, `"net-device":"disable"`, `"peertype":"one"`,
 	} {
