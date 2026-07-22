@@ -32,6 +32,12 @@ type DeployEndState struct {
 	// never pruned) since the apply command result is pruned at 30d.
 	CapturedUUIDs map[string]string `json:"captured_uuids,omitempty"`
 
+	// StatusCommandID is the ipsec_status SA-liveness probe enqueued when this
+	// end applied+verified (C2b-2b). The degraded poll reads it to drive the
+	// tunnel to up/down; empty when the probe couldn't be built (the tunnel
+	// stays degraded, SA unknown — never a guessed transition).
+	StatusCommandID string `json:"status_command_id,omitempty"`
+
 	// RollbackUnproven marks an end whose apply outcome is UNKNOWN (command
 	// expired/lost/pruned) AND that captured no UUIDs — so its remove will skip
 	// every step and report clean, byte-indistinguishable from an end that

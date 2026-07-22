@@ -1,6 +1,17 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.143] - 2026-07-22
+
+### Added — IPSec SA-liveness verification (C2b-2b): deployed tunnels now reach `up` / `down`
+
+A fully-deployed tunnel used to stall at `degraded` forever ("SA liveness check pending") — the `up` status was unreachable and the drivers' `StatusProbe`/`ParseStatus` plumbing had zero callers. The deploy saga now completes: when both ends apply+verify, the server enqueues a READ-ONLY `ipsec_status` probe per end (atomically with the `degraded` transition, recorded as `StatusCommandID` in the deploy record) and keeps the deploy modal polling (`sa_pending`) until the probes resolve.
+
+- **Transitions:** every end's IKE+Child SA up ⇒ **`up`**; any end definitively not up ⇒ **`down`** (new status; rollback available, edit/delete still blocked, reason persisted in `last_error`); anything inconclusive — probe lost/failed/unparseable, an older collector answering `unknown command type`, a parser that can't match the tunnel — **stays `degraded` with the reason**. A guessed up/down is never emitted. All transitions are one guarded write; re-polls can't regress a terminal up/down.
+- **Tunnel-aware parsers (security-critical):** the old `ParseStatus` prototypes were bare substring matchers — any up tunnel on the device would have false-up'd ours. `ParseStatus(raw, RenderView)` now JSON-parses and matches THIS tunnel: FortiGate by phase1 `name` in `monitor/vpn/ipsec` (absent ⇒ down; proxyid up ⇒ IKE up), OPNsense by remote peer IP in `sessions/searchPhase1` rows (exact/`[port]`/`/32`-tolerant, never substring — `198.51.100.1` ≠ `198.51.100.11`; a hostname peer ⇒ unknown, never a guessed down; no session row ⇒ down). OPNsense Child mirrors IKE for policy-based (a `searchPhase2` step can refine later).
+- **Frontend:** deploy modal keeps polling while `sa_pending`, stops on `down`, shows a per-end `SA up/down/unknown` badge; `down` added to rollback-offered and edit/delete-blocked gating (mirrors the server 409s).
+- Requires collector ≥ 1.3.26 (the `ipsec_status` handler); older collectors degrade gracefully to the pre-C2b-2b `degraded` behavior.
+
 ## [0.11.142] - 2026-07-22
 
 ### Removed — dead `NextFree` helper + a stale reqid comment (IPSEC polish audit)

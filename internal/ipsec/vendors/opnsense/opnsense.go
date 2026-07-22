@@ -17,6 +17,7 @@ package opnsense
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"strings"
 
 	"firewall-mon/internal/ipsec"
@@ -228,20 +229,93 @@ func (d driver) PreflightProbe(v ipsec.RenderView) []ipsec.PreflightStep {
 	}
 }
 
-func (d driver) ParseStatus(raw string) (ipsec.TunnelStatus, error) {
-	low := strings.ToLower(raw)
+func (d driver) ParseStatus(raw string, v ipsec.RenderView) (ipsec.TunnelStatus, error) {
 	st := ipsec.TunnelStatus{IKE: ipsec.SAUnknown, Child: ipsec.SAUnknown}
-	if strings.Contains(low, "\"connected\"") || strings.Contains(low, "established") {
-		st.IKE = ipsec.SAUp
-	} else if strings.Contains(low, "connecting") || strings.Contains(low, "\"down\"") {
-		st.IKE = ipsec.SADown
+	// OPNsense sessions/searchPhase1 returns swanctl IKE-SA rows
+	// ({"rows":[…], "rowCount":N}). swanctl rows don't carry the MVC
+	// description, so name-matching isn't possible — the stable key for THIS
+	// tunnel is the remote peer IP, matched tolerantly (a row may render it as
+	// "1.2.3.4", "1.2.3.4[4500]", or "1.2.3.4/32" depending on version).
+	var doc struct {
+		Rows []map[string]any `json:"rows"`
 	}
-	if strings.Contains(low, "installed") || strings.Contains(low, "child") && st.IKE == ipsec.SAUp {
-		st.Child = ipsec.SAUp
-	} else {
-		st.Child = st.IKE
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		return st, fmt.Errorf("unparseable OPNsense sessions document: %w", err)
 	}
+	peer := v.Remote().PeerIP
+	if net.ParseIP(peer) == nil {
+		// A hostname/empty peer appears in session rows only in RESOLVED form —
+		// we can't match it without guessing. Unknown, never a guessed down.
+		st.RawError = "peer " + peer + " is not an IP literal — cannot match session rows"
+		return st, nil
+	}
+	matched := false
+	for _, row := range doc.Rows {
+		if !rowHasPeer(row, peer) {
+			continue
+		}
+		matched = true
+		s := strings.ToLower(firstStringField(row, "status", "state", "ike-state", "phase1-state"))
+		switch {
+		case strings.Contains(s, "established"), strings.Contains(s, "connected"), s == "up":
+			st.IKE = ipsec.SAUp
+		case s != "" && st.IKE != ipsec.SAUp:
+			st.IKE = ipsec.SADown // a reported state that isn't up
+		}
+	}
+	if !matched {
+		// We just deployed this tunnel; no session row referencing its peer is a
+		// definitive not-established.
+		st.IKE, st.Child = ipsec.SADown, ipsec.SADown
+		st.RawError = "no IKE session to peer " + peer
+		return st, nil
+	}
+	// Child mirrors IKE for policy-based: the phase1 search can't see child
+	// SAs, and with policies=1 the established IKE SA is what installs the
+	// kernel SPD. (A searchPhase2 step can refine this later — the collector
+	// envelope already carries per-step bodies.)
+	st.Child = st.IKE
 	return st, nil
+}
+
+// rowHasPeer reports whether any string value in the (possibly nested) row
+// matches the peer IP — exactly, or with a swanctl-style "[port]" or "/32"
+// suffix. Exact matching (never substring) so "10.0.0.1" can't match
+// "10.0.0.11".
+func rowHasPeer(row map[string]any, peer string) bool {
+	for _, val := range row {
+		switch t := val.(type) {
+		case string:
+			if t == peer || strings.HasPrefix(t, peer+"[") || t == peer+"/32" {
+				return true
+			}
+		case map[string]any:
+			if rowHasPeer(t, peer) {
+				return true
+			}
+		case []any:
+			for _, item := range t {
+				if s, ok := item.(string); ok && (s == peer || strings.HasPrefix(s, peer+"[") || s == peer+"/32") {
+					return true
+				}
+				if m, ok := item.(map[string]any); ok && rowHasPeer(m, peer) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// firstStringField returns the first non-empty string value among the named
+// keys (OPNsense session-row field names vary across versions).
+func firstStringField(row map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if s, ok := row[k].(string); ok && s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 // ---- UUID-chaining tokens + endpoints ----

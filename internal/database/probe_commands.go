@@ -54,6 +54,12 @@ const (
 	// snapshot: the collector deletes each object by mkey (ownership-checked,
 	// 404-tolerant). Used by rollback.
 	ProbeCommandTypeIPSecRemove = "remove_ipsec"
+
+	// ProbeCommandTypeIPSecStatus is a READ-ONLY SA-liveness probe of one
+	// deployed tunnel end (C2b-2b): the collector GETs the vendor driver's
+	// StatusProbe steps and returns the raw device documents; the SERVER parses
+	// them (vendor ParseStatus) to drive the tunnel degraded → up/down.
+	ProbeCommandTypeIPSecStatus = "ipsec_status"
 )
 
 // probeCommandDeviceTouching lists command types whose execution makes the
@@ -66,6 +72,7 @@ var probeCommandDeviceTouching = map[string]bool{
 	ProbeCommandTypeIPSecPreflight: true, // a successful REST read proves reachability
 	ProbeCommandTypeIPSecApply:     true, // a successful write proves reachability
 	ProbeCommandTypeIPSecRemove:    true,
+	ProbeCommandTypeIPSecStatus:    true, // a successful SA-probe read proves reachability
 }
 
 // ProbeCommandTouchesDevice reports whether a succeeded result for the given

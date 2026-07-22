@@ -255,7 +255,12 @@ type VendorDriver interface {
 	Render(v RenderView) (Artifact, error)
 	RenderRemove(v RenderView) (Artifact, error)
 	StatusProbe(v RenderView) []ProbeStep
-	ParseStatus(raw string) (TunnelStatus, error)
+	// ParseStatus interprets the raw device document the collector fetched with
+	// StatusProbe's steps. It MUST be tunnel-aware (v carries the intent): a
+	// device hosts many tunnels, so a bare "any tunnel is up" check would
+	// false-up. When the document can't be matched to THIS tunnel with
+	// confidence, return SAUnknown — never a guessed up/down (C2b-2b).
+	ParseStatus(raw string, v RenderView) (TunnelStatus, error)
 	// PreflightProbe returns the READ-ONLY REST GETs the collector runs before a
 	// deploy: an auth/version check plus reads of the exact objects a deploy
 	// would create, so name/VTI/reqid collisions surface without any write. Each
