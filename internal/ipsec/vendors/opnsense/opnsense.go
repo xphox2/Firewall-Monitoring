@@ -250,77 +250,37 @@ func (d driver) ParseStatus(raw string) (ipsec.TunnelStatus, error) {
 // bodies/paths reference it as the token <uuid:NAME>. Render captures and
 // RenderRemove deletes by the SAME names (a parity test pins this).
 const (
-	nameConn      = "conn"
-	nameLocal     = "local"
-	nameRemote    = "remote"
-	nameChild     = "child"
-	namePSK       = "psk"
-	nameVTI       = "vti"
-	nameGW        = "gw"
-	nameGWPeer    = "gw_peer"
-	nameRoutePeer = "route_peer"
+	nameConn   = "conn"
+	nameLocal  = "local"
+	nameRemote = "remote"
+	nameChild  = "child"
+	namePSK    = "psk"
 )
 
 func tokName(n string) string { return "<uuid:" + n + ">" }
-func nameRoute(i int) string  { return fmt.Sprintf("route%d", i) }
 
-// OPNsense REST MVC endpoints (verified against a live 26.1 box + the core API
-// docs). add*/del*/search* action names for the swanctl "connections",
-// pre_shared_keys, routing, routes controllers; the VTI lives under its OWN
-// controller `/api/ipsec/vti/{add,del/$uuid,search}` (NOT interfaces/vti_settings,
-// which does not exist); IPsec apply is `ipsec/service/reconfigure`.
+// OPNsense REST MVC endpoints for the policy-based swanctl footprint (verified
+// against a live 26.1 box): the swanctl "connections" + pre_shared_keys
+// controllers, and IPsec apply via `ipsec/service/reconfigure`. Policy-based
+// creates no VTI/gateway/route, so those controllers are not referenced.
 const (
 	epConnAdd   = "/api/ipsec/connections/addConnection"
 	epLocalAdd  = "/api/ipsec/connections/addLocal"
 	epRemoteAdd = "/api/ipsec/connections/addRemote"
 	epChildAdd  = "/api/ipsec/connections/addChild"
 	epPSKAdd    = "/api/ipsec/pre_shared_keys/addItem"
-	epVTIAdd    = "/api/ipsec/vti/add"
-	epGWAdd     = "/api/routing/settings/addGateway"
-	epRouteAdd  = "/api/routes/routes/addroute"
 
 	epConnDel   = "/api/ipsec/connections/delConnection"
 	epLocalDel  = "/api/ipsec/connections/delLocal"
 	epRemoteDel = "/api/ipsec/connections/delRemote"
 	epChildDel  = "/api/ipsec/connections/delChild"
 	epPSKDel    = "/api/ipsec/pre_shared_keys/delItem"
-	epVTIDel    = "/api/ipsec/vti/del"
-	epGWDel     = "/api/routing/settings/delGateway"
-	epRouteDel  = "/api/routes/routes/delroute"
 
 	epConnSearch = "/api/ipsec/connections/searchConnection"
 	epPSKSearch  = "/api/ipsec/pre_shared_keys/searchItem"
-	epVTISearch  = "/api/ipsec/vti/search"
 
-	epIPsecReconfigure   = "/api/ipsec/service/reconfigure"
-	epRoutingReconfigure = "/api/routing/settings/reconfigure"
-	epRoutesReconfigure  = "/api/routes/routes/reconfigure"
+	epIPsecReconfigure = "/api/ipsec/service/reconfigure"
 )
-
-// routingApplySteps applies gateways then routes (Render runs the IPsec
-// reconfigure inline, before the gateway, so the ipsec<reqid> interface exists).
-func routingApplySteps() []ipsec.ApplyStep {
-	return []ipsec.ApplyStep{
-		api("Apply gateways", "POST", epRoutingReconfigure, "{}"),
-		api("Apply static routes", "POST", epRoutesReconfigure, "{}"),
-	}
-}
-
-// applySteps applies every subsystem (IPsec → gateways → routes). Used by
-// RenderRemove, where ordering between them doesn't matter for teardown.
-func applySteps() []ipsec.ApplyStep {
-	return []ipsec.ApplyStep{
-		api("Apply IPsec configuration", "POST", epIPsecReconfigure, "{}"),
-		api("Apply gateways", "POST", epRoutingReconfigure, "{}"),
-		api("Apply static routes", "POST", epRoutesReconfigure, "{}"),
-	}
-}
-
-// peerRouteNeeded reports whether the conditional peer /32 self-lockout guard
-// renders: a Gateway is set AND a protected subnet contains the peer's WAN IP.
-func peerRouteNeeded(local, remote *ipsec.EndpointSpec) bool {
-	return local.Gateway != "" && ipsec.SubnetContainsIP(remote.ProtectedSubnets, remote.PeerIP)
-}
 
 // ---- helpers ----
 
