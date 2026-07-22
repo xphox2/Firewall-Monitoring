@@ -766,6 +766,7 @@
 
     function openDeployModal(id, op) {
         stopDeployPoll();
+        deployReasonSnapshot = ''; // fresh per-deploy so a prior failure can't leak in
         $('ipsec-deploy-title').textContent = (op === 'rollback') ? 'Roll Back Tunnel' : 'Deploy Tunnel';
         $('ipsec-deploy-sub').textContent = (op === 'rollback')
             ? 'Removes the deployed configuration from the device (only objects tagged for this tunnel).'
@@ -845,6 +846,33 @@
     // lastDeployErrorText holds the aggregated failure reason for the Copy button.
     var lastDeployErrorText = '';
 
+    // deployReasonSnapshot captures the apply-failure detail from the live
+    // (rolling_back) frame — where the failed-apply report + failing step (e.g.
+    // addGateway) are present — so the reason survives into the terminal
+    // rolled_back frame, which no longer carries it. Reset per-deploy in
+    // openDeployModal. Module-scope so it isn't wiped by each poll's re-render.
+    var deployReasonSnapshot = '';
+
+    // deployApplyFailure extracts the reason from any end whose report is a FAILED
+    // apply (not a remove): the report error plus each failing step's endpoint.
+    // Returns '' when no end shows an apply failure (so a clean/remove frame won't
+    // overwrite a captured reason).
+    function deployApplyFailure(data) {
+        var reasons = [];
+        (data && data.ends || []).forEach(function (e) {
+            var r = e.report;
+            if (!r || typeof r !== 'object') return;
+            if (r.op === 'remove') return;      // removes succeeding is not the failure
+            if (r.applied === true) return;     // this end applied fine
+            var lbl = 'End ' + (e.end === 0 ? 'A' : 'B');
+            if (r.error) reasons.push(lbl + ': ' + r.error);
+            (r.steps || []).forEach(function (s) {
+                if (!s.ok) reasons.push(lbl + ' · ' + s.op + ' ' + s.path + ' (HTTP ' + (s.status || 0) + ')' + (s.note ? ' — ' + s.note : ''));
+            });
+        });
+        return reasons.join('\n');
+    }
+
     // deployFailureReason gathers every scrap of "why" from a terminal failure:
     // the top-level note plus each end's report error and failing-step notes (the
     // collector's ApplyReport, incl. OPNsense validation detail).
@@ -874,7 +902,11 @@
         var title = status === 'rolled_back' ? 'Deploy failed — automatically rolled back'
             : status === 'rollback_failed' ? 'Rollback did not complete — the device may still hold objects'
                 : 'Deploy failed';
-        lastDeployErrorText = deployFailureReason(data) || 'No further detail was reported by the collector.';
+        // Prefer the live apply-failure detail (this frame), then the snapshot
+        // captured during rolling_back, then the backend-supplied note/reason, then
+        // the fallback. This is what makes the addGateway error survive the rollback.
+        lastDeployErrorText = deployApplyFailure(data) || deployReasonSnapshot ||
+            deployFailureReason(data) || 'No further detail was reported by the collector.';
         return '<div class="card" style="padding:14px;border-left:4px solid var(--fwmon-sig-crit);margin-bottom:12px;">' +
             '<div style="font-weight:700;color:var(--fwmon-sig-crit);margin-bottom:6px;">✕ ' + esc(title) + '</div>' +
             '<div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:0.5px;color:var(--fwmon-text-faint);margin-bottom:4px;">Reason — stays here until you acknowledge</div>' +
@@ -886,6 +918,11 @@
 
     function renderDeployBody(id, data, state, op) {
         var status = (data && data.status) || '';
+        // Capture the apply-failure reason on EVERY poll (it rides the rolling_back
+        // frame, not a terminal one), richest-wins, so the terminal banner can show
+        // it after the rollback clears the per-end apply reports.
+        var applyFail = deployApplyFailure(data);
+        if (applyFail && applyFail.length > deployReasonSnapshot.length) deployReasonSnapshot = applyFail;
         var line;
         if (state.polling) {
             line = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;color:var(--fwmon-text-mute);font-size:0.85rem;">' +
