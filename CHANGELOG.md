@@ -1,6 +1,17 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.142] - 2026-07-22
+
+### Removed — dead `NextFree` helper + a stale reqid comment (IPSEC polish audit)
+
+Post-merge audit of the IPSec provisioning path found two dead ends left over from the pre-C2b design:
+
+- **`ipsec.NextFree` deleted** (`internal/ipsec/allocation.go`): zero callers in either repo (verified by grep across server + collector). It allocated a reqid/if_id against a live-read device set — a "refresh_state" step that was never built. Policy-based OPNsense uses no reqid and the FortiGate render derives it deterministically from the tunnel ID, so nothing needs it.
+- **Stale comment fixed** (`handlers_ipsec.go` `hydrateDerived`): it claimed "the collector re-allocates [reqid] against live device state at apply time if it collides" — **no such logic exists** in the collector. The comment now says what actually guards a reqid clash: the preflight collision-check.
+
+No behavior change; `StatusProbe`/`ParseStatus` are intentionally KEPT (they are the driver-side plumbing for the upcoming C2b-2b SA-liveness phase).
+
 ## [0.11.141] - 2026-07-21
 
 ### Added — Selectable IPSec tunnel mode (route-based / policy-based); OPNsense now fully deployable

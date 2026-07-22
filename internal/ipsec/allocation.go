@@ -76,17 +76,6 @@ func FGPolicyKey(tunnelID uint, index int) int {
 	return fgKeyBase + int(tunnelID)*fgKeyStride + fgPolicyOffset + index
 }
 
-// NextFree returns the smallest integer >= start that is not present in taken.
-// Used to allocate reqid / if_id / tunnel-number against the set already in use
-// on a device (read live in the refresh_state step).
-func NextFree(taken map[int]bool, start int) int {
-	for n := start; ; n++ {
-		if !taken[n] {
-			return n
-		}
-	}
-}
-
 func u32ToIP(v uint32) net.IP {
 	b := make([]byte, 4)
 	binary.BigEndian.PutUint32(b, v)
