@@ -66,8 +66,9 @@ func hydrateDerived(intent *ipsec.TunnelIntent) {
 		intent.Ends[0].InnerIP = innerA
 		intent.Ends[1].InnerIP = innerB
 	}
-	// A per-tunnel reqid keeps both ends' child SA / VTI aligned; the collector
-	// re-allocates against live device state at apply time if it collides.
+	// A per-tunnel reqid keeps both ends' child SA / VTI aligned. Derived
+	// deterministically from the tunnel ID (no live device read-back); the
+	// preflight collision-check is what guards against a clash on the device.
 	intent.Ends[0].Reqid = int(id)
 	intent.Ends[1].Reqid = int(id)
 }
