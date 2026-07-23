@@ -1,6 +1,41 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.151] - 2026-07-23
+
+### Fixed — Adversarial-review follow-ups to the audit batch
+
+Two defects caught reviewing v0.11.148–150 before merge:
+
+- **config-revision body limit needed headroom over the 50MB text cap.** Setting the per-path body limit to exactly `maxConfigTextSize` (50MB) still 400'd near-50MB configs: `MaxBytesReader` bounds the whole JSON *body* (config text + envelope + per-character string escaping), which exceeds 50MB before the text itself does. Raised to 64MB so the handler's own limit is the effective ceiling with its clear error.
+- **INTERFACE_DOWN admin-down resolve tightened to `AdminStatus == "down"`.** The prior `!= "up"` also matched an *empty* AdminStatus from a partial SNMP walk (oper-down reported, admin OID not walked), which would false-resolve a genuine ongoing outage. Now only a reported admin-down resolves; a guard test pins the empty-status case open.
+- Minor: the SMTP send now shares a single absolute deadline across dial + conversation (total bounded by 30s, not dial-timeout + I/O-timeout).
+
+## [0.11.150] - 2026-07-23
+
+### Security — Config-history authz, admin-console output escaping, CI least-privilege (engineering audit)
+
+- **Read-only accounts could download full device config revisions.** The `config-history` diff / raw-download / raw-view routes were not in `adminOnlyRoutes`, so `RequireRole` defaulted them to the lowest `viewer` role. Device config text embeds credentials (SNMP communities, IPSec PSK / admin hashes, depending on vendor export), so these reads (and the per-revision DELETE) are now admin-only — matching the reveal-secret precedent. The metadata list stays viewer-visible. A source-scan guard test pins the wiring.
+- **Two admin-console output-escaping gaps closed.** The threat-intel lookup result rendered the server-echoed `query`/`country` fields unescaped into `innerHTML` (self-XSS), and the IRC channel dropdown left the channel name unescaped inside the `<option value="…">` attribute (attribute-injection). Both now route through the existing escaper.
+- **CI least-privilege.** `docker.yml` and `benchmark.yml` had no `permissions:` block, inheriting the repo/org default `GITHUB_TOKEN` scope while `docker.yml` handles Docker Hub secrets. Both are now pinned to `contents: read`.
+
+## [0.11.149] - 2026-07-23
+
+### Fixed — Ingest hardening: clamp future timestamps, reconcile config-revision body limit (engineering audit)
+
+- **Collector-supplied future timestamps are now clamped (High).** Every bulk telemetry writer (`system_status`, `vpn_status`, `interface_stats`, syslog, traps, pings, flow counters, sensors, health, licenses, …) previously replaced only a *zero* timestamp with the arrival time — a future-dated value passed straight through. A future timestamp becomes the permanent `MAX(timestamp)` "latest" row (unclearable), suppresses `TELEMETRY_STALE` detection (masking real outages), escapes retention cleanup, and — beyond the current partition window — has no partition at all. All 23 `Receive*` writers now run the timestamp through `clampIngestTimestamp` (zero → now, future → now), the same guard the topology path already used (generalized from `clampTopologyTimestamp`).
+- **config-revision endpoint no longer capped by the global 5MB body limit.** The flat 5MB request-body cap made the handler's own 50MB `maxConfigTextSize` guard unreachable, so large full-device FortiGate configs were rejected at JSON binding with a misleading "Invalid JSON". A new `BodySizeLimitPerPath` gives the config-revision route its intended 50MB limit while keeping every other endpoint at 5MB.
+
+## [0.11.148] - 2026-07-23
+
+### Fixed — Alerting resilience: SMTP hang, webhook connection reuse, stuck INTERFACE_DOWN (engineering audit)
+
+Engineering-audit findings in the alert/notification path:
+
+- **Unbounded SMTP send could wedge the entire monitoring loop (High).** `net/smtp.SendMail` sets no I/O deadline, and every alert email is sent synchronously on the poller's single monitoring goroutine. An SMTP host that accepted the TCP connection then stalled (half-open NAT, hung MTA, blackhole) blocked that goroutine forever — freezing staleness sweeps, VPN checks and rollups — and the supervisor only restarts on panic, not on a hang. Both alert-email paths now go through a new `sendMailWithDeadline` helper that bounds the entire conversation (dial + greeting + STARTTLS + AUTH + DATA + QUIT) with a 30s deadline. STARTTLS/CompoundAuth behaviour is unchanged. Regression-tested against a stalled and a non-routable server.
+- **Webhook response bodies now drained before close.** Slack/Discord/PagerDuty/Opsgenie/Teams posts closed the response body without reading it to EOF, defeating keep-alive connection reuse (a re-dial per alert during storms). Both posters now drain to `io.Discard` before close.
+- **INTERFACE_DOWN could stay stuck open after a port was administratively disabled (Medium).** The fire path requires `AdminStatus=up` and the recovery path required `Status=up`, so admin-disabling an already-alerting link (admin=down, oper=down) left the alert open until the port was re-enabled and came back up. Admin-down is now treated as a deliberate end-of-outage and resolves the open alert (gated on the in-memory active flag so it adds no per-cycle DB writes).
+
 ## [0.11.147] - 2026-07-23
 
 ### Fixed — IPSec FortiGate⇄OPNsense IKE identity type mismatch (keyid → fqdn)

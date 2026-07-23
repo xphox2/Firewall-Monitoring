@@ -215,6 +215,15 @@ func (am *AlertManager) markActiveLocked(key string, now time.Time) {
 	am.fireStart[key] = now
 }
 
+// alertActive reports whether the given key is currently firing in THIS process
+// (cheap RLock read). Used to gate optional recovery resolves so they don't add
+// per-cycle DB writes when there's nothing open to resolve.
+func (am *AlertManager) alertActive(key string) bool {
+	am.mu.RLock()
+	defer am.mu.RUnlock()
+	return am.activeAlerts[key]
+}
+
 // flapPruneLocked drops short-resolve records older than the window and
 // returns the surviving count. Caller holds am.mu.
 func (am *AlertManager) flapPruneLocked(key string, now time.Time) int {
@@ -462,12 +471,26 @@ func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats,
 	am.dispatchFired(fired, globalNC, "interface")
 	am.dispatchStateCandidates(stateCands, now)
 
-	// Recovery: interfaces that are now up
+	// Recovery: interfaces that are now up, plus AL-M3 — a link an operator
+	// administratively DISABLED after it alerted. The fire path requires
+	// AdminStatus=="up" and the up-recovery below requires Status=="up", so an
+	// open INTERFACE_DOWN on a since-disabled port (admin=down, oper=down) would
+	// otherwise never resolve — it stays stuck until the port is re-enabled AND
+	// comes back up. Admin-down is a deliberate operator action ending the
+	// outage, so resolve it. Gated on the in-memory active flag so it adds no
+	// per-cycle DB writes for the common (never-alerted) case.
 	for _, iface := range interfaces {
-		if iface.Status == "up" {
-			key := ifaceDownKey(iface.DeviceID, iface.Name)
+		key := ifaceDownKey(iface.DeviceID, iface.Name)
+		switch {
+		case iface.Status == "up":
 			am.sendRecovery(key, "INTERFACE_DOWN", fmt.Sprintf("interface_%s", iface.Name),
 				fmt.Sprintf("Interface %s is back up", iface.Name), iface.DeviceID, siteID)
+		case iface.AdminStatus == "down" && am.alertActive(key):
+			// Strictly ADMIN-DOWN (not merely "!= up"): a partial SNMP walk that
+			// returns oper-down but leaves AdminStatus empty must NOT be read as
+			// "operator disabled" and false-resolve a genuine ongoing outage.
+			am.sendRecovery(key, "INTERFACE_DOWN", fmt.Sprintf("interface_%s", iface.Name),
+				fmt.Sprintf("Interface %s administratively disabled", iface.Name), iface.DeviceID, siteID)
 		}
 	}
 

@@ -79,11 +79,11 @@
         var host = el('ti-lookup-result');
         if (!host) return;
         var rows = [];
-        rows.push(kv('Query', d.query));
+        rows.push(kv('Query', esc(d.query)));
         if (d.kind === 'asn') {
             rows.push(kv('AS number', 'AS' + esc(d.asn)));
         } else {
-            rows.push(kv('Country', d.country || '—'));
+            rows.push(kv('Country', d.country ? esc(d.country) : '—'));
             rows.push(kv('ASN', d.asn ? ('AS' + esc(d.asn) + (d.asn_org ? ' · ' + esc(d.asn_org) : '')) : '—'));
             if (d.asn_prefix) rows.push(kv('Network', esc(d.asn_prefix)));
             if (d.geo_enabled === false) rows.push(kv('Geo', 'disabled'));

@@ -2,8 +2,10 @@ package notifier
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +15,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"mime/quotedprintable"
+	"net"
 	"net/http"
 	"net/smtp"
 	"net/textproto"
@@ -255,6 +258,82 @@ This is an automated alert from your Firewall monitoring system.
 	return subject, body
 }
 
+// smtpSendTimeout bounds the ENTIRE SMTP conversation (dial + greeting + EHLO +
+// STARTTLS + AUTH + DATA + QUIT). AUDIT C1/AL-H1: net/smtp.SendMail sets no I/O
+// deadline, and every alert email is sent synchronously on the poller's single
+// monitoring goroutine — an SMTP host that accepts the TCP connection then
+// stalls (half-open NAT, hung MTA, blackhole) would otherwise wedge the whole
+// monitoring loop forever (the supervisor only restarts on panic, not on hang).
+// A var (not const) so tests can shorten it.
+var smtpSendTimeout = 30 * time.Second
+
+// sendMailWithDeadline is a drop-in replacement for smtp.SendMail that bounds
+// the whole exchange with an absolute deadline. It replicates the stdlib's
+// dial→hello→STARTTLS(if advertised)→AUTH(if configured)→MAIL→RCPT→DATA→QUIT
+// sequence exactly (so STARTTLS/CompoundAuth behaviour is unchanged); the only
+// difference is the dial timeout and the connection deadline.
+func sendMailWithDeadline(addr, host string, auth smtp.Auth, from string, to []string, msg []byte) error {
+	// One absolute deadline covers the whole exchange — dial AND every
+	// subsequent read/write — so the total is bounded by smtpSendTimeout (not
+	// dial-timeout + separate I/O-timeout).
+	deadline := time.Now().Add(smtpSendTimeout)
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	// Any subsequent read/write that stalls past the deadline fails instead of
+	// blocking indefinitely.
+	_ = conn.SetDeadline(deadline)
+
+	client, err := smtp.NewClient(conn, host)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	if err := client.Hello("firewall-mon"); err != nil {
+		return err
+	}
+	if ok, _ := client.Extension("STARTTLS"); ok {
+		if err := client.StartTLS(&tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}); err != nil {
+			return err
+		}
+	}
+	if auth != nil {
+		if ok, _ := client.Extension("AUTH"); ok {
+			if err := client.Auth(auth); err != nil {
+				return err
+			}
+		} else {
+			return errors.New("smtp: server doesn't support AUTH")
+		}
+	}
+	if err := client.Mail(from); err != nil {
+		return err
+	}
+	for _, rcpt := range to {
+		if err := client.Rcpt(rcpt); err != nil {
+			return err
+		}
+	}
+	w, err := client.Data()
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write(msg); err != nil {
+		return err
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+	return client.Quit()
+}
+
 func (n *Notifier) sendEmail(alert *models.Alert, nc NotifyConfig) error {
 	if nc.SMTPHost == "" {
 		return nil
@@ -275,7 +354,7 @@ func (n *Notifier) sendEmail(alert *models.Alert, nc NotifyConfig) error {
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s",
 		nc.SMTPFrom, nc.SMTPTo, subject, body)
 
-	err := smtp.SendMail(addr, auth, nc.SMTPFrom,
+	err := sendMailWithDeadline(addr, nc.SMTPHost, auth, nc.SMTPFrom,
 		[]string{nc.SMTPTo}, []byte(msg))
 
 	if err != nil {
@@ -373,6 +452,9 @@ func (n *Notifier) postJSON(url string, payload interface{}) error {
 		return fmt.Errorf("webhook %s: %w", webhookHost(url), err)
 	}
 	defer resp.Body.Close()
+	// Drain to EOF before Close (LIFO defer order) so the keep-alive connection
+	// returns to the idle pool instead of re-dialing per alert (AUDIT C2).
+	defer func() { _, _ = io.Copy(io.Discard, resp.Body) }()
 
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("webhook %s returned status %d", webhookHost(url), resp.StatusCode)
@@ -506,6 +588,8 @@ func (n *Notifier) postJSONWithHeaders(url string, payload interface{}, headers 
 		return fmt.Errorf("webhook %s: %w", webhookHost(url), err)
 	}
 	defer resp.Body.Close()
+	// Drain to EOF before Close (LIFO defer order) for keep-alive reuse (AUDIT C2).
+	defer func() { _, _ = io.Copy(io.Discard, resp.Body) }()
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("webhook %s returned status %d", webhookHost(url), resp.StatusCode)
 	}
@@ -709,7 +793,7 @@ func (n *Notifier) SendHTMLEmail(subject, textBody, htmlBody string, attachments
 		recipientList[i] = strings.TrimSpace(recipientList[i])
 	}
 
-	if err := smtp.SendMail(addr, auth, nc.SMTPFrom, recipientList, msg); err != nil {
+	if err := sendMailWithDeadline(addr, nc.SMTPHost, auth, nc.SMTPFrom, recipientList, msg); err != nil {
 		return fmt.Errorf("failed to send HTML email: %w", err)
 	}
 	return nil

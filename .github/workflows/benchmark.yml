@@ -13,6 +13,10 @@ name: Benchmark
 on:
   workflow_dispatch:
 
+# Least privilege (AUDIT B2): benchmarks only read the repo.
+permissions:
+  contents: read
+
 jobs:
   bench-ingest:
     name: Ingestion benchmarks (PostgreSQL)

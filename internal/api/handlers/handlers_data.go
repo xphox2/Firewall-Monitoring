@@ -175,9 +175,7 @@ func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 	filtered := messages[:0]
 	for i := range messages {
 		messages[i].ProbeID = probe.ID
-		if messages[i].Timestamp.IsZero() {
-			messages[i].Timestamp = now
-		}
+		messages[i].Timestamp = clampIngestTimestamp(messages[i].Timestamp, now)
 		if messages[i].DeviceID == 0 && messages[i].SourceIP != "" {
 			if devID := ipToDevice[messages[i].SourceIP]; devID > 0 {
 				messages[i].DeviceID = devID
@@ -292,9 +290,7 @@ func (h *Handler) ReceiveTrapEvents(c *gin.Context) {
 			continue
 		}
 		traps[i].ProbeID = probe.ID
-		if traps[i].Timestamp.IsZero() {
-			traps[i].Timestamp = now
-		}
+		traps[i].Timestamp = clampIngestTimestamp(traps[i].Timestamp, now)
 		filtered = append(filtered, traps[i])
 	}
 	if err := h.db.SaveTrapEvents(filtered); err != nil {
@@ -344,9 +340,7 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 	filtered := samples[:0]
 	for i := range samples {
 		samples[i].ProbeID = probe.ID
-		if samples[i].Timestamp.IsZero() {
-			samples[i].Timestamp = now
-		}
+		samples[i].Timestamp = clampIngestTimestamp(samples[i].Timestamp, now)
 		if samples[i].DeviceID == 0 && samples[i].SamplerAddress != "" {
 			if devID := ipToDevice[samples[i].SamplerAddress]; devID > 0 {
 				samples[i].DeviceID = devID
@@ -481,9 +475,7 @@ func (h *Handler) ReceiveFlowCounterSamples(c *gin.Context) {
 	filtered := counters[:0]
 	for i := range counters {
 		counters[i].ProbeID = probe.ID
-		if counters[i].Timestamp.IsZero() {
-			counters[i].Timestamp = now
-		}
+		counters[i].Timestamp = clampIngestTimestamp(counters[i].Timestamp, now)
 		if counters[i].DeviceID == 0 && counters[i].SamplerAddress != "" {
 			if devID := ipToDevice[counters[i].SamplerAddress]; devID > 0 {
 				counters[i].DeviceID = devID
@@ -529,9 +521,7 @@ func (h *Handler) ReceivePingResults(c *gin.Context) {
 			continue
 		}
 		results[i].ProbeID = probe.ID
-		if results[i].Timestamp.IsZero() {
-			results[i].Timestamp = now
-		}
+		results[i].Timestamp = clampIngestTimestamp(results[i].Timestamp, now)
 		filtered = append(filtered, results[i])
 		// Only a SUCCESSFUL ping proves reachability — a saved failure row
 		// must not keep an unreachable device "online", and a spooled failure
@@ -622,9 +612,7 @@ func (h *Handler) ReceiveInterfaceAddresses(c *gin.Context) {
 		if addrs[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[addrs[i].DeviceID] {
 			continue
 		}
-		if addrs[i].Timestamp.IsZero() {
-			addrs[i].Timestamp = now
-		}
+		addrs[i].Timestamp = clampIngestTimestamp(addrs[i].Timestamp, now)
 		filtered = append(filtered, addrs[i])
 		if addrs[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, addrs[i].DeviceID, addrs[i].Timestamp)
@@ -670,9 +658,7 @@ func (h *Handler) ReceiveProcessorStats(c *gin.Context) {
 		if stats[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[stats[i].DeviceID] {
 			continue
 		}
-		if stats[i].Timestamp.IsZero() {
-			stats[i].Timestamp = now
-		}
+		stats[i].Timestamp = clampIngestTimestamp(stats[i].Timestamp, now)
 		filtered = append(filtered, stats[i])
 		if stats[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, stats[i].DeviceID, stats[i].Timestamp)
@@ -713,9 +699,7 @@ func (h *Handler) ReceiveDiskUsage(c *gin.Context) {
 		if rows[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[rows[i].DeviceID] {
 			continue
 		}
-		if rows[i].Timestamp.IsZero() {
-			rows[i].Timestamp = now
-		}
+		rows[i].Timestamp = clampIngestTimestamp(rows[i].Timestamp, now)
 		filtered = append(filtered, rows[i])
 		if rows[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, rows[i].DeviceID, rows[i].Timestamp)
@@ -756,9 +740,7 @@ func (h *Handler) ReceiveLoadAverage(c *gin.Context) {
 		if rows[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[rows[i].DeviceID] {
 			continue
 		}
-		if rows[i].Timestamp.IsZero() {
-			rows[i].Timestamp = now
-		}
+		rows[i].Timestamp = clampIngestTimestamp(rows[i].Timestamp, now)
 		filtered = append(filtered, rows[i])
 		if rows[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, rows[i].DeviceID, rows[i].Timestamp)
@@ -799,9 +781,7 @@ func (h *Handler) ReceiveHardwareSensors(c *gin.Context) {
 		if sensors[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[sensors[i].DeviceID] {
 			continue
 		}
-		if sensors[i].Timestamp.IsZero() {
-			sensors[i].Timestamp = now
-		}
+		sensors[i].Timestamp = clampIngestTimestamp(sensors[i].Timestamp, now)
 		filtered = append(filtered, sensors[i])
 		if sensors[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, sensors[i].DeviceID, sensors[i].Timestamp)
@@ -845,9 +825,7 @@ func (h *Handler) ReceiveSystemStatuses(c *gin.Context) {
 		if statuses[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[statuses[i].DeviceID] {
 			continue // skip data for devices not assigned to this probe
 		}
-		if statuses[i].Timestamp.IsZero() {
-			statuses[i].Timestamp = now
-		}
+		statuses[i].Timestamp = clampIngestTimestamp(statuses[i].Timestamp, now)
 		filtered = append(filtered, statuses[i])
 		if statuses[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, statuses[i].DeviceID, statuses[i].Timestamp)
@@ -894,9 +872,7 @@ func (h *Handler) ReceiveInterfaceStats(c *gin.Context) {
 		if stats[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[stats[i].DeviceID] {
 			continue
 		}
-		if stats[i].Timestamp.IsZero() {
-			stats[i].Timestamp = now
-		}
+		stats[i].Timestamp = clampIngestTimestamp(stats[i].Timestamp, now)
 		if stats[i].TypeName == "" && stats[i].Type > 0 {
 			if name, ok := snmp.IfTypeNames[stats[i].Type]; ok {
 				stats[i].TypeName = name
@@ -944,9 +920,7 @@ func (h *Handler) ReceiveVPNStatuses(c *gin.Context) {
 		if statuses[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[statuses[i].DeviceID] {
 			continue
 		}
-		if statuses[i].Timestamp.IsZero() {
-			statuses[i].Timestamp = now
-		}
+		statuses[i].Timestamp = clampIngestTimestamp(statuses[i].Timestamp, now)
 		if statuses[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, statuses[i].DeviceID, statuses[i].Timestamp)
 		}
@@ -989,9 +963,7 @@ func (h *Handler) ReceiveHAStatuses(c *gin.Context) {
 		if statuses[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[statuses[i].DeviceID] {
 			continue
 		}
-		if statuses[i].Timestamp.IsZero() {
-			statuses[i].Timestamp = now
-		}
+		statuses[i].Timestamp = clampIngestTimestamp(statuses[i].Timestamp, now)
 		filtered = append(filtered, statuses[i])
 		if statuses[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, statuses[i].DeviceID, statuses[i].Timestamp)
@@ -1032,9 +1004,7 @@ func (h *Handler) ReceiveSecurityStats(c *gin.Context) {
 		if stats[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[stats[i].DeviceID] {
 			continue
 		}
-		if stats[i].Timestamp.IsZero() {
-			stats[i].Timestamp = now
-		}
+		stats[i].Timestamp = clampIngestTimestamp(stats[i].Timestamp, now)
 		filtered = append(filtered, stats[i])
 		if stats[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, stats[i].DeviceID, stats[i].Timestamp)
@@ -1075,9 +1045,7 @@ func (h *Handler) ReceiveSDWANHealth(c *gin.Context) {
 		if health[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[health[i].DeviceID] {
 			continue
 		}
-		if health[i].Timestamp.IsZero() {
-			health[i].Timestamp = now
-		}
+		health[i].Timestamp = clampIngestTimestamp(health[i].Timestamp, now)
 		filtered = append(filtered, health[i])
 		if health[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, health[i].DeviceID, health[i].Timestamp)
@@ -1113,9 +1081,7 @@ func (h *Handler) ReceiveLicenseInfo(c *gin.Context) {
 		if licenses[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[licenses[i].DeviceID] {
 			continue
 		}
-		if licenses[i].Timestamp.IsZero() {
-			licenses[i].Timestamp = now
-		}
+		licenses[i].Timestamp = clampIngestTimestamp(licenses[i].Timestamp, now)
 		filtered = append(filtered, licenses[i])
 		if licenses[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, licenses[i].DeviceID, licenses[i].Timestamp)
@@ -1166,9 +1132,7 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 		return
 	}
 
-	if rev.Timestamp.IsZero() {
-		rev.Timestamp = time.Now()
-	}
+	rev.Timestamp = clampIngestTimestamp(rev.Timestamp, time.Now())
 
 	// Compute the vendor-aware normalized checksum. This is what change-detection
 	// alerts compare against — raw checksums drift on every backup for FortiOS
@@ -1277,9 +1241,7 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 		if rev.VerifyCount == 0 {
 			rev.VerifyCount = 1
 		}
-		if rev.Timestamp.IsZero() {
-			rev.Timestamp = now
-		}
+		rev.Timestamp = clampIngestTimestamp(rev.Timestamp, now)
 		if err := tx.Create(&rev).Error; err != nil {
 			return err
 		}
@@ -1405,9 +1367,7 @@ func (h *Handler) ReceiveProcessSnapshot(c *gin.Context) {
 		return
 	}
 
-	if snap.Timestamp.IsZero() {
-		snap.Timestamp = time.Now()
-	}
+	snap.Timestamp = clampIngestTimestamp(snap.Timestamp, time.Now())
 
 	if err := h.db.Gorm().Create(&snap).Error; err != nil {
 		log.Printf("ReceiveProcessSnapshot: DB save error: %v", err)
@@ -1444,9 +1404,7 @@ func (h *Handler) ReceiveInterfaceErrors(c *gin.Context) {
 		if errs[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[errs[i].DeviceID] {
 			continue
 		}
-		if errs[i].Timestamp.IsZero() {
-			errs[i].Timestamp = now
-		}
+		errs[i].Timestamp = clampIngestTimestamp(errs[i].Timestamp, now)
 		filtered = append(filtered, errs[i])
 		if errs[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, errs[i].DeviceID, errs[i].Timestamp)
@@ -1489,9 +1447,7 @@ func (h *Handler) ReceiveSensorDetails(c *gin.Context) {
 			log.Printf("ReceiveSensorDetails: filtering out device_id=%d (not in allowed list)", sensors[i].DeviceID)
 			continue
 		}
-		if sensors[i].Timestamp.IsZero() {
-			sensors[i].Timestamp = now
-		}
+		sensors[i].Timestamp = clampIngestTimestamp(sensors[i].Timestamp, now)
 		filtered = append(filtered, sensors[i])
 		if sensors[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, sensors[i].DeviceID, sensors[i].Timestamp)
@@ -1531,9 +1487,7 @@ func (h *Handler) ReceiveLicenseDetails(c *gin.Context) {
 		if licenses[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[licenses[i].DeviceID] {
 			continue
 		}
-		if licenses[i].Timestamp.IsZero() {
-			licenses[i].Timestamp = now
-		}
+		licenses[i].Timestamp = clampIngestTimestamp(licenses[i].Timestamp, now)
 		filtered = append(filtered, licenses[i])
 		if licenses[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, licenses[i].DeviceID, licenses[i].Timestamp)

@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.147"
+const ServerVersion = "0.11.151"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -564,8 +564,19 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	router.Use(middleware.RequestID())             // AUDIT-135: before RequestLogger so the ID is logged
 	router.Use(tracing.GinMiddleware("fwmon-api")) // AUDIT-150: server span + W3C extract, before RequestLogger so logs get trace_id
 	router.Use(middleware.RequestLogger())
-	router.Use(metrics.Middleware())              // AUDIT-077: record request latency by route/method/status
-	router.Use(middleware.BodySizeLimit(5 << 20)) // 5MB max request body
+	router.Use(metrics.Middleware()) // AUDIT-077: record request latency by route/method/status
+	// 5MB max request body globally, except the config-revision endpoint which
+	// receives full-device configs. AUDIT T4: a flat 5MB cap made the handler's
+	// own 50MB maxConfigTextSize guard unreachable. The body limit here is 64MB
+	// (NOT 50MB): MaxBytesReader caps the whole JSON *body* — the config text
+	// plus the envelope and per-character JSON string escaping — while
+	// maxConfigTextSize checks only the decoded ConfigText, so the body of a
+	// near-50MB config is larger than 50MB. The 14MB headroom keeps the
+	// handler's own limit the effective ceiling (returning its clear error)
+	// instead of a misleading "Invalid JSON" at the reader.
+	router.Use(middleware.BodySizeLimitPerPath(5<<20, map[string]int64{
+		"/config-revision": 64 << 20,
+	}))
 	// Rate limiter applied per-group below instead of globally so authenticated
 	// admin users don't share buckets with unauthenticated requests.
 
@@ -733,6 +744,15 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			// Revealing a stored device credential in plaintext is admin-only,
 			// even though day-to-day device edits are operator-level.
 			"/admin/api/devices/:id/reveal-secret": true,
+			// Config revisions embed device credentials (SNMP communities, IPSec
+			// PSK/admin hashes depending on vendor export), so reading the raw
+			// config, its diff, or deleting a revision is admin-only — same class
+			// as reveal-secret. The metadata LIST (/config-history) stays
+			// viewer-visible so operators can see that revisions exist. AUDIT M2:
+			// these previously defaulted GET->viewer (lowest role).
+			"/admin/api/devices/:id/config-history/diff":        true,
+			"/admin/api/devices/:id/config-history/:revId":      true,
+			"/admin/api/devices/:id/config-history/:revId/view": true,
 			// IPSec provisioning carries PSK credential material — admin-only.
 			"/admin/api/ipsec/capabilities":        true,
 			"/admin/api/ipsec/preview":             true,

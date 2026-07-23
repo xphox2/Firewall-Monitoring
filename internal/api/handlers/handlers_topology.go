@@ -34,10 +34,16 @@ func normalizeTopologyMAC(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
 }
 
-// clampTopologyTimestamp bounds a probe-controlled timestamp: zero → now,
-// future → now. An unclamped future timestamp would pin evidence "fresh"
-// forever, defeating the staleness staircase and retention.
-func clampTopologyTimestamp(ts, now time.Time) time.Time {
+// clampIngestTimestamp bounds a collector-controlled timestamp: zero → now,
+// future → now. An unclamped future timestamp would pin the row as the newest
+// sample forever (MAX(timestamp) "latest" queries), defeat the telemetry
+// staleness staircase, and never be purged by retention — and a value more than
+// 6 months in the FUTURE would have no partition. Past timestamps are left
+// untouched on purpose: legitimately delayed/spooled batches carry a real past
+// collection time. AUDIT T1: every Receive* writer that trusts the collector's
+// timestamp must run it through this (previously only the topology path did;
+// the high-volume telemetry writers only replaced a zero value).
+func clampIngestTimestamp(ts, now time.Time) time.Time {
 	if ts.IsZero() || ts.After(now) {
 		return now
 	}
@@ -75,7 +81,7 @@ func (h *Handler) ReceiveTopologyEntries(c *gin.Context) {
 		if entries[i].EntryType != "arp" && entries[i].EntryType != "fdb" {
 			continue
 		}
-		entries[i].Timestamp = clampTopologyTimestamp(entries[i].Timestamp, now)
+		entries[i].Timestamp = clampIngestTimestamp(entries[i].Timestamp, now)
 		entries[i].ID = 0 // server-assigned
 		entries[i].MACAddress = normalizeTopologyMAC(entries[i].MACAddress)
 		// An FDB row whose MAC didn't canonicalize can never join against
@@ -135,7 +141,7 @@ func (h *Handler) ReceiveTopologyNeighbors(c *gin.Context) {
 		if neighbors[i].Protocol != "lldp" && neighbors[i].Protocol != "cdp" {
 			continue
 		}
-		neighbors[i].Timestamp = clampTopologyTimestamp(neighbors[i].Timestamp, now)
+		neighbors[i].Timestamp = clampIngestTimestamp(neighbors[i].Timestamp, now)
 		neighbors[i].ID = 0
 		// Chassis IDs are MAC-form when the neighbor advertised subtype
 		// macAddress — normalize so the inference's ownership join works.
