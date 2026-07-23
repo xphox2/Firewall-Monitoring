@@ -257,19 +257,41 @@ func (am *AlertManager) flapSuppress(key string, now time.Time) bool {
 	return am.flapPruneLocked(key, now) >= am.config.Alerts.FlapMaxFires
 }
 
+// rowMeasuredSessions reports whether a system_status row genuinely measured the
+// live session table, so a session_count of 0 is a real "idle" reading rather
+// than an absent field. AUDIT AL-M2: system_status has two writers with disjoint
+// fields — the SNMP full poll (sets Uptime + session_count) and the FortiGate SSH
+// `diagnose sys performance` writer (sets cpu/mem + network/cpu-breakdown/session-
+// rate fields but leaves Uptime and session_count 0). A genuine full row is
+// Uptime>0 with none of the SSH-perf-only fields set; the SSH-perf partial row is
+// positively excluded by any of those perf fields being non-zero.
+func rowMeasuredSessions(s *models.SystemStatus) bool {
+	return s.Uptime > 0 &&
+		s.NetworkInKbps == 0 && s.NetworkOutKbps == 0 &&
+		s.CPUIdle == 0 && s.MemoryFreeable == 0 && s.SessionRate1 == 0
+}
+
 func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *uint) error {
 	type metricCheck struct {
 		alertType models.AlertType
 		metricKey string
 		metric    string
 		current   float64
+		// populated reports whether THIS row actually measured the metric, so a
+		// value of 0 is a real reading (allowing recovery) rather than an absent
+		// field. AUDIT AL-M2: cpu/mem/disk reduce to current>0 (a live device
+		// never reports 0%), but session_count can legitimately be 0 on an idle
+		// device — yet system_status has two writers with disjoint fields (the SSH
+		// perf row carries cpu/mem but leaves sessions/uptime 0), so a plain 0
+		// can't be trusted as "recovered".
+		populated bool
 	}
 
 	checks := []metricCheck{
-		{models.AlertTypeCPUHigh, fmt.Sprintf("cpu_high_%d", status.DeviceID), "cpu_usage", status.CPUUsage},
-		{models.AlertTypeMemoryHigh, fmt.Sprintf("memory_high_%d", status.DeviceID), "memory_usage", status.MemoryUsage},
-		{models.AlertTypeDiskHigh, fmt.Sprintf("disk_high_%d", status.DeviceID), "disk_usage", status.DiskUsage},
-		{models.AlertTypeSessionsHigh, fmt.Sprintf("sessions_high_%d", status.DeviceID), "session_count", float64(status.SessionCount)},
+		{models.AlertTypeCPUHigh, fmt.Sprintf("cpu_high_%d", status.DeviceID), "cpu_usage", status.CPUUsage, status.CPUUsage > 0},
+		{models.AlertTypeMemoryHigh, fmt.Sprintf("memory_high_%d", status.DeviceID), "memory_usage", status.MemoryUsage, status.MemoryUsage > 0},
+		{models.AlertTypeDiskHigh, fmt.Sprintf("disk_high_%d", status.DeviceID), "disk_usage", status.DiskUsage, status.DiskUsage > 0},
+		{models.AlertTypeSessionsHigh, fmt.Sprintf("sessions_high_%d", status.DeviceID), "session_count", float64(status.SessionCount), status.SessionCount > 0 || rowMeasuredSessions(status)},
 	}
 
 	var fired []firedEntry
@@ -367,13 +389,13 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *u
 		if rc.resolved.ClearThreshold > 0 && rc.resolved.ClearThreshold < recoverBelow {
 			recoverBelow = rc.resolved.ClearThreshold
 		}
-		// No-data guard: a value of exactly 0 means the metric is unpopulated in
-		// this row, not that it recovered to 0. A live device never reports 0%
-		// cpu/memory/disk — and system_status has two writers with disjoint field
-		// coverage (the SSH `diagnose sys performance` row carries cpu/mem but
-		// disk_usage=0), so a partial row landing as the newest sample must not
-		// auto-resolve a genuine open alert. Recovery waits for a real reading.
-		if fireAt > 0 && rc.current > 0 && rc.current < recoverBelow {
+		// No-data guard (AUDIT AL-M2): recover only when THIS row actually measured
+		// the metric (rc.populated). For cpu/mem/disk that is current>0 (a live
+		// device never reports 0%); for session_count it also accepts a genuine
+		// full-row 0 (idle device) via rowMeasuredSessions, while still refusing a
+		// partial SSH-perf row whose session_count is merely absent. This fixes a
+		// SESSIONS_HIGH that could never clear once sessions legitimately hit 0.
+		if fireAt > 0 && rc.populated && rc.current < recoverBelow {
 			am.sendRecovery(rc.metricKey, rc.alertType, rc.metric,
 				fmt.Sprintf("%s recovered to %.1f", rc.metric, rc.current), status.DeviceID, siteID)
 		}

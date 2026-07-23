@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.155] - 2026-07-23
+
+### Fixed — SESSIONS_HIGH could never auto-resolve at 0 sessions (engineering audit, Phase 3)
+
+**AL-M2** — the metric recovery guard treated a value of exactly 0 as "field unpopulated, don't resolve", which is correct for cpu/memory/disk (a live device never reports 0%) but wrong for `session_count`: an idle device legitimately has 0 sessions, so an open `SESSIONS_HIGH` alert could never auto-clear once sessions actually dropped to 0. The guard is now per-metric: `session_count` recovers on a 0 reading **only when the row genuinely measured sessions** — a full SNMP poll (`Uptime>0` with none of the SSH-`diagnose sys performance` writer's fields set) — so a partial two-writer row whose `session_count` is merely absent still cannot false-resolve a real alert.
+
+Remaining Phase 3 alert-engine items (recovery-write gating, off-poll-goroutine notification dispatch, two-writer read coalescing, and minor SFLOW-attribution/clock-skew hardening) are tracked as a follow-up.
+
 ## [0.11.154] - 2026-07-23
 
 ### Security — SSRF dial pinning on admin test/diagnostic endpoints (engineering audit, Phase 2)
