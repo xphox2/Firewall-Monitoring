@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.154] - 2026-07-23
+
+### Security — SSRF dial pinning on admin test/diagnostic endpoints (engineering audit, Phase 2)
+
+**M1** — the admin-only test/diagnostic endpoints validated a host with `isValidExternalIP` but then dialed it separately, letting the dial re-resolve — a DNS-rebinding TOCTOU where an attacker-controlled resolver returns a public IP to the check and a private/loopback IP to the actual connection. The four reachable paths now dial the resolved-and-validated IP directly:
+
+- **Probe connectivity test** and the **SMTP test-email diagnostic** dial through `httputil.SafeDialContext` (resolve → validate every candidate → dial the validated IP).
+- The **manual "send report now"** endpoint uses a new `SendHTMLEmailPinned` (SSRF-pinned) variant.
+- The **IRC connection test** pre-resolves and validates the host, then hands go-ircevent a pinned `IP:port` (the library has no dialer hook), keeping `TLSConfig.ServerName` as the hostname so certificate verification is unaffected.
+
+Deliberately **unchanged**: the alert-notification and scheduled-report email sends (which legitimately target an admin-configured, possibly internal-relay SMTP host) still use a plain dialer — pinning them through the RFC1918-blocking `SafeDialContext` would break internal relays. The threat-feed/MaxMind fetchers (`L4`) are left as-is for the same reason (an operator may host a feed internally) and because they are server-timer fetches, not attacker-triggered.
+
 ## [0.11.153] - 2026-07-23
 
 ### Fixed — DB partition/retention hardening (engineering audit, Phase 4)

@@ -216,7 +216,11 @@ func (h *Handler) SendReportNow(c *gin.Context) {
 		SMTPTo:       recipients,
 	}
 
-	if err := h.notifier.SendHTMLEmail(subject, text, html, atts, nc, recipients); err != nil {
+	// AUDIT M1: SSRF-pinned send — this endpoint validated smtpHost via
+	// isValidExternalIP above, so pin the resolved IP for the actual dial to
+	// close the DNS-rebinding window. (Alert + scheduled-report sends use the
+	// unpinned SendHTMLEmail, which may target an internal relay by design.)
+	if err := h.notifier.SendHTMLEmailPinned(subject, text, html, atts, nc, recipients); err != nil {
 		// AUDIT API3: log the raw SMTP/dial error (may carry internal
 		// hostnames/ports/TLS detail) but don't echo it to the client — every
 		// other server-side failure path uses this generic-message pattern.

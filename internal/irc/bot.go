@@ -1,17 +1,21 @@
 package irc
 
 import (
+	"context"
 	crand "crypto/rand"
 	"crypto/tls"
 	"fmt"
 	"log"
 	"math/big"
+	"net"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
 
+	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/logging"
 	"firewall-mon/internal/models"
 
@@ -1113,7 +1117,26 @@ func (tb *TestBot) Connect() error {
 
 	tb.conn = conn
 
-	addr := fmt.Sprintf("%s:%d", tb.serverHost, tb.serverPort)
+	// AUDIT M1: go-ircevent re-resolves the host inside Connect() with no dialer
+	// hook, so resolve + validate here and hand it a pinned IP:port — closing the
+	// DNS-rebinding window after the caller's isValidExternalIP pre-check.
+	// TLSConfig.ServerName stays the hostname (set above) so SNI/cert verification
+	// still validates against the name, not the dialed IP.
+	ips, rerr := net.DefaultResolver.LookupIPAddr(context.Background(), tb.serverHost)
+	if rerr != nil {
+		return fmt.Errorf("resolve IRC server %q: %w", tb.serverHost, rerr)
+	}
+	var dialIP net.IP
+	for _, ipa := range ips {
+		if !httputil.IsBlockedIP(ipa.IP) {
+			dialIP = ipa.IP
+			break
+		}
+	}
+	if dialIP == nil {
+		return fmt.Errorf("refusing to connect: %q resolves only to blocked/internal addresses", tb.serverHost)
+	}
+	addr := net.JoinHostPort(dialIP.String(), strconv.Itoa(tb.serverPort))
 	return conn.Connect(addr)
 }
 

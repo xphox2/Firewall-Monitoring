@@ -43,7 +43,7 @@ func TestSendMailWithDeadline_StalledServerDoesNotHang(t *testing.T) {
 	start := time.Now()
 	go func() {
 		done <- sendMailWithDeadline(ln.Addr().String(), "127.0.0.1", nil,
-			"from@example.com", []string{"to@example.com"}, []byte("test"))
+			"from@example.com", []string{"to@example.com"}, []byte("test"), nil)
 	}()
 
 	select {
@@ -70,7 +70,7 @@ func TestSendMailWithDeadline_DialTimeout(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- sendMailWithDeadline("203.0.113.1:25", "203.0.113.1", nil,
-			"from@example.com", []string{"to@example.com"}, []byte("test"))
+			"from@example.com", []string{"to@example.com"}, []byte("test"), nil)
 	}()
 
 	select {
