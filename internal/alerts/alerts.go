@@ -273,6 +273,13 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *u
 		populated bool
 	}
 
+	// AUDIT AL-M2: trust a 0 session_count as "idle" only from an authoritative
+	// full SNMP poll. This relies on the collector stamping Source=snmp ONLY when
+	// the session OID was actually polled (see the Firewall-Collector writer); a
+	// row that skipped the session measurement must not carry Source=snmp, or a
+	// transiently-absent session count could false-resolve. Resolution is
+	// opportunistic — it lands on the next poller pass whose newest row is an
+	// SNMP poll (a FortiGate also has the SSH-perf writer, whose rows defer it).
 	sessionsMeasured := status.SessionCount > 0 || status.Source == models.SystemStatusSourceSNMP
 	checks := []metricCheck{
 		{models.AlertTypeCPUHigh, fmt.Sprintf("cpu_high_%d", status.DeviceID), "cpu_usage", status.CPUUsage, status.CPUUsage > 0},

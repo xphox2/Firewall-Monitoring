@@ -152,7 +152,7 @@ type SystemStatus struct {
 	// freshness row. Empty = legacy/unknown (pre-Source collector). Used so a
 	// session_count of 0 is trusted as "idle" only from an SNMP row, never from a
 	// supplementary/partial one. Empty column added by migration v52.
-	Source string `json:"source" gorm:"column:source"`
+	Source string `json:"source" gorm:"column:source;size:16"`
 }
 
 // system_status writer sources (AUDIT AL-M2). Stamped by the collector per writer.
