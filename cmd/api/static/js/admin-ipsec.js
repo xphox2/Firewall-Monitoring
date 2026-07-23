@@ -385,7 +385,12 @@
     function isIPv4(s) {
         var m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s);
         if (!m) return false;
-        for (var i = 1; i <= 4; i++) { if (parseInt(m[i], 10) > 255) return false; }
+        for (var i = 1; i <= 4; i++) {
+            // Match Go's net.ParseIP (client must never be STRICTER than the server):
+            // it rejects >255 AND leading-zero octets like "01.2.3.4".
+            if (parseInt(m[i], 10) > 255) return false;
+            if (m[i].length > 1 && m[i].charAt(0) === '0') return false;
+        }
         return true;
     }
     function looksIPv6(s) { return s.indexOf(':') >= 0 && /^[0-9a-fA-F:.]+$/.test(s) && (s.match(/:/g) || []).length >= 2; }
@@ -406,7 +411,12 @@
     // defaultIdentity: sanitized device name for fqdn, the end's WAN/peer IP for ip.
     function defaultIdentity(pfx, dev) {
         if (idTypeVal(pfx) === 'ip') { return ifaceVal(pfx, 'peer') || (dev && dev.ip_address) || ''; }
-        return sanitizeFqdnId(dev && dev.name) || ('site-' + pfx);
+        var s = sanitizeFqdnId(dev && dev.name);
+        // A device NAMED like an IP (e.g. "192.168.5.107") sanitizes to an IP-shaped
+        // string, which the fqdn rules would then block — so the prefill must not
+        // produce one. Fall back to a guaranteed-valid non-IP default.
+        if (!s || isIPv4(s) || isIPv4Range(s)) { s = 'site-' + pfx; }
+        return s;
     }
 
     // prefillIdentity fills the id input from device data unless the operator has
