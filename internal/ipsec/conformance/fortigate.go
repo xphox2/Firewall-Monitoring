@@ -89,6 +89,11 @@ func init() {
 			"system/interface": {
 				// allowaccess is a space-separated list of management protocols.
 				"allowaccess": {kind: spaceEnum, enum: []string{"ping", "https", "ssh", "snmp", "http", "telnet", "fgfm", "radius-acct", "probe-response", "fabric", "ftm", "speed-test", "scim"}},
+				// VTI addressing is FortiOS's "<ipv4> <dotted-netmask>" pair form.
+				// An empty/malformed address is a device rejection (the fwm-t4
+				// HTTP 500: policy-based renders emitted "ip": " 255.255.255.255").
+				"ip":        {kind: ipMask},
+				"remote-ip": {kind: ipMask},
 			},
 			"router/static": {
 				"blackhole": {kind: enableDisable},

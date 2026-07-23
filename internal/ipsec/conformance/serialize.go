@@ -44,6 +44,7 @@ var ruleKindNames = map[ruleKind]string{
 	bool01:        "bool01",
 	intRange:      "int_range",
 	addressList:   "address",
+	ipMask:        "ip_mask",
 	proposalIKE:   "proposal_ike",
 	proposalESP:   "proposal_esp",
 }

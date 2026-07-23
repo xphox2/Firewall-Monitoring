@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.144] - 2026-07-22
+
+### Fixed — FortiGate policy-based deploy: VTI addressing + net-device (the fwm-t4 HTTP 500)
+
+A policy-based FortiGate⇄OPNsense deploy (fwm-t4) died at `PUT system/interface/fwm-t4` with HTTP 500, mid-apply. Root cause chain: `hydrateDerived` only allocated VTI addressing for **route-based** tunnels (policy-based got empty `InnerIP`s), but the FortiGate render — which *keeps the VTI + routes in both modes* by design (FortiOS 7.6 removed no-VTI mode) — unconditionally emitted `"ip": " 255.255.255.255"` (empty address). Tests never caught it because `canonicalIntent` hand-sets InnerIP, bypassing `hydrateDerived`; conformance never caught it because `system/interface` `ip`/`remote-ip` were unvalidated.
+
+- **`hydrateDerived` allocates VTI addressing in BOTH modes** (OPNsense's policy render ignores it). Tunnels persisted before this fix are healed by re-saving (Update re-hydrates).
+- **FortiGate render fails fast** on an empty `InnerIP` with a clear re-save message — a broken intent can never again emit a malformed step mid-apply. `RenderRemove` stays ungated (rollback must always run).
+- **phase1 `net-device` is now `enable`**: it was `disable`, contradicting the render's own "interface is auto-created by the phase1 POST" — without the kernel device, the VTI/routes/policies can't forward.
+- **Conformance `ip_mask` rule kind** (FortiOS `"<ipv4> <dotted-netmask>"` pair, contiguous mask) now covers `system/interface` `ip`/`remote-ip` — the fwm-t4 value class is caught pre-dispatch and, with collector ≥ 1.3.27, pre-write. Six new cross-repo `ParityCases` (incl. the exact bug value) pin the kind.
+- **Tests:** the exact fwm-t4 app-path regression (persist → hydrate → deploy → render ships a valid pair + `net-device":"enable"` + passes conformance), render fail-fast, parity pins. Two existing tests updated to the corrected behavior (policy-mode hydration, net-device).
+
 ## [0.11.143] - 2026-07-22
 
 ### Added — IPSec SA-liveness verification (C2b-2b): deployed tunnels now reach `up` / `down`

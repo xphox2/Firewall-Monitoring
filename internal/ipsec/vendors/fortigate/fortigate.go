@@ -68,6 +68,15 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 	local, remote := v.Local(), v.Remote()
 	name := in.Name
 
+	// VTI addressing is mandatory for this driver in BOTH modes (the design keeps
+	// the VTI + routes: FortiOS 7.6 removed the legacy no-VTI action=ipsec mode).
+	// An end with no InnerIP is a broken intent (e.g. persisted before policy-mode
+	// allocation shipped) — refuse to render rather than emit a step whose empty
+	// "ip" the device would reject mid-apply (the fwm-t4 HTTP 500).
+	if local.InnerIP == "" || remote.InnerIP == "" {
+		return ipsec.Artifact{}, fmt.Errorf("fortigate render needs VTI addressing on both ends (InnerIP empty) — re-save the tunnel to rehydrate its derived fields")
+	}
+
 	p1, err := phase1Proposal(in.IKE)
 	if err != nil {
 		return ipsec.Artifact{}, err
@@ -81,11 +90,14 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 	// rendered as type=dynamic with no remote-gw; a static peer sets it. The PSK
 	// rides the body via the %PSK% placeholder (injected into the real step,
 	// masked in the preview) — validPSK guarantees it stays JSON-safe.
+	// net-device=enable: the phase1 POST auto-creates the (kernel) tunnel
+	// interface the VTI addressing step, static routes, and firewall policies all
+	// depend on — without it the cmdb object exists but nothing forwards.
 	p1body := map[string]any{
 		"name":         name,
 		"interface":    local.EgressIface,
 		"ike-version":  ikeVer(in.IKEVersion),
-		"net-device":   "disable",
+		"net-device":   "enable",
 		"proposal":     p1,
 		"dhgrp":        string(in.IKE.DH),
 		"peertype":     "one",

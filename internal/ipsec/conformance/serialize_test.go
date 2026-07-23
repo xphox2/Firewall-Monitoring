@@ -45,6 +45,13 @@ var ParityCases = []ParityCase{
 	{"fortigate", "/api/v2/cmdb/vpn.ipsec/phase2-interface", "proposal", "aes256gcm", true},
 	{"fortigate", "/api/v2/cmdb/vpn.ipsec/phase2-interface", "proposal", "aes256-sha256", true},
 	{"fortigate", "/api/v2/cmdb/vpn.ipsec/phase2-interface", "proposal", "aes256gcm-sha384", false}, // AEAD is single token
+	// FortiGate system/interface IP MASK pairs (the fwm-t4 value class)
+	{"fortigate", "/api/v2/cmdb/system/interface/fwm-t7", "ip", "169.254.1.1 255.255.255.255", true},
+	{"fortigate", "/api/v2/cmdb/system/interface/fwm-t7", "ip", " 255.255.255.255", false},          // fwm-t4 bug value
+	{"fortigate", "/api/v2/cmdb/system/interface/fwm-t7", "ip", "169.254.1.1", false},               // missing mask
+	{"fortigate", "/api/v2/cmdb/system/interface/fwm-t7", "ip", "169.254.1.1 255.255.0.0.0", false}, // non-contiguous mask
+	{"fortigate", "/api/v2/cmdb/system/interface/fwm-t7", "ip", "", false},                          // empty
+	{"fortigate", "/api/v2/cmdb/system/interface/fwm-t7", "remote-ip", "169.254.1.2 255.255.255.252", true},
 }
 
 // parityBody wraps a proposal value in the vendor's body shape.

@@ -125,7 +125,10 @@ func TestFortiGate_RendersModernProposal(t *testing.T) {
 		`"src-subnet":"10.10.10.0 255.255.255.0"`, `"dst-subnet":"192.168.50.0 255.255.255.0"`,
 		`"type":"dynamic"`, // peer B is dynamic
 		`"tcp-mss-sender":1350`, `"localid":"fwm-t7-a"`, `"peerid":"fwm-t7-b"`,
-		`"add-route":"disable"`, `"net-device":"disable"`, `"peertype":"one"`,
+		// net-device=enable (since v0.11.144): the phase1 POST auto-creates the
+		// kernel tunnel interface the VTI/routes/policies depend on — disable
+		// left a cmdb object that couldn't forward.
+		`"add-route":"disable"`, `"net-device":"enable"`, `"peertype":"one"`,
 	} {
 		if !strings.Contains(all, want) {
 			t.Errorf("fortigate render missing %q\n--- bodies ---\n%s", want, all)
