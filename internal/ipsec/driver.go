@@ -65,8 +65,7 @@ func (d CapabilityDescriptor) supportsIKE(v IKEVersion) bool { return containsIK
 func (d CapabilityDescriptor) supportsInteg(i Integrity) bool {
 	return i == IntegrityNone || containsInteg(d.Integrity, i)
 }
-func (d CapabilityDescriptor) supportsPRF(p PRF) bool       { return containsPRF(d.PRF, p) }
-func (d CapabilityDescriptor) supportsIDType(t IDType) bool { return containsIDType(d.IDTypes, t) }
+func (d CapabilityDescriptor) supportsPRF(p PRF) bool { return containsPRF(d.PRF, p) }
 
 func containsInteg(s []Integrity, i Integrity) bool {
 	for _, x := range s {
