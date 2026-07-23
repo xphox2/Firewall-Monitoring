@@ -1133,6 +1133,25 @@ func (d *Database) migrateFlowSamplesWidenIntColumns() error {
 // re-run are safe. SQLite (the test backend) already has the column from
 // AutoMigrate and does not support `ADD COLUMN IF NOT EXISTS`, so the
 // non-Postgres path uses AutoMigrate, which adds the column only if missing.
+// migrateSystemStatusSource (v52, AUDIT AL-M2) adds the `source` column to
+// system_status so the alert engine can tell which collector writer produced a
+// row (SNMP full poll vs SSH-perf freshness row) and trust a 0 session_count as
+// "idle" (allowing SESSIONS_HIGH to auto-resolve) only from an authoritative
+// SNMP row. Adding a column with a constant default is metadata-only on
+// PostgreSQL 11+ (no table rewrite), fast even on a partitioned system_status;
+// routed through execMaintenanceDDL so the lifted statement_timeout covers the
+// ADD propagating across all partitions.
+func (d *Database) migrateSystemStatusSource() error {
+	if !d.dialect.IsPostgres() {
+		return d.db.AutoMigrate(&models.SystemStatus{})
+	}
+	if err := d.execMaintenanceDDL(`ALTER TABLE system_status ADD COLUMN IF NOT EXISTS source varchar(16) NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("migrate v52 add system_status.source: %w", err)
+	}
+	log.Printf("migrate v52 system_status.source: ensured column exists (varchar(16) not null default '')")
+	return nil
+}
+
 func (d *Database) migrateFlowSamplesAddDropsColumn() error {
 	if !d.dialect.IsPostgres() {
 		return d.db.AutoMigrate(&models.FlowSample{})

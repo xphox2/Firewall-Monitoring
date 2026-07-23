@@ -146,7 +146,20 @@ type SystemStatus struct {
 	// Memory breakdown
 	MemoryFree     uint64 `json:"memory_free"`
 	MemoryFreeable uint64 `json:"memory_freeable"`
+	// Source identifies which collector writer produced this row (AUDIT AL-M2):
+	// SystemStatusSourceSNMP for a full SNMP poll (authoritative session count) vs
+	// SystemStatusSourceSSHPerf for the FortiGate SSH `diagnose sys performance`
+	// freshness row. Empty = legacy/unknown (pre-Source collector). Used so a
+	// session_count of 0 is trusted as "idle" only from an SNMP row, never from a
+	// supplementary/partial one. Empty column added by migration v52.
+	Source string `json:"source" gorm:"column:source"`
 }
+
+// system_status writer sources (AUDIT AL-M2). Stamped by the collector per writer.
+const (
+	SystemStatusSourceSNMP    = "snmp"     // full SNMP poll — authoritative session count
+	SystemStatusSourceSSHPerf = "ssh-perf" // FortiGate SSH diagnose sys performance freshness row
+)
 
 type InterfaceStats struct {
 	ID          uint      `json:"id" gorm:"primaryKey"`
