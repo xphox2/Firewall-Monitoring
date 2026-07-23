@@ -453,8 +453,15 @@ func (d *Database) EnsurePartitions() error {
 		partitionStart := time.Date(year, month, 1, 0, 0, 0, 0, time.UTC)
 		partitionEnd := partitionStart.AddDate(0, 1, 0)
 
-		startStr := partitionStart.Format("2006-01-02")
-		endStr := partitionEnd.Format("2006-01-02")
+		// Render the RANGE bounds with an EXPLICIT UTC offset (not a bare date) so
+		// the literal is interpreted identically regardless of the PG session
+		// TimeZone. The partition key is timestamptz, and a bare-date literal is
+		// anchored in the session TZ at CREATE time — so once D4 pins the session
+		// to UTC, an explicit +00 keeps every new monthly partition aligned with
+		// the existing UTC-created ones (no boundary overlap/gap). parsePartition-
+		// UpperBound already accepts this rendering.
+		startStr := partitionStart.Format("2006-01-02 15:04:05-07:00")
+		endStr := partitionEnd.Format("2006-01-02 15:04:05-07:00")
 
 		for _, def := range partitioned {
 			partitionName := fmt.Sprintf("%s_%d%02d", def.tableName, year, month)
@@ -530,7 +537,11 @@ func (d *Database) migratePartitionDefaultPartitions() error {
 		}
 		if err := d.execMaintenanceDDL(fmt.Sprintf(
 			`CREATE TABLE IF NOT EXISTS %s_default PARTITION OF %s DEFAULT`, def.tableName, def.tableName)); err != nil {
-			return fmt.Errorf("v51 create default partition for %s: %w", def.tableName, err)
+			// Log-and-continue (not fatal), matching EnsurePartitions — which runs
+			// immediately after on the same boot and idempotently retries the same
+			// CREATE. A fatal error here would crash-loop the process over a
+			// non-critical partition-hygiene step.
+			log.Printf("v51 create default partition warning for %s: %v", def.tableName, err)
 		}
 	}
 	return nil
