@@ -119,6 +119,11 @@ func (h *Handler) CreateIPSecTunnel(c *gin.Context) {
 	}
 	intent.ID = m.ID
 	hydrateDerived(&intent)
+	// Coerce IKE identity types to ones both ends can render identically (e.g.
+	// OPNsense can't encode keyid) BEFORE persisting, so the stored intent is clean.
+	if caps, cerr := resolveCaps(&intent); cerr == nil {
+		ipsec.NormalizeIdentities(&intent, caps)
+	}
 	m2, err := database.IPSecIntentToModel(&intent)
 	if err != nil {
 		_ = db.DeleteIPSecTunnel(m.ID)
@@ -220,6 +225,11 @@ func (h *Handler) UpdateIPSecTunnel(c *gin.Context) {
 	}
 	intent.ID = id
 	hydrateDerived(&intent)
+	// Coerce IKE identity types to ones both ends can render identically (e.g.
+	// OPNsense can't encode keyid) BEFORE persisting, so the stored intent is clean.
+	if caps, cerr := resolveCaps(&intent); cerr == nil {
+		ipsec.NormalizeIdentities(&intent, caps)
+	}
 	m, err := database.IPSecIntentToModel(&intent)
 	if err != nil {
 		httputil.InternalError(c, "Failed to encode tunnel", err)
@@ -337,6 +347,7 @@ func (h *Handler) PreviewIPSecTunnel(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error(cerr.Error()))
 		return
 	}
+	ipsec.NormalizeIdentities(intent, caps) // coerce keyid→fqdn so the preview matches what deploy renders
 	previews, rerr := renderBothEnds(intent)
 	if rerr != nil {
 		c.JSON(http.StatusBadRequest, response.Error(rerr.Error()))
@@ -389,6 +400,7 @@ func (h *Handler) PreviewIPSecIntent(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error(cerr.Error()))
 		return
 	}
+	ipsec.NormalizeIdentities(&intent, caps) // coerce keyid→fqdn so the stateless preview matches deploy
 	pskAutogen := intent.PSK == "" || intent.PSK == ipsecPSKMask
 	if pskAutogen {
 		intent.PSK = ipsecPreviewPlaceholderPSK // validate/render only; never returned
@@ -819,6 +831,10 @@ func (h *Handler) DeployIPSecTunnel(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error(cerr.Error()))
 		return
 	}
+	// Coerce IKE identity types to ones both ends render identically before the
+	// deploy renders each end — this is what fixes a tunnel stored with keyid
+	// (which OPNsense can't encode) on redeploy, with no manual field edit.
+	ipsec.NormalizeIdentities(intent, caps)
 	if ipsec.HasBlock(ipsec.Validate(intent, caps)) {
 		c.JSON(http.StatusConflict, response.Error("tunnel has blocking validation findings — resolve them before deploying"))
 		return

@@ -1,6 +1,17 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.147] - 2026-07-23
+
+### Fixed — IPSec FortiGate⇄OPNsense IKE identity type mismatch (keyid → fqdn)
+
+A FortiGate⇄OPNsense tunnel could complete IKE_SA_INIT and PSK authentication and still fail with `AUTH_FAILED` because the two ends disagreed on the IKE *identity type*. The wizard hardcoded every identity as `keyid`; the FortiGate render faithfully emitted `set localid-type keyid` (so it sent `ID_KEY_ID`), but the OPNsense render dropped the type and wrote the id as a bare string, which strongSwan reads as `ID_FQDN` — so OPNsense's peer-id constraint (`identity required ID_FQDN, not matched by ID_KEY_ID`) rejected the peer. OPNsense's Connections model genuinely cannot represent a keyid identity (its swanctl generator writes the id unquoted, so a `@#<hex>` keyid encoding is swallowed as a `#` comment).
+
+- OPNsense capability descriptor no longer advertises `keyid` (it can only represent ip/fqdn), so the vendor-intersection the wizard offers excludes it for any pair containing OPNsense.
+- New `ipsec.NormalizeIdentities` coerces an identity type neither end can render identically to the mutually-supported type (an IP-literal value → `ip`, otherwise → `fqdn`); it runs on the create/update/preview/deploy paths, so a tunnel already stored with `keyid` is corrected on redeploy with no manual field edit.
+- The OPNsense render now fails loud on a `keyid` identity instead of silently mis-rendering it.
+- The tunnel wizard replaces the hardcoded `keyid` with a data-driven IKE identity-type selector populated from the negotiated capabilities, defaulting to FQDN.
+
 ## [0.11.146] - 2026-07-23
 
 ### Fixed — deploy modal: phase label + stale "up to ~1 min" copy

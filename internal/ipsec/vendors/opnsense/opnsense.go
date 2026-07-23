@@ -53,10 +53,17 @@ func (driver) Capabilities() ipsec.CapabilityDescriptor {
 		RequiresFirewallPolicy: true,
 		AutoObjects:            []string{"kernel IPsec policies (SPD)"},
 		SelectorModel:          ipsec.SelectorEndpoint,
-		IDTypes:                []ipsec.IDType{ipsec.IDTypeIP, ipsec.IDTypeFQDN, ipsec.IDTypeKeyID},
-		PushTransport:          ipsec.PushREST,
-		RendererName:           "opnsense_rest",
-		TemplateVersion:        templateVersion,
+		// OPNsense's IPsec Connections model cannot represent a keyid identity: its
+		// swanctl-config generator writes the id unquoted, so strongSwan's @#<hex>
+		// keyid encoding is swallowed as a `#` comment and the identity parses empty
+		// (verified live: `no shared key found for '' - ''`). Only IP/FQDN survive the
+		// round-trip, so keyid is deliberately NOT advertised — Intersect then excludes
+		// it for any pair containing OPNsense, and NormalizeIdentities coerces a stored
+		// keyid intent to fqdn before render.
+		IDTypes:         []ipsec.IDType{ipsec.IDTypeIP, ipsec.IDTypeFQDN},
+		PushTransport:   ipsec.PushREST,
+		RendererName:    "opnsense_rest",
+		TemplateVersion: templateVersion,
 	}
 }
 
@@ -64,6 +71,16 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 	in := v.Intent
 	local, remote := v.Local(), v.Remote()
 	desc := in.Name // fwm-t<ID> — the idempotency search key
+
+	// OPNsense cannot encode a keyid identity (see Capabilities: the swanctl
+	// generator drops the type, so it silently mismatches a peer that honors it).
+	// Fail loud rather than emit a config that can never authenticate — real paths
+	// never reach here because ipsec.NormalizeIdentities coerces keyid→fqdn first.
+	for _, id := range []ipsec.IKEIdentity{local.LocalID, remote.LocalID} {
+		if id.Type == ipsec.IDTypeKeyID {
+			return ipsec.Artifact{}, fmt.Errorf("opnsense cannot represent a keyid IKE identity (%q); use fqdn or ip", id.Value)
+		}
+	}
 
 	ikeProp, err := ikeProposal(in.IKE)
 	if err != nil {

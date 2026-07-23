@@ -150,6 +150,7 @@
             $('ipsec-caps-note').textContent = 'Both ends support: ' + (caps.allowed.encryption || []).join(', ') + '.';
             renderProfiles();
             populateCustom();
+            populateIDTypes();
             $('ipsec-crypto-section').style.display = '';
             $('ipsec-endpoints-section').style.display = '';
             $('ipsec-a-title').textContent = 'Endpoint A — ' + a.name + ' (' + vendorOf(a) + ')';
@@ -340,6 +341,36 @@
         $('ipsec-pfs').disabled = !a.pfs;
     }
 
+    function idTypeLabel(v) {
+        return v === 'fqdn' ? 'FQDN' : v === 'ip' ? 'IP address' : v === 'keyid' ? 'Key ID' : v;
+    }
+
+    // populateIDTypes fills each end's IKE identity-type <select> from the
+    // negotiated id_types (intersection of both ends' capabilities). Because
+    // OPNsense no longer advertises keyid, a FortiGate↔OPNsense pair only offers
+    // ip/fqdn. Defaults to FQDN (the cross-vendor string-identity default) and
+    // preserves a still-valid prior choice across device changes.
+    function populateIDTypes() {
+        var types = (caps.allowed.id_types || []);
+        if (!types.length) { types = ['fqdn']; }
+        ['a', 'b'].forEach(function (pfx) {
+            var id = 'ipsec-' + pfx + '-idtype', prev = $(id).value;
+            fillSel(id, types, idTypeLabel);
+            $(id).value = (types.indexOf(prev) >= 0) ? prev : (types.indexOf('fqdn') >= 0 ? 'fqdn' : types[0]);
+        });
+    }
+
+    function idTypeVal(pfx) { return $('ipsec-' + pfx + '-idtype').value || 'fqdn'; }
+
+    // setIdType selects a stored identity type IF it's an offered option; an
+    // unsupported legacy value (e.g. keyid on a pair including OPNsense) is left at
+    // the populateIDTypes default so the wizard can't re-submit an invalid type.
+    function setIdType(pfx, type) {
+        if (!type) return;
+        var sel = $('ipsec-' + pfx + '-idtype');
+        if (Array.prototype.some.call(sel.options, function (o) { return o.value === type; })) { sel.value = type; }
+    }
+
     function chosenProfile() {
         var r = document.querySelector('input[name=ipsec-profile]:checked');
         return r ? r.value : 'custom';
@@ -371,7 +402,7 @@
                 dynamic: $('ipsec-' + pfx + '-dyn').checked,
                 egress_iface: ifaceVal(pfx, 'egress'),
                 lan_iface: ifaceVal(pfx, 'lan'),
-                local_id: { type: 'keyid', value: $('ipsec-' + pfx + '-id').value.trim() },
+                local_id: { type: idTypeVal(pfx), value: $('ipsec-' + pfx + '-id').value.trim() },
                 protected_subnets: subnets('ipsec-' + pfx + '-subnets'),
                 gateway: $('ipsec-' + pfx + '-gateway').value.trim(),
                 child_lifetime_secs: life, mss_clamp: 1350
@@ -467,6 +498,10 @@
                 $('ipsec-a-subnets').value = (t.ends[0].protected_subnets || []).join('\n');
                 $('ipsec-b-subnets').value = (t.ends[1].protected_subnets || []).join('\n');
                 $('ipsec-a-id').value = (t.ends[0].local_id || {}).value || ''; $('ipsec-b-id').value = (t.ends[1].local_id || {}).value || '';
+                // Restore the stored identity type into the select (options populated by
+                // onDevicesChosen above); an unsupported stored type (legacy keyid) falls
+                // back to the populateIDTypes default (fqdn).
+                setIdType('a', (t.ends[0].local_id || {}).type); setIdType('b', (t.ends[1].local_id || {}).type);
                 $('ipsec-a-gateway').value = t.ends[0].gateway || ''; $('ipsec-b-gateway').value = t.ends[1].gateway || '';
                 // PSK stays masked (unchanged on save); Save stays gated until preview.
                 lastPreviewOK = false; $('ipsec-save-btn').disabled = true;
