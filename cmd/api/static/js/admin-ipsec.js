@@ -949,9 +949,21 @@
         if (applyFail && applyFail.length > deployReasonSnapshot.length) deployReasonSnapshot = applyFail;
         var line;
         if (state.polling) {
+            // Label by phase so the modal doesn't say "Deploying…" once the apply
+            // commands have succeeded and the server is now waiting on the SA-
+            // liveness probes (C2b-2b): the work is different ("verifying"), and
+            // the "up to ~1 min" reassurance is misleading once the elapsed timer
+            // clearly exceeds the claimed heartbeat window. After ~90s drop the
+            // reassurance entirely — the elapsed timer itself signals the wait.
+            var isSA = (status === 'degraded' && data && data.sa_pending);
+            var phaseLabel = isSA ? 'Verifying SA liveness' : 'Deploying';
+            var elapsedSec = Math.floor(state.elapsedMs / 1000);
+            var reassurance = (elapsedSec <= 90)
+                ? ' <span style="color:var(--fwmon-text-faint);">— the collector picks this up on its next check-in (up to ~1 min)</span>'
+                : ' <span style="color:var(--fwmon-text-faint);">— still waiting</span>';
             line = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;color:var(--fwmon-text-mute);font-size:0.85rem;">' +
-                '<span class="fwmon-spinner"></span><span>' + (op === 'rollback' ? 'Rolling back' : 'Deploying') + '… ' + esc(mmss(state.elapsedMs)) +
-                ' <span style="color:var(--fwmon-text-faint);">— the collector applies this on its next check-in (up to ~1 min)</span></span></div>';
+                '<span class="fwmon-spinner"></span><span>' + esc(phaseLabel) + '… ' + esc(mmss(state.elapsedMs)) +
+                reassurance + '</span></div>';
         } else if (state.exhausted) {
             line = '<div style="color:var(--fwmon-sig-warn);font-size:0.85rem;margin-bottom:10px;">No terminal result after ' + esc(mmss(state.elapsedMs)) + ' — the collector may be offline or still queued. This modal will pick it up if you reopen “View progress”.</div>';
         } else {
