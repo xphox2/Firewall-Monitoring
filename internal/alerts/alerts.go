@@ -263,13 +263,29 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *u
 		metricKey string
 		metric    string
 		current   float64
+		// populated reports whether THIS row actually measured the metric, so a
+		// value of 0 is a real reading (allowing recovery) rather than an absent
+		// field. AUDIT AL-M2: cpu/mem/disk reduce to current>0 (a live device
+		// never reports 0%); session_count can legitimately be 0 on an idle
+		// device, but system_status has two writers, so a 0 is trusted only from
+		// an authoritative full SNMP poll (Source=snmp) — never from the
+		// supplementary SSH-perf row or a legacy (empty-Source) row.
+		populated bool
 	}
 
+	// AUDIT AL-M2: trust a 0 session_count as "idle" only from an authoritative
+	// full SNMP poll. This relies on the collector stamping Source=snmp ONLY when
+	// the session OID was actually polled (see the Firewall-Collector writer); a
+	// row that skipped the session measurement must not carry Source=snmp, or a
+	// transiently-absent session count could false-resolve. Resolution is
+	// opportunistic — it lands on the next poller pass whose newest row is an
+	// SNMP poll (a FortiGate also has the SSH-perf writer, whose rows defer it).
+	sessionsMeasured := status.SessionCount > 0 || status.Source == models.SystemStatusSourceSNMP
 	checks := []metricCheck{
-		{models.AlertTypeCPUHigh, fmt.Sprintf("cpu_high_%d", status.DeviceID), "cpu_usage", status.CPUUsage},
-		{models.AlertTypeMemoryHigh, fmt.Sprintf("memory_high_%d", status.DeviceID), "memory_usage", status.MemoryUsage},
-		{models.AlertTypeDiskHigh, fmt.Sprintf("disk_high_%d", status.DeviceID), "disk_usage", status.DiskUsage},
-		{models.AlertTypeSessionsHigh, fmt.Sprintf("sessions_high_%d", status.DeviceID), "session_count", float64(status.SessionCount)},
+		{models.AlertTypeCPUHigh, fmt.Sprintf("cpu_high_%d", status.DeviceID), "cpu_usage", status.CPUUsage, status.CPUUsage > 0},
+		{models.AlertTypeMemoryHigh, fmt.Sprintf("memory_high_%d", status.DeviceID), "memory_usage", status.MemoryUsage, status.MemoryUsage > 0},
+		{models.AlertTypeDiskHigh, fmt.Sprintf("disk_high_%d", status.DeviceID), "disk_usage", status.DiskUsage, status.DiskUsage > 0},
+		{models.AlertTypeSessionsHigh, fmt.Sprintf("sessions_high_%d", status.DeviceID), "session_count", float64(status.SessionCount), sessionsMeasured},
 	}
 
 	var fired []firedEntry
@@ -367,13 +383,14 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *u
 		if rc.resolved.ClearThreshold > 0 && rc.resolved.ClearThreshold < recoverBelow {
 			recoverBelow = rc.resolved.ClearThreshold
 		}
-		// No-data guard: a value of exactly 0 means the metric is unpopulated in
-		// this row, not that it recovered to 0. A live device never reports 0%
-		// cpu/memory/disk — and system_status has two writers with disjoint field
-		// coverage (the SSH `diagnose sys performance` row carries cpu/mem but
-		// disk_usage=0), so a partial row landing as the newest sample must not
-		// auto-resolve a genuine open alert. Recovery waits for a real reading.
-		if fireAt > 0 && rc.current > 0 && rc.current < recoverBelow {
+		// No-data guard (AUDIT AL-M2): recover only when THIS row actually measured
+		// the metric (rc.populated). cpu/mem/disk reduce to current>0 (a live device
+		// never reports 0%, and the SSH `diagnose sys performance` row carries
+		// cpu/mem but disk_usage=0). session_count can legitimately be 0 on an idle
+		// device, so it recovers on 0 only from an authoritative full SNMP poll
+		// (Source=snmp) — a supplementary SSH-perf row or a legacy empty-Source row
+		// with session_count=0 must never auto-resolve a genuine SESSIONS_HIGH.
+		if fireAt > 0 && rc.populated && rc.current < recoverBelow {
 			am.sendRecovery(rc.metricKey, rc.alertType, rc.metric,
 				fmt.Sprintf("%s recovered to %.1f", rc.metric, rc.current), status.DeviceID, siteID)
 		}
