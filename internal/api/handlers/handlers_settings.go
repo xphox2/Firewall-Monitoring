@@ -576,9 +576,12 @@ func runSMTPDiagnostic(host string, port int, username, password, from, to strin
 	cStart := time.Now()
 	// AUDIT M1: pin the resolved+validated IP (SafeDialContext) so DNS rebinding
 	// can't redirect this admin-triggered test dial to an internal address after
-	// the isValidExternalIP pre-check in the caller. SafeDialContext bounds the
-	// dial with its own 10s timeout.
-	netConn, err := httputil.SafeDialContext(10*time.Second)(context.Background(), "tcp", addr)
+	// the isValidExternalIP pre-check in the caller. A 10s context bounds the DNS
+	// resolve too (SafeDialContext's LookupIPAddr honors the ctx); the dialer's
+	// own 10s Timeout bounds the TCP connect.
+	dctx, dcancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer dcancel()
+	netConn, err := httputil.SafeDialContext(10*time.Second)(dctx, "tcp", addr)
 	if err != nil {
 		summary, _ = fail("connect", "tcp dial "+addr, cStart, err)
 		return trace, false, summary

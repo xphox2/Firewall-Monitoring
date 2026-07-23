@@ -1131,6 +1131,11 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
+	// AUDIT T7: server-assigned PK — ignore any client-supplied id. Critical
+	// here: the config-history "latest" is picked by Order("id DESC"), so a
+	// client-set huge id would become the permanent latest and poison every
+	// subsequent change-diff/alert for the device.
+	rev.ID = 0
 	log.Printf("ReceiveConfigRevision: received DeviceID=%d, Length=%d, ConfigText len=%d", rev.DeviceID, rev.Length, len(rev.ConfigText))
 
 	allowedDevices := h.probeDeviceIDs(probe.ID)
@@ -1377,6 +1382,7 @@ func (h *Handler) ReceiveProcessSnapshot(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
+	snap.ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
 
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	if allowedDevices != nil && !allowedDevices[snap.DeviceID] {

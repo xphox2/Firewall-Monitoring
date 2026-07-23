@@ -63,3 +63,52 @@ func TestCheckInterfaceStatus_AdminDownResolvesStuckAlert(t *testing.T) {
 		t.Fatalf("after admin-down: %d open INTERFACE_DOWN, want 0 (stuck-alert bug)", got)
 	}
 }
+
+// TestCheckInterfaceStatus_AdminDownResolvesAcrossRestart is the AUDIT AL-M3
+// review follow-up: the admin-down resolve must NOT depend on the process-local
+// activeAlerts flag, or the stuck-alert survives a redeploy (activeAlerts is
+// empty after restart) and any suppressed state-engine fire (which never marks
+// activeAlerts). Simulate that by clearing the in-memory active set before the
+// admin-down poll and asserting the open DB row is still cold-resolved.
+func TestCheckInterfaceStatus_AdminDownResolvesAcrossRestart(t *testing.T) {
+	db := database.NewDatabaseForTesting(t)
+	cfg := &config.Config{}
+	cfg.Alerts.InterfaceDownAlert = true
+	am := NewAlertManager(cfg, notifier.NewNotifier(cfg), db)
+	am.everUp[ifaceDownKey(1, "port1")] = true
+
+	openCount := func() int64 {
+		t.Helper()
+		var n int64
+		if err := db.Gorm().Model(&models.Alert{}).
+			Where("alert_type = ? AND resolved_at IS NULL", "INTERFACE_DOWN").
+			Count(&n).Error; err != nil {
+			t.Fatalf("count: %v", err)
+		}
+		return n
+	}
+
+	// Fire, leaving an open row.
+	down := []models.InterfaceStats{{DeviceID: 1, Name: "port1", Status: "down", AdminStatus: "up"}}
+	if err := am.CheckInterfaceStatus(down, nil); err != nil {
+		t.Fatalf("fire: %v", err)
+	}
+	if got := openCount(); got != 1 {
+		t.Fatalf("after fire: %d open, want 1", got)
+	}
+
+	// Simulate a restart: the open DB row persists, but the in-memory active set
+	// is empty (as it is in a fresh process).
+	am.mu.Lock()
+	am.activeAlerts = map[string]bool{}
+	am.mu.Unlock()
+
+	// Admin-down must STILL cold-resolve the persisted open row.
+	adminDown := []models.InterfaceStats{{DeviceID: 1, Name: "port1", Status: "down", AdminStatus: "down"}}
+	if err := am.CheckInterfaceStatus(adminDown, nil); err != nil {
+		t.Fatalf("admin-down: %v", err)
+	}
+	if got := openCount(); got != 0 {
+		t.Fatalf("after admin-down post-restart: %d open, want 0 (restart-safe cold resolve)", got)
+	}
+}

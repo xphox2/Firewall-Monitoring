@@ -216,7 +216,7 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 		// it should also rekey before the IKE SA so the initiator owns rekey.
 		if e.ChildLifetimeSecs < 0 {
 			add(SeverityBlock, "child_lifetime_invalid",
-				fmt.Sprintf("%s child lifetime must be positive", endLabel(intent, i)))
+				fmt.Sprintf("%s child lifetime must not be negative", endLabel(intent, i)))
 		} else if e.ChildLifetimeSecs > 0 && intent.IKELifetimeSecs > 0 && e.ChildLifetimeSecs >= intent.IKELifetimeSecs {
 			add(SeverityWarn, "child_lifetime_ge_ike",
 				fmt.Sprintf("%s child lifetime (%ds) is not shorter than the IKE lifetime (%ds) — the child should rekey first",

@@ -142,9 +142,16 @@ deploy_remote() {
     # AUDIT B5: never let an empty/short REMOTE_DIR turn `rm -rf ${REMOTE_DIR}/*`
     # into `rm -rf /*`. REMOTE_DIR is /opt/${APP_NAME} today, but guard the
     # destructive expansion so a future refactor can't wipe the remote root.
+    # Require exactly /opt/<single-component> — a bare `/opt/*` glob would also
+    # match /opt/.. (→ rm -rf /*) or /opt/ (→ rm -rf /opt/*), so validate the
+    # basename too (AUDIT — Fable).
+    base="${REMOTE_DIR#/opt/}"
     case "${REMOTE_DIR}" in
-        /opt/*) : ;;
+        /opt/"$base") : ;;
         *) log_error "REMOTE_DIR='${REMOTE_DIR}' is not under /opt — refusing to rm -rf"; exit 1 ;;
+    esac
+    case "$base" in
+        ""|.|..|*/*) log_error "REMOTE_DIR='${REMOTE_DIR}' is not a safe single dir under /opt — refusing to rm -rf"; exit 1 ;;
     esac
     ssh ${SSH_OPTS} ${USER}@${HOST} "sudo rm -rf ${REMOTE_DIR}/*"
 

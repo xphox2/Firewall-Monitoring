@@ -630,10 +630,17 @@ async function sendMessage() {
 
 function escapeHtml(text) {
     // AUDIT-059: nullish check, not falsy — `if (!text)` blanked numeric 0.
+    // AUDIT F2: use the replace-chain (not the textContent→innerHTML trick),
+    // which ALSO escapes " and ' — required for the <option value="..."> sink
+    // below, where the textContent form left quotes unescaped (a channel name
+    // like `" onmouseover=...` could break out of the value attribute).
     if (text == null) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 // Init — the SPA calls this when the IRC page is shown (admin-main.js
