@@ -102,6 +102,9 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 			add(SeverityBlock, "id_missing",
 				fmt.Sprintf("%s must have an explicit IKE identity value", endLabel(intent, i)))
 		}
+		// Type-aware identity validation: block any value that would fail phase-1
+		// auth on a FortiGate⇄OPNsense tunnel (see validateIdentity).
+		fs = append(fs, validateIdentity(intent, i)...)
 		// Egress + LAN interfaces are required: route-based rendering binds the VTI
 		// to the egress and writes the LAN firewall policy, so an empty value would
 		// emit `set interface ""` / a rule with no source interface downstream.
@@ -364,6 +367,86 @@ func safeToken(s string) bool {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
 		case r == '.' || r == '_' || r == '-' || r == ':':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// validateIdentity blocks IKE identity VALUES that would fail phase-1 auth on a
+// FortiGate⇄OPNsense tunnel. The two vendors classify the identity TYPE
+// differently: FortiGate's `localid-type` FORCES the type, but OPNsense renders
+// the swanctl id bare, so strongSwan AUTO-classifies it (an IP-literal →
+// ID_IPV4/6_ADDR, an "ip-ip" range → ID_IPV4_ADDR_RANGE, a value with `:` →
+// IPv6-or-KEY_ID, else → ID_FQDN). If the two ends disagree on the type the SA
+// fails with AUTH_FAILED (the same class as the v0.11.147 keyid fix). A
+// single-label value like "TECHLABS" is fine — both vendors accept it as an
+// FQDN identity, so it is deliberately NOT flagged. The generic charset gate
+// (safeToken) has already run in the caller; this adds the type-specific rules.
+func validateIdentity(intent *TunnelIntent, i int) []Finding {
+	var fs []Finding
+	id := intent.Ends[i].LocalID
+	val := id.Value
+	if val == "" {
+		return fs // handled by the id_missing block
+	}
+	label := endLabel(intent, i)
+
+	// The value mirrors into FortiGate `localid` AND `peerid` (the other end's id),
+	// both capped at 63 characters — applies to every identity type.
+	if len(val) > 63 {
+		fs = append(fs, Finding{SeverityBlock, "id_too_long",
+			fmt.Sprintf("%s IKE identity %q is %d characters — the maximum is 63 (FortiGate limit)", label, val, len(val))})
+	}
+
+	switch id.Type {
+	case IDTypeFQDN:
+		switch {
+		case net.ParseIP(val) != nil:
+			fs = append(fs, Finding{SeverityBlock, "id_fqdn_is_ip",
+				fmt.Sprintf("%s FQDN identity %q is an IP address — strongSwan would treat it as an IP identity while FortiGate sends it as an FQDN, so the tunnel fails to authenticate. Set the identity type to IP instead.", label, val)})
+		case isIPRange(val):
+			fs = append(fs, Finding{SeverityBlock, "id_fqdn_is_range",
+				fmt.Sprintf("%s FQDN identity %q is an IP address range — strongSwan parses it as an address range, which cannot be an IKE identity.", label, val)})
+		case safeToken(val) && !fqdnCharsOK(val):
+			// safeToken permits ':' but a ':'-bearing value is read by strongSwan as
+			// an IPv6 address, a KEY_ID, or a `type:` prefix — never the ID_FQDN
+			// FortiGate sends. (Every other hostile char is already blocked by
+			// safeToken/unsafe_value above, so this branch only catches ':'.)
+			fs = append(fs, Finding{SeverityBlock, "id_fqdn_charset",
+				fmt.Sprintf("%s FQDN identity %q must not contain ':' — the peer would interpret it as an IP/key-id, not an FQDN.", label, val)})
+		}
+	case IDTypeIP:
+		if net.ParseIP(val) == nil {
+			fs = append(fs, Finding{SeverityBlock, "id_ip_invalid",
+				fmt.Sprintf("%s IP identity %q is not a valid IP address.", label, val)})
+		}
+	}
+	return fs
+}
+
+// isIPRange reports whether s is an "ip-ip" address range (e.g.
+// 10.0.0.1-10.0.0.9) — strongSwan (≥5.4.0) parses these as ID_IPV4_ADDR_RANGE,
+// not an FQDN. Splits on the FIRST '-' so hostnames like "my-fw.example.com"
+// (whose first segment isn't an IP) are not misdetected.
+func isIPRange(s string) bool {
+	i := strings.IndexByte(s, '-')
+	if i <= 0 || i >= len(s)-1 {
+		return false
+	}
+	return net.ParseIP(s[:i]) != nil && net.ParseIP(s[i+1:]) != nil
+}
+
+// fqdnCharsOK reports whether every rune is in [A-Za-z0-9._-] — the interop-safe
+// FQDN-identity charset. Stricter than safeToken (which also allows ':') and
+// deliberately includes '_' (strongSwan classifies it as FQDN, OPNsense allows
+// it, and Fortinet's own docs use e.g. prince_1.test.com).
+func fqdnCharsOK(s string) bool {
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '.' || r == '_' || r == '-':
 		default:
 			return false
 		}
