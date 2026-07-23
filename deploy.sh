@@ -139,6 +139,13 @@ deploy_remote() {
     ssh ${SSH_OPTS} ${USER}@${HOST} "sudo mkdir -p ${BACKUP_DIR}; if [ -n \"\$(ls -A ${REMOTE_DIR} 2>/dev/null)\" ]; then sudo tar czf ${BACKUP_DIR}/${APP_NAME}-${STAMP}.tar.gz -C ${REMOTE_DIR} . && echo 'Backup: ${BACKUP_DIR}/${APP_NAME}-${STAMP}.tar.gz'; else echo 'No existing install to back up (first deploy)'; fi"
 
     log_info "Transferring files..."
+    # AUDIT B5: never let an empty/short REMOTE_DIR turn `rm -rf ${REMOTE_DIR}/*`
+    # into `rm -rf /*`. REMOTE_DIR is /opt/${APP_NAME} today, but guard the
+    # destructive expansion so a future refactor can't wipe the remote root.
+    case "${REMOTE_DIR}" in
+        /opt/*) : ;;
+        *) log_error "REMOTE_DIR='${REMOTE_DIR}' is not under /opt — refusing to rm -rf"; exit 1 ;;
+    esac
     ssh ${SSH_OPTS} ${USER}@${HOST} "sudo rm -rf ${REMOTE_DIR}/*"
 
     rsync -avz -e "ssh ${SSH_OPTS}" --progress bin/ ${USER}@${HOST}:${REMOTE_DIR}/
@@ -183,9 +190,11 @@ install_local() {
     # as. Previously the unit ran as root, which is the worst-case blast
     # radius for any future RCE — the binary would land on a public-facing
     # network port (8080, 162/udp, 6343/udp), and a single memory-corruption
-    # bug would give the attacker root. The Docker path already runs as the
-    # non-root `fwmon` user (Dockerfile USER); the native systemd path now
-    # matches.
+    # bug would give the attacker root. In the Docker path the long-running
+    # daemons drop to the non-root `fwmon` user via su-exec, though the
+    # container's init/PID1 still runs as root (there is NO `USER` directive in
+    # the Dockerfile — AUDIT B1, a tracked follow-up). This native systemd path
+    # runs the service as a dedicated non-root user throughout.
     create_service_user
 
     mkdir -p ${INSTALL_DIR}

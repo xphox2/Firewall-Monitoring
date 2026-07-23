@@ -1031,7 +1031,13 @@ func (d *Database) migrateFlowSamplesWidenIntColumns() error {
 			ALTER COLUMN input_if_index TYPE bigint,
 			ALTER COLUMN output_if_index TYPE bigint
 	`
-	if err := d.db.Exec(stmt).Error; err != nil {
+	// AUDIT D1: route through execMaintenanceDDL, which lifts the per-connection
+	// 30s statement_timeout (AUDIT-037) for the duration of the DDL. On a
+	// populated flow_samples the first-time ALTER COLUMN ... TYPE is a full table
+	// rewrite; without the lift it would be cancelled at 30s and crash-loop boot.
+	// (Latent today — prod is past v9 and fresh installs get correct types from
+	// AutoMigrate so this is a no-op — but cheap to harden.)
+	if err := d.execMaintenanceDDL(stmt); err != nil {
 		return fmt.Errorf("migrate v9 flow_samples widen int columns: %w", err)
 	}
 	log.Printf("migrate v9 flow_samples widen: src_port/dst_port -> integer, sequence_number/sampling_rate/input_if_index/output_if_index -> bigint")

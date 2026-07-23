@@ -664,6 +664,12 @@ func (c *Config) Validate() error {
 	// Secrets warnings
 	if c.Server.JWTSecretKey == "" {
 		log.Println("WARNING: JWT_SECRET_KEY not set — a random key will be generated (tokens invalidated on restart)")
+	} else if len(c.Server.JWTSecretKey) < 32 {
+		// AUDIT L2: HS256 with a low-entropy operator-set secret is offline
+		// brute-forceable (and it also seeds the AES key when ENCRYPTION_KEY is
+		// unset). The auto-generated key is 32 bytes; hold operator-set keys to
+		// the same floor. Warn (not fatal) so an upgrade can't brick boot.
+		log.Printf("WARNING: JWT_SECRET_KEY is only %d characters — use at least 32 random characters; a short secret is brute-forceable and weakens token + credential security", len(c.Server.JWTSecretKey))
 	}
 	if c.Server.EncryptionKey == "" && c.Server.JWTSecretKey == "" {
 		log.Println("WARNING: Neither ENCRYPTION_KEY nor JWT_SECRET_KEY set — database credentials will not be encrypted")

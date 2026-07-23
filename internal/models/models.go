@@ -1089,10 +1089,14 @@ type IPSecTunnel struct {
 	LastError string `json:"last_error" gorm:"type:text"`
 
 	// Promoted endpoint columns for listing/filtering.
-	ADeviceID uint   `json:"a_device_id" gorm:"index"`
-	BDeviceID uint   `json:"b_device_id" gorm:"index"`
-	AVendor   string `json:"a_vendor"`
-	BVendor   string `json:"b_vendor"`
+	// AUDIT D5: pin column names explicitly. GORM currently derives exactly these
+	// snake-case names, but UpdateIPSecTunnel hardcodes them in an Updates(map),
+	// so a future field rename or GORM naming change would silently break the
+	// write (same class as the v17 CIDR→c_id_r bug).
+	ADeviceID uint   `json:"a_device_id" gorm:"column:a_device_id;index"`
+	BDeviceID uint   `json:"b_device_id" gorm:"column:b_device_id;index"`
+	AVendor   string `json:"a_vendor" gorm:"column:a_vendor"`
+	BVendor   string `json:"b_vendor" gorm:"column:b_vendor"`
 
 	// IntentJSON is the serialized ipsec.TunnelIntent WITHOUT the PSK. Excluded
 	// from API JSON (the handler re-expands it into a masked response DTO).

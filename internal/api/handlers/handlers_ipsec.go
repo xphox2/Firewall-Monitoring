@@ -1149,6 +1149,19 @@ func (h *Handler) GetIPSecDeployResult(c *gin.Context) {
 		case database.ProbeCommandStatusFailed:
 			anyBad, allAbortedPreWrite, unknown[i] = true, false, true
 			failMsg = firstNonEmpty(failMsg, cmd.Result, "apply command failed")
+			// AUDIT IP4: a Failed apply may still have created device objects
+			// before it failed. Best-effort parse the result and merge any
+			// captured UUIDs so auto-rollback can delete them — otherwise they
+			// leak as orphans and the end is forced to RollbackUnproven.
+			var frv ipsecApplyReportView
+			if json.Unmarshal([]byte(cmd.Result), &frv) == nil && len(frv.CapturedUUIDs) > 0 {
+				if e.CapturedUUIDs == nil {
+					e.CapturedUUIDs = map[string]string{}
+				}
+				for k, v := range frv.CapturedUUIDs {
+					e.CapturedUUIDs[k] = v
+				}
+			}
 		case database.ProbeCommandStatusSucceeded:
 			var rv ipsecApplyReportView
 			if json.Unmarshal([]byte(cmd.Result), &rv) != nil {
@@ -1534,7 +1547,11 @@ func (h *Handler) RollbackIPSecTunnel(c *gin.Context) {
 		return
 	}
 	fromStatuses := []string{ipsecStatusDegraded, ipsecStatusUp, ipsecStatusDown, ipsecStatusError, ipsecStatusRollbackFailed}
-	if terr := db.TransitionIPSecDeploy(id, fromStatuses, ipsecStatusRollingBack, "", string(blob), false, cmds); terr != nil {
+	// AUDIT IP3: carry an operator-initiated reason (not empty) so the terminal
+	// banner reads "rolled back — operator-initiated rollback" instead of
+	// synthesizing the misleading "deploy failed" when LastError is empty. The
+	// auto-rollback path still carries the real deploy failure.
+	if terr := db.TransitionIPSecDeploy(id, fromStatuses, ipsecStatusRollingBack, "operator-initiated rollback", string(blob), false, cmds); terr != nil {
 		if errors.Is(terr, database.ErrIPSecConcurrentDeploy) {
 			c.JSON(http.StatusConflict, response.Error("tunnel is not in a rollback-able state (nothing deployed, or a deploy/rollback is in progress)"))
 			return

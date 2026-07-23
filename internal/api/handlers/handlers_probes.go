@@ -120,14 +120,16 @@ func (h *Handler) CreateProbe(c *gin.Context) {
 	// returned once, in this create response — the creator (operator-level)
 	// needs it to deploy the collector, and the only other reveal path
 	// (RegenerateProbeKey) is admin-only. Every subsequent read stays redacted.
-	plainKey := ""
 	keyBytes := make([]byte, 32)
 	if _, err := rand.Read(keyBytes); err != nil {
-		log.Printf("Failed to generate registration key: %v", err)
-	} else {
-		plainKey = hex.EncodeToString(keyBytes)
-		probe.RegistrationKey = database.HashProbeKey(plainKey)
+		// AUDIT API5: crypto/rand essentially never fails on a healthy host, but
+		// if it does we must NOT persist a probe with an empty registration key
+		// (which would be keyed on HashProbeKey("") and effectively unauthenticated).
+		httputil.InternalError(c, "Failed to generate registration key", err)
+		return
 	}
+	plainKey := hex.EncodeToString(keyBytes)
+	probe.RegistrationKey = database.HashProbeKey(plainKey)
 
 	if err := db.CreateProbe(&probe); err != nil {
 		httputil.InternalError(c, "Failed to create probe", err)

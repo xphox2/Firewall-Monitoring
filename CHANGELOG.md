@@ -1,6 +1,23 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.152] - 2026-07-23
+
+### Fixed — Engineering-audit deferred set, Phase 1 (hygiene hardening)
+
+Sixteen low-risk correctness/security fixes from the deferred audit backlog:
+
+- **API1** `CreateDeviceConnection` now zeroes the client-supplied primary key (a set `id` inserted at that PK and desynced the Postgres identity sequence), matching every sibling create handler.
+- **API2** the threat-intel search now uses the shared bounded pager, so the response envelope stops echoing an unclamped `limit`/`offset` back to the UI.
+- **API3** the manual "send report" endpoint no longer returns the raw SMTP/dial error to the client (logged server-side; generic message returned).
+- **API4** the unauthenticated client-error beacon sanitizes control characters (CR/LF) from every logged field, closing a log-line-forging vector.
+- **API5** `CreateProbe` aborts with 500 if `crypto/rand` fails instead of persisting a probe with an empty (effectively unauthenticated) registration key.
+- **T6** `POST /probes/register` is now rate-limited like every other probe endpoint. **T7** the 20 bulk `Receive*` telemetry writers zero any client-supplied row PK (mass-assignment).
+- **D1** the v9 `flow_samples` column-widen migration routes through `execMaintenanceDDL` so its statement-timeout is lifted (harmless today; prevents a boot crash-loop on any pre-v9 populated upgrade). **D5** the `IPSecTunnel` A/B device/vendor columns are pinned with explicit `column:` tags.
+- **IP3** an operator-initiated IPSec rollback now surfaces "operator-initiated rollback" instead of the misleading "deploy failed". **IP4** a `Failed` apply command's captured UUIDs are merged so auto-rollback can still delete objects created before the failure (no orphans). **IP5** the WAN gateway is validated as an IP and IKE/child lifetimes get range/sanity findings (early, clear errors instead of a cryptic pre-dispatch 400).
+- **Security L2** a weak operator-set `JWT_SECRET_KEY` (&lt;32 chars) is now warned about at startup. **L3** the reveal-secret TOTP step-up applies the single-use replay guard, matching the 2FA login path.
+- **B4** `govulncheck` is pinned (`@v1.6.0`) like staticcheck/gosec. **B5** `deploy.sh` guards its destructive `rm -rf` against an empty/foreign `REMOTE_DIR`, corrects a factually-wrong "Dockerfile USER" comment, and `config.env.example` documents the remote-DB `DB_SSL_MODE=disable` footgun.
+
 ## [0.11.151] - 2026-07-23
 
 ### Fixed — Adversarial-review follow-ups to the audit batch
