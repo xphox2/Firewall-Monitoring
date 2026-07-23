@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.146] - 2026-07-23
+
+### Fixed — deploy modal: phase label + stale "up to ~1 min" copy
+
+The deploy modal's polling line stayed "Deploying…" even after the server transitioned to `degraded + sa_pending` (C2b-2b), and the "the collector applies this on its next check-in (up to ~1 min)" reassurance kept showing long past the claimed ~1-minute window — looking like a stuck deploy at 3+ minutes when the work had simply moved on to SA-liveness verification.
+
+- **Phase-aware label:** "Deploying…" while the apply commands are in flight; "Verifying SA liveness…" once status is `degraded` with SA probes pending. The work is genuinely different in each phase and the modal now says so.
+- **Reassurance fades at 90s:** the "up to ~1 min" copy only shows while elapsed ≤ 90s (the default collector heartbeat is ~60s, so 90s gives a small buffer). After that it's replaced with "still waiting" — the elapsed timer itself communicates the wait honestly instead of promising a window that's already elapsed.
+
 ## [0.11.145] - 2026-07-23
 
 ### Fixed — admin toast squished/clipped (add/remove IPSec tunnel, and every other toast)
