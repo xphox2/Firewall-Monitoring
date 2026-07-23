@@ -34,28 +34,37 @@ func TestGeneratePendingToken_StageAndExpiry(t *testing.T) {
 	}
 }
 
-// TestMarkTOTPSlotUsed_ReplayGuard: the same 30s slot authenticates once.
+// TestMarkTOTPSlotUsed_ReplayGuard: a given code is single-use per {purpose,user};
+// the guard keys on the CODE (not the wall-clock slot), so it holds across a 30s
+// boundary within the code's ±1 skew validity window.
 func TestMarkTOTPSlotUsed_ReplayGuard(t *testing.T) {
 	t.Parallel()
 	am := auth.NewAuthManager(testConfig(), newFakeDB())
-	if !am.MarkTOTPSlotUsed(7, "login") {
-		t.Fatal("first use of a slot must succeed")
+
+	// First use of a code succeeds; an exact replay is rejected.
+	if !am.MarkTOTPSlotUsed(7, "login", "123456") {
+		t.Fatal("first use of a code must succeed")
 	}
-	if am.MarkTOTPSlotUsed(7, "login") {
-		t.Fatal("second use of the same slot must be rejected (replay)")
+	if am.MarkTOTPSlotUsed(7, "login", "123456") {
+		t.Fatal("replay of the same code must be rejected")
+	}
+	// A DIFFERENT code for the same user/purpose is a distinct authentication
+	// (e.g. the next 30s code) — must succeed.
+	if !am.MarkTOTPSlotUsed(7, "login", "654321") {
+		t.Fatal("a different code must not be blocked by another code's guard")
 	}
 	// A different user is tracked independently.
-	if !am.MarkTOTPSlotUsed(8, "login") {
-		t.Fatal("other users must not share the slot guard")
+	if !am.MarkTOTPSlotUsed(8, "login", "123456") {
+		t.Fatal("other users must not share the guard")
 	}
-	// AUDIT L3: a different PURPOSE for the same user has its own slot, so
-	// logging in then revealing a credential in the same 30s window both succeed;
-	// but a second reveal in that slot is still blocked.
-	if !am.MarkTOTPSlotUsed(7, "reveal") {
-		t.Fatal("a distinct purpose must have an independent slot")
+	// AUDIT L3: a different PURPOSE for the same user+code is independent, so
+	// logging in then revealing a credential with the current code both succeed;
+	// a second reveal with that code is still blocked.
+	if !am.MarkTOTPSlotUsed(7, "reveal", "123456") {
+		t.Fatal("a distinct purpose must have an independent guard")
 	}
-	if am.MarkTOTPSlotUsed(7, "reveal") {
-		t.Fatal("second use of the same slot+purpose must be rejected (replay)")
+	if am.MarkTOTPSlotUsed(7, "reveal", "123456") {
+		t.Fatal("replay of the same code+purpose must be rejected")
 	}
 }
 

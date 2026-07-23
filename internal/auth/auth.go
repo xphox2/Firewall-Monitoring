@@ -2,7 +2,9 @@ package auth
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sync"
@@ -83,18 +85,20 @@ type AuthManager struct {
 	config        *config.Config
 	loginAttempts map[string][]time.Time
 	attemptsMu    sync.RWMutex
-	// lastTOTPSlot records, per {purpose,user}, the most recent 30s TOTP
-	// time-slot that successfully authenticated — a valid code is single-use
-	// within its slot (replay guard). Keyed by purpose ("login", "reveal", …) so
-	// independent flows don't consume each other's slot: logging in and then
-	// revealing a credential in the same 30s window are distinct actions and must
-	// each be allowed once, while two of the SAME action with one code are not.
-	// The map is PER-PROCESS: under the normal AUDIT-040 singleton exactly one
-	// cmd/api serves logins, so the guard is complete. Under ALLOW_MULTI_API=true
-	// each instance keeps its own map, so a still-fresh intercepted code could be
-	// replayed once per extra instance — an accepted follower-mode divergence,
-	// documented alongside the lockout/rate-limit caveats in docs/OPERATIONS.md.
-	lastTOTPSlot map[string]int64
+	// usedTOTPCodes remembers each successfully-validated TOTP code (hashed,
+	// namespaced by {purpose,user}) until it can no longer be accepted — the
+	// replay guard. Keyed on the CODE, not the wall-clock slot: validateTOTPCode
+	// uses Skew:1, so a code is valid for ~90s across three 30s slots, and a
+	// slot-based guard let an intercepted code replay once in the adjacent slot.
+	// Value = unix expiry (first-use + totpReplayWindow). Keyed by purpose so
+	// independent flows ("login" vs "reveal") don't lock each other out. Only
+	// valid codes reach here (callers validate first), so the map holds at most a
+	// few entries per user per window and is swept on each call. PER-PROCESS:
+	// under the AUDIT-040 singleton exactly one cmd/api serves logins, so the
+	// guard is complete; under ALLOW_MULTI_API=true a still-fresh intercepted code
+	// could be replayed once per extra instance — an accepted follower-mode
+	// divergence, documented alongside the lockout/rate-limit caveats.
+	usedTOTPCodes map[string]int64
 }
 
 func NewAuthManager(cfg *config.Config, db Database) *AuthManager {
@@ -102,7 +106,7 @@ func NewAuthManager(cfg *config.Config, db Database) *AuthManager {
 		db:            db,
 		config:        cfg,
 		loginAttempts: make(map[string][]time.Time),
-		lastTOTPSlot:  make(map[string]int64),
+		usedTOTPCodes: make(map[string]int64),
 	}
 }
 
@@ -180,20 +184,39 @@ func (am *AuthManager) ClearFailures(username, ip string) {
 	delete(am.loginAttempts, lockoutKeyFor(username, ip))
 }
 
-// MarkTOTPSlotUsed atomically records the current 30s TOTP slot for a
-// {purpose,user}, returning false when that slot already authenticated once for
-// that purpose — the replay guard: an intercepted still-fresh code cannot be
-// used a second time for the SAME action. Distinct purposes ("login" vs
-// "reveal") have independent slots so one doesn't lock out the other.
-func (am *AuthManager) MarkTOTPSlotUsed(userID uint, purpose string) bool {
-	slot := time.Now().Unix() / 30
-	key := fmt.Sprintf("%s:%d", purpose, userID)
+// totpReplayWindow is how long a used TOTP code is remembered — the full ±1
+// skew validity window (3×30s). A code first accepted at any instant can still
+// be accepted by validateTOTPCode only until the end of its next 30s step, i.e.
+// at most this long later, so remembering it for this window closes the replay
+// gap regardless of where a wall-clock slot boundary falls.
+const totpReplayWindow = 90 * time.Second
+
+// MarkTOTPSlotUsed records a successfully-validated TOTP code as consumed for a
+// {purpose,user}, returning false if that exact code was already used within its
+// validity window — the replay guard: an intercepted still-fresh code cannot be
+// used a second time for the SAME action, even across a 30s slot boundary
+// (validateTOTPCode's Skew:1 keeps a code valid for ~90s). Distinct purposes
+// ("login" vs "reveal") have independent guards so one doesn't lock out the
+// other. Callers MUST validate the code first; only valid codes reach here.
+func (am *AuthManager) MarkTOTPSlotUsed(userID uint, purpose, code string) bool {
+	now := time.Now()
+	// Hash so we don't hold plaintext codes in memory; namespace by purpose+user.
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%s", purpose, userID, code)))
+	key := hex.EncodeToString(sum[:])
+
 	am.attemptsMu.Lock()
 	defer am.attemptsMu.Unlock()
-	if am.lastTOTPSlot[key] == slot {
-		return false
+	// Sweep expired entries (map holds only successfully-used codes, so it stays
+	// tiny — a few per user per window).
+	for k, exp := range am.usedTOTPCodes {
+		if now.Unix() > exp {
+			delete(am.usedTOTPCodes, k)
+		}
 	}
-	am.lastTOTPSlot[key] = slot
+	if exp, seen := am.usedTOTPCodes[key]; seen && now.Unix() <= exp {
+		return false // replay of a code still within its validity window
+	}
+	am.usedTOTPCodes[key] = now.Add(totpReplayWindow).Unix()
 	return true
 }
 

@@ -101,7 +101,7 @@ func (h *Handler) TOTPLogin(c *gin.Context) {
 	// as the fallback path.
 	authenticated := false
 	if validateTOTPCode(req.Code, admin.TOTPSecret) {
-		authenticated = h.authManager.MarkTOTPSlotUsed(admin.ID, "login")
+		authenticated = h.authManager.MarkTOTPSlotUsed(admin.ID, "login", req.Code)
 	}
 	if !authenticated {
 		used, cerr := db.ConsumeRecoveryCode(admin.ID, database.HashAPIToken(req.Code))
