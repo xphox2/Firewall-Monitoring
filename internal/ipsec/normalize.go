@@ -31,16 +31,14 @@ func NormalizeIdentities(intent *TunnelIntent, caps [2]CapabilityDescriptor) {
 	}
 }
 
-// coerceIDType picks the best mutually-supported identity type for a value: an IP
-// literal maps to IDTypeIP when allowed, otherwise IDTypeFQDN when allowed. Falls
-// back to IDTypeFQDN so the value never renders type-less (a non-IP string is a
-// valid FQDN identity for both strongSwan and FortiOS).
+// coerceIDType picks the best identity type for a value: an IP literal maps to
+// IDTypeIP when the mutual set allows it, otherwise IDTypeFQDN. FQDN is the
+// unconditional fallback because every supported vendor renders a bare string as
+// ID_FQDN (strongSwan and FortiOS both), so a non-IP identity is always a valid
+// FQDN — there is no vendor pair that shares neither ip nor fqdn.
 func coerceIDType(value string, mutual []IDType) IDType {
 	if net.ParseIP(value) != nil && containsIDType(mutual, IDTypeIP) {
 		return IDTypeIP
-	}
-	if containsIDType(mutual, IDTypeFQDN) {
-		return IDTypeFQDN
 	}
 	return IDTypeFQDN
 }
