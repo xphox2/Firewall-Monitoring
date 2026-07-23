@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.158] - 2026-07-23
+
+### Added — IPSec IKE identity validation + auto-prefill (block anything that would fail the tunnel)
+
+The IPSec wizard's IKE identity field had no type-aware validation — only a charset gate — so a value that reads fine to a human could silently break the tunnel. An IKE `ID_FQDN` is an opaque identity string (not a DNS name), so a single word like `TECHLABS` is perfectly valid on **both** FortiGate and OPNsense/strongSwan; it does not need a dotted `fw.example.com` form. But because OPNsense renders the swanctl id **bare** (strongSwan then auto-classifies it) while FortiGate's `localid-type fqdn` **forces** the FQDN type, certain values are classified differently by each end → `AUTH_FAILED` (the same class as the v0.11.147 keyid fix). This ships:
+
+- **Server-side validation** (`internal/ipsec/validation.go`, authoritative — surfaces in the wizard findings panel and gates Save/Deploy) that **blocks** any identity that would fail phase-1 auth: for `fqdn` — an IP literal (`id_fqdn_is_ip`, strongSwan would treat it as an IP identity), an `ip-ip` range (`id_fqdn_is_range`), or a `:` (`id_fqdn_charset`, read as IPv6/key-id); for `ip` — a non-IP value (`id_ip_invalid`); and for all types, >63 characters (`id_too_long`, the FortiGate limit that binds on both `localid` and `peerid`). A single-label FQDN like `TECHLABS` and underscores (`prince_1.test.com`) are explicitly allowed. Rules validated against the strongSwan source + FortiOS docs via an adversarial review.
+- **Wizard auto-prefill** (`admin-ipsec.js`): each end's identity is auto-filled from real device data — the sanitized device name for `fqdn`, the WAN/peer IP for `ip` — guaranteed to pass validation, and re-derived when the identity type changes, while never clobbering a value the operator has manually edited or a stored tunnel's identity. An inline field hint mirrors the server rules for instant feedback before Preview; the id inputs cap at `maxlength=63`.
+
 ## [0.11.157] - 2026-07-23
 
 ### Security — TOTP replay guard now keys on the code, not the wall-clock slot

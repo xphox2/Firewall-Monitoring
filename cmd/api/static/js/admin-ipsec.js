@@ -121,6 +121,8 @@
             $('ipsec-' + f + '-custom').style.display = '';
         });
         $('ipsec-a-dyn').checked = false; $('ipsec-b-dyn').checked = false;
+        idDirty.a = false; idDirty.b = false;
+        ['a', 'b'].forEach(function (pfx) { var h = $('ipsec-' + pfx + '-id-hint'); if (h) { h.textContent = ''; h.style.display = 'none'; } });
 
         AC.apiFetch(API + '/devices').then(function (r) {
             devices = ((r && r.data) || []).filter(function (d) {
@@ -162,7 +164,7 @@
         var pending = [];
         if (String(a.id) !== loadedDevice.a) { loadedDevice.a = String(a.id); pending.push(loadHints('a', a.id)); }
         if (String(b.id) !== loadedDevice.b) { loadedDevice.b = String(b.id); pending.push(loadHints('b', b.id)); }
-        return Promise.all([capsP, Promise.all(pending)]).then(function () { });
+        return Promise.all([capsP, Promise.all(pending)]).then(function () { prefillIdentity('a'); prefillIdentity('b'); });
     }
 
     // ---- data-driven endpoint hints -------------------------------------
@@ -371,6 +373,85 @@
         if (Array.prototype.some.call(sel.options, function (o) { return o.value === type; })) { sel.value = type; }
     }
 
+    // ---- IKE identity: data-driven prefill + instant client-side pre-check -----
+    // The SERVER (validation.go validateIdentity) is authoritative and gates Save
+    // via the findings panel; the JS below just (a) auto-fills a guaranteed-valid
+    // identity from real device data so the operator rarely types it, and (b)
+    // mirrors the server rules for an inline error BEFORE Preview. idDirty tracks a
+    // manual edit / a loaded stored value so the prefill never clobbers an override.
+    var idDirty = { a: false, b: false };
+
+    // isIPv4 / isIPv4Range mirror net.ParseIP / the server's isIPRange (first '-').
+    function isIPv4(s) {
+        var m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s);
+        if (!m) return false;
+        for (var i = 1; i <= 4; i++) {
+            // Match Go's net.ParseIP (client must never be STRICTER than the server):
+            // it rejects >255 AND leading-zero octets like "01.2.3.4".
+            if (parseInt(m[i], 10) > 255) return false;
+            if (m[i].length > 1 && m[i].charAt(0) === '0') return false;
+        }
+        return true;
+    }
+    function looksIPv6(s) { return s.indexOf(':') >= 0 && /^[0-9a-fA-F:.]+$/.test(s) && (s.match(/:/g) || []).length >= 2; }
+    function isIPv4Range(s) {
+        var i = s.indexOf('-');
+        if (i <= 0 || i >= s.length - 1) return false;
+        return isIPv4(s.slice(0, i)) && isIPv4(s.slice(i + 1));
+    }
+
+    // sanitizeFqdnId turns a device name into a valid FQDN identity (mirrors the
+    // server fqdn charset [A-Za-z0-9._-]): lower-case, collapse invalid runs to '-',
+    // trim leading/trailing separators, cap at 63. A device name is never an IP.
+    function sanitizeFqdnId(name) {
+        var s = String(name || '').toLowerCase().replace(/[^a-z0-9._-]+/g, '-');
+        return s.replace(/^[.\-_]+/, '').replace(/[.\-_]+$/, '').slice(0, 63);
+    }
+
+    // defaultIdentity: sanitized device name for fqdn, the end's WAN/peer IP for ip.
+    function defaultIdentity(pfx, dev) {
+        if (idTypeVal(pfx) === 'ip') { return ifaceVal(pfx, 'peer') || (dev && dev.ip_address) || ''; }
+        var s = sanitizeFqdnId(dev && dev.name);
+        // A device NAMED like an IP (e.g. "192.168.5.107") sanitizes to an IP-shaped
+        // string, which the fqdn rules would then block — so the prefill must not
+        // produce one. Fall back to a guaranteed-valid non-IP default.
+        if (!s || isIPv4(s) || isIPv4Range(s)) { s = 'site-' + pfx; }
+        return s;
+    }
+
+    // prefillIdentity fills the id input from device data unless the operator has
+    // edited it (idDirty). Re-run on device change and on id-type change.
+    function prefillIdentity(pfx) {
+        if (idDirty[pfx]) { validateId(pfx); return; }
+        var dev = deviceById($('ipsec-dev-' + pfx).value);
+        if (!dev) return;
+        var v = defaultIdentity(pfx, dev);
+        if (v) { $('ipsec-' + pfx + '-id').value = v; }
+        validateId(pfx);
+    }
+
+    // idError returns '' if the identity is valid, else a message — kept byte-for-
+    // byte in step with the server rules (validation.go validateIdentity).
+    function idError(pfx) {
+        var val = $('ipsec-' + pfx + '-id').value.trim();
+        if (val === '') return 'An IKE identity is required.';
+        if (val.length > 63) return 'Maximum 63 characters (FortiGate limit).';
+        if (idTypeVal(pfx) === 'ip') {
+            return (isIPv4(val) || looksIPv6(val)) ? '' : 'Not a valid IP address.';
+        }
+        // fqdn
+        if (isIPv4(val) || looksIPv6(val)) return 'An FQDN identity can’t be an IP address — switch the identity type to IP.';
+        if (isIPv4Range(val)) return 'An IP address range isn’t a valid IKE identity.';
+        if (!/^[A-Za-z0-9._-]+$/.test(val)) return 'Only letters, digits, dots, hyphens and underscores are allowed (no “:”, “@” or spaces).';
+        return '';
+    }
+    function validateId(pfx) {
+        var hint = $('ipsec-' + pfx + '-id-hint'), err = idError(pfx);
+        hint.textContent = err;
+        hint.style.display = err ? '' : 'none';
+        return err === '';
+    }
+
     function chosenProfile() {
         var r = document.querySelector('input[name=ipsec-profile]:checked');
         return r ? r.value : 'custom';
@@ -502,6 +583,9 @@
                 // onDevicesChosen above); an unsupported stored type (legacy keyid) falls
                 // back to the populateIDTypes default (fqdn).
                 setIdType('a', (t.ends[0].local_id || {}).type); setIdType('b', (t.ends[1].local_id || {}).type);
+                // Stored identities are user data — mark dirty so a later type change
+                // doesn't overwrite them with the device-name default; still validate.
+                idDirty.a = true; idDirty.b = true; validateId('a'); validateId('b');
                 $('ipsec-a-gateway').value = t.ends[0].gateway || ''; $('ipsec-b-gateway').value = t.ends[1].gateway || '';
                 // PSK stays masked (unchanged on save); Save stays gated until preview.
                 lastPreviewOK = false; $('ipsec-save-btn').disabled = true;
@@ -554,6 +638,12 @@
         // interface's address.
         ['a-egress', 'b-egress'].forEach(function (f) {
             $('ipsec-' + f).addEventListener('change', function () { syncPeerToEgress(f.charAt(0)); });
+        });
+        // IKE identity: track manual edits (so prefill doesn't clobber) + show the
+        // instant client-side error; re-derive the default when the id-type flips.
+        ['a', 'b'].forEach(function (pfx) {
+            $('ipsec-' + pfx + '-id').addEventListener('input', function () { idDirty[pfx] = true; validateId(pfx); });
+            $('ipsec-' + pfx + '-idtype').addEventListener('change', function () { prefillIdentity(pfx); });
         });
         // Any edit after a clean preview invalidates it (see invalidate()).
         $('ipsec-wizard-form').addEventListener('input', invalidate);
