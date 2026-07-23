@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.145] - 2026-07-23
+
+### Fixed — admin toast squished/clipped (add/remove IPSec tunnel, and every other toast)
+
+The success toast on add/remove an IPSec tunnel ("Tunnel draft saved" / "Tunnel updated" / "Tunnel deleted") — and every other `AC.showSuccess` / `showError` toast — rendered squished or clipped because `.toast-message` carried its own `position:fixed; left:50%; transform:translateX(-50%)` while the wrapping `.toast-container` (added in the sticky-toast refactor) also positioned itself. Two positioning contexts collided, and the fixed inner div with no explicit width shrank around its button children — `flex:1` on the text span had ~0px to work with, so even a short message like "Tunnel saved" wrapped to many near-empty lines.
+
+- **Root cause:** `position/top/left/transform/z-index` on `.toast-message` (`admin-shared.css`) conflicted with the container's positioning (`admin-common.js showToast`). The container is the positioning owner; the inner is just the styled card.
+- **Fix:** strip positioning from `.toast-message` so the container governs layout (max-width, centering) and the inner is its flex child with real width. Visual styling (colors via `.success`/`.error`/`.warning`, glass blur, animation) preserved.
+- Benefits every toast caller (IPSec, Sites, Probes, Rules, Reports, NOC) — the squish affected all of them, not just IPSec.
+
 ## [0.11.144] - 2026-07-22
 
 ### Fixed — FortiGate policy-based deploy: VTI addressing + net-device (the fwm-t4 HTTP 500)

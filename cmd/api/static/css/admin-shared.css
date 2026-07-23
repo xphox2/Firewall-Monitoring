@@ -862,22 +862,27 @@ tr:hover {
 
 /* User-facing Error/Success Messages (toast-style) */
 .toast-message {
-    position: fixed;
-    top: 24px;
-    left: 50%;
-    transform: translateX(-50%);
-    padding: 12px 24px;
-    border-radius: 10px;
-    font-size: 0.88rem;
-    font-weight: 600;
-    z-index: 1000;
+    /* Position is owned by the wrapping .toast-container (see admin-common.js
+       showToast) — the container is fixed+centered with max-width, and this
+       inner div is its flex child. Previously this rule had `position:fixed;
+       left:50%; transform:translateX(-50%)` of its own, which collided with
+       the container's positioning AND gave the inner no explicit width —
+       with `flex:1` on the text span the inner shrank to its button children
+       and the message rendered squished/clipped (the add/remove-IPSec-tunnel
+       success toast). Removing positioning lets the container govern layout.
+       Visual styling (colors, radius, animation) stays here as defaults;
+       JS inline styles win for padding/radius/font/box-shadow on creation. */
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 18px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
-    box-shadow: var(--fwmon-elev-2);
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    animation: toastSlideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+    animation: toastSlideIn 0.3s ease;
 }
 
 .toast-message.error {
