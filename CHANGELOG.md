@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.153] - 2026-07-23
+
+### Fixed — DB partition/retention hardening (engineering audit, Phase 4)
+
+- **D2 — partitioned tables now have a DEFAULT partition.** The high-volume RANGE-partitioned tables (`interface_stats`, `system_status`, `syslog_messages`, `syslog_summaries`, `trap_events`, `flow_samples`, `denied_events`) only had current-month + 6-future-month partitions, so a row whose `timestamp` fell before the current month — backward device clock skew, or a batch received just after 00:00 on the 1st carrying prev-month rows — failed the entire insert/COPY with `no partition of relation found for row` (for `flow_samples` the collector then re-queued that batch forever). A new migration (v51) plus `EnsurePartitions` create a `<table>_default` partition per parent so those rows land safely; retention still ages them out and the cleanup cron already skips the default. Verified on real PostgreSQL 16 (a backdated insert lands in the default instead of erroring).
+- **D3 — the `alerts` cleanup is now batched.** It previously issued a single unbounded `DELETE` for acked alerts and loaded *every* stale-unacked row into memory to log it before another unbounded `DELETE`. On a flapping fleet that meant one long row-lock on a high-write table. Both now use the shared 10k-row batched delete (with `lock_timeout=5s` + inter-batch sleep) like every other time-series table; the AUDIT-031 archive trace is preserved as a bounded sample + count.
+- **D4 — the PostgreSQL session time zone is pinned to UTC** on every pooled connection. Chart bucketing runs `date_trunc`/`to_char` server-side and the result is parsed as UTC client-side; without this the x-axis silently shifted by the server's local offset when the PG session TZ wasn't UTC. Verified against a PG whose default zone was non-UTC.
+
 ## [0.11.152] - 2026-07-23
 
 ### Fixed — Engineering-audit deferred set, Phase 1 (hygiene hardening)

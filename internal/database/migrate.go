@@ -413,6 +413,20 @@ func (d *Database) EnsurePartitions() error {
 		return nil
 	}
 
+	// AUDIT D2: ensure a DEFAULT partition per parent so a row whose timestamp
+	// falls outside the current±6-month window — backward clock skew, or a batch
+	// received just after 00:00 on the 1st carrying prev-month rows — lands in the
+	// default instead of failing the whole insert/COPY with "no partition of
+	// relation found for row". Idempotent; the cleanup cron already skips the
+	// default's unparseable bound and parent-level retention still trims its rows.
+	// Also covers freshly-converted parents that predate the v51 migration.
+	for _, def := range partitioned {
+		if err := d.execMaintenanceDDL(fmt.Sprintf(
+			`CREATE TABLE IF NOT EXISTS %s_default PARTITION OF %s DEFAULT`, def.tableName, def.tableName)); err != nil {
+			log.Printf("Default partition warning for %s: %v", def.tableName, err)
+		}
+	}
+
 	// LC-19: compute each table's per-partition index plan once — derived from
 	// the model's gorm index tags (partitionIndexPlan), not a second hard-coded
 	// list that can drift from the model.
@@ -439,8 +453,15 @@ func (d *Database) EnsurePartitions() error {
 		partitionStart := time.Date(year, month, 1, 0, 0, 0, 0, time.UTC)
 		partitionEnd := partitionStart.AddDate(0, 1, 0)
 
-		startStr := partitionStart.Format("2006-01-02")
-		endStr := partitionEnd.Format("2006-01-02")
+		// Render the RANGE bounds with an EXPLICIT UTC offset (not a bare date) so
+		// the literal is interpreted identically regardless of the PG session
+		// TimeZone. The partition key is timestamptz, and a bare-date literal is
+		// anchored in the session TZ at CREATE time — so once D4 pins the session
+		// to UTC, an explicit +00 keeps every new monthly partition aligned with
+		// the existing UTC-created ones (no boundary overlap/gap). parsePartition-
+		// UpperBound already accepts this rendering.
+		startStr := partitionStart.Format("2006-01-02 15:04:05-07:00")
+		endStr := partitionEnd.Format("2006-01-02 15:04:05-07:00")
 
 		for _, def := range partitioned {
 			partitionName := fmt.Sprintf("%s_%d%02d", def.tableName, year, month)
@@ -483,6 +504,46 @@ func (d *Database) EnsurePartitions() error {
 		}
 	}
 
+	return nil
+}
+
+// migratePartitionDefaultPartitions is the v51 migration (AUDIT D2): create a
+// DEFAULT partition for each already-partitioned high-volume parent so a row
+// whose timestamp falls outside the current±6-month window lands in the default
+// rather than failing the entire insert/COPY with "no partition of relation
+// found for row" (which, for flow_samples, fails the whole pgx COPY batch and
+// the collector re-queues it forever). Idempotent (IF NOT EXISTS); PG-only
+// (recorded as a no-op on the SQLite test backend). Plain (unconverted) tables
+// are skipped — EnsurePartitions adds their default once they are converted.
+// Runs before EnsurePartitions on boot, so a fresh install has the default
+// before any traffic.
+func (d *Database) migratePartitionDefaultPartitions() error {
+	if !d.dialect.IsPostgres() {
+		return nil
+	}
+	for _, def := range partitionTables {
+		var isPartitioned bool
+		if err := d.db.Raw(`
+			SELECT EXISTS (
+				SELECT 1 FROM pg_partitioned_table pt
+				JOIN pg_class c ON c.oid = pt.partrelid
+				WHERE c.relname = ?
+			)`, def.tableName).Scan(&isPartitioned).Error; err != nil {
+			log.Printf("v51 default-partition probe warning for %s: %v", def.tableName, err)
+			continue
+		}
+		if !isPartitioned {
+			continue
+		}
+		if err := d.execMaintenanceDDL(fmt.Sprintf(
+			`CREATE TABLE IF NOT EXISTS %s_default PARTITION OF %s DEFAULT`, def.tableName, def.tableName)); err != nil {
+			// Log-and-continue (not fatal), matching EnsurePartitions — which runs
+			// immediately after on the same boot and idempotently retries the same
+			// CREATE. A fatal error here would crash-loop the process over a
+			// non-critical partition-hygiene step.
+			log.Printf("v51 create default partition warning for %s: %v", def.tableName, err)
+		}
+	}
 	return nil
 }
 
