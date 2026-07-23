@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.151"
+const ServerVersion = "0.11.152"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -664,7 +664,10 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		// recovery code for a session. Same rate limiter as login.
 		api.POST("/auth/totp", middleware.LoginRateLimiter(), handler.TOTPLogin)
 
-		api.POST("/probes/register", handler.RegisterProbe)
+		// AUDIT T6: rate-limit registration like every other probe endpoint — it
+		// is unauthenticated (presents a registration key) and hits the DB, so an
+		// unthrottled caller is a cheap load / key-guessing surface.
+		api.POST("/probes/register", middleware.ProbeRateLimiter(), handler.RegisterProbe)
 		api.POST("/probes/heartbeat", handler.ProbeHeartbeat)
 
 		// Probe data ingestion endpoints (rate limited, authenticated per-request)

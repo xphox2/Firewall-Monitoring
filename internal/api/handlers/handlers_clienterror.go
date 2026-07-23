@@ -19,9 +19,25 @@ type clientErrorReport struct {
 	URL     string `json:"url"`
 }
 
-// truncateField bounds an attacker- or bug-controlled string before it reaches
-// the log, so a runaway error can't flood the log with one giant line.
+// sanitizeLogField replaces ASCII control characters (CR/LF and friends) with a
+// space so a client-controlled value can't forge extra log lines (AUDIT API4:
+// this endpoint is unauthenticated and its fields are attacker-controlled).
+// Applied to every field — including the multi-line JS stack, which becomes
+// single-line; the server-added "\n  stack: " prefix is unaffected.
+func sanitizeLogField(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, s)
+}
+
+// truncateField sanitizes then bounds an attacker- or bug-controlled string
+// before it reaches the log, so a runaway error can't flood the log with one
+// giant line and control characters can't forge new lines.
 func truncateField(s string, n int) string {
+	s = sanitizeLogField(s)
 	if len(s) > n {
 		return s[:n] + "…(truncated)"
 	}

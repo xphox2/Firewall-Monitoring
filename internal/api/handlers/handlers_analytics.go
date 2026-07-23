@@ -750,11 +750,11 @@ func (h *Handler) SearchThreatIntel(c *gin.Context) {
 		Severity:   strings.TrimSpace(c.Query("severity")),
 		ActiveOnly: c.Query("active") == "true" || c.Query("active") == "1",
 	}
-	offset, _ := strconv.Atoi(c.Query("offset"))
-	limit := 100
-	if l, err := strconv.Atoi(c.Query("limit")); err == nil && l > 0 {
-		limit = l
-	}
+	// AUDIT API2: use the shared bounded pager (limit 1–500, offset ≥ 0). The
+	// previous inline parse echoed the client's raw limit/offset back in the
+	// envelope even though the DB layer clamped the query, so the UI pager
+	// disagreed with the page actually returned.
+	limit, offset := httputil.ParsePagination(c)
 	rows, total, err := db.SearchThreatIntel(f, offset, limit)
 	if err != nil {
 		httputil.InternalError(c, "Failed to search threat intel", err)

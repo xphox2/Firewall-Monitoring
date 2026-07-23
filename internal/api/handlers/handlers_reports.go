@@ -217,8 +217,11 @@ func (h *Handler) SendReportNow(c *gin.Context) {
 	}
 
 	if err := h.notifier.SendHTMLEmail(subject, text, html, atts, nc, recipients); err != nil {
+		// AUDIT API3: log the raw SMTP/dial error (may carry internal
+		// hostnames/ports/TLS detail) but don't echo it to the client — every
+		// other server-side failure path uses this generic-message pattern.
 		log.Printf("Send report failed: %v", err)
-		c.JSON(http.StatusBadGateway, response.Error("Failed to send report: "+err.Error()))
+		c.JSON(http.StatusBadGateway, response.Error("Failed to send report (see server logs for detail)"))
 		return
 	}
 

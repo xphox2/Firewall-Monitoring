@@ -142,6 +142,12 @@ func (h *Handler) CreateDeviceConnection(c *gin.Context) {
 	conn.SourceDevice = nil
 	conn.DestDevice = nil
 
+	// AUDIT API1: reset the server-owned primary key so a client can't set it.
+	// A client-supplied ID inserts at that PK and desyncs the Postgres identity
+	// sequence (later auto-increment inserts then collide); every sibling create
+	// handler already zeroes this. (DeviceConnection has no CreatedAt/UpdatedAt.)
+	conn.ID = 0
+
 	// Validate required FK references
 	if conn.SourceDeviceID == 0 || conn.DestDeviceID == 0 {
 		c.JSON(http.StatusBadRequest, response.Error("Source and destination device IDs are required"))

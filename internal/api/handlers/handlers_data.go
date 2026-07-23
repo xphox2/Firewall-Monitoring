@@ -176,6 +176,7 @@ func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 	for i := range messages {
 		messages[i].ProbeID = probe.ID
 		messages[i].Timestamp = clampIngestTimestamp(messages[i].Timestamp, now)
+		messages[i].ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
 		if messages[i].DeviceID == 0 && messages[i].SourceIP != "" {
 			if devID := ipToDevice[messages[i].SourceIP]; devID > 0 {
 				messages[i].DeviceID = devID
@@ -291,6 +292,7 @@ func (h *Handler) ReceiveTrapEvents(c *gin.Context) {
 		}
 		traps[i].ProbeID = probe.ID
 		traps[i].Timestamp = clampIngestTimestamp(traps[i].Timestamp, now)
+		traps[i].ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
 		filtered = append(filtered, traps[i])
 	}
 	if err := h.db.SaveTrapEvents(filtered); err != nil {
@@ -341,6 +343,7 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 	for i := range samples {
 		samples[i].ProbeID = probe.ID
 		samples[i].Timestamp = clampIngestTimestamp(samples[i].Timestamp, now)
+		samples[i].ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
 		if samples[i].DeviceID == 0 && samples[i].SamplerAddress != "" {
 			if devID := ipToDevice[samples[i].SamplerAddress]; devID > 0 {
 				samples[i].DeviceID = devID
@@ -476,6 +479,7 @@ func (h *Handler) ReceiveFlowCounterSamples(c *gin.Context) {
 	for i := range counters {
 		counters[i].ProbeID = probe.ID
 		counters[i].Timestamp = clampIngestTimestamp(counters[i].Timestamp, now)
+		counters[i].ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
 		if counters[i].DeviceID == 0 && counters[i].SamplerAddress != "" {
 			if devID := ipToDevice[counters[i].SamplerAddress]; devID > 0 {
 				counters[i].DeviceID = devID
@@ -522,6 +526,7 @@ func (h *Handler) ReceivePingResults(c *gin.Context) {
 		}
 		results[i].ProbeID = probe.ID
 		results[i].Timestamp = clampIngestTimestamp(results[i].Timestamp, now)
+		results[i].ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
 		filtered = append(filtered, results[i])
 		// Only a SUCCESSFUL ping proves reachability — a saved failure row
 		// must not keep an unreachable device "online", and a spooled failure
@@ -613,6 +618,7 @@ func (h *Handler) ReceiveInterfaceAddresses(c *gin.Context) {
 			continue
 		}
 		addrs[i].Timestamp = clampIngestTimestamp(addrs[i].Timestamp, now)
+		addrs[i].ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
 		filtered = append(filtered, addrs[i])
 		if addrs[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, addrs[i].DeviceID, addrs[i].Timestamp)
@@ -659,6 +665,7 @@ func (h *Handler) ReceiveProcessorStats(c *gin.Context) {
 			continue
 		}
 		stats[i].Timestamp = clampIngestTimestamp(stats[i].Timestamp, now)
+		stats[i].ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
 		filtered = append(filtered, stats[i])
 		if stats[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, stats[i].DeviceID, stats[i].Timestamp)
@@ -700,6 +707,7 @@ func (h *Handler) ReceiveDiskUsage(c *gin.Context) {
 			continue
 		}
 		rows[i].Timestamp = clampIngestTimestamp(rows[i].Timestamp, now)
+		rows[i].ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
 		filtered = append(filtered, rows[i])
 		if rows[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, rows[i].DeviceID, rows[i].Timestamp)
@@ -741,6 +749,7 @@ func (h *Handler) ReceiveLoadAverage(c *gin.Context) {
 			continue
 		}
 		rows[i].Timestamp = clampIngestTimestamp(rows[i].Timestamp, now)
+		rows[i].ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
 		filtered = append(filtered, rows[i])
 		if rows[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, rows[i].DeviceID, rows[i].Timestamp)
@@ -782,6 +791,7 @@ func (h *Handler) ReceiveHardwareSensors(c *gin.Context) {
 			continue
 		}
 		sensors[i].Timestamp = clampIngestTimestamp(sensors[i].Timestamp, now)
+		sensors[i].ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
 		filtered = append(filtered, sensors[i])
 		if sensors[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, sensors[i].DeviceID, sensors[i].Timestamp)
@@ -826,6 +836,7 @@ func (h *Handler) ReceiveSystemStatuses(c *gin.Context) {
 			continue // skip data for devices not assigned to this probe
 		}
 		statuses[i].Timestamp = clampIngestTimestamp(statuses[i].Timestamp, now)
+		statuses[i].ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
 		filtered = append(filtered, statuses[i])
 		if statuses[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, statuses[i].DeviceID, statuses[i].Timestamp)
@@ -873,6 +884,7 @@ func (h *Handler) ReceiveInterfaceStats(c *gin.Context) {
 			continue
 		}
 		stats[i].Timestamp = clampIngestTimestamp(stats[i].Timestamp, now)
+		stats[i].ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
 		if stats[i].TypeName == "" && stats[i].Type > 0 {
 			if name, ok := snmp.IfTypeNames[stats[i].Type]; ok {
 				stats[i].TypeName = name
@@ -921,6 +933,7 @@ func (h *Handler) ReceiveVPNStatuses(c *gin.Context) {
 			continue
 		}
 		statuses[i].Timestamp = clampIngestTimestamp(statuses[i].Timestamp, now)
+		statuses[i].ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
 		if statuses[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, statuses[i].DeviceID, statuses[i].Timestamp)
 		}
@@ -964,6 +977,7 @@ func (h *Handler) ReceiveHAStatuses(c *gin.Context) {
 			continue
 		}
 		statuses[i].Timestamp = clampIngestTimestamp(statuses[i].Timestamp, now)
+		statuses[i].ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
 		filtered = append(filtered, statuses[i])
 		if statuses[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, statuses[i].DeviceID, statuses[i].Timestamp)
@@ -1005,6 +1019,7 @@ func (h *Handler) ReceiveSecurityStats(c *gin.Context) {
 			continue
 		}
 		stats[i].Timestamp = clampIngestTimestamp(stats[i].Timestamp, now)
+		stats[i].ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
 		filtered = append(filtered, stats[i])
 		if stats[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, stats[i].DeviceID, stats[i].Timestamp)
@@ -1046,6 +1061,7 @@ func (h *Handler) ReceiveSDWANHealth(c *gin.Context) {
 			continue
 		}
 		health[i].Timestamp = clampIngestTimestamp(health[i].Timestamp, now)
+		health[i].ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
 		filtered = append(filtered, health[i])
 		if health[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, health[i].DeviceID, health[i].Timestamp)
@@ -1082,6 +1098,7 @@ func (h *Handler) ReceiveLicenseInfo(c *gin.Context) {
 			continue
 		}
 		licenses[i].Timestamp = clampIngestTimestamp(licenses[i].Timestamp, now)
+		licenses[i].ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
 		filtered = append(filtered, licenses[i])
 		if licenses[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, licenses[i].DeviceID, licenses[i].Timestamp)
@@ -1405,6 +1422,7 @@ func (h *Handler) ReceiveInterfaceErrors(c *gin.Context) {
 			continue
 		}
 		errs[i].Timestamp = clampIngestTimestamp(errs[i].Timestamp, now)
+		errs[i].ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
 		filtered = append(filtered, errs[i])
 		if errs[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, errs[i].DeviceID, errs[i].Timestamp)
@@ -1448,6 +1466,7 @@ func (h *Handler) ReceiveSensorDetails(c *gin.Context) {
 			continue
 		}
 		sensors[i].Timestamp = clampIngestTimestamp(sensors[i].Timestamp, now)
+		sensors[i].ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
 		filtered = append(filtered, sensors[i])
 		if sensors[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, sensors[i].DeviceID, sensors[i].Timestamp)
@@ -1488,6 +1507,7 @@ func (h *Handler) ReceiveLicenseDetails(c *gin.Context) {
 			continue
 		}
 		licenses[i].Timestamp = clampIngestTimestamp(licenses[i].Timestamp, now)
+		licenses[i].ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
 		filtered = append(filtered, licenses[i])
 		if licenses[i].DeviceID > 0 {
 			trackDeviceTime(deviceTimes, licenses[i].DeviceID, licenses[i].Timestamp)

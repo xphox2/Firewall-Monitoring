@@ -116,7 +116,7 @@ tidy-check: ## Fail if go.mod / go.sum aren't tidy
 
 .PHONY: vuln
 vuln: ## Run govulncheck (requires github.com/golang/vuln)
-	$(GO) install golang.org/x/vuln/cmd/govulncheck@latest
+	$(GO) install golang.org/x/vuln/cmd/govulncheck@v1.6.0
 	govulncheck ./...
 
 .PHONY: install

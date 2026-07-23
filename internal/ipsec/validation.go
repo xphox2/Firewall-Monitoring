@@ -205,6 +205,33 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 			add(SeverityBlock, "inner_ip_invalid",
 				fmt.Sprintf("%s VTI inner address %q is not a valid IP", endLabel(intent, i), e.InnerIP))
 		}
+		// AUDIT IP5: the WAN next-hop gateway, when set, is rendered unquoted into
+		// the FortiGate peer host-route (`set gateway <ip>`); an unparsable value
+		// reaches the device and fails the route write → rollback. Block early.
+		if e.Gateway != "" && net.ParseIP(e.Gateway) == nil {
+			add(SeverityBlock, "gateway_invalid",
+				fmt.Sprintf("%s WAN gateway %q is not a valid IP", endLabel(intent, i), e.Gateway))
+		}
+		// AUDIT IP5: child (phase2) lifetime sanity. Negative is nonsensical;
+		// it should also rekey before the IKE SA so the initiator owns rekey.
+		if e.ChildLifetimeSecs < 0 {
+			add(SeverityBlock, "child_lifetime_invalid",
+				fmt.Sprintf("%s child lifetime must be positive", endLabel(intent, i)))
+		} else if e.ChildLifetimeSecs > 0 && intent.IKELifetimeSecs > 0 && e.ChildLifetimeSecs >= intent.IKELifetimeSecs {
+			add(SeverityWarn, "child_lifetime_ge_ike",
+				fmt.Sprintf("%s child lifetime (%ds) is not shorter than the IKE lifetime (%ds) — the child should rekey first",
+					endLabel(intent, i), e.ChildLifetimeSecs, intent.IKELifetimeSecs))
+		}
+	}
+	// AUDIT IP5: IKE lifetime range. Values outside the commonly-supported
+	// 120–172800s window are rejected at render on some vendors (FortiGate), which
+	// otherwise surfaces only as a cryptic pre-dispatch 400. Warn (OPNsense accepts
+	// a wider range, so don't hard-block) unless it's non-positive.
+	if intent.IKELifetimeSecs < 0 {
+		add(SeverityBlock, "ike_lifetime_invalid", "IKE lifetime must be positive")
+	} else if intent.IKELifetimeSecs > 0 && (intent.IKELifetimeSecs < 120 || intent.IKELifetimeSecs > 172800) {
+		add(SeverityWarn, "ike_lifetime_range",
+			fmt.Sprintf("IKE lifetime %ds is outside the commonly-supported 120–172800s range and may be rejected by some vendors", intent.IKELifetimeSecs))
 	}
 	if intent.DPD.DelaySecs <= 0 {
 		add(SeverityWarn, "dpd_off", "dead-peer detection is off — a dead peer won't be noticed and routes may blackhole")
