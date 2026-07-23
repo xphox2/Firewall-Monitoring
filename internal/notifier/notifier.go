@@ -272,7 +272,17 @@ var smtpSendTimeout = 30 * time.Second
 // dial→hello→STARTTLS(if advertised)→AUTH(if configured)→MAIL→RCPT→DATA→QUIT
 // sequence exactly (so STARTTLS/CompoundAuth behaviour is unchanged); the only
 // difference is the dial timeout and the connection deadline.
-func sendMailWithDeadline(addr, host string, auth smtp.Auth, from string, to []string, msg []byte) error {
+// dialFunc matches net.Dialer.DialContext and httputil.SafeDialContext's return.
+type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
+
+// sendMailWithDeadline sends over TCP with a single absolute deadline. dial is
+// optional: nil dials the host directly (a plain net.Dialer) — the correct
+// behaviour for the alert/scheduled-report paths, which legitimately target an
+// admin-configured internal-relay IP. AUDIT M1: the guarded, admin-triggered
+// endpoints (test-email, manual send-report) pass an SSRF-pinning dialer so a
+// DNS-rebinding host can't be redirected to an internal address after the
+// isValidExternalIP pre-check.
+func sendMailWithDeadline(addr, host string, auth smtp.Auth, from string, to []string, msg []byte, dial dialFunc) error {
 	// One absolute deadline covers the whole exchange — dial AND every
 	// subsequent read/write — so the total is bounded by smtpSendTimeout (not
 	// dial-timeout + separate I/O-timeout).
@@ -280,8 +290,11 @@ func sendMailWithDeadline(addr, host string, auth smtp.Auth, from string, to []s
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 
-	var dialer net.Dialer
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	if dial == nil {
+		var dialer net.Dialer
+		dial = dialer.DialContext
+	}
+	conn, err := dial(ctx, "tcp", addr)
 	if err != nil {
 		return err
 	}
@@ -355,7 +368,7 @@ func (n *Notifier) sendEmail(alert *models.Alert, nc NotifyConfig) error {
 		nc.SMTPFrom, nc.SMTPTo, subject, body)
 
 	err := sendMailWithDeadline(addr, nc.SMTPHost, auth, nc.SMTPFrom,
-		[]string{nc.SMTPTo}, []byte(msg))
+		[]string{nc.SMTPTo}, []byte(msg), nil)
 
 	if err != nil {
 		return fmt.Errorf("failed to send email: %w", err)
@@ -760,6 +773,21 @@ func buildMIMEMessage(from, to, subject, textBody, htmlBody string, attachments 
 // see buildMIMEMessage). textBody may be blank (legacy HTML-only shape).
 // If recipients is empty, falls back to nc.SMTPTo.
 func (n *Notifier) SendHTMLEmail(subject, textBody, htmlBody string, attachments []Attachment, nc NotifyConfig, recipients string) error {
+	// nil dialer = plain net.Dialer: alert + scheduled-report sends legitimately
+	// reach an admin-configured (possibly internal-relay) SMTP host.
+	return n.sendHTMLEmail(subject, textBody, htmlBody, attachments, nc, recipients, nil)
+}
+
+// SendHTMLEmailPinned is SendHTMLEmail with SSRF-pinned dialing (AUDIT M1): the
+// resolved SMTP IP is validated and dialed directly so a DNS-rebinding host
+// can't be redirected to an internal address between the caller's
+// isValidExternalIP pre-check and the send. Only the guarded, admin-triggered
+// "send report now" endpoint uses this.
+func (n *Notifier) SendHTMLEmailPinned(subject, textBody, htmlBody string, attachments []Attachment, nc NotifyConfig, recipients string) error {
+	return n.sendHTMLEmail(subject, textBody, htmlBody, attachments, nc, recipients, httputil.SafeDialContext(smtpSendTimeout))
+}
+
+func (n *Notifier) sendHTMLEmail(subject, textBody, htmlBody string, attachments []Attachment, nc NotifyConfig, recipients string, dial dialFunc) error {
 	if nc.SMTPHost == "" {
 		return nil
 	}
@@ -793,7 +821,7 @@ func (n *Notifier) SendHTMLEmail(subject, textBody, htmlBody string, attachments
 		recipientList[i] = strings.TrimSpace(recipientList[i])
 	}
 
-	if err := sendMailWithDeadline(addr, nc.SMTPHost, auth, nc.SMTPFrom, recipientList, msg); err != nil {
+	if err := sendMailWithDeadline(addr, nc.SMTPHost, auth, nc.SMTPFrom, recipientList, msg, dial); err != nil {
 		return fmt.Errorf("failed to send HTML email: %w", err)
 	}
 	return nil

@@ -441,7 +441,10 @@ func (h *Handler) TestProbeConnection(c *gin.Context) {
 	// part of the address). JoinHostPort handles both v4 and v6.
 	address := net.JoinHostPort(req.ListenAddress, strconv.Itoa(req.ListenPort))
 
-	conn, err := net.DialTimeout("tcp", address, 5*time.Second)
+	// AUDIT M1: pin the resolved+validated IP for the dial (SafeDialContext) so a
+	// DNS-rebinding host can't be redirected to an internal address after the
+	// isValidExternalIP pre-check above.
+	conn, err := httputil.SafeDialContext(5*time.Second)(c.Request.Context(), "tcp", address)
 	if err != nil {
 		c.JSON(http.StatusOK, response.Success(gin.H{
 			"success": false,

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -573,8 +574,11 @@ func runSMTPDiagnostic(host string, port int, username, password, from, to strin
 
 	// ----- CONNECT -----
 	cStart := time.Now()
-	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	netConn, err := dialer.Dial("tcp", addr)
+	// AUDIT M1: pin the resolved+validated IP (SafeDialContext) so DNS rebinding
+	// can't redirect this admin-triggered test dial to an internal address after
+	// the isValidExternalIP pre-check in the caller. SafeDialContext bounds the
+	// dial with its own 10s timeout.
+	netConn, err := httputil.SafeDialContext(10*time.Second)(context.Background(), "tcp", addr)
 	if err != nil {
 		summary, _ = fail("connect", "tcp dial "+addr, cStart, err)
 		return trace, false, summary
