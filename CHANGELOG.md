@@ -1,6 +1,19 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.156] - 2026-07-23
+
+### Fixed — Adversarial (Fable) review follow-ups on today's audit work
+
+A four-way adversarial review of everything shipped today (v0.11.148–155 + the collector) found four real gaps, all fixed here:
+
+- **AL-M3 stuck-alert survived a restart / suppressed fires (Medium).** The admin-down INTERFACE_DOWN resolve was gated on the process-local `activeAlerts` flag, so it did nothing after a redeploy (that flag is empty in a fresh process) or for a suppressed state-engine fire (which never marks it) — leaving exactly the stuck alert the fix targeted. It is now an unconditional cold resolve (like the up-branch), whose DB resolve is idempotent and restart-safe. Regression test added for the post-restart case.
+- **T7 missed two single-record ingest writers.** `ReceiveConfigRevision` and `ReceiveProcessSnapshot` still trusted a client-supplied primary key. The config-revision case was the real risk: the config-history "latest" is chosen by `ORDER BY id DESC`, so a collector posting a huge `id` would become the permanent latest and poison every subsequent change diff/alert. Both now zero the server-assigned PK like the 20 bulk writers.
+- **F2 escaping was quote-unsafe for an attribute.** The IRC channel-name fix put the value through `admin-irc.js`'s local `escapeHtml`, which used the `textContent→innerHTML` trick and does **not** escape `"`/`'` — so `<option value="…">` could still be broken out of via a channel name like `" onmouseover=…`. The local escaper now uses the quote-escaping replace-chain.
+- **SMTP test-email diagnostic left the DNS resolve unbounded.** The pinned dial passed `context.Background()`, so only the TCP connect was time-bounded; the resolve is now wrapped in a 10s context (matching the IRC path).
+
+Also hardened `deploy.sh`'s `rm -rf` guard (a bare `/opt/*` glob matched `/opt/..` → `rm -rf /*`; now validates the basename) and corrected an IPSec child-lifetime validation message.
+
 ## [0.11.155] - 2026-07-23
 
 ### Fixed — SESSIONS_HIGH could never auto-resolve at 0 sessions, done right via a Source column (engineering audit, Phase 3b, server side)
