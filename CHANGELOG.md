@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.148] - 2026-07-23
+
+### Fixed — Alerting resilience: SMTP hang, webhook connection reuse, stuck INTERFACE_DOWN (engineering audit)
+
+Engineering-audit findings in the alert/notification path:
+
+- **Unbounded SMTP send could wedge the entire monitoring loop (High).** `net/smtp.SendMail` sets no I/O deadline, and every alert email is sent synchronously on the poller's single monitoring goroutine. An SMTP host that accepted the TCP connection then stalled (half-open NAT, hung MTA, blackhole) blocked that goroutine forever — freezing staleness sweeps, VPN checks and rollups — and the supervisor only restarts on panic, not on a hang. Both alert-email paths now go through a new `sendMailWithDeadline` helper that bounds the entire conversation (dial + greeting + STARTTLS + AUTH + DATA + QUIT) with a 30s deadline. STARTTLS/CompoundAuth behaviour is unchanged. Regression-tested against a stalled and a non-routable server.
+- **Webhook response bodies now drained before close.** Slack/Discord/PagerDuty/Opsgenie/Teams posts closed the response body without reading it to EOF, defeating keep-alive connection reuse (a re-dial per alert during storms). Both posters now drain to `io.Discard` before close.
+- **INTERFACE_DOWN could stay stuck open after a port was administratively disabled (Medium).** The fire path requires `AdminStatus=up` and the recovery path required `Status=up`, so admin-disabling an already-alerting link (admin=down, oper=down) left the alert open until the port was re-enabled and came back up. Admin-down is now treated as a deliberate end-of-outage and resolves the open alert (gated on the in-memory active flag so it adds no per-cycle DB writes).
+
 ## [0.11.147] - 2026-07-23
 
 ### Fixed — IPSec FortiGate⇄OPNsense IKE identity type mismatch (keyid → fqdn)
