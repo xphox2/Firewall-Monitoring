@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.149"
+const ServerVersion = "0.11.150"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -738,6 +738,15 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			// Revealing a stored device credential in plaintext is admin-only,
 			// even though day-to-day device edits are operator-level.
 			"/admin/api/devices/:id/reveal-secret": true,
+			// Config revisions embed device credentials (SNMP communities, IPSec
+			// PSK/admin hashes depending on vendor export), so reading the raw
+			// config, its diff, or deleting a revision is admin-only — same class
+			// as reveal-secret. The metadata LIST (/config-history) stays
+			// viewer-visible so operators can see that revisions exist. AUDIT M2:
+			// these previously defaulted GET->viewer (lowest role).
+			"/admin/api/devices/:id/config-history/diff":        true,
+			"/admin/api/devices/:id/config-history/:revId":      true,
+			"/admin/api/devices/:id/config-history/:revId/view": true,
 			// IPSec provisioning carries PSK credential material — admin-only.
 			"/admin/api/ipsec/capabilities":        true,
 			"/admin/api/ipsec/preview":             true,

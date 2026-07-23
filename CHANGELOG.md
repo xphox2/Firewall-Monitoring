@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.150] - 2026-07-23
+
+### Security — Config-history authz, admin-console output escaping, CI least-privilege (engineering audit)
+
+- **Read-only accounts could download full device config revisions.** The `config-history` diff / raw-download / raw-view routes were not in `adminOnlyRoutes`, so `RequireRole` defaulted them to the lowest `viewer` role. Device config text embeds credentials (SNMP communities, IPSec PSK / admin hashes, depending on vendor export), so these reads (and the per-revision DELETE) are now admin-only — matching the reveal-secret precedent. The metadata list stays viewer-visible. A source-scan guard test pins the wiring.
+- **Two admin-console output-escaping gaps closed.** The threat-intel lookup result rendered the server-echoed `query`/`country` fields unescaped into `innerHTML` (self-XSS), and the IRC channel dropdown left the channel name unescaped inside the `<option value="…">` attribute (attribute-injection). Both now route through the existing escaper.
+- **CI least-privilege.** `docker.yml` and `benchmark.yml` had no `permissions:` block, inheriting the repo/org default `GITHUB_TOKEN` scope while `docker.yml` handles Docker Hub secrets. Both are now pinned to `contents: read`.
+
 ## [0.11.149] - 2026-07-23
 
 ### Fixed — Ingest hardening: clamp future timestamps, reconcile config-revision body limit (engineering audit)

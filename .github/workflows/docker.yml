@@ -18,6 +18,13 @@ on:
     types: [completed]
     branches: [master]
 
+# Least privilege (AUDIT B2): this workflow only reads the repo to build; it
+# publishes to Docker Hub via docker login (DOCKERHUB_* secrets), not the
+# GITHUB_TOKEN. Pin the token to read-only rather than inheriting the repo/org
+# default (which can be read/write).
+permissions:
+  contents: read
+
 jobs:
   publish:
     name: Build and push to Docker Hub

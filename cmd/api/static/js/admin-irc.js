@@ -595,7 +595,7 @@ async function loadChannelsForSend() {
         
         channelSelect.innerHTML = '<option value="">Select a channel...</option>' +
             serverChannels.filter(c => c.status === 'joined').map(c => 
-                `<option value="${c.channel_name}">${escapeHtml(c.channel_name)}</option>`
+                `<option value="${escapeHtml(c.channel_name)}">${escapeHtml(c.channel_name)}</option>`
             ).join('');
     } catch (err) {
         showAlert('Failed to load channels: ' + err.message);
