@@ -1,6 +1,12 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.157] - 2026-07-23
+
+### Security — TOTP replay guard now keys on the code, not the wall-clock slot
+
+The 2FA replay guard recorded the *current 30s wall-clock slot* as used, but `validateTOTPCode` allows `Skew: 1` (±1 period, RFC 6238), so a code stays valid for ~90s across three slots. A code first accepted near a slot boundary could therefore be replayed once in the adjacent slot — the guard covered only the slot it was first seen in, not the code's full validity window. The guard now remembers each successfully-validated code (SHA-256 hash, namespaced by `{purpose,user}`) for the full 90s skew window, so an intercepted still-fresh code can't be reused for the same action regardless of where the slot boundary falls. Applies to both the login and reveal-secret step-up paths. Only valid codes are remembered (callers validate first) and entries self-expire, so the in-memory set stays tiny.
+
 ## [0.11.156] - 2026-07-23
 
 ### Fixed — Adversarial (Fable) review follow-ups on today's audit work
