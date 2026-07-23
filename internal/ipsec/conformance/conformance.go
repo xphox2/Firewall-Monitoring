@@ -41,6 +41,7 @@ const (
 	bool01                        // "0" | "1" (OPNsense stringified booleans)
 	intRange                      // integer in [Min, Max]
 	addressList                   // IP | CIDR | hostname (never "%any"); empty allowed iff AllowEmpty
+	ipMask                        // FortiOS "<ipv4> <dotted-netmask>" pair (contiguous mask)
 	proposalIKE                   // phase-1 proposal, validated by VendorSpec.ikeProp
 	proposalESP                   // phase-2 proposal, validated by VendorSpec.espProp
 )
@@ -197,6 +198,14 @@ func (s *vendorSpec) checkValue(path, name, val string, rule fieldRule) (Finding
 				return mk(`not a valid IP/CIDR/hostname (e.g. "%any" is rejected — use empty)`)
 			}
 		}
+	case ipMask:
+		// FortiGate "IP MASK" pair: exactly two space-separated dotted-quad
+		// tokens (address + contiguous netmask), e.g. "169.254.1.1
+		// 255.255.255.255". Empty / single-token / malformed values are device
+		// rejections (the fwm-t4 HTTP 500 class).
+		if !validIPMaskPair(val) {
+			return mk(`must be "<ipv4> <dotted-netmask>" (two tokens, contiguous mask)`)
+		}
 	case proposalIKE:
 		if s.ikeProp != nil {
 			if ok, why := s.ikeProp(val); !ok {
@@ -272,6 +281,26 @@ func validAddress(s string) bool {
 		return true
 	}
 	return isHostname(s)
+}
+
+// validIPMaskPair validates FortiOS's "<ipv4> <dotted-netmask>" two-token form
+// (system/interface ip / remote-ip): both tokens dotted-quad IPv4, the mask
+// contiguous (net.IPMask.Size reports bits=32 only for contiguous masks).
+// Mirrors the collector's fwapi evaluator (pinned by the cross-repo ParityCases).
+func validIPMaskPair(val string) bool {
+	parts := strings.Fields(val)
+	if len(parts) != 2 {
+		return false
+	}
+	if net.ParseIP(parts[0]).To4() == nil {
+		return false
+	}
+	m := net.ParseIP(parts[1]).To4()
+	if m == nil {
+		return false
+	}
+	_, bits := net.IPMask(m).Size()
+	return bits == 32
 }
 
 // isHostname is a permissive RFC-1123-ish check — enough to distinguish a real

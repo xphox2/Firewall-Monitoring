@@ -60,10 +60,12 @@ func TestIPSec_CreateGetPreview(t *testing.T) {
 	if created.Intent.PSK != ipsecPSKMask {
 		t.Errorf("create response must mask the PSK, got %q", created.Intent.PSK)
 	}
-	// Policy-based ⇒ no VTI addressing is hydrated (hydrateDerived gates VTI on
-	// route-based). Confirm it's correctly absent.
-	if created.Intent.VTISubnet != "" || created.Intent.Ends[0].InnerIP != "" {
-		t.Errorf("policy-based intent must not hydrate VTI addressing: %+v", created.Intent)
+	// Policy-based ALSO hydrates VTI addressing (since v0.11.144): the FortiGate
+	// driver keeps the VTI + routes in both modes (FortiOS 7.6 removed no-VTI
+	// mode), so its render needs InnerIP on every intent — a policy-based tunnel
+	// persisted WITHOUT it failed at the device with HTTP 500 (fwm-t4).
+	if created.Intent.VTISubnet == "" || created.Intent.Ends[0].InnerIP == "" || created.Intent.Ends[1].InnerIP == "" {
+		t.Errorf("policy-based intent must hydrate VTI addressing (FG keeps the VTI in both modes): %+v", created.Intent)
 	}
 	if ipsec.HasBlock(created.Validation) {
 		t.Errorf("clean intent should have no validation blocks: %+v", created.Validation)

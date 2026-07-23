@@ -61,11 +61,14 @@ func hydrateDerived(intent *ipsec.TunnelIntent) {
 	id := intent.ID
 	intent.Name = fmt.Sprintf("fwm-t%d", id)
 	cidr, innerA, innerB := ipsec.AllocateVTI(id)
-	if intent.Mode == ipsec.ModeRouteBased {
-		intent.VTISubnet = cidr
-		intent.Ends[0].InnerIP = innerA
-		intent.Ends[1].InnerIP = innerB
-	}
+	// VTI addressing is allocated in BOTH modes: the FortiGate driver keeps the
+	// VTI + routes for policy-based too (FortiOS 7.6 removed no-VTI mode), so its
+	// render needs InnerIP on every intent. OPNsense's policy render ignores
+	// these fields. Allocating unconditionally also fixes tunnels persisted
+	// before policy-mode allocation shipped (re-save rehydrates them).
+	intent.VTISubnet = cidr
+	intent.Ends[0].InnerIP = innerA
+	intent.Ends[1].InnerIP = innerB
 	// A per-tunnel reqid keeps both ends' child SA / VTI aligned. Derived
 	// deterministically from the tunnel ID (no live device read-back); the
 	// preflight collision-check is what guards against a clash on the device.
