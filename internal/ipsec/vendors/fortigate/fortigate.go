@@ -265,20 +265,60 @@ func (d driver) PreflightProbe(v ipsec.RenderView) []ipsec.PreflightStep {
 	return steps
 }
 
-func (d driver) ParseStatus(raw string) (ipsec.TunnelStatus, error) {
-	low := strings.ToLower(raw)
+func (d driver) ParseStatus(raw string, v ipsec.RenderView) (ipsec.TunnelStatus, error) {
 	st := ipsec.TunnelStatus{IKE: ipsec.SAUnknown, Child: ipsec.SAUnknown}
-	// FortiOS monitor/vpn/ipsec reports per-proxyid "status":"up"/"down" and a
-	// gateway "connected"/"down".
-	if strings.Contains(low, "\"connected\"") || strings.Contains(low, "\"status\":\"up\"") {
-		st.IKE = ipsec.SAUp
-	} else if strings.Contains(low, "\"down\"") {
-		st.IKE = ipsec.SADown
+	// FortiOS monitor/vpn/ipsec returns one entry per phase1, keyed by name,
+	// each with a connection-phase and per-proxyid (phase2) statuses. The device
+	// hosts many tunnels, so the entry MUST be matched by this tunnel's name —
+	// a bare "any status up anywhere" check would false-up.
+	var doc struct {
+		Results []struct {
+			Name            string `json:"name"`
+			ConnectionPhase string `json:"connection-phase"`
+			ProxyID         []struct {
+				Status string `json:"status"`
+			} `json:"proxyid"`
+		} `json:"results"`
 	}
-	if strings.Contains(low, "\"status\":\"up\"") {
-		st.Child = ipsec.SAUp
-	} else {
-		st.Child = st.IKE
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		return st, fmt.Errorf("unparseable FortiOS monitor document: %w", err)
+	}
+	name := v.Intent.Name
+	found := false
+	for _, e := range doc.Results {
+		if e.Name != name {
+			continue
+		}
+		found = true
+		childUp := false
+		for _, p := range e.ProxyID {
+			if strings.EqualFold(p.Status, "up") {
+				childUp = true
+				break
+			}
+		}
+		switch {
+		case childUp:
+			st.Child = ipsec.SAUp
+		default:
+			// No phase2 SA up (including a phase1 entry with zero proxyids).
+			st.Child = ipsec.SADown
+		}
+		switch {
+		case st.Child == ipsec.SAUp:
+			st.IKE = ipsec.SAUp // a phase2 SA can't exist without phase1
+		case strings.EqualFold(e.ConnectionPhase, "up"):
+			st.IKE = ipsec.SAUp
+		case e.ConnectionPhase != "":
+			st.IKE = ipsec.SADown // phase1 state reported, and it isn't up
+		}
+		return st, nil
+	}
+	if !found {
+		// We just deployed this tunnel; its absence from the monitor list is a
+		// definitive not-established, not an ambiguity.
+		st.IKE, st.Child = ipsec.SADown, ipsec.SADown
+		st.RawError = "tunnel " + name + " not present in monitor/vpn/ipsec"
 	}
 	return st, nil
 }

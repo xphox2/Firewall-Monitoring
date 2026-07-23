@@ -271,6 +271,7 @@ const (
 	ipsecStatusDeploying      = "deploying"
 	ipsecStatusDegraded       = "degraded"
 	ipsecStatusUp             = "up"
+	ipsecStatusDown           = "down"
 	ipsecStatusRollingBack    = "rolling_back"
 	ipsecStatusRolledBack     = "rolled_back"
 	ipsecStatusRollbackFailed = "rollback_failed"
@@ -652,6 +653,82 @@ func ipsecApplyRunnerSupported(vendor string) bool {
 	return vendor == "fortigate" || vendor == "opnsense"
 }
 
+// ipsecStatusPayload is the ipsec_status command payload (C2b-2b): a READ-ONLY
+// SA-liveness probe of one deployed end. The collector runs the GET steps and
+// returns the raw device documents; the SERVER parses them (driver ParseStatus)
+// so the repos can never drift on what "up" means.
+type ipsecStatusPayload struct {
+	Vendor     string `json:"vendor"`
+	DeviceID   uint   `json:"device_id,omitempty"`
+	TunnelName string `json:"tunnel_name,omitempty"`
+	BaseURL    string `json:"base_url"`
+	// APIToken is deliberately marshaled — the collector authenticates with it.
+	// Same contract as ipsecApplyPayload: encrypted at rest, TLS-delivered,
+	// never logged (gosec G117 CI-excluded).
+	APIToken    string            `json:"api_token"`
+	InsecureTLS bool              `json:"insecure_tls,omitempty"`
+	Steps       []ipsec.ProbeStep `json:"steps"`
+}
+
+// ipsecStatusReportView mirrors the collector's fwapi.StatusReport envelope.
+type ipsecStatusReportView struct {
+	Vendor string `json:"vendor"`
+	Steps  []struct {
+		Path   string `json:"path"`
+		Status int    `json:"status"`
+		Body   string `json:"body"`
+		Note   string `json:"note"`
+	} `json:"steps"`
+	Error string `json:"error"`
+}
+
+// ipsecBuildStatusCmd builds the ipsec_status probe for one deployed end: the
+// vendor driver's StatusProbe steps against the device's REST API. A build
+// failure is NOT fatal to the deploy terminal — the caller falls back to a
+// degraded-without-SA-check outcome.
+func ipsecBuildStatusCmd(db database.Store, m *models.IPSecTunnel, intent *ipsec.TunnelIntent, e ipsec.DeployEndState) (*models.ProbeCommand, error) {
+	dev, derr := db.GetDevice(e.DeviceID)
+	if derr != nil {
+		return nil, fmt.Errorf("end %c device (id %d) not found — cannot probe SA", 'A'+e.End, e.DeviceID)
+	}
+	if dev.ProbeID == nil || *dev.ProbeID == 0 {
+		return nil, fmt.Errorf("end %c (%s): device has no collector assigned", 'A'+e.End, dev.Name)
+	}
+	drv, ok := ipsec.Driver(e.Vendor)
+	if !ok {
+		return nil, fmt.Errorf("end %c (%q): no IPSec driver", 'A'+e.End, e.Vendor)
+	}
+	steps := drv.StatusProbe(ipsec.ViewFor(intent, e.End))
+	if len(steps) == 0 {
+		return nil, fmt.Errorf("end %c (%s): driver ships no status probe", 'A'+e.End, e.Vendor)
+	}
+	port := dev.APIPort
+	if port == 0 {
+		port = 443
+	}
+	payload := ipsecStatusPayload{
+		Vendor:      e.Vendor,
+		DeviceID:    dev.ID,
+		TunnelName:  m.Name,
+		BaseURL:     fmt.Sprintf("https://%s:%d", dev.IPAddress, port),
+		APIToken:    dev.APIToken,
+		InsecureTLS: dev.APIInsecureTLS,
+		Steps:       steps,
+	}
+	// api_token marshaled intentionally (gosec G117 CI-excluded).
+	buf, merr := json.Marshal(payload)
+	if merr != nil {
+		return nil, merr
+	}
+	return &models.ProbeCommand{
+		ProbeID:   *dev.ProbeID,
+		DeviceID:  dev.ID,
+		CommandID: uuid.NewString(),
+		Type:      database.ProbeCommandTypeIPSecStatus,
+		Payload:   string(buf),
+	}, nil
+}
+
 // ipsecHasLiveCommand reports whether the tunnel's deploy record references any
 // apply or rollback command that is still non-terminal (pending/dispatched) — the
 // concurrency guard: deploy/rollback both refuse (409) while one is in flight.
@@ -917,11 +994,12 @@ func (h *Handler) GetIPSecDeployResult(c *gin.Context) {
 	}
 
 	type endReport struct {
-		End       int             `json:"end"`
-		DeviceID  uint            `json:"device_id"`
-		Status    string          `json:"status"`
-		Report    json.RawMessage `json:"report,omitempty"`
-		RawResult string          `json:"raw_result,omitempty"`
+		End       int                 `json:"end"`
+		DeviceID  uint                `json:"device_id"`
+		Status    string              `json:"status"`
+		Report    json.RawMessage     `json:"report,omitempty"`
+		RawResult string              `json:"raw_result,omitempty"`
+		SA        *ipsec.TunnelStatus `json:"sa,omitempty"`
 	}
 	out := make([]endReport, 0, 2)
 	status := m.Status
@@ -994,6 +1072,16 @@ func (h *Handler) GetIPSecDeployResult(c *gin.Context) {
 			}
 		}
 		c.JSON(http.StatusOK, response.Success(gin.H{"tunnel_id": m.ID, "status": status, "op": "rollback", "auto": st.Rollback.Auto, "note": termReason}))
+		return
+	}
+
+	// SA-liveness evaluation (C2b-2b): a deployed, object-verified tunnel sits at
+	// degraded while its per-end ipsec_status probes are in flight; once they
+	// all resolve, drive it to up (all ends' IKE+Child up) or down (any end
+	// definitively not up). Inconclusive NEVER transitions — a guessed up/down
+	// is worse than an honest degraded.
+	if m.Status == ipsecStatusDegraded && st != nil && ipsecHasStatusChecks(st) {
+		h.evalIPSecStatusChecks(c, db, m, st)
 		return
 	}
 
@@ -1081,11 +1169,33 @@ func (h *Handler) GetIPSecDeployResult(c *gin.Context) {
 		case pending:
 			// still deploying — no change
 		case !anyBad && anyGood:
-			// every deployable end applied + object-verified (SA liveness = C2b-2b)
+			// every deployable end applied + object-verified → SA-liveness
+			// verification (C2b-2b): enqueue a read-only ipsec_status probe per
+			// end IN THE SAME guarded write and keep polling degraded until they
+			// resolve to up / down / inconclusive. A probe-build failure is not
+			// fatal: that end gets no StatusCommandID and the degraded-eval
+			// branch treats it as inconclusive, never a guessed transition.
 			status = ipsecStatusDegraded
-			note = "both ends deployed and object-verified; SA liveness check pending (C2b-2b)"
+			note = "both ends deployed and object-verified; verifying SA liveness…"
+			intent, ierr := database.IPSecModelToIntent(m)
+			var sCmds []*models.ProbeCommand
+			if ierr != nil {
+				note = "both ends deployed and object-verified; SA liveness check unavailable (malformed intent)"
+				log.Printf("ipsec-deploy: tunnel %d: cannot decode intent for SA probes: %v", id, ierr)
+			} else {
+				for i := range st.Ends {
+					cmd, berr := ipsecBuildStatusCmd(db, m, intent, st.Ends[i])
+					if berr != nil {
+						note = "both ends deployed and object-verified; SA liveness check partially unavailable"
+						log.Printf("ipsec-deploy: tunnel %d: SA probe build failed: %v", id, berr)
+						continue
+					}
+					st.Ends[i].StatusCommandID = cmd.CommandID
+					sCmds = append(sCmds, cmd)
+				}
+			}
 			blob, _ := json.Marshal(st)
-			_ = db.TransitionIPSecDeploy(id, []string{ipsecStatusDeploying}, status, "", string(blob), true, nil)
+			_ = db.TransitionIPSecDeploy(id, []string{ipsecStatusDeploying}, status, "", string(blob), true, sCmds)
 		case allAbortedPreWrite:
 			// nothing was written on any end → keep the record; NO auto-rollback
 			// (there is nothing to reverse). Escape = operator rollback (clears it).
@@ -1136,9 +1246,173 @@ func (h *Handler) GetIPSecDeployResult(c *gin.Context) {
 		}
 	}
 
+	// A terminal down keeps its reason in last_error; surface it on re-polls
+	// (the classify path only sets note on live transitions).
+	if note == "" && m.Status == ipsecStatusDown {
+		note = m.LastError
+	}
+
+	// On the deploying→degraded transition frame the SA probes were JUST
+	// enqueued — flag them in flight so the deploy modal keeps polling for the
+	// up/down resolution instead of stopping at the bare degraded frame.
+	saPending := status == ipsecStatusDegraded && st != nil && ipsecHasStatusChecks(st)
+
 	c.JSON(http.StatusOK, response.Success(gin.H{
 		"tunnel_id": m.ID, "status": status, "note": note, "ends": out,
-		"conflict": anyConflict, "collisions": collisions,
+		"conflict": anyConflict, "collisions": collisions, "sa_pending": saPending,
+	}))
+}
+
+// ipsecHasStatusChecks reports whether any deployed end carries an SA-liveness
+// probe to evaluate (C2b-2b).
+func ipsecHasStatusChecks(st *ipsec.DeployState) bool {
+	for i := range st.Ends {
+		if st.Ends[i].StatusCommandID != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// evalIPSecStatusChecks drives a degraded tunnel to up / down / (stays)
+// degraded from its per-end ipsec_status probes (C2b-2b). While any probe is
+// still in flight it answers sa_pending so the deploy modal keeps polling. The
+// RAW device document is parsed by the vendor driver's ParseStatus (server-side,
+// tunnel-aware). Transition rules: EVERY end's IKE+Child up ⇒ up; ANY end
+// definitively down ⇒ down; anything else (probe failed/lost/unparseable,
+// collector too old to know ipsec_status, parser inconclusive) ⇒ STAY degraded —
+// a guessed up/down is worse than an honest degraded. All transitions are ONE
+// guarded write (F2); a lost race just re-polls.
+func (h *Handler) evalIPSecStatusChecks(c *gin.Context, db database.Store, m *models.IPSecTunnel, st *ipsec.DeployState) {
+	id := m.ID
+	type saView struct {
+		End      int                 `json:"end"`
+		DeviceID uint                `json:"device_id"`
+		Status   string              `json:"status"`
+		SA       *ipsec.TunnelStatus `json:"sa,omitempty"`
+	}
+	out := make([]saView, 0, len(st.Ends))
+	pending := false
+	allUp, anyDown := true, false
+	var downReasons, incReasons []string
+
+	var intent *ipsec.TunnelIntent
+	var ierr error
+	intentDecoded := false
+
+	for i := range st.Ends {
+		e := &st.Ends[i]
+		sv := saView{End: e.End, DeviceID: e.DeviceID, Status: "none"}
+		lbl := fmt.Sprintf("end %c", 'A'+e.End)
+		inconclusive := func(reason string) {
+			allUp = false
+			incReasons = append(incReasons, lbl+": "+reason)
+		}
+		if e.StatusCommandID == "" {
+			inconclusive("no SA probe was enqueued")
+			out = append(out, sv)
+			continue
+		}
+		cmd, cerr := db.GetProbeCommandByCommandID(e.StatusCommandID)
+		if cerr != nil {
+			httputil.InternalError(c, "Failed to read command", cerr)
+			return
+		}
+		if cmd == nil {
+			inconclusive("SA probe result was lost")
+			out = append(out, sv)
+			continue
+		}
+		sv.Status = cmd.Status
+		switch cmd.Status {
+		case database.ProbeCommandStatusPending, database.ProbeCommandStatusDispatched:
+			pending = true
+		case database.ProbeCommandStatusSucceeded:
+			var rv ipsecStatusReportView
+			switch {
+			case json.Unmarshal([]byte(cmd.Result), &rv) != nil:
+				inconclusive("SA probe report unparseable")
+			case rv.Error != "":
+				inconclusive(rv.Error)
+			case len(rv.Steps) == 0 || rv.Steps[0].Body == "":
+				inconclusive("SA probe returned no device document")
+			case rv.Steps[0].Status < 200 || rv.Steps[0].Status >= 300:
+				inconclusive(fmt.Sprintf("SA probe got HTTP %d", rv.Steps[0].Status))
+			default:
+				if !intentDecoded {
+					intent, ierr = database.IPSecModelToIntent(m)
+					intentDecoded = true
+				}
+				drv, dok := ipsec.Driver(e.Vendor)
+				switch {
+				case ierr != nil:
+					inconclusive("malformed intent")
+				case !dok:
+					inconclusive("no IPSec driver for " + e.Vendor)
+				default:
+					// Drivers emit exactly one probe step today; the definitive
+					// document is steps[0] (FG monitor/vpn/ipsec, OPN
+					// sessions/searchPhase1).
+					ts, perr := drv.ParseStatus(rv.Steps[0].Body, ipsec.ViewFor(intent, e.End))
+					switch {
+					case perr != nil:
+						inconclusive(perr.Error())
+					default:
+						sv.SA = &ts
+						rs := fmt.Sprintf("%s ike=%s child=%s", lbl, ts.IKE, ts.Child)
+						if ts.RawError != "" {
+							rs += " (" + ts.RawError + ")"
+						}
+						switch {
+						case ts.IKE == ipsec.SAUp && ts.Child == ipsec.SAUp:
+							// end fully up
+						case ts.IKE == ipsec.SADown || ts.Child == ipsec.SADown:
+							anyDown, allUp = true, false
+							downReasons = append(downReasons, rs)
+						default:
+							allUp = false
+							incReasons = append(incReasons, rs)
+						}
+					}
+				}
+			}
+		default: // failed / expired — incl. an old collector's "unknown command type"
+			allUp = false
+			msg := lbl + ": SA probe " + cmd.Status
+			if cmd.Result != "" {
+				msg += " — " + cmd.Result
+			}
+			incReasons = append(incReasons, msg)
+		}
+		out = append(out, sv)
+	}
+
+	if pending {
+		c.JSON(http.StatusOK, response.Success(gin.H{
+			"tunnel_id": id, "status": m.Status, "sa_pending": true,
+			"note": "deployed and object-verified — verifying SA liveness…", "ends": out,
+		}))
+		return
+	}
+
+	status := m.Status
+	note := ""
+	switch {
+	case allUp && len(st.Ends) > 0:
+		status = ipsecStatusUp
+		note = "both ends deployed, object-verified, and SA up"
+		blob, _ := json.Marshal(st)
+		_ = db.TransitionIPSecDeploy(id, []string{ipsecStatusDegraded}, status, "", string(blob), false, nil)
+	case anyDown:
+		status = ipsecStatusDown
+		note = "SA did not come up — " + strings.Join(append(downReasons, incReasons...), "; ")
+		blob, _ := json.Marshal(st)
+		_ = db.TransitionIPSecDeploy(id, []string{ipsecStatusDegraded}, status, note, string(blob), false, nil)
+	default:
+		note = "SA liveness inconclusive — " + strings.Join(incReasons, "; ")
+	}
+	c.JSON(http.StatusOK, response.Success(gin.H{
+		"tunnel_id": id, "status": status, "note": note, "ends": out, "sa_pending": false,
 	}))
 }
 
@@ -1240,7 +1514,7 @@ func (h *Handler) RollbackIPSecTunnel(c *gin.Context) {
 		httputil.InternalError(c, "Failed to encode deploy state", merr)
 		return
 	}
-	fromStatuses := []string{ipsecStatusDegraded, ipsecStatusUp, ipsecStatusError, ipsecStatusRollbackFailed}
+	fromStatuses := []string{ipsecStatusDegraded, ipsecStatusUp, ipsecStatusDown, ipsecStatusError, ipsecStatusRollbackFailed}
 	if terr := db.TransitionIPSecDeploy(id, fromStatuses, ipsecStatusRollingBack, "", string(blob), false, cmds); terr != nil {
 		if errors.Is(terr, database.ErrIPSecConcurrentDeploy) {
 			c.JSON(http.StatusConflict, response.Error("tunnel is not in a rollback-able state (nothing deployed, or a deploy/rollback is in progress)"))

@@ -54,11 +54,12 @@
 
     // Row-action gating — mirrors the server's ipsecEditable/ipsecDeletable + the
     // deploy/rollback source-status sets, so the UI doesn't offer dead-end clicks
-    // (the server still enforces every rule with a 409).
-    function canEdit(s) { return ['deploying', 'degraded', 'up', 'rolling_back', 'rollback_failed'].indexOf(s) === -1; }
+    // (the server still enforces every rule with a 409). 'down' (C2b-2b) carries
+    // a deploy record just like degraded/up: rollback yes, edit/delete no.
+    function canEdit(s) { return ['deploying', 'degraded', 'up', 'down', 'rolling_back', 'rollback_failed'].indexOf(s) === -1; }
     function canDelete(s) { return ['draft', 'rolled_back', 'error'].indexOf(s) !== -1; }
     function canDeploy(s) { return ['draft', 'rolled_back'].indexOf(s) !== -1; }
-    function canRollback(s) { return ['degraded', 'up', 'error', 'rollback_failed'].indexOf(s) !== -1; }
+    function canRollback(s) { return ['degraded', 'up', 'down', 'error', 'rollback_failed'].indexOf(s) !== -1; }
     function canReset(s) { return s === 'error' || s === 'rollback_failed'; }
     function inProgress(s) { return s === 'deploying' || s === 'rolling_back'; }
 
@@ -795,8 +796,11 @@
         return '<div class="card" style="padding:12px;color:var(--fwmon-sig-crit);">' + html + '</div>';
     }
 
-    function deployTerminal(status) {
-        return ['degraded', 'up', 'error', 'rolled_back', 'rollback_failed'].indexOf(status) !== -1;
+    function deployTerminal(status, data) {
+        // C2b-2b: degraded with SA-liveness probes still in flight is NOT
+        // terminal — keep polling until they resolve to up/down/inconclusive.
+        if (status === 'degraded' && data && data.sa_pending) return false;
+        return ['degraded', 'up', 'down', 'error', 'rolled_back', 'rollback_failed'].indexOf(status) !== -1;
     }
 
     function collisionGuidance(data) {
@@ -813,9 +817,17 @@
     }
 
     function deployEndCard(e) {
+        // C2b-2b: when the SA-liveness probe resolved for this end, show it.
+        var saHtml = '';
+        if (e.sa) {
+            var saUp = (e.sa.ike === 'up' && e.sa.child === 'up');
+            var saDown = (e.sa.ike === 'down' || e.sa.child === 'down');
+            saHtml = ' <span class="badge ' + (saUp ? 'success' : (saDown ? 'danger' : 'warning')) + '">' +
+                'SA ' + (saUp ? 'up' : (saDown ? 'down' : 'unknown')) + '</span>';
+        }
         var head = '<div style="font-weight:600;margin-bottom:4px;">End ' + (e.end === 0 ? 'A' : 'B') +
             ' <span style="color:var(--fwmon-text-mute);font-weight:normal;">(device #' + esc(e.device_id) + ')</span> ' +
-            statusBadge(e.status) + '</div>';
+            statusBadge(e.status) + saHtml + '</div>';
         var r = e.report;
         var body;
         if (r && typeof r === 'object') {
@@ -974,7 +986,7 @@
             if (!deployLive(gen)) return;
             var data = (r && r.data) || {};
             var elapsed = Date.now() - startMs;
-            var terminal = deployTerminal(data.status);
+            var terminal = deployTerminal(data.status, data);
             var more = !terminal && elapsed < DEPLOY_WINDOW_MS;
             renderDeployBody(id, data, { elapsedMs: elapsed, polling: more, exhausted: !terminal && !more }, op);
             if (more) {
