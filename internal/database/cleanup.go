@@ -451,8 +451,13 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	// condition has escalated to a separate alert that has
 	// itself been handled).
 	alertCutoff := time.Now().AddDate(0, 0, -alertDays)
-	if err := d.db.Where("acknowledged = true AND timestamp < ?", alertCutoff).Delete(&models.Alert{}).Error; err != nil {
-		return fmt.Errorf("failed to cleanup acked alert: %w", err)
+	// AUDIT D3: batch the acked-alert delete (was a single unbounded DELETE).
+	// `alerts` is in the aggressive-autovacuum high-write list, so on a flapping
+	// fleet a single DELETE takes one long row-lock; route it through the same
+	// 10k-row batched loop (lock_timeout=5s + inter-batch sleep) every other
+	// time-series table uses.
+	if err := d.batchedDeleteOlderThanWhere(&models.Alert{}, alertCutoff, "acknowledged = ?", true); err != nil {
+		return fmt.Errorf("failed to cleanup acked alerts: %w", err)
 	}
 	unackCutoff := time.Now().AddDate(0, 0, -ret.Days(ret.UnackAlertDays))
 	if unackCutoff.After(alertCutoff) {
@@ -465,25 +470,28 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		// "unack window >= ack window, always".
 		unackCutoff = alertCutoff
 	}
-	// Find first, log a warning per row, then bulk-delete.
-	// The find-then-log-then-delete is two queries instead of
-	// one, but it gives us the "what got archived" trace for
-	// free. The alternative (a single DELETE...RETURNING) is
-	// not portable across SQLite.
-	var staleUnack []models.Alert
-	if err := d.db.Where("acknowledged = false AND timestamp < ?", unackCutoff).Find(&staleUnack).Error; err != nil {
-		return fmt.Errorf("failed to query stale unack alerts: %w", err)
+	// AUDIT D3: previously this loaded EVERY stale unacked row into memory just to
+	// log it, then issued one unbounded DELETE. Keep the AUDIT-031 archive trace
+	// but bound it — log a count plus a small sample — then delete in batches.
+	var staleCount int64
+	if err := d.db.Model(&models.Alert{}).Where("acknowledged = false AND timestamp < ?", unackCutoff).Count(&staleCount).Error; err != nil {
+		return fmt.Errorf("failed to count stale unack alerts: %w", err)
 	}
-	for _, a := range staleUnack {
-		log.Printf("WARNING: AUDIT-031 auto-archiving stale unacked alert ID=%d device_id=%d severity=%s message=%q timestamp=%s (older than %d days; an operator should have acked this)",
-			a.ID, a.DeviceID, a.Severity, a.Message, a.Timestamp.Format(time.RFC3339), ret.Days(ret.UnackAlertDays))
-	}
-	if len(staleUnack) > 0 {
-		var ids []uint
-		for _, a := range staleUnack {
-			ids = append(ids, a.ID)
+	if staleCount > 0 {
+		var sample []models.Alert
+		if err := d.db.Where("acknowledged = false AND timestamp < ?", unackCutoff).
+			Order("timestamp ASC").Limit(20).Find(&sample).Error; err != nil {
+			return fmt.Errorf("failed to sample stale unack alerts: %w", err)
 		}
-		if err := d.db.Where("id IN ?", ids).Delete(&models.Alert{}).Error; err != nil {
+		for _, a := range sample {
+			log.Printf("WARNING: AUDIT-031 auto-archiving stale unacked alert ID=%d device_id=%d severity=%s message=%q timestamp=%s (older than %d days; an operator should have acked this)",
+				a.ID, a.DeviceID, a.Severity, a.Message, a.Timestamp.Format(time.RFC3339), ret.Days(ret.UnackAlertDays))
+		}
+		if staleCount > int64(len(sample)) {
+			log.Printf("WARNING: AUDIT-031 auto-archiving %d more stale unacked alerts (older than %d days; sample of %d logged above)",
+				staleCount-int64(len(sample)), ret.Days(ret.UnackAlertDays), len(sample))
+		}
+		if err := d.batchedDeleteOlderThanWhere(&models.Alert{}, unackCutoff, "acknowledged = ?", false); err != nil {
 			return fmt.Errorf("failed to cleanup stale unack alerts: %w", err)
 		}
 	}

@@ -125,7 +125,11 @@ func Connect(cfg *config.Config) (*Database, error) {
 		Logger: logger.Default.LogMode(dbLogLevelFromEnv()),
 	}
 
-	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+	// AUDIT D4: pin the session time zone to UTC on every pooled connection.
+	// Chart bucketing runs date_trunc/to_char server-side and parseBucketToMillis
+	// (charts.go) parses the zone-less result AS UTC; without this the x-axis
+	// silently shifts by the server's local offset if the PG session TZ isn't UTC.
+	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s TimeZone=UTC",
 		cfg.Database.Host, cfg.Database.Port,
 		pgQuote(cfg.Database.User), pgQuote(cfg.Database.Password),
 		pgQuote(cfg.Database.Name), cfg.Database.SSLMode)

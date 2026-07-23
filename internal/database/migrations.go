@@ -99,6 +99,7 @@ var registeredMigrations = []migration{
 	{version: 48, name: "event_rule_profiles", run: (*Database).migrateEventRuleProfiles},
 	{version: 49, name: "device_api_credentials", run: (*Database).migrateDeviceAPICredentials},
 	{version: 50, name: "ipsec_tunnel_deploy_state", run: (*Database).migrateIPSecTunnelDeployState},
+	{version: 51, name: "partition_default_partitions", run: (*Database).migratePartitionDefaultPartitions},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

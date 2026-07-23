@@ -413,6 +413,20 @@ func (d *Database) EnsurePartitions() error {
 		return nil
 	}
 
+	// AUDIT D2: ensure a DEFAULT partition per parent so a row whose timestamp
+	// falls outside the current±6-month window — backward clock skew, or a batch
+	// received just after 00:00 on the 1st carrying prev-month rows — lands in the
+	// default instead of failing the whole insert/COPY with "no partition of
+	// relation found for row". Idempotent; the cleanup cron already skips the
+	// default's unparseable bound and parent-level retention still trims its rows.
+	// Also covers freshly-converted parents that predate the v51 migration.
+	for _, def := range partitioned {
+		if err := d.execMaintenanceDDL(fmt.Sprintf(
+			`CREATE TABLE IF NOT EXISTS %s_default PARTITION OF %s DEFAULT`, def.tableName, def.tableName)); err != nil {
+			log.Printf("Default partition warning for %s: %v", def.tableName, err)
+		}
+	}
+
 	// LC-19: compute each table's per-partition index plan once — derived from
 	// the model's gorm index tags (partitionIndexPlan), not a second hard-coded
 	// list that can drift from the model.
@@ -483,6 +497,42 @@ func (d *Database) EnsurePartitions() error {
 		}
 	}
 
+	return nil
+}
+
+// migratePartitionDefaultPartitions is the v51 migration (AUDIT D2): create a
+// DEFAULT partition for each already-partitioned high-volume parent so a row
+// whose timestamp falls outside the current±6-month window lands in the default
+// rather than failing the entire insert/COPY with "no partition of relation
+// found for row" (which, for flow_samples, fails the whole pgx COPY batch and
+// the collector re-queues it forever). Idempotent (IF NOT EXISTS); PG-only
+// (recorded as a no-op on the SQLite test backend). Plain (unconverted) tables
+// are skipped — EnsurePartitions adds their default once they are converted.
+// Runs before EnsurePartitions on boot, so a fresh install has the default
+// before any traffic.
+func (d *Database) migratePartitionDefaultPartitions() error {
+	if !d.dialect.IsPostgres() {
+		return nil
+	}
+	for _, def := range partitionTables {
+		var isPartitioned bool
+		if err := d.db.Raw(`
+			SELECT EXISTS (
+				SELECT 1 FROM pg_partitioned_table pt
+				JOIN pg_class c ON c.oid = pt.partrelid
+				WHERE c.relname = ?
+			)`, def.tableName).Scan(&isPartitioned).Error; err != nil {
+			log.Printf("v51 default-partition probe warning for %s: %v", def.tableName, err)
+			continue
+		}
+		if !isPartitioned {
+			continue
+		}
+		if err := d.execMaintenanceDDL(fmt.Sprintf(
+			`CREATE TABLE IF NOT EXISTS %s_default PARTITION OF %s DEFAULT`, def.tableName, def.tableName)); err != nil {
+			return fmt.Errorf("v51 create default partition for %s: %w", def.tableName, err)
+		}
+	}
 	return nil
 }
 
