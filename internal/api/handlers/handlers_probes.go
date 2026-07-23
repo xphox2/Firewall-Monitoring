@@ -139,24 +139,21 @@ func (h *Handler) CreateProbe(c *gin.Context) {
 	// Create SystemSetting so RegisterProbe can look up this probe by key.
 	// The setting key embeds the HASHED key (RegisterProbe hashes the presented
 	// token before looking it up), so no plaintext lands in the settings table.
-	if probe.RegistrationKey != "" {
-		setting := models.SystemSetting{
-			Key:      "probe_registration_" + probe.RegistrationKey,
-			Value:    probe.Name,
-			Type:     "string",
-			Label:    "Probe Registration Key for " + probe.Name,
-			Category: "probes",
-		}
-		if err := db.Gorm().Create(&setting).Error; err != nil {
-			log.Printf("Warning: Failed to create registration setting for probe %s: %v", probe.Name, err)
-		}
+	// (RegistrationKey is always set — key generation failure returned 500 above.)
+	setting := models.SystemSetting{
+		Key:      "probe_registration_" + probe.RegistrationKey,
+		Value:    probe.Name,
+		Type:     "string",
+		Label:    "Probe Registration Key for " + probe.Name,
+		Category: "probes",
+	}
+	if err := db.Gorm().Create(&setting).Error; err != nil {
+		log.Printf("Warning: Failed to create registration setting for probe %s: %v", probe.Name, err)
 	}
 
 	httputil.RedactProbe(&probe)
 	// LC-16 show-once reveal: after redacting everything else, put the
-	// plaintext key (never the hash, never the mask) on the create response
-	// only. Empty when key generation failed — the UI then points at the
-	// admin-only Regenerate Key path instead of rendering a fake key.
+	// plaintext key (never the hash, never the mask) on the create response only.
 	probe.RegistrationKey = plainKey
 	c.JSON(http.StatusCreated, response.Success(probe))
 }

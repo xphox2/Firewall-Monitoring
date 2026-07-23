@@ -83,15 +83,18 @@ type AuthManager struct {
 	config        *config.Config
 	loginAttempts map[string][]time.Time
 	attemptsMu    sync.RWMutex
-	// lastTOTPSlot records, per user, the most recent 30s TOTP time-slot that
-	// successfully authenticated — a valid code is single-use within its slot
-	// (replay guard). The map is PER-PROCESS: under the normal AUDIT-040
-	// singleton exactly one cmd/api serves logins, so the guard is complete.
-	// Under ALLOW_MULTI_API=true each instance keeps its own map, so a
-	// still-fresh intercepted code could be replayed once per extra instance
-	// — an accepted follower-mode divergence, documented alongside the
-	// lockout/rate-limit caveats in docs/OPERATIONS.md.
-	lastTOTPSlot map[uint]int64
+	// lastTOTPSlot records, per {purpose,user}, the most recent 30s TOTP
+	// time-slot that successfully authenticated — a valid code is single-use
+	// within its slot (replay guard). Keyed by purpose ("login", "reveal", …) so
+	// independent flows don't consume each other's slot: logging in and then
+	// revealing a credential in the same 30s window are distinct actions and must
+	// each be allowed once, while two of the SAME action with one code are not.
+	// The map is PER-PROCESS: under the normal AUDIT-040 singleton exactly one
+	// cmd/api serves logins, so the guard is complete. Under ALLOW_MULTI_API=true
+	// each instance keeps its own map, so a still-fresh intercepted code could be
+	// replayed once per extra instance — an accepted follower-mode divergence,
+	// documented alongside the lockout/rate-limit caveats in docs/OPERATIONS.md.
+	lastTOTPSlot map[string]int64
 }
 
 func NewAuthManager(cfg *config.Config, db Database) *AuthManager {
@@ -99,7 +102,7 @@ func NewAuthManager(cfg *config.Config, db Database) *AuthManager {
 		db:            db,
 		config:        cfg,
 		loginAttempts: make(map[string][]time.Time),
-		lastTOTPSlot:  make(map[uint]int64),
+		lastTOTPSlot:  make(map[string]int64),
 	}
 }
 
@@ -177,17 +180,20 @@ func (am *AuthManager) ClearFailures(username, ip string) {
 	delete(am.loginAttempts, lockoutKeyFor(username, ip))
 }
 
-// MarkTOTPSlotUsed atomically records the current 30s TOTP slot for a user,
-// returning false when that slot already authenticated once — the replay
-// guard: an intercepted still-fresh code cannot be used a second time.
-func (am *AuthManager) MarkTOTPSlotUsed(userID uint) bool {
+// MarkTOTPSlotUsed atomically records the current 30s TOTP slot for a
+// {purpose,user}, returning false when that slot already authenticated once for
+// that purpose — the replay guard: an intercepted still-fresh code cannot be
+// used a second time for the SAME action. Distinct purposes ("login" vs
+// "reveal") have independent slots so one doesn't lock out the other.
+func (am *AuthManager) MarkTOTPSlotUsed(userID uint, purpose string) bool {
 	slot := time.Now().Unix() / 30
+	key := fmt.Sprintf("%s:%d", purpose, userID)
 	am.attemptsMu.Lock()
 	defer am.attemptsMu.Unlock()
-	if am.lastTOTPSlot[userID] == slot {
+	if am.lastTOTPSlot[key] == slot {
 		return false
 	}
-	am.lastTOTPSlot[userID] = slot
+	am.lastTOTPSlot[key] = slot
 	return true
 }
 

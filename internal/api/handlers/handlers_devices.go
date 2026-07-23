@@ -409,7 +409,7 @@ func (h *Handler) RevealDeviceSecret(c *gin.Context) {
 		// AUDIT L3: single-use-per-slot replay guard, same as the 2FA login path
 		// (handlers_totp.go). Without it a valid code could be replayed within its
 		// ~30–90s validity window to repeat a credential reveal.
-		if !h.authManager.MarkTOTPSlotUsed(admin.ID) {
+		if !h.authManager.MarkTOTPSlotUsed(admin.ID, "reveal") {
 			c.JSON(http.StatusForbidden, response.Error("Authenticator code already used — wait for the next code"))
 			return
 		}

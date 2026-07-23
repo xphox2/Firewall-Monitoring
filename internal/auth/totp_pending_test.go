@@ -38,15 +38,24 @@ func TestGeneratePendingToken_StageAndExpiry(t *testing.T) {
 func TestMarkTOTPSlotUsed_ReplayGuard(t *testing.T) {
 	t.Parallel()
 	am := auth.NewAuthManager(testConfig(), newFakeDB())
-	if !am.MarkTOTPSlotUsed(7) {
+	if !am.MarkTOTPSlotUsed(7, "login") {
 		t.Fatal("first use of a slot must succeed")
 	}
-	if am.MarkTOTPSlotUsed(7) {
+	if am.MarkTOTPSlotUsed(7, "login") {
 		t.Fatal("second use of the same slot must be rejected (replay)")
 	}
 	// A different user is tracked independently.
-	if !am.MarkTOTPSlotUsed(8) {
+	if !am.MarkTOTPSlotUsed(8, "login") {
 		t.Fatal("other users must not share the slot guard")
+	}
+	// AUDIT L3: a different PURPOSE for the same user has its own slot, so
+	// logging in then revealing a credential in the same 30s window both succeed;
+	// but a second reveal in that slot is still blocked.
+	if !am.MarkTOTPSlotUsed(7, "reveal") {
+		t.Fatal("a distinct purpose must have an independent slot")
+	}
+	if am.MarkTOTPSlotUsed(7, "reveal") {
+		t.Fatal("second use of the same slot+purpose must be rejected (replay)")
 	}
 }
 
