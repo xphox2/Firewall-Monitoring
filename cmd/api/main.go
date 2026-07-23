@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.148"
+const ServerVersion = "0.11.149"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -564,8 +564,13 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	router.Use(middleware.RequestID())             // AUDIT-135: before RequestLogger so the ID is logged
 	router.Use(tracing.GinMiddleware("fwmon-api")) // AUDIT-150: server span + W3C extract, before RequestLogger so logs get trace_id
 	router.Use(middleware.RequestLogger())
-	router.Use(metrics.Middleware())              // AUDIT-077: record request latency by route/method/status
-	router.Use(middleware.BodySizeLimit(5 << 20)) // 5MB max request body
+	router.Use(metrics.Middleware()) // AUDIT-077: record request latency by route/method/status
+	// 5MB max request body globally, except the config-revision endpoint which
+	// receives full-device configs (its own maxConfigTextSize=50MB applies).
+	// AUDIT T4: a flat 5MB cap made that 50MB guard unreachable.
+	router.Use(middleware.BodySizeLimitPerPath(5<<20, map[string]int64{
+		"/config-revision": 50 << 20,
+	}))
 	// Rate limiter applied per-group below instead of globally so authenticated
 	// admin users don't share buckets with unauthenticated requests.
 

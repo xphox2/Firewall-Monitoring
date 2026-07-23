@@ -469,6 +469,29 @@ func BodySizeLimit(maxBytes int64) gin.HandlerFunc {
 	}
 }
 
+// BodySizeLimitPerPath rejects request bodies larger than defaultBytes, except
+// for request paths ending in one of the suffixes in overrides, which get their
+// own (larger) limit. AUDIT T4: the config-revision endpoint legitimately
+// receives multi-MB full-device configs; the flat global 5MB cap made its own
+// 50MB guard unreachable and rejected large FortiGate backups with a misleading
+// "Invalid JSON". Match is on URL.Path suffix, which is already normalized (the
+// /api/v1 alias rewrite runs earlier in the chain).
+func BodySizeLimitPerPath(defaultBytes int64, overrides map[string]int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		limit := defaultBytes
+		for suffix, b := range overrides {
+			if strings.HasSuffix(c.Request.URL.Path, suffix) {
+				limit = b
+				break
+			}
+		}
+		if c.Request.Body != nil {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
+		}
+		c.Next()
+	}
+}
+
 // newCSPNonce returns a fresh base64-encoded 128-bit random nonce. AUDIT-022:
 // emitted on every request so the CSP header can list 'nonce-<x>' in place of
 // 'unsafe-inline'. 128 bits of entropy is the same strength Cloudflare/AWS use

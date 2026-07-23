@@ -1,6 +1,13 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.149] - 2026-07-23
+
+### Fixed — Ingest hardening: clamp future timestamps, reconcile config-revision body limit (engineering audit)
+
+- **Collector-supplied future timestamps are now clamped (High).** Every bulk telemetry writer (`system_status`, `vpn_status`, `interface_stats`, syslog, traps, pings, flow counters, sensors, health, licenses, …) previously replaced only a *zero* timestamp with the arrival time — a future-dated value passed straight through. A future timestamp becomes the permanent `MAX(timestamp)` "latest" row (unclearable), suppresses `TELEMETRY_STALE` detection (masking real outages), escapes retention cleanup, and — beyond the current partition window — has no partition at all. All 23 `Receive*` writers now run the timestamp through `clampIngestTimestamp` (zero → now, future → now), the same guard the topology path already used (generalized from `clampTopologyTimestamp`).
+- **config-revision endpoint no longer capped by the global 5MB body limit.** The flat 5MB request-body cap made the handler's own 50MB `maxConfigTextSize` guard unreachable, so large full-device FortiGate configs were rejected at JSON binding with a misleading "Invalid JSON". A new `BodySizeLimitPerPath` gives the config-revision route its intended 50MB limit while keeping every other endpoint at 5MB.
+
 ## [0.11.148] - 2026-07-23
 
 ### Fixed — Alerting resilience: SMTP hang, webhook connection reuse, stuck INTERFACE_DOWN (engineering audit)
