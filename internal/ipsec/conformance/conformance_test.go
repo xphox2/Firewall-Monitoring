@@ -25,14 +25,14 @@ func buildIntent(vendor string, ike ipsec.IKEProposal, esp ipsec.ESPProposal, ve
 			{
 				DeviceID: 1, Vendor: vendor, PeerIP: "66.179.9.155",
 				EgressIface: "port1", LANIface: "port3",
-				LocalID:          ipsec.IKEIdentity{Type: ipsec.IDTypeKeyID, Value: "fwm-t7-a"},
+				LocalID:          ipsec.IKEIdentity{Type: ipsec.IDTypeFQDN, Value: "fwm-t7-a"},
 				ProtectedSubnets: []string{"10.10.10.0/24"},
 				InnerIP:          innerA, Reqid: 7, MSSClamp: 1350, ChildLifetimeSecs: 7200,
 			},
 			{
 				DeviceID: 2, Vendor: vendor, PeerIP: "198.51.100.9", Dynamic: true,
 				EgressIface: "port1", LANIface: "port3",
-				LocalID:          ipsec.IKEIdentity{Type: ipsec.IDTypeKeyID, Value: "fwm-t7-b"},
+				LocalID:          ipsec.IKEIdentity{Type: ipsec.IDTypeFQDN, Value: "fwm-t7-b"},
 				ProtectedSubnets: []string{"192.168.50.0/24"},
 				InnerIP:          innerB, Reqid: 7, MSSClamp: 1350, ChildLifetimeSecs: 3600,
 			},
