@@ -1122,15 +1122,29 @@ func (tb *TestBot) Connect() error {
 	// DNS-rebinding window after the caller's isValidExternalIP pre-check.
 	// TLSConfig.ServerName stays the hostname (set above) so SNI/cert verification
 	// still validates against the name, not the dialed IP.
-	ips, rerr := net.DefaultResolver.LookupIPAddr(context.Background(), tb.serverHost)
+	rctx, rcancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer rcancel()
+	ips, rerr := net.DefaultResolver.LookupIPAddr(rctx, tb.serverHost)
 	if rerr != nil {
 		return fmt.Errorf("resolve IRC server %q: %w", tb.serverHost, rerr)
 	}
+	// Pin ONE validated IP (go-ircevent has no dialer hook to try-each, so we can
+	// only hand it a single address). Prefer a non-blocked IPv4 first — a
+	// dual-stack host advertising an unreachable AAAA shouldn't fail the test —
+	// then fall back to any non-blocked IP.
 	var dialIP net.IP
 	for _, ipa := range ips {
-		if !httputil.IsBlockedIP(ipa.IP) {
+		if ipa.IP.To4() != nil && !httputil.IsBlockedIP(ipa.IP) {
 			dialIP = ipa.IP
 			break
+		}
+	}
+	if dialIP == nil {
+		for _, ipa := range ips {
+			if !httputil.IsBlockedIP(ipa.IP) {
+				dialIP = ipa.IP
+				break
+			}
 		}
 	}
 	if dialIP == nil {
