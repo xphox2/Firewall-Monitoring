@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.151] - 2026-07-23
+
+### Fixed — Adversarial-review follow-ups to the audit batch
+
+Two defects caught reviewing v0.11.148–150 before merge:
+
+- **config-revision body limit needed headroom over the 50MB text cap.** Setting the per-path body limit to exactly `maxConfigTextSize` (50MB) still 400'd near-50MB configs: `MaxBytesReader` bounds the whole JSON *body* (config text + envelope + per-character string escaping), which exceeds 50MB before the text itself does. Raised to 64MB so the handler's own limit is the effective ceiling with its clear error.
+- **INTERFACE_DOWN admin-down resolve tightened to `AdminStatus == "down"`.** The prior `!= "up"` also matched an *empty* AdminStatus from a partial SNMP walk (oper-down reported, admin OID not walked), which would false-resolve a genuine ongoing outage. Now only a reported admin-down resolves; a guard test pins the empty-status case open.
+- Minor: the SMTP send now shares a single absolute deadline across dial + conversation (total bounded by 30s, not dial-timeout + I/O-timeout).
+
 ## [0.11.150] - 2026-07-23
 
 ### Security — Config-history authz, admin-console output escaping, CI least-privilege (engineering audit)

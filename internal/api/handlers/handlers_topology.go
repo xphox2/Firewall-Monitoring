@@ -37,10 +37,12 @@ func normalizeTopologyMAC(s string) string {
 // clampIngestTimestamp bounds a collector-controlled timestamp: zero → now,
 // future → now. An unclamped future timestamp would pin the row as the newest
 // sample forever (MAX(timestamp) "latest" queries), defeat the telemetry
-// staleness staircase, and never be purged by retention — and a >6-month value
-// would have no partition. AUDIT T1: every Receive* writer that trusts the
-// collector's timestamp must run it through this (previously only the topology
-// path did; the high-volume telemetry writers only replaced a zero value).
+// staleness staircase, and never be purged by retention — and a value more than
+// 6 months in the FUTURE would have no partition. Past timestamps are left
+// untouched on purpose: legitimately delayed/spooled batches carry a real past
+// collection time. AUDIT T1: every Receive* writer that trusts the collector's
+// timestamp must run it through this (previously only the topology path did;
+// the high-volume telemetry writers only replaced a zero value).
 func clampIngestTimestamp(ts, now time.Time) time.Time {
 	if ts.IsZero() || ts.After(now) {
 		return now

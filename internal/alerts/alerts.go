@@ -485,7 +485,10 @@ func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats,
 		case iface.Status == "up":
 			am.sendRecovery(key, "INTERFACE_DOWN", fmt.Sprintf("interface_%s", iface.Name),
 				fmt.Sprintf("Interface %s is back up", iface.Name), iface.DeviceID, siteID)
-		case iface.AdminStatus != "up" && am.alertActive(key):
+		case iface.AdminStatus == "down" && am.alertActive(key):
+			// Strictly ADMIN-DOWN (not merely "!= up"): a partial SNMP walk that
+			// returns oper-down but leaves AdminStatus empty must NOT be read as
+			// "operator disabled" and false-resolve a genuine ongoing outage.
 			am.sendRecovery(key, "INTERFACE_DOWN", fmt.Sprintf("interface_%s", iface.Name),
 				fmt.Sprintf("Interface %s administratively disabled", iface.Name), iface.DeviceID, siteID)
 		}

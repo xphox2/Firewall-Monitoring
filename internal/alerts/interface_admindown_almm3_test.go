@@ -43,7 +43,18 @@ func TestCheckInterfaceStatus_AdminDownResolvesStuckAlert(t *testing.T) {
 		t.Fatalf("after down: %d open INTERFACE_DOWN, want 1", got)
 	}
 
-	// 2. Operator admin-disables the port (admin=down, oper=down).
+	// 2. A partial SNMP walk returns oper-down but leaves AdminStatus empty.
+	// This must NOT be read as "administratively disabled" — resolving here
+	// would false-clear a genuine ongoing outage. The alert stays open.
+	partial := []models.InterfaceStats{{DeviceID: 1, Name: "port1", Status: "down", AdminStatus: ""}}
+	if err := am.CheckInterfaceStatus(partial, nil); err != nil {
+		t.Fatalf("CheckInterfaceStatus (partial): %v", err)
+	}
+	if got := openCount(); got != 1 {
+		t.Fatalf("after empty-AdminStatus: %d open INTERFACE_DOWN, want 1 (must not false-resolve)", got)
+	}
+
+	// 3. Operator admin-disables the port (admin=down, oper=down) → resolve.
 	adminDown := []models.InterfaceStats{{DeviceID: 1, Name: "port1", Status: "down", AdminStatus: "down"}}
 	if err := am.CheckInterfaceStatus(adminDown, nil); err != nil {
 		t.Fatalf("CheckInterfaceStatus (admin-down): %v", err)

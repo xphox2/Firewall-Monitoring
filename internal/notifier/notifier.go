@@ -2,6 +2,7 @@ package notifier
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/tls"
@@ -272,15 +273,22 @@ var smtpSendTimeout = 30 * time.Second
 // sequence exactly (so STARTTLS/CompoundAuth behaviour is unchanged); the only
 // difference is the dial timeout and the connection deadline.
 func sendMailWithDeadline(addr, host string, auth smtp.Auth, from string, to []string, msg []byte) error {
-	dialer := &net.Dialer{Timeout: smtpSendTimeout}
-	conn, err := dialer.Dial("tcp", addr)
+	// One absolute deadline covers the whole exchange — dial AND every
+	// subsequent read/write — so the total is bounded by smtpSendTimeout (not
+	// dial-timeout + separate I/O-timeout).
+	deadline := time.Now().Add(smtpSendTimeout)
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
-	// Absolute deadline on the socket: any subsequent read/write that stalls
-	// past this point fails instead of blocking indefinitely.
-	_ = conn.SetDeadline(time.Now().Add(smtpSendTimeout))
+	// Any subsequent read/write that stalls past the deadline fails instead of
+	// blocking indefinitely.
+	_ = conn.SetDeadline(deadline)
 
 	client, err := smtp.NewClient(conn, host)
 	if err != nil {

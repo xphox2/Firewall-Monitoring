@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.150"
+const ServerVersion = "0.11.151"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -566,10 +566,16 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	router.Use(middleware.RequestLogger())
 	router.Use(metrics.Middleware()) // AUDIT-077: record request latency by route/method/status
 	// 5MB max request body globally, except the config-revision endpoint which
-	// receives full-device configs (its own maxConfigTextSize=50MB applies).
-	// AUDIT T4: a flat 5MB cap made that 50MB guard unreachable.
+	// receives full-device configs. AUDIT T4: a flat 5MB cap made the handler's
+	// own 50MB maxConfigTextSize guard unreachable. The body limit here is 64MB
+	// (NOT 50MB): MaxBytesReader caps the whole JSON *body* — the config text
+	// plus the envelope and per-character JSON string escaping — while
+	// maxConfigTextSize checks only the decoded ConfigText, so the body of a
+	// near-50MB config is larger than 50MB. The 14MB headroom keeps the
+	// handler's own limit the effective ceiling (returning its clear error)
+	// instead of a misleading "Invalid JSON" at the reader.
 	router.Use(middleware.BodySizeLimitPerPath(5<<20, map[string]int64{
-		"/config-revision": 50 << 20,
+		"/config-revision": 64 << 20,
 	}))
 	// Rate limiter applied per-group below instead of globally so authenticated
 	// admin users don't share buckets with unauthenticated requests.
