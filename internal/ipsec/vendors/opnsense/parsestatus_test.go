@@ -35,6 +35,37 @@ func TestParseStatus_Established(t *testing.T) {
 	}
 }
 
+// TestParseStatus_ConnectedBool is the real sessions/searchPhase1 shape (fwm-t9):
+// phase1 liveness is a BOOLEAN "connected", with no string status field. The
+// row must be read as up — the string-only path misread it as unknown.
+func TestParseStatus_ConnectedBool(t *testing.T) {
+	d, _ := ipsec.Driver("opnsense")
+	raw := `{"total":1,"rowCount":1,"rows":[
+		{"local-addrs":"%any","remote-addrs":"198.51.100.1","local-id":"opnsense","remote-id":"techlabs-fw-01","version":"IKEv2","connected":true,"install-time":"55","bytes-in":0,"bytes-out":0}
+	]}`
+	st, err := d.ParseStatus(raw, testView("198.51.100.1"))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if st.IKE != ipsec.SAUp || st.Child != ipsec.SAUp {
+		t.Errorf("status = %+v, want ike/child up (connected:true)", st)
+	}
+}
+
+// TestParseStatus_ConnectedBoolFalse: a searchPhase1 row present but not yet
+// connected is a definitive down, not unknown.
+func TestParseStatus_ConnectedBoolFalse(t *testing.T) {
+	d, _ := ipsec.Driver("opnsense")
+	raw := `{"rowCount":1,"rows":[{"remote-addrs":"198.51.100.1","connected":false}]}`
+	st, err := d.ParseStatus(raw, testView("198.51.100.1"))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if st.IKE != ipsec.SADown {
+		t.Errorf("ike = %q, want down (connected:false)", st.IKE)
+	}
+}
+
 // TestParseStatus_SwanctlPortSuffix: swanctl may render the peer with a port
 // suffix ("1.2.3.4[4500]") — the match must tolerate it WITHOUT substring
 // false-positives.

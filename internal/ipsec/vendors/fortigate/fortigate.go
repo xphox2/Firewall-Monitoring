@@ -281,11 +281,19 @@ func (d driver) ParseStatus(raw string, v ipsec.RenderView) (ipsec.TunnelStatus,
 	st := ipsec.TunnelStatus{IKE: ipsec.SAUnknown, Child: ipsec.SAUnknown}
 	// FortiOS monitor/vpn/ipsec returns one entry per phase1, keyed by name,
 	// each with a connection-phase and per-proxyid (phase2) statuses. The device
-	// hosts many tunnels, so the entry MUST be matched by this tunnel's name —
+	// hosts many tunnels, so entries MUST be matched by this tunnel's name —
 	// a bare "any status up anywhere" check would false-up.
+	//
+	// A NAT/dialup peer (e.g. a peer behind NAT dialling in) makes FortiOS split
+	// this tunnel across TWO entries: a bare parent (name==tunnel, empty proxyid)
+	// and one per-peer instance (name=="<tunnel>_N", parent==tunnel) that carries
+	// the live phase2. Match BOTH — name==tunnel OR parent==tunnel — and aggregate
+	// across them, or a dialup instance's up proxyid is missed and a healthy
+	// tunnel is misreported as child-down.
 	var doc struct {
 		Results []struct {
 			Name            string `json:"name"`
+			Parent          string `json:"parent"`
 			ConnectionPhase string `json:"connection-phase"`
 			ProxyID         []struct {
 				Status string `json:"status"`
@@ -296,41 +304,45 @@ func (d driver) ParseStatus(raw string, v ipsec.RenderView) (ipsec.TunnelStatus,
 		return st, fmt.Errorf("unparseable FortiOS monitor document: %w", err)
 	}
 	name := v.Intent.Name
-	found := false
+	found, childUp, ikePhaseUp, ikePhaseReported := false, false, false, false
 	for _, e := range doc.Results {
-		if e.Name != name {
+		if e.Name != name && e.Parent != name {
 			continue
 		}
 		found = true
-		childUp := false
 		for _, p := range e.ProxyID {
 			if strings.EqualFold(p.Status, "up") {
 				childUp = true
-				break
 			}
 		}
 		switch {
-		case childUp:
-			st.Child = ipsec.SAUp
-		default:
-			// No phase2 SA up (including a phase1 entry with zero proxyids).
-			st.Child = ipsec.SADown
-		}
-		switch {
-		case st.Child == ipsec.SAUp:
-			st.IKE = ipsec.SAUp // a phase2 SA can't exist without phase1
 		case strings.EqualFold(e.ConnectionPhase, "up"):
-			st.IKE = ipsec.SAUp
+			ikePhaseUp = true
 		case e.ConnectionPhase != "":
-			st.IKE = ipsec.SADown // phase1 state reported, and it isn't up
+			ikePhaseReported = true // phase1 state reported, and it isn't up
 		}
-		return st, nil
 	}
 	if !found {
 		// We just deployed this tunnel; its absence from the monitor list is a
 		// definitive not-established, not an ambiguity.
 		st.IKE, st.Child = ipsec.SADown, ipsec.SADown
 		st.RawError = "tunnel " + name + " not present in monitor/vpn/ipsec"
+		return st, nil
+	}
+	if childUp {
+		st.Child = ipsec.SAUp
+	} else {
+		// No phase2 SA up in any matched entry (incl. a bare parent with zero
+		// proxyids).
+		st.Child = ipsec.SADown
+	}
+	switch {
+	case childUp:
+		st.IKE = ipsec.SAUp // a phase2 SA can't exist without phase1
+	case ikePhaseUp:
+		st.IKE = ipsec.SAUp
+	case ikePhaseReported:
+		st.IKE = ipsec.SADown
 	}
 	return st, nil
 }

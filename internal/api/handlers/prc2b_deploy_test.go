@@ -299,3 +299,139 @@ func TestRollback_NothingDeployed_400(t *testing.T) {
 		t.Fatalf("rollback with no deploy record = %d, want 400", rec.Code)
 	}
 }
+
+func TestRecheck_NothingDeployed_400(t *testing.T) {
+	h, db := setupTestHandler(t)
+	probe, _ := setupProbeAndDevice(t, db)
+	devA := makeFortiDevice(t, db, probe.ID, "203.0.113.9")
+	devB := makeFortiDevice(t, db, probe.ID, "203.0.113.10")
+	id := createTunnelRow(t, db, "fortigate", "fortigate", devA.ID, devB.ID, 1)
+	c, rec := jsonReq(http.MethodPost, "/x", "")
+	c.Params = gin.Params{{Key: "id", Value: strconv.Itoa(int(id))}}
+	h.RecheckIPSecTunnel(c)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("recheck with no deploy record = %d, want 400", rec.Code)
+	}
+}
+
+// TestRecheck_DownRecoversToUp is the recovery loop for the fwm-t9 class of bug:
+// the one-shot post-deploy check misread a tunnel that hadn't come up yet (or was
+// misparsed) → terminal `down`. A recheck re-enqueues the read-only SA probes,
+// returns the tunnel to degraded, and the fresh device state drives it to `up`.
+func TestRecheck_DownRecoversToUp(t *testing.T) {
+	h, db := setupTestHandler(t)
+	probe, _ := setupProbeAndDevice(t, db)
+	devA := makeFortiDevice(t, db, probe.ID, "203.0.113.9")
+	devB := makeFortiDevice(t, db, probe.ID, "203.0.113.10")
+	id := createTunnelRow(t, db, "fortigate", "fortigate", devA.ID, devB.ID, 1)
+	if _, code := deployReq(t, h, id); code != http.StatusOK {
+		t.Fatalf("deploy = %d", code)
+	}
+	row, _ := db.GetIPSecTunnel(id)
+	tunnelName := row.Name
+
+	// A FortiOS monitor document wrapped in the collector's status-report envelope.
+	mkReport := func(monitor string) string {
+		b, _ := json.Marshal(monitor)
+		return `{"vendor":"fortigate","steps":[{"path":"/api/v2/monitor/vpn/ipsec","status":200,"body":` + string(b) + `}]}`
+	}
+	upDoc := mkReport(`{"results":[{"name":"` + tunnelName + `","connection-phase":"up","proxyid":[{"status":"up"}]}]}`)
+	downDoc := mkReport(`{"results":[{"name":"other","proxyid":[]}]}`) // our tunnel absent → down
+
+	completeApply := func() {
+		r, _ := db.GetIPSecTunnel(id)
+		var st ipsec.DeployState
+		_ = json.Unmarshal([]byte(r.DeployJSON), &st)
+		for _, e := range st.Ends {
+			if _, _, err := db.CompleteProbeCommand(probe.ID, e.CommandID, "succeeded", `{"applied":true,"verified":true}`); err != nil {
+				t.Fatalf("complete apply: %v", err)
+			}
+		}
+	}
+	completeStatus := func(report string) {
+		r, _ := db.GetIPSecTunnel(id)
+		var st ipsec.DeployState
+		_ = json.Unmarshal([]byte(r.DeployJSON), &st)
+		n := 0
+		for _, e := range st.Ends {
+			if e.StatusCommandID == "" {
+				continue
+			}
+			if _, _, err := db.CompleteProbeCommand(probe.ID, e.StatusCommandID, "succeeded", report); err != nil {
+				t.Fatalf("complete status: %v", err)
+			}
+			n++
+		}
+		if n == 0 {
+			t.Fatal("no status probes were enqueued to complete")
+		}
+	}
+	poll := func() string {
+		c, rec := jsonReq(http.MethodGet, "/x", "")
+		c.Params = gin.Params{{Key: "id", Value: strconv.Itoa(int(id))}}
+		h.GetIPSecDeployResult(c)
+		var resp struct {
+			Data struct {
+				Status string `json:"status"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("poll decode: %v (%s)", err, rec.Body.String())
+		}
+		return resp.Data.Status
+	}
+	recheck := func() int {
+		c, rec := jsonReq(http.MethodPost, "/x", "")
+		c.Params = gin.Params{{Key: "id", Value: strconv.Itoa(int(id))}}
+		h.RecheckIPSecTunnel(c)
+		return rec.Code
+	}
+
+	// Deploy applies + verifies → degraded, SA probes enqueued.
+	completeApply()
+	if s := poll(); s != "degraded" {
+		t.Fatalf("post-apply status = %q, want degraded", s)
+	}
+	// First liveness read misfires (tunnel not present yet) → terminal down.
+	completeStatus(downDoc)
+	if s := poll(); s != "down" {
+		t.Fatalf("status after down probe = %q, want down", s)
+	}
+	// The one-shot eval is terminal: a further poll must NOT re-evaluate.
+	if s := poll(); s != "down" {
+		t.Fatalf("re-poll of terminal down = %q, want down (no re-eval)", s)
+	}
+
+	// Recheck → back to degraded with fresh probes.
+	if code := recheck(); code != http.StatusOK {
+		t.Fatalf("recheck = %d, want 200", code)
+	}
+	if r, _ := db.GetIPSecTunnel(id); r.Status != "degraded" {
+		t.Fatalf("post-recheck status = %q, want degraded", r.Status)
+	}
+	// This time the device reports the tunnel up → up.
+	completeStatus(upDoc)
+	if s := poll(); s != "up" {
+		t.Fatalf("status after recheck up probe = %q, want up", s)
+	}
+}
+
+// TestRecheck_WhileDeploying_409: a recheck must be refused while an apply is in
+// flight (the tunnel isn't in a settled state).
+func TestRecheck_WhileDeploying_409(t *testing.T) {
+	h, db := setupTestHandler(t)
+	probe, _ := setupProbeAndDevice(t, db)
+	devA := makeFortiDevice(t, db, probe.ID, "203.0.113.9")
+	devB := makeFortiDevice(t, db, probe.ID, "203.0.113.10")
+	id := createTunnelRow(t, db, "fortigate", "fortigate", devA.ID, devB.ID, 1)
+	if _, code := deployReq(t, h, id); code != http.StatusOK {
+		t.Fatalf("deploy = %d", code)
+	}
+	// Status is 'deploying' with apply commands pending — recheck must 409.
+	c, rec := jsonReq(http.MethodPost, "/x", "")
+	c.Params = gin.Params{{Key: "id", Value: strconv.Itoa(int(id))}}
+	h.RecheckIPSecTunnel(c)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("recheck while deploying = %d, want 409", rec.Code)
+	}
+}

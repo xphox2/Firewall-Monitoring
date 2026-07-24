@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.158"
+const ServerVersion = "0.11.159"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -769,6 +769,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			"/admin/api/ipsec/tunnels/:id/preflight":    true,
 			"/admin/api/ipsec/tunnels/:id/deploy":       true,
 			"/admin/api/ipsec/tunnels/:id/rollback":     true,
+			"/admin/api/ipsec/tunnels/:id/recheck":      true,
 			"/admin/api/ipsec/tunnels/:id/deploy/reset": true,
 			// Wizard interface hints expose per-device addressing to the admin-only
 			// IPSec wizard; keep behind the same admin gate.
@@ -955,6 +956,9 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.POST("/api/ipsec/tunnels/:id/deploy", handler.DeployIPSecTunnel)
 		admin.GET("/api/ipsec/tunnels/:id/deploy", handler.GetIPSecDeployResult)
 		admin.POST("/api/ipsec/tunnels/:id/rollback", handler.RollbackIPSecTunnel)
+		// Re-run SA-liveness verification on a settled tunnel (recovery for a tunnel
+		// that came up after the one-shot post-deploy check); read-only on devices.
+		admin.POST("/api/ipsec/tunnels/:id/recheck", handler.RecheckIPSecTunnel)
 		// Operator escape: force-clear a wedged deploy record (error/rollback_failed).
 		admin.POST("/api/ipsec/tunnels/:id/deploy/reset", handler.ForceResetIPSecDeploy)
 		// Read-only endpoint hints: the picked device's real interfaces + addresses
