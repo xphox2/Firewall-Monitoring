@@ -70,6 +70,31 @@ func TestOPNsense_FirewallRules_Rendered(t *testing.T) {
 	}
 }
 
+// TestOPNsense_FirewallRules_MultiSubnet: multiple protected subnets per end
+// comma-join into ONE rule pair (the filter source_net/destination_net are
+// Multiple=Y on OPNsense 26.1 — verified live), not a per-pair explosion.
+func TestOPNsense_FirewallRules_MultiSubnet(t *testing.T) {
+	d, _ := ipsec.Driver("opnsense")
+	in := canonicalIntent()
+	in.Ends[1].ProtectedSubnets = []string{"192.168.50.0/24", "192.168.51.0/24"} // OPNsense = local
+	art, err := d.Render(ipsec.ViewFor(in, 1))
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	var addRules int
+	for _, s := range art.Steps {
+		if s.Path == "/api/firewall/filter/addRule" {
+			addRules++
+			if s.CaptureAs == "rule_out" && !strings.Contains(s.Body, `"source_net":"192.168.50.0/24,192.168.51.0/24"`) {
+				t.Errorf("multi-subnet source_net should comma-join: %s", s.Body)
+			}
+		}
+	}
+	if addRules != 2 {
+		t.Errorf("multi-subnet must still be 2 rules (comma-joined), got %d", addRules)
+	}
+}
+
 // TestOPNsense_Preflight_IncludesRuleAnchor pins the collision/verify anchor for
 // the firewall rule (searchPhrase-pinned so a rule-heavy box can't paginate it away).
 func TestOPNsense_Preflight_IncludesRuleAnchor(t *testing.T) {

@@ -258,12 +258,11 @@
         // Behind-NAT default: a device monitored over an RFC1918 address dials out
         // from behind NAT, so its endpoint should be DYNAMIC — a private mgmt IP is
         // NOT a reachable static peer (that config black-holes the tunnel; the server
-        // also blocks it as peer_unroutable). Default the checkbox ON for a fresh
-        // pick; loadTunnelIntoWizard applies a stored tunnel's dynamic value AFTER
-        // this, so editing is unaffected.
-        if (isPrivateIPv4(suggested)) {
-            $('ipsec-' + pfx + '-dyn').checked = true;
-        }
+        // also blocks it as peer_unroutable). Set SYMMETRICALLY on each fresh device
+        // pick (a public mgmt IP re-clears it — never leave a stale dynamic on when
+        // the operator switches to a public device). loadTunnelIntoWizard applies a
+        // stored tunnel's dynamic value AFTER this, so editing is unaffected.
+        $('ipsec-' + pfx + '-dyn').checked = isPrivateIPv4(suggested);
     }
 
     // isPrivateIPv4 reports RFC1918 / CGNAT / loopback / link-local (mirrors the

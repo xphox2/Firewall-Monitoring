@@ -228,8 +228,10 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 		if e.Vendor == "opnsense" {
 			for _, s := range append(append([]string{}, e.ProtectedSubnets...), intent.Ends[1-i].ProtectedSubnets...) {
 				if ip, _, err := net.ParseCIDR(strings.TrimSpace(s)); err == nil && !isPrivate(ip) {
+					// Word it as a tunnel-level fact (the public subnet may be on either
+					// end); the pass rule lives on this OPNsense end.
 					add(SeverityWarn, "firewall_floating_public_subnet",
-						fmt.Sprintf("%s protects a public subnet (%s) and OPNsense's tunnel pass rule is interface-agnostic — ensure WAN anti-spoofing/block-private is enabled so the rule can't be abused by spoofed traffic", endLabel(intent, i), s))
+						fmt.Sprintf("%s's tunnel pass rule is interface-agnostic (floating) and this tunnel carries a public subnet (%s) — ensure WAN anti-spoofing/block-private is enabled so the rule can't be abused by spoofed traffic", endLabel(intent, i), s))
 					break
 				}
 			}
