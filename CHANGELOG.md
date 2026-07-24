@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.161] - 2026-07-24
+
+### Fixed — OPNsense firewall rule rejected multi-subnet tunnels (comma-joined source_net)
+
+v0.11.160 rendered the OPNsense pass rule's `source_net`/`destination_net` as a **comma-joined** list of the protected subnets (mirroring the swanctl `local_ts`/`remote_ts` fields, which do accept lists). But OPNsense's **firewall** filter field does not: a live deploy of a 2-subnet tunnel was rejected with `"192.168.50.0/24,192.168.5.0/24 is not a valid source IP address or alias"` (the `Multiple=Y` model attribute permits multiple *values* but does not split a comma-joined *string* — the whole string was validated as one network). The apply failed at the first `addRule` and the tunnel auto-rolled-back cleanly.
+
+- **`internal/ipsec/vendors/opnsense/opnsense.go`** now fans out **one pass rule per (local × remote) subnet pair per direction**, each carrying a **single network** per field — mirroring FortiGate's per-subnet-pair phase2 fan-out. A single-subnet tunnel is unchanged (2 rules); a 2×1 tunnel is 4 rules. Capture names are `rule_out_<pair>` / `rule_in_<pair>`, deterministic across `Render`/`RenderRemove` so the capture/delete rollback parity holds. Caught by Fable's adversarial diff review and confirmed by the live deploy.
+
 ## [0.11.160] - 2026-07-24
 
 ### Fixed — OPNsense IPSec tunnels came up but passed no traffic (missing data-plane firewall rule)
