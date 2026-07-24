@@ -272,6 +272,19 @@ func (d driver) ParseStatus(raw string, v ipsec.RenderView) (ipsec.TunnelStatus,
 			continue
 		}
 		matched = true
+		// swanctl sessions/searchPhase1 reports phase1 liveness as a BOOLEAN
+		// "connected" (true == established) and carries no string status field —
+		// so this must be checked first. Older/other endpoints instead report a
+		// string status/state; keep that as a fallback for version tolerance.
+		if b, ok := row["connected"].(bool); ok {
+			switch {
+			case b:
+				st.IKE = ipsec.SAUp
+			case st.IKE != ipsec.SAUp:
+				st.IKE = ipsec.SADown
+			}
+			continue
+		}
 		s := strings.ToLower(firstStringField(row, "status", "state", "ike-state", "phase1-state"))
 		switch {
 		case strings.Contains(s, "established"), strings.Contains(s, "connected"), s == "up":

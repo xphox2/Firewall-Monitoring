@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.159] - 2026-07-23
+
+### Fixed — IPSec SA-liveness misread a healthy tunnel as "down" (NAT/dialup + OPNsense phase1), plus a Recheck recovery action
+
+A FortiGate ⇄ OPNsense tunnel (fwm-t9) came up cleanly on **both** firewalls — IKEv2 SA `ESTABLISHED`, child SA `INSTALLED` — yet Firewall-Mon reported it `down`. The tunnel was healthy; the post-deploy SA-liveness check misparsed both ends' status documents, and the one-shot check had no way to recover once it wrote a terminal `down`. Three fixes:
+
+- **FortiGate `ParseStatus` now handles NAT/dialup peers** (`internal/ipsec/vendors/fortigate/fortigate.go`). A peer behind NAT makes FortiOS split the tunnel across two `monitor/vpn/ipsec` entries: a bare parent (`name==tunnel`, empty `proxyid`) and a per-peer instance (`name=="<tunnel>_0"`, `parent==tunnel`) that carries the live phase2. The parser matched the bare parent only and read `child=down`; it now matches **`name==tunnel` OR `parent==tunnel`** and aggregates proxyid state across both, deriving IKE-up from the up child even when FortiOS omits `connection-phase`.
+- **OPNsense `ParseStatus` now reads the `connected` boolean** (`internal/ipsec/vendors/opnsense/opnsense.go`). `sessions/searchPhase1` reports phase1 liveness as `"connected": true` with no string status field; the parser only looked for string `status`/`state` fields and returned `unknown`. It now checks the boolean first (string fields kept as a version-tolerant fallback).
+- **New Recheck action** (`POST /api/ipsec/tunnels/:id/recheck` + a **Recheck** button on settled tunnels). It re-enqueues the read-only SA-liveness probes and returns the tunnel to `degraded` so the existing poll drives it to up/down from the **fresh** device state — the recovery path for a tunnel that comes up after the one-shot post-deploy check (e.g. a slow dialup peer). It writes nothing to the firewalls; allowed only from up/down/degraded with no command in flight; admin-only.
+
 ## [0.11.158] - 2026-07-23
 
 ### Added — IPSec IKE identity validation + auto-prefill (block anything that would fail the tunnel)

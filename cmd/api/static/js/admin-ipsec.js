@@ -60,6 +60,9 @@
     function canDelete(s) { return ['draft', 'rolled_back', 'error'].indexOf(s) !== -1; }
     function canDeploy(s) { return ['draft', 'rolled_back'].indexOf(s) !== -1; }
     function canRollback(s) { return ['degraded', 'up', 'down', 'error', 'rollback_failed'].indexOf(s) !== -1; }
+    // Recheck re-runs SA-liveness (read-only on devices) — the recovery for a
+    // tunnel that came up after the one-shot post-deploy check and reads 'down'.
+    function canRecheck(s) { return ['up', 'down', 'degraded'].indexOf(s) !== -1; }
     function canReset(s) { return s === 'error' || s === 'rollback_failed'; }
     function inProgress(s) { return s === 'deploying' || s === 'rolling_back'; }
 
@@ -77,6 +80,9 @@
             }
             if (canDeploy(s)) {
                 btns += '<button class="btn sm primary" data-action="ipsec-deploy" data-min-role="admin" data-id="' + t.id + '" title="Writes config to the FortiGate device">Deploy</button> ';
+            }
+            if (canRecheck(s)) {
+                btns += '<button class="btn sm secondary" data-action="ipsec-recheck" data-min-role="admin" data-id="' + t.id + '" title="Re-verify SA liveness from the live device state — no device writes">Recheck</button> ';
             }
             if (canRollback(s)) {
                 btns += '<button class="btn sm warning" data-action="ipsec-rollback" data-min-role="admin" data-id="' + t.id + '" title="Removes the deployed config from the device">Rollback</button> ';
@@ -614,6 +620,7 @@
             'ipsec-preflight-close': function () { stopPreflightPoll(); AC.closeModal('ipsec-preflight-modal'); },
             'ipsec-deploy': function (el) { startDeploy(parseInt(el.dataset.id, 10)); },
             'ipsec-rollback': function (el) { startRollback(parseInt(el.dataset.id, 10)); },
+            'ipsec-recheck': function (el) { startRecheck(parseInt(el.dataset.id, 10)); },
             'ipsec-reset': function (el) { resetDeploy(parseInt(el.dataset.id, 10)); },
             'ipsec-progress': function (el) { openDeployModal(parseInt(el.dataset.id, 10), el.dataset.op || 'deploy'); },
             'ipsec-deploy-close': function () { stopDeployPoll(); AC.closeModal('ipsec-deploy-modal'); loadTunnels(); },
@@ -888,6 +895,21 @@
         });
     }
 
+    // startRecheck re-runs SA-liveness verification (read-only on the devices):
+    // it re-enqueues the ipsec_status probes and reopens the progress modal, which
+    // polls the same deploy GET until the tunnel resolves to up/down from the fresh
+    // device state. No confirm — it writes nothing to the firewalls.
+    function startRecheck(id) {
+        openDeployModal(id, 'recheck');
+        AC.apiFetch(API + '/ipsec/tunnels/' + id + '/recheck', { method: 'POST' }).then(function () {
+            if (!deployLive(deployGen)) return;
+            pollDeploy(id, deployGen, Date.now(), 'recheck');
+        }).catch(function (e) {
+            if (!deployLive(deployGen)) return;
+            $('ipsec-deploy-body').innerHTML = deployErrorCard('Could not start recheck: ' + esc(e.message));
+        });
+    }
+
     // resetDeploy force-clears a wedged deploy record (error/rollback_failed). It
     // touches NO device — the operator acknowledges the device may still hold
     // objects and must verify manually.
@@ -905,10 +927,13 @@
     function openDeployModal(id, op) {
         stopDeployPoll();
         deployReasonSnapshot = ''; // fresh per-deploy so a prior failure can't leak in
-        $('ipsec-deploy-title').textContent = (op === 'rollback') ? 'Roll Back Tunnel' : 'Deploy Tunnel';
+        $('ipsec-deploy-title').textContent = (op === 'rollback') ? 'Roll Back Tunnel'
+            : (op === 'recheck') ? 'Recheck Tunnel' : 'Deploy Tunnel';
         $('ipsec-deploy-sub').textContent = (op === 'rollback')
             ? 'Removes the deployed configuration from the device (only objects tagged for this tunnel).'
-            : 'Writes configuration to the firewall over its REST API, then verifies the objects exist.';
+            : (op === 'recheck')
+                ? 'Re-reads the live SA state from both firewalls (read-only) and updates the tunnel status.'
+                : 'Writes configuration to the firewall over its REST API, then verifies the objects exist.';
         $('ipsec-deploy-body').innerHTML =
             '<div style="display:flex;align-items:center;gap:8px;color:var(--fwmon-text-mute);font-size:0.9rem;">' +
             '<span class="fwmon-spinner"></span><span>Starting ' + esc(op) + '…</span></div>';

@@ -1562,6 +1562,96 @@ func (h *Handler) RollbackIPSecTunnel(c *gin.Context) {
 	c.JSON(http.StatusOK, response.Success(gin.H{"tunnel_id": m.ID, "status": ipsecStatusRollingBack, "commands": rollbackIDs}))
 }
 
+// RecheckIPSecTunnel re-runs SA-liveness verification on an already-deployed
+// tunnel (C2b-2b): it re-enqueues the read-only ipsec_status probe per end and
+// moves the tunnel back to degraded, so the existing deploy-poll eval drives it
+// to up / down from the FRESH device state. This is the operator's recovery path
+// for a tunnel that came up AFTER the one-shot post-deploy check (e.g. a slow
+// dialup peer) and so is stuck reading down — no redeploy, no device mutation.
+// Allowed only from a settled state (up/down/degraded) with no command in flight.
+func (h *Handler) RecheckIPSecTunnel(c *gin.Context) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+	m, err := db.GetIPSecTunnel(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, response.Error("Tunnel not found"))
+		return
+	}
+	st, perr := parseDeployState(m)
+	if perr != nil {
+		httputil.InternalError(c, "Failed to read deploy state", perr)
+		return
+	}
+	if st == nil || len(st.Ends) == 0 {
+		c.JSON(http.StatusBadRequest, response.Error("nothing to recheck — no deploy record for this tunnel"))
+		return
+	}
+	switch m.Status {
+	case ipsecStatusUp, ipsecStatusDown, ipsecStatusDegraded:
+		// settled — a recheck is meaningful
+	default:
+		c.JSON(http.StatusConflict, response.Error("tunnel is not in a re-checkable state (deploy or rollback in progress)"))
+		return
+	}
+	if live, lerr := ipsecHasLiveCommand(db, st); lerr != nil {
+		httputil.InternalError(c, "Failed to check in-flight commands", lerr)
+		return
+	} else if live {
+		c.JSON(http.StatusConflict, response.Error("a deploy or rollback is already in progress for this tunnel"))
+		return
+	}
+
+	intent, ierr := database.IPSecModelToIntent(m)
+	if ierr != nil {
+		c.JSON(http.StatusBadRequest, response.Error("cannot recheck — tunnel intent is malformed: "+ierr.Error()))
+		return
+	}
+	// Build a fresh status probe per end. Best-effort per end (a device with no
+	// collector yields no probe → that end evaluates inconclusive), but at least
+	// one probe must build or there is nothing to recheck.
+	var sCmds []*models.ProbeCommand
+	var buildErrs []string
+	for i := range st.Ends {
+		st.Ends[i].StatusCommandID = "" // drop the stale probe id; re-set on success
+		cmd, berr := ipsecBuildStatusCmd(db, m, intent, st.Ends[i])
+		if berr != nil {
+			buildErrs = append(buildErrs, berr.Error())
+			continue
+		}
+		st.Ends[i].StatusCommandID = cmd.CommandID
+		sCmds = append(sCmds, cmd)
+	}
+	if len(sCmds) == 0 {
+		c.JSON(http.StatusBadRequest, response.Error("cannot recheck — no SA probe could be built: "+strings.Join(buildErrs, "; ")))
+		return
+	}
+
+	blob, merr := json.Marshal(st)
+	if merr != nil {
+		httputil.InternalError(c, "Failed to encode deploy state", merr)
+		return
+	}
+	fromStatuses := []string{ipsecStatusUp, ipsecStatusDown, ipsecStatusDegraded}
+	if terr := db.TransitionIPSecDeploy(id, fromStatuses, ipsecStatusDegraded, "", string(blob), false, sCmds); terr != nil {
+		if errors.Is(terr, database.ErrIPSecConcurrentDeploy) {
+			c.JSON(http.StatusConflict, response.Error("tunnel state changed — refresh and retry"))
+			return
+		}
+		httputil.InternalError(c, "Failed to start recheck", terr)
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(gin.H{
+		"tunnel_id": m.ID, "status": ipsecStatusDegraded, "sa_pending": true,
+		"note": "re-verifying SA liveness…",
+	}))
+}
+
 // ipsecBuildRemoveCmd builds the remove_ipsec command for one deployed end from
 // its stored RemoveSteps snapshot + captured-UUID substitutions (empty for
 // FortiGate). Shared by manual RollbackIPSecTunnel and the poll's auto-rollback.
