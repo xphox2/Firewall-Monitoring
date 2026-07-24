@@ -4,14 +4,17 @@
 // is visible in the UI, captured by config.xml backup (keeping the mandatory-
 // backup gate honest), and survives configd regeneration.
 //
-// Route-based (VTI): an IPsec VTI (/api/ipsec/vti) with a pinned reqid, a child
-// with 0/0 selectors and "Install Policies" OFF; OPNsense auto-creates the
-// routed `ipsec<reqid>` interface on IPsec reconfigure, and a gateway + static
-// route (referencing it) steer the protected subnets. The VTI's `skip_fw` lets
-// tunnel traffic bypass the firewall (so no automation pass-rule is needed —
-// filtering rests on the peer end's policies). All objects carry a `fwm-t<ID>`
-// description; endpoints/fields verified against a live OPNsense 26.1 box + the
-// core API docs/models.
+// Policy-based ONLY (26.1 has no REST API to assign a VTI as a firewall
+// interface, which route-based gateways require). The footprint is a swanctl
+// connection + local/remote PSK auth + a child whose SPECIFIC selectors install
+// the kernel SPD (policies=1) — no VTI/gateway/route. Decrypted traffic surfaces
+// on the IPsec (enc0) interface, which is default-deny, so the driver ALSO renders
+// two floating firewall PASS rules (scoped to the protected subnets, one per
+// traffic-origin direction) via the Firewall/Filter automation API + a
+// filter/apply — without them the SA comes up but no packet forwards. The rule is
+// FLOATING (interface empty) because OPNsense's filter InterfaceField cannot name
+// enc0. All objects carry a `fwm-t<ID>` description; endpoints/fields verified
+// against a live OPNsense 26.1 box + the core API docs/models.
 package opnsense
 
 import (
@@ -43,15 +46,23 @@ func (driver) Capabilities() ipsec.CapabilityDescriptor {
 		PRF:        []ipsec.PRF{ipsec.PRFSHA512, ipsec.PRFSHA384, ipsec.PRFSHA256},
 		DHGroups:   []ipsec.DHGroup{ipsec.DHGroup21, ipsec.DHGroup20, ipsec.DHGroup19, ipsec.DHGroup16, ipsec.DHGroup15, ipsec.DHGroup14},
 		PFS:        true,
-		MSSClamp:   true,
+		// MSSClamp is advertised so the wizard offers a clamp for cross-vendor pairs,
+		// where the FortiGate end applies it (its tcp-mss clamps SYNs it forwards in
+		// both directions). OPNsense's automation filter-rule model has NO per-rule
+		// max-mss field (verified live: only set-prio/tcpflags), and the global
+		// Normalization scrub-MSS is out of REST scope — so an OPNsense⇄OPNsense pair
+		// gets no clamp. Honest-but-pragmatic: keep it for the FG⇄OPN case rather than
+		// drop it and lose the peer-side clamp too.
+		MSSClamp: true,
 
 		MaxTunnelNameLen: 0, // strongSwan connection names are unbounded
 		// Policy-based installs kernel policies from the child selectors; decrypted
-		// traffic surfaces on the IPsec (enc0) interface and is NOT auto-passed — an
-		// explicit firewall rule may be needed for data-plane traffic (not for the
-		// tunnel to come up). No VTI/gateway/route objects are created.
+		// traffic surfaces on the IPsec (enc0) interface, which is default-deny — so
+		// the driver ALSO renders two floating firewall PASS rules (scoped to the
+		// protected subnets) + a filter/apply, or the SA comes up but no packet
+		// forwards. No VTI/gateway/route objects are created.
 		RequiresFirewallPolicy: true,
-		AutoObjects:            []string{"kernel IPsec policies (SPD)"},
+		AutoObjects:            []string{"kernel IPsec policies (SPD)", "floating firewall pass rules"},
 		SelectorModel:          ipsec.SelectorEndpoint,
 		// OPNsense's IPsec Connections model cannot represent a keyid identity: its
 		// swanctl-config generator writes the id unquoted, so strongSwan's @#<hex>
@@ -170,18 +181,32 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 		"preSharedKey": map[string]any{"description": desc, "keyType": "PSK", "ident": local.LocalID.Value, "remote_ident": remote.LocalID.Value, "Key": in.PSK},
 	})
 
+	// DATA-PLANE firewall rules. Policy-based install surfaces decrypted traffic on
+	// the IPsec (enc0) interface, which is default-deny — WITHOUT these the SA comes
+	// up but no packet is forwarded. Two floating PASS rules (one per traffic-origin
+	// direction; pf keep-state carries each flow's replies), scoped to the protected
+	// subnets. Single address family per tunnel (mixed v4/v6 fails loud above).
+	ipproto, ferr := protectedFamily(append(append([]string{}, local.ProtectedSubnets...), remote.ProtectedSubnets...)...)
+	if ferr != nil {
+		return ipsec.Artifact{}, ferr
+	}
+	ruleOut := fwRule(desc, ipproto, localTS, remoteTS)
+	ruleIn := fwRule(desc, ipproto, remoteTS, localTS)
+
 	// Every create CaptureAs-binds its device UUID; child/local/remote reference
-	// <uuid:conn>; RenderRemove deletes by the same tokens. The tail reconfigure
-	// applies the swanctl config. NOTE: decrypted traffic surfaces on the IPsec
-	// (enc0) interface and is NOT auto-passed — an explicit firewall pass rule may
-	// be needed for DATA-PLANE traffic (not for the tunnel to come up).
+	// <uuid:conn>; RenderRemove deletes by the same tokens. The two applies are
+	// distinct reloads: ipsec/service/reconfigure loads swanctl/SPD, filter/apply
+	// loads the pf ruleset — the firewall rules do nothing until filter/apply runs.
 	steps := []ipsec.ApplyStep{
 		apiCap("Create IPsec connection (IKE)", epConnAdd, conn, nameConn),
 		apiCap("Add local auth (PSK identity)", epLocalAdd, localAuth, nameLocal),
 		apiCap("Add remote auth (PSK identity)", epRemoteAdd, remoteAuth, nameRemote),
 		apiCap("Add child SA (policy-based: specific selectors, install policies)", epChildAdd, child, nameChild),
 		apiCap("Store pre-shared key", epPSKAdd, pskStep, namePSK),
+		apiCap("Add firewall pass rule (LAN → remote subnets)", epRuleAdd, ruleOut, nameRuleOut),
+		apiCap("Add firewall pass rule (remote → LAN subnets)", epRuleAdd, ruleIn, nameRuleIn),
 		api("Apply IPsec configuration", "POST", epIPsecReconfigure, "{}"),
+		api("Apply firewall filter", "POST", epFilterApply, "{}"),
 	}
 
 	return ipsec.Artifact{
@@ -191,7 +216,7 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 		Checksum:        ipsec.ChecksumSteps(steps),
 		TemplateVersion: templateVersion,
 		PreviewText:     swanctlPreview(desc, ikeProp, espProp, localAddr, remoteAddr, localTS, remoteTS, local, remote),
-		AutoObjects:     []string{"kernel IPsec policies (SPD)"},
+		AutoObjects:     []string{"kernel IPsec policies (SPD)", "floating firewall pass rules (protected subnets, both directions)"},
 	}, nil
 }
 
@@ -204,13 +229,17 @@ func (d driver) RenderRemove(v ipsec.RenderView) (ipsec.Artifact, error) {
 	// insurance). Idempotent: OPNsense returns 200 {"result":"not found"} for an
 	// already-gone UUID, and a token with no stored UUID is skipped.
 	steps := []ipsec.ApplyStep{
+		delByUUID("Delete firewall pass rule (remote → LAN subnets)", epRuleDel, nameRuleIn),
+		delByUUID("Delete firewall pass rule (LAN → remote subnets)", epRuleDel, nameRuleOut),
 		delByUUID("Delete child SA", epChildDel, nameChild),
 		delByUUID("Delete remote auth", epRemoteDel, nameRemote),
 		delByUUID("Delete local auth", epLocalDel, nameLocal),
 		delByUUID("Delete IPsec connection", epConnDel, nameConn),
 		delByUUID("Delete pre-shared key", epPSKDel, namePSK),
 	}
-	steps = append(steps, api("Apply IPsec configuration", "POST", epIPsecReconfigure, "{}"))
+	steps = append(steps,
+		api("Apply IPsec configuration", "POST", epIPsecReconfigure, "{}"),
+		api("Apply firewall filter", "POST", epFilterApply, "{}"))
 	return ipsec.Artifact{
 		Vendor: "opnsense", Kind: ipsec.ArtifactRemove, Steps: steps,
 		Checksum: ipsec.ChecksumSteps(steps), TemplateVersion: templateVersion,
@@ -239,10 +268,16 @@ func (d driver) PreflightProbe(v ipsec.RenderView) []ipsec.PreflightStep {
 	// (connection + psk); a pre-existing fwm-t<ID> connection is the authoritative
 	// "already deployed" signal. No VTI/gateway/route is created, so no vti anchor
 	// and none of the old configd-gateway-cache hazard applies.
+	// The firewall-rule anchor uses ?searchPhrase=<desc> so a rule-heavy box's
+	// pagination can't hide the fwm rule from the collision/verify GET (firewall
+	// rules are far more numerous than IPsec connections). Both pass rules share the
+	// fwm-t<ID> description, so this one anchor covers them; a partial create still
+	// fails writeOK at apply time, so the shared anchor is not a silent-partial hole.
 	return []ipsec.PreflightStep{
 		{Check: "auth", Method: "GET", Path: "/api/core/firmware/status"},
 		{Check: "connection", Method: "GET", Path: epConnSearch, ExpectAbsent: true},
 		{Check: "psk", Method: "GET", Path: epPSKSearch, ExpectAbsent: true},
+		{Check: "rule", Method: "GET", Path: epRuleSearch + "?searchPhrase=" + v.Intent.Name, ExpectAbsent: true},
 	}
 }
 
@@ -354,11 +389,13 @@ func firstStringField(row map[string]any, keys ...string) string {
 // bodies/paths reference it as the token <uuid:NAME>. Render captures and
 // RenderRemove deletes by the SAME names (a parity test pins this).
 const (
-	nameConn   = "conn"
-	nameLocal  = "local"
-	nameRemote = "remote"
-	nameChild  = "child"
-	namePSK    = "psk"
+	nameConn    = "conn"
+	nameLocal   = "local"
+	nameRemote  = "remote"
+	nameChild   = "child"
+	namePSK     = "psk"
+	nameRuleOut = "rule_out" // firewall pass rule: local → remote protected subnets
+	nameRuleIn  = "rule_in"  // firewall pass rule: remote → local protected subnets
 )
 
 func tokName(n string) string { return "<uuid:" + n + ">" }
@@ -384,9 +421,76 @@ const (
 	epPSKSearch  = "/api/ipsec/pre_shared_keys/searchItem"
 
 	epIPsecReconfigure = "/api/ipsec/service/reconfigure"
+
+	// Firewall "automation" filter rules (OPNsense/Firewall/Api/FilterController) —
+	// the data-plane pass rules for decrypted tunnel traffic on enc0. addRule
+	// captures a UUID; delRule/<uuid> removes it; searchRule is the collision/verify
+	// anchor; filter/apply reloads pf (a separate reload from ipsec/service/reconfigure
+	// — without it the saved rule never enters the running ruleset).
+	epRuleAdd     = "/api/firewall/filter/addRule"
+	epRuleDel     = "/api/firewall/filter/delRule"
+	epRuleSearch  = "/api/firewall/filter/searchRule"
+	epFilterApply = "/api/firewall/filter/apply"
 )
 
 // ---- helpers ----
+
+// protectedFamily returns the pf `ipprotocol` value ("inet"/"inet6") shared by
+// every protected subnet on both ends. A firewall rule's ipprotocol is
+// single-valued, so a mixed IPv4/IPv6 footprint can't be expressed as one rule
+// pair; that fails loud here (a dual-stack tunnel is a documented follow-up)
+// rather than silently dropping the other family's subnets. An empty footprint
+// defaults to inet (IPv4 is the rest of the stack's assumption: VTI allocation, etc).
+func protectedFamily(subnets ...string) (string, error) {
+	fam := ""
+	for _, s := range subnets {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		f := "inet"
+		ip, _, err := net.ParseCIDR(s)
+		if err != nil {
+			ip = net.ParseIP(s)
+		}
+		if ip != nil && ip.To4() == nil {
+			f = "inet6"
+		}
+		if fam == "" {
+			fam = f
+		} else if fam != f {
+			return "", fmt.Errorf("mixed IPv4/IPv6 protected subnets are not yet supported for the OPNsense firewall rule (split the tunnel by address family)")
+		}
+	}
+	if fam == "" {
+		fam = "inet"
+	}
+	return fam, nil
+}
+
+// fwRule builds an OPNsense automation filter PASS rule body. interface is left
+// EMPTY (floating) so the rule evaluates on all interfaces incl. enc0 — OPNsense's
+// filter InterfaceField only offers assigned interfaces (wan/lan/optN), never
+// enc0, so a named IPsec-interface rule is not creatable via REST. The rule is
+// scoped by source/destination subnets instead; direction=in + pf keep-state
+// carries each flow's replies. description = the fwm-t<ID> owner tag (shared with
+// every other object so the collector's exact-match collision/verify anchor finds it).
+func fwRule(desc, ipproto, srcNet, dstNet string) string {
+	return jsonBody(map[string]any{
+		"rule": map[string]any{
+			"enabled":         "1",
+			"action":          "pass",
+			"quick":           "1",
+			"interface":       "", // floating — matches enc0 without naming it
+			"direction":       "in",
+			"ipprotocol":      ipproto,
+			"protocol":        "any",
+			"source_net":      srcNet,
+			"destination_net": dstNet,
+			"description":     desc,
+		},
+	})
+}
 
 func api(desc, method, path, body string) ipsec.ApplyStep {
 	return ipsec.ApplyStep{Kind: ipsec.StepHTTPAPI, Description: desc, Method: method, Path: path, Body: body}

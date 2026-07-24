@@ -255,6 +255,30 @@
         } else {
             setIfaceValue(pfx, 'peer', suggested);
         }
+        // Behind-NAT default: a device monitored over an RFC1918 address dials out
+        // from behind NAT, so its endpoint should be DYNAMIC — a private mgmt IP is
+        // NOT a reachable static peer (that config black-holes the tunnel; the server
+        // also blocks it as peer_unroutable). Default the checkbox ON for a fresh
+        // pick; loadTunnelIntoWizard applies a stored tunnel's dynamic value AFTER
+        // this, so editing is unaffected.
+        if (isPrivateIPv4(suggested)) {
+            $('ipsec-' + pfx + '-dyn').checked = true;
+        }
+    }
+
+    // isPrivateIPv4 reports RFC1918 / CGNAT / loopback / link-local (mirrors the
+    // server's isPrivate) so the wizard can spot a behind-NAT management address.
+    function isPrivateIPv4(s) {
+        var m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec((s || '').trim());
+        if (!m) return false;
+        var a = +m[1], b = +m[2];
+        if (a > 255 || b > 255 || +m[3] > 255 || +m[4] > 255) return false;
+        return a === 10 ||
+            (a === 172 && b >= 16 && b <= 31) ||
+            (a === 192 && b === 168) ||
+            (a === 100 && b >= 64 && b <= 127) || // CGNAT 100.64/10
+            a === 127 ||
+            (a === 169 && b === 254);
     }
 
     // When the egress (WAN) interface changes, re-default the peer/public IP to that
