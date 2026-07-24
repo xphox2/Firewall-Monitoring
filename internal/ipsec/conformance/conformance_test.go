@@ -127,6 +127,32 @@ func TestConformance_CatchesKnownBugs(t *testing.T) {
 	}
 }
 
+// TestConformance_FirewallRule pins the new data-plane firewall-rule object spec:
+// a valid floating PASS rule conforms, and bad controlled-vocab values are caught
+// before dispatch (the fwm-t3 value-typo bug class, now for firewall rules).
+func TestConformance_FirewallRule(t *testing.T) {
+	good := []ipsec.ApplyStep{{Kind: ipsec.StepHTTPAPI, Method: "POST", Path: "/api/firewall/filter/addRule",
+		Body: `{"rule":{"enabled":"1","action":"pass","quick":"1","interface":"","direction":"in","ipprotocol":"inet","protocol":"any","source_net":"192.168.50.0/24","destination_net":"10.10.10.0/24","description":"fwm-t9"}}`}}
+	if f := conformance.Validate("opnsense", good); len(f) > 0 {
+		t.Errorf("valid firewall rule should conform; got %v", findingsStr(f))
+	}
+
+	bad := []ipsec.ApplyStep{{Kind: ipsec.StepHTTPAPI, Method: "POST", Path: "/api/firewall/filter/addRule",
+		Body: `{"rule":{"enabled":"true","action":"allow","direction":"any","ipprotocol":"ipv4","protocol":"any"}}`}}
+	f := conformance.Validate("opnsense", bad)
+	want := map[string]bool{"enabled": false, "action": false, "direction": false, "ipprotocol": false}
+	for _, finding := range f {
+		if _, ok := want[finding.Field]; ok {
+			want[finding.Field] = true
+		}
+	}
+	for field, found := range want {
+		if !found {
+			t.Errorf("conformance FAILED to catch bad firewall-rule %q; findings: %v", field, findingsStr(f))
+		}
+	}
+}
+
 func findingsStr(f []conformance.Finding) string {
 	s := ""
 	for _, x := range f {

@@ -1,6 +1,19 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.160] - 2026-07-24
+
+### Fixed — OPNsense IPSec tunnels came up but passed no traffic (missing data-plane firewall rule)
+
+A deployed FortiGate ⇄ OPNsense policy-based tunnel established its SA but forwarded **zero packets**: the OPNsense driver rendered only the swanctl objects (connection/local/remote/child/PSK) and **never a firewall rule**, so decrypted traffic surfacing on the IPsec (`enc0`) interface was dropped by pf default-deny. FortiGate gets full routes + firewall policies; OPNsense got none — even though its own `Capabilities` declared `RequiresFirewallPolicy: true`. Confirmed live: OPNsense encrypted + transmitted correctly, but had only a `pass out on enc0` rule and no inbound pass.
+
+- **`internal/ipsec/vendors/opnsense/opnsense.go`** now renders **two floating firewall PASS rules** (one per traffic-origin direction; pf keep-state carries each flow's replies) scoped to the protected subnets, via the Firewall/Filter automation API (`addRule`), plus a **separate `filter/apply`** step after `ipsec/service/reconfigure` (the pf ruleset is a distinct reload — without it the saved rule never loads). The rules are **floating** (`interface` empty) because OPNsense's filter `InterfaceField` only offers assigned interfaces and cannot name `enc0`/IPsec (verified live) — a floating rule evaluates on all interfaces including `enc0`. `RenderRemove` deletes both rules by captured UUID; `PreflightProbe` adds a `searchRule` collision/verify anchor (pinned with `?searchPhrase=` to survive pagination on rule-heavy boxes). The collector needs no change (its generic `http_api` executor already handles the filter endpoints).
+- **`internal/ipsec/conformance/opnsense.go`**: new `firewall/filter/addRule` object spec (pre-dispatch value guard for `action`/`direction`/`ipprotocol`/`enabled`/`quick`).
+- **`internal/ipsec/validation.go`**: `peer_unroutable` **block** — a behind-NAT end saved as a *static* peer with a private IP opposite a *public* peer becomes an unroutable remote-gateway (a guaranteed dead tunnel); it must be marked dynamic or given its real public IP. Plus a `firewall_floating_public_subnet` **warning** — the floating pass rule is interface-agnostic, so a public protected subnet should be paired with WAN anti-spoofing.
+- **Wizard (`cmd/api/static/js/admin-ipsec.js`)**: a device monitored over an RFC1918 address now defaults its endpoint to **dynamic/behind-NAT** (a private management IP is not a reachable static peer), preventing the mis-configuration the `peer_unroutable` block backstops.
+
+Single IP family per tunnel (mixed IPv4/IPv6 protected subnets fail the render loud — a documented dual-stack follow-up). A separate follow-up will add data-plane reachability verification so a tunnel is only reported "up" once a packet has actually crossed it.
+
 ## [0.11.159] - 2026-07-23
 
 ### Fixed — IPSec SA-liveness misread a healthy tunnel as "down" (NAT/dialup + OPNsense phase1), plus a Recheck recovery action

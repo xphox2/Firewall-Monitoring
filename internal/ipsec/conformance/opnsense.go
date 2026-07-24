@@ -148,6 +148,19 @@ func init() {
 			"routes/routes/addroute": {
 				"network": {kind: addressList},
 			},
+			// Data-plane firewall pass rule (Firewall/Filter automation model). Only
+			// the controlled-vocab fields are pinned; interface is intentionally
+			// unvalidated (empty/floating is valid and the assignable set is
+			// box-dependent), and source_net/destination_net are freeform CIDR/alias
+			// lists the box validates.
+			"firewall/filter/addRule": {
+				"enabled":    {kind: bool01},
+				"quick":      {kind: bool01},
+				"action":     {kind: enumRule, enum: []string{"pass", "block", "reject"}},
+				"direction":  {kind: enumRule, enum: []string{"in", "out"}},
+				"ipprotocol": {kind: enumRule, enum: []string{"inet", "inet6"}},
+				"protocol":   {kind: enumRule, enum: []string{"any", "TCP", "UDP", "TCP/UDP", "ICMP", "ESP", "AH", "GRE", "IPV6-ICMP", "tcp", "udp", "icmp", "esp", "gre"}},
+			},
 		},
 	})
 }

@@ -196,12 +196,44 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 		// not just warned. (Dynamic ends legitimately have no static peer IP.)
 		if !e.Dynamic {
 			ip := net.ParseIP(e.PeerIP)
-			if ip == nil {
+			peer := &intent.Ends[1-i]
+			peerIP := net.ParseIP(peer.PeerIP)
+			switch {
+			case ip == nil:
 				add(SeverityBlock, "peer_ip_invalid",
 					fmt.Sprintf("%s has no valid static endpoint IP address", endLabel(intent, i)))
-			} else if isPrivate(ip) {
+			case isPrivate(ip) && !peer.Dynamic && peerIP != nil && !isPrivate(peerIP):
+				// This end's private/CGNAT address becomes the far (public) peer's
+				// STATIC remote-gateway (FortiGate `set remote-gw`, OPNsense
+				// remote_addrs) — an unroutable address across the internet, so the
+				// tunnel can never establish. The behind-NAT end must be marked
+				// dynamic (dialup) or carry its real public IP. Block, don't warn:
+				// this is a guaranteed dead tunnel, not a "confirm reachability".
+				add(SeverityBlock, "peer_unroutable",
+					fmt.Sprintf("%s endpoint %s is a private/CGNAT address but %s is public — the peer cannot reach a private address across the internet. Mark %s as dynamic (behind NAT), or enter its real public IP.",
+						endLabel(intent, i), e.PeerIP, endLabel(intent, 1-i), endLabel(intent, i)))
+			case isPrivate(ip):
+				// Both ends private (LAN-to-LAN) or the peer is itself dynamic —
+				// plausibly reachable; keep the softer confirm-reachability warning.
 				add(SeverityWarn, "peer_private",
 					fmt.Sprintf("%s's endpoint %s is a private/CGNAT address — confirm it is reachable by the peer", endLabel(intent, i), e.PeerIP))
+			}
+		}
+		// OPNsense's data-plane pass rule is FLOATING (interface-agnostic — its filter
+		// API cannot name the enc0/IPsec interface), so it also matches a same-5-tuple
+		// packet arriving on ANY interface. For PRIVATE protected subnets, OPNsense's
+		// default WAN block-private/antispoof drops a spoofed WAN packet before this
+		// rule; with a PUBLIC protected subnet that guarantee is gone. Warn so the
+		// operator confirms WAN anti-spoofing is enabled.
+		if e.Vendor == "opnsense" {
+			for _, s := range append(append([]string{}, e.ProtectedSubnets...), intent.Ends[1-i].ProtectedSubnets...) {
+				if ip, _, err := net.ParseCIDR(strings.TrimSpace(s)); err == nil && !isPrivate(ip) {
+					// Word it as a tunnel-level fact (the public subnet may be on either
+					// end); the pass rule lives on this OPNsense end.
+					add(SeverityWarn, "firewall_floating_public_subnet",
+						fmt.Sprintf("%s's tunnel pass rule is interface-agnostic (floating) and this tunnel carries a public subnet (%s) — ensure WAN anti-spoofing/block-private is enabled so the rule can't be abused by spoofed traffic", endLabel(intent, i), s))
+					break
+				}
 			}
 		}
 		if e.InnerIP != "" && net.ParseIP(e.InnerIP) == nil {
