@@ -183,15 +183,16 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 
 	// DATA-PLANE firewall rules. Policy-based install surfaces decrypted traffic on
 	// the IPsec (enc0) interface, which is default-deny — WITHOUT these the SA comes
-	// up but no packet is forwarded. Two floating PASS rules (one per traffic-origin
-	// direction; pf keep-state carries each flow's replies), scoped to the protected
-	// subnets. Single address family per tunnel (mixed v4/v6 fails loud above).
+	// up but no packet is forwarded. One floating PASS rule per (local × remote)
+	// subnet PAIR per direction (pf keep-state carries each flow's replies), each
+	// with a SINGLE network per field: OPNsense's filter source_net/destination_net
+	// reject a comma-joined multi-subnet string (verified live: "… is not a valid
+	// source IP address or alias"), so we fan out per pair like FortiGate's phase2.
+	// Single address family per tunnel (mixed v4/v6 fails loud above).
 	ipproto, ferr := protectedFamily(append(append([]string{}, local.ProtectedSubnets...), remote.ProtectedSubnets...)...)
 	if ferr != nil {
 		return ipsec.Artifact{}, ferr
 	}
-	ruleOut := fwRule(desc, ipproto, localTS, remoteTS)
-	ruleIn := fwRule(desc, ipproto, remoteTS, localTS)
 
 	// Every create CaptureAs-binds its device UUID; child/local/remote reference
 	// <uuid:conn>; RenderRemove deletes by the same tokens. The two applies are
@@ -203,11 +204,13 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 		apiCap("Add remote auth (PSK identity)", epRemoteAdd, remoteAuth, nameRemote),
 		apiCap("Add child SA (policy-based: specific selectors, install policies)", epChildAdd, child, nameChild),
 		apiCap("Store pre-shared key", epPSKAdd, pskStep, namePSK),
-		apiCap("Add firewall pass rule (LAN → remote subnets)", epRuleAdd, ruleOut, nameRuleOut),
-		apiCap("Add firewall pass rule (remote → LAN subnets)", epRuleAdd, ruleIn, nameRuleIn),
-		api("Apply IPsec configuration", "POST", epIPsecReconfigure, "{}"),
-		api("Apply firewall filter", "POST", epFilterApply, "{}"),
 	}
+	for _, sp := range fwRuleSpecs(local, remote) {
+		steps = append(steps, apiCap("Add firewall pass rule ("+sp.src+" → "+sp.dst+")", epRuleAdd, fwRule(desc, ipproto, sp.src, sp.dst), sp.capture))
+	}
+	steps = append(steps,
+		api("Apply IPsec configuration", "POST", epIPsecReconfigure, "{}"),
+		api("Apply firewall filter", "POST", epFilterApply, "{}"))
 
 	return ipsec.Artifact{
 		Vendor:          "opnsense",
@@ -228,15 +231,20 @@ func (d driver) RenderRemove(v ipsec.RenderView) (ipsec.Artifact, error) {
 	// gateway, or route to delete). Children before the connection (cascade
 	// insurance). Idempotent: OPNsense returns 200 {"result":"not found"} for an
 	// already-gone UUID, and a token with no stored UUID is skipped.
-	steps := []ipsec.ApplyStep{
-		delByUUID("Delete firewall pass rule (remote → LAN subnets)", epRuleDel, nameRuleIn),
-		delByUUID("Delete firewall pass rule (LAN → remote subnets)", epRuleDel, nameRuleOut),
+	var steps []ipsec.ApplyStep
+	// Firewall rules first (independent of IPsec). One delete per rendered pair/leg;
+	// the same capture names Render produced (unresolved tokens are skipped by the
+	// collector, so a pre-change tunnel's snapshot without these still rolls back).
+	for _, sp := range fwRuleSpecs(v.Local(), v.Remote()) {
+		steps = append(steps, delByUUID("Delete firewall pass rule ("+sp.src+" → "+sp.dst+")", epRuleDel, sp.capture))
+	}
+	steps = append(steps,
 		delByUUID("Delete child SA", epChildDel, nameChild),
 		delByUUID("Delete remote auth", epRemoteDel, nameRemote),
 		delByUUID("Delete local auth", epLocalDel, nameLocal),
 		delByUUID("Delete IPsec connection", epConnDel, nameConn),
 		delByUUID("Delete pre-shared key", epPSKDel, namePSK),
-	}
+	)
 	steps = append(steps,
 		api("Apply IPsec configuration", "POST", epIPsecReconfigure, "{}"),
 		api("Apply firewall filter", "POST", epFilterApply, "{}"))
@@ -394,8 +402,8 @@ const (
 	nameRemote  = "remote"
 	nameChild   = "child"
 	namePSK     = "psk"
-	nameRuleOut = "rule_out" // firewall pass rule: local → remote protected subnets
-	nameRuleIn  = "rule_in"  // firewall pass rule: remote → local protected subnets
+	nameRuleOut = "rule_out" // capture-name PREFIX: local→remote pass rules (rule_out_<pair>)
+	nameRuleIn  = "rule_in"  // capture-name PREFIX: remote→local pass rules (rule_in_<pair>)
 )
 
 func tokName(n string) string { return "<uuid:" + n + ">" }
@@ -466,6 +474,28 @@ func protectedFamily(subnets ...string) (string, error) {
 		fam = "inet"
 	}
 	return fam, nil
+}
+
+// fwRuleSpec is one pass-rule to render: its capture token and the single
+// source/destination network it permits.
+type fwRuleSpec struct{ capture, src, dst string }
+
+// fwRuleSpecs enumerates one PASS rule per (local × remote) subnet pair in BOTH
+// directions — each with a SINGLE network per field (the OPNsense filter fields
+// reject a comma-joined list). Deterministic order + capture names so Render and
+// RenderRemove agree (the capture/delete parity the rollback contract needs).
+func fwRuleSpecs(local, remote *ipsec.EndpointSpec) []fwRuleSpec {
+	var specs []fwRuleSpec
+	i := 0
+	for _, ls := range local.ProtectedSubnets {
+		for _, rs := range remote.ProtectedSubnets {
+			specs = append(specs,
+				fwRuleSpec{fmt.Sprintf("%s_%d", nameRuleOut, i), ls, rs},
+				fwRuleSpec{fmt.Sprintf("%s_%d", nameRuleIn, i), rs, ls})
+			i++
+		}
+	}
+	return specs
 }
 
 // fwRule builds an OPNsense automation filter PASS rule body. interface is left

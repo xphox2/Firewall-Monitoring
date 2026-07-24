@@ -1,6 +1,7 @@
 package ipsec_test
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -53,45 +54,52 @@ func TestOPNsense_FirewallRules_Rendered(t *testing.T) {
 		}
 	}
 
-	// Orientation: OUT-leg source=local(50)/dest=remote(10); IN-leg swapped.
+	// Orientation for the single subnet pair (pair 0): OUT-leg source=local(50)/
+	// dest=remote(10); IN-leg swapped.
 	byCap := map[string]string{}
 	for _, r := range rules {
 		byCap[r.capture] = r.body
 	}
-	out, in2 := byCap["rule_out"], byCap["rule_in"]
+	out, in2 := byCap["rule_out_0"], byCap["rule_in_0"]
 	if out == "" || in2 == "" {
-		t.Fatalf("expected rule_out and rule_in captures, got %v", byCap)
+		t.Fatalf("expected rule_out_0 and rule_in_0 captures, got %v", byCap)
 	}
 	if !strings.Contains(out, `"source_net":"192.168.50.0/24"`) || !strings.Contains(out, `"destination_net":"10.10.10.0/24"`) {
-		t.Errorf("rule_out orientation wrong: %s", out)
+		t.Errorf("rule_out_0 orientation wrong: %s", out)
 	}
 	if !strings.Contains(in2, `"source_net":"10.10.10.0/24"`) || !strings.Contains(in2, `"destination_net":"192.168.50.0/24"`) {
-		t.Errorf("rule_in orientation wrong: %s", in2)
+		t.Errorf("rule_in_0 orientation wrong: %s", in2)
 	}
 }
 
-// TestOPNsense_FirewallRules_MultiSubnet: multiple protected subnets per end
-// comma-join into ONE rule pair (the filter source_net/destination_net are
-// Multiple=Y on OPNsense 26.1 — verified live), not a per-pair explosion.
+// TestOPNsense_FirewallRules_MultiSubnet: multiple protected subnets fan out to
+// one rule PAIR per (local × remote) subnet pair, each with a SINGLE network per
+// field — OPNsense's filter source_net rejects a comma-joined list (verified live).
 func TestOPNsense_FirewallRules_MultiSubnet(t *testing.T) {
 	d, _ := ipsec.Driver("opnsense")
 	in := canonicalIntent()
-	in.Ends[1].ProtectedSubnets = []string{"192.168.50.0/24", "192.168.51.0/24"} // OPNsense = local
+	in.Ends[1].ProtectedSubnets = []string{"192.168.50.0/24", "192.168.51.0/24"} // OPNsense=local (2)
+	// remote (FortiGate) has 1 subnet → 2 pairs × 2 directions = 4 rules.
 	art, err := d.Render(ipsec.ViewFor(in, 1))
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	var addRules int
 	for _, s := range art.Steps {
-		if s.Path == "/api/firewall/filter/addRule" {
-			addRules++
-			if s.CaptureAs == "rule_out" && !strings.Contains(s.Body, `"source_net":"192.168.50.0/24,192.168.51.0/24"`) {
-				t.Errorf("multi-subnet source_net should comma-join: %s", s.Body)
+		if s.Path != "/api/firewall/filter/addRule" {
+			continue
+		}
+		addRules++
+		// The source_net / destination_net VALUES must each be a SINGLE network —
+		// never a comma-joined list (the live-rejected case).
+		for _, m := range regexp.MustCompile(`"(?:source_net|destination_net)":"([^"]*)"`).FindAllStringSubmatch(s.Body, -1) {
+			if strings.Contains(m[1], ",") {
+				t.Errorf("rule %q field value must be a single network, not a list: %q", s.CaptureAs, m[1])
 			}
 		}
 	}
-	if addRules != 2 {
-		t.Errorf("multi-subnet must still be 2 rules (comma-joined), got %d", addRules)
+	if addRules != 4 {
+		t.Errorf("2 local × 1 remote × 2 directions = 4 rules, got %d", addRules)
 	}
 }
 
