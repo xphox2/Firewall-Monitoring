@@ -69,7 +69,7 @@ func ParseOPNsense(deviceID uint, ts time.Time, phase1Body, sadBody, spdBody str
 
 	for _, pol := range policies {
 		c := conns.forPeer(pol.remoteHost)
-		name, phase1 := childName(c, pol.remoteSel)
+		name, phase1 := childName(c, pol.localSel, pol.remoteSel)
 		in, outb := sas.counters(pol.reqid, pol.localHost)
 
 		row := models.VPNStatus{
@@ -111,20 +111,20 @@ func ParseOPNsense(deviceID uint, ts time.Time, phase1Body, sadBody, spdBody str
 		}
 
 		out = append(out, row)
-		seen[childKey(phase1, pol.remoteSel)] = true
+		seen[childKey(phase1, pol.localSel, pol.remoteSel)] = true
 	}
 
 	// Anything the server expects but the box is not carrying is DOWN, not
 	// absent. Zero counters and zero uptime keep the ever-up gate honest: a
 	// child that has never established must not be alertable.
 	for _, e := range expected {
-		if seen[childKey(e.TunnelName, e.Remote)] {
+		if seen[childKey(e.TunnelName, e.Local, e.Remote)] {
 			continue
 		}
 		out = append(out, models.VPNStatus{
 			DeviceID:     deviceID,
 			Timestamp:    ts,
-			TunnelName:   tunnelChildName(e.TunnelName, e.Remote),
+			TunnelName:   tunnelChildName(e.TunnelName, e.Local, e.Remote),
 			Phase1Name:   e.TunnelName,
 			TunnelType:   "ipsec",
 			LocalSubnet:  e.Local,
@@ -145,6 +145,8 @@ type conn struct {
 
 type connIndex struct {
 	byPeer map[string][]conn
+	total  int  // connections seen, for the unambiguous-by-elimination fallback
+	only   conn // the sole connection when total == 1
 }
 
 // forPeer returns the connection terminating on that peer address, or a zero
@@ -155,11 +157,25 @@ type connIndex struct {
 // child attributed to the wrong tunnel would be labelled with a name an
 // operator trusts.
 func (ci connIndex) forPeer(peer string) conn {
-	cs := ci.byPeer[peer]
-	if len(cs) != 1 {
-		return conn{}
+	if cs := ci.byPeer[peer]; len(cs) == 1 {
+		return cs[0]
+	} else if len(cs) > 1 {
+		return conn{} // ambiguous — refuse rather than mislabel
 	}
-	return cs[0]
+	// No address match. This is NOT exotic: when this box is the responder to a
+	// dynamic peer the driver renders remote_addrs as "%any", so searchPhase1
+	// reports no usable peer address while the kernel SPD holds the address the
+	// peer was observed arriving from — the join fails for every child of that
+	// tunnel. Leaving them unnamed would empty Phase1Name, which is the field
+	// the connection map matches provisioned tunnels on, dropping the row back
+	// to IP matching against a NAT address: exactly the misattribution that was
+	// just fixed.
+	//
+	// When the box has exactly one connection, elimination is not a guess.
+	if ci.total == 1 {
+		return ci.only
+	}
+	return conn{}
 }
 
 func parsePhase1(body string) (connIndex, error) {
@@ -171,14 +187,19 @@ func parsePhase1(body string) (connIndex, error) {
 	for _, r := range doc.Rows {
 		// local-addrs is "%any" on a box behind NAT, so only the remote side
 		// is usable as a join key.
-		peer := hostOf(str(r, "remote-addrs", "remote-host"))
-		if peer == "" {
-			continue
-		}
-		ci.byPeer[peer] = append(ci.byPeer[peer], conn{
+		c := conn{
 			desc: strings.TrimSpace(str(r, "phase1desc")),
 			uuid: str(r, "name", "ikeid"),
-		})
+		}
+		ci.total++
+		ci.only = c
+		// "%any" is a wildcard, not an address — indexing it would make every
+		// dynamic-peer tunnel collide under one key.
+		peer := hostOf(str(r, "remote-addrs", "remote-host"))
+		if peer == "" || peer == "%any" {
+			continue
+		}
+		ci.byPeer[peer] = append(ci.byPeer[peer], c)
 	}
 	return ci, nil
 }
@@ -282,34 +303,42 @@ func (idx saIndex) counters(reqid, localHost string) (in, out *sa) {
 // multi-subnet tunnel to a single surviving row. Phase1Name carries the bare
 // provisioned name so the connection map's provisioned-attribution matches it
 // with no extra code.
-func childName(c conn, remoteSel string) (name, phase1 string) {
+func childName(c conn, localSel, remoteSel string) (name, phase1 string) {
 	if c.desc != "" {
-		return tunnelChildName(c.desc, remoteSel), c.desc
+		return tunnelChildName(c.desc, localSel, remoteSel), c.desc
 	}
 	// No description: an unprovisioned / hand-built tunnel. The connection UUID
 	// is the only stable-ish identity available. It changes if the connection
 	// is recreated, which reads as a new tunnel — accepted, and it only affects
 	// tunnels this system did not create.
 	if c.uuid != "" {
-		return tunnelChildName(c.uuid, remoteSel), c.uuid
+		return tunnelChildName(c.uuid, localSel, remoteSel), c.uuid
 	}
-	return tunnelChildName("ipsec", remoteSel), ""
+	return tunnelChildName("ipsec", localSel, remoteSel), ""
 }
 
-// tunnelChildName joins a tunnel name to one child's remote selector.
+// tunnelChildName joins a tunnel name to the child's selector PAIR.
 //
-// The separator must not be "/" and the network address is used WITHOUT its
+// Both selectors are required, not just the remote one. A tunnel fans out
+// local×remote, so two children can share a remote selector while differing on
+// the local side — e.g. 50.0/24→13.0/24 and 60.0/24→13.0/24. Naming on the
+// remote alone gives them one name, and GetAllLatestVPNStatuses (newest row per
+// device+tunnel_name) then discards one of them. That is the mirror image of
+// the multi-subnet case this telemetry exists to make visible, so it must not
+// be the thing that breaks it.
+//
+// The separator must not be "/" and network addresses are used WITHOUT their
 // prefix length, because this value is passed in a URL PATH by every chart
 // caller (…/vpn/:tunnel/chart) and gin routes on the decoded path — an escaped
-// slash becomes a real separator and the request 404s. Two children of one
-// tunnel necessarily have different network addresses, so dropping the prefix
-// costs no uniqueness.
-func tunnelChildName(tunnel, remoteSel string) string {
-	return tunnel + ":" + networkOf(remoteSel)
+// slash becomes a real separator and the request 404s. Dropping the prefix
+// costs no uniqueness: two children of one tunnel differ in at least one
+// network address.
+func tunnelChildName(tunnel, localSel, remoteSel string) string {
+	return tunnel + ":" + networkOf(localSel) + "-" + networkOf(remoteSel)
 }
 
-func childKey(phase1, remoteSel string) string {
-	return phase1 + "|" + networkOf(remoteSel)
+func childKey(phase1, localSel, remoteSel string) string {
+	return phase1 + "|" + networkOf(localSel) + "|" + networkOf(remoteSel)
 }
 
 // ---- small helpers -----------------------------------------------------

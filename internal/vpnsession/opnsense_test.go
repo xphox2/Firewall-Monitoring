@@ -221,3 +221,61 @@ func TestParseOPNsense_ConnectedWithNoInstalledChildIsDown(t *testing.T) {
 		t.Errorf("uptime = %d, want 0 — a non-installed child must not arm the ever-up gate", rows[0].uptime)
 	}
 }
+
+// THE MIRRORED TWO-SUBNET CASE. v0.11.168 made multiple local subnets per
+// endpoint first-class, so a tunnel can fan out local×remote. From OPNsense's
+// side the FortiGate's two subnets are REMOTE (distinct), but the mirror —
+// two LOCAL subnets to one remote — produces children whose remote selector is
+// identical. Naming on the remote selector alone collapses them, and
+// GetAllLatestVPNStatuses keeps only the newest.
+func TestParseOPNsense_MultiLocalSubnetChildrenDoNotCollide(t *testing.T) {
+	spd := `{"rows":[
+	 {"src":"192.168.50.0/24","dst":"192.168.13.0/24","dir":"out","reqid":"2","src-dst":["192.168.5.107","66.179.9.155"]},
+	 {"src":"192.168.60.0/24","dst":"192.168.13.0/24","dir":"out","reqid":"3","src-dst":["192.168.5.107","66.179.9.155"]}]}`
+	sad := `{"rows":[
+	 {"src":"192.168.5.107[4500]","reqid":2,"bytes_current":100,"addtime_diff":10},
+	 {"src":"192.168.5.107[4500]","reqid":3,"bytes_current":200,"addtime_diff":10}]}`
+
+	rows := parse(t, phase1Fixture, sad, spd)
+	if len(rows) != 2 {
+		t.Fatalf("want 2 child rows, got %d", len(rows))
+	}
+	if rows[0].name == rows[1].name {
+		t.Fatalf("two children sharing one REMOTE selector both got %q — the "+
+			"newest-per-name query discards one. The name must carry BOTH selectors.", rows[0].name)
+	}
+}
+
+// When this box is the RESPONDER to a dynamic peer the driver renders
+// remote_addrs as "%any", so searchPhase1 offers no address to join on while
+// the kernel SPD holds the peer's observed address. Leaving the child unnamed
+// would empty Phase1Name — the field the connection map matches provisioned
+// tunnels on — dropping the row back to IP matching against a NAT address.
+func TestParseOPNsense_WildcardPeerStillNamesASoleConnection(t *testing.T) {
+	p1 := `{"rows":[{"local-addrs":"%any","remote-addrs":"%any","phase1desc":"fwm-t11","name":"uuid-a"}]}`
+	rows := parse(t, p1, sadFixture, spdFixture)
+	if len(rows) != 1 {
+		t.Fatalf("want 1 row, got %d", len(rows))
+	}
+	if rows[0].phase1 != "fwm-t11" {
+		t.Errorf("phase1_name = %q, want fwm-t11 — with exactly one connection on the box, "+
+			"elimination is not a guess, and an empty phase1_name loses provisioned attribution",
+			rows[0].phase1)
+	}
+}
+
+// But elimination only holds when there IS one connection. With several and no
+// address match, naming one of them would be a guess wearing a trusted label.
+func TestParseOPNsense_WildcardPeerWithSeveralConnectionsRefusesToGuess(t *testing.T) {
+	p1 := `{"rows":[
+	 {"remote-addrs":"%any","phase1desc":"fwm-t11","name":"uuid-a"},
+	 {"remote-addrs":"%any","phase1desc":"fwm-t99","name":"uuid-b"}]}`
+	rows := parse(t, p1, sadFixture, spdFixture)
+	if len(rows) != 1 {
+		t.Fatalf("want 1 row, got %d", len(rows))
+	}
+	if rows[0].phase1 == "fwm-t11" || rows[0].phase1 == "fwm-t99" {
+		t.Errorf("phase1_name = %q — with two wildcard connections there is no evidence "+
+			"which one this child belongs to", rows[0].phase1)
+	}
+}
