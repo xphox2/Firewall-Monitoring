@@ -1010,7 +1010,7 @@ func (p *Poller) runMonitoringCycle() {
 	// Auto-detect connections — record cycle start BEFORE all detectors
 	// so the stale cleanup doesn't delete connections from the first detector.
 	connCycleStart := time.Now()
-	vpnCount := p.detectVPNConnections(devices)
+	vpnCount, vpnOK := p.detectVPNConnections(devices)
 	overlayCount := p.detectOverlayConnections(devices)
 	l2Count, l2OK := p.detectL2Links(devices)
 
@@ -1020,8 +1020,8 @@ func (p *Poller) runMonitoringCycle() {
 	// connections. l2OK guards the same hazard one level finer: a failed L2
 	// evidence READ with healthy VPN detectors would otherwise sweep every L2
 	// row (their last_check untouched) and recreate them next cycle with new IDs.
-	if p.db != nil && !l2OK {
-		log.Printf("Connection detection: L2 detector read failed, skipping stale cleanup this cycle to preserve existing data")
+	if p.db != nil && !(l2OK && vpnOK) {
+		log.Printf("Connection detection: a detector read failed (l2OK=%t vpnOK=%t), skipping stale cleanup this cycle to preserve existing data", l2OK, vpnOK)
 	} else if p.db != nil && (vpnCount+overlayCount+l2Count) > 0 {
 		removed := p.db.CleanupStaleAutoConnectionsBefore(connCycleStart)
 		if removed > 0 {
@@ -1374,9 +1374,13 @@ func (p *Poller) pruneStaleIfaceStats(ttl time.Duration) {
 // detectVPNConnections matches VPN tunnel remote IPs to known device IPs
 // (management IP + all interface addresses) and auto-creates/updates DeviceConnection records.
 // Returns the number of connection pairs processed.
-func (p *Poller) detectVPNConnections(devices []models.Device) int {
+// detectVPNConnections returns the number of connections it upserted and whether
+// the detection READ succeeded. The ok flag mirrors l2OK: a failed read must not
+// be mistaken for "this device pair no longer exists", or the cycle's stale sweep
+// would delete every VPN edge and recreate it with new IDs next cycle.
+func (p *Poller) detectVPNConnections(devices []models.Device) (int, bool) {
 	if p.db == nil || len(devices) == 0 {
-		return 0
+		return 0, true
 	}
 
 	// Build IP → Device map from management IPs
@@ -1408,8 +1412,16 @@ func (p *Poller) detectVPNConnections(devices []models.Device) int {
 	vpnStatuses, err := p.db.GetAllLatestVPNStatuses()
 	if err != nil {
 		log.Printf("VPN auto-detect: failed to get VPN statuses - %v", err)
-		return 0
+		return 0, false
 	}
+	// Rows past the grace horizon never arrive here — GetAllLatestVPNStatuses
+	// drops them — so a tunnel the device has stopped reporting simply stops
+	// being upserted and the cycle's stale sweep reaps its connection. What
+	// remains is the fresh/stale split: evidence older than the fresh window
+	// still identifies a real device pair, but is too old to assert up/down, so
+	// the connection is HELD as "stale" (amber) instead of being trusted.
+	freshCutoff := time.Now().Add(-database.VPNEvidenceFresh)
+	isFresh := func(vpn models.VPNStatus) bool { return !vpn.Timestamp.Before(freshCutoff) }
 	// NB: do NOT early-return when vpnStatuses is empty. Dial-up/interface-mode
 	// spokes expose no fgVpnTunTable rows, so the remote-gateway strategies below
 	// no-op for them — but the tunnel-overlay phase further down still maps them
@@ -1434,6 +1446,7 @@ func (p *Poller) detectVPNConnections(devices []models.Device) int {
 		destID      uint
 		tunnelNames map[string]bool
 		anyUp       bool
+		anyFresh    bool // at least one row inside the fresh window backs this pair
 		matchMethod string
 		connType    string
 		sides       int // how many sides have a matching tunnel (1=unidirectional, 2=bidirectional)
@@ -1480,8 +1493,11 @@ func (p *Poller) detectVPNConnections(devices []models.Device) int {
 		if vpn.TunnelName != "" {
 			pi.tunnelNames[vpn.TunnelName] = true
 		}
-		if vpn.Status == "up" {
-			pi.anyUp = true
+		if isFresh(vpn) {
+			pi.anyFresh = true
+			if vpn.Status == "up" {
+				pi.anyUp = true
+			}
 		}
 		// Upgrade connection type if we see SSL
 		if vpn.TunnelType == "sslvpn" {
@@ -1555,8 +1571,11 @@ func (p *Poller) detectVPNConnections(devices []models.Device) int {
 				pairs[key] = pi
 			}
 			pi.tunnelNames[vpn.TunnelName] = true
-			if vpn.Status == "up" {
-				pi.anyUp = true
+			if isFresh(vpn) {
+				pi.anyFresh = true
+				if vpn.Status == "up" {
+					pi.anyUp = true
+				}
 			}
 			break // found match for this tunnel, move on
 		}
@@ -1677,8 +1696,11 @@ func (p *Poller) detectVPNConnections(devices []models.Device) int {
 					pairs[key] = pi
 				}
 				pi.tunnelNames[vpn.TunnelName] = true
-				if vpn.Status == "up" {
-					pi.anyUp = true
+				if isFresh(vpn) {
+					pi.anyFresh = true
+					if vpn.Status == "up" {
+						pi.anyUp = true
+					}
 				}
 				break
 			}
@@ -1761,6 +1783,7 @@ func (p *Poller) detectVPNConnections(devices []models.Device) int {
 					matchMethod: "tunnel_overlay",
 					connType:    "ipsec",
 					anyUp:       a.up || b.up,
+					anyFresh:    true, // interface-derived evidence, not vpn_status
 				}
 				if a.name != "" {
 					pi.tunnelNames[a.name] = true
@@ -1773,9 +1796,19 @@ func (p *Poller) detectVPNConnections(devices []models.Device) int {
 		}
 	}
 
+	held := 0
 	for _, pi := range pairs {
+		// No fresh evidence => hold the connection as "stale" (amber) rather than
+		// asserting a status we can no longer justify. The upsert still advances
+		// last_check, so the ID stays stable and the sweep leaves it alone; once
+		// the evidence ages past grace it stops arriving entirely and the sweep
+		// reaps it. Same up -> stale -> deleted staircase the L2 detector uses.
 		status := "down"
-		if pi.anyUp {
+		switch {
+		case !pi.anyFresh:
+			status = "stale"
+			held++
+		case pi.anyUp:
 			status = "up"
 		}
 
@@ -1844,9 +1877,18 @@ func (p *Poller) detectVPNConnections(devices []models.Device) int {
 	}
 
 	if len(pairs) > 0 {
-		log.Printf("VPN auto-detect: processed %d connection(s) across %d devices", len(pairs), len(devices))
+		log.Printf("VPN auto-detect: processed %d connection(s) across %d devices%s", len(pairs), len(devices), heldNote(held))
 	}
-	return len(pairs)
+	return len(pairs), true
+}
+
+// heldNote annotates the detect log when connections were held on stale evidence,
+// so an operator seeing amber edges can tell it is deliberate, not a detector bug.
+func heldNote(held int) string {
+	if held == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (%d held on stale evidence)", held)
 }
 
 // detectOverlayConnections finds matching overlay/local interfaces across devices and
@@ -1900,11 +1942,18 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) int {
 		}
 	}
 
-	// Load VPN tunnel data to verify direct links
+	// Load VPN tunnel data to verify direct links. Only FRESH rows may verify a
+	// direct link: an "up" carried over from evidence that is hours old would
+	// keep classifying an overlay as directly-linked long after the underlying
+	// tunnel stopped being reported.
 	vpnStatuses, _ := p.db.GetAllLatestVPNStatuses()
+	overlayFreshCutoff := time.Now().Add(-database.VPNEvidenceFresh)
 	// Build set of device pairs with verified direct VPN links (remote IP points to other device)
 	vpnByDevice := make(map[uint][]models.VPNStatus)
 	for _, vpn := range vpnStatuses {
+		if vpn.Timestamp.Before(overlayFreshCutoff) {
+			continue
+		}
 		vpnByDevice[vpn.DeviceID] = append(vpnByDevice[vpn.DeviceID], vpn)
 	}
 

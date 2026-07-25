@@ -2,13 +2,62 @@ package database
 
 import (
 	"errors"
+	"log"
 	"time"
 
+	"firewall-mon/internal/l2infer"
 	"firewall-mon/internal/models"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+// VPN evidence freshness windows, deliberately the SAME values the L2 link
+// staircase uses (l2infer.FreshWindow / GraceWindow) so both edge families on
+// the connection map age at one cadence and one amber "stale" state means the
+// same thing regardless of which detector produced the edge.
+//
+// Fresh (≤30m) → the tunnel's real up/down status. Between fresh and grace → the
+// connection is held with status "stale" rather than trusted or deleted. Past
+// grace (>3h) → not state at all: invisible to every reader here, so the poller
+// stops re-stamping last_check and the existing CleanupStaleAutoConnectionsBefore
+// sweep reaps the row.
+//
+// 30m is not arbitrary: VPN rows arrive from two writers at different cadences
+// (SNMP ~60s, FortiGate SSH at SSHPollInterval, default 900s). A tighter window —
+// e.g. the alert path's 3×PollInterval / 5-minute floor — would mark every
+// SSH-fed tunnel stale for two thirds of every interval and flap the map.
+const (
+	VPNEvidenceFresh = l2infer.FreshWindow
+	VPNEvidenceGrace = l2infer.GraceWindow
+)
+
+// vpnZoneSlack widens the SQL-side lower bound so it can only ever be too
+// generous, never too strict.
+//
+// SQLite stores a timestamp as TEXT in whatever zone it was written with —
+// "…T12:24:58-04:00" vs "…T16:24:58Z" for the same instant — and compares it
+// lexicographically, so a bound in one zone silently mis-filters rows written in
+// another. The collector stamps rows with local time, so this is real. Postgres
+// (timestamptz) normalizes and is unaffected, but the query must be correct on
+// both dialects.
+//
+// So SQL only PRUNES (keeping the partition scan bounded, which is why the bound
+// exists at all) and the exact horizon is applied in Go, where comparison is
+// instant-based and zone-proof. 24h clears any real-world offset (max ±14h).
+const vpnZoneSlack = 24 * time.Hour
+
+// withinVPNGrace drops rows outside the evidence horizon. This — not the SQL
+// bound — is the authoritative gate; see vpnZoneSlack.
+func withinVPNGrace(in []models.VPNStatus, now time.Time) []models.VPNStatus {
+	out := in[:0]
+	for _, s := range in {
+		if now.Sub(s.Timestamp) <= VPNEvidenceGrace {
+			out = append(out, s)
+		}
+	}
+	return out
+}
 
 func (d *Database) SaveSystemStatus(status *models.SystemStatus) error {
 	return d.db.Create(status).Error
@@ -145,18 +194,33 @@ func (d *Database) SaveVPNStatuses(statuses []models.VPNStatus) error {
 	return batchInsertWithFallback(d.db, "vpn_status", statuses)
 }
 
+// GetLatestVPNStatuses returns a device's current tunnels: the newest row per
+// tunnel_name that is still within the evidence horizon (see vpnLatestSubquery).
+// Tunnels the device has stopped reporting age out; tunnels on a slower writer
+// are no longer masked by a faster one.
+//
+// Only snapshot SELECTION is horizon-bounded. The enrichment passes below —
+// peer-subnet cross-fill, RemoteDeviceID resolution, and LastUpAt — are
+// historical annotations of a current tunnel, not state claims, so they keep
+// reading unbounded history on purpose.
 func (d *Database) GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, error) {
-	var latest models.VPNStatus
-	if err := d.db.Where("device_id = ?", deviceID).Order("timestamp DESC").First(&latest).Error; err != nil {
+	now := time.Now()
+	prune := now.Add(-VPNEvidenceGrace - vpnZoneSlack)
+	var statuses []models.VPNStatus
+	err := d.db.Where("device_id = ? AND timestamp >= ? AND (tunnel_name, timestamp) IN (?)",
+		deviceID, prune, vpnLatestSubquery(d.db, deviceID, prune)).
+		Find(&statuses).Error
+	if err == nil {
+		statuses = withinVPNGrace(statuses, now)
+	}
+	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return []models.VPNStatus{}, nil
 		}
 		return nil, err
 	}
-	var statuses []models.VPNStatus
-	err := d.db.Where("device_id = ? AND timestamp = ?", deviceID, latest.Timestamp).Find(&statuses).Error
-	if err != nil || len(statuses) == 0 {
-		return statuses, err
+	if len(statuses) == 0 {
+		return []models.VPNStatus{}, nil
 	}
 
 	// Cross-fill Phase 2 subnets from peer devices
@@ -294,38 +358,142 @@ func (d *Database) GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, erro
 	// with 200 tunnels per device the difference is meaningful. Skipped
 	// for tunnels that are currently up (LastUpAt would just equal the
 	// snapshot timestamp anyway and the UI doesn't render the chip).
-	type lastUpRow struct {
-		TunnelName string    `gorm:"column:tunnel_name"`
-		MaxTs      time.Time `gorm:"column:max_ts"`
-	}
-	var rows []lastUpRow
-	if err := d.db.Model(&models.VPNStatus{}).
+	// Scanned through database/sql rather than mapped into a struct: an aggregate
+	// loses the column's declared type, so the SQLite driver returns
+	// MAX(timestamp) as a string while Postgres returns time.Time, and GORM can
+	// map neither into a portable field (time.Time rejects the string; `any` is
+	// an unsupported field type). database/sql DOES support scanning into *any,
+	// handing back the driver's native value, which coerceDBTime then normalizes.
+	//
+	// The previous code swallowed the resulting scan error with an `err == nil`
+	// guard, so last_up_at silently never populated on SQLite.
+	byName := make(map[string]time.Time)
+	if rows, err := d.db.Model(&models.VPNStatus{}).
 		Select("tunnel_name, MAX(timestamp) as max_ts").
 		Where("device_id = ? AND status = ?", deviceID, "up").
 		Group("tunnel_name").
-		Scan(&rows).Error; err == nil {
-		byName := make(map[string]time.Time, len(rows))
-		for _, r := range rows {
-			byName[r.TunnelName] = r.MaxTs
-		}
-		for i := range statuses {
-			if ts, ok := byName[statuses[i].TunnelName]; ok {
-				t := ts
-				statuses[i].LastUpAt = &t
+		Rows(); err != nil {
+		log.Printf("GetLatestVPNStatuses: last_up_at lookup for device %d failed: %v", deviceID, err)
+	} else {
+		for rows.Next() {
+			var name string
+			var raw any
+			if serr := rows.Scan(&name, &raw); serr != nil {
+				log.Printf("GetLatestVPNStatuses: last_up_at scan for device %d failed: %v", deviceID, serr)
+				break
 			}
+			if ts, ok := coerceDBTime(raw); ok {
+				byName[name] = ts
+			}
+		}
+		if rerr := rows.Err(); rerr != nil {
+			log.Printf("GetLatestVPNStatuses: last_up_at rows for device %d: %v", deviceID, rerr)
+		}
+		rows.Close()
+	}
+	for i := range statuses {
+		if ts, ok := byName[statuses[i].TunnelName]; ok {
+			t := ts
+			statuses[i].LastUpAt = &t
 		}
 	}
 
 	return statuses, err
 }
 
-// GetAllLatestVPNStatuses returns the latest VPN tunnel snapshot for every device.
+// coerceDBTime converts an aggregate timestamp value into a time.Time. Postgres
+// returns time.Time directly; SQLite returns the stored text, in one of a few
+// layouts depending on how the row was written.
+func coerceDBTime(v any) (time.Time, bool) {
+	switch t := v.(type) {
+	case time.Time:
+		return t, true
+	case *time.Time:
+		if t == nil {
+			return time.Time{}, false
+		}
+		return *t, true
+	case []byte:
+		return coerceDBTime(string(t))
+	case string:
+		for _, layout := range []string{
+			time.RFC3339Nano, time.RFC3339,
+			"2006-01-02 15:04:05.999999999-07:00",
+			"2006-01-02 15:04:05.999999999",
+			"2006-01-02 15:04:05",
+		} {
+			if ts, err := time.Parse(layout, t); err == nil {
+				return ts, true
+			}
+		}
+	}
+	return time.Time{}, false
+}
+
+// GetAllLatestVPNStatuses returns the newest row for every tunnel still within
+// the evidence horizon, across all devices. See the vpnLatestSubquery doc for
+// why this is per-TUNNEL rather than per-device, and why the horizon lives in
+// the query rather than at the call sites.
 func (d *Database) GetAllLatestVPNStatuses() ([]models.VPNStatus, error) {
+	now := time.Now()
+	prune := now.Add(-VPNEvidenceGrace - vpnZoneSlack)
 	var statuses []models.VPNStatus
-	// Subquery: max timestamp per device
-	sub := d.db.Model(&models.VPNStatus{}).Select("device_id, MAX(timestamp) as max_ts").Group("device_id")
-	err := d.db.Where("(device_id, timestamp) IN (?)", sub).Find(&statuses).Error
-	return statuses, err
+	sub := d.db.Model(&models.VPNStatus{}).
+		Select("device_id, tunnel_name, MAX(timestamp) as max_ts").
+		Where("timestamp >= ?", prune).
+		Group("device_id, tunnel_name")
+	if err := d.db.Where("timestamp >= ? AND (device_id, tunnel_name, timestamp) IN (?)", prune, sub).
+		Find(&statuses).Error; err != nil {
+		return nil, err
+	}
+	return withinVPNGrace(statuses, now), nil
+}
+
+// GetVPNTunnelCounts returns the up and total tunnel counts for a device using
+// the same horizon-bounded per-tunnel snapshot as the other readers, so a badge
+// can never disagree with the device page about which tunnels exist.
+//
+// A tunnel whose state is neither up nor down (FortiGate reports "unknown" for a
+// phase1 whose phase2 has no SA) counts toward total but not up — it is present
+// on the device, just not carrying traffic.
+func (d *Database) GetVPNTunnelCounts(deviceID uint) (up, total int, err error) {
+	now := time.Now()
+	prune := now.Add(-VPNEvidenceGrace - vpnZoneSlack)
+	var statuses []models.VPNStatus
+	if err = d.db.Select("status, timestamp").
+		Where("device_id = ? AND timestamp >= ? AND (tunnel_name, timestamp) IN (?)",
+			deviceID, prune, vpnLatestSubquery(d.db, deviceID, prune)).
+		Find(&statuses).Error; err != nil {
+		return 0, 0, err
+	}
+	for _, s := range withinVPNGrace(statuses, now) {
+		total++
+		if s.Status == "up" {
+			up++
+		}
+	}
+	return up, total, nil
+}
+
+// vpnLatestSubquery selects the newest timestamp per tunnel_name for one device
+// within the evidence horizon.
+//
+// Per-TUNNEL, deliberately. The previous device-wide MAX(timestamp) assumed each
+// collector batch is one complete atomic snapshot of the device. That is false
+// whenever two writers report VPN state at different cadences — a FortiGate feeds
+// both the ~60s SNMP path and the SSH path (SSHPollInterval, default 900s), so
+// the slower writer's tunnels were permanently masked by the faster writer's
+// newer rows and vanished from the UI while genuinely up.
+//
+// The horizon then does the other half: a tunnel that has stopped being reported
+// altogether ages out instead of being served as current state forever. Together
+// these fix opposite failures — one query used to resurrect deleted tunnels, the
+// other buried live ones.
+func vpnLatestSubquery(db *gorm.DB, deviceID uint, prune time.Time) *gorm.DB {
+	return db.Model(&models.VPNStatus{}).
+		Select("tunnel_name, MAX(timestamp) as max_ts").
+		Where("device_id = ? AND timestamp >= ?", deviceID, prune).
+		Group("tunnel_name")
 }
 
 // RecentHAFailover reports whether the device's HA cluster changed its active

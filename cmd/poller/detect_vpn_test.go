@@ -48,7 +48,11 @@ func TestDetectVPNConnections_TunnelOverlay(t *testing.T) {
 		t.Fatalf("save interface addresses: %v", err)
 	}
 
-	if n := p.detectVPNConnections([]models.Device{hub, spoke}); n != 1 {
+	n, ok := p.detectVPNConnections([]models.Device{hub, spoke})
+	if !ok {
+		t.Fatal("detectVPNConnections reported a failed read")
+	}
+	if n != 1 {
 		t.Fatalf("detectVPNConnections found %d connections, want 1", n)
 	}
 
@@ -109,7 +113,7 @@ func TestDetectVPNConnections_SpokesNotLinkedToEachOther(t *testing.T) {
 		t.Fatalf("save addrs: %v", err)
 	}
 
-	p.detectVPNConnections([]models.Device{hub, s1, s2})
+	p.detectVPNConnections([]models.Device{hub, s1, s2}) //nolint:errcheck // count/ok not asserted here
 
 	conns, err := db.GetAllConnections()
 	if err != nil {

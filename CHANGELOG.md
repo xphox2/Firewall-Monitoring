@@ -1,6 +1,29 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.166] - 2026-07-25
+
+### Fixed — VPN telemetry: "last known" was being served as "current state"
+
+A rolled-back IPSec tunnel kept rendering on the connection map as a live-looking edge for days after it was deleted from the device. Live-confirmed: an edge `DC2-FW2 ↔ OPNsense / tunnel_names=fwm-t7 / status=down` whose `last_check` was still being refreshed every 60 seconds two days after the tunnel's `ipsec_tunnels` row was gone and the device's own config backup showed no trace of it.
+
+Root cause: the collector only POSTs VPN status when the list is non-empty, so a device with **zero** tunnels writes no rows at all and its snapshot freezes. `GetAllLatestVPNStatuses` had **no age predicate**, so it served that frozen snapshot forever; `detectVPNConnections` never inspected the row timestamps, re-derived the pair every cycle, and `UpsertAutoConnection` re-stamped `last_check`. The reaper (`CleanupStaleAutoConnectionsBefore`) was correct all along — it was **starved**, never broken, because the row was refreshed before every sweep.
+
+Investigating it surfaced that three separate queries disagreed about what "latest" means, and were wrong in **opposite** directions. Measured on the live DB for one FortiGate: the IRC badge counts (unbounded per-tunnel `MAX`) returned 5 tunnels including two dead for 2 days, while the device-detail page (device-wide `MAX`) returned 1 — **hiding a genuinely live tunnel**. The device-wide `MAX` assumes each collector batch is one complete atomic snapshot; that is false whenever two writers report at different cadences (SNMP ~60s vs the FortiGate SSH path at `SSHPollInterval`, default 900s), so the slower writer's tunnels were permanently masked by the faster writer's newer rows.
+
+- **`internal/database/telemetry.go`** — both readers now select the newest row **per tunnel_name** bounded by an evidence horizon, replacing the per-device `MAX`. Dead tunnels expire; slow-writer tunnels stop being masked. Only snapshot *selection* is bounded — the peer-subnet cross-fill, `RemoteDeviceID` resolution and `LastUpAt` enrichments still read full history, since they annotate a current tunnel rather than assert state. New `GetVPNTunnelCounts` gives the badges the same semantic, so a count can no longer disagree with the device page.
+- **`cmd/poller/main.go`** — the detector applies the **same up → stale → deleted staircase the L2 detector already uses**, reusing `l2infer.FreshWindow` (30m) / `GraceWindow` (3h). Fresh evidence yields real up/down; evidence between fresh and grace **holds** the connection as `status="stale"` (rendered amber by the existing frontend, ID stable); past grace the rows stop being served at all, so `last_check` stops advancing and the existing sweep reaps the row. 30m is load-bearing: a tighter window (e.g. the alert path's 5-minute floor) would mark every SSH-fed tunnel stale for two thirds of every interval and flap the map.
+- **`detectVPNConnections` now reports read success**, and the stale sweep is gated on it alongside the existing `l2OK`. This closes a **pre-existing** hazard: a failed VPN read with a healthy L2 read would let the sweep delete every VPN edge and recreate it with new IDs.
+- **`detectOverlayConnections`** only accepts fresh rows when verifying a direct link — an `up` carried over from hours-old evidence must not keep classifying an overlay as directly-linked.
+
+**No migration needed — self-healing.** The ghost row's `last_check` stops advancing on the first cycle after deploy and the existing reaper removes it within ~60s. Frozen `vpn_status` rows stop being readable as state immediately and age out via existing retention; they are deliberately not deleted early.
+
+### Fixed — `last_up_at` silently never populated on SQLite
+
+The "last seen up X ago" enrichment scanned `MAX(timestamp)` into a `time.Time` struct field. An aggregate loses the column's declared type, so the SQLite driver returns a string and the scan failed — and the error was swallowed by an `err == nil` guard, so the field was quietly left empty rather than reported. It now scans through `database/sql` (which supports `*any`, yielding the driver's native value) and normalizes both the Postgres `time.Time` and the SQLite string forms, logging any failure instead of hiding it.
+
+Related dialect hazard, handled: SQLite stores a timestamp as **text in whatever zone it was written** (`…T12:24:58-04:00` vs `…T16:24:58Z` for the same instant) and compares it lexicographically, so a zone-mismatched bound silently mis-filters. The SQL bound is therefore only a partition-pruning hint, widened by 24h; the exact horizon is applied in Go where comparison is instant-based.
+
 ## [0.11.165] - 2026-07-25
 
 ### Added — block route-based FortiGate tunnels to a dynamic (dialup) peer

@@ -120,6 +120,16 @@ func TestRunMonitoringCycle_KeepsAlertEngineCalls(t *testing.T) {
 			t.Errorf("runMonitoringCycle no longer invokes %s — the alert/health engine must keep running every cycle", call)
 		}
 	}
+	// The stale-connection sweep must stay gated on BOTH detector read flags. A
+	// failed read is not evidence that a device pair disappeared, so sweeping on
+	// one would delete every edge of that family and recreate it with fresh IDs
+	// next cycle. This is the cheap tripwire against "simplifying" the guard.
+	for _, guard := range []string{"vpnOK", "l2OK"} {
+		if !strings.Contains(body, guard) {
+			t.Errorf("runMonitoringCycle no longer consults %s — the stale-connection sweep must not run on a failed detector read", guard)
+		}
+	}
+
 	if strings.Contains(body, "pollDevice(") {
 		t.Errorf("runMonitoringCycle still references pollDevice — the direct device-SNMP loop is retired")
 	}
