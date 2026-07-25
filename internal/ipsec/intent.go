@@ -18,6 +18,8 @@
 // live in the database layer.
 package ipsec
 
+import "strings"
+
 // Encryption, Integrity, PRF and DHGroup are neutral crypto tokens. Drivers
 // translate them to vendor dialect; the wizard/validation never sees a vendor
 // string. Empty means "not applicable" (e.g. AEAD ciphers carry their own
@@ -123,7 +125,16 @@ type EndpointSpec struct {
 	// operator-supplied (there is no route-table telemetry to auto-fill it).
 	Gateway string `json:"gateway"`
 	// LANIface is the inside interface for firewall policy src/dst.
+	//
+	// Deprecated as the source of truth: use EffectiveLANIfaces(). Kept populated
+	// (mirroring LANIfaces[0]) so intents persisted before LANIfaces existed keep
+	// working and older readers of the JSON are unaffected.
 	LANIface string `json:"lan_iface"`
+	// LANIfaces is the full set of inside interfaces for firewall policy src/dst.
+	// A protected-subnet list can span several ports; naming only one meant the
+	// policies covered one port while the phase2 selectors covered all of them,
+	// so traffic on the others was silently dropped.
+	LANIfaces []string `json:"lan_ifaces"`
 	// LocalID is this end's IKE identity (mirrored as the peer's Remote ID).
 	LocalID IKEIdentity `json:"local_id"`
 	// Dynamic marks a responder end whose peer address is not statically known
@@ -146,6 +157,40 @@ type EndpointSpec struct {
 	ChildLifetimeSecs int `json:"child_lifetime_secs"`
 	// MSSClamp is the per-end TCP MSS clamp (0 = none/auto).
 	MSSClamp int `json:"mss_clamp"`
+}
+
+// EffectiveLANIfaces is the ONLY correct way to read this end's inside
+// interfaces. It resolves LANIfaces, falling back to the legacy singular, then
+// trims, drops empties and dedupes.
+//
+// It exists because the resolution has to hold on paths that never normalize.
+// hydrateDerived runs on fresh JSON binds only — every read of a persisted
+// intent (deploy, preflight, status, recheck) unmarshals straight from
+// intent_json — so an intent stored before LANIfaces existed reaches the driver
+// with the slice nil. A driver reading the slice directly would render a policy
+// with no interface members: rejected by the device, or worse, a tunnel that
+// comes up and drops everything.
+//
+// Normalizing here rather than at save time is likewise load-bearing: the
+// wizard's comma-separated custom entry can yield empty elements, and a
+// {"name": ""} member passes conformance (which models only `action`) before
+// failing on the device mid-apply. FortiOS also rejects duplicate members.
+func (e *EndpointSpec) EffectiveLANIfaces() []string {
+	raw := e.LANIfaces
+	if len(raw) == 0 && e.LANIface != "" {
+		raw = []string{e.LANIface}
+	}
+	out := make([]string, 0, len(raw))
+	seen := make(map[string]bool, len(raw))
+	for _, n := range raw {
+		n = strings.TrimSpace(n)
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	return out
 }
 
 // DPD is dead-peer-detection config (per-end-local, not negotiated).

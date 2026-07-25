@@ -1,6 +1,37 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.168] - 2026-07-25
+
+### Added — multiple LAN interfaces per IPSec tunnel endpoint
+
+A tunnel endpoint protects a *list* of subnets but could name only **one** LAN interface, so the FortiGate firewall policies covered one port while the phase2 selectors covered every subnet. Traffic on the other ports was silently dropped: the tunnel negotiated, reported healthy, and moved nothing.
+
+The degenerate form of this cost a live deploy — `lan_iface: port3` paired with a protected subnet that lives on `port2`. Validation passed, the deploy succeeded, both SAs came up, and nothing objected.
+
+Endpoints now take a list of LAN interfaces. Subnets and interfaces are independent axes: N subnets behind one port, one subnet per port, or N-to-M all render identically.
+
+- **Still exactly two policies**, not two per interface. FortiOS models `srcintf`/`dstintf` as member tables — verified against the live device, `firewall/policy?action=schema` reports `"category":"table","member_table":true` — so N interfaces are N members of one policy. That keeps the policy ids, names and the whole preflight/remove key space identical to the single-interface case, and avoids a collision that per-interface policies would have hit: FortiOS enforces unique non-empty policy names and every copy would have wanted `<tunnel>-out`.
+- **Known cosmetic tradeoff:** a policy with multiple interface members disables the FortiOS GUI's *Interface Pair View* for that policy list. The policies remain fully readable in the normal list view.
+
+**Compatibility is enforced at the read layer, not at save time.** `hydrateDerived` runs only on fresh JSON binds; every read of a persisted intent — deploy, preflight, status, recheck — unmarshals straight from `intent_json` and never hydrates. A driver reading the new field directly would therefore render a policy with **no interface members** for any tunnel stored before this release. The new `EndpointSpec.EffectiveLANIfaces()` resolves the list (falling back to the legacy singular, trimming, dropping empties and deduping) and is the only accessor any consumer uses, so no path can observe an unresolved value. A regression test drives old-shape JSON through `IPSecModelToIntent → Render`, deliberately *not* through the normalizer — a test that hydrated first would pass while exactly that regression shipped.
+
+### Added — warning when a protected subnet isn't on any selected LAN interface
+
+New non-blocking finding `lan_subnet_mismatch`, naming the interface that actually carries the subnet. This is the check that would have caught the lost deploy.
+
+Deliberately narrow: it fires only when a subnet is disjoint from every selected interface **and** overlaps some *other* local interface, which always yields a nameable carrier. It stays silent for subnets routed via a downstream L3 device (on no local interface at all), for supernets that merely contain an interface's network (containment counts in either direction), and for devices with no interface data. A vaguer check would fire on legitimate topologies and get trained away.
+
+Warn rather than block, because it needs live device facts — a never-polled device has none, and blocking would refuse a correct intent.
+
+### Changed — a LAN interface is required only where the rules name one
+
+New `CapabilityDescriptor.UsesLANIface`. OPNsense's pass rules are floating (`interface: ""`) and scoped by subnet, so they never name an inside interface; requiring one there demanded a value nothing reads. FortiGate true, OPNsense false — validation skips `lan_missing` and the wizard hides the picker accordingly.
+
+### Fixed — wizard endpoints no longer sit side by side on a phone
+
+`.form-row` is a two-column grid with no mobile collapse, so endpoints A and B stayed side by side at any width. Added a single-column collapse at ≤768px. The rule goes in **both** `admin-shared.css` and `styles.css`: `admin.html` loads the former first and Tailwind flattens `@layer components`, so a rule in `admin-shared.css` alone would be overridden by the duplicate `.form-row` in the generated `tailwind.css`.
+
 ## [0.11.167] - 2026-07-25
 
 ### Fixed — tunnel-overlay edges could never reach the final step of the staircase

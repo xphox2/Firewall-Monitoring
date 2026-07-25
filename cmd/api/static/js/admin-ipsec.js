@@ -121,11 +121,13 @@
         ['a-subnets', 'a-id', 'b-subnets', 'b-id', 'a-gateway', 'b-gateway', 'psk',
             'a-egress-custom', 'a-lan-custom', 'b-egress-custom', 'b-lan-custom',
             'a-peer-custom', 'b-peer-custom'].forEach(function (f) { $('ipsec-' + f).value = ''; });
-        ['a-egress', 'a-lan', 'b-egress', 'b-lan', 'a-peer', 'b-peer'].forEach(function (f) {
+        // The LAN pickers are checkbox lists, not selects — reset them separately.
+        ['a-egress', 'b-egress', 'a-peer', 'b-peer'].forEach(function (f) {
             $('ipsec-' + f).innerHTML = '<option value="__custom__">Custom…</option>';
             $('ipsec-' + f).value = '__custom__';
             $('ipsec-' + f + '-custom').style.display = '';
         });
+        ['a', 'b'].forEach(function (pfx) { populateLanList(pfx, []); });
         $('ipsec-a-dyn').checked = false; $('ipsec-b-dyn').checked = false;
         idDirty.a = false; idDirty.b = false;
         ['a', 'b'].forEach(function (pfx) { var h = $('ipsec-' + pfx + '-id-hint'); if (h) { h.textContent = ''; h.style.display = 'none'; } });
@@ -156,6 +158,7 @@
             caps = (r && r.data) || null;
             if (!caps) return;
             $('ipsec-caps-note').textContent = 'Both ends support: ' + (caps.allowed.encryption || []).join(', ') + '.';
+            applyLanPickerVisibility();
             renderProfiles();
             populateCustom();
             populateIDTypes();
@@ -192,6 +195,93 @@
         if (suggested) { sel.value = suggested; }
         else if (!ifaces.length) { sel.value = '__custom__'; }
         toggleCustom(pfx, kind);
+    }
+
+    // ---- LAN interfaces: a checkbox list, not a select --------------------
+    // Several inside ports can carry the protected subnets, and the two are
+    // independent — N subnets behind one port, or one subnet per port, both
+    // render the same. The list is manual: nothing is pre-ticked.
+
+    // Only vendors whose rules NAME an interface get the picker. OPNsense's pass
+    // rules are floating and subnet-scoped, so asking there would request a value
+    // nothing reads — and would imply semantics the rules don't have.
+    function applyLanPickerVisibility() {
+        ['a', 'b'].forEach(function (pfx) {
+            var group = $('ipsec-' + pfx + '-lan-group');
+            if (!group) { return; }
+            var end = caps && caps[pfx];
+            // Default to showing it: if capabilities haven't loaded we must not
+            // silently hide a field the operator has to fill in.
+            var uses = !end || end.uses_lan_iface !== false;
+            group.style.display = uses ? '' : 'none';
+        });
+    }
+
+    function lanList(pfx) { return $('ipsec-' + pfx + '-lan-list'); }
+    function lanCustom(pfx) { return $('ipsec-' + pfx + '-lan-custom'); }
+
+    // Split the custom box on commas so several unpolled interfaces round-trip;
+    // one text input otherwise caps you at a single name.
+    function lanCustomNames(pfx) {
+        var el = lanCustom(pfx);
+        if (!el) { return []; }
+        return (el.value || '').split(',').map(function (n) { return n.trim(); }).filter(Boolean);
+    }
+
+    // Render the checkbox list, preserving anything already ticked (hints can
+    // land after an edit has restored the stored selection).
+    function populateLanList(pfx, ifaces) {
+        var box = lanList(pfx);
+        if (!box) { return; }
+        var keep = lanChecked(pfx);
+        var lans = (ifaces || []).filter(function (i) { return i.is_lan; });
+        if (!lans.length) {
+            box.innerHTML = '<div style="color:var(--fwmon-text-faint);font-size:0.8rem;">No LAN interfaces detected — name them below.</div>';
+            return;
+        }
+        box.innerHTML = lans.map(function (i) {
+            // Show each interface's networks: that is what makes the choice
+            // checkable against the protected subnets without guessing.
+            var nets = (i.addresses || []).map(function (a) { return a.cidr; }).filter(Boolean);
+            var hint = nets.length ? ' <span style="color:var(--fwmon-text-faint);">— ' + esc(nets.join(', ')) + '</span>' : '';
+            var on = keep.indexOf(i.name) !== -1 ? ' checked' : '';
+            return '<label class="iface-check"><input type="checkbox" value="' + esc(i.name) + '"' + on + '>' +
+                '<span>' + esc(ifaceLabel(i)) + hint + '</span></label>';
+        }).join('');
+    }
+
+    function lanChecked(pfx) {
+        var box = lanList(pfx);
+        if (!box) { return []; }
+        return Array.prototype.slice.call(box.querySelectorAll('input[type=checkbox]'))
+            .filter(function (cb) { return cb.checked; })
+            .map(function (cb) { return cb.value; });
+    }
+
+    // The effective list: ticked boxes plus any custom names, deduped.
+    function lanVals(pfx) {
+        var out = [], seen = {};
+        lanChecked(pfx).concat(lanCustomNames(pfx)).forEach(function (n) {
+            if (n && !seen[n]) { seen[n] = true; out.push(n); }
+        });
+        return out;
+    }
+
+    // Restore a stored list on edit. Names the device still reports get ticked;
+    // anything it no longer reports drops into the custom box rather than being
+    // silently lost.
+    function setLanValues(pfx, names) {
+        var box = lanList(pfx);
+        names = (names || []).filter(Boolean);
+        var leftover = [];
+        var boxes = box ? Array.prototype.slice.call(box.querySelectorAll('input[type=checkbox]')) : [];
+        boxes.forEach(function (cb) { cb.checked = false; });
+        names.forEach(function (n) {
+            var hit = null;
+            for (var i = 0; i < boxes.length; i++) { if (boxes[i].value === n) { hit = boxes[i]; break; } }
+            if (hit) { hit.checked = true; } else { leftover.push(n); }
+        });
+        if (lanCustom(pfx)) { lanCustom(pfx).value = leftover.join(', '); }
     }
 
     function toggleCustom(pfx, kind) {
@@ -302,7 +392,7 @@
             endpointHints[pfx] = h;
             var ifaces = h.interfaces || [];
             populateIfaceSelect(pfx, 'egress', ifaces, h.suggested_egress);
-            populateIfaceSelect(pfx, 'lan', ifaces, h.suggested_lan);
+            populateLanList(pfx, ifaces);
             populatePeerSelect(pfx, h);
             // Fill subnets when the box is empty OR still holds the prior auto-fill
             // (so re-picking a device refreshes them) — but never clobber an operator
@@ -325,7 +415,9 @@
             var fh = { interfaces: [], wan_ip: (d && d.ip_address) || '', suggested_peer_ip: (d && d.ip_address) || '' };
             endpointHints[pfx] = fh;
             populateIfaceSelect(pfx, 'egress', [], '');
-            populateIfaceSelect(pfx, 'lan', [], '');
+            // No polled interfaces: the checklist renders its "name them below"
+            // note and the custom box carries the operator's entry.
+            populateLanList(pfx, []);
             populatePeerSelect(pfx, fh);
             invalidate();
         });
@@ -511,7 +603,10 @@
                 peer_ip: ifaceVal(pfx, 'peer'),
                 dynamic: $('ipsec-' + pfx + '-dyn').checked,
                 egress_iface: ifaceVal(pfx, 'egress'),
-                lan_iface: ifaceVal(pfx, 'lan'),
+                lan_ifaces: lanVals(pfx),
+            // Mirror the head into the legacy scalar so anything still reading it
+            // (older builds, stored-intent diffs) sees a consistent value.
+            lan_iface: lanVals(pfx)[0] || '',
                 local_id: { type: idTypeVal(pfx), value: $('ipsec-' + pfx + '-id').value.trim() },
                 protected_subnets: subnets('ipsec-' + pfx + '-subnets'),
                 gateway: $('ipsec-' + pfx + '-gateway').value.trim(),
@@ -604,7 +699,7 @@
                 setIfaceValue('a', 'peer', t.ends[0].peer_ip); setIfaceValue('b', 'peer', t.ends[1].peer_ip);
                 $('ipsec-a-dyn').checked = !!t.ends[0].dynamic; $('ipsec-b-dyn').checked = !!t.ends[1].dynamic;
                 setIfaceValue('a', 'egress', t.ends[0].egress_iface); setIfaceValue('b', 'egress', t.ends[1].egress_iface);
-                setIfaceValue('a', 'lan', t.ends[0].lan_iface); setIfaceValue('b', 'lan', t.ends[1].lan_iface);
+                setLanValues('a', t.ends[0].lan_ifaces || (t.ends[0].lan_iface ? [t.ends[0].lan_iface] : [])); setLanValues('b', t.ends[1].lan_ifaces || (t.ends[1].lan_iface ? [t.ends[1].lan_iface] : []));
                 $('ipsec-a-subnets').value = (t.ends[0].protected_subnets || []).join('\n');
                 $('ipsec-b-subnets').value = (t.ends[1].protected_subnets || []).join('\n');
                 $('ipsec-a-id').value = (t.ends[0].local_id || {}).value || ''; $('ipsec-b-id').value = (t.ends[1].local_id || {}).value || '';
@@ -661,8 +756,17 @@
         $('ipsec-dev-a').addEventListener('change', onDevicesChosen);
         $('ipsec-dev-b').addEventListener('change', onDevicesChosen);
         // Reveal the free-text field only when "Custom…" is chosen (egress/LAN/peer).
-        ['a-egress', 'a-lan', 'b-egress', 'b-lan', 'a-peer', 'b-peer'].forEach(function (f) {
+        ['a-egress', 'b-egress', 'a-peer', 'b-peer'].forEach(function (f) {
             $('ipsec-' + f).addEventListener('change', function () { toggleCustom(f.charAt(0), f.slice(2)); });
+        });
+        // Ticking a LAN interface changes the intent, so it must re-gate Save the
+        // same way any other field does. Delegated, since the boxes are rebuilt
+        // whenever hints land.
+        ['a', 'b'].forEach(function (pfx) {
+            var box = lanList(pfx);
+            if (box) { box.addEventListener('change', invalidate); }
+            var cust = lanCustom(pfx);
+            if (cust) { cust.addEventListener('input', invalidate); }
         });
         // Changing the egress (WAN) interface re-defaults the peer/public IP to that
         // interface's address.

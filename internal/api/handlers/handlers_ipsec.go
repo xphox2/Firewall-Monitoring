@@ -74,6 +74,18 @@ func hydrateDerived(intent *ipsec.TunnelIntent) {
 	// preflight collision-check is what guards against a clash on the device.
 	intent.Ends[0].Reqid = int(id)
 	intent.Ends[1].Reqid = int(id)
+	// Normalize the LAN interface list on save and mirror the head back into the
+	// legacy singular, so the stored JSON stays readable by anything still using
+	// it (the wizard's edit path, older builds). Nothing DEPENDS on this having
+	// run — EffectiveLANIfaces resolves the same thing on every read path,
+	// including the deploy path, which never hydrates.
+	for i := range intent.Ends {
+		eff := intent.Ends[i].EffectiveLANIfaces()
+		intent.Ends[i].LANIfaces = eff
+		if len(eff) > 0 {
+			intent.Ends[i].LANIface = eff[0]
+		}
+	}
 }
 
 // CreateIPSecTunnel persists a new tunnel intent (draft). Generates a PSK if
@@ -140,6 +152,9 @@ func (h *Handler) CreateIPSecTunnel(c *gin.Context) {
 
 	caps, _ := resolveCaps(&intent)
 	findings := ipsec.Validate(&intent, caps)
+	// Device-fact findings (warn-only) live outside ipsec.Validate, which is pure
+	// by design. Not appended at the deploy gate, which stays a blocking check.
+	findings = append(findings, h.lanCoherenceFindings(db, &intent)...)
 	intent.PSK = ipsecPSKMask
 	c.JSON(http.StatusCreated, response.Success(tunnelResponse{Intent: &intent, Status: "draft", Validation: findings}))
 }
@@ -181,6 +196,7 @@ func (h *Handler) GetIPSecTunnel(c *gin.Context) {
 	var findings []ipsec.Finding
 	if caps, err := resolveCaps(intent); err == nil {
 		findings = ipsec.Validate(intent, caps)
+		findings = append(findings, h.lanCoherenceFindings(db, intent)...)
 	}
 	intent.PSK = ipsecPSKMask
 	c.JSON(http.StatusOK, response.Success(tunnelResponse{Intent: intent, Status: m.Status, LastError: m.LastError, Validation: findings}))
@@ -243,6 +259,9 @@ func (h *Handler) UpdateIPSecTunnel(c *gin.Context) {
 	}
 	caps, _ := resolveCaps(&intent)
 	findings := ipsec.Validate(&intent, caps)
+	// Device-fact findings (warn-only) live outside ipsec.Validate, which is pure
+	// by design. Not appended at the deploy gate, which stays a blocking check.
+	findings = append(findings, h.lanCoherenceFindings(db, &intent)...)
 	intent.PSK = ipsecPSKMask
 	c.JSON(http.StatusOK, response.Success(tunnelResponse{Intent: &intent, Status: "draft", Validation: findings}))
 }
@@ -354,6 +373,7 @@ func (h *Handler) PreviewIPSecTunnel(c *gin.Context) {
 		return
 	}
 	findings := ipsec.Validate(intent, caps)
+	findings = append(findings, h.lanCoherenceFindings(db, intent)...)
 	c.JSON(http.StatusOK, response.Success(gin.H{"ends": previews, "validation": findings}))
 }
 
@@ -409,6 +429,9 @@ func (h *Handler) PreviewIPSecIntent(c *gin.Context) {
 	// trusting the id is harmless) so an edit preview is exact; id=0 → provisional.
 	hydrateDerived(&intent)
 	findings := ipsec.Validate(&intent, caps)
+	// Device-fact findings (warn-only) live outside ipsec.Validate, which is pure
+	// by design. Not appended at the deploy gate, which stays a blocking check.
+	findings = append(findings, h.lanCoherenceFindings(h.reqDB(c), &intent)...)
 	previews, rerr := renderBothEnds(&intent)
 	if rerr != nil {
 		c.JSON(http.StatusBadRequest, response.Error(rerr.Error()))
@@ -2045,4 +2068,133 @@ func (h *Handler) GetIPSecEndpointHints(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response.Success(resp))
+}
+
+// --- LAN interface ⇄ protected subnet coherence (device facts) ---------------
+
+// deviceIfaceNets is one interface and the networks its addresses sit on.
+type deviceIfaceNets struct {
+	Name  string
+	IsLAN bool
+	Nets  []*net.IPNet
+}
+
+// deviceInterfaceNets returns each interface with EVERY network its addresses
+// carry — a port can hold several, and a subnet on a secondary address counts
+// just as much as one on the primary.
+//
+// Same latest-snapshot join GetIPSecEndpointHints uses; a never-polled device
+// yields nothing, which callers must treat as "cannot say", never as "wrong".
+func (h *Handler) deviceInterfaceNets(db database.Store, deviceID uint) []deviceIfaceNets {
+	if db == nil || deviceID == 0 {
+		return nil
+	}
+	gdb := db.Gorm()
+	latest := func(table string) *gorm.DB {
+		return gdb.Where("device_id = ? AND timestamp = (SELECT MAX(timestamp) FROM "+table+" WHERE device_id = ?)", deviceID, deviceID)
+	}
+	var ifaces []models.InterfaceStats
+	if err := latest("interface_stats").Find(&ifaces).Error; err != nil {
+		log.Printf("lan coherence: device %d interface stats: %v", deviceID, err)
+		return nil
+	}
+	var addrs []models.InterfaceAddress
+	if err := latest("interface_addresses").Find(&addrs).Error; err != nil {
+		log.Printf("lan coherence: device %d interface addresses: %v", deviceID, err)
+		return nil
+	}
+	byIdx := make(map[int][]models.InterfaceAddress, len(addrs))
+	for _, a := range addrs {
+		byIdx[a.IfIndex] = append(byIdx[a.IfIndex], a)
+	}
+	out := make([]deviceIfaceNets, 0, len(ifaces))
+	for _, iface := range ifaces {
+		e := deviceIfaceNets{
+			Name:  iface.Name,
+			IsLAN: netclass.IsLANType(iface.TypeName) && !netclass.IsVPNInterfaceName(iface.Name),
+		}
+		for _, a := range byIdx[iface.Index] {
+			// SubnetCIDR declines /30-/32 and IPv6; such an address simply does not
+			// participate. Safe here because the finding requires a POSITIVE match on
+			// another interface, so a blind spot loses sensitivity, never precision.
+			cidr, ok := netclass.SubnetCIDR(a.IPAddress, a.NetMask)
+			if !ok {
+				continue
+			}
+			if _, n, err := net.ParseCIDR(cidr); err == nil {
+				e.Nets = append(e.Nets, n)
+			}
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// lanCoherenceFindings warns when a protected subnet is disjoint from every
+// SELECTED LAN interface yet sits on some OTHER local interface — i.e. the
+// policies will name a port the traffic never touches, so it is dropped while
+// the tunnel reports healthy.
+//
+// Deliberately narrow. It stays silent when the subnet is on no local interface
+// at all (routed via a downstream L3 device — legitimate and common), when it
+// merely contains or is contained by a selected interface's network
+// (containment counts as a match in either direction, so supernets are fine),
+// and when the device has no interface data. A check that fired on those would
+// be noise, and an advisory operators learn to ignore is worse than none.
+func (h *Handler) lanCoherenceFindings(db database.Store, intent *ipsec.TunnelIntent) []ipsec.Finding {
+	if intent == nil {
+		return nil
+	}
+	var out []ipsec.Finding
+	for i := range intent.Ends {
+		end := &intent.Ends[i]
+		drv, ok := ipsec.Driver(end.Vendor)
+		if !ok || !drv.Capabilities().UsesLANIface {
+			continue // this vendor's rules never name an interface
+		}
+		ifaces := h.deviceInterfaceNets(db, end.DeviceID)
+		if len(ifaces) == 0 {
+			continue // never polled — cannot say
+		}
+		selected := make(map[string]bool)
+		for _, n := range end.EffectiveLANIfaces() {
+			selected[n] = true
+		}
+		for _, s := range end.ProtectedSubnets {
+			_, subnet, err := net.ParseCIDR(strings.TrimSpace(s))
+			if err != nil {
+				continue // subnet_invalid already covers this
+			}
+			onSelected, carrier := false, ""
+			for _, ifc := range ifaces {
+				for _, n := range ifc.Nets {
+					if !n.Contains(subnet.IP) && !subnet.Contains(n.IP) {
+						continue
+					}
+					if selected[ifc.Name] {
+						onSelected = true
+					} else if carrier == "" && ifc.IsLAN {
+						carrier = ifc.Name
+					}
+				}
+			}
+			if onSelected || carrier == "" {
+				continue
+			}
+			out = append(out, ipsec.Finding{
+				Severity: ipsec.SeverityWarn,
+				Code:     "lan_subnet_mismatch",
+				Message: fmt.Sprintf("%s: protected subnet %s is not on any selected LAN interface — it is on %s. "+
+					"The firewall policies will name the selected interface(s), so traffic for %s is dropped even though the tunnel comes up.",
+					endLabelForVendor(intent, i), s, carrier, s),
+			})
+		}
+	}
+	return out
+}
+
+// endLabelForVendor mirrors the validation package's end labelling so a finding
+// from here reads identically to one from Validate.
+func endLabelForVendor(intent *ipsec.TunnelIntent, i int) string {
+	return fmt.Sprintf("end %c (%s)", 'A'+i, intent.Ends[i].Vendor)
 }

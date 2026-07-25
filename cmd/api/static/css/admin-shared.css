@@ -1719,3 +1719,31 @@ td .actions,
         margin-left: 0 !important;
     }
 }
+
+/* IPSec wizard: LAN interface checkbox list. Several inside ports can carry the
+   protected subnets, so this is a multi-select; each row shows the interface's
+   own networks so the choice can be checked against the subnets without guessing. */
+.iface-checklist {
+    max-height: 132px;
+    overflow-y: auto;
+    border: 1px solid var(--fwmon-border);
+    border-radius: 6px;
+    padding: 6px 8px;
+    background: var(--fwmon-input-bg, transparent);
+}
+.iface-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+    font-size: 0.84rem;
+    cursor: pointer;
+}
+.iface-check input[type="checkbox"] { flex: 0 0 auto; margin: 0; width: auto; }
+.iface-check span { min-width: 0; overflow-wrap: anywhere; }
+
+/* Endpoint A and B sit in a two-column .form-row that had no mobile collapse, so
+   they stayed side by side on a phone. */
+@media (max-width: 768px) {
+    .form-row { grid-template-columns: 1fr; }
+}
