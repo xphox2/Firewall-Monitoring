@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.170] - 2026-07-25
+
+### Fixed — a failed render no longer discards the findings that explain it
+
+Both IPSec preview endpoints returned **400** when the intent could not be rendered as configuration, throwing away the validation findings computed moments earlier. The wizard anchors each finding to the control that caused it; with a 400 it showed a dismissible toast and anchored nothing.
+
+The trigger is the ordinary one, not an edge case: rendering fail-fasts on an endpoint with no LAN interface, which is the state of every tunnel before the operator ticks one. So `lan_missing` — the finding that says exactly what to do — was the one guaranteed to be swallowed, along with any subnet mismatches found alongside it.
+
+A render failure is now reported as a finding rather than an HTTP error. The preview exists to explain what is wrong with an intent, and a bad intent is precisely when the driver cannot render it. Empty `ends` is a valid preview: there is nothing to show yet, and the findings carry the answer. The stored-tunnel endpoint also had its ordering corrected — it rendered *before* validating, so it bailed before the explanatory findings had even been computed.
+
+When the render fails but validation found nothing blocking, the error becomes a synthetic blocking `render_failed` finding rather than being swallowed. That case is a validation gap — the intent passed every linter yet cannot become config — and it must still gate Save, since the client enables Save whenever nothing blocks. The deploy gate keeps its hard error: refusing to deploy something that will not render is correct there.
+
+The preview pane now states why it is empty instead of rendering blank.
+
 ## [0.11.169] - 2026-07-25
 
 ### Changed — IPSec tunnel wizard rebuilt around a live link schematic
