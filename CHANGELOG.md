@@ -1,6 +1,42 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.165] - 2026-07-25
+
+### Added — block route-based FortiGate tunnels to a dynamic (dialup) peer
+
+New blocking validation finding `routebased_dialup_unsupported`. `add-route` installs a route per **negotiated** phase2 selector, and a route-based tunnel negotiates `0.0.0.0/0` — so on a dialup peer it would install a **default route via the tunnel** instead of routes for the protected subnets. That is both wrong (the protected subnets get no specific route) and dangerous (it can capture unrelated traffic on a device whose own default route has a higher distance). Parent-bound statics are not an alternative (see v0.11.164), so the combination has no working form and is now refused with an explanation rather than deployed as a tunnel that comes up carrying nothing. Policy-based is unaffected — it negotiates the protected subnets as the selectors, so `add-route` installs exactly the right per-subnet routes.
+
+### Fixed — competing-route advisory measured against the wrong distance for a dialup peer
+
+The advisory added in v0.11.163 assumed the tunnel's routes always sit at the driver's distance **10**. Since v0.11.164 a dialup peer's routes are injected by FortiOS at distance **15**, so the advisory was wrong in both directions on exactly the topology that motivated it: a pre-existing route at distance 11–15 **beats** the injected route and reinstated "tunnel up, zero outbound" while the advisory stayed **silent** (a false all-clear), and a route at distance 10 was reported as an ECMP "tie" when it actually wins outright. `tunnelRouteDistance` now returns 15 for a dynamic peer and 10 for a static one, and the finding text names who installs the tunnel's route — the remedy differs, since an operator cannot lower a route the device injects.
+
+### Fixed — peer /32 self-lockout guard is a false premise for a dialup peer
+
+`peerRouteNeeded` pinned a /32 host route to the peer's address out the WAN whenever that address fell inside the peer's own protected subnets and this end had a gateway set. That guard exists so a tunnelled subnet cannot swallow the IKE endpoint this FortiGate dials — but a FortiGate **never dials a dialup peer** (the peer initiates, and ESP returns to whatever source its NAT presents), and a dynamic end's `PeerIP` is its management address, not an IKE endpoint. The /32 landed at FortiOS's default distance 10, **beating the injected /24 at distance 15**, so traffic to a legitimate host inside the peer's LAN left the WAN in cleartext instead of the tunnel — with validation silent, because it treats a set gateway as resolving the lockout. The route is no longer rendered for a dynamic peer, and the matching `self_lockout` warning is no longer raised for one.
+
+Silencing that warning must not silence the **broad-cover-prefix block** that shares the same code path, so the two were separated. A prefix like `0.0.0.0/2` is longer than the device's own default route and therefore wins regardless of distance; for a dynamic peer it now blocks **unconditionally**, without first asking whether the prefix contains `PeerIP`. A dialup end's recorded `PeerIP` is its management address, not the endpoint it dials in from, so "does not contain it" proves nothing — and unlike the static case there is no remedy, because the /32 pin would need an address nobody knows. Like `routebased_dialup_unsupported`, that combination has no working form and is refused outright.
+
+Note for the record: a dynamic peer with a gateway and a contained `PeerIP` no longer allocates the peer-route slot at all, so its slot space is `2n` rather than `2n+1`. All four route functions move together and rollback uses the deploy-time snapshot, so this is safe; the only exposure is an edge that cannot arise in normal flow (a tunnel deployed before v0.11.165 whose deploy record is manually purged and then removed from a freshly rendered artifact would not sweep the old /32).
+
+## [0.11.164] - 2026-07-25
+
+### Fixed — FortiGate tunnels to a dynamic (dialup) peer came up but carried no outbound traffic
+
+A FortiGate ⇄ dynamic-peer tunnel deployed cleanly, showed every SA up with the correct selectors, decrypted inbound traffic — and encrypted **nothing** outbound. The tunnel looked healthy from every status view while silently carrying no traffic in one direction. Live-confirmed on fwm-t9 (FortiOS 7.6.7 ⇄ OPNsense 26.1): FortiGate `rxp=228 txp=0`, both phase2 up, while strongSwan showed the matching child sending and receiving nothing back.
+
+Root cause: since **FortiOS 7.0.1** a route binds to a tunnel by **tun_id**, replacing the pre-7.0 route-tree search. A dialup (`type dynamic`) phase1 gives every peer a sub-tunnel carrying its own tun_id (the peer's address), while the parent interface keeps a different one. The driver emitted per-subnet static routes naming the **parent**, so their tun_id matched no sub-tunnel and FortiOS had no way to select an outgoing sub-tunnel — packets were routed to the tunnel and dropped at IPsec egress. This affected **every** tunnel with a dynamic peer end, in both policy-based and route-based mode, and was invisible to the deploy: all writes succeed and all objects verify.
+
+- **`internal/ipsec/vendors/fortigate/fortigate.go`** — a dynamic peer now renders phase1 `add-route=enable` (FortiOS injects a reverse route per negotiated phase2 selector, bound to the correct sub-tunnel) and **no longer emits its own per-subnet tunnel routes**. The two halves are a matched pair: the injected routes sit at distance 15 and **lose** to a distance-10 static, so leaving the statics in place does not duplicate them — it shadows them and reinstates the bug. A static peer is unchanged (`add-route=disable`, driver-owned routes), since its tunnel has a single tun_id equal to the remote gateway.
+- The distance-254 **blackhole** backstop is still emitted for both peer types — it is what stops traffic leaking out the default route while the tunnel is down.
+- The route **seq-num slot space is unchanged**: a dialup peer reserves but does not fill the per-subnet tunnel-route slots, so blackhole and peer-route keys land on the same seq-nums for both peer types. `RenderRemove` deliberately sweeps the whole slot space (a DELETE of an absent key is success), which also reaps the parent-bound statics left behind by a tunnel deployed before this fix.
+- `PreflightProbe` now probes exactly the slots `Render` creates. The collector re-runs those GETs after the write expecting each object to be PRESENT, so probing a never-created route would have reported a healthy deploy as unverified.
+
+Verified live end-to-end after the fix: the RIB switched to `iface fwm-t9_0 gw <peer> dist 15`, and **both** subnet pairs passed traffic bidirectionally (`in 504 / out 504` on each phase2, 0% ping loss).
+
+
+Diagnosis note: the competing-route advisory added in v0.11.163 was not the cause here and its verdict was correct — the operator's conflicting route had already been disabled and was absent from the RIB.
+
 ## [0.11.163] - 2026-07-24
 
 ### Added — IPSec preflight advisory: pre-existing FortiGate route that competes with the tunnel

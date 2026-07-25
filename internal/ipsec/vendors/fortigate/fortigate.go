@@ -91,8 +91,10 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 	// rides the body via the %PSK% placeholder (injected into the real step,
 	// masked in the preview) — validPSK guarantees it stays JSON-safe.
 	// net-device=enable: the phase1 POST auto-creates the (kernel) tunnel
-	// interface the VTI addressing step, static routes, and firewall policies all
-	// depend on — without it the cmdb object exists but nothing forwards.
+	// interface the VTI addressing step and firewall policies depend on — without
+	// it the cmdb object exists but nothing forwards. (A STATIC peer's per-subnet
+	// routes also ride that interface; a dialup peer gets no driver-owned routes
+	// at all — see tunnelRoutesNeeded.)
 	p1body := map[string]any{
 		"name":         name,
 		"interface":    local.EgressIface,
@@ -104,14 +106,22 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 		"localid-type": idType(local.LocalID.Type),
 		"localid":      local.LocalID.Value,
 		"peerid":       remote.LocalID.Value,
-		"add-route":    "disable",
 		"psksecret":    "%PSK%",
 	}
 	if remote.Dynamic {
 		p1body["type"] = "dynamic"
+		// Dialup: FortiOS must inject the reverse routes itself, bound to the
+		// peer's sub-tunnel, because a static route naming the parent carries the
+		// wrong tun_id and cannot select a sub-tunnel (see tunnelRoutesNeeded).
+		// Render pairs this with NOT emitting its own per-subnet tunnel routes —
+		// the two settings are a matched pair and must not be changed apart.
+		p1body["add-route"] = "enable"
 	} else {
 		p1body["type"] = "static"
 		p1body["remote-gw"] = remote.PeerIP
+		// Static peer: one tunnel whose tun_id is the remote gateway, so Render's
+		// own routes bind correctly and FortiOS must not add competing ones.
+		p1body["add-route"] = "disable"
 	}
 	if in.IKELifetimeSecs > 0 {
 		p1body["keylife"] = in.IKELifetimeSecs
@@ -185,7 +195,13 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 		preview = append(preview, s.Method+" "+s.Path+"\n"+body)
 	}
 
-	auto := []string{"tunnel interface " + name, "static route(s)", "blackhole route(s) (distance 254)", "2 firewall policies"}
+	auto := []string{"tunnel interface " + name}
+	if tunnelRoutesNeeded(remote) {
+		auto = append(auto, "static route(s)")
+	} else {
+		auto = append(auto, "reverse route(s) injected by the device (dialup peer: phase1 add-route)")
+	}
+	auto = append(auto, "blackhole route(s) (distance 254)", "2 firewall policies")
 	if peerRouteNeeded(local, remote) {
 		auto = append(auto, "peer /32 host route (self-lockout guard)")
 	}
@@ -265,7 +281,7 @@ func (d driver) PreflightProbe(v ipsec.RenderView) []ipsec.PreflightStep {
 	// deterministic keys Render/RenderRemove use, so the collision precheck reads
 	// the EXACT objects and the post-write verify counts them exactly (a test pins
 	// PreflightProbe's keys == Render's).
-	for i := 0; i < routeCount(local, remote); i++ {
+	for _, i := range createdRouteIndices(local, remote) {
 		steps = append(steps, ipsec.PreflightStep{
 			Check: "route", Method: "GET", Path: cmdbRoute + "/" + itoa(ipsec.FGRouteKey(in.ID, i)), ExpectAbsent: true,
 		})
@@ -374,14 +390,45 @@ func mssNote(m int) string {
 	return ""
 }
 
+// tunnelRoutesNeeded reports whether Render must install its OWN static routes
+// for the remote protected subnets.
+//
+// It must NOT for a dynamic (dialup) peer. Since FortiOS 7.0.1 a route is bound
+// to a tunnel by tun_id rather than by a route-tree search, and a dialup phase1
+// gives every peer a sub-tunnel with its own tun_id (the peer's address) while
+// the PARENT interface keeps a different one. A hand-written static route naming
+// the parent therefore carries a tun_id that matches no sub-tunnel, and FortiOS
+// has no way to pick the correct outgoing sub-tunnel: traffic decrypts inbound
+// but is dropped at IPsec egress ("No matching IPsec selector"), so the tunnel
+// comes up and silently carries nothing outbound.
+//
+// For dialup the supported mechanism is phase1 add-route (set alongside this in
+// Render): FortiOS injects a route per negotiated phase2 selector at distance 15
+// bound to the correct sub-tunnel. Those injected routes LOSE to a distance-10
+// static, so emitting ours as well does not merely duplicate them — it shadows
+// them and reinstates the bug. Confirmed live on FortiOS 7.6.7: with the statics
+// removed and add-route on, the RIB switched to `iface fwm-t9_0 gw <peer>
+// dist 15` and traffic flowed both ways on every subnet pair.
+func tunnelRoutesNeeded(remote *ipsec.EndpointSpec) bool { return !remote.Dynamic }
+
 // routeSteps builds the static-route POSTs: one per remote protected subnet via
-// the VTI, a blackhole per subnet (distance 254 — drop, don't leak, when the
-// tunnel is down), and the conditional peer /32 (see peerRouteNeeded). seq-nums
-// are the deterministic keys RenderRemove deletes.
+// the VTI (STATIC peers only — see tunnelRoutesNeeded), a blackhole per subnet
+// (distance 254 — drop, don't leak, when the tunnel is down), and the
+// conditional peer /32 (see peerRouteNeeded). seq-nums are the deterministic
+// keys RenderRemove deletes.
+//
+// idx advances over the per-subnet tunnel-route slots even when they are not
+// emitted, so the blackhole and peer seq-nums are IDENTICAL for a dynamic and a
+// static peer. That keeps the key space stable: a tunnel deployed before this
+// fix has its blackholes at the same seq-nums, so RenderRemove still reaps them.
 func routeSteps(tid uint, name string, local, remote *ipsec.EndpointSpec) []ipsec.ApplyStep {
 	var steps []ipsec.ApplyStep
 	idx := 0
 	for _, s := range remote.ProtectedSubnets {
+		if !tunnelRoutesNeeded(remote) {
+			idx++ // slot reserved but deliberately not created (dialup: add-route owns it)
+			continue
+		}
 		steps = append(steps, fgAPI("static route "+s+" via tunnel", "POST", cmdbRoute, jsonBody(map[string]any{
 			"seq-num": ipsec.FGRouteKey(tid, idx), "dst": cidrToFGT(s), "device": name, "comment": name,
 		})))
@@ -426,16 +473,53 @@ func policySteps(tid uint, name, lan string) []ipsec.ApplyStep {
 // tunnel (self-lockout). Needs a Gateway to point the /32 at; without one the
 // route isn't rendered and validation raises a self_lockout WARNING (a WAN
 // default route may already cover the peer, so it's acknowledgeable, not a block).
+// It is meaningless — and actively harmful — for a DYNAMIC peer. This FortiGate
+// never dials a dialup peer (the peer initiates, and ESP returns to whatever
+// source the NAT presents), so its PeerIP is not an IKE endpoint that could be
+// locked out; for a dynamic end it is the management address. Pinning a /32 for
+// it out the WAN at FortiOS's default distance 10 would beat the add-route
+// injected /24 at distance 15 and send traffic destined for a legitimate host
+// inside the peer's LAN out the WAN in cleartext instead of down the tunnel.
 func peerRouteNeeded(local, remote *ipsec.EndpointSpec) bool {
+	if remote.Dynamic {
+		return false
+	}
 	return local.Gateway != "" && ipsec.SubnetContainsIP(remote.ProtectedSubnets, remote.PeerIP)
 }
 
+// routeCount is the size of the route-key SLOT SPACE, not the number of routes
+// actually created (a dialup peer reserves but does not fill the per-subnet
+// tunnel-route slots). RenderRemove sweeps the whole slot space deliberately:
+// a DELETE of a never-created key is treated as success by the collector, and
+// sweeping it also reaps the parent-bound statics left by a tunnel deployed
+// before the dialup fix.
 func routeCount(local, remote *ipsec.EndpointSpec) int {
 	n := len(remote.ProtectedSubnets) * 2
 	if peerRouteNeeded(local, remote) {
 		n++
 	}
 	return n
+}
+
+// createdRouteIndices lists the route slots Render actually POSTs. PreflightProbe
+// checks exactly these: a slot Render skips must not be probed, because the
+// collector re-runs the same GETs after the write expecting each object to be
+// PRESENT, and a never-created route would fail that verification.
+func createdRouteIndices(local, remote *ipsec.EndpointSpec) []int {
+	n := len(remote.ProtectedSubnets)
+	idx := make([]int, 0, routeCount(local, remote))
+	if tunnelRoutesNeeded(remote) {
+		for i := 0; i < n; i++ {
+			idx = append(idx, i)
+		}
+	}
+	for i := n; i < 2*n; i++ {
+		idx = append(idx, i) // blackholes are always created
+	}
+	if peerRouteNeeded(local, remote) {
+		idx = append(idx, 2*n)
+	}
+	return idx
 }
 
 // fgPhase2Pair is one phase2-interface: its cmdb mkey (name) + FortiGate-format

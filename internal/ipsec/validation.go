@@ -169,6 +169,36 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 		add(SeverityBlock, "vti_missing", "a route-based tunnel needs a VTI transit subnet")
 	}
 
+	// --- route-based + a dynamic (dialup) peer has no working way to steer
+	// return traffic on FortiGate, so refuse it rather than deploy a tunnel that
+	// comes up and silently carries nothing outbound.
+	//
+	// Since FortiOS 7.0.1 a route binds to a tunnel by tun_id. A dialup phase1
+	// gives each peer a sub-tunnel with its own tun_id, so a static route naming
+	// the parent interface matches no sub-tunnel and traffic dies at IPsec
+	// egress. The supported substitute is phase1 add-route, which installs a
+	// route per NEGOTIATED phase2 selector — but a route-based tunnel negotiates
+	// 0.0.0.0/0, so add-route would install a DEFAULT ROUTE via the tunnel
+	// instead of the protected subnets. That is both wrong (the protected
+	// subnets get no specific route) and dangerous (it can capture unrelated
+	// traffic on a device whose own default route has a higher distance).
+	//
+	// Policy-based is unaffected: it negotiates the protected subnets as the
+	// selectors, so add-route installs exactly the right per-subnet routes.
+	if intent.Mode == ModeRouteBased {
+		for i := range intent.Ends {
+			peer := 1 - i
+			if intent.Ends[peer].Dynamic && intent.Ends[i].Vendor == "fortigate" {
+				add(SeverityBlock, "routebased_dialup_unsupported",
+					fmt.Sprintf("%s: a route-based tunnel to a dynamic/behind-NAT peer cannot steer return traffic on FortiGate "+
+						"(a dialup peer's routes must come from phase1 add-route, which follows the negotiated selectors — and "+
+						"route-based negotiates 0.0.0.0/0, so it would install a default route via the tunnel rather than the "+
+						"protected subnets). Use policy-based mode for this tunnel, or give the peer a reachable static address.",
+						endLabel(intent, i)))
+			}
+		}
+	}
+
 	// --- policy-based: the protected subnets ARE the traffic selectors, so each
 	// end must declare at least one (empty selectors = no tunneled traffic).
 	if intent.Mode == ModePolicyBased {
@@ -323,17 +353,40 @@ func validateSubnets(intent *TunnelIntent) []Finding {
 					fmt.Sprintf("%s would route 0.0.0.0/0 over the tunnel — a pinned host route to the peer is required first", endLabel(intent, i))})
 				continue
 			}
-			if peerIP != nil && n.Contains(peerIP) {
-				// A very broad covering prefix (e.g. the 0.0.0.0/1 + 128.0.0.0/1
-				// full-tunnel split) is a default-route equivalent: it captures the
-				// peer's own path and ~all traffic, so it needs a pinned peer route
-				// first — block it like 0/0, above. isBroadCoverPrefix keeps this
-				// from being bypassed by the /1 halves of a full tunnel.
-				if isBroadCoverPrefix(n) {
-					fs = append(fs, Finding{SeverityBlock, "default_route_over_vti",
-						fmt.Sprintf("%s would route %s over the tunnel — effectively a default route capturing the peer %s; a pinned host route to the peer is required first", endLabel(intent, i), n.String(), peer.PeerIP)})
-					continue
+			// A very broad covering prefix (e.g. the 0.0.0.0/1 + 128.0.0.0/1
+			// full-tunnel split) is a default-route equivalent: it captures ~all
+			// traffic including the peer's own path, so it needs a pinned peer route
+			// first — block it like 0/0, above. isBroadCoverPrefix keeps this from
+			// being bypassed by the /1 halves of a full tunnel.
+			//
+			// For a DYNAMIC peer this blocks UNCONDITIONALLY, without asking whether
+			// the prefix contains PeerIP. The recorded PeerIP of a dialup end is its
+			// management address, not the endpoint it actually dials in from, so a
+			// "does not contain it" answer proves nothing — and a broad prefix is
+			// long enough to beat the device's own default route regardless of
+			// distance, so it can swallow the peer's real NAT address and capture a
+			// huge slice of traffic. There is also no remedy available: the /32 pin
+			// needs an address nobody knows. Like routebased_dialup_unsupported,
+			// this combination has no working form, so refuse it outright.
+			if isBroadCoverPrefix(n) && (peer.Dynamic || (peerIP != nil && n.Contains(peerIP))) {
+				msg := fmt.Sprintf("%s would route %s over the tunnel — effectively a default route capturing the peer %s; a pinned host route to the peer is required first", endLabel(intent, i), n.String(), peer.PeerIP)
+				if peer.Dynamic {
+					msg = fmt.Sprintf("%s would route %s over the tunnel to a dynamic/behind-NAT peer — effectively a default route, and the peer's real endpoint is not known in advance, so it cannot be excluded with a pinned host route. Narrow the protected subnets to the networks that actually need the tunnel.", endLabel(intent, i), n.String())
 				}
+				fs = append(fs, Finding{SeverityBlock, "default_route_over_vti", msg})
+				continue
+			}
+			// Beyond the broad-prefix case, a DYNAMIC peer's PeerIP is not an IKE
+			// endpoint — this end never dials it (the peer initiates, and ESP returns
+			// to whatever source its NAT presents), so it cannot be locked out by
+			// routing its subnet down the tunnel. Warning about it would be a false
+			// premise, and would invite the operator to set a Gateway that pins a /32
+			// out the WAN over a legitimate in-tunnel host. The driver's
+			// peerRouteNeeded declines that route for the same reason; keep in step.
+			if peer.Dynamic {
+				continue
+			}
+			if peerIP != nil && n.Contains(peerIP) {
 				// A specific routed subnet that contains the peer's own endpoint is
 				// safe ONLY if a host route to the peer via the WAN is pinned. When
 				// THIS end supplies a WAN Gateway, the apply path renders that /32
