@@ -544,7 +544,10 @@ func (h *Handler) PreflightIPSecTunnel(c *gin.Context) {
 			BaseURL:     fmt.Sprintf("https://%s:%d", dev.IPAddress, port),
 			APIToken:    dev.APIToken,
 			InsecureTLS: dev.APIInsecureTLS,
-			Steps:       drv.PreflightProbe(ipsec.ViewFor(intent, i)),
+			// Advisory reads ride the preflight command but are kept OUT of
+			// PreflightProbe (and therefore out of the deploy saga's collision
+			// precheck), so nothing derived from them can abort a write.
+			Steps: append(drv.PreflightProbe(ipsec.ViewFor(intent, i)), drv.AdvisoryProbe(ipsec.ViewFor(intent, i))...),
 		}
 		// api_token is intentionally marshaled here: this is the collector command
 		// payload (encrypted at rest by EnqueueProbeCommand, TLS-delivered, never
@@ -591,12 +594,19 @@ func (h *Handler) GetIPSecPreflightResult(c *gin.Context) {
 		return
 	}
 	type endReport struct {
-		End       int             `json:"end"`
-		DeviceID  uint            `json:"device_id"`
-		Status    string          `json:"status"` // pending/dispatched/succeeded/failed/expired, or "none"
-		Report    json.RawMessage `json:"report"` // structured collector report (when succeeded)
-		RawResult string          `json:"raw_result,omitempty"`
+		End      int             `json:"end"`
+		DeviceID uint            `json:"device_id"`
+		Status   string          `json:"status"` // pending/dispatched/succeeded/failed/expired, or "none"
+		Report   json.RawMessage `json:"report"` // structured collector report (when succeeded)
+		// Advisories are NON-BLOCKING findings the server derives from the
+		// advisory step bodies in Report. They are advice about pre-existing
+		// device state, never a reason to withhold a deploy.
+		Advisories []ipsec.Advisory `json:"advisories,omitempty"`
+		RawResult  string           `json:"raw_result,omitempty"`
 	}
+	// The intent is only needed to derive advisories; a stored intent that no
+	// longer decodes must not break reporting the preflight itself.
+	intent, ierr := database.IPSecModelToIntent(m)
 	out := make([]endReport, 0, 2)
 	for i, devID := range [2]uint{m.ADeviceID, m.BDeviceID} {
 		er := endReport{End: i, DeviceID: devID, Status: "none"}
@@ -605,6 +615,9 @@ func (h *Handler) GetIPSecPreflightResult(c *gin.Context) {
 			er.Status = cmd.Status
 			if json.Valid([]byte(cmd.Result)) {
 				er.Report = json.RawMessage(cmd.Result)
+				if ierr == nil && i < len(intent.Ends) {
+					er.Advisories = preflightAdvisories(intent, i, []byte(cmd.Result))
+				}
 			} else if cmd.Result != "" {
 				er.RawResult = cmd.Result
 			}
@@ -612,6 +625,41 @@ func (h *Handler) GetIPSecPreflightResult(c *gin.Context) {
 		out = append(out, er)
 	}
 	c.JSON(http.StatusOK, response.Success(gin.H{"tunnel_id": m.ID, "ends": out}))
+}
+
+// preflightAdvisories derives an end's non-blocking advisories from the raw
+// collector report. Advisory step bodies are echoed back under checks[].body
+// (only for steps the driver marked ReturnBody), and the vendor parsing happens
+// here on the server — mirroring StatusProbe/ParseStatus, so the collector stays
+// a transport and vendor knowledge lives in one repo.
+//
+// Every failure mode degrades to "no advisories": a collector predating the body
+// field, a step that errored, an unparseable body. An advisory is only ever
+// raised from device state actually read.
+func preflightAdvisories(intent *ipsec.TunnelIntent, end int, result []byte) []ipsec.Advisory {
+	drv, ok := ipsec.Driver(intent.Ends[end].Vendor)
+	if !ok {
+		return nil
+	}
+	var rep struct {
+		Checks []struct {
+			Check string `json:"check"`
+			Body  string `json:"body"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal(result, &rep); err != nil {
+		return nil
+	}
+	bodies := make(map[string]string, len(rep.Checks))
+	for _, c := range rep.Checks {
+		if c.Body != "" {
+			bodies[c.Check] = c.Body
+		}
+	}
+	if len(bodies) == 0 {
+		return nil
+	}
+	return drv.Advisories(ipsec.ViewFor(intent, end), bodies)
 }
 
 // --- IPSec deploy / rollback (WRITES config; C2b-1: FortiGate end only) -------
