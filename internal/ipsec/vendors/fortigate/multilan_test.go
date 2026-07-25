@@ -160,3 +160,20 @@ func TestPolicy_LegacyIntentJSONStillRendersItsInterface(t *testing.T) {
 			"not lose its interface on the deploy path", got)
 	}
 }
+
+// Render must refuse rather than emit "srcintf": [] — conformance models only
+// `action`, so an empty member array would pass every local check and die on the
+// device. Validation blocks this before deploy, but preview renders without that
+// gate, so the invariant has to be local to Render too.
+func TestRender_FailsFastWithNoLANInterface(t *testing.T) {
+	in := t9Intent()
+	in.Ends[0].LANIface, in.Ends[0].LANIfaces = "", nil
+
+	_, err := fgDriver(t).Render(ipsec.ViewFor(in, 0))
+	if err == nil {
+		t.Fatal("render must fail fast with no LAN interface, not emit an empty srcintf")
+	}
+	if !strings.Contains(err.Error(), "LAN interface") {
+		t.Errorf("error should name the cause; got %v", err)
+	}
+}

@@ -214,6 +214,10 @@
             // silently hide a field the operator has to fill in.
             var uses = !end || end.uses_lan_iface !== false;
             group.style.display = uses ? '' : 'none';
+            // Clear it when hiding, or leftover text keeps riding the payload and
+            // can raise a blocking unsafe_value finding against a field the
+            // operator can no longer see.
+            if (!uses) { setLanValues(pfx, []); }
         });
     }
 

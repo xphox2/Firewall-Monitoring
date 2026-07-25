@@ -28,6 +28,12 @@ Warn rather than block, because it needs live device facts — a never-polled de
 
 New `CapabilityDescriptor.UsesLANIface`. OPNsense's pass rules are floating (`interface: ""`) and scoped by subnet, so they never name an inside interface; requiring one there demanded a value nothing reads. FortiGate true, OPNsense false — validation skips `lan_missing` and the wizard hides the picker accordingly.
 
+### Fixed — two edges found in review
+
+`Render` now refuses when an end has no LAN interface instead of emitting `"srcintf": []`. Validation blocks that before deploy, but preview renders without the gate and the conformance spec models only `action`, so the empty body would have passed every local check and failed on the device. The invariant now lives with the code that would break.
+
+Hiding the LAN picker for a vendor that ignores it also clears it. Switching an end's device from FortiGate to OPNsense mid-wizard hid the field but left its contents in the payload, where `safeToken` still validated them — leftover text could raise a blocking finding against a field the operator could no longer see.
+
 ### Fixed — wizard endpoints no longer sit side by side on a phone
 
 `.form-row` is a two-column grid with no mobile collapse, so endpoints A and B stayed side by side at any width. Added a single-column collapse at ≤768px. The rule goes in **both** `admin-shared.css` and `styles.css`: `admin.html` loads the former first and Tailwind flattens `@layer components`, so a rule in `admin-shared.css` alone would be overridden by the duplicate `.form-row` in the generated `tailwind.css`.

@@ -78,6 +78,13 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 	if local.InnerIP == "" || remote.InnerIP == "" {
 		return ipsec.Artifact{}, fmt.Errorf("fortigate render needs VTI addressing on both ends (InnerIP empty) — re-save the tunnel to rehydrate its derived fields")
 	}
+	// Same fail-fast for the inside interfaces: with none, policySteps would emit
+	// "srcintf": [] — a body the device rejects and conformance does not model
+	// (it validates only `action`). Validation blocks this before deploy, but
+	// preview renders without that gate, so keep the invariant local to Render.
+	if len(local.EffectiveLANIfaces()) == 0 {
+		return ipsec.Artifact{}, fmt.Errorf("fortigate render needs at least one LAN interface — the firewall policies have no source/destination without one")
+	}
 
 	p1, err := phase1Proposal(in.IKE)
 	if err != nil {
