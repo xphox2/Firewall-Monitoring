@@ -37,8 +37,24 @@ type ExpectedChild struct {
 }
 
 // opnDoc is the envelope every OPNsense search endpoint returns.
+//
+// Rows is a POINTER so its absence can be told apart from an empty result. A
+// body that is valid JSON but not a result set — an auth failure rendered as
+// 200, an error envelope — would otherwise unmarshal cleanly with a nil slice
+// and read as "this box has no tunnels", synthesizing a down row for every
+// expected child. That is a fleet-wide false outage manufactured out of a
+// failed request, which is worse than reporting nothing.
 type opnDoc struct {
-	Rows []map[string]any `json:"rows"`
+	Rows *[]map[string]any `json:"rows"`
+}
+
+// rows returns the result set, or an error when the document carried none.
+func (d opnDoc) rows(what string) ([]map[string]any, error) {
+	if d.Rows == nil {
+		return nil, fmt.Errorf("%s did not return a result set (no \"rows\" key) — "+
+			"treating as an error rather than as zero tunnels", what)
+	}
+	return *d.Rows, nil
 }
 
 // ParseOPNsense builds one row per child SA from the three session documents.
@@ -184,7 +200,11 @@ func parsePhase1(body string) (connIndex, error) {
 	if err := json.Unmarshal([]byte(body), &doc); err != nil {
 		return ci, fmt.Errorf("searchPhase1 unparseable: %w", err)
 	}
-	for _, r := range doc.Rows {
+	rows, rerr := doc.rows("searchPhase1")
+	if rerr != nil {
+		return ci, rerr
+	}
+	for _, r := range rows {
 		// local-addrs is "%any" on a box behind NAT, so only the remote side
 		// is usable as a join key.
 		c := conn{
@@ -217,8 +237,12 @@ func parseSPD(body string) ([]policy, error) {
 	if err := json.Unmarshal([]byte(body), &doc); err != nil {
 		return nil, fmt.Errorf("spd/search unparseable: %w", err)
 	}
-	out := make([]policy, 0, len(doc.Rows)/2+1)
-	for _, r := range doc.Rows {
+	rows, rerr := doc.rows("spd/search")
+	if rerr != nil {
+		return nil, rerr
+	}
+	out := make([]policy, 0, len(rows)/2+1)
+	for _, r := range rows {
 		// Each child appears twice, once per direction. The outbound policy
 		// alone gives local→remote in the orientation vpn_status wants.
 		if !strings.EqualFold(str(r, "dir"), "out") {
@@ -230,9 +254,22 @@ func parseSPD(body string) ([]policy, error) {
 		}
 		p := policy{reqid: id, localSel: str(r, "src"), remoteSel: str(r, "dst")}
 		// src-dst is [local endpoint, remote endpoint] for the out direction.
+		// Both sides are normalized the same way as the SAD's src, since either
+		// may carry a "[port]" suffix and a raw comparison would silently never
+		// match.
 		if hosts, ok := r["src-dst"].([]any); ok && len(hosts) == 2 {
-			p.localHost, _ = hosts[0].(string)
-			p.remoteHost, _ = hosts[1].(string)
+			lh, _ := hosts[0].(string)
+			rh, _ := hosts[1].(string)
+			p.localHost, p.remoteHost = hostOf(lh), hostOf(rh)
+		}
+		// Without the endpoint pair the SAs cannot be assigned a direction: an
+		// empty localHost makes EVERY SA look inbound, so which one wins is map
+		// iteration order. bytes_in would then alternate between two cumulative
+		// counters poll-to-poll and the downstream reset-clamp would re-count
+		// each downward swap as a full cumulative — a traffic spike from
+		// nothing, with bytes_out flat at zero. Skipping is the honest answer.
+		if p.localHost == "" || p.remoteHost == "" {
+			continue
 		}
 		out = append(out, p)
 	}
@@ -257,12 +294,16 @@ func parseSAD(body string) (saIndex, error) {
 	if err := json.Unmarshal([]byte(body), &doc); err != nil {
 		return idx, fmt.Errorf("sad/search unparseable: %w", err)
 	}
+	rows, rerr := doc.rows("sad/search")
+	if rerr != nil {
+		return idx, rerr
+	}
 	// age is seconds since install, so the SMALLEST age is the newest SA.
 	// During rekey two SAs share one reqid and direction; taking the newest
 	// rather than summing avoids double-counting the overlap and the phantom
 	// drop when the old one expires — a drop the downstream reset-clamp would
 	// re-count as a full cumulative, spiking every chart once an hour.
-	for _, r := range doc.Rows {
+	for _, r := range rows {
 		id := reqidOf(r)
 		if id == "" {
 			continue

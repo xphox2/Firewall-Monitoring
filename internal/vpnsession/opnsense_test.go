@@ -311,3 +311,34 @@ func TestParseOPNsense_UnnamedButPresentChildIsNotAlsoReportedDown(t *testing.T)
 		t.Fatalf("want exactly 1 row for 1 child, got %d: %+v", len(rows), rows)
 	}
 }
+
+// A policy row with no endpoint pair cannot have its SAs classified: with an
+// empty localHost EVERY SA looks inbound, so which one wins is map-iteration
+// order. That makes bytes_in alternate between two cumulative counters
+// poll-to-poll, and the downstream reset-clamp re-counts each downward swap as
+// a full cumulative — a traffic spike out of nothing, with bytes_out flat at 0.
+func TestParseOPNsense_PolicyWithoutEndpointsIsSkipped(t *testing.T) {
+	spd := `{"rows":[{"src":"192.168.50.0/24","dst":"192.168.13.0/24","dir":"out","reqid":"2"}]}`
+	rows := parse(t, phase1Fixture, sadFixture, spd)
+	if len(rows) != 0 {
+		t.Errorf("a policy with no src-dst must be skipped rather than guessed at; got %+v", rows)
+	}
+}
+
+// A valid-JSON body that is not a result set — an auth failure rendered as 200,
+// an error envelope — unmarshals with Rows nil and would otherwise read as
+// "this box has no tunnels", synthesizing a down row for every expected child.
+// That is a fleet-wide false outage manufactured from a failed request.
+func TestParseOPNsense_ErrorShapedBodyIsNotZeroTunnels(t *testing.T) {
+	for name, body := range map[string]string{
+		"empty object":   `{}`,
+		"error envelope": `{"errorMessage":"authentication failed"}`,
+	} {
+		_, err := ParseOPNsense(5, time.Now(), body, sadFixture, spdFixture,
+			[]ExpectedChild{{TunnelName: "fwm-t11", Local: "192.168.50.0/24", Remote: "192.168.13.0/24"}})
+		if err == nil {
+			t.Errorf("%s: must be rejected, not read as zero tunnels — otherwise every "+
+				"expected child is synthesized down and the whole device false-alarms", name)
+		}
+	}
+}
