@@ -1546,7 +1546,10 @@ func (p *Poller) detectVPNConnections(devices []models.Device) (int, bool) {
 		anyFresh    bool // at least one row inside the fresh window backs this pair
 		matchMethod string
 		connType    string
-		sides       int // how many sides have a matching tunnel (1=unidirectional, 2=bidirectional)
+		// NB: a `sides` counter used to live here. It was only ever assigned zero
+		// and never read — the bidirectional determination is made below from the
+		// tunnel tables directly — so it is gone rather than carried as a field
+		// that looks meaningful and is not.
 	}
 
 	pairs := make(map[string]*pairInfo)
