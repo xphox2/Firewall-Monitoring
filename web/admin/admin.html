@@ -27,6 +27,7 @@
     <link rel="stylesheet" href="/static/css/admin-flows.css">
     <link rel="stylesheet" href="/static/css/admin-settings.css">
     <link rel="stylesheet" href="/static/css/admin-profile.css">
+    <link rel="stylesheet" href="/static/css/admin-ipsec.css">
     <!-- Tailwind arbitrary-hex → Console token bridge. Linked last so it wins
          over the precompiled tailwind.css utility classes. -->
     <link rel="stylesheet" href="/static/css/admin-tw-bridge.css">
@@ -2774,92 +2775,209 @@
 
     <!-- IPSec Tunnel Wizard (v0.11.89) -->
     <div class="modal" id="ipsec-wizard-modal" role="dialog" aria-modal="true" aria-labelledby="ipsec-wizard-title">
-        <div class="modal-content" style="max-width:920px;">
-            <div class="modal-header">
-                <h2 id="ipsec-wizard-title">New IPSec Tunnel</h2>
-                <button class="modal-close" data-action="ipsec-wizard-close">&times;</button>
-            </div>
-            <form id="ipsec-wizard-form">
+        <div class="modal-content ipsec-wiz" style="max-width:1080px;">
+            <form id="ipsec-wizard-form" class="ipsec-wiz-form">
                 <input type="hidden" id="ipsec-edit-id">
-                <!-- 1. Endpoints -->
-                <h3 style="font-size:0.95rem;font-weight:600;color:var(--fwmon-text);margin:0 0 8px;">1 · Endpoints</h3>
-                <div class="form-row">
-                    <div class="form-group"><label for="ipsec-dev-a">Device A</label><select id="ipsec-dev-a"><option value="">— select —</option></select></div>
-                    <div class="form-group"><label for="ipsec-dev-b">Device B</label><select id="ipsec-dev-b"><option value="">— select —</option></select></div>
-                </div>
-                <p id="ipsec-caps-note" style="color:var(--fwmon-text-mute);font-size:0.78rem;margin:0 0 14px;">Pick two FortiGate/OPNsense devices to load the crypto options both support.</p>
 
-                <!-- 2. Crypto -->
-                <div id="ipsec-crypto-section" style="display:none;border-top:1px solid var(--fwmon-border);padding-top:12px;">
-                    <h3 style="font-size:0.95rem;font-weight:600;color:var(--fwmon-text);margin:0 0 8px;">2 · Crypto</h3>
-                    <div class="form-group">
-                        <label for="ipsec-mode">Tunnel mode</label>
-                        <select id="ipsec-mode"></select>
-                        <p id="ipsec-mode-note" style="color:var(--fwmon-text-mute);font-size:0.75rem;margin:4px 0 0;"></p>
+                <!-- Fixed chrome: title, the live link schematic, phase dots. -->
+                <header class="ipsec-wiz-head">
+                    <div class="modal-header" style="margin:0;">
+                        <h2 id="ipsec-wizard-title">New IPSec Tunnel</h2>
+                        <button type="button" class="modal-close" data-action="ipsec-wizard-close">&times;</button>
                     </div>
-                    <div class="form-group">
-                        <label>Profile</label>
-                        <div id="ipsec-profiles" style="display:flex;gap:16px;flex-wrap:wrap;"></div>
-                    </div>
-                    <div id="ipsec-custom-crypto" style="display:none;">
+                    <!-- The schematic IS the spine: it shows what is being built, live. -->
+                    <div id="ipsec-schematic" class="ipsec-schematic" aria-live="polite"></div>
+                    <nav class="ipsec-phases" aria-label="Wizard progress">
+                        <button type="button" class="ipsec-phase-tab" id="ipsec-tab-design" data-action="ipsec-phase" data-phase="design" aria-current="step">
+                            <span class="ipsec-phase-dot"></span><span>Design</span>
+                        </button>
+                        <button type="button" class="ipsec-phase-tab" id="ipsec-tab-verify" data-action="ipsec-phase" data-phase="verify">
+                            <span class="ipsec-phase-dot"></span><span>Verify</span>
+                        </button>
+                    </nav>
+                </header>
+
+                <!-- Scrolling body. BOTH panels stay mounted; one is hidden. -->
+                <div class="ipsec-wiz-body">
+
+                    <section class="ipsec-panel" id="ipsec-panel-design" tabindex="-1">
+                        <h3 class="ipsec-panel-title">Which two firewalls?</h3>
                         <div class="form-row">
-                            <div class="form-group"><label for="ipsec-ikever">IKE version</label><select id="ipsec-ikever"></select></div>
-                            <div class="form-group"><label for="ipsec-enc">Encryption</label><select id="ipsec-enc"></select></div>
+                            <div class="form-group"><label for="ipsec-dev-a">Site A</label><select id="ipsec-dev-a"><option value="">— select —</option></select></div>
+                            <div class="form-group"><label for="ipsec-dev-b">Site B</label><select id="ipsec-dev-b"><option value="">— select —</option></select></div>
                         </div>
-                        <div class="form-row">
-                            <div class="form-group"><label for="ipsec-integ">Integrity (CBC only)</label><select id="ipsec-integ"></select></div>
-                            <div class="form-group"><label for="ipsec-prf">PRF</label><select id="ipsec-prf"></select></div>
+                        <p id="ipsec-caps-note" class="ipsec-note">Pick both firewalls to see what they can agree on.</p>
+                        <div id="ipsec-existing" class="ipsec-existing" hidden></div>
+
+                        <div id="ipsec-endpoints-section" style="display:none;">
+                            <div class="ipsec-sides">
+                                <!-- Site A -->
+                                <div class="ipsec-side">
+                                    <h4 class="ipsec-side-title" id="ipsec-a-title">Site A</h4>
+                                    <div class="ipsec-facts" id="ipsec-a-facts"></div>
+
+                                    <div class="form-group">
+                                        <label for="ipsec-a-subnets">Networks this site shares</label>
+                                        <textarea id="ipsec-a-subnets" rows="3" placeholder="192.168.13.0/24"></textarea>
+                                        <p class="ipsec-hint">One per line. These become the tunnel's traffic selectors.</p>
+                                        <div class="ipsec-anchor" data-anchor="a-subnets"></div>
+                                    </div>
+
+                                    <div class="form-group" id="ipsec-a-lan-group">
+                                        <label>Inside interfaces</label>
+                                        <p class="ipsec-hint">The ports these networks live on — the firewall rules name them.</p>
+                                        <div id="ipsec-a-lan-list" class="iface-checklist"></div>
+                                        <input type="text" id="ipsec-a-lan-custom" placeholder="other interface name(s), comma separated">
+                                        <div class="ipsec-anchor" data-anchor="a-lan"></div>
+                                    </div>
+
+                                    <details class="ipsec-adv">
+                                        <summary>Connection details</summary>
+                                        <div class="form-group">
+                                            <label for="ipsec-a-peer">Public address</label>
+                                            <select id="ipsec-a-peer"><option value="__custom__">Custom…</option></select>
+                                            <input type="text" id="ipsec-a-peer-custom" placeholder="e.g. 66.179.9.155" style="display:none;margin-top:6px;">
+                                            <div class="ipsec-anchor" data-anchor="a-peer"></div>
+                                        </div>
+                                        <label class="toggle-label"><span class="toggle-switch"><input type="checkbox" id="ipsec-a-dyn"><span class="toggle-slider"></span></span><span>No fixed public address — this site initiates</span></label>
+                                        <div class="form-group">
+                                            <label for="ipsec-a-egress">Internet-facing interface</label>
+                                            <select id="ipsec-a-egress"><option value="__custom__">Custom…</option></select>
+                                            <input type="text" id="ipsec-a-egress-custom" placeholder="interface name" style="display:none;margin-top:6px;">
+                                            <div class="ipsec-anchor" data-anchor="a-egress"></div>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="ipsec-a-id">Identity this site presents</label>
+                                            <div style="display:flex;gap:6px;">
+                                                <select id="ipsec-a-idtype" style="flex:0 0 auto;width:auto;" title="Identity type"></select>
+                                                <input type="text" id="ipsec-a-id" placeholder="site-a" maxlength="63" style="flex:1;min-width:0;">
+                                            </div>
+                                            <div id="ipsec-a-id-hint" class="ipsec-fielderr" style="display:none;"></div>
+                                            <div class="ipsec-anchor" data-anchor="a-id"></div>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="ipsec-a-gateway">Next hop to the internet</label>
+                                            <input type="text" id="ipsec-a-gateway" placeholder="only if a shared network contains the far site's public IP">
+                                            <div class="ipsec-anchor" data-anchor="a-gateway"></div>
+                                        </div>
+                                    </details>
+                                </div>
+
+                                <!-- Site B -->
+                                <div class="ipsec-side">
+                                    <h4 class="ipsec-side-title" id="ipsec-b-title">Site B</h4>
+                                    <div class="ipsec-facts" id="ipsec-b-facts"></div>
+
+                                    <div class="form-group">
+                                        <label for="ipsec-b-subnets">Networks this site shares</label>
+                                        <textarea id="ipsec-b-subnets" rows="3" placeholder="192.168.50.0/24"></textarea>
+                                        <p class="ipsec-hint">One per line. These become the tunnel's traffic selectors.</p>
+                                        <div class="ipsec-anchor" data-anchor="b-subnets"></div>
+                                    </div>
+
+                                    <div class="form-group" id="ipsec-b-lan-group">
+                                        <label>Inside interfaces</label>
+                                        <p class="ipsec-hint">The ports these networks live on — the firewall rules name them.</p>
+                                        <div id="ipsec-b-lan-list" class="iface-checklist"></div>
+                                        <input type="text" id="ipsec-b-lan-custom" placeholder="other interface name(s), comma separated">
+                                        <div class="ipsec-anchor" data-anchor="b-lan"></div>
+                                    </div>
+
+                                    <details class="ipsec-adv">
+                                        <summary>Connection details</summary>
+                                        <div class="form-group">
+                                            <label for="ipsec-b-peer">Public address</label>
+                                            <select id="ipsec-b-peer"><option value="__custom__">Custom…</option></select>
+                                            <input type="text" id="ipsec-b-peer-custom" placeholder="e.g. 198.51.100.1" style="display:none;margin-top:6px;">
+                                            <div class="ipsec-anchor" data-anchor="b-peer"></div>
+                                        </div>
+                                        <label class="toggle-label"><span class="toggle-switch"><input type="checkbox" id="ipsec-b-dyn"><span class="toggle-slider"></span></span><span>No fixed public address — this site initiates</span></label>
+                                        <div class="form-group">
+                                            <label for="ipsec-b-egress">Internet-facing interface</label>
+                                            <select id="ipsec-b-egress"><option value="__custom__">Custom…</option></select>
+                                            <input type="text" id="ipsec-b-egress-custom" placeholder="interface name" style="display:none;margin-top:6px;">
+                                            <div class="ipsec-anchor" data-anchor="b-egress"></div>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="ipsec-b-id">Identity this site presents</label>
+                                            <div style="display:flex;gap:6px;">
+                                                <select id="ipsec-b-idtype" style="flex:0 0 auto;width:auto;" title="Identity type"></select>
+                                                <input type="text" id="ipsec-b-id" placeholder="site-b" maxlength="63" style="flex:1;min-width:0;">
+                                            </div>
+                                            <div id="ipsec-b-id-hint" class="ipsec-fielderr" style="display:none;"></div>
+                                            <div class="ipsec-anchor" data-anchor="b-id"></div>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="ipsec-b-gateway">Next hop to the internet</label>
+                                            <input type="text" id="ipsec-b-gateway" placeholder="only if a shared network contains the far site's public IP">
+                                            <div class="ipsec-anchor" data-anchor="b-gateway"></div>
+                                        </div>
+                                    </details>
+                                </div>
+                            </div>
+
+                            <!-- Encryption reads as one settled sentence; the six controls
+                                 live behind it and are the SAME nodes the JS already drives. -->
+                            <div id="ipsec-crypto-section" class="ipsec-crypto" style="display:none;">
+                                <div class="ipsec-crypto-line">
+                                    <span class="ipsec-crypto-label">Encryption</span>
+                                    <span id="ipsec-crypto-summary" class="ipsec-crypto-summary"></span>
+                                    <button type="button" class="ipsec-linkbtn" data-action="ipsec-crypto-toggle" aria-expanded="false" aria-controls="ipsec-crypto-detail">change</button>
+                                </div>
+                                <div id="ipsec-crypto-detail" class="ipsec-crypto-detail" hidden>
+                                    <div class="form-group">
+                                        <label for="ipsec-mode">Tunnel mode</label>
+                                        <select id="ipsec-mode"></select>
+                                        <p id="ipsec-mode-note" class="ipsec-hint"></p>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Profile</label>
+                                        <div id="ipsec-profiles" class="ipsec-profile-chips"></div>
+                                    </div>
+                                    <div id="ipsec-custom-crypto" style="display:none;">
+                                        <div class="form-row">
+                                            <div class="form-group"><label for="ipsec-ikever">IKE version</label><select id="ipsec-ikever"></select></div>
+                                            <div class="form-group"><label for="ipsec-enc">Encryption</label><select id="ipsec-enc"></select></div>
+                                        </div>
+                                        <div class="form-row">
+                                            <div class="form-group"><label for="ipsec-integ">Integrity</label><select id="ipsec-integ"></select></div>
+                                            <div class="form-group"><label for="ipsec-prf">PRF</label><select id="ipsec-prf"></select></div>
+                                        </div>
+                                        <div class="form-row">
+                                            <div class="form-group"><label for="ipsec-dh">DH group</label><select id="ipsec-dh"></select></div>
+                                            <div class="form-group"><label class="toggle-label" style="margin-top:22px;"><span class="toggle-switch"><input type="checkbox" id="ipsec-pfs" checked><span class="toggle-slider"></span></span><span>Perfect forward secrecy</span></label></div>
+                                        </div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="ipsec-psk">Pre-shared key</label>
+                                        <input type="text" id="ipsec-psk" autocomplete="off" placeholder="leave blank — a strong key is generated on save">
+                                        <div class="ipsec-anchor" data-anchor="psk"></div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                        <div class="form-row">
-                            <div class="form-group"><label for="ipsec-dh">DH group (IKE)</label><select id="ipsec-dh"></select></div>
-                            <div class="form-group"><label class="toggle-label" style="margin-top:22px;"><span class="toggle-switch"><input type="checkbox" id="ipsec-pfs" checked><span class="toggle-slider"></span></span><span>PFS (child SA)</span></label></div>
+                    </section>
+
+                    <section class="ipsec-panel" id="ipsec-panel-verify" tabindex="-1" style="display:none;">
+                        <h3 class="ipsec-panel-title">What this will build</h3>
+                        <div id="ipsec-matrix" class="ipsec-matrix"></div>
+                        <div id="ipsec-preview-section" style="display:none;">
+                            <div id="ipsec-findings" class="ipsec-findings"></div>
+                            <div id="ipsec-preview-panes" class="ipsec-preview-panes"></div>
                         </div>
-                    </div>
+                    </section>
                 </div>
 
-                <!-- 3. Per-endpoint -->
-                <div id="ipsec-endpoints-section" style="display:none;border-top:1px solid var(--fwmon-border);padding-top:12px;margin-top:12px;">
-                    <h3 style="font-size:0.95rem;font-weight:600;color:var(--fwmon-text);margin:0 0 8px;">3 · Endpoint details</h3>
-                    <div class="form-row" style="align-items:flex-start;">
-                        <div style="flex:1;min-width:0;">
-                            <div style="font-size:0.8rem;font-weight:600;color:var(--fwmon-text-dim);margin-bottom:6px;" id="ipsec-a-title">Endpoint A</div>
-                            <div class="form-group"><label for="ipsec-a-peer">This end's public IP (WAN endpoint)</label><select id="ipsec-a-peer"><option value="__custom__">Custom…</option></select><input type="text" id="ipsec-a-peer-custom" placeholder="e.g. 66.179.9.155" style="display:none;margin-top:6px;"></div>
-                            <label class="toggle-label" style="margin-bottom:8px;"><span class="toggle-switch"><input type="checkbox" id="ipsec-a-dyn"><span class="toggle-slider"></span></span><span>Dynamic (peer address unknown)</span></label>
-                            <div class="form-group"><label for="ipsec-a-egress">Egress interface</label><select id="ipsec-a-egress"><option value="__custom__">Custom…</option></select><input type="text" id="ipsec-a-egress-custom" placeholder="interface name" style="display:none;margin-top:6px;"></div>
-                            <div class="form-group" id="ipsec-a-lan-group"><label>LAN interfaces <span style="color:var(--fwmon-text-faint);font-weight:normal;">— every inside port the protected subnets live on</span></label><div id="ipsec-a-lan-list" class="iface-checklist"></div><input type="text" id="ipsec-a-lan-custom" placeholder="other interface name(s), comma separated" style="margin-top:6px;"></div>
-                            <div class="form-group"><label for="ipsec-a-subnets">Protected subnets (one per line)</label><textarea id="ipsec-a-subnets" rows="2" placeholder="10.10.10.0/24"></textarea></div>
-                            <div class="form-group"><label for="ipsec-a-id">IKE identity <span style="color:var(--fwmon-text-faint);font-weight:normal;">— auto-filled from the device name; editable</span></label><div style="display:flex;gap:6px;"><select id="ipsec-a-idtype" style="flex:0 0 auto;width:auto;" title="IKE identity type"></select><input type="text" id="ipsec-a-id" placeholder="site-a" maxlength="63" style="flex:1;min-width:0;"></div><div id="ipsec-a-id-hint" style="display:none;color:var(--fwmon-danger,#e5484d);font-size:0.78rem;margin-top:4px;"></div></div>
-                            <div class="form-group"><label for="ipsec-a-gateway">WAN gateway <span style="color:var(--fwmon-text-faint);font-weight:normal;">— optional; only needed if a protected subnet contains the peer's WAN IP (pins a /32)</span></label><input type="text" id="ipsec-a-gateway" placeholder="e.g. 66.179.9.1"></div>
-                        </div>
-                        <div style="flex:1;min-width:0;">
-                            <div style="font-size:0.8rem;font-weight:600;color:var(--fwmon-text-dim);margin-bottom:6px;" id="ipsec-b-title">Endpoint B</div>
-                            <div class="form-group"><label for="ipsec-b-peer">This end's public IP (WAN endpoint)</label><select id="ipsec-b-peer"><option value="__custom__">Custom…</option></select><input type="text" id="ipsec-b-peer-custom" placeholder="e.g. 192.168.5.107" style="display:none;margin-top:6px;"></div>
-                            <label class="toggle-label" style="margin-bottom:8px;"><span class="toggle-switch"><input type="checkbox" id="ipsec-b-dyn"><span class="toggle-slider"></span></span><span>Dynamic (peer address unknown)</span></label>
-                            <div class="form-group"><label for="ipsec-b-egress">Egress interface</label><select id="ipsec-b-egress"><option value="__custom__">Custom…</option></select><input type="text" id="ipsec-b-egress-custom" placeholder="interface name" style="display:none;margin-top:6px;"></div>
-                            <div class="form-group" id="ipsec-b-lan-group"><label>LAN interfaces <span style="color:var(--fwmon-text-faint);font-weight:normal;">— every inside port the protected subnets live on</span></label><div id="ipsec-b-lan-list" class="iface-checklist"></div><input type="text" id="ipsec-b-lan-custom" placeholder="other interface name(s), comma separated" style="margin-top:6px;"></div>
-                            <div class="form-group"><label for="ipsec-b-subnets">Protected subnets (one per line)</label><textarea id="ipsec-b-subnets" rows="2" placeholder="192.168.50.0/24"></textarea></div>
-                            <div class="form-group"><label for="ipsec-b-id">IKE identity <span style="color:var(--fwmon-text-faint);font-weight:normal;">— auto-filled from the device name; editable</span></label><div style="display:flex;gap:6px;"><select id="ipsec-b-idtype" style="flex:0 0 auto;width:auto;" title="IKE identity type"></select><input type="text" id="ipsec-b-id" placeholder="site-b" maxlength="63" style="flex:1;min-width:0;"></div><div id="ipsec-b-id-hint" style="display:none;color:var(--fwmon-danger,#e5484d);font-size:0.78rem;margin-top:4px;"></div></div>
-                            <div class="form-group"><label for="ipsec-b-gateway">WAN gateway <span style="color:var(--fwmon-text-faint);font-weight:normal;">— optional; only needed if a protected subnet contains the peer's WAN IP (pins a /32)</span></label><input type="text" id="ipsec-b-gateway" placeholder="e.g. 192.168.5.1"></div>
-                        </div>
-                    </div>
-                    <div class="form-group" style="max-width:420px;">
-                        <label for="ipsec-psk">Pre-shared key</label>
-                        <input type="text" id="ipsec-psk" placeholder="leave blank to auto-generate on save" autocomplete="off">
-                    </div>
-                </div>
-
-                <!-- 4. Preview -->
-                <div id="ipsec-preview-section" style="display:none;border-top:1px solid var(--fwmon-border);padding-top:12px;margin-top:12px;">
-                    <h3 style="font-size:0.95rem;font-weight:600;color:var(--fwmon-text);margin:0 0 8px;">4 · Validation &amp; preview</h3>
-                    <div id="ipsec-findings" style="margin-bottom:10px;"></div>
-                    <div id="ipsec-preview-panes" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"></div>
-                </div>
-
-                <div class="modal-footer">
+                <!-- Fixed footer. Save stays MOUNTED even on Design: invalidate()
+                     disables it on every keystroke and would throw if it vanished. -->
+                <footer class="ipsec-wiz-foot">
+                    <span id="ipsec-foot-note" class="ipsec-foot-note"></span>
                     <button type="button" class="btn secondary" data-action="ipsec-wizard-close">Cancel</button>
-                    <button type="button" class="btn secondary" data-action="ipsec-preview" data-min-role="admin">Validate &amp; Preview</button>
-                    <button type="button" class="btn" data-action="ipsec-save" data-min-role="admin" id="ipsec-save-btn" disabled>Save draft</button>
-                </div>
+                    <button type="button" class="btn secondary" id="ipsec-back-btn" data-action="ipsec-phase" data-phase="design" style="display:none;">Back</button>
+                    <button type="button" class="btn" id="ipsec-next-btn" data-action="ipsec-phase" data-phase="verify">Check it over</button>
+                    <button type="button" class="btn secondary" id="ipsec-preview-btn" data-action="ipsec-preview" data-min-role="admin" style="display:none;">Validate</button>
+                    <button type="button" class="btn" id="ipsec-save-btn" data-action="ipsec-save" data-min-role="admin" disabled style="display:none;">Save &amp; preflight</button>
+                </footer>
             </form>
         </div>
     </div>

@@ -2184,6 +2184,11 @@ func (h *Handler) lanCoherenceFindings(db database.Store, intent *ipsec.TunnelIn
 			out = append(out, ipsec.Finding{
 				Severity: ipsec.SeverityWarn,
 				Code:     "lan_subnet_mismatch",
+				End:      &i,
+				// The subnet, so the UI can highlight the ONE lane this is about.
+				// A code+end pair cannot distinguish two mismatches on the same end,
+				// and digging it back out of Message would weld the client to prose.
+				Subject: s,
 				Message: fmt.Sprintf("%s: protected subnet %s is not on any selected LAN interface — it is on %s. "+
 					"The firewall policies will name the selected interface(s), so traffic for %s is dropped even though the tunnel comes up.",
 					endLabelForVendor(intent, i), s, carrier, s),

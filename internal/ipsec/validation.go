@@ -18,11 +18,35 @@ const (
 
 // Finding is one validation result. Code is a stable machine key; Message is
 // human-facing.
+//
+// End and Subject exist so the UI can put a finding next to the thing that
+// caused it instead of in a flat list at the bottom of the form. Both are
+// additive JSON: older consumers that read only severity/message are unaffected.
+//
+//   - End is the endpoint index the finding is about, or nil for a tunnel-level
+//     finding (crypto, mode, subnet overlap). It is a POINTER because end A is
+//     index 0, and a plain int would be indistinguishable from "not set" — in
+//     JS, `if (f.end)` on a 0 silently drops every end-A finding.
+//   - Subject is the specific value the finding is about (usually a subnet) when
+//     one finding of a code can be raised several times for one end. Without it
+//     the UI cannot tell WHICH of two mismatched subnets to highlight, and the
+//     only alternative — parsing it back out of Message — would weld the client
+//     to server prose.
 type Finding struct {
 	Severity Severity `json:"severity"`
 	Code     string   `json:"code"`
 	Message  string   `json:"message"`
+	End      *int     `json:"end,omitempty"`
+	Subject  string   `json:"subject,omitempty"`
 }
+
+// endRef is the End value for a finding that belongs to one endpoint.
+func endRef(i int) *int { return &i }
+
+// tunnelWide is the End value for a finding that belongs to the tunnel rather
+// than to either endpoint. Named rather than a bare nil so every call site has
+// to state which it means.
+var tunnelWide *int
 
 // HasBlock reports whether any finding blocks deploy.
 func HasBlock(fs []Finding) bool {
@@ -41,18 +65,25 @@ func HasBlock(fs []Finding) bool {
 // at the handler layer where the other tunnels are known.
 func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 	var fs []Finding
-	add := func(sev Severity, code, msg string) { fs = append(fs, Finding{sev, code, msg}) }
+	// end is the endpoint the finding belongs to (endRef(i)), or tunnelWide.
+	// Taking it as a parameter — rather than defaulting it — is deliberate: the
+	// signature change makes the compiler enumerate every call site so each one
+	// has to decide, instead of ~37 of them silently compiling with no end and
+	// leaving the UI unable to anchor them.
+	add := func(end *int, sev Severity, code, msg string) {
+		fs = append(fs, Finding{Severity: sev, Code: code, Message: msg, End: end})
+	}
 
 	// Reserve the <uuid:NAME> substitution token: operator free-text that reaches a
 	// checksummed apply-step body (IKE identities, PSK) must not contain it, or the
 	// collector's UUID substitution would either splice into operator text or abort
 	// on a bogus token (F7).
 	if strings.Contains(intent.PSK, "<uuid:") {
-		add(SeverityBlock, "reserved_token", "the PSK must not contain the reserved substring \"<uuid:\"")
+		add(tunnelWide, SeverityBlock, "reserved_token", "the PSK must not contain the reserved substring \"<uuid:\"")
 	}
 	for i := range intent.Ends {
 		if strings.Contains(intent.Ends[i].LocalID.Value, "<uuid:") {
-			add(SeverityBlock, "reserved_token",
+			add(endRef(i), SeverityBlock, "reserved_token",
 				fmt.Sprintf("%s identity must not contain the reserved substring \"<uuid:\"", endLabel(intent, i)))
 		}
 	}
@@ -60,27 +91,27 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 	// --- capability intersection: both ends must support the chosen crypto/mode.
 	for i, c := range caps {
 		if !c.supportsIKE(intent.IKEVersion) {
-			add(SeverityBlock, "ike_version_unsupported",
+			add(endRef(i), SeverityBlock, "ike_version_unsupported",
 				fmt.Sprintf("%s does not support IKE %s", endLabel(intent, i), intent.IKEVersion))
 		}
 		if !c.supportsMode(intent.Mode) {
-			add(SeverityBlock, "mode_unsupported",
+			add(endRef(i), SeverityBlock, "mode_unsupported",
 				fmt.Sprintf("%s does not support %s tunnels", endLabel(intent, i), intent.Mode))
 		}
 		if !c.supportsEnc(intent.IKE.Enc) || !c.supportsEnc(intent.ESP.Enc) {
-			add(SeverityBlock, "encryption_unsupported",
+			add(endRef(i), SeverityBlock, "encryption_unsupported",
 				fmt.Sprintf("%s does not support the selected encryption", endLabel(intent, i)))
 		}
 		if !c.supportsDH(intent.IKE.DH) {
-			add(SeverityBlock, "dhgroup_unsupported",
+			add(endRef(i), SeverityBlock, "dhgroup_unsupported",
 				fmt.Sprintf("%s does not support IKE DH group %s", endLabel(intent, i), intent.IKE.DH))
 		}
 		if !c.supportsInteg(intent.IKE.Integ) || !c.supportsInteg(intent.ESP.Integ) {
-			add(SeverityBlock, "integrity_unsupported",
+			add(endRef(i), SeverityBlock, "integrity_unsupported",
 				fmt.Sprintf("%s does not support the selected integrity algorithm", endLabel(intent, i)))
 		}
 		if !c.supportsPRF(intent.IKE.PRF) {
-			add(SeverityBlock, "prf_unsupported",
+			add(endRef(i), SeverityBlock, "prf_unsupported",
 				fmt.Sprintf("%s does not support the selected PRF", endLabel(intent, i)))
 		}
 		// Interface names and IKE IDs are interpolated into vendor CLI/config the
@@ -96,14 +127,14 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 		}
 		for _, tok := range toks {
 			if tok.val != "" && !safeToken(tok.val) {
-				add(SeverityBlock, "unsafe_value",
+				add(endRef(i), SeverityBlock, "unsafe_value",
 					fmt.Sprintf("%s %s %q contains characters outside [A-Za-z0-9._:-]", endLabel(intent, i), tok.label, tok.val))
 			}
 		}
 		// Explicit IKE identity is mandatory (the wizard designs out IP-default IDs
 		// to avoid the NAT-ID failure class); an empty ID renders `set localid ""`.
 		if intent.Ends[i].LocalID.Value == "" {
-			add(SeverityBlock, "id_missing",
+			add(endRef(i), SeverityBlock, "id_missing",
 				fmt.Sprintf("%s must have an explicit IKE identity value", endLabel(intent, i)))
 		}
 		// Type-aware identity validation: block any value that would fail phase-1
@@ -113,7 +144,7 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 		// to the egress and writes the LAN firewall policy, so an empty value would
 		// emit `set interface ""` / a rule with no source interface downstream.
 		if intent.Ends[i].EgressIface == "" {
-			add(SeverityBlock, "egress_missing",
+			add(endRef(i), SeverityBlock, "egress_missing",
 				fmt.Sprintf("%s must specify an egress (WAN) interface", endLabel(intent, i)))
 		}
 		// Only for vendors whose rules actually name an inside interface. OPNsense's
@@ -122,60 +153,60 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 		// carrying only the singular still satisfies it, and so a list of blank
 		// entries does not.
 		if c.UsesLANIface && len(intent.Ends[i].EffectiveLANIfaces()) == 0 {
-			add(SeverityBlock, "lan_missing",
+			add(endRef(i), SeverityBlock, "lan_missing",
 				fmt.Sprintf("%s must specify at least one LAN interface", endLabel(intent, i)))
 		}
 		if intent.ESP.PFS != DHGroupNone && !c.supportsDH(intent.ESP.PFS) {
-			add(SeverityBlock, "pfs_unsupported",
+			add(endRef(i), SeverityBlock, "pfs_unsupported",
 				fmt.Sprintf("%s does not support PFS DH group %s", endLabel(intent, i), intent.ESP.PFS))
 		}
 		if c.MaxTunnelNameLen > 0 && len(intent.Name) > c.MaxTunnelNameLen {
-			add(SeverityBlock, "name_too_long",
+			add(endRef(i), SeverityBlock, "name_too_long",
 				fmt.Sprintf("tunnel name %q exceeds %s's %d-character limit", intent.Name, c.Vendor, c.MaxTunnelNameLen))
 		}
 	}
 
 	// --- deprecated crypto: red-flag (warn), never silently accept.
 	if intent.IKEVersion == IKEv1 {
-		add(SeverityWarn, "ikev1_deprecated", "IKEv1 is deprecated (RFC 9395) — use IKEv2 unless a peer requires it")
+		add(tunnelWide, SeverityWarn, "ikev1_deprecated", "IKEv1 is deprecated (RFC 9395) — use IKEv2 unless a peer requires it")
 	}
 	for _, e := range []Encryption{intent.IKE.Enc, intent.ESP.Enc} {
 		if e == Enc3DES {
-			add(SeverityWarn, "weak_encryption", "3DES is broken (SWEET32) — do not use for new tunnels")
+			add(tunnelWide, SeverityWarn, "weak_encryption", "3DES is broken (SWEET32) — do not use for new tunnels")
 		}
 	}
 	for _, in := range []Integrity{intent.IKE.Integ, intent.ESP.Integ} {
 		if in == IntegritySHA1 {
-			add(SeverityWarn, "weak_integrity", "SHA-1 is deprecated — use SHA-256 or better")
+			add(tunnelWide, SeverityWarn, "weak_integrity", "SHA-1 is deprecated — use SHA-256 or better")
 		}
 	}
 	for _, g := range []DHGroup{intent.IKE.DH, intent.ESP.PFS} {
 		if g == DHGroup2 || g == DHGroup5 {
-			add(SeverityWarn, "weak_dhgroup", fmt.Sprintf("DH group %s is too weak — use group 14 or an ECP group", g))
+			add(tunnelWide, SeverityWarn, "weak_dhgroup", fmt.Sprintf("DH group %s is too weak — use group 14 or an ECP group", g))
 		}
 	}
 
 	// --- non-AEAD ciphers REQUIRE an integrity algorithm (GCM carries its own).
 	if !isAEAD(intent.IKE.Enc) && intent.IKE.Integ == IntegrityNone {
-		add(SeverityBlock, "integrity_required", "the IKE cipher is not AEAD and needs an integrity algorithm")
+		add(tunnelWide, SeverityBlock, "integrity_required", "the IKE cipher is not AEAD and needs an integrity algorithm")
 	}
 	if !isAEAD(intent.ESP.Enc) && intent.ESP.Integ == IntegrityNone {
-		add(SeverityBlock, "integrity_required", "the ESP cipher is not AEAD and needs an integrity algorithm")
+		add(tunnelWide, SeverityBlock, "integrity_required", "the ESP cipher is not AEAD and needs an integrity algorithm")
 	}
 
 	// --- PSK hard floor.
 	if ok, reason := validPSK(intent.PSK); !ok {
-		add(SeverityBlock, "psk_invalid", reason)
+		add(tunnelWide, SeverityBlock, "psk_invalid", reason)
 	}
 
 	// --- initiator: at least one end must be static (able to be dialed).
 	if intent.Ends[0].Dynamic && intent.Ends[1].Dynamic {
-		add(SeverityBlock, "no_initiator", "both ends are dynamic/behind NAT — at least one end must have a reachable static endpoint")
+		add(tunnelWide, SeverityBlock, "no_initiator", "both ends are dynamic/behind NAT — at least one end must have a reachable static endpoint")
 	}
 
 	// --- route-based needs a VTI transit subnet.
 	if intent.Mode == ModeRouteBased && strings.TrimSpace(intent.VTISubnet) == "" {
-		add(SeverityBlock, "vti_missing", "a route-based tunnel needs a VTI transit subnet")
+		add(tunnelWide, SeverityBlock, "vti_missing", "a route-based tunnel needs a VTI transit subnet")
 	}
 
 	// --- route-based + a dynamic (dialup) peer has no working way to steer
@@ -198,7 +229,7 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 		for i := range intent.Ends {
 			peer := 1 - i
 			if intent.Ends[peer].Dynamic && intent.Ends[i].Vendor == "fortigate" {
-				add(SeverityBlock, "routebased_dialup_unsupported",
+				add(endRef(i), SeverityBlock, "routebased_dialup_unsupported",
 					fmt.Sprintf("%s: a route-based tunnel to a dynamic/behind-NAT peer cannot steer return traffic on FortiGate "+
 						"(a dialup peer's routes must come from phase1 add-route, which follows the negotiated selectors — and "+
 						"route-based negotiates 0.0.0.0/0, so it would install a default route via the tunnel rather than the "+
@@ -213,7 +244,7 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 	if intent.Mode == ModePolicyBased {
 		for i := range intent.Ends {
 			if len(intent.Ends[i].ProtectedSubnets) == 0 {
-				add(SeverityBlock, "selectors_missing",
+				add(endRef(i), SeverityBlock, "selectors_missing",
 					fmt.Sprintf("%s: a policy-based tunnel needs at least one protected subnet (it is the traffic selector)", endLabel(intent, i)))
 			}
 		}
@@ -226,7 +257,7 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 	for i := range intent.Ends {
 		e := &intent.Ends[i]
 		if caps[i].MSSClamp && e.MSSClamp == 0 {
-			add(SeverityWarn, "mss_unset",
+			add(endRef(i), SeverityWarn, "mss_unset",
 				fmt.Sprintf("%s has no TCP MSS clamp — large packets may drop over the tunnel (recommend ~1350)", endLabel(intent, i)))
 		}
 		// A non-dynamic (dialable) end MUST carry a valid endpoint IP: it is
@@ -239,7 +270,7 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 			peerIP := net.ParseIP(peer.PeerIP)
 			switch {
 			case ip == nil:
-				add(SeverityBlock, "peer_ip_invalid",
+				add(endRef(i), SeverityBlock, "peer_ip_invalid",
 					fmt.Sprintf("%s has no valid static endpoint IP address", endLabel(intent, i)))
 			case isPrivate(ip) && !peer.Dynamic && peerIP != nil && !isPrivate(peerIP):
 				// This end's private/CGNAT address becomes the far (public) peer's
@@ -248,13 +279,13 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 				// tunnel can never establish. The behind-NAT end must be marked
 				// dynamic (dialup) or carry its real public IP. Block, don't warn:
 				// this is a guaranteed dead tunnel, not a "confirm reachability".
-				add(SeverityBlock, "peer_unroutable",
+				add(endRef(i), SeverityBlock, "peer_unroutable",
 					fmt.Sprintf("%s endpoint %s is a private/CGNAT address but %s is public — the peer cannot reach a private address across the internet. Mark %s as dynamic (behind NAT), or enter its real public IP.",
 						endLabel(intent, i), e.PeerIP, endLabel(intent, 1-i), endLabel(intent, i)))
 			case isPrivate(ip):
 				// Both ends private (LAN-to-LAN) or the peer is itself dynamic —
 				// plausibly reachable; keep the softer confirm-reachability warning.
-				add(SeverityWarn, "peer_private",
+				add(endRef(i), SeverityWarn, "peer_private",
 					fmt.Sprintf("%s's endpoint %s is a private/CGNAT address — confirm it is reachable by the peer", endLabel(intent, i), e.PeerIP))
 			}
 		}
@@ -269,30 +300,30 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 				if ip, _, err := net.ParseCIDR(strings.TrimSpace(s)); err == nil && !isPrivate(ip) {
 					// Word it as a tunnel-level fact (the public subnet may be on either
 					// end); the pass rule lives on this OPNsense end.
-					add(SeverityWarn, "firewall_floating_public_subnet",
+					add(endRef(i), SeverityWarn, "firewall_floating_public_subnet",
 						fmt.Sprintf("%s's tunnel pass rule is interface-agnostic (floating) and this tunnel carries a public subnet (%s) — ensure WAN anti-spoofing/block-private is enabled so the rule can't be abused by spoofed traffic", endLabel(intent, i), s))
 					break
 				}
 			}
 		}
 		if e.InnerIP != "" && net.ParseIP(e.InnerIP) == nil {
-			add(SeverityBlock, "inner_ip_invalid",
+			add(endRef(i), SeverityBlock, "inner_ip_invalid",
 				fmt.Sprintf("%s VTI inner address %q is not a valid IP", endLabel(intent, i), e.InnerIP))
 		}
 		// AUDIT IP5: the WAN next-hop gateway, when set, is rendered unquoted into
 		// the FortiGate peer host-route (`set gateway <ip>`); an unparsable value
 		// reaches the device and fails the route write → rollback. Block early.
 		if e.Gateway != "" && net.ParseIP(e.Gateway) == nil {
-			add(SeverityBlock, "gateway_invalid",
+			add(endRef(i), SeverityBlock, "gateway_invalid",
 				fmt.Sprintf("%s WAN gateway %q is not a valid IP", endLabel(intent, i), e.Gateway))
 		}
 		// AUDIT IP5: child (phase2) lifetime sanity. Negative is nonsensical;
 		// it should also rekey before the IKE SA so the initiator owns rekey.
 		if e.ChildLifetimeSecs < 0 {
-			add(SeverityBlock, "child_lifetime_invalid",
+			add(endRef(i), SeverityBlock, "child_lifetime_invalid",
 				fmt.Sprintf("%s child lifetime must not be negative", endLabel(intent, i)))
 		} else if e.ChildLifetimeSecs > 0 && intent.IKELifetimeSecs > 0 && e.ChildLifetimeSecs >= intent.IKELifetimeSecs {
-			add(SeverityWarn, "child_lifetime_ge_ike",
+			add(endRef(i), SeverityWarn, "child_lifetime_ge_ike",
 				fmt.Sprintf("%s child lifetime (%ds) is not shorter than the IKE lifetime (%ds) — the child should rekey first",
 					endLabel(intent, i), e.ChildLifetimeSecs, intent.IKELifetimeSecs))
 		}
@@ -302,13 +333,13 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 	// otherwise surfaces only as a cryptic pre-dispatch 400. Warn (OPNsense accepts
 	// a wider range, so don't hard-block) unless it's non-positive.
 	if intent.IKELifetimeSecs < 0 {
-		add(SeverityBlock, "ike_lifetime_invalid", "IKE lifetime must be positive")
+		add(tunnelWide, SeverityBlock, "ike_lifetime_invalid", "IKE lifetime must be positive")
 	} else if intent.IKELifetimeSecs > 0 && (intent.IKELifetimeSecs < 120 || intent.IKELifetimeSecs > 172800) {
-		add(SeverityWarn, "ike_lifetime_range",
+		add(tunnelWide, SeverityWarn, "ike_lifetime_range",
 			fmt.Sprintf("IKE lifetime %ds is outside the commonly-supported 120–172800s range and may be rejected by some vendors", intent.IKELifetimeSecs))
 	}
 	if intent.DPD.DelaySecs <= 0 {
-		add(SeverityWarn, "dpd_off", "dead-peer detection is off — a dead peer won't be noticed and routes may blackhole")
+		add(tunnelWide, SeverityWarn, "dpd_off", "dead-peer detection is off — a dead peer won't be noticed and routes may blackhole")
 	}
 
 	return fs
@@ -320,8 +351,12 @@ func validateSubnets(intent *TunnelIntent) []Finding {
 	var fs []Finding
 	a, aErr := parseCIDRs(intent.Ends[0].ProtectedSubnets)
 	b, bErr := parseCIDRs(intent.Ends[1].ProtectedSubnets)
-	for _, e := range append(aErr, bErr...) {
-		fs = append(fs, Finding{SeverityBlock, "subnet_invalid", e})
+	// Reported per end rather than as one merged list: a malformed CIDR is only
+	// actionable if the operator knows WHICH side's box to fix.
+	for end, errs := range map[int][]string{0: aErr, 1: bErr} {
+		for _, e := range errs {
+			fs = append(fs, Finding{Severity: SeverityBlock, Code: "subnet_invalid", Message: e, End: endRef(end)})
+		}
 	}
 
 	// Cap protected subnets per end: FortiGate routes/policies use deterministic
@@ -331,8 +366,7 @@ func validateSubnets(intent *TunnelIntent) []Finding {
 	// blocked at validation, never silently overwriting its own policy on apply.
 	for i := range intent.Ends {
 		if n := len(intent.Ends[i].ProtectedSubnets); n > MaxProtectedSubnetsPerEnd {
-			fs = append(fs, Finding{SeverityBlock, "too_many_subnets",
-				fmt.Sprintf("%s has %d protected subnets — the maximum is %d (deterministic route/policy key allocation); split into multiple tunnels", endLabel(intent, i), n, MaxProtectedSubnetsPerEnd)})
+			fs = append(fs, Finding{Severity: SeverityBlock, Code: "too_many_subnets", End: endRef(i), Message: fmt.Sprintf("%s has %d protected subnets — the maximum is %d (deterministic route/policy key allocation); split into multiple tunnels", endLabel(intent, i), n, MaxProtectedSubnetsPerEnd)})
 		}
 	}
 
@@ -340,8 +374,7 @@ func validateSubnets(intent *TunnelIntent) []Finding {
 	for _, na := range a {
 		for _, nb := range b {
 			if netsOverlap(na, nb) {
-				fs = append(fs, Finding{SeverityBlock, "subnet_overlap",
-					fmt.Sprintf("protected networks overlap (%s ↔ %s) — they must be disjoint", na.String(), nb.String())})
+				fs = append(fs, Finding{Severity: SeverityBlock, Code: "subnet_overlap", End: tunnelWide, Message: fmt.Sprintf("protected networks overlap (%s ↔ %s) — they must be disjoint", na.String(), nb.String())})
 			}
 		}
 	}
@@ -358,8 +391,11 @@ func validateSubnets(intent *TunnelIntent) []Finding {
 			if isDefaultRoute(n) {
 				// A default route already implies the peer-path problem; report it
 				// once (the more specific self_lockout below is skipped for 0/0).
-				fs = append(fs, Finding{SeverityBlock, "default_route_over_vti",
-					fmt.Sprintf("%s would route 0.0.0.0/0 over the tunnel — a pinned host route to the peer is required first", endLabel(intent, i))})
+				// End is the PEER, not i: the finding is raised for end i but the
+				// 0/0 lives in the peer's protected list, and that is the field the
+				// operator has to edit.
+				fs = append(fs, Finding{Severity: SeverityBlock, Code: "default_route_over_vti", End: endRef(1 - i), Subject: n.String(),
+					Message: fmt.Sprintf("%s would route 0.0.0.0/0 over the tunnel — a pinned host route to the peer is required first", endLabel(intent, i))})
 				continue
 			}
 			// A very broad covering prefix (e.g. the 0.0.0.0/1 + 128.0.0.0/1
@@ -382,7 +418,7 @@ func validateSubnets(intent *TunnelIntent) []Finding {
 				if peer.Dynamic {
 					msg = fmt.Sprintf("%s would route %s over the tunnel to a dynamic/behind-NAT peer — effectively a default route, and the peer's real endpoint is not known in advance, so it cannot be excluded with a pinned host route. Narrow the protected subnets to the networks that actually need the tunnel.", endLabel(intent, i), n.String())
 				}
-				fs = append(fs, Finding{SeverityBlock, "default_route_over_vti", msg})
+				fs = append(fs, Finding{Severity: SeverityBlock, Code: "default_route_over_vti", End: endRef(1 - i), Subject: n.String(), Message: msg})
 				continue
 			}
 			// Beyond the broad-prefix case, a DYNAMIC peer's PeerIP is not an IKE
@@ -405,8 +441,7 @@ func validateSubnets(intent *TunnelIntent) []Finding {
 				if intent.Ends[i].Gateway != "" {
 					continue
 				}
-				fs = append(fs, Finding{SeverityWarn, "self_lockout",
-					fmt.Sprintf("protected subnet %s includes the peer's WAN endpoint %s — set this end's WAN gateway to auto-pin a /32 host route to the peer, or remove the WAN/transit network from the protected list", n.String(), peer.PeerIP)})
+				fs = append(fs, Finding{Severity: SeverityWarn, Code: "self_lockout", End: endRef(1 - i), Subject: n.String(), Message: fmt.Sprintf("protected subnet %s includes the peer's WAN endpoint %s — set this end's WAN gateway to auto-pin a /32 host route to the peer, or remove the WAN/transit network from the protected list", n.String(), peer.PeerIP)})
 			}
 		}
 	}
@@ -490,31 +525,26 @@ func validateIdentity(intent *TunnelIntent, i int) []Finding {
 	// The value mirrors into FortiGate `localid` AND `peerid` (the other end's id),
 	// both capped at 63 characters — applies to every identity type.
 	if len(val) > 63 {
-		fs = append(fs, Finding{SeverityBlock, "id_too_long",
-			fmt.Sprintf("%s IKE identity %q is %d characters — the maximum is 63 (FortiGate limit)", label, val, len(val))})
+		fs = append(fs, Finding{Severity: SeverityBlock, Code: "id_too_long", End: endRef(i), Message: fmt.Sprintf("%s IKE identity %q is %d characters — the maximum is 63 (FortiGate limit)", label, val, len(val))})
 	}
 
 	switch id.Type {
 	case IDTypeFQDN:
 		switch {
 		case net.ParseIP(val) != nil:
-			fs = append(fs, Finding{SeverityBlock, "id_fqdn_is_ip",
-				fmt.Sprintf("%s FQDN identity %q is an IP address — strongSwan would treat it as an IP identity while FortiGate sends it as an FQDN, so the tunnel fails to authenticate. Set the identity type to IP instead.", label, val)})
+			fs = append(fs, Finding{Severity: SeverityBlock, Code: "id_fqdn_is_ip", End: endRef(i), Message: fmt.Sprintf("%s FQDN identity %q is an IP address — strongSwan would treat it as an IP identity while FortiGate sends it as an FQDN, so the tunnel fails to authenticate. Set the identity type to IP instead.", label, val)})
 		case isIPRange(val):
-			fs = append(fs, Finding{SeverityBlock, "id_fqdn_is_range",
-				fmt.Sprintf("%s FQDN identity %q is an IP address range — strongSwan parses it as an address range, which cannot be an IKE identity.", label, val)})
+			fs = append(fs, Finding{Severity: SeverityBlock, Code: "id_fqdn_is_range", End: endRef(i), Message: fmt.Sprintf("%s FQDN identity %q is an IP address range — strongSwan parses it as an address range, which cannot be an IKE identity.", label, val)})
 		case safeToken(val) && !fqdnCharsOK(val):
 			// safeToken permits ':' but a ':'-bearing value is read by strongSwan as
 			// an IPv6 address, a KEY_ID, or a `type:` prefix — never the ID_FQDN
 			// FortiGate sends. (Every other hostile char is already blocked by
 			// safeToken/unsafe_value above, so this branch only catches ':'.)
-			fs = append(fs, Finding{SeverityBlock, "id_fqdn_charset",
-				fmt.Sprintf("%s FQDN identity %q must not contain ':' — the peer would interpret it as an IP/key-id, not an FQDN.", label, val)})
+			fs = append(fs, Finding{Severity: SeverityBlock, Code: "id_fqdn_charset", End: endRef(i), Message: fmt.Sprintf("%s FQDN identity %q must not contain ':' — the peer would interpret it as an IP/key-id, not an FQDN.", label, val)})
 		}
 	case IDTypeIP:
 		if net.ParseIP(val) == nil {
-			fs = append(fs, Finding{SeverityBlock, "id_ip_invalid",
-				fmt.Sprintf("%s IP identity %q is not a valid IP address.", label, val)})
+			fs = append(fs, Finding{Severity: SeverityBlock, Code: "id_ip_invalid", End: endRef(i), Message: fmt.Sprintf("%s IP identity %q is not a valid IP address.", label, val)})
 		}
 	}
 	return fs
