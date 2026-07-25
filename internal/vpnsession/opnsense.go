@@ -111,14 +111,14 @@ func ParseOPNsense(deviceID uint, ts time.Time, phase1Body, sadBody, spdBody str
 		}
 
 		out = append(out, row)
-		seen[childKey(phase1, pol.localSel, pol.remoteSel)] = true
+		seen[childKey(pol.localSel, pol.remoteSel)] = true
 	}
 
 	// Anything the server expects but the box is not carrying is DOWN, not
 	// absent. Zero counters and zero uptime keep the ever-up gate honest: a
 	// child that has never established must not be alertable.
 	for _, e := range expected {
-		if seen[childKey(e.TunnelName, e.Local, e.Remote)] {
+		if seen[childKey(e.Local, e.Remote)] {
 			continue
 		}
 		out = append(out, models.VPNStatus{
@@ -337,8 +337,18 @@ func tunnelChildName(tunnel, localSel, remoteSel string) string {
 	return tunnel + ":" + networkOf(localSel) + "-" + networkOf(remoteSel)
 }
 
-func childKey(phase1, localSel, remoteSel string) string {
-	return phase1 + "|" + networkOf(localSel) + "|" + networkOf(remoteSel)
+// childKey identifies a child by its SELECTOR PAIR, not by its name.
+//
+// Naming is best-effort — an unjoinable connection falls back to the UUID — but
+// the expected-children list can only refer to the provisioned name. Keying on
+// the name therefore fails to recognise an established-but-unnamed child, and
+// the same child gets reported twice: up under the UUID and synthesized down
+// under the provisioned name, i.e. a phantom outage beside a working tunnel.
+//
+// The selector pair is the child's real identity: the kernel will not install
+// two policies for the same pair, so it is unique per box.
+func childKey(localSel, remoteSel string) string {
+	return networkOf(localSel) + "|" + networkOf(remoteSel)
 }
 
 // ---- small helpers -----------------------------------------------------

@@ -279,3 +279,35 @@ func TestParseOPNsense_WildcardPeerWithSeveralConnectionsRefusesToGuess(t *testi
 			"which one this child belongs to", rows[0].phase1)
 	}
 }
+
+// A child that IS established but whose connection could not be NAMED falls
+// back to the UUID. The expected-children list uses the provisioned name, so if
+// the "already seen" bookkeeping is keyed on the name, the same child is
+// reported twice: once up under the UUID and once synthesized down under the
+// provisioned name. An operator would see a phantom outage next to a working
+// tunnel — worse than either alone.
+func TestParseOPNsense_UnnamedButPresentChildIsNotAlsoReportedDown(t *testing.T) {
+	// Two connections, neither joinable by address, so naming falls back to UUID.
+	p1 := `{"rows":[
+	 {"remote-addrs":"%any","phase1desc":"fwm-t11","name":"uuid-a"},
+	 {"remote-addrs":"%any","phase1desc":"fwm-t99","name":"uuid-b"}]}`
+
+	rows := parse(t, p1, sadFixture, spdFixture,
+		ExpectedChild{TunnelName: "fwm-t11", Local: "192.168.50.0/24", Remote: "192.168.13.0/24"})
+
+	var up, down int
+	for _, r := range rows {
+		switch r.status {
+		case "up":
+			up++
+		case "down":
+			down++
+		}
+	}
+	if up == 1 && down == 1 {
+		t.Fatalf("the same child was reported BOTH up and down: %+v", rows)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("want exactly 1 row for 1 child, got %d: %+v", len(rows), rows)
+	}
+}
