@@ -1388,87 +1388,6 @@ func (p *Poller) pruneStaleIfaceStats(ttl time.Duration) {
 // the detection READ succeeded. The ok flag mirrors l2OK: a failed read must not
 // be mistaken for "this device pair no longer exists", or the cycle's stale sweep
 // would delete every VPN edge and recreate it with new IDs next cycle.
-// vpnSelectorNet parses a selector as reported in vpn_status.
-//
-// Two formats occur, from two different code paths in the FortiGate SNMP
-// profile: proper CIDR ("192.168.13.0/24") and an inclusive RANGE
-// ("192.168.13.0 - 192.168.13.255") emitted where the MIB exposes begin/end
-// addresses instead of addr/mask. A CIDR-only parse silently fails on the
-// latter, which would leave a healthy tunnel unattributed and its edge red.
-//
-// A range is reduced to its first address, which is all the containment test
-// below needs.
-func vpnSelectorNet(s string) (net.IP, bool) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil, false
-	}
-	if i := strings.Index(s, "-"); i >= 0 {
-		s = strings.TrimSpace(s[:i])
-	}
-	if ip, _, err := net.ParseCIDR(s); err == nil {
-		return ip, true
-	}
-	if ip := net.ParseIP(s); ip != nil {
-		return ip, true
-	}
-	return nil, false
-}
-
-// selectorCovered reports whether any of the intent's subnets contains the
-// address the device reported for this selector. Containment rather than
-// equality: FortiOS narrows a selector it has negotiated (a /24 in the intent
-// is reported as a /32 for the specific host pair actually in use).
-func selectorCovered(intentSubnets []string, reported string) bool {
-	ip, ok := vpnSelectorNet(reported)
-	if !ok {
-		return false
-	}
-	for _, s := range intentSubnets {
-		_, n, err := net.ParseCIDR(strings.TrimSpace(s))
-		if err != nil {
-			continue
-		}
-		if n.Contains(ip) {
-			return true
-		}
-	}
-	return false
-}
-
-// matchProvisionedBySubnets identifies the provisioned tunnel an unnamed row
-// belongs to, using the traffic it carries.
-//
-// A FortiGate dialup instance carries no usable tunnel name — the collector
-// synthesizes one from the peer's observed address — so the selectors are the
-// only self-describing thing on the row. Both must line up with the same
-// tunnel's intent, from the reporting device's point of view.
-//
-// A tie is resolved by refusing to answer: attributing a tunnel to the wrong
-// parent is worse than leaving it unattributed, because the result wears the
-// "provisioned" label and looks authoritative.
-func matchProvisionedBySubnets(provPairs map[string]database.ProvisionedTunnelPair, vpn models.VPNStatus) (database.ProvisionedTunnelPair, bool) {
-	if vpn.LocalSubnet == "" || vpn.RemoteSubnet == "" {
-		return database.ProvisionedTunnelPair{}, false
-	}
-	var hit database.ProvisionedTunnelPair
-	found := 0
-	for _, pp := range provPairs {
-		local, remote, ok := pp.SubnetsFor(vpn.DeviceID)
-		if !ok {
-			continue // this device is not an endpoint of that tunnel
-		}
-		if selectorCovered(local, vpn.LocalSubnet) && selectorCovered(remote, vpn.RemoteSubnet) {
-			hit = pp
-			found++
-		}
-	}
-	if found != 1 {
-		return database.ProvisionedTunnelPair{}, false
-	}
-	return hit, true
-}
-
 func (p *Poller) detectVPNConnections(devices []models.Device) (int, bool) {
 	if p.db == nil || len(devices) == 0 {
 		return 0, true
@@ -1682,7 +1601,7 @@ func (p *Poller) detectVPNConnections(devices []models.Device) (int, bool) {
 		if linked[i] != nil || !isDialup(vpn) {
 			continue
 		}
-		pp, ok := matchProvisionedBySubnets(provPairs, vpn)
+		pp, ok := database.MatchProvisionedBySubnets(provPairs, vpn)
 		if !ok {
 			continue
 		}
