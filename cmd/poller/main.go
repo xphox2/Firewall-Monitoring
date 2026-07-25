@@ -1436,6 +1436,7 @@ func (p *Poller) detectVPNConnections(devices []models.Device) (int, bool) {
 	// still identifies a real device pair, but is too old to assert up/down, so
 	// the connection is HELD as "stale" (amber) instead of being trusted.
 	freshCutoff := time.Now().Add(-database.VPNEvidenceFresh)
+	graceCutoff := time.Now().Add(-database.VPNEvidenceGrace)
 	isFresh := func(vpn models.VPNStatus) bool { return !vpn.Timestamp.Before(freshCutoff) }
 	// NB: do NOT early-return when vpnStatuses is empty. Dial-up/interface-mode
 	// spokes expose no fgVpnTunTable rows, so the remote-gateway strategies below
@@ -1774,6 +1775,15 @@ func (p *Poller) detectVPNConnections(devices []models.Device) (int, bool) {
 			if addr.Timestamp.Before(evidenceTS) {
 				evidenceTS = addr.Timestamp
 			}
+			// Past grace this is not evidence at all. Without this cutoff the
+			// staircase has no final step: a frozen device's rows sit at its own
+			// per-device MAX forever, so the pair keeps being re-derived and
+			// re-stamped and the sweep can never reap it — either held amber
+			// indefinitely (both sides frozen) or, worse, rendered a confident
+			// "up" from a dead spoke's frozen status (one side frozen).
+			if evidenceTS.Before(graceCutoff) {
+				continue
+			}
 			tunAddrs = append(tunAddrs, tunAddr{
 				deviceID: addr.DeviceID,
 				ip:       ip4,
@@ -1908,6 +1918,10 @@ func (p *Poller) detectVPNConnections(devices []models.Device) (int, bool) {
 
 		if err := p.db.UpsertAutoConnection(pi.sourceID, pi.destID, status, tunnelNames, connName, pi.connType, pi.matchMethod); err != nil {
 			log.Printf("VPN auto-detect: failed to upsert connection %s - %v", connName, err)
+			// The sweep is unconditional now, so a write failure is as dangerous as
+			// a read failure: last_check was not advanced, and the sweep would read
+			// that as "the pair is gone" and delete a live edge.
+			readsOK = false
 		}
 	}
 
@@ -1938,6 +1952,12 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) (int, bool) {
 		return 0, true
 	}
 
+	// cycleOK tracks whether this cycle's evidence is COMPLETE. Every read and
+	// write below feeds it: the stale sweep is unconditional, so a failure that
+	// leaves an edge un-refreshed would be read as "the pair is gone" and delete
+	// something alive.
+	cycleOK := true
+
 	ifaces, err := p.db.GetAllLatestInterfaces()
 	if err != nil {
 		log.Printf("Overlay auto-detect: failed to get interfaces - %v", err)
@@ -1953,6 +1973,11 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) (int, bool) {
 	for _, dev := range devices {
 		if strings.ToLower(dev.Vendor) == "fortigate" {
 			rev, err := p.db.GetLatestConfigRevision(dev.ID)
+			if err != nil {
+				// vxlan-derived edges for this device can't be built this cycle.
+				log.Printf("Overlay auto-detect: config revision for device %d - %v", dev.ID, err)
+				cycleOK = false
+			}
 			if err == nil && rev != nil && rev.ConfigText != "" {
 				vxlans := snmp.ParseFortiGateVxlanConfig(rev.ConfigText)
 				if len(vxlans) > 0 {
@@ -1973,7 +1998,13 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) (int, bool) {
 			ipToDeviceID[devices[i].IPAddress] = devices[i].ID
 		}
 	}
-	ifAddrs, _ := p.db.GetLatestInterfaceAddresses()
+	// A failed read here guts hasDirectLink, so pairs that require direct-link
+	// validation silently fail to form and the sweep deletes live edges.
+	ifAddrs, addrErr := p.db.GetLatestInterfaceAddresses()
+	if addrErr != nil {
+		log.Printf("Overlay auto-detect: failed to get interface addresses - %v", addrErr)
+		cycleOK = false
+	}
 	for _, addr := range ifAddrs {
 		if _, exists := ipToDeviceID[addr.IPAddress]; !exists {
 			ipToDeviceID[addr.IPAddress] = addr.DeviceID
@@ -1984,7 +2015,11 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) (int, bool) {
 	// direct link: an "up" carried over from evidence that is hours old would
 	// keep classifying an overlay as directly-linked long after the underlying
 	// tunnel stopped being reported.
-	vpnStatuses, _ := p.db.GetAllLatestVPNStatuses()
+	vpnStatuses, vpnErr := p.db.GetAllLatestVPNStatuses()
+	if vpnErr != nil {
+		log.Printf("Overlay auto-detect: failed to get VPN statuses - %v", vpnErr)
+		cycleOK = false
+	}
 	overlayFreshCutoff := time.Now().Add(-database.VPNEvidenceFresh)
 	// Build set of device pairs with verified direct VPN links (remote IP points to other device)
 	vpnByDevice := make(map[uint][]models.VPNStatus)
@@ -2227,6 +2262,7 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) (int, bool) {
 
 		if err := p.db.UpsertAutoConnection(pi.sourceID, pi.destID, status, tunnelNames, connName, pi.connType, "name_match"); err != nil {
 			log.Printf("Overlay auto-detect: failed to upsert connection %s - %v", connName, err)
+			cycleOK = false
 		} else {
 			created++
 		}
@@ -2235,7 +2271,7 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) (int, bool) {
 	if created > 0 {
 		log.Printf("Overlay auto-detect: upserted %d connection(s)", created)
 	}
-	return created, true
+	return created, cycleOK
 }
 
 // sendCriticalAlertEmail sends an HTML email for critical alerts with embedded charts.
