@@ -306,12 +306,82 @@
                 // Render tunnel tables
                 renderTunnelTable('src-tunnels-table', data.source_tunnels || [], conn.source_device_id);
                 renderTunnelTable('dst-tunnels-table', data.dest_tunnels || [], conn.dest_device_id);
+                renderTunnelCharts('src-tunnel-charts', data.source_tunnels || [], conn.source_device_id);
+                renderTunnelCharts('dst-tunnel-charts', data.dest_tunnels || [], conn.dest_device_id);
                 document.getElementById('src-tunnels-title').textContent = 'Source Tunnels (' + srcName + ')';
                 document.getElementById('dst-tunnels-title').textContent = 'Destination Tunnels (' + dstName + ')';
             }
         }).catch(function(err) {
             console.error('[ConnectionDetail] Error loading detail:', err);
             AC.showError('Failed to load connection details');
+        });
+    }
+
+    // One chart per LOGICAL tunnel, full width, above its table.
+    //
+    // Previously every row expanded to its own small chart, so a tunnel drew one
+    // chart per side AND one per phase2 row — and because a config-derived row
+    // (FortiGate SSH phase1) carries no counters at all, one of them was always
+    // blank. Rows of one tunnel are united by tunnel_group, which the server
+    // resolves from the provisioning record; the group query sums their
+    // per-bucket deltas, and counterless rows contribute nothing.
+    //
+    // Scoped to one device per table on purpose: the two ends report the SAME
+    // traffic from their own side, so a combined chart would double every byte.
+    function renderTunnelCharts(hostId, tunnels, deviceId) {
+        var host = document.getElementById(hostId);
+        if (!host) return;
+        var groups = [], seen = {};
+        for (var i = 0; i < tunnels.length; i++) {
+            var g = tunnels[i].tunnel_group || tunnels[i].phase1_name || tunnels[i].tunnel_name;
+            if (!g || seen[g]) continue;
+            seen[g] = true;
+            groups.push(g);
+        }
+        if (!groups.length) { host.innerHTML = ''; return; }
+
+        var html = '';
+        for (var k = 0; k < groups.length; k++) {
+            var cid = hostId + '-g' + k;
+            html +=
+                '<div class="tunnel-chart-wrap" style="margin-bottom:16px;">' +
+                    '<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;">' +
+                        '<span style="font-weight:600;color:var(--fwmon-text);">' + AC.escapeHtml(groups[k]) + '</span>' +
+                        '<span style="font-size:0.75rem;color:var(--fwmon-text-mute);">combined across this tunnel\'s phase 2 entries</span>' +
+                    '</div>' +
+                    '<div class="range-pills" style="margin-bottom:8px;">' +
+                        ['1h', '24h', '7d', '30d'].map(function(rg, ri) {
+                            return '<div class="range-pill' + (ri === 1 ? ' active' : '') + '" data-action="load-group-chart"' +
+                                ' data-canvas-id="' + cid + '" data-device-id="' + deviceId + '"' +
+                                ' data-group="' + AC.escapeHtml(groups[k]) + '" data-range="' + rg + '">' + rg + '</div>';
+                        }).join('') +
+                    '</div>' +
+                    '<div class="chart-container"><canvas id="' + cid + '"></canvas></div>' +
+                '</div>';
+        }
+        host.innerHTML = html;
+        for (var m = 0; m < groups.length; m++) {
+            loadGroupChart(hostId + '-g' + m, deviceId, groups[m], '24h');
+        }
+    }
+
+    function loadGroupChart(canvasId, deviceId, group, range, pillEl) {
+        if (pillEl) {
+            var pills = pillEl.parentElement.querySelectorAll('.range-pill');
+            for (var p = 0; p < pills.length; p++) { pills[p].classList.remove('active'); }
+            pillEl.classList.add('active');
+        }
+        return AC.apiFetch(API_BASE + '/devices/' + deviceId + '/vpn-group-chart?group=' +
+                encodeURIComponent(group) + '&range=' + range).then(function(result) {
+            var data = result.data;
+            var canvas = document.getElementById(canvasId);
+            if (!canvas) return;
+            if (tunnelCharts[canvasId]) { tunnelCharts[canvasId].destroy(); delete tunnelCharts[canvasId]; }
+            if (!Array.isArray(data) || !data.length) return;
+            var series = window.FwmonBwChart.normalizeDeltas(data);
+            tunnelCharts[canvasId] = window.FwmonBwChart.mount(canvas, series, { rxLabel: 'In', txLabel: 'Out' });
+        }).catch(function(err) {
+            AC.showError('Failed to load tunnel chart');
         });
     }
 
@@ -332,8 +402,8 @@
                 ? '<span class="badge ipsec">' + AC.escapeHtml(t.tunnel_type) + '</span>'
                 : '-';
             html +=
-                '<tr class="tunnel-row" data-action="toggle-tunnel" data-row-id="' + rowId + '" data-device-id="' + deviceId + '" data-tunnel-name="' + AC.escapeHtml(t.tunnel_name) + '">' +
-                    '<td><span class="chevron" id="chev-' + rowId + '">&#9654;</span></td>' +
+                '<tr class="tunnel-row">' +
+                    '<td></td>' +
                     '<td>' + AC.escapeHtml(t.phase1_name || t.tunnel_name) + '</td>' +
                     '<td>' + AC.escapeHtml(t.tunnel_name) + '</td>' +
                     '<td>' + typeBadge + '</td>' +
@@ -344,19 +414,6 @@
                     '<td>' + formatBytes(t.bytes_in) + '</td>' +
                     '<td>' + formatBytes(t.bytes_out) + '</td>' +
                     '<td>' + formatUptime(t.tunnel_uptime) + '</td>' +
-                '</tr>' +
-                '<tr class="tunnel-expand" id="' + rowId + '">' +
-                    '<td colspan="11">' +
-                        '<div class="tunnel-chart-wrap">' +
-                            '<div class="range-pills" style="margin-bottom:8px;">' +
-                                '<div class="range-pill active" data-action="load-tunnel-chart" data-row-id="' + rowId + '" data-device-id="' + deviceId + '" data-tunnel-name="' + AC.escapeHtml(t.tunnel_name) + '" data-range="1h">1h</div>' +
-                                '<div class="range-pill" data-action="load-tunnel-chart" data-row-id="' + rowId + '" data-device-id="' + deviceId + '" data-tunnel-name="' + AC.escapeHtml(t.tunnel_name) + '" data-range="24h">24h</div>' +
-                                '<div class="range-pill" data-action="load-tunnel-chart" data-row-id="' + rowId + '" data-device-id="' + deviceId + '" data-tunnel-name="' + AC.escapeHtml(t.tunnel_name) + '" data-range="7d">7d</div>' +
-                                '<div class="range-pill" data-action="load-tunnel-chart" data-row-id="' + rowId + '" data-device-id="' + deviceId + '" data-tunnel-name="' + AC.escapeHtml(t.tunnel_name) + '" data-range="30d">30d</div>' +
-                            '</div>' +
-                            '<div class="chart-container"><canvas id="chart-' + rowId + '"></canvas></div>' +
-                        '</div>' +
-                    '</td>' +
                 '</tr>';
         }
         tbody.innerHTML = html;
@@ -408,46 +465,6 @@
                 '</div>';
         }
         container.innerHTML = html;
-    }
-
-    function toggleTunnel(rowId, deviceId, tunnelName) {
-        var expandRow = document.getElementById(rowId);
-        var chev = document.getElementById('chev-' + rowId);
-        if (expandRow.classList.contains('open')) {
-            expandRow.classList.remove('open');
-            chev.classList.remove('open');
-        } else {
-            expandRow.classList.add('open');
-            chev.classList.add('open');
-            if (!tunnelCharts[rowId]) {
-                loadTunnelChart(rowId, deviceId, tunnelName, '1h');
-            }
-        }
-    }
-
-    function loadTunnelChart(rowId, deviceId, tunnelName, range, pillEl) {
-        if (pillEl) {
-            var pills = pillEl.parentElement.querySelectorAll('.range-pill');
-            for (var p = 0; p < pills.length; p++) { pills[p].classList.remove('active'); }
-            pillEl.classList.add('active');
-        }
-        return AC.apiFetch(API_BASE + '/devices/' + deviceId + '/vpn/' + encodeURIComponent(tunnelName) + '/chart?range=' + range).then(function(result) {
-            var data = result.data;
-            if (!data) return;
-
-            var canvas = document.getElementById('chart-' + rowId);
-            if (!canvas) return;
-            if (tunnelCharts[rowId]) tunnelCharts[rowId].destroy();
-            if (!Array.isArray(data) || !data.length) return;
-
-            // VPN tunnel rows arrive as per-bucket deltas — render
-            // throughput/transfer/combined via the shared 3-mode component.
-            var series = window.FwmonBwChart.normalizeDeltas(data);
-            tunnelCharts[rowId] = window.FwmonBwChart.mount(canvas, series, { rxLabel: 'In', txLabel: 'Out' });
-        }).catch(function(err) {
-            console.error('[ConnectionDetail] Error loading tunnel chart:', err);
-            AC.showError('Failed to load tunnel chart');
-        });
     }
 
     function chartOptions(yCallback) {
@@ -688,14 +705,9 @@
         'set-flow-range': function(el) {
             setFlowRange(parseInt(el.dataset.range, 10));
         },
-        'toggle-tunnel': function(el, e) {
-            // Don't toggle when clicking on the range pills inside the expand row
-            if (e.target.closest('.tunnel-expand')) return;
-            toggleTunnel(el.dataset.rowId, parseInt(el.dataset.deviceId, 10), el.dataset.tunnelName);
-        },
-        'load-tunnel-chart': function(el, e) {
-            e.stopPropagation();
-            loadTunnelChart(el.dataset.rowId, parseInt(el.dataset.deviceId, 10), el.dataset.tunnelName, el.dataset.range, el);
+        'load-group-chart': function(el) {
+            loadGroupChart(el.dataset.canvasId, parseInt(el.dataset.deviceId, 10),
+                el.dataset.group, el.dataset.range, el);
         }
     });
 

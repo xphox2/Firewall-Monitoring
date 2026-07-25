@@ -1057,6 +1057,9 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/connections/:id/flows", handler.GetConnectionFlows)
 		admin.GET("/api/connections/:id/events", handler.GetConnectionEvents)
 		admin.GET("/api/devices/:id/vpn/:tunnel/chart", handler.GetVPNTunnelChart)
+		// Group chart: the tunnel group is a QUERY param, not a path segment —
+		// child names embed selectors and gin routes on the decoded path.
+		admin.GET("/api/devices/:id/vpn-group-chart", handler.GetVPNGroupChart)
 		admin.GET("/api/devices/:id/security-stats", handler.GetDeviceSecurityStats)
 		admin.GET("/api/devices/:id/sdwan-health", handler.GetDeviceSDWANHealth)
 		admin.GET("/api/devices/:id/ha-status", handler.GetDeviceHAStatus)
