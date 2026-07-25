@@ -963,6 +963,14 @@
     }
 
     function renderPreviewPanes(ends, provisional) {
+        // The server now answers 200 with findings and NO ends when the intent
+        // cannot be rendered yet (it used to 400 and the findings were lost). Say
+        // so, rather than leaving a blank panel that reads like a failed request.
+        if (!ends || !ends.length) {
+            $('ipsec-preview-panes').innerHTML =
+                '<p class="ipsec-matrix-cap">No configuration to show yet — resolve the items above and validate again.</p>';
+            return;
+        }
         var note = provisional ? '<div style="color:var(--fwmon-text-mute);font-size:0.72rem;margin-bottom:4px;">Provisional — tunnel name, VTI addressing, and reqid are assigned on Save.</div>' : '';
         $('ipsec-preview-panes').innerHTML = (ends || []).map(function (e) {
             return '<div style="min-width:0;">' + note +

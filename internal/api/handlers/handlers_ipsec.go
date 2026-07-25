@@ -367,14 +367,49 @@ func (h *Handler) PreviewIPSecTunnel(c *gin.Context) {
 		return
 	}
 	ipsec.NormalizeIdentities(intent, caps) // coerce keyid→fqdn so the preview matches what deploy renders
-	previews, rerr := renderBothEnds(intent)
-	if rerr != nil {
-		c.JSON(http.StatusBadRequest, response.Error(rerr.Error()))
-		return
-	}
+	// Validate BEFORE rendering: the render is the thing most likely to fail on a
+	// bad intent, and it used to bail before the findings that explain why had
+	// even been computed.
 	findings := ipsec.Validate(intent, caps)
 	findings = append(findings, h.lanCoherenceFindings(db, intent)...)
+	previews, findings := renderPreviewEnds(intent, findings)
 	c.JSON(http.StatusOK, response.Success(gin.H{"ends": previews, "validation": findings}))
+}
+
+// renderPreviewEnds renders both ends for a PREVIEW response, converting a
+// render failure into a blocking finding instead of an error.
+//
+// A failed render is not an HTTP error here. The preview exists to explain what
+// is wrong with an intent, and a bad intent is precisely when the driver cannot
+// render it — so returning 400 threw away the findings that name the offending
+// field, and the wizard showed a dismissible toast instead of anchoring anything
+// to the control the operator has to fix. Concretely: an empty IKE identity
+// produces id_missing, and an unparseable gateway produces gateway_invalid, and
+// neither ever reached the client.
+//
+// Empty ends is a valid preview: there is nothing to show yet, and the findings
+// carry the answer.
+//
+// When the render fails but validation found nothing blocking, the error is
+// surfaced as a synthetic blocking finding rather than swallowed. That case is a
+// validation gap (the intent passed every linter yet cannot be rendered), and it
+// must still gate Save — the client disables Save whenever any finding blocks.
+//
+// This is preview-only. The deploy gate keeps its hard error: refusing to deploy
+// something that will not render is correct there.
+func renderPreviewEnds(intent *ipsec.TunnelIntent, findings []ipsec.Finding) ([]endPreview, []ipsec.Finding) {
+	previews, rerr := renderBothEnds(intent)
+	if rerr == nil {
+		return previews, findings
+	}
+	if !ipsec.HasBlock(findings) {
+		findings = append(findings, ipsec.Finding{
+			Severity: ipsec.SeverityBlock,
+			Code:     "render_failed",
+			Message:  "this tunnel cannot be rendered as configuration: " + rerr.Error(),
+		})
+	}
+	return nil, findings
 }
 
 // renderBothEnds renders each end's redacted preview. It returns ONLY endPreview
@@ -432,11 +467,7 @@ func (h *Handler) PreviewIPSecIntent(c *gin.Context) {
 	// Device-fact findings (warn-only) live outside ipsec.Validate, which is pure
 	// by design. Not appended at the deploy gate, which stays a blocking check.
 	findings = append(findings, h.lanCoherenceFindings(h.reqDB(c), &intent)...)
-	previews, rerr := renderBothEnds(&intent)
-	if rerr != nil {
-		c.JSON(http.StatusBadRequest, response.Error(rerr.Error()))
-		return
-	}
+	previews, findings := renderPreviewEnds(&intent, findings)
 	c.JSON(http.StatusOK, response.Success(gin.H{
 		"ends":        previews,
 		"validation":  findings,
