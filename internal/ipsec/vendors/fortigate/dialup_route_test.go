@@ -187,3 +187,62 @@ func TestRouteBasedDialup_IsRefused(t *testing.T) {
 		}
 	}
 }
+
+// A dialup peer's tunnel routes come from FortiOS at distance 15, not from the
+// driver at distance 10. The competing-route advisory must measure against the
+// route that ACTUALLY carries the traffic — otherwise a pre-existing route at
+// distance 11-15 beats the injected route and the advisory stays silent, a false
+// all-clear on the very "tunnel up, zero outbound" failure it exists to catch.
+func TestAdvisory_DialupUsesInjectedRouteDistance(t *testing.T) {
+	d := fgDriver(t)
+	// A pre-existing route at distance 12: harmless against a static peer's
+	// distance-10 route, but it BEATS a dialup peer's distance-15 injected route.
+	body := `{"results":[{"seq-num":7,"dst":"192.168.50.0 255.255.255.0","gateway":"10.0.0.1","device":"port2","distance":12,"blackhole":"disable","status":"enable"}]}`
+
+	dyn := d.Advisories(ipsec.ViewFor(dialupIntent(true), 0), map[string]string{checkRouteTable: body})
+	if len(dyn) != 1 {
+		t.Fatalf("a distance-12 route BEATS the dialup peer's distance-15 injected route and must be advised; got %d", len(dyn))
+	}
+	if !strings.Contains(dyn[0].Title, "outranks") {
+		t.Errorf("distance 12 vs 15 outranks the tunnel; got title %q", dyn[0].Title)
+	}
+	if !strings.Contains(dyn[0].Detail, "distance 15") {
+		t.Errorf("detail must state the injected-route distance the operator has to beat; got %q", dyn[0].Detail)
+	}
+	if !strings.Contains(dyn[0].Remedy, "set distance 25") {
+		t.Errorf("remedy must clear 15, not 10; got %q", dyn[0].Remedy)
+	}
+
+	// Same route against a STATIC peer: distance 12 loses to the driver's 10, so
+	// there is genuinely nothing to report.
+	if sta := d.Advisories(ipsec.ViewFor(dialupIntent(false), 0), map[string]string{checkRouteTable: body}); len(sta) != 0 {
+		t.Errorf("distance 12 loses to a static peer's distance-10 route — no advisory expected, got %+v", sta)
+	}
+}
+
+// The peer /32 "self-lockout guard" must NOT be rendered for a dialup peer. This
+// FortiGate never dials such a peer, so its PeerIP is not an IKE endpoint that
+// could be locked out — and a /32 out the WAN at distance 10 would beat the
+// injected /24 at 15, sending traffic for a legitimate in-tunnel host out the
+// WAN in cleartext.
+func TestDialupPeer_NoPeerHostRoute(t *testing.T) {
+	in := dialupIntent(true)
+	// Arrange the exact trigger: a Gateway on this end, and the peer's address
+	// sitting inside its own protected subnets.
+	in.Ends[0].Gateway = "203.0.113.254"
+	in.Ends[1].PeerIP = "192.168.5.107" // inside 192.168.5.0/24
+	_, all := renderBodies(t, in)
+
+	if strings.Contains(all, `"dst":"192.168.5.107 255.255.255.255"`) {
+		t.Errorf("dialup render must not pin a /32 host route to the peer — it would "+
+			"shadow the injected /24 and blackhole a legitimate in-tunnel host:\n%s", all)
+	}
+
+	// And validation must not nag about a lockout that cannot happen.
+	caps := [2]ipsec.CapabilityDescriptor{fgDriver(t).Capabilities(), fgDriver(t).Capabilities()}
+	for _, f := range ipsec.Validate(in, caps) {
+		if f.Code == "self_lockout" {
+			t.Errorf("self_lockout is a false premise for a dialup peer: %+v", f)
+		}
+	}
+}

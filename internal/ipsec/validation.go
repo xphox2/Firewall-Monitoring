@@ -344,7 +344,17 @@ func validateSubnets(intent *TunnelIntent) []Finding {
 	for i := range intent.Ends {
 		peer := &intent.Ends[1-i]
 		routed, _ := parseCIDRs(peer.ProtectedSubnets) // subnets end i installs toward the tunnel
+		// A DYNAMIC peer's PeerIP is not an IKE endpoint — this end never dials it
+		// (the peer initiates, and ESP returns to whatever source its NAT presents),
+		// so it cannot be locked out by routing its subnet down the tunnel. Treating
+		// it as one raises a bogus self_lockout warning and invites the operator to
+		// set a Gateway that would pin a /32 out the WAN over a legitimate in-tunnel
+		// host. The driver's peerRouteNeeded declines the route for the same reason;
+		// the two must stay in step.
 		peerIP := net.ParseIP(peer.PeerIP)
+		if peer.Dynamic {
+			peerIP = nil
+		}
 		for _, n := range routed {
 			if isDefaultRoute(n) {
 				// A default route already implies the peer-path problem; report it

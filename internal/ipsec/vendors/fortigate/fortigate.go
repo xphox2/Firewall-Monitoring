@@ -91,8 +91,10 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 	// rides the body via the %PSK% placeholder (injected into the real step,
 	// masked in the preview) — validPSK guarantees it stays JSON-safe.
 	// net-device=enable: the phase1 POST auto-creates the (kernel) tunnel
-	// interface the VTI addressing step, static routes, and firewall policies all
-	// depend on — without it the cmdb object exists but nothing forwards.
+	// interface the VTI addressing step and firewall policies depend on — without
+	// it the cmdb object exists but nothing forwards. (A STATIC peer's per-subnet
+	// routes also ride that interface; a dialup peer gets no driver-owned routes
+	// at all — see tunnelRoutesNeeded.)
 	p1body := map[string]any{
 		"name":         name,
 		"interface":    local.EgressIface,
@@ -471,7 +473,17 @@ func policySteps(tid uint, name, lan string) []ipsec.ApplyStep {
 // tunnel (self-lockout). Needs a Gateway to point the /32 at; without one the
 // route isn't rendered and validation raises a self_lockout WARNING (a WAN
 // default route may already cover the peer, so it's acknowledgeable, not a block).
+// It is meaningless — and actively harmful — for a DYNAMIC peer. This FortiGate
+// never dials a dialup peer (the peer initiates, and ESP returns to whatever
+// source the NAT presents), so its PeerIP is not an IKE endpoint that could be
+// locked out; for a dynamic end it is the management address. Pinning a /32 for
+// it out the WAN at FortiOS's default distance 10 would beat the add-route
+// injected /24 at distance 15 and send traffic destined for a legitimate host
+// inside the peer's LAN out the WAN in cleartext instead of down the tunnel.
 func peerRouteNeeded(local, remote *ipsec.EndpointSpec) bool {
+	if remote.Dynamic {
+		return false
+	}
 	return local.Gateway != "" && ipsec.SubnetContainsIP(remote.ProtectedSubnets, remote.PeerIP)
 }
 

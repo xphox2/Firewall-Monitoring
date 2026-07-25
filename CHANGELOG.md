@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.165] - 2026-07-25
+
+### Added — block route-based FortiGate tunnels to a dynamic (dialup) peer
+
+New blocking validation finding `routebased_dialup_unsupported`. `add-route` installs a route per **negotiated** phase2 selector, and a route-based tunnel negotiates `0.0.0.0/0` — so on a dialup peer it would install a **default route via the tunnel** instead of routes for the protected subnets. That is both wrong (the protected subnets get no specific route) and dangerous (it can capture unrelated traffic on a device whose own default route has a higher distance). Parent-bound statics are not an alternative (see v0.11.164), so the combination has no working form and is now refused with an explanation rather than deployed as a tunnel that comes up carrying nothing. Policy-based is unaffected — it negotiates the protected subnets as the selectors, so `add-route` installs exactly the right per-subnet routes.
+
+### Fixed — competing-route advisory measured against the wrong distance for a dialup peer
+
+The advisory added in v0.11.163 assumed the tunnel's routes always sit at the driver's distance **10**. Since v0.11.164 a dialup peer's routes are injected by FortiOS at distance **15**, so the advisory was wrong in both directions on exactly the topology that motivated it: a pre-existing route at distance 11–15 **beats** the injected route and reinstated "tunnel up, zero outbound" while the advisory stayed **silent** (a false all-clear), and a route at distance 10 was reported as an ECMP "tie" when it actually wins outright. `tunnelRouteDistance` now returns 15 for a dynamic peer and 10 for a static one, and the finding text names who installs the tunnel's route — the remedy differs, since an operator cannot lower a route the device injects.
+
+### Fixed — peer /32 self-lockout guard is a false premise for a dialup peer
+
+`peerRouteNeeded` pinned a /32 host route to the peer's address out the WAN whenever that address fell inside the peer's own protected subnets and this end had a gateway set. That guard exists so a tunnelled subnet cannot swallow the IKE endpoint this FortiGate dials — but a FortiGate **never dials a dialup peer** (the peer initiates, and ESP returns to whatever source its NAT presents), and a dynamic end's `PeerIP` is its management address, not an IKE endpoint. The /32 landed at FortiOS's default distance 10, **beating the injected /24 at distance 15**, so traffic to a legitimate host inside the peer's LAN left the WAN in cleartext instead of the tunnel — with validation silent, because it treats a set gateway as resolving the lockout. The route is no longer rendered for a dynamic peer, and the matching `self_lockout` warning is no longer raised for one. The route key slot is simply left uncreated, so the seq-num slot space is unchanged.
+
 ## [0.11.164] - 2026-07-25
 
 ### Fixed — FortiGate tunnels to a dynamic (dialup) peer came up but carried no outbound traffic
@@ -16,9 +30,6 @@ Root cause: since **FortiOS 7.0.1** a route binds to a tunnel by **tun_id**, rep
 
 Verified live end-to-end after the fix: the RIB switched to `iface fwm-t9_0 gw <peer> dist 15`, and **both** subnet pairs passed traffic bidirectionally (`in 504 / out 504` on each phase2, 0% ping loss).
 
-### Added — block route-based FortiGate tunnels to a dynamic (dialup) peer
-
-New blocking validation finding `routebased_dialup_unsupported`. `add-route` installs a route per **negotiated** phase2 selector, and a route-based tunnel negotiates `0.0.0.0/0` — so on a dialup peer it would install a **default route via the tunnel** instead of routes for the protected subnets. That is both wrong (the protected subnets get no specific route) and dangerous (it can capture unrelated traffic on a device whose own default route has a higher distance). Parent-bound statics are not an alternative for the reason above, so the combination has no working form and is now refused with an explanation rather than deployed as a tunnel that comes up carrying nothing. Policy-based is unaffected — it negotiates the protected subnets as the selectors, so `add-route` installs exactly the right per-subnet routes.
 
 Diagnosis note: the competing-route advisory added in v0.11.163 was not the cause here and its verdict was correct — the operator's conflicting route had already been disabled and was absent from the RIB.
 
