@@ -18,6 +18,16 @@ Investigating it surfaced that three separate queries disagreed about what "late
 
 **No migration needed — self-healing.** The ghost row's `last_check` stops advancing on the first cycle after deploy and the existing reaper removes it within ~60s. Frozen `vpn_status` rows stop being readable as state immediately and age out via existing retention; they are deliberately not deleted early.
 
+### Fixed — three residual holes in the same bug class
+
+Adversarial review of the above found the fix closed the reported path but left siblings open:
+
+- **Tunnel-overlay pairs had no freshness discipline at all.** Phase-4 matching is built from `interface_addresses` + `interface_stats`, both unbounded per-device `MAX`, and the pair was hardcoded as fresh. A device whose telemetry froze entirely (collector dead, device decommissioned) would keep re-deriving an overlay pair from frozen rows with a permanently "up" status and a re-stamped `last_check` — the identical ghost mechanism, just fed by a different table. Overlay evidence now carries its own timestamp (the older of the two rows that formed it) and takes the same staircase.
+- **The stale sweep could never fire in a VPN-only deployment.** It required `count > 0` across all detectors — a stand-in for a read-success signal the detectors did not report. In a deployment whose only connection is a VPN pair, that pair expiring drops every count to zero, so the sweep was skipped *forever* and the ghost row rendered indefinitely: the very bug this change exists to fix, surviving in the degenerate topology. All three detectors now report read success and the gate is "did every read succeed", not "did they find anything" — a successful read that legitimately found nothing is real evidence that nothing is left, and must sweep.
+- **"A failed read is not evidence the pair is gone" was enforced for only one of four reads.** `detectOverlayConnections` returned a bare count, and two interface reads inside `detectVPNConnections` were logged and continued past with empty maps — so with the other detectors healthy the sweep would delete every affected edge and recreate it next cycle with new IDs. All four now feed the read-success signal.
+
+Also corrected: the SQL prune bound's safety margin was justified by the wrong arithmetic. What matters is the worst-case wall-clock *spread* between the bound and a row, not the largest absolute offset; a local-zone bound makes that `14 − (−12) = 26h`, exceeding the 24h slack. The bound is now always built from UTC (offset 0), which caps the spread at 12h and makes the constant correct with margin.
+
 ### Fixed — `last_up_at` silently never populated on SQLite
 
 The "last seen up X ago" enrichment scanned `MAX(timestamp)` into a `time.Time` struct field. An aggregate loses the column's declared type, so the SQLite driver returns a string and the scan failed — and the error was swallowed by an `err == nil` guard, so the field was quietly left empty rather than reported. It now scans through `database/sql` (which supports `*any`, yielding the driver's native value) and normalizes both the Postgres `time.Time` and the SQLite string forms, logging any failure instead of hiding it.

@@ -108,7 +108,8 @@ func TestGetAllLatestVPNStatuses_SlowWriterNotMaskedByFast(t *testing.T) {
 	}
 }
 
-// Per-device isolation: one device expiring must not affect another.
+// The horizon is a hard edge: a tunnel a minute inside it is current, a minute
+// outside it is not.
 func TestGetAllLatestVPNStatuses_GraceBoundary(t *testing.T) {
 	d := vpnFreshnessDB(t)
 	now := time.Now().UTC()

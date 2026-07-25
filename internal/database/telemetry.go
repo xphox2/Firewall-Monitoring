@@ -44,7 +44,15 @@ const (
 //
 // So SQL only PRUNES (keeping the partition scan bounded, which is why the bound
 // exists at all) and the exact horizon is applied in Go, where comparison is
-// instant-based and zone-proof. 24h clears any real-world offset (max ±14h).
+// instant-based and zone-proof.
+//
+// The slack must cover the worst-case WALL-CLOCK SPREAD between the bound and a
+// row — not the largest absolute offset. The bound is always built from
+// time.Now().UTC() (offset 0), so a row can trail it by at most the most western
+// real offset, UTC-12; 24h clears that with a wide margin. Building the bound
+// from local time instead would make the worst case 14 - (-12) = 26h and this
+// constant too small — which is why the UTC() call at each use site is load
+// bearing, not cosmetic.
 const vpnZoneSlack = 24 * time.Hour
 
 // withinVPNGrace drops rows outside the evidence horizon. This — not the SQL
@@ -205,7 +213,8 @@ func (d *Database) SaveVPNStatuses(statuses []models.VPNStatus) error {
 // reading unbounded history on purpose.
 func (d *Database) GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, error) {
 	now := time.Now()
-	prune := now.Add(-VPNEvidenceGrace - vpnZoneSlack)
+	// UTC: see vpnZoneSlack — a local-zone bound widens the worst case past the slack.
+	prune := now.UTC().Add(-VPNEvidenceGrace - vpnZoneSlack)
 	var statuses []models.VPNStatus
 	err := d.db.Where("device_id = ? AND timestamp >= ? AND (tunnel_name, timestamp) IN (?)",
 		deviceID, prune, vpnLatestSubquery(d.db, deviceID, prune)).
@@ -214,9 +223,6 @@ func (d *Database) GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, erro
 		statuses = withinVPNGrace(statuses, now)
 	}
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return []models.VPNStatus{}, nil
-		}
 		return nil, err
 	}
 	if len(statuses) == 0 {
@@ -436,7 +442,8 @@ func coerceDBTime(v any) (time.Time, bool) {
 // the query rather than at the call sites.
 func (d *Database) GetAllLatestVPNStatuses() ([]models.VPNStatus, error) {
 	now := time.Now()
-	prune := now.Add(-VPNEvidenceGrace - vpnZoneSlack)
+	// UTC: see vpnZoneSlack — a local-zone bound widens the worst case past the slack.
+	prune := now.UTC().Add(-VPNEvidenceGrace - vpnZoneSlack)
 	var statuses []models.VPNStatus
 	sub := d.db.Model(&models.VPNStatus{}).
 		Select("device_id, tunnel_name, MAX(timestamp) as max_ts").
@@ -458,7 +465,8 @@ func (d *Database) GetAllLatestVPNStatuses() ([]models.VPNStatus, error) {
 // on the device, just not carrying traffic.
 func (d *Database) GetVPNTunnelCounts(deviceID uint) (up, total int, err error) {
 	now := time.Now()
-	prune := now.Add(-VPNEvidenceGrace - vpnZoneSlack)
+	// UTC: see vpnZoneSlack — a local-zone bound widens the worst case past the slack.
+	prune := now.UTC().Add(-VPNEvidenceGrace - vpnZoneSlack)
 	var statuses []models.VPNStatus
 	if err = d.db.Select("status, timestamp").
 		Where("device_id = ? AND timestamp >= ? AND (tunnel_name, timestamp) IN (?)",

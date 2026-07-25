@@ -1011,24 +1011,34 @@ func (p *Poller) runMonitoringCycle() {
 	// so the stale cleanup doesn't delete connections from the first detector.
 	connCycleStart := time.Now()
 	vpnCount, vpnOK := p.detectVPNConnections(devices)
-	overlayCount := p.detectOverlayConnections(devices)
+	overlayCount, overlayOK := p.detectOverlayConnections(devices)
 	l2Count, l2OK := p.detectL2Links(devices)
 
 	// Clean up auto-detected connections not refreshed by any detector.
-	// Only run cleanup if at least one detector found connections — otherwise
-	// a transient failure (DB error, empty data) would wipe all existing
-	// connections. l2OK guards the same hazard one level finer: a failed L2
-	// evidence READ with healthy VPN detectors would otherwise sweep every L2
-	// row (their last_check untouched) and recreate them next cycle with new IDs.
-	if p.db != nil && !(l2OK && vpnOK) {
-		log.Printf("Connection detection: a detector read failed (l2OK=%t vpnOK=%t), skipping stale cleanup this cycle to preserve existing data", l2OK, vpnOK)
-	} else if p.db != nil && (vpnCount+overlayCount+l2Count) > 0 {
+	//
+	// The gate is "did every detector's READ succeed", not "did they find
+	// anything". A failed read is indistinguishable from "the pair is gone", so
+	// sweeping on one would delete every edge of that family and recreate it next
+	// cycle with new IDs. But a SUCCESSFUL read that legitimately found nothing is
+	// real evidence that nothing is left, and must sweep.
+	//
+	// The old count>0 heuristic stood in for a success signal the detectors did
+	// not report. It also created a starvation corner: in a deployment whose only
+	// connection is a VPN pair, that pair expiring drops every count to zero, so
+	// the sweep was skipped forever and the very ghost row this cleanup exists to
+	// remove would render indefinitely. Now that all three detectors report read
+	// success, the counts are no longer needed to infer it.
+	detectorsOK := l2OK && vpnOK && overlayOK
+	if p.db != nil && !detectorsOK {
+		log.Printf("Connection detection: a detector read failed (l2OK=%t vpnOK=%t overlayOK=%t), skipping stale cleanup this cycle to preserve existing data", l2OK, vpnOK, overlayOK)
+	} else if p.db != nil {
+		if vpnCount+overlayCount+l2Count == 0 {
+			log.Printf("Connection detection: all detectors read successfully and found 0 connections; sweeping any leftovers")
+		}
 		removed := p.db.CleanupStaleAutoConnectionsBefore(connCycleStart)
 		if removed > 0 {
 			log.Printf("Connection cleanup: removed %d stale auto-detected connection(s)", removed)
 		}
-	} else if p.db != nil {
-		log.Printf("Connection detection: all detectors found 0 connections, skipping stale cleanup to preserve existing data")
 	}
 
 	// Check for alert escalations and probe data flow monitoring
@@ -1394,9 +1404,14 @@ func (p *Poller) detectVPNConnections(devices []models.Device) (int, bool) {
 	}
 
 	// Extend IP map with all interface addresses from IP-MIB
+	// A failed read is NOT evidence that a pair disappeared. Every interface-IP
+	// matched pair would silently fail to form this cycle and then be swept, so
+	// the whole detection is reported as unsuccessful instead.
+	readsOK := true
 	ifAddrs, err := p.db.GetLatestInterfaceAddresses()
 	if err != nil {
 		log.Printf("VPN auto-detect: failed to get interface addresses - %v", err)
+		readsOK = false
 	} else {
 		for _, addr := range ifAddrs {
 			if _, exists := ipToDevice[addr.IPAddress]; exists {
@@ -1718,12 +1733,16 @@ func (p *Poller) detectVPNConnections(devices []models.Device) (int, bool) {
 	// same-site guard) and complements, never overrides, the pairs found above.
 	if ifaces, ifErr := p.db.GetAllLatestInterfaces(); ifErr != nil {
 		log.Printf("VPN auto-detect: failed to get interfaces for tunnel-overlay match - %v", ifErr)
+		readsOK = false
 	} else {
-		type tunIf struct{ name, status string }
+		type tunIf struct {
+			name, status string
+			ts           time.Time
+		}
 		tunnelIface := make(map[string]tunIf) // "deviceID:ifIndex" → tunnel interface
 		for _, iface := range ifaces {
 			if strings.EqualFold(iface.TypeName, "tunnel") {
-				tunnelIface[fmt.Sprintf("%d:%d", iface.DeviceID, iface.Index)] = tunIf{iface.Name, iface.Status}
+				tunnelIface[fmt.Sprintf("%d:%d", iface.DeviceID, iface.Index)] = tunIf{iface.Name, iface.Status, iface.Timestamp}
 			}
 		}
 		type tunAddr struct {
@@ -1732,6 +1751,7 @@ func (p *Poller) detectVPNConnections(devices []models.Device) (int, bool) {
 			network  *net.IPNet
 			name     string
 			up       bool
+			ts       time.Time // evidence age, for the freshness staircase
 		}
 		var tunAddrs []tunAddr
 		for _, addr := range ifAddrs {
@@ -1748,12 +1768,19 @@ func (p *Poller) detectVPNConnections(devices []models.Device) (int, bool) {
 			if ip4 == nil || mask4 == nil {
 				continue
 			}
+			// Evidence age = the OLDER of the two rows that formed this entry, so a
+			// stale half can't be masked by a fresh one.
+			evidenceTS := tif.ts
+			if addr.Timestamp.Before(evidenceTS) {
+				evidenceTS = addr.Timestamp
+			}
 			tunAddrs = append(tunAddrs, tunAddr{
 				deviceID: addr.DeviceID,
 				ip:       ip4,
 				network:  &net.IPNet{IP: ip4.Mask(net.IPMask(mask4)), Mask: net.IPMask(mask4)},
 				name:     tif.name,
 				up:       tif.status == "up",
+				ts:       evidenceTS,
 			})
 		}
 		for i := 0; i < len(tunAddrs); i++ {
@@ -1783,7 +1810,15 @@ func (p *Poller) detectVPNConnections(devices []models.Device) (int, bool) {
 					matchMethod: "tunnel_overlay",
 					connType:    "ipsec",
 					anyUp:       a.up || b.up,
-					anyFresh:    true, // interface-derived evidence, not vpn_status
+					// Interface-derived evidence, so it needs its own freshness check:
+					// GetAllLatestInterfaces is an unbounded per-device MAX, so a device
+					// whose telemetry froze keeps serving the same tunnel-interface rows
+					// forever. Without this, an overlay pair would be re-derived and
+					// re-stamped every cycle exactly like the vpn_status ghost this
+					// change fixes. Either side being fresh is enough to call the pair
+					// current — requiring both would over-suppress a live hub whose
+					// spoke has merely gone quiet.
+					anyFresh: !a.ts.Before(freshCutoff) || !b.ts.Before(freshCutoff),
 				}
 				if a.name != "" {
 					pi.tunnelNames[a.name] = true
@@ -1879,7 +1914,7 @@ func (p *Poller) detectVPNConnections(devices []models.Device) (int, bool) {
 	if len(pairs) > 0 {
 		log.Printf("VPN auto-detect: processed %d connection(s) across %d devices%s", len(pairs), len(devices), heldNote(held))
 	}
-	return len(pairs), true
+	return len(pairs), readsOK
 }
 
 // heldNote annotates the detect log when connections were held on stale evidence,
@@ -1895,15 +1930,18 @@ func heldNote(held int) string {
 // creates auto-detected connections. Only handles L2VLAN, L3IPVLAN, and VXLAN types.
 // Tunnel/IPSec/GRE connections are handled exclusively by detectVPNConnections which
 // uses actual VPN tunnel data (IPs, status) rather than name matching.
-func (p *Poller) detectOverlayConnections(devices []models.Device) int {
+// detectOverlayConnections returns the number of connections it upserted and
+// whether its reads succeeded — see detectVPNConnections for why the second
+// value matters to the stale sweep.
+func (p *Poller) detectOverlayConnections(devices []models.Device) (int, bool) {
 	if p.db == nil || len(devices) == 0 {
-		return 0
+		return 0, true
 	}
 
 	ifaces, err := p.db.GetAllLatestInterfaces()
 	if err != nil {
 		log.Printf("Overlay auto-detect: failed to get interfaces - %v", err)
-		return 0
+		return 0, false
 	}
 
 	deviceByID := make(map[uint]*models.Device, len(devices))
@@ -2197,7 +2235,7 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) int {
 	if created > 0 {
 		log.Printf("Overlay auto-detect: upserted %d connection(s)", created)
 	}
-	return created
+	return created, true
 }
 
 // sendCriticalAlertEmail sends an HTML email for critical alerts with embedded charts.

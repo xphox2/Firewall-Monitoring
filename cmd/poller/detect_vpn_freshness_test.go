@@ -34,7 +34,10 @@ func freshnessFixture(t *testing.T) (*Poller, *database.Database, models.Device,
 }
 
 // seedPair writes a mutual pair of tunnel rows (each pointing at the other's mgmt
-// IP) at the given age, which is what the ip_match strategy keys on.
+// IP) at the given age. That mutual form is what the direct remote-gateway match
+// keys on; because both sides match, the bidirectional pass then relabels
+// match_method to "bidirectional" (the upsert keys on device pair + type, so the
+// label does not affect identity).
 func seedPair(t *testing.T, db *database.Database, a, b models.Device, status string, age time.Duration) {
 	t.Helper()
 	ts := time.Now().UTC().Add(-age)
@@ -145,9 +148,15 @@ func TestDetectVPN_ExpiredEvidenceIsReaped(t *testing.T) {
 	}
 }
 
-// A manually-created connection is the operator's, not the detector's, and must
-// survive expired evidence untouched.
-func TestDetectVPN_ManualConnectionNeverReaped(t *testing.T) {
+// A manually-created connection is the operator's, not the detector's. It must
+// survive BOTH paths: the stale-hold upsert must not rewrite its status, and the
+// sweep must not delete it.
+//
+// The evidence is seeded inside the hold window on purpose. With expired evidence
+// the detector never reaches UpsertAutoConnection at all, so the test would only
+// exercise the sweep's auto_detected filter — which passes without any of this
+// change and would prove nothing about the new "stale" write path.
+func TestDetectVPN_ManualConnectionNeverOverwritten(t *testing.T) {
 	p, db, a, b := freshnessFixture(t)
 	manual := &models.DeviceConnection{
 		Name: "operator link", SourceDeviceID: a.ID, DestDeviceID: b.ID,
@@ -157,18 +166,26 @@ func TestDetectVPN_ManualConnectionNeverReaped(t *testing.T) {
 	if err := db.Gorm().Create(manual).Error; err != nil {
 		t.Fatalf("create manual connection: %v", err)
 	}
-	seedPair(t, db, a, b, "down", database.VPNEvidenceGrace+time.Hour)
+	// Inside the hold window: the detector WILL try to upsert this pair as "stale".
+	seedPair(t, db, a, b, "up", database.VPNEvidenceFresh+30*time.Minute)
 
 	if _, ok := p.detectVPNConnections([]models.Device{a, b}); !ok {
 		t.Fatal("detect reported a failed read")
 	}
-	db.CleanupStaleAutoConnectionsBefore(time.Now())
 
-	var got models.DeviceConnection
-	if err := db.Gorm().First(&got, manual.ID).Error; err != nil {
-		t.Fatalf("manual connection was deleted: %v", err)
+	var afterUpsert models.DeviceConnection
+	if err := db.Gorm().First(&afterUpsert, manual.ID).Error; err != nil {
+		t.Fatalf("manual connection disappeared: %v", err)
 	}
-	if got.Status != "up" {
-		t.Errorf("manual connection status = %q, want untouched up", got.Status)
+	if afterUpsert.Status != "up" {
+		t.Errorf("stale-hold overwrote a manual connection: status = %q, want up", afterUpsert.Status)
+	}
+	if afterUpsert.AutoDetected {
+		t.Error("manual connection was flipped to auto_detected")
+	}
+	// And the sweep must still spare it despite its ancient last_check.
+	db.CleanupStaleAutoConnectionsBefore(time.Now())
+	if err := db.Gorm().First(&models.DeviceConnection{}, manual.ID).Error; err != nil {
+		t.Fatalf("sweep deleted a manual connection: %v", err)
 	}
 }
