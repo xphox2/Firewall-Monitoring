@@ -188,17 +188,34 @@
         // otherwise sit under the NEW one's freshly-loaded checklist.
         clearAnchors();
         $('ipsec-findings').innerHTML = '';
-        if (!a || !b) {
-            // Clearing a device must also drop the previous pair's duplicate note.
-            $('ipsec-existing').hidden = true;
-            refreshDerived();
-            return Promise.resolve();
-        }
         // Capabilities are fetched per pair and every consumer keys off `caps`
         // (the Verify gate, the profile radios, the crypto summary). Without a
         // token, two quick device changes can let the OLDER response land last and
         // rebuild the crypto controls for a pair that is no longer selected.
+        //
+        // The bump happens BEFORE the incomplete-pair return, not after it: those
+        // responses are just as stale, and leaving them unguarded meant clearing a
+        // device hid the duplicate-tunnel note only for an in-flight reply to put
+        // the OLD pair's note straight back — the fix undoing itself.
         var gen = ++capsGen;
+        // Dropped for the same reason: a failed fetch for the NEW pair would
+        // otherwise leave the previous pair's descriptor in place, so the Verify
+        // gate would pass and the crypto radios would still be the old pair's.
+        caps = null;
+        if (!a || !b) {
+            // Drop in-flight hints for whichever side was cleared, and forget that
+            // its device was loaded. Bumping the token WITHOUT clearing
+            // loadedDevice would strand that endpoint: re-picking the same device
+            // is a no-op for the loadedDevice guard, so the response we just
+            // discarded would never be re-requested and its fields would stay
+            // empty. The side still selected keeps its token and any hand-picked
+            // interface, which is exactly what loadedDevice exists to protect.
+            if (!a) { hintGen.a++; loadedDevice.a = ''; }
+            if (!b) { hintGen.b++; loadedDevice.b = ''; }
+            $('ipsec-existing').hidden = true;
+            refreshDerived();
+            return Promise.resolve();
+        }
         // Peer/public IP + interfaces + subnets are all populated from each device's
         // real polled data by loadHints (below).
         var capsP = AC.apiFetch(API + '/ipsec/capabilities?a=' + encodeURIComponent(vendorOf(a)) + '&b=' + encodeURIComponent(vendorOf(b))).then(function (r) {

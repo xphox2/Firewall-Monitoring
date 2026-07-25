@@ -63,7 +63,7 @@ func TestIPSecWizard_EndGuardIsTypeofNotTruthiness(t *testing.T) {
 	// Catch a regression to any truthiness form on the same field. Comments are
 	// stripped first: the code documents this exact trap by NAMING the bad form,
 	// and matching that would fail the test for explaining itself.
-	for _, bad := range []string{"if (f.end)", "f.end &&", "!f.end ", "f.end ?"} {
+	for _, bad := range []string{"if (f.end)", "f.end &&", "!f.end", "f.end ?"} {
 		if strings.Contains(code, bad) {
 			t.Errorf("found truthiness test %q on f.end — end A is 0 and would be dropped", bad)
 		}
@@ -156,9 +156,12 @@ func TestIPSecWizard_EveryMappedCodeIsEmittedByTheServer(t *testing.T) {
 	server := string(v) + string(h)
 
 	start := strings.Index(js, "var ANCHOR = {")
-	end := strings.Index(js[start:], "};")
-	if start < 0 || end < 0 {
+	if start < 0 {
 		t.Fatal("ANCHOR map not found")
+	}
+	end := strings.Index(js[start:], "};")
+	if end < 0 {
+		t.Fatal("ANCHOR map is not terminated")
 	}
 	body := stripJSComments(js[start : start+end])
 
@@ -177,6 +180,64 @@ func TestIPSecWizard_EveryMappedCodeIsEmittedByTheServer(t *testing.T) {
 		t.Errorf("ANCHOR maps codes the server never emits: %v\n"+
 			"These entries are dead — and their presence disguises the fact that the real "+
 			"code for that field is unmapped and falling through to the summary.", dead)
+	}
+}
+
+// An anchored finding that lands in a COLLAPSED container is worse than a
+// summarised one: it is in the DOM, so nothing looks broken, but the operator
+// cannot see it — while the summary says "each is marked on the field it
+// affects". Most anchors sit inside <details class="ipsec-adv"> (closed) or
+// #ipsec-crypto-detail (hidden), so the reveal is what makes anchoring real.
+// Deleting it would revert that silently and every other test here would stay
+// green, since they only assert the anchor ELEMENTS exist.
+func TestIPSecWizard_AnchoringRevealsCollapsedContainers(t *testing.T) {
+	js, html := readWizardFiles(t)
+	code := stripJSComments(js)
+
+	if !strings.Contains(code, "function revealAnchor(") {
+		t.Fatal("revealAnchor is gone — anchored findings can be inserted into a closed " +
+			"<details> or the hidden crypto disclosure and never appear on screen")
+	}
+	// The CALL, not the definition: `function revealAnchor(host) {` also contains
+	// "revealAnchor(host)", so the loose form stays green when the call site is
+	// deleted and the reveal never runs.
+	if !strings.Contains(code, "revealAnchor(host);") {
+		t.Error("revealAnchor is defined but never called from the anchor insertion path")
+	}
+	// The two mechanisms that actually hide an anchor in this markup.
+	if !strings.Contains(code, "'DETAILS'") {
+		t.Error("revealAnchor must open enclosing <details> — the peer/egress/identity/gateway " +
+			"anchors all live inside one")
+	}
+	if !strings.Contains(code, "ipsec-crypto-detail") {
+		t.Error("revealAnchor must un-hide #ipsec-crypto-detail — the PSK anchor lives inside it")
+	}
+	// Guard the premise: if the markup stops using <details>/hidden for these,
+	// this test is checking a mechanism that no longer matters.
+	form := wizardForm(t, html)
+	if !strings.Contains(form, "ipsec-adv") {
+		t.Error("the wizard no longer uses <details class=\"ipsec-adv\"> — re-check what can hide an anchor")
+	}
+}
+
+// slotFor decides WHICH field a finding lands on, and for reserved_token that
+// decision is made from whether the finding carries an end. Passing the raw
+// f.end instead of the typeof-derived boolean reintroduces the falsy-zero bug
+// one level up: end A is 0, so an end-A identity error would be routed to the
+// PSK box. That mis-delivery passes every truthiness scan in this file.
+func TestIPSecWizard_SlotResolutionUsesTheTypeofDerivedFlag(t *testing.T) {
+	js, _ := readWizardFiles(t)
+	code := stripJSComments(js)
+
+	if !strings.Contains(code, "slotFor(f.code, hasEnd)") {
+		t.Error("slotFor must be called with the typeof-derived `hasEnd`, not the raw f.end: " +
+			"end A is 0, so a raw value would route end-A identity findings to the PSK field")
+	}
+	// reserved_token is emitted for BOTH the PSK (tunnel-wide) and an IKE identity
+	// (per-end), so it cannot live in the flat code->slot map.
+	if !strings.Contains(code, "reserved_token") {
+		t.Error("reserved_token must be resolved explicitly — it is raised for both the PSK " +
+			"and an identity, and a single mapping would put one of them on the wrong field")
 	}
 }
 
