@@ -1,6 +1,34 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.169] - 2026-07-25
+
+### Changed — IPSec tunnel wizard rebuilt around a live link schematic
+
+The wizard was one modal holding ~27 controls in a single scroll, and it never showed **what it was building**. Every failure in the recent tunnel work was a mismatch — wrong subnet, wrong interface, a missing subnet pair — and the artifact that was wrong was never on screen. Validation compounded it: the server sent a stable `code` on every finding, and the client read only `severity` and `message`, dumping all of them into one div at the bottom, far from the field that caused them.
+
+**A live link schematic is now the wizard's spine.** Two endpoint cards joined by the tunnel, present as soon as both firewalls are picked, with the subnet pairs drawn as lanes crossing it and redrawn as the operator types. A flagged pair paints amber and states the reason inline.
+
+The schematic is **mode-aware**, which is load-bearing rather than cosmetic: policy-based fans out one child SA per (local × remote) pair, while route-based renders a **single** `0.0.0.0/0 ↔ 0.0.0.0/0` child and steers with static routes. Drawing four lanes against a device that holds one would recreate exactly the UI-says-N / device-holds-1 confusion this work was about. The caption names both vocabularies — "2 subnet pairs · 2 child SAs (phase2)" — so it can be checked directly against `diagnose vpn tunnel list` / `swanctl` output.
+
+**Findings now anchor to the control that caused them.** `Finding` carries `end` and `subject`; the client places each one beside its field and paints the matching lane. `End` is a pointer and end A serialises as an explicit `0` — a value int cannot distinguish "end A" from "not set", and `if (f.end)` on a `0` would silently drop every end-A finding, i.e. half of them, on the end that is usually the FortiGate. `subject` is what makes two mismatches on the same end distinguishable. Two findings anchor to the **peer's** networks field rather than the end they were raised for, because that is where the offending subnet actually lives. Anything unmapped still renders in the summary — findings are never lost.
+
+**Two phases replace one scroll.** Design (devices → schematic → per-side networks → crypto as one collapsed sentence) and Verify (matrix, findings, per-vendor previews, Save). Both panels stay mounted and nothing is re-rendered per phase, so the ~25 DOM reads, the once-bound listeners and the async hint landings all keep working.
+
+Fields the server already answers are presented as confirmed facts rather than re-asked questions — "out via port1", "behind NAT · dials out" — with the mounted controls behind a disclosure. Also: the wizard now says **why** Save is disabled instead of silently greying it out, flags when the two firewalls already have a tunnel between them, and widens to 1080px.
+
+### Fixed — anchored findings could be inserted into a collapsed container
+
+Most anchors sit inside "Connection details" (a closed `<details>`) or the crypto disclosure (hidden by default). A finding placed there was in the DOM but not on screen, while the summary said "each is marked on the field it affects" — sending the operator to look for a message that was not visible. Precisely the silent failure the redesign exists to remove. Anchoring now reveals every enclosing container on the way up, opening only the one that holds a finding.
+
+Clearing a device also invalidates the in-flight requests for the pair being abandoned. Without that, hiding the duplicate-tunnel note was promptly undone by a late reply putting the old pair's note back, and a failed capability fetch for a new pair left the previous pair's descriptor in place — so the Verify gate passed and the crypto controls stayed the old pair's.
+
+Also fixed: stale findings, lane paint and the phase-tab marker survived a device change and decorated the new pair's freshly-loaded fields; the capabilities fetch had no generation token, so two quick device changes could let the older response rebuild the crypto controls for a pair no longer selected; the Verify matrix rendered "one child SA carries everything" for a route-based tunnel with an empty side, contradicting the schematic's own empty state; `subnet_invalid` findings came back in random A/B order because the loop ranged over a map; `Subject` used the canonical CIDR, so a non-canonical entry like `10.0.0.1/8` anchored to the field but never highlighted its row; and the `reserved_token` code — raised for both the PSK and an IKE identity — was mapped to a single field, which would have put an identity error on the PSK box.
+
+### Added — guardrails for the anchoring contract
+
+The contract spans three files and every way it breaks is silent — the finding falls back to the summary, which looks exactly like the old behaviour. Three tests pin it: the `typeof f.end === 'number'` guard (comment-stripped, so the code may document the trap by naming it), every mapped slot having a `[data-anchor]` element in the markup, and `Finding.End` staying a pointer. Each was verified to fail when its rule is broken.
+
 ## [0.11.168] - 2026-07-25
 
 ### Added — multiple LAN interfaces per IPSec tunnel endpoint

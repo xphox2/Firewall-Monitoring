@@ -167,3 +167,46 @@ func TestLANCoherence_LegacySingularCounts(t *testing.T) {
 		t.Errorf("a legacy intent must be judged on its effective interfaces; got %q", f.Message)
 	}
 }
+
+// The finding must carry BOTH the end and the specific subnet. Code+end alone
+// cannot distinguish two mismatches on the same end, so the UI could not tell
+// which one to highlight — and digging the subnet back out of the message would
+// weld the client to server prose.
+func TestLANCoherence_CarriesEndAndSubject(t *testing.T) {
+	h, db := setupTestHandler(t)
+	// All three interfaces in ONE call: the latest-snapshot join keys on
+	// MAX(timestamp), so a second seeding pass would hide the first.
+	seedIfaces(t, db, 1, ifaceSeed{
+		{Name: "port2", Index: 2, TypeName: "ethernet", Addrs: [][2]string{{"192.168.25.1", "255.255.255.0"}}},
+		{Name: "port3", Index: 3, TypeName: "ethernet", Addrs: [][2]string{{"192.168.13.1", "255.255.255.0"}}},
+		{Name: "port4", Index: 4, TypeName: "ethernet", Addrs: [][2]string{{"10.20.0.1", "255.255.255.0"}}},
+	})
+	// Two subnets carried by ports that are NOT selected — two mismatches, one end.
+	in := coherenceIntent([]string{"port3"}, []string{"192.168.25.0/24", "10.20.0.0/24"})
+
+	var got []ipsec.Finding
+	for _, f := range h.lanCoherenceFindings(db, in) {
+		if f.Code == "lan_subnet_mismatch" {
+			got = append(got, f)
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("want one finding per mismatched subnet, got %d", len(got))
+	}
+	subjects := map[string]bool{}
+	for _, f := range got {
+		if f.End == nil {
+			t.Fatal("a per-end finding must carry its end")
+		}
+		if *f.End != 0 {
+			t.Errorf("End = %d, want 0 (the FortiGate end) — note end A is 0, which is falsy in JS", *f.End)
+		}
+		if f.Subject == "" {
+			t.Error("Subject must name the subnet the finding is about")
+		}
+		subjects[f.Subject] = true
+	}
+	if len(subjects) != 2 {
+		t.Errorf("the two findings must be distinguishable by Subject, got %v", subjects)
+	}
+}

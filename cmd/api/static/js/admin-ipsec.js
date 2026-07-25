@@ -11,6 +11,7 @@
     var devices = [];      // eligible (fortigate/opnsense) devices
     var lastPreviewOK = false;
     var hintGen = { a: 0, b: 0 };         // per-endpoint request token — drop stale hint responses
+    var capsGen = 0;                      // per-pair token — drop stale capability responses
     var lastHintSubnets = { a: '', b: '' }; // last auto-filled subnets, so a re-pick can refresh them
     var endpointHints = { a: null, b: null }; // cached hints per endpoint (peer-IP options + egress→peer sync)
     var loadedDevice = { a: '', b: '' };      // device id whose hints are loaded per endpoint (re-load only on change)
@@ -19,7 +20,26 @@
 
     // Any change to the intent invalidates a prior clean preview — Save must not
     // persist an intent that was never previewed (the block-findings gate would lie).
-    function invalidate() { lastPreviewOK = false; $('ipsec-save-btn').disabled = true; }
+    // Any edit after a clean preview un-gates Save. It is also the one hook every
+    // field already funnels through (form-level input/change bubbling), so the
+    // schematic redraws from here rather than needing listeners of its own.
+    function invalidate() {
+        lastPreviewOK = false;
+        $('ipsec-save-btn').disabled = true;
+        refreshDerived();
+    }
+
+    // Guarded: this runs on every keystroke, including before a device pair or
+    // capabilities exist.
+    function refreshDerived() {
+        if (!$('ipsec-schematic')) return;
+        cryptoSummary();
+        renderFacts('a');
+        renderFacts('b');
+        renderSchematic();
+        if (phase === 'verify') renderMatrix();
+        updateFootNote();
+    }
     function esc(s) { return AC.escapeHtml(String(s == null ? '' : s)); }
     function vendorOf(d) { return (d.vendor || 'fortigate'); }
 
@@ -131,6 +151,17 @@
         $('ipsec-a-dyn').checked = false; $('ipsec-b-dyn').checked = false;
         idDirty.a = false; idDirty.b = false;
         ['a', 'b'].forEach(function (pfx) { var h = $('ipsec-' + pfx + '-id-hint'); if (h) { h.textContent = ''; h.style.display = 'none'; } });
+        // Stale anchors from a previous open would otherwise decorate fields that
+        // have just been reset.
+        clearAnchors();
+        $('ipsec-schematic').innerHTML = '';
+        $('ipsec-matrix').innerHTML = '';
+        $('ipsec-existing').hidden = true;
+        $('ipsec-crypto-detail').hidden = true;
+        var cryptoTgl = document.querySelector('[data-action="ipsec-crypto-toggle"]');
+        if (cryptoTgl) { cryptoTgl.setAttribute('aria-expanded', 'false'); cryptoTgl.textContent = 'change'; }
+        $('ipsec-tab-design').classList.remove('has-block', 'has-warn');
+        setPhase('design');
 
         AC.apiFetch(API + '/devices').then(function (r) {
             devices = ((r && r.data) || []).filter(function (d) {
@@ -151,10 +182,44 @@
 
     function onDevicesChosen() {
         var a = deviceById($('ipsec-dev-a').value), b = deviceById($('ipsec-dev-b').value);
-        if (!a || !b) { return Promise.resolve(); }
+        // Findings belong to the pair that was validated. Changing either device
+        // makes every one of them stale, and the hint reload repopulates the very
+        // fields they decorate — so a warning about the OLD FortiGate's ports would
+        // otherwise sit under the NEW one's freshly-loaded checklist.
+        clearAnchors();
+        $('ipsec-findings').innerHTML = '';
+        // Capabilities are fetched per pair and every consumer keys off `caps`
+        // (the Verify gate, the profile radios, the crypto summary). Without a
+        // token, two quick device changes can let the OLDER response land last and
+        // rebuild the crypto controls for a pair that is no longer selected.
+        //
+        // The bump happens BEFORE the incomplete-pair return, not after it: those
+        // responses are just as stale, and leaving them unguarded meant clearing a
+        // device hid the duplicate-tunnel note only for an in-flight reply to put
+        // the OLD pair's note straight back — the fix undoing itself.
+        var gen = ++capsGen;
+        // Dropped for the same reason: a failed fetch for the NEW pair would
+        // otherwise leave the previous pair's descriptor in place, so the Verify
+        // gate would pass and the crypto radios would still be the old pair's.
+        caps = null;
+        if (!a || !b) {
+            // Drop in-flight hints for whichever side was cleared, and forget that
+            // its device was loaded. Bumping the token WITHOUT clearing
+            // loadedDevice would strand that endpoint: re-picking the same device
+            // is a no-op for the loadedDevice guard, so the response we just
+            // discarded would never be re-requested and its fields would stay
+            // empty. The side still selected keeps its token and any hand-picked
+            // interface, which is exactly what loadedDevice exists to protect.
+            if (!a) { hintGen.a++; loadedDevice.a = ''; }
+            if (!b) { hintGen.b++; loadedDevice.b = ''; }
+            $('ipsec-existing').hidden = true;
+            refreshDerived();
+            return Promise.resolve();
+        }
         // Peer/public IP + interfaces + subnets are all populated from each device's
         // real polled data by loadHints (below).
         var capsP = AC.apiFetch(API + '/ipsec/capabilities?a=' + encodeURIComponent(vendorOf(a)) + '&b=' + encodeURIComponent(vendorOf(b))).then(function (r) {
+            if (gen !== capsGen) return; // a newer pair was picked while this was in flight
             caps = (r && r.data) || null;
             if (!caps) return;
             $('ipsec-caps-note').textContent = 'Both ends support: ' + (caps.allowed.encryption || []).join(', ') + '.';
@@ -164,16 +229,21 @@
             populateIDTypes();
             $('ipsec-crypto-section').style.display = '';
             $('ipsec-endpoints-section').style.display = '';
-            $('ipsec-a-title').textContent = 'Endpoint A — ' + a.name + ' (' + vendorOf(a) + ')';
-            $('ipsec-b-title').textContent = 'Endpoint B — ' + b.name + ' (' + vendorOf(b) + ')';
+            $('ipsec-a-title').textContent = a.name;
+            $('ipsec-b-title').textContent = b.name;
+            cryptoSummary();
         }).catch(function (e) { AC.showError('No shared crypto for this pair: ' + e.message); });
+        checkExisting();
         // Populate interfaces/peer-IP/subnets from each device's real polled data —
         // but only (re)load the endpoint whose device actually changed, so editing
         // one end never clobbers a hand-picked peer/interface on the other. Non-fatal.
         var pending = [];
         if (String(a.id) !== loadedDevice.a) { loadedDevice.a = String(a.id); pending.push(loadHints('a', a.id)); }
         if (String(b.id) !== loadedDevice.b) { loadedDevice.b = String(b.id); pending.push(loadHints('b', b.id)); }
-        return Promise.all([capsP, Promise.all(pending)]).then(function () { prefillIdentity('a'); prefillIdentity('b'); });
+        return Promise.all([capsP, Promise.all(pending)]).then(function () {
+            prefillIdentity('a'); prefillIdentity('b');
+            refreshDerived();
+        });
     }
 
     // ---- data-driven endpoint hints -------------------------------------
@@ -634,14 +704,261 @@
         };
     }
 
+    // ---- the link schematic ---------------------------------------------
+    // The wizard's spine: what is being built, drawn as it is typed. Every
+    // failure this feature shipped was a mismatch the form never showed.
+
+    function subnetsOf(pfx) {
+        return $('ipsec-' + pfx + '-subnets').value.split(/[\n,]+/)
+            .map(function (s) { return s.trim(); }).filter(Boolean);
+    }
+
+    function modeVal() { return ($('ipsec-mode') && $('ipsec-mode').value) || 'route-based'; }
+
+    // trafficMatrix is PURE — the schematic and the Verify matrix both read it, so
+    // the two can never disagree.
+    //
+    // It must be mode-aware or it lies. fgPhase2Pairs fans out one phase2 per
+    // (local x remote) pair ONLY in policy-based mode; route-based renders a SINGLE
+    // 0.0.0.0/0 <-> 0.0.0.0/0 child and steers with per-subnet static routes.
+    // Drawing 4 lanes against a device holding 1 child would recreate the exact
+    // UI-says-N/device-holds-1 confusion this whole saga was about.
+    function trafficMatrix(aNets, bNets, mode) {
+        if (mode === 'route-based') {
+            return {
+                routed: true,
+                lanes: [{ a: '0.0.0.0/0', b: '0.0.0.0/0' }],
+                childCount: (aNets.length && bNets.length) ? 1 : 0,
+                aRoutes: bNets, // A installs routes TO B's networks
+                bRoutes: aNets
+            };
+        }
+        var lanes = [];
+        aNets.forEach(function (an) {
+            bNets.forEach(function (bn) { lanes.push({ a: an, b: bn }); });
+        });
+        return { routed: false, lanes: lanes, childCount: lanes.length, aRoutes: [], bRoutes: [] };
+    }
+
+    // Findings paint the schematic. Keyed by "end:subject" so two mismatches on one
+    // end stay distinguishable — which is exactly why Subject is on the wire.
+    var laneFlags = {};
+
+    function laneFlagFor(end, net) {
+        return laneFlags[end + ':' + net] || null;
+    }
+
+    function nodeHtml(pfx, dev) {
+        var dyn = $('ipsec-' + pfx + '-dyn').checked;
+        var addr = ifaceVal(pfx, 'peer');
+        var egress = ifaceVal(pfx, 'egress');
+        var meta = [];
+        if (egress) meta.push('out via ' + esc(egress));
+        if (dyn) meta.push('behind NAT · dials out');
+        return '<div class="ipsec-node">' +
+            '<div class="ipsec-node-vendor">' + esc(vendorOf(dev)) + '</div>' +
+            '<div class="ipsec-node-name">' + esc(dev.name) + '</div>' +
+            '<div class="ipsec-node-addr">' +
+                esc(addr || (dyn ? 'no fixed address' : '—')) + '</div>' +
+            (meta.length ? '<div class="ipsec-node-meta">' + meta.join(' · ') + '</div>' : '') +
+            '</div>';
+    }
+
+    function renderSchematic() {
+        var host = $('ipsec-schematic');
+        if (!host) return;
+        var a = deviceById($('ipsec-dev-a').value), b = deviceById($('ipsec-dev-b').value);
+        if (!a || !b || !caps) { host.innerHTML = ''; return; }
+
+        var mode = modeVal();
+        var m = trafficMatrix(subnetsOf('a'), subnetsOf('b'), mode);
+        var spanLabel = ($('ipsec-ikever') ? $('ipsec-ikever').value : 'ikev2') + ' · ' +
+            (mode === 'route-based' ? 'route-based' : 'policy-based');
+
+        var lanes;
+        if (!m.lanes.length || (!subnetsOf('a').length || !subnetsOf('b').length)) {
+            lanes = '<div class="ipsec-lanes-empty">Add the networks each site shares to see what this tunnel will carry.</div>';
+        } else {
+            lanes = m.lanes.map(function (l) {
+                var fa = laneFlagFor(0, l.a), fb = laneFlagFor(1, l.b);
+                var flag = fa || fb;
+                return '<div class="ipsec-lane' + (flag ? ' is-warn' : '') + '">' +
+                    '<span class="ipsec-lane-net">' + esc(l.a) + '</span>' +
+                    '<span class="ipsec-lane-link">↔</span>' +
+                    '<span class="ipsec-lane-net r">' + esc(l.b) + '</span>' +
+                    (flag ? '<span class="ipsec-lane-flag">' + esc(flag) + '</span>' : '') +
+                    '</div>';
+            }).join('');
+            // Both vocabularies: the plain phrase, plus the term the devices
+            // themselves print — the point is to be checkable against
+            // `diagnose vpn tunnel list` / `swanctl`. Never "tunnels": conflating
+            // children with tunnels is the confusion that cost days.
+            var cap;
+            if (m.routed) {
+                cap = '1 selector pair · 1 child SA (phase2) · ' +
+                    m.aRoutes.length + ' route' + (m.aRoutes.length === 1 ? '' : 's') + ' on ' + esc(a.name) +
+                    ' · ' + m.bRoutes.length + ' on ' + esc(b.name);
+            } else {
+                cap = m.lanes.length + ' subnet pair' + (m.lanes.length === 1 ? '' : 's') +
+                    ' · ' + m.childCount + ' child SA' + (m.childCount === 1 ? '' : 's') + ' (phase2)';
+            }
+            lanes += '<div class="ipsec-lane-count">' + cap + '</div>';
+        }
+
+        host.innerHTML = '<div class="ipsec-link">' +
+            nodeHtml('a', a) +
+            '<div class="ipsec-span">' +
+                '<div class="ipsec-span-label">' + esc(spanLabel) + '</div>' +
+                '<div class="ipsec-span-rule"></div>' +
+            '</div>' +
+            nodeHtml('b', b) +
+            '</div>' +
+            '<div class="ipsec-lanes">' + lanes + '</div>';
+    }
+
+    // The Verify matrix is the same data as a table — one source, so the two views
+    // can never disagree about how many children the device will hold.
+    function renderMatrix() {
+        var host = $('ipsec-matrix');
+        if (!host) return;
+        var a = deviceById($('ipsec-dev-a').value), b = deviceById($('ipsec-dev-b').value);
+        if (!a || !b) { host.innerHTML = ''; return; }
+        var aNets = subnetsOf('a'), bNets = subnetsOf('b');
+        var m = trafficMatrix(aNets, bNets, modeVal());
+        // Route-based ALWAYS yields one 0.0.0.0/0 lane, so `!m.lanes.length` alone
+        // would render "one child SA carries everything" for a tunnel with an empty
+        // side that will carry nothing — and contradict the schematic, which shows
+        // its empty state. Both views must agree; that is the point of sharing
+        // trafficMatrix.
+        if (!m.lanes.length || !aNets.length || !bNets.length) {
+            host.innerHTML = '<p class="ipsec-matrix-cap">Both sites need at least one network before this tunnel carries anything.</p>';
+            return;
+        }
+
+        // The status cell stays TERSE. The full sentence already appears twice —
+        // on the lane in the schematic and on the field that caused it — and a
+        // paragraph inside a table cell wrecks the row rhythm that makes the
+        // matrix scannable in the first place.
+        var rows = m.lanes.map(function (l) {
+            var flag = laneFlagFor(0, l.a) || laneFlagFor(1, l.b);
+            return '<tr' + (flag ? ' class="is-warn"' : '') + '><td>' + esc(l.a) + '</td><td>' + esc(l.b) + '</td>' +
+                '<td>' + (flag ? '⚠ see above' : 'carried') + '</td></tr>';
+        }).join('');
+        var cap = m.routed
+            ? 'Route-based: one 0.0.0.0/0 child SA carries everything; the networks below are steered by static routes.'
+            : m.childCount + ' child SA' + (m.childCount === 1 ? '' : 's') + ' (phase2) will exist on each device.';
+        host.innerHTML = '<div style="overflow-x:auto;"><table>' +
+            '<thead><tr><th>' + esc(a.name) + '</th><th>' + esc(b.name) + '</th><th>Status</th></tr></thead>' +
+            '<tbody>' + rows + '</tbody></table></div>' +
+            '<p class="ipsec-matrix-cap">' + cap + '</p>' +
+            (m.routed ? '<p class="ipsec-matrix-cap">' + esc(a.name) + ' routes: ' +
+                esc(m.aRoutes.join(', ') || '—') + ' · ' + esc(b.name) + ' routes: ' +
+                esc(m.bRoutes.join(', ') || '—') + '</p>' : '');
+    }
+
+    // ---- findings anchored to the field that caused them ------------------
+    // The server sends a stable `code` on every finding; this maps it to the
+    // control the operator has to edit. Anything unmapped still renders in the
+    // summary — findings are never lost.
+    // Codes are taken verbatim from internal/ipsec/validation.go — an entry that
+    // does not match a real emitted code is dead weight, and a real code that is
+    // missing here silently falls back to the summary.
+    var ANCHOR = {
+        lan_missing: 'lan', lan_subnet_mismatch: 'lan',
+        egress_missing: 'egress',
+        peer_ip_invalid: 'peer', peer_unroutable: 'peer', peer_private: 'peer',
+        id_missing: 'id', id_too_long: 'id', id_fqdn_is_ip: 'id',
+        id_fqdn_is_range: 'id', id_fqdn_charset: 'id', id_ip_invalid: 'id',
+        subnet_invalid: 'subnets', too_many_subnets: 'subnets', selectors_missing: 'subnets',
+        default_route_over_vti: 'subnets', self_lockout: 'subnets',
+        gateway_invalid: 'gateway',
+        psk_invalid: 'psk'
+    };
+
+    // reserved_token is raised for BOTH the PSK (tunnel-wide) and an IKE identity
+    // (per-end) — the same code, two different fields. A flat code→slot map would
+    // drop an identity error onto the PSK box, so it is resolved by whether the
+    // finding carries an end.
+    function slotFor(code, hasEnd) {
+        if (code === 'reserved_token') { return hasEnd ? 'id' : 'psk'; }
+        return ANCHOR[code];
+    }
+
+    function clearAnchors() {
+        laneFlags = {};
+        var nodes = document.querySelectorAll('#ipsec-wizard-form .ipsec-anchor');
+        Array.prototype.forEach.call(nodes, function (n) { n.innerHTML = ''; });
+        var tab = $('ipsec-tab-design');
+        if (tab) tab.classList.remove('has-block', 'has-warn');
+    }
+
+    // An anchored finding is worse than a summarised one if the operator cannot
+    // SEE it. Most anchors sit inside "Connection details" (<details>, closed) or
+    // the crypto disclosure (hidden), and inserting into a collapsed subtree while
+    // the summary says "each is marked on the field it affects" sends the operator
+    // to Design to look for a message that is not on screen — exactly the silent
+    // failure this redesign exists to remove. So reveal every container on the way
+    // up before the finding lands in it.
+    function revealAnchor(host) {
+        var el = host;
+        while (el && el.id !== 'ipsec-wizard-form') {
+            if (el.tagName === 'DETAILS') { el.open = true; }
+            if (el.id === 'ipsec-crypto-detail' && el.hidden) {
+                el.hidden = false;
+                var tgl = document.querySelector('[data-action="ipsec-crypto-toggle"]');
+                if (tgl) { tgl.setAttribute('aria-expanded', 'true'); tgl.textContent = 'done'; }
+            }
+            el = el.parentElement;
+        }
+    }
+
     function renderFindings(findings) {
-        var block = (findings || []).filter(function (f) { return f.severity === 'block'; });
-        var warn = (findings || []).filter(function (f) { return f.severity === 'warn'; });
-        var html = '';
-        block.forEach(function (f) { html += '<div style="color:var(--fwmon-danger,#f85149);font-size:0.82rem;">✕ ' + esc(f.message) + '</div>'; });
-        warn.forEach(function (f) { html += '<div style="color:var(--fwmon-warning,#d29922);font-size:0.82rem;">⚠ ' + esc(f.message) + '</div>'; });
-        if (!html) html = '<div style="color:var(--fwmon-success,#3fb950);font-size:0.82rem;">✓ No issues — ready to save.</div>';
+        clearAnchors();
+        var list = findings || [];
+        var block = list.filter(function (f) { return f.severity === 'block'; });
+        var warn = list.filter(function (f) { return f.severity === 'warn'; });
+        var summary = [];
+
+        list.forEach(function (f) {
+            if (f.severity !== 'block' && f.severity !== 'warn') return;
+            // End A is 0, which is FALSY — `if (f.end)` would drop every end-A
+            // anchor, i.e. half the findings, on the end that is usually the
+            // FortiGate. The type check is load-bearing.
+            var hasEnd = typeof f.end === 'number';
+            var slot = slotFor(f.code, hasEnd);
+            if (f.subject && hasEnd) { laneFlags[f.end + ':' + f.subject] = f.message; }
+            if (!slot || (slot !== 'psk' && !hasEnd)) { summary.push(f); return; }
+
+            var id = slot === 'psk' ? 'psk' : (f.end === 0 ? 'a-' : 'b-') + slot;
+            var host = document.querySelector('#ipsec-wizard-form .ipsec-anchor[data-anchor="' + id + '"]');
+            if (!host) { summary.push(f); return; }
+            var cls = 'ipsec-anchor-item' + (f.severity === 'warn' ? ' is-warn' : '');
+            host.insertAdjacentHTML('beforeend', '<div class="' + cls + '">' + esc(f.message) + '</div>');
+            revealAnchor(host);
+        });
+
+        var html = summary.map(function (f) {
+            return '<div class="ipsec-finding ' + (f.severity === 'block' ? 'is-block' : 'is-warn') + '">' +
+                (f.severity === 'block' ? '✕ ' : '⚠ ') + esc(f.message) + '</div>';
+        }).join('');
+        if (!block.length && !warn.length) {
+            html = '<div class="ipsec-finding is-ok">✓ No issues — ready to save.</div>';
+        } else if (!html) {
+            // Everything was anchored; say so rather than leaving the panel blank.
+            html = '<div class="ipsec-finding' + (block.length ? ' is-block' : ' is-warn') + '">' +
+                block.length + ' blocking, ' + warn.length + ' warning — each is marked on the field it affects.</div>';
+        }
         $('ipsec-findings').innerHTML = html;
+
+        // A phase holding a problem says so on its own tab, so a finding anchored
+        // on the Design panel is discoverable from Verify.
+        var tab = $('ipsec-tab-design');
+        if (tab) {
+            tab.classList.toggle('has-block', block.length > 0);
+            tab.classList.toggle('has-warn', block.length === 0 && warn.length > 0);
+        }
+        renderSchematic();
+        renderMatrix();
         return block.length === 0;
     }
 
@@ -664,11 +981,12 @@
             renderPreviewPanes(d.ends, d.provisional);
             lastPreviewOK = ok;
             $('ipsec-save-btn').disabled = !ok;
+            updateFootNote();
         }).catch(function (e) { AC.showError('Preview failed: ' + e.message); });
     }
 
     function save() {
-        if (!lastPreviewOK) { AC.showError('Run Validate & Preview and resolve any blockers first'); return; }
+        if (!lastPreviewOK) { AC.showError('Run Validate and resolve any blockers first'); return; }
         var intent = collectIntent();
         var id = parseInt($('ipsec-edit-id').value, 10) || 0;
         var url = id ? (API + '/ipsec/tunnels/' + id) : (API + '/ipsec/tunnels');
@@ -717,6 +1035,15 @@
                 $('ipsec-a-gateway').value = t.ends[0].gateway || ''; $('ipsec-b-gateway').value = t.ends[1].gateway || '';
                 // PSK stays masked (unchanged on save); Save stays gated until preview.
                 lastPreviewOK = false; $('ipsec-save-btn').disabled = true;
+                // Editing a custom-crypto tunnel must SHOW the crypto controls —
+                // restoreCrypto force-shows #ipsec-custom-crypto, so the enclosing
+                // disclosure has to open with it or the operator sees nothing.
+                if ($('ipsec-custom-crypto').style.display !== 'none') {
+                    $('ipsec-crypto-detail').hidden = false;
+                    var tgl = document.querySelector('[data-action="ipsec-crypto-toggle"]');
+                    if (tgl) { tgl.setAttribute('aria-expanded', 'true'); tgl.textContent = 'done'; }
+                }
+                refreshDerived();
             });
         }).catch(function (e) { AC.showError('Failed to load tunnel: ' + e.message); });
     }
@@ -730,8 +1057,126 @@
         });
     }
 
+    // ---- phases ----------------------------------------------------------
+    // BOTH panels stay mounted; one is hidden. Nothing is ever re-rendered per
+    // phase: collectIntent reads ~25 controls straight from the DOM, wire() binds
+    // direct listeners once, and loadHints lands async into targets that must
+    // still exist. An innerHTML-swapping step machine breaks all three.
+    var phase = 'design';
+
+    function setPhase(next) {
+        // Gate: both devices picked AND capabilities loaded. Without caps,
+        // renderProfiles never ran and Verify would render with zero profile
+        // radios — chosenProfile() would then silently report 'custom'.
+        if (next === 'verify' && !caps) {
+            AC.showError('Pick both firewalls first.');
+            return;
+        }
+        phase = next;
+        var design = next === 'design';
+        $('ipsec-panel-design').style.display = design ? '' : 'none';
+        $('ipsec-panel-verify').style.display = design ? 'none' : '';
+        $('ipsec-tab-design').setAttribute('aria-current', design ? 'step' : 'false');
+        $('ipsec-tab-verify').setAttribute('aria-current', design ? 'false' : 'step');
+        $('ipsec-next-btn').style.display = design ? '' : 'none';
+        $('ipsec-back-btn').style.display = design ? 'none' : '';
+        $('ipsec-preview-btn').style.display = design ? 'none' : '';
+        $('ipsec-save-btn').style.display = design ? 'none' : '';
+        if (!design) {
+            // A mid-flow device change silently rebuilds the crypto radios, so the
+            // matrix is recomputed on every entry rather than cached.
+            renderMatrix();
+        }
+        updateFootNote();
+        var panel = $(design ? 'ipsec-panel-design' : 'ipsec-panel-verify');
+        if (panel && panel.focus) panel.focus();
+    }
+
+    // Say WHY Save is disabled. invalidate() kills it on every keystroke, and
+    // today it does so with no on-screen reason at all.
+    function updateFootNote() {
+        var note = $('ipsec-foot-note');
+        if (!note) return;
+        if (phase === 'design') { note.textContent = ''; note.classList.remove('is-warn'); return; }
+        if (lastPreviewOK) {
+            note.textContent = 'Checked — saving also runs preflight.';
+            note.classList.remove('is-warn');
+        } else {
+            note.textContent = 'Changed since it was last checked — run Validate to save.';
+            note.classList.add('is-warn');
+        }
+    }
+
+    // Crypto reads as one settled sentence; the six controls live behind "change".
+    function cryptoSummary() {
+        var el = $('ipsec-crypto-summary');
+        if (!el || !caps) return;
+        var prof = chosenProfile();
+        var parts = [];
+        if (prof !== 'custom') {
+            var p = (caps.profiles || []).find(function (x) { return x.name === prof; });
+            if (p) {
+                parts = [p.name, (p.ike.enc || '').toUpperCase(), (p.ike.dh ? 'DH' + p.ike.dh : ''), p.ike_version];
+            }
+        } else {
+            parts = ['Custom', ($('ipsec-enc').value || '').toUpperCase(),
+                ($('ipsec-dh').value ? 'DH' + $('ipsec-dh').value : ''), $('ipsec-ikever').value];
+        }
+        el.textContent = parts.filter(Boolean).join(' · ');
+    }
+
+    // Derived answers presented as confirmed facts rather than re-asked questions.
+    function renderFacts(pfx) {
+        var host = $('ipsec-' + pfx + '-facts');
+        if (!host) return;
+        var egress = ifaceVal(pfx, 'egress'), addr = ifaceVal(pfx, 'peer');
+        var dyn = $('ipsec-' + pfx + '-dyn').checked;
+        var bits = [];
+        if (addr) bits.push('<span>Address <span class="ipsec-fact-val">' + esc(addr) + '</span></span>');
+        if (egress) bits.push('<span>Out via <span class="ipsec-fact-val">' + esc(egress) + '</span></span>');
+        if (dyn) bits.push('<span>Behind NAT · dials out</span>');
+        host.innerHTML = bits.join('');
+    }
+
+    // Catch a duplicate at authoring rather than at preflight.
+    function checkExisting() {
+        var host = $('ipsec-existing');
+        if (!host) return;
+        var a = $('ipsec-dev-a').value, b = $('ipsec-dev-b').value;
+        var editing = parseInt($('ipsec-edit-id').value, 10) || 0;
+        if (!a || !b) { host.hidden = true; return; }
+        var gen = capsGen; // same token: a device change invalidates this answer too
+        AC.apiFetch(API + '/ipsec/tunnels').then(function (r) {
+            if (gen !== capsGen) return;
+            var hit = ((r && r.data) || []).filter(function (t) {
+                if (t.id === editing) return false;
+                // Promoted endpoint columns on models.IPSecTunnel — a_device_id /
+                // b_device_id. Sorted, because A/B is an authoring choice: the same
+                // pair picked the other way round is the same pair.
+                var ids = [String(t.a_device_id), String(t.b_device_id)].sort();
+                return ids.join('|') === [String(a), String(b)].sort().join('|');
+            });
+            if (!hit.length) { host.hidden = true; return; }
+            host.hidden = false;
+            host.innerHTML = 'These two already have ' + hit.length + ' tunnel' + (hit.length === 1 ? '' : 's') +
+                ': ' + hit.map(function (t) { return esc(t.name || ('#' + t.id)); }).join(', ') +
+                '. A second one is allowed, but check this is not a duplicate.';
+        }).catch(function () { host.hidden = true; });
+    }
+
     function wire() {
         AC.delegateEvent('click', {
+            'ipsec-phase': function (el) { setPhase(el.dataset.phase); },
+            'ipsec-crypto-toggle': function (el) {
+                // The disclosure IS #ipsec-custom-crypto's container restyled — a
+                // second visibility mechanism ANDed on top would leave an operator
+                // editing a custom-crypto tunnel staring at nothing.
+                var box = $('ipsec-crypto-detail');
+                var open = !box.hidden;
+                box.hidden = open;
+                el.setAttribute('aria-expanded', String(!open));
+                el.textContent = open ? 'change' : 'done';
+            },
             'ipsec-new': function () { openWizard(0); },
             'ipsec-edit': function (el) { openWizard(parseInt(el.dataset.id, 10)); },
             'ipsec-delete': function (el) { del(parseInt(el.dataset.id, 10)); },
