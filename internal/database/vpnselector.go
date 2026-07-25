@@ -95,3 +95,59 @@ func MatchProvisionedBySubnets(provPairs map[string]ProvisionedTunnelPair, vpn m
 	}
 	return hit, true
 }
+
+// resolveTunnelGroups labels each row with the LOGICAL tunnel it belongs to.
+//
+// One tunnel arrives as several rows from several writers under unrelated
+// names. On a FortiGate the SSH row carries the provisioned name (`fwm-t11`)
+// but no counters — `show ... phase1-interface` reads config, not state — while
+// the SNMP dialup row carries the counters under a name the collector
+// synthesizes from the peer's observed address, with an EMPTY phase1_name.
+// No single existing field unites them, which is why the connection-detail page
+// renders a chart per row and one of them is always blank.
+//
+// Precedence mirrors the connection map's, so the page and the map cannot give
+// different answers about which rows are one tunnel:
+//
+//  1. the provisioned tunnel whose NAME the row reports (tunnel_name or
+//     phase1_name), guarded so the reporting device is one of its endpoints;
+//  2. failing that, the provisioned tunnel whose SELECTORS the row matches —
+//     this is what catches the unnamed dialup child;
+//  3. failing that, phase1_name, then tunnel_name, so a row is never groupless.
+//
+// A failed provisioning lookup is not fatal: the fallbacks still group rows
+// that share a phase1 name, which is the pre-existing behaviour.
+func (d *Database) resolveTunnelGroups(statuses []models.VPNStatus) {
+	if len(statuses) == 0 {
+		return
+	}
+	provPairs, err := d.GetProvisionedTunnelPairs()
+	if err != nil {
+		provPairs = nil
+	}
+	for i := range statuses {
+		statuses[i].TunnelGroup = tunnelGroupFor(provPairs, statuses[i])
+	}
+}
+
+func tunnelGroupFor(provPairs map[string]ProvisionedTunnelPair, vpn models.VPNStatus) string {
+	for _, n := range []string{vpn.TunnelName, vpn.Phase1Name} {
+		if n == "" {
+			continue
+		}
+		// The reporting device must be an endpoint. vpn_status tunnel names are
+		// free text read off a device and only ipsec_tunnels.name is unique, so
+		// an unrelated box reporting a same-named tunnel must not join the group.
+		if pp, ok := provPairs[strings.ToLower(n)]; ok &&
+			(vpn.DeviceID == pp.A || vpn.DeviceID == pp.B) {
+			return pp.Name
+		}
+	}
+	if pp, ok := MatchProvisionedBySubnets(provPairs, vpn); ok {
+		return pp.Name
+	}
+	if vpn.Phase1Name != "" {
+		return vpn.Phase1Name
+	}
+	return vpn.TunnelName
+}
