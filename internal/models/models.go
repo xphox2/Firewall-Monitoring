@@ -213,6 +213,23 @@ type VPNStatus struct {
 	// rows. Nil when no historical 'up' is known. Lets the UI render
 	// "last seen up 2h ago" for tunnels currently down.
 	LastUpAt *time.Time `json:"last_up_at,omitempty" gorm:"-"`
+	// TunnelGroup is the LOGICAL tunnel this row belongs to — computed, never
+	// stored. One tunnel is reported as several rows by several writers with
+	// unrelated names: a FortiGate's SSH row carries the provisioned name but no
+	// counters, while its SNMP sibling carries the counters under a synthesized
+	// "dialup-<peer-ip>" name with an EMPTY phase1_name. Grouping on any single
+	// existing field therefore cannot unite them, which is why the UI drew one
+	// chart per row — including permanently blank ones.
+	//
+	// Populated by GetLatestVPNStatuses from the provisioned-tunnel record
+	// (name match, else subnet match), falling back to Phase1Name then
+	// TunnelName so every row always has a group.
+	//
+	// It is a human-meaningful LABEL, not a globally unique key: consumers must
+	// group by (DeviceID, TunnelGroup). That is required regardless, because the
+	// two ENDS of one tunnel report the same traffic from their own side — a
+	// chart summing across devices would double every byte.
+	TunnelGroup string `json:"tunnel_group,omitempty" gorm:"-"`
 	// RemoteDeviceID — resolved peer device id when GetLatestVPNStatuses
 	// is able to match this tunnel to a peer's VPN snapshot by RemoteIP
 	// (v0.10.218, bundle G3). Lets the frontend link the remote_ip cell

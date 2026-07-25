@@ -397,6 +397,7 @@ func (d *Database) GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, erro
 		}
 		rows.Close()
 	}
+	d.resolveTunnelGroups(statuses)
 	for i := range statuses {
 		if ts, ok := byName[statuses[i].TunnelName]; ok {
 			t := ts

@@ -369,6 +369,62 @@ func parseTrafficRangeHours(s string) float64 {
 	return 24
 }
 
+// GetVPNGroupChart returns one series for a whole LOGICAL tunnel on one device.
+//
+// A tunnel is reported as several vpn_status rows under unrelated names — a
+// FortiGate's SSH row carries the provisioned name but no counters, its SNMP
+// sibling carries the counters under a synthesized name — so charting per name
+// shows a fraction of the traffic, or an empty series. This resolves the group's
+// member names server-side and sums their per-bucket deltas.
+//
+// The group is a QUERY parameter, deliberately, not a path segment. Tunnel
+// names are device-supplied text and child names embed selectors; gin routes on
+// the DECODED path, so an escaped "/" becomes a real separator and the request
+// 404s. Keeping it out of the path removes that whole failure class rather than
+// relying on every future name being path-safe.
+func (h *Handler) GetVPNGroupChart(c *gin.Context) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+	group := c.Query("group")
+	if group == "" {
+		c.JSON(http.StatusBadRequest, response.Error("Tunnel group required"))
+		return
+	}
+	// Resolve the group's member names from the device's own rows, so the client
+	// never has to know (or URL-encode) them.
+	statuses, err := db.GetLatestVPNStatuses(id)
+	if err != nil {
+		httputil.InternalError(c, "Failed to get VPN statuses", err)
+		return
+	}
+	var names []string
+	seen := map[string]bool{}
+	for _, s := range statuses {
+		if s.TunnelGroup == group && !seen[s.TunnelName] {
+			seen[s.TunnelName] = true
+			names = append(names, s.TunnelName)
+		}
+	}
+	if len(names) == 0 {
+		c.JSON(http.StatusOK, response.Success([]database.VPNChartBucket{}))
+		return
+	}
+	from, to := httputil.ParseChartWindow(c, "24h")
+	data, err := db.GetVPNChartGroupWindow(id, names, from, to)
+	if err != nil {
+		log.Printf("GetVPNChartGroupWindow(%d, %v, %v, %v) error: %v", id, names, from, to, err)
+		httputil.InternalError(c, "Failed to get VPN chart data", err)
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(data))
+}
+
 func (h *Handler) GetVPNTunnelChart(c *gin.Context) {
 	db := h.reqDB(c)
 	if !httputil.RequireDB(c, db) {

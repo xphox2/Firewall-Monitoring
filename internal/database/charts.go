@@ -407,6 +407,50 @@ func (d *Database) GetVPNChartData(deviceID uint, tunnelName string, rangeStr st
 // cumulative counter as one "delta" (~the tunnel's lifetime bytes, every SSH
 // poll). A both-zero row carries no throughput information either way; a
 // genuine reset is still handled by the ELSE clamp on the next nonzero sample.
+// vpnDeltaQueryGrouped is vpnDeltaQuery over SEVERAL tunnel names at once, for
+// a chart that shows one logical tunnel reported as multiple rows.
+//
+// The only material difference is the window: PARTITION BY tunnel_name.
+// vpnDeltaQuery gets away with a bare `ORDER BY timestamp` because its WHERE
+// pins exactly one series — widen that to an IN-list without partitioning and
+// LAG walks across interleaved rows from different tunnels, so every delta is
+// computed against the wrong predecessor and the whole chart is garbage. This
+// is not hypothetical: a FortiGate's two dialup children of one peer share a
+// synthesized name today, which is the shape that first exposes it.
+//
+// Rows with no counters at all are already excluded by the shared
+// `NOT (bytes_in = 0 AND bytes_out = 0)` predicate, which is what stops a
+// config-derived row (SSH phase1, no counters) from contributing an empty
+// series — the cause of the blank half of today's two-chart display.
+//
+// Scoped to ONE device on purpose. The two ends of a tunnel each report the
+// same traffic from their own side; summing across devices would double it.
+func vpnDeltaQueryGrouped(bucketExpr, timeWhere string) string {
+	return fmt.Sprintf(`
+		SELECT bucket, SUM(delta_in) as in_bytes, SUM(delta_out) as out_bytes,
+		       SUM(delta_pin) as in_packets, SUM(delta_pout) as out_packets
+		FROM (
+			SELECT %s as bucket,
+				CASE WHEN LAG(bytes_in) OVER w IS NULL THEN NULL
+					WHEN bytes_in >= LAG(bytes_in) OVER w THEN bytes_in - LAG(bytes_in) OVER w
+					ELSE bytes_in END as delta_in,
+				CASE WHEN LAG(bytes_out) OVER w IS NULL THEN NULL
+					WHEN bytes_out >= LAG(bytes_out) OVER w THEN bytes_out - LAG(bytes_out) OVER w
+					ELSE bytes_out END as delta_out,
+				CASE WHEN LAG(packets_in) OVER w IS NULL THEN NULL
+					WHEN packets_in >= LAG(packets_in) OVER w THEN packets_in - LAG(packets_in) OVER w
+					ELSE packets_in END as delta_pin,
+				CASE WHEN LAG(packets_out) OVER w IS NULL THEN NULL
+					WHEN packets_out >= LAG(packets_out) OVER w THEN packets_out - LAG(packets_out) OVER w
+					ELSE packets_out END as delta_pout
+			FROM vpn_status
+			WHERE device_id = ? AND tunnel_name IN (?) AND %s
+				AND NOT (bytes_in = 0 AND bytes_out = 0)
+			WINDOW w AS (PARTITION BY tunnel_name ORDER BY timestamp)
+		) AS deltas WHERE delta_in IS NOT NULL
+		GROUP BY bucket ORDER BY bucket ASC`, bucketExpr, timeWhere)
+}
+
 func vpnDeltaQuery(bucketExpr, timeWhere string) string {
 	return fmt.Sprintf(`
 		SELECT bucket, SUM(delta_in) as in_bytes, SUM(delta_out) as out_bytes,
@@ -449,6 +493,40 @@ func (d *Database) GetVPNChartWindow(deviceID uint, tunnelName string, from, to 
 
 	var rows []VPNChartBucket
 	err := d.db.Raw(vpnDeltaQuery(bucketExpr, "timestamp > ? AND timestamp <= ?"), deviceID, tunnelName, from, to).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		rows[i].BucketMs = parseBucketToMillis(rows[i].Bucket)
+	}
+	return rows, nil
+}
+
+// GetVPNChartGroupWindow returns per-bucket deltas summed across every tunnel
+// name that makes up ONE logical tunnel on ONE device.
+//
+// It exists because a single tunnel is reported as several rows under unrelated
+// names (see models.VPNStatus.TunnelGroup), so the per-name chart shows a
+// fraction of the traffic — or, for a config-derived row, nothing at all.
+// Callers pass the names of one group; scoping to a single device is the
+// caller's job and is deliberate, since both ends report the same bytes.
+func (d *Database) GetVPNChartGroupWindow(deviceID uint, tunnelNames []string, from, to time.Time) ([]VPNChartBucket, error) {
+	if len(tunnelNames) == 0 || !to.After(from) {
+		return []VPNChartBucket{}, nil
+	}
+	// One name is the overwhelmingly common case; use the single-series query so
+	// grouping cannot change existing behaviour for it.
+	if len(tunnelNames) == 1 {
+		return d.GetVPNChartWindow(deviceID, tunnelNames[0], from, to)
+	}
+	if to.Sub(from) > maxChartWindow {
+		from = to.Add(-maxChartWindow)
+	}
+	bucketExpr := d.dialect.TimeBucket(bucketUnitForWindow(to.Sub(from)), "timestamp")
+
+	var rows []VPNChartBucket
+	err := d.db.Raw(vpnDeltaQueryGrouped(bucketExpr, "timestamp > ? AND timestamp <= ?"),
+		deviceID, tunnelNames, from, to).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
