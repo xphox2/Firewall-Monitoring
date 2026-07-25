@@ -344,17 +344,7 @@ func validateSubnets(intent *TunnelIntent) []Finding {
 	for i := range intent.Ends {
 		peer := &intent.Ends[1-i]
 		routed, _ := parseCIDRs(peer.ProtectedSubnets) // subnets end i installs toward the tunnel
-		// A DYNAMIC peer's PeerIP is not an IKE endpoint — this end never dials it
-		// (the peer initiates, and ESP returns to whatever source its NAT presents),
-		// so it cannot be locked out by routing its subnet down the tunnel. Treating
-		// it as one raises a bogus self_lockout warning and invites the operator to
-		// set a Gateway that would pin a /32 out the WAN over a legitimate in-tunnel
-		// host. The driver's peerRouteNeeded declines the route for the same reason;
-		// the two must stay in step.
 		peerIP := net.ParseIP(peer.PeerIP)
-		if peer.Dynamic {
-			peerIP = nil
-		}
 		for _, n := range routed {
 			if isDefaultRoute(n) {
 				// A default route already implies the peer-path problem; report it
@@ -363,17 +353,40 @@ func validateSubnets(intent *TunnelIntent) []Finding {
 					fmt.Sprintf("%s would route 0.0.0.0/0 over the tunnel — a pinned host route to the peer is required first", endLabel(intent, i))})
 				continue
 			}
-			if peerIP != nil && n.Contains(peerIP) {
-				// A very broad covering prefix (e.g. the 0.0.0.0/1 + 128.0.0.0/1
-				// full-tunnel split) is a default-route equivalent: it captures the
-				// peer's own path and ~all traffic, so it needs a pinned peer route
-				// first — block it like 0/0, above. isBroadCoverPrefix keeps this
-				// from being bypassed by the /1 halves of a full tunnel.
-				if isBroadCoverPrefix(n) {
-					fs = append(fs, Finding{SeverityBlock, "default_route_over_vti",
-						fmt.Sprintf("%s would route %s over the tunnel — effectively a default route capturing the peer %s; a pinned host route to the peer is required first", endLabel(intent, i), n.String(), peer.PeerIP)})
-					continue
+			// A very broad covering prefix (e.g. the 0.0.0.0/1 + 128.0.0.0/1
+			// full-tunnel split) is a default-route equivalent: it captures ~all
+			// traffic including the peer's own path, so it needs a pinned peer route
+			// first — block it like 0/0, above. isBroadCoverPrefix keeps this from
+			// being bypassed by the /1 halves of a full tunnel.
+			//
+			// For a DYNAMIC peer this blocks UNCONDITIONALLY, without asking whether
+			// the prefix contains PeerIP. The recorded PeerIP of a dialup end is its
+			// management address, not the endpoint it actually dials in from, so a
+			// "does not contain it" answer proves nothing — and a broad prefix is
+			// long enough to beat the device's own default route regardless of
+			// distance, so it can swallow the peer's real NAT address and capture a
+			// huge slice of traffic. There is also no remedy available: the /32 pin
+			// needs an address nobody knows. Like routebased_dialup_unsupported,
+			// this combination has no working form, so refuse it outright.
+			if isBroadCoverPrefix(n) && (peer.Dynamic || (peerIP != nil && n.Contains(peerIP))) {
+				msg := fmt.Sprintf("%s would route %s over the tunnel — effectively a default route capturing the peer %s; a pinned host route to the peer is required first", endLabel(intent, i), n.String(), peer.PeerIP)
+				if peer.Dynamic {
+					msg = fmt.Sprintf("%s would route %s over the tunnel to a dynamic/behind-NAT peer — effectively a default route, and the peer's real endpoint is not known in advance, so it cannot be excluded with a pinned host route. Narrow the protected subnets to the networks that actually need the tunnel.", endLabel(intent, i), n.String())
 				}
+				fs = append(fs, Finding{SeverityBlock, "default_route_over_vti", msg})
+				continue
+			}
+			// Beyond the broad-prefix case, a DYNAMIC peer's PeerIP is not an IKE
+			// endpoint — this end never dials it (the peer initiates, and ESP returns
+			// to whatever source its NAT presents), so it cannot be locked out by
+			// routing its subnet down the tunnel. Warning about it would be a false
+			// premise, and would invite the operator to set a Gateway that pins a /32
+			// out the WAN over a legitimate in-tunnel host. The driver's
+			// peerRouteNeeded declines that route for the same reason; keep in step.
+			if peer.Dynamic {
+				continue
+			}
+			if peerIP != nil && n.Contains(peerIP) {
 				// A specific routed subnet that contains the peer's own endpoint is
 				// safe ONLY if a host route to the peer via the WAN is pinned. When
 				// THIS end supplies a WAN Gateway, the apply path renders that /32

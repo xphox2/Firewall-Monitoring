@@ -238,11 +238,61 @@ func TestDialupPeer_NoPeerHostRoute(t *testing.T) {
 			"shadow the injected /24 and blackhole a legitimate in-tunnel host:\n%s", all)
 	}
 
-	// And validation must not nag about a lockout that cannot happen.
+	// And validation must not nag about a lockout that cannot happen. Check with
+	// the Gateway CLEARED: with one set, the pre-fix code also stayed silent (a
+	// set Gateway was treated as auto-resolving the lockout), so only the
+	// gateway-empty leg actually pins the validation change.
 	caps := [2]ipsec.CapabilityDescriptor{fgDriver(t).Capabilities(), fgDriver(t).Capabilities()}
+	in.Ends[0].Gateway = ""
 	for _, f := range ipsec.Validate(in, caps) {
 		if f.Code == "self_lockout" {
 			t.Errorf("self_lockout is a false premise for a dialup peer: %+v", f)
 		}
+	}
+	// The same shape with a STATIC peer must STILL warn — the gate must not have
+	// disabled the check wholesale.
+	sta := dialupIntent(false)
+	sta.Ends[1].PeerIP = "192.168.5.107"
+	sta.Ends[0].Gateway = ""
+	var warned bool
+	for _, f := range ipsec.Validate(sta, caps) {
+		if f.Code == "self_lockout" {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Error("a STATIC peer whose endpoint sits inside its own protected subnet must still raise self_lockout")
+	}
+}
+
+// REGRESSION GUARD: silencing the dialup self-lockout warning must NOT silence
+// the broad-cover-prefix BLOCK. A prefix like 0.0.0.0/2 is longer than the
+// device's default route, so it wins regardless of distance and can swallow the
+// peer's real NAT address — and for a dialup peer there is no /32 pin remedy,
+// because nobody knows the address to pin. It must block unconditionally.
+func TestDialupPeer_BroadCoverPrefixStillBlocks(t *testing.T) {
+	in := dialupIntent(true)
+	// No overlap with the local side, so subnet_overlap stays silent and this
+	// test can only pass via the broad-prefix block.
+	in.Ends[1].ProtectedSubnets = []string{"0.0.0.0/2"}
+	// 192.168.5.107 is OUTSIDE 0.0.0.0/2 (which covers 0.0.0.0-63.255.255.255), so
+	// the n.Contains(peerIP) test is FALSE and only the unconditional dynamic-peer
+	// clause can raise the block. (A PeerIP inside the prefix would pass even under
+	// the old contains-gated code, and prove nothing.)
+	in.Ends[1].PeerIP = "192.168.5.107"
+	in.Ends[0].ProtectedSubnets = []string{"192.168.25.0/24"}
+
+	caps := [2]ipsec.CapabilityDescriptor{fgDriver(t).Capabilities(), fgDriver(t).Capabilities()}
+	var blocked bool
+	for _, f := range ipsec.Validate(in, caps) {
+		if f.Code == "default_route_over_vti" && f.Severity == ipsec.SeverityBlock {
+			blocked = true
+			if !strings.Contains(f.Message, "not known in advance") {
+				t.Errorf("dialup broad-prefix block should explain why no pinned host route can help; got %q", f.Message)
+			}
+		}
+	}
+	if !blocked {
+		t.Error("a broad-cover prefix toward a DYNAMIC peer must BLOCK even though PeerIP is outside it")
 	}
 }
