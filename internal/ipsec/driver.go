@@ -267,6 +267,19 @@ type VendorDriver interface {
 	// step's Path is checked against the collision-detection contract in the
 	// collector; steps are HTTP GETs only and MUST never mutate device state.
 	PreflightProbe(v RenderView) []PreflightStep
+	// AdvisoryProbe returns READ-ONLY GETs whose bodies feed Advisories. It is
+	// DELIBERATELY separate from PreflightProbe: PreflightProbe's steps are also
+	// the deploy saga's collision-precheck (an ExpectAbsent hit ABORTS the write),
+	// so advisory reads live on their own method and the deploy path never sees
+	// them. That makes "an advisory can never block a deploy" structural rather
+	// than a property of how the collector happens to interpret a flag.
+	AdvisoryProbe(v RenderView) []PreflightStep
+	// Advisories turns the AdvisoryProbe bodies (keyed by the step's Check) into
+	// NON-BLOCKING findings. Vendor parsing lives here, server-side, mirroring
+	// StatusProbe/ParseStatus — the collector stays a dumb transport. A body that
+	// is missing (older collector), empty, or unparseable yields NO advisory: this
+	// must never invent a warning it cannot substantiate.
+	Advisories(v RenderView, bodies map[string]string) []Advisory
 }
 
 // PreflightStep is one read-only check the collector performs before a deploy.
@@ -274,11 +287,29 @@ type VendorDriver interface {
 // collector can turn the raw GET result into a structured finding; ExpectAbsent
 // = a non-empty/200 result is a COLLISION (an object we intended to create
 // already exists), whereas the auth/version checks expect success.
+//
+// ReturnBody asks the collector to echo the (size-capped) response body back in
+// the report so the SERVER can parse it; it is only set on AdvisoryProbe steps.
+// A collector predating the field simply omits the body and the advisory is
+// skipped — additive, so no wire-version bump is needed.
 type PreflightStep struct {
 	Check        string `json:"check"`
 	Method       string `json:"method"`
 	Path         string `json:"path"`
 	ExpectAbsent bool   `json:"expect_absent"`
+	ReturnBody   bool   `json:"return_body,omitempty"`
+}
+
+// Advisory is a NON-BLOCKING preflight finding: something already on the device
+// that will degrade or defeat the tunnel, but that is the operator's call to
+// resolve — never grounds to refuse a deploy. Distinct from a Finding (which can
+// be blocking) and from a collision (which aborts the apply saga).
+type Advisory struct {
+	Check   string `json:"check"`             // the AdvisoryProbe step that produced it
+	Title   string `json:"title"`             // one-line summary
+	Detail  string `json:"detail,omitempty"`  // the concrete device state observed
+	Remedy  string `json:"remedy,omitempty"`  // what the operator can do about it
+	Subject string `json:"subject,omitempty"` // the object/prefix concerned
 }
 
 var (

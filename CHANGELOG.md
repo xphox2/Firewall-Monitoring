@@ -1,6 +1,27 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.163] - 2026-07-24
+
+### Added — IPSec preflight advisory: pre-existing FortiGate route that competes with the tunnel
+
+A deploy installs one static route per remote protected subnet via the tunnel interface, leaving `distance` unset so FortiOS applies its default of **10**. If the device already carries a hand-made route covering that subnet, nothing warns about it and the failure is silent: the tunnel comes up healthy and simply does not carry the traffic.
+
+- **distance below 10** — the existing route stays preferred and traffic never enters the tunnel.
+- **distance equal to 10** — FortiOS installs both and ECMP-balances, so roughly half the traffic leaves the wrong way.
+
+Found on the live fwm-t9 tunnel: `edit 1 / set dst 192.168.5.0 255.255.255.0 / set gateway 192.168.25.254 / set device port3` with no explicit distance — an exact tie with the tunnel's own route for `192.168.5.0/24`.
+
+The preflight now reads the device's static-route table and reports each competing route as an **advisory**: which `seq-num` it is, the prefix and next-hop, why it conflicts, and the concrete `set distance` fix. Advisories are **non-blocking by construction** and never gate Deploy.
+
+- **`internal/ipsec/driver.go`** — new `Advisory` type; `VendorDriver` gains `AdvisoryProbe` (read-only GETs) and `Advisories` (server-side parsing of their bodies). `PreflightStep` gains `ReturnBody`. Advisory reads are kept on a **separate** method from `PreflightProbe` deliberately: `PreflightProbe`'s steps are reused verbatim as the deploy saga's collision precheck, where an `ExpectAbsent` hit **aborts** the write. Because the deploy path never receives advisory steps, "an advisory cannot stop a deploy" is a structural property, not a matter of how a flag is interpreted downstream.
+- **`internal/ipsec/vendors/fortigate/advisory.go`** — reads `router/static` (field-filtered to keep the response small), skips routes this tunnel owns (deterministic `seq-num`, plus the comment/device tag `Render` stamps), disabled routes, blackhole routes, and routes whose prefix cannot be resolved (`dstaddr` address objects). Matches on prefix **overlap**, so a covering supernet is caught as well as an exact match. Accepts FortiOS's inconsistently-quoted numerics.
+- **`internal/ipsec/vendors/opnsense/opnsense.go`** — no advisory: policy-based OPNsense installs strongSwan kernel SPD entries, which are consulted before the routing table, so a static route cannot divert tunnel traffic the way it can on FortiGate's route-based VTI forwarding. Documented as a follow-up for the route-based path (still blocked upstream — a VTI device cannot be assigned an interface handle via any MVC/REST endpoint).
+- **Advisories only ever assert observed state.** A missing body (collector predating the field), a non-2xx read, an oversize response, or an unparseable body yields **no** advisory rather than a guess — and their absence is never rendered as an all-clear.
+- **UI** — advisories render in the preflight modal as warnings, labelled "this does not block the deploy", with a per-end count badge.
+
+Requires Firewall-Collector v1.3.29 to echo the advisory bodies; on an older collector the advisory is silently skipped.
+
 ## [0.11.162] - 2026-07-24
 
 ### Fixed — OPNsense IPSec child fan-out per subnet pair (multi-subnet tunnels only brought up one pair)

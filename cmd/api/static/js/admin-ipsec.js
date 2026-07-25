@@ -737,6 +737,26 @@
         return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2);
     }
 
+    // Advisories are NON-BLOCKING findings about pre-existing device state that
+    // will degrade the tunnel (e.g. a static route that outranks the tunnel's).
+    // They are rendered as warnings and deliberately gate nothing: the operator
+    // decides, and Deploy stays available whether or not any are present.
+    function advisoriesHtml(list) {
+        if (!list || !list.length) return '';
+        var items = list.map(function (a) {
+            return '<li style="margin-bottom:8px;">' +
+                '<div style="font-weight:600;">' + esc(a.title || 'Advisory') + '</div>' +
+                (a.detail ? '<div style="font-size:0.82rem;margin-top:2px;">' + esc(a.detail) + '</div>' : '') +
+                (a.remedy ? '<div style="font-size:0.82rem;margin-top:3px;color:var(--fwmon-text-mute);">' + esc(a.remedy) + '</div>' : '') +
+                '</li>';
+        }).join('');
+        return '<div class="card" style="padding:10px;margin-top:8px;border-left:3px solid var(--fwmon-sig-warn);">' +
+            '<div style="font-weight:600;color:var(--fwmon-sig-warn);margin-bottom:6px;">' +
+            'Advisory · ' + list.length + ' item' + (list.length === 1 ? '' : 's') +
+            ' — this does not block the deploy</div>' +
+            '<ul style="margin:0;padding-left:16px;">' + items + '</ul></div>';
+    }
+
     function endReportHtml(e, state) {
         state = state || {};
         var r = e.report;
@@ -781,10 +801,12 @@
         } else {
             collisionBadge = b(true, false, 'no collision');
         }
+        var advisories = e.advisories || [];
         var badges =
             b(r.reachable, false, r.reachable ? 'reachable' : 'unreachable') +
             b(r.auth_ok, false, r.auth_ok ? 'auth ok' : 'auth failed') +
-            collisionBadge;
+            collisionBadge +
+            (advisories.length ? b(false, true, advisories.length + ' advisory') : '');
         var ver = r.os_version ? '<div style="font-size:0.82rem;color:var(--fwmon-text-mute);margin-top:4px;">version: ' + esc(r.os_version) + '</div>' : '';
         var checks = (r.checks || []).map(function (c) {
             var mark = c.collision ? '⚠ collision' : (c.indeterminate ? '? inconclusive' : (c.ok ? '✓' : '✗'));
@@ -794,7 +816,8 @@
         }).join('');
         return '<div class="card" style="padding:12px;">' + head +
             '<div style="margin:6px 0;">' + badges + '</div>' + ver +
-            (checks ? '<ul style="margin:8px 0 0 0;padding-left:16px;">' + checks + '</ul>' : '') + '</div>';
+            (checks ? '<ul style="margin:8px 0 0 0;padding-left:16px;">' + checks + '</ul>' : '') +
+            advisoriesHtml(advisories) + '</div>';
     }
 
     // A top status line so activity is visible even before per-end data changes:

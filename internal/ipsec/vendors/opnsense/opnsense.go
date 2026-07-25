@@ -277,6 +277,22 @@ func (d driver) PreflightProbe(v ipsec.RenderView) []ipsec.PreflightStep {
 	}
 }
 
+// AdvisoryProbe returns no steps. The route-conflict advisory the FortiGate
+// driver raises does not apply to the mode this driver deploys: policy-based
+// OPNsense installs strongSwan kernel SPD entries, and a matching SPD entry is
+// consulted BEFORE the routing table, so a pre-existing static route to a remote
+// protected subnet cannot divert traffic out of the tunnel the way it can on
+// FortiGate's route-based VTI forwarding.
+//
+// If/when the route-based OPNsense path becomes deployable (it is currently
+// blocked upstream — a VTI device cannot be assigned an interface handle via any
+// MVC/REST endpoint, so addGateway has nothing valid to reference), it WILL need
+// the equivalent gateway/route conflict advisory over /api/routes/routes/search.
+func (d driver) AdvisoryProbe(ipsec.RenderView) []ipsec.PreflightStep { return nil }
+
+// Advisories has nothing to analyse while AdvisoryProbe emits no steps.
+func (d driver) Advisories(ipsec.RenderView, map[string]string) []ipsec.Advisory { return nil }
+
 func (d driver) ParseStatus(raw string, v ipsec.RenderView) (ipsec.TunnelStatus, error) {
 	st := ipsec.TunnelStatus{IKE: ipsec.SAUnknown, Child: ipsec.SAUnknown}
 	// OPNsense sessions/searchPhase1 returns swanctl IKE-SA rows
