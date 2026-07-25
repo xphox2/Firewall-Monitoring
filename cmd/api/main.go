@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.165"
+const ServerVersion = "0.11.167"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -444,15 +444,16 @@ func main() {
 				dev["sessions"] = status.SessionCount
 				dev["uptime"] = status.Uptime
 			}
-			var vpnUp, vpnTotal int64
-			db.Gorm().Model(&models.VPNStatus{}).
-				Where("device_id = ? AND timestamp = (SELECT MAX(v2.timestamp) FROM vpn_status v2 WHERE v2.device_id = ? AND v2.tunnel_name = vpn_status.tunnel_name)", d.ID, d.ID).
-				Count(&vpnTotal)
-			db.Gorm().Model(&models.VPNStatus{}).
-				Where("device_id = ? AND status = ? AND timestamp = (SELECT MAX(v2.timestamp) FROM vpn_status v2 WHERE v2.device_id = ? AND v2.tunnel_name = vpn_status.tunnel_name)", d.ID, "up", d.ID).
-				Count(&vpnUp)
-			dev["vpn_up"] = int(vpnUp)
-			dev["vpn_total"] = int(vpnTotal)
+			// Counts come from the shared horizon-bounded per-tunnel snapshot, so
+			// this badge can never disagree with the device page. The inline query
+			// this replaces had no age bound at all and kept counting tunnels the
+			// device had stopped reporting days earlier.
+			vpnUp, vpnTotal, err := db.GetVPNTunnelCounts(d.ID)
+			if err != nil {
+				log.Printf("IRC status: VPN counts for device %d: %v", d.ID, err)
+			}
+			dev["vpn_up"] = vpnUp
+			dev["vpn_total"] = vpnTotal
 
 			var alertCount int64
 			db.Gorm().Model(&models.Alert{}).Where("device_id = ? AND acknowledged = ?", d.ID, false).Count(&alertCount)

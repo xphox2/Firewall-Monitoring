@@ -1,6 +1,53 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.167] - 2026-07-25
+
+### Fixed — tunnel-overlay edges could never reach the final step of the staircase
+
+v0.11.166 gave overlay pairs a freshness check but no expiry, so the staircase had no last step. A device whose telemetry froze keeps serving the same tunnel-interface rows at its own per-device `MAX` indefinitely, so the pair was re-derived and `last_check` re-stamped every cycle and the sweep could never reap it. Two ghosts survived: both sides frozen held amber forever, and — worse — **one side frozen rendered a confident "up"** taken from a dead spoke's frozen interface status, which is the same "last known served as current" fault the release set out to fix. Overlay evidence past the grace horizon now stops forming pairs at all, so the sweep reaps as intended and the fresh/stale split applies only to evidence that is genuinely current.
+
+### Fixed — write failures did not break cycle coherence
+
+Making the stale sweep unconditional in v0.11.166 removed an incidental protection: the old `count > 0` gate happened to cover the case where every upsert failed. A failed write is exactly as dangerous as a failed read — `last_check` is not advanced, and the sweep reads that as "the pair is gone" and deletes a live edge. Upsert failures now clear the detector's success flag alongside read failures.
+
+### Fixed — the overlay detector's remaining ungated reads
+
+`detectOverlayConnections` still discarded errors from `GetLatestInterfaceAddresses`, `GetAllLatestVPNStatuses` and the per-device `GetLatestConfigRevision`. Failure of either of the first two guts `hasDirectLink`, so every overlay pair that requires direct-link validation silently fails to form and is swept while the detector still reports success; a config-revision failure does the same to vxlan-derived edges. All now feed the signal, and the v0.11.166 note claiming full closure has been corrected.
+
+## [0.11.166] - 2026-07-25
+
+### Fixed — VPN telemetry: "last known" was being served as "current state"
+
+A rolled-back IPSec tunnel kept rendering on the connection map as a live-looking edge for days after it was deleted from the device. Live-confirmed: an edge `DC2-FW2 ↔ OPNsense / tunnel_names=fwm-t7 / status=down` whose `last_check` was still being refreshed every 60 seconds two days after the tunnel's `ipsec_tunnels` row was gone and the device's own config backup showed no trace of it.
+
+Root cause: the collector only POSTs VPN status when the list is non-empty, so a device with **zero** tunnels writes no rows at all and its snapshot freezes. `GetAllLatestVPNStatuses` had **no age predicate**, so it served that frozen snapshot forever; `detectVPNConnections` never inspected the row timestamps, re-derived the pair every cycle, and `UpsertAutoConnection` re-stamped `last_check`. The reaper (`CleanupStaleAutoConnectionsBefore`) was correct all along — it was **starved**, never broken, because the row was refreshed before every sweep.
+
+Investigating it surfaced that three separate queries disagreed about what "latest" means, and were wrong in **opposite** directions. Measured on the live DB for one FortiGate: the IRC badge counts (unbounded per-tunnel `MAX`) returned 5 tunnels including two dead for 2 days, while the device-detail page (device-wide `MAX`) returned 1 — **hiding a genuinely live tunnel**. The device-wide `MAX` assumes each collector batch is one complete atomic snapshot; that is false whenever two writers report at different cadences (SNMP ~60s vs the FortiGate SSH path at `SSHPollInterval`, default 900s), so the slower writer's tunnels were permanently masked by the faster writer's newer rows.
+
+- **`internal/database/telemetry.go`** — both readers now select the newest row **per tunnel_name** bounded by an evidence horizon, replacing the per-device `MAX`. Dead tunnels expire; slow-writer tunnels stop being masked. Only snapshot *selection* is bounded — the peer-subnet cross-fill, `RemoteDeviceID` resolution and `LastUpAt` enrichments still read full history, since they annotate a current tunnel rather than assert state. New `GetVPNTunnelCounts` gives the badges the same semantic, so a count can no longer disagree with the device page.
+- **`cmd/poller/main.go`** — the detector applies the **same up → stale → deleted staircase the L2 detector already uses**, reusing `l2infer.FreshWindow` (30m) / `GraceWindow` (3h). Fresh evidence yields real up/down; evidence between fresh and grace **holds** the connection as `status="stale"` (rendered amber by the existing frontend, ID stable); past grace the rows stop being served at all, so `last_check` stops advancing and the existing sweep reaps the row. 30m is load-bearing: a tighter window (e.g. the alert path's 5-minute floor) would mark every SSH-fed tunnel stale for two thirds of every interval and flap the map.
+- **`detectVPNConnections` now reports read success**, and the stale sweep is gated on it alongside the existing `l2OK`. This closes a **pre-existing** hazard: a failed VPN read with a healthy L2 read would let the sweep delete every VPN edge and recreate it with new IDs.
+- **`detectOverlayConnections`** only accepts fresh rows when verifying a direct link — an `up` carried over from hours-old evidence must not keep classifying an overlay as directly-linked.
+
+**No migration needed — self-healing.** The ghost row's `last_check` stops advancing on the first cycle after deploy and the existing reaper removes it within ~60s. Frozen `vpn_status` rows stop being readable as state immediately and age out via existing retention; they are deliberately not deleted early.
+
+### Fixed — three residual holes in the same bug class
+
+Adversarial review of the above found the fix closed the reported path but left siblings open:
+
+- **Tunnel-overlay pairs had no freshness discipline at all.** Phase-4 matching is built from `interface_addresses` + `interface_stats`, both unbounded per-device `MAX`, and the pair was hardcoded as fresh. A device whose telemetry froze entirely (collector dead, device decommissioned) would keep re-deriving an overlay pair from frozen rows with a permanently "up" status and a re-stamped `last_check` — the identical ghost mechanism, just fed by a different table. Overlay evidence now carries its own timestamp (the older of the two rows that formed it) and takes the same staircase.
+- **The stale sweep could never fire in a VPN-only deployment.** It required `count > 0` across all detectors — a stand-in for a read-success signal the detectors did not report. In a deployment whose only connection is a VPN pair, that pair expiring drops every count to zero, so the sweep was skipped *forever* and the ghost row rendered indefinitely: the very bug this change exists to fix, surviving in the degenerate topology. All three detectors now report read success and the gate is "did every read succeed", not "did they find anything" — a successful read that legitimately found nothing is real evidence that nothing is left, and must sweep.
+- **"A failed read is not evidence the pair is gone" was enforced for only one of four reads.** `detectOverlayConnections` returned a bare count, and two interface reads inside `detectVPNConnections` were logged and continued past with empty maps — so with the other detectors healthy the sweep would delete every affected edge and recreate it next cycle with new IDs. The four named reads now feed the read-success signal (the overlay detector's remaining reads are closed in v0.11.167).
+
+Also corrected: the SQL prune bound's safety margin was justified by the wrong arithmetic. What matters is the worst-case wall-clock *spread* between the bound and a row, not the largest absolute offset; a local-zone bound makes that `14 − (−12) = 26h`, exceeding the 24h slack. The bound is now always built from UTC (offset 0), which caps the spread at 12h and makes the constant correct with margin.
+
+### Fixed — `last_up_at` silently never populated on SQLite
+
+The "last seen up X ago" enrichment scanned `MAX(timestamp)` into a `time.Time` struct field. An aggregate loses the column's declared type, so the SQLite driver returns a string and the scan failed — and the error was swallowed by an `err == nil` guard, so the field was quietly left empty rather than reported. It now scans through `database/sql` (which supports `*any`, yielding the driver's native value) and normalizes both the Postgres `time.Time` and the SQLite string forms, logging any failure instead of hiding it.
+
+Related dialect hazard, handled: SQLite stores a timestamp as **text in whatever zone it was written** (`…T12:24:58-04:00` vs `…T16:24:58Z` for the same instant) and compares it lexicographically, so a zone-mismatched bound silently mis-filters. The SQL bound is therefore only a partition-pruning hint, widened by 24h; the exact horizon is applied in Go where comparison is instant-based.
+
 ## [0.11.165] - 2026-07-25
 
 ### Added — block route-based FortiGate tunnels to a dynamic (dialup) peer
