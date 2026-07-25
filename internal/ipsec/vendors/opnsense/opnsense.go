@@ -150,31 +150,14 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 	remoteAuth := jsonBody(map[string]any{
 		"remote": map[string]any{"enabled": "1", "description": desc, "connection": tokName(nameConn), "round": "0", "auth": "psk", "id": remote.LocalID.Value},
 	})
-	// Traffic selectors = the protected subnets (comma-joined CIDR lists per the
-	// OPNsense Swanctl.xml NetworkField AsList model). policies=1 makes strongSwan
-	// install the kernel SPD, so no routed interface/gateway is needed. No reqid:
-	// that only links a child to a routed VTI (route-based); a policy-based child
-	// lets strongSwan allocate one dynamically.
-	localTS := strings.Join(local.ProtectedSubnets, ",")
-	remoteTS := strings.Join(remote.ProtectedSubnets, ",")
-	child := jsonBody(map[string]any{
-		"child": map[string]any{
-			"enabled":       "1",
-			"description":   desc,
-			"connection":    tokName(nameConn),
-			"mode":          "tunnel",
-			"policies":      "1", // policy-based: install kernel IPsec policies
-			"esp_proposals": espProp,
-			"local_ts":      localTS,
-			"remote_ts":     remoteTS,
-			"rekey_time":    itoa(childLife),
-			"start_action":  startAction(remote.Dynamic),
-			"close_action":  "start",
-			// dpd_action OptionField accepts only clear/trap/start (never strongSwan's
-			// "restart"); "start" is OPNsense's re-initiate-on-DPD.
-			"dpd_action": "start",
-		},
-	})
+	// Traffic selectors: ONE child per (local × remote) subnet PAIR, each with a
+	// SINGLE local_ts/remote_ts. FortiGate holds one src/dst pair per phase2 and
+	// NARROWS a multi-TS CHILD_SA down to a single pair (strongSwan won't re-spawn
+	// children for the narrowed-away selectors), so a comma-joined child brings up
+	// only ONE pair against a FortiGate peer — we fan out to match its phase2s
+	// (mirrors fgPhase2Pairs + this driver's own fwRuleSpecs). policies=1 installs
+	// the kernel SPD (no routed interface/gateway); no reqid (strongSwan allocates a
+	// distinct one per child dynamically — a shared reqid would be the bug).
 	// PSK: fields per the OPNsense IPsec.xml model — ident (local id), remote_ident
 	// (peer id), keyType, Key. Marshaled with the REAL key (never in the preview).
 	pskStep := jsonBody(map[string]any{
@@ -202,9 +185,12 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 		apiCap("Create IPsec connection (IKE)", epConnAdd, conn, nameConn),
 		apiCap("Add local auth (PSK identity)", epLocalAdd, localAuth, nameLocal),
 		apiCap("Add remote auth (PSK identity)", epRemoteAdd, remoteAuth, nameRemote),
-		apiCap("Add child SA (policy-based: specific selectors, install policies)", epChildAdd, child, nameChild),
-		apiCap("Store pre-shared key", epPSKAdd, pskStep, namePSK),
 	}
+	// One child per subnet pair (policy-based: specific selectors, install policies).
+	for _, sp := range childSpecs(local, remote) {
+		steps = append(steps, apiCap("Add child SA ("+sp.localTS+" ↔ "+sp.remoteTS+")", epChildAdd, childBody(desc, espProp, sp, childLife, remote.Dynamic), sp.capture))
+	}
+	steps = append(steps, apiCap("Store pre-shared key", epPSKAdd, pskStep, namePSK))
 	for _, sp := range fwRuleSpecs(local, remote) {
 		steps = append(steps, apiCap("Add firewall pass rule ("+sp.src+" → "+sp.dst+")", epRuleAdd, fwRule(desc, ipproto, sp.src, sp.dst), sp.capture))
 	}
@@ -218,7 +204,7 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 		Steps:           steps,
 		Checksum:        ipsec.ChecksumSteps(steps),
 		TemplateVersion: templateVersion,
-		PreviewText:     swanctlPreview(desc, ikeProp, espProp, localAddr, remoteAddr, localTS, remoteTS, local, remote),
+		PreviewText:     swanctlPreview(desc, ikeProp, espProp, localAddr, remoteAddr, local, remote),
 		AutoObjects:     []string{"kernel IPsec policies (SPD)", "floating firewall pass rules (protected subnets, both directions)"},
 	}, nil
 }
@@ -238,8 +224,10 @@ func (d driver) RenderRemove(v ipsec.RenderView) (ipsec.Artifact, error) {
 	for _, sp := range fwRuleSpecs(v.Local(), v.Remote()) {
 		steps = append(steps, delByUUID("Delete firewall pass rule ("+sp.src+" → "+sp.dst+")", epRuleDel, sp.capture))
 	}
+	for _, sp := range childSpecs(v.Local(), v.Remote()) {
+		steps = append(steps, delByUUID("Delete child SA ("+sp.localTS+" ↔ "+sp.remoteTS+")", epChildDel, sp.capture))
+	}
 	steps = append(steps,
-		delByUUID("Delete child SA", epChildDel, nameChild),
 		delByUUID("Delete remote auth", epRemoteDel, nameRemote),
 		delByUUID("Delete local auth", epLocalDel, nameLocal),
 		delByUUID("Delete IPsec connection", epConnDel, nameConn),
@@ -400,7 +388,7 @@ const (
 	nameConn    = "conn"
 	nameLocal   = "local"
 	nameRemote  = "remote"
-	nameChild   = "child"
+	nameChild   = "child" // capture-name PREFIX: one child per subnet pair (child_<pair>)
 	namePSK     = "psk"
 	nameRuleOut = "rule_out" // capture-name PREFIX: local→remote pass rules (rule_out_<pair>)
 	nameRuleIn  = "rule_in"  // capture-name PREFIX: remote→local pass rules (rule_in_<pair>)
@@ -474,6 +462,49 @@ func protectedFamily(subnets ...string) (string, error) {
 		fam = "inet"
 	}
 	return fam, nil
+}
+
+// childSpec is one strongSwan child to render: its capture token and the single
+// local/remote traffic-selector pair it installs.
+type childSpec struct{ capture, localTS, remoteTS string }
+
+// childSpecs enumerates one child per (local × remote) subnet pair, each with a
+// SINGLE local_ts/remote_ts — FortiGate holds one src/dst pair per phase2 and
+// narrows a multi-TS child to a single pair, so each pair needs its own child.
+// SAME nesting/index as fwRuleSpecs so child_<i> lines up with that pair's rules
+// (the capture/delete parity RenderRemove relies on).
+func childSpecs(local, remote *ipsec.EndpointSpec) []childSpec {
+	var specs []childSpec
+	i := 0
+	for _, ls := range local.ProtectedSubnets {
+		for _, rs := range remote.ProtectedSubnets {
+			specs = append(specs, childSpec{fmt.Sprintf("%s_%d", nameChild, i), ls, rs})
+			i++
+		}
+	}
+	return specs
+}
+
+// childBody builds one policy-based addChild body (specific selectors → kernel SPD).
+// dpd_action OptionField accepts only clear/trap/start (never strongSwan's "restart");
+// "start" is OPNsense's re-initiate-on-DPD. No reqid — strongSwan allocates per child.
+func childBody(desc, espProp string, sp childSpec, childLife int, remoteDynamic bool) string {
+	return jsonBody(map[string]any{
+		"child": map[string]any{
+			"enabled":       "1",
+			"description":   desc,
+			"connection":    tokName(nameConn),
+			"mode":          "tunnel",
+			"policies":      "1",
+			"esp_proposals": espProp,
+			"local_ts":      sp.localTS,
+			"remote_ts":     sp.remoteTS,
+			"rekey_time":    itoa(childLife),
+			"start_action":  startAction(remoteDynamic),
+			"close_action":  "start",
+			"dpd_action":    "start",
+		},
+	})
 }
 
 // fwRuleSpec is one pass-rule to render: its capture token and the single
@@ -698,15 +729,18 @@ func dhToken(g ipsec.DHGroup) (string, error) {
 	return "", fmt.Errorf("opnsense: unsupported dh group %q", g)
 }
 
-func swanctlPreview(desc, ike, esp, localAddr, remoteAddr, localTS, remoteTS string, local, remote *ipsec.EndpointSpec) string {
+func swanctlPreview(desc, ike, esp, localAddr, remoteAddr string, local, remote *ipsec.EndpointSpec) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "connections.%s {\n", desc)
 	fmt.Fprintf(&b, "  version = 2\n  proposals = %s\n", ike)
 	fmt.Fprintf(&b, "  local_addrs = %s\n  remote_addrs = %s\n", localAddr, remoteAddr)
 	fmt.Fprintf(&b, "  local { auth = psk; id = %s }\n", local.LocalID.Value)
 	fmt.Fprintf(&b, "  remote { auth = psk; id = %s }\n", remote.LocalID.Value)
-	fmt.Fprintf(&b, "  children.%s {\n", desc)
-	fmt.Fprintf(&b, "    esp_proposals = %s\n    local_ts = %s\n    remote_ts = %s\n    policies = yes\n  }\n}", esp, localTS, remoteTS)
-	b.WriteString("\n# + pre-shared key (********); policy-based (kernel SPD) — no VTI/gateway/route")
+	// One child block per subnet pair (each installs its own kernel SPD policy).
+	for _, sp := range childSpecs(local, remote) {
+		fmt.Fprintf(&b, "  children.%s {\n", sp.capture)
+		fmt.Fprintf(&b, "    esp_proposals = %s\n    local_ts = %s\n    remote_ts = %s\n    policies = yes\n  }\n", esp, sp.localTS, sp.remoteTS)
+	}
+	b.WriteString("}\n# + pre-shared key (********); policy-based (kernel SPD) — no VTI/gateway/route")
 	return b.String()
 }

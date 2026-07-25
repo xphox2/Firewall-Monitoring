@@ -1,6 +1,22 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.162] - 2026-07-24
+
+### Fixed — OPNsense IPSec child fan-out per subnet pair (multi-subnet tunnels only brought up one pair)
+
+A FortiGate ⇄ OPNsense tunnel with **multiple protected subnets on the OPNsense end** only ever installed **one** subnet pair. Live-confirmed on fwm-t9 (OPNsense `[192.168.50.0/24, 192.168.5.0/24]` ↔ FortiGate `192.168.25.0/24`): the OPNsense child config carried both subnets in a comma-joined `local_ts`, but the *installed* CHILD_SA had narrowed to `192.168.50.0/24` only, and the FortiGate monitor showed a single proxyid up — so the second subnet (a user's Mac LAN) could not use the tunnel.
+
+Root cause: the OPNsense driver rendered **one** strongSwan child with a comma-joined `local_ts`/`remote_ts`. FortiGate holds a single src/dst pair per phase2 and **narrows** a multi-traffic-selector CHILD_SA down to one pair; strongSwan does not re-spawn children for the narrowed-away selectors (per strongSwan's Fortinet interop guidance). The FortiGate side already fanned out one phase2 per pair, so the ends were structurally mismatched.
+
+- **`internal/ipsec/vendors/opnsense/opnsense.go`** now fans out **one child per (local × remote) subnet pair**, each with a **single** `local_ts`/`remote_ts` — mirroring FortiGate's `fgPhase2Pairs` and this driver's own per-pair firewall rules. Capture names are `child_<pair>`, deterministic and index-aligned with the firewall-rule pairs so the `Render`/`RenderRemove` capture/delete rollback parity holds. A single-subnet tunnel is unchanged (one `child_0`, behaviorally identical). Validated by an adversarial Fable plan review (against strongSwan/FortiGate interop docs) and live SA inspection.
+
+### Fixed — IPSec deploy progress modal reset its "~1 min" timer per phase
+
+The deploy/rollback/recheck progress modal measured elapsed time from a single start point while promising the collector "picks this up on its next check-in (up to ~1 min)". But a deploy is **multiple collector round-trips** (parallel apply → SA-liveness verify), so the cumulative timer sailed well past the "~1 min" the UI claimed.
+
+- **`cmd/api/static/js/admin-ipsec.js`** now tracks the current phase (derived from `status` + each end's command status + `sa_pending`) and **restarts the timer each time the deploy advances**, keying the "up to ~1 min" reassurance on the per-phase timer. Total elapsed stays visible as a secondary `(m:ss total)` so a genuinely stuck deploy can't hide behind a per-phase reset; the 5-minute total safety cap is unchanged.
+
 ## [0.11.161] - 2026-07-24
 
 ### Fixed — OPNsense firewall rule rejected multi-subnet tunnels (comma-joined source_net)

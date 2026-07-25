@@ -2,6 +2,7 @@ package ipsec_test
 
 import (
 	"regexp"
+	"strings"
 	"testing"
 
 	"firewall-mon/internal/ipsec"
@@ -55,10 +56,11 @@ func TestOPNsense_CaptureRemoveTokenParity(t *testing.T) {
 		}
 	}
 
-	// The child auth bodies must reference the connection token, not a literal.
+	// The child/auth bodies must reference the connection token, not a literal.
+	// HasPrefix covers the fanned-out child_<i> captures (one child per subnet pair).
 	var sawChildRef bool
 	for _, s := range art.Steps {
-		if s.CaptureAs == "child" || s.CaptureAs == "local" || s.CaptureAs == "remote" {
+		if strings.HasPrefix(s.CaptureAs, "child") || s.CaptureAs == "local" || s.CaptureAs == "remote" {
 			if re.MatchString(s.Body) {
 				sawChildRef = true
 			}
