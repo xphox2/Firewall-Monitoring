@@ -353,7 +353,10 @@ func validateSubnets(intent *TunnelIntent) []Finding {
 	b, bErr := parseCIDRs(intent.Ends[1].ProtectedSubnets)
 	// Reported per end rather than as one merged list: a malformed CIDR is only
 	// actionable if the operator knows WHICH side's box to fix.
-	for end, errs := range map[int][]string{0: aErr, 1: bErr} {
+	// Fixed order, not a map: ranging over a map randomizes which end's parse
+	// errors come first, so the findings list would reorder run-to-run for
+	// identical input — noise in diffs, snapshots and any UI that lists them.
+	for end, errs := range [2][]string{aErr, bErr} {
 		for _, e := range errs {
 			fs = append(fs, Finding{Severity: SeverityBlock, Code: "subnet_invalid", Message: e, End: endRef(end)})
 		}
@@ -394,7 +397,7 @@ func validateSubnets(intent *TunnelIntent) []Finding {
 				// End is the PEER, not i: the finding is raised for end i but the
 				// 0/0 lives in the peer's protected list, and that is the field the
 				// operator has to edit.
-				fs = append(fs, Finding{Severity: SeverityBlock, Code: "default_route_over_vti", End: endRef(1 - i), Subject: n.String(),
+				fs = append(fs, Finding{Severity: SeverityBlock, Code: "default_route_over_vti", End: endRef(1 - i), Subject: subjectFor(peer.ProtectedSubnets, n),
 					Message: fmt.Sprintf("%s would route 0.0.0.0/0 over the tunnel — a pinned host route to the peer is required first", endLabel(intent, i))})
 				continue
 			}
@@ -418,7 +421,7 @@ func validateSubnets(intent *TunnelIntent) []Finding {
 				if peer.Dynamic {
 					msg = fmt.Sprintf("%s would route %s over the tunnel to a dynamic/behind-NAT peer — effectively a default route, and the peer's real endpoint is not known in advance, so it cannot be excluded with a pinned host route. Narrow the protected subnets to the networks that actually need the tunnel.", endLabel(intent, i), n.String())
 				}
-				fs = append(fs, Finding{Severity: SeverityBlock, Code: "default_route_over_vti", End: endRef(1 - i), Subject: n.String(), Message: msg})
+				fs = append(fs, Finding{Severity: SeverityBlock, Code: "default_route_over_vti", End: endRef(1 - i), Subject: subjectFor(peer.ProtectedSubnets, n), Message: msg})
 				continue
 			}
 			// Beyond the broad-prefix case, a DYNAMIC peer's PeerIP is not an IKE
@@ -441,7 +444,7 @@ func validateSubnets(intent *TunnelIntent) []Finding {
 				if intent.Ends[i].Gateway != "" {
 					continue
 				}
-				fs = append(fs, Finding{Severity: SeverityWarn, Code: "self_lockout", End: endRef(1 - i), Subject: n.String(), Message: fmt.Sprintf("protected subnet %s includes the peer's WAN endpoint %s — set this end's WAN gateway to auto-pin a /32 host route to the peer, or remove the WAN/transit network from the protected list", n.String(), peer.PeerIP)})
+				fs = append(fs, Finding{Severity: SeverityWarn, Code: "self_lockout", End: endRef(1 - i), Subject: subjectFor(peer.ProtectedSubnets, n), Message: fmt.Sprintf("protected subnet %s includes the peer's WAN endpoint %s — set %s's WAN gateway to auto-pin a /32 host route to the peer, or remove the WAN/transit network from this protected list", n.String(), peer.PeerIP, endLabel(intent, i))})
 			}
 		}
 	}
@@ -462,6 +465,24 @@ func parseCIDRs(cidrs []string) (nets []*net.IPNet, errs []string) {
 		nets = append(nets, n)
 	}
 	return nets, errs
+}
+
+// subjectFor returns the subnet AS THE OPERATOR TYPED IT.
+//
+// Subject is a UI matching key: the wizard highlights the row whose text equals
+// it. net.IPNet.String() canonicalizes, so a textarea holding "10.0.0.1/8" would
+// yield Subject "10.0.0.0/8" and match nothing on screen — the finding would
+// anchor to the field but the offending row would never light up. Falls back to
+// the canonical form when no raw entry corresponds (it always should).
+func subjectFor(raw []string, n *net.IPNet) string {
+	want := n.String()
+	for _, c := range raw {
+		c = strings.TrimSpace(c)
+		if _, p, err := net.ParseCIDR(c); err == nil && p.String() == want {
+			return c
+		}
+	}
+	return want
 }
 
 func netsOverlap(a, b *net.IPNet) bool { return a.Contains(b.IP) || b.Contains(a.IP) }

@@ -17,6 +17,12 @@ The schematic is **mode-aware**, which is load-bearing rather than cosmetic: pol
 
 Fields the server already answers are presented as confirmed facts rather than re-asked questions — "out via port1", "behind NAT · dials out" — with the mounted controls behind a disclosure. Also: the wizard now says **why** Save is disabled instead of silently greying it out, flags when the two firewalls already have a tunnel between them, and widens to 1080px.
 
+### Fixed — anchored findings could be inserted into a collapsed container
+
+Most anchors sit inside "Connection details" (a closed `<details>`) or the crypto disclosure (hidden by default). A finding placed there was in the DOM but not on screen, while the summary said "each is marked on the field it affects" — sending the operator to look for a message that was not visible. Precisely the silent failure the redesign exists to remove. Anchoring now reveals every enclosing container on the way up, opening only the one that holds a finding.
+
+Also fixed: stale findings, lane paint and the phase-tab marker survived a device change and decorated the new pair's freshly-loaded fields; the capabilities fetch had no generation token, so two quick device changes could let the older response rebuild the crypto controls for a pair no longer selected; the Verify matrix rendered "one child SA carries everything" for a route-based tunnel with an empty side, contradicting the schematic's own empty state; `subnet_invalid` findings came back in random A/B order because the loop ranged over a map; `Subject` used the canonical CIDR, so a non-canonical entry like `10.0.0.1/8` anchored to the field but never highlighted its row; and the `reserved_token` code — raised for both the PSK and an IKE identity — was mapped to a single field, which would have put an identity error on the PSK box.
+
 ### Added — guardrails for the anchoring contract
 
 The contract spans three files and every way it breaks is silent — the finding falls back to the summary, which looks exactly like the old behaviour. Three tests pin it: the `typeof f.end === 'number'` guard (comment-stripped, so the code may document the trap by naming it), every mapped slot having a `[data-anchor]` element in the markup, and `Finding.End` staying a pointer. Each was verified to fail when its rule is broken.

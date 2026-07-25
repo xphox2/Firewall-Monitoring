@@ -52,7 +52,11 @@ func readWizardFiles(t *testing.T) (js, html string) {
 func TestIPSecWizard_EndGuardIsTypeofNotTruthiness(t *testing.T) {
 	js, _ := readWizardFiles(t)
 
-	if !strings.Contains(js, "typeof f.end === 'number'") {
+	// Both directions scan CODE, not comments: the positive check would otherwise
+	// be satisfied by the comment that explains the rule, leaving the test green
+	// with the guard deleted.
+	code := stripJSComments(js)
+	if !strings.Contains(code, "typeof f.end === 'number'") {
 		t.Error("the end guard must be `typeof f.end === 'number'`: end A is 0, which is falsy, " +
 			"so a truthiness check silently drops every end-A anchor")
 	}
@@ -60,7 +64,7 @@ func TestIPSecWizard_EndGuardIsTypeofNotTruthiness(t *testing.T) {
 	// stripped first: the code documents this exact trap by NAMING the bad form,
 	// and matching that would fail the test for explaining itself.
 	for _, bad := range []string{"if (f.end)", "f.end &&", "!f.end ", "f.end ?"} {
-		if strings.Contains(stripJSComments(js), bad) {
+		if strings.Contains(code, bad) {
 			t.Errorf("found truthiness test %q on f.end — end A is 0 and would be dropped", bad)
 		}
 	}
@@ -92,6 +96,12 @@ func TestIPSecWizard_EveryAnchorSlotExistsInMarkup(t *testing.T) {
 		t.Fatal("no slots parsed out of the ANCHOR map")
 	}
 
+	// Scoped to the wizard form: the JS queries
+	// `#ipsec-wizard-form .ipsec-anchor[data-anchor=...]`, so an element that
+	// exists elsewhere on the page would satisfy a whole-file search while the
+	// real lookup returns null and the finding falls through to the summary.
+	form := wizardForm(t, html)
+
 	var missing []string
 	for slot := range slots {
 		// 'psk' is tunnel-level and unprefixed; every other slot is per-end.
@@ -100,16 +110,73 @@ func TestIPSecWizard_EveryAnchorSlotExistsInMarkup(t *testing.T) {
 			ids = []string{"psk"}
 		}
 		for _, id := range ids {
-			if !strings.Contains(html, `data-anchor="`+id+`"`) {
+			if !strings.Contains(form, `data-anchor="`+id+`"`) {
 				missing = append(missing, id)
 			}
 		}
 	}
 	sort.Strings(missing)
 	if len(missing) > 0 {
-		t.Errorf("ANCHOR maps findings to slots with no [data-anchor] element in admin.html: %v\n"+
+		t.Errorf("ANCHOR maps findings to slots with no [data-anchor] element inside #ipsec-wizard-form: %v\n"+
 			"Those findings fall back to the summary silently — the UI looks fine and the "+
 			"operator never sees them next to the field they must edit.", missing)
+	}
+}
+
+// wizardForm returns the markup between <form id="ipsec-wizard-form"> and its
+// closing tag, which is the subtree the JS actually queries.
+func wizardForm(t *testing.T, html string) string {
+	t.Helper()
+	start := strings.Index(html, `<form id="ipsec-wizard-form"`)
+	if start < 0 {
+		t.Fatal(`<form id="ipsec-wizard-form"> not found — it is the invalidation backbone ` +
+			`(form-level input/change bubbling) and every anchor lookup is scoped to it`)
+	}
+	end := strings.Index(html[start:], "</form>")
+	if end < 0 {
+		t.Fatal("wizard form is not closed")
+	}
+	return html[start : start+end]
+}
+
+// A mapped code that the server never emits is dead weight; the reverse — a real
+// per-field code with no mapping — silently falls back to the summary, which is
+// the behaviour this whole feature replaced. Codes drift as validation grows, so
+// pin the direction that actually hurts: every code in the map must be real.
+func TestIPSecWizard_EveryMappedCodeIsEmittedByTheServer(t *testing.T) {
+	js, _ := readWizardFiles(t)
+	v, err := os.ReadFile("../../internal/ipsec/validation.go")
+	if err != nil {
+		t.Fatalf("read validation.go: %v", err)
+	}
+	h, err := os.ReadFile("../../internal/api/handlers/handlers_ipsec.go")
+	if err != nil {
+		t.Fatalf("read handlers_ipsec.go: %v", err)
+	}
+	server := string(v) + string(h)
+
+	start := strings.Index(js, "var ANCHOR = {")
+	end := strings.Index(js[start:], "};")
+	if start < 0 || end < 0 {
+		t.Fatal("ANCHOR map not found")
+	}
+	body := stripJSComments(js[start : start+end])
+
+	// Every `code: 'slot'` pair, not just the first on each line — the map packs
+	// several entries per line, so an anchored `^\s*` regex silently checks about
+	// a third of them.
+	codeRe := regexp.MustCompile(`([a-z_]+)\s*:\s*'`)
+	var dead []string
+	for _, m := range codeRe.FindAllStringSubmatch(body, -1) {
+		if !strings.Contains(server, `"`+m[1]+`"`) {
+			dead = append(dead, m[1])
+		}
+	}
+	sort.Strings(dead)
+	if len(dead) > 0 {
+		t.Errorf("ANCHOR maps codes the server never emits: %v\n"+
+			"These entries are dead — and their presence disguises the fact that the real "+
+			"code for that field is unmapped and falling through to the summary.", dead)
 	}
 }
 

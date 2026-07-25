@@ -11,6 +11,7 @@
     var devices = [];      // eligible (fortigate/opnsense) devices
     var lastPreviewOK = false;
     var hintGen = { a: 0, b: 0 };         // per-endpoint request token — drop stale hint responses
+    var capsGen = 0;                      // per-pair token — drop stale capability responses
     var lastHintSubnets = { a: '', b: '' }; // last auto-filled subnets, so a re-pick can refresh them
     var endpointHints = { a: null, b: null }; // cached hints per endpoint (peer-IP options + egress→peer sync)
     var loadedDevice = { a: '', b: '' };      // device id whose hints are loaded per endpoint (re-load only on change)
@@ -157,6 +158,8 @@
         $('ipsec-matrix').innerHTML = '';
         $('ipsec-existing').hidden = true;
         $('ipsec-crypto-detail').hidden = true;
+        var cryptoTgl = document.querySelector('[data-action="ipsec-crypto-toggle"]');
+        if (cryptoTgl) { cryptoTgl.setAttribute('aria-expanded', 'false'); cryptoTgl.textContent = 'change'; }
         $('ipsec-tab-design').classList.remove('has-block', 'has-warn');
         setPhase('design');
 
@@ -179,10 +182,27 @@
 
     function onDevicesChosen() {
         var a = deviceById($('ipsec-dev-a').value), b = deviceById($('ipsec-dev-b').value);
-        if (!a || !b) { return Promise.resolve(); }
+        // Findings belong to the pair that was validated. Changing either device
+        // makes every one of them stale, and the hint reload repopulates the very
+        // fields they decorate — so a warning about the OLD FortiGate's ports would
+        // otherwise sit under the NEW one's freshly-loaded checklist.
+        clearAnchors();
+        $('ipsec-findings').innerHTML = '';
+        if (!a || !b) {
+            // Clearing a device must also drop the previous pair's duplicate note.
+            $('ipsec-existing').hidden = true;
+            refreshDerived();
+            return Promise.resolve();
+        }
+        // Capabilities are fetched per pair and every consumer keys off `caps`
+        // (the Verify gate, the profile radios, the crypto summary). Without a
+        // token, two quick device changes can let the OLDER response land last and
+        // rebuild the crypto controls for a pair that is no longer selected.
+        var gen = ++capsGen;
         // Peer/public IP + interfaces + subnets are all populated from each device's
         // real polled data by loadHints (below).
         var capsP = AC.apiFetch(API + '/ipsec/capabilities?a=' + encodeURIComponent(vendorOf(a)) + '&b=' + encodeURIComponent(vendorOf(b))).then(function (r) {
+            if (gen !== capsGen) return; // a newer pair was picked while this was in flight
             caps = (r && r.data) || null;
             if (!caps) return;
             $('ipsec-caps-note').textContent = 'Both ends support: ' + (caps.allowed.encryption || []).join(', ') + '.';
@@ -715,14 +735,13 @@
         var dyn = $('ipsec-' + pfx + '-dyn').checked;
         var addr = ifaceVal(pfx, 'peer');
         var egress = ifaceVal(pfx, 'egress');
-        var bad = laneFlagFor(pfx === 'a' ? 0 : 1, addr);
         var meta = [];
         if (egress) meta.push('out via ' + esc(egress));
         if (dyn) meta.push('behind NAT · dials out');
         return '<div class="ipsec-node">' +
             '<div class="ipsec-node-vendor">' + esc(vendorOf(dev)) + '</div>' +
             '<div class="ipsec-node-name">' + esc(dev.name) + '</div>' +
-            '<div class="ipsec-node-addr' + (bad ? ' is-bad' : '') + '">' +
+            '<div class="ipsec-node-addr">' +
                 esc(addr || (dyn ? 'no fixed address' : '—')) + '</div>' +
             (meta.length ? '<div class="ipsec-node-meta">' + meta.join(' · ') + '</div>' : '') +
             '</div>';
@@ -736,7 +755,6 @@
 
         var mode = modeVal();
         var m = trafficMatrix(subnetsOf('a'), subnetsOf('b'), mode);
-        var prof = chosenProfile();
         var spanLabel = ($('ipsec-ikever') ? $('ipsec-ikever').value : 'ikev2') + ' · ' +
             (mode === 'route-based' ? 'route-based' : 'policy-based');
 
@@ -778,8 +796,7 @@
             '</div>' +
             nodeHtml('b', b) +
             '</div>' +
-            '<div class="ipsec-lanes">' + lanes + '</div>' +
-            (prof && prof !== 'custom' ? '' : '');
+            '<div class="ipsec-lanes">' + lanes + '</div>';
     }
 
     // The Verify matrix is the same data as a table — one source, so the two views
@@ -789,8 +806,17 @@
         if (!host) return;
         var a = deviceById($('ipsec-dev-a').value), b = deviceById($('ipsec-dev-b').value);
         if (!a || !b) { host.innerHTML = ''; return; }
-        var m = trafficMatrix(subnetsOf('a'), subnetsOf('b'), modeVal());
-        if (!m.lanes.length) { host.innerHTML = '<p class="ipsec-matrix-cap">No networks entered yet.</p>'; return; }
+        var aNets = subnetsOf('a'), bNets = subnetsOf('b');
+        var m = trafficMatrix(aNets, bNets, modeVal());
+        // Route-based ALWAYS yields one 0.0.0.0/0 lane, so `!m.lanes.length` alone
+        // would render "one child SA carries everything" for a tunnel with an empty
+        // side that will carry nothing — and contradict the schematic, which shows
+        // its empty state. Both views must agree; that is the point of sharing
+        // trafficMatrix.
+        if (!m.lanes.length || !aNets.length || !bNets.length) {
+            host.innerHTML = '<p class="ipsec-matrix-cap">Both sites need at least one network before this tunnel carries anything.</p>';
+            return;
+        }
 
         // The status cell stays TERSE. The full sentence already appears twice —
         // on the lane in the schematic and on the field that caused it — and a
@@ -817,21 +843,56 @@
     // The server sends a stable `code` on every finding; this maps it to the
     // control the operator has to edit. Anything unmapped still renders in the
     // summary — findings are never lost.
+    // Codes are taken verbatim from internal/ipsec/validation.go — an entry that
+    // does not match a real emitted code is dead weight, and a real code that is
+    // missing here silently falls back to the summary.
     var ANCHOR = {
         lan_missing: 'lan', lan_subnet_mismatch: 'lan',
         egress_missing: 'egress',
         peer_ip_invalid: 'peer', peer_unroutable: 'peer', peer_private: 'peer',
-        id_missing: 'id', id_invalid: 'id', id_too_long: 'id', id_type_unsupported: 'id',
+        id_missing: 'id', id_too_long: 'id', id_fqdn_is_ip: 'id',
+        id_fqdn_is_range: 'id', id_fqdn_charset: 'id', id_ip_invalid: 'id',
         subnet_invalid: 'subnets', too_many_subnets: 'subnets', selectors_missing: 'subnets',
         default_route_over_vti: 'subnets', self_lockout: 'subnets',
         gateway_invalid: 'gateway',
-        psk_invalid: 'psk', psk_too_short: 'psk'
+        psk_invalid: 'psk'
     };
+
+    // reserved_token is raised for BOTH the PSK (tunnel-wide) and an IKE identity
+    // (per-end) — the same code, two different fields. A flat code→slot map would
+    // drop an identity error onto the PSK box, so it is resolved by whether the
+    // finding carries an end.
+    function slotFor(code, hasEnd) {
+        if (code === 'reserved_token') { return hasEnd ? 'id' : 'psk'; }
+        return ANCHOR[code];
+    }
 
     function clearAnchors() {
         laneFlags = {};
         var nodes = document.querySelectorAll('#ipsec-wizard-form .ipsec-anchor');
         Array.prototype.forEach.call(nodes, function (n) { n.innerHTML = ''; });
+        var tab = $('ipsec-tab-design');
+        if (tab) tab.classList.remove('has-block', 'has-warn');
+    }
+
+    // An anchored finding is worse than a summarised one if the operator cannot
+    // SEE it. Most anchors sit inside "Connection details" (<details>, closed) or
+    // the crypto disclosure (hidden), and inserting into a collapsed subtree while
+    // the summary says "each is marked on the field it affects" sends the operator
+    // to Design to look for a message that is not on screen — exactly the silent
+    // failure this redesign exists to remove. So reveal every container on the way
+    // up before the finding lands in it.
+    function revealAnchor(host) {
+        var el = host;
+        while (el && el.id !== 'ipsec-wizard-form') {
+            if (el.tagName === 'DETAILS') { el.open = true; }
+            if (el.id === 'ipsec-crypto-detail' && el.hidden) {
+                el.hidden = false;
+                var tgl = document.querySelector('[data-action="ipsec-crypto-toggle"]');
+                if (tgl) { tgl.setAttribute('aria-expanded', 'true'); tgl.textContent = 'done'; }
+            }
+            el = el.parentElement;
+        }
     }
 
     function renderFindings(findings) {
@@ -843,11 +904,11 @@
 
         list.forEach(function (f) {
             if (f.severity !== 'block' && f.severity !== 'warn') return;
-            var slot = ANCHOR[f.code];
             // End A is 0, which is FALSY — `if (f.end)` would drop every end-A
             // anchor, i.e. half the findings, on the end that is usually the
             // FortiGate. The type check is load-bearing.
             var hasEnd = typeof f.end === 'number';
+            var slot = slotFor(f.code, hasEnd);
             if (f.subject && hasEnd) { laneFlags[f.end + ':' + f.subject] = f.message; }
             if (!slot || (slot !== 'psk' && !hasEnd)) { summary.push(f); return; }
 
@@ -856,6 +917,7 @@
             if (!host) { summary.push(f); return; }
             var cls = 'ipsec-anchor-item' + (f.severity === 'warn' ? ' is-warn' : '');
             host.insertAdjacentHTML('beforeend', '<div class="' + cls + '">' + esc(f.message) + '</div>');
+            revealAnchor(host);
         });
 
         var html = summary.map(function (f) {
@@ -1053,7 +1115,7 @@
         var egress = ifaceVal(pfx, 'egress'), addr = ifaceVal(pfx, 'peer');
         var dyn = $('ipsec-' + pfx + '-dyn').checked;
         var bits = [];
-        if (addr) bits.push('<span>Public <span class="ipsec-fact-val">' + esc(addr) + '</span></span>');
+        if (addr) bits.push('<span>Address <span class="ipsec-fact-val">' + esc(addr) + '</span></span>');
         if (egress) bits.push('<span>Out via <span class="ipsec-fact-val">' + esc(egress) + '</span></span>');
         if (dyn) bits.push('<span>Behind NAT · dials out</span>');
         host.innerHTML = bits.join('');
@@ -1066,7 +1128,9 @@
         var a = $('ipsec-dev-a').value, b = $('ipsec-dev-b').value;
         var editing = parseInt($('ipsec-edit-id').value, 10) || 0;
         if (!a || !b) { host.hidden = true; return; }
+        var gen = capsGen; // same token: a device change invalidates this answer too
         AC.apiFetch(API + '/ipsec/tunnels').then(function (r) {
+            if (gen !== capsGen) return;
             var hit = ((r && r.data) || []).filter(function (t) {
                 if (t.id === editing) return false;
                 // Promoted endpoint columns on models.IPSecTunnel — a_device_id /
