@@ -1,6 +1,7 @@
 package ipsec_test
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -50,8 +51,26 @@ func TestPreflightProbeKeys_MatchRenderKeys(t *testing.T) {
 		}
 	}
 
-	// Collect the route/policy paths Render creates (POST bodies carry the keys;
-	// RenderRemove DELETEs by the mkey path, which is what we compare against).
+	// Collect the route keys Render actually POSTs. This — not the remove sweep —
+	// is what preflight must mirror: the collector re-runs the preflight GETs
+	// after the write expecting each object to be PRESENT, so probing a key
+	// Render never creates would fail verification.
+	art, err := d.Render(view)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	createdRoutes := map[string]bool{}
+	for _, s := range art.Steps {
+		if s.Method != "POST" || !strings.HasSuffix(s.Path, "/router/static") {
+			continue
+		}
+		m := regexp.MustCompile(`"seq-num":(\d+)`).FindStringSubmatch(s.Body)
+		if m == nil {
+			t.Fatalf("route POST body has no seq-num: %s", s.Body)
+		}
+		createdRoutes["/api/v2/cmdb/router/static/"+m[1]] = true
+	}
+
 	rem, err := d.RenderRemove(view)
 	if err != nil {
 		t.Fatalf("render remove: %v", err)
@@ -69,16 +88,38 @@ func TestPreflightProbeKeys_MatchRenderKeys(t *testing.T) {
 	if len(preRoutes) == 0 || len(prePolicies) != 2 {
 		t.Fatalf("preflight should read ≥1 route + exactly 2 policy keys, got routes=%d policies=%d", len(preRoutes), len(prePolicies))
 	}
-	if !sameKeys(preRoutes, remRoutes) {
-		t.Errorf("preflight route keys != render route keys\n preflight=%v\n render=%v", preRoutes, remRoutes)
+	if !sameKeys(preRoutes, createdRoutes) {
+		t.Errorf("preflight route keys != the keys Render creates\n preflight=%v\n created=%v", preRoutes, createdRoutes)
 	}
 	if !sameKeys(prePolicies, remPolicies) {
 		t.Errorf("preflight policy keys != render policy keys\n preflight=%v\n render=%v", prePolicies, remPolicies)
 	}
 
-	// Explicit spot-check against the allocation formula.
-	if !preRoutes["/api/v2/cmdb/router/static/"+strconv.Itoa(ipsec.FGRouteKey(in.ID, 0))] {
-		t.Errorf("preflight missing route seq-num %d", ipsec.FGRouteKey(in.ID, 0))
+	// RenderRemove must be able to reap everything Render created. It sweeps the
+	// whole key SLOT SPACE — a superset — so that a slot left filled by a tunnel
+	// deployed under an older render (e.g. the parent-bound statics a dialup peer
+	// no longer gets) is still cleaned up. A DELETE of an absent key is success.
+	for k := range createdRoutes {
+		if !remRoutes[k] {
+			t.Errorf("RenderRemove does not delete created route %s", k)
+		}
+	}
+	if len(remRoutes) < len(createdRoutes) {
+		t.Errorf("remove sweep (%d) must cover at least the created routes (%d)", len(remRoutes), len(createdRoutes))
+	}
+
+	// Explicit spot-check against the allocation formula. canonicalIntent's peer B
+	// is DYNAMIC, so slot 0 (the per-subnet tunnel route) is deliberately reserved
+	// but never created — FortiOS injects that route itself via phase1 add-route,
+	// and a parent-bound static would shadow it and break egress. The blackhole
+	// slot IS always created; pin that instead.
+	nSub := len(in.Ends[1].ProtectedSubnets)
+	blackhole0 := "/api/v2/cmdb/router/static/" + strconv.Itoa(ipsec.FGRouteKey(in.ID, nSub))
+	if !preRoutes[blackhole0] {
+		t.Errorf("preflight missing blackhole route key %s", blackhole0)
+	}
+	if preRoutes["/api/v2/cmdb/router/static/"+strconv.Itoa(ipsec.FGRouteKey(in.ID, 0))] {
+		t.Error("preflight must NOT probe the per-subnet tunnel-route slot for a dynamic peer — it is never created")
 	}
 	for _, off := range []int{0, 1} {
 		if !prePolicies["/api/v2/cmdb/firewall/policy/"+strconv.Itoa(ipsec.FGPolicyKey(in.ID, off))] {

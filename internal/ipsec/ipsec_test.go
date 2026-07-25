@@ -128,7 +128,11 @@ func TestFortiGate_RendersModernProposal(t *testing.T) {
 		// net-device=enable (since v0.11.144): the phase1 POST auto-creates the
 		// kernel tunnel interface the VTI/routes/policies depend on — disable
 		// left a cmdb object that couldn't forward.
-		`"add-route":"disable"`, `"net-device":"enable"`, `"peertype":"one"`,
+		//
+		// add-route=ENABLE because peer B is dynamic (dialup). FortiOS must inject
+		// the reverse routes itself, bound to the peer's sub-tunnel; a static route
+		// naming the parent carries the wrong tun_id and drops at IPsec egress.
+		`"add-route":"enable"`, `"net-device":"enable"`, `"peertype":"one"`,
 	} {
 		if !strings.Contains(all, want) {
 			t.Errorf("fortigate render missing %q\n--- bodies ---\n%s", want, all)
