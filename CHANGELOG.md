@@ -16,6 +16,10 @@ Root cause: since **FortiOS 7.0.1** a route binds to a tunnel by **tun_id**, rep
 
 Verified live end-to-end after the fix: the RIB switched to `iface fwm-t9_0 gw <peer> dist 15`, and **both** subnet pairs passed traffic bidirectionally (`in 504 / out 504` on each phase2, 0% ping loss).
 
+### Added — block route-based FortiGate tunnels to a dynamic (dialup) peer
+
+New blocking validation finding `routebased_dialup_unsupported`. `add-route` installs a route per **negotiated** phase2 selector, and a route-based tunnel negotiates `0.0.0.0/0` — so on a dialup peer it would install a **default route via the tunnel** instead of routes for the protected subnets. That is both wrong (the protected subnets get no specific route) and dangerous (it can capture unrelated traffic on a device whose own default route has a higher distance). Parent-bound statics are not an alternative for the reason above, so the combination has no working form and is now refused with an explanation rather than deployed as a tunnel that comes up carrying nothing. Policy-based is unaffected — it negotiates the protected subnets as the selectors, so `add-route` installs exactly the right per-subnet routes.
+
 Diagnosis note: the competing-route advisory added in v0.11.163 was not the cause here and its verdict was correct — the operator's conflicting route had already been disabled and was absent from the RIB.
 
 ## [0.11.163] - 2026-07-24

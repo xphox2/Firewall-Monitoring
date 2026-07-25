@@ -169,6 +169,36 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 		add(SeverityBlock, "vti_missing", "a route-based tunnel needs a VTI transit subnet")
 	}
 
+	// --- route-based + a dynamic (dialup) peer has no working way to steer
+	// return traffic on FortiGate, so refuse it rather than deploy a tunnel that
+	// comes up and silently carries nothing outbound.
+	//
+	// Since FortiOS 7.0.1 a route binds to a tunnel by tun_id. A dialup phase1
+	// gives each peer a sub-tunnel with its own tun_id, so a static route naming
+	// the parent interface matches no sub-tunnel and traffic dies at IPsec
+	// egress. The supported substitute is phase1 add-route, which installs a
+	// route per NEGOTIATED phase2 selector — but a route-based tunnel negotiates
+	// 0.0.0.0/0, so add-route would install a DEFAULT ROUTE via the tunnel
+	// instead of the protected subnets. That is both wrong (the protected
+	// subnets get no specific route) and dangerous (it can capture unrelated
+	// traffic on a device whose own default route has a higher distance).
+	//
+	// Policy-based is unaffected: it negotiates the protected subnets as the
+	// selectors, so add-route installs exactly the right per-subnet routes.
+	if intent.Mode == ModeRouteBased {
+		for i := range intent.Ends {
+			peer := 1 - i
+			if intent.Ends[peer].Dynamic && intent.Ends[i].Vendor == "fortigate" {
+				add(SeverityBlock, "routebased_dialup_unsupported",
+					fmt.Sprintf("%s: a route-based tunnel to a dynamic/behind-NAT peer cannot steer return traffic on FortiGate "+
+						"(a dialup peer's routes must come from phase1 add-route, which follows the negotiated selectors — and "+
+						"route-based negotiates 0.0.0.0/0, so it would install a default route via the tunnel rather than the "+
+						"protected subnets). Use policy-based mode for this tunnel, or give the peer a reachable static address.",
+						endLabel(intent, i)))
+			}
+		}
+	}
+
 	// --- policy-based: the protected subnets ARE the traffic selectors, so each
 	// end must declare at least one (empty selectors = no tunneled traffic).
 	if intent.Mode == ModePolicyBased {

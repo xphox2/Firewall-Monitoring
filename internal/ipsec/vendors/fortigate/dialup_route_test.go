@@ -153,3 +153,37 @@ func mustCIDR(t *testing.T, cidr string) string {
 	}
 	return ip + " " + mask
 }
+
+// Route-based + a dialup peer must be REFUSED, not rendered. add-route follows
+// the negotiated selectors, and route-based negotiates 0.0.0.0/0 — so FortiOS
+// would install a default route via the tunnel instead of per-subnet routes,
+// which is both wrong and capable of capturing unrelated traffic. Policy-based
+// negotiates the protected subnets, so it is fine.
+func TestRouteBasedDialup_IsRefused(t *testing.T) {
+	in := dialupIntent(true)
+	in.Mode = ipsec.ModeRouteBased
+	in.VTISubnet = "169.254.1.36/30"
+
+	caps := [2]ipsec.CapabilityDescriptor{fgDriver(t).Capabilities(), fgDriver(t).Capabilities()}
+	fs := ipsec.Validate(in, caps)
+	var found bool
+	for _, f := range fs {
+		if f.Code == "routebased_dialup_unsupported" {
+			found = true
+			if f.Severity != ipsec.SeverityBlock {
+				t.Errorf("route-based+dialup must BLOCK, got severity %q", f.Severity)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("route-based tunnel to a dynamic peer must be blocked; findings=%+v", fs)
+	}
+
+	// The same intent in policy-based mode must NOT raise it.
+	in.Mode = ipsec.ModePolicyBased
+	for _, f := range ipsec.Validate(in, caps) {
+		if f.Code == "routebased_dialup_unsupported" {
+			t.Error("policy-based + dialup is supported and must not be blocked")
+		}
+	}
+}
