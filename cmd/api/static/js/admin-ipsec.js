@@ -865,8 +865,14 @@
     // mirroring the preflight machinery (generation token guards stale timers).
     var deployTimer = null;
     var deployGen = 0;
-    var DEPLOY_WINDOW_MS = 300000; // ~5 min — writes + verify GETs on a busy box
+    var DEPLOY_WINDOW_MS = 300000; // ~5 min total safety cap — writes + verify GETs on a busy box
     var DEPLOY_POLL_MS = 3000;
+    // A deploy is several collector round-trips (parallel apply → SA-liveness verify),
+    // each up to one heartbeat (~1 min). Track the CURRENT phase separately so the
+    // "up to ~1 min" reassurance resets per round-trip instead of a single cumulative
+    // timer sailing past the ~1 min it claims. phaseKey = the observable per-round-trip state.
+    var deployPhaseKey = '';
+    var deployPhaseStartMs = 0;
 
     function stopDeployPoll() {
         deployGen++;
@@ -950,6 +956,8 @@
     function openDeployModal(id, op) {
         stopDeployPoll();
         deployReasonSnapshot = ''; // fresh per-deploy so a prior failure can't leak in
+        deployPhaseKey = '';       // fresh phase tracking (first poll seeds it)
+        deployPhaseStartMs = Date.now();
         $('ipsec-deploy-title').textContent = (op === 'rollback') ? 'Roll Back Tunnel'
             : (op === 'recheck') ? 'Recheck Tunnel' : 'Deploy Tunnel';
         $('ipsec-deploy-sub').textContent = (op === 'rollback')
@@ -1130,13 +1138,22 @@
             // reassurance entirely — the elapsed timer itself signals the wait.
             var isSA = (status === 'degraded' && data && data.sa_pending);
             var phaseLabel = isSA ? 'Verifying SA liveness' : 'Deploying';
-            var elapsedSec = Math.floor(state.elapsedMs / 1000);
-            var reassurance = (elapsedSec <= 90)
-                ? ' <span style="color:var(--fwmon-text-faint);">— the collector picks this up on its next check-in (up to ~1 min)</span>'
+            // Reassurance + primary counter are PER-PHASE: each collector round-trip
+            // legitimately takes up to ~1 min, so keying on the phase timer (not
+            // cumulative elapsed) keeps "up to ~1 min" truthful each step.
+            var phaseMs = (typeof state.phaseMs === 'number') ? state.phaseMs : state.elapsedMs;
+            var phaseSec = Math.floor(phaseMs / 1000);
+            var reassurance = (phaseSec <= 90)
+                ? ' <span style="color:var(--fwmon-text-faint);">— the collector picks up this step on its next check-in (up to ~1 min)</span>'
                 : ' <span style="color:var(--fwmon-text-faint);">— still waiting</span>';
+            // Total elapsed stays visible (mandatory — keeps a genuinely stuck deploy
+            // from hiding behind a per-phase reset) once it diverges from the phase timer.
+            var totalNote = (state.elapsedMs > phaseMs + 1500)
+                ? ' <span style="color:var(--fwmon-text-faint);">(' + esc(mmss(state.elapsedMs)) + ' total)</span>'
+                : '';
             line = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;color:var(--fwmon-text-mute);font-size:0.85rem;">' +
-                '<span class="fwmon-spinner"></span><span>' + esc(phaseLabel) + '… ' + esc(mmss(state.elapsedMs)) +
-                reassurance + '</span></div>';
+                '<span class="fwmon-spinner"></span><span>' + esc(phaseLabel) + '… ' + esc(mmss(phaseMs)) +
+                reassurance + totalNote + '</span></div>';
         } else if (state.exhausted) {
             line = '<div style="color:var(--fwmon-sig-warn);font-size:0.85rem;margin-bottom:10px;">No terminal result after ' + esc(mmss(state.elapsedMs)) + ' — the collector may be offline or still queued. This modal will pick it up if you reopen “View progress”.</div>';
         } else {
@@ -1171,9 +1188,22 @@
             if (!deployLive(gen)) return;
             var data = (r && r.data) || {};
             var elapsed = Date.now() - startMs;
+            // Reset the per-phase timer whenever the deploy ADVANCES. The observable
+            // per-round-trip state is status + each end's command status + sa_pending;
+            // every change is a genuine phase step (statuses are monotonic, no thrash).
+            // rolling_back frames carry no ends[] — both removes run as one round-trip,
+            // so rollback stays a single phase (one reset when ends vanish).
+            var phaseKey = (data.status || '') + '|' +
+                ((data.ends || []).map(function (e) { return e.status; }).join(',')) + '|' +
+                (data.sa_pending ? 'sa' : '');
+            if (phaseKey !== deployPhaseKey) {
+                deployPhaseKey = phaseKey;
+                deployPhaseStartMs = Date.now();
+            }
+            var phaseMs = Date.now() - deployPhaseStartMs;
             var terminal = deployTerminal(data.status, data);
             var more = !terminal && elapsed < DEPLOY_WINDOW_MS;
-            renderDeployBody(id, data, { elapsedMs: elapsed, polling: more, exhausted: !terminal && !more }, op);
+            renderDeployBody(id, data, { elapsedMs: elapsed, phaseMs: phaseMs, polling: more, exhausted: !terminal && !more }, op);
             if (more) {
                 deployTimer = setTimeout(function () { pollDeploy(id, gen, startMs, op); }, DEPLOY_POLL_MS);
             }
