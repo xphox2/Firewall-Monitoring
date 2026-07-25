@@ -5,8 +5,10 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"firewall-mon/internal/api/response"
+	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 
@@ -438,15 +440,21 @@ func (h *Handler) GetVPNMapData(c *gin.Context) {
 		Name string
 	}
 	ipToDevice := make(map[string]deviceRef, len(devices)*2)
+	deviceByID := make(map[uint]*models.Device, len(devices))
+	for i := range devices {
+		deviceByID[devices[i].ID] = &devices[i]
+	}
 	for _, d := range devices {
 		ipToDevice[d.IPAddress] = deviceRef{ID: d.ID, Name: d.Name}
 	}
+	// Tunnels this system deployed carry their endpoints as recorded fact; a
+	// failed read only costs the override, so it is non-fatal.
+	provPairs, perr := db.GetProvisionedTunnelPairs()
+	if perr != nil {
+		provPairs = nil
+	}
 	ifAddrs, err := db.GetLatestInterfaceAddresses()
 	if err == nil {
-		deviceByID := make(map[uint]*models.Device, len(devices))
-		for i := range devices {
-			deviceByID[devices[i].ID] = &devices[i]
-		}
 		for _, addr := range ifAddrs {
 			if _, exists := ipToDevice[addr.IPAddress]; exists {
 				continue
@@ -496,11 +504,25 @@ func (h *Handler) GetVPNMapData(c *gin.Context) {
 			result[key] = dv
 		}
 
+		// Peer attribution must agree with the edge the connection map draws, so
+		// this applies the same precedence as detectVPNConnections: a recorded
+		// deployment wins, and a dialup row's remote IP is not evidence of
+		// anything (for a peer behind NAT it is the gateway's address, which
+		// legitimately belongs to a different monitored device). Without this the
+		// panel would keep naming the NAT gateway while the edge named the real
+		// peer — two answers to the same question on one screen.
 		var matchID uint
 		var matchName string
-		if ref, found := ipToDevice[vpn.RemoteIP]; found && ref.ID != vpn.DeviceID {
-			matchID = ref.ID
-			matchName = ref.Name
+		if peer, found := provisionedPeer(provPairs, vpn); found {
+			matchID = peer
+			if d, ok := deviceByID[peer]; ok {
+				matchName = d.Name
+			}
+		} else if vpn.TunnelType != "ipsec-dialup" {
+			if ref, found := ipToDevice[vpn.RemoteIP]; found && ref.ID != vpn.DeviceID {
+				matchID = ref.ID
+				matchName = ref.Name
+			}
 		}
 
 		dv.Total++
@@ -528,4 +550,37 @@ func (h *Handler) GetVPNMapData(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response.Success(result))
+}
+
+// provisionedPeer returns the far-end device of the tunnel this row belongs to,
+// when the row names a tunnel THIS system deployed.
+//
+// It mirrors the precedence detectVPNConnections applies, so the map's per-device
+// panel and the edges it draws cannot give two different answers about who a
+// tunnel connects. Peer attribution from the remote IP is structurally wrong for
+// a dialup peer behind NAT — the responder observes the gateway's address, which
+// legitimately belongs to a different monitored device — and for a tunnel we
+// provisioned the endpoints are recorded fact rather than inference.
+//
+// The reporting device must be one of the recorded endpoints: vpn_status
+// tunnel names are free text read off a device, and only ipsec_tunnels.name is
+// unique, so an unrelated device reporting a same-named tunnel must not be able
+// to claim the pair.
+func provisionedPeer(provPairs map[string]database.ProvisionedTunnelPair, vpn models.VPNStatus) (uint, bool) {
+	for _, n := range []string{vpn.TunnelName, vpn.Phase1Name} {
+		if n == "" {
+			continue
+		}
+		pp, ok := provPairs[strings.ToLower(n)]
+		if !ok {
+			continue
+		}
+		switch vpn.DeviceID {
+		case pp.A:
+			return pp.B, true
+		case pp.B:
+			return pp.A, true
+		}
+	}
+	return 0, false
 }

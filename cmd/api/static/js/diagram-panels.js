@@ -164,7 +164,7 @@
         const dstName = conn.dest_device?.name || 'Device ' + conn.dest_device_id;
         const typeBadge = window.typeBadgeHtml(conn.connection_type);
         const statusBadge = `<span class="badge ${conn.status}">${window.escapeHtml((conn.status || 'unknown').toUpperCase())}</span>`;
-        const methodLabels = {ip_match:'Direct',interface_ip:'Direct',bidirectional:'Direct',tunnel_indirect:'Indirect',wan_inferred:'Indirect',name_match:'Indirect',overlay_name:'Indirect',lldp_neighbor:'LLDP confirmed',fdb_match:'MAC-table matched',arp_match:'ARP inferred'};
+        const methodLabels = {ip_match:'Direct',interface_ip:'Direct',bidirectional:'Direct',provisioned:'Provisioned',tunnel_overlay:'Tunnel subnet',tunnel_indirect:'Indirect',wan_inferred:'Indirect',name_match:'Indirect',overlay_name:'Indirect',lldp_neighbor:'LLDP confirmed',fdb_match:'MAC-table matched',arp_match:'ARP inferred'};
         const methodBadge = conn.match_method ? `<span class="badge info" style="font-size:0.68rem;">${methodLabels[conn.match_method] || conn.match_method}</span>` : '';
 
         panel.innerHTML = `

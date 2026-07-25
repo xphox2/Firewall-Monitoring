@@ -1,6 +1,30 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.171] - 2026-07-25
+
+### Fixed — connection map attributed NAT'd IPSec tunnels to the NAT gateway
+
+The map drew an IPSec edge that did not exist and omitted the one that did: `DC2-FW1 ↔ TECHLABS-FW-01` instead of `TECHLABS-FW-01 ↔ OPNsense`.
+
+A FortiGate names a dialup instance after the peer's **observed source address**. For a peer behind NAT that is the gateway's public IP — which legitimately belongs to a different monitored device — so attribution by remote IP lands on the gateway. In production two *distinct* peers behind one NAT both collapsed onto it, and the synthetic tunnel name also contaminated a second, legitimate edge's tunnel list. This is not a tuning problem: matching a dialup peer by remote IP cannot be right, because the peer never puts its own address on the wire.
+
+Tunnels this system provisioned now attribute from their **recorded endpoints** instead. `ipsec_tunnels` has always held the true device pair; nothing joined it to detection until now.
+
+Deliberate details:
+
+- **Row-driven, never table-driven.** A pair forms only when live telemetry names the tunnel. Pairing straight from the table would produce an edge with no fresh evidence — permanently amber, and re-derived every cycle so the stale sweep could never reap it.
+- **Dialup rows are fully inert for IP attribution**, not merely barred from creating a pair. The weaker rule still lets two peers behind one NAT inject their names and their hardcoded `up` into an unrelated device's legitimate edge — and whether they do depends on database row order, churning the row every cycle.
+- Keyed on `tunnel_type = "ipsec-dialup"`, not the `dialup-` name prefix: that prefix is synthesized by our own collector only as a fallback when the FortiOS table has no name column, so a name-based test would miss every named row.
+- **The reporting device must be one of the recorded endpoints.** Tunnel names are free text read off a device; only the provisioning record is unique.
+- **`provisioned` is terminal** — corroboration must not downgrade a recorded deployment.
+- A FortiGate reports one tunnel as two rows from two writers: SSH supplies the name but, being config rather than state, no liveness; SNMP supplies liveness and selectors but no usable name. The child is matched to its parent by selector containment, so the edge renders green — and so a subnet-bearing child alone still carries the tunnel if the SSH writer goes quiet. Both selector formats are handled (CIDR and the `begin - end` range form; only one code path emits CIDR).
+- Ambiguous selector matches attribute nothing: a wrong parent would wear the highest-confidence label.
+
+The map's per-device panel applies the same precedence, so it and the edges cannot give two different answers about who a tunnel connects.
+
+**No migration.** Once detection is corrected the wrong rows converge on their own: the phantom stops being re-stamped and the existing sweep deletes it, and `tunnel_names` is rewritten wholesale every cycle.
+
 ## [0.11.170] - 2026-07-25
 
 ### Fixed — a failed render no longer discards the findings that explain it
