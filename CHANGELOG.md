@@ -1,6 +1,30 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.172] - 2026-07-25
+
+### Changed — one VPN chart per tunnel instead of one per row
+
+Every tunnel row on the connection-detail page expanded to its own small chart, so a single tunnel drew one chart per side **and** one per phase 2 entry. Worse, a FortiGate reports one tunnel as two rows from two writers: the SSH row carries the provisioned name but no counters at all (it reads config, not live state), while its SNMP sibling carries the counters under a synthesized `dialup-<peer-ip>` name with an empty `phase1_name`. The operator saw two charts for one tunnel, one of them permanently blank.
+
+Now one **full-width** chart per logical tunnel sits above its table, and the per-child detail stays in the table where it belongs — the chart answers "is traffic flowing" (one question per tunnel), the table answers "which subnet pair" (one row per child).
+
+Rows are united by a new computed `tunnel_group`, resolved server-side from the provisioning record with the same precedence the connection map uses, so the page and the map cannot disagree about which rows are one tunnel. Counterless rows contribute nothing, so the blank series disappears rather than being hidden.
+
+The group chart query partitions its window per tunnel. Without that, widening the existing single-series query to several names makes `LAG` walk across interleaved rows from different tunnels — every delta computed against the wrong predecessor. The test measures it at 152000 instead of 2200, a 69× error rather than a near-miss. The query is scoped to one device deliberately: both ends report the same traffic from their own side, so summing across devices would double every byte.
+
+The new endpoint takes the group as a **query parameter**, not a path segment — child names embed selectors and gin routes on the decoded path, so an escaped `/` becomes a real separator and the request 404s.
+
+**Known limit:** an unprovisioned tunnel has no record to group by, so its rows still fall back to `phase1_name`/`tunnel_name` and can render separately.
+
+### Added — OPNsense IPSec session parser (not yet wired to a poller)
+
+Turns three OPNsense session documents into one `vpn_status` row per child SA. `searchPhase2` is unusable — it requires POST and the collector hard-refuses any non-GET status step by design — so this uses three parameterless GETs (`sessions/searchPhase1`, `spd/search`, `sad/search`) correlated on `reqid`.
+
+Details verified against a live box rather than assumed: the SAD cannot name our tunnels (its description merge needs a model `reqid`, and the driver deliberately writes none), so naming comes from `searchPhase1`; `reqid` is a JSON number in one endpoint and a string in the other; rekey puts two SAs on one reqid and direction, so the newest is taken rather than summed — summing would drop when the old SA expires, and the downstream reset-clamp would re-count the whole cumulative as a traffic spike every hour.
+
+A down child leaves no trace at all (our children use `start_action` start/none, not trap), so expected children absent from the box are synthesized as down with zero counters — otherwise the rows would simply stop arriving and the alert path, which needs a literal down row, would never fire.
+
 ## [0.11.171] - 2026-07-25
 
 ### Fixed — connection map attributed NAT'd IPSec tunnels to the NAT gateway
