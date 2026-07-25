@@ -73,6 +73,7 @@ type IPSecStore interface {
 	CreateIPSecTunnel(m *models.IPSecTunnel) error
 	GetIPSecTunnel(id uint) (*models.IPSecTunnel, error)
 	ListIPSecTunnels() ([]models.IPSecTunnel, error)
+	GetProvisionedTunnelPairs() (map[string]ProvisionedTunnelPair, error)
 	UpdateIPSecTunnel(m *models.IPSecTunnel) error
 	UpdateIPSecTunnelStatus(id uint, status, lastErr string) error
 	MarkIPSecTunnelDeployed(id uint, status, lastErr string) error

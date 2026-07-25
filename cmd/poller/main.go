@@ -1388,6 +1388,87 @@ func (p *Poller) pruneStaleIfaceStats(ttl time.Duration) {
 // the detection READ succeeded. The ok flag mirrors l2OK: a failed read must not
 // be mistaken for "this device pair no longer exists", or the cycle's stale sweep
 // would delete every VPN edge and recreate it with new IDs next cycle.
+// vpnSelectorNet parses a selector as reported in vpn_status.
+//
+// Two formats occur, from two different code paths in the FortiGate SNMP
+// profile: proper CIDR ("192.168.13.0/24") and an inclusive RANGE
+// ("192.168.13.0 - 192.168.13.255") emitted where the MIB exposes begin/end
+// addresses instead of addr/mask. A CIDR-only parse silently fails on the
+// latter, which would leave a healthy tunnel unattributed and its edge red.
+//
+// A range is reduced to its first address, which is all the containment test
+// below needs.
+func vpnSelectorNet(s string) (net.IP, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, false
+	}
+	if i := strings.Index(s, "-"); i >= 0 {
+		s = strings.TrimSpace(s[:i])
+	}
+	if ip, _, err := net.ParseCIDR(s); err == nil {
+		return ip, true
+	}
+	if ip := net.ParseIP(s); ip != nil {
+		return ip, true
+	}
+	return nil, false
+}
+
+// selectorCovered reports whether any of the intent's subnets contains the
+// address the device reported for this selector. Containment rather than
+// equality: FortiOS narrows a selector it has negotiated (a /24 in the intent
+// is reported as a /32 for the specific host pair actually in use).
+func selectorCovered(intentSubnets []string, reported string) bool {
+	ip, ok := vpnSelectorNet(reported)
+	if !ok {
+		return false
+	}
+	for _, s := range intentSubnets {
+		_, n, err := net.ParseCIDR(strings.TrimSpace(s))
+		if err != nil {
+			continue
+		}
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchProvisionedBySubnets identifies the provisioned tunnel an unnamed row
+// belongs to, using the traffic it carries.
+//
+// A FortiGate dialup instance carries no usable tunnel name — the collector
+// synthesizes one from the peer's observed address — so the selectors are the
+// only self-describing thing on the row. Both must line up with the same
+// tunnel's intent, from the reporting device's point of view.
+//
+// A tie is resolved by refusing to answer: attributing a tunnel to the wrong
+// parent is worse than leaving it unattributed, because the result wears the
+// "provisioned" label and looks authoritative.
+func matchProvisionedBySubnets(provPairs map[string]database.ProvisionedTunnelPair, vpn models.VPNStatus) (database.ProvisionedTunnelPair, bool) {
+	if vpn.LocalSubnet == "" || vpn.RemoteSubnet == "" {
+		return database.ProvisionedTunnelPair{}, false
+	}
+	var hit database.ProvisionedTunnelPair
+	found := 0
+	for _, pp := range provPairs {
+		local, remote, ok := pp.SubnetsFor(vpn.DeviceID)
+		if !ok {
+			continue // this device is not an endpoint of that tunnel
+		}
+		if selectorCovered(local, vpn.LocalSubnet) && selectorCovered(remote, vpn.RemoteSubnet) {
+			hit = pp
+			found++
+		}
+	}
+	if found != 1 {
+		return database.ProvisionedTunnelPair{}, false
+	}
+	return hit, true
+}
+
 func (p *Poller) detectVPNConnections(devices []models.Device) (int, bool) {
 	if p.db == nil || len(devices) == 0 {
 		return 0, true
@@ -1470,42 +1551,32 @@ func (p *Poller) detectVPNConnections(devices []models.Device) (int, bool) {
 
 	pairs := make(map[string]*pairInfo)
 
-	for _, vpn := range vpnStatuses {
-		remoteDevice, ok := ipToDevice[vpn.RemoteIP]
-		if !ok {
-			continue
-		}
-		if remoteDevice.ID == vpn.DeviceID {
-			continue // skip self-referencing
-		}
-
-		key := pairKey(vpn.DeviceID, remoteDevice.ID)
+	// getPair fetches or creates the accumulator for a device pair. method/ct are
+	// used only on creation; an existing pair keeps its own (see the stickiness
+	// rules below).
+	getPair := func(a, b uint, method, ct string) *pairInfo {
+		key := pairKey(a, b)
 		pi, exists := pairs[key]
-		if !exists {
-			srcID, dstID := vpn.DeviceID, remoteDevice.ID
-			if srcID > dstID {
-				srcID, dstID = dstID, srcID
-			}
-			// Determine match method based on how the IP was found
-			method := "ip_match"
-			if ipSource[vpn.RemoteIP] == "interface" {
-				method = "interface_ip"
-			}
-			// Determine connection type from tunnel type
-			ct := "ipsec"
-			if vpn.TunnelType == "sslvpn" {
-				ct = "ssl"
-			}
-			pi = &pairInfo{
-				sourceID:    srcID,
-				destID:      dstID,
-				tunnelNames: make(map[string]bool),
-				matchMethod: method,
-				connType:    ct,
-				sides:       0,
-			}
-			pairs[key] = pi
+		if exists {
+			return pi
 		}
+		srcID, dstID := a, b
+		if srcID > dstID {
+			srcID, dstID = dstID, srcID
+		}
+		pi = &pairInfo{
+			sourceID:    srcID,
+			destID:      dstID,
+			tunnelNames: make(map[string]bool),
+			matchMethod: method,
+			connType:    ct,
+		}
+		pairs[key] = pi
+		return pi
+	}
+
+	// absorb folds one tunnel row's evidence into a pair.
+	absorb := func(pi *pairInfo, vpn models.VPNStatus) {
 		if vpn.TunnelName != "" {
 			pi.tunnelNames[vpn.TunnelName] = true
 		}
@@ -1515,11 +1586,149 @@ func (p *Poller) detectVPNConnections(devices []models.Device) (int, bool) {
 				pi.anyUp = true
 			}
 		}
-		// Upgrade connection type if we see SSL
 		if vpn.TunnelType == "sslvpn" {
 			pi.connType = "ssl"
 		}
-		// Upgrade match method if this side is via interface IP
+	}
+
+	// ---- Phase 0: tunnels THIS system provisioned -------------------------
+	//
+	// For a tunnel we deployed, the endpoints are a recorded fact, so stop
+	// guessing them from the remote IP. That guess is structurally wrong for a
+	// dialup peer behind NAT: the responder observes the NAT gateway's address,
+	// so the tunnel gets attributed to whichever monitored device owns that
+	// public IP rather than to the peer behind it.
+	//
+	// This phase is deliberately ROW-DRIVEN — it pairs devices only when live
+	// telemetry names the tunnel. Pairing straight from the ipsec_tunnels table
+	// would look tidier and is a trap: such a pair carries no fresh evidence, so
+	// it renders permanently "stale", and because it would be re-derived every
+	// cycle regardless of evidence it keeps advancing last_check and the stale
+	// sweep could never reap it — exactly the frozen-evidence ghost the
+	// fresh/grace staircase exists to kill.
+	provPairs, perr := p.db.GetProvisionedTunnelPairs()
+	if perr != nil {
+		// Not fatal: fall back to IP matching. But a failed read is not evidence
+		// that a pair disappeared, so don't let the sweep act on this cycle.
+		log.Printf("VPN auto-detect: failed to get provisioned tunnel pairs - %v", perr)
+		readsOK = false
+		provPairs = nil
+	}
+
+	// provisionedFor resolves the tunnel a row belongs to by NAME.
+	//
+	// The device reporting the row must be one of the recorded endpoints.
+	// vpn_status.tunnel_name is free text read off a device and only
+	// ipsec_tunnels.name is unique, so without this guard a tunnel hand-named
+	// "fwm-t11" on two unrelated firewalls would confidently pair the provisioned
+	// devices on the strength of an unrelated device's telemetry — and do it
+	// wearing the highest-confidence label.
+	provisionedFor := func(vpn models.VPNStatus) (database.ProvisionedTunnelPair, bool) {
+		for _, n := range []string{vpn.TunnelName, vpn.Phase1Name} {
+			if n == "" {
+				continue
+			}
+			pp, ok := provPairs[strings.ToLower(n)]
+			if !ok {
+				continue
+			}
+			if vpn.DeviceID == pp.A || vpn.DeviceID == pp.B {
+				return pp, true
+			}
+		}
+		return database.ProvisionedTunnelPair{}, false
+	}
+
+	// isDialup marks a row whose peer is identified ONLY by its observed source
+	// address. TunnelType — not the "dialup-" name prefix — is the correct key:
+	// the prefix is synthesized by our own collector as a fallback when the
+	// FortiOS gen1 dialup table has no name column, so a name-based test would
+	// silently miss every row that does have a name. TunnelType is set for every
+	// dialup-table row.
+	isDialup := func(vpn models.VPNStatus) bool { return vpn.TunnelType == "ipsec-dialup" }
+
+	// linked records which pair each row was attributed to by provisioning, so
+	// the IP phase can skip rows already placed.
+	linked := make(map[int]*pairInfo, len(vpnStatuses))
+
+	for i, vpn := range vpnStatuses {
+		pp, ok := provisionedFor(vpn)
+		if !ok {
+			continue
+		}
+		pi := getPair(pp.A, pp.B, "provisioned", "ipsec")
+		pi.matchMethod = "provisioned" // wins even if an earlier phase created the pair
+		absorb(pi, vpn)
+		linked[i] = pi
+	}
+
+	// ---- Phase 0b: dialup children of a provisioned tunnel ------------------
+	//
+	// A FortiGate reports one tunnel as TWO rows from two different writers: the
+	// SSH path yields the phase1 name but, because `show ... phase1-interface` is
+	// CONFIG rather than live state, no liveness ("unknown") and no counters; the
+	// SNMP dialup table yields the liveness and the selectors but no usable name.
+	// Phase 0 pairs the tunnel from the first; without this step the edge would
+	// render red on a perfectly healthy tunnel.
+	//
+	// Matching on the selectors also means a subnet-bearing child alone can carry
+	// the tunnel if the SSH writer goes quiet — otherwise the tunnel would vanish
+	// from the map entirely, which is worse than the wrong-but-visible edge this
+	// change replaces.
+	for i, vpn := range vpnStatuses {
+		if linked[i] != nil || !isDialup(vpn) {
+			continue
+		}
+		pp, ok := matchProvisionedBySubnets(provPairs, vpn)
+		if !ok {
+			continue
+		}
+		pi := getPair(pp.A, pp.B, "provisioned", "ipsec")
+		pi.matchMethod = "provisioned"
+		absorb(pi, vpn)
+		linked[i] = pi
+	}
+
+	for i, vpn := range vpnStatuses {
+		// A row already attributed by provisioning must not also be matched by IP —
+		// that is the whole point of preferring recorded fact over inference.
+		if linked[i] != nil {
+			continue
+		}
+		// A dialup row is INERT for IP-based attribution: it contributes nothing
+		// at all — not a pair, not a tunnel name, not liveness. Its remote IP is
+		// the address the peer was observed arriving from, which for a NAT'd peer
+		// belongs to the gateway, not the peer. Letting such a row merely
+		// "contribute" to a pair created by other evidence is not enough: two
+		// distinct peers behind one NAT would still inject their names and their
+		// hardcoded "up" into an unrelated device's legitimate edge, and whether
+		// they did so would depend on slice iteration order — i.e. on DB row
+		// order, churning the row every cycle.
+		if isDialup(vpn) {
+			continue
+		}
+		remoteDevice, ok := ipToDevice[vpn.RemoteIP]
+		if !ok {
+			continue
+		}
+		if remoteDevice.ID == vpn.DeviceID {
+			continue // skip self-referencing
+		}
+
+		// Determine match method based on how the IP was found
+		method := "ip_match"
+		if ipSource[vpn.RemoteIP] == "interface" {
+			method = "interface_ip"
+		}
+		// Determine connection type from tunnel type
+		ct := "ipsec"
+		if vpn.TunnelType == "sslvpn" {
+			ct = "ssl"
+		}
+		pi := getPair(vpn.DeviceID, remoteDevice.ID, method, ct)
+		absorb(pi, vpn)
+		// Upgrade match method if this side is via interface IP. The == "ip_match"
+		// test already prevents this from touching a "provisioned" pair.
 		if ipSource[vpn.RemoteIP] == "interface" && pi.matchMethod == "ip_match" {
 			pi.matchMethod = "interface_ip"
 		}
@@ -1599,18 +1808,35 @@ func (p *Poller) detectVPNConnections(devices []models.Device) (int, bool) {
 
 	// Bidirectional check: for each pair, see if both sides have tunnels pointing at each other
 	for _, pi := range pairs {
+		// "provisioned" is TERMINAL. It rests on a recorded deployment, which is
+		// strictly better evidence than two inferences agreeing, so corroboration
+		// must not overwrite it. (This matters once the far end also reports: its
+		// rows resolve by IP into this same pair and would otherwise downgrade the
+		// label.)
+		if pi.matchMethod == "provisioned" {
+			continue
+		}
 		srcTunnels := vpnByDevice[pi.sourceID]
 		dstTunnels := vpnByDevice[pi.destID]
 		srcPointsToDst := false
 		dstPointsToSrc := false
 
+		// Dialup rows are excluded here too. A NAT'd dialup row can otherwise be
+		// the sole evidence that one side "points to" the other, manufacturing
+		// bidirectional confidence for a pair that was never corroborated.
 		for _, t := range srcTunnels {
+			if isDialup(t) {
+				continue
+			}
 			if rd, ok := ipToDevice[t.RemoteIP]; ok && rd.ID == pi.destID {
 				srcPointsToDst = true
 				break
 			}
 		}
 		for _, t := range dstTunnels {
+			if isDialup(t) {
+				continue
+			}
 			if rd, ok := ipToDevice[t.RemoteIP]; ok && rd.ID == pi.sourceID {
 				dstPointsToSrc = true
 				break

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"firewall-mon/internal/ipsec"
@@ -94,6 +95,84 @@ func (d *Database) ListIPSecTunnels() ([]models.IPSecTunnel, error) {
 		ms[i].PSK = "" // never leak even the ciphertext in a list
 	}
 	return ms, err
+}
+
+// ProvisionedTunnelPair is the authoritative endpoint pair of a tunnel THIS
+// system deployed, keyed by its name.
+//
+// Subnets carries each end's protected selectors so a caller can recognise an
+// unnamed tunnel row by the traffic it carries. They are resolved here rather
+// than by the caller because they live inside the serialized intent, not in a
+// promoted column, and reading them correctly means going through the intent
+// accessors — which is this package's job, not the poller's.
+type ProvisionedTunnelPair struct {
+	Name string
+	A    uint
+	B    uint
+	// ASubnets/BSubnets are the protected subnets of ends A and B respectively.
+	ASubnets []string
+	BSubnets []string
+}
+
+// SubnetsFor returns the protected subnets of whichever end is deviceID, and
+// those of its peer. ok is false if deviceID is not part of this tunnel.
+func (p ProvisionedTunnelPair) SubnetsFor(deviceID uint) (local, remote []string, ok bool) {
+	switch deviceID {
+	case p.A:
+		return p.ASubnets, p.BSubnets, true
+	case p.B:
+		return p.BSubnets, p.ASubnets, true
+	}
+	return nil, nil, false
+}
+
+// GetProvisionedTunnelPairs returns lower(name) → endpoint pair for every tunnel
+// whose configuration may currently be on the devices.
+//
+// It exists so the connection-map detector can stop *guessing* who a tunnel
+// connects. Peer attribution is otherwise derived from the tunnel's remote IP,
+// which is structurally wrong for a dialup peer behind NAT: the address observed
+// by the responder is the NAT gateway's, so the tunnel is attributed to whatever
+// monitored device owns that public IP rather than to the peer sitting behind
+// it. For a tunnel we provisioned, the endpoints are a recorded fact.
+//
+// STATE FILTER: only draft and rolled_back are excluded — the two states where
+// the config is definitively not on the devices. Everything else (including
+// rollback_failed and error, where config is very likely still live) is trusted,
+// because if a device reports a tunnel by that name the recorded pair is the
+// truth about it.
+//
+// Callers MUST additionally check that the device reporting the tunnel is one of
+// the returned pair. vpn_status.tunnel_name is free text read off a device and
+// only ipsec_tunnels.name is unique, so an unrelated device reporting a
+// same-named tunnel would otherwise attribute a pair it has nothing to do with.
+func (d *Database) GetProvisionedTunnelPairs() (map[string]ProvisionedTunnelPair, error) {
+	var ms []models.IPSecTunnel
+	err := d.db.
+		Select("name", "a_device_id", "b_device_id", "intent_json").
+		Where("status NOT IN ?", []string{"draft", "rolled_back"}).
+		Find(&ms).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]ProvisionedTunnelPair, len(ms))
+	for i := range ms {
+		m := ms[i]
+		// A tunnel with an unresolved endpoint can't attribute anything.
+		if m.Name == "" || m.ADeviceID == 0 || m.BDeviceID == 0 {
+			continue
+		}
+		p := ProvisionedTunnelPair{Name: m.Name, A: m.ADeviceID, B: m.BDeviceID}
+		// Selectors are best-effort: a tunnel whose intent won't decode can still
+		// attribute by name, which is the primary job. Losing the subnets only
+		// costs the caller the ability to recognise unnamed rows.
+		if in, ierr := IPSecModelToIntent(&m); ierr == nil && in != nil {
+			p.ASubnets = append([]string(nil), in.Ends[0].ProtectedSubnets...)
+			p.BSubnets = append([]string(nil), in.Ends[1].ProtectedSubnets...)
+		}
+		out[strings.ToLower(m.Name)] = p
+	}
+	return out, nil
 }
 
 // UpdateIPSecTunnel updates a tunnel. A PSK equal to the redaction mask (or
