@@ -52,15 +52,6 @@ type rowView struct {
 	in, out, uptime                     uint64
 }
 
-func find(rows []rowView, remote string) *rowView {
-	for i := range rows {
-		if rows[i].remote == remote {
-			return &rows[i]
-		}
-	}
-	return nil
-}
-
 // The whole point: one row per child, carrying its own selectors and counters.
 func TestParseOPNsense_PerChildRow(t *testing.T) {
 	rows := parse(t, phase1Fixture, sadFixture, spdFixture)
