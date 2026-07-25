@@ -35,23 +35,63 @@ func TestValidate_IDMissingBlocks_PRB(t *testing.T) {
 	}
 }
 
-// Egress + LAN interfaces are required — an empty value would render an invalid
-// interface binding / firewall rule downstream, so it must block at validation.
-func TestValidate_EgressLANRequired(t *testing.T) {
+// Egress is required on every end — an empty value renders an invalid interface
+// binding downstream.
+func TestValidate_EgressRequired(t *testing.T) {
 	in := canonicalIntent()
 	in.Ends[0].EgressIface = ""
-	in.Ends[1].LANIface = ""
-	fs := ipsec.Validate(in, bothCaps(t))
-	if !hasCode(fs, "egress_missing") {
-		t.Errorf("empty egress interface must block with egress_missing; got %+v", fs)
+	if !hasCode(ipsec.Validate(in, bothCaps(t)), "egress_missing") {
+		t.Errorf("empty egress interface must block with egress_missing")
 	}
-	if !hasCode(fs, "lan_missing") {
-		t.Errorf("empty LAN interface must block with lan_missing; got %+v", fs)
+	if hasCode(ipsec.Validate(canonicalIntent(), bothCaps(t)), "egress_missing") {
+		t.Error("canonical intent has an egress interface and must not trip egress_missing")
 	}
-	// The canonical intent has both interfaces and must not trip either.
-	clean := ipsec.Validate(canonicalIntent(), bothCaps(t))
-	if hasCode(clean, "egress_missing") || hasCode(clean, "lan_missing") {
-		t.Errorf("canonical intent has both interfaces set and must not trip: %+v", clean)
+}
+
+// A LAN interface is required only for vendors whose rules NAME one. FortiGate
+// policies do; OPNsense's pass rules are floating and subnet-scoped, so demanding
+// one there would ask for a value nothing reads.
+//
+// canonicalIntent's end 0 is FortiGate and end 1 is OPNsense, so this pins both
+// directions — before UsesLANIface, clearing end 1 raised lan_missing.
+func TestValidate_LANRequiredOnlyWhereRulesNameIt(t *testing.T) {
+	fgEnd := ipsec.Validate(func() *ipsec.TunnelIntent {
+		in := canonicalIntent()
+		in.Ends[0].LANIface, in.Ends[0].LANIfaces = "", nil
+		return in
+	}(), bothCaps(t))
+	if !hasCode(fgEnd, "lan_missing") {
+		t.Errorf("FortiGate end with no LAN interface must block with lan_missing; got %+v", fgEnd)
+	}
+
+	opnEnd := ipsec.Validate(func() *ipsec.TunnelIntent {
+		in := canonicalIntent()
+		in.Ends[1].LANIface, in.Ends[1].LANIfaces = "", nil
+		return in
+	}(), bothCaps(t))
+	if hasCode(opnEnd, "lan_missing") {
+		t.Errorf("OPNsense end needs no LAN interface — its rules are floating; got %+v", opnEnd)
+	}
+
+	// A list of blank entries is as empty as no list: the effective set is what
+	// counts, or a whitespace-only custom entry would render {"name": ""}.
+	blank := canonicalIntent()
+	blank.Ends[0].LANIface = ""
+	blank.Ends[0].LANIfaces = []string{"", "   "}
+	if !hasCode(ipsec.Validate(blank, bothCaps(t)), "lan_missing") {
+		t.Error("a LAN list of only blank entries must still block with lan_missing")
+	}
+
+	// The legacy singular alone still satisfies it — this is the persisted shape.
+	legacy := canonicalIntent()
+	legacy.Ends[0].LANIfaces = nil
+	legacy.Ends[0].LANIface = "port3"
+	if hasCode(ipsec.Validate(legacy, bothCaps(t)), "lan_missing") {
+		t.Error("an intent carrying only the legacy lan_iface must satisfy the requirement")
+	}
+
+	if hasCode(ipsec.Validate(canonicalIntent(), bothCaps(t)), "lan_missing") {
+		t.Error("canonical intent must not trip lan_missing")
 	}
 }
 

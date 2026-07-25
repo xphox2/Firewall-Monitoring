@@ -62,8 +62,11 @@ func (driver) Capabilities() ipsec.CapabilityDescriptor {
 		// protected subnets) + a filter/apply, or the SA comes up but no packet
 		// forwards. No VTI/gateway/route objects are created.
 		RequiresFirewallPolicy: true,
-		AutoObjects:            []string{"kernel IPsec policies (SPD)", "floating firewall pass rules"},
-		SelectorModel:          ipsec.SelectorEndpoint,
+		// OPNsense pass rules are floating (interface: "") and scoped by subnet, so
+		// no inside interface is ever named — asking for one would be a dead field.
+		UsesLANIface:  false,
+		AutoObjects:   []string{"kernel IPsec policies (SPD)", "floating firewall pass rules"},
+		SelectorModel: ipsec.SelectorEndpoint,
 		// OPNsense's IPsec Connections model cannot represent a keyid identity: its
 		// swanctl-config generator writes the id unquoted, so strongSwan's @#<hex>
 		// keyid encoding is swallowed as a `#` comment and the identity parses empty

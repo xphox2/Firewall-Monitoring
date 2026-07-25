@@ -46,12 +46,14 @@ func (driver) Capabilities() ipsec.CapabilityDescriptor {
 
 		MaxTunnelNameLen:       15,
 		RequiresFirewallPolicy: true,
-		AutoObjects:            []string{"tunnel_interface", "static_route", "blackhole_route", "firewall_policy"},
-		SelectorModel:          ipsec.SelectorZero,
-		IDTypes:                []ipsec.IDType{ipsec.IDTypeIP, ipsec.IDTypeFQDN, ipsec.IDTypeKeyID},
-		PushTransport:          ipsec.PushREST,
-		RendererName:           "fortios_rest",
-		TemplateVersion:        templateVersion,
+		// FortiGate policies name their src/dst interfaces explicitly.
+		UsesLANIface:    true,
+		AutoObjects:     []string{"tunnel_interface", "static_route", "blackhole_route", "firewall_policy"},
+		SelectorModel:   ipsec.SelectorZero,
+		IDTypes:         []ipsec.IDType{ipsec.IDTypeIP, ipsec.IDTypeFQDN, ipsec.IDTypeKeyID},
+		PushTransport:   ipsec.PushREST,
+		RendererName:    "fortios_rest",
+		TemplateVersion: templateVersion,
 	}
 }
 
@@ -75,6 +77,13 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 	// "ip" the device would reject mid-apply (the fwm-t4 HTTP 500).
 	if local.InnerIP == "" || remote.InnerIP == "" {
 		return ipsec.Artifact{}, fmt.Errorf("fortigate render needs VTI addressing on both ends (InnerIP empty) — re-save the tunnel to rehydrate its derived fields")
+	}
+	// Same fail-fast for the inside interfaces: with none, policySteps would emit
+	// "srcintf": [] — a body the device rejects and conformance does not model
+	// (it validates only `action`). Validation blocks this before deploy, but
+	// preview renders without that gate, so keep the invariant local to Render.
+	if len(local.EffectiveLANIfaces()) == 0 {
+		return ipsec.Artifact{}, fmt.Errorf("fortigate render needs at least one LAN interface — the firewall policies have no source/destination without one")
 	}
 
 	p1, err := phase1Proposal(in.IKE)
@@ -180,7 +189,7 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 	}
 	steps = append(steps, fgAPI("tunnel interface addressing"+mssNote(local.MSSClamp), "PUT", cmdbIface+"/"+name, jsonBody(ifbody)))
 	steps = append(steps, routeSteps(in.ID, name, local, remote)...)
-	steps = append(steps, policySteps(in.ID, name, local.LANIface)...)
+	steps = append(steps, policySteps(in.ID, name, local.EffectiveLANIfaces())...)
 
 	// Preview: the phase1 body is masked (it carries the PSK); everything else is
 	// shown verbatim (no secrets).
@@ -449,12 +458,36 @@ func routeSteps(tid uint, name string, local, remote *ipsec.EndpointSpec) []ipse
 	return steps
 }
 
-func policySteps(tid uint, name, lan string) []ipsec.ApplyStep {
-	mkPolicy := func(id int, pname, srcintf, dstintf string) string {
+// policySteps emits the two accept policies that carry tunnel traffic to and
+// from the inside network(s).
+//
+// It stays TWO policies regardless of how many LAN interfaces are given:
+// FortiOS models srcintf/dstintf as member tables (verified against a live
+// FortiOS 7.6 box — `firewall/policy?action=schema` reports
+// "category":"table","member_table":true), so N interfaces are N members of one
+// policy rather than N policies. That keeps the policy ids, names and the whole
+// preflight/remove key space identical to the single-interface case — and avoids
+// the name collision that per-interface policies would hit, since FortiOS
+// enforces unique non-empty policy names and every copy would want `<name>-out`.
+//
+// Members are OR-matched at policy lookup, so a subnet list spanning several
+// ports is covered by one pair. The one operator-visible cost is that a
+// multi-interface policy disables the GUI's Interface Pair View for that list.
+func policySteps(tid uint, name string, lans []string) []ipsec.ApplyStep {
+	members := func(names ...string) []map[string]string {
+		out := make([]map[string]string, 0, len(names))
+		for _, n := range names {
+			out = append(out, map[string]string{"name": n})
+		}
+		return out
+	}
+	lanMembers := members(lans...)
+	tunMembers := members(name)
+	mkPolicy := func(id int, pname string, srcintf, dstintf []map[string]string) string {
 		return jsonBody(map[string]any{
 			"policyid": id, "name": pname,
-			"srcintf": []map[string]string{{"name": srcintf}},
-			"dstintf": []map[string]string{{"name": dstintf}},
+			"srcintf": srcintf,
+			"dstintf": dstintf,
 			"srcaddr": []map[string]string{{"name": "all"}},
 			"dstaddr": []map[string]string{{"name": "all"}},
 			"action":  "accept", "schedule": "always",
@@ -463,8 +496,8 @@ func policySteps(tid uint, name, lan string) []ipsec.ApplyStep {
 		})
 	}
 	return []ipsec.ApplyStep{
-		fgAPI("firewall policy (LAN → tunnel)", "POST", cmdbPolicy, mkPolicy(ipsec.FGPolicyKey(tid, 0), name+"-out", lan, name)),
-		fgAPI("firewall policy (tunnel → LAN)", "POST", cmdbPolicy, mkPolicy(ipsec.FGPolicyKey(tid, 1), name+"-in", name, lan)),
+		fgAPI("firewall policy (LAN → tunnel)", "POST", cmdbPolicy, mkPolicy(ipsec.FGPolicyKey(tid, 0), name+"-out", lanMembers, tunMembers)),
+		fgAPI("firewall policy (tunnel → LAN)", "POST", cmdbPolicy, mkPolicy(ipsec.FGPolicyKey(tid, 1), name+"-in", tunMembers, lanMembers)),
 	}
 }
 

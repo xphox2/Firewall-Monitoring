@@ -47,6 +47,11 @@ type CapabilityDescriptor struct {
 	// RequiresFirewallPolicy: the driver must emit a pass rule/policy or traffic
 	// is dropped (OPNsense Connections, Palo Alto).
 	RequiresFirewallPolicy bool `json:"requires_firewall_policy"`
+	// UsesLANIface: the driver names the inside interface(s) in the rules it
+	// emits, so the operator must choose them. False for a vendor whose rules are
+	// interface-agnostic — OPNsense's are floating (interface: "") and scoped by
+	// subnet, so asking for a LAN interface there requests a value nothing reads.
+	UsesLANIface bool `json:"uses_lan_iface"`
 	// AutoObjects the driver injects that the operator would otherwise forget
 	// (e.g. "blackhole_route", "firewall_policy") — surfaced in preview.
 	AutoObjects []string `json:"auto_objects"`

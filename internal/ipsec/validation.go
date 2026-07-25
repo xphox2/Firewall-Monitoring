@@ -86,11 +86,15 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 		// Interface names and IKE IDs are interpolated into vendor CLI/config the
 		// collector will apply — reject anything outside a safe token set so a
 		// stray quote/space can't break out of the config context downstream.
-		for _, tok := range []struct{ label, val string }{
+		toks := []struct{ label, val string }{
 			{"egress interface", intent.Ends[i].EgressIface},
-			{"LAN interface", intent.Ends[i].LANIface},
 			{"IKE identity", intent.Ends[i].LocalID.Value},
-		} {
+		}
+		// Every LAN interface is interpolated, not just the first.
+		for _, lan := range intent.Ends[i].EffectiveLANIfaces() {
+			toks = append(toks, struct{ label, val string }{"LAN interface", lan})
+		}
+		for _, tok := range toks {
 			if tok.val != "" && !safeToken(tok.val) {
 				add(SeverityBlock, "unsafe_value",
 					fmt.Sprintf("%s %s %q contains characters outside [A-Za-z0-9._:-]", endLabel(intent, i), tok.label, tok.val))
@@ -112,9 +116,14 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 			add(SeverityBlock, "egress_missing",
 				fmt.Sprintf("%s must specify an egress (WAN) interface", endLabel(intent, i)))
 		}
-		if intent.Ends[i].LANIface == "" {
+		// Only for vendors whose rules actually name an inside interface. OPNsense's
+		// are floating and subnet-scoped, so requiring one there would demand a
+		// value nothing reads. Tested on the EFFECTIVE list so a legacy intent
+		// carrying only the singular still satisfies it, and so a list of blank
+		// entries does not.
+		if c.UsesLANIface && len(intent.Ends[i].EffectiveLANIfaces()) == 0 {
 			add(SeverityBlock, "lan_missing",
-				fmt.Sprintf("%s must specify a LAN interface", endLabel(intent, i)))
+				fmt.Sprintf("%s must specify at least one LAN interface", endLabel(intent, i)))
 		}
 		if intent.ESP.PFS != DHGroupNone && !c.supportsDH(intent.ESP.PFS) {
 			add(SeverityBlock, "pfs_unsupported",
