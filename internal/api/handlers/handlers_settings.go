@@ -155,6 +155,9 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		"detect_deny_storm_victim_enabled":      true,
 		"detect_denied_then_allowed_enabled":    true,
 		"detect_deny_policy_pattern":            true,
+		// Syslog retention band boundary. Severities BELOW it get the critical
+		// window, at/above it the informational one. See SyslogCriticalBelow.
+		"syslog_critical_below_severity": true,
 	}
 
 	secretKeys := settingsSecretKeys // v0.10.226: shared with GetSettings
@@ -185,6 +188,18 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		}
 		// Validate values by key type
 		switch s.Key {
+		case "syslog_critical_below_severity":
+			// Mirrors database.SyslogCriticalBelow's clamp. Rejected rather than
+			// silently clamped so the operator learns the bound: above 6 the
+			// setting would promise severity 6 the critical window while syslog
+			// aggregation keeps deleting it at the informational age.
+			v, err := strconv.Atoi(strings.TrimSpace(s.Value))
+			if err != nil || v < 1 || v > 6 {
+				c.JSON(http.StatusBadRequest, response.Error(
+					"syslog_critical_below_severity must be between 1 and 6 — severity 6 and "+
+						"above is handled by syslog aggregation, which has its own window"))
+				return
+			}
 		case "cpu_threshold", "memory_threshold", "disk_threshold":
 			v, err := strconv.ParseFloat(s.Value, 64)
 			if err != nil || v < 0 || v > 100 {

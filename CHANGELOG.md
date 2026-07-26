@@ -1,6 +1,24 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.178] - 2026-07-26
+
+### Added
+
+**The syslog critical/informational band boundary is now an operator setting** (`syslog_critical_below_severity`, admin UI). It was hard-coded at severity 6, which put NOTICE (5) in the *critical* band.
+
+On the production fleet that is **97.3% of all syslog by volume** — 65.9 M of 67.7 M rows, ~58 GB — so the long critical retention window was being spent almost entirely on notice-level noise, while the genuinely critical severities (0–3) amounted to **7,259 rows / 6.6 MB**. Moving the boundary to 5 puts that bulk on the short informational window instead.
+
+The value is **clamped to [1, 6]**, and the upper bound is not cosmetic: syslog aggregation summarises-then-deletes severity ≥ 6 on its own 5-minute cadence and deliberately does not read this setting, so a boundary above 6 would promise severity 6 the long critical window here while aggregation kept deleting it at the informational age — the setting would silently break the guarantee it advertises. The API rejects out-of-range values rather than clamping silently, so the operator learns the bound.
+
+Three bands result: below the boundary is critical, boundary–5 is retained for the informational window but never aggregated, and 6+ is aggregated then deleted. The default of 6 preserves the previous behaviour exactly, so an upgrade changes nothing until the setting is moved.
+
+### Fixed
+
+**Aggressive autovacuum silently stopped applying to any partitioned table.** `ConfigureAutovacuum` issued `ALTER TABLE <parent> SET (autovacuum_*)`, but storage parameters do not propagate from a partitioned parent to its children and Postgres rejects them on the parent outright — so the failure was logged and skipped, and every leaf ran at the 20% default scale factor instead of the intended 1%. This already affected `denied_events` and every fresh install.
+
+It is load-bearing rather than cosmetic: a monthly partition only stays near its live size because rows deleted by retention free pages that later inserts into that same still-open partition reuse, and that requires vacuum to keep up. Settings are now applied to each leaf partition, falling back to the table itself when it is not partitioned.
+
 ## [0.11.177] - 2026-07-26
 
 ### Fixed

@@ -221,6 +221,46 @@ func statusFallback(perTable, statusDays int) int {
 	return statusDays
 }
 
+// SyslogSeverityBoundaryKey is the system_settings key for the syslog
+// critical/informational band boundary. Severities BELOW it are retained for
+// SyslogCriticalDays; severities at or above it for SyslogInfoDays.
+const SyslogSeverityBoundaryKey = "syslog_critical_below_severity"
+
+// syslogSeverityBoundaryDefault preserves the historic hard-coded split
+// (severity 0-5 critical, 6-7 informational) so an upgrade changes nothing
+// until an operator moves it.
+const syslogSeverityBoundaryDefault = 6
+
+// SyslogCriticalBelow returns the severity boundary between the critical and
+// informational retention bands.
+//
+// It exists because the split was hard-coded at 6, which put NOTICE (5) in the
+// critical band. On a real fleet notice-level messages are ~97% of all syslog by
+// volume, so the long critical window was being spent almost entirely on noise
+// while the genuinely critical severities (0-3) amounted to a few megabytes.
+// Lowering this to 5 moves that bulk onto the short informational window.
+//
+// CLAMPED TO [1, 6], and the upper bound is not cosmetic. Aggregation
+// (RunSyslogAggregationCycle) summarises-then-deletes severity >= 6 on its own
+// 5-minute cadence and deliberately does NOT read this setting. A boundary above
+// 6 would therefore promise severity 6 the long critical window here while
+// aggregation kept deleting it at the informational age — the setting would
+// silently break the guarantee it advertises. The lower bound keeps at least
+// EMERG in the critical band.
+//
+// Three bands result: below the boundary = critical, boundary..5 = retained for
+// the informational window but never aggregated, 6+ = aggregated then deleted.
+func (d *Database) SyslogCriticalBelow() int {
+	n := d.GetIntSetting(SyslogSeverityBoundaryKey, syslogSeverityBoundaryDefault)
+	if n < 1 {
+		return 1
+	}
+	if n > syslogSeverityBoundaryDefault {
+		return syslogSeverityBoundaryDefault
+	}
+	return n
+}
+
 // syslogPartitionDropDays returns the age in days past which an ENTIRE
 // syslog_messages monthly partition is provably expired under EVERY retention
 // window — the max of the critical (severity 0-5) and informational (6-7)
@@ -391,18 +431,23 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		}
 	}
 
-	// Critical syslog (severity 0-5): delete after SyslogCriticalDays (0 = never delete)
+	// Critical syslog: delete after SyslogCriticalDays (0 = never delete).
+	// The band boundary is operator-configurable — see SyslogCriticalBelow.
+	boundary := d.SyslogCriticalBelow()
 	if ret.SyslogCriticalDays > 0 {
 		criticalCutoff := time.Now().AddDate(0, 0, -ret.SyslogCriticalDays)
-		if err := d.batchedDeleteOlderThanWhere(&models.SyslogMessage{}, criticalCutoff, "severity < 6"); err != nil {
+		if err := d.batchedDeleteOlderThanWhere(&models.SyslogMessage{}, criticalCutoff,
+			fmt.Sprintf("severity < %d", boundary)); err != nil {
 			return fmt.Errorf("failed to cleanup syslog_message: %w", err)
 		}
 	}
 
-	// Informational syslog (severity 6-7): delete after SyslogInfoDays
-	// This catches any informational syslog that wasn't aggregated (aggregation runs every 5 min)
+	// Everything at or above the boundary: delete after SyslogInfoDays.
+	// This also catches informational syslog that aggregation has not consumed
+	// (aggregation runs every 5 min, and only ever handles severity >= 6).
 	infoCutoff := time.Now().AddDate(0, 0, -infoDays)
-	if err := d.batchedDeleteOlderThanWhere(&models.SyslogMessage{}, infoCutoff, "severity >= 6"); err != nil {
+	if err := d.batchedDeleteOlderThanWhere(&models.SyslogMessage{}, infoCutoff,
+		fmt.Sprintf("severity >= %d", boundary)); err != nil {
 		return fmt.Errorf("failed to cleanup informational syslog_message: %w", err)
 	}
 

@@ -725,22 +725,66 @@ func (d *Database) ConfigureAutovacuum() error {
 	// - vacuum_cost_delay = 10ms (vs default 20ms) - vacuum more aggressively
 	// - vacuum_cost_limit = 2000 (vs default 200) - allow more work per vacuum
 	for _, table := range tables {
-		sql := fmt.Sprintf(`
+		// Storage parameters do NOT propagate from a partitioned parent to its
+		// children, and Postgres rejects them on the parent outright ("specify
+		// storage parameters for its leaf partitions instead"). Applying them to
+		// the parent and logging the failure therefore meant the aggressive
+		// settings SILENTLY stopped applying the moment a table was partitioned —
+		// every leaf ran at the 20% default scale factor instead of 1%.
+		//
+		// That is load-bearing, not cosmetic. A monthly partition only stays near
+		// its live size because rows deleted by retention free pages that later
+		// inserts into that same still-open partition reuse. Vacuum has to keep up
+		// for that to happen; at a 20% scale factor on a multi-GB partition it does
+		// not, and the partition grows toward its full ingest size instead.
+		for _, target := range d.autovacuumTargets(table) {
+			sql := fmt.Sprintf(`
 			ALTER TABLE %s SET (
 				autovacuum_vacuum_scale_factor = 0.01,
 				autovacuum_analyze_scale_factor = 0.05,
 				autovacuum_vacuum_cost_delay = 10,
 				autovacuum_vacuum_cost_limit = 2000
-			)`, table)
-		if err := d.execMaintenanceDDL(sql); err != nil {
-			// Log but don't fail - table might not exist yet or be a partitioned table
-			log.Printf("Autovacuum config warning for %s: %v", table, err)
-			continue
+			)`, target)
+			if err := d.execMaintenanceDDL(sql); err != nil {
+				// Log but don't fail - table might not exist yet on this deployment
+				log.Printf("Autovacuum config warning for %s: %v", target, err)
+				continue
+			}
+			log.Printf("Configured autovacuum for %s", target)
 		}
-		log.Printf("Configured autovacuum for %s", table)
 	}
 
 	return nil
+}
+
+// autovacuumTargets resolves a configured table name to the relations that can
+// actually carry storage parameters: the leaf partitions when it is partitioned,
+// otherwise the table itself. A partitioned parent accepts no reloptions, so
+// addressing it is always a no-op.
+//
+// Returns the table unchanged on any error — the caller's per-target ALTER is
+// already failure-tolerant, so a probe failure degrades to today's behaviour
+// rather than skipping the table entirely.
+func (d *Database) autovacuumTargets(table string) []string {
+	var isPartitioned bool
+	if err := d.db.Raw(`SELECT EXISTS (
+		SELECT 1 FROM pg_partitioned_table pt
+		JOIN pg_class c ON c.oid = pt.partrelid WHERE c.relname = ?)`, table).Scan(&isPartitioned).Error; err != nil {
+		return []string{table}
+	}
+	if !isPartitioned {
+		return []string{table}
+	}
+	var leaves []string
+	if err := d.db.Raw(`
+		SELECT c.relname
+		FROM pg_inherits i
+		JOIN pg_class c ON c.oid = i.inhrelid
+		JOIN pg_class parent ON parent.oid = i.inhparent
+		WHERE parent.relname = ?`, table).Scan(&leaves).Error; err != nil || len(leaves) == 0 {
+		return []string{table}
+	}
+	return leaves
 }
 
 // ensureInterfaceAddrUniqueIndex repairs the unique index that
