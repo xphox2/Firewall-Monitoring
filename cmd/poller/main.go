@@ -144,6 +144,43 @@ func humanBps(bps float64) string {
 	}
 }
 
+// Retention cleanup cadence. See the cleanupTimer comment in the run loop for
+// why the first run must not wait a full interval.
+const (
+	cleanupInterval     = 24 * time.Hour
+	initialCleanupDelay = 5 * time.Minute
+)
+
+// runRetentionCleanup applies every retention policy and the periodic schema
+// housekeeping, under the leader lock so only one instance does the work.
+func (p *Poller) runRetentionCleanup() {
+	p.runUnderLeaderLock("cleanup", func() {
+		if p.db != nil {
+			if err := p.db.CleanupOldData(p.cfg.Retention); err != nil {
+				log.Printf("Data cleanup error: %v", err)
+			} else {
+				log.Println("Old data cleanup completed")
+			}
+			if err := p.db.CleanupConfigRevisions(); err != nil {
+				log.Printf("Config revision cleanup error: %v", err)
+			} else {
+				log.Println("Config revision retention cleanup completed (top 50 + last 90d, run-collapsed)")
+			}
+			// Ensure future partitions exist (creates ahead partitions if needed)
+			if err := p.db.EnsurePartitions(); err != nil {
+				log.Printf("Partition check error: %v", err)
+			}
+			// Ensure autovacuum is configured (no-op if already configured)
+			if err := p.db.ConfigureAutovacuum(); err != nil {
+				log.Printf("Autovacuum config error: %v", err)
+			}
+		}
+		if p.alertManager != nil {
+			p.alertManager.PruneExpiredCooldowns()
+		}
+	})
+}
+
 func (p *Poller) Start() error {
 	if p.cfg.SNMP.PollInterval < 30*time.Second {
 		p.cfg.SNMP.PollInterval = 30 * time.Second
@@ -171,9 +208,20 @@ func (p *Poller) Start() error {
 	ticker := time.NewTicker(p.cfg.SNMP.PollInterval)
 	defer ticker.Stop()
 
-	// Cleanup old data daily
-	cleanupTicker := time.NewTicker(24 * time.Hour)
-	defer cleanupTicker.Stop()
+	// Retention cleanup: shortly after startup, then daily.
+	//
+	// A plain 24h Ticker was the ONLY trigger, and a Ticker starts counting from
+	// process start — so on a deployment that restarts more often than once a day
+	// (a release cadence of several per day, plus every crash and reboot),
+	// retention NEVER ran. Production accumulated 45 days of syslog under a
+	// 30-day policy, filled its 98GB volume, and Postgres crash-looped on
+	// "No space left on device".
+	//
+	// The first run is delayed rather than immediate so a restart does not have to
+	// compete with cleanup while the poller is still coming up; it is idempotent
+	// and cheap once the backlog is gone.
+	cleanupTimer := time.NewTimer(initialCleanupDelay)
+	defer cleanupTimer.Stop()
 
 	// L2 of the 2026-07-01 audit: prune the alert-cooldown map hourly (not just
 	// on the daily cleanup). Now that prune respects each key's own cooldown,
@@ -234,32 +282,9 @@ func (p *Poller) Start() error {
 			if p.alertManager != nil {
 				p.alertManager.PruneExpiredCooldowns() // L2: hourly, cheap, no lock needed
 			}
-		case <-cleanupTicker.C:
-			p.runUnderLeaderLock("cleanup", func() {
-				if p.db != nil {
-					if err := p.db.CleanupOldData(p.cfg.Retention); err != nil {
-						log.Printf("Data cleanup error: %v", err)
-					} else {
-						log.Println("Old data cleanup completed")
-					}
-					if err := p.db.CleanupConfigRevisions(); err != nil {
-						log.Printf("Config revision cleanup error: %v", err)
-					} else {
-						log.Println("Config revision retention cleanup completed (top 50 + last 90d, run-collapsed)")
-					}
-					// Ensure future partitions exist (creates ahead partitions if needed)
-					if err := p.db.EnsurePartitions(); err != nil {
-						log.Printf("Partition check error: %v", err)
-					}
-					// Ensure autovacuum is configured (no-op if already configured)
-					if err := p.db.ConfigureAutovacuum(); err != nil {
-						log.Printf("Autovacuum config error: %v", err)
-					}
-				}
-				if p.alertManager != nil {
-					p.alertManager.PruneExpiredCooldowns()
-				}
-			})
+		case <-cleanupTimer.C:
+			p.runRetentionCleanup()
+			cleanupTimer.Reset(cleanupInterval)
 		case <-p.stopChan:
 			log.Println("Poller stopped")
 			return nil

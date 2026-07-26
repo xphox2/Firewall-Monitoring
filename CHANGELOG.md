@@ -1,6 +1,22 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.177] - 2026-07-26
+
+### Fixed
+
+**Retention never ran, and the dashboard was watching the wrong disk.** Together these took production down: Postgres crash-looped on `No space left on device` with a 98 GB volume at 100%, holding 45 days of syslog under a 30-day policy.
+
+**`CleanupOldData` was reachable only from a `time.NewTicker(24 * time.Hour)`.** A Ticker counts from process start, so on a deployment that restarts more often than once a day — several releases most days, plus every crash and reboot — the first tick was never reached and **no retention policy was ever applied**. The cleanup code itself was correct and well-tested; nothing called it. It now runs shortly after startup and then daily, with the body extracted to `(*Poller).runRetentionCleanup` so both paths share one implementation.
+
+The guard tests pin the schedule rather than the cleanup, because the failure is invisible to any test that calls the cleanup directly: one rejects arming retention with a bare `Ticker`, one requires the first run to be shorter than a full interval, one requires the body to stay callable from both paths.
+
+**The platform health probe reported `disk.Usage("/")`.** In the single-container deployment `/` is the image's overlay filesystem while PGDATA is a bind mount — at the moment of the outage they read **83%** and **98%**. The dashboard showed 83%, so nothing looked wrong and no alert fired.
+
+The probe now also reports the volume that actually holds the database, located by asking Postgres for its own `data_directory` rather than assuming a path, so it stays correct across deployment layouts. When that directory is not visible to the API process (an external database server) the probe yields nothing rather than reporting a misleading filesystem.
+
+The dashboard surfaces it as its own **DB volume** tile — separate from Disk, because an operator needs to know *which* volume is filling — and it now contributes to the Platform module's severity. The compact system metric reports the worse of the two.
+
 ## [0.11.176] - 2026-07-25
 
 ### Fixed

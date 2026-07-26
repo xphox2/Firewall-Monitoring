@@ -67,6 +67,12 @@ func (h *Handler) buildSystemHealth(ctx context.Context, db database.Store) gin.
 			if err := g.Raw("SELECT pg_database_size(current_database())").Scan(&size).Error; err == nil {
 				dbInfo["size_bytes"] = size
 			}
+			// Ask Postgres where its data actually lives, rather than assuming.
+			// See the data-volume block below for why this matters.
+			var dataDir string
+			if err := g.Raw("SHOW data_directory").Scan(&dataDir).Error; err == nil {
+				dbInfo["data_directory"] = dataDir
+			}
 		}
 	}
 	out["db"] = dbInfo
@@ -87,6 +93,29 @@ func (h *Handler) buildSystemHealth(ctx context.Context, db database.Store) gin.
 		host["disk_percent"] = du.UsedPercent
 		host["disk_total_bytes"] = du.Total
 		host["disk_used_bytes"] = du.Used
+	}
+
+	// The DATABASE volume, which is the one that can take the system down, and is
+	// usually NOT the root filesystem.
+	//
+	// Reporting only "/" is how a full disk went unnoticed until Postgres
+	// crash-looped on "No space left on device": in the single-container
+	// deployment "/" is the image's overlay filesystem while PGDATA is a bind
+	// mount, and at the moment of the outage they read 83% and 98% respectively.
+	// The dashboard showed the 83%.
+	//
+	// Located by asking Postgres for its own data_directory rather than assuming a
+	// path, so this stays correct across deployment layouts. When the directory is
+	// not visible to this process (an external database server) the probe simply
+	// yields nothing rather than reporting a misleading filesystem.
+	if dir, _ := dbInfo["data_directory"].(string); dir != "" {
+		if du, err := disk.Usage(dir); err == nil && du != nil {
+			host["data_disk_path"] = dir
+			host["data_disk_percent"] = du.UsedPercent
+			host["data_disk_total_bytes"] = du.Total
+			host["data_disk_used_bytes"] = du.Used
+			host["data_disk_free_bytes"] = du.Free
+		}
 	}
 	if la, err := load.Avg(); err == nil && la != nil {
 		host["load1"] = la.Load1
