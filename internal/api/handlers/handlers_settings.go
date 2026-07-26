@@ -193,7 +193,10 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		switch s.Key {
 		case "server_disk_threshold":
 			// 0 disables the percentage trigger (the floor can still fire).
-			v, err := strconv.ParseFloat(strings.TrimSpace(s.Value), 64)
+			// Parsed as an INT because the poller reads it with GetIntSetting:
+			// accepting "85.5" here would store a value that silently falls back
+			// to the default at read time.
+			v, err := strconv.Atoi(strings.TrimSpace(s.Value))
 			if err != nil || v < 0 || v > 100 {
 				c.JSON(http.StatusBadRequest, response.Error(
 					"server_disk_threshold must be between 0 and 100 (0 disables the percentage trigger)"))

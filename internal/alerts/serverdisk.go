@@ -115,6 +115,17 @@ func (am *AlertManager) checkOneServerVolume(sv ServerVolume, pctThreshold float
 		}
 		return
 	}
+	// Cross-restart backstop. The in-memory cooldown map dies with the process,
+	// so without this a poller restart into a still-full disk re-pages
+	// immediately — once per restart, and a crash-loop would page continuously.
+	// Every other persistent-state alert applies this via dispatchFired.
+	if am.dbCooldownActive(0, models.AlertTypeServerDiskHigh, metric, now, cooldown) {
+		am.mu.Unlock()
+		if devRule != nil {
+			am.RecordEventRuleHit(devRule.id)
+		}
+		return
+	}
 	am.recordCooldownLocked(key, now, cooldown)
 	// Mark active so the recovery leg actually notifies — the second template bug.
 	am.markActiveLocked(key, now)

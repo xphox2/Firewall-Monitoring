@@ -23,7 +23,6 @@ func (d *Database) SaveServerMetric(m *models.ServerMetric) error {
 // failure-reads-as-healthy shape that let the disk fill unnoticed.
 type ServerMetricBucket struct {
 	Bucket            string   `json:"bucket"`
-	BucketMS          int64    `json:"bucket_ms"`
 	CPUPercent        float64  `json:"cpu_percent"`
 	MemPercent        float64  `json:"mem_percent"`
 	Load1             float64  `json:"load1"`
@@ -39,9 +38,11 @@ type ServerMetricBucket struct {
 // that is the sampling cadence — minute buckets would yield mostly-empty bins
 // with one populated in five.
 func (d *Database) GetServerMetricWindow(from, to time.Time) ([]ServerMetricBucket, error) {
+	// Floor at 5 minutes because that is the sampling cadence — minute buckets
+	// would yield four empty bins for every populated one.
 	unit := bucketUnitForWindow(to.Sub(from))
 	if unit == "minute" {
-		unit = "hour"
+		unit = "5min"
 	}
 	bucketExpr := d.dialect.TimeBucket(unit, "timestamp")
 

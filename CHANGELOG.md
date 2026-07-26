@@ -19,6 +19,8 @@ The new alert deliberately does not reuse `RecordProbeDataTruncation`, the exist
 
 Two seed-marker tests asserted the literal `"5"` rather than the seed-version constant, so they broke on a generation bump that did not change the behaviour they test.
 
+The fire path also gains the cross-restart cooldown backstop every other persistent-state alert already had. Without it a poller restart into a still-full disk re-pages immediately — once per restart, and a crash-looping poller would page continuously — because the in-memory cooldown map dies with the process.
+
 ### Notes
 
 Probe failure is treated as a fault, not as health — the incident's own shape. The root filesystem is watched independently of the database probe, so a failure locating PGDATA can never leave the server entirely unwatched; the data directory is cached so the check survives a crash-looping Postgres, which is exactly when it matters; and a sample taken while the volume could not be probed stores **NULL rather than 0**, so the chart shows a gap instead of a reassuring 0%-used flatline.

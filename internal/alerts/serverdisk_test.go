@@ -204,3 +204,30 @@ func TestServerDisk_CooldownComesFromTheResolvedPolicy(t *testing.T) {
 			"ignoring resolved.CooldownMinutes and hardcoding ~5 minutes", n, n)
 	}
 }
+
+// The in-memory cooldown map dies with the process. Without a database-side
+// backstop a poller restart into a still-full disk re-pages immediately — once
+// per restart, and a crash-looping poller would page continuously. Every other
+// persistent-state alert gets this via dispatchFired.
+func TestServerDisk_RestartDoesNotRePageWithinCooldown(t *testing.T) {
+	am, db := newTestManager(t)
+	setServerDiskPolicy(am, 30)
+
+	v := []ServerVolume{{Label: "data", Volume: vol("/data", 95, 1)}}
+	am.CheckServerVolumes(v, 85, 5*gb)
+	if n := serverDiskAlerts(t, am, "server_disk_data"); n != 1 {
+		t.Fatalf("setup: expected 1 open alert, got %d", n)
+	}
+
+	// Simulate a restart: a fresh manager over the SAME database, so the
+	// in-memory cooldown map is empty but the open alert row survives.
+	am2 := NewAlertManager(am.config, am.notifier, db)
+	setServerDiskPolicy(am2, 30)
+	am2.CheckServerVolumes(v, 85, 5*gb)
+
+	if n := serverDiskAlerts(t, am2, "server_disk_data"); n != 1 {
+		t.Errorf("open alerts = %d, want 1 — a restart re-paged a still-full disk inside "+
+			"the cooldown window; the in-memory map is empty after a restart, so the "+
+			"database-side backstop is what has to suppress it", n)
+	}
+}

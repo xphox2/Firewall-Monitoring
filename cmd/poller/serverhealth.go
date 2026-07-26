@@ -52,12 +52,20 @@ func (p *Poller) collectServerVolumes() (vols []alerts.ServerVolume, dataOK bool
 		return vols, false
 	}
 	dir, have, err := dataDirLocator.DataDirectory(p.db.Gorm())
+	// Rate-limited rather than once-per-process: a monitoring probe that goes
+	// quiet after one line is the shape of the incident itself. The two cases
+	// are reported differently on purpose — with a cached path the volume IS
+	// still being watched, which is precisely what the cache is for, and saying
+	// otherwise during a crash-loop would send the operator the wrong way.
 	if err != nil && dataDirLocator.ShouldWarn(time.Now()) {
-		// Rate-limited rather than once-per-process: a monitoring probe that
-		// goes quiet after one line is the shape of the incident itself.
-		log.Printf("server health: cannot read the database data_directory (%v) — the "+
-			"DATABASE VOLUME IS NOT BEING MONITORED. Grant pg_read_all_settings to the "+
-			"application role. The root filesystem is still watched.", err)
+		if have {
+			log.Printf("server health: cannot read the database data_directory (%v); "+
+				"continuing to monitor the last known path %s", err, dir)
+		} else {
+			log.Printf("server health: cannot read the database data_directory (%v) — the "+
+				"DATABASE VOLUME IS NOT BEING MONITORED. Grant pg_read_all_settings to the "+
+				"application role. The root filesystem is still watched.", err)
+		}
 	}
 	if !have {
 		return vols, false

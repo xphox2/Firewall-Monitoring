@@ -72,8 +72,10 @@
     function loadServerTrend() {
         var el = document.getElementById('dash-server-trend');
         if (!el || typeof Chart === 'undefined') return;
-        AC.apiFetch(window.API_BASE + '/system/metrics/chart?range=24h')
-            .then(function (r) { return r.json(); })
+        // AC.apiFetch resolves to the PARSED body, not a Response — calling
+        // .json() on it throws, and the .catch below would swallow it into a
+        // console warning while the chart silently never rendered.
+        AC.apiFetch(API + '/system/metrics/chart?range=24h')
             .then(function (res) {
                 var rows = (res && res.data) || [];
                 if (!rows.length) return;
