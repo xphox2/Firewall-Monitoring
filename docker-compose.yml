@@ -8,6 +8,18 @@ services:
     image: xphox/firewall-mon:latest
     container_name: firewall-mon
     restart: unless-stopped
+    # Without an explicit cap the json-file driver grows without bound — Docker
+    # only rotates when max-size is set. On the rust-01 deployment this service
+    # writes ~80 MB/day, so an uncapped log reaches the GB range in weeks on the
+    # same volume that already filled once in 2026-05 (see v0.10.199). The cap
+    # applies from container *recreate*, not restart: an existing oversized log
+    # survives `docker compose restart` and is only dropped by `up -d` replacing
+    # the container.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       # Severity 0-5 syslog (notice/warning/error/critical/alert) retention. Default in
       # internal/config/config.go is 0 (= never delete), which leads to unbounded growth

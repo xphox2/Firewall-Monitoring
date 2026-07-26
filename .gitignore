@@ -23,6 +23,20 @@ Thumbs.db
 .env.local
 config.env
 
+# Runtime config volume (CONFIG_DIR, default ./config). Holds config.env — from
+# which the AES-256 key for every {enc} secret is derived — and pg-credentials.
+# The bare `config.env` pattern above matches that one file at any depth, but NOT
+# its siblings, so a `git add -A` in a deployment checkout would stage the
+# Postgres credentials. Ignore the whole directory; nothing in it is source.
+config/
+
+# Backup copies. Operators leave these beside the file they snapshot
+# (config.env.broken.bak, docker-compose.yml.bak-<tag>, *.db.bak.<timestamp>),
+# and they carry whatever secrets the original held.
+*.bak
+*.bak.*
+*.bak-*
+
 # Logs
 *.log
 
