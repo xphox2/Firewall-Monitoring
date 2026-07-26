@@ -1,6 +1,22 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.179] - 2026-07-26
+
+### Fixed
+
+**The runtime config directory was not ignored, so `git add -A` in a deployment checkout would have staged the Postgres credentials.** `.gitignore` carried a bare `config.env` pattern, which git matches by basename at any depth — so `config/config.env` was covered, but none of its siblings were. The `CONFIG_DIR` volume also holds `pg-credentials` (`PG_USER` / `PG_PASSWORD`) and accumulates operator backups such as `config.env.broken.bak`, and `git status` listed both as ordinary untracked files.
+
+This is a live hazard rather than a theoretical one: the repository is public, deployments are working checkouts of it rather than exported artefacts, and `config.env` is where the AES-256 key for every `{enc}` secret is derived from. A single `git add -A && git commit && git push` on a server would have published the database credentials and the key protecting every stored SNMP/IRC/SMTP secret. Audited on the rust-01 deployment 2026-07-26 — nothing had been committed, so no rotation was required, but the checkout was one careless `add -A` away from it.
+
+`config/` is now ignored as a directory (nothing in it is source), and `*.bak`, `*.bak.*`, `*.bak-*` are ignored so snapshot copies cannot carry a secret past the ignore rules that cover the original. Note this only protects checkouts made *after* the change — an existing deployment keeps its own `.git/info/exclude` or needs this pulled.
+
+### Added
+
+**Explicit log rotation for the `firewall-mon` container.** The json-file driver does not rotate at all unless `max-size` is set, and the service had no `logging:` block, so its container log grew without bound. The rust-01 deployment writes roughly 80 MB/day, which reaches the GB range within weeks — on the same volume that syslog growth already filled once in 2026-05 (see v0.10.199).
+
+Capped at `max-size: 10m` / `max-file: 3`, matching what the marketing-site and technical-labs compose files already use. The cap takes effect when the container is **recreated**, not restarted: an already-oversized log survives `docker compose restart` and is only discarded when `up -d` replaces the container.
+
 ## [0.11.178] - 2026-07-26
 
 ### Added
