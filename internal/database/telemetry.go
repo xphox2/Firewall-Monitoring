@@ -264,8 +264,22 @@ func (d *Database) GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, erro
 		for id := range peerIDs {
 			ids = append(ids, id)
 		}
+		// Bounded to the evidence horizon, like every other read in this file.
+		//
+		// Without the bound this reads the ENTIRE history of every peer that
+		// carries subnet text, just to keep the newest row per remote_ip — so its
+		// cost grows with RETENTION rather than with tunnel count. Measured on a
+		// seeded database, one chart request went 5ms → 81ms → 324ms at 300 →
+		// 5,000 → 20,000 rows per peer, and production retains far more than
+		// that. The page issues several such calls every 30 seconds per viewer.
+		//
+		// This is a bug fix rather than a semantic change: cross-filling from a
+		// peer row older than the grace window means enriching a "latest status"
+		// with data the rest of this file has already declared not to be state.
+		// The only rows it stops using are ones no other reader here would trust.
+		peerPrune := time.Now().UTC().Add(-VPNEvidenceGrace - vpnZoneSlack)
 		var peerVPNs []models.VPNStatus
-		d.db.Where("device_id IN ? AND (local_subnet != '' OR remote_subnet != '')", ids).
+		d.db.Where("device_id IN ? AND timestamp >= ? AND (local_subnet != '' OR remote_subnet != '')", ids, peerPrune).
 			Order("device_id, timestamp DESC").Find(&peerVPNs)
 		for _, pv := range peerVPNs {
 			if pv.RemoteIP == "" {

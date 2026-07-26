@@ -2,6 +2,7 @@ package database
 
 import (
 	"testing"
+	"time"
 
 	"firewall-mon/internal/models"
 )
@@ -133,5 +134,52 @@ func TestTunnelGroup_MultiSubnetChildrenShareOneGroup(t *testing.T) {
 	}
 	if a.TunnelName == b.TunnelName {
 		t.Error("...while keeping distinct tunnel_names, or the newest-per-name query drops one")
+	}
+}
+
+// The peer cross-fill inside GetLatestVPNStatuses must not read history older
+// than the evidence horizon.
+//
+// Unbounded, it read EVERY row of every peer carrying subnet text just to keep
+// the newest one per remote_ip, so its cost grew with RETENTION rather than
+// tunnel count — measured at 5ms / 81ms / 324ms per request for 300 / 5,000 /
+// 20,000 rows per peer, on a page that issues several such calls every 30
+// seconds. Enriching a "latest status" from a row the rest of this file has
+// already aged out is also wrong on its own terms.
+func TestGetLatestVPNStatuses_PeerCrossFillIgnoresAgedOutRows(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+
+	if err := d.Gorm().Create(&models.DeviceConnection{
+		Name: "pair", SourceDeviceID: 1, DestDeviceID: 2, ConnectionType: "ipsec",
+	}).Error; err != nil {
+		t.Fatalf("create connection: %v", err)
+	}
+	if err := d.Gorm().Create(&models.Device{Name: "peer", IPAddress: "10.9.9.9"}).Error; err != nil {
+		t.Fatalf("create device: %v", err)
+	}
+
+	now := time.Now()
+	// The device's own row, fresh, with no selectors — the cross-fill's target.
+	// The peer's only subnet-bearing row is FAR past the grace horizon.
+	if err := d.SaveVPNStatuses([]models.VPNStatus{
+		{DeviceID: 1, TunnelName: "t1", RemoteIP: "10.9.9.9", Status: "up", Timestamp: now},
+		{DeviceID: 2, TunnelName: "t1", RemoteIP: "10.9.9.9", Status: "up",
+			LocalSubnet: "10.1.1.0/24", RemoteSubnet: "10.2.2.0/24",
+			Timestamp: now.Add(-30 * 24 * time.Hour)},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	got, err := d.GetLatestVPNStatuses(1)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 row for device 1, got %d", len(got))
+	}
+	if got[0].LocalSubnet != "" || got[0].RemoteSubnet != "" {
+		t.Errorf("selectors were cross-filled from a 30-day-old peer row (%q / %q) — a row "+
+			"that far past the grace horizon is not state and must not enrich a latest status",
+			got[0].LocalSubnet, got[0].RemoteSubnet)
 	}
 }
