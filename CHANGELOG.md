@@ -15,7 +15,10 @@ The guard tests pin the schedule rather than the cleanup, because the failure is
 
 The probe now also reports the volume that actually holds the database, located by asking Postgres for its own `data_directory` rather than assuming a path, so it stays correct across deployment layouts. When that directory is not visible to the API process (an external database server) the probe yields nothing rather than reporting a misleading filesystem.
 
-The dashboard surfaces it as its own **DB volume** tile — separate from Disk, because an operator needs to know *which* volume is filling — and it now contributes to the Platform module's severity. The compact system metric reports the worse of the two.
+The dashboard surfaces it as its own **DB volume** tile — separate from Disk, because an operator needs to know *which* volume is filling — and it now contributes to the Platform module's severity.
+
+**The application role needs `pg_read_all_settings` for this to work at all.** `data_directory` is a superuser-only setting, and the role created by the entrypoint is a plain user — so without a grant the probe would have failed on every call, silently disabled the entire data-volume block, and logged a permission error every 10 seconds. The entrypoint now grants it (read-only; it confers no data access), and a failure to read the path is reported once with an actionable message rather than swallowed. Silently losing that signal is the incident's own failure shape, so it must not fail quietly. Operators running an external database must grant it themselves.
+
 
 ## [0.11.176] - 2026-07-25
 

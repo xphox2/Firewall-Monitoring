@@ -2,8 +2,10 @@ package handlers
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"runtime"
+	"sync"
 	"time"
 
 	"firewall-mon/internal/api/response"
@@ -19,6 +21,11 @@ import (
 // systemHealthDBTimeout caps the DB ping in the Server Platform card so a hung
 // database can't make the dashboard's health poll hang.
 const systemHealthDBTimeout = 1 * time.Second
+
+// dataDirOnce keeps the "cannot read data_directory" warning to a single line.
+// buildSystemHealth runs behind a 10s dashboard cache, so an unconditional log
+// would emit this forever at six lines a minute.
+var dataDirOnce sync.Once
 
 // buildSystemHealth collects the server-platform health snapshot (process +
 // Go runtime + database pool/size/reachability + host CPU/mem/disk/load). Every
@@ -69,8 +76,21 @@ func (h *Handler) buildSystemHealth(ctx context.Context, db database.Store) gin.
 			}
 			// Ask Postgres where its data actually lives, rather than assuming.
 			// See the data-volume block below for why this matters.
+			//
+			// data_directory is a superuser-only GUC, so a role lacking
+			// pg_read_all_settings gets 42501 here and the data-volume block below
+			// goes quiet. That is the incident's own failure shape — a missing
+			// signal read as health — so it is reported once rather than swallowed,
+			// and never per-call: this runs behind a 10s dashboard cache and would
+			// otherwise emit an error line every 10 seconds forever.
 			var dataDir string
-			if err := g.Raw("SHOW data_directory").Scan(&dataDir).Error; err == nil {
+			if err := g.Raw("SHOW data_directory").Scan(&dataDir).Error; err != nil {
+				dataDirOnce.Do(func() {
+					log.Printf("system health: cannot read data_directory (%v) — the database "+
+						"volume will NOT be monitored. Grant pg_read_all_settings to the "+
+						"application role, or accept that only the root filesystem is watched.", err)
+				})
+			} else {
 				dbInfo["data_directory"] = dataDir
 			}
 		}

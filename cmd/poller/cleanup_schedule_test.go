@@ -39,8 +39,81 @@ func TestRetentionCleanup_FirstRunIsNotAFullInterval(t *testing.T) {
 	}
 }
 
+// GAP A: the tests above all pass if the select case is DELETED outright while
+// the timer declaration stays (the `defer Stop()` keeps it compiling). That is
+// the literal incident — "nothing calls the cleanup" — surviving a green suite.
+// So pin the call site and the re-arm, not just the timer's construction.
+func TestRetentionCleanup_RunLoopCallsItAndReArms(t *testing.T) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "main.go", nil, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("parse main.go: %v", err)
+	}
+
+	var calls, rearms int
+	ast.Inspect(file, func(n ast.Node) bool {
+		comm, ok := n.(*ast.CommClause)
+		if !ok {
+			return true
+		}
+		// Comm is nil for a `default:` clause, and ast.Inspect panics on nil.
+		if comm.Comm == nil {
+			return true
+		}
+		// Only the case that receives from the cleanup timer's channel.
+		recvsCleanupTimer := false
+		ast.Inspect(comm.Comm, func(m ast.Node) bool {
+			if sel, ok := m.(*ast.SelectorExpr); ok && sel.Sel.Name == "C" {
+				if id, ok := sel.X.(*ast.Ident); ok && strings.Contains(strings.ToLower(id.Name), "cleanup") {
+					recvsCleanupTimer = true
+				}
+			}
+			return true
+		})
+		if !recvsCleanupTimer {
+			return true
+		}
+		for _, stmt := range comm.Body {
+			ast.Inspect(stmt, func(m ast.Node) bool {
+				call, ok := m.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				switch fn := call.Fun.(type) {
+				case *ast.SelectorExpr:
+					if fn.Sel.Name == "runRetentionCleanup" {
+						calls++
+					}
+					if fn.Sel.Name == "Reset" {
+						rearms++
+					}
+				case *ast.Ident:
+					if fn.Name == "runRetentionCleanup" {
+						calls++
+					}
+				}
+				return true
+			})
+		}
+		return true
+	})
+
+	if calls == 0 {
+		t.Error("the cleanup timer's select case does not call runRetentionCleanup — " +
+			"retention never runs. This is the incident: the cleanup code was correct " +
+			"and well covered, and nothing invoked it.")
+	}
+	if rearms == 0 {
+		t.Error("the cleanup timer's select case never calls Reset — a Timer fires ONCE, " +
+			"so retention would run a single time per process and never again")
+	}
+}
+
 // The regression guard proper: the run loop must not go back to arming retention
 // with a bare Ticker, whose first fire is one full interval after start.
+//
+// GAP C: keyed on the DURATION, not the variable name — an innocent rename to
+// `retentionTicker` evaded the name-keyed version of this check.
 func TestRetentionCleanup_RunLoopDoesNotUseATicker(t *testing.T) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "main.go", nil, parser.ParseComments)
@@ -55,7 +128,7 @@ func TestRetentionCleanup_RunLoopDoesNotUseATicker(t *testing.T) {
 			return true
 		}
 		ident, ok := assign.Lhs[0].(*ast.Ident)
-		if !ok || !strings.Contains(strings.ToLower(ident.Name), "cleanup") {
+		if !ok {
 			return true
 		}
 		call, ok := assign.Rhs[0].(*ast.CallExpr)
@@ -67,7 +140,16 @@ func TestRetentionCleanup_RunLoopDoesNotUseATicker(t *testing.T) {
 			return true
 		}
 		if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "time" && sel.Sel.Name == "NewTicker" {
-			offenders = append(offenders, ident.Name)
+			// Only retention-cadence tickers. The poll ticker is legitimate.
+			for _, arg := range call.Args {
+				if id, ok := arg.(*ast.Ident); ok && id.Name == "cleanupInterval" {
+					offenders = append(offenders, ident.Name)
+				}
+			}
+			if strings.Contains(strings.ToLower(ident.Name), "cleanup") ||
+				strings.Contains(strings.ToLower(ident.Name), "retention") {
+				offenders = append(offenders, ident.Name)
+			}
 		}
 		return true
 	})

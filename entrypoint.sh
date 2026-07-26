@@ -120,6 +120,14 @@ su-exec postgres psql -h "$PGRUN" -c "SELECT 1 FROM pg_roles WHERE rolname='$PG_
 # already existed with the hardcoded 'fwmon' password; ALTER swaps it).
 # Idempotent and safe under trust-auth local-socket access.
 su-exec postgres psql -h "$PGRUN" -c "ALTER USER $PG_USER WITH PASSWORD '$PG_PASSWORD';" > /dev/null
+# The platform health probe reports the DISK VOLUME HOLDING THE DATABASE, which
+# it locates by asking Postgres for its own data_directory. That is a
+# superuser-only GUC, so without this grant the probe errors on every call, the
+# whole data-volume block silently disappears from the dashboard, and the log
+# gains a permission error every 10 seconds. Silently losing that signal is what
+# let a full data volume go unnoticed until Postgres crash-looped.
+# pg_read_all_settings is read-only and grants no data access. Idempotent.
+su-exec postgres psql -h "$PGRUN" -c "GRANT pg_read_all_settings TO $PG_USER;" > /dev/null
 su-exec postgres psql -h "$PGRUN" -tc "SELECT 1 FROM pg_database WHERE datname='$PG_DB'" | grep -q 1 || \
     su-exec postgres psql -h "$PGRUN" -c "CREATE DATABASE $PG_DB OWNER $PG_USER;" > /dev/null
 
