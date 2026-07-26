@@ -19,17 +19,19 @@ import (
 func TestAutovacuumIntegration_SettingsReachLeafPartitions(t *testing.T) {
 	d := NewIntegrationDB(t)
 
-	// denied_events is created partitioned by v47, so migrations alone give us a
-	// partitioned parent with children.
+	// syslog_messages is BOTH in defaultAutovacuumTables and converted to a
+	// partitioned parent by migration v2 on a fresh schema — the combination this
+	// test needs. (An earlier version asserted on denied_events, which is
+	// partitioned but was absent from the autovacuum list, so it proved nothing.)
 	var isPartitioned bool
 	if err := d.db.Raw(`SELECT EXISTS (
 		SELECT 1 FROM pg_partitioned_table pt
-		JOIN pg_class c ON c.oid = pt.partrelid WHERE c.relname = 'denied_events')`).
+		JOIN pg_class c ON c.oid = pt.partrelid WHERE c.relname = 'syslog_messages')`).
 		Scan(&isPartitioned).Error; err != nil {
 		t.Fatalf("probe: %v", err)
 	}
 	if !isPartitioned {
-		t.Skip("denied_events is not partitioned on this schema; nothing to assert")
+		t.Skip("syslog_messages is not partitioned on this schema; nothing to assert")
 	}
 
 	if err := d.EnsurePartitions(); err != nil {
@@ -48,11 +50,11 @@ func TestAutovacuumIntegration_SettingsReachLeafPartitions(t *testing.T) {
 		FROM pg_inherits i
 		JOIN pg_class c ON c.oid = i.inhrelid
 		JOIN pg_class p ON p.oid = i.inhparent
-		WHERE p.relname = 'denied_events'`).Scan(&leaves).Error; err != nil {
+		WHERE p.relname = 'syslog_messages'`).Scan(&leaves).Error; err != nil {
 		t.Fatalf("read leaf reloptions: %v", err)
 	}
 	if len(leaves) == 0 {
-		t.Fatal("denied_events has no child partitions — EnsurePartitions did not run")
+		t.Fatal("syslog_messages has no child partitions — EnsurePartitions did not run")
 	}
 
 	var missing []string

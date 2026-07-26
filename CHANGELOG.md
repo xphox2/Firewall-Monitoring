@@ -19,6 +19,8 @@ Three bands result: below the boundary is critical, boundary–5 is retained for
 
 It is load-bearing rather than cosmetic: a monthly partition only stays near its live size because rows deleted by retention free pages that later inserts into that same still-open partition reuse, and that requires vacuum to keep up. Settings are now applied to each leaf partition, falling back to the table itself when it is not partitioned.
 
+`denied_events` is also added to the tuned set — it is partitioned, takes ~44k rows/day, and has a 2-day retention window, so it churns harder than several tables already on the list, yet was never tuned.
+
 ## [0.11.177] - 2026-07-26
 
 ### Fixed

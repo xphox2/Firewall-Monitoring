@@ -682,6 +682,9 @@ var defaultAutovacuumTables = []string{
 	"vpn_status",
 	"ha_status",
 	"interface_addresses",
+	// Partitioned, ~44k rows/day, and a 2-day retention window — so it churns
+	// harder than several tables already on this list, yet was never tuned.
+	"denied_events",
 }
 
 // autovacuumTables returns the tables to tune. By default that's
