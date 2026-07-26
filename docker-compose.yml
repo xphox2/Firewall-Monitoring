@@ -5,7 +5,12 @@ services:
     # master push. `docker compose pull` upgrades to the latest published
     # image; `docker compose build` still produces a local image under the
     # same name for from-source workflows.
-    image: xphox/firewall-mon:latest
+    #
+    # Overridable so a from-source deployment can tag its local build something
+    # other than the Hub name (FIREWALL_MON_IMAGE=firewall-mon:latest) without
+    # editing this file. Editing it in place is what produced the untracked
+    # working-tree drift on rust-01 that blocked `git pull` — see v0.11.179.
+    image: ${FIREWALL_MON_IMAGE:-xphox/firewall-mon:latest}
     container_name: firewall-mon
     restart: unless-stopped
     # Without an explicit cap the json-file driver grows without bound — Docker
@@ -26,6 +31,19 @@ services:
       # of syslog_messages on deployments where firewall traffic logs arrive at severity 5.
       # See CHANGELOG v0.10.199 for the 2026-05-11 incident that motivated this default.
       - RETENTION_SYSLOG_CRITICAL_DAYS=30
+      # `.env.example` tells operators to pin these so {enc} secret continuity
+      # never depends on the /config bind-mount surviving — but until now this
+      # file never passed them through, so setting them in .env did nothing and
+      # the advice silently failed. compose only uses .env for interpolation; a
+      # variable reaches the container solely via an entry here.
+      #
+      # Empty is safe and is the default. entrypoint.sh only seeds config.env
+      # when the file is absent, and its `${JWT_SECRET_KEY:-...}` treats empty
+      # as unset; config.go's loadEnvFile then fills the value in from
+      # config.env because it writes any key whose env value is empty. So an
+      # unset variable here leaves existing key derivation exactly as it was.
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
     ports:
       - "8080:8080"       # Web UI / API
       - "162:162/udp"     # SNMP traps

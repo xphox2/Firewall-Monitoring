@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.180] - 2026-07-26
+
+### Fixed
+
+**`JWT_SECRET_KEY` / `ENCRYPTION_KEY` set in `.env` did nothing.** `.env.example` has long told operators to pin these "so key continuity never depends on a bind-mount surviving" — the safest way to protect every `{enc}` secret across a relocation. But `docker-compose.yml` never listed them under `environment:`, and compose uses `.env` purely for `${...}` interpolation: a variable reaches the container only via an explicit entry. So the documented advice silently did nothing, and continuity kept depending on `/config/config.env` — the exact fragility the docs warn about.
+
+Both are now passed through, defaulting to empty. Empty is safe and changes nothing for existing deployments: `entrypoint.sh` only seeds `config.env` when that file is absent, its own `${JWT_SECRET_KEY:-...}` treats empty as unset, and `loadEnvFile` in `internal/config/config.go` writes any key whose current env value is empty — so `config.env` still populates the value exactly as before. Setting the variable in `.env` now takes precedence, as documented.
+
+### Added
+
+**`FIREWALL_MON_IMAGE` overrides the image name.** The image was hardcoded to the Docker Hub tag, so a from-source deployment that builds locally under a different tag had to edit `docker-compose.yml` in place. That edit is untracked working-tree drift, and it makes `git pull` refuse to update the deployment checkout — which is precisely what had happened on rust-01, where a hand-edited compose file diverged from master on five separate lines and could not be updated without a manual merge.
+
+With this plus the existing `DATA_DIR` / `CONFIG_DIR` / `GEOIP_DIR` hooks, a deployment can express its entire local configuration in a gitignored `.env` and keep `docker-compose.yml` byte-identical to the tracked file, so pulls stay clean.
+
 ## [0.11.179] - 2026-07-26
 
 ### Fixed
