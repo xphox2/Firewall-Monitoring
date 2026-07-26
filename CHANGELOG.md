@@ -1,6 +1,22 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.182] - 2026-07-26
+
+### Fixed
+
+**Saving global alert defaults returned 400 and silently discarded every setting in the batch.** Shipped in v0.11.178 and live since.
+
+The alerting page's save posts *every* field in its map unconditionally. `syslog_critical_below_severity` was added to that map and to the save-side validation, but never to `alertGlobalDefaults` — the read path. So the input rendered empty, the save posted `""`, validation rejected it, and because `UpdateSettings` returns on the first bad value **before persisting anything**, the entire batch was abandoned.
+
+Worse than a one-off: the overview never returned the key, so even after an operator typed a value and saved successfully it was empty again on the next load and **every subsequent save failed**. The field could not be cleared either, since blank is rejected. And it took the v0.11.181 disk knobs (`server_disk_threshold`, `server_disk_free_floor_gb`) down with it — the alerts added specifically so the disk-full outage could not recur unnoticed became untunable.
+
+Verified against a live instance: before the fix the save is rejected and its siblings do not persist; after, the save is accepted and they do.
+
+### Added
+
+A guard test asserting that **every key the alerting page posts on save is also returned by the read path**. This bug class is invisible to normal testing — each half works in isolation, and only the pairing fails — so the contract is now pinned rather than relying on remembering it. Verified to fail against the shipped code.
+
 ## [0.11.181] - 2026-07-26
 
 ### Added
