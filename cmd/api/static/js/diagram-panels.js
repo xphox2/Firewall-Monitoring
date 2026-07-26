@@ -992,7 +992,10 @@
             return rows.map((t, i) => {
                 const rowId = `${prefix}-${i}`;
                 const dest = t.matched_device_id ? `<a href="/admin/devices/${t.matched_device_id}" style="color:var(--fwmon-accent);text-decoration:none;font-size:0.78rem;">${window.escapeHtml(t.matched_name)}</a>` : '<span style="color:var(--fwmon-sig-warn);font-size:0.78rem;">Off-Net</span>';
-                const statusBadge = `<span class="badge ${t.status}">${t.status.toUpperCase()}</span>`;
+                // Guarded like every sibling call site. The API always sends a status
+                // today (no omitempty), so this is consistency rather than a live fix.
+                const st = t.status || 'unknown';
+                const statusBadge = `<span class="badge ${st}">${st.toUpperCase()}</span>`;
                 return `
                     <tr class="panel-tunnel-row" data-action="dp-toggle-tunnel" data-row="${rowId}" data-device="${devId}" data-tunnel="${window.escapeHtml(chartGroup(t))}">
                         <td><span class="chevron" id="pchev-${rowId}">&#9654;</span></td>

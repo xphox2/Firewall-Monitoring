@@ -67,6 +67,119 @@ func withinVPNGrace(in []models.VPNStatus, now time.Time) []models.VPNStatus {
 	return out
 }
 
+// vpnStateClass splits a tunnel's rows into a state observation and a config
+// row. Used both as the SQL GROUP BY expression (so one scan returns the newest
+// of each) and as the Go-side predicate, so the two can never disagree.
+//
+// Test for membership of ('up','down'), never for equality with "unknown". The
+// non-state domain is OPEN: the config writer takes its status from a
+// `set status <token>` match, so any token can appear, and a truncated SNMP walk
+// can ship an empty status. Everything that is not a state claim is a config row.
+const vpnStateClass = "CASE WHEN status IN ('up','down') THEN 1 ELSE 0 END"
+
+func isVPNStateRow(s models.VPNStatus) bool {
+	return s.Status == "up" || s.Status == "down"
+}
+
+// unquoteConfigValue strips the quotes FortiOS puts around config values.
+//
+// The SSH config parser captures the token verbatim from `set interface "wan1"`,
+// so interface_name reaches the UI as `"wan1"` — quotes included — on every
+// device in the fleet. Stripped on read rather than at ingest so the 90 days of
+// rows already stored are fixed too, and so no collector deploy is required.
+// Quoting is FortiOS syntax, never part of the interface name.
+func unquoteConfigValue(v string) string {
+	if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
+		return v[1 : len(v)-1]
+	}
+	return v
+}
+
+// mergeVPNWriters collapses a tunnel's two writers into one row.
+//
+// vpn_status has two writers with disjoint fields: the ~60s SNMP path reports
+// status, counters and selectors but never interface_name/mode; the ~15min SSH
+// config path reports interface_name/mode but has no liveness to report, so it
+// stamps a placeholder status and zero counters. Taking the newest row per
+// tunnel therefore threw away whichever writer had not fired most recently — the
+// badge read "unknown" for the ~50s after each config poll, and Interface/Mode
+// were blank the rest of the time.
+//
+// A config row is metadata, not a state claim, so it must never DISPLACE a state
+// observation: the base is the newest state row, enriched with the config row's
+// metadata. A tunnel with no state row keeps the config row as its base, which
+// preserves the previous behaviour for SNMP-restricted devices that only ever
+// produce config rows.
+//
+// The base is one coherent observation rather than a field-by-field blend. A
+// blend would stitch status, counters and selectors from different instants, and
+// could launder a pre-reset counter back in after a device reboot.
+//
+// The merged row keeps the BASE row's timestamp, never the fresher config row's.
+// The freshness staircase gates on that timestamp, so borrowing the config row's
+// would let a tunnel whose SNMP feed had died keep looking live on the strength
+// of a poll that knows nothing about liveness.
+//
+// CALL THIS AFTER withinVPNGrace, never before. The fallback must key off "no
+// state row SURVIVED the grace filter", not "no state row was returned": the SQL
+// prune is far wider than the grace horizon, so a state row aged between the two
+// is returned by the query, suppresses the fallback, and is then dropped by the
+// filter — making the tunnel vanish from the UI entirely rather than falling back
+// to its config row.
+func mergeVPNWriters(rows []models.VPNStatus) []models.VPNStatus {
+	type tunnelKey struct {
+		device uint
+		name   string
+	}
+	type pair struct{ state, config *models.VPNStatus }
+
+	agg := make(map[tunnelKey]*pair, len(rows))
+	seen := make([]tunnelKey, 0, len(rows))
+
+	for i := range rows {
+		row := &rows[i]
+		key := tunnelKey{row.DeviceID, row.TunnelName}
+		p, ok := agg[key]
+		if !ok {
+			p = &pair{}
+			agg[key] = p
+			seen = append(seen, key)
+		}
+		// Newest of each class. The outer query joins on (device, tunnel,
+		// timestamp) and is blind to the class, so it can return a non-max row of
+		// one class that happens to tie another class's max — selecting by
+		// timestamp here absorbs that instead of trusting the row count.
+		slot := &p.config
+		if isVPNStateRow(*row) {
+			slot = &p.state
+		}
+		if *slot == nil || row.Timestamp.After((*slot).Timestamp) {
+			*slot = row
+		}
+	}
+
+	out := make([]models.VPNStatus, 0, len(seen))
+	for _, key := range seen {
+		p := agg[key]
+		base := p.state
+		if base == nil {
+			base = p.config
+		}
+		merged := *base
+		if p.config != nil {
+			if merged.InterfaceName == "" && p.config.InterfaceName != "" {
+				merged.InterfaceName = p.config.InterfaceName
+			}
+			if merged.Mode == "" && p.config.Mode != "" {
+				merged.Mode = p.config.Mode
+			}
+		}
+		merged.InterfaceName = unquoteConfigValue(merged.InterfaceName)
+		out = append(out, merged)
+	}
+	return out
+}
+
 func (d *Database) SaveSystemStatus(status *models.SystemStatus) error {
 	return d.db.Create(status).Error
 }
@@ -228,7 +341,9 @@ func (d *Database) GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, erro
 		deviceID, prune, vpnLatestSubquery(d.db, deviceID, prune)).
 		Find(&statuses).Error
 	if err == nil {
-		statuses = withinVPNGrace(statuses, now)
+		// Grace FIRST, then merge: the fallback keys off "no state row survived",
+		// not "no state row was returned". See mergeVPNWriters.
+		statuses = mergeVPNWriters(withinVPNGrace(statuses, now))
 	}
 	if err != nil {
 		return nil, err
@@ -468,36 +583,45 @@ func (d *Database) GetAllLatestVPNStatuses() ([]models.VPNStatus, error) {
 	// UTC: see vpnZoneSlack — a local-zone bound widens the worst case past the slack.
 	prune := now.UTC().Add(-VPNEvidenceGrace - vpnZoneSlack)
 	var statuses []models.VPNStatus
+	// Grouped by class too, so one scan returns the newest state row AND the
+	// newest config row per tunnel; see vpnStateClass and mergeVPNWriters.
 	sub := d.db.Model(&models.VPNStatus{}).
 		Select("device_id, tunnel_name, MAX(timestamp) as max_ts").
 		Where("timestamp >= ?", prune).
-		Group("device_id, tunnel_name")
+		Group("device_id, tunnel_name, " + vpnStateClass)
 	if err := d.db.Where("timestamp >= ? AND (device_id, tunnel_name, timestamp) IN (?)", prune, sub).
 		Find(&statuses).Error; err != nil {
 		return nil, err
 	}
-	return withinVPNGrace(statuses, now), nil
+	return mergeVPNWriters(withinVPNGrace(statuses, now)), nil
 }
 
 // GetVPNTunnelCounts returns the up and total tunnel counts for a device using
 // the same horizon-bounded per-tunnel snapshot as the other readers, so a badge
 // can never disagree with the device page about which tunnels exist.
 //
-// A tunnel whose state is neither up nor down (FortiGate reports "unknown" for a
-// phase1 whose phase2 has no SA) counts toward total but not up — it is present
-// on the device, just not carrying traffic.
+// A tunnel whose state is neither up nor down counts toward total but not up —
+// it is present on the device, just not reporting liveness. In practice that is
+// a device whose only writer is the SSH config path, which stamps a placeholder
+// status because a config read cannot observe liveness. (An earlier version of
+// this comment attributed "unknown" to FortiGate reporting it for a phase1 with
+// no SA; no FortiGate path emits a VPN status other than up or down.)
+//
+// tunnel_name is selected and the rows are merged for a reason: the subquery
+// returns the newest row of EACH writer class, so counting rows directly would
+// total every dual-writer tunnel twice.
 func (d *Database) GetVPNTunnelCounts(deviceID uint) (up, total int, err error) {
 	now := time.Now()
 	// UTC: see vpnZoneSlack — a local-zone bound widens the worst case past the slack.
 	prune := now.UTC().Add(-VPNEvidenceGrace - vpnZoneSlack)
 	var statuses []models.VPNStatus
-	if err = d.db.Select("status, timestamp").
+	if err = d.db.Select("tunnel_name, status, timestamp").
 		Where("device_id = ? AND timestamp >= ? AND (tunnel_name, timestamp) IN (?)",
 			deviceID, prune, vpnLatestSubquery(d.db, deviceID, prune)).
 		Find(&statuses).Error; err != nil {
 		return 0, 0, err
 	}
-	for _, s := range withinVPNGrace(statuses, now) {
+	for _, s := range mergeVPNWriters(withinVPNGrace(statuses, now)) {
 		total++
 		if s.Status == "up" {
 			up++
@@ -520,10 +644,18 @@ func (d *Database) GetVPNTunnelCounts(deviceID uint) (up, total int, err error) 
 // altogether ages out instead of being served as current state forever. Together
 // these fix opposite failures — one query used to resurrect deleted tunnels, the
 // other buried live ones.
+//
+// Grouped by CLASS as well as by tunnel (see vpnStateClass), so one scan returns
+// the newest state row AND the newest config row per tunnel. Adding a second
+// grouped scan instead would be materially worse here: vpn_status is not
+// partitioned and has no timestamp-leading index, so the fleet-wide sibling of
+// this query is already a full-scan shape run every poll cycle and every 15s by
+// the map.
 func vpnLatestSubquery(db *gorm.DB, deviceID uint, prune time.Time) *gorm.DB {
 	return db.Model(&models.VPNStatus{}).
 		Select("tunnel_name, MAX(timestamp) as max_ts").
 		Where("device_id = ? AND timestamp >= ?", deviceID, prune).
+		Group(vpnStateClass).
 		Group("tunnel_name")
 }
 
