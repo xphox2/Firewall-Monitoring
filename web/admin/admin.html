@@ -843,6 +843,7 @@
                 <div style="border-top:1px solid var(--fwmon-border);margin:14px 0 12px;padding-top:12px;">
                     <div class="form-row">
                         <div class="form-group"><label for="alerting-g-telemetry-stale" title="Minutes without polled telemetry (vitals / interface stats) on a still-reachable device before a TELEMETRY_STALE alert fires. 0 disables. Must exceed the slowest per-device collection cadence (e.g. the SSH poll interval) or that device will fire and recover on each poll.">Telemetry stale threshold (min, 0 = off)</label><input type="number" id="alerting-g-telemetry-stale" min="0" max="1440" step="1"></div>
+                        <div class="form-group"><label for="alerting-g-syslog-band" title="Syslog severities BELOW this value are kept for the critical retention window; this value and above are kept for the shorter informational window. Default 6 keeps the historic split. Lowering it to 5 moves NOTICE — typically the large majority of syslog volume — onto the short window. Cannot exceed 6: severity 6 and above is handled by syslog aggregation, which has its own window.">Syslog critical below severity</label><input type="number" id="alerting-g-syslog-band" min="1" max="6" step="1"><div class="field-hint">Severities under this get the long (critical) retention window. 6 = historic behaviour; 5 moves NOTICE to the short window.</div></div>
                     </div>
                 </div>
             </div>
