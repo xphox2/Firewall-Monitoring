@@ -34,6 +34,7 @@ func NewDatabaseForTesting(t interface {
 		&models.Device{},
 		&models.Site{},
 		&models.SystemStatus{},
+		&models.ServerMetric{},
 		&models.InterfaceStats{},
 		&models.VPNStatus{},
 		&models.HAStatus{},

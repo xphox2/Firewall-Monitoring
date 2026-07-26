@@ -23,6 +23,7 @@ import (
 func (d *Database) migrateBaseline() error {
 	allModels := []interface{}{
 		&models.SystemStatus{},
+		&models.ServerMetric{},
 		&models.InterfaceStats{},
 		&models.VPNStatus{},
 		&models.HAStatus{},
@@ -1197,6 +1198,12 @@ func (d *Database) migrateSystemStatusSource() error {
 	}
 	log.Printf("migrate v52 system_status.source: ensured column exists (varchar(16) not null default '')")
 	return nil
+}
+
+// migrateServerMetrics (v53) creates the server_metrics table on existing
+// databases. The baseline AutoMigrate covers fresh installs only.
+func (d *Database) migrateServerMetrics() error {
+	return d.db.AutoMigrate(&models.ServerMetric{})
 }
 
 func (d *Database) migrateFlowSamplesAddDropsColumn() error {

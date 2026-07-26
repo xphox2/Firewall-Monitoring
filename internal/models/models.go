@@ -12,9 +12,12 @@ import (
 type AlertType string
 
 const (
-	AlertTypeCPUHigh            AlertType = "CPU_HIGH"
-	AlertTypeMemoryHigh         AlertType = "MEMORY_HIGH"
-	AlertTypeDiskHigh           AlertType = "DISK_HIGH"
+	AlertTypeCPUHigh    AlertType = "CPU_HIGH"
+	AlertTypeMemoryHigh AlertType = "MEMORY_HIGH"
+	AlertTypeDiskHigh   AlertType = "DISK_HIGH"
+	// SERVER_DISK_HIGH is the fwmon server's OWN volume, not a monitored
+	// device's. DISK_HIGH is keyed on a device id and can never cover it.
+	AlertTypeServerDiskHigh     AlertType = "SERVER_DISK_HIGH"
 	AlertTypeSessionsHigh       AlertType = "SESSIONS_HIGH"
 	AlertTypeDeviceOffline      AlertType = "DEVICE_OFFLINE"
 	AlertTypeInterfaceDown      AlertType = "INTERFACE_DOWN"
@@ -1204,7 +1207,41 @@ type PingStats struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
-func (SystemStatus) TableName() string     { return "system_status" }
+func (SystemStatus) TableName() string { return "system_status" }
+
+// ServerMetric is the Firewall-Mon SERVER's own resource usage — the host
+// running this software, not a monitored device.
+//
+// Deliberately NOT system_status rows with device_id 0. That table already has
+// two writers with disjoint field sets, and more concretely
+// GetLatestSystemStatus() is device-UNFILTERED (ORDER BY timestamp DESC LIMIT 1)
+// and feeds the public dashboard — a server row every few minutes would
+// routinely be the newest, so the public status page would present this server's
+// CPU and memory as a firewall's.
+type ServerMetric struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	Timestamp time.Time `json:"timestamp" gorm:"index"`
+
+	CPUPercent    float64 `json:"cpu_percent"`
+	MemPercent    float64 `json:"mem_percent"`
+	MemUsedBytes  uint64  `json:"mem_used_bytes"`
+	MemTotalBytes uint64  `json:"mem_total_bytes"`
+	Load1         float64 `json:"load1"`
+
+	RootDiskPercent   float64 `json:"root_disk_percent"`
+	RootDiskFreeBytes uint64  `json:"root_disk_free_bytes"`
+
+	// NULLABLE ON PURPOSE. When the database volume could not be probed (an
+	// external database, or a start into a dead database before the path is
+	// known) these stay nil rather than defaulting to 0 — a zero would draw a
+	// 0%-used flatline on the chart, which is "failure reads as healthy" in
+	// graph form. Readers must omit nil points, not plot them.
+	DataDiskPercent   *float64 `json:"data_disk_percent"`
+	DataDiskFreeBytes *uint64  `json:"data_disk_free_bytes"`
+	DataDiskPath      string   `json:"data_disk_path"`
+}
+
+func (ServerMetric) TableName() string     { return "server_metrics" }
 func (InterfaceStats) TableName() string   { return "interface_stats" }
 func (VPNStatus) TableName() string        { return "vpn_status" }
 func (HAStatus) TableName() string         { return "ha_status" }

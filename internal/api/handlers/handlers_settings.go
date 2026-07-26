@@ -158,6 +158,9 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		// Syslog retention band boundary. Severities BELOW it get the critical
 		// window, at/above it the informational one. See SyslogCriticalBelow.
 		"syslog_critical_below_severity": true,
+		// The fwmon server's OWN volumes. 0 disables either trigger.
+		"server_disk_threshold":     true,
+		"server_disk_free_floor_gb": true,
 	}
 
 	secretKeys := settingsSecretKeys // v0.10.226: shared with GetSettings
@@ -188,6 +191,22 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		}
 		// Validate values by key type
 		switch s.Key {
+		case "server_disk_threshold":
+			// 0 disables the percentage trigger (the floor can still fire).
+			v, err := strconv.ParseFloat(strings.TrimSpace(s.Value), 64)
+			if err != nil || v < 0 || v > 100 {
+				c.JSON(http.StatusBadRequest, response.Error(
+					"server_disk_threshold must be between 0 and 100 (0 disables the percentage trigger)"))
+				return
+			}
+		case "server_disk_free_floor_gb":
+			// 0 disables the free-space trigger (the percentage can still fire).
+			v, err := strconv.Atoi(strings.TrimSpace(s.Value))
+			if err != nil || v < 0 || v > 10000 {
+				c.JSON(http.StatusBadRequest, response.Error(
+					"server_disk_free_floor_gb must be between 0 and 10000 (0 disables the free-space trigger)"))
+				return
+			}
 		case "syslog_critical_below_severity":
 			// Mirrors database.SyslogCriticalBelow's clamp. Rejected rather than
 			// silently clamped so the operator learns the bound: above 6 the

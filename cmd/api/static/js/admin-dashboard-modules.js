@@ -58,6 +58,60 @@
             '<polyline points="' + pts + '" fill="none" stroke="' + c + '" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>';
     }
 
+    // ---- server trend chart ---------------------------------------------
+    // The tiles answer "is it bad now"; this answers "is it getting worse, and
+    // how fast" — the question nobody could answer when the database volume
+    // filled, because nothing kept history of the server's own resources.
+    //
+    // This is the first chart in this module. admin-main.js's createChart helper
+    // lives inside its IIFE and is not exported, so build the Chart directly;
+    // the library itself is page-global. Theme handling needs no registration —
+    // recolorChartsForTheme walks every canvas via Chart.getChart().
+    var serverTrendChart = null;
+
+    function loadServerTrend() {
+        var el = document.getElementById('dash-server-trend');
+        if (!el || typeof Chart === 'undefined') return;
+        AC.apiFetch(window.API_BASE + '/system/metrics/chart?range=24h')
+            .then(function (r) { return r.json(); })
+            .then(function (res) {
+                var rows = (res && res.data) || [];
+                if (!rows.length) return;
+                function series(name, key, color) {
+                    return {
+                        label: name, borderColor: color, backgroundColor: color,
+                        borderWidth: 2, pointRadius: 0, tension: 0.25,
+                        // A null must STAY a gap. A bucket where the volume
+                        // could not be probed is "unknown", not "0% used" —
+                        // plotting it as zero is the chart-shaped version of
+                        // reading a failed probe as healthy.
+                        spanGaps: false,
+                        data: rows.map(function (x) { return x[key] == null ? null : x[key]; })
+                    };
+                }
+                if (serverTrendChart) { serverTrendChart.destroy(); serverTrendChart = null; }
+                serverTrendChart = new Chart(el.getContext('2d'), {
+                    type: 'line',
+                    data: {
+                        labels: rows.map(function (x) { return x.bucket; }),
+                        datasets: [
+                            series('CPU %', 'cpu_percent', '#58a6ff'),
+                            series('Memory %', 'mem_percent', '#a371f7'),
+                            series('Root disk %', 'root_disk_percent', '#3fb950'),
+                            series('DB volume %', 'data_disk_percent', '#f0883e')
+                        ]
+                    },
+                    options: {
+                        responsive: true, maintainAspectRatio: false,
+                        interaction: { mode: 'index', intersect: false },
+                        scales: { y: { beginAtZero: true, max: 100, ticks: { callback: function (v) { return v + '%'; } } } },
+                        plugins: { legend: { display: true, labels: { boxWidth: 10 } } }
+                    }
+                });
+            })
+            .catch(function (e) { fwmonLog.warn('[Dashboard] server trend load failed', e); });
+    }
+
     // ---- module definitions --------------------------------------------------
     // Each: { id, title, sev(data)->'ok'|'warn'|'crit', body(data)->html }
     var MODULES = [
@@ -90,7 +144,8 @@
                     tile('Goroutines', num(rt.goroutines)) +
                     tile('Heap', rt.heap_alloc_mb != null ? Math.round(rt.heap_alloc_mb) + ' MB' : 'n/a') +
                     tile('Version', '<span style="font-size:0.9rem">' + esc(p.version || '—') + '</span>')
-                );
+                ) + '<div style="margin-top:14px;height:190px;position:relative;">' +
+                    '<canvas id="dash-server-trend"></canvas></div>';
             }
         },
         {
@@ -305,6 +360,10 @@
                 '<div class="dash-module-body">' + body + '</div></section>';
         }).join('');
         host.innerHTML = html || '<div class="dash-empty" style="padding:32px;">All modules hidden — click Customize to add some.</div>';
+        // No per-module post-render hook exists, and body() can only return
+        // markup — so the chart is built here, after the canvas is in the DOM.
+        // No-ops when the Platform module is hidden.
+        loadServerTrend();
         if (customizing) wireDnd(host);
     }
 

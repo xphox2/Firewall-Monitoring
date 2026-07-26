@@ -101,6 +101,7 @@ var registeredMigrations = []migration{
 	{version: 50, name: "ipsec_tunnel_deploy_state", run: (*Database).migrateIPSecTunnelDeployState},
 	{version: 51, name: "partition_default_partitions", run: (*Database).migratePartitionDefaultPartitions},
 	{version: 52, name: "system_status_source", run: (*Database).migrateSystemStatusSource},
+	{version: 53, name: "server_metrics", run: (*Database).migrateServerMetrics},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

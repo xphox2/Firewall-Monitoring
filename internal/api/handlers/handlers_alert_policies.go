@@ -353,12 +353,16 @@ func (h *Handler) alertGlobalDefaults(db database.Store) gin.H {
 		"spike_min_throughput_mbps":  h.config.Alerts.SpikeMinThroughputMbps,
 		// Code default matches telemetryStaleDefaultMinutes in cmd/poller.
 		"telemetry_stale_minutes": 60,
+		// The fwmon server's own volumes; see serverhealth.
+		"server_disk_threshold":     85,
+		"server_disk_free_floor_gb": 5,
 	}
 	var settings []models.SystemSetting
 	db.Gorm().Where(`"key" IN ?`, []string{
 		"cpu_threshold", "memory_threshold", "disk_threshold", "session_threshold",
 		"spike_alert_enabled", "spike_stddev_threshold", "spike_min_duration_minutes",
 		"spike_min_throughput_mbps", "telemetry_stale_minutes",
+		"server_disk_threshold", "server_disk_free_floor_gb",
 	}).Find(&settings)
 	for _, s := range settings {
 		if s.Value == "" {
@@ -366,11 +370,12 @@ func (h *Handler) alertGlobalDefaults(db database.Store) gin.H {
 		}
 		switch s.Key {
 		case "cpu_threshold", "memory_threshold", "disk_threshold", "spike_stddev_threshold",
-			"spike_min_throughput_mbps":
+			"spike_min_throughput_mbps", "server_disk_threshold":
 			if v, err := strconv.ParseFloat(s.Value, 64); err == nil {
 				g[s.Key] = v
 			}
-		case "session_threshold", "spike_min_duration_minutes", "telemetry_stale_minutes":
+		case "session_threshold", "spike_min_duration_minutes", "telemetry_stale_minutes",
+			"server_disk_free_floor_gb":
 			if v, err := strconv.Atoi(s.Value); err == nil {
 				g[s.Key] = v
 			}

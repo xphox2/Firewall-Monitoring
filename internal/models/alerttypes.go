@@ -41,6 +41,7 @@ func AllAlertTypes() []AlertTypeInfo {
 		{AlertTypeCPUHigh, FamilyMetrics, "CPU usage above threshold"},
 		{AlertTypeMemoryHigh, FamilyMetrics, "Memory usage above threshold"},
 		{AlertTypeDiskHigh, FamilyMetrics, "Disk usage above threshold"},
+		{AlertTypeServerDiskHigh, FamilyMetrics, "Firewall-Mon server's own disk volume above threshold or low on free space"},
 		{AlertTypeSessionsHigh, FamilyMetrics, "Session count above threshold"},
 		{AlertTypeTrafficSpike, FamilyMetrics, "Throughput anomaly vs the device's own baseline"},
 

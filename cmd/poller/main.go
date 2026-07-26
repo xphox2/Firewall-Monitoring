@@ -205,6 +205,11 @@ func (p *Poller) Start() error {
 	// Run the first monitoring cycle immediately on startup
 	p.runMonitoringCycle()
 
+	// And check the server's own volumes immediately, so a restart INTO an
+	// already-full disk alerts now rather than five minutes from now — the
+	// window in which the incident's Postgres was crash-looping.
+	p.checkServerHealth()
+
 	ticker := time.NewTicker(p.cfg.SNMP.PollInterval)
 	defer ticker.Stop()
 
@@ -222,6 +227,12 @@ func (p *Poller) Start() error {
 	// and cheap once the backlog is gone.
 	cleanupTimer := time.NewTimer(initialCleanupDelay)
 	defer cleanupTimer.Stop()
+
+	// The server's OWN volumes. Nothing else evaluates them: DISK_HIGH is keyed
+	// on a device id, and the fwmon server is not a monitored device — which is
+	// why a full database volume crash-looped Postgres with no alert.
+	serverHealthTicker := time.NewTicker(serverHealthInterval)
+	defer serverHealthTicker.Stop()
 
 	// L2 of the 2026-07-01 audit: prune the alert-cooldown map hourly (not just
 	// on the daily cleanup). Now that prune respects each key's own cooldown,
@@ -285,6 +296,8 @@ func (p *Poller) Start() error {
 		case <-cleanupTimer.C:
 			p.runRetentionCleanup()
 			cleanupTimer.Reset(cleanupInterval)
+		case <-serverHealthTicker.C:
+			p.runUnderLeaderLock("server-health", p.checkServerHealth)
 		case <-p.stopChan:
 			log.Println("Poller stopped")
 			return nil

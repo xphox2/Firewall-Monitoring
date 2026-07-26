@@ -427,7 +427,8 @@ func ruleSourceForAlertType(at models.AlertType) string {
 		return "flow"
 	case models.AlertTypeDeviceOffline, models.AlertTypeTelemetryStale, models.AlertTypeInterfaceErrors,
 		models.AlertTypeConfigChange, models.AlertTypeSSHHostKeyChanged,
-		models.AlertTypeProbeDataLag, models.AlertTypeProbeDataTruncated:
+		models.AlertTypeProbeDataLag, models.AlertTypeProbeDataTruncated,
+		models.AlertTypeServerDiskHigh:
 		return "device"
 	}
 	// EVERY SFLOW_* type — the consolidated security card, per-detection

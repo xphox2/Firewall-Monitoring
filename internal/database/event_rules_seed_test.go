@@ -1,6 +1,7 @@
 package database
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -196,8 +197,12 @@ func TestEnsureDefaultRules_UpgradeMarker3To4(t *testing.T) {
 	if vpnCount != 0 {
 		t.Error("operator-deleted gen-2 state seed was resurrected on the 3→4 upgrade")
 	}
-	if v, _ := d.GetSettingValue("event_rules_seed_version"); v != "5" {
-		t.Errorf("marker not advanced to 5, got %q", v)
+	// Assert against the constant, not a literal: this pinned "5" and broke on
+	// the next generation bump even though the behaviour it tests — the marker
+	// advances to the newest generation — was unchanged.
+	if want := strconv.Itoa(eventRuleSeedVersion); func() string { v, _ := d.GetSettingValue("event_rules_seed_version"); return v }() != want {
+		v, _ := d.GetSettingValue("event_rules_seed_version")
+		t.Errorf("marker not advanced to %s, got %q", want, v)
 	}
 	if v, _ := d.GetSettingValue("state_engine_owns"); v != "interface_down" {
 		t.Errorf("ownership flag clobbered on upgrade: got %q", v)
@@ -344,8 +349,12 @@ func TestEnsureDefaultRules_UpgradeMarker4To5(t *testing.T) {
 			t.Errorf("%s: must land DISABLED (GORM default-write-back trap)", name)
 		}
 	}
-	if v, _ := d.GetSettingValue("event_rules_seed_version"); v != "5" {
-		t.Errorf("marker not advanced to 5, got %q", v)
+	// Assert against the constant, not a literal: this pinned "5" and broke on
+	// the next generation bump even though the behaviour it tests — the marker
+	// advances to the newest generation — was unchanged.
+	if want := strconv.Itoa(eventRuleSeedVersion); func() string { v, _ := d.GetSettingValue("event_rules_seed_version"); return v }() != want {
+		v, _ := d.GetSettingValue("event_rules_seed_version")
+		t.Errorf("marker not advanced to %s, got %q", want, v)
 	}
 	if v, _ := d.GetSettingValue("state_engine_owns"); v != "interface_down" {
 		t.Errorf("ownership flag clobbered on upgrade: got %q", v)

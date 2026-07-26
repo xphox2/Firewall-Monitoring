@@ -604,7 +604,8 @@ func defaultCooldownForType(alertType models.AlertType) int {
 func defaultSeverityForType(alertType models.AlertType) models.Severity {
 	switch alertType {
 	case "DISK_HIGH", "INTERFACE_DOWN", "VPN_TUNNEL_DOWN", "DEVICE_OFFLINE",
-		"SYSLOG_EMERGENCY", "SYSLOG_CRITICAL", "SSH_HOST_KEY_CHANGED":
+		"SYSLOG_EMERGENCY", "SYSLOG_CRITICAL", "SSH_HOST_KEY_CHANGED",
+		"SERVER_DISK_HIGH":
 		return "critical"
 	case "SYSLOG_ALERT":
 		return "warning"

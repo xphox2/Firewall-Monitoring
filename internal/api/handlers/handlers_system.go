@@ -10,6 +10,7 @@ import (
 
 	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/database"
+	"firewall-mon/internal/httputil"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shirou/gopsutil/v4/cpu"
@@ -145,6 +146,23 @@ func (h *Handler) buildSystemHealth(ctx context.Context, db database.Store) gin.
 	out["host"] = host
 
 	return out
+}
+
+// GetServerMetricChart returns bucketed history of the SERVER's own CPU, memory
+// and volumes — the trend behind the Platform tiles.
+//
+// The alert answers "is it bad now"; this answers "is it getting worse, and how
+// fast". Data-disk points are null when the volume could not be probed and must
+// stay null all the way to the client, so the chart omits them rather than
+// drawing a 0%-used flatline.
+func (h *Handler) GetServerMetricChart(c *gin.Context) {
+	from, to := httputil.ParseChartWindow(c, "24h")
+	rows, err := h.reqDB(c).GetServerMetricWindow(from, to)
+	if err != nil {
+		httputil.InternalError(c, "Failed to get server metrics", err)
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(rows))
 }
 
 // GetSystemHealth backs the standalone /api/system endpoint (also reused inside
