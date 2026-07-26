@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.175] - 2026-07-25
+
+### Fixed
+
+**The grouped VPN chart reported 4x a hub's real traffic.** Found on production immediately after deploying 0.11.174, by comparing a single tunnel's charted total against its group's: 25,757,243 bytes were charted as 103,028,972.
+
+A FortiGate's SNMP table carries one counter series per **phase 1**, and the collector writes that series once per phase 2 **name**. A hub with four phase 2 selectors under one phase 1 therefore emits four rows per poll with byte-identical counters and a microsecond-identical timestamp. Those are one measurement reported four times, not four series — so summing the group multiplied the tunnel's traffic by its selector count.
+
+The per-name query was accidentally immune because it only ever read one name; grouping is what exposed the duplication. The existing comment reasoned about the same hazard **across** devices ("the two ends of a tunnel each report the same traffic from their own side") and missed that it also happens within one.
+
+Rows that are the same measurement — same device, same instant, same counters — now collapse to one before deltas are computed. Members with genuinely independent counters differ in at least one counter, so they survive as separate series and still sum, which is the reason the group chart exists.
+
 ## [0.11.174] - 2026-07-25
 
 ### Fixed

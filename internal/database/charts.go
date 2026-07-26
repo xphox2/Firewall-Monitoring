@@ -425,6 +425,21 @@ func (d *Database) GetVPNChartData(deviceID uint, tunnelName string, rangeStr st
 //
 // Scoped to ONE device on purpose. The two ends of a tunnel each report the
 // same traffic from their own side; summing across devices would double it.
+//
+// The same duplication happens WITHIN one device, which is subtler and was a
+// live 4x overstatement before this collapse existed. A FortiGate's SNMP table
+// carries one counter series per phase1, and the collector writes it once per
+// phase2 NAME — so a hub with four phase2 selectors under one phase1 emits four
+// rows per poll with byte-identical counters and a microsecond-identical
+// timestamp. Those are one measurement reported four times, not four series, and
+// summing them multiplies the tunnel's traffic by the number of selectors.
+//
+// The inner GROUP BY collapses rows that are the same measurement: same device,
+// same instant, same counters. MIN(tunnel_name) picks a stable representative
+// (the set is identical every poll, so the same name wins every time), which is
+// what the window then partitions by. Members with genuinely independent
+// counters differ in at least one counter and so survive as separate series and
+// still sum — which is the whole point of a group chart.
 func vpnDeltaQueryGrouped(bucketExpr, timeWhere string) string {
 	return fmt.Sprintf(`
 		SELECT bucket, SUM(delta_in) as in_bytes, SUM(delta_out) as out_bytes,
@@ -443,9 +458,14 @@ func vpnDeltaQueryGrouped(bucketExpr, timeWhere string) string {
 				CASE WHEN LAG(packets_out) OVER w IS NULL THEN NULL
 					WHEN packets_out >= LAG(packets_out) OVER w THEN packets_out - LAG(packets_out) OVER w
 					ELSE packets_out END as delta_pout
-			FROM vpn_status
-			WHERE device_id = ? AND tunnel_name IN (?) AND %s
-				AND NOT (bytes_in = 0 AND bytes_out = 0)
+			FROM (
+				SELECT MIN(tunnel_name) as tunnel_name, timestamp,
+					bytes_in, bytes_out, packets_in, packets_out
+				FROM vpn_status
+				WHERE device_id = ? AND tunnel_name IN (?) AND %s
+					AND NOT (bytes_in = 0 AND bytes_out = 0)
+				GROUP BY timestamp, bytes_in, bytes_out, packets_in, packets_out
+			) AS src
 			WINDOW w AS (PARTITION BY tunnel_name ORDER BY timestamp)
 		) AS deltas WHERE delta_in IS NOT NULL
 		GROUP BY bucket ORDER BY bucket ASC`, bucketExpr, timeWhere)
