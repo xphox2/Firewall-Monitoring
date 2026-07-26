@@ -435,21 +435,36 @@
         if (currentPanelConnId) loadPanelFlowStats(currentPanelConnId, hours);
     }
 
-    // groupByPhase1 collapses Phase 2 selectors that share a Phase 1 IKE gateway
-    // into one group. Multiple Phase 2 selectors under one Phase 1 share a single
-    // counter series, so the UI shows ONE graph per Phase 1 (keyed off a
-    // representative selector) and lists the selectors as non-graphed children.
-    function groupByPhase1(tunnels) {
+    // Group rows into LOGICAL tunnels.
+    //
+    // (This replaces a phase1-keyed grouping whose chart was "keyed off a
+    // representative selector" — the assumption being that selectors under one
+    // phase1 share a counter series. They do not: the representative can be a
+    // config-derived row with no counters at all.)
+    //
+    // tunnel_group is resolved server-side from the provisioning record, which
+    // is the only thing that can unite a FortiGate's two rows: the SSH row
+    // carries the provisioned name but no counters, its SNMP sibling carries the
+    // counters under a synthesized name with an EMPTY phase1_name. Grouping on
+    // phase1_name — as this did — leaves them in separate groups, and the chart
+    // then picked `phase2[0]` as its series, which can be the counterless one.
+    //
+    // Falls back to phase1_name then tunnel_name so a row is never groupless.
+    function groupTunnels(tunnels) {
         const groups = {}, order = [];
         (tunnels || []).forEach(t => {
-            const key = (t.phase1_name && t.phase1_name.trim()) || t.tunnel_name;
+            const key = (t.tunnel_group && t.tunnel_group.trim()) ||
+                (t.phase1_name && t.phase1_name.trim()) || t.tunnel_name;
             if (!groups[key]) { groups[key] = []; order.push(key); }
             groups[key].push(t);
         });
         return order.map(k => ({ phase1: k, phase2: groups[k] }));
     }
 
-    function countPhase1(tunnels) { return groupByPhase1(tunnels).length; }
+    // Feeds the panel's tunnel-count tile. Note this now counts LOGICAL tunnels:
+    // a FortiGate tunnel reported as two rows used to count twice and now counts
+    // once, which is the number an operator would give.
+    function countPhase1(tunnels) { return groupTunnels(tunnels).length; }
 
     function renderPanelTunnelTable(tableId, tunnels, deviceId, family) {
         const tbody = document.querySelector(`#${tableId} tbody`);
@@ -459,9 +474,12 @@
             return;
         }
         let html = '';
-        groupByPhase1(tunnels).forEach((g, gi) => {
+        groupTunnels(tunnels).forEach((g, gi) => {
             const rowId = `${tableId}-row-${gi}`;
-            const rep = g.phase2[0].tunnel_name; // representative selector — shared counter series
+            // The group key, not a representative row: the server sums the whole
+            // group's per-bucket deltas, so a counterless member contributes nothing
+            // instead of being picked as THE series and charting blank.
+            const rep = g.phase1;
             const anyUp = g.phase2.some(t => t.status === 'up' || t.state === 'up');
             const statusBadge = anyUp ? '<span class="badge up">UP</span>' : '<span class="badge down">DOWN</span>';
             const sumIn = g.phase2.reduce((a, t) => a + (t.bytes_in || 0), 0);
@@ -881,7 +899,7 @@
 
     async function loadPanelTunnelChart(rowId, deviceId, tunnelName, range) {
         try {
-            const resp = await window.apiFetch(`${window.API_BASE}/devices/${deviceId}/vpn/${encodeURIComponent(tunnelName)}/chart?range=${range}`);
+            const resp = await window.apiFetch(`${window.API_BASE}/devices/${deviceId}/vpn-group-chart?group=${encodeURIComponent(tunnelName)}&range=${range}`);
             const data = resp && resp.data ? resp.data : resp;
             if (!data) return;
             const canvas = document.getElementById('pchart-' + rowId);
