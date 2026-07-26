@@ -25,7 +25,11 @@ A second, quieter fix falls out. A tunnel whose SNMP feed died 40 minutes ago bu
 
 ### Changed
 
-`GetVPNTunnelCounts`' doc comment claimed FortiGate reports `unknown` for a phase1 whose phase2 has no SA. No FortiGate path emits a VPN status other than up or down; the sole producer is the collector's placeholder.
+`GetVPNTunnelCounts`' doc comment claimed FortiGate reports `unknown` for a phase1 whose phase2 has no SA. The IPSec parsers emit only up/down; the placeholder is the collector's, and the one real device-side producer of `unknown` is the GRE parser, which maps any `ifOperStatus` outside up/down to it.
+
+### Known consequence
+
+A **GRE** tunnel entering a state like `lowerLayerDown` reports `unknown`, which is now treated as a non-state row. Its last real up/down observation therefore remains the base, so the UI shows the old status for up to 30 minutes and then `stale`, where previously it flipped to `unknown` within ~60s. Alerting is unchanged — neither value ever alerted. No GRE tunnels exist in the current fleet. The proper fix is at the parser, mapping a non-up `ifOperStatus` to `down` so GRE outages can alert at all; that is a behaviour change on the alert path and belongs in its own change.
 
 ## [0.11.175] - 2026-07-25
 

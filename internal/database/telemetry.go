@@ -602,10 +602,13 @@ func (d *Database) GetAllLatestVPNStatuses() ([]models.VPNStatus, error) {
 //
 // A tunnel whose state is neither up nor down counts toward total but not up —
 // it is present on the device, just not reporting liveness. In practice that is
-// a device whose only writer is the SSH config path, which stamps a placeholder
-// status because a config read cannot observe liveness. (An earlier version of
-// this comment attributed "unknown" to FortiGate reporting it for a phase1 with
-// no SA; no FortiGate path emits a VPN status other than up or down.)
+// in practice a device whose only writer is the SSH config path, which stamps a
+// placeholder status because a config read cannot observe liveness.
+//
+// (An earlier version of this comment attributed "unknown" to FortiGate
+// reporting it for a phase1 with no SA. The IPSec parsers emit only up/down; the
+// GRE parser is the one real device-side producer, mapping any ifOperStatus
+// outside up/down — lowerLayerDown, testing, notPresent — to "unknown".)
 //
 // tunnel_name is selected and the rows are merged for a reason: the subquery
 // returns the newest row of EACH writer class, so counting rows directly would

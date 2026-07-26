@@ -145,6 +145,31 @@ func TestVPNWriterMerge_AgedStateRowFallsBackInsteadOfVanishing(t *testing.T) {
 		t.Errorf("status = %q, want \"unknown\" — the only surviving row is the config row, "+
 			"and an out-of-grace state claim must not be resurrected", got.Status)
 	}
+
+	// All THREE readers merge, so all three can regress this independently.
+	// Pinning it on the per-device reader alone leaves the other two free to
+	// swap the order and stay green.
+	all, err := d.GetAllLatestVPNStatuses()
+	if err != nil {
+		t.Fatalf("GetAllLatestVPNStatuses: %v", err)
+	}
+	if len(all) == 0 {
+		t.Error("the tunnel VANISHED from the fleet-wide reader — it feeds the connection " +
+			"map and the alert engine, so it must merge after the grace filter too")
+	} else if fleet := onlyTunnel(t, all, "DMZ"); fleet.Status != "unknown" {
+		t.Errorf("fleet reader status = %q, want \"unknown\"", fleet.Status)
+	}
+
+	up, total, err := d.GetVPNTunnelCounts(1)
+	if err != nil {
+		t.Fatalf("GetVPNTunnelCounts: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("counts total = %d, want 1 — the badge lost the tunnel the page still shows", total)
+	}
+	if up != 0 {
+		t.Errorf("counts up = %d, want 0 — an out-of-grace \"up\" must not be resurrected", up)
+	}
 }
 
 // The fleet-wide reader feeds both the map and the alert engine; it must merge
