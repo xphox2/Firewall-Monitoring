@@ -1198,7 +1198,15 @@
 
             sysMetric('sys-cpu', host.cpu_percent != null ? host.cpu_percent.toFixed(0) + '%' : 'n/a', host.cpu_percent);
             sysMetric('sys-mem', host.mem_percent != null ? host.mem_percent.toFixed(0) + '%' : 'n/a', host.mem_percent);
-            sysMetric('sys-disk', host.disk_percent != null ? host.disk_percent.toFixed(0) + '%' : 'n/a', host.disk_percent);
+            // Report the WORSE of the root and database volumes. The database
+            // volume is usually a separate mount and is the one whose exhaustion
+            // stops Postgres; showing only "/" hid a 98% data volume behind an
+            // 83% root filesystem.
+            var worstDisk = host.disk_percent;
+            if (host.data_disk_percent != null && (worstDisk == null || host.data_disk_percent > worstDisk)) {
+                worstDisk = host.data_disk_percent;
+            }
+            sysMetric('sys-disk', worstDisk != null ? worstDisk.toFixed(0) + '%' : 'n/a', worstDisk);
             sysMetric('sys-load', host.load1 != null ? host.load1.toFixed(2) : 'n/a');
 
             var poolTxt = (pool.in_use != null) ? (pool.in_use + '/' + (pool.max_open || pool.open || 0)) : 'n/a';

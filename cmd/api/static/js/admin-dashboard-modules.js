@@ -65,7 +65,13 @@
             id: 'platform', title: 'Platform',
             sev: function (d) {
                 var h = (d.platform || {}).host || {};
-                return pctSev(Math.max(h.cpu_percent || 0, h.mem_percent || 0, h.disk_percent || 0));
+                // data_disk_percent is the volume holding the database. It is
+                // usually NOT the root filesystem, and it is the one that takes
+                // the system down: a full PGDATA crash-loops Postgres on
+                // "No space left on device". Omitting it here is why a 98% data
+                // volume showed as a healthy 83% platform tile.
+                return pctSev(Math.max(h.cpu_percent || 0, h.mem_percent || 0,
+                    h.disk_percent || 0, h.data_disk_percent || 0));
             },
             body: function (d) {
                 var p = d.platform || {}, host = p.host || {}, rt = p.runtime || {};
@@ -74,6 +80,11 @@
                     tile('CPU', pc(host.cpu_percent), host.cpu_percent != null ? pctSev(host.cpu_percent) : null) +
                     tile('Memory', pc(host.mem_percent), host.mem_percent != null ? pctSev(host.mem_percent) : null) +
                     tile('Disk', pc(host.disk_percent), host.disk_percent != null ? pctSev(host.disk_percent) : null) +
+                    // Shown separately rather than folded into Disk: an operator
+                    // needs to know WHICH volume is filling to act on it.
+                    (host.data_disk_percent != null
+                        ? tile('DB volume', pc(host.data_disk_percent), pctSev(host.data_disk_percent))
+                        : '') +
                     tile('Load 1m', host.load1 != null ? host.load1.toFixed(2) : 'n/a') +
                     tile('Uptime', fmtUptime(p.uptime_seconds)) +
                     tile('Goroutines', num(rt.goroutines)) +
