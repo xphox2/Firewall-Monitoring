@@ -205,3 +205,65 @@ func TestVPNWriterMerge_StripsFortiOSConfigQuotes(t *testing.T) {
 			"the interface name, and it reaches the UI verbatim today", got.InterfaceName)
 	}
 }
+
+// GetVPNTunnelCounts selects only (tunnel_name, status, timestamp), so DeviceID
+// is zero on every row it merges. The merge key is (device, name) — with the
+// device half constant, the NAME half has to carry the whole discrimination or
+// every tunnel on the device collapses into one.
+//
+// The single-tunnel count test cannot see this: one tunnel collapses to one
+// tunnel either way.
+func TestVPNWriterMerge_CountsDoNotCollapseDistinctTunnels(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	now := time.Now()
+	for _, name := range []string{"DMZ", "HUB", "NUDAY_LAN"} {
+		seedStateRow(t, d, 1, name, "up", now.Add(-90*time.Second))
+		seedConfigRow(t, d, 1, name, now.Add(-30*time.Second))
+	}
+
+	up, total, err := d.GetVPNTunnelCounts(1)
+	if err != nil {
+		t.Fatalf("GetVPNTunnelCounts: %v", err)
+	}
+	if total != 3 {
+		t.Errorf("total = %d, want 3 — three distinct tunnels, each with two writers; "+
+			"neither collapsed together nor counted twice", total)
+	}
+	if up != 3 {
+		t.Errorf("up = %d, want 3", up)
+	}
+}
+
+// The merge is keyed per DEVICE as well as per name. Two devices commonly run
+// tunnels with the same name (DMZ, HUB and NUDAY_LAN all appear on more than one
+// firewall in a hub-and-spoke), and the fleet-wide reader sees them together.
+func TestVPNWriterMerge_SameTunnelNameOnTwoDevicesStaysSeparate(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	now := time.Now()
+	seedStateRow(t, d, 1, "DMZ", "up", now.Add(-90*time.Second))
+	seedConfigRow(t, d, 1, "DMZ", now.Add(-30*time.Second))
+	seedStateRow(t, d, 2, "DMZ", "down", now.Add(-90*time.Second))
+	seedConfigRow(t, d, 2, "DMZ", now.Add(-30*time.Second))
+
+	rows, err := d.GetAllLatestVPNStatuses()
+	if err != nil {
+		t.Fatalf("GetAllLatestVPNStatuses: %v", err)
+	}
+	byDevice := map[uint]string{}
+	for _, r := range rows {
+		if r.TunnelName != "DMZ" {
+			continue
+		}
+		if prev, dup := byDevice[r.DeviceID]; dup {
+			t.Fatalf("device %d has two DMZ rows (%q and %q) — not merged", r.DeviceID, prev, r.Status)
+		}
+		byDevice[r.DeviceID] = r.Status
+	}
+	if len(byDevice) != 2 {
+		t.Fatalf("want DMZ on 2 devices, got %d — one device's tunnel absorbed the other's", len(byDevice))
+	}
+	if byDevice[1] != "up" || byDevice[2] != "down" {
+		t.Errorf("statuses = dev1:%q dev2:%q, want up/down — the two devices' rows were "+
+			"merged into one another", byDevice[1], byDevice[2])
+	}
+}
