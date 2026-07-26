@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
-**The syslog critical/informational band boundary is now an operator setting** (`syslog_critical_below_severity`, admin UI). It was hard-coded at severity 6, which put NOTICE (5) in the *critical* band.
+**The syslog critical/informational band boundary is now an operator setting** — `syslog_critical_below_severity`, exposed as a field on the alerting settings page. It was hard-coded at severity 6, which put NOTICE (5) in the *critical* band.
 
 On the production fleet that is **97.3% of all syslog by volume** — 65.9 M of 67.7 M rows, ~58 GB — so the long critical retention window was being spent almost entirely on notice-level noise, while the genuinely critical severities (0–3) amounted to **7,259 rows / 6.6 MB**. Moving the boundary to 5 puts that bulk on the short informational window instead.
 

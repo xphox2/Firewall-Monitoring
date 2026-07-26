@@ -139,3 +139,41 @@ func TestSyslogBands_CleanupActuallyUsesTheBoundary(t *testing.T) {
 			"boundary moved too far and is eating genuinely critical logs (got %d)", warnings)
 	}
 }
+
+// The test above is named for disjointness but only proves COMPLETENESS — the
+// bands `< B` and `>= B` cover [0,7] for every B, so it passes even if one
+// predicate ignores the boundary. A concrete surviving mutation: leave the
+// CRITICAL predicate as a literal `severity < 6` while info uses B. The bands
+// then OVERLAP on [B,5], and a row in that overlap is deleted by whichever
+// window is shorter — not the one the operator was promised.
+//
+// Detect it by making the critical window the SHORT one: with B=5 a NOTICE row
+// belongs solely to the 30-day info band and must survive a 1-day critical
+// window. Under the literal-6 mutation it also matches `< 6` and dies at 1 day.
+func TestSyslogBands_DoNotOverlap(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	setBoundary(t, d, "5")
+
+	tenDaysOld := time.Now().AddDate(0, 0, -10)
+	if err := d.Gorm().Create(&[]models.SyslogMessage{
+		{DeviceID: 1, Severity: 5, Message: "notice", Timestamp: tenDaysOld},
+	}).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Critical window SHORT, informational window LONG — the reverse of the
+	// other test, which is what exposes an overlap.
+	if err := d.CleanupOldData(config.RetentionConfig{
+		SyslogCriticalDays: 1, SyslogInfoDays: 30,
+	}); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+
+	var notices int64
+	d.Gorm().Model(&models.SyslogMessage{}).Where("severity = 5").Count(&notices)
+	if notices != 1 {
+		t.Errorf("a NOTICE was deleted by the 1-day CRITICAL window despite the boundary " +
+			"placing it in the 30-day informational band — the bands overlap, so the " +
+			"shorter window silently wins")
+	}
+}
