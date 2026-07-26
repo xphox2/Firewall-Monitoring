@@ -975,6 +975,18 @@
         const matched = tunnels.filter(t => t.matched_device_id > 0);
         const offnet = tunnels.filter(t => t.matched_device_id === 0);
 
+        // The chart endpoint is keyed by LOGICAL tunnel, not by row name — one
+        // tunnel is reported as several rows under unrelated names and only their
+        // union has a complete counter series. Asking for a row's own name gets an
+        // empty 200 for exactly the counter-bearing rows (FortiGate dialup, every
+        // OPNsense child), so the fallback chain must end at the row name only for
+        // rows the server could not group.
+        function chartGroup(t) {
+            return (t.tunnel_group && t.tunnel_group.trim()) ||
+                (t.phase1_name && t.phase1_name.trim()) ||
+                t.tunnel_name;
+        }
+
         function renderVPNTunnelRows(prefix, rows, devId) {
             if (!rows.length) return '<tr><td colspan="9" style="text-align:center;color:var(--fwmon-text-mute);padding:12px;">None</td></tr>';
             return rows.map((t, i) => {
@@ -982,7 +994,7 @@
                 const dest = t.matched_device_id ? `<a href="/admin/devices/${t.matched_device_id}" style="color:var(--fwmon-accent);text-decoration:none;font-size:0.78rem;">${window.escapeHtml(t.matched_name)}</a>` : '<span style="color:var(--fwmon-sig-warn);font-size:0.78rem;">Off-Net</span>';
                 const statusBadge = `<span class="badge ${t.status}">${t.status.toUpperCase()}</span>`;
                 return `
-                    <tr class="panel-tunnel-row" data-action="dp-toggle-tunnel" data-row="${rowId}" data-device="${devId}" data-tunnel="${window.escapeHtml(t.tunnel_name)}">
+                    <tr class="panel-tunnel-row" data-action="dp-toggle-tunnel" data-row="${rowId}" data-device="${devId}" data-tunnel="${window.escapeHtml(chartGroup(t))}">
                         <td><span class="chevron" id="pchev-${rowId}">&#9654;</span></td>
                         <td>${window.escapeHtml(t.tunnel_name)}</td>
                         <td>${window.escapeHtml((t.tunnel_type || 'ipsec').toUpperCase())}</td>
@@ -996,10 +1008,10 @@
                     <tr class="panel-tunnel-expand" id="${rowId}">
                         <td colspan="9">
                             <div class="panel-range-pills" style="margin-bottom:6px;">
-                                <div class="panel-range-pill" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${devId}" data-tunnel="${window.escapeHtml(t.tunnel_name)}" data-range="1h">1h</div>
-                                <div class="panel-range-pill active" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${devId}" data-tunnel="${window.escapeHtml(t.tunnel_name)}" data-range="24h">24h</div>
-                                <div class="panel-range-pill" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${devId}" data-tunnel="${window.escapeHtml(t.tunnel_name)}" data-range="7d">7d</div>
-                                <div class="panel-range-pill" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${devId}" data-tunnel="${window.escapeHtml(t.tunnel_name)}" data-range="30d">30d</div>
+                                <div class="panel-range-pill" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${devId}" data-tunnel="${window.escapeHtml(chartGroup(t))}" data-range="1h">1h</div>
+                                <div class="panel-range-pill active" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${devId}" data-tunnel="${window.escapeHtml(chartGroup(t))}" data-range="24h">24h</div>
+                                <div class="panel-range-pill" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${devId}" data-tunnel="${window.escapeHtml(chartGroup(t))}" data-range="7d">7d</div>
+                                <div class="panel-range-pill" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${devId}" data-tunnel="${window.escapeHtml(chartGroup(t))}" data-range="30d">30d</div>
                             </div>
                             <div class="panel-chart-container" style="height:150px;"><canvas id="pchart-${rowId}"></canvas></div>
                         </td>

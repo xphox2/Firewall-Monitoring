@@ -1,7 +1,7 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
-## [0.11.173] - 2026-07-26
+## [0.11.173] - 2026-07-25
 
 ### Fixed — VPN chart follow-ups from the #187 review
 
@@ -16,6 +16,8 @@ This is a bug fix rather than a tuning change: cross-filling from a row older th
 **Narrowed traffic selectors no longer produce phantom down rows.** IKEv2 narrows during negotiation, so a peer can install a policy for one host inside the configured subnet; the child then stopped being recognised and a spurious down row appeared beside the working tunnel. Matching is now two-pass — exact first, then containment — with three constraints on the second, because unconstrained containment causes a strictly worse failure: a tunnel with a wide intent would absorb an unrelated tunnel's child and silently never report its own outage. Containment therefore only considers policies resolving to the same tunnel, each claimable once, with the most specific claimant winning.
 
 **Two more surfaces stopped drawing blank charts.** The connection-map panel grouped by phase1 and charted a "representative selector", which can be the config-derived row that has no counters at all; device-detail charted whichever row was expanded, with the same result. Both now chart the logical tunnel. The panel's tunnel-count tile consequently counts logical tunnels — a FortiGate tunnel reported as two rows used to count twice.
+
+**The map's device panel needed the same field, and this is where deferring it became a regression.** `GetVPNMapData` uses a fetch that does not resolve tunnel groups, and its DTO had no such field. Because the panel's two tables share one chart loader, switching that loader to group-keyed lookups while leaving this table sending row names would have inverted the fix on that surface: the rows that used to chart (FortiGate dialup, every OPNsense child) would have gone blank, and the row that now charts is the one that used to be blank. The map path now resolves groups and carries the field.
 
 ### Added
 

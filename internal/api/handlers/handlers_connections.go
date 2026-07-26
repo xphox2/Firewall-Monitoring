@@ -526,6 +526,11 @@ func (h *Handler) GetVPNMapData(c *gin.Context) {
 		httputil.InternalError(c, "Failed to get VPN statuses", err)
 		return
 	}
+	// Unlike GetLatestVPNStatuses, this fetch does not resolve tunnel groups —
+	// and the panel's chart is keyed by GROUP, not by row name. Without this the
+	// counter-bearing rows (FortiGate dialup, every OPNsense child) ask for a
+	// group that matches no member and chart blank.
+	db.ResolveTunnelGroups(vpnStatuses)
 
 	type tunnelInfo struct {
 		TunnelName    string `json:"tunnel_name"`
@@ -535,6 +540,7 @@ func (h *Handler) GetVPNMapData(c *gin.Context) {
 		MatchedDevID  uint   `json:"matched_device_id"`
 		MatchedName   string `json:"matched_name"`
 		Phase1Name    string `json:"phase1_name"`
+		TunnelGroup   string `json:"tunnel_group"`
 		LocalSubnet   string `json:"local_subnet"`
 		RemoteSubnet  string `json:"remote_subnet"`
 		TunnelUptime  uint64 `json:"tunnel_uptime"`
@@ -595,6 +601,7 @@ func (h *Handler) GetVPNMapData(c *gin.Context) {
 			MatchedDevID:  matchID,
 			MatchedName:   matchName,
 			Phase1Name:    vpn.Phase1Name,
+			TunnelGroup:   vpn.TunnelGroup,
 			LocalSubnet:   vpn.LocalSubnet,
 			RemoteSubnet:  vpn.RemoteSubnet,
 			TunnelUptime:  vpn.TunnelUptime,

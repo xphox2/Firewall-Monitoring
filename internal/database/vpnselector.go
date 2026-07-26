@@ -69,7 +69,7 @@ func MatchProvisionedBySubnets(provPairs map[string]ProvisionedTunnelPair, vpn m
 //
 // A failed provisioning lookup is not fatal: the fallbacks still group rows
 // that share a phase1 name, which is the pre-existing behaviour.
-func (d *Database) resolveTunnelGroups(statuses []models.VPNStatus) {
+func (d *Database) ResolveTunnelGroups(statuses []models.VPNStatus) {
 	if len(statuses) == 0 {
 		return
 	}
