@@ -287,6 +287,9 @@ type IngestStore interface {
 	FoldPingStats(deviceID, probeID uint, targetIP string, minL, maxL, sum float64, count int, packetLoss float64, now time.Time) error
 	SaveProcessorStats(stats []models.ProcessorStats) error
 	SaveDiskUsage(rows []models.DiskUsage) error
+	// Server self-monitoring samples (the host running this software).
+	SaveServerMetric(m *models.ServerMetric) error
+	GetServerMetricWindow(from, to time.Time) ([]ServerMetricBucket, error)
 	SaveLoadAverage(rows []models.LoadAverage) error
 	SaveSDWANHealth(health []models.SDWANHealth) error
 	SaveSecurityStats(stats []models.SecurityStats) error

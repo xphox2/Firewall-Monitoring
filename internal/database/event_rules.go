@@ -22,8 +22,9 @@ const (
 	seedVerMetric       = 3 // CPU/mem/disk/session thresholds (Phase 2, inert)
 	seedVerTrapSpike    = 4 // traffic spike + HA/LINK trap templates (Phase 3, inert)
 	seedVerFullCoverage = 5 // one editable default rule per remaining alert type
+	seedVerServerHealth = 6 // the fwmon server's own volumes (SERVER_DISK_HIGH)
 
-	eventRuleSeedVersion = seedVerFullCoverage
+	eventRuleSeedVersion = seedVerServerHealth
 )
 
 // EnsureDefaultRules seeds the default event rules exactly once (guarded by a
@@ -255,6 +256,16 @@ func defaultEventRules() []models.EventRule {
 			Enabled: true, Priority: 200, Source: "device", Action: "alert",
 			AlertType: models.AlertTypeTelemetryStale, SeedVersion: seedVerFullCoverage,
 			MatchJSON: `{"op":"eq","field":"event_type","value":"telemetry_stale"}`},
+		// Gen 6. Carries an explicit cooldown because the type default is
+		// SHADOWED: applyPolicyChannels overwrites CooldownMinutes from the
+		// policy, and the Default policy seeds 5 minutes — so without a
+		// rule-level value (which wins over policy-level) a full disk would
+		// re-page every 5 minutes instead of every 30.
+		{Name: "Default: Server disk high", Description: "The Firewall-Mon server's OWN disk volume is above the configured percentage, or below the free-space floor. Distinct from DISK_HIGH, which only covers monitored devices. Blank severity inherits the type default (critical).",
+			Enabled: true, Priority: 200, Source: "device", Action: "alert",
+			AlertType: models.AlertTypeServerDiskHigh, SeedVersion: seedVerServerHealth,
+			CooldownMinutes: func() *int { v := 30; return &v }(),
+			MatchJSON:       `{"op":"eq","field":"event_type","value":"server_disk_high"}`},
 		{Name: "Default: Interface errors", Description: "Interface error/discard delta alert. Add an interface_name condition to mute or re-grade one noisy port.",
 			Enabled: true, Priority: 200, Source: "device", Action: "alert",
 			AlertType: models.AlertTypeInterfaceErrors, SeedVersion: seedVerFullCoverage,

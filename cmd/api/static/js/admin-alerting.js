@@ -20,7 +20,9 @@
         spike_min_duration_minutes: 'alerting-g-spike-min',
         spike_min_throughput_mbps: 'alerting-g-spike-floor',
         telemetry_stale_minutes: 'alerting-g-telemetry-stale',
-        syslog_critical_below_severity: 'alerting-g-syslog-band'
+        syslog_critical_below_severity: 'alerting-g-syslog-band',
+        server_disk_threshold: 'alerting-g-server-disk',
+        server_disk_free_floor_gb: 'alerting-g-server-disk-floor'
     };
 
     var METRIC_LABEL = {
@@ -151,6 +153,8 @@
         pushNum('spike_min_throughput_mbps', 'spike');
         pushNum('telemetry_stale_minutes', 'alerts');
         pushNum('syslog_critical_below_severity', 'retention');
+        pushNum('server_disk_threshold', 'alerts');
+        pushNum('server_disk_free_floor_gb', 'alerts');
 
         AC.apiFetch(API_BASE + '/settings', {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings)

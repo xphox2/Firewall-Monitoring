@@ -1808,7 +1808,9 @@
                 : (a.device_name ? escapeHtml(a.device_name)
                     : (a.alert_type === 'SFLOW_SECURITY_DIGEST'
                         ? '<span style="color:var(--fwmon-text-faint);" title="Site-wide storm rollup — many sources, no single device">Site-wide</span>'
-                        : ''));
+                        : a.alert_type === 'SERVER_DISK_HIGH'
+                            ? '<span style="color:var(--fwmon-text-faint);" title="The Firewall-Mon server itself, not a monitored device">Firewall-Mon server</span>'
+                            : ''));
             var siteCell = a.site_name ? escapeHtml(a.site_name) : '<span style="color:var(--fwmon-text-faint);">—</span>';
             // Type cell is a SINGLE badge with the full alert_type (e.g.
             // SFLOW_SECURITY_DIGEST) — no nested "badge inside a badge". The
@@ -1908,7 +1910,8 @@
             var devName = a.device_name || (devForAlert ? devForAlert.name : ('DEV-' + a.device_id));
             var devLinkHtml = a.device_id
                 ? AC.deviceLink(a.device_id, devName)
-                : (a.device_name || (a.alert_type === 'SFLOW_SECURITY_DIGEST' ? 'Site-wide' : 'Unknown'));
+                : (a.device_name || (a.alert_type === 'SFLOW_SECURITY_DIGEST' ? 'Site-wide'
+                    : a.alert_type === 'SERVER_DISK_HIGH' ? 'Firewall-Mon server' : 'Unknown'));
             // The analytics pages use device_id (not device) as their state
             // key — see FwmonControls.attachAnalyticsPage descriptors below.
             var deviceAlertsLink = a.device_id

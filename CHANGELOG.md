@@ -1,6 +1,30 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.181] - 2026-07-26
+
+### Added
+
+**The server now alerts on its own disk volumes, and keeps CPU / memory / disk history.** This closes the last recurrence path from the 2026-07-26 outage: retention was fixed and the dashboard corrected, but `DISK_HIGH` is keyed on a device id and fed from device polling, so the Firewall-Mon server's own volumes were never evaluated by anything. A filling disk was *visible* on the dashboard and paged nobody — the same shape as the incident itself, where the signal existed and nobody was watching.
+
+New `SERVER_DISK_HIGH` alert, evaluated every 5 minutes by the poller and once immediately at startup, so a restart into an already-full disk alerts now rather than in five minutes. It watches **both** the root filesystem and the volume holding the database, naming which one in the alert, with per-volume alert identity so one volume recovering cannot close the other's open alert.
+
+**Two triggers, whichever trips first** — a percentage (default 85%) and an absolute free-space floor (default 5 GB), both operator-settable on the alerting settings page, either disabled by setting it to 0. Neither alone is adequate: 90% of a 200 GB volume is 20 GB free and comfortable, while 90% of a 20 GB volume is nearly dead, and a floor alone stays silent on a large disk until it is almost full. The floor is sized off the real failure mode — Postgres dies when it cannot write WAL, which is bytes, not a ratio.
+
+**Server metrics history** (`server_metrics`, migration v53, 90-day retention) is recorded by the same probe, so there is no second collection path to drift, and charted on the dashboard's Platform module. Free bytes are stored alongside percentages because a percentage alone cannot answer "how long until full" — the question nobody could answer while the volume was filling.
+
+### Fixed
+
+The new alert deliberately does not reuse `RecordProbeDataTruncation`, the existing device-less alert, because that function carries three latent bugs that would have been inherited: it builds its notify config from the bare snapshot so `PolicyActive` is never set and it **can never page PagerDuty, Opsgenie or Teams**; it never marks the alert active, so its recovery notification is always skipped; and it hardcodes a 5-minute cooldown while ignoring the resolved policy, making every configured cooldown decorative. All three are avoided here and each is pinned by a test that fails if reintroduced. `PROBE_DATA_TRUNCATED` itself still has them — a separate follow-up.
+
+Two seed-marker tests asserted the literal `"5"` rather than the seed-version constant, so they broke on a generation bump that did not change the behaviour they test.
+
+The fire path also gains the cross-restart cooldown backstop every other persistent-state alert already had. Without it a poller restart into a still-full disk re-pages immediately — once per restart, and a crash-looping poller would page continuously — because the in-memory cooldown map dies with the process.
+
+### Notes
+
+Probe failure is treated as a fault, not as health — the incident's own shape. The root filesystem is watched independently of the database probe, so a failure locating PGDATA can never leave the server entirely unwatched; the data directory is cached so the check survives a crash-looping Postgres, which is exactly when it matters; and a sample taken while the volume could not be probed stores **NULL rather than 0**, so the chart shows a gap instead of a reassuring 0%-used flatline.
+
 ## [0.11.180] - 2026-07-26
 
 ### Fixed

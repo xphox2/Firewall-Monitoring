@@ -38,6 +38,8 @@ func deviceEventType(at models.AlertType) string {
 		return "probe_data_lag"
 	case models.AlertTypeProbeDataTruncated:
 		return "probe_data_truncated"
+	case models.AlertTypeServerDiskHigh:
+		return "server_disk_high"
 	}
 	return ""
 }
