@@ -1,6 +1,36 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.176] - 2026-07-25
+
+### Fixed
+
+**A VPN tunnel's status badge read `unknown` every 15 minutes, and its Interface and Mode columns were blank the rest of the time.** Both are the same bug seen from two sides.
+
+`vpn_status` has two writers with disjoint fields. The ~60s SNMP path reports status, counters and selectors but never `interface_name`/`mode`; the ~15min SSH config path reports `interface_name`/`mode` but has no liveness to report, so it stamps a placeholder status and zero counters. The readers took the newest row per tunnel, which threw away whichever writer had not fired most recently — so for the ~50s after each config poll the badge showed `unknown` with zero bytes and blank subnets, and for the other ~14 minutes Interface and Mode showed `-`.
+
+Verified on production across 7 days and 61,908 rows: no `up`/`down` row ever carries `interface_name`, and no `unknown` row ever carries counters. The split is absolute.
+
+A config row is metadata, not a state claim, so it now never displaces a state observation. The base is the newest row that actually reports state, enriched with the config row's metadata; a tunnel with no state row keeps its config row as the base, so SNMP-restricted devices behave exactly as before. The base stays one coherent observation rather than a field-by-field blend, which would stitch counters and status from different instants and could launder a pre-reset counter back in after a reboot.
+
+The merged row keeps the **state** row's timestamp. Borrowing the config row's fresher one would let a tunnel whose SNMP feed had died keep looking live on the strength of a poll that knows nothing about liveness.
+
+**Both readers merge, deliberately** — the fleet-wide one feeds the connection map *and* the alert engine, and the two must not disagree about the same tunnel. This cannot raise a novel alert: the engine skips anything that is not `down`, and in the ~94% of cycles it already saw the SNMP row, any alert this could raise has already been raised. What it removes is a blind spot in which a genuinely down tunnel was skipped.
+
+A second, quieter fix falls out. A tunnel whose SNMP feed died 40 minutes ago but whose config poll is 2 minutes old was asserted **down** on the connection map, on the strength of a row that knows nothing about liveness. It now reads **stale**, which is what the freshness staircase was built to say.
+
+**Interface names no longer render with FortiOS's quotes** (`"wan1"` rather than `wan1`) — the config parser captures the token verbatim, and every device in the fleet is affected. Stripped on read, so the rows already stored are fixed without a collector deploy.
+
+`GetVPNTunnelCounts` merges too, or the device-list badge would count every dual-writer tunnel twice.
+
+### Changed
+
+`GetVPNTunnelCounts`' doc comment claimed FortiGate reports `unknown` for a phase1 whose phase2 has no SA. The IPSec parsers emit only up/down; the placeholder is the collector's, and the one real device-side producer of `unknown` is the GRE parser, which maps any `ifOperStatus` outside up/down to it.
+
+### Known consequence
+
+A **GRE** tunnel entering a state like `lowerLayerDown` reports `unknown`, which is now treated as a non-state row. Its last real up/down observation therefore remains the base, so the UI shows the old status for up to 30 minutes and then `stale`, where previously it flipped to `unknown` within ~60s. Alerting is unchanged — neither value ever alerted. No GRE tunnels exist in the current fleet. The proper fix is at the parser, mapping a non-up `ifOperStatus` to `down` so GRE outages can alert at all; that is a behaviour change on the alert path and belongs in its own change.
+
 ## [0.11.175] - 2026-07-25
 
 ### Fixed
