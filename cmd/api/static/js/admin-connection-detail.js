@@ -328,6 +328,26 @@
     //
     // Scoped to one device per table on purpose: the two ends report the SAME
     // traffic from their own side, so a combined chart would double every byte.
+    // Selected chart range per logical tunnel, so the 30s poll does not throw the
+    // user's choice away every refresh (the same pattern currentTrafficRange /
+    // currentFlowHours already use for the other charts on this page).
+    //
+    // Keyed by host + GROUP NAME, never by the canvas id. The canvas id is
+    // positional (`-g0`, `-g1`, …) over a group list derived from row order,
+    // which has no ORDER BY — so when a tunnel appears, disappears or simply
+    // comes back in a different order, index N names a different tunnel and the
+    // remembered range would silently land on the wrong chart. The host id is in
+    // the key because the same provisioned group legitimately appears in BOTH
+    // the source and destination tables.
+    var groupRanges = {};
+    // Monotonic token per canvas: a click-initiated load still in flight when the
+    // refresh wipes host.innerHTML would otherwise resolve against the NEW canvas
+    // of the same positional id — possibly a different tunnel — and overwrite the
+    // fresh chart with the old group's data.
+    var groupChartGen = {};
+
+    function groupKey(hostId, group) { return hostId + '|' + group; }
+
     function renderTunnelCharts(hostId, tunnels, deviceId) {
         var host = document.getElementById(hostId);
         if (!host) return;
@@ -338,11 +358,13 @@
             seen[g] = true;
             groups.push(g);
         }
-        if (!groups.length) { host.innerHTML = ''; return; }
+        if (!groups.length) { destroyGroupCharts(hostId); host.innerHTML = ''; return; }
+        destroyGroupCharts(hostId, groups);
 
         var html = '';
         for (var k = 0; k < groups.length; k++) {
             var cid = hostId + '-g' + k;
+            var activeRange = groupRanges[groupKey(hostId, groups[k])] || '24h';
             html +=
                 '<div class="tunnel-chart-wrap" style="margin-bottom:16px;">' +
                     '<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;">' +
@@ -350,9 +372,10 @@
                         '<span style="font-size:0.75rem;color:var(--fwmon-text-mute);">combined across this tunnel\'s phase 2 entries</span>' +
                     '</div>' +
                     '<div class="range-pills" style="margin-bottom:8px;">' +
-                        ['1h', '24h', '7d', '30d'].map(function(rg, ri) {
-                            return '<div class="range-pill' + (ri === 1 ? ' active' : '') + '" data-action="load-group-chart"' +
+                        ['1h', '24h', '7d', '30d'].map(function(rg) {
+                            return '<div class="range-pill' + (rg === activeRange ? ' active' : '') + '" data-action="load-group-chart"' +
                                 ' data-canvas-id="' + cid + '" data-device-id="' + deviceId + '"' +
+                                ' data-host-id="' + hostId + '"' +
                                 ' data-group="' + AC.escapeHtml(groups[k]) + '" data-range="' + rg + '">' + rg + '</div>';
                         }).join('') +
                     '</div>' +
@@ -361,18 +384,47 @@
         }
         host.innerHTML = html;
         for (var m = 0; m < groups.length; m++) {
-            loadGroupChart(hostId + '-g' + m, deviceId, groups[m], '24h');
+            loadGroupChart(hostId + '-g' + m, deviceId, groups[m],
+                groupRanges[groupKey(hostId, groups[m])] || '24h', null, hostId, true);
         }
     }
 
-    function loadGroupChart(canvasId, deviceId, group, range, pillEl) {
+    // destroyGroupCharts tears down Chart.js instances for a host's groups.
+    // Without it, wiping host.innerHTML orphans the canvases while the Chart
+    // objects (and their listeners) live on in tunnelCharts forever. `keep` is
+    // the set of groups still being rendered; omit it to destroy all of them.
+    function destroyGroupCharts(hostId, keep) {
+        var keepIds = {};
+        if (keep) {
+            for (var k = 0; k < keep.length; k++) { keepIds[hostId + '-g' + k] = true; }
+        }
+        Object.keys(tunnelCharts).forEach(function(cid) {
+            if (cid.indexOf(hostId + '-g') !== 0 || keepIds[cid]) return;
+            try { tunnelCharts[cid].destroy(); } catch (e) { /* already detached */ }
+            delete tunnelCharts[cid];
+        });
+    }
+
+    // fromRefresh marks a load the user did not ask for. Those must fail quietly:
+    // one API blip would otherwise pop a toast per group per side, every 30s.
+    function loadGroupChart(canvasId, deviceId, group, range, pillEl, hostId, fromRefresh) {
         if (pillEl) {
             var pills = pillEl.parentElement.querySelectorAll('.range-pill');
             for (var p = 0; p < pills.length; p++) { pills[p].classList.remove('active'); }
             pillEl.classList.add('active');
         }
+        // Remember the choice so the next poll re-applies it instead of snapping
+        // every chart back to 24h.
+        if (hostId && group) { groupRanges[groupKey(hostId, group)] = range; }
+
+        var gen = (groupChartGen[canvasId] || 0) + 1;
+        groupChartGen[canvasId] = gen;
+
         return AC.apiFetch(API_BASE + '/devices/' + deviceId + '/vpn-group-chart?group=' +
                 encodeURIComponent(group) + '&range=' + range).then(function(result) {
+            // A refresh may have rebuilt the DOM while this was in flight; the
+            // canvas of this id can now belong to a different tunnel.
+            if (groupChartGen[canvasId] !== gen) return;
             var data = result.data;
             var canvas = document.getElementById(canvasId);
             if (!canvas) return;
@@ -381,14 +433,18 @@
             var series = window.FwmonBwChart.normalizeDeltas(data);
             tunnelCharts[canvasId] = window.FwmonBwChart.mount(canvas, series, { rxLabel: 'In', txLabel: 'Out' });
         }).catch(function(err) {
-            AC.showError('Failed to load tunnel chart');
+            // A request cancelled by navigation or a superseding poll is not an
+            // error worth showing anyone.
+            if (err && (err.name === 'AbortError' || err.name === 'CancelError')) return;
+            console.error('[ConnectionDetail] Error loading tunnel chart:', err);
+            if (!fromRefresh) AC.showError('Failed to load tunnel chart');
         });
     }
 
     function renderTunnelTable(tableId, tunnels, deviceId) {
         var tbody = document.querySelector('#' + tableId + ' tbody');
         if (!tunnels.length) {
-            tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:var(--fwmon-text-mute);padding:30px;">No matching tunnels found</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--fwmon-text-mute);padding:30px;">No matching tunnels found</td></tr>';
             return;
         }
         var html = '';
@@ -403,7 +459,6 @@
                 : '-';
             html +=
                 '<tr class="tunnel-row">' +
-                    '<td></td>' +
                     '<td>' + AC.escapeHtml(t.phase1_name || t.tunnel_name) + '</td>' +
                     '<td>' + AC.escapeHtml(t.tunnel_name) + '</td>' +
                     '<td>' + typeBadge + '</td>' +
@@ -706,8 +761,11 @@
             setFlowRange(parseInt(el.dataset.range, 10));
         },
         'load-group-chart': function(el) {
+            // hostId is what makes the chosen range survive the 30s refresh —
+            // without it loadGroupChart cannot key the store, and every poll
+            // silently snaps the chart back to 24h.
             loadGroupChart(el.dataset.canvasId, parseInt(el.dataset.deviceId, 10),
-                el.dataset.group, el.dataset.range, el);
+                el.dataset.group, el.dataset.range, el, el.dataset.hostId, false);
         }
     });
 

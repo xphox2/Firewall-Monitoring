@@ -29,19 +29,12 @@
     <style nonce="{{ .Nonce }}">
         .gauge-bg { fill: none; stroke: var(--fwmon-panel-bg); stroke-width: 6; }
         .gauge-fill { fill: none; stroke-width: 6; stroke-linecap: round; transition: stroke-dashoffset 0.5s; }
-        .tunnel-expand { display: none; }
-        .tunnel-expand.open { display: table-row; }
-        .tunnel-expand td { padding: 0; border-bottom: 1px solid var(--fwmon-border); }
-        /* v0.10.230: chevron rotation on tunnel-row expand. JS toggles
-         * .open on the .chevron span (admin-connection-detail.js:262/265).
-         * The matching rule existed only as `.panel-tunnel-row .chevron.open`
-         * in admin.html (the diagram panel), so the rotation was a no-op
-         * on this page — clicking a tunnel row expanded the detail but
-         * the ► glyph stayed pointing right instead of becoming ▼. */
-        .tunnel-row { cursor: pointer; }
+        /* The tunnel rows no longer expand: each logical tunnel has one
+         * full-width chart above the table instead of a small one per row, so
+         * the .tunnel-expand / .chevron rules and the cursor:pointer that
+         * advertised a click target are gone. Only the hover tint remains,
+         * which still helps read across a wide row. */
         .tunnel-row:hover td { background: var(--fwmon-hover); }
-        .chevron { display: inline-block; transition: transform 0.2s; font-size: 0.7rem; color: var(--fwmon-text-faint); margin-right: 4px; }
-        .chevron.open { transform: rotate(90deg); }
         /* v0.10.228: same display reset as admin.html — admin-shared.css's
          * .stat-card { display: flex } was leaking through because this
          * file's override didn't reset it. No tiles on this page use the
@@ -159,7 +152,7 @@
                 <div id="src-tunnel-charts"></div>
                 <div class="overflow-x-auto">
                     <table id="src-tunnels-table" class="tunnel-table">
-                        <thead><tr><th></th><th>Phase 1</th><th>Phase 2</th><th>Type</th><th>Status</th><th>Remote GW</th><th>Local Subnet</th><th>Remote Subnet</th><th>Bytes In</th><th>Bytes Out</th><th>Uptime</th></tr></thead>
+                        <thead><tr><th>Phase 1</th><th>Phase 2</th><th>Type</th><th>Status</th><th>Remote GW</th><th>Local Subnet</th><th>Remote Subnet</th><th>Bytes In</th><th>Bytes Out</th><th>Uptime</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
@@ -172,7 +165,7 @@
                 <div id="dst-tunnel-charts"></div>
                 <div class="overflow-x-auto">
                     <table id="dst-tunnels-table" class="tunnel-table">
-                        <thead><tr><th></th><th>Phase 1</th><th>Phase 2</th><th>Type</th><th>Status</th><th>Remote GW</th><th>Local Subnet</th><th>Remote Subnet</th><th>Bytes In</th><th>Bytes Out</th><th>Uptime</th></tr></thead>
+                        <thead><tr><th>Phase 1</th><th>Phase 2</th><th>Type</th><th>Status</th><th>Remote GW</th><th>Local Subnet</th><th>Remote Subnet</th><th>Bytes In</th><th>Bytes Out</th><th>Uptime</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>

@@ -342,3 +342,111 @@ func TestParseOPNsense_ErrorShapedBodyIsNotZeroTunnels(t *testing.T) {
 		}
 	}
 }
+
+// IKEv2 NARROWS a selector during negotiation, so a peer can install a policy
+// for a specific host inside the configured subnet. The prefix-stripping key
+// already tolerates /24 → /32 on the same network address (the narrowing seen in
+// production), but a HOST-specific narrowing changes the address itself and the
+// child stops being recognised — synthesizing a phantom down row beside the
+// working one.
+func TestParseOPNsense_HostNarrowedSelectorStillMatchesItsExpectedChild(t *testing.T) {
+	// The box installed 192.168.13.7/32, inside the configured 192.168.13.0/24.
+	spd := `{"rows":[{"src":"192.168.50.0/24","dst":"192.168.13.7/32","dir":"out","reqid":"2",
+	  "src-dst":["192.168.5.107","66.179.9.155"]}]}`
+	sad := `{"rows":[{"src":"192.168.5.107[4500]","reqid":2,"bytes_current":500,"addtime_diff":10}]}`
+
+	rows := parse(t, phase1Fixture, sad, spd,
+		ExpectedChild{TunnelName: "fwm-t11", Local: "192.168.50.0/24", Remote: "192.168.13.0/24"})
+
+	if len(rows) != 1 {
+		t.Fatalf("the narrowed child must be recognised as the expected one, not reported "+
+			"twice; got %d rows: %+v", len(rows), rows)
+	}
+	if rows[0].status != "up" {
+		t.Errorf("status = %q, want up", rows[0].status)
+	}
+}
+
+// THE MIRROR TEST. Containment must not be applied box-globally, or a tunnel
+// with a WIDE intent absorbs an unrelated tunnel's present child, marks itself
+// seen, and never reports its own outage. A phantom down row is noisy; a
+// swallowed real outage is silent, which is strictly worse — and is exactly what
+// the expected-children mechanism exists to prevent.
+func TestParseOPNsense_WideIntentDoesNotSwallowAnotherTunnelsOutage(t *testing.T) {
+	// One child is up, carrying 192.168.50.0/24 ↔ 192.168.13.0/24.
+	rows := parse(t, phase1Fixture, sadFixture, spdFixture,
+		// tunnel A: the one that is actually up.
+		ExpectedChild{TunnelName: "fwm-t11", Local: "192.168.50.0/24", Remote: "192.168.13.0/24"},
+		// tunnel B: a full-tunnel intent that CONTAINS A's selectors but has no
+		// policy of its own — it is DOWN and must say so.
+		ExpectedChild{TunnelName: "fwm-t99", Local: "0.0.0.0/0", Remote: "0.0.0.0/0"},
+	)
+
+	var downForB bool
+	for _, r := range rows {
+		if r.phase1 == "fwm-t99" && r.status == "down" {
+			downForB = true
+		}
+	}
+	if !downForB {
+		t.Fatalf("tunnel fwm-t99 is down and must report it — a wide intent must not be "+
+			"marked present by another tunnel's child. Got %+v", rows)
+	}
+}
+
+// Isolates the TUNNEL-SCOPING constraint. The wide-intent test above passes even
+// without scoping, because pass 1 had already claimed the only policy — so it
+// proves the claim-once rule, not scoping. Here the policy is UNCLAIMED, so
+// nothing but scoping stops the wide intent absorbing another tunnel's child.
+func TestParseOPNsense_ContainmentWillNotCrossTunnels(t *testing.T) {
+	// The box carries one child, belonging to fwm-t11 (per phase1desc).
+	// The only expectation is for a DIFFERENT tunnel whose intent is wide
+	// enough to contain it.
+	rows := parse(t, phase1Fixture, sadFixture, spdFixture,
+		ExpectedChild{TunnelName: "fwm-t99", Local: "0.0.0.0/0", Remote: "0.0.0.0/0"})
+
+	var downForOther bool
+	for _, r := range rows {
+		if r.phase1 == "fwm-t99" && r.status == "down" {
+			downForOther = true
+		}
+	}
+	if !downForOther {
+		t.Fatalf("fwm-t99 has no child on this box and must report down — containment must "+
+			"not let it claim fwm-t11's policy just because its intent contains it. Got %+v", rows)
+	}
+}
+
+// Isolates the CLAIM-ONCE constraint inside pass 2. Both expected children must
+// need containment (neither matches exactly, or pass 1's claim would mask the
+// rule), and both must contain the single installed policy. Exactly one may take
+// it — the most specific — or the other's real outage is silently swallowed.
+func TestParseOPNsense_OnePolicySatisfiesOnlyOneExpectedChild(t *testing.T) {
+	// One installed child, host-narrowed to .13.7 — inside BOTH expectations.
+	spd := `{"rows":[{"src":"192.168.50.0/24","dst":"192.168.13.7/32","dir":"out","reqid":"2",
+	  "src-dst":["192.168.5.107","66.179.9.155"]}]}`
+	sad := `{"rows":[{"src":"192.168.5.107[4500]","reqid":2,"bytes_current":500,"addtime_diff":10}]}`
+
+	rows := parse(t, phase1Fixture, sad, spd,
+		ExpectedChild{TunnelName: "fwm-t11", Local: "192.168.50.0/24", Remote: "192.168.0.0/16"},
+		ExpectedChild{TunnelName: "fwm-t11", Local: "192.168.50.0/24", Remote: "192.168.13.0/24"},
+	)
+
+	var down int
+	for _, r := range rows {
+		if r.status == "down" {
+			down++
+		}
+	}
+	if down != 1 {
+		t.Fatalf("one installed policy can satisfy only ONE expected child; the other is "+
+			"down and must say so. Want 1 down row, got %d: %+v", down, rows)
+	}
+	// And the one it satisfies must be the most specific: the /24, not the /16.
+	for _, r := range rows {
+		if r.status == "down" && r.remote != "192.168.0.0/16" {
+			t.Errorf("the /24 should have claimed the narrowed policy, leaving the /16 down; "+
+				"got the %s reported down instead", r.remote)
+		}
+	}
+}

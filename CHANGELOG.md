@@ -1,6 +1,40 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.174] - 2026-07-25
+
+### Fixed
+
+**The VPN map's device panel charted blank for the rows the previous release set out to fix.** Its two tables share one chart loader. That loader became group-keyed in 0.11.173, but only the connection panel was converted — the device-node panel kept sending raw row names, and its data source neither resolved tunnel groups nor exposed the field.
+
+Deferring it did not leave that panel unimproved, it inverted the fix there: every counter-bearing row (FortiGate `dialup-<ip>`, every OPNsense child) asked for a group matching no member and drew nothing, while the row that did chart was the counterless one that was blank before. The map path now resolves groups and carries the field, and the panel sends it with the same fallback chain the server uses.
+
+The regression test drives the value through the real chart endpoint rather than asserting the field is merely present — a row whose group equals its own name would satisfy that, and that is the shape which was never broken.
+
+### Changed
+
+`GetLatestVPNStatuses`' contract comment claimed all three enrichment passes read unbounded history, which 0.11.173 made false, and it did not mention that the bound also covers peer-device resolution. It now says which pass stays unbounded and why, and states the consequence: a peer quiet for longer than the horizon loses its subnets and deep-link rather than showing a stale pairing.
+
+## [0.11.173] - 2026-07-25
+
+### Fixed — VPN chart follow-ups from the #187 review
+
+**The selected chart range no longer resets every 30 seconds.** The connection-detail poll rebuilt every chart at the default 24h, so a 1h/7d/30d choice survived at most one refresh. The range is now remembered per logical tunnel — keyed by host and group NAME, never by the positional canvas id, because that index is derived from a row order with no `ORDER BY`, so a tunnel appearing or reordering would silently apply the remembered range to a different chart.
+
+Three adjacent defects fell out of the same root: an in-flight click could resolve against a rebuilt canvas and overwrite the refresh's chart with another tunnel's data; Chart.js instances for vanished groups were never destroyed; and the error path swallowed the error, did not filter cancelled requests, and fired one toast per group per side — so a single API blip popped N red toasts every 30 seconds.
+
+**A tunnel's peer cross-fill no longer scans its whole history.** `GetLatestVPNStatuses` read *every* `vpn_status` row of every peer carrying subnet text, newest-first, purely to keep one row per `remote_ip`. Its cost therefore grew with **retention**, not with tunnel count. Measured per chart request: 5.3ms / 80.7ms / **324ms** at 300 / 5,000 / 20,000 rows per peer — and production retains 90 days at roughly a 60s cadence. Bounded to the evidence horizon it is flat at ~24ms, and 5,000 and 20,000 now cost the same.
+
+This is a bug fix rather than a tuning change: cross-filling from a row older than the grace window enriches a "latest status" with data every other reader in that file has already declared not to be state. Every caller benefits, including the two calls the detail endpoint makes per page load.
+
+**Narrowed traffic selectors no longer produce phantom down rows.** IKEv2 narrows during negotiation, so a peer can install a policy for one host inside the configured subnet; the child then stopped being recognised and a spurious down row appeared beside the working tunnel. Matching is now two-pass — exact first, then containment — with three constraints on the second, because unconstrained containment causes a strictly worse failure: a tunnel with a wide intent would absorb an unrelated tunnel's child and silently never report its own outage. Containment therefore only considers policies resolving to the same tunnel, each claimable once, with the most specific claimant winning.
+
+**Two more surfaces stopped drawing blank charts.** The connection-map panel grouped by phase1 and charted a "representative selector", which can be the config-derived row that has no counters at all; device-detail charted whichever row was expanded, with the same result. Both now chart the logical tunnel. The panel's tunnel-count tile consequently counts logical tunnels — a FortiGate tunnel reported as two rows used to count twice.
+
+### Added
+
+Handler tests for the group chart endpoint (member resolution, device scoping, unknown group, missing parameter), and a test pinning the peer cross-fill's horizon.
+
 ## [0.11.172] - 2026-07-25
 
 ### Changed — one VPN chart per tunnel instead of one per row

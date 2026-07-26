@@ -212,6 +212,10 @@ type TelemetryReadStore interface {
 	GetLatestSystemStatus() (*models.SystemStatus, error)
 	GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, error)
 	GetAllLatestVPNStatuses() ([]models.VPNStatus, error)
+	// ResolveTunnelGroups stamps the computed TunnelGroup on rows fetched by a
+	// path that does not resolve it (GetAllLatestVPNStatuses). GetLatestVPNStatuses
+	// already calls it, so only the map path needs this.
+	ResolveTunnelGroups(statuses []models.VPNStatus)
 	GetVPNTunnelCounts(deviceID uint) (up, total int, err error)
 	GetSystemStatusHistory(deviceID uint, hours int) ([]models.SystemStatus, error)
 	GetSystemStatusBuckets(deviceID uint, rangeStr string) ([]SystemStatusBucket, error)

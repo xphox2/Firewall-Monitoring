@@ -1,10 +1,10 @@
 package database
 
 import (
-	"net"
 	"strings"
 
 	"firewall-mon/internal/models"
+	"firewall-mon/internal/netclass"
 )
 
 // Selector matching for VPN telemetry attribution.
@@ -14,54 +14,6 @@ import (
 // poller's connection detection and the read paths that resolve a tunnel's
 // identity for display. They were in package main, which no other package can
 // import — the dependency was backwards.
-
-// vpnSelectorNet parses a selector as reported in vpn_status.
-//
-// Two formats occur, from two different code paths in the FortiGate SNMP
-// profile: proper CIDR ("192.168.13.0/24") and an inclusive RANGE
-// ("192.168.13.0 - 192.168.13.255") emitted where the MIB exposes begin/end
-// addresses instead of addr/mask. A CIDR-only parse silently fails on the
-// latter, which would leave a healthy tunnel unattributed and its edge red.
-//
-// A range is reduced to its first address, which is all the containment test
-// below needs.
-func vpnSelectorNet(s string) (net.IP, bool) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil, false
-	}
-	if i := strings.Index(s, "-"); i >= 0 {
-		s = strings.TrimSpace(s[:i])
-	}
-	if ip, _, err := net.ParseCIDR(s); err == nil {
-		return ip, true
-	}
-	if ip := net.ParseIP(s); ip != nil {
-		return ip, true
-	}
-	return nil, false
-}
-
-// selectorCovered reports whether any of the intent's subnets contains the
-// address the device reported for this selector. Containment rather than
-// equality: FortiOS narrows a selector it has negotiated (a /24 in the intent
-// is reported as a /32 for the specific host pair actually in use).
-func selectorCovered(intentSubnets []string, reported string) bool {
-	ip, ok := vpnSelectorNet(reported)
-	if !ok {
-		return false
-	}
-	for _, s := range intentSubnets {
-		_, n, err := net.ParseCIDR(strings.TrimSpace(s))
-		if err != nil {
-			continue
-		}
-		if n.Contains(ip) {
-			return true
-		}
-	}
-	return false
-}
 
 // MatchProvisionedBySubnets identifies the provisioned tunnel an unnamed row
 // belongs to, using the traffic it carries.
@@ -85,7 +37,7 @@ func MatchProvisionedBySubnets(provPairs map[string]ProvisionedTunnelPair, vpn m
 		if !ok {
 			continue // this device is not an endpoint of that tunnel
 		}
-		if selectorCovered(local, vpn.LocalSubnet) && selectorCovered(remote, vpn.RemoteSubnet) {
+		if netclass.SelectorCovered(local, vpn.LocalSubnet) && netclass.SelectorCovered(remote, vpn.RemoteSubnet) {
 			hit = pp
 			found++
 		}
@@ -117,7 +69,7 @@ func MatchProvisionedBySubnets(provPairs map[string]ProvisionedTunnelPair, vpn m
 //
 // A failed provisioning lookup is not fatal: the fallbacks still group rows
 // that share a phase1 name, which is the pre-existing behaviour.
-func (d *Database) resolveTunnelGroups(statuses []models.VPNStatus) {
+func (d *Database) ResolveTunnelGroups(statuses []models.VPNStatus) {
 	if len(statuses) == 0 {
 		return
 	}

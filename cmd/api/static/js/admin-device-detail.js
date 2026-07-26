@@ -930,6 +930,22 @@
         filterIfaces(currentFilter); // re-render controls (reset chip) + reload chart for the window
     }
 
+    // A tunnel is reported as several rows under unrelated names — on a FortiGate
+    // the SSH row carries the provisioned name but NO counters while its SNMP
+    // sibling carries the counters under a synthesized name. Charting the row the
+    // operator happened to expand therefore shows a blank graph half the time.
+    // tunnel_group is resolved server-side and unites them; fall back to the row's
+    // own name so a row is never unchartable.
+    function groupForTunnel(tunnelName) {
+        var rows = (deviceData && deviceData.vpn_status) || [];
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].tunnel_name === tunnelName) {
+                return rows[i].tunnel_group || rows[i].phase1_name || tunnelName;
+            }
+        }
+        return tunnelName;
+    }
+
     function loadTunnelChart(tunnelName, range) {
         currentTunnelRange = range;
 
@@ -946,7 +962,9 @@
         var seq = (tunnelChartSeq[tunnelName] || 0) + 1;
         tunnelChartSeq[tunnelName] = seq;
 
-        fetch('/admin/api/devices/' + deviceId + '/vpn/' + encodeURIComponent(tunnelName) + '/chart?' + chartQuery(tunnelWin, range), { credentials: 'same-origin' })
+        fetch('/admin/api/devices/' + deviceId + '/vpn-group-chart?group=' +
+                encodeURIComponent(groupForTunnel(tunnelName)) + '&' + chartQuery(tunnelWin, range),
+            { credentials: 'same-origin' })
             .then(function(resp) {
                 if (!resp.ok) return Promise.reject(new Error('Failed'));
                 return resp.json();

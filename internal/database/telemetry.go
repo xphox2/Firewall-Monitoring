@@ -207,10 +207,18 @@ func (d *Database) SaveVPNStatuses(statuses []models.VPNStatus) error {
 // Tunnels the device has stopped reporting age out; tunnels on a slower writer
 // are no longer masked by a faster one.
 //
-// Only snapshot SELECTION is horizon-bounded. The enrichment passes below —
-// peer-subnet cross-fill, RemoteDeviceID resolution, and LastUpAt — are
-// historical annotations of a current tunnel, not state claims, so they keep
-// reading unbounded history on purpose.
+// Two of the three enrichment passes below are bounded too, and for different
+// reasons. LastUpAt reads unbounded history on purpose: "when was this last up"
+// is a historical annotation of a current tunnel, and the answer is only useful
+// when it IS old. The peer read that feeds subnet cross-fill and RemoteDeviceID
+// is bounded to the evidence horizon, because its cost grew with retention
+// rather than with tunnel count, and because a peer row older than the horizon
+// is one this same function would refuse to return as that peer's own state —
+// enriching from it would launder aged-out data back in as current.
+//
+// The consequence is deliberate: if a peer stops reporting for longer than the
+// horizon while this device keeps reporting, its rows lose the peer's subnets
+// and the peer-device deep-link, rather than showing a stale pairing.
 func (d *Database) GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, error) {
 	now := time.Now()
 	// UTC: see vpnZoneSlack — a local-zone bound widens the worst case past the slack.
@@ -264,8 +272,22 @@ func (d *Database) GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, erro
 		for id := range peerIDs {
 			ids = append(ids, id)
 		}
+		// Bounded to the evidence horizon, like every other read in this file.
+		//
+		// Without the bound this reads the ENTIRE history of every peer that
+		// carries subnet text, just to keep the newest row per remote_ip — so its
+		// cost grows with RETENTION rather than with tunnel count. Measured on a
+		// seeded database, one chart request went 5ms → 81ms → 324ms at 300 →
+		// 5,000 → 20,000 rows per peer, and production retains far more than
+		// that. The page issues several such calls every 30 seconds per viewer.
+		//
+		// This is a bug fix rather than a semantic change: cross-filling from a
+		// peer row older than the grace window means enriching a "latest status"
+		// with data the rest of this file has already declared not to be state.
+		// The only rows it stops using are ones no other reader here would trust.
+		peerPrune := time.Now().UTC().Add(-VPNEvidenceGrace - vpnZoneSlack)
 		var peerVPNs []models.VPNStatus
-		d.db.Where("device_id IN ? AND (local_subnet != '' OR remote_subnet != '')", ids).
+		d.db.Where("device_id IN ? AND timestamp >= ? AND (local_subnet != '' OR remote_subnet != '')", ids, peerPrune).
 			Order("device_id, timestamp DESC").Find(&peerVPNs)
 		for _, pv := range peerVPNs {
 			if pv.RemoteIP == "" {
@@ -397,7 +419,7 @@ func (d *Database) GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, erro
 		}
 		rows.Close()
 	}
-	d.resolveTunnelGroups(statuses)
+	d.ResolveTunnelGroups(statuses)
 	for i := range statuses {
 		if ts, ok := byName[statuses[i].TunnelName]; ok {
 			t := ts

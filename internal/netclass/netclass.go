@@ -108,3 +108,72 @@ func SubnetCIDR(ipAddr, netMask string) (cidr string, ok bool) {
 	network := ip4.Mask(net.IPMask(mask4))
 	return fmt.Sprintf("%s/%d", network.String(), ones), true
 }
+
+// SelectorIP parses an IPSec traffic selector as devices actually report it and
+// returns its first address.
+//
+// Two formats occur, from two different code paths in the FortiGate SNMP
+// profile: proper CIDR ("192.168.13.0/24") and an inclusive RANGE
+// ("192.168.13.0 - 192.168.13.255"), emitted where the MIB exposes begin/end
+// addresses instead of addr/mask. A CIDR-only parse silently fails on the
+// latter, which would leave a healthy tunnel unattributed.
+//
+// It lives here rather than beside either caller because both the telemetry
+// parser and the connection detector need it, and it is pure net/strings logic
+// with no database or vendor coupling.
+func SelectorIP(s string) (net.IP, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, false
+	}
+	if i := strings.Index(s, "-"); i >= 0 {
+		s = strings.TrimSpace(s[:i])
+	}
+	if ip, _, err := net.ParseCIDR(s); err == nil {
+		return ip, true
+	}
+	if ip := net.ParseIP(s); ip != nil {
+		return ip, true
+	}
+	return nil, false
+}
+
+// SelectorCovered reports whether any of the configured subnets contains the
+// address a device reported for a selector.
+//
+// Containment rather than equality, because IKEv2 NARROWS: a /24 in the intent
+// is legitimately reported as a /32 for the host pair actually in use. Note the
+// direction is one-way on purpose — configured ⊇ reported. Treating it as
+// symmetric would let a reported supernet match a narrower intent, which is not
+// something a compliant peer can produce.
+func SelectorCovered(configured []string, reported string) bool {
+	ip, ok := SelectorIP(reported)
+	if !ok {
+		return false
+	}
+	for _, s := range configured {
+		_, n, err := net.ParseCIDR(strings.TrimSpace(s))
+		if err != nil {
+			continue
+		}
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// SelectorPrefixLen returns a selector's prefix length, for preferring the most
+// specific of several candidate matches. Missing or unparseable prefixes sort
+// as the least specific.
+func SelectorPrefixLen(s string) int {
+	s = strings.TrimSpace(s)
+	if i := strings.Index(s, "-"); i >= 0 {
+		return 0
+	}
+	if _, n, err := net.ParseCIDR(s); err == nil {
+		ones, _ := n.Mask.Size()
+		return ones
+	}
+	return 0
+}
