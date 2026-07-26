@@ -15,10 +15,12 @@ package vpnsession
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"firewall-mon/internal/models"
+	"firewall-mon/internal/netclass"
 )
 
 // ExpectedChild is one subnet pair a provisioned tunnel is supposed to carry.
@@ -81,7 +83,7 @@ func ParseOPNsense(deviceID uint, ts time.Time, phase1Body, sadBody, spdBody str
 	}
 
 	out := make([]models.VPNStatus, 0, len(policies)+len(expected))
-	seen := make(map[string]bool, len(policies))
+	obs := make([]observedChild, 0, len(policies))
 
 	for _, pol := range policies {
 		c := conns.forPeer(pol.remoteHost)
@@ -127,16 +129,13 @@ func ParseOPNsense(deviceID uint, ts time.Time, phase1Body, sadBody, spdBody str
 		}
 
 		out = append(out, row)
-		seen[childKey(pol.localSel, pol.remoteSel)] = true
+		obs = append(obs, observedChild{localSel: pol.localSel, remoteSel: pol.remoteSel, tunnel: phase1})
 	}
 
 	// Anything the server expects but the box is not carrying is DOWN, not
 	// absent. Zero counters and zero uptime keep the ever-up gate honest: a
 	// child that has never established must not be alertable.
-	for _, e := range expected {
-		if seen[childKey(e.Local, e.Remote)] {
-			continue
-		}
+	for _, e := range unmatchedExpected(expected, obs) {
 		out = append(out, models.VPNStatus{
 			DeviceID:     deviceID,
 			Timestamp:    ts,
@@ -447,4 +446,103 @@ func num(r map[string]any, key string) uint64 {
 		}
 	}
 	return 0
+}
+
+// observedChild is one child SA the box is actually carrying.
+type observedChild struct {
+	localSel, remoteSel string
+	tunnel              string // resolved tunnel name, "" when unresolvable
+}
+
+// unmatchedExpected returns the expected children the box is NOT carrying.
+//
+// Two passes, and the order matters.
+//
+// Pass 1 is exact on the selector pair, which pins today's behaviour: the
+// overwhelmingly common case is that the installed policy states exactly what
+// was configured.
+//
+// Pass 2 exists because IKEv2 NARROWS — a peer may install a policy for one host
+// inside the configured subnet, so the addresses differ and pass 1 misses,
+// synthesizing a phantom down row beside a working tunnel.
+//
+// Pass 2 is deliberately constrained three ways, because unconstrained
+// containment causes a strictly WORSE failure than the one it fixes: a tunnel
+// with a wide intent (a full-tunnel 0.0.0.0/0, or a supernet) would contain
+// another tunnel's child, mark itself present, and silently never report its own
+// outage. So it only considers policies that
+//
+//   - resolve to the SAME tunnel as the expected child (an unresolvable policy
+//     is skipped rather than guessed at),
+//   - are not already claimed by another expected child, and
+//   - when several qualify, the most specific wins.
+//
+// The cost of those constraints is that a narrowed child on a tunnel whose name
+// could not be resolved still reports a phantom down row. That is the right way
+// round: a spurious down row is visible and can be investigated, a swallowed
+// outage cannot.
+func unmatchedExpected(expected []ExpectedChild, obs []observedChild) []ExpectedChild {
+	if len(expected) == 0 {
+		return nil
+	}
+	satisfied := make([]bool, len(expected))
+	claimed := make([]bool, len(obs))
+
+	for ei, e := range expected {
+		want := childKey(e.Local, e.Remote)
+		for oi, o := range obs {
+			if claimed[oi] || childKey(o.localSel, o.remoteSel) != want {
+				continue
+			}
+			satisfied[ei], claimed[oi] = true, true
+			break
+		}
+	}
+
+	// Most-specific-FIRST, over the expected children — not over the policies.
+	//
+	// Scoring the observed policy is useless when several expectations compete
+	// for the same one: its specificity is identical for all of them, so the
+	// winner would be decided by iteration order and a /16 could take the policy
+	// a /24 should own, reporting the /24 down. Ordering the claimants instead
+	// makes the tightest expectation win, which is the one the operator would
+	// call the real owner.
+	order := make([]int, 0, len(expected))
+	for ei := range expected {
+		if !satisfied[ei] {
+			order = append(order, ei)
+		}
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		return expectedSpecificity(expected[order[a]]) > expectedSpecificity(expected[order[b]])
+	})
+
+	for _, ei := range order {
+		e := expected[ei]
+		for oi, o := range obs {
+			if claimed[oi] || o.tunnel == "" || o.tunnel != e.TunnelName {
+				continue
+			}
+			if !netclass.SelectorCovered([]string{e.Local}, o.localSel) ||
+				!netclass.SelectorCovered([]string{e.Remote}, o.remoteSel) {
+				continue
+			}
+			satisfied[ei], claimed[oi] = true, true
+			break
+		}
+	}
+
+	var out []ExpectedChild
+	for ei, e := range expected {
+		if !satisfied[ei] {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// expectedSpecificity ranks an expected child by how tightly it is scoped, so
+// the narrowest claimant wins a contested policy.
+func expectedSpecificity(e ExpectedChild) int {
+	return netclass.SelectorPrefixLen(e.Local) + netclass.SelectorPrefixLen(e.Remote)
 }
