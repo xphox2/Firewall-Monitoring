@@ -1,6 +1,22 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.186] - 2026-07-26
+
+### Fixed
+
+**The per-severity volume estimate never appeared on partitioned installs — which is every fresh install.** PostgreSQL does not analyze a partitioned *parent* automatically; autovacuum only processes the leaves. So `pg_stats` for `syslog_messages` stays empty indefinitely, and reading the parent alone resolved no statistics at all: every severity rendered as "below what statistics track", including one holding tens of millions of rows. The feature's stated reason to exist was inert on the shape every new deployment has.
+
+The estimate now uses the parent's statistics when they exist and combines the leaves' otherwise, weighting each leaf by its row count — a leaf's frequency is a fraction *of that leaf*, so an unweighted mean would let a nearly-empty month distort the table. `syslogAvgRowWidth` had the same blind spot and the same fix.
+
+This survived the previous round's testing only because seeding the harness ran an explicit `ANALYZE` on the parent — the one thing production never does. Verified against all three real shapes, with the frequencies matching seeded ground truth exactly (0.001 / 0.025 / 0.97 / 0.004).
+
+**A blank retention default advertised a window it does not use.** The field's placeholder read `30`, but with no explicit default each severity falls back to the server's configured retention — which is **keep forever** for severities 0–5, not 30 days. On the page built in response to a disk-full outage, that is the most costly possible direction to be wrong in. The placeholder now reads `not set` and the hint says where the real windows come from; a single number cannot describe a per-severity fallback. The internal inherit sentinel no longer leaks into the API response either.
+
+### Added
+
+Integration tests covering the three shapes `syslog_messages` is actually deployed in — plain heap, partitioned with only the leaf analyzed, and partitioned with both analyzed — because each fails differently and the previous round was guarded only by reading rendered figures. Both bugs are mutation-verified: reverting to the parent-only query fails exactly the leaf-only shape, and re-introducing the parent-plus-partitions sum fails exactly the parent-analyzed shape with `total rows = 40000, want 20000`. A further test asserts the estimator reads **zero tuples** from the table, pinning the property the whole catalog-statistics approach exists for.
+
 ## [0.11.185] - 2026-07-26
 
 ### Changed
@@ -13,7 +29,7 @@ Both modules take their severity dot from one shared `resourceSev`, so the tiles
 
 ### Fixed
 
-**The trend chart could outlive its canvas.** Hiding the module removes the canvas, but the Chart instance stayed registered against the detached node — and `recolorChartsForTheme` walks every chart via `Chart.getChart()` on each theme flip. Latent before, when the canvas could only disappear with the whole Platform module; reachable now that the chart is independently hideable. It is destroyed when its canvas is absent. Verified: hiding the module leaves zero orphaned charts, and re-showing rebuilds it.
+**The trend chart could outlive its canvas.** Hiding the module removes the canvas, but Chart.js kept the instance — and its full dataset — in its registry for a canvas that no longer existed, for as long as the page lived. Latent before, when the canvas could only disappear with the whole Platform module; reachable now that the chart is independently hideable. It is destroyed when its canvas is absent. Verified: hiding the module leaves zero orphaned charts, and re-showing rebuilds it.
 
 ## [0.11.184] - 2026-07-26
 

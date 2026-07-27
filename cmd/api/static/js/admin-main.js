@@ -2498,8 +2498,16 @@
                     '<label for="' + SYSLOG_RETENTION_DEFAULT + '">Default for all severities (days)</label>' +
                     '<input type="number" id="' + SYSLOG_RETENTION_DEFAULT + '" name="' + SYSLOG_RETENTION_DEFAULT +
                         '" value="' + escapeHtml(stored(SYSLOG_RETENTION_DEFAULT)) +
-                        '" placeholder="30" min="0" max="3650" step="1">' +
-                    '<div class="field-hint">Applies to every severity left blank below. 0 keeps everything forever.</div>' +
+                        '" placeholder="' + (d.default_set ? '' : 'not set') + '" min="0" max="3650" step="1">' +
+                    // Deliberately NOT a number when unset. With no explicit
+                    // default each severity falls back to the server's
+                    // configured retention, which differs BY severity and is
+                    // keep-forever for the low ones — so any single placeholder
+                    // would be a lie on this page of all pages. The Effective
+                    // column carries the per-severity truth.
+                    '<div class="field-hint">Applies to every severity left blank below. 0 keeps everything forever.' +
+                    (d.default_set ? '' : ' With no default set, each severity falls back to the server&rsquo;s configured retention &mdash; see Effective.') +
+                    '</div>' +
                 '</div>' + note +
                 '<table class="data-table" style="margin-top:10px;"><thead><tr>' +
                     '<th>Severity</th><th>Keep (days)</th><th>Effective</th><th>Estimated volume</th>' +

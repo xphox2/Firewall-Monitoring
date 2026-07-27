@@ -71,9 +71,12 @@
 
     function loadServerTrend() {
         var el = document.getElementById('dash-server-trend');
-        // Hiding the module removes the canvas. Drop the chart with it: a live
-        // Chart bound to a detached canvas is still walked by
-        // recolorChartsForTheme via Chart.getChart() on every theme flip.
+        // Hiding the module removes the canvas. Drop the chart with it, or
+        // Chart.js keeps the instance (and its full dataset) in its registry
+        // for a canvas that no longer exists, for as long as the page lives.
+        // Note this is registry hygiene, not a rendering bug:
+        // recolorChartsForTheme walks document.querySelectorAll('canvas'), so a
+        // DETACHED canvas is never visited by it.
         if (!el) {
             if (serverTrendChart) { serverTrendChart.destroy(); serverTrendChart = null; }
             return;

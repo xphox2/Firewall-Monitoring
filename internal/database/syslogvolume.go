@@ -35,7 +35,13 @@ type SyslogSeverityVolume struct {
 // SyslogVolumeReport backs the Retention page.
 type SyslogVolumeReport struct {
 	Severities []SyslogSeverityVolume `json:"severities"`
-	DefaultDay int                    `json:"default_days"`
+	// DefaultDay is the explicit default window, and is meaningful only when
+	// DefaultSet is true — the internal "inherit" sentinel is never exposed.
+	// With no explicit default each severity falls back to the server's
+	// configured retention, which is NOT a single number, so the page must not
+	// present one. Each row's resolved window is in the severity entry.
+	DefaultDay int  `json:"default_days"`
+	DefaultSet bool `json:"default_set"`
 	// StatsAvailable is false before ANALYZE has run. The page says so rather
 	// than showing a distribution it invented.
 	StatsAvailable bool  `json:"stats_available"`
@@ -53,7 +59,10 @@ func (d *Database) SyslogVolume(ret config.RetentionConfig) SyslogVolumeReport {
 	days := d.SyslogRetentionDays(ret)
 	defaultDays := d.GetIntSetting(SyslogRetentionDefaultKey, syslogRetentionInherit)
 
-	out := SyslogVolumeReport{DefaultDay: defaultDays}
+	out := SyslogVolumeReport{}
+	if defaultDays != syslogRetentionInherit {
+		out.DefaultDay, out.DefaultSet = defaultDays, true
+	}
 	total, freqs, ok := d.syslogSeverityStats()
 	out.StatsAvailable = ok
 	out.TotalRows = total
@@ -139,17 +148,66 @@ func (d *Database) syslogSeverityStats() (total int64, freqs map[int]float64, ok
 		Severity int
 		Freq     float64
 	}
-	// Only a handful of distinct severities exist, so they all fit inside the
-	// tracked most-common set.
+	// Follow the rows into the leaves.
+	//
+	// autovacuum does NOT analyze a partitioned parent — PostgreSQL only
+	// processes leaves automatically — so on a partitioned install
+	// pg_stats for the parent is simply EMPTY, and stays empty forever unless
+	// somebody runs ANALYZE on the parent by hand. Since a fresh install
+	// converts syslog_messages to a partitioned table, reading the parent alone
+	// meant the estimates never appeared on precisely the shape every new
+	// deployment has. (This survived initial testing only because seeding the
+	// harness ran an explicit ANALYZE on the parent.)
+	//
+	// So: use the parent's own statistics when they exist, and otherwise
+	// combine the leaves'. A leaf's frequency is a fraction OF THAT LEAF, so
+	// the leaves must be weighted by their row counts rather than averaged —
+	// an unweighted mean would let a nearly-empty month distort the whole
+	// table. Only a handful of distinct severities exist, so they all fit
+	// inside each relation's tracked most-common set.
 	if err := d.db.Raw(`
-		SELECT unnest(most_common_vals::text::int[]) AS severity,
-		       unnest(most_common_freqs)             AS freq
-		FROM pg_stats
-		WHERE tablename = 'syslog_messages' AND attname = 'severity'`).Scan(&stats).Error; err != nil {
+		WITH parent AS (
+			SELECT c.oid, c.relname, n.nspname,
+			       GREATEST(c.reltuples, 0) AS rows
+			FROM pg_class c
+			JOIN pg_namespace n ON n.oid = c.relnamespace
+			WHERE c.relname = 'syslog_messages'
+		), parent_has_stats AS (
+			SELECT EXISTS (
+				SELECT 1 FROM pg_stats st JOIN parent p
+				  ON st.tablename = p.relname AND st.schemaname = p.nspname
+				WHERE st.attname = 'severity'
+			) AS ok
+		), src AS (
+			SELECT p.relname, p.nspname, p.rows FROM parent p
+			WHERE (SELECT ok FROM parent_has_stats)
+			UNION ALL
+			SELECT c.relname, n.nspname, GREATEST(c.reltuples, 0)
+			FROM pg_inherits i
+			JOIN pg_class c ON c.oid = i.inhrelid
+			JOIN pg_namespace n ON n.oid = c.relnamespace
+			JOIN parent p ON p.oid = i.inhparent
+			WHERE NOT (SELECT ok FROM parent_has_stats)
+		), tot AS (
+			SELECT SUM(rows) AS all_rows FROM src
+		), per_rel AS (
+			SELECT src.rows,
+			       unnest(st.most_common_vals::text::int[]) AS severity,
+			       unnest(st.most_common_freqs)             AS freq
+			FROM src
+			JOIN pg_stats st ON st.tablename = src.relname
+			                AND st.schemaname = src.nspname
+			                AND st.attname = 'severity'
+		)
+		SELECT severity,
+		       SUM(freq * rows) / NULLIF((SELECT all_rows FROM tot), 0) AS freq
+		FROM per_rel
+		GROUP BY severity`).Scan(&stats).Error; err != nil {
 		return total, freqs, false
 	}
+	// GROUP BY yields one row per severity; the accumulate is defensive.
 	for _, s := range stats {
-		freqs[s.Severity] = s.Freq
+		freqs[s.Severity] += s.Freq
 	}
 	return total, freqs, len(freqs) > 0
 }
@@ -160,10 +218,28 @@ func (d *Database) syslogAvgRowWidth() int64 {
 	if !d.dialect.IsPostgres() {
 		return 0
 	}
+	// Same parent-has-no-statistics problem as syslogSeverityStats: prefer the
+	// parent's own row width, and fall back to a leaf's when the parent has
+	// never been analyzed. Row width barely varies between partitions, so any
+	// analyzed leaf is a good enough source — no weighting needed.
 	var w int64
 	if err := d.db.Raw(`
-		SELECT COALESCE(SUM(avg_width), 0)::bigint
-		FROM pg_stats WHERE tablename = 'syslog_messages'`).Scan(&w).Error; err != nil {
+		SELECT COALESCE((
+			SELECT SUM(avg_width) FROM pg_stats WHERE tablename = 'syslog_messages'
+		), (
+			SELECT SUM(st.avg_width)
+			FROM pg_stats st
+			WHERE st.tablename = (
+				SELECT c.relname
+				FROM pg_inherits i
+				JOIN pg_class c ON c.oid = i.inhrelid
+				JOIN pg_class p ON p.oid = i.inhparent
+				WHERE p.relname = 'syslog_messages'
+				  AND EXISTS (SELECT 1 FROM pg_stats s2 WHERE s2.tablename = c.relname)
+				ORDER BY c.reltuples DESC
+				LIMIT 1
+			)
+		), 0)::bigint`).Scan(&w).Error; err != nil {
 		return 0
 	}
 	return w
