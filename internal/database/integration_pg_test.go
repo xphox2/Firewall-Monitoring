@@ -134,8 +134,12 @@ func TestPostgresIntegration(t *testing.T) {
 		now := time.Now().UTC()
 		suffix := fmt.Sprintf("%d%02d", now.Year(), int(now.Month()))
 		want := map[string][]string{
-			"flow_samples":     {"device_ts", "timestamp", "probe_id", "src_addr", "dst_addr"},
-			"syslog_messages":  {"device_ts", "timestamp", "probe_id", "severity"},
+			"flow_samples": {"device_ts", "timestamp", "probe_id", "src_addr", "dst_addr"},
+			// severity_timestamp, not severity: the standalone severity index was
+			// replaced by the (severity, timestamp) composite that per-severity
+			// retention deletes need, and partitionIndexPlan drops the standalone
+			// as a redundant leading prefix. Suffixes derive from COLUMNS.
+			"syslog_messages":  {"device_ts", "timestamp", "probe_id", "severity_timestamp"},
 			"trap_events":      {"device_ts", "timestamp", "probe_id", "severity"},
 			"syslog_summaries": {"device_ts", "timestamp", "interval_type", "severity"},
 			"interface_stats":  {"device_ts", "timestamp", "device_idx_ts"},
