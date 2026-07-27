@@ -102,6 +102,7 @@ var registeredMigrations = []migration{
 	{version: 51, name: "partition_default_partitions", run: (*Database).migratePartitionDefaultPartitions},
 	{version: 52, name: "system_status_source", run: (*Database).migrateSystemStatusSource},
 	{version: 53, name: "server_metrics", run: (*Database).migrateServerMetrics},
+	{version: 54, name: "syslog_severity_timestamp_index", run: (*Database).migrateSyslogSeverityIndex},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

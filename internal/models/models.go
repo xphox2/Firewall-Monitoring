@@ -1269,7 +1269,7 @@ func (PingStats) TableName() string        { return "ping_stats" }
 
 type SyslogMessage struct {
 	ID             uint      `json:"id" gorm:"primaryKey"`
-	Timestamp      time.Time `json:"timestamp" gorm:"index;index:idx_syslog_device_ts,priority:2"`
+	Timestamp      time.Time `json:"timestamp" gorm:"index;index:idx_syslog_device_ts,priority:2;index:idx_syslog_sev_ts,priority:2"`
 	DeviceID       uint      `json:"device_id" gorm:"index;index:idx_syslog_device_ts,priority:1"`
 	ProbeID        uint      `json:"probe_id" gorm:"index"`
 	Hostname       string    `json:"hostname"`
@@ -1280,7 +1280,7 @@ type SyslogMessage struct {
 	Message        string    `json:"message"`
 	Priority       int       `json:"priority"`
 	Facility       int       `json:"facility"`
-	Severity       int       `json:"severity" gorm:"index:idx_syslog_severity"`
+	Severity       int       `json:"severity" gorm:"index:idx_syslog_sev_ts,priority:1"`
 	SourceIP       string    `json:"source_ip"`
 	CreatedAt      time.Time `json:"created_at"`
 }

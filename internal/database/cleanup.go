@@ -409,67 +409,60 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		return fmt.Errorf("failed to cleanup probe_commands: %w", err)
 	}
 
-	// Syslog: handle critical (0-5) and informational (6-7) differently.
-	// infoDays is the effective informational window (default 7), shared by the
-	// info DELETE, the summaries cutoff, and the partition-drop bound below.
-	infoDays := ret.SyslogInfoDays
-	if infoDays <= 0 {
-		infoDays = 7 // default fallback
-	}
+	// Syslog: one retention window PER SEVERITY.
+	//
+	// This replaced two hard-coded bands because the volume is overwhelmingly
+	// concentrated in one severity — on a real fleet severity 5 (notice) is ~97%
+	// of all syslog, and everything else together is under 2 GB per 30 days. Two
+	// bands forced a choice between keeping the noise and losing the signal.
+	//
+	// A window of 0 means KEEP FOREVER and is simply never deleted.
+	sevDays := d.SyslogRetentionDays(ret)
 
-	// LC-23 (2026-07-04 audit): partition-drop fast path for syslog_messages —
-	// the table that dominates prod DB size. The old blanket "never
-	// partition-drop syslog" rule over-generalized: a partition can straddle
-	// the two severity cutoffs, but one whose entire range is older than BOTH
-	// windows (max of critical + informational) holds only expired rows and is
-	// safe to drop wholesale — instant space reclamation instead of the
-	// batched DELETE bloating it with dead tuples and leaving empty monthly
-	// children behind forever. syslogPartitionDropDays returns 0 (never drop)
-	// whenever any severity class is kept forever; straddling/newer partitions
-	// still rely on the severity-scoped DELETEs below for exact retention.
-	if dropDays := syslogPartitionDropDays(ret, infoDays); dropDays > 0 {
+	// LC-23: partition-drop fast path for syslog_messages, the table that
+	// dominates prod DB size. A partition may only be dropped once EVERY
+	// severity inside it has expired, so syslogMaxWindow returns 0 — never drop —
+	// if any severity is kept forever. Straddling and newer partitions still
+	// rely on the per-severity DELETEs below for exact retention.
+	if dropDays := syslogMaxWindow(sevDays[:]); dropDays > 0 {
 		dropCutoff := time.Now().AddDate(0, 0, -dropDays)
 		if _, err := d.dropPartitionsOlderThan("syslog_messages", dropCutoff); err != nil {
 			log.Printf("cleanup: drop-old-partitions warning for syslog_messages: %v", err)
 		}
 	}
 
-	// Critical syslog: delete after SyslogCriticalDays (0 = never delete).
-	// The band boundary is operator-configurable — see SyslogCriticalBelow.
-	boundary := d.SyslogCriticalBelow()
-	if ret.SyslogCriticalDays > 0 {
-		criticalCutoff := time.Now().AddDate(0, 0, -ret.SyslogCriticalDays)
-		if err := d.batchedDeleteOlderThanWhere(&models.SyslogMessage{}, criticalCutoff,
-			"severity < ?", boundary); err != nil {
-			return fmt.Errorf("failed to cleanup syslog_message: %w", err)
+	// One batched DELETE per DISTINCT window rather than one per severity: when
+	// nothing has been uncoupled this collapses to a single statement, no worse
+	// than the two-band model it replaces.
+	for days, severities := range syslogWindowGroups(sevDays) {
+		cutoff := time.Now().AddDate(0, 0, -days)
+		if err := d.batchedDeleteOlderThanWhere(&models.SyslogMessage{}, cutoff,
+			"severity IN ?", severities); err != nil {
+			return fmt.Errorf("failed to cleanup syslog_message (severities %v, %dd): %w",
+				severities, days, err)
 		}
 	}
 
-	// Everything at or above the boundary: delete after SyslogInfoDays.
-	// This also catches informational syslog that aggregation has not consumed
-	// (aggregation runs every 5 min, and only ever handles severity >= 6).
-	infoCutoff := time.Now().AddDate(0, 0, -infoDays)
-	if err := d.batchedDeleteOlderThanWhere(&models.SyslogMessage{}, infoCutoff,
-		"severity >= ?", boundary); err != nil {
-		return fmt.Errorf("failed to cleanup informational syslog_message: %w", err)
+	// Syslog summaries carry a severity column and only ever hold the
+	// aggregated severities, so they are pruned per-severity with the same
+	// windows. The wholesale partition drop needs the same keep-forever guard as
+	// syslog_messages above — pruning rows per-severity would otherwise still let
+	// a blanket drop take a keep-forever severity's summaries with it.
+	aggDays := []int{sevDays[aggregatedSeverityFloor], sevDays[SyslogSeverityCount-1]}
+	if dropDays := syslogMaxWindow(aggDays); dropDays > 0 {
+		summaryDropCutoff := time.Now().AddDate(0, 0, -dropDays)
+		if _, err := d.dropPartitionsOlderThan("syslog_summaries", summaryDropCutoff); err != nil {
+			log.Printf("cleanup: drop-old-partitions warning for syslog_summaries: %v", err)
+		}
 	}
-
-	// Syslog summaries: delete after SyslogInfoDays (they are derived from
-	// informational syslog). AUDIT-028: drop whole old partitions first
-	// (no-op if plain).
-	summaryCutoff := time.Now().AddDate(0, 0, -infoDays)
-	if _, err := d.dropPartitionsOlderThan("syslog_summaries", summaryCutoff); err != nil {
-		log.Printf("cleanup: drop-old-partitions warning for syslog_summaries: %v", err)
-	}
-	if err := d.batchedDeleteOlderThan(&models.SyslogSummary{}, summaryCutoff); err != nil {
-		return fmt.Errorf("failed to cleanup syslog_summary: %w", err)
-	}
-
-	// Legacy SyslogDays applies only when neither new config is set (backwards compat)
-	if ret.SyslogDays > 0 && ret.SyslogCriticalDays == 0 && ret.SyslogInfoDays == 0 {
-		cutoff := time.Now().AddDate(0, 0, -ret.SyslogDays)
-		if err := d.batchedDeleteOlderThan(&models.SyslogMessage{}, cutoff); err != nil {
-			return fmt.Errorf("failed to cleanup syslog_message: %w", err)
+	for sev := aggregatedSeverityFloor; sev < SyslogSeverityCount; sev++ {
+		if sevDays[sev] <= 0 {
+			continue // keep forever
+		}
+		cutoff := time.Now().AddDate(0, 0, -sevDays[sev])
+		if err := d.batchedDeleteOlderThanWhere(&models.SyslogSummary{}, cutoff,
+			"severity = ?", sev); err != nil {
+			return fmt.Errorf("failed to cleanup syslog_summary (severity %d): %w", sev, err)
 		}
 	}
 
