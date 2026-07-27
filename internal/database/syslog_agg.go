@@ -17,26 +17,41 @@ import (
 // the multi-page path. Defaults to 10000.
 var syslogAggPageSize = 10000
 
-// RunSyslogAggregationCycle aggregates old informational syslog into summaries for scalability.
-// Called every 5 minutes by the poller:
-//  1. Raw informational (severity 6-7) older than SyslogInfoDays → hourly summaries
-//  2. Hourly summaries older than 48h → daily summaries
+// RunSyslogAggregationCycle aggregates old informational syslog into summaries
+// for scalability. Called every 5 minutes by the poller:
+//  1. Raw severity 6-7 past that severity's OWN retention window → hourly summaries
+//  2. Hourly summaries older than 48h → daily summaries (severity-agnostic)
+//
+// Because this runs every 5 minutes while cleanup runs every 24 hours, this
+// path is the effective owner of severities 6-7 — cleanup only ever mops up what
+// aggregation missed. That is why the per-severity window has to be honoured
+// HERE and not just in cleanup.
 func (d *Database) RunSyslogAggregationCycle(retention config.RetentionConfig) error {
-	infoDays := retention.SyslogInfoDays
-	if infoDays <= 0 {
-		infoDays = 7 // default: aggregate after 7 days
-	}
-
 	work := false
 	var lastErr error
 
-	// Step 1: raw informational syslog > infoDays old → hourly summaries
-	cutoffInfo := time.Now().AddDate(0, 0, -infoDays)
-	if done, err := d.aggregateSyslogToSummary(cutoffInfo, "1h"); err != nil {
-		lastErr = err
-		log.Printf("Syslog aggregation: step 1 error: %v", err)
-	} else if done {
-		work = true
+	// Step 1: raw aggregated-severity syslog past ITS OWN window → hourly summaries.
+	//
+	// One pass per severity, each with its own cutoff, watermark and
+	// transaction. Severity partitions the rows disjointly, so no row can be
+	// claimed by two passes and each pass keeps the same summarise-then-delete
+	// atomicity the single pass had.
+	sevDays := d.SyslogRetentionDays(retention)
+	for sev := aggregatedSeverityFloor; sev < SyslogSeverityCount; sev++ {
+		// 0 means keep forever, so this severity is never summarised OR deleted
+		// and simply stays raw. Skipping the pass is the correct reading rather
+		// than summarise-but-do-not-delete: every reader unions raw and summary
+		// counts, so keeping both would double-count.
+		if sevDays[sev] <= 0 {
+			continue
+		}
+		cutoff := time.Now().AddDate(0, 0, -sevDays[sev])
+		if done, err := d.aggregateSyslogToSummary(cutoff, sev, "1h"); err != nil {
+			lastErr = err
+			log.Printf("Syslog aggregation: step 1 error (severity %d): %v", sev, err)
+		} else if done {
+			work = true
+		}
 	}
 
 	// Step 2: hourly summaries > 48h old → daily summaries
@@ -67,9 +82,10 @@ type syslogSummaryRow struct {
 	SampleMessage  string
 }
 
-// aggregateSyslogToSummary groups raw informational syslog older than cutoff into hourly summaries.
+// aggregateSyslogToSummary groups raw syslog of ONE severity older than cutoff
+// into hourly summaries, then deletes exactly what it summarised.
 // Returns true if work was done, error if fatal.
-func (d *Database) aggregateSyslogToSummary(cutoff time.Time, intervalType string) (bool, error) {
+func (d *Database) aggregateSyslogToSummary(cutoff time.Time, severity int, intervalType string) (bool, error) {
 	bucketUnit := "hour"
 	bucketFmt := "2006-01-02 15:04"
 	if intervalType == "1d" {
@@ -95,7 +111,7 @@ func (d *Database) aggregateSyslogToSummary(cutoff time.Time, intervalType strin
 	err := d.db.Transaction(func(tx *gorm.DB) error {
 		var watermark int64
 		if err := tx.Model(&models.SyslogMessage{}).
-			Where("timestamp < ? AND severity >= 6", cutoff).
+			Where("timestamp < ? AND severity = ?", cutoff, severity).
 			Select("COALESCE(MAX(id), 0)").
 			Scan(&watermark).Error; err != nil {
 			return fmt.Errorf("watermark: %w", err)
@@ -109,7 +125,7 @@ func (d *Database) aggregateSyslogToSummary(cutoff time.Time, intervalType strin
 		for {
 			var rows []syslogSummaryRow
 			if err := tx.Model(&models.SyslogMessage{}).
-				Where("timestamp < ? AND severity >= 6 AND id <= ?", cutoff, watermark). // only informational (6) and debug (7)
+				Where("timestamp < ? AND severity = ? AND id <= ?", cutoff, severity, watermark).
 				Select(bucketExpr + " as bucket, device_id, severity, facility, app_name, " +
 					"COUNT(*) as count, MIN(message) as sample_message").
 				Group(groupKey).
@@ -137,7 +153,7 @@ func (d *Database) aggregateSyslogToSummary(cutoff time.Time, intervalType strin
 
 		// Delete exactly the rows that were summarized (same watermark scope),
 		// in the same transaction as the inserts.
-		if err := tx.Where("timestamp < ? AND severity >= 6 AND id <= ?", cutoff, watermark).
+		if err := tx.Where("timestamp < ? AND severity = ? AND id <= ?", cutoff, severity, watermark).
 			Delete(&models.SyslogMessage{}).Error; err != nil {
 			return fmt.Errorf("delete consumed raw messages: %w", err)
 		}

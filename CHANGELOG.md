@@ -1,6 +1,34 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.183] - 2026-07-26
+
+### Added
+
+**Syslog retention is now per severity.** Previously two hard-coded bands — "critical" below a boundary, "informational" at or above it — which is far too blunt for the real shape of the data. On this fleet **severity 5 (notice) is 97.2% of all syslog**, 66.1 M of 68.1 M rows; everything else together costs under 2 GB per 30 days. Two bands forced a choice between keeping the noise and losing the signal. Per-severity windows allow cutting only what is spamming and *extending* what is worth keeping — warnings and errors at 90 days cost roughly 5 GB.
+
+Each severity resolves through **per-severity setting → default setting → the existing legacy model**, read-through with no seeding, so an operator who changes nothing keeps exactly the retention they have today. Three values are distinct and deliberate: **blank inherits** the default, **0 keeps forever**, N keeps N days. That distinction needs a sentinel, because the settings accessor returns its default for absent, empty *and* unparseable values — collapsing blank into 0 would silently begin deleting logs an operator chose to keep indefinitely.
+
+Zero stays **asymmetric** where the legacy model made it so: `SyslogCriticalDays == 0` means forever, but `SyslogInfoDays <= 0` clamps to 7, in cleanup and aggregation alike. Folding both into a uniform "0 = forever" would invert an explicit `RETENTION_SYSLOG_INFO_DAYS=0`.
+
+**Aggregation is severity-aware too, and that was the hard part.** It summarises-then-deletes severities 6–7 every 5 minutes while cleanup runs every 24 hours, so for those severities aggregation is the effective owner — a window honoured only in cleanup would do nothing. Its three hard-coded predicates are now scoped to one severity per pass, each with its own cutoff, watermark and transaction. A severity set to keep-forever **skips its pass entirely** rather than being summarised-but-not-deleted, which would double-count in every reader that unions raw and summary counts.
+
+Both partition drops are keep-forever aware: one severity kept indefinitely pins every partition, for `syslog_messages` and `syslog_summaries` alike.
+
+### Fixed
+
+**A `(severity, timestamp)` index that would never have existed.** The composite the per-severity deletes need was added as a gorm model tag — which does nothing on an existing database. Tags are applied only by the baseline migration's `AutoMigrate` loop, and already-recorded versions are skipped, so it would have taken effect on fresh installs only. Worse, had it run, `AutoMigrate` executes on a connection carrying the 30-second `statement_timeout` and swallows failures as warnings while still recording the migration as applied — so a timed-out build would have looked like success.
+
+It is now an explicit migration (v54) in its own transaction with the timeout lifted and `maintenance_work_mem` raised, dialect-branched so SQLite tests still pass. The superseded `idx_syslog_severity` is dropped in the same migration — the composite covers it as a leading prefix, and it costs 673 MB here.
+
+### Added
+
+**Index builds now report progress.** A build over 68 M rows takes long enough that silence is indistinguishable from a hang, and this codebase had no progress reporting of any kind. A monitor polls `pg_stat_progress_create_index` on its own connection — the one issuing the DDL is blocked inside it — and logs phase alongside percentage every 10 seconds. Phase matters as much as percentage: the counters reset between phases, so a bare percentage going backwards reads as a fault when it is normal. Written generically, so any future index build gets the same visibility.
+
+### Note
+
+Per-severity windows are not yet settable from the UI, so behaviour is unchanged: every severity resolves through the legacy fallback. The settings API accepts the keys, and the Retention settings page follows.
+
 ## [0.11.182] - 2026-07-26
 
 ### Fixed

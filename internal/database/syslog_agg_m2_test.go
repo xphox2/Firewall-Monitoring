@@ -40,7 +40,7 @@ func TestAggregateSyslogToSummary_NoGroupLoss_M2(t *testing.T) {
 		}
 	}
 
-	ok, err := d.aggregateSyslogToSummary(cutoff, "1h")
+	ok, err := d.aggregateSyslogToSummary(cutoff, 6, "1h")
 	if err != nil {
 		t.Fatalf("aggregate: %v", err)
 	}

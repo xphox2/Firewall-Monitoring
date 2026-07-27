@@ -1206,6 +1206,78 @@ func (d *Database) migrateServerMetrics() error {
 	return d.db.AutoMigrate(&models.ServerMetric{})
 }
 
+// migrateSyslogSeverityIndex (v54) creates the (severity, timestamp) composite
+// that per-severity retention deletes need.
+//
+// It is an explicit migration rather than a model tag because a tag would do
+// NOTHING on an existing database: tags are only applied by migrateBaseline's
+// AutoMigrate loop, and runMigrationList skips any version already recorded, so
+// v1 never runs again. EnsurePartitions is no help either — it returns early for
+// a plain table, which is what syslog_messages is here. The tag is kept as well,
+// so fresh installs get the index from the baseline.
+//
+// The timeout is lifted deliberately. AutoMigrate would have run this on an
+// ordinary pooled connection carrying the DSN's 30s statement_timeout AND
+// swallowed the resulting abort as a warning while still recording the migration
+// as applied — a silent no-op. This runs its own transaction so the lift is
+// explicit and a failure is a real error.
+func (d *Database) migrateSyslogSeverityIndex() error {
+	const create = `CREATE INDEX IF NOT EXISTS idx_syslog_sev_ts ON syslog_messages (severity, "timestamp")`
+	// Superseded by the composite, which covers it as a leading prefix. Dropped
+	// AFTER the create so no query is ever left without an index to use.
+	const dropOld = `DROP INDEX IF EXISTS idx_syslog_severity`
+
+	if !d.dialect.IsPostgres() {
+		// SET LOCAL is Postgres-only syntax and registered migrations also run
+		// against SQLite in tests.
+		if err := d.db.Exec(create).Error; err != nil {
+			return fmt.Errorf("create idx_syslog_sev_ts: %w", err)
+		}
+		return d.db.Exec(dropOld).Error
+	}
+
+	d.logSyslogIndexScale()
+
+	stop := make(chan struct{})
+	d.watchIndexBuild("syslog_messages", stop)
+	// Closed even when the DDL errors, so a failed build never leaks the poller.
+	defer close(stop)
+
+	return d.db.Transaction(func(tx *gorm.DB) error {
+		// Lift the 30s timeout: this build takes minutes on a large table.
+		if err := tx.Exec("SET LOCAL statement_timeout = 0").Error; err != nil {
+			return err
+		}
+		// The server default (64MB) forces an external merge sort that spills to
+		// disk on a table this size. SET LOCAL reverts on commit.
+		if err := tx.Exec("SET LOCAL maintenance_work_mem = '1GB'").Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(create).Error; err != nil {
+			return fmt.Errorf("create idx_syslog_sev_ts: %w", err)
+		}
+		return tx.Exec(dropOld).Error
+	})
+}
+
+// logSyslogIndexScale states up front why the wait is long, so the progress
+// lines that follow have context.
+func (d *Database) logSyslogIndexScale() {
+	var info struct {
+		Rows int64
+		Size string
+	}
+	err := d.db.Raw(`
+		SELECT COALESCE(GREATEST(c.reltuples, 0), 0)::bigint AS rows,
+		       pg_size_pretty(pg_relation_size(c.oid))       AS size
+		FROM pg_class c WHERE c.relname = 'syslog_messages'`).Scan(&info).Error
+	if err != nil {
+		return
+	}
+	log.Printf("index build syslog_messages: creating idx_syslog_sev_ts over ~%d rows (%s heap); "+
+		"writes to this table are blocked until it completes", info.Rows, info.Size)
+}
+
 func (d *Database) migrateFlowSamplesAddDropsColumn() error {
 	if !d.dialect.IsPostgres() {
 		return d.db.AutoMigrate(&models.FlowSample{})

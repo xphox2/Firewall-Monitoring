@@ -161,6 +161,17 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		// The fwmon server's OWN volumes. 0 disables either trigger.
 		"server_disk_threshold":     true,
 		"server_disk_free_floor_gb": true,
+		// Per-severity syslog retention. Blank inherits the default; 0 keeps
+		// forever; N is days.
+		"syslog_retention_days_0":       true,
+		"syslog_retention_days_1":       true,
+		"syslog_retention_days_2":       true,
+		"syslog_retention_days_3":       true,
+		"syslog_retention_days_4":       true,
+		"syslog_retention_days_5":       true,
+		"syslog_retention_days_6":       true,
+		"syslog_retention_days_7":       true,
+		"syslog_retention_days_default": true,
 	}
 
 	secretKeys := settingsSecretKeys // v0.10.226: shared with GetSettings
@@ -191,6 +202,24 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		}
 		// Validate values by key type
 		switch s.Key {
+		case "syslog_retention_days_default", "syslog_retention_days_0", "syslog_retention_days_1",
+			"syslog_retention_days_2", "syslog_retention_days_3", "syslog_retention_days_4",
+			"syslog_retention_days_5", "syslog_retention_days_6", "syslog_retention_days_7":
+			// Three legal shapes, and they mean different things:
+			//   ""  clear the override, inherit the default
+			//   "0" keep forever
+			//   "N" keep N days
+			// Blank MUST be accepted — it is how a severity is re-coupled to the
+			// default, and rejecting it is what broke the alert-defaults save.
+			// The detect_* arm cannot be reused: it requires v >= 1.
+			if strings.TrimSpace(s.Value) != "" {
+				v, err := strconv.Atoi(strings.TrimSpace(s.Value))
+				if err != nil || v < 0 || v > 3650 {
+					c.JSON(http.StatusBadRequest, response.Error(
+						"syslog retention must be blank (inherit), 0 (keep forever), or 1-3650 days"))
+					return
+				}
+			}
 		case "server_disk_threshold":
 			// 0 disables the percentage trigger (the floor can still fire).
 			// Parsed as an INT because the poller reads it with GetIntSetting:
