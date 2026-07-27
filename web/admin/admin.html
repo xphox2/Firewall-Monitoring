@@ -845,7 +845,6 @@
                         <div class="form-group"><label for="alerting-g-telemetry-stale" title="Minutes without polled telemetry (vitals / interface stats) on a still-reachable device before a TELEMETRY_STALE alert fires. 0 disables. Must exceed the slowest per-device collection cadence (e.g. the SSH poll interval) or that device will fire and recover on each poll.">Telemetry stale threshold (min, 0 = off)</label><input type="number" id="alerting-g-telemetry-stale" min="0" max="1440" step="1"></div>
                         <div class="form-group"><label for="alerting-g-server-disk" title="Alert when the Firewall-Mon SERVER's own disk volume (both the root filesystem and the volume holding the database) reaches this percentage. 0 disables the percentage trigger. This is separate from the per-device Disk threshold above, which only covers monitored firewalls.">Server disk threshold (%, 0 = off)</label><input type="number" id="alerting-g-server-disk" min="0" max="100" step="1"><div class="field-hint">The server's own volumes. A full database volume stops PostgreSQL.</div></div>
                         <div class="form-group"><label for="alerting-g-server-disk-floor" title="Alert when a server volume has less than this many GB free, regardless of percentage. 0 disables. A percentage is a poor proxy on a large disk — 10% of 200GB is 20GB free, while 10% of 20GB is nearly nothing — so this floor catches the real danger: PostgreSQL needs room to write WAL.">Server disk free floor (GB, 0 = off)</label><input type="number" id="alerting-g-server-disk-floor" min="0" max="10000" step="1"><div class="field-hint">Fires on whichever trips first, this or the percentage.</div></div>
-                        <div class="form-group"><label for="alerting-g-syslog-band" title="Syslog severities BELOW this value are kept for the critical retention window; this value and above are kept for the shorter informational window. Default 6 keeps the historic split. Lowering it to 5 moves NOTICE — typically the large majority of syslog volume — onto the short window. Cannot exceed 6: severity 6 and above is handled by syslog aggregation, which has its own window.">Syslog critical below severity</label><input type="number" id="alerting-g-syslog-band" min="1" max="6" step="1"><div class="field-hint">Severities under this get the long (critical) retention window. 6 = historic behaviour; 5 moves NOTICE to the short window.</div></div>
                     </div>
                 </div>
             </div>
@@ -1141,6 +1140,7 @@
                 <a class="settings-nav-item" href="#reports" data-settings-section="reports">Reports</a>
                 <a class="settings-nav-item" href="#display" data-settings-section="display">Display</a>
                 <a class="settings-nav-item" href="#detection" data-settings-section="detection">Detection</a>
+                <a class="settings-nav-item" href="#retention" data-settings-section="retention">Retention</a>
             </nav>
             <div class="settings-content">
             <!-- The former Account section (password + 2FA) moved to the
@@ -1289,6 +1289,13 @@
                 <div class="card-header"><h2>sFlow Detection Thresholds</h2></div>
                 <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">Tune the sFlow detection engine. Leave a field blank to use the built-in default (or the <code>DETECT_*</code> env value). Changes apply within ~5 minutes — no restart. A port scan from a known-bad source (threat feed) always escalates to critical.</p>
                 <div class="settings-grid" id="settings-detection"></div>
+            </div>
+            </section>
+            <section class="settings-section" id="settings-section-retention" data-section="retention">
+            <div class="card">
+                <div class="card-header"><h2>Syslog Retention</h2></div>
+                <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">How long syslog is kept, per severity. Leave a severity blank to inherit the default. Enter <strong>0</strong> to keep it <strong>forever</strong>. Volume figures are estimates from database statistics, not exact counts &mdash; they are here to show which severity is actually consuming the space.</p>
+                <div id="settings-retention"></div>
             </div>
             </section>
             <!-- Sticky save bar: hidden until FwmonSettingsUI counts unsaved

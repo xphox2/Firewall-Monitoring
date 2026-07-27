@@ -1,6 +1,54 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.186] - 2026-07-26
+
+### Fixed
+
+**The per-severity volume estimate never appeared on partitioned installs — which is every fresh install.** PostgreSQL does not analyze a partitioned *parent* automatically; autovacuum only processes the leaves. So `pg_stats` for `syslog_messages` stays empty indefinitely, and reading the parent alone resolved no statistics at all: every severity rendered as "below what statistics track", including one holding tens of millions of rows. The feature's stated reason to exist was inert on the shape every new deployment has.
+
+The estimate now uses the parent's statistics when they exist and combines the leaves' otherwise, weighting each leaf by its row count — a leaf's frequency is a fraction *of that leaf*, so an unweighted mean would let a nearly-empty month distort the table. `syslogAvgRowWidth` had the same blind spot and the same fix.
+
+This survived the previous round's testing only because seeding the harness ran an explicit `ANALYZE` on the parent — the one thing production never does. Verified against all three real shapes, with the frequencies matching seeded ground truth exactly (0.001 / 0.025 / 0.97 / 0.004).
+
+**A blank retention default advertised a window it does not use.** The field's placeholder read `30`, but with no explicit default each severity falls back to the server's configured retention — which is **keep forever** for severities 0–5, not 30 days. On the page built in response to a disk-full outage, that is the most costly possible direction to be wrong in. The placeholder now reads `not set` and the hint says where the real windows come from; a single number cannot describe a per-severity fallback. The internal inherit sentinel no longer leaks into the API response either.
+
+### Added
+
+Integration tests covering the three shapes `syslog_messages` is actually deployed in — plain heap, partitioned with only the leaf analyzed, and partitioned with both analyzed — because each fails differently and the previous round was guarded only by reading rendered figures. Both bugs are mutation-verified: reverting to the parent-only query fails exactly the leaf-only shape, and re-introducing the parent-plus-partitions sum fails exactly the parent-analyzed shape with `total rows = 40000, want 20000`. A further test asserts the estimator reads **zero tuples** from the table, pinning the property the whole catalog-statistics approach exists for.
+
+## [0.11.185] - 2026-07-26
+
+### Changed
+
+**The CPU/memory/disk trend is its own dashboard module, and has lost its legend.** It was previously welded into the bottom of the Platform module's body. The tiles answer "is it bad now"; the trend answers "is it getting worse, and how fast" — a different question, and the one nobody could answer when the database volume filled. As a module it is now individually hideable and reorderable like everything else on the dashboard, and it gets room to be read (240px, up from 190px squeezed under the tiles).
+
+The legend is gone because the chart's interaction mode is `index`: hovering anywhere already names all four series with their values at that moment, so a static legend spent vertical space repeating what the hover says. Verified rather than assumed — a single hover yields all four labelled readings.
+
+Both modules take their severity dot from one shared `resourceSev`, so the tiles and the trend cannot disagree about whether the same four numbers are bad.
+
+### Fixed
+
+**The trend chart could outlive its canvas.** Hiding the module removes the canvas, but Chart.js kept the instance — and its full dataset — in its registry for a canvas that no longer existed, for as long as the page lived. Latent before, when the canvas could only disappear with the whole Platform module; reachable now that the chart is independently hideable. It is destroyed when its canvas is absent. Verified: hiding the module leaves zero orphaned charts, and re-showing rebuilds it.
+
+## [0.11.184] - 2026-07-26
+
+### Added
+
+**A Retention settings page, and syslog duration is now controlled in exactly one place.** Settings → Retention holds a default window plus a per-severity override for each of the eight syslog severities. Leave a severity blank to inherit the default; enter **0** to keep it forever. The v0.11.183 backend made this resolvable; this makes it operable.
+
+Each severity shows its **resolved effective window** — including one inherited as "kept forever" — beside an estimate of what it costs. Both matter: setting the default legitimately ends an inherited keep-forever for the low severities, and that has to be visible at the moment it is chosen rather than discovered when the data is gone. The volume figures are what turn eight anonymous number boxes into a decision, because in practice one severity is ~97% of the table.
+
+**Volume is estimated from database statistics, never counted.** A real `GROUP BY` over 68 M rows would risk the 30-second statement timeout on every page load — the exact failure class this work exists to remove. Sampling was rejected for the opposite reason: the rare severities are ~0.01% of rows, so even a 0.1% sample would routinely report **zero** for emergency and error, and a hard zero on EMERG invites shortening it. The planner's own statistics give per-severity frequencies with no table access at all, and a severity too rare to be tracked is reported as such rather than as a fabricated zero.
+
+### Changed
+
+The syslog band field is **removed from the alerting page**, leaving one control for syslog duration rather than two that could disagree. The underlying setting stays — the resolver still reads it as the legacy fallback for anyone who never opens the new page — so this is purely the removal of a duplicate surface. All four sites were removed together: leaving either half would have re-created the v0.11.182 bug where the whole alert-defaults batch is abandoned.
+
+### Fixed
+
+**Estimated volume double-counted on partitioned installs.** The row total summed the relation *and* its partitions, but an explicit `ANALYZE` on a partitioned parent populates the parent's estimate with the whole total too — so 20,000 rows reported as 40,000. Production is a plain heap and was unaffected; every fresh install would have been wrong. Now it sums the partitions or the relation, never both. Caught by checking the rendered figures against seeded data rather than trusting the query.
+
 ## [0.11.183] - 2026-07-26
 
 ### Added

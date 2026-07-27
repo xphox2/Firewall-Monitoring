@@ -17,6 +17,7 @@
     var TRACKED_CONTAINERS = [
         '#settings-notifications', '#settings-smtp',
         '#settings-reports', '#settings-detection',
+        '#settings-retention',
         '#display-settings'
     ];
     var TRACKED_SELECTOR = TRACKED_CONTAINERS.join(',');

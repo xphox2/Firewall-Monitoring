@@ -36,6 +36,17 @@ import (
 // consumers must never key off different sets.
 var settingsSecretKeys = database.SecretSettingKeys
 
+// GetSyslogRetention backs the Retention settings page: each severity's
+// resolved window alongside an estimate of what it costs.
+//
+// The volume figures are estimates read from planner statistics rather than
+// counted. Counting 68M rows on every page load would risk the 30s
+// statement_timeout — the very failure class per-severity retention exists to
+// remove — and it would be self-inflicted.
+func (h *Handler) GetSyslogRetention(c *gin.Context) {
+	c.JSON(http.StatusOK, response.Success(h.reqDB(c).SyslogVolume(h.config.Retention)))
+}
+
 func (h *Handler) GetSettings(c *gin.Context) {
 	if h.db == nil {
 		c.JSON(http.StatusOK, response.Success([]models.SystemSetting{}))
