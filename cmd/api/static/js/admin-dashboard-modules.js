@@ -71,7 +71,14 @@
 
     function loadServerTrend() {
         var el = document.getElementById('dash-server-trend');
-        if (!el || typeof Chart === 'undefined') return;
+        // Hiding the module removes the canvas. Drop the chart with it: a live
+        // Chart bound to a detached canvas is still walked by
+        // recolorChartsForTheme via Chart.getChart() on every theme flip.
+        if (!el) {
+            if (serverTrendChart) { serverTrendChart.destroy(); serverTrendChart = null; }
+            return;
+        }
+        if (typeof Chart === 'undefined') return;
         // AC.apiFetch resolves to the PARSED body, not a Response — calling
         // .json() on it throws, and the .catch below would swallow it into a
         // console warning while the chart silently never rendered.
@@ -107,7 +114,11 @@
                         responsive: true, maintainAspectRatio: false,
                         interaction: { mode: 'index', intersect: false },
                         scales: { y: { beginAtZero: true, max: 100, ticks: { callback: function (v) { return v + '%'; } } } },
-                        plugins: { legend: { display: true, labels: { boxWidth: 10 } } }
+                        // No legend: interaction mode 'index' means hovering
+                        // anywhere names all four series with their values at
+                        // that moment, so a static legend spends vertical space
+                        // to repeat what the hover already says.
+                        plugins: { legend: { display: false } }
                     }
                 });
             })
@@ -116,19 +127,23 @@
 
     // ---- module definitions --------------------------------------------------
     // Each: { id, title, sev(data)->'ok'|'warn'|'crit', body(data)->html }
+    // Shared by the Platform tiles and the Resource trend chart, which report the
+    // same four quantities and must never disagree about whether they are bad.
+    //
+    // data_disk_percent is the volume holding the database. It is usually NOT the
+    // root filesystem, and it is the one that takes the system down: a full
+    // PGDATA crash-loops Postgres on "No space left on device". Omitting it here
+    // is why a 98% data volume showed as a healthy 83% platform tile.
+    function resourceSev(d) {
+        var h = (d.platform || {}).host || {};
+        return pctSev(Math.max(h.cpu_percent || 0, h.mem_percent || 0,
+            h.disk_percent || 0, h.data_disk_percent || 0));
+    }
+
     var MODULES = [
         {
             id: 'platform', title: 'Platform',
-            sev: function (d) {
-                var h = (d.platform || {}).host || {};
-                // data_disk_percent is the volume holding the database. It is
-                // usually NOT the root filesystem, and it is the one that takes
-                // the system down: a full PGDATA crash-loops Postgres on
-                // "No space left on device". Omitting it here is why a 98% data
-                // volume showed as a healthy 83% platform tile.
-                return pctSev(Math.max(h.cpu_percent || 0, h.mem_percent || 0,
-                    h.disk_percent || 0, h.data_disk_percent || 0));
-            },
+            sev: resourceSev,
             body: function (d) {
                 var p = d.platform || {}, host = p.host || {}, rt = p.runtime || {};
                 function pc(v) { return v == null ? 'n/a' : Math.round(v) + '%'; }
@@ -146,7 +161,20 @@
                     tile('Goroutines', num(rt.goroutines)) +
                     tile('Heap', rt.heap_alloc_mb != null ? Math.round(rt.heap_alloc_mb) + ' MB' : 'n/a') +
                     tile('Version', '<span style="font-size:0.9rem">' + esc(p.version || '—') + '</span>')
-                ) + '<div style="margin-top:14px;height:190px;position:relative;">' +
+                );
+            }
+        },
+        {
+            // Its own module rather than a footnote under the Platform tiles:
+            // the tiles answer "is it bad now" and this answers "is it getting
+            // worse, and how fast" — a different question, and the one nobody
+            // could answer when the database volume filled. Being a module also
+            // makes it individually hideable and reorderable like everything
+            // else on the dashboard.
+            id: 'resources', title: 'Resource trend · 24h',
+            sev: resourceSev,
+            body: function () {
+                return '<div style="height:240px;position:relative;">' +
                     '<canvas id="dash-server-trend"></canvas></div>';
             }
         },
@@ -364,7 +392,7 @@
         host.innerHTML = html || '<div class="dash-empty" style="padding:32px;">All modules hidden — click Customize to add some.</div>';
         // No per-module post-render hook exists, and body() can only return
         // markup — so the chart is built here, after the canvas is in the DOM.
-        // No-ops when the Platform module is hidden.
+        // No-ops (and releases the chart) when the Resources module is hidden.
         loadServerTrend();
         if (customizing) wireDnd(host);
     }

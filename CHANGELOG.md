@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.185] - 2026-07-26
+
+### Changed
+
+**The CPU/memory/disk trend is its own dashboard module, and has lost its legend.** It was previously welded into the bottom of the Platform module's body. The tiles answer "is it bad now"; the trend answers "is it getting worse, and how fast" — a different question, and the one nobody could answer when the database volume filled. As a module it is now individually hideable and reorderable like everything else on the dashboard, and it gets room to be read (240px, up from 190px squeezed under the tiles).
+
+The legend is gone because the chart's interaction mode is `index`: hovering anywhere already names all four series with their values at that moment, so a static legend spent vertical space repeating what the hover says. Verified rather than assumed — a single hover yields all four labelled readings.
+
+Both modules take their severity dot from one shared `resourceSev`, so the tiles and the trend cannot disagree about whether the same four numbers are bad.
+
+### Fixed
+
+**The trend chart could outlive its canvas.** Hiding the module removes the canvas, but the Chart instance stayed registered against the detached node — and `recolorChartsForTheme` walks every chart via `Chart.getChart()` on each theme flip. Latent before, when the canvas could only disappear with the whole Platform module; reachable now that the chart is independently hideable. It is destroyed when its canvas is absent. Verified: hiding the module leaves zero orphaned charts, and re-showing rebuilds it.
+
 ## [0.11.184] - 2026-07-26
 
 ### Added
