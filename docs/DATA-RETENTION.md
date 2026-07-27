@@ -198,3 +198,21 @@ the biggest wins are: set `RETENTION_SYSLOG_CRITICAL_DAYS` to a finite value
 also consider lowering `RETENTION_FLOW_ROLLUP_DAYS` (default 365): rollups
 retain per-conversation src/dst IP pairs for a full year even after the raw
 `flow_samples` rows have aged out.
+
+## Syslog retention
+
+> **Syslog retention is per severity (v0.11.183+).** Each severity has its own
+> window, set in **Settings → Retention**. A severity left blank inherits the
+> default; **0 keeps it forever**. The older two-band model
+> (`RETENTION_SYSLOG_CRITICAL_DAYS` / `RETENTION_SYSLOG_INFO_DAYS` split at a
+> configurable boundary) still applies as the fallback for any severity that has
+> not been given a window, so an operator who changes nothing keeps exactly the
+> retention they have today.
+>
+> Two things worth knowing before shortening a window on a large table. The first
+> cleanup afterwards deletes everything that just fell outside it — on a fleet
+> where one severity dominates, that can be tens of millions of rows. It is safe
+> and resumable (10k rows per transaction, with a pause between), but it runs for
+> **hours**. And `DELETE` returns space to the table's free list for reuse, not to
+> the operating system: the database will stop growing, it will not shrink.
+

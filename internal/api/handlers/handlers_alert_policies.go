@@ -356,11 +356,6 @@ func (h *Handler) alertGlobalDefaults(db database.Store) gin.H {
 		// The fwmon server's own volumes; see serverhealth.
 		"server_disk_threshold":     85,
 		"server_disk_free_floor_gb": 5,
-		// Syslog retention band boundary. MUST be here, not only in the save
-		// path: admin-alerting.js maps this field for reading and pushes it
-		// unconditionally on save, so omitting it renders the input empty, the
-		// save then posts "", and validation rejects the whole batch.
-		"syslog_critical_below_severity": 6,
 	}
 	var settings []models.SystemSetting
 	db.Gorm().Where(`"key" IN ?`, []string{
@@ -368,7 +363,6 @@ func (h *Handler) alertGlobalDefaults(db database.Store) gin.H {
 		"spike_alert_enabled", "spike_stddev_threshold", "spike_min_duration_minutes",
 		"spike_min_throughput_mbps", "telemetry_stale_minutes",
 		"server_disk_threshold", "server_disk_free_floor_gb",
-		"syslog_critical_below_severity",
 	}).Find(&settings)
 	for _, s := range settings {
 		if s.Value == "" {
@@ -381,7 +375,7 @@ func (h *Handler) alertGlobalDefaults(db database.Store) gin.H {
 				g[s.Key] = v
 			}
 		case "session_threshold", "spike_min_duration_minutes", "telemetry_stale_minutes",
-			"server_disk_free_floor_gb", "syslog_critical_below_severity":
+			"server_disk_free_floor_gb":
 			if v, err := strconv.Atoi(s.Value); err == nil {
 				g[s.Key] = v
 			}

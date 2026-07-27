@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"firewall-mon/internal/config"
 
 	"gorm.io/gorm"
 
@@ -290,6 +291,8 @@ type IngestStore interface {
 	// Server self-monitoring samples (the host running this software).
 	SaveServerMetric(m *models.ServerMetric) error
 	GetServerMetricWindow(from, to time.Time) ([]ServerMetricBucket, error)
+	// Retention page: resolved per-severity windows + estimated volume.
+	SyslogVolume(ret config.RetentionConfig) SyslogVolumeReport
 	SaveLoadAverage(rows []models.LoadAverage) error
 	SaveSDWANHealth(health []models.SDWANHealth) error
 	SaveSecurityStats(stats []models.SecurityStats) error

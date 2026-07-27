@@ -2436,6 +2436,84 @@
 
     populateTimezoneSelect();
 
+
+    // ---- Syslog retention (per severity) ---------------------------------
+    // One place controls syslog duration. A default covers every severity;
+    // typing a value into a severity uncouples it.
+    //
+    // The volume figures are ESTIMATES from database statistics, not counts:
+    // counting 68M rows on every page load would risk the same 30s timeout this
+    // feature exists to avoid. They are shown because the whole decision turns
+    // on one severity typically being ~97% of the data — without them the page
+    // is eight anonymous boxes.
+    var SYSLOG_RETENTION_PREFIX = 'syslog_retention_days_';
+    var SYSLOG_RETENTION_DEFAULT = 'syslog_retention_days_default';
+
+    function renderRetentionSettings(settings) {
+        var host = document.getElementById('settings-retention');
+        if (!host) return;
+
+        AC.apiFetch(API_BASE + '/settings/syslog-retention').then(function (res) {
+            var d = (res && res.data) || {};
+            var sevs = d.severities || [];
+            var stored = function (key) {
+                var f = settings.find(function (x) { return x.key === key; });
+                return f ? f.value : '';
+            };
+
+            function fmtRows(v) {
+                if (!v.tracked) return '<span style="color:var(--fwmon-text-faint);">below what statistics track</span>';
+                var r = v.est_rows, unit = '';
+                if (r >= 1e6) { r = (r / 1e6).toFixed(1); unit = 'M'; }
+                else if (r >= 1e3) { r = (r / 1e3).toFixed(0); unit = 'k'; }
+                var mb = v.est_bytes / (1024 * 1024);
+                var size = mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : Math.round(mb) + ' MB';
+                return '~' + r + unit + ' rows, ~' + size;
+            }
+            // Say what a severity ACTUALLY resolves to. Setting the default
+            // legitimately ends an inherited keep-forever; that has to be
+            // visible when it is chosen, not discovered when the data is gone.
+            function fmtWindow(v) {
+                var txt = v.forever ? 'kept forever' : v.days + ' days';
+                if (v.inherited) txt += ' <span style="color:var(--fwmon-text-faint);">(inherited)</span>';
+                return txt;
+            }
+
+            var rows = sevs.map(function (v) {
+                return '<tr>' +
+                    '<td style="white-space:nowrap;"><strong>' + v.severity + '</strong> ' + escapeHtml(v.name) + '</td>' +
+                    '<td><input type="number" name="' + SYSLOG_RETENTION_PREFIX + v.severity +
+                        '" value="' + escapeHtml(stored(SYSLOG_RETENTION_PREFIX + v.severity)) +
+                        '" placeholder="inherit" min="0" max="3650" step="1" style="width:90px;"></td>' +
+                    '<td style="font-size:0.85rem;">' + fmtWindow(v) + '</td>' +
+                    '<td style="font-size:0.85rem;color:var(--fwmon-text-faint);">' + fmtRows(v) + '</td>' +
+                    '</tr>';
+            }).join('');
+
+            var note = d.stats_available ? '' :
+                '<p style="color:var(--fwmon-text-faint);font-size:0.82rem;">Volume statistics not yet collected for this table; figures will appear after the database next analyses it.</p>';
+
+            host.innerHTML =
+                '<div class="form-group" style="max-width:320px;">' +
+                    '<label for="' + SYSLOG_RETENTION_DEFAULT + '">Default for all severities (days)</label>' +
+                    '<input type="number" id="' + SYSLOG_RETENTION_DEFAULT + '" name="' + SYSLOG_RETENTION_DEFAULT +
+                        '" value="' + escapeHtml(stored(SYSLOG_RETENTION_DEFAULT)) +
+                        '" placeholder="30" min="0" max="3650" step="1">' +
+                    '<div class="field-hint">Applies to every severity left blank below. 0 keeps everything forever.</div>' +
+                '</div>' + note +
+                '<table class="data-table" style="margin-top:10px;"><thead><tr>' +
+                    '<th>Severity</th><th>Keep (days)</th><th>Effective</th><th>Estimated volume</th>' +
+                '</tr></thead><tbody>' + rows + '</tbody></table>';
+
+            if (window.FwmonSettingsUI && FwmonSettingsUI.snapshotBaseline) {
+                FwmonSettingsUI.snapshotBaseline();
+            }
+        }).catch(function (e) {
+            fwmonLog.warn('[Settings] retention load failed', e);
+            host.innerHTML = '<p style="color:var(--fwmon-text-faint);">Retention settings unavailable.</p>';
+        });
+    }
+
     function loadSettings() {
         apiFetch(API_BASE + '/settings').then(function(result) {
             if (!result) return;
@@ -2558,6 +2636,8 @@
 
             // sFlow detection thresholds. Blank input = use the built-in/env
             // default (shown as the placeholder); a value overrides it live.
+            renderRetentionSettings(settings);
+
             document.getElementById('settings-detection').innerHTML = [
                 { key: 'detect_port_scan_ports', label: 'Port scan — distinct dst ports', def: '100', step: '1' },
                 { key: 'detect_super_spreader_hosts', label: 'Super-spreader — distinct dst hosts', def: '100', step: '1' },
@@ -3216,6 +3296,13 @@
         document.querySelectorAll('#settings-detection input').forEach(function(input) {
             // value may be "" (blank = use default) — sent through so the server clears any prior override.
             settings.push({ key: input.name, value: input.value.trim(), category: 'detection', type: 'string' });
+        });
+
+        document.querySelectorAll('#settings-retention input').forEach(function(input) {
+            // Blank is POSTED, not skipped — that is how a severity is re-coupled
+            // to the default. Blank and "0" are different: blank inherits, 0 keeps
+            // forever, and the server distinguishes them via a sentinel.
+            settings.push({ key: input.name, value: input.value.trim(), category: 'retention', type: 'string' });
         });
 
         var tzSel = document.getElementById('display-timezone');

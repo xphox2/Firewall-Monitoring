@@ -1,6 +1,24 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.184] - 2026-07-26
+
+### Added
+
+**A Retention settings page, and syslog duration is now controlled in exactly one place.** Settings → Retention holds a default window plus a per-severity override for each of the eight syslog severities. Leave a severity blank to inherit the default; enter **0** to keep it forever. The v0.11.183 backend made this resolvable; this makes it operable.
+
+Each severity shows its **resolved effective window** — including one inherited as "kept forever" — beside an estimate of what it costs. Both matter: setting the default legitimately ends an inherited keep-forever for the low severities, and that has to be visible at the moment it is chosen rather than discovered when the data is gone. The volume figures are what turn eight anonymous number boxes into a decision, because in practice one severity is ~97% of the table.
+
+**Volume is estimated from database statistics, never counted.** A real `GROUP BY` over 68 M rows would risk the 30-second statement timeout on every page load — the exact failure class this work exists to remove. Sampling was rejected for the opposite reason: the rare severities are ~0.01% of rows, so even a 0.1% sample would routinely report **zero** for emergency and error, and a hard zero on EMERG invites shortening it. The planner's own statistics give per-severity frequencies with no table access at all, and a severity too rare to be tracked is reported as such rather than as a fabricated zero.
+
+### Changed
+
+The syslog band field is **removed from the alerting page**, leaving one control for syslog duration rather than two that could disagree. The underlying setting stays — the resolver still reads it as the legacy fallback for anyone who never opens the new page — so this is purely the removal of a duplicate surface. All four sites were removed together: leaving either half would have re-created the v0.11.182 bug where the whole alert-defaults batch is abandoned.
+
+### Fixed
+
+**Estimated volume double-counted on partitioned installs.** The row total summed the relation *and* its partitions, but an explicit `ANALYZE` on a partitioned parent populates the parent's estimate with the whole total too — so 20,000 rows reported as 40,000. Production is a plain heap and was unaffected; every fresh install would have been wrong. Now it sums the partitions or the relation, never both. Caught by checking the rendered figures against seeded data rather than trusting the query.
+
 ## [0.11.183] - 2026-07-26
 
 ### Added
