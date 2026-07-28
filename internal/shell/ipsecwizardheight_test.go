@@ -163,8 +163,15 @@ func TestIPSecWizard_InsidePortsDeriveFromSubnets(t *testing.T) {
 	// Bound to the textarea, never the form: a restore sets .value
 	// programmatically and fires no input event, so binding here is what stops a
 	// saved tunnel's port selection being rewritten just by being reopened.
-	if !strings.Contains(js, "sb.addEventListener('input', function () { autoTickLANFromSubnets(pfx); })") {
+	//
+	// Matched structurally rather than as one exact line — the handler has since
+	// grown a second call, and a literal pin would fail on a change that keeps
+	// the property intact.
+	bind := regexp.MustCompile(`(?s)sb\.addEventListener\('input',\s*function\s*\(\)\s*\{(.*?)\}\);`).FindStringSubmatch(js)
+	if bind == nil {
 		t.Error("subnet-driven derivation is not bound to the subnets textarea's input event")
+	} else if !strings.Contains(bind[1], "autoTickLANFromSubnets(pfx)") {
+		t.Error("the subnets textarea's input handler no longer derives the inside ports")
 	}
 
 	// Vendors whose rules name no interface must be left alone.
@@ -172,5 +179,68 @@ func TestIPSecWizard_InsidePortsDeriveFromSubnets(t *testing.T) {
 		t.Error("the derivation does not exempt vendors that never name an interface " +
 			"(OPNsense's rules are floating and subnet-scoped) — it would tick a control " +
 			"that vendor does not even show")
+	}
+}
+
+// Selective subnet paths: the wizard's own rules, which the Go tests cannot see.
+//
+// The tunnel otherwise carries the full cross product of both ends' subnets, so
+// switching a path off is a security control. These pin the parts where getting
+// it wrong is silent.
+func TestIPSecWizard_SelectivePathRules(t *testing.T) {
+	js := readWizardAsset(t, "../../cmd/api/static/js/admin-ipsec.js")
+
+	// Keys must mirror the server: canonical, so reformatting a subnet keeps a
+	// path disabled rather than quietly re-enabling it.
+	if !strings.Contains(js, "function canonNet") || !strings.Contains(js, "function pathKey") {
+		t.Error("no canonical path-key construction — a raw key would fail OPEN when the " +
+			"operator reformats a subnet, silently re-enabling a path they switched off")
+	}
+
+	// The count must never claim more children than the device will hold.
+	if !strings.Contains(js, "childCount: on") {
+		t.Error("childCount is not restricted to ENABLED lanes; the caption would overstate " +
+			"what the device holds — the UI-lies-about-the-device failure this area exists to avoid")
+	}
+
+	// Route-based negotiates one 0.0.0.0/0 selector; a per-path control there
+	// would do nothing on the device.
+	if !strings.Contains(js, "var tog = m.routed ? ''") {
+		t.Error("per-path toggles are not suppressed in route-based mode")
+	}
+
+	// Propagation must only ever release a port the wizard itself ticked.
+	prune := regexp.MustCompile(`(?s)function pruneFullyDisabledSubnets\(\)\s*\{(.*?)\n    \}`).FindStringSubmatch(js)
+	if prune == nil {
+		t.Fatal("pruneFullyDisabledSubnets() not found")
+	}
+	// Pin the GUARD, not merely a mention. The function also DELETEs from
+	// lanAutoTicked, so a substring check anywhere in the body passes even with
+	// the guard removed — the exact way a test can look green while the
+	// protection is gone.
+	guard := regexp.MustCompile(`if \(!cb\.checked \|\|([^)]*)\) \{ return; \}`).FindStringSubmatch(prune[1])
+	if guard == nil {
+		t.Fatal("the untick guard in pruneFullyDisabledSubnets() is not in the expected shape")
+	}
+	if !strings.Contains(guard[1], "lanAutoTicked") {
+		t.Error("the untick guard does not consult lanAutoTicked — propagation could untick " +
+			"a port the operator chose by hand, which may serve a subnet routed downstream " +
+			"of it that no address table can show")
+	}
+	if !strings.Contains(guard[1], "still[cb.value]") {
+		t.Error("the untick guard does not check whether another live subnet still needs the " +
+			"port; autoTickLANFromSubnets would tick it straight back on the next keystroke")
+	}
+	// Dispatching change here would record the wizard's own untick as the
+	// operator's and permanently suppress auto-ticking for that port.
+	if regexp.MustCompile(`cb\.checked = false;\s*\n\s*cb\.dispatchEvent`).MatchString(prune[1]) {
+		t.Error("propagation dispatches a change event when unticking, which records it as " +
+			"an OPERATOR untick and suppresses future auto-ticking for that port")
+	}
+
+	// The selection has to reach the server.
+	if !strings.Contains(js, "disabled_paths: Object.keys(disabledPaths)") {
+		t.Error("the disabled paths are never sent — the wizard would show a path as off " +
+			"while the device carries it")
 	}
 }

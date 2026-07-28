@@ -112,6 +112,43 @@ type ProvisionedTunnelPair struct {
 	// ASubnets/BSubnets are the protected subnets of ends A and B respectively.
 	ASubnets []string
 	BSubnets []string
+	// EnabledPaths are the (A-side, B-side) subnet pairs the tunnel actually
+	// provisions, once individually disabled paths are removed.
+	//
+	// Carried as PAIRS because the enabled set generally cannot be expressed as
+	// two lists: disable one path of a 2x2 and the surviving three are not the
+	// cross product of any pair of lists. Filtering ASubnets/BSubnets instead
+	// would be a no-op precisely when it matters, since every subnet still has
+	// at least one enabled path.
+	//
+	// Meaningful only when PathDetail is true.
+	EnabledPaths [][2]string
+	// PathDetail says EnabledPaths is authoritative. It exists because an empty
+	// EnabledPaths is otherwise ambiguous between "route-based, so there are no
+	// pairs and the flat lists are what to match on" and "policy-based with
+	// every path switched off, so this tunnel carries nothing" — opposite
+	// answers to the same question.
+	PathDetail bool
+}
+
+// PathsFor returns this tunnel's enabled subnet pairs oriented for deviceID —
+// (local, remote) from that device's point of view. ok is false if deviceID is
+// not an endpoint, or if the tunnel has no pair-level detail (route-based).
+func (p ProvisionedTunnelPair) PathsFor(deviceID uint) (paths [][2]string, ok bool) {
+	if !p.PathDetail {
+		return nil, false
+	}
+	switch deviceID {
+	case p.A:
+		return p.EnabledPaths, true
+	case p.B:
+		flipped := make([][2]string, 0, len(p.EnabledPaths))
+		for _, pr := range p.EnabledPaths {
+			flipped = append(flipped, [2]string{pr[1], pr[0]})
+		}
+		return flipped, true
+	}
+	return nil, false
 }
 
 // SubnetsFor returns the protected subnets of whichever end is deviceID, and
@@ -169,6 +206,18 @@ func (d *Database) GetProvisionedTunnelPairs() (map[string]ProvisionedTunnelPair
 		if in, ierr := IPSecModelToIntent(&m); ierr == nil && in != nil {
 			p.ASubnets = append([]string(nil), in.Ends[0].ProtectedSubnets...)
 			p.BSubnets = append([]string(nil), in.Ends[1].ProtectedSubnets...)
+			// Pair-level detail only where pairs exist. Route-based negotiates a
+			// single 0.0.0.0/0 selector, and PathsFor reports exactly that — which
+			// would match every row on the box if used for attribution, so it is
+			// deliberately left nil and the subnet lists stay authoritative there.
+			if in.Mode == ipsec.ModePolicyBased {
+				p.PathDetail = true
+				for _, path := range in.PathsFor(0) {
+					if path.Enabled {
+						p.EnabledPaths = append(p.EnabledPaths, [2]string{path.Local, path.Remote})
+					}
+				}
+			}
 		}
 		out[strings.ToLower(m.Name)] = p
 	}

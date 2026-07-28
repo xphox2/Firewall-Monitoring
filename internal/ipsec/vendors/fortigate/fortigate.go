@@ -184,7 +184,10 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 	steps := []ipsec.ApplyStep{
 		fgAPI("phase1-interface (IKE gateway)", "POST", cmdbPhase1, inject(p1json, in.PSK)),
 	}
-	for _, p := range fgPhase2Pairs(name, in, local, remote) {
+	for _, p := range fgPhase2Pairs(name, in, v.Self) {
+		if !p.enabled {
+			continue // path switched off: no selector, so it carries nothing
+		}
 		steps = append(steps, mkPhase2(p.mkey, p.src, p.dst))
 	}
 	steps = append(steps, fgAPI("tunnel interface addressing"+mssNote(local.MSSClamp), "PUT", cmdbIface+"/"+name, jsonBody(ifbody)))
@@ -244,8 +247,21 @@ func (d driver) RenderRemove(v ipsec.RenderView) (ipsec.Artifact, error) {
 	for i := routeCount(local, remote) - 1; i >= 0; i-- {
 		steps = append(steps, fgDelete("delete static route", cmdbRoute+"/"+itoa(ipsec.FGRouteKey(in.ID, i))))
 	}
-	// phase2 objects (reverse of create) before phase1
-	pairs := fgPhase2Pairs(name, in, local, remote)
+	// phase2 objects (reverse of create) before phase1 — sweeping the WHOLE slot
+	// space, disabled paths included, exactly as the route sweep above does.
+	//
+	// This is not tidiness. RunApply's remove loop is continue-on-error, so a
+	// rollback can fail on one phase2 DELETE and still delete phase1, leaving an
+	// orphan phase2 with no phase1. ForceResetIPSecDeploy then returns the tunnel
+	// to draft; if the operator disables that very path and redeploys, preflight
+	// probes only ENABLED mkeys, misses the orphan, recreates phase1 — and the
+	// orphan binds to it by phase1name, putting the disabled path back on the
+	// wire. Sweeping every slot keeps the orphan in the next rollback's snapshot
+	// so it is reaped rather than becoming permanently invisible.
+	//
+	// A DELETE of a never-created mkey is treated as success by the collector, so
+	// the extra steps cost nothing.
+	pairs := fgPhase2Pairs(name, in, v.Self)
 	for i := len(pairs) - 1; i >= 0; i-- {
 		steps = append(steps, fgDelete("delete phase2-interface", cmdbPhase2+"/"+pairs[i].mkey))
 	}
@@ -282,7 +298,13 @@ func (d driver) PreflightProbe(v ipsec.RenderView) []ipsec.PreflightStep {
 		{Check: "auth", Method: "GET", Path: "/api/v2/monitor/system/status"},
 		{Check: "phase1", Method: "GET", Path: cmdbPhase1 + "/" + name, ExpectAbsent: true},
 	}
-	for _, p := range fgPhase2Pairs(name, in, local, remote) {
+	for _, p := range fgPhase2Pairs(name, in, v.Self) {
+		if !p.enabled {
+			// Probing a disabled mkey would demand it be ABSENT, and the collector
+			// re-runs these post-write expecting PRESENT — so this cannot become a
+			// collision check without a coordinated collector change.
+			continue
+		}
 		steps = append(steps, ipsec.PreflightStep{Check: "phase2", Method: "GET", Path: cmdbPhase2 + "/" + p.mkey, ExpectAbsent: true})
 	}
 	steps = append(steps, ipsec.PreflightStep{Check: "vti", Method: "GET", Path: cmdbIface + "/" + name, ExpectAbsent: true})
@@ -556,28 +578,46 @@ func createdRouteIndices(local, remote *ipsec.EndpointSpec) []int {
 }
 
 // fgPhase2Pair is one phase2-interface: its cmdb mkey (name) + FortiGate-format
-// selectors. RenderRemove/PreflightProbe enumerate the SAME pairs to stay in sync.
-type fgPhase2Pair struct{ mkey, src, dst string }
+// selectors, plus whether the operator has this path switched ON.
+//
+// RenderRemove/PreflightProbe enumerate the SAME pairs to stay in sync — but
+// they do NOT all consume `enabled` the same way; see fgPhase2Pairs.
+type fgPhase2Pair struct {
+	mkey, src, dst string
+	enabled        bool
+}
 
-// fgPhase2Pairs returns the phase2 objects for the tunnel. Route-based = one 0/0
-// pair keyed by the tunnel name. Policy-based = one pair per (local×remote)
-// protected-subnet, keyed `name` (first) then `name-<k>` — FortiGate holds a
-// single src/dst pair per phase2, so multiple selectors need multiple phase2s.
-func fgPhase2Pairs(name string, in *ipsec.TunnelIntent, local, remote *ipsec.EndpointSpec) []fgPhase2Pair {
-	if in.Mode != ipsec.ModePolicyBased || len(local.ProtectedSubnets) == 0 || len(remote.ProtectedSubnets) == 0 {
-		return []fgPhase2Pair{{name, "0.0.0.0 0.0.0.0", "0.0.0.0 0.0.0.0"}}
+// fgPhase2Pairs returns EVERY phase2 slot for the tunnel, enabled or not.
+// Route-based = one 0/0 pair keyed by the tunnel name. Policy-based = one pair
+// per (local×remote) protected-subnet, keyed `name` (first) then `name-<k>` —
+// FortiGate holds a single src/dst pair per phase2, so multiple selectors need
+// multiple phase2s.
+//
+// The mkey suffix comes from the pair's index in the FULL cross product and is
+// never compacted, so disabling a path leaves every other path's device object
+// exactly where it was. Compacting would slide `name-3` down to `name-2` and
+// silently re-point a live object at a different selector.
+//
+// Callers decide what to do with disabled slots:
+//   - Render and PreflightProbe SKIP them (nothing is created, nothing probed).
+//   - RenderRemove sweeps them ALL. That is deliberate — see its comment.
+func fgPhase2Pairs(name string, in *ipsec.TunnelIntent, self int) []fgPhase2Pair {
+	paths := in.PathsFor(self)
+	if len(paths) == 0 {
+		// Either side empty: FortiOS still needs a selector, and 0/0 is what this
+		// driver has always fallen back to here.
+		return []fgPhase2Pair{{name, "0.0.0.0 0.0.0.0", "0.0.0.0 0.0.0.0", true}}
 	}
-	var pairs []fgPhase2Pair
-	idx := 0
-	for _, ls := range local.ProtectedSubnets {
-		for _, rs := range remote.ProtectedSubnets {
-			mkey := name
-			if idx > 0 {
-				mkey = fmt.Sprintf("%s-%d", name, idx)
-			}
-			pairs = append(pairs, fgPhase2Pair{mkey, cidrToFGT(ls), cidrToFGT(rs)})
-			idx++
+	if in.Mode != ipsec.ModePolicyBased {
+		return []fgPhase2Pair{{name, "0.0.0.0 0.0.0.0", "0.0.0.0 0.0.0.0", true}}
+	}
+	pairs := make([]fgPhase2Pair, 0, len(paths))
+	for _, p := range paths {
+		mkey := name
+		if p.Index > 0 {
+			mkey = fmt.Sprintf("%s-%d", name, p.Index)
 		}
+		pairs = append(pairs, fgPhase2Pair{mkey, cidrToFGT(p.Local), cidrToFGT(p.Remote), p.Enabled})
 	}
 	return pairs
 }

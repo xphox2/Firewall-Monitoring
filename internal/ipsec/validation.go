@@ -253,6 +253,9 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 	// --- protected-subnet linters (overlap + self-lockout).
 	fs = append(fs, validateSubnets(intent)...)
 
+	// --- selectively disabled paths.
+	fs = append(fs, validateDisabledPaths(intent)...)
+
 	// --- MTU/MSS + reachability warnings.
 	for i := range intent.Ends {
 		e := &intent.Ends[i]
@@ -370,6 +373,38 @@ func validateSubnets(intent *TunnelIntent) []Finding {
 	for i := range intent.Ends {
 		if n := len(intent.Ends[i].ProtectedSubnets); n > MaxProtectedSubnetsPerEnd {
 			fs = append(fs, Finding{Severity: SeverityBlock, Code: "too_many_subnets", End: endRef(i), Message: fmt.Sprintf("%s has %d protected subnets — the maximum is %d (deterministic route/policy key allocation); split into multiple tunnels", endLabel(intent, i), n, MaxProtectedSubnetsPerEnd)})
+		}
+	}
+
+	// Duplicate canonical networks WITHIN one end.
+	//
+	// Nothing forbade this before, and it was merely wasteful — two entries that
+	// canonicalise the same render identical duplicate phase2s. It becomes a
+	// correctness problem once DisabledPaths keys are content-addressed: two raw
+	// entries collapsing to one key means a single disabled entry silently
+	// governs two lanes, and the "is any path still using this subnet" count is
+	// wrong. Content keys are only trustworthy while canonical forms are unique
+	// within an end.
+	//
+	// One finding per offending RAW entry, each carrying its own Subject, so the
+	// wizard highlights both rows rather than only the first match.
+	for i := range intent.Ends {
+		seen := make(map[string]string, len(intent.Ends[i].ProtectedSubnets))
+		for _, raw := range intent.Ends[i].ProtectedSubnets {
+			c := canonCIDR(raw)
+			if c == "" {
+				continue // subnet_invalid already covers unparseable entries
+			}
+			if first, dup := seen[c]; dup {
+				fs = append(fs, Finding{
+					Severity: SeverityBlock, Code: "subnet_duplicate_within_end", End: endRef(i),
+					Subject: raw,
+					Message: fmt.Sprintf("%s: %s and %s are the same network (%s) — list it once",
+						endLabel(intent, i), first, raw, c),
+				})
+				continue
+			}
+			seen[c] = raw
 		}
 	}
 
@@ -627,4 +662,148 @@ func endLabel(intent *TunnelIntent, i int) string {
 		return fmt.Sprintf("end %c (%s)", 'A'+i, intent.Ends[i].Vendor)
 	}
 	return fmt.Sprintf("end %c", 'A'+i)
+}
+
+// validateDisabledPaths checks the selective-path overlay.
+//
+// The wizard maintains the invariant that a subnet only stays listed while some
+// path still uses it, but UpdateIPSecTunnel binds arbitrary intent JSON, so the
+// server cannot assume it.
+func validateDisabledPaths(intent *TunnelIntent) []Finding {
+	var fs []Finding
+
+	if intent.Mode != ModePolicyBased {
+		if len(intent.DisabledPaths) > 0 {
+			// Route-based negotiates a single 0.0.0.0/0 child and steers by route,
+			// so there is nothing per-path to switch off and the list would sit
+			// there looking effective while doing nothing.
+			fs = append(fs, Finding{
+				Severity: SeverityWarn, Code: "disabled_paths_ignored", End: tunnelWide,
+				Message: "individual paths are disabled, but a route-based tunnel negotiates one 0.0.0.0/0 selector and steers by route — the selection has no effect here",
+			})
+		}
+		return fs
+	}
+
+	paths := intent.PathsFor(0)
+	if len(paths) == 0 {
+		return fs // empty subnet lists — selectors_missing already covers it
+	}
+
+	enabled := 0
+	for _, p := range paths {
+		if p.Enabled {
+			enabled++
+		}
+	}
+	if enabled == 0 {
+		fs = append(fs, Finding{
+			Severity: SeverityBlock, Code: "all_paths_disabled", End: tunnelWide,
+			Message: "every path is disabled — the tunnel would come up carrying nothing",
+		})
+		return fs
+	}
+
+	// An entry that names no actual pair does nothing, and does it SILENTLY.
+	// The wizard cannot produce one (it prunes on every edit), but the API takes
+	// arbitrary JSON: a key written in the wrong orientation, misspelled, or in
+	// non-canonical form leaves the path ENABLED and carrying traffic while the
+	// stored intent looks like it was switched off. That is the one fail-open
+	// this feature has, so it must not be quiet.
+	known := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		if k := PathKey(p.Local, p.Remote); k != "" {
+			known[k] = true
+		}
+	}
+	for _, k := range intent.DisabledPaths {
+		k = strings.TrimSpace(k)
+		if k == "" || known[k] {
+			continue
+		}
+		fs = append(fs, Finding{
+			Severity: SeverityWarn, Code: "disabled_path_unknown", End: tunnelWide,
+			Subject: k,
+			Message: fmt.Sprintf("%q does not name a path on this tunnel, so it disables nothing — check the orientation (A|B) and that both networks are still listed", k),
+		})
+	}
+
+	// A disabled path can be re-opened by a BROADER enabled one. Only identical
+	// canonical networks are rejected within an end, so 10.0.0.0/16 and
+	// 10.0.1.0/24 can both be listed: disable 10.0.1.0/24 ↔ B and its hosts
+	// still reach B through the /16's child and pass rule. The lane reads off
+	// while the traffic flows — the exact thing this control is for — and it is
+	// inherent to selector semantics rather than a bug, so say it out loud.
+	for _, off := range paths {
+		if off.Enabled {
+			continue
+		}
+		offLocal, offRemote := parseOne(off.Local), parseOne(off.Remote)
+		if offLocal == nil || offRemote == nil {
+			continue
+		}
+		for _, on := range paths {
+			if !on.Enabled || on.Index == off.Index {
+				continue
+			}
+			onLocal, onRemote := parseOne(on.Local), parseOne(on.Remote)
+			if onLocal == nil || onRemote == nil {
+				continue
+			}
+			if covers(onLocal, offLocal) && covers(onRemote, offRemote) {
+				fs = append(fs, Finding{
+					Severity: SeverityWarn, Code: "disabled_path_shadowed", End: tunnelWide,
+					Subject: off.Local,
+					Message: fmt.Sprintf("%s ↔ %s is disabled, but the wider enabled path %s ↔ %s still carries it — narrow or disable that one too",
+						off.Local, off.Remote, on.Local, on.Remote),
+				})
+				break
+			}
+		}
+	}
+
+	// A subnet that survives in the list with all of its paths switched off still
+	// gets its route and blackhole on FortiGate, so traffic is sent into a tunnel
+	// that holds no matching selector and is dropped. Fail-closed, but a silent
+	// drop nobody asked for — worth saying out loud.
+	for end := range intent.Ends {
+		used := make(map[string]bool)
+		for _, p := range intent.PathsFor(end) {
+			if p.Enabled {
+				used[p.Local] = true
+			}
+		}
+		for _, s := range intent.Ends[end].ProtectedSubnets {
+			if used[s] || canonCIDR(s) == "" {
+				continue
+			}
+			fs = append(fs, Finding{
+				Severity: SeverityWarn, Code: "subnet_all_paths_disabled", End: endRef(end),
+				Subject: s,
+				Message: fmt.Sprintf("%s: %s is listed but every path using it is disabled — it carries nothing, and traffic to it is dropped rather than routed elsewhere",
+					endLabel(intent, end), s),
+			})
+		}
+	}
+	return fs
+}
+
+// parseOne parses a single CIDR, returning nil when it does not parse
+// (subnet_invalid already reports those).
+func parseOne(s string) *net.IPNet {
+	_, n, err := net.ParseCIDR(strings.TrimSpace(s))
+	if err != nil {
+		return nil
+	}
+	return n
+}
+
+// covers reports whether outer contains the whole of inner.
+func covers(outer, inner *net.IPNet) bool {
+	if !outer.Contains(inner.IP) {
+		return false
+	}
+	ob, _ := outer.Mask.Size()
+	ib, _ := inner.Mask.Size()
+	return ob <= ib
 }

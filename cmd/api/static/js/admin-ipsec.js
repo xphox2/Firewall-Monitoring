@@ -142,6 +142,8 @@
             'a-egress-custom', 'a-lan-custom', 'b-egress-custom', 'b-lan-custom',
             'a-peer-custom', 'b-peer-custom'].forEach(function (f) { $('ipsec-' + f).value = ''; });
         lanUnticked = { a: {}, b: {} };
+        lanAutoTicked = { a: {}, b: {} };
+        disabledPaths = {};
         // The LAN pickers are checkbox lists, not selects — reset them separately.
         ['a-egress', 'b-egress', 'a-peer', 'b-peer'].forEach(function (f) {
             $('ipsec-' + f).innerHTML = '<option value="__custom__">Custom…</option>';
@@ -352,6 +354,7 @@
     //   * It runs on an ACTIVE subnet edit only, never on restore. Reopening a
     //     saved tunnel must not quietly change which ports its rules name.
     var lanUnticked = { a: {}, b: {} };
+    var lanAutoTicked = { a: {}, b: {} };
 
     function ipv4ToInt(ip) {
         var p = String(ip).split('.');
@@ -412,6 +415,11 @@
         Array.prototype.slice.call(box.querySelectorAll('input[type=checkbox]')).forEach(function (cb) {
             if (cb.checked || !carriers[cb.value] || lanUnticked[pfx][cb.value]) { return; }
             cb.checked = true;
+            // Remember it was OUR tick. Propagation may later undo a tick the
+            // wizard made; it must never undo one the operator made by hand,
+            // because a hand-ticked port may carry a subnet routed downstream of
+            // it that no address table can show.
+            lanAutoTicked[pfx][cb.value] = true;
             changed = true;
         });
         if (changed) { invalidate(); refreshDerived(); }
@@ -797,8 +805,143 @@
             ike: ike, esp: esp, ike_lifetime_secs: ikeLife,
             dpd: { delay_secs: 30, timeout_secs: 0 },
             psk: $('ipsec-psk').value, // blank = auto-generate on save
+            disabled_paths: Object.keys(disabledPaths),
             ends: [end(a, 'a', lifeA), end(b, 'b', lifeB)]
         };
+    }
+
+
+    // ---- selectively disabled paths --------------------------------------
+    // The selectors are otherwise the full cross product of the two ends'
+    // subnets, which hands every network on one side a path to every network on
+    // the other — a user VLAN reaching the far side's management net purely
+    // because both were listed.
+    //
+    // Keys mirror the server exactly: canonical "aCIDR|bCIDR" in tunnel A|B
+    // orientation. Canonical so that reformatting a subnet keeps a path
+    // disabled rather than silently re-enabling it (fail closed), and so the
+    // two sides agree about which pair a key names.
+    var disabledPaths = {};
+
+    function ipToInt(ip) {
+        var p = String(ip).split('.');
+        if (p.length !== 4) { return null; }
+        var n = 0;
+        for (var i = 0; i < 4; i++) {
+            var o = Number(p[i]);
+            if (!isFinite(o) || o < 0 || o > 255 || p[i] === '') { return null; }
+            n = (n * 256) + o;
+        }
+        return n;
+    }
+
+    // Canonical network form, matching Go's net.IPNet.String(). "" when it does
+    // not parse — which never matches a key, so the path stays ENABLED, bounded
+    // by the server's subnet_invalid block.
+    function canonNet(cidr) {
+        var m = /^\s*(\d+\.\d+\.\d+\.\d+)\/(\d{1,2})\s*$/.exec(String(cidr || ''));
+        if (!m) { return ''; }
+        var base = ipToInt(m[1]), bits = Number(m[2]);
+        if (base === null || bits < 0 || bits > 32) { return ''; }
+        var mask = bits === 0 ? 0 : (0xFFFFFFFF << (32 - bits)) >>> 0;
+        var net = (base & mask) >>> 0;
+        return [(net >>> 24) & 255, (net >>> 16) & 255, (net >>> 8) & 255, net & 255].join('.') + '/' + bits;
+    }
+
+    function pathKey(aNet, bNet) {
+        var ca = canonNet(aNet), cb = canonNet(bNet);
+        return (ca && cb) ? ca + '|' + cb : '';
+    }
+
+    function pathEnabled(aNet, bNet) {
+        var k = pathKey(aNet, bNet);
+        return !k || !disabledPaths[k];
+    }
+
+    function togglePath(aNet, bNet) {
+        var k = pathKey(aNet, bNet);
+        if (!k) { return; }
+        if (disabledPaths[k]) { delete disabledPaths[k]; } else { disabledPaths[k] = true; }
+        pruneFullyDisabledSubnets();
+        pruneDisabledPaths();
+        invalidate();
+        refreshDerived();
+    }
+
+    // Drop keys naming subnets that are no longer listed. An operator who edits
+    // a subnet has not asked to keep a rule about a network they removed, and a
+    // stale key would be invisible — nothing on screen would explain it.
+    function pruneDisabledPaths() {
+        var live = {};
+        subnetsOf('a').forEach(function (an) {
+            subnetsOf('b').forEach(function (bn) {
+                var k = pathKey(an, bn);
+                if (k) { live[k] = true; }
+            });
+        });
+        Object.keys(disabledPaths).forEach(function (k) {
+            if (!live[k]) { delete disabledPaths[k]; }
+        });
+    }
+
+
+    // When the LAST path using a subnet is switched off, that subnet is carrying
+    // nothing — drop it, and give back the port the wizard ticked for it.
+    //
+    // Deliberately narrow. It only removes a port THIS wizard ticked
+    // (lanAutoTicked): a hand-ticked port may serve a subnet routed downstream
+    // of it, invisible to any address table, and unticking that would break a
+    // correct choice. It also leaves any port still carrying another live
+    // subnet, or autoTickLANFromSubnets would simply tick it back on the next
+    // keystroke — a visible fight with the operator.
+    //
+    // One-way by nature: removing the subnet prunes its keys, so re-adding it
+    // starts from the full mesh again.
+    function pruneFullyDisabledSubnets() {
+        if (modeVal() === 'route-based') { return; }
+        var aNets = subnetsOf('a'), bNets = subnetsOf('b');
+        if (!aNets.length || !bNets.length) { return; }
+
+        var live = { a: {}, b: {} };
+        aNets.forEach(function (an) {
+            bNets.forEach(function (bn) {
+                if (!pathEnabled(an, bn)) { return; }
+                live.a[an] = true;
+                live.b[bn] = true;
+            });
+        });
+
+        ['a', 'b'].forEach(function (pfx) {
+            var nets = pfx === 'a' ? aNets : bNets;
+            var keep = nets.filter(function (n) { return live[pfx][n]; });
+            if (keep.length === nets.length || !keep.length) { return; }
+            var box = $('ipsec-' + pfx + '-subnets');
+            box.value = keep.join('\n');
+
+            // Release only ports this wizard ticked and that nothing left needs.
+            var still = {};
+            var ifaces = ((endpointHints[pfx] || {}).interfaces) || [];
+            keep.map(parseCidr4).filter(Boolean).forEach(function (want) {
+                ifaces.forEach(function (i) {
+                    if (!i.is_lan) { return; }
+                    (i.addresses || []).forEach(function (a) {
+                        var net = parseCidr4(a.cidr);
+                        if (net && cidrOverlaps(net, want)) { still[i.name] = true; }
+                    });
+                });
+            });
+            var lbox = lanList(pfx);
+            if (lbox) {
+                Array.prototype.slice.call(lbox.querySelectorAll('input[type=checkbox]')).forEach(function (cb) {
+                    if (!cb.checked || still[cb.value] || !lanAutoTicked[pfx][cb.value]) { return; }
+                    // Assign directly: dispatching change here would record this as
+                    // an operator untick and suppress future auto-ticking.
+                    cb.checked = false;
+                    delete lanAutoTicked[pfx][cb.value];
+                });
+            }
+        });
+        pruneDisabledPaths();
     }
 
     // ---- the link schematic ---------------------------------------------
@@ -830,11 +973,18 @@
                 bRoutes: aNets
             };
         }
-        var lanes = [];
+        var lanes = [], on = 0;
         aNets.forEach(function (an) {
-            bNets.forEach(function (bn) { lanes.push({ a: an, b: bn }); });
+            bNets.forEach(function (bn) {
+                var en = pathEnabled(an, bn);
+                if (en) { on++; }
+                lanes.push({ a: an, b: bn, enabled: en });
+            });
         });
-        return { routed: false, lanes: lanes, childCount: lanes.length, aRoutes: [], bRoutes: [] };
+        // childCount counts ENABLED lanes only: it is what the device will
+        // actually hold, and overstating it is the UI-lies-about-the-device
+        // failure this whole area exists to avoid.
+        return { routed: false, lanes: lanes, childCount: on, total: lanes.length, aRoutes: [], bRoutes: [] };
     }
 
     // Findings paint the schematic. Keyed by "end:subject" so two mismatches on one
@@ -879,7 +1029,18 @@
             lanes = m.lanes.map(function (l) {
                 var fa = laneFlagFor(0, l.a), fb = laneFlagFor(1, l.b);
                 var flag = fa || fb;
-                return '<div class="ipsec-lane' + (flag ? ' is-warn' : '') + '">' +
+                var off = l.enabled === false;
+                // Route-based negotiates ONE 0.0.0.0/0 child and steers by route,
+                // so there is no per-path selector to switch off. Offering a
+                // control that the device cannot honour is the exact
+                // UI-lies-about-the-device failure this area is scarred by.
+                var tog = m.routed ? '' :
+                    '<label class="ipsec-lane-tog" title="' + (off ? 'Not carried — click to carry it' : 'Carried — click to stop carrying it') + '">' +
+                    '<input type="checkbox" data-action="ipsec-path-toggle"' +
+                        ' data-a="' + esc(l.a) + '" data-b="' + esc(l.b) + '"' + (off ? '' : ' checked') + '>' +
+                    '</label>';
+                return '<div class="ipsec-lane' + (flag ? ' is-warn' : '') + (off ? ' is-off' : '') + '">' +
+                    tog +
                     '<span class="ipsec-lane-net">' + esc(l.a) + '</span>' +
                     '<span class="ipsec-lane-link">↔</span>' +
                     '<span class="ipsec-lane-net r">' + esc(l.b) + '</span>' +
@@ -892,11 +1053,14 @@
             // children with tunnels is the confusion that cost days.
             var cap;
             if (m.routed) {
-                cap = '1 selector pair · 1 child SA (phase2) · ' +
+                cap = 'one 0.0.0.0/0 selector, steered by route — individual paths are not selectable in this mode · ' +
                     m.aRoutes.length + ' route' + (m.aRoutes.length === 1 ? '' : 's') + ' on ' + esc(a.name) +
                     ' · ' + m.bRoutes.length + ' on ' + esc(b.name);
             } else {
-                cap = m.lanes.length + ' subnet pair' + (m.lanes.length === 1 ? '' : 's') +
+                var tot = m.total != null ? m.total : m.lanes.length;
+                cap = (m.childCount === tot
+                        ? tot + ' subnet pair' + (tot === 1 ? '' : 's')
+                        : m.childCount + ' of ' + tot + ' subnet pairs') +
                     ' · ' + m.childCount + ' child SA' + (m.childCount === 1 ? '' : 's') + ' (phase2)';
             }
             laneCount = '<div class="ipsec-lane-count">' + cap + '</div>';
@@ -991,8 +1155,16 @@
         // matrix scannable in the first place.
         var rows = m.lanes.map(function (l) {
             var flag = laneFlagFor(0, l.a) || laneFlagFor(1, l.b);
-            return '<tr' + (flag ? ' class="is-warn"' : '') + '><td>' + esc(l.a) + '</td><td>' + esc(l.b) + '</td>' +
-                '<td>' + (flag ? '⚠ see above' : 'carried') + '</td></tr>';
+            // A switched-off path must read as NOT carried here too. This is the
+            // last screen before deploy, and the schematic and this table share
+            // trafficMatrix precisely so they cannot disagree — saying "carried"
+            // on a pair the device will hold no selector for is the
+            // UI-lies-about-the-device failure in its most consequential place.
+            var off = l.enabled === false;
+            var status = off ? 'not carried' : (flag ? '⚠ see above' : 'carried');
+            var cls = off ? ' class="is-off"' : (flag ? ' class="is-warn"' : '');
+            return '<tr' + cls + '><td>' + esc(l.a) + '</td><td>' + esc(l.b) + '</td>' +
+                '<td>' + status + '</td></tr>';
         }).join('');
         var cap = m.routed
             ? 'Route-based: one 0.0.0.0/0 child SA carries everything; the networks below are steered by static routes.'
@@ -1180,6 +1352,10 @@
                 $('ipsec-a-dyn').checked = !!t.ends[0].dynamic; $('ipsec-b-dyn').checked = !!t.ends[1].dynamic;
                 setIfaceValue('a', 'egress', t.ends[0].egress_iface); setIfaceValue('b', 'egress', t.ends[1].egress_iface);
                 setLanValues('a', t.ends[0].lan_ifaces || (t.ends[0].lan_iface ? [t.ends[0].lan_iface] : [])); setLanValues('b', t.ends[1].lan_ifaces || (t.ends[1].lan_iface ? [t.ends[1].lan_iface] : []));
+                // Restore the stored selection BEFORE the subnets, so the first
+                // schematic render already reflects it.
+                disabledPaths = {};
+                (t.disabled_paths || []).forEach(function (k) { if (k) { disabledPaths[k] = true; } });
                 $('ipsec-a-subnets').value = (t.ends[0].protected_subnets || []).join('\n');
                 $('ipsec-b-subnets').value = (t.ends[1].protected_subnets || []).join('\n');
                 $('ipsec-a-id').value = (t.ends[0].local_id || {}).value || ''; $('ipsec-b-id').value = (t.ends[1].local_id || {}).value || '';
@@ -1326,6 +1502,7 @@
         AC.delegateEvent('click', {
             'ipsec-phase': function (el) { setPhase(el.dataset.phase); },
             'ipsec-schematic-toggle': function () { toggleSchematic(); },
+            'ipsec-path-toggle': function (el) { togglePath(el.dataset.a, el.dataset.b); },
             'ipsec-crypto-toggle': function (el) {
                 // The disclosure IS #ipsec-custom-crypto's container restyled — a
                 // second visibility mechanism ANDed on top would leave an operator
@@ -1378,7 +1555,7 @@
                     if (cb && cb.type === 'checkbox') {
                         // Remember a deliberate untick so the next keystroke in the
                         // subnets box does not put it straight back.
-                        if (cb.checked) { delete lanUnticked[pfx][cb.value]; }
+                        if (cb.checked) { delete lanUnticked[pfx][cb.value]; delete lanAutoTicked[pfx][cb.value]; }
                         else { lanUnticked[pfx][cb.value] = true; }
                     }
                     invalidate();
@@ -1404,7 +1581,12 @@
         // fires no input event) can never rewrite a saved port selection.
         ['a', 'b'].forEach(function (pfx) {
             var sb = $('ipsec-' + pfx + '-subnets');
-            if (sb) { sb.addEventListener('input', function () { autoTickLANFromSubnets(pfx); }); }
+            if (sb) {
+                sb.addEventListener('input', function () {
+                    autoTickLANFromSubnets(pfx);
+                    pruneDisabledPaths();
+                });
+            }
         });
         $('ipsec-wizard-form').addEventListener('input', invalidate);
         $('ipsec-wizard-form').addEventListener('change', invalidate);
