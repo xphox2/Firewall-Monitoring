@@ -155,6 +155,9 @@
         // have just been reset.
         clearAnchors();
         $('ipsec-schematic').innerHTML = '';
+        // Re-apply the remembered collapse (and hide the toggle while there is
+        // no diagram yet) — the class lives on the dialog, which persists.
+        syncSchematicToggle();
         $('ipsec-matrix').innerHTML = '';
         $('ipsec-existing').hidden = true;
         $('ipsec-crypto-detail').hidden = true;
@@ -775,7 +778,7 @@
         var spanLabel = ($('ipsec-ikever') ? $('ipsec-ikever').value : 'ikev2') + ' · ' +
             (mode === 'route-based' ? 'route-based' : 'policy-based');
 
-        var lanes;
+        var lanes, laneCount = '';
         if (!m.lanes.length || (!subnetsOf('a').length || !subnetsOf('b').length)) {
             lanes = '<div class="ipsec-lanes-empty">Add the networks each site shares to see what this tunnel will carry.</div>';
         } else {
@@ -802,7 +805,7 @@
                 cap = m.lanes.length + ' subnet pair' + (m.lanes.length === 1 ? '' : 's') +
                     ' · ' + m.childCount + ' child SA' + (m.childCount === 1 ? '' : 's') + ' (phase2)';
             }
-            lanes += '<div class="ipsec-lane-count">' + cap + '</div>';
+            laneCount = '<div class="ipsec-lane-count">' + cap + '</div>';
         }
 
         host.innerHTML = '<div class="ipsec-link">' +
@@ -813,7 +816,60 @@
             '</div>' +
             nodeHtml('b', b) +
             '</div>' +
-            '<div class="ipsec-lanes">' + lanes + '</div>';
+            // The count sits OUTSIDE the scrolling list, so "4 subnet pairs" stays
+            // on screen however the list is scrolled.
+            '<div class="ipsec-lanes">' + lanes + '</div>' + laneCount;
+        syncSchematicToggle();
+    }
+
+    // ---- diagram collapse ------------------------------------------------
+    // The schematic is fixed chrome: it never scrolls away, and it grows with
+    // every subnet pair. Capping the lane list bounds that, but an operator
+    // filling in the form should also be able to reclaim the space outright.
+    // The choice is remembered, because someone who wants it gone wants it gone
+    // for the next tunnel too.
+    var SCHEMATIC_HIDE_KEY = 'fwmon.ipsec.schematicHidden';
+
+    // An explicit choice always wins. Absent one, start collapsed where the
+    // diagram would leave the form unusable: measured at 1440x800, the head took
+    // 56% of the dialog and the body showed 192px of 614px of content. Nobody
+    // should have to find a button before they can fill in the form, and the
+    // count on that button keeps the diagram discoverable.
+    var SCHEMATIC_TIGHT_VIEWPORT = 900;
+
+    function schematicHidden() {
+        try {
+            var v = localStorage.getItem(SCHEMATIC_HIDE_KEY);
+            if (v === '1') { return true; }
+            if (v === '0') { return false; }
+        } catch (e) { /* private mode: fall through to the viewport default */ }
+        return window.innerHeight < SCHEMATIC_TIGHT_VIEWPORT;
+    }
+
+    function syncSchematicToggle() {
+        var wiz = document.querySelector('.ipsec-wiz');
+        var btn = $('ipsec-schematic-toggle');
+        if (!wiz || !btn) return;
+        var host = $('ipsec-schematic');
+        // Nothing drawn yet (no devices picked) — no space to argue over.
+        var empty = !host || !host.innerHTML.trim();
+        btn.style.display = empty ? 'none' : '';
+        var hidden = schematicHidden();
+        wiz.classList.toggle('schematic-collapsed', hidden);
+        btn.setAttribute('aria-expanded', hidden ? 'false' : 'true');
+        // Carry the count on the button so collapsing never hides that there
+        // are pairs to look at.
+        var n = host ? host.querySelectorAll('.ipsec-lane').length : 0;
+        var suffix = hidden && n ? ' · ' + n + ' pair' + (n === 1 ? '' : 's') : '';
+        btn.textContent = (hidden ? 'Show diagram' : 'Hide diagram') + suffix;
+    }
+
+    function toggleSchematic() {
+        // Writes '1'/'0' explicitly, which pins the choice against the
+        // viewport default from here on.
+        var next = schematicHidden() ? '0' : '1';
+        try { localStorage.setItem(SCHEMATIC_HIDE_KEY, next); } catch (e) {}
+        syncSchematicToggle();
     }
 
     // The Verify matrix is the same data as a table — one source, so the two views
@@ -1175,6 +1231,7 @@
     function wire() {
         AC.delegateEvent('click', {
             'ipsec-phase': function (el) { setPhase(el.dataset.phase); },
+            'ipsec-schematic-toggle': function () { toggleSchematic(); },
             'ipsec-crypto-toggle': function (el) {
                 // The disclosure IS #ipsec-custom-crypto's container restyled — a
                 // second visibility mechanism ANDed on top would leave an operator
