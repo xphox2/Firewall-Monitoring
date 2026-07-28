@@ -1,6 +1,30 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.188] - 2026-07-28
+
+### Added
+
+**Individual subnet paths can be switched off on an IPSec tunnel.** A tunnel's traffic selectors were the full cross product of the two ends' protected subnets, so two subnets a side meant four paths and there was no way to carry `25.0/24 ↔ 50.0/24` without also carrying `25.0/24 ↔ 5.0/24`. In practice that hands a user VLAN a route to the far side's management network purely because both were listed, and the only workaround was splitting one tunnel into several with duplicated crypto and peer config.
+
+Each path in the wizard's schematic now has a checkbox. Disabled paths dim and strike through rather than vanishing, and the caption reads "3 of 4 subnet pairs · 3 child SAs (phase2)" so the count never overstates what the device holds.
+
+Switching a path off does **not** disturb the subnets or ports — with two subnets a side, turning off `25↔5` leaves `25.0/24` in place because `25↔50` still uses it. Only when the *last* path using a subnet goes off is that subnet removed and its port released, and then only a port the wizard itself ticked: a hand-ticked port may serve a subnet routed downstream of it, which no address table can show.
+
+**Not offered in route-based mode**, which negotiates a single `0.0.0.0/0` selector and steers by static route — there is no per-path selector to switch off, and the caption says so rather than presenting a control the device cannot honour.
+
+To be plain about what this is: disabling a path means *stop encrypting it*, not *block it*. On FortiGate a remaining route makes it fail closed; on OPNsense such traffic follows ordinary routing exactly as an unlisted subnet does today.
+
+### Fixed
+
+**FortiGate rollback now sweeps the whole phase2 slot space.** `RunApply`'s remove loop is continue-on-error, so a rollback could fail on one phase2 DELETE and still delete phase1, leaving an orphan phase2 with no phase1. A force-reset then returns the tunnel to draft; had the operator disabled that path and redeployed, preflight would probe only enabled keys, miss the orphan, recreate phase1 — and the orphan would bind to it, putting the disabled path back on the wire, invisible to every later operation. Rollback now carries every slot, so the orphan is reaped rather than becoming permanent. (An earlier draft of this work argued delete *ordering* made that impossible; it does not — order decides what is attempted last, not what succeeds.)
+
+**Duplicate networks within one end are now rejected.** Nothing forbade listing `10.0.13.0/24` and `10.0.13.1/24` together; harmless before, but path keys are content-addressed, so two entries collapsing to one key would let a single switch govern two paths.
+
+### Changed
+
+Tunnel attribution consults the enabled paths rather than the flat subnet lists. Filtering the lists would have been a no-op precisely when it matters — three paths of a 2×2 are not the cross product of any two lists — and the test is existential (*does any enabled path cover this row*) because selector matching is one-way containment for IKEv2 narrowing, so a reported address can sit inside both an enabled and a disabled entry.
+
 ## [0.11.187] - 2026-07-28
 
 ### Fixed

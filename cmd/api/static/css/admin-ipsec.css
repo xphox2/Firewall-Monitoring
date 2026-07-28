@@ -224,6 +224,25 @@
     border-top: 1px solid var(--fwmon-border);
 }
 
+/* A path the operator has switched off. Dimmed and struck through rather than
+   hidden: it must stay visible and re-enableable, and the contrast still has to
+   clear AA, so this dims toward the muted token rather than to near-nothing. */
+.ipsec-lane.is-off .ipsec-lane-net {
+    color: var(--fwmon-text-mute);
+    text-decoration: line-through;
+}
+
+.ipsec-lane.is-off .ipsec-lane-link { color: var(--fwmon-text-faint); }
+
+.ipsec-lane-tog {
+    display: inline-flex;
+    align-items: center;
+    margin-right: 8px;
+    cursor: pointer;
+}
+
+.ipsec-lane-tog input { cursor: pointer; margin: 0; }
+
 .ipsec-lanes-empty {
     padding: 10px 12px;
     font-size: 0.8rem;
