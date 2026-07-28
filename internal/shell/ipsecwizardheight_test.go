@@ -125,3 +125,52 @@ func TestIPSecWizard_StoredChoiceBeatsViewportDefault(t *testing.T) {
 			"height for anyone who has not found the toggle")
 	}
 }
+
+// FortiOS policies are interface-scoped by construction — a body with
+// "srcintf": [] is rejected outright — so the port genuinely has to be named in
+// the config. That is not a reason to make a human work out WHICH port: the
+// wizard already holds every interface's networks and the protected subnets,
+// and prints them side by side. Matching them by eye is redoing arithmetic the
+// page has already done, and getting it wrong is silent — the tunnel comes up
+// and traffic for the unnamed port is dropped.
+func TestIPSecWizard_InsidePortsDeriveFromSubnets(t *testing.T) {
+	js := readWizardAsset(t, "../../cmd/api/static/js/admin-ipsec.js")
+
+	if !strings.Contains(js, "function autoTickLANFromSubnets") {
+		t.Fatal("no derivation of inside ports from the protected subnets — the operator is " +
+			"left to match interface addressing against subnets by eye")
+	}
+
+	// ADD only. A port may carry a subnet routed downstream of it, which no
+	// address table can show, so unticking on the wizard's own authority would
+	// delete a correct choice the operator made deliberately.
+	fn := regexp.MustCompile(`(?s)function autoTickLANFromSubnets\(pfx\) \{(.*?)\n    \}`).FindStringSubmatch(js)
+	if fn == nil {
+		t.Fatal("autoTickLANFromSubnets() body not found")
+	}
+	if regexp.MustCompile(`\.checked\s*=\s*false`).MatchString(fn[1]) {
+		t.Error("the derivation unticks boxes. It must only ever ADD: a subnet routed " +
+			"downstream of a port is invisible to the address table, so an untick here " +
+			"silently discards a correct manual selection.")
+	}
+
+	// A deliberate untick must survive the next keystroke.
+	if !strings.Contains(fn[1], "lanUnticked[pfx][cb.value]") {
+		t.Error("the derivation ignores explicitly unticked ports — it would re-tick them " +
+			"on every keystroke and make the control unusable")
+	}
+
+	// Bound to the textarea, never the form: a restore sets .value
+	// programmatically and fires no input event, so binding here is what stops a
+	// saved tunnel's port selection being rewritten just by being reopened.
+	if !strings.Contains(js, "sb.addEventListener('input', function () { autoTickLANFromSubnets(pfx); })") {
+		t.Error("subnet-driven derivation is not bound to the subnets textarea's input event")
+	}
+
+	// Vendors whose rules name no interface must be left alone.
+	if !strings.Contains(fn[1], "uses_lan_iface === false") {
+		t.Error("the derivation does not exempt vendors that never name an interface " +
+			"(OPNsense's rules are floating and subnet-scoped) — it would tick a control " +
+			"that vendor does not even show")
+	}
+}

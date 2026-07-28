@@ -14,6 +14,14 @@ Two independent protections, since either alone leaves a hole:
 
 Guarded by four tests in `internal/shell`, each mutation-verified: removing the cap, folding the count back into the scrolling list, reading the stored preference as a bare truthy value, or nesting the toggle inside the element whose `innerHTML` is rewritten on every keystroke each fail exactly the test that covers them.
 
+### Changed
+
+**The FortiGate's inside ports now derive from the subnets you entered.** FortiOS policies are interface-scoped by construction — a body with `"srcintf": []` is rejected outright — so the port genuinely has to be named in the config. That was never a reason to make a person work out *which* port: the wizard already holds every interface's networks and the protected subnets, and prints them side by side, so matching them by eye was redoing arithmetic the page had already done. Getting it wrong is silent — the tunnel comes up and traffic for the unnamed port is dropped.
+
+Ticking the ports that carry the protected subnets is now automatic, under three rules that keep it honest. It only ever **adds**, because a port can carry traffic for a subnet routed downstream of it and no address table can show that. A deliberate untick is **remembered**, so the control never fights the next keystroke. And it runs on an **active edit only**, bound to the subnets field rather than the form — reopening a saved tunnel must not quietly change which ports its rules name.
+
+OPNsense is untouched: its pass rules are floating and subnet-scoped, so it exposes no interface picker to tick.
+
 ## [0.11.186] - 2026-07-26
 
 ### Fixed
