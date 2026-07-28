@@ -15,6 +15,10 @@ Switching a path off does **not** disturb the subnets or ports — with two subn
 
 To be plain about what this is: disabling a path means *stop encrypting it*, not *block it*. On FortiGate a remaining route makes it fail closed; on OPNsense such traffic follows ordinary routing exactly as an unlisted subnet does today.
 
+The Verify matrix marks a switched-off path **not carried** and strikes it through, matching the schematic and the child-SA count. It shares one source with the schematic precisely so the two cannot disagree, and this is the last screen before deploy.
+
+Two fail-open gaps are warned rather than left silent. A `disabled_paths` entry that names no real pair — wrong orientation, a typo, non-canonical text — disables nothing while the stored intent looks like it did; the wizard cannot produce one, but the API accepts arbitrary JSON. And a disabled path can be re-opened by a **broader enabled one**: only identical networks are rejected within an end, so with `10.0.0.0/16` and `10.0.1.0/24` both listed, disabling the /24 achieves nothing because the /16 still carries it. That is inherent to selector semantics rather than a bug, which is exactly why it needs saying.
+
 ### Fixed
 
 **FortiGate rollback now sweeps the whole phase2 slot space.** `RunApply`'s remove loop is continue-on-error, so a rollback could fail on one phase2 DELETE and still delete phase1, leaving an orphan phase2 with no phase1. A force-reset then returns the tunnel to draft; had the operator disabled that path and redeployed, preflight would probe only enabled keys, miss the orphan, recreate phase1 — and the orphan would bind to it, putting the disabled path back on the wire, invisible to every later operation. Rollback now carries every slot, so the orphan is reaped rather than becoming permanent. (An earlier draft of this work argued delete *ordering* made that impossible; it does not — order decides what is attempted last, not what succeeds.)

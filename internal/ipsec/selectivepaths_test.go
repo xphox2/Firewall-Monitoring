@@ -188,3 +188,50 @@ func TestPaths_EmptyListsYieldNoPathsNotWideOpen(t *testing.T) {
 		})
 	}
 }
+
+// A DisabledPaths entry that names no real pair does nothing, and does it
+// silently — the one fail-open this feature has. The wizard prunes on every
+// edit, but UpdateIPSecTunnel takes arbitrary JSON, so a key in the wrong
+// orientation or with a typo leaves the path carrying traffic while the stored
+// intent looks like it was switched off.
+func TestPaths_UnknownDisabledEntryIsFlagged(t *testing.T) {
+	in := pathIntent([]string{"192.168.13.0/24"}, []string{"192.168.50.0/24"},
+		// reversed orientation: B|A instead of A|B
+		ipsec.PathKey("192.168.50.0/24", "192.168.13.0/24"))
+
+	if !in.PathsFor(0)[0].Enabled {
+		t.Fatal("fixture wrong: the reversed key should NOT match, leaving the path enabled")
+	}
+
+	var found bool
+	for _, f := range ipsec.Validate(in, capsForPair(t, "fortigate", "fortigate")) {
+		if f.Code == "disabled_path_unknown" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("no disabled_path_unknown finding — the operator believes a path is off " +
+			"while it carries traffic, with nothing on screen to say otherwise")
+	}
+}
+
+// A disabled path can be re-opened by a broader ENABLED one, because only
+// identical canonical networks are rejected within an end. The lane reads off
+// while the traffic flows.
+func TestPaths_ShadowedByBroaderEnabledPathIsFlagged(t *testing.T) {
+	in := pathIntent(
+		[]string{"10.0.0.0/16", "10.0.1.0/24"},
+		[]string{"192.168.50.0/24"},
+		ipsec.PathKey("10.0.1.0/24", "192.168.50.0/24"))
+
+	var found bool
+	for _, f := range ipsec.Validate(in, capsForPair(t, "fortigate", "fortigate")) {
+		if f.Code == "disabled_path_shadowed" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("no disabled_path_shadowed finding — 10.0.1.x still reaches the far side " +
+			"through the enabled /16, so switching the /24 off achieved nothing")
+	}
+}

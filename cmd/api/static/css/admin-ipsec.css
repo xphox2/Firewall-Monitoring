@@ -243,6 +243,13 @@
 
 .ipsec-lane-tog input { cursor: pointer; margin: 0; }
 
+/* Same treatment in the Verify matrix as on the schematic lane. */
+.ipsec-matrix tr.is-off td,
+#ipsec-matrix tr.is-off td {
+    color: var(--fwmon-text-mute);
+    text-decoration: line-through;
+}
+
 .ipsec-lanes-empty {
     padding: 10px 12px;
     font-size: 0.8rem;

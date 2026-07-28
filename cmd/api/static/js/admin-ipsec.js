@@ -1155,8 +1155,16 @@
         // matrix scannable in the first place.
         var rows = m.lanes.map(function (l) {
             var flag = laneFlagFor(0, l.a) || laneFlagFor(1, l.b);
-            return '<tr' + (flag ? ' class="is-warn"' : '') + '><td>' + esc(l.a) + '</td><td>' + esc(l.b) + '</td>' +
-                '<td>' + (flag ? '⚠ see above' : 'carried') + '</td></tr>';
+            // A switched-off path must read as NOT carried here too. This is the
+            // last screen before deploy, and the schematic and this table share
+            // trafficMatrix precisely so they cannot disagree — saying "carried"
+            // on a pair the device will hold no selector for is the
+            // UI-lies-about-the-device failure in its most consequential place.
+            var off = l.enabled === false;
+            var status = off ? 'not carried' : (flag ? '⚠ see above' : 'carried');
+            var cls = off ? ' class="is-off"' : (flag ? ' class="is-warn"' : '');
+            return '<tr' + cls + '><td>' + esc(l.a) + '</td><td>' + esc(l.b) + '</td>' +
+                '<td>' + status + '</td></tr>';
         }).join('');
         var cap = m.routed
             ? 'Route-based: one 0.0.0.0/0 child SA carries everything; the networks below are steered by static routes.'
