@@ -141,6 +141,7 @@
         ['a-subnets', 'a-id', 'b-subnets', 'b-id', 'a-gateway', 'b-gateway', 'psk',
             'a-egress-custom', 'a-lan-custom', 'b-egress-custom', 'b-lan-custom',
             'a-peer-custom', 'b-peer-custom'].forEach(function (f) { $('ipsec-' + f).value = ''; });
+        lanUnticked = { a: {}, b: {} };
         // The LAN pickers are checkbox lists, not selects — reset them separately.
         ['a-egress', 'b-egress', 'a-peer', 'b-peer'].forEach(function (f) {
             $('ipsec-' + f).innerHTML = '<option value="__custom__">Custom…</option>';
@@ -155,6 +156,9 @@
         // have just been reset.
         clearAnchors();
         $('ipsec-schematic').innerHTML = '';
+        // Re-apply the remembered collapse (and hide the toggle while there is
+        // no diagram yet) — the class lives on the dialog, which persists.
+        syncSchematicToggle();
         $('ipsec-matrix').innerHTML = '';
         $('ipsec-existing').hidden = true;
         $('ipsec-crypto-detail').hidden = true;
@@ -270,7 +274,10 @@
     // ---- LAN interfaces: a checkbox list, not a select --------------------
     // Several inside ports can carry the protected subnets, and the two are
     // independent — N subnets behind one port, or one subnet per port, both
-    // render the same. The list is manual: nothing is pre-ticked.
+    // render the same. The ports whose addressing MATCHES the protected subnets
+    // tick themselves (see autoTickLANFromSubnets); the list stays editable,
+    // because a port can carry traffic for a subnet routed downstream of it,
+    // which no address table can show.
 
     // Only vendors whose rules NAME an interface get the picker. OPNsense's pass
     // rules are floating and subnet-scoped, so asking there would request a value
@@ -322,6 +329,92 @@
             return '<label class="iface-check"><input type="checkbox" value="' + esc(i.name) + '"' + on + '>' +
                 '<span>' + esc(ifaceLabel(i)) + hint + '</span></label>';
         }).join('');
+    }
+
+
+    // ---- inside ports, derived from the subnets ---------------------------
+    // FortiOS policies are interface-scoped by construction: a policy body with
+    // "srcintf": [] is rejected outright, so the port genuinely has to be named
+    // in the config. The OPERATOR is a different question. The wizard already
+    // knows every interface's networks (it prints them next to each checkbox)
+    // and it already knows the protected subnets, so making a human match the
+    // two by eye is asking them to redo arithmetic the page has already done —
+    // and getting it wrong is silent: the tunnel comes up and the traffic for
+    // the unnamed port is dropped.
+    //
+    // So the ports carrying the protected subnets tick themselves.
+    //
+    // Three rules keep this honest:
+    //   * ADD only, never untick — a port may legitimately carry traffic for a
+    //     subnet the address table cannot show (anything routed downstream).
+    //   * An explicit untick is remembered, so the box does not fight the
+    //     operator by re-ticking on the next keystroke.
+    //   * It runs on an ACTIVE subnet edit only, never on restore. Reopening a
+    //     saved tunnel must not quietly change which ports its rules name.
+    var lanUnticked = { a: {}, b: {} };
+
+    function ipv4ToInt(ip) {
+        var p = String(ip).split('.');
+        if (p.length !== 4) { return null; }
+        var n = 0;
+        for (var i = 0; i < 4; i++) {
+            var o = Number(p[i]);
+            if (!isFinite(o) || o < 0 || o > 255 || p[i] === '') { return null; }
+            n = (n * 256) + o;
+        }
+        return n;
+    }
+
+    // IPv4 only — an IPv6 CIDR returns null and simply does not auto-tick,
+    // which leaves the operator exactly the manual control they have today
+    // rather than guessing from a half-parsed address.
+    function parseCidr4(s) {
+        var m = /^\s*(\d+\.\d+\.\d+\.\d+)\/(\d{1,2})\s*$/.exec(String(s || ''));
+        if (!m) { return null; }
+        var base = ipv4ToInt(m[1]), bits = Number(m[2]);
+        if (base === null || bits < 0 || bits > 32) { return null; }
+        var mask = bits === 0 ? 0 : (0xFFFFFFFF << (32 - bits)) >>> 0;
+        return { net: (base & mask) >>> 0, mask: mask, bits: bits };
+    }
+
+    // Overlap in EITHER direction, mirroring the server's containment test: the
+    // port may hold the wider network or the narrower one.
+    function cidrOverlaps(x, y) {
+        if (!x || !y) { return false; }
+        var m = x.bits < y.bits ? x.mask : y.mask;
+        return ((x.net & m) >>> 0) === ((y.net & m) >>> 0);
+    }
+
+    function autoTickLANFromSubnets(pfx) {
+        var box = lanList(pfx);
+        if (!box) { return; }
+        var end = caps && caps[pfx];
+        if (end && end.uses_lan_iface === false) { return; } // vendor names no interface
+        var ifaces = ((endpointHints[pfx] || {}).interfaces) || [];
+        if (!ifaces.length) { return; }
+
+        var wanted = subnetsOf(pfx).map(parseCidr4).filter(Boolean);
+        if (!wanted.length) { return; }
+
+        var carriers = {};
+        ifaces.forEach(function (i) {
+            if (!i.is_lan) { return; }
+            (i.addresses || []).forEach(function (a) {
+                var net = parseCidr4(a.cidr);
+                if (!net) { return; }
+                for (var k = 0; k < wanted.length; k++) {
+                    if (cidrOverlaps(net, wanted[k])) { carriers[i.name] = true; return; }
+                }
+            });
+        });
+
+        var changed = false;
+        Array.prototype.slice.call(box.querySelectorAll('input[type=checkbox]')).forEach(function (cb) {
+            if (cb.checked || !carriers[cb.value] || lanUnticked[pfx][cb.value]) { return; }
+            cb.checked = true;
+            changed = true;
+        });
+        if (changed) { invalidate(); refreshDerived(); }
     }
 
     function lanChecked(pfx) {
@@ -477,6 +570,10 @@
                 box.value = suggested;
             }
             lastHintSubnets[pfx] = suggested;
+            // The checklist only just gained its interfaces; if subnets are
+            // already present (auto-filled or restored-then-edited) the ports
+            // they imply can be derived now.
+            autoTickLANFromSubnets(pfx);
             // Hints mutate fields programmatically (no change event fires), so a hint
             // landing after a clean preview must re-gate Save.
             invalidate();
@@ -775,7 +872,7 @@
         var spanLabel = ($('ipsec-ikever') ? $('ipsec-ikever').value : 'ikev2') + ' · ' +
             (mode === 'route-based' ? 'route-based' : 'policy-based');
 
-        var lanes;
+        var lanes, laneCount = '';
         if (!m.lanes.length || (!subnetsOf('a').length || !subnetsOf('b').length)) {
             lanes = '<div class="ipsec-lanes-empty">Add the networks each site shares to see what this tunnel will carry.</div>';
         } else {
@@ -802,7 +899,7 @@
                 cap = m.lanes.length + ' subnet pair' + (m.lanes.length === 1 ? '' : 's') +
                     ' · ' + m.childCount + ' child SA' + (m.childCount === 1 ? '' : 's') + ' (phase2)';
             }
-            lanes += '<div class="ipsec-lane-count">' + cap + '</div>';
+            laneCount = '<div class="ipsec-lane-count">' + cap + '</div>';
         }
 
         host.innerHTML = '<div class="ipsec-link">' +
@@ -813,7 +910,60 @@
             '</div>' +
             nodeHtml('b', b) +
             '</div>' +
-            '<div class="ipsec-lanes">' + lanes + '</div>';
+            // The count sits OUTSIDE the scrolling list, so "4 subnet pairs" stays
+            // on screen however the list is scrolled.
+            '<div class="ipsec-lanes">' + lanes + '</div>' + laneCount;
+        syncSchematicToggle();
+    }
+
+    // ---- diagram collapse ------------------------------------------------
+    // The schematic is fixed chrome: it never scrolls away, and it grows with
+    // every subnet pair. Capping the lane list bounds that, but an operator
+    // filling in the form should also be able to reclaim the space outright.
+    // The choice is remembered, because someone who wants it gone wants it gone
+    // for the next tunnel too.
+    var SCHEMATIC_HIDE_KEY = 'fwmon.ipsec.schematicHidden';
+
+    // An explicit choice always wins. Absent one, start collapsed where the
+    // diagram would leave the form unusable: measured at 1440x800, the head took
+    // 56% of the dialog and the body showed 192px of 614px of content. Nobody
+    // should have to find a button before they can fill in the form, and the
+    // count on that button keeps the diagram discoverable.
+    var SCHEMATIC_TIGHT_VIEWPORT = 900;
+
+    function schematicHidden() {
+        try {
+            var v = localStorage.getItem(SCHEMATIC_HIDE_KEY);
+            if (v === '1') { return true; }
+            if (v === '0') { return false; }
+        } catch (e) { /* private mode: fall through to the viewport default */ }
+        return window.innerHeight < SCHEMATIC_TIGHT_VIEWPORT;
+    }
+
+    function syncSchematicToggle() {
+        var wiz = document.querySelector('.ipsec-wiz');
+        var btn = $('ipsec-schematic-toggle');
+        if (!wiz || !btn) return;
+        var host = $('ipsec-schematic');
+        // Nothing drawn yet (no devices picked) — no space to argue over.
+        var empty = !host || !host.innerHTML.trim();
+        btn.style.display = empty ? 'none' : '';
+        var hidden = schematicHidden();
+        wiz.classList.toggle('schematic-collapsed', hidden);
+        btn.setAttribute('aria-expanded', hidden ? 'false' : 'true');
+        // Carry the count on the button so collapsing never hides that there
+        // are pairs to look at.
+        var n = host ? host.querySelectorAll('.ipsec-lane').length : 0;
+        var suffix = hidden && n ? ' · ' + n + ' pair' + (n === 1 ? '' : 's') : '';
+        btn.textContent = (hidden ? 'Show diagram' : 'Hide diagram') + suffix;
+    }
+
+    function toggleSchematic() {
+        // Writes '1'/'0' explicitly, which pins the choice against the
+        // viewport default from here on.
+        var next = schematicHidden() ? '0' : '1';
+        try { localStorage.setItem(SCHEMATIC_HIDE_KEY, next); } catch (e) {}
+        syncSchematicToggle();
     }
 
     // The Verify matrix is the same data as a table — one source, so the two views
@@ -1175,6 +1325,7 @@
     function wire() {
         AC.delegateEvent('click', {
             'ipsec-phase': function (el) { setPhase(el.dataset.phase); },
+            'ipsec-schematic-toggle': function () { toggleSchematic(); },
             'ipsec-crypto-toggle': function (el) {
                 // The disclosure IS #ipsec-custom-crypto's container restyled — a
                 // second visibility mechanism ANDed on top would leave an operator
@@ -1221,7 +1372,18 @@
         // whenever hints land.
         ['a', 'b'].forEach(function (pfx) {
             var box = lanList(pfx);
-            if (box) { box.addEventListener('change', invalidate); }
+            if (box) {
+                box.addEventListener('change', function (ev) {
+                    var cb = ev.target;
+                    if (cb && cb.type === 'checkbox') {
+                        // Remember a deliberate untick so the next keystroke in the
+                        // subnets box does not put it straight back.
+                        if (cb.checked) { delete lanUnticked[pfx][cb.value]; }
+                        else { lanUnticked[pfx][cb.value] = true; }
+                    }
+                    invalidate();
+                });
+            }
             var cust = lanCustom(pfx);
             if (cust) { cust.addEventListener('input', invalidate); }
         });
@@ -1237,6 +1399,13 @@
             $('ipsec-' + pfx + '-idtype').addEventListener('change', function () { prefillIdentity(pfx); });
         });
         // Any edit after a clean preview invalidates it (see invalidate()).
+        // Typing subnets derives the inside ports. Bound to the textarea itself,
+        // NOT to the form, so a restore (which sets .value programmatically and
+        // fires no input event) can never rewrite a saved port selection.
+        ['a', 'b'].forEach(function (pfx) {
+            var sb = $('ipsec-' + pfx + '-subnets');
+            if (sb) { sb.addEventListener('input', function () { autoTickLANFromSubnets(pfx); }); }
+        });
         $('ipsec-wizard-form').addEventListener('input', invalidate);
         $('ipsec-wizard-form').addEventListener('change', invalidate);
     }

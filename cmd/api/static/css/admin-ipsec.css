@@ -154,8 +154,36 @@
     border: 1px solid var(--fwmon-border);
     border-radius: var(--fwmon-radius-sm);
     background: color-mix(in srgb, var(--fwmon-text) 2.5%, transparent);
-    overflow: hidden;
+    /* The spine must not starve the form it describes. One lane per subnet
+       pair means two subnets a side is FOUR lanes, and the schematic lives in
+       chrome that never shrinks — so an uncapped list silently squeezes the
+       scrolling body. Measured at 1440x800 with two subnets a side: the head
+       took 56% of the dialog and left the form a 190px window onto 614px of
+       content, which is what made the wizard feel unscrollable. Cap the list
+       and let it scroll on its own; the pair count sits OUTSIDE this box so
+       the total stays visible no matter where the list is scrolled. */
+    max-height: 132px;
+    overflow-y: auto;
 }
+
+/* Reclaim the whole diagram. Capping bounds the pathological case; this is for
+   the operator who simply wants the form. The count rides on the button, so
+   collapsing never hides the fact that there are pairs to look at. */
+.ipsec-wiz.schematic-collapsed .ipsec-schematic { display: none; }
+
+.ipsec-schematic-toggle {
+    margin-left: auto;
+    background: none;
+    border: 1px solid var(--fwmon-border);
+    border-radius: var(--fwmon-radius-sm);
+    color: var(--fwmon-text-mute);
+    font: inherit;
+    font-size: 0.78rem;
+    padding: 3px 10px;
+    cursor: pointer;
+}
+
+.ipsec-schematic-toggle:hover { color: var(--fwmon-text); border-color: var(--fwmon-accent); }
 
 .ipsec-lane {
     display: grid;
@@ -499,6 +527,9 @@
     .ipsec-link { grid-template-columns: 1fr; }
     .ipsec-span { min-width: 0; padding: 8px 0; }
     .ipsec-span-rule { border-top: 0; border-left: 2px solid var(--fwmon-accent); height: 18px; width: 0; }
+
+    /* Short viewport: the form matters more than the picture of it. */
+    .ipsec-lanes { max-height: 96px; }
 
     .iface-checklist { max-height: none; }
     .iface-check { min-height: 38px; }

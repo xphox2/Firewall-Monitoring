@@ -1,6 +1,31 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.187] - 2026-07-28
+
+### Fixed
+
+**The IPSec wizard became unusable at laptop height once a tunnel carried more than a couple of subnets.** The schematic is fixed chrome — it never scrolls away — while the form beneath it is the only scrolling region. But the schematic grows with the configuration it describes: one lane per subnet pair, so two subnets a side is four lanes and three a side is nine. Measured at 1440x800 with two subnets a side, the head took **379px of a 680px dialog (56%)**, leaving the form a **190px window onto 614px of content**. The operator could not scroll to the fields they had opened the wizard to fill in.
+
+Two independent protections, since either alone leaves a hole:
+
+- **The lane list is capped** (132px, 96px on short viewports) and scrolls on its own, so no number of subnet pairs can push the form off screen. The pair count moved OUTSIDE that box — scrolling the lanes must not hide how many there are, which is the one number that says whether the tunnel is what was intended.
+- **The whole diagram collapses**, reclaiming 284px and taking the form from 190px to 476px. The choice is remembered. Where the viewport cannot afford the diagram it starts collapsed, because nobody should have to find a button before they can use a form; the collapsed button reads "Show diagram · 4 pairs" so this never conceals that there is configuration to review. An explicit choice outranks that default in both directions.
+
+Guarded by four tests in `internal/shell`, each mutation-verified: removing the cap, folding the count back into the scrolling list, reading the stored preference as a bare truthy value, or nesting the toggle inside the element whose `innerHTML` is rewritten on every keystroke each fail exactly the test that covers them.
+
+### Changed
+
+**The FortiGate's inside ports now derive from the subnets you entered.** FortiOS policies are interface-scoped by construction — a body with `"srcintf": []` is rejected outright — so the port genuinely has to be named in the config. That was never a reason to make a person work out *which* port: the wizard already holds every interface's networks and the protected subnets, and prints them side by side, so matching them by eye was redoing arithmetic the page had already done. Getting it wrong is silent — the tunnel comes up and traffic for the unnamed port is dropped.
+
+Ticking the ports that carry the protected subnets is now automatic, under three rules that keep it honest. It only ever **adds**, because a port can carry traffic for a subnet routed downstream of it and no address table can show that. A deliberate untick is **remembered**, so the control never fights the next keystroke. And it runs on an **active edit only**, bound to the subnets field rather than the form — reopening a saved tunnel must not quietly change which ports its rules name.
+
+OPNsense is untouched: its pass rules are floating and subnet-scoped, so it exposes no interface picker to tick.
+
+### Security
+
+Bumped `google.golang.org/grpc` to v1.82.1 for **GO-2026-6061** (indirect, via the OTLP trace exporter). Unrelated to the wizard work — the advisory landed between CI runs and blocked the gate. `govulncheck` is clean against the pinned 1.25.12 toolchain, which already carries the `crypto/tls` GO-2026-5856 fix.
+
 ## [0.11.186] - 2026-07-26
 
 ### Fixed
