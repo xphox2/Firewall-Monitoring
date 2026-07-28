@@ -22,6 +22,10 @@ Ticking the ports that carry the protected subnets is now automatic, under three
 
 OPNsense is untouched: its pass rules are floating and subnet-scoped, so it exposes no interface picker to tick.
 
+### Security
+
+Bumped `google.golang.org/grpc` to v1.82.1 for **GO-2026-6061** (indirect, via the OTLP trace exporter). Unrelated to the wizard work — the advisory landed between CI runs and blocked the gate. `govulncheck` is clean against the pinned 1.25.12 toolchain, which already carries the `crypto/tls` GO-2026-5856 fix.
+
 ## [0.11.186] - 2026-07-26
 
 ### Fixed
