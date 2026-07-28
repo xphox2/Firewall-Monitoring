@@ -190,11 +190,11 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 		apiCap("Add remote auth (PSK identity)", epRemoteAdd, remoteAuth, nameRemote),
 	}
 	// One child per subnet pair (policy-based: specific selectors, install policies).
-	for _, sp := range childSpecs(local, remote) {
+	for _, sp := range childSpecs(in, v.Self) {
 		steps = append(steps, apiCap("Add child SA ("+sp.localTS+" ↔ "+sp.remoteTS+")", epChildAdd, childBody(desc, espProp, sp, childLife, remote.Dynamic), sp.capture))
 	}
 	steps = append(steps, apiCap("Store pre-shared key", epPSKAdd, pskStep, namePSK))
-	for _, sp := range fwRuleSpecs(local, remote) {
+	for _, sp := range fwRuleSpecs(in, v.Self) {
 		steps = append(steps, apiCap("Add firewall pass rule ("+sp.src+" → "+sp.dst+")", epRuleAdd, fwRule(desc, ipproto, sp.src, sp.dst), sp.capture))
 	}
 	steps = append(steps,
@@ -207,7 +207,7 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 		Steps:           steps,
 		Checksum:        ipsec.ChecksumSteps(steps),
 		TemplateVersion: templateVersion,
-		PreviewText:     swanctlPreview(desc, ikeProp, espProp, localAddr, remoteAddr, local, remote),
+		PreviewText:     swanctlPreview(desc, ikeProp, espProp, localAddr, remoteAddr, local, remote, in, v.Self),
 		AutoObjects:     []string{"kernel IPsec policies (SPD)", "floating firewall pass rules (protected subnets, both directions)"},
 	}, nil
 }
@@ -224,10 +224,10 @@ func (d driver) RenderRemove(v ipsec.RenderView) (ipsec.Artifact, error) {
 	// Firewall rules first (independent of IPsec). One delete per rendered pair/leg;
 	// the same capture names Render produced (unresolved tokens are skipped by the
 	// collector, so a pre-change tunnel's snapshot without these still rolls back).
-	for _, sp := range fwRuleSpecs(v.Local(), v.Remote()) {
+	for _, sp := range fwRuleSpecs(v.Intent, v.Self) {
 		steps = append(steps, delByUUID("Delete firewall pass rule ("+sp.src+" → "+sp.dst+")", epRuleDel, sp.capture))
 	}
-	for _, sp := range childSpecs(v.Local(), v.Remote()) {
+	for _, sp := range childSpecs(v.Intent, v.Self) {
 		steps = append(steps, delByUUID("Delete child SA ("+sp.localTS+" ↔ "+sp.remoteTS+")", epChildDel, sp.capture))
 	}
 	steps = append(steps,
@@ -487,19 +487,25 @@ func protectedFamily(subnets ...string) (string, error) {
 // local/remote traffic-selector pair it installs.
 type childSpec struct{ capture, localTS, remoteTS string }
 
-// childSpecs enumerates one child per (local × remote) subnet pair, each with a
-// SINGLE local_ts/remote_ts — FortiGate holds one src/dst pair per phase2 and
-// narrows a multi-TS child to a single pair, so each pair needs its own child.
-// SAME nesting/index as fwRuleSpecs so child_<i> lines up with that pair's rules
-// (the capture/delete parity RenderRemove relies on).
-func childSpecs(local, remote *ipsec.EndpointSpec) []childSpec {
+// childSpecs enumerates one child per ENABLED (local × remote) subnet pair, each
+// with a SINGLE local_ts/remote_ts — FortiGate holds one src/dst pair per phase2
+// and narrows a multi-TS child to a single pair, so each pair needs its own
+// child. SAME nesting/index as fwRuleSpecs so child_<i> lines up with that
+// pair's rules (the capture/delete parity RenderRemove relies on).
+//
+// A disabled path consumes its index and is skipped, so the tokens of the
+// surviving children never shift — child_3 stays child_3 whether or not
+// child_2 was switched off. Unlike the FortiGate driver, RenderRemove here
+// skips the same pairs: an OPNsense token is only meaningful if Render captured
+// a UUID for it, so emitting deletes for never-captured tokens would break the
+// capture/delete parity in the other direction.
+func childSpecs(in *ipsec.TunnelIntent, self int) []childSpec {
 	var specs []childSpec
-	i := 0
-	for _, ls := range local.ProtectedSubnets {
-		for _, rs := range remote.ProtectedSubnets {
-			specs = append(specs, childSpec{fmt.Sprintf("%s_%d", nameChild, i), ls, rs})
-			i++
+	for _, p := range in.PathsFor(self) {
+		if !p.Enabled {
+			continue
 		}
+		specs = append(specs, childSpec{fmt.Sprintf("%s_%d", nameChild, p.Index), p.Local, p.Remote})
 	}
 	return specs
 }
@@ -530,20 +536,23 @@ func childBody(desc, espProp string, sp childSpec, childLife int, remoteDynamic 
 // source/destination network it permits.
 type fwRuleSpec struct{ capture, src, dst string }
 
-// fwRuleSpecs enumerates one PASS rule per (local × remote) subnet pair in BOTH
-// directions — each with a SINGLE network per field (the OPNsense filter fields
-// reject a comma-joined list). Deterministic order + capture names so Render and
-// RenderRemove agree (the capture/delete parity the rollback contract needs).
-func fwRuleSpecs(local, remote *ipsec.EndpointSpec) []fwRuleSpec {
+// fwRuleSpecs enumerates one PASS rule per ENABLED (local × remote) subnet pair
+// in BOTH directions — each with a SINGLE network per field (the OPNsense filter
+// fields reject a comma-joined list). Deterministic order + capture names so
+// Render and RenderRemove agree (the capture/delete parity the rollback contract
+// needs).
+//
+// Skips exactly the pairs childSpecs skips, on the same index, so a disabled
+// path leaves neither a child nor a rule permitting its traffic.
+func fwRuleSpecs(in *ipsec.TunnelIntent, self int) []fwRuleSpec {
 	var specs []fwRuleSpec
-	i := 0
-	for _, ls := range local.ProtectedSubnets {
-		for _, rs := range remote.ProtectedSubnets {
-			specs = append(specs,
-				fwRuleSpec{fmt.Sprintf("%s_%d", nameRuleOut, i), ls, rs},
-				fwRuleSpec{fmt.Sprintf("%s_%d", nameRuleIn, i), rs, ls})
-			i++
+	for _, p := range in.PathsFor(self) {
+		if !p.Enabled {
+			continue
 		}
+		specs = append(specs,
+			fwRuleSpec{fmt.Sprintf("%s_%d", nameRuleOut, p.Index), p.Local, p.Remote},
+			fwRuleSpec{fmt.Sprintf("%s_%d", nameRuleIn, p.Index), p.Remote, p.Local})
 	}
 	return specs
 }
@@ -748,7 +757,7 @@ func dhToken(g ipsec.DHGroup) (string, error) {
 	return "", fmt.Errorf("opnsense: unsupported dh group %q", g)
 }
 
-func swanctlPreview(desc, ike, esp, localAddr, remoteAddr string, local, remote *ipsec.EndpointSpec) string {
+func swanctlPreview(desc, ike, esp, localAddr, remoteAddr string, local, remote *ipsec.EndpointSpec, in *ipsec.TunnelIntent, self int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "connections.%s {\n", desc)
 	fmt.Fprintf(&b, "  version = 2\n  proposals = %s\n", ike)
@@ -756,7 +765,7 @@ func swanctlPreview(desc, ike, esp, localAddr, remoteAddr string, local, remote 
 	fmt.Fprintf(&b, "  local { auth = psk; id = %s }\n", local.LocalID.Value)
 	fmt.Fprintf(&b, "  remote { auth = psk; id = %s }\n", remote.LocalID.Value)
 	// One child block per subnet pair (each installs its own kernel SPD policy).
-	for _, sp := range childSpecs(local, remote) {
+	for _, sp := range childSpecs(in, self) {
 		fmt.Fprintf(&b, "  children.%s {\n", sp.capture)
 		fmt.Fprintf(&b, "    esp_proposals = %s\n    local_ts = %s\n    remote_ts = %s\n    policies = yes\n  }\n", esp, sp.localTS, sp.remoteTS)
 	}

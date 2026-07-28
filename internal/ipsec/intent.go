@@ -18,7 +18,10 @@
 // live in the database layer.
 package ipsec
 
-import "strings"
+import (
+	"net"
+	"strings"
+)
 
 // Encryption, Integrity, PRF and DHGroup are neutral crypto tokens. Drivers
 // translate them to vendor dialect; the wizard/validation never sees a vendor
@@ -223,7 +226,137 @@ type TunnelIntent struct {
 	// 169.254.x.y/30); Ends[i].InnerIP are the two host addresses.
 	VTISubnet string `json:"vti_subnet"`
 
+	// DisabledPaths turns OFF individual subnet pairs. The selectors are
+	// otherwise the full cross product of the two ends' ProtectedSubnets, which
+	// grants every network on one side a path to every network on the other —
+	// routinely handing a user VLAN a route to the far side's management net
+	// purely because both were listed.
+	//
+	// Entries are "aCIDR|bCIDR" in tunnel A|B orientation (A is Ends[0]),
+	// CANONICALISED via net.IPNet.String(). Canonical rather than raw — unlike
+	// Finding.Subject, which must stay raw to match the operator's text on
+	// screen — because this is a persisted identity: reformatting 10.0.0.1/8 to
+	// 10.0.0.0/8 must keep a path disabled rather than silently re-enable it.
+	// Fail closed. ('|' cannot occur in CIDR text, so it is an unambiguous
+	// separator.)
+	//
+	// Empty (including absent from older stored JSON) means the full mesh, so
+	// every tunnel written before this existed keeps exactly its old behaviour.
+	// Read it through PathsFor, never directly.
+	DisabledPaths []string `json:"disabled_paths"`
+
 	Ends [2]EndpointSpec `json:"ends"`
+}
+
+// SubnetPath is one (local, remote) selector pair for a specific end.
+//
+// Index is the pair's position in THIS end's local×remote enumeration and is
+// load-bearing: both drivers mint device object keys from it (FortiGate phase2
+// mkeys name/name-1/name-2…, OPNsense child_<i>/rule_out_<i>/rule_in_<i>, whose
+// tokens key the captured-UUID map rollback depends on). It therefore counts
+// over the FULL cross product and never compacts — a disabled pair consumes its
+// index and simply is not emitted. Compacting would slide name-3 down to name-2
+// and silently re-point an existing device object at a different selector.
+type SubnetPath struct {
+	Index   int
+	Local   string // raw, as the operator listed it
+	Remote  string
+	Enabled bool
+}
+
+// canonCIDR returns the canonical network form of a CIDR string, or "" if it
+// does not parse. "" never matches a stored key, so an unparseable subnet
+// renders ENABLED — bounded by the subnet_invalid block, which stops deploy.
+func canonCIDR(s string) string {
+	_, n, err := net.ParseCIDR(strings.TrimSpace(s))
+	if err != nil {
+		return ""
+	}
+	return n.String()
+}
+
+// PathKey builds the canonical A|B lookup key for a pair given in TUNNEL
+// orientation (a from Ends[0], b from Ends[1]). Returns "" if either side fails
+// to parse.
+func PathKey(a, b string) string {
+	ca, cb := canonCIDR(a), canonCIDR(b)
+	if ca == "" || cb == "" {
+		return ""
+	}
+	return ca + "|" + cb
+}
+
+// PathsFor enumerates the selector pairs for ONE end, in that end's
+// local×remote order, each flagged Enabled.
+//
+// Per-end rather than tunnel-canonical because both drivers enumerate
+// local×remote and local/remote flip with RenderView.Self — a tunnel-canonical
+// A×B order would reorder end B's indices and change the device keys it mints.
+// The index here is byte-for-byte what the drivers produced before this
+// existed; only Enabled is new.
+//
+// It is the ONE place the cross product is resolved, for the same reason
+// EffectiveLANIfaces exists: hydrateDerived runs on fresh JSON binds only, and
+// every read of a persisted intent — deploy included — unmarshals straight from
+// intent_json without it.
+func (t *TunnelIntent) PathsFor(self int) []SubnetPath {
+	// Route-based negotiates a single 0.0.0.0/0 child and steers with per-subnet
+	// static routes, so there are no per-pair selectors to switch off. Resolve
+	// the mode here once rather than at each call site.
+	if t.Mode != ModePolicyBased {
+		return []SubnetPath{{Index: 0, Local: "0.0.0.0/0", Remote: "0.0.0.0/0", Enabled: true}}
+	}
+
+	local, remote := &t.Ends[self], &t.Ends[1-self]
+	// Deliberately zero paths, NOT a single 0/0 path, when either side is empty.
+	// The drivers' own empty-list fallback is a 0/0 selector, so yielding one
+	// here would show an operator who just disabled their last path something
+	// WIDER than everything. Deploy is separately blocked by subnets_required.
+	if len(local.ProtectedSubnets) == 0 || len(remote.ProtectedSubnets) == 0 {
+		return nil
+	}
+
+	disabled := make(map[string]bool, len(t.DisabledPaths))
+	for _, k := range t.DisabledPaths {
+		if k = strings.TrimSpace(k); k != "" {
+			disabled[k] = true
+		}
+	}
+
+	out := make([]SubnetPath, 0, len(local.ProtectedSubnets)*len(remote.ProtectedSubnets))
+	idx := 0
+	for _, ls := range local.ProtectedSubnets {
+		for _, rs := range remote.ProtectedSubnets {
+			// Keys are stored in tunnel A|B orientation; paths are yielded
+			// local×remote. For end B those are swapped, so swap back before
+			// looking up or every end-B lookup silently misses and the two ends
+			// disagree about which pairs exist.
+			a, b := ls, rs
+			if self == 1 {
+				a, b = rs, ls
+			}
+			key := PathKey(a, b)
+			out = append(out, SubnetPath{
+				Index:   idx,
+				Local:   ls,
+				Remote:  rs,
+				Enabled: key == "" || !disabled[key],
+			})
+			idx++
+		}
+	}
+	return out
+}
+
+// EnabledPathCount reports how many pairs will actually be provisioned.
+func (t *TunnelIntent) EnabledPathCount(self int) int {
+	n := 0
+	for _, p := range t.PathsFor(self) {
+		if p.Enabled {
+			n++
+		}
+	}
+	return n
 }
 
 // RenderView projects the symmetric intent into local/remote terms for ONE end.

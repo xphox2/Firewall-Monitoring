@@ -253,6 +253,9 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 	// --- protected-subnet linters (overlap + self-lockout).
 	fs = append(fs, validateSubnets(intent)...)
 
+	// --- selectively disabled paths.
+	fs = append(fs, validateDisabledPaths(intent)...)
+
 	// --- MTU/MSS + reachability warnings.
 	for i := range intent.Ends {
 		e := &intent.Ends[i]
@@ -370,6 +373,38 @@ func validateSubnets(intent *TunnelIntent) []Finding {
 	for i := range intent.Ends {
 		if n := len(intent.Ends[i].ProtectedSubnets); n > MaxProtectedSubnetsPerEnd {
 			fs = append(fs, Finding{Severity: SeverityBlock, Code: "too_many_subnets", End: endRef(i), Message: fmt.Sprintf("%s has %d protected subnets — the maximum is %d (deterministic route/policy key allocation); split into multiple tunnels", endLabel(intent, i), n, MaxProtectedSubnetsPerEnd)})
+		}
+	}
+
+	// Duplicate canonical networks WITHIN one end.
+	//
+	// Nothing forbade this before, and it was merely wasteful — two entries that
+	// canonicalise the same render identical duplicate phase2s. It becomes a
+	// correctness problem once DisabledPaths keys are content-addressed: two raw
+	// entries collapsing to one key means a single disabled entry silently
+	// governs two lanes, and the "is any path still using this subnet" count is
+	// wrong. Content keys are only trustworthy while canonical forms are unique
+	// within an end.
+	//
+	// One finding per offending RAW entry, each carrying its own Subject, so the
+	// wizard highlights both rows rather than only the first match.
+	for i := range intent.Ends {
+		seen := make(map[string]string, len(intent.Ends[i].ProtectedSubnets))
+		for _, raw := range intent.Ends[i].ProtectedSubnets {
+			c := canonCIDR(raw)
+			if c == "" {
+				continue // subnet_invalid already covers unparseable entries
+			}
+			if first, dup := seen[c]; dup {
+				fs = append(fs, Finding{
+					Severity: SeverityBlock, Code: "subnet_duplicate_within_end", End: endRef(i),
+					Subject: raw,
+					Message: fmt.Sprintf("%s: %s and %s are the same network (%s) — list it once",
+						endLabel(intent, i), first, raw, c),
+				})
+				continue
+			}
+			seen[c] = raw
 		}
 	}
 
@@ -627,4 +662,70 @@ func endLabel(intent *TunnelIntent, i int) string {
 		return fmt.Sprintf("end %c (%s)", 'A'+i, intent.Ends[i].Vendor)
 	}
 	return fmt.Sprintf("end %c", 'A'+i)
+}
+
+// validateDisabledPaths checks the selective-path overlay.
+//
+// The wizard maintains the invariant that a subnet only stays listed while some
+// path still uses it, but UpdateIPSecTunnel binds arbitrary intent JSON, so the
+// server cannot assume it.
+func validateDisabledPaths(intent *TunnelIntent) []Finding {
+	var fs []Finding
+
+	if intent.Mode != ModePolicyBased {
+		if len(intent.DisabledPaths) > 0 {
+			// Route-based negotiates a single 0.0.0.0/0 child and steers by route,
+			// so there is nothing per-path to switch off and the list would sit
+			// there looking effective while doing nothing.
+			fs = append(fs, Finding{
+				Severity: SeverityWarn, Code: "disabled_paths_ignored", End: tunnelWide,
+				Message: "individual paths are disabled, but a route-based tunnel negotiates one 0.0.0.0/0 selector and steers by route — the selection has no effect here",
+			})
+		}
+		return fs
+	}
+
+	paths := intent.PathsFor(0)
+	if len(paths) == 0 {
+		return fs // empty subnet lists — selectors_missing already covers it
+	}
+
+	enabled := 0
+	for _, p := range paths {
+		if p.Enabled {
+			enabled++
+		}
+	}
+	if enabled == 0 {
+		fs = append(fs, Finding{
+			Severity: SeverityBlock, Code: "all_paths_disabled", End: tunnelWide,
+			Message: "every path is disabled — the tunnel would come up carrying nothing",
+		})
+		return fs
+	}
+
+	// A subnet that survives in the list with all of its paths switched off still
+	// gets its route and blackhole on FortiGate, so traffic is sent into a tunnel
+	// that holds no matching selector and is dropped. Fail-closed, but a silent
+	// drop nobody asked for — worth saying out loud.
+	for end := range intent.Ends {
+		used := make(map[string]bool)
+		for _, p := range intent.PathsFor(end) {
+			if p.Enabled {
+				used[p.Local] = true
+			}
+		}
+		for _, s := range intent.Ends[end].ProtectedSubnets {
+			if used[s] || canonCIDR(s) == "" {
+				continue
+			}
+			fs = append(fs, Finding{
+				Severity: SeverityWarn, Code: "subnet_all_paths_disabled", End: endRef(end),
+				Subject: s,
+				Message: fmt.Sprintf("%s: %s is listed but every path using it is disabled — it carries nothing, and traffic to it is dropped rather than routed elsewhere",
+					endLabel(intent, end), s),
+			})
+		}
+	}
+	return fs
 }

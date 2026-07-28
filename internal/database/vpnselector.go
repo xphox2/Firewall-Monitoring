@@ -33,11 +33,10 @@ func MatchProvisionedBySubnets(provPairs map[string]ProvisionedTunnelPair, vpn m
 	var hit ProvisionedTunnelPair
 	found := 0
 	for _, pp := range provPairs {
-		local, remote, ok := pp.SubnetsFor(vpn.DeviceID)
-		if !ok {
+		if _, _, ok := pp.SubnetsFor(vpn.DeviceID); !ok {
 			continue // this device is not an endpoint of that tunnel
 		}
-		if netclass.SelectorCovered(local, vpn.LocalSubnet) && netclass.SelectorCovered(remote, vpn.RemoteSubnet) {
+		if provisionedCarries(pp, vpn) {
 			hit = pp
 			found++
 		}
@@ -102,4 +101,37 @@ func tunnelGroupFor(provPairs map[string]ProvisionedTunnelPair, vpn models.VPNSt
 		return vpn.Phase1Name
 	}
 	return vpn.TunnelName
+}
+
+// provisionedCarries reports whether a provisioned tunnel actually carries the
+// traffic this row describes.
+//
+// The test is EXISTENTIAL over enabled pairs — "is there a single enabled path
+// whose local side covers the reported local AND whose remote side covers the
+// reported remote" — and that shape is load-bearing rather than stylistic.
+// SelectorCovered is one-way containment, not equality, because IKEv2 narrowing
+// legitimately reports a configured /24 as a /32. Overlapping networks within
+// one end are still legal (only identical ones are rejected), so a reported
+// address can sit inside BOTH an enabled and a disabled entry. Testing the
+// lists independently, or finding "the" covering pair and asking whether it is
+// disabled, would then reject a row that genuinely belongs to an enabled child.
+//
+// Falling back to the flat lists when there is no pair detail keeps route-based
+// tunnels — which negotiate one 0.0.0.0/0 selector — matching as they always have.
+func provisionedCarries(pp ProvisionedTunnelPair, vpn models.VPNStatus) bool {
+	paths, ok := pp.PathsFor(vpn.DeviceID)
+	if !ok {
+		// No pair detail (route-based): the flat lists are authoritative.
+		local, remote, isEnd := pp.SubnetsFor(vpn.DeviceID)
+		return isEnd &&
+			netclass.SelectorCovered(local, vpn.LocalSubnet) &&
+			netclass.SelectorCovered(remote, vpn.RemoteSubnet)
+	}
+	for _, path := range paths {
+		if netclass.SelectorCovered(path[:1], vpn.LocalSubnet) &&
+			netclass.SelectorCovered(path[1:2], vpn.RemoteSubnet) {
+			return true
+		}
+	}
+	return false
 }
