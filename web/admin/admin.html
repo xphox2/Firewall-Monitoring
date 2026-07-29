@@ -2795,18 +2795,20 @@
                         <h2 id="ipsec-wizard-title">New IPSec Tunnel</h2>
                         <button type="button" class="modal-close" data-action="ipsec-wizard-close">&times;</button>
                     </div>
-                    <!-- The schematic IS the spine: it shows what is being built, live. -->
-                    <div id="ipsec-schematic" class="ipsec-schematic" aria-live="polite"></div>
+                    <!-- One BOUNDED line, so the header can never grow with the
+                         configuration. The diagram itself lives in its own phase,
+                         where it has the whole body to work with. -->
+                    <div id="ipsec-summary" class="ipsec-summary" aria-live="polite"></div>
                     <nav class="ipsec-phases" aria-label="Wizard progress">
                         <button type="button" class="ipsec-phase-tab" id="ipsec-tab-design" data-action="ipsec-phase" data-phase="design" aria-current="step">
                             <span class="ipsec-phase-dot"></span><span>Design</span>
                         </button>
+                        <button type="button" class="ipsec-phase-tab" id="ipsec-tab-diagram" data-action="ipsec-phase" data-phase="diagram">
+                            <span class="ipsec-phase-dot"></span><span>Paths</span>
+                        </button>
                         <button type="button" class="ipsec-phase-tab" id="ipsec-tab-verify" data-action="ipsec-phase" data-phase="verify">
                             <span class="ipsec-phase-dot"></span><span>Verify</span>
                         </button>
-                        <button type="button" class="ipsec-schematic-toggle" id="ipsec-schematic-toggle"
-                                data-action="ipsec-schematic-toggle" aria-expanded="true"
-                                aria-controls="ipsec-schematic">Hide diagram</button>
                     </nav>
                 </header>
 
@@ -2969,6 +2971,15 @@
                                 </div>
                             </div>
                         </div>
+                    </section>
+
+                    <!-- The paths view. #ipsec-schematic MOVED here from the header
+                         and deliberately KEEPS its id: refreshDerived uses its
+                         presence as the mount guard for the entire live-render
+                         pipeline, and openWizard writes to it unguarded. -->
+                    <section class="ipsec-panel ipsec-panel-diagram" id="ipsec-panel-diagram" tabindex="-1" style="display:none;">
+                        <div id="ipsec-schematic" class="ipsec-schematic" aria-live="polite"></div>
+                        <div id="ipsec-paths" class="ipsec-paths"></div>
                     </section>
 
                     <section class="ipsec-panel" id="ipsec-panel-verify" tabindex="-1" style="display:none;">
