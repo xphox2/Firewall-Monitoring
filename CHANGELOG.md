@@ -1,7 +1,7 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
-## [0.11.189] - 2026-07-29
+## [0.11.189] - 2026-07-28
 
 ### Changed
 
@@ -13,7 +13,7 @@ All notable changes to this project are documented in this file.
 
 **Nothing disappears any more.** v0.11.188 removed a subnet once every path using it was switched off; that made rows vanish and left no way to click them back on. The subnet and its ports are now left alone permanently. The trade-off, stated plainly: a listed subnet with all paths off still gets its FortiGate route and blackhole, so traffic to it is dropped rather than routed elsewhere, and the remaining guard is the non-blocking `subnet_all_paths_disabled` warning.
 
-Rows are real `<button type="button">` elements with `aria-pressed` — the first keyboard-reachable clickable rows in this console, and `type="button"` because a bare `<button>` inside the wizard's `<form>` submits it on every click.
+Rows are real `<button type="button">` elements with `aria-pressed`, and `type="button"` matters because a bare `<button>` inside the wizard's `<form>` submits it on every click. Focus is restored across the re-render that follows a toggle: the list is rebuilt wholesale, so the activated button is destroyed and focus would otherwise fall to the document, where the modal's focus trap sends the next Tab back to the top of the dialog — making keyboard use technically possible and practically hostile.
 
 ### Fixed
 

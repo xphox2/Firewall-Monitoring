@@ -86,8 +86,8 @@
     flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
-    margin: 0 -20px -0px;
-    padding: 0 20px;
+    margin: 0 -20px;
+    padding: 0 20px 12px;
 }
 
 .ipsec-wiz-foot {

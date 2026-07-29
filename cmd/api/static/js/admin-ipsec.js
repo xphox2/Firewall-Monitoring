@@ -157,6 +157,14 @@
         // have just been reset.
         clearAnchors();
         $('ipsec-schematic').innerHTML = '';
+        // The summary is visible IMMEDIATELY on open, so unlike the paths list it
+        // cannot wait to be re-rendered: Edit → Cancel → New Tunnel would
+        // otherwise show the previous tunnel's endpoints and path count.
+        if ($('ipsec-summary')) { $('ipsec-summary').innerHTML = ''; }
+        // The paths list would self-heal on phase entry, but leaving the previous
+        // tunnel's rows sitting in the DOM is the same class of staleness and
+        // costs one line to remove.
+        if ($('ipsec-paths')) { $('ipsec-paths').innerHTML = ''; }
         $('ipsec-matrix').innerHTML = '';
         $('ipsec-existing').hidden = true;
         $('ipsec-crypto-detail').hidden = true;
@@ -1000,9 +1008,35 @@
     // PRODUCT of both ends' subnet counts — five a side is twenty-five rows —
     // and grouping makes "everything from this network is off" visible without
     // counting.
+    // renderPaths replaces the list wholesale, which destroys the very button
+    // the operator just activated: focus falls to <body>, and openModal's focus
+    // trap then sends the next Tab back to the TOP of the dialog. Toggling five
+    // of twenty-five rows would mean re-traversing the wizard five times — which
+    // would make "keyboard reachable" true in principle and hostile in practice.
+    // Remember what was focused by its DATA, since the node itself does not
+    // survive, and restore it afterwards.
+    function focusedPathRef() {
+        var el = document.activeElement;
+        if (!el || !el.closest || !el.closest('#ipsec-paths')) { return null; }
+        var btn = el.closest('[data-action]');
+        if (!btn) { return null; }
+        return { action: btn.dataset.action, a: btn.dataset.a, b: btn.dataset.b };
+    }
+
+    function restorePathFocus(ref) {
+        if (!ref) { return; }
+        var sel = '#ipsec-paths [data-action="' + ref.action + '"]' +
+            '[data-a="' + (window.CSS && CSS.escape ? CSS.escape(ref.a) : ref.a) + '"]';
+        if (ref.b) { sel += '[data-b="' + (window.CSS && CSS.escape ? CSS.escape(ref.b) : ref.b) + '"]'; }
+        var el;
+        try { el = document.querySelector(sel); } catch (e) { el = null; }
+        if (el && el.focus) { el.focus(); }
+    }
+
     function renderPaths() {
         var host = $('ipsec-paths');
         if (!host) return;
+        var keepFocus = focusedPathRef();
         var a = deviceById($('ipsec-dev-a').value), b = deviceById($('ipsec-dev-b').value);
         if (!a || !b || !caps) {
             host.innerHTML = '<div class="ipsec-paths-empty">Pick both firewalls to see what this tunnel will carry.</div>';
@@ -1033,7 +1067,7 @@
             byA[l.a].push(l);
         });
 
-        host.innerHTML = order.map(function (an) {
+        var html = order.map(function (an) {
             var group = byA[an];
             var on = group.filter(function (l) { return l.enabled !== false; }).length;
             // aria-pressed on the group is genuinely tri-state: "mixed" is the
@@ -1061,6 +1095,8 @@
                     '<span class="ipsec-paths-head-count">' + on + ' of ' + group.length + '</span>' +
                 '</button>' + rows + '</div>';
         }).join('');
+        host.innerHTML = html;
+        restorePathFocus(keepFocus);
     }
 
     // Whole-group toggle: one click instead of twenty-five when a network should
@@ -1112,7 +1148,7 @@
             // on a pair the device will hold no selector for is the
             // UI-lies-about-the-device failure in its most consequential place.
             var off = l.enabled === false;
-            var status = off ? 'not carried' : (flag ? '⚠ see above' : 'carried');
+            var status = off ? 'not carried' : (flag ? '⚠ see Paths' : 'carried');
             var cls = off ? ' class="is-off"' : (flag ? ' class="is-warn"' : '');
             return '<tr' + cls + '><td>' + esc(l.a) + '</td><td>' + esc(l.b) + '</td>' +
                 '<td>' + status + '</td></tr>';
@@ -1232,12 +1268,19 @@
             tab.classList.toggle('has-block', block.length > 0);
             tab.classList.toggle('has-warn', block.length === 0 && warn.length > 0);
         }
-        // Same for Paths: laneFlags are painted onto individual path rows, and a
-        // warning about a path is invisible from anywhere but that view.
+        // Same for Paths — but only when that view actually SHOWS the flagged
+        // rows. Route-based renders one explanatory paragraph and no rows, so a
+        // badge there would send the operator to a screen with nothing on it.
         var ptab = $('ipsec-tab-diagram');
         if (ptab) {
-            var anyLane = Object.keys(laneFlags).length > 0;
-            ptab.classList.toggle('has-warn', anyLane);
+            var showsRows = modeVal() !== 'route-based' && Object.keys(laneFlags).length > 0;
+            // Severity matters: default_route_over_vti is a BLOCK, and badging it
+            // amber would understate what the Design tab shows in red.
+            var laneBlock = showsRows && block.some(function (f) {
+                return f.subject && laneFlags[f.end + ':' + f.subject];
+            });
+            ptab.classList.toggle('has-block', laneBlock);
+            ptab.classList.toggle('has-warn', showsRows && !laneBlock);
         }
         renderSchematic();
         renderMatrix();
@@ -1413,7 +1456,9 @@
     function updateFootNote() {
         var note = $('ipsec-foot-note');
         if (!note) return;
-        if (phase === 'design') { note.textContent = ''; note.classList.remove('is-warn'); return; }
+        // Only Verify shows Validate/Save, so only Verify may talk about them —
+        // naming a button that is not on screen is worse than saying nothing.
+        if (phase !== 'verify') { note.textContent = ''; note.classList.remove('is-warn'); return; }
         if (lastPreviewOK) {
             note.textContent = 'Checked — saving also runs preflight.';
             note.classList.remove('is-warn');
