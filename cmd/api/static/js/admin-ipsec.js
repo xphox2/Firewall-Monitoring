@@ -142,7 +142,6 @@
             'a-egress-custom', 'a-lan-custom', 'b-egress-custom', 'b-lan-custom',
             'a-peer-custom', 'b-peer-custom'].forEach(function (f) { $('ipsec-' + f).value = ''; });
         lanUnticked = { a: {}, b: {} };
-        lanAutoTicked = { a: {}, b: {} };
         disabledPaths = {};
         // The LAN pickers are checkbox lists, not selects — reset them separately.
         ['a-egress', 'b-egress', 'a-peer', 'b-peer'].forEach(function (f) {
@@ -158,9 +157,6 @@
         // have just been reset.
         clearAnchors();
         $('ipsec-schematic').innerHTML = '';
-        // Re-apply the remembered collapse (and hide the toggle while there is
-        // no diagram yet) — the class lives on the dialog, which persists.
-        syncSchematicToggle();
         $('ipsec-matrix').innerHTML = '';
         $('ipsec-existing').hidden = true;
         $('ipsec-crypto-detail').hidden = true;
@@ -354,7 +350,6 @@
     //   * It runs on an ACTIVE subnet edit only, never on restore. Reopening a
     //     saved tunnel must not quietly change which ports its rules name.
     var lanUnticked = { a: {}, b: {} };
-    var lanAutoTicked = { a: {}, b: {} };
 
     function ipv4ToInt(ip) {
         var p = String(ip).split('.');
@@ -415,11 +410,6 @@
         Array.prototype.slice.call(box.querySelectorAll('input[type=checkbox]')).forEach(function (cb) {
             if (cb.checked || !carriers[cb.value] || lanUnticked[pfx][cb.value]) { return; }
             cb.checked = true;
-            // Remember it was OUR tick. Propagation may later undo a tick the
-            // wizard made; it must never undo one the operator made by hand,
-            // because a hand-ticked port may carry a subnet routed downstream of
-            // it that no address table can show.
-            lanAutoTicked[pfx][cb.value] = true;
             changed = true;
         });
         if (changed) { invalidate(); refreshDerived(); }
@@ -862,7 +852,6 @@
         var k = pathKey(aNet, bNet);
         if (!k) { return; }
         if (disabledPaths[k]) { delete disabledPaths[k]; } else { disabledPaths[k] = true; }
-        pruneFullyDisabledSubnets();
         pruneDisabledPaths();
         invalidate();
         refreshDerived();
@@ -885,64 +874,6 @@
     }
 
 
-    // When the LAST path using a subnet is switched off, that subnet is carrying
-    // nothing — drop it, and give back the port the wizard ticked for it.
-    //
-    // Deliberately narrow. It only removes a port THIS wizard ticked
-    // (lanAutoTicked): a hand-ticked port may serve a subnet routed downstream
-    // of it, invisible to any address table, and unticking that would break a
-    // correct choice. It also leaves any port still carrying another live
-    // subnet, or autoTickLANFromSubnets would simply tick it back on the next
-    // keystroke — a visible fight with the operator.
-    //
-    // One-way by nature: removing the subnet prunes its keys, so re-adding it
-    // starts from the full mesh again.
-    function pruneFullyDisabledSubnets() {
-        if (modeVal() === 'route-based') { return; }
-        var aNets = subnetsOf('a'), bNets = subnetsOf('b');
-        if (!aNets.length || !bNets.length) { return; }
-
-        var live = { a: {}, b: {} };
-        aNets.forEach(function (an) {
-            bNets.forEach(function (bn) {
-                if (!pathEnabled(an, bn)) { return; }
-                live.a[an] = true;
-                live.b[bn] = true;
-            });
-        });
-
-        ['a', 'b'].forEach(function (pfx) {
-            var nets = pfx === 'a' ? aNets : bNets;
-            var keep = nets.filter(function (n) { return live[pfx][n]; });
-            if (keep.length === nets.length || !keep.length) { return; }
-            var box = $('ipsec-' + pfx + '-subnets');
-            box.value = keep.join('\n');
-
-            // Release only ports this wizard ticked and that nothing left needs.
-            var still = {};
-            var ifaces = ((endpointHints[pfx] || {}).interfaces) || [];
-            keep.map(parseCidr4).filter(Boolean).forEach(function (want) {
-                ifaces.forEach(function (i) {
-                    if (!i.is_lan) { return; }
-                    (i.addresses || []).forEach(function (a) {
-                        var net = parseCidr4(a.cidr);
-                        if (net && cidrOverlaps(net, want)) { still[i.name] = true; }
-                    });
-                });
-            });
-            var lbox = lanList(pfx);
-            if (lbox) {
-                Array.prototype.slice.call(lbox.querySelectorAll('input[type=checkbox]')).forEach(function (cb) {
-                    if (!cb.checked || still[cb.value] || !lanAutoTicked[pfx][cb.value]) { return; }
-                    // Assign directly: dispatching change here would record this as
-                    // an operator untick and suppress future auto-ticking.
-                    cb.checked = false;
-                    delete lanAutoTicked[pfx][cb.value];
-                });
-            }
-        });
-        pruneDisabledPaths();
-    }
 
     // ---- the link schematic ---------------------------------------------
     // The wizard's spine: what is being built, drawn as it is typed. Every
@@ -1015,57 +946,13 @@
         var host = $('ipsec-schematic');
         if (!host) return;
         var a = deviceById($('ipsec-dev-a').value), b = deviceById($('ipsec-dev-b').value);
-        if (!a || !b || !caps) { host.innerHTML = ''; return; }
+        if (!a || !b || !caps) { host.innerHTML = ''; renderSummary(); return; }
 
         var mode = modeVal();
-        var m = trafficMatrix(subnetsOf('a'), subnetsOf('b'), mode);
         var spanLabel = ($('ipsec-ikever') ? $('ipsec-ikever').value : 'ikev2') + ' · ' +
             (mode === 'route-based' ? 'route-based' : 'policy-based');
 
-        var lanes, laneCount = '';
-        if (!m.lanes.length || (!subnetsOf('a').length || !subnetsOf('b').length)) {
-            lanes = '<div class="ipsec-lanes-empty">Add the networks each site shares to see what this tunnel will carry.</div>';
-        } else {
-            lanes = m.lanes.map(function (l) {
-                var fa = laneFlagFor(0, l.a), fb = laneFlagFor(1, l.b);
-                var flag = fa || fb;
-                var off = l.enabled === false;
-                // Route-based negotiates ONE 0.0.0.0/0 child and steers by route,
-                // so there is no per-path selector to switch off. Offering a
-                // control that the device cannot honour is the exact
-                // UI-lies-about-the-device failure this area is scarred by.
-                var tog = m.routed ? '' :
-                    '<label class="ipsec-lane-tog" title="' + (off ? 'Not carried — click to carry it' : 'Carried — click to stop carrying it') + '">' +
-                    '<input type="checkbox" data-action="ipsec-path-toggle"' +
-                        ' data-a="' + esc(l.a) + '" data-b="' + esc(l.b) + '"' + (off ? '' : ' checked') + '>' +
-                    '</label>';
-                return '<div class="ipsec-lane' + (flag ? ' is-warn' : '') + (off ? ' is-off' : '') + '">' +
-                    tog +
-                    '<span class="ipsec-lane-net">' + esc(l.a) + '</span>' +
-                    '<span class="ipsec-lane-link">↔</span>' +
-                    '<span class="ipsec-lane-net r">' + esc(l.b) + '</span>' +
-                    (flag ? '<span class="ipsec-lane-flag">' + esc(flag) + '</span>' : '') +
-                    '</div>';
-            }).join('');
-            // Both vocabularies: the plain phrase, plus the term the devices
-            // themselves print — the point is to be checkable against
-            // `diagnose vpn tunnel list` / `swanctl`. Never "tunnels": conflating
-            // children with tunnels is the confusion that cost days.
-            var cap;
-            if (m.routed) {
-                cap = 'one 0.0.0.0/0 selector, steered by route — individual paths are not selectable in this mode · ' +
-                    m.aRoutes.length + ' route' + (m.aRoutes.length === 1 ? '' : 's') + ' on ' + esc(a.name) +
-                    ' · ' + m.bRoutes.length + ' on ' + esc(b.name);
-            } else {
-                var tot = m.total != null ? m.total : m.lanes.length;
-                cap = (m.childCount === tot
-                        ? tot + ' subnet pair' + (tot === 1 ? '' : 's')
-                        : m.childCount + ' of ' + tot + ' subnet pairs') +
-                    ' · ' + m.childCount + ' child SA' + (m.childCount === 1 ? '' : 's') + ' (phase2)';
-            }
-            laneCount = '<div class="ipsec-lane-count">' + cap + '</div>';
-        }
-
+        // The link only. The pairs are their own view now — see renderPaths.
         host.innerHTML = '<div class="ipsec-link">' +
             nodeHtml('a', a) +
             '<div class="ipsec-span">' +
@@ -1073,62 +960,126 @@
                 '<div class="ipsec-span-rule"></div>' +
             '</div>' +
             nodeHtml('b', b) +
-            '</div>' +
-            // The count sits OUTSIDE the scrolling list, so "4 subnet pairs" stays
-            // on screen however the list is scrolled.
-            '<div class="ipsec-lanes">' + lanes + '</div>' + laneCount;
-        syncSchematicToggle();
+            '</div>';
+        renderSummary();
+        renderPaths();
     }
 
-    // ---- diagram collapse ------------------------------------------------
-    // The schematic is fixed chrome: it never scrolls away, and it grows with
-    // every subnet pair. Capping the lane list bounds that, but an operator
-    // filling in the form should also be able to reclaim the space outright.
-    // The choice is remembered, because someone who wants it gone wants it gone
-    // for the next tunnel too.
-    var SCHEMATIC_HIDE_KEY = 'fwmon.ipsec.schematicHidden';
+    // The header spine: ONE bounded line. It never lists pairs, which is what
+    // stops the header growing with the configuration — the failure that made
+    // the wizard feel unscrollable before the diagram got its own view. The
+    // TOTAL lives here rather than in the scrolling list, so the number that
+    // says whether the tunnel is what you intended is always on screen.
+    function renderSummary() {
+        var host = $('ipsec-summary');
+        if (!host) return;
+        var a = deviceById($('ipsec-dev-a').value), b = deviceById($('ipsec-dev-b').value);
+        if (!a || !b || !caps) { host.innerHTML = ''; return; }
 
-    // An explicit choice always wins. Absent one, start collapsed where the
-    // diagram would leave the form unusable: measured at 1440x800, the head took
-    // 56% of the dialog and the body showed 192px of 614px of content. Nobody
-    // should have to find a button before they can fill in the form, and the
-    // count on that button keeps the diagram discoverable.
-    var SCHEMATIC_TIGHT_VIEWPORT = 900;
-
-    function schematicHidden() {
-        try {
-            var v = localStorage.getItem(SCHEMATIC_HIDE_KEY);
-            if (v === '1') { return true; }
-            if (v === '0') { return false; }
-        } catch (e) { /* private mode: fall through to the viewport default */ }
-        return window.innerHeight < SCHEMATIC_TIGHT_VIEWPORT;
+        var m = trafficMatrix(subnetsOf('a'), subnetsOf('b'), modeVal());
+        var count;
+        if (m.routed) {
+            count = 'one 0.0.0.0/0 selector, steered by route';
+        } else if (!m.lanes.length) {
+            count = 'no networks yet';
+        } else {
+            var tot = m.total != null ? m.total : m.lanes.length;
+            // Both vocabularies: the plain phrase, plus the term the devices
+            // themselves print, so it is checkable against `diagnose vpn tunnel
+            // list` / `swanctl`. Never "tunnels" — conflating children with
+            // tunnels is the confusion that cost days.
+            count = (m.childCount === tot ? tot + ' path' + (tot === 1 ? '' : 's')
+                                          : m.childCount + ' of ' + tot + ' paths') +
+                ' · ' + m.childCount + ' child SA' + (m.childCount === 1 ? '' : 's') + ' (phase2)';
+        }
+        host.innerHTML = '<strong>' + esc(a.name) + '</strong> ↔ <strong>' + esc(b.name) + '</strong>' +
+            ' <span class="ipsec-summary-count">· ' + esc(count) + '</span>';
     }
 
-    function syncSchematicToggle() {
-        var wiz = document.querySelector('.ipsec-wiz');
-        var btn = $('ipsec-schematic-toggle');
-        if (!wiz || !btn) return;
-        var host = $('ipsec-schematic');
-        // Nothing drawn yet (no devices picked) — no space to argue over.
-        var empty = !host || !host.innerHTML.trim();
-        btn.style.display = empty ? 'none' : '';
-        var hidden = schematicHidden();
-        wiz.classList.toggle('schematic-collapsed', hidden);
-        btn.setAttribute('aria-expanded', hidden ? 'false' : 'true');
-        // Carry the count on the button so collapsing never hides that there
-        // are pairs to look at.
-        var n = host ? host.querySelectorAll('.ipsec-lane').length : 0;
-        var suffix = hidden && n ? ' · ' + n + ' pair' + (n === 1 ? '' : 's') : '';
-        btn.textContent = (hidden ? 'Show diagram' : 'Hide diagram') + suffix;
+    // The paths view. Grouped by the site-A network because a flat list is the
+    // PRODUCT of both ends' subnet counts — five a side is twenty-five rows —
+    // and grouping makes "everything from this network is off" visible without
+    // counting.
+    function renderPaths() {
+        var host = $('ipsec-paths');
+        if (!host) return;
+        var a = deviceById($('ipsec-dev-a').value), b = deviceById($('ipsec-dev-b').value);
+        if (!a || !b || !caps) {
+            host.innerHTML = '<div class="ipsec-paths-empty">Pick both firewalls to see what this tunnel will carry.</div>';
+            return;
+        }
+
+        var m = trafficMatrix(subnetsOf('a'), subnetsOf('b'), modeVal());
+        if (!m.lanes.length || !subnetsOf('a').length || !subnetsOf('b').length) {
+            host.innerHTML = '<div class="ipsec-paths-empty">Add the networks each site shares to see what this tunnel will carry.</div>';
+            return;
+        }
+        if (m.routed) {
+            // Route-based negotiates ONE 0.0.0.0/0 child and steers by route, so
+            // there is no per-path selector to switch off. Offering a control the
+            // device cannot honour is the UI-lies-about-the-device failure this
+            // area is scarred by.
+            host.innerHTML = '<div class="ipsec-paths-empty">Route-based: the devices negotiate a single ' +
+                '0.0.0.0/0 selector and steer with static routes, so individual paths cannot be ' +
+                'switched off here. ' + esc(a.name) + ' installs ' + m.aRoutes.length + ' route' +
+                (m.aRoutes.length === 1 ? '' : 's') + '; ' + esc(b.name) + ' installs ' + m.bRoutes.length + '.</div>';
+            return;
+        }
+
+        // Preserve enumeration order; group on the site-A network.
+        var order = [], byA = {};
+        m.lanes.forEach(function (l) {
+            if (!byA[l.a]) { byA[l.a] = []; order.push(l.a); }
+            byA[l.a].push(l);
+        });
+
+        host.innerHTML = order.map(function (an) {
+            var group = byA[an];
+            var on = group.filter(function (l) { return l.enabled !== false; }).length;
+            // aria-pressed on the group is genuinely tri-state: "mixed" is the
+            // honest answer for a partly-enabled group.
+            var gp = on === group.length ? 'true' : (on === 0 ? 'false' : 'mixed');
+            var rows = group.map(function (l) {
+                var flag = laneFlagFor(0, l.a) || laneFlagFor(1, l.b);
+                var off = l.enabled === false;
+                return '<button type="button" class="ipsec-path' + (flag ? ' is-warn' : '') + '"' +
+                    ' aria-pressed="' + (off ? 'false' : 'true') + '"' +
+                    ' data-action="ipsec-path-toggle" data-a="' + esc(l.a) + '" data-b="' + esc(l.b) + '"' +
+                    ' title="' + (off ? 'Not carried — click to carry it' : 'Carried — click to stop carrying it') + '">' +
+                    '<span class="ipsec-path-net">' + esc(l.a) + '</span>' +
+                    '<span class="ipsec-path-link">↔</span>' +
+                    '<span class="ipsec-path-net r">' + esc(l.b) + '</span>' +
+                    '<span class="ipsec-path-state">' + (off ? 'off' : 'on') + '</span>' +
+                    (flag ? '<span class="ipsec-path-flag">' + esc(flag) + '</span>' : '') +
+                    '</button>';
+            }).join('');
+            return '<div class="ipsec-paths-group">' +
+                '<button type="button" class="ipsec-paths-head" aria-pressed="' + gp + '"' +
+                    ' data-action="ipsec-group-toggle" data-a="' + esc(an) + '"' +
+                    ' title="Switch every path from this network on or off">' +
+                    '<span>' + esc(an) + '</span>' +
+                    '<span class="ipsec-paths-head-count">' + on + ' of ' + group.length + '</span>' +
+                '</button>' + rows + '</div>';
+        }).join('');
     }
 
-    function toggleSchematic() {
-        // Writes '1'/'0' explicitly, which pins the choice against the
-        // viewport default from here on.
-        var next = schematicHidden() ? '0' : '1';
-        try { localStorage.setItem(SCHEMATIC_HIDE_KEY, next); } catch (e) {}
-        syncSchematicToggle();
+    // Whole-group toggle: one click instead of twenty-five when a network should
+    // stop being carried. All-on turns the group off; anything else turns it on,
+    // so a partly-disabled group resolves toward carrying rather than dropping.
+    function toggleGroup(aNet) {
+        var bNets = subnetsOf('b');
+        if (!bNets.length) return;
+        var allOn = bNets.every(function (bn) { return pathEnabled(aNet, bn); });
+        bNets.forEach(function (bn) {
+            var k = pathKey(aNet, bn);
+            if (!k) return;
+            if (allOn) { disabledPaths[k] = true; } else { delete disabledPaths[k]; }
+        });
+        pruneDisabledPaths();
+        invalidate();
+        refreshDerived();
     }
+
 
     // The Verify matrix is the same data as a table — one source, so the two views
     // can never disagree about how many children the device will hold.
@@ -1210,8 +1161,10 @@
         laneFlags = {};
         var nodes = document.querySelectorAll('#ipsec-wizard-form .ipsec-anchor');
         Array.prototype.forEach.call(nodes, function (n) { n.innerHTML = ''; });
-        var tab = $('ipsec-tab-design');
-        if (tab) tab.classList.remove('has-block', 'has-warn');
+        ['ipsec-tab-design', 'ipsec-tab-diagram'].forEach(function (id) {
+            var t = $(id);
+            if (t) t.classList.remove('has-block', 'has-warn');
+        });
     }
 
     // An anchored finding is worse than a summarised one if the operator cannot
@@ -1278,6 +1231,13 @@
         if (tab) {
             tab.classList.toggle('has-block', block.length > 0);
             tab.classList.toggle('has-warn', block.length === 0 && warn.length > 0);
+        }
+        // Same for Paths: laneFlags are painted onto individual path rows, and a
+        // warning about a path is invisible from anywhere but that view.
+        var ptab = $('ipsec-tab-diagram');
+        if (ptab) {
+            var anyLane = Object.keys(laneFlags).length > 0;
+            ptab.classList.toggle('has-warn', anyLane);
         }
         renderSchematic();
         renderMatrix();
@@ -1407,22 +1367,44 @@
             return;
         }
         phase = next;
-        var design = next === 'design';
-        $('ipsec-panel-design').style.display = design ? '' : 'none';
-        $('ipsec-panel-verify').style.display = design ? 'none' : '';
-        $('ipsec-tab-design').setAttribute('aria-current', design ? 'step' : 'false');
-        $('ipsec-tab-verify').setAttribute('aria-current', design ? 'false' : 'step');
-        $('ipsec-next-btn').style.display = design ? '' : 'none';
-        $('ipsec-back-btn').style.display = design ? 'none' : '';
-        $('ipsec-preview-btn').style.display = design ? 'none' : '';
-        $('ipsec-save-btn').style.display = design ? 'none' : '';
-        if (!design) {
+        // Ordered, so Next/Back are derived rather than hardcoded — a third
+        // phase would otherwise need every one of these rewritten again.
+        var ORDER = ['design', 'diagram', 'verify'];
+        var at = ORDER.indexOf(next);
+        if (at < 0) { at = 0; next = phase = 'design'; }
+
+        ORDER.forEach(function (p) {
+            var panel = $('ipsec-panel-' + p), tab = $('ipsec-tab-' + p);
+            if (panel) { panel.style.display = p === next ? '' : 'none'; }
+            if (tab) { tab.setAttribute('aria-current', p === next ? 'step' : 'false'); }
+        });
+
+        // The Paths view fills the dialog, which needs a DEFINITE height —
+        // max-height alone leaves it content-sized and every flex child below
+        // collapses to auto. Toggled, not just added, so the other two phases
+        // keep sizing to their content.
+        var wiz = document.querySelector('.ipsec-wiz');
+        if (wiz) { wiz.classList.toggle('phase-diagram', next === 'diagram'); }
+
+        var last = at === ORDER.length - 1;
+        $('ipsec-next-btn').style.display = last ? 'none' : '';
+        $('ipsec-back-btn').style.display = at === 0 ? 'none' : '';
+        $('ipsec-preview-btn').style.display = last ? '' : 'none';
+        $('ipsec-save-btn').style.display = last ? '' : 'none';
+        if (!last) {
+            $('ipsec-next-btn').dataset.phase = ORDER[at + 1];
+            $('ipsec-next-btn').textContent = next === 'design' ? 'Review the paths' : 'Check it over';
+        }
+        if (at > 0) { $('ipsec-back-btn').dataset.phase = ORDER[at - 1]; }
+
+        if (next === 'diagram') { renderPaths(); }
+        if (last) {
             // A mid-flow device change silently rebuilds the crypto radios, so the
             // matrix is recomputed on every entry rather than cached.
             renderMatrix();
         }
         updateFootNote();
-        var panel = $(design ? 'ipsec-panel-design' : 'ipsec-panel-verify');
+        var panel = $('ipsec-panel-' + next);
         if (panel && panel.focus) panel.focus();
     }
 
@@ -1501,8 +1483,8 @@
     function wire() {
         AC.delegateEvent('click', {
             'ipsec-phase': function (el) { setPhase(el.dataset.phase); },
-            'ipsec-schematic-toggle': function () { toggleSchematic(); },
             'ipsec-path-toggle': function (el) { togglePath(el.dataset.a, el.dataset.b); },
+            'ipsec-group-toggle': function (el) { toggleGroup(el.dataset.a); },
             'ipsec-crypto-toggle': function (el) {
                 // The disclosure IS #ipsec-custom-crypto's container restyled — a
                 // second visibility mechanism ANDed on top would leave an operator
@@ -1555,7 +1537,7 @@
                     if (cb && cb.type === 'checkbox') {
                         // Remember a deliberate untick so the next keystroke in the
                         // subnets box does not put it straight back.
-                        if (cb.checked) { delete lanUnticked[pfx][cb.value]; delete lanAutoTicked[pfx][cb.value]; }
+                        if (cb.checked) { delete lanUnticked[pfx][cb.value]; }
                         else { lanUnticked[pfx][cb.value] = true; }
                     }
                     invalidate();

@@ -1,6 +1,24 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.189] - 2026-07-29
+
+### Changed
+
+**The IPSec tunnel diagram is now its own full-height view.** It used to sit in fixed chrome above the form, where the two competed for height — which is why v0.11.187 had to cap the path list at 132px and add a collapse toggle. A tunnel's path list grows as the *product* of both ends' subnet counts, so five subnets a side is twenty-five rows; rationing that space was the wrong answer. Paths is now a third phase beside Design and Verify, owning the whole dialog, and the cap and the toggle are gone because the competition is gone. A one-line summary stays in the header, so live feedback survives while typing and the total is always on screen.
+
+**Paths are toggled by clicking the path, not a checkbox, and colour carries the state** — accent for carried, muted with a red edge for not. No strike-through: colour is the signal, and struck text reads as *deleted* on a row that is meant to be clicked again. Both states are built from theme tokens, so Day and Night work without a second set of rules.
+
+**Paths are grouped by source network**, with sticky headers and a live "1 of 2" count, because a flat twenty-five-row list is unscannable. Clicking a group header switches every path from that network at once — one click instead of twenty-five. A partly-enabled group reports `aria-pressed="mixed"`.
+
+**Nothing disappears any more.** v0.11.188 removed a subnet once every path using it was switched off; that made rows vanish and left no way to click them back on. The subnet and its ports are now left alone permanently. The trade-off, stated plainly: a listed subnet with all paths off still gets its FortiGate route and blackhole, so traffic to it is dropped rather than routed elsewhere, and the remaining guard is the non-blocking `subnet_all_paths_disabled` warning.
+
+Rows are real `<button type="button">` elements with `aria-pressed` — the first keyboard-reachable clickable rows in this console, and `type="button"` because a bare `<button>` inside the wizard's `<form>` submits it on every click.
+
+### Fixed
+
+**The wizard's own shell block had never taken effect.** `admin.html`'s inline `<style>` loads *after* `admin-ipsec.css`, so at equal specificity the generic `.modal-content` won every shared property: the wizard has been running at 85vh with 24px padding since v0.11.187, not the 92vh/zero-padding its stylesheet describes, and the 480px full-screen rule was dead for the same reason. Both are now `.modal-content.ipsec-wiz`, which wins deterministically. Design and Verify therefore change appearance slightly — that is the shipped design finally applying.
+
 ## [0.11.188] - 2026-07-28
 
 ### Added
