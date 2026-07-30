@@ -1048,9 +1048,18 @@ type Probe struct {
 	// never re-registered) and is treated as v1. The heartbeat handler gates
 	// schema-v4 features (pending_commands delivery) on this value, so a v3
 	// collector is never sent a wire field it does not understand.
-	SchemaVersion int       `json:"schema_version"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	SchemaVersion int `json:"schema_version"`
+	// AgentVersion is the collector's own software version, reported on register
+	// and every heartbeat. Distinct from SchemaVersion, which tracks the WIRE
+	// FORMAT: a collector can speak schema v5 on any number of builds, so the
+	// schema told you nothing about which binary was running.
+	//
+	// Empty means a collector too old to report it (pre-v1.3.31), which is
+	// itself informative — and why consumers must treat "" as unknown rather
+	// than as old-or-new.
+	AgentVersion string    `json:"agent_version" gorm:"size:32"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 	// DecommissionedAt marks a probe as retired (decommissioned/replaced)
 	// WITHOUT deleting its row or any of its telemetry, so historical running
 	// totals continue to include it. Non-null => decommissioned: hidden from

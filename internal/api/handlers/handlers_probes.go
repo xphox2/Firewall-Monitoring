@@ -489,6 +489,9 @@ func (h *Handler) RegisterProbe(c *gin.Context) {
 		// rejected with HTTP 426 (Upgrade Required) and the supported range
 		// in the X-Probe-Schema-Version-Supported response header.
 		SchemaVersion *int `json:"schema_version"`
+		// AgentVersion is the collector's own build. Optional: absent means a
+		// collector too old to report it, which is itself the answer.
+		AgentVersion string `json:"agent_version"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		probeErr(c, http.StatusBadRequest, "Invalid request")
@@ -569,9 +572,16 @@ func (h *Handler) RegisterProbe(c *gin.Context) {
 	// delivery on the stored value, so skipping the write here would leave an
 	// upgraded collector stuck without commands until a lifecycle bounce.
 	if existingProbe.ApprovalStatus == "approved" && existingProbe.Status == "online" {
-		if existingProbe.SchemaVersion != selectedVersion {
+		if existingProbe.SchemaVersion != selectedVersion || existingProbe.AgentVersion != req.AgentVersion {
+			upd := map[string]interface{}{"schema_version": selectedVersion}
+			// Only write a version the collector actually reported: blanking a
+			// known version because an older binary re-registered would lose
+			// information rather than correct it.
+			if req.AgentVersion != "" {
+				upd["agent_version"] = clampAgentVersion(req.AgentVersion)
+			}
 			if err := h.db.Gorm().Model(&models.Probe{}).Where("id = ?", existingProbe.ID).
-				Update("schema_version", selectedVersion).Error; err != nil {
+				Updates(upd).Error; err != nil {
 				httputil.InternalError(c, "Failed to update probe schema version", err)
 				return
 			}
@@ -674,6 +684,17 @@ func (h *Handler) RegenerateProbeKey(c *gin.Context) {
 	}))
 }
 
+// clampAgentVersion bounds a self-reported version string. It is collector-
+// supplied and lands in a VARCHAR(32), so it is truncated rather than trusted —
+// an over-long value would otherwise fail the write and take the whole heartbeat
+// with it.
+func clampAgentVersion(v string) string {
+	if len(v) > 32 {
+		return v[:32]
+	}
+	return v
+}
+
 func (h *Handler) ProbeHeartbeat(c *gin.Context) {
 	if h.db == nil {
 		probeErr(c, http.StatusServiceUnavailable, "Database not available")
@@ -693,6 +714,10 @@ func (h *Handler) ProbeHeartbeat(c *gin.Context) {
 		// probe last saw for it (SSH host-key change detection). Optional;
 		// absent for probes that don't report it.
 		ObservedHostKeys map[uint]string `json:"observed_host_keys"`
+		// AgentVersion rides every heartbeat, not just register, so an upgrade
+		// is visible within one cadence rather than only after a
+		// re-registration that may never happen.
+		AgentVersion string `json:"agent_version"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		probeErr(c, http.StatusBadRequest, "Invalid request")
@@ -729,10 +754,17 @@ func (h *Handler) ProbeHeartbeat(c *gin.Context) {
 		status = "online"
 	}
 
-	h.db.Gorm().Model(probe).Updates(map[string]interface{}{
+	hbUpdate := map[string]interface{}{
 		"last_seen": time.Now(),
 		"status":    status,
-	})
+	}
+	// Only write a version the collector reported. A blank must never overwrite
+	// a known one: that would turn "upgraded and reporting" back into "unknown"
+	// on the first heartbeat from anything older.
+	if req.AgentVersion != "" && req.AgentVersion != probe.AgentVersion {
+		hbUpdate["agent_version"] = clampAgentVersion(req.AgentVersion)
+	}
+	h.db.Gorm().Model(probe).Updates(hbUpdate)
 
 	if len(req.ObservedHostKeys) > 0 {
 		h.processObservedHostKeys(probe.ID, req.ObservedHostKeys)

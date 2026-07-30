@@ -1,6 +1,22 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.191] - 2026-07-30
+
+### Added
+
+**Probes record the collector's software version.** The server previously knew only the negotiated `schema_version`, which describes the wire format and not the binary — so "which collector build is this?" had no answer. Migration v55 adds `probes.agent_version`, populated from register and every heartbeat, and it appears on each probe card in the admin UI.
+
+Empty means a collector too old to report one, which is itself the answer; nothing backfills a guess, because that would destroy the distinction. A reported version is never overwritten by a blank, so an older binary re-registering cannot turn "known" back into "unknown".
+
+### Changed
+
+**The IPSec telemetry gate now asks the version first.** A collector too old to run `ipsec_telemetry` is skipped **silently** — no command, no failed row, no log line — instead of being asked every five minutes and answering "unknown command type" each time.
+
+An unknown version deliberately does **not** skip. It covers both a genuinely ancient collector and a probe that simply has not re-registered since the server upgraded, and refusing on an unknown is how a feature quietly never starts. Unknown falls through to the existing error-text back-off, which self-heals either way — as it did on this deployment, where the first command raced the collector restart and the retry an hour later succeeded.
+
+Version comparison is numeric per segment, not lexical: `1.3.9` is older than `1.3.30`, which a string compare gets backwards. An unparseable version reads as "not older", so an unrecognised format can never silently disable the feature.
+
 ## [0.11.190] - 2026-07-29
 
 ### Added

@@ -2390,3 +2390,29 @@ func (d *Database) migrateEventRuleProfiles() error {
 	log.Printf("migrate v48 event_rule_profiles: migrated %d disabled type(s) across %d referenced policy(ies) into dense profile toggles; assignments mirrored", len(dSet), len(referenced))
 	return nil
 }
+
+// migrateProbeAgentVersion (v55) adds probes.agent_version.
+//
+// The server previously knew only the negotiated schema_version, which tracks
+// the wire format rather than the binary — so there was no way to answer "which
+// collector build is this?". Anything version-dependent had to infer it: the
+// IPSec telemetry gate matches on the TEXT of a failure the collector returns,
+// and diagnosing a stale collector meant hunting for side effects in unrelated
+// telemetry.
+//
+// Nullable with no default: empty means a collector too old to report it, which
+// is itself the answer, and backfilling a guess would destroy that distinction.
+func (d *Database) migrateProbeAgentVersion() error {
+	// SQLite (the test backend) does not support ADD COLUMN IF NOT EXISTS and
+	// already has the column from the baseline AutoMigrate, so it takes the
+	// AutoMigrate path — which adds the column only if missing. Same shape as
+	// v52/v53.
+	if !d.dialect.IsPostgres() {
+		return d.db.AutoMigrate(&models.Probe{})
+	}
+	if err := d.execMaintenanceDDL(`ALTER TABLE probes ADD COLUMN IF NOT EXISTS agent_version VARCHAR(32)`); err != nil {
+		return fmt.Errorf("migrate v55 add probes.agent_version: %w", err)
+	}
+	log.Printf("migrate v55 probes.agent_version: ensured column exists (varchar(32), nullable)")
+	return nil
+}
