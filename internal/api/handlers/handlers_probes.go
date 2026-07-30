@@ -17,6 +17,7 @@ import (
 	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
+	"firewall-mon/internal/ipsectelemetry"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/relay"
 
@@ -819,6 +820,23 @@ func (h *Handler) ReceiveCommandResult(c *gin.Context) {
 		cmd.DeviceID > 0 && database.ProbeCommandTouchesDevice(cmd.Type) {
 		now := time.Now()
 		h.bumpDevicesOnline(map[uint]time.Time{cmd.DeviceID: now}, now)
+	}
+	// IPSec session telemetry is parsed inline, unlike ipsec_status which is
+	// evaluated later on the status-poll GET: nothing else would ever read this
+	// result, and the rows have a freshness window to satisfy.
+	//
+	// Gated on `applied` because the collector re-POSTs cached results on
+	// redelivery — ungated, every redelivery would insert the whole batch again.
+	if applied && req.Status == database.ProbeCommandStatusSucceeded &&
+		cmd.Type == database.ProbeCommandTypeIPSecTelemetry && cmd.DeviceID > 0 {
+		rows, terr := ipsectelemetry.Ingest(h.db, cmd.DeviceID, req.Result, time.Now())
+		if terr != nil {
+			// Logged, not fatal: the command itself succeeded, and failing the
+			// response would make the collector retry a result it already has.
+			log.Printf("ReceiveCommandResult: ipsec telemetry for device %d: %v", cmd.DeviceID, terr)
+		} else if len(rows) > 0 {
+			log.Printf("ReceiveCommandResult: ipsec telemetry device %d -> %d child SA rows", cmd.DeviceID, len(rows))
+		}
 	}
 	log.Printf("ReceiveCommandResult: probe %d command %s -> %s (applied=%v)", probe.ID, req.CommandID, req.Status, applied)
 	c.JSON(http.StatusOK, response.Success(gin.H{"applied": applied}))
