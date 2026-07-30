@@ -2,12 +2,19 @@ package main
 
 import (
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/ipsectelemetry"
+	"firewall-mon/internal/models"
 )
+
+// minTelemetryAgent is the first collector build that understands
+// ipsec_telemetry. A collector older than this cannot run the command, so
+// enqueueing for it only produces a failed row.
+const minTelemetryAgent = "1.3.30"
 
 // IPSec session telemetry cadence.
 //
@@ -47,7 +54,7 @@ func (p *Poller) runIPSecTelemetryCycle() {
 		if !dev.Enabled || len(ipsectelemetry.StepsFor(dev.Vendor)) == 0 {
 			continue
 		}
-		if skip, why := p.skipTelemetry(dev.ID, now); skip {
+		if skip, why := p.skipTelemetry(dev, now); skip {
 			if why != "" {
 				log.Printf("ipsec telemetry: device %d (%s): %s", dev.ID, dev.Name, why)
 			}
@@ -68,7 +75,24 @@ func (p *Poller) runIPSecTelemetryCycle() {
 }
 
 // skipTelemetry decides whether to leave this device alone for now.
-func (p *Poller) skipTelemetry(deviceID uint, now time.Time) (bool, string) {
+func (p *Poller) skipTelemetry(dev *models.Device, now time.Time) (bool, string) {
+	deviceID := dev.ID
+
+	// Ask the collector's reported version first. When it is known this is an
+	// exact answer, and it costs nothing: a collector too old to run the command
+	// is skipped SILENTLY, with no failed row and no log line, instead of being
+	// asked every five minutes and answering "unknown command type" forever.
+	//
+	// An empty version means a collector too old to report one at all — which is
+	// itself older than the first build that understands this command. But it is
+	// deliberately NOT treated as a skip: it also covers a probe that has not yet
+	// re-registered since the server upgraded, and refusing telemetry on an
+	// unknown is how a feature quietly never starts. Unknown falls through to the
+	// error-text back-off below, which self-heals either way.
+	if v := p.probeAgentVersion(dev); v != "" && versionLess(v, minTelemetryAgent) {
+		return true, ""
+	}
+
 	last, err := p.db.GetLatestCommandByDeviceType(deviceID, database.ProbeCommandTypeIPSecTelemetry)
 	if err != nil || last == nil {
 		return false, ""
@@ -92,4 +116,38 @@ func (p *Poller) skipTelemetry(deviceID uint, now time.Time) (bool, string) {
 		return false, "retrying telemetry after unknown-command-type back-off (collector may have been upgraded)"
 	}
 	return false, ""
+}
+
+// probeAgentVersion returns the reported build of the collector that owns this
+// device, or "" when unknown.
+func (p *Poller) probeAgentVersion(dev *models.Device) string {
+	if dev.ProbeID == nil || *dev.ProbeID == 0 {
+		return ""
+	}
+	pr, err := p.db.GetProbe(*dev.ProbeID)
+	if err != nil || pr == nil {
+		return ""
+	}
+	return pr.AgentVersion
+}
+
+// versionLess compares dotted numeric versions (1.3.30 < 1.3.31 < 1.4.0).
+//
+// Deliberately not a string compare, which would put "1.3.9" after "1.3.30",
+// and not a semver library for three integers. A segment that does not parse
+// makes the comparison return false — "not older" — so an unrecognised format
+// never silently disables the feature.
+func versionLess(a, b string) bool {
+	as, bs := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(as) && i < len(bs); i++ {
+		ai, aerr := strconv.Atoi(strings.TrimSpace(as[i]))
+		bi, berr := strconv.Atoi(strings.TrimSpace(bs[i]))
+		if aerr != nil || berr != nil {
+			return false
+		}
+		if ai != bi {
+			return ai < bi
+		}
+	}
+	return len(as) < len(bs)
 }

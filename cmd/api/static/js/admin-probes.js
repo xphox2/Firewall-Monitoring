@@ -180,6 +180,16 @@
                             '<span style="font-size:0.6rem;text-transform:uppercase;color:var(--fwmon-text-mute);letter-spacing:0.5px;margin-bottom:2px;">Last Seen</span>' +
                             '<span style="font-size:0.8rem;font-weight:600;color:var(--fwmon-text-dim);font-family:var(--fwmon-font-mono);">' + lastSeen + '</span>' +
                         '</div>' +
+                        '<div style="display:flex;flex-direction:column;">' +
+                            '<span style="font-size:0.6rem;text-transform:uppercase;color:var(--fwmon-text-mute);letter-spacing:0.5px;margin-bottom:2px;">Version</span>' +
+                            // "unknown" rather than a blank or a guess: it means a
+                            // collector too old to report its build, which is a real
+                            // answer and the one worth being able to see.
+                            '<span style="font-size:0.8rem;font-weight:600;color:' +
+                                (p.agent_version ? 'var(--fwmon-text-dim)' : 'var(--fwmon-text-mute)') +
+                                ';font-family:var(--fwmon-font-mono);">' +
+                                AC.escapeHtml(p.agent_version || 'unknown') + '</span>' +
+                        '</div>' +
                     '</div>' +
                     statsHtml +
                 '</div>' +
