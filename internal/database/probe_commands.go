@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"strings"
 )
 
 // Probe command channel (relay schema v4). The server enqueues ProbeCommand
@@ -60,6 +61,13 @@ const (
 	// StatusProbe steps and returns the raw device documents; the SERVER parses
 	// them (vendor ParseStatus) to drive the tunnel degraded → up/down.
 	ProbeCommandTypeIPSecStatus = "ipsec_status"
+
+	// ProbeCommandTypeIPSecTelemetry is the RECURRING read-only fetch of a
+	// device's IPSec session documents, correlated server-side into per-child-SA
+	// telemetry rows. Distinct from ipsec_status, which is deploy verification:
+	// that one is one-shot, single-step and first-result-wins, and polling must
+	// not inherit any of those.
+	ProbeCommandTypeIPSecTelemetry = "ipsec_telemetry"
 )
 
 // probeCommandDeviceTouching lists command types whose execution makes the
@@ -73,6 +81,7 @@ var probeCommandDeviceTouching = map[string]bool{
 	ProbeCommandTypeIPSecApply:     true, // a successful write proves reachability
 	ProbeCommandTypeIPSecRemove:    true,
 	ProbeCommandTypeIPSecStatus:    true, // a successful SA-probe read proves reachability
+	ProbeCommandTypeIPSecTelemetry: true, // likewise: a successful session read proves reachability
 }
 
 // ProbeCommandTouchesDevice reports whether a succeeded result for the given
@@ -106,6 +115,20 @@ const (
 	// so the cap must clear the real worst case — the apply/remove reports are also
 	// compacted collector-side (only non-OK steps listed) as defence in depth.
 	probeCommandResultMaxLen = 65536
+
+	// probeCommandTelemetryResultMaxLen is the cap for ipsec_telemetry, which
+	// returns THREE raw device documents rather than a compacted report. The
+	// 64 KiB default was sized for preflight/apply reports; three unfiltered
+	// session documents from a busy box can exceed it, and a truncated envelope
+	// is invalid JSON — so the parse fails, no rows are written, and the command
+	// still reads "succeeded". Silent, and identical on every poll, so the tunnel
+	// would simply age out with nothing saying why.
+	//
+	// Raised for this type only: the base cap is the anti-bloat guard for the
+	// whole table, and this is the first RECURRING command (288 results per
+	// device per day), so lifting it globally multiplies the worst case for
+	// every other type.
+	probeCommandTelemetryResultMaxLen = 512 * 1024
 
 	// probeCommandClaimBatch caps how many commands one heartbeat response
 	// carries; the remainder rides the next heartbeat (60s later).
@@ -259,14 +282,31 @@ func (d *Database) ClaimProbeCommands(probeID uint) ([]models.ProbeCommand, erro
 // completed command row is returned (Payload still encrypted) so the caller
 // can act on its DeviceID/Type — e.g. count a succeeded device-touching
 // command as reachability evidence.
+// probeCommandTruncatedMarker is appended when a result is cut. It deliberately
+// makes the stored text INVALID JSON in a self-describing way: a consumer that
+// tries to parse it fails with a message naming truncation rather than a generic
+// syntax error at some arbitrary offset.
+const probeCommandTruncatedMarker = "\n[truncated: result exceeded the stored-result cap]"
+
+// probeCommandResultCap is the stored-result limit for a command type.
+func probeCommandResultCap(cmdType string) int {
+	if cmdType == ProbeCommandTypeIPSecTelemetry {
+		return probeCommandTelemetryResultMaxLen
+	}
+	return probeCommandResultMaxLen
+}
+
+// ProbeCommandResultTruncated reports whether a stored result was cut short.
+// Callers parsing a result MUST check this first: a truncated body fails to
+// parse for a reason that has nothing to do with the device.
+func ProbeCommandResultTruncated(result string) bool {
+	return strings.HasSuffix(result, probeCommandTruncatedMarker)
+}
+
 func (d *Database) CompleteProbeCommand(probeID uint, commandID, status, result string) (cmd models.ProbeCommand, applied bool, err error) {
 	if status != ProbeCommandStatusSucceeded && status != ProbeCommandStatusFailed {
 		return cmd, false, fmt.Errorf("invalid command result status %q", status)
 	}
-	if len(result) > probeCommandResultMaxLen {
-		result = result[:probeCommandResultMaxLen]
-	}
-
 	err = d.db.Transaction(func(tx *gorm.DB) error {
 		if e := tx.Where("command_id = ? AND probe_id = ?", commandID, probeID).
 			First(&cmd).Error; e != nil {
@@ -274,6 +314,13 @@ func (d *Database) CompleteProbeCommand(probeID uint, commandID, status, result 
 		}
 		if probeCommandTerminal(cmd.Status) {
 			return nil // idempotent replay — first result wins
+		}
+		// Truncate only now that the row — and therefore its Type — is known.
+		// Doing it before the load forced one cap on every type, and silently
+		// stored a broken JSON prefix that a consumer could only discover as an
+		// unexplained parse failure. Record the truncation instead.
+		if max := probeCommandResultCap(cmd.Type); len(result) > max {
+			result = result[:max] + probeCommandTruncatedMarker
 		}
 		if e := tx.Model(&models.ProbeCommand{}).Where("id = ?", cmd.ID).
 			Updates(map[string]interface{}{

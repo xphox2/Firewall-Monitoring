@@ -227,6 +227,8 @@ func (p *Poller) Start() error {
 	// and cheap once the backlog is gone.
 	cleanupTimer := time.NewTimer(initialCleanupDelay)
 	defer cleanupTimer.Stop()
+	ipsecTelemetryTicker := time.NewTicker(ipsecTelemetryInterval)
+	defer ipsecTelemetryTicker.Stop()
 
 	// The server's OWN volumes. Nothing else evaluates them: DISK_HIGH is keyed
 	// on a device id, and the fwmon server is not a monitored device — which is
@@ -285,6 +287,8 @@ func (p *Poller) Start() error {
 			})
 		case <-detectTicker.C:
 			p.runUnderLeaderLock("flow-detect", p.runFlowDetectionCycle)
+		case <-ipsecTelemetryTicker.C:
+			p.runUnderLeaderLock("ipsec-telemetry", p.runIPSecTelemetryCycle)
 		case <-feedInitC:
 			p.startThreatFeedSyncAsync() // M9: async, off the select loop
 		case <-feedTickC:

@@ -1,6 +1,28 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.190] - 2026-07-29
+
+### Added
+
+**OPNsense IPSec session telemetry — the connection map can finally see the far end.** OPNsense had never written a single `vpn_status` row. Its VPN collection walks the SNMP interface table for names beginning `ipsec`, which is correct for route-based IPSec but finds nothing on a policy-based box: those install kernel SPD entries through `enc0` and create no per-tunnel interface. Even a match would not have helped, because an interface carries no traffic selectors — and the selectors are exactly what was missing.
+
+The parser for this already existed and had never been called: `internal/vpnsession`, added in v0.11.171 under the heading *"not yet wired to a poller"*, with fixtures captured from the live box. It correlates three session documents on `reqid` and emits one row per child SA with selectors, byte counters and uptime. This release wires it up.
+
+A new recurring `ipsec_telemetry` probe command carries the three GETs — all parameterless, which is why the POST-only `searchPhase2` is unusable and the SPD/SAD pair is the route taken. The poller enqueues every five minutes, comfortably inside the 30-minute freshness window. Parsing stays server-side, where the parser and its fixtures live, and where IPSec device documents are already parsed from command results.
+
+The expected-children list — needed because a **down** child leaves no trace in either document, so an outage would otherwise be invisible — comes from `ProvisionedTunnelPair.PathsFor(deviceID)`, which already filters to enabled paths and orients them for the reporting device. Deliberately not `TunnelIntent.PathsFor`, which returns the full cross product with each pair flagged: fed in unfiltered, every path an operator had switched off would become a permanent "down" row, manufacturing exactly the outage the mechanism exists to detect.
+
+### Fixed
+
+**The stored-result cap applied one limit to every command type.** Results were truncated at 64 KiB *before* the command row — and therefore its type — was read. That cap was sized for compacted preflight reports; three raw session documents can exceed it, and a truncated envelope is invalid JSON, so any consumer reading the stored copy would fail with an unexplained syntax error rather than a message naming the cause.
+
+Truncation now happens after the row loads, uses a raised per-type limit for telemetry, and is recorded explicitly. To be accurate about the scope: telemetry is parsed from the result as received, not from the stored copy, so this is defence for anything that reads stored results later — it is not what makes ingestion work today.
+
+### Changed
+
+Telemetry results are parsed inline on receipt, gated on the result being newly applied — the collector re-POSTs cached results on redelivery, and without the gate every redelivery would insert the batch again. An older collector answers the unknown type with a clear failure; the poller backs off on **that specific answer only**, never on failure in general, since a transient failure would otherwise latch telemetry off permanently. The back-off is time-bounded so it recovers on its own once the collector is upgraded.
+
 ## [0.11.189] - 2026-07-28
 
 ### Changed
