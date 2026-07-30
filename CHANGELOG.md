@@ -11,6 +11,8 @@ This surfaced rather than started in v0.11.190: before it, the SSH-derived phase
 
 It stays in the group's status and byte totals, because it is the **only** member that carries either: the SSH rows read configuration and can observe neither liveness nor traffic. It is demoted from the child list only when real children exist, so a dialup tunnel this system did not provision still shows its selectors rather than none.
 
+**The paired tunnel tables no longer fall out of step.** Source and destination tunnels render as two independent tables in a two-column grid, each sizing its own columns from its own content — so a two-word header like "REMOTE IP" wrapping on one side alone made that header row taller and pushed every row below it out of alignment with its counterpart. Headers no longer wrap, both halves get the same header height regardless of content, and the tunnel-name cell (the only genuinely variable-width one, since a child row carries two CIDRs) now yields space instead of holding the table wide and squeezing the rest.
+
 **A child that makes no claim about its state is no longer painted DOWN.** Only `up` and `down` are state claims — a FortiGate SSH row says `unknown` precisely because `show` reads configuration and cannot observe liveness, which is the premise the two-writer merge rests on. The panel collapsed everything not-up into DOWN, which would have shown four dead children beneath a parent badged UP. Such rows now render as a dash, with a tooltip pointing at the row that does know.
 
 ## [0.11.191] - 2026-07-30

@@ -248,12 +248,35 @@
     font-weight: 600;
     text-transform: uppercase;
     font-size: 0.72rem;
+    /* Never wrap a header. These tables are rendered as an independent PAIR in
+       a two-column grid, so a header that wraps on one side alone makes that
+       header row taller and pushes every row below it out of step with its
+       counterpart — "REMOTE IP" is two words and was the one that broke. */
+    white-space: nowrap;
 }
 
 .vpn-detail-table td {
     padding: 8px 12px;
     border-bottom: 1px solid var(--fwmon-panel-bg);
     color: var(--fwmon-text-dim);
+}
+
+/* The tunnel name is the only genuinely variable-width cell — a child selector
+   row reads "192.168.12.0/24 -> 192.168.13.0/24" — so it is the one that yields
+   space. Without this it holds the table wide and squeezes every other column
+   until their headers wrap, which is what broke the pairing. */
+.vpn-detail-table td:nth-child(2) {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+/* Both halves of the pair get the same header height whatever their content,
+   so the two tables start on the same line. */
+.tunnel-columns .vpn-detail-table thead th {
+    height: 34px;
+    vertical-align: middle;
+    padding-top: 0;
+    padding-bottom: 0;
 }
 
 .vpn-detail-table tr:hover td {
