@@ -485,7 +485,23 @@
             const sumIn = g.phase2.reduce((a, t) => a + (t.bytes_in || 0), 0);
             const sumOut = g.phase2.reduce((a, t) => a + (t.bytes_out || 0), 0);
             const remoteIP = g.phase2[0].remote_ip || '-';
-            const selCount = g.phase2.length;
+
+            // The dialup row is a TUNNEL-level observation, not a phase2 child:
+            // FortiOS's dialup table reports one entry per dialup PEER, not one
+            // per selector. It stays in the group's aggregates above — it is the
+            // only member carrying liveness and counters, because the SSH rows
+            // read CONFIG and can report neither — but listing it beside the real
+            // children invents a path that does not exist, duplicating whichever
+            // one it narrows to. On a 2x2 tunnel that reads as "5 selectors" for
+            // four paths.
+            //
+            // Demoted ONLY when real children exist. A dialup tunnel this system
+            // did not provision has no other source of selectors, and hiding it
+            // would leave the group with none at all.
+            const withSel = g.phase2.filter(t => t.local_subnet || t.remote_subnet);
+            const named = withSel.filter(t => t.tunnel_type !== 'ipsec-dialup');
+            const children = named.length ? named : withSel;
+            const selCount = children.length;
             const label = window.escapeHtml(g.phase1) + (selCount > 1 ? ` <span style="color:var(--fwmon-text-mute);font-size:0.72rem;">(${selCount} selectors)</span>` : '');
             const pill = (r, lbl, active) => `<div class="panel-range-pill${active ? ' active' : ''}" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${deviceId}" data-tunnel="${window.escapeHtml(rep)}" data-range="${r}">${lbl}</div>`;
             html += `
@@ -498,14 +514,23 @@
                     <td>${window.formatBytes(sumOut)}</td>
                 </tr>`;
             // Phase 2 selector child rows (subnets) — informational, no graph.
-            g.phase2.forEach(t => {
-                if (!t.local_subnet && !t.remote_subnet) return;
-                const sUp = t.status === 'up' || t.state === 'up';
+            children.forEach(t => {
+                // Only 'up' and 'down' are state claims. A FortiGate SSH row says
+                // 'unknown' because `show` reads CONFIG and cannot observe
+                // liveness — that is the premise the whole two-writer merge rests
+                // on. Rendering it as DOWN would show four dead children under a
+                // parent badged UP, which is worse than saying nothing: it is a
+                // claim the device never made.
+                const claim = (t.status === 'up' || t.state === 'up') ? 'up'
+                    : (t.status === 'down' || t.state === 'down') ? 'down' : '';
+                const childBadge = claim
+                    ? `<span class="badge ${claim}" style="font-size:0.6rem;">${claim.toUpperCase()}</span>`
+                    : `<span style="font-size:0.6rem;color:var(--fwmon-text-mute);" title="This writer reads configuration and cannot observe liveness; the tunnel's state is on the row above.">&mdash;</span>`;
                 html += `
                 <tr class="panel-tunnel-p2child">
                     <td></td>
                     <td style="font-family:monospace;font-size:0.74rem;color:var(--fwmon-text-faint);padding-left:14px;">&#8627; ${window.escapeHtml(t.local_subnet || '?')} &rarr; ${window.escapeHtml(t.remote_subnet || '?')}</td>
-                    <td><span class="badge ${sUp ? 'up' : 'down'}" style="font-size:0.6rem;">${sUp ? 'UP' : 'DOWN'}</span></td>
+                    <td>${childBadge}</td>
                     <td></td>
                     <td style="font-size:0.74rem;">${window.formatBytes(t.bytes_in)}</td>
                     <td style="font-size:0.74rem;">${window.formatBytes(t.bytes_out)}</td>
