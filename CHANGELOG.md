@@ -15,7 +15,9 @@ The expected-children list — needed because a **down** child leaves no trace i
 
 ### Fixed
 
-**The stored-result cap could silently discard a whole telemetry cycle.** Results were truncated at 64 KiB *before* the command row — and therefore its type — was read, so one limit applied to everything. Three raw session documents can exceed a cap sized for compacted preflight reports, and a truncated envelope is invalid JSON: the parse fails, no rows are written, and the command still reports success. Identical on every poll, so a tunnel would simply age out with nothing saying why. Truncation now happens after the row is loaded, uses a raised per-type limit for telemetry, and is recorded explicitly so a consumer reports it rather than inferring it from a syntax error.
+**The stored-result cap applied one limit to every command type.** Results were truncated at 64 KiB *before* the command row — and therefore its type — was read. That cap was sized for compacted preflight reports; three raw session documents can exceed it, and a truncated envelope is invalid JSON, so any consumer reading the stored copy would fail with an unexplained syntax error rather than a message naming the cause.
+
+Truncation now happens after the row loads, uses a raised per-type limit for telemetry, and is recorded explicitly. To be accurate about the scope: telemetry is parsed from the result as received, not from the stored copy, so this is defence for anything that reads stored results later — it is not what makes ingestion work today.
 
 ### Changed
 

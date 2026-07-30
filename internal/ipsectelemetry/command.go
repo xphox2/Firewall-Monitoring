@@ -69,11 +69,12 @@ func BuildCommand(dev *models.Device) (*models.ProbeCommand, error) {
 	if len(steps) == 0 {
 		return nil, nil
 	}
-	if dev.ProbeID == nil || *dev.ProbeID == 0 {
-		return nil, fmt.Errorf("device %q has no collector assigned", dev.Name)
-	}
-	if dev.APIToken == "" {
-		return nil, fmt.Errorf("device %q has no API token — cannot read session state", dev.Name)
+	// Not configured for API reads is a normal state, not an error: an OPNsense
+	// box monitored over SNMP only has no collector or no token, and erroring
+	// here would log the same line every five minutes forever — 288 a day, per
+	// device. Nil means "nothing to do", same as an unsupported vendor.
+	if dev.ProbeID == nil || *dev.ProbeID == 0 || dev.APIToken == "" {
+		return nil, nil
 	}
 	port := dev.APIPort
 	if port == 0 {
