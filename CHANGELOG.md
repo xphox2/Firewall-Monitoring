@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.192] - 2026-07-30
+
+### Fixed
+
+**A FortiGate dialup tunnel listed one selector too many, and the extra duplicated a real path.** FortiOS's dialup table reports one entry per dialup *peer*, not one per selector — so `dialup-<peer>` is a tunnel-level observation, not a phase2 child. The panel listed it beside the real children anyway, so a tunnel with four subnet pairs showed **five**, the fifth duplicating whichever path the dialup entry narrowed to.
+
+This surfaced rather than started in v0.11.190: before it, the SSH-derived phase2 rows carried no selectors at all and the panel skipped them, leaving the dialup row as the only child on display — one path out of four. Now that the real children have selectors, the dialup row has to stop pretending to be one of them.
+
+It stays in the group's status and byte totals, because it is the **only** member that carries either: the SSH rows read configuration and can observe neither liveness nor traffic. It is demoted from the child list only when real children exist, so a dialup tunnel this system did not provision still shows its selectors rather than none.
+
+**A child that makes no claim about its state is no longer painted DOWN.** Only `up` and `down` are state claims — a FortiGate SSH row says `unknown` precisely because `show` reads configuration and cannot observe liveness, which is the premise the two-writer merge rests on. The panel collapsed everything not-up into DOWN, which would have shown four dead children beneath a parent badged UP. Such rows now render as a dash, with a tooltip pointing at the row that does know.
+
 ## [0.11.191] - 2026-07-30
 
 ### Added
