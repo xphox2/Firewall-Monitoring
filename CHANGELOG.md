@@ -9,6 +9,14 @@ All notable changes to this project are documented in this file.
 
 Empty means a collector too old to report one, which is itself the answer; nothing backfills a guess, because that would destroy the distinction. A reported version is never overwritten by a blank, so an older binary re-registering cannot turn "known" back into "unknown".
 
+### Fixed
+
+**A tunnel could briefly rename itself and leave a ghost on the map.** OPNsense does not always populate `phase1desc`: during teardown it returns the connection with the description already gone while the kernel SPD still holds the policies. The parser then fell back to the connection UUID, so that single poll emitted the same children under a different tunnel name — and since grouping resolves on `Phase1Name`, those rows never joined the provisioned tunnel. They sat on the map as a separate tunnel for the full three-hour grace window before ageing out.
+
+Observed in production on the rollback of `fwm-t12`: 796 rows named `fwm-t12` against 4 named for the UUID, all four written by the one poll that caught the teardown.
+
+The server already knows which tunnel owns each selector pair, so that name is now authoritative — stable across teardown, rekey and any device-side quirk, and it is the identity grouping resolves on. A pair claimed by two tunnels is left to the device-derived name rather than assigned by coin-flip, and a tunnel this system did not provision keeps its own description.
+
 ### Changed
 
 **The IPSec telemetry gate now asks the version first.** A collector too old to run `ipsec_telemetry` is skipped **silently** — no command, no failed row, no log line — instead of being asked every five minutes and answering "unknown command type" each time.

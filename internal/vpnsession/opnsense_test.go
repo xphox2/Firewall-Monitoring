@@ -450,3 +450,67 @@ func TestParseOPNsense_OnePolicySatisfiesOnlyOneExpectedChild(t *testing.T) {
 		}
 	}
 }
+
+// A child's identity must not depend on phase1desc, which OPNsense does not
+// always populate.
+//
+// During teardown the box returns the connection with the description already
+// gone while the kernel SPD still holds the policies. childName then falls back
+// to the connection UUID, so that single poll emits the same children under a
+// different tunnel name — and because grouping resolves on Phase1Name, those
+// rows do not join the provisioned tunnel. They linger as a ghost tunnel for the
+// full 3-hour grace window.
+//
+// Seen in production on 2026-07-30: 796 rows named fwm-t12 and 4 named for the
+// UUID, all four written by the one poll that caught the rollback.
+func TestParseOPNsense_NameSurvivesMissingPhase1Desc(t *testing.T) {
+	// Same connection, but phase1desc absent — exactly the teardown shape.
+	phase1 := `{"total":1,"rowCount":1,"rows":[{"local-addrs":"%any",
+		"remote-addrs":"66.179.9.155","ikeid":"57be1aa0-08bc-40e7-888b-f1998dc42d7c",
+		"name":"57be1aa0-08bc-40e7-888b-f1998dc42d7c","connected":true}]}`
+	spd := `{"total":1,"rowCount":1,"rows":[{"reqid":"1","dir":"out",
+		"src":"192.168.50.0/24","dst":"192.168.13.0/24",
+		"src-dst":["192.168.5.107","66.179.9.155"]}]}`
+	sad := `{"total":0,"rowCount":0,"rows":[]}`
+
+	expected := []ExpectedChild{
+		{TunnelName: "fwm-t12", Local: "192.168.50.0/24", Remote: "192.168.13.0/24"},
+	}
+
+	rows, err := ParseOPNsense(5, time.Now(), phase1, sad, spd, expected)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d: %+v", len(rows), rows)
+	}
+	if rows[0].Phase1Name != "fwm-t12" {
+		t.Errorf("Phase1Name = %q, want %q. With phase1desc absent the parser fell back "+
+			"to the connection UUID, so this row will not group with the provisioned "+
+			"tunnel and shows as a ghost until it ages out of the grace window.",
+			rows[0].Phase1Name, "fwm-t12")
+	}
+	if !strings.HasPrefix(rows[0].TunnelName, "fwm-t12:") {
+		t.Errorf("TunnelName = %q, want the fwm-t12: prefix", rows[0].TunnelName)
+	}
+}
+
+// With no expected list — an unprovisioned tunnel this system did not create —
+// the device-derived identity is still the right answer and must be preserved.
+func TestParseOPNsense_UnprovisionedKeepsDeviceIdentity(t *testing.T) {
+	phase1 := `{"total":1,"rowCount":1,"rows":[{"local-addrs":"%any",
+		"remote-addrs":"203.0.113.9","ikeid":"abc-123","name":"abc-123",
+		"phase1desc":"hand-built","connected":true}]}`
+	spd := `{"total":1,"rowCount":1,"rows":[{"reqid":"7","dir":"out",
+		"src":"10.9.0.0/24","dst":"10.8.0.0/24",
+		"src-dst":["192.168.5.107","203.0.113.9"]}]}`
+	sad := `{"total":0,"rowCount":0,"rows":[]}`
+
+	rows, err := ParseOPNsense(5, time.Now(), phase1, sad, spd, nil)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Phase1Name != "hand-built" {
+		t.Errorf("expected the device's own description to survive, got %+v", rows)
+	}
+}

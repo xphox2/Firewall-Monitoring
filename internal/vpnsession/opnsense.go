@@ -85,9 +85,31 @@ func ParseOPNsense(deviceID uint, ts time.Time, phase1Body, sadBody, spdBody str
 	out := make([]models.VPNStatus, 0, len(policies)+len(expected))
 	obs := make([]observedChild, 0, len(policies))
 
+	// The provisioned name for each selector pair, so a child's identity does not
+	// depend on a field the device sometimes omits. See expectedNames.
+	provisioned := expectedNames(expected)
+
 	for _, pol := range policies {
 		c := conns.forPeer(pol.remoteHost)
 		name, phase1 := childName(c, pol.localSel, pol.remoteSel)
+		// Prefer the name the SERVER provisioned this pair under.
+		//
+		// OPNsense does not always populate phase1desc: during teardown it
+		// returns the connection with the description already gone while the
+		// kernel SPD still holds the policies. childName then falls back to the
+		// connection UUID, so that one poll emits the same children under a
+		// different tunnel name — a ghost tunnel that lingers for the whole
+		// 3-hour grace window before it ages out of the map.
+		//
+		// Observed in production: 796 rows named fwm-t12 and 4 named for the
+		// UUID, all four written in the single poll that caught the rollback.
+		//
+		// The server already knows which tunnel owns this selector pair, so use
+		// that. It is stable across teardown, rekey, and any device-side quirk,
+		// and it is the identity grouping resolves on.
+		if pn, ok := provisioned[childKey(pol.localSel, pol.remoteSel)]; ok && pn != "" {
+			name, phase1 = tunnelChildName(pn, pol.localSel, pol.remoteSel), pn
+		}
 		in, outb := sas.counters(pol.reqid, pol.localHost)
 
 		row := models.VPNStatus{
@@ -387,6 +409,31 @@ func tunnelChildName(tunnel, localSel, remoteSel string) string {
 //
 // The selector pair is the child's real identity: the kernel will not install
 // two policies for the same pair, so it is unique per box.
+// expectedNames maps a selector pair to the tunnel name the server provisioned
+// it under. Keyed the same way unmatchedExpected matches, so the two agree.
+//
+// A pair listed by two tunnels is ambiguous and is left out rather than
+// arbitrarily assigned: the device-derived name is a better answer than a
+// coin-flip between two provisioned ones.
+func expectedNames(expected []ExpectedChild) map[string]string {
+	if len(expected) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(expected))
+	dupe := make(map[string]bool, len(expected))
+	for _, e := range expected {
+		k := childKey(e.Local, e.Remote)
+		if prev, seen := out[k]; seen && prev != e.TunnelName {
+			dupe[k] = true
+		}
+		out[k] = e.TunnelName
+	}
+	for k := range dupe {
+		delete(out, k)
+	}
+	return out
+}
+
 func childKey(localSel, remoteSel string) string {
 	return networkOf(localSel) + "|" + networkOf(remoteSel)
 }
