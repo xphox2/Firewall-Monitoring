@@ -1489,8 +1489,96 @@
         });
     }
 
+    // --- Tunnel state: three answers, not two -------------------------------
+    //
+    // vpn_status has two writers with disjoint knowledge. A FortiGate's SNMP row
+    // observes liveness and counters; its SSH sibling reads `show`, which is
+    // CONFIG — it carries the provisioned name and the selectors but has no way
+    // to know whether the tunnel is up, so it reports "unknown" with zero bytes.
+    //
+    // Only 'up' and 'down' are claims. Everything else — 'unknown', '', a
+    // truncated walk — is the ABSENCE of a claim, and collapsing it into DOWN
+    // states something the device never said: four dead-looking children beneath
+    // a parent badged UP. These helpers exist so that every renderer of a tunnel
+    // row answers the question the same way; a second opinion is how the bug got
+    // in twice.
+    var TUNNEL_NO_CLAIM_TITLE = 'This writer reads configuration and cannot observe liveness, so it reported no state.';
+    var TUNNEL_NO_CLAIM_CHILD_TITLE = 'This writer reads configuration and cannot observe liveness; the tunnel’s state is on the row above.';
+
+    function tunnelClaim(row) {
+        if (!row) return '';
+        return (row.status === 'up' || row.state === 'up') ? 'up'
+            : (row.status === 'down' || row.state === 'down') ? 'down' : '';
+    }
+
+    // Reduction over the rows of ONE logical tunnel. Any member observing 'up'
+    // makes the tunnel up — on a FortiGate the single SNMP dialup row is the
+    // only member that can see liveness at all, and its siblings' silence is not
+    // evidence against it. A 'down' claim counts only when nobody claims up.
+    // When no member claims anything, the group makes no claim either.
+    function tunnelGroupClaim(rows) {
+        var sawDown = false;
+        for (var i = 0; i < (rows || []).length; i++) {
+            var c = tunnelClaim(rows[i]);
+            if (c === 'up') return 'up';
+            if (c === 'down') sawDown = true;
+        }
+        return sawDown ? 'down' : '';
+    }
+
+    function tunnelStateBadge(claim, opts) {
+        var o = opts || {};
+        var size = o.size || '0.7rem';
+        if (claim === 'up' || claim === 'down') {
+            return '<span class="badge ' + claim + '" style="font-size:' + size + ';">' +
+                claim.toUpperCase() + '</span>';
+        }
+        var title = o.title || (o.child ? TUNNEL_NO_CLAIM_CHILD_TITLE : TUNNEL_NO_CLAIM_TITLE);
+        return '<span style="font-size:' + size + ';color:var(--fwmon-text-mute);" title="' +
+            escapeHtml(title) + '">&mdash;</span>';
+    }
+
+    // A config row reports 0/0 because it counts nothing, not because nothing
+    // passed. Rendering that as "0 B" is the same lie the status badge stopped
+    // telling. An 'up' row genuinely reporting 0/0 IS an observation and keeps
+    // its zero — which is what protects a live selector that has carried no
+    // traffic yet.
+    function tunnelCountersObserved(row) {
+        if (!row) return false;
+        if ((row.bytes_in || 0) !== 0 || (row.bytes_out || 0) !== 0) return true;
+        return tunnelClaim(row) !== '';
+    }
+
+    function tunnelGroupCountersObserved(rows) {
+        for (var i = 0; i < (rows || []).length; i++) {
+            if (tunnelCountersObserved(rows[i])) return true;
+        }
+        return false;
+    }
+
+    // tunnel_uptime is SECONDS. Stated here because the two connection views
+    // used to disagree — one divided by 100 — and rendered a 53-minute tunnel
+    // as "0m". Confirmed against prod: an OPNsense tunnel deployed at 22:10 and
+    // read at 23:03 reported 3171.
+    function formatTunnelUptime(seconds) {
+        var s = Number(seconds) || 0;
+        if (s <= 0) return '-';
+        var d = Math.floor(s / 86400);
+        var h = Math.floor((s % 86400) / 3600);
+        var m = Math.floor((s % 3600) / 60);
+        if (d > 0) return d + 'd ' + h + 'h';
+        if (h > 0) return h + 'h ' + m + 'm';
+        return m + 'm';
+    }
+
     window.AdminCommon = {
         API_BASE: API_BASE,
+        tunnelClaim: tunnelClaim,
+        tunnelGroupClaim: tunnelGroupClaim,
+        tunnelStateBadge: tunnelStateBadge,
+        tunnelCountersObserved: tunnelCountersObserved,
+        tunnelGroupCountersObserved: tunnelGroupCountersObserved,
+        formatTunnelUptime: formatTunnelUptime,
         renderAlertInheritanceHints: renderAlertInheritanceHints,
         flagEmoji: flagEmoji,
         asnChip: asnChip,
