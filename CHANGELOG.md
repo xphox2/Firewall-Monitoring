@@ -17,11 +17,17 @@ All notable changes to this project are documented in this file.
 
 **A writer that counts nothing renders a dash, not `0 B`** — the same lie the status badge stopped telling. A row reporting `up` with genuine zero counters keeps its zero, which is what a live selector that has carried no traffic yet actually looks like.
 
-**Tunnel uptime is seconds, and both pages now agree.** The standalone page divided it by 100 as if it were TimeTicks hundredths, rendering a 53-minute tunnel as `0m` — a hundred-fold understatement on every row of that table.
+**Tunnel uptime had three renderers and three opinions; now it has one.** The standalone page divided it by 100 as if it were TimeTicks hundredths, rendering a 53-minute tunnel as `0m`.
+
+### Known issue
+
+**A FortiGate's `tunnel_uptime` is not an uptime, and this release stops pretending otherwise.** Measured over 24h of live telemetry: dialup rows carry `fgVpnDialupLifetime` — a *configured SA lifetime* — sitting at exactly 43200 or 7200 across 1,437 and 1,263 consecutive polls, one distinct value each; static tunnels report a value that is only ever 0 or 1. Only OPNsense produces a real monotonic uptime (1 → 3514 over 24h, 219 distinct values, resetting on rekey).
+
+The grouped tunnel table therefore shows **"last up"**, derived by this system from rows that actually reported `up`, rather than an age taken from a vendor counter. Correcting the counter at its source is a cross-repo change that also moves alert eligibility — `resolveVPNEverUp` in `cmd/poller` treats a non-zero uptime as evidence a tunnel has ever been up — so it is tracked separately rather than folded into a display fix. Until then the standalone page's Uptime column still reflects whatever the device sent.
 
 ### Changed
 
-- The three-way state decision, the counters predicate and the uptime formatter live in `admin-common.js` and are shared by every renderer. Four independent opinions is how the same bug shipped four times.
+- The three-way state decision, the counters predicate and the uptime formatter live in `admin-common.js` and are shared by all three tunnel renderers. Independent opinions is how the same bug shipped four times.
 - Phase 2 selector matching is bounded by logical tunnel and tolerates IKEv2 narrowing, falling back to exact equality for selector formats that are not CIDR — FortiGate's SNMP walk emits ranges like `192.168.5.0 - 192.168.5.255`, which no CIDR parser can read.
 
 ## [0.11.192] - 2026-07-30

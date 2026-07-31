@@ -33,11 +33,11 @@
     }
 
     // formatUptime lived here and divided tunnel_uptime by 100, treating it as
-    // TimeTicks hundredths. It is seconds — an OPNsense tunnel deployed at 22:10
-    // and read at 23:03 reported 3171 — so this column rendered a 53-minute
-    // tunnel as "0m", a hundred-fold understatement on every row. The panel's
-    // formatter always treated it as seconds; the two pages disagreed. Both now
-    // call AC.formatTunnelUptime so there is only one answer.
+    // TimeTicks hundredths. For OPNsense — the one writer producing a real
+    // uptime — it is seconds, so this column rendered a 53-minute tunnel as
+    // "0m". All three renderers now call AC.formatTunnelUptime; see the caveats
+    // there about FortiGate, whose value is a configured lifetime rather than
+    // an age and is not made correct by fixing the unit.
 
     function formatSpeed(bytesPerSec) {
         if (!bytesPerSec || bytesPerSec <= 0) return '0 bps';

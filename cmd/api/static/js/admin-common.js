@@ -1556,10 +1556,25 @@
         return false;
     }
 
-    // tunnel_uptime is SECONDS. Stated here because the two connection views
-    // used to disagree — one divided by 100 — and rendered a 53-minute tunnel
-    // as "0m". Confirmed against prod: an OPNsense tunnel deployed at 22:10 and
-    // read at 23:03 reported 3171.
+    // tunnel_uptime is SECONDS where it is an uptime at all. Three renderers
+    // used to disagree about the unit — one divided by 100, rendering a
+    // 53-minute tunnel as "0m" — so the answer lives here now.
+    //
+    // Confirmed seconds for OPNsense ONLY, which is the sole writer producing a
+    // real monotonic uptime (1 -> 3514 over 24h, 219 distinct values, resetting
+    // on rekey). Do NOT read this as a general guarantee:
+    //
+    //   - FortiGate DIALUP rows carry fgVpnDialupLifetime (.12356.101.12.2.1.1.3)
+    //     — a configured SA lifetime. Constant 43200 or 7200 across thousands of
+    //     consecutive polls. It is not an age and never changes.
+    //   - FortiGate STATIC tunnels report a value that is only ever 0 or 1.
+    //
+    // Callers must therefore treat a FortiGate uptime as untrustworthy rather
+    // than merely imprecise. The tunnel tables deliberately show last_up_at —
+    // which this system derives from rows that actually reported 'up' — instead
+    // of an age. Fixing the writers is a cross-repo change with alert-eligibility
+    // consequences (cmd/poller resolveVPNEverUp reads TunnelUptime), so it is
+    // tracked separately rather than smuggled into a display fix.
     function formatTunnelUptime(seconds) {
         var s = Number(seconds) || 0;
         if (s <= 0) return '-';

@@ -117,8 +117,9 @@ func TestConnDetail_Phase2TabFullyRemoved(t *testing.T) {
 	}
 }
 
-// tunnel_uptime is SECONDS. The standalone page divided by 100 and rendered a
-// 53-minute tunnel as "0m"; the panel did not. One formatter, one answer.
+// tunnel_uptime is SECONDS where it is an uptime at all. The standalone page
+// divided by 100 and rendered a 53-minute tunnel as "0m"; two other renderers
+// did not. One formatter, one answer.
 func TestConnDetail_UptimeIsSecondsInOnePlace(t *testing.T) {
 	if strings.Contains(readConnDetailJS(t), "hundredths / 100") {
 		t.Error("the standalone page divides tunnel_uptime by 100 again — every uptime " +
@@ -127,6 +128,38 @@ func TestConnDetail_UptimeIsSecondsInOnePlace(t *testing.T) {
 	body := funcBody(t, readCommonJS(t), `formatTunnelUptime\(seconds\) \{`)
 	if strings.Contains(body, "/ 100") {
 		t.Error("the shared uptime formatter treats tunnel_uptime as hundredths")
+	}
+	// A local formatter is how the three-way disagreement happened. There must
+	// not be a second one anywhere in either connection view.
+	for _, f := range []struct{ name, js string }{
+		{"diagram-panels.js", readPanelJS(t)},
+		{"admin-connection-detail.js", readConnDetailJS(t)},
+	} {
+		if regexp.MustCompile(`function\s+format\w*[Uu]ptime\s*\(`).MatchString(f.js) {
+			t.Errorf("%s: defines its own uptime formatter again — that is exactly how one "+
+				"page came to divide by 100 while the others did not", f.name)
+		}
+	}
+}
+
+// A FortiGate's tunnel_uptime is not an age: its dialup rows carry
+// fgVpnDialupLifetime (constant 43200/7200 across thousands of polls) and its
+// static tunnels report only 0 or 1. Rendering it as "up Xh" on the grouped
+// table produced a permanent, never-changing age on a tunnel that had just
+// bounced — and "up 0m" beside a DOWN badge. The grouped table must derive its
+// age chip from last_up_at, which the SERVER computes from rows that actually
+// reported 'up'.
+func TestConnDetail_GroupedTableDoesNotRenderVendorUptimeAsAnAge(t *testing.T) {
+	body := funcBody(t, readPanelJS(t), `renderPanelTunnelTable\(tableId, tunnels, deviceId, family, agreed\) \{`)
+	// Match a property READ (`.tunnel_uptime`), not the bare word — the code
+	// deliberately names the field in a comment explaining why it is not used.
+	if regexp.MustCompile(`\.tunnel_uptime`).MatchString(body) {
+		t.Error("the grouped tunnel table reads tunnel_uptime again — on a FortiGate that " +
+			"is a configured SA lifetime, so the row would claim a fixed age forever")
+	}
+	if !strings.Contains(body, "last_up_at") {
+		t.Error("the grouped tunnel table no longer derives its age chip from last_up_at, " +
+			"the only observation this system makes itself")
 	}
 }
 

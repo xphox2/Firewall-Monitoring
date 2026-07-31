@@ -25,11 +25,9 @@
         };
     }
 
-    function formatPanelUptime(s) {
-        if (!s) return '-';
-        const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
-        return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h` : `${Math.floor(s / 60)}m`;
-    }
+    // formatPanelUptime lived here. It was the THIRD opinion on how to render
+    // tunnel_uptime — the standalone page divided by 100, this one did not — so
+    // it is gone in favour of AC.formatTunnelUptime. Three renderers, one answer.
 
     function formatSpeed(bitsPerSec) {
         if (!bitsPerSec) return '-';
@@ -515,10 +513,17 @@
             // FortiGate the config rows carry no remote_ip at all, so index 0
             // rendered "-" while the dialup row beside it knew the peer address.
             const remoteIP = (g.phase2.find(t => t.remote_ip) || {}).remote_ip || '-';
-            // Uptime is this device's own observation now that the peer-borrowing
-            // cross-fill is gone; the max across the group is the longest any
-            // member has actually seen the tunnel up.
-            const uptime = g.phase2.reduce((a, t) => Math.max(a, t.tunnel_uptime || 0), 0);
+            // NO tunnel_uptime here, deliberately. It is not trustworthy across
+            // vendors: FortiGate's dialup rows carry fgVpnDialupLifetime — a
+            // configured SA LIFETIME, constant at 43200 or 7200 across thousands
+            // of consecutive polls — and its static tunnels report a value that
+            // is only ever 0 or 1. Rendering either as an age would have shown a
+            // permanent, never-changing "up 12h" on a tunnel that bounced a
+            // minute ago. Only OPNsense produces a real monotonic uptime.
+            //
+            // last_up_at is safe because the SERVER derives it from rows that
+            // actually reported 'up', so it is an observation this system made
+            // rather than a counter it trusted.
             const lastUp = g.phase2.map(t => t.last_up_at).filter(Boolean).sort().pop();
 
             // The dialup row is a TUNNEL-level observation, not a phase2 child:
@@ -537,12 +542,14 @@
             const named = withSel.filter(t => t.tunnel_type !== 'ipsec-dialup');
             const children = named.length ? named : withSel;
             const selCount = children.length;
-            // Uptime rides under the tunnel name rather than in a seventh column:
-            // these tables render as a PAIR in a two-column grid, and each extra
-            // column costs both halves their width at every viewport.
-            const ageChip = uptime > 0
-                ? `<span style="color:var(--fwmon-text-mute);font-size:0.68rem;">up ${AC.formatTunnelUptime(uptime)}</span>`
-                : (lastUp ? `<span style="color:var(--fwmon-text-mute);font-size:0.68rem;" title="Last observed up">last up ${window.escapeHtml(String(lastUp).slice(0, 16).replace('T', ' '))}</span>` : '');
+            // The chip rides under the tunnel name rather than in a seventh
+            // column: these tables render as a PAIR in a two-column grid, so
+            // every extra column costs both halves their width at every
+            // viewport. Shown only when the group is NOT up — for a live tunnel
+            // "last up" is noise, and for a dead one it is the useful fact.
+            const ageChip = (AC.tunnelGroupClaim(g.phase2) !== 'up' && lastUp)
+                ? `<span style="color:var(--fwmon-text-mute);font-size:0.68rem;" title="Last observed reporting up">last up ${window.escapeHtml(AC.formatDateShort(lastUp))}</span>`
+                : '';
             const label = window.escapeHtml(g.phase1) +
                 (selCount > 1 ? ` <span style="color:var(--fwmon-text-mute);font-size:0.72rem;">(${selCount} selectors)</span>` : '') +
                 (ageChip ? `<div>${ageChip}</div>` : '');
@@ -1027,7 +1034,7 @@
                         <td>${statusBadge}</td>
                         <td style="font-family:monospace;font-size:0.78rem;">${window.escapeHtml(t.remote_ip || '-')}</td>
                         <td>${dest}</td>
-                        <td>${t.status === 'up' ? formatPanelUptime(t.tunnel_uptime) : '-'}</td>
+                        <td>${t.status === 'up' ? AC.formatTunnelUptime(t.tunnel_uptime) : '-'}</td>
                     </tr>
                     <tr class="panel-tunnel-expand" id="${rowId}">
                         <td colspan="9">
