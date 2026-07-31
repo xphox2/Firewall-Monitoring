@@ -267,8 +267,10 @@
             const dstName = c.dest_device?.name || conn.dest_device?.name || 'Device ' + c.dest_device_id;
 
             const family = data.family || familyOf(c.connection_type);
-            document.getElementById('pkpi-bytes-in').textContent = window.formatBytes(data.total_bytes_in);
-            document.getElementById('pkpi-bytes-out').textContent = window.formatBytes(data.total_bytes_out);
+            // The byte tiles are assigned INSIDE the family branches, not here.
+            // Only the tunnel family has a reset-safe windowed total to show; a
+            // direct link's totals come from interface counters and a blanket
+            // repoint would blank its tiles. See setPanelByteKpis.
             const statusEl = document.getElementById('pkpi-status');
             statusEl.innerHTML = `<span class="badge ${c.status}" style="font-size:0.75rem;">${(c.status || 'unknown').toUpperCase()}</span>`;
 
@@ -281,6 +283,7 @@
                 const countLabel = document.getElementById('pkpi-count-label');
                 if (countLabel) countLabel.textContent = 'Interfaces';
                 document.getElementById('pkpi-tunnels').textContent = ifaces.length;
+                setPanelByteKpis(data, false);
                 renderPanelInterfaceTab(ifaces, c, srcName, dstName);
                 renderPanelL2Evidence(c, data.evidence || [], srcName, dstName);
             } else if (family === 'overlay') {
@@ -289,19 +292,26 @@
                 const overlays = data.overlays || [];
                 const srcT = data.source_tunnels || [], dstT = data.dest_tunnels || [];
                 document.getElementById('pkpi-tunnels').textContent = overlays.length || countLogicalTunnels(srcT, dstT);
+                // Overlay keeps its two cumulative-counter tables, so its tiles
+                // stay cumulative too — one panel must not mix the two meanings.
+                setPanelByteKpis(data, false);
                 renderPanelOverlayTab(data, c, srcName, dstName);
-            } else {
-                // Tunnel / overlay / off-net: group Phase 2 selectors under their
-                // Phase 1 (one graph per Phase 1 — Phase 2 selectors share it).
+            } else if (family === 'tunnel') {
+                // ONE table, one row per path. The two ends name the same path
+                // differently and describe it from opposite perspectives, so two
+                // independent tables put unrelated rows on the same line.
                 const srcT = data.source_tunnels || [], dstT = data.dest_tunnels || [];
                 document.getElementById('pkpi-tunnels').textContent = countLogicalTunnels(srcT, dstT);
-                const tnoun = family === 'overlay' ? 'Carrier' : 'Source Tunnels';
-                const dnoun = family === 'overlay' ? 'Carrier (remote)' : 'Dest Tunnels';
-                document.getElementById('ptab-src-title').textContent = `${tnoun} (${srcName})`;
-                document.getElementById('ptab-dst-title').textContent = `${dnoun} (${dstName})`;
-                // phase2_matches no longer drives a tab of its own — it is the
-                // evidence behind the per-selector "both ends reported this"
-                // chip, keyed by the row name each side used.
+                setPanelByteKpis(data, true);
+                renderPanelPathTable('ptab-tunnels', data, c, srcName, dstName);
+            } else {
+                // Off-net: there is no peer device reporting its own side, so
+                // there is nothing to pair. Keep the two-table rendering.
+                const srcT = data.source_tunnels || [], dstT = data.dest_tunnels || [];
+                document.getElementById('pkpi-tunnels').textContent = countLogicalTunnels(srcT, dstT);
+                setPanelByteKpis(data, false);
+                document.getElementById('ptab-src-title').textContent = `Source Tunnels (${srcName})`;
+                document.getElementById('ptab-dst-title').textContent = `Dest Tunnels (${dstName})`;
                 const p2 = data.phase2_matches || [];
                 const srcAgreed = new Set(p2.map(m => m.source_tunnel).filter(Boolean));
                 const dstAgreed = new Set(p2.map(m => m.dest_tunnel).filter(Boolean));
@@ -486,6 +496,316 @@
     function peerChip(t, agreed) {
         if (!agreed || !t.tunnel_name || !agreed.has(t.tunnel_name)) return '';
         return ' <span style="font-size:0.62rem;color:var(--fwmon-sig-ok);" title="Both ends independently reported this selector pair.">&harr; peer</span>';
+    }
+
+    // The byte tiles show a WINDOWED delta for the tunnel family and the legacy
+    // cumulative sum everywhere else, so the label has to say which — a tile
+    // reading "Bytes In" over a 24h delta is the same unlabelled-number problem
+    // this panel keeps having.
+    function setPanelByteKpis(data, windowed) {
+        const hrs = data.window_hours || 24;
+        const sw = data.source_window || {}, dw = data.dest_window || {};
+        const inEl = document.getElementById('pkpi-bytes-in');
+        const outEl = document.getElementById('pkpi-bytes-out');
+        const labels = document.querySelectorAll('.panel-kpi-card .kpi-label');
+        if (windowed) {
+            inEl.textContent = window.formatBytes(sw.in_bytes || 0);
+            outEl.textContent = window.formatBytes(sw.out_bytes || 0);
+            inEl.title = `Source side, last ${hrs}h. Peer reports ${window.formatBytes(dw.in_bytes || 0)} in / ${window.formatBytes(dw.out_bytes || 0)} out — the two ends count differently and are not expected to agree.`;
+            if (labels[0]) labels[0].textContent = `Bytes In (${hrs}h)`;
+            if (labels[1]) labels[1].textContent = `Bytes Out (${hrs}h)`;
+        } else {
+            inEl.textContent = window.formatBytes(data.total_bytes_in);
+            outEl.textContent = window.formatBytes(data.total_bytes_out);
+            if (labels[0]) labels[0].textContent = 'Bytes In';
+            if (labels[1]) labels[1].textContent = 'Bytes Out';
+        }
+    }
+
+    // deriveChildren demotes a dialup row from the child list — FortiOS reports
+    // one dialup entry per PEER, not per selector, so listing it beside the real
+    // children invents a path. Demoted ONLY when real children exist, because an
+    // unprovisioned dialup tunnel has no other source of selectors.
+    //
+    // Called once per side, and per GROUP: a flat pass over a whole device's rows
+    // would demote an unprovisioned tunnel's dialup row because a DIFFERENT
+    // tunnel on the same connection contributed named rows, and that path would
+    // then vanish entirely instead of showing one-sided.
+    function deriveChildren(rows) {
+        const withSel = (rows || []).filter(t => t.local_subnet || t.remote_subnet);
+        const named = withSel.filter(t => t.tunnel_type !== 'ipsec-dialup');
+        return named.length ? named : withSel;
+    }
+
+    // Two rows from opposite ends describe the same path when each one's local
+    // side is the other's remote side. Raw string compare on purpose: the server
+    // normalises selectors before ITS match test, and the one case this fallback
+    // exists for — a cross-filled row — was copied from the peer verbatim.
+    function mirrorsExactly(s, d) {
+        return !!s.local_subnet && !!s.remote_subnet &&
+            s.local_subnet === d.remote_subnet && s.remote_subnet === d.local_subnet;
+    }
+
+    // Pick at most ONE dest row per source row. Order matters and is not
+    // cosmetic: nothing in the chain applies an ORDER BY, so "first candidate
+    // wins" would pair differently between page loads. Same logical tunnel
+    // first, because two route-based tunnels between one device pair both report
+    // 0.0.0.0/0 and match each other exactly — only the group tells them apart.
+    function bestDestFor(src, candidates) {
+        const rank = (d) => (
+            (src.tunnel_group && src.tunnel_group === d.tunnel_group ? 8 : 0) +
+            (mirrorsExactly(src, d) ? 4 : 0) +
+            (src.remote_ip && d.remote_ip && src.remote_ip !== d.remote_ip ? 0 : 1)
+        );
+        return candidates.slice().sort((a, b) => {
+            const r = rank(b) - rank(a);
+            return r !== 0 ? r : String(a.tunnel_name).localeCompare(String(b.tunnel_name));
+        })[0];
+    }
+
+    // How much traffic to show for one path, and whose number it is.
+    //
+    // "This end has counters" means the per-path map has an entry for THIS ROW'S
+    // name — not that the side reports counters somewhere. A FortiGate's dialup
+    // row carries counters at side level while its children never do, and
+    // testing at the wrong level renders a dash on every path.
+    //
+    // An end flagged shared_counter replicates one series across all its phase2
+    // names, so no per-path number exists there at all; showing it anyway would
+    // multiply the tunnel's traffic by its selector count, which was a live 4x
+    // overstatement before the chart query learned to collapse it.
+    // Traffic for a whole logical tunnel.
+    //
+    // NOT the side total: `source_window` covers every tunnel on that device in
+    // this connection, and a device pair can carry several. Stamping it on each
+    // group made an idle tunnel read as its busy neighbour's traffic and made the
+    // rows sum to a multiple of the KPI tile. Sum the group's OWN rows instead —
+    // including a demoted dialup row, which is often the only member of a
+    // FortiGate group that counts anything at all.
+    //
+    // The side total is only correct here when the side has exactly one group,
+    // which is the single case where "every tunnel on this device" and "this
+    // tunnel" are the same set.
+    function groupTraffic(sRows, dRows, data, groupCount) {
+        const ends = [
+            { rows: sRows, tag: 'SRC', totals: data.source_path_totals || {}, prov: data.source_provenance || {}, side: data.source_window || {} },
+            { rows: dRows, tag: 'DST', totals: data.dest_path_totals || {}, prov: data.dest_provenance || {}, side: data.dest_window || {} }
+        ];
+        let sawShared = false;
+        for (const e of ends) {
+            if (!e.rows || !e.rows.length) continue;
+            if (e.prov.shared_counter) {
+                // One series repeated under every name: per-name sums would
+                // multiply it. The side total still describes this tunnel when
+                // it is the only one on the side.
+                sawShared = true;
+                if (groupCount === 1) return { bytes: (e.side.in_bytes || 0) + (e.side.out_bytes || 0), tag: e.tag };
+                continue;
+            }
+            let sum = 0, found = false, claims = false;
+            e.rows.forEach(r => {
+                if ((e.prov.interleaved || {})[r.tunnel_name]) { sawShared = true; return; }
+                if (window.AdminCommon.tunnelClaim(r) !== '') claims = true;
+                const t = e.totals[r.tunnel_name];
+                if (t) { sum += (t.in_bytes || 0) + (t.out_bytes || 0); found = true; }
+            });
+            if (found) return { bytes: sum, tag: e.tag };
+            // Nothing counted, but the device said the tunnel is up: that is zero
+            // traffic, not unknown traffic. Deliberately NOT the side total here —
+            // that covers every tunnel on the device, and borrowing it is exactly
+            // how an idle tunnel came to display its busy neighbour's bytes.
+            if (claims) return { bytes: 0, tag: e.tag };
+        }
+        return { bytes: null, shared: sawShared };
+    }
+
+    // One traffic cell, with the origin tag that says whose number it is. The two
+    // ends count differently, so an unattributed figure invites the comparison
+    // that started all this.
+    function trafficCell(t, srcName, dstName) {
+        if (t.bytes !== null) {
+            const who = t.tag === 'SRC' ? srcName : dstName;
+            return `${window.formatBytes(t.bytes)} <span style="font-size:0.62rem;color:var(--fwmon-text-mute);border:1px solid var(--fwmon-border);border-radius:3px;padding:0 4px;" title="Reported by ${window.escapeHtml(who)}">${t.tag}</span>`;
+        }
+        if (t.shared) {
+            return `<span style="color:var(--fwmon-text-mute);font-size:0.7rem;" title="No per-path figure exists here: this device reports one counter series for the whole tunnel rather than one per selector, or two children share a single name. Use the tunnel's own total instead.">shared counter</span>`;
+        }
+        return '<span style="color:var(--fwmon-text-mute);">&mdash;</span>';
+    }
+
+    function pathTraffic(src, dst, data) {
+        const AC = window.AdminCommon;
+        const ends = [
+            { row: src, tag: 'SRC', totals: data.source_path_totals || {}, prov: data.source_provenance || {} },
+            { row: dst, tag: 'DST', totals: data.dest_path_totals || {}, prov: data.dest_provenance || {} }
+        ];
+        let sawShared = false, claimedZero = null;
+        for (const e of ends) {
+            if (!e.row || !e.row.tunnel_name) continue;
+            if (e.prov.shared_counter || (e.prov.interleaved || {})[e.row.tunnel_name]) { sawShared = true; continue; }
+            const t = e.totals[e.row.tunnel_name];
+            if (t) return { bytes: (t.in_bytes || 0) + (t.out_bytes || 0), tag: e.tag };
+            // No entry in the window map is not the same as no information. The
+            // delta query drops rows that never carried a byte, so a selector
+            // that is genuinely INSTALLED and simply idle lands here — and the
+            // honest reading of an up row with no traffic is zero, not "unknown".
+            // A config row makes no claim at all and correctly falls through.
+            if (claimedZero === null && AC.tunnelClaim(e.row) !== '') {
+                claimedZero = { bytes: 0, tag: e.tag };
+            }
+        }
+        return claimedZero || { bytes: null, shared: sawShared };
+    }
+
+    // ONE table, one row per path, both ends' state on the same line.
+    //
+    // The two ends name the same path differently (fwm-t12-2 vs
+    // fwm-t12:192.168.50.0-192.168.13.0) and describe it from opposite
+    // perspectives (13.0 -> 50.0 vs 50.0 -> 13.0), so two independent tables put
+    // unrelated rows on the same visual line and nothing on screen says so.
+    // Pairing here is structural: a path IS a row, so it cannot drift.
+    function renderPanelPathTable(hostId, data, c, srcName, dstName) {
+        const AC = window.AdminCommon;
+        const host = document.getElementById(hostId);
+        if (!host) return;
+        const srcT = data.source_tunnels || [], dstT = data.dest_tunnels || [];
+        const hrs = data.window_hours || 24;
+
+        // Index the server's pairing. It only emits a match when BOTH devices
+        // described the path from their own side — rows whose selectors were
+        // cross-filled from the peer are excluded there, because such a row
+        // would always "agree" with the very row it was copied from.
+        const matchesBySrc = {};
+        (data.phase2_matches || []).forEach(m => {
+            if (!m.source_tunnel) return;
+            (matchesBySrc[m.source_tunnel] = matchesBySrc[m.source_tunnel] || []).push(m.dest_tunnel);
+        });
+
+        // Build the whole model BEFORE rendering. Pairing has to be able to
+        // reach across groups: two ends of an UNPROVISIONED tunnel fall back to
+        // device-local names for their group key (vpnselector tunnelGroupFor), so
+        // they routinely disagree on it even when the server paired their rows on
+        // mirrored selectors. Deciding group-by-group would render that path once
+        // from each end and tell the operator, falsely, that each peer never
+        // reported it.
+        const dstGroups = {};
+        groupTunnels(dstT).forEach(g => { dstGroups[g.phase1] = g; });
+        const srcGroups = groupTunnels(srcT);
+        const claimedDst = new Set();
+        const model = [];
+
+        srcGroups.forEach(sg => {
+            const dg = dstGroups[sg.phase1];
+            const dChildren = dg ? deriveChildren(dg.phase2) : [];
+            const dByName = {};
+            dChildren.forEach(d => { dByName[d.tunnel_name] = d; });
+            const paths = deriveChildren(sg.phase2).map(s => {
+                const cands = (matchesBySrc[s.tunnel_name] || [])
+                    .map(n => dByName[n]).filter(d => d && !claimedDst.has(d.tunnel_name));
+                const d = cands.length ? bestDestFor(s, cands) : null;
+                if (d) claimedDst.add(d.tunnel_name);
+                return { s: s, d: d };
+            });
+            // Same-group leftovers first: a cross-filled row is excluded from the
+            // server's matching by design, so its mirror is the only evidence.
+            dChildren.forEach(d => {
+                if (claimedDst.has(d.tunnel_name)) return;
+                const hit = paths.find(p => !p.d && mirrorsExactly(p.s, d));
+                if (hit) { hit.d = d; hit.inferred = true; claimedDst.add(d.tunnel_name); }
+            });
+            model.push({ sg: sg, dg: dg, paths: paths });
+        });
+
+        // Now the dest groups no source group claimed. Their children may still
+        // belong to a path already listed under a differently-named source group.
+        const orphanDst = [];
+        groupTunnels(dstT).forEach(dg => {
+            if (srcGroups.some(sg => sg.phase1 === dg.phase1)) return;
+            deriveChildren(dg.phase2).forEach(d => {
+                if (claimedDst.has(d.tunnel_name)) return;
+                let merged = false;
+                for (const g of model) {
+                    const hit = g.paths.find(p => !p.d && mirrorsExactly(p.s, d));
+                    if (hit) { hit.d = d; hit.inferred = true; claimedDst.add(d.tunnel_name); merged = true; break; }
+                }
+                if (!merged) orphanDst.push({ dg: dg, d: d });
+            });
+        });
+        // Whatever is left really is a tunnel only the far end reported.
+        const byOrphanGroup = {};
+        orphanDst.forEach(o => {
+            (byOrphanGroup[o.dg.phase1] = byOrphanGroup[o.dg.phase1] || { sg: null, dg: o.dg, paths: [] })
+                .paths.push({ s: null, d: o.d });
+        });
+        Object.keys(byOrphanGroup).forEach(k => model.push(byOrphanGroup[k]));
+
+        let html = `<table class="vpn-detail-table" id="ptab-path-table"><thead><tr>
+            <th></th><th>Path</th>
+            <th>${window.escapeHtml(srcName)}</th><th>${window.escapeHtml(dstName)}</th>
+            <th title="Bytes over the last ${hrs}h, computed from per-poll deltas — not a lifetime counter, so it does not collapse when a child SA rekeys. The tag names which end reported it; the two ends count differently and are not expected to agree.">Traffic (${hrs}h)</th>
+            <th>Remote IP</th></tr></thead><tbody>`;
+
+        model.forEach((g, gi) => {
+            const sg = g.sg, dg = g.dg, paths = g.paths;
+            const rowId = `ptab-path-row-${gi}`;
+            const sRows = sg ? sg.phase2 : [];
+            const dRows = dg ? dg.phase2 : [];
+            const label = window.escapeHtml((sg || dg).phase1);
+            const sIP = (sRows.find(t => t.remote_ip) || {}).remote_ip || '';
+            const dIP = (dRows.find(t => t.remote_ip) || {}).remote_ip || '';
+            const ips = [sIP, dIP].filter(Boolean).map(window.escapeHtml).join(' &harr; ') || '-';
+            const gt = groupTraffic(sRows, dRows, data, model.length);
+            const count = paths.length;
+
+            html += `
+                <tr class="panel-tunnel-row" data-action="dp-toggle-path" data-row="${rowId}"
+                    data-src-device="${c.source_device_id}" data-dst-device="${c.dest_device_id}"
+                    data-tunnel="${window.escapeHtml((sg || dg).phase1)}">
+                    <td><span class="chevron" id="pchev-${rowId}">&#9654;</span></td>
+                    <td><strong>${label}</strong>${count > 1 ? ` <span style="color:var(--fwmon-text-mute);font-size:0.72rem;">(${count} paths)</span>` : ''}</td>
+                    <td>${sg ? AC.tunnelStateBadge(AC.tunnelGroupClaim(sRows)) : notReported(srcName)}</td>
+                    <td>${dg ? AC.tunnelStateBadge(AC.tunnelGroupClaim(dRows)) : notReported(dstName)}</td>
+                    <td>${trafficCell(gt, srcName, dstName)}</td>
+                    <td style="font-family:monospace;font-size:0.74rem;">${ips}</td>
+                </tr>`;
+
+            paths.forEach(p => {
+                // Rendered in the SOURCE device's perspective wherever there is a
+                // source row; a dest-only path is flipped so every line reads the
+                // same way down the column.
+                const local = p.s ? p.s.local_subnet : (p.d.remote_subnet || '?');
+                const remote = p.s ? p.s.remote_subnet : (p.d.local_subnet || '?');
+                html += `
+                <tr class="panel-tunnel-p2child">
+                    <td></td>
+                    <td style="font-family:monospace;font-size:0.74rem;color:var(--fwmon-text-faint);padding-left:18px;">&#8627; ${window.escapeHtml(local || '?')} &harr; ${window.escapeHtml(remote || '?')}${p.inferred ? ' <span style="font-size:0.62rem;color:var(--fwmon-text-mute);" title="The two ends did not agree on a tunnel name, so this pairing was inferred from mirrored selectors.">inferred</span>' : ''}</td>
+                    <td>${p.s ? AC.tunnelStateBadge(AC.tunnelClaim(p.s), { size: '0.6rem', child: true }) : notReported(srcName)}</td>
+                    <td>${p.d ? AC.tunnelStateBadge(AC.tunnelClaim(p.d), { size: '0.6rem', child: true }) : notReported(dstName)}</td>
+                    <td style="font-size:0.74rem;">${trafficCell(pathTraffic(p.s, p.d, data), srcName, dstName)}</td>
+                    <td></td>
+                </tr>`;
+            });
+
+            html += `
+                <tr class="panel-tunnel-expand" id="${rowId}">
+                    <td colspan="6">
+                        <div class="panel-chart-container" style="height:140px;"><canvas id="pchart-${rowId}-src"></canvas></div>
+                        <div class="panel-chart-container" style="height:140px;margin-top:8px;"><canvas id="pchart-${rowId}-dst"></canvas></div>
+                    </td>
+                </tr>`;
+        });
+        const rows = model.length;
+
+        html += '</tbody></table>';
+        host.innerHTML = rows
+            ? `<div style="overflow-x:auto;">${html}</div>`
+            : '<div style="text-align:center;color:var(--fwmon-text-mute);padding:16px;">No tunnels</div>';
+    }
+
+    // One end said nothing about this tunnel at all — distinct from "said it is
+    // down" and from "cannot observe liveness".
+    function notReported(who) {
+        return `<span style="color:var(--fwmon-text-mute);font-size:0.68rem;" title="${window.escapeHtml(who)} did not report this tunnel.">not reported</span>`;
     }
 
     function renderPanelTunnelTable(tableId, tunnels, deviceId, family, agreed) {
@@ -967,6 +1287,29 @@
         }
     }
 
+    // The path table shows one logical tunnel from BOTH ends, so expanding it
+    // draws a chart per side. Scoped to one device each on purpose: the two ends
+    // report the SAME traffic from their own side, so a combined series would
+    // double every byte.
+    function togglePanelPath(rowId, srcDeviceId, dstDeviceId, tunnelName) {
+        const expandRow = document.getElementById(rowId);
+        const chev = document.getElementById('pchev-' + rowId);
+        if (!expandRow) return;
+        if (expandRow.classList.contains('open')) {
+            expandRow.classList.remove('open');
+            if (chev) chev.classList.remove('open');
+            return;
+        }
+        expandRow.classList.add('open');
+        if (chev) chev.classList.add('open');
+        if (!panelChartInstances['tunnel-' + rowId + '-src']) {
+            loadPanelTunnelChart(rowId + '-src', srcDeviceId, tunnelName, '24h');
+        }
+        if (!panelChartInstances['tunnel-' + rowId + '-dst']) {
+            loadPanelTunnelChart(rowId + '-dst', dstDeviceId, tunnelName, '24h');
+        }
+    }
+
     async function loadPanelTunnelChart(rowId, deviceId, tunnelName, range) {
         try {
             const resp = await window.apiFetch(`${window.API_BASE}/devices/${deviceId}/vpn-group-chart?group=${encodeURIComponent(tunnelName)}&range=${range}`);
@@ -1098,6 +1441,8 @@
             if (currentPanelConnId) loadPanelEvents(currentPanelConnId, hrs);
         } else if (action === 'dp-toggle-tunnel') {
             togglePanelTunnel(el.dataset.row, parseInt(el.dataset.device), el.dataset.tunnel);
+        } else if (action === 'dp-toggle-path') {
+            togglePanelPath(el.dataset.row, parseInt(el.dataset.srcDevice), parseInt(el.dataset.dstDevice), el.dataset.tunnel);
         } else if (action === 'dp-tunnel-chart') {
             e.stopPropagation();
             var pills = el.parentElement.querySelectorAll('.panel-range-pill');

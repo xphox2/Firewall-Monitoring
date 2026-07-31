@@ -1,6 +1,44 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.196] - 2026-07-31
+
+### Fixed
+
+**Each tunnel now shows its own traffic, not the whole device's.** v0.11.195's path table stamped the side-wide 24h total on every tunnel's parent row. That total covers *every* tunnel on the device in a connection, and the detail builder admits them all — so a device pair carrying two tunnels rendered both rows with the same figure, an idle tunnel wearing its busy neighbour's traffic, and the rows summing to a multiple of the header tile. A tunnel's total is now the sum of its own rows, including a demoted dial-up row, which is often the only member of a FortiGate group that counts anything at all. The side-wide figure is used only when the side has exactly one tunnel — the one case where "every tunnel on this device" and "this tunnel" are the same set. A tunnel that reports up but counted nothing reads `0 B`, never its neighbour's bytes.
+
+**A path both ends reported is no longer drawn twice when they disagree on the tunnel's name.** Two ends of an unprovisioned tunnel fall back to device-local names for their grouping key, so they routinely differ even where the server has already paired their selectors. Pairing that could only see within one group rendered such a path once from each end and stated in the tooltip that each peer never reported it — with the pairing evidence sitting in the payload. Pairing now reaches across groups, and a row can only be claimed once.
+
+**A device could be called a shared counter on a single sample.** The replicated-counter verdict is a ≥90% ratio, but with one eligible sample a lone coincidence is 100% — condemning precisely the device that does report real per-path numbers, which is the outcome the ratio exists to prevent. It now needs at least five samples, under a minute of polling.
+
+**A clean counter series could be suppressed.** The duplicate-name check omitted the no-counters filter its own rationale depends on, so one counting row beside an idle one at the same instant flagged a series whose deltas are perfectly fine.
+
+### Changed
+
+- Corrected the explanation of *why* a FortiGate emits a bare host address. It is not a `/30` refusal — that lives in a different function. The builder returns the address unchanged when there is no mask to build from, and the range path collapses when the end equals the begin. The behaviour was right; the stated mechanism was wrong in three places.
+- The shared-counter tooltip covers both causes rather than only the replicated-series one.
+
+## [0.11.195] - 2026-07-31
+
+### Fixed
+
+**The two ends of a tunnel are now one row each, not two tables you have to line up by eye.** The connection panel rendered source and destination tunnels as independent tables in a two-column grid. The ends name the same path differently (`fwm-t12-2` vs `fwm-t12:192.168.50.0-192.168.13.0`) and describe it from opposite perspectives (`13.0→50.0` vs `50.0→13.0`), so row *n* on the left had nothing to do with row *n* on the right — and nothing on screen said so. The tunnel family now renders **one table, one row per path**, with each end's state in its own column. Alignment is structural: a path *is* a row, so it cannot drift.
+
+**The transferred total went backwards while traffic was flowing.** It summed each side's *latest cumulative* counters. OPNsense child SAs rekey independently and their counters reset, so the displayed total collapsed — measured live on connection 23984 at `314,100 → 384,960 → 206,940 → 37,020` across two rekeys — while the FortiGate side, a per-peer session counter that does not reset on child rekey, climbed away from it. The panel now shows a reset-safe delta over a fixed window, which means the same thing on both ends. The same sum backed the **byte KPI tiles on both the panel and the standalone page**; those are fixed too, and their labels now carry the window rather than saying "Total".
+
+**A per-path figure is no longer invented where none exists.** A FortiGate writes one counter series per phase 1 and the collector stores it under *every* phase 2 name, so attributing it per path would multiply a tunnel's traffic by its selector count — a 4× overstatement the chart query already had to defend against. Each end is now assessed for whether its per-path counters are genuinely distinct, and an end that replicates says *shared counter* instead of showing a number. Measured over 24h of production this separates cleanly: a real FortiGate collapses at **100%** of eligible samples, OPNsense at **5.2%**.
+
+**Selectors that mean the same network now compare equal across vendors.** A FortiGate emits a host selector as a bare address — its selector builder returns the address unchanged when the MIB exposes no mask, and when the range's end equals its begin — where OPNsense emits `/32`; it also emits ranges wherever no mask is available. Those never matched as text, so a path both ends reported rendered as reported by one. Selectors are normalised before the match test — aligned range to CIDR, bare address to `/32`, and **anything else returned unchanged**, which is what keeps two ends mirroring a non-aligned range matching exactly as they do today. Normalisation only ever adds matches.
+
+**Paths that the server cannot pair no longer render twice.** An unprovisioned tunnel whose ends disagree on the tunnel name, or a hub-side ADVPN row whose selectors were cross-filled, produced no match — and the naive reading listed the path once from each end. Such rows are now merged on mirrored selectors and marked *inferred*.
+
+### Changed
+
+- Dial-up demotion is applied to **both** ends and computed **per tunnel group**. Only the source side demoted before, so a destination FortiGate's per-peer aggregate appended as a phantom extra path; and a flat pass would have demoted an unprovisioned tunnel's only selector-bearing row because a different tunnel on the same connection had named rows.
+- Path pairing is deterministic — same logical tunnel, then exact selector mirror, then peer address, then name. Nothing in the query chain applies an `ORDER BY`, so "first match wins" paired differently between page loads, and two route-based tunnels between one device pair both report `0.0.0.0/0` and match each other exactly.
+- An installed-but-idle selector shows `0 B` rather than a dash. The delta query drops rows that never carried a byte, but an `up` row with no traffic is an observation, not an absence of one.
+- Off-net and overlay connections keep the two-table rendering and their cumulative tiles — neither has a peer reporting its own side to pair against.
+
 ## [0.11.194] - 2026-07-30
 
 ### Fixed

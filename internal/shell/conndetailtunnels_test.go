@@ -190,3 +190,161 @@ func funcBody(t *testing.T, js, sigPattern string) string {
 	t.Fatalf("unbalanced braces after %q", sigPattern)
 	return ""
 }
+
+// v0.11.195 replaced the tunnel family's two side-by-side tables with ONE table,
+// one row per path. `renderPanelTunnelTable` survives for the overlay and
+// off-net families, which is why the pins above stay pointed at it — but it also
+// means every pin above now guards only those families. The new renderer would
+// otherwise ship with no protection at all, free to re-make each bug the old one
+// was taught out of.
+//
+// These pins are call-shaped on purpose. A bare strings.Contains is satisfied by
+// a COMMENT mentioning the helper, and it cannot count — so "the badge goes
+// through the shared helper" would pass on a renderer that converted one of the
+// two ends and left the other collapsing unknown into DOWN.
+
+// A path row carries BOTH ends' state. Half-converting it is the likeliest slip,
+// and it is invisible: the table still renders, one column just lies.
+func TestPathTable_BothEndsGoThroughTheSharedStateHelper(t *testing.T) {
+	body := funcBody(t, readPanelJS(t), `renderPanelPathTable\(hostId, data, c, srcName, dstName\) \{`)
+	for _, call := range []string{
+		"AC.tunnelStateBadge(AC.tunnelGroupClaim(sRows))", // parent, source end
+		"AC.tunnelStateBadge(AC.tunnelGroupClaim(dRows))", // parent, dest end
+		"AC.tunnelStateBadge(AC.tunnelClaim(p.s)",         // child, source end
+		"AC.tunnelStateBadge(AC.tunnelClaim(p.d)",         // child, dest end
+	} {
+		if !strings.Contains(body, call) {
+			t.Errorf("path table is missing %q — that end's status is being decided "+
+				"outside the shared tri-state helper, so it can render DOWN for a row "+
+				"that never claimed anything", call)
+		}
+	}
+	if regexp.MustCompile(`\.tunnel_uptime`).MatchString(body) {
+		t.Error("the path table reads tunnel_uptime again — on a FortiGate that is a " +
+			"configured SA lifetime, not an age")
+	}
+	// The old renderer bans this shape too. Without it here, a path row could
+	// simply stop calling the helper and hand-roll the two-way ternary again.
+	if regexp.MustCompile(`\?\s*'?<?span class="badge up"`).MatchString(body) {
+		t.Error("a two-way up/down badge ternary is back in the path table")
+	}
+	// The traffic column must not reach for a row's cumulative counters either —
+	// pathTraffic is pinned separately, but the renderer could bypass it.
+	if regexp.MustCompile(`\.bytes_in|\.bytes_out`).MatchString(body) {
+		t.Error("the path table reads a row's cumulative counters directly, bypassing " +
+			"the windowed totals — that is the sum-of-latest bug returning")
+	}
+}
+
+// A tunnel's own total must come from ITS rows, not from the side-wide window.
+// source_window covers every tunnel on that device in this connection, so
+// stamping it on each group made an idle tunnel read as its busy neighbour's
+// traffic and made the rows sum to a multiple of the KPI tile.
+func TestPathTable_GroupTotalIsPerTunnelNotPerSide(t *testing.T) {
+	body := funcBody(t, readPanelJS(t), `groupTraffic\(sRows, dRows, data, groupCount\) \{`)
+	if !strings.Contains(body, "e.rows.forEach") {
+		t.Error("groupTraffic no longer sums the group's OWN rows, so every tunnel on a " +
+			"multi-tunnel connection shows the same side-wide figure")
+	}
+	// The property, not just the presence of a guard: EVERY read of the side-wide
+	// window must sit on a line that also tests groupCount === 1. A guard placed
+	// somewhere in the function is worth nothing if a later return reaches past
+	// it — which is exactly how the side total came to be stamped on every group.
+	for _, line := range strings.Split(body, "\n") {
+		if strings.Contains(line, "e.side") && !strings.Contains(line, "groupCount === 1") {
+			t.Errorf("groupTraffic reads the side-wide window outside the single-group "+
+				"guard:\n    %s\nThat total covers EVERY tunnel on the device, so an idle "+
+				"tunnel would display its busy neighbour's traffic", strings.TrimSpace(line))
+		}
+	}
+	if !strings.Contains(body, "shared_counter") {
+		t.Error("groupTraffic ignores shared_counter, so a replicated series would be " +
+			"summed once per selector name")
+	}
+	if !strings.Contains(funcBody(t, readPanelJS(t), `renderPanelPathTable\(hostId, data, c, srcName, dstName\) \{`), "groupTraffic(") {
+		t.Error("the parent row no longer goes through groupTraffic")
+	}
+}
+
+// Two ends of an UNPROVISIONED tunnel fall back to device-local group names, so
+// they routinely disagree on the group key even when the server paired their
+// rows. Pairing that cannot reach across groups renders such a path twice — once
+// from each end — while telling the operator each peer never reported it.
+func TestPathTable_PairingReachesAcrossGroups(t *testing.T) {
+	body := funcBody(t, readPanelJS(t), `renderPanelPathTable\(hostId, data, c, srcName, dstName\) \{`)
+	if !strings.Contains(body, "for (const g of model)") {
+		t.Error("an unclaimed dest child is no longer offered to paths in OTHER groups, " +
+			"so an unprovisioned tunnel renders one row per end instead of one per path")
+	}
+	if !strings.Contains(body, "claimedDst") {
+		t.Error("dest children are no longer claimed globally, so one row can be paired " +
+			"into two different groups")
+	}
+}
+
+// Demotion must happen on BOTH sides. Nothing demotes dest-side dialup rows
+// otherwise, and the per-peer aggregate then appends as a phantom extra path —
+// the "5 selectors for 4 paths" bug, re-made on the other end.
+func TestPathTable_DemotesDialupOnBothSides(t *testing.T) {
+	body := funcBody(t, readPanelJS(t), `renderPanelPathTable\(hostId, data, c, srcName, dstName\) \{`)
+	for _, call := range []string{"deriveChildren(sg.phase2)", "deriveChildren(dg.phase2)"} {
+		if !strings.Contains(body, call) {
+			t.Errorf("missing %q — a dialup row on that side would be listed as a path, "+
+				"inventing one that does not exist", call)
+		}
+	}
+	// And the shared helper must stay conditional: an unprovisioned dialup tunnel
+	// has no other selector source, so demoting it unconditionally hides the only
+	// row that describes the path.
+	dc := funcBody(t, readPanelJS(t), `deriveChildren\(rows\) \{`)
+	if !strings.Contains(dc, "named.length ? named : withSel") {
+		t.Error("deriveChildren demotes dialup rows unconditionally — an unprovisioned " +
+			"dialup tunnel would then show no selectors whatsoever")
+	}
+}
+
+// The traffic column is the reason this change exists. It must come from the
+// windowed delta map, never from a row's cumulative counters, or the number goes
+// backwards on every child-SA rekey exactly as before.
+func TestPathTable_TrafficIsWindowedNotCumulative(t *testing.T) {
+	pt := funcBody(t, readPanelJS(t), `pathTraffic\(src, dst, data\) \{`)
+	if regexp.MustCompile(`\.bytes_in|\.bytes_out`).MatchString(pt) {
+		t.Error("pathTraffic reads a row's cumulative counters — that is the " +
+			"sum-of-latest bug returning, and it collapses on rekey")
+	}
+	// An end that replicates one counter series across its phase2 names has no
+	// per-path figure at all; showing it anyway multiplies the tunnel's traffic
+	// by its selector count.
+	for _, guard := range []string{"shared_counter", "interleaved"} {
+		if !strings.Contains(pt, guard) {
+			t.Errorf("pathTraffic ignores %q, so a replicated counter series would be "+
+				"attributed to every path individually", guard)
+		}
+	}
+	// A selector that is installed but idle is absent from the delta map, because
+	// the query drops rows that never carried a byte. That is not "unknown" — the
+	// device said it is up, so the honest reading is zero.
+	if !strings.Contains(pt, "AC.tunnelClaim(e.row) !== ''") {
+		t.Error("pathTraffic renders a dash for an installed-but-idle path instead of " +
+			"0 B, claiming no observation where the device made one")
+	}
+}
+
+// The byte tiles carried the identical sum-of-latest bug one tab above the table
+// being fixed. Repointing them is only safe per family: a direct link's totals
+// come from interface counters and has no windowed figure at all.
+func TestPathTable_ByteKpisAreFamilyGatedAndLabelled(t *testing.T) {
+	js := readPanelJS(t)
+	if regexp.MustCompile(`(?m)^\s*document\.getElementById\('pkpi-bytes-in'\)\.textContent`).MatchString(js) {
+		t.Error("the byte tiles are assigned outside setPanelByteKpis again — done " +
+			"before the family branch, that blanks direct-family tiles")
+	}
+	body := funcBody(t, js, `setPanelByteKpis\(data, windowed\) \{`)
+	if !strings.Contains(body, "kpi-label") {
+		t.Error("setPanelByteKpis no longer rewrites the tile labels, so a 24h delta " +
+			"renders under a label that says lifetime total")
+	}
+	if !strings.Contains(body, "data.total_bytes_in") {
+		t.Error("the non-windowed families lost their cumulative fallback")
+	}
+}

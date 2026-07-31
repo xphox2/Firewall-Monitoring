@@ -255,9 +255,32 @@
             renderBridge(srcName, dstName, conn.status, conn.connection_type);
             renderBridgeSubtitle(conn, srcName, dstName);
 
-            // Stat cards
-            document.getElementById('stat-bytes-in').textContent = formatBytes(data.total_bytes_in);
-            document.getElementById('stat-bytes-out').textContent = formatBytes(data.total_bytes_out);
+            // Stat cards.
+            //
+            // For a tunnel these are a reset-safe WINDOWED delta, not the sum of
+            // each side's latest cumulative counters. That sum visibly goes
+            // backwards: an OPNsense child SA rekeys independently and its
+            // counter restarts, so the displayed total collapsed while traffic
+            // was still flowing. Other families have no windowed figure — their
+            // bytes come from interface counters — so they keep the lifetime sum,
+            // and the label says which is on screen.
+            var windowed = data.family === 'tunnel' && data.source_window;
+            var sw = data.source_window || {}, dw = data.dest_window || {};
+            var winHrs = data.window_hours || 24;
+            document.getElementById('stat-bytes-in').textContent =
+                formatBytes(windowed ? sw.in_bytes : data.total_bytes_in);
+            document.getElementById('stat-bytes-out').textContent =
+                formatBytes(windowed ? sw.out_bytes : data.total_bytes_out);
+            document.getElementById('stat-bytes-in-label').textContent =
+                windowed ? 'Bytes In (' + winHrs + 'h)' : 'Total Bytes In';
+            document.getElementById('stat-bytes-out-label').textContent =
+                windowed ? 'Bytes Out (' + winHrs + 'h)' : 'Total Bytes Out';
+            if (windowed) {
+                document.getElementById('stat-bytes-in').title =
+                    'Source side over the last ' + winHrs + 'h. Peer reports ' +
+                    formatBytes(dw.in_bytes || 0) + ' in / ' + formatBytes(dw.out_bytes || 0) +
+                    ' out — the two ends count differently and are not expected to agree.';
+            }
             var statusEl = document.getElementById('stat-status');
             // AUDIT-065: escape conn.status before it lands in innerHTML (both the
             // class attribute and the text). The server validates it to an enum,

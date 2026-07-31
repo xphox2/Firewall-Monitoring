@@ -32,15 +32,23 @@ import (
 // belong to the same logical tunnel: containment is asymmetric in its blast
 // radius, and a row reporting 0.0.0.0/0 contains EVERY other selector, so an
 // unbounded relaxation would pair rows from unrelated tunnels.
+// Both sides are NORMALIZED before the equality test, because the two vendors
+// serialise the same network differently: a FortiGate reports a host pair as the
+// bare address "192.168.13.7" (its selector builder returns the address as-is
+// when the MIB exposes no mask, and when end == begin) while OPNsense
+// reports "192.168.13.7/32", and those never compare equal as text. Normalizing
+// only ever ADDS matches — NormalizeSelector returns anything it cannot convert
+// unchanged, so two mirrored ranges still match each other exactly as before.
 func selectorMirrors(a, b string, allowNarrowing bool) bool {
-	if a == b {
+	na, nb := netclass.NormalizeSelector(a), netclass.NormalizeSelector(b)
+	if na == nb {
 		return true
 	}
 	if !allowNarrowing {
 		return false
 	}
-	return netclass.SelectorCovered([]string{a}, b) ||
-		netclass.SelectorCovered([]string{b}, a)
+	return netclass.SelectorCovered([]string{na}, nb) ||
+		netclass.SelectorCovered([]string{nb}, na)
 }
 
 // Phase2Match is a path BOTH ends independently reported: one row from each
@@ -144,6 +152,23 @@ type ConnectionDetailResult struct {
 	ThroughputOut   float64                 `json:"throughput_out"`
 	HasFlowData     bool                    `json:"has_flow_data"`
 	Phase2Matches   []Phase2Match           `json:"phase2_matches"`
+	// Windowed traffic. TotalBytes* above are each side's LATEST CUMULATIVE
+	// counters summed, which is not a quantity the two ends can be compared on:
+	// they reset at different moments (an OPNsense child SA rekeys independently,
+	// a FortiGate per-peer session counter does not), so the sum visibly goes
+	// backwards while traffic is still flowing. These are reset-safe deltas over
+	// WindowHours instead, and they mean the same thing on both ends.
+	WindowHours      int                       `json:"window_hours,omitempty"`
+	SourceWindow     VPNWindowTotal            `json:"source_window"`
+	DestWindow       VPNWindowTotal            `json:"dest_window"`
+	SourcePathTotals map[string]VPNWindowTotal `json:"source_path_totals,omitempty"`
+	DestPathTotals   map[string]VPNWindowTotal `json:"dest_path_totals,omitempty"`
+	// Whether each end's per-path numbers can be attributed to a path at all —
+	// a FortiGate replicates one counter series across every phase2 name, so
+	// showing it per path would multiply the tunnel's traffic by its selector
+	// count. See GetVPNCounterProvenance.
+	SourceProvenance VPNCounterProvenance `json:"source_provenance"`
+	DestProvenance   VPNCounterProvenance `json:"dest_provenance"`
 	// Evidence explains WHY an L2-inferred direct link is drawn (which
 	// LLDP/FDB/ARP rows produced it). Populated for the direct family when
 	// the connection's match method is one of the L2 tiers; empty means the
@@ -684,6 +709,23 @@ func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, er
 			}
 		}
 	}
+
+	// Reset-safe windowed traffic, per side and per path.
+	//
+	// This is the number the UI shows, instead of the cumulative sums above. A
+	// per-child SA that rekeys resets its counter, so summing the latest values
+	// across children makes the displayed total DROP while traffic is flowing —
+	// observed on connection 23984 going 384,960 -> 206,940 -> 37,020 across two
+	// rekeys. Deltas over a fixed window have no such discontinuity, and unlike a
+	// lifetime counter they mean the same thing on both ends of the tunnel.
+	const detailWindowHours = 24
+	result.WindowHours = detailWindowHours
+	winTo := time.Now()
+	winFrom := winTo.Add(-detailWindowHours * time.Hour)
+	result.SourceWindow, result.SourcePathTotals, result.SourceProvenance =
+		d.windowedTraffic(conn.SourceDeviceID, result.SourceTunnels, winFrom, winTo)
+	result.DestWindow, result.DestPathTotals, result.DestProvenance =
+		d.windowedTraffic(conn.DestDeviceID, result.DestTunnels, winFrom, winTo)
 
 	// Compute live throughput (bytes/sec) from the two most recent VPNStatus samples per source tunnel
 	for _, t := range result.SourceTunnels {
@@ -1406,4 +1448,47 @@ func (d *Database) resolveL2EndpointInterfaces(conn *models.DeviceConnection) []
 	// Only meaningful when at least one end resolved to a REAL interface;
 	// otherwise let the legacy path try the name list.
 	return refs
+}
+
+// windowedTraffic computes one side's reset-safe traffic over [from, to]: the
+// side total, a per-tunnel-name breakdown, and how far that breakdown can be
+// trusted to mean "per path".
+//
+// The side total goes through the GROUPED query on purpose — its collapse of
+// identical-counter siblings is exactly what stops a FortiGate's replicated
+// per-phase2 rows from multiplying the tunnel's traffic by its selector count.
+// The per-path map deliberately skips that collapse, because attribution needs
+// real names; the provenance flags are what tell the UI when that map is not
+// safe to show per path.
+func (d *Database) windowedTraffic(deviceID uint, rows []models.VPNStatus, from, to time.Time) (VPNWindowTotal, map[string]VPNWindowTotal, VPNCounterProvenance) {
+	names := make([]string, 0, len(rows))
+	seen := map[string]bool{}
+	for _, r := range rows {
+		if r.TunnelName == "" || seen[r.TunnelName] {
+			continue
+		}
+		seen[r.TunnelName] = true
+		names = append(names, r.TunnelName)
+	}
+	var side VPNWindowTotal
+	if len(names) == 0 {
+		return side, nil, VPNCounterProvenance{}
+	}
+	if buckets, err := d.GetVPNChartGroupWindow(deviceID, names, from, to); err == nil {
+		for _, b := range buckets {
+			side.InBytes += uint64(b.InBytes)
+			side.OutBytes += uint64(b.OutBytes)
+		}
+	} else {
+		log.Printf("windowedTraffic: side total for device %d failed: %v", deviceID, err)
+	}
+	perPath, err := d.GetVPNWindowTotalsByTunnel(deviceID, names, from, to)
+	if err != nil {
+		log.Printf("windowedTraffic: per-path totals for device %d failed: %v", deviceID, err)
+	}
+	prov, err := d.GetVPNCounterProvenance(deviceID, names, from, to)
+	if err != nil {
+		log.Printf("windowedTraffic: counter provenance for device %d failed: %v", deviceID, err)
+	}
+	return side, perPath, prov
 }

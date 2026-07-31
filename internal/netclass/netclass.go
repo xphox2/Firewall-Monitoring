@@ -177,3 +177,71 @@ func SelectorPrefixLen(s string) int {
 	}
 	return 0
 }
+
+// NormalizeSelector rewrites a device-reported traffic selector into CIDR where
+// that is possible WITHOUT changing what it means, so the two ends of a tunnel
+// can be compared as strings even when their vendors serialise differently.
+//
+// A FortiGate emits three shapes (see snmp.vendor_fortigate): proper CIDR when
+// the MIB exposes a mask; an inclusive RANGE "10.0.1.0 - 10.0.1.255" when it does
+// not; and a BARE ADDRESS when there is no mask to build from, or when the
+// range's end equals its begin. OPNsense emits CIDR throughout. So a host pair
+// that IKEv2 narrowed reads "192.168.13.7" on one end and "192.168.13.7/32" on
+// the other, and today those never compare equal.
+//
+// Three arms, and the third is the one that matters:
+//
+//   - an ALIGNED range becomes its CIDR;
+//   - a bare address becomes /32;
+//   - anything else is RETURNED UNCHANGED.
+//
+// That last arm is not a failure path, it is a guarantee. A non-aligned range
+// has no CIDR form, and approximating it by its begin address would let a range
+// selector collide with a host selector. Returning it verbatim also preserves
+// the behaviour this function must not regress: two FortiGates mirroring the
+// same range already match on exact string equality, and dropping or rewriting
+// the value would take that away. Normalizing therefore only ever ADDS matches.
+func NormalizeSelector(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.Contains(s, "/") {
+		return s
+	}
+	if i := strings.Index(s, " - "); i >= 0 {
+		return normalizeRange(s, strings.TrimSpace(s[:i]), strings.TrimSpace(s[i+3:]))
+	}
+	if ip := net.ParseIP(s); ip != nil && ip.To4() != nil {
+		return s + "/32"
+	}
+	return s
+}
+
+// normalizeRange converts begin-end to CIDR only when the range is exactly one
+// aligned network: a power-of-two size, starting on a multiple of that size.
+// Any other range keeps its original text.
+func normalizeRange(original, begin, end string) string {
+	b, e := net.ParseIP(begin), net.ParseIP(end)
+	if b == nil || e == nil {
+		return original
+	}
+	b4, e4 := b.To4(), e.To4()
+	if b4 == nil || e4 == nil {
+		return original
+	}
+	bi := uint32(b4[0])<<24 | uint32(b4[1])<<16 | uint32(b4[2])<<8 | uint32(b4[3])
+	ei := uint32(e4[0])<<24 | uint32(e4[1])<<16 | uint32(e4[2])<<8 | uint32(e4[3])
+	if ei < bi {
+		return original
+	}
+	size := uint64(ei) - uint64(bi) + 1
+	if size&(size-1) != 0 { // not a power of two
+		return original
+	}
+	if uint64(bi)%size != 0 { // not aligned to its own size
+		return original
+	}
+	ones := 32
+	for s := size; s > 1; s >>= 1 {
+		ones--
+	}
+	return fmt.Sprintf("%s/%d", b4.String(), ones)
+}
