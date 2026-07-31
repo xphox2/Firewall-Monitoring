@@ -1,6 +1,23 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.196] - 2026-07-31
+
+### Fixed
+
+**Each tunnel now shows its own traffic, not the whole device's.** v0.11.195's path table stamped the side-wide 24h total on every tunnel's parent row. That total covers *every* tunnel on the device in a connection, and the detail builder admits them all — so a device pair carrying two tunnels rendered both rows with the same figure, an idle tunnel wearing its busy neighbour's traffic, and the rows summing to a multiple of the header tile. A tunnel's total is now the sum of its own rows, including a demoted dial-up row, which is often the only member of a FortiGate group that counts anything at all. The side-wide figure is used only when the side has exactly one tunnel — the one case where "every tunnel on this device" and "this tunnel" are the same set. A tunnel that reports up but counted nothing reads `0 B`, never its neighbour's bytes.
+
+**A path both ends reported is no longer drawn twice when they disagree on the tunnel's name.** Two ends of an unprovisioned tunnel fall back to device-local names for their grouping key, so they routinely differ even where the server has already paired their selectors. Pairing that could only see within one group rendered such a path once from each end and stated in the tooltip that each peer never reported it — with the pairing evidence sitting in the payload. Pairing now reaches across groups, and a row can only be claimed once.
+
+**A device could be called a shared counter on a single sample.** The replicated-counter verdict is a ≥90% ratio, but with one eligible sample a lone coincidence is 100% — condemning precisely the device that does report real per-path numbers, which is the outcome the ratio exists to prevent. It now needs at least five samples, under a minute of polling.
+
+**A clean counter series could be suppressed.** The duplicate-name check omitted the no-counters filter its own rationale depends on, so one counting row beside an idle one at the same instant flagged a series whose deltas are perfectly fine.
+
+### Changed
+
+- Corrected the explanation of *why* a FortiGate emits a bare host address. It is not a `/30` refusal — that lives in a different function. The builder returns the address unchanged when there is no mask to build from, and the range path collapses when the end equals the begin. The behaviour was right; the stated mechanism was wrong in three places.
+- The shared-counter tooltip covers both causes rather than only the replicated-series one.
+
 ## [0.11.195] - 2026-07-31
 
 ### Fixed
