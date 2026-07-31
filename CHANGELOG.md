@@ -1,6 +1,22 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.194] - 2026-07-30
+
+### Fixed
+
+**A FortiGate's `tunnel_uptime` is not an uptime, and v0.11.193 briefly rendered it as one.** That release added an "up 12h" chip to the grouped tunnel table, having verified the field against a single writer. Measured across 24h of live telemetry it does not hold: dialup rows carry `fgVpnDialupLifetime` — a *configured SA lifetime*, and the OID is named accordingly — sitting at exactly 43200 or 7200 across 1,437 and 1,263 consecutive polls, one distinct value each; static tunnels report a value that is only ever 0 or 1. Only OPNsense produces a real monotonic uptime (1 → 3514 over 24h, 219 distinct values, resetting on rekey).
+
+The chip would have shown a permanent, never-changing age on a tunnel that had just bounced, and on a down tunnel reporting `uptime=1` it would have rendered **"up 0m" beside a DOWN badge**. It is removed. The grouped table now shows **"last up"** — derived by this system from rows that actually reported `up`, and only when the group is not currently up.
+
+**A third uptime formatter survived in the file that claimed there was only one.** `formatPanelUptime` in `diagram-panels.js` was still rendering the VPN badge panel's Uptime column; it now calls the shared formatter. The "last up" chip also renders in the viewer's timezone rather than raw UTC.
+
+### Known issue
+
+**FortiGate uptime is still shown raw in two places**: the standalone connection page's Uptime column and the device VPN badge panel's Uptime column. Both reflect whatever the device sent, so an up FortiGate dialup tunnel reads a fixed `12h 0m` there.
+
+Correcting the counter at its source is a cross-repo change that also moves alert eligibility, so it is tracked separately rather than folded into a display fix — and it **must not be done as a bare zeroing**. `resolveVPNEverUp` (`cmd/poller`) arms a tunnel for VPN_DOWN when `bytes > 0 || tunnel_uptime > 0`; it is suppress-only, so removing the bogus value can only produce *fewer* alerts, never more. But FortiGate tunnels that show no bytes on a down row would then silently lose VPN_DOWN coverage. The fix needs a compensating arm — marking ever-up from an observed `status == 'up'` row — landing in the same change.
+
 ## [0.11.193] - 2026-07-30
 
 ### Fixed
@@ -18,12 +34,6 @@ All notable changes to this project are documented in this file.
 **A writer that counts nothing renders a dash, not `0 B`** — the same lie the status badge stopped telling. A row reporting `up` with genuine zero counters keeps its zero, which is what a live selector that has carried no traffic yet actually looks like.
 
 **Tunnel uptime had three renderers and three opinions; now it has one.** The standalone page divided it by 100 as if it were TimeTicks hundredths, rendering a 53-minute tunnel as `0m`.
-
-### Known issue
-
-**A FortiGate's `tunnel_uptime` is not an uptime, and this release stops pretending otherwise.** Measured over 24h of live telemetry: dialup rows carry `fgVpnDialupLifetime` — a *configured SA lifetime* — sitting at exactly 43200 or 7200 across 1,437 and 1,263 consecutive polls, one distinct value each; static tunnels report a value that is only ever 0 or 1. Only OPNsense produces a real monotonic uptime (1 → 3514 over 24h, 219 distinct values, resetting on rekey).
-
-The grouped tunnel table therefore shows **"last up"**, derived by this system from rows that actually reported `up`, rather than an age taken from a vendor counter. Correcting the counter at its source is a cross-repo change that also moves alert eligibility — `resolveVPNEverUp` in `cmd/poller` treats a non-zero uptime as evidence a tunnel has ever been up — so it is tracked separately rather than folded into a display fix. Until then the standalone page's Uptime column still reflects whatever the device sent.
 
 ### Changed
 
