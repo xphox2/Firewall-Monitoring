@@ -1,6 +1,27 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.195] - 2026-07-31
+
+### Fixed
+
+**The two ends of a tunnel are now one row each, not two tables you have to line up by eye.** The connection panel rendered source and destination tunnels as independent tables in a two-column grid. The ends name the same path differently (`fwm-t12-2` vs `fwm-t12:192.168.50.0-192.168.13.0`) and describe it from opposite perspectives (`13.0→50.0` vs `50.0→13.0`), so row *n* on the left had nothing to do with row *n* on the right — and nothing on screen said so. The tunnel family now renders **one table, one row per path**, with each end's state in its own column. Alignment is structural: a path *is* a row, so it cannot drift.
+
+**The transferred total went backwards while traffic was flowing.** It summed each side's *latest cumulative* counters. OPNsense child SAs rekey independently and their counters reset, so the displayed total collapsed — measured live on connection 23984 at `314,100 → 384,960 → 206,940 → 37,020` across two rekeys — while the FortiGate side, a per-peer session counter that does not reset on child rekey, climbed away from it. The panel now shows a reset-safe delta over a fixed window, which means the same thing on both ends. The same sum backed the **byte KPI tiles on both the panel and the standalone page**; those are fixed too, and their labels now carry the window rather than saying "Total".
+
+**A per-path figure is no longer invented where none exists.** A FortiGate writes one counter series per phase 1 and the collector stores it under *every* phase 2 name, so attributing it per path would multiply a tunnel's traffic by its selector count — a 4× overstatement the chart query already had to defend against. Each end is now assessed for whether its per-path counters are genuinely distinct, and an end that replicates says *shared counter* instead of showing a number. Measured over 24h of production this separates cleanly: a real FortiGate collapses at **100%** of eligible samples, OPNsense at **5.2%**.
+
+**Selectors that mean the same network now compare equal across vendors.** A FortiGate emits a host selector as a bare address (its CIDR builder refuses `/30` and tighter) where OPNsense emits `/32`, and emits ranges where the MIB has no mask. Those never matched as text, so a path both ends reported rendered as reported by one. Selectors are normalised before the match test — aligned range to CIDR, bare address to `/32`, and **anything else returned unchanged**, which is what keeps two ends mirroring a non-aligned range matching exactly as they do today. Normalisation only ever adds matches.
+
+**Paths that the server cannot pair no longer render twice.** An unprovisioned tunnel whose ends disagree on the tunnel name, or a hub-side ADVPN row whose selectors were cross-filled, produced no match — and the naive reading listed the path once from each end. Such rows are now merged on mirrored selectors and marked *inferred*.
+
+### Changed
+
+- Dial-up demotion is applied to **both** ends and computed **per tunnel group**. Only the source side demoted before, so a destination FortiGate's per-peer aggregate appended as a phantom extra path; and a flat pass would have demoted an unprovisioned tunnel's only selector-bearing row because a different tunnel on the same connection had named rows.
+- Path pairing is deterministic — same logical tunnel, then exact selector mirror, then peer address, then name. Nothing in the query chain applies an `ORDER BY`, so "first match wins" paired differently between page loads, and two route-based tunnels between one device pair both report `0.0.0.0/0` and match each other exactly.
+- An installed-but-idle selector shows `0 B` rather than a dash. The delta query drops rows that never carried a byte, but an `up` row with no traffic is an observation, not an absence of one.
+- Off-net and overlay connections keep the two-table rendering and their cumulative tiles — neither has a peer reporting its own side to pair against.
+
 ## [0.11.194] - 2026-07-30
 
 ### Fixed

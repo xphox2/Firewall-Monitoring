@@ -555,3 +555,135 @@ func (d *Database) GetVPNChartGroupWindow(deviceID uint, tunnelNames []string, f
 	}
 	return rows, nil
 }
+
+// VPNWindowTotal is one tunnel's reset-safe byte delta over a window.
+type VPNWindowTotal struct {
+	TunnelName string `json:"tunnel_name"`
+	InBytes    uint64 `json:"in_bytes"`
+	OutBytes   uint64 `json:"out_bytes"`
+}
+
+// GetVPNWindowTotalsByTunnel returns each named tunnel's total delta over the
+// window, keyed by its own name.
+//
+// This is deliberately NOT vpnDeltaQueryGrouped with the buckets summed. That
+// query collapses rows that are the same measurement — same instant, identical
+// counters — which is correct for a chart of one logical tunnel but destroys the
+// only thing this function exists to provide: attribution to a specific phase2
+// name. Two genuinely distinct OPNsense children whose counters coincide for a
+// single poll would be merged into one series and one of them would silently
+// report nothing. Observed on connection 23984, so not hypothetical.
+//
+// The reset clamp and the both-zero exclusion carry over unchanged: a config
+// row that counts nothing must not enter a series, and a child SA that rekeys
+// mid-window must contribute its post-reset bytes rather than a negative.
+func (d *Database) GetVPNWindowTotalsByTunnel(deviceID uint, tunnelNames []string, from, to time.Time) (map[string]VPNWindowTotal, error) {
+	out := map[string]VPNWindowTotal{}
+	if len(tunnelNames) == 0 || !to.After(from) {
+		return out, nil
+	}
+	var rows []VPNWindowTotal
+	err := d.db.Raw(`
+		SELECT tunnel_name, SUM(delta_in) as in_bytes, SUM(delta_out) as out_bytes
+		FROM (
+			SELECT tunnel_name,
+				CASE WHEN LAG(bytes_in) OVER w IS NULL THEN NULL
+					WHEN bytes_in >= LAG(bytes_in) OVER w THEN bytes_in - LAG(bytes_in) OVER w
+					ELSE bytes_in END as delta_in,
+				CASE WHEN LAG(bytes_out) OVER w IS NULL THEN NULL
+					WHEN bytes_out >= LAG(bytes_out) OVER w THEN bytes_out - LAG(bytes_out) OVER w
+					ELSE bytes_out END as delta_out
+			FROM vpn_status
+			WHERE device_id = ? AND tunnel_name IN (?)
+				AND timestamp > ? AND timestamp <= ?
+				AND NOT (bytes_in = 0 AND bytes_out = 0)
+			WINDOW w AS (PARTITION BY tunnel_name ORDER BY timestamp)
+		) AS deltas WHERE delta_in IS NOT NULL
+		GROUP BY tunnel_name`, deviceID, tunnelNames, from, to).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		out[r.TunnelName] = r
+	}
+	return out, nil
+}
+
+// VPNCounterProvenance says how far a device's per-phase2 counters can be
+// trusted to mean "this path", as opposed to "this tunnel, repeated".
+type VPNCounterProvenance struct {
+	// SharedCounter: this device replicates ONE counter series across all the
+	// group's phase2 names, so no per-path number can be attributed. A FortiGate
+	// does this — its SNMP table carries one series per phase1 and the collector
+	// writes it once per phase2 name.
+	SharedCounter bool `json:"shared_counter"`
+	// Interleaved names carry MORE THAN ONE child under a single name, so a
+	// LAG partition walks two counter series as if they were one and every
+	// alternation reads as a reset. A FortiGate's two dialup children of one
+	// peer share a synthesized name today.
+	Interleaved map[string]bool `json:"interleaved,omitempty"`
+}
+
+// GetVPNCounterProvenance derives both signals in one pass over the window.
+//
+// SharedCounter is a RATIO, never "did it ever happen". Two independent children
+// legitimately report identical counters at the odd poll — observed on connection
+// 23984 — so a `> 0` test would condemn the one device that does report real
+// per-path numbers. A device that genuinely replicates collapses at essentially
+// every instant where more than one of its names reported, hence the 90% floor.
+//
+// Interleaved needs a different predicate entirely and cannot come from the
+// collapse count: its shape is ONE name at one instant with DIFFERING counters,
+// which lands in separate collapse groups and never registers as a collapse.
+func (d *Database) GetVPNCounterProvenance(deviceID uint, tunnelNames []string, from, to time.Time) (VPNCounterProvenance, error) {
+	p := VPNCounterProvenance{Interleaved: map[string]bool{}}
+	if len(tunnelNames) == 0 || !to.After(from) {
+		return p, nil
+	}
+
+	// Per instant: how many distinct names reported, and how many distinct
+	// counter tuples they carried. names > tuples => a collapse happened.
+	var stamps []struct {
+		Names  int64
+		Tuples int64
+	}
+	if err := d.db.Raw(`
+		SELECT COUNT(DISTINCT tunnel_name) as names,
+		       COUNT(DISTINCT CAST(bytes_in AS TEXT) || '/' || CAST(bytes_out AS TEXT)) as tuples
+		FROM vpn_status
+		WHERE device_id = ? AND tunnel_name IN (?)
+			AND timestamp > ? AND timestamp <= ?
+			AND NOT (bytes_in = 0 AND bytes_out = 0)
+		GROUP BY timestamp`, deviceID, tunnelNames, from, to).Scan(&stamps).Error; err != nil {
+		return p, err
+	}
+	var eligible, collapsed int
+	for _, s := range stamps {
+		if s.Names < 2 {
+			continue // one reporter proves nothing either way
+		}
+		eligible++
+		if s.Tuples < s.Names {
+			collapsed++
+		}
+	}
+	if eligible > 0 && float64(collapsed)/float64(eligible) >= 0.9 {
+		p.SharedCounter = true
+	}
+
+	// A name that appears more than once at the same instant is two children
+	// wearing one name.
+	var dupes []struct{ TunnelName string }
+	if err := d.db.Raw(`
+		SELECT tunnel_name FROM vpn_status
+		WHERE device_id = ? AND tunnel_name IN (?)
+			AND timestamp > ? AND timestamp <= ?
+		GROUP BY tunnel_name, timestamp HAVING COUNT(*) > 1`,
+		deviceID, tunnelNames, from, to).Scan(&dupes).Error; err != nil {
+		return p, err
+	}
+	for _, r := range dupes {
+		p.Interleaved[r.TunnelName] = true
+	}
+	return p, nil
+}
