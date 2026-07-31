@@ -10,12 +10,46 @@ import (
 
 	"firewall-mon/internal/l2infer"
 	"firewall-mon/internal/models"
+	"firewall-mon/internal/netclass"
 	"firewall-mon/internal/snmp"
 
 	"gorm.io/gorm"
 )
 
-// Phase2Match represents a matched pair of Phase 2 selectors between two devices.
+// selectorMirrors reports whether two selector strings — one from each end of a
+// tunnel — describe the same side of the same path.
+//
+// Exact equality is tried FIRST, and is not merely an optimisation: FortiGate's
+// SNMP walk serialises selectors as RANGES ("192.168.5.0 - 192.168.5.255", see
+// snmp.vendor_fortigate), and net.ParseCIDR — which is what SelectorCovered
+// requires of its CONFIGURED argument — cannot read one. Containment therefore
+// only resolves for a range when the other side is a parseable CIDR, so two
+// mirrored ranges would silently stop matching. Equality is what carries them.
+//
+// allowNarrowing widens the test to one-way containment in either direction,
+// because IKEv2 narrowing legitimately reports a configured /24 as the /32
+// actually in use. The caller must only set it for two rows already known to
+// belong to the same logical tunnel: containment is asymmetric in its blast
+// radius, and a row reporting 0.0.0.0/0 contains EVERY other selector, so an
+// unbounded relaxation would pair rows from unrelated tunnels.
+func selectorMirrors(a, b string, allowNarrowing bool) bool {
+	if a == b {
+		return true
+	}
+	if !allowNarrowing {
+		return false
+	}
+	return netclass.SelectorCovered([]string{a}, b) ||
+		netclass.SelectorCovered([]string{b}, a)
+}
+
+// Phase2Match is a path BOTH ends independently reported: one row from each
+// device, describing the same selector pair from its own side.
+//
+// It is the sole input to the UI's peer-agreement marker, so it deliberately
+// excludes pairs where either row's selectors were cross-filled from the peer —
+// see the guards at the build site. A match here means two devices each made a
+// claim, not that one device's claim was copied onto the other.
 type Phase2Match struct {
 	SourceTunnel string `json:"source_tunnel"`
 	DestTunnel   string `json:"dest_tunnel"`
@@ -563,9 +597,11 @@ func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, er
 					if dst.LocalSubnet != "" && dst.RemoteSubnet != "" {
 						if result.SourceTunnels[i].LocalSubnet == "" {
 							result.SourceTunnels[i].LocalSubnet = dst.RemoteSubnet
+							result.SourceTunnels[i].SubnetsInferred = true
 						}
 						if result.SourceTunnels[i].RemoteSubnet == "" {
 							result.SourceTunnels[i].RemoteSubnet = dst.LocalSubnet
+							result.SourceTunnels[i].SubnetsInferred = true
 						}
 						break
 					}
@@ -578,9 +614,11 @@ func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, er
 					if src.LocalSubnet != "" && src.RemoteSubnet != "" {
 						if result.DestTunnels[i].LocalSubnet == "" {
 							result.DestTunnels[i].LocalSubnet = src.RemoteSubnet
+							result.DestTunnels[i].SubnetsInferred = true
 						}
 						if result.DestTunnels[i].RemoteSubnet == "" {
 							result.DestTunnels[i].RemoteSubnet = src.LocalSubnet
+							result.DestTunnels[i].SubnetsInferred = true
 						}
 						break
 					}
@@ -589,40 +627,44 @@ func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, er
 		}
 	}
 
-	// Cross-fill tunnel uptime: if one side reports 0 uptime, use the paired tunnel's value.
-	if len(result.SourceTunnels) > 0 && len(result.DestTunnels) > 0 {
-		for i := range result.SourceTunnels {
-			if result.SourceTunnels[i].TunnelUptime == 0 {
-				for _, dst := range result.DestTunnels {
-					if dst.TunnelUptime > 0 {
-						result.SourceTunnels[i].TunnelUptime = dst.TunnelUptime
-						break
-					}
-				}
-			}
-		}
-		for i := range result.DestTunnels {
-			if result.DestTunnels[i].TunnelUptime == 0 {
-				for _, src := range result.SourceTunnels {
-					if src.TunnelUptime > 0 {
-						result.DestTunnels[i].TunnelUptime = src.TunnelUptime
-						break
-					}
-				}
-			}
-		}
-	}
+	// There was a tunnel-uptime cross-fill here. It is gone deliberately.
+	//
+	// It took the FIRST peer row reporting a non-zero uptime — no selector
+	// match, no name match, no identity of any kind — and stamped that number
+	// onto every row of this side that reported zero. The result was not an
+	// inference about the row it landed on; it was an unrelated row's number
+	// wearing this device's name. On connection 23984 every FortiGate row
+	// carried the OPNsense tunnel's age.
+	//
+	// A row that reports no uptime now keeps zero, and the frontends render
+	// that as "-". Absent beats invented.
 
-	// Phase 2 inverse matching: source's local_subnet == dest's remote_subnet (and vice versa)
+	// Phase 2 inverse matching: a pair of rows, one from each end, describing the
+	// SAME path — source's local is dest's remote and vice versa.
+	//
+	// This is now the sole input to the UI's "both ends report this path" marker,
+	// so it must mean exactly that and nothing weaker. Two guards enforce it:
+	//
+	//   - a row whose selectors were CROSS-FILLED from the peer is skipped. Such
+	//     a row was populated from the very row it would be compared against, so
+	//     it always "agrees" — with itself, one device having observed nothing.
+	//   - narrowing tolerance is allowed only WITHIN one logical tunnel. IKEv2
+	//     legitimately reports a configured /24 as a /32, so containment matching
+	//     is needed; but containment makes a route-based 0.0.0.0/0 row cover
+	//     EVERY peer row, which across tunnels would pair rows of unrelated
+	//     tunnels. TunnelGroup already names the logical tunnel, so relax only
+	//     when both ends agree on it and fall back to exact equality otherwise.
 	for _, src := range result.SourceTunnels {
-		if src.LocalSubnet == "" || src.RemoteSubnet == "" {
+		if src.LocalSubnet == "" || src.RemoteSubnet == "" || src.SubnetsInferred {
 			continue
 		}
 		for _, dst := range result.DestTunnels {
-			if dst.LocalSubnet == "" || dst.RemoteSubnet == "" {
+			if dst.LocalSubnet == "" || dst.RemoteSubnet == "" || dst.SubnetsInferred {
 				continue
 			}
-			if src.LocalSubnet == dst.RemoteSubnet && src.RemoteSubnet == dst.LocalSubnet {
+			sameTunnel := src.TunnelGroup != "" && src.TunnelGroup == dst.TunnelGroup
+			if selectorMirrors(src.LocalSubnet, dst.RemoteSubnet, sameTunnel) &&
+				selectorMirrors(src.RemoteSubnet, dst.LocalSubnet, sameTunnel) {
 				result.Phase2Matches = append(result.Phase2Matches, Phase2Match{
 					SourceTunnel: src.TunnelName,
 					DestTunnel:   dst.TunnelName,

@@ -1,6 +1,45 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.194] - 2026-07-30
+
+### Fixed
+
+**A FortiGate's `tunnel_uptime` is not an uptime, and v0.11.193 briefly rendered it as one.** That release added an "up 12h" chip to the grouped tunnel table, having verified the field against a single writer. Measured across 24h of live telemetry it does not hold: dialup rows carry `fgVpnDialupLifetime` — a *configured SA lifetime*, and the OID is named accordingly — sitting at exactly 43200 or 7200 across 1,437 and 1,263 consecutive polls, one distinct value each; static tunnels report a value that is only ever 0 or 1. Only OPNsense produces a real monotonic uptime (1 → 3514 over 24h, 219 distinct values, resetting on rekey).
+
+The chip would have shown a permanent, never-changing age on a tunnel that had just bounced, and on a down tunnel reporting `uptime=1` it would have rendered **"up 0m" beside a DOWN badge**. It is removed. The grouped table now shows **"last up"** — derived by this system from rows that actually reported `up`, and only when the group is not currently up.
+
+**A third uptime formatter survived in the file that claimed there was only one.** `formatPanelUptime` in `diagram-panels.js` was still rendering the VPN badge panel's Uptime column; it now calls the shared formatter. The "last up" chip also renders in the viewer's timezone rather than raw UTC.
+
+### Known issue
+
+**FortiGate uptime is still shown raw in two places**: the standalone connection page's Uptime column and the device VPN badge panel's Uptime column. Both reflect whatever the device sent, so an up FortiGate dialup tunnel reads a fixed `12h 0m` there.
+
+Correcting the counter at its source is a cross-repo change that also moves alert eligibility, so it is tracked separately rather than folded into a display fix — and it **must not be done as a bare zeroing**. `resolveVPNEverUp` (`cmd/poller`) arms a tunnel for VPN_DOWN when `bytes > 0 || tunnel_uptime > 0`; it is suppress-only, so removing the bogus value can only produce *fewer* alerts, never more. But FortiGate tunnels that show no bytes on a down row would then silently lose VPN_DOWN coverage. The fix needs a compensating arm — marking ever-up from an observed `status == 'up'` row — landing in the same change.
+
+## [0.11.193] - 2026-07-30
+
+### Fixed
+
+**A working tunnel read DOWN on one end and UP on the other.** The connection-detail view renders a device pair's tunnels twice — in the map side-panel and on the standalone page — and both collapsed every state that was not `up` into **DOWN**. A FortiGate contributes config rows read over SSH from `show`, which cannot observe liveness and so report `unknown`; only its SNMP sibling sees state at all. On the standalone page, which lists rows flat with no sibling to fall back on, all four selectors of a tunnel that was up and passing traffic in both directions badged DOWN, beside an OPNsense reporting UP. Only `up` and `down` are claims now; everything else renders as a dash that says why.
+
+**The view stopped presenting inferences as observations.** Three cross-fills copied a peer device's data onto rows that reported none, unmarked, and the UI could not tell the difference. The tunnel-uptime cross-fill is gone entirely — it took the *first* peer row reporting a non-zero uptime, with no selector, name or identity match of any kind, so every FortiGate row wore the OPNsense tunnel's age. The two subnet cross-fills remain (a device that reports no selectors still needs a usable row) but now set `subnets_inferred`, and anything that reasons about agreement between the two ends refuses to use them.
+
+**Phase 2 is no longer a tab.** It duplicated the Tunnels table and got it wrong three ways: status via the same two-way boolean, so every card badged red DOWN; bytes read only from the source side, so a config row made every card read `0 B / 0 B / Total 0 B` while the destination's real counters were fetched and never rendered; and hardcoded hex that broke the Day theme. The one question it uniquely answered — do both ends report this path? — now rides on the selector row itself as a `↔ peer` marker, and its absence is explicitly neutral rather than an accusation.
+
+**A tunnel counted once, not once per end.** The side-panel's tunnel tile summed each end's groups (**2** for one tunnel) and the standalone page summed raw rows (**9** for the same tunnel).
+
+**Remote IP is read from the first member that reports one**, not from group member zero. Nothing between the query and the renderer applies an `ORDER BY`, and a FortiGate's config rows carry no `remote_ip` at all — so the column showed `-` while the SNMP row beside it knew the peer address, depending on what the query plan returned that day.
+
+**A writer that counts nothing renders a dash, not `0 B`** — the same lie the status badge stopped telling. A row reporting `up` with genuine zero counters keeps its zero, which is what a live selector that has carried no traffic yet actually looks like.
+
+**Tunnel uptime had three renderers and three opinions; now it has one.** The standalone page divided it by 100 as if it were TimeTicks hundredths, rendering a 53-minute tunnel as `0m`.
+
+### Changed
+
+- The three-way state decision, the counters predicate and the uptime formatter live in `admin-common.js` and are shared by all three tunnel renderers. Independent opinions is how the same bug shipped four times.
+- Phase 2 selector matching is bounded by logical tunnel and tolerates IKEv2 narrowing, falling back to exact equality for selector formats that are not CIDR — FortiGate's SNMP walk emits ranges like `192.168.5.0 - 192.168.5.255`, which no CIDR parser can read.
+
 ## [0.11.192] - 2026-07-30
 
 ### Fixed

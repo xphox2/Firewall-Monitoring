@@ -25,11 +25,9 @@
         };
     }
 
-    function formatPanelUptime(s) {
-        if (!s) return '-';
-        const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
-        return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h` : `${Math.floor(s / 60)}m`;
-    }
+    // formatPanelUptime lived here. It was the THIRD opinion on how to render
+    // tunnel_uptime — the standalone page divided by 100, this one did not — so
+    // it is gone in favour of AC.formatTunnelUptime. Three renderers, one answer.
 
     function formatSpeed(bitsPerSec) {
         if (!bitsPerSec) return '-';
@@ -186,7 +184,6 @@
                 <div class="panel-tabs" id="rich-panel-tabs">
                     <div class="panel-tab active" data-tab="overview" data-action="dp-switch-tab">Overview</div>
                     <div class="panel-tab" data-tab="tunnels" data-action="dp-switch-tab">Tunnels</div>
-                    <div class="panel-tab" data-tab="phase2" data-action="dp-switch-tab" id="ptab-phase2-tab" style="display:none;">Phase 2</div>
                     <div class="panel-tab" data-tab="flows" data-action="dp-switch-tab" id="ptab-flows-tab" style="display:none;">Flows</div>
                     <div class="panel-tab" data-tab="events" data-action="dp-switch-tab">Events</div>
                 </div>
@@ -209,9 +206,6 @@
                                 <table class="vpn-detail-table" id="ptab-dst-tunnels"><thead><tr><th></th><th>Tunnel</th><th>Status</th><th>Remote IP</th><th>In</th><th>Out</th></tr></thead><tbody></tbody></table>
                             </div>
                         </div>
-                    </div>
-                    <div class="panel-tab-content" id="ptab-phase2">
-                        <div id="panel-phase2-container"></div>
                     </div>
                     <div class="panel-tab-content" id="ptab-flows">
                         <div class="panel-range-pills" id="panel-flow-range">
@@ -278,8 +272,6 @@
             const statusEl = document.getElementById('pkpi-status');
             statusEl.innerHTML = `<span class="badge ${c.status}" style="font-size:0.75rem;">${(c.status || 'unknown').toUpperCase()}</span>`;
 
-            const p2Tab = document.getElementById('ptab-phase2-tab');
-
             if (family === 'direct') {
                 // Direct links carry interfaces, not tunnels — render the member
                 // interfaces (from interface_stats) into the second tab, topped
@@ -291,30 +283,30 @@
                 document.getElementById('pkpi-tunnels').textContent = ifaces.length;
                 renderPanelInterfaceTab(ifaces, c, srcName, dstName);
                 renderPanelL2Evidence(c, data.evidence || [], srcName, dstName);
-                if (p2Tab) p2Tab.style.display = 'none';
             } else if (family === 'overlay') {
                 // Overlay (VXLAN/L3VLAN): show config + SNMP-derived overlay
                 // detail (VNI, carrier iface, VTEPs) plus the carrier tunnel.
                 const overlays = data.overlays || [];
                 const srcT = data.source_tunnels || [], dstT = data.dest_tunnels || [];
-                document.getElementById('pkpi-tunnels').textContent = overlays.length || (countPhase1(srcT) + countPhase1(dstT));
+                document.getElementById('pkpi-tunnels').textContent = overlays.length || countLogicalTunnels(srcT, dstT);
                 renderPanelOverlayTab(data, c, srcName, dstName);
-                if (p2Tab) p2Tab.style.display = 'none';
             } else {
                 // Tunnel / overlay / off-net: group Phase 2 selectors under their
                 // Phase 1 (one graph per Phase 1 — Phase 2 selectors share it).
                 const srcT = data.source_tunnels || [], dstT = data.dest_tunnels || [];
-                document.getElementById('pkpi-tunnels').textContent = countPhase1(srcT) + countPhase1(dstT);
+                document.getElementById('pkpi-tunnels').textContent = countLogicalTunnels(srcT, dstT);
                 const tnoun = family === 'overlay' ? 'Carrier' : 'Source Tunnels';
                 const dnoun = family === 'overlay' ? 'Carrier (remote)' : 'Dest Tunnels';
                 document.getElementById('ptab-src-title').textContent = `${tnoun} (${srcName})`;
                 document.getElementById('ptab-dst-title').textContent = `${dnoun} (${dstName})`;
-                renderPanelTunnelTable('ptab-src-tunnels', srcT, c.source_device_id, family);
-                renderPanelTunnelTable('ptab-dst-tunnels', dstT, c.dest_device_id, family);
-
+                // phase2_matches no longer drives a tab of its own — it is the
+                // evidence behind the per-selector "both ends reported this"
+                // chip, keyed by the row name each side used.
                 const p2 = data.phase2_matches || [];
-                if (p2Tab) p2Tab.style.display = p2.length > 0 ? '' : 'none';
-                if (p2.length > 0) renderPanelPhase2(p2, srcName, dstName);
+                const srcAgreed = new Set(p2.map(m => m.source_tunnel).filter(Boolean));
+                const dstAgreed = new Set(p2.map(m => m.dest_tunnel).filter(Boolean));
+                renderPanelTunnelTable('ptab-src-tunnels', srcT, c.source_device_id, family, srcAgreed);
+                renderPanelTunnelTable('ptab-dst-tunnels', dstT, c.dest_device_id, family, dstAgreed);
             }
 
             const flowsTab = document.getElementById('ptab-flows-tab');
@@ -461,12 +453,43 @@
         return order.map(k => ({ phase1: k, phase2: groups[k] }));
     }
 
-    // Feeds the panel's tunnel-count tile. Note this now counts LOGICAL tunnels:
-    // a FortiGate tunnel reported as two rows used to count twice and now counts
-    // once, which is the number an operator would give.
-    function countPhase1(tunnels) { return groupTunnels(tunnels).length; }
+    // Feeds the panel's tunnel-count tile. Counts LOGICAL tunnels ACROSS BOTH
+    // ENDS: a tunnel is one tunnel whether you are looking at it from the
+    // FortiGate or the OPNsense, so the two sides' groups are unioned rather
+    // than added. Summing them reported "2" for the single tunnel between a
+    // device pair — and the standalone page, summing raw rows, reported "9".
+    function countLogicalTunnels(srcTunnels, dstTunnels) {
+        const names = new Set();
+        [srcTunnels, dstTunnels].forEach(list => {
+            groupTunnels(list || []).forEach(g => { if (g.phase1) names.add(g.phase1); });
+        });
+        return names.size;
+    }
 
-    function renderPanelTunnelTable(tableId, tunnels, deviceId, family) {
+    // A writer that counts nothing renders an em dash, not "0 B". See
+    // AC.tunnelCountersObserved — an 'up' row genuinely reporting zero keeps its
+    // zero, because that IS an observation.
+    function noCounters() {
+        return '<span style="color:var(--fwmon-text-mute);" title="This writer reads configuration and reports no counters.">&mdash;</span>';
+    }
+
+    // "Both ends reported this path."
+    //
+    // The server emits a phase2 match only when two devices each described the
+    // same selector pair from their own side; rows whose selectors were
+    // cross-filled from the peer are excluded there, because such a row would
+    // always agree with the very row it was copied from.
+    //
+    // Absence is NEUTRAL and the tooltip says so — it means no mirrored selector
+    // was observed, never that the peer disagrees. That distinction is the whole
+    // reason this replaced the Phase 2 tab rather than inheriting its red DOWN.
+    function peerChip(t, agreed) {
+        if (!agreed || !t.tunnel_name || !agreed.has(t.tunnel_name)) return '';
+        return ' <span style="font-size:0.62rem;color:var(--fwmon-sig-ok);" title="Both ends independently reported this selector pair.">&harr; peer</span>';
+    }
+
+    function renderPanelTunnelTable(tableId, tunnels, deviceId, family, agreed) {
+        const AC = window.AdminCommon;
         const tbody = document.querySelector(`#${tableId} tbody`);
         const noun = family === 'overlay' ? 'carrier tunnels' : 'tunnels';
         if (!tunnels.length) {
@@ -480,11 +503,28 @@
             // group's per-bucket deltas, so a counterless member contributes nothing
             // instead of being picked as THE series and charting blank.
             const rep = g.phase1;
-            const anyUp = g.phase2.some(t => t.status === 'up' || t.state === 'up');
-            const statusBadge = anyUp ? '<span class="badge up">UP</span>' : '<span class="badge down">DOWN</span>';
+            const statusBadge = AC.tunnelStateBadge(AC.tunnelGroupClaim(g.phase2));
+            const observed = AC.tunnelGroupCountersObserved(g.phase2);
             const sumIn = g.phase2.reduce((a, t) => a + (t.bytes_in || 0), 0);
             const sumOut = g.phase2.reduce((a, t) => a + (t.bytes_out || 0), 0);
-            const remoteIP = g.phase2[0].remote_ip || '-';
+            // FIRST NON-EMPTY, never [0]. Nothing in the chain from
+            // GetLatestVPNStatuses down to groupTunnels applies an ORDER BY, so
+            // member 0 is whatever the query plan happened to return — and on a
+            // FortiGate the config rows carry no remote_ip at all, so index 0
+            // rendered "-" while the dialup row beside it knew the peer address.
+            const remoteIP = (g.phase2.find(t => t.remote_ip) || {}).remote_ip || '-';
+            // NO tunnel_uptime here, deliberately. It is not trustworthy across
+            // vendors: FortiGate's dialup rows carry fgVpnDialupLifetime — a
+            // configured SA LIFETIME, constant at 43200 or 7200 across thousands
+            // of consecutive polls — and its static tunnels report a value that
+            // is only ever 0 or 1. Rendering either as an age would have shown a
+            // permanent, never-changing "up 12h" on a tunnel that bounced a
+            // minute ago. Only OPNsense produces a real monotonic uptime.
+            //
+            // last_up_at is safe because the SERVER derives it from rows that
+            // actually reported 'up', so it is an observation this system made
+            // rather than a counter it trusted.
+            const lastUp = g.phase2.map(t => t.last_up_at).filter(Boolean).sort().pop();
 
             // The dialup row is a TUNNEL-level observation, not a phase2 child:
             // FortiOS's dialup table reports one entry per dialup PEER, not one
@@ -502,7 +542,17 @@
             const named = withSel.filter(t => t.tunnel_type !== 'ipsec-dialup');
             const children = named.length ? named : withSel;
             const selCount = children.length;
-            const label = window.escapeHtml(g.phase1) + (selCount > 1 ? ` <span style="color:var(--fwmon-text-mute);font-size:0.72rem;">(${selCount} selectors)</span>` : '');
+            // The chip rides under the tunnel name rather than in a seventh
+            // column: these tables render as a PAIR in a two-column grid, so
+            // every extra column costs both halves their width at every
+            // viewport. Shown only when the group is NOT up — for a live tunnel
+            // "last up" is noise, and for a dead one it is the useful fact.
+            const ageChip = (AC.tunnelGroupClaim(g.phase2) !== 'up' && lastUp)
+                ? `<span style="color:var(--fwmon-text-mute);font-size:0.68rem;" title="Last observed reporting up">last up ${window.escapeHtml(AC.formatDateShort(lastUp))}</span>`
+                : '';
+            const label = window.escapeHtml(g.phase1) +
+                (selCount > 1 ? ` <span style="color:var(--fwmon-text-mute);font-size:0.72rem;">(${selCount} selectors)</span>` : '') +
+                (ageChip ? `<div>${ageChip}</div>` : '');
             const pill = (r, lbl, active) => `<div class="panel-range-pill${active ? ' active' : ''}" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${deviceId}" data-tunnel="${window.escapeHtml(rep)}" data-range="${r}">${lbl}</div>`;
             html += `
                 <tr class="panel-tunnel-row" data-action="dp-toggle-tunnel" data-row="${rowId}" data-device="${deviceId}" data-tunnel="${window.escapeHtml(rep)}">
@@ -510,30 +560,25 @@
                     <td>${label}</td>
                     <td>${statusBadge}</td>
                     <td style="font-family:monospace;font-size:0.78rem;">${window.escapeHtml(remoteIP)}</td>
-                    <td>${window.formatBytes(sumIn)}</td>
-                    <td>${window.formatBytes(sumOut)}</td>
+                    <td>${observed ? window.formatBytes(sumIn) : noCounters()}</td>
+                    <td>${observed ? window.formatBytes(sumOut) : noCounters()}</td>
                 </tr>`;
             // Phase 2 selector child rows (subnets) — informational, no graph.
+            //
+            // Status and counters go through the shared AC helpers: only 'up' and
+            // 'down' are claims, and a config row's 0/0 is the absence of a count
+            // rather than a count of zero. See admin-common.js.
             children.forEach(t => {
-                // Only 'up' and 'down' are state claims. A FortiGate SSH row says
-                // 'unknown' because `show` reads CONFIG and cannot observe
-                // liveness — that is the premise the whole two-writer merge rests
-                // on. Rendering it as DOWN would show four dead children under a
-                // parent badged UP, which is worse than saying nothing: it is a
-                // claim the device never made.
-                const claim = (t.status === 'up' || t.state === 'up') ? 'up'
-                    : (t.status === 'down' || t.state === 'down') ? 'down' : '';
-                const childBadge = claim
-                    ? `<span class="badge ${claim}" style="font-size:0.6rem;">${claim.toUpperCase()}</span>`
-                    : `<span style="font-size:0.6rem;color:var(--fwmon-text-mute);" title="This writer reads configuration and cannot observe liveness; the tunnel's state is on the row above.">&mdash;</span>`;
+                const childBadge = AC.tunnelStateBadge(AC.tunnelClaim(t), { size: '0.6rem', child: true });
+                const childObserved = AC.tunnelCountersObserved(t);
                 html += `
                 <tr class="panel-tunnel-p2child">
                     <td></td>
-                    <td style="font-family:monospace;font-size:0.74rem;color:var(--fwmon-text-faint);padding-left:14px;">&#8627; ${window.escapeHtml(t.local_subnet || '?')} &rarr; ${window.escapeHtml(t.remote_subnet || '?')}</td>
+                    <td style="font-family:monospace;font-size:0.74rem;color:var(--fwmon-text-faint);padding-left:14px;">&#8627; ${window.escapeHtml(t.local_subnet || '?')} &rarr; ${window.escapeHtml(t.remote_subnet || '?')}${peerChip(t, agreed)}</td>
                     <td>${childBadge}</td>
                     <td></td>
-                    <td style="font-size:0.74rem;">${window.formatBytes(t.bytes_in)}</td>
-                    <td style="font-size:0.74rem;">${window.formatBytes(t.bytes_out)}</td>
+                    <td style="font-size:0.74rem;">${childObserved ? window.formatBytes(t.bytes_in) : noCounters()}</td>
+                    <td style="font-size:0.74rem;">${childObserved ? window.formatBytes(t.bytes_out) : noCounters()}</td>
                 </tr>`;
             });
             html += `
@@ -938,48 +983,6 @@
         } catch (e) { console.error('Tunnel chart failed:', e); }
     }
 
-    function renderPanelPhase2(matches, srcName, dstName) {
-        const container = document.getElementById('panel-phase2-container');
-        if (!matches.length) {
-            container.innerHTML = '<div style="text-align:center;color:var(--fwmon-text-mute);padding:20px;">No Phase 2 selector matches.</div>';
-            return;
-        }
-        let html = '';
-        matches.forEach((m, i) => {
-            const srcUp = m.source_status === 'up';
-            const dstUp = m.dest_status === 'up';
-            const bothUp = srcUp && dstUp;
-            const pathColor = bothUp ? '#3fb950' : '#f85149';
-            const statusClass = bothUp ? 'up' : 'down';
-            const fmtB = window.formatBytes || function(v) { return v + ' B'; };
-            const srcTotal = (m.src_bytes_in || 0) + (m.src_bytes_out || 0);
-            html += `
-            <div style="background:var(--fwmon-bg);border:1px solid var(--fwmon-border);border-radius:6px;padding:12px;margin-bottom:8px;">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-                    <span style="font-size:0.8rem;font-weight:600;color:var(--fwmon-text);">${window.escapeHtml(m.source_phase1 || m.source_tunnel)} &harr; ${window.escapeHtml(m.dest_phase1 || m.dest_tunnel)}</span>
-                    <span class="badge ${statusClass}" style="font-size:0.65rem;">${bothUp ? 'ACTIVE' : 'DOWN'}</span>
-                </div>
-                <div style="display:flex;gap:12px;margin-bottom:6px;font-size:0.72rem;color:var(--fwmon-text-faint);">
-                    <span>&darr; In: <strong style="color:var(--fwmon-accent);">${fmtB(m.src_bytes_in || 0)}</strong></span>
-                    <span>&uarr; Out: <strong style="color:var(--fwmon-sig-ok);">${fmtB(m.src_bytes_out || 0)}</strong></span>
-                    <span>Total: <strong style="color:var(--fwmon-text);">${fmtB(srcTotal)}</strong></span>
-                    ${m.src_uptime ? `<span>Up: ${Math.floor(m.src_uptime / 3600)}h</span>` : ''}
-                </div>
-                <svg width="100%" height="60" viewBox="0 0 500 60" style="display:block;">
-                    <rect x="0" y="10" width="130" height="40" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1"/>
-                    <text x="65" y="26" text-anchor="middle" fill="#8b949e" font-size="9">${window.escapeHtml(srcName)}</text>
-                    <text x="65" y="40" text-anchor="middle" fill="#58a6ff" font-size="10" font-family="monospace">${window.escapeHtml(m.local_subnet)}</text>
-                    <rect x="370" y="10" width="130" height="40" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1"/>
-                    <text x="435" y="26" text-anchor="middle" fill="#8b949e" font-size="9">${window.escapeHtml(dstName)}</text>
-                    <text x="435" y="40" text-anchor="middle" fill="#3fb950" font-size="10" font-family="monospace">${window.escapeHtml(m.remote_subnet)}</text>
-                    <path id="pp2-${i}" d="M130,30 Q250,8 370,30" fill="none" stroke="${pathColor}" stroke-width="2"/>
-                    ${bothUp ? `<circle r="2.5" fill="${pathColor}" opacity="0.85"><animateMotion dur="3s" begin="0s" repeatCount="indefinite" fill="freeze"><mpath href="#pp2-${i}"/></animateMotion></circle>` : ''}
-                </svg>
-            </div>`;
-        });
-        container.innerHTML = html;
-    }
-
     // --- Rich VPN Badge Detail Panel ---
     function showRichVPNDetailPanel(deviceId, offnetOnly, devices, vpnMap) {
         destroyPanelCharts();
@@ -1031,7 +1034,7 @@
                         <td>${statusBadge}</td>
                         <td style="font-family:monospace;font-size:0.78rem;">${window.escapeHtml(t.remote_ip || '-')}</td>
                         <td>${dest}</td>
-                        <td>${t.status === 'up' ? formatPanelUptime(t.tunnel_uptime) : '-'}</td>
+                        <td>${t.status === 'up' ? AC.formatTunnelUptime(t.tunnel_uptime) : '-'}</td>
                     </tr>
                     <tr class="panel-tunnel-expand" id="${rowId}">
                         <td colspan="9">

@@ -239,6 +239,24 @@ type VPNStatus struct {
 	// to the peer's /admin/devices/:id page when known. Nil when no peer
 	// match exists (typical for tunnels to non-monitored remote sites).
 	RemoteDeviceID *uint `json:"remote_device_id,omitempty" gorm:"-"`
+	// SubnetsInferred says at least one of LocalSubnet/RemoteSubnet was copied
+	// from a PEER device's row rather than reported by this one. Computed, never
+	// stored.
+	//
+	// Two cross-fills populate empty selectors from the other end
+	// (GetLatestVPNStatuses and GetConnectionDetail) so that a device which
+	// reports no selectors — an SNMP-restricted FortiGate, an ADVPN hub — still
+	// renders a usable row. That is a reasonable display aid and a terrible
+	// basis for agreement: a row filled FROM a peer will always "match" that
+	// same peer, so any "both ends agree" signal computed over cross-filled rows
+	// asserts mutual observation when only one device observed anything.
+	//
+	// One flag rather than one per side is deliberate. Both cross-fills touch
+	// only the field that is empty, so a row can legitimately carry one reported
+	// and one borrowed selector — but an agreement test needs BOTH fields, so
+	// either one being borrowed already makes the comparison circular. Per-side
+	// provenance would buy nothing a consumer could act on.
+	SubnetsInferred bool `json:"subnets_inferred,omitempty" gorm:"-"`
 }
 
 type HAStatus struct {

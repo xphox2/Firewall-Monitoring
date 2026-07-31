@@ -448,9 +448,11 @@ func (d *Database) GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, erro
 			if peerTunnel != nil {
 				if statuses[i].LocalSubnet == "" && peerTunnel.LocalSubnet != "" {
 					statuses[i].LocalSubnet = peerTunnel.LocalSubnet
+					statuses[i].SubnetsInferred = true
 				}
 				if statuses[i].RemoteSubnet == "" && peerTunnel.RemoteSubnet != "" {
 					statuses[i].RemoteSubnet = peerTunnel.RemoteSubnet
+					statuses[i].SubnetsInferred = true
 				}
 				// Surface the resolved peer device id (v0.10.218, bundle G3).
 				// Frontend uses this to link the remote_ip cell to the peer's

@@ -32,16 +32,12 @@
         return String(n);
     }
 
-    function formatUptime(hundredths) {
-        if (!hundredths) return '-';
-        var secs = Math.floor(hundredths / 100);
-        var d = Math.floor(secs / 86400);
-        var h = Math.floor((secs % 86400) / 3600);
-        var m = Math.floor((secs % 3600) / 60);
-        if (d > 0) return d + 'd ' + h + 'h';
-        if (h > 0) return h + 'h ' + m + 'm';
-        return m + 'm';
-    }
+    // formatUptime lived here and divided tunnel_uptime by 100, treating it as
+    // TimeTicks hundredths. For OPNsense — the one writer producing a real
+    // uptime — it is seconds, so this column rendered a 53-minute tunnel as
+    // "0m". All three renderers now call AC.formatTunnelUptime; see the caveats
+    // there about FortiGate, whose value is a configured lifetime rather than
+    // an age and is not made correct by fixing the unit.
 
     function formatSpeed(bytesPerSec) {
         if (!bytesPerSec || bytesPerSec <= 0) return '0 bps';
@@ -288,24 +284,32 @@
 
                 document.getElementById('tab-src-tunnels').textContent = 'Interfaces';
                 document.getElementById('tab-dst-tunnels').classList.add('hidden');
-                document.getElementById('tab-phase2').classList.add('hidden');
                 document.getElementById('tab-evidence').classList.remove('hidden');
 
                 renderInterfaceTable(data.interfaces || [], conn, srcName, dstName);
                 renderEvidence(conn, data.evidence || []);
             } else {
-                var tunnelCount = (data.source_tunnels ? data.source_tunnels.length : 0) + (data.dest_tunnels ? data.dest_tunnels.length : 0);
-                document.getElementById('stat-tunnel-count').textContent = tunnelCount;
+                // One tunnel is one tunnel from either end. Adding the two sides'
+                // ROW counts reported 9 for the single tunnel of connection 23984
+                // — five FortiGate rows (four config children plus the SNMP
+                // dialup row) and four OPNsense children.
+                document.getElementById('stat-tunnel-count').textContent =
+                    countLogicalTunnels(data.source_tunnels, data.dest_tunnels);
                 document.getElementById('tab-evidence').classList.add('hidden');
 
-                // Show/hide Phase 2 matches tab (same .hidden bug as above)
+                // phase2_matches drives the per-row "both ends reported this"
+                // chip rather than a tab of its own; the server emits a match
+                // only when each device made the claim from its own side.
                 var p2matches = data.phase2_matches || [];
-                document.getElementById('tab-phase2').classList.toggle('hidden', p2matches.length === 0);
-                renderPhase2Matches(p2matches, srcName, dstName);
+                var srcAgreed = {}, dstAgreed = {};
+                p2matches.forEach(function(m) {
+                    if (m.source_tunnel) srcAgreed[m.source_tunnel] = true;
+                    if (m.dest_tunnel) dstAgreed[m.dest_tunnel] = true;
+                });
 
                 // Render tunnel tables
-                renderTunnelTable('src-tunnels-table', data.source_tunnels || [], conn.source_device_id);
-                renderTunnelTable('dst-tunnels-table', data.dest_tunnels || [], conn.dest_device_id);
+                renderTunnelTable('src-tunnels-table', data.source_tunnels || [], conn.source_device_id, srcAgreed);
+                renderTunnelTable('dst-tunnels-table', data.dest_tunnels || [], conn.dest_device_id, dstAgreed);
                 renderTunnelCharts('src-tunnel-charts', data.source_tunnels || [], conn.source_device_id);
                 renderTunnelCharts('dst-tunnel-charts', data.dest_tunnels || [], conn.dest_device_id);
                 document.getElementById('src-tunnels-title').textContent = 'Source Tunnels (' + srcName + ')';
@@ -441,7 +445,28 @@
         });
     }
 
-    function renderTunnelTable(tableId, tunnels, deviceId) {
+    // One tunnel is one tunnel from either end — union the two sides' logical
+    // groups rather than adding their row counts. Mirrors countLogicalTunnels in
+    // diagram-panels.js; both pages must give the operator the same number.
+    function countLogicalTunnels(srcTunnels, dstTunnels) {
+        var names = {}, n = 0;
+        [srcTunnels || [], dstTunnels || []].forEach(function(list) {
+            list.forEach(function(t) {
+                var key = (t.tunnel_group && t.tunnel_group.trim()) ||
+                    (t.phase1_name && t.phase1_name.trim()) || t.tunnel_name;
+                if (key && !names[key]) { names[key] = true; n++; }
+            });
+        });
+        return n;
+    }
+
+    // A writer that counts nothing renders an em dash, not "0 B" — see
+    // AC.tunnelCountersObserved.
+    function noCounters() {
+        return '<span style="color:var(--fwmon-text-mute);" title="This writer reads configuration and reports no counters.">&mdash;</span>';
+    }
+
+    function renderTunnelTable(tableId, tunnels, deviceId, agreed) {
         var tbody = document.querySelector('#' + tableId + ' tbody');
         if (!tunnels.length) {
             tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--fwmon-text-mute);padding:30px;">No matching tunnels found</td></tr>';
@@ -450,76 +475,36 @@
         var html = '';
         for (var i = 0; i < tunnels.length; i++) {
             var t = tunnels[i];
-            var rowId = tableId + '-row-' + i;
-            var statusBadge = (t.status === 'up' || t.state === 'up')
-                ? '<span class="badge up">UP</span>'
-                : '<span class="badge down">DOWN</span>';
+            // This table is FLAT — no grouping, so there is no SNMP sibling to
+            // supply the state a config row lacks. Collapsing 'unknown' into DOWN
+            // therefore badged all four of connection 23984's FortiGate rows DOWN
+            // on a tunnel that was up and passing traffic. Only 'up' and 'down'
+            // are claims; see AC.tunnelClaim.
+            var statusBadge = AC.tunnelStateBadge(AC.tunnelClaim(t));
+            var observed = AC.tunnelCountersObserved(t);
             var typeBadge = t.tunnel_type
                 ? '<span class="badge ipsec">' + AC.escapeHtml(t.tunnel_type) + '</span>'
                 : '-';
+            // Absence is neutral: no mirrored selector was observed, NOT that the
+            // peer disagrees.
+            var chip = (agreed && t.tunnel_name && agreed[t.tunnel_name])
+                ? ' <span style="font-size:0.68rem;color:var(--fwmon-sig-ok);" title="Both ends independently reported this selector pair.">&harr; peer</span>'
+                : '';
             html +=
                 '<tr class="tunnel-row">' +
                     '<td>' + AC.escapeHtml(t.phase1_name || t.tunnel_name) + '</td>' +
-                    '<td>' + AC.escapeHtml(t.tunnel_name) + '</td>' +
+                    '<td>' + AC.escapeHtml(t.tunnel_name) + chip + '</td>' +
                     '<td>' + typeBadge + '</td>' +
                     '<td>' + statusBadge + '</td>' +
                     '<td>' + AC.escapeHtml(t.remote_ip || '-') + '</td>' +
                     '<td><code style="color:var(--fwmon-accent);font-size:0.8rem;">' + AC.escapeHtml(t.local_subnet || '-') + '</code></td>' +
                     '<td><code style="color:var(--fwmon-sig-ok);font-size:0.8rem;">' + AC.escapeHtml(t.remote_subnet || '-') + '</code></td>' +
-                    '<td>' + formatBytes(t.bytes_in) + '</td>' +
-                    '<td>' + formatBytes(t.bytes_out) + '</td>' +
-                    '<td>' + formatUptime(t.tunnel_uptime) + '</td>' +
+                    '<td>' + (observed ? formatBytes(t.bytes_in) : noCounters()) + '</td>' +
+                    '<td>' + (observed ? formatBytes(t.bytes_out) : noCounters()) + '</td>' +
+                    '<td>' + AC.formatTunnelUptime(t.tunnel_uptime) + '</td>' +
                 '</tr>';
         }
         tbody.innerHTML = html;
-    }
-
-    function renderPhase2Matches(matches, srcName, dstName) {
-        var container = document.getElementById('phase2-matches-container');
-        if (!matches.length) {
-            container.innerHTML = '<div style="text-align:center;color:var(--fwmon-text-mute);padding:30px;">No Phase 2 selector matches found between these devices.</div>';
-            return;
-        }
-        var html = '';
-        for (var i = 0; i < matches.length; i++) {
-            var m = matches[i];
-            var srcUp = m.source_status === 'up';
-            var dstUp = m.dest_status === 'up';
-            var bothUp = srcUp && dstUp;
-            var pathColor = bothUp ? 'var(--fwmon-sig-ok)' : 'var(--fwmon-sig-crit)';
-            var statusLabel = bothUp ? 'ACTIVE' : 'DOWN';
-            var statusClass = bothUp ? 'up' : 'down';
-            var filterAttr = bothUp ? ' filter="url(#p2glow-' + i + ')"' : '';
-            var animCircles = bothUp
-                ? '<circle r="3" style="fill:' + pathColor + '" opacity="0.85">' +
-                      '<animateMotion dur="3s" begin="0s" repeatCount="indefinite" fill="freeze"><mpath href="#p2path-' + i + '"/></animateMotion>' +
-                  '</circle>' +
-                  '<circle r="2.5" style="fill:var(--fwmon-accent)" opacity="0.7">' +
-                      '<animateMotion dur="3.5s" begin="1s" repeatCount="indefinite" fill="freeze" keyPoints="1;0" keyTimes="0;1" calcMode="linear"><mpath href="#p2path-' + i + '"/></animateMotion>' +
-                  '</circle>'
-                : '';
-            html +=
-                '<div class="phase2-match-card" style="background:var(--fwmon-card-bg);border:1px solid var(--fwmon-border);border-radius:8px;padding:16px;margin-bottom:12px;">' +
-                    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">' +
-                        '<span style="font-size:0.85rem;font-weight:600;color:var(--fwmon-text);">' + AC.escapeHtml(m.source_phase1 || m.source_tunnel) + ' &harr; ' + AC.escapeHtml(m.dest_phase1 || m.dest_tunnel) + '</span>' +
-                        '<span class="badge ' + statusClass + '" style="font-size:0.7rem;">' + statusLabel + '</span>' +
-                    '</div>' +
-                    '<svg width="100%" height="70" viewBox="0 0 600 70" style="display:block;">' +
-                        '<defs><filter id="p2glow-' + i + '" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>' +
-                        '<rect x="0" y="15" width="160" height="40" rx="6" style="fill:var(--fwmon-bg);stroke:var(--fwmon-border)" stroke-width="1"/>' +
-                        '<text x="80" y="30" text-anchor="middle" style="fill:var(--fwmon-text-faint)" font-size="10">' + AC.escapeHtml(srcName) + '</text>' +
-                        '<text x="80" y="46" text-anchor="middle" style="fill:var(--fwmon-accent)" font-size="11" font-family="monospace">' + AC.escapeHtml(m.local_subnet) + '</text>' +
-                        '<rect x="440" y="15" width="160" height="40" rx="6" style="fill:var(--fwmon-bg);stroke:var(--fwmon-border)" stroke-width="1"/>' +
-                        '<text x="520" y="30" text-anchor="middle" style="fill:var(--fwmon-text-faint)" font-size="10">' + AC.escapeHtml(dstName) + '</text>' +
-                        '<text x="520" y="46" text-anchor="middle" style="fill:var(--fwmon-sig-ok)" font-size="11" font-family="monospace">' + AC.escapeHtml(m.remote_subnet) + '</text>' +
-                        '<path id="p2path-' + i + '" d="M160,35 Q300,10 440,35" fill="none" style="stroke:' + pathColor + '" stroke-width="2"' + filterAttr + '/>' +
-                        '<path d="M160,35 Q300,60 440,35" fill="none" style="stroke:' + pathColor + '" stroke-width="1.5" stroke-dasharray="4,4" opacity="0.5"/>' +
-                        animCircles +
-                        '<text x="300" y="8" text-anchor="middle" style="fill:var(--fwmon-text-mute)" font-size="9">Phase 2: ' + AC.escapeHtml(m.source_tunnel) + ' &harr; ' + AC.escapeHtml(m.dest_tunnel) + '</text>' +
-                    '</svg>' +
-                '</div>';
-        }
-        container.innerHTML = html;
     }
 
     function chartOptions(yCallback) {

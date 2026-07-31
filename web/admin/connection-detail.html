@@ -50,7 +50,7 @@
         .section-tab.active { color: var(--fwmon-accent); border-bottom-color: var(--fwmon-accent); }
         /* AUDIT-048: this inline .section-tab rule (display:inline-block) loads
            after admin-shared.css, so it overrides the `.hidden { display:none }`
-           that admin-connection-detail.js toggles on #tab-phase2 / #tab-flows.
+           that admin-connection-detail.js toggles on #tab-evidence / #tab-flows.
            Without this, the v0.10.230 classList.toggle('hidden',...) fix was a
            no-op. !important + the extra .section-tab specificity restores it. */
         .section-tab.hidden { display: none !important; }
@@ -104,7 +104,6 @@
             <div class="section-tab active" data-action="switch-tab" data-tab="overview">Overview</div>
             <div class="section-tab" id="tab-src-tunnels" data-action="switch-tab" data-tab="src-tunnels">Source Tunnels</div>
             <div class="section-tab" id="tab-dst-tunnels" data-action="switch-tab" data-tab="dst-tunnels">Destination Tunnels</div>
-            <div class="section-tab hidden" id="tab-phase2" data-action="switch-tab" data-tab="phase2">Phase 2 Selectors</div>
             <div class="section-tab hidden" id="tab-evidence" data-action="switch-tab" data-tab="evidence">Link Evidence</div>
             <div class="section-tab hidden" id="tab-flows" data-action="switch-tab" data-tab="flows">Traffic Analysis</div>
         </div>
@@ -179,14 +178,6 @@
                 <div class="overflow-x-auto">
                     <div id="evidence-container"></div>
                 </div>
-            </div>
-        </div>
-
-        <div class="tab-content" id="tab-content-phase2">
-            <div class="card mb-4">
-                <h2 class="text-base font-semibold mb-4">IPSec Phase 2 Selector Matches</h2>
-                <p style="color:var(--fwmon-text-faint);font-size:0.875rem;margin-bottom:16px;">Matched pairs where source's local subnet = destination's remote subnet (and vice versa), confirming end-to-end IPSec SA alignment.</p>
-                <div id="phase2-matches-container"></div>
             </div>
         </div>
 
