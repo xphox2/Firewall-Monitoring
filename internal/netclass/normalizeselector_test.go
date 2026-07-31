@@ -44,23 +44,25 @@ func TestNormalizeSelector(t *testing.T) {
 }
 
 // The property the phase-2 matcher depends on: normalizing can only ever ADD
-// matches. Two strings that were equal before must still be equal after, or a
-// mirrored-range pair that matches in production today would silently stop.
-func TestNormalizeSelector_NeverBreaksAnExistingEquality(t *testing.T) {
+// matches, never remove one.
+//
+// Two ends mirroring a selector this function cannot convert still have to
+// match, and today they do — by exact equality of the identical raw text, which
+// selectorMirrors documents as load-bearing for FortiGate range selectors. That
+// survives only if refusal returns the input UNCHANGED. Returning "", or a
+// best-effort approximation like the range's begin address, would silently drop
+// a match that works in production.
+func TestNormalizeSelector_RefusalIsIdentity(t *testing.T) {
 	for _, s := range []string{
-		"192.168.13.0/24",
-		"192.168.5.0 - 192.168.5.255", // aligned range, both ends identical
-		"10.0.0.1 - 10.0.0.254",       // NON-aligned: the refusal arm
-		"0.0.0.0/0",                   // route-based
-		"192.168.13.7",                // bare host
-		"garbage",                     // unparseable
+		"10.0.0.1 - 10.0.0.254", // non-aligned range: no CIDR form exists
+		"10.0.0.0 - 10.0.0.99",  // not a power-of-two size
+		"garbage",               // unparseable
+		"2001:db8::/32",         // IPv6 — untouched, not mangled into IPv4
 	} {
-		if NormalizeSelector(s) != NormalizeSelector(s) {
-			t.Errorf("NormalizeSelector(%q) is not deterministic", s)
-		}
-		// Two ends reporting the identical string must still mirror each other.
-		if NormalizeSelector(s) == "" && s != "" {
-			t.Errorf("NormalizeSelector(%q) erased the selector; refusal must be identity", s)
+		if got := NormalizeSelector(s); got != s {
+			t.Errorf("NormalizeSelector(%q) = %q, want it returned verbatim — a selector "+
+				"this function cannot convert must still compare equal to the peer's "+
+				"identical text, which is the only way those two ends match at all", s, got)
 		}
 	}
 }
