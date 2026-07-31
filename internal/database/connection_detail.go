@@ -34,7 +34,8 @@ import (
 // unbounded relaxation would pair rows from unrelated tunnels.
 // Both sides are NORMALIZED before the equality test, because the two vendors
 // serialise the same network differently: a FortiGate reports a host pair as the
-// bare address "192.168.13.7" (buildCIDR refuses /30 and tighter) while OPNsense
+// bare address "192.168.13.7" (its selector builder returns the address as-is
+// when the MIB exposes no mask, and when end == begin) while OPNsense
 // reports "192.168.13.7/32", and those never compare equal as text. Normalizing
 // only ever ADDS matches — NormalizeSelector returns anything it cannot convert
 // unchanged, so two mirrored ranges still match each other exactly as before.

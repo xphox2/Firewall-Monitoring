@@ -667,17 +667,30 @@ func (d *Database) GetVPNCounterProvenance(deviceID uint, tunnelNames []string, 
 			collapsed++
 		}
 	}
-	if eligible > 0 && float64(collapsed)/float64(eligible) >= 0.9 {
+	// A floor as well as a ratio. With one eligible sample a single coincidental
+	// collapse is 100%, which would condemn the very device that DOES report
+	// per-path numbers — the outcome the ratio exists to prevent. Five samples is
+	// under a minute of polling, and the flag self-heals as the window fills.
+	const minSamplesForVerdict = 5
+	if eligible >= minSamplesForVerdict && float64(collapsed)/float64(eligible) >= 0.9 {
 		p.SharedCounter = true
 	}
 
 	// A name that appears more than once at the same instant is two children
 	// wearing one name.
+	//
+	// Filtered to counting rows for the same reason the delta query is: this flag
+	// exists because a LAG partition would walk two counter series as if they
+	// were one, and a row with no counters never enters that partition. Without
+	// the filter, one counting row plus one 0/0 row at the same instant would
+	// flag a series whose deltas are perfectly clean, and the UI would suppress a
+	// real number.
 	var dupes []struct{ TunnelName string }
 	if err := d.db.Raw(`
 		SELECT tunnel_name FROM vpn_status
 		WHERE device_id = ? AND tunnel_name IN (?)
 			AND timestamp > ? AND timestamp <= ?
+			AND NOT (bytes_in = 0 AND bytes_out = 0)
 		GROUP BY tunnel_name, timestamp HAVING COUNT(*) > 1`,
 		deviceID, tunnelNames, from, to).Scan(&dupes).Error; err != nil {
 		return p, err

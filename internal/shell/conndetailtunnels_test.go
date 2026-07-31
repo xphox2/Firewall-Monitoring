@@ -208,10 +208,10 @@ func funcBody(t *testing.T, js, sigPattern string) string {
 func TestPathTable_BothEndsGoThroughTheSharedStateHelper(t *testing.T) {
 	body := funcBody(t, readPanelJS(t), `renderPanelPathTable\(hostId, data, c, srcName, dstName\) \{`)
 	for _, call := range []string{
-		"AC.tunnelStateBadge(srcClaim)",           // parent, source end
-		"AC.tunnelStateBadge(dstClaim)",           // parent, dest end
-		"AC.tunnelStateBadge(AC.tunnelClaim(p.s)", // child, source end
-		"AC.tunnelStateBadge(AC.tunnelClaim(p.d)", // child, dest end
+		"AC.tunnelStateBadge(AC.tunnelGroupClaim(sRows))", // parent, source end
+		"AC.tunnelStateBadge(AC.tunnelGroupClaim(dRows))", // parent, dest end
+		"AC.tunnelStateBadge(AC.tunnelClaim(p.s)",         // child, source end
+		"AC.tunnelStateBadge(AC.tunnelClaim(p.d)",         // child, dest end
 	} {
 		if !strings.Contains(body, call) {
 			t.Errorf("path table is missing %q — that end's status is being decided "+
@@ -223,6 +223,63 @@ func TestPathTable_BothEndsGoThroughTheSharedStateHelper(t *testing.T) {
 		t.Error("the path table reads tunnel_uptime again — on a FortiGate that is a " +
 			"configured SA lifetime, not an age")
 	}
+	// The old renderer bans this shape too. Without it here, a path row could
+	// simply stop calling the helper and hand-roll the two-way ternary again.
+	if regexp.MustCompile(`\?\s*'?<?span class="badge up"`).MatchString(body) {
+		t.Error("a two-way up/down badge ternary is back in the path table")
+	}
+	// The traffic column must not reach for a row's cumulative counters either —
+	// pathTraffic is pinned separately, but the renderer could bypass it.
+	if regexp.MustCompile(`\.bytes_in|\.bytes_out`).MatchString(body) {
+		t.Error("the path table reads a row's cumulative counters directly, bypassing " +
+			"the windowed totals — that is the sum-of-latest bug returning")
+	}
+}
+
+// A tunnel's own total must come from ITS rows, not from the side-wide window.
+// source_window covers every tunnel on that device in this connection, so
+// stamping it on each group made an idle tunnel read as its busy neighbour's
+// traffic and made the rows sum to a multiple of the KPI tile.
+func TestPathTable_GroupTotalIsPerTunnelNotPerSide(t *testing.T) {
+	body := funcBody(t, readPanelJS(t), `groupTraffic\(sRows, dRows, data, groupCount\) \{`)
+	if !strings.Contains(body, "e.rows.forEach") {
+		t.Error("groupTraffic no longer sums the group's OWN rows, so every tunnel on a " +
+			"multi-tunnel connection shows the same side-wide figure")
+	}
+	// The property, not just the presence of a guard: EVERY read of the side-wide
+	// window must sit on a line that also tests groupCount === 1. A guard placed
+	// somewhere in the function is worth nothing if a later return reaches past
+	// it — which is exactly how the side total came to be stamped on every group.
+	for _, line := range strings.Split(body, "\n") {
+		if strings.Contains(line, "e.side") && !strings.Contains(line, "groupCount === 1") {
+			t.Errorf("groupTraffic reads the side-wide window outside the single-group "+
+				"guard:\n    %s\nThat total covers EVERY tunnel on the device, so an idle "+
+				"tunnel would display its busy neighbour's traffic", strings.TrimSpace(line))
+		}
+	}
+	if !strings.Contains(body, "shared_counter") {
+		t.Error("groupTraffic ignores shared_counter, so a replicated series would be " +
+			"summed once per selector name")
+	}
+	if !strings.Contains(funcBody(t, readPanelJS(t), `renderPanelPathTable\(hostId, data, c, srcName, dstName\) \{`), "groupTraffic(") {
+		t.Error("the parent row no longer goes through groupTraffic")
+	}
+}
+
+// Two ends of an UNPROVISIONED tunnel fall back to device-local group names, so
+// they routinely disagree on the group key even when the server paired their
+// rows. Pairing that cannot reach across groups renders such a path twice — once
+// from each end — while telling the operator each peer never reported it.
+func TestPathTable_PairingReachesAcrossGroups(t *testing.T) {
+	body := funcBody(t, readPanelJS(t), `renderPanelPathTable\(hostId, data, c, srcName, dstName\) \{`)
+	if !strings.Contains(body, "for (const g of model)") {
+		t.Error("an unclaimed dest child is no longer offered to paths in OTHER groups, " +
+			"so an unprovisioned tunnel renders one row per end instead of one per path")
+	}
+	if !strings.Contains(body, "claimedDst") {
+		t.Error("dest children are no longer claimed globally, so one row can be paired " +
+			"into two different groups")
+	}
 }
 
 // Demotion must happen on BOTH sides. Nothing demotes dest-side dialup rows
@@ -230,7 +287,7 @@ func TestPathTable_BothEndsGoThroughTheSharedStateHelper(t *testing.T) {
 // the "5 selectors for 4 paths" bug, re-made on the other end.
 func TestPathTable_DemotesDialupOnBothSides(t *testing.T) {
 	body := funcBody(t, readPanelJS(t), `renderPanelPathTable\(hostId, data, c, srcName, dstName\) \{`)
-	for _, call := range []string{"deriveChildren(sRows)", "deriveChildren(dRows)"} {
+	for _, call := range []string{"deriveChildren(sg.phase2)", "deriveChildren(dg.phase2)"} {
 		if !strings.Contains(body, call) {
 			t.Errorf("missing %q — a dialup row on that side would be listed as a path, "+
 				"inventing one that does not exist", call)

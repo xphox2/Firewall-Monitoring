@@ -184,10 +184,10 @@ func SelectorPrefixLen(s string) int {
 //
 // A FortiGate emits three shapes (see snmp.vendor_fortigate): proper CIDR when
 // the MIB exposes a mask; an inclusive RANGE "10.0.1.0 - 10.0.1.255" when it does
-// not; and a BARE ADDRESS when begin == end, or when the mask is /30 or tighter
-// (buildCIDR refuses those). OPNsense emits CIDR throughout. So a host pair that
-// IKEv2 narrowed reads "192.168.13.7" on one end and "192.168.13.7/32" on the
-// other, and today those never compare equal.
+// not; and a BARE ADDRESS when there is no mask to build from, or when the
+// range's end equals its begin. OPNsense emits CIDR throughout. So a host pair
+// that IKEv2 narrowed reads "192.168.13.7" on one end and "192.168.13.7/32" on
+// the other, and today those never compare equal.
 //
 // Three arms, and the third is the one that matters:
 //
