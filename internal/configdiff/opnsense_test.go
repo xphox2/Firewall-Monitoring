@@ -421,3 +421,97 @@ func TestOPNsenseParserIsTolerant(t *testing.T) {
 		}
 	}
 }
+
+// revWith returns opnsenseA with its revision block rewritten, for exercising
+// the advancement gate.
+func revWith(user, desc, ts string) string {
+	old := `<revision>
+    <username>root@192.168.5.15</username>
+    <description>/firewall_rules_edit.php made changes</description>
+    <time>1785449422.77</time>
+  </revision>`
+	return strings.Replace(opnsenseA, old,
+		"<revision>\n    <username>"+user+"</username>\n    <description>"+desc+
+			"</description>\n    <time>"+ts+"</time>\n  </revision>", 1)
+}
+
+// TestOPNsenseAttributionFromConfig covers the happy path: the revision block
+// advanced, so the saving user is authoritative without any syslog correlation.
+func TestOPNsenseAttributionFromConfig(t *testing.T) {
+	t.Parallel()
+	prev := revWith("root@192.168.5.15", "/firewall_rules_edit.php made changes", "1785449422.77")
+	cur := revWith("alice@10.0.0.9", "/firewall_rules_edit.php made changes", "1785449999.10")
+
+	att, ok := AttributionFromConfig("opnsense", []byte(cur), []byte(prev))
+	if !ok {
+		t.Fatal("an advanced revision block should attribute")
+	}
+	if att.User != "alice@10.0.0.9" || att.Source != "10.0.0.9" || att.Method != "GUI" {
+		t.Errorf("got user=%q source=%q method=%q", att.User, att.Source, att.Method)
+	}
+	if _, ok := AttributionFromConfig("fortigate", []byte(cur), []byte(prev)); ok {
+		t.Error("fortigate must not claim in-config attribution")
+	}
+}
+
+// TestOPNsenseUnadvancedRevisionIsNotAttribution is the out-of-band case: a
+// hand-edited config.xml + reload does not rewrite <revision>, so the stale block
+// must NOT be credited to the previous legitimate admin.
+func TestOPNsenseUnadvancedRevisionIsNotAttribution(t *testing.T) {
+	t.Parallel()
+	prev := revWith("root@192.168.5.15", "/firewall_rules_edit.php made changes", "1785449422.77")
+
+	// Same stamp, different content: an unattributed edit.
+	cur := strings.Replace(prev, "<hostname>fw1</hostname>", "<hostname>pwned</hostname>", 1)
+	if _, ok := AttributionFromConfig("opnsense", []byte(cur), []byte(prev)); ok {
+		t.Error("an unadvanced revision block must not attribute")
+	}
+
+	// Backwards stamp: a restore-from-backup carries an older block.
+	older := revWith("root@192.168.5.15", "/firewall_rules_edit.php made changes", "1785000000.00")
+	if _, ok := AttributionFromConfig("opnsense", []byte(older), []byte(prev)); ok {
+		t.Error("a backwards revision stamp must not attribute")
+	}
+
+	// Unparsable previous capture: fail closed rather than credit a possible
+	// hand-edit to whoever last saved legitimately.
+	if _, ok := AttributionFromConfig("opnsense", []byte(prev), []byte("<opnsense></opnsense>")); ok {
+		t.Error("an unparsable previous revision must fail closed")
+	}
+	if _, ok := AttributionFromConfig("opnsense", []byte(prev), nil); ok {
+		t.Error("an empty previous config must fail closed")
+	}
+}
+
+// TestOPNsenseAttributionSurvivesLateDelivery pins the regression a wall-clock
+// window would have caused: the collector's config poll defaults to 15 minutes
+// and production revision-to-delivery gaps already reach ~13, so gating on
+// recency would mark legitimate changes unattributed and escalate them.
+func TestOPNsenseAttributionSurvivesLateDelivery(t *testing.T) {
+	t.Parallel()
+	prev := revWith("root@192.168.5.15", "x.php made changes", "1000000000.00")
+	// Stamped long ago in wall-clock terms; still the newer of the two.
+	cur := revWith("bob@10.0.0.5", "x.php made changes", "1000000001.00")
+
+	if _, ok := AttributionFromConfig("opnsense", []byte(cur), []byte(prev)); !ok {
+		t.Error("a late-delivered but in-order change must still attribute")
+	}
+}
+
+// TestOPNsenseAttributionMethodNotGuessed pins that our own provisioner's API
+// changes are not mislabelled: the corpus's most common description matches
+// neither the GUI nor the API pattern, so Method stays empty rather than
+// asserting something false.
+func TestOPNsenseAttributionMethodNotGuessed(t *testing.T) {
+	t.Parallel()
+	prev := revWith("(root)", "Updated plugin interface configuration", "1785449422.77")
+	cur := revWith("(root)", "Updated plugin interface configuration", "1785449999.10")
+
+	att, ok := AttributionFromConfig("opnsense", []byte(cur), []byte(prev))
+	if !ok {
+		t.Fatal("expected attribution")
+	}
+	if att.Method != "" {
+		t.Errorf("method should stay empty for an unrecognised description, got %q", att.Method)
+	}
+}

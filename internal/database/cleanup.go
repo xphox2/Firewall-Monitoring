@@ -616,3 +616,63 @@ func (d *Database) auditDeviceVendors() {
 			len(unsupported), strings.Join(unsupported, ", "))
 	}
 }
+
+// backfillNormalizedChecksums recomputes DeviceConfigRevision.NormalizedChecksum
+// for any row whose stored value disagrees with what the CURRENT vendor
+// normalizer produces, and rewrites it in place.
+//
+// WHY: adding or tightening a vendor normalizer changes the normalized form, so
+// the next backup would hash differently from the stored prior and fire exactly
+// one phantom CONFIG_CHANGE per device on upgrade. Recomputing the stored history
+// removes that, and makes the WHOLE revision history diff-consistent rather than
+// just the newest row.
+//
+// Idempotent: a second run finds nothing to do, so this is safe to leave in
+// permanently as a normalizer-version-drift repair.
+//
+// MUST stay inside the startup advisory-lock-gated block (see database.go) so
+// exactly one of api/poller/trap runs it. A collector delivery racing the
+// backfill can still fire one residual phantom alert; that is a one-off on
+// upgrade, not a steady state.
+//
+// Consequence to accept: two historically-distinct revisions may now normalize
+// identically. They stay as separate rows — no retroactive merge — and the diff
+// UI's existing "no real configuration changes" banner reports it correctly when
+// the two are compared.
+func (d *Database) backfillNormalizedChecksums() {
+	type row struct {
+		ID         uint
+		ConfigText string
+		Vendor     string
+		Stored     string
+	}
+	var rows []row
+	if err := d.Gorm().Raw(`
+		SELECT r.id AS id, r.config_text AS config_text,
+		       COALESCE(dev.vendor, '') AS vendor,
+		       COALESCE(r.normalized_checksum, '') AS stored
+		FROM device_config_revisions r
+		JOIN devices dev ON dev.id = r.device_id
+		WHERE r.config_text IS NOT NULL AND r.config_text <> ''`).Scan(&rows).Error; err != nil {
+		log.Printf("normalized-checksum backfill: query failed: %v", err)
+		return
+	}
+
+	fixed := 0
+	for _, r := range rows {
+		want := configdiff.HashNormalized(r.Vendor, []byte(r.ConfigText))
+		if want == r.Stored {
+			continue
+		}
+		if err := d.Gorm().Exec(
+			`UPDATE device_config_revisions SET normalized_checksum = ? WHERE id = ?`,
+			want, r.ID).Error; err != nil {
+			log.Printf("normalized-checksum backfill: update failed for revision %d: %v", r.ID, err)
+			continue
+		}
+		fixed++
+	}
+	if fixed > 0 {
+		log.Printf("normalized-checksum backfill: recomputed %d of %d config revisions after a normalizer change (prevents one phantom CONFIG_CHANGE per affected device)", fixed, len(rows))
+	}
+}

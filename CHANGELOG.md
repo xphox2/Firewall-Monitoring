@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.198] - 2026-07-31
+
+### Added
+
+**OPNsense config changes are now attributed to the admin who made them, from the config itself.** OPNsense stamps the saving user, the page and the time into the configuration on every GUI or API change, which is better evidence than syslog correlation — authoritative, and immune to how long the backup took to arrive. Attribution is accepted only when that stamp actually *advanced* since the previous backup, so a hand-edited `config.xml` reloaded on the box still reports as an unattributed out-of-band change rather than being credited to whoever last saved legitimately. A restore-from-backup, which carries an older stamp, is treated the same way.
+
+Deliberately *not* gated on wall-clock recency: the check happens when the backup is written to the database, the collector's config poll defaults to 15 minutes, and production revision-to-delivery gaps already reach 13 — so a recency window would have marked ordinary changes unattributed and escalated them to critical, which is the bug being fixed.
+
+**Truncated OPNsense captures are flagged rather than trusted.** A `config.xml` is a single document, so a partial capture would make the object diff report the entire configuration as removed. Such a capture is now marked suspect and does not alert. The validator is deliberately no stricter than the parser: rejecting anything the parser tolerates would mark every backup from that device suspect, and suspect never alerts — silently disabling change detection instead of over-reporting it.
+
+### Fixed
+
+**Stored config checksums are repaired on startup after a normalizer change.** Changing how a vendor's config is normalized changes its hash, so the first backup after an upgrade would differ from the stored prior and fire one phantom config-change alert per affected device. Existing revisions are now recomputed in place, which also makes the whole stored history diff-consistent rather than only the newest row. Idempotent, and run by whichever process holds the startup lock.
+
 ## [0.11.197] - 2026-07-31
 
 ### Added
