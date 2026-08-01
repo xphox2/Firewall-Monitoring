@@ -1,6 +1,26 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.199] - 2026-07-31
+
+### Changed
+
+**The config-diff modal is rebuilt as a change-review surface rather than a diff viewer with a summary bolted on.** The object view kept the FortiGate layout you already liked — the coloured `ADDED` / `REMOVED` / `MODIFIED` word, the object name, its severity, the impact line, then the attribute deltas — and gained the parts it was missing:
+
+- **A verdict band** that answers "what happened, how bad, and who did it" before any clicking, including the change's attribution.
+- **Cards open by default** when the set is small enough to scan, the change is security-relevant, or the detail is short. Previously every card started collapsed, so opening the diff showed nothing at all and a critical finding sat behind the same click as a cosmetic one.
+- **Filtering and grouping** — free-text search across objects and attributes, severity pills, and group-by kind or severity. Severity was previously a decorative badge that did nothing.
+- **Kind shown as a breadcrumb** rather than uppercased. Uppercasing destroyed readability on long paths like `OPNsense.Swanctl.Connections.Connection`.
+- **Volatile runs folded** into a single line naming the patterns, instead of rows an operator has to read past to find real changes.
+
+The footnote no longer claims every device's noise is "FortiOS encryption-IV churn" — it is built from the patterns the vendor's own normalizer reports, so it says something true on an OPNsense box.
+
+### Fixed
+
+**The diff modal is now usable in day mode and on a phone.** Colour was previously chosen in JavaScript, which is how it slipped past the theme-blindness guard — that check only catches a literal hex inside a style attribute, not one returned from a function. All styling moved to a stylesheet driven by design-system tokens; contrast now passes AA in both themes. The modal was also a fixed 1400px with a two-column split view; it is now a full-screen sheet below 900px with the split view coerced to unified, since two 40-character columns of config text is not readable on a phone.
+
+**Object cards can be operated by keyboard.** The expander was a `<div>`: not focusable, not announced, and impossible to reach without a mouse. It is now a real button with `aria-expanded`, and the view switches are proper tabs with arrow-key navigation.
+
 ## [0.11.198] - 2026-07-31
 
 ### Added

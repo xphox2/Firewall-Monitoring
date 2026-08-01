@@ -1731,21 +1731,22 @@
         }
     });
 
+    // CFGDIFF-UI:BEGIN
     function openConfigDiff(fromID, toID) {
-        console.log('[diff] opening compare from=' + fromID + ' to=' + toID + ' device=' + deviceId);
+        fwmonLog.debug('[diff] opening compare from=' + fromID + ' to=' + toID + ' device=' + deviceId);
         var url = '/admin/api/devices/' + deviceId + '/config-history/diff?from=' + fromID + '&to=' + toID;
         fetch(url, { credentials: 'same-origin' })
             .then(function(r) {
-                console.log('[diff] HTTP ' + r.status + ' ' + r.statusText);
+                fwmonLog.debug('[diff] HTTP ' + r.status + ' ' + r.statusText);
                 return r.json();
             })
             .then(function(result) {
-                console.log('[diff] response:', result);
+                fwmonLog.debug('[diff] response:', result);
                 if (!result.success || !result.data) {
                     var modal = document.getElementById('config-diff-modal');
                     var body  = document.getElementById('config-diff-body');
                     if (modal && body) {
-                        body.innerHTML = '<div style="color:var(--fwmon-sig-crit);padding:20px">' +
+                        body.innerHTML = '<div class="cfgdiff-placeholder cfgdiff-error">' +
                             '<strong>Server returned an error.</strong><br>' +
                             esc(String((result && result.error) || 'unknown')) +
                             '</div>';
@@ -1756,14 +1757,13 @@
                 }
                 renderConfigDiff(result.data);
             }).catch(function(e) {
-                console.error('[diff] fetch failed:', e);
+                fwmonLog.error('[diff] fetch failed:', e);
                 var modal = document.getElementById('config-diff-modal');
                 var body  = document.getElementById('config-diff-body');
                 if (modal && body) {
-                    body.innerHTML = '<div style="color:var(--fwmon-sig-crit);padding:20px">' +
+                    body.innerHTML = '<div class="cfgdiff-placeholder cfgdiff-error">' +
                         '<strong>Failed to load diff.</strong><br>' +
-                        esc(String(e && e.message || e)) + '<br><br>' +
-                        '<span style="color:var(--fwmon-text-faint);font-size:0.85rem">Open browser dev tools (F12) → Console for details.</span>' +
+                        esc(String(e && e.message || e)) +
                         '</div>';
                     modal.classList.remove('hidden');
                     AC.openModal('config-diff-modal');
@@ -1771,138 +1771,449 @@
             });
     }
 
+    //
+    // Config-diff modal. Colour is NEVER selected here — the renderer emits
+    // data-sev / data-op state strings and admin-config-diff.css maps them onto
+    // design-system tokens. The previous implementation picked hex in JS
+    // (sevColor(), an opColor ternary), which is exactly how it evaded the
+    // theme-blindness guardrail: that regex only matches a literal `color:#hex`
+    // in a style string, not a value routed through a variable.
+
+    // cdState is the single source of truth for the open modal. Holding the
+    // fetched payload lets filtering and the raw/object switch work without a
+    // refetch, and lets the inactive view stay unrendered until it is asked for
+    // (a 20k-row line_diff used to be built on every open, whether looked at or
+    // not).
+    var cdState = {
+        data: null,
+        view: 'obj',
+        ldView: 'unified',
+        group: 'kind',
+        filters: { q: '', sevs: null },
+        cache: { obj: null, unified: null, split: null }
+    };
+
+    var CD_SEVS = ['critical', 'high', 'medium', 'info'];
+
     function renderConfigDiff(data) {
-        var modal = document.getElementById('config-diff-modal');
-        var meta  = document.getElementById('config-diff-meta');
-        var body  = document.getElementById('config-diff-body');
-        if (!modal || !meta || !body) {
-            console.error('config-diff-modal: required DOM elements missing', { modal: !!modal, meta: !!meta, body: !!body });
+        var modal    = document.getElementById('config-diff-modal');
+        var meta     = document.getElementById('config-diff-meta');
+        var body     = document.getElementById('config-diff-body');
+        var verdict  = document.getElementById('config-diff-verdict');
+        var controls = document.getElementById('config-diff-controls');
+        var note     = document.getElementById('config-diff-note');
+        if (!modal || !meta || !body || !verdict || !controls || !note) {
+            fwmonLog.error('config-diff-modal: required DOM elements missing');
             return;
         }
 
-        // Show the modal FIRST. If diff rendering throws, the user at least
-        // sees an error in the modal body instead of a frozen-looking page.
+        // Show the modal FIRST. If rendering throws, the operator sees the error
+        // in the modal body rather than a frozen-looking page.
         modal.classList.remove('hidden');
         AC.openModal('config-diff-modal');
-        body.innerHTML = '<div style="padding:20px;color:var(--fwmon-text-faint)">Computing diff…</div>';
+        body.innerHTML = '<div class="cfgdiff-placeholder">Computing diff…</div>';
 
         try {
-            var fromRev = data && data.from || {};
-            var toRev   = data && data.to   || {};
+            cdState.data = data || {};
+            cdState.view = 'obj';
+            cdState.ldView = 'unified';
+            cdState.group = 'kind';
+            cdState.filters = { q: '', sevs: null };
+            cdState.cache = { obj: null, unified: null, split: null };
 
-            meta.innerHTML = '<span style="color:var(--fwmon-sig-crit)">From #' + esc(String(fromRev.id || '?')) + '</span> ' + formatTime(fromRev.timestamp) +
+            var fromRev = cdState.data.from || {};
+            var toRev   = cdState.data.to   || {};
+
+            meta.innerHTML =
+                '#' + esc(String(fromRev.id || '?')) + ' ' + formatTime(fromRev.timestamp) +
                 ' (' + esc(fromRev.trigger_source || 'poll') + ', ' + esc(fromRev.backup_quality || 'full') + ')' +
-                ' &nbsp;→&nbsp; <span style="color:var(--fwmon-sig-ok)">To #' + esc(String(toRev.id || '?')) + '</span> ' + formatTime(toRev.timestamp) +
-                ' (' + esc(toRev.trigger_source || 'poll') + ', ' + esc(toRev.backup_quality || 'full') + ')' +
-                attributionBadge(toRev);
+                ' <span class="sep">→</span> ' +
+                '#' + esc(String(toRev.id || '?')) + ' ' + formatTime(toRev.timestamp) +
+                ' (' + esc(toRev.trigger_source || 'poll') + ', ' + esc(toRev.backup_quality || 'full') + ')';
 
-            // Fast path: matching normalized checksums means there were NO real
-            // configuration changes between these two backups — only FortiGate's
-            // per-emission IV-churn noise. Show a clear banner instead of a wall
-            // of grey "unchanged" lines.
-            if (fromRev.normalized_checksum &&
-                fromRev.normalized_checksum === toRev.normalized_checksum) {
-                body.innerHTML =
-                    '<div style="background:rgba(63,185,80,0.1);border:1px solid #3fb950;color:var(--fwmon-sig-ok);padding:16px;margin:16px;border-radius:8px;font-family:sans-serif">' +
-                        '<strong>No real configuration changes between these two backups.</strong><br>' +
-                        '<span style="color:var(--fwmon-text-dim);font-size:0.88rem;">' +
-                            'Both revisions normalize to the same checksum (<code style="color:var(--fwmon-accent)">' + esc(fromRev.normalized_checksum.slice(0, 12)) + '…</code>). ' +
-                            'The raw bytes differ only because FortiOS regenerates a fresh AES IV salt for every <code>ENC</code> blob and rewrites a few header lines on every emission.' +
-                        '</span>' +
-                    '</div>';
-                return;
-            }
+            var changes = sortChanges((cdState.data.object_changes || []).slice());
+            cdState.data.object_changes = changes;
 
-            // The raw line diff is computed server-side (configdiff.DiffLines,
-            // a Myers O(ND) diff with volatile masking baked into the alignment)
-            // and delivered as data.line_diff. The browser only renders it.
-            var rawHTML = renderLineDiff(data && data.line_diff);
+            verdict.innerHTML = renderVerdict(cdState.data, changes, toRev);
+            verdict.hidden = false;
+            controls.innerHTML = renderControls(cdState.data, changes);
+            controls.hidden = false;
+            renderNote(note, cdState.data);
 
-            // Preferred view: the per-object semantic diff (parsed + classified
-            // server-side). Falls back to the raw line diff for vendors without an
-            // object parser, or when the only difference is volatile noise.
-            var changes  = (data && data.object_changes) || [];
-            var summary  = (data && data.summary) || {};
-            var hasObjects = changes.length > 0;
-            var objectHTML = hasObjects
-                ? renderObjectDiff(changes, summary)
-                : '<div style="padding:20px;color:var(--fwmon-text-faint);font-family:sans-serif">No object-level changes detected — the difference is volatile-only, or this vendor has no object parser yet. See the <strong>Raw diff</strong>.</div>';
-
-            var toggle =
-                '<div style="display:flex;gap:8px;padding:10px 12px;border-bottom:1px solid var(--fwmon-border);font-family:sans-serif">' +
-                    '<button id="cd-btn-obj" data-action="cd-view" data-view="obj" style="cursor:pointer;border:1px solid var(--fwmon-border);border-radius:6px;padding:5px 12px;background:var(--fwmon-panel-bg);color:var(--fwmon-text-dim)">Object view</button>' +
-                    '<button id="cd-btn-raw" data-action="cd-view" data-view="raw" style="cursor:pointer;border:1px solid var(--fwmon-border);border-radius:6px;padding:5px 12px;background:var(--fwmon-panel-bg);color:var(--fwmon-text-dim)">Raw diff</button>' +
-                '</div>';
-
-            body.innerHTML = toggle +
-                '<div id="cd-objects">' + objectHTML + '</div>' +
-                '<div id="cd-raw" style="display:none">' + rawHTML + '</div>';
-
-            window.__cdView(hasObjects ? 'obj' : 'raw');
+            // An equal-checksum pair still gets the controls, so the raw bytes
+            // remain reachable. The old code hard-returned here, leaving no way
+            // to look at them even when you wanted to.
+            cdState.view = changes.length > 0 ? 'obj' : 'raw';
+            renderActiveView();
+            cdWireTablist(controls);
+            verdict.focus();
         } catch (err) {
-            console.error('Diff render failed:', err, 'data:', data);
-            body.innerHTML = '<div style="color:var(--fwmon-sig-crit);padding:20px;font-family:sans-serif">' +
-                '<strong>Failed to render diff.</strong><br>' +
-                esc(String(err && err.message || err)) + '<br><br>' +
-                '<span style="color:var(--fwmon-text-faint);font-size:0.85rem">Open browser dev tools (F12) → Console for details.</span>' +
+            fwmonLog.error('Diff render failed:', err);
+            body.innerHTML = '<div class="cfgdiff-placeholder">' +
+                '<strong>Failed to render diff.</strong><br>' + esc(String(err && err.message || err)) +
                 '</div>';
         }
     }
 
-    // Row styles for the unified line diff. Kept as constants so the split view
-    // and the unchanged-run collapse reuse the exact same look.
-    var CD_ROW = 'padding:1px 8px;white-space:pre-wrap;word-break:break-all';
+    // sortChanges orders by severity, then kind, then name — so the thing an
+    // operator needs to see is first rather than wherever the backend emitted it.
+    function sortChanges(changes) {
+        var rank = { critical: 0, high: 1, medium: 2, info: 3 };
+        return changes.sort(function(a, b) {
+            var ra = rank[sevOf(a)], rb = rank[sevOf(b)];
+            if (ra !== rb) return ra - rb;
+            if (a.kind !== b.kind) return (a.kind || '') < (b.kind || '') ? -1 : 1;
+            return (a.name || a.path || '') < (b.name || b.path || '') ? -1 : 1;
+        });
+    }
 
-    // renderLineDiff renders the server-computed, aligned line diff (data.line_diff
-    // from configdiff.DiffLines). The server already did the Myers alignment and
-    // volatile masking; this only turns rows into HTML, collapses long unchanged
-    // runs, highlights intra-line word changes, and supports a split view.
-    function renderLineDiff(ld) {
-        if (!ld || !ld.rows || !ld.rows.length) {
-            return '<div style="color:var(--fwmon-text-faint);padding:20px">No differences found</div>';
+    function sevOf(ch) { return (ch && ch.risk && ch.risk.severity) || 'info'; }
+
+    // renderVerdict answers "what happened, how bad, and who did it" before any
+    // clicking. Three variants: nothing really changed, nothing parsed, and a
+    // severity-driven summary.
+    function renderVerdict(data, changes, toRev) {
+        var from = data.from || {}, to = data.to || {};
+        var same = from.normalized_checksum && from.normalized_checksum === to.normalized_checksum;
+
+        if (same) {
+            return verdictShell('ok', 'No real configuration changes between these two backups.',
+                '', '<div class="cfgdiff-verdict-sub">Both revisions normalize to the same checksum (<code>' +
+                esc(String(from.normalized_checksum).slice(0, 12)) + '…</code>). The raw bytes differ only in content this vendor rewrites on every backup.</div>',
+                attributionChip(toRev));
         }
-        var rows = ld.rows;
+
+        var summary = data.summary || {};
+        var sev = summary.max_severity || (changes.length ? sevOf(changes[0]) : 'info');
+        var impact = summary.impact;
+        if (!impact && changes.length) impact = (changes[0].risk && changes[0].risk.summary) || '';
+        if (!impact) {
+            impact = changes.length
+                ? changes.length + ' object change' + (changes.length === 1 ? '' : 's')
+                : 'Changes detected, but no object-level detail is available for this vendor.';
+        }
+
+        var stats = changes.length
+            ? changes.length + ' change' + (changes.length === 1 ? '' : 's') +
+              ' · ' + (summary.added || 0) + ' added · ' + (summary.removed || 0) + ' removed · ' + (summary.modified || 0) + ' modified'
+            : '';
+
+        return verdictShell(sev, impact, stats, '', attributionChip(toRev));
+    }
+
+    function verdictShell(sev, impact, stats, subHTML, attribHTML) {
+        var out = '<div class="cfgdiff-verdict-line">' +
+            '<span class="cfgdiff-chip" data-sev="' + esc(sev) + '">' + esc(sev.toUpperCase()) + '</span>' +
+            '<span class="cfgdiff-impact">' + esc(impact) + '</span>' +
+            '</div>';
+        if (stats || attribHTML) {
+            out += '<div class="cfgdiff-stats">' + esc(stats) + attribHTML + '</div>';
+        }
+        return out + subHTML;
+    }
+
+    // attributionChip renders the tri-state: attributed, checked-but-unmatched
+    // (possible out-of-band change), or never checked.
+    function attributionChip(rev) {
+        if (!rev) return '';
+        if (rev.changed_by) {
+            return '<span class="cfgdiff-chip attrib no-dot">by ' + esc(rev.changed_by) +
+                (rev.change_method ? ' via ' + esc(rev.change_method) : '') + '</span>';
+        }
+        if (rev.attribution_checked && rev.attributed === false) {
+            return '<span class="cfgdiff-chip oob" title="No authenticated admin session matched this change">possible out-of-band change</span>';
+        }
+        return '';
+    }
+
+    function renderControls(data, changes) {
+        var counts = {};
+        CD_SEVS.forEach(function(s) { counts[s] = 0; });
+        changes.forEach(function(c) { counts[sevOf(c)] = (counts[sevOf(c)] || 0) + 1; });
+
+        var pills = CD_SEVS.map(function(s) {
+            if (!counts[s]) return '';
+            return '<button type="button" class="cfgdiff-tab" data-action="cd-sev-filter" data-sev="' + s + '" ' +
+                'aria-pressed="false">' + esc(s) + ' <span class="cfgdiff-count">' + counts[s] + '</span></button>';
+        }).join('');
+
+        var hasObjects = changes.length > 0;
+        var row1 =
+            '<div class="cfgdiff-ctl-row">' +
+                '<div class="cfgdiff-tabs" role="tablist" aria-label="Diff view">' +
+                    '<button type="button" class="cfgdiff-tab" role="tab" data-action="cd-view" data-view="obj" ' +
+                        'aria-controls="config-diff-body" aria-selected="' + (hasObjects ? 'true' : 'false') + '"' +
+                        (hasObjects ? '' : ' disabled title="No object-level changes to show"') + '>Changes</button>' +
+                    '<button type="button" class="cfgdiff-tab" role="tab" data-action="cd-view" data-view="raw" ' +
+                        'aria-controls="config-diff-body" aria-selected="' + (hasObjects ? 'false' : 'true') + '">Raw text</button>' +
+                '</div>' +
+                '<label class="fwmon-sr-only" for="cfgdiff-search">Filter changes</label>' +
+                '<input id="cfgdiff-search" class="cfgdiff-search" type="text" data-action="cd-search" ' +
+                    'placeholder="Filter by object or attribute…">' +
+                '<div class="cfgdiff-sevpills">' + pills + '</div>' +
+            '</div>';
+
+        var row2 = hasObjects
+            ? '<div class="cfgdiff-ctl-row" data-cd-objectonly>' +
+                  '<div class="cfgdiff-tabs" role="group" aria-label="Group changes by">' +
+                      '<button type="button" class="cfgdiff-tab" data-action="cd-group-by" data-group="kind" aria-pressed="true">Kind</button>' +
+                      '<button type="button" class="cfgdiff-tab" data-action="cd-group-by" data-group="severity" aria-pressed="false">Severity</button>' +
+                  '</div>' +
+                  '<button type="button" class="cfgdiff-tab" data-action="cd-expand-all">Expand all</button>' +
+                  '<button type="button" class="cfgdiff-tab" data-action="cd-collapse-all">Collapse all</button>' +
+                  '<span class="cfgdiff-count" id="cfgdiff-shown" aria-live="polite">' +
+                      changes.length + ' of ' + changes.length + ' shown</span>' +
+              '</div>'
+            : '';
+
+        return row1 + row2;
+    }
+
+    // renderNote builds the volatile-pattern legend from the payload instead of
+    // naming one vendor's quirk in static copy. The old footnote said "FortiOS
+    // encryption-IV churn" on every device, including ones that have never run
+    // FortiOS.
+    function renderNote(note, data) {
+        var pats = data.volatile_patterns || [];
+        var ld = data.line_diff || {};
+        var anyVolatile = (ld.rows || []).some(function(r) { return r.op === 'volatile'; });
+        if (!pats.length || !anyVolatile) { note.hidden = true; note.innerHTML = ''; return; }
+        note.innerHTML = 'Suppressed as noise — content this vendor rewrites on every backup: ' +
+            pats.map(function(p) {
+                return '<code title="' + esc(p.description || '') + '">' + esc(p.name) + '</code>';
+            }).join(' ');
+        note.hidden = false;
+    }
+
+    // renderActiveView renders the requested view, building it once and caching.
+    function renderActiveView() {
+        var body = document.getElementById('config-diff-body');
+        if (!body) return;
+        if (cdState.view === 'raw') {
+            if (cdState.cache[cdState.ldView] === null) {
+                cdState.cache[cdState.ldView] = renderRawDiff(cdState.data.line_diff, cdState.ldView);
+            }
+            body.innerHTML = renderRawChrome() + cdState.cache[cdState.ldView];
+        } else {
+            if (cdState.cache.obj === null) {
+                cdState.cache.obj = renderObjectList(cdState.data.object_changes || []);
+            }
+            body.innerHTML = cdState.cache.obj;
+            applyCdFilter();
+        }
+        var objOnly = document.querySelector('[data-cd-objectonly]');
+        if (objOnly) objOnly.hidden = cdState.view === 'raw';
+    }
+
+    function renderRawChrome() {
+        var narrow = window.innerWidth <= 900;
+        return '<div class="cfgdiff-ctl-row cfgdiff-rawchrome">' +
+            '<div class="cfgdiff-tabs" role="tablist" aria-label="Raw diff layout">' +
+                '<button type="button" class="cfgdiff-tab" role="tab" data-action="ld-view" data-view="unified" ' +
+                    'aria-selected="' + (cdState.ldView === 'unified') + '">Unified</button>' +
+                '<button type="button" class="cfgdiff-tab" role="tab" data-action="ld-view" data-view="split" ' +
+                    'aria-selected="' + (cdState.ldView === 'split') + '"' +
+                    (narrow ? ' disabled aria-disabled="true" title="Split view needs a wider screen"' : '') +
+                    '>Split</button>' +
+            '</div></div>';
+    }
+
+    // renderObjectList groups the changes and renders one row each. Groups get a
+    // sticky header tinted to their worst severity.
+    function renderObjectList(changes) {
+        if (!changes.length) {
+            return '<div class="cfgdiff-placeholder">No object-level changes detected — the difference is volatile-only, or this vendor has no object parser yet. See <strong>Raw text</strong>.</div>';
+        }
+        var groups = {};
+        var order = [];
+        changes.forEach(function(ch, idx) {
+            var key = cdState.group === 'severity' ? sevOf(ch) : (ch.kind || '');
+            if (!groups[key]) { groups[key] = []; order.push(key); }
+            groups[key].push({ ch: ch, idx: idx });
+        });
+
         var out = [];
-
-        if (ld.truncated) {
-            out.push('<div style="background:var(--fwmon-panel-bg);color:var(--fwmon-sig-warn);padding:8px;text-align:center;font-family:sans-serif">' +
-                esc(ld.note || 'Diff truncated for size. Download both revisions to compare offline.') + '</div>');
-        }
-
-        // A view toggle for unified vs split. State lives on the container so
-        // __ldView can flip it without re-fetching.
-        out.push('<div style="display:flex;gap:8px;padding:8px 10px;font-family:sans-serif">' +
-            '<button type="button" id="ld-btn-unified" data-action="ld-view" data-view="unified" style="cursor:pointer;border:1px solid var(--fwmon-border);border-radius:6px;padding:4px 10px;background:#1f6feb;color:#fff;font-size:0.8rem">Unified</button>' +
-            '<button type="button" id="ld-btn-split" data-action="ld-view" data-view="split" style="cursor:pointer;border:1px solid var(--fwmon-border);border-radius:6px;padding:4px 10px;background:var(--fwmon-panel-bg);color:var(--fwmon-text-dim);font-size:0.8rem">Split</button>' +
-            '</div>');
-
-        out.push('<div id="ld-unified">' + renderUnified(rows) + '</div>');
-        out.push('<div id="ld-split" style="display:none">' + renderSplit(rows) + '</div>');
+        order.forEach(function(key) {
+            var items = groups[key];
+            var worst = items.reduce(function(acc, it) {
+                var r = { critical: 0, high: 1, medium: 2, info: 3 };
+                return r[sevOf(it.ch)] < r[acc] ? sevOf(it.ch) : acc;
+            }, 'info');
+            var label = cdState.group === 'severity' ? esc(key) : kindLabel(key);
+            out.push('<div class="cfgdiff-group" data-sev="' + esc(worst) + '">' + label +
+                '<span class="cfgdiff-group-n">' + items.length + '</span></div>');
+            items.forEach(function(it) { out.push(objectRow(it.ch, it.idx, changes.length)); });
+        });
         return out.join('');
     }
 
-    // renderUnified builds the classic one-column diff, collapsing runs of >3
-    // consecutive equal/volatile-equal lines into an expandable context divider.
+    // kindLabel renders a dotted kind as a breadcrumb. No case transform: the old
+    // uppercase treatment destroyed information in kinds like
+    // OPNsense.Swanctl.Connections.Connection, which an operator needs to be able
+    // to grep for verbatim.
+    function kindLabel(kind) {
+        var segs = String(kind || '').split('.');
+        var last = segs.pop();
+        var head = segs.map(function(s) { return esc(s); }).join('<span class="sep"> · </span>');
+        return '<span title="' + esc(kind) + '">' +
+            (head ? head + '<span class="sep"> · </span>' : '') +
+            '<strong>' + esc(last) + '</strong></span>';
+    }
+
+    // objectRow renders one change. The row alone answers "what and how bad";
+    // the panel holds the attribute detail.
+    //
+    // Density rule: expand when the set is small enough to scan, when the change
+    // is security-relevant, or when the detail is short. The old view collapsed
+    // EVERYTHING by default, so opening the modal showed nothing at all and the
+    // security-relevant change was behind the same click as a cosmetic one.
+    function objectRow(ch, idx, total) {
+        var sev = sevOf(ch);
+        var op = ch.op || 'modified';
+        var attrs = ch.attrs || [];
+        var open = total <= 25 || sev === 'critical' || sev === 'high' || sev === 'medium' || attrs.length <= 3;
+        var pid = 'cfgdiff-panel-' + idx;
+
+        // The group header already carries the kind, and a composite key can be
+        // long (a Swanctl child is keyed on description + both selectors), so
+        // repeating the full path inline just pushes the risk summary off-screen.
+        // It stays reachable as the row's title.
+        var name = esc(ch.name || ch.path || '');
+
+        var why = (ch.risk && ch.risk.summary) ? ch.risk.summary : '';
+        if (!open && attrs.length) {
+            why = attrs.length + ' attribute' + (attrs.length === 1 ? '' : 's') + ' changed: ' +
+                attrs.slice(0, 4).map(function(d) { return d.key; }).join(', ') +
+                (attrs.length > 4 ? ', +' + (attrs.length - 4) + ' more' : '');
+        }
+
+        var hay = ((ch.path || '') + ' ' + (ch.kind || '') + ' ' + (ch.name || '') + ' ' +
+            attrs.map(function(d) { return d.key + ' ' + (d.old || '') + ' ' + (d.new || ''); }).join(' ')).toLowerCase();
+
+        return '<article class="cfgdiff-obj" data-op="' + esc(op) + '" data-sev="' + esc(sev) + '" ' +
+                'data-hay="' + esc(hay) + '">' +
+            '<button type="button" class="cfgdiff-obj-head" data-action="cd-toggle" data-idx="' + idx + '" ' +
+                'title="' + esc(ch.path || '') + '" ' +
+                'aria-expanded="' + (open ? 'true' : 'false') + '" aria-controls="' + pid + '">' +
+                '<span class="cfgdiff-op">' + esc(op.toUpperCase()) + '</span>' +
+                '<span class="cfgdiff-name">' + name + '</span>' +
+                '<span class="cfgdiff-chip" data-sev="' + esc(sev) + '">' + esc(sev) + '</span>' +
+                '<span class="cfgdiff-why">' + esc(why) + '</span>' +
+            '</button>' +
+            attrList(attrs, pid, open) +
+            '</article>';
+    }
+
+    // attrList is a list, not a table, so it can reflow to one column on a phone
+    // without the display:block-on-tr trick that destroys table semantics for a
+    // screen reader. Each item carries a visually-hidden sentence that reads
+    // better aloud than four cells would.
+    function attrList(attrs, pid, open) {
+        var items = attrs.map(function(d) {
+            var pair = (d.old && d.new) ? wordDiffPair(d.old, d.new) : [esc(d.old || ''), esc(d.new || '')];
+            var spoken = d.key + (d.old && d.new ? ' changed from ' + d.old + ' to ' + d.new
+                : d.new ? ' set to ' + d.new : ' removed, was ' + d.old);
+            return '<li class="cfgdiff-attr">' +
+                '<span class="fwmon-sr-only">' + esc(spoken) + '</span>' +
+                '<span class="cfgdiff-key" aria-hidden="true">' + esc(d.key) + '</span>' +
+                '<span class="cfgdiff-old" aria-hidden="true">' + pair[0] + '</span>' +
+                '<span class="cfgdiff-arrow" aria-hidden="true">→</span>' +
+                '<span class="cfgdiff-new" aria-hidden="true">' + pair[1] + '</span>' +
+                '</li>';
+        }).join('');
+        return '<ul class="cfgdiff-attrs" id="' + pid + '"' + (open ? '' : ' hidden') + '>' + items + '</ul>';
+    }
+
+    // applyCdFilter hides rows in place rather than re-rendering, so expansion
+    // state survives typing. A group whose rows are all hidden hides too.
+    function applyCdFilter() {
+        var q = cdState.filters.q;
+        var sevs = cdState.filters.sevs;
+        var rows = document.querySelectorAll('#config-diff-body .cfgdiff-obj');
+        var shown = 0;
+        rows.forEach(function(el) {
+            var okQ = !q || (el.dataset.hay || '').indexOf(q) !== -1;
+            var okS = !sevs || sevs.has(el.dataset.sev);
+            var visible = okQ && okS;
+            el.hidden = !visible;
+            if (visible) shown++;
+        });
+
+        // Hide a group header with nothing under it.
+        var groups = document.querySelectorAll('#config-diff-body .cfgdiff-group');
+        groups.forEach(function(g) {
+            var any = false;
+            var n = g.nextElementSibling;
+            while (n && !n.classList.contains('cfgdiff-group')) {
+                if (n.classList.contains('cfgdiff-obj') && !n.hidden) { any = true; break; }
+                n = n.nextElementSibling;
+            }
+            g.hidden = !any;
+        });
+
+        var readout = document.getElementById('cfgdiff-shown');
+        if (readout) readout.textContent = shown + ' of ' + rows.length + ' shown';
+    }
+
+    // cdWireTablist gives each tablist roving-tabindex keyboard behaviour.
+    function cdWireTablist(root) {
+        root.querySelectorAll('[role="tablist"]').forEach(function(tl) {
+            var tabs = Array.prototype.slice.call(tl.querySelectorAll('[role="tab"]'));
+            tl.addEventListener('keydown', function(e) {
+                var i = tabs.indexOf(document.activeElement);
+                if (i < 0) return;
+                var next = -1;
+                if (e.key === 'ArrowRight') next = (i + 1) % tabs.length;
+                else if (e.key === 'ArrowLeft') next = (i - 1 + tabs.length) % tabs.length;
+                else if (e.key === 'Home') next = 0;
+                else if (e.key === 'End') next = tabs.length - 1;
+                if (next >= 0) { e.preventDefault(); tabs[next].focus(); }
+            });
+        });
+    }
+
+    // renderRawDiff renders the server-computed aligned line diff. The server did
+    // the Myers alignment and the volatile masking; this turns rows into HTML,
+    // folds long unchanged runs, and highlights intra-line word changes.
+    function renderRawDiff(ld, which) {
+        if (!ld || !ld.rows || !ld.rows.length) {
+            return '<div class="cfgdiff-placeholder">No differences found</div>';
+        }
+        var out = [];
+        if (ld.truncated) {
+            out.push('<div class="cfgdiff-truncated">' +
+                esc(ld.note || 'Diff truncated for size. Download both revisions to compare offline.') + '</div>');
+        }
+        out.push('<div class="cfgdiff-lines">' +
+            (which === 'split' ? renderSplit(ld.rows) : renderUnified(ld.rows)) + '</div>');
+        return out.join('');
+    }
+
     function renderUnified(rows) {
         var parts = [];
-        var i = 0;
-        var groupId = 0;
+        var i = 0, groupId = 0;
         while (i < rows.length) {
-            // Gather a run of unchanged (equal or volatile) rows.
             if (rows[i].op === 'equal' || rows[i].op === 'volatile') {
                 var j = i;
                 while (j < rows.length && (rows[j].op === 'equal' || rows[j].op === 'volatile')) j++;
                 var run = rows.slice(i, j);
+
+                // A run that is ONLY volatile is suppressed noise: collapse it to a
+                // single chip naming the patterns, rather than N rows an operator
+                // has to read past.
+                if (run.length && run.every(function(r) { return r.op === 'volatile'; })) {
+                    parts.push(volatileChip(run));
+                    i = j;
+                    continue;
+                }
                 if (run.length > 4) {
-                    // Keep 2 lines of leading/trailing context; collapse the middle.
                     run.slice(0, 2).forEach(function(r) { parts.push(unifiedRow(r)); });
                     var hidden = run.slice(2, run.length - 2);
                     var gid = 'ld-ctx-' + (groupId++);
-                    parts.push('<button type="button" data-action="ld-expand" data-target="' + gid + '" ' +
-                        'style="display:block;width:100%;text-align:center;cursor:pointer;border:0;border-top:1px solid var(--fwmon-border);border-bottom:1px solid var(--fwmon-border);background:var(--fwmon-card-bg);color:var(--fwmon-accent);padding:3px 8px;font-family:sans-serif;font-size:0.78rem">' +
+                    parts.push('<button type="button" class="cfgdiff-expand" data-action="ld-expand" ' +
+                        'data-target="' + gid + '" aria-expanded="false" aria-controls="' + gid + '">' +
                         '⋯ ' + hidden.length + ' unchanged line' + (hidden.length === 1 ? '' : 's') + ' — click to expand</button>');
-                    parts.push('<div id="' + gid + '" style="display:none">' +
-                        hidden.map(unifiedRow).join('') + '</div>');
+                    parts.push('<div id="' + gid + '" hidden>' + hidden.map(unifiedRow).join('') + '</div>');
                     run.slice(run.length - 2).forEach(function(r) { parts.push(unifiedRow(r)); });
                 } else {
                     run.forEach(function(r) { parts.push(unifiedRow(r)); });
@@ -1910,11 +2221,10 @@
                 i = j;
                 continue;
             }
-            // A changed region: pair adjacent delete+insert for word-level highlight.
             if (rows[i].op === 'delete' && i + 1 < rows.length && rows[i + 1].op === 'insert') {
                 var pair = wordDiffPair(rows[i].text, rows[i + 1].text);
-                parts.push(diffLine('-', 'rgba(248,81,73,0.15)', '#ff7b72', pair[0]));
-                parts.push(diffLine('+', 'rgba(63,185,80,0.15)', '#3fb950', pair[1]));
+                parts.push('<div class="cfgdiff-line" data-op="delete">' + pair[0] + '</div>');
+                parts.push('<div class="cfgdiff-line" data-op="insert">' + pair[1] + '</div>');
                 i += 2;
                 continue;
             }
@@ -1924,59 +2234,56 @@
         return parts.join('');
     }
 
-    // unifiedRow renders a single non-paired row.
+    function volatileChip(run) {
+        var names = {};
+        run.forEach(function(r) { if (r.vname) names[r.vname] = true; });
+        var list = Object.keys(names);
+        return '<div class="cfgdiff-volatile">⌁ ' + run.length + ' volatile line' +
+            (run.length === 1 ? '' : 's') + ' suppressed' +
+            (list.length ? ' (' + esc(list.join(', ')) + ')' : '') + '</div>';
+    }
+
     function unifiedRow(r) {
-        if (r.op === 'volatile') {
-            return '<div style="background:var(--fwmon-panel-bg);color:var(--fwmon-text-faint);' + CD_ROW + '"> &nbsp; <em>(volatile' +
-                (r.vname ? ': ' + esc(r.vname) : '') + ')</em></div>';
-        }
-        if (r.op === 'delete') return diffLine('-', 'rgba(248,81,73,0.15)', '#ff7b72', esc(r.text));
-        if (r.op === 'insert') return diffLine('+', 'rgba(63,185,80,0.15)', '#3fb950', esc(r.text));
-        return '<div style="color:var(--fwmon-text-dim);' + CD_ROW + '">  ' + esc(r.text) + '</div>';
+        if (r.op === 'volatile') return volatileChip([r]);
+        return '<div class="cfgdiff-line" data-op="' + esc(r.op) + '">' + esc(r.text) + '</div>';
     }
 
-    // diffLine wraps a prefixed diff line. `inner` is ALREADY-ESCAPED HTML.
-    function diffLine(prefix, bg, color, innerHTML) {
-        return '<div style="background:' + bg + ';color:' + color + ';' + CD_ROW + '">' + prefix + ' ' + innerHTML + '</div>';
-    }
-
-    // renderSplit builds a two-column (old | new) view driven by the same op list.
     function renderSplit(rows) {
         var left = [], right = [];
-        var cell = function(bg, color, txt) {
-            return '<div style="background:' + bg + ';color:' + color + ';' + CD_ROW + ';min-height:1.2em">' + txt + '</div>';
+        var cell = function(op, html) {
+            return '<div class="cfgdiff-line"' + (op ? ' data-op="' + op + '"' : '') + '>' + html + '</div>';
         };
         for (var i = 0; i < rows.length; i++) {
             var r = rows[i];
             if (r.op === 'equal') {
-                left.push(cell('transparent', '#c9d1d9', esc(r.text)));
-                right.push(cell('transparent', '#c9d1d9', esc(r.text)));
+                left.push(cell('equal', esc(r.text)));
+                right.push(cell('equal', esc(r.text)));
             } else if (r.op === 'volatile') {
-                var v = '<em>(volatile' + (r.vname ? ': ' + esc(r.vname) : '') + ')</em>';
-                left.push(cell('#21262d', '#8b949e', v));
-                right.push(cell('#21262d', '#8b949e', v));
+                left.push(volatileChip([r]));
+                right.push(volatileChip([r]));
             } else if (r.op === 'delete' && i + 1 < rows.length && rows[i + 1].op === 'insert') {
                 var pair = wordDiffPair(r.text, rows[i + 1].text);
-                left.push(cell('rgba(248,81,73,0.15)', '#ff7b72', pair[0]));
-                right.push(cell('rgba(63,185,80,0.15)', '#3fb950', pair[1]));
+                left.push(cell('delete', pair[0]));
+                right.push(cell('insert', pair[1]));
                 i++;
             } else if (r.op === 'delete') {
-                left.push(cell('rgba(248,81,73,0.15)', '#ff7b72', esc(r.text)));
-                right.push(cell('transparent', '#c9d1d9', ''));
+                left.push(cell('delete', esc(r.text)));
+                right.push(cell('', ''));
             } else if (r.op === 'insert') {
-                left.push(cell('transparent', '#c9d1d9', ''));
-                right.push(cell('rgba(63,185,80,0.15)', '#3fb950', esc(r.text)));
+                left.push(cell('', ''));
+                right.push(cell('insert', esc(r.text)));
             }
         }
-        return '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0">' +
-            '<div style="border-right:1px solid var(--fwmon-border)">' + left.join('') + '</div>' +
-            '<div>' + right.join('') + '</div></div>';
+        return '<div class="cfgdiff-split">' +
+            '<div class="col">' + left.join('') + '</div>' +
+            '<div class="divider"></div>' +
+            '<div class="col">' + right.join('') + '</div></div>';
     }
 
     // wordDiffPair returns [oldHTML, newHTML] with changed tokens highlighted, but
-    // only when the two lines are similar enough to make token alignment
-    // meaningful (else it degrades to plain escaped text). Tokens are ESCAPED
-    // FIRST, then wrapped — wrapping already-escaped text can split HTML entities.
+    // only when the two are similar enough for token alignment to mean anything
+    // (else it degrades to plain escaped text). Tokens are ESCAPED FIRST, then
+    // wrapped — wrapping already-escaped text can split an HTML entity.
     function wordDiffPair(oldText, newText) {
         oldText = oldText || '';
         newText = newText || '';
@@ -1990,11 +2297,9 @@
         if (common.count / denom < 0.5) {
             return [esc(oldText), esc(newText)];
         }
-        return [markTokens(a, common.a, '#f85149'), markTokens(b, common.b, '#3fb950')];
+        return [markTokens(a, common.a, 'del'), markTokens(b, common.b, 'ins')];
     }
 
-    // wordLCS returns the length of the longest common token subsequence plus the
-    // set of matched indices on each side.
     function wordLCS(a, b) {
         var n = a.length, m = b.length;
         var dp = [];
@@ -2014,117 +2319,88 @@
         return { a: aMatch, b: bMatch, count: count };
     }
 
-    // markTokens escapes each token, then wraps non-matched (changed) tokens in a
-    // highlight span. Escape-then-wrap order is deliberate (see wordDiffPair).
-    function markTokens(tokens, matched, color) {
+    // markTokens escapes each token, then wraps changed ones. The highlight
+    // carries an underline as well as a tint so it survives colour-blindness and
+    // low-contrast displays.
+    function markTokens(tokens, matched, cls) {
         return tokens.map(function(tok, idx) {
             var e = esc(tok);
-            if (matched[idx]) return e;
-            return '<span style="background:' + color + '33;color:' + color + ';border-radius:2px">' + e + '</span>';
+            return matched[idx] ? e : '<span class="cfgdiff-tok ' + cls + '">' + e + '</span>';
         }).join('');
     }
 
-    // sevColor maps a configdiff severity to a display color.
-    function sevColor(s) {
-        return s === 'critical' ? '#f85149'
-             : s === 'high'     ? '#ff7b72'
-             : s === 'medium'   ? '#d2992a'
-             :                    '#6e7681';
-    }
-
-    // attributionBadge renders the change-attribution badge for a revision, using
-    // the tri-state: attributed (who/how), checked-but-unmatched (out-of-band), or
-    // never-checked (nothing — e.g. a first-seen/merged row). attribution_checked
-    // disambiguates an empty changed_by so we never mislabel an un-correlated row.
-    function attributionBadge(rev) {
-        if (!rev) return '';
-        if (rev.changed_by) {
-            var who = esc(rev.changed_by) + (rev.change_method ? ' via ' + esc(rev.change_method) : '');
-            return ' &nbsp; <span style="background:#1f6feb;color:#fff;border-radius:10px;padding:2px 8px;font-size:0.78rem">changed by ' + who + '</span>';
-        }
-        if (rev.attribution_checked && rev.attributed === false) {
-            return ' &nbsp; <span style="background:#8957e5;color:#fff;border-radius:10px;padding:2px 8px;font-size:0.78rem" title="No authenticated admin session matched this change">⚠ possible out-of-band change</span>';
-        }
-        return '';
-    }
-
-    // renderObjectDiff builds the per-object semantic diff view: a summary banner,
-    // then collapsible per-object cards grouped by kind, each showing its risk
-    // badge and attribute-level before/after.
-    function renderObjectDiff(changes, summary) {
-        var out = [];
-        var sev = summary.max_severity || 'info';
-        out.push('<div style="margin:12px;padding:12px;border-radius:8px;background:var(--fwmon-card-bg);border-left:4px solid ' + sevColor(sev) + ';font-family:sans-serif">' +
-            '<strong style="color:var(--fwmon-text-dim)">' + (summary.added || 0) + ' added · ' + (summary.removed || 0) + ' removed · ' + (summary.modified || 0) + ' modified</strong>' +
-            ' &nbsp; <span style="background:' + sevColor(sev) + ';color:#fff;border-radius:10px;padding:2px 8px;font-size:0.78rem">' + esc(sev) + '</span>' +
-            (summary.impact ? '<div style="margin-top:8px;color:var(--fwmon-text-faint);font-size:0.88rem">' + esc(summary.impact) + '</div>' : '') +
-            '</div>');
-
-        var lastKind = null;
-        changes.forEach(function(ch, idx) {
-            if (ch.kind !== lastKind) {
-                out.push('<div style="margin:14px 12px 4px;color:var(--fwmon-accent);font-family:monospace;font-size:0.82rem;text-transform:uppercase;letter-spacing:0.04em">' + esc(ch.kind) + '</div>');
-                lastKind = ch.kind;
-            }
-            var opColor = ch.op === 'added' ? '#3fb950' : ch.op === 'removed' ? '#f85149' : '#58a6ff';
-            var rsev = (ch.risk && ch.risk.severity) || 'info';
-            out.push('<div style="margin:0 12px 8px;border:1px solid var(--fwmon-border);border-radius:8px;overflow:hidden">');
-            out.push('<div data-action="cd-toggle" data-idx="' + idx + '" style="cursor:pointer;display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--fwmon-card-bg);font-family:sans-serif">' +
-                '<span style="color:' + opColor + ';font-weight:600;font-size:0.78rem;min-width:74px">' + esc((ch.op || '').toUpperCase()) + '</span>' +
-                '<span style="color:var(--fwmon-text-dim);font-family:monospace">' + esc(ch.name || ch.path) + '</span>' +
-                '<span style="background:' + sevColor(rsev) + ';color:#fff;border-radius:10px;padding:1px 8px;font-size:0.74rem">' + esc(rsev) + '</span>' +
-                ((ch.risk && ch.risk.summary) ? '<span style="color:var(--fwmon-text-faint);font-size:0.82rem;margin-left:auto;text-align:right">' + esc(ch.risk.summary) + '</span>' : '') +
-                '</div>');
-            out.push('<div id="cd-card-b-' + idx + '" style="display:none;padding:6px 12px;background:var(--fwmon-bg)">');
-            out.push('<table style="width:100%;border-collapse:collapse;font-family:monospace;font-size:0.85rem">');
-            (ch.attrs || []).forEach(function(d) {
-                var oldc = d.old ? '<span style="color:var(--fwmon-sig-crit)">' + esc(d.old) + '</span>' : '<span style="color:var(--fwmon-text-faint)">—</span>';
-                var newc = d.new ? '<span style="color:var(--fwmon-sig-ok)">' + esc(d.new) + '</span>' : '<span style="color:var(--fwmon-text-faint)">—</span>';
-                out.push('<tr>' +
-                    '<td style="color:var(--fwmon-text-faint);padding:2px 10px 2px 0;vertical-align:top;white-space:nowrap">' + esc(d.key) + '</td>' +
-                    '<td style="padding:2px 6px;vertical-align:top">' + oldc + '</td>' +
-                    '<td style="color:var(--fwmon-text-faint);padding:2px 6px">→</td>' +
-                    '<td style="padding:2px 6px;vertical-align:top">' + newc + '</td>' +
-                    '</tr>');
-            });
-            out.push('</table></div></div>');
-        });
-        return out.join('');
-    }
-
-    // __cdToggle expands/collapses one object card's attribute table.
+    // __cdToggle expands/collapses one object's attribute list.
     window.__cdToggle = function(i) {
-        var e = document.getElementById('cd-card-b-' + i);
-        if (e) e.style.display = (e.style.display === 'none' ? 'block' : 'none');
+        var panel = document.getElementById('cfgdiff-panel-' + i);
+        var btn = document.querySelector('[data-action="cd-toggle"][data-idx="' + i + '"]');
+        if (!panel || !btn) return;
+        var open = panel.hidden;
+        panel.hidden = !open;
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
     };
 
-    // __cdView switches between the object view and the raw line diff.
+    window.__cdSetAllExpanded = function(open) {
+        document.querySelectorAll('#config-diff-body .cfgdiff-attrs').forEach(function(p) { p.hidden = !open; });
+        document.querySelectorAll('#config-diff-body [data-action="cd-toggle"]').forEach(function(b) {
+            b.setAttribute('aria-expanded', open ? 'true' : 'false');
+        });
+    };
+
+    // __cdView switches between the object view and the raw text.
     window.__cdView = function(which) {
-        var o = document.getElementById('cd-objects');
-        var r = document.getElementById('cd-raw');
-        var bo = document.getElementById('cd-btn-obj');
-        var br = document.getElementById('cd-btn-raw');
-        if (!o || !r) return;
-        var raw = which === 'raw';
-        o.style.display = raw ? 'none' : 'block';
-        r.style.display = raw ? 'block' : 'none';
-        if (bo) bo.style.background = raw ? '#21262d' : '#1f6feb';
-        if (br) br.style.background = raw ? '#1f6feb' : '#21262d';
+        cdState.view = which === 'raw' ? 'raw' : 'obj';
+        document.querySelectorAll('[data-action="cd-view"]').forEach(function(b) {
+            b.setAttribute('aria-selected', b.dataset.view === cdState.view ? 'true' : 'false');
+        });
+        renderActiveView();
     };
 
-    // __ldView switches the line diff between unified and split layouts.
+    // __ldView switches the raw text between unified and split.
     window.__ldView = function(which) {
-        var u = document.getElementById('ld-unified');
-        var s = document.getElementById('ld-split');
-        var bu = document.getElementById('ld-btn-unified');
-        var bs = document.getElementById('ld-btn-split');
-        if (!u || !s) return;
-        var split = which === 'split';
-        u.style.display = split ? 'none' : 'block';
-        s.style.display = split ? 'block' : 'none';
-        if (bu) { bu.style.background = split ? '#21262d' : '#1f6feb'; bu.style.color = split ? '#c9d1d9' : '#fff'; }
-        if (bs) { bs.style.background = split ? '#1f6feb' : '#21262d'; bs.style.color = split ? '#fff' : '#c9d1d9'; }
+        // Two ~40-character columns of config text is unreadable; coerce rather
+        // than hand the operator a horizontal-scroll trap.
+        if (which === 'split' && window.innerWidth <= 900) which = 'unified';
+        cdState.ldView = which === 'split' ? 'split' : 'unified';
+        renderActiveView();
     };
+
+    window.__cdSevFilter = function(sev, el) {
+        if (!cdState.filters.sevs) cdState.filters.sevs = new Set();
+        var on = el.getAttribute('aria-pressed') === 'true';
+        if (on) cdState.filters.sevs.delete(sev); else cdState.filters.sevs.add(sev);
+        el.setAttribute('aria-pressed', on ? 'false' : 'true');
+        if (cdState.filters.sevs.size === 0) cdState.filters.sevs = null;
+        applyCdFilter();
+    };
+
+    window.__cdGroupBy = function(group) {
+        cdState.group = group === 'severity' ? 'severity' : 'kind';
+        document.querySelectorAll('[data-action="cd-group-by"]').forEach(function(b) {
+            b.setAttribute('aria-pressed', b.dataset.group === cdState.group ? 'true' : 'false');
+        });
+        cdState.cache.obj = null;
+        renderActiveView();
+    };
+
+    window.__cdSearch = function(q) {
+        cdState.filters.q = String(q || '').trim().toLowerCase();
+        applyCdFilter();
+    };
+
+    // The Split pill's disabled state depends on viewport width, which is
+    // evaluated when the chrome is built. Without this, rotating a phone or
+    // dragging a window narrow leaves the pill looking available while
+    // __ldView silently coerces the click back to unified — an affordance that
+    // lies. Only the raw view has width-dependent chrome, so nothing else needs
+    // re-rendering.
+    window.addEventListener('resize', function() {
+        var modal = document.getElementById('config-diff-modal');
+        if (!modal || modal.classList.contains('hidden')) return;
+        if (cdState.view !== 'raw') return;
+        clearTimeout(window.__cdResizeT);
+        window.__cdResizeT = setTimeout(function() { renderActiveView(); }, 150);
+    });
+    // CFGDIFF-UI:END
 
     window.viewConfigRevision = function(revId) {
         fetch('/admin/api/devices/' + deviceId + '/config-history/' + revId + '/view', { credentials: 'same-origin' })
@@ -2385,14 +2661,40 @@
         'cd-toggle': function(el) {
             window.__cdToggle(parseInt(el.dataset.idx, 10));
         },
+        'cd-sev-filter': function(el) {
+            window.__cdSevFilter(el.dataset.sev, el);
+        },
+        'cd-group-by': function(el) {
+            window.__cdGroupBy(el.dataset.group);
+        },
+        'cd-expand-all': function() {
+            window.__cdSetAllExpanded(true);
+        },
+        'cd-collapse-all': function() {
+            window.__cdSetAllExpanded(false);
+        },
         // Line diff: unified/split toggle + expand a collapsed unchanged run.
         'ld-view': function(el) {
             window.__ldView(el.dataset.view);
         },
         'ld-expand': function(el) {
             var box = document.getElementById(el.dataset.target);
-            if (box) box.style.display = 'block';
-            el.style.display = 'none';
+            if (box) box.hidden = false;
+            // Keep the button in the flow rather than removing it: hiding the
+            // element the user just activated destroys their focus position.
+            el.setAttribute('aria-expanded', 'true');
+            el.disabled = true;
+            el.textContent = '⋯ expanded';
+        }
+    });
+
+    // The search box needs `input`, not `click`. input bubbles, so delegation
+    // works and no per-render binding is needed — which matters because the
+    // control bar is rebuilt on every modal open.
+    AC.delegateEvent('input', {
+        'cd-search': function(el) {
+            clearTimeout(window.__cdSearchT);
+            window.__cdSearchT = setTimeout(function() { window.__cdSearch(el.value); }, 120);
         }
     });
 

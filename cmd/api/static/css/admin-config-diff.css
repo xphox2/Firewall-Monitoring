@@ -1,0 +1,572 @@
+/* Config-diff modal — the change-review surface on the device-detail page.
+ *
+ * THREE RULES FOR EDITING THIS FILE:
+ *
+ * 1. Colour comes from design-system tokens, never a literal hex. Severity and
+ *    op colour are selected in CSS via [data-sev] / [data-op] hooks so the JS
+ *    only ever emits a state string. The previous implementation picked hex in
+ *    JS (sevColor(), an opColor ternary), which is how it evaded
+ *    TestNoThemeBlindInlineTextColor — that guard only matches a literal
+ *    `color:#hex` in a style string, not a value routed through a variable.
+ *
+ * 2. Never transition `color`. Chromium pins var() across a theme flip, so a
+ *    transitioned colour freezes on the old theme's ink. Transition only
+ *    background-color, border-color, box-shadow and opacity.
+ *
+ * 3. Scope everything under #config-diff-modal by ID, not by adding a class to
+ *    the modal element. Two guardrails depend on the exact markup:
+ *    modalaria_audit069_test.go matches `<div class="modal" id="...">` — a
+ *    second class breaks it — and device_detail_html_test.go requires the
+ *    literal `class="modal-content"`.
+ *
+ * Loaded after admin-design-system.css and before admin-tw-bridge.css, which
+ * must remain last (TestStylesheetOrder_ConsoleFontsWin).
+ */
+
+/* ---------- modal shell ---------- */
+
+#config-diff-modal .modal-content {
+    width: min(1440px, 96vw);
+    height: min(88vh, 1000px);
+    max-width: none;
+    max-height: none;
+    padding: 0;              /* padding moves into the bands so sticky spans edge-to-edge */
+    overflow: hidden;        /* the scroller scrolls, not the shell */
+    display: flex;
+    flex-direction: column;
+}
+
+#config-diff-modal .modal-header {
+    padding: var(--fwmon-sp-3) var(--fwmon-sp-4);
+    margin: 0;
+    border-bottom: 1px solid var(--fwmon-border);
+}
+
+#config-diff-meta {
+    font-family: var(--fwmon-font-mono);
+    font-size: var(--fwmon-t-data, 0.78rem);
+    color: var(--fwmon-text-faint);
+}
+
+/* ---------- severity + op colour hooks ---------- */
+
+.cfgdiff-verdict[data-sev="critical"],
+.cfgdiff-obj[data-sev="critical"] { --sev: var(--fwmon-sig-crit); }
+.cfgdiff-verdict[data-sev="high"],
+.cfgdiff-obj[data-sev="high"]     { --sev: var(--fwmon-sig-error); }
+.cfgdiff-verdict[data-sev="medium"],
+.cfgdiff-obj[data-sev="medium"]   { --sev: var(--fwmon-sig-warn); }
+.cfgdiff-verdict[data-sev="info"],
+.cfgdiff-obj[data-sev="info"]     { --sev: var(--fwmon-sig-info); }
+.cfgdiff-verdict[data-sev="ok"]   { --sev: var(--fwmon-sig-ok); }
+
+.cfgdiff-obj[data-op="added"]    { --op: var(--fwmon-sig-ok); }
+.cfgdiff-obj[data-op="removed"]  { --op: var(--fwmon-sig-crit); }
+.cfgdiff-obj[data-op="modified"] { --op: var(--fwmon-accent); }
+
+/* ---------- verdict band ---------- */
+
+.cfgdiff-verdict {
+    position: relative;
+    padding: var(--fwmon-sp-3) var(--fwmon-sp-4);
+    background: var(--fwmon-card-bg);
+    border-bottom: 1px solid var(--fwmon-border);
+    border-left: 3px solid var(--sev, var(--fwmon-sig-info));
+    font-family: var(--fwmon-font-ui);
+}
+.cfgdiff-verdict:focus { outline: none; }
+
+.cfgdiff-verdict-line {
+    display: flex;
+    align-items: center;
+    gap: var(--fwmon-sp-2);
+    flex-wrap: wrap;
+}
+
+.cfgdiff-impact {
+    color: var(--fwmon-text);
+    font-weight: 500;
+    min-width: 0;
+}
+
+.cfgdiff-stats {
+    margin-top: var(--fwmon-sp-2);
+    display: flex;
+    align-items: center;
+    gap: var(--fwmon-sp-2);
+    flex-wrap: wrap;
+    font-family: var(--fwmon-font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: var(--fwmon-t-data, 0.78rem);
+    color: var(--fwmon-text-dim);
+}
+.cfgdiff-stats .cfgdiff-attrib { margin-left: auto; }
+
+.cfgdiff-verdict-sub {
+    margin-top: var(--fwmon-sp-2);
+    color: var(--fwmon-text-faint);
+    font-size: 0.85rem;
+}
+
+/* Outlined chips only — a filled badge needs its own ink for AA in both themes,
+ * which is a class of bug this avoids rather than manages. */
+.cfgdiff-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-family: var(--fwmon-font-ui);
+    font-size: var(--fwmon-t-label, 0.72rem);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    color: var(--chip, var(--fwmon-text-dim));
+    background: color-mix(in srgb, var(--chip, var(--fwmon-text-dim)) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--chip, var(--fwmon-text-dim)) 35%, transparent);
+}
+.cfgdiff-chip::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+}
+.cfgdiff-chip.no-dot::before { display: none; }
+
+.cfgdiff-chip[data-sev="critical"] { --chip: var(--fwmon-sig-crit); }
+.cfgdiff-chip[data-sev="high"]     { --chip: var(--fwmon-sig-error); }
+.cfgdiff-chip[data-sev="medium"]   { --chip: var(--fwmon-sig-warn); }
+.cfgdiff-chip[data-sev="info"]     { --chip: var(--fwmon-sig-info); }
+.cfgdiff-chip[data-sev="ok"]       { --chip: var(--fwmon-sig-ok); }
+.cfgdiff-chip.attrib               { --chip: var(--fwmon-accent); }
+.cfgdiff-chip.oob                  { --chip: var(--fwmon-sig-warn); }
+
+/* ---------- control bar ---------- */
+
+.cfgdiff-controls {
+    padding: var(--fwmon-sp-2) var(--fwmon-sp-4);
+    background: var(--fwmon-card-bg);
+    border-bottom: 1px solid var(--fwmon-border);
+    display: flex;
+    flex-direction: column;
+    gap: var(--fwmon-sp-2);
+}
+
+.cfgdiff-ctl-row {
+    display: flex;
+    align-items: center;
+    gap: var(--fwmon-sp-2);
+    flex-wrap: wrap;
+}
+
+.cfgdiff-tabs { display: inline-flex; gap: 4px; }
+
+/* Layout switcher above the raw text, inside the scroller. */
+.cfgdiff-rawchrome {
+    padding: 6px var(--fwmon-sp-3);
+    border-bottom: 1px solid var(--fwmon-border);
+}
+
+.cfgdiff-tab {
+    cursor: pointer;
+    border: 1px solid var(--fwmon-border);
+    border-radius: var(--fwmon-radius-sm, 6px);
+    padding: 5px 12px;
+    background: var(--fwmon-panel-bg);
+    color: var(--fwmon-text-dim);
+    font-family: var(--fwmon-font-ui);
+    font-size: 0.82rem;
+    transition: background-color 120ms ease, border-color 120ms ease;
+}
+.cfgdiff-tab:hover { background: var(--fwmon-hover); }
+.cfgdiff-tab[aria-selected="true"],
+.cfgdiff-tab[aria-pressed="true"] {
+    background: color-mix(in srgb, var(--fwmon-accent) 18%, transparent);
+    border-color: color-mix(in srgb, var(--fwmon-accent) 55%, transparent);
+    color: var(--fwmon-accent);
+}
+.cfgdiff-tab[disabled] { opacity: 0.45; cursor: not-allowed; }
+
+.cfgdiff-search {
+    flex: 1 1 200px;
+    min-width: 140px;
+    padding: 5px 10px;
+    border: 1px solid var(--fwmon-border);
+    border-radius: var(--fwmon-radius-sm, 6px);
+    background: var(--fwmon-panel-bg);
+    color: var(--fwmon-text);
+    font-family: var(--fwmon-font-ui);
+    font-size: 0.82rem;
+}
+.cfgdiff-search::placeholder { color: var(--fwmon-text-mute); }
+.cfgdiff-search:focus {
+    outline: none;
+    border-color: var(--fwmon-accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--fwmon-accent) 25%, transparent);
+}
+
+.cfgdiff-sevpills { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+
+.cfgdiff-count {
+    font-family: var(--fwmon-font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: var(--fwmon-t-label, 0.72rem);
+    color: var(--fwmon-text-faint);
+    margin-left: auto;
+}
+
+/* ---------- scroller ---------- */
+
+.cfgdiff-body {
+    flex: 1;
+    overflow: auto;
+    overscroll-behavior: contain;
+    background: var(--fwmon-bg);
+    min-height: 200px;
+}
+.cfgdiff-body:focus-visible {
+    outline: 2px solid var(--fwmon-accent);
+    outline-offset: -2px;
+}
+
+.cfgdiff-placeholder {
+    padding: var(--fwmon-sp-5) var(--fwmon-sp-4);
+    color: var(--fwmon-text-faint);
+    font-family: var(--fwmon-font-ui);
+    text-align: center;
+}
+.cfgdiff-placeholder.cfgdiff-error { color: var(--fwmon-sig-crit); }
+
+/* ---------- group headers ---------- */
+
+.cfgdiff-group {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    align-items: baseline;
+    gap: var(--fwmon-sp-2);
+    padding: var(--fwmon-sp-2) var(--fwmon-sp-4) 5px;
+    margin-top: var(--fwmon-sp-3);
+    background: var(--fwmon-bg);
+    border-bottom: 2px solid color-mix(in srgb, var(--sev, var(--fwmon-border)) 45%, transparent);
+    font-family: var(--fwmon-font-mono);
+    font-size: var(--fwmon-t-data, 0.78rem);
+    color: var(--fwmon-text);
+}
+.cfgdiff-group:first-child { margin-top: 0; }
+.cfgdiff-group .sep { color: var(--fwmon-text-mute); }
+.cfgdiff-group .cfgdiff-group-n {
+    margin-left: auto;
+    color: var(--fwmon-text-faint);
+    font-size: var(--fwmon-t-label, 0.72rem);
+}
+
+/* ---------- object rows ---------- */
+
+.cfgdiff-obj {
+    margin: 0 var(--fwmon-sp-4) var(--fwmon-sp-2);
+    border: 1px solid var(--fwmon-border);
+    border-left: 2px solid var(--sev, var(--fwmon-border));
+    border-radius: var(--fwmon-radius, 8px);
+    overflow: hidden;
+    background: var(--fwmon-card-bg);
+}
+.cfgdiff-obj[hidden] { display: none; }
+
+.cfgdiff-obj-head {
+    width: 100%;
+    display: grid;
+    /* Both text columns are minmax(0, …) so a long composite key or a long risk
+     * summary truncates instead of forcing the row wider than the modal. `auto`
+     * on the name column let it push the summary off-screen. */
+    grid-template-columns: 74px minmax(0, 2fr) auto minmax(0, 3fr);
+    align-items: center;
+    gap: var(--fwmon-sp-2);
+    padding: 7px var(--fwmon-sp-3);
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    text-align: left;
+    font-family: var(--fwmon-font-ui);
+    transition: background-color 120ms ease;
+}
+.cfgdiff-obj-head:hover { background: var(--fwmon-hover); }
+.cfgdiff-obj-head:focus-visible {
+    outline: 2px solid var(--fwmon-accent);
+    outline-offset: -2px;
+}
+
+/* The operation reads as a WORD in a fixed column, carried over from the
+ * FortiGate view. It is real text, so it is announced by a screen reader and
+ * does not rely on colour alone to convey meaning. */
+.cfgdiff-op {
+    font-family: var(--fwmon-font-ui);
+    font-size: var(--fwmon-t-label, 0.72rem);
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    color: var(--op, var(--fwmon-text-dim));
+    white-space: nowrap;
+}
+
+.cfgdiff-name {
+    font-family: var(--fwmon-font-mono);
+    font-size: var(--fwmon-t-data, 0.8rem);
+    color: var(--fwmon-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+.cfgdiff-name .path { color: var(--fwmon-text-mute); }
+
+.cfgdiff-why {
+    margin-left: auto;
+    text-align: right;
+    color: var(--fwmon-text-faint);
+    font-size: 0.8rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+/* ---------- attribute list ----------
+ * A list, not a table. Reflowing a real <table> needs display:block on tr/td,
+ * which destroys the row/cell semantics screen readers rely on; a list with one
+ * visually-hidden sentence per item reflows with one line of CSS and reads
+ * better aloud. */
+
+.cfgdiff-attrs {
+    margin: 0;
+    padding: 5px var(--fwmon-sp-3) var(--fwmon-sp-2);
+    list-style: none;
+    background: var(--fwmon-bg);
+    border-top: 1px solid var(--fwmon-border);
+}
+.cfgdiff-attrs[hidden] { display: none; }
+
+.cfgdiff-attr {
+    display: grid;
+    grid-template-columns: minmax(90px, max-content) minmax(0, 1fr) 16px minmax(0, 1fr);
+    align-items: start;
+    gap: var(--fwmon-sp-2);
+    padding: 2px 0;
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.8rem;
+    line-height: 1.45;
+}
+
+/* Attribute keys stay lowercase mono, as in the FortiGate view. Uppercasing them
+ * is actively worse here: OPNsense keys are long and snake_cased
+ * (esp_proposals, remote_ts, webgui.protocol), and shouting them costs
+ * readability without adding information. */
+.cfgdiff-key {
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.78rem;
+    color: var(--fwmon-text-faint);
+    padding-top: 1px;
+    white-space: nowrap;
+}
+
+/* Value text stays --fwmon-text on a tinted wash. The signal colour is carried
+ * by the wash and the rail only: signal-on-wash runs ~3:1 and fails AA in dark,
+ * worse in day. */
+.cfgdiff-old,
+.cfgdiff-new {
+    color: var(--fwmon-text);
+    word-break: break-all;
+    white-space: pre-wrap;
+    padding: 0 5px;
+    border-radius: 3px;
+    /* Hug the value rather than filling the column: a full-width wash behind a
+     * short value like `1` reads as a huge red or green bar and drowns the row. */
+    justify-self: start;
+    max-width: 100%;
+}
+.cfgdiff-old { background: color-mix(in srgb, var(--fwmon-sig-crit) 13%, transparent); }
+.cfgdiff-new { background: color-mix(in srgb, var(--fwmon-sig-ok) 13%, transparent); }
+/* "Nothing on this side" is an absence, not a value — no wash, just a dash. */
+.cfgdiff-old:empty,
+.cfgdiff-new:empty { background: transparent; padding-left: 0; }
+.cfgdiff-old:empty::after,
+.cfgdiff-new:empty::after { content: "—"; color: var(--fwmon-text-mute); }
+.cfgdiff-arrow { color: var(--fwmon-text-mute); text-align: center; }
+
+/* ---------- raw line diff ---------- */
+
+.cfgdiff-lines {
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.8rem;
+    line-height: 1.45;
+}
+
+.cfgdiff-line {
+    padding: 1px var(--fwmon-sp-3) 1px 26px;
+    position: relative;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: var(--fwmon-text-dim);
+}
+.cfgdiff-line::before {
+    position: absolute;
+    left: 9px;
+    color: var(--ln, var(--fwmon-text-mute));
+    font-weight: 700;
+}
+.cfgdiff-line[data-op="delete"] {
+    --ln: var(--fwmon-sig-crit);
+    background: color-mix(in srgb, var(--fwmon-sig-crit) 13%, transparent);
+    color: var(--fwmon-text);
+}
+.cfgdiff-line[data-op="delete"]::before { content: "−"; }
+.cfgdiff-line[data-op="insert"] {
+    --ln: var(--fwmon-sig-ok);
+    background: color-mix(in srgb, var(--fwmon-sig-ok) 13%, transparent);
+    color: var(--fwmon-text);
+}
+.cfgdiff-line[data-op="insert"]::before { content: "+"; }
+.cfgdiff-line[data-op="equal"]::before { content: " "; }
+
+/* Volatile runs are suppressed noise, not content: one chip line per run with a
+ * hatched rail, never something an operator mistakes for a change. */
+.cfgdiff-volatile {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 2px var(--fwmon-sp-3);
+    padding: 3px 10px;
+    border-radius: var(--fwmon-radius-sm, 6px);
+    border-left: 3px solid transparent;
+    background:
+        linear-gradient(var(--fwmon-panel-bg), var(--fwmon-panel-bg)) padding-box,
+        repeating-linear-gradient(45deg,
+            var(--fwmon-text-mute) 0 2px, transparent 2px 5px) border-box;
+    color: var(--fwmon-text-mute);
+    font-family: var(--fwmon-font-ui);
+    font-size: 0.76rem;
+}
+
+.cfgdiff-expand {
+    display: block;
+    width: 100%;
+    text-align: center;
+    cursor: pointer;
+    border: 0;
+    border-top: 1px solid var(--fwmon-border);
+    border-bottom: 1px solid var(--fwmon-border);
+    background: var(--fwmon-card-bg);
+    color: var(--fwmon-accent);
+    padding: 3px var(--fwmon-sp-3);
+    font-family: var(--fwmon-font-ui);
+    font-size: 0.78rem;
+    transition: background-color 120ms ease;
+}
+.cfgdiff-expand:hover { background: var(--fwmon-hover); }
+
+.cfgdiff-tok {
+    background: color-mix(in srgb, var(--tok, var(--fwmon-accent)) 26%, transparent);
+    color: var(--fwmon-text);
+    border-radius: 2px;
+    box-shadow: inset 0 -1.5px 0 var(--tok, var(--fwmon-accent));
+}
+.cfgdiff-tok.del { --tok: var(--fwmon-sig-crit); }
+.cfgdiff-tok.ins { --tok: var(--fwmon-sig-ok); }
+
+.cfgdiff-split { display: grid; grid-template-columns: 1fr 1px 1fr; }
+.cfgdiff-split .divider { background: var(--fwmon-border); }
+.cfgdiff-split > .col { overflow-x: auto; }
+
+.cfgdiff-truncated {
+    padding: var(--fwmon-sp-2);
+    text-align: center;
+    background: var(--fwmon-panel-bg);
+    color: var(--fwmon-sig-warn);
+    font-family: var(--fwmon-font-ui);
+    font-size: 0.82rem;
+}
+
+/* ---------- footnote ---------- */
+
+.cfgdiff-note {
+    padding: var(--fwmon-sp-2) var(--fwmon-sp-4);
+    border-top: 1px solid var(--fwmon-border);
+    background: var(--fwmon-card-bg);
+    color: var(--fwmon-text-faint);
+    font-family: var(--fwmon-font-ui);
+    font-size: 0.76rem;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.cfgdiff-note[hidden] { display: none; }
+.cfgdiff-note code {
+    color: var(--fwmon-text-dim);
+    background: var(--fwmon-panel-bg);
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-family: var(--fwmon-font-mono);
+}
+
+/* ---------- narrow viewport ---------- */
+
+@media (max-width: 900px) {
+    #config-diff-modal .modal-content {
+        width: 100vw;
+        height: 100vh;         /* fallback first */
+        height: 100dvh;
+        max-width: none;
+        border-radius: 0;
+    }
+    #config-diff-modal .modal-close { min-width: 44px; min-height: 44px; }
+    .cfgdiff-verdict,
+    .cfgdiff-controls,
+    .cfgdiff-note { padding-left: var(--fwmon-sp-3); padding-right: var(--fwmon-sp-3); }
+    .cfgdiff-obj { margin-left: var(--fwmon-sp-2); margin-right: var(--fwmon-sp-2); }
+    .cfgdiff-search { flex-basis: 100%; }
+    /* Two ~40-character columns of config text is not readable; the Split pill is
+     * disabled in JS and coerced to unified rather than left as a horizontal
+     * scroll trap. */
+    .cfgdiff-split { grid-template-columns: 1fr; }
+    .cfgdiff-split .divider { display: none; }
+    .cfgdiff-sevpills { overflow-x: auto; scrollbar-width: none; flex-wrap: nowrap; }
+    .cfgdiff-sevpills::-webkit-scrollbar { display: none; }
+    .cfgdiff-tab { min-height: 32px; }
+}
+
+@media (max-width: 640px) {
+    .cfgdiff-attr { grid-template-columns: 1fr; gap: 1px; }
+    .cfgdiff-arrow { display: none; }
+    .cfgdiff-old::before { content: "− "; color: var(--fwmon-sig-crit); }
+    .cfgdiff-new::before { content: "+ "; color: var(--fwmon-sig-ok); }
+    .cfgdiff-obj-head { grid-template-columns: 20px 1fr; row-gap: 4px; }
+    .cfgdiff-why { grid-column: 1 / -1; margin-left: 0; text-align: left; white-space: normal; }
+    .cfgdiff-stats .cfgdiff-attrib { margin-left: 0; }
+}
+
+/* ---------- print ---------- */
+
+@media print {
+    #config-diff-modal .modal-content {
+        position: static;
+        width: auto;
+        height: auto;
+        max-height: none;
+        overflow: visible;
+        box-shadow: none;
+    }
+    .cfgdiff-controls,
+    .cfgdiff-expand,
+    #config-diff-modal .modal-close { display: none !important; }
+    .cfgdiff-body { overflow: visible; }
+    .cfgdiff-attrs[hidden] { display: block !important; }
+    .cfgdiff-old,
+    .cfgdiff-new,
+    .cfgdiff-line[data-op] { background: transparent !important; }
+    .cfgdiff-line[data-op="delete"],
+    .cfgdiff-old { border-left: 2px solid #000; }
+    .cfgdiff-line[data-op="insert"],
+    .cfgdiff-new { border-left: 2px dotted #000; }
+}

@@ -26,6 +26,7 @@
     <!-- v0.10.212: shared design-system primitives now live in their own file. -->
     <link rel="stylesheet" href="/static/css/admin-design-system.css">
     <link rel="stylesheet" href="/static/css/admin-device-detail.css">
+    <link rel="stylesheet" href="/static/css/admin-config-diff.css">
     <link rel="stylesheet" href="/static/css/admin-tw-bridge.css">
     <style nonce="{{ .Nonce }}">
         @media (max-width: 768px) {
@@ -537,18 +538,21 @@
 
             <!-- Config Diff Modal -->
             <div class="modal" id="config-diff-modal" role="dialog" aria-modal="true" aria-labelledby="config-diff-modal-title">
-                <div class="modal-content" style="width:1400px;max-width:96vw;max-height:90vh;display:flex;flex-direction:column;">
+                <div class="modal-content">
                     <div class="modal-header">
                         <div>
-                            <h2 id="config-diff-modal-title" class="text-[1.2rem] font-bold text-[#e6edf3]">Configuration Diff</h2>
-                            <div style="font-size:0.78rem;color:var(--fwmon-text-faint)" id="config-diff-meta">&nbsp;</div>
+                            <h2 id="config-diff-modal-title" class="text-[1.2rem] font-bold">Configuration Diff</h2>
+                            <div id="config-diff-meta">&nbsp;</div>
                         </div>
                         <button class="modal-close" data-action="close-config-diff">&times;</button>
                     </div>
-                    <div id="config-diff-body" style="flex:1;overflow:auto;background:var(--fwmon-bg);border:1px solid var(--fwmon-border);border-radius:6px;font-family:SFMono-Regular,Consolas,Liberation Mono,Menlo,monospace;font-size:0.8rem;line-height:1.4;white-space:pre;min-height:300px;"></div>
-                    <div style="font-size:0.78rem;color:var(--fwmon-text-faint);margin-top:12px;">
-                        Lines marked <span style="background:var(--fwmon-border);color:var(--fwmon-text-faint);padding:2px 6px;border-radius:4px">(volatile)</span> change every backup due to FortiOS encryption-IV churn — they are not real config changes.
-                    </div>
+                    <!-- Verdict, controls and note are PERSISTENT landmarks so the
+                         renderer never creates or destroys the sticky chrome; only
+                         #config-diff-body is replaced. -->
+                    <div id="config-diff-verdict" class="cfgdiff-verdict" tabindex="-1" hidden></div>
+                    <div id="config-diff-controls" class="cfgdiff-controls" hidden></div>
+                    <div id="config-diff-body" class="cfgdiff-body"></div>
+                    <div id="config-diff-note" class="cfgdiff-note" hidden></div>
                 </div>
             </div>
 
