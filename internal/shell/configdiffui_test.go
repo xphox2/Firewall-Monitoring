@@ -195,6 +195,59 @@ func TestConfigDiffUI_StylesheetSlot(t *testing.T) {
 	}
 }
 
+// TestConfigDiffUI_AttrColumnsAreShared pins where the attribute grid's column
+// tracks live.
+//
+// They must be on the LIST (.cfgdiff-attrs), not on each row (.cfgdiff-attr).
+// With tracks on the row, every row sizes its own columns independently, so a
+// row keyed `Swanctl.Connections` and one keyed `Pools` disagree on the key
+// width and the arrows and values stagger down the panel. A <table> shares
+// column widths across rows for free — which is why the original FortiGate view
+// looked aligned — and subgrid is how a list gets that back without giving up
+// its semantics.
+func TestConfigDiffUI_AttrColumnsAreShared(t *testing.T) {
+	data, err := os.ReadFile(cdCSSPath)
+	if err != nil {
+		t.Skipf("%s not found: %v", cdCSSPath, err)
+	}
+	css := string(data)
+
+	listRule := ruleBody(css, ".cfgdiff-attrs {")
+	if listRule == "" {
+		t.Fatal(".cfgdiff-attrs rule not found")
+	}
+	if !strings.Contains(listRule, "grid-template-columns") {
+		t.Error(".cfgdiff-attrs must define grid-template-columns — the shared tracks are what makes the rows line up")
+	}
+
+	rowRule := ruleBody(css, ".cfgdiff-attr {")
+	if rowRule == "" {
+		t.Fatal(".cfgdiff-attr rule not found")
+	}
+	if !strings.Contains(rowRule, "subgrid") {
+		t.Error(".cfgdiff-attr must use `grid-template-columns: subgrid` so the row adopts the list's tracks instead of computing its own")
+	}
+	if !strings.Contains(css, "@supports not (grid-template-columns: subgrid)") {
+		t.Error("missing the non-subgrid fallback — without it, older engines render every cell in one column")
+	}
+}
+
+// ruleBody returns the declarations of the first CSS rule whose selector line
+// matches sel. Crude, and adequate: this file is hand-written and its rules are
+// not nested.
+func ruleBody(css, sel string) string {
+	i := strings.Index(css, sel)
+	if i < 0 {
+		return ""
+	}
+	rest := css[i+len(sel):]
+	j := strings.Index(rest, "}")
+	if j < 0 {
+		return ""
+	}
+	return rest[:j]
+}
+
 // TestConfigDiffUI_ResponsiveAndPrint pins the narrow-viewport and print rules,
 // and the theme-flip trap.
 func TestConfigDiffUI_ResponsiveAndPrint(t *testing.T) {

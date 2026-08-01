@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.200] - 2026-08-01
+
+### Fixed
+
+**Attribute rows in the config diff now line up.** Each row was its own grid, so every row sized its own columns independently — a row keyed `Swanctl.Connections` and one keyed `Pools` disagreed on the key width, and the arrows and values staggered down the panel instead of forming clean columns. The column tracks now live on the list and each row adopts them via subgrid, which is how the original table-based view got aligned columns for free. Verified across every panel: one x-position per column, including a 54-row panel.
+
+The value columns also hug their content rather than stretching, so the `→` sits just after the old value instead of being pushed hundreds of pixels away across empty space. A guardrail pins the tracks to the list, since the failure is purely visual and nothing else would catch it.
+
 ## [0.11.199] - 2026-07-31
 
 ### Changed
