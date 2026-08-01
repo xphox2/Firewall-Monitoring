@@ -12,25 +12,30 @@ type AttrDelta struct {
 
 // ObjectChange describes how one config object differs between two snapshots,
 // together with its security classification.
+//
+// Vendor is stamped by DiffObjects and selects the classifier rule set. It is
+// additive JSON — the frontend ignores unknown keys.
 type ObjectChange struct {
-	Path  string      `json:"path"`
-	Kind  string      `json:"kind"`
-	Name  string      `json:"name"`
-	Op    string      `json:"op"` // added | removed | modified
-	Attrs []AttrDelta `json:"attrs"`
-	Risk  Risk        `json:"risk"`
+	Path   string      `json:"path"`
+	Kind   string      `json:"kind"`
+	Name   string      `json:"name"`
+	Vendor string      `json:"vendor,omitempty"`
+	Op     string      `json:"op"` // added | removed | modified
+	Attrs  []AttrDelta `json:"attrs"`
+	Risk   Risk        `json:"risk"`
 }
 
 // DiffObjects parses both configs into objects and returns the per-object changes
 // classified by risk. ok is false when the vendor has no ObjectParser, in which
-// case the caller should fall back to the line diff. Both inputs are NORMALIZED
-// before parsing so volatile content (ENC blobs, IV drift) never appears as a
-// change.
+// case the caller should fall back to the line diff.
+//
+// Both inputs are prepared by parseInputFor before parsing, so volatile content
+// (ENC blobs, IV drift, save timestamps) never appears as a change. That is the
+// normalized form for most vendors; a vendor with its own ParseInput gets a
+// preparation tuned for parsing rather than for hashing — see ParseInput.
 func DiffObjects(vendor string, a, b []byte) (changes []ObjectChange, ok bool) {
-	na, _ := Normalize(vendor, a)
-	nb, _ := Normalize(vendor, b)
-	objsA, okA := ParseObjects(vendor, na)
-	objsB, okB := ParseObjects(vendor, nb)
+	objsA, okA := ParseObjects(vendor, parseInputFor(vendor, a))
+	objsB, okB := ParseObjects(vendor, parseInputFor(vendor, b))
 	if !okA || !okB {
 		return nil, false
 	}
@@ -41,14 +46,14 @@ func DiffObjects(vendor string, a, b []byte) (changes []ObjectChange, ok bool) {
 	for path, oa := range ia {
 		ob, present := ib[path]
 		if !present {
-			changes = append(changes, classified(ObjectChange{
+			changes = append(changes, classified(vendor, ObjectChange{
 				Path: oa.Path, Kind: oa.Kind, Name: oa.Name, Op: "removed",
 				Attrs: attrsAsSide(oa.Attrs, false),
 			}))
 			continue
 		}
 		if deltas := diffAttrs(oa.Attrs, ob.Attrs); len(deltas) > 0 {
-			changes = append(changes, classified(ObjectChange{
+			changes = append(changes, classified(vendor, ObjectChange{
 				Path: oa.Path, Kind: oa.Kind, Name: oa.Name, Op: "modified",
 				Attrs: deltas,
 			}))
@@ -56,7 +61,7 @@ func DiffObjects(vendor string, a, b []byte) (changes []ObjectChange, ok bool) {
 	}
 	for path, ob := range ib {
 		if _, present := ia[path]; !present {
-			changes = append(changes, classified(ObjectChange{
+			changes = append(changes, classified(vendor, ObjectChange{
 				Path: ob.Path, Kind: ob.Kind, Name: ob.Name, Op: "added",
 				Attrs: attrsAsSide(ob.Attrs, true),
 			}))
@@ -114,7 +119,11 @@ func attrsAsSide(attrs map[string]string, new bool) []AttrDelta {
 	return out
 }
 
-func classified(c ObjectChange) ObjectChange {
+// classified stamps the vendor and then classifies. The order matters:
+// ClassifyChange dispatches on Vendor, so stamping after classification would
+// silently route every change through the fallback rule set.
+func classified(vendor string, c ObjectChange) ObjectChange {
+	c.Vendor = vendor
 	c.Risk = ClassifyChange(c)
 	return c
 }

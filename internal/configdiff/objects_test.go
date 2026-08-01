@@ -265,8 +265,8 @@ func TestClassifyChangeRules(t *testing.T) {
 func TestClassifyChangesOverall(t *testing.T) {
 	t.Parallel()
 	changes := []ObjectChange{
-		classified(ObjectChange{Path: "system.global", Kind: "system.global", Op: "modified", Attrs: []AttrDelta{{Key: "hostname", Old: `"A"`, New: `"B"`}}}),
-		classified(ObjectChange{Path: "firewall.policy/5", Kind: "firewall.policy", Op: "modified", Attrs: []AttrDelta{{Key: "srcaddr", Old: `"LAN"`, New: `"all"`}}}),
+		classified("fortigate", ObjectChange{Path: "system.global", Kind: "system.global", Op: "modified", Attrs: []AttrDelta{{Key: "hostname", Old: `"A"`, New: `"B"`}}}),
+		classified("fortigate", ObjectChange{Path: "firewall.policy/5", Kind: "firewall.policy", Op: "modified", Attrs: []AttrDelta{{Key: "srcaddr", Old: `"LAN"`, New: `"all"`}}}),
 	}
 	overall, per := ClassifyChanges(changes)
 	if len(per) != 2 {

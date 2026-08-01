@@ -1,6 +1,24 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.197] - 2026-07-31
+
+### Added
+
+**OPNsense and pfSense config changes now get the object view, not just a raw text diff.** The semantic diff is gated on an optional parser capability that only FortiGate implemented, so every other vendor silently fell back to a line delta with no object model, no risk classification, and no severity. OPNsense now has a normalizer and an XML object parser, so a config change is reported as *which objects changed and how* — firewall rules, interfaces, users, IPsec connections — with the same per-object cards FortiGate has had. pfSense shares the normalizer and parser (its `config.xml` is the same lineage) with its own identity key; it is registered but **unverified against a real device**, and inert until the collector learns to fetch a pfSense backup.
+
+### Fixed
+
+**Every OPNsense config change was paging as `critical`.** With no object parser the classifier produced no severity, and attribution — which only understood FortiOS syslog — never matched, so the "no authenticated session" escalation fired on every single change. All 32 OPNsense config-change alerts in production were `critical`, against FortiGate's 537 warning / 19 critical / 1 info. Severity is now derived from what actually changed.
+
+**A tunnel recreate no longer registers as a configuration change.** OPNsense reassigns every IPsec object's uuid when a tunnel is deleted and recreated, and rewrites save timestamps on every save including a no-op. Two consecutive production revisions differed by 52 lines with **zero** semantic difference — each such save wrote a history row and fired an alert. Uuids are now canonicalised for change detection while the parser still sees the originals, so identity and cross-references stay intact.
+
+**Secrets are no longer rendered in the diff.** An OPNsense `config.xml` carries the IPsec pre-shared key, certificate private keys and password hashes as stable plaintext. Because they never change between backups they landed on unchanged context lines, which display raw text — so they were shown verbatim every time a diff was opened. Secret bodies are now replaced by a short content digest, which also keeps a *rotation* visible rather than silently swallowing it.
+
+### Changed
+
+- Risk classification is now per-vendor rather than one FortiOS-shaped rule set, so vendor rules cannot collide as more are added. FortiGate's rules moved verbatim and its behaviour is unchanged.
+
 ## [0.11.196] - 2026-07-31
 
 ### Fixed
