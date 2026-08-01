@@ -1186,13 +1186,21 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 	// with bad ones — the row will be tagged "suspect" and treated as a new
 	// state so it gets visibility instead of silently replacing good data.
 	suspect := false
-	if vendor == "fortigate" {
-		if err := configdiff.ValidateFortiGateBackup([]byte(rev.ConfigText)); err != nil {
-			log.Printf("ReceiveConfigRevision: validation failed for device %d, treating as suspect: %v",
-				rev.DeviceID, err)
-			suspect = true
-			rev.BackupQuality = "suspect"
-		}
+	var validateErr error
+	switch vendor {
+	case "fortigate":
+		validateErr = configdiff.ValidateFortiGateBackup([]byte(rev.ConfigText))
+	case "opnsense", "pfsense":
+		// A single-document config makes truncation far more damaging than on
+		// FortiOS: the object parser would report the ENTIRE configuration as
+		// removed rather than a few sections missing.
+		validateErr = configdiff.ValidateOPNsenseBackup([]byte(rev.ConfigText))
+	}
+	if validateErr != nil {
+		log.Printf("ReceiveConfigRevision: validation failed for device %d, treating as suspect: %v",
+			rev.DeviceID, validateErr)
+		suspect = true
+		rev.BackupQuality = "suspect"
 	}
 
 	// Merge-into-latest model (v0.10.198+):
@@ -1309,7 +1317,21 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 		// Correlation was attempted for this real change — record that, so the UI
 		// can distinguish "no session found (out-of-band)" from "never checked".
 		attrUpdates := map[string]interface{}{"attribution_checked": true}
-		if att, found := h.attributeConfigChange(rev.DeviceID, now); found {
+
+		// Some vendors record who saved the config INSIDE the config itself
+		// (OPNsense's <revision> block). That is authoritative and needs no syslog
+		// correlation, so prefer it; fall back to the FortiOS config-change event
+		// log for vendors that don't. Both sides are passed because the in-config
+		// stamp only counts when it ADVANCED — a hand-edited config.xml + reload
+		// leaves it untouched and must not be credited to the previous admin.
+		att, found := configdiff.AttributionFromConfig(vendor, []byte(rev.ConfigText), []byte(prevConfigText))
+		if !found {
+			if ev, ok := h.attributeConfigChange(rev.DeviceID, now); ok {
+				att = configdiff.ChangeAttribution{User: ev.User, Source: ev.Source, Method: ev.Method}
+				found = true
+			}
+		}
+		if found {
 			info.ChangedBy = att.User
 			info.Method = att.Method
 			info.Attributed = true

@@ -112,3 +112,57 @@ func ValidateFortiGateBackup(b []byte) error {
 
 	return nil
 }
+
+// OPNsenseMinBackupSize is the smallest plausible real OPNsense/pfSense
+// config.xml. A real one runs ~60 KB; a fresh install is still tens of KB, so
+// anything under 4 KB is truncation rather than a tiny-but-valid config.
+const OPNsenseMinBackupSize = 4096
+
+var (
+	ErrMissingXMLRoot    = errors.New("backup missing an <opnsense>/<pfsense> root element")
+	ErrUnclosedXMLRoot   = errors.New("backup root element is not closed (likely truncated)")
+	ErrXMLRootOutOfOrder = errors.New("backup root close tag precedes its open tag")
+)
+
+// ValidateOPNsenseBackup performs a cheap structural sanity check on bytes that
+// claim to be a `cat /conf/config.xml`.
+//
+// This matters more than the FortiGate equivalent. A FortiOS backup is many
+// independent `config` blocks, so a truncation costs a few missing sections. An
+// OPNsense config is ONE document, so a truncated capture makes the object parser
+// report the entire configuration as removed — a spectacular false alarm.
+//
+// Deliberately NOT a strict XML decode to EOF. The parser runs with Strict
+// disabled precisely so an unescaped '&' typed into an operator description does
+// not abort it; a stricter validator here would mark every backup from such a
+// device `suspect`, and suspect never alerts — silently disabling change
+// detection for that device forever, which is worse than the over-alerting this
+// guards against. Validator tolerance must equal parser tolerance.
+func ValidateOPNsenseBackup(b []byte) error {
+	if len(b) == 0 {
+		return ErrEmptyBackup
+	}
+	if len(b) < OPNsenseMinBackupSize {
+		return fmt.Errorf("%w: %d bytes < %d", ErrBackupTooSmall, len(b), OPNsenseMinBackupSize)
+	}
+	if !utf8.Valid(b) {
+		return ErrBinaryCorruption
+	}
+
+	s := string(b)
+	for _, root := range []string{"opnsense", "pfsense"} {
+		open := strings.Index(s, "<"+root+">")
+		if open < 0 {
+			continue
+		}
+		close := strings.LastIndex(s, "</"+root+">")
+		if close < 0 {
+			return ErrUnclosedXMLRoot
+		}
+		if close < open {
+			return ErrXMLRootOutOfOrder
+		}
+		return nil
+	}
+	return ErrMissingXMLRoot
+}

@@ -383,6 +383,12 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 	// audit log makes that visible without mutating the data.
 	d.auditDeviceVendors()
 
+	// Repair stored normalized checksums after a normalizer change, so adding or
+	// tightening one does not fire a phantom CONFIG_CHANGE per device on the
+	// first backup after upgrade. Idempotent, and gated by the same startup lock
+	// acquired above so exactly one process does the work.
+	d.backfillNormalizedChecksums()
+
 	// Encrypt any existing plaintext SNMP credentials
 	d.migrateEncryptSecrets()
 

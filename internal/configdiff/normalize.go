@@ -65,6 +65,40 @@ type LineMasker interface {
 	MaskVolatileLines(raw []byte) []byte
 }
 
+// lineHasSecret reports whether a MASKED line carries a secret-class marker, so
+// DiffLines can display the masked form instead of the raw one.
+//
+// It matches the masked LINE rather than a pattern name extracted by
+// volatileTokenRe, because secret markers are deliberately bracket-free (a
+// rotation must read as a real change, not as folded noise) and the token regex
+// therefore never sees them. Defining this by intent instead of by match target
+// once produced a predicate that could never fire.
+//
+// Scoped to the bracket-free digest tokens only. FortiGate's markers are
+// bracketed and never match, so its rendering is unchanged — and it has no
+// equivalent leak to fix: FortiOS re-encrypts ENC and PEM bodies with a fresh IV
+// on every emission, so raw never equals raw and the equal-row leak cannot arise
+// there. Certificate digests are excluded too: a cert is public, and hiding its
+// body would defeat the point of fingerprinting the rotation.
+func lineHasSecret(masked string) bool {
+	return strings.Contains(masked, opnSecretTokenPrefix)
+}
+
+// attrPresentValue is the sentinel a parser emits for an element that exists but
+// has no text (<descr/>, <any/>, <log/>).
+//
+// An empty string cannot be used. diffAttrs emits AttrDelta{Key, Old: v} when a
+// key is removed and AttrDelta{Key, New: v} when one is added; with v == "" both
+// serialize identically, so "this rule gained <any/>" and "this rule lost
+// <any/>" become indistinguishable — which makes any widening-vs-narrowing rule
+// unimplementable. FortiOS avoids the same trap with its <unset> sentinel.
+//
+// The value is not perfectly uncollidable — a leaf containing the literal
+// &lt;present&gt; decodes to exactly this string — but that is contrived, and the
+// alternative (dropping empty attributes) would erase <any/>, which the
+// exposure classifier depends on.
+const attrPresentValue = "<present>"
+
 var registry = map[string]Normalizer{}
 
 // Register installs a Normalizer for a given vendor key. Called from

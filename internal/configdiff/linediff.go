@@ -37,7 +37,13 @@ const (
 
 // volatileTokenRe extracts the pattern name from a masked line, e.g.
 // `set password ENC <volatile-enc>` → "enc".
-var volatileTokenRe = regexp.MustCompile(`<volatile-([a-z0-9-]+)>`)
+//
+// The trailing slash is optional so the self-closing form used by XML vendors
+// (`<uuid><volatile-uuid/></uuid>`) matches too: an XML config is re-parsed from
+// its NORMALIZED form, so a marker there must keep the document well-formed,
+// which the FortiOS-style unclosed tag would not. Every pre-existing FortiGate
+// marker still matches unchanged.
+var volatileTokenRe = regexp.MustCompile(`<volatile-([a-z0-9-]+)/?>`)
 
 // DiffLines computes an aligned, volatile-aware line diff between two config
 // revisions. Alignment is done with a proper Myers O(ND) diff over volatile-
@@ -186,6 +192,23 @@ func prepareDiffInput(vendor string, raw []byte) (rawLines, maskLines []string) 
 	// degrade safely to no masking rather than misalign the whole diff.
 	if len(rawLines) != len(maskLines) {
 		maskLines = rawLines
+	}
+
+	// Secret lines are DISPLAYED masked, not just aligned masked.
+	//
+	// Every row DiffLines emits carries raw text — `equal` rows included — so a
+	// secret that is stable plaintext (an OPNsense PSK or bcrypt hash is
+	// byte-identical between backups) would otherwise be rendered verbatim in the
+	// diff on every open. FortiGate never hit this only because its ENC blobs are
+	// re-encrypted with a fresh IV per emission, so raw never equals raw.
+	//
+	// Substituting here covers all four ops at one site, and provably cannot
+	// perturb alignment or the added/removed counts: both derive from maskLines,
+	// which this loop never touches.
+	for i, m := range maskLines {
+		if lineHasSecret(m) {
+			rawLines[i] = m
+		}
 	}
 
 	// Drop a single trailing empty element so "config\n" and "config" don't diff

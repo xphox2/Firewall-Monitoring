@@ -26,6 +26,32 @@ type ObjectParser interface {
 	ParseObjects(raw []byte) ([]ConfigObject, error)
 }
 
+// ParseInput is an optional capability letting a vendor feed its ObjectParser a
+// DIFFERENT preparation of the config than the one used for hashing.
+//
+// OPNsense needs this. Its normalizer canonicalises every uuid to a positional
+// token so that a device-side uuid reshuffle — which OPNsense performs on any
+// tunnel recreate, with byte-identical content — is hash-stable. But the parser
+// must still see the ORIGINAL uuids: they are its fallback object identity and
+// the key of its cross-reference map, and positional tokens would both collapse
+// distinct objects and shift under an unrelated insertion.
+//
+// Vendors that do not implement it are parsed from Normalize's output, exactly
+// as before.
+type ParseInput interface {
+	ParseInput(raw []byte) []byte
+}
+
+// parseInputFor returns the bytes ParseObjects should run on: the vendor's
+// ParseInput preparation when it has one, otherwise the normalized form.
+func parseInputFor(vendor string, raw []byte) []byte {
+	if pi, ok := Lookup(vendor).(ParseInput); ok {
+		return pi.ParseInput(raw)
+	}
+	normalized, _ := Normalize(vendor, raw)
+	return normalized
+}
+
 // ParseObjects returns the object model for a config if the vendor's normalizer
 // implements ObjectParser. ok is false when the vendor has no parser, in which
 // case the caller should fall back to the line diff.
