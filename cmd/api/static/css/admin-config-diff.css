@@ -338,24 +338,57 @@
  * visually-hidden sentence per item reflows with one line of CSS and reads
  * better aloud. */
 
+/* The COLUMN TRACKS live on the list, not on each row.
+ *
+ * This is the whole reason the rows line up. With `display: grid` on each <li>,
+ * every row computes its own track widths, so a row keyed `Swanctl.Connections`
+ * and one keyed `Pools` size their key column differently and the arrows and
+ * values stagger down the panel. A real <table> shares column widths across rows
+ * for free — that is why the original FortiGate view looked aligned — and
+ * subgrid is how a list gets the same behaviour without giving up its
+ * semantics. */
 .cfgdiff-attrs {
     margin: 0;
     padding: 5px var(--fwmon-sp-3) var(--fwmon-sp-2);
     list-style: none;
     background: var(--fwmon-bg);
     border-top: 1px solid var(--fwmon-border);
+    display: grid;
+    /* Tracks hug their content instead of stretching, so the arrow sits just
+     * after the old value rather than 700px away across an empty 1fr. That
+     * content-sized behaviour is what a <table> gave the original view for free.
+     * minmax(0, …) keeps each track shrinkable, so a genuinely long value still
+     * wraps rather than forcing the panel wide. */
+    grid-template-columns:
+        minmax(90px, max-content)
+        minmax(0, max-content)
+        16px
+        minmax(0, max-content);
+    justify-content: start;
+    align-items: start;
+    column-gap: var(--fwmon-sp-2);
+    row-gap: 2px;
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.8rem;
+    line-height: 1.45;
 }
 .cfgdiff-attrs[hidden] { display: none; }
 
 .cfgdiff-attr {
     display: grid;
-    grid-template-columns: minmax(90px, max-content) minmax(0, 1fr) 16px minmax(0, 1fr);
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
     align-items: start;
-    gap: var(--fwmon-sp-2);
-    padding: 2px 0;
-    font-family: var(--fwmon-font-mono);
-    font-size: 0.8rem;
-    line-height: 1.45;
+    column-gap: var(--fwmon-sp-2);
+}
+
+/* Engines without subgrid: dissolve the row so its cells become direct grid
+ * items of the list, which aligns identically. Costs the <li> box (and with it
+ * the list-item role on some engines), so it is the fallback rather than the
+ * default — each row still carries its own visually-hidden sentence, so the
+ * meaning survives either way. */
+@supports not (grid-template-columns: subgrid) {
+    .cfgdiff-attr { display: contents; }
 }
 
 /* Attribute keys stay lowercase mono, as in the FortiGate view. Uppercasing them
@@ -537,7 +570,10 @@
 }
 
 @media (max-width: 640px) {
-    .cfgdiff-attr { grid-template-columns: 1fr; gap: 1px; }
+    /* Single column: the tracks live on the list, so that is where the override
+     * belongs — restating it on the row would be ignored under subgrid. */
+    .cfgdiff-attrs { grid-template-columns: 1fr; row-gap: 1px; }
+    .cfgdiff-attr { row-gap: 1px; padding-bottom: 4px; }
     .cfgdiff-arrow { display: none; }
     .cfgdiff-old::before { content: "− "; color: var(--fwmon-sig-crit); }
     .cfgdiff-new::before { content: "+ "; color: var(--fwmon-sig-ok); }
