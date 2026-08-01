@@ -54,7 +54,10 @@ const (
 	// matchable by linediff's volatileTokenRe so the UI can name the pattern.
 	opnTimeToken     = "<volatile-time/>"
 	opnRevisionToken = "<volatile-revision/>"
-	opnUUIDToken     = "<volatile-uuid/>"
+	// #nosec G101 -- not a credential: this is the literal placeholder written
+	// INTO the config text to replace a uuid. G101 matches the "Token" in the
+	// identifier name; the value is a fixed XML marker.
+	opnUUIDToken = "<volatile-uuid/>"
 
 	// Attribute values: bracket-free. Invisible to volatileTokenRe, so those raw
 	// rows render as volatile without a pattern name — an accepted trade.
@@ -71,9 +74,12 @@ const (
 // MaskVolatileLines and VolatilePatterns, so the hash and the UI can never drift
 // apart — the same discipline vendor_fortigate.go documents.
 const (
-	opnRevisionBody     = `(?s)<revision>.*?</revision>`
-	opnPersistedAtBody  = `(persisted_at=")[^"]*(")`
-	opnTimeBody         = `<time>[^<]*</time>`
+	opnRevisionBody    = `(?s)<revision>.*?</revision>`
+	opnPersistedAtBody = `(persisted_at=")[^"]*(")`
+	opnTimeBody        = `<time>[^<]*</time>`
+	// #nosec G101 -- not a credential: a regex matching the ELEMENT that holds a
+	// password-change timestamp, so the timestamp can be masked. G101 matches the
+	// "Pwd" in the identifier name.
 	opnPwdChangedAtBody = `<pwd_changed_at>[^<]*</pwd_changed_at>`
 )
 
