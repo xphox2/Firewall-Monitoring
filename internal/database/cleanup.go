@@ -262,6 +262,50 @@ func (d *Database) SyslogCriticalBelow() int {
 	return n
 }
 
+// SyslogSummaryRetentionKey sets how long aggregated syslog summaries are kept.
+// 0 = keep forever.
+const SyslogSummaryRetentionKey = "syslog_summary_retention_days"
+
+// syslogSummaryRetentionDefault is a year. Summaries exist precisely so the
+// long-window view survives after the raw rows behind them are gone, so their
+// window has to be LONGER than the raw one, not equal to it. They are also
+// tiny — a correctly-grouped production day is ~1.2k rows against ~5.6M raw.
+const syslogSummaryRetentionDefault = 365
+
+// syslogSummaryBandFloor is the lowest severity that can ever be aggregated,
+// given SyslogAggregateFrom is clamped at 5. Pruning spans this STATIC band
+// rather than following the current aggregation floor: if the floor is raised
+// (say 5 back to 6), summaries already written at severity 5 would otherwise
+// never be visited again and would live forever in a table that is a plain heap
+// on most deployments, so partition-drop cannot mop them up either. A delete for
+// a severity with no rows costs nothing.
+const syslogSummaryBandFloor = 5
+
+// SyslogSummaryRetentionDays returns the retention window for syslog_summaries.
+//
+// This is the SOLE owner of summary pruning, and that is the fix for a defect
+// that made the whole aggregation pipeline pointless. Pruning used to reuse the
+// per-severity RAW windows (sevDays[sev]) — but a summary is CREATED from rows
+// already older than that same window, so every summary was born already past
+// its own prune cutoff and was destroyed by the next cleanup. Production proved
+// it: 282 summary rows, every one stamped at exactly the 7-day raw cutoff,
+// against a syslog_summaries table that had never held a row for longer than a
+// day since the deployment existed.
+//
+// sevDays now governs only when raw rows are aggregated (syslog_agg.go) and
+// deleted; how long the resulting summaries live is this setting alone.
+//
+// A window SHORTER than an aggregated severity's raw window recreates the
+// born-dead behaviour. That is not rejected here — an operator may legitimately
+// want summaries kept briefly — but it is called out in the settings UI.
+func (d *Database) SyslogSummaryRetentionDays() int {
+	n := d.GetIntSetting(SyslogSummaryRetentionKey, syslogSummaryRetentionDefault)
+	if n < 0 {
+		return syslogSummaryRetentionDefault
+	}
+	return n
+}
+
 // syslogPartitionDropDays returns the age in days past which an ENTIRE
 // syslog_messages monthly partition is provably expired under EVERY retention
 // window — the max of the critical (severity 0-5) and informational (6-7)
@@ -443,26 +487,28 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		}
 	}
 
-	// Syslog summaries carry a severity column and only ever hold the
-	// aggregated severities, so they are pruned per-severity with the same
-	// windows. The wholesale partition drop needs the same keep-forever guard as
-	// syslog_messages above — pruning rows per-severity would otherwise still let
-	// a blanket drop take a keep-forever severity's summaries with it.
-	aggDays := []int{sevDays[aggregatedSeverityFloor], sevDays[SyslogSeverityCount-1]}
-	if dropDays := syslogMaxWindow(aggDays); dropDays > 0 {
-		summaryDropCutoff := time.Now().AddDate(0, 0, -dropDays)
-		if _, err := d.dropPartitionsOlderThan("syslog_summaries", summaryDropCutoff); err != nil {
+	// Summaries are pruned on their OWN window, never on the raw per-severity
+	// windows. Reusing sevDays here was the bug: aggregation creates a summary
+	// from rows already older than sevDays[sev], so the summary was born past its
+	// own prune cutoff and the next cleanup destroyed it — which is why
+	// syslog_summaries sat empty in production while aggregation appeared to run.
+	// See SyslogSummaryRetentionDays.
+	//
+	// The band is STATIC (syslogSummaryBandFloor..7), not the current aggregation
+	// floor, so lowering the floor and later raising it cannot strand summaries at
+	// a severity nothing visits any more.
+	if summaryDays := d.SyslogSummaryRetentionDays(); summaryDays > 0 {
+		summaryCutoff := time.Now().AddDate(0, 0, -summaryDays)
+		// One window for the whole band means a partition is expired outright
+		// once it is older than it — no per-severity keep-forever to guard.
+		if _, err := d.dropPartitionsOlderThan("syslog_summaries", summaryCutoff); err != nil {
 			log.Printf("cleanup: drop-old-partitions warning for syslog_summaries: %v", err)
 		}
-	}
-	for sev := aggregatedSeverityFloor; sev < SyslogSeverityCount; sev++ {
-		if sevDays[sev] <= 0 {
-			continue // keep forever
-		}
-		cutoff := time.Now().AddDate(0, 0, -sevDays[sev])
-		if err := d.batchedDeleteOlderThanWhere(&models.SyslogSummary{}, cutoff,
-			"severity = ?", sev); err != nil {
-			return fmt.Errorf("failed to cleanup syslog_summary (severity %d): %w", sev, err)
+		for sev := syslogSummaryBandFloor; sev < SyslogSeverityCount; sev++ {
+			if err := d.batchedDeleteOlderThanWhere(&models.SyslogSummary{}, summaryCutoff,
+				"severity = ?", sev); err != nil {
+				return fmt.Errorf("failed to cleanup syslog_summary (severity %d): %w", sev, err)
+			}
 		}
 	}
 
