@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.203] - 2026-08-08
+
+### Changed
+
+**Dropped a redundant index on `syslog_messages`, reclaiming 881 MB.** `idx_syslog_messages_device_id` covers `(device_id)`, which is a strict leading prefix of `idx_syslog_device_ts` `(device_id, timestamp)` — so the composite serves every lookup the single-column index could. Dropping it removes no capability; those lookups move onto an index that is already present and already maintained, and each write stops paying to update a second structure for the same column.
+
+Measured on production: **881 MB for 14 scans across the entire life of the database**, beside a composite that answered the same access shape 126 times. The real consumer of device-scoped syslog is the device-filtered search page, and it depends on the *composite*, not this — its plan takes both predicates as an `Index Cond` and satisfies `ORDER BY timestamp DESC` from the backward scan, turning 16.2 million matching rows into a 50-row walk. That plan is untouched.
+
+The standalone `index` tag is removed from `SyslogMessage.DeviceID` as well, because the migration alone would not have held: GORM's `AutoMigrate` creates indexes from struct tags but never drops ones that disappear from a struct, so every fresh install would have rebuilt exactly what the migration removes. A test pins that a fresh `AutoMigrate` no longer produces it, and fails if the tag returns.
+
+This is the rule `partitionIndexPlan` has always applied when deriving per-partition indexes — *"c is a prefix of (or equal to) o: keep only the longer index"* — so partitioned deployments never carried the redundant index and the migration is a no-op there. The drop is metadata-only, with no table rewrite or scan, so it completes in milliseconds even on a 72 GB table.
+
 ## [0.11.202] - 2026-08-08
 
 ### Fixed

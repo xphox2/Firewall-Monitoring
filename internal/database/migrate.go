@@ -1260,6 +1260,41 @@ func (d *Database) migrateSyslogSeverityIndex() error {
 	})
 }
 
+// migrateDropRedundantSyslogDeviceIndex (v56) drops idx_syslog_messages_device_id.
+//
+// It is a strict leading prefix of idx_syslog_device_ts (device_id, timestamp),
+// so the composite serves every device_id lookup the single-column index could
+// — dropping it removes no capability, it only moves those lookups onto an index
+// that is already there and already maintained.
+//
+// Measured on production: 881 MB for 14 scans across the whole life of the
+// database, against a composite that answered the same shape 126 times. The
+// device-filtered syslog page is the real consumer and it needs the composite,
+// not this: its plan takes both predicates as an Index Cond and satisfies
+// ORDER BY timestamp DESC from the backward scan, turning 16.2M matching rows
+// into a 50-row walk. That plan is unaffected here.
+//
+// Removing the model tag alone would do nothing on an existing database — tags
+// are only applied by migrateBaseline's AutoMigrate loop, and AutoMigrate
+// creates indexes but never drops ones that disappear from a struct. Hence the
+// explicit migration. partitionIndexPlan (migrate.go:266-318) already applied
+// this same prefix-coverage rule, so a partitioned deployment never had the
+// index and this is a no-op there.
+func (d *Database) migrateDropRedundantSyslogDeviceIndex() error {
+	const drop = `DROP INDEX IF EXISTS idx_syslog_messages_device_id`
+	if !d.dialect.IsPostgres() {
+		return d.db.Exec(drop).Error
+	}
+	// Dropping an index takes a brief ACCESS EXCLUSIVE lock. It is metadata-only
+	// — no table rewrite, no scan — so it returns in milliseconds even on a
+	// 72 GB table, unlike the build in v54 that needed the timeout lifted.
+	if err := d.execMaintenanceDDL(drop); err != nil {
+		return fmt.Errorf("migrate v56 drop idx_syslog_messages_device_id: %w", err)
+	}
+	log.Printf("migrate v56: dropped idx_syslog_messages_device_id (redundant leading prefix of idx_syslog_device_ts)")
+	return nil
+}
+
 // logSyslogIndexScale states up front why the wait is long, so the progress
 // lines that follow have context.
 func (d *Database) logSyslogIndexScale() {

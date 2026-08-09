@@ -1295,9 +1295,15 @@ func (PingResult) TableName() string       { return "ping_results" }
 func (PingStats) TableName() string        { return "ping_stats" }
 
 type SyslogMessage struct {
-	ID             uint      `json:"id" gorm:"primaryKey"`
-	Timestamp      time.Time `json:"timestamp" gorm:"index;index:idx_syslog_device_ts,priority:2;index:idx_syslog_sev_ts,priority:2"`
-	DeviceID       uint      `json:"device_id" gorm:"index;index:idx_syslog_device_ts,priority:1"`
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	Timestamp time.Time `json:"timestamp" gorm:"index;index:idx_syslog_device_ts,priority:2;index:idx_syslog_sev_ts,priority:2"`
+	// No standalone `index` here: (device_id) is a strict leading prefix of
+	// idx_syslog_device_ts (device_id, timestamp), so the composite serves every
+	// device_id lookup the single-column index could. On production the redundant
+	// one cost 881 MB for 14 scans across the database's lifetime. Migration v56
+	// drops it on existing installs; partitionIndexPlan already applied the same
+	// prefix-coverage rule, so partitioned deployments never had it.
+	DeviceID       uint      `json:"device_id" gorm:"index:idx_syslog_device_ts,priority:1"`
 	ProbeID        uint      `json:"probe_id" gorm:"index"`
 	Hostname       string    `json:"hostname"`
 	AppName        string    `json:"app_name"`
