@@ -812,9 +812,25 @@ func (d *Database) aggregateFlowsToRollup(cutoff time.Time, intervalType string)
 	totalGroups := 0
 
 	err := d.db.Transaction(func(tx *gorm.DB) error {
-		var watermark int64
+		// Work probe first: an unfiltered watermark is non-zero whenever the
+		// table holds any row, so it can no longer signal "nothing to roll up".
+		var probe []int64
 		if err := tx.Model(&models.FlowSample{}).
 			Where("timestamp < ?", cutoff).
+			Select("1").Limit(1).
+			Scan(&probe).Error; err != nil {
+			return fmt.Errorf("flow rollup: work probe: %w", err)
+		}
+		if len(probe) == 0 {
+			return nil
+		}
+
+		// UNFILTERED deliberately — see the note on the promote path below. The
+		// watermark is only an upper bound excluding rows that arrive mid-pass,
+		// so any bound >= every id in the target set is correct; the predicates
+		// stay on the reads and the delete, which already carry them.
+		var watermark int64
+		if err := tx.Model(&models.FlowSample{}).
 			Select("COALESCE(MAX(id), 0)").
 			Scan(&watermark).Error; err != nil {
 			return fmt.Errorf("flow rollup: watermark: %w", err)
@@ -898,9 +914,35 @@ func (d *Database) aggregateRollupsUp(srcInterval, dstInterval string, cutoff ti
 	totalGroups := 0
 
 	err := d.db.Transaction(func(tx *gorm.DB) error {
-		var watermark int64
+		var probe []int64
 		if err := tx.Model(&models.FlowRollup{}).
 			Where("interval_type = ? AND timestamp < ?", srcInterval, cutoff).
+			Select("1").Limit(1).
+			Scan(&probe).Error; err != nil {
+			return fmt.Errorf("flow rollup: %s work probe: %w", srcInterval, err)
+		}
+		if len(probe) == 0 {
+			return nil
+		}
+
+		// The watermark is deliberately UNFILTERED, and this is the site that
+		// proved why. PostgreSQL rewrites MAX(id) into a backward walk of the
+		// primary key that stops at the first row passing the filter, priced by
+		// expected-rows-until-first-match. Under `interval_type = ? AND
+		// timestamp < ?` the newest ids all fail the timestamp test, so the walk
+		// crossed most of the table while the planner still estimated 4.48
+		// against a real worst case of 29,536,475 — measured on production, it
+		// blew the 30s statement_timeout and every cycle rolled back and retried:
+		//
+		//   flows.go:950: Flow rollup: 5m watermark: ERROR: canceling statement
+		//   due to statement timeout (SQLSTATE 57014) (rolled back, will retry)
+		//
+		// Unfiltered, the same rewrite stops on the first tuple: 1.3ms. Only the
+		// upper bound matters — rows inserted below carry dstInterval and ids
+		// above this bound, and the delete keeps `interval_type = srcInterval`,
+		// so it can never reach them.
+		var watermark int64
+		if err := tx.Model(&models.FlowRollup{}).
 			Select("COALESCE(MAX(id), 0)").
 			Scan(&watermark).Error; err != nil {
 			return fmt.Errorf("flow rollup: %s watermark: %w", srcInterval, err)
