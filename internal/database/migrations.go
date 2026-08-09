@@ -104,6 +104,7 @@ var registeredMigrations = []migration{
 	{version: 53, name: "server_metrics", run: (*Database).migrateServerMetrics},
 	{version: 54, name: "syslog_severity_timestamp_index", run: (*Database).migrateSyslogSeverityIndex},
 	{version: 55, name: "probe_agent_version", run: (*Database).migrateProbeAgentVersion},
+	{version: 56, name: "drop_redundant_syslog_device_index", run: (*Database).migrateDropRedundantSyslogDeviceIndex},
 }
 
 // RunMigrations applies every registered migration not yet recorded in
