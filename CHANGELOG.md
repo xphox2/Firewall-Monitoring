@@ -1,6 +1,23 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.202] - 2026-08-08
+
+### Fixed
+
+**The flow rollup carried the same watermark defect v0.11.201 fixed in syslog aggregation, and kept timing out in production on the very next cycle after that release deployed.** Both rollup passes opened by reading a `MAX(id)` watermark with the pass's own predicates attached. PostgreSQL rewrites `MAX(id)` into a backward walk of the primary key that stops at the first row passing the filter, priced by expected-rows-until-first-match; because the newest ids all fail `timestamp < cutoff`, the walk crossed most of the table. Measured on the live `flow_rollups`: the planner estimated **4.48** against a plan whose own worst case is **29,536,475**, so the statement blew the connection's 30-second `statement_timeout` and every five-minute cycle rolled back and retried:
+
+```
+flows.go:950: Flow rollup: 5m watermark: ERROR: canceling statement due to
+statement timeout (SQLSTATE 57014) (rolled back, will retry next cycle)
+```
+
+Both watermarks are now unfiltered, with the predicates left on the reads and the delete where they already were, so the set each pass acts on is unchanged. The same rewrite then stops on the first tuple — the identical query returns in **1.3 ms**. Each pass gains a work probe, because an unfiltered bound is non-zero whenever the table holds any row and can no longer signal "nothing to roll up".
+
+This should have shipped with v0.11.201. `syslog_agg.go`'s own header describes its correctness shape as "shared with the flow rollups", which was an accurate pointer to a second instance of the bug that went unread — the fix landed on one caller and left the other failing. The source guard has been widened from a single file to a table covering both pipelines, and it was verified to fail against the flow-rollup site specifically, so the same half-fix cannot recur.
+
+Three behavioural tests per pipeline pin that the wider bound does not widen what a pass consumes: samples newer than the cutoff and rows of another `interval_type` now sit below the watermark for the first time and must survive, a no-work pass must delete nothing, and the promote path must not consume its own output.
+
 ## [0.11.201] - 2026-08-08
 
 ### Fixed
