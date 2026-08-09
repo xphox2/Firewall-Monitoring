@@ -103,15 +103,49 @@ func (d *Database) aggregateSyslogToSummary(cutoff time.Time, severity int, inte
 	//     `id <= watermark`, so raw messages that arrive mid-pass (ingestion
 	//     runs concurrently in cmd/api, and a collector backlog replay carries
 	//     OLD timestamps) are never deleted un-summarized — they wait for the
-	//     next cycle.
+	//     next cycle. The bound is unfiltered; only that it is an UPPER bound
+	//     matters, and filtering it was a planner trap (see below).
 	//   - Deterministic ORDER BY over the full group key so LIMIT/OFFSET pages
 	//     neither overlap nor skip groups.
 	//   - Inserts + delete in ONE transaction: a mid-pass failure rolls back
 	//     completely instead of leaving summaries the next cycle double-counts.
 	err := d.db.Transaction(func(tx *gorm.DB) error {
-		var watermark int64
+		// Cheap "is there anything to do" probe, served by (severity, timestamp).
+		// Replaces the old `watermark == 0` early-exit, which is no longer
+		// available now that the watermark is unfiltered (see below).
+		var probe []int64
 		if err := tx.Model(&models.SyslogMessage{}).
 			Where("timestamp < ? AND severity = ?", cutoff, severity).
+			Select("1").Limit(1).
+			Scan(&probe).Error; err != nil {
+			return fmt.Errorf("work probe: %w", err)
+		}
+		if len(probe) == 0 {
+			return nil
+		}
+
+		// The watermark is deliberately UNFILTERED. It exists only as an upper
+		// bound excluding rows that arrive mid-pass, so ANY bound >= every id in
+		// the target set is correct — and the SELECT and DELETE below both still
+		// carry the full predicates, so the set they act on is unchanged.
+		//
+		// Filtering it was a severe performance trap. PostgreSQL rewrites
+		// MAX(id) into a backward walk of the primary key that stops at the
+		// first row passing the filter, and prices it by expected-rows-until-
+		// first-match. Under `severity = ? AND timestamp < ?` the newest ids all
+		// fail the timestamp test, so the walk crossed most of the table while
+		// the planner still estimated single-digit cost. Measured on a 92M-row
+		// production table it exceeded 120s against a 30s statement_timeout — so
+		// every 5-minute cycle aborted and retried forever and NOTHING was ever
+		// aggregated. Unfiltered, the same rewrite stops on the first tuple:
+		// 0.5ms.
+		//
+		// An index on (severity, timestamp, id) does NOT fix this: for a
+		// high-share severity the planner prices the pkey walk at ~6 and keeps
+		// choosing it, so the index would appear to work on the small severities
+		// and still fail on the one that carries the volume.
+		var watermark int64
+		if err := tx.Model(&models.SyslogMessage{}).
 			Select("COALESCE(MAX(id), 0)").
 			Scan(&watermark).Error; err != nil {
 			return fmt.Errorf("watermark: %w", err)
@@ -231,9 +265,27 @@ func (d *Database) promoteSyslogSummaries(srcInterval, dstInterval string, cutof
 	totalGroups := 0
 
 	err := d.db.Transaction(func(tx *gorm.DB) error {
-		var watermark int64
+		// Same shape, and the same trap, as aggregateSyslogToSummary's watermark:
+		// probe for work under the real predicates, then take an UNFILTERED
+		// upper bound. Harmless on a small syslog_summaries, but it becomes the
+		// identical pathological pkey walk once summaries accumulate, so it is
+		// fixed here rather than left to be rediscovered.
+		var probe []int64
 		if err := tx.Model(&models.SyslogSummary{}).
 			Where("interval_type = ? AND timestamp < ?", srcInterval, cutoff).
+			Select("1").Limit(1).
+			Scan(&probe).Error; err != nil {
+			return fmt.Errorf("%s work probe: %w", srcInterval, err)
+		}
+		if len(probe) == 0 {
+			return nil
+		}
+
+		// Rows inserted below carry dstInterval and ids above this bound, so the
+		// final delete — which keeps `interval_type = srcInterval` — can never
+		// reach them.
+		var watermark int64
+		if err := tx.Model(&models.SyslogSummary{}).
 			Select("COALESCE(MAX(id), 0)").
 			Scan(&watermark).Error; err != nil {
 			return fmt.Errorf("%s watermark: %w", srcInterval, err)
