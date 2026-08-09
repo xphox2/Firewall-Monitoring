@@ -1,6 +1,22 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.201] - 2026-08-08
+
+### Fixed
+
+**Syslog aggregation has been failing every five minutes and never wrote a single summary.** Each pass opens by reading a `MAX(id)` watermark, and it carried the pass's own predicates: `WHERE timestamp < cutoff AND severity = ?`. PostgreSQL rewrites `MAX(id)` into a backward walk of the primary key that stops at the first row passing the filter, and prices it by expected-rows-until-first-match. Because the newest rows all fail the timestamp test, that walk crossed most of the table while the planner still estimated single-digit cost — on a 92-million-row production table the statement exceeded **120 seconds** against the connection's 30-second `statement_timeout`, so every cycle aborted, rolled back and retried. The observable result was a `syslog_summaries` table with **zero rows** and a `SQLSTATE 57014` pair in the log every five minutes.
+
+The watermark is now unfiltered. It exists only as an upper bound that excludes rows arriving mid-pass, so any bound at or above every id in the target set is correct; the predicates stay on the `SELECT` and the `DELETE`, which already carried them, so the set each pass acts on is unchanged. Unfiltered, the same planner rewrite stops on the very first tuple — the identical query drops from over 120 seconds to **0.5 ms**.
+
+An index on `(severity, timestamp, id)` was considered and rejected. For a severity holding most of the table the planner prices the primary-key walk in single digits and keeps choosing it, so the index would have passed testing on the low-volume severities and still failed on the one carrying the volume — while adding several gigabytes of index, per-insert maintenance, and a build that blocks writes on the live table.
+
+`promoteSyslogSummaries` opened with the same filtered-watermark shape. It is harmless today only because the table it reads is empty; it would become the identical trap as soon as summaries accumulate, so it is fixed in the same change rather than left to be rediscovered.
+
+Because an unfiltered watermark is non-zero whenever the table holds any row, the old `watermark == 0` early-exit can no longer signal "nothing to aggregate". Each pass now opens with a cheap indexed work probe instead.
+
+Three behavioural tests pin that the wider bound does not widen what a pass consumes — rows of another severity and rows newer than the cutoff now sit below the watermark for the first time, and must survive — plus a no-work pass deleting nothing, and the promote step not consuming its own output. The regression itself is a planner choice that cannot be reproduced on the SQLite test backend, so a source guard additionally fails the build if a `Where` is ever reattached to either watermark.
+
 ## [0.11.200] - 2026-08-01
 
 ### Fixed
