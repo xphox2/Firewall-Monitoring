@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.205] - 2026-08-08
+
+### Added
+
+**The summary retention window is now settable from Settings &rarr; Retention.** v0.11.204 introduced `syslog_summary_retention_days` and wired it through the settings API, but left no control for it — a knob operators could not reach. It now sits below the per-severity table, with the same blank/`0`/`N` semantics as the windows above it.
+
+The hint states the trap explicitly rather than leaving the validator to reject it: summaries are created *from* rows already past their raw window, so setting this shorter than a severity's own window deletes them as fast as they are written — which is precisely the defect the separate window exists to fix. An operator may still legitimately want a short window, so it is allowed and explained rather than blocked.
+
 ## [0.11.204] - 2026-08-08
 
 ### Fixed
