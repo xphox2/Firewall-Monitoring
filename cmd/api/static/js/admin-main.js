@@ -2448,6 +2448,7 @@
     // is eight anonymous boxes.
     var SYSLOG_RETENTION_PREFIX = 'syslog_retention_days_';
     var SYSLOG_RETENTION_DEFAULT = 'syslog_retention_days_default';
+    var SYSLOG_SUMMARY_RETENTION = 'syslog_summary_retention_days';
 
     function renderRetentionSettings(settings) {
         var host = document.getElementById('settings-retention');
@@ -2511,7 +2512,23 @@
                 '</div>' + note +
                 '<table class="data-table" style="margin-top:10px;"><thead><tr>' +
                     '<th>Severity</th><th>Keep (days)</th><th>Effective</th><th>Estimated volume</th>' +
-                '</tr></thead><tbody>' + rows + '</tbody></table>';
+                '</tr></thead><tbody>' + rows + '</tbody></table>' +
+                '<div class="form-group" style="max-width:320px;margin-top:18px;">' +
+                    '<label for="' + SYSLOG_SUMMARY_RETENTION + '">Keep summaries (days)</label>' +
+                    '<input type="number" id="' + SYSLOG_SUMMARY_RETENTION + '" name="' + SYSLOG_SUMMARY_RETENTION +
+                        '" value="' + escapeHtml(stored(SYSLOG_SUMMARY_RETENTION)) +
+                        '" placeholder="365" min="0" max="3650" step="1">' +
+                    // Summaries are created FROM rows already past their raw
+                    // window, so a summary window shorter than that window
+                    // deletes them the moment they are written. That is the
+                    // defect this setting exists to fix; the hint says so
+                    // rather than the validator silently rejecting a value an
+                    // operator may legitimately want.
+                    '<div class="field-hint">Aggregated hourly and daily counts outlive the raw messages they came from, ' +
+                    'so the long-range Syslog view keeps working after the raw rows age out. Blank uses 365 days; 0 keeps them forever. ' +
+                    'Setting this shorter than a severity&rsquo;s window above will delete summaries as fast as they are written.' +
+                    '</div>' +
+                '</div>';
 
             if (window.FwmonSettingsUI && FwmonSettingsUI.snapshotBaseline) {
                 FwmonSettingsUI.snapshotBaseline();
