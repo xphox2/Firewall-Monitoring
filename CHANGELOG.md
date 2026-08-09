@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.204] - 2026-08-08
+
+### Fixed
+
+**Aggregated syslog summaries were destroyed by the cleanup that immediately followed them.** Summary pruning reused the per-severity *raw* retention windows — but aggregation creates a summary from rows that are already older than that same window, so every summary was born past its own prune cutoff. Production made the shape unmistakable: 282 summary rows, every one stamped at exactly the 7-day raw cutoff, in a `syslog_summaries` table that had never retained a row for a full day since the deployment existed.
+
+Summaries now have their own window, `syslog_summary_retention_days`, defaulting to **365 days**. That setting is the sole owner of summary pruning; the per-severity windows govern only when raw rows are aggregated and deleted. The two must be decoupled, because the entire purpose of a summary is to outlive the raw rows behind it — and they are cheap enough to keep for a year, since a correctly-grouped production day is roughly 1,200 rows against 5.6 million raw.
+
+Blank inherits the default, `0` keeps forever, `1`–`3650` sets days — the same three shapes the raw windows use.
+
+Pruning also now spans a **static** severity band (5–7) rather than following the current aggregation floor. Had it followed the floor, lowering the floor to include severity 5 and later raising it again would have stranded those summaries at a severity nothing visits — permanently, since `syslog_summaries` is a plain heap on existing deployments and partition-drop cannot reclaim them either. A delete for a severity holding no rows costs nothing.
+
+Five tests cover it, the central one being the direct regression: a summary aggregated from rows just past the raw window must survive the cleanup that follows. Reintroducing the old per-severity prune fails it.
+
 ## [0.11.203] - 2026-08-08
 
 ### Changed

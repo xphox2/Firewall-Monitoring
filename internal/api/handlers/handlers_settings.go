@@ -183,6 +183,10 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		"syslog_retention_days_6":       true,
 		"syslog_retention_days_7":       true,
 		"syslog_retention_days_default": true,
+		// How long aggregated summaries live. Deliberately NOT one of the
+		// per-severity raw windows: reusing those made every summary born past
+		// its own prune cutoff. See SyslogSummaryRetentionDays.
+		"syslog_summary_retention_days": true,
 	}
 
 	secretKeys := settingsSecretKeys // v0.10.226: shared with GetSettings
@@ -228,6 +232,19 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				if err != nil || v < 0 || v > 3650 {
 					c.JSON(http.StatusBadRequest, response.Error(
 						"syslog retention must be blank (inherit), 0 (keep forever), or 1-3650 days"))
+					return
+				}
+			}
+		case "syslog_summary_retention_days":
+			// Same three shapes as the raw windows: blank inherits the default,
+			// 0 keeps forever, N is days. A window SHORTER than an aggregated
+			// severity's raw window recreates the born-dead behaviour the
+			// separate window exists to fix, so it is allowed but not silent.
+			if strings.TrimSpace(s.Value) != "" {
+				v, err := strconv.Atoi(strings.TrimSpace(s.Value))
+				if err != nil || v < 0 || v > 3650 {
+					c.JSON(http.StatusBadRequest, response.Error(
+						"summary retention must be blank (inherit), 0 (keep forever), or 1-3650 days"))
 					return
 				}
 			}
