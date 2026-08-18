@@ -788,11 +788,15 @@ func (d *Database) ConfigureAutovacuum() error {
 				autovacuum_vacuum_insert_scale_factor = 0.005,
 				autovacuum_vacuum_insert_threshold = 100000
 			)`, target)
+			// Logged BEFORE the insert-params attempt, not after: the four
+			// settings above are already applied at this point, so skipping this
+			// line when only the PG13+ parameters are rejected would report a
+			// total failure on every boot of an older server.
+			log.Printf("Configured autovacuum for %s", target)
 			if err := d.execMaintenanceDDL(insertSQL); err != nil {
 				log.Printf("Autovacuum insert-threshold config warning for %s (PostgreSQL 13+ only): %v", target, err)
 				continue
 			}
-			log.Printf("Configured autovacuum for %s", target)
 		}
 	}
 

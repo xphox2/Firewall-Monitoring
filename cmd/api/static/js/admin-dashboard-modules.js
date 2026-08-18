@@ -68,6 +68,46 @@
     // the library itself is page-global. Theme handling needs no registration —
     // recolorChartsForTheme walks every canvas via Chart.getChart().
     var serverTrendChart = null;
+    var serverTrendRows = null;    // last fetched series, kept so a replaced canvas can be redrawn without refetching
+    var serverTrendFetching = false;
+
+    function drawServerTrend(el, rows) {
+        function series(name, key, color) {
+            return {
+                label: name, borderColor: color, backgroundColor: color,
+                borderWidth: 2, pointRadius: 0, tension: 0.25,
+                // A null must STAY a gap. A bucket where the volume
+                // could not be probed is "unknown", not "0% used" —
+                // plotting it as zero is the chart-shaped version of
+                // reading a failed probe as healthy.
+                spanGaps: false,
+                data: rows.map(function (x) { return x[key] == null ? null : x[key]; })
+            };
+        }
+        if (serverTrendChart) { serverTrendChart.destroy(); serverTrendChart = null; }
+        serverTrendChart = new Chart(el.getContext('2d'), {
+            type: 'line',
+            data: {
+                labels: rows.map(function (x) { return x.bucket; }),
+                datasets: [
+                    series('CPU %', 'cpu_percent', '#58a6ff'),
+                    series('Memory %', 'mem_percent', '#a371f7'),
+                    series('Root disk %', 'root_disk_percent', '#3fb950'),
+                    series('DB volume %', 'data_disk_percent', '#f0883e')
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                scales: { y: { beginAtZero: true, max: 100, ticks: { callback: function (v) { return v + '%'; } } } },
+                // No legend: interaction mode 'index' means hovering
+                // anywhere names all four series with their values at
+                // that moment, so a static legend spends vertical space
+                // to repeat what the hover already says.
+                plugins: { legend: { display: false } }
+            }
+        });
+    }
 
     function loadServerTrend() {
         var el = document.getElementById('dash-server-trend');
@@ -79,62 +119,46 @@
         // DETACHED canvas is never visited by it.
         if (!el) {
             if (serverTrendChart) { serverTrendChart.destroy(); serverTrendChart = null; }
-            lastTrendKey = null;
-            return;
+            return; // keep serverTrendRows/lastTrendKey: re-showing the module redraws from cache
         }
         if (typeof Chart === 'undefined') return;
         // render() runs on every drag-drop and every eye-toggle in Customize
-        // mode, and this used to refetch the 24h series and rebuild the Chart
-        // instance each time. Refetch only when the health payload actually
-        // advanced; a rebuild is still forced whenever the chart is missing
-        // (first paint, or the module was hidden and the canvas destroyed).
+        // mode, and this used to REFETCH the 24h series and rebuild the Chart
+        // each time. Refetch only when the health payload actually advanced.
+        //
+        // The redraw, though, cannot be skipped on the same terms: render()
+        // rewrites host.innerHTML, so the canvas is a BRAND NEW element every
+        // time even when the data has not changed, and the existing Chart is
+        // still bound to the detached old one. Guarding on "we have a chart"
+        // alone would therefore leave the visible canvas blank on every
+        // same-snapshot render. Redraw from the cached rows instead — no
+        // network, and the chart survives Customize mode.
         var key = (data && data.generated_at) || '';
-        if (serverTrendChart && key === lastTrendKey) return;
-        lastTrendKey = key;
+        if (serverTrendRows && key === lastTrendKey) {
+            if (!serverTrendChart || serverTrendChart.canvas !== el) drawServerTrend(el, serverTrendRows);
+            return;
+        }
+        if (serverTrendFetching) return; // in flight; its .then draws
+        serverTrendFetching = true;
         // AC.apiFetch resolves to the PARSED body, not a Response — calling
         // .json() on it throws, and the .catch below would swallow it into a
         // console warning while the chart silently never rendered.
         AC.apiFetch(API + '/system/metrics/chart?range=24h')
             .then(function (res) {
+                serverTrendFetching = false;
                 var rows = (res && res.data) || [];
                 if (!rows.length) return;
-                function series(name, key, color) {
-                    return {
-                        label: name, borderColor: color, backgroundColor: color,
-                        borderWidth: 2, pointRadius: 0, tension: 0.25,
-                        // A null must STAY a gap. A bucket where the volume
-                        // could not be probed is "unknown", not "0% used" —
-                        // plotting it as zero is the chart-shaped version of
-                        // reading a failed probe as healthy.
-                        spanGaps: false,
-                        data: rows.map(function (x) { return x[key] == null ? null : x[key]; })
-                    };
-                }
-                if (serverTrendChart) { serverTrendChart.destroy(); serverTrendChart = null; }
-                serverTrendChart = new Chart(el.getContext('2d'), {
-                    type: 'line',
-                    data: {
-                        labels: rows.map(function (x) { return x.bucket; }),
-                        datasets: [
-                            series('CPU %', 'cpu_percent', '#58a6ff'),
-                            series('Memory %', 'mem_percent', '#a371f7'),
-                            series('Root disk %', 'root_disk_percent', '#3fb950'),
-                            series('DB volume %', 'data_disk_percent', '#f0883e')
-                        ]
-                    },
-                    options: {
-                        responsive: true, maintainAspectRatio: false,
-                        interaction: { mode: 'index', intersect: false },
-                        scales: { y: { beginAtZero: true, max: 100, ticks: { callback: function (v) { return v + '%'; } } } },
-                        // No legend: interaction mode 'index' means hovering
-                        // anywhere names all four series with their values at
-                        // that moment, so a static legend spends vertical space
-                        // to repeat what the hover already says.
-                        plugins: { legend: { display: false } }
-                    }
-                });
+                serverTrendRows = rows;
+                lastTrendKey = key; // only on success, so a failure retries
+                // Re-resolve the canvas: another render() may have replaced it
+                // while this request was in flight.
+                var target = document.getElementById('dash-server-trend');
+                if (target) drawServerTrend(target, rows);
             })
-            .catch(function (e) { fwmonLog.warn('[Dashboard] server trend load failed', e); });
+            .catch(function (e) {
+                serverTrendFetching = false;
+                fwmonLog.warn('[Dashboard] server trend load failed', e);
+            });
     }
 
     // ---- module definitions --------------------------------------------------
@@ -544,8 +568,8 @@
     var HEALTH_TIMEOUT_MS = 20000;
 
     function fetchData() {
-        // One request at a time. Also cancels on navigation away, so a reply
-        // can't land and re-render a page the user already left.
+        // One request at a time: a new poll supersedes any straggler rather than
+        // letting two replies race to render.
         if (inFlight) { try { inFlight.abort(); } catch (e) {} }
         var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
         inFlight = ctl;

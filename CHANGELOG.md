@@ -25,6 +25,10 @@ Five of the largest relations were absent from the tuned list entirely, includin
 
 **`trap_events` had no standalone timestamp index** (migration v57). It carried only `(device_id, timestamp)`, which cannot serve the fleet-wide `MAX(timestamp)` the composite runs to decide whether the trap receiver is up — a full scan for one status badge. Syslog, flow and ping tables all declared one; this table was simply missed.
 
+**The Resource trend chart no longer blanks on re-render.** `render()` rewrites the module grid's markup, so the chart's canvas is a new element every time — the Chart instance stays bound to the detached old one. Redraws now come from the cached series whenever the canvas has been replaced, with a network refetch only when the underlying snapshot actually advanced. Previously every render refetched the 24-hour series and rebuilt the chart, including on every drag and every visibility toggle in Customize mode.
+
+**A single panic can no longer freeze the console permanently.** `SafeGo` contains a panic to its goroutine but then lets it exit; for a background refresher that would have been terminal, leaving viewers on an ever-ageing snapshot under a banner promising it was refreshing. The computation now recovers per iteration, restoring the property the per-request path got from gin's recovery.
+
 **The dashboard was polled twice.** Two independent 30-second timers — one in `FwmonDashboard`, one in `admin-main.js` — both refreshed `/api/dashboard/health`, phase-offset, so an open dashboard issued roughly two requests per 30 s instead of one; the second also skipped the `!customizing` guard. The trend chart was likewise refetched on every render, including every drag and every visibility toggle in Customize mode.
 
 ### Added

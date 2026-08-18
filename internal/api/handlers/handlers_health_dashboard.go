@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"firewall-mon/internal/api/response"
+	"firewall-mon/internal/logging"
 	"firewall-mon/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -130,9 +131,28 @@ func (hub *dashboardHealthHub) Run(ctx context.Context) {
 
 		hub.mu.Lock()
 		idle := hub.lastRequest.IsZero() || time.Since(hub.lastRequest) > dashboardHealthIdleWindow
+		fresh := !hub.generatedAt.IsZero() && time.Since(hub.generatedAt) < interval
 		hub.mu.Unlock()
 		if idle {
 			continue // nobody is looking — compute nothing
+		}
+		// Already fresh: drop this cycle.
+		//
+		// Every client poll landing DURING a compute sees a snapshot older than
+		// the interval (the timer just waited one) and so sends a wake. Without
+		// this check that wake fires the instant the compute finishes and runs a
+		// second one back-to-back against a snapshot that is already current —
+		// which under a handful of viewers converges on two computes per
+		// interval, and when a compute outlasts its interval degenerates into
+		// computing continuously with no gap. That is precisely what measuring
+		// the delay from completion is supposed to prevent, so the wake path has
+		// to honour it too.
+		//
+		// The timer path is unaffected: it fires exactly one interval after the
+		// last publish, so the snapshot's age equals the interval and is not
+		// "fresh" by this test.
+		if fresh {
+			continue
 		}
 		hub.compute()
 	}
@@ -142,6 +162,18 @@ func (hub *dashboardHealthHub) Run(ctx context.Context) {
 // because every query inside computeDashboardHealth swallows its own error, so a
 // statement killed by statement_timeout would otherwise leave no trace at all.
 func (hub *dashboardHealthHub) compute() {
+	// Per-ITERATION recovery, not just the SafeGo wrapper around Run.
+	//
+	// SafeGo contains a panic to this goroutine but then lets it exit — it does
+	// not restart fn. For a refresher that would be terminal: one panic anywhere
+	// in the aggregation (or in gopsutil) and the console freezes for the life of
+	// the process, showing either a permanent "Building the system-health
+	// snapshot…" or an ever-ageing snapshot under a banner promising it is
+	// refreshing. Before this endpoint moved off the request path a panic here
+	// was absorbed by gin's per-request recovery and the next request simply
+	// tried again; this keeps that property.
+	defer logging.Recover("dashboard-health-compute")
+
 	start := time.Now()
 	snap := hub.h.computeDashboardHealth()
 	took := time.Since(start)
