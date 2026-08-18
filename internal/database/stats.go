@@ -217,6 +217,25 @@ type DashboardTimeSeries struct {
 	DeviceStatusMap []KeyCount   `json:"device_status"`
 }
 
+// GetAlertsTimeSeries returns ONLY the hourly alert counts, in the same envelope
+// as GetDashboardTimeSeries.
+//
+// The system-health composite renders a single alerts sparkline and reads only
+// `alerts_over_time` — but it used to call GetDashboardTimeSeries, which also
+// builds hourly GROUP BYs over flow_samples, syslog_messages and trap_events and
+// then throws all three away. On production the syslog one alone was measured at
+// 7.0s (an external merge sort spilling 52MB), for a series nothing displays.
+//
+// The envelope is deliberately the same *DashboardTimeSeries: the browser reads
+// `trend.alerts_over_time`, so returning a bare slice here would silently leave
+// an empty sparkline with no error anywhere. The unused series stay nil.
+func (d *Database) GetAlertsTimeSeries(hours int) (*DashboardTimeSeries, error) {
+	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+	return &DashboardTimeSeries{
+		AlertsOverTime: d.timeSeriesCount(&models.Alert{}, cutoff, 0),
+	}, nil
+}
+
 // GetDashboardTimeSeries returns dashboard-level time-series data
 func (d *Database) GetDashboardTimeSeries(hours int) (*DashboardTimeSeries, error) {
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)

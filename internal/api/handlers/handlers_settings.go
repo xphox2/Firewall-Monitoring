@@ -187,6 +187,9 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		// per-severity raw windows: reusing those made every summary born past
 		// its own prune cutoff. See SyslogSummaryRetentionDays.
 		"syslog_summary_retention_days": true,
+		// How often the background refresher rebuilds the system-health
+		// composite. Clamped server-side to 15-3600s; see dashboardHealthHub.
+		"dashboard_health_refresh_seconds": true,
 	}
 
 	secretKeys := settingsSecretKeys // v0.10.226: shared with GetSettings
@@ -245,6 +248,20 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				if err != nil || v < 0 || v > 3650 {
 					c.JSON(http.StatusBadRequest, response.Error(
 						"summary retention must be blank (inherit), 0 (keep forever), or 1-3650 days"))
+					return
+				}
+			}
+		case "dashboard_health_refresh_seconds":
+			// Blank inherits the default. The refresher clamps to the same range
+			// at read time, so an out-of-range value could never take effect —
+			// rejecting it here means the operator is told that, rather than
+			// saving a number the system quietly ignores.
+			if strings.TrimSpace(s.Value) != "" {
+				v, err := strconv.Atoi(strings.TrimSpace(s.Value))
+				if err != nil || v < dashboardHealthRefreshMin || v > dashboardHealthRefreshMax {
+					c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf(
+						"dashboard refresh must be blank (default %ds) or %d-%d seconds",
+						dashboardHealthRefreshDefault, dashboardHealthRefreshMin, dashboardHealthRefreshMax)))
 					return
 				}
 			}

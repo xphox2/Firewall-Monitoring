@@ -2,20 +2,48 @@ package handlers
 
 import (
 	"context"
+	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"firewall-mon/internal/api/response"
+	"firewall-mon/internal/logging"
 	"firewall-mon/internal/models"
 
 	"github.com/gin-gonic/gin"
 )
 
-// dashboardHealthTTL is how long a computed system-health composite is served
-// from cache. Within this window every browser tab / refresh / workstation gets
-// the same in-memory snapshot, so the underlying DB aggregation runs at most
-// once per TTL regardless of client count (see ttlCache).
-const dashboardHealthTTL = 10 * time.Second
+// The system-health composite is built by a BACKGROUND refresher, never on a
+// request. It used to be a 10s TTL + singleflight cache computed lazily by
+// whichever request found it expired — but the client polls every 30s, so a
+// single operator with one tab missed the cache on every poll and paid the full
+// aggregation each time. On production (99M-row syslog_messages on rotational
+// storage) that was a measured 32.57s per request, longer than the 30s
+// WriteTimeout, so the connection died mid-flight and the dashboard sat on
+// "Loading system health…" indefinitely.
+//
+// Now: a ticker computes the snapshot off the request path and the handler only
+// ever hands back whatever is current. A request can never be slow, whatever the
+// cache state.
+const (
+	// dashboardHealthRefreshKey is the admin-UI setting (seconds) controlling how
+	// often the background refresher recomputes. Not an env var — new knobs are
+	// admin settings.
+	dashboardHealthRefreshKey     = "dashboard_health_refresh_seconds"
+	dashboardHealthRefreshDefault = 30
+	// dashboardHealthRefreshMin clamps the setting. The compute is a multi-second
+	// aggregation over the biggest tables in the database; letting an operator set
+	// it to 1s would turn the dashboard into a self-inflicted outage.
+	dashboardHealthRefreshMin = 15
+	// dashboardHealthRefreshMax bounds the other end so a typo can't park the
+	// snapshot at a stale value for hours.
+	dashboardHealthRefreshMax = 3600
+	// dashboardHealthIdleWindow gates the ticker on recent interest, mirroring the
+	// NOC hub's M11 subscriber gating: with nobody looking at the dashboard the
+	// refresher computes nothing at all.
+	dashboardHealthIdleWindow = 5 * time.Minute
+)
 
 // pollerFreshWindow / trapFreshWindow bound how recent the newest poll / trap
 // must be for the Services module to call the poller / trap-receiver "up". These
@@ -27,27 +55,200 @@ const (
 	staleDeviceWindow = 60 * time.Minute
 )
 
-// GetDashboardHealth is the single cached composite that powers every module of
-// the customizable system-health dashboard. It is NOT the NOC: it summarizes the
-// health of the Firewall-Mon platform + pipeline (server box, DB, ingestion,
-// collectors, services) plus high-level fleet/alert rollups — it does not stream
-// the real-time per-site/device view.
+// dashboardHealthHub owns the background computation of the system-health
+// composite. One goroutine recomputes on a cadence; every request is served from
+// whatever snapshot is current, so no browser ever waits on the DB.
 //
-// The whole payload is wrapped in a ~10s TTL + singleflight cache so rapid
-// refreshes and many concurrent workstations collapse to one computation.
+// Modelled on nocHub (noc.go) with one deliberate difference: nocHub closes its
+// idle-wake gap by computing INLINE on the 0→1 subscribe, which we cannot copy —
+// an inline compute is exactly the multi-second block this exists to remove. The
+// wake here is a non-blocking signal to the refresher instead.
+type dashboardHealthHub struct {
+	h *Handler
+
+	mu          sync.Mutex
+	snap        gin.H
+	generatedAt time.Time
+	lastRequest time.Time
+	// interval is cached from the admin setting by the refresher so the request
+	// path never issues a settings query just to decide whether to nudge it.
+	interval time.Duration
+
+	// wake is a depth-1 signal channel: a request finding the snapshot missing or
+	// past its interval nudges the refresher instead of waiting for the next tick.
+	wake chan struct{}
+}
+
+func newDashboardHealthHub(h *Handler) *dashboardHealthHub {
+	return &dashboardHealthHub{
+		h:        h,
+		interval: dashboardHealthRefreshDefault * time.Second,
+		wake:     make(chan struct{}, 1),
+	}
+}
+
+// refreshInterval reads the admin setting, clamped. Called only by the refresher
+// goroutine, never on a request.
+func (hub *dashboardHealthHub) refreshInterval() time.Duration {
+	secs := dashboardHealthRefreshDefault
+	if hub.h != nil && hub.h.db != nil {
+		secs = hub.h.db.GetIntSetting(dashboardHealthRefreshKey, dashboardHealthRefreshDefault)
+	}
+	if secs < dashboardHealthRefreshMin {
+		secs = dashboardHealthRefreshMin
+	}
+	if secs > dashboardHealthRefreshMax {
+		secs = dashboardHealthRefreshMax
+	}
+	return time.Duration(secs) * time.Second
+}
+
+// Run recomputes the snapshot until ctx is cancelled.
+//
+// The delay is measured from compute COMPLETION, not on a fixed time.Ticker: on
+// a large database the compute can exceed the interval, and a plain ticker would
+// then fire back-to-back computes with no gap and pin the disk that also serves
+// ingest.
+func (hub *dashboardHealthHub) Run(ctx context.Context) {
+	if hub == nil || hub.h == nil || hub.h.db == nil {
+		return
+	}
+	for {
+		interval := hub.refreshInterval()
+		hub.mu.Lock()
+		hub.interval = interval
+		hub.mu.Unlock()
+
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		case <-hub.wake:
+			timer.Stop()
+		}
+
+		hub.mu.Lock()
+		idle := hub.lastRequest.IsZero() || time.Since(hub.lastRequest) > dashboardHealthIdleWindow
+		fresh := !hub.generatedAt.IsZero() && time.Since(hub.generatedAt) < interval
+		hub.mu.Unlock()
+		if idle {
+			continue // nobody is looking — compute nothing
+		}
+		// Already fresh: drop this cycle.
+		//
+		// Every client poll landing DURING a compute sees a snapshot older than
+		// the interval (the timer just waited one) and so sends a wake. Without
+		// this check that wake fires the instant the compute finishes and runs a
+		// second one back-to-back against a snapshot that is already current —
+		// which under a handful of viewers converges on two computes per
+		// interval, and when a compute outlasts its interval degenerates into
+		// computing continuously with no gap. That is precisely what measuring
+		// the delay from completion is supposed to prevent, so the wake path has
+		// to honour it too.
+		//
+		// The timer path is unaffected: it fires exactly one interval after the
+		// last publish, so the snapshot's age equals the interval and is not
+		// "fresh" by this test.
+		if fresh {
+			continue
+		}
+		hub.compute()
+	}
+}
+
+// compute runs the aggregation and publishes the result. Duration is logged
+// because every query inside computeDashboardHealth swallows its own error, so a
+// statement killed by statement_timeout would otherwise leave no trace at all.
+func (hub *dashboardHealthHub) compute() {
+	// Per-ITERATION recovery, not just the SafeGo wrapper around Run.
+	//
+	// SafeGo contains a panic to this goroutine but then lets it exit — it does
+	// not restart fn. For a refresher that would be terminal: one panic anywhere
+	// in the aggregation (or in gopsutil) and the console freezes for the life of
+	// the process, showing either a permanent "Building the system-health
+	// snapshot…" or an ever-ageing snapshot under a banner promising it is
+	// refreshing. Before this endpoint moved off the request path a panic here
+	// was absorbed by gin's per-request recovery and the next request simply
+	// tried again; this keeps that property.
+	defer logging.Recover("dashboard-health-compute")
+
+	start := time.Now()
+	snap := hub.h.computeDashboardHealth()
+	took := time.Since(start)
+
+	hub.mu.Lock()
+	hub.snap = snap
+	hub.generatedAt = time.Now()
+	interval := hub.interval
+	hub.mu.Unlock()
+
+	switch {
+	case took > interval:
+		log.Printf("dashboard-health: compute took %s — longer than the %s refresh interval; "+
+			"the snapshot is now this database's steady-state load while the dashboard is open", took, interval)
+	case took > 2*time.Second:
+		log.Printf("dashboard-health: compute took %s", took)
+	}
+}
+
+// request records interest, nudges the refresher when the snapshot is missing or
+// past its interval, and returns the current snapshot without blocking. A nil
+// snapshot means nothing has been computed yet.
+func (hub *dashboardHealthHub) request() (gin.H, time.Time) {
+	hub.mu.Lock()
+	hub.lastRequest = time.Now()
+	snap, generatedAt, interval := hub.snap, hub.generatedAt, hub.interval
+	hub.mu.Unlock()
+
+	if snap == nil || time.Since(generatedAt) > interval {
+		select {
+		case hub.wake <- struct{}{}:
+		default: // a wake is already pending — one is enough
+		}
+	}
+	return snap, generatedAt
+}
+
+// RunDashboardHealthHub runs the system-health refresher until ctx is cancelled.
+// Called once from cmd/api, AFTER SetNotifier/SetIRCManager: computeDashboardHealth
+// reads those to report service status.
+func (h *Handler) RunDashboardHealthHub(ctx context.Context) {
+	if h == nil || h.dashHub == nil {
+		return
+	}
+	h.dashHub.Run(ctx)
+}
+
+// GetDashboardHealth serves the background-computed system-health composite that
+// powers every module of the customizable dashboard. It is NOT the NOC: it
+// summarizes the health of the Firewall-Mon platform + pipeline (server box, DB,
+// ingestion, collectors, services) plus high-level fleet/alert rollups — it does
+// not stream the real-time per-site/device view.
+//
+// This handler NEVER touches the database. It returns whatever the refresher last
+// produced, plus age_seconds so the UI can show staleness honestly, and a
+// {"status":"computing"} sentinel before the first snapshot exists. Serving a
+// stale snapshot labelled with its age beats blocking a browser for 30 seconds.
 func (h *Handler) GetDashboardHealth(c *gin.Context) {
-	if h.db == nil {
+	if h.db == nil || h.dashHub == nil {
 		c.JSON(http.StatusOK, response.Success(nil))
 		return
 	}
-	val, err := h.dashCache.get("dashboard-health", dashboardHealthTTL, func() (interface{}, error) {
-		return h.computeDashboardHealth(), nil
-	})
-	if err != nil {
-		c.JSON(http.StatusOK, response.Success(nil))
+	snap, generatedAt := h.dashHub.request()
+	if snap == nil {
+		c.JSON(http.StatusOK, response.Success(gin.H{"status": "computing"}))
 		return
 	}
-	c.JSON(http.StatusOK, response.Success(val))
+	// Shallow copy so age_seconds never mutates the shared snapshot. The nested
+	// values are only ever read after compute publishes them.
+	out := make(gin.H, len(snap)+1)
+	for k, v := range snap {
+		out[k] = v
+	}
+	out["age_seconds"] = int64(time.Since(generatedAt).Seconds())
+	c.JSON(http.StatusOK, response.Success(out))
 }
 
 // computeDashboardHealth runs the (cheap) aggregate queries once. Uses the
@@ -89,6 +290,9 @@ func (h *Handler) computeDashboardHealth() gin.H {
 			"syslog": t.Syslog, "traps": t.Traps, "flows": t.Flows, "pings": t.Pings,
 			"syslog_last_hour": t.SyslogLastHr, "traps_last_hour": t.TrapsLastHr,
 			"flows_last_hour": t.FlowsLastHr, "pings_last_hour": t.PingsLastHr,
+			// This map is rebuilt key by key, so the approx marker has to be
+			// copied explicitly or the UI silently renders estimates as exact.
+			"approx": t.Approx,
 		}
 	}
 	if newestPoll != nil {
@@ -140,7 +344,10 @@ func (h *Handler) computeDashboardHealth() gin.H {
 		openTotal += r.C
 	}
 	alerts := gin.H{"open_total": openTotal, "open_by_severity": openBySev}
-	if ts, err := db.GetDashboardTimeSeries(24); err == nil && ts != nil {
+	// Alerts-only: the dashboard renders one sparkline from trend.alerts_over_time
+	// and nothing else, so the flows/syslog/traps series the full call also builds
+	// were pure waste (the syslog one measured 7.0s on production).
+	if ts, err := db.GetAlertsTimeSeries(24); err == nil && ts != nil {
 		alerts["trend"] = ts
 	}
 
@@ -178,7 +385,7 @@ func (h *Handler) computeDashboardHealth() gin.H {
 		svc("Database", map[bool]string{true: "up", false: "down"}[dbReachable]),
 		svc("Poller", upIdle(pollerUp)),
 		svc("Trap Receiver", upIdle(trapUp)),
-		svc("Notifier", map[bool]string{true: "configured", false: "off"}[h.notifier != nil]),
+		svc("Notifier", map[bool]string{true: "configured", false: "off"}[h.GetNotifier() != nil]),
 		svc("IRC", map[bool]string{true: "configured", false: "off"}[h.GetIRCManager() != nil]),
 	}
 

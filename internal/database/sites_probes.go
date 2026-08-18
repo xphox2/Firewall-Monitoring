@@ -490,25 +490,46 @@ type TelemetryTotals struct {
 	TrapsLastHr  int64 `json:"traps_last_hour"`
 	FlowsLastHr  int64 `json:"flows_last_hour"`
 	PingsLastHr  int64 `json:"pings_last_hour"`
+	// Approx reports that the all-time totals came from planner statistics rather
+	// than an exact count, so the UI can render them as "~99.4M" instead of
+	// implying a precision it does not have. The last-hour figures are always
+	// exact. False when every total was counted exactly.
+	Approx bool `json:"approx"`
 }
 
 // GetTelemetryTotals returns all-time and last-hour counts across every probe's
 // telemetry with NO probe filter (see TelemetryTotals).
+//
+// The all-time totals are ESTIMATES from the planner catalog wherever one is
+// available. They used to be four unbounded COUNT(*)s, and on production the
+// syslog_messages one alone reads an 88GB table — measured at 4.07s warm and
+// substantially worse cold, on every dashboard refresh AND every load of the
+// Probes page's "Data Totals" card. Nothing renders these as anything but a
+// rounded magnitude, so a catalog lookup accurate to a few percent buys back all
+// of that. Where no statistic exists (SQLite, never-analyzed, empty) the exact
+// count is used instead — see estimateRowCount.
+//
+// The last-hour figures stay exact: they are time-bounded and index-supported,
+// and they are what the "rate" reading depends on.
 func (d *Database) GetTelemetryTotals() (*TelemetryTotals, error) {
 	hourAgo := time.Now().UTC().Add(-1 * time.Hour)
 	t := &TelemetryTotals{}
 	type spec struct {
 		model    interface{}
+		table    string
 		total    *int64
 		lastHour *int64
 	}
 	for _, s := range []spec{
-		{&models.SyslogMessage{}, &t.Syslog, &t.SyslogLastHr},
-		{&models.TrapEvent{}, &t.Traps, &t.TrapsLastHr},
-		{&models.FlowSample{}, &t.Flows, &t.FlowsLastHr},
-		{&models.PingResult{}, &t.Pings, &t.PingsLastHr},
+		{&models.SyslogMessage{}, "syslog_messages", &t.Syslog, &t.SyslogLastHr},
+		{&models.TrapEvent{}, "trap_events", &t.Traps, &t.TrapsLastHr},
+		{&models.FlowSample{}, "flow_samples", &t.Flows, &t.FlowsLastHr},
+		{&models.PingResult{}, "ping_results", &t.Pings, &t.PingsLastHr},
 	} {
-		if err := d.db.Model(s.model).Count(s.total).Error; err != nil {
+		if est, ok := d.estimateRowCount(s.table); ok {
+			*s.total = est
+			t.Approx = true
+		} else if err := d.db.Model(s.model).Count(s.total).Error; err != nil {
 			return nil, fmt.Errorf("telemetry totals: count %T: %w", s.model, err)
 		}
 		if err := d.db.Model(s.model).Where("timestamp > ?", hourAgo).Count(s.lastHour).Error; err != nil {

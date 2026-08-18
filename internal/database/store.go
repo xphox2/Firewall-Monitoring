@@ -236,6 +236,7 @@ type ChartStore interface {
 	GetVPNChartWindow(deviceID uint, tunnelName string, from, to time.Time) ([]VPNChartBucket, error)
 	GetVPNChartGroupWindow(deviceID uint, tunnelNames []string, from, to time.Time) ([]VPNChartBucket, error)
 	GetDashboardTimeSeries(hours int) (*DashboardTimeSeries, error)
+	GetAlertsTimeSeries(hours int) (*DashboardTimeSeries, error)
 }
 
 // EventStatsStore covers the alert/syslog/trap/flow statistics aggregates.

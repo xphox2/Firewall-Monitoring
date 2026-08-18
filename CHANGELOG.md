@@ -1,6 +1,44 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.206] - 2026-08-17
+
+### Fixed
+
+**The Dashboard no longer takes minutes to load.** Opening the system-health console showed "Loading system health…" for seconds to minutes, every time. Measured against production: a single `GET /api/dashboard/health` took **32.57 seconds**, while the next request served from cache took 1.16 ms. The endpoint now answers in **under a millisecond on every request, including the first one after a restart**.
+
+The composite was computed lazily by whichever request found the cache expired. With a 10-second TTL against a 30-second client poll, a single operator with one tab missed the cache on *every* poll and paid the whole aggregation. Worse, 32.57 s exceeds the 30 s `WriteTimeout`, so the connection was torn down mid-flight — and the client's `catch` swallowed that silently, leaving the placeholder on screen indefinitely with nothing to click.
+
+A background refresher now owns the computation, modelled on the existing NOC snapshot broadcaster. The handler only ever hands back the last published snapshot and never touches the database. Like the NOC hub it computes only while someone is actually looking, so an idle system costs nothing; unlike it, a request finding a missing or stale snapshot signals the refresher over a buffered channel instead of computing inline, because an inline compute is the very block being removed. The interval is measured from compute *completion* rather than a fixed ticker, so a compute that runs longer than its interval cannot stack up back-to-back runs against the disk that also serves ingest.
+
+The payload now carries `age_seconds`, and the browser distinguishes three states instead of two — `computing`, `stale` and `fresh`. This is load-bearing: every module body defaults its missing keys to zero, so rendering the pre-first-compute sentinel as data would have painted "Database — Reachable: No" with a critical dot, an empty fleet and no services, on every restart.
+
+**All-time telemetry totals no longer count 88 GB of rows to render a rounded number.** `GetTelemetryTotals` ran four unbounded `COUNT(*)`s; the `syslog_messages` one alone was measured at 4.07 s warm and substantially worse cold. They now come from the planner catalog — accurate to a few percent, a single lookup — and are rendered with a `~` prefix so they never claim a precision they don't have. Last-hour figures remain exact. Where no statistic exists (SQLite, a never-analyzed table, an empty table) it falls back to an exact count rather than reporting a fabricated zero. This also speeds up the Probes page, which serves the same figures through `/api/probes/stats/global` and was paying the identical cost on the request path.
+
+**The system-health composite built three time series nothing displays.** It called `GetDashboardTimeSeries`, which aggregates hourly counts over flows, alerts, syslog and traps — but the dashboard renders one sparkline and reads only `alerts_over_time`. The syslog series alone measured 7.0 s (an external merge sort spilling 52 MB to disk). It now requests the alerts series only, in the same envelope.
+
+**`/api/dashboard/summary` is now cached.** The vitals rail polls it every 30 s from *every* admin page, and its 24-hour `COUNT(*)` over `syslog_messages` measured 1.49–1.81 s on production, uncached. It is a pure global aggregate, so it now shares the existing TTL + singleflight cache. The cached computation deliberately runs on the background store: bound to the leader request's context, one client navigating away would cancel the query for every caller coalesced behind it, and since errors aren't cached the entry would never warm.
+
+**Visibility maps on the high-ingest tables were never being maintained.** Per-table autovacuum tuning covered dead-tuple vacuums only. Append-only telemetry produces almost no dead tuples, so the vacuum that maintains the *visibility map* fell back to the global insert scale factor of 0.2 — roughly 19M inserts on a 99M-row table, against an ingest of ~4.5M rows/day. The most recent day of rows therefore never had its visibility map set, and every index-only scan over the recent window degraded into millions of random heap fetches: the dashboard's 24-hour `GROUP BY device_id` measured 10.0 s with 4,299,238 heap fetches. `autovacuum_vacuum_insert_scale_factor` and `autovacuum_vacuum_insert_threshold` are now set as well, issued as a separate `ALTER TABLE` so that on a pre-13 PostgreSQL the statement can be rejected without also discarding the four settings already applied.
+
+Five of the largest relations were absent from the tuned list entirely, including `flow_rollups` — the second-biggest table in production at 49.7M rows / 9.4 GB, written continuously by the rollup ladder.
+
+**`trap_events` had no standalone timestamp index** (migration v57). It carried only `(device_id, timestamp)`, which cannot serve the fleet-wide `MAX(timestamp)` the composite runs to decide whether the trap receiver is up — a full scan for one status badge. Syslog, flow and ping tables all declared one; this table was simply missed.
+
+**The Resource trend chart no longer blanks on re-render.** `render()` rewrites the module grid's markup, so the chart's canvas is a new element every time — the Chart instance stays bound to the detached old one. Redraws now come from the cached series whenever the canvas has been replaced, with a network refetch only when the underlying snapshot actually advanced. Previously every render refetched the 24-hour series and rebuilt the chart, including on every drag and every visibility toggle in Customize mode.
+
+**A single panic can no longer freeze the console permanently.** `SafeGo` contains a panic to its goroutine but then lets it exit; for a background refresher that would have been terminal, leaving viewers on an ever-ageing snapshot under a banner promising it was refreshing. The computation now recovers per iteration, restoring the property the per-request path got from gin's recovery.
+
+**The dashboard was polled twice.** Two independent 30-second timers — one in `FwmonDashboard`, one in `admin-main.js` — both refreshed `/api/dashboard/health`, phase-offset, so an open dashboard issued roughly two requests per 30 s instead of one; the second also skipped the `!customizing` guard. The trend chart was likewise refetched on every render, including every drag and every visibility toggle in Customize mode.
+
+### Added
+
+**Settings &rarr; Display now exposes the system-health refresh interval** (`dashboard_health_refresh_seconds`, blank = 30 s), clamped server-side to 15–3600 s so it cannot be turned into a self-inflicted outage.
+
+### Changed
+
+**The dashboard paints progressively and recovers from failure.** Module shells and the saved layout render immediately rather than the whole grid collapsing to a single centred spinner, the layout and health requests run in parallel instead of chained, requests carry an `AbortController` and a client-side deadline, and a failed load shows an error with a retry control instead of a placeholder that never resolves.
+
 ## [0.11.205] - 2026-08-08
 
 ### Added

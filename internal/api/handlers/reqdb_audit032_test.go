@@ -48,4 +48,29 @@ func TestRequestContextBoundary_AUDIT032(t *testing.T) {
 	if strings.Contains(read("handlers_data.go"), "h.reqDB(") {
 		t.Error("handlers_data.go uses h.reqDB — probe-ingestion writes must stay on the durable background context (h.db), not the request context (AUDIT-032).")
 	}
+
+	// BACKGROUND-STORE ALLOWED: browser-facing, but deliberately NOT on the
+	// request context.
+	//
+	// handlers_health_dashboard.go was simply missing from inScope above, which
+	// left the single heaviest browser-facing handler unguarded. It cannot be
+	// added there: the positive check requires the file to CONTAIN h.reqDB(c),
+	// and this one legitimately never will. Its computation is a global
+	// aggregate shared by every client through a background refresher / the
+	// singleflight cache, so binding it to one requester's context would let that
+	// client's disconnect cancel the work every other client is waiting on — and
+	// since ttlCache does not cache errors, the cache would never warm.
+	//
+	// So the exemption is asserted rather than assumed: these files must use the
+	// background store and must NOT reach for reqDB.
+	backgroundStoreAllowed := []string{"handlers_health_dashboard.go"}
+	for _, f := range backgroundStoreAllowed {
+		src := read(f)
+		if strings.Contains(src, "h.reqDB(") {
+			t.Errorf("%s uses h.reqDB — this file computes shared global aggregates on the background store (h.db) so one client's disconnect cannot cancel work every other client is waiting on (AUDIT-032).", f)
+		}
+		if !strings.Contains(src, "db := h.db") {
+			t.Errorf("%s must compute on the background store (db := h.db); if that changed, revisit whether it belongs in inScope instead (AUDIT-032).", f)
+		}
+	}
 }

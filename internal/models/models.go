@@ -374,8 +374,12 @@ type LoadAverage struct {
 func (LoadAverage) TableName() string { return "load_average" }
 
 type TrapEvent struct {
-	ID        uint      `json:"id" gorm:"primaryKey"`
-	Timestamp time.Time `json:"timestamp" gorm:"index:idx_trap_device_ts,priority:2"`
+	ID uint `json:"id" gorm:"primaryKey"`
+	// Standalone index as well as the composite: idx_trap_device_ts leads on
+	// device_id, so it cannot serve a fleet-wide `MAX(timestamp)` or a bare
+	// time-window scan. SyslogMessage, FlowSample and PingResult all declare one;
+	// trap_events was the outlier. See migration v57.
+	Timestamp time.Time `json:"timestamp" gorm:"index;index:idx_trap_device_ts,priority:2"`
 	DeviceID  uint      `json:"device_id" gorm:"index;index:idx_trap_device_ts,priority:1"`
 	ProbeID   uint      `json:"probe_id" gorm:"index"`
 	SourceIP  string    `json:"source_ip"`

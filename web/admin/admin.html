@@ -325,7 +325,7 @@
                 </div>
             </div>
             <div id="dashboard-modules" class="dash-modules">
-                <div class="loading" style="padding:32px;">Loading system health…</div>
+                <div class="dash-banner" role="status">Loading system health…</div>
             </div>
         </div>
 
@@ -1231,6 +1231,17 @@
                     <div class="setting-item">
                         <label>Public Dashboard Refresh Interval (seconds)</label>
                         <input type="number" name="public_refresh_interval" value="30" min="10" max="300">
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header"><h2>Admin Dashboard</h2></div>
+                <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">The system-health console is rebuilt on a schedule in the background, so opening it never waits on the database. This controls how often that rebuild runs.</p>
+                <div id="admin-dashboard-settings" class="settings-grid">
+                    <div class="setting-item">
+                        <label for="dashboard_health_refresh_seconds">System Health Refresh Interval (seconds)</label>
+                        <input type="number" id="dashboard_health_refresh_seconds" name="dashboard_health_refresh_seconds" placeholder="30" min="15" max="3600" step="1">
+                        <div class="field-hint">Blank uses 30 seconds. The rebuild is a multi-second aggregation over the largest tables in the database, so shorter intervals cost real I/O; it is skipped entirely while nobody has the dashboard open.</div>
                     </div>
                 </div>
             </div>
