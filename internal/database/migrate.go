@@ -686,6 +686,15 @@ var defaultAutovacuumTables = []string{
 	// Partitioned, ~44k rows/day, and a 2-day retention window — so it churns
 	// harder than several tables already on this list, yet was never tuned.
 	"denied_events",
+	// Measured on production while tracing the dashboard's cost: these are among
+	// the largest relations in the database and none of them was being tuned.
+	// flow_rollups in particular is the SECOND biggest table there (49.7M rows /
+	// 9.4 GB) and is written continuously by the 5-minute rollup ladder.
+	"flow_rollups",
+	"flow_detections",
+	"hardware_sensors",
+	"security_stats",
+	"disk_usage",
 }
 
 // autovacuumTables returns the tables to tune. By default that's
@@ -752,6 +761,35 @@ func (d *Database) ConfigureAutovacuum() error {
 			if err := d.execMaintenanceDDL(sql); err != nil {
 				// Log but don't fail - table might not exist yet on this deployment
 				log.Printf("Autovacuum config warning for %s: %v", target, err)
+				continue
+			}
+
+			// INSERT-driven autovacuum, issued as a SEPARATE statement.
+			//
+			// The settings above only govern vacuums triggered by dead tuples. An
+			// append-only telemetry table produces almost none, so on production
+			// syslog_messages the vacuum that maintains the VISIBILITY MAP was
+			// instead governed by the global autovacuum_vacuum_insert_scale_factor
+			// of 0.2 — roughly 19M inserts on a 99M-row table, against an ingest of
+			// ~4.5M rows/day. The last day of rows therefore never had its
+			// visibility map set, and every index-only scan over the recent window
+			// degraded into millions of random heap fetches: the dashboard's 24h
+			// GROUP BY measured 10s with 4,299,238 heap fetches. These two settings
+			// are what stop that.
+			//
+			// Separate from the ALTER above on purpose. ALTER TABLE is atomic and
+			// these two reloptions are PostgreSQL 13+, so folding them into one
+			// statement would mean an older server rejects the whole thing and
+			// silently loses the four aggressive settings it applies today —
+			// leaving the table worse off than before while only logging a warning.
+			// Split, an old server simply keeps what it has and skips these.
+			insertSQL := fmt.Sprintf(`
+			ALTER TABLE %s SET (
+				autovacuum_vacuum_insert_scale_factor = 0.005,
+				autovacuum_vacuum_insert_threshold = 100000
+			)`, target)
+			if err := d.execMaintenanceDDL(insertSQL); err != nil {
+				log.Printf("Autovacuum insert-threshold config warning for %s (PostgreSQL 13+ only): %v", target, err)
 				continue
 			}
 			log.Printf("Configured autovacuum for %s", target)
@@ -1292,6 +1330,42 @@ func (d *Database) migrateDropRedundantSyslogDeviceIndex() error {
 		return fmt.Errorf("migrate v56 drop idx_syslog_messages_device_id: %w", err)
 	}
 	log.Printf("migrate v56: dropped idx_syslog_messages_device_id (redundant leading prefix of idx_syslog_device_ts)")
+	return nil
+}
+
+// migrateTrapEventsTimestampIndex (v57) gives trap_events a standalone
+// timestamp index.
+//
+// The table had only idx_trap_device_ts (device_id, timestamp), which leads on
+// device_id and so cannot serve the fleet-wide `SELECT MAX(timestamp)` the
+// system-health composite runs to decide whether the trap receiver is up — that
+// was a full scan of the table for one boolean badge. SyslogMessage, FlowSample
+// and PingResult all declare a standalone timestamp index; trap_events was
+// simply missed.
+//
+// Like v54 this needs to be an explicit migration as well as a model tag: tags
+// are only applied by migrateBaseline's AutoMigrate loop, which never runs again
+// on an existing database. The tag is kept so fresh installs get it from the
+// baseline.
+//
+// Shape-aware by construction: on a fresh install trap_events is a partitioned
+// parent and on production it is a plain heap, and CREATE INDEX on a partitioned
+// parent cascades to the leaves (PG11+), so one statement covers both. It is
+// also NOT a leading prefix of idx_trap_device_ts, so partitionIndexPlan's
+// prefix-coverage rule keeps it.
+//
+// No timeout lift here, unlike v54: trap_events is a small table (production:
+// ~200k rows / 61 MB) and this build returns in well under the 30s
+// statement_timeout. If that ever stops being true the v54 shape is the model.
+func (d *Database) migrateTrapEventsTimestampIndex() error {
+	const create = `CREATE INDEX IF NOT EXISTS idx_trap_events_timestamp ON trap_events ("timestamp")`
+	if !d.dialect.IsPostgres() {
+		return d.db.Exec(create).Error
+	}
+	if err := d.execMaintenanceDDL(create); err != nil {
+		return fmt.Errorf("migrate v57 create idx_trap_events_timestamp: %w", err)
+	}
+	log.Printf("migrate v57: ensured idx_trap_events_timestamp on trap_events")
 	return nil
 }
 

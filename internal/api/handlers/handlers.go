@@ -39,10 +39,14 @@ type Handler struct {
 	// startTime is the process boot time, used by GetSystemHealth to report
 	// server uptime on the dashboard's Server Platform card.
 	startTime time.Time
-	// dashCache holds short-TTL, singleflight-deduped snapshots of the fleet-wide
-	// dashboard health composite so many workstations / rapid refreshes compute it
-	// at most once per TTL. Global aggregate only — never per-user/per-request.
+	// dashCache holds short-TTL, singleflight-deduped snapshots of fleet-wide
+	// dashboard aggregates so many workstations / rapid refreshes compute them
+	// at most once per TTL. Global aggregates only — never per-user/per-request.
 	dashCache *ttlCache
+	// dashHub computes the system-health composite in the BACKGROUND so
+	// /api/dashboard/health never runs a query on a request. See
+	// handlers_health_dashboard.go.
+	dashHub *dashboardHealthHub
 	// db is the repository interface (database.Store), not the concrete
 	// *database.Database god-object — handlers depend on the narrow method set
 	// and can be unit-tested with a fake store. The runtime value is still the
@@ -96,6 +100,7 @@ func NewHandler(cfg *config.Config, authManager *auth.AuthManager, db *database.
 	if db != nil {
 		h.RefreshThreatMatcher()
 		h.nocHub = newNOCHub(db, nocSnapshotInterval)
+		h.dashHub = newDashboardHealthHub(h)
 	}
 	return h
 }
@@ -187,6 +192,16 @@ func (h *Handler) SetNotifier(n *notifier.Notifier) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.notifier = n
+}
+
+// GetNotifier returns the wired notifier under the lock. The dashboard-health
+// refresher runs on a background goroutine and reads this concurrently with the
+// SetNotifier call during startup, so the bare field read it used to do was a
+// data race — and would have reported "Notifier: off" if it ever won it.
+func (h *Handler) GetNotifier() *notifier.Notifier {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.notifier
 }
 
 // SetVersion records the server version stamped into rendered reports.

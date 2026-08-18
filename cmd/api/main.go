@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.205"
+const ServerVersion = "0.11.206"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -500,6 +500,18 @@ func main() {
 	}
 	handler.SetIRCManager(ircManager)
 	defer ircManager.Stop()
+
+	// System-health dashboard refresher: one goroutine recomputes the composite on
+	// a cadence so GET /api/dashboard/health never runs a query on a request.
+	//
+	// Started HERE, not next to the NOC broadcaster above, because
+	// computeDashboardHealth reports Notifier/IRC status — starting it before
+	// SetNotifier (above) and SetIRCManager (just now) would race those writes and
+	// could publish a snapshot claiming both are off. This is still before
+	// setupRoutes and ListenAndServe, so no request can arrive without a hub.
+	logging.SafeGo("dashboard-health-refresher", func() {
+		handler.RunDashboardHealthHub(bgCtx)
+	})
 
 	setupRoutes(router, cfg, handler, authManager, db)
 

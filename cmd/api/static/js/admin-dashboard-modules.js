@@ -79,9 +79,18 @@
         // DETACHED canvas is never visited by it.
         if (!el) {
             if (serverTrendChart) { serverTrendChart.destroy(); serverTrendChart = null; }
+            lastTrendKey = null;
             return;
         }
         if (typeof Chart === 'undefined') return;
+        // render() runs on every drag-drop and every eye-toggle in Customize
+        // mode, and this used to refetch the 24h series and rebuild the Chart
+        // instance each time. Refetch only when the health payload actually
+        // advanced; a rebuild is still forced whenever the chart is missing
+        // (first paint, or the module was hidden and the canvas destroyed).
+        var key = (data && data.generated_at) || '';
+        if (serverTrendChart && key === lastTrendKey) return;
+        lastTrendKey = key;
         // AC.apiFetch resolves to the PARSED body, not a Response — calling
         // .json() on it throws, and the .catch below would swallow it into a
         // console warning while the chart silently never rendered.
@@ -210,8 +219,12 @@
             },
             body: function (d) {
                 var g = d.ingestion || {};
+                // Totals are planner estimates, not COUNT(*) — an exact count of
+                // syslog_messages reads tens of GB. "~" states that instead of
+                // implying a precision they don't have; the /hr rates are exact.
+                var approx = g.approx ? '~' : '';
                 function row(label, total, lh) {
-                    return tile(label, '<span>' + num(total) + '</span>' +
+                    return tile(label, '<span>' + approx + num(total) + '</span>' +
                         '<span class="dash-rate">+' + num(lh) + '/hr</span>');
                 }
                 return tiles(
@@ -353,6 +366,17 @@
     var loaded = false;
     var pollStarted = false;
     var dragId = null;
+    // Load state drives the banner above the grid. The server computes the
+    // composite in the BACKGROUND, so a request can legitimately answer
+    // "nothing computed yet" ({"status":"computing"}) or hand back a snapshot
+    // with an age. Those are not the same as having data, and must never be fed
+    // to the module bodies: they default every missing key to zero, so a
+    // sentinel rendered as data paints "Database — Reachable: No" with a crit
+    // dot, an empty fleet and no services. That is a false outage report.
+    var loadState = 'loading'; // 'loading' | 'computing' | 'ready' | 'error'
+    var ageSeconds = 0;
+    var inFlight = null;       // AbortController for the current /dashboard/health
+    var lastTrendKey = null;   // guards redundant /system/metrics/chart fetches
 
     function reconcile(saved) {
         var out = [], seen = {};
@@ -369,16 +393,58 @@
     function clone(l) { return l.map(function (e) { return { id: e.id, visible: e.visible }; }); }
 
     // ---- rendering -----------------------------------------------------------
+
+    // The status line above the grid. It exists because the page used to have
+    // exactly two states — "Loading system health…" or fully rendered — and the
+    // loading one was a dead end: fetchData swallowed every failure silently, so
+    // a request killed by the server's 30s write timeout left that placeholder on
+    // screen forever with nothing to click.
+    function statusBanner() {
+        if (loadState === 'error') {
+            return '<div class="dash-banner dash-banner-error" role="alert">' +
+                '<span>Couldn\'t load system health.</span>' +
+                '<button type="button" class="btn btn-sm" data-dash-retry>Retry</button></div>';
+        }
+        if (loadState === 'computing') {
+            return '<div class="dash-banner" role="status">Building the system-health snapshot… this appears within a minute.</div>';
+        }
+        if (loadState === 'loading') {
+            return '<div class="dash-banner" role="status">Loading system health…</div>';
+        }
+        // Fresh data still gets a line when it is materially old, so nobody reads
+        // an idle-wake snapshot as the current state of the system.
+        if (ageSeconds > 120) {
+            return '<div class="dash-banner" role="status">Showing the snapshot from ' +
+                esc(relAge(ageSeconds)) + ' — refreshing…</div>';
+        }
+        return '';
+    }
+
+    function relAge(secs) {
+        if (secs < 90) return Math.max(1, Math.round(secs)) + 's ago';
+        if (secs < 5400) return Math.round(secs / 60) + 'm ago';
+        return Math.round(secs / 3600) + 'h ago';
+    }
+
+    // Module shells paint from `layout` alone, so the page shows its structure
+    // (and the user's saved order) before any data arrives, instead of one
+    // centred spinner standing in for all eight modules.
+    function skeletonBody() {
+        return '<div class="dash-skeleton" aria-hidden="true"><span></span><span></span><span></span></div>';
+    }
+
     function render() {
         var host = document.getElementById('dashboard-modules');
         if (!host) return;
-        if (!data) { host.innerHTML = '<div class="loading" style="padding:32px;">Loading system health…</div>'; return; }
+        if (!layout) return; // nothing to lay out yet; load() always renders after
         var html = layout.map(function (e) {
             var m = MODULE_INDEX[e.id];
             if (!m) return '';
             if (!e.visible && !customizing) return '';
+            // Severity is only meaningful once real data exists. Without it the
+            // dot stays neutral rather than reporting a fabricated status.
             var sev = 'ok';
-            try { sev = m.sev(data) || 'ok'; } catch (err) { sev = 'ok'; }
+            if (data) { try { sev = m.sev(data) || 'ok'; } catch (err) { sev = 'ok'; } }
             var cls = 'dash-module' + (customizing ? ' editing' : '') + (!e.visible ? ' hidden-mod' : '');
             var controls = customizing
                 ? '<div class="dash-mod-controls">' +
@@ -386,13 +452,20 @@
                 '<span class="dash-grip" title="Drag to reorder" aria-hidden="true">⠿</span></div>'
                 : '';
             var body = '';
-            try { body = m.body(data); } catch (err) { body = '<div class="dash-empty">unavailable</div>'; }
+            if (!data) {
+                body = skeletonBody();
+            } else {
+                try { body = m.body(data); } catch (err) { body = '<div class="dash-empty">unavailable</div>'; }
+            }
             return '<section class="' + cls + '" data-mod-id="' + e.id + '"' + (customizing ? ' draggable="true"' : '') + '>' +
                 '<div class="dash-module-header"><span class="dash-dot" style="background:' + sevColor(sev) + '"></span>' +
                 '<h3>' + esc(m.title) + '</h3>' + controls + '</div>' +
                 '<div class="dash-module-body">' + body + '</div></section>';
         }).join('');
-        host.innerHTML = html || '<div class="dash-empty" style="padding:32px;">All modules hidden — click Customize to add some.</div>';
+        host.innerHTML = statusBanner() +
+            (html || '<div class="dash-empty" style="padding:32px;">All modules hidden — click Customize to add some.</div>');
+        var retry = host.querySelector('[data-dash-retry]');
+        if (retry) retry.addEventListener('click', function () { loadState = 'loading'; render(); fetchData(); });
         // No per-module post-render hook exists, and body() can only return
         // markup — so the chart is built here, after the canvas is in the DOM.
         // No-ops (and releases the chart) when the Resources module is hidden.
@@ -464,11 +537,55 @@
     }
 
     // ---- data + lifecycle ----------------------------------------------------
+    // Client-side deadline for /dashboard/health. The server now answers from a
+    // background snapshot so this should never fire, but without it a stalled
+    // connection leaves the request outstanding indefinitely — which is how the
+    // page used to sit on "Loading system health…" for minutes.
+    var HEALTH_TIMEOUT_MS = 20000;
+
     function fetchData() {
-        return AC.apiFetch(API + '/dashboard/health').then(function (r) {
-            data = (r && r.data) ? r.data : null;
-            render();
-        }).catch(function () { /* keep last data */ });
+        // One request at a time. Also cancels on navigation away, so a reply
+        // can't land and re-render a page the user already left.
+        if (inFlight) { try { inFlight.abort(); } catch (e) {} }
+        var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        inFlight = ctl;
+        var timer = ctl ? setTimeout(function () { try { ctl.abort(); } catch (e) {} }, HEALTH_TIMEOUT_MS) : null;
+
+        return AC.apiFetch(API + '/dashboard/health', ctl ? { signal: ctl.signal } : undefined)
+            .then(function (r) {
+                if (timer) clearTimeout(timer);
+                if (inFlight !== ctl) return; // superseded by a newer request
+                inFlight = null;
+                var d = (r && r.data) ? r.data : null;
+                if (d && d.status === 'computing') {
+                    // The refresher has not produced a snapshot yet. Deliberately
+                    // do NOT assign this to `data`: every module body defaults its
+                    // missing keys to zero, so rendering the sentinel would report
+                    // the database as unreachable and the fleet as empty.
+                    loadState = data ? 'ready' : 'computing';
+                    render();
+                    return;
+                }
+                if (!d) { loadState = data ? 'ready' : 'error'; render(); return; }
+                data = d;
+                ageSeconds = typeof d.age_seconds === 'number' ? d.age_seconds : 0;
+                loadState = 'ready';
+                render();
+            })
+            .catch(function (e) {
+                if (timer) clearTimeout(timer);
+                // A request superseded by a newer one (we aborted it above)
+                // must not touch the UI: its AbortError would otherwise paint
+                // "Couldn't load system health" over a request that is still
+                // perfectly in flight.
+                if (inFlight !== ctl) return;
+                inFlight = null;
+                // Keep the last good payload, but never leave a first load stuck
+                // on a spinner with no way out.
+                loadState = data ? 'ready' : 'error';
+                fwmonLog.warn('[Dashboard] health load failed', e);
+                render();
+            });
     }
     function loadLayout() {
         return AC.apiFetch(API + '/me/dashboard').then(function (r) {
@@ -488,7 +605,18 @@
             loaded = true;
             layout = clone(DEFAULT_LAYOUT);
             wireToolbar();
-            loadLayout().then(fetchData);
+            // Parallel, not chained. loadLayout falls back to DEFAULT_LAYOUT on
+            // error, so it never needed to gate the health request — chaining
+            // them just put a full round-trip in front of the payload the page
+            // is actually waiting for.
+            //
+            // The trailing render() is required: fetchData renders internally,
+            // and if it wins the race it paints against the DEFAULT_LAYOUT set
+            // above while loadLayout then replaces `layout` without re-rendering.
+            // Without this the user's saved order and hidden modules would not
+            // appear until the next 30s poll.
+            render(); // shells first, from whatever layout we have
+            Promise.all([loadLayout(), fetchData()]).then(render);
             if (!pollStarted && AC.pollWhenVisible) {
                 pollStarted = true;
                 AC.pollWhenVisible(function () {

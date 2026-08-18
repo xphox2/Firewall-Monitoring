@@ -25,12 +25,19 @@
         // probe still exists), so the numbers never drop when a probe is
         // decommissioned or deleted. See GET /api/probes/stats/global.
         function renderSummary(t) {
+            // The all-time totals come from PostgreSQL's planner statistics, not
+            // a COUNT(*) — an exact count of syslog_messages reads tens of GB and
+            // took seconds on every load of this page. The "~" says so rather
+            // than implying a precision these figures don't have. The last-hour
+            // figures below are still exact. See GetTelemetryTotals.
+            var approx = t && t.approx ? '~' : '';
             function card(icon, accent, label, total, lastHr) {
                 return '<div class="stat-card ' + accent + '">' +
                     '<div class="stat-icon">' + icon + '</div>' +
                     '<div class="stat-content">' +
                         '<div class="stat-label">' + label + '</div>' +
-                        '<div class="stat-value">' + (total || 0).toLocaleString() + '</div>' +
+                        '<div class="stat-value" title="' + (approx ? 'Approximate — from table statistics' : '') + '">' +
+                            approx + (total || 0).toLocaleString() + '</div>' +
                         '<div style="font-size:0.72rem;color:var(--fwmon-text-faint);margin-top:4px;">+' + (lastHr || 0).toLocaleString() + ' last hr</div>' +
                     '</div>' +
                 '</div>';

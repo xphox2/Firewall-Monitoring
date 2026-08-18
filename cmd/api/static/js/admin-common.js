@@ -382,7 +382,11 @@
                 method: options.method || 'GET',
                 headers: headers,
                 body: options.body ? (typeof options.body === 'string' ? options.body : JSON.stringify(options.body)) : undefined,
-                credentials: 'same-origin'
+                credentials: 'same-origin',
+                // Passed through so callers can cancel: without it an
+                // AbortController handed to apiFetch was silently ignored and
+                // the request ran to completion regardless.
+                signal: options.signal
             }).then(function(res) {
             if ((res.status === 502 || res.status === 503 || res.status === 504) && attempt < maxAttempts) {
                 var delay = Math.pow(2, attempt - 1) * 200 + Math.floor(Math.random() * 150);

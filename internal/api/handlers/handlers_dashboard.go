@@ -833,11 +833,38 @@ type dashboardSummaryDevice struct {
 // Both the vitals rail and the stat grid consume this (coalesced client-side), so
 // the heavy /api/dashboard endpoint no longer runs on login.
 func (h *Handler) GetDashboardSummary(c *gin.Context) {
-	db := h.reqDB(c)
-	if db == nil {
+	if h.db == nil {
 		c.JSON(http.StatusOK, response.Success(nil))
 		return
 	}
+	val, err := h.dashCache.get("dashboard-summary", dashboardSummaryTTL, func() (interface{}, error) {
+		return h.computeDashboardSummary(), nil
+	})
+	if err != nil {
+		c.JSON(http.StatusOK, response.Success(nil))
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(val))
+}
+
+// dashboardSummaryTTL bounds how long one computed summary is reused. The vitals
+// rail polls this every 30s from EVERY admin page, and the 24h syslog COUNT
+// inside it was measured at 1.49-1.81s on production, so before caching it was
+// the largest recurring request-path cost in the product.
+const dashboardSummaryTTL = 15 * time.Second
+
+// computeDashboardSummary builds the summary payload.
+//
+// It runs on the BACKGROUND store h.db, not h.reqDB(c), and that is load-bearing
+// rather than an oversight: the result is shared by every client through
+// dashCache, and ttlCache collapses concurrent misses with singleflight. If the
+// compute inherited the leader request's context, that one client navigating away
+// would cancel the query for every caller coalesced behind it — and since errors
+// are not cached, the cache would never warm. The payload itself is a pure global
+// aggregate with no per-user component (device counts, a minimal id/name/status
+// device list, probe counts, bounded 24h totals), so sharing it is correct.
+func (h *Handler) computeDashboardSummary() gin.H {
+	db := h.db
 	g := db.Gorm()
 
 	// Device counts by status — a single GROUP BY over the small config table.
@@ -900,7 +927,7 @@ func (h *Handler) GetDashboardSummary(c *gin.Context) {
 		log.Printf("dashboard summary: trap count: %v", err)
 	}
 
-	c.JSON(http.StatusOK, response.Success(gin.H{
+	return gin.H{
 		"device_counts":       gin.H{"total": total, "online": online, "offline": offline},
 		"devices":             devices,
 		"probe_count_active":  probeActive,
@@ -908,7 +935,7 @@ func (h *Handler) GetDashboardSummary(c *gin.Context) {
 		"probe_count_stale":   probeStale,
 		"syslog_24h":          syslog24,
 		"trap_24h":            trap24,
-	}))
+	}
 }
 
 // GetNoisyDevices returns the top-N devices ranked by recent alert + syslog

@@ -22,7 +22,6 @@
     // of flashing back to the "loading..." placeholder every 30s — the
     // placeholder should only show on the very first load of a probe.
     var probeStatsCache = {};
-    var adminRefreshTimer;
     var connRefreshTimer;
     var syslogRefreshTimer;
     var syslogOffset = 0;
@@ -2552,6 +2551,10 @@
                 if (tzSel) tzSel.value = tzSetting.value;
             }
 
+            var dashRefresh = settings.find(function(s) { return s.key === 'dashboard_health_refresh_seconds'; });
+            var dashRefreshInput = document.getElementById('dashboard_health_refresh_seconds');
+            if (dashRefreshInput) dashRefreshInput.value = (dashRefresh && dashRefresh.value) ? dashRefresh.value : '';
+
             var alertSettings = settings.filter(function(s) { return s.category === 'alerts'; });
             var notifSettings = settings.filter(function(s) { return s.category === 'notifications'; });
             var savedReportVals = {};
@@ -3290,6 +3293,13 @@
         document.querySelectorAll('#display-settings input').forEach(function(input) {
             if (input.name === 'display_timezone') return; // skip, added explicitly below
             settings.push({ key: input.name, value: input.type === 'checkbox' ? String(input.checked) : input.value, category: 'display', type: input.type === 'checkbox' ? 'bool' : 'string' });
+        });
+        // Kept out of #display-settings deliberately: that block is round-tripped
+        // through /display-settings, which only knows the public-dashboard keys,
+        // so an input placed there would save but never load its stored value
+        // back. This one reads from the generic settings list in loadSettings.
+        document.querySelectorAll('#admin-dashboard-settings input').forEach(function(input) {
+            settings.push({ key: input.name, value: input.value.trim(), category: 'display', type: 'string' });
         });
         var reportsSection = document.getElementById('settings-reports');
         var dailyEnabled = reportsSection.querySelector('input[name="report_daily_enabled"]') && reportsSection.querySelector('input[name="report_daily_enabled"]').checked;
@@ -4708,11 +4718,13 @@
         }
     });
 
-    // Dashboard refresh — visibility-gated (v0.10.214, bundle C2). Page-
-    // active check stays so we don't refresh when on syslog/alerts/etc;
-    // the new gate also pauses when the whole browser tab is hidden.
-    adminRefreshTimer = AC.pollWhenVisible(function() {
-        var activePage = document.querySelector('.page.active');
-        if (activePage && activePage.id === 'page-dashboard') loadDashboard();
-    }, 30000, { immediate: false });
+    // Dashboard refresh is owned by FwmonDashboard (admin-dashboard-modules.js),
+    // which runs its own visibility-gated 30s poll.
+    //
+    // There used to be a second 30s timer here calling loadDashboard() ->
+    // FwmonDashboard.load() -> fetchData(), phase-offset from the module's own
+    // timer — so an open dashboard issued roughly two /dashboard/health requests
+    // per 30s instead of one, and this copy also skipped the `!customizing`
+    // guard the module's timer applies. Nav-time loading is unaffected: the
+    // `case 'dashboard'` branch in loadPageData still calls loadDashboard().
 })();
