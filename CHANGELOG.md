@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.207] - 2026-08-23
+
+### Fixed
+
+**The IRC bot posts its periodic status box again.** On production the bot sat in its channels, visibly connected, while the auto-status box silently never appeared — with not a single log line explaining why. Root cause: the status loop is one goroutine, and during a connection outage one of its sends parked forever inside the IRC library's 10-slot write buffer. The library cannot free such a sender: its own teardown deadlocks — `Disconnect()` waits on the internal ping loop, which is itself parked on the same full buffer, so the channel close that would have released the sender is never reached. The bot later reconnected and re-joined on a fresh connection, which is why it looked healthy while auto-status stayed dead until a process restart.
+
+Every IRC write is now timeout-bounded (15 s, far beyond any healthy drain of the write buffer, far under the ~16-minute half-open-socket teardown). On timeout the parked sender is abandoned — a bounded, self-reclaiming leak — the failure is logged, and the loop moves on; a failed channel retries on its next due tick. All eleven send paths were converted in one pass, not just the one that broke: the auto-status box, command replies (`!status`/`!stats`/`!help` — the library waits unboundedly for callbacks, so a parked reply would have frozen the connection's entire read loop), unknown-command and admin-only notices, NickServ/ChanServ identification, channel joins, nick-collision renames, admin channel sends, and both QUIT paths. `Bot.Stop` additionally no longer sends QUIT while holding the bot lock, so a dead connection can no longer stall admin handlers for the duration of the timeout. A watchdog logs any status tick that exceeds two minutes. Regression tests pin the fix using a fresh unconnected library object, which is naturally connected-looking with a write channel that parks forever — exactly the production failure shape.
+
 ## [0.11.206] - 2026-08-17
 
 ### Fixed
