@@ -1,6 +1,6 @@
 module firewall-mon
 
-go 1.25.12
+go 1.25.13
 
 require (
 	github.com/gin-gonic/gin v1.12.0

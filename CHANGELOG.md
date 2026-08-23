@@ -1,6 +1,12 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.208] - 2026-08-23
+
+### Security
+
+**Go toolchain bumped 1.25.12 → 1.25.13.** The govulncheck CI gate went red on master with seven standard-library vulnerabilities present in go1.25.12 and fixed in go1.25.13 (encoding/xml recursion depth, encoding/asn1 recursion depth, net/http Punycode label rejection, crypto/tls, html/template, net/url — GO-2026-6218/6091/6090/6089/6088/5972/5026). As established for this class of failure, the fix is the `go` directive in go.mod — CI resolves its toolchain from the version file. Verified locally under the pinned toolchain: `GOTOOLCHAIN=go1.25.13 govulncheck ./...` reports zero vulnerabilities affecting this code.
+
 ## [0.11.207] - 2026-08-23
 
 ### Fixed
