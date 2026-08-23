@@ -617,7 +617,7 @@ func (b *Bot) onConnected() {
 			if ch.ChannelKey != "" {
 				chanName += " " + ch.ChannelKey
 			}
-			if err := safeJoin(conn, chanName); err != nil {
+			if err := safeJoin(conn, chanName, ch.ChannelName); err != nil {
 				// Remaining joins would hit the same dead conn.
 				log.Printf("IRC: join %s failed: %v", ch.ChannelName, err)
 				break
@@ -1265,15 +1265,11 @@ func safeNotice(conn *irc.Connection, target, message string) error {
 	return sendWithTimeout("NOTICE to "+target, func() { conn.Notice(target, message) })
 }
 
-func safeJoin(conn *irc.Connection, channelSpec string) error {
-	// channelSpec may carry a channel key — log the channel name only. A
-	// whitespace-only spec (operator typo the create handler doesn't reject)
-	// must not panic on Fields()[0].
-	name := channelSpec
-	if f := strings.Fields(channelSpec); len(f) > 0 {
-		name = f[0]
-	}
-	return sendWithTimeout("JOIN "+name, func() { conn.Join(channelSpec) })
+// safeJoin takes the loggable channel name separately: channelSpec may carry
+// a channel key, which must never reach logs — and deriving the name from the
+// spec would log the key itself on a whitespace-only channel name.
+func safeJoin(conn *irc.Connection, channelSpec, logName string) error {
+	return sendWithTimeout("JOIN "+logName, func() { conn.Join(channelSpec) })
 }
 
 func safeNick(conn *irc.Connection, nick string) error {
