@@ -155,23 +155,31 @@ func TestBotStop_QuitOutsideLock(t *testing.T) {
 		close(stopDone)
 	}()
 
-	// While Stop's QUIT is parked, the lock must be free and Conn nil.
-	time.Sleep(20 * time.Millisecond)
-	locked := make(chan struct{})
-	go func() {
-		b.mu.Lock()
-		conn := b.Conn
-		b.mu.Unlock()
-		if conn != nil {
-			t.Error("b.Conn not nilled before the QUIT send")
+	// While Stop's QUIT is parked (~200ms), the lock must be acquirable and
+	// Conn already nil. Poll (Stop's goroutine may not be scheduled yet)
+	// instead of assuming a fixed scheduling delay; the watchdog converts a
+	// held-forever lock into a failure instead of a hung test.
+	withWatchdog(t, time.Second, "lock acquisition while QUIT parked", func() {
+		for {
+			b.mu.Lock()
+			conn := b.Conn
+			b.mu.Unlock()
+			if conn == nil {
+				// Legit fix: we got here ~195ms before Stop returns. In the
+				// regression (QUIT under the lock) we could only acquire it
+				// after Stop finished — stopDone closes within microseconds
+				// of the unlock, so after a short grace it must still be open.
+				time.Sleep(10 * time.Millisecond)
+				select {
+				case <-stopDone:
+					t.Error("lock only became free after Stop returned — QUIT was sent under b.mu")
+				default:
+				}
+				return
+			}
+			time.Sleep(time.Millisecond)
 		}
-		close(locked)
-	}()
-	select {
-	case <-locked:
-	case <-time.After(time.Second):
-		t.Fatal("b.mu still held while QUIT parked — Stop sends under the lock again")
-	}
+	})
 
 	select {
 	case <-stopDone:

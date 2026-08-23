@@ -160,11 +160,19 @@ func (m *Manager) Start() {
 
 func (m *Manager) Stop() {
 	close(m.quit)
+	// H5 invariant: never send while holding m.mu. Each bot.Stop() sends a
+	// QUIT that can block up to ircSendTimeout on a dead conn — done under
+	// the read lock, N dead bots would queue every m.mu writer (and then all
+	// readers) for N × ircSendTimeout during shutdown.
 	m.mu.RLock()
+	bots := make([]*Bot, 0, len(m.bots))
 	for _, bot := range m.bots {
-		bot.Stop()
+		bots = append(bots, bot)
 	}
 	m.mu.RUnlock()
+	for _, bot := range bots {
+		bot.Stop()
+	}
 	m.wg.Wait()
 }
 
@@ -1258,8 +1266,13 @@ func safeNotice(conn *irc.Connection, target, message string) error {
 }
 
 func safeJoin(conn *irc.Connection, channelSpec string) error {
-	// channelSpec may carry a channel key — log the channel name only.
-	name := strings.Fields(channelSpec)[0]
+	// channelSpec may carry a channel key — log the channel name only. A
+	// whitespace-only spec (operator typo the create handler doesn't reject)
+	// must not panic on Fields()[0].
+	name := channelSpec
+	if f := strings.Fields(channelSpec); len(f) > 0 {
+		name = f[0]
+	}
 	return sendWithTimeout("JOIN "+name, func() { conn.Join(channelSpec) })
 }
 
