@@ -515,6 +515,20 @@ func (b *Bot) Start() {
 		}
 	})
 
+	// Server rejections are numerics, and the library swallows every numeric
+	// without a registered callback — a send the ircd refuses (spam filter,
+	// +m without voice, flood limits) otherwise vanishes with the bot
+	// believing it succeeded. Proven in prod 2026-08-24: an InspIRCd
+	// repeat-character filter 404'd every auto-status box line for weeks
+	// with zero log evidence. 433 stays with its own handler above.
+	for _, numeric := range []string{"401", "404", "412", "417", "421", "437", "471", "473", "474", "475", "477", "482", "489", "494"} {
+		num := numeric
+		conn.AddCallback(num, func(e *irc.Event) {
+			defer logging.Recover("irc-callback-errnumeric")
+			log.Printf("IRC: server rejected command (%s): %s", num, strings.Join(e.Arguments, " "))
+		})
+	}
+
 	b.mu.Unlock()
 
 	addr := fmt.Sprintf("%s:%d", server.ServerHost, server.ServerPort)

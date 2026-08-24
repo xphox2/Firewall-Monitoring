@@ -1,6 +1,12 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.209] - 2026-08-24
+
+### Fixed
+
+**IRC server rejections are no longer invisible.** The auto-status box had been silently blocked for weeks by the IRC server's repeat-character spam filter (the box is built from repeated characters — progress bars of spaces, dash runs) — proven live by replaying the bot's exact rendered bytes from a test client and receiving `404: Your message to this channel was blocked: Please don't repeat the same characters` for every line. The bot never knew: the ircd reports refusals as numerics, and the IRC library drops any numeric without a registered callback, so every send looked successful. The bot now registers handlers for the rejection numerics (404 cannot-send, 417 input-too-long, 471-475/477 join failures, 482 privilege, and the rest of the common family) and logs each as `IRC: server rejected command`. The filter itself is server-side configuration — exempt the bot or relax the repeat filter there; this change guarantees the next such refusal shows up in the logs within a minute instead of never.
+
 ## [0.11.208] - 2026-08-23
 
 ### Security
