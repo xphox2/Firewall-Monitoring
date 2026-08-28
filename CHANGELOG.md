@@ -1,6 +1,11 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.210] - 2026-08-27
+
+### Added
+- Engineering audit report `docs/audit-2026-08-27-consolidated.md` — a deep dual-repo (Firewall-Mon + Firewall-Collector) adversarial multi-agent review sweeping 100% of both repos' source. Every candidate was screened against a do-not-re-flag list and adjudicated by three independent verification lenses (reproduce-from-source, exploitability/materiality, mitigation-or-intent), surviving only on two or more confirmations; the highest-severity findings were then independently re-derived. 148 findings confirmed (AUDIT-171..AUDIT-318): 6 High, 47 Medium, 85 Low, 10 Info. This release publishes the audit only — no code behavior changes; remediation ships in subsequent versioned PRs.
+
 ## [0.11.209] - 2026-08-24
 
 ### Fixed
