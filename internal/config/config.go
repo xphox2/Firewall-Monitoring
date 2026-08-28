@@ -283,8 +283,11 @@ type AuthConfig struct {
 	// change it, but they made a conscious choice.)
 	AdminUsernameExplicit bool
 	// AdminPasswordGenerated tracks whether the admin password was
-	// auto-generated (i.e. ADMIN_PASSWORD was not set in the
-	// environment). AUDIT-136: pre-fix, callers did
+	// auto-generated (i.e. ADMIN_PASSWORD was unset OR set-but-empty
+	// in the environment — AUDIT-173 makes empty behave like unset,
+	// since the shipped config.env.example seeds `ADMIN_PASSWORD=`
+	// and an empty password can never pass login). AUDIT-136:
+	// pre-fix, callers did
 	// `os.LookupEnv("ADMIN_PASSWORD")` at every decision point,
 	// which is fragile (the env could change between calls) and
 	// duplicated work. The flag is captured once at config-load
@@ -385,6 +388,11 @@ func Load() *Config {
 	// the only copy of the password in memory is the one we hand
 	// to the caller; the caller is now responsible for zeroing it
 	// after use (handled in `cmd/api/main.go`).
+
+	// AUDIT-173: read ADMIN_PASSWORD exactly once so AdminPassword and
+	// AdminPasswordGenerated can never desync on a mid-Load env mutation.
+	adminPasswordEnv := os.Getenv("ADMIN_PASSWORD")
+
 	return &Config{
 		Server: ServerConfig{
 			Host:                 getEnv("SERVER_HOST", "0.0.0.0"),
@@ -537,12 +545,12 @@ func Load() *Config {
 			// AUDIT-136's TOCTOU goal is preserved: both fields are captured
 			// once, here, at config-load time.
 			AdminPassword: func() string {
-				if v := os.Getenv("ADMIN_PASSWORD"); v != "" {
-					return v
+				if adminPasswordEnv != "" {
+					return adminPasswordEnv
 				}
 				return getDefaultPassword()
 			}(),
-			AdminPasswordGenerated: os.Getenv("ADMIN_PASSWORD") == "",
+			AdminPasswordGenerated: adminPasswordEnv == "",
 			BcryptCost:             getIntEnv("BCRYPT_COST", 12),
 			TokenExpiry:            getDurationEnv("TOKEN_EXPIRY", 24*time.Hour),
 			MaxLoginAttempts:       getIntEnv("MAX_LOGIN_ATTEMPTS", 5),
@@ -678,7 +686,7 @@ func (c *Config) Validate() error {
 	// layer always derives an AES key from the JWT secret when ENCRYPTION_KEY
 	// is unset, and logs its own accurate warning) and was removed.
 	if c.Server.JWTSecretKey == "" {
-		log.Println("NOTICE: JWT_SECRET_KEY not set — a key will be auto-generated and persisted to <SECRETS_DIR>/.jwt-secret. Tokens survive restarts as long as that directory persists; if it is lost, every login token AND every stored encrypted credential becomes unreadable. Set JWT_SECRET_KEY explicitly for portable deployments.")
+		log.Println("NOTICE: JWT_SECRET_KEY not set — a key will be auto-generated and persisted to <SECRETS_DIR>/.jwt-secret. Tokens survive restarts as long as that directory persists; if it is lost, every login token is invalidated (and, unless ENCRYPTION_KEY is set, every stored encrypted credential becomes unreadable too). Set JWT_SECRET_KEY explicitly for portable deployments.")
 	} else if len(c.Server.JWTSecretKey) < 32 {
 		// AUDIT L2: HS256 with a low-entropy operator-set secret is offline
 		// brute-forceable (and it also seeds the AES key when ENCRYPTION_KEY is
@@ -833,7 +841,8 @@ func generateRandomPassword(length int) string {
 }
 
 // IsGeneratedPassword returns true if the admin password was auto-generated
-// (ADMIN_PASSWORD was not set in the env at config-load time). AUDIT-136:
+// (ADMIN_PASSWORD was unset or set-but-empty in the env at config-load
+// time — AUDIT-173 treats empty as unset). AUDIT-136:
 // pre-fix this re-queried `os.LookupEnv` on every call, which is fragile
 // (TOCTOU: the env could change between config-load and a later call
 // to `IsGeneratedPassword()`). Post-fix the answer is captured once
