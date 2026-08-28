@@ -17,8 +17,13 @@ import (
 // The test pins three invariants:
 //  1. When ADMIN_PASSWORD is unset at config-load time,
 //     `IsGeneratedPassword()` returns true.
-//  2. When ADMIN_PASSWORD is set (even to empty string) at
+//  2. When ADMIN_PASSWORD is set to a NON-EMPTY value at
 //     config-load time, `IsGeneratedPassword()` returns false.
+//     (AUDIT-173 revised this case: a set-but-EMPTY value now
+//     counts as unset — see TestEmptyAdminPassword_AUDIT173.
+//     The shipped config.env.example seeds `ADMIN_PASSWORD=`,
+//     and the old "deliberate empty password" semantic produced
+//     a bcrypt("") admin the login handler can never accept.)
 //  3. A subsequent call to `os.Unsetenv("ADMIN_PASSWORD")` does
 //     NOT change the answer — the bool was captured at load time
 //     and the env mutation is invisible. This is the TOCTOU
@@ -38,16 +43,12 @@ func TestIsGeneratedPassword_AUDIT136(t *testing.T) {
 		}
 	})
 
-	// Case 2: env set (even to "") → generated = false.
+	// Case 2: env set to a real value → generated = false.
 	t.Run("set", func(t *testing.T) {
-		t.Setenv("ADMIN_PASSWORD", "")
-		// t.Setenv("ADMIN_PASSWORD", "") actually sets to "".
-		// That counts as "the operator set the env" per
-		// the AUDIT-136 semantic (they explicitly chose to
-		// pass an empty value).
+		t.Setenv("ADMIN_PASSWORD", "operator-chosen-password")
 		c := Load()
 		if c.IsGeneratedPassword() {
-			t.Errorf("IsGeneratedPassword() = true with ADMIN_PASSWORD explicitly set (even to empty), want false (the operator made a deliberate choice)")
+			t.Errorf("IsGeneratedPassword() = true with ADMIN_PASSWORD set to a non-empty value, want false (the operator chose a password)")
 		}
 	})
 

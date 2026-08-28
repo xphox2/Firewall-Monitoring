@@ -521,20 +521,28 @@ func Load() *Config {
 		Auth: AuthConfig{
 			AdminUsername:         getEnv("ADMIN_USERNAME", "admin"),
 			AdminUsernameExplicit: os.Getenv("ADMIN_USERNAME") != "",
-			AdminPassword:         getEnv("ADMIN_PASSWORD", getDefaultPassword()),
-			// AUDIT-136: capture "was ADMIN_PASSWORD set in the env"
-			// once at config-load time, so every consumer
-			// (`IsGeneratedPassword`, the secrets-persistence
-			// flow in `cmd/api/main.go`, the startup-warning
-			// logic) reads the same authoritative value rather
-			// than re-querying the env and risking TOCTOU. We
-			// use `LookupEnv` (not `Getenv == ""`) because an
-			// operator who explicitly sets ADMIN_PASSWORD=""
-			// has made a deliberate choice — "I want an
-			// empty admin password" — and that should NOT
-			// trigger the auto-generated-password flow. The
-			// distinction is the whole point of the fix.
-			AdminPasswordGenerated: func() bool { _, ok := os.LookupEnv("ADMIN_PASSWORD"); return !ok }(),
+			// AUDIT-173: an EMPTY ADMIN_PASSWORD (set-but-blank, exactly what
+			// config.env.example ships and deploy.sh seeds) must behave like
+			// UNSET and take the auto-generate+persist path. The pre-fix
+			// LookupEnv semantics (AUDIT-136) treated blank as "the operator
+			// deliberately wants an empty password", but the login handler
+			// rejects empty passwords (binding:"required"), so that choice
+			// produced an admin with bcrypt("") that nobody can ever log in
+			// as and InitAdmin never replaces — a permanent lockout. Every
+			// other secret in the tree (secrets.LoadOrGenerate, entrypoint
+			// ${VAR:-...}) already treats blank as unset; this aligns
+			// ADMIN_PASSWORD with them. The closure also keeps
+			// getDefaultPassword() (a fresh CSPRNG value) from being
+			// materialized when the operator did set a real password.
+			// AUDIT-136's TOCTOU goal is preserved: both fields are captured
+			// once, here, at config-load time.
+			AdminPassword: func() string {
+				if v := os.Getenv("ADMIN_PASSWORD"); v != "" {
+					return v
+				}
+				return getDefaultPassword()
+			}(),
+			AdminPasswordGenerated: os.Getenv("ADMIN_PASSWORD") == "",
 			BcryptCost:             getIntEnv("BCRYPT_COST", 12),
 			TokenExpiry:            getDurationEnv("TOKEN_EXPIRY", 24*time.Hour),
 			MaxLoginAttempts:       getIntEnv("MAX_LOGIN_ATTEMPTS", 5),
@@ -661,9 +669,16 @@ func (c *Config) Validate() error {
 		log.Println("         SERVER_ENABLE_TLS=true and configuring SERVER_TLS_CERT / SERVER_TLS_KEY.")
 	}
 
-	// Secrets warnings
+	// Secrets warnings.
+	// AUDIT-310: the old text here ("tokens invalidated on restart") predated
+	// the AUDIT-008 persistence flow — every binary now runs
+	// secrets.LoadOrGenerate, which persists the generated key to
+	// <SECRETS_DIR>/.jwt-secret and reloads it on later boots. The companion
+	// "credentials will not be encrypted" warning was likewise false (the DB
+	// layer always derives an AES key from the JWT secret when ENCRYPTION_KEY
+	// is unset, and logs its own accurate warning) and was removed.
 	if c.Server.JWTSecretKey == "" {
-		log.Println("WARNING: JWT_SECRET_KEY not set — a random key will be generated (tokens invalidated on restart)")
+		log.Println("NOTICE: JWT_SECRET_KEY not set — a key will be auto-generated and persisted to <SECRETS_DIR>/.jwt-secret. Tokens survive restarts as long as that directory persists; if it is lost, every login token AND every stored encrypted credential becomes unreadable. Set JWT_SECRET_KEY explicitly for portable deployments.")
 	} else if len(c.Server.JWTSecretKey) < 32 {
 		// AUDIT L2: HS256 with a low-entropy operator-set secret is offline
 		// brute-forceable (and it also seeds the AES key when ENCRYPTION_KEY is
@@ -671,8 +686,12 @@ func (c *Config) Validate() error {
 		// the same floor. Warn (not fatal) so an upgrade can't brick boot.
 		log.Printf("WARNING: JWT_SECRET_KEY is only %d characters — use at least 32 random characters; a short secret is brute-forceable and weakens token + credential security", len(c.Server.JWTSecretKey))
 	}
-	if c.Server.EncryptionKey == "" && c.Server.JWTSecretKey == "" {
-		log.Println("WARNING: Neither ENCRYPTION_KEY nor JWT_SECRET_KEY set — database credentials will not be encrypted")
+	// AUDIT-173 (belt-and-braces): with the empty-as-unset resolution above,
+	// AdminPassword can never be empty here; if a future refactor breaks that
+	// invariant, fail loudly instead of bootstrapping an admin with
+	// bcrypt("") that the login handler can never accept.
+	if c.Auth.AdminPassword == "" {
+		return fmt.Errorf("ADMIN_PASSWORD resolved empty — refusing to bootstrap an admin account with an empty password")
 	}
 
 	// Alert email config consistency
