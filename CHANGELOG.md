@@ -1,6 +1,11 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.212] - 2026-08-28
+
+### Added
+- Roadmap note **P2-6** in `docs/FEATURE-ROADMAP.md` (nice-to-have): publish GitHub releases/tags for shipped versions. The repo currently publishes no tags or releases, so the technicallabs.org System Monitor — which resolves each project's live version via the GitHub API (`releases/latest`, then `tags`) — can never resolve this repo and permanently falls back to its stale hardcoded baseline (v0.11.122). A CI step that tags `v<ServerVersion>` on master when the constant changes would make the website update automatically with every release. Docs-only; no behavior changes.
+
 ## [0.11.211] - 2026-08-28
 
 ### Fixed
