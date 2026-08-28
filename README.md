@@ -382,7 +382,7 @@ The most important ones:
 | `SERVER_ENABLE_TLS` | `false` | Terminate TLS in-process (cert/key via `SERVER_TLS_CERT`/`_KEY`) |
 | `JWT_SECRET_KEY` | _(auto-generated + persisted)_ | Signs login JWTs **and** derives the AES-256 key for stored secrets |
 | `ENCRYPTION_KEY` | _(derived from JWT secret)_ | Optional explicit key for encrypting device/probe secrets at rest |
-| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / _(set me)_ | Initial admin login (a non-default username is strongly recommended) |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / _(auto-generated + persisted)_ | Initial admin login — leave `ADMIN_PASSWORD` unset/empty to auto-generate and persist one (a non-default username is strongly recommended) |
 | `SNMP_HOST` / `SNMP_PORT` / `SNMP_COMMUNITY` | `192.168.1.1` / `161` / `public` | Legacy global SNMP defaults (devices are polled by collectors, not the server) |
 | `SNMP_POLL_INTERVAL` | `60s` | `fwmon-poller` monitoring-cycle cadence (staleness threshold = 3× this, min 5m) |
 | `SNMP_TRAP_COMMUNITY` | _(empty — required)_ | Trap community check (AUDIT-012) |

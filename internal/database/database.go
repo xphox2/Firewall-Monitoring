@@ -528,6 +528,12 @@ const apiSingletonLockKey int64 = 0x46574d4e41504953
 //     (the pinned conn is closed before returning so it isn't leaked).
 //   - err only on a connection/probe infrastructure failure.
 //
+// AUDIT-183: release is ALWAYS a callable func, on every path including
+// errors. main.go registers `defer releaseSingleton()` with whatever this
+// returns, and its lockErr branch deliberately proceeds as primary — a nil
+// release there panicked at graceful shutdown after any transient DB error
+// during the startup probe.
+//
 // SQLite (tests / single-process) returns acquired=true + a no-op release — the
 // guard is inert because there is exactly one process. A second call on the same
 // *Database pins a DIFFERENT pooled connection (a different PG session), so it
@@ -538,17 +544,17 @@ func (d *Database) AcquireAPISingletonLock() (release func(), acquired bool, err
 	}
 	sqlDB, err := d.db.DB()
 	if err != nil {
-		return nil, false, err
+		return func() {}, false, err
 	}
 	ctx := context.Background()
 	conn, err := sqlDB.Conn(ctx) // pins one backend out of the pool
 	if err != nil {
-		return nil, false, err
+		return func() {}, false, err
 	}
 	var got bool
 	if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", apiSingletonLockKey).Scan(&got); err != nil {
 		conn.Close()
-		return nil, false, err
+		return func() {}, false, err
 	}
 	if !got {
 		conn.Close() // held by another session — don't leak the pinned conn

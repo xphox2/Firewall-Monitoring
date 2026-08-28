@@ -161,7 +161,11 @@ deploy_remote() {
 
     log_info "Installing files on remote..."
     ssh ${SSH_OPTS} ${USER}@${HOST} << 'EOF'
-        sudo cp /tmp/web/* /opt/firewall-mon/ -r
+        # AUDIT-171: install web/ WITH its directory prefix — the API binary
+        # resolves ./web/**/*.html against WorkingDirectory=/opt/firewall-mon
+        # and panics (crash-loops) when the glob matches nothing.
+        sudo rm -rf /opt/firewall-mon/web
+        sudo cp -r /tmp/web /opt/firewall-mon/web
         # AUDIT-099: never clobber the operator's live config. The pre-fix
         # deploy unconditionally copied config.env.example over
         # /etc/firewall-mon/config.env on EVERY deploy, wiping the
@@ -182,7 +186,10 @@ deploy_remote() {
 EOF
 
     log_info "Deployment complete!"
-    log_info "Connect to server and run: sudo /opt/firewall-mon/scripts/install.sh"
+    # AUDIT-171 (adjacent): the old instruction pointed at
+    # /opt/firewall-mon/scripts/install.sh, which was never shipped.
+    log_info "Upgrade: restart services with: sudo systemctl restart fwmon-api fwmon-poller fwmon-trap"
+    log_info "First install: run 'sudo ./deploy.sh install' from a repo checkout on the server to create the systemd units"
 }
 
 install_local() {
@@ -213,8 +220,16 @@ install_local() {
         chmod +x ${INSTALL_DIR}/*
     fi
 
+    # AUDIT-171: copy web/ WITH its directory prefix. The pre-fix copy
+    # flattened web/* into ${INSTALL_DIR}, but the API binary loads HTML
+    # templates via LoadHTMLGlob("./web/**/*.html") relative to the unit's
+    # WorkingDirectory=${INSTALL_DIR}; a zero-match glob panics at startup
+    # and Restart=always turns that into a permanent crash loop. The
+    # rm -rf guard prevents `cp -r web dir/web` nesting web/web on
+    # re-install.
     if [ -d "web" ]; then
-        cp -r web/* ${INSTALL_DIR}/
+        rm -rf ${INSTALL_DIR}/web
+        cp -r web ${INSTALL_DIR}/web
     fi
 
     if [ ! -f "${CONFIG_DIR}/config.env" ]; then
@@ -222,10 +237,11 @@ install_local() {
         log_warn "Please edit ${CONFIG_DIR}/config.env with your settings"
     fi
 
-    if [ -d "scripts" ]; then
-        cp scripts/*.sh ${INSTALL_DIR}/
-        chmod +x ${INSTALL_DIR}/*.sh
-    fi
+    # AUDIT-171 (adjacent): the old scripts-copy block is gone. scripts/
+    # holds development-time audit helpers (*.py) only — no shell scripts
+    # exist there, so under `set -e` the unexpanded shell-script glob made
+    # cp fail and aborted the install before the systemd units were ever
+    # created.
 
     # AUDIT-021: fix ownership after copy so the fwmon user can read its
     # own binaries / web assets / scripts. The data dir must also be

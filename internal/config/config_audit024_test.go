@@ -40,6 +40,10 @@ func validConfig() *Config {
 			BcryptCost:            12,
 			AdminUsername:         "ops-test", // see comment above re: AUDIT-105
 			AdminUsernameExplicit: true,
+			// AUDIT-173: Validate() now rejects an empty AdminPassword
+			// (an empty one would bootstrap a bcrypt("") admin the login
+			// handler can never accept), so a valid config carries one.
+			AdminPassword: "test-password",
 		},
 	}
 }
