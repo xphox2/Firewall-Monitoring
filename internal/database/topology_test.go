@@ -233,6 +233,26 @@ func TestGetConnectionDetail_L2Evidence(t *testing.T) {
 	if !sawCore {
 		t.Error("no evidence row from the source device")
 	}
+
+	// AUDIT-201: HasFlowData is derived by an existence probe
+	// (Select("1").Limit(1).Scan), not an unbounded COUNT. With no flow
+	// samples seeded the pair must report none.
+	if detail.HasFlowData {
+		t.Error("HasFlowData = true with no flow samples seeded")
+	}
+	// Seed a single flow sample for one endpoint; the probe must flip to true.
+	if err := db.Gorm().Create(&models.FlowSample{
+		DeviceID: core.ID, Timestamp: now, SrcAddr: "10.0.0.1", DstAddr: "10.0.0.2", Bytes: 100, Packets: 1,
+	}).Error; err != nil {
+		t.Fatalf("seed flow sample: %v", err)
+	}
+	detail2, err := db.GetConnectionDetail(conns[0].ID)
+	if err != nil {
+		t.Fatalf("detail (post-flow): %v", err)
+	}
+	if !detail2.HasFlowData {
+		t.Error("HasFlowData = false after seeding a flow sample for an endpoint")
+	}
 }
 
 // TestResolveL2EndpointInterfaces_NoCrossDeviceNameCollision pins the live

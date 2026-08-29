@@ -383,8 +383,9 @@
     function loadDashboard() {
         // The dashboard is now the customizable system-health console rendered by
         // FwmonDashboard (admin-dashboard-modules.js), fed by the cached
-        // /api/dashboard/health composite. Delegate to it. The legacy stat-grid /
-        // probe-card path below is unreachable (kept until a follow-up removes it).
+        // /api/dashboard/health composite. Delegate to it. The legacy stat-grid
+        // path below is unreachable (kept until a follow-up removes it); its
+        // per-probe /stats fan-out was already removed (AUDIT-198).
         if (window.FwmonDashboard) { window.FwmonDashboard.load(); return; }
         Promise.all([
             AC.fetchDashboardSummary(),
@@ -420,49 +421,6 @@
             document.getElementById('active-probes').textContent = summary.probe_count_active || 0;
             document.getElementById('syslog-count').textContent = (summary.syslog_24h || 0).toLocaleString();
             document.getElementById('trap-count').textContent = (summary.trap_24h || 0).toLocaleString();
-
-            // Probe health cards
-            var probeContainer = document.getElementById('probe-health-cards');
-            if (probes.length === 0) {
-                probeContainer.innerHTML = '<div class="empty-state">No probes configured</div>';
-            } else {
-                probeContainer.innerHTML = probes.map(function(p) {
-                    var statusClass = p.status === 'online' ? 'online' : (p.status === 'offline' ? 'offline' : 'pending');
-                    var lastSeen = p.last_seen ? timeAgo(p.last_seen) : 'Never';
-                    return '<div class="probe-card clickable" data-probe-id="' + escapeHtml(p.id) + '" data-probe-name="' + escapeHtml(p.name) + '">' +
-                        '<div class="probe-name"><span class="pulse-dot ' + statusClass + '"></span>' + escapeHtml(p.name) + '</div>' +
-                        '<div class="probe-meta">' + escapeHtml(p.site ? p.site.name : 'No Site') + ' &middot; ' + escapeHtml(p.approval_status) + ' &middot; Last seen: ' + lastSeen + '</div>' +
-                        '<div class="probe-stats" id="probe-stats-' + p.id + '">' +
-                            renderProbeStatsInner(probeStatsCache[p.id]) +
-                        '</div></div>';
-                }).join('');
-
-                // Load stats for each probe
-                probes.forEach(function(p) {
-                    apiFetch(API_BASE + '/probes/' + p.id + '/stats').then(function(r) {
-                        if (!r || !r.data) return;
-                        var lh = r.data.last_hour || {};
-                        // Cache so the next 30s refresh re-renders with these
-                        // numbers immediately rather than the loading placeholder.
-                        probeStatsCache[p.id] = lh;
-                        var el = document.getElementById('probe-stats-' + p.id);
-                        if (el) {
-                            el.innerHTML = renderProbeStatsInner(lh);
-                        }
-                    }).catch(function(err) {
-                        console.error('Failed to load probe stats:', err);
-                    });
-                });
-
-                // Click handler for probe cards to show detail modal
-                document.querySelectorAll('.probe-card.clickable').forEach(function(card) {
-                    card.addEventListener('click', function() {
-                        var probeId = parseInt(this.dataset.probeId);
-                        var probeName = this.dataset.probeName;
-                        showProbeDetailModal(probeId, probeName);
-                    });
-                });
-            }
 
             // Probe detail modal functions
             window.showProbeDetailModal = function(probeId, probeName) {
