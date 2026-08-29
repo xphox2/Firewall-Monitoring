@@ -51,7 +51,17 @@ var (
 	panSanitizedMarker = []byte(`*****`)
 )
 
-func (paloaltoNormalizer) Normalize(raw []byte) ([]byte, string) {
+// maskVolatile replaces each volatile element BODY with a fixed
+// `<volatile-*>` token, keeping the surrounding tag so a real field change is
+// never swallowed. Shared by Normalize (hashing) and MaskVolatileLines (line
+// diff) so the two can never drift and VolatilePatterns stays truthful.
+//
+// A FLAT token, not a content digest: a PAN-OS <phash> is re-salted on every
+// emission for the SAME password, so a digest would still churn — only a fixed
+// token kills the false red/green delta. The tokens are bracketed
+// (`<volatile-phash>`), so the line diff classifies the row as `volatile`
+// (folded noise) and linediff.volatileTokenRe can name the pattern in the UI.
+func (paloaltoNormalizer) maskVolatile(raw []byte) []byte {
 	out := make([]byte, len(raw))
 	copy(out, raw)
 
@@ -62,6 +72,12 @@ func (paloaltoNormalizer) Normalize(raw []byte) ([]byte, string) {
 	out = panPassphraseRegex.ReplaceAll(out, []byte(`${1}<volatile-passphrase>${2}`))
 	out = panConfigVersionAttrRegex.ReplaceAll(out, []byte(`${1}<volatile-config-attrs>${2}`))
 
+	return out
+}
+
+func (n paloaltoNormalizer) Normalize(raw []byte) ([]byte, string) {
+	out := n.maskVolatile(raw)
+
 	quality := QualityFull
 	// Heuristic: sanitized exports replace every secret with the literal `*****`.
 	// We only flag masked if the marker appears multiple times — a single
@@ -71,6 +87,16 @@ func (paloaltoNormalizer) Normalize(raw []byte) ([]byte, string) {
 	}
 
 	return out, quality
+}
+
+// MaskVolatileLines implements LineMasker (AUDIT-265): without it prepareDiffInput
+// fell back to unmasked lines, so PAN-OS re-salted <phash> and encrypted <key>
+// values churned as false red/green deltas on every diff even though
+// VolatilePatterns advertised them as masked. The single-line PAN element bodies
+// mean the shared maskVolatile replacements preserve the line count 1:1; a
+// (rare) multi-line body would collapse and prepareDiffInput fails closed.
+func (n paloaltoNormalizer) MaskVolatileLines(raw []byte) []byte {
+	return n.maskVolatile(raw)
 }
 
 func (paloaltoNormalizer) VolatilePatterns() []VolatilePattern {

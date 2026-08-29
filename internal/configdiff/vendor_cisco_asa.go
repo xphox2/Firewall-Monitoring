@@ -42,7 +42,17 @@ var (
 	asaMasterPassphraseRegex = regexp.MustCompile(`(?m)^(\s*key\s+config-key\s+password-encryption\s+)\S+\s*$`)
 )
 
-func (ciscoASANormalizer) Normalize(raw []byte) ([]byte, string) {
+// maskVolatile replaces each volatile secret/header VALUE with a fixed
+// `<volatile-*>` token while keeping the config keyword, so a real change stays
+// visible. Shared by Normalize (hashing) and MaskVolatileLines (line diff) so
+// the two can never drift and VolatilePatterns stays truthful.
+//
+// A FLAT token, not a content digest: Type 6 (AES master-passphrase) re-nonces
+// on every emission for the SAME secret, so a digest would still churn — only a
+// fixed token kills the false delta. Every regex is `(?m)^…$` line-anchored, so
+// the line count is preserved exactly. Types 5/7/8/9 are deliberately left
+// untouched (deterministic ciphertext) so a real rotation still diffs.
+func (ciscoASANormalizer) maskVolatile(raw []byte) []byte {
 	out := make([]byte, len(raw))
 	copy(out, raw)
 
@@ -54,7 +64,20 @@ func (ciscoASANormalizer) Normalize(raw []byte) ([]byte, string) {
 	out = asaType6KeyRegex.ReplaceAll(out, []byte(`${1}<volatile-type6>`))
 	out = asaMasterPassphraseRegex.ReplaceAll(out, []byte(`${1}<volatile-master-passphrase>`))
 
-	return out, QualityFull
+	return out
+}
+
+func (n ciscoASANormalizer) Normalize(raw []byte) ([]byte, string) {
+	return n.maskVolatile(raw), QualityFull
+}
+
+// MaskVolatileLines implements LineMasker (AUDIT-265): without it prepareDiffInput
+// fell back to unmasked lines, so Type 6 (random-nonce) secrets and the `: Saved`
+// timestamp header churned as false red/green deltas on every diff even though
+// VolatilePatterns advertised them as masked. The line-anchored regexes keep the
+// line count 1:1.
+func (n ciscoASANormalizer) MaskVolatileLines(raw []byte) []byte {
+	return n.maskVolatile(raw)
 }
 
 func (ciscoASANormalizer) VolatilePatterns() []VolatilePattern {
