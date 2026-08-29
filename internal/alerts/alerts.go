@@ -162,7 +162,25 @@ func (am *AlertManager) SetStormSourcesDefault(n int) {
 func (am *AlertManager) StormThreshold(siteID *uint) int {
 	am.mu.RLock()
 	defer am.mu.RUnlock()
-	return am.resolveAlertConfig(0, siteID, models.AlertTypeSFlowSecurityDigest).StormSources
+	resolved := am.resolveAlertConfig(0, siteID, models.AlertTypeSFlowSecurityDigest)
+	// AUDIT-243 follow-up: StormThreshold is a ROUTING consumer, not a fire-side
+	// skip guard — rollUpSecurityStorms uses the returned threshold to decide
+	// whether to CONSUME per-source detections into a digest (removing them from
+	// the per-source SFLOW_SECURITY path). When the digest type is toggled off
+	// for this scope, ProcessSecurityDigest drops that rollup on !AlertEnabled,
+	// so returning the resolved threshold here would silently swallow a live
+	// storm that must instead fall back to firing as per-source alerts. Return 0
+	// (digest disabled → per-source path handles the storm). This closes two
+	// swallows at once: the AUDIT-243 regression (the resolver now flows past the
+	// toggle, so a rule/site StormSources override is applied to a disabled type
+	// and lowers the threshold into range) AND the pre-existing case where a
+	// large storm already reached the toggled-off digest via the global default
+	// (StormSources is seeded from that default at the top of the resolver, so
+	// even the pre-243 early-return returned it non-zero).
+	if !resolved.AlertEnabled {
+		return 0
+	}
+	return resolved.StormSources
 }
 
 // ifaceDownKey / vpnDownKey build the cooldown/active/ever-up map keys. Kept as

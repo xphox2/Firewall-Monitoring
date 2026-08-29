@@ -75,6 +75,43 @@ func TestStormThreshold_SiteOverride(t *testing.T) {
 	}
 }
 
+// TestStormThreshold_ToggledOffFallsBackToPerSource is the AUDIT-243 follow-up
+// pin: StormThreshold is a routing consumer with no fire-side AlertEnabled
+// guard. After AUDIT-243 the resolver flows PAST the event-profile toggle, so a
+// digest rule's StormSources override (5) is now applied even when the digest
+// type is toggled OFF — which would drop the rollup threshold into range for a
+// live storm that ProcessSecurityDigest then silently swallows (it drops on
+// !AlertEnabled). StormThreshold must return 0 for a toggled-off digest so the
+// storm falls back to the per-source path, while an ENABLED digest still honors
+// the override.
+func TestStormThreshold_ToggledOffFallsBackToPerSource(t *testing.T) {
+	newCache := func() *models.AlertPolicy {
+		return &models.AlertPolicy{ID: 1, Name: "p", IsDefault: true,
+			Rules: []models.AlertRule{{PolicyID: 1, AlertType: models.AlertTypeSFlowSecurityDigest,
+				Enabled: true, StormSources: intPtr(5)}}}
+	}
+
+	// Digest toggled ON → the rule override applies (5).
+	am, _ := newTestManager(t)
+	am.SetStormSourcesDefault(25)
+	installPolicyCache(am, newCache(), nil)
+	installDefaultProfileToggles(am, map[models.AlertType]bool{models.AlertTypeSFlowSecurityDigest: true})
+	if got := am.StormThreshold(nil); got != 5 {
+		t.Fatalf("digest enabled → StormThreshold %d, want 5 (rule override honored)", got)
+	}
+
+	// Digest toggled OFF → StormThreshold must be 0 (per-source fallback), NOT
+	// the 5 the resolver now flows through to.
+	am2, _ := newTestManager(t)
+	am2.SetStormSourcesDefault(25)
+	installPolicyCache(am2, newCache(), nil)
+	installDefaultProfileToggles(am2, map[models.AlertType]bool{models.AlertTypeSFlowSecurityDigest: false})
+	if got := am2.StormThreshold(nil); got != 0 {
+		t.Fatalf("digest toggled off → StormThreshold %d, want 0 so a storm falls back "+
+			"to the per-source SFLOW_SECURITY path instead of a swallowed digest", got)
+	}
+}
+
 // TestProcessSecurityDigest_OneAlertForManySources: N distinct sources collapse
 // into ONE digest whose CurrentValue is the distinct-source count and severity is
 // the max in the group. Guards C4/(k)/(q).
