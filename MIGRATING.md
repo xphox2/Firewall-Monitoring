@@ -38,10 +38,10 @@ versions can talk to which server versions, and what to do when a
 in the `POST /api/probes/register` request and response bodies. It is **not**
 the semantic version of either binary; it is a small integer bumped in
 lockstep with this file whenever the relay handshake changes shape. The
-current maximum is **`4`**; v1 through v3 remain fully supported.
+current maximum is **`5`**; v1 through v4 remain fully supported.
 
 When a probe registers it sends its `schema_version`. The server validates it
-against `[relay.SchemaVersionMin, relay.SchemaVersionMax]` (currently `1`-`4`)
+against `[relay.SchemaVersionMin, relay.SchemaVersionMax]` (currently `1`-`5`)
 and, since server v0.11.75, **persists the selected version on the probe row**
 (`probes.schema_version`) — version-gated downstream features key off the
 stored value. Three outcomes:
@@ -101,7 +101,7 @@ The happy-path rolling upgrade is **server first, then probe**:
 
 If you do the **wrong** order (a probe whose `schema_version` is newer than
 the server supports) you will see exactly one class of error: the probe gets a
-426, logs `Probe schema_version N not supported (server supports 1-1)`, and
+426, logs `Probe schema_version N not supported (server supports 1-5)`, and
 its register fails. Roll the server forward (or the probe back) and the probe
 registers. There is **no data loss** — the probe keeps unsent data in its
 on-disk queue until the server can accept it again.

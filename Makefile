@@ -24,7 +24,15 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' Makefile | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-15s %s\n", $$1, $$2}'
 
 .PHONY: qa
-qa: tidy-check fmt-check vet build test ## Run the full QA gate (same as CI)
+# AUDIT-227: this MUST invoke every gate ci.yml runs so "same as CI" stays
+# true. ci.yml jobs: build-test (tidy-check, gofmt, vet, build, `go test
+# -race`), static-analysis (staticcheck, pinned), gosec (pinned + excludes),
+# vuln-scan (govulncheck, pinned). The Postgres integration job is CI-only
+# (needs a live server) and tailwind-freshness rebuilds CSS — run those via
+# `make test-integration` / `make tailwind` when relevant; every other gate
+# is mirrored here. `test` (non-race) is kept alongside `test-race` so the
+# gate still runs on hosts without a C toolchain.
+qa: tidy-check fmt-check vet staticcheck gosec vuln build test test-race ## Run the full QA gate (same as CI)
 	@echo "QA OK (v$(VERSION))"
 
 .PHONY: test
@@ -113,6 +121,21 @@ tidy-check: ## Fail if go.mod / go.sum aren't tidy
 		git --no-pager diff -- go.mod go.sum; \
 		exit 1; \
 	fi
+
+.PHONY: staticcheck
+staticcheck: ## Run staticcheck (pinned to ci.yml's version)
+	# Pinned to the same version as .github/workflows/ci.yml so local and CI
+	# agree; config lives in staticcheck.conf.
+	$(GO) install honnef.co/go/tools/cmd/staticcheck@v0.7.0
+	staticcheck ./...
+
+.PHONY: gosec
+gosec: ## Run gosec (pinned + the same excludes as CI)
+	# Version + -exclude list mirror .github/workflows/ci.yml exactly. Excluded
+	# rules are systematic false positives for this app category (see ci.yml for
+	# the per-rule rationale). Keep both in sync when either changes.
+	$(GO) install github.com/securego/gosec/v2/cmd/gosec@v2.27.1
+	gosec -quiet -severity medium -exclude=G115,G117,G124,G203,G304,G401,G501,G703 ./...
 
 .PHONY: vuln
 vuln: ## Run govulncheck (requires github.com/golang/vuln)

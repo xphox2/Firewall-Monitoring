@@ -8,7 +8,7 @@
 
 **Status legend**
 
-- **Stable** — shipping in the current `0.10.x` release, exercised in CI,
+- **Stable** — shipping in the current `0.11.x` release, exercised in CI,
   covered by tests.
 - **Beta** — shipping but the audit row says "not done" or there's a known
   follow-up. Safe to use, but read the linked caveat.
@@ -77,7 +77,7 @@
 
 | Feature | Status | Role | Since |
 |---|---|---|---|
-| Image-free executive HTML report (view in-browser, export PDF) | Stable | [Server] | 0.1 |
+| Executive HTML report — image-free in-browser/PDF; scheduled email embeds inline `cid:` charts | Stable | [Server] | 0.1 |
 | Daily / weekly scheduled report | Stable | [Server] | 0.1 |
 | Traffic-spike detection in reports | Stable | [Server] | 0.10.239 |
 | Uptime rollup in reports | Stable | [Server] | 0.1 |
