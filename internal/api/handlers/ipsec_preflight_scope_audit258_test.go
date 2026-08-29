@@ -93,4 +93,23 @@ func TestPreflight_TunnelScoped_AUDIT258(t *testing.T) {
 	if strings.Contains(b2body, "tunnel-one") {
 		t.Errorf("tunnel 2 poll cross-contaminated with tunnel 1's report: %s", b2body)
 	}
+
+	// Review hardening (AUDIT-258 finding 1): reassigning a tunnel's end-A device
+	// after a preflight must NOT attribute the old device's stale report (or
+	// advisories derived against the new intent) to the new device. UpdateIPSecTunnel
+	// does not clear preflight_json, so the poll must reject a recorded end whose
+	// device no longer matches. Swap tunnel 1's end A to a fresh device and re-poll.
+	swapped := makeFortiDevice(t, db, probe.ID, "203.0.113.60")
+	row, err := db.GetIPSecTunnel(t1)
+	if err != nil {
+		t.Fatalf("get tunnel 1: %v", err)
+	}
+	row.ADeviceID = swapped.ID
+	if err := db.UpdateIPSecTunnel(row); err != nil {
+		t.Fatalf("swap end-A device: %v", err)
+	}
+	swappedBody := poll(t1)
+	if strings.Contains(swappedBody, "tunnel-one") {
+		t.Errorf("tunnel 1 poll still surfaced the stale report of its FORMER end-A device after a device swap: %s", swappedBody)
+	}
 }

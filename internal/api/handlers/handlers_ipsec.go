@@ -689,10 +689,22 @@ func (h *Handler) GetIPSecPreflightResult(c *gin.Context) {
 	// other tunnel's report. A tunnel not yet preflighted (or preflighted before
 	// this field existed) has no recorded ID for an end, so it reports "none"
 	// rather than another tunnel's stale result.
-	pfCmdID := map[int]string{}
-	if pf, perr := parsePreflightState(m); perr == nil && pf != nil {
+	// Key the recorded command by end AND the device it was preflighted against.
+	// UpdateIPSecTunnel can reassign a_device_id/b_device_id without clearing
+	// preflight_json, so a recorded end whose device no longer matches the
+	// tunnel's current device is stale — report "none" rather than attribute
+	// the old device's report (and advisories derived against the new intent) to
+	// the new device.
+	type pfRec struct {
+		cmdID string
+		devID uint
+	}
+	pfByEnd := map[int]pfRec{}
+	if pf, perr := parsePreflightState(m); perr != nil {
+		log.Printf("IPSec preflight: tunnel %d has unparsable preflight state: %v (reporting none)", m.ID, perr)
+	} else if pf != nil {
 		for _, e := range pf.Ends {
-			pfCmdID[e.End] = e.CommandID
+			pfByEnd[e.End] = pfRec{cmdID: e.CommandID, devID: e.DeviceID}
 		}
 	}
 
@@ -701,8 +713,8 @@ func (h *Handler) GetIPSecPreflightResult(c *gin.Context) {
 		er := endReport{End: i, DeviceID: devID, Status: "none"}
 		var cmd *models.ProbeCommand
 		var cerr error
-		if cmdID := pfCmdID[i]; cmdID != "" {
-			cmd, cerr = db.GetProbeCommandByCommandID(cmdID)
+		if rec := pfByEnd[i]; rec.cmdID != "" && rec.devID == devID {
+			cmd, cerr = db.GetProbeCommandByCommandID(rec.cmdID)
 		}
 		if cerr == nil && cmd != nil {
 			er.Status = cmd.Status
