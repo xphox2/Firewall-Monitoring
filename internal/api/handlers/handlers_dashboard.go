@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"sort"
@@ -181,7 +182,14 @@ func (h *Handler) GetPublicInterfaces(c *gin.Context) {
 			// anonymous caller hitting the endpoint directly received every
 			// interface of a public device — internal LAN/DMZ names, MACs,
 			// VLANs, counters — bypassing the curation entirely.
-			if allowed, ok := h.publicIfaceAllowlist(c, deviceID); ok {
+			allowed, ok, aerr := h.publicIfaceAllowlist(c, deviceID)
+			if aerr != nil {
+				// Fail CLOSED: the curation setting was unreadable, so do not
+				// guess that no narrowing exists (review hardening, AUDIT-194).
+				c.JSON(http.StatusServiceUnavailable, response.Error("No interface data available"))
+				return
+			}
+			if ok {
 				filtered := ifaces[:0]
 				for _, iface := range ifaces {
 					if allowed[iface.Name] {
@@ -236,7 +244,15 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	// below — not a 403 — so the SPA renders an empty chart instead of
 	// erroring. Without this, history for ANY index of a public device was
 	// served regardless of the operator's curation.
-	if allowed, ok := h.publicIfaceAllowlist(c, deviceID); ok {
+	allowed, ok, aerr := h.publicIfaceAllowlist(c, deviceID)
+	if aerr != nil {
+		// Fail CLOSED (review hardening, AUDIT-194): unreadable curation must
+		// not expose a non-allowlisted interface's history; the empty series
+		// is what the SPA already renders for missing data.
+		c.JSON(http.StatusOK, response.Success(publicChartEmptySeries(viewType, rangeStr)))
+		return
+	}
+	if ok {
 		var latest models.InterfaceStats
 		nameErr := db.Gorm().Select("name").
 			Where("device_id = ? AND \"index\" = ?", deviceID, ifIndex).
@@ -416,36 +432,47 @@ func publicChartEmptySeries(viewType, rangeStr string) map[string]interface{} {
 	}
 }
 
+// errDBUnavailable marks the fail-closed path when the curation setting
+// cannot be read at all (review hardening, AUDIT-194).
+var errDBUnavailable = errors.New("database unavailable")
+
 // publicIfaceAllowlist returns the operator-curated interface NAMES for a
 // device and whether a non-empty list exists. Mirrors public-dashboard.js:
 // an EMPTY/absent list means "no narrowing configured" → all interfaces.
 // The setting is "public_interfaces", JSON of the shape
 // {"<deviceID>":["wan1",...]} (default "{}"). ok=false — no filtering — is
-// deliberately the answer for an empty/absent list, an unset key, unparsable
-// JSON, or an unavailable DB: deny-all-on-empty would blank every public
-// dashboard whose operator never configured a narrowing.
-func (h *Handler) publicIfaceAllowlist(c *gin.Context, deviceID uint) (map[string]bool, bool) {
+// deliberately the answer for an empty/absent list, an unset key, or
+// unparsable JSON: deny-all-on-empty would blank every public dashboard
+// whose operator never configured a narrowing. A DB ERROR is different
+// (review hardening on AUDIT-194): the setting may exist but be unreadable,
+// so failing open would serve an anonymous caller every interface of a
+// curated device during a transient fault — err is returned and the caller
+// must fail CLOSED.
+func (h *Handler) publicIfaceAllowlist(c *gin.Context, deviceID uint) (map[string]bool, bool, error) {
 	db := h.reqDB(c)
 	if db == nil {
-		return nil, false
+		return nil, false, errDBUnavailable
 	}
 	var s models.SystemSetting
 	if err := db.Gorm().Select("value").Where("\"key\" = ?", "public_interfaces").First(&s).Error; err != nil {
-		return nil, false
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, false, nil // never configured — no narrowing
+		}
+		return nil, false, err
 	}
 	var lists map[string][]string
 	if err := json.Unmarshal([]byte(s.Value), &lists); err != nil {
-		return nil, false
+		return nil, false, nil
 	}
 	names := lists[strconv.FormatUint(uint64(deviceID), 10)]
 	if len(names) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 	allowed := make(map[string]bool, len(names))
 	for _, name := range names {
 		allowed[name] = true
 	}
-	return allowed, true
+	return allowed, true, nil
 }
 
 // publicBoolSetting reads a boolean system setting for the unauthenticated
