@@ -355,25 +355,23 @@ type UptimeConfig struct {
 }
 
 type ProbeConfig struct {
-	EnableProbeServer    bool
-	ListenAddress        string
-	ListenPort           int
-	ServerURL            string
-	EnableTLS            bool
-	TLSCertFile          string
-	TLSKeyFile           string
-	ClientTLSCertFile    string
-	ClientTLSKeyFile     string
-	EnableMTLS           bool
-	ICMPEnabled          bool
-	ICMPInterval         time.Duration
-	SyslogEnabled        bool
-	SyslogPort           int
-	SyslogUseTLS         bool
-	SyslogAllowedSources string // Comma-separated list of allowed source IPs
-	SFlowEnabled         bool
-	SFlowPort            int
-	SFlowAllowedSources  string // Comma-separated list of allowed source IPs
+	ListenAddress       string
+	ListenPort          int
+	ServerURL           string
+	EnableTLS           bool
+	TLSCertFile         string
+	TLSKeyFile          string
+	ClientTLSCertFile   string
+	ClientTLSKeyFile    string
+	EnableMTLS          bool
+	ICMPEnabled         bool
+	ICMPInterval        time.Duration
+	SyslogEnabled       bool
+	SyslogPort          int
+	SyslogUseTLS        bool
+	SFlowEnabled        bool
+	SFlowPort           int
+	SFlowAllowedSources string // Comma-separated list of allowed source IPs
 }
 
 func Load() *Config {
@@ -597,25 +595,23 @@ func Load() *Config {
 			TrackingEnabled: getBoolEnv("UPTIME_TRACKING_ENABLED", true),
 		},
 		Probe: ProbeConfig{
-			EnableProbeServer:    getBoolEnv("PROBE_SERVER_ENABLED", false),
-			ListenAddress:        getEnv("PROBE_LISTEN_ADDRESS", "0.0.0.0"),
-			ListenPort:           getIntEnv("PROBE_LISTEN_PORT", 8089),
-			ServerURL:            getEnv("PROBE_SERVER_URL", ""),
-			EnableTLS:            getBoolEnv("PROBE_TLS_ENABLED", false),
-			TLSCertFile:          getEnv("PROBE_TLS_CERT", "/etc/firewall-mon/probe.crt"),
-			TLSKeyFile:           getEnv("PROBE_TLS_KEY", "/etc/firewall-mon/probe.key"),
-			ClientTLSCertFile:    getEnv("PROBE_CLIENT_TLS_CERT", "/etc/firewall-mon/client.crt"),
-			ClientTLSKeyFile:     getEnv("PROBE_CLIENT_TLS_KEY", "/etc/firewall-mon/client.key"),
-			EnableMTLS:           getBoolEnv("PROBE_MTLS_ENABLED", false),
-			ICMPEnabled:          getBoolEnv("PROBE_ICMP_ENABLED", true),
-			ICMPInterval:         getDurationEnv("PROBE_ICMP_INTERVAL", 30*time.Second),
-			SyslogEnabled:        getBoolEnv("PROBE_SYSLOG_ENABLED", true),
-			SyslogPort:           getIntEnv("PROBE_SYSLOG_PORT", 514),
-			SyslogUseTLS:         getBoolEnv("PROBE_SYSLOG_TLS", false),
-			SyslogAllowedSources: getEnv("SYSLOG_ALLOWED_SOURCES", ""),
-			SFlowEnabled:         getBoolEnv("PROBE_SFLOW_ENABLED", true),
-			SFlowPort:            getIntEnv("PROBE_SFLOW_PORT", 6343),
-			SFlowAllowedSources:  getEnv("SFLOW_ALLOWED_SOURCES", ""),
+			ListenAddress:       getEnv("PROBE_LISTEN_ADDRESS", "0.0.0.0"),
+			ListenPort:          getIntEnv("PROBE_LISTEN_PORT", 8089),
+			ServerURL:           getEnv("PROBE_SERVER_URL", ""),
+			EnableTLS:           getBoolEnv("PROBE_TLS_ENABLED", false),
+			TLSCertFile:         getEnv("PROBE_TLS_CERT", "/etc/firewall-mon/probe.crt"),
+			TLSKeyFile:          getEnv("PROBE_TLS_KEY", "/etc/firewall-mon/probe.key"),
+			ClientTLSCertFile:   getEnv("PROBE_CLIENT_TLS_CERT", "/etc/firewall-mon/client.crt"),
+			ClientTLSKeyFile:    getEnv("PROBE_CLIENT_TLS_KEY", "/etc/firewall-mon/client.key"),
+			EnableMTLS:          getBoolEnv("PROBE_MTLS_ENABLED", false),
+			ICMPEnabled:         getBoolEnv("PROBE_ICMP_ENABLED", true),
+			ICMPInterval:        getDurationEnv("PROBE_ICMP_INTERVAL", 30*time.Second),
+			SyslogEnabled:       getBoolEnv("PROBE_SYSLOG_ENABLED", true),
+			SyslogPort:          getIntEnv("PROBE_SYSLOG_PORT", 514),
+			SyslogUseTLS:        getBoolEnv("PROBE_SYSLOG_TLS", false),
+			SFlowEnabled:        getBoolEnv("PROBE_SFLOW_ENABLED", true),
+			SFlowPort:           getIntEnv("PROBE_SFLOW_PORT", 6343),
+			SFlowAllowedSources: getEnv("SFLOW_ALLOWED_SOURCES", ""),
 		},
 	}
 }

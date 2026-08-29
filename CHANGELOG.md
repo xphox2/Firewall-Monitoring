@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.228] - 2026-08-29
+
+### Removed
+
+Dead-code removal from the 2026-08-27 engineering audit — seven findings. `cmd/probe` was retired long ago (collectors now poll and parse at the edge), which orphaned three server packages as dead forks of the collector's live versions plus several unreferenced helpers. Each removal was re-verified to have zero non-test, non-self callers across both repos (`go list -deps ./cmd/...` excludes them, whole-repo and cross-repo grep clean) before deletion; the full test suite still passes, proving nothing depended on the removed code.
+
+- **Removed the three orphaned dead packages `internal/syslog`, `internal/sflow`, `internal/ping` (AUDIT-286, AUDIT-304, AUDIT-316).** These were `cmd/probe`-era listeners with no importer anywhere in the server binaries; `internal/sflow` also carried a latent use-after-overwrite bug that was moot because unreachable. Live server ingest is unchanged: `ReceiveSyslogMessages`/`ReceiveFlowSamples` in `handlers_data.go` bind already-parsed models relayed from the collector.
+- **Corrected docs that advertised nonexistent server-side syslog/sFlow/ICMP listeners (AUDIT-182).** `README.md` (server "Listens on" row, feature list, repo tree, network-ports table, security caveat), `docker-compose.yml` (dropped the phantom `514/udp`, `514/tcp`, `6343/udp`, `8089` port mappings) and `Dockerfile` (`EXPOSE 8080 162/udp`) now reflect reality: the server runs only the SNMP trap receiver (UDP/162) and the collector-relay HTTP endpoints on 8080; raw syslog/sFlow/ICMP are parsed at the edge collector. Also removed the two never-read config fields `ProbeConfig.EnableProbeServer` and `ProbeConfig.SyslogAllowedSources` (and their loader lines).
+- **Removed the dead `syslogPartitionDropDays` helper and its dedicated test (AUDIT-267).** The live wholesale-partition-drop path in `cleanup.go` uses `syslogMaxWindow(sevDays[:])`, which is untouched.
+- **Removed the dead `Database.SaveConfigRevision` (AUDIT-268).** Zero callers in either repo; it was not part of the `Store` interface. The live write path is `ReceiveConfigRevision` (`handlers_data.go`) and retention is `CleanupConfigRevisions` (per-device cap 500), both untouched.
+- **Removed the dead `RollingStats` type, `NewRollingStats` constructor, `AddAndCheck` method and their `circularBuffer` helper from `internal/report/spike.go` (AUDIT-292).** Zero callers, no tests; it z-scored a raw cumulative counter rather than a delta. The live spike-detection path (exercised by the remaining spike test files) is untouched.
+
 ## [0.11.227] - 2026-08-29
 
 ### Fixed

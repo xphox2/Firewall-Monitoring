@@ -54,7 +54,10 @@ RUN chmod +x entrypoint.sh
 
 RUN chown -R fwmon:fwmon /app
 
-EXPOSE 8080 162/udp 514/udp 6343/udp 8089
+# Web UI/API + probe relay ingest (8080) and the SNMP trap receiver (162/udp).
+# The server runs no raw syslog/sFlow/ICMP listener — those live on the edge
+# collector, which relays already-parsed telemetry over 8080.
+EXPOSE 8080 162/udp
 
 # AUDIT-091: HEALTHCHECK drives Docker's `container is ready` vs
 # `container is alive` distinction. The 3-process entrypoint (api,
