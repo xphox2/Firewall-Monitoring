@@ -79,7 +79,15 @@
                     } catch(e) { publicInterfaces = {}; }
                 }
                 publicIfacesLoaded = true;
-            }).catch(function() { publicIfacesLoaded = true; });
+            }).catch(function() {
+                // AUDIT-185 (follow-up): do NOT flip publicIfacesLoaded on a
+                // FAILED fetch. Re-enabling the Public checkboxes over an empty
+                // publicInterfaces map would let a click POST that empty map and
+                // wipe every other device's selection — the exact data-loss this
+                // finding guards. Leaving the flag false keeps the checkboxes
+                // disabled (correct degraded state). The catch still settles, so
+                // the init chain's .then(loadDevice) runs and the device renders.
+            });
     }
 
     function isPublicIface(iface) {

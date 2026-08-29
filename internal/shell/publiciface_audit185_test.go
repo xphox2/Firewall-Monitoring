@@ -29,6 +29,16 @@ func TestPublicIface_LoadReturnsFetch_AUDIT185(t *testing.T) {
 	if !strings.Contains(loadFn, "publicIfacesLoaded = true") {
 		t.Error("AUDIT-185 regression: loadPublicInterfaces() no longer sets publicIfacesLoaded")
 	}
+	// Follow-up hardening: the flag must be set true ONLY on the success path
+	// (the .then), never in the .catch. A FAILED display-settings fetch that
+	// re-enabled the Public checkboxes over an empty publicInterfaces map would
+	// let a click POST that empty map and wipe every other device's selection —
+	// the exact data-loss this finding guards. Pin exactly one set-true site.
+	if n := strings.Count(loadFn, "publicIfacesLoaded = true"); n != 1 {
+		t.Errorf("AUDIT-185 regression: publicIfacesLoaded is set true %d times in loadPublicInterfaces() "+
+			"(want exactly 1 — the success .then only). A .catch that sets it re-enables the checkboxes "+
+			"over an empty map on a failed fetch, wiping other devices' public-interface selections.", n)
+	}
 }
 
 func TestPublicIface_ToggleGuardsOnLoadedFlag_AUDIT185(t *testing.T) {
