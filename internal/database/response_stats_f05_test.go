@@ -115,6 +115,36 @@ func TestGetAlertResponseStats_Deterministic(t *testing.T) {
 	}
 }
 
+// TestGetAlertResponseStats_NullNotesCounted (AUDIT-266 review): a row with a
+// NULL notes column and a valid acknowledged_at must count toward MTTA, exactly
+// as the former Go loop (which scanned NULL into "") did. A bare
+// `notes NOT LIKE 'Auto-resolved:%'` evaluates NULL, which is not true, so it
+// would wrongly EXCLUDE the row; COALESCE restores the empty-string scan.
+func TestGetAlertResponseStats_NullNotesCounted(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	now := time.Now()
+	ts := now.Add(-1 * time.Hour)
+	ack := ts.Add(6 * time.Minute)
+	a := models.Alert{Timestamp: ts, DeviceID: 1, AlertType: "CPU_HIGH", Severity: "warning", MetricName: "cpu_usage", Acknowledged: true, AcknowledgedAt: &ack, Notes: "seed"}
+	if err := d.Gorm().Create(&a).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// Force NULL notes (a plain string struct field can't carry nil).
+	if err := d.Gorm().Model(&models.Alert{}).Where("id = ?", a.ID).Update("notes", nil).Error; err != nil {
+		t.Fatalf("null notes: %v", err)
+	}
+	mtta, _, acked, _, err := d.GetAlertResponseStats(7)
+	if err != nil {
+		t.Fatalf("GetAlertResponseStats: %v", err)
+	}
+	if acked != 1 {
+		t.Fatalf("acked = %d, want 1 (a NULL-notes acked row must count) — bare NOT LIKE would drop it", acked)
+	}
+	if mtta < 5.5 || mtta > 6.5 {
+		t.Errorf("MTTA = %.2f, want ≈6", mtta)
+	}
+}
+
 // TestGetNoisiestAlerts_F06: leaderboard groups by (type, device), newest
 // window only, ordered by count, with device names joined.
 func TestGetNoisiestAlerts_F06(t *testing.T) {

@@ -399,14 +399,16 @@ var syntheticCompanionMetrics = []string{"recovery", "incident"}
 // excluded everywhere; auto-resolved rows (notes "Auto-resolved: …") count
 // toward MTTR (the condition's lifetime) but NOT MTTA — auto-ack would fake
 // instant operator response. The `>= 0` guards drop clock-skew rows whose
-// ack/resolve predate the alert, matching the former Go loop exactly.
+// ack/resolve predate the alert. notes is COALESCE'd to an empty string so a NULL scans as
+// the empty string the former Go loop saw (SQL NULL is not false, so a bare
+// `notes NOT LIKE` would wrongly exclude a NULL-notes acked row).
 func (d *Database) GetAlertResponseStats(days int) (mttaMinutes, mttrMinutes float64, ackedCount, resolvedCount int64, err error) {
 	cutoff := time.Now().AddDate(0, 0, -days)
 	ackMin := d.dialect.MinutesBetween("acknowledged_at", "timestamp")
 	resMin := d.dialect.MinutesBetween("resolved_at", "timestamp")
 	// MTTA excludes auto-resolved rows; MTTR includes them. Both drop negative
 	// (pre-alert) durations. The LIKE prefix mirrors strings.HasPrefix.
-	ackCond := fmt.Sprintf("acknowledged_at IS NOT NULL AND notes NOT LIKE 'Auto-resolved:%%' AND %s >= 0", ackMin)
+	ackCond := fmt.Sprintf("acknowledged_at IS NOT NULL AND COALESCE(notes, '') NOT LIKE 'Auto-resolved:%%' AND %s >= 0", ackMin)
 	resCond := fmt.Sprintf("resolved_at IS NOT NULL AND %s >= 0", resMin)
 	selectExpr := fmt.Sprintf(
 		"COUNT(CASE WHEN %[1]s THEN 1 END) AS acked_count, "+
