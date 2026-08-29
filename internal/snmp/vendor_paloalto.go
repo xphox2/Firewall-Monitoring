@@ -89,7 +89,7 @@ func (p *PaloAltoProfile) ParseSystemStatus(pdus []gosnmp.SnmpPDU) *models.Syste
 			status.Version = "PAN-OS " + safeString(pdu.Value)
 		case paOIDSysUpTime:
 			ticks := gosnmp.ToBigInt(pdu.Value).Uint64()
-			status.Uptime = ticks / 100
+			status.Uptime = ticks // AUDIT-220: store RAW hundredths (the consumer FormatUptime divides by 100 once; pre-dividing here made this legacy single-device path render non-FortiGate uptime 100x too small — same fix as the collector profiles).
 		case paOIDProcessorLoad1:
 			status.CPUUsage = float64(gosnmp.ToBigInt(pdu.Value).Int64())
 		case paOIDSessionActive:

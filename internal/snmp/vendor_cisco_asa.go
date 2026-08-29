@@ -100,9 +100,9 @@ func (c *CiscoASAProfile) ParseSystemStatus(pdus []gosnmp.SnmpPDU) *models.Syste
 		case asaOIDSysDescr:
 			status.Version = extractCiscoASAVersion(safeString(pdu.Value))
 		case asaOIDSysUpTime:
-			// sysUpTime is in hundredths of a second; convert to seconds
+			// sysUpTime is in hundredths of a second; store it RAW (AUDIT-220)
 			ticks := gosnmp.ToBigInt(pdu.Value).Uint64()
-			status.Uptime = ticks / 100
+			status.Uptime = ticks // AUDIT-220: store RAW hundredths (the consumer FormatUptime divides by 100 once; pre-dividing here made this legacy single-device path render non-FortiGate uptime 100x too small — same fix as the collector profiles).
 		case asaOIDMemPoolUsed:
 			memUsedBytes = gosnmp.ToBigInt(pdu.Value).Int64()
 		case asaOIDMemPoolFree:
