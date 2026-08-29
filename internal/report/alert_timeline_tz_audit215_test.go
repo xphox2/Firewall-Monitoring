@@ -28,14 +28,18 @@ func TestBucketAlerts_RespectsReportTimezone_AUDIT215(t *testing.T) {
 		t.Skipf("tzdata unavailable: %v", err)
 	}
 
-	// A single alert two hours ago — comfortably inside a 24h hourly-bucket
-	// window and away from any bucket boundary, so it indexes identically under
-	// both locations.
-	at := time.Now().Add(-2 * time.Hour)
+	// Pin a single reference instant for BOTH renderings so the rolling
+	// now-24h..now window is identical across them — otherwise each call would
+	// read its own time.Now() (they differ by µs–ms, more under -race) and an
+	// alert near a bucket boundary could land in a different index between the
+	// two calls, flaking the same-index assertion below. The injected now makes
+	// the bucketing deterministic; only loc changes between the two calls.
+	now := time.Now()
+	at := now.Add(-2 * time.Hour)
 	alerts := []models.Alert{{Severity: "critical", Timestamp: at}}
 
-	utc := bucketAlerts(alerts, 24, time.UTC)
-	et := bucketAlerts(alerts, 24, etLoc)
+	utc := bucketAlerts(alerts, 24, time.UTC, now)
+	et := bucketAlerts(alerts, 24, etLoc, now)
 	if len(utc) == 0 || len(et) != len(utc) {
 		t.Fatalf("bucket count mismatch: utc=%d et=%d", len(utc), len(et))
 	}
