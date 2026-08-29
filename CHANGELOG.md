@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.233] - 2026-08-29
+
+### Changed
+
+Finalized the 2026-08-27 audit disposition ledger (`docs/audit-2026-08-27-consolidated.md`) — the capstone of the batched remediation program. All 148 findings are now recorded as resolved (147) or refuted (1), with zero unresolved. The final 13 findings that had shipped since the ledger was first built were flipped from ⚠️ UNRESOLVED to ✅ RESOLVED, each carrying its resolving version and PR:
+
+- **AUDIT-176** — serverhealth regression tests (server v0.11.232 · PR #240), the last remaining HIGH.
+- **AUDIT-216, 237, 263, 282, 283, 284, 305, 306, 307, 317** — the collector ingest-hardening set (collector v1.3.43 · PR #107): bounded trap/varbind logging, ifaceIPMap pruning, case-insensitive parseBool, IPFIX field-spec bounds, NetFlow seqTracker TTL eviction, v9 0xFFFF template rejection, UDP syslog parse-error metric, tracked TFTP writeHandler goroutine, handleRRQ allowlist/rate-limit parity, and constant-time trap community comparison.
+- **AUDIT-186, 187** — the strict-source-binding pair (collector v1.3.44 · PR #108): sFlow UDP-source attribution binding and TFTP pending-trigger upload binding, behind `PROBE_STRICT_SOURCE_BINDING`.
+
+The roll-up table and note were updated to 147 resolved / 1 refuted / 0 unresolved; the 135 already-correct dispositions and the AUDIT-319+ section are unchanged.
+
 ## [0.11.232] - 2026-08-29
 
 ### Added
