@@ -113,6 +113,7 @@ func (n opnsenseNormalizer) ParseObjects(raw []byte) ([]ConfigObject, error) {
 	p := &opnWalker{
 		keyFields: keyFieldsByVendor[n.vendor],
 		used:      make(map[string]bool),
+		pathCount: make(map[string]int),
 		byUUID:    make(map[string]string),
 	}
 	p.walk(root, "", 0)
@@ -183,6 +184,7 @@ type opnWalker struct {
 	keyFields map[string][]string
 	out       []ConfigObject
 	used      map[string]bool
+	pathCount map[string]int // base Path -> objects emitted sharing it (AUDIT-264)
 	byUUID    map[string]string
 }
 
@@ -303,9 +305,27 @@ func (p *opnWalker) emit(kind, name string, c *opnNode) {
 // append adds an object, guarding against a Path collision. Two objects sharing
 // a Path would silently overwrite one another in indexObjects, making one of
 // them invisible to the diff.
+//
+// Collisions are disambiguated by a PER-BASE-PATH occurrence counter — the Nth
+// object sharing this base Path — NOT the global emission ordinal len(p.out)
+// (AUDIT-264). DiffObjects keys strictly on Path, so a suffix derived from the
+// global ordinal shifts whenever an UNRELATED object is inserted or removed
+// earlier in the walk: the same logical object then gets a different synthetic
+// Path between snapshots A and B and churns as a spurious remove+add. An
+// occurrence counter keyed on the base Path is stable under such unrelated
+// insertions — the 2nd colliding "kind/name" is always "kind/name#2" regardless
+// of how many other objects preceded it. The inner loop advances the counter
+// again in the (contrived) event the synthetic Path itself already exists.
 func (p *opnWalker) append(o ConfigObject) {
 	if p.used[o.Path] {
-		o.Path += "#" + strconv.Itoa(len(p.out)+1)
+		base := o.Path
+		for {
+			p.pathCount[base]++
+			o.Path = base + "#" + strconv.Itoa(p.pathCount[base]+1)
+			if !p.used[o.Path] {
+				break
+			}
+		}
 	}
 	p.used[o.Path] = true
 	p.out = append(p.out, o)

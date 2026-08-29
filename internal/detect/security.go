@@ -230,6 +230,22 @@ func (d threatIntelDetector) Detect(w Window) ([]Detection, error) {
 // wants unsampled flow timing.
 type c2BeaconDetector struct{}
 
+// beaconPerFrameBytesExpr is the average PER-FRAME payload size for the byte
+// gate (AUDIT-273). BeaconMaxAvgBytes is an MTU-ish per-frame ceiling, but the
+// stored `bytes` column is PRE-MULTIPLIED by sampling_rate at ingest
+// (internal/sflow/sflow.go: Bytes = frame_length * sampling_rate when rate > 1,
+// else frame_length). Comparing AVG(bytes) against a per-frame ceiling made the
+// gate unreachable on sampled sFlow — at rate 512 it demanded an average frame
+// <= ~2.9 bytes — so no sampled c2_beacon candidate could ever pass even though
+// the detector is classified ValiditySampledOK. Divide each row's bytes by its
+// own effective sampling rate (max(sampling_rate,1), matching the ingest
+// multiplier) BEFORE averaging, so the comparison is per-frame on both sampled
+// and unsampled (rate 0/1) rows. Division is per-row (inside AVG) so a source
+// whose rows carry different sampling rates is still normalized correctly. The
+// *1.0 forces float division in both SQLite and PostgreSQL; the CASE avoids
+// GREATEST, which SQLite lacks.
+const beaconPerFrameBytesExpr = "AVG(bytes * 1.0 / CASE WHEN sampling_rate > 1 THEN sampling_rate ELSE 1 END)"
+
 func (c2BeaconDetector) Name() string       { return "c2_beacon" }
 func (c2BeaconDetector) Category() Category { return CategorySecurity }
 
@@ -250,7 +266,7 @@ func (d c2BeaconDetector) Detect(w Window) ([]Detection, error) {
 		Where("direction IN ?", []int{int(classify.DirOutbound), int(classify.DirExternal)}).
 		Select("src_addr, dst_addr, MAX(device_id) as device_id, dst_port, COUNT(*) as cnt").
 		Group("src_addr, dst_addr, dst_port").
-		Having("COUNT(*) >= ? AND AVG(bytes) <= ?", cfg.BeaconMinSamples, cfg.BeaconMaxAvgBytes).
+		Having("COUNT(*) >= ? AND "+beaconPerFrameBytesExpr+" <= ?", cfg.BeaconMinSamples, cfg.BeaconMaxAvgBytes).
 		Order("cnt DESC").Limit(50).Scan(&cands).Error; err != nil {
 		return nil, err
 	}

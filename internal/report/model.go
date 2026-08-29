@@ -289,7 +289,7 @@ func BuildReportModel(devices []models.Device, deviceData []*DeviceReportData, t
 	m.PeakThroughput = formatThroughput(peakBps)
 	m.TotalTransfer = formatBytes(totalBytes)
 
-	m.AlertBuckets = bucketAlerts(allAlerts, hours)
+	m.AlertBuckets = bucketAlerts(allAlerts, hours, loc)
 	m.HasAlerts = len(allAlerts) > 0
 
 	if uptimeCount > 0 {
@@ -508,9 +508,17 @@ func sparkline(series []float64) []SparkBar {
 
 // bucketAlerts groups alerts into a time histogram. Ported from the old
 // go-chart RenderAlertTrend (v0.10.236) so the timeline is pure HTML/CSS.
-func bucketAlerts(alerts []models.Alert, hours int) []AlertBucket {
+//
+// loc is the report timezone (AUDIT-215): every axis label, tooltip and bucket
+// boundary is rendered in loc so the Alert Activity timeline matches the
+// CPU/Mem chart and the report header instead of showing UTC on a UTC container.
+// A nil loc falls back to UTC.
+func bucketAlerts(alerts []models.Alert, hours int, loc *time.Location) []AlertBucket {
 	if len(alerts) == 0 {
 		return nil
+	}
+	if loc == nil {
+		loc = time.UTC
 	}
 
 	bucketDuration := time.Hour
@@ -518,7 +526,7 @@ func bucketAlerts(alerts []models.Alert, hours int) []AlertBucket {
 		bucketDuration = 24 * time.Hour
 	}
 
-	now := time.Now()
+	now := time.Now().In(loc)
 	start := now.Add(-time.Duration(hours) * time.Hour)
 	numBuckets := int(now.Sub(start)/bucketDuration) + 1
 	if numBuckets > 100 {
