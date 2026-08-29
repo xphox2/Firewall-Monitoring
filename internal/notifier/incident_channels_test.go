@@ -1,6 +1,10 @@
 package notifier
 
 import (
+	"net/http"
+	"net/http/httptest"
+	neturl "net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,6 +72,47 @@ func TestOpsgeniePayload_PriorityAndAlias(t *testing.T) {
 	}
 	if buildOpsgeniePayload(fireAlert("warning"))["priority"] != "P3" {
 		t.Error("warning → want P3")
+	}
+}
+
+// TestOpsgenieCloseURL_EscapesAlias (AUDIT-208): the close-by-alias URL
+// interpolates the dedup key into the URL PATH, and keys embed MetricName —
+// interface names like "interface_GigabitEthernet0/0" carry '/'. Unescaped,
+// the slash splits the path and Opsgenie 404s the close, so the incident stays
+// open forever. The alias must arrive as ONE path segment with the slash as
+// %2F; alertDedupKey itself (the fire payload's alias) stays byte-identical.
+func TestOpsgenieCloseURL_EscapesAlias(t *testing.T) {
+	var gotEscapedPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotEscapedPath = r.URL.EscapedPath()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	orig := opsgenieAlertsURL
+	opsgenieAlertsURL = srv.URL + "/v2/alerts"
+	defer func() { opsgenieAlertsURL = orig }()
+
+	n := &Notifier{client: srv.Client()}
+	a := fireAlert("info")
+	a.AlertType = "INTERFACE_DOWN_RESOLVED"
+	a.MetricName = "interface_GigabitEthernet0/0"
+	if err := n.sendOpsgenie(a, NotifyConfig{OpsgenieAPIKey: "gk"}); err != nil {
+		t.Fatalf("sendOpsgenie: %v", err)
+	}
+	want := "/v2/alerts/" + neturl.PathEscape(alertDedupKey(a)) + "/close"
+	if gotEscapedPath != want {
+		t.Errorf("close path = %q, want %q", gotEscapedPath, want)
+	}
+	if !strings.Contains(gotEscapedPath, "%2F") {
+		t.Errorf("alias slash not %%2F-escaped on the wire: %q", gotEscapedPath)
+	}
+
+	// A space-containing metric must build a valid request (no NewRequest error).
+	b := fireAlert("info")
+	b.AlertType = "INTERFACE_DOWN_RESOLVED"
+	b.MetricName = "interface with space"
+	if err := n.sendOpsgenie(b, NotifyConfig{OpsgenieAPIKey: "gk"}); err != nil {
+		t.Errorf("space-containing metric: %v", err)
 	}
 }
 

@@ -110,9 +110,15 @@ func (am *AlertManager) consultDeviceRuleLocked(at models.AlertType, deviceID ui
 	if rule.severity != "" {
 		resolved.Severity = rule.severity
 	}
+	// AUDIT-246: consult the cache FIRST — stamping rule.policyID before the
+	// lookup persisted a dangling id (deleted policy, stale rule) onto saved
+	// alert rows, breaking policy attribution and any policy-joined read.
+	// A dangling id now leaves the resolved policy (or nil) in place.
 	if rule.policyID != nil {
-		resolved.PolicyID = rule.policyID
-		am.applyRulePolicy(resolved, *rule.policyID)
+		if p := am.findPolicy(*rule.policyID); p != nil {
+			resolved.PolicyID = &p.ID
+			applyPolicyChannels(resolved, p)
+		}
 	}
 	if rule.cooldownMin != nil && *rule.cooldownMin > 0 {
 		resolved.CooldownMinutes = *rule.cooldownMin

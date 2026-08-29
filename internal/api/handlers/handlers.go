@@ -55,11 +55,14 @@ type Handler struct {
 	mu sync.RWMutex
 
 	// agentDropsLast tracks the last CUMULATIVE sFlow sample-pool drops
-	// counter seen per agent, so recordAgentDrops (M2 of the 2026-07-01
-	// audit) can fold per-batch deltas into flow_agent_drops. Guarded by
-	// agentDropsMu; bounded by maxTrackedDropAgents.
+	// counter seen per (agent, sampling rate) pair, so recordAgentDrops (M2
+	// of the 2026-07-01 audit) can fold per-batch deltas into
+	// flow_agent_drops. Keyed per pair since AUDIT-248 — a dual-rate agent
+	// exports one counter per sampling instance, and a shared per-agent
+	// baseline fabricated deltas whenever the streams interleaved. Guarded by
+	// agentDropsMu; maxTrackedDropAgents now bounds pairs.
 	agentDropsMu   sync.Mutex
-	agentDropsLast map[string]uint64
+	agentDropsLast map[agentKey]uint64
 
 	// denyPatternCached is the TTL-cached block-policy-name glob used by the
 	// syslog-ingest deny projection (Tranche 4 Phase 2), guarded by h.mu.
@@ -178,6 +181,26 @@ func (h *Handler) SetAlertManager(am *alerts.AlertManager) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.alertManager = am
+}
+
+// alertsConfigSnapshot returns the alerts config for handler fallback reads
+// (AUDIT-250). When an AlertManager is wired, its RefreshThresholds loop
+// rewrites the SHARED config.Alerts struct in place under the manager's lock —
+// so the read must go through AlertsSnapshot (a value copy taken under that
+// same lock), never a bare h.config.Alerts dereference. Handlers built without
+// a manager (tests, early startup) read the process config directly: nothing
+// mutates it there.
+func (h *Handler) alertsConfigSnapshot() config.AlertsConfig {
+	h.mu.RLock()
+	am := h.alertManager
+	h.mu.RUnlock()
+	if am != nil {
+		return am.AlertsSnapshot()
+	}
+	if h.config != nil {
+		return h.config.Alerts
+	}
+	return config.AlertsConfig{}
 }
 
 func (h *Handler) SetSNMPClient(client *snmp.SNMPClient) {

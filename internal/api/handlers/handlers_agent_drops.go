@@ -7,11 +7,22 @@ import (
 	"firewall-mon/internal/models"
 )
 
-// maxTrackedDropAgents bounds the per-agent cumulative-drops baseline map.
-// Agents are the monitored firewalls (dozens, not thousands), but the sampler
-// address arrives from the network, so the map must not grow unbounded
-// (project invariant). Beyond the cap, new agents simply aren't drop-tracked.
+// maxTrackedDropAgents bounds the cumulative-drops baseline map. Agents are
+// the monitored firewalls (dozens, not thousands), but the sampler address
+// arrives from the network, so the map must not grow unbounded (project
+// invariant). Since AUDIT-248 the map keys (agent, sampling rate) pairs, so
+// the cap bounds pairs. Beyond the cap, new pairs simply aren't drop-tracked.
 const maxTrackedDropAgents = 4096
+
+// agentKey identifies one cumulative sample-pool drops counter stream: sFlow
+// agents commonly run several sampling instances (per rate), each with its own
+// counter. AUDIT-248: baselining per bare agent address folded those streams
+// onto one baseline, so a dual-rate agent's interleaved counters fabricated a
+// bogus delta (and a bogus re-baseline) on nearly every batch.
+type agentKey struct {
+	agent string
+	rate  uint32
+}
 
 // recordAgentDrops folds a flow batch's sFlow sample-pool drops counters into
 // flow_agent_drops — the missing half of the drops pipeline (M2 of the
@@ -31,10 +42,6 @@ func (h *Handler) recordAgentDrops(samples []models.FlowSample) {
 	}
 
 	// Highest cumulative counter per (agent, sampling rate) in this batch.
-	type agentKey struct {
-		agent string
-		rate  uint32
-	}
 	batchMax := make(map[agentKey]uint64)
 	for i := range samples {
 		if samples[i].SamplerAddress == "" {
@@ -69,25 +76,25 @@ func (h *Handler) recordAgentDrops(samples []models.FlowSample) {
 
 	h.agentDropsMu.Lock()
 	if h.agentDropsLast == nil {
-		h.agentDropsLast = make(map[string]uint64)
+		h.agentDropsLast = make(map[agentKey]uint64)
 	}
 	for k, cur := range batchMax {
-		last, seen := h.agentDropsLast[k.agent]
+		last, seen := h.agentDropsLast[k]
 		switch {
 		case !seen:
 			if len(h.agentDropsLast) >= maxTrackedDropAgents {
-				continue // bounded map: new agents past the cap aren't tracked
+				continue // bounded map: new (agent, rate) pairs past the cap aren't tracked
 			}
 			// First sighting: the cumulative value predates our observation
 			// window, so it becomes the baseline without counting as a delta.
-			h.agentDropsLast[k.agent] = cur
+			h.agentDropsLast[k] = cur
 		case cur > last:
-			h.agentDropsLast[k.agent] = cur
+			h.agentDropsLast[k] = cur
 			saves = append(saves, pending{k.agent, k.rate, cur - last})
 		case cur < last:
 			// Counter went backward: agent restart. Re-baseline; the drops
 			// accumulated since its restart are real.
-			h.agentDropsLast[k.agent] = cur
+			h.agentDropsLast[k] = cur
 			if cur > 0 {
 				saves = append(saves, pending{k.agent, k.rate, cur})
 			}

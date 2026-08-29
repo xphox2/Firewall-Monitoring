@@ -219,6 +219,10 @@ type TelemetryReadStore interface {
 	ResolveTunnelGroups(statuses []models.VPNStatus)
 	GetVPNTunnelCounts(deviceID uint) (up, total int, err error)
 	GetSystemStatusHistory(deviceID uint, hours int) ([]models.SystemStatus, error)
+	// GetRecentSystemStatus is the newest-first, caller-limited variant used by
+	// the F17 baseline builder (AUDIT-245); the ASC history method above stays
+	// chart-ordered for its dashboard/device/report consumers.
+	GetRecentSystemStatus(deviceID uint, hours, limit int) ([]models.SystemStatus, error)
 	GetSystemStatusBuckets(deviceID uint, rangeStr string) ([]SystemStatusBucket, error)
 	GetSecurityStatsHistory(deviceID uint, hours int) ([]models.SecurityStats, error)
 	GetPingResultHistory(deviceID uint, hours int) ([]models.PingResult, error)

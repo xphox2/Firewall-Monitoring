@@ -2,6 +2,7 @@ package notifier
 
 import (
 	"fmt"
+	neturl "net/url"
 	"strings"
 
 	"firewall-mon/internal/models"
@@ -14,10 +15,12 @@ import (
 // deterministic dedup key, and the companion *_RESOLVED events resolve/close
 // the incident instead of opening a new one.
 
-const (
-	pagerDutyEventsURL = "https://events.pagerduty.com/v2/enqueue"
-	opsgenieAlertsURL  = "https://api.opsgenie.com/v2/alerts"
-)
+const pagerDutyEventsURL = "https://events.pagerduty.com/v2/enqueue"
+
+// opsgenieAlertsURL is a var (not const) solely so the AUDIT-208 regression
+// test can point sendOpsgenie at a local httptest server and assert the close
+// URL that actually goes on the wire. Production never reassigns it.
+var opsgenieAlertsURL = "https://api.opsgenie.com/v2/alerts"
 
 // alertDedupKey identifies one alert condition across fire and resolve. For a
 // consolidated event (EventKey set — e.g. an sFlow security event) the key is
@@ -128,8 +131,15 @@ func (n *Notifier) sendOpsgenie(alert *models.Alert, nc NotifyConfig) error {
 	url := opsgenieAlertsURL
 	var payload interface{}
 	if isRecovery(alert) {
-		// Close by alias: POST /v2/alerts/:alias/close?identifierType=alias
-		url = fmt.Sprintf("%s/%s/close?identifierType=alias", opsgenieAlertsURL, alertDedupKey(alert))
+		// Close by alias: POST /v2/alerts/:alias/close?identifierType=alias.
+		// AUDIT-208: the alias is interpolated into the URL PATH, and dedup
+		// keys embed MetricName — interface names like
+		// "interface_GigabitEthernet0/0" carry '/', which unescaped splits the
+		// path so Opsgenie 404s the close and the incident stays open forever.
+		// PathEscape the URL use only; the alias in the fire payload (and
+		// alertDedupKey itself) must stay byte-identical or every in-flight
+		// incident is orphaned.
+		url = fmt.Sprintf("%s/%s/close?identifierType=alias", opsgenieAlertsURL, neturl.PathEscape(alertDedupKey(alert)))
 		payload = map[string]string{"source": "firewall-mon", "note": alert.Message}
 	} else {
 		payload = buildOpsgeniePayload(alert)

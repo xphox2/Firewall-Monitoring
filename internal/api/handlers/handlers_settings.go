@@ -584,26 +584,29 @@ func (h *Handler) getNotificationSetting(key string) string {
 			return h.db.DecryptField(s.Value)
 		}
 	}
-	// Fall back to env/config values
+	// Fall back to env/config values. AUDIT-250: through one locked snapshot —
+	// the AlertManager's RefreshThresholds rewrites the shared config.Alerts
+	// struct in place, so a bare field read here races with the refresh loop.
+	ac := h.alertsConfigSnapshot()
 	switch key {
 	case "smtp_host":
-		return h.config.Alerts.SMTPHost
+		return ac.SMTPHost
 	case "smtp_port":
-		return strconv.Itoa(h.config.Alerts.SMTPPort)
+		return strconv.Itoa(ac.SMTPPort)
 	case "smtp_username":
-		return h.config.Alerts.SMTPUsername
+		return ac.SMTPUsername
 	case "smtp_password":
-		return h.config.Alerts.SMTPPassword
+		return ac.SMTPPassword
 	case "smtp_from":
-		return h.config.Alerts.SMTPFrom
+		return ac.SMTPFrom
 	case "smtp_to":
-		return h.config.Alerts.SMTPTo
+		return ac.SMTPTo
 	case "slack_webhook":
-		return h.config.Alerts.SlackWebhookURL
+		return ac.SlackWebhookURL
 	case "discord_webhook":
-		return h.config.Alerts.DiscordWebhookURL
+		return ac.DiscordWebhookURL
 	case "webhook_url":
-		return h.config.Alerts.WebHookURL
+		return ac.WebHookURL
 	// LC-39 (2026-07-04 audit): the T2 incident channels are env-configurable
 	// (PAGERDUTY_ROUTING_KEY / OPSGENIE_API_KEY / TEAMS_WEBHOOK_URL /
 	// WEBHOOK_SECRET, loaded in internal/config) and real alert delivery runs
@@ -615,13 +618,13 @@ func (h *Handler) getNotificationSetting(key string) string {
 	// (AlertManager.RefreshThresholds overrides config only from non-empty
 	// DB rows).
 	case "webhook_secret":
-		return h.config.Alerts.WebhookSecret
+		return ac.WebhookSecret
 	case "pagerduty_routing_key":
-		return h.config.Alerts.PagerDutyRoutingKey
+		return ac.PagerDutyRoutingKey
 	case "opsgenie_api_key":
-		return h.config.Alerts.OpsgenieAPIKey
+		return ac.OpsgenieAPIKey
 	case "teams_webhook":
-		return h.config.Alerts.TeamsWebhookURL
+		return ac.TeamsWebhookURL
 	}
 	return ""
 }

@@ -150,6 +150,23 @@ func (d *Database) GetSystemStatusHistory(deviceID uint, hours int) ([]models.Sy
 	return statuses, err
 }
 
+// GetRecentSystemStatus returns up to limit system-status rows for a device
+// within the trailing window, NEWEST FIRST (AUDIT-245). It exists for the F17
+// baseline builder: GetSystemStatusHistory orders ASC + LIMIT 2000, so on a
+// device producing more than 2000 rows per window the limit keeps the OLDEST
+// samples and the "trailing 24h baseline" silently becomes a stale one.
+// GetSystemStatusHistory itself must keep its ASC ordering — four chart/report
+// consumers render it as a left-to-right time series. Rows here are returned
+// in DESC order without a reverse: the baseline's mean/stddev is
+// order-independent.
+func (d *Database) GetRecentSystemStatus(deviceID uint, hours, limit int) ([]models.SystemStatus, error) {
+	var statuses []models.SystemStatus
+	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+	err := d.db.Where("device_id = ? AND timestamp > ?", deviceID, cutoff).
+		Order("timestamp DESC").Limit(limit).Find(&statuses).Error
+	return statuses, err
+}
+
 // SystemStatusBucket holds a single time-bucket for system-status charting.
 // Mirrors InterfaceChartBucket but for the per-device system metrics
 // surfaced on the device-detail page (CPU, memory, disk, sessions, network

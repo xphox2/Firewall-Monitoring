@@ -141,6 +141,101 @@ func TestZScore_NoBaseline_FallsBackStatic(t *testing.T) {
 	}
 }
 
+// seedMixedWriterHistory writes n SNMP-shaped rows (cpu + disk) and n
+// SSH-perf-shaped rows (cpu only, disk 0 — that writer never measures disk),
+// interleaved over the last hour.
+func seedMixedWriterHistory(t *testing.T, am *AlertManager, dev uint, n int, disk float64) {
+	t.Helper()
+	base := time.Now().Add(-time.Hour)
+	rows := make([]models.SystemStatus, 0, 2*n)
+	for i := 0; i < n; i++ {
+		rows = append(rows,
+			models.SystemStatus{Timestamp: base.Add(time.Duration(2*i) * time.Minute), DeviceID: dev, CPUUsage: 30, DiskUsage: disk},
+			models.SystemStatus{Timestamp: base.Add(time.Duration(2*i+1) * time.Minute), DeviceID: dev, CPUUsage: 32, DiskUsage: 0},
+		)
+	}
+	if err := am.db.Gorm().Create(&rows).Error; err != nil {
+		t.Fatalf("seed mixed history: %v", err)
+	}
+}
+
+// TestZScore_DiskBaselineIgnoresZeroDiskRows (AUDIT-172): system_status has
+// two writers with disjoint fields — the FortiGate SSH perf rows always carry
+// disk_usage=0. The disk baseline must be built from real (>0) disk samples
+// only, or the mean halves and zscore mode pages DISK_HIGH on ordinary levels.
+func TestZScore_DiskBaselineIgnoresZeroDiskRows(t *testing.T) {
+	am, _ := newTestManager(t)
+	const dev = 94
+	seedMixedWriterHistory(t, am, dev, 20, 70) // 20 SNMP rows disk≈70 + 20 SSH rows disk=0
+
+	am.ensureBaseline(dev)
+	mean, _, ok := am.baselineFor(dev, "disk_usage")
+	if !ok {
+		t.Fatal("disk baseline missing — 20 real disk samples exceed baselineMinPts")
+	}
+	if mean < 65 || mean > 75 {
+		t.Fatalf("disk baseline mean = %.2f, want ≈70 (SSH zero-disk rows polluted it)", mean)
+	}
+	// cpu is measured by BOTH writers — all 40 rows count, no filtering.
+	if cpuMean, _, cpuOK := am.baselineFor(dev, "cpu_usage"); !cpuOK || cpuMean < 30 || cpuMean > 32 {
+		t.Fatalf("cpu baseline = %.2f ok=%v, want ≈31 from all rows", cpuMean, cpuOK)
+	}
+}
+
+// Companion: a window with NO real disk samples (SSH-only device) must yield
+// NO disk baseline (ok=false → static floor governs) — the per-series
+// baselineMinPts gate. A whole-window gate would bless an empty/tiny disk
+// series here, which is worse than the original bug.
+func TestZScore_AllZeroDiskRowsYieldNoDiskBaseline(t *testing.T) {
+	am, _ := newTestManager(t)
+	const dev = 95
+	seedMixedWriterHistory(t, am, dev, 20, 0) // every row disk=0
+
+	am.ensureBaseline(dev)
+	if _, _, ok := am.baselineFor(dev, "disk_usage"); ok {
+		t.Fatal("all-zero disk window produced a disk baseline; want ok=false (static fallback)")
+	}
+	if _, _, ok := am.baselineFor(dev, "cpu_usage"); !ok {
+		t.Fatal("cpu baseline must still exist — the min-points gate is per series, not per window")
+	}
+}
+
+// TestBaseline_UsesNewestSamples (AUDIT-245): with more rows in the window
+// than the 2000-row cap, the baseline must be built from the NEWEST samples.
+// The old ASC+LIMIT read kept the oldest 2000, so the newest activity never
+// entered the baseline: here the 100 newest rows read CPU 80 and the mean
+// would stay pinned at exactly 20 without the fix; with it, the newest 2000
+// rows (100×80 + 1900×20) average 23.
+func TestBaseline_UsesNewestSamples(t *testing.T) {
+	am, _ := newTestManager(t)
+	const dev = 96
+	base := time.Now().Add(-time.Hour)
+	rows := make([]models.SystemStatus, 2100)
+	for i := range rows {
+		cpu := 20.0
+		if i >= 2000 { // the 100 newest samples
+			cpu = 80
+		}
+		rows[i] = models.SystemStatus{
+			Timestamp: base.Add(time.Duration(i) * time.Second),
+			DeviceID:  dev,
+			CPUUsage:  cpu,
+		}
+	}
+	if err := am.db.Gorm().CreateInBatches(&rows, 200).Error; err != nil {
+		t.Fatalf("seed 2100 rows: %v", err)
+	}
+
+	am.ensureBaseline(dev)
+	mean, _, ok := am.baselineFor(dev, "cpu_usage")
+	if !ok {
+		t.Fatal("cpu baseline missing")
+	}
+	if mean < 22 || mean > 24 {
+		t.Fatalf("cpu baseline mean = %.2f, want ≈23 (newest 2000 rows); 20.00 means the limit kept the OLDEST samples", mean)
+	}
+}
+
 // TestZScore_FlatBaselineGuard: a perfectly flat line (σ=0) must not turn
 // microscopic noise into alerts — zscore disables itself, static floor rules.
 func TestZScore_FlatBaselineGuard(t *testing.T) {

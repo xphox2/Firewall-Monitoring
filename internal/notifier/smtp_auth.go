@@ -48,6 +48,14 @@ func LoginAuth(username, password, host string) smtp.Auth {
 	return &loginAuth{username: username, password: password, host: host}
 }
 
+// isLocalhost mirrors net/smtp's unexported helper of the same name: the
+// stdlib's PlainAuth permits cleartext AUTH only to a server explicitly
+// addressed as the local host (a relay on the same box), where a network
+// MITM is not in the threat model. Deliberately not configurable.
+func isLocalhost(name string) bool {
+	return name == "localhost" || name == "127.0.0.1" || name == "::1"
+}
+
 // Start declares the mechanism. Two safety gates, both mirroring the
 // stdlib's smtp.PlainAuth:
 //
@@ -59,12 +67,16 @@ func LoginAuth(username, password, host string) smtp.Auth {
 //     stdlib PlainAuth gates on this; v0.10.223 was missing it.
 //
 //  2. server.TLS — refuse to send credentials over a cleartext
-//     connection. Same rule as PlainAuth.
+//     connection, except to localhost (AUDIT-285). This is now actually
+//     the same rule as PlainAuth: the stdlib exempts an explicitly-local
+//     server, and before this fix the missing exemption meant a
+//     LOGIN-only relay on 127.0.0.1 could never authenticate while an
+//     identically-configured PLAIN one worked.
 func (a *loginAuth) Start(server *smtp.ServerInfo) (string, []byte, error) {
 	if server.Name != a.host {
 		return "", nil, fmt.Errorf("wrong host name (server presented %q, expected %q)", server.Name, a.host)
 	}
-	if !server.TLS {
+	if !server.TLS && !isLocalhost(server.Name) {
 		return "", nil, errors.New("unencrypted connection")
 	}
 	return "LOGIN", nil, nil

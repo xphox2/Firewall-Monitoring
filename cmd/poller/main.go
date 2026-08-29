@@ -90,6 +90,15 @@ type Poller struct {
 	// Reset on condition-false; empty at process start by construction.
 	// Accessed only from the single leader-locked monitoring cycle — no mutex.
 	telemetryStaleStreak map[uint]int
+
+	// telemetryStaleParts records, per device with a live in-process
+	// TELEMETRY_STALE fire, WHICH signals (vitals / interface stats) were
+	// stale (AUDIT-189). The recovery gate requires every recorded-stale part
+	// fresh again — closing on ANY fresh signal let an iface-stale alert
+	// false-recover once the dead interface rows aged out of the lookback
+	// while SSH kept vitals fresh. Cleared on recovery, ineligibility, and the
+	// devByID prune. Same single-goroutine access as the streak map — no mutex.
+	telemetryStaleParts map[uint]staleSignalParts
 }
 
 // startThreatFeedSyncAsync runs the threat-feed sync off the poller's select
@@ -142,6 +151,7 @@ func NewPoller(cfg *config.Config, db *database.Database, am *alerts.AlertManage
 		stopChan:       make(chan struct{}),
 
 		telemetryStaleStreak: make(map[uint]int),
+		telemetryStaleParts:  make(map[uint]staleSignalParts),
 	}
 	// M30: pre-stamp the loop heartbeat so /readyz is ready during startup,
 	// before Start()'s first tick.

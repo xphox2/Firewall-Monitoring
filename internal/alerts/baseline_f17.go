@@ -50,9 +50,13 @@ func (am *AlertManager) ensureBaseline(deviceID uint) {
 		return
 	}
 
-	hist, err := am.db.GetSystemStatusHistory(deviceID, baselineWindow)
+	// AUDIT-245: newest-first with the limit applied by the DB. The old
+	// GetSystemStatusHistory call ordered ASC + LIMIT 2000, so a device
+	// producing >2000 rows per window baselined the OLDEST samples — a stale
+	// baseline masquerading as "trailing 24h".
+	hist, err := am.db.GetRecentSystemStatus(deviceID, baselineWindow, 2000)
 	entry := deviceBaselines{at: time.Now(), metrics: map[string]metricBaseline{}}
-	if err == nil && len(hist) >= baselineMinPts {
+	if err == nil {
 		series := map[string][]float64{
 			"cpu_usage":     make([]float64, 0, len(hist)),
 			"memory_usage":  make([]float64, 0, len(hist)),
@@ -62,10 +66,28 @@ func (am *AlertManager) ensureBaseline(deviceID uint) {
 		for i := range hist {
 			series["cpu_usage"] = append(series["cpu_usage"], hist[i].CPUUsage)
 			series["memory_usage"] = append(series["memory_usage"], hist[i].MemoryUsage)
-			series["disk_usage"] = append(series["disk_usage"], hist[i].DiskUsage)
+			// AUDIT-172: system_status has two writers with disjoint fields —
+			// the FortiGate SSH perf writer's rows always carry disk_usage=0.
+			// Admitting them halved (or worse) the disk baseline, so zscore
+			// mode fired DISK_HIGH on perfectly ordinary disk levels. Mirror
+			// the fire path's populated-gate (alerts.go: current>0 — a live
+			// device never reports 0% disk). cpu/memory/session_count are NOT
+			// filtered: both writers measure cpu/memory, and 0 sessions is a
+			// legitimate idle reading.
+			if hist[i].DiskUsage > 0 {
+				series["disk_usage"] = append(series["disk_usage"], hist[i].DiskUsage)
+			}
 			series["session_count"] = append(series["session_count"], float64(hist[i].SessionCount))
 		}
+		// The min-points gate is PER SERIES, not per window: an all-SSH window
+		// has plenty of rows but zero usable disk samples, and a whole-window
+		// gate would then bless a tiny (or empty) disk series as a baseline —
+		// worse than the bug. A short series stays absent (ok=false), so
+		// baselineFor's callers fall back to the static floor.
 		for metric, vals := range series {
+			if len(vals) < baselineMinPts {
+				continue
+			}
 			mean, std := meanStd(vals)
 			entry.metrics[metric] = metricBaseline{mean: mean, std: std, ok: true}
 		}

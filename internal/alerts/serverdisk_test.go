@@ -205,6 +205,35 @@ func TestServerDisk_CooldownComesFromTheResolvedPolicy(t *testing.T) {
 	}
 }
 
+// TestServerDisk_MaintenanceSuppresses (AUDIT-247): SERVER_DISK_HIGH was the
+// one alert path that ignored resolved.InMaintenance entirely — a breach
+// during a SuppressAll window paged anyway. The row must save Suppressed (the
+// evidence stays) with no notification, and it must carry the resolved
+// PolicyID so CheckEscalations can pick it up (nil-PolicyID rows never
+// escalate — the second half of this finding).
+func TestServerDisk_MaintenanceSuppresses(t *testing.T) {
+	am, _ := newTestManager(t)
+	setServerDiskPolicy(am, 30)
+	now := time.Now()
+	am.policyCache.windows = []models.MaintenanceWindow{{
+		Name: "planned", StartTime: now.Add(-time.Hour), EndTime: now.Add(time.Hour), SuppressAll: true,
+	}}
+
+	am.CheckServerVolumes([]ServerVolume{{Label: "data", Volume: vol("/data", 95, 1)}}, 85, 5*gb)
+
+	var a models.Alert
+	if err := am.db.Gorm().Where("alert_type = ? AND metric_name = ?",
+		models.AlertTypeServerDiskHigh, "server_disk_data").First(&a).Error; err != nil {
+		t.Fatalf("the breach must still save a row (suppressed evidence): %v", err)
+	}
+	if !a.Suppressed {
+		t.Error("row saved un-suppressed inside a SuppressAll maintenance window")
+	}
+	if a.PolicyID == nil || *a.PolicyID != 1 {
+		t.Errorf("row PolicyID = %v, want the resolved policy (1) — nil-PolicyID rows can never escalate", a.PolicyID)
+	}
+}
+
 // The in-memory cooldown map dies with the process. Without a database-side
 // backstop a poller restart into a still-full disk re-pages immediately — once
 // per restart, and a crash-looping poller would page continuously. Every other

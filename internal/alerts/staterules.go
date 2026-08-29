@@ -96,8 +96,12 @@ func (am *AlertManager) buildStateCandidateLocked(rule *compiledRule, deviceID u
 		am.applyRulePolicy(&resolved, *rule.policyID)
 	}
 	dp := rule.dampen
-	if dp.MinUpSeconds <= 0 {
-		dp.MinUpSeconds = defaultStateMinUpSeconds
+	// nil = inherit the default; an explicit 0 stays 0 and disables the
+	// up-run fast-path (AUDIT-191). The pointer target is a fresh local, so
+	// the compiled rule's params are never aliased/mutated.
+	if dp.MinUpSeconds == nil {
+		v := defaultStateMinUpSeconds
+		dp.MinUpSeconds = &v
 	}
 	// DailyCap: 0 means "no cap" (alert on every outage episode) — the UI and the
 	// seed rules always set refire_mode, so an explicitly-configured rule honors
@@ -195,8 +199,8 @@ func (am *AlertManager) decideStateFire(c stateCandidate, now time.Time) stateFi
 	g.Model(&models.Alert{}).Select("resolved_at").
 		Where("device_id = ? AND alert_type = ? AND metric_name = ? AND resolved_at IS NOT NULL", c.deviceID, c.alertType, c.metricName).
 		Order("resolved_at DESC").First(&lr)
-	if c.dampen.MinUpSeconds > 0 && lr.ResolvedAt != nil &&
-		now.Sub(*lr.ResolvedAt) >= time.Duration(c.dampen.MinUpSeconds)*time.Second {
+	if c.dampen.MinUpSeconds != nil && *c.dampen.MinUpSeconds > 0 && lr.ResolvedAt != nil &&
+		now.Sub(*lr.ResolvedAt) >= time.Duration(*c.dampen.MinUpSeconds)*time.Second {
 		return stateFire
 	}
 
@@ -273,7 +277,7 @@ func ValidateStateDampenJSON(s string) string {
 	default:
 		return `dampen_json refire_mode must be "episode" (or empty)`
 	}
-	if dp.MinUpSeconds < 0 {
+	if dp.MinUpSeconds != nil && *dp.MinUpSeconds < 0 {
 		return "dampen_json min_up_seconds must be ≥ 0"
 	}
 	if dp.DailyCap < 0 {

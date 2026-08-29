@@ -227,6 +227,44 @@ func TestTelemetryStale_RecoveryResolves(t *testing.T) {
 	}
 }
 
+// TestTelemetryStale_SSHFreshDoesNotRecoverIfaceStale (AUDIT-189): an alert
+// fired by the INTERFACE signal alone (SNMP dead, SSH perf keeping vitals
+// fresh — the fleet's primary failure mode) must NOT auto-resolve when the
+// dead interface rows age out of the 24h lookback while vitals stay fresh.
+// The old gate closed on ANY fresh signal, so exactly this scenario sent a
+// false "recovered" notification while SNMP was still broken.
+func TestTelemetryStale_SSHFreshDoesNotRecoverIfaceStale(t *testing.T) {
+	p, db := newTelemetryTestPoller(t)
+	dev := newStaleTestDevice(t, p)
+
+	// Fire via iface-only staleness (vitals fresh throughout).
+	mustCreate(t, db, &models.SystemStatus{DeviceID: dev.ID, Timestamp: time.Now(), CPUUsage: 10})
+	mustCreate(t, db, &models.InterfaceStats{DeviceID: dev.ID, Timestamp: time.Now().Add(-2 * time.Hour), Name: "port1", Index: 1, Status: "up", AdminStatus: "up"})
+	runCycles(p, []models.Device{*dev}, telemetryStaleCycles, nil)
+	if got := countAlerts(t, db, "TELEMETRY_STALE", dev.ID); got != 1 {
+		t.Fatalf("precondition: TELEMETRY_STALE = %d, want 1", got)
+	}
+
+	// The dead interface rows age past the lookback; vitals keep flowing.
+	if err := db.Gorm().Model(&models.InterfaceStats{}).Where("device_id = ?", dev.ID).
+		Update("timestamp", time.Now().Add(-telemetryStaleLookback-time.Hour)).Error; err != nil {
+		t.Fatalf("age interface rows: %v", err)
+	}
+	mustCreate(t, db, &models.SystemStatus{DeviceID: dev.ID, Timestamp: time.Now(), CPUUsage: 10})
+	runCycles(p, []models.Device{*dev}, 2, nil)
+
+	var open int64
+	db.Gorm().Model(&models.Alert{}).
+		Where("alert_type = ? AND device_id = ? AND resolved_at IS NULL", "TELEMETRY_STALE", dev.ID).
+		Count(&open)
+	if open != 1 {
+		t.Errorf("open rows after iface aged out = %d, want 1 — fresh vitals must not recover an iface-stale alert", open)
+	}
+	if got := countAlerts(t, db, "TELEMETRY_STALE_RESOLVED", dev.ID); got != 0 {
+		t.Errorf("false recovery: %d TELEMETRY_STALE_RESOLVED companions, want 0", got)
+	}
+}
+
 // TestTelemetryStale_OfflineSupersedes: when the device transitions to fully
 // offline, AutoResolveTelemetryStale closes the open alert silently — resolved
 // row, NO _RESOLVED companion, no recovery notification.

@@ -65,9 +65,16 @@ type AlertManager struct {
 	// digest globally). Set each cycle by the poller via SetStormSourcesDefault so
 	// resolveAlertConfig can seed ResolvedAlertConfig.StormSources without a DB read.
 	stormSourcesDefault int
-	mu                  sync.RWMutex
-	alertCooldown       time.Duration
-	policyCache         PolicyCache
+	// mu guards the policy/rule caches (policyCache, eventRules, deviceMeta,
+	// stateOwned), the cooldown/active/flap maps above, AND config.Alerts:
+	// RefreshThresholds rewrites config.Alerts field-by-field under the write
+	// lock, so every read of it — resolveAlertConfig's global fallbacks,
+	// notifier.SnapshotConfig, direct field reads — must hold at least the
+	// read lock (AUDIT-244/250). Handlers outside this package go through
+	// AlertsSnapshot.
+	mu            sync.RWMutex
+	alertCooldown time.Duration
+	policyCache   PolicyCache
 	// Event-rule engine (migration v35; profile-partitioned since v48): the
 	// compiled enabled rules bucketed by owning profile + the
 	// device→(vendor,site) map, both refreshed alongside policyCache under am.mu.
@@ -124,6 +131,18 @@ func NewAlertManager(cfg *config.Config, notif *notifier.Notifier, db *database.
 		stateOwned:          make(map[string]bool),
 		telemetryColdSwept:  make(map[uint]bool),
 	}
+}
+
+// AlertsSnapshot returns a value copy of the live alerts config taken under
+// am.mu (AUDIT-250). RefreshThresholds rewrites config.Alerts field-by-field
+// under the write lock, and the API process shares the same config struct with
+// its AlertManager — so handler fallback reads must come through here, never
+// through a bare h.config.Alerts dereference, or they race with the refresh
+// loop. One snapshot per call site; the copy is safe to read at leisure.
+func (am *AlertManager) AlertsSnapshot() config.AlertsConfig {
+	am.mu.RLock()
+	defer am.mu.RUnlock()
+	return am.config.Alerts
 }
 
 // SetStormSourcesDefault updates the global cross-source digest threshold (from
@@ -797,9 +816,14 @@ func (am *AlertManager) ProcessFlowDetection(det *models.FlowDetection, siteID *
 	var ruleSev models.Severity
 	if fdRule != nil && fdRule.action == "alert" {
 		ruleSev = fdRule.severity
+		// AUDIT-246 (fourth sibling site, found in this fix's own sweep —
+		// the audit named one, verification three): findPolicy-first so a
+		// dangling rule policyID is never stamped onto the saved row.
 		if fdRule.policyID != nil {
-			resolved.PolicyID = fdRule.policyID
-			am.applyRulePolicy(&resolved, *fdRule.policyID)
+			if p := am.findPolicy(*fdRule.policyID); p != nil {
+				resolved.PolicyID = &p.ID
+				applyPolicyChannels(&resolved, p)
+			}
 		}
 		if fdRule.cooldownMin != nil && *fdRule.cooldownMin > 0 {
 			cooldown = time.Duration(*fdRule.cooldownMin) * time.Minute
@@ -894,11 +918,18 @@ func (am *AlertManager) ProcessSecurityEvent(group []*models.FlowDetection, site
 	metric := "sflow_" + winner.Detector
 
 	now := time.Now()
+	// AUDIT-244: resolveAlertConfig walks policyCache and SnapshotConfig reads
+	// config.Alerts — both am.mu-owned (see the field doc) and rewritten by
+	// RefreshThresholds under the write lock. One RLock region covers both
+	// reads and ends before any am.db call; the rule consult below re-RLocks
+	// (sequential regions are fine).
+	am.mu.RLock()
 	resolved := am.resolveAlertConfig(deviceID, siteID, alertType)
+	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
+	am.mu.RUnlock()
 	if !resolved.AlertEnabled {
 		return 0, nil
 	}
-	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
 	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
 	// Precedence: an explicit severity on a matching policy rule wins (the
 	// operator deliberately re-graded this type — same rule as the trap path,
@@ -934,11 +965,14 @@ func (am *AlertManager) ProcessSecurityEvent(group []*models.FlowDetection, site
 		}
 		// Rewrite the notify channels + cooldown from the rule's policy/knobs, not
 		// just stamp the ID — else the alert routes on the device policy's channels
-		// while the row names the rule's policy (attribution lie). applyRulePolicy
-		// reads the policy cache, so do it under the same RLock.
+		// while the row names the rule's policy (attribution lie). The cache lookup
+		// runs under the same RLock. AUDIT-246: consult findPolicy FIRST — a
+		// dangling rule policyID must not be stamped onto the saved row.
 		if csRule.policyID != nil {
-			resolved.PolicyID = csRule.policyID
-			am.applyRulePolicy(&resolved, *csRule.policyID)
+			if p := am.findPolicy(*csRule.policyID); p != nil {
+				resolved.PolicyID = &p.ID
+				applyPolicyChannels(&resolved, p)
+			}
 		}
 		if csRule.cooldownMin != nil && *csRule.cooldownMin > 0 {
 			cooldown = time.Duration(*csRule.cooldownMin) * time.Minute
@@ -1086,11 +1120,15 @@ func (am *AlertManager) ProcessSecurityDigest(siteID *uint, detector string, gro
 	// deviceID 0: resolve the digest from the SITE policy only — passing a
 	// "representative device" would leak that device's per-device override onto
 	// the whole-site rollup (see the plan C3/C4).
+	// AUDIT-244: policyCache + config.Alerts reads under one RLock region
+	// (mirrors ProcessSecurityEvent; ends before any am.db call).
+	am.mu.RLock()
 	resolved := am.resolveAlertConfig(0, siteID, alertType)
+	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
+	am.mu.RUnlock()
 	if !resolved.AlertEnabled {
 		return 0, nil
 	}
-	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
 	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
 	newSev := models.Severity(winner.Severity)
 	if newSev == "" {
@@ -1113,9 +1151,13 @@ func (am *AlertManager) ProcessSecurityDigest(siteID *uint, detector string, gro
 		if dgRule.severity != "" {
 			newSev = dgRule.severity
 		}
+		// AUDIT-246: findPolicy-first (same as the per-source path above) — a
+		// dangling rule policyID is never stamped onto the digest row.
 		if dgRule.policyID != nil {
-			resolved.PolicyID = dgRule.policyID
-			am.applyRulePolicy(&resolved, *dgRule.policyID)
+			if p := am.findPolicy(*dgRule.policyID); p != nil {
+				resolved.PolicyID = &p.ID
+				applyPolicyChannels(&resolved, p)
+			}
 		}
 		if dgRule.cooldownMin != nil && *dgRule.cooldownMin > 0 {
 			cooldown = time.Duration(*dgRule.cooldownMin) * time.Minute
@@ -2263,7 +2305,18 @@ func escalateSeverity(sev models.Severity) models.Severity {
 // This catches issues like queue full, network problems, or systematic data loss
 // that wouldn't be caught by heartbeat-based DEVICE_OFFLINE alerts.
 func (am *AlertManager) CheckProbeDataFlow() error {
-	if am.db == nil || am.config.Alerts.ProbeDataLagAlertMinutes <= 0 {
+	if am.db == nil {
+		return nil
+	}
+	// AUDIT-244: config.Alerts is am.mu-owned (RefreshThresholds rewrites it
+	// under the write lock). Capture the lag setting and the notify snapshot
+	// once, under one RLock region held across no DB call — the per-probe
+	// loop below reuses the locals instead of re-reading the struct.
+	am.mu.RLock()
+	lagMinutes := am.config.Alerts.ProbeDataLagAlertMinutes
+	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
+	am.mu.RUnlock()
+	if lagMinutes <= 0 {
 		return nil
 	}
 
@@ -2273,8 +2326,7 @@ func (am *AlertManager) CheckProbeDataFlow() error {
 	}
 
 	now := time.Now()
-	lagThreshold := time.Duration(am.config.Alerts.ProbeDataLagAlertMinutes) * time.Minute
-	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
+	lagThreshold := time.Duration(lagMinutes) * time.Minute
 
 	for _, probe := range probes {
 		// M28 of the 2026-07-01 audit: DecommissionProbe deliberately keeps
@@ -2330,7 +2382,7 @@ func (am *AlertManager) CheckProbeDataFlow() error {
 			Timestamp:  now,
 			AlertType:  "PROBE_DATA_LAG",
 			Severity:   resolved.Severity,
-			Message:    fmt.Sprintf("Probe %s has not received data for %v (threshold: %d min)", probe.Name, lag.Round(time.Minute), am.config.Alerts.ProbeDataLagAlertMinutes),
+			Message:    fmt.Sprintf("Probe %s has not received data for %v (threshold: %d min)", probe.Name, lag.Round(time.Minute), lagMinutes),
 			MetricName: "probe_data_flow",
 			PolicyID:   resolved.PolicyID,
 			Suppressed: resolved.InMaintenance,

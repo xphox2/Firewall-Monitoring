@@ -1,7 +1,10 @@
 package notifier
 
 import (
+	"bufio"
 	"net"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -56,6 +59,116 @@ func TestSendMailWithDeadline_StalledServerDoesNotHang(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("sendMailWithDeadline hung past the deadline (the C1 bug)")
+	}
+}
+
+// startFakeSMTP runs a scripted plaintext SMTP server (no STARTTLS, no AUTH)
+// that completes sendMailWithDeadline's exchange and records every RCPT TO
+// command. Returns the listen port and an accessor for the recorded commands.
+func startFakeSMTP(t *testing.T) (port int, rcpts func() []string) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { ln.Close() })
+
+	var mu sync.Mutex
+	var got []string
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				r := bufio.NewReader(c)
+				write := func(s string) { _, _ = c.Write([]byte(s + "\r\n")) }
+				write("220 fwmon-test ESMTP")
+				inData := false
+				for {
+					line, err := r.ReadString('\n')
+					if err != nil {
+						return
+					}
+					line = strings.TrimRight(line, "\r\n")
+					if inData {
+						if line == "." {
+							inData = false
+							write("250 OK: queued")
+						}
+						continue
+					}
+					switch {
+					case strings.HasPrefix(strings.ToUpper(line), "EHLO"),
+						strings.HasPrefix(strings.ToUpper(line), "HELO"):
+						write("250 fwmon-test greets you")
+					case strings.HasPrefix(strings.ToUpper(line), "MAIL FROM"):
+						write("250 OK")
+					case strings.HasPrefix(strings.ToUpper(line), "RCPT TO"):
+						mu.Lock()
+						got = append(got, line)
+						mu.Unlock()
+						write("250 OK")
+					case strings.HasPrefix(strings.ToUpper(line), "DATA"):
+						inData = true
+						write("354 go ahead")
+					case strings.HasPrefix(strings.ToUpper(line), "QUIT"):
+						write("221 bye")
+						return
+					default:
+						write("250 OK")
+					}
+				}
+			}(conn)
+		}
+	}()
+
+	return ln.Addr().(*net.TCPAddr).Port, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		out := make([]string, len(got))
+		copy(out, got)
+		return out
+	}
+}
+
+// TestSendEmail_SplitsCommaRecipients (AUDIT-209): "a@x.com, b@y.com" must
+// produce one RCPT TO per address on the wire. sendEmail used to hand the RAW
+// comma string to the envelope as a single recipient, which multi-recipient
+// relays reject — every alert email to more than one address silently failed
+// while the report path (which splits) delivered.
+func TestSendEmail_SplitsCommaRecipients(t *testing.T) {
+	cases := []struct {
+		name string
+		to   string
+		want []string
+	}{
+		{"two recipients", "a@x.com, b@y.com", []string{"a@x.com", "b@y.com"}},
+		{"single recipient", "a@x.com", []string{"a@x.com"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			port, rcpts := startFakeSMTP(t)
+			n := &Notifier{}
+			nc := NotifyConfig{
+				SMTPHost: "127.0.0.1", SMTPPort: port,
+				SMTPFrom: "fwmon@example.com", SMTPTo: tc.to,
+			}
+			if err := n.sendEmail(fireAlert("warning"), nc); err != nil {
+				t.Fatalf("sendEmail: %v", err)
+			}
+			got := rcpts()
+			if len(got) != len(tc.want) {
+				t.Fatalf("RCPT TO commands = %d (%q), want %d", len(got), got, len(tc.want))
+			}
+			for i, addr := range tc.want {
+				if got[i] != "RCPT TO:<"+addr+">" {
+					t.Errorf("RCPT %d = %q, want %q", i, got[i], "RCPT TO:<"+addr+">")
+				}
+			}
+		})
 	}
 }
 
