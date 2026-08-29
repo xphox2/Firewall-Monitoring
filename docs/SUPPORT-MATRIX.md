@@ -92,8 +92,13 @@ sources for one device).
 
 ## Wire-format reference
 
-- `internal/relay/relay.go` — the relay DTO definitions + the
-  `SchemaVersionMin`/`SchemaVersionMax` consts (source of truth).
+- `internal/relay/relay.go` — the `SchemaVersionMin`/`SchemaVersionMax`
+  handshake consts (source of truth) + the v4 command-channel DTOs
+  (`PendingCommand` / `CommandResultRequest`) the server consumes. NOT the
+  telemetry wire-shape reference.
+- `internal/models` (server receiver, e.g. `models.FlowSample` bound in
+  `internal/api/handlers/handlers_data.go`) + the Firewall-Collector repo's
+  `internal/relay` package (sender) — the authoritative telemetry wire shapes.
 - `internal/models/models.go` — the server's persisted model definitions.
 - `MIGRATING.md` — the `schema_version` handshake mechanics and rollout order.
 

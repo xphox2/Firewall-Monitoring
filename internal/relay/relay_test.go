@@ -1,9 +1,10 @@
 package relay
 
 import (
-	"encoding/json"
-	"fmt"
-	"strings"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"sort"
 	"testing"
 )
 
@@ -20,82 +21,48 @@ func TestSchemaVersionBounds(t *testing.T) {
 	}
 }
 
-// TestRegistrationSchemaVersionOmitempty pins the pre-handshake compatibility
-// contract: a zero SchemaVersion must NOT appear on the wire (so already-deployed
-// collectors that omit it keep working), while an explicit version must.
-func TestRegistrationSchemaVersionOmitempty(t *testing.T) {
-	t.Run("request omits zero version", func(t *testing.T) {
-		b, err := json.Marshal(RegistrationRequest{RegistrationKey: "k", ProbeName: "p"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(string(b), "schema_version") {
-			t.Errorf("zero SchemaVersion must be omitted; got %s", b)
-		}
-	})
-	t.Run("request includes explicit version", func(t *testing.T) {
-		b, _ := json.Marshal(RegistrationRequest{RegistrationKey: "k", SchemaVersion: SchemaVersionMax})
-		if !strings.Contains(string(b), fmt.Sprintf(`"schema_version":%d`, SchemaVersionMax)) {
-			t.Errorf("explicit SchemaVersion must be present; got %s", b)
-		}
-	})
-	t.Run("response omits zero version", func(t *testing.T) {
-		b, _ := json.Marshal(RegistrationResponse{Approved: true, ProbeID: 7})
-		if strings.Contains(string(b), "schema_version") {
-			t.Errorf("zero SchemaVersion must be omitted; got %s", b)
-		}
-	})
-}
+// TestNoDriftingTelemetryDTOs guards the AUDIT-211 decision: the telemetry
+// wire-contract types (FlowSample, SyslogMessage, TrapEvent, PingResult,
+// registration/heartbeat DTOs, …) live in internal/models on the server side
+// and in the Firewall-Collector repo on the sender side — NOT here. This
+// package holds ONLY the schema-version handshake consts and the v4
+// command-channel DTOs the server actually consumes. Re-adding a telemetry
+// struct here would resurrect the drifting duplicate this audit removed, so
+// this test fails if relay.go declares any type other than the two survivors.
+func TestNoDriftingTelemetryDTOs(t *testing.T) {
+	allowed := map[string]bool{
+		"PendingCommand":       true,
+		"CommandResultRequest": true,
+	}
 
-// TestFlowSampleDropsOmitempty pins the forward-compatibility contract for the
-// v0.10.473 `drops` field: absent when zero so pre-adopting collectors see no
-// new key.
-func TestFlowSampleDropsOmitempty(t *testing.T) {
-	zero, _ := json.Marshal(FlowSample{DeviceID: 1})
-	if strings.Contains(string(zero), "drops") {
-		t.Errorf("zero Drops must be omitted; got %s", zero)
-	}
-	nonzero, _ := json.Marshal(FlowSample{DeviceID: 1, Drops: 5})
-	if !strings.Contains(string(nonzero), `"drops":5`) {
-		t.Errorf("non-zero Drops must be present; got %s", nonzero)
-	}
-}
-
-func TestHeartbeatObservedHostKeysOmitempty(t *testing.T) {
-	b, _ := json.Marshal(HeartbeatRequest{ProbeID: 1, Status: "ok"})
-	if strings.Contains(string(b), "observed_host_keys") {
-		t.Errorf("nil ObservedHostKeys must be omitted; got %s", b)
-	}
-	b, _ = json.Marshal(HeartbeatRequest{ProbeID: 1, ObservedHostKeys: map[uint]string{2: "ssh-ed25519 AAAA"}})
-	if !strings.Contains(string(b), "observed_host_keys") {
-		t.Errorf("populated ObservedHostKeys must be present; got %s", b)
-	}
-}
-
-// TestWireContractRoundTrip confirms the high-volume telemetry DTOs survive a
-// marshal→unmarshal round-trip unchanged — locking the JSON tag names the
-// collector depends on.
-func TestWireContractRoundTrip(t *testing.T) {
-	fs := FlowSample{
-		DeviceID: 3, ProbeID: 4, SamplerAddress: "10.0.0.1",
-		SrcAddr: "1.2.3.4", DstAddr: "5.6.7.8", SrcPort: 1024, DstPort: 443,
-		Protocol: 6, Bytes: 1500, Packets: 2, SamplingRate: 512, Drops: 9,
-	}
-	var got FlowSample
-	b, err := json.Marshal(fs)
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "relay.go", nil, 0)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("parse relay.go: %v", err)
 	}
-	if err := json.Unmarshal(b, &got); err != nil {
-		t.Fatal(err)
-	}
-	if got != fs {
-		t.Errorf("round-trip mismatch:\n got  %+v\n want %+v", got, fs)
-	}
-	// Spot-check the exact wire keys the collector encodes against.
-	for _, key := range []string{`"src_addr"`, `"dst_addr"`, `"sampling_rate"`, `"tcp_flags"`} {
-		if !strings.Contains(string(b), key) {
-			t.Errorf("FlowSample JSON missing expected key %s", key)
+
+	var declared []string
+	for _, decl := range f.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.TYPE {
+			continue
 		}
+		for _, spec := range gd.Specs {
+			ts, ok := spec.(*ast.TypeSpec)
+			if !ok {
+				continue
+			}
+			declared = append(declared, ts.Name.Name)
+			if !allowed[ts.Name.Name] {
+				t.Errorf("relay.go declares type %q — telemetry/wire DTOs belong in "+
+					"internal/models (server) and the Firewall-Collector repo, not "+
+					"internal/relay; only the command-channel DTOs may live here", ts.Name.Name)
+			}
+		}
+	}
+
+	sort.Strings(declared)
+	if len(declared) != len(allowed) {
+		t.Errorf("relay.go declares types %v; expected exactly the 2 command-channel DTOs", declared)
 	}
 }

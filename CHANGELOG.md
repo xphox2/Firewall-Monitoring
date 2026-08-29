@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.230] - 2026-08-29
+
+### Fixed
+
+Removed the drifted dead DTO structs from `internal/relay` and repointed the wire-contract docs at the real source of truth (AUDIT-211). The package's doc comment claimed its JSON DTO structs were "the human-readable source of truth" for the probe↔server wire, but they were orphaned dead code — referenced nowhere in the server binary — that had drifted badly from the real wire (a `FlowSample` missing 12 Tranche-3 fields and carrying 6 phantom sFlow-engine fields, missing `trigger_source`/`backup_quality`/`tftp_server_ip`/`agent_version`, plus a version-history comment naming `TopologyEntry`/`TopologyNeighbor` types the file never declared). The real wire contract is `internal/models` on the server-receiver side (e.g. `models.FlowSample`, bound in `internal/api/handlers/handlers_data.go`) and the Firewall-Collector repo's `internal/relay` package on the sender side.
+
+- **Deleted 14 dead, drifted DTO structs** from `internal/relay/relay.go`: `TrapEvent`, `PingResult`, `SyslogMessage`, `FlowSample`, `RegistrationRequest`, `RegistrationResponse`, `HeartbeatRequest`, `HeartbeatResponse`, `DeviceInfo`, `DevicesResponse`, `ConfigRevision`, `ProcessSnapshot`, `ProcessInfo`, and `InterfaceErrorSnapshot`. Each was confirmed to have zero references outside the package before removal; no runtime path read any of them, so this is a dead-code and docs change with no wire or behavior impact.
+- **Kept the four symbols the server binary actually consumes:** the `SchemaVersionMin`/`SchemaVersionMax` handshake consts and the v4 command-channel DTOs `PendingCommand` / `CommandResultRequest` (delivered on the heartbeat response and reported back to `POST /api/probes/:id/command-result`).
+- **Rewrote the package doc comment** to drop the false "source of truth" claim and name the real authoritative types (`internal/models` + the collector's `internal/relay`); reworded the schema-version history so it describes each version's purpose without implying the collector-side payload types live in this file.
+- **Repointed `MIGRATING.md` and `docs/SUPPORT-MATRIX.md`** at the real wire-shape source of truth, while keeping their accurate `SchemaVersionMin`/`SchemaVersionMax` handshake references.
+- **Added a within-repo guardrail** (`TestNoDriftingTelemetryDTOs`) that parses `relay.go` and fails if it declares any type beyond the two command-channel DTOs, locking the decision so a future edit can't re-introduce a drifting telemetry duplicate.
+
 ## [0.11.229] - 2026-08-29
 
 ### Fixed
