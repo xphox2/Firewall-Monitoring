@@ -173,7 +173,11 @@
     }
 
     function solidBadge(fill, label) {
-        return '<span class="badge" style="background:' + fill + ';color:' + badgeInk(fill) + ';font-size:0.65rem;padding:1px 5px;">' + label + '</span>';
+        // AUDIT-184: escape at the sink. typeBadgeHtml's fallback passes the raw
+        // connection_type through here, and the result lands in innerHTML — a
+        // stored-XSS vector before the server allowlisted the field. Escaping
+        // here covers every caller (the literal labels are unaffected).
+        return '<span class="badge" style="background:' + fill + ';color:' + badgeInk(fill) + ';font-size:0.65rem;padding:1px 5px;">' + escapeHtml(label) + '</span>';
     }
 
     function matchMethodBadge(method, autoDetected) {

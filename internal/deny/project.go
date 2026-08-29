@@ -12,8 +12,10 @@
 package deny
 
 import (
+	"net"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"firewall-mon/internal/classify"
 	"firewall-mon/internal/logfields"
@@ -131,12 +133,23 @@ func Project(msg *models.SyslogMessage, tm *threatintel.Holder, cfg PatternConfi
 	if src == "" || dst == "" {
 		return models.DeniedEvent{}, false
 	}
+	// AUDIT-272: require both endpoints to parse as real IPs. SrcAddr/DstAddr
+	// land in INDEXED text columns; a crafted syslog line with a multi-KB
+	// "srcip" would otherwise be stored verbatim (a >2704-byte value even
+	// overflows the PG btree row limit and fails the batch INSERT). Parsing
+	// structurally caps both at valid textual IP length — stronger than an
+	// arbitrary byte cap. ScopeLocal's parse-failure semantics ("don't hide
+	// unknowns") are for flow CHARTS; at ingest, garbage is rejected.
+	srcIP, dstIP := net.ParseIP(src), net.ParseIP(dst)
+	if srcIP == nil || dstIP == nil {
+		return models.DeniedEvent{}, false
+	}
 	// Drop scope-local noise (multicast / link-local / limited broadcast) at the
 	// source — a burst of internal SSDP/mDNS/broadcast denies would otherwise
-	// manufacture a fake victim. classify.ScopeLocal does not catch subnet-
+	// manufacture a fake victim. The scope-local test does not catch subnet-
 	// directed broadcast (no netmask here), which the deny_storm_victim
 	// distinct-source threshold tolerates.
-	if classify.ScopeLocal(src, dst) {
+	if classify.ScopeLocalIP(srcIP) || classify.ScopeLocalIP(dstIP) {
 		return models.DeniedEvent{}, false
 	}
 
@@ -154,9 +167,15 @@ func Project(msg *models.SyslogMessage, tm *threatintel.Holder, cfg PatternConfi
 		SrcCountry:  capStr(f["srccountry"], 48),
 		DstCountry:  capStr(f["dstcountry"], 48),
 		PolicyID:    atoiU32(f["policyid"]),
-		PolicyName:  f["policyname"],
-		Service:     f["service"],
-		Signal:      signal,
+		// AUDIT-312: cap the remaining free-text fields at 64 BYTES (capStr
+		// cuts rune-safely). FortiOS limits policy names to 35 characters and
+		// service names to 63, so 64 bytes is headroom for ASCII names; a
+		// multibyte name may keep fewer characters, which is acceptable —
+		// the point is bounding what a crafted multi-KB log line can bloat
+		// this short-retention, volume-sized table with.
+		PolicyName: capStr(f["policyname"], 64),
+		Service:    capStr(f["service"], 64),
+		Signal:     signal,
 	}
 	// Threat bitfield — bits 0/1 only (syslog carries no ASN).
 	if tm != nil {
@@ -197,11 +216,21 @@ func subtype(s string) uint8 {
 }
 
 // capStr bounds a stored FortiGate field so a crafted log can't bloat a row.
+// The cut is rune-safe (AUDIT-272): these fields render in the UI, and a byte
+// slice can split a multi-byte UTF-8 sequence mid-rune, storing invalid UTF-8.
+// Backing up to the rune boundary keeps the result valid without allocating.
 func capStr(s string, max int) string {
-	if len(s) > max {
-		return s[:max]
+	if len(s) <= max {
+		return s
 	}
-	return s
+	cut := max
+	// A byte with the top two bits 10xxxxxx is a UTF-8 continuation byte —
+	// backing up past them lands on the start of the rune that straddles the
+	// cut, which is then dropped whole. utf8.UTFMax bounds the walk.
+	for cut > 0 && cut > max-utf8.UTFMax && s[cut]&0xC0 == 0x80 {
+		cut--
+	}
+	return s[:cut]
 }
 
 func atoiU16(s string) uint16 {

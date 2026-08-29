@@ -265,6 +265,16 @@ func isScopeLocal(ip net.IP) bool {
 		ip.IsUnspecified() || ip.Equal(net.IPv4bcast)
 }
 
+// ScopeLocalIP is isScopeLocal for callers that have already parsed (and
+// therefore validated) the address themselves — deny.Project rejects
+// unparseable src/dst outright (AUDIT-272), so it needs the scope-local test
+// on the net.IP it holds rather than ScopeLocal's parse-and-pass-garbage
+// string form. ScopeLocal's existing callers and its unparseable-input
+// semantics are unchanged.
+func ScopeLocalIP(ip net.IP) bool {
+	return isScopeLocal(ip)
+}
+
 // ScopeLocal reports whether a flow is scope-local noise, true when EITHER
 // endpoint is scope-local. Either-endpoint semantics catch fe80→ff02 (both
 // scope-local), DHCP DISCOVER 0.0.0.0→255.255.255.255 (both), and the common
