@@ -1,6 +1,17 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.223] - 2026-08-29
+
+### Fixed
+
+Audit remediation batch 15 of the 2026-08-27 engineering audit — IRC bot correctness, concurrency, and resource-leak hardening, all in `internal/irc/bot.go`. Each finding was re-verified line-by-line against current master and the vendored go-ircevent, and each ships a regression test that fails if the fix is reverted.
+
+- **A disabled IRC server no longer gets auto-connected by the reconnect sweep after any channel edit (AUDIT-205).** `reconnectDue` ignored the server's `Enabled` state, so once `RestartBot` (invoked on every channel create/update/delete) placed a fresh bot for a disabled server into the manager map, the 30s reconnect sweep would connect it — `AutoReconnect` defaults true — silently defeating the operator's disable. `reconnectDue` now gates on `Enabled` as well.
+- **`RestartBot` no longer launches `Bot.Start` on an unguarded goroutine (AUDIT-315).** Its two sibling start sites recover from panics (REL-01) but `RestartBot`'s did not, so a panic in `Start` triggered by an admin Restart would crash the entire fwmon-api process (admin UI, ingestion, NOC). All three start sites now go through a single `launchBot` helper that carries the recover, so the guard can't be forgotten again.
+- **IRC commands sent as a private message are now answered to the sender (AUDIT-278).** For a PM, IRC sets the message target to the bot's own nick, so the reply path was PRIVMSG-ing the bot itself and the user saw nothing. Replies (command output and the unknown-command / admin-only notices) now go to the channel for a channel message and to the sender for a PM. The admin check keeps using the raw target, so PM admin remains denied by design.
+- **A `Bot.Stop` racing an in-flight `Bot.Start` no longer leaks a live, unowned IRC session (AUDIT-206) and a wedged connection no longer accumulates parked sender goroutines for the process lifetime (AUDIT-314).** Both are the same class — a goroutine or session pinned to a connection no owner can reclaim. `Start` releases its lock before dialing; if a `Stop` wins that window, `Start` now re-checks the quit signal after `Connect` and tears down the exact connection it registered (the sole `Disconnect` caller, before the error-watcher exists), instead of leaving a registered session squatting the nick. And because the library exposes no cancellable send — a goroutine parked on a dead connection's full/nil write buffer genuinely cannot be reclaimed (`Disconnect`'s wait deadlocks on the same full buffer) — the first send that times out now latches the connection write-dead so every later send short-circuits, bounding the leak to one parked sender per wedged connection instead of one per 30s status tick.
+
 ## [0.11.222] - 2026-08-29
 
 ### Fixed

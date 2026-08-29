@@ -4,6 +4,7 @@ import (
 	"context"
 	crand "crypto/rand"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
@@ -93,11 +94,19 @@ func (b *Bot) resetBackoff() {
 }
 
 // reconnectDue reports whether the manager's reconnect sweep should attempt
-// this bot now: auto-reconnect enabled, not connected, and past the backoff.
+// this bot now: the server is enabled, auto-reconnect is enabled, it is not
+// connected, and it is past the backoff.
+//
+// AUDIT-205: the Enabled gate is load-bearing. RestartBot (called
+// unconditionally by CreateIRCChannel/UpdateIRCChannel/DeleteIRCChannel on any
+// channel edit) stores a fresh bot into m.bots even for a DISABLED server,
+// gating only the immediate Start() on Enabled. AutoReconnect defaults true, so
+// without this check the 30s reconnect sweep would later connect a server the
+// operator explicitly disabled — silently defeating the disable control.
 func (b *Bot) reconnectDue(now time.Time) bool {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	return b.Server.AutoReconnect && b.Conn == nil && now.After(b.nextAttempt)
+	return b.Server.Enabled && b.Server.AutoReconnect && b.Conn == nil && now.After(b.nextAttempt)
 }
 
 type Manager struct {
@@ -176,6 +185,22 @@ func (m *Manager) Stop() {
 	m.wg.Wait()
 }
 
+// launchBot starts b.Start() on a tracked, panic-recovered goroutine. Every
+// start site (initial load, reconnect sweep, RestartBot) goes through here so
+// the REL-01 recover can never be forgotten: go-ircevent's own callbacks aside,
+// an un-recovered panic in Bot.Start crashes the whole fwmon-api process
+// (AUDIT-315 — RestartBot's launch used to lack the recover its two siblings
+// had). The defer order matches the siblings: Recover is deferred first so it
+// runs last and still catches a panic after wg.Done has decremented.
+func (m *Manager) launchBot(b *Bot) {
+	m.wg.Add(1)
+	go func() {
+		defer logging.Recover("irc-bot") // REL-01
+		defer m.wg.Done()
+		b.Start()
+	}()
+}
+
 func (m *Manager) loadAndStartBots() {
 	var servers []models.IRCServer
 	if err := m.db.Preload("Channels").Find(&servers).Error; err != nil {
@@ -189,12 +214,7 @@ func (m *Manager) loadAndStartBots() {
 			m.decryptServerSecrets(&server)
 			bot := m.createBot(&server)
 			m.bots[server.ID] = bot
-			m.wg.Add(1)
-			go func(b *Bot) {
-				defer logging.Recover("irc-bot") // REL-01
-				defer m.wg.Done()
-				b.Start()
-			}(bot)
+			m.launchBot(bot)
 		}
 	}
 	m.mu.Unlock()
@@ -264,12 +284,7 @@ func (m *Manager) reconnectLoop() {
 			m.mu.RLock()
 			for _, bot := range m.bots {
 				if bot.reconnectDue(now) {
-					m.wg.Add(1)
-					go func(b *Bot) {
-						defer logging.Recover("irc-bot") // REL-01
-						defer m.wg.Done()
-						b.Start()
-					}(bot)
+					m.launchBot(bot)
 				}
 			}
 			m.mu.RUnlock()
@@ -416,6 +431,12 @@ func (m *Manager) createBot(server *models.IRCServer) *Bot {
 	}
 }
 
+// startConnectHook, when non-nil, runs inside Start immediately after a
+// successful Connect and before the AUDIT-206 stop-race re-check. Tests use it
+// to deterministically inject a Stop() that raced the unlocked dial. Production
+// leaves it nil.
+var startConnectHook func(*Bot)
+
 func (b *Bot) Start() {
 	b.mu.Lock()
 	if b.Conn != nil {
@@ -492,6 +513,7 @@ func (b *Bot) Start() {
 		b.mu.Lock()
 		b.Conn = nil
 		b.mu.Unlock()
+		forgetConn(conn) // AUDIT-314
 		b.updateStatus("disconnected", "connection lost")
 	})
 
@@ -542,6 +564,50 @@ func (b *Bot) Start() {
 		return
 	}
 
+	// Test seam only (nil in production): deterministically simulate a Stop()
+	// that won the race against the unlocked dial.
+	if startConnectHook != nil {
+		startConnectHook(b)
+	}
+
+	// AUDIT-206: Start released b.mu (above) before dialing, so a Stop() /
+	// RestartBot() (or the reconnect sweep tearing this bot down) can have raced
+	// the unlocked Connect. If it did, b.quit is now closed — and Stop's QUIT
+	// parked on the pre-Connect nil pwrite and was discarded when Connect
+	// allocated the real one, leaving a REGISTERED session that no owner would
+	// ever tear down: onConnected sees b.Conn==nil and bails without joining,
+	// and the error-watcher below would block on ErrorChan forever. Start
+	// created this conn, so Start tears it down here — and does so BEFORE
+	// starting the error-watcher, so this Disconnect stays the SOLE Disconnect
+	// caller for the conn (a second call panics on the already-closed pwrite).
+	// Connect has allocated a live pwrite/Error/socket, so Disconnect on this
+	// freshly-registered conn completes cleanly (its loops honor end); the
+	// deadlock hazard only exists on a wedged conn with a full pwrite.
+	b.mu.Lock()
+	stopped := false
+	select {
+	case <-b.quit:
+		stopped = true
+	default:
+	}
+	if stopped {
+		if b.Conn == conn {
+			b.Conn = nil
+		}
+		b.mu.Unlock()
+		// Re-deliver the QUIT Stop lost into the pre-Connect nil pwrite: pwrite
+		// is live now, so this reaches the server, which drops us gracefully
+		// (readLoop then unblocks, so the Disconnect below completes promptly
+		// instead of stalling on the read deadline). safeQuit is
+		// timeout-bounded; on a wedged send it latches and returns, and
+		// Disconnect still runs.
+		_ = safeQuit(conn)
+		forgetConn(conn)
+		conn.Disconnect() // sole Disconnect caller for this conn (no watcher started)
+		return
+	}
+	b.mu.Unlock()
+
 	// Deliberately NOT conn.Loop(): the library's loop reconnects internally
 	// with ZERO delay whenever the TCP dial succeeds but the connection dies
 	// right after — this go-ircevent version defers the TLS handshake to the
@@ -558,6 +624,9 @@ func (b *Bot) Start() {
 		b.mu.Lock()
 		b.Conn = nil
 		b.mu.Unlock()
+		// AUDIT-314: drop any write-dead latch for this conn — it is being
+		// abandoned, and no further sends will target it once b.Conn is nil.
+		forgetConn(conn)
 		// Bookkeeping BEFORE Disconnect: on a half-open socket (writes fail,
 		// reads hang) Disconnect's Wait() can stall until the read deadline
 		// (Timeout+PingFreq ≈ 16 min) — the backoff bump and status write must
@@ -601,6 +670,7 @@ func (b *Bot) Stop() {
 		if err := safeQuit(conn); err != nil {
 			log.Printf("IRC: QUIT on stop failed: %v", err)
 		}
+		forgetConn(conn) // AUDIT-314: this conn is abandoned
 	}
 }
 
@@ -675,21 +745,31 @@ func (b *Bot) onPrivmsg(e *irc.Event) {
 	cmdStr := strings.ToLower(parts[0])
 	cmd, exists := b.manager.lookupCommand(cmdStr)
 
+	// AUDIT-278: for a private message IRC sets Arguments[0] (target) to the
+	// bot's OWN nick, so replying to target would PRIVMSG the bot itself and the
+	// sender would see nothing. Reply to the channel for a channel message, and
+	// to the sender for a PM. isAdmin still receives the raw target — its own
+	// target==ownNick check deliberately denies PM admin.
+	replyTo := target
+	if strings.EqualFold(target, conn.GetNick()) {
+		replyTo = nick
+	}
+
 	if !exists {
-		if err := safeNotice(conn, target, fmt.Sprintf("Unknown command: %s", parts[0])); err != nil {
-			log.Printf("IRC: unknown-command notice to %s failed: %v", target, err)
+		if err := safeNotice(conn, replyTo, fmt.Sprintf("Unknown command: %s", parts[0])); err != nil {
+			log.Printf("IRC: unknown-command notice to %s failed: %v", replyTo, err)
 		}
 		return
 	}
 
 	if cmd.AdminOnly && !b.isAdmin(target, nick) {
-		if err := safeNotice(conn, target, "This command is admin only"); err != nil {
-			log.Printf("IRC: admin-only notice to %s failed: %v", target, err)
+		if err := safeNotice(conn, replyTo, "This command is admin only"); err != nil {
+			log.Printf("IRC: admin-only notice to %s failed: %v", replyTo, err)
 		}
 		return
 	}
 
-	b.handleCommand(target, cmd, parts[1:])
+	b.handleCommand(replyTo, cmd, parts[1:])
 }
 
 func (b *Bot) handleCommand(target string, cmd *models.IRCCommand, args []string) {
@@ -895,6 +975,7 @@ func (b *Bot) onQuit(e *irc.Event) {
 	b.mu.Lock()
 	b.Conn = nil
 	b.mu.Unlock()
+	forgetConn(conn) // AUDIT-314
 	b.updateStatus("disconnected", "")
 }
 
@@ -1231,6 +1312,56 @@ func (tb *TestBot) Disconnect() {
 // a half-open socket.
 var ircSendTimeout = 15 * time.Second
 
+// errSendTimedOut is the sentinel a timed-out sendWithTimeout wraps, so callers
+// can distinguish "connection wedged" from a panic/torn-down error without
+// string matching. The user-visible message still contains "timed out".
+var errSendTimedOut = errors.New("send timed out")
+
+// writeDeadConns latches connections whose writeLoop is presumed dead. AUDIT-314:
+// once a send to a conn times out, the goroutine parked on that conn's full
+// (or pre-Connect nil) pwrite can NEVER be reclaimed with this library —
+// Disconnect's irc.Wait() deadlocks on the library's own pingLoop parked on the
+// same full channel, so close(pwrite) is unreachable. Rather than spawn a fresh
+// doomed goroutine on every subsequent send (statusLoop fires one per 30s tick;
+// the pre-fix code leaked them monotonically for the process lifetime), the
+// first timeout latches the conn here and every later send to it short-circuits
+// with an error. The leak is thereby bounded to ONE parked sender per wedged
+// connection. Entries are removed by forgetConn when the conn is torn down or
+// replaced, so the map only ever holds currently-wedged connections.
+var writeDeadConns sync.Map // *irc.Connection -> struct{}
+
+func connWriteDead(conn *irc.Connection) bool {
+	_, dead := writeDeadConns.Load(conn)
+	return dead
+}
+
+func markConnWriteDead(conn *irc.Connection) { writeDeadConns.Store(conn, struct{}{}) }
+
+// forgetConn drops any write-dead latch for conn. Called wherever a conn is
+// abandoned (Stop, the error-watcher, the AUDIT-206 stop-race teardown, onQuit,
+// DISCONNECTED) so a superseded conn's entry does not linger. Idempotent.
+func forgetConn(conn *irc.Connection) {
+	if conn != nil {
+		writeDeadConns.Delete(conn)
+	}
+}
+
+// sendVia wraps sendWithTimeout with the per-connection write-dead latch
+// (AUDIT-314). A conn already latched dead never spawns another sender; the
+// first timeout latches it. Every production send routes through here via the
+// safe* wrappers; sendWithTimeout stays latch-free so the raw
+// timeout/panic-contract tests exercise it directly.
+func sendVia(conn *irc.Connection, desc string, send func()) error {
+	if connWriteDead(conn) {
+		return fmt.Errorf("%s skipped: connection write-dead", desc)
+	}
+	err := sendWithTimeout(desc, send)
+	if errors.Is(err, errSendTimedOut) {
+		markConnWriteDead(conn)
+	}
+	return err
+}
+
 // sendWithTimeout runs one library write with both guards every send needs:
 //
 //   - Panic → error: the error watcher's conn.Disconnect() closes the
@@ -1243,10 +1374,15 @@ var ircSendTimeout = 15 * time.Second
 //     full channel, so close(pwrite) is never reached. A parked send in
 //     statusLoop wedged prod auto-status permanently (2026-08); a parked
 //     send in a callback freezes that conn's read loop (RunCallbacks waits
-//     unboundedly). On timeout the sender goroutine is abandoned: a bounded
-//     leak of one goroutine + one dead-conn reference per quiet-death event,
-//     self-reclaiming if a later close(pwrite) panics the parked send.
+//     unboundedly). On timeout the sender goroutine is abandoned. That
+//     abandoned goroutine genuinely cannot be reclaimed in the wedge (the
+//     library exposes no cancellable send and close(pwrite) is unreachable —
+//     the earlier "self-reclaiming" claim here was wrong, AUDIT-314), so
+//     sendVia latches the conn write-dead on the first timeout: every later
+//     send to it short-circuits, bounding the leak to ONE parked sender per
+//     wedged connection instead of one per 30s status tick.
 //
+// This is the raw guard; production sends go through sendVia (the latch).
 // desc must be verb + target only, never message content — NickServ/ChanServ
 // IDENTIFY sends carry passwords and must not reach logs.
 func sendWithTimeout(desc string, send func()) error {
@@ -1267,31 +1403,31 @@ func sendWithTimeout(desc string, send func()) error {
 		return err
 	case <-t.C:
 		log.Printf("IRC: %s timed out after %v; abandoning parked sender (connection presumed dead)", desc, ircSendTimeout)
-		return fmt.Errorf("%s timed out after %v", desc, ircSendTimeout)
+		return fmt.Errorf("%s timed out after %v: %w", desc, ircSendTimeout, errSendTimedOut)
 	}
 }
 
 func safePrivmsg(conn *irc.Connection, target, message string) error {
-	return sendWithTimeout("PRIVMSG to "+target, func() { conn.Privmsg(target, message) })
+	return sendVia(conn, "PRIVMSG to "+target, func() { conn.Privmsg(target, message) })
 }
 
 func safeNotice(conn *irc.Connection, target, message string) error {
-	return sendWithTimeout("NOTICE to "+target, func() { conn.Notice(target, message) })
+	return sendVia(conn, "NOTICE to "+target, func() { conn.Notice(target, message) })
 }
 
 // safeJoin takes the loggable channel name separately: channelSpec may carry
 // a channel key, which must never reach logs — and deriving the name from the
 // spec would log the key itself on a whitespace-only channel name.
 func safeJoin(conn *irc.Connection, channelSpec, logName string) error {
-	return sendWithTimeout("JOIN "+logName, func() { conn.Join(channelSpec) })
+	return sendVia(conn, "JOIN "+logName, func() { conn.Join(channelSpec) })
 }
 
 func safeNick(conn *irc.Connection, nick string) error {
-	return sendWithTimeout("NICK "+nick, func() { conn.Nick(nick) })
+	return sendVia(conn, "NICK "+nick, func() { conn.Nick(nick) })
 }
 
 func safeQuit(conn *irc.Connection) error {
-	return sendWithTimeout("QUIT", conn.Quit)
+	return sendVia(conn, "QUIT", conn.Quit)
 }
 
 func (b *Bot) SendMessage(channel, message string) error {
@@ -1366,11 +1502,7 @@ func (m *Manager) RestartBot(serverID uint) error {
 	m.mu.Unlock()
 
 	if server.Enabled {
-		m.wg.Add(1)
-		go func() {
-			defer m.wg.Done()
-			newBot.Start()
-		}()
+		m.launchBot(newBot) // AUDIT-315: same panic-recovered launch path as the siblings
 	}
 
 	return nil
