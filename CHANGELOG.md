@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.232] - 2026-08-29
+
+### Changed
+
+Recorded the final disposition of every finding in the 2026-08-27 engineering audit. Documentation-only — no runtime-logic change.
+
+- **Disposition ledger for all 148 audit findings.** `docs/audit-2026-08-27-consolidated.md` now carries an inline disposition blockquote directly under each `#### AUDIT-NNN` heading (same convention as the 2026-07-01 and 2026-07-04 audit docs): ✅ RESOLVED with the resolving version and PR, ⛔ REFUTED with the reason, or ⚠️ DISPOSITION UNRESOLVED for findings with no evidence of a fix. Final tally: **134 resolved, 1 refuted (AUDIT-198, dead code), 13 unresolved.**
+- **Roll-up status table** added below the severity/class summary tables, with the resolved/refuted/unresolved counts and a pointer to the inline dispositions. The 13 unresolved findings are the two remediation batches never executed: Batch 6 (AUDIT-176 — the sole remaining HIGH, serverhealth test coverage) and Batch 9 (collector ingest attribution + hardening: AUDIT-186, 187, 216, 237, 263, 282, 283, 284, 305, 306, 307, 317).
+- **"Findings surfaced during remediation (AUDIT-319+)" section** appended, recording five new open items noticed while remediating the original 148 (IRC SASL error-path leak, FortiGate dialup SNMP column provenance, cross-repo dialup Local/Remote divergence, an admin-ipsec.js tautological poll guard, and an unclamped public-interface chart range) as candidates for a future audit — not dispositions of the original 148.
+
 ## [0.11.231] - 2026-08-29
 
 ### Fixed
