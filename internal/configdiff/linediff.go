@@ -2,6 +2,7 @@ package configdiff
 
 import (
 	"bytes"
+	"log"
 	"regexp"
 	"strings"
 )
@@ -52,8 +53,21 @@ var volatileTokenRe = regexp.MustCompile(`<volatile-([a-z0-9-]+)/?>`)
 // whose only difference is volatile (masked-equal, raw-different) is reported as
 // Op "volatile" rather than a delete/insert pair.
 func DiffLines(vendor string, a, b []byte) LineDiff {
-	aRaw, aMask := prepareDiffInput(vendor, a)
-	bRaw, bMask := prepareDiffInput(vendor, b)
+	aRaw, aMask, aOK := prepareDiffInput(vendor, a)
+	bRaw, bMask, bOK := prepareDiffInput(vendor, b)
+
+	// AUDIT-200 fail-closed: if either side's masking violated the line-count
+	// invariant, the secret display-substitution above CANNOT be trusted — the
+	// old behavior silently fell back to unmasked lines and rendered every
+	// PSK/hash/private key verbatim. Withhold the raw line diff instead. The
+	// log line matters: the silent degrade is exactly what made this invisible.
+	if !aOK || !bOK {
+		log.Printf("ERROR: configdiff: %s line masker violated the line-count invariant; withholding raw line diff (secrets could not be verified masked)", vendor)
+		return LineDiff{
+			Truncated: true,
+			Note:      "Secret masking could not be verified for this revision, so the raw line diff is withheld to avoid rendering credentials in cleartext. Use the object diff, or download both revisions.",
+		}
+	}
 
 	var d LineDiff
 	emit := func(r LineRow) bool {
@@ -175,7 +189,13 @@ func volatileName(maskA, maskB string) string {
 // prepareDiffInput returns the display lines and the masked (alignment) lines for
 // one config, guaranteed to be the same length. Newlines are normalized (CRLF→LF)
 // and a single trailing empty line (from a trailing newline) is dropped.
-func prepareDiffInput(vendor string, raw []byte) (rawLines, maskLines []string) {
+//
+// maskOK reports whether the masker held the line-count invariant. When false,
+// maskLines falls back to rawLines (so the slices stay coherent for any caller)
+// but the secret display-substitution below never ran against a trustworthy
+// mask — DiffLines must NOT render the result (AUDIT-200: this used to degrade
+// silently, rendering every secret in cleartext).
+func prepareDiffInput(vendor string, raw []byte) (rawLines, maskLines []string, maskOK bool) {
 	clean := bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
 
 	var masked []byte
@@ -189,8 +209,10 @@ func prepareDiffInput(vendor string, raw []byte) (rawLines, maskLines []string) 
 	maskLines = splitTrimCR(masked)
 
 	// Invariant: masking must preserve line count. If a masker ever violates it,
-	// degrade safely to no masking rather than misalign the whole diff.
-	if len(rawLines) != len(maskLines) {
+	// fall back to unmasked alignment — and report it, so DiffLines fails closed
+	// instead of rendering lines whose secrets were never display-masked.
+	maskOK = len(rawLines) == len(maskLines)
+	if !maskOK {
 		maskLines = rawLines
 	}
 
@@ -217,7 +239,7 @@ func prepareDiffInput(vendor string, raw []byte) (rawLines, maskLines []string) 
 		rawLines = rawLines[:k-1]
 		maskLines = maskLines[:len(maskLines)-1]
 	}
-	return rawLines, maskLines
+	return rawLines, maskLines, maskOK
 }
 
 func splitTrimCR(b []byte) []string {

@@ -225,6 +225,19 @@ func digestSecrets(in []byte) []byte {
 // fingerprintXMLElement rewrites each match's element body to
 // "<tag>prefix:<8 hex>". Deterministic, so an unchanged value never churns the
 // hash, yet visibly different after a rotation.
+//
+// Line count is preserved (AUDIT-200): the element regexes use [^<], which in
+// RE2 matches '\n', so a secret body spanning lines used to collapse to one
+// line — prepareDiffInput's masked-vs-raw line-count invariant then failed and
+// the ENTIRE revision silently degraded to NO masking, rendering every PSK and
+// hash verbatim. Merely re-appending bare newlines would be insufficient: the
+// empty continuation lines carry no token, so lineHasSecret would miss lines
+// 2..n and still leak them. Instead, mirroring maskFortiPemLines, the digest
+// lands on the first line and each subsequent consumed line repeats the bare
+// token, so alignment holds AND every line of the secret display-masks. The
+// output stays well-formed XML (the tokens are plain multi-line text content),
+// and a single-line body — the overwhelmingly common case — is byte-identical
+// to the previous scheme, so existing normalized hashes do not churn.
 func fingerprintXMLElement(in []byte, re *regexp.Regexp, prefix string) []byte {
 	return re.ReplaceAllFunc(in, func(m []byte) []byte {
 		s := string(m)
@@ -238,7 +251,8 @@ func fingerprintXMLElement(in []byte, re *regexp.Regexp, prefix string) []byte {
 			return m // nothing to hide; keep empty elements distinguishable
 		}
 		sum := sha256.Sum256([]byte(body))
-		return []byte(s[:open+1] + prefix + hex.EncodeToString(sum[:])[:8] + s[close:])
+		tok := prefix + hex.EncodeToString(sum[:])[:8]
+		return []byte(s[:open+1] + tok + strings.Repeat("\n"+tok, strings.Count(body, "\n")) + s[close:])
 	})
 }
 
@@ -277,8 +291,9 @@ func canonicalizeUUIDs(in []byte) []byte {
 // ReplaceAll: it emits the replacement, then one extra newline per newline the
 // match consumed, so masked line i still corresponds to raw line i and the Myers
 // alignment in DiffLines never drifts. (Mirrors maskFortiPemLines; the same 1:1
-// invariant is asserted in prepareDiffInput, which degrades to NO masking at all
-// if it is violated — so a violation would silently disable volatile folding.)
+// invariant is asserted in prepareDiffInput, and since AUDIT-200 a violation
+// fails CLOSED — DiffLines withholds the raw line diff with an operator-facing
+// note instead of silently disabling masking.)
 //
 // Applied to every element pattern, not only the multi-line <revision> block:
 // the single-line ones cost nothing extra, and a multi-line body on some other

@@ -15,6 +15,23 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// validConnectionTypes is the server-side allowlist for the client-settable
+// connection_type field (AUDIT-184: an unvalidated value was rendered into
+// innerHTML by the badge renderers — stored XSS). The authoritative set is the
+// union of connectionFamily's cases (internal/database/connection_detail.go:
+// tunnel = ipsec/ssl/gre/tunnel, overlay = vxlan/l3ipvlan, direct =
+// ethernet/lag/l2vlan/bridge/wan, offnet) and every value the poller's
+// auto-detection emits. The admin UI's select is a strict SUBSET of this
+// (admin.html omits ethernet/bridge/offnet), so the server list must be this
+// superset — otherwise editing an auto-detected ethernet link's notes together
+// with its type would 400.
+var validConnectionTypes = map[string]bool{
+	"ipsec": true, "ssl": true, "gre": true, "tunnel": true,
+	"vxlan": true, "l3ipvlan": true,
+	"ethernet": true, "lag": true, "l2vlan": true, "bridge": true, "wan": true,
+	"offnet": true,
+}
+
 func (h *Handler) GetConnectionStatusSummary(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
@@ -150,6 +167,23 @@ func (h *Handler) CreateDeviceConnection(c *gin.Context) {
 	// handler already zeroes this. (DeviceConnection has no CreatedAt/UpdatedAt.)
 	conn.ID = 0
 
+	// AUDIT-184: connection_type is rendered by the badge helpers, so it must
+	// come from the allowlist. Empty means "not provided" — apply the GORM
+	// column default explicitly so validation has a concrete value.
+	if conn.ConnectionType == "" {
+		conn.ConnectionType = "ipsec"
+	}
+	if !validConnectionTypes[conn.ConnectionType] {
+		c.JSON(http.StatusBadRequest, response.Error("Invalid connection type"))
+		return
+	}
+
+	// AUDIT-184 (second vector): match_method is a server-owned field written
+	// only by the poller's auto-detection, but ShouldBindJSON let a client set
+	// it to arbitrary text that the detail panels render. Reset it so the GORM
+	// default applies.
+	conn.MatchMethod = ""
+
 	// Validate required FK references
 	if conn.SourceDeviceID == 0 || conn.DestDeviceID == 0 {
 		c.JSON(http.StatusBadRequest, response.Error("Source and destination device IDs are required"))
@@ -216,6 +250,16 @@ func (h *Handler) UpdateDeviceConnection(c *gin.Context) {
 		validStatuses := map[string]bool{"unknown": true, "up": true, "down": true}
 		if s, isStr := statusVal.(string); !isStr || !validStatuses[s] {
 			c.JSON(http.StatusBadRequest, response.Error("Invalid status value"))
+			return
+		}
+	}
+
+	// AUDIT-184: validate connection_type against the allowlist if provided —
+	// the badge renderers interpolate it into innerHTML, so an arbitrary string
+	// here was a stored-XSS vector.
+	if ctVal, ok := updates["connection_type"]; ok {
+		if s, isStr := ctVal.(string); !isStr || !validConnectionTypes[s] {
+			c.JSON(http.StatusBadRequest, response.Error("Invalid connection type"))
 			return
 		}
 	}
