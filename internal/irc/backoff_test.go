@@ -46,7 +46,7 @@ func TestReconnectBackoff_Escalation(t *testing.T) {
 // TestReconnectBackoff_ResetOnConnect: a successful registration clears the
 // streak so the next unrelated drop retries fast again.
 func TestReconnectBackoff_ResetOnConnect(t *testing.T) {
-	b := &Bot{Server: &models.IRCServer{AutoReconnect: true}}
+	b := &Bot{Server: &models.IRCServer{Enabled: true, AutoReconnect: true}}
 	for i := 0; i < 5; i++ {
 		b.noteConnectFailure()
 	}
@@ -71,7 +71,7 @@ func TestReconnectDue_Gates(t *testing.T) {
 		}
 	})
 	t.Run("inside backoff window", func(t *testing.T) {
-		b := &Bot{Server: &models.IRCServer{AutoReconnect: true}}
+		b := &Bot{Server: &models.IRCServer{Enabled: true, AutoReconnect: true}}
 		b.nextAttempt = now.Add(time.Minute)
 		if b.reconnectDue(now) {
 			t.Error("due despite nextAttempt in the future")
@@ -80,4 +80,26 @@ func TestReconnectDue_Gates(t *testing.T) {
 			t.Error("not due after the backoff window passed")
 		}
 	})
+}
+
+// TestReconnectDue_DisabledServerNeverReconnects_AUDIT205: a disabled server
+// must NEVER be auto-reconnected by the manager's 30s sweep, even with
+// AutoReconnect=true (the default), a nil Conn, and the backoff window elapsed.
+// RestartBot (called on any channel edit) stores a fresh disabled bot into
+// m.bots and gates only the immediate Start() on Enabled; without the Enabled
+// gate in reconnectDue the sweep would connect a server the operator explicitly
+// disabled — silently defeating the disable control.
+func TestReconnectDue_DisabledServerNeverReconnects_AUDIT205(t *testing.T) {
+	now := time.Now()
+	b := &Bot{Server: &models.IRCServer{Enabled: false, AutoReconnect: true}}
+	// Conn nil, nextAttempt zero (already past) — the pre-fix reconnectDue
+	// returned true here.
+	if b.reconnectDue(now) {
+		t.Fatal("disabled server reported due for reconnect — the sweep would defeat the disable control")
+	}
+	// A legitimately enabled server with the same state must still reconnect.
+	b.Server.Enabled = true
+	if !b.reconnectDue(now) {
+		t.Fatal("enabled server with AutoReconnect and nil Conn must still be due for reconnect")
+	}
 }
