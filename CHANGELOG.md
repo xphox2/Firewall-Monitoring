@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.232] - 2026-08-29
+
+### Added
+
+Regression test coverage for the incident-derived serverhealth invariants (audit batch: AUDIT-176). `internal/serverhealth/` had zero test files, leaving two load-bearing invariants from the 2026-07-26 disk-full outage unguarded. The code was already correct; this pins it so a careless refactor can't silently reproduce the outage blind spot.
+
+- **AUDIT-176 — crash-loop data-directory fallback (`internal/serverhealth/probe.go`).** Added `probe_test.go` covering `DataDirLocator`: caches on success, falls back to the last cached path with `ok=true` and the original error passed through when the lookup fails (so a crash-looping Postgres does not blind the disk check), reports `ok=false` when nothing is cached yet, treats an empty scan as a non-overwriting failure, short-circuits on a non-postgres/nil dialector, and rate-limits `ShouldWarn` to the 1h `WarnInterval`. To make invariant (a) testable without a live Postgres, extracted a minimal `dataDirLookup` injection: `DataDirectory` keeps its exact signature and every branch, delegating the cache/fallback policy to an unexported `directory(lookup)` — structural only, no behavior change.
+- **AUDIT-176 — `dataOK` nil-vs-zero strictness (`cmd/poller/serverhealth.go`).** Added `cmd/poller/serverhealth_test.go` over the in-memory sqlite `newTestPoller` harness: `recordServerMetrics` populates the `DataDiskPercent`/`DataDiskFreeBytes` pointer fields only when `dataOK`, leaves them nil (never zero) when `dataOK` is false even if a stale `data`-labeled volume is present, always records the root volume independently of `dataOK`, and `collectServerVolumes` returns `dataOK=false` when `p.db == nil`. A zero here would draw a "disk empty" flatline — the failure-reads-as-healthy shape of the outage.
+
 ## [0.11.231] - 2026-08-29
 
 ### Fixed

@@ -62,8 +62,24 @@ func (l *DataDirLocator) DataDirectory(g *gorm.DB) (string, bool, error) {
 	if g == nil || g.Dialector == nil || g.Dialector.Name() != "postgres" {
 		return "", false, nil
 	}
-	var dir string
-	err := g.Raw("SHOW data_directory").Scan(&dir).Error
+	return l.directory(func() (string, error) {
+		var dir string
+		err := g.Raw("SHOW data_directory").Scan(&dir).Error
+		return dir, err
+	})
+}
+
+// dataDirLookup performs the underlying data_directory read. Extracted so the
+// cache/fallback logic can be exercised without a live Postgres.
+type dataDirLookup func() (string, error)
+
+// directory applies the cache/fallback policy to a lookup result. On a
+// successful, non-empty read it caches and returns the fresh path; on any
+// failure (or an empty scan) it falls back to the last cached path — returning
+// ok=true with the original error passed through — so a crash-looping database
+// does not blind the check. With nothing cached yet it reports ok=false.
+func (l *DataDirLocator) directory(lookup dataDirLookup) (string, bool, error) {
+	dir, err := lookup()
 	if err == nil && strings.TrimSpace(dir) != "" {
 		l.mu.Lock()
 		l.cached = dir

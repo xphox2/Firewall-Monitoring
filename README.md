@@ -10,7 +10,7 @@
 > is a sibling repo, [Firewall-Collector](https://github.com/xphox2/Firewall-Collector).
 
 [![CI](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml/badge.svg)](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.11.231-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.11.232-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.25.13+-00ADD8)](go.mod)
 [![Status](https://img.shields.io/badge/status-alpha-orange)](#project-status)
