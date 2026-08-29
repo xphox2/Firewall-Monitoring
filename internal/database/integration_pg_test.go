@@ -36,6 +36,41 @@ func pgIsPartitioned(t *testing.T, d *Database, table string) bool {
 	return ok
 }
 
+// childNonUniqueIndexCols returns, for each non-unique index on the given
+// child partition (cascaded parent indexes included), its ordered column list
+// keyed by index name. Mirrors parentPartitionedIndexColumns but for leaf
+// relations (relkind 'i').
+func childNonUniqueIndexCols(t *testing.T, d *Database, child string) map[string][]string {
+	t.Helper()
+	var rows []struct {
+		IndexName string
+		Cols      string
+	}
+	if err := d.Gorm().Raw(`
+		SELECT i.relname AS index_name,
+		       string_agg(a.attname, ',' ORDER BY k.ord) AS cols
+		FROM pg_index x
+		JOIN pg_class i ON i.oid = x.indexrelid
+		JOIN pg_class t ON t.oid = x.indrelid
+		JOIN LATERAL unnest(x.indkey) WITH ORDINALITY AS k(attnum, ord) ON true
+		JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+		WHERE t.relname = ?
+		  AND i.relkind = 'i'
+		  AND NOT x.indisunique
+		  AND x.indexprs IS NULL
+		GROUP BY i.relname`, child).Scan(&rows).Error; err != nil {
+		t.Fatalf("child index probe %s: %v", child, err)
+	}
+	out := make(map[string][]string, len(rows))
+	for _, r := range rows {
+		if r.Cols == "" {
+			continue
+		}
+		out[r.IndexName] = strings.Split(r.Cols, ",")
+	}
+	return out
+}
+
 // newPGForTest delegates to the shared NewIntegrationDB harness (defined in
 // integration_testkit.go) — connects to TEST_PG_DSN (skipping if unset), resets
 // the public schema, runs migrations, returns a migrated *Database.
@@ -125,40 +160,95 @@ func TestPostgresIntegration(t *testing.T) {
 	})
 
 	// LC-19 (2026-07-04 audit): on a real Postgres, every model-tag index must
-	// exist on the current-month child partitions after EnsurePartitions. The
-	// pre-fix hard-coded recreation list silently dropped the AUDIT-034
+	// be SERVED on the current-month child partitions after EnsurePartitions.
+	// The pre-fix hard-coded recreation list silently dropped the AUDIT-034
 	// flow_samples src/dst indexes (and probe_id / syslog_summaries indexes)
 	// on every fresh install — the sqlite-mode AutoMigrate test could never
 	// catch it because the partition conversion is PG-only.
+	//
+	// AUDIT-174 reshaped the assertion from index NAME to index COLUMNS: the
+	// (severity, timestamp) index on syslog leaves and the (timestamp) index on
+	// trap_events leaves now arrive as the CASCADED child of the v54/v57
+	// parent partitioned indexes (auto-named by PG), and EnsurePartitions
+	// deliberately skips its own same-columned entries. What LC-19 protects is
+	// coverage, not spelling — so assert that some non-unique index on the
+	// child serves each wanted column list (equal, or wanted is its leading
+	// prefix).
 	t.Run("PartitionModelTagIndexes_LC19", func(t *testing.T) {
 		now := time.Now().UTC()
 		suffix := fmt.Sprintf("%d%02d", now.Year(), int(now.Month()))
-		want := map[string][]string{
-			"flow_samples": {"device_ts", "timestamp", "probe_id", "src_addr", "dst_addr"},
-			// severity_timestamp, not severity: the standalone severity index was
-			// replaced by the (severity, timestamp) composite that per-severity
-			// retention deletes need, and partitionIndexPlan drops the standalone
-			// as a redundant leading prefix. Suffixes derive from COLUMNS.
-			"syslog_messages":  {"device_ts", "timestamp", "probe_id", "severity_timestamp"},
-			"trap_events":      {"device_ts", "timestamp", "probe_id", "severity"},
-			"syslog_summaries": {"device_ts", "timestamp", "interval_type", "severity"},
-			"interface_stats":  {"device_ts", "timestamp", "device_idx_ts"},
-			"system_status":    {"device_ts", "timestamp"},
+		want := map[string][][]string{
+			"flow_samples": {{"device_id", "timestamp"}, {"timestamp"}, {"probe_id"}, {"src_addr"}, {"dst_addr"}},
+			// (severity, timestamp), not (severity): the standalone severity index
+			// was replaced by the composite that per-severity retention deletes
+			// need, and partitionIndexPlan drops the standalone as a redundant
+			// leading prefix.
+			"syslog_messages":  {{"device_id", "timestamp"}, {"timestamp"}, {"probe_id"}, {"severity", "timestamp"}},
+			"trap_events":      {{"device_id", "timestamp"}, {"timestamp"}, {"probe_id"}, {"severity"}},
+			"syslog_summaries": {{"device_id", "timestamp"}, {"timestamp"}, {"interval_type"}, {"severity"}},
+			"interface_stats":  {{"device_id", "timestamp"}, {"timestamp"}, {"device_id", "index", "timestamp"}},
+			"system_status":    {{"device_id", "timestamp"}, {"timestamp"}},
 		}
-		for table, idxSuffixes := range want {
+		for table, wantCols := range want {
 			child := fmt.Sprintf("%s_%s", table, suffix)
-			for _, s := range idxSuffixes {
-				idxName := fmt.Sprintf("idx_%s_%s", child, s)
-				var n int
-				if err := d.Gorm().Raw(
-					"SELECT COUNT(*) FROM pg_indexes WHERE tablename = ? AND indexname = ?",
-					child, idxName).Scan(&n).Error; err != nil {
-					t.Fatalf("pg_indexes probe %s: %v", idxName, err)
+			have := childNonUniqueIndexCols(t, d, child)
+			if len(have) == 0 {
+				t.Errorf("partition %s has no non-unique indexes at all", child)
+				continue
+			}
+			for _, cols := range wantCols {
+				served := false
+				for _, idxCols := range have {
+					if isColPrefix(cols, idxCols) {
+						served = true
+						break
+					}
 				}
-				if n != 1 {
-					t.Errorf("partition %s is missing index %s (LC-19: per-partition indexes must cover the model's gorm index tags)", child, idxName)
+				if !served {
+					t.Errorf("partition %s: no index serves (%s) — per-partition indexes must cover the model's gorm index tags (LC-19); have %v",
+						child, strings.Join(cols, ", "), have)
 				}
 			}
+		}
+	})
+
+	// AUDIT-174 (2026-08-27 audit): after EnsurePartitions on a fresh schema —
+	// where the v54/v57 PARENT partitioned indexes exist and cascade to every
+	// leaf — no child of any partitioned parent may carry two non-unique
+	// indexes over the same key columns (same indkey). This is the audit's
+	// exact gap: the LC-19 check above counts coverage and the old version
+	// counted only the PLAN's names, so a cascaded twin under a different name
+	// passed every test while doubling index write amplification and disk on
+	// every monthly leaf.
+	t.Run("NoDuplicateChildIndexes_AUDIT174", func(t *testing.T) {
+		parents := make([]string, 0, len(partitionTables))
+		for _, def := range partitionTables {
+			parents = append(parents, def.tableName)
+		}
+		var dups []struct {
+			Child string
+			Key   string
+			Names string
+		}
+		if err := d.Gorm().Raw(`
+			SELECT t.relname AS child,
+			       x.indkey::text AS key,
+			       string_agg(i.relname, ', ' ORDER BY i.relname) AS names
+			FROM pg_index x
+			JOIN pg_class i ON i.oid = x.indexrelid
+			JOIN pg_class t ON t.oid = x.indrelid
+			JOIN pg_inherits h ON h.inhrelid = t.oid
+			JOIN pg_class parent ON parent.oid = h.inhparent
+			WHERE parent.relname IN ?
+			  AND NOT x.indisunique
+			  AND i.relkind = 'i'
+			GROUP BY t.relname, x.indkey::text
+			HAVING COUNT(*) > 1`, parents).Scan(&dups).Error; err != nil {
+			t.Fatalf("duplicate-index probe: %v", err)
+		}
+		for _, dup := range dups {
+			t.Errorf("child %s carries duplicate non-unique indexes over indkey %q: %s (AUDIT-174: a parent-covered plan entry was created anyway)",
+				dup.Child, dup.Key, dup.Names)
 		}
 	})
 

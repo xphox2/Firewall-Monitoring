@@ -10,31 +10,34 @@ import (
 
 // TestAggregateSyslogToSummary_NoGroupLoss_M2 is the regression for the
 // 2026-06-23 audit M2 finding: aggregateSyslogToSummary deleted ALL matching raw
-// rows inside each page's transaction, so the moment page 1 committed it wiped
-// every still-un-summarized group — any distinct groups beyond the first page
-// were silently dropped without being counted. With the delete moved to after
-// the loop, every group is summarized regardless of how many pages it spans.
+// rows inside each internal unit's transaction, so the moment the first unit
+// committed it wiped every still-un-summarized group — any distinct groups
+// beyond it were silently dropped without being counted. The internal unit was
+// a LIMIT/OFFSET page then and is a time window now (AUDIT-204); the pinned
+// outcome is the same either way: with the delete scoped to exactly what each
+// unit summarised, every group is summarized regardless of how many units the
+// pass spans.
 func TestAggregateSyslogToSummary_NoGroupLoss_M2(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	if err := d.db.AutoMigrate(&models.SyslogMessage{}, &models.SyslogSummary{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	// Force the multi-page path: tiny page size with more distinct groups than
-	// one page holds. Pre-fix, page 1 would summarize 2 groups then delete all 5
-	// groups' raw rows, losing 3.
-	orig := syslogAggPageSize
-	syslogAggPageSize = 2
-	defer func() { syslogAggPageSize = orig }()
+	// Force the multi-window path: 1h windows with the 5 groups seeded in 5
+	// DIFFERENT hours, so the pass spans 5 windows. Pre-M2, the first unit
+	// would summarize its groups then delete every group's raw rows.
+	orig := syslogAggWindow
+	syslogAggWindow = time.Hour
+	defer func() { syslogAggWindow = orig }()
 
 	cutoff := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	old := cutoff.Add(-2 * time.Hour)
 	const groups = 5
 	for i := 0; i < groups; i++ {
-		// Distinct app_name → distinct group; severity 6 = informational.
+		// Distinct app_name → distinct group; severity 6 = informational;
+		// each group in its own hour window.
 		if err := d.db.Create(&models.SyslogMessage{
 			DeviceID: 1, Severity: 6, AppName: fmt.Sprintf("app%d", i),
-			Timestamp: old, Message: "info",
+			Timestamp: cutoff.Add(-time.Duration(i+2) * time.Hour), Message: "info",
 		}).Error; err != nil {
 			t.Fatalf("seed: %v", err)
 		}
@@ -48,11 +51,11 @@ func TestAggregateSyslogToSummary_NoGroupLoss_M2(t *testing.T) {
 		t.Fatal("expected work to be done")
 	}
 
-	// Every group must be summarized (pre-fix: only the first page = 2).
+	// Every group must be summarized (pre-fix: only the first unit's).
 	var summaries []models.SyslogSummary
 	d.db.Find(&summaries)
 	if len(summaries) != groups {
-		t.Errorf("summary rows = %d, want %d (groups beyond page 1 were silently dropped)", len(summaries), groups)
+		t.Errorf("summary rows = %d, want %d (groups beyond the first window were silently dropped)", len(summaries), groups)
 	}
 	var totalCounted int64
 	for _, s := range summaries {

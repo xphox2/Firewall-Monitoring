@@ -12,10 +12,12 @@ import (
 	"gorm.io/gorm"
 )
 
-// syslogAggPageSize bounds how many distinct groups aggregateSyslogToSummary
-// reads per page. A package var (not a const) so tests can shrink it to exercise
-// the multi-page path. Defaults to 10000.
-var syslogAggPageSize = 10000
+// syslogAggWindow is the width of one aggregation time window — the slice of
+// raw history one transaction summarises and deletes (AUDIT-204). A package
+// var (not a const) so tests can shrink it to exercise the multi-window path.
+// Defaults to one hour, matching the summary bucket, so a bucket never
+// straddles two windows in production.
+var syslogAggWindow = time.Hour
 
 // RunSyslogAggregationCycle aggregates old informational syslog into summaries
 // for scalability. Called every 5 minutes by the poller:
@@ -83,8 +85,27 @@ type syslogSummaryRow struct {
 }
 
 // aggregateSyslogToSummary groups raw syslog of ONE severity older than cutoff
-// into hourly summaries, then deletes exactly what it summarised.
+// into hourly summaries, deleting exactly what it summarised, one bounded time
+// window at a time (AUDIT-204 — see window_agg.go for why LIMIT/OFFSET paging
+// could never clear a real backlog under statement_timeout, and why lifting
+// the timeout was rejected). Each window's SELECT and DELETE carry
+// `timestamp >= ? AND timestamp < ? AND severity = ? AND id <= ?`, served by
+// idx_syslog_sev_ts; each window's insert+delete commit in their OWN
+// transaction, so a failure mid-backlog keeps every earlier window's progress.
 // Returns true if work was done, error if fatal.
+//
+// Correctness shape retained from the H1+H2/M2 fixes (do not regress):
+//   - MAX(id) watermark: every read and delete is scoped to `id <= watermark`,
+//     so raw messages that arrive mid-pass (ingestion runs concurrently in
+//     cmd/api, and a collector backlog replay carries OLD timestamps) are
+//     never deleted un-summarized — they wait for the next cycle.
+//   - A window's raw-row DELETE shares its transaction with that window's
+//     summary INSERT: no summaries are ever committed for rows that survive,
+//     and no rows are ever deleted un-summarised.
+//
+// The paged version's ORDER BY over the group key is gone with the paging: it
+// existed only so LIMIT/OFFSET pages neither overlapped nor skipped groups,
+// and each window now consumes its whole group set in one statement.
 func (d *Database) aggregateSyslogToSummary(cutoff time.Time, severity int, intervalType string) (bool, error) {
 	bucketUnit := "hour"
 	bucketFmt := "2006-01-02 15:04"
@@ -94,108 +115,108 @@ func (d *Database) aggregateSyslogToSummary(cutoff time.Time, severity int, inte
 	}
 	bucketExpr := d.dialect.TimeBucket(bucketUnit, "timestamp")
 
-	pageSize := syslogAggPageSize
-	totalGroups := 0
+	// Cheap "is there anything to do" probe, served by (severity, timestamp).
+	// Replaces the old `watermark == 0` early-exit, which is no longer
+	// available now that the watermark is unfiltered (see below). The probe,
+	// watermark and window-start reads run outside any transaction: READ
+	// COMMITTED gives each statement a fresh snapshot either way, and only the
+	// watermark's upper-bound property (not cross-statement consistency)
+	// carries the correctness.
+	var probe []int64
+	if err := d.db.Model(&models.SyslogMessage{}).
+		Where("timestamp < ? AND severity = ?", cutoff, severity).
+		Select("1").Limit(1).
+		Scan(&probe).Error; err != nil {
+		err = fmt.Errorf("work probe: %w", err)
+		log.Printf("Syslog aggregation: %v (will retry next cycle)", err)
+		return false, err
+	}
+	if len(probe) == 0 {
+		return false, nil
+	}
 
-	// Correctness shape shared with the flow rollups (H1+H2 of the 2026-07-01
-	// audit, extending the M2 fix of 2026-06-23):
-	//   - MAX(id) watermark: reads and the final delete are scoped to
-	//     `id <= watermark`, so raw messages that arrive mid-pass (ingestion
-	//     runs concurrently in cmd/api, and a collector backlog replay carries
-	//     OLD timestamps) are never deleted un-summarized — they wait for the
-	//     next cycle. The bound is unfiltered; only that it is an UPPER bound
-	//     matters, and filtering it was a planner trap (see below).
-	//   - Deterministic ORDER BY over the full group key so LIMIT/OFFSET pages
-	//     neither overlap nor skip groups.
-	//   - Inserts + delete in ONE transaction: a mid-pass failure rolls back
-	//     completely instead of leaving summaries the next cycle double-counts.
-	err := d.db.Transaction(func(tx *gorm.DB) error {
-		// Cheap "is there anything to do" probe, served by (severity, timestamp).
-		// Replaces the old `watermark == 0` early-exit, which is no longer
-		// available now that the watermark is unfiltered (see below).
-		var probe []int64
-		if err := tx.Model(&models.SyslogMessage{}).
-			Where("timestamp < ? AND severity = ?", cutoff, severity).
-			Select("1").Limit(1).
-			Scan(&probe).Error; err != nil {
-			return fmt.Errorf("work probe: %w", err)
-		}
-		if len(probe) == 0 {
-			return nil
-		}
+	// The watermark is deliberately UNFILTERED. It exists only as an upper
+	// bound excluding rows that arrive mid-pass, so ANY bound >= every id in
+	// the target set is correct — and the SELECT and DELETE below both still
+	// carry the full predicates, so the set they act on is unchanged.
+	//
+	// Filtering it was a severe performance trap. PostgreSQL rewrites
+	// MAX(id) into a backward walk of the primary key that stops at the
+	// first row passing the filter, and prices it by expected-rows-until-
+	// first-match. Under `severity = ? AND timestamp < ?` the newest ids all
+	// fail the timestamp test, so the walk crossed most of the table while
+	// the planner still estimated single-digit cost. Measured on a 92M-row
+	// production table it exceeded 120s against a 30s statement_timeout — so
+	// every 5-minute cycle aborted and retried forever and NOTHING was ever
+	// aggregated. Unfiltered, the same rewrite stops on the first tuple:
+	// 0.5ms.
+	//
+	// An index on (severity, timestamp, id) does NOT fix this: for a
+	// high-share severity the planner prices the pkey walk at ~6 and keeps
+	// choosing it, so the index would appear to work on the small severities
+	// and still fail on the one that carries the volume.
+	var watermark int64
+	if err := d.db.Model(&models.SyslogMessage{}).
+		Select("COALESCE(MAX(id), 0)").
+		Scan(&watermark).Error; err != nil {
+		err = fmt.Errorf("watermark: %w", err)
+		log.Printf("Syslog aggregation: %v (will retry next cycle)", err)
+		return false, err
+	}
+	if watermark == 0 {
+		return false, nil
+	}
 
-		// The watermark is deliberately UNFILTERED. It exists only as an upper
-		// bound excluding rows that arrive mid-pass, so ANY bound >= every id in
-		// the target set is correct — and the SELECT and DELETE below both still
-		// carry the full predicates, so the set they act on is unchanged.
-		//
-		// Filtering it was a severe performance trap. PostgreSQL rewrites
-		// MAX(id) into a backward walk of the primary key that stops at the
-		// first row passing the filter, and prices it by expected-rows-until-
-		// first-match. Under `severity = ? AND timestamp < ?` the newest ids all
-		// fail the timestamp test, so the walk crossed most of the table while
-		// the planner still estimated single-digit cost. Measured on a 92M-row
-		// production table it exceeded 120s against a 30s statement_timeout — so
-		// every 5-minute cycle aborted and retried forever and NOTHING was ever
-		// aggregated. Unfiltered, the same rewrite stops on the first tuple:
-		// 0.5ms.
-		//
-		// An index on (severity, timestamp, id) does NOT fix this: for a
-		// high-share severity the planner prices the pkey walk at ~6 and keeps
-		// choosing it, so the index would appear to work on the small severities
-		// and still fail on the one that carries the volume.
-		var watermark int64
-		if err := tx.Model(&models.SyslogMessage{}).
-			Select("COALESCE(MAX(id), 0)").
-			Scan(&watermark).Error; err != nil {
-			return fmt.Errorf("watermark: %w", err)
-		}
-		if watermark == 0 {
-			return nil
-		}
+	// Window-walk start: the oldest eligible row. With severity pinned, this
+	// is idx_syslog_sev_ts's first tuple for that severity — the same
+	// first-tuple stop that makes the unfiltered watermark cheap, not the
+	// filtered-MAX planner trap (the oldest rows pass the residual
+	// timestamp/id predicates immediately).
+	start, ok, err := oldestEligibleTimestamp(d.db.Model(&models.SyslogMessage{}).
+		Where("severity = ? AND timestamp < ? AND id <= ?", severity, cutoff, watermark))
+	if err != nil {
+		err = fmt.Errorf("window start: %w", err)
+		log.Printf("Syslog aggregation: %v (will retry next cycle)", err)
+		return false, err
+	}
+	if !ok {
+		return false, nil
+	}
 
-		const groupKey = "bucket, device_id, severity, facility, app_name"
-		offset := 0
-		for {
+	window := syslogAggWindow
+	if bucketUnit == "day" && window < 24*time.Hour {
+		window = 24 * time.Hour // never split a day bucket across windows
+	}
+
+	const groupKey = "bucket, device_id, severity, facility, app_name"
+	totalGroups, err := walkAggregationWindows(d.db, window, start, cutoff,
+		func(tx *gorm.DB, winStart, winEnd time.Time) (int, error) {
 			var rows []syslogSummaryRow
 			if err := tx.Model(&models.SyslogMessage{}).
-				Where("timestamp < ? AND severity = ? AND id <= ?", cutoff, severity, watermark).
+				Where("timestamp >= ? AND timestamp < ? AND severity = ? AND id <= ?", winStart, winEnd, severity, watermark).
 				Select(bucketExpr + " as bucket, device_id, severity, facility, app_name, " +
 					"COUNT(*) as count, MIN(message) as sample_message").
 				Group(groupKey).
-				Order(groupKey).
-				Limit(pageSize).Offset(offset).
 				Scan(&rows).Error; err != nil {
-				return fmt.Errorf("scan raw messages: %w", err)
+				return 0, fmt.Errorf("scan raw messages: %w", err)
 			}
 			if len(rows) == 0 {
-				break
+				return 0, nil
 			}
 			if err := batchInsertSyslogSummaries(tx, rows, intervalType, bucketFmt); err != nil {
-				return err
+				return 0, err
 			}
-			totalGroups += len(rows)
-			if len(rows) < pageSize {
-				break
+			// Delete exactly this window's summarised rows (same predicates and
+			// watermark scope), in the same transaction as the inserts.
+			if err := tx.Where("timestamp >= ? AND timestamp < ? AND severity = ? AND id <= ?", winStart, winEnd, severity, watermark).
+				Delete(&models.SyslogMessage{}).Error; err != nil {
+				return 0, fmt.Errorf("delete consumed raw messages: %w", err)
 			}
-			offset += pageSize
-		}
-
-		if totalGroups == 0 {
-			return nil
-		}
-
-		// Delete exactly the rows that were summarized (same watermark scope),
-		// in the same transaction as the inserts.
-		if err := tx.Where("timestamp < ? AND severity = ? AND id <= ?", cutoff, severity, watermark).
-			Delete(&models.SyslogMessage{}).Error; err != nil {
-			return fmt.Errorf("delete consumed raw messages: %w", err)
-		}
-		return nil
-	})
+			return len(rows), nil
+		})
 	if err != nil {
-		log.Printf("Syslog aggregation: %v (rolled back, will retry next cycle)", err)
-		return false, err
+		log.Printf("Syslog aggregation: %v (window rolled back; %d groups from earlier windows kept, will resume next cycle)", err, totalGroups)
+		return totalGroups > 0, err
 	}
 
 	if totalGroups == 0 {
@@ -215,7 +236,15 @@ func batchInsertSyslogSummaries(tx *gorm.DB, rows []syslogSummaryRow, intervalTy
 		}
 		batch := make([]models.SyslogSummary, 0, end-i)
 		for _, r := range rows[i:end] {
-			ts, _ := time.Parse(bucketFmt, r.Bucket)
+			// AUDIT-203: a bucket/layout mismatch must fail the transaction, not
+			// silently commit a year-0001 summary in the same tx that deletes the
+			// raw rows — retention would then reap the mis-dated summary and the
+			// history would vanish with no log. The caller's tx rolls back, so
+			// the raw rows are preserved for the next cycle.
+			ts, err := time.Parse(bucketFmt, r.Bucket)
+			if err != nil {
+				return fmt.Errorf("parse bucket %q with layout %q: %w", r.Bucket, bucketFmt, err)
+			}
 			batch = append(batch, models.SyslogSummary{
 				Timestamp:    ts,
 				DeviceID:     r.DeviceID,

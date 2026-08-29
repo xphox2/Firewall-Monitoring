@@ -43,6 +43,9 @@ func TestRetentionCleanup_FirstRunIsNotAFullInterval(t *testing.T) {
 // the timer declaration stays (the `defer Stop()` keeps it compiling). That is
 // the literal incident — "nothing calls the cleanup" — surviving a green suite.
 // So pin the call site and the re-arm, not just the timer's construction.
+// AUDIT-188: the pinned call is now startRetentionCleanupAsync — the cleanup
+// launches off the select loop so a multi-hour backlog clear cannot park the
+// loop and starve the server-health disk check.
 func TestRetentionCleanup_RunLoopCallsItAndReArms(t *testing.T) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "main.go", nil, parser.ParseComments)
@@ -81,14 +84,14 @@ func TestRetentionCleanup_RunLoopCallsItAndReArms(t *testing.T) {
 				}
 				switch fn := call.Fun.(type) {
 				case *ast.SelectorExpr:
-					if fn.Sel.Name == "runRetentionCleanup" {
+					if fn.Sel.Name == "startRetentionCleanupAsync" {
 						calls++
 					}
 					if fn.Sel.Name == "Reset" {
 						rearms++
 					}
 				case *ast.Ident:
-					if fn.Name == "runRetentionCleanup" {
+					if fn.Name == "startRetentionCleanupAsync" {
 						calls++
 					}
 				}
@@ -99,9 +102,10 @@ func TestRetentionCleanup_RunLoopCallsItAndReArms(t *testing.T) {
 	})
 
 	if calls == 0 {
-		t.Error("the cleanup timer's select case does not call runRetentionCleanup — " +
+		t.Error("the cleanup timer's select case does not call startRetentionCleanupAsync — " +
 			"retention never runs. This is the incident: the cleanup code was correct " +
-			"and well covered, and nothing invoked it.")
+			"and well covered, and nothing invoked it. (AUDIT-188: the call must be the " +
+			"async launcher, not a synchronous runRetentionCleanup that parks the loop.)")
 	}
 	if rearms == 0 {
 		t.Error("the cleanup timer's select case never calls Reset — a Timer fires ONCE, " +

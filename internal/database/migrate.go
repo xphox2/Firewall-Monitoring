@@ -330,6 +330,74 @@ func isColPrefix(a, b []string) bool {
 	return true
 }
 
+// parentPartitionedIndexColumns returns the ordered column list of every
+// NON-UNIQUE partitioned index (pg_class relkind 'I') declared on the given
+// partitioned parent table. PostgreSQL cascades a parent-level index to every
+// existing and future leaf automatically, so any per-leaf index over the same
+// (or a covered) column list would be a second, physically identical btree.
+// Postgres-only by construction — callers reach here only for partitioned
+// parents, which exist only on the PG backend.
+func (d *Database) parentPartitionedIndexColumns(tableName string) ([][]string, error) {
+	var rows []struct {
+		IndexName string
+		Cols      string
+	}
+	// indexprs IS NULL excludes expression indexes (their indkey carries 0
+	// attnums that would join to nothing); indisunique=false matches the plan's
+	// own scope — partitionIndexPlan never emits unique indexes.
+	if err := d.db.Raw(`
+		SELECT i.relname AS index_name,
+		       string_agg(a.attname, ',' ORDER BY k.ord) AS cols
+		FROM pg_index x
+		JOIN pg_class i ON i.oid = x.indexrelid
+		JOIN pg_class t ON t.oid = x.indrelid
+		JOIN LATERAL unnest(x.indkey) WITH ORDINALITY AS k(attnum, ord) ON true
+		JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+		WHERE t.relname = ?
+		  AND i.relkind = 'I'
+		  AND NOT x.indisunique
+		  AND x.indexprs IS NULL
+		GROUP BY i.relname`, tableName).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([][]string, 0, len(rows))
+	for _, r := range rows {
+		if r.Cols == "" {
+			continue
+		}
+		out = append(out, strings.Split(r.Cols, ","))
+	}
+	return out, nil
+}
+
+// planEntriesNotCoveredByParent filters a per-leaf index plan against the
+// parent's partitioned indexes (AUDIT-174): an entry whose column list is
+// equal to, or a leading prefix of, a parent index's columns is dropped —
+// the cascaded parent index already serves it on every leaf, and creating it
+// again under the plan's own name would build a second physically identical
+// btree per leaf (double write amplification and disk on the volume-dominant
+// tables, forever). The returned skipped list carries the dropped entries'
+// suffixes for one summary log line. The plan itself stays complete
+// (partitionIndexPlan is untouched — the LC-19 drift guard keeps pinning it);
+// only its application is filtered.
+func planEntriesNotCoveredByParent(plan []partitionIndex, parentIndexCols [][]string) (kept []partitionIndex, skipped []string) {
+	for _, p := range plan {
+		covered := false
+		for _, cols := range parentIndexCols {
+			if isColPrefix(p.cols, cols) {
+				covered = true
+				break
+			}
+		}
+		if covered {
+			skipped = append(skipped, p.suffix)
+			continue
+		}
+		kept = append(kept, p)
+	}
+	return kept, skipped
+}
+
 // partitionIndexSuffix maps an index's column list to the per-partition name
 // suffix (idx_<partition>_<suffix>). The first three cases pin the names the
 // pre-LC-19 hard-coded list already created, so `CREATE INDEX IF NOT EXISTS`
@@ -438,6 +506,31 @@ func (d *Database) EnsurePartitions() error {
 			return fmt.Errorf("partition index plan for %s: %w", def.tableName, err)
 		}
 		indexPlans[def.tableName] = plan
+	}
+
+	// AUDIT-174: drop plan entries a parent-level PARTITIONED index already
+	// serves. v54 (idx_syslog_sev_ts on syslog_messages (severity, timestamp))
+	// and v57 (idx_trap_events_timestamp on trap_events (timestamp)) create
+	// their indexes on the PARENT, and PostgreSQL cascades a parent index to
+	// every new leaf automatically — so on a fresh install each monthly leaf
+	// got the cascaded index AND the plan's identically-columned one under a
+	// different name (`IF NOT EXISTS` matches by name only). This is resolved
+	// from the catalog on every run rather than a hard-coded exclusion list,
+	// which would be exactly the LC-19 drift the derived plan exists to
+	// prevent. On a probe failure the FULL plan is kept: a redundant index is
+	// recoverable, a missing one is a silent per-query regression.
+	for _, def := range partitioned {
+		parentIdx, err := d.parentPartitionedIndexColumns(def.tableName)
+		if err != nil {
+			log.Printf("Parent index probe warning for %s: %v (keeping the full per-leaf index plan)", def.tableName, err)
+			continue
+		}
+		kept, skipped := planEntriesNotCoveredByParent(indexPlans[def.tableName], parentIdx)
+		if len(skipped) > 0 {
+			log.Printf("Partition indexes for %s: skipping per-leaf %s — covered by a parent partitioned index that cascades to every leaf (AUDIT-174)",
+				def.tableName, strings.Join(skipped, ", "))
+		}
+		indexPlans[def.tableName] = kept
 	}
 
 	// Create partitions for current month + 6 months ahead
