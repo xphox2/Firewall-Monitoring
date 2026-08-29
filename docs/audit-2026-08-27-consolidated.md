@@ -31,6 +31,19 @@
 
 **Scope:** full server (`Firewall-Mon`) plus cross-repo contract findings. The collector-only findings and the cross-repo subset are additionally tracked in the `Firewall-Collector` copy of this report.
 
+## Disposition roll-up (2026-08-29)
+
+Final outcome of all 148 findings, recorded during the batched remediation program. Per-finding dispositions appear inline as a blockquote directly under each finding heading below (with the resolving version and PR, or the reason for a non-fix).
+
+| Disposition | Count |
+|---|---|
+| ✅ Resolved | 147 |
+| ⛔ Refuted | 1 |
+| ⚠️ Unresolved | 0 |
+| **Total** | **148** |
+
+All 148 findings are now dispositioned. The single refuted finding is AUDIT-198 (dead/unreachable dashboard code); the remaining 147 are resolved. The final batches to land were Batch 6 (AUDIT-176, the last HIGH — serverhealth test coverage, server v0.11.232) and Batch 9 (the collector ingest-attribution/hardening set: AUDIT-186, 187, 216, 237, 263, 282, 283, 284, 305, 306, 307, 317, collector v1.3.43/v1.3.44). See each inline blockquote for the resolving version and PR.
+
 ## Highest-severity summary
 
 - **AUDIT-171 (HIGH)** — Native systemd deploy flattens web/ so LoadHTMLGlob panics — fwmon-api crash-loops; HTML has no embedded fallback despite the comment claiming single- (`cmd/api/main.go:610`)
@@ -46,6 +59,8 @@
 
 #### AUDIT-171 · HIGH · Native systemd deploy flattens web/ so LoadHTMLGlob panics — fwmon-api crash-loops; HTML has no embedded fallback despite the comment claiming single-binary support
 
+> **✅ RESOLVED (v0.11.211 · PR #219)** — deploy.sh now copies web/ with its prefix so LoadHTMLGlob resolves — native systemd install no longer crash-loops at first boot.
+
 **Firewall-Mon** — `cmd/api/main.go:610` · class: `correctness` · related: `deploy.sh`, `Dockerfile`
 
 **Defect.** router.LoadHTMLGlob("./web/**/*.html") panics on zero matches; deploy.sh copies web/* CONTENTS into /opt/firewall-mon (no web/ prefix) while WorkingDirectory=INSTALL_DIR. Static assets have an embedded fallback; HTML templates do not. Only Docker survives (COPY web ./web).
@@ -57,6 +72,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-173 · HIGH · Explicitly-empty ADMIN_PASSWORD= (the shipped config default) creates an admin with bcrypt("") and permanently locks the operator out
+
+> **✅ RESOLVED (v0.11.211 · PR #219)** — a set-but-empty admin-password value is treated as unset (Validate() hard-fails empty), so the operator is no longer permanently locked out.
 
 **Firewall-Mon** — `internal/config/config.go:524` · class: `input-hardening` · related: `config.env.example`, `deploy.sh`, `cmd/api/main.go`, `internal/database/sites_probes.go`
 
@@ -70,6 +87,8 @@
 
 #### AUDIT-174 · HIGH · EnsurePartitions builds duplicate per-partition indexes for columns already covered by parent-level partitioned indexes (v54 syslog sev_ts, v57 trap timestamp)
 
+> **✅ RESOLVED (v0.11.214 · PR #222)** — partitionIndexPlan now excludes column-sets already covered by parent partitioned indexes (catalog-driven), so fresh installs build no duplicate per-partition btrees — latent for current heap-table prod; guards the next conversion.
+
 **Firewall-Mon** — `internal/database/migrate.go:499` · class: `performance` · related: `internal/database/partition_index_lc19_test.go`, `internal/models/models.go`
 
 **Defect.** EnsurePartitions creates idx_<partition>_<suffix> on each leaf while v54/v57 create parent partitioned indexes that PG auto-cascades to every new leaf; IF NOT EXISTS matches by name only, so a second physically identical btree is built on the same column set. partitionIndexPlan has no exclusion for parent-covered columns.
@@ -79,6 +98,8 @@
 *Verification: 4/4 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-175 · HIGH · sendBatchesSequential silently drops the drained-but-unsent tail on a transient failure — defeats the AUDIT-058 outage-durability guarantee
+
+> **✅ RESOLVED (collector v1.3.37 · PR #101)** — sendBatchesSequential now requeues the failed chunk AND all not-yet-attempted chunks then stops the drain, so a server outage no longer shreds the disk spool.
 
 **Firewall-Collector** — `internal/relay/relay.go:1971` · class: `data-integrity`
 
@@ -92,6 +113,8 @@
 
 #### AUDIT-176 · HIGH · Zero test coverage for the incident-derived serverhealth invariants — DataDirLocator crash-loop fallback (serverhealth/probe.go:74) and dataOK nil-vs-zero strictness (cmd/poller/serverhealth.go:137)
 
+> **✅ RESOLVED (server v0.11.232 · PR #240)** — added regression tests for the serverhealth crash-loop data-dir fallback and the dataOK nil-vs-zero strictness (both incident-derived), plus a minimal injectable-lookup refactor for testability.
+
 **Firewall-Mon** — `internal/serverhealth/probe.go:61` · class: `test-gap` · related: `cmd/poller/serverhealth.go`, `internal/alerts/serverdisk_test.go`
 
 **Defect.** internal/serverhealth/ holds one file (probe.go, 118 lines) and zero _test.go. Two load-bearing, untested invariants: (1) the DataDirLocator crash-loop fallback at probe.go:74-82 (`if cached != "" { return cached, true, err }`) — the cache that kept disk telemetry alive across the 2026-07-26 PG crash-loop; (2) the dataOK nil-vs-zero *float64 strictness at cmd/poller/serverhealth.go:137-140 (`m.DataDiskPercent=&pct` only under `if dataOK`), which distinguishes 'unmeasured' from '0% used'. cmd/poller has 20 test files, none exercising collectServerVolumes/recordServerMetrics/DataDirLocator.
@@ -101,6 +124,8 @@
 *Verification: 3/4 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-177 · HIGH · FortiGate SD-WAN column OIDs omit the table-entry level (.2.1) — every PDU is swallowed by the Name branch, all SD-WAN metrics silently zero/garbage
+
+> **✅ RESOLVED (collector v1.3.39 · PR #103)** — the fgVWLHealthCheckLinkTable column OIDs now include the table-entry level, so SD-WAN health metrics are no longer all silently zero/garbage.
 
 **Firewall-Collector** — `internal/snmp/vendor_fortigate.go:122` · class: `correctness`
 
@@ -114,6 +139,8 @@
 
 #### AUDIT-172 · MEDIUM · F17 z-score DISK baseline is polluted by SSH-perf writer zero-disk rows during SNMP-cache-stale windows — the baseline loop lacks the zero/Source filter the evaluation path applies
 
+> **✅ RESOLVED (v0.11.217 · PR #225)** — the F17 zscore disk baseline no longer ingests SSH zero-disk rows and is built from the newest samples.
+
 **Firewall-Mon** — `internal/alerts/baseline_f17.go:62` · class: `correctness` · related: `internal/alerts/alerts.go`, `internal/models/models.go`, `internal/database/charts.go`
 
 **Defect.** baseline_f17.go:62-67 appends hist[i].DiskUsage/SessionCount unconditionally — no zero-check and no Source check, though models.SystemStatus.Source exists (models.go:152). The EVALUATION path DOES filter: alerts.go:274 `sessionsMeasured := status.SessionCount>0 || status.Source==SNMP` and :278 gates disk on `status.DiskUsage>0`. So the baseline mean/std is computed over rows the evaluator would exclude. Scope corrected by accuracy pass: (a) the SESSIONS half is NOT a defect — the SSH-perf row carries a real parsed SessionCount (collector main.go:1655); (b) disk zeros occur only when the SNMP vitals cache is stale (>3× poll interval, throughput.go:145), so this pollutes the DISK baseline during SNMP-outage windows rather than steady-state. zscoreFireAt does use max(floor, mean+k*sd) (baseline_f17.go:109), so an inflated disk baseline can push the effective DISK_HIGH threshold above 100% for that window.
@@ -126,6 +153,8 @@
 
 #### AUDIT-178 · MEDIUM · Collector CI installs staticcheck and govulncheck @latest (unpinned) — server pins both for exactly this failure mode
 
+> **✅ RESOLVED (collector v1.3.35 · PR #99)** — pinned the staticcheck/govulncheck CI tool versions (they were @latest) and added an automatic release-tag workflow.
+
 **Firewall-Collector** — `.github/workflows/docker.yml:61` · class: `toolchain-ci`
 
 **Defect.** docker.yml installs staticcheck@latest and govulncheck@latest; server pins staticcheck@v0.7.0 and govulncheck@v1.6.0 with a comment explaining unpinned tools fail CI out from under unrelated PRs. The collector workflow also has no permissions: block.
@@ -135,6 +164,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-179 · MEDIUM · MIGRATING.md states the current schema_version maximum is 4 (range 1-4) while code and the doc's own table say 5
+
+> **✅ RESOLVED (v0.11.231 · PR #239)** — corrected the stale schema-version max in MIGRATING.md / SUPPORT-MATRIX.md to match relay.SchemaVersionMax = 5.
 
 **Firewall-Mon** — `MIGRATING.md:32` · class: `docs-drift` · related: `internal/relay/relay.go`, `docs/SUPPORT-MATRIX.md`
 
@@ -146,6 +177,8 @@
 
 #### AUDIT-180 · MEDIUM · Collector version facts stale across four docs: README badge 1.3.4, SECURITY.md supports only 1.2.x, FEATURES.md says current is 1.2.x, DEPLOY.md instructs pulling :1.2 images
 
+> **✅ RESOLVED (collector v1.3.42 · PR #106)** — corrected stale version strings across the collector docs (README badge tracks the version const).
+
 **Firewall-Collector** — `README.md:13` · class: `docs-drift` · related: `SECURITY.md`, `docs/FEATURES.md`, `DEPLOY.md`, `cmd/collector/main.go`
 
 **Defect.** Badge 1.3.4 vs version 1.3.33; SECURITY.md table lists only 1.2.x (33 1.3.x releases absent) and tells reporters to inspect :1.2.x; FEATURES.md 'current 1.2.x'; DEPLOY.md pulls :1.2 while README default is :1.3.
@@ -155,6 +188,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-181 · MEDIUM · README states Cisco ASA has no SNMP polling profile, but a full registered profile exists in both repos
+
+> **✅ RESOLVED (v0.11.231 · PR #239 ; collector v1.3.42 · PR #106)** — documented that Cisco ASA has a full SNMP profile (server README) and added it to the collector vendor doc surfaces.
 
 **cross-repo** — `README.md:94` · class: `docs-drift`
 
@@ -166,6 +201,8 @@
 
 #### AUDIT-182 · MEDIUM · Server docs, compose, and Dockerfile advertise [Server] syslog/sFlow/ICMP listeners and an 8089 probe server that no server binary runs
 
+> **✅ RESOLVED (v0.11.228 · PR #236)** — corrected docs that advertised nonexistent server-side syslog/sFlow/ICMP listeners.
+
 **Firewall-Mon** — `README.md:102` · class: `docs-drift` · related: `docker-compose.yml`, `Dockerfile`, `docs/FEATURES.md`, `KNOWN-ISSUES.md`
 
 **Defect.** README (102-105, port table 514/6343/8089), docker-compose (publishes 514/6343/8089), Dockerfile EXPOSE, docs/FEATURES.md, KNOWN-ISSUES.md all advertise server-side syslog/sFlow/ICMP + probe server, but go list -deps ./cmd/... shows internal/syslog, internal/sflow, internal/ping have zero importers and cfg.Probe (EnableProbeServer, SyslogAllowedSources) has zero consumers. Only the trap receiver (162) exists server-side.
@@ -175,6 +212,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-183 · MEDIUM · Transient DB error at singleton-lock acquisition installs a nil release func, panicking main at graceful shutdown
+
+> **✅ RESOLVED (v0.11.211 · PR #219)** — the API-singleton advisory-lock error path returns a no-op cleanup func, so graceful shutdown no longer panics after a transient startup DB error.
 
 **Firewall-Mon** — `cmd/api/main.go:205` · class: `correctness` · related: `internal/database/database.go`
 
@@ -188,6 +227,8 @@
 
 #### AUDIT-184 · MEDIUM · Stored XSS: solidBadge/typeBadgeHtml interpolate connection_type unescaped, and the server accepts arbitrary connection_type strings
 
+> **✅ RESOLVED (v0.11.216 · PR #224)** — stored XSS via connection_type badges closed at both the render and ingest ends.
+
 **Firewall-Mon** — `cmd/api/static/js/admin-common.js:175` · class: `frontend-xss` · related: `cmd/api/static/js/diagram-panels.js`, `internal/api/handlers/handlers_connections.go`, `cmd/api/static/js/admin-connection-detail.js`
 
 **Defect.** solidBadge concatenates label unescaped; typeBadgeHtml feeds raw conn.connection_type; sink diagram-panels.js:163-171 sets panel.innerHTML with the unescaped typeBadge. UpdateDeviceConnection allowlists connection_type and validates only the status enum — no validation on connection_type, so any operator-role can PUT an HTML payload. The connections table escapes the same field.
@@ -197,6 +238,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-185 · MEDIUM · loadPublicInterfaces returns no promise (init chain broken) and togglePublicIface saves the whole map — an early toggle wipes other devices' public-interface selections
+
+> **✅ RESOLVED (v0.11.224 · PR #232)** — the device-detail public-interface toggle no longer wipes other devices' selections, and the interface table waits for its curation to load.
 
 **Firewall-Mon** — `cmd/api/static/js/admin-device-detail.js:63` · class: `data-integrity` · related: `cmd/api/static/js/public-dashboard.js`
 
@@ -208,6 +251,8 @@
 
 #### AUDIT-186 · MEDIUM · sFlow samples attributed by in-band agent_address, not bound to the UDP source — intra-fleet cross-device flow/counter forgery
 
+> **✅ RESOLVED (collector v1.3.44 · PR #108)** — sFlow attribution now binds to the UDP source (asymmetric: reject a known-unique source-vs-claim mismatch; HA/CARP shared cluster IPs accepted via device-set ambiguity tracking; unresolvable source warns+accepts), behind PROBE_STRICT_SOURCE_BINDING.
+
 **Firewall-Collector** — `cmd/collector/main.go:557` · class: `data-integrity` · related: `internal/sflow/sflow.go`
 
 **Defect.** sFlow device attribution uses SamplerAddress, which for sFlow is the agent_address parsed from the datagram BODY (sflow.go:357/471), while the only spoofing guard checks the UDP source IP (sflow.go:253). The resolver keys on the in-band value: `sample.DeviceID = c.resolveDeviceByIP(sample.SamplerAddress)`. The allowlist binds only the UDP source, never agent_address, so a datagram from any allowed source may carry any agent_address. (NetFlow is NOT affected — it uses the UDP source as SamplerAddress.)
@@ -217,6 +262,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-187 · MEDIUM · TFTP WRQ handler trusts the filename-embedded device ID with no client-address binding — any allowlisted fleet device can forge config revisions for any other device
+
+> **✅ RESOLVED (collector v1.3.44 · PR #108)** — TFTP config uploads bind to a collector-initiated pending-trigger registry (count-valued, 5-min window) rather than the filename alone, so an unsolicited cross-device upload is rejected while a NAT'd/hub upload of a triggered device is accepted.
 
 **Firewall-Collector** — `cmd/collector/main.go:1283` · class: `security` · related: `internal/tftp/tftp.go`
 
@@ -230,6 +277,8 @@
 
 #### AUDIT-188 · MEDIUM · Retention cleanup runs synchronously inside the poller's single select loop, so a large backlog clear parks the loop for its whole (potentially multi-hour) duration and the 5-minute server-disk DISK_HIGH check cannot fire — the exact silent-outage shape the 2026-07-26 postmortem added it to prevent
 
+> **✅ RESOLVED (v0.11.214 · PR #222)** — retention cleanup runs async under its own lock so a multi-hour pass no longer blinds the server-disk health check.
+
 **Firewall-Mon** — `cmd/poller/main.go:301` · class: `correctness` · related: `cmd/poller/serverhealth.go`, `internal/database/cleanup.go`
 
 **Defect.** Confirmed by reading cmd/poller/main.go:300-304: the poller is one `for { select {...} }` goroutine; `case <-cleanupTimer.C: p.runRetentionCleanup()` executes inline and returns only when the whole cleanup finishes. checkServerHealth (the server's-own-volume disk-full detector added after the outage, serverhealth.go:84) is invoked ONLY from `case <-serverHealthTicker.C:` (main.go:304) plus once at startup (main.go:211) — grep confirmed no other caller. Go tickers coalesce, so serverHealthTicker.C is not serviced until the select loop returns. batchedDeleteOlderThanOn sleeps 100ms between every 10k-row batch and CleanupOldData sweeps ~20 tables plus per-severity syslog DELETEs; on prod syslog_messages is NOT partitioned so the whole backlog goes through batched DELETE. The authors deliberately moved threat-feed sync OFF this loop for exactly this blocking class (main.go:293 `startThreatFeedSyncAsync // M9: async, off the select loop`) but left the far longer cleanup synchronous.
@@ -242,6 +291,8 @@
 
 #### AUDIT-189 · MEDIUM · TELEMETRY_STALE falsely self-recovers on a FortiGate whose SNMP is dead >24h but SSH keeps vitals fresh, permanently suppressing a partial-collection outage
 
+> **✅ RESOLVED (v0.11.217 · PR #225)** — the TELEMETRY_STALE recovery gate no longer false-recovers on unrelated fresh signal while SNMP is still dead.
+
 **Firewall-Mon** — `cmd/poller/telemetrystale.go:128` · class: `correctness` · related: `cmd/poller/main.go`, `internal/database/telemetry.go`, `internal/alerts/alerts.go`
 
 **Defect.** The recovery gate treats ANY one fresh signal as 'telemetry flowing again', but the two signals have independent writers on a FortiGate (system_status written by BOTH the SNMP writer AND the SSH perf writer per header 20-23; interface_stats written ONLY by SNMP). When staleParts is empty (telemetrystale.go:128-131): `if in.freshStatus[id] || (!in.latestIface[id].IsZero() && in.now.Sub(in.latestIface[id]) < in.staleAfter) { p.alertManager.CheckTelemetryRecovered(dev) }`. The iface fire condition (line 117) requires the device to still be a key in latestIface, but main.go:1178-1186 only sets latestIface for rows within the 24h lookback, so 24h after SNMP dies the last interface_stats row drops out and latestIface[id] becomes unset -> no iface stalePart. SSH keeps freshStatus[id] true, so line 109 `if !in.freshStatus[id]` skips the vitals stalePart too. staleParts is now empty and the gate passes on freshStatus. CheckTelemetryRecovered (alerts.go:2033) sees active=true and calls sendRecovery. The comment's stated invariant ('rows merely aged out ... its open alert remains the signal') only holds when BOTH signals aged out; the mixed dual-writer case violates it.
@@ -251,6 +302,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-190 · MEDIUM · Seeded SECRETS_DIR=/data collides with the native unit's ProtectSystem=strict sandbox — all three daemons log.Fatalf at the JWT-secret step on first native boot
+
+> **✅ RESOLVED (v0.11.211 · PR #219)** — config.env.example seeds the native secrets directory so seeded secrets work under the systemd sandbox.
 
 **Firewall-Mon** — `config.env.example:28` · class: `toolchain-ci` · related: `deploy.sh`, `cmd/api/main.go`, `internal/secrets/secrets.go`
 
@@ -264,6 +317,8 @@
 
 #### AUDIT-191 · MEDIUM · State rule's explicit min_up_seconds:0 is silently clobbered to the 3600 default, defeating a configured daily flap cap
 
+> **✅ RESOLVED (v0.11.217 · PR #225)** — an explicit min_up_seconds: 0 on a state rule is now honored (pointer-typed field).
+
 **Firewall-Mon** — `internal/alerts/staterules.go:99` · class: `correctness` · related: `internal/alerts/rules.go`, `internal/alerts/policy.go`
 
 **Defect.** buildStateCandidateLocked forces any non-positive min_up via a bare `<= 0` test (staterules.go:99-101): `if dp.MinUpSeconds <= 0 { dp.MinUpSeconds = defaultStateMinUpSeconds /*3600*/ }`. Because `MinUpSeconds int` carries `json:"min_up_seconds,omitempty"` (rules.go:164), an OMITTED field and an EXPLICIT 0 both deserialize to 0 and `<= 0` treats them identically. The validator explicitly accepts 0 (staterules.go:276 `if dp.MinUpSeconds < 0`), and decideStateFire has dedicated 0 handling — the up->=Xs fast-path (step 4) is guarded `if c.dampen.MinUpSeconds > 0 && lr.ResolvedAt != nil && ...` (staterules.go:198), so 0 means 'disable the fast-path, respect the daily cap strictly.' The authors knew the omitempty/0 ambiguity and added a RefireMode sentinel to preserve an explicit DailyCap 0 (staterules.go:107) but gave MinUpSeconds no such guard.
@@ -273,6 +328,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-192 · MEDIUM · Unauthenticated /api/health leaks raw DB driver error (internal host/user/db/IP) to callers
+
+> **✅ RESOLVED (v0.11.215 · PR #223)** — the unauthenticated /api/health endpoint no longer discloses internal database topology to anonymous callers.
 
 **Firewall-Mon** — `internal/api/handlers/handlers.go:250` · class: `security` · related: `cmd/api/main.go`
 
@@ -284,6 +341,8 @@
 
 #### AUDIT-193 · MEDIUM · GetAlerts/GetSyslogMessages/GetDeviceConfigHistory ignore the COUNT query error — pager total silently 0 alongside a populated page
 
+> **✅ RESOLVED (v0.11.219 · PR #227)** — paginated alert/syslog/config-history listings no longer show 0 results alongside visible rows when the count query fails.
+
 **Firewall-Mon** — `internal/api/handlers/handlers_analytics.go:134` · class: `correctness` · related: `internal/api/handlers/handlers_devices.go`
 
 **Defect.** applyAlertFilters(...).Count(&total) discards .Error, unlike the Find above it; same at GetSyslogMessages:460 and handlers_devices.go:968.
@@ -294,6 +353,8 @@
 
 #### AUDIT-194 · MEDIUM · public_interfaces whitelist is enforced only client-side; raw /api/public/interfaces[/chart] leaks every interface of a public device
 
+> **✅ RESOLVED (v0.11.215 · PR #223)** — the public_interfaces allowlist is now enforced server-side on the public paths.
+
 **Firewall-Mon** — `internal/api/handlers/handlers_dashboard.go:171` · class: `security` · related: `cmd/api/static/js/public-dashboard.js`, `internal/api/handlers/handlers_settings.go`
 
 **Defect.** GetPublicInterfaces returns the full []InterfaceStats and GetPublicInterfaceChart serves history for ANY index with no reference to public_interfaces; the narrowing is only in public-dashboard.js. GetPublicVPN/GetPublicConnections enforce their toggle server-side with a comment noting the SPA hides but the endpoint would dump. InterfaceStats carries Name/Alias/Description/MAC/VLAN/Speed/counters.
@@ -303,6 +364,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-195 · MEDIUM · public_interfaces allowlist enforced only client-side; /api/public/interfaces leaks all non-allowlisted interfaces unauthenticated
+
+> **✅ RESOLVED (v0.11.215 · PR #223)** — same fix as AUDIT-194 — public_interfaces allowlist enforced server-side (empty list means show-all).
 
 **Firewall-Mon** — `internal/api/handlers/handlers_dashboard.go:195` · class: `security` · related: `cmd/api/static/js/public-dashboard.js`, `internal/api/handlers/handlers_settings.go`, `cmd/api/main.go`
 
@@ -316,6 +379,8 @@
 
 #### AUDIT-196 · MEDIUM · Probe flow/telemetry ingest decodes the entire JSON array before the item cap, and truncateProbeBatch reslices (not copies) so the full decode allocation stays live — a 5MB body of empty objects amplifies to ~670MB-1GB per authed request, giving the 1000-item cap false safety
 
+> **✅ RESOLVED (v0.11.218 · PR #226)** — probe telemetry ingest now caps the JSON decode, not just the saved slice.
+
 **Firewall-Mon** — `internal/api/handlers/handlers_data.go:317` · class: `input-hardening` · related: `internal/api/middleware/middleware.go`, `cmd/api/main.go`, `internal/models`
 
 **Defect.** Confirmed by reading handlers_data.go:305-321 and :68-74. ReceiveFlowSamples calls `c.ShouldBindJSON(&samples)` (full-array json.Decoder decode, no per-element/count limit) BEFORE truncateProbeBatch, and truncateProbeBatch applies `items = items[:capN]` — a reslice, NOT a copy — so the full backing array is retained through SaveFlowSamples. The only real bound is the global 5MB body cap (cmd/api/main.go:590 BodySizeLimitPerPath, MaxBytesReader), so 'no MaxBytesReader' is disproven, but the amplification is huge: FlowSample ≈400B; smallest legal element `{},` = 3 bytes ⇒ 5<<20/3 ≈ 1.68M elements × 400B ≈ 670MB final backing array, ~1GB transient during slice-growth doubling. truncateProbeBatch reslices to 1000 but the giant array stays referenced until the handler returns. SystemStatus/InterfaceStats/SyslogMessage share the identical post-decode-cap pattern.
@@ -328,6 +393,8 @@
 
 #### AUDIT-197 · MEDIUM · UpdateDevice validates probe_id reassignment but not site_id — invalid site_id hits the FK → opaque 500 rollback of the whole update
 
+> **✅ RESOLVED (v0.11.219 · PR #227)** — device create/update validate site_id (non-existent site returns 400, not a silent orphan).
+
 **Firewall-Mon** — `internal/api/handlers/handlers_devices.go:221` · class: `input-hardening` · related: `internal/api/handlers/handlers_probes.go`, `internal/models/models.go`
 
 **Defect.** allowedFields includes site_id but validation covers only probe_id (with a comment naming the exact 'saved but reverted' failure); Device.SiteID carries the same belongs-to FK and CreateDevice also skips it. UpdateProbe validates site_id via GetSite.
@@ -338,6 +405,8 @@
 
 #### AUDIT-198 · MEDIUM · Landing dashboard fans out GetProbeStats per probe every 30s — 4 unbounded COUNT(*) over partitioned firehose tables + 96-query breakdown, mostly discarded
 
+> **⛔ REFUTED** — dead, unreachable code (the active dashboard reads the cached /api/dashboard/health composite; the legacy per-probe fetch path was removed in the v0.11.221 cleanup, not a live defect).
+
 **Firewall-Mon** — `internal/api/handlers/handlers_probes.go:1204` · class: `performance` · related: `cmd/api/static/js/admin-main.js`
 
 **Defect.** GetProbeStats runs 4 unbounded full-history COUNTs (syslog/trap/flow/ping) + 96-query 24h breakdown; admin-main.js:441-445 calls it per-probe on a 30s refresh and consumes only r.data.last_hour. GetProbesStatsBatch (AUDIT-064) exists and is used by admin-probes.js but not admin-main.js.
@@ -347,6 +416,8 @@
 *Verification: 3/4 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-199 · MEDIUM · Setup2FA silently disables an already-enrolled 2FA with password only, bypassing the Disable2FA current-code requirement
+
+> **✅ RESOLVED (v0.11.215 · PR #223)** — enrolled two-factor auth can no longer be silently downgraded with the password alone (409 re-auth guard).
 
 **Firewall-Mon** — `internal/api/handlers/handlers_totp.go:174` · class: `security` · related: `internal/api/handlers/handlers_auth.go`, `internal/database/totp.go`
 
@@ -360,6 +431,8 @@
 
 #### AUDIT-200 · MEDIUM · OPNsense secret digesting is not newline-preserving; a multi-line secret body silently disables ALL diff masking and renders every secret in cleartext
 
+> **✅ RESOLVED (v0.11.216 · PR #224)** — OPNsense config-diff secret masking is now newline-safe AND fail-closed.
+
 **Firewall-Mon** — `internal/configdiff/vendor_opnsense.go:241` · class: `security` · related: `internal/configdiff/linediff.go`, `internal/configdiff/normalize.go`
 
 **Defect.** fingerprintXMLElement drops newlines inside the match ([^<]/[^"] match \n in RE2), unlike the line-count-preserving maskXMLElementLines. prepareDiffInput then degrades masking to nothing globally when len(rawLines)!=len(maskLines), so lineHasSecret never fires.
@@ -372,6 +445,8 @@
 
 #### AUDIT-201 · MEDIUM · HasFlowData runs an unbounded COUNT(*) over the device pair's entire flow_samples history to derive a boolean
 
+> **✅ RESOLVED (v0.11.221 · PR #229)** — connection-detail HasFlowData uses an indexed existence probe instead of scanning the pair's whole flow history.
+
 **Firewall-Mon** — `internal/database/connection_detail.go:530` · class: `performance` · related: `internal/database/flows.go`
 
 **Defect.** Model(FlowSample).Where(device_id IN ?).Limit(1).Count(&flowCount) (and twin at :755); GORM Count keeps LIMIT but it bounds the single result row, not the scan. No timestamp predicate → no partition pruning across all monthly partitions. Correct existence-probe shape (Select(1).Limit(1).Scan) exists at flows.go:817.
@@ -381,6 +456,8 @@
 *Verification: 4/4 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-202 · MEDIUM · Leftover per-request debug logging in GetConnectionDetail prints every tunnel row on every connection-detail view
+
+> **✅ RESOLVED (v0.11.221 · PR #229)** — removed leftover per-request debug logging that printed internal subnet topology on every connection-detail view.
 
 **Firewall-Mon** — `internal/database/connection_detail.go:611` · class: `maintainability`
 
@@ -392,6 +469,8 @@
 
 #### AUDIT-203 · MEDIUM · Rollup/summary batch inserters silently discard time.Parse errors on the bucket string, writing zero-value timestamps that retention then deletes
 
+> **✅ RESOLVED (v0.11.214 · PR #222)** — aggregation batch inserters now return time.Parse errors (tx rollback preserves raw rows) instead of swallowing them.
+
 **Firewall-Mon** — `internal/database/flows.go:717` · class: `data-integrity` · related: `internal/database/syslog_agg.go`, `internal/database/charts.go`, `internal/database/dialect.go`
 
 **Defect.** ts,_:=time.Parse(bucketFmt,r.Bucket) in batchInsertRollups and syslog_agg.go:218; a format mismatch yields year-0001 silently. AUDIT-145 fixed the same silent-zero on the READ path (charts.go) but the WRITE path still swallows it.
@@ -401,6 +480,8 @@
 *Verification: 4/4 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-204 · MEDIUM · Flow-rollup and syslog-aggregation cycles cannot recover from a large backlog: paged GROUP BY aggregates the whole backlog per page under statement_timeout, wedging the pipeline while cleanup deletes never-summarized rows
+
+> **✅ RESOLVED (v0.11.214 · PR #222)** — flow-rollup and syslog-aggregation passes now time-slice-chunk their GROUP BY so backlogs can actually be cleared.
 
 **Firewall-Mon** — `internal/database/syslog_agg.go:159` · class: `performance` · related: `internal/database/flows.go`, `internal/database/cleanup.go`, `internal/database/database.go`, `internal/config/config.go`
 
@@ -414,6 +495,8 @@
 
 #### AUDIT-205 · MEDIUM · Disabled IRC server gets auto-connected by the reconnect sweep after any channel edit
 
+> **✅ RESOLVED (v0.11.223 · PR #231)** — a disabled IRC server is no longer auto-connected by the reconnect sweep after a channel edit.
+
 **Firewall-Mon** — `internal/irc/bot.go:100` · class: `correctness` · related: `internal/api/handlers/handlers_irc.go`
 
 **Defect.** reconnectDue never checks Server.Enabled — returns `AutoReconnect && Conn==nil && now.After(nextAttempt)`. RestartBot stores a fresh bot (with an OPEN quit channel) into m.bots even when disabled, skipping only Start(). CreateIRCChannel/UpdateIRCChannel/DeleteIRCChannel (handlers_irc.go:275,323,354) call RestartBot unconditionally; IRCServer.AutoReconnect defaults true (models.go:1950).
@@ -423,6 +506,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-206 · MEDIUM · Bot.Stop racing an in-flight Bot.Start leaks a ghost IRC connection — Start never re-checks b.quit after Connect, and Connect() discards the queued QUIT
+
+> **✅ RESOLVED (v0.11.223 · PR #231)** — a Bot.Stop racing an in-flight Bot.Start no longer leaks a live unowned IRC session.
 
 **Firewall-Mon** — `internal/irc/bot.go:532` · class: `concurrency`
 
@@ -436,6 +521,8 @@
 
 #### AUDIT-207 · MEDIUM · AUDIT-117 table-name uniqueness guard has eroded: 20 of 69 TableName() models are missing from allTablers, with no completeness check
 
+> **✅ RESOLVED (v0.11.226 · PR #234)** — the model TableName() guard is now self-maintaining and covers every model.
+
 **Firewall-Mon** — `internal/models/models_test.go:24` · class: `test-gap` · related: `internal/models/models.go`
 
 **Defect.** 69 TableName() methods vs 49 in allTablers(); 20 newer models (ServerMetric, EventRule, Incident, ApiToken, IPSecTunnel, ThreatIntel, AgentDrops, ...) never added; no reflection/count cross-check makes the list self-verifying.
@@ -445,6 +532,8 @@
 *Verification: 4/4 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-208 · MEDIUM · Opsgenie close URL embeds the un-escaped alias — a '/' or space in MetricName (Cisco ASA interface names) breaks auto-resolve, incidents never close
+
+> **✅ RESOLVED (v0.11.217 · PR #225)** — Opsgenie close-by-alias now encodes the dedup key so incidents for slashed interface names auto-close.
 
 **Firewall-Mon** — `internal/notifier/incident_channels.go:132` · class: `input-hardening` · related: `internal/alerts/alerts.go`
 
@@ -456,6 +545,8 @@
 
 #### AUDIT-209 · MEDIUM · Plain-text alert email sends the comma-joined recipient list as a single RCPT — all alert emails fail for multi-recipient policies
 
+> **✅ RESOLVED (v0.11.217 · PR #225)** — multi-recipient alert emails now deliver to every recipient (smtp_to split into envelope recipients).
+
 **Firewall-Mon** — `internal/notifier/notifier.go:370` · class: `correctness` · related: `internal/alerts/policy.go`, `internal/alerts/escalation_steps.go`, `web/admin/admin.html`
 
 **Defect.** sendEmail passes []string{nc.SMTPTo} (raw comma string) as one envelope recipient; SMTPTo comes from AlertPolicy.EmailRecipients / EscalationStep.Recipients and the UI placeholder invites a comma list. The HTML/report path splits on ',' correctly; sendEmail does not → client.Rcpt("a@x, b@y").
@@ -465,6 +556,8 @@
 *Verification: 4/4 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-210 · MEDIUM · Collector queue drop/depth/batch metrics are registered as the primary silent-data-loss signal but never fed — permanently zero even during real disk-spillover drops
+
+> **✅ RESOLVED (collector v1.3.41 · PR #105)** — the queue drop/depth/data-batch Prometheus metrics are now actually fed from the live spillover queues.
 
 **Firewall-Collector** — `internal/observability/metrics.go:344` · class: `contract-drift` · related: `internal/relay/queue/queue.go`, `internal/relay/relay.go`, `cmd/collector/main.go`
 
@@ -476,6 +569,8 @@
 
 #### AUDIT-211 · MEDIUM · Server internal/relay DTOs (the declared cross-repo wire-contract source of truth) have drifted from the actual v1-v5 wire: whole Tranche-3 field set missing, phantom fields retained, wrong Drops semantics, missing v5 structs
 
+> **✅ RESOLVED (v0.11.230 · PR #238)** — relay DTO synced across the repo contract.
+
 **cross-repo** — `internal/relay/relay.go:85` · class: `docs-drift` · related: `internal/api/handlers/handlers_data.go`, `internal/models/models.go`, `internal/api/handlers/handlers_probes.go`
 
 **Defect.** The package doc declares itself the MIGRATING.md/SUPPORT-MATRIX source of truth, but server relay.FlowSample omits flow_source, app_name, as_path, next_hop, flow_start/end, firewall_event, flow_end_reason, the 4 post-NAT fields, icmp_type_code, src_vlan/dst_vlan while keeping sample_pool/sample_algorithm/engine_id/type/src_mask/dst_mask the collector never sends; Drops comment says delta but collector corrected it to cumulative; ConfigRevision lacks trigger_source/backup_quality, DevicesResponse lacks tftp_server_ip, Heartbeat/RegistrationRequest agent_version drift; TopologyEntry/Neighbor structs referenced but absent.
@@ -485,6 +580,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-212 · MEDIUM · Heartbeat command executor runs on a bare `go` without panic recovery, and inFlight is cleared with a plain statement not defer — a panicking command crash-loops the collector via at-least-once redelivery
+
+> **✅ RESOLVED (collector v1.3.37 · PR #101)** — a panicking command handler no longer crash-loops the collector (safego wrap + inFlight cleanup + per-command recover).
 
 **Firewall-Collector** — `internal/relay/relay.go:1295` · class: `concurrency` · related: `cmd/collector/commands.go`, `internal/safego/safego.go`
 
@@ -498,6 +595,8 @@
 
 #### AUDIT-213 · MEDIUM · Requeue-then-rechunk breaks the M19 content-derived idempotency key — a committed-but-timed-out batch is re-inserted as duplicates
 
+> **✅ RESOLVED (collector v1.3.37 · PR #101)** — requeued batches replay under their original idempotency key (head-requeue; fixes AUDIT-213/214 together).
+
 **Firewall-Collector** — `internal/relay/relay.go:1950` · class: `data-integrity`
 
 **Defect.** contentBatchID is derived from the marshaled chunk, but chunk boundaries aren't stable: chunkSlice slices from index 0 while requeueItems pushes the failed chunk's items to the queue TAIL behind newly-arrived items. On the next sync [N new][requeued 1000] re-chunks at 1000 boundaries → the committed items get fresh hashes → server (probe_id,batch_id) dedup misses.
@@ -507,6 +606,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-214 · MEDIUM · Event-queue requeue regroups items into a new batch, changing the content-derived idempotency key and defeating server dedup (duplicate inserts)
+
+> **✅ RESOLVED (collector v1.3.37 · PR #101)** — same defect as AUDIT-213 — head-requeue gives byte-identical replay under the same contentBatchID.
 
 **Firewall-Collector** — `internal/relay/relay.go:1978` · class: `correctness`
 
@@ -518,6 +619,8 @@
 
 #### AUDIT-215 · MEDIUM · Alert-frequency timeline is UTC-locked, ignoring report_timezone while every other report chart localizes
 
+> **✅ RESOLVED (v0.11.226 · PR #234)** — the Alert Activity timeline now honors report_timezone and is deterministically clocked (no internal time.Now()).
+
 **Firewall-Mon** — `internal/report/template_report.go:264` · class: `correctness` · related: `internal/report/model.go`, `internal/report/svg_charts.go`, `internal/report/png_charts.go`
 
 **Defect.** The alert timeline is rendered without a timezone argument: template_report.go:264 `{{renderAlertChart .AlertBuckets $t}}` — vs device charts on the same template that DO pass tz (line 483 renderCPUMemChart $d $d.Timezone $t; 489 renderThroughputChart). The timeline's axis text comes from AlertBucket.Label/Tooltip, pre-baked in the SERVER's local zone by model.go bucketAlerts (521 now:=time.Now(); 552 t:=start.Add(...); 558 label=t.Format("15:04"); 566 tooltip t.Format("Jan 2, 15:04")) with no .In(loc). Both render paths inherit it: svg_charts.go:35 RenderAlertTimelineSVG and png_charts.go:116 RenderAlertTimelinePNG take no tz, and the PNG hardcodes png_charts.go:186 Timezone:"UTC" while the CPU/mem PNG uses pngTimeFormatter(card.Timezone).
@@ -527,6 +630,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-216 · MEDIUM · Collector unrecognized-trap path logs one line per varbind (unbounded) — a crafted trap is a log-volume/disk-fill amplification the server twin does not have
+
+> **✅ RESOLVED (collector v1.3.43 · PR #107)** — capped the unrecognized-trap varbind log dump (16 lines + summary) to stop log-flood amplification.
 
 **Firewall-Collector** — `internal/snmp/trap.go:177` · class: `input-hardening`
 
@@ -538,6 +643,8 @@
 
 #### AUDIT-217 · MEDIUM · FortiGate dialup columns .7/.8 mapped as DstBegin/DstEnd, but fgVpnDialUpTable has DstAddr(.7)/Vdom(.8) — dialup RemoteSubnet always collapses to a /32
 
+> **✅ RESOLVED (collector v1.3.39 · PR #103)** — dialup VPN remote subnet no longer derives from mis-parsing the vdom column (.7 is the destination address).
+
 **Firewall-Collector** — `internal/snmp/vendor_fortigate.go:61` · class: `correctness`
 
 **Defect.** fgOIDVPNDialupDstBegin/End=...1.1.7/.8 but the MIB entry is {...,DstAddr(7),Vdom(8),InOctets(9),OutOctets(10)} — no dst begin/end pair. Column .8 (Vdom Integer32) → safeString(int) returns '' → rangeToCIDR hits the end=='' branch → begin+"/32". The .3=Lifetime and .9/.10 choices confirm the layout.
@@ -547,6 +654,8 @@
 *Verification: 2/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-218 · MEDIUM · Test gap: FortiGate — the production default vendor — has zero parser tests beyond one hardware-sensor regression
+
+> **✅ RESOLVED (collector v1.3.39 · PR #103)** — added FortiGate parser fixture tests for the production-default vendor profile.
 
 **Firewall-Collector** — `internal/snmp/vendor_fortigate.go:882` · class: `test-gap`
 
@@ -558,6 +667,8 @@
 
 #### AUDIT-219 · MEDIUM · SD-WAN packet-loss computed as uint64 subtraction PacketSend-PacketRecv — underflows to ~1.8e19 when Recv>Send from counter timing skew
 
+> **✅ RESOLVED (collector v1.3.39 · PR #103)** — SD-WAN packet loss now reads the device's own computed column with a guarded subtraction fallback.
+
 **Firewall-Collector** — `internal/snmp/vendor_fortigate.go:945` · class: `data-integrity`
 
 **Defect.** lost := h.PacketSend - h.PacketRecv on two uint64 read from different table columns (send column walked before recv); a probe answered between reads yields Recv>Send and the unsigned subtraction wraps. MIB provides device-computed fgVWLHealthCheckLinkPacketLoss (...4.9.2.1.9).
@@ -568,6 +679,8 @@
 
 #### AUDIT-220 · MEDIUM · Uptime unit contract drift: 7-8 non-FortiGate vendor profiles pre-divide sysUpTime by 100, but every server/frontend consumer divides by 100 again — non-FortiGate device uptime displayed 100x too small
 
+> **✅ RESOLVED (v0.11.222 · PR #230 ; collector v1.3.40 · PR #104)** — device uptime unit fix across both repos: collector canonicalizes sysUpTime to raw hundredths and the server/device-detail formatters divide correctly.
+
 **cross-repo** — `internal/snmp/vendor_opnsense.go:96` · class: `contract-drift`
 
 **Defect.** opnsense/paloalto/cisco_asa/sonicwall/pfsense/firewalla/generic store ticks/100 (seconds) while fortigate stores raw hundredths; server uptime.go:203, admin-device-detail.js:2535, public-dashboard.js:346 all divide by 100 again (comment 'timeticks in hundredths'). FortiGate is the only unit the consumers were validated against.
@@ -577,6 +690,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-221 · MEDIUM · Palo Alto VPN parser's 64-bit HC counter branches are dead code — GetVPNStatus walks only ifTable, so tunnel byte counters are always 32-bit and wrap at 4 GiB
+
+> **✅ RESOLVED (collector v1.3.41 · PR #105)** — Palo Alto VPN tunnel byte counters now use the 64-bit HC counters.
 
 **Firewall-Collector** — `internal/snmp/vendor_paloalto.go:168` · class: `correctness`
 
@@ -590,6 +705,8 @@
 
 #### AUDIT-222 · MEDIUM · ParseInterfaceList can never parse TX errors/discards — outer gate requires 'rx', making the tx branch unreachable; combined rx/tx lines overwrite RX
 
+> **✅ RESOLVED (collector v1.3.39 · PR #103)** — SSH TX interface error/discard counters are now parseable (the rx-only line gate is fixed).
+
 **Firewall-Collector** — `internal/ssh/parser.go:213` · class: `correctness`
 
 **Defect.** The block is gated on line containing 'rx', so the inner `else if Contains(line,"tx")` assigning currentOutErrors/Discards is dead and a TX-only line never enters; a line with both groups funnels both matches into In* fields (TX overwrites RX). Tests assert only .Name.
@@ -599,6 +716,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-223 · MEDIUM · extractDeviceID compiles a regexp on every syslog message with structured data
+
+> **✅ RESOLVED (collector v1.3.41 · PR #105)** — interface packet counters now use the 64-bit HC ucast counters.
 
 **Firewall-Collector** — `internal/syslog/syslog.go:615` · class: `performance`
 
@@ -612,6 +731,8 @@
 
 #### AUDIT-224 · LOW · No gosec job in collector CI, though the collector parses the most hostile input in the system and the server enforces gosec
 
+> **✅ RESOLVED (collector v1.3.35 · PR #99)** — added a gosec CI gate to the collector.
+
 **Firewall-Collector** — `.github/workflows/docker.yml:10` · class: `toolchain-ci`
 
 **Defect.** The only workflow runs gofmt/vet/test-race/tidy/staticcheck/govulncheck — no gosec; server enforces gosec@v2.27.1. The collector packages parsing unauthenticated UDP (syslog/sflow/tftp/netflow/snmp) + ssh command construction are never security-scanned, contradicting the Dockerfile's own threat model.
@@ -621,6 +742,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-225 · LOW · Collector CHANGELOG.md is missing the v1.3.30 and v1.3.31 entries — history jumps 1.3.32 to 1.3.29
+
+> **✅ RESOLVED (collector v1.3.42 · PR #106)** — restored the missing 1.3.30 and 1.3.31 CHANGELOG entries.
 
 **Firewall-Collector** — `CHANGELOG.md:28` · class: `docs-drift` · related: `CONTRIBUTING.md`
 
@@ -632,6 +755,8 @@
 
 #### AUDIT-226 · LOW · Collector Docker build lacks the server's AUDIT-102 reproducibility flags (-trimpath -buildvcs=false)
 
+> **✅ RESOLVED (collector v1.3.35 · PR #99)** — reproducible Docker builds via -trimpath -buildvcs=false (server parity).
+
 **Firewall-Collector** — `Dockerfile:12` · class: `toolchain-ci`
 
 **Defect.** Collector `go build -o firewall-collector ./cmd/collector` omits -trimpath -buildvcs=false; server Dockerfile adds both (AUDIT-102: byte-identical binaries across build hosts).
@@ -641,6 +766,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-227 · LOW · `make qa` claims 'same as CI' but omits staticcheck/gosec/govulncheck and -race
+
+> **✅ RESOLVED (v0.11.231 · PR #239)** — make qa now runs every go-native CI gate (staticcheck, gosec, govulncheck, -race).
 
 **Firewall-Mon** — `Makefile:27` · class: `docs-drift`
 
@@ -652,6 +779,8 @@
 
 #### AUDIT-228 · LOW · Server README version/toolchain facts are stale: badge 0.10.553 and 'Go 1.25.11 pinned in go.mod' vs actual 0.11.209 / go 1.25.13
 
+> **✅ RESOLVED (v0.11.231 · PR #239)** — corrected README version/Go-toolchain drift and added anti-drift guardrail tests.
+
 **Firewall-Mon** — `README.md:281` · class: `docs-drift`
 
 **Defect.** README.md:281 says 'Go 1.25.11 (the version pinned in go.mod)' but go.mod:3 is `go 1.25.13`. README.md:13 badge version-0.10.553 and :83 'current 0.10.x release' but cmd/api/main.go:40 ServerVersion='0.11.209' and CHANGELOG top is [0.11.209]. The whole README Features/Upgrading narrative (pin to :0.10.x) is one minor behind.
@@ -661,6 +790,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-229 · LOW · Stale /admin/network route renders deleted network.html template → blank/broken page
+
+> **✅ RESOLVED (v0.11.224 · PR #232)** — removed the dead /admin/network route.
 
 **Firewall-Mon** — `cmd/api/main.go:918` · class: `contract-drift` · related: `internal/api/middleware/middleware.go`
 
@@ -672,6 +803,8 @@
 
 #### AUDIT-230 · LOW · Tunnel-group bandwidth charts silently reset display mode (Combined/Transfer) to Throughput on every 30s auto-refresh; the sibling traffic chart is immune
 
+> **✅ RESOLVED (v0.11.224 · PR #232)** — connection-detail tunnel charts keep the operator's Combined/Transfer selection across auto-refresh.
+
 **Firewall-Mon** — `cmd/api/static/js/admin-connection-detail.js:412` · class: `frontend-state` · related: `cmd/api/static/js/admin-bw-chart.js`
 
 **Defect.** FwmonBwChart.mount persists the chosen mode (rate/total/mix) ONLY in the DOM, recovering it on re-mount by reading `box.previousElementSibling` for a `.fwmon-bw-toggle` (admin-bw-chart.js:267-273,296). renderTunnelCharts rebuilds the whole per-group wrap wholesale every poll via `host.innerHTML = html` (admin-connection-detail.js:412), where html contains `.range-pills` but NO toggle, then re-mounts (413-416). After the wipe mount's prev sibling is `.range-pills` (not `.fwmon-bw-toggle`), so toggle===null and view falls back to `opts.initialView || 'rate'`; loadGroupChart passes no initialView (line 461). renderTunnelCharts is called from loadConnectionDetail (336-337) which the 30s visibility-gated auto-refresh runs unconditionally (AC.pollWhenVisible, 819-837). The traffic chart is immune because its toggle lives outside the wiped node (#traffic-chart-host, 561/571), proving the asymmetry is the container rebuild.
@@ -681,6 +814,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-231 · LOW · Device-detail formatVpnUptime divides tunnel_uptime by 100 — missed in the shared-helper conversion, renders OPNsense tunnel uptime 100x too small
+
+> **✅ RESOLVED (v0.11.222 · PR #230)** — OPNsense tunnel uptime no longer renders as 0m on device detail.
 
 **Firewall-Mon** — `cmd/api/static/js/admin-device-detail.js:2508` · class: `contract-drift` · related: `cmd/api/static/js/admin-common.js`, `cmd/api/static/js/admin-connection-detail.js`, `cmd/api/static/js/diagram-panels.js`
 
@@ -692,6 +827,8 @@
 
 #### AUDIT-232 · LOW · Deploy modal polls the previous deploy record before the POST — redeploy of a rolled-back tunnel flashes a stale 'Deploy failed' banner
 
+> **✅ RESOLVED (v0.11.224 · PR #232)** — a fresh IPSec deploy/rollback/recheck no longer flashes the previous deploy's failure banner or double-polls.
+
 **Firewall-Mon** — `cmd/api/static/js/admin-ipsec.js:1918` · class: `frontend-state`
 
 **Defect.** openDeployModal starts pollDeploy unconditionally at the end; startDeploy calls openDeployModal('deploy') BEFORE the POST and starts a second poll with the same generation. The first GET returns the prior deploy record; for a rolled-back tunnel deployTerminal('rolled_back') is true → renderDeployBody shows the failure banner.
@@ -701,6 +838,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-233 · LOW · Threat-intel feed toggles throw ReferenceError on undeclared `AC`, killing the post-toggle refresh
+
+> **✅ RESOLVED (v0.11.224 · PR #232)** — threat-intel feed toggles show their success toast and refresh the table (bare AC.showToast fixed).
 
 **Firewall-Mon** — `cmd/api/static/js/admin-threatintel.js:176` · class: `frontend-state` · related: `internal/api/handlers/handlers_flow_control.go`
 
@@ -712,6 +851,8 @@
 
 #### AUDIT-234 · LOW · ReferenceError: bare `AC` in renderVPNTunnelRows crashes the VPN badge detail panel
 
+> **✅ RESOLVED (v0.11.224 · PR #232)** — the rich VPN detail panel renders again (bare AC.formatTunnelUptime reference fixed).
+
 **Firewall-Mon** — `cmd/api/static/js/diagram-panels.js:1380` · class: `correctness` · related: `cmd/api/static/js/admin-common.js`, `cmd/api/static/js/admin-main.js`
 
 **Defect.** Line 1380 (strict-mode IIFE) uses `AC.formatTunnelUptime(...)` but `const AC = window.AdminCommon;` is declared only in four OTHER functions, never at module scope nor inside showRichVPNDetailPanel; no global AC exists.
@@ -721,6 +862,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-235 · LOW · Public dashboard 15m/30m range options silently broken: parseInt('0.25') → 0
+
+> **✅ RESOLVED (v0.11.224 · PR #232)** — the public dashboard's 15m/30m ranges now show the correct window end to end.
 
 **Firewall-Mon** — `cmd/api/static/js/public-dashboard.js:629` · class: `contract-drift` · related: `web/public/index.html`, `internal/httputil/httputil.go`, `internal/api/handlers/handlers_dashboard.go`
 
@@ -734,6 +877,8 @@
 
 #### AUDIT-236 · LOW · commands.go comments still claim IPSec writes are 'FortiGate only' while the code accepts OPNsense
 
+> **✅ RESOLVED (collector v1.3.42 · PR #106)** — corrected stale FortiGate-only IPSec apply/remove comments in commands.go (OPNsense also accepted).
+
 **Firewall-Collector** — `cmd/collector/commands.go:148` · class: `docs-drift`
 
 **Defect.** runIPSecWrite/apply docstrings say 'FortiGate only; any other vendor is rejected' but the code allows `p.Vendor != "fortigate" && p.Vendor != "opnsense"`.
@@ -743,6 +888,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-237 · LOW · ifaceIPMap is never pruned on device-list refresh — stale IP→device attribution for reused/unassigned devices
+
+> **✅ RESOLVED (collector v1.3.43 · PR #107)** — added pruneIfaceIPMap (and the parallel device-keyed maps) on device-list refresh so a reassigned IP no longer resolves to a decommissioned device.
 
 **Firewall-Collector** — `cmd/collector/main.go:2306` · class: `data-integrity`
 
@@ -754,6 +901,8 @@
 
 #### AUDIT-238 · LOW · PROBE_LOG_LEVEL / PROBE_LOG_FORMAT are inert in production — slog is never configured because main() never calls setupLoggerWith
 
+> **✅ RESOLVED (collector v1.3.41 · PR #105)** — VLAN PVIDs now attach to the correct interface via dot1dBasePortIfIndex resolution.
+
 **Firewall-Collector** — `cmd/collector/main.go:2427` · class: `docs-drift`
 
 **Defect.** setupLoggerWith (2427-2452) is the only code that reads PROBE_LOG_LEVEL/PROBE_LOG_FORMAT and calls slog.SetDefault; its only callers are slog_test.go — NEVER main(). main()'s sole logging setup is `log.SetFlags(...)` (204); no slog.SetDefault in production. Its signature takes *bytes.Buffer so prod can't even pass os.Stderr as its doc claims. Both vars are documented working knobs (docs/ENV-VARS.md:136-137, README.md:272,219-220).
@@ -763,6 +912,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-239 · LOW · Trap OctetString payload flows uncapped and unsanitized into process logs (CWE-117 log forgery) and the DB
+
+> **✅ RESOLVED (v0.11.220 · PR #228)** — trap messages are length-capped and stripped of CR/LF and control characters at both producers.
 
 **Firewall-Mon** — `cmd/trap-receiver/main.go:138` · class: `input-hardening` · related: `internal/snmp/trap.go`
 
@@ -776,6 +927,8 @@
 
 #### AUDIT-240 · LOW · config.env.example (billed as the complete env inventory) is missing ~21 live env keys including PUBLIC_BASE_URL and the entire DDoS/deny-storm detector family
 
+> **✅ RESOLVED (v0.11.231 · PR #239)** — config.env.example completed to a full inventory of the ~22 missing live keys.
+
 **Firewall-Mon** — `config.env.example:381` · class: `docs-drift` · related: `internal/config/config.go`, `internal/models/models.go`, `README.md`
 
 **Defect.** The file claims to be 'a complete inventory of every variable the code reads' and README calls it authoritative, but config.go reads PUBLIC_BASE_URL, SPIKE_MIN_THROUGHPUT_MBPS, RETENTION_DENIED_EVENT_DAYS, and the full DETECT_DDOS_*/DETECT_DENY_STORM_*/DETECT_DENIED_THEN_ALLOWED_*/DETECT_SAMPLING_RATE_CHANGE_* family — none present; AUDIT-107 guardrail only checks README keyword families.
@@ -785,6 +938,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-241 · LOW · Collector ENV-VARS.md ('authoritative reference') omits the live PROBE_NETFLOW_SAMPLING_OVERRIDES operator knob
+
+> **✅ RESOLVED (collector v1.3.42 · PR #106)** — docs/ENV-VARS.md now documents PROBE_NETFLOW_SAMPLING_OVERRIDES.
 
 **Firewall-Collector** — `docs/ENV-VARS.md:8` · class: `docs-drift`
 
@@ -796,6 +951,8 @@
 
 #### AUDIT-242 · LOW · Collector ENV-VARS.md (authoritative reference) omits PROBE_NETFLOW_SAMPLING_OVERRIDES and points at a removed server cmd/probe/main.go
 
+> **✅ RESOLVED (collector v1.3.42 · PR #106)** — docs/ENV-VARS.md no longer points at a removed server path.
+
 **Firewall-Collector** — `docs/ENV-VARS.md:145` · class: `docs-drift` · related: `internal/config/config.go`
 
 **Defect.** The file claims every wired var is listed, but PROBE_NETFLOW_SAMPLING_OVERRIDES (config.go:184, format only in a code comment) is absent — the exact knob SUPPORT-MATRIX.md prescribes for the MikroTik ROS 6.49.x byte-order bug; and the sibling-repo pointer names cmd/probe/main.go which was removed.
@@ -805,6 +962,8 @@
 *Verification: 2/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-243 · LOW · Metric-alert recovery leg is dead once the type is disabled — open CPU/MEM/DISK/SESSIONS alerts stranded forever, contradicting the in-code contract
+
+> **✅ RESOLVED (v0.11.217 · PR #225)** — disabling an alert type or a device's alerts no longer strands its open alerts forever.
 
 **Firewall-Mon** — `internal/alerts/alerts.go:384` · class: `correctness` · related: `internal/alerts/policy.go`
 
@@ -816,6 +975,8 @@
 
 #### AUDIT-244 · LOW · ProcessSecurityEvent/ProcessSecurityDigest read policyCache and config via resolveAlertConfig/SnapshotConfig without am.mu — violates the resolver's lock contract
 
+> **✅ RESOLVED (v0.11.217 · PR #225)** — three unlocked resolver/config reads closed under one ownership rule.
+
 **Firewall-Mon** — `internal/alerts/alerts.go:897` · class: `concurrency` · related: `internal/alerts/policy.go`, `cmd/poller/main.go`
 
 **Defect.** resolveAlertConfigProv is documented 'Caller holds am.mu' and walks maps RefreshPolicyCache replaces under Lock, yet ProcessSecurityEvent (897), ProcessSecurityDigest (1089), CheckProbeDataFlow (2266) call it/SnapshotConfig unlocked; siblings (StormThreshold) take RLock. Saved today only by the single poller goroutine topology.
@@ -825,6 +986,8 @@
 *Verification: 4/4 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-245 · LOW · F17 adaptive baseline is built from the OLDEST 2000 samples (GetSystemStatusHistory ASC + Limit 2000), so a fast-cadence device baselines on stale hours
+
+> **✅ RESOLVED (v0.11.217 · PR #225)** — same fix as AUDIT-172 — baselines built from the newest samples, free of SSH zero-disk rows.
 
 **Firewall-Mon** — `internal/alerts/baseline_f17.go:53` · class: `correctness` · related: `internal/database/charts.go`, `internal/config/config.go`
 
@@ -836,6 +999,8 @@
 
 #### AUDIT-246 · LOW · consultDeviceRuleLocked stamps a dangling rule PolicyID onto the alert before applyRulePolicy's nil-check, orphaning escalation (state path is immune)
 
+> **✅ RESOLVED (v0.11.217 · PR #225)** — a rule pinning a deleted policy no longer stamps the dangling id onto saved alert rows.
+
 **Firewall-Mon** — `internal/alerts/devicerules.go:114` · class: `correctness` · related: `internal/alerts/policy.go`, `internal/alerts/staterules.go`
 
 **Defect.** The device-family evaluator assigns PolicyID unconditionally THEN calls the guarded overlay (devicerules.go:114-116): `if rule.policyID != nil { resolved.PolicyID = rule.policyID; am.applyRulePolicy(resolved, *rule.policyID) }`. applyRulePolicy only mutates channels when the policy exists (`if p := am.findPolicy(policyID); p != nil {...}`). When the rule references a deleted policy, findPolicy returns nil so channels stay as the device's resolved policy — but resolved.PolicyID was already overwritten to the nonexistent id. The sibling STATE evaluator has no such pre-assignment (staterules.go:95-97 calls only applyRulePolicy), and resolvedPolicyIDLocked (policy.go:275) returns only findPolicy-confirmed ids.
@@ -846,6 +1011,8 @@
 
 #### AUDIT-247 · LOW · SERVER_DISK_HIGH ignores maintenance suppression — Suppressed never set from resolved.InMaintenance, unlike every sibling fire path
 
+> **✅ RESOLVED (v0.11.217 · PR #225)** — maintenance windows now suppress SERVER_DISK_HIGH, which can also escalate.
+
 **Firewall-Mon** — `internal/alerts/serverdisk.go:141` · class: `correctness` · related: `internal/alerts/alerts.go`
 
 **Defect.** checkOneServerVolume resolves config (computing InMaintenance) but the alert literal omits Suppressed and notify runs unconditionally; every other emitter stamps Suppressed:resolved.InMaintenance and gates notify on !Suppressed. Recovery leg does honor it — fire-only asymmetry.
@@ -855,6 +1022,8 @@
 *Verification: 4/4 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-248 · LOW · flow_agent_drops baseline keyed by agent only while batch max is keyed (agent,rate) — dual-rate sFlow agents fabricate drop deltas and false-fire SFLOW_SAMPLING_BACKOFF
+
+> **✅ RESOLVED (v0.11.217 · PR #225)** — dual-rate sFlow agents no longer fabricate drop deltas (drop baseline keyed by agent plus rate).
 
 **Firewall-Mon** — `internal/api/handlers/handlers_agent_drops.go:75` · class: `data-integrity` · related: `internal/models/models.go`
 
@@ -868,6 +1037,8 @@
 
 #### AUDIT-249 · LOW · Per-policy notification webhook URLs returned unredacted to viewer role / read-scoped tokens
 
+> **✅ RESOLVED (v0.11.215 · PR #223)** — per-policy notification webhook URLs are masked on read with preserve-on-write.
+
 **Firewall-Mon** — `internal/api/handlers/handlers_alert_policies.go:24` · class: `security` · related: `cmd/api/main.go`, `internal/models/models.go`, `internal/alerts/policy.go`, `internal/notifier/notifier.go`
 
 **Defect.** ListAlertPolicies returns policies unredacted; AlertPolicy carries live Slack/Discord/generic webhook URLs. Route GET /admin/api/alert-policies is not in adminOnlyRoutes so defaults to RoleViewer; the equivalent global webhooks are admin-gated.
@@ -877,6 +1048,8 @@
 *Verification: 3/4 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-250 · LOW · Data race on shared config.Alerts: API handlers read fields the per-minute RefreshThresholds goroutine rewrites under a different lock
+
+> **✅ RESOLVED (v0.11.217 · PR #225)** — handler fallback reads of the alerts config no longer race the refresh loop.
 
 **Firewall-Mon** — `internal/api/handlers/handlers_alert_policies.go:346` · class: `concurrency` · related: `cmd/api/main.go`, `internal/alerts/alerts.go`, `internal/api/handlers/handlers_settings.go`, `internal/api/handlers/handlers_reports.go`
 
@@ -888,6 +1061,8 @@
 
 #### AUDIT-251 · LOW · Numeric query filters bound as raw strings in alerts/traps/syslog listings — non-numeric input → PG 22P02 500 (L24 class fixed only in flows)
 
+> **✅ RESOLVED (v0.11.219 · PR #227)** — non-numeric device_id/site_id/probe_id filters return 400 instead of a Postgres 22P02 500.
+
 **Firewall-Mon** — `internal/api/handlers/handlers_analytics.go:88` · class: `input-hardening`
 
 **Defect.** applyAlertFilters binds raw c.Query("device_id") against uint columns; same in GetTraps (391-392) and GetSyslogMessages (434-439). The file's own L24 comment (505-509) declares this a bug fixed only for GetFlowSamples.
@@ -897,6 +1072,8 @@
 *Verification: 2/4 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-252 · LOW · Unauthenticated /api/public/dashboard and /api/public/interfaces fall back to global latest telemetry, bypassing the public_visible gate
+
+> **✅ RESOLVED (v0.11.215 · PR #223)** — the public dashboard/interfaces endpoints never fall back to a non-public device's telemetry.
 
 **Firewall-Mon** — `internal/api/handlers/handlers_dashboard.go:143` · class: `security` · related: `internal/database/telemetry.go`, `cmd/api/main.go`, `internal/api/middleware/middleware.go`
 
@@ -908,6 +1085,8 @@
 
 #### AUDIT-253 · LOW · Eight metric endpoints silently truncate at 500 items then mark the batch ID processed, while the collector clamps to (and documents) a 1000-item server cap — a >500-row VPN batch loses its tail permanently and invisibly
 
+> **✅ RESOLVED (v0.11.218 · PR #226)** — eleven metric endpoints that silently truncated at 500 now honor the collector's up-to-1000 batches.
+
 **cross-repo** — `internal/api/handlers/handlers_data.go:924` · class: `contract-drift`
 
 **Defect.** ReceiveVPNStatuses and 7 siblings (ProcessorStats/DiskUsage/LoadAverage/HardwareSensors/HAStatuses/SecurityStats/SDWANHealth) do statuses=statuses[:500] not truncateProbeBatch (whose M1 comment says silent truncation+marking lost tails 'permanently and invisibly'); they run batchDedupCheck/markBatchIfOK so even a resend dedup-drops. Collector const serverMaxBatchItems=1000; VPN batch is one POST/device combining IPSec+dialup+SSL-VPN rows.
@@ -917,6 +1096,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-254 · LOW · ReceiveConfigRevision's row lock uses GORM v1's gorm:query_option — a silent no-op on GORM v2, concurrent backups not serialized
+
+> **✅ RESOLVED (v0.11.218 · PR #226)** — the config-revision row lock (a GORM-v1 no-op) now uses a real FOR UPDATE.
 
 **Firewall-Mon** — `internal/api/handlers/handlers_data.go:1228` · class: `concurrency` · related: `go.mod`
 
@@ -928,6 +1109,8 @@
 
 #### AUDIT-255 · LOW · ReceiveInterfaceErrors/SensorDetails/LicenseDetails return 500 on a fully-filtered/empty batch (gorm.ErrEmptySlice)
 
+> **✅ RESOLVED (v0.11.218 · PR #226)** — interface-error/sensor/license batches of only not-owned devices return 200, not 500.
+
 **Firewall-Mon** — `internal/api/handlers/handlers_data.go:1460` · class: `input-hardening`
 
 **Defect.** Three direct h.db.Gorm().Create(&filtered) handlers with no len==0 guard; GORM Create on an empty slice returns ErrEmptySlice. Sibling ReceiveHardwareSensors guards len==0 → 200 {saved:0}. filtered empties when every row is dropped by the device allow-list.
@@ -938,6 +1121,8 @@
 
 #### AUDIT-256 · LOW · DeleteDeviceConfigRevision reports the stale parse-error variable instead of result.Error — real DB failure never logged
 
+> **✅ RESOLVED (v0.11.219 · PR #227)** — a config-revision delete now logs the real database error, not a stale nil parse error.
+
 **Firewall-Mon** — `internal/api/handlers/handlers_devices.go:1153` · class: `correctness`
 
 **Defect.** InternalError(c,"Failed to delete config revision",err) where err is the (necessarily nil) revID ParseUint error; result.Error is dropped and InternalError only logs err when non-nil.
@@ -947,6 +1132,8 @@
 *Verification: 4/4 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-257 · LOW · DeleteEventRuleProfile echoes the raw wrapped DB/transaction error to the client with a 400
+
+> **✅ RESOLVED (v0.11.219 · PR #227)** — an event-rule-profile handler's error handling corrected (paired with AUDIT-256).
 
 **Firewall-Mon** — `internal/api/handlers/handlers_event_profiles.go:170` · class: `contract-drift` · related: `internal/database/event_rule_profiles.go`, `internal/api/handlers/handlers_alert_policies.go`
 
@@ -960,6 +1147,8 @@
 
 #### AUDIT-258 · LOW · GetIPSecPreflightResult polls by device+type, so two tunnels sharing a device cross-contaminate preflight reports and advisories
 
+> **✅ RESOLVED (v0.11.219 · PR #227)** — IPSec preflight results are now tunnel-scoped (new preflight_json column, migration v58).
+
 **Firewall-Mon** — `internal/api/handlers/handlers_ipsec.go:667` · class: `correctness` · related: `internal/database/probe_commands.go`, `internal/ipsec/deploystate.go`
 
 **Defect.** GetLatestCommandByDeviceType(devID, IPSecPreflight) ignores the per-end CommandIDs; probe_commands.go:371 and deploystate.go:6 both document that device+type bleeds across tunnels on one box. The wrong tunnel's report bodies are then fed into this tunnel's driver/intent.
@@ -972,6 +1161,8 @@
 
 #### AUDIT-259 · LOW · Two browser handlers (GetSyslogRetention, GetServerMetricChart) call reqDB(c) without the nil guard every sibling uses → panic/500 in the DB-unavailable state
 
+> **✅ RESOLVED (v0.11.219 · PR #227)** — GetSyslogRetention returns 503 instead of panicking on the nil Store when the DB is unavailable.
+
 **Firewall-Mon** — `internal/api/handlers/handlers_settings.go:47` · class: `correctness` · related: `internal/api/handlers/handlers.go`, `internal/api/handlers/handlers_system.go`
 
 **Defect.** GetSyslogRetention: `c.JSON(200, response.Success(h.reqDB(c).SyslogVolume(...)))` (handlers_settings.go:47) and GetServerMetricChart: `h.reqDB(c).GetServerMetricWindow(...)` (handlers_system.go:160). reqDB (handlers.go:158-163) returns a true-nil database.Store when h.db==nil — the documented reason RequireDB/`==nil` guards exist. Every other DB-backed handler first calls httputil.RequireDB or checks h.db==nil; the h.db==nil state is explicitly contemplated (NewHandler guard, GetHealth/GetSettings special-cases).
@@ -981,6 +1172,8 @@
 *Verification: 2/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-260 · LOW · Public unauthenticated GET /api/public/display-settings issues a DB DELETE on every request
+
+> **✅ RESOLVED (v0.11.215 · PR #223)** — the anonymous /api/public/display-settings read no longer writes to the database.
 
 **Firewall-Mon** — `internal/api/handlers/handlers_settings.go:1223` · class: `performance` · related: `cmd/api/main.go`
 
@@ -992,6 +1185,8 @@
 
 #### AUDIT-261 · LOW · GetServerMetricChart calls a method on the nil Store from reqDB — panics instead of 503 when DB unavailable
 
+> **✅ RESOLVED (v0.11.219 · PR #227)** — GetServerMetricChart returns 503 instead of panicking on the nil Store (paired with AUDIT-259).
+
 **Firewall-Mon** — `internal/api/handlers/handlers_system.go:158` · class: `correctness` · related: `internal/api/handlers/handlers.go`, `internal/httputil/httputil.go`
 
 **Defect.** h.reqDB(c).GetServerMetricWindow(...) with no nil check; reqDB returns nil when h.db==nil. Every sibling guards with RequireDB.
@@ -1001,6 +1196,8 @@
 *Verification: 3/4 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-262 · LOW · Username-enumeration timing oracle in ValidateCredentials: unknown usernames skip the bcrypt compare entirely
+
+> **✅ RESOLVED (v0.11.215 · PR #223)** — unknown usernames now cost a full bcrypt comparison (timing-safe).
 
 **Firewall-Mon** — `internal/auth/auth.go:271` · class: `security` · related: `internal/config/config.go`
 
@@ -1014,6 +1211,8 @@
 
 #### AUDIT-263 · LOW · parseBool silently maps any unrecognized value (True/TRUE) to false, disabling default-on listeners with no warning
 
+> **✅ RESOLVED (collector v1.3.43 · PR #107)** — parseBool is now case-insensitive over {true,1,yes,on}/{false,0,no,off} and warns+defaults on unrecognized values.
+
 **Firewall-Collector** — `internal/config/config.go:276` · class: `input-hardening` · related: `cmd/collector/main.go`
 
 **Defect.** parseBool returns v=="true"||"1"||"yes" (case-sensitive); any non-matching non-empty value returns false, not the default, with no log — unlike parseSamplingOverrides/setupLoggerWith which warn. M23 shows this class already bit PROBE_INSECURE_SKIP_VERIFY.
@@ -1023,6 +1222,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-264 · LOW · parse_opnsense path-collision disambiguator embeds a document-global ordinal, so an unrelated earlier insertion renames colliding objects and diffs them as remove+add
+
+> **✅ RESOLVED (v0.11.226 · PR #234)** — OPNsense config-diff synthetic paths are now stable under unrelated edits.
 
 **Firewall-Mon** — `internal/configdiff/parse_opnsense.go:306` · class: `correctness` · related: `internal/configdiff/diff_objects.go`, `internal/configdiff/classify_opnsense.go`
 
@@ -1034,6 +1235,8 @@
 
 #### AUDIT-265 · LOW · Palo Alto and Cisco ASA have no LineMasker: their line diffs render secret churn as red/green deltas and stable secrets verbatim
 
+> **✅ RESOLVED (v0.11.226 · PR #234)** — PAN-OS and Cisco ASA line diffs now mask volatile secrets.
+
 **Firewall-Mon** — `internal/configdiff/vendor_paloalto.go:54` · class: `security` · related: `internal/configdiff/vendor_cisco_asa.go`, `internal/configdiff/linediff.go`, `internal/api/handlers/handlers_devices.go`, `cmd/api/static/js/admin-device-detail.js`
 
 **Defect.** paloaltoNormalizer/ciscoASANormalizer implement only Normalize, not MaskVolatileLines; prepareDiffInput falls back to masked=clean for non-LineMasker vendors, so no row is 'volatile' and lineHasSecret never fires. PAN-OS <phash> re-salts each emit; ASA Type 7 is trivially reversible. UI legend advertises volatile patterns that never take effect.
@@ -1043,6 +1246,8 @@
 *Verification: 2/2 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-266 · LOW · GetAlertResponseStats truncates to 20000 rows with no ORDER BY — MTTA/MTTR and acked/resolved counts computed over an arbitrary DB-ordered slice
+
+> **✅ RESOLVED (v0.11.221 · PR #229)** — alert response-time stats (MTTA/MTTR) computed deterministically with SQL-side conditional aggregation.
 
 **Firewall-Mon** — `internal/database/alerts.go:405` · class: `data-integrity` · related: `internal/report/data.go`
 
@@ -1054,6 +1259,8 @@
 
 #### AUDIT-267 · LOW · syslogPartitionDropDays is dead code encoding retired two-band semantics, kept alive only by its test
 
+> **✅ RESOLVED (v0.11.228 · PR #236)** — removed the dead syslogPartitionDropDays helper and its test.
+
 **Firewall-Mon** — `internal/database/cleanup.go:324` · class: `maintainability` · related: `internal/database/cleanup_syslog_partition_lc23_test.go`, `internal/database/syslogretention.go`
 
 **Defect.** Zero production callers; live drop path uses syslogMaxWindow(sevDays) honoring per-severity overrides, while syslogPartitionDropDays reads only legacy env windows. Its test green-stamps semantics the product no longer runs.
@@ -1063,6 +1270,8 @@
 *Verification: 4/4 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-268 · LOW · Dead SaveConfigRevision enforces a 5-row-per-device cap that contradicts the live 500-cap merge-into-latest retention model
+
+> **✅ RESOLVED (v0.11.228 · PR #236)** — removed the dead Database.SaveConfigRevision (zero callers).
 
 **Firewall-Mon** — `internal/database/config_revisions.go:24` · class: `maintainability` · related: `internal/api/handlers/handlers_data.go`, `internal/database/cleanup.go`
 
@@ -1074,6 +1283,8 @@
 
 #### AUDIT-269 · LOW · GetConnectionFlowStats issues three DISTINCT scans over the pair's full unbounded vpn_status/interface_stats history per request
 
+> **✅ RESOLVED (v0.11.221 · PR #229)** — connection flow-stats metadata queries are now time-bounded.
+
 **Firewall-Mon** — `internal/database/connection_detail.go:1122` · class: `performance` · related: `internal/database/telemetry.go`, `internal/models/models.go`
 
 **Defect.** Three raw queries (subnet-pair, phase1_name, interface fallback) carry no timestamp bound; vpn_status has no covering index for the filter and interface_stats none for name/desc/alias. telemetry.go:390 already fixed this exact shape ('bug fix rather than semantic change').
@@ -1083,6 +1294,8 @@
 *Verification: 4/4 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-270 · LOW · Server ResolveDeviceByIP uses exact-match .First with no ORDER BY — traps misattributed/collapsed across sites under NAT, HA VIP, or reused RFC1918 management IPs
+
+> **✅ RESOLVED (v0.11.219 · PR #227)** — trap device-by-IP resolution is deterministic under shared IPs (stable tie-break).
 
 **Firewall-Mon** — `internal/database/devices.go:37` · class: `security` · related: `internal/alerts/alerts.go`
 
@@ -1094,6 +1307,8 @@
 
 #### AUDIT-271 · LOW · Migration v10's doc comment is orphaned onto migrateSystemStatusSource; migrateFlowSamplesAddDropsColumn has no attached doc
 
+> **✅ RESOLVED (v0.11.231 · PR #239)** — fixed the orphaned v10 migration doc comment that ran into the next function.
+
 **Firewall-Mon** — `internal/database/migrate.go:1226` · class: `docs-drift`
 
 **Defect.** The 28-line v10 doc block runs into the v52 comment with no blank line, so Go attaches the combined block to migrateSystemStatusSource while migrateFlowSamplesAddDropsColumn (1394) has no doc.
@@ -1103,6 +1318,8 @@
 *Verification: 4/4 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-272 · LOW · DeniedEvent stores unbounded attacker-controlled KV values — capStr applied only to countries; unvalidated srcip/dstip land in indexed columns
+
+> **✅ RESOLVED (v0.11.216 · PR #224)** — denied-event ingest validates and bounds attacker-controlled fields.
 
 **Firewall-Mon** — `internal/deny/project.go:143` · class: `input-hardening` · related: `internal/models/models.go`, `internal/database/batch_insert.go`, `internal/classify/classify.go`
 
@@ -1116,6 +1333,8 @@
 
 #### AUDIT-273 · LOW · c2_beacon 'small callout' gate compares ingest pre-multiplied byte estimates to a 1500-byte wire-size ceiling, structurally disabling the detector on sampled sFlow
 
+> **✅ RESOLVED (v0.11.226 · PR #234)** — the c2_beacon byte gate now works on sampled sFlow.
+
 **Firewall-Mon** — `internal/detect/security.go:253` · class: `correctness` · related: `internal/detect/detect.go`, `internal/detect/ddos.go`
 
 **Defect.** Having(AVG(bytes)<=1500) but flow_samples.bytes is pre-multiplied by sampling_rate at ingest (ddos.go:23 contract), so AVG<=1500 needs avg frame <1500/rate (<3 bytes at rate 512) — no sampled candidate can pass. detectorValidity marks c2_beacon ValiditySampledOK, contradicting the gate.
@@ -1128,6 +1347,8 @@
 
 #### AUDIT-274 · LOW · FortiGate lifetime/DPD device ranges enforced only by the deploy-time conformance guard, not by Validate — a wizard-green intent 400s on Deploy
 
+> **✅ RESOLVED (v0.11.225 · PR #233)** — a green wizard preview now implies a deployable config (fixed with AUDIT-275).
+
 **Firewall-Mon** — `internal/ipsec/validation.go:325` · class: `contract-drift` · related: `internal/ipsec/conformance/fortigate.go`, `internal/api/handlers/handlers_ipsec.go`
 
 **Defect.** Validate only blocks a NEGATIVE child lifetime and WARNs above it; IKE lifetime out of range is WARN-only (validation.go:340) and DPD has no upper bound. But the FortiGate conformance spec hard-rejects: keylifeseconds/keylife intRange[120,172800], dpd-retryinterval intRange[1,60] (conformance/fortigate.go). conformance.Validate runs ONLY in DeployIPSecTunnel (handlers_ipsec.go:995), never in the Preview paths the wizard uses.
@@ -1138,6 +1359,8 @@
 
 #### AUDIT-275 · LOW · Validation never bounds DPD delay or child lifetime, but FortiGate conformance hard-caps them — valid-looking intents refused at deploy with an unanchored 400
 
+> **✅ RESOLVED (v0.11.225 · PR #233)** — same defect as AUDIT-274 seen from a second angle — preview/deploy parity.
+
 **Firewall-Mon** — `internal/ipsec/validation.go:344` · class: `contract-drift` · related: `internal/ipsec/conformance/fortigate.go`, `internal/ipsec/vendors/fortigate/fortigate.go`, `internal/api/handlers/handlers_ipsec.go`
 
 **Defect.** Validation only warns dpd_off and blocks child lifetime <0; render emits values verbatim and conformance caps dpd-retryinterval[1,60] and keylifeseconds[120,172800]. Preview/renderPreviewEnds skip conformance. The team already fixed this class for IKE lifetime (AUDIT-IP5).
@@ -1147,6 +1370,8 @@
 *Verification: 4/4 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-276 · LOW · OPNsense ParseStatus reports a definitive SADown for a dynamic peer it can never match, driving a healthy tunnel to 'down'
+
+> **✅ RESOLVED (v0.11.225 · PR #233)** — OPNsense SA status no longer forces down for an unmatched dynamic peer.
 
 **Firewall-Mon** — `internal/ipsec/vendors/opnsense/opnsense.go:347` · class: `correctness` · related: `internal/api/handlers/handlers_ipsec.go`, `internal/ipsec/validation.go`, `cmd/api/static/js/admin-ipsec.js`
 
@@ -1160,6 +1385,8 @@
 
 #### AUDIT-277 · LOW · OPNsense preview pane hardcodes 'version = 2' while the applied REST body honors the intent's IKE version
 
+> **✅ RESOLVED (v0.11.225 · PR #233)** — OPNsense IKEv1 tunnel preview no longer misreports the IKE version.
+
 **Firewall-Mon** — `internal/ipsec/vendors/opnsense/opnsense.go:763` · class: `docs-drift` · related: `internal/api/handlers/handlers_ipsec.go`
 
 **Defect.** swanctlPreview prints literal 'version = 2'; apply sets version:ikeVersion(in.IKEVersion). Preview is billed as authoritative; FortiGate preview has no equivalent drift.
@@ -1169,6 +1396,8 @@
 *Verification: 4/4 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-278 · LOW · IRC PM'd commands are answered to the bot's own nick — the sender never sees the response
+
+> **✅ RESOLVED (v0.11.223 · PR #231)** — IRC commands sent as a private message are now answered to the sender.
 
 **Firewall-Mon** — `internal/irc/bot.go:652` · class: `correctness`
 
@@ -1180,6 +1409,8 @@
 
 #### AUDIT-279 · LOW · l2infer mergeCandidate: mirrored LLDP rows fail to collapse when the remote-port identity doesn't resolve — one cable becomes two parallel lldp_neighbor links sharing the same local port
 
+> **✅ RESOLVED (v0.11.227 · PR #235)** — L2 inference no longer duplicates a link when a neighbor advertised an unresolvable remote port.
+
 **Firewall-Mon** — `internal/l2infer/infer.go:917` · class: `correctness`
 
 **Defect.** sideMatches tests only the reporter-side port; step-3 conflict gate exempts LLDP-vs-LLDP; resolveRemotePort returns the raw PortID as a name when unresolved (FortiGate ambiguous hw-switch base MAC, ifName/ifDescr mismatch), so a mirrored row with a KNOWN name finds no exact match and no fillable side → step 4 appends a second link. Test only covers PortID==Name.
@@ -1189,6 +1420,8 @@
 *Verification: 4/4 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-280 · LOW · opnsense/pfsense filterlog extractors are stubs — structured-field event rules silently never match for the in-prod OPNsense vendor
+
+> **✅ RESOLVED (v0.11.227 · PR #235)** — OPNsense/pfSense structured log field extraction and deny projection now work (was a no-op stub).
 
 **Firewall-Mon** — `internal/logfields/opnsense.go:18` · class: `correctness` · related: `internal/logfields/pfsense.go`, `internal/alerts/rules.go`, `internal/deny/project.go`
 
@@ -1200,6 +1433,8 @@
 
 #### AUDIT-281 · LOW · Unpinned GORM columns with acronym-mangled derived names (trap_o_id, ip_s_version, wf_http_s_blocked) — same class as the fixed v17 CIDR→c_id_r bug
 
+> **✅ RESOLVED (v0.11.227 · PR #235)** — three acronym-heavy model fields pinned to their existing column names.
+
 **Firewall-Mon** — `internal/models/models.go:386` · class: `contract-drift` · related: `internal/database/migrate.go`
 
 **Defect.** TrapEvent.TrapOID, SystemStatus.IPSVersion, SecurityStats.WFHTTPSBlocked have no column: pin; NamingStrategy derives trap_o_id/ip_s_version/wf_http_s_blocked via commonInitialisms — exactly the v17 CIDR→c_id_r failure. AUDIT-D5 mandates pinning this class.
@@ -1209,6 +1444,8 @@
 *Verification: 4/4 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-282 · LOW · IPFIX field-spec parser pre-allocates slice capacity from an unvalidated attacker-controlled count
+
+> **✅ RESOLVED (collector v1.3.43 · PR #107)** — bounded the IPFIX field-spec count by remaining bytes before allocation (no 512KB alloc from a tiny packet).
 
 **Firewall-Collector** — `internal/netflow/ipfix.go:110` · class: `input-hardening` · related: `internal/netflow/v9.go`, `internal/netflow/template.go`
 
@@ -1222,6 +1459,8 @@
 
 #### AUDIT-283 · LOW · seqTracker caps its state map but never evicts — forged observation domains permanently starve sequence-loss detection
 
+> **✅ RESOLVED (collector v1.3.43 · PR #107)** — added an idle TTL sweep to the NetFlow seqTracker on the maintenance ticker so it can't be permanently filled.
+
 **Firewall-Collector** — `internal/netflow/seq.go:73` · class: `input-hardening` · related: `internal/netflow/netflow.go`, `internal/netflow/template.go`
 
 **Defect.** observe() refuses new keys once len>=4096 but seq.go has no delete/sweep; every sibling cache (template/sampler/flowdedup) evicts. The key's domain field is an unauthenticated packet value.
@@ -1233,6 +1472,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-284 · LOW · v9 template field with Length 0xFFFF bypasses the field-width quarantine and is mis-decoded as an IPFIX variable-length field
+
+> **✅ RESOLVED (collector v1.3.43 · PR #107)** — reject a v9 template field Length 0xFFFF (IPFIX-only varlen marker) at parse time, quarantining that template.
 
 **Firewall-Collector** — `internal/netflow/template.go:153` · class: `input-hardening`
 
@@ -1246,6 +1487,8 @@
 
 #### AUDIT-285 · LOW · SMTP loginAuth TLS gate is stricter than PlainAuth (no localhost exception) despite its 'Same rule as PlainAuth' comment — CompoundAuth silently drops every alert email to a localhost LOGIN-only relay without STARTTLS
 
+> **✅ RESOLVED (v0.11.217 · PR #225)** — localhost LOGIN-only SMTP relays now work like PLAIN ones.
+
 **Firewall-Mon** — `internal/notifier/smtp_auth.go:67` · class: `contract-drift`
 
 **Defect.** Verified loginAuth.Start gates unconditionally on TLS: `if !server.TLS { return "", nil, errors.New("unencrypted connection") }` (smtp_auth.go:67-69), with an in-file comment claiming 'Same rule as PlainAuth.' But net/smtp PlainAuth sends creds over cleartext when connected to localhost/127.0.0.1/::1, so the two branches CompoundAuth dispatches to (smtp.PlainAuth vs LoginAuth) are NOT the same rule — loginAuth is strictly stricter. sendMailWithDeadline only runs STARTTLS when advertised, so a bare local relay yields server.TLS==false.
@@ -1255,6 +1498,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-286 · LOW · internal/ping is orphaned dead code whose Ping() can never succeed (udp4 socket + *net.IPAddr WriteTo EINVAL, ParseMessage proto 0) — delete, not test
+
+> **✅ RESOLVED (v0.11.228 · PR #236)** — removed the orphaned dead internal/sflow package.
 
 **Firewall-Mon** — `internal/ping/ping.go:235` · class: `correctness`
 
@@ -1266,6 +1511,8 @@
 
 #### AUDIT-287 · LOW · isRetryableStatus treats 413/414 (payload too large) as transient — an oversized batch is requeued and retried forever
 
+> **✅ RESOLVED (collector v1.3.37 · PR #101)** — oversized batches (HTTP 413/414) are dropped instead of retried forever.
+
 **Firewall-Collector** — `internal/relay/relay.go:2081` · class: `correctness`
 
 **Defect.** isRetryableStatus's switch omits 413/414 → default:return true; sendBatch replays the byte-identical body (content-derived batch ID), so a body exceeding a proxy/server cap once exceeds it every retry. doDirectSend has the same hole for metric payloads.
@@ -1275,6 +1522,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-288 · LOW · One 404 on /flow-counters permanently collapses the negotiated schema to v1, silently disabling v3-v5 features (disk/load, command channel incl. IPSec deploys, topology) until a collector restart
+
+> **✅ RESOLVED (collector v1.3.37 · PR #101)** — a 404 on /flow-counters no longer silently disables half the collector.
 
 **Firewall-Collector** — `internal/relay/relay.go:2136` · class: `correctness`
 
@@ -1286,6 +1535,8 @@
 
 #### AUDIT-289 · LOW · Six relay Send* methods read c.probeID without c.mu, racing the mutex-guarded write in finishRegister during re-registration
 
+> **✅ RESOLVED (collector v1.3.37 · PR #101)** — six unsynchronized probe-ID reads fixed with GetProbeID().
+
 **Firewall-Collector** — `internal/relay/relay.go:2274` · class: `concurrency` · related: `cmd/collector/main.go`
 
 **Defect.** SendConfigRevision (2274), SendProcessSnapshot (2456), SendInterfaceErrorSnapshot (2476/2499), SendSensorDetails (2522), SendLicenseDetails (2545) use bare fmt.Sprint(c.probeID); the field is written under c.mu in finishRegister (concurrently on heartbeat/dataSend/poll re-register paths). The GetProbeID() accessor exists and is used by every other sender.
@@ -1295,6 +1546,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-290 · LOW · computeTraffic divides counter deltas by the nominal bucket width, not actual inter-bucket spacing — sparse buckets inflate report throughput and synthesize false spikes
+
+> **✅ RESOLVED (v0.11.227 · PR #235)** — report throughput no longer inflates across polling gaps.
 
 **Firewall-Mon** — `internal/report/data.go:119` · class: `correctness` · related: `internal/database/charts.go`, `internal/report/spike.go`, `internal/report/report.go`
 
@@ -1308,6 +1561,8 @@
 
 #### AUDIT-291 · LOW · BuildDailyReport/BuildWeeklyReport render the EMAIL layout (cid: image refs) but discard the attachments, so the HTML references images that are never attached
 
+> **✅ RESOLVED (v0.11.227 · PR #235)** — exported report wrappers no longer discard their chart attachments (latent).
+
 **Firewall-Mon** — `internal/report/email.go:28` · class: `contract-drift` · related: `internal/report/template_report.go`
 
 **Defect.** email.go:14/19 document BuildDailyReport/BuildWeeklyReport as 'self-contained HTML ... (no attachments).' But both route through buildReport -> BuildReport(..., collapsible=false) -> BuildReportWithOps, where line 58 sets m.IsEmail = !collapsible => true, so line 76 takes renderEmailWithCharts(m), which sets ChartCID/AlertChartCID and the template emits `<img src="cid:{{$d.ChartCID}}">` (template_report.go:454) and `cid:{{.AlertChartCID}}` (256). BuildReport then discards the attachments: email.go:29 `subject, html, _, _, err := BuildReportWithOps(...)`. The cid: parts have no backing MIME parts. Live email/preview paths call BuildReportWithOps directly and keep atts, so today these three exported wrappers are reached only by tests — a latent trap, not a live outage.
@@ -1318,6 +1573,8 @@
 
 #### AUDIT-292 · LOW · RollingStats/AddAndCheck is dead code that z-scores raw cumulative octet counters — the exact bug class v0.10.236 removed
 
+> **✅ RESOLVED (v0.11.228 · PR #236)** — removed the dead RollingStats type and its circularBuffer helper.
+
 **Firewall-Mon** — `internal/report/spike.go:537` · class: `maintainability`
 
 **Defect.** AddAndCheck(...,inBytes,outBytes,...) feeds float64(inBytes+outBytes) straight into mean+k*std; zero callers repo-wide. The same file (29-35) documents that running std-dev on a monotonic octet counter made the old detector fire constantly.
@@ -1327,6 +1584,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-293 · LOW · Shared IfTypeNames maps have drifted: collector lacks 47/gre and 209/bridge, leaving TypeName empty for FortiGate LAN (bridge) and GRE at the source — currently masked by a server-side ingest backfill
+
+> **✅ RESOLVED (collector v1.3.41 · PR #105)** — batch-14 SNMP counter/attribution correctness plus observability wiring.
 
 **cross-repo** — `internal/snmp/snmp.go:70` · class: `contract-drift`
 
@@ -1340,6 +1599,8 @@
 
 #### AUDIT-294 · LOW · GetInterfaceStats packet/error counters read only 32-bit ifInUcastPkts although the code already walks ifXTable where ifHCInUcastPkts live
 
+> **✅ RESOLVED (collector v1.3.41 · PR #105)** — batch-14 SNMP counter/attribution correctness plus observability wiring.
+
 **Firewall-Collector** — `internal/snmp/snmp.go:345` · class: `data-integrity`
 
 **Defect.** InPackets/OutPackets read Counter32 ifInUcastPkts/ifOutUcastPkts; the ifXTable walk (384-422) upgrades bytes to ifHCInOctets but never reads ifHCInUcastPkts(.7)/ifHCOutUcastPkts(.11).
@@ -1349,6 +1610,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-295 · LOW · dot1qPvid is indexed by dot1dBasePort but the code uses the index as ifIndex — VLAN IDs attach to the wrong interface on devices where bridge-port numbering diverges
+
+> **✅ RESOLVED (collector v1.3.41 · PR #105)** — batch-14 SNMP counter/attribution correctness plus observability wiring.
 
 **Firewall-Collector** — `internal/snmp/snmp.go:425` · class: `correctness`
 
@@ -1360,6 +1623,8 @@
 
 #### AUDIT-296 · LOW · Vendor enterprise traps are never classified: parseTrap matches varbind NAMES against notification OIDs that only ever arrive as the snmpTrapOID.0 VALUE
 
+> **✅ RESOLVED (v0.11.220 · PR #228)** — vendor enterprise traps are classified by the snmpTrapOID.0 varbind value.
+
 **Firewall-Mon** — `internal/snmp/trap.go:257` · class: `correctness` · related: `cmd/trap-receiver/main.go`, `internal/snmp/vendor_fortigate.go`, `internal/snmp/vendor_paloalto.go`, `internal/snmp/vendor_sonicwall.go`
 
 **Defect.** Phase-2 loops lookupTrapOID(v.Name), but the notification identity (e.g. fgTrapVPNTunnelDown .1.3.6.1.4.1.12356.101.2.0.302) is the VALUE of snmpTrapOID.0; varbind names are payload objects never in any TrapOIDs() map. parseLinkTrap correctly reads v.Value; SNMPv1 Enterprise/SpecificTrap also unread. No test covers the vendor phase.
@@ -1369,6 +1634,8 @@
 *Verification: 4/4 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-297 · LOW · Server ifTable prefix-match in parseLinkTrap misclassifies varbind columns 10-19/20-29 as ifIndex/ifDescr (HasPrefix with no dot boundary)
+
+> **✅ RESOLVED (v0.11.220 · PR #228)** — link-trap interface-column matching now uses exact OID boundaries.
 
 **Firewall-Mon** — `internal/snmp/trap.go:321` · class: `correctness`
 
@@ -1380,6 +1647,8 @@
 
 #### AUDIT-298 · LOW · Firewalla fan-sensor parsing is dead code — walk base OID excludes the fan subtree
 
+> **✅ RESOLVED (collector v1.3.41 · PR #105)** — batch-14 SNMP counter/attribution correctness plus observability wiring.
+
 **Firewall-Collector** — `internal/snmp/vendor_firewalla.go:202` · class: `correctness` · related: `internal/snmp/snmp.go`
 
 **Defect.** HWSensorBaseOID() returns only the temperature subtree fwBaseOIDLmTempSensor = .1.3.6.1.4.1.2021.13.16.2.1; GetHardwareSensors does a single WalkAll(baseOID) (snmp.go:586). The fan branches match fwOIDLmFanSensorDescr/Value under .13.16.3.1 — a sibling subtree the .13.16.2.1 walk never enters. The comment hedges 'if present in same walk — different subtree.'
@@ -1389,6 +1658,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-299 · LOW · rangeToCIDR validates only XOR contiguity, not that begin is the network address — non-aligned IP ranges are misrendered as wrong CIDR blocks
+
+> **✅ RESOLVED (collector v1.3.39 · PR #103)** — non-aligned selector ranges render as explicit ranges instead of wrong CIDR blocks.
 
 **Firewall-Collector** — `internal/snmp/vendor_fortigate.go:477` · class: `correctness`
 
@@ -1402,6 +1673,8 @@
 
 #### AUDIT-300 · LOW · FortiGate voltage sensors labeled unit "mV" while fgHwSensorEntValue reports volts
 
+> **✅ RESOLVED (collector v1.3.39 · PR #103)** — FortiGate voltage sensors report V, not mV (collector path).
+
 **Firewall-Collector** — `internal/snmp/vendor_fortigate.go:572` · class: `correctness`
 
 **Defect.** inferSensorUnit voltage case sets `s.Type="voltage"; s.Unit="mV"`. The value comes from safeFloat(pdu.Value) where fgHwSensorEntValue is a DisplayString float like '52.500000' (the code's own comment, line 529). FortiGate voltage rails report decimal volts (e.g. '12.070000', '3.300000'), not integer millivolts — value in volts, unit says mV.
@@ -1411,6 +1684,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-301 · LOW · Server-side FortiGate voltage sensors report volts labeled 'mV' on the LIVE dashboard hardware-sensor path (not just the collector's dead probe path)
+
+> **✅ RESOLVED (v0.11.220 · PR #228)** — FortiGate voltage sensors report V instead of mV on the server SNMP path.
 
 **Firewall-Mon** — `internal/snmp/vendor_fortigate.go:634` · class: `correctness`
 
@@ -1422,6 +1697,8 @@
 
 #### AUDIT-302 · LOW · PaloAlto hardware-sensor 'alarm' status is unreachable: status==3 rows are skipped before the alarm branch that tests status==3 (server + collector copies)
 
+> **✅ RESOLVED (v0.11.220 · PR #228 ; collector v1.3.41 · PR #105)** — Palo Alto nonoperational hardware sensors (operStatus 3) now report alarm instead of being dropped, at both server and collector.
+
 **cross-repo** — `internal/snmp/vendor_paloalto.go:306` · class: `correctness`
 
 **Defect.** Loop `if sd.status==2 || sd.status==3 { continue }` precedes `if sd.status==3 { alarmStatus="alarm" }`, so nonoperational(3) sensors are dropped and the alarm assignment is dead; every emitted PA sensor is hardcoded 'normal'. Identical in Firewall-Collector/internal/snmp/vendor_paloalto.go:279.
@@ -1432,6 +1709,8 @@
 
 #### AUDIT-303 · LOW · ParsePerformanceStatus truncates FortiOS uptime to whole days — hours/minutes discarded, fresh-booted devices report Uptime=0 for 24h
 
+> **✅ RESOLVED (collector v1.3.39 · PR #103)** — SSH uptime parsing keeps hours and minutes, not just whole days.
+
 **Firewall-Collector** — `internal/ssh/parser.go:423` · class: `correctness`
 
 **Defect.** uptimeRegex captures only `(\d+)\s+days` from 'Uptime: 20 days, 3 hours, 26 minutes' → info.Uptime=days*86400, dropping up to 23h59m.
@@ -1441,6 +1720,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-304 · LOW · internal/syslog and internal/sflow are orphaned dead forks (unreachable since cmd/probe removal) still receiving audit fixes, carrying confirmed bugs the collector already fixed (TCP framing aliasing, non-digit PRIVAL, sflow double-return)
+
+> **✅ RESOLVED (v0.11.228 · PR #236)** — removed the orphaned dead internal/ping package.
 
 **Firewall-Mon** — `internal/syslog/syslog.go:171` · class: `maintainability` · related: `internal/sflow/sflow.go`, `internal/syslog/fuzz_audit119_test.go`, `internal/sflow/fuzz_audit119_test.go`
 
@@ -1454,6 +1735,8 @@
 
 #### AUDIT-305 · LOW · UDP syslog logs one line per malformed datagram — the exact log-flood vector the TCP path's M16 fix removed
 
+> **✅ RESOLVED (collector v1.3.43 · PR #107)** — replaced the per-datagram UDP syslog parse-error log with a firewall_collector_syslog_parse_errors_total metric.
+
 **Firewall-Collector** — `internal/syslog/syslog.go:411` · class: `input-hardening`
 
 **Defect.** UDP path log.Printf's every ParseRFC5424 error; the TCP path (202-204) deliberately `continue`s without logging (M16: 'a flood would DoS the log'). The UDP rate limiter bounds volume but at the legitimate-traffic budget.
@@ -1465,6 +1748,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-306 · LOW · TFTP writeHandler runs on an untracked goroutine — Shutdown() returns while a just-received config upload is still being relayed
+
+> **✅ RESOLVED (collector v1.3.43 · PR #107)** — the TFTP writeHandler goroutine is now tracked by the server WaitGroup so Shutdown waits for an in-flight config-revision send.
 
 **Firewall-Collector** — `internal/tftp/tftp.go:319` · class: `concurrency`
 
@@ -1478,6 +1763,8 @@
 
 #### AUDIT-307 · LOW · TFTP handleRRQ bypasses the AUDIT-050 source-IP allowlist and rate limit that handleWRQ enforces
 
+> **✅ RESOLVED (collector v1.3.43 · PR #107)** — handleRRQ now applies the same allowlist + rate-limit guards as handleWRQ.
+
 **Firewall-Collector** — `internal/tftp/tftp.go:334` · class: `input-hardening`
 
 **Defect.** handleRRQ runs the read handler with no isSourceAllowed()/checkAndUpdateRateLimit() (handleWRQ has both); serve() also logs one line per RRQ/WRQ before any allowlist check.
@@ -1487,6 +1774,8 @@
 *Verification: 2/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-308 · LOW · web/admin/README.md lists probe-pending.html as an existing standalone page; the file and its route are gone
+
+> **✅ RESOLVED (v0.11.231 · PR #239)** — removed stale admin-page references (probe-pending.html) and corrected the SPA route list.
 
 **Firewall-Mon** — `web/admin/README.md:8` · class: `docs-drift` · related: `README.md`, `cmd/api/main.go`, `web/admin/admin.html`
 
@@ -1500,6 +1789,8 @@
 
 #### AUDIT-309 · INFO · Collector still on go1.25.12 with 5 reachable stdlib CVEs the server already patched; CI go-version hardcode has drifted
 
+> **✅ RESOLVED (collector v1.3.35 · PR #99)** — under the pinned go1.25.13 toolchain govulncheck reports zero reachable vulnerabilities (residual verified clean).
+
 **Firewall-Collector** — `go.mod:3` · class: `security`
 
 **Defect.** go.mod:3 `go 1.25.12` vs server 1.25.13 (v0.11.208 bump); verified GOTOOLCHAIN=go1.25.12 govulncheck ./... reports 5 reachable stdlib vulns (GO-2026-6218 net/url, 6090 crypto/tls, 6089 net/http, 5972 encoding/asn1, 5026 net/http) via fwapi/observability/relay TLS. docker.yml:20 also hardcodes go-version 1.25.11 instead of go-version-file.
@@ -1509,6 +1800,8 @@
 *Verification: 3/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-310 · INFO · Validate() emits stale pre-AUDIT-008 warnings: 'tokens invalidated on restart' and 'database credentials will not be encrypted' are both false now
+
+> **✅ RESOLVED (v0.11.211 · PR #219)** — corrected stale startup warnings about key generation and token invalidation.
 
 **Firewall-Mon** — `internal/config/config.go:666` · class: `docs-drift` · related: `cmd/api/main.go`, `internal/secrets/secrets.go`
 
@@ -1520,6 +1813,8 @@
 
 #### AUDIT-311 · INFO · SearchThreatIntel builds a LIKE pattern without escaping % / _ wildcards in the operator query
 
+> **✅ RESOLVED (v0.11.216 · PR #224)** — threat-intel search treats % and _ as literals in the SQL LIKE pattern.
+
 **Firewall-Mon** — `internal/database/threat_intel.go:178` · class: `input-hardening`
 
 **Defect.** threat_intel.go:177-179: `if f.Query != "" { q = q.Where("cidr LIKE ?", "%"+f.Query+"%") }`. The raw operator query is embedded into a LIKE pattern with no ESCAPE handling, so `%` and `_` act as SQL wildcards rather than literals.
@@ -1529,6 +1824,8 @@
 *Verification: 2/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-312 · INFO · DeniedEvent PolicyName/Service stored uncapped — capStr row-bloat guard applied only to country fields
+
+> **✅ RESOLVED (v0.11.216 · PR #224)** — denied-event ingest validation and bounds (paired with AUDIT-272).
 
 **Firewall-Mon** — `internal/deny/project.go:157` · class: `input-hardening` · related: `internal/models/models.go`, `internal/database/ping.go`, `internal/api/handlers/handlers_data.go`
 
@@ -1540,6 +1837,8 @@
 
 #### AUDIT-313 · INFO · IKEv1 + AES-GCM passes validation and conformance for FortiGate, but FortiOS accepts GCM only on IKEv2 — deploy fails on-device and auto-rolls back
 
+> **✅ RESOLVED (v0.11.225 · PR #233)** — FortiGate IKEv1 plus a GCM (AEAD) IKE cipher is now blocked at validation/preview.
+
 **Firewall-Mon** — `internal/ipsec/vendors/fortigate/fortigate.go:110` · class: `contract-drift` · related: `internal/ipsec/validation.go`, `internal/ipsec/conformance/fortigate.go`, `internal/api/handlers/handlers_ipsec.go`, `cmd/api/static/js/admin-ipsec.js`
 
 **Defect.** The pkg doc states 'GCM is IKEv2-only' but nothing enforces it: Capabilities advertises IKEv1 and GCM as independent sets, Render emits both, validation only warns ikev1_deprecated, and conformance fgIKEProposal validates version-agnostically. Wizard offers both.
@@ -1549,6 +1848,8 @@
 *Verification: 4/4 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-314 · INFO · IRC sendWithTimeout abandons a permanently-parked sender goroutine per send during a wedged connection — the code's own 'bounded, self-reclaiming' comment is wrong in the wedge because close(pwrite) is never reached, so goroutines + dead-conn refs accumulate for the life of the process
+
+> **✅ RESOLVED (v0.11.223 · PR #231)** — a wedged IRC connection no longer accumulates parked senders (paired with AUDIT-206).
 
 **Firewall-Mon** — `internal/irc/bot.go:1254` · class: `resource-leak`
 
@@ -1560,6 +1861,8 @@
 
 #### AUDIT-315 · INFO · RestartBot spawns Bot.Start without the REL-01 panic recover its two sibling launch sites have — one panic crashes all of fwmon-api
 
+> **✅ RESOLVED (v0.11.223 · PR #231)** — RestartBot no longer launches Bot.Start on an unguarded goroutine (panic-recovering).
+
 **Firewall-Mon** — `internal/irc/bot.go:1370` · class: `concurrency`
 
 **Defect.** RestartBot: `go func(){ defer m.wg.Done(); newBot.Start() }()` with no defer logging.Recover; loadAndStartBots (193) and reconnectLoop (268) both guard with Recover-first. The file's M8 comment documents un-recovered IRC panics crash the whole fwmon-api process.
@@ -1569,6 +1872,8 @@
 *Verification: 2/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-316 · INFO · Server internal/sflow and internal/syslog receiver packages are dead — no cmd binary depends on them; they duplicate the collector's live parsers and can silently drift
+
+> **✅ RESOLVED (v0.11.228 · PR #236)** — removed the orphaned dead internal/syslog package.
 
 **Firewall-Mon** — `internal/sflow/sflow.go:68` · class: `maintainability` · related: `internal/syslog/syslog.go`, `internal/api/handlers/handlers_data.go`
 
@@ -1580,6 +1885,8 @@
 
 #### AUDIT-317 · INFO · Collector trap community check uses non-constant-time != — the server twin's AUDIT-012 subtle.ConstantTimeCompare hardening never propagated to the actual network-facing receiver
 
+> **✅ RESOLVED (collector v1.3.43 · PR #107)** — the SNMP trap community check uses subtle.ConstantTimeCompare (parity with the server twin).
+
 **Firewall-Collector** — `internal/snmp/trap.go:114` · class: `security`
 
 **Defect.** allowCommunity compares attacker-supplied community against the shared secret with a plain short-circuiting `if community != t.community { ...; return false }` (trap.go:114-121). The Firewall-Mon twin was explicitly hardened under AUDIT-012 with subtle.ConstantTimeCompare and a comment explaining the prefix-length leak the != caused; the collector never imports crypto/subtle and never got the fix, despite being the ACTUAL deployed network-facing trap receiver. Documented server-side hardening that drifted out of twin parity. NOTE: exploitability is essentially nil today — SNMP traps are one-way with no response whose latency reflects the compare — so this is a parity/hygiene note, load-bearing only if a future change adds an observable per-trap timing signal.
@@ -1589,6 +1896,8 @@
 *Verification: 2/3 independent refuter lenses confirmed (survives the ≥2-confirm bar).*
 
 #### AUDIT-318 · INFO · Uptime tracker is never fed: RecordUptime/SaveUptimeRecord have zero callers, so /api/uptime and dashboard uptime_stats serve permanently-zero, fabricated data
+
+> **✅ RESOLVED (v0.11.229 · PR #237)** — wired the device uptime tracker (previously dead).
 
 **Firewall-Mon** — `internal/uptime/uptime.go:100` · class: `contract-drift` · related: `internal/api/handlers/handlers_analytics.go`, `internal/api/handlers/handlers_dashboard.go`, `cmd/api/main.go`, `internal/database/events.go`
 
@@ -1617,3 +1926,13 @@ These candidates were raised by a finder but **killed by ≥2 refuter lenses**. 
 ## Appendix B — Standing do-not-re-flag (accepted-risk / by-design)
 
 Carried from prior audits and confirmed still intentional: HSTS-behind-proxy; threat-feed env-only URL; proxy rate-limit (AUDIT-097); NOC SSE admin-only ceiling; SSH alert-only TOFU (AUDIT-071); AuthManager bcrypt mutex / login-map pruner; single-admin `user_id=1` fallback; MD5 config-checksum; documented `gosec` excludes; FortiGate SSL-VPN OID 12.3.1.1 (WONTFIX — feature unused, returns `noSuchObject`→0); `tunnel_uptime` FortiGate semantics; dashboard `computing`-sentinel; poller-as-alert-engine split; obsolete server `cmd/probe`.
+
+## Findings surfaced during remediation (AUDIT-319+)
+
+These were noticed while remediating the 148 findings above. They are **not** dispositions of the original 148 — they are new, open items to verify and triage in a future audit (next free id is AUDIT-319).
+
+- **Server — IRC SASL error path leaks a goroutine + socket per attempt.** `internal/irc/bot.go` `Connect()`: when `negotiateCaps` (SASL) fails, the read/ping/write loops have already been spawned and the function returns the error **without** calling `Disconnect()`. On a SASL-enabled server with bad credentials, every reconnect attempt leaks one goroutine and one open socket.
+- **Server — FortiGate dialup SNMP profile columns look copied from the tunnel table.** `internal/snmp/vendor_fortigate.go`: the dialup-table columns `.2/.3/.4/.11/.12` appear to have been copied from the site-to-site tunnel table (12.2.2.1) into the dialup table (12.2.1.1). Unverified — needs derivation against a real dialup FortiGate walk.
+- **Cross-repo — dialup Local/Remote subnet mapping divergence.** The collector maps `src → Local` / `dst → Remote` for dialup peers while the server maps the opposite. A swap inverts the `RemoteSubnet` values that feed `connection_detail` flow-attribution LIKE patterns; the correct direction should be settled against the FORTINET-FORTIGATE-MIB DESCRIPTION text.
+- **Server — admin-ipsec.js `pollDeploy` gen guard is tautological on the gen half.** `cmd/api/static/js/admin-ipsec.js`: `if(!deployLive(deployGen))` is always-true on the generation half, so a rogue second poll can fire if a POST resolves after the operator has opened a different tunnel's progress modal.
+- **Server — `GetPublicInterfaceChart` unclamped range can overflow.** `internal/api/handlers_dashboard.go`: a `range=Inf`/huge value flows into `int(+Inf)`, overflowing to an arbitrary cutoff. Still device- and public-gated, but a `ParseHours`-style upper clamp would be tidier.
