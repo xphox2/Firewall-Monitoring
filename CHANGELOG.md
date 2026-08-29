@@ -1,7 +1,7 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
-## [0.11.217] - 2026-08-28
+## [0.11.217] - 2026-08-29
 
 ### Fixed
 
