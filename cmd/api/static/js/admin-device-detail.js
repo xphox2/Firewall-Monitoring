@@ -2518,7 +2518,8 @@
     // treats tunnel_uptime as SECONDS (its actual unit). The former local
     // helper here divided by 100 — a leftover that rendered a 53-minute
     // OPNsense tunnel as "0m" — and was the one renderer missed in the
-    // shared-helper conversion. Kept as a thin alias for any late caller.
+    // shared-helper conversion. Retained as a thin delegating alias (no
+    // current callers) to avoid a wider rename in this display-only fix.
     function formatVpnUptime(seconds) {
         return AC.formatTunnelUptime(seconds);
     }
