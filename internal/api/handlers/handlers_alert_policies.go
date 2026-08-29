@@ -27,6 +27,9 @@ func (h *Handler) ListAlertPolicies(c *gin.Context) {
 		return
 	}
 
+	// AUDIT-249: per-policy webhook URLs are postable bearer credentials and
+	// this GET is viewer-visible — mask them like every other read path.
+	httputil.RedactAlertPolicies(policies)
 	c.JSON(http.StatusOK, response.Success(policies))
 }
 
@@ -46,6 +49,8 @@ func (h *Handler) GetAlertPolicy(c *gin.Context) {
 		return
 	}
 
+	// AUDIT-249: mask the webhook URLs on this read path too.
+	httputil.RedactAlertPolicy(policy)
 	c.JSON(http.StatusOK, response.Success(policy))
 }
 
@@ -73,6 +78,15 @@ func (h *Handler) CreateAlertPolicy(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("Invalid escalation steps: %v", err)))
 		return
 	}
+	// AUDIT-249: a literal mask on CREATE can only be a client bug — there is
+	// no stored value to preserve, and storing it would make "********" the
+	// live webhook URL.
+	if policy.SlackWebhookURL == httputil.RedactedMask ||
+		policy.DiscordWebhookURL == httputil.RedactedMask ||
+		policy.WebhookURL == httputil.RedactedMask {
+		c.JSON(http.StatusBadRequest, response.Error("Webhook URL must be a real URL, not the redacted placeholder"))
+		return
+	}
 
 	policy.ID = 0
 	if err := db.CreateAlertPolicy(&policy); err != nil {
@@ -81,6 +95,8 @@ func (h *Handler) CreateAlertPolicy(c *gin.Context) {
 	}
 	h.refreshAlertConfigCache(db)
 
+	// AUDIT-249: mask the response copy like every other policy read.
+	httputil.RedactAlertPolicy(&policy)
 	c.JSON(http.StatusCreated, response.Success(policy))
 }
 
@@ -113,12 +129,29 @@ func (h *Handler) UpdateAlertPolicy(c *gin.Context) {
 
 	policy.ID = existing.ID
 	policy.CreatedAt = existing.CreatedAt
+	// AUDIT-249 preserve-on-write: reads mask the webhook URLs, the admin UI
+	// round-trips every field, and db.UpdateAlertPolicy is a full-column Save
+	// — so without this restore, the FIRST save of any policy after the mask
+	// landed would overwrite every stored webhook with "********" (the exact
+	// mask-overwrite bug class documented on httputil.RedactedMask).
+	if policy.SlackWebhookURL == httputil.RedactedMask {
+		policy.SlackWebhookURL = existing.SlackWebhookURL
+	}
+	if policy.DiscordWebhookURL == httputil.RedactedMask {
+		policy.DiscordWebhookURL = existing.DiscordWebhookURL
+	}
+	if policy.WebhookURL == httputil.RedactedMask {
+		policy.WebhookURL = existing.WebhookURL
+	}
 	if err := db.UpdateAlertPolicy(&policy); err != nil {
 		httputil.InternalError(c, "Failed to update alert policy", err)
 		return
 	}
 	h.refreshAlertConfigCache(db)
 
+	// Mask the response copy (in memory only — the row is already saved):
+	// a save must not become the read path that hands the live URLs back.
+	httputil.RedactAlertPolicy(&policy)
 	c.JSON(http.StatusOK, response.Success(policy))
 }
 
@@ -190,6 +223,12 @@ func (h *Handler) CloneAlertPolicy(c *gin.Context) {
 
 	// Reload with rules
 	result, _ := db.GetAlertPolicy(clone.ID)
+	// AUDIT-249: the clone COPIES the source's live webhook URLs straight from
+	// the DB (correct — no masked client payload is involved), but the
+	// response is a read and gets the mask like every other.
+	if result != nil {
+		httputil.RedactAlertPolicy(result)
+	}
 	c.JSON(http.StatusCreated, response.Success(result))
 }
 
@@ -223,6 +262,10 @@ func (h *Handler) BatchUpsertAlertRules(c *gin.Context) {
 
 	// Reload policy with rules
 	policy, _ := db.GetAlertPolicy(id)
+	// AUDIT-249: mask the webhook URLs on this read path too.
+	if policy != nil {
+		httputil.RedactAlertPolicy(policy)
+	}
 	c.JSON(http.StatusOK, response.Success(policy))
 }
 

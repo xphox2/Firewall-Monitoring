@@ -163,6 +163,18 @@ func (h *Handler) Setup2FA(c *gin.Context) {
 		return
 	}
 
+	// AUDIT-199: SetAdminTOTP below writes enabled=false, so re-running setup
+	// against an ENROLLED account would silently strip the second factor with
+	// the password alone — exactly the downgrade Disable2FA exists to prevent
+	// (it demands password AND a current code). Reject instead of staging: the
+	// admin UI never offers setup while enrolled (admin-profile.js renders only
+	// the Disable form), and admin-driven resets go through the separate
+	// /users/:id/reset-2fa route.
+	if admin.TOTPEnabled {
+		c.JSON(http.StatusConflict, response.Error("Two-factor authentication is already enabled. Disable it first (password + current code) to re-enroll."))
+		return
+	}
+
 	key, err := totp.Generate(totp.GenerateOpts{
 		Issuer:      "Firewall-Mon",
 		AccountName: username,
