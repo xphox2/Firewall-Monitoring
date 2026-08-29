@@ -156,8 +156,15 @@ func (h *Handler) buildSystemHealth(ctx context.Context, db database.Store) gin.
 // stay null all the way to the client, so the chart omits them rather than
 // drawing a 0%-used flatline.
 func (h *Handler) GetServerMetricChart(c *gin.Context) {
+	// AUDIT-261: reqDB(c) returns a nil Store when the DB is unavailable; guard it
+	// so the nil-receiver GetServerMetricWindow call returns 503 instead of
+	// panicking.
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
 	from, to := httputil.ParseChartWindow(c, "24h")
-	rows, err := h.reqDB(c).GetServerMetricWindow(from, to)
+	rows, err := db.GetServerMetricWindow(from, to)
 	if err != nil {
 		httputil.InternalError(c, "Failed to get server metrics", err)
 		return

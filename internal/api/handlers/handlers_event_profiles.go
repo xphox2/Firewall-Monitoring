@@ -167,7 +167,15 @@ func (h *Handler) DeleteEventRuleProfile(c *gin.Context) {
 		return
 	}
 	if err := db.DeleteEventRuleProfile(id); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error(err.Error()))
+		// AUDIT-257: match only the known domain validation string (400); route
+		// every other error — wrapped gorm.ErrRecordNotFound, driver text, bare
+		// transaction failures — through InternalError so internal detail is logged
+		// server-side, not echoed to the client. Mirrors DeleteAlertPolicy.
+		if err.Error() == "cannot delete the Default event rule profile" {
+			c.JSON(http.StatusBadRequest, response.Error(err.Error()))
+		} else {
+			httputil.InternalError(c, "Failed to delete event rule profile", err)
+		}
 		return
 	}
 	h.refreshAlertConfigCache(db)

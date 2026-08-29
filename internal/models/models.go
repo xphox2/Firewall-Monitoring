@@ -1175,6 +1175,13 @@ type IPSecTunnel struct {
 	// from API JSON; carries no secrets.
 	DeployJSON string `json:"-" gorm:"type:text"`
 
+	// PreflightJSON records the per-end preflight command IDs of the most recent
+	// preflight run (AUDIT-258), so GetIPSecPreflightResult polls the EXACT command
+	// for each end (tunnel-scoped) instead of the device's latest preflight command
+	// — which, on a hub device terminating two tunnels, would return the other
+	// tunnel's collision report. Same pattern as DeployJSON; carries no secrets.
+	PreflightJSON string `json:"-" gorm:"type:text"`
+
 	LastDeployedAt *time.Time `json:"last_deployed_at"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`

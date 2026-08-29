@@ -46,6 +46,24 @@ type DeployEndState struct {
 	RollbackUnproven bool `json:"rollback_unproven,omitempty"`
 }
 
+// PreflightState is the per-preflight record persisted on a tunnel row
+// (models.IPSecTunnel.PreflightJSON). Like DeployState it makes preflight status
+// polling TUNNEL-SCOPED: it records the exact per-end preflight command ID from
+// the latest run so GetIPSecPreflightResult reads each end's own command
+// (GetProbeCommandByCommandID) rather than the device's latest preflight command,
+// which would bleed across two tunnels on one box. It carries NO secrets.
+type PreflightState struct {
+	EnqueuedAt string              `json:"enqueued_at,omitempty"`
+	Ends       []PreflightEndState `json:"ends"`
+}
+
+// PreflightEndState records one end's preflight command for the latest run.
+type PreflightEndState struct {
+	End       int    `json:"end"`
+	DeviceID  uint   `json:"device_id"`
+	CommandID string `json:"command_id"`
+}
+
 // RollbackState records the in-flight/last rollback so its terminal status is
 // poll-driven (never set at POST time). Auto is set when the server triggered a
 // compensating rollback after a partial/failed deploy (vs an operator POST).

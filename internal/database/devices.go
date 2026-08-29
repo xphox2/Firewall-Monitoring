@@ -31,15 +31,22 @@ func (d *Database) GetDevice(id uint) (*models.Device, error) {
 }
 
 // ResolveDeviceByIP finds a device ID by management IP or interface address.
+//
+// AUDIT-270: both lookups pin a deterministic ORDER BY. A management IP is not
+// unique (NAT, an HA VIP, or a reused RFC1918 management IP can appear on more
+// than one device), and .First with no ordering returns a storage-order-dependent
+// row — so the same trap could be misattributed to different devices across
+// restarts/plan changes. Ordering by the lowest id makes a shared IP always
+// resolve to the same device.
 func (d *Database) ResolveDeviceByIP(ip string) uint {
 	// Check management IP first
 	var device models.Device
-	if err := d.db.Where("ip_address = ?", ip).Select("id").First(&device).Error; err == nil {
+	if err := d.db.Where("ip_address = ?", ip).Order("id ASC").Select("id").First(&device).Error; err == nil {
 		return device.ID
 	}
 	// Check interface addresses
 	var addr models.InterfaceAddress
-	if err := d.db.Where("ip_address = ?", ip).Select("device_id").First(&addr).Error; err == nil {
+	if err := d.db.Where("ip_address = ?", ip).Order("device_id ASC").Select("device_id").First(&addr).Error; err == nil {
 		return addr.DeviceID
 	}
 	return 0
@@ -62,7 +69,9 @@ func (d *Database) ResolveDevicesByIPs(ips []string) map[string]uint {
 		ID        uint
 		IPAddress string
 	}
-	d.db.Model(&models.Device{}).Select("id", "ip_address").Where("ip_address IN ?", ips).Scan(&devices)
+	// AUDIT-270: order by id so a shared management IP resolves to the same lowest-
+	// id device as ResolveDeviceByIP (the first-match guard below then keeps it).
+	d.db.Model(&models.Device{}).Select("id", "ip_address").Where("ip_address IN ?", ips).Order("id ASC").Scan(&devices)
 	for _, dev := range devices {
 		if dev.IPAddress != "" && result[dev.IPAddress] == 0 {
 			result[dev.IPAddress] = dev.ID
@@ -81,7 +90,7 @@ func (d *Database) ResolveDevicesByIPs(ips []string) map[string]uint {
 			DeviceID  uint
 			IPAddress string
 		}
-		d.db.Model(&models.InterfaceAddress{}).Select("device_id", "ip_address").Where("ip_address IN ?", remaining).Scan(&addrs)
+		d.db.Model(&models.InterfaceAddress{}).Select("device_id", "ip_address").Where("ip_address IN ?", remaining).Order("device_id ASC").Scan(&addrs)
 		for _, a := range addrs {
 			if a.IPAddress != "" && result[a.IPAddress] == 0 {
 				result[a.IPAddress] = a.DeviceID

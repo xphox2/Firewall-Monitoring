@@ -120,6 +120,22 @@ func (h *Handler) GetAlerts(c *gin.Context) {
 		return
 	}
 
+	// AUDIT-251: reject a non-numeric value for the uint filter columns up front —
+	// binding it raw (as this listing did, unlike GetFlowSamples which the L24 fix
+	// already hardened) throws 22P02 → 500 on Postgres, while SQLite silently
+	// matches nothing. site_id additionally accepts the "unassigned" sentinel.
+	// alert_type/severity are string columns and stay raw.
+	if msg := validateNumericFilter(c, "device_id"); msg != "" {
+		c.JSON(http.StatusBadRequest, response.Error(msg))
+		return
+	}
+	if v := c.Query("site_id"); v != "" && v != "unassigned" {
+		if _, err := strconv.ParseUint(v, 10, 32); err != nil {
+			c.JSON(http.StatusBadRequest, response.Error("Invalid site_id"))
+			return
+		}
+	}
+
 	limit, offset := httputil.ParsePagination(c)
 
 	query := applyAlertFilters(c, db.Gorm().Order("timestamp DESC").Limit(limit).Offset(offset))
@@ -131,10 +147,31 @@ func (h *Handler) GetAlerts(c *gin.Context) {
 	}
 	enrichAlertsDeviceSite(db.Gorm(), alerts)
 
+	// AUDIT-193: surface a count-query failure as a 500 (mirroring the Find above)
+	// instead of discarding .Error — a transient count failure otherwise returned
+	// 200 with total:0 alongside a populated page, so the pager read "0 results".
 	var total int64
-	applyAlertFilters(c, db.Gorm().Model(&models.Alert{})).Count(&total)
+	if err := applyAlertFilters(c, db.Gorm().Model(&models.Alert{})).Count(&total).Error; err != nil {
+		httputil.InternalError(c, "Failed to count alerts", err)
+		return
+	}
 
 	c.JSON(http.StatusOK, response.Success(gin.H{"alerts": alerts, "total": total}))
+}
+
+// validateNumericFilter returns "" when the named query parameter is absent or a
+// valid uint, or an "Invalid <name>" message otherwise. It rejects non-numeric
+// values before they are bound against a uint column, which raises 22P02 (500) on
+// Postgres (SQLite silently matches nothing). AUDIT-251.
+func validateNumericFilter(c *gin.Context, name string) string {
+	v := c.Query(name)
+	if v == "" {
+		return ""
+	}
+	if _, err := strconv.ParseUint(v, 10, 32); err != nil {
+		return "Invalid " + name
+	}
+	return ""
 }
 
 // enrichAlertsDeviceSite fills each alert's transient DeviceName/SiteName from its
@@ -384,6 +421,13 @@ func (h *Handler) GetTraps(c *gin.Context) {
 		return
 	}
 
+	// AUDIT-251: reject a non-numeric device_id before binding it against the uint
+	// column (22P02/500 on Postgres). severity and trap_type are string columns.
+	if msg := validateNumericFilter(c, "device_id"); msg != "" {
+		c.JSON(http.StatusBadRequest, response.Error(msg))
+		return
+	}
+
 	limit, offset := httputil.ParsePagination(c)
 
 	query := db.Gorm().Order("timestamp DESC").Limit(limit).Offset(offset)
@@ -411,6 +455,18 @@ func (h *Handler) GetSyslogMessages(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
 		c.JSON(http.StatusOK, response.Success(gin.H{"messages": []models.SyslogMessage{}, "total": 0}))
+		return
+	}
+
+	// AUDIT-251: reject non-numeric probe_id/device_id before binding them against
+	// the uint columns (22P02/500 on Postgres). severity is already strconv-parsed
+	// below; the search filter is a string.
+	if msg := validateNumericFilter(c, "probe_id"); msg != "" {
+		c.JSON(http.StatusBadRequest, response.Error(msg))
+		return
+	}
+	if msg := validateNumericFilter(c, "device_id"); msg != "" {
+		c.JSON(http.StatusBadRequest, response.Error(msg))
 		return
 	}
 
@@ -456,8 +512,14 @@ func (h *Handler) GetSyslogMessages(c *gin.Context) {
 		return
 	}
 
+	// AUDIT-193: surface a count-query failure as a 500 (mirroring the Find above)
+	// instead of discarding .Error, so the pager total can never read 0 alongside
+	// a populated page when the count query transiently fails.
 	var total int64
-	applyFilters(db.Gorm().Model(&models.SyslogMessage{})).Count(&total)
+	if err := applyFilters(db.Gorm().Model(&models.SyslogMessage{})).Count(&total).Error; err != nil {
+		httputil.InternalError(c, "Failed to count syslog messages", err)
+		return
+	}
 
 	c.JSON(http.StatusOK, response.Success(gin.H{"messages": messages, "total": total}))
 }

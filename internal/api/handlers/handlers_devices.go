@@ -92,6 +92,16 @@ func (h *Handler) CreateDevice(c *gin.Context) {
 		return
 	}
 
+	// AUDIT-197: validate the assigned site exists so a bad site_id is a clear 400
+	// rather than an opaque FK-violation 500. site_id 0/nil is the legitimate
+	// "unassigned" case and stays allowed.
+	if device.SiteID != nil && *device.SiteID > 0 {
+		if _, err := db.GetSite(*device.SiteID); err != nil {
+			c.JSON(http.StatusBadRequest, response.Error("Site not found"))
+			return
+		}
+	}
+
 	device.ID = 0
 	device.Status = "unknown"
 	device.CreatedAt = time.Time{}
@@ -233,6 +243,24 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 		if pf > 0 {
 			if _, err := db.GetProbe(uint(pf)); err != nil {
 				c.JSON(http.StatusBadRequest, response.Error("Target probe not found"))
+				return
+			}
+		}
+	}
+
+	// AUDIT-197: validate the target site the same way (mirror of the probe_id
+	// block above and UpdateProbe's site_id check). Without it, reassigning to a
+	// non-existent site fails with an opaque FK-violation 500 that rolls back the
+	// whole update. A nil/0 value is the explicit "unassign" case and is allowed.
+	if siteVal, ok := filteredUpdates["site_id"]; ok && siteVal != nil {
+		sf, isNum := siteVal.(float64) // JSON numbers decode as float64
+		if !isNum || sf < 0 || sf != float64(int(sf)) {
+			c.JSON(http.StatusBadRequest, response.Error("Invalid site ID"))
+			return
+		}
+		if sf > 0 {
+			if _, err := db.GetSite(uint(sf)); err != nil {
+				c.JSON(http.StatusBadRequest, response.Error("Site not found"))
 				return
 			}
 		}
@@ -964,8 +992,14 @@ func (h *Handler) GetDeviceConfigHistory(c *gin.Context) {
 	// older clients but is now a no-op (every row is already distinct).
 	const displayLimit = 100
 
+	// AUDIT-193: surface a count-query failure as a 500 (mirroring the Find below)
+	// instead of discarding .Error, so total_all can never report 0 alongside a
+	// populated revisions page when the count query transiently fails.
 	var totalAll int64
-	db.Gorm().Model(&models.DeviceConfigRevision{}).Where("device_id = ?", uint(id)).Count(&totalAll)
+	if err := db.Gorm().Model(&models.DeviceConfigRevision{}).Where("device_id = ?", uint(id)).Count(&totalAll).Error; err != nil {
+		httputil.InternalError(c, "Failed to count config revisions", err)
+		return
+	}
 
 	var revisions []models.DeviceConfigRevision
 	if err := db.Gorm().Where("device_id = ?", uint(id)).
@@ -1152,7 +1186,10 @@ func (h *Handler) DeleteDeviceConfigRevision(c *gin.Context) {
 
 	result := db.Gorm().Where("id = ? AND device_id = ?", uint(revID), uint(id)).Delete(&models.DeviceConfigRevision{})
 	if result.Error != nil {
-		httputil.InternalError(c, "Failed to delete config revision", err)
+		// AUDIT-256: log/surface result.Error, not the stale `err` (the revID
+		// strconv error, which is nil here) — otherwise the real DB failure was
+		// neither logged nor reflected in the 500.
+		httputil.InternalError(c, "Failed to delete config revision", result.Error)
 		return
 	}
 	if result.RowsAffected == 0 {

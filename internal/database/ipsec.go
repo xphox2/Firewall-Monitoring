@@ -278,6 +278,16 @@ func (d *Database) SetIPSecRollbackState(id uint, status, deployJSON string) err
 		Updates(map[string]interface{}{"status": status, "deploy_json": deployJSON}).Error
 }
 
+// SetIPSecPreflightState records the per-end preflight command IDs on the tunnel
+// (AUDIT-258). Written after the preflight commands are enqueued so the status
+// poll can read each end's OWN command by ID (tunnel-scoped) rather than the
+// device's latest preflight command. Touches only preflight_json — never status
+// or deploy_json, so it is independent of the deploy saga.
+func (d *Database) SetIPSecPreflightState(id uint, preflightJSON string) error {
+	return d.db.Model(&models.IPSecTunnel{}).Where("id = ?", id).
+		Update("preflight_json", preflightJSON).Error
+}
+
 // TransitionIPSecDeploy atomically (1) UPDATEs the tunnel's status + last_error +
 // deploy_json (+ last_deployed_at when setDeployedAt), guarded on its current
 // status being in fromStatuses (optimistic lock — 0 rows affected ⇒

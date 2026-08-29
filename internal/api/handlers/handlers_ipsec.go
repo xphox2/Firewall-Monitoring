@@ -566,6 +566,11 @@ func (h *Handler) PreflightIPSecTunnel(c *gin.Context) {
 	}
 	deviceIDs := [2]uint{m.ADeviceID, m.BDeviceID}
 	enqueued := make([]ipsecPreflightEnqueued, 0, 2)
+	// AUDIT-258: record each end's preflight command ID so the status poll reads
+	// the EXACT command for this tunnel, not the device's latest preflight command
+	// (which bleeds across two tunnels sharing a hub device). Same pattern as the
+	// deploy path's DeployState.
+	pfEnds := make([]ipsec.PreflightEndState, 0, 2)
 	for i := range intent.Ends {
 		dev, derr := db.GetDevice(deviceIDs[i])
 		if derr != nil {
@@ -612,20 +617,36 @@ func (h *Handler) PreflightIPSecTunnel(c *gin.Context) {
 			httputil.InternalError(c, "Failed to build preflight payload", merr)
 			return
 		}
+		// Pre-generate the CommandID (honored by EnqueueProbeCommand) so it can be
+		// recorded on the tunnel below, exactly as the deploy path does.
+		commandID := uuid.NewString()
 		cmd := &models.ProbeCommand{
-			ProbeID:  *dev.ProbeID,
-			DeviceID: dev.ID,
-			Type:     database.ProbeCommandTypeIPSecPreflight,
-			Payload:  string(buf),
+			ProbeID:   *dev.ProbeID,
+			DeviceID:  dev.ID,
+			CommandID: commandID,
+			Type:      database.ProbeCommandTypeIPSecPreflight,
+			Payload:   string(buf),
 		}
 		if eerr := db.EnqueueProbeCommand(cmd); eerr != nil {
 			httputil.InternalError(c, "Failed to enqueue preflight", eerr)
 			return
 		}
+		pfEnds = append(pfEnds, ipsec.PreflightEndState{End: i, DeviceID: dev.ID, CommandID: cmd.CommandID})
 		enqueued = append(enqueued, ipsecPreflightEnqueued{
 			End: i, DeviceID: dev.ID, Vendor: intent.Ends[i].Vendor, ProbeID: *dev.ProbeID, CommandID: cmd.CommandID,
 		})
 	}
+
+	// Persist the per-end command IDs for this run (AUDIT-258). A failure here is
+	// non-fatal to the enqueue — the commands are already queued and will run — but
+	// the poll would then fall back to the previous run's IDs, so log it loudly.
+	pfState := ipsec.PreflightState{EnqueuedAt: time.Now().UTC().Format(time.RFC3339), Ends: pfEnds}
+	if blob, merr := json.Marshal(&pfState); merr != nil {
+		log.Printf("ipsec preflight: failed to encode preflight state for tunnel %d: %v", m.ID, merr)
+	} else if serr := db.SetIPSecPreflightState(m.ID, string(blob)); serr != nil {
+		log.Printf("ipsec preflight: failed to persist preflight state for tunnel %d: %v", m.ID, serr)
+	}
+
 	c.JSON(http.StatusOK, response.Success(gin.H{"tunnel_id": m.ID, "commands": enqueued}))
 }
 
@@ -661,10 +682,40 @@ func (h *Handler) GetIPSecPreflightResult(c *gin.Context) {
 	// The intent is only needed to derive advisories; a stored intent that no
 	// longer decodes must not break reporting the preflight itself.
 	intent, ierr := database.IPSecModelToIntent(m)
+
+	// AUDIT-258: read the per-end command IDs recorded at enqueue so each end is
+	// polled by its OWN command (tunnel-scoped), not the device's latest preflight
+	// command — which, on a hub device terminating two tunnels, would return the
+	// other tunnel's report. A tunnel not yet preflighted (or preflighted before
+	// this field existed) has no recorded ID for an end, so it reports "none"
+	// rather than another tunnel's stale result.
+	// Key the recorded command by end AND the device it was preflighted against.
+	// UpdateIPSecTunnel can reassign a_device_id/b_device_id without clearing
+	// preflight_json, so a recorded end whose device no longer matches the
+	// tunnel's current device is stale — report "none" rather than attribute
+	// the old device's report (and advisories derived against the new intent) to
+	// the new device.
+	type pfRec struct {
+		cmdID string
+		devID uint
+	}
+	pfByEnd := map[int]pfRec{}
+	if pf, perr := parsePreflightState(m); perr != nil {
+		log.Printf("IPSec preflight: tunnel %d has unparsable preflight state: %v (reporting none)", m.ID, perr)
+	} else if pf != nil {
+		for _, e := range pf.Ends {
+			pfByEnd[e.End] = pfRec{cmdID: e.CommandID, devID: e.DeviceID}
+		}
+	}
+
 	out := make([]endReport, 0, 2)
 	for i, devID := range [2]uint{m.ADeviceID, m.BDeviceID} {
 		er := endReport{End: i, DeviceID: devID, Status: "none"}
-		cmd, cerr := db.GetLatestCommandByDeviceType(devID, database.ProbeCommandTypeIPSecPreflight)
+		var cmd *models.ProbeCommand
+		var cerr error
+		if rec := pfByEnd[i]; rec.cmdID != "" && rec.devID == devID {
+			cmd, cerr = db.GetProbeCommandByCommandID(rec.cmdID)
+		}
 		if cerr == nil && cmd != nil {
 			er.Status = cmd.Status
 			if json.Valid([]byte(cmd.Result)) {
@@ -889,6 +940,18 @@ func parseDeployState(m *models.IPSecTunnel) (*ipsec.DeployState, error) {
 	}
 	var st ipsec.DeployState
 	if err := json.Unmarshal([]byte(m.DeployJSON), &st); err != nil {
+		return nil, err
+	}
+	return &st, nil
+}
+
+// parsePreflightState decodes a tunnel's PreflightJSON (empty → nil, no error).
+func parsePreflightState(m *models.IPSecTunnel) (*ipsec.PreflightState, error) {
+	if strings.TrimSpace(m.PreflightJSON) == "" {
+		return nil, nil
+	}
+	var st ipsec.PreflightState
+	if err := json.Unmarshal([]byte(m.PreflightJSON), &st); err != nil {
 		return nil, err
 	}
 	return &st, nil

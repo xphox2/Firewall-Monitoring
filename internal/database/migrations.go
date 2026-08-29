@@ -106,6 +106,7 @@ var registeredMigrations = []migration{
 	{version: 55, name: "probe_agent_version", run: (*Database).migrateProbeAgentVersion},
 	{version: 56, name: "drop_redundant_syslog_device_index", run: (*Database).migrateDropRedundantSyslogDeviceIndex},
 	{version: 57, name: "trap_events_timestamp_index", run: (*Database).migrateTrapEventsTimestampIndex},
+	{version: 58, name: "ipsec_tunnel_preflight_state", run: (*Database).migrateIPSecTunnelPreflightState},
 }
 
 // RunMigrations applies every registered migration not yet recorded in
