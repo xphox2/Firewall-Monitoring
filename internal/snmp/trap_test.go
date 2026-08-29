@@ -126,6 +126,38 @@ func TestParseLinkTrap_IfColumnDotBoundary(t *testing.T) {
 	}
 }
 
+// TestParseLinkTrap_SanitizeAndCap is the AUDIT-239 regression for the SECOND
+// trap-message producer: the linkUp/linkDown path builds trap.Message via
+// formatLinkMessage from an attacker-controlled ifDescr. A CRLF-laced +
+// oversized ifDescr must be stripped of control characters and capped, or it
+// forges log lines (CWE-117) and bloats the alerts row (LINK_DOWN is a warning
+// that passes the alert filter, and LINK_UP drives sendRecovery).
+func TestParseLinkTrap_SanitizeAndCap(t *testing.T) {
+	t.Parallel()
+	rcv := newTestReceiver(t)
+
+	badDescr := "WAN1\nFATAL forged line\r\n" + strings.Repeat("A", 60000)
+	packet := &gosnmp.SnmpPacket{
+		Version: gosnmp.Version2c,
+		Variables: []gosnmp.SnmpPDU{
+			{Name: oidSnmpTrapOID, Type: gosnmp.ObjectIdentifier, Value: oidLinkDown},
+			{Name: oidIfIndex + ".7", Type: gosnmp.Integer, Value: 7},
+			{Name: oidIfDescr + ".7", Type: gosnmp.OctetString, Value: []byte(badDescr)},
+		},
+	}
+
+	trap := rcv.parseLinkTrap(packet)
+	if trap == nil {
+		t.Fatal("parseLinkTrap returned nil for a linkDown trap")
+	}
+	if strings.ContainsAny(trap.Message, "\n\r") {
+		t.Errorf("Message %q still contains CR/LF (log forgery)", trap.Message)
+	}
+	if r := []rune(trap.Message); len(r) > 256 {
+		t.Errorf("Message length = %d runes, want <= 256", len(r))
+	}
+}
+
 // TestFormatTrapMessage_SanitizeAndCap is the AUDIT-239 regression: an
 // OctetString varbind's raw bytes must be stripped of control characters (CR/LF
 // forge log lines — CWE-117) and the whole message capped at 256 chars before

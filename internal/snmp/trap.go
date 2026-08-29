@@ -303,10 +303,12 @@ func (t *TrapReceiver) parseTrap(packet *gosnmp.SnmpPacket, addr *net.UDPAddr) *
 }
 
 // firstDataVarbind returns the first varbind that is not the snmpTrapOID.0 or
-// sysUpTime.0 wrapper — a representative payload varbind for the trap message,
-// mirroring the collector's buildTrapMessage, which skips exactly those two
-// wrapper OIDs. Returns a zero PDU when the packet carries only wrappers, in
-// which case formatTrapMessage emits just the trap-type label.
+// sysUpTime.0 wrapper — a representative payload varbind for the trap message.
+// It shares the collector's wrapper-skip set (those two OIDs) but not its full
+// message body: the collector's buildTrapMessage joins ALL data varbinds,
+// whereas this uses just the first (full parity is a later cross-repo batch).
+// Returns a zero PDU when the packet carries only wrappers, in which case
+// formatTrapMessage emits just the trap-type label.
 func firstDataVarbind(packet *gosnmp.SnmpPacket) gosnmp.SnmpPDU {
 	for _, v := range packet.Variables {
 		if v.Name == oidSnmpTrapOID || v.Name == oidSysUpTime {
@@ -414,7 +416,11 @@ func formatLinkMessage(trapType, ifIndex, ifDescr, ifOperStatus string) string {
 	if ifOperStatus != "" {
 		parts = append(parts, fmt.Sprintf("status=%s", ifOperStatus))
 	}
-	return strings.Join(parts, " ")
+	// AUDIT-239: ifDescr is a raw attacker-controlled OctetString, so this is the
+	// second trap-message producer (besides formatTrapMessage). Sanitize and cap
+	// at the single return so the linkUp/linkDown path can't forge log lines or
+	// bloat a row either.
+	return sanitizeTrapField(strings.Join(parts, " "))
 }
 
 // lookupTrapOID searches all registered vendor profiles for the given trap OID.
