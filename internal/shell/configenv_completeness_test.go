@@ -60,11 +60,14 @@ func TestConfigEnvExample_DocumentsEveryConfigGoKey(t *testing.T) {
 		if _, ok := allowedUndocumentedEnvKeys[key]; ok {
 			continue
 		}
-		// Every documented key appears as `KEY=` (bare, or after `# ` when
-		// commented). The trailing `=` prevents a shorter key from matching
-		// inside a longer one (e.g. DETECT_DENY_STORM_MIN_DENIES vs
-		// DETECT_DENY_STORM_MIN_DENIES_INTERNAL).
-		if !strings.Contains(body, key+"=") {
+		// Every documented key appears on its OWN line as `KEY=` (bare, or
+		// after a leading `# ` when it's a commented example). Anchor the match
+		// to the start of a line: a bare strings.Contains(body, key+"=") would
+		// let a NEW key that is a suffix of a documented one pass silently (e.g.
+		// a future `SECRET` reads as documented because `WEBHOOK_SECRET=`
+		// contains it). `^#?\s*KEY=` requires KEY to begin its own line.
+		lineRe := regexp.MustCompile(`(?m)^#?\s*` + regexp.QuoteMeta(key) + `=`)
+		if !lineRe.MatchString(body) {
 			missing = append(missing, key)
 		}
 	}

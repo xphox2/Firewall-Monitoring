@@ -91,8 +91,8 @@ public AUDIT-NNN row exists.
 
 - **[Probe] SNMP device polling** (v1/v2c/v3, MD5/SHA/SHA2, DES/AES/AES192/256).
   Per-device `VendorProfile` registry. SNMP-pollable profiles: FortiGate,
-  Palo Alto, Cisco ASA, SonicWall, pfSense, OPNsense, Firewalla (seven
-  registered profiles). Cisco ASA has both a full SNMP polling profile
+  Palo Alto, Cisco ASA, SonicWall, pfSense, OPNsense, Firewalla (seven vendor
+  profiles plus a generic fallback). Cisco ASA has both a full SNMP polling profile
   (CISCO-PROCESS-MIB CPU, CISCO-MEMORY-POOL-MIB memory, CISCO-FIREWALL-MIB
   connection count + failover HA, CDP neighbors) and per-vendor config-diff
   normalization. **The server never polls devices itself** (the direct poll loop
