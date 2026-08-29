@@ -8,12 +8,21 @@
 > `relay.SchemaVersionMin` / `relay.SchemaVersionMax` consts in
 > `internal/relay/relay.go`. This file is the human-readable mirror, and
 > `docs/SUPPORT-MATRIX.md` holds the per-version compatibility table.
+>
+> **Source of truth for the telemetry wire shapes:** the server-side receiver
+> types in `internal/models` (e.g. `models.FlowSample`, bound in
+> `internal/api/handlers/handlers_data.go`) and the sender types in the
+> Firewall-Collector repo's `internal/relay` package. `internal/relay` in
+> *this* repo holds only the schema-version consts above and the v4
+> command-channel DTOs — it is not the wire-shape reference.
 
 ## Why this doc exists
 
 The collector probe and the central server communicate via a set of
-hand-maintained JSON DTOs (defined in `internal/relay/relay.go` and
-`internal/models/models.go`) over the `/api/probes/...` REST endpoints. The
+hand-maintained JSON DTOs — the server-side receiver shapes live in
+`internal/models` (bound in `internal/api/handlers/handlers_data.go`) and the
+sender shapes in the Firewall-Collector repo's `internal/relay` package — over
+the `/api/probes/...` REST endpoints. The
 two binaries are deployed and upgraded **independently**, so a server-side
 change that adds a required field, shifts a field's semantics, or removes an
 endpoint could break a deployed collector with no graceful signal.
