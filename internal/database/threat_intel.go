@@ -1,6 +1,7 @@
 package database
 
 import (
+	"strings"
 	"time"
 
 	"firewall-mon/internal/models"
@@ -175,7 +176,12 @@ func (d *Database) SearchThreatIntel(f ThreatIntelFilter, offset, limit int) ([]
 	}
 	q := d.db.Model(&models.ThreatIntel{})
 	if f.Query != "" {
-		q = q.Where("cidr LIKE ?", "%"+f.Query+"%")
+		// AUDIT-311: treat % and _ in the operator's query as literals, not
+		// LIKE wildcards ("10_0" must not match "10.0"). Backslash is escaped
+		// FIRST so a literal `\` in the query can't re-arm a wildcard; the
+		// ESCAPE clause matches the house style in flows.go/connection_detail.go.
+		esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(f.Query)
+		q = q.Where("cidr LIKE ? ESCAPE '\\'", "%"+esc+"%")
 	}
 	if f.Source != "" {
 		q = q.Where("source = ?", f.Source)

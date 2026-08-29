@@ -181,9 +181,10 @@ func TestOPNsenseNormalizedOutputIsWellFormedXML(t *testing.T) {
 	}
 }
 
-// TestOPNsenseMaskPreservesLineCount pins the LineMasker contract.
-// prepareDiffInput silently degrades to NO masking when it is violated, so only
-// a test catches it.
+// TestOPNsenseMaskPreservesLineCount pins the LineMasker contract. Since
+// AUDIT-200 a violation fails closed (DiffLines withholds the raw line diff),
+// so a regression here would surface to operators as a withheld diff — this
+// test catches it before it ships.
 func TestOPNsenseMaskPreservesLineCount(t *testing.T) {
 	t.Parallel()
 	n := opnsenseNormalizer{vendor: "opnsense"}
