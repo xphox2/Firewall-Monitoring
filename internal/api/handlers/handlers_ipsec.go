@@ -398,9 +398,16 @@ func (h *Handler) PreviewIPSecTunnel(c *gin.Context) {
 // This is preview-only. The deploy gate keeps its hard error: refusing to deploy
 // something that will not render is correct there.
 func renderPreviewEnds(intent *ipsec.TunnelIntent, findings []ipsec.Finding) ([]endPreview, []ipsec.Finding) {
-	previews, rerr := renderBothEnds(intent)
+	previews, cfindings, rerr := renderBothEnds(intent)
 	if rerr == nil {
-		return previews, findings
+		// Preview and Deploy must AGREE: the deploy path (DeployIPSecTunnel) runs
+		// conformance.Validate on each rendered end and 400s on any violation, but
+		// PreviewIPSecTunnel/PreviewIPSecIntent never did — so a FortiGate end with
+		// e.g. child_lifetime=60 or dpd.delay=120 (which ipsec.Validate only WARNs
+		// about, if at all) previewed green and then failed conformance on deploy,
+		// leaving the tunnel undeployable via the wizard. Surfacing the same
+		// conformance findings here makes a green preview imply a deployable config.
+		return previews, append(findings, cfindings...)
 	}
 	if !ipsec.HasBlock(findings) {
 		findings = append(findings, ipsec.Finding{
@@ -415,23 +422,42 @@ func renderPreviewEnds(intent *ipsec.TunnelIntent, findings []ipsec.Finding) ([]
 // renderBothEnds renders each end's redacted preview. It returns ONLY endPreview
 // (PreviewText + step count) — never the raw Artifact/Steps, which carry the
 // plaintext PSK. Shared by the stored-tunnel and stateless preview handlers.
-func renderBothEnds(intent *ipsec.TunnelIntent) ([]endPreview, error) {
+//
+// It ALSO returns the per-vendor conformance findings for the rendered steps,
+// mapped to blocking ipsec.Findings anchored to the end they belong to. This is
+// the exact check DeployIPSecTunnel runs before dispatch, so the preview cannot
+// show green for a config the deploy would reject on conformance (AUDIT-274/275).
+// conformance.Validate is a no-op for a vendor with no spec, so it never
+// over-blocks — and only fortigate/opnsense have render drivers anyway.
+func renderBothEnds(intent *ipsec.TunnelIntent) ([]endPreview, []ipsec.Finding, error) {
 	previews := make([]endPreview, 0, 2)
+	var cfindings []ipsec.Finding
 	for i := range intent.Ends {
-		d, ok := ipsec.Driver(intent.Ends[i].Vendor)
+		vendor := intent.Ends[i].Vendor
+		d, ok := ipsec.Driver(vendor)
 		if !ok {
-			return nil, fmt.Errorf("end %c (%q): no IPSec provisioning driver", 'A'+i, intent.Ends[i].Vendor)
+			return nil, nil, fmt.Errorf("end %c (%q): no IPSec provisioning driver", 'A'+i, vendor)
 		}
 		art, err := d.Render(ipsec.ViewFor(intent, i))
 		if err != nil {
-			return nil, fmt.Errorf("end %c (%s): %v", 'A'+i, intent.Ends[i].Vendor, err)
+			return nil, nil, fmt.Errorf("end %c (%s): %v", 'A'+i, vendor, err)
+		}
+		end := i // stable address per iteration for Finding.End
+		for _, cf := range conformance.Validate(vendor, art.Steps) {
+			cfindings = append(cfindings, ipsec.Finding{
+				Severity: ipsec.SeverityBlock,
+				Code:     "conformance",
+				End:      &end,
+				Subject:  cf.Field,
+				Message:  fmt.Sprintf("end %c (%s): the device would reject this config — %s", 'A'+i, vendor, cf.String()),
+			})
 		}
 		previews = append(previews, endPreview{
-			End: i, Vendor: intent.Ends[i].Vendor, Preview: art.PreviewText,
+			End: i, Vendor: vendor, Preview: art.PreviewText,
 			AutoObjects: art.AutoObjects, Steps: len(art.Steps),
 		})
 	}
-	return previews, nil
+	return previews, cfindings, nil
 }
 
 // ipsecPreviewPlaceholderPSK is a synthetic valid PSK used ONLY to render/validate

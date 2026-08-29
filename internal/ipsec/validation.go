@@ -170,6 +170,30 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 	if intent.IKEVersion == IKEv1 {
 		add(tunnelWide, SeverityWarn, "ikev1_deprecated", "IKEv1 is deprecated (RFC 9395) — use IKEv2 unless a peer requires it")
 	}
+
+	// --- FortiGate: a GCM (AEAD) IKE cipher REQUIRES IKEv2 (see the fortigate
+	// package doc: "GCM is IKEv2-only"). FortiOS pairs a phase1 AEAD proposal with
+	// a PRF its IKEv2 stack negotiates; an IKEv1 + AES-*-GCM phase1 POST is rejected
+	// by the device mid-apply → live deploy failure and auto-rollback. Neither
+	// ipsec.Validate (warn-only ikev1_deprecated) nor the conformance proposal
+	// grammar (token-shape only, version-agnostic) caught it before, so a Custom
+	// IKEv1+GCM profile previewed and passed conformance, then failed on the wire.
+	//
+	// Scoped to a FortiGate end rather than a blanket reject: strongSwan/OPNsense
+	// DO accept an AEAD IKE cipher under IKEv1 (the IKE SA carries its own PRF), so
+	// blocking it for every vendor would over-reject a valid OPNsense⇄OPNsense
+	// config. BLOCK (not warn) so it is caught at validation/preview, anchored to
+	// the offending FortiGate end, never on the device. isAEAD tests the IKE
+	// (phase-1) cipher specifically — ESP GCM under IKEv1 is fine on FortiOS.
+	if intent.IKEVersion == IKEv1 && isAEAD(intent.IKE.Enc) {
+		for i := range intent.Ends {
+			if intent.Ends[i].Vendor == "fortigate" {
+				add(endRef(i), SeverityBlock, "ikev1_gcm_unsupported",
+					fmt.Sprintf("%s: FortiGate requires IKEv2 for a GCM (AEAD) IKE cipher — IKEv1 with %s is rejected by FortiOS. Use IKEv2, or select a CBC cipher with a separate integrity algorithm.",
+						endLabel(intent, i), intent.IKE.Enc))
+			}
+		}
+	}
 	for _, e := range []Encryption{intent.IKE.Enc, intent.ESP.Enc} {
 		if e == Enc3DES {
 			add(tunnelWide, SeverityWarn, "weak_encryption", "3DES is broken (SWEET32) — do not use for new tunnels")

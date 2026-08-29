@@ -1,6 +1,17 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.225] - 2026-08-29
+
+### Fixed
+
+Audit remediation batch 17 of the 2026-08-27 engineering audit — five IPSec validation/render correctness findings. Each was re-verified line-by-line against current master, and each ships a targeted unit test that fails if the fix is reverted.
+
+- **A green wizard preview now implies a deployable config (AUDIT-274, AUDIT-275 — fixed together, one defect seen from two angles).** `PreviewIPSecTunnel`/`PreviewIPSecIntent` ran only the vendor-neutral `ipsec.Validate`, which merely WARNs (or does not bound at all) on out-of-range child/IKE lifetimes and DPD delay, while `DeployIPSecTunnel` additionally runs `conformance.Validate` on each rendered end and 400s on any violation. So a FortiGate end with `child_lifetime=60` (below the device's 120s `keylifeseconds` floor) or a tunnel `dpd.delay=120` (above FortiGate's `dpd-retryinterval` ceiling of 60) previewed GREEN and then failed conformance on deploy — leaving the tunnel undeployable via the wizard. Chosen fix: Option A — the preview path (`renderBothEnds`) now runs the same per-vendor `conformance.Validate` on the rendered steps and surfaces any violation as a blocking finding anchored to the offending end, so preview and deploy enforce an identical check. This cannot over-block: `conformance.Validate` is a no-op for a vendor with no spec, and only fortigate/opnsense have render drivers — a currently-valid FortiGate⇄OPNsense config still previews green (guarded by test).
+- **FortiGate IKEv1 + a GCM (AEAD) IKE cipher is now blocked at validation/preview (AUDIT-313).** GCM is IKEv2-only on FortiOS (the phase1 AEAD proposal needs a PRF only its IKEv2 stack negotiates), but `Capabilities()` advertised IKE versions and encryption as independent sets, `ipsec.Validate` only WARNed `ikev1_deprecated`, and the conformance proposal grammar checks token shape version-agnostically — so a Custom IKEv1 + AES-256-GCM profile passed preview/validation/conformance and then failed the phase1 POST mid-apply (live deploy failure + auto-rollback). `ipsec.Validate` now BLOCKS this combination, anchored to the FortiGate end. Scoped to a FortiGate end (not a blanket reject): strongSwan/OPNsense accept an AEAD IKE cipher under IKEv1, so a blanket block would over-reject a valid OPNsense⇄OPNsense config.
+- **OPNsense SA status no longer forces "down" for an unmatched dynamic peer (AUDIT-276).** `ParseStatus` matched session rows solely by the stored peer IP and, on no match, unconditionally reported SADown — but a dialup/behind-NAT peer's stored PeerIP is its MANAGEMENT address, not the source it dials in from, so a healthy policy-based/NAT'd tunnel legitimately shows no matching row and was force-marked down, risking a spurious rollback of a live tunnel. An unmatched DYNAMIC peer now returns SAUnknown ("can't tell"), which the deploy-verify path treats as inconclusive rather than tripping the down/rollback branch; a non-dynamic unmatched peer still reports SADown.
+- **OPNsense IKEv1 tunnel preview no longer misreports the IKE version (AUDIT-277).** `swanctlPreview` hardcoded `version = 2`, so an IKEv1 tunnel's operator-reviewed preview always showed version 2 while the apply path correctly emitted version 1. The preview now derives the version from `ikeVersion(in.IKEVersion)`, matching apply.
+
 ## [0.11.224] - 2026-08-29
 
 ### Fixed

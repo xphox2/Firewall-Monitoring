@@ -344,8 +344,22 @@ func (d driver) ParseStatus(raw string, v ipsec.RenderView) (ipsec.TunnelStatus,
 		}
 	}
 	if !matched {
-		// We just deployed this tunnel; no session row referencing its peer is a
-		// definitive not-established.
+		if v.Remote().Dynamic {
+			// A dynamic/behind-NAT peer's stored PeerIP is its MANAGEMENT address,
+			// not the source it actually dials in from (see validation.go's dialup
+			// notes), so an established policy-based/NAT'd tunnel legitimately shows
+			// no session row for the stored IP. "No match" therefore means "can't
+			// tell", not "down": return SAUnknown (st is already Unknown/Unknown) so
+			// the deploy-verify path treats it as inconclusive rather than forcing a
+			// spurious rollback of a healthy tunnel. A genuinely-down dynamic tunnel
+			// is still caught elsewhere (it never becomes SAUp), and inconclusive
+			// blocks the "fully up" claim without tripping the down/rollback branch.
+			st.RawError = "no session row for dynamic peer " + peer +
+				" (its dial-in source differs from the stored management address) — status unknown"
+			return st, nil
+		}
+		// A static peer we just deployed to: no session row referencing its peer is
+		// a definitive not-established.
 		st.IKE, st.Child = ipsec.SADown, ipsec.SADown
 		st.RawError = "no IKE session to peer " + peer
 		return st, nil
@@ -760,7 +774,9 @@ func dhToken(g ipsec.DHGroup) (string, error) {
 func swanctlPreview(desc, ike, esp, localAddr, remoteAddr string, local, remote *ipsec.EndpointSpec, in *ipsec.TunnelIntent, self int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "connections.%s {\n", desc)
-	fmt.Fprintf(&b, "  version = 2\n  proposals = %s\n", ike)
+	// version must mirror the apply path (ikeVersion(in.IKEVersion)), or an IKEv1
+	// tunnel's operator-reviewed preview would always misreport "version = 2".
+	fmt.Fprintf(&b, "  version = %s\n  proposals = %s\n", ikeVersion(in.IKEVersion), ike)
 	fmt.Fprintf(&b, "  local_addrs = %s\n  remote_addrs = %s\n", localAddr, remoteAddr)
 	fmt.Fprintf(&b, "  local { auth = psk; id = %s }\n", local.LocalID.Value)
 	fmt.Fprintf(&b, "  remote { auth = psk; id = %s }\n", remote.LocalID.Value)
