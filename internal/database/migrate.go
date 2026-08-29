@@ -1355,34 +1355,6 @@ func (d *Database) migrateFlowSamplesWidenIntColumns() error {
 	return nil
 }
 
-// migrateFlowSamplesAddDropsColumn (v10) adds the `drops` column to existing
-// flow_samples tables. This is the actual fix for the probe-side
-// `Failed to send flows batch: status 500 {"error":"Failed to save flow
-// samples"}` loop: the server logged `column "drops" of relation
-// "flow_samples" does not exist (SQLSTATE 42703)` and the collector re-queued
-// the same flows forever, so no sFlow data was persisted.
-//
-// Cause: the `Drops` field (sFlow v5 §3.1.1 sample-pool drops, added in the
-// 2026-06-22 audit) was added to the FlowSample model and to
-// saveFlowSamplesPGX's COPY column list, but no migration added the column to
-// databases created before the field existed. cmd/api boots with
-// RunMigrations() only — there is NO per-startup AutoMigrate — and the baseline
-// AutoMigrate (v1) had already been recorded as applied, so it never re-ran to
-// pick up the new field. Every COPY then named a column the table lacked and
-// failed at parse time.
-//
-// `drops` is uint64 in the model (gorm column `drops`, default 0, not null), so
-// the column is `bigint NOT NULL DEFAULT 0`. Adding a column with a constant
-// default is metadata-only on PostgreSQL 11+ (no table rewrite), so it is fast
-// even on a large flow_samples. Routed through execMaintenanceDDL so the lifted
-// statement_timeout covers the case of a partitioned flow_samples propagating
-// the ADD across many partitions on deployments that converted the table.
-//
-// Idempotency: `ADD COLUMN IF NOT EXISTS` no-ops once the column is present, so
-// fresh installs (which get `drops` from the baseline AutoMigrate) and any
-// re-run are safe. SQLite (the test backend) already has the column from
-// AutoMigrate and does not support `ADD COLUMN IF NOT EXISTS`, so the
-// non-Postgres path uses AutoMigrate, which adds the column only if missing.
 // migrateSystemStatusSource (v52, AUDIT AL-M2) adds the `source` column to
 // system_status so the alert engine can tell which collector writer produced a
 // row (SNMP full poll vs SSH-perf freshness row) and trust a 0 session_count as
@@ -1551,6 +1523,34 @@ func (d *Database) logSyslogIndexScale() {
 		"writes to this table are blocked until it completes", info.Rows, info.Size)
 }
 
+// migrateFlowSamplesAddDropsColumn (v10) adds the `drops` column to existing
+// flow_samples tables. This is the actual fix for the probe-side
+// `Failed to send flows batch: status 500 {"error":"Failed to save flow
+// samples"}` loop: the server logged `column "drops" of relation
+// "flow_samples" does not exist (SQLSTATE 42703)` and the collector re-queued
+// the same flows forever, so no sFlow data was persisted.
+//
+// Cause: the `Drops` field (sFlow v5 §3.1.1 sample-pool drops, added in the
+// 2026-06-22 audit) was added to the FlowSample model and to
+// saveFlowSamplesPGX's COPY column list, but no migration added the column to
+// databases created before the field existed. cmd/api boots with
+// RunMigrations() only — there is NO per-startup AutoMigrate — and the baseline
+// AutoMigrate (v1) had already been recorded as applied, so it never re-ran to
+// pick up the new field. Every COPY then named a column the table lacked and
+// failed at parse time.
+//
+// `drops` is uint64 in the model (gorm column `drops`, default 0, not null), so
+// the column is `bigint NOT NULL DEFAULT 0`. Adding a column with a constant
+// default is metadata-only on PostgreSQL 11+ (no table rewrite), so it is fast
+// even on a large flow_samples. Routed through execMaintenanceDDL so the lifted
+// statement_timeout covers the case of a partitioned flow_samples propagating
+// the ADD across many partitions on deployments that converted the table.
+//
+// Idempotency: `ADD COLUMN IF NOT EXISTS` no-ops once the column is present, so
+// fresh installs (which get `drops` from the baseline AutoMigrate) and any
+// re-run are safe. SQLite (the test backend) already has the column from
+// AutoMigrate and does not support `ADD COLUMN IF NOT EXISTS`, so the
+// non-Postgres path uses AutoMigrate, which adds the column only if missing.
 func (d *Database) migrateFlowSamplesAddDropsColumn() error {
 	if !d.dialect.IsPostgres() {
 		return d.db.AutoMigrate(&models.FlowSample{})

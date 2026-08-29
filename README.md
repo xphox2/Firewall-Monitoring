@@ -10,9 +10,9 @@
 > is a sibling repo, [Firewall-Collector](https://github.com/xphox2/Firewall-Collector).
 
 [![CI](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml/badge.svg)](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.10.553-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.11.231-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Go](https://img.shields.io/badge/go-1.25.11+-00ADD8)](go.mod)
+[![Go](https://img.shields.io/badge/go-1.25.13+-00ADD8)](go.mod)
 [![Status](https://img.shields.io/badge/status-alpha-orange)](#project-status)
 
 > ⚠️ **Alpha.** This project is under active development and is published for early
@@ -42,8 +42,9 @@ the edge**, this repo **runs at HQ**.
 
 Self-hosted network/security teams and small-to-mid MSPs running a
 **firewall fleet across multiple sites** — primarily FortiGate today, with
-SNMP profiles for Palo Alto, SonicWall, pfSense, OPNsense and Firewalla, plus
-config-diff support for Cisco ASA. It gives you one pane of glass (status, interfaces, VPN tunnels,
+SNMP profiles for Palo Alto, Cisco ASA, SonicWall, pfSense, OPNsense and
+Firewalla, plus config-diff normalization for FortiGate, Palo Alto and Cisco
+ASA. It gives you one pane of glass (status, interfaces, VPN tunnels,
 syslog, sFlow, alerts, reports) with **lightweight remote probes** that
 relay SNMP/syslog/sFlow/ICMP from sites you can't poll directly — without
 standing up a heavyweight NMS.
@@ -67,7 +68,7 @@ standing up a heavyweight NMS.
 | License | OSS (MIT) | Commercial | OSS + paid | OSS | OSS | OSS + paid | OSS | SaaS |
 | Self-hosted | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✗ (SaaS) |
 | Multi-site relay probes | ✅ built-in | sensors/remote probes | distributed pollers | proxies | distributed pollers | distributed | ✗ | n/a |
-| Multi-vendor firewall SNMP profiles | ✅ (Forti/Palo/SonicWall/pfSense/OPNsense/Firewalla) | generic SNMP | generic SNMP | generic SNMP | generic SNMP | generic SNMP | ✗ | ✗ |
+| Multi-vendor firewall SNMP profiles | ✅ (Forti/Palo/Cisco ASA/SonicWall/pfSense/OPNsense/Firewalla) | generic SNMP | generic SNMP | generic SNMP | generic SNMP | generic SNMP | ✗ | ✗ |
 | Config-change tracking | ✅ (per-vendor normalized) | partial | plugins | partial | ✅ (Oxidized) | partial | ✗ | ✗ |
 | Syslog + sFlow ingest | ✅ | add-on | plugins | add-on | partial | add-on | ✗ | ✗ |
 | Footprint | Light (3 Go daemons) | Heavy | Medium | Medium | Medium | Medium | Light | n/a |
@@ -80,7 +81,7 @@ general NMS.
 
 ## Features
 
-Every feature below is shipped in the current `0.10.x` release. **Role
+Every feature below is shipped in the current `0.11.x` release. **Role
 tag** — `[Server]` runs on the central server (this repo), `[Probe]`
 runs on the collector, `[Both]` requires both sides. **Status** —
 Stable shipping, Beta shipping but with a known follow-up, Planned a
@@ -90,9 +91,11 @@ public AUDIT-NNN row exists.
 
 - **[Probe] SNMP device polling** (v1/v2c/v3, MD5/SHA/SHA2, DES/AES/AES192/256).
   Per-device `VendorProfile` registry. SNMP-pollable profiles: FortiGate,
-  Palo Alto, SonicWall, pfSense, OPNsense, Firewalla (six registered
-  profiles). Cisco ASA is supported for config-diff only (no SNMP polling
-  profile). **The server never polls devices itself** (the direct poll loop
+  Palo Alto, Cisco ASA, SonicWall, pfSense, OPNsense, Firewalla (seven
+  registered profiles). Cisco ASA has both a full SNMP polling profile
+  (CISCO-PROCESS-MIB CPU, CISCO-MEMORY-POOL-MIB memory, CISCO-FIREWALL-MIB
+  connection count + failover HA, CDP neighbors) and per-vendor config-diff
+  normalization. **The server never polls devices itself** (the direct poll loop
   was retired in v0.11.74) — collectors poll at the edge and relay;
   `fwmon-poller` is the server-side monitoring/alert engine that evaluates
   the relayed telemetry every `SNMP_POLL_INTERVAL` (default 60s).
@@ -142,8 +145,9 @@ public AUDIT-NNN row exists.
 
 ### Reports
 
-- **[Server] Image-free executive HTML report** (view in-browser, export
-  PDF, download, or email on a schedule).
+- **[Server] Executive HTML report** — image-free when viewed in-browser or
+  exported to PDF; the scheduled email variant embeds the charts as inline
+  (`cid:`) images.
 - **[Server] Daily / weekly scheduled report** with
   `REPORT_TIMEZONE` (IANA TZ).
 - **[Server] Traffic-spike + uptime rollup** in reports.
@@ -274,7 +278,7 @@ registration, poll cycle, alert firing/recovery) is in
 
 ### Prerequisites
 
-- **Go 1.25.11** (the version pinned in `go.mod`; uses `log/slog`-era
+- **Go 1.25.13** (the version pinned in `go.mod`; uses `log/slog`-era
   stdlib; CI builds on the same toolchain).
 - **Linux server** (tested on Ubuntu/Debian). The native installer uses
   **systemd**; macOS/Windows can build and run the binaries but the
@@ -394,7 +398,7 @@ The most important ones:
 ## Upgrading
 
 The Docker image is `:latest` by default; for reproducibility pin to
-the matching `:0.10.x` tag. The collector and the server can be
+the matching `:0.11.x` tag. The collector and the server can be
 upgraded in either order — the `schema_version` handshake is symmetric
 and both directions are backward-compatible. The
 [operations runbook](docs/OPERATIONS.md#upgrade) is the
@@ -478,7 +482,7 @@ The grouped overview below covers every category.
 
 ### Admin UI pages (HTML, auth-gated)
 
-`GET /admin` and `/admin/{dashboard,devices,devices/:id,connections,connections/:id,sites,probes,probe-pending,interfaces,syslog,flows,traps,network,maintenance,reports,settings,irc,alerts,alert-policies}`
+`GET /admin` and `/admin/{dashboard,devices,devices/:id,connections,connections/:id,sites,probes,syslog,flows,noc,traps,alerts,alert-policies,alerting,event-rules,threat-intel,ipsec,maintenance,reports,settings,profile,audit,irc}`
 
 ### Admin API (JSON, auth + CSRF) — base `/admin/api`
 

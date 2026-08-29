@@ -203,7 +203,7 @@ install_local() {
     # AUDIT-021: create the dedicated system user the systemd unit will run
     # as. Previously the unit ran as root, which is the worst-case blast
     # radius for any future RCE — the binary would land on a public-facing
-    # network port (8080, 162/udp, 6343/udp), and a single memory-corruption
+    # network port (8080, 162/udp), and a single memory-corruption
     # bug would give the attacker root. In the Docker path the long-running
     # daemons drop to the non-root `fwmon` user via su-exec, though the
     # container's init/PID1 still runs as root (there is NO `USER` directive in

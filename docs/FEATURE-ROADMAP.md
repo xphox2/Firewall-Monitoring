@@ -54,7 +54,7 @@ Maturity legend: **Stable** = shipping; **Beta** = shipping with a known follow-
 
 | Capability | Owner | Maturity | Notes |
 |---|---|---|---|
-| Executive HTML report (image-free, zero attachments) | Server | Stable | Single `html/template`. |
+| Executive HTML report (image-free in-browser/PDF; scheduled email embeds inline `cid:` charts) | Server | Stable | Single `html/template`. |
 | Scheduled daily/weekly email reports | Server | Stable | `REPORT_TIMEZONE` (IANA TZ). |
 | PDF export / download / send-now | Server | Stable | |
 | Traffic-spike + uptime rollups; SVG/go-chart rendering | Server | Stable | |

@@ -5,8 +5,8 @@ via `//go:embed` and served by `cmd/api`. `admin.html` is the single-page app
 shell and now hosts the large majority of pages (dashboard, devices, sites,
 probes, IRC, alerts, event-rules, settings, …) as in-page `page-<name>` divs
 switched client-side by `admin-main.js`. The remaining separate full-page
-documents are `device-detail.html`, `connection-detail.html`,
-`probe-pending.html`, and `login.html`.
+documents are `device-detail.html`, `connection-detail.html`, and
+`login.html`.
 
 ## Sidebar/header duplication is being retired by folding pages into the SPA
 
