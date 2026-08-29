@@ -64,6 +64,57 @@ func TestGetAlertResponseStats_F05(t *testing.T) {
 	}
 }
 
+// TestGetAlertResponseStats_Deterministic pins AUDIT-266: with SQL-side
+// aggregation the whole trailing window is summarised (not an arbitrary
+// DB-ordered slice), so the result is independent of row/insertion order, and
+// rows older than the window are excluded. MTTA excludes auto-resolved rows;
+// MTTR includes them.
+func TestGetAlertResponseStats_Deterministic(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	now := time.Now()
+
+	mk := func(ts time.Time, ackAfter, resAfter time.Duration, notes string) models.Alert {
+		a := models.Alert{Timestamp: ts, DeviceID: 1, AlertType: "CPU_HIGH", Severity: "warning", MetricName: "cpu_usage", Notes: notes}
+		if ackAfter > 0 {
+			tt := ts.Add(ackAfter)
+			a.Acknowledged, a.AcknowledgedAt = true, &tt
+		}
+		if resAfter > 0 {
+			tt := ts.Add(resAfter)
+			a.ResolvedAt = &tt
+		}
+		return a
+	}
+
+	rows := []models.Alert{
+		mk(now.Add(-1*time.Hour), 5*time.Minute, 10*time.Minute, "looked into it"),
+		mk(now.Add(-2*time.Hour), 15*time.Minute, 0, ""),
+		mk(now.Add(-3*time.Hour), 0, 40*time.Minute, "Auto-resolved: recovered"),
+		// Older than the 7-day window: excluded regardless of insertion order.
+		mk(now.AddDate(0, 0, -8), 100*time.Minute, 100*time.Minute, ""),
+	}
+	if err := d.Gorm().Create(&rows).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	mtta, mttr, acked, resolved, err := d.GetAlertResponseStats(7)
+	if err != nil {
+		t.Fatalf("GetAlertResponseStats: %v", err)
+	}
+	if acked != 2 {
+		t.Errorf("acked = %d, want 2 (old row excluded; auto-resolved not acked)", acked)
+	}
+	if mtta < 9.5 || mtta > 10.5 { // (5+15)/2 = 10
+		t.Errorf("MTTA = %.2f min, want ≈10", mtta)
+	}
+	if resolved != 2 {
+		t.Errorf("resolved = %d, want 2 (old row excluded; manual + auto)", resolved)
+	}
+	if mttr < 24.5 || mttr > 25.5 { // (10+40)/2 = 25
+		t.Errorf("MTTR = %.2f min, want ≈25", mttr)
+	}
+}
+
 // TestGetNoisiestAlerts_F06: leaderboard groups by (type, device), newest
 // window only, ordered by count, with device names joined.
 func TestGetNoisiestAlerts_F06(t *testing.T) {

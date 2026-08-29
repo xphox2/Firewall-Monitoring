@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.221] - 2026-08-29
+
+### Fixed
+
+Audit remediation batch 12 of the 2026-08-27 engineering audit — connection-detail and alert query performance (AUDIT-201, AUDIT-202, AUDIT-266, AUDIT-269 fixed; AUDIT-198 re-verified as already-mitigated dead code and removed). Every finding was re-verified line-by-line against current master before being fixed.
+
+- The connection-detail flow-existence check no longer scans the pair's entire flow history: both `HasFlowData` derivations now use an indexed existence probe (`SELECT 1 ... LIMIT 1`) that stops at the first matching row, instead of an unbounded `COUNT` whose `LIMIT(1)` only capped the returned rows, not the scan (AUDIT-201).
+- Removed leftover per-request debug logging that printed internal subnet topology (tunnel names, local/remote subnets) on every connection-detail view — an unconditional multi-line dump on a hot admin read path (AUDIT-202).
+- Alert response-time stats (MTTA/MTTR) are now computed deterministically over the whole trailing window with SQL-side conditional aggregation (`AVG`/`COUNT`), instead of pulling an arbitrary DB-ordered 20,000-row slice into Go and averaging it — which silently dropped rows and produced order-dependent numbers once the window exceeded the cap. A `MinutesBetween` dialect helper backs the duration math on both PostgreSQL and SQLite (AUDIT-266).
+- The connection flow-stats metadata queries are now time-bounded: the DISTINCT scans over `vpn_status` (subnet pairs, phase-1 names) and `interface_stats` (interface indices) are constrained to the query window with the already-computed cutoff, so they no longer walk full history and a renamed/renumbered subnet from months ago can no longer resurrect stale flows into the totals (AUDIT-269).
+- Removed the unreachable legacy per-probe dashboard fetch: the active dashboard reads the cached `/api/dashboard/health` composite, so the per-probe `/probes/:id/stats` fan-out the audit flagged was already dead code behind an early return. The single-probe detail modal (a legitimate on-click caller) is retained (AUDIT-198).
+
 ## [0.11.220] - 2026-08-29
 
 ### Fixed

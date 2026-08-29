@@ -1,9 +1,9 @@
 package database
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"firewall-mon/internal/models"
@@ -393,41 +393,41 @@ type NoiseRow struct {
 var syntheticCompanionMetrics = []string{"recovery", "incident"}
 
 // GetAlertResponseStats computes MTTA/MTTR over the trailing window (days).
-// Durations are averaged in Go for dialect portability. Synthetic companion
-// rows (recovery + incident summaries) are excluded everywhere; auto-resolved
-// rows (notes "Auto-resolved: …") count toward MTTR (the condition's lifetime)
-// but NOT MTTA — auto-ack would fake instant operator response.
+// Durations are averaged in SQL (conditional AVG/COUNT) so the whole window is
+// summarised deterministically rather than an arbitrary DB-ordered slice —
+// AUDIT-266. Synthetic companion rows (recovery + incident summaries) are
+// excluded everywhere; auto-resolved rows (notes "Auto-resolved: …") count
+// toward MTTR (the condition's lifetime) but NOT MTTA — auto-ack would fake
+// instant operator response. The `>= 0` guards drop clock-skew rows whose
+// ack/resolve predate the alert, matching the former Go loop exactly.
 func (d *Database) GetAlertResponseStats(days int) (mttaMinutes, mttrMinutes float64, ackedCount, resolvedCount int64, err error) {
 	cutoff := time.Now().AddDate(0, 0, -days)
-	var rows []models.Alert
-	if err = d.db.Select("timestamp, acknowledged_at, resolved_at, notes").
+	ackMin := d.dialect.MinutesBetween("acknowledged_at", "timestamp")
+	resMin := d.dialect.MinutesBetween("resolved_at", "timestamp")
+	// MTTA excludes auto-resolved rows; MTTR includes them. Both drop negative
+	// (pre-alert) durations. The LIKE prefix mirrors strings.HasPrefix.
+	ackCond := fmt.Sprintf("acknowledged_at IS NOT NULL AND notes NOT LIKE 'Auto-resolved:%%' AND %s >= 0", ackMin)
+	resCond := fmt.Sprintf("resolved_at IS NOT NULL AND %s >= 0", resMin)
+	selectExpr := fmt.Sprintf(
+		"COUNT(CASE WHEN %[1]s THEN 1 END) AS acked_count, "+
+			"AVG(CASE WHEN %[1]s THEN %[2]s END) AS mtta, "+
+			"COUNT(CASE WHEN %[3]s THEN 1 END) AS resolved_count, "+
+			"AVG(CASE WHEN %[3]s THEN %[4]s END) AS mttr",
+		ackCond, ackMin, resCond, resMin)
+
+	var agg struct {
+		AckedCount    int64
+		Mtta          sql.NullFloat64
+		ResolvedCount int64
+		Mttr          sql.NullFloat64
+	}
+	if err = d.db.Model(&models.Alert{}).
+		Select(selectExpr).
 		Where("timestamp > ? AND metric_name NOT IN ? AND (acknowledged_at IS NOT NULL OR resolved_at IS NOT NULL)", cutoff, syntheticCompanionMetrics).
-		Limit(20000).Find(&rows).Error; err != nil {
+		Scan(&agg).Error; err != nil {
 		return 0, 0, 0, 0, err
 	}
-	var ackSum, resSum float64
-	for i := range rows {
-		auto := strings.HasPrefix(rows[i].Notes, "Auto-resolved:")
-		if rows[i].AcknowledgedAt != nil && !auto {
-			if dur := rows[i].AcknowledgedAt.Sub(rows[i].Timestamp); dur >= 0 {
-				ackSum += dur.Minutes()
-				ackedCount++
-			}
-		}
-		if rows[i].ResolvedAt != nil {
-			if dur := rows[i].ResolvedAt.Sub(rows[i].Timestamp); dur >= 0 {
-				resSum += dur.Minutes()
-				resolvedCount++
-			}
-		}
-	}
-	if ackedCount > 0 {
-		mttaMinutes = ackSum / float64(ackedCount)
-	}
-	if resolvedCount > 0 {
-		mttrMinutes = resSum / float64(resolvedCount)
-	}
-	return mttaMinutes, mttrMinutes, ackedCount, resolvedCount, nil
+	return agg.Mtta.Float64, agg.Mttr.Float64, agg.AckedCount, agg.ResolvedCount, nil
 }
 
 // GetNoisiestAlerts returns the top (alert_type, device) pairs by fire count

@@ -526,9 +526,9 @@ func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, er
 			result.TotalBytesIn += r.InBytes
 			result.TotalBytesOut += r.OutBytes
 		}
-		var flowCount int64
-		d.db.Model(&models.FlowSample{}).Where("device_id IN ?", []uint{conn.SourceDeviceID, conn.DestDeviceID}).Limit(1).Count(&flowCount)
-		result.HasFlowData = flowCount > 0
+		var probe []int
+		d.db.Model(&models.FlowSample{}).Where("device_id IN ?", []uint{conn.SourceDeviceID, conn.DestDeviceID}).Select("1").Limit(1).Scan(&probe)
+		result.HasFlowData = len(probe) > 0
 		result.Evidence = d.buildConnectionEvidence(&conn)
 		return result, nil
 	}
@@ -608,13 +608,6 @@ func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, er
 
 	// Cross-fill: if one side has empty subnets, infer from the other side (swapped).
 	// Hub-side ADVPN tunnels often have empty Phase 2 selectors in SNMP.
-	log.Printf("GetConnectionDetail %d: source_tunnels=%d dest_tunnels=%d", connID, len(result.SourceTunnels), len(result.DestTunnels))
-	for i, t := range result.SourceTunnels {
-		log.Printf("GetConnectionDetail %d: source_tunnel[%d] name=%s local=%s remote=%s", connID, i, t.TunnelName, t.LocalSubnet, t.RemoteSubnet)
-	}
-	for i, t := range result.DestTunnels {
-		log.Printf("GetConnectionDetail %d: dest_tunnel[%d] name=%s local=%s remote=%s", connID, i, t.TunnelName, t.LocalSubnet, t.RemoteSubnet)
-	}
 	if len(result.SourceTunnels) > 0 && len(result.DestTunnels) > 0 {
 		for i := range result.SourceTunnels {
 			if result.SourceTunnels[i].LocalSubnet == "" || result.SourceTunnels[i].RemoteSubnet == "" {
@@ -751,9 +744,9 @@ func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, er
 	}
 
 	// Check if sFlow data exists for either device
-	var flowCount int64
-	d.db.Model(&models.FlowSample{}).Where("device_id IN ?", []uint{conn.SourceDeviceID, conn.DestDeviceID}).Limit(1).Count(&flowCount)
-	result.HasFlowData = flowCount > 0
+	var probe []int
+	d.db.Model(&models.FlowSample{}).Where("device_id IN ?", []uint{conn.SourceDeviceID, conn.DestDeviceID}).Select("1").Limit(1).Scan(&probe)
+	result.HasFlowData = len(probe) > 0
 
 	return result, nil
 }
@@ -1120,8 +1113,8 @@ func (d *Database) GetConnectionFlowStats(connID uint, hours int) (*ConnectionFl
 	}
 	var pairs []subnetPair
 	d.db.Raw(`SELECT DISTINCT local_subnet, remote_subnet FROM vpn_status
-		WHERE device_id IN ? AND tunnel_name IN ? AND local_subnet != '' AND remote_subnet != ''`,
-		deviceIDs, tunnelNames).Scan(&pairs)
+		WHERE device_id IN ? AND tunnel_name IN ? AND local_subnet != '' AND remote_subnet != '' AND timestamp > ?`,
+		deviceIDs, tunnelNames, cutoff).Scan(&pairs)
 
 	// Convert subnet pairs to LIKE patterns
 	var subnetConditions []string
@@ -1163,8 +1156,8 @@ func (d *Database) GetConnectionFlowStats(connID uint, hours int) (*ConnectionFl
 		// Collect Phase1Names alongside tunnel names for better interface matching
 		var phase1Names []string
 		d.db.Raw(`SELECT DISTINCT phase1_name FROM vpn_status
-			WHERE device_id IN ? AND tunnel_name IN ? AND phase1_name != ''`,
-			deviceIDs, tunnelNames).Pluck("phase1_name", &phase1Names)
+			WHERE device_id IN ? AND tunnel_name IN ? AND phase1_name != '' AND timestamp > ?`,
+			deviceIDs, tunnelNames, cutoff).Pluck("phase1_name", &phase1Names)
 
 		allNames := make([]string, 0, len(tunnelNames)+len(phase1Names))
 		allNames = append(allNames, tunnelNames...)
@@ -1173,8 +1166,8 @@ func (d *Database) GetConnectionFlowStats(connID uint, hours int) (*ConnectionFl
 		var tunnelIfIndices []int
 		ifIndexSet := make(map[int]bool)
 		var ifaces []models.InterfaceStats
-		d.db.Raw(fmt.Sprintf("SELECT DISTINCT device_id, %s FROM interface_stats WHERE device_id IN ? AND (name IN ? OR description IN ? OR alias IN ?)", d.dialect.QuoteIdent("index")),
-			deviceIDs, allNames, allNames, allNames).Scan(&ifaces)
+		d.db.Raw(fmt.Sprintf("SELECT DISTINCT device_id, %s FROM interface_stats WHERE device_id IN ? AND (name IN ? OR description IN ? OR alias IN ?) AND timestamp > ?", d.dialect.QuoteIdent("index")),
+			deviceIDs, allNames, allNames, allNames, cutoff).Scan(&ifaces)
 		for _, iface := range ifaces {
 			ifIndexSet[iface.Index] = true
 		}

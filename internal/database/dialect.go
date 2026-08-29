@@ -13,6 +13,11 @@ type Dialect interface {
 
 	// IsPostgres reports whether this dialect targets PostgreSQL.
 	IsPostgres() bool
+
+	// MinutesBetween returns a SQL expression yielding the number of minutes
+	// (a floating-point value, may be negative) from startCol to endCol. Both
+	// arguments must reference timestamp columns.
+	MinutesBetween(endCol, startCol string) string
 }
 
 // ---------- PostgreSQL ----------
@@ -42,6 +47,10 @@ func (postgresDialect) QuoteIdent(name string) string {
 
 func (postgresDialect) IsPostgres() bool { return true }
 
+func (postgresDialect) MinutesBetween(endCol, startCol string) string {
+	return fmt.Sprintf("(EXTRACT(EPOCH FROM (%s - %s)) / 60.0)", endCol, startCol)
+}
+
 // ---------- SQLite (test only) ----------
 
 type sqliteDialect struct{}
@@ -67,3 +76,7 @@ func (sqliteDialect) TimeBucket(unit, column string) string {
 
 func (sqliteDialect) QuoteIdent(name string) string { return `"` + name + `"` }
 func (sqliteDialect) IsPostgres() bool              { return false }
+
+func (sqliteDialect) MinutesBetween(endCol, startCol string) string {
+	return fmt.Sprintf("((julianday(%s) - julianday(%s)) * 1440.0)", endCol, startCol)
+}
