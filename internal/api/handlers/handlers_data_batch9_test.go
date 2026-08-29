@@ -2,9 +2,12 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -232,5 +235,172 @@ func TestReceiveConfigRevision_UsesRowLockClause(t *testing.T) {
 	}
 	if !strings.Contains(s, `clause.Locking{Strength: "UPDATE"}`) {
 		t.Error("handlers_data.go must lock with clause.Locking{Strength: \"UPDATE\"} (real FOR UPDATE)")
+	}
+}
+
+// ── AUDIT-196 follow-up: a truncated body must 400 and NOT dedup-mark ─────────
+
+// doRawProbeRequest posts a RAW (unmarshaled) body with arbitrary headers to a
+// probe handler — used to send a deliberately malformed/truncated JSON body that
+// json.Marshal could never produce.
+func doRawProbeRequest(t *testing.T, h func(*gin.Context), method, path string, probeID uint, authKey, rawBody string, headers map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	router := gin.New()
+	router.Handle(method, "/probes/:id"+path, h)
+
+	req := httptest.NewRequest(method, fmt.Sprintf("/probes/%d%s", probeID, path), strings.NewReader(rawBody))
+	req.Header.Set("Content-Type", "application/json")
+	if authKey != "" {
+		req.Header.Set("Authorization", "Bearer "+authKey)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	return w
+}
+
+// TestReceiveSystemStatuses_TruncatedBody_400AndNotDeduped is the reviewer's HIGH
+// regression: a body cut mid-array (`[{...},{...}` with no closing `]`) must 400
+// and MUST NOT mark the idempotency batch id processed — otherwise the
+// collector's retry would be deduped and the tail lost forever with no alert.
+// json.Decoder.More() swallows the read error, so pre-fix this returned a partial
+// 200 and marked the batch. Fails pre-this-fix.
+func TestReceiveSystemStatuses_TruncatedBody_400AndNotDeduped(t *testing.T) {
+	h, db := setupTestHandler(t)
+	probe, device := setupProbeAndDevice(t, db)
+
+	const batchID = "batch-truncated-1"
+	rawBody := fmt.Sprintf(`[{"device_id":%d},{"device_id":%d}`, device.ID, device.ID) // no closing ]
+
+	w := doRawProbeRequest(t, h.ReceiveSystemStatuses, "POST", "/system-statuses",
+		probe.ID, probe.RegistrationKey, rawBody, map[string]string{"X-Probe-Batch-ID": batchID})
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("truncated body: status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+	if db.BatchAlreadyProcessed(probe.ID, batchID) {
+		t.Error("truncated body marked the batch id processed — the collector's retry will be deduped and the tail lost")
+	}
+	var count int64
+	db.Gorm().Model(&models.SystemStatus{}).Where("device_id = ?", device.ID).Count(&count)
+	if count != 0 {
+		t.Errorf("truncated body saved %d partial rows, want 0", count)
+	}
+}
+
+// ── AUDIT-196: decoder-level memory + shape unit tests ────────────────────────
+
+// countingElem counts every time the JSON decoder MATERIALIZES an element into a
+// struct — the only way to pin decodeCappedArray's memory claim (at most capN
+// elements are ever decoded; the tail is drained as raw bytes).
+type countingElem struct {
+	DeviceID uint `json:"device_id"`
+}
+
+var decodeMaterializeCount int32
+
+func (e *countingElem) UnmarshalJSON(b []byte) error {
+	atomic.AddInt32(&decodeMaterializeCount, 1)
+	return nil
+}
+
+func newDecodeCtx(body string) (*gin.Context, *httptest.ResponseRecorder) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/", strings.NewReader(body))
+	return c, w
+}
+
+// TestDecodeCappedArray_MaterializesAtMostCapN pins the AUDIT-196 memory
+// guarantee: for an over-cap array only capN elements are ever decoded into
+// structs, while `total` still reflects the true element count for the alert.
+func TestDecodeCappedArray_MaterializesAtMostCapN(t *testing.T) {
+	var sb strings.Builder
+	sb.WriteByte('[')
+	const n = 250
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		sb.WriteString(`{"device_id":1}`)
+	}
+	sb.WriteByte(']')
+
+	atomic.StoreInt32(&decodeMaterializeCount, 0)
+	c, _ := newDecodeCtx(sb.String())
+
+	out, total, ok := decodeCappedArray[countingElem](c, 100)
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	if len(out) != 100 {
+		t.Errorf("len(out) = %d, want 100", len(out))
+	}
+	if total != n {
+		t.Errorf("total = %d, want %d (exact count for the truncation alert)", total, n)
+	}
+	if got := atomic.LoadInt32(&decodeMaterializeCount); got != 100 {
+		t.Errorf("materialized %d elements, want exactly 100 — memory cap breached (the whole array was decoded)", got)
+	}
+}
+
+// TestDecodeCappedArray_NullBody_EmptyBatch: a bare JSON null decodes as an empty
+// batch (ok=true, total=0), matching ShouldBindJSON(&slice) → nil slice.
+func TestDecodeCappedArray_NullBody_EmptyBatch(t *testing.T) {
+	c, _ := newDecodeCtx("null")
+	out, total, ok := decodeCappedArray[countingElem](c, 100)
+	if !ok || total != 0 || len(out) != 0 {
+		t.Errorf("null body: out=%v total=%d ok=%v, want empty ok batch", out, total, ok)
+	}
+}
+
+// TestDecodeCappedArray_MalformedDrainTail_400: a malformed element in the drained
+// (over-cap) tail is a bad body and must 400, matching pre-fix full-decode reject.
+func TestDecodeCappedArray_MalformedDrainTail_400(t *testing.T) {
+	c, w := newDecodeCtx(`[{"device_id":1},{"device_id":1},{"device_id":1},garbage]`)
+	_, _, ok := decodeCappedArray[countingElem](c, 2)
+	if ok {
+		t.Error("malformed drain tail: ok = true, want false")
+	}
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("malformed drain tail: status = %d, want 400", w.Code)
+	}
+}
+
+// TestDecodeCappedArray_TruncatedNoCloser_400: a well-formed prefix with no
+// closing `]` must 400 (the closing-delimiter check), even though json.More()
+// swallowed the underlying EOF.
+func TestDecodeCappedArray_TruncatedNoCloser_400(t *testing.T) {
+	c, w := newDecodeCtx(`[{"device_id":1},{"device_id":1}`)
+	_, _, ok := decodeCappedArray[countingElem](c, 100)
+	if ok {
+		t.Error("truncated no-closer: ok = true, want false")
+	}
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("truncated no-closer: status = %d, want 400", w.Code)
+	}
+}
+
+// TestDecodeCappedArray_HappyShapes: normal array, [], and trailing garbage after
+// `]` (unread, lenient — matches ShouldBindJSON) all decode ok.
+func TestDecodeCappedArray_HappyShapes(t *testing.T) {
+	c, _ := newDecodeCtx(`[{"device_id":1},{"device_id":2}]`)
+	out, total, ok := decodeCappedArray[countingElem](c, 100)
+	if !ok || len(out) != 2 || total != 2 {
+		t.Errorf("normal array: out=%d total=%d ok=%v, want 2/2/true", len(out), total, ok)
+	}
+
+	c, _ = newDecodeCtx(`[]`)
+	out, total, ok = decodeCappedArray[countingElem](c, 100)
+	if !ok || len(out) != 0 || total != 0 {
+		t.Errorf("empty array: out=%d total=%d ok=%v, want 0/0/true", len(out), total, ok)
+	}
+
+	c, _ = newDecodeCtx(`[{"device_id":1}]trailing garbage`)
+	out, total, ok = decodeCappedArray[countingElem](c, 100)
+	if !ok || len(out) != 1 || total != 1 {
+		t.Errorf("trailing garbage: out=%d total=%d ok=%v, want 1/1/true", len(out), total, ok)
 	}
 }

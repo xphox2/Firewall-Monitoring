@@ -78,6 +78,19 @@ func decodeCappedArray[T any](c *gin.Context, capN int) (out []T, total int, ok 
 		}
 		total++
 	}
+	// dec.More() returns false on a READ error too — EOF from a dropped/truncated
+	// body, or MaxBytesReader's "request body too large" landing at an element
+	// boundary. Without this check a body cut mid-array (`[{...},{...}` with no
+	// closing `]`) would return a PARTIAL batch as ok=true; the handler would save
+	// it, return 200, and markBatchIfOK would record the idempotency key — so the
+	// collector's retry is deduped and the tail is lost forever with NO truncation
+	// alert. Consuming the closing `]` restores the pre-fix 400: a well-formed
+	// array ends on the `]` delim (no error), while a truncated or oversize body
+	// errors here. Trailing garbage after `]` is left unread, matching the lenient
+	// ShouldBindJSON behavior.
+	if _, err := dec.Token(); err != nil {
+		return fail()
+	}
 	return out, total, true
 }
 
