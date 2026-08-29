@@ -1,6 +1,17 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.218] - 2026-08-29
+
+### Fixed
+
+Audit remediation batch 9 of the 2026-08-27 engineering audit — probe telemetry ingest resilience (AUDIT-196, AUDIT-253, AUDIT-254, AUDIT-255). Every finding was re-verified line-by-line against current master before being fixed; the count in AUDIT-253 was undercounted in the audit (it named 8 truncation sites, verification found 11), and all 11 are subsumed by the AUDIT-196 streaming-decode conversion rather than fixed separately.
+
+- **AUDIT-196: probe telemetry ingest now caps the DECODE, not just the saved slice.** Every `Receive*` telemetry handler read the whole JSON array into memory with `ShouldBindJSON(&items)` and only THEN applied its item cap — and because the cap reslices rather than copies, the entire decoded backing array stayed live. A 5MB body of empty `{}` objects amplified to ~670MB–1GB of decoded structs before the 1000-item cap ever applied, so the cap gave false safety (the 5MB per-path body limit was the only real bound, and the per-IP rate limiter is bypassable across source IPs). A shared streaming decoder (`decodeCappedArray`) now stops materializing structs once the cap is reached — peak live memory is the cap's worth of structs, not the whole array — while still counting the dropped tail (as raw bytes, one element at a time) so the operator-visible `PROBE_DATA_TRUNCATED` alert stays exact. All 22 array-ingest handlers across the data and topology endpoints were converted; per-handler dedup, device-ownership filtering, and save calls are unchanged.
+- **AUDIT-253: eleven metric endpoints silently truncated at 500 while the collector sends up to 1000.** ProcessorStats, DiskUsage, LoadAverage, HardwareSensors, VPNStatuses, HAStatuses, SecurityStats, SDWANHealth, LicenseInfo, InterfaceErrors, and SensorDetails each resliced to `[:500]` with no log or alert, losing rows 501+ permanently once the batch idempotency key was marked processed. All eleven are now capped at 1000 through the same streaming decoder as the other endpoints, and a batch that overshoots emits the same truncation alert instead of dropping the tail invisibly.
+- **AUDIT-254: the config-revision row lock was a GORM-v1 no-op.** `ReceiveConfigRevision` locked the latest revision with `tx.Set("gorm:query_option", "FOR UPDATE")`, a GORM-v1 key that GORM v2 silently ignores — so two concurrent backups for one device both read the same prior revision, both inserted, and produced duplicate revisions and duplicate `CONFIG_CHANGE` alerts. It now uses the v2 `clause.Locking{Strength: "UPDATE"}` clause, a real `FOR UPDATE` row lock on Postgres (SQLite serializes the whole DB, so the same correctness property held there already).
+- **AUDIT-255: interface-error/sensor/license batches of only not-owned devices returned 500 instead of 200.** `ReceiveInterfaceErrors`, `ReceiveSensorDetails`, and `ReceiveLicenseDetails` called `gorm.Create` on the post-filter slice with no length guard, so when the device-ownership filter dropped every row the empty-slice insert raised `gorm.ErrEmptySlice` → 500. Each now mirrors `ReceiveHardwareSensors` and returns 200 `{saved: 0}` for an empty filtered batch.
+
 ## [0.11.217] - 2026-08-29
 
 ### Fixed
