@@ -872,6 +872,18 @@ func mergeCandidate(links []*Link, c *candidate) []*Link {
 	rawUpgradable := func(existing, in portRef) bool {
 		return c.tier == TierLLDP && existing.known() && existing.ifIndex == 0 && in.ifIndex > 0
 	}
+	// farConflict vetoes a raw-fallback merge when the OPPOSITE (far) sides of
+	// the candidate and the link are BOTH resolved (ifIndex>0) yet name different
+	// physical ports — proof they are DISTINCT parallel links, not one wire
+	// described twice. rawUpgradable grants a match on the REPORTER side alone,
+	// so without this veto two genuine parallel LLDP links whose reporter side
+	// collides only because one side's remote port is a raw fallback would be
+	// merged/cross-paired, silently losing an edge (AUDIT-279 follow-up). A
+	// raw-fallback far side (ifIndex 0) never trips the veto — that side is
+	// exactly what a legitimate mirror upgrades.
+	farConflict := func(linkFar, candFar portRef) bool {
+		return linkFar.ifIndex > 0 && candFar.ifIndex > 0 && !samePort(linkFar, candFar)
+	}
 
 	sideMatches := func(l *Link) (exact bool, fillable bool) {
 		lA := portRef{l.AIfIndex, l.AIfName}
@@ -880,12 +892,12 @@ func mergeCandidate(links []*Link, c *candidate) []*Link {
 			if samePort(lA, aPort) {
 				return true, false
 			}
-			return false, !lA.known() || rawUpgradable(lA, aPort)
+			return false, !lA.known() || (rawUpgradable(lA, aPort) && !farConflict(lB, bPort))
 		}
 		if samePort(lB, bPort) {
 			return true, false
 		}
-		return false, !lB.known() || rawUpgradable(lB, bPort)
+		return false, !lB.known() || (rawUpgradable(lB, bPort) && !farConflict(lA, aPort))
 	}
 
 	fillSide := func(cur portRef, in portRef) (portRef, bool) {

@@ -60,4 +60,22 @@ func TestOPNsenseFilterlogExtract(t *testing.T) {
 	if pg := Fields("opnsense", &plain); pg["action"] != "" || pg["srcip"] != "" {
 		t.Errorf("non-filterlog line must not produce structured fields, got %v", pg)
 	}
+
+	// A comma-dense token from some OTHER daemon on an opnsense-vendor device
+	// must NOT be mistaken for filterlog CSV — the signature gate (rulenr int,
+	// pf action verdict, ipversion 4/6) rejects it, so no bogus structured
+	// fields pollute Event-Rule matching (AUDIT-280 follow-up).
+	for _, noise := range []string{
+		// action field ("accept") is not a pf verdict.
+		`audit[9]: 100,,,evt,eth0,log,accept,in,4,x,y,z,q,r,s,6,tcp,60,1.2.3.4,5.6.7.8,10,20`,
+		// field 0 ("host") is not a small integer.
+		`app: host,a,b,c,d,e,block,in,4,x,y,z,q,r,s,6,tcp,60,1.2.3.4,5.6.7.8,10,20`,
+		// ipversion field is "9", not 4/6.
+		`x: 3,,,t,igb0,match,block,in,9,x,y,z,q,r,s,6,tcp,60,1.2.3.4,5.6.7.8,10,20`,
+	} {
+		g := Fields("opnsense", &models.SyslogMessage{Severity: 5, Message: noise})
+		if g["action"] != "" || g["srcip"] != "" || g["dstip"] != "" {
+			t.Errorf("comma-dense non-filterlog line leaked structured fields: %q -> %v", noise, g)
+		}
+	}
 }

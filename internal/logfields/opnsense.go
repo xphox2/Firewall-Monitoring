@@ -87,13 +87,45 @@ func extractFilterlog(raw string, dst map[string]string) {
 
 // filterlogCSV returns the comma-separated filterlog payload from a reconstructed
 // syslog line. The CSV is a single whitespace-free token with many commas
-// (>= the 8-field common prefix), so it's identified by its comma density — this
-// survives the collector's RFC5424 space-split moving the leading tokens around.
+// (>= the 8-field common prefix), so it's located by comma density — surviving
+// the collector's RFC5424 space-split moving the leading tokens around — and then
+// VALIDATED against the filterlog signature: field 0 (rulenr) a small integer,
+// field 6 (action) a pf verdict, field 8 (ipversion) 4 or 6. The signature gate
+// stops a comma-dense token from an UNRELATED daemon on a pf/opnsense-vendor
+// device from polluting the Event-Rule structured fields (AUDIT-280 follow-up).
 func filterlogCSV(raw string) string {
 	for _, tok := range strings.Fields(raw) {
-		if strings.Count(tok, ",") >= 8 {
-			return tok
+		if strings.Count(tok, ",") < 8 {
+			continue
 		}
+		f := strings.Split(tok, ",")
+		if len(f) < 9 || !isSmallUint(f[0]) {
+			continue
+		}
+		switch f[6] { // pf action verdict
+		case "pass", "block", "reject":
+		default:
+			continue
+		}
+		if f[8] != "4" && f[8] != "6" { // ipversion
+			continue
+		}
+		return tok
 	}
 	return ""
+}
+
+// isSmallUint reports whether s is a short, all-digit, non-negative integer — the
+// shape of a filterlog rulenr. Rejects empty, signed, or oversized tokens so the
+// signature gate can't be satisfied by arbitrary comma-dense text.
+func isSmallUint(s string) bool {
+	if s == "" || len(s) > 7 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
