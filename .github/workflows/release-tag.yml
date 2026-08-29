@@ -1,0 +1,61 @@
+# Roadmap item P2-6: publish a GitHub tag + release for every shipped version.
+#
+# Every release in this repo is a ServerVersion bump in cmd/api/main.go plus a
+# CHANGELOG entry; before this workflow the repo published zero tags and zero
+# releases, so anything resolving versions via the GitHub API (the
+# technicallabs.org System Monitor uses releases/latest, falling back to tags)
+# could never see a shipped version. On every push to master this job reads
+# the version constant and, when no v<version> tag exists yet, creates the tag
+# and a release whose notes are that version's CHANGELOG section. Idempotent:
+# re-runs and doc-only pushes that don't bump the constant are no-ops.
+name: Release Tag
+
+on:
+  push:
+    branches: [master]
+
+# The one workflow that must write to the repo (tags + releases). Scoped to
+# exactly that; the CI workflow keeps its contents: read.
+permissions:
+  contents: write
+
+concurrency:
+  group: release-tag
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history so `git rev-parse v<V>` sees existing tags.
+          fetch-depth: 0
+
+      - name: Tag and release the current version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=$(grep -oP 'const ServerVersion = "\K[^"]+' cmd/api/main.go)
+          if [ -z "$V" ]; then
+            echo "::error::could not extract ServerVersion from cmd/api/main.go"
+            exit 1
+          fi
+          if git rev-parse "v$V" >/dev/null 2>&1; then
+            echo "tag v$V already exists — nothing to do"
+            exit 0
+          fi
+          # Release notes = this version's CHANGELOG section (between its
+          # bracketed heading and the next one).
+          awk -v ver="$V" '
+            $0 ~ "^## \\[" ver "\\]" { f = 1; next }
+            /^## \[/ { if (f) exit }
+            f
+          ' CHANGELOG.md > /tmp/notes.md
+          if [ ! -s /tmp/notes.md ]; then
+            echo "Release v$V — see CHANGELOG.md for details." > /tmp/notes.md
+          fi
+          gh release create "v$V" --target "$GITHUB_SHA" --title "v$V" --notes-file /tmp/notes.md
+          echo "created release v$V"
