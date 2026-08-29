@@ -631,7 +631,9 @@ func inferSensorUnit(s *models.HardwareSensor) {
 		strings.Contains(lower, "+3.") || strings.Contains(lower, "+5.") ||
 		strings.Contains(lower, "+12") || strings.Contains(lower, "volt"):
 		s.Type = "voltage"
-		s.Unit = "mV"
+		// fgHwSensorEntValue is a DisplayString in VOLTS (e.g. "12.07"), not
+		// millivolts. Twin of the collector's inferSensorUnit (AUDIT-301).
+		s.Unit = "V"
 	case strings.Contains(lower, "ps") && strings.Contains(lower, "status"):
 		s.Type = "power"
 		s.Unit = ""

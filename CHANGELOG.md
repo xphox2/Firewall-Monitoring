@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.220] - 2026-08-29
+
+### Fixed
+
+Audit remediation batch 11 of the 2026-08-27 engineering audit — server-side SNMP/trap parity with the collector (AUDIT-296, AUDIT-239, AUDIT-297, AUDIT-301, AUDIT-302). Every finding was re-verified line-by-line against current master before being fixed.
+
+- Vendor enterprise traps (VPN, HA, and IPS/threat notifications) are now classified by the value of the snmpTrapOID.0 varbind — the way the collector already does — instead of being silently discarded. Previously the receiver only matched varbind *names* against the notification-OID registry, but the notification OID arrives as the *value* of snmpTrapOID.0, so vendor traps never classified and were dropped. This will surface previously-dropped trap alerts (intended); volume stays bounded by the receiver's existing per-source rate limiter. A name-based fallback is kept for devices that send the OID as a varbind name (AUDIT-296).
+- Trap messages are now length-capped (256 characters) and stripped of CR/LF and other control characters at both trap-message producers (the vendor-trap and the linkUp/linkDown link-trap paths) before they reach the log or the database — closing a log-forgery vector (embedded newlines forging log lines, CWE-117) and preventing crafted traps from bloating the alerts table and notifier payloads (AUDIT-239).
+- Link-trap interface-column matching now uses exact OID boundaries: the IF-MIB column prefixes (ifIndex, ifDescr, ifOperStatus) are matched with a trailing dot, so columns 10–19 (e.g. ...2.2.1.10) are no longer misread as ifIndex (...2.2.1.1) (AUDIT-297).
+- FortiGate voltage sensors now report their unit as "V" instead of "mV" on the server SNMP path; fgHwSensorEntValue is a DisplayString already expressed in volts. Twin of the collector's fix (AUDIT-301).
+- Palo Alto nonoperational hardware sensors (EntPhySensorOperStatus 3) are now emitted with status "alarm" instead of being dropped before the alarm branch, which had made every emitted PA sensor read as "normal" and a failed sensor appear healthy/absent. Only truly-unavailable sensors (status 2) are still dropped (AUDIT-302).
+
 ## [0.11.219] - 2026-08-29
 
 ### Fixed

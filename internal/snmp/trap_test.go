@@ -1,13 +1,186 @@
 package snmp
 
 import (
+	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/models"
+
+	"github.com/gosnmp/gosnmp"
 )
+
+// newTestReceiver builds a receiver with a set community (community/rate-limit
+// paths are unused by parseTrap directly).
+func newTestReceiver(t *testing.T) *TrapReceiver {
+	t.Helper()
+	cfg := &config.Config{}
+	cfg.SNMP.TrapCommunity = "public"
+	rcv, err := NewTrapReceiver(cfg)
+	if err != nil {
+		t.Fatalf("NewTrapReceiver: %v", err)
+	}
+	return rcv
+}
+
+var testTrapAddr = &net.UDPAddr{IP: net.ParseIP("192.0.2.50")}
+
+// TestParseTrap_ClassifiesByTrapOIDValue is the AUDIT-296 regression: a vendor
+// notification OID arrives ONLY as the VALUE of the snmpTrapOID.0 varbind (RFC
+// 3418), never as a varbind name. The pre-fix phase-2 loop matched varbind
+// NAMES against the registry, so this packet classified as nothing and parseTrap
+// returned nil — the trap was silently discarded. The fix classifies by the
+// snmpTrapOID.0 value, matching the collector.
+func TestParseTrap_ClassifiesByTrapOIDValue(t *testing.T) {
+	t.Parallel()
+	rcv := newTestReceiver(t)
+
+	// .1.3.6.1.4.1.25461.2.1.3.2.0.1747 = PaloAlto vpn-tunnel-down (critical),
+	// registered in vendor_paloalto.go TrapOIDs.
+	const paVPNDown = ".1.3.6.1.4.1.25461.2.1.3.2.0.1747"
+	packet := &gosnmp.SnmpPacket{
+		Version: gosnmp.Version2c,
+		Variables: []gosnmp.SnmpPDU{
+			{Name: oidSysUpTime, Type: gosnmp.TimeTicks, Value: uint32(12345)},
+			{Name: oidSnmpTrapOID, Type: gosnmp.ObjectIdentifier, Value: paVPNDown},
+			{Name: ".1.3.6.1.4.1.25461.2.1.3.2.1.1", Type: gosnmp.OctetString, Value: []byte("tunnel to HQ down")},
+		},
+	}
+
+	trap := rcv.parseTrap(packet, testTrapAddr)
+	if trap == nil {
+		t.Fatal("parseTrap returned nil for a trap whose notification OID is in snmpTrapOID.0's value (pre-fix drop); want a classified TrapEvent")
+	}
+	if trap.TrapType != "vpn-tunnel-down" {
+		t.Errorf("TrapType = %q, want vpn-tunnel-down", trap.TrapType)
+	}
+	if trap.Severity != "critical" {
+		t.Errorf("Severity = %q, want critical", trap.Severity)
+	}
+	if trap.TrapOID != paVPNDown {
+		t.Errorf("TrapOID = %q, want %q", trap.TrapOID, paVPNDown)
+	}
+	// The message must be built from a representative DATA varbind, not the
+	// snmpTrapOID.0/sysUpTime wrappers.
+	if !strings.Contains(trap.Message, "tunnel to HQ down") {
+		t.Errorf("Message = %q, want it to include the data varbind payload", trap.Message)
+	}
+}
+
+// TestParseTrap_NameBasedFallbackStillWorks proves the fallback path is kept:
+// a device that (non-standardly) sends the notification OID as a varbind NAME
+// still classifies.
+func TestParseTrap_NameBasedFallbackStillWorks(t *testing.T) {
+	t.Parallel()
+	rcv := newTestReceiver(t)
+
+	const paVPNUp = ".1.3.6.1.4.1.25461.2.1.3.2.0.1746" // vpn-tunnel-up (info)
+	packet := &gosnmp.SnmpPacket{
+		Version: gosnmp.Version2c,
+		Variables: []gosnmp.SnmpPDU{
+			{Name: paVPNUp, Type: gosnmp.OctetString, Value: []byte("up")},
+		},
+	}
+	trap := rcv.parseTrap(packet, testTrapAddr)
+	if trap == nil {
+		t.Fatal("parseTrap returned nil; name-based fallback must still classify a notification OID sent as a varbind name")
+	}
+	if trap.TrapType != "vpn-tunnel-up" {
+		t.Errorf("TrapType = %q, want vpn-tunnel-up", trap.TrapType)
+	}
+}
+
+// TestParseLinkTrap_IfColumnDotBoundary is the AUDIT-297 regression: the switch
+// used HasPrefix without a trailing dot, so ifIndex (...2.2.1.1) prefix-matched
+// ...2.2.1.10..19. A varbind in column 10 (...2.2.1.10.x) must NOT be read as
+// ifIndex; the real ifIndex column (...2.2.1.1.x) must be.
+func TestParseLinkTrap_IfColumnDotBoundary(t *testing.T) {
+	t.Parallel()
+	rcv := newTestReceiver(t)
+
+	packet := &gosnmp.SnmpPacket{
+		Version: gosnmp.Version2c,
+		Variables: []gosnmp.SnmpPDU{
+			{Name: oidSnmpTrapOID, Type: gosnmp.ObjectIdentifier, Value: oidLinkDown},
+			// Real ifIndex column (...2.2.1.1.7): value 7 is the interface index.
+			{Name: oidIfIndex + ".7", Type: gosnmp.Integer, Value: 7},
+			// A different IF-MIB column that begins with ...2.2.1.1 as a text
+			// prefix (...2.2.1.10.99) — pre-fix this was misread as ifIndex,
+			// clobbering it with 99.
+			{Name: ".1.3.6.1.2.1.2.2.1.10.99", Type: gosnmp.Counter32, Value: uint(4096)},
+		},
+	}
+
+	trap := rcv.parseLinkTrap(packet)
+	if trap == nil {
+		t.Fatal("parseLinkTrap returned nil for a linkDown trap")
+	}
+	if !strings.Contains(trap.Message, "ifIndex=7") {
+		t.Errorf("Message = %q, want ifIndex=7 (column 10 must not be misread as ifIndex)", trap.Message)
+	}
+	if strings.Contains(trap.Message, "ifIndex=4096") || strings.Contains(trap.Message, "ifIndex=99") {
+		t.Errorf("Message = %q: a ...2.2.1.10 varbind was misread as ifIndex", trap.Message)
+	}
+}
+
+// TestParseLinkTrap_SanitizeAndCap is the AUDIT-239 regression for the SECOND
+// trap-message producer: the linkUp/linkDown path builds trap.Message via
+// formatLinkMessage from an attacker-controlled ifDescr. A CRLF-laced +
+// oversized ifDescr must be stripped of control characters and capped, or it
+// forges log lines (CWE-117) and bloats the alerts row (LINK_DOWN is a warning
+// that passes the alert filter, and LINK_UP drives sendRecovery).
+func TestParseLinkTrap_SanitizeAndCap(t *testing.T) {
+	t.Parallel()
+	rcv := newTestReceiver(t)
+
+	badDescr := "WAN1\nFATAL forged line\r\n" + strings.Repeat("A", 60000)
+	packet := &gosnmp.SnmpPacket{
+		Version: gosnmp.Version2c,
+		Variables: []gosnmp.SnmpPDU{
+			{Name: oidSnmpTrapOID, Type: gosnmp.ObjectIdentifier, Value: oidLinkDown},
+			{Name: oidIfIndex + ".7", Type: gosnmp.Integer, Value: 7},
+			{Name: oidIfDescr + ".7", Type: gosnmp.OctetString, Value: []byte(badDescr)},
+		},
+	}
+
+	trap := rcv.parseLinkTrap(packet)
+	if trap == nil {
+		t.Fatal("parseLinkTrap returned nil for a linkDown trap")
+	}
+	if strings.ContainsAny(trap.Message, "\n\r") {
+		t.Errorf("Message %q still contains CR/LF (log forgery)", trap.Message)
+	}
+	if r := []rune(trap.Message); len(r) > 256 {
+		t.Errorf("Message length = %d runes, want <= 256", len(r))
+	}
+}
+
+// TestFormatTrapMessage_SanitizeAndCap is the AUDIT-239 regression: an
+// OctetString varbind's raw bytes must be stripped of control characters (CR/LF
+// forge log lines — CWE-117) and the whole message capped at 256 chars before
+// it reaches the log and the DB.
+func TestFormatTrapMessage_SanitizeAndCap(t *testing.T) {
+	t.Parallel()
+	rcv := newTestReceiver(t)
+
+	payload := "line1\nline2\r\ninjected\x1bESC" + strings.Repeat("A", 1024)
+	v := gosnmp.SnmpPDU{
+		Name:  ".1.3.6.1.4.1.25461.2.1.3.2.1.1",
+		Type:  gosnmp.OctetString,
+		Value: []byte(payload),
+	}
+	msg := rcv.formatTrapMessage(v, ".1.3.6.1.4.1.25461.2.1.3.2.0.1747")
+
+	if strings.ContainsAny(msg, "\n\r") || strings.Contains(msg, "\x1b") {
+		t.Errorf("Message %q still contains control characters", msg)
+	}
+	if r := []rune(msg); len(r) > 256 {
+		t.Errorf("Message length = %d runes, want <= 256", len(r))
+	}
+}
 
 // TestTrapReceiver_Start_RequiresCommunity locks in AUDIT-012: an empty
 // SNMP_TRAP_COMMUNITY must cause Start to fail. The pre-AUDIT code
