@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.213] - 2026-08-28
+
+### Added
+- **GitHub releases/tags are now published automatically (roadmap P2-6).** A new `release-tag` workflow runs on every master push: it reads `ServerVersion` from `cmd/api/main.go` and, when no `v<version>` tag exists yet, creates the tag and a GitHub release whose notes are that version's CHANGELOG section. Idempotent — doc-only pushes and re-runs are no-ops. This is the fix for the gap recorded in 0.11.212: the repo published zero tags/releases, so the technicallabs.org System Monitor (which resolves live versions via the GitHub API, `releases/latest` then `tags`) permanently showed a stale baseline. `v0.11.211` was backfilled manually so the API resolves immediately; every later version tags itself. The workflow carries the repo's only `contents: write` grant, scoped to exactly this job; CI keeps `contents: read`.
+
+## [0.11.212] - 2026-08-28
+
+### Added
+- Roadmap note **P2-6** in `docs/FEATURE-ROADMAP.md` (nice-to-have): publish GitHub releases/tags for shipped versions. The repo currently publishes no tags or releases, so the technicallabs.org System Monitor — which resolves each project's live version via the GitHub API (`releases/latest`, then `tags`) — can never resolve this repo and permanently falls back to its stale hardcoded baseline (v0.11.122). A CI step that tags `v<ServerVersion>` on master when the constant changes would make the website update automatically with every release. Docs-only; no behavior changes.
+
 ## [0.11.211] - 2026-08-28
 
 ### Fixed
