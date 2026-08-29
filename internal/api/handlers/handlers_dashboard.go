@@ -265,6 +265,7 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 
 	var hours int
 	var maxPoints int
+	var subHour time.Duration // AUDIT-235: fractional-hour ranges (0.25=15m, 0.5=30m)
 
 	switch rangeStr {
 	case "5m":
@@ -291,10 +292,19 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	case "90d":
 		hours = 2160
 		maxPoints = 90
-	default: // 1h or numeric fallback
-		if parsed, err := strconv.Atoi(rangeStr); err == nil && parsed > 0 {
-			hours = parsed
-			maxPoints = 180
+	default: // 1h or numeric fallback (incl. the fractional public 0.25/0.5 ranges)
+		// AUDIT-235: parse as a float, not Atoi — the public dashboard sends
+		// range=0.25 (15m) / 0.5 (30m). Atoi failed on those and silently fell
+		// through to the 1h default, so the fractional windows showed the wrong
+		// span end to end even after the client parseFloat fix.
+		if parsed, err := strconv.ParseFloat(rangeStr, 64); err == nil && parsed > 0 {
+			if parsed < 1 {
+				subHour = time.Duration(parsed * float64(time.Hour))
+				maxPoints = 30
+			} else {
+				hours = int(parsed)
+				maxPoints = 180
+			}
 		} else {
 			hours = 1
 			maxPoints = 60
@@ -307,6 +317,8 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 		cutoff = time.Now().Add(-5 * time.Minute)
 	} else if rangeStr == "15m" {
 		cutoff = time.Now().Add(-15 * time.Minute)
+	} else if subHour > 0 {
+		cutoff = time.Now().Add(-subHour) // AUDIT-235: sub-hour public range
 	} else {
 		cutoff = time.Now().Add(-time.Duration(hours) * time.Hour)
 	}
@@ -368,8 +380,8 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	for i, p := range sampled {
 		// Use appropriate time format based on range
 		var labelFormat string
-		if rangeStr == "5m" || rangeStr == "15m" {
-			labelFormat = "15:04:05" // include seconds for short ranges
+		if rangeStr == "5m" || rangeStr == "15m" || subHour > 0 {
+			labelFormat = "15:04:05" // include seconds for short ranges (incl. AUDIT-235 sub-hour)
 		} else if rangeStr == "7d" {
 			labelFormat = "01-02 15:00" // date and hour for 7 days
 		} else if rangeStr == "90d" {
@@ -606,9 +618,27 @@ func (h *Handler) GetPublicStatusHistory(c *gin.Context) {
 	// Unified parsing (v0.10.217, bundle D2). httputil.ParseHours enforces
 	// the 24h default + 8760h (1 year) cap shared by every endpoint that
 	// accepts an `hours` query parameter.
-	hours := httputil.ParseHours(c)
-
-	statuses, err := db.GetSystemStatusHistory(deviceID, hours)
+	//
+	// AUDIT-235: the public dashboard's 15m/30m ranges send hours=0.25/0.5.
+	// ParseHours is integer-only (Atoi) and truncates those to its 24h default,
+	// so the CPU/memory history silently showed 24h. For a genuine sub-hour
+	// value, query by an explicit cutoff duration (mirrors GetSystemStatusHistory
+	// — ASC + LIMIT 2000); integer hours keep the shared helper + method.
+	var statuses []models.SystemStatus
+	var err error
+	var subHour time.Duration
+	if hq := c.Query("hours"); hq != "" {
+		if f, ferr := strconv.ParseFloat(hq, 64); ferr == nil && f > 0 && f < 1 {
+			subHour = time.Duration(f * float64(time.Hour))
+		}
+	}
+	if subHour > 0 {
+		cutoff := time.Now().Add(-subHour)
+		err = db.Gorm().Where("device_id = ? AND timestamp > ?", deviceID, cutoff).
+			Order("timestamp ASC").Limit(2000).Find(&statuses).Error
+	} else {
+		statuses, err = db.GetSystemStatusHistory(deviceID, httputil.ParseHours(c))
+	}
 	if err != nil {
 		httputil.InternalError(c, "Failed to get status history", err)
 		return

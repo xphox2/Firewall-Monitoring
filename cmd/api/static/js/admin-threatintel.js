@@ -11,6 +11,15 @@
 (function() {
     'use strict';
 
+    // AUDIT-233: AC must live at MODULE scope. onMasterToggle/onFeedToggle/
+    // onStormSave reference bare `AC.showToast`; without a module-scope binding
+    // those threw ReferenceError, which the chained .catch swallowed — so no
+    // success toast ever appeared and onFeedToggle's table did not refresh after
+    // a successful toggle (the throw skipped the .then's loadFeeds(), and its
+    // .catch does not reload). admin-threatintel.js is deferred after
+    // admin-common.js, which sets window.AdminCommon before this runs.
+    var AC = window.AdminCommon;
+
     var PAGE_SIZE = 100;
     var searchOffset = 0;
     var searchTotal = 0;
@@ -21,7 +30,6 @@
         return f ? f(String(s == null ? '' : s)) : String(s == null ? '' : s);
     }
     function api(path, opts) {
-        var AC = window.AdminCommon;
         if (!AC || !AC.apiFetch) return Promise.reject(new Error('AdminCommon unavailable'));
         return AC.apiFetch(path, opts);
     }
@@ -249,7 +257,6 @@
             if (!rows.length) {
                 body.innerHTML = '<tr><td colspan="6" class="fwmon-ti-empty">No matching indicators.</td></tr>';
             } else {
-                var AC = window.AdminCommon;
                 var html = '';
                 for (var i = 0; i < rows.length; i++) {
                     var r = rows[i];

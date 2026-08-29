@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.224] - 2026-08-29
+
+### Fixed
+
+Audit remediation batch 16 of the 2026-08-27 engineering audit — seven frontend/handler correctness findings across the admin console and public dashboard. Each finding was re-verified line-by-line against current master, and each ships a content-pinning regression test in `internal/shell/` that fails if the fix is reverted.
+
+- **The device-detail public-interface toggle no longer wipes other devices' selections, and the interface table waits for its curation to load (AUDIT-185).** `loadPublicInterfaces()` did not return its fetch, so the init chain did not wait and the interface table rendered (and never re-rendered) with an empty map; `togglePublicIface` POSTs the ENTIRE `public_interfaces` map, so a checkbox click before the map loaded serialized an empty map and erased every other device's public-dashboard selection. `loadPublicInterfaces` now returns its promise, and a `publicIfacesLoaded` flag blocks the toggle and disables the checkboxes until the map is present.
+- **The dead `/admin/network` route was removed (AUDIT-229).** `web/network.html`, `admin-network.js` and the sidebar link were deleted earlier, but `cmd/api/main.go` still registered `admin.GET("/network")` rendering the now-missing `network.html`, so the route errored. The registration and the last `network.html` reference are gone.
+- **The connection-detail tunnel charts keep the operator's Combined/Transfer selection across the 30s auto-refresh (AUDIT-230).** `renderTunnelCharts` rebuilds each chart host via `innerHTML`, destroying the `.fwmon-bw-toggle` that `FwmonBwChart.mount` reads to recover the selected mode — so every poll snapped the view back to Throughput. The selected mode is now snapshotted (keyed by tunnel group) before the rebuild and passed to `mount` as `initialView`.
+- **A fresh IPSec deploy/rollback/recheck no longer flashes the previous deploy's failure banner or double-polls (AUDIT-232).** The progress modal opened and immediately GET-polled the deploy record BEFORE the launching POST, so a stale terminal/rollback banner could render during launch and the POST resolution then started a second concurrent poll with the same generation. `openDeployModal` now takes a `deferPoll` flag; a launch defers the single poll until its POST is accepted, while a "View progress" open still polls immediately.
+- **The rich VPN detail panel renders again for devices with a live tunnel (AUDIT-234).** `diagram-panels.js` referenced bare `AC.formatTunnelUptime(...)` for any `up` tunnel while `AC = window.AdminCommon` was declared only inside four other functions — throwing a `ReferenceError` inside `.map()` and killing the whole panel. `AC` is now declared once at module scope.
+- **Threat-intel feed toggles show their success toast and refresh the feed table (AUDIT-233).** Same root cause as AUDIT-234 — bare `AC.showToast` in the feed/master/storm handlers with `AC` only declared locally in `api()`/`renderSearch()`. Corrected scope versus the audit: the `ReferenceError` was CAUGHT by the chained `.catch`, so it was never an unhandled rejection and the button was never stuck disabled; the only real effects were that no success toast fired and `onFeedToggle`'s per-feed table did not auto-refresh after a successful toggle. Hoisting `AC` to module scope (the shared fix with AUDIT-234) restores both.
+- **The public dashboard's 15m/30m ranges now show the correct window end to end (AUDIT-235).** `public-dashboard.js` parsed the range with `parseInt`, truncating the `0.25`/`0.5` (15m/30m) options to `0`; the client now uses `parseFloat`. The server also honored only integer ranges, so those windows still resolved wrong: `GetPublicInterfaceChart` now parses the range as a float and drives a sub-hour cutoff duration (was `Atoi` → 1h fallback), and `GetPublicStatusHistory` honors a genuine sub-hour `hours` value via an explicit cutoff (was the integer `ParseHours` 24h default). Integer ranges keep the shared helpers unchanged.
+
 ## [0.11.223] - 2026-08-29
 
 ### Fixed

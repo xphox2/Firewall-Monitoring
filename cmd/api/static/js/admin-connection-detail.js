@@ -367,6 +367,12 @@
     // the key because the same provisioned group legitimately appears in BOTH
     // the source and destination tables.
     var groupRanges = {};
+    // AUDIT-230: remembered bw-chart mode (rate/combined/transfer) keyed the same
+    // way as groupRanges. renderTunnelCharts wipes host.innerHTML on every 30s
+    // auto-refresh, which destroys each group's .fwmon-bw-toggle; without this,
+    // FwmonBwChart.mount can't recover the sibling toggle and snaps the view back
+    // to 'rate', so the operator's Combined/Transfer choice is lost every poll.
+    var groupBwViews = {};
     // Monotonic token per canvas: a click-initiated load still in flight when the
     // refresh wipes host.innerHTML would otherwise resolve against the NEW canvas
     // of the same positional id — possibly a different tunnel — and overwrite the
@@ -384,6 +390,17 @@
             if (!g || seen[g]) continue;
             seen[g] = true;
             groups.push(g);
+        }
+        // AUDIT-230: snapshot each existing group's selected bw-chart mode BEFORE
+        // the innerHTML rebuild wipes the toggles, keyed by group so it survives
+        // reorders. loadGroupChart re-applies it as initialView on the fresh mount.
+        var existingWraps = host.querySelectorAll('.tunnel-chart-wrap');
+        for (var ew = 0; ew < existingWraps.length; ew++) {
+            var wrapPill = existingWraps[ew].querySelector('.range-pill[data-group]');
+            var wrapActive = existingWraps[ew].querySelector('.fwmon-bw-toggle-btn.active');
+            if (wrapPill && wrapActive) {
+                groupBwViews[groupKey(hostId, wrapPill.getAttribute('data-group'))] = wrapActive.getAttribute('data-bwm');
+            }
         }
         if (!groups.length) { destroyGroupCharts(hostId); host.innerHTML = ''; return; }
         destroyGroupCharts(hostId, groups);
@@ -458,7 +475,12 @@
             if (tunnelCharts[canvasId]) { tunnelCharts[canvasId].destroy(); delete tunnelCharts[canvasId]; }
             if (!Array.isArray(data) || !data.length) return;
             var series = window.FwmonBwChart.normalizeDeltas(data);
-            tunnelCharts[canvasId] = window.FwmonBwChart.mount(canvas, series, { rxLabel: 'In', txLabel: 'Out' });
+            // AUDIT-230: pass the remembered mode as initialView. On a range click
+            // the toggle still exists in the DOM, so mount() recovers it from the
+            // sibling and ignores this; on the auto-refresh rebuild the toggle is
+            // gone, so initialView is what keeps Combined/Transfer from resetting.
+            var bwView = (hostId && group) ? (groupBwViews[groupKey(hostId, group)] || 'rate') : 'rate';
+            tunnelCharts[canvasId] = window.FwmonBwChart.mount(canvas, series, { rxLabel: 'In', txLabel: 'Out', initialView: bwView });
         }).catch(function(err) {
             // A request cancelled by navigation or a superseding poll is not an
             // error worth showing anyone.

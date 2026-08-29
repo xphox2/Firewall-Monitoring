@@ -626,7 +626,7 @@
             bwView = e.target.value;
             refreshBandwidthCharts();
         } else if (e.target.id === 'dash-range') {
-            dashRange = parseInt(e.target.value);
+            dashRange = parseFloat(e.target.value); // AUDIT-235: parseInt truncated 0.25/0.5 (15m/30m) to 0
             refreshBandwidthCharts();
             refreshCpuCharts();
         }

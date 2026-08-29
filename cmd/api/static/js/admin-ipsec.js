@@ -1859,7 +1859,7 @@
             AC.confirm('This WRITES IPSec configuration to the FortiGate device over its REST API. You can roll it back afterwards. Continue?',
                 { title: 'Deploy tunnel?', confirmLabel: 'Deploy', danger: false }).then(function (ok) {
                 if (!ok) return;
-                openDeployModal(id, 'deploy');
+                openDeployModal(id, 'deploy', true); // AUDIT-232: defer poll until the POST lands
                 AC.apiFetch(API + '/ipsec/tunnels/' + id + '/deploy', { method: 'POST' }).then(function () {
                     if (!deployLive(deployGen)) return;
                     pollDeploy(id, deployGen, Date.now(), 'deploy');
@@ -1875,7 +1875,7 @@
         AC.confirm('This REMOVES the deployed IPSec configuration from the device (phase1/phase2, tunnel interface, routes and policies for this tunnel). Continue?',
             { title: 'Roll back tunnel?', confirmLabel: 'Roll back', danger: true }).then(function (ok) {
             if (!ok) return;
-            openDeployModal(id, 'rollback');
+            openDeployModal(id, 'rollback', true); // AUDIT-232: defer poll until the POST lands
             AC.apiFetch(API + '/ipsec/tunnels/' + id + '/rollback', { method: 'POST' }).then(function () {
                 if (!deployLive(deployGen)) return;
                 pollDeploy(id, deployGen, Date.now(), 'rollback');
@@ -1891,7 +1891,7 @@
     // polls the same deploy GET until the tunnel resolves to up/down from the fresh
     // device state. No confirm — it writes nothing to the firewalls.
     function startRecheck(id) {
-        openDeployModal(id, 'recheck');
+        openDeployModal(id, 'recheck', true); // AUDIT-232: defer poll until the POST lands
         AC.apiFetch(API + '/ipsec/tunnels/' + id + '/recheck', { method: 'POST' }).then(function () {
             if (!deployLive(deployGen)) return;
             pollDeploy(id, deployGen, Date.now(), 'recheck');
@@ -1915,7 +1915,7 @@
         });
     }
 
-    function openDeployModal(id, op) {
+    function openDeployModal(id, op, deferPoll) {
         stopDeployPoll();
         deployReasonSnapshot = ''; // fresh per-deploy so a prior failure can't leak in
         deployPhaseKey = '';       // fresh phase tracking (first poll seeds it)
@@ -1931,8 +1931,16 @@
             '<div style="display:flex;align-items:center;gap:8px;color:var(--fwmon-text-mute);font-size:0.9rem;">' +
             '<span class="fwmon-spinner"></span><span>Starting ' + esc(op) + '…</span></div>';
         AC.openModal('ipsec-deploy-modal');
-        // A "View progress" open (op known, no POST) starts polling immediately.
-        pollDeploy(id, deployGen, Date.now(), op);
+        // AUDIT-232: a fresh launch (deploy/rollback/recheck) passes deferPoll —
+        // its POST has not landed yet, so an immediate GET here would return the
+        // PRIOR deploy record and paint a stale terminal/failure banner during
+        // launch, then the POST resolution would start a SECOND concurrent poll
+        // with the same deployGen. The caller starts the single poll after the
+        // POST is accepted instead. A "View progress" open (no POST) still polls
+        // immediately.
+        if (!deferPoll) {
+            pollDeploy(id, deployGen, Date.now(), op);
+        }
     }
 
     function deployErrorCard(html) {
