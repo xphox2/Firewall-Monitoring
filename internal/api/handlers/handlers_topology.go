@@ -69,12 +69,10 @@ func (h *Handler) ReceiveTopologyEntries(c *gin.Context) {
 		return
 	}
 	defer h.markBatchIfOK(c, probe.ID, batchID)
-	var entries []models.TopologyEntry
-	if err := c.ShouldBindJSON(&entries); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+	entries, ok := decodeCappedProbeBatch[models.TopologyEntry](h, c, probe, "topology-entries", 5000)
+	if !ok {
 		return
 	}
-	entries = truncateProbeBatch(h, probe, "topology-entries", 5000, entries)
 
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
@@ -129,12 +127,10 @@ func (h *Handler) ReceiveTopologyNeighbors(c *gin.Context) {
 		return
 	}
 	defer h.markBatchIfOK(c, probe.ID, batchID)
-	var neighbors []models.TopologyNeighbor
-	if err := c.ShouldBindJSON(&neighbors); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+	neighbors, ok := decodeCappedProbeBatch[models.TopologyNeighbor](h, c, probe, "topology-neighbors", 500)
+	if !ok {
 		return
 	}
-	neighbors = truncateProbeBatch(h, probe, "topology-neighbors", 500, neighbors)
 
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()

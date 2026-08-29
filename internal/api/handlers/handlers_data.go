@@ -20,6 +20,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // batchDedupCheck implements the AUDIT-042 idempotency check for probe batch
@@ -53,30 +54,29 @@ func (h *Handler) markBatchIfOK(c *gin.Context, probeID uint, batchID string) {
 	}
 }
 
-// truncateProbeBatch enforces a per-request item cap on an ingestion batch.
+// recordProbeTruncation logs a dropped-tail truncation and, past the
+// 20%-overshoot threshold, records the operator-visible PROBE_DATA_TRUNCATED
+// alert. AUDIT-196: the decode itself now enforces the item cap
+// (decodeCappedArray), so the whole array is never materialized; this preserves
+// the truncation SIGNAL the old truncateProbeBatch reslice emitted.
 //
-// M1 of the 2026-07-01 audit: the flows/counters/pings/interface paths
+// M1 of the 2026-07-01 audit: the flows/counters/pings/interface paths once
 // truncated silently — `items = items[:1000]` with no log or alert — then
-// returned 200 and marked the idempotency batch ID processed, so the
-// collector's retry machinery could never resend the tail. Any operator who
-// raised PROBE_MAX_BATCH_SIZE above the server cap lost every batch's tail
-// permanently and invisibly. Every truncation is now logged, and (matching the
-// pre-existing traps/syslog behavior) an operator-visible probe alert is
-// recorded when the overshoot exceeds 20%. The collector additionally clamps
-// PROBE_MAX_BATCH_SIZE to 1000 as of v1.2.155 so updated deployments never
-// truncate at all.
-func truncateProbeBatch[T any](h *Handler, probe *models.Probe, kind string, capN int, items []T) []T {
-	if len(items) <= capN {
-		return items
-	}
-	orig := len(items)
-	items = items[:capN]
+// returned 200 and marked the idempotency batch ID processed, so the collector's
+// retry machinery could never resend the tail. Any operator who raised
+// PROBE_MAX_BATCH_SIZE above the server cap lost every batch's tail permanently
+// and invisibly. Every truncation is now logged, and (matching the pre-existing
+// traps/syslog behavior) an operator-visible probe alert is recorded when the
+// overshoot exceeds 20%. The collector additionally clamps PROBE_MAX_BATCH_SIZE
+// to 1000 as of v1.2.155 so updated deployments never truncate at all. `orig` is
+// the true element count — the streaming decoder counts the dropped tail without
+// retaining it.
+func (h *Handler) recordProbeTruncation(probe *models.Probe, kind string, orig, capN int) {
 	log.Printf("%s: probe %d (%s) sent %d items; truncated to %d — the tail is DROPPED. Clamp PROBE_MAX_BATCH_SIZE <= %d on the collector.",
 		kind, probe.ID, probe.Name, orig, capN, capN)
 	if h.alertManager != nil && orig > capN+capN/5 {
 		h.alertManager.RecordProbeDataTruncation(probe.ID, probe.Name, orig, capN)
 	}
-	return items
 }
 
 // bumpOnlineFreshness is how recent a device's freshest row must be for the
@@ -145,12 +145,10 @@ func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 		return
 	}
 	defer h.markBatchIfOK(c, probe.ID, batchID)
-	var messages []models.SyslogMessage
-	if err := c.ShouldBindJSON(&messages); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+	messages, ok := decodeCappedProbeBatch[models.SyslogMessage](h, c, probe, "syslog", 1000)
+	if !ok {
 		return
 	}
-	messages = truncateProbeBatch(h, probe, "syslog", 1000, messages)
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	// Pre-resolve the source IPs of device-less messages in one batch query
@@ -277,12 +275,10 @@ func (h *Handler) ReceiveTrapEvents(c *gin.Context) {
 		return
 	}
 	defer h.markBatchIfOK(c, probe.ID, batchID)
-	var traps []models.TrapEvent
-	if err := c.ShouldBindJSON(&traps); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+	traps, ok := decodeCappedProbeBatch[models.TrapEvent](h, c, probe, "traps", 1000)
+	if !ok {
 		return
 	}
-	traps = truncateProbeBatch(h, probe, "traps", 1000, traps)
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := traps[:0]
@@ -313,12 +309,10 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 		return
 	}
 	defer h.markBatchIfOK(c, probe.ID, batchID)
-	var samples []models.FlowSample
-	if err := c.ShouldBindJSON(&samples); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+	samples, ok := decodeCappedProbeBatch[models.FlowSample](h, c, probe, "flows", 1000)
+	if !ok {
 		return
 	}
-	samples = truncateProbeBatch(h, probe, "flows", 1000, samples)
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	// Server-side device-resolution fallback for unresolved samples, batched into
 	// one query for the whole payload instead of a lookup per sample.
@@ -451,12 +445,10 @@ func (h *Handler) ReceiveFlowCounterSamples(c *gin.Context) {
 		return
 	}
 	defer h.markBatchIfOK(c, probe.ID, batchID)
-	var counters []models.FlowInterfaceCounter
-	if err := c.ShouldBindJSON(&counters); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+	counters, ok := decodeCappedProbeBatch[models.FlowInterfaceCounter](h, c, probe, "flow-counters", 1000)
+	if !ok {
 		return
 	}
-	counters = truncateProbeBatch(h, probe, "flow-counters", 1000, counters)
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	var ipToDevice map[string]uint
 	if h.db != nil {
@@ -508,12 +500,10 @@ func (h *Handler) ReceivePingResults(c *gin.Context) {
 		return
 	}
 	defer h.markBatchIfOK(c, probe.ID, batchID)
-	var results []models.PingResult
-	if err := c.ShouldBindJSON(&results); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+	results, ok := decodeCappedProbeBatch[models.PingResult](h, c, probe, "pings", 1000)
+	if !ok {
 		return
 	}
-	results = truncateProbeBatch(h, probe, "pings", 1000, results)
 	log.Printf("ReceivePingResults: probe %d received %d results", probe.ID, len(results))
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
@@ -603,12 +593,10 @@ func (h *Handler) ReceiveInterfaceAddresses(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var addrs []models.InterfaceAddress
-	if err := c.ShouldBindJSON(&addrs); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+	addrs, ok := decodeCappedProbeBatch[models.InterfaceAddress](h, c, probe, "interface-addresses", 1000)
+	if !ok {
 		return
 	}
-	addrs = truncateProbeBatch(h, probe, "interface-addresses", 1000, addrs)
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := addrs[:0]
@@ -648,13 +636,9 @@ func (h *Handler) ReceiveProcessorStats(c *gin.Context) {
 		return
 	}
 	defer h.markBatchIfOK(c, probe.ID, batchID)
-	var stats []models.ProcessorStats
-	if err := c.ShouldBindJSON(&stats); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+	stats, ok := decodeCappedProbeBatch[models.ProcessorStats](h, c, probe, "processor-stats", 1000)
+	if !ok {
 		return
-	}
-	if len(stats) > 500 {
-		stats = stats[:500]
 	}
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
@@ -690,13 +674,9 @@ func (h *Handler) ReceiveDiskUsage(c *gin.Context) {
 		return
 	}
 	defer h.markBatchIfOK(c, probe.ID, batchID)
-	var rows []models.DiskUsage
-	if err := c.ShouldBindJSON(&rows); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+	rows, ok := decodeCappedProbeBatch[models.DiskUsage](h, c, probe, "disk-usage", 1000)
+	if !ok {
 		return
-	}
-	if len(rows) > 500 {
-		rows = rows[:500]
 	}
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
@@ -732,13 +712,9 @@ func (h *Handler) ReceiveLoadAverage(c *gin.Context) {
 		return
 	}
 	defer h.markBatchIfOK(c, probe.ID, batchID)
-	var rows []models.LoadAverage
-	if err := c.ShouldBindJSON(&rows); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+	rows, ok := decodeCappedProbeBatch[models.LoadAverage](h, c, probe, "load-average", 1000)
+	if !ok {
 		return
-	}
-	if len(rows) > 500 {
-		rows = rows[:500]
 	}
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
@@ -774,13 +750,9 @@ func (h *Handler) ReceiveHardwareSensors(c *gin.Context) {
 		return
 	}
 	defer h.markBatchIfOK(c, probe.ID, batchID)
-	var sensors []models.HardwareSensor
-	if err := c.ShouldBindJSON(&sensors); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+	sensors, ok := decodeCappedProbeBatch[models.HardwareSensor](h, c, probe, "hardware-sensors", 1000)
+	if !ok {
 		return
-	}
-	if len(sensors) > 500 {
-		sensors = sensors[:500]
 	}
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
@@ -820,12 +792,10 @@ func (h *Handler) ReceiveSystemStatuses(c *gin.Context) {
 		return
 	}
 	defer h.markBatchIfOK(c, probe.ID, batchID)
-	var statuses []models.SystemStatus
-	if err := c.ShouldBindJSON(&statuses); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+	statuses, ok := decodeCappedProbeBatch[models.SystemStatus](h, c, probe, "system-status", 100)
+	if !ok {
 		return
 	}
-	statuses = truncateProbeBatch(h, probe, "system-status", 100, statuses)
 
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
@@ -869,12 +839,10 @@ func (h *Handler) ReceiveInterfaceStats(c *gin.Context) {
 		return
 	}
 	defer h.markBatchIfOK(c, probe.ID, batchID)
-	var stats []models.InterfaceStats
-	if err := c.ShouldBindJSON(&stats); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+	stats, ok := decodeCappedProbeBatch[models.InterfaceStats](h, c, probe, "interface-stats", 1000)
+	if !ok {
 		return
 	}
-	stats = truncateProbeBatch(h, probe, "interface-stats", 1000, stats)
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	deviceTimes := make(map[uint]time.Time)
@@ -916,13 +884,9 @@ func (h *Handler) ReceiveVPNStatuses(c *gin.Context) {
 		return
 	}
 	defer h.markBatchIfOK(c, probe.ID, batchID)
-	var statuses []models.VPNStatus
-	if err := c.ShouldBindJSON(&statuses); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+	statuses, ok := decodeCappedProbeBatch[models.VPNStatus](h, c, probe, "vpn-status", 1000)
+	if !ok {
 		return
-	}
-	if len(statuses) > 500 {
-		statuses = statuses[:500]
 	}
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
@@ -960,13 +924,9 @@ func (h *Handler) ReceiveHAStatuses(c *gin.Context) {
 		return
 	}
 	defer h.markBatchIfOK(c, probe.ID, batchID)
-	var statuses []models.HAStatus
-	if err := c.ShouldBindJSON(&statuses); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+	statuses, ok := decodeCappedProbeBatch[models.HAStatus](h, c, probe, "ha-status", 1000)
+	if !ok {
 		return
-	}
-	if len(statuses) > 500 {
-		statuses = statuses[:500]
 	}
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
@@ -1002,13 +962,9 @@ func (h *Handler) ReceiveSecurityStats(c *gin.Context) {
 		return
 	}
 	defer h.markBatchIfOK(c, probe.ID, batchID)
-	var stats []models.SecurityStats
-	if err := c.ShouldBindJSON(&stats); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+	stats, ok := decodeCappedProbeBatch[models.SecurityStats](h, c, probe, "security-stats", 1000)
+	if !ok {
 		return
-	}
-	if len(stats) > 500 {
-		stats = stats[:500]
 	}
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
@@ -1044,13 +1000,9 @@ func (h *Handler) ReceiveSDWANHealth(c *gin.Context) {
 		return
 	}
 	defer h.markBatchIfOK(c, probe.ID, batchID)
-	var health []models.SDWANHealth
-	if err := c.ShouldBindJSON(&health); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+	health, ok := decodeCappedProbeBatch[models.SDWANHealth](h, c, probe, "sdwan-health", 1000)
+	if !ok {
 		return
-	}
-	if len(health) > 500 {
-		health = health[:500]
 	}
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
@@ -1081,13 +1033,9 @@ func (h *Handler) ReceiveLicenseInfo(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var licenses []models.LicenseInfo
-	if err := c.ShouldBindJSON(&licenses); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+	licenses, ok := decodeCappedProbeBatch[models.LicenseInfo](h, c, probe, "license-info", 1000)
+	if !ok {
 		return
-	}
-	if len(licenses) > 500 {
-		licenses = licenses[:500]
 	}
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
@@ -1224,8 +1172,12 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 		var prevRev models.DeviceConfigRevision
 		// Lock the latest row for this device. On Postgres this is a real row
 		// lock; on SQLite the entire DB is serialized under transactions, so
-		// the same correctness property holds.
-		err := tx.Set("gorm:query_option", "FOR UPDATE").
+		// the same correctness property holds. AUDIT-254: the old GORM-v1
+		// query-option key was silently ignored by GORM v2 — the SELECT took no
+		// lock, so two concurrent backups for one device both read the same
+		// prevRev, both INSERT, and produced duplicate revisions + duplicate
+		// CONFIG_CHANGE alerts. The v2 clause below emits a real row lock.
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("device_id = ?", rev.DeviceID).
 			Order("id DESC").Limit(1).
 			First(&prevRev).Error
@@ -1432,13 +1384,9 @@ func (h *Handler) ReceiveInterfaceErrors(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var errs []models.InterfaceErrors
-	if err := c.ShouldBindJSON(&errs); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+	errs, ok := decodeCappedProbeBatch[models.InterfaceErrors](h, c, probe, "interface-errors", 1000)
+	if !ok {
 		return
-	}
-	if len(errs) > 500 {
-		errs = errs[:500]
 	}
 
 	allowedDevices := h.probeDeviceIDs(probe.ID)
@@ -1457,6 +1405,13 @@ func (h *Handler) ReceiveInterfaceErrors(c *gin.Context) {
 		}
 	}
 
+	// AUDIT-255: gorm.Create on an empty slice returns ErrEmptySlice → 500. When
+	// the device-ownership filter drops every row, that's a clean no-op, not an
+	// error. Mirror ReceiveHardwareSensors' guard.
+	if len(filtered) == 0 {
+		c.JSON(http.StatusOK, response.Success(gin.H{"saved": 0}))
+		return
+	}
 	if err := h.db.Gorm().Create(&filtered).Error; err != nil {
 		log.Printf("ReceiveInterfaceErrors: DB save error: %v", err)
 		httputil.InternalError(c, "Failed to save interface errors", err)
@@ -1472,15 +1427,11 @@ func (h *Handler) ReceiveSensorDetails(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var sensors []models.HardwareSensor
-	if err := c.ShouldBindJSON(&sensors); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+	sensors, ok := decodeCappedProbeBatch[models.HardwareSensor](h, c, probe, "sensor-details", 1000)
+	if !ok {
 		return
 	}
 	log.Printf("ReceiveSensorDetails: probe=%d received %d sensors", probe.ID, len(sensors))
-	if len(sensors) > 500 {
-		sensors = sensors[:500]
-	}
 
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	log.Printf("ReceiveSensorDetails: probe=%d allowed devices=%v", probe.ID, allowedDevices)
@@ -1502,6 +1453,11 @@ func (h *Handler) ReceiveSensorDetails(c *gin.Context) {
 	}
 	log.Printf("ReceiveSensorDetails: probe=%d filtered to %d sensors", probe.ID, len(filtered))
 
+	// AUDIT-255: empty post-filter slice → gorm.ErrEmptySlice → 500. Guard it.
+	if len(filtered) == 0 {
+		c.JSON(http.StatusOK, response.Success(gin.H{"saved": 0}))
+		return
+	}
 	if err := h.db.Gorm().Create(&filtered).Error; err != nil {
 		log.Printf("ReceiveSensorDetails: DB save error: %v", err)
 		httputil.InternalError(c, "Failed to save sensor details", err)
@@ -1517,13 +1473,9 @@ func (h *Handler) ReceiveLicenseDetails(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var licenses []models.LicenseInfo
-	if err := c.ShouldBindJSON(&licenses); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+	licenses, ok := decodeCappedProbeBatch[models.LicenseInfo](h, c, probe, "license-details", 100)
+	if !ok {
 		return
-	}
-	if len(licenses) > 100 {
-		licenses = licenses[:100]
 	}
 
 	allowedDevices := h.probeDeviceIDs(probe.ID)
@@ -1542,6 +1494,11 @@ func (h *Handler) ReceiveLicenseDetails(c *gin.Context) {
 		}
 	}
 
+	// AUDIT-255: empty post-filter slice → gorm.ErrEmptySlice → 500. Guard it.
+	if len(filtered) == 0 {
+		c.JSON(http.StatusOK, response.Success(gin.H{"saved": 0}))
+		return
+	}
 	if err := h.db.Gorm().Create(&filtered).Error; err != nil {
 		log.Printf("ReceiveLicenseDetails: DB save error: %v", err)
 		httputil.InternalError(c, "Failed to save license details", err)
