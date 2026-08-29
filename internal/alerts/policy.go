@@ -324,13 +324,19 @@ func (am *AlertManager) resolveAlertConfigProv(deviceID uint, siteID *uint, aler
 
 	devCfg := am.policyCache.deviceConfigs[deviceID]
 
-	// Check device alerts enabled
+	// Check device alerts enabled. AUDIT-243: mark disabled and CONTINUE —
+	// never early-return. The metric recovery leg (alerts.go) only runs when
+	// the resolved threshold is non-zero ("fireAt > 0"), so an early return
+	// here left Threshold at 0 and every already-open CPU/MEM/DISK/SESSIONS
+	// alert stranded forever the moment its device was disabled. Resolution
+	// must reach the tail (threshold fallback + maintenance scan) with
+	// AlertEnabled=false; every AlertEnabled consumer is a fire-side skip
+	// guard, so nothing new can fire from the fuller config.
 	if devCfg != nil && !devCfg.AlertsEnabled {
 		resolved.AlertEnabled = false
 		if prov != nil {
 			prov.AlertsDisabled = true
 		}
-		return resolved
 	}
 
 	// Resolve policy: device → site → default (shared helper, dangling-safe)
@@ -368,13 +374,15 @@ func (am *AlertManager) resolveAlertConfigProv(deviceID uint, siteID *uint, aler
 	// here would orphan stateful PagerDuty/Opsgenie incidents (the resolve
 	// event would never dispatch) — a fidelity break from the old disabled-
 	// rule behavior.
+	// AUDIT-243: like the device-disable gate above, mark disabled and
+	// CONTINUE so a toggled-off type still resolves its threshold and the
+	// recovery leg can auto-resolve the alerts left open by the toggle.
 	if on, layer := am.eventToggleLocked(deviceID, siteID, alertType); !on {
 		resolved.AlertEnabled = false
 		if prov != nil {
 			prov.AlertsDisabled = true
 			prov.ToggleLayer = layer
 		}
-		return resolved
 	}
 
 	if rule != nil {

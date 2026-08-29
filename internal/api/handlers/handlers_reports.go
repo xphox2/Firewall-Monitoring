@@ -26,13 +26,15 @@ func reportWindow(period string) (int, string) {
 }
 
 // reportTimezone resolves the report timezone from settings, falling back to
-// config and finally UTC.
+// config and finally UTC. AUDIT-250: config fallbacks read through the locked
+// alertsConfigSnapshot — the AlertManager's refresh loop rewrites the shared
+// config.Alerts in place.
 func (h *Handler) reportTimezone() string {
 	if tz := h.getNotificationSetting("report_timezone"); tz != "" {
 		return tz
 	}
-	if h.config != nil && h.config.Alerts.ReportTimezone != "" {
-		return h.config.Alerts.ReportTimezone
+	if ac := h.alertsConfigSnapshot(); ac.ReportTimezone != "" {
+		return ac.ReportTimezone
 	}
 	return "UTC"
 }
@@ -45,8 +47,8 @@ func (h *Handler) reportSpikeThreshold() float64 {
 			return f
 		}
 	}
-	if h.config != nil && h.config.Alerts.SpikeStdDevThreshold > 0 {
-		return h.config.Alerts.SpikeStdDevThreshold
+	if ac := h.alertsConfigSnapshot(); ac.SpikeStdDevThreshold > 0 {
+		return ac.SpikeStdDevThreshold
 	}
 	return 3.0
 }
@@ -61,8 +63,13 @@ func (h *Handler) reportSpikeFloorMbps() float64 {
 			return f
 		}
 	}
-	if h.config != nil && h.config.Alerts.SpikeMinThroughputMbps >= 0 {
-		return h.config.Alerts.SpikeMinThroughputMbps
+	// The h.config nil-guard is load-bearing here (unlike the two resolvers
+	// above): the `>= 0` condition is satisfied by the zero value, so a
+	// handler with no config at all must keep returning the 1.0 default.
+	if h.config != nil {
+		if ac := h.alertsConfigSnapshot(); ac.SpikeMinThroughputMbps >= 0 {
+			return ac.SpikeMinThroughputMbps
+		}
 	}
 	return 1.0
 }

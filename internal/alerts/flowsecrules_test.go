@@ -84,6 +84,77 @@ func TestFlowSec_ExpiryAtMatchTime(t *testing.T) {
 	}
 }
 
+// TestFlowSec_DanglingPolicyIDNotStamped (AUDIT-246, ProcessSecurityEvent
+// mirror of the device-rule case): a customize rule pinning a PolicyID absent
+// from the cache must not stamp that dangling id onto the saved SFLOW_SECURITY
+// row.
+func TestFlowSec_DanglingPolicyIDNotStamped(t *testing.T) {
+	am, db := newTestManager(t)
+	dangling := uint(999)
+	r := &models.EventRule{Name: "route scans to retired policy", Enabled: true, Source: "flow_security",
+		Action: "alert", Priority: 50, PolicyID: &dangling,
+		MatchJSON: `{"op":"eq","field":"detector","value":"port_scan"}`}
+	if err := db.CreateEventRule(r); err != nil {
+		t.Fatal(err)
+	}
+	am.RefreshEventRules(db)
+
+	group := []*models.FlowDetection{{
+		SrcAddr: "198.51.100.7", Detector: "port_scan", Severity: "warning",
+		Message: "port scan from 198.51.100.7", DetectedAt: time.Now(),
+	}}
+	id, err := am.ProcessSecurityEvent(group, nil)
+	if err != nil {
+		t.Fatalf("ProcessSecurityEvent: %v", err)
+	}
+	if id == 0 {
+		t.Fatal("expected an alert to fire")
+	}
+	var a models.Alert
+	if err := db.Gorm().First(&a, id).Error; err != nil {
+		t.Fatalf("load alert: %v", err)
+	}
+	if a.PolicyID != nil && *a.PolicyID == dangling {
+		t.Fatalf("saved row carries the dangling policy id %d; want the resolved policy or nil", dangling)
+	}
+}
+
+// TestFlowDetection_DanglingPolicyIDNotStamped pins the FOURTH AUDIT-246 site
+// (ProcessFlowDetection — the single-detection operational/policy path, found
+// in the fix's own sweep after the audit named one site and verification
+// three): same contract, the dangling id never reaches the saved row.
+func TestFlowDetection_DanglingPolicyIDNotStamped(t *testing.T) {
+	am, db := newTestManager(t)
+	dangling := uint(999)
+	r := &models.EventRule{Name: "route cleartext to retired policy", Enabled: true, Source: "flow_security",
+		Action: "alert", Priority: 50, PolicyID: &dangling,
+		MatchJSON: `{"op":"eq","field":"detector","value":"cleartext"}`}
+	if err := db.CreateEventRule(r); err != nil {
+		t.Fatal(err)
+	}
+	am.RefreshEventRules(db)
+
+	det := &models.FlowDetection{
+		Detector: "cleartext", Category: "policy", Severity: "warning",
+		SrcAddr: "10.0.0.5", DstAddr: "10.0.0.9", DstPort: 23,
+		Message: "cleartext telnet", DedupKey: "ct-10.0.0.5", DetectedAt: time.Now(),
+	}
+	id, err := am.ProcessFlowDetection(det, nil)
+	if err != nil {
+		t.Fatalf("ProcessFlowDetection: %v", err)
+	}
+	if id == 0 {
+		t.Fatal("expected an alert to fire")
+	}
+	var a models.Alert
+	if err := db.Gorm().First(&a, id).Error; err != nil {
+		t.Fatalf("load alert: %v", err)
+	}
+	if a.PolicyID != nil && *a.PolicyID == dangling {
+		t.Fatalf("saved row carries the dangling policy id %d; want the resolved policy or nil", dangling)
+	}
+}
+
 // TestFlowSecFields_CategoryEventTypes pins the v0.11.111 generalization:
 // event_type is category-mapped ("security_event" UNCHANGED for back-compat
 // with pre-existing operator rules; policy/operational get their own), and

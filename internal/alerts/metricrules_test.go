@@ -106,6 +106,59 @@ func TestMetricRule_SuppressMutesFireButRecovers(t *testing.T) {
 	}
 }
 
+// TestMetricRule_ToggleOffStillRecovers (AUDIT-243): the v48 per-type toggle
+// gate early-returned before the threshold fallback, so a type toggled Off
+// resolved with Threshold 0 — and the recovery leg's fireAt>0 gate then
+// stranded every already-open alert of that type forever. Disabling must mute
+// the FIRE while the open alert still auto-resolves.
+func TestMetricRule_ToggleOffStillRecovers(t *testing.T) {
+	am, db := newTestManager(t)
+	setHysteresisPolicy(am, 90, 0)
+	installDefaultProfileToggles(am, map[models.AlertType]bool{models.AlertTypeCPUHigh: false})
+	const dev = 7
+	// An alert opened BEFORE the operator toggled the type Off.
+	seedAlert(t, db, openAlert(dev, models.AlertTypeCPUHigh, "cpu_usage", time.Now().Add(-time.Minute)))
+
+	// A high reading must NOT fire a new alert (type is Off)...
+	if err := am.CheckSystemStatus(cpuStatus(dev, 95), nil); err != nil {
+		t.Fatal(err)
+	}
+	if n := openCPUAlerts(t, am, dev); n != 1 {
+		t.Fatalf("toggled-off type fired a new alert: %d open, want 1", n)
+	}
+	// ...but a recovery reading must STILL resolve the open alert.
+	if err := am.CheckSystemStatus(cpuStatus(dev, 10), nil); err != nil {
+		t.Fatal(err)
+	}
+	if n := openCPUAlerts(t, am, dev); n != 0 {
+		t.Fatalf("toggled-off type stranded its open alert: %d open, want 0", n)
+	}
+}
+
+// TestDeviceAlertsDisabled_StillRecovers (AUDIT-243, second disable path):
+// same contract when the whole DEVICE has alerts disabled — the open DISK_HIGH
+// must auto-resolve on a genuine recovery reading, and no new alert may fire.
+func TestDeviceAlertsDisabled_StillRecovers(t *testing.T) {
+	am, db := newTestManager(t)
+	setDiskPolicy(am, 90, 80)
+	const dev = 7
+	am.policyCache.deviceConfigs[dev] = &models.DeviceAlertConfig{DeviceID: dev, AlertsEnabled: false}
+	seedAlert(t, db, openAlert(dev, models.AlertTypeDiskHigh, "disk_usage", time.Now().Add(-time.Minute)))
+
+	if err := am.CheckSystemStatus(&models.SystemStatus{DeviceID: dev, DiskUsage: 95}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if n := openDiskAlerts(t, am, dev); n != 1 {
+		t.Fatalf("disabled device fired a new alert: %d open, want 1", n)
+	}
+	if err := am.CheckSystemStatus(&models.SystemStatus{DeviceID: dev, DiskUsage: 40}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if n := openDiskAlerts(t, am, dev); n != 0 {
+		t.Fatalf("disabled device stranded its open alert: %d open, want 0", n)
+	}
+}
+
 func TestMetricRule_NoRuleFallsBackToLegacy(t *testing.T) {
 	am, db := newTestManager(t)
 	setHysteresisPolicy(am, 90, 0)

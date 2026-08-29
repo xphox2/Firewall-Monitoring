@@ -347,8 +347,29 @@ func sendMailWithDeadline(addr, host string, auth smtp.Auth, from string, to []s
 	return client.Quit()
 }
 
+// splitRecipients splits a comma-separated recipient list into trimmed,
+// non-empty addresses. Shared by the alert email path and the HTML/report path
+// so the two cannot drift (AUDIT-209): sendEmail used to hand the RAW comma
+// string to the envelope as a single RCPT TO, which multi-recipient relays
+// reject outright — every alert email to more than one address failed while
+// the scheduled reports (which always split) kept delivering.
+func splitRecipients(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func (n *Notifier) sendEmail(alert *models.Alert, nc NotifyConfig) error {
 	if nc.SMTPHost == "" {
+		return nil
+	}
+	rcpts := splitRecipients(nc.SMTPTo)
+	if len(rcpts) == 0 {
 		return nil
 	}
 
@@ -364,11 +385,13 @@ func (n *Notifier) sendEmail(alert *models.Alert, nc NotifyConfig) error {
 		auth = CompoundAuth(nc.SMTPUsername, nc.SMTPPassword, nc.SMTPHost)
 	}
 
+	// The To: HEADER deliberately keeps the raw comma-separated string — a
+	// valid RFC 5322 address-list; only the ENVELOPE recipients are split.
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s",
 		nc.SMTPFrom, nc.SMTPTo, subject, body)
 
 	err := sendMailWithDeadline(addr, nc.SMTPHost, auth, nc.SMTPFrom,
-		[]string{nc.SMTPTo}, []byte(msg), nil)
+		rcpts, []byte(msg), nil)
 
 	if err != nil {
 		return fmt.Errorf("failed to send email: %w", err)
@@ -816,10 +839,7 @@ func (n *Notifier) sendHTMLEmail(subject, textBody, htmlBody string, attachments
 		auth = CompoundAuth(nc.SMTPUsername, nc.SMTPPassword, nc.SMTPHost)
 	}
 
-	recipientList := strings.Split(recipients, ",")
-	for i := range recipientList {
-		recipientList[i] = strings.TrimSpace(recipientList[i])
-	}
+	recipientList := splitRecipients(recipients)
 
 	if err := sendMailWithDeadline(addr, nc.SMTPHost, auth, nc.SMTPFrom, recipientList, msg, dial); err != nil {
 		return fmt.Errorf("failed to send HTML email: %w", err)

@@ -58,16 +58,29 @@ type telemetryStaleInputs struct {
 	now           time.Time
 }
 
+// staleSignalParts records WHICH signals were stale when a TELEMETRY_STALE
+// fired (AUDIT-189). Recovery must see EVERY part that fired come back fresh:
+// the old gate closed on ANY fresh signal, so an iface-stale alert (SNMP dead,
+// SSH perf alive) auto-resolved with a false "recovered" notification the
+// moment the dead interface rows aged out of the 24h lookback while vitals
+// stayed fresh — then re-fired, forever, while SNMP was still broken.
+type staleSignalParts struct {
+	vitals, iface bool
+}
+
 // evaluateTelemetryStale applies the fire condition per device, maintains the
 // consecutive-cycle debounce counters, and drives fire/recovery/cold-resolve
 // through the AlertManager. Runs on the single leader-locked monitoring-cycle
-// goroutine — telemetryStaleStreak needs no mutex.
+// goroutine — telemetryStaleStreak and telemetryStaleParts need no mutex.
 func (p *Poller) evaluateTelemetryStale(in telemetryStaleInputs) {
 	if p.alertManager == nil {
 		return
 	}
 	if p.telemetryStaleStreak == nil { // hand-built Pollers (tests) skip NewPoller
 		p.telemetryStaleStreak = make(map[uint]int)
+	}
+	if p.telemetryStaleParts == nil {
+		p.telemetryStaleParts = make(map[uint]staleSignalParts)
 	}
 
 	// 0 disables the check entirely (checked BEFORE clamping — the clamp must
@@ -76,6 +89,10 @@ func (p *Poller) evaluateTelemetryStale(in telemetryStaleInputs) {
 	minutes := p.db.GetIntSetting("telemetry_stale_minutes", telemetryStaleDefaultMinutes)
 	if minutes <= 0 {
 		p.telemetryStaleStreak = make(map[uint]int)
+		// Parts records reset with the streaks: with the check disabled no
+		// recovery can run anyway, and on re-enable a still-stale device
+		// re-fires (cooldown-deduped) and re-records.
+		p.telemetryStaleParts = make(map[uint]staleSignalParts)
 		return
 	}
 	threshold := time.Duration(minutes) * time.Minute
@@ -102,12 +119,15 @@ func (p *Poller) evaluateTelemetryStale(in telemetryStaleInputs) {
 		}
 		if !eligible {
 			delete(p.telemetryStaleStreak, id)
+			delete(p.telemetryStaleParts, id)
 			continue
 		}
 
 		var staleParts []string
+		var partVitals, partIface bool
 		if !in.freshStatus[id] {
 			if ts, ok := in.staleVitals[id]; ok && in.now.Sub(ts) >= threshold {
+				partVitals = true
 				staleParts = append(staleParts, fmt.Sprintf("no system vitals for %s (last at %s)",
 					in.now.Sub(ts).Round(time.Minute), ts.Format("2006-01-02 15:04 MST")))
 			} else if !ok {
@@ -115,18 +135,36 @@ func (p *Poller) evaluateTelemetryStale(in telemetryStaleInputs) {
 			}
 		}
 		if ts, ok := in.latestIface[id]; ok && in.now.Sub(ts) >= threshold {
+			partIface = true
 			staleParts = append(staleParts, fmt.Sprintf("no interface stats for %s (last at %s)",
 				in.now.Sub(ts).Round(time.Minute), ts.Format("2006-01-02 15:04 MST")))
 		}
 
 		if len(staleParts) == 0 {
 			delete(p.telemetryStaleStreak, id)
-			// Recovery only makes sense when telemetry is actually flowing
-			// again — at least one fresh signal. (A device whose rows merely
-			// aged out of the lookback stays as-is; its open alert remains the
-			// signal.) CheckTelemetryRecovered gates its own DB work.
-			if in.freshStatus[id] || (!in.latestIface[id].IsZero() && in.now.Sub(in.latestIface[id]) < in.staleAfter) {
+			// Recovery requires EVERY signal that fired to be fresh again
+			// (AUDIT-189), not just any fresh signal: with vitals fresh, an
+			// iface-stale alert used to false-recover the moment the dead
+			// interface rows aged out of the lookback — while SNMP was still
+			// broken. An iface-stale part recovers only when latestIface has a
+			// PRESENT and fresh entry; an aged-out key is NOT recovered.
+			rec, tracked := p.telemetryStaleParts[id]
+			if !tracked {
+				// Cold start: a row left open across a poller restart has no
+				// parts record — do not guess which signals fired. Be
+				// conservative and do not recover via this gate: a
+				// stranded-open alert (closed by AutoResolveTelemetryStale on
+				// full offline, or by a re-fire→genuine-recovery cycle) is
+				// smaller harm than silently suppressing the alert this
+				// feature exists to keep open.
+				continue
+			}
+			vitalsFresh := in.freshStatus[id]
+			ifaceTS, ifaceSeen := in.latestIface[id]
+			ifaceFresh := ifaceSeen && in.now.Sub(ifaceTS) < in.staleAfter
+			if (!rec.vitals || vitalsFresh) && (!rec.iface || ifaceFresh) {
 				p.alertManager.CheckTelemetryRecovered(dev)
+				delete(p.telemetryStaleParts, id)
 			}
 			continue
 		}
@@ -135,17 +173,27 @@ func (p *Poller) evaluateTelemetryStale(in telemetryStaleInputs) {
 		if p.telemetryStaleStreak[id] < telemetryStaleCycles {
 			continue // debounce: condition must persist across cycles
 		}
+		// Record the stale signal set for the recovery gate. Refreshed every
+		// post-debounce cycle so a second signal dying mid-outage tightens the
+		// recovery requirement to match the live condition.
+		p.telemetryStaleParts[id] = staleSignalParts{vitals: partVitals, iface: partIface}
 		if err := p.alertManager.CheckTelemetryStale(dev, strings.Join(staleParts, "; ")); err != nil {
 			log.Printf("Device %s: telemetry stale check error - %v", dev.Name, err)
 		}
 	}
 
-	// Prune streak entries for devices that left devByID entirely (deleted or
-	// disabled) — without this the map leaks, and a stale carried-over streak
-	// would defeat the debounce when a device is re-enabled.
+	// Prune streak/parts entries for devices that left devByID entirely
+	// (deleted or disabled) — without this the maps leak, and a stale
+	// carried-over streak would defeat the debounce when a device is
+	// re-enabled.
 	for id := range p.telemetryStaleStreak {
 		if _, ok := in.devByID[id]; !ok {
 			delete(p.telemetryStaleStreak, id)
+		}
+	}
+	for id := range p.telemetryStaleParts {
+		if _, ok := in.devByID[id]; !ok {
+			delete(p.telemetryStaleParts, id)
 		}
 	}
 

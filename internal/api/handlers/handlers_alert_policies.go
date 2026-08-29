@@ -385,15 +385,18 @@ func metricThresholdRows(scope string, id uint, name string, cpu, mem, disk floa
 // SystemSettings (fresh DB read), falling back to the process config for any
 // key not yet persisted. These are the values the Alerting hub edits.
 func (h *Handler) alertGlobalDefaults(db database.Store) gin.H {
+	// AUDIT-250: one locked snapshot — the poller/API refresh loop rewrites
+	// the shared config.Alerts in place under the AlertManager's lock.
+	ac := h.alertsConfigSnapshot()
 	g := gin.H{
-		"cpu_threshold":              h.config.Alerts.CPUThreshold,
-		"memory_threshold":           h.config.Alerts.MemoryThreshold,
-		"disk_threshold":             h.config.Alerts.DiskThreshold,
-		"session_threshold":          h.config.Alerts.SessionThreshold,
-		"spike_alert_enabled":        h.config.Alerts.SpikeAlertEnabled,
-		"spike_stddev_threshold":     h.config.Alerts.SpikeStdDevThreshold,
-		"spike_min_duration_minutes": h.config.Alerts.SpikeMinDurationMinutes,
-		"spike_min_throughput_mbps":  h.config.Alerts.SpikeMinThroughputMbps,
+		"cpu_threshold":              ac.CPUThreshold,
+		"memory_threshold":           ac.MemoryThreshold,
+		"disk_threshold":             ac.DiskThreshold,
+		"session_threshold":          ac.SessionThreshold,
+		"spike_alert_enabled":        ac.SpikeAlertEnabled,
+		"spike_stddev_threshold":     ac.SpikeStdDevThreshold,
+		"spike_min_duration_minutes": ac.SpikeMinDurationMinutes,
+		"spike_min_throughput_mbps":  ac.SpikeMinThroughputMbps,
 		// Code default matches telemetryStaleDefaultMinutes in cmd/poller.
 		"telemetry_stale_minutes": 60,
 		// The fwmon server's own volumes; see serverhealth.

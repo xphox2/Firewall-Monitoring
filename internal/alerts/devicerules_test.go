@@ -105,6 +105,38 @@ func TestCheckDeviceOffline_RuleSuppressAndCustomize(t *testing.T) {
 	}
 }
 
+// TestDeviceRule_DanglingPolicyIDNotStamped (AUDIT-246): an alert-action rule
+// whose PolicyID no longer exists in the cache (deleted policy, stale rule)
+// must NOT stamp that dangling id onto the saved alert row — the row keeps the
+// resolved policy (nil here: no cache loaded), so policy attribution and
+// policy-joined reads stay sound.
+func TestDeviceRule_DanglingPolicyIDNotStamped(t *testing.T) {
+	am, db := newTestManager(t)
+	dev := &models.Device{Name: "edge-9", IPAddress: "10.0.0.9", Enabled: true}
+	if err := db.Gorm().Create(dev).Error; err != nil {
+		t.Fatal(err)
+	}
+	dangling := uint(999)
+	r := &models.EventRule{Name: "route offline to retired policy", Enabled: true, Source: "device",
+		Action: "alert", Priority: 50, PolicyID: &dangling,
+		MatchJSON: `{"op":"eq","field":"event_type","value":"device_offline"}`}
+	if err := db.CreateEventRule(r); err != nil {
+		t.Fatal(err)
+	}
+	am.RefreshEventRules(db)
+
+	if err := am.CheckDeviceOffline(dev); err != nil {
+		t.Fatal(err)
+	}
+	var a models.Alert
+	if err := db.Gorm().Where("alert_type = ?", "DEVICE_OFFLINE").First(&a).Error; err != nil {
+		t.Fatalf("alert must still fire: %v", err)
+	}
+	if a.PolicyID != nil && *a.PolicyID == dangling {
+		t.Fatalf("saved row carries the dangling policy id %d; want the resolved policy or nil", dangling)
+	}
+}
+
 // TestCheckInterfaceErrors_RuleScopedToInterface: a rule narrowed to one
 // interface mutes only that port; a sibling port still fires.
 func TestCheckInterfaceErrors_RuleScopedToInterface(t *testing.T) {

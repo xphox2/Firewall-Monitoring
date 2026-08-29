@@ -19,7 +19,7 @@ func stateCand(deviceID uint, atype models.AlertType, metric string, minUp, dail
 		deviceID:   deviceID,
 		alertType:  atype,
 		metricName: metric,
-		dampen:     dampenParams{MinUpSeconds: minUp, DailyCap: dailyCap},
+		dampen:     dampenParams{MinUpSeconds: &minUp, DailyCap: dailyCap},
 	}
 }
 
@@ -139,7 +139,7 @@ func TestBuildStateCandidate_DailyCapZeroHonored(t *testing.T) {
 	am, _ := newTestManager(t)
 	var nc notifier.NotifyConfig
 
-	explicit := &compiledRule{source: "state", dampen: dampenParams{RefireMode: "episode", MinUpSeconds: 3600, DailyCap: 0}}
+	explicit := &compiledRule{source: "state", dampen: dampenParams{RefireMode: "episode", MinUpSeconds: intPtr(3600), DailyCap: 0}}
 	c, ok := am.buildStateCandidateLocked(explicit, 1, nil, "k", "INTERFACE_DOWN", "interface_x", "down", nc)
 	if !ok {
 		t.Fatal("candidate should be enabled by default")
@@ -153,8 +153,8 @@ func TestBuildStateCandidate_DailyCapZeroHonored(t *testing.T) {
 	if c2.dampen.DailyCap != defaultStateDailyCap {
 		t.Errorf("bare rule must default daily_cap to %d, got %d", defaultStateDailyCap, c2.dampen.DailyCap)
 	}
-	if c2.dampen.MinUpSeconds != defaultStateMinUpSeconds {
-		t.Errorf("bare rule must default min_up to %d, got %d", defaultStateMinUpSeconds, c2.dampen.MinUpSeconds)
+	if c2.dampen.MinUpSeconds == nil || *c2.dampen.MinUpSeconds != defaultStateMinUpSeconds {
+		t.Errorf("bare rule must default min_up to %d, got %v", defaultStateMinUpSeconds, c2.dampen.MinUpSeconds)
 	}
 }
 
@@ -176,9 +176,39 @@ func TestBuildStateCandidate_DisabledAlertSkipped(t *testing.T) {
 	}
 	am.RefreshPolicyCache(db)
 
-	rule := &compiledRule{source: "state", dampen: dampenParams{RefireMode: "episode", MinUpSeconds: 3600, DailyCap: 1}}
+	rule := &compiledRule{source: "state", dampen: dampenParams{RefireMode: "episode", MinUpSeconds: intPtr(3600), DailyCap: 1}}
 	if _, ok := am.buildStateCandidateLocked(rule, 7, nil, "k", "INTERFACE_DOWN", "interface_x", "down", nc); ok {
 		t.Fatal("candidate must NOT be built when device alerting is disabled")
+	}
+}
+
+// TestBuildStateCandidate_MinUpZeroHonored (AUDIT-191): an explicit
+// min_up_seconds: 0 disables the up-run fast-path — it must survive
+// buildStateCandidateLocked verbatim (only nil inherits the 3600 default), and
+// decideStateFire must then suppress a capped re-fire even after a >1h up-run.
+// With the old value-typed field the 0 was indistinguishable from "omitted"
+// and silently became 3600, so the daily cap never bound strictly.
+func TestBuildStateCandidate_MinUpZeroHonored(t *testing.T) {
+	am, db := newTestManager(t)
+	var nc notifier.NotifyConfig
+
+	explicit := &compiledRule{source: "state", dampen: dampenParams{RefireMode: "episode", MinUpSeconds: intPtr(0), DailyCap: 1}}
+	c, ok := am.buildStateCandidateLocked(explicit, 1, nil, "k", "INTERFACE_DOWN", "interface_port1", "down", nc)
+	if !ok {
+		t.Fatal("candidate should be enabled by default")
+	}
+	if c.dampen.MinUpSeconds == nil || *c.dampen.MinUpSeconds != 0 {
+		t.Fatalf("explicit min_up_seconds 0 must be honored, got %v", c.dampen.MinUpSeconds)
+	}
+
+	// A notified alert 2h ago, resolved >1h ago (up-run well past the default
+	// 3600s) and inside the 24h notify window → cap reached. With min_up=0
+	// the fast-path is OFF, so the cap binds: suppress, never fire.
+	now := time.Now()
+	resolved := now.Add(-90 * time.Minute)
+	seedAlert(t, db, mkAlert(1, "INTERFACE_DOWN", "interface_port1", now.Add(-2*time.Hour), false, &resolved, true))
+	if got := am.decideStateFire(c, now); got != stateSuppressCapped {
+		t.Fatalf("min_up 0 + cap reached must suppress (strict daily cap), got %v", got)
 	}
 }
 

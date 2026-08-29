@@ -145,6 +145,14 @@ func (am *AlertManager) checkOneServerVolume(sv ServerVolume, pctThreshold float
 		Message: fmt.Sprintf("Firewall-Mon server volume %s (%s) is %s",
 			sv.Volume.Path, sv.Label, why),
 		MetricName: metric,
+		// AUDIT-247: carry the resolved PolicyID — without it CheckEscalations
+		// skips the row (nil-PolicyID alerts never escalate), so a full server
+		// disk could page once and then go silent forever; the notify config
+		// above is already built from this same resolved policy. And honor
+		// maintenance windows like every other alert path: the row is saved
+		// Suppressed and the notification muted.
+		PolicyID:   resolved.PolicyID,
+		Suppressed: resolved.InMaintenance,
 		// Set here rather than left to enrichAlert: with no device and no probe
 		// it would stay empty, and the notification would not say where it came
 		// from (the email subject drops its suffix and the context block omits
@@ -152,7 +160,12 @@ func (am *AlertManager) checkOneServerVolume(sv ServerVolume, pctThreshold float
 		DeviceName: "Firewall-Mon server",
 	}
 	am.saveAlert(&alert)
-	if err := am.notify(&alert, nc); err != nil {
-		log.Printf("Failed to send server disk alert for %s: %v", sv.Volume.Path, err)
+	// The cooldown was recorded unconditionally above (pre-suppression, the
+	// 17-site house template): a maintenance window mutes the page, it does
+	// not license a page storm the moment the window ends.
+	if !alert.Suppressed {
+		if err := am.notify(&alert, nc); err != nil {
+			log.Printf("Failed to send server disk alert for %s: %v", sv.Volume.Path, err)
+		}
 	}
 }

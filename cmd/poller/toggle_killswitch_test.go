@@ -98,6 +98,63 @@ func TestFlowTogglePass_MasterToggleDoesNotAckDetections(t *testing.T) {
 	}
 }
 
+// TestStormRollup_ToggledOffDigestDoesNotSwallowPerSource is the end-to-end
+// AUDIT-243 follow-up: with the SFLOW_SECURITY_DIGEST type toggled OFF, a live
+// cross-source storm must NOT be consumed into a digest that ProcessSecurityDigest
+// then drops (silent suppression) — the detections must survive rollUpSecurityStorms
+// so the per-source SFLOW_SECURITY path fires them. Pre-fix, StormThreshold returned
+// the (seeded/overridden) threshold even for a disabled digest, so the 10-source
+// storm cleared it, got rolled up, and vanished.
+func TestStormRollup_ToggledOffDigestDoesNotSwallowPerSource(t *testing.T) {
+	p, db := newTelemetryTestPoller(t)
+	installDefaultToggles(t, p, map[models.AlertType]bool{
+		models.AlertTypeSFlowSecurityDigest: false, // digest slid Off
+	})
+	// A storm threshold of 5 that a 10-source storm clears — the rollup would
+	// fire if the toggle-off did not force StormThreshold to 0.
+	p.alertManager.SetStormSourcesDefault(5)
+
+	bySubject := map[string][]*models.FlowDetection{}
+	for i := 0; i < 10; i++ {
+		src := "203.0.113." + itoa(i)
+		d := &models.FlowDetection{Detector: "port_scan", Category: "security", Severity: "warning",
+			DeviceID: 1, SrcAddr: src, DetectedAt: time.Now().UTC(), DedupKey: "ps_storm_" + itoa(i)}
+		mustCreate(t, db, d)
+		bySubject[src] = []*models.FlowDetection{d}
+	}
+
+	link := func(_ []uint, _ uint, _ string) {}
+	p.rollUpSecurityStorms(bySubject, link)
+
+	// Every source must survive (not consumed into a swallowed digest), so the
+	// per-source loop fires 10 SFLOW_SECURITY alerts.
+	if len(bySubject) != 10 {
+		t.Fatalf("toggled-off digest swallowed the storm: %d of 10 sources survived rollUpSecurityStorms", len(bySubject))
+	}
+	// And no digest alert was written for the disabled type.
+	var digests int64
+	db.Gorm().Model(&models.Alert{}).
+		Where("alert_type = ?", models.AlertTypeSFlowSecurityDigest).Count(&digests)
+	if digests != 0 {
+		t.Errorf("a toggled-off digest wrote %d alert(s), want 0", digests)
+	}
+}
+
+// itoa keeps the storm test independent of any package helper.
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b [3]byte
+	i := len(b)
+	for n > 0 {
+		i--
+		b[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(b[i:])
+}
+
 // TestFlowTogglePass_OnRowIsNoop: an explicit ON row (or no row) leaves
 // detections untouched — the pass only ever REMOVES work.
 func TestFlowTogglePass_OnRowIsNoop(t *testing.T) {

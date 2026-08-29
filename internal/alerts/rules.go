@@ -160,9 +160,15 @@ func (r *compiledRule) expired(now time.Time) bool {
 // + round-trip; the evaluators that read them land in Phase 4.)
 type dampenParams struct {
 	// state source
-	RefireMode   string `json:"refire_mode,omitempty"`
-	MinUpSeconds int    `json:"min_up_seconds,omitempty"`
-	DailyCap     int    `json:"daily_cap,omitempty"`
+	RefireMode string `json:"refire_mode,omitempty"`
+	// MinUpSeconds is a POINTER (AUDIT-191, mirroring MinThroughputMbps
+	// below): nil = inherit the 3600s default, an explicit 0 = disable the
+	// up-run fast-path for this rule so the daily cap binds strictly
+	// (meaningful, unlike DailyCap's 0), >0 = override. As a value-typed int
+	// the explicit 0 was indistinguishable from "omitted" and silently became
+	// the 1h default.
+	MinUpSeconds *int `json:"min_up_seconds,omitempty"`
+	DailyCap     int  `json:"daily_cap,omitempty"`
 	// metric source
 	Mode           string  `json:"mode,omitempty"`            // "static" | "zscore"
 	Threshold      float64 `json:"threshold,omitempty"`       // 0 = inherit resolved threshold
