@@ -1,7 +1,6 @@
 package report
 
 import (
-	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -507,81 +506,4 @@ func meanStdDev(values []float64) (float64, float64) {
 	}
 	stddev := math.Sqrt(sumSq / float64(len(values)))
 	return mean, stddev
-}
-
-// RollingStats tracks a circular buffer of traffic values per interface for real-time spike detection.
-type RollingStats struct {
-	mu       sync.RWMutex
-	buffers  map[string]*circularBuffer // keyed by "deviceID_ifName"
-	capacity int
-}
-
-type circularBuffer struct {
-	data  []float64
-	pos   int
-	count int
-}
-
-// NewRollingStats creates a new RollingStats with the given buffer capacity.
-func NewRollingStats(capacity int) *RollingStats {
-	if capacity < 10 {
-		capacity = 10
-	}
-	return &RollingStats{
-		buffers:  make(map[string]*circularBuffer),
-		capacity: capacity,
-	}
-}
-
-// AddAndCheck adds a value to the rolling buffer and returns a spike if detected.
-func (rs *RollingStats) AddAndCheck(deviceID uint, ifName string, inBytes, outBytes uint64, threshold float64) *TrafficSpike {
-	key := fmt.Sprintf("%d_%s", deviceID, ifName)
-	value := float64(inBytes + outBytes)
-
-	rs.mu.Lock()
-	defer rs.mu.Unlock()
-
-	buf, ok := rs.buffers[key]
-	if !ok {
-		buf = &circularBuffer{data: make([]float64, rs.capacity)}
-		rs.buffers[key] = buf
-	}
-
-	// Add value
-	buf.data[buf.pos] = value
-	buf.pos = (buf.pos + 1) % rs.capacity
-	if buf.count < rs.capacity {
-		buf.count++
-	}
-
-	// Need at least 10 samples before detecting
-	if buf.count < 10 {
-		return nil
-	}
-
-	// Compute stats over buffer (excluding current value)
-	var vals []float64
-	for i := 0; i < buf.count; i++ {
-		idx := (buf.pos - 1 - i + rs.capacity) % rs.capacity
-		if i > 0 { // skip the value we just inserted
-			vals = append(vals, buf.data[idx])
-		}
-	}
-
-	mean, stddev := meanStdDev(vals)
-	if stddev == 0 {
-		return nil
-	}
-
-	if value > mean+threshold*stddev {
-		return &TrafficSpike{
-			Timestamp: time.Now(),
-			Interface: ifName,
-			Value:     value,
-			Mean:      mean,
-			StdDev:    stddev,
-			Severity:  "warning",
-		}
-	}
-	return nil
 }

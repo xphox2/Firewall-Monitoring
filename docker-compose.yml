@@ -45,12 +45,10 @@ services:
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
     ports:
-      - "8080:8080"       # Web UI / API
+      - "8080:8080"       # Web UI / API + probe relay ingest
       - "162:162/udp"     # SNMP traps
-      - "514:514/udp"     # Syslog (UDP)
-      - "514:514/tcp"     # Syslog (TCP)
-      - "6343:6343/udp"   # sFlow
-      - "8089:8089"       # Probe server
+      # The server has no raw syslog/sFlow/ICMP listener — those run on the
+      # edge collector, which relays already-parsed telemetry over 8080.
     volumes:
       # Host path for SQLite/Postgres data + config-backup archive. Default is
       # a project-local ./data dir (works out of the box for fresh deploys).

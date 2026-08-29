@@ -1260,7 +1260,8 @@ func (d *Database) migrateConfigRevisionAttribution() error {
 //
 // Idempotency: the WHERE clause selects only rows that haven't been migrated
 // yet (sampling_rate > 1 AND packets = 1). New inserts already write
-// Packets = sampling_rate (the parser change in internal/sflow/sflow.go),
+// Packets = sampling_rate (the parser change now lives in the collector's
+// sFlow parser; the server's own copy was removed in v0.11.228),
 // so they never match the predicate. sampling_rate = 1 rows are a no-op
 // (scaling by 1 is identity) and packets = 1 stays correct.
 //

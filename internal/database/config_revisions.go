@@ -10,38 +10,6 @@ import (
 	"gorm.io/gorm"
 )
 
-func (d *Database) SaveConfigRevision(rev *models.DeviceConfigRevision) error {
-	tx := d.db.Begin()
-	if err := tx.Create(rev).Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("save config revision: insert: %w", err)
-	}
-	var count int64
-	if err := tx.Model(&models.DeviceConfigRevision{}).Where("device_id = ?", rev.DeviceID).Count(&count).Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("save config revision: count existing: %w", err)
-	}
-	if count > 5 {
-		deleteCount := count - 5
-		var toDelete []uint
-		if err := tx.Model(&models.DeviceConfigRevision{}).
-			Where("device_id = ?", rev.DeviceID).
-			Order("timestamp ASC").
-			Limit(int(deleteCount)).
-			Pluck("id", &toDelete).Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("save config revision: select stale revisions to prune: %w", err)
-		}
-		if len(toDelete) > 0 {
-			if err := tx.Where("device_id = ? AND id IN ?", rev.DeviceID, toDelete).Delete(&models.DeviceConfigRevision{}).Error; err != nil {
-				tx.Rollback()
-				return fmt.Errorf("save config revision: prune stale revisions: %w", err)
-			}
-		}
-	}
-	return tx.Commit().Error
-}
-
 func (d *Database) GetLatestConfigRevision(deviceID uint) (*models.DeviceConfigRevision, error) {
 	var rev models.DeviceConfigRevision
 	err := d.db.Where("device_id = ?", deviceID).Order("timestamp DESC").First(&rev).Error

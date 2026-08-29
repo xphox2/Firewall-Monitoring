@@ -306,32 +306,6 @@ func (d *Database) SyslogSummaryRetentionDays() int {
 	return n
 }
 
-// syslogPartitionDropDays returns the age in days past which an ENTIRE
-// syslog_messages monthly partition is provably expired under EVERY retention
-// window — the max of the critical (severity 0-5) and informational (6-7)
-// windows — so dropPartitionsOlderThan may reclaim it wholesale (LC-23).
-// Returns 0 ("never drop") when any severity class is kept forever:
-//   - SyslogCriticalDays > 0: both windows are bounded → max of the two.
-//   - legacy single-window mode (SyslogCriticalDays == 0 && SyslogInfoDays == 0
-//     && SyslogDays > 0): every row ages out by max(SyslogDays, effInfoDays)
-//     (the info DELETE always runs at the effective default).
-//   - otherwise SyslogCriticalDays == 0 means critical rows (those below the
-//     configurable band boundary, see SyslogCriticalBelow) are kept forever,
-//     so no partition is ever wholly expired.
-//
-// effInfoDays is the caller's effective informational window (SyslogInfoDays
-// with its 7-day default applied).
-func syslogPartitionDropDays(ret config.RetentionConfig, effInfoDays int) int {
-	switch {
-	case ret.SyslogCriticalDays > 0:
-		return max(ret.SyslogCriticalDays, effInfoDays)
-	case ret.SyslogInfoDays == 0 && ret.SyslogDays > 0:
-		return max(ret.SyslogDays, effInfoDays)
-	default:
-		return 0
-	}
-}
-
 func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	type cleanupEntry struct {
 		model interface{}

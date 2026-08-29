@@ -28,10 +28,10 @@
 | SNMP polling (v1 / v2c / v3, MD5/SHA/SHA2, DES/AES/AES192/256) | Stable | [Server] | 0.1 |
 | Per-device SNMP vendor OID profile (FortiGate, Palo Alto, SonicWall, pfSense, OPNsense, Firewalla) | Stable | [Server] | 0.1 |
 | SNMP trap receiver (UDP/162, V1 enterprise + V2c specific-trap, per-source-IP rate-limit, community filter) | Stable | [Server] | 0.1 |
-| Syslog receiver — TCP + UDP, RFC 5424 + RFC 3164, `SYSLOG_ALLOWED_SOURCES` allow-list | Stable | [Server] | 0.1 |
-| sFlow v5 datagram parser | Stable | [Server] | 0.1 |
+| Syslog receiver — TCP + UDP, RFC 5424 + RFC 3164, source allow-list (parsed at the edge, relayed to the server) | Stable | [Probe] | 0.1 |
+| sFlow v5 datagram parser (parsed at the edge, relayed to the server) | Stable | [Probe] | 0.1 |
 | NetFlow v5/v9 + IPFIX ingest (`flow_source`-labelled rows, denied-flow events, post-NAT tuple, source filter, biflow, dual-export dedup) | Stable | [Server] + [Probe] | 0.11.20 / collector 1.3.0 (migration v29) |
-| ICMP ping (raw `net/icmp`, no external `ping` binary) | Stable | [Server] | 0.1 |
+| ICMP ping (raw `net/icmp`, no external `ping` binary; runs at the edge, relayed to the server) | Stable | [Probe] | 0.1 |
 | **Probe** relay ingest (syslog / sFlow / trap / flow / ping / SNMP-poll results) | Stable | [Server] + [Probe] | 0.1 |
 | Probe idempotency via `X-Probe-Batch-ID` | Stable | [Server] + [Probe] | 0.10.246 (AUDIT-042) |
 | `schema_version` handshake (HTTP 426 on mismatch) | Stable | [Server] + [Probe] | 0.10.382 / 1.2.108 |

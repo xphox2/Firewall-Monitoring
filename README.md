@@ -34,7 +34,7 @@ the edge**, this repo **runs at HQ**.
 |---|---|---|
 | Role | Store, alert, visualize, configure | Listen at the edge, relay to HQ |
 | Binaries | `fwmon-api`, `fwmon-poller`, `fwmon-trap` | `firewall-collector`, `firewall-collector-diag-backup`, `firewall-collector-tftp-test` |
-| Listens on | 8080/tcp, 162/udp, 514/udp+tcp, 6343/udp, 8089/tcp | 162/udp, 514/tcp+udp, 6343/udp, 69/udp |
+| Listens on | 8080/tcp (Web UI/API + probe relay), 162/udp (SNMP traps) | 162/udp, 514/tcp+udp, 6343/udp, 69/udp |
 | Talks to | The device (SNMP/SSH/TFTP); the probe (HTTPS) | The server (HTTPS, mTLS) |
 | Docs | this README + [docs/](docs/STRUCTURE.md) | [README](https://github.com/xphox2/Firewall-Collector/blob/master/README.md) + [docs/](https://github.com/xphox2/Firewall-Collector/blob/master/docs/STRUCTURE.md) |
 
@@ -99,12 +99,11 @@ public AUDIT-NNN row exists.
 - **[Server] SNMP trap receiver** (UDP/162). V1 enterprise + V2c
   specific-trap, per-source-IP rate limit, community filter (required,
   AUDIT-012).
-- **[Server] Syslog receiver** — TCP + UDP, RFC 5424 + RFC 3164,
-  `SYSLOG_ALLOWED_SOURCES` allow-list.
-- **[Server] sFlow v5 datagram parser**.
-- **[Server] ICMP ping** — raw `net/icmp`, no external binary.
 - **[Both] Probe relay ingest** — syslog / sFlow / trap / flow / ping /
   SNMP-poll results from a remote [collector](https://github.com/xphox2/Firewall-Collector).
+  Syslog (RFC 5424 + RFC 3164), sFlow v5 and ICMP are parsed **at the
+  edge by the collector** and relayed here already-decoded — the server
+  runs no raw syslog/sFlow/ICMP listener of its own.
 - **[Both] `X-Probe-Batch-ID` idempotency key** (AUDIT-042) +
   **`schema_version` handshake** (0.10.382 / 1.2.108). Out-of-range
   versions get HTTP 426 with `X-Probe-Schema-Version-Supported`. No
@@ -250,9 +249,6 @@ firewall-mon/
 │   ├── uptime/        # Uptime calculation
 │   ├── models/        # GORM data models
 │   ├── relay/         # Probe↔server wire contract (DTOs + schema_version)
-│   ├── ping/          # ICMP ping collector
-│   ├── syslog/        # Syslog receiver (TCP/UDP/TLS)
-│   ├── sflow/         # sFlow v5 receiver
 │   ├── secrets/       # JWT/encryption key load-or-generate
 │   ├── audit/         # Append-only admin-action audit log
 │   ├── metrics/       # Prometheus /metrics + observability server
@@ -300,8 +296,8 @@ sudo apt install -y build-essential   # gcc — only for `make test-race`; norma
 |---|---|---|---|
 | `8080` | TCP | inbound | HTTP UI + API (set by `SERVER_PORT`; put TLS or a reverse proxy in front for prod) |
 | `162` | UDP | inbound | SNMP trap receiver (`SNMP_TRAP_LISTEN`, default `0.0.0.0:162`) |
-| `514` | UDP/TCP | inbound | syslog collector |
-| `6343` | UDP | inbound | sFlow collector |
+| `514` | UDP/TCP | inbound | syslog receiver — **on the collector** (edge); the server ingests syslog only via the probe relay on `8080` |
+| `6343` | UDP | inbound | sFlow receiver — **on the collector** (edge); the server ingests sFlow only via the probe relay on `8080` |
 | `5432` | TCP | outbound | PostgreSQL (`DB_PORT`; prod backend) |
 
 Probes relay back to the server over the same HTTP(S) port (`8080`),
@@ -550,7 +546,7 @@ That said, it is early:
   vendor profiles are less exercised.
 - **Run it hardened.** See the [Security](#security) section and
   [`SECURITY.md`](SECURITY.md) — put TLS in front of it, don't expose the
-  trap/syslog listeners to the public internet, and change the generated admin
+  SNMP trap listener to the public internet, and change the generated admin
   password on first login.
 - **No telemetry.** Firewall-Mon does not phone home — see [`PRIVACY.md`](PRIVACY.md).
 

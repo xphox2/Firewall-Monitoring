@@ -12,7 +12,8 @@ import (
 // the v7 migration must backfill existing flow_samples rows so bytes
 // becomes `frame_length * sampling_rate` and packets becomes
 // `sampling_rate`. Without this migration, new inserts are scaled (per
-// the internal/sflow parser change) but historical rows remain unscaled,
+// the collector's sFlow parser change; the server's own copy was removed in
+// v0.11.228) but historical rows remain unscaled,
 // so SUM(bytes) mixes apples and oranges.
 //
 // Three checks:

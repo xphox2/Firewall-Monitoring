@@ -11,7 +11,7 @@ in the current Firewall-Mon release. The intent is two-fold:
 
 ## Active limitations
 
-### Single-binary deployment on ports 8080 / 162 / 514 / 6343
+### Single-binary deployment on ports 8080 / 162
 
 The Docker image runs api + poller + trap-receiver in a single process
 group inside one container, all binding to the host's network
