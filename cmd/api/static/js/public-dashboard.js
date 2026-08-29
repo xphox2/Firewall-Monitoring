@@ -367,8 +367,8 @@
                 var events = st.downtime_events || 0;
                 var span = st.start_time
                     ? 'since ' + formatInTimezone(st.start_time, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-                    : 'the observed window';
-                av.title = 'Availability over ' + span + ' — ' + events + ' reboot event(s)';
+                    : 'over the observed window';
+                av.title = 'Availability ' + span + ' — ' + events + ' reboot event(s)';
             }
         }).catch(function() {});
 
