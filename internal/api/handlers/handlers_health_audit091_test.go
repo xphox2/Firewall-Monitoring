@@ -38,6 +38,8 @@ func TestGetHealth_HealthyDB_Returns200_AUDIT091(t *testing.T) {
 // rather than 200. The pre-fix GetHealth would have returned 200 with
 // "database":false, which is a "healthy" status with a hand-wavy
 // caveat — exactly the silent-failure pattern the audit flagged.
+// AUDIT-192: the endpoint is unauthenticated, so the body must carry
+// ONLY booleans — no db_error/encryption_error detail keys, ever.
 func TestGetHealth_NilDB_Returns503_AUDIT091(t *testing.T) {
 	h := &Handler{} // no db wired
 	w := doHealthRequest(t, h)
@@ -51,9 +53,7 @@ func TestGetHealth_NilDB_Returns503_AUDIT091(t *testing.T) {
 	if got, want := resp["database"], false; got != want {
 		t.Errorf("database = %v, want %v", got, want)
 	}
-	if got, ok := resp["db_error"].(string); !ok || got == "" {
-		t.Errorf("db_error must be a non-empty string explaining the failure; got: %v", resp["db_error"])
-	}
+	assertNoHealthErrorDetail(t, resp)
 }
 
 // TestGetHealth_DBPingFails_Returns503_AUDIT091 — when the DB is
@@ -63,7 +63,10 @@ func TestGetHealth_NilDB_Returns503_AUDIT091(t *testing.T) {
 //
 // This is the scenario AUDIT-045 was about: the pre-fix code would
 // have reported "healthy" with no warning, leaving the operator
-// wondering why their dashboard is blank.
+// wondering why their dashboard is blank. AUDIT-192 tightened the
+// contract: the failure is reported as database=false + 503 ONLY — the
+// raw driver error (which embeds host/user/database) stays in the
+// server log, never in the anonymous response body.
 func TestGetHealth_DBPingFails_Returns503_AUDIT091(t *testing.T) {
 	h, db := setupTestHandler(t)
 	// Force-close the underlying sql.DB. Subsequent queries (including
@@ -80,8 +83,20 @@ func TestGetHealth_DBPingFails_Returns503_AUDIT091(t *testing.T) {
 	if got, want := resp["status"], "unhealthy"; got != want {
 		t.Errorf("status = %v, want %q", got, want)
 	}
-	if got, ok := resp["db_error"].(string); !ok || got == "" {
-		t.Errorf("db_error must be a non-empty string explaining the failure; got: %v", resp["db_error"])
+	if got, want := resp["database"], false; got != want {
+		t.Errorf("database = %v, want %v", got, want)
+	}
+	assertNoHealthErrorDetail(t, resp)
+}
+
+// assertNoHealthErrorDetail pins AUDIT-192: no failure-detail key may ever
+// appear in the unauthenticated health body, on any path.
+func assertNoHealthErrorDetail(t *testing.T, resp map[string]interface{}) {
+	t.Helper()
+	for _, key := range []string{"db_error", "encryption_error"} {
+		if v, leaked := resp[key]; leaked {
+			t.Errorf("%s leaked to the unauthenticated health body (AUDIT-192): %v", key, v)
+		}
 	}
 }
 

@@ -223,3 +223,36 @@ func TestSetup2FA_QRPNG(t *testing.T) {
 		t.Fatalf("QR unexpectedly small: %v", b)
 	}
 }
+
+// TestSetup2FA_RejectsWhenAlreadyEnabled_AUDIT199: Setup2FA writes
+// totp_enabled=false, so re-running it against an ENROLLED account with just
+// the password would silently strip the second factor — the exact downgrade
+// Disable2FA's password+current-code requirement exists to prevent. An
+// enrolled account must get a 409 and the enrollment row must be untouched
+// (the DB assertion is the real regression pin).
+func TestSetup2FA_RejectsWhenAlreadyEnabled_AUDIT199(t *testing.T) {
+	h, db, u := profileTestHandler(t, "op", auth.RoleOperator, "pw-operator")
+	const secret = "JBSWY3DPEHPK3PXP"
+	if err := db.Gorm().Model(&models.Admin{}).Where("id = ?", u.ID).
+		Updates(map[string]interface{}{"totp_enabled": true, "totp_secret": secret}).Error; err != nil {
+		t.Fatalf("enroll TOTP: %v", err)
+	}
+
+	c, body := profileReq(http.MethodPost, "/admin/api/2fa/setup", `{"password":"pw-operator"}`, "op", auth.RoleOperator, u.ID)
+	h.Setup2FA(c)
+	if c.Writer.Status() != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 — a correct password alone must not restart enrollment while 2FA is on (body=%s)",
+			c.Writer.Status(), body.String())
+	}
+
+	var after models.Admin
+	if err := db.Gorm().First(&after, u.ID).Error; err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if !after.TOTPEnabled {
+		t.Error("totp_enabled flipped to false — 2FA silently disabled with password only (AUDIT-199)")
+	}
+	if after.TOTPSecret != secret {
+		t.Errorf("totp_secret overwritten: got %q, want the original enrollment untouched", after.TOTPSecret)
+	}
+}

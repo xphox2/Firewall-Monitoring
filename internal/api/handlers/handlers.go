@@ -241,17 +241,23 @@ func (h *Handler) GetHealth(c *gin.Context) {
 	// API unhealthy and trigger a container restart loop. The
 	// "snmp_connected" boolean above is informational for operators
 	// reading the JSON, not a health gate.
+	// AUDIT-192: this endpoint is UNAUTHENTICATED (Docker's HEALTHCHECK and
+	// external monitors hit it anonymously), so failure detail must never ride
+	// the response — the raw driver error embeds internal topology (DB host,
+	// user, database name, IP) exactly when the system is degraded. The body
+	// carries only booleans; the diagnosis goes to the server log, which is
+	// where the operator is looking during an outage anyway.
 	dbOK := true
 	if h.db != nil {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), healthCheckDBTimeout)
 		defer cancel()
 		if err := h.db.Gorm().WithContext(ctx).Exec("SELECT 1").Error; err != nil {
 			dbOK = false
-			health["db_error"] = err.Error()
+			log.Printf("health: DB ping failed: %v", err)
 		}
 	} else {
 		dbOK = false
-		health["db_error"] = "database not initialized"
+		log.Printf("health: database not initialized")
 	}
 	health["database"] = dbOK
 
@@ -259,14 +265,16 @@ func (h *Handler) GetHealth(c *gin.Context) {
 	// ENCRYPTION_KEY makes every stored secret silently undecryptable; the
 	// poller/trap-receiver fail-fast on this, but the API stays up so an
 	// operator can fix the key — so it reports the failure here (503) instead
-	// of serving "healthy" while every SNMP poll quietly fails.
+	// of serving "healthy" while every SNMP poll quietly fails. AUDIT-192: the
+	// canary detail carries the same raw driver error class as the DB ping, so
+	// it too is logged server-side, never returned.
 	encOK := true
 	if h.db != nil {
 		var encDetail string
 		encOK, encDetail = h.db.EncryptionVerified()
 		health["encryption"] = encOK
 		if !encOK {
-			health["encryption_error"] = encDetail
+			log.Printf("health: encryption check failed: %s", encDetail)
 		}
 	}
 
