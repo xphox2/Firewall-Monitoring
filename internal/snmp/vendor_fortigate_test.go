@@ -57,3 +57,37 @@ func TestFortiGate_ParseHardwareSensors_DisplayStringValue(t *testing.T) {
 		t.Errorf("fan type/unit = %q/%q, want fan/RPM", fan.Type, fan.Unit)
 	}
 }
+
+// TestFortiGate_ParseHardwareSensors_VoltageUnit is the AUDIT-301 regression:
+// fgHwSensorEntValue is a DisplayString in VOLTS (e.g. "12.07"), so a
+// voltage-named sensor must report Unit "V", not "mV". Twin of the collector's
+// inferSensorUnit, documented kept-in-sync.
+func TestFortiGate_ParseHardwareSensors_VoltageUnit(t *testing.T) {
+	f := &FortiGateProfile{}
+	pdus := []gosnmp.SnmpPDU{
+		{Name: fgOIDHWSensorName + ".3", Type: gosnmp.OctetString, Value: []byte("+12V voltage")},
+		{Name: fgOIDHWSensorValue + ".3", Type: gosnmp.OctetString, Value: []byte("12.07")},
+		{Name: fgOIDHWSensorAlarm + ".3", Type: gosnmp.Integer, Value: 0},
+	}
+
+	var volt models.HardwareSensor
+	found := false
+	for _, s := range f.ParseHardwareSensors(pdus) {
+		if s.Name == "+12V voltage" {
+			volt = s
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("voltage sensor not parsed")
+	}
+	if volt.Type != "voltage" {
+		t.Errorf("type = %q, want voltage", volt.Type)
+	}
+	if volt.Unit != "V" {
+		t.Errorf("unit = %q, want V (fgHwSensorEntValue is in volts, not millivolts)", volt.Unit)
+	}
+	if volt.Value != 12.07 {
+		t.Errorf("value = %v, want 12.07", volt.Value)
+	}
+}

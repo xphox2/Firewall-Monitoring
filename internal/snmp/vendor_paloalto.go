@@ -303,7 +303,11 @@ func (p *PaloAltoProfile) ParseHardwareSensors(pdus []gosnmp.SnmpPDU) []models.H
 	var result []models.HardwareSensor
 
 	for idx, sd := range sensors {
-		if sd.status == 2 || sd.status == 3 {
+		// EntPhySensorOperStatus: 1=ok, 2=unavailable, 3=nonoperational. Drop
+		// only truly-unavailable (2) sensors; nonoperational (3) must reach the
+		// alarm branch below so a failed sensor surfaces as "alarm" instead of
+		// being silently dropped as healthy/absent (AUDIT-302).
+		if sd.status == 2 {
 			continue
 		}
 

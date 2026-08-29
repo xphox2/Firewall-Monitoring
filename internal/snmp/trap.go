@@ -42,6 +42,7 @@ func init() {
 // Standard IETF trap OIDs (RFC 3418)
 const (
 	oidSnmpTrapOID  = ".1.3.6.1.6.3.1.1.4.1.0"
+	oidSysUpTime    = ".1.3.6.1.2.1.1.3.0"
 	oidLinkDown     = ".1.3.6.1.6.3.1.1.5.3"
 	oidLinkUp       = ".1.3.6.1.6.3.1.1.5.4"
 	oidIfIndex      = ".1.3.6.1.2.1.2.2.1.1"
@@ -253,17 +254,44 @@ func (t *TrapReceiver) parseTrap(packet *gosnmp.SnmpPacket, addr *net.UDPAddr) *
 		return linkTrap
 	}
 
-	// Phase 2: Vendor-specific trap lookup
+	// Phase 2: Vendor-specific trap lookup. Per RFC 3418 the notification OID
+	// that identifies the trap arrives as the VALUE of the snmpTrapOID.0
+	// varbind, NOT as a varbind name — so classify by that value first, the way
+	// the collector's parseTrap does (Firewall-Collector internal/snmp/trap.go).
+	// Without this, vendor VPN/HA/IPS traps never classified and parseTrap
+	// silently discarded them (AUDIT-296).
+	var trapOIDValue string
 	for _, v := range packet.Variables {
-		oid := v.Name
-
-		trapType, severity := lookupTrapOID(oid)
-		if trapType != "" {
-			trap.TrapOID = oid
+		if v.Name == oidSnmpTrapOID {
+			if oid, ok := v.Value.(string); ok {
+				trapOIDValue = oid
+			}
+			break
+		}
+	}
+	if trapOIDValue != "" {
+		if trapType, severity := lookupTrapOID(trapOIDValue); trapType != "" {
+			trap.TrapOID = trapOIDValue
 			trap.TrapType = trapType
 			trap.Severity = severity
-			trap.Message = t.formatTrapMessage(v, oid)
-			break
+			trap.Message = t.formatTrapMessage(firstDataVarbind(packet), trapOIDValue)
+		}
+	}
+
+	// Fallback: some devices send the notification OID as a varbind NAME rather
+	// than as the snmpTrapOID.0 value. The collector keeps both paths.
+	if trap.TrapOID == "" {
+		for _, v := range packet.Variables {
+			oid := v.Name
+
+			trapType, severity := lookupTrapOID(oid)
+			if trapType != "" {
+				trap.TrapOID = oid
+				trap.TrapType = trapType
+				trap.Severity = severity
+				trap.Message = t.formatTrapMessage(v, oid)
+				break
+			}
 		}
 	}
 
@@ -272,6 +300,21 @@ func (t *TrapReceiver) parseTrap(packet *gosnmp.SnmpPacket, addr *net.UDPAddr) *
 	}
 
 	return trap
+}
+
+// firstDataVarbind returns the first varbind that is not the snmpTrapOID.0 or
+// sysUpTime.0 wrapper — a representative payload varbind for the trap message,
+// mirroring the collector's buildTrapMessage, which skips exactly those two
+// wrapper OIDs. Returns a zero PDU when the packet carries only wrappers, in
+// which case formatTrapMessage emits just the trap-type label.
+func firstDataVarbind(packet *gosnmp.SnmpPacket) gosnmp.SnmpPDU {
+	for _, v := range packet.Variables {
+		if v.Name == oidSnmpTrapOID || v.Name == oidSysUpTime {
+			continue
+		}
+		return v
+	}
+	return gosnmp.SnmpPDU{}
 }
 
 // parseLinkTrap detects standard IETF linkUp/linkDown traps from both
@@ -318,15 +361,15 @@ func (t *TrapReceiver) parseLinkTrap(packet *gosnmp.SnmpPacket) *models.TrapEven
 	for _, v := range packet.Variables {
 		oid := v.Name
 		switch {
-		case strings.HasPrefix(oid, oidIfIndex):
+		case strings.HasPrefix(oid, oidIfIndex+"."):
 			ifIndex = fmt.Sprintf("%v", v.Value)
-		case strings.HasPrefix(oid, oidIfDescr):
+		case strings.HasPrefix(oid, oidIfDescr+"."):
 			if val, ok := v.Value.([]byte); ok {
 				ifDescr = string(val)
 			} else {
 				ifDescr = fmt.Sprintf("%v", v.Value)
 			}
-		case strings.HasPrefix(oid, oidIfOperStatus):
+		case strings.HasPrefix(oid, oidIfOperStatus+"."):
 			switch val := v.Value.(type) {
 			case int:
 				if val == 1 {
@@ -405,5 +448,33 @@ func (t *TrapReceiver) formatTrapMessage(v gosnmp.SnmpPDU, oid string) string {
 		sb.WriteString(fmt.Sprintf("%d", v.Value))
 	}
 
-	return sb.String()
+	// AUDIT-239: the OctetString value above is raw attacker-controlled bytes.
+	// Strip control characters (embedded CR/LF forge extra log lines — CWE-117 —
+	// once this reaches log.Printf in the trap-receiver, and pollute the alerts
+	// table + notifier payloads via ProcessTrap) and cap the total length so a
+	// crafted trap can't bloat a row. Applied to the whole message so ANY
+	// varbind type is cleaned.
+	return sanitizeTrapField(sb.String())
+}
+
+// maxTrapMessageLen caps a formatted trap message before it reaches the log and
+// the DB (Alert.Message → alerts table + notifier payloads).
+const maxTrapMessageLen = 256
+
+// sanitizeTrapField strips CR/LF and other ASCII control characters from an
+// attacker-controlled trap value (so it can't forge extra log lines) and caps
+// its length to maxTrapMessageLen runes. Mirrors handlers.sanitizeLogField /
+// truncateField, reimplemented here because that helper lives in the handlers
+// package and is not importable from internal/snmp (AUDIT-239).
+func sanitizeTrapField(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, s)
+	if r := []rune(s); len(r) > maxTrapMessageLen {
+		s = string(r[:maxTrapMessageLen])
+	}
+	return s
 }
