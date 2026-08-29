@@ -109,6 +109,30 @@ func TestParseStatus_NoMatchingRow(t *testing.T) {
 	}
 }
 
+// TestParseStatus_DynamicPeerNoRowIsUnknown (AUDIT-276): a dynamic/behind-NAT
+// peer's stored PeerIP is its MANAGEMENT address, not the source it dials in
+// from — so a healthy policy-based/NAT'd tunnel legitimately shows no session
+// row for the stored IP. An unmatched DYNAMIC peer must be SAUnknown ("can't
+// tell"), never a forced SADown that would trip a spurious rollback of a healthy
+// tunnel. (The non-dynamic unmatched case above stays SADown.)
+func TestParseStatus_DynamicPeerNoRowIsUnknown(t *testing.T) {
+	d, _ := ipsec.Driver("opnsense")
+	in := &ipsec.TunnelIntent{ID: 7, Name: "fwm-t7"}
+	in.Ends[0] = ipsec.EndpointSpec{Vendor: "opnsense", PeerIP: "203.0.113.1"}
+	in.Ends[1] = ipsec.EndpointSpec{Vendor: "fortigate", PeerIP: "198.51.100.1", Dynamic: true}
+	v := ipsec.ViewFor(in, 0)
+	// No row references the stored management IP (the dynamic peer dialed in from
+	// a different NAT'd source), yet the tunnel is healthy.
+	raw := `{"rowCount":1,"rows":[{"ikeid":"3","remote-addrs":"10.9.9.9","status":"ESTABLISHED"}]}`
+	st, err := d.ParseStatus(raw, v)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if st.IKE != ipsec.SAUnknown || st.Child != ipsec.SAUnknown {
+		t.Errorf("status = %+v, want unknown/unknown for an unmatched DYNAMIC peer (a forced down would roll back a healthy tunnel)", st)
+	}
+}
+
 // TestParseStatus_ConnectingIsDown: a row mid-negotiation reports a state that
 // isn't up.
 func TestParseStatus_ConnectingIsDown(t *testing.T) {
