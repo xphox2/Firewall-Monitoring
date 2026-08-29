@@ -435,9 +435,15 @@ func (d *Database) dropParentCoveredLeafIndexes(parent string, skippedSuffixes [
 		return
 	}
 	// Drop only names that actually exist as indexes, so the common case (no
-	// duplicates — this prod) costs one catalog probe and zero DDL.
+	// duplicates — this prod) costs one catalog probe and zero DDL. The
+	// pg_inherits exclusion matters on upgrade-path installs partitioned
+	// BEFORE v54: there the parent CREATE INDEX *attached* the pre-existing
+	// plan-named leaf index instead of cascading a twin — that index IS the
+	// cascade child (no duplicate exists), PG refuses to drop it, and without
+	// this filter every boot would log a "will retry" that can never succeed.
 	var existing []string
-	if err := d.db.Raw(`SELECT relname FROM pg_class WHERE relname IN ? AND relkind = 'i'`,
+	if err := d.db.Raw(`SELECT relname FROM pg_class WHERE relname IN ? AND relkind = 'i'
+		AND NOT EXISTS (SELECT 1 FROM pg_inherits h WHERE h.inhrelid = pg_class.oid)`,
 		candidates).Scan(&existing).Error; err != nil {
 		log.Printf("AUDIT-174: duplicate-index existence probe for %s failed: %v (cleanup skipped this boot)", parent, err)
 		return
