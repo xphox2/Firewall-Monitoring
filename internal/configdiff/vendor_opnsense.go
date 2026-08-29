@@ -61,6 +61,11 @@ const (
 
 	// Attribute values: bracket-free. Invisible to volatileTokenRe, so those raw
 	// rows render as volatile without a pattern name — an accepted trade.
+	//
+	// The persisted_at substitution ([^"] also matches \n in RE2) is NOT
+	// count-preserving in principle; OPNsense only ever writes epoch floats
+	// there, and if a newline ever did appear, the AUDIT-200 fail-closed
+	// backstop in DiffLines withholds the diff rather than degrading silently.
 	opnPersistedAtToken = "volatile-persisted-at"
 
 	// Secret and certificate digests are bracket-free by DESIGN, so volatileTokenRe

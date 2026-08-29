@@ -138,7 +138,7 @@ func TestDiffLinesFailsClosedOnMaskCountViolation(t *testing.T) {
 		t.Fatalf("Rows = %d rows, want nil — a mask-count violation must withhold the raw diff (fail closed)", len(d.Rows))
 	}
 	if !d.Truncated {
-		t.Errorf("Truncated = false, want true (the UI shows the note behind the truncated banner)")
+		t.Errorf("Truncated = false, want true (renderRawDiff keys the note banner off it — its rows-empty handling is pinned by internal/shell's rawdiff_withheld_note_audit200_test.go)")
 	}
 	if !strings.Contains(d.Note, "withheld") {
 		t.Errorf("Note = %q, want the operator-facing withheld-diff explanation", d.Note)

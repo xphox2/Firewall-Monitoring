@@ -167,10 +167,12 @@ func Project(msg *models.SyslogMessage, tm *threatintel.Holder, cfg PatternConfi
 		SrcCountry:  capStr(f["srccountry"], 48),
 		DstCountry:  capStr(f["dstcountry"], 48),
 		PolicyID:    atoiU32(f["policyid"]),
-		// AUDIT-312: cap the remaining free-text fields. FortiOS limits policy
-		// names to 35 chars and service names to 63 — 64 is documented headroom
-		// over both, while still bounding what a crafted multi-KB log line can
-		// bloat this short-retention, volume-sized table with.
+		// AUDIT-312: cap the remaining free-text fields at 64 BYTES (capStr
+		// cuts rune-safely). FortiOS limits policy names to 35 characters and
+		// service names to 63, so 64 bytes is headroom for ASCII names; a
+		// multibyte name may keep fewer characters, which is acceptable —
+		// the point is bounding what a crafted multi-KB log line can bloat
+		// this short-retention, volume-sized table with.
 		PolicyName: capStr(f["policyname"], 64),
 		Service:    capStr(f["service"], 64),
 		Signal:     signal,

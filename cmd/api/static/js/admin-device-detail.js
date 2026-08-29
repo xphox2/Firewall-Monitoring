@@ -2177,6 +2177,15 @@
     // folds long unchanged runs, and highlights intra-line word changes.
     function renderRawDiff(ld, which) {
         if (!ld || !ld.rows || !ld.rows.length) {
+            // AUDIT-200: a WITHHELD diff arrives with zero rows but a truncated
+            // note (the fail-closed masking path). Rendering the affirmative
+            // "No differences found" for it would be a false statement that
+            // could hide a real config change during incident review — show
+            // the note banner instead. The plain placeholder stays for the
+            // genuine no-rows-no-note case.
+            if (ld && ld.truncated && ld.note) {
+                return '<div class="cfgdiff-truncated">' + esc(ld.note) + '</div>';
+            }
             return '<div class="cfgdiff-placeholder">No differences found</div>';
         }
         var out = [];
