@@ -64,6 +64,60 @@ func TestComputeTraffic(t *testing.T) {
 	}
 }
 
+// TestComputeTraffic_GapNoInflation (AUDIT-290): GetInterfaceChartData does no
+// gap-fill, so a missed poll leaves a bucket whose real span exceeds the nominal
+// width. The rate must divide by the ACTUAL span, not the nominal bucketSeconds,
+// or a gap inflates throughput and manufactures a phantom spike.
+func TestComputeTraffic_GapNoInflation(t *testing.T) {
+	t.Parallel()
+	base := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
+	mk := func(min int, total float64) database.InterfaceChartBucket {
+		return database.InterfaceChartBucket{
+			Bucket:  base.Add(time.Duration(min) * time.Minute).Format("2006-01-02 15:04"),
+			InBytes: total, OutBytes: 0,
+		}
+	}
+	// 1e6 bytes per bucket, but polls at minutes 2..9 are MISSING: the third
+	// bucket spans 9 minutes (540s), not the nominal 60s.
+	buckets := []database.InterfaceChartBucket{
+		mk(0, 0),
+		mk(1, 1e6),  // delta 1e6 over 60s
+		mk(10, 2e6), // delta 1e6 over 540s (the gap)
+		mk(11, 3e6), // delta 1e6 over 60s
+	}
+	nominal := 60.0
+	_, peak, avg, series, _ := computeTraffic(buckets, nominal)
+
+	// Gapped bucket (series[1]) must use the ACTUAL 540s span, not 60s.
+	wantGap := 1e6 * 8 / 540
+	if !approx(series[1], wantGap) {
+		t.Errorf("gapped-bucket rate = %.1f, want %.1f (actual 540s span, NOT nominal 60s)", series[1], wantGap)
+	}
+	inflated := 1e6 * 8 / 60
+	if approx(series[1], inflated) {
+		t.Errorf("gapped bucket inflated to nominal-width rate %.1f — gap not accounted for", series[1])
+	}
+	// Peak comes from the genuine 60s buckets, never the gap.
+	if !approx(peak, inflated) {
+		t.Errorf("peak = %.1f, want %.1f (a real 60s bucket, not an inflated gap)", peak, inflated)
+	}
+	// Average over the ACTUAL 11-minute (660s) span, not nominal 3*60s=180s.
+	if !approx(avg, 3e6*8/660) {
+		t.Errorf("avg = %.1f, want %.1f (actual 660s window)", avg, 3e6*8/660)
+	}
+
+	// Regression: a UNIFORMLY-spaced series (span==nominal) gives exactly the
+	// nominal-width result — no change from the pre-fix behaviour.
+	uni := []database.InterfaceChartBucket{mk(0, 0), mk(1, 1e6), mk(2, 2e6)}
+	_, upeak, uavg, useries, _ := computeTraffic(uni, nominal)
+	if !approx(useries[0], 1e6*8/60) || !approx(useries[1], 1e6*8/60) {
+		t.Errorf("uniform series changed: %v, want two 60s-width rates", useries)
+	}
+	if !approx(upeak, 1e6*8/60) || !approx(uavg, 2e6*8/120) {
+		t.Errorf("uniform peak/avg changed: peak=%.1f avg=%.1f", upeak, uavg)
+	}
+}
+
 func TestFormatters(t *testing.T) {
 	t.Parallel()
 	if got := formatBytes(3 * 1024 * 1024); got != "3.0 MB" {

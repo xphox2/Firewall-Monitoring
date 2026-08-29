@@ -11,23 +11,31 @@ import (
 	"firewall-mon/internal/notifier"
 )
 
-// BuildDailyReport builds a self-contained HTML daily report (no attachments).
-func BuildDailyReport(devices []models.Device, deviceData []*DeviceReportData, tz string) (string, string, error) {
+// BuildDailyReport builds an HTML daily email report. Returns (subject, html,
+// attachments, error) — the email render embeds cid: chart images, so the PNG
+// attachments MUST travel with the html to the send path or the images break
+// (AUDIT-291).
+func BuildDailyReport(devices []models.Device, deviceData []*DeviceReportData, tz string) (string, string, []notifier.Attachment, error) {
 	return buildReport(devices, deviceData, tz, 24, "Daily", "")
 }
 
-// BuildWeeklyReport builds a self-contained HTML weekly report (no attachments).
-func BuildWeeklyReport(devices []models.Device, deviceData []*DeviceReportData, tz string) (string, string, error) {
+// BuildWeeklyReport builds an HTML weekly email report. Returns (subject, html,
+// attachments, error) — see BuildDailyReport re: the cid: chart attachments
+// (AUDIT-291).
+func BuildWeeklyReport(devices []models.Device, deviceData []*DeviceReportData, tz string) (string, string, []notifier.Attachment, error) {
 	return buildReport(devices, deviceData, tz, 168, "Weekly", "")
 }
 
 // BuildReport renders a report HTML body + subject for the given window. The
 // collapsible flag wraps per-device detail in <details> (admin preview); email
-// sends always-open blocks. Returns (subject, html, error). Renders in the
-// light theme — theme-aware callers use BuildReportWithOps.
-func BuildReport(devices []models.Device, deviceData []*DeviceReportData, tz string, hours int, period, version string, collapsible bool) (string, string, error) {
-	subject, html, _, _, err := BuildReportWithOps(devices, deviceData, tz, hours, period, version, collapsible, nil, ThemeByName(""))
-	return subject, html, err
+// sends always-open blocks. Returns (subject, html, attachments, error): the
+// email render (collapsible=false) produces cid: chart images whose PNG
+// attachments are returned here so the caller can attach them (AUDIT-291 — they
+// were previously discarded, breaking every cid: image). Renders in the light
+// theme — theme-aware callers use BuildReportWithOps.
+func BuildReport(devices []models.Device, deviceData []*DeviceReportData, tz string, hours int, period, version string, collapsible bool) (string, string, []notifier.Attachment, error) {
+	subject, html, _, attachments, err := BuildReportWithOps(devices, deviceData, tz, hours, period, version, collapsible, nil, ThemeByName(""))
+	return subject, html, attachments, err
 }
 
 // emailDeviceChartSlots bounds the per-device CPU/Mem PNGs riding in one
@@ -184,7 +192,7 @@ func qpEncodedLen(s string) int {
 	return buf.Len()
 }
 
-func buildReport(devices []models.Device, deviceData []*DeviceReportData, tz string, hours int, period, version string) (string, string, error) {
+func buildReport(devices []models.Device, deviceData []*DeviceReportData, tz string, hours int, period, version string) (string, string, []notifier.Attachment, error) {
 	return BuildReport(devices, deviceData, tz, hours, period, version, false)
 }
 
