@@ -2211,6 +2211,15 @@ func (d *Database) migrateIPSecTunnelDeployState() error {
 	return d.db.AutoMigrate(&models.IPSecTunnel{})
 }
 
+// migrateIPSecTunnelPreflightState (v58) adds ipsec_tunnels.preflight_json — the
+// per-preflight record (per-end preflight command IDs) that makes preflight status
+// tunnel-scoped, so two tunnels sharing a hub device don't cross-contaminate
+// preflight reports (AUDIT-258). Additive text column, plain AutoMigrate (small,
+// unpartitioned), idempotent — same precedent as v50 (deploy_json).
+func (d *Database) migrateIPSecTunnelPreflightState() error {
+	return d.db.AutoMigrate(&models.IPSecTunnel{})
+}
+
 // migrateEventRuleDampenJSON (v41) adds event_rules.dampen_json — the per-source
 // dampening params blob backing the unified alerting-via-Event-Rules program.
 // Additive text column, plain AutoMigrate (event_rules is small, unpartitioned).

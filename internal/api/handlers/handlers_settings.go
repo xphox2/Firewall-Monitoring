@@ -44,7 +44,14 @@ var settingsSecretKeys = database.SecretSettingKeys
 // statement_timeout — the very failure class per-severity retention exists to
 // remove — and it would be self-inflicted.
 func (h *Handler) GetSyslogRetention(c *gin.Context) {
-	c.JSON(http.StatusOK, response.Success(h.reqDB(c).SyslogVolume(h.config.Retention)))
+	// AUDIT-259: reqDB(c) returns a nil Store when the DB is unavailable; guard it
+	// like every sibling handler so this returns 503 instead of panicking on the
+	// nil-receiver SyslogVolume call.
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(db.SyslogVolume(h.config.Retention)))
 }
 
 func (h *Handler) GetSettings(c *gin.Context) {

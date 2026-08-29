@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.219] - 2026-08-29
+
+### Fixed
+
+Audit remediation batch 10 of the 2026-08-27 engineering audit — browser read-path and IPSec preflight resilience (AUDIT-193, AUDIT-197, AUDIT-251, AUDIT-256, AUDIT-257, AUDIT-258, AUDIT-259, AUDIT-261, AUDIT-270). Every finding was re-verified line-by-line against current master before being fixed.
+
+- Paginated alert, syslog, and config-history listings no longer show "0 results" alongside rows that are visibly present when the count query fails: the count error is now surfaced as a 500 and logged instead of being discarded, so the pager total can never silently read 0 beside a populated page (AUDIT-193).
+- Device create and update now validate site_id the same way they already validated probe_id: assigning a device to a non-existent site returns a clear 400 instead of an opaque foreign-key 500 that rolled back the whole update. site_id 0/nil (the legitimate "unassigned" case) stays allowed (AUDIT-197).
+- Non-numeric device_id / site_id / probe_id filters on the alerts, traps, and syslog listings return 400 instead of a Postgres 22P02 500 — the same input-hardening the flows listing already carried; the string filter columns (alert_type, severity, trap_type) are untouched (AUDIT-251).
+- Two error-handling bugs fixed: a config-revision delete logged a stale nil parse error instead of the real database error (AUDIT-256), and an event-rule-profile delete echoed the raw wrapped DB/transaction error to the client with a 400 — it now matches only the known "cannot delete the Default event rule profile" validation string and routes everything else through the generic, server-logged 500, mirroring DeleteAlertPolicy (AUDIT-257).
+- IPSec preflight results are now tunnel-scoped: the per-end preflight command IDs are recorded on the tunnel (new preflight_json column, migration v58) and the status poll reads each end's own command by ID, so two tunnels terminating on one hub device no longer cross-contaminate each other's collision reports and advisories. Same pattern as the deploy path's deploy_json (AUDIT-258).
+- Two DB-unavailable handlers (GetSyslogRetention, GetServerMetricChart) now return 503 instead of panicking on the nil Store that reqDB returns when the database is unavailable (AUDIT-259, AUDIT-261).
+- Trap device-by-IP resolution is deterministic under shared IPs (NAT, HA VIP, or reused RFC1918 management IPs): both the single and batched lookups pin a stable ORDER BY so a shared IP always resolves to the same lowest-id device (AUDIT-270).
+
 ## [0.11.218] - 2026-08-29
 
 ### Fixed
