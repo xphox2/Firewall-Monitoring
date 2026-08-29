@@ -207,9 +207,10 @@ func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 			}
 		}
 	}
-	// Tranche 4 Phase 2: project FortiGate action="deny" lines into denied_events
-	// for the deny detectors. deny.Project cheap-gates non-deny messages before
-	// any KV parse, so the majority stream is untouched on this hot path.
+	// Tranche 4 Phase 2: project FortiGate action="deny" and OPNsense/pfSense
+	// filterlog block/reject lines into denied_events for the deny detectors.
+	// deny.ProjectVendor cheap-gates non-deny messages before any parse, so the
+	// majority stream is untouched on this hot path.
 	h.projectDeniedEvents(filtered)
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
@@ -219,17 +220,41 @@ func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 const denyPatternCacheTTL = 60 * time.Second
 
 // projectDeniedEvents derives DeniedEvent rows from a saved syslog batch and
-// bulk-inserts them. Only FortiGate deny lines project (deny.Project returns
-// false otherwise). Best-effort: a projection/insert failure is logged, never
-// fatal to syslog ingest.
+// bulk-inserts them. FortiGate deny lines and OPNsense/pfSense filterlog
+// block/reject lines project (deny.ProjectVendor returns false otherwise), keyed
+// off each message's device vendor. Best-effort: a projection/insert failure is
+// logged, never fatal to syslog ingest.
 func (h *Handler) projectDeniedEvents(msgs []models.SyslogMessage) {
 	if len(msgs) == 0 || h.db == nil {
 		return
 	}
 	cfg := deny.PatternConfig{Pattern: h.denyPolicyPattern()}
+	// Resolve each distinct device's vendor once (few devices per batch), so a
+	// FortiGate batch pays no extra lookups and OPNsense/pfSense route to the
+	// filterlog parser. A device with no vendor (or DeviceID 0) defaults to the
+	// historical FortiGate behaviour.
+	vendors := make(map[uint]string)
+	for i := range msgs {
+		id := msgs[i].DeviceID
+		if id == 0 {
+			continue
+		}
+		if _, seen := vendors[id]; seen {
+			continue
+		}
+		vendor := "fortigate"
+		if dev, err := h.db.GetDevice(id); err == nil && dev != nil && dev.Vendor != "" {
+			vendor = dev.Vendor
+		}
+		vendors[id] = vendor
+	}
 	events := make([]models.DeniedEvent, 0, len(msgs))
 	for i := range msgs {
-		if ev, ok := deny.Project(&msgs[i], &h.threatMatch, cfg); ok {
+		vendor := vendors[msgs[i].DeviceID]
+		if vendor == "" {
+			vendor = "fortigate"
+		}
+		if ev, ok := deny.ProjectVendor(vendor, &msgs[i], &h.threatMatch, cfg); ok {
 			events = append(events, ev)
 		}
 	}

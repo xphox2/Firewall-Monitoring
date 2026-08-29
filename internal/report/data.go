@@ -106,24 +106,54 @@ func BuildSeasonalProfileFromChart(buckets []database.InterfaceChartBucket, buck
 //
 // Each consecutive bucket delta is the bytes transferred in that bucket window.
 // Negative deltas (counter reset or 32-bit wrap) are clamped to zero.
+//
+// AUDIT-290: rate (bps) and the average window use the ACTUAL span between
+// consecutive bucket timestamps, not the nominal bucket width. GetInterfaceChartData
+// does a plain GROUP BY with NO gap-fill, so a missed poll leaves a hole and the
+// real spacing exceeds the nominal width after any outage — dividing the delta by
+// the nominal width would inflate throughput 3-5x and manufacture phantom spikes.
+// bucketSeconds remains the fallback divisor when a timestamp can't be parsed or
+// the span is non-positive (clock skew). The cumulative-counter delta/clamp logic
+// is unchanged — only the TIME divisor is corrected.
 func computeTraffic(buckets []database.InterfaceChartBucket, bucketSeconds float64) (total, peak, avg float64, series []float64, times []time.Time) {
 	if len(buckets) < 2 || bucketSeconds <= 0 {
 		return 0, 0, 0, nil, nil
 	}
+	prevTime := parseBucketTime(buckets[0].Bucket)
 	for i := 1; i < len(buckets); i++ {
 		delta := (buckets[i].InBytes + buckets[i].OutBytes) - (buckets[i-1].InBytes + buckets[i-1].OutBytes)
 		if delta < 0 {
 			delta = 0 // counter reset / wrap
 		}
 		total += delta
-		bps := delta * 8 / bucketSeconds
+		curTime := parseBucketTime(buckets[i].Bucket)
+		// Actual seconds since the previous bucket; fall back to the nominal
+		// width when either timestamp failed to parse or the span is
+		// non-positive (equal buckets / clock skew).
+		dt := bucketSeconds
+		if !curTime.IsZero() && !prevTime.IsZero() {
+			if span := curTime.Sub(prevTime).Seconds(); span > 0 {
+				dt = span
+			}
+		}
+		bps := delta * 8 / dt
 		if bps > peak {
 			peak = bps
 		}
 		series = append(series, bps)
-		times = append(times, parseBucketTime(buckets[i].Bucket))
+		times = append(times, curTime)
+		prevTime = curTime
 	}
+	// Average over the ACTUAL observed span (first→last bucket) so a gapped
+	// series doesn't understate or overstate the mean; nominal width is the
+	// fallback when the endpoints won't parse.
 	windowSeconds := bucketSeconds * float64(len(buckets)-1)
+	first, last := parseBucketTime(buckets[0].Bucket), parseBucketTime(buckets[len(buckets)-1].Bucket)
+	if !first.IsZero() && !last.IsZero() {
+		if span := last.Sub(first).Seconds(); span > 0 {
+			windowSeconds = span
+		}
+	}
 	if windowSeconds > 0 {
 		avg = total * 8 / windowSeconds
 	}

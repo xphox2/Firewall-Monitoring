@@ -111,9 +111,85 @@ func containsFold(s, substr string) bool {
 
 // Project derives a DeniedEvent from a FortiGate syslog message, or ok=false if
 // the message is not a denial (the common case — those never touch the table).
-// tm may be nil (Match is nil-safe → ThreatFlag 0, no escalation).
+// tm may be nil (Match is nil-safe → ThreatFlag 0, no escalation). Back-compat
+// entry point; new callers should use ProjectVendor with the device vendor.
 func Project(msg *models.SyslogMessage, tm *threatintel.Holder, cfg PatternConfig) (models.DeniedEvent, bool) {
-	if msg == nil || !hasDenySignal(msg.Message, cfg) {
+	return ProjectVendor("fortigate", msg, tm, cfg)
+}
+
+// ProjectVendor derives a DeniedEvent from a syslog message under the device's
+// vendor (AUDIT-280). FortiGate uses the action="deny"/block-policy heuristics;
+// OPNsense/pfSense parse the pf `filterlog` block/reject verdict. Unknown
+// vendors fall through to the FortiGate parser (the historical default) so no
+// existing FortiGate deny stops projecting.
+func ProjectVendor(vendor string, msg *models.SyslogMessage, tm *threatintel.Holder, cfg PatternConfig) (models.DeniedEvent, bool) {
+	if msg == nil {
+		return models.DeniedEvent{}, false
+	}
+	switch strings.ToLower(strings.TrimSpace(vendor)) {
+	case "opnsense", "pfsense":
+		return projectFilterlog(vendor, msg, tm)
+	default:
+		return projectFortiGate(msg, tm, cfg)
+	}
+}
+
+// projectFilterlog projects an OPNsense/pfSense pf `filterlog` block/reject
+// verdict into a DeniedEvent. Cheap-gated on the action word before any parse so
+// the pass/accept majority of the filterlog stream is untouched on the hot path.
+func projectFilterlog(vendor string, msg *models.SyslogMessage, tm *threatintel.Holder) (models.DeniedEvent, bool) {
+	if !strings.Contains(msg.Message, "block") && !strings.Contains(msg.Message, "reject") {
+		return models.DeniedEvent{}, false
+	}
+	f := logfields.Fields(vendor, msg)
+	switch strings.ToLower(f["action"]) {
+	case "block", "reject":
+	default:
+		return models.DeniedEvent{}, false
+	}
+	src, dst := f["srcip"], f["dstip"]
+	if src == "" || dst == "" {
+		return models.DeniedEvent{}, false
+	}
+	// Mirror the FortiGate path's structural IP validation (AUDIT-272) and
+	// scope-local noise drop.
+	srcIP, dstIP := net.ParseIP(src), net.ParseIP(dst)
+	if srcIP == nil || dstIP == nil {
+		return models.DeniedEvent{}, false
+	}
+	if classify.ScopeLocalIP(srcIP) || classify.ScopeLocalIP(dstIP) {
+		return models.DeniedEvent{}, false
+	}
+	ev := models.DeniedEvent{
+		Timestamp: msg.Timestamp,
+		DeviceID:  msg.DeviceID,
+		ProbeID:   msg.ProbeID,
+		SrcAddr:   src,
+		DstAddr:   dst,
+		SrcPort:   atoiU16(f["srcport"]),
+		DstPort:   atoiU16(f["dstport"]),
+		Protocol:  atoiU8(f["proto"]),
+		// filterlog names the interface, not a wan/lan/dmz role, and carries no
+		// forward/local subtype — leave both Unknown rather than guess.
+		SrcIntfRole: models.IntfRoleUnknown,
+		Subtype:     models.DenySubtypeUnknown,
+		Signal:      models.DenySignalAction,
+	}
+	if tm != nil {
+		if _, ok := tm.Match(src); ok {
+			ev.ThreatFlag |= 1
+		}
+		if _, ok := tm.Match(dst); ok {
+			ev.ThreatFlag |= 2
+		}
+	}
+	return ev, true
+}
+
+// projectFortiGate is the original FortiOS action="deny" / block-policy
+// projection.
+func projectFortiGate(msg *models.SyslogMessage, tm *threatintel.Holder, cfg PatternConfig) (models.DeniedEvent, bool) {
+	if !hasDenySignal(msg.Message, cfg) {
 		return models.DeniedEvent{}, false
 	}
 	f := logfields.Fields("fortigate", msg)

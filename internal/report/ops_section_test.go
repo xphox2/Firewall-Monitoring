@@ -25,7 +25,7 @@ func TestReport_OpsSection_Renders(t *testing.T) {
 		}
 	}
 
-	_, html2, err := BuildReport([]models.Device{}, nil, "UTC", 24, "Daily", "test", false)
+	_, html2, _, err := BuildReport([]models.Device{}, nil, "UTC", 24, "Daily", "test", false)
 	if err != nil {
 		t.Fatalf("BuildReport: %v", err)
 	}

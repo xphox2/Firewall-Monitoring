@@ -861,6 +861,30 @@ func mergeCandidate(links []*Link, c *candidate) []*Link {
 	}
 	reporterIsA := c.reporter == a
 
+	// AUDIT-279: a name-only "raw fallback" side (ifIndex==0, name set) is what
+	// resolveRemotePort returns when a neighbor advertised a remote-port name
+	// that didn't resolve to any of the far device's interfaces. The far
+	// device's own mirrored LLDP row names that SAME physical port correctly
+	// (ifIndex>0). Treat the raw fallback as fillable/upgradable by that
+	// authoritative resolved port so the mirrored rows collapse to ONE link
+	// instead of spawning a duplicate that claims the same local port. Scoped to
+	// LLDP so a weaker tier can never rewrite an existing port attribution.
+	rawUpgradable := func(existing, in portRef) bool {
+		return c.tier == TierLLDP && existing.known() && existing.ifIndex == 0 && in.ifIndex > 0
+	}
+	// farConflict vetoes a raw-fallback merge when the OPPOSITE (far) sides of
+	// the candidate and the link are BOTH resolved (ifIndex>0) yet name different
+	// physical ports — proof they are DISTINCT parallel links, not one wire
+	// described twice. rawUpgradable grants a match on the REPORTER side alone,
+	// so without this veto two genuine parallel LLDP links whose reporter side
+	// collides only because one side's remote port is a raw fallback would be
+	// merged/cross-paired, silently losing an edge (AUDIT-279 follow-up). A
+	// raw-fallback far side (ifIndex 0) never trips the veto — that side is
+	// exactly what a legitimate mirror upgrades.
+	farConflict := func(linkFar, candFar portRef) bool {
+		return linkFar.ifIndex > 0 && candFar.ifIndex > 0 && !samePort(linkFar, candFar)
+	}
+
 	sideMatches := func(l *Link) (exact bool, fillable bool) {
 		lA := portRef{l.AIfIndex, l.AIfName}
 		lB := portRef{l.BIfIndex, l.BIfName}
@@ -868,20 +892,27 @@ func mergeCandidate(links []*Link, c *candidate) []*Link {
 			if samePort(lA, aPort) {
 				return true, false
 			}
-			return false, !lA.known()
+			return false, !lA.known() || (rawUpgradable(lA, aPort) && !farConflict(lB, bPort))
 		}
 		if samePort(lB, bPort) {
 			return true, false
 		}
-		return false, !lB.known()
+		return false, !lB.known() || (rawUpgradable(lB, bPort) && !farConflict(lA, aPort))
+	}
+
+	fillSide := func(cur portRef, in portRef) (portRef, bool) {
+		if (in.known() && !cur.known()) || rawUpgradable(cur, in) {
+			return in, true
+		}
+		return cur, false
 	}
 
 	apply := func(l *Link) {
-		if aPort.known() && !(portRef{l.AIfIndex, l.AIfName}).known() {
-			l.AIfIndex, l.AIfName = aPort.ifIndex, aPort.name
+		if p, ok := fillSide(portRef{l.AIfIndex, l.AIfName}, aPort); ok {
+			l.AIfIndex, l.AIfName = p.ifIndex, p.name
 		}
-		if bPort.known() && !(portRef{l.BIfIndex, l.BIfName}).known() {
-			l.BIfIndex, l.BIfName = bPort.ifIndex, bPort.name
+		if p, ok := fillSide(portRef{l.BIfIndex, l.BIfName}, bPort); ok {
+			l.BIfIndex, l.BIfName = p.ifIndex, p.name
 		}
 		l.VLANIDs = append(l.VLANIDs, c.vlans...)
 		if c.ts.After(l.LatestEvidence) {

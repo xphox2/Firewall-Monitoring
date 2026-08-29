@@ -132,7 +132,7 @@ type SystemStatus struct {
 	LowMemUsage   int    `json:"low_mem_usage"`
 	LowMemCap     int    `json:"low_mem_cap"`
 	AVVersion     string `json:"av_version"`
-	IPSVersion    string `json:"ips_version"`
+	IPSVersion    string `json:"ips_version" gorm:"column:ip_s_version"` // AUDIT-281: pin the existing GORM-mangled column name (prod already created it); do NOT rename.
 	SSLVPNUsers   int    `json:"sslvpn_users"`
 	SSLVPNTunnels int    `json:"sslvpn_tunnels"`
 	// Network throughput (kbps) from SSH performance status
@@ -297,7 +297,7 @@ type SecurityStats struct {
 	IPSLow         uint64    `json:"ips_low"`
 	IPSInfo        uint64    `json:"ips_info"`
 	WFHTTPBlocked  uint64    `json:"wf_http_blocked"`
-	WFHTTPSBlocked uint64    `json:"wf_https_blocked"`
+	WFHTTPSBlocked uint64    `json:"wf_https_blocked" gorm:"column:wf_http_s_blocked"` // AUDIT-281: pin the existing GORM-mangled column name (prod already created it); do NOT rename.
 	WFURLBlocked   uint64    `json:"wf_url_blocked"`
 }
 
@@ -383,7 +383,7 @@ type TrapEvent struct {
 	DeviceID  uint      `json:"device_id" gorm:"index;index:idx_trap_device_ts,priority:1"`
 	ProbeID   uint      `json:"probe_id" gorm:"index"`
 	SourceIP  string    `json:"source_ip"`
-	TrapOID   string    `json:"trap_oid"`
+	TrapOID   string    `json:"trap_oid" gorm:"column:trap_o_id"` // AUDIT-281: pin the existing GORM-mangled column name (prod already created it); do NOT rename.
 	TrapType  string    `json:"trap_type"`
 	Severity  string    `json:"severity" gorm:"index:idx_trap_severity"`
 	Message   string    `json:"message"`

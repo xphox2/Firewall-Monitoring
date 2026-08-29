@@ -289,7 +289,7 @@ func BuildReportModel(devices []models.Device, deviceData []*DeviceReportData, t
 	m.PeakThroughput = formatThroughput(peakBps)
 	m.TotalTransfer = formatBytes(totalBytes)
 
-	m.AlertBuckets = bucketAlerts(allAlerts, hours, loc)
+	m.AlertBuckets = bucketAlerts(allAlerts, hours, loc, time.Now())
 	m.HasAlerts = len(allAlerts) > 0
 
 	if uptimeCount > 0 {
@@ -513,7 +513,12 @@ func sparkline(series []float64) []SparkBar {
 // boundary is rendered in loc so the Alert Activity timeline matches the
 // CPU/Mem chart and the report header instead of showing UTC on a UTC container.
 // A nil loc falls back to UTC.
-func bucketAlerts(alerts []models.Alert, hours int, loc *time.Location) []AlertBucket {
+// bucketAlerts buckets alerts into a rolling now-hours..now window rendered in
+// loc. now is injected (not read from the wall clock) so the bucketing is
+// deterministic and testable — the caller passes time.Now(); a test can pin a
+// single instant so two renderings of the same alert set (e.g. under different
+// locations) index identically.
+func bucketAlerts(alerts []models.Alert, hours int, loc *time.Location, now time.Time) []AlertBucket {
 	if len(alerts) == 0 {
 		return nil
 	}
@@ -526,7 +531,7 @@ func bucketAlerts(alerts []models.Alert, hours int, loc *time.Location) []AlertB
 		bucketDuration = 24 * time.Hour
 	}
 
-	now := time.Now().In(loc)
+	now = now.In(loc)
 	start := now.Add(-time.Duration(hours) * time.Hour)
 	numBuckets := int(now.Sub(start)/bucketDuration) + 1
 	if numBuckets > 100 {

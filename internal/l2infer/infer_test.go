@@ -274,6 +274,73 @@ func TestInferLinks_ParallelLinks(t *testing.T) {
 	}
 }
 
+// AUDIT-279: mirrored LLDP rows where ONE side advertised the remote port by a
+// name that doesn't resolve to any of the far device's interfaces (PortID !=
+// interface Name → resolveRemotePort raw fallback portRef{0,name}) must still
+// collapse to ONE link, not spawn a duplicate claiming the same local port. The
+// far device's own row names that port authoritatively (ifIndex>0) and upgrades
+// the raw fallback.
+func TestInferLinks_LLDPRawRemoteFallbackDedups(t *testing.T) {
+	nbrs := []NeighborRow{
+		// fw-core sees fw-branch but advertises its remote port as "ge-0/0/3",
+		// which is NOT one of fw-branch's interface names (lan3/lan4) → raw
+		// fallback for the B side.
+		{DeviceID: 1, LocalIfIndex: 5, ChassisID: "aa:bb:cc:00:01:03", PortID: "ge-0/0/3", SysName: "fw-branch", Ts: ts()},
+		// fw-branch's mirrored row names its own port (lan3) and fw-core's port
+		// (port5) correctly.
+		{DeviceID: 2, LocalIfIndex: 3, ChassisID: "aa:bb:cc:00:00:05", PortID: "port5", SysName: "fw-core", Ts: ts()},
+	}
+	links := InferLinks(twoDevices(), twoDeviceIfaces(), nil, nil, nbrs)
+	if len(links) != 1 {
+		t.Fatalf("got %d links, want 1 (raw-fallback remote must merge, not duplicate): %+v", len(links), links)
+	}
+	l := links[0]
+	// The B side must resolve to fw-branch's authoritative port (lan3/ifIndex3),
+	// not linger on the raw "ge-0/0/3" fallback.
+	if l.AIfName != "port5" || l.BIfName != "lan3" || l.BIfIndex != 3 {
+		t.Errorf("ports wrong: A=%s(%d) B=%s(%d), want port5/lan3(3)", l.AIfName, l.AIfIndex, l.BIfName, l.BIfIndex)
+	}
+	if l.Method != MethodLLDP || l.Sided != "both" {
+		t.Errorf("method/sided wrong: %+v", l)
+	}
+}
+
+// AUDIT-279 follow-up: two GENUINE parallel LLDP links (port5↔lan3 and
+// port6↔lan4) where one side carries a raw-fallback remote name must NOT be
+// merged or cross-paired, even under adverse row ordering. The raw-fallback
+// merge grants a match on the reporter side alone; without the far-side conflict
+// veto, fw-branch's lan4 row (arriving first) would merge onto the raw port5
+// link — drawing a phantom port5↔lan4 and LOSING the real port6↔lan4 edge.
+func TestInferLinks_LLDPParallelRawFallbackKeepsBothEdges(t *testing.T) {
+	nbrs := []NeighborRow{
+		// fw-core's port5 row advertises its remote port as "ge-0/0/3", which
+		// matches none of fw-branch's interfaces → raw fallback for the far side.
+		// (port5 really connects to lan3.)
+		{DeviceID: 1, LocalIfIndex: 5, ChassisID: "aa:bb:cc:00:01:03", PortID: "ge-0/0/3", SysName: "fw-branch", Ts: ts()},
+		// Adverse ordering: fw-branch's lan4→port6 row arrives BEFORE its
+		// lan3→port5 row. Both name fw-core's port authoritatively.
+		{DeviceID: 2, LocalIfIndex: 4, ChassisID: "aa:bb:cc:00:00:06", PortID: "port6", SysName: "fw-core", Ts: ts()},
+		{DeviceID: 2, LocalIfIndex: 3, ChassisID: "aa:bb:cc:00:00:05", PortID: "port5", SysName: "fw-core", Ts: ts()},
+	}
+	links := InferLinks(twoDevices(), twoDeviceIfaces(), nil, nil, nbrs)
+	pairs := map[string]bool{}
+	for _, l := range links {
+		pairs[l.AIfName+"↔"+l.BIfName] = true
+	}
+	if len(links) != 2 {
+		t.Fatalf("got %d links, want 2 distinct parallel links: %+v", len(links), links)
+	}
+	if !pairs["port5↔lan3"] {
+		t.Errorf("missing real edge port5↔lan3: %+v", links)
+	}
+	if !pairs["port6↔lan4"] {
+		t.Errorf("LOST edge port6↔lan4 (raw-fallback merge swallowed it): %+v", links)
+	}
+	if pairs["port5↔lan4"] || pairs["port6↔lan3"] {
+		t.Errorf("phantom/cross-paired link drawn: %+v", links)
+	}
+}
+
 // ARP must never spawn a second link when the pair already has one on a
 // different port (logical VLAN subif vs the physical port is the same wire).
 func TestInferLinks_ARPNeverSpawnsParallel(t *testing.T) {

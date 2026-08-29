@@ -4,9 +4,8 @@
 //
 // Extraction is vendor-aware via the same registry idiom used by
 // internal/configdiff and internal/snmp: each vendor registers an Extractor in
-// init(); Lookup(vendor) returns it (or a generic fallback). FortiGate is the
-// only rich extractor today; opnsense/pfsense are registered stubs, ready to be
-// filled when those devices arrive.
+// init(); Lookup(vendor) returns it (or a generic fallback). FortiGate parses
+// its key=value stream; OPNsense and pfSense parse the shared pf `filterlog` CSV.
 package logfields
 
 import (
