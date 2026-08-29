@@ -19,7 +19,6 @@ import (
 	"firewall-mon/internal/notifier"
 	"firewall-mon/internal/snmp"
 	"firewall-mon/internal/threatintel"
-	"firewall-mon/internal/uptime"
 
 	"github.com/gin-gonic/gin"
 )
@@ -28,7 +27,6 @@ type Handler struct {
 	config       *config.Config
 	authManager  *auth.AuthManager
 	snmpClient   *snmp.SNMPClient
-	uptimeTrack  *uptime.UptimeTracker
 	alertManager *alerts.AlertManager
 	ircManager   *irc.Manager
 	notifier     *notifier.Notifier
@@ -89,7 +87,6 @@ func NewHandler(cfg *config.Config, authManager *auth.AuthManager, db *database.
 	h := &Handler{
 		config:      cfg,
 		authManager: authManager,
-		uptimeTrack: uptime.NewUptimeTracker(cfg),
 		geoResolver: geo,
 		db:          db,
 		startTime:   time.Now(),

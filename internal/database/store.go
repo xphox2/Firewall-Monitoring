@@ -229,7 +229,7 @@ type TelemetryReadStore interface {
 	GetPingResultHistory(deviceID uint, hours int) ([]models.PingResult, error)
 	GetPingStatsByTarget(deviceID uint, targetIP string) (*models.PingStats, error)
 	GetLatestInterfaceCountersByDevice(deviceID uint) ([]models.FlowInterfaceCounter, error)
-	GetUptimeRecords(limit int) ([]models.UptimeRecord, error)
+	GetUptimeRecords(deviceID uint, limit int) ([]models.UptimeRecord, error)
 	RecentHAFailover(deviceID uint, window time.Duration) bool
 	GetTelemetryTotals() (*TelemetryTotals, error)
 }
@@ -305,6 +305,9 @@ type IngestStore interface {
 	SaveSyslogMessages(msgs []models.SyslogMessage) error
 	SaveDeniedEvents(events []models.DeniedEvent) error
 	SaveSystemStatuses(statuses []models.SystemStatus) error
+	// SaveUptimeRecord persists one per-device availability snapshot (AUDIT-318).
+	// Written by the periodic uptime-snapshot worker in cmd/api.
+	SaveUptimeRecord(record *models.UptimeRecord) error
 	// SaveTopology*Snapshot REPLACE the device's rows per (device, type/
 	// protocol) scope — state tables, not time-series (see topology.go).
 	SaveTopologyEntriesSnapshot(entries []models.TopologyEntry) error

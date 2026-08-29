@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.229] - 2026-08-29
+
+### Fixed
+
+Wired the uptime tracker end-to-end as real per-device availability, and displayed it (AUDIT-318). The `internal/uptime` tracker was dead on both sides: its write path (`RecordUptime`/`SaveUptimeRecord`) had zero callers, so its stats were frozen at the zero-state; its `downtime` field was never incremented (only the event count was), so `CalculateFiveNines` was a constant "315.58 seconds remaining"; and no frontend rendered its output. It was also a single global instance in front of genuinely multi-device telemetry.
+
+- **Repurposed `internal/uptime` from a stateful singleton into a pure function library computing availability at read time (Option C).** `ComputeStats(rows, start)` derives per-device availability from that device's persisted `system_status` history (oldest→newest): a DOWN EVENT is a drop in the cumulative SNMP `sysUpTime` counter (a reboot), and downtime is now ACCUMULATED per reboot — estimated as the wall-clock gap between the pre- and post-reboot samples minus the uptime the device already reports post-reboot, clamped ≥0 (this fixes the never-incremented-downtime bug, so five-nines is meaningful). `UptimePercent` = (elapsed − downtime)/elapsed × 100, clamped [0,100]. The stateful global tracker, its on-disk baseline, and `h.uptimeTrack` were removed — no more global-mutable-state / last-writer-wins across the fleet.
+- **`GetUptime`/`ResetUptime` and the public/admin dashboards now compute per device.** `GetUptime` takes a `device_id`, loads that device's history, and returns real per-device stats + a meaningful `five_nines` + the device-scoped `uptime_records`. The public dashboard payload's `uptime_stats` is now a real availability figure for the resolved device; `ResetUptime` clears that device's snapshot rows (no in-memory baseline exists under the read-time model).
+- **Added per-device snapshot persistence.** A cheap `uptime-snapshot` worker in `cmd/api` (every 15m, decoupled from ingest) walks known devices, computes each device's availability, and persists a `uptime_records` row with `DeviceID` SET — fixing the old `GetUptimeRecord` DeviceID=0 defect where every persisted row collided on device 0.
+- **Store interface:** `GetUptimeRecords` now takes a `device_id` filter (signature + all callers updated), and `SaveUptimeRecord` was added to the `database.Store` interface so persistence is reachable via the store.
+- **Display (public device dashboard):** the CPU/Memory widget header now shows a distinct, clearly-labeled "AVAIL 99.xx%" element beside the existing live "UPTIME" counter, sourced from the now-real per-device `uptime_stats`. It reflows on narrow/wallboard screens and only appears once a real (>0) value exists.
+
 ## [0.11.228] - 2026-08-29
 
 ### Removed

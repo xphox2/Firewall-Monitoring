@@ -207,7 +207,14 @@
         var w = savedPos ? savedPos.w : def.w;
         var h = savedPos ? savedPos.h : def.h;
 
-        var uptimeHtml = def.type === 'cpumem' ? '<span class="uptime-live" id="uptime-' + def.id + '" style="font-size:0.7rem;color:#58a6ff;font-weight:400;letter-spacing:0;text-transform:none;margin-left:8px;font-family:monospace;"></span>' : '';
+        // AUDIT-318: the cpumem widget shows the live "UPTIME" counter AND a
+        // distinct read-time "AVAIL" (availability %) computed server-side from
+        // this device's system_status history. Both spans wrap inside the flex
+        // header so they reflow on narrow/wallboard screens.
+        var uptimeHtml = def.type === 'cpumem'
+            ? '<span class="uptime-live" id="uptime-' + def.id + '" style="font-size:0.7rem;color:#58a6ff;font-weight:400;letter-spacing:0;text-transform:none;margin-left:8px;font-family:monospace;"></span>'
+              + '<span class="availability-live" id="availability-' + def.id + '" style="font-size:0.7rem;color:#3fb950;font-weight:400;letter-spacing:0;text-transform:none;margin-left:8px;font-family:monospace;"></span>'
+            : '';
         var html = '<div class="widget-hdr"><h3>' + escapeHtml(def.title) + uptimeHtml + '</h3>' +
             '<button class="widget-close" data-wid="' + def.id + '">&times;</button></div>' +
             '<div class="widget-body" id="wb-' + def.id + '">' +
@@ -347,6 +354,15 @@
             } else if (data && data.uptime) {
                 var el = document.getElementById('uptime-' + wid);
                 if (el) el.textContent = 'UPTIME ' + data.uptime;
+            }
+            // AUDIT-318: per-device availability computed server-side at read
+            // time from system_status history. Distinct from the live UPTIME
+            // counter above. Hidden until there's a real (>0) value.
+            var av = document.getElementById('availability-' + wid);
+            var st = data && data.uptime_stats;
+            if (av && st && typeof st.uptime_percent === 'number' && st.uptime_percent > 0) {
+                av.textContent = 'AVAIL ' + st.uptime_percent.toFixed(2) + '%';
+                av.title = 'Availability over the trailing 30 days (' + (st.downtime_events || 0) + ' reboot event(s))';
             }
         }).catch(function() {});
 

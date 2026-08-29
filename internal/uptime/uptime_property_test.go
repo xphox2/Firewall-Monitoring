@@ -7,12 +7,14 @@ import (
 	"testing"
 	"testing/quick"
 	"time"
+
+	"firewall-mon/internal/models"
 )
 
 // AUDIT-120: property-based tests for the uptime math, using stdlib
 // testing/quick. They assert invariants that must hold for every input rather
 // than spot-checking examples: the FormatUptime round-trip, and the
-// UptimePercent clamp + reboot-underflow guard in GetStats.
+// UptimePercent clamp in ComputeStats (AUDIT-318 read-time availability).
 
 // parseUptimeString reverses FormatUptime back into seconds. It understands the
 // four shapes FormatUptime can emit ("Xd Xh Xm Xs", "Xh Xm Xs", "Xm Xs", "Xs")
@@ -66,35 +68,27 @@ func TestFormatUptime_RoundTrip_AUDIT120(t *testing.T) {
 	}
 }
 
-// TestGetStats_UptimePercentBounded_AUDIT120: UptimePercent is always a finite
-// value in [0,100]. A device reboot (current device uptime below the recorded
-// baseline) and a not-yet-reported tracker (lastUptime==0) must both yield 0,
-// never a negative number or NaN from the uint64 subtraction.
-func TestGetStats_UptimePercentBounded_AUDIT120(t *testing.T) {
+// TestComputeStats_UptimePercentBounded_AUDIT120: for ANY per-device sysUpTime
+// series (including reboots, where the counter drops), ComputeStats yields a
+// finite UptimePercent in [0,100] — never negative, never NaN/Inf from the
+// downtime subtraction. Rows are built with strictly increasing timestamps
+// (30s apart) so elapsed > 0.
+func TestComputeStats_UptimePercentBounded_AUDIT120(t *testing.T) {
 	t.Parallel()
-	prop := func(lastUptime, startUptime uint64, elapsedSecs uint16) bool {
-		// White-box construction: GetStats only reads baseline + lastUptime,
-		// never config, so a zero-value tracker with fields set is sufficient.
-		ut := &UptimeTracker{
-			baseline: &UptimeBaseline{
-				// Guarantee the baseline start is strictly in the past so
-				// elapsedTime > 0 (the branch that computes a percentage).
-				StartTime:   time.Now().Add(-time.Duration(elapsedSecs)*time.Second - time.Second),
-				StartUptime: startUptime,
-			},
-			lastUptime: lastUptime,
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	prop := func(uptimes []uint64) bool {
+		if len(uptimes) == 0 {
+			return true // empty series is a valid zero-value case
 		}
-		p := ut.GetStats().UptimePercent
-		if math.IsNaN(p) || math.IsInf(p, 0) || p < 0 || p > 100 {
-			return false
+		rows := make([]models.SystemStatus, len(uptimes))
+		for i, u := range uptimes {
+			rows[i] = models.SystemStatus{
+				Timestamp: base.Add(time.Duration(i) * 30 * time.Second),
+				Uptime:    u,
+			}
 		}
-		if lastUptime == 0 && p != 0 {
-			return false
-		}
-		if lastUptime < startUptime && p != 0 { // reboot → underflow guard → 0
-			return false
-		}
-		return true
+		p := ComputeStats(rows, rows[0].Timestamp).UptimePercent
+		return !math.IsNaN(p) && !math.IsInf(p, 0) && p >= 0 && p <= 100
 	}
 	if err := quick.Check(prop, &quick.Config{MaxCount: 5000}); err != nil {
 		t.Error(err)

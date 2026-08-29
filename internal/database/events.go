@@ -47,9 +47,16 @@ func (d *Database) SaveUptimeRecord(record *models.UptimeRecord) error {
 	return d.db.Create(record).Error
 }
 
-func (d *Database) GetUptimeRecords(limit int) ([]models.UptimeRecord, error) {
+// GetUptimeRecords returns persisted uptime snapshots newest-first. A non-zero
+// deviceID scopes the result to one device (AUDIT-318 per-device availability);
+// deviceID==0 returns records across all devices.
+func (d *Database) GetUptimeRecords(deviceID uint, limit int) ([]models.UptimeRecord, error) {
 	var records []models.UptimeRecord
-	err := d.db.Order("timestamp DESC").Limit(limit).Find(&records).Error
+	q := d.db.Order("timestamp DESC").Limit(limit)
+	if deviceID != 0 {
+		q = q.Where("device_id = ?", deviceID)
+	}
+	err := q.Find(&records).Error
 	return records, err
 }
 
