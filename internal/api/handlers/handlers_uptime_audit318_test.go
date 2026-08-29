@@ -72,16 +72,19 @@ func TestGetUptime_PerDeviceIndependent(t *testing.T) {
 		t.Fatalf("create d2: %v", err)
 	}
 
-	base := time.Now().Add(-4 * time.Hour)
-	// device 1: counter drops (reboot) between samples 2 and 3.
-	insertStatus(t, h, d1.ID, base, 500000)
-	insertStatus(t, h, d1.ID, base.Add(time.Hour), 900000)
-	insertStatus(t, h, d1.ID, base.Add(2*time.Hour), 10000)
-	insertStatus(t, h, d1.ID, base.Add(3*time.Hour), 50000)
-	// device 2: strictly monotonic.
-	insertStatus(t, h, d2.ID, base, 100000)
-	insertStatus(t, h, d2.ID, base.Add(time.Hour), 200000)
-	insertStatus(t, h, d2.ID, base.Add(2*time.Hour), 300000)
+	// Truncate to whole seconds so claimed-boot arithmetic is exact.
+	base := time.Now().Add(-2 * time.Hour).Truncate(time.Second)
+	// device 1: a genuine reboot — up 10000s, then (after an 8-min gap) back up
+	// only 30s → claimed boot jumps ~510s into the future of the last good
+	// sample. One event, real downtime.
+	insertStatus(t, h, d1.ID, base, 1_000_000)
+	insertStatus(t, h, d1.ID, base.Add(60*time.Second), 1_006_000)
+	insertStatus(t, h, d1.ID, base.Add(600*time.Second), 3_000)
+	insertStatus(t, h, d1.ID, base.Add(660*time.Second), 9_000)
+	// device 2: strictly monotonic (constant claimed boot) — no reboot.
+	insertStatus(t, h, d2.ID, base, 1_000_000)
+	insertStatus(t, h, d2.ID, base.Add(60*time.Second), 1_006_000)
+	insertStatus(t, h, d2.ID, base.Add(120*time.Second), 1_012_000)
 
 	s1 := callGetUptime(t, h, d1.ID)
 	s2 := callGetUptime(t, h, d2.ID)

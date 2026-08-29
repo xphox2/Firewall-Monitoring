@@ -14,54 +14,99 @@ import (
 	"firewall-mon/internal/models"
 )
 
-// UptimeStats is the read-time availability summary for ONE device.
+// UptimeStats is the read-time availability summary for ONE device. It is
+// scoped to the OBSERVED window (the retained system_status samples), not a
+// year — StartTime and ObservedSeconds describe exactly what was measured, so
+// the presentation layer never claims a window the data doesn't cover.
 type UptimeStats struct {
-	UptimePercent  float64   `json:"uptime_percent"`
-	TotalDowntime  float64   `json:"total_downtime_seconds"`
-	DowntimeEvents int       `json:"downtime_events"`
-	CurrentUptime  uint64    `json:"current_uptime"`
-	StartTime      time.Time `json:"start_time"`
+	UptimePercent   float64   `json:"uptime_percent"`
+	TotalDowntime   float64   `json:"total_downtime_seconds"`
+	DowntimeEvents  int       `json:"downtime_events"`
+	CurrentUptime   uint64    `json:"current_uptime"`
+	StartTime       time.Time `json:"start_time"`       // oldest retained readable sample
+	ObservedSeconds float64   `json:"observed_seconds"` // width of the observed window
+	SampleCount     int       `json:"sample_count"`     // readable (nonzero-uptime) samples
 }
 
-// fiveNinesBudgetSeconds is the maximum downtime per year permitted by a
-// 99.999% ("five nines") availability target: 5 min 15.576 sec.
-const fiveNinesBudgetSeconds = 315.576
+// fiveNinesUnavailability is the unavailability fraction permitted by a 99.999%
+// ("five nines") target: 0.001% of the window.
+const fiveNinesUnavailability = 1e-5
+
+// rebootSlackSeconds is how far a device's CLAIMED boot instant must move into
+// the future of the previous sample before we count a reboot. It comfortably
+// exceeds both the ~60s SNMP poll cadence and the ≤60s minute-truncation jitter
+// of the SSH-perf writer (system_status is a dual-writer table: 60s-cadence,
+// 10ms-granular SNMP uptime interleaved with 15m-cadence, minute-truncated
+// SSH-perf uptime). Below this threshold a claimed-boot shift is jitter, not a
+// real restart.
+const rebootSlackSeconds = 90.0
 
 // ComputeStats derives availability for a single device from its system_status
 // history. `rows` must be for ONE device, ordered oldest→newest by timestamp;
-// `start` is the window start used for the elapsed-time denominator (callers
-// typically pass rows[0].Timestamp).
+// `start` seeds StartTime only when there is data-derived start to prefer.
 //
-// A DOWN EVENT is a reboot: the SNMP sysUpTime counter (timeticks, hundredths
-// of a second, cumulative) DROPS below the previous sample's value. Downtime is
-// ESTIMATED per reboot as the wall-clock gap between the pre-reboot and
-// post-reboot samples MINUS the uptime the device already reports in the
-// post-reboot sample (i.e. how long it had been back up when we first observed
-// it again), clamped ≥0. This fixes the historical bug where downtime was never
-// accumulated (only the event count was), which made five-nines a constant.
+// Readability: a row with Uptime==0 means "unknown/unreadable" (an SSH parse
+// miss, an SNMP NoSuchInstance/timeout), NEVER "0 seconds up", so such rows are
+// SKIPPED entirely — otherwise they masquerade as a reboot-to-zero and invent
+// downtime, and an all-zeros series would read as a false 100%.
 //
-// UptimePercent is (elapsed − totalDowntime) / elapsed × 100, clamped to
-// [0,100] — the standard availability ratio, so it moves off the frozen
-// zero-state and directly reflects accumulated downtime.
+// Reboot detection is by CLAIMED BOOT TIME, not a raw counter drop. A device's
+// boot instant ≈ sample.Timestamp − sample.Uptime/100 (seconds). A reboot is
+// counted between two readable samples only when the later sample claims to
+// have booted AFTER the earlier sample's timestamp by more than
+// rebootSlackSeconds. This makes a monotonic series and minute-truncation
+// jitter both yield ZERO reboots (the claimed boot only jitters within slack),
+// while a genuine restart (claimed boot jumps to recent) yields one. It also
+// sidesteps the missing timestamp tie-break in GetRecentSystemStatus (no
+// secondary ORDER BY): two near-simultaneous dual-writer rows differ only
+// within slack.
+//
+// Downtime for a detected reboot = max(0, claimedBoot − prev.Timestamp): the
+// device was last confirmed up at prev.Timestamp and reports booting at
+// claimedBoot, so that interval is the (conservative, provable) outage. It is
+// bounded by the inter-sample gap.
+//
+// COUNTER WRAP: 32-bit sysUpTime wraps to 0 about every 497 days. A wrap looks
+// like a fresh, recent boot, so the claimed-boot test counts it as one reboot
+// plus up to one inter-sample interval of downtime. This is a once-per-~497-day
+// edge we accept rather than special-case; a 64-bit counter or a
+// device-provided boot-time OID would remove it.
+//
+// UptimePercent is (observed − totalDowntime) / observed × 100, clamped [0,100].
 func ComputeStats(rows []models.SystemStatus, start time.Time) UptimeStats {
 	stats := UptimeStats{StartTime: start}
-	if len(rows) == 0 {
+
+	// Keep only readable samples (Uptime != 0).
+	valid := make([]models.SystemStatus, 0, len(rows))
+	for _, r := range rows {
+		if r.Uptime == 0 {
+			continue
+		}
+		valid = append(valid, r)
+	}
+	stats.SampleCount = len(valid)
+	if len(valid) == 0 {
+		// No signal at all — return a no-data zero-state, NEVER 100%.
 		return stats
 	}
 
-	stats.CurrentUptime = rows[len(rows)-1].Uptime
+	stats.CurrentUptime = valid[len(valid)-1].Uptime
+	windowStart := valid[0].Timestamp
+	stats.StartTime = windowStart
 
-	for i := 1; i < len(rows); i++ {
-		prev := rows[i-1]
-		cur := rows[i]
-		if cur.Uptime < prev.Uptime {
-			// Reboot detected between prev and cur.
+	// claimedBootUnix computes a sample's boot instant in float Unix seconds.
+	// Working in float seconds (rather than time.Duration) avoids int64
+	// overflow for absurd uptime values (e.g. the property test's MaxUint64).
+	claimedBootUnix := func(s models.SystemStatus) float64 {
+		return float64(s.Timestamp.Unix()) - float64(s.Uptime)/100.0
+	}
+
+	for i := 1; i < len(valid); i++ {
+		prevUnix := float64(valid[i-1].Timestamp.Unix())
+		boot := claimedBootUnix(valid[i])
+		if boot > prevUnix+rebootSlackSeconds {
 			stats.DowntimeEvents++
-
-			gap := cur.Timestamp.Sub(prev.Timestamp).Seconds()
-			// Seconds the device had already been up when first seen back.
-			backUpFor := float64(cur.Uptime) / 100
-			down := gap - backUpFor
+			down := boot - prevUnix
 			if down < 0 {
 				down = 0
 			}
@@ -69,11 +114,8 @@ func ComputeStats(rows []models.SystemStatus, start time.Time) UptimeStats {
 		}
 	}
 
-	effStart := start
-	if effStart.IsZero() {
-		effStart = rows[0].Timestamp
-	}
-	elapsed := rows[len(rows)-1].Timestamp.Sub(effStart).Seconds()
+	elapsed := valid[len(valid)-1].Timestamp.Sub(windowStart).Seconds()
+	stats.ObservedSeconds = elapsed
 	if elapsed > 0 {
 		pct := (elapsed - stats.TotalDowntime) / elapsed * 100
 		if pct < 0 {
@@ -88,21 +130,26 @@ func ComputeStats(rows []models.SystemStatus, start time.Time) UptimeStats {
 	return stats
 }
 
-// CalculateFiveNines reports the remaining annual downtime budget for a 99.999%
-// availability target, given accumulated downtime. It is a pure function of the
-// supplied stats (not a receiver), so the value is MEANINGFUL: it moves as
-// downtime accumulates instead of being a constant.
+// CalculateFiveNines reports the remaining downtime budget for a 99.999% target
+// OVER THE OBSERVED WINDOW (not a mislabeled annual figure): the budget is
+// ObservedSeconds × 0.001%. It is a pure function of the supplied stats, so the
+// value is meaningful and moves as downtime accumulates. With no observed
+// window it reports insufficient data rather than a false "Achieved".
 func CalculateFiveNines(stats UptimeStats) string {
+	if stats.SampleCount == 0 || stats.ObservedSeconds <= 0 {
+		return "Insufficient data"
+	}
 	if stats.UptimePercent >= 99.999 {
-		return "Achieved"
+		return "Achieved for the observed window"
 	}
 
-	downtimeRemaining := fiveNinesBudgetSeconds - stats.TotalDowntime
-	if downtimeRemaining < 0 {
-		downtimeRemaining = 0
+	budget := stats.ObservedSeconds * fiveNinesUnavailability
+	remaining := budget - stats.TotalDowntime
+	if remaining < 0 {
+		remaining = 0
 	}
 
-	return fmt.Sprintf("%.2f seconds remaining for 99.999%% uptime", downtimeRemaining)
+	return fmt.Sprintf("%.2f seconds of downtime budget remaining for 99.999%% over the observed window", remaining)
 }
 
 // NewRecord builds a persistable models.UptimeRecord from computed stats with

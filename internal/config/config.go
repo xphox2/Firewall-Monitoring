@@ -19,7 +19,6 @@ type Config struct {
 	Database   DatabaseConfig
 	Auth       AuthConfig
 	Alerts     AlertsConfig
-	Uptime     UptimeConfig
 	Retention  RetentionConfig
 	Detect     DetectConfig
 	ThreatFeed ThreatFeedConfig
@@ -348,11 +347,6 @@ type AlertsConfig struct {
 	FlapMinActiveSeconds int
 }
 
-type UptimeConfig struct {
-	BaselineFile    string
-	TrackingEnabled bool
-}
-
 func Load() *Config {
 	// AUDIT-158: the pre-fix code had a `defer func() { defaultPassword = "" }()`
 	// here to scrub the module-level cache after Load returned. That was
@@ -568,10 +562,6 @@ func Load() *Config {
 			TeamsWebhookURL:          getEnv("TEAMS_WEBHOOK_URL", ""),
 			PublicBaseURL:            strings.TrimRight(getEnv("PUBLIC_BASE_URL", ""), "/"),
 			ProbeDataLagAlertMinutes: getIntEnv("PROBE_DATA_LAG_ALERT_MINUTES", 60),
-		},
-		Uptime: UptimeConfig{
-			BaselineFile:    getEnv("UPTIME_BASELINE_FILE", "/var/lib/firewall-mon/uptime.json"),
-			TrackingEnabled: getBoolEnv("UPTIME_TRACKING_ENABLED", true),
 		},
 	}
 }

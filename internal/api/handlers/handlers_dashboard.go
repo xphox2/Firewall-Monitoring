@@ -21,12 +21,16 @@ import (
 )
 
 // uptimeWindowHours / uptimeSampleCap bound the read-time availability
-// computation (AUDIT-318). We read the newest uptimeSampleCap system_status
-// rows within the trailing window so reboot detection stays anchored to RECENT
-// history (GetSystemStatusHistory's ASC+LIMIT keeps the OLDEST rows, so it is
-// the wrong method here — see AUDIT-245); GetRecentSystemStatus is newest-first.
+// computation (AUDIT-318). uptimeWindowHours is only an UPPER lookback bound;
+// uptimeSampleCap dominates it — at the ~60s SNMP cadence 2000 samples is only
+// ~31h, so the ACTUAL observed window is whatever the retained rows span and is
+// reported to the client as UptimeStats.StartTime/ObservedSeconds (the display
+// labels from that, never a fixed "30 days"). We read the NEWEST rows so reboot
+// detection stays anchored to recent history (GetSystemStatusHistory's ASC+LIMIT
+// keeps the OLDEST rows — wrong here, see AUDIT-245); GetRecentSystemStatus is
+// newest-first.
 const (
-	uptimeWindowHours = 720 // 30 days
+	uptimeWindowHours = 720 // max lookback; sample cap dominates
 	uptimeSampleCap   = 2000
 )
 

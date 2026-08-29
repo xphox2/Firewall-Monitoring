@@ -357,12 +357,18 @@
             }
             // AUDIT-318: per-device availability computed server-side at read
             // time from system_status history. Distinct from the live UPTIME
-            // counter above. Hidden until there's a real (>0) value.
+            // counter above. Hidden until there's a real (>0) value. The label
+            // is scoped to the ACTUAL observed window (start_time), never a
+            // window the retained samples don't cover.
             var av = document.getElementById('availability-' + wid);
             var st = data && data.uptime_stats;
             if (av && st && typeof st.uptime_percent === 'number' && st.uptime_percent > 0) {
                 av.textContent = 'AVAIL ' + st.uptime_percent.toFixed(2) + '%';
-                av.title = 'Availability over the trailing 30 days (' + (st.downtime_events || 0) + ' reboot event(s))';
+                var events = st.downtime_events || 0;
+                var span = st.start_time
+                    ? 'since ' + formatInTimezone(st.start_time, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+                    : 'the observed window';
+                av.title = 'Availability over ' + span + ' — ' + events + ' reboot event(s)';
             }
         }).catch(function() {});
 
