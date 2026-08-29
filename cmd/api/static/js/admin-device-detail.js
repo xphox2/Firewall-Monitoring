@@ -1094,7 +1094,7 @@
                 // two facts ("status: down" + "last_up_at: T") into one
                 // glanceable cell.
                 '<td>' + (v.status === 'up'
-                    ? formatVpnUptime(v.tunnel_uptime)
+                    ? AC.formatTunnelUptime(v.tunnel_uptime)
                     : (v.last_up_at
                         ? '<span title="Last observed up: ' + esc(formatTime(v.last_up_at)) +
                           '" style="color:var(--fwmon-text-faint);font-size:0.85rem;">last up ' + esc(formatRelative(v.last_up_at)) + '</span>'
@@ -2514,15 +2514,14 @@
         return val.toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
     }
 
-    function formatVpnUptime(hundredths) {
-        if (!hundredths) return '-';
-        var secs = Math.floor(hundredths / 100);
-        var d = Math.floor(secs / 86400);
-        var h = Math.floor((secs % 86400) / 3600);
-        var m = Math.floor((secs % 3600) / 60);
-        if (d > 0) return d + 'd ' + h + 'h';
-        if (h > 0) return h + 'h ' + m + 'm';
-        return m + 'm';
+    // AUDIT-231: renderVPN now uses the shared AC.formatTunnelUptime, which
+    // treats tunnel_uptime as SECONDS (its actual unit). The former local
+    // helper here divided by 100 — a leftover that rendered a 53-minute
+    // OPNsense tunnel as "0m" — and was the one renderer missed in the
+    // shared-helper conversion. Retained as a thin delegating alias (no
+    // current callers) to avoid a wider rename in this display-only fix.
+    function formatVpnUptime(seconds) {
+        return AC.formatTunnelUptime(seconds);
     }
 
     function formatSpeed(iface) {

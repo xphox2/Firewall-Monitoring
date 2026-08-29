@@ -79,7 +79,7 @@ func (o *OPNsenseProfile) ParseSystemStatus(pdus []gosnmp.SnmpPDU) *models.Syste
 			status.Version = extractOPNsenseVersion(safeString(pdu.Value))
 		case onsOIDSysUpTime:
 			ticks := gosnmp.ToBigInt(pdu.Value).Uint64()
-			status.Uptime = ticks / 100
+			status.Uptime = ticks // AUDIT-220: store RAW hundredths (the consumer FormatUptime divides by 100 once; pre-dividing here was a latent 100x error should this legacy single-device path ever select a non-FortiGate profile — same fix as the collector profiles).
 		case onsOIDCpuUser:
 			cpuUser = gosnmp.ToBigInt(pdu.Value).Int64()
 		case onsOIDCpuSystem:

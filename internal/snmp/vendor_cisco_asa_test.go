@@ -32,8 +32,8 @@ func TestCiscoASA_ParseSystemStatus(t *testing.T) {
 	if status.Version != "ASA 9.16(4)8" {
 		t.Errorf("Version = %q, want ASA 9.16(4)8", status.Version)
 	}
-	if status.Uptime != 3600 {
-		t.Errorf("Uptime = %d, want 3600", status.Uptime)
+	if status.Uptime != 360000 { // AUDIT-220: raw hundredths, not seconds
+		t.Errorf("Uptime = %d, want 360000", status.Uptime)
 	}
 	if status.CPUUsage != 17 {
 		t.Errorf("CPUUsage = %v, want 17", status.CPUUsage)

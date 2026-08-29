@@ -84,9 +84,9 @@ func (fw *FirewallaProfile) ParseSystemStatus(pdus []gosnmp.SnmpPDU) *models.Sys
 		case fwOIDSysDescr:
 			status.Version = extractFirewallaVersion(safeString(pdu.Value))
 		case fwOIDSysUpTime:
-			// sysUpTime is in hundredths of a second; convert to seconds
+			// sysUpTime is in hundredths of a second; store it RAW (AUDIT-220)
 			ticks := gosnmp.ToBigInt(pdu.Value).Uint64()
-			status.Uptime = ticks / 100
+			status.Uptime = ticks // AUDIT-220: store RAW hundredths (the consumer FormatUptime divides by 100 once; pre-dividing here was a latent 100x error should this legacy single-device path ever select a non-FortiGate profile — same fix as the collector profiles).
 		case fwOIDCpuUser:
 			cpuUser = gosnmp.ToBigInt(pdu.Value).Int64()
 		case fwOIDCpuSystem:
