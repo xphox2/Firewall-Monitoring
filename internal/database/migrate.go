@@ -345,18 +345,26 @@ func (d *Database) parentPartitionedIndexColumns(tableName string) ([][]string, 
 	// indexprs IS NULL excludes expression indexes (their indkey carries 0
 	// attnums that would join to nothing); indisunique=false matches the plan's
 	// own scope — partitionIndexPlan never emits unique indexes.
+	//
+	// Review hardening (AUDIT-174): indpred IS NULL — a PARTIAL parent index
+	// does NOT fully cover a plan entry and must never suppress the full
+	// per-leaf index; ord <= indnkeyatts — INCLUDE columns are payload, not
+	// key columns, and must not widen the claimed coverage; indisvalid —
+	// an invalid index serves no queries and covers nothing.
 	if err := d.db.Raw(`
 		SELECT i.relname AS index_name,
 		       string_agg(a.attname, ',' ORDER BY k.ord) AS cols
 		FROM pg_index x
 		JOIN pg_class i ON i.oid = x.indexrelid
 		JOIN pg_class t ON t.oid = x.indrelid
-		JOIN LATERAL unnest(x.indkey) WITH ORDINALITY AS k(attnum, ord) ON true
+		JOIN LATERAL unnest(x.indkey) WITH ORDINALITY AS k(attnum, ord) ON k.ord <= x.indnkeyatts
 		JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
 		WHERE t.relname = ?
 		  AND i.relkind = 'I'
 		  AND NOT x.indisunique
 		  AND x.indexprs IS NULL
+		  AND x.indpred IS NULL
+		  AND x.indisvalid
 		GROUP BY i.relname`, tableName).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
@@ -396,6 +404,51 @@ func planEntriesNotCoveredByParent(plan []partitionIndex, parentIndexCols [][]st
 		kept = append(kept, p)
 	}
 	return kept, skipped
+}
+
+// dropParentCoveredLeafIndexes removes the plan-named per-leaf indexes that a
+// covering parent partitioned index makes redundant (AUDIT-174 review fix).
+// Fresh installs created between v0.11.183 (v54 shipped) and v0.11.213 built
+// both btrees on every leaf; stopping NEW duplicates alone would leave those
+// installs carrying the write-amplification twins for the leaves' whole
+// lifetime. Scope is deliberately surgical: only children of the named parent,
+// only the exact plan-derived names (idx_<child>_<suffix>), and only for
+// suffixes the catalog probe proved covered. Failures log and continue — a
+// leftover duplicate is recoverable on the next boot.
+func (d *Database) dropParentCoveredLeafIndexes(parent string, skippedSuffixes []string) {
+	var children []string
+	if err := d.db.Raw(`
+		SELECT c.relname FROM pg_inherits h
+		JOIN pg_class c ON c.oid = h.inhrelid
+		JOIN pg_class p ON p.oid = h.inhparent
+		WHERE p.relname = ?`, parent).Scan(&children).Error; err != nil {
+		log.Printf("AUDIT-174: child enumeration for %s failed: %v (duplicate-index cleanup skipped this boot)", parent, err)
+		return
+	}
+	candidates := make([]string, 0, len(children)*len(skippedSuffixes))
+	for _, child := range children {
+		for _, suffix := range skippedSuffixes {
+			candidates = append(candidates, fmt.Sprintf("idx_%s_%s", child, suffix))
+		}
+	}
+	if len(candidates) == 0 {
+		return
+	}
+	// Drop only names that actually exist as indexes, so the common case (no
+	// duplicates — this prod) costs one catalog probe and zero DDL.
+	var existing []string
+	if err := d.db.Raw(`SELECT relname FROM pg_class WHERE relname IN ? AND relkind = 'i'`,
+		candidates).Scan(&existing).Error; err != nil {
+		log.Printf("AUDIT-174: duplicate-index existence probe for %s failed: %v (cleanup skipped this boot)", parent, err)
+		return
+	}
+	for _, idx := range existing {
+		if err := d.db.Exec("DROP INDEX IF EXISTS " + idx).Error; err != nil {
+			log.Printf("AUDIT-174: drop duplicate leaf index %s: %v (will retry next boot)", idx, err)
+			continue
+		}
+		log.Printf("AUDIT-174: dropped duplicate leaf index %s (covered by a parent partitioned index)", idx)
+	}
 }
 
 // partitionIndexSuffix maps an index's column list to the per-partition name
@@ -529,6 +582,13 @@ func (d *Database) EnsurePartitions() error {
 		if len(skipped) > 0 {
 			log.Printf("Partition indexes for %s: skipping per-leaf %s — covered by a parent partitioned index that cascades to every leaf (AUDIT-174)",
 				def.tableName, strings.Join(skipped, ", "))
+			// Review fix: fresh installs created on v0.11.183..v0.11.213
+			// (published images) already built BOTH btrees on every leaf —
+			// this deployment's prod never did (verified against the live
+			// catalog), but the fleet did. Drop the plan-named twins the
+			// covering parent index makes redundant; exact names only,
+			// only for suffixes the catalog probe proved covered.
+			d.dropParentCoveredLeafIndexes(def.tableName, skipped)
 		}
 		indexPlans[def.tableName] = kept
 	}

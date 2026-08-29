@@ -7,7 +7,8 @@ Per-PR loop: verify (refute-by-default) → fix → fable review of diff → QA 
 - [x] Batch 1 (Server 0.11.211): startup/deploy — 171, 173, 183, 190, 310 — ALL CONFIRMED+FIXED; fable review SOUND (after: force-add gitignored test, doc/NOTICE polish, single env read); PR #219 open, background CI watch → merge
 - [ ] Batch 2 (Collector 1.3.35): CI pinning — 178, 224, 226 CONFIRMED+FIXED, 309 ALREADY-RESOLVED; fable SOUND (after queue.go doc + permissions-guard hardening); PR #99 open, watch-merge running. Bonus real fixes: 3× 0o750 dirs, 2× ineffective //nolint:gosec → #nosec G402, #nosec G404 jitter. internal/shell convention established in collector.
 - [ ] Batch 3 (Collector **1.3.37** — renumbered): relay durability — 175, 212, 213, 214, 287, 288, 289. NOTE: teammate session's docs commit e337a95 (v1.3.36, PR #100) rode onto this branch via worktree race — leave untouched; their PR #100 merge cleans my diff. Coordinate version slots with technicallabs-website-bd session.
-- [ ] Batch 4 (Server 0.11.212): data pipeline/partitioning — 174, 188, 203, 204 (prod DB inspect first)
+- [ ] Batch 4 (Server **0.11.214** — renumbered twice; .212=teammate docs, .213=release-automation PR #221): data pipeline — 174, 188, 203, 204 IMPLEMENTED (cd020ed, pushed; all three GROUP-BYs window-walked; threat-feed heartbeat masking fixed alongside; SQLite zone trap caught by own tests). Fable review in flight.
+- [ ] INTERJECTED (user): release versions — DONE: v0.11.211 + v1.3.35 releases live (backfill); PR #221 release-tag workflow (v0.11.213, supersedes #220) watch-merging; collector workflow = v1.3.38 after Batch 3 merges.
 - [ ] Batch 5 (Collector 1.3.37): FortiGate SNMP/SSH + tests — 177, 217, 218, 219, 222, 299, 300, 303
 - [ ] Batch 6 (Server 0.11.213): serverhealth tests — 176
 - [ ] CHECKPOINT: deploy + live-verify rust-01

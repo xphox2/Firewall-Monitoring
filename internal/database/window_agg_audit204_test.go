@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"firewall-mon/internal/models"
+
+	"gorm.io/gorm"
 )
 
 // AUDIT-204 (2026-08-27 audit): the aggregation passes used to page their
@@ -198,5 +200,55 @@ func TestFlowRollup_LaterWindowFailureKeepsEarlierProgress_AUDIT204(t *testing.T
 		}
 		t.Errorf("surviving sample ports = %v, want [2002 3003] — earlier windows consumed, "+
 			"failed and unreached windows preserved", ports)
+	}
+}
+
+// TestWalkAggregationWindows_JumpsEmptyRanges_AUDIT204Review pins the review
+// fix on the window walk: cost must be proportional to NON-EMPTY windows, not
+// to the time span. Pre-fix, a single pathologically ancient row (the
+// collector's generic BSD syslog parser emits year-0 timestamps) made the walk
+// crawl one transaction per empty window across millennia. The walker now
+// probes the next eligible row after every window and jumps there, so this
+// fixture — one ancient row and one recent row ~2000 years apart at a 1-hour
+// window (~17.8M windows pre-fix) — must complete in exactly two aggregate
+// calls and two probes.
+func TestWalkAggregationWindows_JumpsEmptyRanges_AUDIT204Review(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+
+	ancient := time.Date(0, 8, 28, 20, 31, 12, 0, time.UTC) // the BSD-parser shape
+	recent := time.Date(2026, 5, 31, 10, 5, 0, 0, time.UTC)
+	cutoff := recent.Add(time.Hour)
+
+	var aggCalls, probes int
+	total, err := walkAggregationWindows(d.db, time.Hour, ancient, cutoff,
+		func(after time.Time) (time.Time, bool, error) {
+			probes++
+			if probes > 10 {
+				t.Fatalf("nextEligible called %d times — the walk is crawling, not jumping", probes)
+			}
+			if !recent.Before(after) {
+				return recent, true, nil
+			}
+			return time.Time{}, false, nil
+		},
+		func(tx *gorm.DB, winStart, winEnd time.Time) (int, error) {
+			aggCalls++
+			if aggCalls > 10 {
+				return 0, fmt.Errorf("aggregate called %d times — empty-window crawl", aggCalls)
+			}
+			return 1, nil
+		})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	// Exactly two populated windows: the ancient row's and the recent row's.
+	if aggCalls != 2 {
+		t.Fatalf("aggregate windows = %d, want exactly 2 (ancient + recent)", aggCalls)
+	}
+	if probes != 2 {
+		t.Fatalf("nextEligible probes = %d, want exactly 2 (jump + exhausted)", probes)
+	}
+	if total != 2 {
+		t.Fatalf("total groups = %d, want 2", total)
 	}
 }

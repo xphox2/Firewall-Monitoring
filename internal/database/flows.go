@@ -862,7 +862,11 @@ func (d *Database) aggregateFlowsToRollup(cutoff time.Time, intervalType string)
 		return false
 	}
 
-	totalGroups, err := walkAggregationWindows(d.db, flowRollupWindow, start, cutoff,
+	nextEligible := func(after time.Time) (time.Time, bool, error) {
+		return oldestEligibleTimestamp(d.db.Model(&models.FlowSample{}).
+			Where("timestamp >= ? AND timestamp < ? AND id <= ?", after, cutoff, watermark))
+	}
+	totalGroups, err := walkAggregationWindows(d.db, flowRollupWindow, start, cutoff, nextEligible,
 		func(tx *gorm.DB, winStart, winEnd time.Time) (int, error) {
 			var rows []rollupRow
 			if err := tx.Model(&models.FlowSample{}).
@@ -977,7 +981,11 @@ func (d *Database) aggregateRollupsUp(srcInterval, dstInterval string, cutoff ti
 		window = 24 * time.Hour // never split a day bucket across windows
 	}
 
-	totalGroups, err := walkAggregationWindows(d.db, window, start, cutoff,
+	nextEligible := func(after time.Time) (time.Time, bool, error) {
+		return oldestEligibleTimestamp(d.db.Model(&models.FlowRollup{}).
+			Where("interval_type = ? AND timestamp >= ? AND timestamp < ? AND id <= ?", srcInterval, after, cutoff, watermark))
+	}
+	totalGroups, err := walkAggregationWindows(d.db, window, start, cutoff, nextEligible,
 		func(tx *gorm.DB, winStart, winEnd time.Time) (int, error) {
 			var rows []rollupRow
 			if err := tx.Model(&models.FlowRollup{}).

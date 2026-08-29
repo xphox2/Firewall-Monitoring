@@ -189,7 +189,11 @@ func (d *Database) aggregateSyslogToSummary(cutoff time.Time, severity int, inte
 	}
 
 	const groupKey = "bucket, device_id, severity, facility, app_name"
-	totalGroups, err := walkAggregationWindows(d.db, window, start, cutoff,
+	nextEligible := func(after time.Time) (time.Time, bool, error) {
+		return oldestEligibleTimestamp(d.db.Model(&models.SyslogMessage{}).
+			Where("severity = ? AND timestamp >= ? AND timestamp < ? AND id <= ?", severity, after, cutoff, watermark))
+	}
+	totalGroups, err := walkAggregationWindows(d.db, window, start, cutoff, nextEligible,
 		func(tx *gorm.DB, winStart, winEnd time.Time) (int, error) {
 			var rows []syslogSummaryRow
 			if err := tx.Model(&models.SyslogMessage{}).

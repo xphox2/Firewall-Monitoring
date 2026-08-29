@@ -39,8 +39,20 @@ import (
 // unit divides the window never straddles two windows. A straddled bucket (a
 // test-shrunk window) writes two summary rows for the same group — untidy but
 // never wrong: every reader and the next promotion tier merge them by SUM.
-// Windows with no matching rows cost one indexed range probe.
+//
+// nextEligible bounds the walk by NON-EMPTY windows, not by time span
+// (review fix on AUDIT-204): after each window the walker asks for the oldest
+// eligible row at-or-after the window's end (a first-tuple index stop, same
+// shape as the caller's start probe) and JUMPS there. Without this, one
+// pathologically ancient row — e.g. the year-0 timestamps the collector's
+// generic BSD syslog parser emits for Cisco/PA/legacy-OPNsense (the layout
+// has no year, and only past/zero values escaped the ingest clamp before its
+// AUDIT-204 lower bound) — degenerated a cycle into ~17.8M empty-window
+// transactions (measured: hours on prod-class hardware) while holding the
+// shared poller work lock. With the jump, per-pass cost is proportional to
+// windows that actually contain rows, plus one cheap probe each.
 func walkAggregationWindows(db *gorm.DB, window time.Duration, start, cutoff time.Time,
+	nextEligible func(after time.Time) (time.Time, bool, error),
 	aggregateWindow func(tx *gorm.DB, winStart, winEnd time.Time) (int, error)) (int, error) {
 	if window <= 0 {
 		window = time.Hour
@@ -67,7 +79,23 @@ func walkAggregationWindows(db *gorm.DB, window time.Duration, start, cutoff tim
 			return total, err
 		}
 		total += groups
-		winStart = winEnd
+		if !winEnd.Before(cutoff) {
+			break
+		}
+		// Jump to the next populated window instead of crawling empty ones.
+		next, ok, err := nextEligible(winEnd)
+		if err != nil {
+			return total, err
+		}
+		if !ok {
+			break // nothing eligible remains before cutoff
+		}
+		if next.Before(winEnd) {
+			// Defensive: a probe must never move backwards; fall back to the
+			// adjacent window rather than loop on the same range.
+			next = winEnd
+		}
+		winStart = next.Truncate(window)
 	}
 	return total, nil
 }

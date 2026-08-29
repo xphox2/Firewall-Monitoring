@@ -252,6 +252,48 @@ func TestPostgresIntegration(t *testing.T) {
 		}
 	})
 
+	// AUDIT-174 review fix: installs created between v0.11.183 and v0.11.213
+	// already carry the duplicate leaf btrees (this deployment's prod does
+	// not, but the published images mean the fleet does). EnsurePartitions
+	// must now DROP a pre-existing plan-named twin on any leaf a covering
+	// parent partitioned index serves. Simulate the pre-fix state by creating
+	// the plan-named duplicate on a live syslog leaf, re-run EnsurePartitions,
+	// and require the twin gone while the cascaded parent index survives.
+	t.Run("DropsPreexistingDuplicateLeafIndex_AUDIT174", func(t *testing.T) {
+		var child string
+		if err := d.Gorm().Raw(`
+			SELECT c.relname FROM pg_inherits h
+			JOIN pg_class c ON c.oid = h.inhrelid
+			JOIN pg_class p ON p.oid = h.inhparent
+			WHERE p.relname = 'syslog_messages'
+			ORDER BY c.relname LIMIT 1`).Scan(&child).Error; err != nil || child == "" {
+			t.Fatalf("no syslog_messages child found (err=%v)", err)
+		}
+		dupName := "idx_" + child + "_severity_timestamp"
+		if err := d.Gorm().Exec(
+			`CREATE INDEX IF NOT EXISTS ` + dupName + ` ON ` + child + ` (severity, "timestamp")`).Error; err != nil {
+			t.Fatalf("create pre-fix duplicate: %v", err)
+		}
+		if err := d.EnsurePartitions(); err != nil {
+			t.Fatalf("EnsurePartitions: %v", err)
+		}
+		var n int
+		d.Gorm().Raw(`SELECT COUNT(*) FROM pg_class WHERE relname = ? AND relkind = 'i'`, dupName).Scan(&n)
+		if n != 0 {
+			t.Errorf("pre-existing duplicate %s survived EnsurePartitions — fleet installs keep both btrees (AUDIT-174 review fix)", dupName)
+		}
+		// The cascaded parent index must still serve the columns.
+		var served int
+		d.Gorm().Raw(`
+			SELECT COUNT(*) FROM pg_index x
+			JOIN pg_class i ON i.oid = x.indexrelid
+			JOIN pg_class t ON t.oid = x.indrelid
+			WHERE t.relname = ? AND NOT x.indisunique`, child).Scan(&served)
+		if served == 0 {
+			t.Errorf("child %s has no non-unique index left — the drop removed the wrong index", child)
+		}
+	})
+
 	// NOTE: the PopulatedTableSkipped subtest is intentionally registered LAST
 	// (after DeviceCRUD), not here. It resets the shared `public` schema via a
 	// second handle to the same physical test database, which would leave
