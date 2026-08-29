@@ -35,16 +35,25 @@ func normalizeTopologyMAC(s string) string {
 }
 
 // clampIngestTimestamp bounds a collector-controlled timestamp: zero → now,
-// future → now. An unclamped future timestamp would pin the row as the newest
-// sample forever (MAX(timestamp) "latest" queries), defeat the telemetry
-// staleness staircase, and never be purged by retention — and a value more than
-// 6 months in the FUTURE would have no partition. Past timestamps are left
-// untouched on purpose: legitimately delayed/spooled batches carry a real past
-// collection time. AUDIT T1: every Receive* writer that trusts the collector's
-// timestamp must run it through this (previously only the topology path did;
-// the high-volume telemetry writers only replaced a zero value).
+// future → now, implausibly ancient → now. An unclamped future timestamp
+// would pin the row as the newest sample forever (MAX(timestamp) "latest"
+// queries), defeat the telemetry staleness staircase, and never be purged by
+// retention — and a value more than 6 months in the FUTURE would have no
+// partition. Recent-past timestamps are left untouched on purpose:
+// legitimately delayed/spooled batches carry a real past collection time.
+//
+// AUDIT-204 (review fix): the ancient lower bound exists because the
+// collector's generic BSD/RFC3164 syslog parser emits YEAR-0 timestamps (the
+// layout has no year field; only the FortiGate parser clamps), and a single
+// stored year-0 row used to stretch the aggregation window walk across
+// millennia of empty windows. No legitimate spool is older than this bound —
+// the deepest outage spool is days, not decades.
+//
+// AUDIT T1: every Receive* writer that trusts the collector's timestamp must
+// run it through this (previously only the topology path did; the high-volume
+// telemetry writers only replaced a zero value).
 func clampIngestTimestamp(ts, now time.Time) time.Time {
-	if ts.IsZero() || ts.After(now) {
+	if ts.IsZero() || ts.After(now) || ts.Year() < 2000 {
 		return now
 	}
 	return ts

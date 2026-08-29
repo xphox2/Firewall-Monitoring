@@ -69,28 +69,30 @@ func TestPromoteSyslogSummaries_MultiPage_NoGroupLoss_H3(t *testing.T) {
 	}
 }
 
-// TestAggregateFlowsToRollup_MultiPage_NoLossOrDoubleCount_H1H2 pins the
-// 2026-07-01 audit H1/H2 fixes on the flow rollup path: with more distinct
-// groups than one page holds, every group must be rolled up exactly once
-// (deterministic ORDER BY pagination over a watermark-scoped immutable source
-// set), the byte total must be preserved exactly, and the consumed raw rows
-// must all be deleted — in the same transaction as the inserts.
-func TestAggregateFlowsToRollup_MultiPage_NoLossOrDoubleCount_H1H2(t *testing.T) {
+// TestAggregateFlowsToRollup_MultiWindow_NoLossOrDoubleCount_H1H2 pins the
+// 2026-07-01 audit H1/H2 fixes on the flow rollup path: with the backlog
+// spanning more internal units than one transaction consumes (LIMIT/OFFSET
+// pages then, AUDIT-204 time windows now), every group must be rolled up
+// exactly once over a watermark-scoped immutable source set, the byte total
+// must be preserved exactly, and each unit's consumed raw rows must be deleted
+// in the same transaction as its inserts.
+func TestAggregateFlowsToRollup_MultiWindow_NoLossOrDoubleCount_H1H2(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	if err := d.db.AutoMigrate(&models.FlowSample{}, &models.FlowRollup{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	orig := flowRollupPageSize
-	flowRollupPageSize = 3
-	defer func() { flowRollupPageSize = orig }()
+	orig := flowRollupWindow
+	flowRollupWindow = time.Hour
+	defer func() { flowRollupWindow = orig }()
 
 	cutoff := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	old := cutoff.Add(-2 * time.Hour)
 	const groups = 10
 	var wantBytes uint64
 	for i := 0; i < groups; i++ {
-		// Distinct dst_port per sample → distinct rollup group; 2 samples each.
+		// Distinct dst_port per sample → distinct rollup group; 2 samples each;
+		// each group in its own hour window so the pass spans 10 windows.
+		old := cutoff.Add(-time.Duration(i+2) * time.Hour)
 		for j := 0; j < 2; j++ {
 			b := uint64(1000*i + 100 + j)
 			wantBytes += b
@@ -110,7 +112,7 @@ func TestAggregateFlowsToRollup_MultiPage_NoLossOrDoubleCount_H1H2(t *testing.T)
 	var rollups []models.FlowRollup
 	d.db.Where("interval_type = ?", "5m").Find(&rollups)
 	if len(rollups) != groups {
-		t.Errorf("rollup rows = %d, want %d (pages overlapped or skipped groups)", len(rollups), groups)
+		t.Errorf("rollup rows = %d, want %d (windows overlapped or skipped groups)", len(rollups), groups)
 	}
 	var gotBytes uint64
 	var gotFlows int64
@@ -132,29 +134,30 @@ func TestAggregateFlowsToRollup_MultiPage_NoLossOrDoubleCount_H1H2(t *testing.T)
 	}
 }
 
-// TestAggregateRollupsUp_MultiPage_NoLossOrDoubleCount_H1H2 pins the same
-// guarantees on the rollup-promotion path (which pages over the very table it
+// TestAggregateRollupsUp_MultiWindow_NoLossOrDoubleCount_H1H2 pins the same
+// guarantees on the rollup-promotion path (which walks over the very table it
 // inserts into — the watermark plus the interval_type filter keep the source
 // set immutable).
-func TestAggregateRollupsUp_MultiPage_NoLossOrDoubleCount_H1H2(t *testing.T) {
+func TestAggregateRollupsUp_MultiWindow_NoLossOrDoubleCount_H1H2(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	if err := d.db.AutoMigrate(&models.FlowRollup{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	orig := flowRollupPageSize
-	flowRollupPageSize = 3
-	defer func() { flowRollupPageSize = orig }()
+	orig := flowRollupWindow
+	flowRollupWindow = time.Hour
+	defer func() { flowRollupWindow = orig }()
 
 	cutoff := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	old := cutoff.Add(-3 * time.Hour)
 	const groups = 10
 	var wantBytes uint64
 	for i := 0; i < groups; i++ {
 		b := uint64(500 * (i + 1))
 		wantBytes += b
+		// Each group in its own hour window so the pass spans 10 windows.
 		if err := d.db.Create(&models.FlowRollup{
-			Timestamp: old, DeviceID: 1, IntervalType: "5m", SrcAddr: "10.0.0.1",
+			Timestamp: cutoff.Add(-time.Duration(i+3) * time.Hour), DeviceID: 1,
+			IntervalType: "5m", SrcAddr: "10.0.0.1",
 			DstAddr: "10.0.0.2", DstPort: uint16(2000 + i), Protocol: 6,
 			BytesSum: b, PacketsSum: 1, FlowCount: 1, SamplingRateAvg: 1,
 		}).Error; err != nil {

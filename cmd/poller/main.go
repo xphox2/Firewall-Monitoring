@@ -62,6 +62,16 @@ type Poller struct {
 	// an interval fires while the previous one is still running.
 	feedSyncRunning atomic.Bool
 
+	// cleanupRunning guards the async retention cleanup (AUDIT-188, same shape
+	// as feedSyncRunning/M9): the daily cleanup can run for hours against a
+	// large backlog on the non-partitioned production heap, and running it
+	// inline parked the single select loop — so serverHealthTicker was never
+	// serviced and checkServerHealth (the 2026-07-26 postmortem's disk-full
+	// detector) could not fire for the whole cleanup, exactly while large
+	// DELETEs were transiently GROWING WAL + dead-tuple usage. The guard also
+	// prevents a cleanup slower than the 24h cadence from stacking.
+	cleanupRunning atomic.Bool
+
 	// feedEnabledSeen tracks the last-observed master + per-feed enable flags so a
 	// detection cycle can notice a false→true flip (an admin re-enabling feeds in
 	// the UI) and trigger an immediate resync — the API can't reach into the
@@ -85,7 +95,10 @@ type Poller struct {
 // startThreatFeedSyncAsync runs the threat-feed sync off the poller's select
 // loop (M9). It no-ops if a sync is already in flight, so intervals can't
 // stack; the cross-process leader lock is acquired inside the goroutine so two
-// poller processes still don't sync concurrently.
+// poller processes still don't sync concurrently. NoHeartbeat: a background
+// goroutine must not stamp the M30 loop-liveness beat (see
+// runUnderLeaderLockNoHeartbeat) — previously this path did, which could mask
+// a genuinely hung select loop while a slow feed sync was in flight.
 func (p *Poller) startThreatFeedSyncAsync() {
 	if !p.feedSyncRunning.CompareAndSwap(false, true) {
 		log.Println("threat-feeds: previous sync still running; skipping this interval")
@@ -93,7 +106,28 @@ func (p *Poller) startThreatFeedSyncAsync() {
 	}
 	logging.SafeGo("threat-feed-sync", func() {
 		defer p.feedSyncRunning.Store(false)
-		p.runUnderLeaderLock("threat-feeds", p.runThreatFeedSync)
+		p.runUnderLeaderLockNoHeartbeat("threat-feeds", p.runThreatFeedSync)
+	})
+}
+
+// startRetentionCleanupAsync runs the daily retention cleanup off the poller's
+// select loop (AUDIT-188), mirroring startThreatFeedSyncAsync/M9: a cleanup
+// clearing a large backlog on the non-partitioned production syslog heap can
+// take hours (thousands of 10k-row DELETE batches with a 100ms sleep between
+// each), and running it inline parked the loop so the 5-minute server-disk
+// check could not fire — the exact silent-outage shape the 2026-07-26
+// postmortem added that check to prevent. Single-flight: a cleanup slower than
+// the 24h cadence is skipped, never stacked. The cross-process leader lock is
+// acquired inside the goroutine (NoHeartbeat variant — a background goroutine
+// must not stamp the M30 loop-liveness beat).
+func (p *Poller) startRetentionCleanupAsync() {
+	if !p.cleanupRunning.CompareAndSwap(false, true) {
+		log.Println("cleanup: previous retention cleanup still running; skipping this interval")
+		return
+	}
+	logging.SafeGo("retention-cleanup", func() {
+		defer p.cleanupRunning.Store(false)
+		p.runRetentionCleanup()
 	})
 }
 
@@ -153,8 +187,13 @@ const (
 
 // runRetentionCleanup applies every retention policy and the periodic schema
 // housekeeping, under the leader lock so only one instance does the work.
+// Called from startRetentionCleanupAsync's goroutine, hence the NoHeartbeat
+// lock variant (AUDIT-188): stamping the M30 loop beat from here would mask a
+// hung select loop. State safety off the loop: this touches only p.db
+// (goroutine-safe), p.cfg.Retention (read-only) and the mutex-guarded
+// alertManager — none of the loop-owned maps (prevIfaceStats etc.).
 func (p *Poller) runRetentionCleanup() {
-	p.runUnderLeaderLock("cleanup", func() {
+	p.runUnderLeaderLockNoHeartbeat("cleanup", func() {
 		if p.db != nil {
 			if err := p.db.CleanupOldData(p.cfg.Retention); err != nil {
 				log.Printf("Data cleanup error: %v", err)
@@ -279,6 +318,11 @@ func (p *Poller) Start() error {
 			// skip this tick and try again on the next one.
 			p.runUnderLeaderLock("monitoring cycle", p.runMonitoringCycle)
 		case <-rollupTicker.C:
+			// Deliberately kept on the SHARED work lock: rollup/aggregation and
+			// the async retention cleanup stay serialized (they contend for the
+			// same tables), so rollup cycles pause while a cleanup runs — an
+			// accepted trade; the AUDIT-204 window-walk keeps each aggregation
+			// slice short, so the pause is bounded per window.
 			p.runUnderLeaderLock("rollup", func() {
 				if p.db != nil {
 					p.db.RunFlowRollupCycle()
@@ -298,10 +342,25 @@ func (p *Poller) Start() error {
 				p.alertManager.PruneExpiredCooldowns() // L2: hourly, cheap, no lock needed
 			}
 		case <-cleanupTimer.C:
-			p.runRetentionCleanup()
+			// Re-arm FIRST so the daily cadence is measured from fire time, not
+			// from whenever the async cleanup finishes; then launch off-loop
+			// (AUDIT-188) so a multi-hour backlog clear cannot park this select
+			// loop and starve the server-health case below.
 			cleanupTimer.Reset(cleanupInterval)
+			p.startRetentionCleanupAsync()
 		case <-serverHealthTicker.C:
-			p.runUnderLeaderLock("server-health", p.checkServerHealth)
+			// Deliberately NOT under the shared work lock (AUDIT-188). The
+			// async retention cleanup holds that single advisory lock for its
+			// whole (potentially multi-hour) run, and the lock is per-connection
+			// — a second acquire from THIS process contends just like another
+			// poller's — so a locked server-health check would be rejected for
+			// the entire cleanup: the disk-full blindness merely relocated.
+			// Running it unlocked is safe and cheap: two statfs calls, two
+			// settings reads, one server_metrics insert; the alert layer has
+			// its own dedup/cooldown, and a duplicate metrics row from a second
+			// poller is far cheaper than the silent outage this check exists to
+			// prevent (2026-07-26 postmortem).
+			p.checkServerHealth()
 		case <-p.stopChan:
 			log.Println("Poller stopped")
 			return nil
@@ -316,7 +375,24 @@ func (p *Poller) Start() error {
 //
 // SQLite (tests / single-process deployments) always acquires (no-op
 // lock), so fn runs every tick.
+//
+// Call this only from the Start() select loop's SYNCHRONOUS cases: it stamps
+// the M30 loop-liveness heartbeat when work is picked up, which is only
+// truthful when the caller IS the loop. Background goroutines (async cleanup,
+// threat-feed sync) use runUnderLeaderLockNoHeartbeat.
 func (p *Poller) runUnderLeaderLock(taskName string, fn func()) {
+	p.runUnderLeaderLockNoHeartbeat(taskName, func() {
+		p.markLoopAlive() // M30: work picked up — a hang inside fn goes stale from here
+		fn()
+	})
+}
+
+// runUnderLeaderLockNoHeartbeat is runUnderLeaderLock WITHOUT the M30
+// loop-liveness stamp, for leader-gated work running on a background goroutine
+// (AUDIT-188): stamping loopBeat from off-loop work would keep /readyz green
+// while the select loop itself was genuinely hung — the exact staleness M30
+// exists to expose.
+func (p *Poller) runUnderLeaderLockNoHeartbeat(taskName string, fn func()) {
 	if p.db == nil {
 		// No DB to lock against; just run.
 		fn()
@@ -328,7 +404,6 @@ func (p *Poller) runUnderLeaderLock(taskName string, fn func()) {
 		return
 	}
 	defer release()
-	p.markLoopAlive() // M30: work picked up — a hang inside fn goes stale from here
 	fn()
 }
 
