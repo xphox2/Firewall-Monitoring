@@ -28,6 +28,7 @@
     var statusHistoryChart = null;
     var statusHistoryPromise = null;
     var publicInterfaces = {}; // {"iface1":true,"iface2":true}
+    var publicIfacesLoaded = false; // AUDIT-185: guard toggles until the map has loaded
 
     var deviceId = window.location.pathname.split('/').pop();
     if (!deviceId || deviceId === 'detail') {
@@ -35,6 +36,10 @@
     }
 
     window.togglePublicIface = function(ifaceName, isPublic) {
+        // AUDIT-185: refuse to POST until the full public_interfaces map has
+        // loaded — otherwise a pre-load click would serialize an empty/partial
+        // map and wipe every OTHER device's public-dashboard selection.
+        if (!publicIfacesLoaded) { return; }
         if (!publicInterfaces[deviceId]) publicInterfaces[deviceId] = [];
         var idx = publicInterfaces[deviceId].indexOf(ifaceName);
         if (isPublic && idx === -1) {
@@ -61,7 +66,10 @@
     };
 
     function loadPublicInterfaces() {
-        fetch('/admin/api/display-settings', { credentials: 'same-origin' })
+        // AUDIT-185: RETURN the promise so the init chain waits for the map
+        // before loadDevice()/renderDevice() run — otherwise the interface
+        // table renders with publicInterfaces={} and never re-renders.
+        return fetch('/admin/api/display-settings', { credentials: 'same-origin' })
             .then(function(resp) { return resp.json(); })
             .then(function(result) {
                 if (result && result.data && result.data.public_interfaces) {
@@ -70,7 +78,16 @@
                         if (!publicInterfaces[deviceId]) publicInterfaces[deviceId] = [];
                     } catch(e) { publicInterfaces = {}; }
                 }
-            }).catch(function() {});
+                publicIfacesLoaded = true;
+            }).catch(function() {
+                // AUDIT-185 (follow-up): do NOT flip publicIfacesLoaded on a
+                // FAILED fetch. Re-enabling the Public checkboxes over an empty
+                // publicInterfaces map would let a click POST that empty map and
+                // wipe every other device's selection — the exact data-loss this
+                // finding guards. Leaving the flag false keeps the checkboxes
+                // disabled (correct degraded state). The catch still settles, so
+                // the init chain's .then(loadDevice) runs and the device renders.
+            });
     }
 
     function isPublicIface(iface) {
@@ -613,7 +630,7 @@
                 '<td>' + ((iface.in_errors || 0) + (iface.out_errors || 0)) + '</td>' +
                 '<td>' + (iface.mtu || '-') + '</td>' +
                 '<td style="font-family:monospace;font-size:0.78rem">' + esc(iface.mac_address || '-') + '</td>' +
-                '<td><input type="checkbox" ' + (isPublicIface(iface) ? 'checked ' : '') + 'data-action="toggle-public-iface" data-iface="' + esc(iface.name).replace(/"/g, '&quot;') + '"></td>' +
+                '<td><input type="checkbox" ' + (isPublicIface(iface) ? 'checked ' : '') + (publicIfacesLoaded ? '' : 'disabled ') + 'data-action="toggle-public-iface" data-iface="' + esc(iface.name).replace(/"/g, '&quot;') + '"></td>' +
                 '</tr>';
 
             if (isExpanded) {

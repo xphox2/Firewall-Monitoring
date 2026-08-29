@@ -2,6 +2,14 @@
 (function() {
     'use strict';
 
+    // AUDIT-234: AC must be declared at MODULE scope. renderVPNTunnelRows (and
+    // any other renderer) references bare `AC.formatTunnelUptime(...)` inside a
+    // .map(); without a module-scope binding that threw ReferenceError for any
+    // 'up' tunnel, killing the rich VPN detail panel. admin-common.js sets
+    // window.AdminCommon before this module executes (defer order + it injects
+    // this file after AdminCommon is defined), so this is safe.
+    const AC = window.AdminCommon;
+
     let panelChartInstances = {};
     let currentPanelConnId = null;
     let pendingOverlayCharts = []; // overlay iface charts to load when the Overlay tab is first shown (avoids 0-size render on a hidden tab)
@@ -428,7 +436,6 @@
 
             const convos = data.top_conversations || [];
             const ctbody = document.querySelector('#panel-convos-table tbody');
-            const AC = window.AdminCommon;
             ctbody.innerHTML = convos.map(c => `<tr><td style="font-family:monospace;font-size:0.78rem;white-space:nowrap;">${AC.ipRef(c.src_addr, { port: c.src_port })}</td><td style="font-family:monospace;font-size:0.78rem;white-space:nowrap;">${AC.ipRef(c.dst_addr, { port: c.dst_port })}</td><td>${window.escapeHtml(c.protocol)}</td><td>${window.formatBytes(c.bytes)}</td><td>${window.formatNum(c.packets)}</td></tr>`).join('') || '<tr><td colspan="5" style="text-align:center;color:var(--fwmon-text-mute);">No conversations</td></tr>';
             AC.enrichIps(ctbody);
         } catch (e) { console.error('Panel flow stats failed:', e); }
@@ -637,7 +644,6 @@
     }
 
     function pathTraffic(src, dst, data) {
-        const AC = window.AdminCommon;
         const ends = [
             { row: src, tag: 'SRC', totals: data.source_path_totals || {}, prov: data.source_provenance || {} },
             { row: dst, tag: 'DST', totals: data.dest_path_totals || {}, prov: data.dest_provenance || {} }
@@ -668,7 +674,6 @@
     // unrelated rows on the same visual line and nothing on screen says so.
     // Pairing here is structural: a path IS a row, so it cannot drift.
     function renderPanelPathTable(hostId, data, c, srcName, dstName) {
-        const AC = window.AdminCommon;
         const host = document.getElementById(hostId);
         if (!host) return;
         const srcT = data.source_tunnels || [], dstT = data.dest_tunnels || [];
@@ -812,7 +817,6 @@
     }
 
     function renderPanelTunnelTable(tableId, tunnels, deviceId, family, agreed) {
-        const AC = window.AdminCommon;
         const tbody = document.querySelector(`#${tableId} tbody`);
         const noun = family === 'overlay' ? 'carrier tunnels' : 'tunnels';
         if (!tunnels.length) {
