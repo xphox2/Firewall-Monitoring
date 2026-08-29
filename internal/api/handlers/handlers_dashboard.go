@@ -14,9 +14,75 @@ import (
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/uptime"
 
+	"firewall-mon/internal/database"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+// uptimeWindowHours / uptimeSampleCap bound the read-time availability
+// computation (AUDIT-318). uptimeWindowHours is only an UPPER lookback bound;
+// uptimeSampleCap dominates it — at the ~60s SNMP cadence 2000 samples is only
+// ~31h, so the ACTUAL observed window is whatever the retained rows span and is
+// reported to the client as UptimeStats.StartTime/ObservedSeconds (the display
+// labels from that, never a fixed "30 days"). We read the NEWEST rows so reboot
+// detection stays anchored to recent history (GetSystemStatusHistory's ASC+LIMIT
+// keeps the OLDEST rows — wrong here, see AUDIT-245); GetRecentSystemStatus is
+// newest-first.
+const (
+	uptimeWindowHours = 720 // max lookback; sample cap dominates
+	uptimeSampleCap   = 2000
+)
+
+// computeUptimeStats derives per-device availability at read time from the
+// persisted system_status history (AUDIT-318). Returns a zero-value UptimeStats
+// when there is no data. Cheap: one bounded, indexed range query.
+func (h *Handler) computeUptimeStats(db database.Store, deviceID uint) uptime.UptimeStats {
+	if db == nil || deviceID == 0 {
+		return uptime.UptimeStats{}
+	}
+	rows, err := db.GetRecentSystemStatus(deviceID, uptimeWindowHours, uptimeSampleCap)
+	if err != nil || len(rows) == 0 {
+		return uptime.UptimeStats{}
+	}
+	// GetRecentSystemStatus is newest-first; ComputeStats needs oldest→newest.
+	for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
+		rows[i], rows[j] = rows[j], rows[i]
+	}
+	return uptime.ComputeStats(rows, rows[0].Timestamp)
+}
+
+// computeUptimeRecord wraps computeUptimeStats as a device-tagged UptimeRecord
+// for the admin dashboard payload (DeviceID SET).
+func (h *Handler) computeUptimeRecord(db database.Store, deviceID uint) *models.UptimeRecord {
+	return uptime.NewRecord(deviceID, h.computeUptimeStats(db, deviceID))
+}
+
+// SnapshotUptime walks every device and persists a per-device availability
+// snapshot into uptime_records (AUDIT-318). It completes the write side of the
+// uptime wire so the history is not permanently empty, and it always sets
+// DeviceID on the persisted record (fixing the old DeviceID=0 defect). Called
+// on a timer by cmd/api using the background store (h.db); it is decoupled from
+// the ingest path and skips devices with no telemetry yet.
+func (h *Handler) SnapshotUptime() {
+	if h.db == nil {
+		return
+	}
+	devices, err := h.db.GetAllDevices()
+	if err != nil {
+		log.Printf("uptime-snapshot: list devices: %v", err)
+		return
+	}
+	for _, dev := range devices {
+		stats := h.computeUptimeStats(h.db, dev.ID)
+		if stats.CurrentUptime == 0 {
+			continue // no system_status telemetry for this device yet
+		}
+		if err := h.db.SaveUptimeRecord(uptime.NewRecord(dev.ID, stats)); err != nil {
+			log.Printf("uptime-snapshot: save device %d: %v", dev.ID, err)
+		}
+	}
+}
 
 func (h *Handler) GetPublicDevices(c *gin.Context) {
 	db := h.reqDB(c)
@@ -92,11 +158,9 @@ func (h *Handler) GetPublicDashboard(c *gin.Context) {
 	if !hasDevice && h.snmpClient != nil {
 		status, err := h.snmpClient.GetSystemStatus()
 		if err == nil {
+			// Legacy single-device SNMP path (mostly dead post-v0.11.74): no
+			// device_id, so no per-device availability to compute (AUDIT-318).
 			var uptimeStats *uptime.UptimeStats
-			if h.uptimeTrack != nil {
-				stats := h.uptimeTrack.GetStats()
-				uptimeStats = &stats
-			}
 			publicData := gin.H{
 				"hostname":     status.Hostname,
 				"version":      status.Version,
@@ -121,11 +185,10 @@ func (h *Handler) GetPublicDashboard(c *gin.Context) {
 			if err := db.Gorm().Select("name").Where("id = ?", deviceID).First(&dev).Error; err != nil {
 				log.Printf("Device %d: failed to get device name: %v", deviceID, err)
 			}
-			var uptimeStats *uptime.UptimeStats
-			if h.uptimeTrack != nil {
-				stats := h.uptimeTrack.GetStats()
-				uptimeStats = &stats
-			}
+			// AUDIT-318: real per-device availability, computed at read time
+			// from this device's persisted system_status history.
+			stats := h.computeUptimeStats(db, deviceID)
+			uptimeStats := &stats
 			publicData := gin.H{
 				"hostname":     status.Hostname,
 				"device_name":  dev.Name,
@@ -718,7 +781,9 @@ func (h *Handler) GetAdminDashboard(c *gin.Context) {
 		Interfaces:      interfaces,
 		HardwareSensors: sensors,
 		RecentAlerts:    recentAlerts,
-		UptimeData:      h.uptimeTrack.GetUptimeRecord(),
+		// AUDIT-318: per-device availability for the device this dashboard row
+		// resolved to, computed at read time (DeviceID set on the record).
+		UptimeData: h.computeUptimeRecord(db, status.DeviceID),
 	}
 
 	c.JSON(http.StatusOK, response.Success(dashboard))

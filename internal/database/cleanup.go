@@ -373,6 +373,12 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		// RETENTION_*_DAYS knob is set; license_info has its own longer knob
 		// (default 365 — expiry snapshots are low-volume and useful
 		// year-over-year).
+		// AUDIT-318: uptime_records gained an active writer (the 15m
+		// uptime-snapshot worker in cmd/api) but had no retention. One row per
+		// device per snapshot accumulates forever otherwise. It carries per-device
+		// availability summaries derived from system_status, so it rides the same
+		// statusDays window as its source table rather than growing unbounded.
+		{&models.UptimeRecord{}, "uptime_records", statusDays},
 		{&models.VPNStatus{}, "vpn_status", statusFallback(ret.VPNStatusDays, statusDays)},
 		{&models.HAStatus{}, "ha_status", statusFallback(ret.HAStatusDays, statusDays)},
 		{&models.SecurityStats{}, "security_stats", statusFallback(ret.SecurityStatsDays, statusDays)},

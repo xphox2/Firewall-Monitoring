@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.228"
+const ServerVersion = "0.11.229"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -406,6 +406,24 @@ func main() {
 			select {
 			case <-ticker.C:
 				alertMgr.RefreshThresholds(db.Gorm())
+			case <-bgCtx.Done():
+				return
+			}
+		}
+	})
+
+	// AUDIT-318: periodically snapshot each device's read-time availability into
+	// uptime_records so the per-device history isn't permanently empty. Cheap,
+	// decoupled writer (NOT on the ingest path): every 15m it walks known
+	// devices, computes availability from persisted system_status, and persists a
+	// device-tagged record.
+	logging.SafeGo("uptime-snapshot", func() {
+		ticker := time.NewTicker(15 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				handler.SnapshotUptime()
 			case <-bgCtx.Done():
 				return
 			}

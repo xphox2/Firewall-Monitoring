@@ -15,6 +15,7 @@ import (
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
+	"firewall-mon/internal/uptime"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -1481,29 +1482,59 @@ func (h *Handler) UpdateAlertNotes(c *gin.Context) {
 	c.JSON(http.StatusOK, response.Message("Alert notes updated"))
 }
 
+// GetUptime returns read-time per-device availability (AUDIT-318). It takes a
+// device_id query param; without one, stats are the zero-value and history is
+// unscoped. Availability is computed from the device's persisted system_status
+// history, so the numbers are live rather than a frozen global tracker.
 func (h *Handler) GetUptime(c *gin.Context) {
 	db := h.reqDB(c)
-	stats := h.uptimeTrack.GetStats()
-	fiveNines := h.uptimeTrack.CalculateFiveNines()
+
+	var deviceID uint
+	if v := c.Query("device_id"); v != "" {
+		if id, err := strconv.ParseUint(v, 10, 64); err == nil {
+			deviceID = uint(id)
+		}
+	}
+
+	stats := h.computeUptimeStats(db, deviceID)
+	fiveNines := uptime.CalculateFiveNines(stats)
 
 	var records []models.UptimeRecord
 	if db != nil {
 		var err error
-		records, err = db.GetUptimeRecords(100)
+		records, err = db.GetUptimeRecords(deviceID, 100)
 		if err != nil {
 			log.Printf("Failed to get uptime records: %v", err)
 		}
 	}
 
 	c.JSON(http.StatusOK, response.Success(gin.H{
+		"device_id":  deviceID,
 		"stats":      stats,
 		"five_nines": fiveNines,
 		"history":    records,
 	}))
 }
 
+// ResetUptime clears a device's persisted uptime snapshots. Under the read-time
+// model (AUDIT-318) there is no in-memory baseline to reset; availability
+// recomputes from live system_status regardless, so this only prunes the
+// historical snapshot rows for the requested device.
 func (h *Handler) ResetUptime(c *gin.Context) {
-	if err := h.uptimeTrack.Reset(); err != nil {
+	db := h.reqDB(c)
+
+	var deviceID uint
+	if v := c.Query("device_id"); v != "" {
+		if id, err := strconv.ParseUint(v, 10, 64); err == nil {
+			deviceID = uint(id)
+		}
+	}
+	if db == nil || deviceID == 0 {
+		c.JSON(http.StatusBadRequest, response.Error("device_id is required"))
+		return
+	}
+
+	if err := db.Gorm().Where("device_id = ?", deviceID).Delete(&models.UptimeRecord{}).Error; err != nil {
 		httputil.InternalError(c, "Failed to reset uptime", err)
 		return
 	}
