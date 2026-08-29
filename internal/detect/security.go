@@ -233,7 +233,8 @@ type c2BeaconDetector struct{}
 // beaconPerFrameBytesExpr is the average PER-FRAME payload size for the byte
 // gate (AUDIT-273). BeaconMaxAvgBytes is an MTU-ish per-frame ceiling, but the
 // stored `bytes` column is PRE-MULTIPLIED by sampling_rate at ingest
-// (internal/sflow/sflow.go: Bytes = frame_length * sampling_rate when rate > 1,
+// (the sFlow parser — now collector-side; the server's own copy was removed
+// in v0.11.228 — sets Bytes = frame_length * sampling_rate when rate > 1,
 // else frame_length). Comparing AVG(bytes) against a per-frame ceiling made the
 // gate unreachable on sampled sFlow — at rate 512 it demanded an average frame
 // <= ~2.9 bytes — so no sampled c2_beacon candidate could ever pass even though
