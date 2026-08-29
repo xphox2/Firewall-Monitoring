@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"sort"
@@ -140,31 +142,14 @@ func (h *Handler) GetPublicDashboard(c *gin.Context) {
 			c.JSON(http.StatusOK, response.Success(publicData))
 			return
 		}
-	} else if db != nil {
-		status, err := db.GetLatestSystemStatus()
-		if err == nil && status != nil {
-			var uptimeStats *uptime.UptimeStats
-			if h.uptimeTrack != nil {
-				stats := h.uptimeTrack.GetStats()
-				uptimeStats = &stats
-			}
-			publicData := gin.H{
-				"hostname":     status.Hostname,
-				"version":      status.Version,
-				"uptime":       uptime.FormatUptime(status.Uptime),
-				"uptime_raw":   status.Uptime,
-				"cpu":          status.CPUUsage,
-				"memory":       status.MemoryUsage,
-				"sessions":     status.SessionCount,
-				"uptime_stats": uptimeStats,
-				"cached":       true,
-				"cached_at":    status.Timestamp,
-			}
-			c.JSON(http.StatusOK, response.Success(publicData))
-			return
-		}
 	}
 
+	// AUDIT-252: NO global fallback. The endpoint is anonymous, and the old
+	// `else if db != nil` branch served db.GetLatestSystemStatus() — the
+	// newest-reporting device regardless of public_visible — whenever no
+	// device passed the public gate. That handed an anonymous caller a
+	// NON-public device's hostname/version/CPU/memory/sessions. With zero
+	// public devices the only correct answer is the 503 below.
 	c.JSON(http.StatusServiceUnavailable, response.Error("No monitoring data available"))
 }
 
@@ -192,17 +177,37 @@ func (h *Handler) GetPublicInterfaces(c *gin.Context) {
 			if err := db.Gorm().Where("device_id = ? AND timestamp = ?", deviceID, latestIface.Timestamp).Find(&ifaces).Error; err != nil {
 				log.Printf("Device %d: failed to get interfaces at timestamp: %v", deviceID, err)
 			}
+			// AUDIT-194/195: enforce the operator's public_interfaces allowlist
+			// SERVER-side. It was only applied in public-dashboard.js, so an
+			// anonymous caller hitting the endpoint directly received every
+			// interface of a public device — internal LAN/DMZ names, MACs,
+			// VLANs, counters — bypassing the curation entirely.
+			allowed, ok, aerr := h.publicIfaceAllowlist(c, deviceID)
+			if aerr != nil {
+				// Fail CLOSED: the curation setting was unreadable, so do not
+				// guess that no narrowing exists (review hardening, AUDIT-194).
+				c.JSON(http.StatusServiceUnavailable, response.Error("No interface data available"))
+				return
+			}
+			if ok {
+				filtered := ifaces[:0]
+				for _, iface := range ifaces {
+					if allowed[iface.Name] {
+						filtered = append(filtered, iface)
+					}
+				}
+				ifaces = filtered
+			}
 			c.JSON(http.StatusOK, response.Success(ifaces))
-			return
-		}
-	} else if db != nil {
-		interfaces, err := db.GetLatestInterfaceStats()
-		if err == nil && len(interfaces) > 0 {
-			c.JSON(http.StatusOK, response.Success(interfaces))
 			return
 		}
 	}
 
+	// AUDIT-252: NO global fallback — the deleted `else if db != nil` branch
+	// served db.GetLatestInterfaceStats() UNFILTERED (every device, public or
+	// not) to anonymous callers whenever no device passed the public gate.
+	// public-dashboard.js already .catch()es this fetch, so the 503 is the
+	// contract.
 	c.JSON(http.StatusServiceUnavailable, response.Error("No interface data available"))
 }
 
@@ -232,6 +237,31 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	}
 
 	rangeStr := c.DefaultQuery("range", "1h")
+
+	// AUDIT-194: the chart endpoint takes a raw ifIndex, so resolve it to the
+	// interface NAME the public_interfaces allowlist speaks, and serve a
+	// non-allowed interface the SAME empty-series payload as the no-data case
+	// below — not a 403 — so the SPA renders an empty chart instead of
+	// erroring. Without this, history for ANY index of a public device was
+	// served regardless of the operator's curation.
+	allowed, ok, aerr := h.publicIfaceAllowlist(c, deviceID)
+	if aerr != nil {
+		// Fail CLOSED (review hardening, AUDIT-194): unreadable curation must
+		// not expose a non-allowlisted interface's history; the empty series
+		// is what the SPA already renders for missing data.
+		c.JSON(http.StatusOK, response.Success(publicChartEmptySeries(viewType, rangeStr)))
+		return
+	}
+	if ok {
+		var latest models.InterfaceStats
+		nameErr := db.Gorm().Select("name").
+			Where("device_id = ? AND \"index\" = ?", deviceID, ifIndex).
+			Order("timestamp DESC").First(&latest).Error
+		if nameErr != nil || !allowed[latest.Name] {
+			c.JSON(http.StatusOK, response.Success(publicChartEmptySeries(viewType, rangeStr)))
+			return
+		}
+	}
 
 	var hours int
 	var maxPoints int
@@ -291,17 +321,7 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	}
 
 	if len(stats) < 2 {
-		c.JSON(http.StatusOK, response.Success(map[string]interface{}{
-			"labels":   []string{},
-			"rx_total": []float64{},
-			"tx_total": []float64{},
-			"rx_rate":  []float64{},
-			"tx_rate":  []float64{},
-			"total_rx": float64(0),
-			"total_tx": float64(0),
-			"view":     viewType,
-			"range":    rangeStr,
-		}))
+		c.JSON(http.StatusOK, response.Success(publicChartEmptySeries(viewType, rangeStr)))
 		return
 	}
 
@@ -392,6 +412,67 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 		"range":      rangeStr,
 		"timestamps": timestamps,
 	}))
+}
+
+// publicChartEmptySeries is the empty-series payload GetPublicInterfaceChart
+// serves both when an interface has too few points to chart AND (AUDIT-194)
+// when the requested interface is outside the public allowlist — the two cases
+// are deliberately indistinguishable to an anonymous caller.
+func publicChartEmptySeries(viewType, rangeStr string) map[string]interface{} {
+	return map[string]interface{}{
+		"labels":   []string{},
+		"rx_total": []float64{},
+		"tx_total": []float64{},
+		"rx_rate":  []float64{},
+		"tx_rate":  []float64{},
+		"total_rx": float64(0),
+		"total_tx": float64(0),
+		"view":     viewType,
+		"range":    rangeStr,
+	}
+}
+
+// errDBUnavailable marks the fail-closed path when the curation setting
+// cannot be read at all (review hardening, AUDIT-194).
+var errDBUnavailable = errors.New("database unavailable")
+
+// publicIfaceAllowlist returns the operator-curated interface NAMES for a
+// device and whether a non-empty list exists. Mirrors public-dashboard.js:
+// an EMPTY/absent list means "no narrowing configured" → all interfaces.
+// The setting is "public_interfaces", JSON of the shape
+// {"<deviceID>":["wan1",...]} (default "{}"). ok=false — no filtering — is
+// deliberately the answer for an empty/absent list, an unset key, or
+// unparsable JSON: deny-all-on-empty would blank every public dashboard
+// whose operator never configured a narrowing. A DB ERROR is different
+// (review hardening on AUDIT-194): the setting may exist but be unreadable,
+// so failing open would serve an anonymous caller every interface of a
+// curated device during a transient fault — err is returned and the caller
+// must fail CLOSED.
+func (h *Handler) publicIfaceAllowlist(c *gin.Context, deviceID uint) (map[string]bool, bool, error) {
+	db := h.reqDB(c)
+	if db == nil {
+		return nil, false, errDBUnavailable
+	}
+	var s models.SystemSetting
+	if err := db.Gorm().Select("value").Where("\"key\" = ?", "public_interfaces").First(&s).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, false, nil // never configured — no narrowing
+		}
+		return nil, false, err
+	}
+	var lists map[string][]string
+	if err := json.Unmarshal([]byte(s.Value), &lists); err != nil {
+		return nil, false, nil
+	}
+	names := lists[strconv.FormatUint(uint64(deviceID), 10)]
+	if len(names) == 0 {
+		return nil, false, nil
+	}
+	allowed := make(map[string]bool, len(names))
+	for _, name := range names {
+		allowed[name] = true
+	}
+	return allowed, true, nil
 }
 
 // publicBoolSetting reads a boolean system setting for the unauthenticated

@@ -1214,15 +1214,12 @@ func (h *Handler) GetPublicDisplaySettings(c *gin.Context) {
 		return
 	}
 
-	// One-time cleanup: remove unused public settings from database
-	unusedKeys := []string{
-		"public_show_hostname", "public_show_uptime", "public_show_cpu",
-		"public_show_memory", "public_show_sessions", "public_show_interfaces",
-		"public_show_bandwidth", "public_vpn_tunnels_by_device",
-	}
-	if err := h.db.Gorm().Where("\"key\" IN ?", unusedKeys).Delete(&models.SystemSetting{}).Error; err != nil {
-		log.Printf("Failed to cleanup unused public settings: %v", err)
-	}
+	// AUDIT-260: the "one-time cleanup" DELETE of eight retired public_show_*
+	// keys that used to run here executed a write transaction on EVERY request
+	// of this anonymous read path — kiosks poll it every ~30s, and any anon
+	// caller could force continuous no-op write transactions on prod PG. The
+	// retired keys are referenced nowhere anymore; stale rows are harmless
+	// (they merely echo in the response map) so no migration replaces it.
 
 	var settings []models.SystemSetting
 	if err := h.db.Gorm().Where("\"key\" LIKE ? OR \"key\" = ?", "public_%", "display_timezone").Find(&settings).Error; err != nil {

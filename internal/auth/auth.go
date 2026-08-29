@@ -99,6 +99,12 @@ type AuthManager struct {
 	// could be replayed once per extra instance — an accepted follower-mode
 	// divergence, documented alongside the lockout/rate-limit caveats.
 	usedTOTPCodes map[string]int64
+
+	// dummyOnce/dummyHash back compareDummy (AUDIT-262): a fixed bcrypt hash
+	// built lazily at the configured cost, burned on the ValidateCredentials
+	// early-return paths that would otherwise skip bcrypt entirely.
+	dummyOnce sync.Once
+	dummyHash []byte
 }
 
 func NewAuthManager(cfg *config.Config, db Database) *AuthManager {
@@ -220,6 +226,26 @@ func (am *AuthManager) MarkTOTPSlotUsed(userID uint, purpose, code string) bool 
 	return true
 }
 
+// compareDummy burns the same bcrypt cost as a real comparison so the
+// unknown-username and empty-hash paths are timing-indistinguishable from a
+// wrong password. Built once at the CONFIGURED cost — tests set BcryptCost
+// to bcrypt.MinCost, and a hardcoded cost-12 dummy would add ~150ms to every
+// auth test's unknown-user call.
+func (am *AuthManager) compareDummy(password string) {
+	am.dummyOnce.Do(func() {
+		cost := bcrypt.DefaultCost
+		if am.config != nil && am.config.Auth.BcryptCost > 0 {
+			cost = am.config.Auth.BcryptCost
+		}
+		if hash, err := bcrypt.GenerateFromPassword([]byte("firewall-mon-timing-uniformity-sentinel"), cost); err == nil {
+			am.dummyHash = hash
+		}
+	})
+	// Result deliberately discarded: the sentinel never equals a caller's
+	// password; the point is spending the full bcrypt cost either way.
+	_ = bcrypt.CompareHashAndPassword(am.dummyHash, []byte(password))
+}
+
 // ValidateCredentials checks username/password with per-IP lockout tracking.
 // The ip parameter is the client's IP address; lockout is tracked per username+IP
 // pair so that an attacker cannot DoS a legitimate user from a different IP.
@@ -270,11 +296,18 @@ func (am *AuthManager) ValidateCredentials(username, password string, ips ...str
 
 	admin, err := am.db.GetAdminByUsername(username)
 	if err != nil || admin == nil {
+		// AUDIT-262: an unknown username must cost a full bcrypt comparison,
+		// or response latency (~1-5ms miss vs ~150ms real user at cost 12)
+		// becomes a remote username-enumeration oracle — defeating the
+		// rename-the-admin-account hardening outright.
+		am.compareDummy(password)
 		am.loginAttempts[lockoutKey] = append(recentAttempts, time.Now())
 		return ErrInvalidCredentials
 	}
 
 	if admin.Password == "" {
+		// AUDIT-262: same oracle through the empty-stored-hash path.
+		am.compareDummy(password)
 		am.loginAttempts[lockoutKey] = append(recentAttempts, time.Now())
 		return ErrInvalidCredentials
 	}
@@ -287,7 +320,9 @@ func (am *AuthManager) ValidateCredentials(username, password string, ips ...str
 	// A disabled account is indistinguishable from bad credentials to the
 	// caller (no account-state oracle), and the failed attempt still counts
 	// toward lockout. Checked only after the bcrypt compare so timing stays
-	// uniform with the credential-failure path.
+	// uniform with the credential-failure path — and, since AUDIT-262, with
+	// the unknown-username and empty-hash paths too (compareDummy burns the
+	// same bcrypt cost there).
 	if admin.Disabled {
 		am.loginAttempts[lockoutKey] = append(recentAttempts, time.Now())
 		return ErrInvalidCredentials

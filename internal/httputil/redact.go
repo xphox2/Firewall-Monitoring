@@ -125,3 +125,29 @@ func RedactIRCServers(servers []models.IRCServer) {
 		RedactIRCServer(&servers[i])
 	}
 }
+
+// RedactAlertPolicy masks a policy's per-policy notification webhook URLs
+// (Slack/Discord/generic). A webhook URL is a postable bearer credential, and
+// the alert-policy GETs are viewer-visible while the equivalent GLOBAL
+// webhooks are admin-gated — so reads get the mask, never the live URL. The
+// UpdateAlertPolicy write path treats an incoming value equal to RedactedMask
+// as "unchanged" (see the mask-overwrite warning on RedactedMask), so masking
+// here is safe for round-trip saves.
+func RedactAlertPolicy(p *models.AlertPolicy) {
+	if p.SlackWebhookURL != "" {
+		p.SlackWebhookURL = RedactedMask
+	}
+	if p.DiscordWebhookURL != "" {
+		p.DiscordWebhookURL = RedactedMask
+	}
+	if p.WebhookURL != "" {
+		p.WebhookURL = RedactedMask
+	}
+}
+
+// RedactAlertPolicies masks webhook URLs on a slice of policies.
+func RedactAlertPolicies(policies []models.AlertPolicy) {
+	for i := range policies {
+		RedactAlertPolicy(&policies[i])
+	}
+}
