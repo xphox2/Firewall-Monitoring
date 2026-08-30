@@ -127,8 +127,9 @@ func TestDeadVPNWalkGuardScopeIsDocumented_AUDIT320(t *testing.T) {
 
 	// Anchored on a phrase unique to THIS guard. The obvious generic anchor,
 	// "guardrail test fails if", is not unique by construction: the CHANGELOG
-	// uses "fails if" for guardrails in a dozen places and "A guardrail test
-	// <verb>" in several, so a future entry could easily reproduce it verbatim.
+	// uses "fails if" for guardrails in about a dozen places, and two other
+	// entries already open with "A guardrail test <verb>", so a future entry
+	// could easily reproduce the exact string.
 	// New entries are prepended, so that one would be matched instead — failing
 	// this test while quoting somebody else's sentence.
 	const anchor = "VPN walk or the dialup OIDs reappear under"
