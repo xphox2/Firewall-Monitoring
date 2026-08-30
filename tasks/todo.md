@@ -6,7 +6,7 @@ The authoritative per-finding record is the disposition ledger in `docs/audit-20
 not this file — the batch checklist below stopped being updated partway through (batches ran in isolated
 worktrees) and is kept only as a historical record of the verification notes.
 
-## Follow-up findings (AUDIT-319..324)
+## Follow-up findings (AUDIT-319..325)
 
 Surfaced during remediation, now verified and numbered. Full detail and evidence in the ledger's
 "Findings surfaced during remediation" section.

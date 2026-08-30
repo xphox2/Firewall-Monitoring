@@ -80,6 +80,9 @@ func TestPublicChartLookback_NeverNonPositive_AUDIT323(t *testing.T) {
 	inputs := []string{
 		"Inf", "-Inf", "NaN", "1e308", "-1e308", "1e18", "99999999",
 		"", "0", "-1", "0.0000001", "abc", "1h", "0.25", "8760", "90d",
+		// Below ~2.78e-13 hours the sub-hour conversion truncates to a
+		// zero-length window, which would put the cutoff at exactly now.
+		"1e-14", "2e-13",
 		strconv.FormatFloat(math.MaxFloat64, 'g', -1, 64),
 	}
 	const maxWindow = maxPublicChartRangeHours * time.Hour

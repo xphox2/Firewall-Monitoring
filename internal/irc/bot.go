@@ -1278,7 +1278,11 @@ func (tb *TestBot) Connect() error {
 		conn.SASLPassword = tb.saslPassword
 	}
 
-	tb.conn = conn
+	// AUDIT-325: tb.conn is deliberately NOT published yet. The resolve and
+	// blocked-IP returns below happen BEFORE any dial, so the conn has a nil
+	// Error channel and nothing to unwind; publishing it there would hand a
+	// future `defer Disconnect()` a conn whose teardown blocks forever sending
+	// on that nil channel. It is published only once Connect has succeeded.
 
 	// AUDIT M1: go-ircevent re-resolves the host inside Connect() with no dialer
 	// hook, so resolve + validate here and hand it a pinned IP:port — closing the
@@ -1321,7 +1325,6 @@ func (tb *TestBot) Connect() error {
 		// pre-dial failure has nothing to unwind, and Disconnect would block
 		// forever on the nil Error channel. Off the request goroutine so a
 		// server that ignores our QUIT cannot stall the admin handler.
-		tb.conn = nil
 		if conn.ErrorChan() != nil {
 			logging.SafeGo("irc-testconn-teardown", func() { // REL-01
 				teardownConn(conn)
@@ -1329,6 +1332,7 @@ func (tb *TestBot) Connect() error {
 		}
 		return err
 	}
+	tb.conn = conn
 	return nil
 }
 

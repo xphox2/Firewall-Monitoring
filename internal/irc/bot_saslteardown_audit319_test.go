@@ -46,7 +46,7 @@ func TestConnectPreDialFailure_LeavesErrorChanNil_AUDIT319(t *testing.T) {
 	}
 }
 
-// TestTeardownFailedConn_UnwindsLoops_AUDIT319 drives the real post-spawn
+// TestTeardownConn_UnwindsLoops_AUDIT319 drives the real post-spawn
 // failure: the server answers CAP LS without advertising sasl, which makes
 // negotiateCaps fail fast, after the three loops and the socket already exist.
 //
@@ -56,7 +56,7 @@ func TestConnectPreDialFailure_LeavesErrorChanNil_AUDIT319(t *testing.T) {
 // which is precisely the leak. The fixture closes on QUIT the way a real ircd
 // does, so a teardown that skipped the QUIT would sit on readLoop's 16-minute
 // read deadline and blow the timeout instead.
-func TestTeardownFailedConn_UnwindsLoops_AUDIT319(t *testing.T) {
+func TestTeardownConn_UnwindsLoops_AUDIT319(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
