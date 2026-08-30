@@ -118,16 +118,19 @@ func TestDeadVPNWalkGuardScopeIsDocumented_AUDIT320(t *testing.T) {
 	// check would silently validate a PROPER SUBSET of the real roots and pass
 	// while the docs omitted the rest, which is the exact drift it exists to
 	// stop. Fail loudly instead.
-	residue := regexp.MustCompile(`"[^"]*"`).ReplaceAllString(string(decl[1]), "")
+	residue := regexp.MustCompile(`(?m)//.*$`).ReplaceAllString(string(decl[1]), "")
+	residue = regexp.MustCompile(`"[^"]*"`).ReplaceAllString(residue, "")
 	if strings.Trim(residue, ", \t\n\r") != "" {
 		t.Fatalf("the roots declaration contains non-literal elements (%q) that this check cannot see; "+
 			"keep it a plain list of \"../../path\" literals", strings.TrimSpace(residue))
 	}
 
-	// Anchored on a phrase unique to THIS guard. A generic anchor such as
-	// "guardrail test fails if" is house style elsewhere in the CHANGELOG, and
-	// since new entries are prepended, a future unrelated one would be matched
-	// instead — failing this test while quoting somebody else's sentence.
+	// Anchored on a phrase unique to THIS guard. The obvious generic anchor,
+	// "guardrail test fails if", is not unique by construction: the CHANGELOG
+	// uses "fails if" for guardrails in a dozen places and "A guardrail test
+	// <verb>" in several, so a future entry could easily reproduce it verbatim.
+	// New entries are prepended, so that one would be matched instead — failing
+	// this test while quoting somebody else's sentence.
 	const anchor = "VPN walk or the dialup OIDs reappear under"
 	backticked := regexp.MustCompile("`([^`]+)`")
 
@@ -137,18 +140,31 @@ func TestDeadVPNWalkGuardScopeIsDocumented_AUDIT320(t *testing.T) {
 			t.Fatalf("read %s: %v", doc, err)
 		}
 		text := string(b)
-		if n := strings.Count(text, anchor); n != 1 {
-			t.Fatalf("%s contains the AUDIT-320 guard-scope phrase %d times, want exactly 1 — "+
-				"this check can no longer identify which sentence to validate", doc, n)
+		// The FIRST occurrence, not the only one: the CHANGELOG is newest-first,
+		// so a later entry that widens this guard describes the current state,
+		// while released entries stay historically accurate and are never
+		// rewritten. The ledger carries exactly one.
+		at := strings.Index(text, anchor)
+		if at < 0 {
+			t.Errorf("%s no longer describes the AUDIT-320 guard scope — the sentence was removed "+
+				"or reworded away from %q", doc, anchor)
+			continue
 		}
-		sentence := text[strings.Index(text, anchor):]
+		sentence := text[at:]
 		if end := strings.Index(sentence, "\n"); end >= 0 {
 			sentence = sentence[:end]
 		}
 
+		// Only spans that name a real package directory count as coverage
+		// claims. The sentence legitimately backticks other things — symbol
+		// names, OID prefixes — and reporting those as claimed roots would
+		// assert something the prose never said, forcing an author to mangle
+		// correct text.
 		documented := map[string]bool{}
 		for _, m := range backticked.FindAllStringSubmatch(sentence, -1) {
-			documented[m[1]] = true
+			if fi, err := os.Stat(filepath.Join("../..", m[1])); err == nil && fi.IsDir() {
+				documented[m[1]] = true
+			}
 		}
 		for root := range roots {
 			if !documented[root] {
