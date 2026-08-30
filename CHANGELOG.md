@@ -13,7 +13,7 @@ This was not inert dead code — it actively misled. Because it looked live, an 
 
 The shared per-vendor VPN parsers (`parseLinuxVPNFromInterfacePDUs`, `parseBSDVPNFromInterfacePDUs`) and `ParseVPNStatus` are untouched, but not because anything currently calls them: `ParseVPNStatus` remains part of the `VendorProfile` vendor-extension contract and mirrors the collector's interface, so removing it would diverge the two repos. Its own entry point `SNMPClient.GetVPNStatus()` is itself uncalled today — that residual family is deliberately outside this change's scope and is recorded as AUDIT-326.
 
-A guardrail test fails if any server-side VPN walk or the dialup OIDs reappear under `internal/snmp` or `cmd/poller`.
+A guardrail test fails if any server-side VPN walk or the dialup OIDs reappear under `internal/snmp`, `internal/api/handlers` or `cmd/poller`.
 
 ## [0.11.234] - 2026-08-29
 
