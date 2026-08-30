@@ -274,6 +274,63 @@ func (h *Handler) GetPublicInterfaces(c *gin.Context) {
 	c.JSON(http.StatusServiceUnavailable, response.Error("No interface data available"))
 }
 
+// maxPublicChartRangeHours bounds the numeric `range` fallback at one year,
+// mirroring httputil.ParseHours. AUDIT-323: without an upper bound,
+// strconv.ParseFloat happily returns +Inf for range=Inf, and converting that
+// to an int is implementation-defined (the minimum int64 on amd64), so the
+// derived cutoff was an arbitrary instant rather than the requested window.
+const maxPublicChartRangeHours = 8760
+
+// publicChartLookback resolves the `range` query value to a lookback duration
+// and a downsampling point budget. It is pure — the caller subtracts the
+// duration from now — so the whole range table is testable without a clock or
+// a database.
+func publicChartLookback(rangeStr string) (time.Duration, int) {
+	switch rangeStr {
+	case "5m":
+		return 5 * time.Minute, 10
+	case "15m":
+		return 15 * time.Minute, 20
+	case "6h":
+		return 6 * time.Hour, 360
+	case "24h":
+		return 24 * time.Hour, 96
+	case "7d":
+		return 168 * time.Hour, 168
+	case "720":
+		return 720 * time.Hour, 90
+	case "8760":
+		return 8760 * time.Hour, 365
+	case "90d":
+		return 2160 * time.Hour, 90
+	}
+
+	// 1h or numeric fallback (incl. the fractional public 0.25/0.5 ranges).
+	//
+	// AUDIT-235: parse as a float, not Atoi — the public dashboard sends
+	// range=0.25 (15m) / 0.5 (30m). Atoi failed on those and silently fell
+	// through to the 1h default, so the fractional windows showed the wrong
+	// span end to end even after the client parseFloat fix.
+	//
+	// AUDIT-323: the upper bound also screens out +Inf and NaN, which fail
+	// every `<=` comparison — that is what keeps the int conversion below
+	// well defined. Anything out of range falls back to the 1h default.
+	if parsed, err := strconv.ParseFloat(rangeStr, 64); err == nil && parsed > 0 && parsed <= maxPublicChartRangeHours {
+		if parsed < 1 {
+			subHour := time.Duration(parsed * float64(time.Hour)) // AUDIT-235: sub-hour public range
+			if subHour <= 0 {
+				// A value so small it truncates to a zero-length window (e.g.
+				// 1e-13) would put the cutoff at exactly now and render an
+				// empty chart. Treat it as unusable and take the default.
+				return time.Hour, 60
+			}
+			return subHour, 30
+		}
+		return time.Duration(int(parsed)) * time.Hour, 180
+	}
+	return time.Hour, 60
+}
+
 func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
@@ -326,65 +383,8 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 		}
 	}
 
-	var hours int
-	var maxPoints int
-	var subHour time.Duration // AUDIT-235: fractional-hour ranges (0.25=15m, 0.5=30m)
-
-	switch rangeStr {
-	case "5m":
-		hours = 0 // special case - use minutes
-		maxPoints = 10
-	case "15m":
-		hours = 0
-		maxPoints = 20
-	case "6h":
-		hours = 6
-		maxPoints = 360
-	case "24h":
-		hours = 24
-		maxPoints = 96
-	case "7d":
-		hours = 168
-		maxPoints = 168
-	case "720":
-		hours = 720
-		maxPoints = 90
-	case "8760":
-		hours = 8760
-		maxPoints = 365
-	case "90d":
-		hours = 2160
-		maxPoints = 90
-	default: // 1h or numeric fallback (incl. the fractional public 0.25/0.5 ranges)
-		// AUDIT-235: parse as a float, not Atoi — the public dashboard sends
-		// range=0.25 (15m) / 0.5 (30m). Atoi failed on those and silently fell
-		// through to the 1h default, so the fractional windows showed the wrong
-		// span end to end even after the client parseFloat fix.
-		if parsed, err := strconv.ParseFloat(rangeStr, 64); err == nil && parsed > 0 {
-			if parsed < 1 {
-				subHour = time.Duration(parsed * float64(time.Hour))
-				maxPoints = 30
-			} else {
-				hours = int(parsed)
-				maxPoints = 180
-			}
-		} else {
-			hours = 1
-			maxPoints = 60
-		}
-	}
-
-	// Calculate cutoff time
-	var cutoff time.Time
-	if rangeStr == "5m" {
-		cutoff = time.Now().Add(-5 * time.Minute)
-	} else if rangeStr == "15m" {
-		cutoff = time.Now().Add(-15 * time.Minute)
-	} else if subHour > 0 {
-		cutoff = time.Now().Add(-subHour) // AUDIT-235: sub-hour public range
-	} else {
-		cutoff = time.Now().Add(-time.Duration(hours) * time.Hour)
-	}
+	lookback, maxPoints := publicChartLookback(rangeStr)
+	cutoff := time.Now().Add(-lookback)
 
 	// Get raw data points
 	var stats []models.InterfaceStats
@@ -443,8 +443,10 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	for i, p := range sampled {
 		// Use appropriate time format based on range
 		var labelFormat string
-		if rangeStr == "5m" || rangeStr == "15m" || subHour > 0 {
-			labelFormat = "15:04:05" // include seconds for short ranges (incl. AUDIT-235 sub-hour)
+		if lookback < time.Hour {
+			// Seconds for every sub-hour window: 5m, 15m and the AUDIT-235
+			// fractional public ranges all resolve to a lookback under an hour.
+			labelFormat = "15:04:05"
 		} else if rangeStr == "7d" {
 			labelFormat = "01-02 15:00" // date and hour for 7 days
 		} else if rangeStr == "90d" {

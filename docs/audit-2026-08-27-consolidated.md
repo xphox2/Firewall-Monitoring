@@ -1929,10 +1929,51 @@ Carried from prior audits and confirmed still intentional: HSTS-behind-proxy; th
 
 ## Findings surfaced during remediation (AUDIT-319+)
 
-These were noticed while remediating the 148 findings above. They are **not** dispositions of the original 148 — they are new, open items to verify and triage in a future audit (next free id is AUDIT-319).
+These were noticed while remediating the 148 findings above. They are **not** dispositions of the original 148 — they are new items, now assigned ids and verified refute-by-default (next free id is AUDIT-326).
 
-- **Server — IRC SASL error path leaks a goroutine + socket per attempt.** `internal/irc/bot.go` `Connect()`: when `negotiateCaps` (SASL) fails, the read/ping/write loops have already been spawned and the function returns the error **without** calling `Disconnect()`. On a SASL-enabled server with bad credentials, every reconnect attempt leaks one goroutine and one open socket.
-- **Server — FortiGate dialup SNMP profile columns look copied from the tunnel table.** `internal/snmp/vendor_fortigate.go`: the dialup-table columns `.2/.3/.4/.11/.12` appear to have been copied from the site-to-site tunnel table (12.2.2.1) into the dialup table (12.2.1.1). Unverified — needs derivation against a real dialup FortiGate walk.
-- **Cross-repo — dialup Local/Remote subnet mapping divergence.** The collector maps `src → Local` / `dst → Remote` for dialup peers while the server maps the opposite. A swap inverts the `RemoteSubnet` values that feed `connection_detail` flow-attribution LIKE patterns; the correct direction should be settled against the FORTINET-FORTIGATE-MIB DESCRIPTION text.
-- **Server — admin-ipsec.js `pollDeploy` gen guard is tautological on the gen half.** `cmd/api/static/js/admin-ipsec.js`: `if(!deployLive(deployGen))` is always-true on the generation half, so a rogue second poll can fire if a POST resolves after the operator has opened a different tunnel's progress modal.
-- **Server — `GetPublicInterfaceChart` unclamped range can overflow.** `internal/api/handlers_dashboard.go`: a `range=Inf`/huge value flows into `int(+Inf)`, overflowing to an arbitrary cutoff. Still device- and public-gated, but a `ParseHours`-style upper clamp would be tidier.
+### AUDIT-319 — Server — IRC SASL error path strands loops and a socket per attempt (MED)
+
+`internal/irc/bot.go`: go-ircevent's `Connect()` allocates the socket and spawns `readLoop`/`writeLoop`/`pingLoop` **before** it negotiates capabilities, then returns the `negotiateCaps` error without unwinding any of it. `Bot.Start`'s error branch dropped the connection without a `Disconnect()`, so a SASL server rejecting our credentials stranded `writeLoop`, `pingLoop` and the socket — repeated by the manager's 30s reconnect sweep for the life of the process. (`readLoop` does exit on its own 16-minute read deadline; the other two never observe `end` close.)
+
+> **✅ RESOLVED (v0.11.234 / #242)** — teardown added to the Connect-error branch, gated on `conn.ErrorChan() != nil`. That gate is load-bearing: `Connect` allocates `irc.Error` immediately before `irc.Add(3)`, so a nil channel means it bailed during validation or the dial with nothing to unwind — and `Disconnect` there would **hang forever**, since it ends by sending on that nil channel while holding the connection lock. Teardown sends QUIT first so `readLoop` unblocks instead of stalling on its read deadline. 3 tests, all verified fail-on-revert.
+
+### AUDIT-320 — Server — FortiGate dialup SNMP columns copied from the tunnel table (LOW)
+
+`internal/snmp/vendor_fortigate.go`: the dialup-table columns `.2/.3/.4/.11/.12` were copied from the site-to-site tunnel table (12.2.2.1) into the dialup table (12.2.1.1).
+
+> **CONFIRMED — defect is real but unreachable.** The authoritative FORTINET-FORTIGATE-MIB `FgVpnDialupEntry` SEQUENCE has exactly **10** columns: `Index(1), Gateway(2), Lifetime(3), Timeout(4), SrcBegin(5), SrcEnd(6), DstAddr(7), Vdom(8), InOctets(9), OutOctets(10)`. The server's `.11` (Status) and `.12` (UpTime) therefore do not exist at all, and `.2/.3/.4` are mislabelled as Phase1Name/Name/RemoteGW. However `SNMPClient.GetAllVPNTunnels()` has **zero callers** — collectors have owned all polling since v0.11.74 — so none of it can execute. The collector's own copy was already corrected under AUDIT-217. Resolution is deletion of the dead chain, not a column fix — tracked as an OPEN follow-up, shipping together with the AUDIT-321 direction-locking test (the same change removes the server's inverted copy).
+
+### AUDIT-321 — Cross-repo — dialup Local/Remote subnet mapping divergence (MED)
+
+The collector maps `src → Local` / `dst → Remote` for dialup peers while the server maps the opposite.
+
+> **❌ REFUTED for the live path — the collector is correct.** Settled against production rather than the MIB text, because **the MIB's own DESCRIPTION strings are inverted**: `fgVpnDialupSrcBegin` reads *"Remote subnet address of the tunnel"* and `fgVpnDialupDstAddr` reads *"Local subnet address of the tunnel"*, which is the opposite of observed device behaviour. Verified on prod (138,643 `ipsec-dialup` rows): device 3 (NUDAY-FW) owns interfaces `192.168.25.254/24` and `192.168.35.1/24`, and those are exactly the subnets the collector labels `local_subnet` — while `remote_subnet` resolves to the far-end `192.168.5.0/24` (device 1's `192.168.5.2/24`). The FortiClient dial-up rows agree: `(.5,.6)` yields the protected `0.0.0.0/0` selector and `.7` yields the client's assigned pool address. `.6` also behaves as a range **end**, not the "subnet mask" its DESCRIPTION claims — prod values render as clean `/24` blocks, which a mask could not produce through `rangeToCIDR`. The only wrong mapping is the server's, which is dead code (AUDIT-320). **Do not "correct" the collector to match the MIB text.** A test locking this direction, carrying the prod evidence above, ships with the AUDIT-320 dead-chain deletion (the same change removes the server's inverted copy, so the two belong together).
+
+### AUDIT-322 — Server — `admin-ipsec.js` pollDeploy generation guard is tautological (LOW)
+
+`cmd/api/static/js/admin-ipsec.js`: the deploy/rollback/recheck POST handlers guarded their own resolution with `deployLive(deployGen)`, comparing the live generation against itself. Only the modal-is-open half did any work, and that stays true once the operator has opened a *different* tunnel's progress modal — letting a late POST start a rogue second poll loop against it.
+
+> **✅ RESOLVED (v0.11.234 / #242)** — all three deferred-poll sites capture `var gen = deployGen` after `openDeployModal` and check that. `openDeployModal`'s own internal call keeps the live value, which is correct there since it runs immediately after the bump. Guardrail test verified fail-on-revert.
+
+### AUDIT-323 — Server — `GetPublicInterfaceChart` unclamped range overflows (LOW)
+
+`internal/api/handlers/handlers_dashboard.go`: the numeric `range` fallback had only a lower bound, so `range=Inf` produced `+Inf`, whose int conversion is implementation-defined (minimum int64 on amd64) and yielded an arbitrary cutoff. Device- and public-gated throughout, so a correctness bug rather than a disclosure one.
+
+> **✅ RESOLVED (v0.11.234 / #242)** — the range table moved to a pure `publicChartLookback` helper bounded by `maxPublicChartRangeHours` (8760), mirroring `httputil.ParseHours`. The upper bound also screens `+Inf` and `NaN`, which fail every `<=` comparison. 2 tests over the full range table, verified fail-on-revert.
+
+### AUDIT-324 — Collector — OID index arc in parsed interface IP addresses (REFUTED)
+
+Noticed while verifying AUDIT-321 against production: 25 of 65 rows in `interface_addresses` hold malformed five-octet strings — `10.10.10.1.1`, `192.168.5.2.1`, `76.66.145.98.1` — i.e. an OID index arc appended to the parsed address.
+
+> **❌ REFUTED — already fixed, and the residue is inert.** The root cause was corrected in collector commit `fcdd66b` (2026-06-21), *"parse ipAddrTable IPs that carry an extra OID sub-index (FortiOS)"*, which added `ipv4FromTableIndex`; `GetInterfaceAddresses` applies it to both the ifIndex and netmask columns. Every malformed row in prod dates from a single 17-second window on **2026-06-22 21:55–21:56**, before the fixed build was deployed; no malformed row has been written since, while clean rows run through 2026-08-30. The residue is also unreachable: it is strictly older than every clean row for the same device (devices 1/2/3 all have current rows), and both consumers select latest-per-device — `GetLatestInterfaceAddresses` joins on `MAX(timestamp)` per device, and the connection-detail resolver takes the newest row. A five-octet string can never match a real source IP either, so it cannot cause mis-attribution, only a miss that cannot occur. No code change; the 25 stale rows can be deleted at an operator's convenience but affect nothing.
+
+### AUDIT-325 — Server — admin "Test IRC Connection" strands loops on BOTH paths (MED)
+
+Found by the adversarial review of the AUDIT-319 fix, which correctly objected that the sibling case had not been swept. `TestBot` carries the same defect on both branches:
+
+- `TestBot.Connect` ended with a bare `return conn.Connect(addr)`. A rejected SASL/CAP negotiation — precisely what testing credentials provokes — left `writeLoop`, `pingLoop` and the socket running.
+- `TestBot.Disconnect` sent only `safeQuit`. QUIT never closes the library's `end` channel, so the loops and the socket survived on the **success** path too: one stranded set per admin test-connection click, with `pingLoop` eventually parking forever on the full `pwrite`.
+
+Lower rate than AUDIT-319 (admin-triggered rather than amplified by the 30s reconnect sweep), but the same defect class.
+
+> **✅ RESOLVED (v0.11.234 / #242)** — both paths now call the shared `teardownConn` (QUIT → unlatch → Disconnect), the failure path behind the same non-nil `ErrorChan` gate, and both off the request goroutine so a server that ignores the QUIT cannot stall the admin handler. `teardownFailedConn` was renamed `teardownConn` to reflect that it unwinds any connection this package owns. Guardrail test verified fail-on-revert.
