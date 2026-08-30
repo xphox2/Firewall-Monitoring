@@ -579,7 +579,7 @@ func (b *Bot) Start() {
 		// the connection lock, which blocks forever.
 		if conn.ErrorChan() != nil {
 			logging.SafeGo("irc-failed-connect-teardown", func() { // REL-01
-				teardownFailedConn(conn)
+				teardownConn(conn)
 			})
 		}
 		return
@@ -1314,16 +1314,38 @@ func (tb *TestBot) Connect() error {
 		return fmt.Errorf("refusing to connect: %q resolves only to blocked/internal addresses", tb.serverHost)
 	}
 	addr := net.JoinHostPort(dialIP.String(), strconv.Itoa(tb.serverPort))
-	return conn.Connect(addr)
+	if err := conn.Connect(addr); err != nil {
+		// AUDIT-325: the same unwind hazard as AUDIT-319, and this path is
+		// where it bites hardest — testing credentials is precisely how a SASL
+		// negotiation gets rejected. Gated on ErrorChan for the same reason: a
+		// pre-dial failure has nothing to unwind, and Disconnect would block
+		// forever on the nil Error channel. Off the request goroutine so a
+		// server that ignores our QUIT cannot stall the admin handler.
+		tb.conn = nil
+		if conn.ErrorChan() != nil {
+			logging.SafeGo("irc-testconn-teardown", func() { // REL-01
+				teardownConn(conn)
+			})
+		}
+		return err
+	}
+	return nil
 }
 
 func (tb *TestBot) Disconnect() {
-	if tb.conn != nil {
-		if err := safeQuit(tb.conn); err != nil {
-			log.Printf("IRC: test-connection QUIT failed: %v", err)
-		}
-		tb.conn = nil
+	if tb.conn == nil {
+		return
 	}
+	// AUDIT-325: this used to send QUIT and stop there. QUIT never closes the
+	// library's `end` channel, so writeLoop and pingLoop kept running and the
+	// socket was never closed — one stranded set per admin test-connection
+	// click, on the SUCCESS path. Full teardown, off the request goroutine so
+	// a server that ignores the QUIT cannot stall the admin handler.
+	conn := tb.conn
+	tb.conn = nil
+	logging.SafeGo("irc-testconn-teardown", func() { // REL-01
+		teardownConn(conn)
+	})
 }
 
 // ircSendTimeout bounds every write into go-ircevent's internal pwrite
@@ -1367,11 +1389,14 @@ func forgetConn(conn *irc.Connection) {
 	}
 }
 
-// teardownFailedConn unwinds a connection whose Connect spawned the library's
-// loops and then failed anyway (AUDIT-319 — capability/SASL negotiation runs
-// after the loops are already up). It is the SOLE Disconnect caller for such a
-// conn: Start has already dropped it from b.Conn, so no other owner exists,
-// and a second Disconnect would panic on the closed pwrite.
+// teardownConn fully unwinds a connection this package owns: QUIT, drop any
+// write-dead latch, then Disconnect. It must be the SOLE Disconnect caller for
+// that conn — a second call panics on the already-closed pwrite — which holds
+// because every caller drops its reference before invoking this.
+//
+// AUDIT-319/325: the library spawns its three loops and opens the socket
+// BEFORE capability/SASL negotiation, and a QUIT on its own never closes
+// `end`, so neither a failed negotiation nor a bare QUIT unwinds anything.
 //
 // QUIT goes first so the server drops us and readLoop's blocking read returns
 // promptly. Disconnect waits on all three loops BEFORE it closes the socket,
@@ -1379,7 +1404,7 @@ func forgetConn(conn *irc.Connection) {
 // Timeout+PingFreq (16 minute) read deadline. safeQuit is timeout-bounded and
 // latches a wedged conn, so it always returns; the caller runs this on its own
 // goroutine so a server that ignores the QUIT delays nothing but this cleanup.
-func teardownFailedConn(conn *irc.Connection) {
+func teardownConn(conn *irc.Connection) {
 	_ = safeQuit(conn)
 	forgetConn(conn)
 	conn.Disconnect()

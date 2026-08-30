@@ -64,7 +64,7 @@ func TestIRCConnectFailure_TearsDownSpawnedLoops_AUDIT319(t *testing.T) {
 	}
 	branch := src[start : start+end]
 
-	if !strings.Contains(branch, "teardownFailedConn") {
+	if !strings.Contains(branch, "teardownConn") {
 		t.Error("AUDIT-319 regression: Bot.Start's Connect-error branch no longer tears down the " +
 			"connection — a SASL rejection strands writeLoop, pingLoop and the socket on every " +
 			"reconnect attempt")
@@ -73,4 +73,49 @@ func TestIRCConnectFailure_TearsDownSpawnedLoops_AUDIT319(t *testing.T) {
 		t.Error("AUDIT-319 regression: the teardown is no longer gated on a non-nil ErrorChan — " +
 			"on a pre-dial failure Disconnect blocks forever sending on the nil Error channel")
 	}
+}
+
+// AUDIT-325: the admin "Test IRC Connection" path carries the same unwind
+// hazard as AUDIT-319 on both of its branches. TestBot.Connect must tear down
+// a connection whose capability negotiation failed — credential testing is
+// exactly where that happens — and TestBot.Disconnect must do a FULL teardown,
+// because a bare QUIT never closes the library's `end` channel, leaving
+// writeLoop, pingLoop and the socket alive on the success path too.
+func TestIRCTestBot_TearsDownBothPaths_AUDIT325(t *testing.T) {
+	b, err := os.ReadFile("../../internal/irc/bot.go")
+	if err != nil {
+		t.Fatalf("read bot.go: %v", err)
+	}
+	src := string(b)
+
+	connect := goFuncBody(t, src, "func (tb *TestBot) Connect() error {")
+	if !strings.Contains(connect, "teardownConn") {
+		t.Error("AUDIT-325 regression: TestBot.Connect no longer tears down a connection whose " +
+			"negotiation failed — every rejected credential test strands writeLoop, pingLoop and a socket")
+	}
+	if !strings.Contains(connect, "conn.ErrorChan() != nil") {
+		t.Error("AUDIT-325 regression: TestBot.Connect's teardown is not gated on a non-nil ErrorChan — " +
+			"a pre-dial failure would block forever in Disconnect")
+	}
+
+	disconnect := goFuncBody(t, src, "func (tb *TestBot) Disconnect() {")
+	if !strings.Contains(disconnect, "teardownConn") {
+		t.Error("AUDIT-325 regression: TestBot.Disconnect only sends QUIT again — QUIT does not close " +
+			"the library's `end`, so the loops and socket survive every test-connection click")
+	}
+}
+
+// goFuncBody returns the source of the Go function starting at decl, up to the
+// first line that closes it at column zero.
+func goFuncBody(t *testing.T, src, decl string) string {
+	t.Helper()
+	i := strings.Index(src, decl)
+	if i < 0 {
+		t.Fatalf("could not locate %q in bot.go", decl)
+	}
+	rest := src[i:]
+	if end := strings.Index(rest, "\n}\n"); end >= 0 {
+		return rest[:end]
+	}
+	return rest
 }

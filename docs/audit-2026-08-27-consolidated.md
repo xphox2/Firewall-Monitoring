@@ -1929,7 +1929,7 @@ Carried from prior audits and confirmed still intentional: HSTS-behind-proxy; th
 
 ## Findings surfaced during remediation (AUDIT-319+)
 
-These were noticed while remediating the 148 findings above. They are **not** dispositions of the original 148 — they are new items, now assigned ids and verified refute-by-default (next free id is AUDIT-325).
+These were noticed while remediating the 148 findings above. They are **not** dispositions of the original 148 — they are new items, now assigned ids and verified refute-by-default (next free id is AUDIT-326).
 
 ### AUDIT-319 — Server — IRC SASL error path strands loops and a socket per attempt (MED)
 
@@ -1961,8 +1961,19 @@ The collector maps `src → Local` / `dst → Remote` for dialup peers while the
 
 > **✅ RESOLVED (v0.11.234 / #242)** — the range table moved to a pure `publicChartLookback` helper bounded by `maxPublicChartRangeHours` (8760), mirroring `httputil.ParseHours`. The upper bound also screens `+Inf` and `NaN`, which fail every `<=` comparison. 2 tests over the full range table, verified fail-on-revert.
 
-### AUDIT-324 — Collector — OID index arc leaks into parsed interface IP addresses (MED, NEW)
+### AUDIT-324 — Collector — OID index arc in parsed interface IP addresses (REFUTED)
 
-Found while verifying AUDIT-321 against production. **25 of 65 rows (38%) across 5 devices** in `interface_addresses` hold malformed five-octet strings — `10.10.10.1.1`, `192.168.5.2.1`, `76.66.145.98.1` — alongside the correct value, i.e. an OID index arc is being appended to the parsed address. This map feeds `ifaceIPMap`, which the strict sFlow/TFTP source binding shipped in collector v1.3.44 (AUDIT-186/187) uses for accept/reject decisions, so bad entries can distort source attribution and the HA/CARP ambiguity tracking.
+Noticed while verifying AUDIT-321 against production: 25 of 65 rows in `interface_addresses` hold malformed five-octet strings — `10.10.10.1.1`, `192.168.5.2.1`, `76.66.145.98.1` — i.e. an OID index arc appended to the parsed address.
 
-> **OPEN** — queued as its own collector batch.
+> **❌ REFUTED — already fixed, and the residue is inert.** The root cause was corrected in collector commit `fcdd66b` (2026-06-21), *"parse ipAddrTable IPs that carry an extra OID sub-index (FortiOS)"*, which added `ipv4FromTableIndex`; `GetInterfaceAddresses` applies it to both the ifIndex and netmask columns. Every malformed row in prod dates from a single 17-second window on **2026-06-22 21:55–21:56**, before the fixed build was deployed; no malformed row has been written since, while clean rows run through 2026-08-30. The residue is also unreachable: it is strictly older than every clean row for the same device (devices 1/2/3 all have current rows), and both consumers select latest-per-device — `GetLatestInterfaceAddresses` joins on `MAX(timestamp)` per device, and the connection-detail resolver takes the newest row. A five-octet string can never match a real source IP either, so it cannot cause mis-attribution, only a miss that cannot occur. No code change; the 25 stale rows can be deleted at an operator's convenience but affect nothing.
+
+### AUDIT-325 — Server — admin "Test IRC Connection" strands loops on BOTH paths (MED)
+
+Found by the adversarial review of the AUDIT-319 fix, which correctly objected that the sibling case had not been swept. `TestBot` carries the same defect on both branches:
+
+- `TestBot.Connect` ended with a bare `return conn.Connect(addr)`. A rejected SASL/CAP negotiation — precisely what testing credentials provokes — left `writeLoop`, `pingLoop` and the socket running.
+- `TestBot.Disconnect` sent only `safeQuit`. QUIT never closes the library's `end` channel, so the loops and the socket survived on the **success** path too: one stranded set per admin test-connection click, with `pingLoop` eventually parking forever on the full `pwrite`.
+
+Lower rate than AUDIT-319 (admin-triggered rather than amplified by the 30s reconnect sweep), but the same defect class.
+
+> **✅ RESOLVED (v0.11.234 / #242)** — both paths now call the shared `teardownConn` (QUIT → unlatch → Disconnect), the failure path behind the same non-nil `ErrorChan` gate, and both off the request goroutine so a server that ignores the QUIT cannot stall the admin handler. `teardownFailedConn` was renamed `teardownConn` to reflect that it unwinds any connection this package owns. Guardrail test verified fail-on-revert.

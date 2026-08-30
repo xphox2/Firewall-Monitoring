@@ -318,6 +318,12 @@ func publicChartLookback(rangeStr string) (time.Duration, int) {
 	if parsed, err := strconv.ParseFloat(rangeStr, 64); err == nil && parsed > 0 && parsed <= maxPublicChartRangeHours {
 		if parsed < 1 {
 			subHour := time.Duration(parsed * float64(time.Hour)) // AUDIT-235: sub-hour public range
+			if subHour <= 0 {
+				// A value so small it truncates to a zero-length window (e.g.
+				// 1e-13) would put the cutoff at exactly now and render an
+				// empty chart. Treat it as unusable and take the default.
+				return time.Hour, 60
+			}
 			return subHour, 30
 		}
 		return time.Duration(int(parsed)) * time.Hour, 180

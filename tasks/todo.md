@@ -16,7 +16,8 @@ Surfaced during remediation, now verified and numbered. Full detail and evidence
 - [x] **AUDIT-321** (cross-repo, MED) — REFUTED for the live path: the collector mapping is correct, verified against prod device LANs. The MIB's own DESCRIPTION text is inverted; the server's (dead) copy is the wrong one.
 - [x] **AUDIT-322** (server, LOW) — deploy-modal generation guard was tautological. Fixed v0.11.234.
 - [x] **AUDIT-323** (server, LOW) — unclamped chart range overflowed to an arbitrary cutoff. Fixed v0.11.234.
-- [ ] **AUDIT-324** (collector, MED, NEW) — an OID index arc leaks into parsed interface IPs: 38% of `interface_addresses` rows in prod are malformed five-octet strings. Feeds `ifaceIPMap`, which the v1.3.44 strict source binding depends on.
+- [x] **AUDIT-324** (collector) — REFUTED: root cause fixed 2026-06-21 (`fcdd66b`); the 25 malformed prod rows are inert residue from a 17-second window on 2026-06-22, strictly older than every clean row and never selected by the latest-per-device consumers.
+- [x] **AUDIT-325** (server, MED) — admin "Test IRC Connection" stranded loops on BOTH paths (failure AND success). Found by adversarial review of the 319 fix. Fixed v0.11.234.
 
 ---
 

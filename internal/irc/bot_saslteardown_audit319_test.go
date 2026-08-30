@@ -50,7 +50,7 @@ func TestConnectPreDialFailure_LeavesErrorChanNil_AUDIT319(t *testing.T) {
 // failure: the server answers CAP LS without advertising sasl, which makes
 // negotiateCaps fail fast, after the three loops and the socket already exist.
 //
-// The assertion is that teardownFailedConn RETURNS. Disconnect calls
+// The assertion is that teardownConn RETURNS. Disconnect calls
 // irc.Wait() on the library's WaitGroup of three, so returning is proof that
 // readLoop, writeLoop and pingLoop all exited and the socket was closed —
 // which is precisely the leak. The fixture closes on QUIT the way a real ircd
@@ -115,7 +115,7 @@ func TestTeardownFailedConn_UnwindsLoops_AUDIT319(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		teardownFailedConn(conn)
+		teardownConn(conn)
 		close(done)
 	}()
 
@@ -126,7 +126,7 @@ func TestTeardownFailedConn_UnwindsLoops_AUDIT319(t *testing.T) {
 			"never unwound — writeLoop, pingLoop and the socket stay stranded for the " +
 			"life of the process, once per reconnect attempt")
 	case <-time.After(20 * time.Second):
-		t.Fatal("teardownFailedConn never returned: irc.Wait() is still blocked on a live " +
+		t.Fatal("teardownConn never returned: irc.Wait() is still blocked on a live " +
 			"loop, so the connection was not fully unwound")
 	}
 
