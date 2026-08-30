@@ -1,7 +1,7 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
-## [0.11.235] - 2026-08-29
+## [0.11.235] - 2026-08-30
 
 ### Removed
 
