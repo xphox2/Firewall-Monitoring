@@ -115,10 +115,6 @@ func (p *PaloAltoProfile) ParseVPNStatus(pdus []gosnmp.SnmpPDU) []models.VPNStat
 	return parsePaloAltoVPNFromInterfacePDUs(pdus)
 }
 
-func (p *PaloAltoProfile) GetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, error) {
-	return paGetAllVPNTunnels(s)
-}
-
 // paIfData holds interface data for Palo Alto VPN detection.
 type paIfData struct {
 	name     string
@@ -220,23 +216,6 @@ func getOrCreatePAIf(m map[int]*paIfData, idx int) *paIfData {
 	v := &paIfData{}
 	m[idx] = v
 	return v
-}
-
-// paGetAllVPNTunnels walks IF-MIB to discover tunnel.* VPN interfaces.
-func paGetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, error) {
-	pdus, err := s.Walk(BaseOIDInterface)
-	if err != nil {
-		return nil, err
-	}
-
-	// Also walk ifXTable for 64-bit counters
-	xPdus, err := s.Walk(BaseOIDIfXTable)
-	if err == nil {
-		pdus = append(pdus, xPdus...)
-	}
-
-	tunnels := parsePaloAltoVPNFromInterfacePDUs(pdus)
-	return tunnels, nil
 }
 
 // Hardware sensors: ENTITY-SENSOR-MIB for temperature, fan, voltage, power.

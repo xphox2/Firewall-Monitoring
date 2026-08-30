@@ -105,10 +105,6 @@ func (g *GenericProfile) ParseVPNStatus(_ []gosnmp.SnmpPDU) []models.VPNStatus {
 	return nil
 }
 
-func (g *GenericProfile) GetAllVPNTunnels(_ *SNMPClient) ([]models.VPNStatus, error) {
-	return nil, nil
-}
-
 // Hardware sensors: ENTITY-SENSOR-MIB support is too inconsistent across
 // devices to be part of a standards-only profile; lmSensors lives under the
 // Net-SNMP enterprise subtree. Not supported.

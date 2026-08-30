@@ -447,14 +447,6 @@ func (s *SNMPClient) GetVPNStatus(vendor ...string) ([]models.VPNStatus, error) 
 	return profile.ParseVPNStatus(pdus), nil
 }
 
-func (s *SNMPClient) GetAllVPNTunnels() ([]models.VPNStatus, error) {
-	profile := s.resolveVendor("")
-	if profile == nil {
-		return nil, fmt.Errorf("no vendor profile available")
-	}
-	return profile.GetAllVPNTunnels(s)
-}
-
 func getOrCreateVPN(m map[int]*models.VPNStatus, index int) *models.VPNStatus {
 	if v, exists := m[index]; exists {
 		return v

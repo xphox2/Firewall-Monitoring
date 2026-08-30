@@ -26,9 +26,6 @@ type VendorProfile interface {
     VPNBaseOID() string                    // table base for an SNMP WALK; "" disables
     ParseVPNStatus(pdus []gosnmp.SnmpPDU) []models.VPNStatus
 
-    // All VPN tunnels (IPSec + GRE) with proper type detection.
-    GetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, error)
-
     HWSensorBaseOID() string
     ParseHardwareSensors(pdus []gosnmp.SnmpPDU) []models.HardwareSensor
 
@@ -114,9 +111,6 @@ profile uses; `models.SystemStatus.CPUUsage`/`MemoryUsage` are `float64`.)
 ```go
 func (a *AcmeProfile) VPNBaseOID() string                                  { return "" }
 func (a *AcmeProfile) ParseVPNStatus(_ []gosnmp.SnmpPDU) []models.VPNStatus { return nil }
-func (a *AcmeProfile) GetAllVPNTunnels(_ *SNMPClient) ([]models.VPNStatus, error) {
-    return nil, nil
-}
 func (a *AcmeProfile) HWSensorBaseOID() string                                       { return "" }
 func (a *AcmeProfile) ParseHardwareSensors(_ []gosnmp.SnmpPDU) []models.HardwareSensor { return nil }
 func (a *AcmeProfile) ProcessorBaseOID() string                                      { return "" }

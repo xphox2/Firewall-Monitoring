@@ -149,8 +149,4 @@ func TestCiscoASA_DeliberateOmissions(t *testing.T) {
 	if defs := p.TrapOIDs(); len(defs) != 0 {
 		t.Errorf("TrapOIDs = %v, want none (deliberately omitted)", defs)
 	}
-	tunnels, err := p.GetAllVPNTunnels(nil)
-	if err != nil || len(tunnels) != 0 {
-		t.Errorf("GetAllVPNTunnels = (%v, %v), want (empty, nil)", tunnels, err)
-	}
 }

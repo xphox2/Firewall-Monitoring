@@ -151,10 +151,6 @@ func (o *OPNsenseProfile) ParseVPNStatus(pdus []gosnmp.SnmpPDU) []models.VPNStat
 	return parseBSDVPNFromInterfacePDUs(pdus)
 }
 
-func (o *OPNsenseProfile) GetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, error) {
-	return bsdGetAllVPNTunnels(s)
-}
-
 // Hardware sensors: not available via bsnmpd.
 
 func (o *OPNsenseProfile) HWSensorBaseOID() string { return "" }

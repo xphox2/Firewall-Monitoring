@@ -126,8 +126,4 @@ func TestGeneric_UnsupportedMetricFamilies(t *testing.T) {
 	if got := p.ParseHAStatus(nil); len(got) != 0 {
 		t.Errorf("ParseHAStatus = %v, want empty", got)
 	}
-	tunnels, err := p.GetAllVPNTunnels(nil)
-	if err != nil || len(tunnels) != 0 {
-		t.Errorf("GetAllVPNTunnels = (%v, %v), want (empty, nil)", tunnels, err)
-	}
 }
