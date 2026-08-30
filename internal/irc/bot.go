@@ -618,13 +618,12 @@ func (b *Bot) Start() {
 		b.mu.Unlock()
 		// Re-deliver the QUIT Stop lost into the pre-Connect nil pwrite: pwrite
 		// is live now, so this reaches the server, which drops us gracefully
-		// (readLoop then unblocks, so the Disconnect below completes promptly
-		// instead of stalling on the read deadline). safeQuit is
-		// timeout-bounded; on a wedged send it latches and returns, and
-		// Disconnect still runs.
-		_ = safeQuit(conn)
-		forgetConn(conn)
-		conn.Disconnect() // sole Disconnect caller for this conn (no watcher started)
+		// (readLoop then unblocks, so the Disconnect completes promptly instead
+		// of stalling on the read deadline). That QUIT-then-Disconnect sequence
+		// is exactly teardownConn, so this path uses it rather than repeating
+		// the three steps and risking drift. Synchronous here: this conn IS
+		// registered, so the server answers the QUIT promptly.
+		teardownConn(conn) // sole Disconnect caller for this conn (no watcher started)
 		return
 	}
 	b.mu.Unlock()
@@ -1385,8 +1384,9 @@ func connWriteDead(conn *irc.Connection) bool {
 func markConnWriteDead(conn *irc.Connection) { writeDeadConns.Store(conn, struct{}{}) }
 
 // forgetConn drops any write-dead latch for conn. Called wherever a conn is
-// abandoned (Stop, the error-watcher, the AUDIT-206 stop-race teardown, onQuit,
-// DISCONNECTED) so a superseded conn's entry does not linger. Idempotent.
+// abandoned — Stop, the error-watcher, onQuit, DISCONNECTED, and teardownConn
+// (which covers the AUDIT-206 stop-race and the AUDIT-319/325 failed-connect
+// paths) — so a superseded conn's entry does not linger. Idempotent.
 func forgetConn(conn *irc.Connection) {
 	if conn != nil {
 		writeDeadConns.Delete(conn)
@@ -1405,7 +1405,8 @@ func forgetConn(conn *irc.Connection) {
 // QUIT goes first so the server drops us and readLoop's blocking read returns
 // promptly. Disconnect waits on all three loops BEFORE it closes the socket,
 // so without the QUIT it would stall for readLoop's full
-// Timeout+PingFreq (16 minute) read deadline. safeQuit is timeout-bounded and
+// Timeout+PingFreq read deadline — ~16 min for a bot conn (library defaults
+// 1m+15m), 15m10s for a TestBot conn, which lowers Timeout to 10s. safeQuit is timeout-bounded and
 // latches a wedged conn, so it always returns; the caller runs this on its own
 // goroutine so a server that ignores the QUIT delays nothing but this cleanup.
 func teardownConn(conn *irc.Connection) {
