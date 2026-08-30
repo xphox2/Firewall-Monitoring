@@ -1929,7 +1929,7 @@ Carried from prior audits and confirmed still intentional: HSTS-behind-proxy; th
 
 ## Findings surfaced during remediation (AUDIT-319+)
 
-These were noticed while remediating the 148 findings above. They are **not** dispositions of the original 148 — they are new items, now assigned ids and verified refute-by-default (next free id is AUDIT-326).
+These were noticed while remediating the 148 findings above. They are **not** dispositions of the original 148 — they are new items, now assigned ids and verified refute-by-default (next free id is AUDIT-327).
 
 ### AUDIT-319 — Server — IRC SASL error path strands loops and a socket per attempt (MED)
 
@@ -1943,13 +1943,13 @@ These were noticed while remediating the 148 findings above. They are **not** di
 
 > **CONFIRMED — defect is real but unreachable.** The authoritative FORTINET-FORTIGATE-MIB `FgVpnDialupEntry` SEQUENCE has exactly **10** columns: `Index(1), Gateway(2), Lifetime(3), Timeout(4), SrcBegin(5), SrcEnd(6), DstAddr(7), Vdom(8), InOctets(9), OutOctets(10)`. The server's `.11` (Status) and `.12` (UpTime) therefore do not exist at all, and `.2/.3/.4` are mislabelled as Phase1Name/Name/RemoteGW. However `SNMPClient.GetAllVPNTunnels()` has **zero callers** — collectors have owned all polling since v0.11.74 — so none of it can execute. The collector's own copy was already corrected under AUDIT-217. Resolution is deletion of the dead chain, not a column fix.
 
-> **✅ RESOLVED (v0.11.235 / #243)** — deleted `SNMPClient.GetAllVPNTunnels`, the `VendorProfile` interface method and its 8 vendor implementations, the linux/bsd/paloalto walk helpers, FortiGate's `ParseVPNDialupStatus`/`ParseGRETunnels`, and the dialup OID constants. The shared `parse{Linux,BSD}VPNFromInterfacePDUs` helpers stay — they are reached by the live `ParseVPNStatus`. A guardrail test fails if a server-side VPN walk or the dialup OIDs reappear under `internal/snmp`.
+> **✅ RESOLVED (v0.11.235 / #243)** — deleted `SNMPClient.GetAllVPNTunnels`, the `VendorProfile` interface method and its 8 vendor implementations, the linux/bsd/paloalto walk helpers, FortiGate's `ParseVPNDialupStatus`/`ParseGRETunnels`, and the dialup OID constants. The shared `parse{Linux,BSD}VPNFromInterfacePDUs` helpers and `ParseVPNStatus` stay because `ParseVPNStatus` is part of the `VendorProfile` vendor-extension contract and mirrors the collector's interface — **not** because they are currently reached: `SNMPClient.GetVPNStatus()` is itself uncalled. That residual family is recorded separately as AUDIT-326 and deliberately left out of scope here. A guardrail test fails if a server-side VPN walk or the dialup OIDs reappear under `internal/snmp`.
 
 ### AUDIT-321 — Cross-repo — dialup Local/Remote subnet mapping divergence (MED)
 
 The collector maps `src → Local` / `dst → Remote` for dialup peers while the server maps the opposite.
 
-> **❌ REFUTED for the live path — the collector is correct.** Settled against production rather than the MIB text, because **the MIB's own DESCRIPTION strings are inverted**: `fgVpnDialupSrcBegin` reads *"Remote subnet address of the tunnel"* and `fgVpnDialupDstAddr` reads *"Local subnet address of the tunnel"*, which is the opposite of observed device behaviour. Verified on prod (138,643 `ipsec-dialup` rows): device 3 (NUDAY-FW) owns interfaces `192.168.25.254/24` and `192.168.35.1/24`, and those are exactly the subnets the collector labels `local_subnet` — while `remote_subnet` resolves to the far-end `192.168.5.0/24` (device 1's `192.168.5.2/24`). The FortiClient dial-up rows agree: `(.5,.6)` yields the protected `0.0.0.0/0` selector and `.7` yields the client's assigned pool address. `.6` also behaves as a range **end**, not the "subnet mask" its DESCRIPTION claims — prod values render as clean `/24` blocks, which a mask could not produce through `rangeToCIDR`. The only wrong mapping is the server's, which is dead code (AUDIT-320). **Do not "correct" the collector to match the MIB text.** The server's inverted copy was deleted with AUDIT-320 (v0.11.235), so only the correct mapping remains in the codebase; a test locking the direction with the prod evidence above ships in the collector, which owns the live mapping.
+> **❌ REFUTED for the live path — the collector is correct.** Settled against production rather than the MIB text, because **the MIB's own DESCRIPTION strings are inverted**: `fgVpnDialupSrcBegin` reads *"Remote subnet address of the tunnel"* and `fgVpnDialupDstAddr` reads *"Local subnet address of the tunnel"*, which is the opposite of observed device behaviour. Verified on prod (138,643 `ipsec-dialup` rows): device 3 (NUDAY-FW) owns interfaces `192.168.25.254/24` and `192.168.35.1/24`, and those are exactly the subnets the collector labels `local_subnet` — while `remote_subnet` resolves to the far-end `192.168.5.0/24` (device 1's `192.168.5.2/24`). The FortiClient dial-up rows agree: `(.5,.6)` yields the protected `0.0.0.0/0` selector and `.7` yields the client's assigned pool address. `.6` also behaves as a range **end**, not the "subnet mask" its DESCRIPTION claims — prod values render as clean `/24` blocks, which a mask could not produce through `rangeToCIDR`. The only wrong mapping is the server's, which is dead code (AUDIT-320). **Do not "correct" the collector to match the MIB text.** The server's inverted copy was deleted with AUDIT-320 (v0.11.235), so only the correct mapping remains in the codebase. The direction is already locked on the collector side by `TestFortiGate_ParseDialupVPNStatus_VdomColumnUnread` (`internal/snmp/vendor_fortigate_test.go`), which asserts both halves — `.5/.6 → LocalSubnet` and `.7 → RemoteSubnet`.
 
 ### AUDIT-322 — Server — `admin-ipsec.js` pollDeploy generation guard is tautological (LOW)
 
@@ -1962,6 +1962,14 @@ The collector maps `src → Local` / `dst → Remote` for dialup peers while the
 `internal/api/handlers/handlers_dashboard.go`: the numeric `range` fallback had only a lower bound, so `range=Inf` produced `+Inf`, whose int conversion is implementation-defined (minimum int64 on amd64) and yielded an arbitrary cutoff. Device- and public-gated throughout, so a correctness bug rather than a disclosure one.
 
 > **✅ RESOLVED (v0.11.234 / #242)** — the range table moved to a pure `publicChartLookback` helper bounded by `maxPublicChartRangeHours` (8760), mirroring `httputil.ParseHours`. The upper bound also screens `+Inf` and `NaN`, which fail every `<=` comparison. 2 tests over the full range table, verified fail-on-revert.
+
+### AUDIT-326 — Server — a further zero-caller SNMP client family (LOW, OPEN)
+
+Surfaced by the adversarial review of the AUDIT-320 deletion, which correctly refuted the first draft's claim that the retained VPN parsers were "reached by the live `ParseVPNStatus` path". They are not. `ParseVPNStatus` is reached only from `SNMPClient.GetVPNStatus()`, and that method has zero callers — the same criterion AUDIT-320 used. The live server SNMP surface is only `GetSystemStatus`, `GetInterfaceStats` and `GetHardwareSensors`; `GetVPNStatus`, `GetInterfaceAddresses` and `GetProcessorStats` are all uncalled.
+
+Left out of AUDIT-320's scope on purpose: unlike `GetAllVPNTunnels`, these sit on the `VendorProfile` contract that mirrors the collector's interface, so deleting them would diverge the two repos and is a design decision rather than dead-code removal. Note also that the deleted walker was the only code stamping `TunnelType = "ipsec"` on FortiGate site-to-site results, so anything reviving `GetVPNStatus` would get an empty `TunnelType` — a pre-existing gap in `ParseVPNStatus`, not a regression.
+
+> **OPEN** — decide deliberately whether the server keeps a vendor-extension SNMP contract at all.
 
 ### AUDIT-324 — Collector — OID index arc in parsed interface IP addresses (REFUTED)
 

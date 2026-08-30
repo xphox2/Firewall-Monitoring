@@ -29,31 +29,37 @@ func TestNoServerSideVPNWalk_AUDIT320(t *testing.T) {
 		{"12356.101.12.2.1.1", "the FortiGate dialup table OIDs were deleted; the server must not reacquire them (and the old copy was wrong — see AUDIT-320)"},
 	}
 
-	root := "../../internal/snmp"
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		t.Fatalf("read %s: %v", root, err)
-	}
+	// cmd/poller is scanned too: the deleted API was interface-bound to
+	// internal/snmp, but a revived walk could just as easily be written
+	// directly against SNMPClient in the poller, which would evade a guard
+	// named "no server-side VPN walk" that only looked at one package.
+	roots := []string{"../../internal/snmp", "../../cmd/poller"}
 
 	var scanned int
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join(root, e.Name()))
+	for _, root := range roots {
+		entries, err := os.ReadDir(root)
 		if err != nil {
-			t.Fatalf("read %s: %v", e.Name(), err)
+			t.Fatalf("read %s: %v", root, err)
 		}
-		scanned++
-		src := string(b)
-		for _, ban := range banned {
-			if strings.Contains(src, ban.token) {
-				t.Errorf("AUDIT-320 regression: %s reintroduces %q — %s",
-					e.Name(), ban.token, ban.why)
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
+				continue
+			}
+			b, err := os.ReadFile(filepath.Join(root, e.Name()))
+			if err != nil {
+				t.Fatalf("read %s: %v", e.Name(), err)
+			}
+			scanned++
+			src := string(b)
+			for _, ban := range banned {
+				if strings.Contains(src, ban.token) {
+					t.Errorf("AUDIT-320 regression: %s reintroduces %q — %s",
+						e.Name(), ban.token, ban.why)
+				}
 			}
 		}
 	}
 	if scanned == 0 {
-		t.Fatal("scanned no files under internal/snmp — this guard is not actually checking anything")
+		t.Fatal("scanned no files — this guard is not actually checking anything")
 	}
 }
