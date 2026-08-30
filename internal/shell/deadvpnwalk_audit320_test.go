@@ -35,12 +35,14 @@ func TestNoServerSideVPNWalk_AUDIT320(t *testing.T) {
 	// named "no server-side VPN walk" that only looked at one package.
 	roots := []string{"../../internal/snmp", "../../cmd/poller"}
 
-	var scanned int
 	for _, root := range roots {
 		entries, err := os.ReadDir(root)
 		if err != nil {
 			t.Fatalf("read %s: %v", root, err)
 		}
+		// Counted PER ROOT: a single total would let one populated root mask
+		// the other silently dropping out of the guard's stated scope.
+		var scanned int
 		for _, e := range entries {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
 				continue
@@ -58,8 +60,8 @@ func TestNoServerSideVPNWalk_AUDIT320(t *testing.T) {
 				}
 			}
 		}
-	}
-	if scanned == 0 {
-		t.Fatal("scanned no files — this guard is not actually checking anything")
+		if scanned == 0 {
+			t.Fatalf("scanned no .go files under %s — this guard is not actually checking that root", root)
+		}
 	}
 }

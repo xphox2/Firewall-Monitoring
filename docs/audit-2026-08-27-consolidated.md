@@ -1943,7 +1943,7 @@ These were noticed while remediating the 148 findings above. They are **not** di
 
 > **CONFIRMED — defect is real but unreachable.** The authoritative FORTINET-FORTIGATE-MIB `FgVpnDialupEntry` SEQUENCE has exactly **10** columns: `Index(1), Gateway(2), Lifetime(3), Timeout(4), SrcBegin(5), SrcEnd(6), DstAddr(7), Vdom(8), InOctets(9), OutOctets(10)`. The server's `.11` (Status) and `.12` (UpTime) therefore do not exist at all, and `.2/.3/.4` are mislabelled as Phase1Name/Name/RemoteGW. However `SNMPClient.GetAllVPNTunnels()` has **zero callers** — collectors have owned all polling since v0.11.74 — so none of it can execute. The collector's own copy was already corrected under AUDIT-217. Resolution is deletion of the dead chain, not a column fix.
 
-> **✅ RESOLVED (v0.11.235 / #243)** — deleted `SNMPClient.GetAllVPNTunnels`, the `VendorProfile` interface method and its 8 vendor implementations, the linux/bsd/paloalto walk helpers, FortiGate's `ParseVPNDialupStatus`/`ParseGRETunnels`, and the dialup OID constants. The shared `parse{Linux,BSD}VPNFromInterfacePDUs` helpers and `ParseVPNStatus` stay because `ParseVPNStatus` is part of the `VendorProfile` vendor-extension contract and mirrors the collector's interface — **not** because they are currently reached: `SNMPClient.GetVPNStatus()` is itself uncalled. That residual family is recorded separately as AUDIT-326 and deliberately left out of scope here. A guardrail test fails if a server-side VPN walk or the dialup OIDs reappear under `internal/snmp`.
+> **✅ RESOLVED (v0.11.235 / #243)** — deleted `SNMPClient.GetAllVPNTunnels`, the `VendorProfile` interface method and its 8 vendor implementations, the linux/bsd/paloalto walk helpers, FortiGate's `ParseVPNDialupStatus`/`ParseGRETunnels`, and the dialup OID constants. The shared `parse{Linux,BSD}VPNFromInterfacePDUs` helpers and `ParseVPNStatus` stay because `ParseVPNStatus` is part of the `VendorProfile` vendor-extension contract and mirrors the collector's interface — **not** because they are currently reached: `SNMPClient.GetVPNStatus()` is itself uncalled. That residual family is recorded separately as AUDIT-326 and deliberately left out of scope here. A guardrail test fails if a server-side VPN walk or the dialup OIDs reappear under `internal/snmp` or `cmd/poller`.
 
 ### AUDIT-321 — Cross-repo — dialup Local/Remote subnet mapping divergence (MED)
 
@@ -1963,14 +1963,6 @@ The collector maps `src → Local` / `dst → Remote` for dialup peers while the
 
 > **✅ RESOLVED (v0.11.234 / #242)** — the range table moved to a pure `publicChartLookback` helper bounded by `maxPublicChartRangeHours` (8760), mirroring `httputil.ParseHours`. The upper bound also screens `+Inf` and `NaN`, which fail every `<=` comparison. 2 tests over the full range table, verified fail-on-revert.
 
-### AUDIT-326 — Server — a further zero-caller SNMP client family (LOW, OPEN)
-
-Surfaced by the adversarial review of the AUDIT-320 deletion, which correctly refuted the first draft's claim that the retained VPN parsers were "reached by the live `ParseVPNStatus` path". They are not. `ParseVPNStatus` is reached only from `SNMPClient.GetVPNStatus()`, and that method has zero callers — the same criterion AUDIT-320 used. The live server SNMP surface is only `GetSystemStatus`, `GetInterfaceStats` and `GetHardwareSensors`; `GetVPNStatus`, `GetInterfaceAddresses` and `GetProcessorStats` are all uncalled.
-
-Left out of AUDIT-320's scope on purpose: unlike `GetAllVPNTunnels`, these sit on the `VendorProfile` contract that mirrors the collector's interface, so deleting them would diverge the two repos and is a design decision rather than dead-code removal. Note also that the deleted walker was the only code stamping `TunnelType = "ipsec"` on FortiGate site-to-site results, so anything reviving `GetVPNStatus` would get an empty `TunnelType` — a pre-existing gap in `ParseVPNStatus`, not a regression.
-
-> **OPEN** — decide deliberately whether the server keeps a vendor-extension SNMP contract at all.
-
 ### AUDIT-324 — Collector — OID index arc in parsed interface IP addresses (REFUTED)
 
 Noticed while verifying AUDIT-321 against production: 25 of 65 rows in `interface_addresses` hold malformed five-octet strings — `10.10.10.1.1`, `192.168.5.2.1`, `76.66.145.98.1` — i.e. an OID index arc appended to the parsed address.
@@ -1987,3 +1979,11 @@ Found by the adversarial review of the AUDIT-319 fix, which correctly objected t
 Lower rate than AUDIT-319 (admin-triggered rather than amplified by the 30s reconnect sweep), but the same defect class.
 
 > **✅ RESOLVED (v0.11.234 / #242)** — both paths now call the shared `teardownConn` (QUIT → unlatch → Disconnect), the failure path behind the same non-nil `ErrorChan` gate, and both off the request goroutine so a server that ignores the QUIT cannot stall the admin handler. `teardownFailedConn` was renamed `teardownConn` to reflect that it unwinds any connection this package owns. Guardrail test verified fail-on-revert.
+
+### AUDIT-326 — Server — a further zero-caller SNMP client family (LOW, OPEN)
+
+Surfaced by the adversarial review of the AUDIT-320 deletion, which correctly refuted the first draft's claim that the retained VPN parsers were "reached by the live `ParseVPNStatus` path". They are not. `ParseVPNStatus` is reached only from `SNMPClient.GetVPNStatus()`, and that method has zero callers — the same criterion AUDIT-320 used. The live server SNMP surface is only `GetSystemStatus`, `GetInterfaceStats` and `GetHardwareSensors`; `GetVPNStatus`, `GetInterfaceAddresses` and `GetProcessorStats` are all uncalled.
+
+Left out of AUDIT-320's scope on purpose, and the distinction is about the COLLECTOR's interface, not the server's. `GetAllVPNTunnels` was on the server's `VendorProfile`, but it has **no counterpart in the collector at all**, so deleting it converged the two repos. These three do have live collector counterparts — `ParseVPNStatus` on the collector's `VendorProfile` (`internal/snmp/vendor.go:35`) and `GetInterfaceAddresses`/`GetProcessorStats`/`GetVPNStatus` on its `SNMPClient` interface (`cmd/collector/main.go:57-60`), all reached from the poll loop — so deleting them would diverge the repos. That makes it a design decision rather than dead-code removal. (`GetInterfaceAddresses` is vendor-neutral in both repos: it walks `ipAddrTable` directly and resolves no vendor profile.) Note also that the deleted walker was the only code stamping `TunnelType = "ipsec"` on FortiGate site-to-site results, so anything reviving `GetVPNStatus` would get an empty `TunnelType` — a pre-existing gap in `ParseVPNStatus`, not a regression.
+
+> **OPEN** — decide deliberately whether the server keeps a vendor-extension SNMP contract at all.
