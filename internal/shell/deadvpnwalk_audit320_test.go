@@ -32,8 +32,8 @@ func TestNoServerSideVPNWalk_AUDIT320(t *testing.T) {
 	}
 
 	// internal/api/handlers is scanned too, and it is the root that matters:
-	// it holds the server's only long-lived *snmp.SNMPClient (the field at
-	// handlers.go:29, constructed in cmd/api/main.go and injected via
+	// it holds the server's only long-lived *snmp.SNMPClient (the snmpClient
+	// field on Handler, constructed in cmd/api/main.go and injected via
 	// SetSNMPClient) and already calls GetSystemStatus/GetInterfaceStats/
 	// GetHardwareSensors on it. Restoring tunnel data on that legacy
 	// single-device path is the realistic way a walk comes back, and it would
@@ -80,57 +80,87 @@ func TestNoServerSideVPNWalk_AUDIT320(t *testing.T) {
 	}
 }
 
-// TestDeadVPNWalkGuardScopeIsDocumented_AUDIT320 keeps the prose describing
-// this guard in step with what it actually scans.
+// TestDeadVPNWalkGuardScopeIsDocumented_AUDIT320 holds the prose describing
+// this guard and the roots it actually scans to the SAME set, in both
+// directions.
 //
-// The scope sentence in the CHANGELOG and the audit ledger has now drifted
-// twice: each time the guard gained a root, the two sentences kept naming the
-// old, narrower set. That matters because the ledger is the permanent record a
-// future audit reads — a reader who believes a package is unguarded either
-// re-does the work or treats a regression there as out of scope by design,
-// which is the same class of misleading documentation AUDIT-320 existed to
-// delete. Drift is cheaper to catch here than in review.
+// The scope sentence in the CHANGELOG and the audit ledger drifted twice: each
+// time the guard gained a root, the two sentences kept naming the old, narrower
+// set. That matters because the ledger is the permanent record a future audit
+// reads — a reader who believes a package is unguarded either re-does the work
+// or treats a regression there as out of scope by design, which is the same
+// class of misleading documentation AUDIT-320 existed to delete. The reverse
+// error is worse still: prose that claims a root the guard no longer scans
+// promises coverage that does not exist. Both are cheaper to catch here than in
+// review.
 func TestDeadVPNWalkGuardScopeIsDocumented_AUDIT320(t *testing.T) {
 	guard, err := os.ReadFile("deadvpnwalk_audit320_test.go")
 	if err != nil {
 		t.Fatalf("read guard source: %v", err)
 	}
-	// Pull the roots straight from this file's own declaration, so the check
-	// cannot fall out of step with the list it is validating.
+
+	// Harvest the roots from this file's own declaration, so the check cannot
+	// fall out of step with the list it validates.
 	decl := regexp.MustCompile(`roots := \[\]string\{([^}]*)\}`).FindSubmatch(guard)
 	if decl == nil {
 		t.Fatal("could not find the roots declaration in the guard source")
 	}
-	var roots []string
-	for _, m := range regexp.MustCompile(`"\.\./\.\./([^"]+)"`).FindAllStringSubmatch(string(decl[1]), -1) {
-		roots = append(roots, m[1])
+	literal := regexp.MustCompile(`"\.\./\.\./([^"]+)"`)
+	roots := map[string]bool{}
+	for _, m := range literal.FindAllStringSubmatch(string(decl[1]), -1) {
+		roots[m[1]] = true
 	}
 	if len(roots) == 0 {
 		t.Fatal("parsed no roots from the declaration — this check would pass vacuously")
 	}
+	// Only "../../x" string literals are visible to the harvest above. If the
+	// declaration ever holds anything else — a variable, a helper call — this
+	// check would silently validate a PROPER SUBSET of the real roots and pass
+	// while the docs omitted the rest, which is the exact drift it exists to
+	// stop. Fail loudly instead.
+	residue := regexp.MustCompile(`"[^"]*"`).ReplaceAllString(string(decl[1]), "")
+	if strings.Trim(residue, ", \t\n\r") != "" {
+		t.Fatalf("the roots declaration contains non-literal elements (%q) that this check cannot see; "+
+			"keep it a plain list of \"../../path\" literals", strings.TrimSpace(residue))
+	}
+
+	// Anchored on a phrase unique to THIS guard. A generic anchor such as
+	// "guardrail test fails if" is house style elsewhere in the CHANGELOG, and
+	// since new entries are prepended, a future unrelated one would be matched
+	// instead — failing this test while quoting somebody else's sentence.
+	const anchor = "VPN walk or the dialup OIDs reappear under"
+	backticked := regexp.MustCompile("`([^`]+)`")
 
 	for _, doc := range []string{"../../CHANGELOG.md", "../../docs/audit-2026-08-27-consolidated.md"} {
 		b, err := os.ReadFile(doc)
 		if err != nil {
 			t.Fatalf("read %s: %v", doc, err)
 		}
-		// Only the v0.11.235 entry and the AUDIT-320 disposition describe this
-		// guard; both contain the phrase below. Older entries are history and
-		// must not be rewritten.
 		text := string(b)
-		idx := strings.Index(text, "guardrail test fails if")
-		if idx < 0 {
-			t.Errorf("%s no longer describes the AUDIT-320 guardrail — the scope sentence was removed", doc)
-			continue
+		if n := strings.Count(text, anchor); n != 1 {
+			t.Fatalf("%s contains the AUDIT-320 guard-scope phrase %d times, want exactly 1 — "+
+				"this check can no longer identify which sentence to validate", doc, n)
 		}
-		sentence := text[idx:]
+		sentence := text[strings.Index(text, anchor):]
 		if end := strings.Index(sentence, "\n"); end >= 0 {
 			sentence = sentence[:end]
 		}
-		for _, root := range roots {
-			if !strings.Contains(sentence, root) {
+
+		documented := map[string]bool{}
+		for _, m := range backticked.FindAllStringSubmatch(sentence, -1) {
+			documented[m[1]] = true
+		}
+		for root := range roots {
+			if !documented[root] {
 				t.Errorf("%s describes the AUDIT-320 guard without naming %q, which it does scan — "+
-					"the documented scope is narrower than the shipped guard:\n  %s", doc, root, sentence)
+					"the documented scope is NARROWER than the shipped guard:\n  %s", doc, root, sentence)
+			}
+		}
+		for path := range documented {
+			if !roots[path] {
+				t.Errorf("%s claims the AUDIT-320 guard covers %q, which it does NOT scan — "+
+					"the documented scope is WIDER than the shipped guard, promising coverage that "+
+					"does not exist:\n  %s", doc, path, sentence)
 			}
 		}
 	}
