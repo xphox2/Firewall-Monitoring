@@ -54,16 +54,27 @@ func TestIRCConnectFailure_TearsDownSpawnedLoops_AUDIT319(t *testing.T) {
 	}
 	src := string(b)
 
-	start := strings.Index(src, "if err := conn.Connect(addr); err != nil {")
-	if start < 0 {
+	// Anchor inside Bot.Start: the same `conn.Connect(addr)` guard now appears
+	// in TestBot.Connect too (AUDIT-325), so a bare search would silently start
+	// guarding the wrong function if the two are ever reordered.
+	fn := strings.Index(src, "func (b *Bot) Start() {")
+	if fn < 0 {
+		t.Fatal("could not locate Bot.Start in bot.go")
+	}
+	rel := strings.Index(src[fn:], "if err := conn.Connect(addr); err != nil {")
+	if rel < 0 {
 		t.Fatal("could not locate Bot.Start's Connect error branch in bot.go")
 	}
+	start := fn + rel
 	end := strings.Index(src[start:], "\n\t}\n")
 	if end < 0 {
 		t.Fatal("could not delimit the Connect error branch")
 	}
 	branch := src[start : start+end]
 
+	if !strings.Contains(branch, "b.noteConnectFailure()") {
+		t.Fatal("the located branch is not Bot.Start's — this guard is anchored to the wrong function")
+	}
 	if !strings.Contains(branch, "teardownConn") {
 		t.Error("AUDIT-319 regression: Bot.Start's Connect-error branch no longer tears down the " +
 			"connection — a SASL rejection strands writeLoop, pingLoop and the socket on every " +

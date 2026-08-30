@@ -19,4 +19,15 @@ func TestTestBot_Connect_RefusesBlockedResolvedIP(t *testing.T) {
 	if !strings.Contains(err.Error(), "blocked/internal") {
 		t.Fatalf("expected a blocked-address refusal, got: %v", err)
 	}
+
+	// AUDIT-325: a Connect that refuses before dialling must not publish the
+	// connection. It was never dialled, so its Error channel is nil — and
+	// teardownConn on such a conn blocks FOREVER, because Disconnect ends by
+	// sending ErrDisconnected on that nil channel while holding the connection
+	// lock. Publishing it would arm that hang for any caller that later adds
+	// the natural `defer bot.Disconnect()`.
+	if bot.conn != nil {
+		t.Fatal("a refused Connect published a connection that was never dialled: " +
+			"its Error channel is nil, so tearing it down would block forever")
+	}
 }
