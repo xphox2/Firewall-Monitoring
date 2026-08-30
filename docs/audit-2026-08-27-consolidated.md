@@ -1929,10 +1929,40 @@ Carried from prior audits and confirmed still intentional: HSTS-behind-proxy; th
 
 ## Findings surfaced during remediation (AUDIT-319+)
 
-These were noticed while remediating the 148 findings above. They are **not** dispositions of the original 148 — they are new, open items to verify and triage in a future audit (next free id is AUDIT-319).
+These were noticed while remediating the 148 findings above. They are **not** dispositions of the original 148 — they are new items, now assigned ids and verified refute-by-default (next free id is AUDIT-325).
 
-- **Server — IRC SASL error path leaks a goroutine + socket per attempt.** `internal/irc/bot.go` `Connect()`: when `negotiateCaps` (SASL) fails, the read/ping/write loops have already been spawned and the function returns the error **without** calling `Disconnect()`. On a SASL-enabled server with bad credentials, every reconnect attempt leaks one goroutine and one open socket.
-- **Server — FortiGate dialup SNMP profile columns look copied from the tunnel table.** `internal/snmp/vendor_fortigate.go`: the dialup-table columns `.2/.3/.4/.11/.12` appear to have been copied from the site-to-site tunnel table (12.2.2.1) into the dialup table (12.2.1.1). Unverified — needs derivation against a real dialup FortiGate walk.
-- **Cross-repo — dialup Local/Remote subnet mapping divergence.** The collector maps `src → Local` / `dst → Remote` for dialup peers while the server maps the opposite. A swap inverts the `RemoteSubnet` values that feed `connection_detail` flow-attribution LIKE patterns; the correct direction should be settled against the FORTINET-FORTIGATE-MIB DESCRIPTION text.
-- **Server — admin-ipsec.js `pollDeploy` gen guard is tautological on the gen half.** `cmd/api/static/js/admin-ipsec.js`: `if(!deployLive(deployGen))` is always-true on the generation half, so a rogue second poll can fire if a POST resolves after the operator has opened a different tunnel's progress modal.
-- **Server — `GetPublicInterfaceChart` unclamped range can overflow.** `internal/api/handlers_dashboard.go`: a `range=Inf`/huge value flows into `int(+Inf)`, overflowing to an arbitrary cutoff. Still device- and public-gated, but a `ParseHours`-style upper clamp would be tidier.
+### AUDIT-319 — Server — IRC SASL error path strands loops and a socket per attempt (MED)
+
+`internal/irc/bot.go`: go-ircevent's `Connect()` allocates the socket and spawns `readLoop`/`writeLoop`/`pingLoop` **before** it negotiates capabilities, then returns the `negotiateCaps` error without unwinding any of it. `Bot.Start`'s error branch dropped the connection without a `Disconnect()`, so a SASL server rejecting our credentials stranded `writeLoop`, `pingLoop` and the socket — repeated by the manager's 30s reconnect sweep for the life of the process. (`readLoop` does exit on its own 16-minute read deadline; the other two never observe `end` close.)
+
+> **✅ RESOLVED (v0.11.234 / #242)** — teardown added to the Connect-error branch, gated on `conn.ErrorChan() != nil`. That gate is load-bearing: `Connect` allocates `irc.Error` immediately before `irc.Add(3)`, so a nil channel means it bailed during validation or the dial with nothing to unwind — and `Disconnect` there would **hang forever**, since it ends by sending on that nil channel while holding the connection lock. Teardown sends QUIT first so `readLoop` unblocks instead of stalling on its read deadline. 3 tests, all verified fail-on-revert.
+
+### AUDIT-320 — Server — FortiGate dialup SNMP columns copied from the tunnel table (LOW)
+
+`internal/snmp/vendor_fortigate.go`: the dialup-table columns `.2/.3/.4/.11/.12` were copied from the site-to-site tunnel table (12.2.2.1) into the dialup table (12.2.1.1).
+
+> **CONFIRMED — defect is real but unreachable.** The authoritative FORTINET-FORTIGATE-MIB `FgVpnDialupEntry` SEQUENCE has exactly **10** columns: `Index(1), Gateway(2), Lifetime(3), Timeout(4), SrcBegin(5), SrcEnd(6), DstAddr(7), Vdom(8), InOctets(9), OutOctets(10)`. The server's `.11` (Status) and `.12` (UpTime) therefore do not exist at all, and `.2/.3/.4` are mislabelled as Phase1Name/Name/RemoteGW. However `SNMPClient.GetAllVPNTunnels()` has **zero callers** — collectors have owned all polling since v0.11.74 — so none of it can execute. The collector's own copy was already corrected under AUDIT-217. Resolution is deletion of the dead chain, not a column fix; see the disposition below.
+
+### AUDIT-321 — Cross-repo — dialup Local/Remote subnet mapping divergence (MED)
+
+The collector maps `src → Local` / `dst → Remote` for dialup peers while the server maps the opposite.
+
+> **❌ REFUTED for the live path — the collector is correct.** Settled against production rather than the MIB text, because **the MIB's own DESCRIPTION strings are inverted**: `fgVpnDialupSrcBegin` reads *"Remote subnet address of the tunnel"* and `fgVpnDialupDstAddr` reads *"Local subnet address of the tunnel"*, which is the opposite of observed device behaviour. Verified on prod (138,643 `ipsec-dialup` rows): device 3 (NUDAY-FW) owns interfaces `192.168.25.254/24` and `192.168.35.1/24`, and those are exactly the subnets the collector labels `local_subnet` — while `remote_subnet` resolves to the far-end `192.168.5.0/24` (device 1's `192.168.5.2/24`). The FortiClient dial-up rows agree: `(.5,.6)` yields the protected `0.0.0.0/0` selector and `.7` yields the client's assigned pool address. `.6` also behaves as a range **end**, not the "subnet mask" its DESCRIPTION claims — prod values render as clean `/24` blocks, which a mask could not produce through `rangeToCIDR`. The only wrong mapping is the server's, which is dead code (AUDIT-320). **Do not "correct" the collector to match the MIB text**; the collector batch that resolves AUDIT-324 adds a test locking this direction with the prod evidence above.
+
+### AUDIT-322 — Server — `admin-ipsec.js` pollDeploy generation guard is tautological (LOW)
+
+`cmd/api/static/js/admin-ipsec.js`: the deploy/rollback/recheck POST handlers guarded their own resolution with `deployLive(deployGen)`, comparing the live generation against itself. Only the modal-is-open half did any work, and that stays true once the operator has opened a *different* tunnel's progress modal — letting a late POST start a rogue second poll loop against it.
+
+> **✅ RESOLVED (v0.11.234 / #242)** — all three deferred-poll sites capture `var gen = deployGen` after `openDeployModal` and check that. `openDeployModal`'s own internal call keeps the live value, which is correct there since it runs immediately after the bump. Guardrail test verified fail-on-revert.
+
+### AUDIT-323 — Server — `GetPublicInterfaceChart` unclamped range overflows (LOW)
+
+`internal/api/handlers/handlers_dashboard.go`: the numeric `range` fallback had only a lower bound, so `range=Inf` produced `+Inf`, whose int conversion is implementation-defined (minimum int64 on amd64) and yielded an arbitrary cutoff. Device- and public-gated throughout, so a correctness bug rather than a disclosure one.
+
+> **✅ RESOLVED (v0.11.234 / #242)** — the range table moved to a pure `publicChartLookback` helper bounded by `maxPublicChartRangeHours` (8760), mirroring `httputil.ParseHours`. The upper bound also screens `+Inf` and `NaN`, which fail every `<=` comparison. 2 tests over the full range table, verified fail-on-revert.
+
+### AUDIT-324 — Collector — OID index arc leaks into parsed interface IP addresses (MED, NEW)
+
+Found while verifying AUDIT-321 against production. **25 of 65 rows (38%) across 5 devices** in `interface_addresses` hold malformed five-octet strings — `10.10.10.1.1`, `192.168.5.2.1`, `76.66.145.98.1` — alongside the correct value, i.e. an OID index arc is being appended to the parsed address. This map feeds `ifaceIPMap`, which the strict sFlow/TFTP source binding shipped in collector v1.3.44 (AUDIT-186/187) uses for accept/reject decisions, so bad entries can distort source attribution and the HA/CARP ambiguity tracking.
+
+> **OPEN** — queued as its own collector batch.

@@ -561,6 +561,27 @@ func (b *Bot) Start() {
 		b.Conn = nil
 		b.mu.Unlock()
 		b.noteConnectFailure()
+		// AUDIT-319: go-ircevent allocates the socket and spawns its three
+		// loops BEFORE it negotiates capabilities, then returns the
+		// negotiateCaps error without unwinding any of it. A SASL server that
+		// rejects our credentials therefore strands writeLoop, pingLoop and
+		// the socket for the process lifetime, and the manager's 30s
+		// reconnect sweep strands another set on every retry. (readLoop does
+		// eventually exit on its own read deadline; the other two never see
+		// `end` close, and pingLoop keeps writing to the live socket.)
+		//
+		// Only post-spawn failures have anything to unwind, and ErrorChan is
+		// the exact discriminator: Connect allocates irc.Error immediately
+		// before irc.Add(3), so a nil channel means it bailed during argument
+		// validation or the dial, with no goroutine, socket or channel ever
+		// created. Tearing down THERE would be far worse than the leak —
+		// Disconnect ends by sending on that nil Error channel while holding
+		// the connection lock, which blocks forever.
+		if conn.ErrorChan() != nil {
+			logging.SafeGo("irc-failed-connect-teardown", func() { // REL-01
+				teardownFailedConn(conn)
+			})
+		}
 		return
 	}
 
@@ -1344,6 +1365,24 @@ func forgetConn(conn *irc.Connection) {
 	if conn != nil {
 		writeDeadConns.Delete(conn)
 	}
+}
+
+// teardownFailedConn unwinds a connection whose Connect spawned the library's
+// loops and then failed anyway (AUDIT-319 — capability/SASL negotiation runs
+// after the loops are already up). It is the SOLE Disconnect caller for such a
+// conn: Start has already dropped it from b.Conn, so no other owner exists,
+// and a second Disconnect would panic on the closed pwrite.
+//
+// QUIT goes first so the server drops us and readLoop's blocking read returns
+// promptly. Disconnect waits on all three loops BEFORE it closes the socket,
+// so without the QUIT it would stall for readLoop's full
+// Timeout+PingFreq (16 minute) read deadline. safeQuit is timeout-bounded and
+// latches a wedged conn, so it always returns; the caller runs this on its own
+// goroutine so a server that ignores the QUIT delays nothing but this cleanup.
+func teardownFailedConn(conn *irc.Connection) {
+	_ = safeQuit(conn)
+	forgetConn(conn)
+	conn.Disconnect()
 }
 
 // sendVia wraps sendWithTimeout with the per-connection write-dead latch

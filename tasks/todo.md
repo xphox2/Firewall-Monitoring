@@ -1,7 +1,26 @@
-# Audit 2026-08-27 Remediation Program (AUDIT-171..318)
+# Audit 2026-08-27 Remediation Program (AUDIT-171..318) — ✅ COMPLETE
 
-Plan: ~/.claude/plans/please-start-planning-a-curried-sprout.md
-Per-PR loop: verify (refute-by-default) → fix → fable review of diff → QA gates → changelog+version → PR → auto-merge → next.
+**Status as of 2026-08-29: all 148 findings dispositioned — 147 resolved, 1 refuted (AUDIT-198, dead code).**
+Shipped across 28 PRs. Server v0.11.210 → **v0.11.233**; collector v1.3.34 → **v1.3.44**.
+The authoritative per-finding record is the disposition ledger in `docs/audit-2026-08-27-consolidated.md`,
+not this file — the batch checklist below stopped being updated partway through (batches ran in isolated
+worktrees) and is kept only as a historical record of the verification notes.
+
+## Follow-up findings (AUDIT-319..324)
+
+Surfaced during remediation, now verified and numbered. Full detail and evidence in the ledger's
+"Findings surfaced during remediation" section.
+
+- [x] **AUDIT-319** (server, MED) — IRC SASL failure stranded writeLoop/pingLoop + socket per attempt. Fixed v0.11.234.
+- [ ] **AUDIT-320** (server, LOW) — FortiGate dialup SNMP columns wrong, but in a chain with zero callers. Resolution = delete the dead `GetAllVPNTunnels` chain.
+- [x] **AUDIT-321** (cross-repo, MED) — REFUTED for the live path: the collector mapping is correct, verified against prod device LANs. The MIB's own DESCRIPTION text is inverted; the server's (dead) copy is the wrong one.
+- [x] **AUDIT-322** (server, LOW) — deploy-modal generation guard was tautological. Fixed v0.11.234.
+- [x] **AUDIT-323** (server, LOW) — unclamped chart range overflowed to an arbitrary cutoff. Fixed v0.11.234.
+- [ ] **AUDIT-324** (collector, MED, NEW) — an OID index arc leaks into parsed interface IPs: 38% of `interface_addresses` rows in prod are malformed five-octet strings. Feeds `ifaceIPMap`, which the v1.3.44 strict source binding depends on.
+
+---
+
+# Historical batch checklist (superseded by the ledger)
 
 ## Stage A — HIGH
 - [x] Batch 1 (Server 0.11.211): startup/deploy — 171, 173, 183, 190, 310 — ALL CONFIRMED+FIXED; fable review SOUND (after: force-add gitignored test, doc/NOTICE polish, single env read); PR #219 open, background CI watch → merge

@@ -1860,11 +1860,17 @@
                 { title: 'Deploy tunnel?', confirmLabel: 'Deploy', danger: false }).then(function (ok) {
                 if (!ok) return;
                 openDeployModal(id, 'deploy', true); // AUDIT-232: defer poll until the POST lands
+                // AUDIT-322: pin the generation this modal just opened with. The guard
+                // below used to be handed the LIVE deployGen, which made its generation
+                // half tautological (gen === deployGen always held), so a POST that
+                // resolved after the operator had opened a DIFFERENT tunnel's progress
+                // modal still passed and started a rogue second poll loop against it.
+                var gen = deployGen;
                 AC.apiFetch(API + '/ipsec/tunnels/' + id + '/deploy', { method: 'POST' }).then(function () {
-                    if (!deployLive(deployGen)) return;
-                    pollDeploy(id, deployGen, Date.now(), 'deploy');
+                    if (!deployLive(gen)) return;
+                    pollDeploy(id, gen, Date.now(), 'deploy');
                 }).catch(function (e) {
-                    if (!deployLive(deployGen)) return;
+                    if (!deployLive(gen)) return;
                     $('ipsec-deploy-body').innerHTML = deployErrorCard('Could not start deploy: ' + esc(e.message));
                 });
             });
@@ -1876,11 +1882,17 @@
             { title: 'Roll back tunnel?', confirmLabel: 'Roll back', danger: true }).then(function (ok) {
             if (!ok) return;
             openDeployModal(id, 'rollback', true); // AUDIT-232: defer poll until the POST lands
+            // AUDIT-322: pin the generation this modal just opened with. The guard
+            // below used to be handed the LIVE deployGen, which made its generation
+            // half tautological (gen === deployGen always held), so a POST that
+            // resolved after the operator had opened a DIFFERENT tunnel's progress
+            // modal still passed and started a rogue second poll loop against it.
+            var gen = deployGen;
             AC.apiFetch(API + '/ipsec/tunnels/' + id + '/rollback', { method: 'POST' }).then(function () {
-                if (!deployLive(deployGen)) return;
-                pollDeploy(id, deployGen, Date.now(), 'rollback');
+                if (!deployLive(gen)) return;
+                pollDeploy(id, gen, Date.now(), 'rollback');
             }).catch(function (e) {
-                if (!deployLive(deployGen)) return;
+                if (!deployLive(gen)) return;
                 $('ipsec-deploy-body').innerHTML = deployErrorCard('Could not start rollback: ' + esc(e.message));
             });
         });
@@ -1892,11 +1904,17 @@
     // device state. No confirm — it writes nothing to the firewalls.
     function startRecheck(id) {
         openDeployModal(id, 'recheck', true); // AUDIT-232: defer poll until the POST lands
+        // AUDIT-322: pin the generation this modal just opened with. The guard
+        // below used to be handed the LIVE deployGen, which made its generation
+        // half tautological (gen === deployGen always held), so a POST that
+        // resolved after the operator had opened a DIFFERENT tunnel's progress
+        // modal still passed and started a rogue second poll loop against it.
+        var gen = deployGen;
         AC.apiFetch(API + '/ipsec/tunnels/' + id + '/recheck', { method: 'POST' }).then(function () {
-            if (!deployLive(deployGen)) return;
-            pollDeploy(id, deployGen, Date.now(), 'recheck');
+            if (!deployLive(gen)) return;
+            pollDeploy(id, gen, Date.now(), 'recheck');
         }).catch(function (e) {
-            if (!deployLive(deployGen)) return;
+            if (!deployLive(gen)) return;
             $('ipsec-deploy-body').innerHTML = deployErrorCard('Could not start recheck: ' + esc(e.message));
         });
     }

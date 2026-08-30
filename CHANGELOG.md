@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.234] - 2026-08-29
+
+### Fixed
+
+Three follow-up findings raised during the 2026-08-27 audit remediation, now verified and numbered AUDIT-319/322/323 in `docs/audit-2026-08-27-consolidated.md`.
+
+- **AUDIT-319 — IRC connections were stranded when SASL authentication failed.** go-ircevent opens the socket and starts its read, write and ping loops *before* it negotiates capabilities, and returns a negotiation error without unwinding any of it. A server that rejected the bot's SASL credentials therefore left the write and ping loops running against an open socket on every attempt, and the reconnect sweep repeated that every 30 seconds for the life of the process. Failed connections are now torn down — QUIT first, so the read loop stops promptly instead of waiting out its 16-minute deadline. The teardown deliberately runs only when the loops actually exist: a connection that failed validation or the dial has nothing to unwind, and tearing it down there would block forever.
+- **AUDIT-322 — a late deploy response could hijack another tunnel's progress modal.** The deploy, rollback and recheck actions checked their own liveness against the *current* modal generation, which is always its own value, so only the "a modal is open" half of the guard did anything. If a POST resolved after the operator had opened a different tunnel's progress modal, it could start a second polling loop against that modal. Each action now pins the generation its own modal opened with.
+- **AUDIT-323 — an out-of-range chart window served an arbitrary time span.** `range=Inf` on the public interface chart parsed to positive infinity and converted to an implementation-defined integer, producing a cutoff unrelated to the requested window. The range table is now a pure helper bounded at one year, matching the existing `hours` parameter, and the bound also rejects infinities and NaN. The endpoint remains device- and public-gated as before.
+
+### Changed
+
+The public interface chart's range resolution moved out of the handler into a pure, table-tested `publicChartLookback` helper. Behaviour for every existing preset and fractional range is unchanged.
+
 ## [0.11.233] - 2026-08-29
 
 ### Changed
