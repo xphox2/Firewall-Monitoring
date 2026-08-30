@@ -29,11 +29,14 @@ func TestNoServerSideVPNWalk_AUDIT320(t *testing.T) {
 		{"12356.101.12.2.1.1", "the FortiGate dialup table OIDs were deleted; the server must not reacquire them (and the old copy was wrong — see AUDIT-320)"},
 	}
 
-	// cmd/poller is scanned too: the deleted API was interface-bound to
-	// internal/snmp, but a revived walk could just as easily be written
-	// directly against SNMPClient in the poller, which would evade a guard
-	// named "no server-side VPN walk" that only looked at one package.
-	roots := []string{"../../internal/snmp", "../../cmd/poller"}
+	// internal/api/handlers is scanned too, and it is the root that matters:
+	// it holds the server's only live *snmp.SNMPClient (handlers.go) and
+	// already calls GetSystemStatus/GetInterfaceStats/GetHardwareSensors on
+	// it. Restoring tunnel data on that legacy single-device path is the
+	// realistic way a walk comes back, and it would sit outside internal/snmp
+	// entirely. cmd/poller is included as the other historical direct-SNMP
+	// site, though it holds no client today.
+	roots := []string{"../../internal/snmp", "../../internal/api/handlers", "../../cmd/poller"}
 
 	for _, root := range roots {
 		entries, err := os.ReadDir(root)
@@ -47,16 +50,19 @@ func TestNoServerSideVPNWalk_AUDIT320(t *testing.T) {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
 				continue
 			}
-			b, err := os.ReadFile(filepath.Join(root, e.Name()))
+			path := filepath.Join(root, e.Name())
+			b, err := os.ReadFile(path)
 			if err != nil {
-				t.Fatalf("read %s: %v", e.Name(), err)
+				t.Fatalf("read %s: %v", path, err)
 			}
 			scanned++
 			src := string(b)
 			for _, ban := range banned {
 				if strings.Contains(src, ban.token) {
+					// Report the full path: the same basename exists under
+					// more than one root, so a bare name is ambiguous.
 					t.Errorf("AUDIT-320 regression: %s reintroduces %q — %s",
-						e.Name(), ban.token, ban.why)
+						path, ban.token, ban.why)
 				}
 			}
 		}

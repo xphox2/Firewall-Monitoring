@@ -18,7 +18,7 @@ Surfaced during remediation, now verified and numbered. Full detail and evidence
 - [x] **AUDIT-323** (server, LOW) — unclamped chart range overflowed to an arbitrary cutoff. Fixed v0.11.234.
 - [x] **AUDIT-324** (collector) — REFUTED: root cause fixed 2026-06-21 (`fcdd66b`); the 25 malformed prod rows are inert residue from a 17-second window on 2026-06-22, strictly older than every clean row and never selected by the latest-per-device consumers.
 - [x] **AUDIT-325** (server, MED) — admin "Test IRC Connection" stranded loops on BOTH paths (failure AND success). Found by adversarial review of the 319 fix. Fixed v0.11.234.
-- [ ] **AUDIT-326** (server, LOW) — OPEN: residual zero-caller SNMP client family (`GetVPNStatus` / `GetInterfaceAddresses` / `GetProcessorStats`). Kept for collector-interface parity, not because anything calls them. Decide deliberately whether the server keeps a vendor-extension SNMP contract at all.
+- [ ] **AUDIT-326** (server, LOW) — OPEN: residual zero-caller SNMP client family, kept for collector parity rather than because anything calls them. Two separate decisions, not one: (a) `GetVPNStatus` / `GetProcessorStats` ride the `VendorProfile` vendor-extension contract — decide whether the server keeps that contract at all; (b) `GetInterfaceAddresses` is vendor-neutral (walks `ipAddrTable`, resolves no profile), so answering (a) does NOT dispose of it — it needs its own call.
 
 ---
 
