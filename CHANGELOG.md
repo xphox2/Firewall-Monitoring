@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.235] - 2026-08-30
+
+### Removed
+
+Deleted the server's dead SNMP VPN-walk chain, resolving **AUDIT-320** and closing out **AUDIT-321** (`docs/audit-2026-08-27-consolidated.md`).
+
+Collectors have owned all device polling since v0.11.74, and the entry point `SNMPClient.GetAllVPNTunnels()` had no callers anywhere — so none of this code could execute. Removed: the entry point, the `GetAllVPNTunnels` method on the `VendorProfile` interface and its eight per-vendor implementations, the `linux`/`bsd`/`paloalto` walk helpers, FortiGate's `ParseVPNDialupStatus` and `ParseGRETunnels`, and the FortiGate dialup OID constants.
+
+This was not inert dead code — it actively misled. Because it looked live, an audit spent effort on its FortiGate dialup columns (which had been copied from the site-to-site tunnel table, reading `.11` and `.12` columns that do not exist in the MIB at all), and its inverted Local/Remote subnet mapping was reported as a cross-repo divergence against the collector when the collector was the correct one.
+
+The shared per-vendor VPN parsers (`parseLinuxVPNFromInterfacePDUs`, `parseBSDVPNFromInterfacePDUs`) and `ParseVPNStatus` are untouched, but not because anything currently calls them: `ParseVPNStatus` remains part of the `VendorProfile` vendor-extension contract and mirrors the collector's interface, so removing it would diverge the two repos. Its own entry point `SNMPClient.GetVPNStatus()` is itself uncalled today — that residual family is deliberately outside this change's scope and is recorded as AUDIT-326.
+
+A guardrail test fails if any server-side VPN walk or the dialup OIDs reappear under `internal/snmp`, `internal/api/handlers` or `cmd/poller`.
+
 ## [0.11.234] - 2026-08-29
 
 ### Fixed

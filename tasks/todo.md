@@ -6,18 +6,19 @@ The authoritative per-finding record is the disposition ledger in `docs/audit-20
 not this file — the batch checklist below stopped being updated partway through (batches ran in isolated
 worktrees) and is kept only as a historical record of the verification notes.
 
-## Follow-up findings (AUDIT-319..325)
+## Follow-up findings (AUDIT-319..326)
 
 Surfaced during remediation, now verified and numbered. Full detail and evidence in the ledger's
 "Findings surfaced during remediation" section.
 
 - [x] **AUDIT-319** (server, MED) — IRC SASL failure stranded writeLoop/pingLoop + socket per attempt. Fixed v0.11.234.
-- [ ] **AUDIT-320** (server, LOW) — FortiGate dialup SNMP columns wrong, but in a chain with zero callers. Resolution = delete the dead `GetAllVPNTunnels` chain.
+- [x] **AUDIT-320** (server, LOW) — FortiGate dialup SNMP columns wrong, but in a chain with zero callers. Dead chain deleted in v0.11.235.
 - [x] **AUDIT-321** (cross-repo, MED) — REFUTED for the live path: the collector mapping is correct, verified against prod device LANs. The MIB's own DESCRIPTION text is inverted; the server's (dead) copy is the wrong one.
 - [x] **AUDIT-322** (server, LOW) — deploy-modal generation guard was tautological. Fixed v0.11.234.
 - [x] **AUDIT-323** (server, LOW) — unclamped chart range overflowed to an arbitrary cutoff. Fixed v0.11.234.
 - [x] **AUDIT-324** (collector) — REFUTED: root cause fixed 2026-06-21 (`fcdd66b`); the 25 malformed prod rows are inert residue from a 17-second window on 2026-06-22, strictly older than every clean row and never selected by the latest-per-device consumers.
 - [x] **AUDIT-325** (server, MED) — admin "Test IRC Connection" stranded loops on BOTH paths (failure AND success). Found by adversarial review of the 319 fix. Fixed v0.11.234.
+- [ ] **AUDIT-326** (server, LOW) — OPEN: residual zero-caller SNMP client family, kept for collector parity rather than because anything calls them. Two separate decisions, not one: (a) `GetVPNStatus` / `GetProcessorStats` ride the `VendorProfile` vendor-extension contract — decide whether the server keeps that contract at all; (b) `GetInterfaceAddresses` is vendor-neutral (walks `ipAddrTable`, resolves no profile), so answering (a) does NOT dispose of it — it needs its own call.
 
 ---
 

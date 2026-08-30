@@ -142,21 +142,3 @@ func getOrCreateBSDIf(m map[int]*bsdIfData, idx int) *bsdIfData {
 	m[idx] = v
 	return v
 }
-
-// bsdGetAllVPNTunnels walks IF-MIB to discover VPN interfaces.
-// Used by both pfSense and OPNsense GetAllVPNTunnels implementations.
-func bsdGetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, error) {
-	pdus, err := s.Walk(BaseOIDInterface)
-	if err != nil {
-		return nil, err
-	}
-
-	// Also walk ifXTable for 64-bit counters and interface names
-	xPdus, err := s.Walk(BaseOIDIfXTable)
-	if err == nil {
-		pdus = append(pdus, xPdus...)
-	}
-
-	tunnels := parseBSDVPNFromInterfacePDUs(pdus)
-	return tunnels, nil
-}

@@ -105,15 +105,6 @@ func (sw *SonicWallProfile) ParseVPNStatus(pdus []gosnmp.SnmpPDU) []models.VPNSt
 	return parseSonicWallVPNFromSATable(pdus)
 }
 
-func (sw *SonicWallProfile) GetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, error) {
-	pdus, err := s.Walk(swBaseOIDVPNSA)
-	if err != nil {
-		return nil, err
-	}
-	tunnels := parseSonicWallVPNFromSATable(pdus)
-	return tunnels, nil
-}
-
 // sonicSAData holds per-SA data from the sonicSAStatTable.
 type sonicSAData struct {
 	peerGateway  string

@@ -152,10 +152,6 @@ func (c *CiscoASAProfile) ParseVPNStatus(_ []gosnmp.SnmpPDU) []models.VPNStatus 
 	return nil
 }
 
-func (c *CiscoASAProfile) GetAllVPNTunnels(_ *SNMPClient) ([]models.VPNStatus, error) {
-	return nil, nil
-}
-
 // Hardware sensors: deliberately unsupported — see the omission note above.
 
 func (c *CiscoASAProfile) HWSensorBaseOID() string { return "" }

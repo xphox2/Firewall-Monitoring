@@ -152,10 +152,6 @@ func (fw *FirewallaProfile) ParseVPNStatus(pdus []gosnmp.SnmpPDU) []models.VPNSt
 
 // SSL-VPN: Not applicable for Firewalla.
 
-func (fw *FirewallaProfile) GetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, error) {
-	return linuxGetAllVPNTunnels(s)
-}
-
 // Hardware sensors: lm-sensors via NET-SNMP extension MIB.
 
 func (fw *FirewallaProfile) HWSensorBaseOID() string { return fwBaseOIDLmTempSensor }
