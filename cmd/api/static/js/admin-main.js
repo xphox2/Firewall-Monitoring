@@ -2436,6 +2436,21 @@
                 if (v.inherited) txt += ' <span style="color:var(--fwmon-text-faint);">(inherited)</span>';
                 return txt;
             }
+            // Ingest RATE, measured as rows arrive (not estimated from
+            // statistics): the figure the footprint column cannot give. The
+            // footprint says what a severity costs today; the rate says where
+            // it is heading, which is what the operator needs when choosing a
+            // window.
+            var faint = '<span style="color:var(--fwmon-text-faint);">';
+            function fmtIngest(v) {
+                if (!v.rate_available) return faint + 'collecting &mdash; first figures after an hour</span>';
+                return '~' + formatNum(v.rows_per_day) + ' rows, ~' + formatBytes(v.bytes_per_day);
+            }
+            function fmtProjected(v) {
+                if (!v.rate_available) return faint + '&mdash;</span>';
+                if (v.projected_forever) return 'grows without bound';
+                return '~' + formatBytes(v.projected_bytes);
+            }
 
             var rows = sevs.map(function (v) {
                 return '<tr>' +
@@ -2445,11 +2460,39 @@
                         '" placeholder="inherit" min="0" max="3650" step="1" style="width:90px;"></td>' +
                     '<td style="font-size:0.85rem;">' + fmtWindow(v) + '</td>' +
                     '<td style="font-size:0.85rem;color:var(--fwmon-text-faint);">' + fmtRows(v) + '</td>' +
+                    '<td style="font-size:0.85rem;white-space:nowrap;">' + fmtIngest(v) + '</td>' +
+                    '<td style="font-size:0.85rem;white-space:nowrap;">' + fmtProjected(v) + '</td>' +
                     '</tr>';
             }).join('');
 
             var note = d.stats_available ? '' :
                 '<p style="color:var(--fwmon-text-faint);font-size:0.82rem;">Volume statistics not yet collected for this table; figures will appear after the database next analyses it.</p>';
+
+            // One plain verdict: the projected steady state against the volume
+            // that has to hold it. Omitted when the volume is unknown (an
+            // external database, or no server sample yet) rather than invented.
+            var hoursTxt = d.rate_hours ? Math.max(1, Math.round(d.rate_hours)) : 0;
+            var basis = hoursTxt ? 'Ingest figures are measured as rows arrive, over the last ' + hoursTxt + ' h' +
+                (d.disk_width_measured ? '' : '; the on-disk cost per row is not yet measured, so projections use the received size') + '.' : '';
+            var verdict = '';
+            if (hoursTxt && d.volume_known && d.volume_total_bytes > 0) {
+                var other = Math.max(0, (d.database_bytes || 0) - (d.current_syslog_bytes || 0));
+                var projected = (d.projected_syslog_bytes || 0) + other;
+                var pct = projected / d.volume_total_bytes * 100;
+                var fits = projected <= d.volume_total_bytes;
+                verdict = '<p style="font-size:0.85rem;margin-top:8px;">' +
+                    '<strong>Projected steady state:</strong> ~' + formatBytes(projected) +
+                    ' (syslog ~' + formatBytes(d.projected_syslog_bytes || 0) + ' at these windows + ~' + formatBytes(other) + ' other data)' +
+                    ' on a ' + formatBytes(d.volume_total_bytes) + ' volume' +
+                    (d.volume_total_derived ? ' <span style="color:var(--fwmon-text-faint);">(volume size derived)</span>' : '') +
+                    ' &mdash; ' +
+                    (fits ? '<span style="color:var(--fwmon-sig-ok);">fits at ~' + Math.round(pct) + ' %</span>' :
+                            '<span style="color:var(--fwmon-sig-error);">exceeds the volume by ~' + formatBytes(projected - d.volume_total_bytes) + '</span>') +
+                    '.' +
+                    (d.projected_forever ? ' ' + faint + 'Severities kept forever grow without bound and are not included.</span>' : '') +
+                    '</p>';
+            }
+            var basisHtml = basis ? '<p style="color:var(--fwmon-text-faint);font-size:0.82rem;margin-top:6px;">' + basis + '</p>' : '';
 
             host.innerHTML =
                 '<div class="form-group" style="max-width:320px;">' +
@@ -2469,7 +2512,9 @@
                 '</div>' + note +
                 '<table class="data-table" style="margin-top:10px;"><thead><tr>' +
                     '<th>Severity</th><th>Keep (days)</th><th>Effective</th><th>Estimated volume</th>' +
+                    '<th>Ingest / day</th><th>Projected at this window</th>' +
                 '</tr></thead><tbody>' + rows + '</tbody></table>' +
+                verdict + basisHtml +
                 '<div class="form-group" style="max-width:320px;margin-top:18px;">' +
                     '<label for="' + SYSLOG_SUMMARY_RETENTION + '">Keep summaries (days)</label>' +
                     '<input type="number" id="' + SYSLOG_SUMMARY_RETENTION + '" name="' + SYSLOG_SUMMARY_RETENTION +

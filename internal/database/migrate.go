@@ -80,6 +80,7 @@ func (d *Database) migrateBaseline() error {
 		&models.DeniedEvent{},
 		&models.EventRuleProfile{},
 		&models.EventRuleProfileToggle{},
+		&models.SyslogIngestHourly{},
 	}
 
 	// Migrate each model individually so one failure doesn't block others.
@@ -2697,4 +2698,20 @@ func (d *Database) migrateProbeAgentVersion() error {
 	}
 	log.Printf("migrate v55 probes.agent_version: ensured column exists (varchar(32), nullable)")
 	return nil
+}
+
+// migrateSyslogIngestHourly (v59) creates the syslog_ingest_hourly table (one
+// row per hour × severity of accepted syslog ingest, written by the ingest
+// meter) and adds server_metrics.data_disk_total_bytes, the volume size the
+// Retention page's projection verdict is measured against.
+//
+// Idempotency: AutoMigrate adds only what is missing. Fresh installs get both
+// from the baseline allModels loop, so this is a recorded no-op there (same
+// shape as migrateFlowAgentDropsTable). Not a partitioned table — ≤ 192 rows a
+// day — so it is deliberately absent from partitionTables/partitionModels.
+func (d *Database) migrateSyslogIngestHourly() error {
+	if err := d.db.AutoMigrate(&models.SyslogIngestHourly{}); err != nil {
+		return err
+	}
+	return d.db.AutoMigrate(&models.ServerMetric{})
 }

@@ -3,6 +3,8 @@
 package database
 
 import (
+	"time"
+
 	"firewall-mon/internal/models"
 
 	"github.com/glebarez/sqlite"
@@ -95,6 +97,8 @@ func NewDatabaseForTesting(t interface {
 		// Event Rule Profiles (v48): profile + sparse toggle matrix.
 		&models.EventRuleProfile{},
 		&models.EventRuleProfileToggle{},
+		// v59: syslog ingest meter buckets.
+		&models.SyslogIngestHourly{},
 	}
 
 	for _, m := range testModels {
@@ -103,7 +107,10 @@ func NewDatabaseForTesting(t interface {
 		}
 	}
 
-	return &Database{db: db, dialect: sqliteDialect{}}
+	// The ingest meter is real here: SaveSyslogMessages must count on the test
+	// backend exactly as it does in production, and the meter is the only
+	// producer of syslog_ingest_hourly.
+	return &Database{db: db, dialect: sqliteDialect{}, ingest: newSyslogIngestMeter(time.Now)}
 }
 
 // SetEncryptionKeyForTesting installs an AES key derived from secret so that

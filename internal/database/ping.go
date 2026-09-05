@@ -220,7 +220,11 @@ func (d *Database) SaveSyslogMessage(msg *models.SyslogMessage) error {
 }
 
 func (d *Database) SaveSyslogMessages(msgs []models.SyslogMessage) error {
-	return batchInsertWithFallback(d.db, "syslog_messages", msgs)
+	// Meter only the rows that landed: the fallback path drops rows it cannot
+	// salvage and still returns nil.
+	saved, err := batchInsertWithFallbackSaved(d.db, "syslog_messages", msgs)
+	d.meterSyslog(saved)
+	return err
 }
 
 // SaveDeniedEvents batch-inserts the Tranche 4 Phase 2 deny projection rows

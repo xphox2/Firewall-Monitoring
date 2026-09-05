@@ -135,9 +135,10 @@ func (p *Poller) recordServerMetrics(vols []alerts.ServerVolume, dataOK bool) {
 			m.RootDiskFreeBytes = v.Volume.FreeBytes
 		case "data":
 			if dataOK {
-				pct, free := v.Volume.Percent, v.Volume.FreeBytes
+				pct, free, total := v.Volume.Percent, v.Volume.FreeBytes, v.Volume.TotalBytes
 				m.DataDiskPercent = &pct
 				m.DataDiskFreeBytes = &free
+				m.DataDiskTotalBytes = &total
 				m.DataDiskPath = v.Volume.Path
 			}
 		}
