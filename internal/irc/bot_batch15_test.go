@@ -291,24 +291,32 @@ func openIRCTestDB(t *testing.T) *gorm.DB {
 
 // TestRestartBot_PanicInStartRecovered_AUDIT315: RestartBot must launch Bot.Start
 // through the same panic-recovered path as its two siblings, so a panic in
-// Start is contained instead of crashing the whole fwmon-api process. A server
-// with an empty Nick makes Start panic (irc.IRC("","") returns nil, then
-// conn.RealName = ... nil-derefs) — the exact class REL-01 guards. If the
+// Start is contained instead of crashing the whole fwmon-api process — the
+// exact class REL-01 guards. The panic is injected through the startConnectHook
+// seam right after the dial (an empty Nick used to be the trigger, until Start
+// learned to refuse it cleanly — see TestStart_EmptyNick_FailsCleanly). If the
 // recover is missing (reverted), the panic escapes the goroutine and crashes
 // the test binary; with it, the goroutine unwinds cleanly and wg drains.
 func TestRestartBot_PanicInStartRecovered_AUDIT315(t *testing.T) {
+	fake := startTestIRCServer(t)
+	host, port := fake.hostPort(t)
+
 	db := openIRCTestDB(t)
 	srv := models.IRCServer{
 		Name:          "boom",
-		ServerHost:    "localhost",
-		ServerPort:    6667,
-		Nick:          "", // forces a nil-deref panic inside Bot.Start
+		ServerHost:    host,
+		ServerPort:    port,
+		Nick:          "fwmon315",
 		Enabled:       true,
 		AutoReconnect: false,
 	}
 	if err := db.Create(&srv).Error; err != nil {
 		t.Fatalf("seed server: %v", err)
 	}
+
+	old := startConnectHook
+	startConnectHook = func(*Bot) { panic("AUDIT-315: injected panic inside Bot.Start") }
+	t.Cleanup(func() { startConnectHook = old })
 
 	m := NewManager(db) // NewManager starts no goroutines; only RestartBot's launch touches wg
 	if err := m.RestartBot(srv.ID); err != nil {

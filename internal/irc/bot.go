@@ -453,9 +453,26 @@ func (b *Bot) Start() {
 	}
 
 	server := b.Server
-	conn := irc.IRC(server.Nick, server.Username)
-	if server.Username == "" {
-		conn = irc.IRC(server.Nick, server.Nick)
+	user := server.Username
+	if user == "" {
+		user = server.Nick
+	}
+	conn := irc.IRC(server.Nick, user)
+	if conn == nil {
+		// go-ircevent returns nil, not an error, for an empty nick or user. The
+		// API rejects an empty nick, but a row can still arrive without one
+		// (legacy data, a direct DB edit). Dereferencing the nil here used to
+		// panic UNDER b.mu: launchBot's recover contained the panic, but the
+		// mutex stayed locked forever, so the next Stop()/RestartBot() on this
+		// bot hung the manager — and with it API shutdown. Treat it as a
+		// connect failure instead: release the lock, record the reason where
+		// the operator sees it, and let the sweep back off as it would for an
+		// unreachable server.
+		b.mu.Unlock()
+		log.Printf("IRC: server %q (id %d) has no nick; not connecting", server.Name, server.ID)
+		b.updateStatus("error", "nick is empty")
+		b.noteConnectFailure()
+		return
 	}
 	conn.RealName = server.RealName
 	if server.RealName == "" {

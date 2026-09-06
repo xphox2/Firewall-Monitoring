@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.238] - 2026-09-05
+
+### Fixed
+
+**IRC bot: an empty nick no longer wedges the bot's mutex.** The IRC client library returns a nil connection, not an error, for an empty nick, and the bot dereferenced it while holding its own lock. The panic itself was contained by the bot launcher's recover, but the lock was never released, so the next stop or restart of that bot hung the IRC manager — and with it a graceful API shutdown. The API already rejects an empty nick on save, so only a legacy row or a direct database edit can produce one; the bot now refuses to connect, records "nick is empty" as the server's last error where the operator sees it, and backs off exactly as it would for an unreachable server. A regression test drives Start with an empty nick and then Stop, which used to hang.
+
+- The existing recover test for `RestartBot` relied on that nil dereference to produce its panic; it now injects one through the start hook after a real dial to the in-package fake server.
+
 ## [0.11.237] - 2026-09-05
 
 ### Fixed
