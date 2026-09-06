@@ -1006,7 +1006,10 @@ func (p *Poller) runMonitoringCycle() {
 		p.alertManager.RefreshThresholds(p.db.Gorm())
 	}
 
-	devices, err := p.db.GetAllDevices()
+	// Active devices only: a retired device must drop out of relayed-telemetry
+	// checks and VPN/overlay/L2 detection. The deviceID→siteID maps in the flow
+	// storm paths deliberately stay on GetAllDevices (attribution of history).
+	devices, err := p.db.GetActiveDevices()
 	if err != nil {
 		log.Printf("Error getting devices: %v", err)
 		return

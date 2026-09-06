@@ -334,7 +334,18 @@
             <div class="card">
                 <div class="card-header">
                     <h2>Devices</h2>
-                    <button class="btn" data-action="show-device-modal" data-min-role="operator">+ Add Device</button>
+                    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                        <!-- Retired devices keep every row of history and can be
+                             restored; they are hidden from the default tab. The
+                             tabs use their own class (not .filter-tab) so the
+                             Probes page's filter cannot clear this page's state. -->
+                        <div class="chart-range-pills" role="group" aria-label="Filter devices">
+                            <button class="device-filter-tab chart-range-pill active" type="button" data-action="filter-devices" data-filter="active">Active</button>
+                            <button class="device-filter-tab chart-range-pill" type="button" data-action="filter-devices" data-filter="retired">Retired</button>
+                            <button class="device-filter-tab chart-range-pill" type="button" data-action="filter-devices" data-filter="all">All</button>
+                        </div>
+                        <button class="btn" data-action="show-device-modal" data-min-role="operator">+ Add Device</button>
+                    </div>
                 </div>
                 <div class="table-wrap">
                     <table id="devices-table">

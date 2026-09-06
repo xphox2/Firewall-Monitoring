@@ -1285,7 +1285,7 @@ func (d *Database) buildConnectionEvidence(conn *models.DeviceConnection) []L2Ev
 
 	ids := []uint{conn.SourceDeviceID, conn.DestDeviceID}
 	var devices []models.Device
-	if err := d.db.Where("id IN ?", ids).Find(&devices).Error; err != nil || len(devices) < 2 {
+	if err := d.db.Scopes(ActiveDevices).Where("id IN ?", ids).Find(&devices).Error; err != nil || len(devices) < 2 {
 		return nil
 	}
 

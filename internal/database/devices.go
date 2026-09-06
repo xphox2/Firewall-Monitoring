@@ -20,6 +20,27 @@ func (d *Database) GetAllDevices() ([]models.Device, error) {
 	return devices, err
 }
 
+// ActiveDevices is the GORM scope every "live fleet" reader applies: devices
+// that have not been retired (retired_at IS NULL). Retiring a device keeps its
+// row and history (see RetireDevice) but it must drop out of polling, ingest
+// allow-lists, dashboards, reports and counts — so those paths use this scope
+// (or GetActiveDevices) rather than a bare Find. GetDevice and GetAllDevices are
+// deliberately NOT scoped: alert enrichment, the detail page and the admin list
+// still need to name a retired device.
+func ActiveDevices(db *gorm.DB) *gorm.DB {
+	return db.Where("retired_at IS NULL")
+}
+
+// GetActiveDevices is GetAllDevices restricted to the ActiveDevices scope.
+func (d *Database) GetActiveDevices() ([]models.Device, error) {
+	var devices []models.Device
+	err := d.db.Scopes(ActiveDevices).Preload("Site").Preload("Probe").Find(&devices).Error
+	for i := range devices {
+		d.DecryptDeviceSecrets(&devices[i])
+	}
+	return devices, err
+}
+
 func (d *Database) GetDevice(id uint) (*models.Device, error) {
 	var device models.Device
 	err := d.db.Preload("Site").Preload("Probe").First(&device, id).Error
@@ -144,7 +165,7 @@ func (d *Database) UpdateDeviceStatus(id uint, status string, lastPolled time.Ti
 func (d *Database) MarkStaleProbeDevicesOffline(staleThreshold time.Time) ([]models.Device, error) {
 	var stale []models.Device
 	if err := d.db.
-		Where("probe_id IS NOT NULL AND enabled = ? AND status = ? AND last_polled < ?", true, "online", staleThreshold).
+		Where("probe_id IS NOT NULL AND retired_at IS NULL AND enabled = ? AND status = ? AND last_polled < ?", true, "online", staleThreshold).
 		Find(&stale).Error; err != nil {
 		return nil, err
 	}
@@ -162,6 +183,118 @@ func (d *Database) MarkStaleProbeDevicesOffline(staleThreshold time.Time) ([]mod
 	return stale, nil
 }
 
+// ErrDeviceRetired is returned by RetireDevice when the device is already
+// retired (the handler maps it to 409).
+var ErrDeviceRetired = errors.New("device is retired")
+
+// ErrDeviceNotRetired is returned by RestoreDevice when the device is not
+// retired, so a stray restore can never flip an active device's status.
+var ErrDeviceNotRetired = errors.New("device is not retired")
+
+// RetireDevice soft-deletes a device (v0.11.239): the mirror of
+// DecommissionProbe. In one transaction it stamps retired_at, disables the
+// device, removes its user-drawn connection-map entries (pure map config,
+// meaningless once an endpoint is gone), resolves its open incidents and
+// acknowledges + resolves its open alert rows. EVERY device-keyed table keeps
+// its rows — telemetry is a running total and the history reattaches with zero
+// row rewrites when RestoreDevice brings the same id back.
+//
+// The alert step matters for more than tidiness: CheckEscalations re-notifies
+// every unacknowledged alert in the last 24h (GetUnacknowledgedAlerts), and a
+// retired device typically carries an open DEVICE_OFFLINE — without this it
+// would escalate forever, the probe-decommission bug shape. The two UPDATEs
+// mirror the alert manager's resolveOpenAlertRows: unacked rows are resolved
+// AND auto-acknowledged (snooze cleared); already-acked rows only gain a
+// resolved_at and an appended note. `||` string concat is valid on both
+// Postgres and SQLite.
+//
+// The LC-21 incident close moved here from DeleteDevice (2026-07-04 audit): the
+// ONLY other resolve path is the device-recovery correlator (incidents_f12.go
+// closeIncident), which can never fire for a device that is no longer polled —
+// pre-fix, "device offline → incident opens → operator removes the device"
+// stranded a permanently-open incident in the poller's cache and the UI. The
+// incident row stays (retention ages it out per LC-22); the title records why.
+func (d *Database) RetireDevice(id uint) error {
+	return d.db.Transaction(func(tx *gorm.DB) error {
+		var dev models.Device
+		if err := tx.Select("id", "retired_at").First(&dev, id).Error; err != nil {
+			return fmt.Errorf("retire device %d: %w", id, err)
+		}
+		if dev.RetiredAt != nil {
+			return fmt.Errorf("retire device %d: %w", id, ErrDeviceRetired)
+		}
+		now := time.Now().UTC()
+		if err := tx.Model(&models.Device{}).Where("id = ?", id).
+			Updates(map[string]interface{}{"retired_at": now, "enabled": false}).Error; err != nil {
+			return fmt.Errorf("retire device %d: mark retired: %w", id, err)
+		}
+		if err := tx.Where("source_device_id = ? OR dest_device_id = ?", id, id).Delete(&models.DeviceConnection{}).Error; err != nil {
+			return fmt.Errorf("retire device %d: delete connections: %w", id, err)
+		}
+		if err := tx.Model(&models.Incident{}).
+			Where("device_id = ? AND resolved_at IS NULL", id).
+			Updates(map[string]interface{}{
+				"resolved_at": now,
+				"title":       gorm.Expr("title || ' (device retired)'"),
+			}).Error; err != nil {
+			return fmt.Errorf("retire device %d: resolve open incidents: %w", id, err)
+		}
+		const note = "Auto-resolved: device retired"
+		// Unacked rows: acknowledge (stops escalation) and resolve if still open.
+		// The ack is applied to every unacked row for the device, not only the
+		// unresolved ones, because GetUnacknowledgedAlerts keys on acknowledged
+		// alone — a resolved-but-unacked row would still be re-notified.
+		if err := tx.Model(&models.Alert{}).
+			Where("device_id = ? AND acknowledged = ?", id, false).
+			Updates(map[string]interface{}{
+				"acknowledged":    true,
+				"acknowledged_at": now,
+				"resolved_at":     gorm.Expr("COALESCE(resolved_at, ?)", now),
+				"notes":           gorm.Expr("CASE WHEN COALESCE(notes,'') = '' THEN ? ELSE notes || ? END", note, "\n"+note),
+				"snoozed_until":   nil,
+				"snoozed_by":      "",
+				"snoozed_reason":  "",
+			}).Error; err != nil {
+			return fmt.Errorf("retire device %d: acknowledge open alerts: %w", id, err)
+		}
+		// Acked-but-open rows: resolve, preserving the operator's ack.
+		if err := tx.Model(&models.Alert{}).
+			Where("device_id = ? AND acknowledged = ? AND resolved_at IS NULL", id, true).
+			Updates(map[string]interface{}{
+				"resolved_at":    now,
+				"notes":          gorm.Expr("CASE WHEN COALESCE(notes,'') = '' THEN ? ELSE notes || ? END", note, "\n"+note),
+				"snoozed_until":  nil,
+				"snoozed_by":     "",
+				"snoozed_reason": "",
+			}).Error; err != nil {
+			return fmt.Errorf("retire device %d: resolve acked alerts: %w", id, err)
+		}
+		return nil
+	})
+}
+
+// RestoreDevice reverses RetireDevice: clears retired_at, re-enables the device
+// and resets status to "unknown" so the next poll (not the pre-retire status)
+// decides online/offline. Nothing else is touched — the history was never
+// moved. Returns gorm.ErrRecordNotFound for an unknown id and
+// ErrDeviceNotRetired for an active one.
+func (d *Database) RestoreDevice(id uint) error {
+	return d.db.Transaction(func(tx *gorm.DB) error {
+		var dev models.Device
+		if err := tx.Select("id", "retired_at").First(&dev, id).Error; err != nil {
+			return fmt.Errorf("restore device %d: %w", id, err)
+		}
+		if dev.RetiredAt == nil {
+			return fmt.Errorf("restore device %d: %w", id, ErrDeviceNotRetired)
+		}
+		if err := tx.Model(&models.Device{}).Where("id = ?", id).
+			Updates(map[string]interface{}{"retired_at": nil, "enabled": true, "status": "unknown"}).Error; err != nil {
+			return fmt.Errorf("restore device %d: %w", id, err)
+		}
+		return nil
+	})
+}
+
 // DeleteDevice removes the device row and its user-drawn connection-map entries,
 // but DELIBERATELY preserves all historical telemetry (system_status,
 // interface_stats, vpn_status, ha_status, hardware_sensors, processor_stats,
@@ -172,6 +305,11 @@ func (d *Database) MarkStaleProbeDevicesOffline(staleThreshold time.Time) ([]mod
 // that telemetry is a running total. DeviceConnection IS removed: it is pure
 // user-drawn map config that is meaningless once an endpoint device is gone.
 // Any OPEN incident for the device is RESOLVED (not deleted) — see LC-21 below.
+//
+// v0.11.239: no HTTP route calls this any more — DELETE /admin/api/devices/:id
+// retires (RetireDevice) so the history stays attributable. Kept for the
+// permanent-purge job that lands in a follow-up, which repurposes it as the
+// final step after every child table has been emptied.
 func (d *Database) DeleteDevice(id uint) error {
 	return d.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("source_device_id = ? OR dest_device_id = ?", id, id).Delete(&models.DeviceConnection{}).Error; err != nil {
@@ -211,10 +349,11 @@ func (d *Database) GetConnectionStatuses() ([]map[string]interface{}, error) {
 	return results, err
 }
 
-// GetDeviceStatuses returns only id and status for all devices (lightweight).
+// GetDeviceStatuses returns only id and status for all active (non-retired)
+// devices (lightweight).
 func (d *Database) GetDeviceStatuses() ([]map[string]interface{}, error) {
 	var results []map[string]interface{}
-	err := d.db.Model(&models.Device{}).Select("id, status").Find(&results).Error
+	err := d.db.Model(&models.Device{}).Scopes(ActiveDevices).Select("id, status").Find(&results).Error
 	return results, err
 }
 

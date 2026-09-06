@@ -111,9 +111,15 @@ partitions are never dropped and only the severity-scoped deletes run.
 
 - **Erasure (Art. 17):** `DELETE /api/probes/:id` removes the **probe row
   only** — it does **not** cascade to that probe's device/telemetry rows.
-  Removing the associated time-series and config data is a manual operation
-  against the database (delete by `device_id` / `probe_id`), or you wait for
-  the retention windows above to age the data out.
+  `DELETE /admin/api/devices/:id` **retires** the device (v0.11.239): the row
+  is kept with a `retired_at` marker, polling and ingest stop, and every
+  telemetry/alert/incident/config-history row is preserved so it can be
+  restored under the same id. Nothing is erased by a retire. Removing the
+  associated time-series and config data is today a manual operation against
+  the database (delete by `device_id` / `probe_id`), or you wait for the
+  retention windows above to age the data out; a permanent, admin-only
+  per-device purge lands in a follow-up release. See
+  [OPERATIONS.md](OPERATIONS.md#retiring-restoring-and-recovering-devices).
 - **Access / portability (Art. 15/20):** export the relevant rows directly
   from the database (e.g. `pg_dump --table=... ` or a scoped `COPY ... TO`).
 - **Rectification (Art. 16):** not generally applicable to telemetry; device

@@ -120,7 +120,7 @@ func (h *Handler) bumpDevicesOnline(deviceTimes map[uint]time.Time, now time.Tim
 		// A silently failing bump reproduces the exact DEVICE_OFFLINE flap this
 		// helper exists to prevent — log it so the failure is diagnosable.
 		if err := h.db.Gorm().Model(&models.Device{}).
-			Where("id = ? AND (last_polled IS NULL OR last_polled < ?)", id, ts).
+			Where("id = ? AND retired_at IS NULL AND (last_polled IS NULL OR last_polled < ?)", id, ts).
 			Updates(updates).Error; err != nil {
 			log.Printf("bumpDevicesOnline: failed to update device %d: %v", id, err)
 		}

@@ -137,7 +137,7 @@ func (rs *ReportScheduler) generateAndSendReport(hours int) {
 		return
 	}
 
-	devices, err := rs.db.GetAllDevices()
+	devices, err := rs.db.GetActiveDevices()
 	if err != nil {
 		log.Printf("Report: failed to get devices: %v", err)
 		return

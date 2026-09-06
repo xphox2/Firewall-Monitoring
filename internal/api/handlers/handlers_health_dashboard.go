@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"firewall-mon/internal/api/response"
+	"firewall-mon/internal/database"
 	"firewall-mon/internal/logging"
 	"firewall-mon/internal/models"
 
@@ -266,7 +267,7 @@ func (h *Handler) computeDashboardHealth() gin.H {
 		Status string
 		C      int64
 	}
-	_ = g.Model(&models.Device{}).Select("status, COUNT(*) AS c").Group("status").Scan(&statusCounts).Error
+	_ = g.Model(&models.Device{}).Scopes(database.ActiveDevices).Select("status, COUNT(*) AS c").Group("status").Scan(&statusCounts).Error
 	var devTotal, devOnline, devOffline int64
 	for _, r := range statusCounts {
 		devTotal += r.C
@@ -281,7 +282,7 @@ func (h *Handler) computeDashboardHealth() gin.H {
 
 	// --- Data freshness: newest successful poll across the fleet ---
 	var newestPoll *time.Time
-	_ = g.Model(&models.Device{}).Select("MAX(last_polled)").Scan(&newestPoll).Error
+	_ = g.Model(&models.Device{}).Scopes(database.ActiveDevices).Select("MAX(last_polled)").Scan(&newestPoll).Error
 
 	// --- Ingestion: orphan-safe running telemetry totals + last-hour rates ---
 	ingestion := gin.H{}
@@ -354,7 +355,7 @@ func (h *Handler) computeDashboardHealth() gin.H {
 	// --- Data quality: stale devices + noisy-device leaderboard ---
 	staleCutoff := time.Now().Add(-staleDeviceWindow)
 	var stale []dashboardSummaryDevice
-	_ = g.Model(&models.Device{}).Select("id, name, status, last_polled").
+	_ = g.Model(&models.Device{}).Scopes(database.ActiveDevices).Select("id, name, status, last_polled").
 		Where("last_polled < ? AND last_polled > ?", staleCutoff, time.Unix(1, 0)).
 		Order("last_polled ASC").Limit(20).Scan(&stale).Error
 	dataQuality := gin.H{

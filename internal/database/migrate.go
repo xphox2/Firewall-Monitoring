@@ -3,6 +3,7 @@ package database
 import (
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"sort"
 	"strings"
@@ -1225,6 +1226,160 @@ func (d *Database) migrateUnifyPingStats() error {
 // baseline run against the current model.
 func (d *Database) migrateProbeDecommissionedAt() error {
 	return d.db.AutoMigrate(&models.Probe{})
+}
+
+// migrateDeviceRetiredAt (v60) adds Device.retired_at (+ its index): the
+// soft-delete marker behind retire/restore (v0.11.239). Same shape as v4 —
+// AutoMigrate only adds what's missing, so it is idempotent, and fresh installs
+// already have the column from the baseline run against the current model.
+func (d *Database) migrateDeviceRetiredAt() error {
+	return d.db.AutoMigrate(&models.Device{})
+}
+
+// orphanDeviceSourceTables are the small, device_id-indexed tables the v61
+// migration scans for device ids that no longer resolve. The partitioned
+// telemetry parents (interface_stats, system_status, ...) are deliberately NOT
+// scanned: a DISTINCT over millions of rows has no place in a startup migration,
+// and any device that ever produced telemetry also has alerts or uptime rows.
+var orphanDeviceSourceTables = []string{
+	"alerts", "device_config_revisions", "device_alert_configs", "uptime_records", "vpn_status",
+}
+
+// migrateMaterializeOrphanedDevices (v61) recreates, as RETIRED rows, the
+// devices that were removed by the pre-v0.11.239 DeleteDevice: that path
+// deleted only the devices row and left every child table keyed by a
+// device_id that no longer resolves (prod 2026-09-06: device 4 with 1.28M
+// interface_stats, 552 alerts, 43 config revisions rendering as "DEV-4" with a
+// dead link). Recreating the row under its ORIGINAL id reattaches the history
+// with zero child-row rewrites; the device can then be restored or purged like
+// any other retired device.
+//
+// Name and IP are recovered from the newest DEVICE_OFFLINE/online alert
+// message ("Device <name> (<ip>) is offline" / "... is back online"), anchored
+// on the LAST "(ip)" group before the suffix because names may contain
+// parentheses. Fallback: "Removed device #<id>" / 0.0.0.0, also used when the
+// recovered name collides with an existing device (names are unique). The
+// `device_id > 0` guard is mandatory: site digest alerts and cross-device flow
+// detections carry device_id 0 and must never materialize a "device 0".
+//
+// Idempotent by construction (only ids absent from devices are inserted). On
+// Postgres the id sequence is bumped past the highest id afterwards so an
+// orphan above the sequence cannot make a later CreateDevice fail with 23505.
+func (d *Database) migrateMaterializeOrphanedDevices() error {
+	orphans := map[uint]struct{}{}
+	for _, table := range orphanDeviceSourceTables {
+		if !d.db.Migrator().HasTable(table) {
+			continue
+		}
+		var ids []uint
+		if err := d.db.Table(table).Distinct("device_id").
+			Where("device_id > 0 AND device_id NOT IN (SELECT id FROM devices)").
+			Pluck("device_id", &ids).Error; err != nil {
+			return fmt.Errorf("scan %s for orphaned device ids: %w", table, err)
+		}
+		for _, id := range ids {
+			orphans[id] = struct{}{}
+		}
+	}
+	if len(orphans) == 0 {
+		return nil
+	}
+	sorted := make([]uint, 0, len(orphans))
+	for id := range orphans {
+		sorted = append(sorted, id)
+	}
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+
+	now := time.Now().UTC()
+	inserted := 0
+	for _, id := range sorted {
+		name, ip := d.recoverOrphanedDeviceIdentity(id)
+		fallback := fmt.Sprintf("Removed device #%d", id)
+		if name == "" {
+			name, ip = fallback, "0.0.0.0"
+		} else {
+			var clash int64
+			if err := d.db.Model(&models.Device{}).Where("name = ?", name).Count(&clash).Error; err != nil {
+				return fmt.Errorf("materialize device %d: name check: %w", id, err)
+			}
+			if clash > 0 {
+				log.Printf("migrate v61: device %d recovered name %q is already in use; using %q", id, name, fallback)
+				name, ip = fallback, "0.0.0.0"
+			}
+		}
+		// Explicit id + every defaulted column spelled out, via raw SQL so the
+		// insert is unambiguous on both backends (GORM Create treats id 0 and
+		// zero-valued defaults specially). last_polled stays NULL: the device
+		// was never polled by this row.
+		if err := d.db.Exec(`INSERT INTO devices (id, name, ip_address, snmp_port, snmp_version, enabled, public_visible, vendor,
+			wan_speed_mbps, sslvpn_users, sslvpn_tunnels, ssh_port, ssh_poll_enabled, ssh_poll_interval, api_port, api_insecure_tls,
+			created_at, updated_at, status, retired_at)
+			VALUES (?, ?, ?, 161, '2c', ?, ?, 'fortigate', 1000, 0, 0, 22, ?, 900, 443, ?, ?, ?, 'offline', ?)`,
+			id, name, ip, false, false, false, false, now, now, now).Error; err != nil {
+			return fmt.Errorf("materialize device %d: insert: %w", id, err)
+		}
+		inserted++
+		log.Printf("migrate v61: materialized retired device %d %q (%s) from orphaned history", id, name, ip)
+	}
+
+	if inserted > 0 && d.dialect.IsPostgres() {
+		var seq string
+		if err := d.db.Raw(`SELECT COALESCE(pg_get_serial_sequence('devices', 'id'), '')`).Scan(&seq).Error; err != nil {
+			return fmt.Errorf("materialize devices: resolve id sequence: %w", err)
+		}
+		if seq != "" {
+			if err := d.db.Exec(fmt.Sprintf(
+				`SELECT setval('%s', GREATEST((SELECT COALESCE(MAX(id), 1) FROM devices), (SELECT last_value FROM %s)))`,
+				seq, seq)).Error; err != nil {
+				return fmt.Errorf("materialize devices: bump id sequence %s: %w", seq, err)
+			}
+		}
+	}
+	return nil
+}
+
+// recoverOrphanedDeviceIdentity returns the (name, ip) parsed from the newest
+// device-status alert for id, or ("", "") when no message has the expected
+// shape. See migrateMaterializeOrphanedDevices.
+func (d *Database) recoverOrphanedDeviceIdentity(id uint) (string, string) {
+	var msgs []string
+	if err := d.db.Model(&models.Alert{}).
+		Where("device_id = ? AND message LIKE ? AND (message LIKE ? OR message LIKE ?)", id, "Device %", "% is offline", "% is back online").
+		Order("timestamp DESC").Limit(1).Pluck("message", &msgs).Error; err != nil || len(msgs) == 0 {
+		return "", ""
+	}
+	return parseDeviceStatusMessage(msgs[0])
+}
+
+// parseDeviceStatusMessage extracts (name, ip) from "Device <name> (<ip>) is
+// offline" / "Device <name> (<ip>) is back online", anchoring on the LAST
+// "(ip)" group so a name containing parentheses parses correctly. Returns
+// ("", "") for anything else (including an unparsable ip).
+func parseDeviceStatusMessage(msg string) (string, string) {
+	body, ok := strings.CutPrefix(msg, "Device ")
+	if !ok {
+		return "", ""
+	}
+	if b, found := strings.CutSuffix(body, " is offline"); found {
+		body = b
+	} else if b, found := strings.CutSuffix(body, " is back online"); found {
+		body = b
+	} else {
+		return "", ""
+	}
+	if !strings.HasSuffix(body, ")") {
+		return "", ""
+	}
+	open := strings.LastIndex(body, " (")
+	if open <= 0 {
+		return "", ""
+	}
+	name := strings.TrimSpace(body[:open])
+	ip := body[open+2 : len(body)-1]
+	if name == "" || net.ParseIP(ip) == nil {
+		return "", ""
+	}
+	return name, ip
 }
 
 // migrateDeviceSSHHostKey (v6) adds Device.ssh_host_key — the pinned SSH

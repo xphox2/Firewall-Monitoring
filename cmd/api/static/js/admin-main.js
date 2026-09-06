@@ -646,10 +646,56 @@
             populateProbeSelect('device-probe');
             populateSiteSelect('device-site');
 
-            var tbody = document.querySelector('#devices-table tbody');
-            tbody.innerHTML = currentDevices.map(function(d) {
-                return '<tr>' +
-                    '<td><a href="/admin/devices/' + d.id + '" style="color:var(--fwmon-accent);text-decoration:none;font-weight:600">' + escapeHtml(d.name) + '</a>' + (d.description ? '<br><span style="color:var(--fwmon-text-mute);font-size:0.78rem;">' + escapeHtml(d.description) + '</span>' : '') + '</td>' +
+            renderDevices();
+        }).catch(function(e) {
+            fwmonLog.error('Failed to load devices:', e);
+        });
+    }
+
+    // Devices page filter tab: 'active' (default) | 'retired' | 'all'. A retired
+    // device (retired_at set) keeps every row of history and is hidden from the
+    // default tab; the Retired tab is where it can be restored.
+    var deviceFilter = 'active';
+
+    function isRetiredDevice(d) { return !!(d && d.retired_at); }
+
+    // Devices that still take part in polling, maps and counts. Retired devices
+    // stay in currentDevices so name lookups (alerts, syslog, chips) keep working.
+    function activeDevices() {
+        return currentDevices.filter(function(d) { return !isRetiredDevice(d); });
+    }
+
+    function filterDevices(filter) {
+        deviceFilter = filter || 'active';
+        document.querySelectorAll('#page-devices .device-filter-tab').forEach(function(t) {
+            t.classList.toggle('active', t.dataset.filter === deviceFilter);
+        });
+        renderDevices();
+    }
+
+    // Re-renders the Devices table from currentDevices without a refetch, so the
+    // filter tabs are instant. loadDevices() fetches, then calls this.
+    function renderDevices() {
+        var tbody = document.querySelector('#devices-table tbody');
+        if (!tbody) return;
+        var rows = deviceFilter === 'all' ? currentDevices
+            : currentDevices.filter(function(d) { return isRetiredDevice(d) === (deviceFilter === 'retired'); });
+        var emptyText = deviceFilter === 'retired' ? 'No retired devices'
+            : deviceFilter === 'active' && currentDevices.length ? 'No active devices — see the Retired tab'
+            : 'No devices configured';
+        tbody.innerHTML = rows.map(function(d) {
+            var retired = isRetiredDevice(d);
+            var retiredBadge = retired
+                ? ' <span class="badge unknown" title="' + escapeHtml('Retired ' + formatDate(d.retired_at) + ' — data preserved') + '">RETIRED</span>'
+                : '';
+            var actions = retired
+                ? '<button class="btn sm" data-action="restore-device" data-min-role="operator" data-id="' + d.id + '" title="Restore this device and resume polling">Restore</button>'
+                : AC.sshLaunchButton(d, true) +
+                  AC.iconButton({ action: 'device-alert-config', id: d.id, icon: 'bell', title: 'Alert settings', minRole: 'operator' }) +
+                  AC.iconButton({ action: 'edit-device', id: d.id, icon: 'pencil', title: 'Edit device', minRole: 'operator' }) +
+                  AC.iconButton({ action: 'retire-device', id: d.id, icon: 'archive', title: 'Retire device (keeps history)', danger: true, minRole: 'operator' });
+            return '<tr' + (retired ? ' class="device-retired"' : '') + '>' +
+                    '<td><a href="/admin/devices/' + d.id + '" style="color:var(--fwmon-accent);text-decoration:none;font-weight:600">' + escapeHtml(d.name) + '</a>' + retiredBadge + (d.description ? '<br><span style="color:var(--fwmon-text-mute);font-size:0.78rem;">' + escapeHtml(d.description) + '</span>' : '') + '</td>' +
                     '<td class="mono">' + escapeHtml(d.ip_address) + '</td>' +
                     '<td>' + (d.probe ? escapeHtml(d.probe.name) : '<span style="color:var(--fwmon-text-mute)">-</span>') + '</td>' +
                     '<td>' + (d.site ? escapeHtml(d.site.name) : '<span style="color:var(--fwmon-text-mute)">-</span>') + '</td>' +
@@ -657,25 +703,18 @@
                     '<td id="dev-mem-' + d.id + '" style="color:var(--fwmon-text-mute)">-</td>' +
                     '<td id="dev-sess-' + d.id + '" style="color:var(--fwmon-text-mute)">-</td>' +
                     '<td class="td-nowrap"><span class="pulse-dot ' + (d.status === 'online' ? 'online' : 'offline') + '"></span><span class="badge ' + escapeHtml(d.status) + '">' + escapeHtml(d.status).toUpperCase() + '</span></td>' +
-                    '<td><input type="checkbox" ' + (d.public_visible ? 'checked ' : '') + 'data-action="toggle-public-visible" data-id="' + d.id + '"></td>' +
-                    '<td><div class="row-actions">' +
-                        AC.sshLaunchButton(d, true) +
-                        AC.iconButton({ action: 'device-alert-config', id: d.id, icon: 'bell', title: 'Alert settings', minRole: 'operator' }) +
-                        AC.iconButton({ action: 'edit-device', id: d.id, icon: 'pencil', title: 'Edit device', minRole: 'operator' }) +
-                        AC.iconButton({ action: 'delete-device', id: d.id, icon: 'trash', title: 'Delete device', danger: true, minRole: 'operator' }) +
-                    '</div></td>' +
+                    '<td><input type="checkbox" ' + (d.public_visible ? 'checked ' : '') + (retired ? 'disabled ' : '') + 'data-action="toggle-public-visible" data-id="' + d.id + '"></td>' +
+                    '<td><div class="row-actions">' + actions + '</div></td>' +
                 '</tr>';
-            }).join('') || '<tr><td colspan="10" class="empty-state">No devices configured</td></tr>';
+        }).join('') || '<tr><td colspan="10" class="empty-state">' + emptyText + '</td></tr>';
 
-            loadDeviceEnrichments();
-            loadDeviceAlertIndicators();
-        }).catch(function(e) {
-            console.error('Failed to load devices:', e);
-        });
+        loadDeviceEnrichments();
+        loadDeviceAlertIndicators();
     }
 
     function loadDeviceAlertIndicators() {
-        currentDevices.forEach(function(d) {
+        // Retired rows carry no alert-config indicator (nothing fires for them).
+        activeDevices().forEach(function(d) {
             apiFetch(API_BASE + '/devices/' + d.id + '/alert-config').then(function(resp) {
                 if (!resp || !resp.data || !resp.data.id) return;
                 var cfg = resp.data;
@@ -1353,12 +1392,19 @@
         }).join('');
     }
 
+    // Small adjunct marker for a retired device, rendered beside its name.
+    function retiredMarker(dev) {
+        return (dev && dev.retired_at) ? ' <span class="badge unknown" title="Retired">retired</span>' : '';
+    }
+
     function populateFilterDevices(selectId) {
         var sel = document.getElementById(selectId);
         if (!sel) return;
         var currentVal = sel.value;
+        // Retired devices stay selectable — their alerts/syslog are still here —
+        // but are labelled so they read apart from the active fleet.
         sel.innerHTML = '<option value="">All Devices</option>' + currentDevices.map(function(d) {
-            return '<option value="' + d.id + '"' + (d.id == currentVal ? ' selected' : '') + '>' + escapeHtml(d.name) + '</option>';
+            return '<option value="' + d.id + '"' + (d.id == currentVal ? ' selected' : '') + '>' + escapeHtml(d.name) + (d.retired_at ? ' (retired)' : '') + '</option>';
         }).join('');
     }
 
@@ -1760,8 +1806,10 @@
             // session is one click to context.
             var dev = currentDevices.find(function(d) { return d.id === a.device_id; });
             var devName = a.device_name || (dev ? dev.name : ('DEV-' + a.device_id));
+            // Retired adjunct marker sits BESIDE the name link (never inside the
+            // Type badge); DEV-<id> remains only for ids no longer in the list.
             var deviceCell = a.device_id
-                ? AC.deviceLink(a.device_id, devName)
+                ? AC.deviceLink(a.device_id, devName) + retiredMarker(dev)
                 : (a.device_name ? escapeHtml(a.device_name)
                     : (a.alert_type === 'SFLOW_SECURITY_DIGEST'
                         ? '<span style="color:var(--fwmon-text-faint);" title="Site-wide storm rollup — many sources, no single device">Site-wide</span>'
@@ -1866,7 +1914,7 @@
             // the currently-loaded list); fall back to the local list, then a stub.
             var devName = a.device_name || (devForAlert ? devForAlert.name : ('DEV-' + a.device_id));
             var devLinkHtml = a.device_id
-                ? AC.deviceLink(a.device_id, devName)
+                ? AC.deviceLink(a.device_id, devName) + retiredMarker(devForAlert)
                 : (a.device_name || (a.alert_type === 'SFLOW_SECURITY_DIGEST' ? 'Site-wide'
                     : a.alert_type === 'SERVER_DISK_HIGH' ? 'Firewall-Mon server' : 'Unknown'));
             // The analytics pages use device_id (not device) as their state
@@ -3085,7 +3133,32 @@
                 loadDevices();
                 AC.showSuccess(id ? 'Device updated' : 'Device created');
             }).catch(function(err) {
-                console.error('Error saving device:', err);
+                // Adding a device whose name belongs to a RETIRED device: offer to
+                // restore that device (same id, history reattaches) with the form's
+                // settings instead of creating a duplicate. Cancel keeps the form
+                // open so the operator can pick another name.
+                var body = err && err.body;
+                if (err && err.status === 409 && body && body.retired_device_id) {
+                    return AC.confirm('A retired device named "' + data.name + '" exists with its history. Restore it and apply these settings?', {
+                        title: 'Restore retired device?',
+                        confirmLabel: 'Restore',
+                    }).then(function(ok) {
+                        if (!ok) return;
+                        var settings = Object.assign({}, data);
+                        delete settings.enabled; // restore re-enables; the server rejects it in the body
+                        return apiFetch(API_BASE + '/devices/' + body.retired_device_id + '/restore', {
+                            method: 'POST', body: JSON.stringify(settings)
+                        }).then(function() {
+                            closeDeviceModal();
+                            loadDevices();
+                            AC.showSuccess('Device restored');
+                        }).catch(function(rerr) {
+                            fwmonLog.error('Error restoring device:', rerr);
+                            AC.showError('Error restoring device: ' + rerr.message);
+                        });
+                    });
+                }
+                fwmonLog.error('Error saving device:', err);
                 AC.showError('Error saving device: ' + err.message);
             });
         });
@@ -3093,20 +3166,34 @@
 
     function editDevice(id) { showDeviceModal(id); }
 
-    function deleteDevice(id) {
-        AC.confirm('Delete this device and all its data?', {
-            title: 'Delete device?',
-            confirmLabel: 'Delete',
+    // Retire replaces delete: the device row is kept (retired_at set, polling
+    // stops once the collector refreshes its device list) and every row of
+    // telemetry, alerts and config history stays attached to the same id.
+    // Permanent removal is a separate, admin-only purge.
+    function retireDevice(id) {
+        AC.confirm('Retire this device? Polling stops within a few minutes; all history is kept and it can be restored later.', {
+            title: 'Retire device?',
+            confirmLabel: 'Retire',
             danger: true,
         }).then(function(ok) {
             if (!ok) return;
-            apiFetch(API_BASE + '/devices/' + id, { method: 'DELETE' }).then(function() {
+            apiFetch(API_BASE + '/devices/' + id + '/retire', { method: 'POST' }).then(function() {
                 loadDevices();
-                AC.showSuccess('Device deleted');
+                AC.showSuccess('Device retired');
             }).catch(function(err) {
-                console.error('Error deleting device:', err);
-                AC.showError('Error deleting device: ' + err.message);
+                fwmonLog.error('Error retiring device:', err);
+                AC.showError('Error retiring device: ' + err.message);
             });
+        });
+    }
+
+    function restoreDevice(id) {
+        apiFetch(API_BASE + '/devices/' + id + '/restore', { method: 'POST' }).then(function() {
+            loadDevices();
+            AC.showSuccess('Device restored');
+        }).catch(function(err) {
+            fwmonLog.error('Error restoring device:', err);
+            AC.showError('Error restoring device: ' + err.message);
         });
     }
 
@@ -3156,7 +3243,9 @@
                 function(conn) { FWDiagram.Panels.showRichConnDetailPanel(conn); },
                 function(deviceId, offnetOnly) { FWDiagram.Panels.showRichVPNDetailPanel(deviceId, offnetOnly, currentDevices, currentVpnMap); }
             );
-            FWDiagram.render(currentDevices, currentConnections, deviceSiteMap, currentVpnMap, siteNames);
+            // Retired devices have no connections (retire drops them) and must
+            // not appear as nodes on the map.
+            FWDiagram.render(activeDevices(), currentConnections, deviceSiteMap, currentVpnMap, siteNames);
             // Seed the alert-severity overlay immediately (don't wait for the first
             // 15s poll) so devices already alerting pulse on first open.
             pollConnectionStatuses();
@@ -3177,14 +3266,14 @@
     function populateDeviceSelects() {
         ['connection-source', 'connection-dest'].forEach(function(sid) {
             var sel = document.getElementById(sid);
-            sel.innerHTML = currentDevices.map(function(d) {
+            sel.innerHTML = activeDevices().map(function(d) {
                 return '<option value="' + d.id + '">' + escapeHtml(d.name) + ' (' + escapeHtml(d.ip_address) + ')</option>';
             }).join('');
         });
     }
 
     function showConnectionModal(id) {
-        if (currentDevices.length < 2) { alert('You need at least 2 devices'); return; }
+        if (activeDevices().length < 2) { alert('You need at least 2 active devices'); return; }
         AC.openModal('connection-modal');
         document.getElementById('connection-form').reset();
         document.getElementById('connection-id').value = id || '';
@@ -4389,7 +4478,9 @@
         'test-device-connection': function(el) { testDeviceConnection(el); },
         'close-connection-modal': function() { closeConnectionModal(); },
         'edit-device': function(el) { editDevice(parseInt(el.dataset.id)); },
-        'delete-device': function(el) { deleteDevice(parseInt(el.dataset.id)); },
+        'retire-device': function(el) { retireDevice(parseInt(el.dataset.id)); },
+        'restore-device': function(el) { restoreDevice(parseInt(el.dataset.id)); },
+        'filter-devices': function(el) { filterDevices(el.dataset.filter); },
         'toggle-public-visible': function(el) {
             var id = parseInt(el.dataset.id);
             var checked = el.checked;

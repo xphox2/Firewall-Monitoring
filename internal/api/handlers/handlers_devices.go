@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/configdiff"
+	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/snmp"
@@ -102,12 +104,36 @@ func (h *Handler) CreateDevice(c *gin.Context) {
 		}
 	}
 
+	// Same-name re-add (v0.11.239): a retired device with this exact name keeps
+	// its history under its original id, so instead of creating a second row
+	// (which the unique name index would refuse anyway) tell the client which
+	// retired device it is — the UI offers to restore it with these settings.
+	var retired models.Device
+	if err := db.Gorm().Select("id, retired_at").
+		Where("name = ? AND retired_at IS NOT NULL", device.Name).First(&retired).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{
+			"success":           false,
+			"error":             "a retired device with this name exists",
+			"retired_device_id": retired.ID,
+			"retired_at":        retired.RetiredAt,
+		})
+		return
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		httputil.InternalError(c, "Failed to create device", err)
+		return
+	}
+
 	device.ID = 0
 	device.Status = "unknown"
+	device.RetiredAt = nil
 	device.CreatedAt = time.Time{}
 	device.UpdatedAt = time.Time{}
 	device.LastPolled = time.Time{}
 	if err := db.CreateDevice(&device); err != nil {
+		if database.IsUniqueViolation(err) {
+			c.JSON(http.StatusConflict, response.Error("device name already in use"))
+			return
+		}
 		httputil.InternalError(c, "Failed to create device", err)
 		return
 	}
@@ -132,7 +158,39 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 		c.JSON(http.StatusNotFound, response.Error("Device not found"))
 		return
 	}
+	// A retired device is frozen: `enabled`/`probe_id` are in the allow-list and
+	// an edit would otherwise produce an "enabled retired" device that no active
+	// path polls. Restore (optionally with settings) is the only way forward.
+	if device.RetiredAt != nil {
+		c.JSON(http.StatusConflict, response.Error("device is retired; restore it first"))
+		return
+	}
 
+	var updates map[string]interface{}
+	if err := c.ShouldBindJSON(&updates); err != nil {
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
+		return
+	}
+
+	filteredUpdates, ok := prepareDeviceUpdates(c, db, device, updates)
+	if !ok {
+		return
+	}
+	if len(filteredUpdates) == 0 {
+		c.JSON(http.StatusBadRequest, response.Error("No valid fields to update"))
+		return
+	}
+
+	h.writeDeviceUpdates(c, db, id, device, filteredUpdates)
+}
+
+// prepareDeviceUpdates applies the UpdateDevice contract to a raw JSON body:
+// allow-list filtering, length/port/IP/enabled/vendor validation, probe and
+// site existence checks, and the secret handling (mask or empty = "leave
+// unchanged", otherwise encrypt). It writes the 400 itself and returns ok=false
+// on any rejection. Shared by UpdateDevice and RestoreDevice so a
+// restore-with-settings can never bypass a check an edit would apply.
+func prepareDeviceUpdates(c *gin.Context, db database.Store, device *models.Device, updates map[string]interface{}) (map[string]interface{}, bool) {
 	allowedFields := map[string]bool{
 		"name":              true,
 		"hostname":          true,
@@ -162,18 +220,7 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 		"api_insecure_tls":  true,
 	}
 
-	var updates map[string]interface{}
-	if err := c.ShouldBindJSON(&updates); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
-		return
-	}
-
 	filteredUpdates := httputil.FilterAllowedFields(updates, allowedFields)
-
-	if len(filteredUpdates) == 0 {
-		c.JSON(http.StatusBadRequest, response.Error("No valid fields to update"))
-		return
-	}
 
 	// Validate string field lengths
 	stringLimits := map[string]int{
@@ -185,7 +232,7 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 		if val, ok := filteredUpdates[field]; ok {
 			if str, isStr := val.(string); isStr && len(str) > maxLen {
 				c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("Field %s exceeds max length of %d", field, maxLen)))
-				return
+				return nil, false
 			}
 		}
 	}
@@ -195,7 +242,7 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 		port, isNum := portVal.(float64) // JSON numbers decode as float64
 		if !isNum || port < 1 || port > 65535 || port != float64(int(port)) {
 			c.JSON(http.StatusBadRequest, response.Error("Invalid SNMP port"))
-			return
+			return nil, false
 		}
 	}
 
@@ -206,7 +253,7 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 			ipStr, isStr := ipVal.(string)
 			if !isStr || !isValidExternalIP(ipStr) {
 				c.JSON(http.StatusBadRequest, response.Error("Invalid or disallowed IP address"))
-				return
+				return nil, false
 			}
 		}
 	}
@@ -215,7 +262,7 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 	if enabledVal, ok := filteredUpdates["enabled"]; ok {
 		if _, isBool := enabledVal.(bool); !isBool {
 			c.JSON(http.StatusBadRequest, response.Error("Invalid value for enabled"))
-			return
+			return nil, false
 		}
 	}
 
@@ -224,7 +271,7 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 		vendorStr, isStr := vendorVal.(string)
 		if !isStr || !isValidVendor(vendorStr) {
 			c.JSON(http.StatusBadRequest, response.Error("Invalid vendor: must be fortigate, paloalto, cisco_asa, sonicwall, firewalla, pfsense, opnsense, or generic"))
-			return
+			return nil, false
 		}
 	}
 
@@ -238,12 +285,12 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 		pf, isNum := probeVal.(float64) // JSON numbers decode as float64
 		if !isNum || pf < 0 || pf != float64(int(pf)) {
 			c.JSON(http.StatusBadRequest, response.Error("Invalid probe ID"))
-			return
+			return nil, false
 		}
 		if pf > 0 {
 			if _, err := db.GetProbe(uint(pf)); err != nil {
 				c.JSON(http.StatusBadRequest, response.Error("Target probe not found"))
-				return
+				return nil, false
 			}
 		}
 	}
@@ -256,12 +303,12 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 		sf, isNum := siteVal.(float64) // JSON numbers decode as float64
 		if !isNum || sf < 0 || sf != float64(int(sf)) {
 			c.JSON(http.StatusBadRequest, response.Error("Invalid site ID"))
-			return
+			return nil, false
 		}
 		if sf > 0 {
 			if _, err := db.GetSite(uint(sf)); err != nil {
 				c.JSON(http.StatusBadRequest, response.Error("Site not found"))
-				return
+				return nil, false
 			}
 		}
 	}
@@ -311,16 +358,29 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 		}
 	}
 
-	// Write via Model(&Device{}).Where(id) rather than Model(device). The
-	// `device` here was loaded by GetDevice, which Preload("Probe")/Preload(
-	// "Site") — so it carries loaded belongs-to associations. gorm's
-	// Model(loadedStruct).Updates(map) re-derives the foreign keys from those
-	// loaded associations (the OLD probe/site) and overrides probe_id/site_id in
-	// the map, silently reverting any reassignment. Passing a bare model + WHERE
-	// makes gorm honor the map values verbatim.
-	if err := db.Gorm().Model(&models.Device{}).Where("id = ?", id).Updates(filteredUpdates).Error; err != nil {
-		httputil.InternalError(c, "Failed to update device", err)
-		return
+	return filteredUpdates, true
+}
+
+// writeDeviceUpdates persists a prepared update map and responds with the
+// fresh row.
+//
+// Write via Model(&Device{}).Where(id) rather than Model(device). The
+// `device` here was loaded by GetDevice, which Preload("Probe")/Preload(
+// "Site") — so it carries loaded belongs-to associations. gorm's
+// Model(loadedStruct).Updates(map) re-derives the foreign keys from those
+// loaded associations (the OLD probe/site) and overrides probe_id/site_id in
+// the map, silently reverting any reassignment. Passing a bare model + WHERE
+// makes gorm honor the map values verbatim.
+func (h *Handler) writeDeviceUpdates(c *gin.Context, db database.Store, id uint, device *models.Device, filteredUpdates map[string]interface{}) {
+	if len(filteredUpdates) > 0 {
+		if err := db.Gorm().Model(&models.Device{}).Where("id = ?", id).Updates(filteredUpdates).Error; err != nil {
+			if database.IsUniqueViolation(err) {
+				c.JSON(http.StatusConflict, response.Error("device name already in use"))
+				return
+			}
+			httputil.InternalError(c, "Failed to update device", err)
+			return
+		}
 	}
 
 	// Re-fetch to return fresh data
@@ -334,6 +394,95 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 	c.JSON(http.StatusOK, response.Success(updated))
 }
 
+// RetireDevice soft-deletes a device: history preserved, polling and ingest
+// stop, open alerts/incidents closed (database.RetireDevice). This is what
+// DELETE /admin/api/devices/:id does since v0.11.239 — a stale client that
+// still calls DELETE gets the safe behavior.
+func (h *Handler) RetireDevice(c *gin.Context) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+	if err := db.RetireDevice(id); err != nil {
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			c.JSON(http.StatusNotFound, response.Error("Device not found"))
+		case errors.Is(err, database.ErrDeviceRetired):
+			c.JSON(http.StatusConflict, response.Error("device is already retired"))
+		default:
+			httputil.InternalError(c, "Failed to retire device", err)
+		}
+		return
+	}
+	c.JSON(http.StatusOK, response.Message("Device retired"))
+}
+
+// RestoreDevice reverses a retire. The body is OPTIONAL: when present it is a
+// device-settings object (the same shape PUT accepts) applied after the
+// restore through the same allow-list, validation and secret handling as
+// UpdateDevice, with `enabled` stripped — a restored device is always
+// re-enabled. This is the "same-name re-add" path: the create form's values
+// are applied to the retired row instead of creating a second device.
+//
+// Settings are validated BEFORE the restore so a rejected body (400) leaves the
+// device retired; blank/masked secrets keep the stored encrypted values.
+func (h *Handler) RestoreDevice(c *gin.Context) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+	device, err := db.GetDevice(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, response.Error("Device not found"))
+		return
+	}
+	if device.RetiredAt == nil {
+		c.JSON(http.StatusConflict, response.Error("device is not retired"))
+		return
+	}
+
+	var filtered map[string]interface{}
+	if c.Request.Body != nil && c.Request.ContentLength != 0 {
+		var updates map[string]interface{}
+		if err := c.ShouldBindJSON(&updates); err != nil && !errors.Is(err, io.EOF) {
+			c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
+			return
+		}
+		delete(updates, "enabled")
+		if len(updates) > 0 {
+			filtered, ok = prepareDeviceUpdates(c, db, device, updates)
+			if !ok {
+				return
+			}
+		}
+	}
+
+	if err := db.RestoreDevice(id); err != nil {
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			c.JSON(http.StatusNotFound, response.Error("Device not found"))
+		case errors.Is(err, database.ErrDeviceNotRetired):
+			c.JSON(http.StatusConflict, response.Error("device is not retired"))
+		default:
+			httputil.InternalError(c, "Failed to restore device", err)
+		}
+		return
+	}
+
+	h.writeDeviceUpdates(c, db, id, device, filtered)
+}
+
+// DeleteDevice is the pre-v0.11.239 hard delete of the devices row. It is no
+// longer routed (DELETE /admin/api/devices/:id → RetireDevice); the permanent
+// purge job in a follow-up repurposes the DB method as its final step.
 func (h *Handler) DeleteDevice(c *gin.Context) {
 	db := h.reqDB(c)
 	if !httputil.RequireDB(c, db) {

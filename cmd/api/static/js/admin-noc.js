@@ -155,6 +155,9 @@
             var s = sites[i];
             var devs = s.devices || [];
             for (var j = 0; j < devs.length; j++) {
+                // Retired devices are out of the active fleet: no card, no count.
+                // (deviceNameMap keeps them so a detection can still be named.)
+                if (devs[j].retired_at) continue;
                 out.push({ dev: devs[j], siteName: s.site_name || 'Unassigned' });
             }
         }

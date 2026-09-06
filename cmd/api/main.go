@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.238"
+const ServerVersion = "0.11.239"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -447,7 +447,7 @@ func main() {
 	ircManager.SetDecryptFunc(db.DecryptField)
 	ircManager.SetStatusProvider(func() (map[string]interface{}, error) {
 		var devices []models.Device
-		db.Gorm().Find(&devices)
+		db.Gorm().Scopes(database.ActiveDevices).Find(&devices)
 
 		var devList []map[string]interface{}
 		for _, d := range devices {
@@ -486,7 +486,7 @@ func main() {
 	})
 	ircManager.SetStatsProvider(func() (map[string]interface{}, error) {
 		var devices []models.Device
-		db.Gorm().Find(&devices)
+		db.Gorm().Scopes(database.ActiveDevices).Find(&devices)
 		var totalDevices = len(devices)
 		var cpuAvg, memAvg float64
 		if totalDevices > 0 {
@@ -957,7 +957,12 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.POST("/api/devices", handler.CreateDevice)
 		admin.POST("/api/devices/test", handler.TestDeviceConnection)
 		admin.PUT("/api/devices/:id", handler.UpdateDevice)
-		admin.DELETE("/api/devices/:id", handler.DeleteDevice)
+		// DELETE retires (soft-delete, history preserved) since v0.11.239 so a
+		// stale client gets the safe behavior; explicit retire/restore routes are
+		// operator-level like the rest of the device CRUD.
+		admin.DELETE("/api/devices/:id", handler.RetireDevice)
+		admin.POST("/api/devices/:id/retire", handler.RetireDevice)
+		admin.POST("/api/devices/:id/restore", handler.RestoreDevice)
 		// Reveal one decrypted device credential — admin-only (in adminOnlyRoutes),
 		// rate-limited like login (it re-verifies a password), audit-logged.
 		admin.POST("/api/devices/:id/reveal-secret", middleware.LoginRateLimiter(), handler.RevealDeviceSecret)

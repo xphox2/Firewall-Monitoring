@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"strings"
 
 	"firewall-mon/internal/api/response"
+	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 
@@ -247,6 +249,11 @@ func (h *Handler) DeleteSite(c *gin.Context) {
 	}
 
 	if err := db.DeleteSite(id); err != nil {
+		if errors.Is(err, database.ErrSiteHasMembers) {
+			c.JSON(http.StatusConflict, response.Error(
+				"move or purge this site's devices and decommission its probes first"))
+			return
+		}
 		httputil.InternalError(c, "Failed to delete site", err)
 		return
 	}

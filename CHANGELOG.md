@@ -1,6 +1,27 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.239] - 2026-09-06
+
+### Added
+
+**Device retire / restore replaces hard delete.** Deleting a device from the console used to drop only the `devices` row and leave every telemetry, alert, incident and config-history row keyed by an id that no longer resolved — the alerts page then rendered `DEV-<id>` with a dead link, and the confirm text ("all its data") was simply untrue. `DELETE /admin/api/devices/:id` now **retires** the device (new `devices.retired_at`, migration v60), mirroring probe decommissioning: polling and ingest stop, open alerts are acknowledged and resolved so the escalation engine stops re-notifying, open incidents close with a `(device retired)` reason, map links are removed, and **every historical row is preserved**. `POST /admin/api/devices/:id/{retire,restore}` are explicit operator-level routes; restore accepts an optional settings body applied through the same validation and secret handling as an edit (`enabled` ignored). Editing a retired device returns `409 device is retired; restore it first`.
+
+**Same-name re-add restores the retired device.** Creating a device whose name matches a retired one returns `409` with `retired_device_id` and `retired_at` so the UI can offer to restore it with the form's settings — same id, history reattached with zero row rewrites. A collision with an active device is now `409 device name already in use` instead of an opaque 500 (`database.IsUniqueViolation`, Postgres 23505 / SQLite).
+
+**Recovery of devices removed before this release** (migration v61 `materialize_orphaned_devices`): ids still present in `alerts`, `device_config_revisions`, `device_alert_configs`, `uptime_records` or `vpn_status` but absent from `devices` are recreated as retired rows under their original id, name and IP parsed from the newest `Device <name> (<ip>) is offline/back online` alert (fallback `Removed device #<id>` / `0.0.0.0`, also on a name collision). `device_id = 0` digest rows are ignored; the Postgres id sequence is bumped past the highest id afterwards. Idempotent; each row is logged.
+
+### Changed
+
+- Every live-fleet reader now applies the `ActiveDevices` scope (`retired_at IS NULL`): collector device lists and the per-item ingest allow-list (a retired device's credentials are no longer shipped to collectors), the stale-device sweep, online bumps and host-key pinning, the poller's main cycle and IPSec telemetry, dashboards, health dashboard, NOC counts and site breakdown, connections VPN map, reports, event-rule device metadata, the vendor audit and the IRC status/stats providers. `GetDevice`, `GetAllDevices`, alert enrichment and the flow-storm site attribution maps stay unfiltered so retired devices are still named.
+- **Site delete refuses while the site still has devices (active or retired) or probes** (`409`). It previously cascaded a raw `DELETE` over both, destroying device rows as a side effect.
+- Deleting or decommissioning a probe no longer counts retired devices as blocking; a probe delete detaches its retired devices (`probe_id` → NULL) so the foreign key cannot refuse it.
+- `internal/database.DeleteDevice` is no longer routed; it stays for the permanent-purge job in a follow-up release.
+
+### Documentation
+
+- `docs/OPERATIONS.md`: new "Retiring, restoring and recovering devices" section; `docs/DATA-RETENTION.md` erasure notes and the README endpoint list updated.
+
 ## [0.11.238] - 2026-09-05
 
 ### Fixed

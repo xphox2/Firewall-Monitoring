@@ -72,9 +72,64 @@ func TestDecommissionProbe_RefusesWhenDevicesAssigned(t *testing.T) {
 	}
 }
 
+// TestRetireDevice_PreservesTelemetry is the v0.11.239 counterpart of
+// TestDeleteDevice_PreservesTelemetry for the path the UI now uses: retiring a
+// device keeps the device row AND every telemetry row keyed by it, so nothing
+// is orphaned and the history reattaches on restore.
+func TestRetireDevice_PreservesTelemetry(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+
+	dev := &models.Device{Name: "dev1", IPAddress: "10.0.0.1"}
+	if err := d.db.Create(dev).Error; err != nil {
+		t.Fatalf("create device: %v", err)
+	}
+	now := time.Now()
+	if err := d.db.Create(&models.SystemStatus{DeviceID: dev.ID, Timestamp: now}).Error; err != nil {
+		t.Fatalf("seed status: %v", err)
+	}
+	if err := d.db.Create(&models.TrapEvent{DeviceID: dev.ID, Timestamp: now}).Error; err != nil {
+		t.Fatalf("seed trap: %v", err)
+	}
+	if err := d.db.Create(&models.Alert{DeviceID: dev.ID, Timestamp: now}).Error; err != nil {
+		t.Fatalf("seed alert: %v", err)
+	}
+	if err := d.db.Create(&models.DeviceConfigRevision{DeviceID: dev.ID, Timestamp: now}).Error; err != nil {
+		t.Fatalf("seed revision: %v", err)
+	}
+
+	if err := d.RetireDevice(dev.ID); err != nil {
+		t.Fatalf("RetireDevice: %v", err)
+	}
+
+	got, err := d.GetDevice(dev.ID)
+	if err != nil {
+		t.Fatalf("device row must survive a retire: %v", err)
+	}
+	if got.RetiredAt == nil {
+		t.Error("retired_at should be set")
+	}
+	for _, c := range []struct {
+		name  string
+		model interface{}
+	}{
+		{"system_status", &models.SystemStatus{}},
+		{"trap_events", &models.TrapEvent{}},
+		{"alerts", &models.Alert{}},
+		{"device_config_revisions", &models.DeviceConfigRevision{}},
+	} {
+		var n int64
+		d.db.Model(c.model).Where("device_id = ?", dev.ID).Count(&n)
+		if n != 1 {
+			t.Errorf("%s must survive a retire, got %d rows", c.name, n)
+		}
+	}
+}
+
 // TestDeleteDevice_PreservesTelemetry guards the fix that a device delete must
 // NOT physically erase its historical telemetry — the rows are orphaned but
 // kept (data is a running total, never destroyed just because a device is gone).
+// DeleteDevice is no longer routed (v0.11.239: DELETE retires) but the DB
+// method stays for the purge follow-up, so its contract is still pinned.
 func TestDeleteDevice_PreservesTelemetry(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	if err := d.db.AutoMigrate(&models.DeviceConnection{}); err != nil {

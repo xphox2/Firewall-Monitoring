@@ -68,7 +68,7 @@ func (h *Handler) SnapshotUptime() {
 	if h.db == nil {
 		return
 	}
-	devices, err := h.db.GetAllDevices()
+	devices, err := h.db.GetActiveDevices()
 	if err != nil {
 		log.Printf("uptime-snapshot: list devices: %v", err)
 		return
@@ -803,7 +803,7 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 		// auto-detected connections the previous unbounded Find could
 		// pull an enormous payload. 1000 is well above any realistic
 		// admin-managed fleet, low enough to fit in a single response.
-		if err := db.Gorm().Preload("Site").Preload("Probe").Limit(1000).Find(&devices).Error; err != nil {
+		if err := db.Gorm().Scopes(database.ActiveDevices).Preload("Site").Preload("Probe").Limit(1000).Find(&devices).Error; err != nil {
 			log.Printf("Failed to get devices: %v", err)
 		}
 
@@ -1050,7 +1050,7 @@ func (h *Handler) computeDashboardSummary() gin.H {
 		Status string
 		C      int64
 	}
-	if err := g.Model(&models.Device{}).Select("status, COUNT(*) AS c").Group("status").Scan(&statusCounts).Error; err != nil {
+	if err := g.Model(&models.Device{}).Scopes(database.ActiveDevices).Select("status, COUNT(*) AS c").Group("status").Scan(&statusCounts).Error; err != nil {
 		log.Printf("dashboard summary: status counts: %v", err)
 	}
 	var total, online, offline int64
@@ -1066,7 +1066,7 @@ func (h *Handler) computeDashboardSummary() gin.H {
 
 	// Minimal device list (id/name/status/last_polled) for the stale + noisy cards.
 	devices := make([]dashboardSummaryDevice, 0)
-	if err := g.Model(&models.Device{}).Select("id, name, status, last_polled").Limit(1000).Scan(&devices).Error; err != nil {
+	if err := g.Model(&models.Device{}).Scopes(database.ActiveDevices).Select("id, name, status, last_polled").Limit(1000).Scan(&devices).Error; err != nil {
 		log.Printf("dashboard summary: device list: %v", err)
 	}
 
@@ -1243,7 +1243,7 @@ func (h *Handler) GetDeviceDataDiag(c *gin.Context) {
 
 	// Defensive cap (v0.10.217, bundle D3).
 	var devices []models.Device
-	if err := db.Gorm().Select("id, name, ip_address, status, last_polled, probe_id").Limit(1000).Find(&devices).Error; err != nil {
+	if err := db.Gorm().Scopes(database.ActiveDevices).Select("id, name, ip_address, status, last_polled, probe_id").Limit(1000).Find(&devices).Error; err != nil {
 		httputil.InternalError(c, "Failed to get devices", err)
 		return
 	}

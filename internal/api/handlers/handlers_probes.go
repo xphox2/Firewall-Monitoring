@@ -1020,8 +1020,8 @@ func (h *Handler) processObservedHostKeys(probeID uint, observed map[uint]string
 			continue
 		}
 		var device models.Device
-		if err := h.db.Gorm().Where("id = ? AND probe_id = ?", deviceID, probeID).First(&device).Error; err != nil {
-			continue // not this probe's device, or it no longer exists
+		if err := h.db.Gorm().Where("id = ? AND probe_id = ? AND retired_at IS NULL", deviceID, probeID).First(&device).Error; err != nil {
+			continue // not this probe's device, retired, or it no longer exists
 		}
 
 		known := splitHostKeys(device.SSHHostKeys)

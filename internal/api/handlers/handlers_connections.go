@@ -528,7 +528,7 @@ func (h *Handler) GetVPNMapData(c *gin.Context) {
 		return
 	}
 
-	devices, err := db.GetAllDevices()
+	devices, err := db.GetActiveDevices()
 	if err != nil {
 		httputil.InternalError(c, "Failed to get devices", err)
 		return
