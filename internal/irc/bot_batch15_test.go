@@ -88,6 +88,12 @@ func startTestIRCServer(t *testing.T) *testIRCServer {
 					if err != nil {
 						return
 					}
+					// A real ircd drops the session on QUIT; so does this one,
+					// which is what lets a client teardown's read loop return
+					// instead of waiting out teardownConn's drain bound.
+					if strings.HasPrefix(line, "QUIT") {
+						return
+					}
 				}
 			}(c)
 		}

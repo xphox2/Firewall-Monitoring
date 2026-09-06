@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file.
 
 - The existing recover test for `RestartBot` relied on that nil dereference to produce its panic; it now injects one through the start hook after a real dial to the in-package fake server.
 
+**IRC bot: a failed-connect teardown no longer drops its own QUIT.** `teardownConn` (the AUDIT-319/325 unwind for a connection whose SASL or capability negotiation failed, and for a stop that raced the dial) queued a QUIT and immediately called the library's `Disconnect`, which closes its `end` channel before waiting for the loops. The write loop selects between `end` and the queued QUIT; if it had not yet parked when `end` closed, the choice was random and the QUIT was dropped half the time, so the server never dropped the session, the read loop sat on its 16-minute deadline, and the unwind stalled — the very leak that code exists to close. It only showed on the CI race lane (two of three runs on 2026-09-06), never locally, because the window is the few nanoseconds between the previous write completing and the loop re-entering its select. The teardown now waits, bounded to 2 s, for the server to drop the session after the QUIT before it disconnects.
+
 ## [0.11.237] - 2026-09-05
 
 ### Fixed

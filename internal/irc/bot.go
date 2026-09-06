@@ -1426,11 +1426,34 @@ func forgetConn(conn *irc.Connection) {
 // 1m+15m), 15m10s for a TestBot conn, which lowers Timeout to 10s. safeQuit is timeout-bounded and
 // latches a wedged conn, so it always returns; the caller runs this on its own
 // goroutine so a server that ignores the QUIT delays nothing but this cleanup.
+//
+// The QUIT must also actually reach the wire before Disconnect runs. safeQuit
+// only queues it on the library's buffered pwrite channel, and Disconnect
+// closes `end` before it waits; writeLoop selects between `end` and pwrite,
+// so if it has not yet woken for the QUIT when `end` closes, Go picks between
+// the two ready cases at random and the QUIT is dropped half the time —
+// leaving exactly the stall above. Locally writeLoop nearly always wakes
+// first; under the race detector on a loaded CI runner it often does not
+// (TestTeardownConn_UnwindsLoops_AUDIT319 timed out on two of three runs on
+// 2026-09-06). So after a queued QUIT, wait for the server to drop the
+// session — readLoop reports that on ErrorChan, which nothing else reads for
+// a conn being torn down here — bounded so a server that ignores the QUIT
+// still only delays this cleanup goroutine.
 func teardownConn(conn *irc.Connection) {
-	_ = safeQuit(conn)
+	if err := safeQuit(conn); err == nil {
+		select {
+		case <-conn.ErrorChan():
+		case <-time.After(teardownQuitDrain):
+		}
+	}
 	forgetConn(conn)
 	conn.Disconnect()
 }
+
+// teardownQuitDrain bounds how long teardownConn waits for the server to drop
+// the session after a QUIT before it disconnects regardless. A real ircd
+// closes within milliseconds; the bound only matters for one that ignores QUIT.
+const teardownQuitDrain = 2 * time.Second
 
 // sendVia wraps sendWithTimeout with the per-connection write-dead latch
 // (AUDIT-314). A conn already latched dead never spawns another sender; the
