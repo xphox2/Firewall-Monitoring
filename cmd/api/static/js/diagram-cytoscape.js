@@ -1427,8 +1427,9 @@
         stopParticles(); startParticles();
         // A newly added cloud sits at the layout origin, which may be outside the
         // current viewport; the graph's extent grew, so bring it into view. An
-        // edge appearing between nodes already on screen never moves the view.
-        if (cloudAdded) cy.animate({ fit: { eles: cy.elements(), padding: 40 } }, { duration: 400 });
+        // edge appearing between nodes already on screen never moves the view,
+        // and a NOC focus keeps its viewport (the cloud is dimmed under it anyway).
+        if (cloudAdded && cy.nodes('.focused').empty()) cy.animate({ fit: { eles: cy.elements(), padding: 40 } }, { duration: 400 });
     }
 
     function animateFlash(edge, color, onComplete) {
