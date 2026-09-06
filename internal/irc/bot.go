@@ -1434,8 +1434,8 @@ func forgetConn(conn *irc.Connection) {
 // the two ready cases at random and the QUIT is dropped half the time —
 // leaving exactly the stall above. Locally writeLoop nearly always wakes
 // first; under the race detector on a loaded CI runner it often does not
-// (TestTeardownConn_UnwindsLoops_AUDIT319 timed out on two of three runs on
-// 2026-09-06). So after a queued QUIT, wait for the server to drop the
+// (TestTeardownConn_UnwindsLoops_AUDIT319 timed out on two of the six
+// race-lane runs on 2026-09-06). So after a queued QUIT, wait for the server to drop the
 // session — readLoop reports that on ErrorChan, which nothing else reads for
 // a conn being torn down here — bounded so a server that ignores the QUIT
 // still only delays this cleanup goroutine.
