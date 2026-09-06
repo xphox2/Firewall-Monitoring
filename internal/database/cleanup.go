@@ -356,6 +356,11 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		// AUDIT-042: idempotency keys only matter for the probe's retry window
 		// (seconds); 2 days is far more than enough and keeps the table tiny.
 		{&models.ProcessedBatch{}, "processed_batches", 2},
+		// v59: the syslog ingest meter's hourly buckets. The Retention page
+		// reads the last 24 h; 8 days keeps a full week on hand for the
+		// disk-forecast follow-up without the table ever mattering (≤ 192
+		// rows/day).
+		{&models.SyslogIngestHourly{}, "syslog_ingest_hourly", 8},
 		// H4 of the 2026-07-01 audit: flow_rollups had no retention at all —
 		// terminal '1d' rollups (one row per distinct conversation per day,
 		// 10^5-10^6 rows/day on a busy network) accumulated forever. The

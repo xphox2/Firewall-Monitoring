@@ -27,28 +27,40 @@ import (
 // CreateBatchSize, so Create(&rows) is one atomic statement — a failure
 // inserts nothing.
 func batchInsertWithFallback[T any](db *gorm.DB, kind string, rows []T) error {
+	_, err := batchInsertWithFallbackSaved(db, kind, rows)
+	return err
+}
+
+// batchInsertWithFallbackSaved is batchInsertWithFallback that also returns the
+// rows that actually landed — the whole input on the fast path, and on the
+// per-row fallback only the rows whose Create succeeded. A caller that meters
+// what was written (the syslog ingest meter) must count from this, not from
+// its input: a nil error here means "at least one row saved", not "all".
+func batchInsertWithFallbackSaved[T any](db *gorm.DB, kind string, rows []T) ([]T, error) {
 	if len(rows) == 0 {
-		return nil
+		return nil, nil
 	}
 	batchErr := db.Create(&rows).Error
 	if batchErr == nil {
-		return nil
+		return rows, nil
 	}
 	log.Printf("%s: batch insert of %d rows failed (%v); retrying per-row (M26 fallback)", kind, len(rows), batchErr)
-	failed := 0
+	saved := make([]T, 0, len(rows))
 	var lastErr error
 	for i := range rows {
 		if err := db.Create(&rows[i]).Error; err != nil {
-			failed++
 			lastErr = err
 			log.Printf("%s: dropping unsalvageable row %d/%d: %v", kind, i+1, len(rows), err)
+			continue
 		}
+		saved = append(saved, rows[i])
 	}
+	failed := len(rows) - len(saved)
 	if failed == len(rows) {
-		return fmt.Errorf("%s: batch and all %d per-row inserts failed: %w", kind, len(rows), lastErr)
+		return nil, fmt.Errorf("%s: batch and all %d per-row inserts failed: %w", kind, len(rows), lastErr)
 	}
 	if failed > 0 {
-		log.Printf("%s: per-row fallback saved %d/%d rows (%d dropped)", kind, len(rows)-failed, len(rows), failed)
+		log.Printf("%s: per-row fallback saved %d/%d rows (%d dropped)", kind, len(saved), len(rows), failed)
 	}
-	return nil
+	return saved, nil
 }

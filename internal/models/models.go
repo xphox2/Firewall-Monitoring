@@ -1276,7 +1276,15 @@ type ServerMetric struct {
 	// graph form. Readers must omit nil points, not plot them.
 	DataDiskPercent   *float64 `json:"data_disk_percent"`
 	DataDiskFreeBytes *uint64  `json:"data_disk_free_bytes"`
-	DataDiskPath      string   `json:"data_disk_path"`
+	// DataDiskTotalBytes is the volume's size as the filesystem reports it
+	// (migration v59). It is stored rather than derived from percent and free
+	// because gopsutil's percent is Used/(Used+Free), which excludes ext4's
+	// reserved blocks — so free ÷ (1 − pct) is NOT the size `df` shows, and a
+	// "fits at N %" verdict built on it would disagree with the shell. Rows
+	// written before v59 carry nil here; readers fall back to the derived figure
+	// and say so.
+	DataDiskTotalBytes *uint64 `json:"data_disk_total_bytes"`
+	DataDiskPath       string  `json:"data_disk_path"`
 }
 
 func (ServerMetric) TableName() string     { return "server_metrics" }
@@ -1328,6 +1336,26 @@ type SyslogMessage struct {
 	SourceIP       string    `json:"source_ip"`
 	CreatedAt      time.Time `json:"created_at"`
 }
+
+// SyslogIngestHourly is one hour × severity of accepted syslog ingest, written
+// by the ingest meter (database.SaveSyslogMessages counts the rows it actually
+// landed). Backs the Retention page's rows/day and projected-size figures.
+//
+// The column is named `timestamp` on purpose so the table rides the existing
+// `batchedDeleteOlderThan` cleanup loop; row_count/byte_count avoid the `rows`
+// keyword. At most 8 rows per hour (192/day) — never a volume concern.
+type SyslogIngestHourly struct {
+	ID uint `json:"id" gorm:"primaryKey"`
+	// Timestamp is the hour start, UTC.
+	Timestamp time.Time `json:"timestamp" gorm:"uniqueIndex:idx_syslog_ingest_hour_sev,priority:1"`
+	Severity  int       `json:"severity" gorm:"uniqueIndex:idx_syslog_ingest_hour_sev,priority:2"`
+	RowCount  int64     `json:"row_count"`
+	// ByteCount is the sum of message+structured_data+hostname+app_name bytes
+	// as received — the payload, not the on-disk cost.
+	ByteCount int64 `json:"byte_count"`
+}
+
+func (SyslogIngestHourly) TableName() string { return "syslog_ingest_hourly" }
 
 func (SyslogMessage) TableName() string { return "syslog_messages" }
 

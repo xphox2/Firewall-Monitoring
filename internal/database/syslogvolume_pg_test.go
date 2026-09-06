@@ -176,8 +176,10 @@ func TestSyslogVolume_DoesNotScanTheTable(t *testing.T) {
 	}
 	read(&before)
 
-	d.syslogSeverityStats()
-	d.syslogAvgRowWidth()
+	// The whole report, not its two original helpers: v0.11.236 added the
+	// on-disk footprint, database size, server_metrics and syslog_ingest_hourly
+	// reads, and every one of them has to stay under this guarantee.
+	d.SyslogVolume(config.RetentionConfig{SyslogCriticalDays: 30, SyslogInfoDays: 7})
 
 	if err := d.db.Exec(`SELECT pg_stat_force_next_flush()`).Error; err != nil {
 		t.Fatalf("flush: %v", err)
@@ -225,5 +227,72 @@ func TestSyslogVolume_NeverAnalyzedReportsUnavailableNotZero(t *testing.T) {
 	if got := len(rep.Severities); got != SyslogSeverityCount {
 		t.Errorf("reported %d severities, want %d — every severity needs a row even when "+
 			"its volume is unknown, or it cannot be configured", got, SyslogSeverityCount)
+	}
+}
+
+// The projection multiplies a row rate by the table's TRUE on-disk cost per row
+// (heap + indexes + TOAST), which the planner's avg_width understates by ~25%
+// on production. It must resolve in every shape the table is deployed in,
+// including the leaf-only-analyzed one every fresh install has.
+func TestSyslogVolume_DiskFootprintResolvesInEveryTableShape(t *testing.T) {
+	shapes := []struct {
+		name  string
+		shape int
+	}{
+		{"plain heap (production)", plainHeap},
+		{"partitioned, leaf analyzed only (every fresh install)", partitionedLeafOnly},
+		{"partitioned, parent also analyzed", partitionedBothAnalyzed},
+	}
+	for _, tc := range shapes {
+		t.Run(tc.name, func(t *testing.T) {
+			d := newPGForTest(t)
+			seedSyslogVolume(t, d, tc.shape)
+
+			width, tableBytes, measured := d.syslogDiskFootprint()
+			if !measured {
+				t.Fatalf("width not measured (width=%d, bytes=%d) — the projection would fall back to "+
+					"the received size and understate the on-disk cost", width, tableBytes)
+			}
+			if width <= 0 || tableBytes <= 0 {
+				t.Errorf("width=%d tableBytes=%d, want both > 0", width, tableBytes)
+			}
+			// 20,000 seeded rows; a partition-double-count would halve the width
+			// and a parent-only read would zero the bytes.
+			if width < 20 || width > 2000 {
+				t.Errorf("width=%d bytes/row is not a plausible per-row cost for the seeded rows", width)
+			}
+			rep := d.SyslogVolume(config.RetentionConfig{SyslogCriticalDays: 30, SyslogInfoDays: 7})
+			if rep.DiskBytesPerRow != width || rep.CurrentSyslogBytes != tableBytes || !rep.DiskWidthMeasured {
+				t.Errorf("report carries width=%d bytes=%d measured=%v, want %d/%d/true",
+					rep.DiskBytesPerRow, rep.CurrentSyslogBytes, rep.DiskWidthMeasured, width, tableBytes)
+			}
+			if rep.DatabaseBytes < rep.CurrentSyslogBytes {
+				t.Errorf("DatabaseBytes=%d < CurrentSyslogBytes=%d", rep.DatabaseBytes, rep.CurrentSyslogBytes)
+			}
+		})
+	}
+}
+
+// Never analyzed: the footprint's bytes are known but its per-row cost is not
+// (reltuples = -1), and the report must say so rather than divide by a sentinel.
+func TestSyslogVolume_DiskWidthUnmeasuredBeforeAnalyze(t *testing.T) {
+	d := newPGForTest(t)
+	if err := d.db.Exec(`DROP TABLE IF EXISTS syslog_messages CASCADE`).Error; err != nil {
+		t.Fatalf("drop: %v", err)
+	}
+	if err := d.db.Exec(`CREATE TABLE syslog_messages (
+		id bigserial, severity int, message text, "timestamp" timestamptz)`).Error; err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := d.db.Exec(`INSERT INTO syslog_messages (severity, message, "timestamp")
+		SELECT 5, 'x', now() FROM generate_series(1, 100) g`).Error; err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	width, tableBytes, measured := d.syslogDiskFootprint()
+	if measured || width != 0 {
+		t.Errorf("width=%d measured=%v before any ANALYZE, want 0/false", width, measured)
+	}
+	if tableBytes <= 0 {
+		t.Errorf("tableBytes=%d, want the relation's size even when the width is unknown", tableBytes)
 	}
 }

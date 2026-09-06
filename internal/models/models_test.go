@@ -38,7 +38,7 @@ func allTablers() []tabler {
 		LicenseInfo{}, HardwareSensor{}, TrapEvent{}, Alert{}, UptimeRecord{},
 		ProcessedBatch{}, LoginAttempt{}, Device{}, DeviceTunnel{}, DeviceConnection{},
 		InterfaceAddress{}, SystemSetting{}, Admin{}, Site{}, Probe{}, ProbeApproval{},
-		ProbeHeartbeat{}, PingResult{}, PingStats{}, SyslogMessage{}, SyslogSummary{},
+		ProbeHeartbeat{}, PingResult{}, PingStats{}, SyslogMessage{}, SyslogSummary{}, SyslogIngestHourly{},
 		FlowSample{}, FlowRollup{}, SiteDatabase{}, SiteDevice{}, SiteSystemStatus{},
 		SiteInterfaceStats{}, SiteTrapEvent{}, SiteAlert{}, SitePingResult{},
 		SitePingStats{}, IRCServer{}, IRCChannel{}, IRCCommand{}, IRCMessageLog{},

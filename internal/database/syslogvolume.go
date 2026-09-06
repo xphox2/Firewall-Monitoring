@@ -1,7 +1,14 @@
 package database
 
 import (
+	"errors"
+	"log"
+	"time"
+
 	"firewall-mon/internal/config"
+	"firewall-mon/internal/models"
+
+	"gorm.io/gorm"
 )
 
 // SyslogSeverityVolume is one severity's estimated share of the table, for the
@@ -30,6 +37,21 @@ type SyslogSeverityVolume struct {
 	Tracked  bool  `json:"tracked"`
 	EstRows  int64 `json:"est_rows"`
 	EstBytes int64 `json:"est_bytes"`
+
+	// Ingest rate, measured by the ingest meter (syslog_ingest.go) over the
+	// last SyslogVolumeReport.RateHours. RateAvailable is false until the
+	// meter has landed its first bucket; the page says "collecting" rather
+	// than showing a zero rate as if nothing arrives.
+	RateAvailable bool  `json:"rate_available"`
+	RowsPerDay    int64 `json:"rows_per_day"`
+	BytesPerDay   int64 `json:"bytes_per_day"` // ingest payload bytes, not on-disk
+
+	// ProjectedBytes is the steady-state on-disk size at the resolved window:
+	// RowsPerDay × Days × DiskBytesPerRow. ProjectedForever is set instead
+	// when the window is keep-forever and rows are arriving — the size grows
+	// without bound and no single number is honest.
+	ProjectedBytes   int64 `json:"projected_bytes"`
+	ProjectedForever bool  `json:"projected_forever"`
 }
 
 // SyslogVolumeReport backs the Retention page.
@@ -46,6 +68,39 @@ type SyslogVolumeReport struct {
 	// than showing a distribution it invented.
 	StatsAvailable bool  `json:"stats_available"`
 	TotalRows      int64 `json:"total_rows"`
+
+	// RateHours is how many hours of ingest buckets the per-severity rates
+	// rest on (≤ 24; 0 = no buckets yet, every RateAvailable is false).
+	RateHours float64 `json:"rate_hours"`
+
+	// DiskBytesPerRow turns a row rate into a size. DiskWidthMeasured=true
+	// means it is the table's true on-disk cost per row (heap + indexes +
+	// TOAST, from the catalog); false means it is the meter's own
+	// bytes-per-row, which understates the on-disk cost.
+	DiskBytesPerRow   int64 `json:"disk_bytes_per_row"`
+	DiskWidthMeasured bool  `json:"disk_width_measured"`
+
+	// CurrentSyslogBytes is the syslog table's on-disk size now; DatabaseBytes
+	// the whole database's. Their difference is "everything else", which the
+	// projection carries forward unchanged.
+	CurrentSyslogBytes int64 `json:"current_syslog_bytes"`
+	DatabaseBytes      int64 `json:"database_bytes"`
+
+	// ProjectedSyslogBytes sums the severities' ProjectedBytes; ProjectedForever
+	// is true when any severity is kept forever and still receiving rows.
+	ProjectedSyslogBytes int64 `json:"projected_syslog_bytes"`
+	ProjectedForever     bool  `json:"projected_forever"`
+
+	// The volume the database lives on, from the newest server_metrics sample
+	// that saw it. VolumeKnown=false (external database, first minutes after
+	// install) means the page omits the verdict rather than inventing one.
+	// VolumeTotalDerived=true means the sample predates the stored size and the
+	// total was derived from percent and free — which excludes ext4's reserved
+	// blocks, so it can read a few percent under what df shows.
+	VolumeTotalBytes   int64 `json:"volume_total_bytes"`
+	VolumeFreeBytes    int64 `json:"volume_free_bytes"`
+	VolumeKnown        bool  `json:"volume_known"`
+	VolumeTotalDerived bool  `json:"volume_total_derived"`
 }
 
 var syslogSeverityNames = [SyslogSeverityCount]string{
@@ -69,6 +124,28 @@ func (d *Database) SyslogVolume(ret config.RetentionConfig) SyslogVolumeReport {
 
 	avgWidth := d.syslogAvgRowWidth()
 
+	rate, hours := d.SyslogIngestRate(time.Now())
+	out.RateHours = hours
+
+	// On-disk cost per row. The catalog figure includes indexes and TOAST
+	// (production: ~1,010 B against a planner avg_width of ~800); when it is
+	// unavailable — never analyzed, SQLite, a catalog error — fall back to what
+	// the meter saw arrive, and say so.
+	width, tableBytes, measured := d.syslogDiskFootprint()
+	if !measured {
+		var totalRows, totalBytes int64
+		for sev := range rate {
+			totalRows += rate[sev].Rows
+			totalBytes += rate[sev].Bytes
+		}
+		if totalRows > 0 {
+			width = totalBytes / totalRows
+		}
+	}
+	out.DiskBytesPerRow, out.DiskWidthMeasured = width, measured
+	out.CurrentSyslogBytes = tableBytes
+	out.DatabaseBytes = d.databaseSizeBytes()
+
 	for sev := 0; sev < SyslogSeverityCount; sev++ {
 		override := d.GetIntSetting(SyslogRetentionKey(sev), syslogRetentionInherit)
 		v := SyslogSeverityVolume{
@@ -83,9 +160,110 @@ func (d *Database) SyslogVolume(ret config.RetentionConfig) SyslogVolumeReport {
 			v.EstRows = int64(f * float64(total))
 			v.EstBytes = v.EstRows * avgWidth
 		}
+		if hours > 0 {
+			v.RateAvailable = true
+			v.RowsPerDay = int64(float64(rate[sev].Rows) * 24 / hours)
+			v.BytesPerDay = int64(float64(rate[sev].Bytes) * 24 / hours)
+			if v.Days <= 0 {
+				v.ProjectedForever = v.RowsPerDay > 0
+			} else {
+				v.ProjectedBytes = v.RowsPerDay * int64(v.Days) * width
+			}
+			out.ProjectedSyslogBytes += v.ProjectedBytes
+			out.ProjectedForever = out.ProjectedForever || v.ProjectedForever
+		}
 		out.Severities = append(out.Severities, v)
 	}
+
+	out.VolumeTotalBytes, out.VolumeFreeBytes, out.VolumeKnown, out.VolumeTotalDerived = d.latestDataVolume()
 	return out
+}
+
+// syslogDiskFootprint reads the syslog table's on-disk size and cost per row
+// from the catalog — heap, indexes and TOAST included — over the same
+// partitions-XOR-parent set syslogSeverityStats uses. measured is false when
+// the width cannot be trusted: never analyzed (reltuples = -1 on every
+// relation), a query error, or SQLite. It never touches the table itself.
+//
+// The width divides only relations the planner has counted: a partition that
+// has received rows but never been analyzed contributes its bytes to the
+// total, not to the per-row cost, or a fresh month would inflate the width.
+func (d *Database) syslogDiskFootprint() (bytesPerRow, tableBytes int64, measured bool) {
+	if !d.dialect.IsPostgres() {
+		return 0, 0, false
+	}
+	var row struct {
+		TotalBytes  int64
+		BytesPerRow *int64
+	}
+	if err := d.db.Raw(`
+		WITH rels AS (
+			SELECT c.oid, c.reltuples
+			FROM pg_inherits i
+			JOIN pg_class c ON c.oid = i.inhrelid
+			JOIN pg_class p ON p.oid = i.inhparent
+			WHERE p.relname = 'syslog_messages'
+			UNION ALL
+			SELECT c.oid, c.reltuples
+			FROM pg_class c
+			WHERE c.relname = 'syslog_messages'
+			  AND NOT EXISTS (SELECT 1 FROM pg_inherits i
+			                  JOIN pg_class p ON p.oid = i.inhparent
+			                  WHERE p.relname = 'syslog_messages')
+		)
+		SELECT COALESCE(SUM(pg_total_relation_size(oid)), 0)::bigint AS total_bytes,
+		       (SUM(CASE WHEN reltuples >= 0 THEN pg_total_relation_size(oid) END)
+		        / NULLIF(SUM(GREATEST(reltuples, 0)), 0))::bigint AS bytes_per_row
+		FROM rels`).Scan(&row).Error; err != nil {
+		log.Printf("syslog volume: disk footprint read failed: %v", err)
+		return 0, 0, false
+	}
+	if row.BytesPerRow == nil || *row.BytesPerRow <= 0 {
+		return 0, row.TotalBytes, false
+	}
+	return *row.BytesPerRow, row.TotalBytes, true
+}
+
+// databaseSizeBytes is the whole database's on-disk size (0 when unknown).
+func (d *Database) databaseSizeBytes() int64 {
+	var n int64
+	q := `SELECT pg_database_size(current_database())`
+	if !d.dialect.IsPostgres() {
+		q = `SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()`
+	}
+	if err := d.db.Raw(q).Scan(&n).Error; err != nil {
+		log.Printf("syslog volume: database size read failed: %v", err)
+		return 0
+	}
+	return n
+}
+
+// latestDataVolume is the database volume as the newest server_metrics sample
+// that could see it reports it. known is false with no such sample (an
+// external database; the first minutes after install). Samples written before
+// v59 stored no total: derive one from percent and free (flagged derived) —
+// gopsutil's percent is Used/(Used+Free), so this excludes the filesystem's
+// reserved blocks and reads a few percent under df.
+func (d *Database) latestDataVolume() (total, free int64, known, derived bool) {
+	var m models.ServerMetric
+	err := d.db.Where("data_disk_free_bytes IS NOT NULL").Order("timestamp DESC").First(&m).Error
+	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("syslog volume: server_metrics read failed: %v", err)
+		}
+		return 0, 0, false, false
+	}
+	if m.DataDiskFreeBytes == nil {
+		return 0, 0, false, false
+	}
+	free = int64(*m.DataDiskFreeBytes)
+	switch {
+	case m.DataDiskTotalBytes != nil && *m.DataDiskTotalBytes > 0:
+		return int64(*m.DataDiskTotalBytes), free, true, false
+	case m.DataDiskPercent != nil && *m.DataDiskPercent >= 0 && *m.DataDiskPercent < 100:
+		return int64(float64(free) / (1 - *m.DataDiskPercent/100)), free, true, true
+	}
+	return 0, free, false, false
 }
 
 // syslogSeverityStats reads the severity distribution straight from the planner

@@ -37,6 +37,12 @@ type Database struct {
 	// always set this.
 	pgxPool *pgxpool.Pool
 
+	// ingest is the syslog ingest meter (syslog_ingest.go). A POINTER on
+	// purpose: WithContext shallow-copies the struct for every browser request,
+	// so a by-value mutex would fail go vet's copylocks and every copy would
+	// carry its own counts. nil-receiver-safe (a Database{} literal is a no-op).
+	ingest *syslogIngestMeter
+
 	// M8 encryption key-check verdict, set once by VerifyEncryptionKey at
 	// startup and read by EncryptionVerified (health/readiness, daemon
 	// fail-fast). encKeyBroken=true means the configured key chain provably
@@ -234,6 +240,7 @@ func Connect(cfg *config.Config) (*Database, error) {
 	d.pingBatch = NewBatchInserter[models.PingResult](100, 5*time.Second, func(items []models.PingResult) error {
 		return d.db.Create(&items).Error
 	})
+	d.ingest = newSyslogIngestMeter(time.Now)
 
 	return d, nil
 }
@@ -578,6 +585,13 @@ func (d *Database) Close() error {
 	}
 	if d.pingBatch != nil {
 		d.pingBatch.Stop()
+	}
+	// Land the ingest meter's unflushed buckets (≤ 60 s of counts) while the
+	// connection is still open. Reached only on graceful shutdown (deferred
+	// Close); a log.Fatalf exit loses that window, which is acceptable for a
+	// rate estimate.
+	if err := d.flushSyslogIngest(true); err != nil {
+		log.Printf("syslog ingest meter: final flush failed: %v", err)
 	}
 
 	// Close the pgx pool first so any in-flight COPY is drained before

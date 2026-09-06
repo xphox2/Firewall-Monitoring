@@ -1,6 +1,21 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.236] - 2026-09-05
+
+### Added
+
+**Syslog ingest rate and projected size on the Retention page.** The page previously showed only each severity's *current* footprint, estimated from planner statistics — a figure that says nothing about where the table is heading. A database volume can reach its alarm threshold with retention working exactly as configured, simply because ingest for one severity has grown under the same window, and nothing in the product showed that growth before the disk did.
+
+- **Ingest meter.** `SaveSyslogMessages` now counts the rows it actually lands, per severity, and persists hourly buckets to a new `syslog_ingest_hourly` table (at most 8 rows an hour; migration v59; retained for 8 days). Counting happens as rows arrive, so the figures cost nothing on the ingest path and never scan the syslog table. Buckets are flushed at most once a minute, outside any lock held by the ingest handler, and a failed flush keeps its counts for the next one; a graceful shutdown lands the last partial minute. Only rows that were written are counted — the per-row fallback path that drops unsalvageable rows no longer inflates the figure.
+- **Two new columns:** *Ingest / day* (rows and received bytes per day, measured over the last 24 h and extrapolated during the first day after install, which the page says) and *Projected at this window* (the steady-state on-disk size at the severity's resolved retention window, or "grows without bound" for a severity kept forever).
+- **One plain verdict** under the table: the projected steady state of the whole database (projected syslog at the current windows plus everything else, carried forward) against the size of the volume that has to hold it — "fits at ~N %" or "exceeds the volume by ~X" — and omitted, rather than invented, when the volume is unknown.
+- The projection uses the syslog table's true on-disk cost per row (heap, indexes and TOAST, from the catalog), which runs materially above the planner's average row width; when that is not yet measurable the page falls back to the received size and says so.
+
+### Changed
+
+- `server_metrics` gains a `data_disk_total_bytes` column (migration v59), written by the poller's server-health sample. The verdict is measured against this stored size rather than one derived from percent and free bytes, because the derived figure excludes the filesystem's reserved blocks and disagrees with `df`. Samples written before the upgrade fall back to the derived figure, flagged as such on the page.
+
 ## [0.11.235] - 2026-08-30
 
 ### Removed
