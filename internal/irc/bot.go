@@ -453,9 +453,26 @@ func (b *Bot) Start() {
 	}
 
 	server := b.Server
-	conn := irc.IRC(server.Nick, server.Username)
-	if server.Username == "" {
-		conn = irc.IRC(server.Nick, server.Nick)
+	user := server.Username
+	if user == "" {
+		user = server.Nick
+	}
+	conn := irc.IRC(server.Nick, user)
+	if conn == nil {
+		// go-ircevent returns nil, not an error, for an empty nick or user. The
+		// API rejects an empty nick, but a row can still arrive without one
+		// (legacy data, a direct DB edit). Dereferencing the nil here used to
+		// panic UNDER b.mu: launchBot's recover contained the panic, but the
+		// mutex stayed locked forever, so the next Stop()/RestartBot() on this
+		// bot hung the manager — and with it API shutdown. Treat it as a
+		// connect failure instead: release the lock, record the reason where
+		// the operator sees it, and let the sweep back off as it would for an
+		// unreachable server.
+		b.mu.Unlock()
+		log.Printf("IRC: server %q (id %d) has no nick; not connecting", server.Name, server.ID)
+		b.updateStatus("error", "nick is empty")
+		b.noteConnectFailure()
+		return
 	}
 	conn.RealName = server.RealName
 	if server.RealName == "" {
@@ -1409,11 +1426,34 @@ func forgetConn(conn *irc.Connection) {
 // 1m+15m), 15m10s for a TestBot conn, which lowers Timeout to 10s. safeQuit is timeout-bounded and
 // latches a wedged conn, so it always returns; the caller runs this on its own
 // goroutine so a server that ignores the QUIT delays nothing but this cleanup.
+//
+// The QUIT must also actually reach the wire before Disconnect runs. safeQuit
+// only queues it on the library's buffered pwrite channel, and Disconnect
+// closes `end` before it waits; writeLoop selects between `end` and pwrite,
+// so if it has not yet woken for the QUIT when `end` closes, Go picks between
+// the two ready cases at random and the QUIT is dropped half the time —
+// leaving exactly the stall above. Locally writeLoop nearly always wakes
+// first; under the race detector on a loaded CI runner it often does not
+// (TestTeardownConn_UnwindsLoops_AUDIT319 timed out on two of the six
+// race-lane runs on 2026-09-06). So after a queued QUIT, wait for the server to drop the
+// session — readLoop reports that on ErrorChan, which nothing else reads for
+// a conn being torn down here — bounded so a server that ignores the QUIT
+// still only delays this cleanup goroutine.
 func teardownConn(conn *irc.Connection) {
-	_ = safeQuit(conn)
+	if err := safeQuit(conn); err == nil {
+		select {
+		case <-conn.ErrorChan():
+		case <-time.After(teardownQuitDrain):
+		}
+	}
 	forgetConn(conn)
 	conn.Disconnect()
 }
+
+// teardownQuitDrain bounds how long teardownConn waits for the server to drop
+// the session after a QUIT before it disconnects regardless. A real ircd
+// closes within milliseconds; the bound only matters for one that ignores QUIT.
+const teardownQuitDrain = 2 * time.Second
 
 // sendVia wraps sendWithTimeout with the per-connection write-dead latch
 // (AUDIT-314). A conn already latched dead never spawns another sender; the

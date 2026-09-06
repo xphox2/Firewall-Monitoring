@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.238] - 2026-09-05
+
+### Fixed
+
+**IRC bot: an empty nick no longer wedges the bot's mutex.** The IRC client library returns a nil connection, not an error, for an empty nick, and the bot dereferenced it while holding its own lock. The panic itself was contained by the bot launcher's recover, but the lock was never released, so the next stop or restart of that bot hung the IRC manager — and with it a graceful API shutdown. The API already rejects an empty nick on save, so only a legacy row or a direct database edit can produce one; the bot now refuses to connect, records "nick is empty" as the server's last error where the operator sees it, and backs off exactly as it would for an unreachable server. A regression test drives Start with an empty nick and then Stop, which used to hang.
+
+- The existing recover test for `RestartBot` relied on that nil dereference to produce its panic; it now injects one through the start hook after a real dial to the in-package fake server.
+
+**IRC bot: a failed-connect teardown no longer drops its own QUIT.** `teardownConn` (the AUDIT-319/325 unwind for a connection whose SASL or capability negotiation failed, and for a stop that raced the dial) queued a QUIT and immediately called the library's `Disconnect`, which closes its `end` channel before waiting for the loops. The write loop selects between `end` and the queued QUIT; if it had not yet parked when `end` closed, the choice was random and the QUIT was dropped half the time, so the server never dropped the session, the read loop sat on its 16-minute deadline, and the unwind stalled — the very leak that code exists to close. It only showed on the CI race lane (two of the six race-lane runs on 2026-09-06), never locally, because the window is the few nanoseconds between the previous write completing and the loop re-entering its select. The teardown now waits, bounded to 2 s, for the server to drop the session after the QUIT before it disconnects.
+
 ## [0.11.237] - 2026-09-05
 
 ### Fixed
