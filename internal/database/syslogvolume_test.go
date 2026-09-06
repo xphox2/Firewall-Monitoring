@@ -13,11 +13,13 @@ import (
 // meter's own bytes-per-row (DiskWidthMeasured=false), which makes the expected
 // figures exact.
 
-// seedIngestBucket writes one bucket 30 minutes old, so the rate window is the
-// 1 h floor and rows/day = rows × 24.
+// seedIngestBucket writes one bucket for the CURRENT hour, so it is always
+// under 1 h old, the rate window is the 1 h floor and rows/day = rows × 24
+// exactly. (Seeding "30 minutes ago" and truncating made the bucket 1-1.5 h old
+// for the first half of every wall-clock hour, and the test flaked.)
 func seedIngestBucket(t *testing.T, d *Database, sev int, rows, bytes int64) {
 	t.Helper()
-	hour := time.Now().UTC().Add(-30 * time.Minute).Truncate(time.Hour)
+	hour := time.Now().UTC().Truncate(time.Hour)
 	if err := d.db.Create(&models.SyslogIngestHourly{Timestamp: hour, Severity: sev, RowCount: rows, ByteCount: bytes}).Error; err != nil {
 		t.Fatalf("seed bucket: %v", err)
 	}
