@@ -5,15 +5,19 @@ Idle remote-access/dialup phase1s (config rows, status unknown) made the Off-Net
 - [x] `diagram-cytoscape.js`: `offnetConnected` + `offnetEdgeData` helpers; `buildElements` uses them; `updateVPNBadges` → `reconcileOffnetEdges`
 - [x] guardrail `internal/shell/diagram_offnet_idle_test.go`
 - [x] ServerVersion 0.11.237 + CHANGELOG entry at top
-- [ ] QA gates: gofmt / build / staticcheck / `go test ./... -count=1`
-- [ ] Local UI check (scratch PG16 + Playwright): idle → no edge; up dialup row → edge appears on poll; row gone → edge + cloud removed
-- [ ] PR + adversarial fable review + auto-merge; CI green
-- [ ] Deploy rust-01, verify /api/version = 0.11.237 and no ✖ off-net lines on /admin/connections
+- [x] QA gates: gofmt / build / staticcheck / `go test ./... -count=1`
+- [x] Local UI check (scratch PG16 + Playwright): idle → no edge; up dialup row → edge + cloud appear on the 15 s poll, label painted, particle flows, cloud fitted into view; down row → edge + cloud removed; edge added under NOC focus inherits the dim
+- [x] PR #245 + 2 adversarial review rounds (round 1: label never painted by any style rule, applyFilters un-hid the graph during expansion, focus dim ignored — all fixed; round 2: sound) — merged 2026-09-06 02:38 UTC (repo has no required checks, so `--auto` merged at once; PR-branch CI was green on the identical tree)
+- [x] Deployed rust-01 2026-09-06 02:55 UTC — `/api/version` = 0.11.237, container healthy, public URL serves the new diagram JS
+- [ ] Follow-up (not this change): master CI run 34007013331 failed once on `internal/irc` `TestTeardownConn_UnwindsLoops_AUDIT319` (20 s timeout) with a recovered nil-pointer panic at `internal/irc/bot.go:460` — `irc.IRC()` returns nil for an empty nick and `Bot.Start` dereferences it. Passed on the PR branch and 4× locally under -race; rerun of the failed job went green on all six jobs (2026-09-06 03:05 UTC), confirming a flake.
 
 ## Post-deploy checklist (user)
 - Open /admin/connections: DC2-FW1 shows NO line to the cloud; NUDAY-FW shows a green "1 connected" line while `dialup-76.66.145.45` is up.
 - Connect a remote-access client to DC2-FW1: within 15 s a green "1 connected" line appears without reload; disconnect: it disappears.
 - Legend "Off-Net" toggle still hides/shows the live line; clicking it opens the VPN panel.
+
+## Review
+- Off-net edge (2026-09-06): prod investigation first (DC2-FW1 RA_* / NUDAY-FW TL-RA-IKEv2 are config-only rows, status unknown, empty remote_ip; a connected peer is its own `dialup-<ip>` row) fixed the rule to "≥1 unmatched tunnel up". Client-only change, no API work. Review round 1 caught that the old label had never been painted either — worth remembering: an edge `label` in data means nothing without a `data(label)` style rule on that selector.
 
 # DB volume growth — 2026-09-05 (plan: ~/.claude/plans/why-is-the-db-cosmic-treasure.md)
 

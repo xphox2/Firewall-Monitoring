@@ -1,5 +1,11 @@
 # Lessons
 
+## `gh pr merge --auto` merges INSTANTLY on this repo — gate on CI yourself (2026-09-06)
+
+**Mistake:** armed `gh pr merge --auto --merge --delete-branch` on PR #245 expecting it to wait for CI; the repo has no required status checks, so it merged on the spot and the post-merge master run then failed (an unrelated `internal/irc` flake). The release-status memory already recorded this gotcha from #215 — I had not re-read it.
+
+**Rules:** (a) on Firewall-Mon, `--auto` is not a CI gate: run `gh pr checks <n> --watch --fail-fast && gh pr merge <n> --merge --delete-branch` instead; (b) when a memory note says "gotcha" about a command you are about to run, open it before running the command; (c) a `label` in Cytoscape edge data draws nothing unless that selector's style has `'label': 'data(label)'` — the old "N unmatched" text had never rendered, and a review round was needed to notice.
+
 ## When a bug report describes two visual states, the user is telling you which one they want (2026-07-09)
 
 **Mistake:** user reported "switch to day mode, you will have a border on the graphs. Once it refreshes the border on the graph is lost." I diagnosed the inconsistency correctly (doughnut borders baked at chart build time, not repainted on theme toggle) but resolved it toward the state I judged design-consistent (invisible card-bg border) — the exact opposite of what they wanted. Shipped v0.11.64, got "you made it worse," shipped v0.11.65 to invert it.
