@@ -76,6 +76,30 @@
     }
 
     // ---- 1a. Data Transformation (tunnel-bundled) ----
+    // offnetConnected counts the unmatched tunnels on a device that are UP —
+    // remote users / unmonitored peers actually connected right now. An unmatched
+    // tunnel that is not up is an idle dialup / remote-access phase1 (a config row
+    // with no SA, or a peer that hung up), not a failure: nobody is connected, so
+    // there is nothing to draw and certainly nothing to mark DOWN. The alert
+    // engine applies the same rule through its ever-up gate.
+    function offnetConnected(vpnInfo) {
+        if (!vpnInfo || !vpnInfo.tunnels) return 0;
+        return vpnInfo.tunnels.filter(function(t) {
+            return !(t.matched_device_id > 0) && t.status === 'up';
+        }).length;
+    }
+
+    // offnetEdgeData is the single shape of an off-net edge, shared by the initial
+    // build and the live reconcile so the two can never disagree. Status is
+    // always 'up': the edge exists only while someone is connected.
+    function offnetEdgeData(deviceId, count) {
+        return {
+            id: 'offnet-' + deviceId, source: 'dev-' + deviceId, target: 'cloud-internet',
+            edgeType: 'offnet', status: 'up', deviceId: deviceId, connType: 'offnet',
+            label: count + ' connected'
+        };
+    }
+
     function buildElements(devices, connections, siteMap, vpnMap, siteNames) {
         var elements = [];
         var siteIds = {};
@@ -124,35 +148,22 @@
             mappedDevicePeers[c.dest_device_id][c.source_device_id] = true;
         });
 
-        // Off-net cloud — only for truly unmatched tunnels (remote users, unmonitored devices)
+        // Off-net cloud — only for devices with a remote user / unmonitored peer
+        // connected RIGHT NOW. An idle remote-access endpoint draws nothing: see
+        // offnetConnected.
         var hasCloud = false;
         var offnetDevices = [];
         devices.forEach(function(d) {
-            var vpnInfo = vpnMap[String(d.id)];
-            if (!vpnInfo) return;
-            // Filter to tunnels with no matched device AND whose remote IP isn't a monitored peer
-            var trueOffnet = vpnInfo.tunnels.filter(function(t) {
-                if (t.matched_device_id > 0) return false; // already matched
-                return true; // genuinely unmatched (remote user, unknown device)
-            });
-            if (trueOffnet.length > 0) {
-                offnetDevices.push({
-                    deviceId: d.id,
-                    anyUp: trueOffnet.some(function(t) { return t.status === 'up'; }),
-                    count: trueOffnet.length
-                });
+            var n = offnetConnected(vpnMap[String(d.id)]);
+            if (n > 0) {
+                offnetDevices.push({ deviceId: d.id, count: n });
                 hasCloud = true;
             }
         });
         if (hasCloud) {
             elements.push({ group: 'nodes', data: { id: 'cloud-internet', nodeType: 'cloud' }});
-
             offnetDevices.forEach(function(info) {
-                elements.push({ group: 'edges', data: {
-                    id: 'offnet-' + info.deviceId, source: 'dev-' + info.deviceId, target: 'cloud-internet',
-                    edgeType: 'offnet', status: info.anyUp ? 'up' : 'down', deviceId: info.deviceId, connType: 'offnet',
-                    label: info.count + ' unmatched'
-                }});
+                elements.push({ group: 'edges', data: offnetEdgeData(info.deviceId, info.count) });
             });
         }
 
@@ -1350,6 +1361,47 @@
             node.data('label', newLabel);
             node.data('vpnInfo', info);
         });
+        reconcileOffnetEdges(vpnMap);
+    }
+
+    // reconcileOffnetEdges makes the off-net edges track the live vpn-map on the
+    // refresh poll: a remote user dialling in grows a green line to the cloud
+    // without a reload, and the line goes away when the last one hangs up. Only
+    // the edges (and the cloud, when nothing else needs it) change \u2014 no node is
+    // moved and no layout runs, so an operator's zoom and expanded tunnels
+    // survive. The initial build (buildElements) and this reconcile share
+    // offnetConnected + offnetEdgeData, so what appears here is exactly what a
+    // fresh render would draw.
+    function reconcileOffnetEdges(vpnMap) {
+        if (!cy) return;
+        var changed = false;
+        cy.nodes('[nodeType="device"]').forEach(function(node) {
+            var devId = node.data('deviceId');
+            var n = offnetConnected(vpnMap[String(devId)]);
+            var edge = cy.getElementById('offnet-' + devId);
+            if (n > 0) {
+                if (edge.empty()) {
+                    if (cy.getElementById('cloud-internet').empty()) {
+                        var pos = loadPositions()['cloud-internet'] || { x: 0, y: 0 };
+                        cy.add({ group: 'nodes', data: { id: 'cloud-internet', nodeType: 'cloud' }, position: pos });
+                    }
+                    cy.add({ group: 'edges', data: offnetEdgeData(devId, n) });
+                    changed = true;
+                } else if (edge.data('label') !== n + ' connected') {
+                    edge.data('label', n + ' connected');
+                }
+            } else if (!edge.empty()) {
+                cy.remove(edge);
+                changed = true;
+            }
+        });
+        if (!changed) return;
+        var cloud = cy.getElementById('cloud-internet');
+        if (!cloud.empty() && cloud.connectedEdges().empty()) cy.remove(cloud);
+        applyFilters();
+        // Rebuild particles wholesale (stopParticles drops every entry, including
+        // any that rode a removed edge) so the new green line gets its flow.
+        stopParticles(); startParticles();
     }
 
     function animateFlash(edge, color, onComplete) {
