@@ -510,7 +510,12 @@
                 'line-color': cssVar('--fwmon-sig-ok', '#4ade80'), 'width': 1.5, 'opacity': 0.6,
                 'line-style': 'dashed', 'line-dash-pattern': [3, 6],
                 'curve-style': 'unbundled-bezier',
-                'control-point-distances': [40], 'control-point-weights': [0.5]
+                'control-point-distances': [40], 'control-point-weights': [0.5],
+                // "N connected" across the wire, same treatment as a sublane label.
+                'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-dim', '#c9d1d9'),
+                'text-rotation': 'data(labelAngle)', 'text-margin-y': 0,
+                'text-background-color': cssVar('--fwmon-bg', '#0d1117'), 'text-background-opacity': 0.8,
+                'text-background-padding': '2px'
             }},
             // DOWN edges — red X
             { selector: 'edge[status="down"]', style: {
@@ -1375,6 +1380,8 @@
     function reconcileOffnetEdges(vpnMap) {
         if (!cy) return;
         var changed = false;
+        var cloudAdded = false;
+        var added = cy.collection();
         cy.nodes('[nodeType="device"]').forEach(function(node) {
             var devId = node.data('deviceId');
             var n = offnetConnected(vpnMap[String(devId)]);
@@ -1383,9 +1390,10 @@
                 if (edge.empty()) {
                     if (cy.getElementById('cloud-internet').empty()) {
                         var pos = loadPositions()['cloud-internet'] || { x: 0, y: 0 };
-                        cy.add({ group: 'nodes', data: { id: 'cloud-internet', nodeType: 'cloud' }, position: pos });
+                        added = added.union(cy.add({ group: 'nodes', data: { id: 'cloud-internet', nodeType: 'cloud' }, position: pos }));
+                        cloudAdded = true;
                     }
-                    cy.add({ group: 'edges', data: offnetEdgeData(devId, n) });
+                    added = added.union(cy.add({ group: 'edges', data: offnetEdgeData(devId, n) }));
                     changed = true;
                 } else if (edge.data('label') !== n + ' connected') {
                     edge.data('label', n + ' connected');
@@ -1398,10 +1406,29 @@
         if (!changed) return;
         var cloud = cy.getElementById('cloud-internet');
         if (!cloud.empty() && cloud.connectedEdges().empty()) cy.remove(cloud);
+        // A NOC focus dims everything but the target and its own edges
+        // (focusNode); elements born under that dim must inherit it, or a
+        // remote user dialling in paints a full-brightness line into a dimmed map.
+        if (cy.nodes('.focused').nonempty()) {
+            added.addClass('dimmed');
+            added.edges().filter(function(e) { return e.connectedNodes('.focused').nonempty(); }).removeClass('dimmed');
+        }
+        // While a tunnel is expanded every other edge is hidden inline
+        // (expandTunnel) and applyFilters would bring them all back, so the new
+        // line is parked hidden instead; collapseTunnel's own applyFilters pass
+        // reveals it. A removal needs no filter pass at all.
+        if (Object.keys(expandedTunnels).length > 0) {
+            added.edges().forEach(function(e) { e.style('display', 'none'); });
+            return;
+        }
         applyFilters();
         // Rebuild particles wholesale (stopParticles drops every entry, including
         // any that rode a removed edge) so the new green line gets its flow.
         stopParticles(); startParticles();
+        // A newly added cloud sits at the layout origin, which may be outside the
+        // current viewport; the graph's extent grew, so bring it into view. An
+        // edge appearing between nodes already on screen never moves the view.
+        if (cloudAdded) cy.animate({ fit: { eles: cy.elements(), padding: 40 } }, { duration: 400 });
     }
 
     function animateFlash(edge, color, onComplete) {

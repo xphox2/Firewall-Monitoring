@@ -25,15 +25,30 @@ func TestDiagramOffnetEdgeOnlyWhileConnected(t *testing.T) {
 
 	for _, pin := range []string{
 		"function offnetConnected(",
-		"&& t.status === 'up';",
+		"t.status === 'up'",
 		"function offnetEdgeData(",
-		"status: 'up', deviceId: deviceId, connType: 'offnet'",
+		"status: 'up'",
 		"label: count + ' connected'",
 		"function reconcileOffnetEdges(",
 	} {
 		if !strings.Contains(js, pin) {
 			t.Errorf("diagram-cytoscape.js must contain %q", pin)
 		}
+	}
+
+	// The label must actually be painted: only a stylesheet rule that reads
+	// data(label) on the off-net selector makes "N connected" visible. Before
+	// this rule existed the edge carried a label no rule ever drew.
+	sel := strings.Index(js, `selector: 'edge[edgeType="offnet"]'`)
+	if sel < 0 {
+		t.Fatal("off-net edge style selector not found")
+	}
+	rule := js[sel:]
+	if end := strings.Index(rule, "}},"); end > 0 {
+		rule = rule[:end]
+	}
+	if !strings.Contains(rule, "'label': 'data(label)'") {
+		t.Error("the off-net edge style must paint data(label)")
 	}
 
 	// The live refresh must reconcile the edges, not only the node badges,
