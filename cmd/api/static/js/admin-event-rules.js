@@ -393,7 +393,12 @@
 
         fillSelect($('er-vendor'), VENDORS.map(function (v) { return { v: v, n: v }; }), 'Any vendor', 'v', 'n');
         $('er-vendor').value = r ? (r.vendor_scope || '') : '';
-        fillSelect($('er-device'), devices, 'Any device', 'id', 'name');
+        // New rules bind to ACTIVE devices; a rule already bound to a retired
+        // device keeps showing it, labelled as retired.
+        var pickable = devices.filter(function (d) {
+            return !d.retired_at || (r && r.device_id && String(r.device_id) === String(d.id));
+        }).map(function (d) { return { id: d.id, label: AC.deviceOptionLabel(d) }; });
+        fillSelect($('er-device'), pickable, 'Any device', 'id', 'label');
         $('er-device').value = r && r.device_id ? r.device_id : '';
         fillSelect($('er-site'), sites, 'Any site', 'id', 'name');
         $('er-site').value = r && r.site_id ? r.site_id : '';

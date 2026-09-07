@@ -10,7 +10,7 @@
 > is a sibling repo, [Firewall-Collector](https://github.com/xphox2/Firewall-Collector).
 
 [![CI](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml/badge.svg)](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.11.240-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.11.241-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.25.13+-00ADD8)](go.mod)
 [![Status](https://img.shields.io/badge/status-alpha-orange)](#project-status)
@@ -486,7 +486,7 @@ The grouped overview below covers every category.
 
 ### Admin API (JSON, auth + CSRF) — base `/admin/api`
 
-- **Devices:** `GET/POST /devices`, `GET/PUT/DELETE /devices/:id` (`DELETE` **retires** the device — history preserved, polling stops; see `POST /devices/:id/{retire,restore}`), `POST /devices/test`, and per-device detail/history/charts under `/devices/:id/{detail,interfaces/:ifIndex/{history,chart},status-history,process-history,config-history[/:revId[/view]],config-history/diff,ha-status,sdwan-health,security-stats,interface-errors,vpn/:tunnel/chart,alert-config}`
+- **Devices:** `GET/POST /devices` (`POST` with `"reuse_name": true` creates a new device under a retired device's name instead of the advisory `409` that offers to restore it — names are unique among *active* devices only), `GET/PUT/DELETE /devices/:id` (`DELETE` **retires** the device — history preserved, polling stops; see `POST /devices/:id/{retire,restore}`), `POST /devices/test`, and per-device detail/history/charts under `/devices/:id/{detail,interfaces/:ifIndex/{history,chart},status-history,process-history,config-history[/:revId[/view]],config-history/diff,ha-status,sdwan-health,security-stats,interface-errors,vpn/:tunnel/chart,alert-config}`
 - **Sites:** `GET/POST /sites`, `GET/PUT/DELETE /sites/:id`, `GET/PUT/DELETE /sites/:id/alert-config`
 - **Probes:** `GET/POST /probes`, `GET/PUT/DELETE /probes/:id`, `GET /probes/pending`, `GET /probes/stats`, `GET /probes/:id/stats`, `POST /probes/:id/{approve,reject,regenerate-key}`, `POST /probes/test`
 - **Connections:** `GET/POST /connections`, `GET/PUT/DELETE /connections/:id`, `GET /connections/:id/{detail,events,flows,traffic}`, `GET /connections/{status-summary,vpn-map}`

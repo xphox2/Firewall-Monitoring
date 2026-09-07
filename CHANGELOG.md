@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.241] - 2026-09-07
+
+### Changed
+
+**Device names are unique among active devices only; a same-name re-add can create a new device.** Since v0.11.239 a removed device is retired and keeps its name, so `devices.name`'s global unique index meant a retired `FW-01` blocked adding a fresh `FW-01` — but a rebuilt VM or a different vendor at the same location should be a *new* device that reuses the name while the retired one keeps its own history under its own id. Migration v63 `device_name_unique_among_active` replaces the global unique index with the partial unique index `idx_devices_name_active (name) WHERE retired_at IS NULL` (plus a plain `idx_devices_name` lookup index; identical DDL on Postgres and SQLite, idempotent, one transaction with the statement timeout lifted). It refuses to run, naming the offenders, if two active devices already share a name.
+
+- `POST /admin/api/devices` accepts `"reuse_name": true`: the advisory `409 a retired device with this name exists` is skipped and a new device is created. The 409 body now names the *most recently retired* device and adds `retired_count`, so the Devices page offers a three-way choice — restore the retired device with the form's settings, create a new device with the name, or cancel — and says when several retired devices share the name. A collision with an *active* device stays `409 device name already in use`, with or without the flag; the index is the authoritative guard against a concurrent create or restore.
+- `RestoreDevice` applies the restore columns and the optional settings in ONE `UPDATE`: clearing `retired_at` first and renaming second could never succeed while an active device held the old name. Restore while an active device holds the name is `409 device name already in use` and the device stays retired; the Devices page then prompts for a new name and restores under it.
+- Devices page: the retired badge shows the retire date inline; device pickers for new configuration (IPSec wizard, maintenance windows, event rules and profiles) list active devices only, plus the currently selected device when it is retired, labelled `name (retired <date>)`.
+
+### Documentation
+
+- `docs/OPERATIONS.md` retire section: names unique among active devices, the three-way re-add prompt, rename-on-restore, and the IPSec identity caveat (the wizard prefills the IKE local identity from the device name, so roll back a retired device's tunnels on a shared peer before provisioning a same-named replacement). README endpoint note for `reuse_name`.
+
 ## [0.11.240] - 2026-09-07
 
 ### Fixed

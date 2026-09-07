@@ -19,7 +19,9 @@ import (
 //   - the Devices page has Active / Retired / All filter tabs
 //   - row actions dispatch retire-device / restore-device (no delete-device)
 //   - the retire confirm wording (the old "and all its data" text was false)
-//   - the Add Device 409 → "restore retired device" prompt wording
+//   - the Add Device 409 → three-way chooser (Restore / Create new / Cancel)
+//     wording, the `reuse_name: true` re-POST and the rename-on-restore prompt
+//   - pickers label retired devices via AC.deviceOptionLabel
 //   - the device-detail page's retired banner + purged-device message
 func TestDeviceRetireUI(t *testing.T) {
 	read := func(path string) string {
@@ -57,7 +59,14 @@ func TestDeviceRetireUI(t *testing.T) {
 		"'filter-devices': function(el)",
 		"function renderDevices()",
 		"'Retire this device? Polling stops within a few minutes; all history is kept and it can be restored later.'",
-		`exists with its history. Restore it and apply these settings?`,
+		`, history preserved). Restore it and apply these settings, or create a new device with this name?`,
+		"retired devices share this name; Restore applies to the most recently retired one.",
+		"AC.choose(msg, {",
+		"{ key: 'restore', label: 'Restore retired device' }",
+		"{ key: 'create', label: 'Create new device' }",
+		"reuse_name: true",
+		"AC.promptText(",
+		"already in use",
 		"body.retired_device_id",
 		"/restore'",
 	} {
@@ -80,6 +89,32 @@ func TestDeviceRetireUI(t *testing.T) {
 		t.Errorf("admin-main.js restore-from-409 must strip `enabled` from the form payload before POSTing /restore.")
 	}
 
+	// Pickers that offer devices for NEW configuration must not list retired
+	// devices as plain names: the shared label helper carries the retired date.
+	for _, f := range []string{
+		"../../cmd/api/static/js/admin-common.js",
+		"../../cmd/api/static/js/admin-main.js",
+		"../../cmd/api/static/js/admin-ipsec.js",
+		"../../cmd/api/static/js/admin-event-profiles.js",
+		"../../cmd/api/static/js/admin-event-rules.js",
+		"../../cmd/api/static/js/admin-alerting.js",
+	} {
+		body := read(f)
+		sig := "AC.deviceOptionLabel("
+		if strings.HasSuffix(f, "admin-common.js") {
+			sig = "deviceOptionLabel: deviceOptionLabel"
+		}
+		if !strings.Contains(body, sig) {
+			t.Errorf("%s missing %q: device pickers must label retired devices with their retired date.", f, sig)
+		}
+	}
+	common := read("../../cmd/api/static/js/admin-common.js")
+	for _, sig := range []string{"choose: chooseModal", "promptText: promptTextModal"} {
+		if !strings.Contains(common, sig) {
+			t.Errorf("admin-common.js missing %q: the add-device chooser and rename-on-restore prompt need it.", sig)
+		}
+	}
+
 	detailHTML := read("../../web/admin/device-detail.html")
 	for _, sig := range []string{
 		`id="retiredBanner"`,
@@ -95,6 +130,8 @@ func TestDeviceRetireUI(t *testing.T) {
 		"'This device was permanently deleted.'",
 		"'Retired on ' + AC.formatDate(dev.retired_at) + '. Data preserved.'",
 		"'restore-device': function()",
+		"AC.promptText(",
+		"already in use",
 	} {
 		if !strings.Contains(detailJS, sig) {
 			t.Errorf("admin-device-detail.js missing the %q signal.", sig)

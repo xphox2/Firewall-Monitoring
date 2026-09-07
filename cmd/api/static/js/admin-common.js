@@ -789,14 +789,21 @@
      * Falls back to window.confirm() if document is not available
      * (defensive — shouldn't happen in browser code).
      */
-    function confirmModal(message, opts) {
+    /* dialogModal is the one builder behind confirm / choose / promptText:
+     * same overlay, role="dialog", aria-modal, aria-labelledby, focus trap,
+     * Escape-cancels and focus-return. `spec` describes what differs:
+     *   buttons:     [{label, value, className, isDefault}] left-to-right
+     *   input:       optional {label, defaultValue} — a labelled text field
+     *                above the buttons; Enter inside it submits `input.value`
+     *   cancelValue: what Escape / overlay click / the cancel button resolve
+     *   submit:      optional function(value, inputEl) → resolved value
+     */
+    function dialogModal(message, opts, spec) {
         opts = opts || {};
-        if (typeof document === 'undefined') {
-            return Promise.resolve(window.confirm(message));
-        }
         return new Promise(function(resolve) {
             var trigger = document.activeElement;
-            var titleId = 'fwmon-confirm-title-' + Math.random().toString(36).slice(2, 8);
+            var uid = Math.random().toString(36).slice(2, 8);
+            var titleId = 'fwmon-confirm-title-' + uid;
             var overlay = document.createElement('div');
             overlay.className = 'fwmon-confirm-overlay';
             overlay.setAttribute('role', 'presentation');
@@ -816,23 +823,39 @@
             body.className = 'fwmon-confirm-body';
             body.textContent = message;
 
-            var actions = document.createElement('div');
-            actions.className = 'fwmon-confirm-actions';
-
-            var cancelBtn = document.createElement('button');
-            cancelBtn.type = 'button';
-            cancelBtn.className = 'fwmon-confirm-btn cancel';
-            cancelBtn.textContent = opts.cancelLabel || 'Cancel';
-
-            var confirmBtn = document.createElement('button');
-            confirmBtn.type = 'button';
-            confirmBtn.className = 'fwmon-confirm-btn confirm' + (opts.danger ? ' danger' : '');
-            confirmBtn.textContent = opts.confirmLabel || (opts.danger ? 'Delete' : 'OK');
-
-            actions.appendChild(cancelBtn);
-            actions.appendChild(confirmBtn);
             dialog.appendChild(title);
             dialog.appendChild(body);
+
+            var inputEl = null;
+            if (spec.input) {
+                var inputId = 'fwmon-confirm-input-' + uid;
+                var label = document.createElement('label');
+                label.htmlFor = inputId;
+                label.textContent = spec.input.label || '';
+                label.style.cssText = 'display:block;font-family:var(--fwmon-font-ui);font-size:0.78rem;color:var(--fwmon-text-dim);margin-bottom:6px;';
+                inputEl = document.createElement('input');
+                inputEl.type = 'text';
+                inputEl.id = inputId;
+                inputEl.value = spec.input.defaultValue != null ? String(spec.input.defaultValue) : '';
+                inputEl.autocomplete = 'off';
+                inputEl.style.cssText = 'display:block;width:100%;box-sizing:border-box;padding:7px 10px;margin:0 0 16px;' +
+                    'border:1px solid var(--fwmon-border);border-radius:6px;background:var(--fwmon-panel-bg);' +
+                    'color:var(--fwmon-text);font-family:var(--fwmon-font-ui);font-size:0.9rem;';
+                if (spec.input.label) dialog.appendChild(label);
+                dialog.appendChild(inputEl);
+            }
+
+            var actions = document.createElement('div');
+            actions.className = 'fwmon-confirm-actions';
+            var buttons = spec.buttons.map(function(b) {
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'fwmon-confirm-btn ' + b.className;
+                btn.textContent = b.label;
+                btn.addEventListener('click', function() { cleanup(b.value); });
+                actions.appendChild(btn);
+                return btn;
+            });
             dialog.appendChild(actions);
             overlay.appendChild(dialog);
             document.body.appendChild(overlay);
@@ -843,16 +866,19 @@
                 if (trigger && trigger.focus) {
                     try { trigger.focus(); } catch (e) { /* ignore */ }
                 }
-                resolve(result);
+                resolve(spec.submit ? spec.submit(result, inputEl) : result);
             }
 
             function onKey(ev) {
                 if (ev.key === 'Escape') {
                     ev.preventDefault();
-                    cleanup(false);
+                    cleanup(spec.cancelValue);
+                } else if (ev.key === 'Enter' && inputEl && document.activeElement === inputEl) {
+                    ev.preventDefault();
+                    cleanup(spec.submitValue);
                 } else if (ev.key === 'Tab') {
-                    // 2-element focus trap.
-                    var focusables = [cancelBtn, confirmBtn];
+                    // Focus trap over every control in the dialog (input first).
+                    var focusables = (inputEl ? [inputEl] : []).concat(buttons);
                     var idx = focusables.indexOf(document.activeElement);
                     if (idx === -1) {
                         ev.preventDefault();
@@ -865,20 +891,84 @@
                 }
             }
 
-            cancelBtn.addEventListener('click', function() { cleanup(false); });
-            confirmBtn.addEventListener('click', function() { cleanup(true); });
             overlay.addEventListener('click', function(ev) {
-                if (ev.target === overlay) cleanup(false);
+                if (ev.target === overlay) cleanup(spec.cancelValue);
             });
             document.addEventListener('keydown', onKey, true);
 
-            // Initial focus — Cancel by default so the user can't Enter-spam
-            // through a destructive prompt.
+            // Initial focus — the text field when there is one, otherwise the
+            // first button flagged isDefault, otherwise the first (cancel)
+            // button so the user can't Enter-spam through a destructive prompt.
             setTimeout(function() {
-                var initial = opts.defaultButton === 'confirm' ? confirmBtn : cancelBtn;
-                if (initial.focus) initial.focus();
+                if (inputEl) { inputEl.focus(); inputEl.select(); return; }
+                var initial = buttons[0];
+                spec.buttons.forEach(function(b, i) { if (b.isDefault) initial = buttons[i]; });
+                if (initial && initial.focus) initial.focus();
             }, 0);
         });
+    }
+
+    function confirmModal(message, opts) {
+        opts = opts || {};
+        if (typeof document === 'undefined') {
+            return Promise.resolve(window.confirm(message));
+        }
+        return dialogModal(message, opts, {
+            cancelValue: false,
+            buttons: [
+                { label: opts.cancelLabel || 'Cancel', value: false, className: 'cancel' },
+                { label: opts.confirmLabel || (opts.danger ? 'Delete' : 'OK'), value: true,
+                  className: 'confirm' + (opts.danger ? ' danger' : ''), isDefault: opts.defaultButton === 'confirm' }
+            ]
+        });
+    }
+
+    /* chooseModal(message, {title, options: [{key, label, danger}], cancelLabel})
+     * → Promise<string|null>: the chosen option's key, or null on Cancel /
+     * Escape / overlay click. A confirm with N answers instead of one — e.g.
+     * "Restore the retired device or create a new one with this name?".
+     */
+    function chooseModal(message, opts) {
+        opts = opts || {};
+        var buttons = [{ label: opts.cancelLabel || 'Cancel', value: null, className: 'cancel' }];
+        (opts.options || []).forEach(function(o) {
+            buttons.push({ label: o.label, value: o.key, className: 'confirm' + (o.danger ? ' danger' : '') });
+        });
+        return dialogModal(message, opts, { cancelValue: null, buttons: buttons });
+    }
+
+    /* promptTextModal(message, {title, label, defaultValue, confirmLabel, cancelLabel})
+     * → Promise<string|null>: the trimmed text, or null on Cancel / Escape /
+     * overlay click / empty input. Enter inside the field submits.
+     */
+    function promptTextModal(message, opts) {
+        opts = opts || {};
+        var SUBMIT = {};
+        return dialogModal(message, opts, {
+            cancelValue: null,
+            submitValue: SUBMIT,
+            input: { label: opts.label || '', defaultValue: opts.defaultValue },
+            buttons: [
+                { label: opts.cancelLabel || 'Cancel', value: null, className: 'cancel' },
+                { label: opts.confirmLabel || 'OK', value: SUBMIT, className: 'confirm' }
+            ],
+            submit: function(result, inputEl) {
+                if (result !== SUBMIT) return null;
+                var text = (inputEl.value || '').trim();
+                return text === '' ? null : text;
+            }
+        });
+    }
+
+    /* deviceOptionLabel(d): a device's name for pickers and chips — plain
+     * `name` while active, `name (retired <date>)` once retired so a rule or
+     * tunnel still bound to a retired device is labelled honestly. Returns
+     * text; callers escape it for HTML.
+     */
+    function deviceOptionLabel(d) {
+        if (!d) return '';
+        var name = d.name != null ? String(d.name) : '';
+        return d.retired_at ? name + ' (retired ' + formatDate(d.retired_at) + ')' : name;
     }
 
     /* ------------------------------------------------------------------
@@ -1633,6 +1723,9 @@
         showToast: showToast,
         clearToasts: clearToasts,
         confirm: confirmModal,
+        choose: chooseModal,
+        promptText: promptTextModal,
+        deviceOptionLabel: deviceOptionLabel,
         openModal: openModal,
         closeModal: closeModal,
         pollWhenVisible: pollWhenVisible,

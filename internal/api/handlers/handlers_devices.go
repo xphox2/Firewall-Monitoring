@@ -46,11 +46,19 @@ func (h *Handler) CreateDevice(c *gin.Context) {
 		return
 	}
 
-	var device models.Device
-	if err := c.ShouldBindJSON(&device); err != nil {
+	// reuse_name (v0.11.241) is a request-only flag, kept off the model so it
+	// never appears in a device response and the update allow-list cannot see
+	// it. The embedded struct's fields promote through encoding/json, so the
+	// device keys bind exactly as before.
+	var req struct {
+		models.Device
+		ReuseName bool `json:"reuse_name"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
+	device := req.Device
 
 	// Validate required fields
 	if strings.TrimSpace(device.Name) == "" || strings.TrimSpace(device.IPAddress) == "" {
@@ -105,22 +113,37 @@ func (h *Handler) CreateDevice(c *gin.Context) {
 	}
 
 	// Same-name re-add (v0.11.239): a retired device with this exact name keeps
-	// its history under its original id, so instead of creating a second row
-	// (which the unique name index would refuse anyway) tell the client which
-	// retired device it is — the UI offers to restore it with these settings.
-	var retired models.Device
-	if err := db.Gorm().Select("id, retired_at").
-		Where("name = ? AND retired_at IS NOT NULL", device.Name).First(&retired).Error; err == nil {
-		c.JSON(http.StatusConflict, gin.H{
-			"success":           false,
-			"error":             "a retired device with this name exists",
-			"retired_device_id": retired.ID,
-			"retired_at":        retired.RetiredAt,
-		})
-		return
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		httputil.InternalError(c, "Failed to create device", err)
-		return
+	// its history under its original id, so tell the client which retired
+	// device it is — the UI offers to restore it with these settings, or (since
+	// v0.11.241, names being unique among ACTIVE devices only) to create a new
+	// device that reuses the name by re-posting with `reuse_name: true`, which
+	// skips this advisory check. The most recently retired one is named, with
+	// the count so the UI can say when several share the name. The partial
+	// unique index stays authoritative: a collision with an active device,
+	// including a concurrent create or restore, is the 409 below.
+	if !req.ReuseName {
+		var retired models.Device
+		if err := db.Gorm().Select("id, retired_at").
+			Where("name = ? AND retired_at IS NOT NULL", device.Name).
+			Order("retired_at DESC").First(&retired).Error; err == nil {
+			var retiredCount int64
+			if err := db.Gorm().Model(&models.Device{}).
+				Where("name = ? AND retired_at IS NOT NULL", device.Name).Count(&retiredCount).Error; err != nil {
+				httputil.InternalError(c, "Failed to create device", err)
+				return
+			}
+			c.JSON(http.StatusConflict, gin.H{
+				"success":           false,
+				"error":             "a retired device with this name exists",
+				"retired_device_id": retired.ID,
+				"retired_at":        retired.RetiredAt,
+				"retired_count":     retiredCount,
+			})
+			return
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			httputil.InternalError(c, "Failed to create device", err)
+			return
+		}
 	}
 
 	device.ID = 0

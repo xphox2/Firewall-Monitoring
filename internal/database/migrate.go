@@ -1320,6 +1320,13 @@ func (d *Database) materializeOrphanedDevices(tx *gorm.DB) error {
 		if name == "" {
 			name, ip = fallback, "0.0.0.0"
 		} else {
+			// Name uniqueness here is checked against EVERY device, not only
+			// the active ones: on an upgraded install this ran under the old
+			// global unique index (v63 relaxes it to active devices only),
+			// and a materialized retired row must not shadow a live name. On
+			// a fresh install there is no name uniqueness at all between v1
+			// (the non-unique idx_devices_name from the model tag) and v63,
+			// which is harmless: a fresh database has no orphans to recover.
 			var clash int64
 			if err := tx.Model(&models.Device{}).Where("name = ?", name).Count(&clash).Error; err != nil {
 				return fmt.Errorf("materialize device %d: name check: %w", id, err)
@@ -1443,6 +1450,59 @@ func (d *Database) migrateCloseAlertsForRetiredDevices() error {
 		}
 		if len(ids) > 0 {
 			log.Printf("migrate v62: closed open alerts and incidents for %d retired device(s)", len(ids))
+		}
+		return nil
+	})
+}
+
+// migrateDeviceNameUniqueAmongActive (v63) relaxes device-name uniqueness
+// from "every row" to "active rows only" so a replacement device can reuse a
+// retired device's name while the retired row keeps its history under its
+// own id (v0.11.241). The model tag went from uniqueIndex to index, so
+// AutoMigrate now declares the plain lookup index idx_devices_name; this
+// migration converges an upgraded install (whose idx_devices_name is the OLD
+// global unique index) onto the same shape: drop it, recreate it non-unique,
+// and add the partial unique index idx_devices_name_active on
+// (name) WHERE retired_at IS NULL. SQLite supports partial indexes, so the
+// DDL is identical on both dialects and every statement is IF (NOT) EXISTS,
+// which makes a rerun a no-op.
+//
+// Pre-flight: if two ACTIVE devices already share a name (impossible under
+// the old index, but a hand-edited database is not) the migration returns an
+// error naming them instead of half-applying — the partial unique index could
+// not be built and the global one would already be gone. One transaction with
+// `SET LOCAL statement_timeout = 0` on Postgres, the v61/v62 pattern, so the
+// index build on a large devices table is never cancelled mid-swap.
+func (d *Database) migrateDeviceNameUniqueAmongActive() error {
+	return d.db.Transaction(func(tx *gorm.DB) error {
+		if d.dialect.IsPostgres() {
+			if err := tx.Exec("SET LOCAL statement_timeout = 0").Error; err != nil {
+				return fmt.Errorf("lift statement_timeout: %w", err)
+			}
+		}
+		var dups []struct {
+			Name string
+			N    int64
+		}
+		if err := tx.Raw(`SELECT name, count(*) AS n FROM devices WHERE retired_at IS NULL GROUP BY name HAVING count(*) > 1 ORDER BY name`).
+			Scan(&dups).Error; err != nil {
+			return fmt.Errorf("migrate v63: scan active duplicate names: %w", err)
+		}
+		if len(dups) > 0 {
+			parts := make([]string, 0, len(dups))
+			for _, dup := range dups {
+				parts = append(parts, fmt.Sprintf("%q (%d active rows)", dup.Name, dup.N))
+			}
+			return fmt.Errorf("migrate v63: active devices share a name, retire or rename them first: %s", strings.Join(parts, ", "))
+		}
+		if err := tx.Exec(`DROP INDEX IF EXISTS idx_devices_name`).Error; err != nil {
+			return fmt.Errorf("migrate v63: drop global unique name index: %w", err)
+		}
+		if err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_devices_name ON devices (name)`).Error; err != nil {
+			return fmt.Errorf("migrate v63: create name lookup index: %w", err)
+		}
+		if err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_name_active ON devices (name) WHERE retired_at IS NULL`).Error; err != nil {
+			return fmt.Errorf("migrate v63: create active-name unique index: %w", err)
 		}
 		return nil
 	})

@@ -8,7 +8,7 @@
     var API = AC.API_BASE;
     var wired = false;
     var caps = null;       // { a, b, allowed, profiles } for the selected pair
-    var devices = [];      // eligible (fortigate/opnsense) devices
+    var devices = [];      // eligible (fortigate/opnsense) devices, retired included
     var lastPreviewOK = false;
     var hintGen = { a: 0, b: 0 };         // per-endpoint request token — drop stale hint responses
     var capsGen = 0;                      // per-pair token — drop stale capability responses
@@ -178,9 +178,10 @@
                 var v = vendorOf(d);
                 return v === 'fortigate' || v === 'opnsense';
             });
-            var opts = '<option value="">— select —</option>' + devices.map(function (d) {
-                return '<option value="' + d.id + '">' + esc(d.name) + ' (' + esc(vendorOf(d)) + ')</option>';
-            }).join('');
+            // New tunnels pick from ACTIVE devices; a stored tunnel bound to a
+            // retired device gets that device appended by loadTunnelIntoWizard.
+            var opts = '<option value="">— select —</option>' + devices.filter(function (d) { return !d.retired_at; })
+                .map(deviceOption).join('');
             $('ipsec-dev-a').innerHTML = opts;
             $('ipsec-dev-b').innerHTML = opts;
             AC.openModal('ipsec-wizard-modal');
@@ -189,6 +190,22 @@
     }
 
     function deviceById(id) { return devices.find(function (d) { return String(d.id) === String(id); }); }
+
+    function deviceOption(d) {
+        return '<option value="' + d.id + '">' + esc(AC.deviceOptionLabel(d)) + ' (' + esc(vendorOf(d)) + ')</option>';
+    }
+
+    // ensureDeviceOption appends a retired device to both A/B selects when a
+    // stored tunnel still binds it, so the edit form displays it (labelled as
+    // retired) instead of a blank select.
+    function ensureDeviceOption(id) {
+        var d = deviceById(id);
+        if (!d || !d.retired_at) return;
+        ['ipsec-dev-a', 'ipsec-dev-b'].forEach(function (selId) {
+            var sel = $(selId);
+            if (sel && !sel.querySelector('option[value="' + d.id + '"]')) sel.insertAdjacentHTML('beforeend', deviceOption(d));
+        });
+    }
 
     function onDevicesChosen() {
         var a = deviceById($('ipsec-dev-a').value), b = deviceById($('ipsec-dev-b').value);
@@ -1344,6 +1361,8 @@
         AC.apiFetch(API + '/ipsec/tunnels/' + id).then(function (r) {
             var t = r && r.data && r.data.intent;
             if (!t) return;
+            ensureDeviceOption(t.ends[0].device_id);
+            ensureDeviceOption(t.ends[1].device_id);
             $('ipsec-dev-a').value = t.ends[0].device_id;
             $('ipsec-dev-b').value = t.ends[1].device_id;
             // Populate crypto + endpoint fields only AFTER capabilities load, so the

@@ -659,6 +659,15 @@
 
     function isRetiredDevice(d) { return !!(d && d.retired_at); }
 
+    // retiredDay renders the retire date as YYYY-MM-DD in the operator's
+    // timezone for the compact RETIRED badge (the full timestamp stays in the
+    // tooltip). 'en-CA' is the locale whose date format IS ISO 8601.
+    function retiredDay(dateStr) {
+        var d = new Date(dateStr);
+        if (isNaN(d.getTime())) return '';
+        return d.toLocaleDateString('en-CA', { timeZone: AC.getTimezone(), year: 'numeric', month: '2-digit', day: '2-digit' });
+    }
+
     // Devices that still take part in polling, maps and counts. Retired devices
     // stay in currentDevices so name lookups (alerts, syslog, chips) keep working.
     function activeDevices() {
@@ -686,7 +695,7 @@
         tbody.innerHTML = rows.map(function(d) {
             var retired = isRetiredDevice(d);
             var retiredBadge = retired
-                ? ' <span class="badge unknown" title="' + escapeHtml('Retired ' + formatDate(d.retired_at) + ' — data preserved') + '">RETIRED</span>'
+                ? ' <span class="badge unknown" title="' + escapeHtml('Retired ' + formatDate(d.retired_at) + ' — data preserved') + '">RETIRED ' + escapeHtml(retiredDay(d.retired_at)) + '</span>'
                 : '';
             // A retired device is no longer polled, so its stored status is
             // frozen at whatever it was at retire time: never paint the live
@@ -3141,29 +3150,47 @@
                 loadDevices();
                 AC.showSuccess(id ? 'Device updated' : 'Device created');
             }).catch(function(err) {
-                // Adding a device whose name belongs to a RETIRED device: offer to
-                // restore that device (same id, history reattaches) with the form's
-                // settings instead of creating a duplicate. Cancel keeps the form
-                // open so the operator can pick another name.
+                // Adding a device whose name belongs to a RETIRED device: names are
+                // unique only among ACTIVE devices, so the operator picks: restore
+                // that device (same id, history reattaches) with the form's
+                // settings, or create a brand-new device that reuses the name
+                // (`reuse_name: true`; the retired one keeps its own history).
+                // Cancel keeps the form open so another name can be picked.
                 var body = err && err.body;
                 if (err && err.status === 409 && body && body.retired_device_id) {
-                    return AC.confirm('A retired device named "' + data.name + '" exists with its history. Restore it and apply these settings?', {
-                        title: 'Restore retired device?',
-                        confirmLabel: 'Restore',
-                    }).then(function(ok) {
-                        if (!ok) return;
-                        var settings = Object.assign({}, data);
-                        delete settings.enabled; // restore re-enables; the server rejects it in the body
-                        return apiFetch(API_BASE + '/devices/' + body.retired_device_id + '/restore', {
-                            method: 'POST', body: JSON.stringify(settings)
-                        }).then(function() {
-                            closeDeviceModal();
-                            loadDevices();
-                            AC.showSuccess('Device restored');
-                        }).catch(function(rerr) {
-                            fwmonLog.error('Error restoring device:', rerr);
-                            AC.showError('Error restoring device: ' + rerr.message);
-                        });
+                    var msg = 'A retired device named "' + data.name + '" exists (retired ' + formatDate(body.retired_at) +
+                        ', history preserved). Restore it and apply these settings, or create a new device with this name?';
+                    if (body.retired_count > 1) {
+                        msg += ' ' + body.retired_count + ' retired devices share this name; Restore applies to the most recently retired one.';
+                    }
+                    return AC.choose(msg, {
+                        title: 'Name belongs to a retired device',
+                        options: [
+                            { key: 'restore', label: 'Restore retired device' },
+                            { key: 'create', label: 'Create new device' }
+                        ],
+                    }).then(function(choice) {
+                        if (choice === 'restore') {
+                            var settings = Object.assign({}, data);
+                            delete settings.enabled; // restore re-enables; the server rejects it in the body
+                            return restoreWithRename(body.retired_device_id, settings, data.name).then(function(done) {
+                                if (!done) return;
+                                closeDeviceModal();
+                                loadDevices();
+                            });
+                        }
+                        if (choice === 'create') {
+                            var fresh = Object.assign({}, data, { reuse_name: true });
+                            return apiFetch(url, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(fresh) }).then(function() {
+                                closeDeviceModal();
+                                loadDevices();
+                                AC.showSuccess('Device created');
+                            }).catch(function(cerr) {
+                                fwmonLog.error('Error creating device:', cerr);
+                                AC.showError('Error saving device: ' + cerr.message);
+                            });
+                        }
+                        // null: cancelled — leave the form open.
                     });
                 }
                 fwmonLog.error('Error saving device:', err);
@@ -3195,13 +3222,51 @@
         });
     }
 
-    function restoreDevice(id) {
-        apiFetch(API_BASE + '/devices/' + id + '/restore', { method: 'POST' }).then(function() {
-            loadDevices();
+    // restoreWithRename POSTs /restore with `settings` (may be empty). When the
+    // device's name is meanwhile held by an ACTIVE device the server answers
+    // 409 "device name already in use"; then ask for a new name and retry with
+    // it, so the restore + rename land in one statement. Resolves true when
+    // the device was restored, false when the operator cancelled or the call
+    // failed (the error is already shown).
+    function restoreWithRename(id, settings, name) {
+        settings = settings || {};
+        var post = function(body) {
+            var req = { method: 'POST' };
+            if (Object.keys(body).length) req.body = JSON.stringify(body);
+            return apiFetch(API_BASE + '/devices/' + id + '/restore', req);
+        };
+        return post(settings).then(function() {
             AC.showSuccess('Device restored');
+            return true;
         }).catch(function(err) {
+            if (err && err.status === 409 && /already in use/i.test(err.message || '')) {
+                return AC.promptText('That name is now used by an active device. Enter a new name for the restored device:', {
+                    title: 'Rename on restore',
+                    label: 'New device name',
+                    defaultValue: (name || 'device') + '-old',
+                    confirmLabel: 'Restore',
+                }).then(function(newName) {
+                    if (!newName) return false;
+                    return post(Object.assign({}, settings, { name: newName })).then(function() {
+                        AC.showSuccess('Device restored as ' + newName);
+                        return true;
+                    }).catch(function(rerr) {
+                        fwmonLog.error('Error restoring device:', rerr);
+                        AC.showError('Error restoring device: ' + rerr.message);
+                        return false;
+                    });
+                });
+            }
             fwmonLog.error('Error restoring device:', err);
             AC.showError('Error restoring device: ' + err.message);
+            return false;
+        });
+    }
+
+    function restoreDevice(id) {
+        var dev = currentDevices.find(function(x) { return Number(x.id) === Number(id); });
+        restoreWithRename(id, {}, dev ? dev.name : '').then(function(done) {
+            if (done) loadDevices();
         });
     }
 
@@ -4159,18 +4224,21 @@
         // Populate device select from API (not currentDevices which may be empty)
         var devSelect = document.getElementById('maint-device-id');
         var siteSelect = document.getElementById('maint-site-id');
+        var editing = id ? currentMaintenanceWindows.find(function(x) { return x.id === id; }) : null;
         apiFetch(API_BASE + '/devices').then(function(r) {
             if (r && r.data) {
-                devSelect.innerHTML = '<option value="">Select Device</option>' + r.data.map(function(d) {
-                    var label = escapeHtml(d.name);
+                // New windows target active devices; a window already bound to a
+                // retired device keeps showing it (labelled as retired).
+                var pickable = r.data.filter(function(d) {
+                    return !isRetiredDevice(d) || (editing && Number(editing.device_id) === Number(d.id));
+                });
+                devSelect.innerHTML = '<option value="">Select Device</option>' + pickable.map(function(d) {
+                    var label = escapeHtml(AC.deviceOptionLabel(d));
                     if (d.ip_address) label += ' (' + escapeHtml(d.ip_address) + ')';
                     return '<option value="' + d.id + '">' + label + '</option>';
                 }).join('');
                 // Re-apply device selection for edit mode
-                if (id) {
-                    var w = currentMaintenanceWindows.find(function(x) { return x.id === id; });
-                    if (w && w.device_id) devSelect.value = w.device_id;
-                }
+                if (editing && editing.device_id) devSelect.value = editing.device_id;
             }
         });
         apiFetch(API_BASE + '/sites').then(function(r) {
