@@ -43,7 +43,7 @@ func (p *Poller) runIPSecTelemetryCycle() {
 	if p.db == nil {
 		return
 	}
-	devices, err := p.db.GetAllDevices()
+	devices, err := p.db.GetActiveDevices()
 	if err != nil {
 		log.Printf("ipsec telemetry: list devices: %v", err)
 		return

@@ -108,6 +108,9 @@ var registeredMigrations = []migration{
 	{version: 57, name: "trap_events_timestamp_index", run: (*Database).migrateTrapEventsTimestampIndex},
 	{version: 58, name: "ipsec_tunnel_preflight_state", run: (*Database).migrateIPSecTunnelPreflightState},
 	{version: 59, name: "syslog_ingest_hourly", run: (*Database).migrateSyslogIngestHourly},
+	{version: 60, name: "device_retired_at", run: (*Database).migrateDeviceRetiredAt},
+	{version: 61, name: "materialize_orphaned_devices", run: (*Database).migrateMaterializeOrphanedDevices},
+	// v62 is reserved for the device purge job table (follow-up PR).
 }
 
 // RunMigrations applies every registered migration not yet recorded in

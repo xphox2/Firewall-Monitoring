@@ -99,6 +99,9 @@
         fetch('/admin/api/devices/' + deviceId + '/detail', { credentials: 'same-origin' })
             .then(function(resp) {
                 if (resp.status === 401) { window.location.href = '/admin/login'; return Promise.reject(new Error('Not authenticated')); }
+                // A retired device still loads (its row is kept); a 404 means the
+                // device was purged, which is the only way a device row disappears.
+                if (resp.status === 404) throw new Error('This device was permanently deleted.');
                 if (!resp.ok) throw new Error('Failed to load device');
                 return resp.json();
             })
@@ -115,9 +118,40 @@
                 // v0.10.230/231/232 sweep — switched to classList toggling
                 // so removing the higher-specificity class can't break it.
                 document.getElementById('loading').classList.add('hidden');
-                document.getElementById('error').classList.remove('hidden');
-                document.getElementById('error').textContent = e.message;
+                var errEl = document.getElementById('error');
+                errEl.classList.remove('hidden');
+                errEl.textContent = e.message;
+                // Purged device: give the operator a way back to the list.
+                if (e.message === 'This device was permanently deleted.') {
+                    var back = document.createElement('a');
+                    back.href = '/admin/devices';
+                    back.textContent = 'Back to Devices';
+                    back.style.marginLeft = '8px';
+                    back.style.color = 'var(--fwmon-accent)';
+                    errEl.appendChild(back);
+                }
             });
+    }
+
+    // Retired banner (device.retired_at set): polling has stopped, history is
+    // kept, Restore re-enables the device with its stored settings.
+    function renderRetiredBanner(dev) {
+        var banner = document.getElementById('retiredBanner');
+        var text = document.getElementById('retiredBannerText');
+        if (!banner || !text) return;
+        if (!dev.retired_at) { banner.classList.add('hidden'); return; }
+        text.textContent = 'Retired on ' + AC.formatDate(dev.retired_at) + '. Data preserved.';
+        banner.classList.remove('hidden');
+    }
+
+    function restoreDevice() {
+        AC.apiFetch('/admin/api/devices/' + deviceId + '/restore', { method: 'POST' }).then(function() {
+            AC.showSuccess('Device restored');
+            loadDevice();
+        }).catch(function(err) {
+            fwmonLog.error('Error restoring device:', err);
+            AC.showError('Error restoring device: ' + err.message);
+        });
     }
 
     function renderDevice() {
@@ -125,6 +159,7 @@
         document.getElementById('content').classList.remove('hidden');
 
         var dev = deviceData.device;
+        renderRetiredBanner(dev);
         var nameText = dev.name || dev.hostname || 'Unknown';
         document.getElementById('deviceName').textContent = nameText;
         document.title = nameText + ' - Firewall Monitor';
@@ -2587,6 +2622,7 @@
 
     // Register all delegated event handlers
     AC.delegateEvent('click', {
+        'restore-device': function() { restoreDevice(); },
         'logout': function() {
             AC.doLogout();
         },

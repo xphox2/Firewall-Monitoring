@@ -322,13 +322,26 @@ func (d *Database) UpdateSite(site *models.Site) error {
 	return d.db.Save(site).Error
 }
 
+// ErrSiteHasMembers is returned by DeleteSite while any device (active OR
+// retired) or probe still references the site. The pre-v0.11.239 version
+// cascaded a raw DELETE over the site's probes and devices — silently destroying
+// device rows (and orphaning their history) as a side effect of removing a
+// site. The operator must move or purge the devices and decommission the probes
+// first; the handler maps this to 409.
+var ErrSiteHasMembers = errors.New("site still has devices or probes")
+
+// DeleteSite removes an empty site. See ErrSiteHasMembers for the guard.
 func (d *Database) DeleteSite(id uint) error {
 	return d.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("site_id = ?", id).Delete(&models.Probe{}).Error; err != nil {
-			return fmt.Errorf("delete site %d: delete probes: %w", id, err)
+		var devices, probes int64
+		if err := tx.Model(&models.Device{}).Where("site_id = ?", id).Count(&devices).Error; err != nil {
+			return fmt.Errorf("delete site %d: count devices: %w", id, err)
 		}
-		if err := tx.Where("site_id = ?", id).Delete(&models.Device{}).Error; err != nil {
-			return fmt.Errorf("delete site %d: delete devices: %w", id, err)
+		if err := tx.Model(&models.Probe{}).Where("site_id = ?", id).Count(&probes).Error; err != nil {
+			return fmt.Errorf("delete site %d: count probes: %w", id, err)
+		}
+		if devices > 0 || probes > 0 {
+			return fmt.Errorf("%w: %d device(s), %d probe(s)", ErrSiteHasMembers, devices, probes)
 		}
 		return tx.Delete(&models.Site{}, id).Error
 	})
@@ -409,9 +422,14 @@ var ErrProbeHasDevices = errors.New("probe has assigned devices")
 // delete probe"). Devices are deliberately NOT deleted here: they may be in the
 // middle of being reassigned, so we refuse the delete with ErrProbeHasDevices
 // and let the operator move them first.
+//
+// Retired devices (v0.11.239) do not block the delete: they are not polled, so
+// nothing is lost by detaching them. Their probe_id is set to NULL inside the
+// transaction first — devices.probe_id is a real foreign key, so the probe row
+// could not be removed while a retired device still pointed at it.
 func (d *Database) DeleteProbe(id uint) error {
 	var deviceCount int64
-	if err := d.db.Model(&models.Device{}).Where("probe_id = ?", id).Count(&deviceCount).Error; err != nil {
+	if err := d.db.Model(&models.Device{}).Where("probe_id = ? AND retired_at IS NULL", id).Count(&deviceCount).Error; err != nil {
 		return fmt.Errorf("delete probe %d: count assigned devices: %w", id, err)
 	}
 	if deviceCount > 0 {
@@ -419,6 +437,11 @@ func (d *Database) DeleteProbe(id uint) error {
 	}
 
 	return d.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&models.Device{}).
+			Where("probe_id = ? AND retired_at IS NOT NULL", id).
+			Update("probe_id", gorm.Expr("NULL")).Error; err != nil {
+			return fmt.Errorf("delete probe %d: detach retired devices: %w", id, err)
+		}
 		// Remove the registration-key SystemSetting (keyed by the hashed key) so
 		// a deleted probe's row doesn't leak and the key can't be reused.
 		var probe models.Probe
@@ -449,9 +472,12 @@ func (d *Database) DeleteProbe(id uint) error {
 // DeleteProbe it refuses while devices are still assigned (ErrProbeHasDevices):
 // the operator must first reassign those devices to the replacement probe. Use
 // this — not DeleteProbe — for an in-service probe, so no data is ever lost.
+//
+// Only ACTIVE devices count (v0.11.239): a retired device is not polled, so it
+// does not need reassigning before its probe is decommissioned.
 func (d *Database) DecommissionProbe(id uint) error {
 	var deviceCount int64
-	if err := d.db.Model(&models.Device{}).Where("probe_id = ?", id).Count(&deviceCount).Error; err != nil {
+	if err := d.db.Model(&models.Device{}).Where("probe_id = ? AND retired_at IS NULL", id).Count(&deviceCount).Error; err != nil {
 		return fmt.Errorf("decommission probe %d: count assigned devices: %w", id, err)
 	}
 	if deviceCount > 0 {
@@ -621,9 +647,13 @@ func (d *Database) GetProbeHeartbeats(probeID uint) ([]models.ProbeHeartbeat, er
 	return heartbeats, err
 }
 
+// GetDevicesByProbe returns the ACTIVE devices assigned to a probe — the list a
+// collector polls (with decrypted secrets). Retired devices are excluded so the
+// collector stops polling them at its next refresh and their credentials are
+// no longer shipped.
 func (d *Database) GetDevicesByProbe(probeID uint) ([]models.Device, error) {
 	var devices []models.Device
-	err := d.db.Where("probe_id = ?", probeID).Preload("Site").Find(&devices).Error
+	err := d.db.Scopes(ActiveDevices).Where("probe_id = ?", probeID).Preload("Site").Find(&devices).Error
 	for i := range devices {
 		d.DecryptDeviceSecrets(&devices[i])
 	}
@@ -635,8 +665,10 @@ func (d *Database) GetDevicesByProbe(probeID uint) ([]models.Device, error) {
 // allow-list check (probeDeviceIDs), which only needs the ID set: it skips the
 // `Preload("Site")` JOIN and the per-device AES-GCM secret decryption that
 // GetDevicesByProbe performs on every call (~18 ingestion handlers invoke it).
+// Active devices only, like GetDevicesByProbe: this is what makes the per-item
+// ingest allow-list drop a retired device's late/spooled rows.
 func (d *Database) GetDeviceIDsByProbe(probeID uint) ([]uint, error) {
 	var ids []uint
-	err := d.db.Model(&models.Device{}).Where("probe_id = ?", probeID).Pluck("id", &ids).Error
+	err := d.db.Model(&models.Device{}).Scopes(ActiveDevices).Where("probe_id = ?", probeID).Pluck("id", &ids).Error
 	return ids, err
 }

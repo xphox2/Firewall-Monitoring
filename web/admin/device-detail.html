@@ -68,6 +68,13 @@
                 <a href="/admin/devices" class="back-link text-[#58a6ff] no-underline text-[0.88rem] hover:underline">&larr; Back to Devices</a>
             </div>
 
+            <!-- Retired banner: shown when the device carries retired_at. Polling
+                 has stopped; every row of history is kept and Restore re-enables it. -->
+            <div id="retiredBanner" class="dash-banner hidden" role="status" style="margin-bottom:20px;">
+                <span id="retiredBannerText"></span>
+                <button class="btn sm" type="button" data-action="restore-device" data-min-role="operator">Restore</button>
+            </div>
+
             <!-- Redesigned Device Header Banner -->
             <div class="device-banner p-6 mb-6 flex items-center justify-between flex-wrap gap-4 shadow-lg">
                 <div class="flex items-center gap-4 flex-wrap">

@@ -437,7 +437,15 @@
                 });
             }
             if (!res.ok) {
-                return res.json().then(function(err) { throw new Error(err.error || 'Request failed'); });
+                // The HTTP status and decoded body ride on the Error so a caller
+                // can branch on a structured failure (e.g. the 409 that carries
+                // `retired_device_id` when re-adding a retired device's name).
+                return res.json().then(function(err) {
+                    var e = new Error(err.error || 'Request failed');
+                    e.status = res.status;
+                    e.body = err;
+                    throw e;
+                });
             }
             return res.json();
             });
@@ -561,7 +569,8 @@
         trash: '<polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line>',
         eye: '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle>',
         copy: '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>',
-        shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>'
+        shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>',
+        archive: '<polyline points="21 8 21 21 3 21 3 8"></polyline><rect x="1" y="3" width="22" height="5"></rect><line x1="10" y1="12" x2="14" y2="12"></line>'
     };
     function icon(name) {
         return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +

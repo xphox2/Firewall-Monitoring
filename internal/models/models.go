@@ -830,6 +830,15 @@ type Device struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 	LastPolled  time.Time `json:"last_polled"`
 	Status      string    `json:"status" gorm:"default:unknown"`
+	// RetiredAt marks a soft-deleted device (v0.11.239, migration v60): the row
+	// and every device-keyed table (telemetry, alerts, incidents, config history)
+	// are preserved, so the history stays attributable and the device can be
+	// restored under the same id. Non-nil = retired: excluded from polling,
+	// ingest allow-lists, dashboards, reports and counts via the ActiveDevices
+	// scope; still returned by GetDevice/GetAllDevices so alert and detail pages
+	// can name it. Status is deliberately left as-is (no fourth status bucket).
+	// Mirrors Probe.DecommissionedAt.
+	RetiredAt *time.Time `json:"retired_at,omitempty" gorm:"index"`
 }
 
 type DeviceTunnel struct {

@@ -103,7 +103,7 @@ func TestRunMonitoringCycle_KeepsAlertEngineCalls(t *testing.T) {
 
 	for _, call := range []string{
 		"RefreshThresholds(",
-		"GetAllDevices()",
+		"GetActiveDevices()", // v0.11.239: the cycle runs over ACTIVE (non-retired) devices
 		"pruneStaleIfaceStats(",
 		"MarkStaleProbeDevicesOffline(",
 		"CheckDeviceOffline(",

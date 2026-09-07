@@ -94,7 +94,7 @@ func (h *Handler) buildReportHTML(db database.Store, period string, collapsible 
 		}
 	}
 
-	devices, err := db.GetAllDevices()
+	devices, err := db.GetActiveDevices()
 	if err != nil {
 		return "", "", "", nil, err
 	}

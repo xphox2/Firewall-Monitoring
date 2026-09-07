@@ -177,9 +177,9 @@ func (d *Database) GetNOCSnapshotFiltered(window time.Duration, filter NOCFilter
 		}
 	}
 
-	// Device online/offline counts, scoped to the filter.
+	// Device online/offline counts, scoped to the filter (active devices only).
 	{
-		q := d.db.Model(&models.Device{})
+		q := d.db.Model(&models.Device{}).Scopes(ActiveDevices)
 		switch {
 		case filter.DeviceID != nil:
 			q = q.Where("id = ?", *filter.DeviceID)
@@ -476,11 +476,12 @@ func (d *Database) buildSiteBreakdown(cutoff time.Time, secs float64) ([]SiteBre
 }
 
 // GetDeviceStatusRows returns the lightweight device fields the NOC breakdown
-// needs (id, name, ip, status, site, last_polled) without preloads. Kept
-// separate from GetDeviceStatuses (id+status only), which feeds hot paths.
+// needs (id, name, ip, status, site, last_polled) without preloads, for ACTIVE
+// devices only. Kept separate from GetDeviceStatuses (id+status only), which
+// feeds hot paths.
 func (d *Database) GetDeviceStatusRows() ([]models.Device, error) {
 	var rows []models.Device
-	err := d.db.Model(&models.Device{}).
+	err := d.db.Model(&models.Device{}).Scopes(ActiveDevices).
 		Select("id, name, ip_address, status, site_id, last_polled").
 		Find(&rows).Error
 	return rows, err

@@ -155,6 +155,9 @@
             var s = sites[i];
             var devs = s.devices || [];
             for (var j = 0; j < devs.length; j++) {
+                // The snapshot is server-scoped to active devices
+                // (GetDeviceStatusRows applies ActiveDevices), so retired
+                // devices never reach this list: no card, no count.
                 out.push({ dev: devs[j], siteName: s.site_name || 'Unassigned' });
             }
         }
@@ -203,7 +206,10 @@
     // ── Detections feed ─────────────────────────────────────────────────────
 
     // deviceNameMap builds an id→name lookup from the snapshot's site breakdown so
-    // a detection's device_id can be shown as a name (no extra fetch).
+    // a detection's device_id can be shown as a name (no extra fetch). The
+    // breakdown holds ACTIVE devices only, so a detection attributed to a
+    // retired device is not in the map and renders through renderDetections'
+    // 'DEV-<id>' fallback — this page has no other name source.
     function deviceNameMap(d) {
         var map = {};
         var sites = (d && d.sites) || [];

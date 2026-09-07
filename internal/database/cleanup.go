@@ -611,13 +611,13 @@ func (d *Database) auditDeviceVendors() {
 		log.Printf("vendor backfill: set %d devices with empty vendor → 'fortigate'", res.RowsAffected)
 	}
 
-	// Step 2: count devices per vendor.
+	// Step 2: count active devices per vendor.
 	type vendorCount struct {
 		Vendor string
 		N      int64
 	}
 	var counts []vendorCount
-	if err := d.db.Model(&models.Device{}).
+	if err := d.db.Model(&models.Device{}).Scopes(ActiveDevices).
 		Select("vendor as vendor, COUNT(*) as n").
 		Group("vendor").
 		Find(&counts).Error; err != nil {

@@ -487,7 +487,8 @@ type DeviceRuleMeta struct {
 	SiteID *uint
 }
 
-// LoadDeviceRuleMeta returns deviceID → {vendor, siteID} for all devices. Called
+// LoadDeviceRuleMeta returns deviceID → {vendor, siteID} for all ACTIVE devices
+// (a retired device has no rule context; nothing is evaluated for it). Called
 // on the same cadence as the policy cache refresh.
 func (d *Database) LoadDeviceRuleMeta() (map[uint]DeviceRuleMeta, error) {
 	var rows []struct {
@@ -495,7 +496,7 @@ func (d *Database) LoadDeviceRuleMeta() (map[uint]DeviceRuleMeta, error) {
 		Vendor string
 		SiteID *uint
 	}
-	if err := d.db.Model(&models.Device{}).Select("id", "vendor", "site_id").Scan(&rows).Error; err != nil {
+	if err := d.db.Model(&models.Device{}).Scopes(ActiveDevices).Select("id", "vendor", "site_id").Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	out := make(map[uint]DeviceRuleMeta, len(rows))

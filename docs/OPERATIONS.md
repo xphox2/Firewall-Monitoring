@@ -242,6 +242,64 @@ the key problem loudly (see “Failure modes”).
 
 ---
 
+## Retiring, restoring and recovering devices
+
+Since v0.11.239 a device is never hard-deleted from the console. **Retire**
+(the trash action on the Devices page, `DELETE /admin/api/devices/:id` or
+`POST /admin/api/devices/:id/retire`, operator-level) is a soft delete that
+mirrors probe decommissioning:
+
+- the row is kept with `retired_at` set and `enabled=false`; status is left
+  as it was (no separate "retired" status bucket);
+- the collector stops polling it at its next device-list refresh
+  (`PROBE_DEVICE_REFRESH_INTERVAL`, default 300 s) and the server's ingest
+  allow-list drops any late or spooled rows for that device only;
+- its open alerts are acknowledged and resolved (so the escalation engine
+  stops re-notifying), its open incidents are resolved with a
+  `(device retired)` reason, and its user-drawn connection-map links are
+  removed;
+- **every** telemetry, alert, incident, config-history and ping row is
+  preserved. Dashboards, NOC, reports, the IRC status and fleet counts exclude
+  retired devices; the alerts page and the device detail page still name it.
+
+**Restore** (`POST /admin/api/devices/:id/restore`, optional JSON body of
+device settings in the `PUT` shape) clears the marker, re-enables the device,
+resets its status to `unknown` and applies the settings through the same
+validation and secret handling as an edit (`enabled` is ignored; blank or
+masked secrets keep the stored values). The history was never moved, so it is
+back on the charts immediately. Editing a retired device with `PUT` returns
+`409 device is retired; restore it first`.
+
+**Same-name re-add.** Creating a device whose name matches a retired one
+returns `409` with `retired_device_id`; the Devices page then offers to
+restore that device with the form's settings instead of creating a second
+row. A name that collides with an *active* device is `409 device name already
+in use`.
+
+**Probes and sites.** A retired device does not block deleting or
+decommissioning its probe (delete detaches it: `probe_id` becomes NULL). A
+site cannot be deleted while any device — active or retired — or probe still
+references it (`409`); move or purge the devices and decommission the probes
+first.
+
+**Recovering devices removed before v0.11.239.** The old delete removed only
+the `devices` row and left every child table keyed by the vanished
+`device_id` (alerts rendered as `DEV-<id>` with a dead link). Migration v61
+(`materialize_orphaned_devices`) runs once at startup, finds such ids in
+`alerts`, `device_config_revisions`, `device_alert_configs`, `uptime_records`
+and `vpn_status`, and recreates each as a **retired** device under its
+original id — name and IP recovered from the newest `Device <name> (<ip>) is
+offline/back online` alert, otherwise `Removed device #<id>` / `0.0.0.0` (also
+used when the recovered name is already taken). Each row is logged as
+`migrate v61: materialized retired device ...`. Rename or restore it from the
+Devices page (Retired tab) like any other retired device. The migration is
+idempotent and never scans the partitioned telemetry parents.
+
+**Permanent deletion** (purge of every row for a device) is not available yet;
+it lands in a follow-up as an admin-only, name-confirmed background job.
+
+---
+
 ## Scale & HA
 
 - **Single API instance only** (enforced — see below). A second `cmd/api`
