@@ -157,10 +157,8 @@ func (h *Handler) PurgeDevice(c *gin.Context) {
 			"IPSec tunnel deployment in progress on this device — wait for it to finish or roll it back first: "+strings.Join(blocking, ", ")))
 		return
 	}
-	username, userID, ok := h.reauthCaller(c, db, req.Password, req.TOTPCode, "purge")
-	if !ok {
-		return
-	}
+	// Before the step-up: a 409 for an already-queued job must never consume
+	// the caller's single-use TOTP code.
 	if active, err := db.GetActiveDevicePurgeJob(id); err != nil {
 		httputil.InternalError(c, "Failed to check purge jobs", err)
 		return
@@ -170,6 +168,10 @@ func (h *Handler) PurgeDevice(c *gin.Context) {
 			"error":   fmt.Sprintf("a purge job is already %s for this device", active.Status),
 			"job_id":  active.ID,
 		})
+		return
+	}
+	username, userID, ok := h.reauthCaller(c, db, req.Password, req.TOTPCode, "purge")
+	if !ok {
 		return
 	}
 	job := &models.DevicePurgeJob{

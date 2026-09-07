@@ -105,6 +105,30 @@ var purgeHeartbeatInterval = 30 * time.Second
 // `cancelling` status between batches.
 var errPurgeCancelled = errors.New("purge cancelled")
 
+// errPurgeDeviceRestored is the job's failure message when the device was
+// restored (retired_at cleared) after the job was queued: the run stops
+// without deleting anything further.
+var errPurgeDeviceRestored = errors.New("device was restored; purge aborted")
+
+// purgeDeviceStillRetired is the worker's guard against the restore-vs-purge
+// race. It reads devices.retired_at for the id: a row with retired_at IS NULL
+// means the device was restored and returns errPurgeDeviceRestored; a missing
+// row is fine (a re-run after the row was already deleted); a retired row is
+// fine. Any read error is returned as-is so the run fails rather than guesses.
+func (d *Database) purgeDeviceStillRetired(ctx context.Context, deviceID uint) error {
+	var rows []struct {
+		RetiredAt *time.Time
+	}
+	if err := d.db.WithContext(ctx).Model(&models.Device{}).Select("retired_at").
+		Where("id = ?", deviceID).Limit(1).Scan(&rows).Error; err != nil {
+		return fmt.Errorf("check device %d retired: %w", deviceID, err)
+	}
+	if len(rows) == 1 && rows[0].RetiredAt == nil {
+		return errPurgeDeviceRestored
+	}
+	return nil
+}
+
 // purgeRelations returns the relations to run the batched delete against for
 // one plan table: on a Postgres RANGE-partitioned parent, every child from
 // pg_inherits INCLUDING the DEFAULT partition (unlike dropPartitionsOlderThan,
@@ -213,6 +237,9 @@ func (d *Database) purgeTableRows(ctx context.Context, pt purgeTable, deviceID u
 //   - between batches the job's status is re-read: `cancelling` stops the run
 //     and finishes it as `cancelled` — the device stays retired with whatever
 //     rows remain, and a later purge resumes from there;
+//   - devices.retired_at is re-read at the start and again right before the
+//     final step: a device that was restored meanwhile fails the job
+//     (`device was restored; purge aborted`) without deleting anything further;
 //   - any other error finishes the job as `failed` with the message;
 //   - ctx cancelled (graceful shutdown) flips the row back to `pending` with a
 //     fresh 5 s context so the next primary resumes it immediately;
@@ -230,6 +257,12 @@ func (d *Database) RunDevicePurge(ctx context.Context, jobID uint) error {
 		return fmt.Errorf("purge job %d: status %q, want running (claim it first)", jobID, job.Status)
 	}
 	deviceID := job.DeviceID
+	// Restore-vs-purge race, worker side: a restore that landed between the
+	// handler's check and this claim (or between the claim and this run) must
+	// not have its device's data deleted underneath it.
+	if err := d.purgeDeviceStillRetired(ctx, deviceID); err != nil {
+		return d.finishPurgeJob(jobID, DevicePurgeStatusFailed, err)
+	}
 	total := len(devicePurgeTables) + 1
 	if err := d.updatePurgeJob(ctx, jobID, map[string]interface{}{
 		"tables_total": total, "tables_done": 0, "current_table": "", "error": "",
@@ -318,7 +351,13 @@ func (d *Database) RunDevicePurge(ctx context.Context, jobID uint) error {
 	}
 	// Device row LAST, through the existing DeleteDevice (device_connections,
 	// open-incident resolution, the row). Idempotent on a re-run whose device
-	// row is already gone: the DELETE simply affects zero rows.
+	// row is already gone: the DELETE simply affects zero rows. A restore that
+	// raced the whole run (the handler refuses one while a job is active, but
+	// the check and the claim are not one transaction) is caught here: the
+	// device row is never removed from under an un-retired device.
+	if err := d.purgeDeviceStillRetired(runCtx, deviceID); err != nil {
+		return d.finishPurgeJob(jobID, DevicePurgeStatusFailed, err)
+	}
 	if err := d.DeleteDevice(deviceID); err != nil {
 		return d.finishPurgeJob(jobID, DevicePurgeStatusFailed, fmt.Errorf("delete device row: %w", err))
 	}
@@ -329,9 +368,13 @@ func (d *Database) RunDevicePurge(ctx context.Context, jobID uint) error {
 	return d.finishPurgeJob(jobID, DevicePurgeStatusDone, nil)
 }
 
-// settlePurgeInterrupt records how an interrupted run ends: a cancel request
-// → `cancelled`; a parent-context cancel (shutdown) → back to `pending`, on a
-// fresh short context because the run's own context is already dead.
+// settlePurgeInterrupt records how an interrupted run ends. A cancel request
+// the run observed (context cause errPurgeCancelled) → `cancelled`. A
+// parent-context cancel (shutdown) depends on the row's status, on a fresh
+// short context because the run's own context is already dead: a cancel that
+// was requested but not yet observed (`cancelling`) is finished as `cancelled`
+// right here — the operator asked for it to stop, and it has — while a plain
+// `running` row goes back to `pending` so the next primary resumes it.
 func (d *Database) settlePurgeInterrupt(runCtx context.Context, jobID uint) error {
 	if errors.Is(context.Cause(runCtx), errPurgeCancelled) {
 		log.Printf("device-purge: job %d cancelled by request; partial data remains, device stays retired", jobID)
@@ -341,7 +384,18 @@ func (d *Database) settlePurgeInterrupt(runCtx context.Context, jobID uint) erro
 	defer cancel()
 	now := time.Now()
 	res := d.db.WithContext(fresh).Model(&models.DevicePurgeJob{}).
-		Where("id = ? AND status IN (?)", jobID, []string{DevicePurgeStatusRunning, DevicePurgeStatusCancelling}).
+		Where("id = ? AND status = ?", jobID, DevicePurgeStatusCancelling).
+		Updates(map[string]interface{}{"status": DevicePurgeStatusCancelled, "finished_at": now, "updated_at": now})
+	if res.Error != nil {
+		log.Printf("device-purge: job %d could not be settled on shutdown (%v); the stale-heartbeat requeue will recover it", jobID, res.Error)
+		return res.Error
+	}
+	if res.RowsAffected == 1 {
+		log.Printf("device-purge: job %d cancelled by request (observed at shutdown); partial data remains, device stays retired", jobID)
+		return nil
+	}
+	res = d.db.WithContext(fresh).Model(&models.DevicePurgeJob{}).
+		Where("id = ? AND status = ?", jobID, DevicePurgeStatusRunning).
 		Updates(map[string]interface{}{"status": DevicePurgeStatusPending, "updated_at": now, "error": "interrupted by shutdown; will resume"})
 	if res.Error != nil {
 		log.Printf("device-purge: job %d could not be returned to pending on shutdown (%v); the stale-heartbeat requeue will recover it", jobID, res.Error)
@@ -392,6 +446,10 @@ func (d *Database) touchPurgeJob(ctx context.Context, jobID uint) error {
 type DevicePurgeWorker struct {
 	db      *Database
 	running atomic.Bool
+	// probeFailing remembers whether the last queue probe failed so a DB
+	// outage is logged once when it starts and once when it clears, not on
+	// every 5 s tick. Only Tick touches it, under the single-flight.
+	probeFailing bool
 }
 
 // NewDevicePurgeWorker binds the worker to the background (durable) Database.
@@ -415,8 +473,15 @@ func (w *DevicePurgeWorker) Tick(ctx context.Context) {
 	// don't pin a connection for the advisory lock every 5 s on a quiet system.
 	var live int64
 	if err := w.db.db.Model(&models.DevicePurgeJob{}).Where("status IN (?)", devicePurgeActiveStatuses).Count(&live).Error; err != nil {
-		log.Printf("device-purge: queue probe failed: %v", err)
+		if !w.probeFailing {
+			log.Printf("device-purge: queue probe failed (logged once until it recovers): %v", err)
+			w.probeFailing = true
+		}
 		return
+	}
+	if w.probeFailing {
+		log.Printf("device-purge: queue probe recovered")
+		w.probeFailing = false
 	}
 	if live == 0 {
 		return

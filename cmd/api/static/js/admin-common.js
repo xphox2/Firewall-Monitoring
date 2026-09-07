@@ -610,8 +610,10 @@
      * (password + 2FA), queued as a background job the server batches,
      * resumes and can cancel. The dialog:
      *   - shows a per-table row estimate from /purge/estimate (capped
-     *     counts render as "1,000,000+") and the IPSec tunnels that go
-     *     with the device (the tunnel intent is removed for BOTH ends);
+     *     counts render as "100,000+"; a table whose count failed carries
+     *     `error` and the dialog says the estimate is incomplete) and the
+     *     IPSec tunnels that go with the device (the tunnel intent is
+     *     removed for BOTH ends);
      *   - requires the operator to type the device name exactly — the
      *     Delete button stays disabled until it matches, and the match is
      *     re-checked before the POST;
@@ -662,9 +664,11 @@
         var nonEmpty = tables.filter(function(t) { return (t.rows || 0) > 0; });
         nonEmpty.sort(function(a, b) { return (b.rows || 0) - (a.rows || 0); });
         var anyCapped = nonEmpty.some(function(t) { return !!t.capped; });
+        var failed = tables.filter(function(t) { return !!t.error; }).map(function(t) { return t.table; });
         var html = '<div style="font-size:0.8rem;color:var(--fwmon-text-faint);margin-bottom:4px">Rows to remove: <strong style="color:var(--fwmon-text)">' +
             escapeHtml(formatNum((est && est.total) || 0)) + (anyCapped ? '+' : '') + '</strong>' +
-            (anyCapped ? ' <span title="Counting stops at 1,000,000 rows per table so the estimate stays fast on a large database">(estimate capped)</span>' : '') +
+            (anyCapped ? ' <span title="Counting stops at 100,000 rows per table so the estimate stays fast on a large database">(estimate capped)</span>' : '') +
+            (failed.length ? ' <span title="' + escapeHtml(failed.join(', ')) + '">(' + failed.length + ' table' + (failed.length === 1 ? '' : 's') + ' could not be counted; the purge still removes them)</span>' : '') +
             '</div>';
         if (nonEmpty.length) {
             html += '<div style="max-height:180px;overflow-y:auto;border:1px solid var(--fwmon-border);border-radius:6px">' +

@@ -357,6 +357,8 @@ only destructive path and it is deliberately heavy:
   `tables_total`) is visible on the Devices row, the device page banner,
   `GET /admin/api/devices/:id/purge` and `GET /admin/api/purge-jobs`. A
   device with tens of millions of syslog rows takes hours; that is expected.
+  The confirm dialog's row estimate counts at most 100,000 rows per table
+  ("100,000+"); a table that cannot be counted is flagged, not fatal.
 - **Resumable.** The job row is the checkpoint: a restart flips a running
   job back to `pending` and the next primary resumes it; a worker that dies
   without a clean shutdown is detected by the heartbeat (`running` with
@@ -368,7 +370,11 @@ only destructive path and it is deliberately heavy:
   remains depends on where it stopped (`current_table` on the job says
   where) — and the device can be restored (whatever history remains comes
   back) or purged again later, resuming from where it stopped. The device row itself is deleted
-  only as the very last step, so a device is never left half-deleted.
+  only as the very last step, so a device is never left half-deleted. A
+  restore is refused (`409`, naming the job) while a purge job is pending,
+  running or cancelling — cancel it first; the worker also re-checks that
+  the device is still retired before it starts and before the final step,
+  so a restore can never have its data deleted underneath it.
 - **What is removed.** All telemetry (`syslog_messages`, `interface_stats`,
   status/sensor/processor/ping/flow/trap/denied-event rows and their
   summaries), **alerts and incidents**, **configuration history**

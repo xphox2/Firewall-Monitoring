@@ -3,6 +3,8 @@ package database
 import (
 	"errors"
 	"fmt"
+	"log"
+	"strings"
 	"time"
 
 	"firewall-mon/internal/models"
@@ -201,16 +203,24 @@ func (d *Database) RequeueStaleDevicePurgeJobs(staleAfter time.Duration) (int64,
 
 // purgeEstimateCap is the per-table LIMIT of the estimate's count subquery. An
 // uncapped count(*) on prod's syslog_messages (134M rows) would exceed the
-// 30 s statement timeout; capping at 1,000,001 lets the dialog say "1,000,000+".
-var purgeEstimateCap int64 = 1000001
+// 30 s statement timeout, and even a capped probe walks the index for every
+// row it counts across 36 tables on the request path; capping at 100,001 lets
+// the dialog say "100,000+" and keeps the whole estimate well inside the
+// request's statement timeout.
+var purgeEstimateCap int64 = 100001
 
 // DevicePurgeEstimateTable is one row of the purge estimate.
 type DevicePurgeEstimateTable struct {
 	Table string `json:"table"`
 	Rows  int64  `json:"rows"`
 	// Capped is true when the table holds MORE than Rows (the count hit the
-	// cap) — render as "1,000,000+".
+	// cap) — render as "100,000+".
 	Capped bool `json:"capped"`
+	// Error is set (Rows 0, Capped false) when this table's count failed —
+	// a missing relation, a statement timeout — and the rest of the estimate
+	// still counted. The purge itself is unaffected; the dialog says the
+	// estimate is incomplete.
+	Error string `json:"error,omitempty"`
 }
 
 // DevicePurgeEstimateTunnel is an IPSec tunnel intent the purge will remove,
@@ -232,6 +242,9 @@ type DevicePurgeEstimate struct {
 // EstimateDevicePurge counts, per table in the purge plan, the rows keyed to
 // the device — capped (see purgeEstimateCap) so the largest tables stay inside
 // the statement timeout — and lists the IPSec tunnel intents that reference it.
+// A table whose count fails is reported with Error set and rows 0 and the
+// estimate continues: the dialog is advisory, and one slow or missing table
+// must not hide the other 35 counts or block the purge itself.
 func (d *Database) EstimateDevicePurge(deviceID uint) (*DevicePurgeEstimate, error) {
 	est := &DevicePurgeEstimate{
 		Tables:  make([]DevicePurgeEstimateTable, 0, len(devicePurgeTables)),
@@ -244,7 +257,9 @@ func (d *Database) EstimateDevicePurge(deviceID uint) (*DevicePurgeEstimate, err
 			// table/col are compile-time literals from devicePurgeTables.
 			q := fmt.Sprintf("SELECT count(*) FROM (SELECT 1 FROM %s WHERE %s = ? LIMIT %d) s", pt.table, col, purgeEstimateCap)
 			if err := d.db.Raw(q, deviceID).Scan(&n).Error; err != nil {
-				return nil, fmt.Errorf("estimate %s: %w", pt.table, err)
+				log.Printf("device-purge: estimate for device %d: %s could not be counted: %v", deviceID, pt.table, err)
+				row = DevicePurgeEstimateTable{Table: pt.table, Error: shortError(err, 120)}
+				break
 			}
 			if n >= purgeEstimateCap {
 				row.Capped = true
@@ -301,4 +316,16 @@ func (d *Database) ListIPSecTunnelsForDevice(deviceID uint) ([]models.IPSecTunne
 		ms[i].PSK = ""
 	}
 	return ms, err
+}
+
+// shortError renders err for a JSON field: the first line, cut at max runes.
+func shortError(err error, max int) string {
+	msg := err.Error()
+	if i := strings.IndexByte(msg, '\n'); i >= 0 {
+		msg = msg[:i]
+	}
+	if r := []rune(msg); len(r) > max {
+		msg = string(r[:max]) + "…"
+	}
+	return msg
 }

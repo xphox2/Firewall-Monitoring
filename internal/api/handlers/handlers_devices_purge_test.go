@@ -151,6 +151,14 @@ func TestPurgeDevice_Preconditions(t *testing.T) {
 	if dup.JobID != job.ID || dup.Error == "" {
 		t.Errorf("409 body = %s, want job_id=%d", rec.Body.String(), job.ID)
 	}
+	// The already-queued check runs BEFORE the password/TOTP step-up: a
+	// conflict with a wrong password is still 409, not 403 — so a 409 can
+	// never consume a single-use authenticator code.
+	c, rec = purgeCtx(http.MethodPost, dev.ID, "admin1", u.ID, `{"confirm_name":"fw-old","password":"WRONG"}`)
+	h.PurgeDevice(c)
+	if rec.Code != http.StatusConflict {
+		t.Errorf("duplicate purge with a wrong password: %d, want 409 (active-job check precedes the step-up)", rec.Code)
+	}
 
 	// The JSON contract the UI codes against: snake_case field names.
 	c, rec = purgeCtx(http.MethodGet, dev.ID, "admin1", u.ID, "")
@@ -167,48 +175,133 @@ func TestPurgeDevice_Preconditions(t *testing.T) {
 	}
 }
 
-// TestPurgeDevice_RefusedWhileTunnelDeploying: an IPSec tunnel on EITHER end in
-// deploying/rolling_back blocks the purge (409 naming the tunnel); a tunnel in
-// a settled state does not.
+// TestPurgeDevice_RefusedWhileTunnelDeploying: an IPSec tunnel on EITHER end
+// (the device as B end, and as A end) in deploying/verifying/rolling_back
+// blocks the purge (409 naming every such tunnel); once both are settled it
+// does not.
 func TestPurgeDevice_RefusedWhileTunnelDeploying(t *testing.T) {
 	h, db, u, dev := purgeTestSetup(t)
 	peer := &models.Device{Name: "fw-peer", IPAddress: "10.0.0.3"}
 	if err := db.Gorm().Create(peer).Error; err != nil {
 		t.Fatal(err)
 	}
-	tun := &models.IPSecTunnel{Name: "hq-branch", ADeviceID: peer.ID, BDeviceID: dev.ID, Status: "deploying", DeployJSON: "{}"}
-	if err := db.Gorm().Create(tun).Error; err != nil {
-		t.Fatal(err)
+	tunB := &models.IPSecTunnel{Name: "hq-branch", ADeviceID: peer.ID, BDeviceID: dev.ID, Status: "deploying", DeployJSON: "{}"}
+	tunA := &models.IPSecTunnel{Name: "branch-hq", ADeviceID: dev.ID, BDeviceID: peer.ID, Status: "verifying", DeployJSON: "{}"}
+	for _, tun := range []*models.IPSecTunnel{tunB, tunA} {
+		if err := db.Gorm().Create(tun).Error; err != nil {
+			t.Fatal(err)
+		}
 	}
 	const good = `{"confirm_name":"fw-old","password":"s3cret-pw"}`
 	c, rec := purgeCtx(http.MethodPost, dev.ID, "admin1", u.ID, good)
 	h.PurgeDevice(c)
 	if rec.Code != http.StatusConflict {
-		t.Fatalf("deploying tunnel on the B end: %d %s, want 409", rec.Code, rec.Body.String())
+		t.Fatalf("deploying/verifying tunnels on both ends: %d %s, want 409", rec.Code, rec.Body.String())
 	}
 	var body struct {
 		Error string `json:"error"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &body)
-	if body.Error == "" || !strings.Contains(body.Error, "hq-branch") || !strings.Contains(body.Error, "deploying") {
-		t.Errorf("409 error = %q, want it to name the tunnel and its state", body.Error)
+	for _, want := range []string{"hq-branch", "deploying", "branch-hq", "verifying"} {
+		if !strings.Contains(body.Error, want) {
+			t.Errorf("409 error = %q, want it to contain %q (both ends named with their state)", body.Error, want)
+		}
 	}
 	if n := auditCount(db, "purge_device"); n != 0 {
 		t.Error("refused purge wrote an audit row")
 	}
 
-	db.Gorm().Model(tun).Update("status", "rolling_back")
+	// B end settled, A end still busy → still refused, naming only the A end.
+	db.Gorm().Model(tunB).Update("status", "up")
+	c, rec = purgeCtx(http.MethodPost, dev.ID, "admin1", u.ID, good)
+	h.PurgeDevice(c)
+	if rec.Code != http.StatusConflict {
+		t.Errorf("verifying tunnel on the A end alone: %d, want 409", rec.Code)
+	}
+	body.Error = ""
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if !strings.Contains(body.Error, "branch-hq") || strings.Contains(body.Error, "hq-branch (") {
+		t.Errorf("409 error = %q, want only the A-end tunnel named", body.Error)
+	}
+
+	// A end settled, B end rolling back → refused.
+	db.Gorm().Model(tunA).Update("status", "up")
+	db.Gorm().Model(tunB).Update("status", "rolling_back")
 	c, rec = purgeCtx(http.MethodPost, dev.ID, "admin1", u.ID, good)
 	h.PurgeDevice(c)
 	if rec.Code != http.StatusConflict {
 		t.Errorf("rolling_back tunnel: %d, want 409", rec.Code)
 	}
 
-	db.Gorm().Model(tun).Update("status", "up")
+	db.Gorm().Model(tunB).Update("status", "up")
 	c, rec = purgeCtx(http.MethodPost, dev.ID, "admin1", u.ID, good)
 	h.PurgeDevice(c)
 	if rec.Code != http.StatusAccepted {
-		t.Errorf("settled tunnel: %d %s, want 202", rec.Code, rec.Body.String())
+		t.Errorf("settled tunnels on both ends: %d %s, want 202", rec.Code, rec.Body.String())
+	}
+}
+
+// TestRestoreDevice_RefusedWhilePurgeActive: a restore is 409 (with the job
+// id and its status) while the device's purge job is pending, running or
+// cancelling, before any restore work; once the job is terminal the restore
+// goes through.
+func TestRestoreDevice_RefusedWhilePurgeActive(t *testing.T) {
+	h, db, u, dev := purgeTestSetup(t)
+	job := &models.DevicePurgeJob{DeviceID: dev.ID, DeviceName: dev.Name, DeviceUUID: dev.UUID}
+	if err := db.CreateDevicePurgeJob(job); err != nil {
+		t.Fatal(err)
+	}
+	restore := func() (int, string, uint) {
+		c, rec := purgeCtx(http.MethodPost, dev.ID, "admin1", u.ID, "")
+		h.RestoreDevice(c)
+		var body struct {
+			Error string `json:"error"`
+			JobID uint   `json:"job_id"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		return rec.Code, body.Error, body.JobID
+	}
+	stillRetired := func(step string) {
+		t.Helper()
+		got, err := db.GetDevice(dev.ID)
+		if err != nil || got.RetiredAt == nil || got.Enabled {
+			t.Fatalf("%s: device = %+v err=%v, want still retired", step, got, err)
+		}
+	}
+
+	// pending
+	if code, msg, id := restore(); code != http.StatusConflict || id != job.ID ||
+		!strings.Contains(msg, "pending") || !strings.Contains(msg, "cancel it first") {
+		t.Errorf("restore with a pending job: %d %q job_id=%d, want 409 naming pending and job %d", code, msg, id, job.ID)
+	}
+	stillRetired("pending")
+
+	// running
+	if won, err := db.ClaimDevicePurgeJob(job.ID); err != nil || !won {
+		t.Fatalf("claim: %v %v", won, err)
+	}
+	if code, msg, id := restore(); code != http.StatusConflict || id != job.ID || !strings.Contains(msg, "running") {
+		t.Errorf("restore with a running job: %d %q job_id=%d, want 409 naming running", code, msg, id)
+	}
+	stillRetired("running")
+
+	// cancelling
+	if st, ok, err := db.CancelDevicePurgeJob(job.ID); err != nil || !ok || st != database.DevicePurgeStatusCancelling {
+		t.Fatalf("cancel running: %q %v %v", st, ok, err)
+	}
+	if code, msg, id := restore(); code != http.StatusConflict || id != job.ID || !strings.Contains(msg, "cancelling") {
+		t.Errorf("restore with a cancelling job: %d %q job_id=%d, want 409 naming cancelling", code, msg, id)
+	}
+	stillRetired("cancelling")
+
+	// terminal → the restore proceeds
+	db.Gorm().Model(job).UpdateColumns(map[string]interface{}{"status": database.DevicePurgeStatusCancelled, "finished_at": time.Now()})
+	if code, msg, _ := restore(); code != http.StatusOK {
+		t.Fatalf("restore after the job ended: %d %q, want 200", code, msg)
+	}
+	got, err := db.GetDevice(dev.ID)
+	if err != nil || got.RetiredAt != nil || !got.Enabled {
+		t.Errorf("restored device = %+v err=%v, want active", got, err)
 	}
 }
 

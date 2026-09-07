@@ -447,9 +447,13 @@ func TestRequeueStaleDevicePurgeJobs(t *testing.T) {
 	}
 }
 
-// TestClaimDevicePurgeJob_CASRejectsSecondClaimant: the pending→running claim
-// is a compare-and-set, so exactly one claimant wins; ClaimNext walks the
-// queue in id order and returns nil on an empty queue.
+// TestClaimDevicePurgeJob_CASRejectsSecondClaimant pins the CAS predicate
+// (`status = pending` in the claim UPDATE): a second sequential claim on an
+// already-running row affects zero rows. It is NOT a concurrent race test —
+// the guarantee that two processes can't both win comes from the database
+// applying the two UPDATEs one after the other against the same predicate,
+// which this sequential pair exercises exactly. ClaimNext walks the queue in
+// id order and returns nil on an empty queue.
 func TestClaimDevicePurgeJob_CASRejectsSecondClaimant(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	dev := seedRetiredDevice(t, d, "fw-cas")
@@ -622,6 +626,180 @@ func TestCleanupOldData_PrunesTerminalPurgeJobs(t *testing.T) {
 		gone := err != nil
 		if gone != wantGone {
 			t.Errorf("job %d gone=%v, want %v", id, gone, wantGone)
+		}
+	}
+}
+
+// TestRunDevicePurge_AbortsWhenDeviceRestoredBeforeRun: the device is
+// restored between the worker's claim and the run (the handler's 409 and the
+// claim are not one transaction). The run fails before touching a row.
+func TestRunDevicePurge_AbortsWhenDeviceRestoredBeforeRun(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	dev := seedRetiredDevice(t, d, "fw-restored-early")
+	seedDeviceRows(t, d, dev.ID, "early")
+	before, _ := countDeviceRows(t, d, dev.ID)
+
+	job := queueAndClaim(t, d, dev)
+	if err := d.RestoreDevice(dev.ID, nil); err != nil {
+		t.Fatalf("restore between claim and run: %v", err)
+	}
+	err := d.RunDevicePurge(context.Background(), job.ID)
+	if !errors.Is(err, errPurgeDeviceRestored) {
+		t.Fatalf("RunDevicePurge err = %v, want errPurgeDeviceRestored", err)
+	}
+	got, _ := d.GetDevicePurgeJob(job.ID)
+	if got.Status != DevicePurgeStatusFailed || got.Error != "device was restored; purge aborted" || got.FinishedAt == nil {
+		t.Errorf("job = %+v, want failed with the restore message", got)
+	}
+	if after, per := countDeviceRows(t, d, dev.ID); after != before {
+		t.Errorf("rows = %d, want %d untouched: %v", after, before, per)
+	}
+	reloaded, err := d.GetDevice(dev.ID)
+	if err != nil || reloaded.RetiredAt != nil {
+		t.Errorf("device after aborted purge: err=%v retired_at=%v, want present and active", err, reloaded.RetiredAt)
+	}
+	if active, _ := d.GetActiveDevicePurgeJob(dev.ID); active != nil {
+		t.Errorf("failed job still active: %+v", active)
+	}
+}
+
+// TestRunDevicePurge_AbortsWhenDeviceRestoredBeforeFinalStep: the device is
+// restored while the LAST plan table is being processed (the batch hook). The
+// tables already walked are empty, but the device row is NOT deleted and the
+// job ends failed with the restore message.
+func TestRunDevicePurge_AbortsWhenDeviceRestoredBeforeFinalStep(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	dev := seedRetiredDevice(t, d, "fw-restored-late")
+	seedDeviceRows(t, d, dev.ID, "late")
+	last := devicePurgeTables[len(devicePurgeTables)-1].table
+
+	purgeBatchHook = func(table string, batchNo int) error {
+		if table == last && batchNo == 1 {
+			if err := d.RestoreDevice(dev.ID, nil); err != nil {
+				t.Errorf("restore during the last table: %v", err)
+			}
+		}
+		return nil
+	}
+	defer func() { purgeBatchHook = nil }()
+
+	job := queueAndClaim(t, d, dev)
+	err := d.RunDevicePurge(context.Background(), job.ID)
+	if !errors.Is(err, errPurgeDeviceRestored) {
+		t.Fatalf("RunDevicePurge err = %v, want errPurgeDeviceRestored", err)
+	}
+	got, _ := d.GetDevicePurgeJob(job.ID)
+	if got.Status != DevicePurgeStatusFailed || got.Error != "device was restored; purge aborted" {
+		t.Errorf("job = %+v, want failed with the restore message", got)
+	}
+	if got.CurrentTable != purgeFinalStep || got.TablesDone != got.TablesTotal-1 {
+		t.Errorf("progress = %d/%d current=%q, want stopped at the final step", got.TablesDone, got.TablesTotal, got.CurrentTable)
+	}
+	if !deviceExists(t, d, dev.ID) {
+		t.Fatal("device row deleted although the device had been restored")
+	}
+	reloaded, _ := d.GetDevice(dev.ID)
+	if reloaded.RetiredAt != nil {
+		t.Error("device re-retired by the aborted purge")
+	}
+	// The plan tables were walked before the restore landed; only the device
+	// row (and device_connections, which DeleteDevice owns) survives.
+	if _, per := countDeviceRows(t, d, dev.ID); per[devicePurgeTables[0].table] != 0 {
+		t.Errorf("%s still has %d rows", devicePurgeTables[0].table, per[devicePurgeTables[0].table])
+	}
+}
+
+// TestRunDevicePurge_ShutdownAfterCancelRequestEndsCancelled: a cancel is
+// requested (running → cancelling) and the parent context is cancelled before
+// the worker observes it between batches. The job must end `cancelled` — the
+// operator asked for it to stop — never go back to `pending`.
+func TestRunDevicePurge_ShutdownAfterCancelRequestEndsCancelled(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	dev := seedRetiredDevice(t, d, "fw-cancel-shutdown")
+	for i := 0; i < 10; i++ {
+		if err := d.db.Create(&models.SyslogMessage{DeviceID: dev.ID, Message: fmt.Sprintf("m%d", i), Timestamp: time.Now()}).Error; err != nil {
+			t.Fatalf("seed syslog: %v", err)
+		}
+	}
+	origBatch := devicePurgeTables[0].batch
+	devicePurgeTables[0].batch = 2
+	defer func() { devicePurgeTables[0].batch = origBatch }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	job := queueAndClaim(t, d, dev)
+	purgeBatchHook = func(table string, batchNo int) error {
+		if table == "syslog_messages" && batchNo == 2 {
+			status, applied, err := d.CancelDevicePurgeJob(job.ID)
+			if err != nil || !applied || status != DevicePurgeStatusCancelling {
+				t.Errorf("cancel running job: status=%q applied=%v err=%v", status, applied, err)
+			}
+			cancel() // shutdown lands before the run's next status re-read
+		}
+		return nil
+	}
+	defer func() { purgeBatchHook = nil }()
+
+	if err := d.RunDevicePurge(ctx, job.ID); err != nil {
+		t.Fatalf("RunDevicePurge err = %v, want nil (a cancel is not an error)", err)
+	}
+	got, _ := d.GetDevicePurgeJob(job.ID)
+	if got.Status != DevicePurgeStatusCancelled || got.FinishedAt == nil {
+		t.Fatalf("job = %+v, want cancelled (never pending)", got)
+	}
+	if active, _ := d.GetActiveDevicePurgeJob(dev.ID); active != nil {
+		t.Errorf("cancelled job still active: %+v", active)
+	}
+	if !deviceExists(t, d, dev.ID) {
+		t.Fatal("device row deleted by a cancelled purge")
+	}
+	var remaining int64
+	d.db.Model(&models.SyslogMessage{}).Where("device_id = ?", dev.ID).Count(&remaining)
+	if remaining != 8 {
+		t.Errorf("remaining syslog rows = %d, want 8 (one batch of two before the cancel)", remaining)
+	}
+}
+
+// TestEstimateDevicePurge_TableFailureIsNonFatal: a plan table whose count
+// fails (dropped here; a statement timeout on prod) is reported with rows 0,
+// capped false and an error, and every other table is still counted.
+func TestEstimateDevicePurge_TableFailureIsNonFatal(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	dev := seedRetiredDevice(t, d, "fw-est-fail")
+	for i := 0; i < 3; i++ {
+		if err := d.db.Create(&models.Alert{DeviceID: dev.ID, Message: "m", Timestamp: time.Now()}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := d.db.Create(&models.HAStatus{DeviceID: dev.ID, Timestamp: time.Now()}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := d.db.Exec("DROP TABLE ha_status").Error; err != nil {
+		t.Fatalf("drop ha_status: %v", err)
+	}
+	est, err := d.EstimateDevicePurge(dev.ID)
+	if err != nil {
+		t.Fatalf("estimate must not fail on one table: %v", err)
+	}
+	if len(est.Tables) != len(devicePurgeTables) {
+		t.Errorf("estimate lists %d tables, want %d (the failed one included)", len(est.Tables), len(devicePurgeTables))
+	}
+	byTable := map[string]DevicePurgeEstimateTable{}
+	for _, row := range est.Tables {
+		byTable[row.Table] = row
+	}
+	if r := byTable["ha_status"]; r.Error == "" || r.Rows != 0 || r.Capped {
+		t.Errorf("ha_status = %+v, want rows 0, capped false, error set", r)
+	}
+	if r := byTable["alerts"]; r.Error != "" || r.Rows != 3 || r.Capped {
+		t.Errorf("alerts = %+v, want 3 counted after the failure", r)
+	}
+	if est.Total != 3 {
+		t.Errorf("total = %d, want 3", est.Total)
+	}
+	for _, row := range est.Tables {
+		if row.Table != "ha_status" && row.Error != "" {
+			t.Errorf("%s carries an error: %q", row.Table, row.Error)
 		}
 	}
 }

@@ -608,6 +608,16 @@ func (d *Database) EnsurePartitions() error {
 		indexPlans[def.tableName] = kept
 	}
 
+	// The DEFAULT child (v51 / created above) is a leaf like any monthly
+	// partition and takes the same plan. It was created bare (pkey only) —
+	// the index loop below only ever named the <table>_YYYYMM leaves — so
+	// every backdated row that lands there was read by full scan: retention's
+	// timestamp-bounded DELETE and the device purge's (device_id, timestamp)
+	// batch subquery both seq-scanned + sorted the default on every batch.
+	for _, def := range partitioned {
+		d.ensureLeafIndexes(def.tableName+"_default", indexPlans[def.tableName])
+	}
+
 	// Create partitions for current month + 6 months ahead
 	now := time.Now()
 	for i := 0; i <= 6; i++ {
@@ -657,23 +667,31 @@ func (d *Database) EnsurePartitions() error {
 			// pre-existing partitions too (IF NOT EXISTS makes it a cheap no-op
 			// when the index is present), so a partition created while an index
 			// was missing from the old list is backfilled on the next startup.
-			// Column names are quoted — interface_stats has an "index" column,
-			// which is a reserved word.
-			for _, idx := range indexPlans[def.tableName] {
-				quoted := make([]string, len(idx.cols))
-				for i, c := range idx.cols {
-					quoted[i] = `"` + c + `"`
-				}
-				createIdxSQL := fmt.Sprintf("CREATE INDEX IF NOT EXISTS idx_%s_%s ON %s (%s)",
-					partitionName, idx.suffix, partitionName, strings.Join(quoted, ", "))
-				if err := d.execMaintenanceDDL(createIdxSQL); err != nil {
-					log.Printf("Index creation warning on %s: %v", partitionName, err)
-				}
-			}
+			d.ensureLeafIndexes(partitionName, indexPlans[def.tableName])
 		}
 	}
 
 	return nil
+}
+
+// ensureLeafIndexes creates the plan's indexes on one leaf partition as
+// idx_<leaf>_<suffix>. IF NOT EXISTS makes it a no-op when the index is
+// present and a backfill when the leaf was created while an index was missing
+// from the plan. Column names are quoted — interface_stats has an "index"
+// column, which is a reserved word. Errors are logged, never returned: a
+// missing leaf index is a per-query slowdown, not a reason to fail startup.
+func (d *Database) ensureLeafIndexes(leaf string, plan []partitionIndex) {
+	for _, idx := range plan {
+		quoted := make([]string, len(idx.cols))
+		for i, c := range idx.cols {
+			quoted[i] = `"` + c + `"`
+		}
+		createIdxSQL := fmt.Sprintf("CREATE INDEX IF NOT EXISTS idx_%s_%s ON %s (%s)",
+			leaf, idx.suffix, leaf, strings.Join(quoted, ", "))
+		if err := d.execMaintenanceDDL(createIdxSQL); err != nil {
+			log.Printf("Index creation warning on %s: %v", leaf, err)
+		}
+	}
 }
 
 // migratePartitionDefaultPartitions is the v51 migration (AUDIT D2): create a
