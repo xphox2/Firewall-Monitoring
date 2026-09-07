@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.242"
+const ServerVersion = "0.11.243"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -531,6 +531,32 @@ func main() {
 		handler.RunDashboardHealthHub(bgCtx)
 	})
 
+	// Device purge worker (v0.11.243): the singleton primary polls the
+	// device_purge_jobs queue every 5 s and runs claimed jobs one at a time on
+	// the background (durable) *Database. A follower never runs it. The tick
+	// is synchronous — a multi-hour purge simply occupies the loop; the CAS
+	// claim + advisory lock inside Tick guard against a second "primary" (the
+	// singleton probe errs toward primary on a transient DB failure), and a
+	// bgCtx cancel at shutdown flips the running job back to pending.
+	if isPrimary {
+		purgeWorker := database.NewDevicePurgeWorker(db)
+		logging.SafeGo("device-purge", func() {
+			log.Println("device-purge: worker started (polling device_purge_jobs every 5s)")
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-bgCtx.Done():
+					return
+				case <-ticker.C:
+					purgeWorker.Tick(bgCtx)
+				}
+			}
+		})
+	} else {
+		log.Println("AUDIT-040: device purge worker disabled (follower / not the singleton primary).")
+	}
+
 	setupRoutes(router, cfg, handler, authManager, db)
 
 	server := &http.Server{
@@ -778,6 +804,13 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			// Revealing a stored device credential in plaintext is admin-only,
 			// even though day-to-day device edits are operator-level.
 			"/admin/api/devices/:id/reveal-secret": true,
+			// Permanent device purge (v0.11.243) destroys data irreversibly and
+			// deletes shared IPSec tunnel intents — admin-only end to end, the
+			// read-only status/estimate/list included.
+			"/admin/api/devices/:id/purge":          true,
+			"/admin/api/devices/:id/purge/cancel":   true,
+			"/admin/api/devices/:id/purge/estimate": true,
+			"/admin/api/purge-jobs":                 true,
 			// Config revisions embed device credentials (SNMP communities, IPSec
 			// PSK/admin hashes depending on vendor export), so reading the raw
 			// config, its diff, or deleting a revision is admin-only — same class
@@ -966,6 +999,16 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		// Reveal one decrypted device credential — admin-only (in adminOnlyRoutes),
 		// rate-limited like login (it re-verifies a password), audit-logged.
 		admin.POST("/api/devices/:id/reveal-secret", middleware.LoginRateLimiter(), handler.RevealDeviceSecret)
+		// Permanent purge of a RETIRED device's data (v0.11.243): a background
+		// job the primary's DevicePurgeWorker runs. All five admin-only (in
+		// adminOnlyRoutes); the POST re-verifies the caller's password (+ TOTP)
+		// so it is login-rate-limited like reveal-secret. Cancel, status and the
+		// estimate carry no credential check and are not rate-limited.
+		admin.POST("/api/devices/:id/purge", middleware.LoginRateLimiter(), handler.PurgeDevice)
+		admin.POST("/api/devices/:id/purge/cancel", handler.CancelDevicePurge)
+		admin.GET("/api/devices/:id/purge", handler.GetDevicePurge)
+		admin.GET("/api/devices/:id/purge/estimate", handler.EstimateDevicePurge)
+		admin.GET("/api/purge-jobs", handler.ListPurgeJobs)
 
 		// IPSec provisioning wizard (PR-A: intent CRUD + capabilities + preview;
 		// no live device writes). Tunnels carry PSK credential material, so the

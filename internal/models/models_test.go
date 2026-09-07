@@ -46,7 +46,7 @@ func allTablers() []tabler {
 		// AUDIT-207: the 20 models the hand-list previously omitted.
 		ServerMetric{}, EventRule{}, EventRuleProfile{}, EventRuleProfileToggle{},
 		Incident{}, DiskUsage{}, LoadAverage{}, TopologyEntry{}, TopologyNeighbor{},
-		AdminRecoveryCode{}, ApiToken{}, ProbeCommand{}, IPSecTunnel{}, DeniedEvent{},
+		AdminRecoveryCode{}, ApiToken{}, ProbeCommand{}, IPSecTunnel{}, DeniedEvent{}, DevicePurgeJob{},
 		ThreatIntel{}, ThreatFeedStatus{}, FlowSourceSuppression{}, FlowInterfaceCounter{},
 		AgentDrops{}, FlowDetection{},
 	}

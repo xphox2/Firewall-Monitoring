@@ -584,15 +584,6 @@ func (h *Handler) RevealDeviceSecret(c *gin.Context) {
 		return
 	}
 
-	username, _ := c.Get("username")
-	userIDVal, _ := c.Get("user_id")
-	usernameStr, _ := username.(string)
-	userID, _ := userIDVal.(uint)
-	if usernameStr == "" {
-		c.JSON(http.StatusUnauthorized, response.Error("Not authenticated"))
-		return
-	}
-
 	var req struct {
 		Password string `json:"password"`
 		TOTPCode string `json:"totp_code"`
@@ -607,37 +598,13 @@ func (h *Handler) RevealDeviceSecret(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("Unknown secret field"))
 		return
 	}
-	if req.Password == "" {
-		c.JSON(http.StatusForbidden, response.Error("Password is required"))
-		return
-	}
 
-	// Re-verify the caller's own password. Resolve the admin by the JWT username
-	// (never a request-supplied identity) so this can only confirm the caller.
-	admin, err := db.GetAdminByUsername(usernameStr)
-	if err != nil || admin == nil || !h.authManager.CheckPassword(req.Password, admin.Password) {
-		c.JSON(http.StatusForbidden, response.Error("Password is incorrect"))
+	// Re-verify the caller's own password (+ TOTP when enrolled) — the shared
+	// step-up helper (handlers_devices_purge.go); the TOTP replay guard is
+	// namespaced "reveal" so a code spent here can't be replayed on a purge.
+	usernameStr, userID, ok := h.reauthCaller(c, db, req.Password, req.TOTPCode, "reveal")
+	if !ok {
 		return
-	}
-	// Step-up: if the caller has 2FA enrolled, a valid TOTP code is also
-	// required — so a phished password + stolen session (which alone couldn't
-	// pass a fresh 2FA login) can't be escalated into bulk credential harvesting.
-	if admin.TOTPEnabled {
-		if req.TOTPCode == "" {
-			c.JSON(http.StatusForbidden, response.Error("Authenticator code required"))
-			return
-		}
-		if !validateTOTPCode(req.TOTPCode, admin.TOTPSecret) {
-			c.JSON(http.StatusForbidden, response.Error("Authenticator code is incorrect"))
-			return
-		}
-		// AUDIT L3: single-use-per-slot replay guard, same as the 2FA login path
-		// (handlers_totp.go). Without it a valid code could be replayed within its
-		// ~30–90s validity window to repeat a credential reveal.
-		if !h.authManager.MarkTOTPSlotUsed(admin.ID, "reveal", req.TOTPCode) {
-			c.JSON(http.StatusForbidden, response.Error("Authenticator code already used — wait for the next code"))
-			return
-		}
 	}
 
 	device, err := db.GetDevice(id) // secrets decrypted in-place by the store

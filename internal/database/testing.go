@@ -12,6 +12,89 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+// testModels is every model the SQLite test harness AutoMigrates. A package
+// var (not a function local) so the device-purge coverage test can reflect
+// over it alongside baselineModels — a device-keyed table missing here would
+// make the purge test fail with "no such table" instead of a real gap.
+var testModels = []interface{}{
+	&models.Probe{},
+	&models.ProbeApproval{},
+	&models.ProbeHeartbeat{},
+	&models.ProbeCommand{},
+	&models.IPSecTunnel{},
+	&models.Device{},
+	// Baseline has device_tunnels; the harness lacked it until the purge job
+	// needed every device-keyed table present.
+	&models.DeviceTunnel{},
+	&models.Site{},
+	&models.SystemStatus{},
+	&models.ServerMetric{},
+	&models.InterfaceStats{},
+	&models.VPNStatus{},
+	&models.HAStatus{},
+	// LC-20: the remaining per-poll status tables, now covered by
+	// CleanupOldData's entries slice (vpn_status/ha_status are above).
+	&models.SecurityStats{},
+	&models.SDWANHealth{},
+	&models.LicenseInfo{},
+	&models.HardwareSensor{},
+	&models.ProcessorStats{},
+	&models.DiskUsage{},
+	&models.LoadAverage{},
+	&models.TopologyEntry{},
+	&models.TopologyNeighbor{},
+	&models.DeviceConfigRevision{},
+	&models.TrapEvent{},
+	&models.SyslogMessage{},
+	&models.FlowSample{},
+	&models.FlowRollup{},
+	&models.AgentDrops{},
+	&models.FlowDetection{},
+	&models.ThreatIntel{},
+	&models.ThreatFeedStatus{},
+	&models.FlowInterfaceCounter{},
+	&models.DeniedEvent{},
+	&models.Alert{},
+	&models.AlertPolicy{},
+	&models.AlertRule{},
+	&models.DeviceAlertConfig{},
+	&models.SiteAlertConfig{},
+	&models.MaintenanceWindow{},
+	&models.PingResult{},
+	&models.PingStats{},
+	// AUDIT-029: the four tables that the cleanup regression
+	// tests exercise. They were previously missing from
+	// this list, which made the test discover the missing
+	// AutoMigrate as a "no such table" failure rather than
+	// the actual audit-029 row-preservation failure.
+	&models.InterfaceErrors{},
+	&models.ProcessStats{},
+	&models.InterfaceAddress{},
+	&models.DeviceConnection{},
+	&models.LoginAttempt{},
+	&models.AuditLog{},
+	&models.IRCMessageLog{},
+	&models.SyslogSummary{},
+	&models.UptimeRecord{},
+	&models.ProcessedBatch{},
+	&models.SystemSetting{},
+	&models.Admin{},
+	&models.ApiToken{},
+	&models.AdminRecoveryCode{},
+	&models.Incident{},
+	// v0.11.46: flow-source silencing table.
+	&models.FlowSourceSuppression{},
+	// Event-rule engine (v35+): rules.
+	&models.EventRule{},
+	// Event Rule Profiles (v48): profile + sparse toggle matrix.
+	&models.EventRuleProfile{},
+	&models.EventRuleProfileToggle{},
+	// v59: syslog ingest meter buckets.
+	&models.SyslogIngestHourly{},
+	// v65: device purge jobs.
+	&models.DevicePurgeJob{},
+}
+
 // NewDatabaseForTesting creates an in-memory SQLite Database for use in tests.
 // The returned Database has no batch inserters (syslogBatch etc. are nil) since
 // handlers use db.Gorm().Create() directly for single-record writes.
@@ -25,80 +108,6 @@ func NewDatabaseForTesting(t interface {
 	})
 	if err != nil {
 		t.Fatal("NewDatabaseForTesting: open SQLite:", err)
-	}
-
-	testModels := []interface{}{
-		&models.Probe{},
-		&models.ProbeApproval{},
-		&models.ProbeHeartbeat{},
-		&models.ProbeCommand{},
-		&models.IPSecTunnel{},
-		&models.Device{},
-		&models.Site{},
-		&models.SystemStatus{},
-		&models.ServerMetric{},
-		&models.InterfaceStats{},
-		&models.VPNStatus{},
-		&models.HAStatus{},
-		// LC-20: the remaining per-poll status tables, now covered by
-		// CleanupOldData's entries slice (vpn_status/ha_status are above).
-		&models.SecurityStats{},
-		&models.SDWANHealth{},
-		&models.LicenseInfo{},
-		&models.HardwareSensor{},
-		&models.ProcessorStats{},
-		&models.DiskUsage{},
-		&models.LoadAverage{},
-		&models.TopologyEntry{},
-		&models.TopologyNeighbor{},
-		&models.DeviceConfigRevision{},
-		&models.TrapEvent{},
-		&models.SyslogMessage{},
-		&models.FlowSample{},
-		&models.FlowRollup{},
-		&models.AgentDrops{},
-		&models.FlowDetection{},
-		&models.ThreatIntel{},
-		&models.ThreatFeedStatus{},
-		&models.FlowInterfaceCounter{},
-		&models.DeniedEvent{},
-		&models.Alert{},
-		&models.AlertPolicy{},
-		&models.AlertRule{},
-		&models.DeviceAlertConfig{},
-		&models.SiteAlertConfig{},
-		&models.MaintenanceWindow{},
-		&models.PingResult{},
-		&models.PingStats{},
-		// AUDIT-029: the four tables that the cleanup regression
-		// tests exercise. They were previously missing from
-		// this list, which made the test discover the missing
-		// AutoMigrate as a "no such table" failure rather than
-		// the actual audit-029 row-preservation failure.
-		&models.InterfaceErrors{},
-		&models.ProcessStats{},
-		&models.InterfaceAddress{},
-		&models.DeviceConnection{},
-		&models.LoginAttempt{},
-		&models.AuditLog{},
-		&models.IRCMessageLog{},
-		&models.SyslogSummary{},
-		&models.UptimeRecord{},
-		&models.ProcessedBatch{},
-		&models.SystemSetting{},
-		&models.Admin{},
-		&models.ApiToken{},
-		&models.AdminRecoveryCode{},
-		&models.Incident{},
-		// v0.11.46: flow-source silencing table.
-		&models.FlowSourceSuppression{},
-		// Event-rule engine (v35+): rules.
-		&models.EventRule{},
-		// Event Rule Profiles (v48): profile + sparse toggle matrix.
-		&models.EventRuleProfile{},
-		&models.EventRuleProfileToggle{},
-		// v59: syslog ingest meter buckets.
-		&models.SyslogIngestHourly{},
 	}
 
 	for _, m := range testModels {

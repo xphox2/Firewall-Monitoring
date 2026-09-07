@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sort"
@@ -114,6 +115,141 @@ func (d *Database) batchedDeleteOlderThanOn(model interface{}, timeColumn string
 			return nil // last (partial) batch — nothing more to delete
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// Batch-loop tunables for batchedDeleteWhere (device purge). Package vars so
+// the tests can shrink the floor and the sleeps without seeding thousands of
+// rows or waiting seconds per retry.
+var (
+	// purgeBatchFloor is the smallest batch the 57014 (statement timeout)
+	// halving retry will go to before giving up.
+	purgeBatchFloor = 500
+	// purgeLockRetries bounds the 55P03 (lock timeout) retries of ONE batch,
+	// e.g. when the poller's partition DROP is queued ahead of the delete.
+	purgeLockRetries = 10
+	// purgeLockRetrySleep is the base of the 1-5 s sleep between 55P03
+	// retries (base * (1 + attempt%5)).
+	purgeLockRetrySleep = time.Second
+	// purgeInterBatchSleep yields to other writers between batches.
+	purgeInterBatchSleep = 100 * time.Millisecond
+	// purgeBatchHook, when non-nil, runs before every batch and can fail it
+	// (test seam for the "Nth batch errors" path). Never set in production.
+	purgeBatchHook func(table string, batchNo int) error
+)
+
+// batchedDeleteWhere deletes every row of table matching `where` (args bound)
+// in bounded batches, for the device purge worker (v0.11.243). Unlike
+// batchedDeleteOlderThanOn — which is left exactly as it was for retention —
+// this loop is context-cancellable, reports progress per batch, orders the
+// probe subquery, and handles the Postgres timeouts a multi-hour purge on a
+// populated prod table will meet:
+//
+//   - The subquery is `SELECT id FROM <t> WHERE <where> ORDER BY <orderBy>
+//     LIMIT ?`. The ORDER BY matters on prod: without it the planner may
+//     seq-scan a 134M-row syslog_messages and rescan dead tuples every batch;
+//     ordering on the table's (device_id, <ts>) index column walks the index.
+//   - Each batch is one transaction via WithContext(ctx), so a cancelled ctx
+//     cancels the in-flight statement. On Postgres the tx sets
+//     `SET LOCAL lock_timeout='5s'` and `SET LOCAL statement_timeout='120s'`
+//     (bounded and tx-scoped like execMaintenanceDDL; the DSN default is 30 s).
+//   - SQLSTATE 57014 (statement timeout): halve the batch (floor
+//     purgeBatchFloor) and retry. 55P03 (lock timeout): sleep 1-5 s and retry
+//     the same batch up to purgeLockRetries times. Any other error returns.
+//   - ctx is checked before every batch; purgeInterBatchSleep between batches.
+//
+// table, where and orderBy are ALWAYS compile-time literals from purge.go
+// (devicePurgeTables) or a relation name read back from pg_inherits — never
+// caller/user input; the only bound value is the device id in args. progress
+// (optional) receives the rows deleted by each batch. Returns nil once a batch
+// deletes fewer rows than its size (nothing more matches).
+func (d *Database) batchedDeleteWhere(ctx context.Context, table, where, orderBy string, batch int, args []interface{}, progress func(rows int64)) error {
+	if batch <= 0 {
+		batch = cleanupDeleteBatchSize
+	}
+	sql := fmt.Sprintf("DELETE FROM %s WHERE id IN (SELECT id FROM %s WHERE %s ORDER BY %s LIMIT ?)", table, table, where, orderBy)
+	lockRetries := 0
+	for batchNo := 1; ; batchNo++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if purgeBatchHook != nil {
+			if err := purgeBatchHook(table, batchNo); err != nil {
+				return err
+			}
+		}
+		var affected int64
+		bound := make([]interface{}, 0, len(args)+1)
+		bound = append(bound, args...)
+		bound = append(bound, batch)
+		err := d.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if d.dialect.IsPostgres() {
+				if e := tx.Exec("SET LOCAL lock_timeout = '5s'").Error; e != nil {
+					return e
+				}
+				if e := tx.Exec("SET LOCAL statement_timeout = '120s'").Error; e != nil {
+					return e
+				}
+			}
+			res := tx.Exec(sql, bound...)
+			affected = res.RowsAffected
+			return res.Error
+		})
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err() // the cancel is the cause, not the driver error it surfaced as
+			}
+			switch sqlState(err) {
+			case "57014": // statement_timeout: the batch is too big for this table's heap
+				if batch > purgeBatchFloor {
+					next := batch / 2
+					if next < purgeBatchFloor {
+						next = purgeBatchFloor
+					}
+					log.Printf("device-purge: %s batch of %d hit statement_timeout; retrying with %d", table, batch, next)
+					batch = next
+					batchNo--
+					continue
+				}
+			case "55P03": // lock_timeout: something (partition DROP, VACUUM FULL) holds the table
+				if lockRetries < purgeLockRetries {
+					lockRetries++
+					wait := purgeLockRetrySleep * time.Duration(1+lockRetries%5)
+					log.Printf("device-purge: %s batch waited on a lock (%d/%d); retrying in %s", table, lockRetries, purgeLockRetries, wait)
+					if !sleepCtx(ctx, wait) {
+						return ctx.Err()
+					}
+					batchNo--
+					continue
+				}
+			}
+			return fmt.Errorf("batched delete %s (batch size %d): %w", table, batch, err)
+		}
+		lockRetries = 0
+		if progress != nil && affected > 0 {
+			progress(affected)
+		}
+		if affected < int64(batch) {
+			return nil // last (partial) batch — nothing more matches
+		}
+		if !sleepCtx(ctx, purgeInterBatchSleep) {
+			return ctx.Err()
+		}
+	}
+}
+
+// sleepCtx sleeps for dur or until ctx is done; false means ctx ended first.
+func sleepCtx(ctx context.Context, dur time.Duration) bool {
+	if dur <= 0 {
+		return ctx.Err() == nil
+	}
+	t := time.NewTimer(dur)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
 	}
 }
 
@@ -436,6 +572,13 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	if err := d.batchedDeleteOlderThanOn(&models.ProbeCommand{}, "updated_at", cmdCutoff,
 		"status IN ('succeeded','failed','expired')"); err != nil {
 		return fmt.Errorf("failed to cleanup probe_commands: %w", err)
+	}
+	// v0.11.243: TERMINAL device purge jobs (done/failed/cancelled) are the
+	// same kind of audit trail — 30 days on updated_at (the terminal-transition
+	// time). Live rows (pending/running/cancelling) are never touched here.
+	if err := d.batchedDeleteOlderThanOn(&models.DevicePurgeJob{}, "updated_at", cmdCutoff,
+		"status IN (?)", []string{DevicePurgeStatusDone, DevicePurgeStatusFailed, DevicePurgeStatusCancelled}); err != nil {
+		return fmt.Errorf("failed to cleanup device_purge_jobs: %w", err)
 	}
 
 	// Syslog: one retention window PER SEVERITY.

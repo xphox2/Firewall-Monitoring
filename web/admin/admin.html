@@ -2669,6 +2669,42 @@
         </div>
     </div>
 
+    <!-- Purge Device Modal (admin-only, re-auth). A retired device keeps every
+         row; this is the explicit "remove the data too" path — queued as a
+         background job, resumable and cancellable. Same password/2FA shape
+         as the reveal-secret modal; kept separate because that one is bound
+         to the device form. -->
+    <div class="modal" id="purge-device-modal" role="dialog" aria-modal="true" aria-labelledby="purge-device-title">
+        <div class="modal-content" style="max-width:520px">
+            <div class="modal-header">
+                <h2 id="purge-device-title">Delete permanently</h2>
+                <button class="modal-close" data-action="close-purge-device-modal">&times;</button>
+            </div>
+            <form id="purge-device-form" autocomplete="off">
+                <p style="color:var(--fwmon-text-faint);font-size:0.85rem;margin:0 0 12px 0">Permanently removes <strong id="purge-device-target" style="color:var(--fwmon-text)"></strong> and every row of its history — telemetry, alerts, incidents, config revisions and tunnel intents. The removal runs in the background, can be cancelled while it runs, and is recorded in the audit log. It cannot be undone.</p>
+                <div id="purge-device-estimate" style="margin-bottom:12px"></div>
+                <div id="purge-device-tunnels" style="margin-bottom:12px"></div>
+                <div class="form-group">
+                    <label for="purge-device-name-confirm">Type the device name to confirm</label>
+                    <input type="text" id="purge-device-name-confirm" autocomplete="off" spellcheck="false" autocapitalize="off">
+                </div>
+                <div class="form-group">
+                    <label for="purge-device-password">Your password</label>
+                    <input type="password" id="purge-device-password" autocomplete="current-password">
+                </div>
+                <div class="form-group">
+                    <label for="purge-device-totp">Authenticator code <span style="color:var(--fwmon-text-faint);font-weight:normal">— only if 2FA is enabled</span></label>
+                    <input type="text" id="purge-device-totp" inputmode="numeric" autocomplete="one-time-code" placeholder="123456">
+                </div>
+                <div id="purge-device-error" style="display:none;color:var(--fwmon-sig-crit);font-size:0.85rem;margin-bottom:8px"></div>
+                <div class="modal-footer">
+                    <button type="button" class="btn secondary" data-action="close-purge-device-modal">Cancel</button>
+                    <button type="submit" class="btn danger" id="purge-device-submit" disabled>Delete permanently</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Device Alert Config Modal -->
     <div class="modal" id="device-alert-modal" role="dialog" aria-modal="true" aria-labelledby="device-alert-modal-title">
         <div class="modal-content">

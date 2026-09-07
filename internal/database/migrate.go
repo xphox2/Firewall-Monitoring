@@ -17,77 +17,83 @@ import (
 	"gorm.io/gorm/schema"
 )
 
+// baselineModels is every model the baseline migration AutoMigrates. A package
+// var (not a function local) so the device-purge coverage test can reflect
+// over it: every struct here with a device-keyed column must have an entry in
+// devicePurgeTables (purge.go), or a purge would leave that table's rows behind.
+var baselineModels = []interface{}{
+	&models.SystemStatus{},
+	&models.ServerMetric{},
+	&models.InterfaceStats{},
+	&models.VPNStatus{},
+	&models.HAStatus{},
+	&models.HardwareSensor{},
+	&models.ProcessorStats{},
+	&models.DiskUsage{},
+	&models.LoadAverage{},
+	&models.TopologyEntry{},
+	&models.TopologyNeighbor{},
+	&models.TrapEvent{},
+	&models.Alert{},
+	&models.UptimeRecord{},
+	&models.LoginAttempt{},
+	&models.AuditLog{},
+	&models.Device{},
+	&models.DeviceTunnel{},
+	&models.DeviceConnection{},
+	&models.SystemSetting{},
+	&models.Admin{},
+	&models.Site{},
+	&models.Probe{},
+	&models.ProbeApproval{},
+	&models.ProbeHeartbeat{},
+	&models.ProbeCommand{},
+	&models.IPSecTunnel{},
+	&models.PingResult{},
+	&models.PingStats{},
+	&models.SyslogMessage{},
+	&models.SyslogSummary{},
+	&models.FlowSample{},
+	&models.FlowRollup{},
+	&models.SiteDatabase{},
+	&models.SecurityStats{},
+	&models.SDWANHealth{},
+	&models.LicenseInfo{},
+	&models.InterfaceAddress{},
+	&models.IRCServer{},
+	&models.IRCChannel{},
+	&models.IRCCommand{},
+	&models.IRCMessageLog{},
+	&models.AlertPolicy{},
+	&models.AlertRule{},
+	&models.DeviceAlertConfig{},
+	&models.SiteAlertConfig{},
+	&models.MaintenanceWindow{},
+	&models.DeviceConfigRevision{},
+	&models.ProcessStats{},
+	&models.InterfaceErrors{},
+	&models.ProcessedBatch{},
+	&models.FlowDetection{},
+	&models.ThreatIntel{},
+	&models.ThreatFeedStatus{},
+	&models.FlowInterfaceCounter{},
+	&models.DeniedEvent{},
+	&models.EventRuleProfile{},
+	&models.EventRuleProfileToggle{},
+	&models.SyslogIngestHourly{},
+	// v65: device purge jobs.
+	&models.DevicePurgeJob{},
+}
+
 // migrateBaseline is the v1 "baseline" migration (AUDIT-044): it brings an empty
 // database up to the full current schema and is idempotent, so on an existing
 // (already-AutoMigrated) deployment every step is a no-op and the migration
 // runner simply records v1 as applied. It is invoked via the registry in
 // migrations.go — do not call it directly; call RunMigrations.
 func (d *Database) migrateBaseline() error {
-	allModels := []interface{}{
-		&models.SystemStatus{},
-		&models.ServerMetric{},
-		&models.InterfaceStats{},
-		&models.VPNStatus{},
-		&models.HAStatus{},
-		&models.HardwareSensor{},
-		&models.ProcessorStats{},
-		&models.DiskUsage{},
-		&models.LoadAverage{},
-		&models.TopologyEntry{},
-		&models.TopologyNeighbor{},
-		&models.TrapEvent{},
-		&models.Alert{},
-		&models.UptimeRecord{},
-		&models.LoginAttempt{},
-		&models.AuditLog{},
-		&models.Device{},
-		&models.DeviceTunnel{},
-		&models.DeviceConnection{},
-		&models.SystemSetting{},
-		&models.Admin{},
-		&models.Site{},
-		&models.Probe{},
-		&models.ProbeApproval{},
-		&models.ProbeHeartbeat{},
-		&models.ProbeCommand{},
-		&models.IPSecTunnel{},
-		&models.PingResult{},
-		&models.PingStats{},
-		&models.SyslogMessage{},
-		&models.SyslogSummary{},
-		&models.FlowSample{},
-		&models.FlowRollup{},
-		&models.SiteDatabase{},
-		&models.SecurityStats{},
-		&models.SDWANHealth{},
-		&models.LicenseInfo{},
-		&models.InterfaceAddress{},
-		&models.IRCServer{},
-		&models.IRCChannel{},
-		&models.IRCCommand{},
-		&models.IRCMessageLog{},
-		&models.AlertPolicy{},
-		&models.AlertRule{},
-		&models.DeviceAlertConfig{},
-		&models.SiteAlertConfig{},
-		&models.MaintenanceWindow{},
-		&models.DeviceConfigRevision{},
-		&models.ProcessStats{},
-		&models.InterfaceErrors{},
-		&models.ProcessedBatch{},
-		&models.FlowDetection{},
-		&models.ThreatIntel{},
-		&models.ThreatFeedStatus{},
-		&models.FlowInterfaceCounter{},
-		&models.DeniedEvent{},
-		&models.EventRuleProfile{},
-		&models.EventRuleProfileToggle{},
-		&models.SyslogIngestHourly{},
-	}
-
 	// Migrate each model individually so one failure doesn't block others.
 	// GORM may attempt table recreation which may fail with "already exists" on upgrades.
-	for _, model := range allModels {
+	for _, model := range baselineModels {
 		if err := d.db.AutoMigrate(model); err != nil {
 			log.Printf("AutoMigrate warning for %T: %v", model, err)
 		}
@@ -1702,6 +1708,13 @@ func (d *Database) migrateSystemStatusSource() error {
 // databases. The baseline AutoMigrate covers fresh installs only.
 func (d *Database) migrateServerMetrics() error {
 	return d.db.AutoMigrate(&models.ServerMetric{})
+}
+
+// migrateDevicePurgeJobs (v65) creates device_purge_jobs, the queue/progress
+// table of the permanent device purge worker (v0.11.243). AutoMigrate is
+// idempotent, so a fresh install (baseline already built it) is a no-op.
+func (d *Database) migrateDevicePurgeJobs() error {
+	return d.db.AutoMigrate(&models.DevicePurgeJob{})
 }
 
 // migrateSyslogSeverityIndex (v54) creates the (severity, timestamp) composite

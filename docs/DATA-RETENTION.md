@@ -114,12 +114,17 @@ partitions are never dropped and only the severity-scoped deletes run.
   `DELETE /admin/api/devices/:id` **retires** the device (v0.11.239): the row
   is kept with a `retired_at` marker, polling and ingest stop, and every
   telemetry/alert/incident/config-history row is preserved so it can be
-  restored under the same id. Nothing is erased by a retire. Removing the
-  associated time-series and config data is today a manual operation against
-  the database (delete by `device_id` / `probe_id`), or you wait for the
-  retention windows above to age the data out; a permanent, admin-only
-  per-device purge lands in a follow-up release. See
-  [OPERATIONS.md](OPERATIONS.md#retiring-restoring-and-recovering-devices).
+  restored under the same id. Nothing is erased by a retire. **Per-device
+  erasure is the purge** (v0.11.243): `POST /admin/api/devices/:id/purge`
+  on a retired device — admin-only, name-confirmed, password + 2FA
+  re-authenticated, audit-logged — runs a background job that deletes every
+  row keyed to the device (telemetry, alerts, incidents, config history,
+  device-scoped rules and windows, shared IPSec tunnel intents, connection
+  links) and then the device row; progress is reported per table and the
+  job is resumable and cancellable. Rows are removed from the live tables;
+  the space is reclaimed by autovacuum, and backups taken before the purge
+  still contain the data (rotate them per your own erasure policy). See
+  [OPERATIONS.md](OPERATIONS.md#permanently-deleting-a-retired-device-purge).
 - **Access / portability (Art. 15/20):** export the relevant rows directly
   from the database (e.g. `pg_dump --table=... ` or a scoped `COPY ... TO`).
 - **Rectification (Art. 16):** not generally applicable to telemetry; device

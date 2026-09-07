@@ -10,7 +10,7 @@
 > is a sibling repo, [Firewall-Collector](https://github.com/xphox2/Firewall-Collector).
 
 [![CI](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml/badge.svg)](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.11.242-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.11.243-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.25.13+-00ADD8)](go.mod)
 [![Status](https://img.shields.io/badge/status-alpha-orange)](#project-status)
@@ -190,7 +190,8 @@ public AUDIT-NNN row exists.
   tracked in [CERT-ROTATION.md](docs/CERT-ROTATION.md).
 - **[Planned] SIGHUP hot-reload of TLS certs** — restart required
   today.
-- **[Planned] One-click GDPR export / per-subject erasure endpoint** —
+- **[Planned] One-click GDPR export endpoint** — per-device erasure
+  exists (the admin-only purge, v0.11.243); a subject-scoped export is
   tracked in [DATA-RETENTION.md](docs/DATA-RETENTION.md).
 
 ### Database & storage
@@ -486,7 +487,7 @@ The grouped overview below covers every category.
 
 ### Admin API (JSON, auth + CSRF) — base `/admin/api`
 
-- **Devices:** `GET/POST /devices` (`POST` with `"reuse_name": true` creates a new device under a retired device's name instead of the advisory `409` that offers to restore it — names are unique among *active* devices only; every device carries a read-only `uuid`, minted on create and immutable — it survives retire/restore, is never reused by a same-name replacement, and is ignored in `POST`/`PUT` bodies), `GET/PUT/DELETE /devices/:id` (`DELETE` **retires** the device — history preserved, polling stops; see `POST /devices/:id/{retire,restore}`), `POST /devices/test`, and per-device detail/history/charts under `/devices/:id/{detail,interfaces/:ifIndex/{history,chart},status-history,process-history,config-history[/:revId[/view]],config-history/diff,ha-status,sdwan-health,security-stats,interface-errors,vpn/:tunnel/chart,alert-config}`
+- **Devices:** `GET/POST /devices` (`POST` with `"reuse_name": true` creates a new device under a retired device's name instead of the advisory `409` that offers to restore it — names are unique among *active* devices only; every device carries a read-only `uuid`, minted on create and immutable — it survives retire/restore, is never reused by a same-name replacement, and is ignored in `POST`/`PUT` bodies), `GET/PUT/DELETE /devices/:id` (`DELETE` **retires** the device — history preserved, polling stops; see `POST /devices/:id/{retire,restore}`), the admin-only **permanent purge** of a retired device's data as a background job — `POST /devices/:id/purge` (`{confirm_name, password, totp_code}`, re-authenticated, `202` + job), `POST /devices/:id/purge/cancel`, `GET /devices/:id/purge` (latest job), `GET /devices/:id/purge/estimate` (capped per-table counts + affected IPSec tunnels), `GET /purge-jobs` — `POST /devices/test`, and per-device detail/history/charts under `/devices/:id/{detail,interfaces/:ifIndex/{history,chart},status-history,process-history,config-history[/:revId[/view]],config-history/diff,ha-status,sdwan-health,security-stats,interface-errors,vpn/:tunnel/chart,alert-config}`
 - **Sites:** `GET/POST /sites`, `GET/PUT/DELETE /sites/:id`, `GET/PUT/DELETE /sites/:id/alert-config`
 - **Probes:** `GET/POST /probes`, `GET/PUT/DELETE /probes/:id`, `GET /probes/pending`, `GET /probes/stats`, `GET /probes/:id/stats`, `POST /probes/:id/{approve,reject,regenerate-key}`, `POST /probes/test`
 - **Connections:** `GET/POST /connections`, `GET/PUT/DELETE /connections/:id`, `GET /connections/:id/{detail,events,flows,traffic}`, `GET /connections/{status-summary,vpn-map}`

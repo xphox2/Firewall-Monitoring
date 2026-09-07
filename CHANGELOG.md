@@ -1,6 +1,21 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.243] - 2026-09-07
+
+### Added
+
+**Permanent purge of a retired device's data — admin-only, re-authenticated, batched, resumable, cancellable.** Retire (v0.11.239) keeps every row; this release adds the explicit "remove the data too" path as a background job, because on a populated deployment it is a very large removal (one production device alone holds 1.28M `interface_stats` rows, and `syslog_messages` is 134M rows) that must never take a long lock or be lost to a restart.
+
+- `POST /admin/api/devices/:id/purge` (body `{confirm_name, password, totp_code}`) queues a job for a **retired** device only (`409 device must be retired first`), after the typed name matches (`400`), no IPSec tunnel on either end is `deploying`/`verifying`/`rolling_back` (`409` naming the tunnels — the purge deletes the shared tunnel intent and would otherwise bypass the tunnel delete guard), the caller re-verifies their own password and, when enrolled, a fresh TOTP code (`403`; replay guard namespaced `purge`), and no job for the device is already `pending`/`running`/`cancelling` (`409` with `job_id`). Returns `202` with the job and writes an audit row `purge_device` (device id, uuid, name, job id). Login-rate-limited like `reveal-secret`. The password/TOTP step-up is now one shared `reauthCaller` helper used by both routes.
+- `POST /admin/api/devices/:id/purge/cancel` (`pending` → `cancelled`; `running` → `cancelling`, finished as `cancelled` by the worker between batches; audit `purge_device_cancel`), `GET /admin/api/devices/:id/purge` (latest job), `GET /admin/api/purge-jobs` (active jobs plus the 20 most recent terminal ones), `GET /admin/api/devices/:id/purge/estimate` (per-table counts capped at 1,000,000 with a `capped` flag, the total, and the IPSec tunnels that will be removed with their peer device name). All five are admin-only (`adminOnlyRoutes`).
+- Job table `device_purge_jobs` (migration v65; model `DevicePurgeJob`; lifecycle `pending → running → done | failed | cancelled`, transient `cancelling`; progress fields `current_table`, `rows_deleted`, `tables_done`/`tables_total`; `updated_at` is the worker heartbeat). Terminal rows are kept 30 days by retention, like `probe_commands`.
+- Worker: the API **primary** polls the queue every 5 s and runs one job at a time. Cross-process safety is layered — an in-process single-flight, a compare-and-set claim (`pending → running`), a session advisory lock held for the run, and a stale-heartbeat requeue (`running` with `updated_at` older than 2 min → `pending`; a live job never qualifies). Graceful shutdown flips the running job back to `pending` so the next primary resumes it. The purge plan is one ordered slice of 36 device-keyed tables (largest first: `syslog_messages`, `interface_stats`, `hardware_sensors`, … `alerts`, `incidents`), each deleted with `<col> = ?` predicates in transactions of at most 10,000 rows (2,000 for `syslog_messages`, `interface_stats`, `flow_samples`), the probe subquery ordered on the table's `(device_id, timestamp)` index, `SET LOCAL lock_timeout='5s'` + `statement_timeout='120s'` per batch on Postgres, batch halving on a statement timeout (floor 500), bounded retries on a lock timeout, and per-partition deletes on partitioned tables (including the DEFAULT child; a child dropped by retention mid-run is skipped). The device row is deleted **last**, through the existing `DeleteDevice`, so a cancelled or failed job always leaves a retired device with partial data that a later purge resumes from. Every plan entry is guarded by a reflection test over the model lists so a new device-keyed table cannot be missed.
+
+### Documentation
+
+- `docs/OPERATIONS.md` gains the purge section (what is removed, partial-cancel state, autovacuum note with the `VACUUM (VERBOSE) interface_stats` hint); `docs/DATA-RETENTION.md` erasure now points at the purge; README endpoint list.
+
 ## [0.11.242] - 2026-09-07
 
 ### Added

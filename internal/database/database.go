@@ -575,6 +575,50 @@ func (d *Database) AcquireAPISingletonLock() (release func(), acquired bool, err
 	}, true, nil
 }
 
+// devicePurgeLockKey is the advisory-lock key the API's device-purge worker
+// holds for the duration of one purge run (v0.11.243). isPrimary is forced true
+// when the singleton probe errors, so two API processes can both believe they
+// are primary; this lock (plus the CAS claim on the job row) keeps them from
+// running the same job. ASCII "FWMNPRGE" packed into an int64.
+const devicePurgeLockKey int64 = 0x46574d4e50524745
+
+// AcquireDevicePurgeLock takes the NON-blocking, session-scoped advisory lock
+// that serializes device-purge runs across API processes — the
+// AcquireAPISingletonLock shape: the lock lives on ONE pinned pool connection
+// and release unlocks on that same connection, then returns it to the pool.
+// acquired=false with err=nil means another session holds it (skip this tick).
+//
+// SQLite (tests / single-process) returns acquired=true + a no-op release.
+func (d *Database) AcquireDevicePurgeLock() (release func(), acquired bool, err error) {
+	if !d.dialect.IsPostgres() {
+		return func() {}, true, nil
+	}
+	sqlDB, err := d.db.DB()
+	if err != nil {
+		return func() {}, false, err
+	}
+	ctx := context.Background()
+	conn, err := sqlDB.Conn(ctx) // pins one backend out of the pool
+	if err != nil {
+		return func() {}, false, err
+	}
+	var got bool
+	if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", devicePurgeLockKey).Scan(&got); err != nil {
+		conn.Close()
+		return func() {}, false, err
+	}
+	if !got {
+		conn.Close() // held by another session — don't leak the pinned conn
+		return func() {}, false, nil
+	}
+	return func() {
+		if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", devicePurgeLockKey); err != nil {
+			log.Printf("device-purge: advisory unlock failed (%v); it releases on connection close", err)
+		}
+		conn.Close()
+	}, true, nil
+}
+
 func (d *Database) Close() error {
 	// Flush and stop all batch inserters before closing the DB
 	if d.syslogBatch != nil {

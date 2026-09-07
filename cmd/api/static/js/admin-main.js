@@ -23,6 +23,11 @@
     // placeholder should only show on the very first load of a probe.
     var probeStatsCache = {};
     var connRefreshTimer;
+    // Device purge jobs (v0.11.243): device_id -> latest job from /purge-jobs.
+    // Loaded for admins only (the route is admin-only) and polled while any
+    // job is pending/running/cancelling so the PURGING badge shows live counts.
+    var purgeJobs = {};
+    var purgeJobsTimer;
     var syslogRefreshTimer;
     var syslogOffset = 0;
     // v0.10.212 (bundle A2) — per-analytics-page state. Initialized from URL
@@ -90,6 +95,7 @@
             document.getElementById('page-title').textContent = item.textContent.trim();
             history.pushState(null, '', '/admin/' + (page === 'dashboard' ? '' : page));
             if (page !== 'connections') stopConnRefresh();
+            if (page !== 'devices') stopPurgePolling();
             loadPageData(page);
         });
     });
@@ -647,6 +653,11 @@
             populateSiteSelect('device-site');
 
             renderDevices();
+            // /purge-jobs is admin-only: fetch it only for an admin session so
+            // an operator's Devices page never 403s in the background.
+            AC.whenMe().then(function(me) {
+                if (me && me.role === 'admin' && currentDevices.some(isRetiredDevice)) loadPurgeJobs();
+            }).catch(function() { /* role unknown — badges stay off */ });
         }).catch(function(e) {
             fwmonLog.error('Failed to load devices:', e);
         });
@@ -696,14 +707,15 @@
             var statusCell = retired
                 ? '<span style="color:var(--fwmon-text-mute)" title="Not polled — retired">—</span>'
                 : '<span class="pulse-dot ' + (d.status === 'online' ? 'online' : 'offline') + '"></span><span class="badge ' + escapeHtml(d.status) + '">' + escapeHtml(d.status).toUpperCase() + '</span>';
+            var purgeSlot = retired ? '<span id="dev-purge-' + d.id + '">' + purgeBadgeHtml(purgeJobs[d.id]) + '</span>' : '';
             var actions = retired
-                ? '<button class="btn sm" data-action="restore-device" data-min-role="operator" data-id="' + d.id + '" title="Restore this device and resume polling">Restore</button>'
+                ? retiredActionsHtml(d, purgeJobs[d.id])
                 : AC.sshLaunchButton(d, true) +
                   AC.iconButton({ action: 'device-alert-config', id: d.id, icon: 'bell', title: 'Alert settings', minRole: 'operator' }) +
                   AC.iconButton({ action: 'edit-device', id: d.id, icon: 'pencil', title: 'Edit device', minRole: 'operator' }) +
                   AC.iconButton({ action: 'retire-device', id: d.id, icon: 'archive', title: 'Retire device (keeps history)', danger: true, minRole: 'operator' });
             return '<tr' + (retired ? ' class="device-retired"' : '') + '>' +
-                    '<td><a href="/admin/devices/' + d.id + '" style="color:var(--fwmon-accent);text-decoration:none;font-weight:600">' + escapeHtml(d.name) + '</a>' + retiredBadge + (d.description ? '<br><span style="color:var(--fwmon-text-mute);font-size:0.78rem;">' + escapeHtml(d.description) + '</span>' : '') + '</td>' +
+                    '<td><a href="/admin/devices/' + d.id + '" style="color:var(--fwmon-accent);text-decoration:none;font-weight:600">' + escapeHtml(d.name) + '</a>' + retiredBadge + purgeSlot + (d.description ? '<br><span style="color:var(--fwmon-text-mute);font-size:0.78rem;">' + escapeHtml(d.description) + '</span>' : '') + '</td>' +
                     '<td class="mono">' + escapeHtml(d.ip_address) + '</td>' +
                     '<td>' + (d.probe ? escapeHtml(d.probe.name) : '<span style="color:var(--fwmon-text-mute)">-</span>') + '</td>' +
                     '<td>' + (d.site ? escapeHtml(d.site.name) : '<span style="color:var(--fwmon-text-mute)">-</span>') + '</td>' +
@@ -712,12 +724,122 @@
                     '<td id="dev-sess-' + d.id + '" style="color:var(--fwmon-text-mute)">-</td>' +
                     '<td class="td-nowrap">' + statusCell + '</td>' +
                     '<td><input type="checkbox" ' + (d.public_visible ? 'checked ' : '') + (retired ? 'disabled ' : '') + 'data-action="toggle-public-visible" data-id="' + d.id + '"></td>' +
-                    '<td><div class="row-actions">' + actions + '</div></td>' +
+                    '<td><div class="row-actions" id="dev-actions-' + d.id + '">' + actions + '</div></td>' +
                 '</tr>';
         }).join('') || '<tr><td colspan="10" class="empty-state">' + emptyText + '</td></tr>';
 
         loadDeviceEnrichments();
         loadDeviceAlertIndicators();
+        syncPurgePolling();
+    }
+
+    // ---- Permanent purge of a retired device (v0.11.243) ----
+    // The dialog itself (estimate, name confirm, password + 2FA, POST) is shared
+    // with the device-detail page via AC.openPurgeDevice; this page owns the
+    // per-row state: a PURGING badge with live counts while a job is active
+    // (Restore hidden, Cancel shown), a FAILED/CANCELLED badge with the error in
+    // the tooltip afterwards (Restore + Delete permanently back), and the row
+    // disappearing once the job is done.
+
+    function purgeBadgeHtml(job) {
+        if (!job) return '';
+        var progress = AC.purgeProgressText(job);
+        if (AC.purgeJobActive(job)) {
+            return ' <span class="badge critical" title="' + escapeHtml('Purge in progress — ' + progress) + '">PURGING · ' +
+                escapeHtml(AC.formatNum(job.rows_deleted || 0)) + ' rows</span>';
+        }
+        if (job.status === 'failed') {
+            return ' <span class="badge critical" title="' + escapeHtml('Purge failed after ' + progress + (job.error ? ': ' + job.error : '') + '. Delete permanently again to resume.') + '">PURGE FAILED</span>';
+        }
+        if (job.status === 'cancelled') {
+            return ' <span class="badge unknown" title="' + escapeHtml('Purge cancelled after ' + progress + (job.error ? ': ' + job.error : '') + '. Rows already removed are gone; Delete permanently again to resume.') + '">PURGE CANCELLED</span>';
+        }
+        return '';
+    }
+
+    function retiredActionsHtml(d, job) {
+        if (AC.purgeJobActive(job)) {
+            return '<button class="btn sm secondary" data-action="purge-cancel" data-min-role="admin" data-id="' + d.id + '" title="' + escapeHtml('Stop the running purge — ' + AC.purgeProgressText(job)) + '">Cancel purge</button>';
+        }
+        return '<button class="btn sm" data-action="restore-device" data-min-role="operator" data-id="' + d.id + '" title="Restore this device and resume polling">Restore</button>' +
+            AC.iconButton({ action: 'purge-device', id: d.id, icon: 'trash', title: 'Delete permanently', danger: true, minRole: 'admin' });
+    }
+
+    // Patches one retired row in place (badge slot + actions) so a 5s poll
+    // never re-renders the whole table (which would refetch enrichments).
+    function renderPurgeRow(d) {
+        var job = purgeJobs[d.id];
+        var slot = document.getElementById('dev-purge-' + d.id);
+        var actions = document.getElementById('dev-actions-' + d.id);
+        if (slot) slot.innerHTML = purgeBadgeHtml(job);
+        if (actions) actions.innerHTML = retiredActionsHtml(d, job);
+    }
+
+    function loadPurgeJobs() {
+        apiFetch(API_BASE + '/purge-jobs').then(function(resp) {
+            var next = {};
+            ((resp && resp.data) || []).forEach(function(j) {
+                var cur = next[j.device_id];
+                // Prefer the active job for a device; otherwise the newest one.
+                if (!cur || (AC.purgeJobActive(j) && !AC.purgeJobActive(cur)) ||
+                    (AC.purgeJobActive(j) === AC.purgeJobActive(cur) && j.id > cur.id)) {
+                    next[j.device_id] = j;
+                }
+            });
+            purgeJobs = next;
+            // A finished job means the device row is gone server-side: reload
+            // the list so it disappears (and say so once).
+            var finished = currentDevices.filter(function(d) { return next[d.id] && next[d.id].status === 'done'; });
+            if (finished.length) {
+                finished.forEach(function(d) { AC.showSuccess('"' + d.name + '" permanently deleted'); });
+                loadDevices();
+                return;
+            }
+            currentDevices.forEach(function(d) { if (isRetiredDevice(d)) renderPurgeRow(d); });
+            syncPurgePolling();
+        }).catch(function(e) {
+            fwmonLog.error('Failed to load purge jobs:', e);
+        });
+    }
+
+    function startPurgePolling() {
+        if (purgeJobsTimer) return;
+        purgeJobsTimer = AC.pollWhenVisible(loadPurgeJobs, 5000, { immediate: false });
+    }
+
+    function stopPurgePolling() {
+        if (purgeJobsTimer) {
+            if (typeof purgeJobsTimer.stop === 'function') purgeJobsTimer.stop();
+            purgeJobsTimer = null;
+        }
+    }
+
+    // Poll only while a job is in flight for a listed device.
+    function syncPurgePolling() {
+        var active = currentDevices.some(function(d) { return AC.purgeJobActive(purgeJobs[d.id]); });
+        if (active) startPurgePolling(); else stopPurgePolling();
+    }
+
+    function openPurgeDeviceRow(id) {
+        var d = currentDevices.find(function(x) { return x.id === id; });
+        if (!d) return;
+        AC.openPurgeDevice(id, d.name, {
+            onQueued: function(job) {
+                if (job && job.device_id === id) purgeJobs[id] = job;
+                renderPurgeRow(d);
+                syncPurgePolling();
+                loadPurgeJobs();
+            }
+        });
+    }
+
+    function cancelPurgeRow(id) {
+        AC.cancelPurgeDevice(id).then(function(ok) {
+            if (ok) loadPurgeJobs();
+        }).catch(function(e) {
+            fwmonLog.error('Error cancelling purge:', e);
+            AC.showError('Error cancelling purge: ' + e.message);
+        });
     }
 
     function loadDeviceAlertIndicators() {
@@ -4552,6 +4674,9 @@
         'edit-device': function(el) { editDevice(parseInt(el.dataset.id)); },
         'retire-device': function(el) { retireDevice(parseInt(el.dataset.id)); },
         'restore-device': function(el) { restoreDevice(parseInt(el.dataset.id)); },
+        'purge-device': function(el) { openPurgeDeviceRow(parseInt(el.dataset.id)); },
+        'purge-cancel': function(el) { cancelPurgeRow(parseInt(el.dataset.id)); },
+        'close-purge-device-modal': function() { AC.closePurgeDevice(); },
         'filter-devices': function(el) { filterDevices(el.dataset.filter); },
         'toggle-public-visible': function(el) {
             var id = parseInt(el.dataset.id);
@@ -4853,6 +4978,7 @@
         var titleEl = document.getElementById('page-title');
         if (titleEl) titleEl.textContent = navItem ? navItem.textContent.trim() : page;
         if (page !== 'connections') stopConnRefresh();
+        if (page !== 'devices') stopPurgePolling();
         // Mirror the popstate handler: for an already-initialized analytics page
         // (alerts/syslog/traps), re-seed its filters from the new URL query so a
         // cross-page deep-link like /admin/alerts?device_id=42 actually applies on
@@ -4877,6 +5003,7 @@
     window.addEventListener('popstate', function() {
         var page = activateTabFromUrl();
         if (page !== 'connections') stopConnRefresh();
+        if (page !== 'devices') stopPurgePolling();
         if (analyticsPages[page] && analyticsPages[page].reseedFromURL) {
             analyticsPages[page].reseedFromURL();
         } else {

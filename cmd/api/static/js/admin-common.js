@@ -602,6 +602,203 @@
         return '<button type="button"' + attrs + '>' + icon(opts.icon) + '</button>';
     }
 
+    /* ------------------------------------------------------------------
+     * Device purge dialog (v0.11.243) — shared by the Devices page and the
+     * standalone device-detail page, both of which carry the same static
+     * #purge-device-modal markup. A retired device keeps every row; purge
+     * is the explicit "remove the data too" path: admin-only, re-authed
+     * (password + 2FA), queued as a background job the server batches,
+     * resumes and can cancel. The dialog:
+     *   - shows a per-table row estimate from /purge/estimate (capped
+     *     counts render as "1,000,000+") and the IPSec tunnels that go
+     *     with the device (the tunnel intent is removed for BOTH ends);
+     *   - requires the operator to type the device name exactly — the
+     *     Delete button stays disabled until it matches, and the match is
+     *     re-checked before the POST;
+     *   - keeps itself open on any failure so a wrong password / 2FA code
+     *     can be retried without re-typing the name.
+     * openPurgeDevice(id, name, { onQueued(job) }) — onQueued fires after a
+     * 202 (job = the queued job) and after a 409 "job already active"
+     * conflict (job = null), so the page can refresh its job state.
+     * ------------------------------------------------------------------ */
+    var purgeCtx = { id: null, name: '', onQueued: null };
+
+    function purgeJobActive(job) {
+        return !!job && (job.status === 'pending' || job.status === 'running' || job.status === 'cancelling');
+    }
+
+    // Short progress line for badges/banners: "12,345 rows · syslog_messages (3/37)".
+    function purgeProgressText(job) {
+        if (!job) return '';
+        var parts = [formatNum(job.rows_deleted || 0) + ' rows removed'];
+        if (job.current_table) parts.push(job.current_table);
+        if (job.tables_total) parts.push((job.tables_done || 0) + '/' + job.tables_total + ' tables');
+        if (job.status === 'cancelling') parts.push('cancelling…');
+        else if (job.status === 'pending') parts.push('queued');
+        return parts.join(' · ');
+    }
+
+    function purgeEl(suffix) { return document.getElementById('purge-device-' + suffix); }
+
+    function purgeShowError(msg) {
+        var err = purgeEl('error');
+        if (!err) return;
+        err.textContent = msg || '';
+        err.style.display = msg ? '' : 'none';
+    }
+
+    function purgeSyncSubmit() {
+        var nameEl = purgeEl('name-confirm');
+        var btn = purgeEl('submit');
+        if (!nameEl || !btn) return;
+        btn.disabled = !(purgeCtx.name && nameEl.value === purgeCtx.name);
+    }
+
+    function renderPurgeEstimate(est) {
+        var host = purgeEl('estimate');
+        var tunnelsHost = purgeEl('tunnels');
+        if (!host) return;
+        var tables = (est && est.tables) || [];
+        var nonEmpty = tables.filter(function(t) { return (t.rows || 0) > 0; });
+        nonEmpty.sort(function(a, b) { return (b.rows || 0) - (a.rows || 0); });
+        var anyCapped = nonEmpty.some(function(t) { return !!t.capped; });
+        var html = '<div style="font-size:0.8rem;color:var(--fwmon-text-faint);margin-bottom:4px">Rows to remove: <strong style="color:var(--fwmon-text)">' +
+            escapeHtml(formatNum((est && est.total) || 0)) + (anyCapped ? '+' : '') + '</strong>' +
+            (anyCapped ? ' <span title="Counting stops at 1,000,000 rows per table so the estimate stays fast on a large database">(estimate capped)</span>' : '') +
+            '</div>';
+        if (nonEmpty.length) {
+            html += '<div style="max-height:180px;overflow-y:auto;border:1px solid var(--fwmon-border);border-radius:6px">' +
+                '<table style="width:100%;border-collapse:collapse;font-size:0.8rem">' +
+                nonEmpty.map(function(t) {
+                    return '<tr><td class="mono" style="padding:3px 8px">' + escapeHtml(t.table) + '</td>' +
+                        '<td style="padding:3px 8px;text-align:right">' + escapeHtml(formatNum(t.rows)) + (t.capped ? '+' : '') + '</td></tr>';
+                }).join('') + '</table></div>';
+        } else {
+            html += '<div style="font-size:0.8rem;color:var(--fwmon-text-faint)">No stored rows beyond the device record itself.</div>';
+        }
+        host.innerHTML = html;
+        if (!tunnelsHost) return;
+        var tunnels = (est && est.tunnels) || [];
+        if (!tunnels.length) { tunnelsHost.innerHTML = ''; return; }
+        tunnelsHost.innerHTML = '<div style="font-size:0.8rem;color:var(--fwmon-text-faint);margin-bottom:4px">IPSec tunnels removed with this device — the tunnel intent is removed for both ends:</div>' +
+            '<ul style="margin:0;padding-left:18px;font-size:0.8rem">' + tunnels.map(function(tn) {
+                return '<li>' + escapeHtml(tn.name || ('tunnel ' + tn.id)) +
+                    (tn.peer_device ? ' <span style="color:var(--fwmon-text-faint)">— peer: ' + escapeHtml(tn.peer_device) + '</span>' : '') + '</li>';
+            }).join('') + '</ul>';
+    }
+
+    function loadPurgeEstimate(id) {
+        var host = purgeEl('estimate');
+        var tunnelsHost = purgeEl('tunnels');
+        if (host) host.innerHTML = '<span class="fwmon-spinner" aria-hidden="true"></span> <span style="font-size:0.8rem;color:var(--fwmon-text-faint)">Counting rows…</span>';
+        if (tunnelsHost) tunnelsHost.innerHTML = '';
+        apiFetch(API_BASE + '/devices/' + id + '/purge/estimate').then(function(resp) {
+            if (purgeCtx.id !== id) return; // dialog moved on to another device
+            renderPurgeEstimate(resp && resp.data);
+        }).catch(function(e) {
+            if (purgeCtx.id !== id) return;
+            fwmonLog.error('Purge estimate failed:', e);
+            if (host) host.innerHTML = '<div style="font-size:0.8rem;color:var(--fwmon-sig-crit)">Could not count rows: ' + escapeHtml(e && e.message ? e.message : 'request failed') + '</div>';
+        });
+    }
+
+    function bindPurgeDialogOnce() {
+        var form = purgeEl('form');
+        if (!form || form.dataset.purgeBound) return;
+        form.dataset.purgeBound = '1';
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            submitPurgeDevice();
+        });
+        var nameEl = purgeEl('name-confirm');
+        if (nameEl) nameEl.addEventListener('input', purgeSyncSubmit);
+    }
+
+    function openPurgeDevice(id, name, opts) {
+        opts = opts || {};
+        if (!purgeEl('modal')) { fwmonLog.error('purge-device-modal missing from the page'); return; }
+        bindPurgeDialogOnce();
+        purgeCtx = { id: id, name: name || '', onQueued: opts.onQueued || null };
+        var target = purgeEl('target');
+        if (target) target.textContent = purgeCtx.name;
+        ['name-confirm', 'password', 'totp'].forEach(function(s) { var el = purgeEl(s); if (el) el.value = ''; });
+        purgeShowError('');
+        purgeSyncSubmit();
+        loadPurgeEstimate(id);
+        openModal('purge-device-modal');
+    }
+
+    // Clears the credential inputs on the way out so a typed password never
+    // lingers in the DOM after the dialog is dismissed.
+    function closePurgeDevice() {
+        ['name-confirm', 'password', 'totp'].forEach(function(s) { var el = purgeEl(s); if (el) el.value = ''; });
+        purgeShowError('');
+        closeModal('purge-device-modal');
+    }
+
+    function submitPurgeDevice() {
+        var id = purgeCtx.id;
+        var nameEl = purgeEl('name-confirm');
+        var pwEl = purgeEl('password');
+        var totpEl = purgeEl('totp');
+        var btn = purgeEl('submit');
+        if (!id || !nameEl || !pwEl) return;
+        // The typed name is the confirmation: re-checked here (not only via the
+        // disabled button) so nothing is POSTed for a mismatched name.
+        if (nameEl.value !== purgeCtx.name) { purgeShowError('Type the device name exactly to confirm.'); return; }
+        if (!pwEl.value) { purgeShowError('Enter your password.'); return; }
+        purgeShowError('');
+        if (btn) btn.disabled = true;
+        apiFetch(API_BASE + '/devices/' + id + '/purge', {
+            method: 'POST',
+            body: JSON.stringify({
+                confirm_name: nameEl.value,
+                password: pwEl.value,
+                totp_code: totpEl ? totpEl.value.trim() : ''
+            })
+        }).then(function(resp) {
+            var job = resp && resp.data ? resp.data : null;
+            var cb = purgeCtx.onQueued;
+            closePurgeDevice();
+            showSuccess('Purge queued');
+            if (cb) cb(job);
+        }).catch(function(e) {
+            fwmonLog.error('Purge request failed:', e);
+            var msg = e && e.message ? e.message : 'Could not queue the purge.';
+            if (e && e.status === 409 && e.body && e.body.job_id) {
+                // A job already exists for this device: nothing to retry here.
+                var cb2 = purgeCtx.onQueued;
+                closePurgeDevice();
+                showError(msg);
+                if (cb2) cb2(null);
+                return;
+            }
+            // Every other failure (wrong password / 2FA → 403, name mismatch,
+            // tunnels still deploying) keeps the dialog open for a retry.
+            purgeShowError(msg);
+            if (pwEl && e && /password|2FA|authenticator|code/i.test(msg)) pwEl.value = '';
+            purgeSyncSubmit();
+        });
+    }
+
+    // POST /purge/cancel after a confirm. Resolves true when the cancel was
+    // accepted (job → cancelled / cancelling), false when the operator backed
+    // out; rejects on a request failure.
+    function cancelPurgeDevice(id) {
+        return confirmModal('Cancel this purge? Rows already removed are gone; the device stays retired and the purge can be run again later.', {
+            title: 'Cancel purge?',
+            confirmLabel: 'Cancel purge',
+            cancelLabel: 'Keep running',
+            danger: true,
+        }).then(function(ok) {
+            if (!ok) return false;
+            return apiFetch(API_BASE + '/devices/' + id + '/purge/cancel', { method: 'POST' }).then(function() {
+                showSuccess('Purge cancelled');
+                return true;
+            });
+        });
+    }
+
     function doLogout() {
         apiFetch(API_BASE + '/logout', { method: 'POST' }).then(function() {
             window.location.href = '/admin/login';
@@ -1747,6 +1944,12 @@
         sshLaunchButton: sshLaunchButton,
         icon: icon,
         iconButton: iconButton,
+        openPurgeDevice: openPurgeDevice,
+        closePurgeDevice: closePurgeDevice,
+        submitPurgeDevice: submitPurgeDevice,
+        cancelPurgeDevice: cancelPurgeDevice,
+        purgeJobActive: purgeJobActive,
+        purgeProgressText: purgeProgressText,
         apiFetch: apiFetch,
         doLogout: doLogout,
         delegateEvent: delegateEvent,
