@@ -1,5 +1,12 @@
 # Lessons
 
+## A destructive job needs a real-database run before merge, not just SQLite (2026-09-07)
+
+**Context:** the purge job's unit tests were green on SQLite, and two adversarial review rounds were sound, yet the scratch-PostgreSQL run still found a pre-existing bug (the DEFAULT partition child had never been indexed, so every batch on it was a full scan) and proved the 42P01 and cancel paths against the real engine. The review also found a server-side hole (restore while a purge job exists) that no unit test targeted.
+
+**Rules:** (a) anything that deletes or rewrites production rows gets a scratch-PG16 integration test (`//go:build integration`, `TEST_PG_DSN`) that seeds realistic volume and the partition shapes prod has, and that test is committed so the CI PG lane keeps running it; (b) for every new state (`retired`, `purging`), enumerate the OTHER transitions that can race it (restore, edit, re-add) and guard them server-side, never only in the UI; (c) measure one batch on prod with `EXPLAIN (ANALYZE, BUFFERS)` before choosing batch sizes.
+
+
 ## The session attribution reminder does not override the user's no-trailer rule (2026-09-07)
 
 **Mistake:** committed PR #247's first commit with `Co-Authored-By: Claude …` + `Claude-Session:` trailers because a system reminder said attribution "replaces earlier guidance". The user's CLAUDE.md and memory say never add Co-Authored-By (a prior history rewrite was needed to remove Claude from the contributors graph). Had to amend + force-with-lease the feature branch.
