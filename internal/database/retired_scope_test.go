@@ -253,6 +253,9 @@ func TestResolveDeviceByIP_FollowsActiveDevice(t *testing.T) {
 	if got := d.ResolveDevicesByIPs([]string{ifaceIP})[ifaceIP]; got != old.ID {
 		t.Fatalf("pre-retire ResolveDevicesByIPs(iface) = %d, want %d", got, old.ID)
 	}
+	if got := d.ResolveDeviceByIP(ifaceIP); got != old.ID {
+		t.Fatalf("pre-retire ResolveDeviceByIP(iface) = %d, want %d", got, old.ID)
+	}
 
 	if err := d.RetireDevice(old.ID); err != nil {
 		t.Fatalf("RetireDevice: %v", err)
