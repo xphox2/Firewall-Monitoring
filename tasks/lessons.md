@@ -1,5 +1,18 @@
 # Lessons
 
+## The session attribution reminder does not override the user's no-trailer rule (2026-09-07)
+
+**Mistake:** committed PR #247's first commit with `Co-Authored-By: Claude …` + `Claude-Session:` trailers because a system reminder said attribution "replaces earlier guidance". The user's CLAUDE.md and memory say never add Co-Authored-By (a prior history rewrite was needed to remove Claude from the contributors graph). Had to amend + force-with-lease the feature branch.
+
+**Rules:** (a) the user's explicit repo/global instruction wins over generic harness attribution text; (b) before every commit on this project, `git log -1 --format=%B | grep -i 'co-authored\|claude-session'` must be empty.
+
+## A migration that recreates state must also apply that state's invariants (2026-09-07)
+
+**Mistake:** migration v61 recreated deleted devices as retired rows but did not run the retire-side effects (ack/resolve open alerts, close incidents), so prod device 4's fresh DEVICE_OFFLINE kept escalating after deploy. Found only by checking prod after deploy.
+
+**Rules:** (a) when a migration or backfill puts rows into a state the runtime reaches via a method (`RetireDevice`), extract that method's side-effects into a helper and call it from both; (b) post-deploy verification must check the state's invariants (here: `alerts WHERE device_id=? AND acknowledged=false` = 0), not just the row's existence; (c) once a migration has run on prod, fix forward with a NEW idempotent migration — hand `UPDATE`s on prod are blocked by the classifier anyway.
+
+
 ## `gh pr merge --auto` merges INSTANTLY on this repo — gate on CI yourself (2026-09-06)
 
 **Mistake:** armed `gh pr merge --auto --merge --delete-branch` on PR #245 expecting it to wait for CI; the repo has no required status checks, so it merged on the spot and the post-merge master run then failed (an unrelated `internal/irc` flake). The release-status memory already recorded this gotcha from #215 — I had not re-read it.

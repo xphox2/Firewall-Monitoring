@@ -223,7 +223,9 @@ var ErrDeviceNotRetired = errors.New("device is not retired")
 // mirror the alert manager's resolveOpenAlertRows: unacked rows are resolved
 // AND auto-acknowledged (snooze cleared); already-acked rows only gain a
 // resolved_at and an appended note. `||` string concat is valid on both
-// Postgres and SQLite.
+// Postgres and SQLite. The step lives in closeAlertsForRetiredDevice so
+// migration v62 (migrateCloseAlertsForRetiredDevices) sweeps every already-
+// retired device the same way.
 //
 // The LC-21 incident close moved here from DeleteDevice (2026-07-04 audit): the
 // ONLY other resolve path is the device-recovery correlator (incidents_f12.go
@@ -248,46 +250,58 @@ func (d *Database) RetireDevice(id uint) error {
 		if err := tx.Where("source_device_id = ? OR dest_device_id = ?", id, id).Delete(&models.DeviceConnection{}).Error; err != nil {
 			return fmt.Errorf("retire device %d: delete connections: %w", id, err)
 		}
-		if err := tx.Model(&models.Incident{}).
-			Where("device_id = ? AND resolved_at IS NULL", id).
-			Updates(map[string]interface{}{
-				"resolved_at": now,
-				"title":       gorm.Expr("title || ' (device retired)'"),
-			}).Error; err != nil {
-			return fmt.Errorf("retire device %d: resolve open incidents: %w", id, err)
-		}
-		const note = "Auto-resolved: device retired"
-		// Unacked rows: acknowledge (stops escalation) and resolve if still open.
-		// The ack is applied to every unacked row for the device, not only the
-		// unresolved ones, because GetUnacknowledgedAlerts keys on acknowledged
-		// alone — a resolved-but-unacked row would still be re-notified.
-		if err := tx.Model(&models.Alert{}).
-			Where("device_id = ? AND acknowledged = ?", id, false).
-			Updates(map[string]interface{}{
-				"acknowledged":    true,
-				"acknowledged_at": now,
-				"resolved_at":     gorm.Expr("COALESCE(resolved_at, ?)", now),
-				"notes":           gorm.Expr("CASE WHEN COALESCE(notes,'') = '' THEN ? ELSE notes || ? END", note, "\n"+note),
-				"snoozed_until":   nil,
-				"snoozed_by":      "",
-				"snoozed_reason":  "",
-			}).Error; err != nil {
-			return fmt.Errorf("retire device %d: acknowledge open alerts: %w", id, err)
-		}
-		// Acked-but-open rows: resolve, preserving the operator's ack.
-		if err := tx.Model(&models.Alert{}).
-			Where("device_id = ? AND acknowledged = ? AND resolved_at IS NULL", id, true).
-			Updates(map[string]interface{}{
-				"resolved_at":    now,
-				"notes":          gorm.Expr("CASE WHEN COALESCE(notes,'') = '' THEN ? ELSE notes || ? END", note, "\n"+note),
-				"snoozed_until":  nil,
-				"snoozed_by":     "",
-				"snoozed_reason": "",
-			}).Error; err != nil {
-			return fmt.Errorf("retire device %d: resolve acked alerts: %w", id, err)
-		}
-		return nil
+		return closeAlertsForRetiredDevice(tx, id, "Auto-resolved: device retired", now)
 	})
+}
+
+// closeAlertsForRetiredDevice is RetireDevice's alert/incident step, shared
+// with migration v62 (migrateCloseAlertsForRetiredDevices) so a device that
+// is already retired closes its open rows exactly the way an operator retire
+// does. It
+// runs on the caller's transaction: open incidents for id are resolved with a
+// "(device retired)" title suffix, every unacked alert is acknowledged (and
+// resolved if still open, snooze cleared) and acked-but-open alerts are
+// resolved preserving the operator's ack; note is appended to each touched
+// alert's notes.
+func closeAlertsForRetiredDevice(tx *gorm.DB, id uint, note string, now time.Time) error {
+	if err := tx.Model(&models.Incident{}).
+		Where("device_id = ? AND resolved_at IS NULL", id).
+		Updates(map[string]interface{}{
+			"resolved_at": now,
+			"title":       gorm.Expr("title || ' (device retired)'"),
+		}).Error; err != nil {
+		return fmt.Errorf("retire device %d: resolve open incidents: %w", id, err)
+	}
+	// Unacked rows: acknowledge (stops escalation) and resolve if still open.
+	// The ack is applied to every unacked row for the device, not only the
+	// unresolved ones, because GetUnacknowledgedAlerts keys on acknowledged
+	// alone — a resolved-but-unacked row would still be re-notified.
+	if err := tx.Model(&models.Alert{}).
+		Where("device_id = ? AND acknowledged = ?", id, false).
+		Updates(map[string]interface{}{
+			"acknowledged":    true,
+			"acknowledged_at": now,
+			"resolved_at":     gorm.Expr("COALESCE(resolved_at, ?)", now),
+			"notes":           gorm.Expr("CASE WHEN COALESCE(notes,'') = '' THEN ? ELSE notes || ? END", note, "\n"+note),
+			"snoozed_until":   nil,
+			"snoozed_by":      "",
+			"snoozed_reason":  "",
+		}).Error; err != nil {
+		return fmt.Errorf("retire device %d: acknowledge open alerts: %w", id, err)
+	}
+	// Acked-but-open rows: resolve, preserving the operator's ack.
+	if err := tx.Model(&models.Alert{}).
+		Where("device_id = ? AND acknowledged = ? AND resolved_at IS NULL", id, true).
+		Updates(map[string]interface{}{
+			"resolved_at":    now,
+			"notes":          gorm.Expr("CASE WHEN COALESCE(notes,'') = '' THEN ? ELSE notes || ? END", note, "\n"+note),
+			"snoozed_until":  nil,
+			"snoozed_by":     "",
+			"snoozed_reason": "",
+		}).Error; err != nil {
+		return fmt.Errorf("retire device %d: resolve acked alerts: %w", id, err)
+	}
+	return nil
 }
 
 // RestoreDevice reverses RetireDevice: clears retired_at, re-enables the device

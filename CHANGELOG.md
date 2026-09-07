@@ -1,6 +1,12 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.240] - 2026-09-07
+
+### Fixed
+
+- **Retired devices now have their open alerts and incidents closed by migration v62 `close_alerts_for_retired_devices`.** Migration v61 recreated a deleted device as retired but left its alert rows as they were, so a still-open, unacknowledged `DEVICE_OFFLINE` raised inside the 24h escalation window kept being re-notified by `CheckEscalations`. Because v61 has already run on existing installs, the fix is a new migration: for every device with `retired_at` set it applies the same close an operator retire performs (unacknowledged alerts acknowledged + resolved with the note `Auto-resolved: device retired`, snooze cleared; acknowledged-but-open alerts resolved preserving the ack; open incidents closed with `(device retired)`). Alerts for active devices and `device_id = 0` digests are untouched, and a rerun matches nothing. The close step is shared with `RetireDevice` via `closeAlertsForRetiredDevice`; `RetireDevice` behaviour is unchanged.
+
 ## [0.11.239] - 2026-09-06
 
 ### Added
