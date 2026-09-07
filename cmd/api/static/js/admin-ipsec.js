@@ -723,9 +723,16 @@
         return s.replace(/^[.\-_]+/, '').replace(/[.\-_]+$/, '').slice(0, 63);
     }
 
-    // defaultIdentity: sanitized device name for fqdn, the end's WAN/peer IP for ip.
+    // defaultIdentity: 'fwm-<device uuid>' for fqdn, the end's WAN/peer IP for ip.
+    // The UUID (not the name) is the default so a replacement device that reuses
+    // a retired device's name never presents the retired device's identity to a
+    // shared peer. 'fwm-' + 36 chars = 40, inside the 63-char cap, FQDN charset
+    // only, never IP-shaped ('fwm' is not an IPv4 octet run, so isIPv4Range,
+    // which splits on the first '-', cannot parse it as a range either).
     function defaultIdentity(pfx, dev) {
         if (idTypeVal(pfx) === 'ip') { return ifaceVal(pfx, 'peer') || (dev && dev.ip_address) || ''; }
+        if (dev && typeof dev.uuid === 'string' && dev.uuid !== '') { return 'fwm-' + dev.uuid; }
+        // Fallback for a device with no UUID (pre-deploy payload): sanitized name.
         var s = sanitizeFqdnId(dev && dev.name);
         // A device NAMED like an IP (e.g. "192.168.5.107") sanitizes to an IP-shaped
         // string, which the fqdn rules would then block — so the prefill must not

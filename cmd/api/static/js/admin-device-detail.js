@@ -200,6 +200,19 @@
         statusBadge.className = 'badge ' + (dev.status || 'unknown');
 
         document.getElementById('deviceIP').textContent = dev.ip_address + ':' + dev.snmp_port;
+        // Device UUID (immutable server-minted identity; the IPSec wizard derives
+        // the default IKE identity from it). Hidden when the payload lacks it.
+        var uuidWrap = document.getElementById('deviceUuidWrap');
+        var uuidEl = document.getElementById('deviceUuid');
+        if (uuidWrap && uuidEl) {
+            if (typeof dev.uuid === 'string' && dev.uuid !== '') {
+                uuidEl.textContent = dev.uuid;
+                uuidWrap.classList.remove('hidden');
+            } else {
+                uuidEl.textContent = '';
+                uuidWrap.classList.add('hidden');
+            }
+        }
         document.getElementById('deviceProbe').textContent = dev.probe ? 'Probe: ' + dev.probe.name : '';
         document.getElementById('deviceSite').textContent = dev.site ? 'Site: ' + dev.site.name : '';
         document.getElementById('devicePolled').textContent = dev.last_polled ? 'Last polled: ' + formatTime(dev.last_polled) : '';
@@ -2649,6 +2662,13 @@
     // Register all delegated event handlers
     AC.delegateEvent('click', {
         'restore-device': function() { restoreDevice(); },
+        'copy-device-uuid': function() {
+            var uuid = document.getElementById('deviceUuid').textContent;
+            if (uuid) {
+                navigator.clipboard.writeText(uuid);
+                AC.showSuccess('UUID copied');
+            }
+        },
         'logout': function() {
             AC.doLogout();
         },

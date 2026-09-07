@@ -162,6 +162,7 @@ func (h *Handler) CreateDevice(c *gin.Context) {
 	}
 
 	device.ID = 0
+	device.UUID = "" // server-minted (BeforeCreate); never client-supplied
 	device.Status = "unknown"
 	device.RetiredAt = nil
 	device.CreatedAt = time.Time{}

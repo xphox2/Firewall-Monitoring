@@ -477,3 +477,151 @@ func TestCreateDevice_ActiveNameBeatsRetiredAdvisory(t *testing.T) {
 		t.Errorf("rows named %q = %d, want 2 (one retired, one active)", device.Name, n)
 	}
 }
+
+// deviceJSONKeys decodes an API envelope whose data is a list of objects and
+// returns each object's key set.
+func deviceJSONKeys(t *testing.T, body []byte) []map[string]interface{} {
+	t.Helper()
+	var resp struct {
+		Data []map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("decode: %v\n%s", err, body)
+	}
+	return resp.Data
+}
+
+// TestDeviceUUID_ExposedAndReadOnly: the device UUID reaches the admin
+// browser unmasked on both device read paths (the list and the detail
+// envelope's `device`), a PUT carrying `uuid` leaves the stored value alone
+// (the allow-list drops it; a uuid-only body is "no valid fields"), and the
+// created device carries it in the 201 response.
+func TestDeviceUUID_ExposedAndReadOnly(t *testing.T) {
+	h, db := setupTestHandler(t)
+	probe, device := setupProbeAndDevice(t, db)
+	if device.UUID == "" {
+		t.Fatal("test fixture: raw create did not mint a uuid")
+	}
+
+	// GET /admin/api/devices carries it unmasked.
+	c, rec := jsonReq(http.MethodGet, "/x", "")
+	h.GetDevices(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list = %d %s", rec.Code, rec.Body.String())
+	}
+	list := deviceJSONKeys(t, rec.Body.Bytes())
+	if len(list) != 1 || list[0]["uuid"] != device.UUID {
+		t.Errorf("list uuid = %v, want %q", list[0]["uuid"], device.UUID)
+	}
+
+	// GET /admin/api/devices/:id/detail → data.device.uuid.
+	c, rec = jsonReq(http.MethodGet, "/x", "")
+	c.Params = idParam(device.ID)
+	h.GetDeviceDetail(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("detail = %d %s", rec.Code, rec.Body.String())
+	}
+	var detail struct {
+		Data struct {
+			Device map[string]interface{} `json:"device"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decode detail: %v", err)
+	}
+	if detail.Data.Device["uuid"] != device.UUID {
+		t.Errorf("detail device.uuid = %v, want %q", detail.Data.Device["uuid"], device.UUID)
+	}
+
+	// PUT with uuid alongside a real field: the field applies, the uuid does not.
+	c, rec = jsonReq(http.MethodPut, "/x", `{"uuid":"11111111-2222-3333-4444-555555555555","description":"edited"}`)
+	c.Params = idParam(device.ID)
+	h.UpdateDevice(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	got, err := db.GetDevice(device.ID)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got.UUID != device.UUID {
+		t.Errorf("PUT changed the uuid: %q → %q", device.UUID, got.UUID)
+	}
+	if got.Description != "edited" {
+		t.Errorf("PUT did not apply description: %q", got.Description)
+	}
+
+	// PUT with only uuid: nothing in the allow-list survives.
+	c, rec = jsonReq(http.MethodPut, "/x", `{"uuid":"11111111-2222-3333-4444-555555555555"}`)
+	c.Params = idParam(device.ID)
+	h.UpdateDevice(c)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("uuid-only PUT = %d %s, want 400 (no valid fields)", rec.Code, rec.Body.String())
+	}
+	if got, _ := db.GetDevice(device.ID); got.UUID != device.UUID {
+		t.Errorf("uuid-only PUT changed the uuid: %q → %q", device.UUID, got.UUID)
+	}
+
+	// POST mints and returns it; a client-supplied uuid on create is ignored
+	// (the create path decodes the body into the struct, so the handler must
+	// clear it before the hook runs — pin that the stored value is the
+	// server's, not the client's, and distinct from the existing device's).
+	const clientUUID = "99999999-8888-7777-6666-555555555555"
+	body, _ := json.Marshal(map[string]interface{}{"name": "second", "ip_address": "192.168.1.5", "probe_id": probe.ID, "uuid": clientUUID})
+	c, rec = jsonReq(http.MethodPost, "/x", string(body))
+	h.CreateDevice(c)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create = %d %s", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		Data struct {
+			ID   uint   `json:"id"`
+			UUID string `json:"uuid"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode 201: %v", err)
+	}
+	if len(created.Data.UUID) != 36 || created.Data.UUID == device.UUID || created.Data.UUID == clientUUID {
+		t.Errorf("created uuid = %q, want a fresh server-minted value (not the client's %q, not %q)", created.Data.UUID, clientUUID, device.UUID)
+	}
+	if stored, _ := db.GetDevice(created.Data.ID); stored == nil || stored.UUID != created.Data.UUID {
+		t.Errorf("stored uuid for the created device does not match the 201 body")
+	}
+}
+
+// TestGetPublicDevices_KeySet pins the unauthenticated devices endpoint to
+// exactly {id, name, status, wan_speed_mbps}: the device UUID (and every
+// other column) must never leak to the public page by accident.
+func TestGetPublicDevices_KeySet(t *testing.T) {
+	h, db := setupTestHandler(t)
+	_, device := setupProbeAndDevice(t, db)
+	if err := db.Gorm().Model(&models.Device{}).Where("id = ?", device.ID).
+		Updates(map[string]interface{}{"enabled": true, "public_visible": true}).Error; err != nil {
+		t.Fatalf("make public: %v", err)
+	}
+
+	c, rec := jsonReq(http.MethodGet, "/x", "")
+	h.GetPublicDevices(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("public devices = %d %s", rec.Code, rec.Body.String())
+	}
+	list := deviceJSONKeys(t, rec.Body.Bytes())
+	if len(list) != 1 {
+		t.Fatalf("public devices = %d rows, want 1: %s", len(list), rec.Body.String())
+	}
+	want := map[string]bool{"id": true, "name": true, "status": true, "wan_speed_mbps": true}
+	for k := range list[0] {
+		if !want[k] {
+			t.Errorf("public device exposes %q; the key set must be exactly {id, name, status, wan_speed_mbps}", k)
+		}
+	}
+	for k := range want {
+		if _, ok := list[0][k]; !ok {
+			t.Errorf("public device is missing %q", k)
+		}
+	}
+	if strings.Contains(rec.Body.String(), device.UUID) {
+		t.Errorf("public devices body leaks the uuid: %s", rec.Body.String())
+	}
+}

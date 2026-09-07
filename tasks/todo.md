@@ -15,9 +15,14 @@
 - [x] migration v62 close_alerts_for_retired_devices — PR #248 merged, deployed 2026-09-07 00:47 UTC, verified
 
 ## v0.11.241 — names unique among ACTIVE devices (plan approved 2026-09-07)
-- [ ] Backend: Name tag index-only; migration v63 partial unique index; testing.go partial index; RestoreDevice single statement; CreateDevice reuse_name wrapper + retired_count; tests; docs; changelog 0.11.241
-- [ ] UI: AC.choose / AC.promptText / AC.deviceOptionLabel; add-device 3-way chooser; rename-on-restore; retired date inline; pickers labelled; shell guardrail updated
-- [ ] QA gates; adversarial diff review; PR; CI; merge; deploy rust-01; verify index shape + version
+- [x] Backend: Name tag index-only; migration v63 partial unique index; testing.go partial index; RestoreDevice single statement; CreateDevice reuse_name wrapper + retired_count; tests; docs; changelog 0.11.241
+- [x] UI: AC.choose / AC.promptText / AC.deviceOptionLabel; add-device 3-way chooser; rename-on-restore; retired date inline; pickers labelled; shell guardrail updated
+- [x] QA gates; adversarial diff review; PR #249; CI; merged; deployed rust-01 2026-09-07 01:34 UTC; index shape + v0.11.241 verified
+
+## v0.11.242 — device UUID + IPSec identity from UUID (plan approved 2026-09-07)
+- [ ] Backend: Device.UUID + BeforeCreate; UpdateDevice Omit(uuid); migration v64 backfill; tests; docs; changelog 0.11.242
+- [ ] UI: wizard defaultIdentity fwm-<uuid>; help text + placeholders; UUID on detail page + edit modal; shell guardrail
+- [ ] QA gates; adversarial diff review; PR; CI; merge; deploy rust-01; verify uuids populated + version
 
 ## PR B — purge job (separate plan-mode delta)
 - [ ] not started
