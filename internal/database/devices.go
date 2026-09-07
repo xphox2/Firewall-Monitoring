@@ -224,7 +224,8 @@ var ErrDeviceNotRetired = errors.New("device is not retired")
 // AND auto-acknowledged (snooze cleared); already-acked rows only gain a
 // resolved_at and an appended note. `||` string concat is valid on both
 // Postgres and SQLite. The step lives in closeAlertsForRetiredDevice so
-// migration v61 closes the same rows for a device it recreates as retired.
+// migration v62 (migrateCloseAlertsForRetiredDevices) sweeps every already-
+// retired device the same way.
 //
 // The LC-21 incident close moved here from DeleteDevice (2026-07-04 audit): the
 // ONLY other resolve path is the device-recovery correlator (incidents_f12.go
@@ -254,8 +255,9 @@ func (d *Database) RetireDevice(id uint) error {
 }
 
 // closeAlertsForRetiredDevice is RetireDevice's alert/incident step, shared
-// with migration v61 (materializeOrphanedDevices) so a device recreated as
-// retired closes its open rows exactly the way an operator retire does. It
+// with migration v62 (migrateCloseAlertsForRetiredDevices) so a device that
+// is already retired closes its open rows exactly the way an operator retire
+// does. It
 // runs on the caller's transaction: open incidents for id are resolved with a
 // "(device retired)" title suffix, every unacked alert is acknowledged (and
 // resolved if still open, snooze cleared) and acked-but-open alerts are
