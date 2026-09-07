@@ -312,12 +312,16 @@ func closeAlertsForRetiredDevice(tx *gorm.DB, id uint, note string, now time.Tim
 //
 // updates (nil/empty = none) is the already-validated, already-encrypted
 // settings map the restore-with-settings handler prepared (the same shape
-// UpdateDevice writes). It is applied in the SAME transaction, after the
-// restore columns are cleared, so a rejected settings write (e.g. a name that
-// collides with another device — IsUniqueViolation on the returned error)
-// rolls the restore back and the device stays retired. The restore columns
-// themselves are never overridable through updates: a caller cannot restore a
-// device as disabled or with a pre-set status.
+// UpdateDevice writes). It is applied in the SAME UPDATE statement as the
+// restore columns: names are unique among active devices only (partial index
+// idx_devices_name_active, v0.11.241), so clearing retired_at first and
+// renaming second could never succeed while an active device holds the old
+// name — the first statement would already collide. One statement means a
+// restore that renames onto a free name lands, and a rejected write (e.g. a
+// name that collides with an active device — IsUniqueViolation on the
+// returned error) rolls the restore back and the device stays retired. The
+// restore columns themselves are never overridable through updates: a caller
+// cannot restore a device as disabled or with a pre-set status.
 func (d *Database) RestoreDevice(id uint, updates map[string]interface{}) error {
 	return d.db.Transaction(func(tx *gorm.DB) error {
 		var dev models.Device
@@ -327,26 +331,16 @@ func (d *Database) RestoreDevice(id uint, updates map[string]interface{}) error 
 		if dev.RetiredAt == nil {
 			return fmt.Errorf("restore device %d: %w", id, ErrDeviceNotRetired)
 		}
-		if err := tx.Model(&models.Device{}).Where("id = ?", id).
-			Updates(map[string]interface{}{"retired_at": nil, "enabled": true, "status": "unknown"}).Error; err != nil {
-			return fmt.Errorf("restore device %d: %w", id, err)
-		}
-		if len(updates) == 0 {
-			return nil
-		}
-		settings := make(map[string]interface{}, len(updates))
+		cols := make(map[string]interface{}, len(updates)+3)
 		for k, v := range updates {
-			switch k {
-			case "retired_at", "enabled", "status":
-				continue
-			}
-			settings[k] = v
+			cols[k] = v
 		}
-		if len(settings) == 0 {
-			return nil
-		}
-		if err := tx.Model(&models.Device{}).Where("id = ?", id).Updates(settings).Error; err != nil {
-			return fmt.Errorf("restore device %d: apply settings: %w", id, err)
+		// Set last so the restore columns win over anything in updates.
+		cols["retired_at"] = nil
+		cols["enabled"] = true
+		cols["status"] = "unknown"
+		if err := tx.Model(&models.Device{}).Where("id = ?", id).Updates(cols).Error; err != nil {
+			return fmt.Errorf("restore device %d: %w", id, err)
 		}
 		return nil
 	})

@@ -37,8 +37,18 @@
         return (Math.round(Number(v) * 100) / 100) + (METRIC_LABEL[alertType] ? '%' : '');
     }
 
+    // retiredAt: device id → retired_at for the overrides table, so a
+    // device-scope override on a retired device is labelled as such.
+    var retiredAt = {};
+
     function load() {
-        AC.apiFetch(API_BASE + '/alert-config/overview').then(function(resp) {
+        Promise.all([
+            AC.apiFetch(API_BASE + '/alert-config/overview'),
+            AC.apiFetch(API_BASE + '/devices').catch(function() { return { data: [] }; })
+        ]).then(function(r) {
+            var resp = r[0];
+            retiredAt = {};
+            ((r[1] && r[1].data) || []).forEach(function(dev) { if (dev.retired_at) retiredAt[dev.id] = dev.retired_at; });
             var d = resp && resp.data ? resp.data : {};
             populateGlobal(d.global || {});
             renderOverrides(d.overrides || []);
@@ -68,6 +78,14 @@
             });
             if (spikeEnabled) spikeEnabled.disabled = !isAdmin;
         });
+    }
+
+    function scopeName(r) {
+        var name = r.scope_name || ('#' + r.scope_id);
+        if (r.scope === 'device' && retiredAt[r.scope_id]) {
+            return AC.deviceOptionLabel({ name: name, retired_at: retiredAt[r.scope_id] });
+        }
+        return name;
     }
 
     function renderOverrides(rows) {
@@ -107,7 +125,7 @@
             var action = editControl(r);
             return '<tr>' +
                 '<td>' + AC.escapeHtml(scope) + '</td>' +
-                '<td>' + AC.escapeHtml(r.scope_name || ('#' + r.scope_id)) + '</td>' +
+                '<td>' + AC.escapeHtml(scopeName(r)) + '</td>' +
                 '<td>' + metric + '</td>' +
                 '<td class="num">' + AC.escapeHtml(String(value)) + '</td>' +
                 '<td>' + note + '</td>' +

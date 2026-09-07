@@ -145,10 +145,36 @@
     }
 
     function restoreDevice() {
-        AC.apiFetch('/admin/api/devices/' + deviceId + '/restore', { method: 'POST' }).then(function() {
+        var post = function(body) {
+            var req = { method: 'POST' };
+            if (body) req.body = JSON.stringify(body);
+            return AC.apiFetch('/admin/api/devices/' + deviceId + '/restore', req);
+        };
+        post(null).then(function() {
             AC.showSuccess('Device restored');
             loadDevice();
         }).catch(function(err) {
+            // Names are unique among ACTIVE devices: if this one's name was
+            // reused by a replacement, restore needs a new name (rename and
+            // restore land in one statement server-side).
+            if (err && err.status === 409 && /already in use/i.test(err.message || '')) {
+                var dev = deviceData && deviceData.device;
+                return AC.promptText('That name is now used by an active device. Enter a new name for the restored device:', {
+                    title: 'Rename on restore',
+                    label: 'New device name',
+                    defaultValue: ((dev && dev.name) || 'device') + '-old',
+                    confirmLabel: 'Restore',
+                }).then(function(newName) {
+                    if (!newName) return;
+                    return post({ name: newName }).then(function() {
+                        AC.showSuccess('Device restored as ' + newName);
+                        loadDevice();
+                    }).catch(function(rerr) {
+                        fwmonLog.error('Error restoring device:', rerr);
+                        AC.showError('Error restoring device: ' + rerr.message);
+                    });
+                });
+            }
             fwmonLog.error('Error restoring device:', err);
             AC.showError('Error restoring device: ' + err.message);
         });

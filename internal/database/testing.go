@@ -107,6 +107,25 @@ func NewDatabaseForTesting(t interface {
 		}
 	}
 
+	// Device names are unique among ACTIVE devices only (migration v63). The
+	// harness runs AutoMigrate, never registeredMigrations, so the partial
+	// unique index is applied here so unit tests exercise the real constraint.
+	// The DROP guards against a unique idx_devices_name from an older model
+	// tag; the current tag declares a plain index, which is left in place.
+	var uniqueName int64
+	db.Raw(`SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_devices_name' AND sql LIKE 'CREATE UNIQUE%'`).Scan(&uniqueName)
+	if uniqueName > 0 {
+		if err := db.Exec(`DROP INDEX IF EXISTS idx_devices_name`).Error; err != nil {
+			t.Fatal("NewDatabaseForTesting: drop unique idx_devices_name:", err)
+		}
+		if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_devices_name ON devices (name)`).Error; err != nil {
+			t.Fatal("NewDatabaseForTesting: create idx_devices_name:", err)
+		}
+	}
+	if err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_name_active ON devices (name) WHERE retired_at IS NULL`).Error; err != nil {
+		t.Fatal("NewDatabaseForTesting: create idx_devices_name_active:", err)
+	}
+
 	// The ingest meter is real here: SaveSyslogMessages must count on the test
 	// backend exactly as it does in production, and the meter is the only
 	// producer of syslog_ingest_hourly.

@@ -774,9 +774,13 @@ type AuditLog struct {
 	UserAgent string    `json:"user_agent"`
 }
 
+// Device.Name is unique among ACTIVE devices only (v0.11.241, migration v63):
+// the partial unique index idx_devices_name_active (name) WHERE retired_at IS
+// NULL lets a replacement reuse a retired device's name while the retired row
+// keeps its own history. The `index` tag declares the plain lookup index.
 type Device struct {
 	ID              uint   `json:"id" gorm:"primaryKey"`
-	Name            string `json:"name" gorm:"uniqueIndex;not null"`
+	Name            string `json:"name" gorm:"index;not null"`
 	Hostname        string `json:"hostname"`
 	IPAddress       string `json:"ip_address" gorm:"not null"`
 	SNMPPort        int    `json:"snmp_port" gorm:"default:161"`

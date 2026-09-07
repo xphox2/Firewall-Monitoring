@@ -526,8 +526,12 @@
             var a = r[0].data || { sites: [], devices: [] };
             allSites = r[1].data || [];
             allDevices = r[2].data || [];
+            var deviceIndex = {};
+            allDevices.forEach(function (d) { deviceIndex[d.id] = d; });
             var chip = function (kind, it) {
-                return '<span class="ep-chip">' + esc(it.name) +
+                // An assignment to a retired device stays visible, labelled as such.
+                var label = kind === 'device' && deviceIndex[it.id] ? AC.deviceOptionLabel(deviceIndex[it.id]) : it.name;
+                return '<span class="ep-chip">' + esc(label) +
                     '<button type="button" title="Unassign (falls back to inherit)" aria-label="Unassign ' + esc(it.name) + '" data-ep-unassign="' + kind + '" data-id="' + it.id + '">×</button></span>';
             };
             var opts = function (items, exclude) {
@@ -546,7 +550,7 @@
                 '<div class="policy-section"><div class="policy-section-header"><h3>Devices</h3></div><div class="policy-section-body">' +
                 '<div class="ep-chip-list">' + ((a.devices || []).map(function (d) { return chip('device', d); }).join('') || '<span style="color:var(--fwmon-text-faint);font-size:0.8rem">No devices assigned.</span>') + '</div>' +
                 '<div class="form-row" style="max-width:420px"><div class="form-group"><label for="ep-add-device">Assign a device</label>' +
-                '<select id="ep-add-device"><option value="">— pick a device —</option>' + opts(allDevices, a.devices) + '</select></div>' +
+                '<select id="ep-add-device"><option value="">— pick a device —</option>' + opts(allDevices.filter(function (d) { return !d.retired_at; }), a.devices) + '</select></div>' +
                 '<div class="form-group" style="align-self:end"><button type="button" class="btn secondary sm" id="ep-add-device-btn" data-min-role="admin">Assign</button></div></div>' +
                 '<p class="field-hint">A device profile beats its site profile; both inherit anything they don\'t override from Default.</p>' +
                 '</div></div>';
@@ -599,6 +603,10 @@
         setHash('#effective');
         setView('effective');
         var body = $('ep-effective-body');
+        // A re-render keeps the current pick, so a retired device already
+        // chosen stays listed (labelled as retired) while new picks are active only.
+        var prevSel = $('ep-eff-device');
+        var selected = prevSel ? prevSel.value : '';
         Promise.all([
             AC.apiFetch(API + '/devices').catch(function () { return { data: [] }; }),
             AC.apiFetch(API + '/sites').catch(function () { return { data: [] }; })
@@ -612,12 +620,14 @@
                 '<p class="text-xs" style="color:var(--fwmon-text-faint);margin:0 0 12px">Pick a device or site to see exactly which alert types fire there and which profile layer decided each one.</p>' +
                 '<div class="form-row" style="max-width:640px"><div class="form-group"><label for="ep-eff-device">Device</label>' +
                 '<select id="ep-eff-device"><option value="">— pick a device —</option>' +
-                allDevices.map(function (d) { return '<option value="' + d.id + '">' + esc(d.name) + '</option>'; }).join('') + '</select></div>' +
+                allDevices.filter(function (d) { return !d.retired_at || String(d.id) === selected; })
+                    .map(function (d) { return '<option value="' + d.id + '">' + esc(AC.deviceOptionLabel(d)) + '</option>'; }).join('') + '</select></div>' +
                 '<div class="form-group"><label for="ep-eff-site">…or site</label>' +
                 '<select id="ep-eff-site"><option value="">— pick a site —</option>' +
                 allSites.map(function (s) { return '<option value="' + s.id + '">' + esc(s.name) + '</option>'; }).join('') + '</select></div></div>' +
                 '<div id="ep-eff-result"></div>';
             var dSel = $('ep-eff-device'), sSel = $('ep-eff-site');
+            if (selected) dSel.value = selected;
             dSel.addEventListener('change', function () { if (dSel.value) { sSel.value = ''; loadEffective('device_id=' + dSel.value); } });
             sSel.addEventListener('change', function () { if (sSel.value) { dSel.value = ''; loadEffective('site_id=' + sSel.value); } });
         });

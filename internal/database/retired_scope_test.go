@@ -348,3 +348,58 @@ func TestRestoreDevice_SettingsAtomic(t *testing.T) {
 		t.Errorf("settings not applied: description=%q ip=%q", got.Description, got.IPAddress)
 	}
 }
+
+// TestDeviceName_UniqueAmongActive pins the v0.11.241 name rule at the
+// database layer (partial unique index idx_devices_name_active): a retired
+// device's name is free for a new active device; a second ACTIVE device with
+// the name is a unique violation; N retired rows may share the name with one
+// active row; and RestoreDevice renames onto a free name in one statement
+// while an active device holds the old name.
+func TestDeviceName_UniqueAmongActive(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+
+	a := &models.Device{Name: "FW", IPAddress: "10.0.0.1", Enabled: true}
+	if err := d.CreateDevice(a); err != nil {
+		t.Fatalf("create A: %v", err)
+	}
+	if err := d.RetireDevice(a.ID); err != nil {
+		t.Fatalf("retire A: %v", err)
+	}
+	a2 := &models.Device{Name: "FW", IPAddress: "10.0.0.2", Enabled: true}
+	if err := d.CreateDevice(a2); err != nil {
+		t.Fatalf("create A' with a retired device's name: %v", err)
+	}
+	a3 := &models.Device{Name: "FW", IPAddress: "10.0.0.3", Enabled: true}
+	if err := d.CreateDevice(a3); !IsUniqueViolation(err) {
+		t.Fatalf("second active A'' err = %v, want a unique violation", err)
+	}
+	if err := d.RetireDevice(a2.ID); err != nil {
+		t.Fatalf("retire A': %v", err)
+	}
+	a4 := &models.Device{Name: "FW", IPAddress: "10.0.0.4", Enabled: true}
+	if err := d.CreateDevice(a4); err != nil {
+		t.Fatalf("create A''' with two retired namesakes: %v", err)
+	}
+	var retired, active int64
+	d.db.Model(&models.Device{}).Where("name = ? AND retired_at IS NOT NULL", "FW").Count(&retired)
+	d.db.Model(&models.Device{}).Where("name = ? AND retired_at IS NULL", "FW").Count(&active)
+	if retired != 2 || active != 1 {
+		t.Errorf("rows named FW: retired=%d active=%d, want 2/1", retired, active)
+	}
+
+	// Restore without a rename collides with the active A'''; with a rename it
+	// lands — one statement, so the retired_at clear and the rename are atomic.
+	if err := d.RestoreDevice(a.ID, nil); !IsUniqueViolation(err) {
+		t.Fatalf("restore A while A''' is active err = %v, want a unique violation", err)
+	}
+	if got, _ := d.GetDevice(a.ID); got.RetiredAt == nil {
+		t.Error("A restored despite the active namesake")
+	}
+	if err := d.RestoreDevice(a.ID, map[string]interface{}{"name": "FW-old"}); err != nil {
+		t.Fatalf("restore A as FW-old: %v", err)
+	}
+	got, _ := d.GetDevice(a.ID)
+	if got.RetiredAt != nil || !got.Enabled || got.Status != "unknown" || got.Name != "FW-old" {
+		t.Errorf("restored A: retired_at=%v enabled=%v status=%q name=%q", got.RetiredAt, got.Enabled, got.Status, got.Name)
+	}
+}

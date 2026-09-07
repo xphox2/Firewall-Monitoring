@@ -270,11 +270,37 @@ masked secrets keep the stored values). The history was never moved, so it is
 back on the charts immediately. Editing a retired device with `PUT` returns
 `409 device is retired; restore it first`.
 
+**Names are unique among active devices only** (v0.11.241, migration v63:
+the global unique index on `devices.name` is replaced by the partial index
+`idx_devices_name_active … WHERE retired_at IS NULL`). A retired device keeps
+its name, and a replacement — a rebuilt VM, or a different vendor at the same
+location — may reuse it as a **new** device with its own id and history.
+
 **Same-name re-add.** Creating a device whose name matches a retired one
-returns `409` with `retired_device_id`; the Devices page then offers to
-restore that device with the form's settings instead of creating a second
-row. A name that collides with an *active* device is `409 device name already
-in use`.
+returns `409` with `retired_device_id` (the most recently retired one),
+`retired_at` and `retired_count`; the Devices page then asks whether to
+**restore** that device with the form's settings, or to **create a new
+device** with the name (the create is re-sent with `"reuse_name": true`, which
+skips the advisory check). When several retired devices share the name,
+Restore applies to the most recently retired one. A name that collides with
+an *active* device is `409 device name already in use` in every case,
+including `reuse_name` — and even when a retired device shares the name: the
+active-name check runs before the retired-name advisory, so the advisory
+(and its `retired_device_id`) only ever appears for a name no active device
+holds.
+
+**Restore is refused while an active device holds the name** (`409 device
+name already in use`, the device stays retired). Restore it under a new name
+instead: the Devices page prompts for one and re-sends the restore with
+`{"name": …}`; the rename and the restore are one statement, so a rejected
+name leaves the row retired and unchanged.
+
+**IPSec identity caveat.** The IPSec wizard prefills the IKE local identity
+from the device name, so a replacement that reuses a retired device's name
+presents the same identity as the retired device's tunnels. Before
+provisioning tunnels on the replacement, roll back the retired device's
+tunnels on any shared peer; otherwise the peer holds two phase1s with the
+same identity and matches whichever it evaluates first.
 
 **Probes and sites.** A retired device does not block deleting or
 decommissioning its probe (delete detaches it: `probe_id` becomes NULL). A

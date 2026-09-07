@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"firewall-mon/internal/models"
 
@@ -221,5 +223,257 @@ func TestRestoreDevice_NameCollisionLeavesRetired(t *testing.T) {
 	if got.RetiredAt == nil || got.Enabled || got.Name != device.Name || got.Description != "" {
 		t.Errorf("after 409 restore: retired_at=%v enabled=%v name=%q description=%q — the restore must have rolled back",
 			got.RetiredAt, got.Enabled, got.Name, got.Description)
+	}
+}
+
+// TestCreateDevice_ReuseRetiredName pins the v0.11.241 add-device flow now that
+// names are unique among ACTIVE devices only: a same-name create without the
+// flag is the advisory 409 (carrying retired_device_id, retired_at and the new
+// retired_count); with `reuse_name: true` it creates a NEW device under a new
+// id while the retired row is untouched and both are listed by GET /devices
+// (proving the flag reaches the handler through the bind wrapper); a second
+// create with the flag while the name is now ACTIVE is the authoritative
+// index 409.
+func TestCreateDevice_ReuseRetiredName(t *testing.T) {
+	h, db := setupTestHandler(t)
+	probe, device := setupProbeAndDevice(t, db)
+	if err := db.RetireDevice(device.ID); err != nil {
+		t.Fatalf("retire: %v", err)
+	}
+	retiredBefore, _ := db.GetDevice(device.ID)
+
+	payload := map[string]interface{}{"name": device.Name, "ip_address": "192.168.1.9", "probe_id": probe.ID, "description": "replacement"}
+	body, _ := json.Marshal(payload)
+	c, rec := jsonReq(http.MethodPost, "/x", string(body))
+	h.CreateDevice(c)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("create with retired name = %d %s, want 409", rec.Code, rec.Body.String())
+	}
+	var conflict struct {
+		Error           string `json:"error"`
+		RetiredDeviceID uint   `json:"retired_device_id"`
+		RetiredAt       string `json:"retired_at"`
+		RetiredCount    int64  `json:"retired_count"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &conflict); err != nil {
+		t.Fatalf("decode 409: %v", err)
+	}
+	if conflict.Error != "a retired device with this name exists" || conflict.RetiredDeviceID != device.ID || conflict.RetiredAt == "" || conflict.RetiredCount != 1 {
+		t.Errorf("409 body = %+v", conflict)
+	}
+
+	// reuse_name → a fresh device, new id.
+	payload["reuse_name"] = true
+	body, _ = json.Marshal(payload)
+	c, rec = jsonReq(http.MethodPost, "/x", string(body))
+	h.CreateDevice(c)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create with reuse_name = %d %s, want 201", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		Data models.Device `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode 201: %v", err)
+	}
+	if created.Data.ID == 0 || created.Data.ID == device.ID {
+		t.Fatalf("created id = %d, want a new id (retired is %d)", created.Data.ID, device.ID)
+	}
+	if created.Data.Name != device.Name || created.Data.RetiredAt != nil || created.Data.Description != "replacement" {
+		t.Errorf("created = name %q retired_at %v description %q", created.Data.Name, created.Data.RetiredAt, created.Data.Description)
+	}
+	if strings.Contains(rec.Body.String(), "reuse_name") {
+		t.Error("reuse_name leaked into the device response")
+	}
+	retiredAfter, _ := db.GetDevice(device.ID)
+	if retiredAfter.RetiredAt == nil || !retiredAfter.RetiredAt.Equal(*retiredBefore.RetiredAt) || retiredAfter.Name != device.Name || retiredAfter.Description != "" {
+		t.Errorf("retired row changed by the reuse create: %+v", retiredAfter)
+	}
+
+	// Both rows are listed.
+	c, rec = jsonReq(http.MethodGet, "/x", "")
+	h.GetDevices(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list = %d", rec.Code)
+	}
+	var list struct {
+		Data []models.Device `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	seen := map[uint]bool{}
+	for _, d := range list.Data {
+		if d.Name == device.Name {
+			seen[d.ID] = true
+		}
+	}
+	if !seen[device.ID] || !seen[created.Data.ID] {
+		t.Errorf("GET /devices lists ids %v, want both %d (retired) and %d (active)", seen, device.ID, created.Data.ID)
+	}
+
+	// The name is ACTIVE now: reuse_name cannot bypass the partial index.
+	c, rec = jsonReq(http.MethodPost, "/x", string(body))
+	h.CreateDevice(c)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("create with reuse_name onto an active name = %d %s, want 409", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Error string `json:"error"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.Error != "device name already in use" {
+		t.Errorf("error = %q", resp.Error)
+	}
+	var n int64
+	db.Gorm().Model(&models.Device{}).Where("name = ?", device.Name).Count(&n)
+	if n != 2 {
+		t.Errorf("rows named %q = %d, want 2 (one retired, one active)", device.Name, n)
+	}
+}
+
+// TestCreateDevice_SeveralRetiredShareName: when two retired devices carry the
+// name, the advisory 409 points at the most recently retired one and reports
+// retired_count 2; restoring that one works.
+func TestCreateDevice_SeveralRetiredShareName(t *testing.T) {
+	h, db := setupTestHandler(t)
+	probe, device := setupProbeAndDevice(t, db)
+	if err := db.RetireDevice(device.ID); err != nil {
+		t.Fatalf("retire first: %v", err)
+	}
+	// Push the first retirement an hour into the past so the DESC order is
+	// unambiguous regardless of clock resolution.
+	if err := db.Gorm().Model(&models.Device{}).Where("id = ?", device.ID).
+		Update("retired_at", time.Now().Add(-time.Hour)).Error; err != nil {
+		t.Fatalf("backdate retired_at: %v", err)
+	}
+	second := &models.Device{Name: device.Name, IPAddress: "192.168.1.9", ProbeID: &probe.ID}
+	if err := db.CreateDevice(second); err != nil {
+		t.Fatalf("create second: %v", err)
+	}
+	if err := db.RetireDevice(second.ID); err != nil {
+		t.Fatalf("retire second: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{"name": device.Name, "ip_address": "192.168.1.10", "probe_id": probe.ID})
+	c, rec := jsonReq(http.MethodPost, "/x", string(body))
+	h.CreateDevice(c)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("create = %d %s, want 409", rec.Code, rec.Body.String())
+	}
+	var conflict struct {
+		RetiredDeviceID uint  `json:"retired_device_id"`
+		RetiredCount    int64 `json:"retired_count"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &conflict)
+	if conflict.RetiredDeviceID != second.ID || conflict.RetiredCount != 2 {
+		t.Errorf("409 body = %+v, want newest retired id %d and count 2", conflict, second.ID)
+	}
+
+	c, rec = jsonReq(http.MethodPost, "/x", "")
+	c.Params = idParam(second.ID)
+	h.RestoreDevice(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("restore newest = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	got, _ := db.GetDevice(second.ID)
+	old, _ := db.GetDevice(device.ID)
+	if got.RetiredAt != nil || old.RetiredAt == nil {
+		t.Errorf("after restore: newest retired_at=%v oldest retired_at=%v", got.RetiredAt, old.RetiredAt)
+	}
+}
+
+// TestRestoreDevice_ActiveHoldsName: restoring a retired device while an
+// ACTIVE device holds its name is a 409 (still retired); restoring with a
+// rename to a free name is a 200 and lands in one statement.
+func TestRestoreDevice_ActiveHoldsName(t *testing.T) {
+	h, db := setupTestHandler(t)
+	probe, device := setupProbeAndDevice(t, db)
+	if err := db.RetireDevice(device.ID); err != nil {
+		t.Fatalf("retire: %v", err)
+	}
+	repl := &models.Device{Name: device.Name, IPAddress: "192.168.1.9", ProbeID: &probe.ID}
+	if err := db.CreateDevice(repl); err != nil {
+		t.Fatalf("create replacement with the reused name: %v", err)
+	}
+
+	c, rec := jsonReq(http.MethodPost, "/x", "")
+	c.Params = idParam(device.ID)
+	h.RestoreDevice(c)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("restore while active holds the name = %d %s, want 409", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Error string `json:"error"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.Error != "device name already in use" {
+		t.Errorf("error = %q", resp.Error)
+	}
+	if got, _ := db.GetDevice(device.ID); got.RetiredAt == nil || got.Enabled {
+		t.Errorf("device restored despite the collision: retired_at=%v enabled=%v", got.RetiredAt, got.Enabled)
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{"name": device.Name + "-old"})
+	c, rec = jsonReq(http.MethodPost, "/x", string(body))
+	c.Params = idParam(device.ID)
+	h.RestoreDevice(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("restore with rename = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	got, _ := db.GetDevice(device.ID)
+	if got.RetiredAt != nil || !got.Enabled || got.Status != "unknown" || got.Name != device.Name+"-old" {
+		t.Errorf("after rename restore: retired_at=%v enabled=%v status=%q name=%q", got.RetiredAt, got.Enabled, got.Status, got.Name)
+	}
+	if active, _ := db.GetDevice(repl.ID); active.Name != device.Name || active.RetiredAt != nil {
+		t.Errorf("replacement changed: %+v", active)
+	}
+}
+
+// TestCreateDevice_ActiveNameBeatsRetiredAdvisory: once a retired name has been
+// reused by a NEW active device, a further same-name create WITHOUT the flag is
+// the plain "device name already in use" 409 — not the restore/create-new
+// advisory, whose only remaining branch would fail on the partial index. The
+// body carries no retired_device_id, so the UI never offers the chooser.
+func TestCreateDevice_ActiveNameBeatsRetiredAdvisory(t *testing.T) {
+	h, db := setupTestHandler(t)
+	probe, device := setupProbeAndDevice(t, db)
+	if err := db.RetireDevice(device.ID); err != nil {
+		t.Fatalf("retire: %v", err)
+	}
+
+	// A' takes the name via reuse_name.
+	body, _ := json.Marshal(map[string]interface{}{"name": device.Name, "ip_address": "192.168.1.9", "probe_id": probe.ID, "reuse_name": true})
+	c, rec := jsonReq(http.MethodPost, "/x", string(body))
+	h.CreateDevice(c)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create with reuse_name = %d %s, want 201", rec.Code, rec.Body.String())
+	}
+
+	// A again, no flag: the active holder wins over the retired namesake.
+	body, _ = json.Marshal(map[string]interface{}{"name": device.Name, "ip_address": "192.168.1.10", "probe_id": probe.ID})
+	c, rec = jsonReq(http.MethodPost, "/x", string(body))
+	h.CreateDevice(c)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("create onto an active name = %d %s, want 409", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode 409: %v", err)
+	}
+	if resp.Error != "device name already in use" {
+		t.Errorf("error = %q, want the plain active-name conflict", resp.Error)
+	}
+	for _, key := range []string{"retired_device_id", "retired_at", "retired_count"} {
+		if strings.Contains(rec.Body.String(), key) {
+			t.Errorf("409 body carries %q; an active-name collision must not offer the retired advisory: %s", key, rec.Body.String())
+		}
+	}
+	var n int64
+	db.Gorm().Model(&models.Device{}).Where("name = ?", device.Name).Count(&n)
+	if n != 2 {
+		t.Errorf("rows named %q = %d, want 2 (one retired, one active)", device.Name, n)
 	}
 }
