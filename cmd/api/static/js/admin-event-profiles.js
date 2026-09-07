@@ -603,6 +603,10 @@
         setHash('#effective');
         setView('effective');
         var body = $('ep-effective-body');
+        // A re-render keeps the current pick, so a retired device already
+        // chosen stays listed (labelled as retired) while new picks are active only.
+        var prevSel = $('ep-eff-device');
+        var selected = prevSel ? prevSel.value : '';
         Promise.all([
             AC.apiFetch(API + '/devices').catch(function () { return { data: [] }; }),
             AC.apiFetch(API + '/sites').catch(function () { return { data: [] }; })
@@ -616,12 +620,14 @@
                 '<p class="text-xs" style="color:var(--fwmon-text-faint);margin:0 0 12px">Pick a device or site to see exactly which alert types fire there and which profile layer decided each one.</p>' +
                 '<div class="form-row" style="max-width:640px"><div class="form-group"><label for="ep-eff-device">Device</label>' +
                 '<select id="ep-eff-device"><option value="">— pick a device —</option>' +
-                allDevices.map(function (d) { return '<option value="' + d.id + '">' + esc(AC.deviceOptionLabel(d)) + '</option>'; }).join('') + '</select></div>' +
+                allDevices.filter(function (d) { return !d.retired_at || String(d.id) === selected; })
+                    .map(function (d) { return '<option value="' + d.id + '">' + esc(AC.deviceOptionLabel(d)) + '</option>'; }).join('') + '</select></div>' +
                 '<div class="form-group"><label for="ep-eff-site">…or site</label>' +
                 '<select id="ep-eff-site"><option value="">— pick a site —</option>' +
                 allSites.map(function (s) { return '<option value="' + s.id + '">' + esc(s.name) + '</option>'; }).join('') + '</select></div></div>' +
                 '<div id="ep-eff-result"></div>';
             var dSel = $('ep-eff-device'), sSel = $('ep-eff-site');
+            if (selected) dSel.value = selected;
             dSel.addEventListener('change', function () { if (dSel.value) { sSel.value = ''; loadEffective('device_id=' + dSel.value); } });
             sSel.addEventListener('change', function () { if (sSel.value) { dSel.value = ''; loadEffective('site_id=' + sSel.value); } });
         });

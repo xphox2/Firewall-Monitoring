@@ -659,15 +659,6 @@
 
     function isRetiredDevice(d) { return !!(d && d.retired_at); }
 
-    // retiredDay renders the retire date as YYYY-MM-DD in the operator's
-    // timezone for the compact RETIRED badge (the full timestamp stays in the
-    // tooltip). 'en-CA' is the locale whose date format IS ISO 8601.
-    function retiredDay(dateStr) {
-        var d = new Date(dateStr);
-        if (isNaN(d.getTime())) return '';
-        return d.toLocaleDateString('en-CA', { timeZone: AC.getTimezone(), year: 'numeric', month: '2-digit', day: '2-digit' });
-    }
-
     // Devices that still take part in polling, maps and counts. Retired devices
     // stay in currentDevices so name lookups (alerts, syslog, chips) keep working.
     function activeDevices() {
@@ -695,7 +686,7 @@
         tbody.innerHTML = rows.map(function(d) {
             var retired = isRetiredDevice(d);
             var retiredBadge = retired
-                ? ' <span class="badge unknown" title="' + escapeHtml('Retired ' + formatDate(d.retired_at) + ' — data preserved') + '">RETIRED ' + escapeHtml(retiredDay(d.retired_at)) + '</span>'
+                ? ' <span class="badge unknown" title="' + escapeHtml('Retired ' + formatDate(d.retired_at) + ' — data preserved') + '">RETIRED ' + escapeHtml(AC.formatDay(d.retired_at)) + '</span>'
                 : '';
             // A retired device is no longer polled, so its stored status is
             // frozen at whatever it was at retire time: never paint the live

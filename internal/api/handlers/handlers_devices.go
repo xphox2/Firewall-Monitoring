@@ -112,15 +112,30 @@ func (h *Handler) CreateDevice(c *gin.Context) {
 		}
 	}
 
+	// An ACTIVE device already holding the name is the plain 409 regardless of
+	// any retired namesake: without this check a retired device with the same
+	// name would turn the collision into the restore/create-new advisory below,
+	// whose "create new" branch can only fail against the partial unique index.
+	// The index stays authoritative for concurrent creates and restores (the
+	// 409 on CreateDevice below).
+	var activeCount int64
+	if err := db.Gorm().Model(&models.Device{}).
+		Where("name = ? AND retired_at IS NULL", device.Name).Count(&activeCount).Error; err != nil {
+		httputil.InternalError(c, "Failed to create device", err)
+		return
+	}
+	if activeCount > 0 {
+		c.JSON(http.StatusConflict, response.Error("device name already in use"))
+		return
+	}
+
 	// Same-name re-add (v0.11.239): a retired device with this exact name keeps
 	// its history under its original id, so tell the client which retired
 	// device it is — the UI offers to restore it with these settings, or (since
 	// v0.11.241, names being unique among ACTIVE devices only) to create a new
 	// device that reuses the name by re-posting with `reuse_name: true`, which
 	// skips this advisory check. The most recently retired one is named, with
-	// the count so the UI can say when several share the name. The partial
-	// unique index stays authoritative: a collision with an active device,
-	// including a concurrent create or restore, is the 409 below.
+	// the count so the UI can say when several share the name.
 	if !req.ReuseName {
 		var retired models.Device
 		if err := db.Gorm().Select("id, retired_at").

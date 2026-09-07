@@ -109,7 +109,7 @@ func TestDeviceRetireUI(t *testing.T) {
 		}
 	}
 	common := read("../../cmd/api/static/js/admin-common.js")
-	for _, sig := range []string{"choose: chooseModal", "promptText: promptTextModal"} {
+	for _, sig := range []string{"choose: chooseModal", "promptText: promptTextModal", "formatDay: formatDay"} {
 		if !strings.Contains(common, sig) {
 			t.Errorf("admin-common.js missing %q: the add-device chooser and rename-on-restore prompt need it.", sig)
 		}

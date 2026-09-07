@@ -284,7 +284,10 @@ device** with the name (the create is re-sent with `"reuse_name": true`, which
 skips the advisory check). When several retired devices share the name,
 Restore applies to the most recently retired one. A name that collides with
 an *active* device is `409 device name already in use` in every case,
-including `reuse_name`.
+including `reuse_name` — and even when a retired device shares the name: the
+active-name check runs before the retired-name advisory, so the advisory
+(and its `retired_device_id`) only ever appears for a name no active device
+holds.
 
 **Restore is refused while an active device holds the name** (`409 device
 name already in use`, the device stays retired). Restore it under a new name

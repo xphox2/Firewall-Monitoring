@@ -429,3 +429,51 @@ func TestRestoreDevice_ActiveHoldsName(t *testing.T) {
 		t.Errorf("replacement changed: %+v", active)
 	}
 }
+
+// TestCreateDevice_ActiveNameBeatsRetiredAdvisory: once a retired name has been
+// reused by a NEW active device, a further same-name create WITHOUT the flag is
+// the plain "device name already in use" 409 — not the restore/create-new
+// advisory, whose only remaining branch would fail on the partial index. The
+// body carries no retired_device_id, so the UI never offers the chooser.
+func TestCreateDevice_ActiveNameBeatsRetiredAdvisory(t *testing.T) {
+	h, db := setupTestHandler(t)
+	probe, device := setupProbeAndDevice(t, db)
+	if err := db.RetireDevice(device.ID); err != nil {
+		t.Fatalf("retire: %v", err)
+	}
+
+	// A' takes the name via reuse_name.
+	body, _ := json.Marshal(map[string]interface{}{"name": device.Name, "ip_address": "192.168.1.9", "probe_id": probe.ID, "reuse_name": true})
+	c, rec := jsonReq(http.MethodPost, "/x", string(body))
+	h.CreateDevice(c)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create with reuse_name = %d %s, want 201", rec.Code, rec.Body.String())
+	}
+
+	// A again, no flag: the active holder wins over the retired namesake.
+	body, _ = json.Marshal(map[string]interface{}{"name": device.Name, "ip_address": "192.168.1.10", "probe_id": probe.ID})
+	c, rec = jsonReq(http.MethodPost, "/x", string(body))
+	h.CreateDevice(c)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("create onto an active name = %d %s, want 409", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode 409: %v", err)
+	}
+	if resp.Error != "device name already in use" {
+		t.Errorf("error = %q, want the plain active-name conflict", resp.Error)
+	}
+	for _, key := range []string{"retired_device_id", "retired_at", "retired_count"} {
+		if strings.Contains(rec.Body.String(), key) {
+			t.Errorf("409 body carries %q; an active-name collision must not offer the retired advisory: %s", key, rec.Body.String())
+		}
+	}
+	var n int64
+	db.Gorm().Model(&models.Device{}).Where("name = ?", device.Name).Count(&n)
+	if n != 2 {
+		t.Errorf("rows named %q = %d, want 2 (one retired, one active)", device.Name, n)
+	}
+}

@@ -9,7 +9,7 @@
 - [x] Tests: retired_scope, retire acks alerts, update 409, create 409, migration v62, site guard, probe lifecycle
 - [x] UI: Devices tabs Active/Retired/All, RETIRED badge, Retire/Restore actions, same-name restore prompt, alerts marker, device-detail banner + 404 copy
 - [x] Docs: CHANGELOG (new top entry), README endpoint, DATA-RETENTION, OPERATIONS; ServerVersion bump
-- [x] QA: (PR #247 merged, deployed 2026-09-07 00:27 UTC, device 4 recovered) gofmt, staticcheck, build, test -count=1; fable review; PR; CI; merge; deploy rust-01; verify device 4 retired + alert link
+- [x] QA: (PR #247 merged, deployed 2026-09-07 00:27 UTC, device 4 recovered) gofmt, staticcheck, build, test -count=1; adversarial diff review; PR; CI; merge; deploy rust-01; verify device 4 retired + alert link
 
 ## v0.11.240 follow-up
 - [x] migration v62 close_alerts_for_retired_devices — PR #248 merged, deployed 2026-09-07 00:47 UTC, verified
@@ -17,7 +17,7 @@
 ## v0.11.241 — names unique among ACTIVE devices (plan approved 2026-09-07)
 - [ ] Backend: Name tag index-only; migration v63 partial unique index; testing.go partial index; RestoreDevice single statement; CreateDevice reuse_name wrapper + retired_count; tests; docs; changelog 0.11.241
 - [ ] UI: AC.choose / AC.promptText / AC.deviceOptionLabel; add-device 3-way chooser; rename-on-restore; retired date inline; pickers labelled; shell guardrail updated
-- [ ] QA gates; fable diff review; PR; CI; merge; deploy rust-01; verify index shape + version
+- [ ] QA gates; adversarial diff review; PR; CI; merge; deploy rust-01; verify index shape + version
 
 ## PR B — purge job (separate plan-mode delta)
 - [ ] not started

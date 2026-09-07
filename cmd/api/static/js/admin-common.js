@@ -108,6 +108,17 @@
         return d.toLocaleString(getBrowserLocale(), { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
     }
 
+    // formatDay renders a timestamp as its calendar day, YYYY-MM-DD, in the
+    // operator's timezone — for the RETIRED badge and retired picker labels,
+    // where the full timestamp belongs in a tooltip. 'en-CA' is the locale
+    // whose date format IS ISO 8601. Empty string for a missing/invalid date.
+    function formatDay(dateStr) {
+        if (!dateStr) return '';
+        var d = new Date(dateStr);
+        if (isNaN(d.getTime())) return '';
+        return d.toLocaleDateString('en-CA', { timeZone: getTimezone(), year: 'numeric', month: '2-digit', day: '2-digit' });
+    }
+
     function formatDateShort(dateStr) {
         if (!dateStr) return '-';
         var d = new Date(dateStr);
@@ -968,7 +979,7 @@
     function deviceOptionLabel(d) {
         if (!d) return '';
         var name = d.name != null ? String(d.name) : '';
-        return d.retired_at ? name + ' (retired ' + formatDate(d.retired_at) + ')' : name;
+        return d.retired_at ? name + ' (retired ' + formatDay(d.retired_at) + ')' : name;
     }
 
     /* ------------------------------------------------------------------
@@ -1742,6 +1753,7 @@
         getTimezone: getTimezone,
         setTimezone: setTimezone,
         formatDate: formatDate,
+        formatDay: formatDay,
         formatDateShort: formatDateShort,
         renderSidebar: renderSidebar,
         renderMobileChrome: renderMobileChrome,
