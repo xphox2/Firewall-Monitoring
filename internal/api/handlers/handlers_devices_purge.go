@@ -107,8 +107,9 @@ func purgeAuditLog(c *gin.Context, db database.Store, username string, userID ui
 // POST /admin/api/devices/:id/purge, body {confirm_name, password, totp_code}.
 // Checks, in order: device exists (404) and is retired (409); confirm_name
 // matches (400); no IPSec tunnel on either end is deploying/verifying/
-// rolling_back (409, naming them); the caller re-authenticates (403); no
-// pending/running/cancelling job exists for the device (409 with job_id). Then
+// rolling_back (409, naming them); no pending/running/cancelling job exists
+// for the device (409 with job_id, checked before re-auth so a duplicate
+// request never burns a TOTP slot); the caller re-authenticates (403). Then
 // the job is created, audit-logged as purge_device, and returned with 202.
 func (h *Handler) PurgeDevice(c *gin.Context) {
 	db := h.reqDB(c)
