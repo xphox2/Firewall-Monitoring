@@ -13,6 +13,8 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
+- Ingest attribution follows the active device: `ResolveDevicesByIPs` / `ResolveDeviceByIP` ignore retired devices on both the management-IP and `interface_addresses` paths, so retiring a firewall and adding its replacement on the same IP attributes syslog, flows and traps to the replacement instead of dropping them against the retired id.
+- Restore with settings is a single transaction: a rejected setting (for example a name already in use → `409`) leaves the device retired and unchanged.
 - Every live-fleet reader now applies the `ActiveDevices` scope (`retired_at IS NULL`): collector device lists and the per-item ingest allow-list (a retired device's credentials are no longer shipped to collectors), the stale-device sweep, online bumps and host-key pinning, the poller's main cycle and IPSec telemetry, dashboards, health dashboard, NOC counts and site breakdown, connections VPN map, reports, event-rule device metadata, the vendor audit and the IRC status/stats providers. `GetDevice`, `GetAllDevices`, alert enrichment and the flow-storm site attribution maps stay unfiltered so retired devices are still named.
 - **Site delete refuses while the site still has devices (active or retired) or probes** (`409`). It previously cascaded a raw `DELETE` over both, destroying device rows as a side effect.
 - Deleting or decommissioning a probe no longer counts retired devices as blocking; a probe delete detaches its retired devices (`probe_id` → NULL) so the foreign key cannot refuse it.

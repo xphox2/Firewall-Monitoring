@@ -24,9 +24,13 @@ func (d *Database) GetAllDevices() ([]models.Device, error) {
 // that have not been retired (retired_at IS NULL). Retiring a device keeps its
 // row and history (see RetireDevice) but it must drop out of polling, ingest
 // allow-lists, dashboards, reports and counts — so those paths use this scope
-// (or GetActiveDevices) rather than a bare Find. GetDevice and GetAllDevices are
-// deliberately NOT scoped: alert enrichment, the detail page and the admin list
-// still need to name a retired device.
+// (or GetActiveDevices) rather than a bare Find. The IP resolvers
+// (ResolveDeviceByIP / ResolveDevicesByIPs) are scoped too: live ingest
+// attribution must follow the ACTIVE device, so "retire FW-01 (ip X), add FW-02
+// (ip X)" resolves X to FW-02 rather than to a retired id the probe allow-list
+// then drops. GetDevice and GetAllDevices are deliberately NOT scoped: alert
+// enrichment, the detail page and the admin list still need to name a retired
+// device.
 func ActiveDevices(db *gorm.DB) *gorm.DB {
 	return db.Where("retired_at IS NULL")
 }
@@ -59,26 +63,38 @@ func (d *Database) GetDevice(id uint) (*models.Device, error) {
 // row — so the same trap could be misattributed to different devices across
 // restarts/plan changes. Ordering by the lowest id makes a shared IP always
 // resolve to the same device.
+//
+// Both lookups apply the ActiveDevices scope (v0.11.239): a retired device's
+// management IP and its historical interface_addresses rows must not capture
+// traps/syslog/flows that now belong to the active device re-added on the same
+// IP. An IP held only by retired devices resolves to 0 (no match).
 func (d *Database) ResolveDeviceByIP(ip string) uint {
 	// Check management IP first
 	var device models.Device
-	if err := d.db.Where("ip_address = ?", ip).Order("id ASC").Select("id").First(&device).Error; err == nil {
+	if err := d.db.Scopes(ActiveDevices).Where("ip_address = ?", ip).Order("id ASC").Select("id").First(&device).Error; err == nil {
 		return device.ID
 	}
 	// Check interface addresses
 	var addr models.InterfaceAddress
-	if err := d.db.Where("ip_address = ?", ip).Order("device_id ASC").Select("device_id").First(&addr).Error; err == nil {
+	if err := d.db.Where("ip_address = ? AND "+activeDeviceIDSubquery, ip).Order("device_id ASC").Select("device_id").First(&addr).Error; err == nil {
 		return addr.DeviceID
 	}
 	return 0
 }
+
+// activeDeviceIDSubquery constrains a device_id-keyed table to rows whose
+// device is still active. Used by the interface_addresses fallback of the IP
+// resolvers, where the ActiveDevices scope cannot be applied directly (the
+// filtered column lives on devices, not on the scanned table).
+const activeDeviceIDSubquery = "device_id IN (SELECT id FROM devices WHERE retired_at IS NULL)"
 
 // ResolveDevicesByIPs resolves many IPs to device IDs in two queries total,
 // instead of the two-query lookup ResolveDeviceByIP issues per IP. Management IP
 // (devices table) takes precedence over interface addresses, matching
 // ResolveDeviceByIP. IPs with no match are simply absent from the returned map.
 // Used by the batched probe-ingestion handlers (syslog/flows) to avoid an N+1
-// query per message.
+// query per message. Scoped to active devices like ResolveDeviceByIP — see
+// the note there.
 func (d *Database) ResolveDevicesByIPs(ips []string) map[string]uint {
 	result := make(map[string]uint, len(ips))
 	if len(ips) == 0 {
@@ -92,7 +108,7 @@ func (d *Database) ResolveDevicesByIPs(ips []string) map[string]uint {
 	}
 	// AUDIT-270: order by id so a shared management IP resolves to the same lowest-
 	// id device as ResolveDeviceByIP (the first-match guard below then keeps it).
-	d.db.Model(&models.Device{}).Select("id", "ip_address").Where("ip_address IN ?", ips).Order("id ASC").Scan(&devices)
+	d.db.Model(&models.Device{}).Scopes(ActiveDevices).Select("id", "ip_address").Where("ip_address IN ?", ips).Order("id ASC").Scan(&devices)
 	for _, dev := range devices {
 		if dev.IPAddress != "" && result[dev.IPAddress] == 0 {
 			result[dev.IPAddress] = dev.ID
@@ -111,7 +127,8 @@ func (d *Database) ResolveDevicesByIPs(ips []string) map[string]uint {
 			DeviceID  uint
 			IPAddress string
 		}
-		d.db.Model(&models.InterfaceAddress{}).Select("device_id", "ip_address").Where("ip_address IN ?", remaining).Order("device_id ASC").Scan(&addrs)
+		d.db.Model(&models.InterfaceAddress{}).Select("device_id", "ip_address").
+			Where("ip_address IN ? AND "+activeDeviceIDSubquery, remaining).Order("device_id ASC").Scan(&addrs)
 		for _, a := range addrs {
 			if a.IPAddress != "" && result[a.IPAddress] == 0 {
 				result[a.IPAddress] = a.DeviceID
@@ -278,7 +295,16 @@ func (d *Database) RetireDevice(id uint) error {
 // decides online/offline. Nothing else is touched — the history was never
 // moved. Returns gorm.ErrRecordNotFound for an unknown id and
 // ErrDeviceNotRetired for an active one.
-func (d *Database) RestoreDevice(id uint) error {
+//
+// updates (nil/empty = none) is the already-validated, already-encrypted
+// settings map the restore-with-settings handler prepared (the same shape
+// UpdateDevice writes). It is applied in the SAME transaction, after the
+// restore columns are cleared, so a rejected settings write (e.g. a name that
+// collides with another device — IsUniqueViolation on the returned error)
+// rolls the restore back and the device stays retired. The restore columns
+// themselves are never overridable through updates: a caller cannot restore a
+// device as disabled or with a pre-set status.
+func (d *Database) RestoreDevice(id uint, updates map[string]interface{}) error {
 	return d.db.Transaction(func(tx *gorm.DB) error {
 		var dev models.Device
 		if err := tx.Select("id", "retired_at").First(&dev, id).Error; err != nil {
@@ -290,6 +316,23 @@ func (d *Database) RestoreDevice(id uint) error {
 		if err := tx.Model(&models.Device{}).Where("id = ?", id).
 			Updates(map[string]interface{}{"retired_at": nil, "enabled": true, "status": "unknown"}).Error; err != nil {
 			return fmt.Errorf("restore device %d: %w", id, err)
+		}
+		if len(updates) == 0 {
+			return nil
+		}
+		settings := make(map[string]interface{}, len(updates))
+		for k, v := range updates {
+			switch k {
+			case "retired_at", "enabled", "status":
+				continue
+			}
+			settings[k] = v
+		}
+		if len(settings) == 0 {
+			return nil
+		}
+		if err := tx.Model(&models.Device{}).Where("id = ?", id).Updates(settings).Error; err != nil {
+			return fmt.Errorf("restore device %d: apply settings: %w", id, err)
 		}
 		return nil
 	})

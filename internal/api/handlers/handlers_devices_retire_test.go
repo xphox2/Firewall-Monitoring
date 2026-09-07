@@ -186,3 +186,40 @@ func TestDeleteSite_WithMembers409(t *testing.T) {
 		t.Errorf("site was deleted despite the guard: %v", err)
 	}
 }
+
+// TestRestoreDevice_NameCollisionLeavesRetired: a restore whose settings rename
+// the device onto an ACTIVE device's name is a 409 and — because restore and
+// settings are one transaction — leaves the device retired rather than
+// restored-but-unrenamed.
+func TestRestoreDevice_NameCollisionLeavesRetired(t *testing.T) {
+	h, db := setupTestHandler(t)
+	_, device := setupProbeAndDevice(t, db)
+	if err := db.Gorm().Create(&models.Device{Name: "taken", IPAddress: "192.168.1.50"}).Error; err != nil {
+		t.Fatalf("create second device: %v", err)
+	}
+	if err := db.RetireDevice(device.ID); err != nil {
+		t.Fatalf("retire: %v", err)
+	}
+
+	c, rec := jsonReq(http.MethodPost, "/x", `{"name":"taken","description":"renamed"}`)
+	c.Params = idParam(device.ID)
+	h.RestoreDevice(c)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("restore onto a taken name = %d %s, want 409", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Error string `json:"error"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.Error != "device name already in use" {
+		t.Errorf("error = %q", resp.Error)
+	}
+	got, err := db.GetDevice(device.ID)
+	if err != nil {
+		t.Fatalf("get device: %v", err)
+	}
+	if got.RetiredAt == nil || got.Enabled || got.Name != device.Name || got.Description != "" {
+		t.Errorf("after 409 restore: retired_at=%v enabled=%v name=%q description=%q — the restore must have rolled back",
+			got.RetiredAt, got.Enabled, got.Name, got.Description)
+	}
+}

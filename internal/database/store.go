@@ -93,7 +93,7 @@ type DeviceStore interface {
 	GetAllDevices() ([]models.Device, error)
 	GetActiveDevices() ([]models.Device, error)
 	RetireDevice(id uint) error
-	RestoreDevice(id uint) error
+	RestoreDevice(id uint, updates map[string]interface{}) error
 	GetDeviceIDsByProbe(probeID uint) ([]uint, error)
 	GetDevicesByProbe(probeID uint) ([]models.Device, error)
 	GetDeviceStatuses() ([]map[string]interface{}, error)

@@ -1265,14 +1265,36 @@ var orphanDeviceSourceTables = []string{
 // Idempotent by construction (only ids absent from devices are inserted). On
 // Postgres the id sequence is bumped past the highest id afterwards so an
 // orphan above the sequence cannot make a later CreateDevice fail with 23505.
+//
+// The whole migration — orphan scans, identity recovery, inserts and the
+// sequence bump — runs in ONE transaction with `SET LOCAL statement_timeout =
+// 0` on Postgres, the ensureInterfaceAddrUniqueIndex / v54 / v34 pattern:
+// AUDIT-037's per-connection 30s statement_timeout applies to every pooled
+// connection, and a DISTINCT + `NOT IN (SELECT id FROM devices)` anti-join over
+// a prod-sized alerts or uptime_records table can exceed it and be canceled
+// mid-migration. The transaction also makes the insert set atomic: a partial
+// materialization can never be recorded as applied.
 func (d *Database) migrateMaterializeOrphanedDevices() error {
+	return d.db.Transaction(func(tx *gorm.DB) error {
+		if d.dialect.IsPostgres() {
+			if err := tx.Exec("SET LOCAL statement_timeout = 0").Error; err != nil {
+				return fmt.Errorf("lift statement_timeout: %w", err)
+			}
+		}
+		return d.materializeOrphanedDevices(tx)
+	})
+}
+
+// materializeOrphanedDevices is the body of migration v61, run on the
+// transaction migrateMaterializeOrphanedDevices opens.
+func (d *Database) materializeOrphanedDevices(tx *gorm.DB) error {
 	orphans := map[uint]struct{}{}
 	for _, table := range orphanDeviceSourceTables {
-		if !d.db.Migrator().HasTable(table) {
+		if !tx.Migrator().HasTable(table) {
 			continue
 		}
 		var ids []uint
-		if err := d.db.Table(table).Distinct("device_id").
+		if err := tx.Table(table).Distinct("device_id").
 			Where("device_id > 0 AND device_id NOT IN (SELECT id FROM devices)").
 			Pluck("device_id", &ids).Error; err != nil {
 			return fmt.Errorf("scan %s for orphaned device ids: %w", table, err)
@@ -1293,13 +1315,13 @@ func (d *Database) migrateMaterializeOrphanedDevices() error {
 	now := time.Now().UTC()
 	inserted := 0
 	for _, id := range sorted {
-		name, ip := d.recoverOrphanedDeviceIdentity(id)
+		name, ip := recoverOrphanedDeviceIdentity(tx, id)
 		fallback := fmt.Sprintf("Removed device #%d", id)
 		if name == "" {
 			name, ip = fallback, "0.0.0.0"
 		} else {
 			var clash int64
-			if err := d.db.Model(&models.Device{}).Where("name = ?", name).Count(&clash).Error; err != nil {
+			if err := tx.Model(&models.Device{}).Where("name = ?", name).Count(&clash).Error; err != nil {
 				return fmt.Errorf("materialize device %d: name check: %w", id, err)
 			}
 			if clash > 0 {
@@ -1311,7 +1333,7 @@ func (d *Database) migrateMaterializeOrphanedDevices() error {
 		// insert is unambiguous on both backends (GORM Create treats id 0 and
 		// zero-valued defaults specially). last_polled stays NULL: the device
 		// was never polled by this row.
-		if err := d.db.Exec(`INSERT INTO devices (id, name, ip_address, snmp_port, snmp_version, enabled, public_visible, vendor,
+		if err := tx.Exec(`INSERT INTO devices (id, name, ip_address, snmp_port, snmp_version, enabled, public_visible, vendor,
 			wan_speed_mbps, sslvpn_users, sslvpn_tunnels, ssh_port, ssh_poll_enabled, ssh_poll_interval, api_port, api_insecure_tls,
 			created_at, updated_at, status, retired_at)
 			VALUES (?, ?, ?, 161, '2c', ?, ?, 'fortigate', 1000, 0, 0, 22, ?, 900, 443, ?, ?, ?, 'offline', ?)`,
@@ -1324,11 +1346,11 @@ func (d *Database) migrateMaterializeOrphanedDevices() error {
 
 	if inserted > 0 && d.dialect.IsPostgres() {
 		var seq string
-		if err := d.db.Raw(`SELECT COALESCE(pg_get_serial_sequence('devices', 'id'), '')`).Scan(&seq).Error; err != nil {
+		if err := tx.Raw(`SELECT COALESCE(pg_get_serial_sequence('devices', 'id'), '')`).Scan(&seq).Error; err != nil {
 			return fmt.Errorf("materialize devices: resolve id sequence: %w", err)
 		}
 		if seq != "" {
-			if err := d.db.Exec(fmt.Sprintf(
+			if err := tx.Exec(fmt.Sprintf(
 				`SELECT setval('%s', GREATEST((SELECT COALESCE(MAX(id), 1) FROM devices), (SELECT last_value FROM %s)))`,
 				seq, seq)).Error; err != nil {
 				return fmt.Errorf("materialize devices: bump id sequence %s: %w", seq, err)
@@ -1340,10 +1362,11 @@ func (d *Database) migrateMaterializeOrphanedDevices() error {
 
 // recoverOrphanedDeviceIdentity returns the (name, ip) parsed from the newest
 // device-status alert for id, or ("", "") when no message has the expected
-// shape. See migrateMaterializeOrphanedDevices.
-func (d *Database) recoverOrphanedDeviceIdentity(id uint) (string, string) {
+// shape. See migrateMaterializeOrphanedDevices; tx is the migration's
+// transaction.
+func recoverOrphanedDeviceIdentity(tx *gorm.DB, id uint) (string, string) {
 	var msgs []string
-	if err := d.db.Model(&models.Alert{}).
+	if err := tx.Model(&models.Alert{}).
 		Where("device_id = ? AND message LIKE ? AND (message LIKE ? OR message LIKE ?)", id, "Device %", "% is offline", "% is back online").
 		Order("timestamp DESC").Limit(1).Pluck("message", &msgs).Error; err != nil || len(msgs) == 0 {
 		return "", ""

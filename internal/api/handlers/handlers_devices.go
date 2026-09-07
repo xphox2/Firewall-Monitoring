@@ -382,8 +382,12 @@ func (h *Handler) writeDeviceUpdates(c *gin.Context, db database.Store, id uint,
 			return
 		}
 	}
+	respondDevice(c, db, id, device)
+}
 
-	// Re-fetch to return fresh data
+// respondDevice re-fetches the device after a write and returns it redacted,
+// falling back to the pre-write copy if the re-read fails.
+func respondDevice(c *gin.Context, db database.Store, id uint, device *models.Device) {
 	updated, err := db.GetDevice(id)
 	if err != nil {
 		httputil.RedactDevice(device)
@@ -429,7 +433,10 @@ func (h *Handler) RetireDevice(c *gin.Context) {
 // are applied to the retired row instead of creating a second device.
 //
 // Settings are validated BEFORE the restore so a rejected body (400) leaves the
-// device retired; blank/masked secrets keep the stored encrypted values.
+// device retired; blank/masked secrets keep the stored encrypted values. The
+// restore and the settings write are ONE transaction (database.RestoreDevice):
+// a settings write the database rejects (name collision → 409) rolls the
+// restore back, so the device is never left restored-but-misconfigured.
 func (h *Handler) RestoreDevice(c *gin.Context) {
 	db := h.reqDB(c)
 	if !httputil.RequireDB(c, db) {
@@ -465,19 +472,21 @@ func (h *Handler) RestoreDevice(c *gin.Context) {
 		}
 	}
 
-	if err := db.RestoreDevice(id); err != nil {
+	if err := db.RestoreDevice(id, filtered); err != nil {
 		switch {
 		case errors.Is(err, gorm.ErrRecordNotFound):
 			c.JSON(http.StatusNotFound, response.Error("Device not found"))
 		case errors.Is(err, database.ErrDeviceNotRetired):
 			c.JSON(http.StatusConflict, response.Error("device is not retired"))
+		case database.IsUniqueViolation(err):
+			c.JSON(http.StatusConflict, response.Error("device name already in use"))
 		default:
 			httputil.InternalError(c, "Failed to restore device", err)
 		}
 		return
 	}
 
-	h.writeDeviceUpdates(c, db, id, device, filtered)
+	respondDevice(c, db, id, device)
 }
 
 // DeleteDevice is the pre-v0.11.239 hard delete of the devices row. It is no

@@ -204,15 +204,15 @@ func TestRetireDevice_ClosesAlertsIncidentsAndConnections(t *testing.T) {
 	if err := d.RetireDevice(99999); !errors.Is(err, gorm.ErrRecordNotFound) {
 		t.Errorf("retire unknown err = %v, want ErrRecordNotFound", err)
 	}
-	if err := d.RestoreDevice(other.ID); !errors.Is(err, ErrDeviceNotRetired) {
+	if err := d.RestoreDevice(other.ID, nil); !errors.Is(err, ErrDeviceNotRetired) {
 		t.Errorf("restore active err = %v, want ErrDeviceNotRetired", err)
 	}
-	if err := d.RestoreDevice(99999); !errors.Is(err, gorm.ErrRecordNotFound) {
+	if err := d.RestoreDevice(99999, nil); !errors.Is(err, gorm.ErrRecordNotFound) {
 		t.Errorf("restore unknown err = %v, want ErrRecordNotFound", err)
 	}
 
 	// Restore clears the marker, re-enables and resets status; history stays.
-	if err := d.RestoreDevice(dev.ID); err != nil {
+	if err := d.RestoreDevice(dev.ID, nil); err != nil {
 		t.Fatalf("RestoreDevice: %v", err)
 	}
 	got, _ = d.GetDevice(dev.ID)
@@ -223,5 +223,125 @@ func TestRetireDevice_ClosesAlertsIncidentsAndConnections(t *testing.T) {
 	d.db.Model(&models.Alert{}).Where("device_id = ?", dev.ID).Count(&n)
 	if n != 3 {
 		t.Errorf("alert history = %d rows after retire+restore, want 3", n)
+	}
+}
+
+// TestResolveDeviceByIP_FollowsActiveDevice pins the ingest-attribution
+// contract of the IP resolvers: "retire FW-01 (ip X), add FW-02 (ip X)" must
+// resolve X to FW-02 for both the batched and the per-IP resolver, on the
+// management-IP path AND the interface_addresses fallback — otherwise syslog/
+// flow rows resolve to the retired id and the probe allow-list drops them, and
+// traps attach to the retired device. An IP held only by a retired device
+// resolves to nothing.
+func TestResolveDeviceByIP_FollowsActiveDevice(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+
+	const mgmtIP = "10.0.0.1"
+	const ifaceIP = "10.0.0.99"
+	old := &models.Device{Name: "FW-01", IPAddress: mgmtIP}
+	if err := d.db.Create(old).Error; err != nil {
+		t.Fatalf("create FW-01: %v", err)
+	}
+	if err := d.db.Create(&models.InterfaceAddress{DeviceID: old.ID, IPAddress: ifaceIP, Timestamp: time.Now()}).Error; err != nil {
+		t.Fatalf("create FW-01 interface address: %v", err)
+	}
+
+	// Sanity: while active, FW-01 owns both IPs.
+	if got := d.ResolveDeviceByIP(mgmtIP); got != old.ID {
+		t.Fatalf("pre-retire ResolveDeviceByIP(mgmt) = %d, want %d", got, old.ID)
+	}
+	if got := d.ResolveDevicesByIPs([]string{ifaceIP})[ifaceIP]; got != old.ID {
+		t.Fatalf("pre-retire ResolveDevicesByIPs(iface) = %d, want %d", got, old.ID)
+	}
+
+	if err := d.RetireDevice(old.ID); err != nil {
+		t.Fatalf("RetireDevice: %v", err)
+	}
+
+	// Only a retired device holds the IPs → no match on either path.
+	if got := d.ResolveDeviceByIP(mgmtIP); got != 0 {
+		t.Errorf("retired-only ResolveDeviceByIP(mgmt) = %d, want 0", got)
+	}
+	if got := d.ResolveDeviceByIP(ifaceIP); got != 0 {
+		t.Errorf("retired-only ResolveDeviceByIP(iface) = %d, want 0", got)
+	}
+	if got := d.ResolveDevicesByIPs([]string{mgmtIP, ifaceIP}); len(got) != 0 {
+		t.Errorf("retired-only ResolveDevicesByIPs = %v, want empty", got)
+	}
+
+	// FW-02 re-added on the same management IP, with a HIGHER id than the
+	// retired FW-01 (the AUDIT-270 lowest-id ordering must not resurrect it).
+	repl := &models.Device{Name: "FW-02", IPAddress: mgmtIP}
+	if err := d.db.Create(repl).Error; err != nil {
+		t.Fatalf("create FW-02: %v", err)
+	}
+	if repl.ID <= old.ID {
+		t.Fatalf("test setup: FW-02 id %d must be above FW-01 id %d", repl.ID, old.ID)
+	}
+	if err := d.db.Create(&models.InterfaceAddress{DeviceID: repl.ID, IPAddress: ifaceIP, Timestamp: time.Now()}).Error; err != nil {
+		t.Fatalf("create FW-02 interface address: %v", err)
+	}
+
+	if got := d.ResolveDeviceByIP(mgmtIP); got != repl.ID {
+		t.Errorf("ResolveDeviceByIP(mgmt) = %d, want active FW-02 %d", got, repl.ID)
+	}
+	if got := d.ResolveDeviceByIP(ifaceIP); got != repl.ID {
+		t.Errorf("ResolveDeviceByIP(iface) = %d, want active FW-02 %d", got, repl.ID)
+	}
+	batch := d.ResolveDevicesByIPs([]string{mgmtIP, ifaceIP})
+	if batch[mgmtIP] != repl.ID {
+		t.Errorf("ResolveDevicesByIPs[mgmt] = %d, want active FW-02 %d", batch[mgmtIP], repl.ID)
+	}
+	if batch[ifaceIP] != repl.ID {
+		t.Errorf("ResolveDevicesByIPs[iface] = %d, want active FW-02 %d", batch[ifaceIP], repl.ID)
+	}
+}
+
+// TestRestoreDevice_SettingsAtomic pins RestoreDevice(id, updates): the
+// settings map is applied in the restore transaction (a restored row carries
+// the new values), the restore columns cannot be overridden through it, and a
+// settings write the database rejects (name collision) rolls the restore back
+// so the device stays retired.
+func TestRestoreDevice_SettingsAtomic(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+
+	dev := &models.Device{Name: "fw", IPAddress: "10.0.0.1", Enabled: true, Status: "online"}
+	taken := &models.Device{Name: "taken", IPAddress: "10.0.0.2", Enabled: true}
+	for _, dv := range []*models.Device{dev, taken} {
+		if err := d.db.Create(dv).Error; err != nil {
+			t.Fatalf("create device: %v", err)
+		}
+	}
+	if err := d.RetireDevice(dev.ID); err != nil {
+		t.Fatalf("RetireDevice: %v", err)
+	}
+
+	// Colliding name: the whole transaction rolls back — still retired,
+	// nothing else applied, error is a unique violation.
+	err := d.RestoreDevice(dev.ID, map[string]interface{}{"name": "taken", "description": "must not land"})
+	if !IsUniqueViolation(err) {
+		t.Fatalf("restore with colliding name err = %v, want a unique violation", err)
+	}
+	got, _ := d.GetDevice(dev.ID)
+	if got.RetiredAt == nil || got.Enabled || got.Description != "" || got.Name != "fw" {
+		t.Errorf("after rejected restore: retired_at=%v enabled=%v name=%q description=%q (restore must have rolled back)",
+			got.RetiredAt, got.Enabled, got.Name, got.Description)
+	}
+
+	// Valid settings land with the restore; restore columns in the map are
+	// ignored so a caller can never restore a device as disabled.
+	err = d.RestoreDevice(dev.ID, map[string]interface{}{
+		"description": "re-added", "ip_address": "10.0.0.9",
+		"enabled": false, "status": "online", "retired_at": time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("RestoreDevice with settings: %v", err)
+	}
+	got, _ = d.GetDevice(dev.ID)
+	if got.RetiredAt != nil || !got.Enabled || got.Status != "unknown" {
+		t.Errorf("restored: retired_at=%v enabled=%v status=%q (restore columns must win)", got.RetiredAt, got.Enabled, got.Status)
+	}
+	if got.Description != "re-added" || got.IPAddress != "10.0.0.9" {
+		t.Errorf("settings not applied: description=%q ip=%q", got.Description, got.IPAddress)
 	}
 }

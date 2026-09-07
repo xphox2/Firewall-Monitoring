@@ -688,6 +688,14 @@
             var retiredBadge = retired
                 ? ' <span class="badge unknown" title="' + escapeHtml('Retired ' + formatDate(d.retired_at) + ' — data preserved') + '">RETIRED</span>'
                 : '';
+            // A retired device is no longer polled, so its stored status is
+            // frozen at whatever it was at retire time: never paint the live
+            // pulse-dot/status badge for it (a device retired while online
+            // would stay green forever). The RETIRED badge next to the name
+            // carries the state; the status cell shows a muted dash.
+            var statusCell = retired
+                ? '<span style="color:var(--fwmon-text-mute)" title="Not polled — retired">—</span>'
+                : '<span class="pulse-dot ' + (d.status === 'online' ? 'online' : 'offline') + '"></span><span class="badge ' + escapeHtml(d.status) + '">' + escapeHtml(d.status).toUpperCase() + '</span>';
             var actions = retired
                 ? '<button class="btn sm" data-action="restore-device" data-min-role="operator" data-id="' + d.id + '" title="Restore this device and resume polling">Restore</button>'
                 : AC.sshLaunchButton(d, true) +
@@ -702,7 +710,7 @@
                     '<td id="dev-cpu-' + d.id + '" style="color:var(--fwmon-text-mute)">-</td>' +
                     '<td id="dev-mem-' + d.id + '" style="color:var(--fwmon-text-mute)">-</td>' +
                     '<td id="dev-sess-' + d.id + '" style="color:var(--fwmon-text-mute)">-</td>' +
-                    '<td class="td-nowrap"><span class="pulse-dot ' + (d.status === 'online' ? 'online' : 'offline') + '"></span><span class="badge ' + escapeHtml(d.status) + '">' + escapeHtml(d.status).toUpperCase() + '</span></td>' +
+                    '<td class="td-nowrap">' + statusCell + '</td>' +
                     '<td><input type="checkbox" ' + (d.public_visible ? 'checked ' : '') + (retired ? 'disabled ' : '') + 'data-action="toggle-public-visible" data-id="' + d.id + '"></td>' +
                     '<td><div class="row-actions">' + actions + '</div></td>' +
                 '</tr>';

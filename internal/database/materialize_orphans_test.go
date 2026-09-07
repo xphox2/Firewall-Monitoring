@@ -107,7 +107,7 @@ func TestMigrateMaterializeOrphanedDevices(t *testing.T) {
 	if len(active) != 1 {
 		t.Errorf("active devices = %d, want 1 (materialized rows are retired)", len(active))
 	}
-	if err := d.RestoreDevice(42); err != nil {
+	if err := d.RestoreDevice(42, nil); err != nil {
 		t.Errorf("restore materialized device: %v", err)
 	}
 }
