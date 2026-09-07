@@ -1,5 +1,95 @@
 # Lessons
 
+## Benchmark the system, not the thing the user pointed at (2026-09-07)
+
+**Context:** user reported "/admin takes minutes to load on first login". The dashboard had already
+been optimised twice (v0.11.206), so the temptation was to optimise it a third time. Measuring
+production instead found the largest consumer of database I/O was `GetAllLatestInterfaces` in the
+POLLER — 52.9 billion blocks read from a 5 GB table, five times the 134 GB syslog table — and that
+the slowest thing an operator can actually wait for is the **Flows page** at 42s, a page nobody had
+opened during the benchmark window and which my first plan did not mention at all.
+
+**Rules:**
+(a) Start with `/metrics`. `fwmon_http_request_duration_seconds` covers EVERY route since process
+start; comparing the `+Inf` bucket against `le="10"` answers "did anything ever exceed 10s" in one
+query. I parsed 9.4 hours of GIN log first and it only covered the routes that happened to be hit.
+(b) Rank by `pg_statio_user_tables.heap_blks_read` and `pg_stat_user_tables.seq_scan` BEFORE forming
+a theory. Cumulative counters do not care which page the user mentioned.
+(c) A benchmark window containing one login only proves things about the pages that login opened.
+Exercise the un-opened pages explicitly, or say plainly that you did not.
+(d) Say "I could not reproduce it" out loud when true. I could not, and reporting that alongside the
+real findings was more useful than a confident story.
+
+## `LIMIT 1` makes PostgreSQL price a full scan as free (2026-09-07)
+
+**Mechanism:** `LIMIT 1` divides the seq-scan cost estimate by the expected number of matches, so a
+large estimate makes scanning the whole relation look nearly free. When zero rows actually match it
+reads everything. A `SELECT 1 ... WHERE interval_type = ? AND timestamp < ? LIMIT 1` on `flow_rollups`
+read 1,971,092 buffers over 23 seconds to return nothing, every five minutes, with a perfectly good
+`(interval_type, timestamp)` index sitting unused.
+
+**Rules:**
+(a) It is a planner TIPPING POINT, not a stable property — the same probe used the index for
+`interval_type='5m'` and seq-scanned for `'1h'`, purely on the estimate. Fix every instance of the
+shape, not the one currently misbehaving.
+(b) `ORDER BY` is the fix only when an index carries the equality predicates first and the ordered
+column next. Otherwise it adds a `Sort` that materialises every match — worse. `syslog_summaries` had
+no such composite; I verified with EXPLAIN and left that one site alone with a comment saying why.
+(c) Check first whether the probe is redundant. Three of these were immediately followed by
+`oldestEligibleTimestamp`, which answers the same question correctly at 1.9ms. Deleting beat fixing.
+
+## Do not sweep an anti-pattern onto a table whose shape differs (2026-09-07)
+
+**Mistake:** having rewritten `GetAllLatestInterfaces`, I applied the identical rewrite to
+`GetLatestInterfaceAddresses` because it "carried the identical anti-pattern". Measuring showed the
+rewrite is SLOWER there — 1.282ms against 0.857ms. `interface_stats` is append-only and grows
+forever; `interface_addresses` is written by an UPSERT on a unique index and is bounded by fleet size
+(67 rows across 2.5 months). At that size a 6-page seq scan beats six index descents. Reverted.
+
+**Rule:** "same code shape" is not "same cost shape". Before extending a performance fix to a
+sibling, measure the sibling. The one-liner that justifies a rewrite on a 15M-row table can be a
+pessimisation on a 67-row one. [[feedback_improve_everything_one_shot]] means fix the full set of
+cases, not apply the same patch blindly.
+
+## A production benchmark can validate a plan most installs never run (2026-09-07)
+
+**Mistake:** measured the interface rewrite at 60 buffers on production and called it proven.
+Production's `interface_stats` is NOT partitioned — it was populated before the empty-only conversion
+and went down the manual runbook path. Every FRESH install partitions it, and the CI Postgres lane is
+the fresh-install shape. The adversarial review flagged the gap; I had argued it away by reasoning
+rather than measuring.
+
+**Rules:**
+(a) When prod and a fresh install differ structurally (partitioned vs not), a prod EXPLAIN proves one
+of the two. Test the other in the CI integration lane, where it runs forever.
+(b) Fixture volume is part of the assertion. At a few hundred rows the planner correctly prefers a
+seq scan of a seven-page child, so a small fixture tests the fixture. Seed enough that the index is
+unambiguously right.
+(c) Assert on cost, not on strings. "No Seq Scan" is wrong — `EnsurePartitions` creates empty future
+children and scanning a zero-page relation is free. The defect is a seq scan costing more than 0.00.
+(d) Verify a new test is DISCRIMINATING by running it against the old code. Two of my four new tests
+passed on the pre-change query; they are guards against tempting variants, not regression tests, and
+their comments now say so.
+
+## False prose about behaviour is its own defect class (2026-09-07)
+
+**Mistake:** a code comment and a CHANGELOG entry both said a capped aggregation cycle keeps the
+backlog draining "because the callers return `totalGroups > 0`". They do not: `RunFlowRollupCycle`
+uses that only to decide whether to log, and `RunSyslogAggregationCycle`'s return is discarded by its
+caller. What actually guarantees resumption is the unconditional 5-minute ticker. The behaviour was
+safe; the written explanation was wrong, and would have misled the next reader.
+
+**Rules:**
+(a) Before writing "X happens because Y", open Y and read it. Same rule as
+[[feedback_verify_citations_in_permanent_records]], extended to mechanism claims, not just
+`path:line` citations.
+(b) "Identical results" is a strong claim. Mine was true of production on the day and false in
+general (orphaned telemetry from pre-purge hard deletes). Say "the same 146 rows on production today"
+and state the delta.
+(c) Inserting a package var directly above a function with no blank line silently steals that
+function's doc comment. gofmt and staticcheck do not catch it.
+
+
 ## A destructive job needs a real-database run before merge, not just SQLite (2026-09-07)
 
 **Context:** the purge job's unit tests were green on SQLite, and two adversarial review rounds were sound, yet the scratch-PostgreSQL run still found a pre-existing bug (the DEFAULT partition child had never been indexed, so every batch on it was a full scan) and proved the 42P01 and cancel paths against the real engine. The review also found a server-side hole (restore while a purge job exists) that no unit test targeted.
