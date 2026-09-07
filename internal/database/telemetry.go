@@ -247,19 +247,28 @@ func (d *Database) SaveInterfaceAddresses(addrs []models.InterfaceAddress) error
 
 // GetLatestInterfaceAddresses returns the latest interface address snapshot per device.
 //
-// Same correlated shape as GetAllLatestInterfaces, and for the same reasons —
-// see that function's comment for the measurements and for why a time bound was
-// rejected. The performance stakes here are far lower (interface_addresses is
-// replaced rather than appended, so production holds ~67 rows and the old shape
-// measured 0.32ms), but the anti-pattern is identical and is not left in place
-// to be copied a third time.
+// This deliberately KEEPS the unbounded MAX(timestamp) GROUP BY shape that was
+// removed from GetAllLatestInterfaces, and the difference is worth stating so
+// nobody "fixes" it later:
+//
+// interface_stats is append-only and grows forever (15.4M rows on production),
+// which is what turned that shape into a Parallel Seq Scan and made the table
+// the largest source of read I/O in the database. interface_addresses is not
+// append-only — SaveInterfaceAddresses UPSERTs on a unique index, so the table
+// holds one row per (device, interface, address) and is structurally bounded by
+// the size of the fleet, not by time. Production carries 67 rows across 2.5
+// months of polling.
+//
+// At that size the GROUP BY is a 6-page seq scan and beats the correlated form,
+// measured on production: 0.857ms as written versus 1.282ms rewritten. Copying
+// the sibling's rewrite here would be cargo cult — it would make this query
+// slower to defend against growth the UPSERT prevents.
 func (d *Database) GetLatestInterfaceAddresses() ([]models.InterfaceAddress, error) {
 	var addrs []models.InterfaceAddress
 	err := d.db.Raw(`
-		SELECT a.* FROM devices d
-		JOIN interface_addresses a
-		  ON a.device_id = d.id
-		 AND a.timestamp = (SELECT MAX(s.timestamp) FROM interface_addresses s WHERE s.device_id = d.id)
+		SELECT a.* FROM interface_addresses a
+		INNER JOIN (SELECT device_id, MAX(timestamp) as max_ts FROM interface_addresses GROUP BY device_id) latest
+		ON a.device_id = latest.device_id AND a.timestamp = latest.max_ts
 	`).Scan(&addrs).Error
 	return addrs, err
 }
