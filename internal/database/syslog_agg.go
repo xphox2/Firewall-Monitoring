@@ -115,25 +115,24 @@ func (d *Database) aggregateSyslogToSummary(cutoff time.Time, severity int, inte
 	}
 	bucketExpr := d.dialect.TimeBucket(bucketUnit, "timestamp")
 
-	// Cheap "is there anything to do" probe, served by (severity, timestamp).
-	// Replaces the old `watermark == 0` early-exit, which is no longer
-	// available now that the watermark is unfiltered (see below). The probe,
-	// watermark and window-start reads run outside any transaction: READ
+	// No "is there anything to do" probe here. There used to be a
+	// `SELECT 1 ... WHERE timestamp < ? AND severity = ? LIMIT 1` at this
+	// point, standing in for the `watermark == 0` early-exit that the
+	// unfiltered watermark (see below) can no longer provide. The window-start
+	// read below already answers the same question from the same index and
+	// returns ok=false on MIN(timestamp) IS NULL, so the probe was one extra
+	// statement for nothing.
+	//
+	// It was also the same latent trap that cost 23 seconds every five minutes
+	// on flow_rollups: `LIMIT 1` prices a seq scan as (total cost / expected
+	// matches), so a large enough estimate makes scanning the whole relation
+	// look free. That estimate moves with retention and ingest, and this probe
+	// sits on the largest table in the database.
+	//
+	// The watermark and window-start reads run outside any transaction: READ
 	// COMMITTED gives each statement a fresh snapshot either way, and only the
 	// watermark's upper-bound property (not cross-statement consistency)
 	// carries the correctness.
-	var probe []int64
-	if err := d.db.Model(&models.SyslogMessage{}).
-		Where("timestamp < ? AND severity = ?", cutoff, severity).
-		Select("1").Limit(1).
-		Scan(&probe).Error; err != nil {
-		err = fmt.Errorf("work probe: %w", err)
-		log.Printf("Syslog aggregation: %v (will retry next cycle)", err)
-		return false, err
-	}
-	if len(probe) == 0 {
-		return false, nil
-	}
 
 	// The watermark is deliberately UNFILTERED. It exists only as an upper
 	// bound excluding rows that arrive mid-pass, so ANY bound >= every id in
@@ -303,6 +302,27 @@ func (d *Database) promoteSyslogSummaries(srcInterval, dstInterval string, cutof
 		// upper bound. Harmless on a small syslog_summaries, but it becomes the
 		// identical pathological pkey walk once summaries accumulate, so it is
 		// fixed here rather than left to be rediscovered.
+		//
+		// This probe is KEPT while the sibling probes in flows.go and in
+		// aggregateSyslogToSummary were deleted, and it deliberately does NOT
+		// get their ORDER BY treatment. Two reasons, both checked:
+		//
+		//  1. It is not redundant. Those siblings were each followed by
+		//     oldestEligibleTimestamp, which answers "is there work" from the
+		//     same index; promoteSyslogSummaries still pages and has no such
+		//     call, so deleting this probe would remove the only early exit.
+		//  2. ORDER BY would make it WORSE. That rewrite only helps when an
+		//     index carries the equality predicates first and the ordered
+		//     column next. syslog_summaries has idx_syslog_summary_interval
+		//     (interval_type) and idx_syslog_summary_device_ts
+		//     (device_id, timestamp) — no (interval_type, timestamp) composite
+		//     — so adding ORDER BY timestamp introduces an explicit Sort node
+		//     (verified with EXPLAIN on production), which must materialise
+		//     every match before returning one. That is the opposite of what a
+		//     LIMIT 1 existence check wants.
+		//
+		// If this table ever grows enough to matter, add the
+		// (interval_type, timestamp) composite FIRST, then the ORDER BY.
 		var probe []int64
 		if err := tx.Model(&models.SyslogSummary{}).
 			Where("interval_type = ? AND timestamp < ?", srcInterval, cutoff).

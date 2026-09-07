@@ -252,3 +252,88 @@ func TestWalkAggregationWindows_JumpsEmptyRanges_AUDIT204Review(t *testing.T) {
 		t.Fatalf("total groups = %d, want 2", total)
 	}
 }
+
+// TestWalkAggregationWindows_BacklogCapStopsEarly pins the per-cycle window cap.
+//
+// Steady state is one or two windows per call, so the cap never fires in normal
+// operation. It exists so that the FIRST cycle after a stall — an outage, a
+// restart loop, or a work probe that was silently answering "nothing to do" —
+// cannot walk an entire backlog in one call while holding the shared poller
+// work lock and pinning the disk that also serves ingest.
+//
+// The two properties that matter are both asserted here: the walk stops at the
+// cap, and stopping is NOT an error and NOT "no work". Callers return
+// `totalGroups > 0`, so a capped cycle must still report a non-zero total or
+// the scheduler would treat the backlog as drained and stop coming back.
+func TestWalkAggregationWindows_BacklogCapStopsEarly(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+
+	orig := maxWindowsPerAggregationCycle
+	maxWindowsPerAggregationCycle = 3
+	defer func() { maxWindowsPerAggregationCycle = orig }()
+
+	// A contiguous backlog far longer than the cap.
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	cutoff := start.Add(50 * time.Hour)
+
+	aggCalls := 0
+	total, err := walkAggregationWindows(d.db, time.Hour, start, cutoff,
+		func(after time.Time) (time.Time, bool, error) {
+			// Every window is populated: never let the walk exit via exhaustion,
+			// so the cap is the only thing that can stop it.
+			if after.Before(cutoff) {
+				return after, true, nil
+			}
+			return time.Time{}, false, nil
+		},
+		func(tx *gorm.DB, winStart, winEnd time.Time) (int, error) {
+			aggCalls++
+			if aggCalls > 10 {
+				return 0, fmt.Errorf("aggregate called %d times — the cap did not stop the walk", aggCalls)
+			}
+			return 2, nil
+		})
+	if err != nil {
+		t.Fatalf("hitting the cap must not be an error, got: %v", err)
+	}
+	if aggCalls != 3 {
+		t.Fatalf("aggregate windows = %d, want exactly the cap of 3", aggCalls)
+	}
+	if total != 6 {
+		t.Fatalf("total groups = %d, want 6 (3 windows x 2) — a capped cycle must report the work it did", total)
+	}
+	if total <= 0 {
+		t.Fatal("a capped cycle reported no work; callers return totalGroups > 0, so the scheduler would stop resuming the backlog")
+	}
+}
+
+// TestWalkAggregationWindows_CapDoesNotFireInSteadyState guards the other side:
+// the cap must be invisible to a normal cycle, which walks one or two windows.
+func TestWalkAggregationWindows_CapDoesNotFireInSteadyState(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	cutoff := start.Add(2 * time.Hour)
+
+	aggCalls := 0
+	total, err := walkAggregationWindows(d.db, time.Hour, start, cutoff,
+		func(after time.Time) (time.Time, bool, error) {
+			if after.Before(cutoff) {
+				return after, true, nil
+			}
+			return time.Time{}, false, nil
+		},
+		func(tx *gorm.DB, winStart, winEnd time.Time) (int, error) {
+			aggCalls++
+			return 1, nil
+		})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if aggCalls != 2 {
+		t.Fatalf("aggregate windows = %d, want 2 — the default cap must not truncate a normal cycle", aggCalls)
+	}
+	if total != 2 {
+		t.Fatalf("total groups = %d, want 2", total)
+	}
+}

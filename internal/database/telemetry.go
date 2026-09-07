@@ -246,6 +246,23 @@ func (d *Database) SaveInterfaceAddresses(addrs []models.InterfaceAddress) error
 }
 
 // GetLatestInterfaceAddresses returns the latest interface address snapshot per device.
+//
+// This deliberately KEEPS the unbounded MAX(timestamp) GROUP BY shape that was
+// removed from GetAllLatestInterfaces, and the difference is worth stating so
+// nobody "fixes" it later:
+//
+// interface_stats is append-only and grows forever (15.4M rows on production),
+// which is what turned that shape into a Parallel Seq Scan and made the table
+// the largest source of read I/O in the database. interface_addresses is not
+// append-only — SaveInterfaceAddresses UPSERTs on a unique index, so the table
+// holds one row per (device, interface, address) and is structurally bounded by
+// the size of the fleet, not by time. Production carries 67 rows across 2.5
+// months of polling.
+//
+// At that size the GROUP BY is a 6-page seq scan and beats the correlated form,
+// measured on production: 0.857ms as written versus 1.282ms rewritten. Copying
+// the sibling's rewrite here would be cargo cult — it would make this query
+// slower to defend against growth the UPSERT prevents.
 func (d *Database) GetLatestInterfaceAddresses() ([]models.InterfaceAddress, error) {
 	var addrs []models.InterfaceAddress
 	err := d.db.Raw(`
@@ -257,12 +274,46 @@ func (d *Database) GetLatestInterfaceAddresses() ([]models.InterfaceAddress, err
 }
 
 // GetAllLatestInterfaces returns the latest interface stats snapshot across all devices.
+//
+// Driven from `devices` with a CORRELATED subquery, not from a GROUP BY over
+// interface_stats, and not from a time bound. All three alternatives were
+// measured on production (15.4M rows, 5GB):
+//
+//	unbounded GROUP BY (the old shape)  423,092 buffers  ~1,700ms
+//	bounded to 2h                        26,117 buffers     255ms
+//	correlated subquery (this)               60 buffers     0.836ms
+//
+// The old shape could not use any index: MAX(timestamp) GROUP BY device_id over
+// the whole table is a Parallel Seq Scan, and the poller runs this ~4x/minute
+// forever, which made interface_stats the single largest source of read I/O in
+// the database (52.9 billion blocks, five times the 134GB syslog_messages).
+//
+// A time bound was rejected rather than merely passed over. Three of the four
+// callers need a window wider than any value that helps: checkRelayedTelemetry
+// needs the 24h telemetryStaleLookback or evaluateTelemetryStale's interface
+// signal becomes unfireable, detectVPNConnections needs >= VPNEvidenceGrace or
+// CleanupStaleAutoConnectionsBefore deletes connections early, and
+// detectOverlayConnections has no freshness gate at all so ANY bound deletes
+// edges. Correlating on device_id removes the window entirely — a device silent
+// for a month still reports its last known interfaces.
+//
+// LATERAL would express this more directly but is a syntax error on SQLite,
+// which is what every cmd/poller test runs on (NewDatabaseForTesting). The
+// correlated form parses on both and Postgres folds it to
+// `Index Cond: ((device_id = d.id) AND (timestamp = (SubPlan 2)))` over
+// idx_iface_device_ts, so cost scales with device count, not table size.
+//
+// Deliberately NOT scoped to active devices: the old query grouped over
+// interface_stats and so included retired devices, and the poller filters
+// separately via GetActiveDevices. Scoping here would silently drop a retired
+// device's interfaces out of VPN, overlay and L2 detection.
 func (d *Database) GetAllLatestInterfaces() ([]models.InterfaceStats, error) {
 	var ifaces []models.InterfaceStats
 	err := d.db.Raw(`
-		SELECT i.* FROM interface_stats i
-		INNER JOIN (SELECT device_id, MAX(timestamp) as max_ts FROM interface_stats GROUP BY device_id) latest
-		ON i.device_id = latest.device_id AND i.timestamp = latest.max_ts
+		SELECT i.* FROM devices d
+		JOIN interface_stats i
+		  ON i.device_id = d.id
+		 AND i.timestamp = (SELECT MAX(s.timestamp) FROM interface_stats s WHERE s.device_id = d.id)
 	`).Scan(&ifaces).Error
 	return ifaces, err
 }

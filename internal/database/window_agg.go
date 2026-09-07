@@ -51,6 +51,36 @@ import (
 // transactions (measured: hours on prod-class hardware) while holding the
 // shared poller work lock. With the jump, per-pass cost is proportional to
 // windows that actually contain rows, plus one cheap probe each.
+
+// maxWindowsPerAggregationCycle bounds how many windows ONE call may walk.
+//
+// Steady state is one or two windows per cycle, so this never fires in normal
+// operation. It exists for the backlog case: if aggregation has been stalled —
+// by an outage, a restart loop, or a work probe that was silently answering
+// "nothing to do" — the first cycle after the stall would otherwise walk the
+// ENTIRE backlog in one call, holding the shared poller work lock and pinning
+// the disk that also serves ingest for as long as that takes.
+//
+// It bounds WINDOWS, not wall-clock time, and a window is not a fixed span:
+// aggregateRollupsUp widens it to 24h for day-bucket promotions, so 24 windows
+// there is 24 days of hourly rollups, not 24 hours. One tick also runs several
+// capped calls in sequence (two syslog severities plus three flow steps). The
+// worked example below is the hourly case only.
+//
+// With the cap, a week-long hourly backlog (168 windows) drains over 7 cycles,
+// about 35 minutes at the 5-minute cadence, and a month over ~2.5 hours.
+//
+// Stopping early returns (groupsSoFar, nil), NOT an error: every window that
+// ran committed independently, so a capped call is forward progress. Resumption
+// does not depend on the return value — RunFlowRollupCycle uses `work` only to
+// decide whether to log, and RunSyslogAggregationCycle's error is discarded by
+// its caller. The 5-minute rollupTicker in cmd/poller re-enters unconditionally,
+// and the next call picks up from the new oldest eligible row because each
+// window's aggregation deletes what it consumed.
+//
+// A package var, not a const, so tests can shrink it to exercise the path.
+var maxWindowsPerAggregationCycle = 24
+
 func walkAggregationWindows(db *gorm.DB, window time.Duration, start, cutoff time.Time,
 	nextEligible func(after time.Time) (time.Time, bool, error),
 	aggregateWindow func(tx *gorm.DB, winStart, winEnd time.Time) (int, error)) (int, error) {
@@ -65,7 +95,16 @@ func walkAggregationWindows(db *gorm.DB, window time.Duration, start, cutoff tim
 	// bound sorts against local-rendered rows by its digits, silently missing
 	// them. Postgres binds are typed timestamptz, where the zone is irrelevant.
 	winStart := start.Truncate(window)
+	walked := 0
 	for winStart.Before(cutoff) {
+		if maxWindowsPerAggregationCycle > 0 && walked >= maxWindowsPerAggregationCycle {
+			// Backlog cap reached — see maxWindowsPerAggregationCycle. Return
+			// the groups committed so far with a nil error: every window that
+			// ran committed independently, so this is forward progress, not a
+			// failure, and the next tick resumes from the new oldest row.
+			break
+		}
+		walked++
 		winEnd := winStart.Add(window)
 		if winEnd.After(cutoff) {
 			winEnd = cutoff
