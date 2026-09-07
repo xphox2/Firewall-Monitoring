@@ -20,9 +20,15 @@ import (
 // live edges. These tests pin the properties that made the correlated form the
 // safe choice.
 
-// TestGetAllLatestInterfaces_ReturnsWholeNewestSnapshotPerDevice is the core
-// equivalence property: one row per interface for each device's most recent
-// poll, and nothing from any earlier poll.
+// TestGetAllLatestInterfaces_ReturnsWholeNewestSnapshotPerDevice pins the core
+// property: one row per interface for each device's most recent poll, and
+// nothing from any earlier poll.
+//
+// Note this test PASSES on the pre-rewrite query too — verified by running it
+// against the old code. It is not a regression test for the rewrite; it is a
+// guard against the tempting variant of the NEW shape, a `since` bound, which
+// would drop the quiet device below. Only DropsOrphanedTelemetry distinguishes
+// old from new.
 func TestGetAllLatestInterfaces_ReturnsWholeNewestSnapshotPerDevice(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 
@@ -80,6 +86,9 @@ func TestGetAllLatestInterfaces_ReturnsWholeNewestSnapshotPerDevice(t *testing.T
 // the poller filters separately via GetActiveDevices. Adding ActiveDevices to
 // the driving scan here would silently remove a retired-but-still-reporting
 // device's interfaces from link detection.
+//
+// Like the test above, this passes on the old query as well: it guards a
+// variant of the new shape, not the change itself.
 func TestGetAllLatestInterfaces_IncludesRetiredDevices(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 
@@ -103,7 +112,8 @@ func TestGetAllLatestInterfaces_IncludesRetiredDevices(t *testing.T) {
 }
 
 // TestGetAllLatestInterfaces_DropsOrphanedTelemetry documents the one accepted
-// behaviour delta. The old query derived its device set from interface_stats, so
+// behaviour delta, and is the only test here that actually distinguishes the
+// new query from the old one (the old query returns 3 rows where this wants 1). The old query derived its device set from interface_stats, so
 // rows whose device_id has no devices row (device_id 0, or a legacy hard delete
 // before the purge job existed) were returned with no device. The rewrite is
 // driven by devices and drops them. That is the desirable direction, but it is a
