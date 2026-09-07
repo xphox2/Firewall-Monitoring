@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.244] - 2026-09-07
+
+### Fixed
+
+**Four unbounded or mis-planned queries that dominated database I/O, found by benchmarking production rather than by reading code.** `interface_stats` had read 52.9 billion blocks since the counters were reset — five times the 134 GB `syslog_messages` table — from a 5 GB table. The cause was one query with no time bound running roughly four times a minute, forever.
+
+- **`GetAllLatestInterfaces` no longer scans the whole table.** It joined `interface_stats` against an unbounded `SELECT device_id, MAX(timestamp) ... GROUP BY device_id`, which no index can serve: production measured a Parallel Seq Scan over 15.4M rows reading **423,092 buffers (3.5 GB) in ~1,700 ms**, called from four sites in the poller's 60 s monitoring cycle. It is now a correlated subquery driven from the small `devices` table, which Postgres folds into `Index Cond: ((device_id = d.id) AND (timestamp = (SubPlan 2)))` over `idx_iface_device_ts`: **60 buffers and 0.836 ms**, with an identical 146-row result on production. A time bound was measured (26,117 buffers, 255 ms) and rejected — `checkRelayedTelemetry` needs the 24 h stale lookback or the interface signal in `evaluateTelemetryStale` becomes unfireable, `detectVPNConnections` needs at least `VPNEvidenceGrace` or `CleanupStaleAutoConnectionsBefore` deletes connections early, and `detectOverlayConnections` has no freshness gate at all, so any bound would delete live overlay edges. Correlating on `device_id` removes the window entirely, so a device silent for a month still reports its last known interfaces. `GetLatestInterfaceAddresses` carried the identical shape and gets the identical rewrite (harmless today at 67 rows, but no longer available to copy). The query is a correlated subquery rather than `LATERAL` because `LATERAL` is a syntax error on SQLite, which is what every `cmd/poller` test runs on.
+- **Three `SELECT 1 ... LIMIT 1` work probes deleted, one fixed, one deliberately left alone.** `LIMIT 1` prices a sequential scan as (total cost ÷ expected matches), so a large enough row estimate makes scanning the whole relation look nearly free. On `flow_rollups` that estimate was 21 M against zero actual matches, and the probe read **1,971,092 buffers over 23,234 ms to return nothing, every five minutes** — 31.6 minutes of scanning in a 9.4 hour window. The probes in `aggregateRollupsUp`, `aggregateFlowsToRollup` and `aggregateSyslogToSummary` were each redundant with the `oldestEligibleTimestamp` call that immediately follows and answers the same question correctly from the same index (measured at 1.9 ms on the same zero-eligible case), so they are removed rather than patched: the whole no-work path now costs about 7.7 ms. The probe in `promoteSyslogSummaries` is kept, because it has no such successor, and it deliberately does **not** get an `ORDER BY` — `syslog_summaries` has no `(interval_type, timestamp)` composite, so ordering adds a `Sort` node that must materialise every match before returning one, which is the opposite of what a `LIMIT 1` existence check wants. The reasoning is recorded at the call site so a future sweep does not blanket-apply the fix.
+- **The connection-detail page's two sFlow existence probes were sequentially scanning `flow_samples` on the request path.** `ORDER BY device_id` makes `idx_flow_samples_device_id` the only way to satisfy the query: **0.303 ms and 8 buffers**.
+
+### Added
+
+- **A per-cycle window cap on the aggregation walk.** Steady state is one or two windows, so it never fires normally. It bounds the first cycle after a stall, which would otherwise walk an entire backlog in one call while holding the shared poller work lock and pinning the disk that also serves ingest. A week-long hourly backlog now drains over about seven cycles instead of one long burst. Hitting the cap is not an error and still reports the groups it committed, so the caller's `totalGroups > 0` keeps the scheduler resuming the backlog.
+
 ## [0.11.243] - 2026-09-07
 
 ### Added

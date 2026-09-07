@@ -820,19 +820,19 @@ const flowRollupGroupKey = "bucket, device_id, src_addr, dst_addr, dst_port, pro
 func (d *Database) aggregateFlowsToRollup(cutoff time.Time, intervalType string) bool {
 	bucketExpr := d.dialect.TimeBucket("5min", "timestamp")
 
-	// Work probe first: an unfiltered watermark is non-zero whenever the
-	// table holds any row, so it can no longer signal "nothing to roll up".
-	var probe []int64
-	if err := d.db.Model(&models.FlowSample{}).
-		Where("timestamp < ?", cutoff).
-		Select("1").Limit(1).
-		Scan(&probe).Error; err != nil {
-		log.Printf("Flow rollup: work probe: %v (will retry next cycle)", err)
-		return false
-	}
-	if len(probe) == 0 {
-		return false
-	}
+	// No work probe here. There used to be a `SELECT 1 ... WHERE timestamp < ?
+	// LIMIT 1` at this point, guarding against the fact that an unfiltered
+	// watermark is non-zero whenever the table holds any row and so cannot
+	// itself signal "nothing to roll up". That role now belongs to the start
+	// probe below (oldestEligibleTimestamp), which answers the same question
+	// from the same index and returns ok=false on MIN(timestamp) IS NULL.
+	//
+	// The removed probe was not merely redundant, it was a trap: `LIMIT 1`
+	// divides the seq-scan cost estimate by the expected number of matches, so
+	// a large estimate makes a full scan look nearly free. Its sibling on
+	// flow_rollups was measured on production reading 1,971,092 buffers over
+	// 23 seconds to return zero rows, every five minutes. See the note in
+	// aggregateRollupsUp.
 
 	// UNFILTERED deliberately — see the note on the promote path below. The
 	// watermark is only an upper bound excluding rows that arrive mid-pass,
@@ -924,17 +924,23 @@ func (d *Database) aggregateRollupsUp(srcInterval, dstInterval string, cutoff ti
 	}
 	bucketExpr := d.dialect.TimeBucket(bucketUnit, "timestamp")
 
-	var probe []int64
-	if err := d.db.Model(&models.FlowRollup{}).
-		Where("interval_type = ? AND timestamp < ?", srcInterval, cutoff).
-		Select("1").Limit(1).
-		Scan(&probe).Error; err != nil {
-		log.Printf("Flow rollup: %s work probe: %v (will retry next cycle)", srcInterval, err)
-		return false
-	}
-	if len(probe) == 0 {
-		return false
-	}
+	// No work probe here — deliberately, and this is the site that proved why.
+	//
+	// The probe used to be `SELECT 1 FROM flow_rollups WHERE interval_type = ?
+	// AND timestamp < ? LIMIT 1`. idx_rollup_interval_ts covers that predicate
+	// exactly, but `LIMIT 1` prices a seq scan as (total cost / expected
+	// matches), and with ~21M rows estimated to match the planner concluded the
+	// first row was immediately at hand. Zero rows actually matched, so it read
+	// the entire 19GB table to find nothing — measured on production at
+	// 1,971,092 buffers and 23,234ms, running every five minutes forever.
+	//
+	// It is not replaced by an ORDER BY, because oldestEligibleTimestamp below
+	// already answers the identical question correctly: it returns ok=false
+	// exactly when MIN(timestamp) IS NULL, from the same index, as a
+	// first-tuple stop measured at 1.9ms on the same zero-eligible case. The
+	// unfiltered watermark between here and there is unaffected (it always runs
+	// when any row exists, and watermark == 0 also returns false), so the whole
+	// no-work path now costs about 7.7ms instead of 23 seconds.
 
 	// The watermark is deliberately UNFILTERED, and this is the site that
 	// proved why. PostgreSQL rewrites MAX(id) into a backward walk of the

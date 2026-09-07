@@ -246,23 +246,65 @@ func (d *Database) SaveInterfaceAddresses(addrs []models.InterfaceAddress) error
 }
 
 // GetLatestInterfaceAddresses returns the latest interface address snapshot per device.
+//
+// Same correlated shape as GetAllLatestInterfaces, and for the same reasons —
+// see that function's comment for the measurements and for why a time bound was
+// rejected. The performance stakes here are far lower (interface_addresses is
+// replaced rather than appended, so production holds ~67 rows and the old shape
+// measured 0.32ms), but the anti-pattern is identical and is not left in place
+// to be copied a third time.
 func (d *Database) GetLatestInterfaceAddresses() ([]models.InterfaceAddress, error) {
 	var addrs []models.InterfaceAddress
 	err := d.db.Raw(`
-		SELECT a.* FROM interface_addresses a
-		INNER JOIN (SELECT device_id, MAX(timestamp) as max_ts FROM interface_addresses GROUP BY device_id) latest
-		ON a.device_id = latest.device_id AND a.timestamp = latest.max_ts
+		SELECT a.* FROM devices d
+		JOIN interface_addresses a
+		  ON a.device_id = d.id
+		 AND a.timestamp = (SELECT MAX(s.timestamp) FROM interface_addresses s WHERE s.device_id = d.id)
 	`).Scan(&addrs).Error
 	return addrs, err
 }
 
 // GetAllLatestInterfaces returns the latest interface stats snapshot across all devices.
+//
+// Driven from `devices` with a CORRELATED subquery, not from a GROUP BY over
+// interface_stats, and not from a time bound. All three alternatives were
+// measured on production (15.4M rows, 5GB):
+//
+//	unbounded GROUP BY (the old shape)  423,092 buffers  ~1,700ms
+//	bounded to 2h                        26,117 buffers     255ms
+//	correlated subquery (this)               60 buffers     0.836ms
+//
+// The old shape could not use any index: MAX(timestamp) GROUP BY device_id over
+// the whole table is a Parallel Seq Scan, and the poller runs this ~4x/minute
+// forever, which made interface_stats the single largest source of read I/O in
+// the database (52.9 billion blocks, five times the 134GB syslog_messages).
+//
+// A time bound was rejected rather than merely passed over. Three of the four
+// callers need a window wider than any value that helps: checkRelayedTelemetry
+// needs the 24h telemetryStaleLookback or evaluateTelemetryStale's interface
+// signal becomes unfireable, detectVPNConnections needs >= VPNEvidenceGrace or
+// CleanupStaleAutoConnectionsBefore deletes connections early, and
+// detectOverlayConnections has no freshness gate at all so ANY bound deletes
+// edges. Correlating on device_id removes the window entirely — a device silent
+// for a month still reports its last known interfaces.
+//
+// LATERAL would express this more directly but is a syntax error on SQLite,
+// which is what every cmd/poller test runs on (NewDatabaseForTesting). The
+// correlated form parses on both and Postgres folds it to
+// `Index Cond: ((device_id = d.id) AND (timestamp = (SubPlan 2)))` over
+// idx_iface_device_ts, so cost scales with device count, not table size.
+//
+// Deliberately NOT scoped to active devices: the old query grouped over
+// interface_stats and so included retired devices, and the poller filters
+// separately via GetActiveDevices. Scoping here would silently drop a retired
+// device's interfaces out of VPN, overlay and L2 detection.
 func (d *Database) GetAllLatestInterfaces() ([]models.InterfaceStats, error) {
 	var ifaces []models.InterfaceStats
 	err := d.db.Raw(`
-		SELECT i.* FROM interface_stats i
-		INNER JOIN (SELECT device_id, MAX(timestamp) as max_ts FROM interface_stats GROUP BY device_id) latest
-		ON i.device_id = latest.device_id AND i.timestamp = latest.max_ts
+		SELECT i.* FROM devices d
+		JOIN interface_stats i
+		  ON i.device_id = d.id
+		 AND i.timestamp = (SELECT MAX(s.timestamp) FROM interface_stats s WHERE s.device_id = d.id)
 	`).Scan(&ifaces).Error
 	return ifaces, err
 }
