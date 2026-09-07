@@ -3,6 +3,9 @@ package models
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 // AlertType is the typed enum of alert categories raised by the AlertManager.
@@ -779,7 +782,16 @@ type AuditLog struct {
 // NULL lets a replacement reuse a retired device's name while the retired row
 // keeps its own history. The `index` tag declares the plain lookup index.
 type Device struct {
-	ID              uint   `json:"id" gorm:"primaryKey"`
+	ID uint `json:"id" gorm:"primaryKey"`
+	// UUID is the device's immutable identity, minted by BeforeCreate on first
+	// insert (migration v64 backfills rows created before it existed). Unlike
+	// the name it is never reused: it survives retire/restore under the same
+	// row and is never carried onto a replacement device that takes over a
+	// retired device's name. The IPSec wizard derives the default IKE identity
+	// (`fwm-<uuid>`) from it, and it is the handle for future external
+	// references. Read-only through the API (never in the PUT allow-list;
+	// UpdateDevice omits the column on Save).
+	UUID            string `json:"uuid" gorm:"size:36;uniqueIndex"`
 	Name            string `json:"name" gorm:"index;not null"`
 	Hostname        string `json:"hostname"`
 	IPAddress       string `json:"ip_address" gorm:"not null"`
@@ -843,6 +855,19 @@ type Device struct {
 	// can name it. Status is deliberately left as-is (no fourth status bucket).
 	// Mirrors Probe.DecommissionedAt.
 	RetiredAt *time.Time `json:"retired_at,omitempty" gorm:"index"`
+}
+
+// BeforeCreate mints the device UUID when the caller left it empty. It is a
+// GORM hook (the first in this package) rather than a CreateDevice step
+// because the test suites insert devices with a raw `db.Create` in dozens of
+// places: a plain string column stores an empty string (not NULL) for an unset field, so
+// without the hook the second raw create would trip the unique index. A
+// caller-supplied UUID is kept as-is.
+func (d *Device) BeforeCreate(tx *gorm.DB) error {
+	if d.UUID == "" {
+		d.UUID = uuid.NewString()
+	}
+	return nil
 }
 
 type DeviceTunnel struct {

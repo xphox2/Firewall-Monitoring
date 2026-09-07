@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"firewall-mon/internal/ipsec"
+
+	"github.com/google/uuid"
 )
 
 // TestValidate_Identity covers the type-aware IKE identity validation: block any
@@ -52,6 +54,18 @@ func TestValidate_Identity(t *testing.T) {
 	for _, val := range []string{"TECHLABS", "fw.technicallabs.org", "prince_1.test.com", "my-fw.example.com"} {
 		if fs := ipsec.Validate(withID(ipsec.IDTypeFQDN, val), c); ipsec.HasBlock(fs) {
 			t.Errorf("fqdn %q should be a valid identity, got blocks %+v", val, fs)
+		}
+	}
+
+	// The wizard's default identity is `fwm-<device uuid>` (v0.11.242): 40
+	// chars of [a-z0-9-], not IP-shaped, and isIPRange splits on the FIRST '-'
+	// so "fwm" is never parsed as an address. It must produce NO finding at
+	// all (not even a warning) on the FortiGate⇄OPNsense pair — one fixed
+	// value and one freshly minted, in case a random UUID ever hits a
+	// digit-only pattern.
+	for _, val := range []string{"fwm-0f8a2c1e-4b6d-4e9a-8c3b-2d1e5f7a9b0c", "fwm-" + uuid.NewString()} {
+		if fs := ipsec.Validate(withID(ipsec.IDTypeFQDN, val), c); len(fs) != 0 {
+			t.Errorf("uuid identity %q should yield no findings, got %+v", val, fs)
 		}
 	}
 

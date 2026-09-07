@@ -12,6 +12,7 @@ import (
 
 	"firewall-mon/internal/models"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 )
@@ -1503,6 +1504,47 @@ func (d *Database) migrateDeviceNameUniqueAmongActive() error {
 		}
 		if err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_name_active ON devices (name) WHERE retired_at IS NULL`).Error; err != nil {
 			return fmt.Errorf("migrate v63: create active-name unique index: %w", err)
+		}
+		return nil
+	})
+}
+
+// migrateDeviceUUID (v64) adds Device.uuid (+ its unique index) and backfills
+// every existing row with a fresh UUID (v0.11.242). AutoMigrate adds the
+// column as NULL on an upgraded install, and rows inserted by v61's raw INSERT
+// (which does not name the column) are NULL on a fresh install too — the
+// unique index tolerates NULLs on both dialects, so the ADD COLUMN itself
+// cannot fail, and the backfill then removes them. An empty string is treated
+// the same as NULL so a row created by any pre-hook path is covered as well.
+//
+// The backfill is a raw UPDATE per row rather than a GORM Update so
+// updated_at is left alone (the device did not change; it merely gained an
+// identity). Idempotent: a rerun selects nothing. One transaction with
+// `SET LOCAL statement_timeout = 0` on Postgres, the v61/v62/v63 pattern —
+// the table is tiny, but the migration must never be the one that trips
+// AUDIT-037's per-connection statement timeout.
+func (d *Database) migrateDeviceUUID() error {
+	if err := d.db.AutoMigrate(&models.Device{}); err != nil {
+		return fmt.Errorf("migrate v64: add uuid column: %w", err)
+	}
+	return d.db.Transaction(func(tx *gorm.DB) error {
+		if d.dialect.IsPostgres() {
+			if err := tx.Exec("SET LOCAL statement_timeout = 0").Error; err != nil {
+				return fmt.Errorf("lift statement_timeout: %w", err)
+			}
+		}
+		var ids []uint
+		if err := tx.Model(&models.Device{}).Where("uuid IS NULL OR uuid = ''").Order("id").
+			Pluck("id", &ids).Error; err != nil {
+			return fmt.Errorf("migrate v64: list devices without a uuid: %w", err)
+		}
+		for _, id := range ids {
+			if err := tx.Exec(`UPDATE devices SET uuid = ? WHERE id = ?`, uuid.NewString(), id).Error; err != nil {
+				return fmt.Errorf("migrate v64: backfill uuid for device %d: %w", id, err)
+			}
+		}
+		if len(ids) > 0 {
+			log.Printf("migrate v64: backfilled uuid for %d device(s)", len(ids))
 		}
 		return nil
 	})

@@ -295,12 +295,16 @@ instead: the Devices page prompts for one and re-sends the restore with
 `{"name": …}`; the rename and the restore are one statement, so a rejected
 name leaves the row retired and unchanged.
 
-**IPSec identity caveat.** The IPSec wizard prefills the IKE local identity
-from the device name, so a replacement that reuses a retired device's name
-presents the same identity as the retired device's tunnels. Before
-provisioning tunnels on the replacement, roll back the retired device's
-tunnels on any shared peer; otherwise the peer holds two phase1s with the
-same identity and matches whichever it evaluates first.
+**IPSec identity.** Every device carries an immutable UUID (`uuid` on the
+device API, shown on the device page and in the edit dialog; migration v64
+backfills devices created before v0.11.242). The IPSec wizard defaults a
+*new* tunnel's IKE local identity to `fwm-<uuid>` rather than the device
+name, so a replacement device that reuses a retired device's name presents a
+different identity automatically — a shared peer never sees two phase1s
+with the same identity. Existing tunnels keep the identity stored in their
+intent (changing a deployed identity would break phase 1); the wizard's edit
+path shows that stored value, and an operator-entered identity still wins
+over the default.
 
 **Probes and sites.** A retired device does not block deleting or
 decommissioning its probe (delete detaches it: `probe_id` becomes NULL). A

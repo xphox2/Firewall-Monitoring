@@ -149,8 +149,16 @@ func (d *Database) CreateDevice(device *models.Device) error {
 	return nil
 }
 
+// UpdateDevice writes every column of device except `uuid`: the UUID is
+// immutable, and a Save from a struct that was loaded without it (or built
+// by hand) must neither blank nor replace the stored value.
 func (d *Database) UpdateDevice(device *models.Device) error {
-	return d.db.Save(device).Error
+	// Save would fall through to an INSERT for a zero id (and to an upsert
+	// when the row is missing); both would store a NULL uuid. Refuse instead.
+	if device.ID == 0 {
+		return errors.New("update device: id required")
+	}
+	return d.db.Omit("uuid").Save(device).Error
 }
 
 // UpdateDeviceStatus performs a targeted update of only status and last_polled fields.

@@ -2897,6 +2897,9 @@
         if (id) {
             var d = currentDevices.find(function(d) { return d.id === id; });
             document.getElementById('device-id').value = d.id;
+            // Read-only server-minted UUID (the API ignores it on PUT).
+            document.getElementById('device-uuid').textContent = d.uuid || '—';
+            document.getElementById('device-uuid-group').style.display = '';
             document.getElementById('device-name').value = d.name;
             document.getElementById('device-ip').value = d.ip_address;
             document.getElementById('device-snmp-port').value = d.snmp_port || 161;
@@ -2927,6 +2930,8 @@
         } else {
             document.getElementById('device-form').reset();
             document.getElementById('device-id').value = '';
+            document.getElementById('device-uuid').textContent = '';
+            document.getElementById('device-uuid-group').style.display = 'none';
             document.getElementById('device-snmp-port').value = '161';
             document.getElementById('device-snmp-version').value = '2c';
             document.getElementById('device-community').value = 'public';

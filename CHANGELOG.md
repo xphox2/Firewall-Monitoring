@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.242] - 2026-09-07
+
+### Added
+
+**Every device has an immutable UUID, and the IPSec wizard derives the default IKE identity from it instead of the name.** v0.11.241 let a replacement device reuse a retired device's name, but the wizard prefilled the IKE local identity from that name — so a same-name replacement would have presented the same identity as the retired device's tunnels on a shared peer, which then holds two phase1s with one identity and matches whichever it evaluates first. `devices.uuid` (migration v64 `device_uuid`: adds the column and its unique index `idx_devices_uuid`, then backfills every row without one — including rows v61 materialized — in one transaction with the statement timeout lifted; idempotent, `updated_at` untouched) is minted by a `Device.BeforeCreate` hook on first insert, survives retire/restore under the same row and is never carried onto a replacement.
+
+- The device API exposes `uuid` unmasked on every read path (list, detail, the create response); it is read-only — dropped from `PUT` bodies by the allow-list, cleared from `POST` bodies before the hook mints the server's value, and `UpdateDevice` omits the column on `Save` so a struct loaded without it can never blank or replace it. The unauthenticated `GET /api/public/devices` key set is pinned to exactly `{id, name, status, wan_speed_mbps}` by a test so the UUID never reaches the public page.
+- IPSec wizard: a new tunnel's FQDN-type identity defaults to `fwm-<uuid>` (40 characters of `[a-z0-9-]`; passes the 63-char cap and the FQDN charset on both FortiGate and OPNsense, and `fwm-` is the marker the OPNsense driver already uses for its objects). The sanitized device name remains the fallback only for a device with no UUID; the `ip` type and the stored identity of an existing tunnel are unchanged — deployed tunnels keep their identity. The identity fields get a help line and a `fwm-<uuid>` placeholder.
+- Device detail page shows the UUID with a copy button; the device edit dialog shows it read-only.
+
+### Documentation
+
+- `docs/OPERATIONS.md` retire section: the identity caveat (roll back the retired device's tunnels first) is replaced by the UUID-derived default identity; README notes `uuid` as read-only on the device API.
+
 ## [0.11.241] - 2026-09-07
 
 ### Changed

@@ -200,6 +200,19 @@
         statusBadge.className = 'badge ' + (dev.status || 'unknown');
 
         document.getElementById('deviceIP').textContent = dev.ip_address + ':' + dev.snmp_port;
+        // Device UUID (immutable server-minted identity; the IPSec wizard derives
+        // the default IKE identity from it). Hidden when the payload lacks it.
+        var uuidWrap = document.getElementById('deviceUuidWrap');
+        var uuidEl = document.getElementById('deviceUuid');
+        if (uuidWrap && uuidEl) {
+            if (typeof dev.uuid === 'string' && dev.uuid !== '') {
+                uuidEl.textContent = dev.uuid;
+                uuidWrap.classList.remove('hidden');
+            } else {
+                uuidEl.textContent = '';
+                uuidWrap.classList.add('hidden');
+            }
+        }
         document.getElementById('deviceProbe').textContent = dev.probe ? 'Probe: ' + dev.probe.name : '';
         document.getElementById('deviceSite').textContent = dev.site ? 'Site: ' + dev.site.name : '';
         document.getElementById('devicePolled').textContent = dev.last_polled ? 'Last polled: ' + formatTime(dev.last_polled) : '';
@@ -2649,6 +2662,19 @@
     // Register all delegated event handlers
     AC.delegateEvent('click', {
         'restore-device': function() { restoreDevice(); },
+        'copy-device-uuid': function() {
+            var uuid = document.getElementById('deviceUuid').textContent;
+            if (!uuid) return;
+            // navigator.clipboard is absent on a plain-HTTP console (non-secure
+            // context) and writeText can be rejected; never claim success early.
+            if (!(navigator.clipboard && navigator.clipboard.writeText)) {
+                AC.showError('Clipboard unavailable on this connection; select the UUID to copy it.');
+                return;
+            }
+            navigator.clipboard.writeText(uuid)
+                .then(function() { AC.showSuccess('UUID copied'); })
+                .catch(function() { AC.showError('Copy failed; select the UUID to copy it.'); });
+        },
         'logout': function() {
             AC.doLogout();
         },

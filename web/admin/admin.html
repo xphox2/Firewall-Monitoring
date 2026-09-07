@@ -2449,6 +2449,13 @@
             </div>
             <form id="device-form">
                 <input type="hidden" id="device-id">
+                <!-- Read-only identity minted by the server on create; shown on edit
+                     only (hidden on add). Not a control, so a span, not <label for>. -->
+                <div class="form-group" id="device-uuid-group" style="display:none">
+                    <span style="display:block;margin-bottom:4px;color:var(--fwmon-text-faint);font-size:0.82rem;font-weight:500;">Device UUID</span>
+                    <code id="device-uuid" style="font-size:0.85rem;word-break:break-all;"></code>
+                    <div class="field-hint">Immutable. New IPSec tunnels default their IKE identity to fwm-&lt;uuid&gt;.</div>
+                </div>
                 <div class="form-row">
                     <div class="form-group">
                         <label for="device-name">Name *</label>
@@ -2887,8 +2894,9 @@
                                             <label for="ipsec-a-id">Identity this site presents</label>
                                             <div style="display:flex;gap:6px;">
                                                 <select id="ipsec-a-idtype" style="flex:0 0 auto;width:auto;" title="Identity type"></select>
-                                                <input type="text" id="ipsec-a-id" placeholder="site-a" maxlength="63" style="flex:1;min-width:0;">
+                                                <input type="text" id="ipsec-a-id" placeholder="fwm-<uuid>" maxlength="63" style="flex:1;min-width:0;">
                                             </div>
+                                            <small id="ipsec-a-id-help" class="field-hint" style="display:block;">Defaults to this device's UUID (fwm-…) so a replacement device never reuses a retired device's identity.</small>
                                             <div id="ipsec-a-id-hint" class="ipsec-fielderr" style="display:none;"></div>
                                             <div class="ipsec-anchor" data-anchor="a-id"></div>
                                         </div>
@@ -2939,8 +2947,9 @@
                                             <label for="ipsec-b-id">Identity this site presents</label>
                                             <div style="display:flex;gap:6px;">
                                                 <select id="ipsec-b-idtype" style="flex:0 0 auto;width:auto;" title="Identity type"></select>
-                                                <input type="text" id="ipsec-b-id" placeholder="site-b" maxlength="63" style="flex:1;min-width:0;">
+                                                <input type="text" id="ipsec-b-id" placeholder="fwm-<uuid>" maxlength="63" style="flex:1;min-width:0;">
                                             </div>
+                                            <small id="ipsec-b-id-help" class="field-hint" style="display:block;">Defaults to this device's UUID (fwm-…) so a replacement device never reuses a retired device's identity.</small>
                                             <div id="ipsec-b-id-hint" class="ipsec-fielderr" style="display:none;"></div>
                                             <div class="ipsec-anchor" data-anchor="b-id"></div>
                                         </div>
