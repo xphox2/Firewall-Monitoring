@@ -59,7 +59,6 @@ func TestMigrateMaterializeOrphanedDevices(t *testing.T) {
 	if err := d.db.Create(&models.VPNStatus{DeviceID: 42, Timestamp: now, TunnelName: "t"}).Error; err != nil {
 		t.Fatalf("seed vpn: %v", err)
 	}
-
 	if err := d.migrateMaterializeOrphanedDevices(); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -110,4 +109,87 @@ func TestMigrateMaterializeOrphanedDevices(t *testing.T) {
 	if err := d.RestoreDevice(42, nil); err != nil {
 		t.Errorf("restore materialized device: %v", err)
 	}
+}
+
+// TestMigrateCloseAlertsForRetiredDevices pins migration v62: a device that
+// is already retired (the v61-materialized shape — retired_at set, alert rows
+// untouched) gets its unacked/unresolved alerts acknowledged + resolved with
+// the RetireDevice note and its open incident closed, while a live device's
+// unacked alert and incident are untouched; a rerun changes nothing.
+func TestMigrateCloseAlertsForRetiredDevices(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	now := time.Now().UTC()
+	retiredAt := now.Add(-time.Hour)
+	retired := models.Device{Name: "GONE-FW", IPAddress: "10.0.0.4", RetiredAt: &retiredAt}
+	live := models.Device{Name: "LIVE-FW", IPAddress: "10.9.9.9"}
+	for _, dev := range []*models.Device{&retired, &live} {
+		if err := d.db.Create(dev).Error; err != nil {
+			t.Fatalf("seed device: %v", err)
+		}
+	}
+	seed := []*models.Alert{
+		{DeviceID: retired.ID, Timestamp: now.Add(-30 * time.Minute), AlertType: "DEVICE_OFFLINE", Message: "Device GONE-FW (10.0.0.4) is offline"},
+		{DeviceID: retired.ID, Timestamp: now.Add(-2 * time.Hour), AlertType: "CPU_HIGH", Message: "CPU 99%", Acknowledged: true, AcknowledgedAt: &retiredAt, Notes: "seen"},
+		{DeviceID: live.ID, Timestamp: now.Add(-30 * time.Minute), AlertType: "DEVICE_OFFLINE", Message: "Device LIVE-FW (10.9.9.9) is offline"},
+	}
+	for _, a := range seed {
+		if err := d.db.Create(a).Error; err != nil {
+			t.Fatalf("seed alert: %v", err)
+		}
+	}
+	for _, id := range []uint{retired.ID, live.ID} {
+		if err := d.db.Create(&models.Incident{DeviceID: id, StartedAt: now, Severity: models.SeverityCritical, Title: "Device offline"}).Error; err != nil {
+			t.Fatalf("seed incident: %v", err)
+		}
+	}
+
+	if err := d.migrateCloseAlertsForRetiredDevices(); err != nil {
+		t.Fatalf("migrate v62: %v", err)
+	}
+
+	const note = "Auto-resolved: device retired"
+	verify := func() {
+		t.Helper()
+		var alerts []models.Alert
+		if err := d.db.Order("id").Find(&alerts).Error; err != nil {
+			t.Fatalf("load alerts: %v", err)
+		}
+		for _, a := range alerts {
+			switch {
+			case a.DeviceID == retired.ID && a.AlertType == "DEVICE_OFFLINE":
+				if !a.Acknowledged || a.AcknowledgedAt == nil || a.ResolvedAt == nil || a.Notes != note {
+					t.Errorf("retired unacked alert not closed: acked=%v acked_at=%v resolved_at=%v notes=%q", a.Acknowledged, a.AcknowledgedAt, a.ResolvedAt, a.Notes)
+				}
+			case a.DeviceID == retired.ID:
+				// Acked-but-open: resolved, operator ack preserved, note appended.
+				if !a.Acknowledged || a.AcknowledgedAt == nil || !a.AcknowledgedAt.Equal(retiredAt) || a.ResolvedAt == nil || a.Notes != "seen\n"+note {
+					t.Errorf("retired acked alert not resolved in place: acked=%v acked_at=%v resolved_at=%v notes=%q", a.Acknowledged, a.AcknowledgedAt, a.ResolvedAt, a.Notes)
+				}
+			default:
+				if a.Acknowledged || a.AcknowledgedAt != nil || a.ResolvedAt != nil || a.Notes != "" {
+					t.Errorf("live device alert %d was touched: acked=%v resolved_at=%v notes=%q", a.ID, a.Acknowledged, a.ResolvedAt, a.Notes)
+				}
+			}
+		}
+		var incs []models.Incident
+		if err := d.db.Order("id").Find(&incs).Error; err != nil {
+			t.Fatalf("load incidents: %v", err)
+		}
+		for _, inc := range incs {
+			if inc.DeviceID == retired.ID {
+				if inc.ResolvedAt == nil || inc.Title != "Device offline (device retired)" {
+					t.Errorf("retired incident not closed: resolved_at=%v title=%q", inc.ResolvedAt, inc.Title)
+				}
+			} else if inc.ResolvedAt != nil || inc.Title != "Device offline" {
+				t.Errorf("live incident was touched: resolved_at=%v title=%q", inc.ResolvedAt, inc.Title)
+			}
+		}
+	}
+	verify()
+
+	// Rerun: nothing matches, no double note / suffix.
+	if err := d.migrateCloseAlertsForRetiredDevices(); err != nil {
+		t.Fatalf("migrate v62 rerun: %v", err)
+	}
+	verify()
 }

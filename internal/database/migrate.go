@@ -1405,6 +1405,49 @@ func parseDeviceStatusMessage(msg string) (string, string) {
 	return name, ip
 }
 
+// migrateCloseAlertsForRetiredDevices (v62) closes the open alert and incident
+// rows of EVERY retired device, exactly as RetireDevice does at retire time
+// (closeAlertsForRetiredDevice, note "Auto-resolved: device retired").
+//
+// Why: v61 recreated deleted devices as retired rows but left their alert rows
+// as they were, and on production the recovered device carried an open,
+// unacknowledged DEVICE_OFFLINE raised inside the 24h GetUnacknowledgedAlerts
+// window — CheckEscalations kept re-notifying it. v61 has already been
+// recorded as applied there, so the fix has to be a new migration rather than
+// a change inside v61's loop. Sweeping every retired device (not only the
+// v61-materialized ones) also covers any row a future code path retires
+// without the alert step.
+//
+// Idempotent by construction: the helper's UPDATEs only match unacknowledged
+// or unresolved rows, so a rerun finds nothing. One transaction with
+// `SET LOCAL statement_timeout = 0` on Postgres, the v61 pattern: the alert
+// UPDATEs are indexed on device_id but a prod-sized alerts table can still
+// exceed AUDIT-037's per-connection 30s statement_timeout.
+func (d *Database) migrateCloseAlertsForRetiredDevices() error {
+	return d.db.Transaction(func(tx *gorm.DB) error {
+		if d.dialect.IsPostgres() {
+			if err := tx.Exec("SET LOCAL statement_timeout = 0").Error; err != nil {
+				return fmt.Errorf("lift statement_timeout: %w", err)
+			}
+		}
+		var ids []uint
+		if err := tx.Model(&models.Device{}).Where("retired_at IS NOT NULL").Order("id").
+			Pluck("id", &ids).Error; err != nil {
+			return fmt.Errorf("list retired devices: %w", err)
+		}
+		now := time.Now().UTC()
+		for _, id := range ids {
+			if err := closeAlertsForRetiredDevice(tx, id, "Auto-resolved: device retired", now); err != nil {
+				return fmt.Errorf("migrate v62: %w", err)
+			}
+		}
+		if len(ids) > 0 {
+			log.Printf("migrate v62: closed open alerts and incidents for %d retired device(s)", len(ids))
+		}
+		return nil
+	})
+}
+
 // migrateDeviceSSHHostKey (v6) adds Device.ssh_host_key — the pinned SSH
 // host-key fingerprint used for change detection. Additive nullable column;
 // AutoMigrate adds only what's missing, so this is idempotent and safe on a

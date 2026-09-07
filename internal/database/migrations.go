@@ -110,7 +110,8 @@ var registeredMigrations = []migration{
 	{version: 59, name: "syslog_ingest_hourly", run: (*Database).migrateSyslogIngestHourly},
 	{version: 60, name: "device_retired_at", run: (*Database).migrateDeviceRetiredAt},
 	{version: 61, name: "materialize_orphaned_devices", run: (*Database).migrateMaterializeOrphanedDevices},
-	// v62 is reserved for the device purge job table (follow-up PR).
+	{version: 62, name: "close_alerts_for_retired_devices", run: (*Database).migrateCloseAlertsForRetiredDevices},
+	// v63 is reserved for the device purge job table (follow-up PR).
 }
 
 // RunMigrations applies every registered migration not yet recorded in
