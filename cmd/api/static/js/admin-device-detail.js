@@ -34,6 +34,8 @@
     if (!deviceId || deviceId === 'detail') {
         deviceId = null;
     }
+    var purgeJob = null;      // latest purge job for this device (admin sessions only)
+    var purgeJobTimer = null; // AC.pollWhenVisible handle while the job is active
 
     window.togglePublicIface = function(ifaceName, isPublic) {
         // AUDIT-185: refuse to POST until the full public_interfaces map has
@@ -134,14 +136,92 @@
     }
 
     // Retired banner (device.retired_at set): polling has stopped, history is
-    // kept, Restore re-enables the device with its stored settings.
+    // kept, Restore re-enables the device with its stored settings. An admin
+    // also gets Delete permanently (the purge dialog shared via
+    // AC.openPurgeDevice); while a purge job is active the banner shows its
+    // progress, hides Restore/Delete and offers Cancel instead.
     function renderRetiredBanner(dev) {
         var banner = document.getElementById('retiredBanner');
         var text = document.getElementById('retiredBannerText');
         if (!banner || !text) return;
-        if (!dev.retired_at) { banner.classList.add('hidden'); return; }
+        if (!dev.retired_at) { banner.classList.add('hidden'); stopPurgePolling(); return; }
         text.textContent = 'Retired on ' + AC.formatDate(dev.retired_at) + '. Data preserved.';
         banner.classList.remove('hidden');
+        renderPurgeState();
+        // /devices/:id/purge is admin-only: only an admin session asks.
+        AC.whenMe().then(function(me) {
+            if (me && me.role === 'admin') loadPurgeJob();
+        }).catch(function() { /* role unknown — no purge state shown */ });
+    }
+
+    function renderPurgeState() {
+        var progress = document.getElementById('retiredBannerPurge');
+        var restoreBtn = document.getElementById('retiredBannerRestore');
+        var purgeBtn = document.getElementById('retiredBannerPurgeBtn');
+        var cancelBtn = document.getElementById('retiredBannerCancelBtn');
+        if (!progress) return;
+        var active = AC.purgeJobActive(purgeJob);
+        var line = '';
+        if (active) line = 'Purging — ' + AC.purgeProgressText(purgeJob);
+        else if (purgeJob && purgeJob.status === 'failed') line = 'Purge failed after ' + AC.purgeProgressText(purgeJob) + (purgeJob.error ? ': ' + purgeJob.error : '') + '. Delete permanently again to resume.';
+        else if (purgeJob && purgeJob.status === 'cancelled') line = 'Purge cancelled after ' + AC.purgeProgressText(purgeJob) + '. Rows already removed are gone; Delete permanently again to resume.';
+        progress.textContent = line;
+        progress.style.display = line ? '' : 'none';
+        if (restoreBtn) restoreBtn.style.display = active ? 'none' : '';
+        if (purgeBtn) purgeBtn.style.display = active ? 'none' : '';
+        if (cancelBtn) cancelBtn.style.display = active ? '' : 'none';
+        if (active) startPurgePolling(); else stopPurgePolling();
+    }
+
+    function loadPurgeJob() {
+        AC.apiFetch('/admin/api/devices/' + deviceId + '/purge').then(function(resp) {
+            purgeJob = resp && resp.data ? resp.data : null;
+            if (purgeJob && purgeJob.status === 'done') {
+                // The device row is gone: reload so the page shows the
+                // "permanently deleted" message with the way back.
+                stopPurgePolling();
+                AC.showSuccess('Device permanently deleted');
+                loadDevice();
+                return;
+            }
+            renderPurgeState();
+        }).catch(function(e) {
+            if (e && e.status === 404) { purgeJob = null; renderPurgeState(); return; } // never purged
+            fwmonLog.error('Failed to load purge job:', e);
+        });
+    }
+
+    function startPurgePolling() {
+        if (purgeJobTimer) return;
+        purgeJobTimer = AC.pollWhenVisible(loadPurgeJob, 5000, { immediate: false });
+    }
+
+    function stopPurgePolling() {
+        if (purgeJobTimer) {
+            if (typeof purgeJobTimer.stop === 'function') purgeJobTimer.stop();
+            purgeJobTimer = null;
+        }
+    }
+
+    function openPurgeFromBanner() {
+        var dev = deviceData && deviceData.device;
+        if (!dev) return;
+        AC.openPurgeDevice(Number(deviceId), dev.name, {
+            onQueued: function(job) {
+                if (job) purgeJob = job;
+                renderPurgeState();
+                loadPurgeJob();
+            }
+        });
+    }
+
+    function cancelPurgeFromBanner() {
+        AC.cancelPurgeDevice(Number(deviceId)).then(function(ok) {
+            if (ok) loadPurgeJob();
+        }).catch(function(e) {
+            fwmonLog.error('Error cancelling purge:', e);
+            AC.showError('Error cancelling purge: ' + e.message);
+        });
     }
 
     function restoreDevice() {
@@ -2662,6 +2742,9 @@
     // Register all delegated event handlers
     AC.delegateEvent('click', {
         'restore-device': function() { restoreDevice(); },
+        'purge-device': function() { openPurgeFromBanner(); },
+        'purge-cancel': function() { cancelPurgeFromBanner(); },
+        'close-purge-device-modal': function() { AC.closePurgeDevice(); },
         'copy-device-uuid': function() {
             var uuid = document.getElementById('deviceUuid').textContent;
             if (!uuid) return;

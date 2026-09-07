@@ -48,6 +48,7 @@ type Store interface {
 	SecretStore
 	MaintenanceOpsStore
 	IPSecStore
+	DevicePurgeStore
 
 	// Gorm exposes the raw *gorm.DB for handlers that build ad-hoc queries
 	// (partial updates, one-off lookups). Unchanged escape hatch.
@@ -66,6 +67,20 @@ var _ Store = (*Database)(nil)
 // request-scoping plumbing in the handler layer never touches the concrete type.
 func (d *Database) WithContextStore(ctx context.Context) Store {
 	return d.WithContext(ctx)
+}
+
+// DevicePurgeStore covers the permanent device purge job queue (v0.11.243,
+// purge_jobs.go). The worker itself (RunDevicePurge, DevicePurgeWorker) runs
+// on the concrete background *Database in cmd/api, never through handlers.
+type DevicePurgeStore interface {
+	CreateDevicePurgeJob(job *models.DevicePurgeJob) error
+	GetDevicePurgeJob(id uint) (*models.DevicePurgeJob, error)
+	GetLatestDevicePurgeJob(deviceID uint) (*models.DevicePurgeJob, error)
+	GetActiveDevicePurgeJob(deviceID uint) (*models.DevicePurgeJob, error)
+	ListDevicePurgeJobs(recentTerminal int) ([]models.DevicePurgeJob, error)
+	CancelDevicePurgeJob(id uint) (status string, applied bool, err error)
+	EstimateDevicePurge(deviceID uint) (*DevicePurgeEstimate, error)
+	ListIPSecTunnelsForDevice(deviceID uint) ([]models.IPSecTunnel, error)
 }
 
 // IPSecStore covers IPSec provisioning-wizard tunnel CRUD (PSK encrypted at

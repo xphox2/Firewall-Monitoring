@@ -27,3 +27,18 @@ func IsUniqueViolation(err error) bool {
 	}
 	return strings.Contains(err.Error(), "UNIQUE constraint failed")
 }
+
+// sqlState returns the Postgres SQLSTATE code carried by err (unwrapped through
+// any %w chain), or "" when err is nil or not a Postgres driver error (SQLite
+// never sets one). The purge worker branches on it: 57014 statement timeout,
+// 55P03 lock timeout, 42P01 relation vanished (a partition dropped by retention).
+func sqlState(err error) string {
+	if err == nil {
+		return ""
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code
+	}
+	return ""
+}

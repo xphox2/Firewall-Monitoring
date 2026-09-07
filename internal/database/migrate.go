@@ -17,77 +17,83 @@ import (
 	"gorm.io/gorm/schema"
 )
 
+// baselineModels is every model the baseline migration AutoMigrates. A package
+// var (not a function local) so the device-purge coverage test can reflect
+// over it: every struct here with a device-keyed column must have an entry in
+// devicePurgeTables (purge.go), or a purge would leave that table's rows behind.
+var baselineModels = []interface{}{
+	&models.SystemStatus{},
+	&models.ServerMetric{},
+	&models.InterfaceStats{},
+	&models.VPNStatus{},
+	&models.HAStatus{},
+	&models.HardwareSensor{},
+	&models.ProcessorStats{},
+	&models.DiskUsage{},
+	&models.LoadAverage{},
+	&models.TopologyEntry{},
+	&models.TopologyNeighbor{},
+	&models.TrapEvent{},
+	&models.Alert{},
+	&models.UptimeRecord{},
+	&models.LoginAttempt{},
+	&models.AuditLog{},
+	&models.Device{},
+	&models.DeviceTunnel{},
+	&models.DeviceConnection{},
+	&models.SystemSetting{},
+	&models.Admin{},
+	&models.Site{},
+	&models.Probe{},
+	&models.ProbeApproval{},
+	&models.ProbeHeartbeat{},
+	&models.ProbeCommand{},
+	&models.IPSecTunnel{},
+	&models.PingResult{},
+	&models.PingStats{},
+	&models.SyslogMessage{},
+	&models.SyslogSummary{},
+	&models.FlowSample{},
+	&models.FlowRollup{},
+	&models.SiteDatabase{},
+	&models.SecurityStats{},
+	&models.SDWANHealth{},
+	&models.LicenseInfo{},
+	&models.InterfaceAddress{},
+	&models.IRCServer{},
+	&models.IRCChannel{},
+	&models.IRCCommand{},
+	&models.IRCMessageLog{},
+	&models.AlertPolicy{},
+	&models.AlertRule{},
+	&models.DeviceAlertConfig{},
+	&models.SiteAlertConfig{},
+	&models.MaintenanceWindow{},
+	&models.DeviceConfigRevision{},
+	&models.ProcessStats{},
+	&models.InterfaceErrors{},
+	&models.ProcessedBatch{},
+	&models.FlowDetection{},
+	&models.ThreatIntel{},
+	&models.ThreatFeedStatus{},
+	&models.FlowInterfaceCounter{},
+	&models.DeniedEvent{},
+	&models.EventRuleProfile{},
+	&models.EventRuleProfileToggle{},
+	&models.SyslogIngestHourly{},
+	// v65: device purge jobs.
+	&models.DevicePurgeJob{},
+}
+
 // migrateBaseline is the v1 "baseline" migration (AUDIT-044): it brings an empty
 // database up to the full current schema and is idempotent, so on an existing
 // (already-AutoMigrated) deployment every step is a no-op and the migration
 // runner simply records v1 as applied. It is invoked via the registry in
 // migrations.go — do not call it directly; call RunMigrations.
 func (d *Database) migrateBaseline() error {
-	allModels := []interface{}{
-		&models.SystemStatus{},
-		&models.ServerMetric{},
-		&models.InterfaceStats{},
-		&models.VPNStatus{},
-		&models.HAStatus{},
-		&models.HardwareSensor{},
-		&models.ProcessorStats{},
-		&models.DiskUsage{},
-		&models.LoadAverage{},
-		&models.TopologyEntry{},
-		&models.TopologyNeighbor{},
-		&models.TrapEvent{},
-		&models.Alert{},
-		&models.UptimeRecord{},
-		&models.LoginAttempt{},
-		&models.AuditLog{},
-		&models.Device{},
-		&models.DeviceTunnel{},
-		&models.DeviceConnection{},
-		&models.SystemSetting{},
-		&models.Admin{},
-		&models.Site{},
-		&models.Probe{},
-		&models.ProbeApproval{},
-		&models.ProbeHeartbeat{},
-		&models.ProbeCommand{},
-		&models.IPSecTunnel{},
-		&models.PingResult{},
-		&models.PingStats{},
-		&models.SyslogMessage{},
-		&models.SyslogSummary{},
-		&models.FlowSample{},
-		&models.FlowRollup{},
-		&models.SiteDatabase{},
-		&models.SecurityStats{},
-		&models.SDWANHealth{},
-		&models.LicenseInfo{},
-		&models.InterfaceAddress{},
-		&models.IRCServer{},
-		&models.IRCChannel{},
-		&models.IRCCommand{},
-		&models.IRCMessageLog{},
-		&models.AlertPolicy{},
-		&models.AlertRule{},
-		&models.DeviceAlertConfig{},
-		&models.SiteAlertConfig{},
-		&models.MaintenanceWindow{},
-		&models.DeviceConfigRevision{},
-		&models.ProcessStats{},
-		&models.InterfaceErrors{},
-		&models.ProcessedBatch{},
-		&models.FlowDetection{},
-		&models.ThreatIntel{},
-		&models.ThreatFeedStatus{},
-		&models.FlowInterfaceCounter{},
-		&models.DeniedEvent{},
-		&models.EventRuleProfile{},
-		&models.EventRuleProfileToggle{},
-		&models.SyslogIngestHourly{},
-	}
-
 	// Migrate each model individually so one failure doesn't block others.
 	// GORM may attempt table recreation which may fail with "already exists" on upgrades.
-	for _, model := range allModels {
+	for _, model := range baselineModels {
 		if err := d.db.AutoMigrate(model); err != nil {
 			log.Printf("AutoMigrate warning for %T: %v", model, err)
 		}
@@ -602,6 +608,16 @@ func (d *Database) EnsurePartitions() error {
 		indexPlans[def.tableName] = kept
 	}
 
+	// The DEFAULT child (v51 / created above) is a leaf like any monthly
+	// partition and takes the same plan. It was created bare (pkey only) —
+	// the index loop below only ever named the <table>_YYYYMM leaves — so
+	// every backdated row that lands there was read by full scan: retention's
+	// timestamp-bounded DELETE and the device purge's (device_id, timestamp)
+	// batch subquery both seq-scanned + sorted the default on every batch.
+	for _, def := range partitioned {
+		d.ensureLeafIndexes(def.tableName+"_default", indexPlans[def.tableName])
+	}
+
 	// Create partitions for current month + 6 months ahead
 	now := time.Now()
 	for i := 0; i <= 6; i++ {
@@ -651,23 +667,31 @@ func (d *Database) EnsurePartitions() error {
 			// pre-existing partitions too (IF NOT EXISTS makes it a cheap no-op
 			// when the index is present), so a partition created while an index
 			// was missing from the old list is backfilled on the next startup.
-			// Column names are quoted — interface_stats has an "index" column,
-			// which is a reserved word.
-			for _, idx := range indexPlans[def.tableName] {
-				quoted := make([]string, len(idx.cols))
-				for i, c := range idx.cols {
-					quoted[i] = `"` + c + `"`
-				}
-				createIdxSQL := fmt.Sprintf("CREATE INDEX IF NOT EXISTS idx_%s_%s ON %s (%s)",
-					partitionName, idx.suffix, partitionName, strings.Join(quoted, ", "))
-				if err := d.execMaintenanceDDL(createIdxSQL); err != nil {
-					log.Printf("Index creation warning on %s: %v", partitionName, err)
-				}
-			}
+			d.ensureLeafIndexes(partitionName, indexPlans[def.tableName])
 		}
 	}
 
 	return nil
+}
+
+// ensureLeafIndexes creates the plan's indexes on one leaf partition as
+// idx_<leaf>_<suffix>. IF NOT EXISTS makes it a no-op when the index is
+// present and a backfill when the leaf was created while an index was missing
+// from the plan. Column names are quoted — interface_stats has an "index"
+// column, which is a reserved word. Errors are logged, never returned: a
+// missing leaf index is a per-query slowdown, not a reason to fail startup.
+func (d *Database) ensureLeafIndexes(leaf string, plan []partitionIndex) {
+	for _, idx := range plan {
+		quoted := make([]string, len(idx.cols))
+		for i, c := range idx.cols {
+			quoted[i] = `"` + c + `"`
+		}
+		createIdxSQL := fmt.Sprintf("CREATE INDEX IF NOT EXISTS idx_%s_%s ON %s (%s)",
+			leaf, idx.suffix, leaf, strings.Join(quoted, ", "))
+		if err := d.execMaintenanceDDL(createIdxSQL); err != nil {
+			log.Printf("Index creation warning on %s: %v", leaf, err)
+		}
+	}
 }
 
 // migratePartitionDefaultPartitions is the v51 migration (AUDIT D2): create a
@@ -1702,6 +1726,13 @@ func (d *Database) migrateSystemStatusSource() error {
 // databases. The baseline AutoMigrate covers fresh installs only.
 func (d *Database) migrateServerMetrics() error {
 	return d.db.AutoMigrate(&models.ServerMetric{})
+}
+
+// migrateDevicePurgeJobs (v65) creates device_purge_jobs, the queue/progress
+// table of the permanent device purge worker (v0.11.243). AutoMigrate is
+// idempotent, so a fresh install (baseline already built it) is a no-op.
+func (d *Database) migrateDevicePurgeJobs() error {
+	return d.db.AutoMigrate(&models.DevicePurgeJob{})
 }
 
 // migrateSyslogSeverityIndex (v54) creates the (severity, timestamp) composite

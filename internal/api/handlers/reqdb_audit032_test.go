@@ -37,6 +37,7 @@ func TestRequestContextBoundary_AUDIT032(t *testing.T) {
 		"handlers_connections.go", "handlers_alert_policies.go", "handlers_sites.go",
 		"handlers_maintenance.go", "handlers_irc.go", "handlers_auth.go",
 		"handlers_audit.go", "handlers_probes.go", "handlers_reports.go",
+		"handlers_devices_purge.go",
 	}
 	for _, f := range inScope {
 		if !strings.Contains(read(f), "h.reqDB(c)") {

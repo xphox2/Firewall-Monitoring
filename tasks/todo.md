@@ -20,9 +20,11 @@
 - [x] QA gates; adversarial diff review; PR #249; CI; merged; deployed rust-01 2026-09-07 01:34 UTC; index shape + v0.11.241 verified
 
 ## v0.11.242 — device UUID + IPSec identity from UUID (plan approved 2026-09-07)
-- [ ] Backend: Device.UUID + BeforeCreate; UpdateDevice Omit(uuid); migration v64 backfill; tests; docs; changelog 0.11.242
-- [ ] UI: wizard defaultIdentity fwm-<uuid>; help text + placeholders; UUID on detail page + edit modal; shell guardrail
-- [ ] QA gates; adversarial diff review; PR; CI; merge; deploy rust-01; verify uuids populated + version
+- [x] Backend: Device.UUID + BeforeCreate; UpdateDevice Omit(uuid); migration v64 backfill; tests; docs; changelog 0.11.242
+- [x] UI: wizard defaultIdentity fwm-<uuid>; help text + placeholders; UUID on detail page + edit modal; shell guardrail
+- [x] QA gates; adversarial diff review; PR #250; CI; merged; deployed rust-01 2026-09-07 02:26 UTC; 6/6 uuids populated, v0.11.242
 
-## PR B — purge job (separate plan-mode delta)
-- [ ] not started
+## v0.11.243 — permanent purge job (plan approved 2026-09-07)
+- [ ] Backend: DevicePurgeJob + v65; devicePurgeTables + reflection coverage; batchedDeleteWhere (ORDER BY, per-table batch, timeouts, retries, partitions); worker (CAS claim, advisory lock, stale requeue, shutdown flip); handlers + 5 admin routes + reauthCaller; docs; changelog 0.11.243
+- [ ] UI: purge-device action, #purge-device-modal (estimate/name/password/2FA), PURGING badge + cancel, polling, detail banner
+- [ ] QA gates; adversarial diff review; PR; CI; merge; deploy rust-01; verify worker start + version

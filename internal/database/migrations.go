@@ -113,7 +113,7 @@ var registeredMigrations = []migration{
 	{version: 62, name: "close_alerts_for_retired_devices", run: (*Database).migrateCloseAlertsForRetiredDevices},
 	{version: 63, name: "device_name_unique_among_active", run: (*Database).migrateDeviceNameUniqueAmongActive},
 	{version: 64, name: "device_uuid", run: (*Database).migrateDeviceUUID},
-	// v65 is reserved for the device purge job table (follow-up PR).
+	{version: 65, name: "device_purge_jobs", run: (*Database).migrateDevicePurgeJobs},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

@@ -650,6 +650,43 @@ type Incident struct {
 
 func (Incident) TableName() string { return "incidents" }
 
+// DevicePurgeJob is one permanent-deletion job for a RETIRED device
+// (v0.11.243). The API worker (primary instance only) claims a pending row,
+// empties every device-keyed table in batches, then deletes the device row.
+//
+// Status lifecycle: pending → running → done | failed | cancelled, with the
+// transient `cancelling` set by the cancel endpoint on a running job (the
+// worker observes it between batches and finishes as `cancelled`). UpdatedAt
+// is the worker's heartbeat — it is touched on every batch — so a `running`
+// row whose updated_at is older than the requeue window belongs to a dead
+// process and is put back to `pending`. Every predicate the worker runs is
+// idempotent, so a re-run after a cancel/failure resumes from whatever rows
+// remain. Terminal rows are an audit trail kept 30 days (CleanupOldData).
+type DevicePurgeJob struct {
+	ID uint `json:"id" gorm:"primaryKey"`
+	// DeviceID is the row being purged. DeviceUUID/DeviceName are copied at
+	// enqueue so the job stays readable after the device row is gone.
+	DeviceID    uint   `json:"device_id" gorm:"index;not null"`
+	DeviceUUID  string `json:"device_uuid" gorm:"size:36"`
+	DeviceName  string `json:"device_name"`
+	RequestedBy string `json:"requested_by"`
+	Status      string `json:"status" gorm:"default:pending;index"`
+	// Progress, updated per batch by the worker.
+	CurrentTable string     `json:"current_table"`
+	RowsDeleted  int64      `json:"rows_deleted"`
+	TablesDone   int        `json:"tables_done"`
+	TablesTotal  int        `json:"tables_total"`
+	Error        string     `json:"error" gorm:"type:text"`
+	StartedAt    *time.Time `json:"started_at"`
+	FinishedAt   *time.Time `json:"finished_at"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+}
+
+// TableName pins the table name so the migration and the worker's raw SQL
+// share one literal.
+func (DevicePurgeJob) TableName() string { return "device_purge_jobs" }
+
 type DeviceAlertConfig struct {
 	ID       uint  `json:"id" gorm:"primaryKey"`
 	DeviceID uint  `json:"device_id" gorm:"uniqueIndex;not null"`

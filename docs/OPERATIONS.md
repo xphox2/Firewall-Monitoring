@@ -325,8 +325,78 @@ used when the recovered name is already taken). Each row is logged as
 Devices page (Retired tab) like any other retired device. The migration is
 idempotent and never scans the partitioned telemetry parents.
 
-**Permanent deletion** (purge of every row for a device) is not available yet;
-it lands in a follow-up as an admin-only, name-confirmed background job.
+### Permanently deleting a retired device (purge)
+
+Since v0.11.243 a **retired** device can be purged — every row keyed to it
+removed and the device row deleted — from the Devices page (Retired tab,
+"Delete permanently") or `POST /admin/api/devices/:id/purge`. It is the
+only destructive path and it is deliberately heavy:
+
+- **Admin-only and re-authenticated.** All five purge routes are admin-only.
+  The POST requires the device name typed back (`confirm_name`), the
+  caller's own password and — when the account has 2FA — a fresh
+  authenticator code (single-use; the same step-up as reveal-secret). Every
+  accepted request writes an audit row `purge_device` naming the device id,
+  UUID, name and job id; a cancel writes `purge_device_cancel`.
+- **Retired only.** An active device returns `409 device must be retired
+  first` — retire it, check nothing else needs its history, then purge.
+- **Refused while an IPSec tunnel on the device is deploying, verifying or
+  rolling back** (`409` naming the tunnels). The purge deletes the tunnel
+  *intent* rows that reference the device — a tunnel intent is one shared
+  row, so the intent disappears for the **peer device too**; the confirm
+  dialog lists those tunnels with their peer. Roll a deployed tunnel back
+  first if you need its device objects removed; the purge removes the
+  server-side intent only, never the config on the peer.
+- **Background, batched, one at a time.** The request returns `202` with a
+  job; the API primary's worker picks it up within 5 s and deletes in
+  transactions of at most 10,000 rows (2,000 on the widest tables), ordered
+  along each table's `(device_id, timestamp)` index, with a 5 s lock
+  timeout and a 120 s statement timeout per batch, so ingestion and the
+  poller are never blocked for long. Partitioned tables are processed per
+  partition. Progress (`current_table`, `rows_deleted`, `tables_done` of
+  `tables_total`) is visible on the Devices row, the device page banner,
+  `GET /admin/api/devices/:id/purge` and `GET /admin/api/purge-jobs`. A
+  device with tens of millions of syslog rows takes hours; that is expected.
+  The confirm dialog's row estimate counts at most 100,000 rows per table
+  ("100,000+"); a table that cannot be counted is flagged, not fatal.
+- **Resumable.** The job row is the checkpoint: a restart flips a running
+  job back to `pending` and the next primary resumes it; a worker that dies
+  without a clean shutdown is detected by the heartbeat (`running` with
+  `updated_at` older than two minutes) and requeued. Every delete is
+  idempotent, so a resumed job simply continues with whatever rows remain.
+- **Cancellable.** Cancel on the row (or `POST .../purge/cancel`) stops the
+  job between batches. **A cancelled or failed purge leaves the device
+  retired with partial data** — tables are processed largest first, so what
+  remains depends on where it stopped (`current_table` on the job says
+  where) — and the device can be restored (whatever history remains comes
+  back) or purged again later, resuming from where it stopped. The device row itself is deleted
+  only as the very last step, so a device is never left half-deleted. A
+  restore is refused (`409`, naming the job) while a purge job is pending,
+  running or cancelling — cancel it first; the worker also re-checks that
+  the device is still retired before it starts and before the final step,
+  so a restore can never have its data deleted underneath it.
+- **What is removed.** All telemetry (`syslog_messages`, `interface_stats`,
+  status/sensor/processor/ping/flow/trap/denied-event rows and their
+  summaries), **alerts and incidents**, **configuration history**
+  (`device_config_revisions`), tunnel and interface-address inventory, the
+  device's alert configuration, device-scoped event rules and maintenance
+  windows, probe commands addressed to it, its user-drawn connection-map
+  links, the shared IPSec tunnel intents noted above, and finally the device
+  row (its UUID is never reused). Rows carrying `device_id = 0`
+  (agent-level detections, probe-level commands, probe alerts) are never
+  touched. Terminal job rows are kept 30 days as an audit trail.
+- **Disk space comes back later, not immediately.** Postgres leaves the
+  deleted rows as dead tuples for autovacuum to reclaim; the tables shrink
+  in place (the space is reused by new ingest) rather than returning it to
+  the filesystem. After a very large purge, `VACUUM (VERBOSE)
+  interface_stats` (and the same for `syslog_messages`) shows the dead
+  tuples being removed and lets you confirm the reclaim without waiting for
+  the autovacuum threshold. On the SQLite test backend deletes are
+  immediate.
+
+**Restore vs. purge:** restore is reversible and free; purge is neither.
+When a device has been replaced under the same name, the usual sequence is
+retire → confirm the replacement works → purge the old one.
 
 ---
 
