@@ -82,8 +82,12 @@ func TestIPSecIdentityUI(t *testing.T) {
 		hintAt := strings.Index(html, hintID)
 		if hintAt < 0 {
 			t.Errorf("admin.html missing %s (the validateId error slot).", hintID)
-		} else if hintAt < helpAt && !strings.Contains(html[hintAt:helpAt], "</div>") {
-			t.Errorf("admin.html %s sits inside the %s error slot; validateId rewrites that slot, so the help text would never render.", helpID, hintID)
+		} else if hintAt < closeAt+closeTag {
+			// The help element must be closed before the error slot opens (or
+			// sit after a closed slot): validateId rewrites the slot's textContent.
+			if hintAt > helpAt || !strings.Contains(html[hintAt:helpAt], "</div>") {
+				t.Errorf("admin.html %s sits inside the %s error slot; validateId rewrites that slot, so the help text would never render.", helpID, hintID)
+			}
 		}
 		placeholder := `id="ipsec-` + pfx + `-id" placeholder="fwm-<uuid>"`
 		if !strings.Contains(html, placeholder) {

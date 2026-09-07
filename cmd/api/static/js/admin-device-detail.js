@@ -2664,10 +2664,16 @@
         'restore-device': function() { restoreDevice(); },
         'copy-device-uuid': function() {
             var uuid = document.getElementById('deviceUuid').textContent;
-            if (uuid) {
-                navigator.clipboard.writeText(uuid);
-                AC.showSuccess('UUID copied');
+            if (!uuid) return;
+            // navigator.clipboard is absent on a plain-HTTP console (non-secure
+            // context) and writeText can be rejected; never claim success early.
+            if (!(navigator.clipboard && navigator.clipboard.writeText)) {
+                AC.showError('Clipboard unavailable on this connection; select the UUID to copy it.');
+                return;
             }
+            navigator.clipboard.writeText(uuid)
+                .then(function() { AC.showSuccess('UUID copied'); })
+                .catch(function() { AC.showError('Copy failed; select the UUID to copy it.'); });
         },
         'logout': function() {
             AC.doLogout();
