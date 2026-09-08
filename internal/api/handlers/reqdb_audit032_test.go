@@ -59,8 +59,12 @@ func TestRequestContextBoundary_AUDIT032(t *testing.T) {
 	// and this one legitimately never will. Its computation is a global
 	// aggregate shared by every client through a background refresher / the
 	// singleflight cache, so binding it to one requester's context would let that
-	// client's disconnect cancel the work every other client is waiting on — and
-	// since ttlCache does not cache errors, the cache would never warm.
+	// client's disconnect cancel the work every other client is waiting on.
+	//
+	// v0.11.245: computeDashboardSummary moved into this file for exactly that
+	// guarantee, and the ttlCache this comment used to reference was deleted with
+	// it — the summary is now published by the background hub, not cached on the
+	// request path.
 	//
 	// So the exemption is asserted rather than assumed: these files must use the
 	// background store and must NOT reach for reqDB.

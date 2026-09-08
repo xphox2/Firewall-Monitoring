@@ -157,3 +157,130 @@ func TestDashboardHealthHub_IntervalClamped(t *testing.T) {
 		t.Error("the clamp floor must be below the default, or the default is unreachable")
 	}
 }
+
+func doDashboardSummaryRequest(t *testing.T, h *Handler) (int, map[string]interface{}) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/dashboard/summary", nil)
+	h.GetDashboardSummary(c)
+
+	var body map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v (body %q)", err, w.Body.String())
+	}
+	return w.Code, body
+}
+
+// TestDashboardSummary_ServesWithoutComputing is the same guarantee as the
+// health endpoint's, extended to the summary in v0.11.245.
+//
+// The summary was the last aggregate computed on the request path. It sat behind
+// a 15s TTL cache while the client polled every 30s, so EVERY poll missed and
+// paid the full cost — 545ms median and 1.55s worst on production, from the
+// vitals rail on every admin page. That is the identical TTL-shorter-than-poll
+// bug this hub was built to fix for /health.
+//
+// The store here is a typed-nil *database.Database: the interface is non-nil so
+// the handler's guard passes, but any real query panics. The handler cannot pass
+// unless it genuinely serves from the published snapshot.
+func TestDashboardSummary_ServesWithoutComputing(t *testing.T) {
+	h := newHubTestHandler(t)
+
+	h.dashHub.mu.Lock()
+	h.dashHub.summarySnap = gin.H{"syslog_24h": int64(4321)}
+	h.dashHub.generatedAt = time.Now().Add(-7 * time.Second)
+	h.dashHub.mu.Unlock()
+
+	code, body := doDashboardSummaryRequest(t, h)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", code)
+	}
+	data, _ := body["data"].(map[string]interface{})
+	if data == nil {
+		t.Fatalf("no data in response: %v", body)
+	}
+	if got, ok := data["syslog_24h"].(float64); !ok || got != 4321 {
+		t.Errorf("syslog_24h = %v, want the published 4321", data["syslog_24h"])
+	}
+	if age, ok := data["age_seconds"].(float64); !ok || age < 5 {
+		t.Errorf("age_seconds = %v, want >= 5 so the UI can show staleness honestly", data["age_seconds"])
+	}
+}
+
+// TestDashboardSummary_ComputingSentinel pins the pre-first-compute contract.
+//
+// The client MUST be able to distinguish "no snapshot yet" from real data. The
+// rail defaults every missing key to 0 and derives its severity from those
+// values, so serving an empty object instead of this sentinel would report a
+// healthy fleet on every restart.
+func TestDashboardSummary_ComputingSentinel(t *testing.T) {
+	h := newHubTestHandler(t)
+
+	code, body := doDashboardSummaryRequest(t, h)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", code)
+	}
+	data, _ := body["data"].(map[string]interface{})
+	if data == nil || data["status"] != "computing" {
+		t.Fatalf("data = %v, want the {\"status\":\"computing\"} sentinel before the first compute", data)
+	}
+	// The sentinel must not masquerade as a real payload.
+	if _, present := data["device_counts"]; present {
+		t.Error("the sentinel carries device_counts; a client branching on the field rather than the status would render zeros")
+	}
+}
+
+// TestDashboardSummary_NilHubGuard covers the construction asymmetry: NewHandler
+// only builds dashHub inside its `db != nil` branch, so a Handler with a store
+// but no hub is reachable. Without the guard this nil-derefs.
+func TestDashboardSummary_NilHubGuard(t *testing.T) {
+	var typedNil *database.Database
+	h := &Handler{db: typedNil} // deliberately no dashHub
+
+	code, body := doDashboardSummaryRequest(t, h)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", code)
+	}
+	if body["data"] != nil {
+		t.Errorf("data = %v, want null when no hub is configured", body["data"])
+	}
+}
+
+// TestComputeStatus_MarksPartial pins the failure-tracking contract.
+//
+// Every block of both computes degrades rather than aborting, which is correct —
+// one bad aggregate should not blank the console. What was wrong before this is
+// that a dropped block left NO trace: a statement killed by the 30s
+// statement_timeout published a confident zero under a fresh generated_at.
+// Production has already hit that, with the noisy-devices scan killed at
+// 30,006ms leaving an empty leaderboard indistinguishable from a quiet fleet.
+func TestComputeStatus_MarksPartial(t *testing.T) {
+	cs := &computeStatus{}
+	if cs.partial() {
+		t.Error("a compute with no failures must not be marked partial")
+	}
+	if cs.note("healthy block", nil) {
+		t.Error("note(nil) reported a failure")
+	}
+	if cs.partial() {
+		t.Error("a nil error marked the snapshot partial")
+	}
+
+	if !cs.note("fleet status counts", errTestCompute) {
+		t.Error("note(err) did not report the failure to its caller")
+	}
+	if !cs.partial() {
+		t.Fatal("a failed block did not mark the snapshot partial — the UI would render the dropped block's zero as truth")
+	}
+	if len(cs.failed) != 1 || cs.failed[0] != "fleet status counts" {
+		t.Errorf("failed = %v, want the name of the dropped block so the UI can say which", cs.failed)
+	}
+}
+
+var errTestCompute = errTestComputeType{}
+
+type errTestComputeType struct{}
+
+func (errTestComputeType) Error() string { return "injected compute failure" }
