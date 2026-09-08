@@ -193,13 +193,25 @@ func (hub *dashboardHealthHub) compute() {
 	summary := hub.h.computeDashboardSummary(cs)
 	took := time.Since(start)
 
-	// Both maps carry the same partial marker, because a client holding only one
-	// of them still needs to know the snapshot behind it is incomplete.
-	if cs.partial() {
-		snap["partial"] = true
-		summary["partial"] = true
+	// Stamp `partial` on both maps HERE, after both computes have run, and never
+	// inside them.
+	//
+	// The tracker is shared, so a value read inside computeDashboardHealth would
+	// be provisional: the health payload is built before the summary runs, and a
+	// summary-only failure would have been recorded as `false`. Doing it once at
+	// the end is the only place the answer is complete for both.
+	//
+	// The key is always present, true or false, so a client can distinguish "this
+	// snapshot is whole" from an older payload that predates the field.
+	partial := cs.partial()
+	snap["partial"] = partial
+	summary["partial"] = partial
+	if partial {
+		// Name the dropped blocks so the UI can say which reading is missing
+		// rather than just flagging the whole snapshot as suspect.
 		snap["partial_blocks"] = cs.failed
 		summary["partial_blocks"] = cs.failed
+		log.Printf("dashboard compute: snapshot published PARTIAL, dropped blocks: %v", cs.failed)
 	}
 
 	hub.mu.Lock()
@@ -372,7 +384,6 @@ func (h *Handler) computeDashboardSummary(cs *computeStatus) gin.H {
 
 	return gin.H{
 		"generated_at":        time.Now(),
-		"partial":             cs.partial(),
 		"device_counts":       gin.H{"total": total, "online": online, "offline": offline},
 		"devices":             devices,
 		"probe_count_active":  probeActive,
@@ -583,7 +594,6 @@ func (h *Handler) computeDashboardHealth(cs *computeStatus) gin.H {
 
 	return gin.H{
 		"generated_at": time.Now(),
-		"partial":      cs.partial(),
 		"platform":     platform,
 		"fleet":        fleet,
 		"ingestion":    ingestion,
