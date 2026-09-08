@@ -32,7 +32,7 @@ const (
 	// often the background refresher recomputes. Not an env var — new knobs are
 	// admin settings.
 	dashboardHealthRefreshKey     = "dashboard_health_refresh_seconds"
-	dashboardHealthRefreshDefault = 30
+	dashboardHealthRefreshDefault = 60
 	// dashboardHealthRefreshMin clamps the setting. The compute is a multi-second
 	// aggregation over the biggest tables in the database; letting an operator set
 	// it to 1s would turn the dashboard into a self-inflicted outage.
@@ -67,8 +67,16 @@ const (
 type dashboardHealthHub struct {
 	h *Handler
 
-	mu          sync.Mutex
+	mu sync.Mutex
+	// snap and summarySnap are published together from ONE compute pass, so they
+	// always describe the same instant and share generatedAt. The summary moved
+	// here in v0.11.245: it was the last request-path aggregate, sitting behind a
+	// 15s TTL cache while the client polled every 30s — so every single poll
+	// missed and paid the full cost, from the vitals rail on EVERY admin page.
+	// That is the same TTL-shorter-than-poll bug this hub was created to fix for
+	// /health; it was simply never fixed for /summary.
 	snap        gin.H
+	summarySnap gin.H
 	generatedAt time.Time
 	lastRequest time.Time
 	// interval is cached from the admin setting by the refresher so the request
@@ -176,11 +184,27 @@ func (hub *dashboardHealthHub) compute() {
 	defer logging.Recover("dashboard-health-compute")
 
 	start := time.Now()
-	snap := hub.h.computeDashboardHealth()
+	// One tracker across both payloads: they are published together under a
+	// single generated_at, so a failure in either makes the whole snapshot
+	// partial. Sharing it also means the summary inherits the health compute's
+	// honesty about dropped blocks without duplicating the plumbing.
+	cs := &computeStatus{}
+	snap := hub.h.computeDashboardHealth(cs)
+	summary := hub.h.computeDashboardSummary(cs)
 	took := time.Since(start)
+
+	// Both maps carry the same partial marker, because a client holding only one
+	// of them still needs to know the snapshot behind it is incomplete.
+	if cs.partial() {
+		snap["partial"] = true
+		summary["partial"] = true
+		snap["partial_blocks"] = cs.failed
+		summary["partial_blocks"] = cs.failed
+	}
 
 	hub.mu.Lock()
 	hub.snap = snap
+	hub.summarySnap = summary
 	hub.generatedAt = time.Now()
 	interval := hub.interval
 	hub.mu.Unlock()
@@ -197,10 +221,10 @@ func (hub *dashboardHealthHub) compute() {
 // request records interest, nudges the refresher when the snapshot is missing or
 // past its interval, and returns the current snapshot without blocking. A nil
 // snapshot means nothing has been computed yet.
-func (hub *dashboardHealthHub) request() (gin.H, time.Time) {
+func (hub *dashboardHealthHub) request() (health, summary gin.H, generatedAt time.Time) {
 	hub.mu.Lock()
 	hub.lastRequest = time.Now()
-	snap, generatedAt, interval := hub.snap, hub.generatedAt, hub.interval
+	snap, summarySnap, generatedAt, interval := hub.snap, hub.summarySnap, hub.generatedAt, hub.interval
 	hub.mu.Unlock()
 
 	if snap == nil || time.Since(generatedAt) > interval {
@@ -209,7 +233,7 @@ func (hub *dashboardHealthHub) request() (gin.H, time.Time) {
 		default: // a wake is already pending — one is enough
 		}
 	}
-	return snap, generatedAt
+	return snap, summarySnap, generatedAt
 }
 
 // RunDashboardHealthHub runs the system-health refresher until ctx is cancelled.
@@ -237,7 +261,16 @@ func (h *Handler) GetDashboardHealth(c *gin.Context) {
 		c.JSON(http.StatusOK, response.Success(nil))
 		return
 	}
-	snap, generatedAt := h.dashHub.request()
+	snap, _, generatedAt := h.dashHub.request()
+	serveSnapshot(c, snap, generatedAt)
+}
+
+// serveSnapshot renders one published payload with its age, or the sentinel when
+// nothing has been computed yet. Shared by the health and summary handlers so
+// the two cannot drift apart — the {"status":"computing"} contract is load
+// bearing on the client, which must branch on it rather than feeding it to a
+// renderer that defaults every missing key to zero.
+func serveSnapshot(c *gin.Context, snap gin.H, generatedAt time.Time) {
 	if snap == nil {
 		c.JSON(http.StatusOK, response.Success(gin.H{"status": "computing"}))
 		return
@@ -252,10 +285,145 @@ func (h *Handler) GetDashboardHealth(c *gin.Context) {
 	c.JSON(http.StatusOK, response.Success(out))
 }
 
+// GetDashboardSummary serves the landing-dashboard summary from the same
+// background snapshot as GetDashboardHealth, and like it NEVER touches the
+// database.
+//
+// This is the endpoint the vitals rail polls from every admin page, every 30s.
+// It used to compute on the request path behind a 15s TTL cache, which meant a
+// single operator with a single tab missed on every poll and paid the full cost
+// (545ms median, 1.55s worst, measured on production). Serving it from the hub
+// removes the last request-path aggregate in the product.
+func (h *Handler) GetDashboardSummary(c *gin.Context) {
+	// dashHub is only built when db != nil (NewHandler), so guard both or the
+	// typed-nil-store test nil-derefs instead of proving the no-DB path.
+	if h.db == nil || h.dashHub == nil {
+		c.JSON(http.StatusOK, response.Success(nil))
+		return
+	}
+	_, summary, generatedAt := h.dashHub.request()
+	serveSnapshot(c, summary, generatedAt)
+}
+
+// computeDashboardSummary builds the landing/vitals payload: device and probe
+// counts, a bounded device list, and 24h telemetry totals.
+//
+// Runs on the BACKGROUND store h.db, never the request-scoped one, and that is
+// asserted rather than merely intended:
+// reqdb_audit032_test.go's backgroundStoreAllowed check requires this file to
+// open its computes with `db := h.db` and to contain no request-scoped store
+// call at all — the check is a literal substring match on the source, so even a
+// comment mentioning that call by name trips it. The payload is a pure global
+// aggregate with no per-user component, so every client shares one result.
+func (h *Handler) computeDashboardSummary(cs *computeStatus) gin.H {
+	db := h.db
+	g := db.Gorm()
+
+	// Device counts by status — a single GROUP BY over the small config table.
+	var statusCounts []struct {
+		Status string
+		C      int64
+	}
+	cs.note("summary status counts",
+		g.Model(&models.Device{}).Scopes(database.ActiveDevices).Select("status, COUNT(*) AS c").Group("status").Scan(&statusCounts).Error)
+	var total, online, offline int64
+	for _, r := range statusCounts {
+		total += r.C
+		switch r.Status {
+		case "online":
+			online = r.C
+		case "offline":
+			offline = r.C
+		}
+	}
+
+	// Minimal device list (id/name/status/last_polled) for the stale + noisy cards.
+	devices := make([]dashboardSummaryDevice, 0)
+	cs.note("summary device list",
+		g.Model(&models.Device{}).Scopes(database.ActiveDevices).Select("id, name, status, last_polled").Limit(1000).Scan(&devices).Error)
+
+	// Probe counts (excluding decommissioned): active drives the stat card,
+	// pending + stale drive the vitals-rail severity readout.
+	probeCount := func(label, where string, args ...interface{}) int64 {
+		var n int64
+		q := g.Model(&models.Probe{}).Where("decommissioned_at IS NULL")
+		if where != "" {
+			q = q.Where(where, args...)
+		}
+		cs.note(label, q.Count(&n).Error)
+		return n
+	}
+	probeActive := probeCount("probe count active", "approval_status = ? AND status = ?", "approved", "online")
+	probePending := probeCount("probe count pending", "approval_status = ?", "pending")
+	probeStale := probeCount("probe count stale", "approval_status = ? AND status <> ?", "approved", "online")
+
+	// Syslog + trap 24h totals via bare bounded COUNTs. GetSyslogStats/GetTrapStats
+	// also compute severity + hourly-bucket breakdowns the rail never uses, so we
+	// count directly. Measured 327ms warm on production after the 2026-09-07
+	// PostgreSQL tuning (649ms before it) — acceptable in a 60s background pass,
+	// where it used to be paid on the request path by every poll.
+	cutoff24 := time.Now().Add(-24 * time.Hour)
+	var syslog24, syslogSummary24, trap24 int64
+	cs.note("summary syslog 24h", g.Model(&models.SyslogMessage{}).Where("timestamp > ?", cutoff24).Count(&syslog24).Error)
+	cs.note("summary syslog-summary 24h", g.Model(&models.SyslogSummary{}).Where("timestamp > ?", cutoff24).
+		Select("COALESCE(SUM(count),0)").Scan(&syslogSummary24).Error)
+	syslog24 += syslogSummary24
+	cs.note("summary traps 24h", g.Model(&models.TrapEvent{}).Where("timestamp > ?", cutoff24).Count(&trap24).Error)
+
+	return gin.H{
+		"generated_at":        time.Now(),
+		"partial":             cs.partial(),
+		"device_counts":       gin.H{"total": total, "online": online, "offline": offline},
+		"devices":             devices,
+		"probe_count_active":  probeActive,
+		"probe_count_pending": probePending,
+		"probe_count_stale":   probeStale,
+		"syslog_24h":          syslog24,
+		"trap_24h":            trap24,
+	}
+}
+
+// computeStatus records whether any block of a compute failed.
+//
+// Every query in both computes deliberately degrades rather than aborting: a
+// failed block is dropped and the rest of the snapshot is still published. That
+// is the right behaviour — one bad aggregate should not blank the console — but
+// before this type there was NO trace of it in the payload, so a block killed by
+// the 30s statement_timeout published a confident zero under a fresh
+// generated_at and the UI rendered it as current truth. Production has already
+// hit exactly that: the noisy-devices scan was killed at 30,006ms, leaving the
+// leaderboard empty and indistinguishable from a genuinely quiet fleet.
+//
+// The stakes rose when the summary joined this hub: the vitals rail is on EVERY
+// admin page, so a killed 24h COUNT would paint "0 syslog" fleet-wide for a
+// whole interval. The snapshot now carries `partial: true` plus the names of the
+// blocks that failed, and the UI shows a degraded state instead of a zero.
+type computeStatus struct {
+	failed  []string
+	skipped bool
+}
+
+// note records a failure for `what` and reports whether one happened, so callers
+// can both track and branch in one expression.
+func (cs *computeStatus) note(what string, err error) bool {
+	if err == nil {
+		return false
+	}
+	cs.failed = append(cs.failed, what)
+	log.Printf("dashboard compute: %s: %v (block dropped, snapshot marked partial)", what, err)
+	return true
+}
+
+// partial reports whether anything was dropped.
+func (cs *computeStatus) partial() bool { return len(cs.failed) > 0 || cs.skipped }
+
 // computeDashboardHealth runs the (cheap) aggregate queries once. Uses the
 // background store h.db so the cached value is shared across all clients — never
 // the per-request store.
-func (h *Handler) computeDashboardHealth() gin.H {
+//
+// Returns the snapshot and the failure tracker; see computeStatus for why a
+// partial result must be labelled rather than silently published.
+func (h *Handler) computeDashboardHealth(cs *computeStatus) gin.H {
 	db := h.db
 	g := db.Gorm()
 
@@ -267,7 +435,7 @@ func (h *Handler) computeDashboardHealth() gin.H {
 		Status string
 		C      int64
 	}
-	_ = g.Model(&models.Device{}).Scopes(database.ActiveDevices).Select("status, COUNT(*) AS c").Group("status").Scan(&statusCounts).Error
+	cs.note("fleet status counts", g.Model(&models.Device{}).Scopes(database.ActiveDevices).Select("status, COUNT(*) AS c").Group("status").Scan(&statusCounts).Error)
 	var devTotal, devOnline, devOffline int64
 	for _, r := range statusCounts {
 		devTotal += r.C
@@ -282,11 +450,13 @@ func (h *Handler) computeDashboardHealth() gin.H {
 
 	// --- Data freshness: newest successful poll across the fleet ---
 	var newestPoll *time.Time
-	_ = g.Model(&models.Device{}).Scopes(database.ActiveDevices).Select("MAX(last_polled)").Scan(&newestPoll).Error
+	cs.note("newest poll", g.Model(&models.Device{}).Scopes(database.ActiveDevices).Select("MAX(last_polled)").Scan(&newestPoll).Error)
 
 	// --- Ingestion: orphan-safe running telemetry totals + last-hour rates ---
 	ingestion := gin.H{}
-	if t, err := db.GetTelemetryTotals(); err == nil && t != nil {
+	t, telErr := db.GetTelemetryTotals()
+	cs.note("telemetry totals", telErr)
+	if telErr == nil && t != nil {
 		ingestion = gin.H{
 			"syslog": t.Syslog, "traps": t.Traps, "flows": t.Flows, "pings": t.Pings,
 			"syslog_last_hour": t.SyslogLastHr, "traps_last_hour": t.TrapsLastHr,
@@ -302,7 +472,9 @@ func (h *Handler) computeDashboardHealth() gin.H {
 
 	// --- Collectors: probe health (exclude decommissioned) ---
 	collectors := gin.H{"online": 0, "offline": 0, "pending": 0, "probes": []gin.H{}}
-	if probes, err := db.GetAllProbes(); err == nil {
+	probes, probeErr := db.GetAllProbes()
+	cs.note("collector probes", probeErr)
+	if probeErr == nil {
 		var online, offline, pending int
 		list := make([]gin.H, 0, len(probes))
 		for _, p := range probes {
@@ -334,10 +506,10 @@ func (h *Handler) computeDashboardHealth() gin.H {
 		Severity string
 		C        int64
 	}
-	_ = g.Model(&models.Alert{}).Select("severity, COUNT(*) AS c").
+	cs.note("open alerts by severity", g.Model(&models.Alert{}).Select("severity, COUNT(*) AS c").
 		Where("resolved_at IS NULL AND suppressed = ? AND acknowledged = ? AND (snoozed_until IS NULL OR snoozed_until < ?)",
 			false, false, time.Now()).
-		Group("severity").Scan(&sevRows).Error
+		Group("severity").Scan(&sevRows).Error)
 	openBySev := gin.H{}
 	var openTotal int64
 	for _, r := range sevRows {
@@ -348,16 +520,18 @@ func (h *Handler) computeDashboardHealth() gin.H {
 	// Alerts-only: the dashboard renders one sparkline from trend.alerts_over_time
 	// and nothing else, so the flows/syslog/traps series the full call also builds
 	// were pure waste (the syslog one measured 7.0s on production).
-	if ts, err := db.GetAlertsTimeSeries(24); err == nil && ts != nil {
+	ts, tsErr := db.GetAlertsTimeSeries(24)
+	cs.note("alerts trend", tsErr)
+	if tsErr == nil && ts != nil {
 		alerts["trend"] = ts
 	}
 
 	// --- Data quality: stale devices + noisy-device leaderboard ---
 	staleCutoff := time.Now().Add(-staleDeviceWindow)
 	var stale []dashboardSummaryDevice
-	_ = g.Model(&models.Device{}).Scopes(database.ActiveDevices).Select("id, name, status, last_polled").
+	cs.note("stale devices", g.Model(&models.Device{}).Scopes(database.ActiveDevices).Select("id, name, status, last_polled").
 		Where("last_polled < ? AND last_polled > ?", staleCutoff, time.Unix(1, 0)).
-		Order("last_polled ASC").Limit(20).Scan(&stale).Error
+		Order("last_polled ASC").Limit(20).Scan(&stale).Error)
 	dataQuality := gin.H{
 		"stale": stale,
 		"noisy": noisyDevices(g, 24, 10),
@@ -372,7 +546,7 @@ func (h *Handler) computeDashboardHealth() gin.H {
 	}
 	pollerUp := newestPoll != nil && time.Since(*newestPoll) < pollerFreshWindow
 	var newestTrap *time.Time
-	_ = g.Model(&models.TrapEvent{}).Select("MAX(timestamp)").Scan(&newestTrap).Error
+	cs.note("newest trap", g.Model(&models.TrapEvent{}).Select("MAX(timestamp)").Scan(&newestTrap).Error)
 	trapUp := newestTrap != nil && time.Since(*newestTrap) < trapFreshWindow
 	svc := func(name, status string) gin.H { return gin.H{"name": name, "status": status} }
 	upIdle := func(ok bool) string {
@@ -392,7 +566,9 @@ func (h *Handler) computeDashboardHealth() gin.H {
 
 	// --- Threat feeds: enabled flag + indicator/source counts ---
 	threatFeeds := gin.H{"enabled": db.GetBoolSetting("threat_feeds_enabled", false)}
-	if counts, err := db.CountThreatIntelBySource(); err == nil {
+	counts, tiErr := db.CountThreatIntelBySource()
+	cs.note("threat-intel counts", tiErr)
+	if tiErr == nil {
 		var totalIPs int64
 		activeSources := 0
 		for _, sc := range counts {
@@ -407,6 +583,7 @@ func (h *Handler) computeDashboardHealth() gin.H {
 
 	return gin.H{
 		"generated_at": time.Now(),
+		"partial":      cs.partial(),
 		"platform":     platform,
 		"fleet":        fleet,
 		"ingestion":    ingestion,

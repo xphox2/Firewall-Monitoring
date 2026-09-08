@@ -1005,116 +1005,17 @@ type dashboardSummaryDevice struct {
 	LastPolled time.Time `json:"last_polled"`
 }
 
-// GetDashboardSummary is the fast landing-dashboard endpoint. It returns only
-// what the first paint needs, using cheap COUNT/GROUP BY queries instead of the
-// 1000-device + 1000-connection + 6-aggregate enrichment load in GetDashboardAll.
-// Both the vitals rail and the stat grid consume this (coalesced client-side), so
-// the heavy /api/dashboard endpoint no longer runs on login.
-func (h *Handler) GetDashboardSummary(c *gin.Context) {
-	if h.db == nil {
-		c.JSON(http.StatusOK, response.Success(nil))
-		return
-	}
-	val, err := h.dashCache.get("dashboard-summary", dashboardSummaryTTL, func() (interface{}, error) {
-		return h.computeDashboardSummary(), nil
-	})
-	if err != nil {
-		c.JSON(http.StatusOK, response.Success(nil))
-		return
-	}
-	c.JSON(http.StatusOK, response.Success(val))
-}
-
-// dashboardSummaryTTL bounds how long one computed summary is reused. The vitals
-// rail polls this every 30s from EVERY admin page, and the 24h syslog COUNT
-// inside it was measured at 1.49-1.81s on production, so before caching it was
-// the largest recurring request-path cost in the product.
-const dashboardSummaryTTL = 15 * time.Second
-
-// computeDashboardSummary builds the summary payload.
+// GetDashboardSummary and computeDashboardSummary moved to
+// handlers_health_dashboard.go in v0.11.245.
 //
-// It runs on the BACKGROUND store h.db, not h.reqDB(c), and that is load-bearing
-// rather than an oversight: the result is shared by every client through
-// dashCache, and ttlCache collapses concurrent misses with singleflight. If the
-// compute inherited the leader request's context, that one client navigating away
-// would cancel the query for every caller coalesced behind it — and since errors
-// are not cached, the cache would never warm. The payload itself is a pure global
-// aggregate with no per-user component (device counts, a minimal id/name/status
-// device list, probe counts, bounded 24h totals), so sharing it is correct.
-func (h *Handler) computeDashboardSummary() gin.H {
-	db := h.db
-	g := db.Gorm()
-
-	// Device counts by status — a single GROUP BY over the small config table.
-	var statusCounts []struct {
-		Status string
-		C      int64
-	}
-	if err := g.Model(&models.Device{}).Scopes(database.ActiveDevices).Select("status, COUNT(*) AS c").Group("status").Scan(&statusCounts).Error; err != nil {
-		log.Printf("dashboard summary: status counts: %v", err)
-	}
-	var total, online, offline int64
-	for _, r := range statusCounts {
-		total += r.C
-		switch r.Status {
-		case "online":
-			online = r.C
-		case "offline":
-			offline = r.C
-		}
-	}
-
-	// Minimal device list (id/name/status/last_polled) for the stale + noisy cards.
-	devices := make([]dashboardSummaryDevice, 0)
-	if err := g.Model(&models.Device{}).Scopes(database.ActiveDevices).Select("id, name, status, last_polled").Limit(1000).Scan(&devices).Error; err != nil {
-		log.Printf("dashboard summary: device list: %v", err)
-	}
-
-	// Probe counts (excluding decommissioned): active drives the stat card,
-	// pending + stale drive the vitals-rail severity readout.
-	probeCount := func(where string, args ...interface{}) int64 {
-		var n int64
-		q := g.Model(&models.Probe{}).Where("decommissioned_at IS NULL")
-		if where != "" {
-			q = q.Where(where, args...)
-		}
-		if err := q.Count(&n).Error; err != nil {
-			log.Printf("dashboard summary: probe count (%s): %v", where, err)
-		}
-		return n
-	}
-	probeActive := probeCount("approval_status = ? AND status = ?", "approved", "online")
-	probePending := probeCount("approval_status = ?", "pending")
-	probeStale := probeCount("approval_status = ? AND status <> ?", "approved", "online")
-
-	// Syslog + trap 24h totals via bare bounded COUNTs. GetSyslogStats/GetTrapStats
-	// also compute severity + hourly-bucket breakdowns (6 and 4 queries over the
-	// partitioned tables) that the rail/stat-card never use — here we only need the
-	// total, so we count directly (2 + 1 queries, window-pruned).
-	cutoff24 := time.Now().Add(-24 * time.Hour)
-	var syslog24, syslogSummary24, trap24 int64
-	if err := g.Model(&models.SyslogMessage{}).Where("timestamp > ?", cutoff24).Count(&syslog24).Error; err != nil {
-		log.Printf("dashboard summary: syslog count: %v", err)
-	}
-	if err := g.Model(&models.SyslogSummary{}).Where("timestamp > ?", cutoff24).
-		Select("COALESCE(SUM(count),0)").Scan(&syslogSummary24).Error; err != nil {
-		log.Printf("dashboard summary: syslog summary count: %v", err)
-	}
-	syslog24 += syslogSummary24
-	if err := g.Model(&models.TrapEvent{}).Where("timestamp > ?", cutoff24).Count(&trap24).Error; err != nil {
-		log.Printf("dashboard summary: trap count: %v", err)
-	}
-
-	return gin.H{
-		"device_counts":       gin.H{"total": total, "online": online, "offline": offline},
-		"devices":             devices,
-		"probe_count_active":  probeActive,
-		"probe_count_pending": probePending,
-		"probe_count_stale":   probeStale,
-		"syslog_24h":          syslog24,
-		"trap_24h":            trap24,
-	}
-}
+// The summary was the last aggregate still computed on the request path. It sat
+// behind a 15s TTL cache while the client polled every 30s, so every poll missed
+// and paid the full cost — the same TTL-shorter-than-poll bug that v0.11.206
+// fixed for /dashboard/health and never fixed here. It is now published by
+// dashboardHealthHub from the same compute pass as the health payload, which is
+// why it lives in that file: reqdb_audit032_test.go's backgroundStoreAllowed
+// list asserts that file uses the background store and never h.reqDB, and the
+// summary needs exactly that guarantee.
 
 // GetNoisyDevices returns the top-N devices ranked by recent alert + syslog
 // volume, computed with a fixed set of GROUP BY device_id queries (bounded by the
@@ -1169,16 +1070,45 @@ func noisyDevices(g *gorm.DB, hours, limit int) []noisyRow {
 		alertByDev[r.DeviceID] = r.C
 	}
 
+	// Per-device correlated counts, NOT `GROUP BY device_id` over syslog_messages.
+	//
+	// The only index carrying device_id is (device_id, timestamp), where the
+	// timestamp is the TRAILING column. A predicate on the trailing column alone
+	// cannot bound the scan, so the grouped form walked all 135M index entries
+	// applying timestamp as a filter: 15,704ms reading 5.4GB on production, and
+	// one execution was killed outright by the 30s statement_timeout. Driving
+	// from the small devices table makes device_id equality-bound and timestamp a
+	// usable range, so each device is one bounded index range: 594ms warm.
+	//
+	// Two things here are deliberate and easy to "tidy" into bugs:
+	//
+	//  1. NO ActiveDevices scope. The name lookup below is unscoped, so a retired
+	//     device that is still producing syslog appears in today's leaderboard —
+	//     production has exactly one (TECHLABS-FW-01, retired 2026-09-07).
+	//     Excluding retired devices may well be better, but that is a product
+	//     decision and must not ride in on a performance fix.
+	//  2. Zero counts are SKIPPED. The grouped form only ever returned rows for
+	//     devices that actually had syslog; this form returns a row per device,
+	//     so folding them in unfiltered would put silent devices on a
+	//     "noisy devices" board with a total of 0.
 	var sysRows []devCount
-	if err := g.Model(&models.SyslogMessage{}).Select("device_id, COUNT(*) AS c").
-		Where("timestamp > ? AND device_id <> 0", cutoff).Group("device_id").Scan(&sysRows).Error; err != nil {
+	if err := g.Model(&models.Device{}).
+		Select("devices.id AS device_id, (SELECT COUNT(*) FROM syslog_messages s WHERE s.device_id = devices.id AND s.timestamp > ?) AS c", cutoff).
+		Where("devices.id <> 0").Scan(&sysRows).Error; err != nil {
 		log.Printf("noisy: syslog counts: %v", err)
 	}
 	for _, r := range sysRows {
-		syslogByDev[r.DeviceID] = r.C
+		if r.C > 0 {
+			syslogByDev[r.DeviceID] = r.C
+		}
 	}
 
 	// Syslog summaries (rolled-up) carry a count column, folded in like GetSyslogStats.
+	//
+	// This one KEEPS the GROUP BY, and the asymmetry with the block above is
+	// intentional: syslog_summaries is 71MB / ~80k rows on production, where the
+	// grouped scan costs milliseconds. The rewrite above exists because
+	// syslog_messages is 134GB / 135M rows, not because GROUP BY is wrong.
 	var sumRows []devCount
 	if err := g.Model(&models.SyslogSummary{}).Select("device_id, COALESCE(SUM(count),0) AS c").
 		Where("timestamp > ? AND device_id <> 0", cutoff).Group("device_id").Scan(&sumRows).Error; err != nil {

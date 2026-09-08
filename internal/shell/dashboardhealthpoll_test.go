@@ -52,3 +52,38 @@ func TestDashboardHealthPolledOnce(t *testing.T) {
 		t.Error("admin-dashboard-modules.js must offer a retry when /dashboard/health fails; the silent catch is what left 'Loading system health…' on screen forever.")
 	}
 }
+
+// TestVitalsRailHandlesComputingSentinel guards the client half of moving
+// /dashboard/summary onto the background hub in v0.11.245.
+//
+// Before that move the summary always returned data, so refreshVitals could get
+// away with `if (!s) return;`. Now it can receive {"status":"computing"} before
+// the first snapshot publishes, and a sentinel is a truthy object — it sails
+// past that guard, and every read below it defaults a missing key to 0.
+//
+// The consequence is worse than blank tiles. The rail derives its severity from
+// those values, so a sentinel yields sev='ok' and the label NOMINAL: it would
+// actively report a healthy fleet after every restart, on EVERY admin page,
+// until the first compute lands. That is the same trap v0.11.206 documented for
+// the dashboard modules, which is why the assertion lives beside that one.
+func TestVitalsRailHandlesComputingSentinel(t *testing.T) {
+	b, err := os.ReadFile("../../cmd/api/static/js/admin-common.js")
+	if err != nil {
+		t.Fatalf("read admin-common.js: %v", err)
+	}
+	common := string(b)
+
+	if !strings.Contains(common, "'computing'") {
+		t.Error("admin-common.js must branch on the {\"status\":\"computing\"} sentinel from /dashboard/summary; " +
+			"a truthy sentinel passes the `if (!s)` guard and every field defaults to 0, so the rail would label a " +
+			"pending snapshot NOMINAL on every admin page.")
+	}
+
+	// The snapshot also reports when a block was dropped (a statement killed by
+	// the 30s timeout has already happened on production). A dropped block reads
+	// as a zero, so the rail must not conclude NOMINAL from one.
+	if !strings.Contains(common, "s.partial") {
+		t.Error("admin-common.js must branch on the snapshot's `partial` flag; a dropped aggregate renders as 0 " +
+			"and would otherwise be reported as a healthy fleet.")
+	}
+}

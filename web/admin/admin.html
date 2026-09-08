@@ -1251,7 +1251,7 @@
                 <div id="admin-dashboard-settings" class="settings-grid">
                     <div class="setting-item">
                         <label for="dashboard_health_refresh_seconds">System Health Refresh Interval (seconds)</label>
-                        <input type="number" id="dashboard_health_refresh_seconds" name="dashboard_health_refresh_seconds" placeholder="30" min="15" max="3600" step="1">
+                        <input type="number" id="dashboard_health_refresh_seconds" name="dashboard_health_refresh_seconds" placeholder="60" min="15" max="3600" step="1">
                         <div class="field-hint">Blank uses 30 seconds. The rebuild is a multi-second aggregation over the largest tables in the database, so shorter intervals cost real I/O; it is skipped entirely while nobody has the dashboard open.</div>
                     </div>
                 </div>

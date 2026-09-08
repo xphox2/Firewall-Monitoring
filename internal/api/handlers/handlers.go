@@ -37,10 +37,6 @@ type Handler struct {
 	// startTime is the process boot time, used by GetSystemHealth to report
 	// server uptime on the dashboard's Server Platform card.
 	startTime time.Time
-	// dashCache holds short-TTL, singleflight-deduped snapshots of fleet-wide
-	// dashboard aggregates so many workstations / rapid refreshes compute them
-	// at most once per TTL. Global aggregates only — never per-user/per-request.
-	dashCache *ttlCache
 	// dashHub computes the system-health composite in the BACKGROUND so
 	// /api/dashboard/health never runs a query on a request. See
 	// handlers_health_dashboard.go.
@@ -90,7 +86,6 @@ func NewHandler(cfg *config.Config, authManager *auth.AuthManager, db *database.
 		geoResolver: geo,
 		db:          db,
 		startTime:   time.Now(),
-		dashCache:   newTTLCache(),
 	}
 	// Load the initial threat-intel matcher from the DB. A background refresh
 	// goroutine (cmd/api) reloads it periodically so feed edits + expiries apply.

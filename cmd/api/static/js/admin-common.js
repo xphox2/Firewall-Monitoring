@@ -1451,6 +1451,26 @@
         if (!rail) return;
         fetchDashboardSummary().then(function (s) {
             if (!s) return;
+
+            /* The summary is served from a background snapshot, so before the
+             * first compute lands the payload is the {"status":"computing"}
+             * sentinel rather than the data. It MUST be branched on here.
+             *
+             * A sentinel is a truthy object, so it sails past `if (!s)`, and
+             * every read below defaults a missing key to 0. Feeding it through
+             * would not merely show zeros — it would compute sev='ok' and label
+             * the rail NOMINAL, actively reporting a healthy fleet on every
+             * restart until the first snapshot publishes. That is the same trap
+             * v0.11.206 documented for the dashboard modules, and this rail is
+             * on EVERY admin page. */
+            if (s.status === 'computing') {
+                ['vital-online', 'vital-total', 'vital-offline', 'vital-probes', 'vital-syslog']
+                    .forEach(function (id) { setVital(id, '--'); });
+                rail.setAttribute('data-sev', 'ok');
+                setVital('vital-worst', 'COMPUTING');
+                return;
+            }
+
             var counts = s.device_counts || {};
             var online = counts.online || 0;
             var offline = counts.offline || 0;
@@ -1476,6 +1496,16 @@
             } else if (pendingProbes > 0) {
                 sev = 'warn';
                 label = pendingProbes + ' PENDING';
+            }
+            /* A partial snapshot means at least one aggregate was dropped —
+             * typically a statement killed by the 30s timeout, which has already
+             * happened on production. The surviving numbers are real, but a
+             * dropped block reads as a zero, so we must not conclude NOMINAL
+             * from it. A genuine crit/warn still wins: a real outage outranks
+             * the caveat about an incomplete snapshot. */
+            if (s.partial && sev === 'ok') {
+                sev = 'warn';
+                label = 'PARTIAL DATA';
             }
             rail.setAttribute('data-sev', sev);
             setVital('vital-worst', label);
