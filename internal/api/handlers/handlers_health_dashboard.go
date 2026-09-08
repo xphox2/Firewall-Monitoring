@@ -68,8 +68,11 @@ type dashboardHealthHub struct {
 	h *Handler
 
 	mu sync.Mutex
-	// snap and summarySnap are published together from ONE compute pass, so they
-	// always describe the same instant and share generatedAt. The summary moved
+	// snap and summarySnap are published together from ONE compute pass and share
+	// hub.generatedAt, which is what age_seconds is derived from. (Each payload
+	// also carries its own inner generated_at, stamped when that half finished,
+	// so the two differ by the summary compute's duration. No client reads the
+	// inner key; age_seconds is the staleness contract.) The summary moved
 	// here in v0.11.245: it was the last request-path aggregate, sitting behind a
 	// 15s TTL cache while the client polled every 30s — so every single poll
 	// missed and paid the full cost, from the vitals rail on EVERY admin page.
@@ -410,23 +413,29 @@ func (h *Handler) computeDashboardSummary(cs *computeStatus) gin.H {
 // whole interval. The snapshot now carries `partial: true` plus the names of the
 // blocks that failed, and the UI shows a degraded state instead of a zero.
 type computeStatus struct {
-	failed  []string
-	skipped bool
+	failed []string
 }
 
 // note records a failure for `what` and reports whether one happened, so callers
 // can both track and branch in one expression.
+//
+// NIL-SAFE on purpose. noisyDevices is shared between this background compute
+// and the request-path GET /api/dashboard/noisy, and only the former has a
+// snapshot to mark. A nil receiver still logs and still reports the failure to
+// its caller; it just has nowhere to record it.
 func (cs *computeStatus) note(what string, err error) bool {
 	if err == nil {
 		return false
 	}
-	cs.failed = append(cs.failed, what)
+	if cs != nil {
+		cs.failed = append(cs.failed, what)
+	}
 	log.Printf("dashboard compute: %s: %v (block dropped, snapshot marked partial)", what, err)
 	return true
 }
 
 // partial reports whether anything was dropped.
-func (cs *computeStatus) partial() bool { return len(cs.failed) > 0 || cs.skipped }
+func (cs *computeStatus) partial() bool { return cs != nil && len(cs.failed) > 0 }
 
 // computeDashboardHealth runs the (cheap) aggregate queries once. Uses the
 // background store h.db so the cached value is shared across all clients — never
@@ -545,7 +554,11 @@ func (h *Handler) computeDashboardHealth(cs *computeStatus) gin.H {
 		Order("last_polled ASC").Limit(20).Scan(&stale).Error)
 	dataQuality := gin.H{
 		"stale": stale,
-		"noisy": noisyDevices(g, 24, 10),
+		// The tracker is passed in deliberately: a killed noisy scan is the exact
+		// incident computeStatus exists for, and without this it would publish an
+		// empty leaderboard under partial:false — indistinguishable from a quiet
+		// fleet, which is the bug, not the symptom.
+		"noisy": noisyDevices(g, 24, 10, cs),
 	}
 
 	// --- Services: activity-inferred component status ---

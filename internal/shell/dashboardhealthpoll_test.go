@@ -79,6 +79,18 @@ func TestVitalsRailHandlesComputingSentinel(t *testing.T) {
 			"pending snapshot NOMINAL on every admin page.")
 	}
 
+	// The dashboard modules must surface it too, not just the rail. The
+	// leaderboard on that page IS the block the flag was created for: a killed
+	// noisy-devices scan renders as an empty list, which reads as a quiet fleet.
+	mods, merr := os.ReadFile("../../cmd/api/static/js/admin-dashboard-modules.js")
+	if merr != nil {
+		t.Fatalf("read admin-dashboard-modules.js: %v", merr)
+	}
+	if !strings.Contains(string(mods), "partial_blocks") {
+		t.Error("admin-dashboard-modules.js must surface a partial snapshot; the dashboard is where the " +
+			"noisy-device leaderboard lives, and a dropped block renders there as an empty list rather than as an error.")
+	}
+
 	// The snapshot also reports when a block was dropped (a statement killed by
 	// the 30s timeout has already happened on production). A dropped block reads
 	// as a zero, so the rail must not conclude NOMINAL from one.

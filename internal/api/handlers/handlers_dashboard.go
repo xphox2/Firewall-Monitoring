@@ -1034,7 +1034,8 @@ func (h *Handler) GetNoisyDevices(c *gin.Context) {
 			limit = n
 		}
 	}
-	c.JSON(http.StatusOK, response.Success(noisyDevices(db.Gorm(), httputil.ParseHours(c), limit)))
+	// nil tracker: this is the request path, with no snapshot to mark partial.
+	c.JSON(http.StatusOK, response.Success(noisyDevices(db.Gorm(), httputil.ParseHours(c), limit, nil)))
 }
 
 // noisyRow is one entry in the noisy-device leaderboard.
@@ -1050,7 +1051,9 @@ type noisyRow struct {
 // last `hours`, with a fixed set of GROUP BY device_id queries (bounded window →
 // partition pruning). Shared by GET /api/dashboard/noisy and the cached health
 // composite. Errors are logged and degrade to partial results, never fatal.
-func noisyDevices(g *gorm.DB, hours, limit int) []noisyRow {
+// cs may be nil: the request-path caller has no snapshot to mark. See
+// computeStatus.note, which is nil-safe for exactly this.
+func noisyDevices(g *gorm.DB, hours, limit int, cs *computeStatus) []noisyRow {
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 
 	type devCount struct {
@@ -1062,10 +1065,8 @@ func noisyDevices(g *gorm.DB, hours, limit int) []noisyRow {
 	syslogByDev := map[uint]int64{}
 
 	var alertRows []devCount
-	if err := g.Model(&models.Alert{}).Select("device_id, COUNT(*) AS c").
-		Where("timestamp > ? AND device_id <> 0", cutoff).Group("device_id").Scan(&alertRows).Error; err != nil {
-		log.Printf("noisy: alert counts: %v", err)
-	}
+	cs.note("noisy: alert counts", g.Model(&models.Alert{}).Select("device_id, COUNT(*) AS c").
+		Where("timestamp > ? AND device_id <> 0", cutoff).Group("device_id").Scan(&alertRows).Error)
 	for _, r := range alertRows {
 		alertByDev[r.DeviceID] = r.C
 	}
@@ -1092,11 +1093,9 @@ func noisyDevices(g *gorm.DB, hours, limit int) []noisyRow {
 	//     so folding them in unfiltered would put silent devices on a
 	//     "noisy devices" board with a total of 0.
 	var sysRows []devCount
-	if err := g.Model(&models.Device{}).
+	cs.note("noisy: syslog counts", g.Model(&models.Device{}).
 		Select("devices.id AS device_id, (SELECT COUNT(*) FROM syslog_messages s WHERE s.device_id = devices.id AND s.timestamp > ?) AS c", cutoff).
-		Where("devices.id <> 0").Scan(&sysRows).Error; err != nil {
-		log.Printf("noisy: syslog counts: %v", err)
-	}
+		Scan(&sysRows).Error)
 	for _, r := range sysRows {
 		if r.C > 0 {
 			syslogByDev[r.DeviceID] = r.C
@@ -1110,10 +1109,8 @@ func noisyDevices(g *gorm.DB, hours, limit int) []noisyRow {
 	// grouped scan costs milliseconds. The rewrite above exists because
 	// syslog_messages is 134GB / 135M rows, not because GROUP BY is wrong.
 	var sumRows []devCount
-	if err := g.Model(&models.SyslogSummary{}).Select("device_id, COALESCE(SUM(count),0) AS c").
-		Where("timestamp > ? AND device_id <> 0", cutoff).Group("device_id").Scan(&sumRows).Error; err != nil {
-		log.Printf("noisy: syslog summary counts: %v", err)
-	}
+	cs.note("noisy: syslog summary counts", g.Model(&models.SyslogSummary{}).Select("device_id, COALESCE(SUM(count),0) AS c").
+		Where("timestamp > ? AND device_id <> 0", cutoff).Group("device_id").Scan(&sumRows).Error)
 	for _, r := range sumRows {
 		syslogByDev[r.DeviceID] += r.C
 	}

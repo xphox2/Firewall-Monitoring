@@ -399,6 +399,12 @@
     // dot, an empty fleet and no services. That is a false outage report.
     var loadState = 'loading'; // 'loading' | 'computing' | 'ready' | 'error'
     var ageSeconds = 0;
+    // partialBlocks names the aggregates the server had to drop from this
+    // snapshot. Every block degrades rather than aborting, so a dropped one
+    // arrives as a zero and is otherwise indistinguishable from a real reading —
+    // production has already published an empty noisy-device leaderboard after
+    // the 30s statement_timeout killed its scan, and it read as a quiet fleet.
+    var partialBlocks = null;
     var inFlight = null;       // AbortController for the current /dashboard/health
     var lastTrendKey = null;   // guards redundant /system/metrics/chart fetches
 
@@ -434,6 +440,16 @@
         }
         if (loadState === 'loading') {
             return '<div class="dash-banner" role="status">Loading system health…</div>';
+        }
+        // A partial snapshot is called out even when it is FRESH: staleness and
+        // incompleteness are different failures, and this one is the more
+        // misleading of the two because the missing reading renders as a
+        // confident zero rather than as old data.
+        if (partialBlocks && partialBlocks.length) {
+            return '<div class="dash-banner dash-banner-error" role="alert">' +
+                '<span>Some readings could not be computed and are showing as zero: ' +
+                esc(partialBlocks.join(', ')) + '.</span>' +
+                '<button type="button" class="btn btn-sm" data-dash-retry>Retry</button></div>';
         }
         // Fresh data still gets a line when it is materially old, so nobody reads
         // an idle-wake snapshot as the current state of the system.
@@ -593,6 +609,7 @@
                 if (!d) { loadState = data ? 'ready' : 'error'; render(); return; }
                 data = d;
                 ageSeconds = typeof d.age_seconds === 'number' ? d.age_seconds : 0;
+                partialBlocks = d.partial ? (d.partial_blocks || []) : null;
                 loadState = 'ready';
                 render();
             })
@@ -622,8 +639,9 @@
 
     // load() runs on every navigation to the dashboard: refresh data, and on the
     // first visit also load the saved layout, wire the toolbar, and start the
-    // (page-guarded) poll. The server caches /dashboard/health ~10s, so polling
-    // from many workstations stays flat.
+    // (page-guarded) poll. The server publishes /dashboard/health from a
+    // background snapshot on a 60s cadence — the old ~10s request-path TTL is
+    // long gone — so polling from many workstations stays flat.
     function load() {
         if (!loaded) {
             loaded = true;
