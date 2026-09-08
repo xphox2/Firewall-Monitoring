@@ -26,19 +26,30 @@ background I/O and two pages nobody had measured.
 - [ ] Deploy rust-01 and verify `interface_stats` I/O collapses.
       **Before-rate measured: 13.9 GB/min, 12 seq_scan/min.**
 
-## Phase 2 — batch the dashboard (the original ask) — NOT STARTED
-- [ ] Move `computeDashboardSummary` onto `dashboardHealthHub`; serve from the snapshot with the
-      `computing`/`age_seconds` contract. Today its ttlCache TTL is 15s against a 30s client poll, so
-      **every poll misses** and pays 545ms, from the vitals rail on EVERY admin page.
-- [ ] `h.dashHub == nil` guard on `GetDashboardSummary`.
-- [ ] Rewrite `noisyDevices` (15,704ms -> 1,876ms). Skip zero counts; do NOT add ActiveDevices.
-- [ ] Publish a `partial` flag — a statement killed by the 30s timeout currently publishes a
-      confident zero.
-- [ ] Refresh default 30 -> 60; update `admin.html` placeholder.
-- [ ] KEEP the 5-minute idle gate (the refresher is not primary-gated; removing it reintroduces the
-      M11 multi-instance duplication).
-- [ ] Delete `dashCache`/`cache.go`/`cache_test.go` + `go mod tidy` (drops golang.org/x/sync).
-- [ ] Vitals rail must branch on the sentinel — today it paints 0/0/0 and labels it NOMINAL.
+## Phase 2 — batch the dashboard (PR #255, v0.11.245) — MERGED, NOT YET DEPLOYED
+User confirmed 2026-09-07: "it's the dashboard that is slow", so this is the targeted phase.
+- [x] `computeDashboardSummary` moved onto `dashboardHealthHub`, published from the SAME compute pass
+      as health. Served from the snapshot with the `computing`/`age_seconds` contract; never touches
+      the DB. Before: ttlCache 15s TTL vs a 30s client poll = **every poll missed**. Measured on the
+      deployed v0.11.244 (already PG-tuned): **322-448ms per poll, 1.31s cold**.
+- [x] `h.dashHub == nil` guard (NewHandler only builds the hub when db != nil).
+- [x] `noisyDevices` per-device rewrite: 15,704ms -> **594ms** warm post-tuning. Re-measured after the
+      PG tuning to confirm the rewrite was still worth it — tuning alone got the old form to 3,617ms,
+      so yes, 6x.
+- [x] `partial` flag + `partial_blocks`, stamped ONCE after both computes.
+      **Adversarial review caught the flag was blind to its own motivating case** — `noisyDevices`
+      swallowed its errors, so the killed-scan incident would still publish `partial:false`. Fixed,
+      with a test that drops the syslog table to stand in for the timeout.
+- [x] Refresh default 30 -> 60; `admin.html` placeholder AND the "Blank uses N seconds" hint.
+- [x] KEPT the 5-minute idle gate — the refresher is not primary-gated, so removing it reintroduces
+      the M11 multi-instance duplication; primary-gating instead leaves followers on `computing`.
+- [x] Deleted `dashCache`/`cache.go`/`cache_test.go`; `golang.org/x/sync` moved to indirect.
+- [x] Vitals rail branches on the sentinel (it would otherwise label a pending snapshot NOMINAL on
+      every admin page) AND on `partial`. Dashboard modules surface `partial_blocks` too — review
+      found only the rail did, and the leaderboard lives on the dashboard.
+- [ ] **Deploy to rust-01 and verify.** Image is BUILT (`firewall-mon:latest`); the container
+      recreate is blocked by the permission classifier and needs the user to say "deploy".
+      Verify: `/admin/api/dashboard/summary` should drop from ~400ms to single-digit ms.
 
 ## Phase 3 — the pages an operator actually waits on — NOT STARTED
 - [ ] **Flows page: 9.5s at 24h, 42.1s at 7d for ONE of ~8 queries.** Best candidate for the
@@ -51,10 +62,30 @@ background I/O and two pages nobody had measured.
 - [ ] `/admin/api/dashboard/noisy` should serve from the snapshot it already contains.
 - [ ] `vpn_status`: 228k seq scans / 54.3B tuples, needs a timestamp-leading index.
 
-## Operator step (user approved 2026-09-07, not yet done)
-- [ ] postgresql.conf: shared_buffers 8GB, effective_cache_size 20GB, work_mem 32MB,
-      maintenance_work_mem 1GB, effective_io_concurrency 2. One container restart.
-      **The old VACUUM step is moot** — relallvisible/relpages on syslog_messages is 99.99%.
+## Operator step — DONE 2026-09-07 23:43 UTC
+- [x] PostgreSQL tuning applied via `ALTER SYSTEM` (not a postgresql.conf edit: the entrypoint's
+      tuning block only runs when PGDATA is empty, and the host path is root-inaccessible).
+      Live: shared_buffers **8GB**, effective_cache_size **20GB**, maintenance_work_mem **1GB**,
+      effective_io_concurrency **2**, work_mem **16MB**, random_page_cost 4 (disk is rotational).
+      Backup at `postgresql.conf.bak-20260907-perf`. The old VACUUM step was moot —
+      relallvisible/relpages on syslog_messages is 99.99%.
+- [ ] **work_mem is 16MB, not the planned 32MB.** `/dev/shm` is the Docker default 64MB and
+      `dynamic_shared_memory_type = posix`, so parallel hash joins allocate work_mem-sized segments
+      there; 32MB x 3 participants would fail. Needs `shm_size: 1g` on the compose service, which
+      must go through a PR — editing the tracked docker-compose.yml in place on rust-01 caused the
+      drift that blocked `git pull` in v0.11.179.
+
+### Combined effect of v0.11.244 + the tuning, measured on prod
+`interface_stats` disk reads: **13.9 GB/min -> 1.575 (code fix) -> 0.053 GB/min (tuned)** = 262x,
+with a **98.6% buffer cache hit ratio** and 0 seq scans/min. Query-level, warm: noisy-devices
+15,704ms -> 3,617ms (tuning) -> 594ms (rewrite); dashboard summary 24h COUNT 649ms -> 327ms; syslog
+hourly chart 7,421ms -> 5,825ms and STILL spills 103MB (needs the meter, not more work_mem).
+
+### Counter-example worth remembering
+`cleanup.go`'s `SELECT id ... WHERE timestamp < ? LIMIT 10000` looks like the same probe
+anti-pattern but is CORRECT as written: **15.2ms / 446 buffers**. Adding `ORDER BY timestamp` makes
+it **4,594ms / 422,877 buffers** — 300x worse. The LIMIT trap is about a probe expecting ZERO
+matches; a batch query expecting MANY wants the opposite plan. Never blanket-apply.
 
 ---
 
