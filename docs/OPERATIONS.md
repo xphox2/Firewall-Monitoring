@@ -483,9 +483,10 @@ raises `DISK_HIGH` against `server_disk_threshold` (default 85%) and `server_dis
 layers live under `/var/lib/containerd`. On the reference deployment `du` reported ~17 GB for
 `/var/lib/docker` while `/var/lib/containerd` held 37 GB.
 
-**`docker system df` under-reports too.** A builder using the `docker-container` driver keeps its
-cache inside its own volume. It once reported `Build Cache 3.846MB` while that builder held
-gigabytes. The honest number is per builder:
+**`docker system df` will point you at the wrong line.** A builder using the `docker-container`
+driver keeps its cache in its own named volume, so those bytes are counted under **Local Volumes**
+while the `Build Cache` row shows only the in-daemon builder. It once read `Build Cache 3.846MB`
+while a container-driver builder held gigabytes. The honest number is per builder:
 
 ```bash
 docker buildx ls                              # note: there is usually more than one
@@ -499,49 +500,67 @@ because that is the one selected in `~/.docker/buildx/current`. `docker builder 
 
 ### The real control is BuildKit's GC policy, not a cleanup job
 
-BuildKit garbage-collects on its own. The reason a host still fills is that the **upstream defaults
-are sized for a large CI machine**:
+BuildKit garbage-collects on its own. The reason a host still fills is that its default policy is a
+**fraction of the filesystem**, and there is one such allowance *per builder*:
 
-| Setting | Upstream default | Meaning on a 77 GB disk |
+| Setting | Default | Consequence |
 |---|---|---|
-| `Max Used Space` | 42.84 GiB | per builder — two builders may exceed the disk |
-| `Min Free Space` | 11.18 GiB | eviction only begins at ~85.5% used |
+| reserved space | 10% of the fs (capped 10 GB) | |
+| min free space | 20% of the fs | **eviction only begins once free space drops under 20%** |
+| max used space | 80% of the fs (capped 100 GB) | **each builder may use 80% of the disk** |
 
-That `Min Free Space` is why such a host climbs to ~88% and then sits there instead of filling
-completely: it is the configured floor, and it happens to sit just above the app's own 85%
-`DISK_HIGH` line. Check the live policy with `docker buildx inspect <name>`.
+Two builders at 80% each is more than the disk holds, and the min-free floor is why such a host
+climbs to ~88% and then *sits* there rather than filling completely. It is not a runaway; it is the
+floor doing its job, and it lands just above the app's own 85% `DISK_HIGH` line.
+
+**The numbers in `docker buildx inspect` are computed once, at daemon or builder start, and then
+frozen.** So they look arbitrary and they drift: a builder started before a disk was grown keeps
+reporting fractions of the *old* size until it is restarted. Do not read them as fixed upstream
+constants — read them as "80% of whatever this filesystem was when the daemon came up".
 
 Set it to something the disk can actually hold. For the `docker` driver, `/etc/docker/daemon.json`:
 
 ```json
 {
-  "builder": { "gc": { "enabled": true, "defaultKeepStorage": "8GB" } },
+  "builder": { "gc": { "enabled": true, "defaultReservedSpace": "8GB" } },
   "log-opts": { "max-size": "50m", "max-file": "3" }
 }
 ```
 
-**Validate the file before you go anywhere near a restart.** The daemon can check a config without
-touching the running instance, so a typo never costs an outage:
+Use `defaultReservedSpace`, not the older `defaultKeepStorage` — the latter is a deprecated alias
+that still works but is the spelling you will find in stale blog posts.
+
+**Check the file's shape before restarting anything.** The daemon can parse a config without
+touching the running instance:
 
 ```bash
 sudo dockerd --validate --config-file=/etc/docker/daemon.json   # prints "configuration OK"
 ```
 
-Then try `systemctl reload docker` and re-inspect with `docker buildx inspect`; a full restart bounces
-every container on the host. For a `docker-container` driver builder, recreate it with
-`docker buildx create --buildkitd-config`, which discards its cache — usually the intent.
+Treat that as a syntax check and nothing more. Keys *nested* under `builder.gc` are decoded as plain
+JSON, so an unknown one is silently ignored — misspell `maxUsedSpace` and validation still passes
+while the setting does nothing. **Always confirm the policy actually took with
+`docker buildx inspect <name>` afterwards.** That is the only check that proves anything.
+
+**`systemctl reload docker` cannot apply this.** The daemon's reload path covers debug, labels,
+registry config, live-restore and a handful of others — not builder config. A reload will appear to
+succeed and change nothing. Applying `builder.gc` needs a genuine `systemctl restart docker`, and
+with no `live-restore` set that bounces **every container on the host**, so it wants a window.
+
+For a `docker-container` driver builder, recreate it with `docker buildx create --buildkitd-config`
+instead, which discards its cache — usually the intent — and touches nothing else.
 
 A finer-grained policy is accepted too, if one number is not enough:
 
 ```json
 { "builder": { "gc": { "enabled": true, "policy": [
-  { "keepStorage": "8GB", "filter": ["unused-for=168h"] },
-  { "keepStorage": "8GB", "all": true }
+  { "reservedSpace": "8GB", "maxUsedSpace": "8GB", "keepDuration": "168h" },
+  { "reservedSpace": "8GB", "maxUsedSpace": "8GB", "all": true }
 ] } } }
 ```
 
-Note `unused-for` takes a Go duration, so `168h` — **not** `7d`. There is no `d` unit and the value is
-rejected outright.
+Durations are Go durations, so `168h` — **not** `7d`. There is no `d` unit and the value is rejected
+outright. The same applies to `--filter unused-for=` on the command line.
 
 The `log-opts` above are worth setting at the same time: containers created without a logging limit
 write unbounded json-file logs. It only affects containers created afterwards.

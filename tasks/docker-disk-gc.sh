@@ -10,14 +10,22 @@
 #
 # WHY THIS IS A HELPER AND NOT A CRON JOB. The root disk hit 88% twice, and a
 # manual cleanup on 2026-09-08 reclaimed 47 GB. The cause was not "nothing ever
-# cleans up" — it was that BuildKit's garbage collector shipped with upstream
-# defaults sized for a CI machine: Max Used Space 42.84 GiB and Min Free Space
-# 11.18 GiB, PER BUILDER, on a 77 GB disk with two builders. A Min Free Space of
-# 11.18 GiB on this disk means BuildKit only starts evicting at 85.5% used, which
-# is exactly why the host climbs to ~88% and then sits there rather than filling
-# to 100%. The real fix is the GC policy (see docs/OPERATIONS.md, "Host disk
-# housekeeping"); this script is the one-off cleanup and the "why is it full"
-# report for when you are staring at a full disk right now.
+# cleans up": BuildKit garbage-collects on its own. It is that BuildKit sizes its
+# default policy AS A FRACTION OF THE FILESYSTEM — reserve 10%, min free 20%, max
+# used 80% — computed once when the daemon or builder starts. Each builder is
+# therefore allowed 80% of the disk, and this host has two of them, so the
+# permitted total exceeds the disk. The min-free floor is also what stops the
+# fill: eviction begins only when free space drops under 20%, which is why the
+# host climbs to ~88% and then SITS there rather than filling to 100%.
+#
+# Those percentages are why the numbers in `buildx inspect` look arbitrary and
+# drift: they are frozen at daemon-start size. On this host they still reflect a
+# 58 GiB filesystem that was grown to 77 GB afterwards, so they will change on
+# the next restart without anyone editing anything.
+#
+# The real fix is to set the policy explicitly (see docs/OPERATIONS.md, "Host
+# disk housekeeping"); this script is the one-off cleanup and the "why is it
+# full" report for when you are staring at a full disk right now.
 #
 # WHAT IT WILL NEVER DO. It only removes untagged ("dangling") images and build
 # cache. It never runs a full system prune, never touches volumes, never passes
@@ -47,11 +55,19 @@ set -euo pipefail
 # app's own 85% DISK_HIGH alert (cmd/poller/serverhealth.go).
 CACHE_CAP="${CACHE_CAP:-8GB}"
 
-# Absolute path: this is expected to run from cron, and paying one line here is
-# cheaper than debugging a PATH difference at 4am.
+# Absolute path by default. This is an operator tool rather than a scheduled job
+# (see the header), but defaulting to a full path costs one line and removes a
+# whole class of "worked in my shell" difference if it is ever wrapped.
 DOCKER="${DOCKER:-/usr/bin/docker}"
 
-LOCKFILE="${LOCKFILE:-/tmp/docker-disk-gc.lock}"
+# UID-suffixed on purpose. With fs.protected_regular=2 (the Ubuntu 24.04 default)
+# a process cannot open another user's file in a sticky world-writable directory,
+# so a bare /tmp/docker-disk-gc.lock created by one user makes every run as any
+# other user die at the `exec 9>` redirection — before printing anything, because
+# a failed redirection exits a non-interactive shell. Since the runbook has the
+# operator using sudo a couple of commands away, that is a live trap rather than
+# a theoretical one, and the file persists until reboot.
+LOCKFILE="${LOCKFILE:-${TMPDIR:-/tmp}/docker-disk-gc.$(id -u).lock}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -67,6 +83,7 @@ die() {
 }
 
 DRY_RUN=false
+BUILDERS="" # filled once in main(); see the note there
 
 # root_used_pct prints the root filesystem's used percentage as a bare integer.
 root_used_pct() {
@@ -96,10 +113,17 @@ builders() {
 		sed -n 's/.*"Name":"\([^"]*\)".*/\1/p' |
 		head -20) || true
 	if [ -z "$out" ]; then
-		# The JSON parse leans on buildx emitting "Name" before "Nodes", which is
-		# Go struct field order and could change. Fall back to the table, where
-		# builder rows start in column 0 and node rows are indented — a display
-		# convention, so the two failure modes are independent.
+		# Fall back to the table, where builder rows start in column 0 and node
+		# rows are indented.
+		#
+		# An earlier version of this comment claimed the JSON key order "could
+		# change because it is Go struct field order". That was wrong: buildx
+		# marshals through a map, so encoding/json sorts the keys and "Name"
+		# sorting before "Nodes" is deterministic. The fallback stays anyway —
+		# it costs nothing and covers the shapes this parse genuinely cannot
+		# handle, such as a future buildx emitting one JSON array instead of one
+		# object per line — but the honest reason is "belt and braces", not a
+		# field-order hazard that does not exist.
 		out=$("$DOCKER" buildx ls 2>/dev/null |
 			awk 'NR>1 && $0 !~ /^[[:space:]]/ {gsub(/\*$/,"",$1); print $1}' |
 			head -20) || true
@@ -117,7 +141,7 @@ report() {
 	"$DOCKER" system df || log_warn "docker system df failed"
 	echo
 	local b
-	for b in $(builders); do
+	for b in $BUILDERS; do
 		local used
 		# Each builder is tolerated individually: a docker-container builder whose
 		# BuildKit container is stopped makes this exit non-zero, and under set -e
@@ -138,15 +162,25 @@ reclaim() {
 	if [ "$DRY_RUN" = true ]; then
 		log_warn "DRY RUN — nothing will be removed."
 		log_info "[dry-run] Would run: ${DOCKER} image prune -f"
-		# Validate the cap's SHAPE here rather than by invoking buildx: --max-used-space
-		# is a prune-only flag (buildx du does not accept it), so there is no
-		# read-only command that exercises its parser. A malformed value would
-		# otherwise only surface during the real run.
-		if ! printf '%s' "$CACHE_CAP" | grep -Eq '^[0-9]+(\.[0-9]+)?(B|[KMGT]B|[KMGT]iB)?$'; then
-			log_warn "CACHE_CAP='${CACHE_CAP}' does not look like a byte size (e.g. 8GB, 512MB) — the real run would fail"
+		# Validate the cap's SHAPE here rather than by invoking buildx:
+		# --max-used-space is a prune-only flag (buildx du does not accept it), so
+		# there is no read-only command that exercises its parser.
+		#
+		# The grammar below mirrors go-units RAMInBytes, which is what buildx
+		# actually uses: case-insensitive, an optional space, and the unit letter
+		# alone is enough. An earlier, tighter regex here was wrong in BOTH
+		# directions — it rejected the perfectly valid 8G/8g/8gib while accepting
+		# a bare "8", which buildx reads as EIGHT BYTES and would trim the cache
+		# to nothing. A validator that is wrong in the permissive direction is
+		# worse than none at all.
+		if ! printf '%s' "$CACHE_CAP" | grep -Eiq '^[0-9]+(\.[0-9]+)?[[:space:]]*([kmgtp]i?b?|b)?$'; then
+			log_warn "CACHE_CAP='${CACHE_CAP}' is not a byte size buildx will accept (e.g. 8GB, 8G, 512MB)"
+		elif ! printf '%s' "$CACHE_CAP" | grep -Eiq '[kmgtp]'; then
+			# Bare digits are legal but mean BYTES. Nobody means 8 bytes.
+			log_warn "CACHE_CAP='${CACHE_CAP}' has no unit, so buildx reads it as ${CACHE_CAP} BYTES and would empty the cache. Use e.g. ${CACHE_CAP}GB."
 		fi
 		local b
-		for b in $(builders); do
+		for b in $BUILDERS; do
 			log_info "[dry-run] Would run: ${DOCKER} buildx prune --builder ${b} -f --max-used-space ${CACHE_CAP}"
 			# Reachability IS worth probing read-only: a docker-container builder
 			# whose BuildKit container is stopped fails the real prune, and knowing
@@ -164,7 +198,7 @@ reclaim() {
 	"$DOCKER" image prune -f || log_warn "image prune failed — continuing"
 
 	local b
-	for b in $(builders); do
+	for b in $BUILDERS; do
 		log_info "capping build cache on builder ${b} at ${CACHE_CAP}"
 		if ! "$DOCKER" buildx prune --builder "$b" -f --max-used-space "$CACHE_CAP"; then
 			log_warn "builder ${b}: prune failed (its BuildKit container may be stopped) — skipping"
@@ -232,11 +266,15 @@ main() {
 
 	command -v "$DOCKER" >/dev/null 2>&1 || die "docker not found at ${DOCKER} (set DOCKER=/path/to/docker)"
 
-	# ONE lock, held here and nowhere else. Do NOT also wrap the cron invocation
-	# in flock on this same path: flock(2) treats the wrapper's fd and this one as
+	# Enumerate once. Every `buildx ls` contacts each builder with a 20s status
+	# timeout, and this used to be called three or four times per invocation.
+	BUILDERS=$(builders)
+
+	# ONE lock, held here and nowhere else. Do NOT also wrap the invocation in
+	# flock on this same path: flock(2) treats the wrapper's fd and this one as
 	# separate open file descriptions, so the inner acquisition is denied by the
 	# outer lock held by the very same process, and the script would exit
-	# immediately on every scheduled run. That was verified on the host.
+	# immediately every time. That was verified on the host.
 	if command -v flock >/dev/null 2>&1; then
 		exec 9>"$LOCKFILE"
 		if ! flock -n 9; then
@@ -250,19 +288,24 @@ main() {
 		# no-op wearing the costume of success, which is the exact failure mode
 		# this script must never have. Found by running it on a machine with no
 		# flock in PATH.
-		log_warn "flock not available — continuing WITHOUT a lock; concurrent runs are possible"
-	fi
-
-	# An empty builder list is the worst failure this script has, because it looks
-	# exactly like success: every loop iterates zero times, nothing is pruned, and
-	# the summary reports a tidy no-op. Fail loudly instead.
-	if [ -z "$(builders)" ]; then
-		die "could not enumerate any buildx builder — refusing to report success having pruned nothing. Check: ${DOCKER} buildx ls"
+		log_warn "file locking unavailable — continuing WITHOUT a lock; concurrent runs are possible"
 	fi
 
 	report
 	echo
 	[ "$cmd" = "report" ] && exit 0
+
+	# An empty builder list is the worst failure this script has, because it looks
+	# exactly like success: every loop iterates zero times, nothing is pruned, and
+	# the summary reports a tidy no-op. Fail loudly instead.
+	#
+	# Checked AFTER report, not before. This guard first sat above it, which meant
+	# that on a box where buildx was broken, `report` printed nothing at all about
+	# the disk — failing hardest in precisely the "staring at a full disk" case the
+	# report exists to serve.
+	if [ -z "$BUILDERS" ]; then
+		die "could not enumerate any buildx builder — refusing to report success having pruned nothing. Check: ${DOCKER} buildx ls"
+	fi
 	reclaim
 }
 

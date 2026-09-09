@@ -20,6 +20,14 @@ import (
 // These assertions are the only mechanised gate on this file: the repo has no
 // shellcheck and no shfmt, in CI or anywhere else, so `go test ./...` running
 // this package is the whole story for shell.
+//
+// Be honest about what this is. It is a TRIPWIRE for the specific one-liner
+// somebody is most likely to reach for, not a sandbox. Substring matching does
+// not catch `docker container prune`, `docker volume rm`, `docker image rm`,
+// `docker compose down -v`, a doubled space, or any indirection through a
+// variable. Making it exhaustive would mean parsing bash, which is a worse use
+// of the effort than the review that catches those in a diff. What it does buy
+// is that the obvious regression fails loudly and immediately.
 
 func TestDockerDiskGC_NeverUsesDestructiveFlags(t *testing.T) {
 	const path = "../../tasks/docker-disk-gc.sh"
@@ -79,10 +87,11 @@ func TestDockerDiskGC_KeepsItsSafetyRails(t *testing.T) {
 	}{
 		{"set -euo pipefail", "house style for operational scripts (tasks/replica-setup.sh), and the script " +
 			"reads command output into variables where a silent failure would produce a wrong report."},
-		{"flock", "the script must hold a lock so a slow run cannot overlap the next one. It must be the ONLY " +
-			"lock: wrapping the invocation in flock on the same path as well would deadlock, because the " +
-			"inner acquisition is a separate open file description and is denied by the outer lock held by " +
-			"the same process. That was verified on the host."},
+		{"flock -n 9", "the script must actually TAKE a lock, not merely mention one — an earlier version of " +
+			"this assertion matched the bare word `flock`, which a log line saying \"flock not available\" " +
+			"satisfied even if the call had been deleted. It must also be the ONLY lock: wrapping the " +
+			"invocation in flock on the same path as well would deadlock, because the inner acquisition is a " +
+			"separate open file description and is denied by the outer lock held by the same process."},
 		{"--max-used-space", "the build-cache bound. This replaced an age filter deliberately: buildx parses " +
 			"durations with Go's time.ParseDuration, which has no 'd' unit, so `until=7d` is rejected outright " +
 			"while `until=168h` is accepted — a cap has no such trap."},
