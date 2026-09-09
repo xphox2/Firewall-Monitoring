@@ -96,6 +96,7 @@ configured = unsigned requests, exactly as before.
 | A device shows **offline** with no alert/email | probe-monitored device (polled by the remote collector, not the central poller) | Fixed in v0.10.323 — confirm you're on ≥ that build; check the probe is sending data. |
 | A device went dark after an edit, community looks like `********` | redacted-secret write-back (pre-v0.10.324) | Re-enter the real SNMP community (the mask overwrote it; unrecoverable from the DB). Confirm you're on ≥ v0.10.324. |
 | Disk filling up | `syslog_messages` bloat | Check severity distribution first; set `RETENTION_SYSLOG_CRITICAL_DAYS`. The retention cleanup runs every 24 h in the poller. |
+| Disk filling up, but the **database volume** is fine | Docker build cache + orphaned images on the **root** filesystem | Different disk, different fix — see [Host disk housekeeping](#host-disk-housekeeping). `df -h /` vs `df -h` on the data volume tells you which one. |
 | Duplicate IRC bots / double login-lockout | two `cmd/api` instances sharing one DB | Known limitation (AUDIT-040, see KNOWN-ISSUES). Run a single API instance until resolved. |
 | Logins all fail right after a restart | `.jwt-secret` was regenerated (not persisted) | Restore `/data/.jwt-secret` from backup, or accept that all sessions + encrypted secrets are lost and re-enter device/IRC/SMTP secrets. |
 | `/interface-addresses` 500s (SQLSTATE 42P10) | legacy duplicate rows blocked the unique index | Fixed in v0.10.322 (self-healing on restart) — confirm you're on ≥ that build. |
@@ -460,6 +461,147 @@ large understatement) and the multi-row-INSERT fallback by ~2x; COPY at batch
 1000 clears the 100k samples/sec sFlow design target on modest hardware; and
 batch size matters — the collector's 500–1000-row batches sit in the right
 range, so don't shrink them to "smooth" load.
+
+## Host disk housekeeping
+
+The section above is about the **database volume**. This one is about the **root filesystem**, which
+holds Docker. They fill for unrelated reasons and the fix for one does nothing for the other — that
+confusion is the single most common wrong turn here.
+
+| Mount | Holds | Fills because |
+|---|---|---|
+| the data volume (a bind mount) | PGDATA | telemetry ingest — see *Resource footprint & DB sizing* |
+| `/` | Docker images, build cache, volumes | build cache and orphaned images, below |
+
+The server already **detects** both: the poller probes root and the PGDATA volume every 5 minutes and
+raises `DISK_HIGH` against `server_disk_threshold` (default 85%) and `server_disk_free_floor_gb`
+(default 5). It does not remediate, which is what this section is for.
+
+### Three traps, in the order people hit them
+
+**`du` on `/var/lib/docker` will convince you Docker is innocent.** With the containerd image store,
+layers live under `/var/lib/containerd`. On the reference deployment `du` reported ~17 GB for
+`/var/lib/docker` while `/var/lib/containerd` held 37 GB.
+
+**`docker system df` will point you at the wrong line.** A builder using the `docker-container`
+driver keeps its cache in its own named volume, so those bytes are counted under **Local Volumes**
+while the `Build Cache` row shows only the in-daemon builder. It once read `Build Cache 3.846MB`
+while a container-driver builder held gigabytes. The honest number is per builder:
+
+```bash
+docker buildx ls                              # note: there is usually more than one
+docker buildx du --builder <name>
+```
+
+**There is more than one builder, and the one you care about may not be the default.** On the
+reference deployment `docker compose build` runs on a builder created by an unrelated project,
+because that is the one selected in `~/.docker/buildx/current`. `docker builder prune` with no
+`--builder` only touches `default`, so it can appear to do nothing.
+
+### The real control is BuildKit's GC policy, not a cleanup job
+
+BuildKit garbage-collects on its own. The reason a host still fills is that its default policy is a
+**fraction of the filesystem**, and there is one such allowance *per builder*:
+
+| Setting | Default | Consequence |
+|---|---|---|
+| reserved space | 10% of the fs (capped 10 GB) | |
+| min free space | 20% of the fs | **eviction only begins once free space drops under 20%** |
+| max used space | 80% of the fs (capped 100 GB) | **each builder may use 80% of the disk** |
+
+Two builders at 80% each is more than the disk holds, and the min-free floor is why such a host
+climbs to ~88% and then *sits* there rather than filling completely. It is not a runaway; it is the
+floor doing its job, and it lands just above the app's own 85% `DISK_HIGH` line.
+
+**The numbers in `docker buildx inspect` are computed once, at daemon or builder start, and then
+frozen.** So they look arbitrary and they drift: a builder started before a disk was grown keeps
+reporting fractions of the *old* size until it is restarted. Do not read them as fixed upstream
+constants — read them as "80% of whatever this filesystem was when the daemon came up".
+
+Set it to something the disk can actually hold. For the `docker` driver, `/etc/docker/daemon.json`:
+
+```json
+{
+  "builder": { "gc": { "enabled": true, "defaultReservedSpace": "8GB" } },
+  "log-opts": { "max-size": "50m", "max-file": "3" }
+}
+```
+
+Use `defaultReservedSpace`, not the older `defaultKeepStorage` — the latter is a deprecated alias
+that still works but is the spelling you will find in stale blog posts.
+
+**Check the file's shape before restarting anything.** The daemon can parse a config without
+touching the running instance:
+
+```bash
+sudo dockerd --validate --config-file=/etc/docker/daemon.json   # prints "configuration OK"
+```
+
+Treat that as a syntax check and nothing more. Keys *nested* under `builder.gc` are decoded as plain
+JSON, so an unknown one is silently ignored — misspell `maxUsedSpace` and validation still passes
+while the setting does nothing. **Always confirm the policy actually took with
+`docker buildx inspect <name>` afterwards.** That is the only check that proves anything.
+
+**`systemctl reload docker` cannot apply this.** The daemon's reload path covers debug, labels,
+registry config, live-restore and a handful of others — not builder config. A reload will appear to
+succeed and change nothing. Applying `builder.gc` needs a genuine `systemctl restart docker`, and
+with no `live-restore` set that bounces **every container on the host**, so it wants a window.
+
+For a `docker-container` driver builder, recreate it with `docker buildx create --buildkitd-config`
+instead, which discards its cache — usually the intent — and touches nothing else.
+
+A finer-grained policy is accepted too, if one number is not enough:
+
+```json
+{ "builder": { "gc": { "enabled": true, "policy": [
+  { "reservedSpace": "8GB", "maxUsedSpace": "8GB", "keepDuration": "168h" },
+  { "reservedSpace": "8GB", "maxUsedSpace": "8GB", "all": true }
+] } } }
+```
+
+Durations are Go durations, so `168h` — **not** `7d`. There is no `d` unit and the value is rejected
+outright. The same applies to `--filter unused-for=` on the command line.
+
+The `log-opts` above are worth setting at the same time: containers created without a logging limit
+write unbounded json-file logs. It only affects containers created afterwards.
+
+### Orphaned images are a separate problem
+
+**BuildKit's GC never touches them** — they are image-store objects, not build cache, so no policy
+will ever reclaim them. Every `docker compose build` replaces the `:latest` tag and leaves the
+previous image untagged; they accumulate one per rebuild, forever.
+
+Prune them **as part of the deploy**, where it is known exactly what was just orphaned:
+
+```bash
+git pull && docker compose build && docker compose up -d
+docker image prune -f      # removes the image the rebuild just orphaned
+```
+
+`docker image prune` without `-a` cannot remove an image any container references, running **or**
+stopped — so this is safe even mid-deploy. It is worth knowing that the live container is sometimes
+itself on an untagged image (a build that ran without a recreate); prune correctly leaves it alone.
+
+Note `until` compares the image **record's** creation time, which is set when the image is orphaned —
+not the config's `Created`, which a cache-hit rebuild leaves at its old value. So `until=24h` means
+"orphaned more than 24h ago" even though `docker images` may print a much older CREATED column.
+
+### When the disk is full right now
+
+`tasks/docker-disk-gc.sh` reports and reclaims. It removes untagged images and caps each builder's
+cache, and it will never run a system prune, touch volumes, or stop a container.
+
+```bash
+./tasks/docker-disk-gc.sh report      # what is using the space
+./tasks/docker-disk-gc.sh --dry-run   # what it would remove
+./tasks/docker-disk-gc.sh             # do it
+```
+
+It exits non-zero if the disk is still above 85% afterwards, which means Docker was **not** the
+cause. Look at `sudo du -xhd1 /var /home /opt | sort -h | tail` next — journald, apt, snap revisions
+and container logs are the usual suspects, and none of them are this script's business.
+
+---
 
 ## Running a single API instance (AUDIT-040)
 

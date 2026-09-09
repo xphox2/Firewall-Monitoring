@@ -1,6 +1,26 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.246] - 2026-09-08
+
+### Added
+
+**`tasks/docker-disk-gc.sh` plus a runbook for the host's root filesystem, which has hit 88% twice.** A manual cleanup on 2026-09-08 reclaimed 47 GB and took it from 88% to 23%. This documents why it fills and adds a tool for when it already has.
+
+- The root filesystem and the database volume fill for unrelated reasons, and the fix for one does nothing for the other. `docs/OPERATIONS.md` gains a **Host disk housekeeping** section that says which is which, and a `Failure modes` row for the case the existing `Disk filling up` row does not cover — that row is scoped to `syslog_messages` bloat on the data volume.
+- The script removes untagged images and caps each builder's build cache with `--max-used-space`. It will never run a system prune, pass `--volumes`, pass `-a` to an image prune, or stop a container. Those exclusions are asserted by `internal/shell/dockerdiskgc_test.go` rather than left to good intentions, because the tempting one-liner that undoes them also removes unused **tagged** images and would force a re-pull of every base image on the box. It exits non-zero when the disk is still above 85% afterwards, which is the signal that Docker was not the cause. Applying the policy needs a real `systemctl restart docker` — the daemon's reload path does not cover builder config, so a reload appears to succeed and changes nothing — and `dockerd --validate` only checks JSON shape, silently ignoring an unknown key nested under `builder.gc`, so the policy must be confirmed with `docker buildx inspect` afterwards.
+- **The failure mode it guards hardest against is a silent no-op that reports success**, which is worse than an error because nobody investigates it. Two were found by testing rather than reasoning: an empty builder list makes every loop iterate zero times and the summary read like a tidy cleanup, so that now fails loudly; and on a host without `flock` the lock check took the "already held" branch and exited 0 announcing another run was in progress, so availability is now distinguished from contention. Builder enumeration also falls back from the JSON form to the table form, since the two depend on independent things (Go struct field order versus a display convention).
+
+### Documentation
+
+**The root cause is a misconfiguration, not a missing cleanup job.** The runbook records it, because the obvious diagnosis is wrong in three separate ways:
+
+- **BuildKit already garbage-collects.** It keeps filling because its default policy is a **fraction of the filesystem** — reserve 10%, min free 20%, max used 80% — and there is one such allowance *per builder*. Two builders at 80% each is more than the disk holds, and the min-free floor is why such a host climbs to ~88% and then *sits* there rather than filling completely, landing just above the app's own 85% `DISK_HIGH` line. Those fractions are resolved once at daemon or builder start and then frozen, which is why `docker buildx inspect` reports numbers that look arbitrary and drift — on the reference host they still describe a filesystem that was grown afterwards. The real control is the GC policy (`daemon.json` `builder.gc`, or `--buildkitd-config` for a container-driver builder), and the doc gives both, using the current `defaultReservedSpace`/`maxUsedSpace` spellings rather than the deprecated `keepStorage` aliases.
+- **`du` on `/var/lib/docker` will convince you Docker is innocent**, because with the containerd image store the layers are under `/var/lib/containerd`. And `docker system df` under-reports as well: a `docker-container` driver builder keeps its cache in its own volume, and it once reported `Build Cache 3.846MB` while that builder held gigabytes. The honest number is `docker buildx du --builder <name>`.
+- **There is more than one builder, and it may not be the default.** `docker compose build` can run on a builder created by an entirely different project, because that is what `~/.docker/buildx/current` selects — so `docker builder prune` with no `--builder` appears to do nothing.
+
+**Orphaned images are a separate problem that no GC policy will ever fix**, since they live in the image store rather than the build cache. Every rebuild replaces the `:latest` tag and leaves the previous image untagged, one per build, forever. The runbook puts `docker image prune -f` in the deploy sequence, where it is known exactly what was just orphaned. That is safe mid-deploy: without `-a` the daemon cannot remove an image any container references, running or stopped — and the live container is sometimes itself on an untagged image, which prune correctly leaves alone.
+
 ## [0.11.245] - 2026-09-07
 
 ### Changed
