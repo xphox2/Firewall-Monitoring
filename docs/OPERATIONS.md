@@ -520,9 +520,28 @@ Set it to something the disk can actually hold. For the `docker` driver, `/etc/d
 }
 ```
 
-Try `systemctl reload docker` first and re-inspect; a full restart bounces every container on the
-host. For a `docker-container` driver builder, recreate it with `docker buildx create
---buildkitd-config`, which discards its cache — usually the intent.
+**Validate the file before you go anywhere near a restart.** The daemon can check a config without
+touching the running instance, so a typo never costs an outage:
+
+```bash
+sudo dockerd --validate --config-file=/etc/docker/daemon.json   # prints "configuration OK"
+```
+
+Then try `systemctl reload docker` and re-inspect with `docker buildx inspect`; a full restart bounces
+every container on the host. For a `docker-container` driver builder, recreate it with
+`docker buildx create --buildkitd-config`, which discards its cache — usually the intent.
+
+A finer-grained policy is accepted too, if one number is not enough:
+
+```json
+{ "builder": { "gc": { "enabled": true, "policy": [
+  { "keepStorage": "8GB", "filter": ["unused-for=168h"] },
+  { "keepStorage": "8GB", "all": true }
+] } } }
+```
+
+Note `unused-for` takes a Go duration, so `168h` — **not** `7d`. There is no `d` unit and the value is
+rejected outright.
 
 The `log-opts` above are worth setting at the same time: containers created without a logging limit
 write unbounded json-file logs. It only affects containers created afterwards.
