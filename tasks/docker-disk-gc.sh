@@ -89,10 +89,22 @@ root_avail_h() {
 # the node. Verified against this host's real output: without the strip it
 # yields honcho-synology0 (a node) instead of honcho-synology (the builder).
 builders() {
-	"$DOCKER" buildx ls --format json 2>/dev/null |
+	local out
+	# JSON first: one object per line, builder "Name" before its nested "Nodes".
+	out=$("$DOCKER" buildx ls --format json 2>/dev/null |
 		sed 's/"Nodes".*//' |
 		sed -n 's/.*"Name":"\([^"]*\)".*/\1/p' |
-		head -20
+		head -20) || true
+	if [ -z "$out" ]; then
+		# The JSON parse leans on buildx emitting "Name" before "Nodes", which is
+		# Go struct field order and could change. Fall back to the table, where
+		# builder rows start in column 0 and node rows are indented — a display
+		# convention, so the two failure modes are independent.
+		out=$("$DOCKER" buildx ls 2>/dev/null |
+			awk 'NR>1 && $0 !~ /^[[:space:]]/ {gsub(/\*$/,"",$1); print $1}' |
+			head -20) || true
+	fi
+	printf '%s\n' "$out"
 }
 
 report() {
@@ -225,10 +237,27 @@ main() {
 	# separate open file descriptions, so the inner acquisition is denied by the
 	# outer lock held by the very same process, and the script would exit
 	# immediately on every scheduled run. That was verified on the host.
-	exec 9>"$LOCKFILE"
-	if ! flock -n 9; then
-		log_warn "another run holds ${LOCKFILE} — exiting"
-		exit 0
+	if command -v flock >/dev/null 2>&1; then
+		exec 9>"$LOCKFILE"
+		if ! flock -n 9; then
+			log_warn "another run holds ${LOCKFILE} — exiting"
+			exit 0
+		fi
+	else
+		# Distinguishing "lock is held" from "flock is missing" matters more than
+		# it looks. Without this branch a host with no flock takes the failure
+		# path above and exits 0 announcing another run holds the lock — a silent
+		# no-op wearing the costume of success, which is the exact failure mode
+		# this script must never have. Found by running it on a machine with no
+		# flock in PATH.
+		log_warn "flock not available — continuing WITHOUT a lock; concurrent runs are possible"
+	fi
+
+	# An empty builder list is the worst failure this script has, because it looks
+	# exactly like success: every loop iterates zero times, nothing is pruned, and
+	# the summary reports a tidy no-op. Fail loudly instead.
+	if [ -z "$(builders)" ]; then
+		die "could not enumerate any buildx builder — refusing to report success having pruned nothing. Check: ${DOCKER} buildx ls"
 	fi
 
 	report
