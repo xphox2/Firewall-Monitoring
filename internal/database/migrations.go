@@ -114,6 +114,7 @@ var registeredMigrations = []migration{
 	{version: 63, name: "device_name_unique_among_active", run: (*Database).migrateDeviceNameUniqueAmongActive},
 	{version: 64, name: "device_uuid", run: (*Database).migrateDeviceUUID},
 	{version: 65, name: "device_purge_jobs", run: (*Database).migrateDevicePurgeJobs},
+	{version: 66, name: "flow_summaries", run: (*Database).migrateFlowSummaries},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

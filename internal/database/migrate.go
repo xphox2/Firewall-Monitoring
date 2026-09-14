@@ -55,6 +55,9 @@ var baselineModels = []interface{}{
 	&models.SyslogSummary{},
 	&models.FlowSample{},
 	&models.FlowRollup{},
+	&models.FlowSummary{},
+	&models.FlowSummaryTop{},
+	&models.FlowSummaryBucket{},
 	&models.SiteDatabase{},
 	&models.SecurityStats{},
 	&models.SDWANHealth{},
@@ -1733,6 +1736,14 @@ func (d *Database) migrateServerMetrics() error {
 // idempotent, so a fresh install (baseline already built it) is a no-op.
 func (d *Database) migrateDevicePurgeJobs() error {
 	return d.db.AutoMigrate(&models.DevicePurgeJob{})
+}
+
+// migrateFlowSummaries (v66) creates the three flow-summary tables. They are
+// deliberately NOT partitioned: the whole point is that they are small — under
+// a million rows for six months of history against 118M in flow_rollups — so
+// partitioning would add machinery without pruning anything worth pruning.
+func (d *Database) migrateFlowSummaries() error {
+	return d.db.AutoMigrate(&models.FlowSummary{}, &models.FlowSummaryTop{}, &models.FlowSummaryBucket{})
 }
 
 // migrateSyslogSeverityIndex (v54) creates the (severity, timestamp) composite

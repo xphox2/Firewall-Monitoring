@@ -1,6 +1,58 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.248] - 2026-09-14
+
+### Added — flow summary tables, so wide windows have something fast to read
+
+The 30-day and 90-day ranges on the Flows page could not return real figures.
+Against `flow_rollups` those windows aggregate roughly 76M and 92M rows; a bare
+`SUM` alone measures 15.1s and 19.5s on production, and the page issues about two
+dozen queries inside a 30-second response budget. No index, no plan tuning and no
+partitioning changes that — the scan itself is the cost, because `flow_rollups`
+is a rollup in name only. Its group key includes the source address, destination
+address and port, so every conversation stays its own row: the hourly tier alone
+holds 70M rows over 28 days, about 104,000 distinct conversation keys per hour.
+
+Three new tables pre-aggregate it. Measured on production, they cover the entire
+six-month retained history in **under a million rows against 118M**, and reproduce
+bytes, packets and flow counts **exactly**.
+
+- `flow_summaries` is a cube over the low-cardinality dimensions (protocol,
+  application category, direction, scope, destination country, flow source,
+  firewall event). Keeping the full cross product means any *combination* of
+  those can be filtered and grouped, including the protocol pill row. Measured at
+  11,384 rows per 24 hours; destination ASN is deliberately excluded because
+  adding it inflates that to 91,000 a day.
+- `flow_summary_tops` holds per-bucket top-50 lists for the high-cardinality
+  dimensions (source, destination, port, ASN, conversation). Fifty is not
+  arbitrary: a window's top-10 is a merge of per-bucket lists, and at N=10 the
+  measured error bound for ports (1,094 MB) *exceeds* the true tenth-place value
+  (562 MB), so a merged top-10 could simply be wrong. At N=50 the bound is 55 MB.
+- `flow_summary_buckets` holds what neither shape can express: exact per-bucket
+  distinct address counts and the sampling range.
+
+The writer is a **separate, idempotent job**, not a write inside the rollup
+transaction. It recomputes a bucket from its source rows rather than merging into
+it, which is what makes late data correct: a collector replaying its
+store-and-forward spool with old timestamps is simply picked up on the next pass.
+A merge-based top-N cannot do that, because the values that fell below the cut are
+already gone. Recomputation also means **the same code path is the backfill** —
+there is no separate migration, and the job walks history a bounded number of
+buckets per cycle until it catches up.
+
+The summary mirrors the rollup ladder's own tiers, hourly and daily, which keeps
+them disjoint. That is not a preference: the hourly rollup tier only reaches back
+28 days and everything older exists solely at day resolution, so hourly summary
+rows cannot be reconstructed for most of the retained window.
+
+Retention is a `SystemSetting` (`flow_summary_retention_days`, default 365)
+rather than another `RETENTION_*` environment variable, matching
+`syslog_summary_retention_days`.
+
+The Flows page does not read these tables yet — that follows once the backfill has
+run and can be compared against the live path on real data.
+
 ## [0.11.247] - 2026-09-14
 
 ### Fixed — Flows page reported figures that did not match the selected range

@@ -1,6 +1,9 @@
 package database
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Dialect abstracts SQL differences between PostgreSQL and other databases.
 type Dialect interface {
@@ -24,6 +27,16 @@ type Dialect interface {
 	// ok is false when the dialect cannot express containment exactly, in which
 	// case callers must fall back to prefix matching and accept a superset.
 	AddrInCIDR(column string) (expr string, ok bool)
+
+	// CastText returns a SQL expression rendering expr as text. Postgres will
+	// not implicitly concatenate an integer, so numeric dimension values have to
+	// be cast explicitly before they can share a text column.
+	CastText(expr string) string
+
+	// Concat joins its arguments into one text value. Postgres and SQLite both
+	// spell this `||`, but it is behind the interface so a future dialect that
+	// does not is a compile error rather than a runtime surprise.
+	Concat(parts ...string) string
 }
 
 // ---------- PostgreSQL ----------
@@ -71,6 +84,10 @@ func (postgresDialect) AddrInCIDR(column string) (string, bool) {
 	return fmt.Sprintf("NULLIF(%s, '')::inet <<= ?::inet", column), true
 }
 
+func (postgresDialect) CastText(expr string) string { return fmt.Sprintf("CAST(%s AS TEXT)", expr) }
+
+func (postgresDialect) Concat(parts ...string) string { return strings.Join(parts, " || ") }
+
 // ---------- SQLite (test only) ----------
 
 type sqliteDialect struct{}
@@ -105,3 +122,7 @@ func (sqliteDialect) MinutesBetween(endCol, startCol string) string {
 // back to prefix matching. SQLite is the dev/test lane only; production is
 // PostgreSQL, where containment is exact.
 func (sqliteDialect) AddrInCIDR(string) (string, bool) { return "", false }
+
+func (sqliteDialect) CastText(expr string) string { return fmt.Sprintf("CAST(%s AS TEXT)", expr) }
+
+func (sqliteDialect) Concat(parts ...string) string { return strings.Join(parts, " || ") }

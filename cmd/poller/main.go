@@ -337,6 +337,17 @@ func (p *Poller) Start() error {
 				if p.db != nil {
 					p.db.RunFlowRollupCycle()
 					p.db.RunSyslogAggregationCycle(p.cfg.Retention)
+					// Runs AFTER the rollup cycle, on the same lock and tick.
+					// Order matters: the summary is computed FROM flow_rollups,
+					// so summarising first would leave the newest buckets a
+					// cycle behind for no reason. Sharing the lock keeps it off
+					// the tables while retention cleanup holds them.
+					//
+					// This is also the backfill — the job recomputes buckets
+					// rather than merging into them, so a cold start simply
+					// walks history a bounded number of buckets per cycle until
+					// it catches up. There is no separate migration to run.
+					p.db.RunFlowSummaryCycle()
 				}
 			})
 		case <-detectTicker.C:

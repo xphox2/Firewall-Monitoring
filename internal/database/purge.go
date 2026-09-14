@@ -59,6 +59,12 @@ var devicePurgeTables = []purgeTable{
 	{table: "syslog_summaries", columns: []string{"device_id"}, orderBy: "timestamp"},
 	{table: "flow_if_counters", columns: []string{"device_id"}, orderBy: "timestamp"},
 	{table: "flow_rollups", columns: []string{"device_id"}, orderBy: "timestamp"},
+	// v66 summary ladder. Small, but device-keyed: leaving them behind would
+	// keep a purged device's traffic visible in every wide-window view, which
+	// is precisely what a purge is for.
+	{table: "flow_summaries", columns: []string{"device_id"}, orderBy: "timestamp"},
+	{table: "flow_summary_tops", columns: []string{"device_id"}, orderBy: "timestamp"},
+	{table: "flow_summary_buckets", columns: []string{"device_id"}, orderBy: "timestamp"},
 	{table: "interface_errors", columns: []string{"device_id"}, orderBy: "timestamp"},
 	{table: "process_stats", columns: []string{"device_id"}, orderBy: "timestamp"},
 	{table: "ha_status", columns: []string{"device_id"}, orderBy: "timestamp"},

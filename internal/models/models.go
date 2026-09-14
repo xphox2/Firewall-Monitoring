@@ -1849,6 +1849,132 @@ type FlowRollup struct {
 
 func (FlowRollup) TableName() string { return "flow_rollups" }
 
+// ---------------------------------------------------------------------------
+// Flow summary: the pre-aggregate that makes wide windows answerable.
+//
+// WHY THIS EXISTS. flow_rollups is a rollup in name only. Its group key is 13
+// columns wide and includes src_addr, dst_addr and dst_port, so every
+// conversation stays its own row: 118M rows / 21 GB on production, with the 1h
+// tier alone holding 70M rows over 28 days (~104,000 distinct conversation keys
+// per hourly bucket). Aggregating it is the cost — a bare SUM measures 12.9s at
+// 7 days and 19.5s at 90 days, and the Flows page issues roughly two dozen
+// queries against a 30-second response budget. No index, no plan tuning and no
+// partitioning changes that; only pre-aggregation does.
+//
+// Measured on production, these three tables cover the ENTIRE retained history
+// (six months) in under a million rows, against 118M — and reproduce bytes,
+// packets and flow counts EXACTLY.
+//
+// WHY THREE TABLES. The dimensions split into two populations that cannot share
+// a shape:
+//   - Low cardinality (protocol ~11, app_category 14, direction 3, country ~200,
+//     flow_source, firewall_event). Stored as a full cross product in
+//     FlowSummary, so ANY combination of them can be filtered and grouped —
+//     including the protocol pill row, which a one-dimension-per-row design
+//     would have forced back onto the slow path. Measured at 11,384 rows per
+//     24h; adding dst_asn (10,961 distinct) would inflate it to 91k/day, which
+//     is why ASN is not in the cube.
+//   - High cardinality (src_addr 339,032 distinct in 24h, dst_addr, dst_port,
+//     dst_asn, and the conversation tuple). Stored as per-bucket top-N in
+//     FlowSummaryTop.
+// Neither shape can carry a distinct COUNT, so per-bucket scalars live in
+// FlowSummaryBucket.
+
+// FlowSummary is the low-cardinality cube: one row per bucket per device per
+// combination of the classification dimensions. Totals, packets, throughput,
+// by-protocol, by-application, by-direction, by-country, local-traffic and the
+// bandwidth chart all come from here, under any filter over these columns.
+//
+// Timestamp+IntervalType form a two-tier ladder mirroring flow_rollups: "1h"
+// for the recent span, "1d" beyond it. That is not a preference — the 1h rollup
+// tier only reaches back 28 days and everything older exists ONLY at day
+// resolution in the 1d tier, so hourly summary rows cannot be reconstructed for
+// it. The tiers are disjoint, so summing across them cannot double-count.
+type FlowSummary struct {
+	ID           uint      `json:"id" gorm:"primaryKey"`
+	Timestamp    time.Time `json:"timestamp" gorm:"uniqueIndex:idx_flow_summary_key,priority:2;index:idx_flow_summary_scan,priority:2"`
+	IntervalType string    `json:"interval_type" gorm:"size:4;uniqueIndex:idx_flow_summary_key,priority:1;index:idx_flow_summary_scan,priority:1"` // "1h","1d"
+	DeviceID     uint      `json:"device_id" gorm:"uniqueIndex:idx_flow_summary_key,priority:3"`
+
+	Protocol      uint8  `json:"protocol" gorm:"uniqueIndex:idx_flow_summary_key,priority:4;default:0;not null"`
+	AppCategory   uint8  `json:"app_category" gorm:"uniqueIndex:idx_flow_summary_key,priority:5;default:0;not null"`
+	Direction     uint8  `json:"direction" gorm:"uniqueIndex:idx_flow_summary_key,priority:6;default:0;not null"`
+	ScopeLocal    bool   `json:"scope_local" gorm:"uniqueIndex:idx_flow_summary_key,priority:7;default:false;not null"`
+	DstCountry    string `json:"dst_country,omitempty" gorm:"type:varchar(2);uniqueIndex:idx_flow_summary_key,priority:8"`
+	FlowSource    uint8  `json:"flow_source" gorm:"uniqueIndex:idx_flow_summary_key,priority:9;default:0;not null"`
+	FirewallEvent uint8  `json:"firewall_event" gorm:"uniqueIndex:idx_flow_summary_key,priority:10;default:0;not null"`
+
+	BytesSum   uint64 `json:"bytes_sum"`
+	PacketsSum uint64 `json:"packets_sum"`
+	FlowCount  int64  `json:"flow_count"`
+	// SamplingBytes is the bytes-weighted sampling numerator, i.e.
+	// SUM(sampling_rate_avg * bytes_sum). Dividing it by BytesSum recovers the
+	// weighted rate for any subset of rows. A plain average could not be
+	// re-aggregated across buckets, and averaging across a sampling-regime change
+	// produces a rate that never existed anyway.
+	SamplingBytes float64 `json:"sampling_bytes"`
+}
+
+func (FlowSummary) TableName() string { return "flow_summaries" }
+
+// FlowSummaryTop holds per-bucket top-N for the high-cardinality dimensions,
+// which cannot go in the cube without destroying its size.
+//
+// N MATTERS AND IS NOT NEGOTIABLE DOWNWARD. A window's top-10 is a merge of
+// per-bucket top-Ns, and the error bound is the sum of each bucket's Nth value.
+// Measured over 24h of hourly buckets on production:
+//
+//	dimension      bound@N=10   bound@N=50   true #10
+//	src_addr        1,286 MB       10 MB      2,607 MB
+//	conversation    1,565 MB       43 MB      2,023 MB
+//	dst_port        1,094 MB       55 MB        562 MB
+//
+// At N=10 the port bound EXCEEDS the true #10, so a merged top-10 can simply be
+// wrong. At N=50 it is about a tenth of it. See flowSummaryTopN.
+//
+// Value is the dimension's value as text (an address, a port number, an "ASxxx"
+// label, or "src|dst|port|proto" for a conversation) so one table serves all of
+// them; the reader formats it per Dimension.
+type FlowSummaryTop struct {
+	ID           uint      `json:"id" gorm:"primaryKey"`
+	Timestamp    time.Time `json:"timestamp" gorm:"uniqueIndex:idx_flow_summary_top_key,priority:3;index:idx_flow_summary_top_scan,priority:3"`
+	IntervalType string    `json:"interval_type" gorm:"size:4;uniqueIndex:idx_flow_summary_top_key,priority:1;index:idx_flow_summary_top_scan,priority:1"`
+	DeviceID     uint      `json:"device_id" gorm:"uniqueIndex:idx_flow_summary_top_key,priority:4"`
+	ScopeLocal   bool      `json:"scope_local" gorm:"uniqueIndex:idx_flow_summary_top_key,priority:5;default:false;not null"`
+	// Dimension is one of the flowSummaryDim* constants.
+	Dimension string `json:"dimension" gorm:"size:16;uniqueIndex:idx_flow_summary_top_key,priority:2;index:idx_flow_summary_top_scan,priority:2"`
+	Value     string `json:"value" gorm:"uniqueIndex:idx_flow_summary_top_key,priority:6"`
+
+	BytesSum   uint64 `json:"bytes_sum"`
+	PacketsSum uint64 `json:"packets_sum"`
+	FlowCount  int64  `json:"flow_count"`
+}
+
+func (FlowSummaryTop) TableName() string { return "flow_summary_tops" }
+
+// FlowSummaryBucket carries the per-bucket scalars that neither of the other
+// two shapes can express: exact distinct address counts (not derivable from a
+// top-N list) and the sampling range.
+//
+// Window-level distinct counts remain approximate — the union of per-bucket
+// distinct sets is not their sum — so the reader reports them as an upper bound
+// and marks the result approximate, exactly as the live path already does when
+// it sums the raw and rolled-up tiers.
+type FlowSummaryBucket struct {
+	ID           uint      `json:"id" gorm:"primaryKey"`
+	Timestamp    time.Time `json:"timestamp" gorm:"uniqueIndex:idx_flow_summary_bucket_key,priority:2;index:idx_flow_summary_bucket_scan,priority:2"`
+	IntervalType string    `json:"interval_type" gorm:"size:4;uniqueIndex:idx_flow_summary_bucket_key,priority:1;index:idx_flow_summary_bucket_scan,priority:1"`
+	DeviceID     uint      `json:"device_id" gorm:"uniqueIndex:idx_flow_summary_bucket_key,priority:3"`
+	ScopeLocal   bool      `json:"scope_local" gorm:"uniqueIndex:idx_flow_summary_bucket_key,priority:4;default:false;not null"`
+
+	DistinctSrc     int64   `json:"distinct_src"`
+	DistinctDst     int64   `json:"distinct_dst"`
+	SamplingRateMin float64 `json:"sampling_rate_min"`
+	SamplingRateMax float64 `json:"sampling_rate_max"`
+}
+
+func (FlowSummaryBucket) TableName() string { return "flow_summary_buckets" }
+
 // FlowDetection is one finding from the sFlow detection engine (internal/detect),
 // run periodically by the poller over a recent window of flow_samples. Each row
 // is a good-vs-bad traffic verdict (security / operational / policy) that the

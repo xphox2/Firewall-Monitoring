@@ -442,6 +442,30 @@ func (d *Database) SyslogSummaryRetentionDays() int {
 	return n
 }
 
+// FlowSummaryRetentionKey sets how long the flow summary tables are kept.
+// 0 = keep forever. A SystemSetting rather than a RETENTION_* env var, matching
+// SyslogSummaryRetentionKey — this is a user-facing knob, and the house rule is
+// that new configuration is an admin-UI setting.
+const FlowSummaryRetentionKey = "flow_summary_retention_days"
+
+// flowSummaryRetentionDefault matches flow_rollups' own 365-day default rather
+// than undercutting it. The summary is what makes a wide window answerable at
+// all, so pruning it sooner than the data it summarises would reintroduce the
+// exact failure it exists to fix: the 90-day pill falling back to raw. It can
+// afford the window — the whole six months of production history fits in under
+// a million rows, against 118M in flow_rollups.
+const flowSummaryRetentionDefault = 365
+
+// FlowSummaryRetentionDays returns the retention window for the flow summary
+// tables.
+func (d *Database) FlowSummaryRetentionDays() int {
+	n := d.GetIntSetting(FlowSummaryRetentionKey, flowSummaryRetentionDefault)
+	if n < 0 {
+		return flowSummaryRetentionDefault
+	}
+	return n
+}
+
 func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	type cleanupEntry struct {
 		model interface{}
@@ -505,6 +529,14 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		// whatever its interval — is stale and safe to drop even if promotion
 		// were broken or disabled.
 		{&models.FlowRollup{}, "flow_rollups", ret.Days(ret.FlowRollupDays)},
+		// v66: the flow summary ladder. Pruned on its own SystemSetting rather
+		// than a RETENTION_* env var (see FlowSummaryRetentionKey). All three
+		// tables share the window — they are written together per bucket, so
+		// keeping one longer than the others would leave a window that reports
+		// totals with no top-talkers, or vice versa.
+		{&models.FlowSummary{}, "flow_summaries", d.FlowSummaryRetentionDays()},
+		{&models.FlowSummaryTop{}, "flow_summary_tops", d.FlowSummaryRetentionDays()},
+		{&models.FlowSummaryBucket{}, "flow_summary_buckets", d.FlowSummaryRetentionDays()},
 		// LC-20 (2026-07-04 audit): the five per-poll status tables the
 		// AUDIT-029 and H4 retention passes both missed — appended every poll
 		// cycle by the poller AND per push by every collector, with no delete
