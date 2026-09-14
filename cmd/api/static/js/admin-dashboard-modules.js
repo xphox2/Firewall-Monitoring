@@ -88,7 +88,14 @@
         serverTrendChart = new Chart(el.getContext('2d'), {
             type: 'line',
             data: {
-                labels: rows.map(function (x) { return x.bucket; }),
+                // Raw UTC bucket strings were shown verbatim; render them in the
+                // viewer's display timezone like every other chart.
+                labels: rows.map(function (x) {
+                    var AC = window.AdminCommon;
+                    return (AC && AC.formatBucketLabel)
+                        ? AC.formatBucketLabel(x.bucket, { hour: '2-digit', minute: '2-digit', hour12: false })
+                        : x.bucket;
+                }),
                 datasets: [
                     series('CPU %', 'cpu_percent', '#58a6ff'),
                     series('Memory %', 'mem_percent', '#a371f7'),

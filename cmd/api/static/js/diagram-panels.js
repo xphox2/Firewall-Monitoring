@@ -404,7 +404,9 @@
             const flowIntervalSec = data.bucket_seconds || 3600;
             panelChartInstances['flowTime'] = new Chart(document.getElementById('panel-flow-time-chart'), {
                 type: 'line',
-                data: { labels: timeData.map(t => t.bucket.split(' ').pop() || t.bucket), datasets: [{ label: 'Throughput', data: timeData.map(t => (t.count * 8) / flowIntervalSec / 1e6), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0, pointRadius: 0, borderWidth: 1.5 }] },
+                data: { labels: timeData.map(t => (window.AdminCommon && window.AdminCommon.formatBucketLabel)
+                    ? window.AdminCommon.formatBucketLabel(t.bucket, { hour: '2-digit', minute: '2-digit', hour12: false })
+                    : (t.bucket.split(' ').pop() || t.bucket)), datasets: [{ label: 'Throughput', data: timeData.map(t => (t.count * 8) / flowIntervalSec / 1e6), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0, pointRadius: 0, borderWidth: 1.5 }] },
                 options: {
                     responsive: true, maintainAspectRatio: false,
                     plugins: {

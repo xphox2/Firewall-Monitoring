@@ -547,6 +547,26 @@
             }
         }
 
+        // Degraded-window warning. When a rolled-up aggregate cannot finish
+        // inside the request budget the API falls back to raw flow_samples,
+        // which holds only ~1 hour — so the tiles below can silently describe an
+        // hour while the range pill says 30 days. Say so rather than letting the
+        // operator read one hour as a month.
+        var degradedBar = document.getElementById('flows-degraded-warning');
+        if (degradedBar) {
+            var escD = (window.AdminCommon && AdminCommon.escapeHtml) || function(s) { return s; };
+            if (d.degraded) {
+                var blocks = d.degraded_blocks || [];
+                degradedBar.hidden = false;
+                degradedBar.innerHTML = '⚠ This window was too large to aggregate in full, so some panels fall back to ' +
+                    'recent samples only and understate the selected range' +
+                    (blocks.length ? ': <strong>' + blocks.map(escD).join('</strong>, <strong>') + '</strong>' : '') +
+                    '. Choose a shorter range for exact figures.';
+            } else {
+                degradedBar.hidden = true;
+            }
+        }
+
         // Stat tiles
         setText('flows-total',      (d.total_flows || 0).toLocaleString());
         setText('flows-bytes',      formatBytes(d.total_bytes || 0));
@@ -554,14 +574,23 @@
         setText('flows-packets',    (d.total_packets || 0).toLocaleString());
         var us = (d.unique_sources || 0).toLocaleString();
         var ud = (d.unique_dests   || 0).toLocaleString();
-        setText('flows-fanout',     us + ' / ' + ud);
+        // Raw and rolled-up tiers are counted separately and summed, so an
+        // address present in both is counted twice. Prefix with "≤" so the tile
+        // reads as the upper bound it is rather than an exact count.
+        setText('flows-fanout',     (d.unique_approximate ? '≤ ' : '') + us + ' / ' + ud);
         setText('flows-protocols',  (d.protocol_count || 0).toLocaleString());
 
         // Sampling chip
         var samplingValue = document.getElementById('flows-sampling-rate-chip');
         if (samplingValue) {
-            var r = d.avg_sampling_rate || 0;
-            samplingValue.textContent = r > 1 ? '1:' + Math.round(r) : '1:1';
+            // A single average across a sampling-regime change is a rate that
+            // never existed (prod averages 1:1024-then-1:1 to a fictitious
+            // 1:125), so show the range when the window spans more than one.
+            var lo = Math.round(d.sampling_rate_min || 0);
+            var hi = Math.round(d.sampling_rate_max || d.avg_sampling_rate || 0);
+            if (lo < 1) lo = 1;
+            if (hi < 1) hi = 1;
+            samplingValue.textContent = hi > lo ? ('1:' + lo + ' - 1:' + hi) : ('1:' + hi);
         }
 
         // Local-traffic notice
@@ -702,7 +731,7 @@
     function loadDetectionSamples(r) {
         var AC = window.AdminCommon;
         var hours = Math.max(1, state.hours || 24);
-        var q = '/admin/api/flows/samples?limit=50&hours=' + encodeURIComponent(hours);
+        var q = '/admin/api/flows?limit=50&hours=' + encodeURIComponent(hours);
         if (r.src_addr) q += '&src_addr=' + encodeURIComponent(r.src_addr);
         if (r.dst_addr) q += '&dst_addr=' + encodeURIComponent(r.dst_addr);
         if (r.dst_port) q += '&dst_port=' + encodeURIComponent(r.dst_port);
@@ -790,10 +819,11 @@
 
     // bwLabel formats a bytes_over_time bucket string into a compact x-axis label.
     function bwLabel(bucket) {
-        var ms = parseBucketToMs(bucket);
-        if (!ms) return String(bucket);
-        var dt = new Date(ms);
-        return dt.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        var AC = window.AdminCommon;
+        if (AC && AC.formatBucketLabel) {
+            return AC.formatBucketLabel(bucket, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+        }
+        return String(bucket);
     }
 
     function showChartLoading() {
@@ -1084,7 +1114,11 @@
     // not bulletproof.
     function filterSignature() {
         var bits = [];
-        if (state.hours)     bits.push(state.hours + 'h');
+        // Deliberately NOT state.hours. The export reads flow_samples, which
+        // holds roughly the last hour regardless of the pill, so naming the file
+        // "…-720h.csv" promised thirty days and delivered one hour. "recent"
+        // describes what is actually in the file.
+        bits.push('recent');
         if (state.device_id) bits.push('dev' + state.device_id);
         if (state.probe_id)  bits.push('probe' + state.probe_id);
         if (state.protocol)  bits.push('proto' + state.protocol);
@@ -1137,7 +1171,11 @@
 
     function updateLoadedCount() {
         var el = document.getElementById('flows-loaded-count');
-        if (el) el.textContent = flowsOffset.toLocaleString() + ' loaded';
+        // The sample list reads flow_samples only, which holds just what the
+        // rollup ladder has not yet consumed — about an hour on production. It
+        // does NOT honour the range pill, so say so instead of letting "1,000
+        // loaded" under a "30d" pill read as thirty days of samples.
+        if (el) el.textContent = flowsOffset.toLocaleString() + ' loaded (recent samples only)';
     }
 
     function renderConversations() {
@@ -1197,12 +1235,11 @@
     // "2026-05-16 14:30" / "2026-05-16 14:00" / "2026-05-16" depending on
     // granularity. Parse → ms.
     function parseBucketToMs(s) {
-        if (!s) return 0;
-        // Pad short forms to a parseable ISO-ish string.
-        var t = s.indexOf(' ') >= 0 ? s.replace(' ', 'T') : (s.length === 10 ? s + 'T00:00:00' : s);
-        var d = new Date(t);
-        if (!isNaN(d.getTime())) return d.getTime();
-        return 0;
+        // Server bucket labels are UTC with no designator; parsing them as local
+        // time shifted every chart's x-axis by the viewer's UTC offset.
+        var AC = window.AdminCommon;
+        var d = (AC && AC.parseUtcBucket) ? AC.parseUtcBucket(s) : null;
+        return d ? d.getTime() : 0;
     }
 
     function formatBytes(b) {

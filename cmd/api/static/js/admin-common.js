@@ -79,6 +79,46 @@
         localStorage.setItem('display_timezone', tz);
     }
 
+    // parseUtcBucket parses a server-rendered chart bucket label as UTC.
+    //
+    // Bucket labels look like "2026-09-12 14:00", "2026-09-12T14:00:00" or
+    // "2026-09-12" and carry NO timezone designator. ECMAScript reads a bare
+    // date-time form as LOCAL time, while the server always renders them in UTC
+    // (the Postgres DSN pins TimeZone=UTC). Every chart that did `new Date(bucket)`
+    // therefore placed each point at the wrong instant, shifted by the viewer's
+    // UTC offset — and then formatted it for display, compounding the error.
+    //
+    // Returns null when the label cannot be parsed, so callers can fall back
+    // rather than render "Invalid Date".
+    function parseUtcBucket(bucket) {
+        if (!bucket) return null;
+        var t = String(bucket).trim();
+        // Already carries a zone designator ("Z" or "+01:00") — trust it.
+        if (!/[Zz]$|[+-]\d{2}:?\d{2}$/.test(t)) {
+            t = t.replace(' ', 'T');
+            if (t.length === 10) t += 'T00:00:00';      // date only
+            else if (t.length === 16) t += ':00';        // no seconds
+            t += 'Z';
+        }
+        var d = new Date(t);
+        return isNaN(d.getTime()) ? null : d;
+    }
+
+    // formatBucketLabel renders a server bucket label in the viewer's configured
+    // display timezone. Use this instead of toLocaleString on a hand-parsed Date:
+    // omitting timeZone falls back to the BROWSER's zone, which disagrees with
+    // every other timestamp in the console.
+    function formatBucketLabel(bucket, opts) {
+        var d = parseUtcBucket(bucket);
+        if (!d) return String(bucket || '');
+        var o = {};
+        for (var k in (opts || {})) { if (Object.prototype.hasOwnProperty.call(opts, k)) o[k] = opts[k]; }
+        o.timeZone = getTimezone();
+        // getBrowserLocale, not a hardcoded 'en-US' — AUDIT-128 requires date
+        // formats to follow the browser's language.
+        return d.toLocaleString(getBrowserLocale(), o);
+    }
+
     // AUDIT-128: locale was hardcoded to 'en-US', which made
     // the admin UI display US-format dates (MM/DD/YYYY) to
     // every operator regardless of their actual locale. The
@@ -1989,6 +2029,8 @@
         delegateEvent: delegateEvent,
         getTimezone: getTimezone,
         setTimezone: setTimezone,
+        parseUtcBucket: parseUtcBucket,
+        formatBucketLabel: formatBucketLabel,
         formatDate: formatDate,
         formatDay: formatDay,
         formatDateShort: formatDateShort,

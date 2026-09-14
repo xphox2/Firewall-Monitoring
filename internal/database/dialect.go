@@ -18,6 +18,12 @@ type Dialect interface {
 	// (a floating-point value, may be negative) from startCol to endCol. Both
 	// arguments must reference timestamp columns.
 	MinutesBetween(endCol, startCol string) string
+
+	// AddrInCIDR returns a SQL predicate (with one bind placeholder, taking the
+	// CIDR as text) that is TRUE when the address in column falls inside it.
+	// ok is false when the dialect cannot express containment exactly, in which
+	// case callers must fall back to prefix matching and accept a superset.
+	AddrInCIDR(column string) (expr string, ok bool)
 }
 
 // ---------- PostgreSQL ----------
@@ -51,6 +57,14 @@ func (postgresDialect) MinutesBetween(endCol, startCol string) string {
 	return fmt.Sprintf("(EXTRACT(EPOCH FROM (%s - %s)) / 60.0)", endCol, startCol)
 }
 
+// AddrInCIDR uses the inet containment operator, which is exact for any mask
+// length and for both address families (a v4 address is simply not contained in
+// a v6 prefix). Addresses are stored as text rendered by net.IP.String(), so the
+// cast is safe.
+func (postgresDialect) AddrInCIDR(column string) (string, bool) {
+	return fmt.Sprintf("%s::inet <<= ?::inet", column), true
+}
+
 // ---------- SQLite (test only) ----------
 
 type sqliteDialect struct{}
@@ -80,3 +94,8 @@ func (sqliteDialect) IsPostgres() bool              { return false }
 func (sqliteDialect) MinutesBetween(endCol, startCol string) string {
 	return fmt.Sprintf("((julianday(%s) - julianday(%s)) * 1440.0)", endCol, startCol)
 }
+
+// AddrInCIDR is not expressible in SQLite without an extension, so callers fall
+// back to prefix matching. SQLite is the dev/test lane only; production is
+// PostgreSQL, where containment is exact.
+func (sqliteDialect) AddrInCIDR(string) (string, bool) { return "", false }
