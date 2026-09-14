@@ -63,22 +63,22 @@ errors in my drafts. Third draft is the one being built.
   `GetFlowStats` fires ~24 sequential queries, so this is the binding constraint.
 
 ### Confirmed defects
-- [ ] Top Conversations / Top Ports raw-only (`flows.go:566`, `:587-588`) — true #1 is NFS at 6,799 MB,
+- [x] Top Conversations / Top Ports raw-only (`flows.go:566`, `:587-588`) — true #1 is NFS at 6,799 MB,
       displayed #1 is 427 MB and the real one is absent.
-- [ ] TotalPackets raw-only (`:354`) — 24h shows 2.7% of truth, 90d shows 0.05%.
-- [ ] Sampling chip raw-only (`:359`) — always 1:1; max rollup rate is 1024, 15.3% of 90d bytes sampled.
-- [ ] Probe filter disables rollups entirely (`:236`) — shows 1.7% of the window, silently.
-- [ ] 30d/90d fall back to raw-only after a cancelled query; only `log.Printf` (`:338`).
-- [ ] Unique counts use `max()` of two tiers (`:343-348`) with no approximation marker.
-- [ ] Detection modal "Sampled flows" 404s — `admin-flows.js:705` hits an unregistered path.
-- [ ] Chart labels wrong twice: UTC parsed as local (`:1199`) AND `display_timezone` ignored (`:796`).
+- [x] TotalPackets raw-only (`:354`) — 24h shows 2.7% of truth, 90d shows 0.05%.
+- [x] Sampling chip raw-only (`:359`) — always 1:1; max rollup rate is 1024, 15.3% of 90d bytes sampled.
+- [x] Probe filter disables rollups entirely (`:236`) — shows 1.7% of the window, silently.
+- [x] 30d/90d fall back to raw-only after a cancelled query; only `log.Printf` (`:338`).
+- [x] Unique counts use `max()` of two tiers (`:343-348`) with no approximation marker.
+- [x] Detection modal "Sampled flows" 404s — `admin-flows.js:705` hits an unregistered path.
+- [x] Chart labels wrong twice: UTC parsed as local (`:1199`) AND `display_timezone` ignored (`:796`).
       Same parse bug in admin-main.js:912, admin-connection-detail.js:681, diagram-panels.js:407,
       admin-dashboard-modules.js:91.
-- [ ] 6h bandwidth view inflated 5x and spiky — minute buckets applied to a 5m tier (`:600-602`).
-- [ ] Every chart ends in a false cliff (in-progress bucket plotted as complete).
-- [ ] CIDR filter rounds masks UP to the octet boundary; /25 returns the whole /24, /6 returns nothing.
-- [ ] Flow Samples tab + CSV export are raw-only but labelled with the window.
-- [ ] ProtocolCount capped at 10 by `Limit(10)` (`:424`, `:457`).
+- [x] 6h bandwidth view inflated 5x and spiky — minute buckets applied to a 5m tier (`:600-602`).
+- [x] Every chart ends in a false cliff (in-progress bucket plotted as complete).
+- [x] CIDR filter rounds masks UP to the octet boundary; /25 returns the whole /24, /6 returns nothing.
+- [x] Flow Samples tab + CSV export are raw-only but labelled with the window.
+- [x] ProtocolCount capped at 10 by `Limit(10)` (`:424`, `:457`).
 
 ### Corrections to my own drafts (do not re-propose)
 - `SET LOCAL work_mem` is a NO-OP — GetFlowStats runs no transaction.
@@ -93,10 +93,11 @@ errors in my drafts. Third draft is the one being built.
   syslog_messages, flow_rollups, interface_stats, system_status are all flat heaps.
 - 90d packets truth is 6,914,320,386 (window), not 11.68B (whole table).
 
-### Build order
-- [ ] **Phase 0** — deadlines per query, short-circuit after first failure, convert the 7 error-
+### Build order — Phase 0 + A committed as v0.11.247 (branch fix/flows-correctness-and-budget)
+Adversarial diff review in flight; not merged yet.
+- [x] **Phase 0** — deadlines per query, short-circuit after first failure, convert the 7 error-
       discarding `Scan()`s, run independent aggregates concurrently. Nothing else is visible without it.
-- [ ] **Phase A** — the 14 correctness items above.
+- [x] **Phase A** — the 14 correctness items above.
 - [ ] **Phase B** — decoupled idempotent per-bucket summariser (recompute, never merge) + a
       low-cardinality cube (11,384 rows/24h, answers any filter combo incl. protocol pills) + top-N
       at N=50 for src/dst/port/asn/conversation. Own plan-mode cycle.

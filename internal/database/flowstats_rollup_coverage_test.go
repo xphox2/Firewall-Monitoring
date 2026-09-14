@@ -249,3 +249,54 @@ func TestFlowAddrFilter_WideCIDRDoesNotMatchNothing(t *testing.T) {
 		t.Errorf("a malformed address filter matched %d flows; it must match none", res.TotalFlows)
 	}
 }
+
+// TestGetFlowStats_DegradedWhenRollupsFail pins the contract that matters most
+// when a window is too wide to aggregate: the request must still RETURN, and it
+// must say that what it returned covers less than the range asked for.
+//
+// Before this, rolled-up failures were logged and execution continued, so a 30d
+// request answered with raw-only figures — about one hour of data — presented
+// under a "30 days" label, and nothing in the payload distinguished that from a
+// complete answer. Dropping the rollup table stands in for the statement timeout
+// that causes this on production.
+func TestGetFlowStats_DegradedWhenRollupsFail(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	now := time.Now()
+	seedTieredFlows(t, db, now)
+
+	// Sanity: a healthy window is NOT degraded. A flag that is always on tells
+	// the operator nothing.
+	healthy, err := db.GetFlowStats(24, FlowStatsFilter{})
+	if err != nil {
+		t.Fatalf("GetFlowStats healthy: %v", err)
+	}
+	if healthy.Degraded {
+		t.Fatalf("a complete window was marked degraded (blocks: %v)", healthy.DegradedBlocks)
+	}
+
+	if err := db.Gorm().Migrator().DropTable(&models.FlowRollup{}); err != nil {
+		t.Fatalf("drop flow_rollups: %v", err)
+	}
+
+	res, err := db.GetFlowStats(24, FlowStatsFilter{})
+	if err != nil {
+		t.Fatalf("GetFlowStats must still return when the rolled-up side fails, got: %v", err)
+	}
+	if !res.Degraded {
+		t.Error("Degraded is false after every rolled-up query failed; the page would present " +
+			"raw-only figures as though they covered the whole window")
+	}
+	if len(res.DegradedBlocks) == 0 {
+		t.Error("DegradedBlocks is empty; the UI cannot name which panels fell back")
+	}
+	// The raw side must still be reported — degraded means partial, not empty.
+	if res.TotalFlows == 0 {
+		t.Error("TotalFlows = 0; the raw tier should still be reported when rollups fail")
+	}
+	// The first failure must short-circuit the rest rather than letting each
+	// remaining rolled-up query run and burn its own timeout in turn.
+	if n := len(res.DegradedBlocks); n < 2 {
+		t.Errorf("DegradedBlocks has %d entries (%v); every skipped panel should be named, "+
+			"not just the one that failed first", n, res.DegradedBlocks)
+	}
+}

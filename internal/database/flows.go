@@ -422,7 +422,12 @@ func (b *flowStatsBudget) skip(block string) {
 func (b *flowStatsBudget) stamp(result *FlowStatsResult) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if !b.degraded && time.Now().Before(b.deadline) {
+	// Degraded means a panel actually lost data — a query failed, or one was
+	// skipped because the allowance had run out. Do NOT key this off the
+	// deadline alone: a request whose panels all completed at 17.9s against an
+	// 18s allowance is fully correct, and marking it degraded would cry wolf on
+	// every slow-but-successful load.
+	if !b.degraded && len(b.blocks) == 0 {
 		return
 	}
 	result.Degraded = true
