@@ -44,8 +44,17 @@ under the requested window's label.
   a 15-connection pool). Measured per-query on production's 24-hour band, the
   fourteen panels cost about 25 seconds in total and Top Conversations alone is
   6.4 seconds, so running them one after another could not fit any budget that
-  also respects the 30-second write timeout. In parallel they finish in roughly
-  the cost of the slowest one.
+  also respects the 30-second write timeout. Replayed at 4-way concurrency against
+  production, the 24-hour range now completes in **9.5 seconds**.
+- **Be clear about what this does not fix.** Seven days and beyond still degrade
+  *completely*: replayed on production with the same 20-second allowance, 9 of the
+  14 panels are cancelled at 7 days and 13 of 14 at 90 days. Those ranges return
+  the raw window — roughly an hour — with every panel named in the banner. That is
+  now honest rather than silent, but it is not fixed. Fixing it needs
+  pre-aggregation, which lands separately.
+- Every panel publishes its raw-only view before the rolled-up query runs, so a
+  degraded window falls back rather than coming back empty. The protocols tile did
+  not, and returned nothing at all on any window that degraded.
 - Every rolled-up aggregate runs under the request deadline, and a panel's result
   is merged only if its query actually succeeded — GORM streams rows before
   reporting a late cancellation, so a cancelled query can leave a partial result
@@ -61,6 +70,10 @@ under the requested window's label.
   gives every connection its own private, empty database, so any concurrent query
   opened a second connection and reported "no such table" for tables the first had
   migrated. Sequential code never noticed; the concurrent flow-stats panels did.
+  (An earlier draft of this entry blamed GORM statement sharing for those errors.
+  That was wrong — a `*gorm.DB` from `Open` or `Session` clones its statement
+  before any chain method mutates it, so concurrent chaining is supported. The
+  pool pin was the fix.)
 
 ### Fixed — charts and filters
 

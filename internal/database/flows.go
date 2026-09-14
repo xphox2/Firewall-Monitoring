@@ -85,7 +85,8 @@ type FlowStatsResult struct {
 	// window — in the worst case only the ~1h still held in flow_samples. The
 	// page MUST say so: before this existed, a 30d request that lost its rollup
 	// queries returned one hour of data labelled "30 days" and looked fine.
-	// DegradedBlocks names the panels that fell back, in the order they failed.
+	// DegradedBlocks names the panels that fell back. The order is goroutine
+	// scheduling order, not a ranking — nothing should depend on it.
 	Degraded       bool     `json:"degraded,omitempty"`
 	DegradedBlocks []string `json:"degraded_blocks,omitempty"`
 	// UniqueApproximate marks UniqueSources/UniqueDests as an upper bound rather
@@ -333,9 +334,15 @@ func rollupIntervalsForWindow(hours int) []string {
 // page survives. Measure through the endpoint.
 //
 // flowStatsBudget bounds the rolled-up work so the handler always returns
-// something honest: each query gets a slice of a whole-request budget, and the
-// first failure stops the remaining rollup queries instead of letting each burn
-// its own timeout in turn.
+// something honest: every panel shares one wall-clock deadline, and whatever has
+// not finished by then is reported as degraded rather than silently dropped.
+//
+// A caveat worth knowing when a wide window degrades: pgx cancels a query by
+// deadlining the socket, so the connection is discarded and the SERVER-side
+// backend keeps running until the DSN's own statement_timeout fires. A degraded
+// load therefore costs a few pool reconnects and some orphaned I/O, and is not
+// as cheap as its wall time suggests. Bounded, not a leak — but it is another
+// reason wide windows want the summary tables rather than this path.
 type flowStatsBudget struct {
 	mu       sync.Mutex
 	parent   context.Context
@@ -503,12 +510,18 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 	}
 
 	// --- Raw flow_samples base ---
-	// session returns a fresh gorm session. Every base builder starts from one,
-	// because a *gorm.DB carries a MUTABLE Statement: building queries from a
-	// single shared handle in several goroutines at once corrupts it, and the
-	// symptom is baffling — sibling queries fail with "no such table" as one
-	// goroutine's Model() overwrites another's mid-build. The rolled-up panels
-	// run concurrently (see flushRollups), so this is load-bearing.
+	// session returns a fresh gorm session for each base builder.
+	//
+	// This is belt-and-braces, NOT the fix for the "no such table" failures seen
+	// when the panels first ran concurrently — an earlier comment here claimed it
+	// was, and that was wrong. Those came from the test harness: SQLite
+	// ":memory:" gives every pooled connection its own private, empty database,
+	// so the first concurrent query opened a second connection onto an unmigrated
+	// schema (see NewDatabaseForTesting, which now pins the pool to one
+	// connection). gorm itself is safe here: a *gorm.DB from Open or Session
+	// clones its Statement before any chain method mutates it, so concurrent
+	// chaining off one handle is supported. Session() is kept because it states
+	// that intent locally rather than relying on the caller's clone state.
 	session := func() *gorm.DB { return d.db.Session(&gorm.Session{}) }
 
 	newRawBase := func() *gorm.DB {
@@ -797,43 +810,53 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 		Protocol uint8
 		Count    int64
 	}
+	// finalizeProtocols must be IDEMPOTENT: it is called once up front to publish
+	// the raw-only view, and again as the merge step if the rolled-up query
+	// succeeds. It therefore builds a fresh list and ASSIGNS — an earlier version
+	// appended to result.ByProtocol and truncated the source slice in place, so a
+	// second call doubled the list.
 	finalizeProtocols := func() {
-		if len(rollupProtos) > 0 {
-			protoMap := make(map[uint8]int64)
-			for _, p := range protocols {
-				protoMap[p.Protocol] = p.Count
-			}
-			for _, p := range rollupProtos {
-				protoMap[p.Protocol] += p.Count
-			}
-			protocols = protocols[:0]
-			for proto, count := range protoMap {
-				protocols = append(protocols, struct {
-					Protocol uint8
-					Count    int64
-				}{proto, count})
-			}
-			sort.SliceStable(protocols, func(i, j int) bool { return protocols[i].Count > protocols[j].Count })
+		merged := make(map[uint8]int64, len(protocols)+len(rollupProtos))
+		for _, p := range protocols {
+			merged[p.Protocol] += p.Count
 		}
+		for _, p := range rollupProtos {
+			merged[p.Protocol] += p.Count
+		}
+		type protoCount struct {
+			Protocol uint8
+			Count    int64
+		}
+		all := make([]protoCount, 0, len(merged))
+		for proto, count := range merged {
+			all = append(all, protoCount{proto, count})
+		}
+		sort.SliceStable(all, func(i, j int) bool { return all[i].Count > all[j].Count })
 		// ProtocolCount is taken BEFORE the display truncation. It used to be
 		// len(protocols) after a Limit(10), so the tile silently stopped counting
 		// at ten however many protocols the window actually carried.
-		result.ProtocolCount = int64(len(protocols))
-		display := protocols
-		if len(display) > 10 {
-			display = display[:10]
+		result.ProtocolCount = int64(len(all))
+		if len(all) > 10 {
+			all = all[:10]
 		}
-		for _, p := range display {
-			result.ByProtocol = append(result.ByProtocol, KeyCount{Key: protoName(p.Protocol), Count: p.Count})
+		out := make([]KeyCount, 0, len(all))
+		for _, p := range all {
+			out = append(out, KeyCount{Key: protoName(p.Protocol), Count: p.Count})
 		}
+		result.ByProtocol = out
 	}
+	// Publish the raw-only breakdown NOW, exactly as every other panel does.
+	// Leaving this to the merge alone meant that on a degraded window — which at
+	// 7 days and beyond is every window — the protocols tile came back EMPTY
+	// rather than falling back to recent samples, while its neighbours kept their
+	// raw rows. The banner said "falls back to recent samples only", which for
+	// this panel was simply untrue.
+	finalizeProtocols()
 	if useRollups {
 		runRollup("protocols", newRollupBase, func(q *gorm.DB) error {
 			return q.Where("protocol <> 0").Select("protocol, SUM(flow_count) as count").Group("protocol").
 				Order("count DESC").Scan(&rollupProtos).Error
 		}, finalizeProtocols)
-	} else {
-		finalizeProtocols()
 	}
 
 	// Application-category and direction distribution (by flow count), raw

@@ -273,6 +273,17 @@ func TestGetFlowStats_DegradedWhenRollupsFail(t *testing.T) {
 	if healthy.Degraded {
 		t.Fatalf("a complete window was marked degraded (blocks: %v)", healthy.DegradedBlocks)
 	}
+	// The protocols panel publishes a raw-only view and then republishes the
+	// merged one, so it runs twice on a healthy window. It must ASSIGN, not
+	// append: an appending version returned each protocol twice.
+	seen := map[string]bool{}
+	for _, p := range healthy.ByProtocol {
+		if seen[p.Key] {
+			t.Errorf("ByProtocol lists %q twice — the panel appends instead of assigning, so "+
+				"publishing the raw view and then the merged one doubles it", p.Key)
+		}
+		seen[p.Key] = true
+	}
 
 	if err := db.Gorm().Migrator().DropTable(&models.FlowRollup{}); err != nil {
 		t.Fatalf("drop flow_rollups: %v", err)
@@ -293,6 +304,27 @@ func TestGetFlowStats_DegradedWhenRollupsFail(t *testing.T) {
 	if res.TotalFlows == 0 {
 		t.Error("TotalFlows = 0; the raw tier should still be reported when rollups fail")
 	}
+	// EVERY panel must still carry its raw-only rows. "Degraded" means the figures
+	// cover less than the window asked for, not that a panel is empty — and an
+	// earlier version of the protocols panel came back empty here while its
+	// neighbours kept their raw rows, under a banner claiming it had fallen back
+	// to recent samples.
+	if len(res.ByProtocol) == 0 {
+		t.Error("ByProtocol is empty on a degraded window; it should hold the raw-only breakdown")
+	}
+	if res.ProtocolCount == 0 {
+		t.Error("ProtocolCount is 0 on a degraded window; the raw tier has protocols")
+	}
+	if len(res.ByCategory) == 0 {
+		t.Error("ByCategory is empty on a degraded window")
+	}
+	if len(res.TopPorts) == 0 {
+		t.Error("TopPorts is empty on a degraded window")
+	}
+	if len(res.TopConversations) == 0 {
+		t.Error("TopConversations is empty on a degraded window")
+	}
+
 	// Every failed panel must be named, not just the first. This does NOT prove
 	// anything about timeouts or cancellation: dropping the table makes every
 	// rolled-up query fail immediately, so the timing behaviour is untested here
