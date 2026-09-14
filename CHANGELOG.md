@@ -40,13 +40,27 @@ at 7 days and 19.5s at 90 days, so wide windows could not deliver a payload — 
 rollup failures were logged and skipped, so the response carried raw-only figures
 under the requested window's label.
 
-- Every rolled-up aggregate now runs under a per-query deadline inside a bounded
-  whole-request budget, and the first failure short-circuits the rest rather than
-  letting each remaining query burn its own timeout in turn.
+- **The rolled-up panels now query concurrently** (bounded to 4 at a time, against
+  a 15-connection pool). Measured per-query on production's 24-hour band, the
+  fourteen panels cost about 25 seconds in total and Top Conversations alone is
+  6.4 seconds, so running them one after another could not fit any budget that
+  also respects the 30-second write timeout. In parallel they finish in roughly
+  the cost of the slowest one.
+- Every rolled-up aggregate runs under the request deadline, and a panel's result
+  is merged only if its query actually succeeded — GORM streams rows before
+  reporting a late cancellation, so a cancelled query can leave a partial result
+  that would otherwise be folded in as though complete.
 - Rolled-up queries that discarded their error entirely now report it.
 - The response carries `degraded` and `degraded_blocks`, and the page shows a
   warning naming the panels that fell back, instead of presenting one hour of data
   as a month.
+
+### Fixed — test harness
+
+- `NewDatabaseForTesting` pinned its SQLite pool to one connection. `:memory:`
+  gives every connection its own private, empty database, so any concurrent query
+  opened a second connection and reported "no such table" for tables the first had
+  migrated. Sequential code never noticed; the concurrent flow-stats panels did.
 
 ### Fixed — charts and filters
 
@@ -66,7 +80,11 @@ under the requested window's label.
   rounded up to the enclosing octet boundary, so a `/25` returned the whole `/24`,
   and anything wider than `/8` (including `0.0.0.0/0`) matched nothing at all.
   PostgreSQL now filters with exact `inet` containment, keeping the prefix match as
-  an index-friendly pre-filter.
+  an index-friendly pre-filter. Verified on production: `192.168.5.128/25` now
+  matches 0 rows where prefix matching returned all 427,386 rows of the `/24`.
+  The containment test guards against empty address values, which production
+  carries 2,377 of — `''::inet` raises a syntax error that aborts the whole
+  statement rather than skipping the row.
 - **The detection detail modal's "Sampled flows" panel always failed**, requesting
   an unregistered path that returned 404.
 - **The flow sample list and CSV export read only recent samples** regardless of

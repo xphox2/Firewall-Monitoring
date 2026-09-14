@@ -59,10 +59,16 @@ func (postgresDialect) MinutesBetween(endCol, startCol string) string {
 
 // AddrInCIDR uses the inet containment operator, which is exact for any mask
 // length and for both address families (a v4 address is simply not contained in
-// a v6 prefix). Addresses are stored as text rendered by net.IP.String(), so the
-// cast is safe.
+// a v6 prefix).
+//
+// NULLIF(col,”) is load-bearing, not defensive tidiness. Production carries
+// 2,377 rows in flow_rollups whose src_addr and dst_addr are the empty string
+// (protocol 0, all in the 1d tier, so every window over 30 days reads them), and
+// ”::inet raises "invalid input syntax for type inet" — which aborts the whole
+// statement, not just that row. NULL is simply not contained by any prefix, so
+// those rows are excluded, which is the right answer for a row with no address.
 func (postgresDialect) AddrInCIDR(column string) (string, bool) {
-	return fmt.Sprintf("%s::inet <<= ?::inet", column), true
+	return fmt.Sprintf("NULLIF(%s, '')::inet <<= ?::inet", column), true
 }
 
 // ---------- SQLite (test only) ----------

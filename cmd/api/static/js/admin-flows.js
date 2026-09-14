@@ -558,10 +558,15 @@
             if (d.degraded) {
                 var blocks = d.degraded_blocks || [];
                 degradedBar.hidden = false;
-                degradedBar.innerHTML = '⚠ This window was too large to aggregate in full, so some panels fall back to ' +
-                    'recent samples only and understate the selected range' +
+                // Deliberately does not diagnose WHY. A panel falls back when its
+                // query runs out of budget on a wide window, but also when the
+                // query itself errors — asserting "too large" would misdiagnose
+                // the second case and send the operator to shorten a range that
+                // was never the problem.
+                degradedBar.innerHTML = '⚠ Some panels could not be aggregated over the full range and fall back to ' +
+                    'recent samples only, so they understate the selected window' +
                     (blocks.length ? ': <strong>' + blocks.map(escD).join('</strong>, <strong>') + '</strong>' : '') +
-                    '. Choose a shorter range for exact figures.';
+                    '. A shorter range usually returns exact figures.';
             } else {
                 degradedBar.hidden = true;
             }

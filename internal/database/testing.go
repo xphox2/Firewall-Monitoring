@@ -110,6 +110,19 @@ func NewDatabaseForTesting(t interface {
 		t.Fatal("NewDatabaseForTesting: open SQLite:", err)
 	}
 
+	// Pin the pool to ONE connection. `:memory:` gives every connection its own
+	// private, empty database, so the moment anything queries concurrently a
+	// second connection opens and reports "no such table" for tables the first
+	// connection migrated. Sequential code never noticed because the single
+	// connection was returned to the pool between queries; GetFlowStats now runs
+	// its rolled-up panels concurrently, which exposed it. One connection also
+	// keeps that concurrent path under test: the goroutines queue on the pool
+	// instead of running in parallel, so the scheduling and merge ordering are
+	// still exercised.
+	if sqlDB, dbErr := db.DB(); dbErr == nil {
+		sqlDB.SetMaxOpenConns(1)
+	}
+
 	for _, m := range testModels {
 		if err := db.AutoMigrate(m); err != nil {
 			t.Fatal("NewDatabaseForTesting: AutoMigrate:", err)

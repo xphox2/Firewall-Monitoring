@@ -293,10 +293,13 @@ func TestGetFlowStats_DegradedWhenRollupsFail(t *testing.T) {
 	if res.TotalFlows == 0 {
 		t.Error("TotalFlows = 0; the raw tier should still be reported when rollups fail")
 	}
-	// The first failure must short-circuit the rest rather than letting each
-	// remaining rolled-up query run and burn its own timeout in turn.
+	// Every failed panel must be named, not just the first. This does NOT prove
+	// anything about timeouts or cancellation: dropping the table makes every
+	// rolled-up query fail immediately, so the timing behaviour is untested here
+	// and cannot be tested on SQLite. The budget's deadline handling is only
+	// exercised against PostgreSQL.
 	if n := len(res.DegradedBlocks); n < 2 {
-		t.Errorf("DegradedBlocks has %d entries (%v); every skipped panel should be named, "+
-			"not just the one that failed first", n, res.DegradedBlocks)
+		t.Errorf("DegradedBlocks has %d entries (%v); every panel that lost data should be named",
+			n, res.DegradedBlocks)
 	}
 }
