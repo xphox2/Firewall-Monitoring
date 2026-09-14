@@ -387,18 +387,20 @@ func (d *Database) writeSummaryTops(tx *gorm.DB, src func() *gorm.DB, tier flowS
 		PacketsSum uint64
 		FlowCount  int64
 	}
+	// Top-N is PER (device, scope), not per bucket overall: the page shows
+	// scope-local traffic and routed traffic in separate panels, so one combined
+	// list would let multicast noise crowd out real talkers. The key set is the
+	// same for every dimension, so it is read ONCE rather than per dimension.
+	var keys []struct {
+		DeviceID   uint
+		ScopeLocal bool
+	}
+	if err := src().Select("device_id, scope_local").Group("device_id, scope_local").Scan(&keys).Error; err != nil {
+		return fmt.Errorf("scan top keys: %w", err)
+	}
+
 	var out []models.FlowSummaryTop
 	for _, dim := range dims {
-		// Top-N is PER (device, scope), not per bucket overall: the page queries
-		// scope-local traffic and routed traffic as separate panels, so a single
-		// combined list would let multicast noise crowd out real talkers.
-		var keys []struct {
-			DeviceID   uint
-			ScopeLocal bool
-		}
-		if err := src().Select("device_id, scope_local").Group("device_id, scope_local").Scan(&keys).Error; err != nil {
-			return fmt.Errorf("scan top keys: %w", err)
-		}
 		for _, k := range keys {
 			var rows []topRow
 			q := src().Where("device_id = ? AND scope_local = ?", k.DeviceID, k.ScopeLocal)
