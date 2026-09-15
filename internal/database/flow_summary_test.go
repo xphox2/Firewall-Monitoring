@@ -1,6 +1,7 @@
 package database
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -376,5 +377,61 @@ func TestFlowSummary_WatermarkAdvancesWhenNothingIsOwned(t *testing.T) {
 		t.Errorf("the daily tier's watermark is %d, want %d. A tier that owns none of "+
 			"what it sees must still record that it has seen it, or its dirty scan grows "+
 			"without bound.", got, maxID())
+	}
+}
+
+// TestFlowSummary_FailedBucketIsRetriedNotSkipped pins the hole that resuming
+// from MAX(summary timestamp) created. If a bucket failed while a later one
+// succeeded, the max jumped past the failure and the walk resumed beyond the
+// gap — leaving a permanent hole in the middle of history that nothing revisited
+// and nothing reported. Backfill now resumes from a CONTIGUOUS fill marker.
+func TestFlowSummary_FailedBucketIsRetriedNotSkipped(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	base := time.Now().UTC().Add(-8 * time.Hour).Truncate(time.Hour)
+	for i := 0; i < 5; i++ {
+		if err := d.Gorm().Create(&models.FlowRollup{
+			Timestamp: base.Add(time.Duration(i)*time.Hour + 5*time.Minute),
+			DeviceID:  1, IntervalType: "5m",
+			SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+			BytesSum: 100, PacketsSum: 1, FlowCount: 1,
+		}).Error; err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+
+	poison := base.Add(2 * time.Hour)
+	orig := flowSummaryBucketHook
+	flowSummaryBucketHook = func(interval string, bucket time.Time) error {
+		if interval == "1h" && bucket.Equal(poison) {
+			return fmt.Errorf("synthetic bucket failure")
+		}
+		return nil
+	}
+	d.RunFlowSummaryCycle()
+
+	// Later buckets must still have been written — one bad bucket must not stall
+	// the tier.
+	var later int64
+	d.Gorm().Model(&models.FlowSummary{}).
+		Where("interval_type = ? AND timestamp > ?", "1h", poison).Count(&later)
+	if later == 0 {
+		t.Error("no buckets after the failing one were written; one bad bucket stalled the tier")
+	}
+	// And the failing bucket must be absent, not silently half-written.
+	var poisoned int64
+	d.Gorm().Model(&models.FlowSummary{}).
+		Where("interval_type = ? AND timestamp = ?", "1h", poison).Count(&poisoned)
+	if poisoned != 0 {
+		t.Errorf("the failing bucket wrote %d rows; its transaction should have rolled back", poisoned)
+	}
+
+	// Now let it succeed. The gap must be refilled rather than skipped forever.
+	flowSummaryBucketHook = orig
+	d.RunFlowSummaryCycle()
+	d.Gorm().Model(&models.FlowSummary{}).
+		Where("interval_type = ? AND timestamp = ?", "1h", poison).Count(&poisoned)
+	if poisoned == 0 {
+		t.Error("the previously-failing bucket was never revisited. Resuming from the newest " +
+			"summarised bucket skips past any gap behind it, permanently.")
 	}
 }

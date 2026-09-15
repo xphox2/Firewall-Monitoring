@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"firewall-mon/internal/models"
@@ -68,6 +69,9 @@ var flowSummaryMaxCycleDuration = 60 * time.Second
 // buckets are the expensive ones. Backfilling six months of daily buckets is a
 // one-time cost and there is no hurry; starving the rest of the cycle is worse.
 var flowSummaryMaxDailyBucketsPerCycle = 2
+
+// flowSummaryBucketHook is a test-only injection point (see summariseBucket).
+var flowSummaryBucketHook func(interval string, bucket time.Time) error
 
 // flowSummaryWatermarkKeyPrefix names the per-tier progress marker. It stores
 // the highest flow_rollups.id this tier has already accounted for.
@@ -251,6 +255,35 @@ func (d *Database) tierTimeBounds(intervals []string) (oldest, newest time.Time,
 	return oldest, newest, ok, nil
 }
 
+// flowSummaryFillKeyPrefix names the per-tier contiguous backfill marker: the
+// newest bucket such that every bucket from the tier's start up to it has been
+// summarised successfully. Distinct from the id watermark, which tracks CHANGES.
+const flowSummaryFillKeyPrefix = "flow_summary_filled_"
+
+func (d *Database) summaryFillMarker(interval string) time.Time {
+	v, ok := d.GetSettingValue(flowSummaryFillKeyPrefix + interval)
+	if !ok || strings.TrimSpace(v) == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(v))
+	if err != nil {
+		return time.Time{}
+	}
+	return t.UTC()
+}
+
+func (d *Database) setSummaryFillMarker(interval string, at time.Time) {
+	if err := d.UpsertSetting(&models.SystemSetting{
+		Key:      flowSummaryFillKeyPrefix + interval,
+		Value:    at.UTC().Format(time.RFC3339),
+		Category: "internal",
+		Type:     "string",
+		Label:    "Flow summary backfill marker (" + interval + ")",
+	}); err != nil {
+		log.Printf("Flow summary: persist %s fill marker: %v", interval, err)
+	}
+}
+
 func (d *Database) summaryWatermark(interval string) int64 {
 	return int64(d.GetIntSetting(flowSummaryWatermarkKeyPrefix+interval, 0))
 }
@@ -285,9 +318,9 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 	// the first error, so a single poison bucket (a timeout, a constraint
 	// violation) meant nothing after it was ever summarised — silently, behind
 	// one log line. Record and move on.
-	run := func(b time.Time) bool {
+	run := func(b time.Time) (keepGoing, succeeded bool) {
 		if time.Now().After(deadline) {
-			return false
+			return false, false
 		}
 		if err := d.summariseBucket(tier, b); err != nil {
 			if firstErr == nil {
@@ -295,10 +328,10 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 			}
 			log.Printf("Flow summary: %s bucket %s failed, skipping: %v",
 				tier.interval, b.Format(time.RFC3339), err)
-			return true // keep going
+			return true, false // keep going, but this bucket is NOT filled
 		}
 		written++
-		return true
+		return true, true
 	}
 
 	// Which buckets this tier OWNS, from its range sources alone. A tier must not
@@ -351,7 +384,7 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 				dirtyComplete = false
 				break
 			}
-			if !run(b) {
+			if keepGoing, _ := run(b); !keepGoing {
 				dirtyComplete = false
 				break
 			}
@@ -359,16 +392,18 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 	}
 
 	// ---- 2. backfill any history never visited ----
+	//
+	// Resume from a CONTIGUOUS fill marker, not from MAX(summary timestamp).
+	// Using the max meant a bucket that failed while a later one succeeded was
+	// never revisited: the max jumped past it and the walk resumed beyond the
+	// gap, leaving a permanent hole in the middle of history that nothing would
+	// ever notice. The marker advances only through unbroken successes, so a
+	// failed bucket is retried every cycle while later buckets still progress.
 	{
-		covered, haveCovered, err := aggregateTimestamp(
-			d.db.Session(&gorm.Session{}).Model(&models.FlowSummary{}).Where("interval_type = ?", tier.interval),
-			"MAX(timestamp)")
-		if err != nil {
-			return written, fmt.Errorf("coverage: %w", err)
-		}
+		filled := d.summaryFillMarker(tier.interval)
 		start := ownedFrom
-		if haveCovered {
-			if next := tier.bucketOf(covered).Add(tier.width); next.After(start) {
+		if !filled.IsZero() {
+			if next := tier.bucketOf(filled).Add(tier.width); next.After(start) {
 				start = next
 			}
 		}
@@ -376,13 +411,25 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 		// though it is: that makes the summary's reach equal the rollup tiers'
 		// reach, so a reader needs only summary + raw with no band belonging to
 		// neither.
+		contiguous := true
+		newFilled := filled
 		for b := start; b.Before(ownedTo); b = b.Add(tier.width) {
 			if tier.maxPerPass > 0 && written >= tier.maxPerPass {
 				break
 			}
-			if !run(b) {
+			keepGoing, ok := run(b)
+			if ok && contiguous {
+				newFilled = b
+			}
+			if !ok {
+				contiguous = false
+			}
+			if !keepGoing {
 				break
 			}
+		}
+		if newFilled.After(filled) {
+			d.setSummaryFillMarker(tier.interval, newFilled)
 		}
 	}
 
@@ -438,6 +485,14 @@ func (d *Database) dirtyBuckets(tier flowSummaryTier, watermark int64) ([]time.T
 // them. Recomputing from the source rows yields the same answer for the same
 // input, whatever ran before.
 func (d *Database) summariseBucket(tier flowSummaryTier, bucket time.Time) error {
+	// Test seam. A permanently-failing bucket is the case that used to leave a
+	// silent hole in history, and there is no other way to provoke one
+	// deterministically. Nil in production.
+	if flowSummaryBucketHook != nil {
+		if err := flowSummaryBucketHook(tier.interval, bucket); err != nil {
+			return err
+		}
+	}
 	end := bucket.Add(tier.width)
 
 	return d.db.Transaction(func(tx *gorm.DB) error {
