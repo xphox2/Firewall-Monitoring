@@ -258,6 +258,11 @@ func (d *Database) tierTimeBounds(intervals []string) (oldest, newest time.Time,
 // flowSummaryFillKeyPrefix names the per-tier contiguous backfill marker: the
 // newest bucket such that every bucket from the tier's start up to it has been
 // summarised successfully. Distinct from the id watermark, which tracks CHANGES.
+//
+// Both markers live in system_settings under category "system", matching
+// encryption_key_canary — this table is the codebase's key-value store, and the
+// settings UI renders an explicit field list rather than iterating rows, so
+// internal keys do not surface there.
 const flowSummaryFillKeyPrefix = "flow_summary_filled_"
 
 func (d *Database) summaryFillMarker(interval string) time.Time {
@@ -276,7 +281,7 @@ func (d *Database) setSummaryFillMarker(interval string, at time.Time) {
 	if err := d.UpsertSetting(&models.SystemSetting{
 		Key:      flowSummaryFillKeyPrefix + interval,
 		Value:    at.UTC().Format(time.RFC3339),
-		Category: "internal",
+		Category: "system",
 		Type:     "string",
 		Label:    "Flow summary backfill marker (" + interval + ")",
 	}); err != nil {
@@ -292,7 +297,7 @@ func (d *Database) setSummaryWatermark(interval string, id int64) {
 	if err := d.UpsertSetting(&models.SystemSetting{
 		Key:      flowSummaryWatermarkKeyPrefix + interval,
 		Value:    strconv.FormatInt(id, 10),
-		Category: "internal",
+		Category: "system",
 		Type:     "number",
 		Label:    "Flow summary progress marker (" + interval + ")",
 	}); err != nil {
