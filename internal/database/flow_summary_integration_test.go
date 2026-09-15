@@ -23,10 +23,14 @@ func TestFlowSummaryIntegration_ExactAndEngineSafe(t *testing.T) {
 	d := NewIntegrationDB(t)
 	base := time.Now().UTC().Add(-6 * time.Hour).Truncate(time.Hour)
 
+	// Byte totals are deliberately unambiguous: the 443 conversation must be the
+	// clear top by bytes, because the assertions below name it. An earlier
+	// version of this seed made port 53 the real winner (2000 bytes against
+	// 443's 1700 across two rows) and the test failed against correct code.
 	rows := []models.FlowRollup{
 		{Timestamp: base.Add(5 * time.Minute), DeviceID: 1, IntervalType: "5m",
 			SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
-			DstCountry: "US", DstASN: 15169, BytesSum: 1000, PacketsSum: 10, FlowCount: 2},
+			DstCountry: "US", DstASN: 15169, BytesSum: 90000, PacketsSum: 10, FlowCount: 2},
 		{Timestamp: base.Add(10 * time.Minute), DeviceID: 1, IntervalType: "5m",
 			SrcAddr: "10.0.0.2", DstAddr: "1.1.1.1", DstPort: 53, Protocol: 17,
 			BytesSum: 2000, PacketsSum: 20, FlowCount: 3},
