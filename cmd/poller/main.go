@@ -61,6 +61,11 @@ type Poller struct {
 	// detection, and made shutdown hang — or (b) stack overlapping syncs when
 	// an interval fires while the previous one is still running.
 	feedSyncRunning atomic.Bool
+	// flowSummaryRunning guards the async flow-summary pass. The pass is
+	// time-bounded per cycle, so a backfill spans many ticks; without this a
+	// second pass would start on top of a running one every 5 minutes and
+	// contend on the same buckets.
+	flowSummaryRunning atomic.Bool
 
 	// cleanupRunning guards the async retention cleanup (AUDIT-188, same shape
 	// as feedSyncRunning/M9): the daily cleanup can run for hours against a
@@ -108,6 +113,40 @@ type Poller struct {
 // goroutine must not stamp the M30 loop-liveness beat (see
 // runUnderLeaderLockNoHeartbeat) — previously this path did, which could mask
 // a genuinely hung select loop while a slow feed sync was in flight.
+// startFlowSummaryAsync runs the flow summary pass off the select loop.
+//
+// The CompareAndSwap guard matters more here than for the feed sync: the pass is
+// time-bounded per cycle, so a backfill spans many ticks, and a second pass
+// starting on top of a running one would contend on the same buckets for no
+// gain. The job recomputes rather than merges, so skipping a tick costs nothing
+// — the work is simply picked up next time.
+func (p *Poller) startFlowSummaryAsync() {
+	if p.db == nil {
+		return
+	}
+	if !p.flowSummaryRunning.CompareAndSwap(false, true) {
+		log.Println("flow-summary: previous pass still running; skipping this interval")
+		return
+	}
+	logging.SafeGo("flow-summary", func() {
+		defer p.flowSummaryRunning.Store(false)
+		// Its OWN advisory lock, not the shared poller work lock. That lock is
+		// non-blocking and shared by every cron tick, so a tick landing while the
+		// holder works is SKIPPED rather than queued — and this is the longest
+		// holder of them all. On the shared key it would drop roughly one
+		// monitoring tick in five during a backfill, turning "delays alert
+		// evaluation" into "skips it". The summary needs exclusion only against
+		// itself.
+		release, acquired := p.db.TryAcquireFlowSummaryLock()
+		if !acquired {
+			log.Println("flow-summary: another poller holds the summary lock; skipping")
+			return
+		}
+		defer release()
+		p.db.RunFlowSummaryCycle()
+	})
+}
+
 func (p *Poller) startThreatFeedSyncAsync() {
 	if !p.feedSyncRunning.CompareAndSwap(false, true) {
 		log.Println("threat-feeds: previous sync still running; skipping this interval")
@@ -339,6 +378,14 @@ func (p *Poller) Start() error {
 					p.db.RunSyslogAggregationCycle(p.cfg.Retention)
 				}
 			})
+			// Deliberately NOT inside the lock closure above. The monitoring
+			// cycle — SNMP polling and alert evaluation — is a sibling case of
+			// this same select, so anything run inline here delays it. The
+			// summary pass is time-bounded but a bounded pass is still up to a
+			// minute, and the backfill is longer; that would stall the alert
+			// engine every tick and could trip the M30 loop-age heartbeat.
+			// Same treatment as the threat-feed sync and retention cleanup.
+			p.startFlowSummaryAsync()
 		case <-detectTicker.C:
 			p.runUnderLeaderLock("flow-detect", p.runFlowDetectionCycle)
 		case <-ipsecTelemetryTicker.C:

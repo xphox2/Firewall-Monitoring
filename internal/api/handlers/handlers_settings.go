@@ -194,6 +194,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		// per-severity raw windows: reusing those made every summary born past
 		// its own prune cutoff. See SyslogSummaryRetentionDays.
 		"syslog_summary_retention_days": true,
+		"flow_summary_retention_days":   true,
 		// How often the background refresher rebuilds the system-health
 		// composite. Clamped server-side to 15-3600s; see dashboardHealthHub.
 		"dashboard_health_refresh_seconds": true,
@@ -242,6 +243,19 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				if err != nil || v < 0 || v > 3650 {
 					c.JSON(http.StatusBadRequest, response.Error(
 						"syslog retention must be blank (inherit), 0 (keep forever), or 1-3650 days"))
+					return
+				}
+			}
+		case "flow_summary_retention_days":
+			// Same three shapes as the syslog windows. A window shorter than
+			// RETENTION_FLOW_ROLLUP_DAYS would prune the summary before the data
+			// it summarises, reintroducing the fallback it exists to prevent —
+			// allowed, but worth knowing.
+			if strings.TrimSpace(s.Value) != "" {
+				v, err := strconv.Atoi(strings.TrimSpace(s.Value))
+				if err != nil || v < 0 || v > 3650 {
+					c.JSON(http.StatusBadRequest, response.Error(
+						"flow summary retention must be blank (inherit), 0 (keep forever), or 1-3650 days"))
 					return
 				}
 			}

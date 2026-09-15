@@ -93,15 +93,45 @@ errors in my drafts. Third draft is the one being built.
   syslog_messages, flow_rollups, interface_stats, system_status are all flat heaps.
 - 90d packets truth is 6,914,320,386 (window), not 11.68B (whole table).
 
-### Build order — Phase 0 + A committed as v0.11.247 (branch fix/flows-correctness-and-budget)
-Adversarial diff review in flight; not merged yet.
+### Build order
+**v0.11.247 MERGED (PR #258) and DEPLOYED to rust-01 2026-09-15 00:06 UTC, healthy.**
+Verified live: the 404 sample path is gone from the deployed JS, `parseUtcBucket` is
+present, the degraded banner is present, no errors since restart. The Flows page
+itself still needs a logged-in load to confirm the tiles.
+
+Two adversarial review rounds on that PR, both of which found real blockers:
+- Round 1: the `inet` cast aborted on prod's 2,377 empty-address rows; and the
+  default 24h view would have shipped permanently degraded (14 panels, ~25s
+  sequential, 18s budget). Fixed with `NULLIF` and 4-way concurrency.
+- Round 2: the protocols tile came back EMPTY on any degraded window (it was the
+  only panel without a raw-only publish); and my `session()` comment asserted a
+  GORM statement-corruption that does not exist — the real cause was SQLite
+  `:memory:` handing each connection its own database.
+
+Measured after the concurrency change, replayed against prod: **24h completes in
+9.5s**. 7d/30d/90d still degrade completely (9 of 14 panels cancelled at 7d, 13 of
+14 at 90d) — honest now, but not fixed. That is what Phase B is for.
 - [x] **Phase 0** — deadlines per query, short-circuit after first failure, convert the 7 error-
       discarding `Scan()`s, run independent aggregates concurrently. Nothing else is visible without it.
 - [x] **Phase A** — the 14 correctness items above.
-- [ ] **Phase B** — decoupled idempotent per-bucket summariser (recompute, never merge) + a
-      low-cardinality cube (11,384 rows/24h, answers any filter combo incl. protocol pills) + top-N
-      at N=50 for src/dst/port/asn/conversation. Own plan-mode cycle.
+- [x] **Phase B1** — schema + summariser + backfill + retention + purge coverage (v0.11.248,
+      PR #259, adversarial review in flight). Three tables cover the WHOLE six-month history in
+      **under 1M rows against 118M**, and reproduce bytes/packets/flows **exactly** (verified by
+      query on prod before writing code). Writer recomputes rather than merges, so late spool
+      replay is absorbed and the same code path IS the backfill. Measured ~0.5s per bucket; ~885
+      buckets catch up in under twenty 5-minute cycles.
+- [ ] **Phase B2** — switch the read path onto the summary. Deliberately separate: the backfill
+      has to run first so the output can be diffed against the live path on real data, which beats
+      any fixture. A draft read path is parked in the scratchpad.
+      Contract settled: cube answers any combination of the low-cardinality dimensions; a filter on
+      src/dst/port/asn is NOT summary-compatible and keeps the live path; a dimension filter means
+      the top-N panels must report degraded rather than show unfiltered talkers beside filtered
+      totals.
 - [ ] **Phase C** — fold the long tail at 5m->1h (88.6% of rows carry 1.08% of bytes) vs partitioning.
+      NOTE the corrected premise: on prod only `denied_events` is partitioned (8 children).
+      flow_samples, syslog_messages, flow_rollups, interface_stats and system_status are all flat
+      heaps — confirmed again by the v0.11.247 startup warnings. `migrate.go` describes a FRESH
+      install, not this box.
 
 ## Phase 3 remainder — other slow pages — NOT STARTED
 - [ ] Syslog page hourly chart: 7,421ms with a 103MB disk sort -> 1.96ms from `syslog_ingest_hourly`
