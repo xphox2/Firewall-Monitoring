@@ -458,9 +458,14 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 		// be a permanent hole up to the marker. One cheap existence check buys
 		// that back.
 		if !filled.IsZero() {
-			var any int64
+			// An EXISTENCE probe, not Count(): gorm renders Limit(1).Count() as
+			// `SELECT count(*) ... LIMIT 1`, which counts every row before
+			// discarding all but one. Selecting a single id stops at the first
+			// tuple.
+			var probe []uint
 			if err := d.db.Session(&gorm.Session{}).Model(&models.FlowSummary{}).
-				Where("interval_type = ?", tier.interval).Limit(1).Count(&any).Error; err == nil && any == 0 {
+				Where("interval_type = ?", tier.interval).
+				Select("id").Limit(1).Find(&probe).Error; err == nil && len(probe) == 0 {
 				log.Printf("Flow summary: %s tier has a fill marker but no rows; restarting its backfill", tier.interval)
 				filled = time.Time{}
 			}
@@ -505,16 +510,28 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 		}
 	}
 
-	// Advance the watermark whenever this pass SAW everything up to the ceiling
-	// and nothing failed — not merely when it wrote something.
+	// Advance the watermark when this pass SAW everything up to the ceiling — not
+	// merely when it wrote something.
+	//
+	// The `watermark == 0` arm is load-bearing, not a shortcut. On the very first
+	// pass the dirty walk does not run at all (there is no watermark to diff
+	// against), so EVERYTHING up to the ceiling is the contiguous backfill's
+	// responsibility whether or not a bucket failed. Leaving the watermark at 0
+	// after a failure meant the dirty walk stayed disabled for the next pass too,
+	// while the backfill marched past — so a row replayed into an
+	// already-filled bucket in that window was neither dirty nor ahead of the
+	// fill marker, and was stale forever.
 	//
 	// Keying it on `written > 0` leaked: the daily tier sees a stream of new 5m
 	// rows for today, owns none of them, writes nothing, and so never advanced.
 	// Its dirty scan then grew without bound, re-reading the same ever-larger id
-	// range every five minutes forever. Conversely, advancing after a TRUNCATED
-	// dirty pass (hit the per-tier cap or the time bound) would drop the buckets
-	// it did not reach, so both conditions have to hold.
-	if firstErr == nil && dirtyComplete {
+	// range every five minutes forever. Conversely, a dirty walk that did not
+	// finish must not advance it. Since that walk is no longer truncated by a cap
+	// or the time bound, the only way it fails to complete is a bucket error, so
+	// firstErr and dirtyComplete are now redundant with each other — both are
+	// kept because a future change reintroducing truncation would otherwise
+	// silently lose the guard.
+	if watermark == 0 || (firstErr == nil && dirtyComplete) {
 		d.setSummaryWatermark(tier.interval, ceiling)
 	}
 	return written, firstErr

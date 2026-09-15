@@ -531,3 +531,204 @@ func TestFlowSummary_LargeDirtyListCompletesInOnePass(t *testing.T) {
 		}
 	}
 }
+
+// --- Invariant guards for the simplified change-detection design -------------
+//
+// Adversarial review found that three of the four load-bearing invariants below
+// survived mutation, i.e. nothing tested them. Removing the dirty cursor deleted
+// the tests that had covered two of them as a side effect of covering the
+// cursor. These pin the BEHAVIOUR directly, so it survives the next refactor.
+
+func seedSummaryHour(t *testing.T, d *Database, base time.Time, hour int, bytes uint64, src string) {
+	t.Helper()
+	if err := d.Gorm().Create(&models.FlowRollup{
+		Timestamp: base.Add(time.Duration(hour)*time.Hour + 5*time.Minute),
+		DeviceID:  1, IntervalType: "5m",
+		SrcAddr: src, DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+		BytesSum: bytes, PacketsSum: 1, FlowCount: 1,
+	}).Error; err != nil {
+		t.Fatalf("seed hour %d: %v", hour, err)
+	}
+}
+
+// summaryBucketBytes returns the source and summary byte totals for one hourly
+// bucket, which is how every guard below states its failure.
+func summaryBucketBytes(d *Database, b time.Time) (want, got uint64) {
+	d.Gorm().Model(&models.FlowRollup{}).
+		Where("timestamp >= ? AND timestamp < ?", b, b.Add(time.Hour)).
+		Select("COALESCE(SUM(bytes_sum),0)").Scan(&want)
+	d.Gorm().Model(&models.FlowSummary{}).
+		Where("interval_type = ? AND timestamp = ?", "1h", b).
+		Select("COALESCE(SUM(bytes_sum),0)").Scan(&got)
+	return
+}
+
+// TestFlowSummary_DirtyWalkFailureIsRetried covers the ONLY retry path the dirty
+// walk has: the watermark being held. FailedBucketIsRetriedNotSkipped exercises
+// the backfill's fill-marker retry instead, so before this test, making the
+// watermark advance unconditionally passed the whole suite.
+func TestFlowSummary_DirtyWalkFailureIsRetried(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	base := time.Now().UTC().Add(-10 * time.Hour).Truncate(time.Hour)
+	for h := 0; h < 4; h++ {
+		seedSummaryHour(t, d, base, h, 100, "10.0.0.1")
+	}
+	d.RunFlowSummaryCycle()
+	if d.summaryWatermark("1h") == 0 {
+		t.Fatal("precondition: watermark not set after the first pass")
+	}
+	for h := 0; h < 4; h++ {
+		seedSummaryHour(t, d, base, h, 5000, "10.0.0.9")
+	}
+
+	poison := base.Add(time.Hour)
+	failed := false
+	orig := flowSummaryBucketHook
+	defer func() { flowSummaryBucketHook = orig }()
+	flowSummaryBucketHook = func(iv string, b time.Time) error {
+		if !failed && iv == "1h" && b.Equal(poison) {
+			failed = true
+			return fmt.Errorf("synthetic one-shot failure")
+		}
+		return nil
+	}
+	for i := 0; i < 4; i++ {
+		d.RunFlowSummaryCycle()
+	}
+	if want, got := summaryBucketBytes(d, poison); got != want {
+		t.Errorf("a bucket that failed once in the dirty walk holds %d bytes against %d in the "+
+			"source; it was never retried. The watermark must not advance past a walk that did "+
+			"not complete.", got, want)
+	}
+}
+
+// TestFlowSummary_MidPassArrivalIsNotBuried pins why the id ceiling is read
+// BEFORE the walk. Rows arriving while a pass runs must belong to the next one;
+// reading the ceiling afterwards buries anything that landed in a bucket the
+// walk had already passed.
+func TestFlowSummary_MidPassArrivalIsNotBuried(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	base := time.Now().UTC().Add(-10 * time.Hour).Truncate(time.Hour)
+	for h := 0; h < 4; h++ {
+		seedSummaryHour(t, d, base, h, 100, "10.0.0.1")
+	}
+	d.RunFlowSummaryCycle()
+	for h := 0; h < 4; h++ {
+		seedSummaryHour(t, d, base, h, 5000, "10.0.0.9")
+	}
+
+	injected := false
+	orig := flowSummaryBucketHook
+	defer func() { flowSummaryBucketHook = orig }()
+	flowSummaryBucketHook = func(iv string, b time.Time) error {
+		// While the LAST bucket is being summarised, a replay lands in the FIRST,
+		// which the walk has already passed.
+		if !injected && iv == "1h" && b.Equal(base.Add(3*time.Hour)) {
+			injected = true
+			seedSummaryHour(t, d, base, 0, 7777, "10.7.7.7")
+		}
+		return nil
+	}
+	d.RunFlowSummaryCycle()
+	flowSummaryBucketHook = nil
+	d.RunFlowSummaryCycle()
+
+	if want, got := summaryBucketBytes(d, base); got != want {
+		t.Errorf("a row that arrived mid-pass into an already-walked bucket left the summary at "+
+			"%d bytes against %d in the source. The ceiling must be read before the walk.", got, want)
+	}
+}
+
+// TestFlowSummary_DirtyWalkIgnoresTheTimeBound pins the other half of "never
+// truncated". LargeDirtyListCompletesInOnePass covers the per-tier cap; this
+// covers the deadline, which is the path that made a cursor necessary.
+func TestFlowSummary_DirtyWalkIgnoresTheTimeBound(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	base := time.Now().UTC().Add(-12 * time.Hour).Truncate(time.Hour)
+	for h := 0; h < 6; h++ {
+		seedSummaryHour(t, d, base, h, 100, "10.0.0.1")
+	}
+	d.RunFlowSummaryCycle()
+	for h := 0; h < 6; h++ {
+		seedSummaryHour(t, d, base, h, 5000, "10.0.0.9")
+	}
+
+	orig := flowSummaryMaxCycleDuration
+	flowSummaryMaxCycleDuration = -time.Hour // already expired
+	defer func() { flowSummaryMaxCycleDuration = orig }()
+	d.RunFlowSummaryCycle()
+
+	for h := 0; h < 6; h++ {
+		bucket := base.Add(time.Duration(h) * time.Hour)
+		if want, got := summaryBucketBytes(d, bucket); got != want {
+			t.Fatalf("an expired deadline truncated the dirty walk at bucket %d (%d bytes against "+
+				"%d). Only the backfill is time-bounded.", h, got, want)
+		}
+	}
+}
+
+// TestFlowSummary_EmptiedSummaryIsRefilled covers the self-heal that a persisted
+// fill marker made necessary. MAX(summary timestamp) used to re-backfill on its
+// own after a TRUNCATE or a failed migration; a marker does not, so without this
+// a cleared table would be a permanent hole.
+func TestFlowSummary_EmptiedSummaryIsRefilled(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	base := time.Now().UTC().Add(-10 * time.Hour).Truncate(time.Hour)
+	for h := 0; h < 4; h++ {
+		seedSummaryHour(t, d, base, h, 100, "10.0.0.1")
+	}
+	d.RunFlowSummaryCycle()
+	if d.summaryFillMarker("1h").IsZero() {
+		t.Fatal("precondition: no fill marker after the first pass")
+	}
+
+	if err := d.Gorm().Where("1 = 1").Delete(&models.FlowSummary{}).Error; err != nil {
+		t.Fatalf("empty the summary: %v", err)
+	}
+	d.RunFlowSummaryCycle()
+
+	var n int64
+	d.Gorm().Model(&models.FlowSummary{}).Where("interval_type = ?", "1h").Count(&n)
+	if n == 0 {
+		t.Error("the summary was emptied under a fill marker and never refilled; the marker " +
+			"records progress the table no longer has")
+	}
+}
+
+// TestFlowSummary_LateDataDuringFirstPassIsNotBuried pins the watermark-zero
+// window. Until the first pass sets a watermark the dirty walk does not run at
+// all, so a failure during that pass used to leave the watermark at zero — the
+// dirty walk stayed disabled while the backfill marched on, and a row replayed
+// into an already-filled bucket was neither dirty nor ahead of the fill marker.
+// Stale forever.
+func TestFlowSummary_LateDataDuringFirstPassIsNotBuried(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	base := time.Now().UTC().Add(-12 * time.Hour).Truncate(time.Hour)
+	for h := 0; h < 6; h++ {
+		seedSummaryHour(t, d, base, h, 100, "10.0.0.1")
+	}
+
+	poison := base.Add(3 * time.Hour)
+	failed := false
+	orig := flowSummaryBucketHook
+	defer func() { flowSummaryBucketHook = orig }()
+	flowSummaryBucketHook = func(iv string, b time.Time) error {
+		if !failed && iv == "1h" && b.Equal(poison) {
+			failed = true
+			return fmt.Errorf("synthetic failure on the first pass")
+		}
+		return nil
+	}
+	d.RunFlowSummaryCycle() // backfills, one bucket fails
+
+	// A replay into a bucket the first pass already filled.
+	seedSummaryHour(t, d, base, 1, 9999, "10.9.9.9")
+	for i := 0; i < 4; i++ {
+		d.RunFlowSummaryCycle()
+	}
+
+	if want, got := summaryBucketBytes(d, base.Add(time.Hour)); got != want {
+		t.Errorf("a row replayed into an already-filled bucket during the first-pass window left "+
+			"the summary at %d bytes against %d in the source.", got, want)
+	}
+}
