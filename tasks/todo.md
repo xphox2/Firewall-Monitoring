@@ -114,8 +114,18 @@ Measured after the concurrency change, replayed against prod: **24h completes in
 - [x] **Phase 0** — deadlines per query, short-circuit after first failure, convert the 7 error-
       discarding `Scan()`s, run independent aggregates concurrently. Nothing else is visible without it.
 - [x] **Phase A** — the 14 correctness items above.
-- [x] **Phase B1** — schema + summariser + backfill + retention + purge coverage (v0.11.248,
-      PR #259, adversarial review in flight). Three tables cover the WHOLE six-month history in
+- [x] **Phase B1** — MERGED (PR #259) and DEPLOYED as v0.11.248 on rust-01 2026-09-15 01:39 UTC.
+      Migration v66 applied, all three tables created, backfill running (2 daily buckets/cycle).
+      **Verified exact on production**: the first days written match the source byte-for-byte and
+      packet-for-packet.
+      **Five adversarial review rounds, every one found a real defect.** The worst: the daily tier
+      summed only the 1d rollup tier then deleted the hourly rows for that day — and the promotion
+      boundary is never day-aligned, so on prod one day held 767 MB in one tier and 42 GB in the
+      other. That would have kept 1.8% of the day, forever, for every new boundary day.
+      Rounds 3-5 each found holes in the CHANGE-DETECTION bookkeeping, every fix opening the next.
+      Round 5 confirmed the right answer was to DELETE the mechanism: the walk over changed buckets
+      now always completes, which removed the cursor, the epoch ceiling and three silent-staleness
+      bugs together (239 net lines). 15 tests, every one mutation-verified. Three tables cover the WHOLE six-month history in
       **under 1M rows against 118M**, and reproduce bytes/packets/flows **exactly** (verified by
       query on prod before writing code). Writer recomputes rather than merges, so late spool
       replay is absorbed and the same code path IS the backfill. Measured ~0.5s per bucket; ~885
