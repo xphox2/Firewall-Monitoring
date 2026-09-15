@@ -65,8 +65,18 @@ var flowSummaryTopN = 50
 var flowSummaryRedoBuckets = 3
 
 // flowSummaryMaxBucketsPerCycle bounds one pass so a cold start (six months of
-// history to backfill) makes steady progress instead of running one enormous
-// transaction against the 30s statement timeout.
+// history to backfill) makes steady progress instead of monopolising the shared
+// work lock.
+//
+// Sized against measured cost. One hourly bucket on production runs the cube in
+// 81ms and each top-N query in ~37ms, so a bucket is roughly half a second all
+// in; 48 of them is ~25s inside a 5-minute rollup tick. That is only the
+// backfill's cost — production's retained history is about 885 buckets, so it
+// catches up in under twenty cycles. Steady state does far less: just the
+// leading edge redone (see flowSummaryRedoBuckets), about 1.5s per cycle.
+//
+// Each bucket commits in its own transaction, so a long pass never holds one
+// long-running transaction open.
 var flowSummaryMaxBucketsPerCycle = 48
 
 // flowSummaryTier describes one rung: which rollup tiers feed it, and how wide
