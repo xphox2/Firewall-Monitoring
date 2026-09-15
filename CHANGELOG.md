@@ -62,11 +62,20 @@ claim the day.
 
 **Cost, measured rather than estimated.** An hourly bucket over ~160k source rows
 takes 1.26s; a daily bucket over 2.1M rows takes 14.1s, and the densest day
-(4.6M rows) approaches 30s on a cold cache. The pass is therefore bounded by
-**time**, not bucket count, runs off the poller's select loop on its
-own advisory lock, and caps the daily tier at two buckets per cycle. The separate
-lock matters: the shared poller work lock is non-blocking, so a monitoring tick
-landing while a long pass held it would be *skipped* rather than delayed.
+(4.6M rows) approaches 30s on a cold cache. The **backfill** is therefore bounded
+by time rather than bucket count, and caps the daily tier per cycle. The pass runs
+off the poller's select loop on its **own** advisory lock: the shared poller work
+lock is non-blocking, so a monitoring tick landing while a long pass held it would
+be *skipped* rather than delayed.
+
+The walk over buckets that **changed** is deliberately never truncated. Capping it
+required a cursor to remember progress, and three separate silent-staleness bugs
+came out of trying to make that cursor correct — a bucket re-dirtied behind it was
+skipped and then buried, a bucket that failed inside a truncated walk dropped below
+it and was never retried, and an unpinned epoch ceiling buried mid-pass arrivals.
+Letting the walk finish removes the mechanism and all three with it. It is
+affordable because the list is bounded by what changed since the last pass, not by
+history: in steady state the current hour plus the promotion boundary day.
 
 **Known limitation, stated now rather than discovered later.** The top-N tables
 carry no dimension columns, so they answer "top talkers for this device" and

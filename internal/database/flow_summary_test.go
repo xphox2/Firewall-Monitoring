@@ -411,224 +411,6 @@ func TestFlowSummary_FailedBucketIsRetriedNotSkipped(t *testing.T) {
 	}
 }
 
-// TestFlowSummary_TruncatedDirtyWalkDoesNotAdvanceWatermark pins the subtlest
-// failure in the change-detection design.
-//
-// The watermark records "everything up to this id has been accounted for". A
-// pass can be cut short two ways — the per-tier bucket cap, or the wall-clock
-// bound — and both leave dirty buckets unprocessed. Advancing the watermark
-// anyway buries those rows below it: they are no longer dirty, and backfill
-// never reaches them because they sit behind the fill marker. The summary then
-// keeps its pre-change figures for those buckets forever.
-//
-// This is the exact defect the watermark was introduced to fix, reached from the
-// other side, so it needs its own guard.
-func TestFlowSummary_TruncatedDirtyWalkDoesNotAdvanceWatermark(t *testing.T) {
-	d := NewDatabaseForTesting(t)
-	base := time.Now().UTC().Add(-8 * time.Hour).Truncate(time.Hour)
-
-	seed := func(hour int, bytes uint64, src string) {
-		if err := d.Gorm().Create(&models.FlowRollup{
-			Timestamp: base.Add(time.Duration(hour)*time.Hour + 5*time.Minute),
-			DeviceID:  1, IntervalType: "5m",
-			SrcAddr: src, DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
-			BytesSum: bytes, PacketsSum: 1, FlowCount: 1,
-		}).Error; err != nil {
-			t.Fatalf("seed hour %d: %v", hour, err)
-		}
-	}
-	for h := 0; h < 4; h++ {
-		seed(h, 100, "10.0.0.1")
-	}
-	d.RunFlowSummaryCycle() // establishes coverage and a watermark
-
-	// Now dirty THREE buckets at once, with a tier that will only process one.
-	for h := 0; h < 3; h++ {
-		seed(h, 5000, "10.0.0.9")
-	}
-	origTiers := flowSummaryTiers
-	flowSummaryTiers = []flowSummaryTier{{
-		interval:     "1h",
-		rangeSources: []string{"5m", "1h"},
-		sumSources:   []string{"5m", "1h"},
-		width:        time.Hour,
-		bucketOf:     func(t time.Time) time.Time { return t.UTC().Truncate(time.Hour) },
-		maxPerPass:   1, // force a truncated walk
-	}}
-	defer func() { flowSummaryTiers = origTiers }()
-
-	d.RunFlowSummaryCycle()
-
-	// Run until it catches up. If the watermark advanced past the truncated
-	// walk, the un-processed buckets are lost and this never converges.
-	for i := 0; i < 6; i++ {
-		d.RunFlowSummaryCycle()
-	}
-
-	for h := 0; h < 3; h++ {
-		bucket := base.Add(time.Duration(h) * time.Hour)
-		var want, got uint64
-		d.Gorm().Model(&models.FlowRollup{}).
-			Where("timestamp >= ? AND timestamp < ?", bucket, bucket.Add(time.Hour)).
-			Select("COALESCE(SUM(bytes_sum),0)").Scan(&want)
-		d.Gorm().Model(&models.FlowSummary{}).
-			Where("interval_type = ? AND timestamp = ?", "1h", bucket).
-			Select("COALESCE(SUM(bytes_sum),0)").Scan(&got)
-		if got != want {
-			t.Errorf("bucket %d holds %d bytes in the summary but %d in the source. A pass cut "+
-				"short by the per-tier cap must NOT advance the watermark, or the buckets it did "+
-				"not reach stop being dirty and are never recomputed.", h, got, want)
-		}
-	}
-}
-
-// TestFlowSummary_RowsArrivingMidEpochAreNotBuried closes the hole the dirty
-// cursor opened.
-//
-// The cursor skips buckets it has already handled in the current epoch. If the
-// epoch's dirty list were recomputed against a LIVE id ceiling every pass, rows
-// arriving mid-epoch for an OLDER bucket would join the list behind the cursor,
-// be skipped by it, and then be buried when the epoch completed and the
-// watermark jumped to the new ceiling — lost permanently, with nothing to
-// re-dirty them.
-//
-// The epoch's ceiling is therefore pinned when it opens: anything newer belongs
-// to the next epoch.
-func TestFlowSummary_RowsArrivingMidEpochAreNotBuried(t *testing.T) {
-	d := NewDatabaseForTesting(t)
-	base := time.Now().UTC().Add(-10 * time.Hour).Truncate(time.Hour)
-
-	seed := func(hour int, bytes uint64, src string) {
-		if err := d.Gorm().Create(&models.FlowRollup{
-			Timestamp: base.Add(time.Duration(hour)*time.Hour + 5*time.Minute),
-			DeviceID:  1, IntervalType: "5m",
-			SrcAddr: src, DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
-			BytesSum: bytes, PacketsSum: 1, FlowCount: 1,
-		}).Error; err != nil {
-			t.Fatalf("seed hour %d: %v", hour, err)
-		}
-	}
-	for h := 0; h < 5; h++ {
-		seed(h, 100, "10.0.0.1")
-	}
-	d.RunFlowSummaryCycle() // establishes coverage and a watermark
-
-	// Dirty the LATER buckets, and force a one-bucket-per-pass walk so the epoch
-	// spans several cycles.
-	for _, h := range []int{2, 3, 4} {
-		seed(h, 5000, "10.0.0.9")
-	}
-	origTiers := flowSummaryTiers
-	flowSummaryTiers = []flowSummaryTier{{
-		interval:     "1h",
-		rangeSources: []string{"5m", "1h"},
-		sumSources:   []string{"5m", "1h"},
-		width:        time.Hour,
-		bucketOf:     func(t time.Time) time.Time { return t.UTC().Truncate(time.Hour) },
-		maxPerPass:   1,
-	}}
-	defer func() { flowSummaryTiers = origTiers }()
-
-	d.RunFlowSummaryCycle() // handles bucket 2; cursor now sits at bucket 2
-
-	// A replay lands in bucket 0 — BEHIND the cursor — while the epoch is open.
-	seed(0, 7777, "10.7.7.7")
-
-	for i := 0; i < 8; i++ {
-		d.RunFlowSummaryCycle()
-	}
-
-	var want, got uint64
-	d.Gorm().Model(&models.FlowRollup{}).
-		Where("timestamp >= ? AND timestamp < ?", base, base.Add(time.Hour)).
-		Select("COALESCE(SUM(bytes_sum),0)").Scan(&want)
-	d.Gorm().Model(&models.FlowSummary{}).
-		Where("interval_type = ? AND timestamp = ?", "1h", base).
-		Select("COALESCE(SUM(bytes_sum),0)").Scan(&got)
-
-	if got != want {
-		t.Errorf("the mid-epoch replay into bucket 0 left the summary at %d bytes against %d in "+
-			"the source. Rows arriving while an epoch is open must belong to the NEXT epoch, or "+
-			"the cursor skips them and the watermark buries them.", got, want)
-	}
-}
-
-// TestFlowSummary_FailedBucketStaysAboveTheCursor pins the second hole the dirty
-// cursor opened. The cursor advanced on any later success, so a walk like
-// [h0 FAILS, h1 ok, h2 ok, cap] left the cursor at h2 with h0 undone. The next
-// pass then SKIPPED h0 because it sits below the cursor — and because it was
-// skipped rather than run, no error was recorded, the epoch completed, and the
-// watermark buried it. Stale forever, and the fill-marker retry cannot help
-// because h0 is behind the fill marker too.
-func TestFlowSummary_FailedBucketStaysAboveTheCursor(t *testing.T) {
-	d := NewDatabaseForTesting(t)
-	base := time.Now().UTC().Add(-10 * time.Hour).Truncate(time.Hour)
-
-	seed := func(hour int, bytes uint64, src string) {
-		if err := d.Gorm().Create(&models.FlowRollup{
-			Timestamp: base.Add(time.Duration(hour)*time.Hour + 5*time.Minute),
-			DeviceID:  1, IntervalType: "5m",
-			SrcAddr: src, DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
-			BytesSum: bytes, PacketsSum: 1, FlowCount: 1,
-		}).Error; err != nil {
-			t.Fatalf("seed hour %d: %v", hour, err)
-		}
-	}
-	for h := 0; h < 6; h++ {
-		seed(h, 100, "10.0.0.1")
-	}
-	d.RunFlowSummaryCycle()
-
-	// FOUR dirty buckets against a cap of two, so the first pass is TRUNCATED and
-	// its cursor persists. That is the shape that buries the failure: without a
-	// truncated pass the cursor is cleared and the scenario cannot arise.
-	for h := 0; h < 4; h++ {
-		seed(h, 5000, "10.0.0.9")
-	}
-
-	origTiers := flowSummaryTiers
-	flowSummaryTiers = []flowSummaryTier{{
-		interval:     "1h",
-		rangeSources: []string{"5m", "1h"},
-		sumSources:   []string{"5m", "1h"},
-		width:        time.Hour,
-		bucketOf:     func(t time.Time) time.Time { return t.UTC().Truncate(time.Hour) },
-		maxPerPass:   2,
-	}}
-	defer func() { flowSummaryTiers = origTiers }()
-
-	// Fail the OLDEST dirty bucket for one cycle only, while later ones succeed.
-	poison := base
-	failed := false
-	origHook := flowSummaryBucketHook
-	defer func() { flowSummaryBucketHook = origHook }()
-	flowSummaryBucketHook = func(interval string, bucket time.Time) error {
-		if !failed && interval == "1h" && bucket.Equal(poison) {
-			failed = true
-			return fmt.Errorf("synthetic one-shot failure")
-		}
-		return nil
-	}
-
-	for i := 0; i < 10; i++ {
-		d.RunFlowSummaryCycle()
-	}
-
-	var want, got uint64
-	d.Gorm().Model(&models.FlowRollup{}).
-		Where("timestamp >= ? AND timestamp < ?", poison, poison.Add(time.Hour)).
-		Select("COALESCE(SUM(bytes_sum),0)").Scan(&want)
-	d.Gorm().Model(&models.FlowSummary{}).
-		Where("interval_type = ? AND timestamp = ?", "1h", poison).
-		Select("COALESCE(SUM(bytes_sum),0)").Scan(&got)
-
-	if got != want {
-		t.Errorf("the bucket that failed once holds %d bytes against %d in the source. The cursor "+
-			"must not advance past a failure, or the failed bucket drops below it and is skipped "+
-			"rather than retried.", got, want)
-	}
-}
-
 // TestFlowSummary_TierAdvancesPastRowsItDoesNotOwn covers the case the watermark
 // fix was actually written for, which no test exercised.
 //
@@ -680,5 +462,72 @@ func TestFlowSummary_TierAdvancesPastRowsItDoesNotOwn(t *testing.T) {
 		t.Errorf("the daily tier's watermark is %d, want %d. It saw rows it does not own and "+
 			"wrote nothing; keying the advance on having written something leaves it stuck, and "+
 			"its dirty scan then widens every cycle forever.", got, maxID())
+	}
+}
+
+// TestFlowSummary_LargeDirtyListCompletesInOnePass pins the invariant the whole
+// change-detection design now rests on: the dirty walk is never truncated.
+//
+// Truncating it required a cursor to remember progress, and every attempt to
+// make that cursor correct opened a new way to lose data — a bucket re-dirtied
+// behind the cursor, a bucket that failed inside a truncated walk, an unpinned
+// epoch ceiling. Letting the walk finish removes the mechanism and all three
+// bugs with it. If a future change reintroduces a cap here, this fails.
+func TestFlowSummary_LargeDirtyListCompletesInOnePass(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	base := time.Now().UTC().Add(-30 * time.Hour).Truncate(time.Hour)
+
+	seed := func(hour int, bytes uint64, src string) {
+		if err := d.Gorm().Create(&models.FlowRollup{
+			Timestamp: base.Add(time.Duration(hour)*time.Hour + 5*time.Minute),
+			DeviceID:  1, IntervalType: "5m",
+			SrcAddr: src, DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+			BytesSum: bytes, PacketsSum: 1, FlowCount: 1,
+		}).Error; err != nil {
+			t.Fatalf("seed hour %d: %v", hour, err)
+		}
+	}
+	const hours = 20
+	for h := 0; h < hours; h++ {
+		seed(h, 100, "10.0.0.1")
+	}
+	// Backfill everything first, so the next pass is purely a dirty walk.
+	for i := 0; i < 5; i++ {
+		d.RunFlowSummaryCycle()
+	}
+
+	// Dirty every bucket at once — far more than any per-tier cap would allow.
+	for h := 0; h < hours; h++ {
+		seed(h, 5000, "10.0.0.9")
+	}
+
+	// A tier with a cap that WOULD truncate, to prove the dirty walk ignores it.
+	origTiers := flowSummaryTiers
+	flowSummaryTiers = []flowSummaryTier{{
+		interval:     "1h",
+		rangeSources: []string{"5m", "1h"},
+		sumSources:   []string{"5m", "1h"},
+		width:        time.Hour,
+		bucketOf:     func(t time.Time) time.Time { return t.UTC().Truncate(time.Hour) },
+		maxPerPass:   2,
+	}}
+	defer func() { flowSummaryTiers = origTiers }()
+
+	d.RunFlowSummaryCycle() // ONE pass
+
+	for h := 0; h < hours; h++ {
+		bucket := base.Add(time.Duration(h) * time.Hour)
+		var want, got uint64
+		d.Gorm().Model(&models.FlowRollup{}).
+			Where("timestamp >= ? AND timestamp < ?", bucket, bucket.Add(time.Hour)).
+			Select("COALESCE(SUM(bytes_sum),0)").Scan(&want)
+		d.Gorm().Model(&models.FlowSummary{}).
+			Where("interval_type = ? AND timestamp = ?", "1h", bucket).
+			Select("COALESCE(SUM(bytes_sum),0)").Scan(&got)
+		if got != want {
+			t.Fatalf("after one pass bucket %d holds %d bytes against %d in the source. The dirty "+
+				"walk must run to completion; capping it needs a cursor, and every version of that "+
+				"cursor lost data.", h, got, want)
+		}
 	}
 }

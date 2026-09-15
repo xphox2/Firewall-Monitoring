@@ -294,76 +294,6 @@ func (d *Database) setSummaryFillMarker(interval string, at time.Time) {
 	}
 }
 
-// flowSummaryDirtyKeyPrefix names the per-tier dirty cursor: how far through the
-// CURRENT watermark epoch's dirty list this tier has got. Cleared whenever the
-// epoch completes and the watermark moves on.
-const flowSummaryDirtyKeyPrefix = "flow_summary_dirty_cursor_"
-
-// summaryDirtyCursor returns how far the current epoch got, and the id ceiling
-// that epoch was opened with. Both live in one setting as "<RFC3339>|<ceiling>".
-//
-// The ceiling is the half of this that is easy to miss and impossible to do
-// without. An epoch's dirty list is "rows newer than the watermark"; if that were
-// recomputed against a LIVE ceiling every pass, rows arriving mid-epoch would
-// join the list behind the cursor and be skipped by it, and then be buried when
-// the epoch finally completed and the watermark jumped to the new ceiling. Rows
-// that arrive after an epoch opens must belong to the NEXT epoch, so the epoch's
-// upper bound has to be pinned when it opens.
-func (d *Database) summaryDirtyCursor(interval string) (at time.Time, ceiling int64, open bool) {
-	v, ok := d.GetSettingValue(flowSummaryDirtyKeyPrefix + interval)
-	if !ok || strings.TrimSpace(v) == "" {
-		return time.Time{}, 0, false
-	}
-	parts := strings.SplitN(strings.TrimSpace(v), "|", 2)
-	if len(parts) != 2 {
-		return time.Time{}, 0, false
-	}
-	c, err := strconv.ParseInt(parts[1], 10, 64)
-	if err != nil || c <= 0 {
-		return time.Time{}, 0, false
-	}
-	// An epoch can be open with NO bucket completed yet; "" means exactly that.
-	if parts[0] == "" {
-		return time.Time{}, c, true
-	}
-	t, err := time.Parse(time.RFC3339, parts[0])
-	if err != nil {
-		return time.Time{}, c, true
-	}
-	return t.UTC(), c, true
-}
-
-func (d *Database) setSummaryDirtyCursor(interval string, at time.Time, ceiling int64) {
-	val := "|" + strconv.FormatInt(ceiling, 10)
-	if !at.IsZero() {
-		val = at.UTC().Format(time.RFC3339) + "|" + strconv.FormatInt(ceiling, 10)
-	}
-	if err := d.UpsertSetting(&models.SystemSetting{
-		Key:      flowSummaryDirtyKeyPrefix + interval,
-		Value:    val,
-		Category: "system",
-		Type:     "string",
-		Label:    "Flow summary dirty cursor (" + interval + ")",
-	}); err != nil {
-		log.Printf("Flow summary: persist %s dirty cursor: %v", interval, err)
-	}
-}
-
-func (d *Database) clearSummaryDirtyCursor(interval string) {
-	if _, _, open := d.summaryDirtyCursor(interval); !open {
-		return
-	}
-	if err := d.UpsertSetting(&models.SystemSetting{
-		Key:      flowSummaryDirtyKeyPrefix + interval,
-		Value:    "",
-		Category: "system",
-		Type:     "string",
-		Label:    "Flow summary dirty cursor (" + interval + ")",
-	}); err != nil {
-		log.Printf("Flow summary: clear %s dirty cursor: %v", interval, err)
-	}
-}
-
 func (d *Database) summaryWatermark(interval string) int64 {
 	return int64(d.GetIntSetting(flowSummaryWatermarkKeyPrefix+interval, 0))
 }
@@ -412,10 +342,10 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 	// That is a deliberate trade — loud and degrading beats silent and wrong —
 	// but it is not free, and an operator seeing this log line repeatedly should
 	// act on it.
+	// run summarises one bucket. keepGoing is false only when the time bound has
+	// expired, which the BACKFILL walk respects; the dirty walk ignores it and
+	// always finishes (see below).
 	run := func(b time.Time) (keepGoing, succeeded bool) {
-		if time.Now().After(deadline) {
-			return false, false
-		}
 		if err := d.summariseBucket(tier, b); err != nil {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("bucket %s: %w", b.Format(time.RFC3339), err)
@@ -426,6 +356,13 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 		}
 		written++
 		return true, true
+	}
+	// runBounded is run() with the time bound applied, for the backfill walk.
+	runBounded := func(b time.Time) (keepGoing, succeeded bool) {
+		if time.Now().After(deadline) {
+			return false, false
+		}
+		return run(b)
 	}
 
 	// Which buckets this tier OWNS, from its range sources alone. A tier must not
@@ -459,70 +396,45 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 
 	// ---- 1. buckets changed since the watermark ----
 	//
+	// This walk ALWAYS runs to completion. It is neither capped by the per-tier
+	// bucket limit nor cut by the time bound, and that is the single most
+	// important simplification in this file.
+	//
+	// Truncating it needed a cursor to remember how far the pass got, and every
+	// attempt to make that cursor correct opened a new way to lose data: a
+	// bucket re-dirtied behind the cursor was skipped and then buried; a bucket
+	// that FAILED inside a truncated walk dropped below the cursor and was
+	// skipped rather than retried; the epoch's id ceiling had to be pinned or
+	// mid-pass arrivals were buried too. Three separate silent-staleness bugs in
+	// one mechanism. Letting the walk finish deletes all of them.
+	//
+	// It is affordable because the list is bounded by what CHANGED since the last
+	// pass, not by history: in steady state that is the current hour plus the
+	// promotion boundary day, roughly 17s. After an outage it is larger — and it
+	// still has to be done, because those buckets are genuinely stale. The pass
+	// holds its own advisory lock, so a long walk delays nothing but itself.
+	//
 	// Detection reads EVERY tier this bucket sums, not just the range sources:
 	// late data replayed into the 1h tier must redirty a day the daily tier owns,
 	// or that day silently keeps its pre-replay figures.
 	dirtyComplete := true
 	if watermark > 0 {
-		// Open an epoch, or resume the one in progress. The epoch's ceiling is
-		// pinned when it opens so rows arriving while it runs belong to the NEXT
-		// epoch rather than joining this list behind the cursor.
-		cursor, epochCeiling, open := d.summaryDirtyCursor(tier.interval)
-		if !open {
-			epochCeiling = ceiling
-		}
-		dirty, err := d.dirtyBuckets(tier, watermark, epochCeiling)
+		dirty, err := d.dirtyBuckets(tier, watermark)
 		if err != nil {
 			return written, fmt.Errorf("dirty buckets: %w", err)
 		}
-		// The cursor is what makes a CAPPED dirty walk make progress. Holding the
-		// watermark back on a truncated walk is necessary but not sufficient: the
-		// next pass recomputes the same dirty list from the same watermark, so
-		// without a cursor it reprocesses the first bucket every cycle and never
-		// reaches the rest. The list is ordered oldest-first, so remembering how
-		// far the epoch got is enough.
-		lastDone := cursor
-		cursorContiguous := true
 		for _, b := range dirty {
 			// A bucket outside this tier's range is not this tier's problem, but
 			// it HAS been seen — it must not hold the watermark back.
 			if !owns(b) {
 				continue
 			}
-			if !cursor.IsZero() && !b.After(cursor) {
-				continue // already handled earlier in this epoch
-			}
-			if tier.maxPerPass > 0 && written >= tier.maxPerPass {
+			if _, ok := run(b); !ok {
+				// firstErr is already set; keep going so one poison bucket does
+				// not hide the rest, and let firstErr hold the watermark so the
+				// whole list is retried next pass.
 				dirtyComplete = false
-				break
 			}
-			keepGoing, ok := run(b)
-			// CONTIGUOUS, like the backfill loop. Advancing lastDone past a
-			// failure would drop the failed bucket below the cursor, where the
-			// next pass skips it — and because it was skipped rather than run,
-			// firstErr is clear, the epoch completes, and the watermark buries
-			// it. Stopping the cursor at the first failure keeps it above the
-			// line so it is retried.
-			if ok && cursorContiguous {
-				lastDone = b
-			} else if !ok {
-				cursorContiguous = false
-			}
-			if !keepGoing {
-				dirtyComplete = false
-				break
-			}
-		}
-		if dirtyComplete {
-			// The epoch is done. Advance the watermark to the epoch's PINNED
-			// ceiling, not the live one — anything newer arrived mid-epoch and
-			// must stay dirty for the next one.
-			if firstErr == nil {
-				ceiling = epochCeiling
-			}
-			d.clearSummaryDirtyCursor(tier.interval)
-		} else {
-			d.setSummaryDirtyCursor(tier.interval, lastDone, epochCeiling)
 		}
 	}
 
@@ -565,7 +477,7 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 			if tier.maxPerPass > 0 && written >= tier.maxPerPass {
 				break
 			}
-			keepGoing, ok := run(b)
+			keepGoing, ok := runBounded(b)
 			if ok && contiguous {
 				newFilled = b
 			}
@@ -597,10 +509,10 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 }
 
 // dirtyBuckets lists the buckets touched by rows newer than the watermark.
-func (d *Database) dirtyBuckets(tier flowSummaryTier, watermark, ceiling int64) ([]time.Time, error) {
+func (d *Database) dirtyBuckets(tier flowSummaryTier, watermark int64) ([]time.Time, error) {
 	var stamps []time.Time
 	rows, err := d.db.Session(&gorm.Session{}).Model(&models.FlowRollup{}).
-		Where("interval_type IN ? AND id > ? AND id <= ?", tier.sumSources, watermark, ceiling).
+		Where("interval_type IN ? AND id > ?", tier.sumSources, watermark).
 		Select("DISTINCT timestamp").Order("timestamp ASC").Rows()
 	if err != nil {
 		return nil, err
