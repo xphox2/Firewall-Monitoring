@@ -183,3 +183,156 @@ func TestFlowSummary_TopNIsPerDeviceAndScope(t *testing.T) {
 		t.Errorf("conversation value %q does not look like src|dst|port|proto", convo.Value)
 	}
 }
+
+// TestFlowSummary_BoundaryDayKeepsEveryHour is the regression for a data-loss
+// bug that production would have hit continuously.
+//
+// The rollup ladder promotes 1h→1d with a cutoff that is NOT day-aligned, so the
+// day at the 30-day boundary is always PARTIALLY promoted. On production,
+// 2026-08-16 held 767 MB in the 1d tier (a single midnight row) and 41 GB across
+// the 1h tier. An earlier daily summariser summed only the 1d tier and then
+// deleted the hourly summary rows covering that day — recording 767 MB for a
+// 45 GB day, losing 98% of it, and repeating for every new boundary day.
+//
+// The daily bucket must sum EVERY rollup tier, which is what makes superseding
+// the hourly rows safe.
+func TestFlowSummary_BoundaryDayKeepsEveryHour(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	day := time.Now().UTC().Add(-40 * 24 * time.Hour).Truncate(24 * time.Hour)
+
+	// The promoted part: one daily row stamped at midnight, small.
+	if err := d.Gorm().Create(&models.FlowRollup{
+		Timestamp: day, DeviceID: 1, IntervalType: "1d",
+		SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+		BytesSum: 1000, PacketsSum: 10, FlowCount: 1,
+	}).Error; err != nil {
+		t.Fatalf("seed 1d: %v", err)
+	}
+	// The not-yet-promoted remainder of the SAME day, far larger.
+	for _, hour := range []int{1, 7, 19} {
+		if err := d.Gorm().Create(&models.FlowRollup{
+			Timestamp: day.Add(time.Duration(hour) * time.Hour), DeviceID: 1, IntervalType: "1h",
+			SrcAddr: "10.0.0.2", DstAddr: "8.8.4.4", DstPort: 443, Protocol: 6,
+			BytesSum: 20000, PacketsSum: 200, FlowCount: 5,
+		}).Error; err != nil {
+			t.Fatalf("seed 1h hour %d: %v", hour, err)
+		}
+	}
+
+	// Two cycles: the first may write hourly rows, the second lets the daily tier
+	// supersede them. Either way the total must survive.
+	d.RunFlowSummaryCycle()
+	d.RunFlowSummaryCycle()
+
+	var sourceBytes uint64
+	if err := d.Gorm().Model(&models.FlowRollup{}).
+		Where("timestamp >= ? AND timestamp < ?", day, day.Add(24*time.Hour)).
+		Select("COALESCE(SUM(bytes_sum),0)").Scan(&sourceBytes).Error; err != nil {
+		t.Fatalf("source total: %v", err)
+	}
+
+	var summaryBytes uint64
+	if err := d.Gorm().Model(&models.FlowSummary{}).
+		Where("timestamp >= ? AND timestamp < ?", day, day.Add(24*time.Hour)).
+		Select("COALESCE(SUM(bytes_sum),0)").Scan(&summaryBytes).Error; err != nil {
+		t.Fatalf("summary total: %v", err)
+	}
+
+	if summaryBytes != sourceBytes {
+		t.Errorf("the boundary day holds %d bytes in the summary but %d in the source. A daily "+
+			"bucket that sums only the 1d tier and then supersedes the hourly rows destroys the "+
+			"hours still awaiting promotion.", summaryBytes, sourceBytes)
+	}
+	if sourceBytes != 61000 {
+		t.Fatalf("seed total is %d, expected 61000; the test is not measuring what it claims", sourceBytes)
+	}
+
+	// And the tiers must not BOTH hold the day, or a reader summing them
+	// double-counts.
+	var hourlyRows, dailyRows int64
+	d.Gorm().Model(&models.FlowSummary{}).
+		Where("interval_type = ? AND timestamp >= ? AND timestamp < ?", "1h", day, day.Add(24*time.Hour)).Count(&hourlyRows)
+	d.Gorm().Model(&models.FlowSummary{}).
+		Where("interval_type = ? AND timestamp >= ? AND timestamp < ?", "1d", day, day.Add(24*time.Hour)).Count(&dailyRows)
+	if hourlyRows > 0 && dailyRows > 0 {
+		t.Errorf("both tiers hold the boundary day (%d hourly, %d daily rows); summing them "+
+			"double-counts it", hourlyRows, dailyRows)
+	}
+}
+
+// TestFlowSummary_LateDataFarBehindIsAbsorbed pins the change-detection
+// mechanism. An earlier version recomputed only the newest few buckets, so a
+// collector offline for several hours replayed its spool into buckets the walk
+// had already passed and would never revisit — the summary silently kept the
+// pre-replay figures forever. Detection is now an id watermark on flow_rollups,
+// which finds changes wherever in history they land.
+func TestFlowSummary_LateDataFarBehindIsAbsorbed(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	base := time.Now().UTC().Add(-14 * time.Hour).Truncate(time.Hour)
+
+	for i := 0; i < 10; i++ {
+		if err := d.Gorm().Create(&models.FlowRollup{
+			Timestamp: base.Add(time.Duration(i)*time.Hour + 5*time.Minute),
+			DeviceID:  1, IntervalType: "5m",
+			SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+			BytesSum: 100, PacketsSum: 1, FlowCount: 1,
+		}).Error; err != nil {
+			t.Fatalf("seed hour %d: %v", i, err)
+		}
+	}
+	d.RunFlowSummaryCycle()
+
+	// Replay lands SIX hours behind the leading edge — well outside any
+	// "recompute the last few buckets" window.
+	lateBucket := base.Add(2 * time.Hour)
+	if err := d.Gorm().Create(&models.FlowRollup{
+		Timestamp: lateBucket.Add(30 * time.Minute), DeviceID: 1, IntervalType: "5m",
+		SrcAddr: "10.9.9.9", DstAddr: "1.1.1.1", DstPort: 53, Protocol: 17,
+		BytesSum: 99999, PacketsSum: 9, FlowCount: 3,
+	}).Error; err != nil {
+		t.Fatalf("seed late row: %v", err)
+	}
+	d.RunFlowSummaryCycle()
+
+	var want, got uint64
+	d.Gorm().Model(&models.FlowRollup{}).
+		Where("timestamp >= ? AND timestamp < ?", lateBucket, lateBucket.Add(time.Hour)).
+		Select("COALESCE(SUM(bytes_sum),0)").Scan(&want)
+	d.Gorm().Model(&models.FlowSummary{}).
+		Where("interval_type = ? AND timestamp = ?", "1h", lateBucket).
+		Select("COALESCE(SUM(bytes_sum),0)").Scan(&got)
+
+	if got != want {
+		t.Errorf("the replayed bucket holds %d bytes in the summary but %d in the source. "+
+			"Change detection must find edits anywhere in history, not only at the leading edge.",
+			got, want)
+	}
+}
+
+// TestFlowSummary_OneBadBucketDoesNotStallTheTier pins the failure mode that
+// turned any single poison bucket into permanent, silent data loss: the pass
+// used to return on the first bucket error and restart from the same place next
+// cycle, so nothing after it was ever summarised.
+func TestFlowSummary_OneBadBucketDoesNotStallTheTier(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	base := time.Now().UTC().Add(-8 * time.Hour).Truncate(time.Hour)
+	for i := 0; i < 5; i++ {
+		if err := d.Gorm().Create(&models.FlowRollup{
+			Timestamp: base.Add(time.Duration(i)*time.Hour + 5*time.Minute),
+			DeviceID:  1, IntervalType: "5m",
+			SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+			BytesSum: 100, PacketsSum: 1, FlowCount: 1,
+		}).Error; err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	d.RunFlowSummaryCycle()
+
+	// Every complete bucket must be present; a stall would leave a gap.
+	var buckets int64
+	d.Gorm().Model(&models.FlowSummary{}).
+		Where("interval_type = ?", "1h").Distinct("timestamp").Count(&buckets)
+	if buckets < 4 {
+		t.Errorf("only %d hourly buckets summarised; the walk should cover the seeded range", buckets)
+	}
+}

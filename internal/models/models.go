@@ -1907,12 +1907,10 @@ type FlowSummary struct {
 	BytesSum   uint64 `json:"bytes_sum"`
 	PacketsSum uint64 `json:"packets_sum"`
 	FlowCount  int64  `json:"flow_count"`
-	// SamplingBytes is the bytes-weighted sampling numerator, i.e.
-	// SUM(sampling_rate_avg * bytes_sum). Dividing it by BytesSum recovers the
-	// weighted rate for any subset of rows. A plain average could not be
-	// re-aggregated across buckets, and averaging across a sampling-regime change
-	// produces a rate that never existed anyway.
-	SamplingBytes float64 `json:"sampling_bytes"`
+	// No sampling column here on purpose. The page reports a sampling RANGE, not
+	// a weighted average (averaging across a sampling-regime change yields a rate
+	// that never existed), and the range lives in FlowSummaryBucket. A
+	// bytes-weighted numerator here would be a column nothing reads.
 }
 
 func (FlowSummary) TableName() string { return "flow_summaries" }

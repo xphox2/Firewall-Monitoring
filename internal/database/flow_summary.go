@@ -3,6 +3,7 @@ package database
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 
 	"firewall-mon/internal/models"
@@ -13,27 +14,23 @@ import (
 // Flow summary writer.
 //
 // WHY A SEPARATE, IDEMPOTENT JOB rather than a write inside the rollup
-// transaction (which is where an earlier design put it):
+// transaction:
 //
 //   - Late data becomes exact. A collector replaying its store-and-forward
 //     spool delivers rows with old timestamps — a path aggregateFlowsToRollup
 //     explicitly designs for — so "each bucket is finished exactly once" is not
 //     a property the ladder can promise. Because this job RECOMPUTES a bucket
-//     from scratch rather than merging into it, re-running it on late data is
-//     correct by construction. A merge-based top-N is lossy; a recompute is not.
-//   - The rollup cycle visits each hour through roughly twelve partial windows
-//     (its aggregation window is an hour but its cutoff is not bucket-aligned),
-//     so a per-bucket top-N could never be computed in one pass inside that
-//     callback.
+//     from scratch rather than merging into it, re-running it is correct by
+//     construction. A merge-based top-N is lossy; a recompute is not.
+//   - The rollup cycle visits each hour through roughly twelve partial windows,
+//     so a per-bucket top-N could never be computed in one pass inside it.
 //   - It keeps a bug out of the rollup ladder's critical path. That job has had
 //     two production incidents; a defect here slows a page, not ingestion.
 //
-// The same function is also the backfill. That is the design's best property:
-// one code path, exercised every cycle, rather than a migration that runs once
-// and is never tested again.
+// The same function is also the backfill: one code path, exercised every cycle,
+// rather than a migration that runs once and is never tested again.
 
-// Summary dimensions for FlowSummaryTop. Values are stored as text so one table
-// serves every high-cardinality dimension.
+// Summary dimensions for FlowSummaryTop.
 const (
 	flowSummaryDimSrcAddr      = "src_addr"
 	flowSummaryDimDstAddr      = "dst_addr"
@@ -44,9 +41,9 @@ const (
 
 // flowSummaryTopN is how many values are kept per bucket per dimension.
 //
-// This number is load-bearing and must not be lowered. A window's top-10 is a
-// merge of per-bucket top-Ns, and the merge's error bound is the sum of each
-// bucket's Nth value. Measured over 24h of hourly buckets on production:
+// Load-bearing, and not to be lowered. A window's top-10 is a merge of
+// per-bucket top-Ns, and the error bound is the sum of each bucket's Nth value.
+// Measured over 24h of hourly buckets on production:
 //
 //	dimension      bound@N=10   bound@N=50   true #10
 //	src_addr        1,286 MB       10 MB      2,607 MB
@@ -57,61 +54,79 @@ const (
 // wrong. At 50 it is roughly a tenth of it. Re-measure if traffic shape changes.
 var flowSummaryTopN = 50
 
-// flowSummaryRedoBuckets is how many already-summarised buckets at the leading
-// edge are recomputed each cycle. Buckets do not stop changing the moment they
-// are first summarised: late spool replay adds rows, and promotion moves a
-// band between rollup tiers. Recomputing the most recent few absorbs both,
-// which is only safe because recomputation is exact.
-var flowSummaryRedoBuckets = 3
-
-// flowSummaryMaxBucketsPerCycle bounds one pass so a cold start (six months of
-// history to backfill) makes steady progress instead of monopolising the shared
-// work lock.
+// flowSummaryMaxCycleDuration bounds one pass by TIME, not bucket count.
 //
-// Sized against measured cost. One hourly bucket on production runs the cube in
-// 81ms and each top-N query in ~37ms, so a bucket is roughly half a second all
-// in; 48 of them is ~25s inside a 5-minute rollup tick. That is only the
-// backfill's cost — production's retained history is about 885 buckets, so it
-// catches up in under twenty cycles. Steady state does far less: just the
-// leading edge redone (see flowSummaryRedoBuckets), about 1.5s per cycle.
-//
-// Each bucket commits in its own transaction, so a long pass never holds one
-// long-running transaction open.
-var flowSummaryMaxBucketsPerCycle = 48
+// Bucket cost varies by more than an order of magnitude and the expensive ones
+// are not the common ones: measured on production, an hourly bucket over ~160k
+// source rows takes 1.26s, while a daily bucket over 2.1M rows takes 14.1s and
+// the densest day (4.6M rows) approaches 30s on a cold cache. A cap counted in
+// buckets therefore cannot bound the work; an earlier version allowed 48 per
+// cycle, which on the daily tier is minutes.
+var flowSummaryMaxCycleDuration = 60 * time.Second
 
-// flowSummaryTier describes one rung: which rollup tiers feed it, and how wide
-// its buckets are.
+// flowSummaryMaxDailyBucketsPerCycle additionally caps the daily tier, whose
+// buckets are the expensive ones. Backfilling six months of daily buckets is a
+// one-time cost and there is no hurry; starving the rest of the cycle is worse.
+var flowSummaryMaxDailyBucketsPerCycle = 2
+
+// flowSummaryWatermarkKeyPrefix names the per-tier progress marker. It stores
+// the highest flow_rollups.id this tier has already accounted for.
+//
+// An id watermark, NOT "recompute the last few buckets". The redo-window
+// approach only absorbed changes at the leading edge: a collector offline for
+// five hours replays into buckets the walk has already passed and would never be
+// revisited, so the summary silently kept the pre-replay figures. Because
+// promotion INSERTS rows (5m→1h→1d), an id watermark also catches a band moving
+// between tiers, wherever in history it lands. This is the same primitive the
+// rollup ladder itself uses.
+const flowSummaryWatermarkKeyPrefix = "flow_summary_watermark_"
+
+// flowSummaryTier describes one rung of the summary ladder.
 type flowSummaryTier struct {
-	interval string   // the summary's own interval_type
-	sources  []string // the flow_rollups interval_types that feed it
-	width    time.Duration
-	bucketOf func(time.Time) time.Time
+	// interval is the summary's own interval_type.
+	interval string
+	// rangeSources decide which buckets this tier OWNS.
+	rangeSources []string
+	// sumSources decide what is aggregated INSIDE a bucket.
+	//
+	// These differ for the daily tier, and that difference is a data-loss fix.
+	// The rollup ladder promotes 1h→1d with a cutoff that is not day-aligned, so
+	// the boundary day is always PARTIALLY promoted. On production today,
+	// 2026-08-16 holds 767 MB in the 1d tier (one midnight row) and 41 GB across
+	// the 1h tier. A daily bucket that summed only the 1d tier would record 767 MB
+	// for a 45 GB day and then delete the hourly rows covering it — losing 98% of
+	// that day, permanently, and repeating for every new boundary day. Summing
+	// every tier inside the bucket makes the daily row complete, which is what
+	// makes superseding the hourly rows safe.
+	sumSources []string
+	width      time.Duration
+	bucketOf   func(time.Time) time.Time
+	maxPerPass int
 }
 
 // flowSummaryTiers mirrors the rollup ladder, which is what keeps the summary
-// tiers disjoint without any promotion step of their own: the 5m and 1h rollup
-// tiers hold the recent ~30 days and feed hourly summary rows; the 1d tier holds
-// everything older and can only feed daily rows, because day-resolution source
-// data cannot reconstruct hours.
-//
-// That last point is not a preference. On production the 1h rollup tier reaches
-// back 28 days and the 1d tier covers the 165 days before it, so an hourly
-// summary simply cannot be backfilled for most of the retained window.
+// tiers disjoint. The hourly tier owns whatever is still at 5m/1h resolution;
+// the daily tier owns whatever promotion has begun collapsing to days, and
+// supersedes the hourly rows for those days.
 var flowSummaryTiers = []flowSummaryTier{
 	{
-		interval: "1h",
-		sources:  []string{"5m", "1h"},
-		width:    time.Hour,
-		bucketOf: func(t time.Time) time.Time { return t.UTC().Truncate(time.Hour) },
+		interval:     "1h",
+		rangeSources: []string{"5m", "1h"},
+		sumSources:   []string{"5m", "1h"},
+		width:        time.Hour,
+		bucketOf:     func(t time.Time) time.Time { return t.UTC().Truncate(time.Hour) },
+		maxPerPass:   0, // time-bounded only
 	},
 	{
-		interval: "1d",
-		sources:  []string{"1d"},
-		width:    24 * time.Hour,
+		interval:     "1d",
+		rangeSources: []string{"1d"},
+		sumSources:   []string{"5m", "1h", "1d"},
+		width:        24 * time.Hour,
 		bucketOf: func(t time.Time) time.Time {
 			u := t.UTC()
 			return time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC)
 		},
+		maxPerPass: flowSummaryMaxDailyBucketsPerCycle,
 	},
 }
 
@@ -119,19 +134,55 @@ var flowSummaryTiers = []flowSummaryTier{
 // repeatedly; each bucket is recomputed from its source rows, so a partial or
 // repeated run converges rather than accumulating.
 //
-// Returns true if it wrote anything, so the caller can tighten its schedule
-// while a backfill is still catching up.
+// Returns true if it wrote anything.
 func (d *Database) RunFlowSummaryCycle() bool {
-	wrote := false
+	deadline := time.Now().Add(flowSummaryMaxCycleDuration)
+
+	// Where the daily tier's reach ends. Everything at or below this instant
+	// belongs to the daily tier; the hourly tier must not claim it.
+	//
+	// Without this floor the two tiers fight over the boundary day forever: the
+	// daily pass supersedes the hourly rows, and the next hourly pass writes them
+	// straight back (the 1h rollup rows are still there), leaving BOTH tiers
+	// holding the day so a reader summing them double-counts it.
+	//
+	// The daily tier runs FIRST for the same reason — it establishes the floor
+	// and clears any hourly rows left over from before a day was promoted.
+	var dailyFloor time.Time
 	for _, tier := range flowSummaryTiers {
-		n, err := d.summariseTier(tier)
-		if err != nil {
-			log.Printf("Flow summary: %s tier: %v (will resume next cycle)", tier.interval, err)
+		if tier.interval != "1d" {
 			continue
 		}
+		if _, newest, ok, err := d.tierTimeBounds(tier.rangeSources); err == nil && ok {
+			dailyFloor = tier.bucketOf(newest).Add(tier.width)
+		}
+	}
+
+	ordered := []flowSummaryTier{}
+	for _, t := range flowSummaryTiers {
+		if t.interval == "1d" {
+			ordered = append(ordered, t)
+		}
+	}
+	for _, t := range flowSummaryTiers {
+		if t.interval != "1d" {
+			ordered = append(ordered, t)
+		}
+	}
+
+	wrote := false
+	for _, tier := range ordered {
+		floor := time.Time{}
+		if tier.interval != "1d" {
+			floor = dailyFloor
+		}
+		n, err := d.summariseTier(tier, deadline, floor)
 		if n > 0 {
 			log.Printf("Flow summary: wrote %d %s bucket(s)", n, tier.interval)
 			wrote = true
+		}
+		if err != nil {
+			log.Printf("Flow summary: %s tier: %v (will resume next cycle)", tier.interval, err)
 		}
 	}
 	return wrote
@@ -139,12 +190,10 @@ func (d *Database) RunFlowSummaryCycle() bool {
 
 // aggregateTimestamp runs a MIN/MAX timestamp aggregate and coerces the result.
 //
-// It exists because a plain Scan into time.Time does NOT work across both
-// engines: SQLite returns timestamps as text, so the scan quietly yields the
-// zero value and every caller concludes there is no data. coerceDBTime is the
-// codebase's existing answer (see oldestEligibleTimestamp, which the rollup
-// ladder uses for the same reason). ok is false when the aggregate is NULL,
-// i.e. no rows matched.
+// A plain Scan into time.Time does NOT work across both engines: SQLite returns
+// timestamps as text, so the scan quietly yields the zero value and every caller
+// concludes there is no data. coerceDBTime is the codebase's existing answer
+// (see oldestEligibleTimestamp). ok is false when the aggregate is NULL.
 func aggregateTimestamp(q *gorm.DB, expr string) (time.Time, bool, error) {
 	rows, err := q.Select(expr).Rows()
 	if err != nil {
@@ -165,103 +214,227 @@ func aggregateTimestamp(q *gorm.DB, expr string) (time.Time, bool, error) {
 	return ts, ok, nil
 }
 
-// summariseTier finds the buckets this tier still owes and computes them.
-func (d *Database) summariseTier(tier flowSummaryTier) (int, error) {
-	// Where the source data starts and ends. Both go through aggregateTimestamp
-	// rather than scanning straight into a time.Time: SQLite hands timestamps
-	// back as text, so a direct scan yields the zero value and the whole cycle
-	// silently does nothing. coerceDBTime is the existing fix for that, already
-	// used by the rollup ladder's own window walk.
-	srcBase := func() *gorm.DB {
-		return d.db.Model(&models.FlowRollup{}).Where("interval_type IN ?", tier.sources)
-	}
-	minTS, ok, err := aggregateTimestamp(srcBase(), "MIN(timestamp)")
-	if err != nil {
-		return 0, fmt.Errorf("source start: %w", err)
-	}
-	if !ok {
-		return 0, nil // no source rows for this tier
-	}
-	maxTS, ok, err := aggregateTimestamp(srcBase(), "MAX(timestamp)")
-	if err != nil {
-		return 0, fmt.Errorf("source end: %w", err)
-	}
-	if !ok {
-		return 0, nil
-	}
-
-	// Resume from the newest bucket already summarised, stepping back a few so
-	// late arrivals and tier promotions are picked up (see
-	// flowSummaryRedoBuckets). With nothing summarised yet this starts at the
-	// oldest source row, which is the backfill.
-	start := tier.bucketOf(minTS)
-	watermark, haveWatermark, err := aggregateTimestamp(
-		d.db.Model(&models.FlowSummary{}).Where("interval_type = ?", tier.interval), "MAX(timestamp)")
-	if err != nil {
-		return 0, fmt.Errorf("watermark: %w", err)
-	}
-	if haveWatermark {
-		redoFrom := tier.bucketOf(watermark).Add(-time.Duration(flowSummaryRedoBuckets) * tier.width)
-		if redoFrom.After(start) {
-			start = redoFrom
+// tierTimeBounds returns the oldest and newest source timestamps for a tier.
+//
+// It probes each interval SEPARATELY with `=` rather than one `interval_type IN
+// (...)` query, because the IN defeats the index's first-tuple stop:
+// idx_rollup_interval_ts leads on interval_type, so an equality pins it and the
+// scan stops at the first tuple, while an IN list forces a full index scan.
+// Measured on production: the IN form takes 8,774ms, the four per-interval
+// equality probes total 5.3ms — a difference of about 1,650x, and it would have
+// run every five minutes forever. This is the exact planner trap the rollup
+// ladder's own comments document.
+func (d *Database) tierTimeBounds(intervals []string) (oldest, newest time.Time, ok bool, err error) {
+	for _, iv := range intervals {
+		base := func() *gorm.DB {
+			return d.db.Session(&gorm.Session{}).Model(&models.FlowRollup{}).Where("interval_type = ?", iv)
 		}
+		lo, haveLo, e := aggregateTimestamp(base(), "MIN(timestamp)")
+		if e != nil {
+			return time.Time{}, time.Time{}, false, e
+		}
+		if !haveLo {
+			continue
+		}
+		hi, _, e := aggregateTimestamp(base(), "MAX(timestamp)")
+		if e != nil {
+			return time.Time{}, time.Time{}, false, e
+		}
+		if !ok || lo.Before(oldest) {
+			oldest = lo
+		}
+		if !ok || hi.After(newest) {
+			newest = hi
+		}
+		ok = true
 	}
+	return oldest, newest, ok, nil
+}
 
-	// Include the bucket the newest source row falls in, even though it is still
-	// filling.
-	//
-	// This is deliberate and it is what keeps the read path simple. If the
-	// summary stopped at the last COMPLETE bucket, it would trail the rollup
-	// tiers by up to a bucket, leaving a band covered by neither the summary nor
-	// raw flow_samples — so a 90-day total would quietly disagree with the live
-	// path by an hour of traffic. Covering the partial bucket makes the summary's
-	// reach exactly equal to the rollup tiers' reach, so summary + raw is a
-	// complete picture, the same two sources the live path unions.
-	//
-	// The partial bucket costs nothing to carry: flowSummaryRedoBuckets
-	// recomputes the leading edge every cycle anyway, and recomputation is exact.
-	end := tier.bucketOf(maxTS).Add(tier.width)
+func (d *Database) summaryWatermark(interval string) int64 {
+	return int64(d.GetIntSetting(flowSummaryWatermarkKeyPrefix+interval, 0))
+}
+
+func (d *Database) setSummaryWatermark(interval string, id int64) {
+	if err := d.UpsertSetting(&models.SystemSetting{
+		Key:      flowSummaryWatermarkKeyPrefix + interval,
+		Value:    strconv.FormatInt(id, 10),
+		Category: "internal",
+		Type:     "number",
+		Label:    "Flow summary progress marker (" + interval + ")",
+	}); err != nil {
+		log.Printf("Flow summary: persist %s watermark: %v", interval, err)
+	}
+}
+
+// summariseTier computes whatever this tier owes: first the buckets changed
+// since the last pass (correctness), then unvisited history (backfill).
+func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor time.Time) (int, error) {
+	// Capture the id ceiling BEFORE reading, so rows arriving mid-pass are picked
+	// up next time rather than being skipped.
+	var ceiling int64
+	if err := d.db.Session(&gorm.Session{}).Model(&models.FlowRollup{}).
+		Select("COALESCE(MAX(id),0)").Scan(&ceiling).Error; err != nil {
+		return 0, fmt.Errorf("id ceiling: %w", err)
+	}
+	watermark := d.summaryWatermark(tier.interval)
 
 	written := 0
-	for b := start; b.Before(end); b = b.Add(tier.width) {
-		if written >= flowSummaryMaxBucketsPerCycle {
-			break
+	var firstErr error
+	// A bucket that fails must NOT stall the tier. An earlier version returned on
+	// the first error, so a single poison bucket (a timeout, a constraint
+	// violation) meant nothing after it was ever summarised — silently, behind
+	// one log line. Record and move on.
+	run := func(b time.Time) bool {
+		if time.Now().After(deadline) {
+			return false
 		}
 		if err := d.summariseBucket(tier, b); err != nil {
-			return written, fmt.Errorf("bucket %s: %w", b.Format(time.RFC3339), err)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("bucket %s: %w", b.Format(time.RFC3339), err)
+			}
+			log.Printf("Flow summary: %s bucket %s failed, skipping: %v",
+				tier.interval, b.Format(time.RFC3339), err)
+			return true // keep going
 		}
 		written++
+		return true
 	}
-	return written, nil
+
+	// Which buckets this tier OWNS, from its range sources alone. A tier must not
+	// claim a bucket outside its range: the daily tier sums every rollup tier (so
+	// its rows are complete) but it only owns days promotion has begun collapsing,
+	// and it supersedes the hourly rows for the days it owns. Letting it claim a
+	// day with no 1d rows at all would delete correct hourly rows and replace them
+	// with a day-resolution copy for no reason.
+	oldest, newest, ok, err := d.tierTimeBounds(tier.rangeSources)
+	if err != nil {
+		return written, fmt.Errorf("tier bounds: %w", err)
+	}
+	if !ok {
+		return written, nil // this tier has no source data yet
+	}
+	ownedFrom := tier.bucketOf(oldest)
+	// A lower tier's reach takes precedence: the hourly tier does not own days
+	// the daily tier has already collapsed.
+	if !floor.IsZero() && floor.After(ownedFrom) {
+		ownedFrom = tier.bucketOf(floor)
+	}
+	ownedTo := tier.bucketOf(newest).Add(tier.width)
+	if ownedTo.Before(ownedFrom) {
+		return written, nil
+	}
+	owns := func(b time.Time) bool { return !b.Before(ownedFrom) && b.Before(ownedTo) }
+
+	// ---- 1. buckets changed since the watermark ----
+	//
+	// Detection reads EVERY tier this bucket sums, not just the range sources:
+	// late data replayed into the 1h tier must redirty a day the daily tier owns,
+	// or that day silently keeps its pre-replay figures.
+	if watermark > 0 {
+		dirty, err := d.dirtyBuckets(tier, watermark)
+		if err != nil {
+			return written, fmt.Errorf("dirty buckets: %w", err)
+		}
+		for _, b := range dirty {
+			if !owns(b) {
+				continue
+			}
+			if tier.maxPerPass > 0 && written >= tier.maxPerPass {
+				break
+			}
+			if !run(b) {
+				break
+			}
+		}
+	}
+
+	// ---- 2. backfill any history never visited ----
+	{
+		covered, haveCovered, err := aggregateTimestamp(
+			d.db.Session(&gorm.Session{}).Model(&models.FlowSummary{}).Where("interval_type = ?", tier.interval),
+			"MAX(timestamp)")
+		if err != nil {
+			return written, fmt.Errorf("coverage: %w", err)
+		}
+		start := ownedFrom
+		if haveCovered {
+			if next := tier.bucketOf(covered).Add(tier.width); next.After(start) {
+				start = next
+			}
+		}
+		// ownedTo includes the bucket the newest source row falls in, partial
+		// though it is: that makes the summary's reach equal the rollup tiers'
+		// reach, so a reader needs only summary + raw with no band belonging to
+		// neither.
+		for b := start; b.Before(ownedTo); b = b.Add(tier.width) {
+			if tier.maxPerPass > 0 && written >= tier.maxPerPass {
+				break
+			}
+			if !run(b) {
+				break
+			}
+		}
+	}
+
+	// Only advance the watermark when the pass completed cleanly; otherwise the
+	// skipped rows would never be revisited.
+	if firstErr == nil && written > 0 {
+		d.setSummaryWatermark(tier.interval, ceiling)
+	} else if firstErr == nil && watermark == 0 {
+		d.setSummaryWatermark(tier.interval, ceiling)
+	}
+	return written, firstErr
+}
+
+// dirtyBuckets lists the buckets touched by rows newer than the watermark.
+func (d *Database) dirtyBuckets(tier flowSummaryTier, watermark int64) ([]time.Time, error) {
+	var stamps []time.Time
+	rows, err := d.db.Session(&gorm.Session{}).Model(&models.FlowRollup{}).
+		Where("interval_type IN ? AND id > ?", tier.sumSources, watermark).
+		Select("DISTINCT timestamp").Order("timestamp ASC").Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	seen := map[time.Time]bool{}
+	for rows.Next() {
+		var raw any
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		ts, ok := coerceDBTime(raw)
+		if !ok {
+			continue
+		}
+		b := tier.bucketOf(ts)
+		if !seen[b] {
+			seen[b] = true
+			stamps = append(stamps, b)
+		}
+	}
+	return stamps, rows.Err()
 }
 
 // summariseBucket recomputes one bucket end to end, in one transaction.
 //
 // Delete-then-insert, deliberately: it is what makes the job idempotent. An
-// upsert would have to merge, and a merged top-N is lossy — the values that fell
+// upsert would have to merge, and a merged top-N is lossy — values that fell
 // below the cut in the first pass are gone, so a second pass could not restore
-// them. Recomputing from the source rows always yields the same answer for the
-// same input, whatever ran before.
+// them. Recomputing from the source rows yields the same answer for the same
+// input, whatever ran before.
 func (d *Database) summariseBucket(tier flowSummaryTier, bucket time.Time) error {
 	end := bucket.Add(tier.width)
 
 	return d.db.Transaction(func(tx *gorm.DB) error {
 		src := func() *gorm.DB {
 			return tx.Model(&models.FlowRollup{}).
-				Where("interval_type IN ? AND timestamp >= ? AND timestamp < ?", tier.sources, bucket, end)
+				Where("interval_type IN ? AND timestamp >= ? AND timestamp < ?", tier.sumSources, bucket, end)
 		}
 
-		for _, del := range []struct {
-			model interface{}
-			table string
-		}{
-			{&models.FlowSummary{}, "flow_summaries"},
-			{&models.FlowSummaryTop{}, "flow_summary_tops"},
-			{&models.FlowSummaryBucket{}, "flow_summary_buckets"},
-		} {
-			if err := tx.Where("interval_type = ? AND timestamp = ?", tier.interval, bucket).
-				Delete(del.model).Error; err != nil {
-				return fmt.Errorf("clear %s: %w", del.table, err)
+		for _, m := range []interface{}{&models.FlowSummary{}, &models.FlowSummaryTop{}, &models.FlowSummaryBucket{}} {
+			if err := tx.Where("interval_type = ? AND timestamp = ?", tier.interval, bucket).Delete(m).Error; err != nil {
+				return fmt.Errorf("clear bucket: %w", err)
 			}
 		}
 
@@ -275,12 +448,13 @@ func (d *Database) summariseBucket(tier flowSummaryTier, bucket time.Time) error
 			return err
 		}
 
-		// A day's summary supersedes the hourly rows covering it. The rollup
-		// ladder moves a band from the 1h tier to the 1d tier as it ages, so
-		// without this the same period would be represented in BOTH summary
-		// tiers and a 90-day read would double-count it. This mirrors the
-		// ladder's own promotion-deletes-the-source rule, which is what keeps
-		// the rollup tiers disjoint.
+		// A day's summary supersedes the hourly rows covering it, mirroring the
+		// ladder's own promotion-deletes-the-source rule — which is what keeps
+		// the two summary tiers disjoint so a reader can sum them.
+		//
+		// Safe ONLY because the daily bucket sums every rollup tier (see
+		// flowSummaryTier.sumSources): the day it replaces them with is complete,
+		// including the hours still sitting in the 1h tier.
 		if tier.interval == "1d" {
 			for _, m := range []interface{}{&models.FlowSummary{}, &models.FlowSummaryTop{}, &models.FlowSummaryBucket{}} {
 				if err := tx.Where("interval_type = ? AND timestamp >= ? AND timestamp < ?", "1h", bucket, end).
@@ -307,13 +481,17 @@ func (d *Database) writeSummaryCube(tx *gorm.DB, src func() *gorm.DB, tier flowS
 		BytesSum      uint64
 		PacketsSum    uint64
 		FlowCount     int64
-		SamplingBytes float64
 	}
-	const groupKey = "device_id, protocol, app_category, direction, scope_local, dst_country, flow_source, firewall_event"
+	// COALESCE on dst_country is not cosmetic: the column is nullable, so NULL
+	// and '' group separately while GORM scans both into a Go string as "". The
+	// two rows then collide on idx_flow_summary_key and the whole bucket fails
+	// to write.
+	const country = "COALESCE(dst_country, '')"
+	groupKey := "device_id, protocol, app_category, direction, scope_local, " + country + ", flow_source, firewall_event"
 	var rows []cubeRow
 	if err := src().
-		Select(groupKey + ", SUM(bytes_sum) as bytes_sum, SUM(packets_sum) as packets_sum, " +
-			"SUM(flow_count) as flow_count, SUM(sampling_rate_avg * bytes_sum) as sampling_bytes").
+		Select("device_id, protocol, app_category, direction, scope_local, " + country + " as dst_country, flow_source, firewall_event, " +
+			"SUM(bytes_sum) as bytes_sum, SUM(packets_sum) as packets_sum, SUM(flow_count) as flow_count").
 		Group(groupKey).Scan(&rows).Error; err != nil {
 		return fmt.Errorf("scan cube: %w", err)
 	}
@@ -328,7 +506,6 @@ func (d *Database) writeSummaryCube(tx *gorm.DB, src func() *gorm.DB, tier flowS
 			ScopeLocal: r.ScopeLocal, DstCountry: r.DstCountry,
 			FlowSource: r.FlowSource, FirewallEvent: r.FirewallEvent,
 			BytesSum: r.BytesSum, PacketsSum: r.PacketsSum, FlowCount: r.FlowCount,
-			SamplingBytes: r.SamplingBytes,
 		})
 	}
 	return tx.CreateInBatches(out, 500).Error
@@ -368,13 +545,15 @@ func (d *Database) writeSummaryBucketScalars(tx *gorm.DB, src func() *gorm.DB, t
 	return tx.CreateInBatches(out, 500).Error
 }
 
-// writeSummaryTops stores per-bucket top-N for each high-cardinality dimension.
+// writeSummaryTops stores per-bucket top-N for each high-cardinality dimension,
+// ranked by bytes because every panel these feed ranks by bytes.
 //
-// Ranked by BYTES, because every panel these feed ranks by bytes. A dimension
-// ranked by flow count would need its own rows.
+// KNOWN LIMITATION, which the reader must respect: these lists carry no
+// dimension columns, so they answer "top talkers for this device" and nothing
+// narrower. "Top sources for TCP" or "top ports to Germany" cannot be served
+// from here — a reader applying a cube filter must report these panels as
+// degraded rather than show unfiltered talkers beside filtered totals.
 func (d *Database) writeSummaryTops(tx *gorm.DB, src func() *gorm.DB, tier flowSummaryTier, bucket time.Time) error {
-	// expr is the SQL that produces the dimension's value as text; skip is an
-	// optional predicate excluding rows the panels never show.
 	dims := []struct {
 		name string
 		expr string
@@ -389,18 +568,7 @@ func (d *Database) writeSummaryTops(tx *gorm.DB, src func() *gorm.DB, tier flowS
 			"src_addr <> '' AND dst_addr <> ''"},
 	}
 
-	type topRow struct {
-		DeviceID   uint
-		ScopeLocal bool
-		Value      string
-		BytesSum   uint64
-		PacketsSum uint64
-		FlowCount  int64
-	}
-	// Top-N is PER (device, scope), not per bucket overall: the page shows
-	// scope-local traffic and routed traffic in separate panels, so one combined
-	// list would let multicast noise crowd out real talkers. The key set is the
-	// same for every dimension, so it is read ONCE rather than per dimension.
+	// The key set is identical for every dimension, so read it once.
 	var keys []struct {
 		DeviceID   uint
 		ScopeLocal bool
@@ -409,6 +577,12 @@ func (d *Database) writeSummaryTops(tx *gorm.DB, src func() *gorm.DB, tier flowS
 		return fmt.Errorf("scan top keys: %w", err)
 	}
 
+	type topRow struct {
+		Value      string
+		BytesSum   uint64
+		PacketsSum uint64
+		FlowCount  int64
+	}
 	var out []models.FlowSummaryTop
 	for _, dim := range dims {
 		for _, k := range keys {
@@ -417,9 +591,13 @@ func (d *Database) writeSummaryTops(tx *gorm.DB, src func() *gorm.DB, tier flowS
 			if dim.skip != "" {
 				q = q.Where(dim.skip)
 			}
+			// The secondary sort on value makes a tie at position N resolve the
+			// same way every run, so two recomputes of identical input produce
+			// identical rows — which "idempotent" has to mean.
 			if err := q.
 				Select(dim.expr + " as value, SUM(bytes_sum) as bytes_sum, SUM(packets_sum) as packets_sum, SUM(flow_count) as flow_count").
-				Group(dim.expr).Order("bytes_sum DESC").Limit(flowSummaryTopN).Scan(&rows).Error; err != nil {
+				Group(dim.expr).Order("bytes_sum DESC").Order("value ASC").
+				Limit(flowSummaryTopN).Scan(&rows).Error; err != nil {
 				return fmt.Errorf("scan top %s: %w", dim.name, err)
 			}
 			for _, r := range rows {

@@ -50,6 +50,19 @@ Retention is a `SystemSetting` (`flow_summary_retention_days`, default 365)
 rather than another `RETENTION_*` environment variable, matching
 `syslog_summary_retention_days`.
 
+**Cost, measured rather than estimated.** An hourly bucket over ~160k source rows
+takes 1.26s; a daily bucket over 2.1M rows takes 14.1s, and the densest day
+(4.6M rows) approaches 30s on a cold cache. The pass is therefore bounded by
+**time**, not bucket count, runs off the poller's select loop so it cannot delay
+alert evaluation, and caps the daily tier at two buckets per cycle.
+
+**Known limitation, stated now rather than discovered later.** The top-N tables
+carry no dimension columns, so they answer "top talkers for this device" and
+nothing narrower. A reader applying a cube filter — "top sources for TCP", "top
+ports to Germany" — must report those panels as degraded rather than show
+unfiltered talkers beside filtered totals. Filters on source, destination, port
+or ASN are not summary-compatible at all and keep the live path.
+
 The Flows page does not read these tables yet — that follows once the backfill has
 run and can be compared against the live path on real data.
 
