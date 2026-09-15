@@ -678,7 +678,14 @@
             flowTimeChart = new Chart(document.getElementById('flow-time-chart'), {
                 type: 'line',
                 data: {
-                    labels: timeData.map(function(t) { return t.bucket.split(' ').pop() || t.bucket; }),
+                    // Bucket labels are UTC; splitting off the time part showed UTC
+                    // digits as though they were local. Render in the display timezone.
+                    labels: timeData.map(function(t) {
+                        var AC = window.AdminCommon;
+                        return (AC && AC.formatBucketLabel)
+                            ? AC.formatBucketLabel(t.bucket, { hour: '2-digit', minute: '2-digit', hour12: false })
+                            : (t.bucket.split(' ').pop() || t.bucket);
+                    }),
                     datasets: [{ label: 'Throughput', data: timeData.map(function(t) { return (t.count * 8) / flowIntervalSec / 1e6; }), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0, pointRadius: 0, borderWidth: 1.5 }]
                 },
                 options: {

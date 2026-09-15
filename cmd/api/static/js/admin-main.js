@@ -909,8 +909,11 @@
 
     function formatBucketTime(bucket, hours) {
         if (!bucket) return '';
-        var d = new Date(bucket);
-        if (isNaN(d.getTime())) return bucket.substring(11,16) || bucket;
+        // Bucket labels are UTC with no designator; `new Date(bucket)` read them
+        // as LOCAL time, so the point was placed at the wrong instant before
+        // being formatted into the display timezone.
+        var d = (AC && AC.parseUtcBucket) ? AC.parseUtcBucket(bucket) : new Date(bucket);
+        if (!d || isNaN(d.getTime())) return bucket.substring(11,16) || bucket;
         var tz = AC.getTimezone();
         if (!hours || hours <= 24) {
             return d.toLocaleString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });

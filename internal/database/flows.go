@@ -1,10 +1,13 @@
 package database
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"net"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"firewall-mon/internal/classify"
@@ -77,6 +80,28 @@ type FlowStatsResult struct {
 	// handler (the DB layer doesn't know the runtime geo config).
 	GeoEnabled bool   `json:"geo_enabled"`
 	GeoSource  string `json:"geo_source,omitempty"`
+	// Degraded reports that at least one rolled-up aggregate did not complete
+	// within its budget, so the figures below cover LESS than the requested
+	// window — in the worst case only the ~1h still held in flow_samples. The
+	// page MUST say so: before this existed, a 30d request that lost its rollup
+	// queries returned one hour of data labelled "30 days" and looked fine.
+	// DegradedBlocks names the panels that fell back. The order is goroutine
+	// scheduling order, not a ranking — nothing should depend on it.
+	Degraded       bool     `json:"degraded,omitempty"`
+	DegradedBlocks []string `json:"degraded_blocks,omitempty"`
+	// UniqueApproximate marks UniqueSources/UniqueDests as an upper bound rather
+	// than a count. Raw and rollup tiers are counted separately and summed, and
+	// an address present in both tiers is counted twice; the true union needs a
+	// re-count the tier layout cannot provide. There was no marker at all before
+	// (the old code took max() of the two tiers and said nothing), so a caller
+	// could not tell an exact figure from an estimate.
+	UniqueApproximate bool `json:"unique_approximate,omitempty"`
+	// SamplingRateMin/Max are the range of per-flow sampling rates observed in
+	// the window, replacing a single average. A bytes-weighted mean across a
+	// regime change is a number that never existed: prod's rates are 1:1 for the
+	// last 59 days and up to 1:1024 before that, averaging to a fictitious 1:125.
+	SamplingRateMin float64 `json:"sampling_rate_min,omitempty"`
+	SamplingRateMax float64 `json:"sampling_rate_max,omitempty"`
 }
 
 // GetMixedFlowSourceDevices returns the names of devices whose last hour of
@@ -146,19 +171,48 @@ func topAddrsByBytes(base func() *gorm.DB, addrCol string, limit int) []KeyCount
 }
 
 // topAddrsByBytesRollup is like topAddrsByBytes but for rollup tables (bytes_sum column).
-func topAddrsByBytesRollup(base func() *gorm.DB, addrCol string, limit int) []KeyCount {
+// topAddrsByBytesRollupQ takes an ALREADY-PREPARED query rather than a base
+// factory, so the caller can bind it to a request budget first and surface the
+// error instead of dropping it (the old form returned only a slice, so a
+// cancelled query was indistinguishable from an empty tier).
+func topAddrsByBytesRollupQ(q *gorm.DB, addrCol string, limit int) ([]KeyCount, error) {
 	type row struct {
 		Addr  string
 		Total int64
 	}
 	var rows []row
-	base().Select(addrCol + " as addr, SUM(bytes_sum) as total").Group(addrCol).
-		Order("total DESC").Limit(limit).Scan(&rows)
+	err := q.Select(addrCol + " as addr, SUM(bytes_sum) as total").Group(addrCol).
+		Order("total DESC").Limit(limit).Scan(&rows).Error
 	out := make([]KeyCount, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, KeyCount{Key: r.Addr, Count: r.Total})
 	}
-	return out
+	return out, err
+}
+
+// currentBucketLabel renders "now" in the same label format d.dialect.TimeBucket
+// produces for unit, so the caller can recognise and drop the still-filling
+// bucket at the end of a series. Returns "" for an unrecognised unit, which
+// makes the caller keep every bucket rather than guess.
+//
+// UTC because that is what the buckets are: the Postgres DSN pins TimeZone=UTC
+// and SQLite's strftime is UTC, so both render bucket labels in UTC.
+func currentBucketLabel(unit string) string {
+	now := time.Now().UTC()
+	switch unit {
+	case "minute":
+		return now.Format("2006-01-02 15:04")
+	case "5min":
+		return now.Truncate(5 * time.Minute).Format("2006-01-02 15:04")
+	case "hour":
+		return now.Format("2006-01-02 15:00")
+	case "6hour":
+		return now.Truncate(6 * time.Hour).Format("2006-01-02 15:00")
+	case "day":
+		return now.Format("2006-01-02")
+	default:
+		return ""
+	}
 }
 
 // FlowStatsFilter narrows GetFlowStats to a subset of flows. All fields are
@@ -189,13 +243,47 @@ type FlowStatsFilter struct {
 // the conversations/top-talker views filter addresses identically to how the
 // samples list does. An unparseable value falls back to an exact match (no
 // rows) rather than silently dropping the filter.
-func flowAddrFilter(q *gorm.DB, column, val string) *gorm.DB {
+func flowAddrFilter(q *gorm.DB, d Dialect, column, val string) *gorm.DB {
 	val = strings.TrimSpace(val)
 	if val == "" {
 		return q
 	}
+	// "everything" means no filter. It used to fall through to an exact string
+	// compare against the literal "0.0.0.0/0" and match nothing at all.
+	if val == "0.0.0.0/0" || val == "::/0" {
+		return q
+	}
+
+	// Exact containment where the dialect can express it (PostgreSQL's inet
+	// operators). cidrToLikePattern rounds every mask UP to the enclosing octet
+	// boundary, so on its own a /25 silently returned the whole /24, a /17 the
+	// whole /16, and anything shorter than /8 returned "" and then matched
+	// nothing. The LIKE prefix is kept alongside as an index-friendly superset
+	// pre-filter when one exists.
+	if _, _, err := net.ParseCIDR(val); err == nil {
+		if expr, ok := d.AddrInCIDR(column); ok {
+			pattern := cidrToLikePattern(val)
+			if strings.Contains(pattern, "%") {
+				q = q.Where(column+" LIKE ? ESCAPE '\\'", pattern)
+			}
+			return q.Where(expr, val)
+		}
+		// No exact form available (SQLite test lane): fall back to the prefix
+		// superset rather than matching nothing.
+		if pattern := cidrToLikePattern(val); pattern != "" {
+			if strings.Contains(pattern, "%") {
+				return q.Where(column+" LIKE ? ESCAPE '\\'", pattern)
+			}
+			return q.Where(column+" = ?", pattern)
+		}
+		return q
+	}
+
 	pattern := cidrToLikePattern(val)
 	if pattern == "" {
+		// Not a CIDR and not parseable as one — an exact address, or garbage.
+		// Comparing literally keeps a malformed filter matching nothing, which
+		// is the safe direction for a filter.
 		return q.Where(column+" = ?", val)
 	}
 	if strings.Contains(pattern, "%") {
@@ -222,22 +310,162 @@ func rollupIntervalsForWindow(hours int) []string {
 	return intervals
 }
 
+// GetFlowStats runs against TWO independent 30-second walls, and the second one
+// is the binding constraint:
+//
+//   - statement_timeout = 30s, set per-connection in the DSN
+//     (`options=-c statement_timeout=...`, see database.go; default
+//     config.Database.StatementTimeout). It cancels ONE query.
+//   - http.Server WriteTimeout = 30s (cmd/api, config.Server.WriteTimeout).
+//     The ENTIRE response must be written within 30s of the request, or the
+//     connection is closed before c.JSON ever runs and the browser gets a
+//     transport error rather than data.
+//
+// GetFlowStats issues ~24 queries, so their SUM has to fit the second wall.
+// Measured on production, a bare SUM over the rollup tiers costs 12.9s at 7d,
+// 15.1s at 30d and 19.5s at 90d, and the top-conversations GROUP BY costs 79.6s
+// at 7d — so on a wide window the old code could not possibly deliver a payload.
+// It did not fail loudly either: rollup errors were logged and execution
+// continued, so the response carried raw-only figures (~1 hour) under the
+// requested window's label.
+//
+// NOTE for anyone re-measuring: the SERVER's statement_timeout is 0, so a psql
+// session runs unbounded and its timings say what a query COSTS, not what the
+// page survives. Measure through the endpoint.
+//
+// flowStatsBudget bounds the rolled-up work so the handler always returns
+// something honest: every panel shares one wall-clock deadline, and whatever has
+// not finished by then is reported as degraded rather than silently dropped.
+//
+// A caveat worth knowing when a wide window degrades: pgx cancels a query by
+// deadlining the socket, so the connection is discarded and the SERVER-side
+// backend keeps running until the DSN's own statement_timeout fires. A degraded
+// load therefore costs a few pool reconnects and some orphaned I/O, and is not
+// as cheap as its wall time suggests. Bounded, not a leak — but it is another
+// reason wide windows want the summary tables rather than this path.
+type flowStatsBudget struct {
+	mu       sync.Mutex
+	parent   context.Context
+	deadline time.Time
+	degraded bool
+	blocks   []string
+}
+
+// flowStatsRollupBudget is the wall-clock allowance for ALL rolled-up
+// aggregates in one request. It is deliberately well under WriteTimeout: the
+// raw-side queries, JSON encoding and the network write all have to fit in
+// what is left.
+const flowStatsRollupBudget = 20 * time.Second
+
+// flowStatsRollupConcurrency caps how many rolled-up panels query at once.
+//
+// This is what makes the default view work at all. Measured per-query against
+// production's 24h band, the fourteen rolled-up panels cost about 25s in total
+// — top_conversations alone is 6.4s — so running them one after another cannot
+// fit any budget that also respects the 30s WriteTimeout. Run in parallel they
+// finish in roughly the cost of the slowest one.
+//
+// Four, not fourteen: the API process's pool is 15 connections
+// (config.Database.MaxOpenConns), and one page load must not be able to consume
+// it. Four leaves eleven for everything else while still cutting the wall time
+// to about a quarter.
+const flowStatsRollupConcurrency = 4
+
+func newFlowStatsBudget(parent context.Context) *flowStatsBudget {
+	if parent == nil {
+		parent = context.Background()
+	}
+	return &flowStatsBudget{
+		parent:   parent,
+		deadline: time.Now().Add(flowStatsRollupBudget),
+	}
+}
+
+// bound returns q bound to the request deadline. ok is false when the allowance
+// has already run out, in which case the caller must skip the query entirely.
+// The returned cancel func must always be called.
+//
+// There is no separate per-query cap: the panels run concurrently, so they share
+// one wall clock rather than consuming a sequence of independent timeouts.
+func (b *flowStatsBudget) bound(q *gorm.DB) (bounded *gorm.DB, cancel context.CancelFunc, ok bool) {
+	b.mu.Lock()
+	deadline := b.deadline
+	b.mu.Unlock()
+	if !time.Now().Before(deadline) {
+		return nil, func() {}, false
+	}
+	ctx, cancelFn := context.WithDeadline(b.parent, deadline)
+	return q.WithContext(ctx), cancelFn, true
+}
+
+// note records the outcome of a rolled-up query. A non-nil error marks the
+// result degraded and names the panel so the UI can say which figures cover
+// less than the requested window.
+func (b *flowStatsBudget) note(block string, err error) {
+	if err == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.degraded {
+		b.degraded = true
+	}
+	log.Printf("Flow stats: %s fell back to raw-only (%v)", block, err)
+	b.blocks = append(b.blocks, block)
+}
+
+// skip records a panel that was never attempted because the budget was already
+// spent, so DegradedBlocks names every affected panel and not just the first.
+func (b *flowStatsBudget) skip(block string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.blocks = append(b.blocks, block)
+}
+
+// stamp copies the budget outcome onto the result. Called once, after every
+// rolled-up query has either run or been skipped.
+func (b *flowStatsBudget) stamp(result *FlowStatsResult) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	// Degraded means a panel actually lost data — a query failed, or one was
+	// skipped because the allowance had run out. Do NOT key this off the
+	// deadline alone: a request whose panels all completed at 17.9s against an
+	// 18s allowance is fully correct, and marking it degraded would cry wolf on
+	// every slow-but-successful load.
+	if !b.degraded && len(b.blocks) == 0 {
+		return
+	}
+	result.Degraded = true
+	result.DegradedBlocks = append(result.DegradedBlocks, b.blocks...)
+}
+
 // GetFlowStats returns aggregated flow statistics, optionally narrowed by filter.
 // It queries both raw flow_samples (recent) and flow_rollups (older data).
 func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsResult, error) {
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 	result := &FlowStatsResult{}
+	budget := newFlowStatsBudget(d.db.Statement.Context)
 
 	// Determine which data source to use:
 	// - hours <= 1: raw samples only (rollups haven't consumed them yet)
 	// - hours > 1: union raw samples + rollups
-	// A probe_id filter forces raw-only: flow_rollups has no probe_id column, so
-	// it can't honor that filter without leaking rows the operator excluded.
-	useRollups := hours > 1 && filter.ProbeID == 0
+	//
+	// A probe_id filter used to force raw-only here, because flow_rollups has no
+	// probe_id column. That was silently catastrophic: raw holds only what the
+	// rollup ladder has not yet consumed (~1 hour on production), so choosing a
+	// probe collapsed EVERY tile to that hour while the range pill still said 7
+	// days — measured at 1.7% of the true flow count, with no warning. Production
+	// has exactly one probe, so the dropdown has a single obvious entry and
+	// picking it is the natural thing to do.
+	//
+	// The rollup side can honor the filter after all, via the device that owns
+	// the flows — same shape as the site filter below. See applyCommonFilters.
+	useRollups := hours > 1
 
 	// applyCommonFilters writes the filters shared by flow_samples and
 	// flow_rollups (both carry device_id / src_addr / dst_addr / dst_port /
-	// protocol). probe_id is applied separately on the raw base only.
+	// protocol). probe_id is applied separately per base: the raw table records
+	// it per row, the rollup table resolves it through the owning device.
 	applyCommonFilters := func(q *gorm.DB) *gorm.DB {
 		if filter.DeviceID > 0 {
 			q = q.Where("device_id = ?", filter.DeviceID)
@@ -276,14 +504,28 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 		if filter.FirewallEvent != nil {
 			q = q.Where("firewall_event = ?", *filter.FirewallEvent)
 		}
-		q = flowAddrFilter(q, "src_addr", filter.SrcAddr)
-		q = flowAddrFilter(q, "dst_addr", filter.DstAddr)
+		q = flowAddrFilter(q, d.dialect, "src_addr", filter.SrcAddr)
+		q = flowAddrFilter(q, d.dialect, "dst_addr", filter.DstAddr)
 		return q
 	}
 
 	// --- Raw flow_samples base ---
+	// session returns a fresh gorm session for each base builder.
+	//
+	// This is belt-and-braces, NOT the fix for the "no such table" failures seen
+	// when the panels first ran concurrently — an earlier comment here claimed it
+	// was, and that was wrong. Those came from the test harness: SQLite
+	// ":memory:" gives every pooled connection its own private, empty database,
+	// so the first concurrent query opened a second connection onto an unmigrated
+	// schema (see NewDatabaseForTesting, which now pins the pool to one
+	// connection). gorm itself is safe here: a *gorm.DB from Open or Session
+	// clones its Statement before any chain method mutates it, so concurrent
+	// chaining off one handle is supported. Session() is kept because it states
+	// that intent locally rather than relying on the caller's clone state.
+	session := func() *gorm.DB { return d.db.Session(&gorm.Session{}) }
+
 	newRawBase := func() *gorm.DB {
-		q := applyCommonFilters(d.db.Model(&models.FlowSample{}).Where("timestamp > ?", cutoff))
+		q := applyCommonFilters(session().Model(&models.FlowSample{}).Where("timestamp > ?", cutoff))
 		if filter.ProbeID > 0 {
 			q = q.Where("probe_id = ?", filter.ProbeID)
 		}
@@ -300,7 +542,86 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 	// construction, summing across them can never double-count.
 	rollupIntervals := rollupIntervalsForWindow(hours)
 	newRollupBase := func() *gorm.DB {
-		return applyCommonFilters(d.db.Model(&models.FlowRollup{}).Where("timestamp > ? AND interval_type IN ?", cutoff, rollupIntervals))
+		q := applyCommonFilters(session().Model(&models.FlowRollup{}).Where("timestamp > ? AND interval_type IN ?", cutoff, rollupIntervals))
+		if filter.ProbeID > 0 {
+			// flow_rollups carries no probe_id, so map the probe to the devices it
+			// owns — the same uncorrelated-subquery shape the site filter uses
+			// above, portable on SQLite and Postgres alike.
+			//
+			// Deliberately an inline subquery rather than GetDeviceIDsByProbe:
+			// that helper applies the ActiveDevices scope, which would drop a
+			// retired device's history from probe-filtered views while the site
+			// filter (unscoped) keeps it — the two filters would disagree about
+			// the same rows.
+			//
+			// One documented semantic, same as the site filter's: this means
+			// "devices CURRENTLY owned by this probe". Rolled-up rows carry no
+			// probe attribution of their own, so re-homing a device rewrites its
+			// history. The raw side, which stores probe_id per row, does not.
+			q = q.Where("device_id IN (SELECT id FROM devices WHERE probe_id = ?)", filter.ProbeID)
+		}
+		return q
+	}
+
+	// runRollup SCHEDULES one rolled-up panel; it does not run it. `query` fills
+	// the panel's own local variables, and `merge` folds them into the response.
+	// Queries run concurrently in flushRollups; merges run afterwards, one at a
+	// time, in registration order — so a merge may touch shared state freely
+	// while the expensive part still overlaps.
+	//
+	// Scheduling rather than executing is what allows the parallelism: measured
+	// on production, the fourteen rolled-up panels cost ~25s sequentially at the
+	// default 24h range, which no budget under the 30s WriteTimeout can absorb.
+	//
+	// A panel's merge runs ONLY if its query succeeded. Several of these queries
+	// used to discard their error entirely, which is why a degraded window was
+	// indistinguishable from an empty one; and gorm's Scan streams rows before
+	// reporting a late cancellation, so a cancelled query can leave a partial
+	// slice behind. Merging that would silently under-report as though complete.
+	type rollupJob struct {
+		block string
+		base  func() *gorm.DB
+		query func(*gorm.DB) error
+		merge func()
+	}
+	var rollupJobs []*rollupJob
+	runRollup := func(block string, base func() *gorm.DB, query func(*gorm.DB) error, merge func()) {
+		rollupJobs = append(rollupJobs, &rollupJob{block: block, base: base, query: query, merge: merge})
+	}
+
+	// flushRollups runs every scheduled panel, then merges the ones that
+	// succeeded. Concurrency is bounded so a single page load cannot drain the
+	// connection pool.
+	flushRollups := func() {
+		if len(rollupJobs) == 0 {
+			return
+		}
+		okFlags := make([]bool, len(rollupJobs))
+		sem := make(chan struct{}, flowStatsRollupConcurrency)
+		var wg sync.WaitGroup
+		for i, job := range rollupJobs {
+			wg.Add(1)
+			go func(i int, job *rollupJob) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				q, cancel, ok := budget.bound(job.base())
+				if !ok {
+					budget.skip(job.block)
+					return
+				}
+				defer cancel()
+				err := job.query(q)
+				budget.note(job.block, err)
+				okFlags[i] = err == nil
+			}(i, job)
+		}
+		wg.Wait()
+		for i, job := range rollupJobs {
+			if okFlags[i] && job.merge != nil {
+				job.merge()
+			}
+		}
 	}
 
 	// Combined aggregates: count, bytes, unique src/dst from raw samples
@@ -314,58 +635,110 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 	// at ingest (collector + server parser both multiply by sampling_rate;
 	// migration v7 backfilled historical rows), so SUM(bytes) is real traffic —
 	// do NOT multiply again below.
-	if err := newRawBase().Select("COUNT(*) as total_flows, COALESCE(SUM(bytes),0) as total_bytes, " +
-		"COUNT(DISTINCT src_addr) as unique_sources, COUNT(DISTINCT dst_addr) as unique_dests").
+	if err := newRawBase().Select("COUNT(*) as total_flows, COALESCE(SUM(bytes),0) as total_bytes").
 		Scan(&rawAgg).Error; err != nil {
 		return nil, fmt.Errorf("flow stats raw aggregates: %w", err)
 	}
 	result.TotalFlows = rawAgg.TotalFlows
 	result.TotalBytes = rawAgg.TotalBytes
-	result.UniqueSources = rawAgg.UniqueSources
-	result.UniqueDests = rawAgg.UniqueDests
+
+	// Unique address counts are split out of the aggregate above and asked as
+	// COUNT(*) FROM (SELECT DISTINCT x) rather than COUNT(DISTINCT x). Measured
+	// on production's 24h band at the live work_mem of 16MB: 3.7s against 6.5s,
+	// with no settings change and no loss of exactness, because the planner can
+	// hash the distinct set instead of sorting it inside the aggregate. The cost
+	// is that one statement becomes three, so each needs its own error handling.
+	countDistinct := func(base func() *gorm.DB, col string) (int64, error) {
+		var n int64
+		err := session().Table("(?) as distinct_vals", base().Select("DISTINCT "+col)).
+			Select("COUNT(*)").Scan(&n).Error
+		return n, err
+	}
+	if n, err := countDistinct(newRawBase, "src_addr"); err != nil {
+		return nil, fmt.Errorf("flow stats raw unique sources: %w", err)
+	} else {
+		result.UniqueSources = n
+	}
+	if n, err := countDistinct(newRawBase, "dst_addr"); err != nil {
+		return nil, fmt.Errorf("flow stats raw unique dests: %w", err)
+	} else {
+		result.UniqueDests = n
+	}
+
+	// Raw packets and the raw sampling range. These MUST be computed before the
+	// rollup block below, which accumulates onto them — reversing the order
+	// silently discards the rolled-up figures, which is the bug that made a 90d
+	// view report 0.05% of its real packet count.
+	var totalPkts struct{ Sum uint64 }
+	if err := newRawBase().Select("COALESCE(SUM(packets),0) as sum").Scan(&totalPkts).Error; err != nil {
+		return nil, fmt.Errorf("flow stats raw packets: %w", err)
+	}
+	result.TotalPackets = totalPkts.Sum
+
+	var rawRate struct {
+		Min float64
+		Max float64
+	}
+	newRawBase().Select("COALESCE(MIN(NULLIF(sampling_rate,0)),0) as min, COALESCE(MAX(sampling_rate),0) as max").Scan(&rawRate)
+	result.SamplingRateMin = rawRate.Min
+	result.SamplingRateMax = rawRate.Max
 
 	// Add rollup aggregates if needed
 	if useRollups {
 		var rollupAgg struct {
-			TotalFlows    int64
-			TotalBytes    uint64
-			UniqueSources int64
-			UniqueDests   int64
+			TotalFlows  int64
+			TotalBytes  uint64
+			TotalPkts   uint64
+			SamplingMin float64
+			SamplingMax float64
 		}
-		if err := newRollupBase().Select("COALESCE(SUM(flow_count),0) as total_flows, COALESCE(SUM(bytes_sum),0) as total_bytes, " +
-			"COUNT(DISTINCT src_addr) as unique_sources, COUNT(DISTINCT dst_addr) as unique_dests").
-			Scan(&rollupAgg).Error; err != nil {
-			log.Printf("Flow stats rollup aggregates: %v", err)
-		} else {
+		// Packets and the sampling range ride along with the totals rather than
+		// running as separate scans: all four come from the same band, and on a
+		// wide window each extra scan is 13-20s of a budget that has to cover
+		// every panel. TotalPackets and the sampling figures were RAW-ONLY before
+		// this, which is why a 90d view reported 0.05% of its real packet count
+		// and the sampling chip always read 1:1.
+		runRollup("totals", newRollupBase, func(q *gorm.DB) error {
+			return q.Select("COALESCE(SUM(flow_count),0) as total_flows, COALESCE(SUM(bytes_sum),0) as total_bytes, " +
+				"COALESCE(SUM(packets_sum),0) as total_pkts, " +
+				"COALESCE(MIN(NULLIF(sampling_rate_avg,0)),0) as sampling_min, " +
+				"COALESCE(MAX(sampling_rate_avg),0) as sampling_max").
+				Scan(&rollupAgg).Error
+		}, func() {
 			result.TotalFlows += rollupAgg.TotalFlows
 			result.TotalBytes += rollupAgg.TotalBytes
-			// For unique counts, the union of distinct sets needs re-counting; this is approximate
-			if rollupAgg.UniqueSources > result.UniqueSources {
-				result.UniqueSources = rollupAgg.UniqueSources
+			result.TotalPackets += rollupAgg.TotalPkts
+			if rollupAgg.SamplingMin > 0 && (result.SamplingRateMin == 0 || rollupAgg.SamplingMin < result.SamplingRateMin) {
+				result.SamplingRateMin = rollupAgg.SamplingMin
 			}
-			if rollupAgg.UniqueDests > result.UniqueDests {
-				result.UniqueDests = rollupAgg.UniqueDests
+			if rollupAgg.SamplingMax > result.SamplingRateMax {
+				result.SamplingRateMax = rollupAgg.SamplingMax
 			}
+		})
+
+		// Unique counts across tiers are a SUM, not a max(). The old code took
+		// max(raw, rollup) and called it approximate; max is not an approximation
+		// of a union, it is a lower bound that ignores one tier entirely. Summing
+		// is the upper bound (an address in both tiers is counted twice), and
+		// UniqueApproximate now says so instead of leaving the caller to guess.
+		for _, u := range []struct {
+			col string
+			dst *int64
+		}{{"src_addr", &result.UniqueSources}, {"dst_addr", &result.UniqueDests}} {
+			u := u
+			var n int64
+			// The base here is d.db, not a rollup base: the rollup query is the
+			// SUBQUERY, wrapped so the planner can hash the distinct set instead
+			// of sorting it inside an aggregate.
+			runRollup("unique_"+u.col, session,
+				func(q *gorm.DB) error {
+					return q.Table("(?) as distinct_vals", newRollupBase().Select("DISTINCT "+u.col)).
+						Select("COUNT(*)").Scan(&n).Error
+				}, func() {
+					*u.dst += n
+					result.UniqueApproximate = true
+				})
 		}
-	}
-
-	// Total packets from raw
-	var totalPkts struct{ Sum uint64 }
-	newRawBase().Select("COALESCE(SUM(packets),0) as sum").Scan(&totalPkts)
-	result.TotalPackets = totalPkts.Sum
-
-	// Average sampling rate (0 means no sampling or unknown)
-	var avgRate struct{ Rate float64 }
-	newRawBase().Select("COALESCE(AVG(CASE WHEN sampling_rate > 0 THEN sampling_rate ELSE NULL END),0) as rate").Scan(&avgRate)
-	result.AvgSamplingRate = avgRate.Rate
-	// L1: bytes is already sampling-scaled, so estimated == total (the field is
-	// retained for API back-compat; the old `* AvgSamplingRate` over-reported by
-	// ~the sampling rate).
-	result.EstimatedBytes = result.TotalBytes
-
-	// Computed throughput
-	if hours > 0 {
-		result.BitsPerSecond = float64(result.TotalBytes) * 8 / (float64(hours) * 3600)
 	}
 
 	// Scope-local traffic stats (link-local / multicast / broadcast / loopback
@@ -391,12 +764,15 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 			Packets uint64
 			Flows   int64
 		}
-		newRollupBase().Where("scope_local = ?", true).
-			Select("COALESCE(SUM(bytes_sum),0) as bytes, COALESCE(SUM(packets_sum),0) as packets, COALESCE(SUM(flow_count),0) as flows").
-			Scan(&localRollup)
-		result.LocalTraffic.Bytes += localRollup.Bytes
-		result.LocalTraffic.Packets += localRollup.Packets
-		result.LocalTraffic.Flows += localRollup.Flows
+		runRollup("local_traffic", newRollupBase, func(q *gorm.DB) error {
+			return q.Where("scope_local = ?", true).
+				Select("COALESCE(SUM(bytes_sum),0) as bytes, COALESCE(SUM(packets_sum),0) as packets, COALESCE(SUM(flow_count),0) as flows").
+				Scan(&localRollup).Error
+		}, func() {
+			result.LocalTraffic.Bytes += localRollup.Bytes
+			result.LocalTraffic.Packets += localRollup.Packets
+			result.LocalTraffic.Flows += localRollup.Flows
+		})
 	}
 
 	// Filtered bases that exclude scope-local noise for top-N charts. Portless
@@ -420,48 +796,77 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 		Protocol uint8
 		Count    int64
 	}
+	// No Limit here, unlike the other top-N panels: protocol is a uint8 with ~7
+	// live values on production, so the full group is tiny — and ProtocolCount
+	// below must count them all. The display list is truncated to 10 at the end.
 	if err := newRawBase().Where("protocol <> 0").Select("protocol, COUNT(*) as count").Group("protocol").
-		Order("count DESC").Limit(10).Scan(&protocols).Error; err != nil {
+		Order("count DESC").Scan(&protocols).Error; err != nil {
 		log.Printf("Flow stats protocol distribution: %v", err)
 	}
-	if useRollups {
-		var rollupProtos []struct {
+	// finalizeProtocols publishes the protocol breakdown. It is a closure so it
+	// can run either directly (raw-only windows) or as the rolled-up panel's
+	// merge step, after the concurrent query has filled rollupProtos.
+	var rollupProtos []struct {
+		Protocol uint8
+		Count    int64
+	}
+	// finalizeProtocols must be IDEMPOTENT: it is called once up front to publish
+	// the raw-only view, and again as the merge step if the rolled-up query
+	// succeeds. It therefore builds a fresh list and ASSIGNS — an earlier version
+	// appended to result.ByProtocol and truncated the source slice in place, so a
+	// second call doubled the list.
+	finalizeProtocols := func() {
+		merged := make(map[uint8]int64, len(protocols)+len(rollupProtos))
+		for _, p := range protocols {
+			merged[p.Protocol] += p.Count
+		}
+		for _, p := range rollupProtos {
+			merged[p.Protocol] += p.Count
+		}
+		type protoCount struct {
 			Protocol uint8
 			Count    int64
 		}
-		newRollupBase().Where("protocol <> 0").Select("protocol, SUM(flow_count) as count").Group("protocol").
-			Order("count DESC").Limit(10).Scan(&rollupProtos)
-		// Merge rollup protocol counts into raw
-		protoMap := make(map[uint8]int64)
-		for _, p := range protocols {
-			protoMap[p.Protocol] = p.Count
+		all := make([]protoCount, 0, len(merged))
+		for proto, count := range merged {
+			all = append(all, protoCount{proto, count})
 		}
-		for _, p := range rollupProtos {
-			protoMap[p.Protocol] += p.Count
+		sort.SliceStable(all, func(i, j int) bool { return all[i].Count > all[j].Count })
+		// ProtocolCount is taken BEFORE the display truncation. It used to be
+		// len(protocols) after a Limit(10), so the tile silently stopped counting
+		// at ten however many protocols the window actually carried.
+		result.ProtocolCount = int64(len(all))
+		if len(all) > 10 {
+			all = all[:10]
 		}
-		protocols = protocols[:0]
-		for proto, count := range protoMap {
-			protocols = append(protocols, struct {
-				Protocol uint8
-				Count    int64
-			}{proto, count})
+		out := make([]KeyCount, 0, len(all))
+		for _, p := range all {
+			out = append(out, KeyCount{Key: protoName(p.Protocol), Count: p.Count})
 		}
-		sort.SliceStable(protocols, func(i, j int) bool { return protocols[i].Count > protocols[j].Count })
-		if len(protocols) > 10 {
-			protocols = protocols[:10]
-		}
+		result.ByProtocol = out
 	}
-	for _, p := range protocols {
-		result.ByProtocol = append(result.ByProtocol, KeyCount{Key: protoName(p.Protocol), Count: p.Count})
+	// Publish the raw-only breakdown NOW, exactly as every other panel does.
+	// Leaving this to the merge alone meant that on a degraded window — which at
+	// 7 days and beyond is every window — the protocols tile came back EMPTY
+	// rather than falling back to recent samples, while its neighbours kept their
+	// raw rows. The banner said "falls back to recent samples only", which for
+	// this panel was simply untrue.
+	finalizeProtocols()
+	if useRollups {
+		runRollup("protocols", newRollupBase, func(q *gorm.DB) error {
+			return q.Where("protocol <> 0").Select("protocol, SUM(flow_count) as count").Group("protocol").
+				Order("count DESC").Scan(&rollupProtos).Error
+		}, finalizeProtocols)
 	}
-	result.ProtocolCount = int64(len(protocols))
 
 	// Application-category and direction distribution (by flow count), raw
 	// samples supplemented with rollups. Both are ingest-time classification
 	// columns (internal/classify) carried onto rollups, so the breakdown holds
 	// up after raw samples age out. Closure mirrors the protocol-distribution
 	// merge above for a single smallint dimension column.
-	dimDist := func(col string, nameFn func(uint8) string) []KeyCount {
+	// dimDist writes into dst rather than returning, so the rolled-up half can be
+	// scheduled and merged after its concurrent query completes.
+	dimDist := func(col string, nameFn func(uint8) string, dst *[]KeyCount) {
 		type drow struct {
 			V     uint8
 			Count int64
@@ -472,28 +877,39 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 		for _, r := range raws {
 			m[r.V] += r.Count
 		}
-		if useRollups {
-			var rs []drow
-			newRollupBase().Select(col + " as v, SUM(flow_count) as count").Group(col).Scan(&rs)
+		publish := func() {
+			out := make([]KeyCount, 0, len(m))
+			for v, c := range m {
+				out = append(out, KeyCount{Key: nameFn(v), Count: c})
+			}
+			sort.SliceStable(out, func(i, j int) bool { return out[i].Count > out[j].Count })
+			*dst = out
+		}
+		if !useRollups {
+			publish()
+			return
+		}
+		var rs []drow
+		runRollup("by_"+col, newRollupBase, func(q *gorm.DB) error {
+			return q.Select(col + " as v, SUM(flow_count) as count").Group(col).Scan(&rs).Error
+		}, func() {
 			for _, r := range rs {
 				m[r.V] += r.Count
 			}
-		}
-		out := make([]KeyCount, 0, len(m))
-		for v, c := range m {
-			out = append(out, KeyCount{Key: nameFn(v), Count: c})
-		}
-		sort.SliceStable(out, func(i, j int) bool { return out[i].Count > out[j].Count })
-		return out
+			publish()
+		})
+		// Publish the raw-only view now so the field is populated even if the
+		// rolled-up half never completes; the merge overwrites it if it does.
+		publish()
 	}
-	result.ByCategory = dimDist("app_category", classify.CategoryName)
-	result.ByDirection = dimDist("direction", classify.DirectionName)
+	dimDist("app_category", classify.CategoryName, &result.ByCategory)
+	dimDist("direction", classify.DirectionName, &result.ByDirection)
 
 	// Top destination countries / ASNs by bytes (GeoLite2 enrichment; empty when
 	// geo is disabled). Destination-oriented — where traffic is going. The
 	// `<> ''` / `<> 0` filters exclude unmapped rows (NULL too: NULL <> '' is not
 	// TRUE), which covers all internal/private traffic GeoLite2 doesn't map.
-	geoTopCountry := func() []KeyCount {
+	geoTopCountry := func() {
 		type grow struct {
 			K     string
 			Total int64
@@ -510,12 +926,25 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 			return out
 		}
 		out := collect(newFilteredRawBase, "bytes")
+		result.TopCountries = out
 		if useRollups {
-			out = mergeKeyCounts(out, collect(newFilteredRollupBase, "bytes_sum"), 10)
+			var rollup []KeyCount
+			runRollup("top_countries", newFilteredRollupBase, func(q *gorm.DB) error {
+				var rows []grow
+				err := q.Where("dst_country <> ?", "").
+					Select("dst_country as k, SUM(bytes_sum) as total").
+					Group("dst_country").Order("total DESC").Limit(10).Scan(&rows).Error
+				rollup = rollup[:0]
+				for _, r := range rows {
+					rollup = append(rollup, KeyCount{Key: r.K, Count: r.Total})
+				}
+				return err
+			}, func() {
+				result.TopCountries = mergeKeyCounts(out, rollup, 10)
+			})
 		}
-		return out
 	}
-	geoTopASN := func() []KeyCount {
+	geoTopASN := func() {
 		type grow struct {
 			K     int64
 			Total int64
@@ -532,26 +961,53 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 			return out
 		}
 		out := collect(newFilteredRawBase, "bytes")
+		result.TopASNs = out
 		if useRollups {
-			out = mergeKeyCounts(out, collect(newFilteredRollupBase, "bytes_sum"), 10)
+			var rollup []KeyCount
+			runRollup("top_asns", newFilteredRollupBase, func(q *gorm.DB) error {
+				var rows []grow
+				err := q.Where("dst_asn <> 0").
+					Select("dst_asn as k, SUM(bytes_sum) as total").
+					Group("dst_asn").Order("total DESC").Limit(10).Scan(&rows).Error
+				rollup = rollup[:0]
+				for _, r := range rows {
+					rollup = append(rollup, KeyCount{Key: fmt.Sprintf("AS%d", r.K), Count: r.Total})
+				}
+				return err
+			}, func() {
+				result.TopASNs = mergeKeyCounts(out, rollup, 10)
+			})
 		}
-		return out
 	}
-	result.TopCountries = geoTopCountry()
-	result.TopASNs = geoTopASN()
+	geoTopCountry()
+	geoTopASN()
 
 	// Top sources by bytes (filtered: excludes port-0 local traffic)
 	result.TopSources = topAddrsByBytes(newFilteredRawBase, "src_addr", 10)
 	if useRollups {
-		rollupSrc := topAddrsByBytesRollup(newFilteredRollupBase, "src_addr", 10)
-		result.TopSources = mergeKeyCounts(result.TopSources, rollupSrc, 10)
+		rawSrc := result.TopSources
+		var rollupSrc []KeyCount
+		runRollup("top_sources", newFilteredRollupBase, func(q *gorm.DB) error {
+			var err error
+			rollupSrc, err = topAddrsByBytesRollupQ(q, "src_addr", 10)
+			return err
+		}, func() {
+			result.TopSources = mergeKeyCounts(rawSrc, rollupSrc, 10)
+		})
 	}
 
 	// Top destinations by bytes (filtered: excludes port-0 local traffic)
 	result.TopDestinations = topAddrsByBytes(newFilteredRawBase, "dst_addr", 10)
 	if useRollups {
-		rollupDst := topAddrsByBytesRollup(newFilteredRollupBase, "dst_addr", 10)
-		result.TopDestinations = mergeKeyCounts(result.TopDestinations, rollupDst, 10)
+		rawDst := result.TopDestinations
+		var rollupDst []KeyCount
+		runRollup("top_destinations", newFilteredRollupBase, func(q *gorm.DB) error {
+			var err error
+			rollupDst, err = topAddrsByBytesRollupQ(q, "dst_addr", 10)
+			return err
+		}, func() {
+			result.TopDestinations = mergeKeyCounts(rawDst, rollupDst, 10)
+		})
 	}
 
 	// Top conversations (filtered: excludes port-0 local traffic)
@@ -578,6 +1034,67 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 			Packets:  c.Packets,
 		})
 	}
+	// Merge the rolled-up tiers in. Without this the card showed only what raw
+	// still holds — about one hour — beside tiles summing the whole window: on
+	// production the displayed #1 was 427 MB at 0.56% while the real #1 (NFS,
+	// 6,799 MB over 24h) was absent from the list entirely, and the percentage
+	// column divided raw-only bytes by a rollup-inclusive total.
+	if useRollups {
+		var rollupConvos []struct {
+			SrcAddr  string
+			DstAddr  string
+			DstPort  uint16
+			Protocol uint8
+			Bytes    uint64
+			Packets  uint64
+		}
+		runRollup("top_conversations", newFilteredRollupBase, func(q *gorm.DB) error {
+			return q.Select("src_addr, dst_addr, dst_port, protocol, SUM(bytes_sum) as bytes, SUM(packets_sum) as packets").
+				Group("src_addr, dst_addr, dst_port, protocol").
+				Order("bytes DESC").Limit(10).Scan(&rollupConvos).Error
+		}, func() {
+			if len(rollupConvos) == 0 {
+				return
+			}
+			type convoKey struct {
+				Src, Dst string
+				Port     uint16
+				Proto    uint8
+			}
+			merged := make(map[convoKey]*FlowConversation, len(convos)+len(rollupConvos))
+			order := make([]convoKey, 0, len(convos)+len(rollupConvos))
+			add := func(src, dst string, port uint16, proto uint8, bytes, packets uint64) {
+				k := convoKey{src, dst, port, proto}
+				if existing, ok := merged[k]; ok {
+					existing.Bytes += bytes
+					existing.Packets += packets
+					return
+				}
+				merged[k] = &FlowConversation{
+					SrcAddr: src, DstAddr: dst, DstPort: port,
+					Protocol: protoName(proto), Bytes: bytes, Packets: packets,
+				}
+				order = append(order, k)
+			}
+			for _, c := range convos {
+				add(c.SrcAddr, c.DstAddr, c.DstPort, c.Protocol, c.Bytes, c.Packets)
+			}
+			for _, c := range rollupConvos {
+				add(c.SrcAddr, c.DstAddr, c.DstPort, c.Protocol, c.Bytes, c.Packets)
+			}
+			out := make([]FlowConversation, 0, len(order))
+			for _, k := range order {
+				out = append(out, *merged[k])
+			}
+			sort.SliceStable(out, func(i, j int) bool { return out[i].Bytes > out[j].Bytes })
+			if len(out) > 10 {
+				out = out[:10]
+			}
+			// REPLACES the raw-only list published below, rather than appending
+			// to it — the merge already folded those rows in.
+			result.TopConversations = out
+		})
+	}
 
 	// Top destination ports
 	var topPorts []struct {
@@ -586,20 +1103,50 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 	}
 	newFilteredRawBase().Select("dst_port as port, SUM(bytes) as total").
 		Where("dst_port > 0").Group("dst_port").Order("total DESC").Limit(10).Scan(&topPorts)
-	for _, p := range topPorts {
-		portName := fmt.Sprintf("%d", p.Port)
-		if n, ok := wellKnownPorts[p.Port]; ok {
-			portName = n
+	portName := func(port uint16) string {
+		if n, ok := wellKnownPorts[port]; ok {
+			return n
 		}
-		result.TopPorts = append(result.TopPorts, KeyCount{Key: portName, Count: p.Total})
+		return fmt.Sprintf("%d", port)
+	}
+	for _, p := range topPorts {
+		result.TopPorts = append(result.TopPorts, KeyCount{Key: portName(p.Port), Count: p.Total})
+	}
+	// Same raw-only defect as Top Conversations: magnitudes ran ~19x low and
+	// port 2049 (the busiest on production) was missing entirely.
+	if useRollups {
+		var rollupPorts []struct {
+			Port  uint16
+			Total int64
+		}
+		rawPorts := result.TopPorts
+		runRollup("top_ports", newFilteredRollupBase, func(q *gorm.DB) error {
+			return q.Select("dst_port as port, SUM(bytes_sum) as total").
+				Where("dst_port > 0").Group("dst_port").Order("total DESC").Limit(10).Scan(&rollupPorts).Error
+		}, func() {
+			rollupKC := make([]KeyCount, 0, len(rollupPorts))
+			for _, p := range rollupPorts {
+				rollupKC = append(rollupKC, KeyCount{Key: portName(p.Port), Count: p.Total})
+			}
+			if len(rollupKC) > 0 {
+				result.TopPorts = mergeKeyCounts(rawPorts, rollupKC, 10)
+			}
+		})
 	}
 
-	// Adaptive time bucketing for bytes over time
+	// Adaptive time bucketing for bytes over time.
+	//
+	// The bucket must NEVER be finer than the finest tier feeding the window.
+	// A 6h view used minute buckets and applied them to flow_rollups too, whose
+	// finest tier is 5m — so each 5-minute row's whole byte count landed in one
+	// minute bucket and the next four were empty. The client divides every point
+	// by a single bucket_seconds, so those points read 5x the true rate and the
+	// line alternated spike-and-zero instead of being linear in time.
 	bucketUnit := "hour"
 	result.BucketSeconds = 3600
 	if hours <= 6 {
-		bucketUnit = "minute"
-		result.BucketSeconds = 60
+		bucketUnit = "5min"
+		result.BucketSeconds = 300
 	} else if hours > 168 {
 		bucketUnit = "day"
 		result.BucketSeconds = 86400
@@ -613,20 +1160,69 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 		log.Printf("Flow stats bytes over time: %v", err)
 	}
 
+	// publishSeries drops the still-filling bucket and writes the chart series.
+	// The newest bucket covers only the elapsed part of the current 5 minutes /
+	// hour / day, so plotting it at full width ended every chart in a false
+	// cliff of up to ~90%. The series is ordered ascending, so it is the last
+	// element.
+	publishSeries := func(series []struct {
+		Bucket string
+		Total  int64
+	}) {
+		if n := len(series); n > 0 {
+			if cutBucket := currentBucketLabel(bucketUnit); cutBucket != "" && series[n-1].Bucket == cutBucket {
+				series = series[:n-1]
+			}
+		}
+		out := make([]TimeBucket, 0, len(series))
+		for _, t := range series {
+			out = append(out, TimeBucket{Bucket: t.Bucket, Count: t.Total})
+		}
+		result.BytesOverTime = out
+	}
+
 	// Merge rollup time series
 	if useRollups {
 		var rollupTS []struct {
 			Bucket string
 			Total  int64
 		}
-		newRollupBase().Select(d.dialect.TimeBucket(bucketUnit, "timestamp") + " as bucket, SUM(bytes_sum) as total").
-			Group("bucket").Order("bucket ASC").Scan(&rollupTS)
-		timeSeries = mergeTimeSeries(timeSeries, rollupTS)
+		runRollup("bytes_over_time", newRollupBase, func(q *gorm.DB) error {
+			return q.Select(d.dialect.TimeBucket(bucketUnit, "timestamp") + " as bucket, SUM(bytes_sum) as total").
+				Group("bucket").Order("bucket ASC").Scan(&rollupTS).Error
+		}, func() {
+			publishSeries(mergeTimeSeries(timeSeries, rollupTS))
+		})
+	}
+	// Publish the raw-only series now so the chart is populated even if the
+	// rolled-up half never completes; the merge replaces it if it does.
+	publishSeries(timeSeries)
+
+	// Run every scheduled rolled-up panel concurrently, then merge the ones that
+	// succeeded. This is the last thing before stamping, so DegradedBlocks names
+	// every panel that lost data rather than only the first.
+	flushRollups()
+
+	// Derived figures come AFTER the flush, because the rolled-up totals they
+	// build on are merged there. Computing them earlier would publish throughput
+	// and estimated bytes for the raw window only.
+	//
+	// AvgSamplingRate is retained for API back-compat and now reports the HIGHEST
+	// rate observed rather than an average: a bytes-weighted mean across a
+	// sampling-regime change is a rate that never existed (production ran 1:1024
+	// until 2026-07-16 and 1:1 since, averaging to a fictitious 1:125). Clients
+	// should prefer SamplingRateMin/Max; when the two are equal this is exactly
+	// the old meaning.
+	result.AvgSamplingRate = result.SamplingRateMax
+	// L1: bytes is already sampling-scaled, so estimated == total (the field is
+	// retained for API back-compat; the old `* AvgSamplingRate` over-reported by
+	// ~the sampling rate).
+	result.EstimatedBytes = result.TotalBytes
+	if hours > 0 {
+		result.BitsPerSecond = float64(result.TotalBytes) * 8 / (float64(hours) * 3600)
 	}
 
-	for _, t := range timeSeries {
-		result.BytesOverTime = append(result.BytesOverTime, TimeBucket{Bucket: t.Bucket, Count: t.Total})
-	}
+	budget.stamp(result)
 
 	return result, nil
 }

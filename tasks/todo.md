@@ -51,9 +51,59 @@ User confirmed 2026-09-07: "it's the dashboard that is slow", so this is the tar
       recreate is blocked by the permission classifier and needs the user to say "deploy".
       Verify: `/admin/api/dashboard/summary` should drop from ~400ms to single-digit ms.
 
-## Phase 3 — the pages an operator actually waits on — NOT STARTED
-- [ ] **Flows page: 9.5s at 24h, 42.1s at 7d for ONE of ~8 queries.** Best candidate for the
-      original complaint. Needs its own design pass (the COUNT DISTINCT is already "approximate").
+## Phase 3 — the Flows page (plan: ~/.claude/plans/we-really-need-to-dreamy-plum.md)
+
+Audited on prod 2026-09-13. The page is **wrong**, not just slow, and two 30s walls stop the long
+windows from returning at all. Plan went through two adversarial Fable reviews; both found blocking
+errors in my drafts. Third draft is the one being built.
+
+### The walls (measure through the APP, never psql — server statement_timeout is 0)
+- `statement_timeout` 30s via DSN (`database.go:155`, default `config.go:419`) — cancels one query.
+- `WriteTimeout` 30s (`main.go:567`, default `config.go:372`) — the WHOLE response must fit in 30s.
+  `GetFlowStats` fires ~24 sequential queries, so this is the binding constraint.
+
+### Confirmed defects
+- [x] Top Conversations / Top Ports raw-only (`flows.go:566`, `:587-588`) — true #1 is NFS at 6,799 MB,
+      displayed #1 is 427 MB and the real one is absent.
+- [x] TotalPackets raw-only (`:354`) — 24h shows 2.7% of truth, 90d shows 0.05%.
+- [x] Sampling chip raw-only (`:359`) — always 1:1; max rollup rate is 1024, 15.3% of 90d bytes sampled.
+- [x] Probe filter disables rollups entirely (`:236`) — shows 1.7% of the window, silently.
+- [x] 30d/90d fall back to raw-only after a cancelled query; only `log.Printf` (`:338`).
+- [x] Unique counts use `max()` of two tiers (`:343-348`) with no approximation marker.
+- [x] Detection modal "Sampled flows" 404s — `admin-flows.js:705` hits an unregistered path.
+- [x] Chart labels wrong twice: UTC parsed as local (`:1199`) AND `display_timezone` ignored (`:796`).
+      Same parse bug in admin-main.js:912, admin-connection-detail.js:681, diagram-panels.js:407,
+      admin-dashboard-modules.js:91.
+- [x] 6h bandwidth view inflated 5x and spiky — minute buckets applied to a 5m tier (`:600-602`).
+- [x] Every chart ends in a false cliff (in-progress bucket plotted as complete).
+- [x] CIDR filter rounds masks UP to the octet boundary; /25 returns the whole /24, /6 returns nothing.
+- [x] Flow Samples tab + CSV export are raw-only but labelled with the window.
+- [x] ProtocolCount capped at 10 by `Limit(10)` (`:424`, `:457`).
+
+### Corrections to my own drafts (do not re-propose)
+- `SET LOCAL work_mem` is a NO-OP — GetFlowStats runs no transaction.
+- Narrowing the raw base to now-1h is a **correctness regression** — raw is bounded by DELETION, not
+  time, and spool replay is an explicitly designed path (`flows.go:812-815`).
+- `GetDeviceIDsByProbe` applies ActiveDevices scope — inconsistent with the site filter. Use the
+  inline subquery instead.
+- Bytes-weighted mean sampling = 1:125, a rate that never existed. Report a range.
+- Top-N merge is NOT "provably exact" — at N=10 the port bound (1,094 MB) exceeds the true #10
+  (562 MB). **N must be >= 50** (bound 55 MB).
+- Phase C premise was false: on prod only `denied_events` is partitioned. flow_samples,
+  syslog_messages, flow_rollups, interface_stats, system_status are all flat heaps.
+- 90d packets truth is 6,914,320,386 (window), not 11.68B (whole table).
+
+### Build order — Phase 0 + A committed as v0.11.247 (branch fix/flows-correctness-and-budget)
+Adversarial diff review in flight; not merged yet.
+- [x] **Phase 0** — deadlines per query, short-circuit after first failure, convert the 7 error-
+      discarding `Scan()`s, run independent aggregates concurrently. Nothing else is visible without it.
+- [x] **Phase A** — the 14 correctness items above.
+- [ ] **Phase B** — decoupled idempotent per-bucket summariser (recompute, never merge) + a
+      low-cardinality cube (11,384 rows/24h, answers any filter combo incl. protocol pills) + top-N
+      at N=50 for src/dst/port/asn/conversation. Own plan-mode cycle.
+- [ ] **Phase C** — fold the long tail at 5m->1h (88.6% of rows carry 1.08% of bytes) vs partitioning.
+
+## Phase 3 remainder — other slow pages — NOT STARTED
 - [ ] Syslog page hourly chart: 7,421ms with a 103MB disk sort -> 1.96ms from `syslog_ingest_hourly`
       (already populated; no device_id, so filtered views fall back).
 - [ ] Probes page: 4 unbounded per-probe counts, syslog one = 4,238ms. `estimateRowCount` is

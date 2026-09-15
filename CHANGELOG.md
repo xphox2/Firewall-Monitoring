@@ -1,6 +1,109 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.247] - 2026-09-14
+
+### Fixed — Flows page reported figures that did not match the selected range
+
+Audited `/admin/api/flows/stats` against production. Several panels had no rollup
+branch, so they read only `flow_samples` — which holds just what the rollup ladder
+has not yet consumed, about one hour — while the tiles beside them summed the whole
+window. The range pill gave no hint that the two disagreed.
+
+- **Top Conversations and Top Ports** now merge the rolled-up tiers. The displayed
+  #1 conversation was 427 MB at 0.56% while the real #1 (6,799 MB over 24h) was
+  absent from the list entirely; port magnitudes ran about 19x low and the busiest
+  port was missing.
+- **Total Packets** now includes rolled-up packets. It previously reported 2.7% of
+  the true 24-hour count and 0.05% of the 90-day count.
+- **Sampling rate** is now reported as the range observed across the window
+  (`sampling_rate_min` / `sampling_rate_max`) instead of a raw-only average that
+  always read 1:1. A single average is not a fix either — averaging across a
+  sampling-regime change yields a rate that never existed.
+- **Selecting a probe no longer collapses every tile to the raw window.** A probe
+  filter used to disable the rollup side entirely because `flow_rollups` has no
+  `probe_id`; the rollup side now resolves the probe through the devices it owns,
+  the same shape the site filter already used. Measured on production at 1.7% of
+  the true flow count before this, with no warning shown.
+- **Unique source/destination counts** sum the tiers instead of taking `max()` of
+  them, and are marked `unique_approximate` so the UI can show them as the upper
+  bound they are. `max()` is not an approximation of a union; it discards a tier.
+- **Protocol count** is taken before the display list is truncated to ten, so the
+  tile no longer silently caps at 10.
+
+### Fixed — wide windows now return an answer instead of a closed connection
+
+`GetFlowStats` issues roughly two dozen queries against two independent 30-second
+limits: a per-connection `statement_timeout`, and the HTTP server's `WriteTimeout`,
+which bounds the whole response. A bare `SUM` over the rollup tiers measures 12.9s
+at 7 days and 19.5s at 90 days, so wide windows could not deliver a payload — and
+rollup failures were logged and skipped, so the response carried raw-only figures
+under the requested window's label.
+
+- **The rolled-up panels now query concurrently** (bounded to 4 at a time, against
+  a 15-connection pool). Measured per-query on production's 24-hour band, the
+  fourteen panels cost about 25 seconds in total and Top Conversations alone is
+  6.4 seconds, so running them one after another could not fit any budget that
+  also respects the 30-second write timeout. Replayed at 4-way concurrency against
+  production, the 24-hour range now completes in **9.5 seconds**.
+- **Be clear about what this does not fix.** Seven days and beyond still degrade
+  *completely*: replayed on production with the same 20-second allowance, 9 of the
+  14 panels are cancelled at 7 days and 13 of 14 at 90 days. Those ranges return
+  the raw window — roughly an hour — with every panel named in the banner. That is
+  now honest rather than silent, but it is not fixed. Fixing it needs
+  pre-aggregation, which lands separately.
+- Every panel publishes its raw-only view before the rolled-up query runs, so a
+  degraded window falls back rather than coming back empty. The protocols tile did
+  not, and returned nothing at all on any window that degraded.
+- Every rolled-up aggregate runs under the request deadline, and a panel's result
+  is merged only if its query actually succeeded — GORM streams rows before
+  reporting a late cancellation, so a cancelled query can leave a partial result
+  that would otherwise be folded in as though complete.
+- Rolled-up queries that discarded their error entirely now report it.
+- The response carries `degraded` and `degraded_blocks`, and the page shows a
+  warning naming the panels that fell back, instead of presenting one hour of data
+  as a month.
+
+### Fixed — test harness
+
+- `NewDatabaseForTesting` pinned its SQLite pool to one connection. `:memory:`
+  gives every connection its own private, empty database, so any concurrent query
+  opened a second connection and reported "no such table" for tables the first had
+  migrated. Sequential code never noticed; the concurrent flow-stats panels did.
+  (An earlier draft of this entry blamed GORM statement sharing for those errors.
+  That was wrong — a `*gorm.DB` from `Open` or `Session` clones its statement
+  before any chain method mutates it, so concurrent chaining is supported. The
+  pool pin was the fix.)
+
+### Fixed — charts and filters
+
+- **Chart x-axis labels were shifted by the viewer's UTC offset.** Server bucket
+  labels carry no timezone designator and ECMAScript reads them as local time. A
+  shared `parseUtcBucket` / `formatBucketLabel` pair now parses them as UTC and
+  renders them in the configured display timezone. Applied to the Flows bandwidth
+  chart and the matching bugs on the dashboard, connection-detail, diagram panels
+  and dashboard modules.
+- **The 6-hour bandwidth view was inflated 5x and spiky.** It used minute buckets
+  against a tier whose finest resolution is 5 minutes, so each rolled-up row's whole
+  byte count landed in one minute and the next four were empty. It now uses
+  5-minute buckets.
+- **Every chart ended in a false cliff** because the still-filling current bucket
+  was plotted at full width. It is now excluded.
+- **CIDR address filters were silently over-broad or silently empty.** Masks were
+  rounded up to the enclosing octet boundary, so a `/25` returned the whole `/24`,
+  and anything wider than `/8` (including `0.0.0.0/0`) matched nothing at all.
+  PostgreSQL now filters with exact `inet` containment, keeping the prefix match as
+  an index-friendly pre-filter. Verified on production: `192.168.5.128/25` now
+  matches 0 rows where prefix matching returned all 427,386 rows of the `/24`.
+  The containment test guards against empty address values, which production
+  carries 2,377 of — `''::inet` raises a syntax error that aborts the whole
+  statement rather than skipping the row.
+- **The detection detail modal's "Sampled flows" panel always failed**, requesting
+  an unregistered path that returned 404.
+- **The flow sample list and CSV export read only recent samples** regardless of
+  the selected range, but were labelled with that range. Both now say so; the export
+  filename no longer claims a window it does not contain.
+
 ## [0.11.246] - 2026-09-08
 
 ### Added
