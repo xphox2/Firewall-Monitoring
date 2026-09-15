@@ -473,11 +473,19 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 		// neither.
 		contiguous := true
 		newFilled := filled
+		// backfilled is counted SEPARATELY from written. The per-tier cap exists
+		// to stop a cold start monopolising a cycle, and the dirty walk is not a
+		// cold start — sharing one counter let routine change-work consume the
+		// cap and starve the backfill, so on the daily tier (cap 2) a single
+		// dirty boundary day every cycle would have halved backfill throughput
+		// for no reason.
+		backfilled := 0
 		for b := start; b.Before(ownedTo); b = b.Add(tier.width) {
-			if tier.maxPerPass > 0 && written >= tier.maxPerPass {
+			if tier.maxPerPass > 0 && backfilled >= tier.maxPerPass {
 				break
 			}
 			keepGoing, ok := runBounded(b)
+			backfilled++
 			if ok && contiguous {
 				newFilled = b
 			}
