@@ -472,6 +472,33 @@ const pollerWorkLockKey int64 = 0x504f4c4c45525357 // "POLLERSW"
 //
 // SQLite (tests) returns acquired=true + a no-op release — single-process there.
 func (d *Database) TryAcquirePollerWorkLock() (release func(), acquired bool) {
+	return d.tryAcquireAdvisoryLock("Poller work", pollerWorkLockKey)
+}
+
+// flowSummaryLockKey is a SEPARATE advisory lock for the flow summary pass.
+//
+// It must not share pollerWorkLockKey. That lock is non-blocking and shared by
+// every poller cron tick, so a tick landing while the holder works is SKIPPED,
+// not queued — and the summary pass is the longest-running of them (up to a
+// minute in steady state, longer during backfill). Putting it on the shared key
+// would drop roughly one monitoring tick in five during a backfill, which means
+// skipping alert evaluation rather than merely delaying it.
+//
+// A dedicated key is safe because the summary needs exclusion only against
+// ITSELF, so two pollers do not recompute the same buckets. It reads
+// flow_rollups and writes only the summary tables, and because it RECOMPUTES a
+// bucket rather than merging, a rollup cycle mutating flow_rollups underneath it
+// is harmless: the affected buckets are simply redirtied and recomputed.
+const flowSummaryLockKey int64 = 0x464c4f5753554d4d // "FLOWSUMM"
+
+// TryAcquireFlowSummaryLock is TryAcquirePollerWorkLock for the summary pass,
+// on its own key. Same non-blocking semantics and the same bias toward doing
+// the work when the probe itself fails.
+func (d *Database) TryAcquireFlowSummaryLock() (release func(), acquired bool) {
+	return d.tryAcquireAdvisoryLock("Flow summary", flowSummaryLockKey)
+}
+
+func (d *Database) tryAcquireAdvisoryLock(label string, key int64) (release func(), acquired bool) {
 	if !d.dialect.IsPostgres() {
 		return func() {}, true
 	}
@@ -479,19 +506,19 @@ func (d *Database) TryAcquirePollerWorkLock() (release func(), acquired bool) {
 	if err != nil {
 		// Probe failure: bias toward DOING the work over skipping it.
 		// A duplicate poll cycle is recoverable; a missed one is not.
-		log.Printf("Poller work lock probe failed (%v); proceeding with work anyway.", err)
+		log.Printf("%s lock probe failed (%v); proceeding with work anyway.", label, err)
 		return func() {}, true
 	}
 	ctx := context.Background()
 	conn, err := sqlDB.Conn(ctx) // pins one backend out of the pool
 	if err != nil {
-		log.Printf("Poller work lock probe failed (%v); proceeding with work anyway.", err)
+		log.Printf("%s lock probe failed (%v); proceeding with work anyway.", label, err)
 		return func() {}, true
 	}
 	var got bool
-	if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", pollerWorkLockKey).Scan(&got); err != nil {
+	if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", key).Scan(&got); err != nil {
 		conn.Close()
-		log.Printf("Poller work lock probe failed (%v); proceeding with work anyway.", err)
+		log.Printf("%s lock probe failed (%v); proceeding with work anyway.", label, err)
 		return func() {}, true
 	}
 	if !got {
@@ -500,13 +527,13 @@ func (d *Database) TryAcquirePollerWorkLock() (release func(), acquired bool) {
 	}
 	return func() {
 		var released bool
-		if err := conn.QueryRowContext(ctx, "SELECT pg_advisory_unlock($1)", pollerWorkLockKey).Scan(&released); err != nil {
-			log.Printf("Poller work lock release failed (%v); will auto-release on connection close.", err)
+		if err := conn.QueryRowContext(ctx, "SELECT pg_advisory_unlock($1)", key).Scan(&released); err != nil {
+			log.Printf("%s lock release failed (%v); will auto-release on connection close.", label, err)
 		} else if !released {
 			// Cannot happen on the pinned conn, but pg_advisory_unlock
 			// reports non-ownership via its return value (not an error) —
 			// surface it instead of silently ignoring it like the pre-fix code.
-			log.Printf("Poller work lock release returned false (lock not held by this session)")
+			log.Printf("%s lock release returned false (lock not held by this session)", label)
 		}
 		conn.Close() // returns the (now-unlocked) connection to the pool
 	}, true

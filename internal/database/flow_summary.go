@@ -160,6 +160,11 @@ func (d *Database) RunFlowSummaryCycle() bool {
 		if _, newest, ok, err := d.tierTimeBounds(tier.rangeSources); err == nil && ok {
 			dailyFloor = tier.bucketOf(newest).Add(tier.width)
 		}
+		// On error the floor stays zero and the hourly tier temporarily owns
+		// everything. That is self-healing rather than harmful: the same rows
+		// leave the daily tier's watermark unadvanced, so the next pass redirties
+		// those days and the daily tier supersedes any hourly rows written in the
+		// meantime. The exposure is one cycle of double-counting at worst.
 	}
 
 	ordered := []flowSummaryTier{}
@@ -289,6 +294,50 @@ func (d *Database) setSummaryFillMarker(interval string, at time.Time) {
 	}
 }
 
+// flowSummaryDirtyKeyPrefix names the per-tier dirty cursor: how far through the
+// CURRENT watermark epoch's dirty list this tier has got. Cleared whenever the
+// epoch completes and the watermark moves on.
+const flowSummaryDirtyKeyPrefix = "flow_summary_dirty_cursor_"
+
+func (d *Database) summaryDirtyCursor(interval string) time.Time {
+	v, ok := d.GetSettingValue(flowSummaryDirtyKeyPrefix + interval)
+	if !ok || strings.TrimSpace(v) == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(v))
+	if err != nil {
+		return time.Time{}
+	}
+	return t.UTC()
+}
+
+func (d *Database) setSummaryDirtyCursor(interval string, at time.Time) {
+	if err := d.UpsertSetting(&models.SystemSetting{
+		Key:      flowSummaryDirtyKeyPrefix + interval,
+		Value:    at.UTC().Format(time.RFC3339),
+		Category: "system",
+		Type:     "string",
+		Label:    "Flow summary dirty cursor (" + interval + ")",
+	}); err != nil {
+		log.Printf("Flow summary: persist %s dirty cursor: %v", interval, err)
+	}
+}
+
+func (d *Database) clearSummaryDirtyCursor(interval string) {
+	if d.summaryDirtyCursor(interval).IsZero() {
+		return
+	}
+	if err := d.UpsertSetting(&models.SystemSetting{
+		Key:      flowSummaryDirtyKeyPrefix + interval,
+		Value:    "",
+		Category: "system",
+		Type:     "string",
+		Label:    "Flow summary dirty cursor (" + interval + ")",
+	}); err != nil {
+		log.Printf("Flow summary: clear %s dirty cursor: %v", interval, err)
+	}
+}
+
 func (d *Database) summaryWatermark(interval string) int64 {
 	return int64(d.GetIntSetting(flowSummaryWatermarkKeyPrefix+interval, 0))
 }
@@ -310,6 +359,13 @@ func (d *Database) setSummaryWatermark(interval string, id int64) {
 func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor time.Time) (int, error) {
 	// Capture the id ceiling BEFORE reading, so rows arriving mid-pass are picked
 	// up next time rather than being skipped.
+	//
+	// This is safe because the pass holds an advisory lock and the rollup ladder
+	// allocates its ids inside a transaction: an id becomes visible at commit, so
+	// a ceiling taken here cannot straddle a half-written window. The ladder's own
+	// watermark rests on the same property. It DOES depend on that lock — on
+	// SQLite (tests) the lock is a no-op, which is acceptable because nothing runs
+	// concurrently there.
 	var ceiling int64
 	if err := d.db.Session(&gorm.Session{}).Model(&models.FlowRollup{}).
 		Select("COALESCE(MAX(id),0)").Scan(&ceiling).Error; err != nil {
@@ -379,20 +435,41 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 		if err != nil {
 			return written, fmt.Errorf("dirty buckets: %w", err)
 		}
+		// The cursor is what makes a CAPPED dirty walk make progress. Holding the
+		// watermark back on a truncated walk is necessary but not sufficient: the
+		// next pass recomputes the same dirty list from the same watermark, so
+		// without a cursor it reprocesses the first bucket every cycle and never
+		// reaches the rest. The list is ordered oldest-first, so remembering how
+		// far the epoch got is enough.
+		cursor := d.summaryDirtyCursor(tier.interval)
+		lastDone := cursor
 		for _, b := range dirty {
 			// A bucket outside this tier's range is not this tier's problem, but
 			// it HAS been seen — it must not hold the watermark back.
 			if !owns(b) {
 				continue
 			}
+			if !cursor.IsZero() && !b.After(cursor) {
+				continue // already handled earlier in this epoch
+			}
 			if tier.maxPerPass > 0 && written >= tier.maxPerPass {
 				dirtyComplete = false
 				break
 			}
-			if keepGoing, _ := run(b); !keepGoing {
+			keepGoing, ok := run(b)
+			if ok {
+				lastDone = b
+			}
+			if !keepGoing {
 				dirtyComplete = false
 				break
 			}
+		}
+		if dirtyComplete {
+			// The whole epoch is done; the watermark below supersedes the cursor.
+			d.clearSummaryDirtyCursor(tier.interval)
+		} else if lastDone.After(cursor) {
+			d.setSummaryDirtyCursor(tier.interval, lastDone)
 		}
 	}
 

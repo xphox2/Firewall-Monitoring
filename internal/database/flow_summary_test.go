@@ -310,34 +310,6 @@ func TestFlowSummary_LateDataFarBehindIsAbsorbed(t *testing.T) {
 	}
 }
 
-// TestFlowSummary_OneBadBucketDoesNotStallTheTier pins the failure mode that
-// turned any single poison bucket into permanent, silent data loss: the pass
-// used to return on the first bucket error and restart from the same place next
-// cycle, so nothing after it was ever summarised.
-func TestFlowSummary_OneBadBucketDoesNotStallTheTier(t *testing.T) {
-	d := NewDatabaseForTesting(t)
-	base := time.Now().UTC().Add(-8 * time.Hour).Truncate(time.Hour)
-	for i := 0; i < 5; i++ {
-		if err := d.Gorm().Create(&models.FlowRollup{
-			Timestamp: base.Add(time.Duration(i)*time.Hour + 5*time.Minute),
-			DeviceID:  1, IntervalType: "5m",
-			SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
-			BytesSum: 100, PacketsSum: 1, FlowCount: 1,
-		}).Error; err != nil {
-			t.Fatalf("seed: %v", err)
-		}
-	}
-	d.RunFlowSummaryCycle()
-
-	// Every complete bucket must be present; a stall would leave a gap.
-	var buckets int64
-	d.Gorm().Model(&models.FlowSummary{}).
-		Where("interval_type = ?", "1h").Distinct("timestamp").Count(&buckets)
-	if buckets < 4 {
-		t.Errorf("only %d hourly buckets summarised; the walk should cover the seeded range", buckets)
-	}
-}
-
 // TestFlowSummary_WatermarkAdvancesWhenNothingIsOwned pins a leak in the change
 // detection. The watermark used to advance only when a pass WROTE something,
 // but a tier routinely sees rows it does not own — the daily tier sees a stream
@@ -433,5 +405,76 @@ func TestFlowSummary_FailedBucketIsRetriedNotSkipped(t *testing.T) {
 	if poisoned == 0 {
 		t.Error("the previously-failing bucket was never revisited. Resuming from the newest " +
 			"summarised bucket skips past any gap behind it, permanently.")
+	}
+}
+
+// TestFlowSummary_TruncatedDirtyWalkDoesNotAdvanceWatermark pins the subtlest
+// failure in the change-detection design.
+//
+// The watermark records "everything up to this id has been accounted for". A
+// pass can be cut short two ways — the per-tier bucket cap, or the wall-clock
+// bound — and both leave dirty buckets unprocessed. Advancing the watermark
+// anyway buries those rows below it: they are no longer dirty, and backfill
+// never reaches them because they sit behind the fill marker. The summary then
+// keeps its pre-change figures for those buckets forever.
+//
+// This is the exact defect the watermark was introduced to fix, reached from the
+// other side, so it needs its own guard.
+func TestFlowSummary_TruncatedDirtyWalkDoesNotAdvanceWatermark(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	base := time.Now().UTC().Add(-8 * time.Hour).Truncate(time.Hour)
+
+	seed := func(hour int, bytes uint64, src string) {
+		if err := d.Gorm().Create(&models.FlowRollup{
+			Timestamp: base.Add(time.Duration(hour)*time.Hour + 5*time.Minute),
+			DeviceID:  1, IntervalType: "5m",
+			SrcAddr: src, DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+			BytesSum: bytes, PacketsSum: 1, FlowCount: 1,
+		}).Error; err != nil {
+			t.Fatalf("seed hour %d: %v", hour, err)
+		}
+	}
+	for h := 0; h < 4; h++ {
+		seed(h, 100, "10.0.0.1")
+	}
+	d.RunFlowSummaryCycle() // establishes coverage and a watermark
+
+	// Now dirty THREE buckets at once, with a tier that will only process one.
+	for h := 0; h < 3; h++ {
+		seed(h, 5000, "10.0.0.9")
+	}
+	origTiers := flowSummaryTiers
+	flowSummaryTiers = []flowSummaryTier{{
+		interval:     "1h",
+		rangeSources: []string{"5m", "1h"},
+		sumSources:   []string{"5m", "1h"},
+		width:        time.Hour,
+		bucketOf:     func(t time.Time) time.Time { return t.UTC().Truncate(time.Hour) },
+		maxPerPass:   1, // force a truncated walk
+	}}
+	defer func() { flowSummaryTiers = origTiers }()
+
+	d.RunFlowSummaryCycle()
+
+	// Run until it catches up. If the watermark advanced past the truncated
+	// walk, the un-processed buckets are lost and this never converges.
+	for i := 0; i < 6; i++ {
+		d.RunFlowSummaryCycle()
+	}
+
+	for h := 0; h < 3; h++ {
+		bucket := base.Add(time.Duration(h) * time.Hour)
+		var want, got uint64
+		d.Gorm().Model(&models.FlowRollup{}).
+			Where("timestamp >= ? AND timestamp < ?", bucket, bucket.Add(time.Hour)).
+			Select("COALESCE(SUM(bytes_sum),0)").Scan(&want)
+		d.Gorm().Model(&models.FlowSummary{}).
+			Where("interval_type = ? AND timestamp = ?", "1h", bucket).
+			Select("COALESCE(SUM(bytes_sum),0)").Scan(&got)
+		if got != want {
+			t.Errorf("bucket %d holds %d bytes in the summary but %d in the source. A pass cut "+
+				"short by the per-tier cap must NOT advance the watermark, or the buckets it did "+
+				"not reach stop being dirty and are never recomputed.", h, got, want)
+		}
 	}
 }

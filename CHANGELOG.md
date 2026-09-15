@@ -63,8 +63,10 @@ claim the day.
 **Cost, measured rather than estimated.** An hourly bucket over ~160k source rows
 takes 1.26s; a daily bucket over 2.1M rows takes 14.1s, and the densest day
 (4.6M rows) approaches 30s on a cold cache. The pass is therefore bounded by
-**time**, not bucket count, runs off the poller's select loop so it cannot delay
-alert evaluation, and caps the daily tier at two buckets per cycle.
+**time**, not bucket count, runs off the poller's select loop on its
+own advisory lock, and caps the daily tier at two buckets per cycle. The separate
+lock matters: the shared poller work lock is non-blocking, so a monitoring tick
+landing while a long pass held it would be *skipped* rather than delayed.
 
 **Known limitation, stated now rather than discovered later.** The top-N tables
 carry no dimension columns, so they answer "top talkers for this device" and

@@ -130,9 +130,20 @@ func (p *Poller) startFlowSummaryAsync() {
 	}
 	logging.SafeGo("flow-summary", func() {
 		defer p.flowSummaryRunning.Store(false)
-		p.runUnderLeaderLockNoHeartbeat("flow-summary", func() {
-			p.db.RunFlowSummaryCycle()
-		})
+		// Its OWN advisory lock, not the shared poller work lock. That lock is
+		// non-blocking and shared by every cron tick, so a tick landing while the
+		// holder works is SKIPPED rather than queued — and this is the longest
+		// holder of them all. On the shared key it would drop roughly one
+		// monitoring tick in five during a backfill, turning "delays alert
+		// evaluation" into "skips it". The summary needs exclusion only against
+		// itself.
+		release, acquired := p.db.TryAcquireFlowSummaryLock()
+		if !acquired {
+			log.Println("flow-summary: another poller holds the summary lock; skipping")
+			return
+		}
+		defer release()
+		p.db.RunFlowSummaryCycle()
 	})
 }
 
