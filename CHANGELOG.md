@@ -50,6 +50,16 @@ Retention is a `SystemSetting` (`flow_summary_retention_days`, default 365)
 rather than another `RETENTION_*` environment variable, matching
 `syslog_summary_retention_days`.
 
+**A note on what review caught here.** The daily tier originally summed only the
+`1d` rollup tier and then deleted the hourly summary rows covering that day. The
+rollup ladder promotes with a cutoff that is not day-aligned, so the boundary day
+is *always* split across two tiers — measured on production, 2026-08-16 holds
+767 MB in the `1d` tier and 42 GB in the `1h` tier. That writer would have
+recorded **1.8% of that day** and destroyed the rest, permanently, repeating for
+every new boundary day. A daily bucket now sums every tier before superseding,
+and the hourly tier is floored at the daily tier's reach so the two do not both
+claim the day.
+
 **Cost, measured rather than estimated.** An hourly bucket over ~160k source rows
 takes 1.26s; a daily bucket over 2.1M rows takes 14.1s, and the densest day
 (4.6M rows) approaches 30s on a cold cache. The pass is therefore bounded by
