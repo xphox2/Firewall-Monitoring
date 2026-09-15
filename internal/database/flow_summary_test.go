@@ -478,3 +478,74 @@ func TestFlowSummary_TruncatedDirtyWalkDoesNotAdvanceWatermark(t *testing.T) {
 		}
 	}
 }
+
+// TestFlowSummary_RowsArrivingMidEpochAreNotBuried closes the hole the dirty
+// cursor opened.
+//
+// The cursor skips buckets it has already handled in the current epoch. If the
+// epoch's dirty list were recomputed against a LIVE id ceiling every pass, rows
+// arriving mid-epoch for an OLDER bucket would join the list behind the cursor,
+// be skipped by it, and then be buried when the epoch completed and the
+// watermark jumped to the new ceiling — lost permanently, with nothing to
+// re-dirty them.
+//
+// The epoch's ceiling is therefore pinned when it opens: anything newer belongs
+// to the next epoch.
+func TestFlowSummary_RowsArrivingMidEpochAreNotBuried(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	base := time.Now().UTC().Add(-10 * time.Hour).Truncate(time.Hour)
+
+	seed := func(hour int, bytes uint64, src string) {
+		if err := d.Gorm().Create(&models.FlowRollup{
+			Timestamp: base.Add(time.Duration(hour)*time.Hour + 5*time.Minute),
+			DeviceID:  1, IntervalType: "5m",
+			SrcAddr: src, DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+			BytesSum: bytes, PacketsSum: 1, FlowCount: 1,
+		}).Error; err != nil {
+			t.Fatalf("seed hour %d: %v", hour, err)
+		}
+	}
+	for h := 0; h < 5; h++ {
+		seed(h, 100, "10.0.0.1")
+	}
+	d.RunFlowSummaryCycle() // establishes coverage and a watermark
+
+	// Dirty the LATER buckets, and force a one-bucket-per-pass walk so the epoch
+	// spans several cycles.
+	for _, h := range []int{2, 3, 4} {
+		seed(h, 5000, "10.0.0.9")
+	}
+	origTiers := flowSummaryTiers
+	flowSummaryTiers = []flowSummaryTier{{
+		interval:     "1h",
+		rangeSources: []string{"5m", "1h"},
+		sumSources:   []string{"5m", "1h"},
+		width:        time.Hour,
+		bucketOf:     func(t time.Time) time.Time { return t.UTC().Truncate(time.Hour) },
+		maxPerPass:   1,
+	}}
+	defer func() { flowSummaryTiers = origTiers }()
+
+	d.RunFlowSummaryCycle() // handles bucket 2; cursor now sits at bucket 2
+
+	// A replay lands in bucket 0 — BEHIND the cursor — while the epoch is open.
+	seed(0, 7777, "10.7.7.7")
+
+	for i := 0; i < 8; i++ {
+		d.RunFlowSummaryCycle()
+	}
+
+	var want, got uint64
+	d.Gorm().Model(&models.FlowRollup{}).
+		Where("timestamp >= ? AND timestamp < ?", base, base.Add(time.Hour)).
+		Select("COALESCE(SUM(bytes_sum),0)").Scan(&want)
+	d.Gorm().Model(&models.FlowSummary{}).
+		Where("interval_type = ? AND timestamp = ?", "1h", base).
+		Select("COALESCE(SUM(bytes_sum),0)").Scan(&got)
+
+	if got != want {
+		t.Errorf("the mid-epoch replay into bucket 0 left the summary at %d bytes against %d in "+
+			"the source. Rows arriving while an epoch is open must belong to the NEXT epoch, or "+
+			"the cursor skips them and the watermark buries them.", got, want)
+	}
+}
