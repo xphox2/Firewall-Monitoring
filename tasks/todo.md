@@ -125,7 +125,18 @@ Measured after the concurrency change, replayed against prod: **24h completes in
       Rounds 3-5 each found holes in the CHANGE-DETECTION bookkeeping, every fix opening the next.
       Round 5 confirmed the right answer was to DELETE the mechanism: the walk over changed buckets
       now always completes, which removed the cursor, the epoch ceiling and three silent-staleness
-      bugs together (239 net lines). 15 tests, every one mutation-verified. Three tables cover the WHOLE six-month history in
+      bugs together (239 net lines). 15 tests, every one mutation-verified.
+
+      **BACKFILL COMPLETE 2026-09-15, verified on prod.** 157 daily buckets (2026-03-02..08-16) +
+      695 hourly (08-17..now) = **634,952 rows total** (389k cube + 245k top-N + 1.8k bucket)
+      against 118M in flow_rollups. Zero errors in 24h. Steady state is exactly 2 hourly buckets
+      per 5-min cycle, matching the measured prediction.
+
+      **The payoff, measured:** a 90-day aggregate returns **113 ms** from the summary versus
+      **31,595 ms** from flow_rollups — and that 31.6s is OVER the 30s statement_timeout, which is
+      precisely why the 90-day view was broken. Both return **identical** figures (342,031,562 flows
+      / 3,949,471,419,102 bytes / 7,079,816,102 packets), which also proves the two summary tiers
+      are disjoint: an overlap would have made the summary total larger. Three tables cover the WHOLE six-month history in
       **under 1M rows against 118M**, and reproduce bytes/packets/flows **exactly** (verified by
       query on prod before writing code). Writer recomputes rather than merges, so late spool
       replay is absorbed and the same code path IS the backfill. Measured ~0.5s per bucket; ~885
