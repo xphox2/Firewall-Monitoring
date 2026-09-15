@@ -312,7 +312,11 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 		return written, fmt.Errorf("tier bounds: %w", err)
 	}
 	if !ok {
-		return written, nil // this tier has no source data yet
+		// No source data for this tier yet. Still record that everything up to
+		// the ceiling has been seen: otherwise the first pass after data DOES
+		// appear starts its dirty scan from id 0.
+		d.setSummaryWatermark(tier.interval, ceiling)
+		return written, nil
 	}
 	ownedFrom := tier.bucketOf(oldest)
 	// A lower tier's reach takes precedence: the hourly tier does not own days
@@ -331,19 +335,24 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 	// Detection reads EVERY tier this bucket sums, not just the range sources:
 	// late data replayed into the 1h tier must redirty a day the daily tier owns,
 	// or that day silently keeps its pre-replay figures.
+	dirtyComplete := true
 	if watermark > 0 {
 		dirty, err := d.dirtyBuckets(tier, watermark)
 		if err != nil {
 			return written, fmt.Errorf("dirty buckets: %w", err)
 		}
 		for _, b := range dirty {
+			// A bucket outside this tier's range is not this tier's problem, but
+			// it HAS been seen — it must not hold the watermark back.
 			if !owns(b) {
 				continue
 			}
 			if tier.maxPerPass > 0 && written >= tier.maxPerPass {
+				dirtyComplete = false
 				break
 			}
 			if !run(b) {
+				dirtyComplete = false
 				break
 			}
 		}
@@ -377,11 +386,16 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 		}
 	}
 
-	// Only advance the watermark when the pass completed cleanly; otherwise the
-	// skipped rows would never be revisited.
-	if firstErr == nil && written > 0 {
-		d.setSummaryWatermark(tier.interval, ceiling)
-	} else if firstErr == nil && watermark == 0 {
+	// Advance the watermark whenever this pass SAW everything up to the ceiling
+	// and nothing failed — not merely when it wrote something.
+	//
+	// Keying it on `written > 0` leaked: the daily tier sees a stream of new 5m
+	// rows for today, owns none of them, writes nothing, and so never advanced.
+	// Its dirty scan then grew without bound, re-reading the same ever-larger id
+	// range every five minutes forever. Conversely, advancing after a TRUNCATED
+	// dirty pass (hit the per-tier cap or the time bound) would drop the buckets
+	// it did not reach, so both conditions have to hold.
+	if firstErr == nil && dirtyComplete {
 		d.setSummaryWatermark(tier.interval, ceiling)
 	}
 	return written, firstErr

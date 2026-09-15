@@ -336,3 +336,45 @@ func TestFlowSummary_OneBadBucketDoesNotStallTheTier(t *testing.T) {
 		t.Errorf("only %d hourly buckets summarised; the walk should cover the seeded range", buckets)
 	}
 }
+
+// TestFlowSummary_WatermarkAdvancesWhenNothingIsOwned pins a leak in the change
+// detection. The watermark used to advance only when a pass WROTE something,
+// but a tier routinely sees rows it does not own — the daily tier sees a stream
+// of new 5m rows for today and owns none of them. It then wrote nothing, never
+// advanced, and re-scanned an ever-larger id range every cycle forever.
+//
+// The watermark means "seen up to here", not "wrote something".
+func TestFlowSummary_WatermarkAdvancesWhenNothingIsOwned(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	base := time.Now().UTC().Add(-6 * time.Hour).Truncate(time.Hour)
+	seedSummarySource(t, d, base)
+	d.RunFlowSummaryCycle()
+
+	maxID := func() int64 {
+		var n int64
+		d.Gorm().Model(&models.FlowRollup{}).Select("COALESCE(MAX(id),0)").Scan(&n)
+		return n
+	}
+	after := d.summaryWatermark("1h")
+	if after == 0 {
+		t.Fatal("watermark never set after the first pass")
+	}
+	if after != maxID() {
+		t.Errorf("watermark is %d but the highest rollup id is %d after a clean pass", after, maxID())
+	}
+
+	// A steady-state pass with nothing new must leave the watermark at the
+	// ceiling rather than dropping back or stalling.
+	d.RunFlowSummaryCycle()
+	if got := d.summaryWatermark("1h"); got != maxID() {
+		t.Errorf("after a second clean pass the watermark is %d, want %d", got, maxID())
+	}
+
+	// The daily tier owns nothing here (no 1d rows at all), so it writes nothing
+	// — and must still not be stuck at zero-progress forever.
+	if got := d.summaryWatermark("1d"); got != maxID() {
+		t.Errorf("the daily tier's watermark is %d, want %d. A tier that owns none of "+
+			"what it sees must still record that it has seen it, or its dirty scan grows "+
+			"without bound.", got, maxID())
+	}
+}
