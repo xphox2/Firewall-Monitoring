@@ -373,6 +373,9 @@ func TestFlowSummary_FailedBucketIsRetriedNotSkipped(t *testing.T) {
 
 	poison := base.Add(2 * time.Hour)
 	orig := flowSummaryBucketHook
+	// defer, not a trailing statement: a t.Fatal or panic below would otherwise
+	// leak the poison hook into every later test in the package.
+	defer func() { flowSummaryBucketHook = orig }()
 	flowSummaryBucketHook = func(interval string, bucket time.Time) error {
 		if interval == "1h" && bucket.Equal(poison) {
 			return fmt.Errorf("synthetic bucket failure")
@@ -398,7 +401,7 @@ func TestFlowSummary_FailedBucketIsRetriedNotSkipped(t *testing.T) {
 	}
 
 	// Now let it succeed. The gap must be refilled rather than skipped forever.
-	flowSummaryBucketHook = orig
+	flowSummaryBucketHook = nil
 	d.RunFlowSummaryCycle()
 	d.Gorm().Model(&models.FlowSummary{}).
 		Where("interval_type = ? AND timestamp = ?", "1h", poison).Count(&poisoned)
@@ -547,5 +550,135 @@ func TestFlowSummary_RowsArrivingMidEpochAreNotBuried(t *testing.T) {
 		t.Errorf("the mid-epoch replay into bucket 0 left the summary at %d bytes against %d in "+
 			"the source. Rows arriving while an epoch is open must belong to the NEXT epoch, or "+
 			"the cursor skips them and the watermark buries them.", got, want)
+	}
+}
+
+// TestFlowSummary_FailedBucketStaysAboveTheCursor pins the second hole the dirty
+// cursor opened. The cursor advanced on any later success, so a walk like
+// [h0 FAILS, h1 ok, h2 ok, cap] left the cursor at h2 with h0 undone. The next
+// pass then SKIPPED h0 because it sits below the cursor — and because it was
+// skipped rather than run, no error was recorded, the epoch completed, and the
+// watermark buried it. Stale forever, and the fill-marker retry cannot help
+// because h0 is behind the fill marker too.
+func TestFlowSummary_FailedBucketStaysAboveTheCursor(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	base := time.Now().UTC().Add(-10 * time.Hour).Truncate(time.Hour)
+
+	seed := func(hour int, bytes uint64, src string) {
+		if err := d.Gorm().Create(&models.FlowRollup{
+			Timestamp: base.Add(time.Duration(hour)*time.Hour + 5*time.Minute),
+			DeviceID:  1, IntervalType: "5m",
+			SrcAddr: src, DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+			BytesSum: bytes, PacketsSum: 1, FlowCount: 1,
+		}).Error; err != nil {
+			t.Fatalf("seed hour %d: %v", hour, err)
+		}
+	}
+	for h := 0; h < 6; h++ {
+		seed(h, 100, "10.0.0.1")
+	}
+	d.RunFlowSummaryCycle()
+
+	// FOUR dirty buckets against a cap of two, so the first pass is TRUNCATED and
+	// its cursor persists. That is the shape that buries the failure: without a
+	// truncated pass the cursor is cleared and the scenario cannot arise.
+	for h := 0; h < 4; h++ {
+		seed(h, 5000, "10.0.0.9")
+	}
+
+	origTiers := flowSummaryTiers
+	flowSummaryTiers = []flowSummaryTier{{
+		interval:     "1h",
+		rangeSources: []string{"5m", "1h"},
+		sumSources:   []string{"5m", "1h"},
+		width:        time.Hour,
+		bucketOf:     func(t time.Time) time.Time { return t.UTC().Truncate(time.Hour) },
+		maxPerPass:   2,
+	}}
+	defer func() { flowSummaryTiers = origTiers }()
+
+	// Fail the OLDEST dirty bucket for one cycle only, while later ones succeed.
+	poison := base
+	failed := false
+	origHook := flowSummaryBucketHook
+	defer func() { flowSummaryBucketHook = origHook }()
+	flowSummaryBucketHook = func(interval string, bucket time.Time) error {
+		if !failed && interval == "1h" && bucket.Equal(poison) {
+			failed = true
+			return fmt.Errorf("synthetic one-shot failure")
+		}
+		return nil
+	}
+
+	for i := 0; i < 10; i++ {
+		d.RunFlowSummaryCycle()
+	}
+
+	var want, got uint64
+	d.Gorm().Model(&models.FlowRollup{}).
+		Where("timestamp >= ? AND timestamp < ?", poison, poison.Add(time.Hour)).
+		Select("COALESCE(SUM(bytes_sum),0)").Scan(&want)
+	d.Gorm().Model(&models.FlowSummary{}).
+		Where("interval_type = ? AND timestamp = ?", "1h", poison).
+		Select("COALESCE(SUM(bytes_sum),0)").Scan(&got)
+
+	if got != want {
+		t.Errorf("the bucket that failed once holds %d bytes against %d in the source. The cursor "+
+			"must not advance past a failure, or the failed bucket drops below it and is skipped "+
+			"rather than retried.", got, want)
+	}
+}
+
+// TestFlowSummary_TierAdvancesPastRowsItDoesNotOwn covers the case the watermark
+// fix was actually written for, which no test exercised.
+//
+// The daily tier detects changes across EVERY tier it sums, so a stream of new
+// 5-minute rows for today lands in its dirty list — but it owns only the days
+// promotion has begun collapsing, so it writes nothing for them. Keyed on
+// "wrote something", its watermark never advanced and its dirty scan re-read an
+// ever-larger id range every cycle forever.
+func TestFlowSummary_TierAdvancesPastRowsItDoesNotOwn(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	oldDay := time.Now().UTC().Add(-45 * 24 * time.Hour).Truncate(24 * time.Hour)
+
+	// Give the daily tier something to own, so it is past the "no source data"
+	// branch and genuinely exercising the dirty walk.
+	if err := d.Gorm().Create(&models.FlowRollup{
+		Timestamp: oldDay, DeviceID: 1, IntervalType: "1d",
+		SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+		BytesSum: 1000, PacketsSum: 10, FlowCount: 1,
+	}).Error; err != nil {
+		t.Fatalf("seed 1d: %v", err)
+	}
+	d.RunFlowSummaryCycle()
+
+	maxID := func() int64 {
+		var n int64
+		d.Gorm().Model(&models.FlowRollup{}).Select("COALESCE(MAX(id),0)").Scan(&n)
+		return n
+	}
+	if got := d.summaryWatermark("1d"); got != maxID() {
+		t.Fatalf("daily watermark is %d after the first pass, want %d", got, maxID())
+	}
+
+	// Now a stream of rows the daily tier sees but does not own: recent 5m rows,
+	// far outside the 1d tier's span.
+	recent := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Hour)
+	for i := 0; i < 3; i++ {
+		if err := d.Gorm().Create(&models.FlowRollup{
+			Timestamp: recent.Add(time.Duration(i) * 5 * time.Minute),
+			DeviceID:  1, IntervalType: "5m",
+			SrcAddr: "10.0.0.2", DstAddr: "1.1.1.1", DstPort: 53, Protocol: 17,
+			BytesSum: 100, PacketsSum: 1, FlowCount: 1,
+		}).Error; err != nil {
+			t.Fatalf("seed recent 5m: %v", err)
+		}
+	}
+	d.RunFlowSummaryCycle()
+
+	if got := d.summaryWatermark("1d"); got != maxID() {
+		t.Errorf("the daily tier's watermark is %d, want %d. It saw rows it does not own and "+
+			"wrote nothing; keying the advance on having written something leaves it stuck, and "+
+			"its dirty scan then widens every cycle forever.", got, maxID())
 	}
 }

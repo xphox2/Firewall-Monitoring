@@ -488,7 +488,15 @@ func (d *Database) TryAcquirePollerWorkLock() (release func(), acquired bool) {
 // ITSELF, so two pollers do not recompute the same buckets. It reads
 // flow_rollups and writes only the summary tables, and because it RECOMPUTES a
 // bucket rather than merging, a rollup cycle mutating flow_rollups underneath it
-// is harmless: the affected buckets are simply redirtied and recomputed.
+// is harmless: promotion INSERTS before deleting, so the new ids redirty the
+// affected buckets.
+//
+// One gap that argument does NOT cover: retention cleanup DELETES flow_rollups
+// rows, and a delete leaves no new id, so a bucket summarised mid-delete at the
+// retention edge is an undercount nothing redirties. It is unreachable today —
+// retention is 365 days and the oldest rolled-up row on production is about six
+// months old — but if the two windows ever meet, the summary's oldest bucket is
+// where to look.
 const flowSummaryLockKey int64 = 0x464c4f5753554d4d // "FLOWSUMM"
 
 // TryAcquireFlowSummaryLock is TryAcquirePollerWorkLock for the summary pass,

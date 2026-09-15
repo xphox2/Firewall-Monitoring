@@ -405,6 +405,13 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 	// the first error, so a single poison bucket (a timeout, a constraint
 	// violation) meant nothing after it was ever summarised — silently, behind
 	// one log line. Record and move on.
+	//
+	// Be honest about the remaining cost: a PERMANENTLY failing bucket is retried
+	// every cycle, everything after it is recomputed every cycle up to the time
+	// bound, and firstErr pins the watermark so the dirty scan keeps widening.
+	// That is a deliberate trade — loud and degrading beats silent and wrong —
+	// but it is not free, and an operator seeing this log line repeatedly should
+	// act on it.
 	run := func(b time.Time) (keepGoing, succeeded bool) {
 		if time.Now().After(deadline) {
 			return false, false
@@ -475,6 +482,7 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 		// reaches the rest. The list is ordered oldest-first, so remembering how
 		// far the epoch got is enough.
 		lastDone := cursor
+		cursorContiguous := true
 		for _, b := range dirty {
 			// A bucket outside this tier's range is not this tier's problem, but
 			// it HAS been seen — it must not hold the watermark back.
@@ -489,8 +497,16 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 				break
 			}
 			keepGoing, ok := run(b)
-			if ok {
+			// CONTIGUOUS, like the backfill loop. Advancing lastDone past a
+			// failure would drop the failed bucket below the cursor, where the
+			// next pass skips it — and because it was skipped rather than run,
+			// firstErr is clear, the epoch completes, and the watermark buries
+			// it. Stopping the cursor at the first failure keeps it above the
+			// line so it is retried.
+			if ok && cursorContiguous {
 				lastDone = b
+			} else if !ok {
+				cursorContiguous = false
 			}
 			if !keepGoing {
 				dirtyComplete = false
@@ -520,6 +536,19 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 	// failed bucket is retried every cycle while later buckets still progress.
 	{
 		filled := d.summaryFillMarker(tier.interval)
+		// Self-heal if the summary was emptied underneath us. MAX(summary
+		// timestamp) used to re-backfill automatically after a TRUNCATE or a
+		// failed migration; a persisted marker does not, so a cleared table would
+		// be a permanent hole up to the marker. One cheap existence check buys
+		// that back.
+		if !filled.IsZero() {
+			var any int64
+			if err := d.db.Session(&gorm.Session{}).Model(&models.FlowSummary{}).
+				Where("interval_type = ?", tier.interval).Limit(1).Count(&any).Error; err == nil && any == 0 {
+				log.Printf("Flow summary: %s tier has a fill marker but no rows; restarting its backfill", tier.interval)
+				filled = time.Time{}
+			}
+		}
 		start := ownedFrom
 		if !filled.IsZero() {
 			if next := tier.bucketOf(filled).Add(tier.width); next.After(start) {
