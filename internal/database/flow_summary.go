@@ -409,10 +409,14 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 	// one mechanism. Letting the walk finish deletes all of them.
 	//
 	// It is affordable because the list is bounded by what CHANGED since the last
-	// pass, not by history: in steady state that is the current hour plus the
-	// promotion boundary day, roughly 17s. After an outage it is larger — and it
-	// still has to be done, because those buckets are genuinely stale. The pass
-	// holds its own advisory lock, so a long walk delays nothing but itself.
+	// pass, not by history. Measured on production over one cycle's worth of
+	// inserts (~30k rollup rows): the changes touch exactly ONE distinct hour
+	// bucket and ONE distinct day bucket. So the steady-state walk is a single
+	// hourly bucket (~1.3s) plus the promotion boundary day (~14s).
+	//
+	// After an outage it is larger — and it still has to be done, because those
+	// buckets are genuinely stale. The pass holds its own advisory lock, so a
+	// long walk delays nothing but itself.
 	//
 	// Detection reads EVERY tier this bucket sums, not just the range sources:
 	// late data replayed into the 1h tier must redirty a day the daily tier owns,
