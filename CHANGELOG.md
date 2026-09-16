@@ -3,6 +3,12 @@ All notable changes to this project are documented in this file.
 
 ## [0.11.249] - 2026-09-16
 
+### Security
+
+- Bumped `google.golang.org/grpc` to v1.83.1 for GO-2026-6348. It arrives indirectly
+  through the OpenTelemetry OTLP trace exporter, and `govulncheck` reports the
+  calling path as reachable, so this is a real fix rather than a graph-only bump.
+
 ### Fixed — the 30-day and 90-day Flows ranges now return real figures
 
 The summary tables landed in v0.11.248 and have finished backfilling; this points
