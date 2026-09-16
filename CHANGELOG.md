@@ -3,6 +3,21 @@ All notable changes to this project are documented in this file.
 
 ## [0.11.249] - 2026-09-16
 
+### Changed
+
+- The summariser skips a bucket with no source rows without opening a
+  transaction. A tier's walk legitimately crosses empty buckets — its start is
+  anchored on the tier below's reach, and quiet periods leave gaps — and each was
+  costing three deletes plus a dozen aggregate queries to write nothing. One
+  indexed existence probe replaces all of it; the slowest test in the package
+  fell from 2.65s to 0.79s.
+- CI's race-detector timeout goes from 5 to 10 minutes. `internal/database` is
+  388 tests at ~93s locally under `-race` *without* this release's additions, and
+  CI runners are roughly 3x slower, which already put it at ~298s against a 300s
+  limit. The timeout exists to catch a hang, and 10 minutes (Go's own default)
+  still does that with margin; a gate that fails at random teaches people to
+  re-run rather than read.
+
 ### Security
 
 - Bumped `google.golang.org/grpc` to v1.83.1 for GO-2026-6348. It arrives indirectly
