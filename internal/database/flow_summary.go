@@ -514,6 +514,27 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 				filled = time.Time{}
 			}
 		}
+		// If this tier now owns buckets OLDER than anything it has built, its
+		// ownership boundary has moved down and the fill marker is stale — it
+		// points at the far end of a range that no longer starts where it did.
+		// Reset it so the newly acquired span is backfilled.
+		//
+		// This happens for real: the daily tier yields the promotion boundary day
+		// once the finer tiers hold part of it (see yieldTo), which hands that day
+		// to this tier. Without this the marker sat weeks ahead, the day was never
+		// built here, and it stayed represented only by the stale daily row that
+		// the yield was meant to replace.
+		if !filled.IsZero() {
+			if oldestBuilt, ok, err := aggregateTimestamp(
+				d.db.Session(&gorm.Session{}).Model(&models.FlowSummary{}).
+					Where("interval_type = ?", tier.interval),
+				"MIN(timestamp)"); err == nil && ok && ownedFrom.Before(tier.bucketOf(oldestBuilt)) {
+				log.Printf("Flow summary: %s tier acquired buckets below %s; restarting its backfill",
+					tier.interval, tier.bucketOf(oldestBuilt).Format(time.RFC3339))
+				filled = time.Time{}
+			}
+		}
+
 		start := ownedFrom
 		if !filled.IsZero() {
 			if next := tier.bucketOf(filled).Add(tier.width); next.After(start) {
@@ -688,6 +709,21 @@ func (d *Database) summariseBucket(tier flowSummaryTier, bucket time.Time) error
 				if err := tx.Where("interval_type = ? AND timestamp >= ? AND timestamp < ?", "1h", bucket, end).
 					Delete(m).Error; err != nil {
 					return fmt.Errorf("supersede hourly rows: %w", err)
+				}
+			}
+		}
+
+		// And the reverse, for the same reason. When the daily tier YIELDS a day
+		// back (see yieldTo), the daily row it wrote earlier is stale: this tier
+		// now holds that day hour by hour, and leaving both would double-count on
+		// read. The floor guarantees this tier never writes into a day the daily
+		// tier still owns, so this can only ever remove a superseded row.
+		if tier.interval == "1h" {
+			dayStart := time.Date(bucket.Year(), bucket.Month(), bucket.Day(), 0, 0, 0, 0, time.UTC)
+			for _, m := range []interface{}{&models.FlowSummary{}, &models.FlowSummaryTop{}, &models.FlowSummaryBucket{}} {
+				if err := tx.Where("interval_type = ? AND timestamp >= ? AND timestamp < ?",
+					"1d", dayStart, dayStart.Add(24*time.Hour)).Delete(m).Error; err != nil {
+					return fmt.Errorf("supersede stale daily row: %w", err)
 				}
 			}
 		}

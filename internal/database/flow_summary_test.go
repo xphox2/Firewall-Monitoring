@@ -734,3 +734,102 @@ func TestFlowSummary_LateDataDuringFirstPassIsNotBuried(t *testing.T) {
 			"the summary at %d bytes against %d in the source.", got, want)
 	}
 }
+
+// TestFlowSummary_YieldedDayIsRebuiltHourly pins the ownership TRANSITION, which
+// production exposed and the steady-state boundary test does not reach.
+//
+// A day summarised as daily, then handed to the hourly tier (because the finer
+// rollup tiers turn out to hold part of it), has to be rebuilt there AND its
+// stale daily row removed. Neither happened: the hourly tier's fill marker sat
+// weeks ahead so it never backfilled the day it had just acquired, and nothing
+// superseded the daily row the yield was meant to replace. The day stayed
+// represented only by a midnight-stamped row — exactly what yielding exists to
+// avoid, since a window cutoff falling inside that day then drops all of it.
+func TestFlowSummary_YieldedDayIsRebuiltHourly(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	day := time.Now().UTC().Add(-40 * 24 * time.Hour).Truncate(24 * time.Hour)
+
+	// A fully-promoted day: only the 1d tier holds it, so the daily tier owns it.
+	if err := d.Gorm().Create(&models.FlowRollup{
+		Timestamp: day, DeviceID: 1, IntervalType: "1d",
+		SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+		BytesSum: 1000, PacketsSum: 10, FlowCount: 1,
+	}).Error; err != nil {
+		t.Fatalf("seed 1d: %v", err)
+	}
+	// Recent traffic as well, so the HOURLY tier builds a fill marker far ahead of
+	// the old day. Without this the marker is zero and its backfill would start at
+	// ownedFrom anyway — which is what made an earlier version of this test pass
+	// with the reset removed.
+	recent := time.Now().UTC().Add(-4 * time.Hour).Truncate(time.Hour)
+	for h := 0; h < 3; h++ {
+		if err := d.Gorm().Create(&models.FlowRollup{
+			Timestamp: recent.Add(time.Duration(h)*time.Hour + 5*time.Minute),
+			DeviceID:  1, IntervalType: "5m",
+			SrcAddr: "10.0.0.3", DstAddr: "1.1.1.1", DstPort: 53, Protocol: 17,
+			BytesSum: 100, PacketsSum: 1, FlowCount: 1,
+		}).Error; err != nil {
+			t.Fatalf("seed recent: %v", err)
+		}
+	}
+	for i := 0; i < 5; i++ {
+		d.RunFlowSummaryCycle()
+	}
+	if d.summaryFillMarker("1h").Before(recent) {
+		t.Fatalf("precondition: hourly fill marker is %v, expected to be at or past %v",
+			d.summaryFillMarker("1h"), recent)
+	}
+	var dailyRows int64
+	d.Gorm().Model(&models.FlowSummary{}).
+		Where("interval_type = ? AND timestamp = ?", "1d", day).Count(&dailyRows)
+	if dailyRows == 0 {
+		t.Fatal("precondition: the day was not summarised as daily")
+	}
+
+	// Now the finer tier turns out to hold part of that same day — the shape a
+	// real promotion boundary always has. The daily tier must yield it.
+	for _, hour := range []int{6, 14} {
+		if err := d.Gorm().Create(&models.FlowRollup{
+			Timestamp: day.Add(time.Duration(hour) * time.Hour), DeviceID: 1, IntervalType: "1h",
+			SrcAddr: "10.0.0.2", DstAddr: "8.8.4.4", DstPort: 443, Protocol: 6,
+			BytesSum: 50000, PacketsSum: 500, FlowCount: 9,
+		}).Error; err != nil {
+			t.Fatalf("seed 1h hour %d: %v", hour, err)
+		}
+	}
+	for i := 0; i < 5; i++ {
+		d.RunFlowSummaryCycle()
+	}
+
+	d.Gorm().Model(&models.FlowSummary{}).
+		Where("interval_type = ? AND timestamp = ?", "1d", day).Count(&dailyRows)
+	if dailyRows != 0 {
+		t.Errorf("the yielded day still has %d daily summary row(s); the hourly tier now holds it "+
+			"and leaving both double-counts on read", dailyRows)
+	}
+
+	var hourlyRows int64
+	d.Gorm().Model(&models.FlowSummary{}).
+		Where("interval_type = ? AND timestamp >= ? AND timestamp < ?", "1h", day, day.Add(24*time.Hour)).
+		Count(&hourlyRows)
+	if hourlyRows == 0 {
+		t.Error("the yielded day was never rebuilt at hourly resolution; the fill marker sits ahead " +
+			"of the newly acquired span and must be reset when ownership moves down")
+	}
+
+	// And the day's traffic must all still be there.
+	var want, got uint64
+	d.Gorm().Model(&models.FlowRollup{}).
+		Where("timestamp >= ? AND timestamp < ?", day, day.Add(24*time.Hour)).
+		Select("COALESCE(SUM(bytes_sum),0)").Scan(&want)
+	d.Gorm().Model(&models.FlowSummary{}).
+		Where("timestamp >= ? AND timestamp < ?", day, day.Add(24*time.Hour)).
+		Select("COALESCE(SUM(bytes_sum),0)").Scan(&got)
+	if got != want {
+		t.Errorf("after the yield the day holds %d bytes in the summary against %d in the source",
+			got, want)
+	}
+	if want != 101000 {
+		t.Fatalf("the day's seed total is %d, expected 101000; the test is not measuring what it claims", want)
+	}
+}

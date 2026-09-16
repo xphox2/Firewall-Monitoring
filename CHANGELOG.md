@@ -1,6 +1,31 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.250] - 2026-09-16
+
+### Fixed — a day changing hands between summary tiers is now reconciled
+
+Found on production immediately after deploying v0.11.249. The daily tier yields
+the promotion boundary day once the finer rollup tiers hold part of it, which is
+what keeps that day at hourly resolution so a window cutoff falling inside it
+truncates the same way the live path does. But nothing reconciled the handover:
+
+- the hourly tier's backfill marker sat weeks ahead of the day it had just
+  acquired, so it never built it;
+- the daily row that the yield was meant to replace was never removed.
+
+The day therefore stayed represented only by a midnight-stamped daily row —
+precisely the shape yielding exists to avoid. A tier that acquires buckets older
+than anything it has built now resets its backfill marker, and the hourly tier
+supersedes a stale daily row the same way the daily tier already superseded
+hourly ones. The floor guarantees the hourly tier never writes into a day the
+daily tier still owns, so that can only ever remove a superseded row.
+
+Both directions are mutation-tested. An earlier version of the test passed with
+the marker reset removed, because its scenario never built a marker ahead in the
+first place — it now seeds recent traffic so the hourly tier has one, which is
+the shape production actually has.
+
 ## [0.11.249] - 2026-09-16
 
 ### Changed
