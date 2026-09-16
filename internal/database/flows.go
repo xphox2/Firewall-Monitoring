@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -563,6 +564,55 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 		return q
 	}
 
+	// --- Summary bases -------------------------------------------------------
+	//
+	// useSummary decides, once, whether this request reads the pre-aggregate
+	// instead of flow_rollups. Three conditions, all necessary:
+	//
+	//   - the window is wide enough to be worth it (below that the live path is
+	//     exact and quick, and exactness beats speed at the default range);
+	//   - the filter touches no high-cardinality dimension, which the summary
+	//     stores as per-bucket top-N rather than as a filterable column;
+	//   - the summary demonstrably COVERS the window. While a backfill is still
+	//     running its oldest bucket is later than the window start, and reading
+	//     it anyway would silently report a fraction of the range — precisely the
+	//     failure this whole change exists to remove.
+	useSummary := hours > flowSummaryMinHours && flowSummaryCompatible(filter) &&
+		d.summaryCoversWindow(cutoff)
+	// The top-talker panels cannot honour a filter on a cube dimension: their
+	// lists are computed per bucket across all protocols and categories. Showing
+	// unfiltered talkers beside filtered totals would be a new way to mislead, so
+	// they report degraded instead.
+	summaryTopsUsable := useSummary && !flowSummaryDimensionFiltered(filter)
+
+	// The cube carries the same column NAMES as flow_rollups for every dimension
+	// it holds, so the aggregate panels below run the same SQL against either —
+	// only the table changes.
+	newSummaryBase := func() *gorm.DB {
+		return applyCommonFilters(session().Model(&models.FlowSummary{}).
+			Where("interval_type IN ? AND timestamp > ?", flowSummaryReadIntervals, cutoff))
+	}
+	newFilteredSummaryBase := func() *gorm.DB {
+		return newSummaryBase().Where("scope_local = ?", false)
+	}
+	newSummaryTopBase := func() *gorm.DB {
+		q := session().Model(&models.FlowSummaryTop{}).
+			Where("interval_type IN ? AND timestamp > ?", flowSummaryReadIntervals, cutoff)
+		return applySummaryDeviceFilters(q, filter)
+	}
+	newSummaryBucketBase := func() *gorm.DB {
+		q := session().Model(&models.FlowSummaryBucket{}).
+			Where("interval_type IN ? AND timestamp > ?", flowSummaryReadIntervals, cutoff)
+		return applySummaryDeviceFilters(q, filter)
+	}
+	// aggBase is whichever table the dimension panels read. The cube carries the
+	// same column names as flow_rollups for every dimension it holds, so those
+	// panels run identical SQL either way — only the table changes.
+	aggBase := newRollupBase
+	if useSummary {
+		aggBase = newSummaryBase
+	}
+
 	// runRollup SCHEDULES one rolled-up panel; it does not run it. `query` fills
 	// the panel's own local variables, and `merge` folds them into the response.
 	// Queries run concurrently in flushRollups; merges run afterwards, one at a
@@ -698,12 +748,19 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 		// every panel. TotalPackets and the sampling figures were RAW-ONLY before
 		// this, which is why a 90d view reported 0.05% of its real packet count
 		// and the sampling chip always read 1:1.
-		runRollup("totals", newRollupBase, func(q *gorm.DB) error {
-			return q.Select("COALESCE(SUM(flow_count),0) as total_flows, COALESCE(SUM(bytes_sum),0) as total_bytes, " +
-				"COALESCE(SUM(packets_sum),0) as total_pkts, " +
-				"COALESCE(MIN(NULLIF(sampling_rate_avg,0)),0) as sampling_min, " +
-				"COALESCE(MAX(sampling_rate_avg),0) as sampling_max").
-				Scan(&rollupAgg).Error
+		// The cube carries no sampling column — the page reports a RANGE and that
+		// lives in flow_summary_buckets — so the summary form drops those two
+		// aggregates and a separate panel supplies them below.
+		totalsSelect := "COALESCE(SUM(flow_count),0) as total_flows, COALESCE(SUM(bytes_sum),0) as total_bytes, " +
+			"COALESCE(SUM(packets_sum),0) as total_pkts, " +
+			"COALESCE(MIN(NULLIF(sampling_rate_avg,0)),0) as sampling_min, " +
+			"COALESCE(MAX(sampling_rate_avg),0) as sampling_max"
+		if useSummary {
+			totalsSelect = "COALESCE(SUM(flow_count),0) as total_flows, COALESCE(SUM(bytes_sum),0) as total_bytes, " +
+				"COALESCE(SUM(packets_sum),0) as total_pkts"
+		}
+		runRollup("totals", aggBase, func(q *gorm.DB) error {
+			return q.Select(totalsSelect).Scan(&rollupAgg).Error
 		}, func() {
 			result.TotalFlows += rollupAgg.TotalFlows
 			result.TotalBytes += rollupAgg.TotalBytes
@@ -722,11 +779,25 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 		// is the upper bound (an address in both tiers is counted twice), and
 		// UniqueApproximate now says so instead of leaving the caller to guess.
 		for _, u := range []struct {
-			col string
-			dst *int64
-		}{{"src_addr", &result.UniqueSources}, {"dst_addr", &result.UniqueDests}} {
+			col    string
+			sumCol string
+			dst    *int64
+		}{{"src_addr", "distinct_src", &result.UniqueSources}, {"dst_addr", "distinct_dst", &result.UniqueDests}} {
 			u := u
 			var n int64
+			if useSummary {
+				// Per-bucket exact counts, summed. Still an upper bound on the
+				// window's true union — an address seen in two buckets counts
+				// twice — which is the same approximation the live path makes
+				// when it sums tiers, and UniqueApproximate says so either way.
+				runRollup("unique_"+u.col, newSummaryBucketBase, func(q *gorm.DB) error {
+					return q.Select("COALESCE(SUM(" + u.sumCol + "),0)").Scan(&n).Error
+				}, func() {
+					*u.dst += n
+					result.UniqueApproximate = true
+				})
+				continue
+			}
 			// The base here is d.db, not a rollup base: the rollup query is the
 			// SUBQUERY, wrapped so the planner can hash the distinct set instead
 			// of sorting it inside an aggregate.
@@ -738,6 +809,26 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 					*u.dst += n
 					result.UniqueApproximate = true
 				})
+		}
+
+		// The cube has no sampling column, so when reading the summary the range
+		// comes from the per-bucket table instead of riding along with the totals.
+		if useSummary {
+			var sampling struct {
+				Min float64
+				Max float64
+			}
+			runRollup("sampling", newSummaryBucketBase, func(q *gorm.DB) error {
+				return q.Select("COALESCE(MIN(NULLIF(sampling_rate_min,0)),0) as min, " +
+					"COALESCE(MAX(sampling_rate_max),0) as max").Scan(&sampling).Error
+			}, func() {
+				if sampling.Min > 0 && (result.SamplingRateMin == 0 || sampling.Min < result.SamplingRateMin) {
+					result.SamplingRateMin = sampling.Min
+				}
+				if sampling.Max > result.SamplingRateMax {
+					result.SamplingRateMax = sampling.Max
+				}
+			})
 		}
 	}
 
@@ -764,7 +855,7 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 			Packets uint64
 			Flows   int64
 		}
-		runRollup("local_traffic", newRollupBase, func(q *gorm.DB) error {
+		runRollup("local_traffic", aggBase, func(q *gorm.DB) error {
 			return q.Where("scope_local = ?", true).
 				Select("COALESCE(SUM(bytes_sum),0) as bytes, COALESCE(SUM(packets_sum),0) as packets, COALESCE(SUM(flow_count),0) as flows").
 				Scan(&localRollup).Error
@@ -783,6 +874,11 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 	}
 	newFilteredRollupBase := func() *gorm.DB {
 		return newRollupBase().Where("scope_local = ?", false)
+	}
+
+	filteredAggBase := newFilteredRollupBase
+	if useSummary {
+		filteredAggBase = newFilteredSummaryBase
 	}
 
 	// Protocol distribution (from raw; supplement with rollups).
@@ -853,7 +949,7 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 	// this panel was simply untrue.
 	finalizeProtocols()
 	if useRollups {
-		runRollup("protocols", newRollupBase, func(q *gorm.DB) error {
+		runRollup("protocols", aggBase, func(q *gorm.DB) error {
 			return q.Where("protocol <> 0").Select("protocol, SUM(flow_count) as count").Group("protocol").
 				Order("count DESC").Scan(&rollupProtos).Error
 		}, finalizeProtocols)
@@ -890,7 +986,7 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 			return
 		}
 		var rs []drow
-		runRollup("by_"+col, newRollupBase, func(q *gorm.DB) error {
+		runRollup("by_"+col, aggBase, func(q *gorm.DB) error {
 			return q.Select(col + " as v, SUM(flow_count) as count").Group(col).Scan(&rs).Error
 		}, func() {
 			for _, r := range rs {
@@ -929,7 +1025,7 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 		result.TopCountries = out
 		if useRollups {
 			var rollup []KeyCount
-			runRollup("top_countries", newFilteredRollupBase, func(q *gorm.DB) error {
+			runRollup("top_countries", filteredAggBase, func(q *gorm.DB) error {
 				var rows []grow
 				err := q.Where("dst_country <> ?", "").
 					Select("dst_country as k, SUM(bytes_sum) as total").
@@ -964,19 +1060,33 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 		result.TopASNs = out
 		if useRollups {
 			var rollup []KeyCount
-			runRollup("top_asns", newFilteredRollupBase, func(q *gorm.DB) error {
-				var rows []grow
-				err := q.Where("dst_asn <> 0").
-					Select("dst_asn as k, SUM(bytes_sum) as total").
-					Group("dst_asn").Order("total DESC").Limit(10).Scan(&rows).Error
-				rollup = rollup[:0]
-				for _, r := range rows {
-					rollup = append(rollup, KeyCount{Key: fmt.Sprintf("AS%d", r.K), Count: r.Total})
-				}
-				return err
-			}, func() {
-				result.TopASNs = mergeKeyCounts(out, rollup, 10)
-			})
+			mergeASNs := func() { result.TopASNs = mergeKeyCounts(out, rollup, 10) }
+			switch {
+			case summaryTopsUsable:
+				runRollup("top_asns", newSummaryTopBase, func(q *gorm.DB) error {
+					vals, err := flowSummaryTopValues(q, flowSummaryDimDstASN, 10)
+					rollup = rollup[:0]
+					for _, v := range vals {
+						// Stored bare so one column serves every dimension.
+						rollup = append(rollup, KeyCount{Key: "AS" + v.Key, Count: v.Count})
+					}
+					return err
+				}, mergeASNs)
+			case useSummary:
+				budget.skip("top_asns")
+			default:
+				runRollup("top_asns", newFilteredRollupBase, func(q *gorm.DB) error {
+					var rows []grow
+					err := q.Where("dst_asn <> 0").
+						Select("dst_asn as k, SUM(bytes_sum) as total").
+						Group("dst_asn").Order("total DESC").Limit(10).Scan(&rows).Error
+					rollup = rollup[:0]
+					for _, r := range rows {
+						rollup = append(rollup, KeyCount{Key: fmt.Sprintf("AS%d", r.K), Count: r.Total})
+					}
+					return err
+				}, mergeASNs)
+			}
 		}
 	}
 	geoTopCountry()
@@ -987,13 +1097,25 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 	if useRollups {
 		rawSrc := result.TopSources
 		var rollupSrc []KeyCount
-		runRollup("top_sources", newFilteredRollupBase, func(q *gorm.DB) error {
-			var err error
-			rollupSrc, err = topAddrsByBytesRollupQ(q, "src_addr", 10)
-			return err
-		}, func() {
-			result.TopSources = mergeKeyCounts(rawSrc, rollupSrc, 10)
-		})
+		if summaryTopsUsable {
+			runRollup("top_sources", newSummaryTopBase, func(q *gorm.DB) error {
+				var err error
+				rollupSrc, err = flowSummaryTopValues(q, flowSummaryDimSrcAddr, 10)
+				return err
+			}, func() {
+				result.TopSources = mergeKeyCounts(rawSrc, rollupSrc, 10)
+			})
+		} else if useSummary {
+			budget.skip("top_sources")
+		} else {
+			runRollup("top_sources", newFilteredRollupBase, func(q *gorm.DB) error {
+				var err error
+				rollupSrc, err = topAddrsByBytesRollupQ(q, "src_addr", 10)
+				return err
+			}, func() {
+				result.TopSources = mergeKeyCounts(rawSrc, rollupSrc, 10)
+			})
+		}
 	}
 
 	// Top destinations by bytes (filtered: excludes port-0 local traffic)
@@ -1001,13 +1123,25 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 	if useRollups {
 		rawDst := result.TopDestinations
 		var rollupDst []KeyCount
-		runRollup("top_destinations", newFilteredRollupBase, func(q *gorm.DB) error {
-			var err error
-			rollupDst, err = topAddrsByBytesRollupQ(q, "dst_addr", 10)
-			return err
-		}, func() {
-			result.TopDestinations = mergeKeyCounts(rawDst, rollupDst, 10)
-		})
+		if summaryTopsUsable {
+			runRollup("top_destinations", newSummaryTopBase, func(q *gorm.DB) error {
+				var err error
+				rollupDst, err = flowSummaryTopValues(q, flowSummaryDimDstAddr, 10)
+				return err
+			}, func() {
+				result.TopDestinations = mergeKeyCounts(rawDst, rollupDst, 10)
+			})
+		} else if useSummary {
+			budget.skip("top_destinations")
+		} else {
+			runRollup("top_destinations", newFilteredRollupBase, func(q *gorm.DB) error {
+				var err error
+				rollupDst, err = topAddrsByBytesRollupQ(q, "dst_addr", 10)
+				return err
+			}, func() {
+				result.TopDestinations = mergeKeyCounts(rawDst, rollupDst, 10)
+			})
+		}
 	}
 
 	// Top conversations (filtered: excludes port-0 local traffic)
@@ -1048,52 +1182,94 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 			Bytes    uint64
 			Packets  uint64
 		}
-		runRollup("top_conversations", newFilteredRollupBase, func(q *gorm.DB) error {
+		convoQuery := func(q *gorm.DB) error {
 			return q.Select("src_addr, dst_addr, dst_port, protocol, SUM(bytes_sum) as bytes, SUM(packets_sum) as packets").
 				Group("src_addr, dst_addr, dst_port, protocol").
 				Order("bytes DESC").Limit(10).Scan(&rollupConvos).Error
-		}, func() {
-			if len(rollupConvos) == 0 {
-				return
+		}
+		convoBase := newFilteredRollupBase
+		if summaryTopsUsable {
+			convoBase = newSummaryTopBase
+			// The summary packs the tuple into one text column so a single table
+			// can serve every high-cardinality dimension; unpack it back into the
+			// same shape the raw side produces.
+			convoQuery = func(q *gorm.DB) error {
+				var rows []struct {
+					Value   string
+					Bytes   uint64
+					Packets uint64
+				}
+				err := q.Where("dimension = ? AND scope_local = ?", flowSummaryDimConversation, false).
+					Select("value, COALESCE(SUM(bytes_sum),0) as bytes, COALESCE(SUM(packets_sum),0) as packets").
+					Group("value").Order("bytes DESC").Order("value ASC").Limit(10).Scan(&rows).Error
+				rollupConvos = rollupConvos[:0]
+				for _, r := range rows {
+					parts := strings.Split(r.Value, "|")
+					if len(parts) != 4 {
+						continue
+					}
+					port, _ := strconv.ParseUint(parts[2], 10, 16)
+					proto, _ := strconv.ParseUint(parts[3], 10, 8)
+					rollupConvos = append(rollupConvos, struct {
+						SrcAddr  string
+						DstAddr  string
+						DstPort  uint16
+						Protocol uint8
+						Bytes    uint64
+						Packets  uint64
+					}{parts[0], parts[1], uint16(port), uint8(proto), r.Bytes, r.Packets})
+				}
+				return err
 			}
-			type convoKey struct {
-				Src, Dst string
-				Port     uint16
-				Proto    uint8
-			}
-			merged := make(map[convoKey]*FlowConversation, len(convos)+len(rollupConvos))
-			order := make([]convoKey, 0, len(convos)+len(rollupConvos))
-			add := func(src, dst string, port uint16, proto uint8, bytes, packets uint64) {
-				k := convoKey{src, dst, port, proto}
-				if existing, ok := merged[k]; ok {
-					existing.Bytes += bytes
-					existing.Packets += packets
+		} else if useSummary {
+			convoBase = nil
+		}
+		if convoBase == nil {
+			budget.skip("top_conversations")
+		} else {
+			runRollup("top_conversations", convoBase, convoQuery, func() {
+				if len(rollupConvos) == 0 {
 					return
 				}
-				merged[k] = &FlowConversation{
-					SrcAddr: src, DstAddr: dst, DstPort: port,
-					Protocol: protoName(proto), Bytes: bytes, Packets: packets,
+				type convoKey struct {
+					Src, Dst string
+					Port     uint16
+					Proto    uint8
 				}
-				order = append(order, k)
-			}
-			for _, c := range convos {
-				add(c.SrcAddr, c.DstAddr, c.DstPort, c.Protocol, c.Bytes, c.Packets)
-			}
-			for _, c := range rollupConvos {
-				add(c.SrcAddr, c.DstAddr, c.DstPort, c.Protocol, c.Bytes, c.Packets)
-			}
-			out := make([]FlowConversation, 0, len(order))
-			for _, k := range order {
-				out = append(out, *merged[k])
-			}
-			sort.SliceStable(out, func(i, j int) bool { return out[i].Bytes > out[j].Bytes })
-			if len(out) > 10 {
-				out = out[:10]
-			}
-			// REPLACES the raw-only list published below, rather than appending
-			// to it — the merge already folded those rows in.
-			result.TopConversations = out
-		})
+				merged := make(map[convoKey]*FlowConversation, len(convos)+len(rollupConvos))
+				order := make([]convoKey, 0, len(convos)+len(rollupConvos))
+				add := func(src, dst string, port uint16, proto uint8, bytes, packets uint64) {
+					k := convoKey{src, dst, port, proto}
+					if existing, ok := merged[k]; ok {
+						existing.Bytes += bytes
+						existing.Packets += packets
+						return
+					}
+					merged[k] = &FlowConversation{
+						SrcAddr: src, DstAddr: dst, DstPort: port,
+						Protocol: protoName(proto), Bytes: bytes, Packets: packets,
+					}
+					order = append(order, k)
+				}
+				for _, c := range convos {
+					add(c.SrcAddr, c.DstAddr, c.DstPort, c.Protocol, c.Bytes, c.Packets)
+				}
+				for _, c := range rollupConvos {
+					add(c.SrcAddr, c.DstAddr, c.DstPort, c.Protocol, c.Bytes, c.Packets)
+				}
+				out := make([]FlowConversation, 0, len(order))
+				for _, k := range order {
+					out = append(out, *merged[k])
+				}
+				sort.SliceStable(out, func(i, j int) bool { return out[i].Bytes > out[j].Bytes })
+				if len(out) > 10 {
+					out = out[:10]
+				}
+				// REPLACES the raw-only list published below, rather than appending
+				// to it — the merge already folded those rows in.
+				result.TopConversations = out
+			})
+		}
 	}
 
 	// Top destination ports
@@ -1120,18 +1296,41 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 			Total int64
 		}
 		rawPorts := result.TopPorts
-		runRollup("top_ports", newFilteredRollupBase, func(q *gorm.DB) error {
-			return q.Select("dst_port as port, SUM(bytes_sum) as total").
-				Where("dst_port > 0").Group("dst_port").Order("total DESC").Limit(10).Scan(&rollupPorts).Error
-		}, func() {
-			rollupKC := make([]KeyCount, 0, len(rollupPorts))
-			for _, p := range rollupPorts {
-				rollupKC = append(rollupKC, KeyCount{Key: portName(p.Port), Count: p.Total})
+		var summaryPorts []KeyCount
+		mergePorts := func() {
+			rollupKC := summaryPorts
+			if rollupKC == nil {
+				rollupKC = make([]KeyCount, 0, len(rollupPorts))
+				for _, p := range rollupPorts {
+					rollupKC = append(rollupKC, KeyCount{Key: portName(p.Port), Count: p.Total})
+				}
 			}
 			if len(rollupKC) > 0 {
 				result.TopPorts = mergeKeyCounts(rawPorts, rollupKC, 10)
 			}
-		})
+		}
+		switch {
+		case summaryTopsUsable:
+			runRollup("top_ports", newSummaryTopBase, func(q *gorm.DB) error {
+				vals, err := flowSummaryTopValues(q, flowSummaryDimDstPort, 10)
+				summaryPorts = make([]KeyCount, 0, len(vals))
+				for _, v := range vals {
+					// The value is the port as text; name it the same way the raw
+					// side does so the merge keys line up.
+					if n, convErr := strconv.ParseUint(v.Key, 10, 16); convErr == nil {
+						summaryPorts = append(summaryPorts, KeyCount{Key: portName(uint16(n)), Count: v.Count})
+					}
+				}
+				return err
+			}, mergePorts)
+		case useSummary:
+			budget.skip("top_ports")
+		default:
+			runRollup("top_ports", newFilteredRollupBase, func(q *gorm.DB) error {
+				return q.Select("dst_port as port, SUM(bytes_sum) as total").
+					Where("dst_port > 0").Group("dst_port").Order("total DESC").Limit(10).Scan(&rollupPorts).Error
+			}, mergePorts)
+		}
 	}
 
 	// Adaptive time bucketing for bytes over time.
@@ -1187,7 +1386,7 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 			Bucket string
 			Total  int64
 		}
-		runRollup("bytes_over_time", newRollupBase, func(q *gorm.DB) error {
+		runRollup("bytes_over_time", aggBase, func(q *gorm.DB) error {
 			return q.Select(d.dialect.TimeBucket(bucketUnit, "timestamp") + " as bucket, SUM(bytes_sum) as total").
 				Group("bucket").Order("bucket ASC").Scan(&rollupTS).Error
 		}, func() {

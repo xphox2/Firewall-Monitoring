@@ -1,6 +1,43 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.249] - 2026-09-16
+
+### Fixed — the 30-day and 90-day Flows ranges now return real figures
+
+The summary tables landed in v0.11.248 and have finished backfilling; this points
+the page at them.
+
+Before: those windows aggregated roughly 76M and 92M rows of `flow_rollups`, every
+rolled-up panel was cancelled by the 30-second statement timeout, and the page
+fell back to the raw window — about an hour — under a "90 days" label. v0.11.247
+made that fallback visible rather than silent. This makes it unnecessary.
+
+**Measured on production: a 90-day aggregate returns in 113 ms from the summary
+against 31,595 ms from `flow_rollups`.** That second number is the point, because
+it is over the timeout. Both paths return identical figures — 342,031,562 flows,
+3,949,471,419,102 bytes, 7,079,816,102 packets — which is also the proof that the
+two summary tiers are disjoint, since an overlap would make the summary larger.
+
+The summary is used only when all three hold:
+
+- the window is wider than 24 hours (below that the live path is exact and quick
+  at 9.5 s, and exactness beats speed at the default range — the summary's
+  top-talker lists are approximate by construction);
+- the filter touches no high-cardinality dimension, since the summary stores
+  source, destination, port and ASN as per-bucket top-50 lists rather than as
+  filterable columns;
+- **the summary demonstrably covers the window.** While a backfill is still
+  running its oldest bucket is later than the window start, and reading it anyway
+  would silently report a fraction of the range. That is the failure this whole
+  programme exists to remove, so it is guarded rather than assumed.
+
+Any combination of the low-cardinality dimensions — protocol, application
+category, direction, scope, destination country, flow source, firewall event — is
+answered exactly from the cube, including the protocol pill row. Under such a
+filter the top-talker panels report **degraded** instead of showing unfiltered
+talkers beside filtered totals, which would be a new way to mislead.
+
 ## [0.11.248] - 2026-09-14
 
 ### Added — flow summary tables, so wide windows have something fast to read
