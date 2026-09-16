@@ -628,6 +628,32 @@ func (d *Database) summariseBucket(tier flowSummaryTier, bucket time.Time) error
 	}
 	end := bucket.Add(tier.width)
 
+	// Skip empty buckets without opening a transaction.
+	//
+	// A tier's walk can legitimately cross buckets with no source rows — its
+	// start is anchored on the tier below's reach, and a quiet period leaves
+	// gaps — and each one was costing three DELETEs plus a dozen aggregate
+	// queries inside a transaction to write nothing. One indexed existence probe
+	// replaces all of it. A bucket that HAD rows and no longer does still needs
+	// the clearing pass, so the probe also checks for existing summary rows.
+	var srcProbe []uint
+	if err := d.db.Session(&gorm.Session{}).Model(&models.FlowRollup{}).
+		Where("interval_type IN ? AND timestamp >= ? AND timestamp < ?", tier.sumSources, bucket, end).
+		Select("id").Limit(1).Find(&srcProbe).Error; err != nil {
+		return fmt.Errorf("probe bucket: %w", err)
+	}
+	if len(srcProbe) == 0 {
+		var sumProbe []uint
+		if err := d.db.Session(&gorm.Session{}).Model(&models.FlowSummary{}).
+			Where("interval_type = ? AND timestamp = ?", tier.interval, bucket).
+			Select("id").Limit(1).Find(&sumProbe).Error; err != nil {
+			return fmt.Errorf("probe summary bucket: %w", err)
+		}
+		if len(sumProbe) == 0 {
+			return nil
+		}
+	}
+
 	return d.db.Transaction(func(tx *gorm.DB) error {
 		src := func() *gorm.DB {
 			return tx.Model(&models.FlowRollup{}).
