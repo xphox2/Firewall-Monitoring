@@ -103,6 +103,20 @@ type flowSummaryTier struct {
 	// every tier inside the bucket makes the daily row complete, which is what
 	// makes superseding the hourly rows safe.
 	sumSources []string
+	// yieldTo names finer rollup tiers whose presence DISQUALIFIES a bucket from
+	// this tier. It exists for the promotion boundary day, which is always
+	// half-promoted: the 1d rollup tier holds its early hours while the 1h tier
+	// still holds the rest.
+	//
+	// Without this the daily tier claimed that day, superseded its hourly summary
+	// rows, and left the whole day represented by one row stamped at midnight.
+	// A 30-day cutoff falls in the middle of that day, and `timestamp > cutoff`
+	// then drops the entire bucket — measured on production, the 30-day window
+	// came out 8.34 GB and 1.86M flows short against the live path, because live
+	// still had those hours stamped hour-by-hour. Leaving the day at hourly
+	// resolution until promotion finishes it makes both paths truncate at the
+	// same boundary.
+	yieldTo    []string
 	width      time.Duration
 	bucketOf   func(time.Time) time.Time
 	maxPerPass int
@@ -116,15 +130,22 @@ var flowSummaryTiers = []flowSummaryTier{
 	{
 		interval:     "1h",
 		rangeSources: []string{"5m", "1h"},
-		sumSources:   []string{"5m", "1h"},
-		width:        time.Hour,
-		bucketOf:     func(t time.Time) time.Time { return t.UTC().Truncate(time.Hour) },
-		maxPerPass:   0, // time-bounded only
+		// Sums the 1d tier too, even though it never OWNS a fully-promoted day.
+		// A day the daily tier yields (see yieldTo) still holds the 1d row for
+		// its already-promoted hours, stamped at midnight; without this that row
+		// belongs to neither tier and its traffic disappears. It lands in the
+		// 00:00 bucket, which is exactly where the live path puts it too — the
+		// rollup row carries that stamp — so the two agree.
+		sumSources: []string{"5m", "1h", "1d"},
+		width:      time.Hour,
+		bucketOf:   func(t time.Time) time.Time { return t.UTC().Truncate(time.Hour) },
+		maxPerPass: 0, // time-bounded only
 	},
 	{
 		interval:     "1d",
 		rangeSources: []string{"1d"},
 		sumSources:   []string{"5m", "1h", "1d"},
+		yieldTo:      []string{"5m", "1h"},
 		width:        24 * time.Hour,
 		bucketOf: func(t time.Time) time.Time {
 			u := t.UTC()
@@ -159,6 +180,15 @@ func (d *Database) RunFlowSummaryCycle() bool {
 		}
 		if _, newest, ok, err := d.tierTimeBounds(tier.rangeSources); err == nil && ok {
 			dailyFloor = tier.bucketOf(newest).Add(tier.width)
+			// Must mirror the yieldTo cap above, or the day the daily tier gave
+			// up would sit above the hourly tier's floor and belong to neither.
+			if len(tier.yieldTo) > 0 {
+				if finerOldest, _, ok2, err2 := d.tierTimeBounds(tier.yieldTo); err2 == nil && ok2 {
+					if boundary := tier.bucketOf(finerOldest); boundary.Before(dailyFloor) {
+						dailyFloor = boundary
+					}
+				}
+			}
 		}
 		// On error the floor stays zero and the hourly tier temporarily owns
 		// everything. That is self-healing rather than harmful: the same rows
@@ -383,13 +413,27 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 		return written, nil
 	}
 	ownedFrom := tier.bucketOf(oldest)
-	// A lower tier's reach takes precedence: the hourly tier does not own days
-	// the daily tier has already collapsed.
-	if !floor.IsZero() && floor.After(ownedFrom) {
+	// The lower tier's reach defines this one's start exactly — not merely a
+	// minimum. Taking max(oldest, floor) left a hole at the promotion boundary:
+	// when the daily tier YIELDS a half-promoted day (see yieldTo) the floor drops
+	// to that day's midnight, but this tier's own range sources start at its first
+	// hour, so the midnight bucket — which holds the day's already-promoted 1d row
+	// — belonged to neither tier and its traffic vanished. Anchoring on the floor
+	// closes that. Buckets below the first real row are simply empty and write
+	// nothing.
+	if !floor.IsZero() {
 		ownedFrom = tier.bucketOf(floor)
 	}
 	ownedTo := tier.bucketOf(newest).Add(tier.width)
-	if ownedTo.Before(ownedFrom) {
+	// Give up any bucket a finer tier still has rows in — see yieldTo.
+	if len(tier.yieldTo) > 0 {
+		if finerOldest, _, ok, err := d.tierTimeBounds(tier.yieldTo); err == nil && ok {
+			if boundary := tier.bucketOf(finerOldest); boundary.Before(ownedTo) {
+				ownedTo = boundary
+			}
+		}
+	}
+	if !ownedTo.After(ownedFrom) {
 		return written, nil
 	}
 	owns := func(b time.Time) bool { return !b.Before(ownedFrom) && b.Before(ownedTo) }

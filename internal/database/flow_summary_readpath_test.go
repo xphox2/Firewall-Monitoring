@@ -79,8 +79,14 @@ func TestFlowSummaryRead_AgreesWithTheLivePath(t *testing.T) {
 
 	summary, live := statsBothWays(t, d, 24, FlowStatsFilter{})
 
-	if summary.Degraded {
-		t.Fatalf("the summary path reported degraded: %v", summary.DegradedBlocks)
+	// The unique-address panels ARE expected to degrade: summing per-bucket
+	// distinct counts is a different quantity, not an approximation of the union,
+	// so the summary declines to publish them. Nothing else may degrade.
+	for _, b := range summary.DegradedBlocks {
+		if b != "unique_src_addr" && b != "unique_dst_addr" {
+			t.Fatalf("the summary path degraded %q; only the unique-address panels should (%v)",
+				b, summary.DegradedBlocks)
+		}
 	}
 	if summary.TotalBytes != live.TotalBytes {
 		t.Errorf("TotalBytes: summary %d, live %d", summary.TotalBytes, live.TotalBytes)
@@ -106,15 +112,28 @@ func TestFlowSummaryRead_AgreesWithTheLivePath(t *testing.T) {
 		t.Fatal("the seed produced no bytes; the comparison proves nothing")
 	}
 
-	sameKeys := func(name string, a, b []KeyCount) {
+	// SYMMETRIC on purpose. An earlier version only looked up the live keys in
+	// the summary map, so a summary list containing extra or invented entries
+	// compared equal — a mutation that appended a bogus key to every summary
+	// panel passed the whole suite.
+	sameKeys := func(name string, summaryList, liveList []KeyCount) {
 		t.Helper()
-		am := map[string]int64{}
-		for _, k := range a {
-			am[k.Key] = k.Count
+		sm := map[string]int64{}
+		for _, k := range summaryList {
+			sm[k.Key] = k.Count
 		}
-		for _, k := range b {
-			if am[k.Key] != k.Count {
-				t.Errorf("%s[%q]: summary %d, live %d", name, k.Key, am[k.Key], k.Count)
+		lm := map[string]int64{}
+		for _, k := range liveList {
+			lm[k.Key] = k.Count
+		}
+		for k, v := range lm {
+			if sm[k] != v {
+				t.Errorf("%s[%q]: summary %d, live %d", name, k, sm[k], v)
+			}
+		}
+		for k, v := range sm {
+			if _, ok := lm[k]; !ok {
+				t.Errorf("%s[%q]=%d is in the summary but not the live result", name, k, v)
 			}
 		}
 	}
@@ -228,5 +247,169 @@ func TestFlowSummaryRead_DegradesTopPanelsUnderADimensionFilter(t *testing.T) {
 		if !named[want] {
 			t.Errorf("DegradedBlocks does not name %q (got %v)", want, res.DegradedBlocks)
 		}
+	}
+}
+
+// TestFlowSummaryRead_HonoursTheProbeFilter pins a defect the summary path
+// reintroduced one table over from where v0.11.247 fixed it.
+//
+// The cube base built its filters with applyCommonFilters alone, which does NOT
+// carry the probe filter — the raw base applies it by column and the rollup base
+// by device subquery. So a probe-filtered wide window served EVERY device's
+// traffic, exactly the "picked the only probe and the numbers changed" trap the
+// original fix existed to close.
+func TestFlowSummaryRead_HonoursTheProbeFilter(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	base := time.Now().UTC().Add(-8 * time.Hour).Truncate(time.Hour)
+
+	probeA, probeB := uint(1), uint(2)
+	for _, dev := range []struct {
+		name  string
+		ip    string
+		probe *uint
+	}{{"fw-a", "192.0.2.1", &probeA}, {"fw-b", "192.0.2.2", &probeB}} {
+		if err := d.Gorm().Create(&models.Device{
+			Name: dev.name, IPAddress: dev.ip, Vendor: "fortigate", ProbeID: dev.probe,
+		}).Error; err != nil {
+			t.Fatalf("seed device %s: %v", dev.name, err)
+		}
+	}
+	var devs []models.Device
+	if err := d.Gorm().Order("id").Find(&devs).Error; err != nil || len(devs) < 2 {
+		t.Fatalf("load devices: %v (%d found)", err, len(devs))
+	}
+
+	for i, dev := range devs {
+		for h := 0; h < 4; h++ {
+			if err := d.Gorm().Create(&models.FlowRollup{
+				Timestamp: base.Add(time.Duration(h)*time.Hour + 5*time.Minute),
+				DeviceID:  dev.ID, IntervalType: "5m",
+				SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+				BytesSum: uint64(1000 * (i + 1)), PacketsSum: 1, FlowCount: 1,
+			}).Error; err != nil {
+				t.Fatalf("seed rollup: %v", err)
+			}
+		}
+	}
+	for i := 0; i < 4; i++ {
+		d.RunFlowSummaryCycle()
+	}
+
+	summary, live := statsBothWays(t, d, 24, FlowStatsFilter{ProbeID: probeA})
+	if summary.TotalBytes != live.TotalBytes {
+		t.Errorf("probe-filtered TotalBytes: summary %d, live %d. The cube base must apply the "+
+			"probe filter; applyCommonFilters does not carry it.", summary.TotalBytes, live.TotalBytes)
+	}
+	unfiltered, _ := statsBothWays(t, d, 24, FlowStatsFilter{})
+	if summary.TotalBytes >= unfiltered.TotalBytes {
+		t.Errorf("the probe filter did not narrow on the summary path: filtered %d, unfiltered %d",
+			summary.TotalBytes, unfiltered.TotalBytes)
+	}
+}
+
+// TestFlowSummaryRead_DoesNotPublishInflatedUniqueCounts pins why the unique
+// panels degrade rather than reporting a number.
+//
+// Summing per-bucket exact distinct counts is not the same approximation the
+// live path makes when it sums two tiers: a 90-day window has roughly 850
+// (bucket x device x scope) rows, so an address present throughout is counted
+// hundreds of times. That is a different quantity, and calling it approximate
+// would not make it honest.
+func TestFlowSummaryRead_DoesNotPublishInflatedUniqueCounts(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	base := time.Now().UTC().Add(-8 * time.Hour).Truncate(time.Hour)
+	seedReadPath(t, d, base)
+	for i := 0; i < 4; i++ {
+		d.RunFlowSummaryCycle()
+	}
+
+	orig := flowSummaryMinHours
+	flowSummaryMinHours = 1
+	defer func() { flowSummaryMinHours = orig }()
+
+	res, err := d.GetFlowStats(24, FlowStatsFilter{})
+	if err != nil {
+		t.Fatalf("GetFlowStats: %v", err)
+	}
+
+	named := map[string]bool{}
+	for _, b := range res.DegradedBlocks {
+		named[b] = true
+	}
+	for _, want := range []string{"unique_src_addr", "unique_dst_addr"} {
+		if !named[want] {
+			t.Errorf("DegradedBlocks does not name %q (got %v); the summary must decline to "+
+				"publish a sum of per-bucket distinct counts", want, res.DegradedBlocks)
+		}
+	}
+	// The seed has 3 distinct sources across 6 buckets. A summed-per-bucket
+	// figure would be around 18; the raw-only count must be far below that.
+	if res.UniqueSources > 6 {
+		t.Errorf("UniqueSources is %d; the seed has 3 distinct sources, so anything near "+
+			"buckets x sources means the per-bucket sum is being published", res.UniqueSources)
+	}
+}
+
+// TestFlowSummaryRead_FallsBackWhileTheBackfillIsIncomplete pins the guard that
+// an earlier version got exactly backwards.
+//
+// That version compared the summary's OLDEST bucket against the window cutoff
+// and called it coverage. The backfill walks oldest-first, so after its very
+// first cycle the summary's oldest bucket already equals the rollups' oldest and
+// the check passes while nearly all of history is still missing — a 45-day
+// window reported a fifth of the truth, not degraded, silently. The guard now
+// requires each tier's CONTIGUOUS fill marker to have reached its newest owned
+// bucket.
+func TestFlowSummaryRead_FallsBackWhileTheBackfillIsIncomplete(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	base := time.Now().UTC().Add(-30 * time.Hour).Truncate(time.Hour)
+	for h := 0; h < 24; h++ {
+		if err := d.Gorm().Create(&models.FlowRollup{
+			Timestamp: base.Add(time.Duration(h)*time.Hour + 5*time.Minute),
+			DeviceID:  1, IntervalType: "5m",
+			SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+			BytesSum: 1000, PacketsSum: 1, FlowCount: 1,
+		}).Error; err != nil {
+			t.Fatalf("seed hour %d: %v", h, err)
+		}
+	}
+
+	// Exactly ONE bucket per pass, so a single cycle leaves the backfill far from
+	// done while the summary's oldest bucket already matches the rollups'.
+	origTiers := flowSummaryTiers
+	flowSummaryTiers = []flowSummaryTier{{
+		interval:     "1h",
+		rangeSources: []string{"5m", "1h"},
+		sumSources:   []string{"5m", "1h", "1d"},
+		width:        time.Hour,
+		bucketOf:     func(t time.Time) time.Time { return t.UTC().Truncate(time.Hour) },
+		maxPerPass:   1,
+	}}
+	defer func() { flowSummaryTiers = origTiers }()
+	d.RunFlowSummaryCycle()
+
+	var summarised int64
+	d.Gorm().Model(&models.FlowSummary{}).Distinct("timestamp").Count(&summarised)
+	if summarised == 0 || summarised >= 24 {
+		t.Fatalf("precondition: %d buckets summarised, wanted a partial backfill", summarised)
+	}
+
+	orig := flowSummaryMinHours
+	flowSummaryMinHours = 1
+	defer func() { flowSummaryMinHours = orig }()
+
+	res, err := d.GetFlowStats(48, FlowStatsFilter{})
+	if err != nil {
+		t.Fatalf("GetFlowStats: %v", err)
+	}
+	var want uint64
+	d.Gorm().Model(&models.FlowRollup{}).
+		Where("timestamp > ?", time.Now().Add(-48*time.Hour)).
+		Select("COALESCE(SUM(bytes_sum),0)").Scan(&want)
+	if res.TotalBytes != want {
+		t.Errorf("with a partial backfill the result holds %d bytes against %d in the rollups. "+
+			"Coverage must be judged by the contiguous fill marker, not by the oldest bucket — "+
+			"the backfill walks oldest-first, so the oldest bucket matches almost immediately.",
+			res.TotalBytes, want)
 	}
 }

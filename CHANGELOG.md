@@ -44,6 +44,25 @@ answered exactly from the cube, including the protocol pill row. Under such a
 filter the top-talker panels report **degraded** instead of showing unfiltered
 talkers beside filtered totals, which would be a new way to mislead.
 
+**The unique-address tiles are not served from the summary at all**, and that is
+deliberate. Summing per-bucket distinct counts is not an approximation of the
+window's union, it is a different quantity: measured on production, a 48-hour
+window gives 414,934 truly distinct sources against a per-bucket sum of 992,789,
+and 30 days sums to 15,294,497 — an order of magnitude out. Those panels report
+degraded and the tile shows the raw window's exact count. A real window-level
+unique count needs a sketch, which is now worth revisiting since scanning is no
+longer the dominant cost.
+
+The threshold is 48 hours rather than 24 because of where each path truncates.
+Summary rows are stamped at bucket start, so below 48 hours the live path reads
+the 5-minute rollup tier and cuts at a 5-minute boundary while the summary can
+only cut at an hour — a 48-hour window measured 1.1 GB short for exactly that
+reason. Above it, both truncate at the same boundary.
+
+Top-talker lists remain a per-bucket merge and so are approximate. Measured
+against the live path on production at 7 days: every live top-10 key is present,
+byte differences are mostly exactly zero and at worst 1.2%.
+
 ## [0.11.248] - 2026-09-14
 
 ### Added — flow summary tables, so wide windows have something fast to read

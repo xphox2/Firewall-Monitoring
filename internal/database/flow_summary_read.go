@@ -1,10 +1,6 @@
 package database
 
 import (
-	"time"
-
-	"firewall-mon/internal/models"
-
 	"gorm.io/gorm"
 )
 
@@ -23,13 +19,22 @@ import (
 
 // flowSummaryMinHours is the window above which the summary is preferred.
 //
-// Below it the live path is exact and quick enough (the rolled-up panels run
-// concurrently; 24 h completes in 9.5 s), and exactness is worth more than speed
-// at the default range: the summary's top-N lists are approximate by
-// construction while the live path's are not.
-// It is a var, not a const, so tests can force either path and compare them —
-// which is the only way to assert the two agree.
-var flowSummaryMinHours = 24
+// 48, not 24, and the extra day is a correctness boundary rather than caution.
+// Summary rows are stamped at bucket START, so a `timestamp > cutoff` predicate
+// drops the bucket the cutoff falls inside. Below 48 hours the live path reads
+// the 5-minute rollup tier and truncates at a 5-minute boundary, while the
+// summary can only truncate at an hour — measured on production, a 48-hour
+// window came out 1.1 GB short for exactly that reason. Above 48 hours the
+// cutoff lands in the hourly or daily rollup band and both paths truncate at the
+// same boundary, so they agree exactly (verified at 7d and 90d on production).
+//
+// Below the threshold the live path is also quick enough: 24 h completes in
+// 9.5 s, and its top-N lists are exact where the summary's are a per-bucket
+// merge.
+//
+// A var, not a const, so tests can force either path and compare them — which is
+// the only way to assert the two agree.
+var flowSummaryMinHours = 48
 
 // flowSummaryReadIntervals is every summary tier, always.
 //
@@ -68,50 +73,41 @@ func flowSummaryDimensionFiltered(filter FlowStatsFilter) bool {
 		filter.DstCountry != "" || filter.FlowSource != nil || filter.FirewallEvent != nil
 }
 
-// summaryCoversWindow reports whether the summary reaches back far enough to
-// answer a window starting at cutoff.
+// summaryBackfillComplete reports whether every summary tier has finished its
+// initial walk, which is the only honest basis for reading the summary at all.
 //
-// This guard is the difference between "fast" and "quietly wrong". While the
-// backfill is still running the summary's oldest bucket is later than the
-// window start, and reading it would silently report a fraction of the range —
-// the exact failure this whole programme exists to remove. The summary is only
-// used when it demonstrably covers everything flow_rollups holds in the window.
-func (d *Database) summaryCoversWindow(cutoff time.Time) bool {
-	sumOldest, ok := d.summaryOldest()
-	if !ok {
-		return false // nothing summarised yet
-	}
-	if !sumOldest.After(cutoff) {
-		return true // covers the whole window
-	}
-	// The summary starts after the cutoff. That is still complete if the rollups
-	// have nothing older either (a young deployment), and wrong otherwise.
-	rollOldest, _, ok, err := d.tierTimeBounds([]string{"5m", "1h", "1d"})
-	if err != nil || !ok {
-		return false
-	}
-	return !sumOldest.After(rollOldest)
-}
-
-// summaryOldest returns the oldest summary bucket across both tiers, probing
-// each interval with an equality so the index's first-tuple stop applies (see
-// tierTimeBounds for why an IN list is 1,650x worse on the rollup table).
-func (d *Database) summaryOldest() (time.Time, bool) {
-	var oldest time.Time
-	found := false
-	for _, iv := range flowSummaryReadIntervals {
-		ts, ok, err := aggregateTimestamp(
-			d.db.Session(&gorm.Session{}).Model(&models.FlowSummary{}).Where("interval_type = ?", iv),
-			"MIN(timestamp)")
-		if err != nil || !ok {
-			continue
+// An earlier version compared the summary's OLDEST bucket against the window's
+// cutoff and called that coverage. It does not work, and it fails in the
+// direction that matters: the backfill walks oldest-first, so after its very
+// first cycle the summary's oldest bucket already equals the rollups' oldest and
+// the check passes while nearly all of history is still missing. Measured in a
+// harness: ten days of source, one cycle, and a 45-day window reported 2,001
+// bytes against 10,001 — a fifth of the truth, not degraded, silently. That is
+// precisely the failure this guard exists to prevent.
+//
+// The right signal was already there. summariseTier maintains a CONTIGUOUS fill
+// marker per tier (see flowSummaryFillKeyPrefix) that advances only through
+// unbroken successes; a tier is caught up when its marker has reached its newest
+// owned bucket. Requiring both tiers is deliberately conservative — no summary
+// reads until the whole thing is built — because a wrong number served quickly
+// is worse than a right one served slowly, which is the defect this entire
+// programme exists to remove.
+func (d *Database) summaryBackfillComplete() bool {
+	for _, tier := range flowSummaryTiers {
+		_, newest, ok, err := d.tierTimeBounds(tier.rangeSources)
+		if err != nil {
+			return false
 		}
-		if !found || ts.Before(oldest) {
-			oldest = ts
-			found = true
+		if !ok {
+			continue // this tier has no source data, so nothing to backfill
+		}
+		lastOwned := tier.bucketOf(newest)
+		filled := d.summaryFillMarker(tier.interval)
+		if filled.IsZero() || filled.Before(lastOwned) {
+			return false
 		}
 	}
-	return oldest, found
+	return true
 }
 
 // flowSummaryTopValues reads one high-cardinality panel: a window's top-N as a

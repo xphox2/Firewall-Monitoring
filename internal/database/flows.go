@@ -578,7 +578,7 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 	//     it anyway would silently report a fraction of the range — precisely the
 	//     failure this whole change exists to remove.
 	useSummary := hours > flowSummaryMinHours && flowSummaryCompatible(filter) &&
-		d.summaryCoversWindow(cutoff)
+		d.summaryBackfillComplete()
 	// The top-talker panels cannot honour a filter on a cube dimension: their
 	// lists are computed per bucket across all protocols and categories. Showing
 	// unfiltered talkers beside filtered totals would be a new way to mislead, so
@@ -589,8 +589,18 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 	// it holds, so the aggregate panels below run the same SQL against either —
 	// only the table changes.
 	newSummaryBase := func() *gorm.DB {
-		return applyCommonFilters(session().Model(&models.FlowSummary{}).
+		q := applyCommonFilters(session().Model(&models.FlowSummary{}).
 			Where("interval_type IN ? AND timestamp > ?", flowSummaryReadIntervals, cutoff))
+		if filter.ProbeID > 0 {
+			// applyCommonFilters does NOT carry the probe filter — the raw base
+			// applies it by column and the rollup base by device subquery, so a
+			// cube base that used applyCommonFilters alone silently served EVERY
+			// device's traffic under a probe filter. Measured in a harness:
+			// 36,000 bytes against 6,000. The same class of defect as the
+			// probe-filter bug v0.11.247 fixed, reintroduced one table over.
+			q = q.Where("device_id IN (SELECT id FROM devices WHERE probe_id = ?)", filter.ProbeID)
+		}
+		return q
 	}
 	newFilteredSummaryBase := func() *gorm.DB {
 		return newSummaryBase().Where("scope_local = ?", false)
@@ -786,16 +796,22 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 			u := u
 			var n int64
 			if useSummary {
-				// Per-bucket exact counts, summed. Still an upper bound on the
-				// window's true union — an address seen in two buckets counts
-				// twice — which is the same approximation the live path makes
-				// when it sums tiers, and UniqueApproximate says so either way.
-				runRollup("unique_"+u.col, newSummaryBucketBase, func(q *gorm.DB) error {
-					return q.Select("COALESCE(SUM(" + u.sumCol + "),0)").Scan(&n).Error
-				}, func() {
-					*u.dst += n
-					result.UniqueApproximate = true
-				})
+				// NOT published from the summary. Summing per-bucket distinct
+				// counts is not the same approximation the live path makes when
+				// it sums two tiers — a 90-day window has roughly 850
+				// (bucket x device x scope) rows, so an address present
+				// throughout is counted hundreds of times. Measured in a
+				// harness: 12 against a true 2. That is not an over-estimate of
+				// the union, it is a different quantity, and labelling it
+				// "approximate" would not make it honest.
+				//
+				// The tile therefore shows the raw window's exact count and the
+				// panel is named as degraded. Publishing a real window-level
+				// unique count from the summary needs a sketch (HyperLogLog),
+				// which is worth revisiting now that scanning is no longer the
+				// dominant cost.
+				_ = u.sumCol
+				budget.skip("unique_" + u.col)
 				continue
 			}
 			// The base here is d.db, not a rollup base: the rollup query is the
@@ -813,7 +829,14 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 
 		// The cube has no sampling column, so when reading the summary the range
 		// comes from the per-bucket table instead of riding along with the totals.
-		if useSummary {
+		//
+		// Only when no cube dimension is filtered: flow_summary_buckets carries no
+		// dimension columns, so under such a filter it would report the range for
+		// ALL traffic beside filtered totals — quietly, since nothing else would
+		// hint at it.
+		if useSummary && !summaryTopsUsable {
+			budget.skip("sampling")
+		} else if useSummary {
 			var sampling struct {
 				Min float64
 				Max float64

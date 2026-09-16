@@ -248,8 +248,10 @@ func TestFlowSummary_BoundaryDayKeepsEveryHour(t *testing.T) {
 		t.Fatalf("seed total is %d, expected 61000; the test is not measuring what it claims", sourceBytes)
 	}
 
-	// And the tiers must not BOTH hold the day, or a reader summing them
-	// double-counts.
+	// The day is now held at HOURLY resolution: the daily tier yields any day the
+	// finer tiers still have rows in, so the promotion boundary stays hour-stamped
+	// and a window cutoff falling inside it truncates the same way the live path
+	// does. What must not happen is BOTH tiers holding it.
 	var hourlyRows, dailyRows int64
 	d.Gorm().Model(&models.FlowSummary{}).
 		Where("interval_type = ? AND timestamp >= ? AND timestamp < ?", "1h", day, day.Add(24*time.Hour)).Count(&hourlyRows)
