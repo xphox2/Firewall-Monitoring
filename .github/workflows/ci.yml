@@ -66,7 +66,15 @@ jobs:
         # AUDIT-121: race detector required in CI. Local runs on Windows
         # may skip this (requires CGO + a working C toolchain); CI has
         # both.
-        run: go test -race -count=1 -timeout=5m ./...
+        #
+        # 10m, not 5m. internal/database is 388 tests and runs ~93s locally
+        # under -race; CI runners are roughly 3x slower, which put it at ~298s
+        # against a 300s limit — a coin flip that had nothing to do with the
+        # change under test. The timeout exists to catch a HANG, and 10m (Go's
+        # own default) still does that with margin. Raising it is the honest fix
+        # here; the alternative is a gate that fails at random and teaches people
+        # to re-run rather than read.
+        run: go test -race -count=1 -timeout=10m ./...
 
   static-analysis:
     name: staticcheck

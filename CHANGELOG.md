@@ -1,6 +1,83 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.249] - 2026-09-16
+
+### Changed
+
+- The summariser skips a bucket with no source rows without opening a
+  transaction. A tier's walk legitimately crosses empty buckets — its start is
+  anchored on the tier below's reach, and quiet periods leave gaps — and each was
+  costing three deletes plus a dozen aggregate queries to write nothing. One
+  indexed existence probe replaces all of it; the slowest test in the package
+  fell from 2.65s to 0.79s.
+- CI's race-detector timeout goes from 5 to 10 minutes. `internal/database` is
+  388 tests at ~93s locally under `-race` *without* this release's additions, and
+  CI runners are roughly 3x slower, which already put it at ~298s against a 300s
+  limit. The timeout exists to catch a hang, and 10 minutes (Go's own default)
+  still does that with margin; a gate that fails at random teaches people to
+  re-run rather than read.
+
+### Security
+
+- Bumped `google.golang.org/grpc` to v1.83.1 for GO-2026-6348. It arrives indirectly
+  through the OpenTelemetry OTLP trace exporter, and `govulncheck` reports the
+  calling path as reachable, so this is a real fix rather than a graph-only bump.
+
+### Fixed — the 30-day and 90-day Flows ranges now return real figures
+
+The summary tables landed in v0.11.248 and have finished backfilling; this points
+the page at them.
+
+Before: those windows aggregated roughly 76M and 92M rows of `flow_rollups`, every
+rolled-up panel was cancelled by the 30-second statement timeout, and the page
+fell back to the raw window — about an hour — under a "90 days" label. v0.11.247
+made that fallback visible rather than silent. This makes it unnecessary.
+
+**Measured on production: a 90-day aggregate returns in 113 ms from the summary
+against 31,595 ms from `flow_rollups`.** That second number is the point, because
+it is over the timeout. Both paths return identical figures — 342,031,562 flows,
+3,949,471,419,102 bytes, 7,079,816,102 packets — which is also the proof that the
+two summary tiers are disjoint, since an overlap would make the summary larger.
+
+The summary is used only when all three hold:
+
+- the window is wider than 24 hours (below that the live path is exact and quick
+  at 9.5 s, and exactness beats speed at the default range — the summary's
+  top-talker lists are approximate by construction);
+- the filter touches no high-cardinality dimension, since the summary stores
+  source, destination, port and ASN as per-bucket top-50 lists rather than as
+  filterable columns;
+- **the summary demonstrably covers the window.** While a backfill is still
+  running its oldest bucket is later than the window start, and reading it anyway
+  would silently report a fraction of the range. That is the failure this whole
+  programme exists to remove, so it is guarded rather than assumed.
+
+Any combination of the low-cardinality dimensions — protocol, application
+category, direction, scope, destination country, flow source, firewall event — is
+answered exactly from the cube, including the protocol pill row. Under such a
+filter the top-talker panels report **degraded** instead of showing unfiltered
+talkers beside filtered totals, which would be a new way to mislead.
+
+**The unique-address tiles are not served from the summary at all**, and that is
+deliberate. Summing per-bucket distinct counts is not an approximation of the
+window's union, it is a different quantity: measured on production, a 48-hour
+window gives 414,934 truly distinct sources against a per-bucket sum of 992,789,
+and 30 days sums to 15,294,497 — an order of magnitude out. Those panels report
+degraded and the tile shows the raw window's exact count. A real window-level
+unique count needs a sketch, which is now worth revisiting since scanning is no
+longer the dominant cost.
+
+The threshold is 48 hours rather than 24 because of where each path truncates.
+Summary rows are stamped at bucket start, so below 48 hours the live path reads
+the 5-minute rollup tier and cuts at a 5-minute boundary while the summary can
+only cut at an hour — a 48-hour window measured 1.1 GB short for exactly that
+reason. Above it, both truncate at the same boundary.
+
+Top-talker lists remain a per-bucket merge and so are approximate. Measured
+against the live path on production at 7 days: every live top-10 key is present,
+byte differences are mostly exactly zero and at worst 1.2%.
+
 ## [0.11.248] - 2026-09-14
 
 ### Added — flow summary tables, so wide windows have something fast to read
