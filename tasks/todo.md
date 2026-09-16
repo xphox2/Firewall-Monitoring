@@ -141,9 +141,13 @@ Measured after the concurrency change, replayed against prod: **24h completes in
       query on prod before writing code). Writer recomputes rather than merges, so late spool
       replay is absorbed and the same code path IS the backfill. Measured ~0.5s per bucket; ~885
       buckets catch up in under twenty 5-minute cycles.
-- [ ] **Phase B2** — switch the read path onto the summary. Deliberately separate: the backfill
-      has to run first so the output can be diffed against the live path on real data, which beats
-      any fixture. A draft read path is parked in the scratchpad.
+- [x] **Phase B2** — read path switched onto the summary (v0.11.249, PR #260, review in flight).
+      **90-day aggregate: 113 ms from the summary vs 31,595 ms from flow_rollups**, identical
+      figures. The coverage guard costs ~11 ms, negligible against that.
+      Gated on three conditions, all necessary: window > 24h; no filter on a high-cardinality
+      dimension; and the summary demonstrably COVERS the window (a running backfill must never be
+      reported as fact). Acceptance test runs the same window through BOTH paths and requires exact
+      agreement on totals, local traffic, throughput, sampling and every dimension breakdown.
       Contract settled: cube answers any combination of the low-cardinality dimensions; a filter on
       src/dst/port/asn is NOT summary-compatible and keeps the live path; a dimension filter means
       the top-N panels must report degraded rather than show unfiltered talkers beside filtered
