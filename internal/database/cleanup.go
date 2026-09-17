@@ -480,6 +480,15 @@ func (d *Database) FlowSummaryRetentionDays() int {
 // now defers a bucket that straddles its cutoff, so a 1h row can sit unpromoted
 // for up to a full day past flowPromote1hTo1dAge instead of the ~5 minutes one
 // ticker interval used to allow.
+// It does not float a ladder STALL — an outage or a long backlog can leave rows
+// unpromoted for longer than any fixed floor. That is the pre-existing "safe to
+// drop even if promotion were broken" trade the caller documents, unchanged here.
+//
+// The > 0 test only guards against a caller that resolves its own default: every
+// present caller goes through RetentionConfig.Days, which returns a positive
+// number on every path, so zero cannot reach this today. It is kept because zero
+// would be actively dangerous one line further on — the cleanup loop turns it
+// into AddDate(0, 0, -0), a cutoff of now, which deletes the entire table.
 func flowRollupRetentionFloor(configuredDays int) int {
 	// The ladder's full reach, plus a day for the deferral and a day of slack.
 	floor := int(flowPromote1hTo1dAge/(24*time.Hour)) + 2

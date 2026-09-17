@@ -1617,12 +1617,18 @@ func (a *rollupAccumulator) add(batch []rollupRow) {
 		return
 	}
 	if a.idx == nil {
-		// Sized with headroom: consecutive sub-ranges of the same day repeat most
-		// of each other's keys, so the final count lands near the first batch's
-		// rather than the sum of all of them. Peak memory is therefore the group
-		// slice — which the single-statement form already held in full — plus
-		// this index. Reserving up front avoids rehashing through the remaining
-		// sub-ranges.
+		// Reserved only to skip the first few doublings; the index still grows.
+		// Do not read this as "most keys recur across sub-ranges" — production
+		// says the opposite. A day of the 1h tier is 2.4M rows folding to 2.1M
+		// day-groups (see the scanStep comment below), so roughly 88% of keys
+		// occur in exactly ONE hour and the finished index holds close to one
+		// entry per group, not one per hour's worth.
+		//
+		// So peak memory here is the group slice — which the single-statement
+		// form already materialised in full, through the same append doublings —
+		// plus an index of about that many entries. The index is the real cost of
+		// merging in Go, and it is what buys every statement staying under the
+		// 30s cancel.
 		a.idx = make(map[rollupKey]int, 2*(len(a.rows)+len(batch)))
 		for i, r := range a.rows {
 			a.idx[r.key()] = i
@@ -2012,8 +2018,9 @@ func (d *Database) aggregateRollupsUp(srcInterval, dstInterval string, cutoff ti
 	// timeout was the alternative and is still declined, on the other half of
 	// window_agg.go's reasoning for rejecting `SET LOCAL statement_timeout = 0`:
 	// a single unbounded aggregate can spill temp files on the data volume, and
-	// an uncancellable statement removes the only backstop against a plan going
-	// wrong on a table this size.
+	// it removes the only AUTOMATIC backstop against a plan going wrong on a
+	// table this size — pg_cancel_backend still works, but only if someone is
+	// watching.
 	var scanStep time.Duration
 	if bucketUnit == "day" {
 		scanStep = time.Hour
