@@ -54,6 +54,19 @@ with a bucket no reader's arithmetic agrees with. It also made the ladder's
 whole-bucket property untestable at the tier where promotion runs most often,
 which is how it was found. Both now floor the Unix epoch to the real width.
 
+### Changed — flow_rollups retention can no longer be set below the ladder's reach
+
+The `flow_rollups` cutoff applies to every `interval_type`, so a retention window
+shorter than the promotion ladder takes to finish would reap hourly rows before
+their daily row is written — silent history loss with no error, the failure mode
+`window_agg.go`'s header records. The default of 365 days is nowhere near it and
+production is on that default, but nothing stopped an operator setting
+`RETENTION_FLOW_ROLLUP_DAYS` to 30 and quietly destroying the daily tier's newest
+day. Deferring straddled buckets is what made this worth enforcing rather than
+documenting: an hourly row can now wait up to a full day past the promotion age
+instead of the one ticker interval it used to. The window is now raised to the
+ladder's reach plus two days, with a log line saying so.
+
 ### Added — the rollup ladder now has PostgreSQL coverage
 
 It had none. Every promotion test ran on SQLite, which is the wrong way round for

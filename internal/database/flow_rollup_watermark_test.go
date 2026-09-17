@@ -1,6 +1,7 @@
 package database
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -485,10 +486,165 @@ func TestAggregateRollupsUp_ScansTheDayInSubRanges(t *testing.T) {
 
 	d.aggregateRollupsUp("1h", "1d", day.Add(48*time.Hour))
 
-	if aggregates < 2 {
-		t.Errorf("the whole day was aggregated in %d statement(s). A 24-hour window must be "+
-			"scanned in sub-ranges — one statement over a production day measures 14.7s "+
-			"against a 30s statement_timeout, and exceeding it stalls the ladder for good.",
+	// Exactly one statement per source bucket. `< 2` would have accepted a
+	// 12-hour step, which is two ~7s statements on a production day — still far
+	// too close to the 30s cancel to be the property this pins.
+	if aggregates != 24 {
+		t.Errorf("the whole day was aggregated in %d statement(s), want 24 — one per hourly "+
+			"source bucket. A single statement over a production day measures 14.7s against "+
+			"a 30s statement_timeout, and exceeding it stalls the ladder for good.",
 			aggregates)
+	}
+}
+
+// TestRollupAccumulator_KeyCoversEveryGroupedColumn guards the one thing nothing
+// else can: that `rollupKey` and the SQL `flowRollupGroupKey` stay in step.
+//
+// The accumulator folds sub-range aggregates by a Go struct key. If a column is
+// added to the GROUP BY but not to that struct, two genuinely distinct groups
+// collapse into one and their measures are summed together — silent corruption
+// on the daily tier only, invisible until someone diffs row counts against the
+// source. The compiler cannot catch it because both sides are independently
+// valid.
+func TestRollupAccumulator_KeyCoversEveryGroupedColumn(t *testing.T) {
+	// flowRollupGroupKey is a comma-separated column list.
+	grouped := 0
+	for _, c := range strings.Split(flowRollupGroupKey, ",") {
+		if strings.TrimSpace(c) != "" {
+			grouped++
+		}
+	}
+	fields := reflect.TypeOf(rollupKey{}).NumField()
+	if fields != grouped {
+		t.Errorf("rollupKey has %d fields but flowRollupGroupKey groups by %d columns (%q). "+
+			"The sub-range merge folds by rollupKey, so a grouped column missing from the "+
+			"struct silently merges distinct groups and sums their measures together.",
+			fields, grouped, flowRollupGroupKey)
+	}
+}
+
+// TestAggregateRollupsUp_MergesDisjointKeysAcrossSubRanges exercises the
+// accumulator's INSERT branch, which every other test misses: they all seed a
+// single group key, so only the merge branch runs and an off-by-one in the index
+// bookkeeping would pass the whole suite.
+//
+// Here each hour carries a key the neighbouring hours do not, plus one shared
+// key present in every hour — so the day must fold to (distinct keys + 1) rows
+// with each one's measures intact.
+func TestAggregateRollupsUp_MergesDisjointKeysAcrossSubRanges(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	if err := d.Gorm().AutoMigrate(&models.FlowRollup{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	day := time.Now().Add(-40 * 24 * time.Hour).UTC().Truncate(24 * time.Hour)
+	const hours = 24
+	for h := 0; h < hours; h++ {
+		ts := day.Add(time.Duration(h) * time.Hour)
+		// Unique to this hour — lands in exactly one sub-range.
+		if err := d.Gorm().Create(&models.FlowRollup{
+			Timestamp: ts, DeviceID: 1, IntervalType: "1h",
+			SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: uint16(1000 + h), Protocol: 6,
+			BytesSum: 7, PacketsSum: 1, FlowCount: 1,
+		}).Error; err != nil {
+			t.Fatalf("seed unique +%dh: %v", h, err)
+		}
+		// Shared by every hour — present in the FIRST batch, which the
+		// accumulator adopts whole and indexes in bulk.
+		if err := d.Gorm().Create(&models.FlowRollup{
+			Timestamp: ts, DeviceID: 1, IntervalType: "1h",
+			SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+			BytesSum: 5, PacketsSum: 1, FlowCount: 1,
+		}).Error; err != nil {
+			t.Fatalf("seed shared +%dh: %v", h, err)
+		}
+		// Absent from hour 0, so it is first seen in the SECOND sub-range and
+		// therefore indexed by the append branch, then merged in every later
+		// one. That is the only path that dereferences an index the append
+		// branch wrote — without it an off-by-one there is never observed.
+		if h > 0 {
+			if err := d.Gorm().Create(&models.FlowRollup{
+				Timestamp: ts, DeviceID: 1, IntervalType: "1h",
+				SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 8443, Protocol: 6,
+				BytesSum: 3, PacketsSum: 1, FlowCount: 1,
+			}).Error; err != nil {
+				t.Fatalf("seed late-shared +%dh: %v", h, err)
+			}
+		}
+	}
+
+	d.aggregateRollupsUp("1h", "1d", day.Add(48*time.Hour))
+
+	var rows []models.FlowRollup
+	if err := d.Gorm().Where("interval_type = ?", "1d").Find(&rows).Error; err != nil {
+		t.Fatalf("read 1d tier: %v", err)
+	}
+	if len(rows) != hours+2 {
+		t.Fatalf("1d tier holds %d rows, want %d (one per hour-unique port, plus the key in "+
+			"every hour and the one that starts at hour 1). A wrong index into the "+
+			"accumulator collapses or duplicates keys.", len(rows), hours+2)
+	}
+
+	var shared, lateShared *models.FlowRollup
+	uniques := 0
+	for i := range rows {
+		switch {
+		case rows[i].DstPort == 443:
+			shared = &rows[i]
+		case rows[i].DstPort == 8443:
+			lateShared = &rows[i]
+		case rows[i].DstPort >= 1000 && rows[i].DstPort < 1000+hours:
+			uniques++
+			if rows[i].BytesSum != 7 || rows[i].FlowCount != 1 {
+				t.Errorf("port %d carries %d bytes / %d flows, want 7 / 1 — a key seen in one "+
+					"sub-range must pass through untouched", rows[i].DstPort,
+					rows[i].BytesSum, rows[i].FlowCount)
+			}
+		default:
+			t.Errorf("unexpected dst_port %d in the daily tier", rows[i].DstPort)
+		}
+	}
+	if uniques != hours {
+		t.Errorf("found %d hour-unique keys, want %d", uniques, hours)
+	}
+	if shared == nil {
+		t.Fatal("the key shared by every hour is missing from the daily tier")
+	}
+	if shared.BytesSum != 5*hours || shared.FlowCount != hours {
+		t.Errorf("the shared key carries %d bytes / %d flows, want %d / %d",
+			shared.BytesSum, shared.FlowCount, 5*hours, hours)
+	}
+	if lateShared == nil {
+		t.Fatal("the key first seen in the second sub-range is missing from the daily tier")
+	}
+	if lateShared.BytesSum != 3*(hours-1) || lateShared.FlowCount != int64(hours-1) {
+		t.Errorf("the key first seen in the second sub-range carries %d bytes / %d flows, "+
+			"want %d / %d — the index the append branch wrote points at the wrong row",
+			lateShared.BytesSum, lateShared.FlowCount, 3*(hours-1), hours-1)
+	}
+}
+
+// TestFlowRollupRetentionFloor_KeepsClearOfTheLadder pins that retention cannot
+// be configured to delete a tier the ladder has not finished with.
+//
+// The flow_rollups cutoff applies to EVERY interval_type, so a window shorter
+// than the ladder's reach reaps hourly rows before their daily row is written —
+// silent loss, no error. Deferring straddled buckets widened the exposure from
+// one ticker interval to a full day, which is what turned this from a comment
+// into a guard.
+func TestFlowRollupRetentionFloor_KeepsClearOfTheLadder(t *testing.T) {
+	ladderDays := int(flowPromote1hTo1dAge / (24 * time.Hour))
+
+	if got := flowRollupRetentionFloor(365); got != 365 {
+		t.Errorf("the default of 365 days was altered to %d; the floor must only raise a "+
+			"window that is genuinely too short", got)
+	}
+	if got := flowRollupRetentionFloor(ladderDays); got <= ladderDays {
+		t.Errorf("a window equal to the promotion age (%d days) stayed at %d — retention "+
+			"would race the 1h→1d promotion it is supposed to outlive", ladderDays, got)
+	}
+	if got := flowRollupRetentionFloor(0); got != 0 {
+		t.Errorf("flowRollupRetentionFloor(0) = %d, want 0 — zero means the caller's own "+
+			"default applies and must pass through untouched", got)
 	}
 }

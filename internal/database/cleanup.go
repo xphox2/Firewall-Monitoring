@@ -466,6 +466,32 @@ func (d *Database) FlowSummaryRetentionDays() int {
 	return n
 }
 
+// flowRollupRetentionFloor keeps the flow_rollups cutoff clear of the promotion
+// ladder's reach.
+//
+// The cutoff applies to EVERY interval_type, so a window shorter than the ladder
+// takes to finish reaps source rows before their destination row is written —
+// silent history loss with no error, the failure mode window_agg.go's header
+// records. The default of 365 days is nowhere near it, but nothing stopped an
+// operator setting RETENTION_FLOW_ROLLUP_DAYS to 30 and quietly destroying the
+// daily tier's newest day.
+//
+// v0.11.253 made this worth enforcing rather than merely documenting: promotion
+// now defers a bucket that straddles its cutoff, so a 1h row can sit unpromoted
+// for up to a full day past flowPromote1hTo1dAge instead of the ~5 minutes one
+// ticker interval used to allow.
+func flowRollupRetentionFloor(configuredDays int) int {
+	// The ladder's full reach, plus a day for the deferral and a day of slack.
+	floor := int(flowPromote1hTo1dAge/(24*time.Hour)) + 2
+	if configuredDays > 0 && configuredDays < floor {
+		log.Printf("Retention: flow_rollups window of %d days is shorter than the rollup ladder's "+
+			"reach; using %d instead, or retention would delete hourly rows before they are promoted",
+			configuredDays, floor)
+		return floor
+	}
+	return configuredDays
+}
+
 func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	type cleanupEntry struct {
 		model interface{}
@@ -528,7 +554,7 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		// promotion long before a year, so anything older than the window —
 		// whatever its interval — is stale and safe to drop even if promotion
 		// were broken or disabled.
-		{&models.FlowRollup{}, "flow_rollups", ret.Days(ret.FlowRollupDays)},
+		{&models.FlowRollup{}, "flow_rollups", flowRollupRetentionFloor(ret.Days(ret.FlowRollupDays))},
 		// v66: the flow summary ladder. Pruned on its own SystemSetting rather
 		// than a RETENTION_* env var (see FlowSummaryRetentionKey). All three
 		// tables share the window — they are written together per bucket, so
