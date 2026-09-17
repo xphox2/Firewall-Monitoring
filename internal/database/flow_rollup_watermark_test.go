@@ -539,7 +539,17 @@ func TestAggregateRollupsUp_MergesDisjointKeysAcrossSubRanges(t *testing.T) {
 
 	day := time.Now().Add(-40 * 24 * time.Hour).UTC().Truncate(24 * time.Hour)
 	const hours = 24
+	// Hours 0 and 7 are left EMPTY, which covers two more paths for free: the
+	// skip-the-delete branch for a sub-range with no source rows, and — because
+	// hour 0 is one of them — the accumulator adopting its first batch on a
+	// LATER sub-range than the first.
+	empty := map[int]bool{0: true, 7: true}
+	seeded := 0
 	for h := 0; h < hours; h++ {
+		if empty[h] {
+			continue
+		}
+		seeded++
 		ts := day.Add(time.Duration(h) * time.Hour)
 		// Unique to this hour — lands in exactly one sub-range.
 		if err := d.Gorm().Create(&models.FlowRollup{
@@ -549,8 +559,8 @@ func TestAggregateRollupsUp_MergesDisjointKeysAcrossSubRanges(t *testing.T) {
 		}).Error; err != nil {
 			t.Fatalf("seed unique +%dh: %v", h, err)
 		}
-		// Shared by every hour — present in the FIRST batch, which the
-		// accumulator adopts whole and indexes in bulk.
+		// Present in every seeded hour, so it arrives in whichever batch the
+		// accumulator adopts whole and is indexed in bulk.
 		if err := d.Gorm().Create(&models.FlowRollup{
 			Timestamp: ts, DeviceID: 1, IntervalType: "1h",
 			SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
@@ -558,11 +568,12 @@ func TestAggregateRollupsUp_MergesDisjointKeysAcrossSubRanges(t *testing.T) {
 		}).Error; err != nil {
 			t.Fatalf("seed shared +%dh: %v", h, err)
 		}
-		// Absent from hour 0, so it is first seen in the SECOND sub-range and
-		// therefore indexed by the append branch, then merged in every later
-		// one. That is the only path that dereferences an index the append
-		// branch wrote — without it an off-by-one there is never observed.
-		if h > 0 {
+		// Absent from the first seeded hour, so it is first seen in a LATER
+		// sub-range and therefore indexed by the append branch, then merged in
+		// every sub-range after that. This is the only path that dereferences an
+		// index the append branch wrote — without it an off-by-one there is
+		// never observed.
+		if h > 1 {
 			if err := d.Gorm().Create(&models.FlowRollup{
 				Timestamp: ts, DeviceID: 1, IntervalType: "1h",
 				SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 8443, Protocol: 6,
@@ -579,10 +590,10 @@ func TestAggregateRollupsUp_MergesDisjointKeysAcrossSubRanges(t *testing.T) {
 	if err := d.Gorm().Where("interval_type = ?", "1d").Find(&rows).Error; err != nil {
 		t.Fatalf("read 1d tier: %v", err)
 	}
-	if len(rows) != hours+2 {
+	if len(rows) != seeded+2 {
 		t.Fatalf("1d tier holds %d rows, want %d (one per hour-unique port, plus the key in "+
-			"every hour and the one that starts at hour 1). A wrong index into the "+
-			"accumulator collapses or duplicates keys.", len(rows), hours+2)
+			"every seeded hour and the one that starts later). A wrong index into the "+
+			"accumulator collapses or duplicates keys.", len(rows), seeded+2)
 	}
 
 	var shared, lateShared *models.FlowRollup
@@ -594,6 +605,9 @@ func TestAggregateRollupsUp_MergesDisjointKeysAcrossSubRanges(t *testing.T) {
 		case rows[i].DstPort == 8443:
 			lateShared = &rows[i]
 		case rows[i].DstPort >= 1000 && rows[i].DstPort < 1000+hours:
+			if empty[int(rows[i].DstPort)-1000] {
+				t.Errorf("port %d came from an hour that was never seeded", rows[i].DstPort)
+			}
 			uniques++
 			if rows[i].BytesSum != 7 || rows[i].FlowCount != 1 {
 				t.Errorf("port %d carries %d bytes / %d flows, want 7 / 1 — a key seen in one "+
@@ -604,23 +618,30 @@ func TestAggregateRollupsUp_MergesDisjointKeysAcrossSubRanges(t *testing.T) {
 			t.Errorf("unexpected dst_port %d in the daily tier", rows[i].DstPort)
 		}
 	}
-	if uniques != hours {
-		t.Errorf("found %d hour-unique keys, want %d", uniques, hours)
+	if uniques != seeded {
+		t.Errorf("found %d hour-unique keys, want %d", uniques, seeded)
 	}
 	if shared == nil {
 		t.Fatal("the key shared by every hour is missing from the daily tier")
 	}
-	if shared.BytesSum != 5*hours || shared.FlowCount != hours {
+	if shared.BytesSum != uint64(5*seeded) || shared.FlowCount != int64(seeded) {
 		t.Errorf("the shared key carries %d bytes / %d flows, want %d / %d",
-			shared.BytesSum, shared.FlowCount, 5*hours, hours)
+			shared.BytesSum, shared.FlowCount, 5*seeded, seeded)
 	}
 	if lateShared == nil {
 		t.Fatal("the key first seen in the second sub-range is missing from the daily tier")
 	}
-	if lateShared.BytesSum != 3*(hours-1) || lateShared.FlowCount != int64(hours-1) {
-		t.Errorf("the key first seen in the second sub-range carries %d bytes / %d flows, "+
+	// Seeded for every hour above 1 that is not in `empty`.
+	lateHours := 0
+	for h := 2; h < hours; h++ {
+		if !empty[h] {
+			lateHours++
+		}
+	}
+	if lateShared.BytesSum != uint64(3*lateHours) || lateShared.FlowCount != int64(lateHours) {
+		t.Errorf("the key first appearing in a later sub-range carries %d bytes / %d flows, "+
 			"want %d / %d — the index the append branch wrote points at the wrong row",
-			lateShared.BytesSum, lateShared.FlowCount, 3*(hours-1), hours-1)
+			lateShared.BytesSum, lateShared.FlowCount, 3*lateHours, lateHours)
 	}
 }
 
