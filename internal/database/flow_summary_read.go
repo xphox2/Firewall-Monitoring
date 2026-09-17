@@ -38,7 +38,7 @@ var flowSummaryMinHours = 48
 
 // flowSummaryReadIntervals is every summary tier, always.
 //
-// Deliberately not mirrored on rollupIntervalsForWindow. The summary tiers are
+// Same shape as flowRollupReadIntervals, and for the same reason. The tiers are
 // disjoint — a day's rows supersede the hourly rows covering it, and the hourly
 // tier is floored at the daily tier's reach — so reading both and summing can
 // neither gap nor double-count, whatever the window. A tier holding nothing in

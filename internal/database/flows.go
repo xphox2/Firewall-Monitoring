@@ -191,15 +191,15 @@ func topAddrsByBytesRollupQ(q *gorm.DB, addrCol string, limit int) ([]KeyCount, 
 	return out, err
 }
 
-// currentBucketLabel renders "now" in the same label format d.dialect.TimeBucket
-// produces for unit, so the caller can recognise and drop the still-filling
-// bucket at the end of a series. Returns "" for an unrecognised unit, which
-// makes the caller keep every bucket rather than guess.
+// bucketLabelAt renders an arbitrary instant in the same label format
+// d.dialect.TimeBucket produces for unit, so a caller can recognise the bucket
+// any given moment falls inside — the still-filling one at the new end of a
+// series, or the partially-covered one at the old end.
 //
 // UTC because that is what the buckets are: the Postgres DSN pins TimeZone=UTC
 // and SQLite's strftime is UTC, so both render bucket labels in UTC.
-func currentBucketLabel(unit string) string {
-	now := time.Now().UTC()
+func bucketLabelAt(at time.Time, unit string) string {
+	now := at.UTC()
 	switch unit {
 	case "minute":
 		return now.Format("2006-01-02 15:04")
@@ -293,23 +293,43 @@ func flowAddrFilter(q *gorm.DB, d Dialect, column, val string) *gorm.DB {
 	return q.Where(column+" = ?", pattern)
 }
 
-// rollupIntervalsForWindow returns every rollup tier whose age band intersects
-// a lookback window of `hours`. The rollup ladder (RunFlowRollupCycle) keeps
-// tiers DISJOINT — each promotion deletes its source rows — so raw covers the
-// last ~1h, 5m covers (1h,48h], 1h covers (48h,30d], 1d covers >30d. Any
-// window longer than a band's start intersects that band, so the tier list is
-// cumulative, and summing across the returned tiers can neither gap nor
-// double-count. Shared by GetFlowStats and GetConnectionFlowStats.
-func rollupIntervalsForWindow(hours int) []string {
-	intervals := []string{"5m"}
-	if hours > 48 {
-		intervals = append(intervals, "1h")
-	}
-	if hours > 720 { // 30 days
-		intervals = append(intervals, "1d")
-	}
-	return intervals
-}
+// flowRollupReadIntervals is every rollup tier. Readers take all of them and let
+// the timestamp predicate decide what is in range.
+//
+// This used to be a function that selected tiers by comparing the window against
+// the ladder's promotion ages (`hours > 48` for the 1h tier, `> 720` for 1d).
+// That was CORRECT but only derivably so, and it is not worth the derivation:
+// promoted rows are stamped at bucket START, so a promoted row's stamp is always
+// below the cutoff that promoted it, and a reader's cutoff is never earlier —
+// meaning `timestamp > cutoff` already excluded everything the selection omitted.
+// Reading all tiers changes no result.
+//
+// What it changes is what the correctness rests on. The old form coupled this
+// file to the same age literals in RunFlowRollupCycle, with nothing enforcing the
+// match, and aggregateRollupsUp takes its cutoff as a PARAMETER — so editing one
+// side silently broke the reader. Demonstrated: promote 5m→1h at 24h and ask for
+// hours=48 and the old code returns 4,000 of 7,000 seeded bytes; promote 1h→1d at
+// 10 days and the 30-day window loses the same way. The test that existed pinned
+// `{48:[5m]}` and `{720:[5m,1h]}`, enshrining the coupling rather than guarding it.
+//
+// Now correctness rests only on the tiers being disjoint (promotion deletes its
+// source rows in the same transaction) and on the timestamp predicate — the same
+// two properties flowSummaryReadIntervals already relies on. Measured on
+// production, reading all tiers costs nothing: 24h sum 478ms vs 449-510ms, 24h
+// top-conversations GROUP BY 3.87s vs 4.05s, 168h sum 11.7s vs 12.5s, each the
+// same plan.
+//
+// Shared by GetFlowStats and GetConnectionFlowStats.
+var flowRollupReadIntervals = []string{"5m", "1h", "1d"}
+
+// The ages at which the ladder promotes each tier. Named rather than inline so a
+// reader can find them, and so it is obvious they are the LADDER's business:
+// nothing on the read side derives from them any more, which is the point of
+// flowRollupReadIntervals above.
+const (
+	flowPromote5mTo1hAge = 48 * time.Hour
+	flowPromote1hTo1dAge = 30 * 24 * time.Hour
+)
 
 // GetFlowStats runs against TWO independent 30-second walls, and the second one
 // is the binding constraint:
@@ -534,14 +554,18 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 	}
 
 	// --- Rollup base ---
-	// The rollup lifecycle keeps each age band in exactly ONE tier (promotion
-	// deletes the source rows in the same transaction): 5m covers (1h,48h],
-	// 1h covers (48h,30d], 1d covers >30d. A window therefore needs EVERY tier
-	// whose band it intersects — querying a single "best" interval left the
-	// younger bands out entirely (a 7d view silently dropped (1h,48h], ~28% of
-	// its window and the most recent part). Because the tiers are disjoint by
-	// construction, summing across them can never double-count.
-	rollupIntervals := rollupIntervalsForWindow(hours)
+	// EVERY tier, always. The rollup lifecycle keeps each age band in exactly ONE
+	// tier (promotion deletes the source rows in the same transaction), so
+	// summing across all of them can neither gap nor double-count, and the
+	// timestamp predicate decides what is actually in range.
+	//
+	// Two earlier forms of this were wrong in opposite directions. Querying a
+	// single "best" interval dropped the younger bands entirely — a 7d view lost
+	// ~28% of its window, the most recent part. Selecting tiers by comparing the
+	// window against the ladder's promotion ages was correct, but only derivably
+	// so, and it coupled this file to literals in RunFlowRollupCycle that nothing
+	// kept in step. See flowRollupReadIntervals.
+	rollupIntervals := flowRollupReadIntervals
 	newRollupBase := func() *gorm.DB {
 		q := applyCommonFilters(session().Model(&models.FlowRollup{}).Where("timestamp > ? AND interval_type IN ?", cutoff, rollupIntervals))
 		if filter.ProbeID > 0 {
@@ -1391,9 +1415,22 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 		Bucket string
 		Total  int64
 	}) {
+		// Trim the still-filling bucket at the NEW end.
 		if n := len(series); n > 0 {
-			if cutBucket := currentBucketLabel(bucketUnit); cutBucket != "" && series[n-1].Bucket == cutBucket {
+			if cutBucket := bucketLabelAt(time.Now(), bucketUnit); cutBucket != "" && series[n-1].Bucket == cutBucket {
 				series = series[:n-1]
+			}
+		}
+		// And the partial bucket at the OLD end, for the same reason at the other
+		// end of the chart. The window's cutoff lands inside a bucket, and
+		// `timestamp > cutoff` keeps only that bucket's post-cutoff slice — which
+		// was then drawn at full bucket width, so the first point read anywhere
+		// from 8% to 100% of its true rate depending on the wall-clock minute.
+		// v0.11.247 fixed the false cliff at the trailing end and missed this one
+		// because it only looked at the newest bucket.
+		if len(series) > 0 {
+			if cutBucket := bucketLabelAt(cutoff, bucketUnit); cutBucket != "" && series[0].Bucket == cutBucket {
+				series = series[1:]
 			}
 		}
 		out := make([]TimeBucket, 0, len(series))
@@ -1583,14 +1620,14 @@ func (d *Database) RunFlowRollupCycle() {
 		work = true
 	}
 
-	// Step 2: 5m rollups > 48h old → 1h rollups
-	cutoff48h := time.Now().Add(-48 * time.Hour)
+	// Step 2: 5m rollups older than flowPromote5mTo1hAge → 1h rollups
+	cutoff48h := time.Now().Add(-flowPromote5mTo1hAge)
 	if d.aggregateRollupsUp("5m", "1h", cutoff48h) {
 		work = true
 	}
 
-	// Step 3: 1h rollups > 30d old → 1d rollups
-	cutoff30d := time.Now().Add(-30 * 24 * time.Hour)
+	// Step 3: 1h rollups older than flowPromote1hTo1dAge → 1d rollups
+	cutoff30d := time.Now().Add(-flowPromote1hTo1dAge)
 	if d.aggregateRollupsUp("1h", "1d", cutoff30d) {
 		work = true
 	}

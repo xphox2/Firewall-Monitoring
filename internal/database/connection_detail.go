@@ -1203,12 +1203,13 @@ func (d *Database) GetConnectionFlowStats(connID uint, hours int) (*ConnectionFl
 	result.TotalPackets = totalPackets.Sum
 
 	// Supplement with rollup data for historical periods (subnet strategy only).
-	// Every rollup tier whose age band intersects the window must be included —
-	// the tiers are disjoint (promotion deletes the source rows), so a single
-	// "best" interval left the younger bands out of long windows entirely. See
-	// rollupIntervalsForWindow (flows.go).
+	// EVERY rollup tier is read — the tiers are disjoint (promotion deletes the
+	// source rows) and the timestamp predicate decides what is in range, so
+	// summing them can neither gap nor double-count. A single "best" interval
+	// left the younger bands out of long windows entirely. See
+	// flowRollupReadIntervals (flows.go) for why the reader no longer selects.
 	if hours > 1 && len(subnetConditions) > 0 {
-		rollupIntervals := rollupIntervalsForWindow(hours)
+		rollupIntervals := flowRollupReadIntervals
 		subnetWhere := strings.Join(subnetConditions, " OR ")
 		rollupBase := func() *gorm.DB {
 			return d.db.Model(&models.FlowRollup{}).

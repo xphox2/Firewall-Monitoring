@@ -1,6 +1,53 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.251] - 2026-09-16
+
+### Fixed — the bandwidth chart's first point was drawn at up to 12x its true rate
+
+`publishSeries` trimmed the still-filling bucket at the new end of the series and
+not the partial one at the old end. A window's cutoff lands inside a bucket and
+`timestamp > cutoff` keeps only that bucket's post-cutoff slice, which was then
+drawn at full bucket width — so the first plotted point read anywhere from 8% to
+100% of its true rate depending on the wall-clock minute. Reachable from the 12h,
+24h and 30d ranges. v0.11.247 fixed exactly this at the trailing end and missed
+this one because it only looked at the newest bucket.
+
+### Changed — readers no longer depend on where the rollup ladder promotes
+
+`rollupIntervalsForWindow` selected tiers by comparing the window against the
+ladder's promotion ages (`hours > 48` for the hourly tier, `> 720` for the daily
+one). That was correct, and only derivably so: promoted rows are stamped at
+bucket start, so a promoted row's stamp is always below the cutoff that promoted
+it and the timestamp predicate already excluded everything the selection omitted.
+
+What it cost was a coupling nothing enforced. The same age literals lived in two
+unrelated files, and `aggregateRollupsUp` takes its cutoff as a *parameter*, so
+editing one side silently broke the reader — demonstrated by promoting to the
+hourly tier at 24 hours and asking for a 48-hour window, which returned 4,000 of
+7,000 seeded bytes. The test that existed pinned that behaviour, enshrining the
+hazard rather than guarding it.
+
+Readers now take every tier and let the timestamp predicate decide, which is what
+the summary reader already did. Correctness rests only on the tiers being
+disjoint and on that predicate. Measured on production, it costs nothing: a
+24-hour sum is 478 ms against 449-510 ms, the 24-hour top-conversations grouping
+3.87 s against 4.05 s, a 168-hour sum 11.7 s against 12.5 s — the same plan each
+time.
+
+Three tests replace the one that pinned the coupling, each asserting the property
+that matters — a reader's answer does not change with where the ladder promotes —
+and each verified to fail against the previous behaviour.
+
+### Not changed, deliberately
+
+The bucket-start convention itself. `timestamp > cutoff` drops the bucket the
+cutoff falls inside: at most one five-minute slice below 48 hours (0.20% at 48h),
+one hour up to 30 days (0.10% at 720h), one day beyond (0.55% at 2160h). Both the
+summary and live paths truncate identically, and that is precisely what the
+summary-versus-live agreement check depends on; flooring to the bucket would
+over-include and break it.
+
 ## [0.11.250] - 2026-09-16
 
 ### Fixed — a day changing hands between summary tiers is now reconciled
