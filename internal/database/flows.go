@@ -1569,6 +1569,91 @@ type rollupRow struct {
 	SamplingRateAvg float64
 }
 
+// rollupKey is rollupRow's GROUP BY key — every field except the four measures.
+type rollupKey struct {
+	Bucket        string
+	DeviceID      uint
+	SrcAddr       string
+	DstAddr       string
+	DstPort       uint16
+	Protocol      uint8
+	AppCategory   uint8
+	Direction     uint8
+	ScopeLocal    bool
+	DstCountry    string
+	DstASN        uint32
+	FlowSource    uint8
+	FirewallEvent uint8
+}
+
+func (r rollupRow) key() rollupKey {
+	return rollupKey{
+		Bucket: r.Bucket, DeviceID: r.DeviceID, SrcAddr: r.SrcAddr, DstAddr: r.DstAddr,
+		DstPort: r.DstPort, Protocol: r.Protocol, AppCategory: r.AppCategory,
+		Direction: r.Direction, ScopeLocal: r.ScopeLocal, DstCountry: r.DstCountry,
+		DstASN: r.DstASN, FlowSource: r.FlowSource, FirewallEvent: r.FirewallEvent,
+	}
+}
+
+// rollupAccumulator folds the partial aggregates of a sub-ranged promotion
+// window into one row per group key, so splitting a window's SELECT across
+// several statements still emits each destination bucket exactly once.
+//
+// The first batch is adopted WHOLE, without building the index — a window that
+// is scanned in one statement (every promotion but 1h→1d) then costs exactly
+// what it did before, and the map is only paid for when there is something to
+// merge.
+type rollupAccumulator struct {
+	rows []rollupRow
+	idx  map[rollupKey]int // nil until a second batch arrives
+}
+
+func (a *rollupAccumulator) add(batch []rollupRow) {
+	if len(batch) == 0 {
+		return
+	}
+	if a.rows == nil {
+		a.rows = batch
+		return
+	}
+	if a.idx == nil {
+		// Reserved only to skip the first few doublings; the index still grows.
+		// Do not read this as "most keys recur across sub-ranges" — production
+		// says the opposite. A day of the 1h tier is 2.4M rows folding to 2.1M
+		// day-groups (see the scanStep comment below), so roughly 88% of keys
+		// occur in exactly ONE hour and the finished index holds close to one
+		// entry per group, not one per hour's worth.
+		//
+		// So peak memory here is the group slice — which the single-statement
+		// form already materialised in full, through the same append doublings —
+		// plus an index of about that many entries. The index is the real cost of
+		// merging in Go, and it is what buys every statement staying under the
+		// 30s cancel.
+		a.idx = make(map[rollupKey]int, 2*(len(a.rows)+len(batch)))
+		for i, r := range a.rows {
+			a.idx[r.key()] = i
+		}
+	}
+	for _, r := range batch {
+		k := r.key()
+		i, ok := a.idx[k]
+		if !ok {
+			a.idx[k] = len(a.rows)
+			a.rows = append(a.rows, r)
+			continue
+		}
+		dst := &a.rows[i]
+		// Re-weight the sampling mean BEFORE FlowCount moves under it.
+		if total := dst.FlowCount + r.FlowCount; total > 0 {
+			dst.SamplingRateAvg = (dst.SamplingRateAvg*float64(dst.FlowCount) +
+				r.SamplingRateAvg*float64(r.FlowCount)) / float64(total)
+		}
+		dst.BytesSum += r.BytesSum
+		dst.PacketsSum += r.PacketsSum
+		dst.FlowCount += r.FlowCount
+	}
+}
+
 // batchInsertRollups inserts rollup rows in batches within the given transaction.
 func batchInsertRollups(tx *gorm.DB, rows []rollupRow, intervalType, bucketFmt string) error {
 	const batchSize = 500
@@ -1690,7 +1775,51 @@ const flowRollupGroupKey = "bucket, device_id, src_addr, dst_addr, dst_port, pro
 //     transaction; windows commit independently, so a failure mid-backlog
 //     keeps earlier windows' progress and can never leave rollups behind for
 //     the next cycle to double-count.
+
+// truncateToBucket rounds an instant DOWN to the start of the bucket it falls
+// in, for the destination bucket width of a promotion step.
+//
+// This is what makes a promotion emit each destination bucket exactly ONCE.
+// walkAggregationWindows clamps its final window at the cutoff
+// (`winEnd = cutoff`, window_agg.go), so an un-truncated cutoff splits the
+// bucket it lands in: the slice below the cutoff is promoted now and the rest on
+// a later cycle, each producing a separate destination row with an identical
+// group key. With a 5-minute ticker that happens every cycle, forever. Measured
+// on production for a single day of the 1h tier: 2,416,851 rows for 2,085,373
+// distinct keys — a multiplicity of 1.159, so roughly 16% of the table is
+// redundant rows.
+//
+// Truncating defers the straddled bucket to the next cycle instead of splitting
+// it. The cost is that a tier holds its data up to one extra bucket-width before
+// promoting, which no longer matters to readers: they take every tier and let
+// the timestamp predicate decide (see rollupIntervalsForWindow).
+//
+// The boundary is computed in UTC, because that is the zone the DB buckets in —
+// the Postgres DSN pins TimeZone=UTC and SQLite's strftime normalises to UTC —
+// so a local-zone day boundary would disagree with the bucket labels for any
+// offset that is not a whole multiple of the width. The result is then carried
+// back into the CALLER's zone. Same instant either way, but the zone is not
+// cosmetic: this value becomes a `timestamp < ?` bound, and SQLite compares
+// timestamps as rendered TEXT including the offset, so a UTC-rendered bound
+// sorts against locally-rendered rows by its digits and silently misses them.
+// walkAggregationWindows documents the same rule for its own window bounds.
+func truncateToBucket(t time.Time, unit string) time.Time {
+	u := t.UTC()
+	switch unit {
+	case "5min":
+		return u.Truncate(5 * time.Minute).In(t.Location())
+	case "hour":
+		return u.Truncate(time.Hour).In(t.Location())
+	case "day":
+		return time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC).In(t.Location())
+	default:
+		return t
+	}
+}
+
 func (d *Database) aggregateFlowsToRollup(cutoff time.Time, intervalType string) bool {
+	// Whole destination buckets only — see truncateToBucket.
+	cutoff = truncateToBucket(cutoff, "5min")
 	bucketExpr := d.dialect.TimeBucket("5min", "timestamp")
 
 	// No work probe here. There used to be a `SELECT 1 ... WHERE timestamp < ?
@@ -1795,6 +1924,8 @@ func (d *Database) aggregateRollupsUp(srcInterval, dstInterval string, cutoff ti
 		bucketUnit = "day"
 		bucketFmt = "2006-01-02"
 	}
+	// Whole destination buckets only — see truncateToBucket.
+	cutoff = truncateToBucket(cutoff, bucketUnit)
 	bucketExpr := d.dialect.TimeBucket(bucketUnit, "timestamp")
 
 	// No work probe here — deliberately, and this is the site that proved why.
@@ -1860,33 +1991,86 @@ func (d *Database) aggregateRollupsUp(srcInterval, dstInterval string, cutoff ti
 		window = 24 * time.Hour // never split a day bucket across windows
 	}
 
+	// scanStep bounds how much time ONE aggregate/delete statement pair covers
+	// INSIDE a window. Zero means the window is handled in a single pair, which
+	// is what every promotion but 1h→1d does.
+	//
+	// A day-destination window has to be 24 hours wide — splitting a day bucket
+	// across windows writes it twice, the exact duplication truncateToBucket
+	// exists to stop — which makes its SELECT and DELETE the largest statements
+	// the ladder issues. Measured on production, a day of the 1h tier runs 2.4M
+	// to 3.8M rows (2026-09-14 and 2026-09-13 respectively); the 2.4M day folds
+	// to 2.1M groups and takes 14.7s to aggregate, and the DELETE covers the same
+	// rows the SELECT read. Both run against the 30s statement_timeout the DSN
+	// pins, and exceeding it there is not a slow cycle but a PERMANENT stall:
+	// the window rolls back and the next tick reissues the identical statement,
+	// forever. That is precisely the failure window_agg.go's header records from
+	// the syslog pass.
+	//
+	// Walking the window in sub-ranges and merging the partial aggregates in Go
+	// keeps every statement to one source-bucket width while the destination
+	// rows stay whole-bucket: each sub-range emits the SAME bucket label, so the
+	// accumulator folds them by group key into one row per bucket.
+	//
+	// What this buys is precisely that every STATEMENT stays under the 30s
+	// cancel. It does NOT shorten the transaction, so it does not reduce how long
+	// xmin is pinned — the window holds the same snapshot either way. Raising the
+	// timeout was the alternative and is still declined, on the other half of
+	// window_agg.go's reasoning for rejecting `SET LOCAL statement_timeout = 0`:
+	// a single unbounded aggregate can spill temp files on the data volume, and
+	// it removes the only AUTOMATIC backstop against a plan going wrong on a
+	// table this size — pg_cancel_backend still works, but only if someone is
+	// watching.
+	var scanStep time.Duration
+	if bucketUnit == "day" {
+		scanStep = time.Hour
+	}
+
 	nextEligible := func(after time.Time) (time.Time, bool, error) {
 		return oldestEligibleTimestamp(d.db.Model(&models.FlowRollup{}).
 			Where("interval_type = ? AND timestamp >= ? AND timestamp < ? AND id <= ?", srcInterval, after, cutoff, watermark))
 	}
 	totalGroups, err := walkAggregationWindows(d.db, window, start, cutoff, nextEligible,
 		func(tx *gorm.DB, winStart, winEnd time.Time) (int, error) {
-			var rows []rollupRow
-			if err := tx.Model(&models.FlowRollup{}).
-				Where("interval_type = ? AND timestamp >= ? AND timestamp < ? AND id <= ?", srcInterval, winStart, winEnd, watermark).
-				Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, scope_local, dst_country, dst_asn, flow_source, firewall_event, " +
-					"SUM(bytes_sum) as bytes_sum, SUM(packets_sum) as packets_sum, SUM(flow_count) as flow_count, " +
-					"CASE WHEN SUM(flow_count) > 0 THEN SUM(sampling_rate_avg * flow_count) / SUM(flow_count) ELSE 0 END as sampling_rate_avg").
-				Group(flowRollupGroupKey).
-				Scan(&rows).Error; err != nil {
-				return 0, fmt.Errorf("flow rollup: scan %s rollups: %w", srcInterval, err)
+			var acc rollupAccumulator
+			for subStart := winStart; subStart.Before(winEnd); {
+				subEnd := winEnd
+				if scanStep > 0 {
+					if e := subStart.Add(scanStep); e.Before(winEnd) {
+						subEnd = e
+					}
+				}
+				var rows []rollupRow
+				if err := tx.Model(&models.FlowRollup{}).
+					Where("interval_type = ? AND timestamp >= ? AND timestamp < ? AND id <= ?", srcInterval, subStart, subEnd, watermark).
+					Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, scope_local, dst_country, dst_asn, flow_source, firewall_event, " +
+						"SUM(bytes_sum) as bytes_sum, SUM(packets_sum) as packets_sum, SUM(flow_count) as flow_count, " +
+						"CASE WHEN SUM(flow_count) > 0 THEN SUM(sampling_rate_avg * flow_count) / SUM(flow_count) ELSE 0 END as sampling_rate_avg").
+					Group(flowRollupGroupKey).
+					Scan(&rows).Error; err != nil {
+					return 0, fmt.Errorf("flow rollup: scan %s rollups: %w", srcInterval, err)
+				}
+				// A GROUP BY over a non-empty range yields at least one group, so
+				// no rows means no source rows and nothing to delete.
+				if len(rows) > 0 {
+					acc.add(rows)
+					if err := tx.Where("interval_type = ? AND timestamp >= ? AND timestamp < ? AND id <= ?", srcInterval, subStart, subEnd, watermark).
+						Delete(&models.FlowRollup{}).Error; err != nil {
+						return 0, fmt.Errorf("flow rollup: delete consumed %s rollups: %w", srcInterval, err)
+					}
+				}
+				subStart = subEnd
 			}
-			if len(rows) == 0 {
+			if len(acc.rows) == 0 {
 				return 0, nil
 			}
-			if err := batchInsertRollups(tx, rows, dstInterval, bucketFmt); err != nil {
+			// The insert trails every sub-range's delete, but they share one
+			// transaction so the window is still atomic, and `id <= watermark`
+			// keeps a delete from ever reaching a row this insert wrote.
+			if err := batchInsertRollups(tx, acc.rows, dstInterval, bucketFmt); err != nil {
 				return 0, fmt.Errorf("flow rollup: promote %s→%s: insert: %w", srcInterval, dstInterval, err)
 			}
-			if err := tx.Where("interval_type = ? AND timestamp >= ? AND timestamp < ? AND id <= ?", srcInterval, winStart, winEnd, watermark).
-				Delete(&models.FlowRollup{}).Error; err != nil {
-				return 0, fmt.Errorf("flow rollup: delete consumed %s rollups: %w", srcInterval, err)
-			}
-			return len(rows), nil
+			return len(acc.rows), nil
 		})
 	if err != nil {
 		log.Printf("Flow rollup: %v (window rolled back; %d groups from earlier windows kept, will resume next cycle)", err, totalGroups)

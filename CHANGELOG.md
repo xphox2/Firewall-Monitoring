@@ -1,6 +1,85 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.253] - 2026-09-16
+
+### Fixed — every promotion wrote its boundary bucket twice, forever
+
+`walkAggregationWindows` clamps its final window at the cutoff, so a cutoff that
+lands mid-bucket SPLITS the destination bucket it falls in: the slice below the
+cutoff is promoted now and the remainder on a later cycle, each writing a
+separate row under an identical group key. The rollup ticker runs every five
+minutes, so this recurred on essentially every cycle. Measured on production for
+a single day of the hourly tier: 2,416,851 rows for 2,085,373 distinct keys, a
+multiplicity of 1.159 — roughly 16% of a 118M-row table was redundant rows.
+
+Promotion now truncates its cutoff down to the destination bucket width, so a
+straddled bucket waits for the next cycle instead of being split. Readers are
+unaffected either way: they already summed the duplicates correctly, which is why
+this was invisible in the figures and visible only in the row count.
+
+The boundary is computed in UTC, because that is where both engines bucket, but
+returned in the CALLER's zone — it becomes a `timestamp < ?` bound, and SQLite
+compares timestamps as rendered text including the offset. `window_agg.go`
+documents the same rule for its own window bounds.
+
+### Fixed — a whole-day promotion was one 30-second timeout from stalling for good
+
+A day-destination window has to be 24 hours wide, since splitting a day bucket
+across windows is the duplication above. That made its `SELECT` and `DELETE` the
+largest statements the ladder issues: measured on production, one day of the
+hourly tier is 2.4M source rows folding to 2.1M groups — a 14.7 s aggregate and a
+3.3M-row delete, both against the 30 s `statement_timeout` the DSN pins.
+Exceeding it there is not a slow cycle but a permanent stall, because the window
+rolls back and the next tick reissues the identical statement. That is the exact
+failure `window_agg.go` records from the syslog pass. The step had not run yet —
+it first fires about 23 hours after deploy.
+
+The window is now scanned an hour at a time and the partial aggregates merged in
+Go, so every statement covers one source-bucket width while the destination rows
+stay whole-bucket: each sub-range emits the same bucket label, and the merge
+folds them by group key. Raising `statement_timeout` was the alternative and is
+deliberately not taken, consistent with `window_agg.go`, which rejected
+`SET LOCAL statement_timeout = 0` for this family of job because an unbounded
+statement pins xmin for its whole duration and risks a temp-file spill.
+
+### Fixed — SQLite bucketed `5min` at one minute and `6hour` at one hour
+
+Both returned a `strftime` one unit finer than the name claimed, while the
+PostgreSQL forms bucket at the real width. For `6hour` that was a documented
+dev-lane approximation; for `5min` it was not, and it is not harmless — the
+raw→5m promotion groups by this expression, so on SQLite it emitted one rollup
+row per minute under the interval type `5m`: five times the rows, each labelled
+with a bucket no reader's arithmetic agrees with. It also made the ladder's
+whole-bucket property untestable at the tier where promotion runs most often,
+which is how it was found. Both now floor the Unix epoch to the real width.
+
+### Changed — flow_rollups retention can no longer be set below the ladder's reach
+
+The `flow_rollups` cutoff applies to every `interval_type`, so a retention window
+shorter than the promotion ladder takes to finish would reap hourly rows before
+their daily row is written — silent history loss with no error, the failure mode
+`window_agg.go`'s header records. The default of 365 days is nowhere near it and
+production is on that default, but nothing stopped an operator setting
+`RETENTION_FLOW_ROLLUP_DAYS` to 30 and quietly destroying the daily tier's newest
+day. Deferring straddled buckets is what made this worth enforcing rather than
+documenting: an hourly row can now wait up to a full day past the promotion age
+instead of the one ticker interval it used to. The window is now raised to the
+ladder's reach plus two days, with a log line saying so.
+
+### Added — the rollup ladder now has PostgreSQL coverage
+
+It had none. Every promotion test ran on SQLite, which is the wrong way round for
+a subsystem with two prior production incidents — and precisely how the bucket
+defect above survived, since every SQLite test shared the same wrong expression.
+Two integration tests now walk raw → 5m → 1h → 1d against a real PostgreSQL,
+asserting that bytes are conserved at each step, that each destination bucket is
+written exactly once however many passes run over it, and that the Go-side merge
+of the sub-ranged day scan reproduces what a single `GROUP BY` would have
+computed. Reverting the truncation makes them fail with the production symptom in
+miniature: 289 five-minute rows for a day instead of 288, 25 hourly instead of
+24, 2 daily instead of 1.
+
 ## [0.11.252] - 2026-09-16
 
 ### Fixed — four columns stored timestamps in two different zones, and SQLite compared them as text

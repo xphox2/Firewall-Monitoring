@@ -97,18 +97,35 @@ func (sqliteDialect) TimeBucket(unit, column string) string {
 	case "minute":
 		return fmt.Sprintf("strftime('%%Y-%%m-%%d %%H:%%M', %s)", column)
 	case "5min":
-		return fmt.Sprintf("strftime('%%Y-%%m-%%d %%H:%%M', %s)", column)
+		return sqliteEpochBucket(column, 300, "%Y-%m-%d %H:%M")
 	case "hour":
 		return fmt.Sprintf("strftime('%%Y-%%m-%%d %%H:00', %s)", column)
 	case "6hour":
-		// SQLite is dev/test only — approximate 6-hour buckets at hour
-		// resolution (Postgres does true 6-hour bucketing in prod).
-		return fmt.Sprintf("strftime('%%Y-%%m-%%d %%H:00', %s)", column)
+		return sqliteEpochBucket(column, 21600, "%Y-%m-%d %H:00")
 	case "day":
 		return fmt.Sprintf("strftime('%%Y-%%m-%%d', %s)", column)
 	default:
 		return fmt.Sprintf("strftime('%%Y-%%m-%%d %%H:00', %s)", column)
 	}
+}
+
+// sqliteEpochBucket truncates to an arbitrary number of seconds by flooring the
+// Unix epoch, which plain strftime cannot express.
+//
+// Both of its callers used to return a strftime one unit FINER than they
+// claimed: "5min" was a minute bucket and "6hour" an hour bucket, while the
+// Postgres forms bucket at the real width. That is not a harmless dev-lane
+// approximation. The raw→5m promotion groups by this expression, so on SQLite it
+// emitted one rollup row per MINUTE under the interval_type "5m" — five times the
+// rows, each labelled with a bucket that no reader's bucket arithmetic agrees
+// with, and it made the ladder's whole-bucket property impossible to test at the
+// tier where promotion runs most often.
+//
+// strftime('%s', …) resolves the column's own offset to UTC, so this buckets in
+// UTC exactly as Postgres does under the DSN's pinned TimeZone=UTC.
+func sqliteEpochBucket(column string, seconds int, layout string) string {
+	return fmt.Sprintf("strftime('%s', (CAST(strftime('%%s', %s) AS INTEGER) / %d) * %d, 'unixepoch')",
+		layout, column, seconds, seconds)
 }
 
 func (sqliteDialect) QuoteIdent(name string) string { return `"` + name + `"` }
