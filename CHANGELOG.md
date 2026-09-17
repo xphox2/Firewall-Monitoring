@@ -1,6 +1,99 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.252] - 2026-09-16
+
+### Fixed — four columns stored timestamps in two different zones, and SQLite compared them as text
+
+Found while making the new rollup-tier tests pass outside UTC, then swept for
+siblings by running the whole suite under `Pacific/Auckland`, `America/New_York`,
+`Asia/Kolkata` and `Australia/Lord_Howe` (a half-hour offset). Four columns had
+writers or comparison bounds in disagreeing zones. Every one is invisible on
+PostgreSQL, which stores `timestamptz` and compares instants; SQLite stores the
+*rendered* text, offset included, and orders it lexically — so `2026-09-16
+16:04+12:00` sorts above `2026-09-16 05:04+00:00` despite being the same moment.
+There is no driver or DSN setting that normalises this (checked `_loc` and
+`_time_format` against `glebarez/sqlite`): the only available rule is that one
+column gets one zone.
+
+- **`flow_rollups.timestamp`** — raw rows carry the writer's zone, but a promoted
+  row's timestamp came from parsing a bucket label, which both engines emit in
+  UTC. The two tiers were then unorderable against a reader cutoff that can only
+  be in one zone, and a cross-tier window silently lost whichever tier disagreed
+  with it. Promoted rows now carry the same zone as the rows they replace.
+- **`threat_intel.expires_at`** — rows are written in the caller's zone and all
+  five expiry predicates bound them with `time.Now().UTC()`. East of Greenwich
+  the comparison inverted: `PruneExpiredThreatIntel` deleted nothing and expired
+  feed entries stayed live in the matcher, while `GetActiveThreatIntel` and the
+  three list paths kept returning them.
+- **`alerts.timestamp`** — fourteen writers stamp `time.Now()` in the caller's
+  zone and `openAlertID` bounds it in that zone, but the two detection-sourced
+  paths passed through `FlowDetection.DetectedAt`, which is deliberately UTC
+  (`detect.go` stores it that way so it agrees with `GetRecentDetections`). Every
+  flow-detection alert therefore fell outside its own cooldown window, so a
+  repeat detection opened a second alert instead of folding into the first.
+- **`devices.retired_at`** — production has a single writer, in UTC; a test
+  backdated in the local zone, inverting the `ORDER BY retired_at DESC` that
+  picks which retired device a same-name re-add points at.
+
+Each fix was mutation-checked: reverting it fails the test with the symptom named
+above.
+
+## [0.11.251] - 2026-09-16
+
+### Fixed — the bandwidth chart's first point under-read its own rate, by up to 12x
+
+`publishSeries` trimmed the still-filling bucket at the new end of the series and
+not the partial one at the old end. A window's cutoff lands inside a bucket and
+`timestamp > cutoff` keeps only that bucket's post-cutoff slice, which was then
+drawn at full bucket width — so the first plotted point read anywhere from 8% to
+100% of its true rate depending on the wall-clock minute. Reachable from the 12h,
+24h and 30d ranges. v0.11.247 fixed exactly this at the trailing end and missed
+this one because it only looked at the newest bucket.
+
+The connection-detail throughput chart had **both** partial buckets — it never
+received the v0.11.247 trailing fix either — and now trims both.
+
+### Changed — the reader derives its tier list from the ladder's own promotion ages
+
+`rollupIntervalsForWindow` selected tiers by comparing the window against the
+ladder's promotion ages (`hours > 48` for the hourly tier, `> 720` for the daily
+one). That was correct, and only derivably so: promoted rows are stamped at
+bucket start, so a promoted row's stamp is always below the cutoff that promoted
+it and the timestamp predicate already excluded everything the selection omitted.
+
+What it cost was a coupling nothing enforced. The same age literals lived in two
+unrelated files, and `aggregateRollupsUp` takes its cutoff as a *parameter*, so
+editing one side silently broke the reader — demonstrated by promoting to the
+hourly tier at 24 hours and asking for a 48-hour window, which returned 4,000 of
+7,000 seeded bytes. The test that existed pinned that behaviour, enshrining the
+hazard rather than guarding it.
+
+The selection now derives from shared constants, so the two sides cannot drift.
+
+Reading *every* tier unconditionally was tried first and rejected on measurement,
+which is worth recording. The planner treats `interval_type IN (…)` and
+`timestamp > cutoff` as independent, so listing tiers whose rows are all older
+than the window inflates the row estimate 6.7-16x and crosses the sequential-scan
+threshold: 24-hour top-conversations went from 4.54 s to 6.43 s with a 115 MB
+external merge to disk, and a 48-hour sum went from a 1.63 s bitmap scan entirely
+in cache to a 10.85 s parallel scan of the whole 19 GB table. Since the panels run
+concurrently that is roughly eight simultaneous full-table scans, and 24 hours is
+the page's default range.
+
+Three tests replace the one that pinned the coupling, each asserting the property
+that matters — a reader's answer does not change with where the ladder promotes —
+and each verified to fail against the previous behaviour.
+
+### Not changed, deliberately
+
+The bucket-start convention itself. `timestamp > cutoff` drops the bucket the
+cutoff falls inside: at most one five-minute slice below 48 hours (0.20% at 48h),
+one hour up to 30 days (0.10% at 720h), one day beyond (0.55% at 2160h). Both the
+summary and live paths truncate identically, and that is precisely what the
+summary-versus-live agreement check depends on; flooring to the bucket would
+over-include and break it.
+
 ## [0.11.250] - 2026-09-16
 
 ### Fixed — a day changing hands between summary tiers is now reconciled
