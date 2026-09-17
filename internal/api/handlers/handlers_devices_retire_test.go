@@ -342,9 +342,12 @@ func TestCreateDevice_SeveralRetiredShareName(t *testing.T) {
 		t.Fatalf("retire first: %v", err)
 	}
 	// Push the first retirement an hour into the past so the DESC order is
-	// unambiguous regardless of clock resolution.
+	// unambiguous regardless of clock resolution. UTC, matching RetireDevice:
+	// SQLite orders timestamps as TEXT including the offset, so backdating in
+	// the local zone sorts a "+12:00" row above a "+00:00" one and inverts the
+	// DESC order this test is asserting.
 	if err := db.Gorm().Model(&models.Device{}).Where("id = ?", device.ID).
-		Update("retired_at", time.Now().Add(-time.Hour)).Error; err != nil {
+		Update("retired_at", time.Now().UTC().Add(-time.Hour)).Error; err != nil {
 		t.Fatalf("backdate retired_at: %v", err)
 	}
 	second := &models.Device{Name: device.Name, IPAddress: "192.168.1.9", ProbeID: &probe.ID}
