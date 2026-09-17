@@ -54,6 +54,19 @@ with a bucket no reader's arithmetic agrees with. It also made the ladder's
 whole-bucket property untestable at the tier where promotion runs most often,
 which is how it was found. Both now floor the Unix epoch to the real width.
 
+### Added — the rollup ladder now has PostgreSQL coverage
+
+It had none. Every promotion test ran on SQLite, which is the wrong way round for
+a subsystem with two prior production incidents — and precisely how the bucket
+defect above survived, since every SQLite test shared the same wrong expression.
+Two integration tests now walk raw → 5m → 1h → 1d against a real PostgreSQL,
+asserting that bytes are conserved at each step, that each destination bucket is
+written exactly once however many passes run over it, and that the Go-side merge
+of the sub-ranged day scan reproduces what a single `GROUP BY` would have
+computed. Reverting the truncation makes them fail with the production symptom in
+miniature: 289 five-minute rows for a day instead of 288, 25 hourly instead of
+24, 2 daily instead of 1.
+
 ## [0.11.252] - 2026-09-16
 
 ### Fixed — four columns stored timestamps in two different zones, and SQLite compared them as text
