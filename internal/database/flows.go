@@ -1569,6 +1569,79 @@ type rollupRow struct {
 	SamplingRateAvg float64
 }
 
+// rollupKey is rollupRow's GROUP BY key — every field except the four measures.
+type rollupKey struct {
+	Bucket        string
+	DeviceID      uint
+	SrcAddr       string
+	DstAddr       string
+	DstPort       uint16
+	Protocol      uint8
+	AppCategory   uint8
+	Direction     uint8
+	ScopeLocal    bool
+	DstCountry    string
+	DstASN        uint32
+	FlowSource    uint8
+	FirewallEvent uint8
+}
+
+func (r rollupRow) key() rollupKey {
+	return rollupKey{
+		Bucket: r.Bucket, DeviceID: r.DeviceID, SrcAddr: r.SrcAddr, DstAddr: r.DstAddr,
+		DstPort: r.DstPort, Protocol: r.Protocol, AppCategory: r.AppCategory,
+		Direction: r.Direction, ScopeLocal: r.ScopeLocal, DstCountry: r.DstCountry,
+		DstASN: r.DstASN, FlowSource: r.FlowSource, FirewallEvent: r.FirewallEvent,
+	}
+}
+
+// rollupAccumulator folds the partial aggregates of a sub-ranged promotion
+// window into one row per group key, so splitting a window's SELECT across
+// several statements still emits each destination bucket exactly once.
+//
+// The first batch is adopted WHOLE, without building the index — a window that
+// is scanned in one statement (every promotion but 1h→1d) then costs exactly
+// what it did before, and the map is only paid for when there is something to
+// merge.
+type rollupAccumulator struct {
+	rows []rollupRow
+	idx  map[rollupKey]int // nil until a second batch arrives
+}
+
+func (a *rollupAccumulator) add(batch []rollupRow) {
+	if len(batch) == 0 {
+		return
+	}
+	if a.rows == nil {
+		a.rows = batch
+		return
+	}
+	if a.idx == nil {
+		a.idx = make(map[rollupKey]int, len(a.rows)+len(batch))
+		for i, r := range a.rows {
+			a.idx[r.key()] = i
+		}
+	}
+	for _, r := range batch {
+		k := r.key()
+		i, ok := a.idx[k]
+		if !ok {
+			a.idx[k] = len(a.rows)
+			a.rows = append(a.rows, r)
+			continue
+		}
+		dst := &a.rows[i]
+		// Re-weight the sampling mean BEFORE FlowCount moves under it.
+		if total := dst.FlowCount + r.FlowCount; total > 0 {
+			dst.SamplingRateAvg = (dst.SamplingRateAvg*float64(dst.FlowCount) +
+				r.SamplingRateAvg*float64(r.FlowCount)) / float64(total)
+		}
+		dst.BytesSum += r.BytesSum
+		dst.PacketsSum += r.PacketsSum
+		dst.FlowCount += r.FlowCount
+	}
+}
+
 // batchInsertRollups inserts rollup rows in batches within the given transaction.
 func batchInsertRollups(tx *gorm.DB, rows []rollupRow, intervalType, bucketFmt string) error {
 	const batchSize = 500
@@ -1707,23 +1780,28 @@ const flowRollupGroupKey = "bucket, device_id, src_addr, dst_addr, dst_port, pro
 // Truncating defers the straddled bucket to the next cycle instead of splitting
 // it. The cost is that a tier holds its data up to one extra bucket-width before
 // promoting, which no longer matters to readers: they take every tier and let
-// the timestamp predicate decide (see flowRollupReadIntervals).
+// the timestamp predicate decide (see rollupIntervalsForWindow).
 //
-// UTC because that is the zone the DB buckets in — the Postgres DSN pins
-// TimeZone=UTC and SQLite's strftime is UTC — so a local-zone truncation would
-// disagree with the bucket labels for any offset that is not a whole multiple of
-// the width.
+// The boundary is computed in UTC, because that is the zone the DB buckets in —
+// the Postgres DSN pins TimeZone=UTC and SQLite's strftime normalises to UTC —
+// so a local-zone day boundary would disagree with the bucket labels for any
+// offset that is not a whole multiple of the width. The result is then carried
+// back into the CALLER's zone. Same instant either way, but the zone is not
+// cosmetic: this value becomes a `timestamp < ?` bound, and SQLite compares
+// timestamps as rendered TEXT including the offset, so a UTC-rendered bound
+// sorts against locally-rendered rows by its digits and silently misses them.
+// walkAggregationWindows documents the same rule for its own window bounds.
 func truncateToBucket(t time.Time, unit string) time.Time {
 	u := t.UTC()
 	switch unit {
 	case "5min":
-		return u.Truncate(5 * time.Minute)
+		return u.Truncate(5 * time.Minute).In(t.Location())
 	case "hour":
-		return u.Truncate(time.Hour)
+		return u.Truncate(time.Hour).In(t.Location())
 	case "day":
-		return time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC)
+		return time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC).In(t.Location())
 	default:
-		return u
+		return t
 	}
 }
 
@@ -1901,33 +1979,79 @@ func (d *Database) aggregateRollupsUp(srcInterval, dstInterval string, cutoff ti
 		window = 24 * time.Hour // never split a day bucket across windows
 	}
 
+	// scanStep bounds how much time ONE aggregate/delete statement pair covers
+	// INSIDE a window. Zero means the window is handled in a single pair, which
+	// is what every promotion but 1h→1d does.
+	//
+	// A day-destination window has to be 24 hours wide — splitting a day bucket
+	// across windows writes it twice, the exact duplication truncateToBucket
+	// exists to stop — which makes its SELECT and DELETE the largest statements
+	// the ladder issues. Measured on production, one day of the 1h tier is 2.4M
+	// source rows folding to 2.1M groups: a 14.7s SELECT and a 3.3M-row DELETE,
+	// both against the 30s statement_timeout the DSN pins. Exceeding it there is
+	// not a slow cycle but a PERMANENT stall — the window rolls back and the
+	// next tick reissues the identical statement, forever. That is precisely the
+	// failure window_agg.go's header records from the syslog pass.
+	//
+	// Walking the window in sub-ranges and merging the partial aggregates in Go
+	// keeps every statement to one source-bucket width while the destination
+	// rows stay whole-bucket: each sub-range emits the SAME bucket label, so the
+	// accumulator folds them by group key into one row per bucket.
+	//
+	// Raising the timeout instead was considered and rejected, consistent with
+	// window_agg.go, which turned down `SET LOCAL statement_timeout = 0` for
+	// this family of job: an unbounded statement pins xmin for its whole
+	// duration and risks a temp-file spill on the data volume.
+	var scanStep time.Duration
+	if bucketUnit == "day" {
+		scanStep = time.Hour
+	}
+
 	nextEligible := func(after time.Time) (time.Time, bool, error) {
 		return oldestEligibleTimestamp(d.db.Model(&models.FlowRollup{}).
 			Where("interval_type = ? AND timestamp >= ? AND timestamp < ? AND id <= ?", srcInterval, after, cutoff, watermark))
 	}
 	totalGroups, err := walkAggregationWindows(d.db, window, start, cutoff, nextEligible,
 		func(tx *gorm.DB, winStart, winEnd time.Time) (int, error) {
-			var rows []rollupRow
-			if err := tx.Model(&models.FlowRollup{}).
-				Where("interval_type = ? AND timestamp >= ? AND timestamp < ? AND id <= ?", srcInterval, winStart, winEnd, watermark).
-				Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, scope_local, dst_country, dst_asn, flow_source, firewall_event, " +
-					"SUM(bytes_sum) as bytes_sum, SUM(packets_sum) as packets_sum, SUM(flow_count) as flow_count, " +
-					"CASE WHEN SUM(flow_count) > 0 THEN SUM(sampling_rate_avg * flow_count) / SUM(flow_count) ELSE 0 END as sampling_rate_avg").
-				Group(flowRollupGroupKey).
-				Scan(&rows).Error; err != nil {
-				return 0, fmt.Errorf("flow rollup: scan %s rollups: %w", srcInterval, err)
+			var acc rollupAccumulator
+			for subStart := winStart; subStart.Before(winEnd); {
+				subEnd := winEnd
+				if scanStep > 0 {
+					if e := subStart.Add(scanStep); e.Before(winEnd) {
+						subEnd = e
+					}
+				}
+				var rows []rollupRow
+				if err := tx.Model(&models.FlowRollup{}).
+					Where("interval_type = ? AND timestamp >= ? AND timestamp < ? AND id <= ?", srcInterval, subStart, subEnd, watermark).
+					Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, scope_local, dst_country, dst_asn, flow_source, firewall_event, " +
+						"SUM(bytes_sum) as bytes_sum, SUM(packets_sum) as packets_sum, SUM(flow_count) as flow_count, " +
+						"CASE WHEN SUM(flow_count) > 0 THEN SUM(sampling_rate_avg * flow_count) / SUM(flow_count) ELSE 0 END as sampling_rate_avg").
+					Group(flowRollupGroupKey).
+					Scan(&rows).Error; err != nil {
+					return 0, fmt.Errorf("flow rollup: scan %s rollups: %w", srcInterval, err)
+				}
+				// A GROUP BY over a non-empty range yields at least one group, so
+				// no rows means no source rows and nothing to delete.
+				if len(rows) > 0 {
+					acc.add(rows)
+					if err := tx.Where("interval_type = ? AND timestamp >= ? AND timestamp < ? AND id <= ?", srcInterval, subStart, subEnd, watermark).
+						Delete(&models.FlowRollup{}).Error; err != nil {
+						return 0, fmt.Errorf("flow rollup: delete consumed %s rollups: %w", srcInterval, err)
+					}
+				}
+				subStart = subEnd
 			}
-			if len(rows) == 0 {
+			if len(acc.rows) == 0 {
 				return 0, nil
 			}
-			if err := batchInsertRollups(tx, rows, dstInterval, bucketFmt); err != nil {
+			// The insert trails every sub-range's delete, but they share one
+			// transaction so the window is still atomic, and `id <= watermark`
+			// keeps a delete from ever reaching a row this insert wrote.
+			if err := batchInsertRollups(tx, acc.rows, dstInterval, bucketFmt); err != nil {
 				return 0, fmt.Errorf("flow rollup: promote %s→%s: insert: %w", srcInterval, dstInterval, err)
 			}
-			if err := tx.Where("interval_type = ? AND timestamp >= ? AND timestamp < ? AND id <= ?", srcInterval, winStart, winEnd, watermark).
-				Delete(&models.FlowRollup{}).Error; err != nil {
-				return 0, fmt.Errorf("flow rollup: delete consumed %s rollups: %w", srcInterval, err)
-			}
-			return len(rows), nil
+			return len(acc.rows), nil
 		})
 	if err != nil {
 		log.Printf("Flow rollup: %v (window rolled back; %d groups from earlier windows kept, will resume next cycle)", err, totalGroups)

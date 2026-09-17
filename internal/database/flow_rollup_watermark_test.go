@@ -1,8 +1,11 @@
 package database
 
 import (
+	"strings"
 	"testing"
 	"time"
+
+	"gorm.io/gorm"
 
 	"firewall-mon/internal/models"
 )
@@ -216,5 +219,276 @@ func TestAggregateRollupsUp_EmitsEachBucketOnce(t *testing.T) {
 	if total+remaining != 1200 {
 		t.Errorf("promoted %d bytes plus %d still in the 5m tier = %d, want 1200 seeded",
 			total, remaining, total+remaining)
+	}
+}
+
+// TestAggregateFlowsToRollup_EmitsEach5mBucketOnce is the raw→5m sibling of
+// TestAggregateRollupsUp_EmitsEachBucketOnce. Every promotion step truncates, so
+// every promotion step needs the guard; this is the one that runs most often.
+func TestAggregateFlowsToRollup_EmitsEach5mBucketOnce(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	if err := d.Gorm().AutoMigrate(&models.FlowSample{}, &models.FlowRollup{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	// One 5-minute bucket's worth of samples, one per minute, all sharing a
+	// group key so a split shows up as two rows where there should be one.
+	bucket := time.Now().Add(-3 * time.Hour).UTC().Truncate(5 * time.Minute)
+	for m := 0; m < 5; m++ {
+		seedFlow(t, d, bucket.Add(time.Duration(m)*time.Minute), 443, 100)
+	}
+
+	// A cutoff landing mid-bucket — what a wall-clock cutoff does on most cycles.
+	d.aggregateFlowsToRollup(bucket.Add(3*time.Minute), "5m")
+	var early int64
+	d.Gorm().Model(&models.FlowRollup{}).Where("interval_type = ?", "5m").Count(&early)
+	if early != 0 {
+		t.Errorf("a cutoff inside the bucket produced %d 5m rows, want 0 — the bucket "+
+			"must be deferred whole, not split across two passes", early)
+	}
+
+	// A later cycle, cutoff past the bucket.
+	d.aggregateFlowsToRollup(bucket.Add(time.Hour), "5m")
+	var rows []models.FlowRollup
+	if err := d.Gorm().Where("interval_type = ?", "5m").Find(&rows).Error; err != nil {
+		t.Fatalf("read 5m tier: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("the bucket produced %d rows in the 5m tier, want 1", len(rows))
+	}
+	if rows[0].BytesSum != 500 {
+		t.Errorf("promoted %d bytes, want the 500 seeded", rows[0].BytesSum)
+	}
+	var leftover int64
+	d.Gorm().Model(&models.FlowSample{}).Count(&leftover)
+	if leftover != 0 {
+		t.Errorf("%d raw samples survived a promotion that consumed their bucket", leftover)
+	}
+}
+
+// TestAggregateRollupsUp_EmitsEachDayOnce covers the 1h→1d step, which is the
+// one the truncation was measured on and the only one whose window is walked in
+// sub-ranges. A day-destination window must be 24h wide (a split day bucket is
+// the duplication being fixed), which made its SELECT and DELETE the largest
+// statements the ladder issues — 14.7s and 3.3M rows against a 30s
+// statement_timeout. The window is therefore scanned an hour at a time and the
+// partial aggregates merged in Go, so this asserts the merge produces ONE row
+// per day carrying every sub-range's bytes.
+func TestAggregateRollupsUp_EmitsEachDayOnce(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	if err := d.Gorm().AutoMigrate(&models.FlowRollup{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	day := time.Now().Add(-40 * 24 * time.Hour).UTC().Truncate(24 * time.Hour)
+	for h := 0; h < 24; h++ {
+		if err := d.Gorm().Create(&models.FlowRollup{
+			Timestamp: day.Add(time.Duration(h) * time.Hour),
+			DeviceID:  1, IntervalType: "1h",
+			SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+			BytesSum: 100, PacketsSum: 2, FlowCount: 1,
+		}).Error; err != nil {
+			t.Fatalf("seed +%dh: %v", h, err)
+		}
+	}
+
+	// Cutoff mid-day: the day must be deferred whole, not split.
+	d.aggregateRollupsUp("1h", "1d", day.Add(13*time.Hour))
+	var early int64
+	d.Gorm().Model(&models.FlowRollup{}).Where("interval_type = ?", "1d").Count(&early)
+	if early != 0 {
+		t.Errorf("a cutoff inside the day produced %d 1d rows, want 0", early)
+	}
+
+	// A later cycle, cutoff past the day.
+	d.aggregateRollupsUp("1h", "1d", day.Add(48*time.Hour))
+	var rows []models.FlowRollup
+	if err := d.Gorm().Where("interval_type = ?", "1d").Find(&rows).Error; err != nil {
+		t.Fatalf("read 1d tier: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("the day produced %d rows in the 1d tier, want 1 — 24 hourly sub-range "+
+			"scans must merge by group key, not emit a row each", len(rows))
+	}
+	if rows[0].BytesSum != 2400 || rows[0].PacketsSum != 48 || rows[0].FlowCount != 24 {
+		t.Errorf("daily row = %d bytes / %d packets / %d flows, want 2400 / 48 / 24 — "+
+			"the sub-range merge dropped measures", rows[0].BytesSum, rows[0].PacketsSum, rows[0].FlowCount)
+	}
+	var leftover int64
+	d.Gorm().Model(&models.FlowRollup{}).Where("interval_type = ?", "1h").Count(&leftover)
+	if leftover != 0 {
+		t.Errorf("%d hourly rows survived the promotion that consumed their day", leftover)
+	}
+}
+
+// TestAggregateRollupsUp_MergesSamplingRateByFlowCount pins the subtlest part of
+// the sub-range merge. sampling_rate_avg is a flow-count-weighted mean, so
+// folding two partial aggregates cannot simply average them or keep the first —
+// it has to re-weight, and it has to do so BEFORE the running flow count moves
+// underneath it.
+func TestAggregateRollupsUp_MergesSamplingRateByFlowCount(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	if err := d.Gorm().AutoMigrate(&models.FlowRollup{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	// Hour h carries flow_count h+1 at sampling rate h+1, so the day's weighted
+	// mean is sum(k^2)/sum(k) over k=1..24 = 4900/300.
+	day := time.Now().Add(-40 * 24 * time.Hour).UTC().Truncate(24 * time.Hour)
+	for h := 0; h < 24; h++ {
+		k := float64(h + 1)
+		if err := d.Gorm().Create(&models.FlowRollup{
+			Timestamp: day.Add(time.Duration(h) * time.Hour),
+			DeviceID:  1, IntervalType: "1h",
+			SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+			BytesSum: 100, PacketsSum: 1, FlowCount: int64(h + 1), SamplingRateAvg: k,
+		}).Error; err != nil {
+			t.Fatalf("seed +%dh: %v", h, err)
+		}
+	}
+
+	d.aggregateRollupsUp("1h", "1d", day.Add(48*time.Hour))
+
+	var rows []models.FlowRollup
+	if err := d.Gorm().Where("interval_type = ?", "1d").Find(&rows).Error; err != nil {
+		t.Fatalf("read 1d tier: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("1d rows = %d, want 1", len(rows))
+	}
+	const want = 4900.0 / 300.0
+	if got := rows[0].SamplingRateAvg; got < want-1e-9 || got > want+1e-9 {
+		t.Errorf("merged sampling_rate_avg = %v, want %v (flow-count-weighted). A plain "+
+			"average gives 12.5 and keeping the first sub-range gives 1.", got, want)
+	}
+	if rows[0].FlowCount != 300 {
+		t.Errorf("merged flow_count = %d, want 300", rows[0].FlowCount)
+	}
+}
+
+// TestTruncateToBucket_KeepsCallersZone pins the zone half of the truncation.
+//
+// The boundary has to be computed in UTC — that is where both engines bucket —
+// but the result becomes a `timestamp < ?` bound, and SQLite compares timestamps
+// as rendered text INCLUDING the offset. A UTC-rendered bound sorted against
+// locally-rendered rows by its digits, so the promotion simply did not see them.
+func TestTruncateToBucket_KeepsCallersZone(t *testing.T) {
+	zone := time.FixedZone("test+12", 12*3600)
+	// 2026-06-02 03:30 UTC, which is 2026-06-02 15:30 in +12.
+	at := time.Date(2026, 6, 2, 3, 30, 0, 0, time.UTC).In(zone)
+
+	for _, tc := range []struct {
+		unit string
+		want time.Time
+	}{
+		{"5min", time.Date(2026, 6, 2, 3, 30, 0, 0, time.UTC)},
+		{"hour", time.Date(2026, 6, 2, 3, 0, 0, 0, time.UTC)},
+		{"day", time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)},
+	} {
+		got := truncateToBucket(at, tc.unit)
+		if !got.Equal(tc.want) {
+			t.Errorf("%s: boundary = %s, want %s (the UTC bucket start, which is what "+
+				"both engines group by)", tc.unit, got.UTC(), tc.want)
+		}
+		if got.Location() != zone {
+			t.Errorf("%s: zone = %s, want the caller's %s — the result is a SQL bound and "+
+				"SQLite compares the rendered offset", tc.unit, got.Location(), zone)
+		}
+	}
+}
+
+// TestAggregateRollupsUp_PromotesRowsStampedOutsideUTC walks the day path with
+// rows and a cutoff that both carry a non-UTC offset, which is what production
+// does — RunFlowRollupCycle's cutoff is time.Now(), in the process zone. It uses
+// an explicit fixed zone rather than the host's, so it exercises that regardless
+// of TZ and guards in a UTC CI too.
+//
+// It is NOT the guard for the caller-zone rule in truncateToBucket: the window
+// walk re-derives its bounds from real row timestamps, so a mis-zoned cutoff
+// usually cannot reach the aggregate here. TestTruncateToBucket_KeepsCallersZone
+// pins that contract directly, and TestFlowRollup_GroupsByFlowSource /
+// _GroupsByFirewallEvent catch it behaviourally east of Greenwich.
+func TestAggregateRollupsUp_PromotesRowsStampedOutsideUTC(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	if err := d.Gorm().AutoMigrate(&models.FlowRollup{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	zone := time.FixedZone("test+12", 12*3600)
+	day := time.Now().Add(-40 * 24 * time.Hour).UTC().Truncate(24 * time.Hour)
+	for h := 0; h < 24; h++ {
+		if err := d.Gorm().Create(&models.FlowRollup{
+			Timestamp: day.Add(time.Duration(h) * time.Hour).In(zone),
+			DeviceID:  1, IntervalType: "1h",
+			SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+			BytesSum: 100, PacketsSum: 1, FlowCount: 1,
+		}).Error; err != nil {
+			t.Fatalf("seed +%dh: %v", h, err)
+		}
+	}
+
+	// The cutoff sits exactly on the day boundary. That matters: a cutoff well
+	// past the day would still sort above every row even when rendered in the
+	// wrong zone, and the test would pass with the bug in place. On the boundary
+	// a 12-hour rendering error crosses half the rows.
+	d.aggregateRollupsUp("1h", "1d", day.Add(24*time.Hour).In(zone))
+
+	var promoted uint64
+	d.Gorm().Model(&models.FlowRollup{}).Where("interval_type = ?", "1d").
+		Select("COALESCE(SUM(bytes_sum),0)").Scan(&promoted)
+	if promoted != 2400 {
+		t.Errorf("promoted %d of 2400 seeded bytes — a day whose rows and cutoff are "+
+			"stamped outside UTC must promote whole.", promoted)
+	}
+}
+
+// TestAggregateRollupsUp_ScansTheDayInSubRanges pins that a whole-day window is
+// not one enormous statement pair.
+//
+// A day-destination window must be 24h wide, which made its SELECT and DELETE
+// the largest statements the ladder issues — measured on production at 14.7s and
+// 3.3M rows, against a 30s statement_timeout. Blowing it there is a PERMANENT
+// stall, since the window rolls back and the next tick reissues the identical
+// statement. The merge that makes sub-ranging possible is covered by
+// TestAggregateRollupsUp_MergesSamplingRateByFlowCount; this covers the split
+// itself, which is otherwise invisible in the results.
+func TestAggregateRollupsUp_ScansTheDayInSubRanges(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	if err := d.Gorm().AutoMigrate(&models.FlowRollup{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	day := time.Now().Add(-40 * 24 * time.Hour).UTC().Truncate(24 * time.Hour)
+	for h := 0; h < 24; h++ {
+		if err := d.Gorm().Create(&models.FlowRollup{
+			Timestamp: day.Add(time.Duration(h) * time.Hour),
+			DeviceID:  1, IntervalType: "1h",
+			SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+			BytesSum: 100, PacketsSum: 1, FlowCount: 1,
+		}).Error; err != nil {
+			t.Fatalf("seed +%dh: %v", h, err)
+		}
+	}
+
+	// Scan() into a plain slice runs through GORM's Row processor, not Query.
+	var aggregates int
+	if err := d.Gorm().Callback().Row().After("gorm:row").
+		Register("test:count_promote_scans", func(tx *gorm.DB) {
+			if sql := tx.Statement.SQL.String(); strings.Contains(sql, "GROUP BY") &&
+				strings.Contains(sql, "flow_rollups") {
+				aggregates++
+			}
+		}); err != nil {
+		t.Fatalf("register callback: %v", err)
+	}
+	defer func() { _ = d.Gorm().Callback().Row().Remove("test:count_promote_scans") }()
+
+	d.aggregateRollupsUp("1h", "1d", day.Add(48*time.Hour))
+
+	if aggregates < 2 {
+		t.Errorf("the whole day was aggregated in %d statement(s). A 24-hour window must be "+
+			"scanned in sub-ranges — one statement over a production day measures 14.7s "+
+			"against a 30s statement_timeout, and exceeding it stalls the ladder for good.",
+			aggregates)
 	}
 }
