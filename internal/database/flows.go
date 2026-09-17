@@ -1617,7 +1617,13 @@ func (a *rollupAccumulator) add(batch []rollupRow) {
 		return
 	}
 	if a.idx == nil {
-		a.idx = make(map[rollupKey]int, len(a.rows)+len(batch))
+		// Sized with headroom: consecutive sub-ranges of the same day repeat most
+		// of each other's keys, so the final count lands near the first batch's
+		// rather than the sum of all of them. Peak memory is therefore the group
+		// slice — which the single-statement form already held in full — plus
+		// this index. Reserving up front avoids rehashing through the remaining
+		// sub-ranges.
+		a.idx = make(map[rollupKey]int, 2*(len(a.rows)+len(batch)))
 		for i, r := range a.rows {
 			a.idx[r.key()] = i
 		}
@@ -1986,22 +1992,28 @@ func (d *Database) aggregateRollupsUp(srcInterval, dstInterval string, cutoff ti
 	// A day-destination window has to be 24 hours wide — splitting a day bucket
 	// across windows writes it twice, the exact duplication truncateToBucket
 	// exists to stop — which makes its SELECT and DELETE the largest statements
-	// the ladder issues. Measured on production, one day of the 1h tier is 2.4M
-	// source rows folding to 2.1M groups: a 14.7s SELECT and a 3.3M-row DELETE,
-	// both against the 30s statement_timeout the DSN pins. Exceeding it there is
-	// not a slow cycle but a PERMANENT stall — the window rolls back and the
-	// next tick reissues the identical statement, forever. That is precisely the
-	// failure window_agg.go's header records from the syslog pass.
+	// the ladder issues. Measured on production, a day of the 1h tier runs 2.4M
+	// to 3.8M rows (2026-09-14 and 2026-09-13 respectively); the 2.4M day folds
+	// to 2.1M groups and takes 14.7s to aggregate, and the DELETE covers the same
+	// rows the SELECT read. Both run against the 30s statement_timeout the DSN
+	// pins, and exceeding it there is not a slow cycle but a PERMANENT stall:
+	// the window rolls back and the next tick reissues the identical statement,
+	// forever. That is precisely the failure window_agg.go's header records from
+	// the syslog pass.
 	//
 	// Walking the window in sub-ranges and merging the partial aggregates in Go
 	// keeps every statement to one source-bucket width while the destination
 	// rows stay whole-bucket: each sub-range emits the SAME bucket label, so the
 	// accumulator folds them by group key into one row per bucket.
 	//
-	// Raising the timeout instead was considered and rejected, consistent with
-	// window_agg.go, which turned down `SET LOCAL statement_timeout = 0` for
-	// this family of job: an unbounded statement pins xmin for its whole
-	// duration and risks a temp-file spill on the data volume.
+	// What this buys is precisely that every STATEMENT stays under the 30s
+	// cancel. It does NOT shorten the transaction, so it does not reduce how long
+	// xmin is pinned — the window holds the same snapshot either way. Raising the
+	// timeout was the alternative and is still declined, on the other half of
+	// window_agg.go's reasoning for rejecting `SET LOCAL statement_timeout = 0`:
+	// a single unbounded aggregate can spill temp files on the data volume, and
+	// an uncancellable statement removes the only backstop against a plan going
+	// wrong on a table this size.
 	var scanStep time.Duration
 	if bucketUnit == "day" {
 		scanStep = time.Hour
