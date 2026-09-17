@@ -157,3 +157,64 @@ func seedRollup(t *testing.T, d *Database, interval string, ts time.Time, port u
 		t.Fatalf("seed rollup %s/%d: %v", interval, port, err)
 	}
 }
+
+// TestAggregateRollupsUp_EmitsEachBucketOnce pins the fix for duplicate-key
+// inflation in the rollup ladder.
+//
+// walkAggregationWindows clamps its final window at the cutoff, so an
+// un-truncated cutoff SPLITS the destination bucket it lands in: the slice below
+// the cutoff promotes now, the rest on a later cycle, each writing a separate row
+// with an identical group key. With a 5-minute ticker that recurs every cycle
+// forever. Measured on production for one day of the 1h tier: 2,416,851 rows for
+// 2,085,373 distinct keys, a multiplicity of 1.159 — roughly 16% of the table.
+//
+// Promotion now truncates its cutoff to the destination bucket width, so a
+// straddled bucket waits for the next cycle rather than being split.
+func TestAggregateRollupsUp_EmitsEachBucketOnce(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	if err := d.Gorm().AutoMigrate(&models.FlowRollup{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	// One hour's worth of 5m rows, all sharing a group key so any split shows up
+	// as two rows where there should be one.
+	hour := time.Now().Add(-50 * time.Hour).UTC().Truncate(time.Hour)
+	for m := 0; m < 60; m += 5 {
+		if err := d.Gorm().Create(&models.FlowRollup{
+			Timestamp: hour.Add(time.Duration(m) * time.Minute),
+			DeviceID:  1, IntervalType: "5m",
+			SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+			BytesSum: 100, PacketsSum: 1, FlowCount: 1,
+		}).Error; err != nil {
+			t.Fatalf("seed +%dm: %v", m, err)
+		}
+	}
+
+	// Promote with a cutoff deliberately landing MID-HOUR, which is what a
+	// wall-clock cutoff does on almost every real cycle.
+	d.aggregateRollupsUp("5m", "1h", hour.Add(32*time.Minute))
+	// And again with the cutoff past the hour, as a later cycle would.
+	d.aggregateRollupsUp("5m", "1h", hour.Add(3*time.Hour))
+
+	var rows []models.FlowRollup
+	if err := d.Gorm().Where("interval_type = ?", "1h").Find(&rows).Error; err != nil {
+		t.Fatalf("read 1h tier: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Errorf("the hour produced %d rows in the 1h tier, want 1. A cutoff landing mid-bucket "+
+			"must defer that bucket, not split it into one row per promotion pass.", len(rows))
+	}
+
+	// And nothing may be lost or double-counted by the deferral.
+	var total uint64
+	for _, r := range rows {
+		total += r.BytesSum
+	}
+	var remaining uint64
+	d.Gorm().Model(&models.FlowRollup{}).Where("interval_type = ?", "5m").
+		Select("COALESCE(SUM(bytes_sum),0)").Scan(&remaining)
+	if total+remaining != 1200 {
+		t.Errorf("promoted %d bytes plus %d still in the 5m tier = %d, want 1200 seeded",
+			total, remaining, total+remaining)
+	}
+}

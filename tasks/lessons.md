@@ -356,3 +356,35 @@ The cursor existed only so a truncated walk could resume. **Removing the truncat
 **Rule: when a second review round finds a bug in the same mechanism a previous round already fixed, stop patching and ask what the mechanism is FOR. Often the requirement that forced it is itself optional.** Patching state machines that have already bitten twice is how silent data loss ships.
 
 **Corollary worth keeping:** mutation-test every fix — revert it, confirm the test fails with the symptom it names, restore. Doing that here caught one test passing for the wrong reason (`WatermarkAdvancesWhenNothingIsOwned` did not exercise the fix it was named for) and one whose scenario never reproduced the bug it claimed (needed a *truncated* walk, not just a failure). A test that has never been seen to fail is unproven.
+
+## 2026-09-16 — Pin the window bound, or now() will invent a difference for you. And stop asking; fix it.
+
+**(a) Two comparison errors in one session, in opposite directions.** Comparing
+two query shapes against a MOVING window is a trap.
+
+*Invented a bug:* to test whether the rollup tier list dropped data I ran
+`... WHERE timestamp > now() - interval '30 days' AND interval_type IN ('5m','1h')`
+then the same with `'1d'` added. The second returned 900,914,126 more bytes and I
+reported it as a live defect. Each query took ~16s, so `now()` advanced between
+them and the second read a later window. With ONE pinned cutoff
+(`WITH c AS (SELECT now() - interval '30 days' AS t)`) they are byte-identical.
+
+*Missed one:* verifying the summary read path, I hand-wrote the "live" comparison
+with all three tiers listed — the CORRECT list, not the one the code builds at
+`hours=720`. So I validated against a query that did not contain the bug.
+
+**Rules.** Pin the window bound once and reference it from both sides. Derive the
+comparison from the CODE, not from memory of what the code does. A difference you
+cannot reproduce with a pinned bound is a timing artifact until proven otherwise.
+
+Same class: a review's `6,718,395,816 vs 6,154,735,638` was real numbers with the
+wrong attribution — exactly one promoted slice (563,660,178 bytes) failing
+`timestamp > cutoff`, i.e. the window edge, not the tier list it was blamed on.
+
+**(b) The user's actual complaint, and it was fair: I kept surfacing each new
+finding as a question instead of fixing it.** Over several days of a fix
+programme I repeatedly ended turns with "found another issue, shall I…". They had
+already said to use Fable and fix everything. Finding an adjacent defect mid-task
+is not a decision point — it is the task. Fix it, review it, ship it, and report
+once at the end. Reserve check-ins for genuine forks: destructive actions, or
+scope the user alone can decide. "I found something small" is never one.

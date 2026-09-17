@@ -1635,7 +1635,46 @@ const flowRollupGroupKey = "bucket, device_id, src_addr, dst_addr, dst_port, pro
 //     transaction; windows commit independently, so a failure mid-backlog
 //     keeps earlier windows' progress and can never leave rollups behind for
 //     the next cycle to double-count.
+
+// truncateToBucket rounds an instant DOWN to the start of the bucket it falls
+// in, for the destination bucket width of a promotion step.
+//
+// This is what makes a promotion emit each destination bucket exactly ONCE.
+// walkAggregationWindows clamps its final window at the cutoff
+// (`winEnd = cutoff`, window_agg.go), so an un-truncated cutoff splits the
+// bucket it lands in: the slice below the cutoff is promoted now and the rest on
+// a later cycle, each producing a separate destination row with an identical
+// group key. With a 5-minute ticker that happens every cycle, forever. Measured
+// on production for a single day of the 1h tier: 2,416,851 rows for 2,085,373
+// distinct keys — a multiplicity of 1.159, so roughly 16% of the table is
+// redundant rows.
+//
+// Truncating defers the straddled bucket to the next cycle instead of splitting
+// it. The cost is that a tier holds its data up to one extra bucket-width before
+// promoting, which no longer matters to readers: they take every tier and let
+// the timestamp predicate decide (see flowRollupReadIntervals).
+//
+// UTC because that is the zone the DB buckets in — the Postgres DSN pins
+// TimeZone=UTC and SQLite's strftime is UTC — so a local-zone truncation would
+// disagree with the bucket labels for any offset that is not a whole multiple of
+// the width.
+func truncateToBucket(t time.Time, unit string) time.Time {
+	u := t.UTC()
+	switch unit {
+	case "5min":
+		return u.Truncate(5 * time.Minute)
+	case "hour":
+		return u.Truncate(time.Hour)
+	case "day":
+		return time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC)
+	default:
+		return u
+	}
+}
+
 func (d *Database) aggregateFlowsToRollup(cutoff time.Time, intervalType string) bool {
+	// Whole destination buckets only — see truncateToBucket.
+	cutoff = truncateToBucket(cutoff, "5min")
 	bucketExpr := d.dialect.TimeBucket("5min", "timestamp")
 
 	// No work probe here. There used to be a `SELECT 1 ... WHERE timestamp < ?
@@ -1740,6 +1779,8 @@ func (d *Database) aggregateRollupsUp(srcInterval, dstInterval string, cutoff ti
 		bucketUnit = "day"
 		bucketFmt = "2006-01-02"
 	}
+	// Whole destination buckets only — see truncateToBucket.
+	cutoff = truncateToBucket(cutoff, bucketUnit)
 	bucketExpr := d.dialect.TimeBucket(bucketUnit, "timestamp")
 
 	// No work probe here — deliberately, and this is the site that proved why.
