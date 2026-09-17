@@ -38,12 +38,16 @@ var flowSummaryMinHours = 48
 
 // flowSummaryReadIntervals is every summary tier, always.
 //
-// Same shape as flowRollupReadIntervals, and for the same reason. The tiers are
-// disjoint — a day's rows supersede the hourly rows covering it, and the hourly
-// tier is floored at the daily tier's reach — so reading both and summing can
-// neither gap nor double-count, whatever the window. A tier holding nothing in
-// range simply contributes nothing. That is one less thing to keep in step as
-// the promotion boundary moves.
+// The tiers are disjoint — a day's rows supersede the hourly rows covering it,
+// and the hourly tier is floored at the daily tier's reach — so reading both and
+// summing can neither gap nor double-count, whatever the window. A tier holding
+// nothing in range simply contributes nothing. That is one less thing to keep in
+// step as the promotion boundary moves.
+//
+// The rollup reader deliberately does NOT do this (see rollupIntervalsForWindow
+// in flows.go): there, a wider interval_type IN list inflates PostgreSQL's row
+// estimate enough to flip a 118M-row table onto a seq scan. Here the whole
+// summary is ~635k rows across both tiers, so the same widening costs nothing.
 var flowSummaryReadIntervals = []string{"1h", "1d"}
 
 // flowSummaryCompatible reports whether a filter can be answered from the

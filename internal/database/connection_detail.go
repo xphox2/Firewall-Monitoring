@@ -1203,13 +1203,12 @@ func (d *Database) GetConnectionFlowStats(connID uint, hours int) (*ConnectionFl
 	result.TotalPackets = totalPackets.Sum
 
 	// Supplement with rollup data for historical periods (subnet strategy only).
-	// EVERY rollup tier is read — the tiers are disjoint (promotion deletes the
-	// source rows) and the timestamp predicate decides what is in range, so
-	// summing them can neither gap nor double-count. A single "best" interval
-	// left the younger bands out of long windows entirely. See
-	// flowRollupReadIntervals (flows.go) for why the reader no longer selects.
+	// Every rollup tier the window can contain rows from — the tiers are disjoint
+	// (promotion deletes the source rows), so summing them can neither gap nor
+	// double-count. A single "best" interval left the younger bands out of long
+	// windows entirely. See rollupIntervalsForWindow (flows.go).
 	if hours > 1 && len(subnetConditions) > 0 {
-		rollupIntervals := flowRollupReadIntervals
+		rollupIntervals := rollupIntervalsForWindow(hours)
 		subnetWhere := strings.Join(subnetConditions, " OR ")
 		rollupBase := func() *gorm.DB {
 			return d.db.Model(&models.FlowRollup{}).
@@ -1269,6 +1268,24 @@ func (d *Database) GetConnectionFlowStats(connID uint, hours int) (*ConnectionFl
 	newBase().Select(d.dialect.TimeBucket("hour", "timestamp") + " as bucket, SUM(bytes) as total").
 		Group("bucket").Order("bucket ASC").Scan(&timeSeries)
 	result.BucketSeconds = 3600 // bytes_over_time is bucketed hourly above
+
+	// Trim the partial buckets at BOTH ends, the same way GetFlowStats does.
+	// This chart is rendered as a rate against a fixed 3600s bucket
+	// (admin-connection-detail.js), so a bucket holding part of an hour is drawn
+	// at full width and under-reads. The trailing one is the false cliff
+	// v0.11.247 fixed on the Flows page and never here; the leading one is the
+	// cutoff's own bucket, holding only its post-cutoff slice.
+	if n := len(timeSeries); n > 0 {
+		if cut := bucketLabelAt(time.Now(), "hour"); cut != "" && timeSeries[n-1].Bucket == cut {
+			timeSeries = timeSeries[:n-1]
+		}
+	}
+	if len(timeSeries) > 0 {
+		if cut := bucketLabelAt(cutoff, "hour"); cut != "" && timeSeries[0].Bucket == cut {
+			timeSeries = timeSeries[1:]
+		}
+	}
+
 	for _, t := range timeSeries {
 		result.BytesOverTime = append(result.BytesOverTime, TimeBucket{Bucket: t.Bucket, Count: t.Total})
 	}

@@ -108,8 +108,13 @@ func TestFlowStats_SurvivesAn5mTo1hPromotionAtAnyAge(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	want := seedTierLadder(t, d, []int{4, 10, 20, 30, 40, 44, 46}, 1000)
 
-	// Promote at 24h rather than the ladder's usual 48h.
-	d.aggregateRollupsUp("5m", "1h", time.Now().Add(-24*time.Hour))
+	// Move the ladder's own age, which is what a future change would do, and
+	// promote accordingly. The reader must follow the constant, not a literal of
+	// its own.
+	orig := flowPromote5mTo1hAge
+	flowPromote5mTo1hAge = 24 * time.Hour
+	defer func() { flowPromote5mTo1hAge = orig }()
+	d.aggregateRollupsUp("5m", "1h", time.Now().Add(-flowPromote5mTo1hAge))
 
 	var promoted int64
 	d.Gorm().Model(&models.FlowRollup{}).Where("interval_type = ?", "1h").Count(&promoted)
@@ -122,9 +127,9 @@ func TestFlowStats_SurvivesAn5mTo1hPromotionAtAnyAge(t *testing.T) {
 		t.Fatalf("GetFlowStats(48): %v", err)
 	}
 	if res.TotalBytes != want {
-		t.Errorf("a 48h window reports %d bytes against %d seeded. The reader must not depend on "+
-			"where the ladder promotes — promoting earlier than the window's own age strands every "+
-			"promoted row outside it.", res.TotalBytes, want)
+		t.Errorf("a 48h window reports %d bytes against %d seeded. The reader derives its tier "+
+			"list from flowPromote5mTo1hAge; if it carried its own literal instead, moving the "+
+			"ladder strands every promoted row outside the window.", res.TotalBytes, want)
 	}
 }
 
@@ -134,10 +139,17 @@ func TestFlowStats_SurvivesA1hTo1dPromotionAtAnyAge(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	want := seedTierLadder(t, d, []int{24, 24 * 5, 24 * 12, 24 * 18, 24 * 22, 24 * 26, 24 * 28}, 1000)
 
-	// Get them into the 1h tier first, then promote to 1d at 10 days rather than
-	// the ladder's usual 30.
-	d.aggregateRollupsUp("5m", "1h", time.Now().Add(-12*time.Hour))
-	d.aggregateRollupsUp("1h", "1d", time.Now().Add(-10*24*time.Hour))
+	// Move the ladder's own age and promote accordingly.
+	orig5m := flowPromote5mTo1hAge
+	orig1h := flowPromote1hTo1dAge
+	flowPromote5mTo1hAge = 12 * time.Hour
+	flowPromote1hTo1dAge = 10 * 24 * time.Hour
+	defer func() {
+		flowPromote5mTo1hAge = orig5m
+		flowPromote1hTo1dAge = orig1h
+	}()
+	d.aggregateRollupsUp("5m", "1h", time.Now().Add(-flowPromote5mTo1hAge))
+	d.aggregateRollupsUp("1h", "1d", time.Now().Add(-flowPromote1hTo1dAge))
 
 	var promoted int64
 	d.Gorm().Model(&models.FlowRollup{}).Where("interval_type = ?", "1d").Count(&promoted)
@@ -170,7 +182,11 @@ func TestFlowStats_TrimsTheLeadingPartialBucket(t *testing.T) {
 	// A full hour's worth of 5m rows spanning the cutoff hour: some before the
 	// 24h cutoff (outside the window) and some after (inside it). The bucket is
 	// therefore partial however the clock falls.
-	for m := 0; m < 60; m += 5 {
+	// Every minute, not every five: seeding only :00-:55 made this a silent no-op
+	// whenever GetFlowStats's own cutoff landed at :55 or later, because then
+	// every seeded row is below it, series[0] is a different hour, and the
+	// assertion passes on unfixed code too. 5 minutes in every 60.
+	for m := 0; m < 60; m++ {
 		if err := d.Gorm().Create(&models.FlowRollup{
 			Timestamp: cutoffHour.Add(time.Duration(m) * time.Minute),
 			DeviceID:  1, IntervalType: "5m",
