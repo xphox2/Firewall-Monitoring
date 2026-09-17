@@ -82,8 +82,14 @@ func (d *Database) UpsertThreatIntelBatch(entries []models.ThreatIntel) error {
 // indicators that drop off their feed don't accumulate forever. Returns the
 // number deleted. Rows with a NULL expires_at (e.g. permanent manual entries)
 // are never touched.
+// The expiry comparisons in this file bind time.Now() in the CALLER's zone, not
+// .UTC(). The instant is the same and PostgreSQL stores timestamptz, so nothing
+// changes in production — but SQLite stores and compares the RENDERED text, and
+// expires_at rows are written by Go code stamping the local offset. A UTC bound
+// against a "+12:00" row compares "05:..." with "16:..." and sorts backwards:
+// expired feed entries were never pruned and stayed live in the matcher.
 func (d *Database) PruneExpiredThreatIntel() (int64, error) {
-	res := d.db.Where("expires_at IS NOT NULL AND expires_at < ?", time.Now().UTC()).
+	res := d.db.Where("expires_at IS NOT NULL AND expires_at < ?", time.Now()).
 		Delete(&models.ThreatIntel{})
 	return res.RowsAffected, res.Error
 }
@@ -101,7 +107,7 @@ func (d *Database) GetActiveThreatIntel() ([]models.ThreatIntel, error) {
 		Where("enabled = ?", false).Pluck("source", &disabled).Error; err != nil {
 		return nil, err
 	}
-	q := d.db.Where("expires_at IS NULL OR expires_at > ?", time.Now().UTC())
+	q := d.db.Where("expires_at IS NULL OR expires_at > ?", time.Now())
 	if len(disabled) > 0 {
 		q = q.Where("source NOT IN ?", disabled)
 	}
@@ -144,7 +150,7 @@ func (d *Database) ListThreatIntel(limit int) ([]models.ThreatIntel, error) {
 func (d *Database) CountActiveThreatIntel() (int64, error) {
 	var n int64
 	err := d.db.Model(&models.ThreatIntel{}).
-		Where("expires_at IS NULL OR expires_at > ?", time.Now().UTC()).
+		Where("expires_at IS NULL OR expires_at > ?", time.Now()).
 		Count(&n).Error
 	return n, err
 }
@@ -193,7 +199,7 @@ func (d *Database) SearchThreatIntel(f ThreatIntelFilter, offset, limit int) ([]
 		q = q.Where("severity = ?", f.Severity)
 	}
 	if f.ActiveOnly {
-		q = q.Where("expires_at IS NULL OR expires_at > ?", time.Now().UTC())
+		q = q.Where("expires_at IS NULL OR expires_at > ?", time.Now())
 	}
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
@@ -215,7 +221,7 @@ type ThreatIntelSourceCount struct {
 func (d *Database) CountThreatIntelBySource() ([]ThreatIntelSourceCount, error) {
 	var out []ThreatIntelSourceCount
 	err := d.db.Model(&models.ThreatIntel{}).
-		Where("expires_at IS NULL OR expires_at > ?", time.Now().UTC()).
+		Where("expires_at IS NULL OR expires_at > ?", time.Now()).
 		Select("source, COUNT(*) as count").
 		Group("source").Order("count DESC").Scan(&out).Error
 	return out, err

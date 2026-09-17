@@ -293,40 +293,50 @@ func flowAddrFilter(q *gorm.DB, d Dialect, column, val string) *gorm.DB {
 	return q.Where(column+" = ?", pattern)
 }
 
-// flowRollupReadIntervals is every rollup tier. Readers take all of them and let
-// the timestamp predicate decide what is in range.
+// rollupIntervalsForWindow returns the rollup tiers a window of `hours` can
+// contain rows from.
 //
-// This used to be a function that selected tiers by comparing the window against
-// the ladder's promotion ages (`hours > 48` for the 1h tier, `> 720` for 1d).
-// That was CORRECT but only derivably so, and it is not worth the derivation:
-// promoted rows are stamped at bucket START, so a promoted row's stamp is always
-// below the cutoff that promoted it, and a reader's cutoff is never earlier —
-// meaning `timestamp > cutoff` already excluded everything the selection omitted.
-// Reading all tiers changes no result.
+// The thresholds are DERIVED from the ladder's own promotion ages rather than
+// repeating them as literals. That is the entire point of this function's
+// present shape. It used to compare against inline `48` and `720`, which was
+// correct only by coincidence: aggregateRollupsUp takes its cutoff as a
+// PARAMETER, so moving an age on the ladder side silently broke the reader here
+// with nothing to catch it. Demonstrated by mutation — promote 5m->1h at 24h,
+// ask for hours=48, and the literal form returns 4,000 of 7,000 seeded bytes;
+// promote 1h->1d at 10 days and the 30-day window loses the same way. The test
+// that existed pinned {48:[5m]} and {720:[5m,1h]}, enshrining the coupling
+// rather than guarding it.
 //
-// What it changes is what the correctness rests on. The old form coupled this
-// file to the same age literals in RunFlowRollupCycle, with nothing enforcing the
-// match, and aggregateRollupsUp takes its cutoff as a PARAMETER — so editing one
-// side silently broke the reader. Demonstrated: promote 5m→1h at 24h and ask for
-// hours=48 and the old code returns 4,000 of 7,000 seeded bytes; promote 1h→1d at
-// 10 days and the 30-day window loses the same way. The test that existed pinned
-// `{48:[5m]}` and `{720:[5m,1h]}`, enshrining the coupling rather than guarding it.
+// Reading EVERY tier unconditionally was tried and rejected. It is correct —
+// the tiers are disjoint because promotion deletes its source rows in the same
+// transaction, so `timestamp > cutoff` cannot gap or double-count — but it is
+// not free, because PostgreSQL's planner treats `interval_type IN (...)` and
+// `timestamp > c` as independent predicates. A wider IN list inflates the row
+// estimate and crosses the seq-scan threshold. Measured on production: 24h
+// top-conversations 4.54s -> 6.43s with a 115MB external merge, and a 48h SUM
+// 1.63s -> 10.85s on a full-table scan.
 //
-// Now correctness rests only on the tiers being disjoint (promotion deletes its
-// source rows in the same transaction) and on the timestamp predicate — the same
-// two properties flowSummaryReadIntervals already relies on. Measured on
-// production, reading all tiers costs nothing: 24h sum 478ms vs 449-510ms, 24h
-// top-conversations GROUP BY 3.87s vs 4.05s, 168h sum 11.7s vs 12.5s, each the
-// same plan.
+// With the default ages this returns exactly what the old literals did, so no
+// query plan moves; what changed is that moving an age now moves the reader too.
 //
 // Shared by GetFlowStats and GetConnectionFlowStats.
-var flowRollupReadIntervals = []string{"5m", "1h", "1d"}
+func rollupIntervalsForWindow(hours int) []string {
+	window := time.Duration(hours) * time.Hour
+	intervals := []string{"5m"}
+	if window > flowPromote5mTo1hAge {
+		intervals = append(intervals, "1h")
+	}
+	if window > flowPromote1hTo1dAge {
+		intervals = append(intervals, "1d")
+	}
+	return intervals
+}
 
-// The ages at which the ladder promotes each tier. Named rather than inline so a
-// reader can find them, and so it is obvious they are the LADDER's business:
-// nothing on the read side derives from them any more, which is the point of
-// flowRollupReadIntervals above.
-const (
+// The ages at which the ladder promotes each tier, and the only place they are
+// written down. rollupIntervalsForWindow derives the read side from them;
+// RunFlowRollupCycle drives the write side from them. Vars rather than consts so
+// a test can move a promotion age and assert the reader followed.
+var (
 	flowPromote5mTo1hAge = 48 * time.Hour
 	flowPromote1hTo1dAge = 30 * 24 * time.Hour
 )
@@ -564,8 +574,8 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 	// ~28% of its window, the most recent part. Selecting tiers by comparing the
 	// window against the ladder's promotion ages was correct, but only derivably
 	// so, and it coupled this file to literals in RunFlowRollupCycle that nothing
-	// kept in step. See flowRollupReadIntervals.
-	rollupIntervals := flowRollupReadIntervals
+	// kept in step. See rollupIntervalsForWindow.
+	rollupIntervals := rollupIntervalsForWindow(hours)
 	newRollupBase := func() *gorm.DB {
 		q := applyCommonFilters(session().Model(&models.FlowRollup{}).Where("timestamp > ? AND interval_type IN ?", cutoff, rollupIntervals))
 		if filter.ProbeID > 0 {
@@ -1578,6 +1588,14 @@ func batchInsertRollups(tx *gorm.DB, rows []rollupRow, intervalType, bucketFmt s
 			if err != nil {
 				return fmt.Errorf("parse bucket %q with layout %q: %w", r.Bucket, bucketFmt, err)
 			}
+			// The bucket label is zone-less and both engines emit it in UTC, so
+			// Parse yields a UTC instant. Carry it into the local zone before
+			// storing: the instant is unchanged (PostgreSQL stores timestamptz,
+			// so nothing moves there), but SQLite stores the rendered text, and
+			// a rollup row rendered "+00:00" beside raw rows rendered in the
+			// writer's offset makes SQLite's lexical comparison mis-order the
+			// tiers against a reader cutoff that can only be in one zone.
+			ts = ts.In(time.Local)
 			batch = append(batch, models.FlowRollup{
 				Timestamp:       ts,
 				DeviceID:        r.DeviceID,

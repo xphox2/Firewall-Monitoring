@@ -882,7 +882,14 @@ func (am *AlertManager) ProcessFlowDetection(det *models.FlowDetection, siteID *
 	}
 
 	alert := models.Alert{
-		Timestamp:    det.DetectedAt,
+		// .Local(): same instant, but alerts.timestamp is a caller-zone column
+		// (every other writer here stamps time.Now(), and openAlertID bounds it
+		// with ref.Add(-cooldown) in that zone). flow_detections.detected_at is
+		// deliberately UTC — see detect.go ToModel — so a detection-sourced
+		// alert is the one place a foreign zone enters. Under SQLite, which
+		// compares the rendered text, that put every flow-detection alert
+		// outside its own cooldown window and broke dedup.
+		Timestamp:    det.DetectedAt.Local(),
 		DeviceID:     det.DeviceID,
 		AlertType:    alertType,
 		Severity:     sev,
@@ -1071,7 +1078,7 @@ func (am *AlertManager) ProcessSecurityEvent(group []*models.FlowDetection, site
 	}
 
 	alert := models.Alert{
-		Timestamp:    winner.DetectedAt,
+		Timestamp:    winner.DetectedAt.Local(), // caller-zone column, see ProcessFlowDetection
 		DeviceID:     deviceID,
 		AlertType:    alertType,
 		Severity:     newSev,
