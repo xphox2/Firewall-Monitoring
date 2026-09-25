@@ -37,9 +37,10 @@ all (v0.11.254, v0.11.255).
   5 s `lock_timeout` (startup DDL is unchanged). A `DROP` that still cannot get
   the lock after three retries leaves that table's expired partitions for the
   next pass and logs `WARNING: cleanup: DROP lock-timed-out on …`. The row-delete
-  that follows skips the kept month — previously a failed drop fell through to
-  row-deleting the whole expired month, which takes hours — while still trimming
-  every newer partition and severity window. So even a permanent blocker limits
+  that follows skips the kept month, while still trimming every newer partition
+  and severity window. (Previously a blocked drop waited without limit, stalling
+  inserts, and any other drop failure fell through to row-deleting the whole
+  expired month, which takes hours.) So even a permanent blocker limits
   growth to the stuck month instead of halting retention for the table.
 - The first retention attempt after a restart moves from 5m to 5m37s, so it no
   longer lands on a rollup tick, and a contended attempt keeps retrying for 2h

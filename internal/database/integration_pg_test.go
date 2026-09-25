@@ -15,7 +15,10 @@
 package database
 
 import (
+	"bytes"
 	"fmt"
+	"log"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -366,14 +369,22 @@ func TestPostgresIntegration(t *testing.T) {
 			}
 		}()
 
-		start := time.Now()
+		// Captured log: a parent-level blocker times out EVERY child, so the
+		// function must give up once for the table, not once per child — each
+		// attempt is another insert stall. A timing bound cannot tell one give-up
+		// from two at a 200ms timeout; the log can.
+		var logBuf bytes.Buffer
+		log.SetOutput(&logBuf)
 		floor, handled, err := d.dropPartitionsOlderThan("interface_stats", cutoff)
+		log.SetOutput(os.Stderr)
 		if err != nil || !handled {
 			t.Fatalf("a lock-timed-out DROP must not be an error: handled=%v err=%v", handled, err)
 		}
-		if limit := time.Duration(1+dropLockRetries) * (cronDDLLockTimeout + time.Second); time.Since(start) > limit {
-			t.Errorf("gave up after %v — more than one table's worth of attempts (%v); it must stop at the first give-up",
-				time.Since(start), limit)
+		if n := strings.Count(logBuf.String(), "DROP lock-timed-out"); n != 1 {
+			t.Errorf("%d give-up warnings, want exactly 1 — it must stop at the first give-up:\n%s", n, logBuf.String())
+		}
+		if !strings.Contains(logBuf.String(), "2 expired partition(s) of interface_stats kept") {
+			t.Errorf("give-up warning does not report both kept partitions:\n%s", logBuf.String())
 		}
 		if want := time.Date(2000, 3, 1, 0, 0, 0, 0, time.UTC); !floor.Equal(want) {
 			t.Errorf("floor = %v, want %v (the upper bound of the NEWEST kept child, including children never attempted)", floor, want)
@@ -426,7 +437,11 @@ func TestPostgresIntegration(t *testing.T) {
 		cronDDLLockTimeout = 200 * time.Millisecond
 		defer func() { cronDDLLockTimeout = origTimeout }()
 
-		ahead := time.Now().UTC().AddDate(0, 6, 0)
+		// The same arithmetic ensurePartitions uses (local month + 6, on the 1st).
+		// AddDate(0, 6, 0) would normalize day overflow — on Mar 31 it lands in
+		// October, one past the last partition startup creates.
+		y, m, _ := time.Now().Date()
+		ahead := time.Date(y, m+6, 1, 0, 0, 0, 0, time.UTC)
 		name := fmt.Sprintf("interface_stats_%d%02d", ahead.Year(), int(ahead.Month()))
 		exists := func() bool {
 			var n int
