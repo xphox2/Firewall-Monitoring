@@ -232,6 +232,65 @@ func humanBps(bps float64) string {
 const (
 	cleanupInterval     = 24 * time.Hour
 	initialCleanupDelay = 5 * time.Minute
+
+	// A cleanup that loses the shared work lock used to forfeit the entire day,
+	// because the lock is non-blocking and the next attempt is 24h later.
+	//
+	// It loses by ARITHMETIC, not luck — but not simply to the task the first draft
+	// of this comment blamed. The goroutine contends with whatever the loop
+	// services AFTER the cleanup case, and select picks uniformly among ready
+	// cases, so the ordering decides which task that is: in the ordering the log
+	// below shows, monitoring had already run and released; in others it is one of
+	// the contenders.
+	//
+	// What makes the loss near-certain is how MANY lock-takers are ready together.
+	// Both cleanup periods are exact multiples of 300s as well as of the 60s
+	// monitoring tick, so a 5-minute-aligned attempt finds four of them ready —
+	// monitoring, rollup (which also runs the syslog aggregation pass),
+	// flow-detect, ipsec-telemetry. The goroutine wins only if cleanup is serviced
+	// last of the five, since otherwise the loop's next synchronous case beats a
+	// goroutine that has yet to pin a connection: about a 3-in-4 loss per aligned
+	// attempt, against at most 1-in-2 with one contender at a plain 60s mark.
+	//
+	// Observed on production 2026-09-25, five minutes after a deploy. The ROLLUP is
+	// the holder visible here (detect or ipsec could win that race in principle):
+	//
+	//	01:00:15 main.go: Monitoring cycle: 5 device(s)   (logged at cycle START)
+	//	01:00:15 main.go: Skipping cleanup: another poller holds the work lock
+	//	01:00:17 flows.go: Flow rollup: aggregated 8811 groups ...
+	//
+	// syslog_messages had reached 37 days of history under a 30-day policy and
+	// 161 GB. v0.11.254 fixed a statement timeout that abandoned a table for a
+	// day; this is why that pass so rarely got to run at all.
+	//
+	// "Forever" would overstate it for the DAILY attempt: cleanupTimer.Reset is
+	// measured from when the case is serviced, not when it fired, so on a
+	// long-lived process the daily attempt drifts off the boundary. On this
+	// deployment, which restarts several times a day, the attempt that matters is
+	// the 5-minute initial one — and that one is aligned every time.
+	//
+	// So a contended cleanup now retries instead of forfeiting. The interval is
+	// deliberately coprime with the contending periods: 97 is prime, so
+	// gcd(97s, 60s) = gcd(97s, 300s) = 1s and successive retries visit every
+	// phase of both. A round interval would not — 90s only alternates between two
+	// phases of the 60s tick, and 150s visits two phases of the 300s one.
+	cleanupLockRetryInterval = 97 * time.Second
+	cleanupLockRetryWindow   = 30 * time.Minute
+)
+
+// Indirections so the retry loop above is testable without burning 97 seconds a
+// turn. Never reassigned outside tests.
+var (
+	timeNow  = time.Now
+	sleepFor = time.Sleep
+	// tryPollerWorkLock is the lock acquisition itself, behind an indirection so a
+	// test can simulate contention without a database.
+	tryPollerWorkLock = func(p *Poller) (func(), bool) {
+		if p.db == nil {
+			return nil, true // nothing to lock against; run
+		}
+		return p.db.TryAcquirePollerWorkLock()
+	}
 )
 
 // runRetentionCleanup applies every retention policy and the periodic schema
@@ -242,31 +301,57 @@ const (
 // (goroutine-safe), p.cfg.Retention (read-only) and the mutex-guarded
 // alertManager — none of the loop-owned maps (prevIfaceStats etc.).
 func (p *Poller) runRetentionCleanup() {
-	p.runUnderLeaderLockNoHeartbeat("cleanup", func() {
-		if p.db != nil {
-			if err := p.db.CleanupOldData(p.cfg.Retention); err != nil {
-				log.Printf("Data cleanup error: %v", err)
-			} else {
-				log.Println("Old data cleanup completed")
-			}
-			if err := p.db.CleanupConfigRevisions(); err != nil {
-				log.Printf("Config revision cleanup error: %v", err)
-			} else {
-				log.Println("Config revision retention cleanup completed (top 50 + last 90d, run-collapsed)")
-			}
-			// Ensure future partitions exist (creates ahead partitions if needed)
-			if err := p.db.EnsurePartitions(); err != nil {
-				log.Printf("Partition check error: %v", err)
-			}
-			// Ensure autovacuum is configured (no-op if already configured)
-			if err := p.db.ConfigureAutovacuum(); err != nil {
-				log.Printf("Autovacuum config error: %v", err)
-			}
+	p.runRetentionCleanupFor(p.retentionCleanupWork)
+}
+
+// runRetentionCleanupFor is runRetentionCleanup with the work injectable, so the
+// retry loop can be tested without a database or a real 97-second sleep.
+func (p *Poller) runRetentionCleanupFor(work func()) {
+	deadline := timeNow().Add(cleanupLockRetryWindow)
+	for attempt := 1; ; attempt++ {
+		if p.runUnderLeaderLockNoHeartbeat("cleanup", work) {
+			return
 		}
-		if p.alertManager != nil {
-			p.alertManager.PruneExpiredCooldowns()
+		if !timeNow().Before(deadline) {
+			// Deliberately not "retention is not running": the usual reason to
+			// lose the lock this long is a SIBLING poller's cleanup already
+			// draining the backlog, in which case retention is running, just not
+			// here.
+			log.Printf("cleanup: could not acquire the work lock within %s (%d attempts); "+
+				"not running retention in this process, next attempt is the daily tick",
+				cleanupLockRetryWindow, attempt)
+			return
 		}
-	})
+		sleepFor(cleanupLockRetryInterval)
+	}
+}
+
+// retentionCleanupWork is the body of the daily pass, run while holding the work
+// lock. Split out of runRetentionCleanup so the lock can be retried around it.
+func (p *Poller) retentionCleanupWork() {
+	if p.db != nil {
+		if err := p.db.CleanupOldData(p.cfg.Retention); err != nil {
+			log.Printf("Data cleanup error: %v", err)
+		} else {
+			log.Println("Old data cleanup completed")
+		}
+		if err := p.db.CleanupConfigRevisions(); err != nil {
+			log.Printf("Config revision cleanup error: %v", err)
+		} else {
+			log.Println("Config revision retention cleanup completed (top 50 + last 90d, run-collapsed)")
+		}
+		// Ensure future partitions exist (creates ahead partitions if needed)
+		if err := p.db.EnsurePartitions(); err != nil {
+			log.Printf("Partition check error: %v", err)
+		}
+		// Ensure autovacuum is configured (no-op if already configured)
+		if err := p.db.ConfigureAutovacuum(); err != nil {
+			log.Printf("Autovacuum config error: %v", err)
+		}
+	}
+	if p.alertManager != nil {
+		p.alertManager.PruneExpiredCooldowns()
+	}
 }
 
 func (p *Poller) Start() error {
@@ -449,19 +534,21 @@ func (p *Poller) runUnderLeaderLock(taskName string, fn func()) {
 // (AUDIT-188): stamping loopBeat from off-loop work would keep /readyz green
 // while the select loop itself was genuinely hung — the exact staleness M30
 // exists to expose.
-func (p *Poller) runUnderLeaderLockNoHeartbeat(taskName string, fn func()) {
-	if p.db == nil {
-		// No DB to lock against; just run.
-		fn()
-		return
-	}
-	release, acquired := p.db.TryAcquirePollerWorkLock()
+// The bool reports whether the lock was ACQUIRED (and therefore whether fn ran).
+// Callers that cannot afford to lose their turn — the daily retention cleanup —
+// use it to retry; the rest ignore it, because a skipped tick of a per-minute or
+// per-5-minute task is picked up by the next one.
+func (p *Poller) runUnderLeaderLockNoHeartbeat(taskName string, fn func()) bool {
+	release, acquired := tryPollerWorkLock(p)
 	if !acquired {
 		log.Printf("Skipping %s: another poller holds the work lock", taskName)
-		return
+		return false
 	}
-	defer release()
+	if release != nil {
+		defer release()
+	}
 	fn()
+	return true
 }
 
 // detectConfigFromCfg maps the operator's DETECT_* config onto the detection

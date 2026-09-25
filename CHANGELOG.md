@@ -1,6 +1,70 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.255] - 2026-09-25
+
+### Fixed — retention forfeited the entire day whenever it lost a lock race, and the race was arithmetic
+
+The third distinct reason retention has silently not run on this deployment. The
+first was a `Ticker` that never reached its first tick across restarts; the second
+was a statement timeout abandoning a table for the day (v0.11.254). This is the
+one that made the second so rare: the pass so seldom got to start at all.
+
+`runUnderLeaderLockNoHeartbeat` acquires the poller work lock **non-blocking** —
+on contention it logged one line and returned, and the next attempt was the 24-hour
+tick. Losing one race therefore skipped a whole day of retention.
+
+**And the race was not chance, it was arithmetic** — though not simply against the
+task the log line first suggests. What the cleanup goroutine contends with is
+whatever the loop services *after* the cleanup case, and `select` picks uniformly
+among ready cases, so the ordering decides: in the ordering this log shows,
+monitoring had already run and released; in others it is one of the contenders.
+
+What makes the loss near-certain is how MANY lock-takers are ready at once. Both
+cleanup periods are exact multiples of 300 s as well as of the 60 s monitoring
+tick, so at a 5-minute-aligned attempt the ready set holds four of them —
+monitoring, rollup (which also runs the syslog aggregation pass), flow-detect and
+ipsec-telemetry. The goroutine wins only if cleanup is serviced last of the five,
+because otherwise the loop's next synchronous case beats a goroutine that still
+has to pin a connection: roughly a 3-in-4 loss per aligned attempt, against at
+most 1-in-2 with a single contender at a plain 60 s mark. Caught five minutes after deploying v0.11.254 —
+note it is the rollup that finishes holding it, and the monitoring line is logged
+at the *start* of its cycle:
+
+```
+01:00:15 main.go:1070: Monitoring cycle: 5 device(s)
+01:00:15 main.go:460: Skipping cleanup: another poller holds the work lock
+01:00:17 flows.go:1905: Flow rollup: aggregated 8811 groups ...
+```
+
+For the *daily* attempt "forever" would overstate it: `cleanupTimer.Reset` is
+measured from when the case is serviced rather than when it fired, so on a
+long-lived process the daily attempt drifts off the boundary. On this deployment,
+which restarts several times a day, the attempt that matters is the five-minute
+initial one — and that one is aligned every time.
+
+That is why `syslog_messages` reached 37 days of history under a 30-day policy at
+161 GB: the v0.11.254 timeout fix was correct but almost never reached.
+
+A contended cleanup now retries every 97 s for up to 30 minutes before deferring
+to the daily tick. 97 is prime, and that is the point: `gcd(97 s, 60 s)` and
+`gcd(97 s, 300 s)` are both 1 s, so successive retries visit *every* phase of both
+contending periods. Mere non-divisibility would not do — 90 s alternates between
+just two phases of the 60 s tick and re-collides every other retry, and 150 s
+visits two phases of the 300 s one. The test asserts coprimality rather than
+non-divisibility, because an earlier version asserted the weaker property and
+accepted 90 s.
+
+`runUnderLeaderLockNoHeartbeat` now reports whether it acquired the lock. Only the
+daily pass retries; the per-minute and per-5-minute callers ignore it, since a
+skipped turn is picked up by their next tick.
+
+**Not fixed here, but noted:** the threat-feed sync shares the same lock on a
+12-hour cadence (`THREAT_FEEDS_INTERVAL`), so it has the same forfeit shape — and
+its one-shot startup sync at 60 s is aligned with the monitoring tick by the same
+arithmetic. Low impact, because feed rows persist with a TTL and a later sync
+re-fills them, but it is the same bug.
+
 ## [0.11.254] - 2026-09-24
 
 ### Fixed — one statement timeout abandoned a whole table's retention until the next day
