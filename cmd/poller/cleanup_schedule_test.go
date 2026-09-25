@@ -263,10 +263,11 @@ func TestRetentionCleanup_LockRetryIsBounded(t *testing.T) {
 // CAUSE, which is arithmetic rather than timing luck: a retry cadence that is a
 // multiple of the tickers it is losing to re-collides on every attempt.
 func TestRetentionCleanup_RetryIntervalDoesNotAlignWithTheTickers(t *testing.T) {
-	// The cadences cleanup contends with: the 5-minute rollup/detect/ipsec
-	// tickers (the actual holders — the select loop is serial, so the monitoring
-	// cycle has already released by the time the cleanup case is serviced) and the
-	// per-minute monitoring tick.
+	// The cadences cleanup contends with. The 5-minute set (rollup/detect/ipsec)
+	// comes first because it is what makes the loss near-certain: four lock-takers
+	// are ready at a 5-minute-aligned attempt, so the goroutine wins only if
+	// cleanup is serviced last. The per-minute monitoring tick is a contender too,
+	// in the select orderings where it is serviced after the cleanup case.
 	//
 	// Non-divisibility is NOT enough, and asserting only that was the first
 	// version of this test. 90s is not a multiple of 60s yet alternates between

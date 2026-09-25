@@ -236,17 +236,24 @@ const (
 	// A cleanup that loses the shared work lock used to forfeit the entire day,
 	// because the lock is non-blocking and the next attempt is 24h later.
 	//
-	// It loses by ARITHMETIC, not luck, but not to the task the first draft of
-	// this comment blamed. The select loop is serial and runUnderLeaderLock is
-	// synchronous, so the monitoring cycle that fires on the same instant has
-	// already released the lock before the cleanup case is serviced. The real
-	// contenders are the FIVE-MINUTE tickers — rollup (which also runs the syslog
-	// aggregation pass), flow-detect, ipsec-telemetry — because both cleanup
-	// periods are exact multiples of 300s as well as of the 60s monitoring tick.
-	// Go's select picks at random among ready cases, so this is a high-probability
-	// loss at every 5-minute-aligned attempt rather than a certainty. Observed on
-	// production 2026-09-25, five minutes after a deploy — note it is the ROLLUP
-	// that finishes holding it:
+	// It loses by ARITHMETIC, not luck — but not simply to the task the first draft
+	// of this comment blamed. The goroutine contends with whatever the loop
+	// services AFTER the cleanup case, and select picks uniformly among ready
+	// cases, so the ordering decides which task that is: in the ordering the log
+	// below shows, monitoring had already run and released; in others it is one of
+	// the contenders.
+	//
+	// What makes the loss near-certain is how MANY lock-takers are ready together.
+	// Both cleanup periods are exact multiples of 300s as well as of the 60s
+	// monitoring tick, so a 5-minute-aligned attempt finds four of them ready —
+	// monitoring, rollup (which also runs the syslog aggregation pass),
+	// flow-detect, ipsec-telemetry. The goroutine wins only if cleanup is serviced
+	// last of the five, since otherwise the loop's next synchronous case beats a
+	// goroutine that has yet to pin a connection: about a 3-in-4 loss per aligned
+	// attempt, against at most 1-in-2 with one contender at a plain 60s mark.
+	//
+	// Observed on production 2026-09-25, five minutes after a deploy. The ROLLUP is
+	// the holder visible here (detect or ipsec could win that race in principle):
 	//
 	//	01:00:15 main.go: Monitoring cycle: 5 device(s)   (logged at cycle START)
 	//	01:00:15 main.go: Skipping cleanup: another poller holds the work lock

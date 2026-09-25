@@ -14,15 +14,20 @@ one that made the second so rare: the pass so seldom got to start at all.
 on contention it logged one line and returned, and the next attempt was the 24-hour
 tick. Losing one race therefore skipped a whole day of retention.
 
-**And the race was not chance, it was arithmetic** — though not against the task
-the log line first suggests. The select loop is serial and the lock helper is
-synchronous, so the monitoring cycle that fires on the same instant has already
-released the lock before the cleanup case is serviced. The real contenders are the
-**five-minute** tickers — rollup (which also runs the syslog aggregation pass),
-flow-detect and ipsec-telemetry — because both cleanup periods are exact multiples
-of 300 s as well as of the 60 s monitoring tick. Go's `select` chooses at random
-among ready cases, so this is a high-probability loss at every 5-minute-aligned
-attempt rather than a certainty. Caught five minutes after deploying v0.11.254 —
+**And the race was not chance, it was arithmetic** — though not simply against the
+task the log line first suggests. What the cleanup goroutine contends with is
+whatever the loop services *after* the cleanup case, and `select` picks uniformly
+among ready cases, so the ordering decides: in the ordering this log shows,
+monitoring had already run and released; in others it is one of the contenders.
+
+What makes the loss near-certain is how MANY lock-takers are ready at once. Both
+cleanup periods are exact multiples of 300 s as well as of the 60 s monitoring
+tick, so at a 5-minute-aligned attempt the ready set holds four of them —
+monitoring, rollup (which also runs the syslog aggregation pass), flow-detect and
+ipsec-telemetry. The goroutine wins only if cleanup is serviced last of the five,
+because otherwise the loop's next synchronous case beats a goroutine that still
+has to pin a connection: roughly a 3-in-4 loss per aligned attempt, against at
+most 1-in-2 with a single contender at a plain 60 s mark. Caught five minutes after deploying v0.11.254 —
 note it is the rollup that finishes holding it, and the monitoring line is logged
 at the *start* of its cycle:
 
