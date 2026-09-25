@@ -183,3 +183,96 @@ func TestRetentionCleanup_IsAReusableFunction(t *testing.T) {
 	t.Error("no (*Poller).runRetentionCleanup method — the cleanup body must be callable " +
 		"from both the startup path and the periodic one")
 }
+
+// Third variant of the same failure: retention not running, for a third reason.
+//
+// The first was a Ticker that never reached its first tick across restarts. The
+// second was a statement timeout abandoning a table for the day (v0.11.254). This
+// is the one that made the second so rare — the work lock is NON-BLOCKING and the
+// next attempt was 24h away, so losing a race forfeited the entire day. And the
+// race was not chance, it was arithmetic: the monitoring ticker is
+// SNMP.PollInterval (60s on prod) and both cleanup periods are exact multiples of
+// it, so every attempt fired on the same instant as a monitoring tick. Observed on
+// production 2026-09-25, five minutes after a deploy:
+//
+//	01:00:15 main.go:1070: Monitoring cycle: 5 device(s)
+//	01:00:15 main.go:460: Skipping cleanup: another poller holds the work lock
+//
+// syslog_messages was at 37 days under a 30-day policy, 161 GB.
+
+func TestRetentionCleanup_RetriesRatherThanForfeitingTheDay(t *testing.T) {
+	origTry, origSleep, origNow := tryPollerWorkLock, sleepFor, timeNow
+	defer func() { tryPollerWorkLock, sleepFor, timeNow = origTry, origSleep, origNow }()
+
+	now := time.Now()
+	timeNow = func() time.Time { return now }
+	sleepFor = func(d time.Duration) { now = now.Add(d) }
+
+	// Contended for the first two attempts, then free.
+	attempts := 0
+	tryPollerWorkLock = func(*Poller) (func(), bool) {
+		attempts++
+		if attempts < 3 {
+			return nil, false
+		}
+		return func() {}, true
+	}
+
+	ran := false
+	p := &Poller{}
+	p.runRetentionCleanupFor(func() { ran = true })
+
+	if !ran {
+		t.Error("cleanup never ran: losing the non-blocking work lock must be retried, " +
+			"not forfeited until the next daily tick 24h later")
+	}
+	if attempts != 3 {
+		t.Errorf("lock attempts = %d, want 3 (two contended, then acquired)", attempts)
+	}
+}
+
+func TestRetentionCleanup_LockRetryIsBounded(t *testing.T) {
+	origTry, origSleep, origNow := tryPollerWorkLock, sleepFor, timeNow
+	defer func() { tryPollerWorkLock, sleepFor, timeNow = origTry, origSleep, origNow }()
+
+	now := time.Now()
+	start := now
+	timeNow = func() time.Time { return now }
+	sleepFor = func(d time.Duration) { now = now.Add(d) }
+
+	attempts := 0
+	tryPollerWorkLock = func(*Poller) (func(), bool) { attempts++; return nil, false }
+
+	ran := false
+	p := &Poller{}
+	p.runRetentionCleanupFor(func() { ran = true })
+
+	if ran {
+		t.Error("cleanup ran without holding the lock")
+	}
+	if elapsed := now.Sub(start); elapsed > cleanupLockRetryWindow+cleanupLockRetryInterval {
+		t.Errorf("retried for %v, beyond the %v window — an unbounded retry would hold the "+
+			"goroutine past the next daily tick", elapsed, cleanupLockRetryWindow)
+	}
+	if attempts < 2 {
+		t.Errorf("attempts = %d, want more than one before giving up", attempts)
+	}
+}
+
+// TestRetentionCleanup_RetryIntervalDoesNotAlignWithTheTickers pins the ROOT
+// CAUSE, which is arithmetic rather than timing luck: a retry cadence that is a
+// multiple of the tickers it is losing to re-collides on every attempt.
+func TestRetentionCleanup_RetryIntervalDoesNotAlignWithTheTickers(t *testing.T) {
+	// The cadences cleanup contends with: the monitoring ticker (SNMP poll
+	// interval, 60s on production) and the 5-minute rollup/detect tickers.
+	for _, contender := range []time.Duration{time.Minute, 5 * time.Minute} {
+		if cleanupLockRetryInterval%contender == 0 {
+			t.Errorf("cleanupLockRetryInterval %v is a multiple of %v, so every retry lands "+
+				"on that ticker again — which is exactly how the original collision was "+
+				"deterministic rather than unlucky", cleanupLockRetryInterval, contender)
+		}
+	}
+	if cleanupLockRetryWindow <= cleanupLockRetryInterval {
+		t.Errorf("retry window %v allows no second attempt", cleanupLockRetryWindow)
+	}
+}
