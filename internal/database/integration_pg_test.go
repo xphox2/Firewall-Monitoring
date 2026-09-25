@@ -15,7 +15,10 @@
 package database
 
 import (
+	"bytes"
 	"fmt"
+	"log"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -306,9 +309,9 @@ func TestPostgresIntegration(t *testing.T) {
 			`CREATE TABLE IF NOT EXISTS interface_stats_200001 PARTITION OF interface_stats FOR VALUES FROM ('2000-01-01') TO ('2000-02-01')`).Error; err != nil {
 			t.Fatalf("create old partition: %v", err)
 		}
-		handled, err := d.dropPartitionsOlderThan("interface_stats", time.Now())
-		if err != nil || !handled {
-			t.Fatalf("dropPartitionsOlderThan: handled=%v err=%v", handled, err)
+		floor, handled, err := d.dropPartitionsOlderThan("interface_stats", time.Now())
+		if err != nil || !handled || !floor.IsZero() {
+			t.Fatalf("dropPartitionsOlderThan: floor=%v handled=%v err=%v", floor, handled, err)
 		}
 		var n int
 		d.Gorm().Raw("SELECT COUNT(*) FROM pg_tables WHERE tablename = 'interface_stats_200001'").Scan(&n)
@@ -319,6 +322,164 @@ func TestPostgresIntegration(t *testing.T) {
 		d.Gorm().Raw("SELECT COUNT(*) FROM pg_tables WHERE tablename = ?", cur).Scan(&n)
 		if n != 1 {
 			t.Fatalf("current-month partition %s should survive the drop", cur)
+		}
+	})
+
+	// v0.11.256: a partition DROP needs ACCESS EXCLUSIVE on the parent, and since
+	// retention stopped shutting out the monitoring cycle it can meet a reader.
+	// It must give up after a bounded wait (never stall inserts behind it for
+	// long), keep the table's expired partitions for the next pass, and return a
+	// floor so the caller's row-DELETE neither grinds through the kept month nor
+	// stops trimming everything newer.
+	t.Run("CleanupDropLockTimeoutKeepsPartitionsAndReturnsFloor", func(t *testing.T) {
+		origTimeout, origSleep := cronDDLLockTimeout, batchDeleteLockRetrySleep
+		cronDDLLockTimeout, batchDeleteLockRetrySleep = 200*time.Millisecond, time.Millisecond
+		defer func() { cronDDLLockTimeout, batchDeleteLockRetrySleep = origTimeout, origSleep }()
+
+		exec := func(sql string) {
+			t.Helper()
+			if err := d.Gorm().Exec(sql).Error; err != nil {
+				t.Fatalf("%s: %v", sql, err)
+			}
+		}
+		exec(`CREATE TABLE IF NOT EXISTS interface_stats_default PARTITION OF interface_stats DEFAULT`)
+		exec(`CREATE TABLE IF NOT EXISTS interface_stats_200001 PARTITION OF interface_stats FOR VALUES FROM ('2000-01-01 00:00:00+00') TO ('2000-02-01 00:00:00+00')`)
+		exec(`CREATE TABLE IF NOT EXISTS interface_stats_200002 PARTITION OF interface_stats FOR VALUES FROM ('2000-02-01 00:00:00+00') TO ('2000-03-01 00:00:00+00')`)
+		defer exec(`DROP TABLE IF EXISTS interface_stats_200001, interface_stats_200002`)
+
+		kept := time.Date(2000, 2, 15, 0, 0, 0, 0, time.UTC)    // in 200002: < floor
+		trimmed := time.Date(2000, 4, 15, 0, 0, 0, 0, time.UTC) // in DEFAULT: >= floor, < cutoff
+		for _, ts := range []time.Time{kept, trimmed} {
+			if err := d.Gorm().Create(&models.InterfaceStats{DeviceID: 1, Timestamp: ts, Name: "floor"}).Error; err != nil {
+				t.Fatalf("seed %v: %v", ts, err)
+			}
+		}
+		cutoff := time.Date(2000, 6, 1, 0, 0, 0, 0, time.UTC)
+
+		// A reader holding ACCESS SHARE on the parent, as a long monitoring or
+		// dashboard query would.
+		reader := d.Gorm().Begin()
+		if err := reader.Exec(`SELECT 1 FROM interface_stats LIMIT 1`).Error; err != nil {
+			t.Fatalf("reader: %v", err)
+		}
+		released := false
+		defer func() {
+			if !released {
+				reader.Rollback()
+			}
+		}()
+
+		// Captured log: a parent-level blocker times out EVERY child, so the
+		// function must give up once for the table, not once per child — each
+		// attempt is another insert stall. A timing bound cannot tell one give-up
+		// from two at a 200ms timeout; the log can.
+		var logBuf bytes.Buffer
+		log.SetOutput(&logBuf)
+		floor, handled, err := d.dropPartitionsOlderThan("interface_stats", cutoff)
+		log.SetOutput(os.Stderr)
+		if err != nil || !handled {
+			t.Fatalf("a lock-timed-out DROP must not be an error: handled=%v err=%v", handled, err)
+		}
+		if n := strings.Count(logBuf.String(), "DROP lock-timed-out"); n != 1 {
+			t.Errorf("%d give-up warnings, want exactly 1 — it must stop at the first give-up:\n%s", n, logBuf.String())
+		}
+		if !strings.Contains(logBuf.String(), "2 expired partition(s) of interface_stats kept") {
+			t.Errorf("give-up warning does not report both kept partitions:\n%s", logBuf.String())
+		}
+		if want := time.Date(2000, 3, 1, 0, 0, 0, 0, time.UTC); !floor.Equal(want) {
+			t.Errorf("floor = %v, want %v (the upper bound of the NEWEST kept child, including children never attempted)", floor, want)
+		}
+		partCount := func(name string) int {
+			var n int
+			d.Gorm().Raw("SELECT COUNT(*) FROM pg_tables WHERE tablename = ?", name).Scan(&n)
+			return n
+		}
+		if partCount("interface_stats_200001") != 1 || partCount("interface_stats_200002") != 1 {
+			t.Fatal("expired partitions were dropped although the parent lock was never granted")
+		}
+
+		// The caller's row-DELETE with the floor: runs alongside the reader
+		// (ROW EXCLUSIVE does not conflict with ACCESS SHARE), spares the kept
+		// month, and still trims rows newer than the floor.
+		where, args := andFloor("", nil, floor)
+		if err := d.batchedDeleteOlderThanWhere(&models.InterfaceStats{}, "interface_stats", cutoff, where, args...); err != nil {
+			t.Fatalf("floored delete: %v", err)
+		}
+		count := func(ts time.Time) int64 {
+			var n int64
+			d.Gorm().Model(&models.InterfaceStats{}).Where("name = ? AND timestamp = ?", "floor", ts).Count(&n)
+			return n
+		}
+		if count(kept) != 1 {
+			t.Error("the kept month was row-deleted — the floor must exclude it (hours of batches on a real month)")
+		}
+		if count(trimmed) != 0 {
+			t.Error("a row newer than the floor and older than the cutoff survived — retention stopped trimming")
+		}
+
+		// Blocker gone: the next pass drops both and returns no floor.
+		reader.Rollback()
+		released = true
+		floor, _, err = d.dropPartitionsOlderThan("interface_stats", cutoff)
+		if err != nil || !floor.IsZero() {
+			t.Fatalf("unblocked pass: floor=%v err=%v, want zero floor", floor, err)
+		}
+		if partCount("interface_stats_200001") != 0 || partCount("interface_stats_200002") != 0 {
+			t.Error("the next unblocked pass did not drop the kept partitions")
+		}
+	})
+
+	// The retention cron's monthly CREATE ... PARTITION OF takes the same parent
+	// lock, so EnsurePartitionsForCron must also give up rather than queue every
+	// insert behind a reader — and create the partition on the next pass.
+	t.Run("EnsurePartitionsForCronBoundsTheParentLockWait", func(t *testing.T) {
+		origTimeout := cronDDLLockTimeout
+		cronDDLLockTimeout = 200 * time.Millisecond
+		defer func() { cronDDLLockTimeout = origTimeout }()
+
+		// The same arithmetic ensurePartitions uses (local month + 6, on the 1st).
+		// AddDate(0, 6, 0) would normalize day overflow — on Mar 31 it lands in
+		// October, one past the last partition startup creates.
+		y, m, _ := time.Now().Date()
+		ahead := time.Date(y, m+6, 1, 0, 0, 0, 0, time.UTC)
+		name := fmt.Sprintf("interface_stats_%d%02d", ahead.Year(), int(ahead.Month()))
+		exists := func() bool {
+			var n int
+			d.Gorm().Raw("SELECT COUNT(*) FROM pg_tables WHERE tablename = ?", name).Scan(&n)
+			return n == 1
+		}
+		if !exists() {
+			t.Fatalf("precondition: %s should exist after startup EnsurePartitions", name)
+		}
+		if err := d.Gorm().Exec("DROP TABLE " + name).Error; err != nil {
+			t.Fatalf("drop %s: %v", name, err)
+		}
+
+		reader := d.Gorm().Begin()
+		if err := reader.Exec(`SELECT 1 FROM interface_stats LIMIT 1`).Error; err != nil {
+			t.Fatalf("reader: %v", err)
+		}
+		done := make(chan error, 1)
+		go func() { done <- d.EnsurePartitionsForCron() }()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("a lock-timed-out CREATE must be logged, not returned: %v", err)
+			}
+		case <-time.After(60 * time.Second):
+			reader.Rollback()
+			t.Fatal("EnsurePartitionsForCron waited on the parent lock unbounded — every insert would queue behind it")
+		}
+		reader.Rollback()
+		if exists() {
+			t.Fatalf("%s was created although the parent lock was held", name)
+		}
+
+		if err := d.EnsurePartitionsForCron(); err != nil {
+			t.Fatalf("unblocked pass: %v", err)
+		}
+		if !exists() {
+			t.Errorf("the unblocked pass did not create %s", name)
 		}
 	})
 

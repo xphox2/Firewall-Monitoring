@@ -188,12 +188,14 @@ func TestRetentionCleanup_IsAReusableFunction(t *testing.T) {
 //
 // The first was a Ticker that never reached its first tick across restarts. The
 // second was a statement timeout abandoning a table for the day (v0.11.254). This
-// is the one that made the second so rare — the work lock is NON-BLOCKING and the
-// next attempt was 24h away, so losing a race forfeited the entire day. And the
-// race was not chance, it was arithmetic: the monitoring ticker is
-// SNMP.PollInterval (60s on prod) and both cleanup periods are exact multiples of
-// it, so every attempt fired on the same instant as a monitoring tick. Observed on
-// production 2026-09-25, five minutes after a deploy:
+// is the one that made the second so rare — the lock is NON-BLOCKING and the next
+// attempt was 24h away, so losing a race forfeited the entire day. And the race
+// was not chance, it was arithmetic: the monitoring ticker is SNMP.PollInterval
+// (60s on prod) and both cleanup periods were exact multiples of it, so every
+// attempt fired on the same instant as a monitoring tick. (Cleanup was on the
+// shared work lock then; since v0.11.256 it is on the maintenance lock, where the
+// contender is the rollup tick — and a contended attempt still retries.) Observed
+// on production 2026-09-25, five minutes after a deploy:
 //
 //	01:00:15 main.go:1070: Monitoring cycle: 5 device(s)
 //	01:00:15 main.go:460: Skipping cleanup: another poller holds the work lock
@@ -201,8 +203,8 @@ func TestRetentionCleanup_IsAReusableFunction(t *testing.T) {
 // syslog_messages was at 37 days under a 30-day policy, 161 GB.
 
 func TestRetentionCleanup_RetriesRatherThanForfeitingTheDay(t *testing.T) {
-	origTry, origSleep, origNow := tryPollerWorkLock, sleepFor, timeNow
-	defer func() { tryPollerWorkLock, sleepFor, timeNow = origTry, origSleep, origNow }()
+	origTry, origSleep, origNow := tryMaintenanceLock, sleepFor, timeNow
+	defer func() { tryMaintenanceLock, sleepFor, timeNow = origTry, origSleep, origNow }()
 
 	now := time.Now()
 	timeNow = func() time.Time { return now }
@@ -210,7 +212,7 @@ func TestRetentionCleanup_RetriesRatherThanForfeitingTheDay(t *testing.T) {
 
 	// Contended for the first two attempts, then free.
 	attempts := 0
-	tryPollerWorkLock = func(*Poller) (func(), bool) {
+	tryMaintenanceLock = func(*Poller) (func(), bool) {
 		attempts++
 		if attempts < 3 {
 			return nil, false
@@ -223,7 +225,7 @@ func TestRetentionCleanup_RetriesRatherThanForfeitingTheDay(t *testing.T) {
 	p.runRetentionCleanupFor(func() { ran = true })
 
 	if !ran {
-		t.Error("cleanup never ran: losing the non-blocking work lock must be retried, " +
+		t.Error("cleanup never ran: losing the non-blocking maintenance lock must be retried, " +
 			"not forfeited until the next daily tick 24h later")
 	}
 	if attempts != 3 {
@@ -232,8 +234,8 @@ func TestRetentionCleanup_RetriesRatherThanForfeitingTheDay(t *testing.T) {
 }
 
 func TestRetentionCleanup_LockRetryIsBounded(t *testing.T) {
-	origTry, origSleep, origNow := tryPollerWorkLock, sleepFor, timeNow
-	defer func() { tryPollerWorkLock, sleepFor, timeNow = origTry, origSleep, origNow }()
+	origTry, origSleep, origNow := tryMaintenanceLock, sleepFor, timeNow
+	defer func() { tryMaintenanceLock, sleepFor, timeNow = origTry, origSleep, origNow }()
 
 	now := time.Now()
 	start := now
@@ -241,7 +243,7 @@ func TestRetentionCleanup_LockRetryIsBounded(t *testing.T) {
 	sleepFor = func(d time.Duration) { now = now.Add(d) }
 
 	attempts := 0
-	tryPollerWorkLock = func(*Poller) (func(), bool) { attempts++; return nil, false }
+	tryMaintenanceLock = func(*Poller) (func(), bool) { attempts++; return nil, false }
 
 	ran := false
 	p := &Poller{}
@@ -263,11 +265,12 @@ func TestRetentionCleanup_LockRetryIsBounded(t *testing.T) {
 // CAUSE, which is arithmetic rather than timing luck: a retry cadence that is a
 // multiple of the tickers it is losing to re-collides on every attempt.
 func TestRetentionCleanup_RetryIntervalDoesNotAlignWithTheTickers(t *testing.T) {
-	// The cadences cleanup contends with. The 5-minute set (rollup/detect/ipsec)
-	// comes first because it is what makes the loss near-certain: four lock-takers
-	// are ready at a 5-minute-aligned attempt, so the goroutine wins only if
-	// cleanup is serviced last. The per-minute monitoring tick is a contender too,
-	// in the select orderings where it is serviced after the cleanup case.
+	// The cadences cleanup contends with. Since v0.11.256 cleanup is on the
+	// maintenance lock and its only periodic contender is the 5-minute rollup
+	// tick; the per-minute tick is kept in the list because a retry cadence
+	// coprime with both costs nothing and survives a future ticker moving onto
+	// that lock. (On the old shared work lock, four lock-takers were ready at a
+	// 5-minute-aligned attempt, which is what made the loss near-certain.)
 	//
 	// Non-divisibility is NOT enough, and asserting only that was the first
 	// version of this test. 90s is not a multiple of 60s yet alternates between
@@ -286,6 +289,96 @@ func TestRetentionCleanup_RetryIntervalDoesNotAlignWithTheTickers(t *testing.T) 
 	}
 	if cleanupLockRetryWindow <= cleanupLockRetryInterval {
 		t.Errorf("retry window %v allows no second attempt", cleanupLockRetryWindow)
+	}
+	// The FIRST attempt matters most on a deployment that restarts several times
+	// a day, and cleanupTimer is armed in the same instant as the rollup ticker.
+	// An initial delay that is a multiple of the rollup period would put every
+	// first attempt on a rollup tick; coprime offsets put it at a fresh phase.
+	if g := gcdDuration(initialCleanupDelay, 5*time.Minute); g != time.Second {
+		t.Errorf("gcd(initialCleanupDelay %v, 5m) = %v, want 1s — the first cleanup attempt "+
+			"after every restart would land on a rollup tick", initialCleanupDelay, g)
+	}
+}
+
+// TestRetentionCleanup_RunsWhileTheWorkLockIsHeld is the v0.11.256 regression
+// itself. On 2026-09-25 the daily pass held the shared work lock for 13 minutes
+// and production logged "Skipping monitoring cycle" every minute of it. Cleanup
+// must take only the maintenance lock: with the work lock held elsewhere it must
+// still run, and it must never try to take the work lock at all.
+func TestRetentionCleanup_RunsWhileTheWorkLockIsHeld(t *testing.T) {
+	origWork, origMaint, origSleep, origNow := tryPollerWorkLock, tryMaintenanceLock, sleepFor, timeNow
+	defer func() {
+		tryPollerWorkLock, tryMaintenanceLock, sleepFor, timeNow = origWork, origMaint, origSleep, origNow
+	}()
+	now := time.Now()
+	timeNow = func() time.Time { return now }
+	sleepFor = func(d time.Duration) { now = now.Add(d) }
+
+	workAttempts := 0
+	tryPollerWorkLock = func(*Poller) (func(), bool) { workAttempts++; return nil, false }
+	tryMaintenanceLock = func(*Poller) (func(), bool) { return func() {}, true }
+
+	ran := false
+	(&Poller{}).runRetentionCleanupFor(func() { ran = true })
+
+	if !ran {
+		t.Error("cleanup did not run while the work lock was held — it is still gated on the " +
+			"lock the monitoring cycle needs, so every pass blacks out alerting")
+	}
+	if workAttempts != 0 {
+		t.Errorf("cleanup tried the work lock %d time(s); it must take only the maintenance lock", workAttempts)
+	}
+}
+
+// TestRollup_ExcludedByTheMaintenanceLock pins the other half: rollup and
+// retention delete from the same tables (flow_samples, flow_rollups) and the
+// syslog aggregation reads what retention deletes, so the rollup tick must share
+// the maintenance lock — a held maintenance lock skips it, a held WORK lock
+// (the monitoring cycle) must not.
+func TestRollup_ExcludedByTheMaintenanceLock(t *testing.T) {
+	origWork, origMaint := tryPollerWorkLock, tryMaintenanceLock
+	defer func() { tryPollerWorkLock, tryMaintenanceLock = origWork, origMaint }()
+
+	p := &Poller{}
+	ran := 0
+
+	tryPollerWorkLock = func(*Poller) (func(), bool) { return nil, false }
+	tryMaintenanceLock = func(*Poller) (func(), bool) { return func() {}, true }
+	p.runUnderMaintenanceLock("rollup", func() { ran++ })
+	if ran != 1 {
+		t.Error("rollup was skipped because the WORK lock was held — it must not depend on the monitoring cycle's lock")
+	}
+
+	tryMaintenanceLock = func(*Poller) (func(), bool) { return nil, false }
+	p.runUnderMaintenanceLock("rollup", func() { ran++ })
+	if ran != 1 {
+		t.Error("rollup ran while the maintenance lock was held — it would overlap retention on the same tables")
+	}
+
+	// And the run loop's rollup case must actually use that wrapper with the
+	// rollup body, or the two checks above test a helper nothing calls.
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "main.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse main.go: %v", err)
+	}
+	wired := false
+	ast.Inspect(file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || len(call.Args) != 2 {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "runUnderMaintenanceLock" {
+			return true
+		}
+		if arg, ok := call.Args[1].(*ast.SelectorExpr); ok && arg.Sel.Name == "runRollupCycle" {
+			wired = true
+		}
+		return true
+	})
+	if !wired {
+		t.Error("no runUnderMaintenanceLock(..., p.runRollupCycle) call in main.go — the rollup tick is not on the maintenance lock")
 	}
 }
 

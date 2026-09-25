@@ -1,6 +1,63 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.256] - 2026-09-25
+
+### Fixed — the daily retention pass switched off alert evaluation for as long as it ran
+
+Verified on production right after v0.11.255 shipped: the retention pass ran from
+02:48 to 03:01:52 UTC, and for every minute of it the poller logged
+
+```
+main.go:544: Skipping monitoring cycle: another poller holds the work lock
+```
+
+plus `Skipping flow-detect / ipsec-telemetry / rollup` at each 5-minute mark.
+Retention held the poller's shared work lock, which is **non-blocking and shared
+by every cron tick**, so a tick that lands while it is held is skipped, not
+queued: 13 minutes a day with no SNMP-driven alert evaluation, and hours during a
+backlog clear. It was rarer before only because retention rarely got to run at
+all (v0.11.254, v0.11.255).
+
+- **Retention cleanup and the rollup tick moved to their own advisory lock**
+  (`FWMAINTN`). The monitoring cycle, flow detection, IPsec telemetry and the
+  threat-feed sync stay on the work lock and now keep running during a retention
+  pass. Rollup stays excluded from retention deliberately: both delete from
+  `flow_samples`/`flow_rollups`, and the syslog aggregation reads
+  `syslog_messages` while retention deletes from it.
+- **Deadlocks are retried.** With the alert engine now running alongside
+  retention, its multi-row auto-resolve `UPDATE` can deadlock with a retention
+  batch on an alert still open past its retention cutoff. A `40P01` used to
+  return from the pass and skip every table after `alerts` until the next day;
+  both batch-delete loops (retention and device purge) now retry it like a lock
+  timeout. The auto-resolve's own errors, previously discarded, are logged.
+- **Partition DDL from the retention pass can no longer stall ingest.** Dropping
+  or creating a monthly partition takes an exclusive lock on the parent, and
+  every insert queues behind it while it waits. Those statements now run under a
+  5 s `lock_timeout` (startup DDL is unchanged). A `DROP` that still cannot get
+  the lock after three retries leaves that table's expired partitions for the
+  next pass and logs `WARNING: cleanup: DROP lock-timed-out on …`. The row-delete
+  that follows skips the kept month, while still trimming every newer partition
+  and severity window. (Previously a blocked drop waited without limit, stalling
+  inserts, and any other drop failure fell through to row-deleting the whole
+  expired month, which takes hours.) So even a permanent blocker limits
+  growth to the stuck month instead of halting retention for the table.
+- The first retention attempt after a restart moves from 5m to 5m37s, so it no
+  longer lands on a rollup tick, and a contended attempt keeps retrying for 2h
+  (was 30m), long enough to outlast a rollup backlog.
+- The skip log line now names the lock and no longer claims the holder is
+  another poller: `Skipping rollup: the maintenance lock is held (another poller,
+  or this process's own long-running holder)`.
+
+Tests: cleanup must run while the work lock is held, rollup is excluded by the
+maintenance lock and not by the work lock, and the AST guards now reject any
+cleanup path back onto the work lock. Also covered: `40P01` retry, a
+parse-driven check that every advisory key is distinct, and two PostgreSQL
+integration tests that hold a real reader on the parent. The first asserts the
+`DROP` gives up on time, returns the right floor, and spares the kept month
+while trimming newer rows. The second asserts the cron partition `CREATE` gives
+up on time and succeeds on the next pass.
+
 ## [0.11.255] - 2026-09-25
 
 ### Fixed — retention forfeited the entire day whenever it lost a lock race, and the race was arithmetic

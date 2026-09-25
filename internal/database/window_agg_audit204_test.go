@@ -258,8 +258,8 @@ func TestWalkAggregationWindows_JumpsEmptyRanges_AUDIT204Review(t *testing.T) {
 // Steady state is one or two windows per call, so the cap never fires in normal
 // operation. It exists so that the FIRST cycle after a stall — an outage, a
 // restart loop, or a work probe that was silently answering "nothing to do" —
-// cannot walk an entire backlog in one call while holding the shared poller
-// work lock and pinning the disk that also serves ingest.
+// cannot walk an entire backlog in one call while holding the maintenance lock
+// and pinning the disk that also serves ingest.
 //
 // The two properties that matter are both asserted here: the walk stops at the
 // cap, and stopping is NOT an error and NOT "no work". Callers return

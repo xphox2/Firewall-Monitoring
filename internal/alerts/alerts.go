@@ -1804,7 +1804,12 @@ func (am *AlertManager) resolveOpenAlertRows(deviceID uint, alertType models.Ale
 	now := time.Now()
 	base := am.db.Gorm().Model(&models.Alert{}).
 		Where("device_id = ? AND alert_type = ? AND metric_name = ? AND resolved_at IS NULL", deviceID, alertType, metricName)
-	base.Session(&gorm.Session{}).Where("acknowledged = ?", false).
+	// Errors are logged, not returned: a failed resolve is redone on the next
+	// poll's recovery signal (sendRecovery always re-runs this). Logged because
+	// since v0.11.256 these multi-row UPDATEs can be the victim of a deadlock
+	// (40P01) with a concurrent retention batch on an alert still open past its
+	// cutoff, and a silently dropped resolve is unobservable.
+	if err := base.Session(&gorm.Session{}).Where("acknowledged = ?", false).
 		Updates(map[string]interface{}{
 			"resolved_at":     now,
 			"acknowledged":    true,
@@ -1813,16 +1818,20 @@ func (am *AlertManager) resolveOpenAlertRows(deviceID uint, alertType models.Ale
 			"snoozed_until":   nil,
 			"snoozed_by":      "",
 			"snoozed_reason":  "",
-		})
+		}).Error; err != nil {
+		log.Printf("alerts: auto-resolve of unacked %s rows for device %d failed (retried next poll): %v", alertType, deviceID, err)
+	}
 	// AUDIT-144 + acked-recovery: also close acked rows, preserving the ack note.
-	base.Session(&gorm.Session{}).Where("acknowledged = ?", true).
+	if err := base.Session(&gorm.Session{}).Where("acknowledged = ?", true).
 		Updates(map[string]interface{}{
 			"resolved_at":    now,
 			"notes":          gorm.Expr("CASE WHEN COALESCE(notes,'') = '' THEN ? ELSE notes || ? END", "Auto-resolved: "+message, "\nAuto-resolved: "+message),
 			"snoozed_until":  nil,
 			"snoozed_by":     "",
 			"snoozed_reason": "",
-		})
+		}).Error; err != nil {
+		log.Printf("alerts: auto-resolve of acked %s rows for device %d failed (retried next poll): %v", alertType, deviceID, err)
+	}
 }
 
 // dispatchFired persists each fired alert and sends it unless suppressed. The

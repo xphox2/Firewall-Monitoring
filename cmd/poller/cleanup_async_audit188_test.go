@@ -17,10 +17,11 @@ import (
 // exactly while large DELETEs were transiently growing WAL + dead-tuple usage.
 // The fix mirrors the M9 threat-feed shape (async launch, single-flight guard)
 // PLUS two subtleties these tests pin:
-//   - server-health must NOT go through the shared advisory work lock: the
-//     async cleanup holds that single lock for its whole run and a second
-//     acquire from the SAME process contends, so a locked disk check would be
-//     rejected for the entire cleanup — the blindness merely relocated.
+//   - server-health must NOT go through any advisory lock: the async cleanup
+//     holds its lock for its whole run and a second acquire from the SAME
+//     process contends, so a locked disk check would be rejected for the entire
+//     cleanup — the blindness merely relocated. (Cleanup moved from the work
+//     lock to the maintenance lock in v0.11.256; the guard covers both.)
 //   - the async goroutine must not stamp the M30 loop-liveness heartbeat,
 //     which would mask a genuinely hung select loop.
 
@@ -112,7 +113,8 @@ func TestServerHealthCase_NotUnderSharedWorkLock(t *testing.T) {
 				switch name {
 				case "checkServerHealth":
 					healthCalls++
-				case "runUnderLeaderLock", "runUnderLeaderLockNoHeartbeat":
+				case "runUnderLeaderLock", "runUnderLeaderLockNoHeartbeat",
+					"runUnderMaintenanceLock", "runUnderMaintenanceLockNoHeartbeat", "runUnderLock":
 					lockedCalls++
 				}
 				return true
@@ -128,8 +130,8 @@ func TestServerHealthCase_NotUnderSharedWorkLock(t *testing.T) {
 		t.Error("the server-health select case does not call checkServerHealth")
 	}
 	if lockedCalls > 0 {
-		t.Error("the server-health select case routes through the shared work lock — " +
-			"the async retention cleanup holds that lock for its whole run, so the disk " +
+		t.Error("the server-health select case routes through an advisory lock — " +
+			"the async retention cleanup holds its lock for its whole run, so the disk " +
 			"check would be rejected for hours (AUDIT-188: call checkServerHealth directly)")
 	}
 }
@@ -161,7 +163,11 @@ func TestRetentionCleanup_DoesNotStampLoopHeartbeat(t *testing.T) {
 		"runRetentionCleanupFor": true,
 		"retentionCleanupWork":   true,
 	}
-	var noHeartbeat, heartbeatLock, stamps, found int
+	// v0.11.256 moved cleanup from the shared work lock to the maintenance lock,
+	// so the monitoring cycle keeps running during a pass. Any path back onto the
+	// work lock — the leader wrappers or the raw tryPollerWorkLock — reinstates
+	// the daily alerting blackout, and fails here.
+	var noHeartbeat, heartbeatLock, workLock, stamps, found int
 	for _, decl := range file.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
 		if !ok || fn.Recv == nil || !cleanupFns[fn.Name.Name] {
@@ -169,6 +175,10 @@ func TestRetentionCleanup_DoesNotStampLoopHeartbeat(t *testing.T) {
 		}
 		found++
 		ast.Inspect(fn.Body, func(m ast.Node) bool {
+			if id, ok := m.(*ast.Ident); ok && id.Name == "tryPollerWorkLock" {
+				workLock++
+				return true
+			}
 			call, ok := m.(*ast.CallExpr)
 			if !ok {
 				return true
@@ -178,10 +188,12 @@ func TestRetentionCleanup_DoesNotStampLoopHeartbeat(t *testing.T) {
 				return true
 			}
 			switch sel.Sel.Name {
-			case "runUnderLeaderLockNoHeartbeat":
+			case "runUnderMaintenanceLockNoHeartbeat":
 				noHeartbeat++
-			case "runUnderLeaderLock":
+			case "runUnderMaintenanceLock", "runUnderLeaderLock":
 				heartbeatLock++
+			case "runUnderLeaderLockNoHeartbeat":
+				workLock++
 			case "markLoopAlive":
 				stamps++
 			}
@@ -193,9 +205,12 @@ func TestRetentionCleanup_DoesNotStampLoopHeartbeat(t *testing.T) {
 			"not quietly shrink what it covers", found, len(cleanupFns), cleanupFns)
 	}
 	if noHeartbeat == 0 {
-		t.Error("the retention cleanup path does not use runUnderLeaderLockNoHeartbeat — cross-process leader gating for the cleanup is gone or on the wrong variant")
+		t.Error("the retention cleanup path does not use runUnderMaintenanceLockNoHeartbeat — cross-process gating for the cleanup is gone or on the wrong variant")
 	}
 	if heartbeatLock > 0 || stamps > 0 {
-		t.Error("the retention cleanup path stamps the M30 loop heartbeat (directly or via runUnderLeaderLock) — from the async goroutine that masks a hung select loop")
+		t.Error("the retention cleanup path stamps the M30 loop heartbeat (directly or via a heartbeat lock wrapper) — from the async goroutine that masks a hung select loop")
+	}
+	if workLock > 0 {
+		t.Error("the retention cleanup path takes the shared WORK lock — every monitoring tick is skipped for the whole pass (13 min of no alert evaluation on prod, 2026-09-25); it must use the maintenance lock")
 	}
 }
