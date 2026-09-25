@@ -1,6 +1,51 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.254] - 2026-09-24
+
+### Fixed — one statement timeout abandoned a whole table's retention until the next day
+
+Observed on production 2026-09-24:
+
+```
+cleanup.go:107 ERROR: canceling statement due to statement timeout (SQLSTATE 57014)
+main.go:248: Data cleanup error: failed to cleanup syslog_message
+(severities [0 1 2 3 4 5], 30d): batched delete (batch size 10000)
+```
+
+A single 57014 returned out of the batch loop and abandoned `syslog_messages` for
+the day; the 24-hour ticker then reissued the identical statement. The table had
+drifted to **36 days of history under a 30-day policy** — 156.6M rows, 161 GB,
+with `/mnt/STORAGE` climbing about 18 GB/week. That is the shape of the
+2026-07-26 disk-full outage, where retention had also been failing silently.
+
+The device-purge loop (`batchedDeleteWhere`, v0.11.243) already carried the
+defences for exactly this, on exactly this table, and its doc comment recorded
+that retention had deliberately been left alone. Retention now carries the same
+three:
+
+- **`ORDER BY` on the time column.** Unordered, the subquery's `LIMIT` takes
+  whatever the scan reaches first, so PostgreSQL may seq-scan the heap and
+  re-walk the dead tuples earlier batches left — each batch costing more than the
+  last until one exceeds the timeout. Ordered, it walks that column's index
+  forward from the oldest live row and stops at `LIMIT`. This is the defence that
+  stops the timeouts arising at all.
+- **`SET LOCAL statement_timeout = '120s'`**, transaction-scoped, above the DSN's
+  30 s. A background daily job can afford a slow batch; it cannot afford losing
+  the whole pass to one.
+- **Retries.** 57014 halves the batch to a floor and retries; 55P03 (a partition
+  `DROP` or `VACUUM FULL` holding the table) sleeps and retries the same batch —
+  a lock conflict says nothing about the batch being too large. Either way the
+  pass makes progress instead of giving up until tomorrow.
+
+The four batch-loop tunables are now shared by both loops and renamed
+`batchDelete*` accordingly.
+
+Each defence is mutation-checked. The `ORDER BY` test asserts the SQL shape
+rather than the rows deleted, deliberately: it is a PostgreSQL planner property,
+and SQLite picks the timestamp index for this predicate either way, so every
+behavioural assertion there passes with the fix reverted.
+
 ## [0.11.253] - 2026-09-16
 
 ### Fixed — every promotion wrote its boundary bucket twice, forever
