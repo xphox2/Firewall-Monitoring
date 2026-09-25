@@ -443,7 +443,11 @@ const pollerWorkLockKey int64 = 0x504f4c4c45525357 // "POLLERSW"
 // TryAcquirePollerWorkLock attempts a non-blocking Postgres advisory lock
 // shared by all poller processes. Returns true if this caller owns the
 // lock and should proceed with work; false if another poller already holds
-// it (caller should skip the cron tick and try again on the next one).
+// it. Most callers should skip the tick and try again on the next one, which is
+// safe for anything on a per-minute or per-5-minute cadence. A caller whose next
+// attempt is far away must RETRY instead of skipping: the daily retention cleanup
+// forfeited a whole day per lost race until v0.11.255, and the loss was systematic
+// because its periods were multiples of the contending tickers'.
 //
 // AUDIT-007: under a 2-poller deployment, both processes' cron tickers
 // fire roughly concurrently. Without this lock both pollers poll every

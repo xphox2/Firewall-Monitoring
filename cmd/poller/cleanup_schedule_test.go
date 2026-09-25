@@ -263,16 +263,39 @@ func TestRetentionCleanup_LockRetryIsBounded(t *testing.T) {
 // CAUSE, which is arithmetic rather than timing luck: a retry cadence that is a
 // multiple of the tickers it is losing to re-collides on every attempt.
 func TestRetentionCleanup_RetryIntervalDoesNotAlignWithTheTickers(t *testing.T) {
-	// The cadences cleanup contends with: the monitoring ticker (SNMP poll
-	// interval, 60s on production) and the 5-minute rollup/detect tickers.
-	for _, contender := range []time.Duration{time.Minute, 5 * time.Minute} {
-		if cleanupLockRetryInterval%contender == 0 {
-			t.Errorf("cleanupLockRetryInterval %v is a multiple of %v, so every retry lands "+
-				"on that ticker again — which is exactly how the original collision was "+
-				"deterministic rather than unlucky", cleanupLockRetryInterval, contender)
+	// The cadences cleanup contends with: the 5-minute rollup/detect/ipsec
+	// tickers (the actual holders — the select loop is serial, so the monitoring
+	// cycle has already released by the time the cleanup case is serviced) and the
+	// per-minute monitoring tick.
+	//
+	// Non-divisibility is NOT enough, and asserting only that was the first
+	// version of this test. 90s is not a multiple of 60s yet alternates between
+	// just two phases of it, so it re-collides every other retry; 150s visits two
+	// phases of 300s. The property that matters is coprimality: gcd == 1s means
+	// successive retries visit EVERY second-phase of the contending period, so a
+	// gap cannot be missed systematically. 97 is prime, hence chosen.
+	for _, contender := range []time.Duration{5 * time.Minute, time.Minute} {
+		if g := gcdDuration(cleanupLockRetryInterval, contender); g != time.Second {
+			t.Errorf("gcd(cleanupLockRetryInterval %v, %v) = %v, want 1s. Retries then visit "+
+				"only %d of the %d phases of that ticker and can re-collide with it "+
+				"systematically — which is how the original collision was arithmetic "+
+				"rather than unlucky.", cleanupLockRetryInterval, contender, g,
+				int(contender/g), int(contender/time.Second))
 		}
 	}
 	if cleanupLockRetryWindow <= cleanupLockRetryInterval {
 		t.Errorf("retry window %v allows no second attempt", cleanupLockRetryWindow)
 	}
+}
+
+// gcdDuration is the greatest common divisor of two durations, used to check that
+// the retry cadence is coprime with the tickers it contends with.
+func gcdDuration(a, b time.Duration) time.Duration {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	if a < 0 {
+		a = -a
+	}
+	return a
 }
