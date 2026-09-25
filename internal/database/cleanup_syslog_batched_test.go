@@ -45,7 +45,7 @@ func TestBatchedDeleteOlderThanWhere_SyslogSeverity(t *testing.T) {
 	}
 
 	// Critical pass: delete stale severity < 6 only.
-	if err := d.batchedDeleteOlderThanWhere(&models.SyslogMessage{}, cutoff, "severity < 6"); err != nil {
+	if err := d.batchedDeleteOlderThanWhere(&models.SyslogMessage{}, "syslog_messages", cutoff, "severity < 6"); err != nil {
 		t.Fatalf("batched critical delete: %v", err)
 	}
 
