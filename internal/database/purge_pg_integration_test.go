@@ -398,7 +398,7 @@ func TestPGPurge_RemovesDeviceAcrossPartitions(t *testing.T) {
 	ifaceBatches := counter.total("interface_stats")
 	t.Logf("purge wall time %s; %d rows deleted → %.0f rows/s; interface_stats batches=%d (%d rows per batch, %s inter-batch sleep), denied_events batches=%d, all relations=%d",
 		wall.Round(time.Millisecond), plannedA, float64(plannedA)/wall.Seconds(), ifaceBatches,
-		planEntry(t, "interface_stats").batch, purgeInterBatchSleep, counter.total("denied_events"), counter.total(""))
+		planEntry(t, "interface_stats").batch, batchDeleteInterSleep, counter.total("denied_events"), counter.total(""))
 	if ifaceBatches < ifaceA/planEntry(t, "interface_stats").batch {
 		t.Errorf("interface_stats batches = %d, want at least %d for %d rows", ifaceBatches, ifaceA/planEntry(t, "interface_stats").batch, ifaceA)
 	}

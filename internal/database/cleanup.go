@@ -89,13 +89,48 @@ func (d *Database) batchedDeleteOlderThanWhere(model interface{}, cutoff time.Ti
 // `detected_at` and flow_agent_drops on `window_start` (H4 of the 2026-07-01
 // audit). timeColumn is always a compile-time literal from this package, never
 // caller/user input.
+//
+// v0.11.254: this loop carries the same three defences batchedDeleteWhere got
+// for the device purge, because retention met the identical wall on the identical
+// table. Observed on production 2026-09-24:
+//
+//	cleanup.go:107 ERROR: canceling statement due to statement timeout (SQLSTATE 57014)
+//	main.go:248: Data cleanup error: failed to cleanup syslog_message
+//	(severities [0 1 2 3 4 5], 30d): batched delete (batch size 10000)
+//
+// One 57014 aborted the whole table's cleanup, the 24h ticker retried the
+// identical statement, and syslog_messages drifted to 36 days of history under a
+// 30-day policy — 156.6M rows, 161 GB, the volume climbing ~18 GB/week. That is
+// the shape of the 2026-07-26 disk-full outage, where retention had also been
+// silently failing.
+//
+//   - ORDER BY timeColumn. Without it the planner may seq-scan and re-walk the
+//     dead tuples the previous batches left, so each batch costs more than the
+//     last until one exceeds the timeout — exactly what batchedDeleteWhere's
+//     comment predicted. Ordered, it walks the per-table timestamp index forward
+//     from the oldest live row and stops at LIMIT.
+//   - SET LOCAL statement_timeout = '120s', tx-scoped, over the DSN's 30s. A
+//     background 24h job can afford a slow batch; losing the whole pass to one
+//     cannot be afforded.
+//   - 57014 halves the batch (floor batchDeleteFloor) and retries; 55P03 sleeps
+//     and retries the same batch. Either way the pass makes progress instead of
+//     abandoning the table until tomorrow.
 func (d *Database) batchedDeleteOlderThanOn(model interface{}, timeColumn string, cutoff time.Time, extraWhere string, args ...interface{}) error {
 	batchSize := cleanupDeleteBatchSize
+	lockRetries := 0
 	for {
 		var affected int64
 		err := d.db.Transaction(func(tx *gorm.DB) error {
+			if cleanupBatchHook != nil {
+				if e := cleanupBatchHook(batchSize); e != nil {
+					return e
+				}
+			}
 			if d.dialect.IsPostgres() {
 				if e := tx.Exec("SET LOCAL lock_timeout = '5s'").Error; e != nil {
+					return e
+				}
+				if e := tx.Exec("SET LOCAL statement_timeout = '120s'").Error; e != nil {
 					return e
 				}
 			}
@@ -103,39 +138,67 @@ func (d *Database) batchedDeleteOlderThanOn(model interface{}, timeColumn string
 			if extraWhere != "" {
 				sub = sub.Where(extraWhere, args...)
 			}
-			sub = sub.Limit(batchSize)
+			// timeColumn is a compile-time literal from this package.
+			sub = sub.Order(timeColumn).Limit(batchSize)
 			res := tx.Where("id IN (?)", sub).Delete(model)
 			affected = res.RowsAffected
 			return res.Error
 		})
 		if err != nil {
+			switch sqlState(err) {
+			case "57014": // statement_timeout: this batch is too big for this heap
+				if batchSize > batchDeleteFloor {
+					next := batchSize / 2
+					if next < batchDeleteFloor {
+						next = batchDeleteFloor
+					}
+					log.Printf("cleanup: batch of %d hit statement_timeout; retrying with %d", batchSize, next)
+					batchSize = next
+					continue
+				}
+			case "55P03": // lock_timeout: a partition DROP or VACUUM FULL holds it
+				if lockRetries < batchDeleteLockRetries {
+					lockRetries++
+					wait := batchDeleteLockRetrySleep * time.Duration(1+lockRetries%5)
+					log.Printf("cleanup: batch waited on a lock (%d/%d); retrying in %s",
+						lockRetries, batchDeleteLockRetries, wait)
+					time.Sleep(wait)
+					continue
+				}
+			}
 			return fmt.Errorf("batched delete (batch size %d): %w", batchSize, err)
 		}
+		lockRetries = 0
 		if affected < int64(batchSize) {
 			return nil // last (partial) batch — nothing more to delete
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(batchDeleteInterSleep)
 	}
 }
 
-// Batch-loop tunables for batchedDeleteWhere (device purge). Package vars so
-// the tests can shrink the floor and the sleeps without seeding thousands of
-// rows or waiting seconds per retry.
+// Batch-loop tunables shared by batchedDeleteWhere (device purge) and
+// batchedDeleteOlderThanOn (retention). Package vars so the tests can shrink the
+// floor and the sleeps without seeding thousands of rows or waiting seconds per
+// retry.
 var (
-	// purgeBatchFloor is the smallest batch the 57014 (statement timeout)
+	// batchDeleteFloor is the smallest batch the 57014 (statement timeout)
 	// halving retry will go to before giving up.
-	purgeBatchFloor = 500
-	// purgeLockRetries bounds the 55P03 (lock timeout) retries of ONE batch,
+	batchDeleteFloor = 500
+	// batchDeleteLockRetries bounds the 55P03 (lock timeout) retries of ONE batch,
 	// e.g. when the poller's partition DROP is queued ahead of the delete.
-	purgeLockRetries = 10
-	// purgeLockRetrySleep is the base of the 1-5 s sleep between 55P03
+	batchDeleteLockRetries = 10
+	// batchDeleteLockRetrySleep is the base of the 1-5 s sleep between 55P03
 	// retries (base * (1 + attempt%5)).
-	purgeLockRetrySleep = time.Second
-	// purgeInterBatchSleep yields to other writers between batches.
-	purgeInterBatchSleep = 100 * time.Millisecond
+	batchDeleteLockRetrySleep = time.Second
+	// batchDeleteInterSleep yields to other writers between batches.
+	batchDeleteInterSleep = 100 * time.Millisecond
 	// purgeBatchHook, when non-nil, runs before every batch and can fail it
 	// (test seam for the "Nth batch errors" path). Never set in production.
 	purgeBatchHook func(table string, batchNo int) error
+	// cleanupBatchHook is the same seam for the retention loop, used to inject
+	// 57014/55P03 without needing a real Postgres slow enough to produce them.
+	// Never set in production.
+	cleanupBatchHook func(batchSize int) error
 )
 
 // batchedDeleteWhere deletes every row of table matching `where` (args bound)
@@ -154,9 +217,9 @@ var (
 //     `SET LOCAL lock_timeout='5s'` and `SET LOCAL statement_timeout='120s'`
 //     (bounded and tx-scoped like execMaintenanceDDL; the DSN default is 30 s).
 //   - SQLSTATE 57014 (statement timeout): halve the batch (floor
-//     purgeBatchFloor) and retry. 55P03 (lock timeout): sleep 1-5 s and retry
-//     the same batch up to purgeLockRetries times. Any other error returns.
-//   - ctx is checked before every batch; purgeInterBatchSleep between batches.
+//     batchDeleteFloor) and retry. 55P03 (lock timeout): sleep 1-5 s and retry
+//     the same batch up to batchDeleteLockRetries times. Any other error returns.
+//   - ctx is checked before every batch; batchDeleteInterSleep between batches.
 //
 // table, where and orderBy are ALWAYS compile-time literals from purge.go
 // (devicePurgeTables) or a relation name read back from pg_inherits — never
@@ -201,10 +264,10 @@ func (d *Database) batchedDeleteWhere(ctx context.Context, table, where, orderBy
 			}
 			switch sqlState(err) {
 			case "57014": // statement_timeout: the batch is too big for this table's heap
-				if batch > purgeBatchFloor {
+				if batch > batchDeleteFloor {
 					next := batch / 2
-					if next < purgeBatchFloor {
-						next = purgeBatchFloor
+					if next < batchDeleteFloor {
+						next = batchDeleteFloor
 					}
 					log.Printf("device-purge: %s batch of %d hit statement_timeout; retrying with %d", table, batch, next)
 					batch = next
@@ -212,10 +275,10 @@ func (d *Database) batchedDeleteWhere(ctx context.Context, table, where, orderBy
 					continue
 				}
 			case "55P03": // lock_timeout: something (partition DROP, VACUUM FULL) holds the table
-				if lockRetries < purgeLockRetries {
+				if lockRetries < batchDeleteLockRetries {
 					lockRetries++
-					wait := purgeLockRetrySleep * time.Duration(1+lockRetries%5)
-					log.Printf("device-purge: %s batch waited on a lock (%d/%d); retrying in %s", table, lockRetries, purgeLockRetries, wait)
+					wait := batchDeleteLockRetrySleep * time.Duration(1+lockRetries%5)
+					log.Printf("device-purge: %s batch waited on a lock (%d/%d); retrying in %s", table, lockRetries, batchDeleteLockRetries, wait)
 					if !sleepCtx(ctx, wait) {
 						return ctx.Err()
 					}
@@ -232,7 +295,7 @@ func (d *Database) batchedDeleteWhere(ctx context.Context, table, where, orderBy
 		if affected < int64(batch) {
 			return nil // last (partial) batch — nothing more matches
 		}
-		if !sleepCtx(ctx, purgeInterBatchSleep) {
+		if !sleepCtx(ctx, batchDeleteInterSleep) {
 			return ctx.Err()
 		}
 	}
