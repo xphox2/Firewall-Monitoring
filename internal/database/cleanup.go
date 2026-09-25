@@ -199,23 +199,30 @@ func (d *Database) batchedDeleteOlderThanWhere(model interface{}, table string, 
 //
 // LOCK-HOLD NOTE, because a pass that finishes instead of bailing costs something.
 // runRetentionCleanup holds pollerWorkLockKey (cmd/poller), which is NON-BLOCKING
-// and shared with the monitoring cycle, rollup, flow-detect and ipsec-telemetry:
+// and shared with the monitoring cycle, rollup, flow-detect, ipsec-telemetry and
+// threat-feed sync:
 // a tick arriving while cleanup works is SKIPPED, not queued, so what is lost is
 // alert evaluation, not merely its timeliness. flowSummaryLockKey's comment
-// records moving the summary pass off this key for that reason, at a cost of "up
-// to a minute".
+// records moving the summary pass off this key for exactly that reason: a pass
+// lasting "up to a minute" was dropping roughly one monitoring tick in five.
 //
 // A complete pass has always held the lock for however long it took; what
-// v0.11.254 changes is that a TIMING-OUT table retries — at worst ~6 halvings x
-// 120s plus bounded lock waits — where before it returned in seconds having done
-// nothing. The ordered subquery above makes those timeouts rare, which is why
+// v0.11.254 changes is that a TIMING-OUT table retries — at worst 6 attempts, so
+// 5 halvings (10000, 5000, 2500, 1250, 625, 500), x 120s plus bounded lock waits
+// — where before it returned in seconds having done nothing. The ordered subquery above makes those timeouts rare, which is why
 // this is documented rather than restructured.
 //
-// A dedicated cleanup lock key is the obvious follow-up and is NOT a free swap:
-// cleanup and rollup are mutually exclusive today ONLY because they share this
-// key, and separating them would let retention delete flow_samples/flow_rollups
-// rows concurrently with the promotion reading them. That deserves its own
-// analysis on a ladder with two prior production incidents.
+// A dedicated cleanup lock key is the obvious follow-up and is NOT a free swap.
+// The serialization it would break is DELIBERATE, not incidental — cmd/poller's
+// rollup tick says so in as many words: "Deliberately kept on the SHARED work
+// lock: rollup/aggregation and the async retention cleanup stay serialized (they
+// contend for the same tables)". That same tick runs RunSyslogAggregationCycle,
+// which reads the table retention is deleting from. Separating the keys would
+// create writer-vs-writer overlap between promotion and retention on
+// flow_samples/flow_rollups, and aggregation-vs-retention on syslog_messages. (A
+// concurrent READER of flow_rollups is already the status quo: the flow summary
+// pass has its own key.) That deserves its own analysis, on a ladder with two
+// prior production incidents.
 func (d *Database) batchedDeleteOlderThanOn(model interface{}, timeColumn, orderBy string, cutoff time.Time, extraWhere string, args ...interface{}) error {
 	batchSize := cleanupDeleteBatchSize
 	lockRetries := 0
