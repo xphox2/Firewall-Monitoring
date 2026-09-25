@@ -1,6 +1,44 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.255] - 2026-09-25
+
+### Fixed — retention forfeited the entire day whenever it lost a lock race, and the race was arithmetic
+
+The third distinct reason retention has silently not run on this deployment. The
+first was a `Ticker` that never reached its first tick across restarts; the second
+was a statement timeout abandoning a table for the day (v0.11.254). This is the
+one that made the second so rare: the pass so seldom got to start at all.
+
+`runUnderLeaderLockNoHeartbeat` acquires the poller work lock **non-blocking** —
+on contention it logged one line and returned, and the next attempt was the 24-hour
+tick. Losing one race therefore skipped a whole day of retention.
+
+**And the race was not chance, it was arithmetic.** The monitoring ticker is
+`SNMP.PollInterval` (60 s on production) and both cleanup periods are exact
+multiples of it — the initial delay is 5 min = 5×60 s, the interval 24 h =
+1440×60 s — so every cleanup attempt fires on the same instant as a monitoring
+tick, forever. Caught five minutes after deploying v0.11.254:
+
+```
+01:00:15 main.go:1070: Monitoring cycle: 5 device(s)
+01:00:15 main.go:460: Skipping cleanup: another poller holds the work lock
+01:00:17 flows.go:1905: Flow rollup: aggregated 8811 groups ...
+```
+
+That is why `syslog_messages` reached 37 days of history under a 30-day policy at
+161 GB: the v0.11.254 timeout fix was correct but almost never reached.
+
+A contended cleanup now retries every 97 s for up to 30 minutes before deferring
+to the daily tick. The interval is deliberately **not** a round number of seconds —
+retrying every 60 s or 120 s would re-align with the very tickers it is losing to,
+reproducing the original bug at a shorter period. A test pins that arithmetic.
+
+`runUnderLeaderLockNoHeartbeat` now reports whether it acquired the lock. Callers
+that can afford to miss a turn (monitoring, rollup, flow-detect, ipsec-telemetry,
+threat-feeds — all on per-minute or per-5-minute cadences) still ignore it; only
+the daily pass retries.
+
 ## [0.11.254] - 2026-09-24
 
 ### Fixed — one statement timeout abandoned a whole table's retention until the next day

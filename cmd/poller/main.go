@@ -232,6 +232,43 @@ func humanBps(bps float64) string {
 const (
 	cleanupInterval     = 24 * time.Hour
 	initialCleanupDelay = 5 * time.Minute
+
+	// A cleanup that loses the shared work lock used to forfeit the entire day,
+	// because the lock is non-blocking and the next attempt is 24h later. That
+	// was not bad luck, it was ARITHMETIC: the monitoring ticker is
+	// SNMP.PollInterval (60s on production) and both cleanup periods are exact
+	// multiples of it — 5 min = 5x60s, 24h = 1440x60s — so every cleanup attempt
+	// fires on the same instant as a monitoring tick, forever. Observed on
+	// production 2026-09-25, five minutes after a deploy:
+	//
+	//	01:00:15 main.go:1070: Monitoring cycle: 5 device(s)
+	//	01:00:15 main.go:460: Skipping cleanup: another poller holds the work lock
+	//	01:00:17 flows.go:1905: Flow rollup: aggregated 8811 groups ...
+	//
+	// syslog_messages had reached 37 days of history under a 30-day policy and
+	// 161 GB. v0.11.254 fixed a statement timeout that abandoned a table for a
+	// day; this is why that pass so rarely got to run at all.
+	//
+	// So a contended cleanup now retries instead of forfeiting. The interval is
+	// deliberately NOT a round number of seconds: retrying every 60s or 90s would
+	// re-align with the very tickers it is losing to.
+	cleanupLockRetryInterval = 97 * time.Second
+	cleanupLockRetryWindow   = 30 * time.Minute
+)
+
+// Indirections so the retry loop above is testable without burning 97 seconds a
+// turn. Never reassigned outside tests.
+var (
+	timeNow  = time.Now
+	sleepFor = time.Sleep
+	// tryPollerWorkLock is the lock acquisition itself, behind an indirection so a
+	// test can simulate contention without a database.
+	tryPollerWorkLock = func(p *Poller) (func(), bool) {
+		if p.db == nil {
+			return nil, true // nothing to lock against; run
+		}
+		return p.db.TryAcquirePollerWorkLock()
+	}
 )
 
 // runRetentionCleanup applies every retention policy and the periodic schema
@@ -242,7 +279,31 @@ const (
 // (goroutine-safe), p.cfg.Retention (read-only) and the mutex-guarded
 // alertManager — none of the loop-owned maps (prevIfaceStats etc.).
 func (p *Poller) runRetentionCleanup() {
-	p.runUnderLeaderLockNoHeartbeat("cleanup", func() {
+	p.runRetentionCleanupFor(p.retentionCleanupWork)
+}
+
+// runRetentionCleanupFor is runRetentionCleanup with the work injectable, so the
+// retry loop can be tested without a database or a real 97-second sleep.
+func (p *Poller) runRetentionCleanupFor(work func()) {
+	deadline := timeNow().Add(cleanupLockRetryWindow)
+	for attempt := 1; ; attempt++ {
+		if p.runUnderLeaderLockNoHeartbeat("cleanup", work) {
+			return
+		}
+		if !timeNow().Before(deadline) {
+			log.Printf("cleanup: could not acquire the work lock within %s (%d attempts); "+
+				"the next attempt is the daily tick. Retention is NOT running.",
+				cleanupLockRetryWindow, attempt)
+			return
+		}
+		sleepFor(cleanupLockRetryInterval)
+	}
+}
+
+// retentionCleanupWork is the body of the daily pass, run while holding the work
+// lock. Split out of runRetentionCleanup so the lock can be retried around it.
+func (p *Poller) retentionCleanupWork() {
+	{
 		if p.db != nil {
 			if err := p.db.CleanupOldData(p.cfg.Retention); err != nil {
 				log.Printf("Data cleanup error: %v", err)
@@ -266,7 +327,7 @@ func (p *Poller) runRetentionCleanup() {
 		if p.alertManager != nil {
 			p.alertManager.PruneExpiredCooldowns()
 		}
-	})
+	}
 }
 
 func (p *Poller) Start() error {
@@ -449,19 +510,21 @@ func (p *Poller) runUnderLeaderLock(taskName string, fn func()) {
 // (AUDIT-188): stamping loopBeat from off-loop work would keep /readyz green
 // while the select loop itself was genuinely hung — the exact staleness M30
 // exists to expose.
-func (p *Poller) runUnderLeaderLockNoHeartbeat(taskName string, fn func()) {
-	if p.db == nil {
-		// No DB to lock against; just run.
-		fn()
-		return
-	}
-	release, acquired := p.db.TryAcquirePollerWorkLock()
+// The bool reports whether the lock was ACQUIRED (and therefore whether fn ran).
+// Callers that cannot afford to lose their turn — the daily retention cleanup —
+// use it to retry; the rest ignore it, because a skipped tick of a per-minute or
+// per-5-minute task is picked up by the next one.
+func (p *Poller) runUnderLeaderLockNoHeartbeat(taskName string, fn func()) bool {
+	release, acquired := tryPollerWorkLock(p)
 	if !acquired {
 		log.Printf("Skipping %s: another poller holds the work lock", taskName)
-		return
+		return false
 	}
-	defer release()
+	if release != nil {
+		defer release()
+	}
 	fn()
+	return true
 }
 
 // detectConfigFromCfg maps the operator's DETECT_* config onto the detection
