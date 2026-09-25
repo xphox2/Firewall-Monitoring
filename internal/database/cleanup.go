@@ -89,7 +89,7 @@ var cleanupDeleteBatchSize = 10000
 //	                                                        ->  765x SLOWER
 //
 // Ungated, this change would have traded one table's timeout for roughly 98
-// minutes of scan time per pass on another — while holding pollerWorkLockKey. The
+// minutes of scan time per pass on another — while holding the poller's lock. The
 // gate is therefore keyed on evidence, not on which tables look big:
 // interface_stats is not small (5.2 GB, and this file elsewhere calls it a
 // 100M-row table), it simply has no timestamp-leading index.
@@ -198,31 +198,25 @@ func (d *Database) batchedDeleteOlderThanWhere(model interface{}, table string, 
 //     abandoning the table until tomorrow.
 //
 // LOCK-HOLD NOTE, because a pass that finishes instead of bailing costs something.
-// runRetentionCleanup holds pollerWorkLockKey (cmd/poller), which is NON-BLOCKING
-// and shared with the monitoring cycle, rollup, flow-detect, ipsec-telemetry and
-// threat-feed sync:
-// a tick arriving while cleanup works is SKIPPED, not queued, so what is lost is
-// alert evaluation, not merely its timeliness. flowSummaryLockKey's comment
-// records moving the summary pass off this key for exactly that reason: a pass
-// lasting "up to a minute" was dropping roughly one monitoring tick in five.
+// runRetentionCleanup holds maintenanceLockKey (cmd/poller) for the whole pass,
+// and the rollup + syslog aggregation tick, which shares that NON-BLOCKING key,
+// is skipped for as long as it runs. That is deliberate: promotion and retention
+// both delete from flow_samples/flow_rollups, and aggregation reads
+// syslog_messages while retention deletes from it.
 //
-// A complete pass has always held the lock for however long it took; what
-// v0.11.254 changes is that a TIMING-OUT table retries — at worst 6 attempts, so
+// Until v0.11.256 the pass held pollerWorkLockKey instead, shared with the
+// monitoring cycle, flow-detect, ipsec-telemetry and the feed sync, so every
+// monitoring tick during a pass was SKIPPED — 13 minutes of no alert evaluation
+// per day on production, hours during a backlog. Moving cleanup and rollup to
+// their own key freed those tasks while keeping the pair serialized; see
+// maintenanceLockKey for what now runs alongside retention and the two points
+// of contact (40P01 on alerts, handled below; partition DDL, execCronDDL).
+//
+// A complete pass has always held its lock for however long it took; what
+// v0.11.254 changed is that a TIMING-OUT table retries — at worst 6 attempts, so
 // 5 halvings (10000, 5000, 2500, 1250, 625, 500), x 120s plus bounded lock waits
-// — where before it returned in seconds having done nothing. The ordered subquery above makes those timeouts rare, which is why
-// this is documented rather than restructured.
-//
-// A dedicated cleanup lock key is the obvious follow-up and is NOT a free swap.
-// The serialization it would break is DELIBERATE, not incidental — cmd/poller's
-// rollup tick says so in as many words: "Deliberately kept on the SHARED work
-// lock: rollup/aggregation and the async retention cleanup stay serialized (they
-// contend for the same tables)". That same tick runs RunSyslogAggregationCycle,
-// which reads the table retention is deleting from. Separating the keys would
-// create writer-vs-writer overlap between promotion and retention on
-// flow_samples/flow_rollups, and aggregation-vs-retention on syslog_messages. (A
-// concurrent READER of flow_rollups is already the status quo: the flow summary
-// pass has its own key.) That deserves its own analysis, on a ladder with two
-// prior production incidents.
+// — where before it returned in seconds having done nothing. The ordered
+// subquery above makes those timeouts rare.
 func (d *Database) batchedDeleteOlderThanOn(model interface{}, timeColumn, orderBy string, cutoff time.Time, extraWhere string, args ...interface{}) error {
 	batchSize := cleanupDeleteBatchSize
 	lockRetries := 0
@@ -257,8 +251,8 @@ func (d *Database) batchedDeleteOlderThanOn(model interface{}, timeColumn, order
 			return res.Error
 		})
 		if err != nil {
-			switch sqlState(err) {
-			case "57014": // statement_timeout: this batch is too big for this heap
+			switch {
+			case sqlState(err) == "57014": // statement_timeout: this batch is too big for this heap
 				if batchSize > batchDeleteFloor {
 					next := batchSize / 2
 					if next < batchDeleteFloor {
@@ -268,12 +262,12 @@ func (d *Database) batchedDeleteOlderThanOn(model interface{}, timeColumn, order
 					batchSize = next
 					continue
 				}
-			case "55P03": // lock_timeout: a partition DROP or VACUUM FULL holds it
+			case lockRetryable(err): // see lockRetryable
 				if lockRetries < batchDeleteLockRetries {
 					lockRetries++
 					wait := batchDeleteLockRetrySleep * time.Duration(1+lockRetries%5)
-					log.Printf("cleanup: batch waited on a lock (%d/%d); retrying in %s",
-						lockRetries, batchDeleteLockRetries, wait)
+					log.Printf("cleanup: batch hit %s (%d/%d); retrying in %s",
+						sqlState(err), lockRetries, batchDeleteLockRetries, wait)
 					time.Sleep(wait)
 					continue
 				}
@@ -304,6 +298,13 @@ var (
 	batchDeleteLockRetrySleep = time.Second
 	// batchDeleteInterSleep yields to other writers between batches.
 	batchDeleteInterSleep = 100 * time.Millisecond
+	// cronDDLLockTimeout bounds how long a retention-cron partition DDL may queue
+	// for its ACCESS EXCLUSIVE lock on the parent; every insert on that parent
+	// queues behind it meanwhile. See execCronDDL.
+	cronDDLLockTimeout = 5 * time.Second
+	// dropLockRetries bounds the 55P03 retries of one partition DROP. Deliberately
+	// NOT batchDeleteLockRetries (10): each attempt is another insert stall.
+	dropLockRetries = 3
 	// purgeBatchHook, when non-nil, runs before every batch and can fail it
 	// (test seam for the "Nth batch errors" path). Never set in production.
 	purgeBatchHook func(table string, batchNo int) error
@@ -378,8 +379,8 @@ func (d *Database) batchedDeleteWhere(ctx context.Context, table, where, orderBy
 			if ctx.Err() != nil {
 				return ctx.Err() // the cancel is the cause, not the driver error it surfaced as
 			}
-			switch sqlState(err) {
-			case "57014": // statement_timeout: the batch is too big for this table's heap
+			switch {
+			case sqlState(err) == "57014": // statement_timeout: the batch is too big for this table's heap
 				if batch > batchDeleteFloor {
 					next := batch / 2
 					if next < batchDeleteFloor {
@@ -390,11 +391,11 @@ func (d *Database) batchedDeleteWhere(ctx context.Context, table, where, orderBy
 					batchNo--
 					continue
 				}
-			case "55P03": // lock_timeout: something (partition DROP, VACUUM FULL) holds the table
+			case lockRetryable(err): // see lockRetryable
 				if lockRetries < batchDeleteLockRetries {
 					lockRetries++
 					wait := batchDeleteLockRetrySleep * time.Duration(1+lockRetries%5)
-					log.Printf("device-purge: %s batch waited on a lock (%d/%d); retrying in %s", table, lockRetries, batchDeleteLockRetries, wait)
+					log.Printf("device-purge: %s batch hit %s (%d/%d); retrying in %s", table, sqlState(err), lockRetries, batchDeleteLockRetries, wait)
 					if !sleepCtx(ctx, wait) {
 						return ctx.Err()
 					}
@@ -417,6 +418,27 @@ func (d *Database) batchedDeleteWhere(ctx context.Context, table, where, orderBy
 	}
 }
 
+// lockRetryable reports whether a failed delete batch should be retried as-is,
+// after a sleep, by both batch loops (retention and device purge):
+//
+//   - 55P03 lock_timeout: a partition DROP or VACUUM FULL holds the table.
+//   - 40P01 deadlock_detected: since v0.11.256 the alert engine's multi-row
+//     auto-resolve UPDATE (resolveOpenAlertRows) runs concurrently with the
+//     unordered retention batch on `alerts`, and PG aborts one side. The
+//     victim's transaction is rolled back whole, so retrying the same batch is
+//     safe. Unretried, one deadlock returned from CleanupOldData and skipped
+//     every table after alerts until the next day.
+//
+// 57014 is deliberately not here: a statement timeout means the batch is too
+// big, and the loops halve it instead.
+func lockRetryable(err error) bool {
+	switch sqlState(err) {
+	case "55P03", "40P01":
+		return true
+	}
+	return false
+}
+
 // sleepCtx sleeps for dur or until ctx is done; false means ctx ended first.
 func sleepCtx(ctx context.Context, dur time.Duration) bool {
 	if dur <= 0 {
@@ -437,26 +459,48 @@ func sleepCtx(ctx context.Context, dur time.Duration) bool {
 // space reclamation, vs. row-by-row DELETE that bloats. It only ever drops a
 // partition whose upper bound (the exclusive `TO ('YYYY-MM-DD')`) is <= cutoff,
 // so the current/future and the straddling partition are never touched (the
-// caller still runs batchedDeleteOlderThan for the straddling tail). Returns
-// whether the table was partitioned (false → caller relies on batched DELETE).
-// Postgres-only; no-op on SQLite.
-func (d *Database) dropPartitionsOlderThan(table string, cutoff time.Time) (bool, error) {
+// caller still runs batchedDeleteOlderThan for the straddling tail). handled
+// reports whether the table was partitioned (false → caller relies on batched
+// DELETE). Postgres-only; no-op on SQLite.
+//
+// A DROP of a leaf takes ACCESS EXCLUSIVE on the PARENT, and while it waits for
+// a reader every insert on that parent queues behind it. Since v0.11.256 the
+// monitoring cycle and flow detection keep running during retention (they are
+// no longer serialized behind it), so each DROP runs under cronDDLLockTimeout
+// and a 55P03 is retried dropLockRetries times. If it still cannot get the lock
+// the table's remaining expired children are left for the next pass — a
+// parent-level blocker would time every one of them out, each costing another
+// insert stall — and the function returns a FLOOR: the upper bound of the newest
+// expired child it did not drop. Every row in an un-dropped child is < floor and
+// every row in the straddling partition is >= floor, so the caller ANDs
+// `timestamp >= floor` onto its batched DELETE: the stuck month is not
+// row-deleted (a month of syslog at 10k rows per batch is hours, all of it
+// holding the maintenance lock), yet the daily trim of every other partition
+// still runs, so even a permanent blocker (a leaked idle-in-transaction session)
+// bounds growth to the stuck month(s) instead of freezing the table. Rows in the
+// DEFAULT partition older than floor are deferred with them, for one pass.
+// floor is zero when nothing was left behind; the caller then adds no predicate.
+//
+// Any other DROP error returns (zero, true, err) and the caller falls through
+// to the parent-wide batched DELETE, as before.
+func (d *Database) dropPartitionsOlderThan(table string, cutoff time.Time) (floor time.Time, handled bool, err error) {
 	if !d.dialect.IsPostgres() {
-		return false, nil
+		return time.Time{}, false, nil
 	}
 	var isPartitioned bool
 	if err := d.db.Raw(`SELECT EXISTS (
 		SELECT 1 FROM pg_partitioned_table pt
 		JOIN pg_class c ON c.oid = pt.partrelid WHERE c.relname = ?)`, table).Scan(&isPartitioned).Error; err != nil {
-		return false, err
+		return time.Time{}, false, err
 	}
 	if !isPartitioned {
-		return false, nil
+		return time.Time{}, false, nil
 	}
 
 	type childPart struct {
 		Name  string
 		Bound string
+		upper time.Time
 	}
 	var children []childPart
 	if err := d.db.Raw(`
@@ -465,8 +509,9 @@ func (d *Database) dropPartitionsOlderThan(table string, cutoff time.Time) (bool
 		JOIN pg_class c ON c.oid = i.inhrelid
 		JOIN pg_class parent ON parent.oid = i.inhparent
 		WHERE parent.relname = ?`, table).Scan(&children).Error; err != nil {
-		return true, err
+		return time.Time{}, true, err
 	}
+	var expired []childPart
 	for _, ch := range children {
 		upper, ok := parsePartitionUpperBound(ch.Bound)
 		if !ok {
@@ -475,12 +520,60 @@ func (d *Database) dropPartitionsOlderThan(table string, cutoff time.Time) (bool
 		if upper.After(cutoff) {
 			continue // range reaches into the retention window — keep it
 		}
-		if err := d.execMaintenanceDDL(fmt.Sprintf(`DROP TABLE IF EXISTS %s`, ch.Name)); err != nil {
-			return true, fmt.Errorf("drop old partition %s: %w", ch.Name, err)
-		}
-		log.Printf("cleanup: dropped old partition %s (range entirely before %s)", ch.Name, cutoff.Format("2006-01-02"))
+		ch.upper = upper
+		expired = append(expired, ch)
 	}
-	return true, nil
+	// Oldest first, so that stopping at a give-up leaves a contiguous run of the
+	// newest expired children and floor is simply the last one's upper bound.
+	// pg_inherits has no inherent order.
+	sort.Slice(expired, func(i, j int) bool { return expired[i].upper.Before(expired[j].upper) })
+	for i, ch := range expired {
+		dropErr := d.dropPartitionWithLockRetry(ch.Name)
+		if dropErr == nil {
+			log.Printf("cleanup: dropped old partition %s (range entirely before %s)", ch.Name, cutoff.Format("2006-01-02"))
+			continue
+		}
+		if sqlState(dropErr) != "55P03" {
+			return time.Time{}, true, fmt.Errorf("drop old partition %s: %w", ch.Name, dropErr)
+		}
+		kept := len(expired) - i
+		floor = expired[len(expired)-1].upper
+		log.Printf("WARNING: cleanup: DROP lock-timed-out on %s (%s, %d attempts): %d expired partition(s) of %s "+
+			"kept until the next pass; rows before %s are not row-deleted meanwhile",
+			ch.Name, cronDDLLockTimeout, 1+dropLockRetries, kept, table, floor.Format("2006-01-02"))
+		return floor, true, nil
+	}
+	return time.Time{}, true, nil
+}
+
+// dropPartitionWithLockRetry drops one leaf under cronDDLLockTimeout, retrying a
+// 55P03 dropLockRetries times. The returned error is the last attempt's.
+func (d *Database) dropPartitionWithLockRetry(name string) error {
+	var err error
+	for attempt := 0; attempt <= dropLockRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(batchDeleteLockRetrySleep)
+		}
+		err = d.execCronDDL(fmt.Sprintf(`DROP TABLE IF EXISTS %s`, name))
+		if err == nil || sqlState(err) != "55P03" {
+			return err
+		}
+	}
+	return err
+}
+
+// andFloor ANDs `timestamp >= floor` onto a batched-delete predicate, to keep
+// the rows of partitions dropPartitionsOlderThan could not drop out of the
+// row-delete. A zero floor returns where/args untouched, so on a normal day the
+// DELETE is byte-identical to the one it replaces (and SQLite never sees it).
+func andFloor(where string, args []interface{}, floor time.Time) (string, []interface{}) {
+	if floor.IsZero() {
+		return where, args
+	}
+	if where == "" {
+		return "timestamp >= ?", []interface{}{floor}
+	}
+	return where + " AND timestamp >= ?", append(append([]interface{}{}, args...), floor)
 }
 
 // parsePartitionUpperBound pulls the exclusive upper bound date out of a
@@ -784,10 +877,13 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		// partitions first (instant, reclaims space); a no-op for plain tables.
 		// Drop errors are non-fatal — fall through to the batched DELETE, which
 		// also trims the straddling/current partition's rows for exact retention.
-		if _, err := d.dropPartitionsOlderThan(e.name, cutoff); err != nil {
+		// A lock-timed-out drop returns a floor instead; see andFloor.
+		floor, _, err := d.dropPartitionsOlderThan(e.name, cutoff)
+		if err != nil {
 			log.Printf("cleanup: drop-old-partitions warning for %s: %v", e.name, err)
 		}
-		if err := d.batchedDeleteOlderThan(e.model, e.name, cutoff); err != nil {
+		where, args := andFloor("", nil, floor)
+		if err := d.batchedDeleteOlderThanWhere(e.model, e.name, cutoff, where, args...); err != nil {
 			return fmt.Errorf("failed to cleanup %s: %w", e.name, err)
 		}
 	}
@@ -842,9 +938,11 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	// severity inside it has expired, so syslogMaxWindow returns 0 — never drop —
 	// if any severity is kept forever. Straddling and newer partitions still
 	// rely on the per-severity DELETEs below for exact retention.
+	var syslogFloor time.Time
 	if dropDays := syslogMaxWindow(sevDays[:]); dropDays > 0 {
 		dropCutoff := time.Now().AddDate(0, 0, -dropDays)
-		if _, err := d.dropPartitionsOlderThan("syslog_messages", dropCutoff); err != nil {
+		var err error
+		if syslogFloor, _, err = d.dropPartitionsOlderThan("syslog_messages", dropCutoff); err != nil {
 			log.Printf("cleanup: drop-old-partitions warning for syslog_messages: %v", err)
 		}
 	}
@@ -854,8 +952,9 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	// than the two-band model it replaces.
 	for days, severities := range syslogWindowGroups(sevDays) {
 		cutoff := time.Now().AddDate(0, 0, -days)
+		where, args := andFloor("severity IN ?", []interface{}{severities}, syslogFloor)
 		if err := d.batchedDeleteOlderThanWhere(&models.SyslogMessage{}, "syslog_messages", cutoff,
-			"severity IN ?", severities); err != nil {
+			where, args...); err != nil {
 			return fmt.Errorf("failed to cleanup syslog_message (severities %v, %dd): %w",
 				severities, days, err)
 		}
@@ -875,12 +974,14 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		summaryCutoff := time.Now().AddDate(0, 0, -summaryDays)
 		// One window for the whole band means a partition is expired outright
 		// once it is older than it — no per-severity keep-forever to guard.
-		if _, err := d.dropPartitionsOlderThan("syslog_summaries", summaryCutoff); err != nil {
+		summaryFloor, _, err := d.dropPartitionsOlderThan("syslog_summaries", summaryCutoff)
+		if err != nil {
 			log.Printf("cleanup: drop-old-partitions warning for syslog_summaries: %v", err)
 		}
 		for sev := syslogSummaryBandFloor; sev < SyslogSeverityCount; sev++ {
+			where, args := andFloor("severity = ?", []interface{}{sev}, summaryFloor)
 			if err := d.batchedDeleteOlderThanWhere(&models.SyslogSummary{}, "syslog_summaries", summaryCutoff,
-				"severity = ?", sev); err != nil {
+				where, args...); err != nil {
 				return fmt.Errorf("failed to cleanup syslog_summary (severity %d): %w", sev, err)
 			}
 		}

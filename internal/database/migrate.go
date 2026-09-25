@@ -508,10 +508,53 @@ func (d *Database) execMaintenanceDDL(sql string, args ...interface{}) error {
 	})
 }
 
+// execCronDDL is execMaintenanceDDL for DDL issued by the daily retention pass,
+// which since v0.11.256 runs concurrently with the monitoring cycle and flow
+// detection instead of shutting them out. A partition CREATE or DROP takes
+// ACCESS EXCLUSIVE on the parent, and while it queues behind a reader every
+// insert on that parent queues behind IT — so here the wait is bounded by
+// cronDDLLockTimeout and a timeout surfaces as 55P03 for the caller to handle.
+// Startup DDL keeps execMaintenanceDDL: nothing else is running yet, and a
+// startup that gave up on a lock would be worse than one that waited.
+func (d *Database) execCronDDL(sql string, args ...interface{}) error {
+	if !d.dialect.IsPostgres() {
+		return d.db.Exec(sql, args...).Error
+	}
+	return d.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SET LOCAL statement_timeout = 0").Error; err != nil {
+			return fmt.Errorf("lift statement_timeout: %w", err)
+		}
+		// SET takes no bind parameters, hence the rendered literal; the value is
+		// a package duration, never input.
+		if err := tx.Exec(fmt.Sprintf("SET LOCAL lock_timeout = '%dms'", cronDDLLockTimeout.Milliseconds())).Error; err != nil {
+			return fmt.Errorf("set lock_timeout: %w", err)
+		}
+		return tx.Exec(sql, args...).Error
+	})
+}
+
 // EnsurePartitions creates monthly range partitions for high-volume tables on PostgreSQL.
 // Partitions are created for the current month + 6 months ahead.
 // This is safe for existing servers - it only creates new partitions, never modifies existing data.
+// Startup variant; the retention cron calls EnsurePartitionsForCron.
 func (d *Database) EnsurePartitions() error {
+	return d.ensurePartitions(d.execMaintenanceDDL)
+}
+
+// EnsurePartitionsForCron is EnsurePartitions for the daily retention pass: the
+// monthly CREATE TABLE ... PARTITION OF (ACCESS EXCLUSIVE on the parent and its
+// DEFAULT partition) goes through execCronDDL so it cannot stall ingest behind a
+// reader. A lock-timed-out CREATE is logged and retried the next day; with a
+// six-month lead and a DEFAULT partition that costs nothing. Only that statement
+// changes: the DEFAULT-partition CREATE ... IF NOT EXISTS returns before locking
+// when it exists, and CREATE INDEX takes SHARE, which never queues behind a
+// reader — under a lock_timeout its daily no-op would instead fail behind any
+// long COPY.
+func (d *Database) EnsurePartitionsForCron() error {
+	return d.ensurePartitions(d.execCronDDL)
+}
+
+func (d *Database) ensurePartitions(createPartition func(sql string, args ...interface{}) error) error {
 	if !d.dialect.IsPostgres() {
 		return nil // Partitioning is PostgreSQL-only
 	}
@@ -558,7 +601,9 @@ func (d *Database) EnsurePartitions() error {
 	// received just after 00:00 on the 1st carrying prev-month rows — lands in the
 	// default instead of failing the whole insert/COPY with "no partition of
 	// relation found for row". Idempotent; the cleanup cron already skips the
-	// default's unparseable bound and parent-level retention still trims its rows.
+	// default's unparseable bound and parent-level retention still trims its rows
+	// — except, for one pass, rows older than the floor of a lock-timed-out
+	// partition DROP (see dropPartitionsOlderThan).
 	// Also covers freshly-converted parents that predate the v51 migration.
 	for _, def := range partitioned {
 		if err := d.execMaintenanceDDL(fmt.Sprintf(
@@ -656,7 +701,7 @@ func (d *Database) EnsurePartitions() error {
 					CREATE TABLE %s PARTITION OF %s
 					FOR VALUES FROM ('%s') TO ('%s')`,
 					partitionName, def.tableName, startStr, endStr)
-				if err := d.execMaintenanceDDL(sql); err != nil {
+				if err := createPartition(sql); err != nil {
 					log.Printf("Partition creation warning for %s: %v", partitionName, err)
 					continue
 				}

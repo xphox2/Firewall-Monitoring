@@ -165,8 +165,8 @@ func (p *Poller) startThreatFeedSyncAsync() {
 // each), and running it inline parked the loop so the 5-minute server-disk
 // check could not fire — the exact silent-outage shape the 2026-07-26
 // postmortem added that check to prevent. Single-flight: a cleanup slower than
-// the 24h cadence is skipped, never stacked. The cross-process leader lock is
-// acquired inside the goroutine (NoHeartbeat variant — a background goroutine
+// the 24h cadence is skipped, never stacked. The cross-process maintenance lock
+// is acquired inside the goroutine (NoHeartbeat variant — a background goroutine
 // must not stamp the M30 loop-liveness beat).
 func (p *Poller) startRetentionCleanupAsync() {
 	if !p.cleanupRunning.CompareAndSwap(false, true) {
@@ -230,52 +230,41 @@ func humanBps(bps float64) string {
 // Retention cleanup cadence. See the cleanupTimer comment in the run loop for
 // why the first run must not wait a full interval.
 const (
-	cleanupInterval     = 24 * time.Hour
-	initialCleanupDelay = 5 * time.Minute
+	cleanupInterval = 24 * time.Hour
+	// 5m37s rather than a round 5m: the rollup ticker (the one task still sharing
+	// the maintenance lock) is armed in the same instant as this timer, so a
+	// round multiple of its 300 s period would land every initial attempt on a
+	// rollup tick. 337 is prime, so the offset is coprime with 60 s and 300 s.
+	initialCleanupDelay = 5*time.Minute + 37*time.Second
 
-	// A cleanup that loses the shared work lock used to forfeit the entire day,
-	// because the lock is non-blocking and the next attempt is 24h later.
+	// A cleanup that loses its lock used to forfeit the entire day, because the
+	// lock is non-blocking and the next attempt is 24h later.
 	//
-	// It loses by ARITHMETIC, not luck — but not simply to the task the first draft
-	// of this comment blamed. The goroutine contends with whatever the loop
-	// services AFTER the cleanup case, and select picks uniformly among ready
-	// cases, so the ordering decides which task that is: in the ordering the log
-	// below shows, monitoring had already run and released; in others it is one of
-	// the contenders.
-	//
-	// What makes the loss near-certain is how MANY lock-takers are ready together.
-	// Both cleanup periods are exact multiples of 300s as well as of the 60s
-	// monitoring tick, so a 5-minute-aligned attempt finds four of them ready —
-	// monitoring, rollup (which also runs the syslog aggregation pass),
-	// flow-detect, ipsec-telemetry. The goroutine wins only if cleanup is serviced
-	// last of the five, since otherwise the loop's next synchronous case beats a
-	// goroutine that has yet to pin a connection: about a 3-in-4 loss per aligned
-	// attempt, against at most 1-in-2 with one contender at a plain 60s mark.
-	//
-	// Observed on production 2026-09-25, five minutes after a deploy. The ROLLUP is
-	// the holder visible here (detect or ipsec could win that race in principle):
+	// Until v0.11.256 that lock was the SHARED work lock, and the loss was
+	// arithmetic, not luck: both cleanup periods were exact multiples of 300 s and
+	// of the 60 s monitoring tick, so an aligned attempt found four lock-takers
+	// ready (monitoring, rollup, flow-detect, ipsec-telemetry) and the goroutine,
+	// which still had to pin a connection, won only if serviced last — roughly a
+	// 3-in-4 loss. Observed on production 2026-09-25, five minutes after a deploy:
 	//
 	//	01:00:15 main.go: Monitoring cycle: 5 device(s)   (logged at cycle START)
 	//	01:00:15 main.go: Skipping cleanup: another poller holds the work lock
 	//	01:00:17 flows.go: Flow rollup: aggregated 8811 groups ...
 	//
 	// syslog_messages had reached 37 days of history under a 30-day policy and
-	// 161 GB. v0.11.254 fixed a statement timeout that abandoned a table for a
-	// day; this is why that pass so rarely got to run at all.
+	// 161 GB.
 	//
-	// "Forever" would overstate it for the DAILY attempt: cleanupTimer.Reset is
-	// measured from when the case is serviced, not when it fired, so on a
-	// long-lived process the daily attempt drifts off the boundary. On this
-	// deployment, which restarts several times a day, the attempt that matters is
-	// the 5-minute initial one — and that one is aligned every time.
-	//
-	// So a contended cleanup now retries instead of forfeiting. The interval is
-	// deliberately coprime with the contending periods: 97 is prime, so
-	// gcd(97s, 60s) = gcd(97s, 300s) = 1s and successive retries visit every
-	// phase of both. A round interval would not — 90s only alternates between two
-	// phases of the 60s tick, and 150s visits two phases of the 300s one.
+	// Cleanup now takes the maintenance lock, whose only other holders are the
+	// 5-minute rollup tick and a sibling poller's cleanup. The rollup holds it for
+	// seconds in steady state but for most of each cycle while it drains a
+	// backlog, so a contended cleanup still retries rather than forfeiting. The
+	// interval is coprime with the tickers: 97 is prime, so gcd(97s, 60s) =
+	// gcd(97s, 300s) = 1s and successive retries visit every phase of both (a
+	// round 90s would only alternate between two phases of the 60 s tick). The
+	// window is long because the only thing waited on is periodic: two hours of
+	// retries costs nothing and outlasts a rollup backlog.
 	cleanupLockRetryInterval = 97 * time.Second
-	cleanupLockRetryWindow   = 30 * time.Minute
+	cleanupLockRetryWindow   = 2 * time.Hour
 )
 
 // Indirections so the retry loop above is testable without burning 97 seconds a
@@ -283,18 +272,26 @@ const (
 var (
 	timeNow  = time.Now
 	sleepFor = time.Sleep
-	// tryPollerWorkLock is the lock acquisition itself, behind an indirection so a
-	// test can simulate contention without a database.
+	// tryPollerWorkLock and tryMaintenanceLock are the lock acquisitions
+	// themselves, behind indirections so a test can simulate contention without a
+	// database.
 	tryPollerWorkLock = func(p *Poller) (func(), bool) {
 		if p.db == nil {
 			return nil, true // nothing to lock against; run
 		}
 		return p.db.TryAcquirePollerWorkLock()
 	}
+	tryMaintenanceLock = func(p *Poller) (func(), bool) {
+		if p.db == nil {
+			return nil, true
+		}
+		return p.db.TryAcquireMaintenanceLock()
+	}
 )
 
 // runRetentionCleanup applies every retention policy and the periodic schema
-// housekeeping, under the leader lock so only one instance does the work.
+// housekeeping, under the maintenance lock so only one instance does the work
+// and the rollup tick never overlaps it.
 // Called from startRetentionCleanupAsync's goroutine, hence the NoHeartbeat
 // lock variant (AUDIT-188): stamping the M30 loop beat from here would mask a
 // hung select loop. State safety off the loop: this touches only p.db
@@ -309,7 +306,7 @@ func (p *Poller) runRetentionCleanup() {
 func (p *Poller) runRetentionCleanupFor(work func()) {
 	deadline := timeNow().Add(cleanupLockRetryWindow)
 	for attempt := 1; ; attempt++ {
-		if p.runUnderLeaderLockNoHeartbeat("cleanup", work) {
+		if p.runUnderMaintenanceLockNoHeartbeat("cleanup", work) {
 			return
 		}
 		if !timeNow().Before(deadline) {
@@ -317,7 +314,7 @@ func (p *Poller) runRetentionCleanupFor(work func()) {
 			// lose the lock this long is a SIBLING poller's cleanup already
 			// draining the backlog, in which case retention is running, just not
 			// here.
-			log.Printf("cleanup: could not acquire the work lock within %s (%d attempts); "+
+			log.Printf("cleanup: could not acquire the maintenance lock within %s (%d attempts); "+
 				"not running retention in this process, next attempt is the daily tick",
 				cleanupLockRetryWindow, attempt)
 			return
@@ -326,8 +323,8 @@ func (p *Poller) runRetentionCleanupFor(work func()) {
 	}
 }
 
-// retentionCleanupWork is the body of the daily pass, run while holding the work
-// lock. Split out of runRetentionCleanup so the lock can be retried around it.
+// retentionCleanupWork is the body of the daily pass, run while holding the
+// maintenance lock. Split out of runRetentionCleanup so the lock can be retried around it.
 func (p *Poller) retentionCleanupWork() {
 	if p.db != nil {
 		if err := p.db.CleanupOldData(p.cfg.Retention); err != nil {
@@ -340,8 +337,10 @@ func (p *Poller) retentionCleanupWork() {
 		} else {
 			log.Println("Config revision retention cleanup completed (top 50 + last 90d, run-collapsed)")
 		}
-		// Ensure future partitions exist (creates ahead partitions if needed)
-		if err := p.db.EnsurePartitions(); err != nil {
+		// Ensure future partitions exist (creates ahead partitions if needed).
+		// The cron variant bounds the parent-lock wait: monitoring runs
+		// alongside this pass now, and must not have its inserts queued.
+		if err := p.db.EnsurePartitionsForCron(); err != nil {
 			log.Printf("Partition check error: %v", err)
 		}
 		// Ensure autovacuum is configured (no-op if already configured)
@@ -452,17 +451,13 @@ func (p *Poller) Start() error {
 			// skip this tick and try again on the next one.
 			p.runUnderLeaderLock("monitoring cycle", p.runMonitoringCycle)
 		case <-rollupTicker.C:
-			// Deliberately kept on the SHARED work lock: rollup/aggregation and
-			// the async retention cleanup stay serialized (they contend for the
-			// same tables), so rollup cycles pause while a cleanup runs — an
-			// accepted trade; the AUDIT-204 window-walk keeps each aggregation
-			// slice short, so the pause is bounded per window.
-			p.runUnderLeaderLock("rollup", func() {
-				if p.db != nil {
-					p.db.RunFlowRollupCycle()
-					p.db.RunSyslogAggregationCycle(p.cfg.Retention)
-				}
-			})
+			// On the MAINTENANCE lock, not the shared work lock: rollup/aggregation
+			// and the async retention cleanup stay serialized (they delete from and
+			// read the same tables), so rollup cycles pause while a cleanup runs —
+			// an accepted trade; the AUDIT-204 window-walk keeps each aggregation
+			// slice short. What moved in v0.11.256 is that the pair no longer
+			// shuts out the monitoring cycle: see database.maintenanceLockKey.
+			p.runUnderMaintenanceLock("rollup", p.runRollupCycle)
 			// Deliberately NOT inside the lock closure above. The monitoring
 			// cycle — SNMP polling and alert evaluation — is a sibling case of
 			// this same select, so anything run inline here delays it. The
@@ -491,12 +486,15 @@ func (p *Poller) Start() error {
 			cleanupTimer.Reset(cleanupInterval)
 			p.startRetentionCleanupAsync()
 		case <-serverHealthTicker.C:
-			// Deliberately NOT under the shared work lock (AUDIT-188). The
-			// async retention cleanup holds that single advisory lock for its
-			// whole (potentially multi-hour) run, and the lock is per-connection
-			// — a second acquire from THIS process contends just like another
-			// poller's — so a locked server-health check would be rejected for
-			// the entire cleanup: the disk-full blindness merely relocated.
+			// Deliberately NOT under any advisory lock (AUDIT-188). The async
+			// retention cleanup holds its lock for its whole (potentially
+			// multi-hour) run, and locks are per-connection — a second acquire
+			// from THIS process contends just like another poller's — so a
+			// locked server-health check would be rejected for the entire
+			// cleanup: the disk-full blindness merely relocated. (Cleanup has
+			// been on the maintenance lock since v0.11.256, so the work lock
+			// would no longer collide with it, but a health check needs no
+			// exclusion and must not start depending on that.)
 			// Running it unlocked is safe and cheap: two statfs calls, two
 			// settings reads, one server_metrics insert; the alert layer has
 			// its own dedup/cooldown, and a duplicate metrics row from a second
@@ -510,18 +508,27 @@ func (p *Poller) Start() error {
 	}
 }
 
-// runUnderLeaderLock acquires the AUDIT-007 cross-process advisory lock,
-// runs fn while holding it, and releases on return. If the lock cannot
-// be acquired (another poller is doing this work), logs a skip message
-// and returns without invoking fn.
+// runRollupCycle is the rollup tick's body: flow rollup promotion and the syslog
+// aggregation pass. Always called under the maintenance lock.
+func (p *Poller) runRollupCycle() {
+	if p.db != nil {
+		p.db.RunFlowRollupCycle()
+		p.db.RunSyslogAggregationCycle(p.cfg.Retention)
+	}
+}
+
+// runUnderLeaderLock acquires the AUDIT-007 cross-process work lock, runs fn
+// while holding it, and releases on return. If the lock cannot be acquired
+// (another poller is doing this work), logs a skip message and returns without
+// invoking fn.
 //
 // SQLite (tests / single-process deployments) always acquires (no-op
 // lock), so fn runs every tick.
 //
 // Call this only from the Start() select loop's SYNCHRONOUS cases: it stamps
 // the M30 loop-liveness heartbeat when work is picked up, which is only
-// truthful when the caller IS the loop. Background goroutines (async cleanup,
-// threat-feed sync) use runUnderLeaderLockNoHeartbeat.
+// truthful when the caller IS the loop. Background goroutines use the
+// NoHeartbeat variants.
 func (p *Poller) runUnderLeaderLock(taskName string, fn func()) {
 	p.runUnderLeaderLockNoHeartbeat(taskName, func() {
 		p.markLoopAlive() // M30: work picked up — a hang inside fn goes stale from here
@@ -533,15 +540,36 @@ func (p *Poller) runUnderLeaderLock(taskName string, fn func()) {
 // loop-liveness stamp, for leader-gated work running on a background goroutine
 // (AUDIT-188): stamping loopBeat from off-loop work would keep /readyz green
 // while the select loop itself was genuinely hung — the exact staleness M30
-// exists to expose.
-// The bool reports whether the lock was ACQUIRED (and therefore whether fn ran).
-// Callers that cannot afford to lose their turn — the daily retention cleanup —
-// use it to retry; the rest ignore it, because a skipped tick of a per-minute or
-// per-5-minute task is picked up by the next one.
+// exists to expose. The bool reports whether the lock was ACQUIRED.
 func (p *Poller) runUnderLeaderLockNoHeartbeat(taskName string, fn func()) bool {
-	release, acquired := tryPollerWorkLock(p)
+	return p.runUnderLock(taskName, "work", tryPollerWorkLock, fn)
+}
+
+// runUnderMaintenanceLock is runUnderLeaderLock on the maintenance lock, for the
+// rollup tick (a synchronous select case, hence the heartbeat).
+func (p *Poller) runUnderMaintenanceLock(taskName string, fn func()) {
+	p.runUnderMaintenanceLockNoHeartbeat(taskName, func() {
+		p.markLoopAlive() // M30: as runUnderLeaderLock
+		fn()
+	})
+}
+
+// runUnderMaintenanceLockNoHeartbeat is the maintenance-lock variant for the
+// retention cleanup goroutine. Callers that cannot afford to lose their turn —
+// the daily cleanup — use the bool to retry; the rollup tick ignores it.
+func (p *Poller) runUnderMaintenanceLockNoHeartbeat(taskName string, fn func()) bool {
+	return p.runUnderLock(taskName, "maintenance", tryMaintenanceLock, fn)
+}
+
+// runUnderLock takes the lock `try` acquires, runs fn, and releases it. The skip
+// line names the lock and does not claim the holder is another process: in a
+// single-poller deployment it is usually this process's own long-running holder
+// (e.g. the rollup tick meeting this process's retention cleanup). `try` is read
+// by the caller at call time, so a test stub of the package var is honoured.
+func (p *Poller) runUnderLock(taskName, lockLabel string, try func(*Poller) (func(), bool), fn func()) bool {
+	release, acquired := try(p)
 	if !acquired {
-		log.Printf("Skipping %s: another poller holds the work lock", taskName)
+		log.Printf("Skipping %s: the %s lock is held (another poller, or this process's own long-running holder)", taskName, lockLabel)
 		return false
 	}
 	if release != nil {

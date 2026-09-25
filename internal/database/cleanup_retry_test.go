@@ -1,6 +1,8 @@
 package database
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -207,9 +209,9 @@ func TestRetentionDelete_OrdersOnlyTimeIndexedTables(t *testing.T) {
 
 // TestRetentionDelete_GivesUpAfterTheLockRetryBudget: the 55P03 retry is bounded.
 // Unbounded — or with a reset that stops the budget ever exhausting — this would
-// hold pollerWorkLockKey indefinitely, and that lock is shared with the monitoring
-// cycle, where a skipped tick is a skipped alert evaluation rather than a delayed
-// one.
+// hold maintenanceLockKey indefinitely, and that lock is shared with the rollup
+// tick, which would be skipped for as long as the retry spun. (Before v0.11.256
+// the lock was the work lock, and what it skipped was alert evaluation.)
 func TestRetentionDelete_GivesUpAfterTheLockRetryBudget(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	seedOldSyslog(t, d, 4, time.Now().Add(-48*time.Hour))
@@ -227,5 +229,97 @@ func TestRetentionDelete_GivesUpAfterTheLockRetryBudget(t *testing.T) {
 	}
 	if attempts != 4 {
 		t.Errorf("attempts = %d, want 4 (one try plus %d retries)", attempts, batchDeleteLockRetries)
+	}
+}
+
+func pgDeadlock() error { return &pgconn.PgError{Code: "40P01", Message: "deadlock detected"} }
+
+// TestRetentionDelete_RetriesTheSameBatchOnDeadlock: since v0.11.256 the alert
+// engine's multi-row auto-resolve UPDATE runs alongside retention, and on `alerts`
+// the two can deadlock. The victim's batch is rolled back whole, so it must be
+// retried unchanged — before this, one 40P01 returned from CleanupOldData and
+// skipped every table after alerts until the next day. The hook fires before any
+// SQL, so this pins the retry decision, not PG's rollback of a real deadlock.
+func TestRetentionDelete_RetriesTheSameBatchOnDeadlock(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	seedOldSyslog(t, d, 5, time.Now().Add(-48*time.Hour))
+
+	origBatch, origSleep, origLockSleep := cleanupDeleteBatchSize, batchDeleteInterSleep, batchDeleteLockRetrySleep
+	cleanupDeleteBatchSize, batchDeleteInterSleep, batchDeleteLockRetrySleep = 8, 0, time.Millisecond
+	defer func() {
+		cleanupDeleteBatchSize, batchDeleteInterSleep, batchDeleteLockRetrySleep = origBatch, origSleep, origLockSleep
+	}()
+
+	var sizes []int
+	fails := 2
+	cleanupBatchHook = func(batchSize int) error {
+		sizes = append(sizes, batchSize)
+		if fails > 0 {
+			fails--
+			return pgDeadlock()
+		}
+		return nil
+	}
+	defer func() { cleanupBatchHook = nil }()
+
+	if err := d.batchedDeleteOlderThanOn(&models.SyslogMessage{}, "timestamp", "timestamp", time.Now(), ""); err != nil {
+		t.Fatalf("a deadlocked batch must be retried, not abandon the pass: %v", err)
+	}
+	for i, got := range sizes {
+		if got != 8 {
+			t.Errorf("attempt %d used batch %d, want 8 — a deadlock says nothing about the batch size", i, got)
+		}
+	}
+	var left int64
+	d.Gorm().Model(&models.SyslogMessage{}).Count(&left)
+	if left != 0 {
+		t.Errorf("%d rows survived a cleanup that reported success", left)
+	}
+}
+
+// TestLockRetryable pins the classification both batch loops share. The purge
+// loop's own hook fires before its transaction and returns directly, so it cannot
+// reach the switch; the predicate is what makes the two loops agree.
+func TestLockRetryable(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want bool
+	}{
+		{pgLockError(), true},
+		{pgDeadlock(), true},
+		{fmt.Errorf("wrapped: %w", pgDeadlock()), true},
+		{pgTimeout(), false}, // halved, not retried as-is
+		{&pgconn.PgError{Code: "23505"}, false},
+		{errors.New("plain"), false},
+		{nil, false},
+	} {
+		if got := lockRetryable(tc.err); got != tc.want {
+			t.Errorf("lockRetryable(%v) = %v, want %v", tc.err, got, tc.want)
+		}
+	}
+}
+
+// TestAndFloor: a zero floor must leave the predicate untouched, so a normal day's
+// DELETE is byte-identical to the one it replaced (and SQLite never sees it); a
+// set floor is ANDed on without mutating the caller's args.
+func TestAndFloor(t *testing.T) {
+	if w, a := andFloor("", nil, time.Time{}); w != "" || a != nil {
+		t.Errorf("zero floor, no predicate: got %q %v, want empty", w, a)
+	}
+	if w, a := andFloor("severity = ?", []interface{}{5}, time.Time{}); w != "severity = ?" || len(a) != 1 {
+		t.Errorf("zero floor must not touch the predicate: got %q %v", w, a)
+	}
+	floor := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	if w, a := andFloor("", nil, floor); w != "timestamp >= ?" || len(a) != 1 || a[0] != floor {
+		t.Errorf("floor on empty predicate: got %q %v", w, a)
+	}
+	args := make([]interface{}, 1, 4)
+	args[0] = []int{5, 6}
+	w, a := andFloor("severity IN ?", args, floor)
+	if w != "severity IN ? AND timestamp >= ?" || len(a) != 2 || a[1] != floor {
+		t.Errorf("floor on existing predicate: got %q %v", w, a)
+	}
+	if len(args) != 1 {
+		t.Errorf("andFloor mutated the caller's args slice to len %d", len(args))
 	}
 }

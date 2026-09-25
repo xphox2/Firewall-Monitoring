@@ -18,7 +18,8 @@ var AppVersion string
 // applying migrations, so the three racing processes (api/poller/trap) and any
 // explicit `migrate` subcommand serialize. It MUST differ from
 // startupMigrationLockKey (a never-released try-lock — a blocking acquire on the
-// same key would deadlock) and pollerWorkLockKey. "FWMNMIGR".
+// same key would deadlock) and every other advisory key
+// (TestAdvisoryLockKeysDistinct). "FWMNMIGR".
 const migrationLockKey int64 = 0x46574d4e4d494752
 
 // createSchemaMigrationsDDL creates the bookkeeping table. Written as raw DDL
