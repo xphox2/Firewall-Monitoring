@@ -183,3 +183,120 @@ func TestRetentionCleanup_IsAReusableFunction(t *testing.T) {
 	t.Error("no (*Poller).runRetentionCleanup method — the cleanup body must be callable " +
 		"from both the startup path and the periodic one")
 }
+
+// Third variant of the same failure: retention not running, for a third reason.
+//
+// The first was a Ticker that never reached its first tick across restarts. The
+// second was a statement timeout abandoning a table for the day (v0.11.254). This
+// is the one that made the second so rare — the work lock is NON-BLOCKING and the
+// next attempt was 24h away, so losing a race forfeited the entire day. And the
+// race was not chance, it was arithmetic: the monitoring ticker is
+// SNMP.PollInterval (60s on prod) and both cleanup periods are exact multiples of
+// it, so every attempt fired on the same instant as a monitoring tick. Observed on
+// production 2026-09-25, five minutes after a deploy:
+//
+//	01:00:15 main.go:1070: Monitoring cycle: 5 device(s)
+//	01:00:15 main.go:460: Skipping cleanup: another poller holds the work lock
+//
+// syslog_messages was at 37 days under a 30-day policy, 161 GB.
+
+func TestRetentionCleanup_RetriesRatherThanForfeitingTheDay(t *testing.T) {
+	origTry, origSleep, origNow := tryPollerWorkLock, sleepFor, timeNow
+	defer func() { tryPollerWorkLock, sleepFor, timeNow = origTry, origSleep, origNow }()
+
+	now := time.Now()
+	timeNow = func() time.Time { return now }
+	sleepFor = func(d time.Duration) { now = now.Add(d) }
+
+	// Contended for the first two attempts, then free.
+	attempts := 0
+	tryPollerWorkLock = func(*Poller) (func(), bool) {
+		attempts++
+		if attempts < 3 {
+			return nil, false
+		}
+		return func() {}, true
+	}
+
+	ran := false
+	p := &Poller{}
+	p.runRetentionCleanupFor(func() { ran = true })
+
+	if !ran {
+		t.Error("cleanup never ran: losing the non-blocking work lock must be retried, " +
+			"not forfeited until the next daily tick 24h later")
+	}
+	if attempts != 3 {
+		t.Errorf("lock attempts = %d, want 3 (two contended, then acquired)", attempts)
+	}
+}
+
+func TestRetentionCleanup_LockRetryIsBounded(t *testing.T) {
+	origTry, origSleep, origNow := tryPollerWorkLock, sleepFor, timeNow
+	defer func() { tryPollerWorkLock, sleepFor, timeNow = origTry, origSleep, origNow }()
+
+	now := time.Now()
+	start := now
+	timeNow = func() time.Time { return now }
+	sleepFor = func(d time.Duration) { now = now.Add(d) }
+
+	attempts := 0
+	tryPollerWorkLock = func(*Poller) (func(), bool) { attempts++; return nil, false }
+
+	ran := false
+	p := &Poller{}
+	p.runRetentionCleanupFor(func() { ran = true })
+
+	if ran {
+		t.Error("cleanup ran without holding the lock")
+	}
+	if elapsed := now.Sub(start); elapsed > cleanupLockRetryWindow+cleanupLockRetryInterval {
+		t.Errorf("retried for %v, beyond the %v window — an unbounded retry would hold the "+
+			"goroutine past the next daily tick", elapsed, cleanupLockRetryWindow)
+	}
+	if attempts < 2 {
+		t.Errorf("attempts = %d, want more than one before giving up", attempts)
+	}
+}
+
+// TestRetentionCleanup_RetryIntervalDoesNotAlignWithTheTickers pins the ROOT
+// CAUSE, which is arithmetic rather than timing luck: a retry cadence that is a
+// multiple of the tickers it is losing to re-collides on every attempt.
+func TestRetentionCleanup_RetryIntervalDoesNotAlignWithTheTickers(t *testing.T) {
+	// The cadences cleanup contends with. The 5-minute set (rollup/detect/ipsec)
+	// comes first because it is what makes the loss near-certain: four lock-takers
+	// are ready at a 5-minute-aligned attempt, so the goroutine wins only if
+	// cleanup is serviced last. The per-minute monitoring tick is a contender too,
+	// in the select orderings where it is serviced after the cleanup case.
+	//
+	// Non-divisibility is NOT enough, and asserting only that was the first
+	// version of this test. 90s is not a multiple of 60s yet alternates between
+	// just two phases of it, so it re-collides every other retry; 150s visits two
+	// phases of 300s. The property that matters is coprimality: gcd == 1s means
+	// successive retries visit EVERY second-phase of the contending period, so a
+	// gap cannot be missed systematically. 97 is prime, hence chosen.
+	for _, contender := range []time.Duration{5 * time.Minute, time.Minute} {
+		if g := gcdDuration(cleanupLockRetryInterval, contender); g != time.Second {
+			t.Errorf("gcd(cleanupLockRetryInterval %v, %v) = %v, want 1s. Retries then visit "+
+				"only %d of the %d phases of that ticker and can re-collide with it "+
+				"systematically — which is how the original collision was arithmetic "+
+				"rather than unlucky.", cleanupLockRetryInterval, contender, g,
+				int(contender/g), int(contender/time.Second))
+		}
+	}
+	if cleanupLockRetryWindow <= cleanupLockRetryInterval {
+		t.Errorf("retry window %v allows no second attempt", cleanupLockRetryWindow)
+	}
+}
+
+// gcdDuration is the greatest common divisor of two durations, used to check that
+// the retry cadence is coprime with the tickers it contends with.
+func gcdDuration(a, b time.Duration) time.Duration {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	if a < 0 {
+		a = -a
+	}
+	return a
+}
