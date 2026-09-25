@@ -66,8 +66,71 @@ var cleanupDeleteBatchSize = 10000
 // a form valid on both Postgres and SQLite) so locks stay short; on Postgres a
 // per-batch `SET LOCAL lock_timeout` bounds lock waits, and a 100ms sleep
 // between batches yields to other writers.
-func (d *Database) batchedDeleteOlderThan(model interface{}, cutoff time.Time) error {
-	return d.batchedDeleteOlderThanWhere(model, cutoff, "")
+// cleanupOrderBy decides whether a retention table's batch subquery may be
+// ORDERED by its time column. It is a PERFORMANCE gate with a large blast radius
+// in BOTH directions; correctness does not depend on it either way.
+//
+// Ordering wins only where the time column LEADS an index: there PostgreSQL walks
+// that index from the oldest live row and stops at LIMIT. Where the only time
+// index is composite — (device_id, timestamp) on most per-poll tables — PG16 has
+// no skip scan, so `WHERE ts < c ORDER BY ts LIMIT n` must read EVERY matching row
+// and top-N sort it, per batch, while the unordered form stops after n.
+//
+// Both directions measured on production, EXPLAIN (ANALYZE, BUFFERS), same
+// predicate, LIMIT 10000:
+//
+//	syslog_messages  (156M rows, standalone timestamp index)
+//	  unordered  4,755 ms  184,814 reads  Seq Scan, 1,617,026 rows filtered
+//	  ordered       40 ms    1,137 reads  Index Scan        ->  118x FASTER
+//
+//	interface_stats  (15.6M rows, only (device_id, timestamp); 10.9M past cutoff)
+//	  unordered      7 ms      265 reads  Seq Scan, stops at LIMIT
+//	  ordered    5,417 ms  432,663 reads  Parallel Seq Scan + top-N heapsort
+//	                                                        ->  765x SLOWER
+//
+// Ungated, this change would have traded one table's timeout for roughly 98
+// minutes of scan time per pass on another — while holding pollerWorkLockKey. The
+// gate is therefore keyed on evidence, not on which tables look big:
+// interface_stats is not small (5.2 GB, and this file elsewhere calls it a
+// 100M-row table), it simply has no timestamp-leading index.
+//
+// Membership was read off production rather than inferred from the models:
+//
+//	SELECT c.relname, a.attname FROM pg_class c
+//	JOIN pg_index i ON i.indrelid = c.oid
+//	JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = i.indkey[0]
+//	WHERE c.relnamespace = 'public'::regnamespace;
+//
+// Re-run that after adding an index or a table. Omitting a table is safe — it
+// keeps exactly the plan it had before v0.11.254.
+func cleanupOrderBy(table, timeColumn string) string {
+	if timeIndexedCleanupTables[table] {
+		return timeColumn
+	}
+	return ""
+}
+
+// timeIndexedCleanupTables is the set whose time column leads an index on
+// production. Deliberately EXCLUDES interface_stats, system_status, flow_rollups,
+// alerts and the per-poll status tables — see cleanupOrderBy.
+var timeIndexedCleanupTables = map[string]bool{
+	"syslog_messages":      true,
+	"syslog_summaries":     true,
+	"syslog_ingest_hourly": true,
+	"trap_events":          true,
+	"flow_samples":         true,
+	"denied_events":        true,
+	"flow_detections":      true, // detected_at
+	"flow_agent_drops":     true, // window_start
+	"ping_results":         true,
+	"server_metrics":       true,
+	"irc_message_logs":     true,
+	"processed_batches":    true,
+	"audit_logs":           true, // created_at
+}
+
+func (d *Database) batchedDeleteOlderThan(model interface{}, table string, cutoff time.Time) error {
+	return d.batchedDeleteOlderThanWhere(model, table, cutoff, "")
 }
 
 // batchedDeleteOlderThanWhere is batchedDeleteOlderThan with an extra predicate
@@ -80,8 +143,8 @@ func (d *Database) batchedDeleteOlderThan(model interface{}, cutoff time.Time) e
 // be killed by statement_timeout then re-attempted every cleanup tick
 // (crash-loop shape). Routing them through the same 10k-row batched loop with
 // `lock_timeout='5s'` and an inter-batch sleep keeps each statement short.
-func (d *Database) batchedDeleteOlderThanWhere(model interface{}, cutoff time.Time, extraWhere string, args ...interface{}) error {
-	return d.batchedDeleteOlderThanOn(model, "timestamp", cutoff, extraWhere, args...)
+func (d *Database) batchedDeleteOlderThanWhere(model interface{}, table string, cutoff time.Time, extraWhere string, args ...interface{}) error {
+	return d.batchedDeleteOlderThanOn(model, "timestamp", cleanupOrderBy(table, "timestamp"), cutoff, extraWhere, args...)
 }
 
 // batchedDeleteOlderThanOn is the column-parameterized core of the batched
@@ -89,13 +152,93 @@ func (d *Database) batchedDeleteOlderThanWhere(model interface{}, cutoff time.Ti
 // `detected_at` and flow_agent_drops on `window_start` (H4 of the 2026-07-01
 // audit). timeColumn is always a compile-time literal from this package, never
 // caller/user input.
-func (d *Database) batchedDeleteOlderThanOn(model interface{}, timeColumn string, cutoff time.Time, extraWhere string, args ...interface{}) error {
+//
+// v0.11.254: this loop carries the same three defences batchedDeleteWhere got
+// for the device purge, because retention met the identical wall on the identical
+// table. Observed on production 2026-09-24:
+//
+//	cleanup.go:107 ERROR: canceling statement due to statement timeout (SQLSTATE 57014)
+//	main.go:248: Data cleanup error: failed to cleanup syslog_message
+//	(severities [0 1 2 3 4 5], 30d): batched delete (batch size 10000)
+//
+// One 57014 aborted the whole table's cleanup, the 24h ticker retried the
+// identical statement, and syslog_messages drifted to 36 days of history under a
+// 30-day policy — 156.6M rows, 161 GB, the volume climbing ~18 GB/week. That is
+// the shape of the 2026-07-26 disk-full outage, where retention had also been
+// silently failing.
+//
+//   - ORDER BY timeColumn. This is the defence that stops the timeouts arising,
+//     as opposed to merely surviving them. Measured against the live 161 GB
+//     syslog_messages with EXPLAIN (ANALYZE, BUFFERS) — same predicate, same
+//     LIMIT 10000:
+//
+//     unordered  4,755 ms  184,814 buffer reads  Seq Scan; 1,617,026 rows
+//     removed by filter
+//     ordered       40 ms    1,137 buffer reads  Index Scan on
+//     idx_syslog_messages_timestamp
+//
+//     118x — and the unordered number is the FIRST batch of a pass. It grows as
+//     the scanned prefix fills with what earlier batches deleted, so each batch
+//     costs more than the last until one crosses the timeout. Ordered, the scan
+//     resumes at the oldest live row and the cost stays flat.
+//
+//     This holds only where timeColumn LEADS an index, which it does on every
+//     table that has actually timed out (syslog_messages has a standalone
+//     timestamp index). A table whose only time index is composite — (device_id,
+//     timestamp) on the small per-poll tables — gets a sort instead. None of those
+//     has ever timed out; if one does, order by that index's leading columns
+//     rather than reaching for a longer timeout.
+//
+//   - SET LOCAL statement_timeout = '120s', tx-scoped, over the DSN's 30s. A
+//     background 24h job can afford a slow batch; losing the whole pass to one
+//     cannot be afforded.
+//
+//   - 57014 halves the batch (floor batchDeleteFloor) and retries; 55P03 sleeps
+//     and retries the same batch. Either way the pass makes progress instead of
+//     abandoning the table until tomorrow.
+//
+// LOCK-HOLD NOTE, because a pass that finishes instead of bailing costs something.
+// runRetentionCleanup holds pollerWorkLockKey (cmd/poller), which is NON-BLOCKING
+// and shared with the monitoring cycle, rollup, flow-detect, ipsec-telemetry and
+// threat-feed sync:
+// a tick arriving while cleanup works is SKIPPED, not queued, so what is lost is
+// alert evaluation, not merely its timeliness. flowSummaryLockKey's comment
+// records moving the summary pass off this key for exactly that reason: a pass
+// lasting "up to a minute" was dropping roughly one monitoring tick in five.
+//
+// A complete pass has always held the lock for however long it took; what
+// v0.11.254 changes is that a TIMING-OUT table retries — at worst 6 attempts, so
+// 5 halvings (10000, 5000, 2500, 1250, 625, 500), x 120s plus bounded lock waits
+// — where before it returned in seconds having done nothing. The ordered subquery above makes those timeouts rare, which is why
+// this is documented rather than restructured.
+//
+// A dedicated cleanup lock key is the obvious follow-up and is NOT a free swap.
+// The serialization it would break is DELIBERATE, not incidental — cmd/poller's
+// rollup tick says so in as many words: "Deliberately kept on the SHARED work
+// lock: rollup/aggregation and the async retention cleanup stay serialized (they
+// contend for the same tables)". That same tick runs RunSyslogAggregationCycle,
+// which reads the table retention is deleting from. Separating the keys would
+// create writer-vs-writer overlap between promotion and retention on
+// flow_samples/flow_rollups, and aggregation-vs-retention on syslog_messages. (A
+// concurrent READER of flow_rollups is already the status quo: the flow summary
+// pass has its own key.) That deserves its own analysis, on a ladder with two
+// prior production incidents.
+func (d *Database) batchedDeleteOlderThanOn(model interface{}, timeColumn, orderBy string, cutoff time.Time, extraWhere string, args ...interface{}) error {
 	batchSize := cleanupDeleteBatchSize
+	lockRetries := 0
 	for {
 		var affected int64
 		err := d.db.Transaction(func(tx *gorm.DB) error {
+			if cleanupBatchHook != nil {
+				if e := cleanupBatchHook(batchSize); e != nil {
+					return e
+				}
+			}
 			if d.dialect.IsPostgres() {
 				if e := tx.Exec("SET LOCAL lock_timeout = '5s'").Error; e != nil {
+					return e
+				}
+				if e := tx.Exec("SET LOCAL statement_timeout = '120s'").Error; e != nil {
 					return e
 				}
 			}
@@ -103,47 +246,83 @@ func (d *Database) batchedDeleteOlderThanOn(model interface{}, timeColumn string
 			if extraWhere != "" {
 				sub = sub.Where(extraWhere, args...)
 			}
+			// orderBy is empty or a compile-time literal from this package; see
+			// cleanupOrderBy for why it is not always set.
+			if orderBy != "" {
+				sub = sub.Order(orderBy)
+			}
 			sub = sub.Limit(batchSize)
 			res := tx.Where("id IN (?)", sub).Delete(model)
 			affected = res.RowsAffected
 			return res.Error
 		})
 		if err != nil {
+			switch sqlState(err) {
+			case "57014": // statement_timeout: this batch is too big for this heap
+				if batchSize > batchDeleteFloor {
+					next := batchSize / 2
+					if next < batchDeleteFloor {
+						next = batchDeleteFloor
+					}
+					log.Printf("cleanup: batch of %d hit statement_timeout; retrying with %d", batchSize, next)
+					batchSize = next
+					continue
+				}
+			case "55P03": // lock_timeout: a partition DROP or VACUUM FULL holds it
+				if lockRetries < batchDeleteLockRetries {
+					lockRetries++
+					wait := batchDeleteLockRetrySleep * time.Duration(1+lockRetries%5)
+					log.Printf("cleanup: batch waited on a lock (%d/%d); retrying in %s",
+						lockRetries, batchDeleteLockRetries, wait)
+					time.Sleep(wait)
+					continue
+				}
+			}
 			return fmt.Errorf("batched delete (batch size %d): %w", batchSize, err)
 		}
+		lockRetries = 0
 		if affected < int64(batchSize) {
 			return nil // last (partial) batch — nothing more to delete
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(batchDeleteInterSleep)
 	}
 }
 
-// Batch-loop tunables for batchedDeleteWhere (device purge). Package vars so
-// the tests can shrink the floor and the sleeps without seeding thousands of
-// rows or waiting seconds per retry.
+// Batch-loop tunables shared by batchedDeleteWhere (device purge) and
+// batchedDeleteOlderThanOn (retention). Package vars so the tests can shrink the
+// floor and the sleeps without seeding thousands of rows or waiting seconds per
+// retry.
 var (
-	// purgeBatchFloor is the smallest batch the 57014 (statement timeout)
+	// batchDeleteFloor is the smallest batch the 57014 (statement timeout)
 	// halving retry will go to before giving up.
-	purgeBatchFloor = 500
-	// purgeLockRetries bounds the 55P03 (lock timeout) retries of ONE batch,
+	batchDeleteFloor = 500
+	// batchDeleteLockRetries bounds the 55P03 (lock timeout) retries of ONE batch,
 	// e.g. when the poller's partition DROP is queued ahead of the delete.
-	purgeLockRetries = 10
-	// purgeLockRetrySleep is the base of the 1-5 s sleep between 55P03
+	batchDeleteLockRetries = 10
+	// batchDeleteLockRetrySleep is the base of the 1-5 s sleep between 55P03
 	// retries (base * (1 + attempt%5)).
-	purgeLockRetrySleep = time.Second
-	// purgeInterBatchSleep yields to other writers between batches.
-	purgeInterBatchSleep = 100 * time.Millisecond
+	batchDeleteLockRetrySleep = time.Second
+	// batchDeleteInterSleep yields to other writers between batches.
+	batchDeleteInterSleep = 100 * time.Millisecond
 	// purgeBatchHook, when non-nil, runs before every batch and can fail it
 	// (test seam for the "Nth batch errors" path). Never set in production.
 	purgeBatchHook func(table string, batchNo int) error
+	// cleanupBatchHook is the same seam for the retention loop, used to inject
+	// 57014/55P03 without needing a real Postgres slow enough to produce them.
+	// Never set in production.
+	cleanupBatchHook func(batchSize int) error
 )
 
 // batchedDeleteWhere deletes every row of table matching `where` (args bound)
-// in bounded batches, for the device purge worker (v0.11.243). Unlike
-// batchedDeleteOlderThanOn — which is left exactly as it was for retention —
-// this loop is context-cancellable, reports progress per batch, orders the
-// probe subquery, and handles the Postgres timeouts a multi-hour purge on a
-// populated prod table will meet:
+// in bounded batches, for the device purge worker (v0.11.243).
+//
+// This loop and batchedDeleteOlderThanOn (retention) now share their defences —
+// the ordered subquery, the tx-scoped 120s statement_timeout and the 57014/55P03
+// retries — because in v0.11.254 retention met the same wall on the same table.
+// Still unique to this one: it is context-cancellable and reports progress per
+// batch, which an operator-triggered multi-hour purge needs and a background
+// daily pass does not. The reasoning below is unchanged; only the claim that
+// retention lacked it is gone.
 //
 //   - The subquery is `SELECT id FROM <t> WHERE <where> ORDER BY <orderBy>
 //     LIMIT ?`. The ORDER BY matters on prod: without it the planner may
@@ -154,9 +333,9 @@ var (
 //     `SET LOCAL lock_timeout='5s'` and `SET LOCAL statement_timeout='120s'`
 //     (bounded and tx-scoped like execMaintenanceDDL; the DSN default is 30 s).
 //   - SQLSTATE 57014 (statement timeout): halve the batch (floor
-//     purgeBatchFloor) and retry. 55P03 (lock timeout): sleep 1-5 s and retry
-//     the same batch up to purgeLockRetries times. Any other error returns.
-//   - ctx is checked before every batch; purgeInterBatchSleep between batches.
+//     batchDeleteFloor) and retry. 55P03 (lock timeout): sleep 1-5 s and retry
+//     the same batch up to batchDeleteLockRetries times. Any other error returns.
+//   - ctx is checked before every batch; batchDeleteInterSleep between batches.
 //
 // table, where and orderBy are ALWAYS compile-time literals from purge.go
 // (devicePurgeTables) or a relation name read back from pg_inherits — never
@@ -201,10 +380,10 @@ func (d *Database) batchedDeleteWhere(ctx context.Context, table, where, orderBy
 			}
 			switch sqlState(err) {
 			case "57014": // statement_timeout: the batch is too big for this table's heap
-				if batch > purgeBatchFloor {
+				if batch > batchDeleteFloor {
 					next := batch / 2
-					if next < purgeBatchFloor {
-						next = purgeBatchFloor
+					if next < batchDeleteFloor {
+						next = batchDeleteFloor
 					}
 					log.Printf("device-purge: %s batch of %d hit statement_timeout; retrying with %d", table, batch, next)
 					batch = next
@@ -212,10 +391,10 @@ func (d *Database) batchedDeleteWhere(ctx context.Context, table, where, orderBy
 					continue
 				}
 			case "55P03": // lock_timeout: something (partition DROP, VACUUM FULL) holds the table
-				if lockRetries < purgeLockRetries {
+				if lockRetries < batchDeleteLockRetries {
 					lockRetries++
-					wait := purgeLockRetrySleep * time.Duration(1+lockRetries%5)
-					log.Printf("device-purge: %s batch waited on a lock (%d/%d); retrying in %s", table, lockRetries, purgeLockRetries, wait)
+					wait := batchDeleteLockRetrySleep * time.Duration(1+lockRetries%5)
+					log.Printf("device-purge: %s batch waited on a lock (%d/%d); retrying in %s", table, lockRetries, batchDeleteLockRetries, wait)
 					if !sleepCtx(ctx, wait) {
 						return ctx.Err()
 					}
@@ -232,7 +411,7 @@ func (d *Database) batchedDeleteWhere(ctx context.Context, table, where, orderBy
 		if affected < int64(batch) {
 			return nil // last (partial) batch — nothing more matches
 		}
-		if !sleepCtx(ctx, purgeInterBatchSleep) {
+		if !sleepCtx(ctx, batchDeleteInterSleep) {
 			return ctx.Err()
 		}
 	}
@@ -608,7 +787,7 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		if _, err := d.dropPartitionsOlderThan(e.name, cutoff); err != nil {
 			log.Printf("cleanup: drop-old-partitions warning for %s: %v", e.name, err)
 		}
-		if err := d.batchedDeleteOlderThan(e.model, cutoff); err != nil {
+		if err := d.batchedDeleteOlderThan(e.model, e.name, cutoff); err != nil {
 			return fmt.Errorf("failed to cleanup %s: %w", e.name, err)
 		}
 	}
@@ -621,11 +800,11 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	// — the "bounded by the number of monitored agents" assumption in models.go
 	// was wrong because windows accumulate. Neither table is partitioned.
 	detCutoff := time.Now().AddDate(0, 0, -ret.Days(ret.FlowDetectionDays))
-	if err := d.batchedDeleteOlderThanOn(&models.FlowDetection{}, "detected_at", detCutoff, ""); err != nil {
+	if err := d.batchedDeleteOlderThanOn(&models.FlowDetection{}, "detected_at", cleanupOrderBy("flow_detections", "detected_at"), detCutoff, ""); err != nil {
 		return fmt.Errorf("failed to cleanup flow_detections: %w", err)
 	}
 	dropsCutoff := time.Now().AddDate(0, 0, -ret.Days(ret.AgentDropsDays))
-	if err := d.batchedDeleteOlderThanOn(&models.AgentDrops{}, "window_start", dropsCutoff, ""); err != nil {
+	if err := d.batchedDeleteOlderThanOn(&models.AgentDrops{}, "window_start", cleanupOrderBy("flow_agent_drops", "window_start"), dropsCutoff, ""); err != nil {
 		return fmt.Errorf("failed to cleanup flow_agent_drops: %w", err)
 	}
 
@@ -636,14 +815,14 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	// Ages on updated_at (the terminal-transition time — the table has no
 	// `timestamp` column), hence batchedDeleteOlderThanOn.
 	cmdCutoff := time.Now().AddDate(0, 0, -30)
-	if err := d.batchedDeleteOlderThanOn(&models.ProbeCommand{}, "updated_at", cmdCutoff,
+	if err := d.batchedDeleteOlderThanOn(&models.ProbeCommand{}, "updated_at", cleanupOrderBy("probe_commands", "updated_at"), cmdCutoff,
 		"status IN ('succeeded','failed','expired')"); err != nil {
 		return fmt.Errorf("failed to cleanup probe_commands: %w", err)
 	}
 	// v0.11.243: TERMINAL device purge jobs (done/failed/cancelled) are the
 	// same kind of audit trail — 30 days on updated_at (the terminal-transition
 	// time). Live rows (pending/running/cancelling) are never touched here.
-	if err := d.batchedDeleteOlderThanOn(&models.DevicePurgeJob{}, "updated_at", cmdCutoff,
+	if err := d.batchedDeleteOlderThanOn(&models.DevicePurgeJob{}, "updated_at", cleanupOrderBy("device_purge_jobs", "updated_at"), cmdCutoff,
 		"status IN (?)", []string{DevicePurgeStatusDone, DevicePurgeStatusFailed, DevicePurgeStatusCancelled}); err != nil {
 		return fmt.Errorf("failed to cleanup device_purge_jobs: %w", err)
 	}
@@ -675,7 +854,7 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	// than the two-band model it replaces.
 	for days, severities := range syslogWindowGroups(sevDays) {
 		cutoff := time.Now().AddDate(0, 0, -days)
-		if err := d.batchedDeleteOlderThanWhere(&models.SyslogMessage{}, cutoff,
+		if err := d.batchedDeleteOlderThanWhere(&models.SyslogMessage{}, "syslog_messages", cutoff,
 			"severity IN ?", severities); err != nil {
 			return fmt.Errorf("failed to cleanup syslog_message (severities %v, %dd): %w",
 				severities, days, err)
@@ -700,7 +879,7 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 			log.Printf("cleanup: drop-old-partitions warning for syslog_summaries: %v", err)
 		}
 		for sev := syslogSummaryBandFloor; sev < SyslogSeverityCount; sev++ {
-			if err := d.batchedDeleteOlderThanWhere(&models.SyslogSummary{}, summaryCutoff,
+			if err := d.batchedDeleteOlderThanWhere(&models.SyslogSummary{}, "syslog_summaries", summaryCutoff,
 				"severity = ?", sev); err != nil {
 				return fmt.Errorf("failed to cleanup syslog_summary (severity %d): %w", sev, err)
 			}
@@ -738,7 +917,7 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	// fleet a single DELETE takes one long row-lock; route it through the same
 	// 10k-row batched loop (lock_timeout=5s + inter-batch sleep) every other
 	// time-series table uses.
-	if err := d.batchedDeleteOlderThanWhere(&models.Alert{}, alertCutoff, "acknowledged = ?", true); err != nil {
+	if err := d.batchedDeleteOlderThanWhere(&models.Alert{}, "alerts", alertCutoff, "acknowledged = ?", true); err != nil {
 		return fmt.Errorf("failed to cleanup acked alerts: %w", err)
 	}
 	unackCutoff := time.Now().AddDate(0, 0, -ret.Days(ret.UnackAlertDays))
@@ -773,7 +952,7 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 			log.Printf("WARNING: AUDIT-031 auto-archiving %d more stale unacked alerts (older than %d days; sample of %d logged above)",
 				staleCount-int64(len(sample)), ret.Days(ret.UnackAlertDays), len(sample))
 		}
-		if err := d.batchedDeleteOlderThanWhere(&models.Alert{}, unackCutoff, "acknowledged = ?", false); err != nil {
+		if err := d.batchedDeleteOlderThanWhere(&models.Alert{}, "alerts", unackCutoff, "acknowledged = ?", false); err != nil {
 			return fmt.Errorf("failed to cleanup stale unack alerts: %w", err)
 		}
 	}

@@ -1,6 +1,101 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.254] - 2026-09-24
+
+### Fixed — one statement timeout abandoned a whole table's retention until the next day
+
+Observed on production 2026-09-24:
+
+```
+cleanup.go:107 ERROR: canceling statement due to statement timeout (SQLSTATE 57014)
+main.go:248: Data cleanup error: failed to cleanup syslog_message
+(severities [0 1 2 3 4 5], 30d): batched delete (batch size 10000)
+```
+
+A single 57014 returned out of the batch loop and abandoned `syslog_messages` for
+the day; the 24-hour ticker then reissued the identical statement. The table had
+drifted to **36 days of history under a 30-day policy** — 156.6M rows, 161 GB,
+with `/mnt/STORAGE` climbing about 18 GB/week. That is the shape of the
+2026-07-26 disk-full outage, where retention had also been failing silently.
+
+The device-purge loop (`batchedDeleteWhere`, v0.11.243) already carried the
+defences for exactly this, on exactly this table, and its doc comment recorded
+that retention had deliberately been left alone. Retention now carries the same
+three:
+
+- **`ORDER BY` on the time column** — the defence that stops the timeouts
+  arising rather than merely surviving them. Measured against the live 161 GB
+  table with `EXPLAIN (ANALYZE, BUFFERS)`, same predicate and `LIMIT 10000`:
+
+  | | Time | Buffer reads | Plan |
+  |---|---|---|---|
+  | Unordered (before) | **4,755 ms** | 184,814 | Seq Scan, 1,617,026 rows removed by filter |
+  | Ordered (after) | **40 ms** | 1,137 | Index Scan on `idx_syslog_messages_timestamp` |
+
+  118x, and the unordered figure is the *first* batch of a pass — it grows as the
+  scanned prefix fills with what earlier batches deleted, so each batch costs more
+  than the last until one crosses the timeout. Ordered, the scan resumes at the
+  oldest live row and the cost stays flat.
+
+  **This is gated per table, because ungated it is a worse bug than the one it
+  fixes.** Ordering only wins where the time column *leads* an index. PG16 has no
+  skip scan, so where the only time index is composite — `(device_id, timestamp)`
+  on most per-poll tables — `ORDER BY` forces every matching row to be read and
+  top-N sorted, per batch, while the unordered form stops at `LIMIT`. Measured on
+  `interface_stats` (15.6M rows, 10.9M past cutoff):
+
+  | | Time | Buffer reads | Plan |
+  |---|---|---|---|
+  | Unordered | **7 ms** | 265 | Seq Scan, stops at `LIMIT` |
+  | Ordered | **5,417 ms** | 432,663 | Parallel Seq Scan + top-N heapsort |
+
+  765x *slower* — about 98 minutes of scan time per pass instead of 8 seconds, all
+  of it while holding `pollerWorkLockKey`. An earlier revision of this change was
+  ungated and would have shipped exactly that. The allow-list
+  (`timeIndexedCleanupTables`) was read off production's `pg_index`, not inferred
+  from the models, and deliberately excludes `interface_stats`, `system_status`,
+  `flow_rollups` and `alerts`. A table absent from it keeps precisely the plan it
+  had before.
+- **`SET LOCAL statement_timeout = '120s'`**, transaction-scoped, above the DSN's
+  30 s. A background daily job can afford a slow batch; it cannot afford losing
+  the whole pass to one.
+- **Retries.** 57014 halves the batch to a floor and retries; 55P03 (a partition
+  `DROP` or `VACUUM FULL` holding the table) sleeps and retries the same batch —
+  a lock conflict says nothing about the batch being too large. Either way the
+  pass makes progress instead of giving up until tomorrow.
+
+The four batch-loop tunables are now shared by both loops and renamed
+`batchDelete*` accordingly.
+
+**Known cost, documented rather than restructured.** `runRetentionCleanup` holds
+`pollerWorkLockKey`, which is non-blocking and shared with the monitoring cycle,
+so a tick arriving while cleanup works is *skipped, not queued* — alert evaluation
+is lost rather than delayed. A complete pass has always held that lock for however
+long it took; what changes here is that a timing-out table now retries instead of
+returning in seconds having done nothing. The ordered subquery makes such timeouts
+rare. A dedicated cleanup lock key is the obvious follow-up but is not a free
+swap: cleanup and the rollup ladder are mutually exclusive today *only* because
+they share this key, and separating them would let retention delete
+`flow_samples`/`flow_rollups` rows concurrently with the promotion reading them.
+
+Considered and not taken: splitting the syslog deletes per single severity, which
+`EXPLAIN` shows is the cheapest plan of all (both conditions as index conditions,
+no filter). The grouped form is already 40 ms once ordered, and the cost that
+actually mattered is the `DELETE` rather than the scan, so it would add statements
+for an unmeasured gain.
+
+Each defence is mutation-checked, the gate in both directions — un-gating it
+fails the composite-index case, never ordering fails the time-indexed one.
+
+The unit test for ordering asserts SQL shape rather than rows deleted,
+deliberately: SQLite picks the timestamp index for this predicate either way, so
+no behavioural assertion can discriminate there (seeding newest-first to break the
+tie does not help). The behavioural pin lives in the PostgreSQL lane, where a
+small un-analyzed table is seq-scanned in physical order: inserted newest-first,
+an unordered batch deletes the newest rows and an ordered one the oldest. It too
+is mutation-checked.
+
 ## [0.11.253] - 2026-09-16
 
 ### Fixed — every promotion wrote its boundary bucket twice, forever

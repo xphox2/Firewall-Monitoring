@@ -30,7 +30,7 @@ func TestBatchedDeleteOlderThan_AUDIT038(t *testing.T) {
 		}
 	}
 
-	if err := d.batchedDeleteOlderThan(&models.SystemStatus{}, cutoff); err != nil {
+	if err := d.batchedDeleteOlderThan(&models.SystemStatus{}, "system_status", cutoff); err != nil {
 		t.Fatalf("batchedDeleteOlderThan: %v", err)
 	}
 
