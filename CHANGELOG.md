@@ -24,12 +24,21 @@ defences for exactly this, on exactly this table, and its doc comment recorded
 that retention had deliberately been left alone. Retention now carries the same
 three:
 
-- **`ORDER BY` on the time column.** Unordered, the subquery's `LIMIT` takes
-  whatever the scan reaches first, so PostgreSQL may seq-scan the heap and
-  re-walk the dead tuples earlier batches left — each batch costing more than the
-  last until one exceeds the timeout. Ordered, it walks that column's index
-  forward from the oldest live row and stops at `LIMIT`. This is the defence that
-  stops the timeouts arising at all.
+- **`ORDER BY` on the time column** — the defence that stops the timeouts
+  arising rather than merely surviving them. Measured against the live 161 GB
+  table with `EXPLAIN (ANALYZE, BUFFERS)`, same predicate and `LIMIT 10000`:
+
+  | | Time | Buffer reads | Plan |
+  |---|---|---|---|
+  | Unordered (before) | **4,755 ms** | 184,814 | Seq Scan, 1,617,026 rows removed by filter |
+  | Ordered (after) | **40 ms** | 1,137 | Index Scan on `idx_syslog_messages_timestamp` |
+
+  118x, and the unordered figure is the *first* batch of a pass — it grows as the
+  scanned prefix fills with what earlier batches deleted, so each batch costs more
+  than the last until one crosses the timeout. Ordered, the scan resumes at the
+  oldest live row and the cost stays flat. This holds only where the time column
+  leads an index, which it does on every table that has actually timed out; the
+  comment records what to do if a composite-index table ever does.
 - **`SET LOCAL statement_timeout = '120s'`**, transaction-scoped, above the DSN's
   30 s. A background daily job can afford a slow batch; it cannot afford losing
   the whole pass to one.
@@ -40,6 +49,23 @@ three:
 
 The four batch-loop tunables are now shared by both loops and renamed
 `batchDelete*` accordingly.
+
+**Known cost, documented rather than restructured.** `runRetentionCleanup` holds
+`pollerWorkLockKey`, which is non-blocking and shared with the monitoring cycle,
+so a tick arriving while cleanup works is *skipped, not queued* — alert evaluation
+is lost rather than delayed. A complete pass has always held that lock for however
+long it took; what changes here is that a timing-out table now retries instead of
+returning in seconds having done nothing. The ordered subquery makes such timeouts
+rare. A dedicated cleanup lock key is the obvious follow-up but is not a free
+swap: cleanup and the rollup ladder are mutually exclusive today *only* because
+they share this key, and separating them would let retention delete
+`flow_samples`/`flow_rollups` rows concurrently with the promotion reading them.
+
+Considered and not taken: splitting the syslog deletes per single severity, which
+`EXPLAIN` shows is the cheapest plan of all (both conditions as index conditions,
+no filter). The grouped form is already 40 ms once ordered, and the cost that
+actually mattered is the `DELETE` rather than the scan, so it would add statements
+for an unmeasured gain.
 
 Each defence is mutation-checked. The `ORDER BY` test asserts the SQL shape
 rather than the rows deleted, deliberately: it is a PostgreSQL planner property,

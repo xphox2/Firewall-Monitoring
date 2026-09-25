@@ -15,8 +15,8 @@ import (
 // timeout. Observed on production 2026-09-24:
 //
 //	cleanup.go:107 ERROR: canceling statement due to statement timeout (SQLSTATE 57014)
-//	main.go:248: Data cleanup error: failed to cleanup syslog_message (30d):
-//	batched delete (batch size 10000)
+//	main.go:248: Data cleanup error: failed to cleanup syslog_message
+//	(severities [0 1 2 3 4 5], 30d): batched delete (batch size 10000)
 //
 // The 24h ticker then reissued the identical statement, so syslog_messages
 // drifted to 36 days of history under a 30-day policy (156.6M rows, 161 GB,
@@ -139,7 +139,9 @@ func TestRetentionDelete_GivesUpAtTheFloor(t *testing.T) {
 	if err := d.batchedDeleteOlderThanOn(&models.SyslogMessage{}, "timestamp", time.Now(), ""); err == nil {
 		t.Fatal("a batch still timing out at the floor must return the error, not report success")
 	}
-	if attempts > 4 {
+	// Exactly two: 8, then 4 (== floor, so no further halving). ">" would not
+	// catch a spurious extra retry.
+	if attempts != 2 {
 		t.Errorf("%d attempts before giving up; halving from 8 with floor 4 must stop after 2", attempts)
 	}
 }
@@ -186,5 +188,31 @@ func TestRetentionDelete_OrdersTheSubquery(t *testing.T) {
 		t.Errorf("the cleanup subquery is unordered:\n  %s\nWithout ORDER BY, PostgreSQL may "+
 			"seq-scan the heap and re-walk the dead tuples previous batches left, so each "+
 			"batch costs more than the last until one blows the statement timeout.", deleteSQL)
+	}
+}
+
+// TestRetentionDelete_GivesUpAfterTheLockRetryBudget: the 55P03 retry is bounded.
+// Without this, a regression to unbounded lock retries — or a reset that makes
+// the budget never exhaust — would hold pollerWorkLockKey indefinitely, and that
+// lock is shared with the monitoring cycle, where a skipped tick is a skipped
+// alert evaluation rather than a delayed one.
+func TestRetentionDelete_GivesUpAfterTheLockRetryBudget(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	seedOldSyslog(t, d, 4, time.Now().Add(-48*time.Hour))
+
+	origSleep, origRetries := batchDeleteLockRetrySleep, batchDeleteLockRetries
+	batchDeleteLockRetrySleep, batchDeleteLockRetries = time.Millisecond, 3
+	defer func() { batchDeleteLockRetrySleep, batchDeleteLockRetries = origSleep, origRetries }()
+
+	attempts := 0
+	cleanupBatchHook = func(int) error { attempts++; return pgLockError() }
+	defer func() { cleanupBatchHook = nil }()
+
+	if err := d.batchedDeleteOlderThanOn(&models.SyslogMessage{}, "timestamp", time.Now(), ""); err == nil {
+		t.Fatal("a batch blocked past the retry budget must return the error, not loop forever")
+	}
+	// The first attempt plus batchDeleteLockRetries retries.
+	if attempts != 4 {
+		t.Errorf("attempts = %d, want 4 (one try plus %d retries)", attempts, batchDeleteLockRetries)
 	}
 }
