@@ -66,7 +66,7 @@ func TestRetentionDelete_HalvesTheBatchOnStatementTimeout(t *testing.T) {
 	}
 	defer func() { cleanupBatchHook = nil }()
 
-	if err := d.batchedDeleteOlderThanOn(&models.SyslogMessage{}, "timestamp", time.Now(), ""); err != nil {
+	if err := d.batchedDeleteOlderThanOn(&models.SyslogMessage{}, "timestamp", "timestamp", time.Now(), ""); err != nil {
 		t.Fatalf("a timed-out batch must be retried smaller, not abandon the table: %v", err)
 	}
 	if len(sizes) < 3 || sizes[0] != 8 || sizes[1] != 4 || sizes[2] != 2 {
@@ -104,7 +104,7 @@ func TestRetentionDelete_RetriesTheSameBatchOnLockTimeout(t *testing.T) {
 	}
 	defer func() { cleanupBatchHook = nil }()
 
-	if err := d.batchedDeleteOlderThanOn(&models.SyslogMessage{}, "timestamp", time.Now(), ""); err != nil {
+	if err := d.batchedDeleteOlderThanOn(&models.SyslogMessage{}, "timestamp", "timestamp", time.Now(), ""); err != nil {
 		t.Fatalf("a lock-blocked batch must be retried, not abandon the table: %v", err)
 	}
 	for i, got := range sizes {
@@ -136,7 +136,7 @@ func TestRetentionDelete_GivesUpAtTheFloor(t *testing.T) {
 	cleanupBatchHook = func(int) error { attempts++; return pgTimeout() }
 	defer func() { cleanupBatchHook = nil }()
 
-	if err := d.batchedDeleteOlderThanOn(&models.SyslogMessage{}, "timestamp", time.Now(), ""); err == nil {
+	if err := d.batchedDeleteOlderThanOn(&models.SyslogMessage{}, "timestamp", "timestamp", time.Now(), ""); err == nil {
 		t.Fatal("a batch still timing out at the floor must return the error, not report success")
 	}
 	// Exactly two: 8, then 4 (== floor, so no further halving). ">" would not
@@ -146,56 +146,70 @@ func TestRetentionDelete_GivesUpAtTheFloor(t *testing.T) {
 	}
 }
 
-// TestRetentionDelete_OrdersTheSubquery pins the ORDER BY, which is the defence
-// that stops the timeouts arising in the first place.
+// TestRetentionDelete_OrdersOnlyTimeIndexedTables pins the gate in BOTH
+// directions, which is the part that is easy to get catastrophically wrong.
 //
-// Unordered, the subquery's LIMIT takes whatever rows the scan reaches first, so
-// PostgreSQL may seq-scan and re-walk the dead tuples earlier batches left —
-// each batch costing more than the last until one exceeds the timeout. That is
-// exactly what batchedDeleteWhere's comment predicted for a 134M-row
-// syslog_messages, and what production hit on 2026-09-24. Ordered on the time
-// column, it walks that column's index forward from the oldest live row and
-// stops at LIMIT.
+// Measured on production, same predicate and LIMIT 10000:
 //
-// This asserts the SQL shape rather than the rows deleted, deliberately: the
-// property is a PostgreSQL planner one, and on the SQLite test lane it cannot be
-// observed at all — SQLite picks the timestamp index for this predicate with or
-// without the ORDER BY, so every behavioural assertion passes either way. Tried
-// and discarded: seeding newest-first so physical order differs from time order
-// still passes unordered, because the index is used regardless.
-func TestRetentionDelete_OrdersTheSubquery(t *testing.T) {
-	d := NewDatabaseForTesting(t)
-	seedOldSyslog(t, d, 2, time.Now().Add(-48*time.Hour))
-
-	var deleteSQL string
-	if err := d.Gorm().Callback().Delete().After("gorm:delete").
-		Register("test:capture_cleanup_delete", func(tx *gorm.DB) {
-			if sql := tx.Statement.SQL.String(); strings.Contains(sql, "syslog_messages") {
-				deleteSQL = sql
+//	syslog_messages  unordered 4,755 ms / 184,814 reads -> ordered    40 ms / 1,137
+//	interface_stats  unordered     7 ms /     265 reads -> ordered 5,417 ms / 432,663
+//
+// 118x faster on the first, 765x SLOWER on the second (a full scan plus top-N
+// heapsort per batch, because its only time index is composite and PG16 has no
+// skip scan). So this asserts both that an allow-listed table IS ordered and that
+// a composite-index table is NOT — the second is the regression the gate exists
+// to prevent, and an earlier revision of this change would have shipped it.
+//
+// SQL shape rather than rows deleted, deliberately: SQLite picks the timestamp
+// index for this predicate either way, so no behavioural assertion can tell the
+// difference there — seeding newest-first to break the tie does not help. The
+// behavioural pin is TestRetentionDeleteIntegration_DeletesOldestFirst, in the
+// PostgreSQL lane.
+func TestRetentionDelete_OrdersOnlyTimeIndexedTables(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		table     string
+		model     interface{}
+		wantOrder bool
+		why       string
+	}{
+		{"time-indexed", "syslog_messages", &models.SyslogMessage{}, true,
+			"syslog_messages has a standalone timestamp index; ordering is 118x faster"},
+		{"composite-only", "interface_stats", &models.InterfaceStats{}, false,
+			"interface_stats has only (device_id, timestamp); ordering is 765x SLOWER"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := NewDatabaseForTesting(t)
+			var deleteSQL string
+			if err := d.Gorm().Callback().Delete().After("gorm:delete").
+				Register("test:capture", func(tx *gorm.DB) {
+					if sql := tx.Statement.SQL.String(); strings.Contains(sql, tc.table) {
+						deleteSQL = sql
+					}
+				}); err != nil {
+				t.Fatalf("register callback: %v", err)
 			}
-		}); err != nil {
-		t.Fatalf("register callback: %v", err)
-	}
-	defer func() { _ = d.Gorm().Callback().Delete().Remove("test:capture_cleanup_delete") }()
+			defer func() { _ = d.Gorm().Callback().Delete().Remove("test:capture") }()
 
-	if err := d.batchedDeleteOlderThanOn(&models.SyslogMessage{}, "timestamp", time.Now(), ""); err != nil {
-		t.Fatalf("cleanup: %v", err)
-	}
-	if deleteSQL == "" {
-		t.Fatal("no DELETE against syslog_messages was captured")
-	}
-	if !strings.Contains(deleteSQL, "ORDER BY") {
-		t.Errorf("the cleanup subquery is unordered:\n  %s\nWithout ORDER BY, PostgreSQL may "+
-			"seq-scan the heap and re-walk the dead tuples previous batches left, so each "+
-			"batch costs more than the last until one blows the statement timeout.", deleteSQL)
+			if err := d.batchedDeleteOlderThan(tc.model, tc.table, time.Now()); err != nil {
+				t.Fatalf("cleanup: %v", err)
+			}
+			if deleteSQL == "" {
+				t.Fatalf("no DELETE against %s was captured", tc.table)
+			}
+			if got := strings.Contains(deleteSQL, "ORDER BY"); got != tc.wantOrder {
+				t.Errorf("ORDER BY present = %v, want %v for %s.\n  %s\n  %s",
+					got, tc.wantOrder, tc.table, tc.why, deleteSQL)
+			}
+		})
 	}
 }
 
 // TestRetentionDelete_GivesUpAfterTheLockRetryBudget: the 55P03 retry is bounded.
-// Without this, a regression to unbounded lock retries — or a reset that makes
-// the budget never exhaust — would hold pollerWorkLockKey indefinitely, and that
-// lock is shared with the monitoring cycle, where a skipped tick is a skipped
-// alert evaluation rather than a delayed one.
+// Unbounded — or with a reset that stops the budget ever exhausting — this would
+// hold pollerWorkLockKey indefinitely, and that lock is shared with the monitoring
+// cycle, where a skipped tick is a skipped alert evaluation rather than a delayed
+// one.
 func TestRetentionDelete_GivesUpAfterTheLockRetryBudget(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	seedOldSyslog(t, d, 4, time.Now().Add(-48*time.Hour))
@@ -208,10 +222,9 @@ func TestRetentionDelete_GivesUpAfterTheLockRetryBudget(t *testing.T) {
 	cleanupBatchHook = func(int) error { attempts++; return pgLockError() }
 	defer func() { cleanupBatchHook = nil }()
 
-	if err := d.batchedDeleteOlderThanOn(&models.SyslogMessage{}, "timestamp", time.Now(), ""); err == nil {
+	if err := d.batchedDeleteOlderThanOn(&models.SyslogMessage{}, "timestamp", "timestamp", time.Now(), ""); err == nil {
 		t.Fatal("a batch blocked past the retry budget must return the error, not loop forever")
 	}
-	// The first attempt plus batchDeleteLockRetries retries.
 	if attempts != 4 {
 		t.Errorf("attempts = %d, want 4 (one try plus %d retries)", attempts, batchDeleteLockRetries)
 	}

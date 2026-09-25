@@ -56,7 +56,7 @@ func TestRetentionDeleteIntegration_DeletesOldestFirst(t *testing.T) {
 	}
 	defer func() { cleanupBatchHook = nil }()
 
-	if err := d.batchedDeleteOlderThanOn(&models.SyslogMessage{}, "timestamp", time.Now(), ""); !errors.Is(err, stop) {
+	if err := d.batchedDeleteOlderThanOn(&models.SyslogMessage{}, "timestamp", "timestamp", time.Now(), ""); !errors.Is(err, stop) {
 		t.Fatalf("expected the injected error to surface, got %v", err)
 	}
 

@@ -36,9 +36,27 @@ three:
   118x, and the unordered figure is the *first* batch of a pass — it grows as the
   scanned prefix fills with what earlier batches deleted, so each batch costs more
   than the last until one crosses the timeout. Ordered, the scan resumes at the
-  oldest live row and the cost stays flat. This holds only where the time column
-  leads an index, which it does on every table that has actually timed out; the
-  comment records what to do if a composite-index table ever does.
+  oldest live row and the cost stays flat.
+
+  **This is gated per table, because ungated it is a worse bug than the one it
+  fixes.** Ordering only wins where the time column *leads* an index. PG16 has no
+  skip scan, so where the only time index is composite — `(device_id, timestamp)`
+  on most per-poll tables — `ORDER BY` forces every matching row to be read and
+  top-N sorted, per batch, while the unordered form stops at `LIMIT`. Measured on
+  `interface_stats` (15.6M rows, 10.9M past cutoff):
+
+  | | Time | Buffer reads | Plan |
+  |---|---|---|---|
+  | Unordered | **7 ms** | 265 | Seq Scan, stops at `LIMIT` |
+  | Ordered | **5,417 ms** | 432,663 | Parallel Seq Scan + top-N heapsort |
+
+  765x *slower* — about 98 minutes of scan time per pass instead of 8 seconds, all
+  of it while holding `pollerWorkLockKey`. An earlier revision of this change was
+  ungated and would have shipped exactly that. The allow-list
+  (`timeIndexedCleanupTables`) was read off production's `pg_index`, not inferred
+  from the models, and deliberately excludes `interface_stats`, `system_status`,
+  `flow_rollups` and `alerts`. A table absent from it keeps precisely the plan it
+  had before.
 - **`SET LOCAL statement_timeout = '120s'`**, transaction-scoped, above the DSN's
   30 s. A background daily job can afford a slow batch; it cannot afford losing
   the whole pass to one.
@@ -67,10 +85,16 @@ no filter). The grouped form is already 40 ms once ordered, and the cost that
 actually mattered is the `DELETE` rather than the scan, so it would add statements
 for an unmeasured gain.
 
-Each defence is mutation-checked. The `ORDER BY` test asserts the SQL shape
-rather than the rows deleted, deliberately: it is a PostgreSQL planner property,
-and SQLite picks the timestamp index for this predicate either way, so every
-behavioural assertion there passes with the fix reverted.
+Each defence is mutation-checked, the gate in both directions — un-gating it
+fails the composite-index case, never ordering fails the time-indexed one.
+
+The unit test for ordering asserts SQL shape rather than rows deleted,
+deliberately: SQLite picks the timestamp index for this predicate either way, so
+no behavioural assertion can discriminate there (seeding newest-first to break the
+tie does not help). The behavioural pin lives in the PostgreSQL lane, where a
+small un-analyzed table is seq-scanned in physical order: inserted newest-first,
+an unordered batch deletes the newest rows and an ordered one the oldest. It too
+is mutation-checked.
 
 ## [0.11.253] - 2026-09-16
 
