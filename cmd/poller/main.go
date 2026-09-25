@@ -234,24 +234,39 @@ const (
 	initialCleanupDelay = 5 * time.Minute
 
 	// A cleanup that loses the shared work lock used to forfeit the entire day,
-	// because the lock is non-blocking and the next attempt is 24h later. That
-	// was not bad luck, it was ARITHMETIC: the monitoring ticker is
-	// SNMP.PollInterval (60s on production) and both cleanup periods are exact
-	// multiples of it — 5 min = 5x60s, 24h = 1440x60s — so every cleanup attempt
-	// fires on the same instant as a monitoring tick, forever. Observed on
-	// production 2026-09-25, five minutes after a deploy:
+	// because the lock is non-blocking and the next attempt is 24h later.
 	//
-	//	01:00:15 main.go:1070: Monitoring cycle: 5 device(s)
-	//	01:00:15 main.go:460: Skipping cleanup: another poller holds the work lock
-	//	01:00:17 flows.go:1905: Flow rollup: aggregated 8811 groups ...
+	// It loses by ARITHMETIC, not luck, but not to the task the first draft of
+	// this comment blamed. The select loop is serial and runUnderLeaderLock is
+	// synchronous, so the monitoring cycle that fires on the same instant has
+	// already released the lock before the cleanup case is serviced. The real
+	// contenders are the FIVE-MINUTE tickers — rollup (which also runs the syslog
+	// aggregation pass), flow-detect, ipsec-telemetry — because both cleanup
+	// periods are exact multiples of 300s as well as of the 60s monitoring tick.
+	// Go's select picks at random among ready cases, so this is a high-probability
+	// loss at every 5-minute-aligned attempt rather than a certainty. Observed on
+	// production 2026-09-25, five minutes after a deploy — note it is the ROLLUP
+	// that finishes holding it:
+	//
+	//	01:00:15 main.go: Monitoring cycle: 5 device(s)   (logged at cycle START)
+	//	01:00:15 main.go: Skipping cleanup: another poller holds the work lock
+	//	01:00:17 flows.go: Flow rollup: aggregated 8811 groups ...
 	//
 	// syslog_messages had reached 37 days of history under a 30-day policy and
 	// 161 GB. v0.11.254 fixed a statement timeout that abandoned a table for a
 	// day; this is why that pass so rarely got to run at all.
 	//
+	// "Forever" would overstate it for the DAILY attempt: cleanupTimer.Reset is
+	// measured from when the case is serviced, not when it fired, so on a
+	// long-lived process the daily attempt drifts off the boundary. On this
+	// deployment, which restarts several times a day, the attempt that matters is
+	// the 5-minute initial one — and that one is aligned every time.
+	//
 	// So a contended cleanup now retries instead of forfeiting. The interval is
-	// deliberately NOT a round number of seconds: retrying every 60s or 90s would
-	// re-align with the very tickers it is losing to.
+	// deliberately coprime with the contending periods: 97 is prime, so
+	// gcd(97s, 60s) = gcd(97s, 300s) = 1s and successive retries visit every
+	// phase of both. A round interval would not — 90s only alternates between two
+	// phases of the 60s tick, and 150s visits two phases of the 300s one.
 	cleanupLockRetryInterval = 97 * time.Second
 	cleanupLockRetryWindow   = 30 * time.Minute
 )
@@ -291,8 +306,12 @@ func (p *Poller) runRetentionCleanupFor(work func()) {
 			return
 		}
 		if !timeNow().Before(deadline) {
+			// Deliberately not "retention is not running": the usual reason to
+			// lose the lock this long is a SIBLING poller's cleanup already
+			// draining the backlog, in which case retention is running, just not
+			// here.
 			log.Printf("cleanup: could not acquire the work lock within %s (%d attempts); "+
-				"the next attempt is the daily tick. Retention is NOT running.",
+				"not running retention in this process, next attempt is the daily tick",
 				cleanupLockRetryWindow, attempt)
 			return
 		}
@@ -303,30 +322,28 @@ func (p *Poller) runRetentionCleanupFor(work func()) {
 // retentionCleanupWork is the body of the daily pass, run while holding the work
 // lock. Split out of runRetentionCleanup so the lock can be retried around it.
 func (p *Poller) retentionCleanupWork() {
-	{
-		if p.db != nil {
-			if err := p.db.CleanupOldData(p.cfg.Retention); err != nil {
-				log.Printf("Data cleanup error: %v", err)
-			} else {
-				log.Println("Old data cleanup completed")
-			}
-			if err := p.db.CleanupConfigRevisions(); err != nil {
-				log.Printf("Config revision cleanup error: %v", err)
-			} else {
-				log.Println("Config revision retention cleanup completed (top 50 + last 90d, run-collapsed)")
-			}
-			// Ensure future partitions exist (creates ahead partitions if needed)
-			if err := p.db.EnsurePartitions(); err != nil {
-				log.Printf("Partition check error: %v", err)
-			}
-			// Ensure autovacuum is configured (no-op if already configured)
-			if err := p.db.ConfigureAutovacuum(); err != nil {
-				log.Printf("Autovacuum config error: %v", err)
-			}
+	if p.db != nil {
+		if err := p.db.CleanupOldData(p.cfg.Retention); err != nil {
+			log.Printf("Data cleanup error: %v", err)
+		} else {
+			log.Println("Old data cleanup completed")
 		}
-		if p.alertManager != nil {
-			p.alertManager.PruneExpiredCooldowns()
+		if err := p.db.CleanupConfigRevisions(); err != nil {
+			log.Printf("Config revision cleanup error: %v", err)
+		} else {
+			log.Println("Config revision retention cleanup completed (top 50 + last 90d, run-collapsed)")
 		}
+		// Ensure future partitions exist (creates ahead partitions if needed)
+		if err := p.db.EnsurePartitions(); err != nil {
+			log.Printf("Partition check error: %v", err)
+		}
+		// Ensure autovacuum is configured (no-op if already configured)
+		if err := p.db.ConfigureAutovacuum(); err != nil {
+			log.Printf("Autovacuum config error: %v", err)
+		}
+	}
+	if p.alertManager != nil {
+		p.alertManager.PruneExpiredCooldowns()
 	}
 }
 

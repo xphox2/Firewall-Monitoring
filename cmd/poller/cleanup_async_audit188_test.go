@@ -146,13 +146,21 @@ func TestRetentionCleanup_DoesNotStampLoopHeartbeat(t *testing.T) {
 		t.Fatalf("parse main.go: %v", err)
 	}
 
-	// v0.11.255: runRetentionCleanup delegates the lock-and-retry loop to
-	// runRetentionCleanupFor, so the lock call lives one level down. Both are
-	// inspected and the counts ACCUMULATED — the property is that the cleanup
-	// path takes the NoHeartbeat variant and never stamps the M30 beat, wherever
-	// that call now sits. Counting per-function would fail the moment either half
-	// stopped containing the call itself.
-	cleanupFns := map[string]bool{"runRetentionCleanup": true, "runRetentionCleanupFor": true}
+	// v0.11.255 split the cleanup into three: runRetentionCleanup delegates to
+	// runRetentionCleanupFor (the lock-and-retry loop), which runs
+	// retentionCleanupWork (the body). ALL THREE must be inspected and their
+	// counts accumulated.
+	//
+	// Listing only the first two silently gutted this guard — before the split the
+	// whole body sat inside the inspected function, so any markLoopAlive in it was
+	// caught; afterwards a stamp in retentionCleanupWork passed unnoticed. The
+	// `found` assertion below exists for the same reason: a rename that drops one
+	// of these names must fail the test rather than narrow it.
+	cleanupFns := map[string]bool{
+		"runRetentionCleanup":    true,
+		"runRetentionCleanupFor": true,
+		"retentionCleanupWork":   true,
+	}
 	var noHeartbeat, heartbeatLock, stamps, found int
 	for _, decl := range file.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
@@ -180,8 +188,9 @@ func TestRetentionCleanup_DoesNotStampLoopHeartbeat(t *testing.T) {
 			return true
 		})
 	}
-	if found == 0 {
-		t.Fatal("no (*Poller).runRetentionCleanup method found")
+	if found != len(cleanupFns) {
+		t.Fatalf("inspected %d of %d cleanup functions %v — a rename must fail this guard, "+
+			"not quietly shrink what it covers", found, len(cleanupFns), cleanupFns)
 	}
 	if noHeartbeat == 0 {
 		t.Error("the retention cleanup path does not use runUnderLeaderLockNoHeartbeat — cross-process leader gating for the cleanup is gone or on the wrong variant")

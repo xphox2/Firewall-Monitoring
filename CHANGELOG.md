@@ -14,11 +14,17 @@ one that made the second so rare: the pass so seldom got to start at all.
 on contention it logged one line and returned, and the next attempt was the 24-hour
 tick. Losing one race therefore skipped a whole day of retention.
 
-**And the race was not chance, it was arithmetic.** The monitoring ticker is
-`SNMP.PollInterval` (60 s on production) and both cleanup periods are exact
-multiples of it — the initial delay is 5 min = 5×60 s, the interval 24 h =
-1440×60 s — so every cleanup attempt fires on the same instant as a monitoring
-tick, forever. Caught five minutes after deploying v0.11.254:
+**And the race was not chance, it was arithmetic** — though not against the task
+the log line first suggests. The select loop is serial and the lock helper is
+synchronous, so the monitoring cycle that fires on the same instant has already
+released the lock before the cleanup case is serviced. The real contenders are the
+**five-minute** tickers — rollup (which also runs the syslog aggregation pass),
+flow-detect and ipsec-telemetry — because both cleanup periods are exact multiples
+of 300 s as well as of the 60 s monitoring tick. Go's `select` chooses at random
+among ready cases, so this is a high-probability loss at every 5-minute-aligned
+attempt rather than a certainty. Caught five minutes after deploying v0.11.254 —
+note it is the rollup that finishes holding it, and the monitoring line is logged
+at the *start* of its cycle:
 
 ```
 01:00:15 main.go:1070: Monitoring cycle: 5 device(s)
@@ -26,18 +32,33 @@ tick, forever. Caught five minutes after deploying v0.11.254:
 01:00:17 flows.go:1905: Flow rollup: aggregated 8811 groups ...
 ```
 
+For the *daily* attempt "forever" would overstate it: `cleanupTimer.Reset` is
+measured from when the case is serviced rather than when it fired, so on a
+long-lived process the daily attempt drifts off the boundary. On this deployment,
+which restarts several times a day, the attempt that matters is the five-minute
+initial one — and that one is aligned every time.
+
 That is why `syslog_messages` reached 37 days of history under a 30-day policy at
 161 GB: the v0.11.254 timeout fix was correct but almost never reached.
 
 A contended cleanup now retries every 97 s for up to 30 minutes before deferring
-to the daily tick. The interval is deliberately **not** a round number of seconds —
-retrying every 60 s or 120 s would re-align with the very tickers it is losing to,
-reproducing the original bug at a shorter period. A test pins that arithmetic.
+to the daily tick. 97 is prime, and that is the point: `gcd(97 s, 60 s)` and
+`gcd(97 s, 300 s)` are both 1 s, so successive retries visit *every* phase of both
+contending periods. Mere non-divisibility would not do — 90 s alternates between
+just two phases of the 60 s tick and re-collides every other retry, and 150 s
+visits two phases of the 300 s one. The test asserts coprimality rather than
+non-divisibility, because an earlier version asserted the weaker property and
+accepted 90 s.
 
-`runUnderLeaderLockNoHeartbeat` now reports whether it acquired the lock. Callers
-that can afford to miss a turn (monitoring, rollup, flow-detect, ipsec-telemetry,
-threat-feeds — all on per-minute or per-5-minute cadences) still ignore it; only
-the daily pass retries.
+`runUnderLeaderLockNoHeartbeat` now reports whether it acquired the lock. Only the
+daily pass retries; the per-minute and per-5-minute callers ignore it, since a
+skipped turn is picked up by their next tick.
+
+**Not fixed here, but noted:** the threat-feed sync shares the same lock on a
+12-hour cadence (`THREAT_FEEDS_INTERVAL`), so it has the same forfeit shape — and
+its one-shot startup sync at 60 s is aligned with the monitoring tick by the same
+arithmetic. Low impact, because feed rows persist with a TTL and a later sync
+re-fills them, but it is the same bug.
 
 ## [0.11.254] - 2026-09-24
 
