@@ -49,7 +49,8 @@ import (
 // has no year, and only past/zero values escaped the ingest clamp before its
 // AUDIT-204 lower bound) — degenerated a cycle into ~17.8M empty-window
 // transactions (measured: hours on prod-class hardware) while holding the
-// shared poller work lock. With the jump, per-pass cost is proportional to
+// poller lock the rollup tick runs under (the shared work lock then; the
+// maintenance lock, shared with retention cleanup, since v0.11.256). With the jump, per-pass cost is proportional to
 // windows that actually contain rows, plus one cheap probe each.
 
 // maxWindowsPerAggregationCycle bounds how many windows ONE call may walk.
@@ -58,8 +59,9 @@ import (
 // operation. It exists for the backlog case: if aggregation has been stalled —
 // by an outage, a restart loop, or a work probe that was silently answering
 // "nothing to do" — the first cycle after the stall would otherwise walk the
-// ENTIRE backlog in one call, holding the shared poller work lock and pinning
-// the disk that also serves ingest for as long as that takes.
+// ENTIRE backlog in one call, holding the maintenance lock (which shuts out
+// retention cleanup) and pinning the disk that also serves ingest for as long as
+// that takes.
 //
 // It bounds WINDOWS, not wall-clock time, and a window is not a fixed span:
 // aggregateRollupsUp widens it to 24h for day-bucket promotions, so 24 windows

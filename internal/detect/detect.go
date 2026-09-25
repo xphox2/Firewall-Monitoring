@@ -246,9 +246,13 @@ func (w Window) Seconds() float64 {
 
 // maxLookback is the ceiling on how far back a detector may read raw
 // flow_samples. HARD INVARIANT: RunFlowRollupCycle (internal/database/flows.go)
-// deletes raw rows older than 1h after folding them into rollups, and rollup +
-// detect run as sequential cases of the poller's single leader-locked loop —
-// so a trailing 60-minute range can never read a hole mid-window. Evidence
+// deletes raw rows older than 1h after folding them into rollups, and within one
+// poller process rollup + detect run as sequential cases of the same select
+// loop — so a trailing 60-minute range can never read a hole mid-window. The
+// invariant is PER PROCESS: since v0.11.256 rollup is on the maintenance lock
+// and detect on the work lock, so in a two-poller deployment one poller's detect
+// can overlap the other's rollup; that exposure is the same seconds-wide
+// boundary sliver described next, which detectors already tolerate. Evidence
 // sitting exactly at the 59-61 min boundary can age out between cycles;
 // detectors using Lookback must tolerate that (thresholds, not exact counts).
 const maxLookback = 60 * time.Minute

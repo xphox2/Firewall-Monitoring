@@ -435,9 +435,11 @@ func (d *Database) tryAcquireStartupLock() bool {
 
 // pollerWorkLockKey is a stable int64 keyed to the ASCII bytes of
 // "POLLERWORK"-ish content packed into a uint64 — chosen so it's visible
-// in pg_locks if an operator ever inspects it. AUDIT-007: shared by all
-// poller-process cron ticks (runMonitoringCycle, rollup, cleanup) so two
-// poller instances don't run the same work twice.
+// in pg_locks if an operator ever inspects it. AUDIT-007: shared by the
+// poller-process cron ticks (monitoring cycle, flow-detect, ipsec-telemetry,
+// threat-feed sync) so two poller instances don't run the same work twice.
+// Rollup and the daily retention cleanup are NOT on it since v0.11.256 — see
+// maintenanceLockKey.
 const pollerWorkLockKey int64 = 0x504f4c4c45525357 // "POLLERSW"
 
 // TryAcquirePollerWorkLock attempts a non-blocking Postgres advisory lock
@@ -447,7 +449,8 @@ const pollerWorkLockKey int64 = 0x504f4c4c45525357 // "POLLERSW"
 // safe for anything on a per-minute or per-5-minute cadence. A caller whose next
 // attempt is far away must RETRY instead of skipping: the daily retention cleanup
 // forfeited a whole day per lost race until v0.11.255, and the loss was systematic
-// because its periods were multiples of the contending tickers'.
+// because its periods were multiples of the contending tickers'. (Cleanup has
+// since moved to maintenanceLockKey, and still retries.)
 //
 // AUDIT-007: under a 2-poller deployment, both processes' cron tickers
 // fire roughly concurrently. Without this lock both pollers poll every
@@ -468,7 +471,7 @@ const pollerWorkLockKey int64 = 0x504f4c4c45525357 // "POLLERSW"
 // pg_advisory_unlock on a non-owning session returns false with only a
 // WARNING (no SQL error), so the failed release was invisible, the lock
 // leaked on an idle pooled conn for up to ConnMaxLifetime (5 min), and
-// the next tick's probe concluded "another poller holds the work lock"
+// the next tick's probe concluded the work lock was held elsewhere
 // and skipped the ENTIRE cycle — in a single-poller deployment. Now the
 // lock is taken on a dedicated PINNED *sql.Conn (the pattern
 // AcquireAPISingletonLock / acquireMigrationLock already use) and the
@@ -502,6 +505,36 @@ func (d *Database) TryAcquirePollerWorkLock() (release func(), acquired bool) {
 // months old — but if the two windows ever meet, the summary's oldest bucket is
 // where to look.
 const flowSummaryLockKey int64 = 0x464c4f5753554d4d // "FLOWSUMM"
+
+// maintenanceLockKey serializes the two passes that must not overlap each
+// other — the daily retention cleanup, and the flow rollup + syslog aggregation
+// tick — and nothing else.
+//
+// Until v0.11.256 both ran on pollerWorkLockKey, which is non-blocking and
+// shared by every cron tick, so while retention worked every monitoring tick was
+// SKIPPED rather than delayed: on 2026-09-25 production logged "Skipping
+// monitoring cycle" every minute for the 13 minutes the pass took, i.e. no
+// SNMP-driven alert evaluation, and a backlog clear would have lasted hours.
+// flowSummaryLockKey left the shared key for the same reason.
+//
+// Why rollup comes WITH cleanup rather than staying behind: promotion and
+// retention both delete from flow_samples/flow_rollups, and the syslog
+// aggregation reads syslog_messages while retention deletes from it; that pair
+// was deliberately serialized and still is. Monitoring, flow-detect,
+// ipsec-telemetry and the feed sync insert new rows and update live ones, while
+// retention deletes rows past an age cutoff, so they may run alongside. The two
+// places they meet are handled where they surface: an alert still open past its
+// retention cutoff can be auto-resolved by the alert engine's multi-row UPDATE
+// while a cleanup batch deletes it, which can deadlock (40P01, retried by the
+// batch loops), and a partition DROP can queue behind a now-concurrent reader
+// (execCronDDL's lock_timeout).
+const maintenanceLockKey int64 = 0x46574d41494e544e // "FWMAINTN"
+
+// TryAcquireMaintenanceLock is TryAcquirePollerWorkLock for retention cleanup
+// and rollup, on their own key. Same non-blocking semantics.
+func (d *Database) TryAcquireMaintenanceLock() (release func(), acquired bool) {
+	return d.tryAcquireAdvisoryLock("Maintenance", maintenanceLockKey)
+}
 
 // TryAcquireFlowSummaryLock is TryAcquirePollerWorkLock for the summary pass,
 // on its own key. Same non-blocking semantics and the same bias toward doing
@@ -556,9 +589,9 @@ func (d *Database) tryAcquireAdvisoryLock(label string, key int64) (release func
 // state stores in process memory — the IRC bots (one nick per server), the
 // login-lockout counters, the rate-limit buckets, and the uptime baseline — so a
 // second cmd/api against the same DB double-runs them (nick collision, ~2× the
-// lockout/rate-limit thresholds, divergent uptime). Distinct from
-// startupMigrationLockKey / pollerWorkLockKey / migrationLockKey. Value is the
-// ASCII of "FWMNAPIS" so it's visible in pg_locks.
+// lockout/rate-limit thresholds, divergent uptime). Distinct from every other
+// advisory key (TestAdvisoryLockKeysDistinct). Value is the ASCII of "FWMNAPIS"
+// so it's visible in pg_locks.
 const apiSingletonLockKey int64 = 0x46574d4e41504953
 
 // AcquireAPISingletonLock takes a NON-blocking, session-scoped Postgres advisory
