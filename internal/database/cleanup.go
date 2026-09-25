@@ -104,17 +104,55 @@ func (d *Database) batchedDeleteOlderThanWhere(model interface{}, cutoff time.Ti
 // the shape of the 2026-07-26 disk-full outage, where retention had also been
 // silently failing.
 //
-//   - ORDER BY timeColumn. Without it the planner may seq-scan and re-walk the
-//     dead tuples the previous batches left, so each batch costs more than the
-//     last until one exceeds the timeout — exactly what batchedDeleteWhere's
-//     comment predicted. Ordered, it walks the per-table timestamp index forward
-//     from the oldest live row and stops at LIMIT.
+//   - ORDER BY timeColumn. This is the defence that stops the timeouts arising,
+//     as opposed to merely surviving them. Measured against the live 161 GB
+//     syslog_messages with EXPLAIN (ANALYZE, BUFFERS) — same predicate, same
+//     LIMIT 10000:
+//
+//     unordered  4,755 ms  184,814 buffer reads  Seq Scan; 1,617,026 rows
+//     removed by filter
+//     ordered       40 ms    1,137 buffer reads  Index Scan on
+//     idx_syslog_messages_timestamp
+//
+//     118x — and the unordered number is the FIRST batch of a pass. It grows as
+//     the scanned prefix fills with what earlier batches deleted, so each batch
+//     costs more than the last until one crosses the timeout. Ordered, the scan
+//     resumes at the oldest live row and the cost stays flat.
+//
+//     This holds only where timeColumn LEADS an index, which it does on every
+//     table that has actually timed out (syslog_messages has a standalone
+//     timestamp index). A table whose only time index is composite — (device_id,
+//     timestamp) on the small per-poll tables — gets a sort instead. None of those
+//     has ever timed out; if one does, order by that index's leading columns
+//     rather than reaching for a longer timeout.
+//
 //   - SET LOCAL statement_timeout = '120s', tx-scoped, over the DSN's 30s. A
 //     background 24h job can afford a slow batch; losing the whole pass to one
 //     cannot be afforded.
+//
 //   - 57014 halves the batch (floor batchDeleteFloor) and retries; 55P03 sleeps
 //     and retries the same batch. Either way the pass makes progress instead of
 //     abandoning the table until tomorrow.
+//
+// LOCK-HOLD NOTE, because a pass that finishes instead of bailing costs something.
+// runRetentionCleanup holds pollerWorkLockKey (cmd/poller), which is NON-BLOCKING
+// and shared with the monitoring cycle, rollup, flow-detect and ipsec-telemetry:
+// a tick arriving while cleanup works is SKIPPED, not queued, so what is lost is
+// alert evaluation, not merely its timeliness. flowSummaryLockKey's comment
+// records moving the summary pass off this key for that reason, at a cost of "up
+// to a minute".
+//
+// A complete pass has always held the lock for however long it took; what
+// v0.11.254 changes is that a TIMING-OUT table retries — at worst ~6 halvings x
+// 120s plus bounded lock waits — where before it returned in seconds having done
+// nothing. The ordered subquery above makes those timeouts rare, which is why
+// this is documented rather than restructured.
+//
+// A dedicated cleanup lock key is the obvious follow-up and is NOT a free swap:
+// cleanup and rollup are mutually exclusive today ONLY because they share this
+// key, and separating them would let retention delete flow_samples/flow_rollups
+// rows concurrently with the promotion reading them. That deserves its own
+// analysis on a ladder with two prior production incidents.
 func (d *Database) batchedDeleteOlderThanOn(model interface{}, timeColumn string, cutoff time.Time, extraWhere string, args ...interface{}) error {
 	batchSize := cleanupDeleteBatchSize
 	lockRetries := 0
@@ -202,11 +240,15 @@ var (
 )
 
 // batchedDeleteWhere deletes every row of table matching `where` (args bound)
-// in bounded batches, for the device purge worker (v0.11.243). Unlike
-// batchedDeleteOlderThanOn — which is left exactly as it was for retention —
-// this loop is context-cancellable, reports progress per batch, orders the
-// probe subquery, and handles the Postgres timeouts a multi-hour purge on a
-// populated prod table will meet:
+// in bounded batches, for the device purge worker (v0.11.243).
+//
+// This loop and batchedDeleteOlderThanOn (retention) now share their defences —
+// the ordered subquery, the tx-scoped 120s statement_timeout and the 57014/55P03
+// retries — because in v0.11.254 retention met the same wall on the same table.
+// Still unique to this one: it is context-cancellable and reports progress per
+// batch, which an operator-triggered multi-hour purge needs and a background
+// daily pass does not. The reasoning below is unchanged; only the claim that
+// retention lacked it is gone.
 //
 //   - The subquery is `SELECT id FROM <t> WHERE <where> ORDER BY <orderBy>
 //     LIMIT ?`. The ORDER BY matters on prod: without it the planner may
