@@ -1,6 +1,26 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.258] - 2026-09-26
+
+### Fixed — the bundled PostgreSQL had 64 MB of shared memory for parallel queries
+
+PostgreSQL runs inside the `firewall-mon` container and keeps parallel-query
+state in `/dev/shm`, which Docker limits to 64 MB unless the service says
+otherwise. A single parallel hash join may grow to `work_mem × 2 × 3
+participants` — 96 MB at the 16 MB `work_mem` production runs today — and a query
+that outgrows `/dev/shm` fails with "could not resize shared memory segment"
+rather than spilling to disk. This is also what held `work_mem` at 16 MB instead
+of the 32 MB the 2026-09-07 tuning intended.
+
+- `docker-compose.yml` sets `shm_size: "1g"`. It takes effect when the container
+  is recreated (`docker compose up -d`). tmpfs only uses RAM for what is actually
+  allocated.
+- `docs/OPERATIONS.md` gains a short section on raising PostgreSQL memory with
+  `ALTER SYSTEM` and the `/dev/shm` ceiling to check first.
+- A guardrail test fails if the compose file drops `shm_size` or sets it under
+  512 MB.
+
 ## [0.11.257] - 2026-09-26
 
 ### Fixed — the Syslog page could not show a 7-day or 30-day view, and 24 h took ~24 s

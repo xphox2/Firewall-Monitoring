@@ -462,6 +462,24 @@ large understatement) and the multi-row-INSERT fallback by ~2x; COPY at batch
 batch size matters — the collector's 500–1000-row batches sit in the right
 range, so don't shrink them to "smooth" load.
 
+### PostgreSQL memory and `/dev/shm`
+
+The bundled PostgreSQL starts with conservative memory settings
+(`entrypoint.sh` writes them only when PGDATA is first created). On a larger
+host, raise them with `ALTER SYSTEM` from inside the container — it writes
+`postgresql.auto.conf`, survives restarts, and `ALTER SYSTEM RESET` undoes it —
+then restart the container.
+
+`work_mem` has a ceiling you must check first. Parallel queries keep their
+shared hash tables in `/dev/shm` (`dynamic_shared_memory_type = posix`), and one
+parallel hash join can use `work_mem × hash_mem_multiplier (2) × 3 participants`.
+Past the container's `/dev/shm` the query fails with *could not resize shared
+memory segment … No space left on device* rather than spilling to disk. The
+compose file sets `shm_size: "1g"` (Docker's default is 64 MB), which covers
+`work_mem` up to ~64 MB with room for concurrent queries. Check the live value
+with `docker exec firewall-mon df -h /dev/shm`; a change to `shm_size` needs
+`docker compose up -d` (a recreate), not a restart.
+
 ## Host disk housekeeping
 
 The section above is about the **database volume**. This one is about the **root filesystem**, which

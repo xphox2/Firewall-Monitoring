@@ -13,6 +13,16 @@ services:
     image: ${FIREWALL_MON_IMAGE:-xphox/firewall-mon:latest}
     container_name: firewall-mon
     restart: unless-stopped
+    # PostgreSQL runs inside this container with dynamic_shared_memory_type =
+    # posix, so parallel queries take their shared hash tables and sort state
+    # from /dev/shm — which Docker caps at 64 MB unless told otherwise. One
+    # parallel hash join may grow to work_mem x hash_mem_multiplier (2) x 3
+    # participants: 96 MB at work_mem 16 MB, 192 MB at 32 MB. Past the cap the
+    # query fails with "could not resize shared memory segment ... No space left
+    # on device" instead of spilling to disk. 1 GB leaves room for several such
+    # queries at once; tmpfs only consumes RAM for what is actually in use.
+    # Takes effect on container recreate (`up -d`), not restart.
+    shm_size: "1g"
     # Without an explicit cap the json-file driver grows without bound — Docker
     # only rotates when max-size is set. On the rust-01 deployment this service
     # writes ~80 MB/day, so an uncapped log reaches the GB range in weeks on the
