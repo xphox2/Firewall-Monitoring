@@ -23,12 +23,11 @@ import (
 )
 
 type Database struct {
-	db          *gorm.DB
-	encKeys     keyChain
-	dialect     Dialect
-	syslogBatch *BatchInserter[models.SyslogMessage]
-	trapBatch   *BatchInserter[models.TrapEvent]
-	pingBatch   *BatchInserter[models.PingResult]
+	db        *gorm.DB
+	encKeys   keyChain
+	dialect   Dialect
+	trapBatch *BatchInserter[models.TrapEvent]
+	pingBatch *BatchInserter[models.PingResult]
 	// pgxPool is the dedicated *pgxpool.Pool used for high-throughput bulk
 	// inserts via the COPY protocol (SaveFlowSamples on the hot path). It is
 	// nil on the SQLite test backend (NewDatabaseForTesting) and on any
@@ -231,9 +230,6 @@ func Connect(cfg *config.Config) (*Database, error) {
 	}
 
 	// Initialize batch inserters
-	d.syslogBatch = NewBatchInserter[models.SyslogMessage](500, 2*time.Second, func(items []models.SyslogMessage) error {
-		return d.db.Create(&items).Error
-	})
 	d.trapBatch = NewBatchInserter[models.TrapEvent](100, 5*time.Second, func(items []models.TrapEvent) error {
 		return d.db.Create(&items).Error
 	})
@@ -693,9 +689,6 @@ func (d *Database) AcquireDevicePurgeLock() (release func(), acquired bool, err 
 
 func (d *Database) Close() error {
 	// Flush and stop all batch inserters before closing the DB
-	if d.syslogBatch != nil {
-		d.syslogBatch.Stop()
-	}
 	if d.trapBatch != nil {
 		d.trapBatch.Stop()
 	}

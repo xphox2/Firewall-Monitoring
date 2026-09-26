@@ -1414,14 +1414,18 @@ type SyslogMessage struct {
 
 // SyslogIngestHourly is one hour × severity of accepted syslog ingest, written
 // by the ingest meter (database.SaveSyslogMessages counts the rows it actually
-// landed). Backs the Retention page's rows/day and projected-size figures.
+// landed). Backs the Retention page's rows/day and projected-size figures, and
+// the fleet-wide counts on the Syslog page and the dashboard.
 //
 // The column is named `timestamp` on purpose so the table rides the existing
 // `batchedDeleteOlderThan` cleanup loop; row_count/byte_count avoid the `rows`
 // keyword. At most 8 rows per hour (192/day) — never a volume concern.
 type SyslogIngestHourly struct {
 	ID uint `json:"id" gorm:"primaryKey"`
-	// Timestamp is the hour start, UTC.
+	// Timestamp is the hour start, UTC — the hour the rows were RECEIVED, not
+	// their message time. UTC is this column's convention: its only writer
+	// stores the UTC hour, so every bound compared against it must be UTC too
+	// (SQLite compares the rendered text, offset included).
 	Timestamp time.Time `json:"timestamp" gorm:"uniqueIndex:idx_syslog_ingest_hour_sev,priority:1"`
 	Severity  int       `json:"severity" gorm:"uniqueIndex:idx_syslog_ingest_hour_sev,priority:2"`
 	RowCount  int64     `json:"row_count"`

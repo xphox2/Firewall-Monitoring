@@ -30,6 +30,10 @@ import (
 // syslogIngestFlushInterval bounds how long counts live only in memory.
 const syslogIngestFlushInterval = 60 * time.Second
 
+// syslogIngestRetentionDays is how long the hourly buckets are kept. It must
+// cover the longest window the Syslog stats accept (ParseHours caps at 8760 h).
+const syslogIngestRetentionDays = 400
+
 // syslogIngestRateWindow is how far back the rate looks.
 const syslogIngestRateWindow = 24 * time.Hour
 
@@ -56,7 +60,23 @@ type syslogIngestMeter struct {
 	// handler concurrently; a stalled Postgres must not stall every syslog POST
 	// behind a 30 s statement_timeout).
 	inFlight bool
+	// pending is the map a running flush swapped out, held here until its
+	// upsert has either committed or failed, so a reader (meterHours) can see
+	// counts that are in neither the live map nor the table yet. Three rules
+	// keep a reader from missing or double-counting a cell:
+	//   (i)  on failure the merge-back into buckets and the clear of pending
+	//        happen in the same lock section;
+	//   (ii) flushGen is bumped after every flush, success AND failure — a
+	//        failed flush also moves cells, from pending back to buckets;
+	//   (iii) one pending map is enough: non-final flushes run synchronously on
+	//        the ingest goroutine behind the inFlight throttle, and the final
+	//        flush runs from Close, after server.Shutdown has drained them.
+	pending  map[time.Time]*[SyslogSeverityCount]ingestCount
+	flushGen uint64
 	now      func() time.Time
+	// beforeUpsert, when set, runs between the swap and the upsert. Tests use
+	// it to hold a flush in flight; nil in production.
+	beforeUpsert func()
 }
 
 func newSyslogIngestMeter(now func() time.Time) *syslogIngestMeter {
@@ -123,14 +143,21 @@ func (d *Database) flushSyslogIngest(final bool) error {
 	}
 	swapped := m.buckets
 	m.buckets = make(map[time.Time]*[SyslogSeverityCount]ingestCount)
+	m.pending = swapped
 	m.inFlight = true
 	m.lastFlush = m.now()
+	hook := m.beforeUpsert
 	m.mu.Unlock()
 
+	if hook != nil {
+		hook()
+	}
 	err := d.upsertSyslogIngest(swapped)
 
 	m.mu.Lock()
 	m.inFlight = false
+	m.pending = nil
+	m.flushGen++
 	if err != nil && !final {
 		// Additive merge: counts that arrived meanwhile for the same hour are
 		// kept, and the swapped ones are retried on the next flush.
@@ -241,4 +268,105 @@ func (d *Database) SyslogIngestRate(now time.Time) (perSev [SyslogSeverityCount]
 		hours = 1
 	}
 	return perSev, hours
+}
+
+// meterHours returns rows accepted per UTC hour and severity for every hour at
+// or after from: the persisted buckets plus the counts still in memory — the
+// live map and a flush in flight (see the pending rules on syslogIngestMeter).
+//
+// Only cmd/api records into the meter (ReceiveSyslogMessages is the sole
+// caller of SaveSyslogMessages); the poller builds one but never records. So
+// this process's buffer is the whole picture of what has not reached the
+// table, and a request-scoped copy of Database shares the same meter pointer.
+//
+// The read is optimistic: snapshot memory under the lock, read the table
+// without it, and if a flush finished in between (flushGen moved) the cells it
+// carried may now be in both places, so read once more. A second flush cannot
+// land within one read — the next is at least syslogIngestFlushInterval away —
+// so one retry settles it.
+func (d *Database) meterHours(from time.Time) (map[time.Time]*[SyslogSeverityCount]int64, error) {
+	from = from.UTC()
+	for attempt := 0; ; attempt++ {
+		gen, mem := d.meterMemory(from)
+		// The column is UTC by its only writer (upsertSyslogIngest stores the
+		// UTC hour), so the bound is UTC too: SQLite compares rendered text.
+		var rows []models.SyslogIngestHourly
+		if err := d.db.Where("timestamp >= ?", from).Find(&rows).Error; err != nil {
+			return nil, err
+		}
+		if attempt == 0 && d.ingest != nil {
+			d.ingest.mu.Lock()
+			moved := d.ingest.flushGen != gen
+			d.ingest.mu.Unlock()
+			if moved {
+				continue
+			}
+		}
+		for _, r := range rows {
+			sev := r.Severity
+			if sev < 0 || sev >= SyslogSeverityCount {
+				sev = SyslogSeverityCount - 1
+			}
+			h := r.Timestamp.UTC()
+			b := mem[h]
+			if b == nil {
+				b = new([SyslogSeverityCount]int64)
+				mem[h] = b
+			}
+			b[sev] += r.RowCount
+		}
+		return mem, nil
+	}
+}
+
+// meterMemory copies the not-yet-persisted counts at or after from, and the
+// flush generation they belong to.
+func (d *Database) meterMemory(from time.Time) (uint64, map[time.Time]*[SyslogSeverityCount]int64) {
+	out := make(map[time.Time]*[SyslogSeverityCount]int64)
+	m := d.ingest
+	if m == nil {
+		return 0, out
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, src := range []map[time.Time]*[SyslogSeverityCount]ingestCount{m.buckets, m.pending} {
+		for h, counts := range src {
+			if h.Before(from) {
+				continue
+			}
+			b := out[h]
+			if b == nil {
+				b = new([SyslogSeverityCount]int64)
+				out[h] = b
+			}
+			for sev := range counts {
+				b[sev] += counts[sev].rows
+			}
+		}
+	}
+	return m.flushGen, out
+}
+
+// oldestMeterHour is the first hour the meter holds anything for, persisted or
+// in memory; ok is false when it holds nothing at all. Order().First rather
+// than MIN(): an aggregate over a timestamp comes back as text on SQLite and
+// will not scan into time.Time.
+func (d *Database) oldestMeterHour() (time.Time, bool, error) {
+	var oldest time.Time
+	ok := false
+	var row models.SyslogIngestHourly
+	err := d.db.Order("timestamp ASC").First(&row).Error
+	switch {
+	case err == nil:
+		oldest, ok = row.Timestamp.UTC(), true
+	case !errors.Is(err, gorm.ErrRecordNotFound):
+		return time.Time{}, false, err
+	}
+	_, mem := d.meterMemory(time.Time{})
+	for h := range mem {
+		if !ok || h.Before(oldest) {
+			oldest, ok = h, true
+		}
+	}
+	return oldest, ok, nil
 }

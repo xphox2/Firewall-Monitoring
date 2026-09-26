@@ -1,6 +1,43 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.257] - 2026-09-26
+
+### Fixed — the Syslog page could not show a 7-day or 30-day view, and 24 h took ~24 s
+
+Measured on production before the change: one 24 h Syslog page load ran three
+queries over ~4.7M `syslog_messages` rows — the total (2.9 s), the severity split
+(13.5 s) and the hourly chart (7.3 s, with a 107 MB on-disk sort). 7 d and 30 d
+could not finish inside the 30 s statement and write timeouts at all.
+
+- **Fleet-wide Syslog figures for windows of 12 h or more now come from the
+  ingest meter** (`syslog_ingest_hourly`, a few hundred rows) instead of counting
+  `syslog_messages`. Over the last 48 h on production the meter matched the raw
+  table to 35 rows in 8.9M. The 1 h and 6 h views, and any device-filtered
+  view, keep the exact path (6 h measured at ~1.8 s).
+- **What the meter counts is different, and the page now says so.** It counts
+  messages *received* per whole UTC hour, so the window starts up to 59 minutes
+  early, a collector backlog replay lands in the hour it arrived, and rows that
+  retention later deletes or summarises are still counted. The total card now
+  reads "Received since …, whole hours" when the meter answered and "Stored, last
+  Nh" when the exact path did — the label follows the response, not the selected
+  range. Before the meter's history reaches back far enough (it began 2026-09-18),
+  the card says where counting began.
+- **The meter's retention is 400 days** (was 8), so long windows stay covered.
+  At most 192 rows a day.
+- **The chart's title and bar labels follow the selected range.** The title was
+  always "Message Trend (24h)" and 7 d / 30 d bars were labelled with a time of
+  day only.
+- **The syslog list's "of N" count stops at 10,000.** It was the same full
+  24 h count (2.9 s, more with a search); capped it measured 2.2 ms. Past the cap
+  the pager reads "10,000+" and Next stays available while full pages come back.
+  The pager counts *stored* messages matching the filters, which is why it can
+  differ from the meter-based cards at 12 h and above.
+- **The dashboard's 24 h syslog figure** (vitals rail, every admin page) now
+  reads the meter too instead of a 2.9 s count once a minute.
+- Removed `SaveSyslogMessage` (singular) and its batch inserter: it had no
+  callers and wrote around the meter.
+
 ## [0.11.256] - 2026-09-25
 
 ### Fixed — the daily retention pass switched off alert evaluation for as long as it ran

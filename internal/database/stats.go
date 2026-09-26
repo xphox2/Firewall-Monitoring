@@ -28,6 +28,101 @@ type EventStatsResult struct {
 	BySeverity []KeyCount   `json:"by_severity"`
 	ByType     []KeyCount   `json:"by_type"`
 	OverTime   []TimeBucket `json:"over_time"`
+	// WindowFrom, when set, is where the counted window actually starts: the
+	// syslog meter counts whole UTC hours, so it is the cutoff floored to the
+	// hour. Absent on the exact paths (raw rows over exactly N hours).
+	WindowFrom *time.Time `json:"window_from,omitempty"`
+	// Partial is true when the meter's history starts after WindowFrom, so the
+	// counts cover only CoverageFrom onward.
+	Partial      bool       `json:"partial,omitempty"`
+	CoverageFrom *time.Time `json:"coverage_from,omitempty"`
+}
+
+// syslogMeterMinHours is the shortest window served from the ingest meter
+// instead of syslog_messages. The meter counts whole UTC hours, so a short
+// window would overstate itself badly (1h reads as up to 2h); below this the
+// exact raw path is cheap anyway — measured on production 2026-09-26, 6 h of
+// raw rows (810k) costs ~1.8 s across the three queries, while 24 h cost ~24 s.
+const syslogMeterMinHours = 12
+
+// syslogSeverityName maps a numeric syslog severity to its display name.
+func syslogSeverityName(sev int) string {
+	switch sev {
+	case 0:
+		return "Emergency"
+	case 1:
+		return "Alert"
+	case 2:
+		return "Critical"
+	case 3:
+		return "Error"
+	case 4:
+		return "Warning"
+	case 5:
+		return "Notice"
+	case 6:
+		return "Info"
+	case 7:
+		return "Debug"
+	}
+	return fmt.Sprintf("Severity %d", sev)
+}
+
+// syslogStatsFromMeter answers the fleet-wide Syslog stats from
+// syslog_ingest_hourly — a few hundred rows — instead of counting
+// syslog_messages, which at production volume (4.7M rows/day) took ~24 s for
+// one 24 h view and could not finish a 7 d one inside the 30 s timeouts.
+//
+// It counts messages RECEIVED per whole UTC hour from the cutoff's hour,
+// which differs from the raw path's "messages still stored whose own
+// timestamp is in the window" in three ways: a collector backlog replay lands
+// in the hour it arrived, rows later deleted or summarised by retention are
+// still counted, and the window starts up to 59 minutes early. On production
+// the two agreed to 35 rows in 8.9M over 48 h. WindowFrom reports the real
+// start so the page can say so. Every figure comes from the same cells, so
+// the total, the severity split and the chart always agree with each other.
+func (d *Database) syslogStatsFromMeter(cutoff time.Time) (*EventStatsResult, error) {
+	from := cutoff.UTC().Truncate(time.Hour)
+	result := &EventStatsResult{WindowFrom: &from}
+
+	oldest, have, err := d.oldestMeterHour()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read syslog meter coverage: %w", err)
+	}
+	if have && oldest.After(from) {
+		result.Partial = true
+		result.CoverageFrom = &oldest
+	}
+
+	hours, err := d.meterHours(from)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read syslog meter: %w", err)
+	}
+	var bySev [SyslogSeverityCount]int64
+	keys := make([]time.Time, 0, len(hours))
+	for h := range hours {
+		keys = append(keys, h)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i].Before(keys[j]) })
+	for _, h := range keys {
+		var n int64
+		for sev, c := range hours[h] {
+			bySev[sev] += c
+			n += c
+		}
+		if n == 0 {
+			continue
+		}
+		result.Total += n
+		// Same text both dialects' TimeBucket("hour") produces.
+		result.OverTime = append(result.OverTime, TimeBucket{Bucket: h.Format("2006-01-02 15:00"), Count: n})
+	}
+	for sev, c := range bySev {
+		if c > 0 {
+			result.BySeverity = append(result.BySeverity, KeyCount{Key: syslogSeverityName(sev), Count: c})
+		}
+	}
+	return result, nil
 }
 
 // timeSeriesCount queries hourly time-bucketed counts for model since cutoff.
@@ -115,6 +210,9 @@ func (d *Database) GetTrapStats(hours int, deviceID uint) (*EventStatsResult, er
 // combined). deviceID = 0 means "all devices" (v0.10.217, bundle D4).
 func (d *Database) GetSyslogStats(hours int, deviceID uint) (*EventStatsResult, error) {
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+	if deviceID == 0 && hours >= syslogMeterMinHours {
+		return d.syslogStatsFromMeter(cutoff)
+	}
 	result := &EventStatsResult{}
 
 	// applyDevFilter is a small helper to keep the device_id WHERE
@@ -139,8 +237,6 @@ func (d *Database) GetSyslogStats(hours int, deviceID uint) (*EventStatsResult, 
 	}
 	result.Total = rawCount + summaryCount
 
-	// Syslog severity is numeric, map to human-readable names
-	sevNames := map[int]string{0: "Emergency", 1: "Alert", 2: "Critical", 3: "Error", 4: "Warning", 5: "Notice", 6: "Info", 7: "Debug"}
 	var bySev []struct {
 		Severity int
 		Count    int64
@@ -168,11 +264,7 @@ func (d *Database) GetSyslogStats(hours int, deviceID uint) (*EventStatsResult, 
 		sevMap[s.Severity] += s.Count
 	}
 	for sev, count := range sevMap {
-		name := sevNames[sev]
-		if name == "" {
-			name = fmt.Sprintf("Severity %d", sev)
-		}
-		result.BySeverity = append(result.BySeverity, KeyCount{Key: name, Count: count})
+		result.BySeverity = append(result.BySeverity, KeyCount{Key: syslogSeverityName(sev), Count: count})
 	}
 
 	// OverTime: combine raw time series with summary counts

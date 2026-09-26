@@ -417,14 +417,14 @@
                 </div>
             </div>
             <div class="stat-grid" id="syslog-stats-grid">
-                <div class="stat-card"><div class="stat-label">Total Messages</div><div class="stat-value accent" id="syslog-total">--</div></div>
+                <div class="stat-card"><div class="stat-label">Total Messages</div><div class="stat-value accent" id="syslog-total">--</div><div class="stat-label" id="syslog-total-basis" style="margin-top:4px;text-transform:none;color:var(--fwmon-text-faint);"></div></div>
                 <div class="stat-card"><div class="stat-label">Emergency/Critical</div><div class="stat-value bad" id="syslog-critical">--</div></div>
                 <div class="stat-card"><div class="stat-label">Warning/Error</div><div class="stat-value" style="color:var(--fwmon-sig-warn)" id="syslog-warning">--</div></div>
                 <div class="stat-card"><div class="stat-label">Info/Notice</div><div class="stat-value" id="syslog-info">--</div></div>
             </div>
             <div class="chart-row">
                 <div class="chart-card">
-                    <h3>Message Trend (24h)</h3>
+                    <h3 id="syslog-trend-title">Message Trend (24h)</h3>
                     <canvas id="syslog-trend-chart"></canvas>
                 </div>
                 <div class="chart-card">

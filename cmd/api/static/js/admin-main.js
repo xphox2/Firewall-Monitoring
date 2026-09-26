@@ -1115,7 +1115,7 @@
             var total = (result.data && result.data.total) ? result.data.total : 0;
             renderSyslogTable(messages, false);
             syslogOffset = messages.length;
-            updateSyslogPagination(messages.length, total);
+            updateSyslogPagination(messages.length, total, !!(result.data && result.data.total_capped));
             loadSyslogCharts();
         }).catch(function(e) {
             console.error('Failed to load syslog:', e);
@@ -1124,7 +1124,10 @@
 
     var syslogTotalCount = 0;
 
-    function updateSyslogPagination(count, total) {
+    // total is capped server-side (total_capped): past 10,000 matching rows the
+    // exact count cost seconds, so the pager reads "10,000+" and Next stays
+    // enabled for as long as full pages keep coming back.
+    function updateSyslogPagination(count, total, capped) {
         syslogTotalCount = total;
         var container = document.getElementById('syslog-pagination');
         if (!container) return;
@@ -1132,15 +1135,17 @@
             container.innerHTML = '';
             return;
         }
+        var more = capped ? '+' : '';
         var from = syslogOffset - count + 1;
         var to = syslogOffset;
         var totalPages = Math.ceil(total / 10);
         var currentPage = Math.ceil(syslogOffset / 10);
+        var atEnd = capped ? count < 10 : syslogOffset >= total;
         container.innerHTML =
-            '<span style="color:var(--fwmon-text-faint);">Showing ' + from + '-' + to + ' of ' + total.toLocaleString() + ' &nbsp;|&nbsp; </span>' +
+            '<span style="color:var(--fwmon-text-faint);">Showing ' + from + '-' + to + ' of ' + total.toLocaleString() + more + ' stored, matching filters &nbsp;|&nbsp; </span>' +
             '<button class="btn secondary sm" data-action="prev-syslog"' + (currentPage <= 1 ? ' disabled' : '') + '>Prev</button> ' +
-            '<span style="color:var(--fwmon-text-faint);">Page ' + currentPage + ' of ' + totalPages + ' &nbsp;</span>' +
-            '<button class="btn secondary sm" data-action="next-syslog"' + (syslogOffset >= total ? ' disabled' : '') + '>Next</button>';
+            '<span style="color:var(--fwmon-text-faint);">Page ' + currentPage + ' of ' + totalPages.toLocaleString() + more + ' &nbsp;</span>' +
+            '<button class="btn secondary sm" data-action="next-syslog"' + (atEnd ? ' disabled' : '') + '>Next</button>';
     }
 
     function prevSyslog() {
@@ -1154,7 +1159,7 @@
             var total = (result.data && result.data.total) ? result.data.total : 0;
             renderSyslogTable(messages, false);
             syslogOffset += messages.length;
-            updateSyslogPagination(messages.length, total);
+            updateSyslogPagination(messages.length, total, !!(result.data && result.data.total_capped));
         }).catch(function(e) {
             console.error('Failed to load prev syslog:', e);
         });
@@ -1169,20 +1174,42 @@
             if (messages.length > 0) {
                 renderSyslogTable(messages, false);
                 syslogOffset += messages.length;
-                updateSyslogPagination(messages.length, total);
+                updateSyslogPagination(messages.length, total, !!(result.data && result.data.total_capped));
             }
         }).catch(function(e) {
             console.error('Failed to load next syslog:', e);
         });
     }
 
+    function syslogRangeLabel(hrs) {
+        return (hrs >= 24 && hrs % 24 === 0) ? (hrs / 24) + 'd' : hrs + 'h';
+    }
+
+    // The two sources count different things, so the card says which one it is,
+    // driven by the payload rather than by the selected pill: window_from is set
+    // only when the server answered from the ingest meter (messages RECEIVED,
+    // whole UTC hours); without it the figures are stored rows over exactly N
+    // hours — the same definition as the pager below.
+    function syslogStatsBasis(d, hrs) {
+        if (!d.window_from) return 'Stored, last ' + syslogRangeLabel(hrs);
+        var from = new Date((d.partial && d.coverage_from) ? d.coverage_from : d.window_from);
+        if (isNaN(from.getTime())) return 'Received, whole hours';
+        var when = from.toLocaleString('en-US', { timeZone: AC.getTimezone(), month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+        return (d.partial ? 'Received since ' + when + ' (counting began then)' : 'Received since ' + when) + ', whole hours';
+    }
+
     function loadSyslogCharts() {
         var s = analyticsPages.syslog && analyticsPages.syslog.getState();
         var hoursParam = (s && s.hours) ? ('?hours=' + s.hours) : '';
+        var hrs = (s && s.hours) ? Number(s.hours) : 24;
         apiFetch(API_BASE + '/syslog/stats' + hoursParam).then(function(result) {
             if (!result || !result.data) return;
             var d = result.data;
             document.getElementById('syslog-total').textContent = (d.total || 0).toLocaleString();
+            var basis = document.getElementById('syslog-total-basis');
+            if (basis) basis.textContent = syslogStatsBasis(d, hrs);
+            var trendTitle = document.getElementById('syslog-trend-title');
+            if (trendTitle) trendTitle.textContent = 'Message Trend (' + syslogRangeLabel(hrs) + ')';
             var crit = 0, warn = 0, info = 0;
             (d.by_severity || []).forEach(function(s) {
                 if (['Emergency','Alert','Critical'].indexOf(s.key) !== -1) crit += s.count;
@@ -1193,7 +1220,7 @@
             document.getElementById('syslog-warning').textContent = warn.toLocaleString();
             document.getElementById('syslog-info').textContent = info.toLocaleString();
 
-            var labels = (d.over_time || []).map(function(b) { return formatBucketTime(b.bucket); });
+            var labels = (d.over_time || []).map(function(b) { return formatBucketTime(b.bucket, hrs); });
             var counts = (d.over_time || []).map(function(b) { return b.count; });
             createChart('syslog-trend-chart','bar',labels,[{label:'Messages',data:counts,backgroundColor:'#58a6ff',borderRadius:3}]);
 
