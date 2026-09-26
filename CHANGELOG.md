@@ -54,6 +54,16 @@ growing with the table.
 - The four "last hour" counts that endpoint also computed were never shown
   anywhere and are gone.
 
+### Changed — `vpn_status` gets a timestamp index (migration v67)
+
+The fleet-wide "latest status per tunnel" query behind VPN alerting, VPN and
+overlay auto-detection and the VPN map filters on the last 27 hours. With no
+index leading on `timestamp`, production answered it with a sequential scan of all
+841k rows to keep 12k — 81 ms, 12 times a minute, 3.8M rows read per minute.
+Migration v67 adds `idx_vpn_status_timestamp`; on a production-shaped copy the
+plan drops the sequential scan entirely. The build is a plain `CREATE INDEX`
+(seconds at 215 MB), during which the poller's `vpn_status` inserts wait.
+
 ## [0.11.256] - 2026-09-25
 
 ### Fixed — the daily retention pass switched off alert evaluation for as long as it ran

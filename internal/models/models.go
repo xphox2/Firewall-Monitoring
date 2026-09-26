@@ -196,7 +196,7 @@ type InterfaceStats struct {
 
 type VPNStatus struct {
 	ID            uint      `json:"id" gorm:"primaryKey"`
-	Timestamp     time.Time `json:"timestamp" gorm:"index:idx_vpn_device_ts,priority:2"`
+	Timestamp     time.Time `json:"timestamp" gorm:"index;index:idx_vpn_device_ts,priority:2"`
 	DeviceID      uint      `json:"device_id" gorm:"index;index:idx_vpn_device_ts,priority:1"`
 	TunnelName    string    `json:"tunnel_name"`
 	TunnelType    string    `json:"tunnel_type"`
