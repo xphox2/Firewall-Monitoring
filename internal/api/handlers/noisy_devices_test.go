@@ -155,8 +155,8 @@ func TestNoisyDevices_FailureMarksSnapshotPartial(t *testing.T) {
 	}
 }
 
-// A nil tracker is the request path (GET /api/dashboard/noisy), which has no
-// snapshot to mark. It must degrade exactly as before rather than panic.
+// computeStatus.note is nil-safe so a helper can run without a snapshot to
+// mark. With a nil tracker noisyDevices must degrade, not panic.
 func TestNoisyDevices_NilTrackerDoesNotPanic(t *testing.T) {
 	d := database.NewDatabaseForTesting(t)
 	g := d.Gorm()

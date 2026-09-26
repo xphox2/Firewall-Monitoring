@@ -489,7 +489,7 @@ The grouped overview below covers every category.
 
 - **Devices:** `GET/POST /devices` (`POST` with `"reuse_name": true` creates a new device under a retired device's name instead of the advisory `409` that offers to restore it — names are unique among *active* devices only; every device carries a read-only `uuid`, minted on create and immutable — it survives retire/restore, is never reused by a same-name replacement, and is ignored in `POST`/`PUT` bodies), `GET/PUT/DELETE /devices/:id` (`DELETE` **retires** the device — history preserved, polling stops; see `POST /devices/:id/{retire,restore}`), the admin-only **permanent purge** of a retired device's data as a background job — `POST /devices/:id/purge` (`{confirm_name, password, totp_code}`, re-authenticated, `202` + job), `POST /devices/:id/purge/cancel`, `GET /devices/:id/purge` (latest job), `GET /devices/:id/purge/estimate` (capped per-table counts + affected IPSec tunnels), `GET /purge-jobs` — `POST /devices/test`, and per-device detail/history/charts under `/devices/:id/{detail,interfaces/:ifIndex/{history,chart},status-history,process-history,config-history[/:revId[/view]],config-history/diff,ha-status,sdwan-health,security-stats,interface-errors,vpn/:tunnel/chart,alert-config}`
 - **Sites:** `GET/POST /sites`, `GET/PUT/DELETE /sites/:id`, `GET/PUT/DELETE /sites/:id/alert-config`
-- **Probes:** `GET/POST /probes`, `GET/PUT/DELETE /probes/:id`, `GET /probes/pending`, `GET /probes/stats`, `GET /probes/:id/stats`, `POST /probes/:id/{approve,reject,regenerate-key}`, `POST /probes/test`
+- **Probes:** `GET/POST /probes`, `GET/PUT/DELETE /probes/:id`, `GET /probes/pending`, `GET /probes/stats` (per-probe totals; large tables estimated), `GET /probes/stats/global`, `POST /probes/:id/{approve,reject,regenerate-key}`, `POST /probes/test`
 - **Connections:** `GET/POST /connections`, `GET/PUT/DELETE /connections/:id`, `GET /connections/:id/{detail,events,flows,traffic}`, `GET /connections/{status-summary,vpn-map}`
 - **Alerts:** `GET /alerts`, `/alerts/:id`, `/alerts/stats`; `POST /alerts/:id/{acknowledge,snooze,unsnooze,notes}`; bulk `POST /alerts/bulk-{acknowledge,snooze}[-filter]`
 - **Alert policies:** `GET/POST /alert-policies`, `GET/PUT/DELETE /alert-policies/:id`, `POST /alert-policies/:id/clone`, `PUT /alert-policies/:id/rules`
@@ -498,7 +498,7 @@ The grouped overview below covers every category.
 - **IRC:** `GET/POST /irc/{servers,channels,commands}`, `PUT/DELETE /irc/{servers,channels,commands}/:id`, `POST /irc/servers/:id/{connect,disconnect}`, `POST /irc/{send,servers/test}`
 - **Reports:** `GET /reports/preview`, `POST /reports/send`
 - **Settings:** `GET/POST /settings`, `POST /settings/{password,test-email,test-webhook}`, `GET /display-settings`
-- **Dashboard / uptime:** `GET /dashboard[/:id|/stats|/diag]`, `GET /uptime`, `POST /uptime/reset`
+- **Dashboard / uptime:** `GET /dashboard[/:id|/diag]`, `GET /dashboard/{health,summary}`, `GET /uptime`, `POST /uptime/reset`
 
 ### Probe ingestion (probe → server, per-probe key auth) — base `/api/probes`
 

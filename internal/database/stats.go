@@ -300,54 +300,19 @@ func (d *Database) GetSyslogStats(hours int, deviceID uint) (*EventStatsResult, 
 	return result, nil
 }
 
-// DashboardTimeSeries holds overview metrics over time
+// DashboardTimeSeries is the envelope of the dashboard's alerts sparkline. The
+// browser reads `alerts_over_time`.
 type DashboardTimeSeries struct {
-	FlowsOverTime   []TimeBucket `json:"flows_over_time"`
-	AlertsOverTime  []TimeBucket `json:"alerts_over_time"`
-	SyslogOverTime  []TimeBucket `json:"syslog_over_time"`
-	TrapsOverTime   []TimeBucket `json:"traps_over_time"`
-	DeviceStatusMap []KeyCount   `json:"device_status"`
+	AlertsOverTime []TimeBucket `json:"alerts_over_time"`
 }
 
-// GetAlertsTimeSeries returns ONLY the hourly alert counts, in the same envelope
-// as GetDashboardTimeSeries.
-//
-// The system-health composite renders a single alerts sparkline and reads only
-// `alerts_over_time` — but it used to call GetDashboardTimeSeries, which also
-// builds hourly GROUP BYs over flow_samples, syslog_messages and trap_events and
-// then throws all three away. On production the syslog one alone was measured at
-// 7.0s (an external merge sort spilling 52MB), for a series nothing displays.
-//
-// The envelope is deliberately the same *DashboardTimeSeries: the browser reads
-// `trend.alerts_over_time`, so returning a bare slice here would silently leave
-// an empty sparkline with no error anywhere. The unused series stay nil.
+// GetAlertsTimeSeries returns the hourly alert counts for the system-health
+// composite's alerts sparkline. It once came from a wider dashboard series that
+// also built hourly GROUP BYs over flow_samples, syslog_messages and trap_events
+// only to throw them away — the syslog one alone measured 7.0 s on production.
 func (d *Database) GetAlertsTimeSeries(hours int) (*DashboardTimeSeries, error) {
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 	return &DashboardTimeSeries{
 		AlertsOverTime: d.timeSeriesCount(&models.Alert{}, cutoff, 0),
 	}, nil
-}
-
-// GetDashboardTimeSeries returns dashboard-level time-series data
-func (d *Database) GetDashboardTimeSeries(hours int) (*DashboardTimeSeries, error) {
-	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
-	result := &DashboardTimeSeries{
-		FlowsOverTime:  d.timeSeriesCount(&models.FlowSample{}, cutoff, 0),
-		AlertsOverTime: d.timeSeriesCount(&models.Alert{}, cutoff, 0),
-		SyslogOverTime: d.timeSeriesCount(&models.SyslogMessage{}, cutoff, 0),
-		TrapsOverTime:  d.timeSeriesCount(&models.TrapEvent{}, cutoff, 0),
-	}
-
-	// Device status distribution
-	var deviceStatus []struct {
-		Status string
-		Count  int64
-	}
-	d.db.Model(&models.Device{}).Where("enabled = ?", true).
-		Select("status, COUNT(*) as count").Group("status").Scan(&deviceStatus)
-	for _, s := range deviceStatus {
-		result.DeviceStatusMap = append(result.DeviceStatusMap, KeyCount{Key: s.Status, Count: s.Count})
-	}
-
-	return result, nil
 }

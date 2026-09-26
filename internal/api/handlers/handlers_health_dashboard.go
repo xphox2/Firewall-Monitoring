@@ -420,10 +420,10 @@ type computeStatus struct {
 // note records a failure for `what` and reports whether one happened, so callers
 // can both track and branch in one expression.
 //
-// NIL-SAFE on purpose. noisyDevices is shared between this background compute
-// and the request-path GET /api/dashboard/noisy, and only the former has a
-// snapshot to mark. A nil receiver still logs and still reports the failure to
-// its caller; it just has nowhere to record it.
+// NIL-SAFE on purpose, so a helper such as noisyDevices can be called without a
+// snapshot to mark (it once also served a request-path endpoint). A nil
+// receiver still logs and still reports the failure to its caller; it just has
+// nowhere to record it.
 func (cs *computeStatus) note(what string, err error) bool {
 	if err == nil {
 		return false

@@ -76,6 +76,24 @@ browser still checks on every load, so a deploy is picked up by a normal reload
 exactly as before, but an unchanged file comes back as an empty 304. All other
 responses keep `no-store`, and the other security headers still apply to assets.
 
+### Removed — the unreachable pre-v0.11.200 dashboard
+
+The admin dashboard has been the background-snapshot health console
+(`FwmonDashboard`) for many releases; the old stat-grid dashboard behind it was
+never reached, because `loadDashboard` delegated first. Removed with it:
+
+- `GET /admin/api/dashboard/noisy` and `GET /admin/api/dashboard/stats` — no page
+  called either. The noisy-device leaderboard itself is unchanged: the dashboard
+  reads it from the health snapshot.
+- `GET /admin/api/probes/:id/stats` (96 queries per call) — its only caller was
+  the never-opened probe detail modal, also removed.
+- The stale-device and noisy-device cards' scripts, the dashboard activity
+  charts, and about 380 lines of unreachable JavaScript.
+
+One behaviour to know: if `admin-dashboard-modules.js` ever failed to load, the
+dashboard used to fall back to the old view; it now stays empty. Both scripts
+ship inside the same binary.
+
 ## [0.11.256] - 2026-09-25
 
 ### Fixed — the daily retention pass switched off alert evaluation for as long as it ran

@@ -1017,27 +1017,6 @@ type dashboardSummaryDevice struct {
 // list asserts that file uses the background store and never h.reqDB, and the
 // summary needs exactly that guarantee.
 
-// GetNoisyDevices returns the top-N devices ranked by recent alert + syslog
-// volume, computed with a fixed set of GROUP BY device_id queries (bounded by the
-// hours window → partition pruning on syslog_messages). This replaces the old
-// dashboard behavior of firing /alerts/stats + /syslog/stats per device (2N
-// round-trips) with a single request.
-func (h *Handler) GetNoisyDevices(c *gin.Context) {
-	db := h.reqDB(c)
-	if db == nil {
-		c.JSON(http.StatusOK, response.Success([]gin.H{}))
-		return
-	}
-	limit := 10
-	if lq := c.Query("limit"); lq != "" {
-		if n, err := strconv.Atoi(lq); err == nil && n > 0 && n <= 100 {
-			limit = n
-		}
-	}
-	// nil tracker: this is the request path, with no snapshot to mark partial.
-	c.JSON(http.StatusOK, response.Success(noisyDevices(db.Gorm(), httputil.ParseHours(c), limit, nil)))
-}
-
 // noisyRow is one entry in the noisy-device leaderboard.
 type noisyRow struct {
 	DeviceID uint   `json:"device_id"`
@@ -1049,10 +1028,8 @@ type noisyRow struct {
 
 // noisyDevices computes the top-`limit` devices by alert + syslog volume over the
 // last `hours`, with a fixed set of GROUP BY device_id queries (bounded window →
-// partition pruning). Shared by GET /api/dashboard/noisy and the cached health
-// composite. Errors are logged and degrade to partial results, never fatal.
-// cs may be nil: the request-path caller has no snapshot to mark. See
-// computeStatus.note, which is nil-safe for exactly this.
+// partition pruning), for the dashboard's background health snapshot. Errors are
+// logged, recorded on cs and degrade to partial results, never fatal.
 func noisyDevices(g *gorm.DB, hours, limit int, cs *computeStatus) []noisyRow {
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 
@@ -1214,22 +1191,4 @@ func (h *Handler) GetDeviceDataDiag(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response.Success(results))
-}
-
-func (h *Handler) GetDashboardStats(c *gin.Context) {
-	db := h.reqDB(c)
-	if db == nil {
-		c.JSON(http.StatusOK, response.Success(nil))
-		return
-	}
-
-	hours := httputil.ParseHours(c)
-
-	stats, err := db.GetDashboardTimeSeries(hours)
-	if err != nil {
-		httputil.InternalError(c, "Failed to get dashboard stats", err)
-		return
-	}
-
-	c.JSON(http.StatusOK, response.Success(stats))
 }
