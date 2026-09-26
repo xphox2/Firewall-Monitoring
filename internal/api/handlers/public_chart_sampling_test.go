@@ -104,7 +104,9 @@ type publicStatusBody struct {
 	} `json:"data"`
 }
 
-func seedStatusRows(t *testing.T, h *Handler, devID uint, span time.Duration, every time.Duration) {
+// seedStatusRows writes one row every `every` across the last `span` and
+// returns the newest row's timestamp.
+func seedStatusRows(t *testing.T, h *Handler, devID uint, span time.Duration, every time.Duration) time.Time {
 	t.Helper()
 	now := time.Now()
 	var rows []models.SystemStatus
@@ -114,6 +116,7 @@ func seedStatusRows(t *testing.T, h *Handler, devID uint, span time.Duration, ev
 	if err := h.db.Gorm().CreateInBatches(&rows, 500).Error; err != nil {
 		t.Fatal(err)
 	}
+	return rows[len(rows)-1].Timestamp
 }
 
 func statusSpan(t *testing.T, h *Handler, url string) (int, time.Duration) {
@@ -139,28 +142,30 @@ func statusSpan(t *testing.T, h *Handler, url string) (int, time.Duration) {
 func TestGetPublicStatusHistory_WeekSpansTheWeek(t *testing.T) {
 	h, db := setupTestHandler(t)
 	dev := seedPublicDeviceWithInterfaces(t, db)
-	seedStatusRows(t, h, dev.ID, 168*time.Hour, time.Minute) // 10,080 rows
+	// 5,040 rows: the old 2,000-row read covered only ~66 h of this week.
+	newest := seedStatusRows(t, h, dev.ID, 168*time.Hour, 2*time.Minute)
 	n, span := statusSpan(t, h, fmt.Sprintf("/endpoint?device_id=%d&hours=168", dev.ID))
 	if n > 181 || span < 160*time.Hour {
 		t.Fatalf("%d points spanning %v, want <= 181 points across nearly the whole week", n, span)
 	}
-	// The newest point is within a minute of now as an absolute instant: a
-	// local time followed by a literal Z would be off by the zone offset.
+	// The newest point is the newest row as an absolute instant: a local time
+	// followed by a literal Z would be off by the zone offset. Compared with the
+	// seeded row, not the clock — under -race this test can run for minutes.
 	w := doPublicGet(t, h.GetPublicStatusHistory, fmt.Sprintf("/endpoint?device_id=%d&hours=168", dev.ID))
 	var b publicStatusBody
 	if err := json.Unmarshal(w.Body.Bytes(), &b); err != nil || len(b.Data) == 0 {
 		t.Fatalf("decode: %v", err)
 	}
 	last, err := time.Parse(time.RFC3339, b.Data[len(b.Data)-1].Timestamp)
-	if err != nil || time.Since(last) > 2*time.Minute || time.Since(last) < 0 {
-		t.Fatalf("newest point %q is not the last minute in UTC (err %v)", b.Data[len(b.Data)-1].Timestamp, err)
+	if err != nil || !last.Equal(newest.Truncate(time.Second)) {
+		t.Fatalf("newest point %q, want the newest row %v in UTC (err %v)", b.Data[len(b.Data)-1].Timestamp, newest.UTC(), err)
 	}
 }
 
 func TestGetPublicStatusHistory_SubHourAndDefault(t *testing.T) {
 	h, db := setupTestHandler(t)
 	dev := seedPublicDeviceWithInterfaces(t, db)
-	seedStatusRows(t, h, dev.ID, 48*time.Hour, time.Minute)
+	_ = seedStatusRows(t, h, dev.ID, 48*time.Hour, time.Minute)
 	if _, span := statusSpan(t, h, fmt.Sprintf("/endpoint?device_id=%d&hours=0.25", dev.ID)); span > 15*time.Minute || span < 10*time.Minute {
 		t.Fatalf("hours=0.25 spans %v, want ~15 minutes (AUDIT-235)", span)
 	}
