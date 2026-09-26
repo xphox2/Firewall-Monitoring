@@ -26,7 +26,7 @@ func TestGatherDeviceData_WeeklyCPUCoversTheWholeWeek(t *testing.T) {
 		if i == 2400 { // day 6
 			cpu = 97
 		}
-		rows = append(rows, models.SystemStatus{DeviceID: dev.ID, Timestamp: from.Add(time.Duration(i)*230*time.Second + time.Minute), CPUUsage: cpu, MemoryUsage: 40, DiskUsage: float64(i), SessionCount: i})
+		rows = append(rows, models.SystemStatus{DeviceID: dev.ID, Timestamp: from.Add(time.Duration(i)*230*time.Second + 115*time.Second), CPUUsage: cpu, MemoryUsage: 40, DiskUsage: float64(i), SessionCount: i})
 	}
 	if err := db.Gorm().CreateInBatches(&rows, 500).Error; err != nil {
 		t.Fatal(err)

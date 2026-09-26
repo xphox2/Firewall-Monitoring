@@ -174,6 +174,8 @@ type SystemStatusSummary struct {
 // over the whole window. With no rows every field is zero.
 func (d *Database) GetSystemStatusSummary(deviceID uint, from, to time.Time) (SystemStatusSummary, error) {
 	var s SystemStatusSummary
+	// The select-list subqueries bind first, textually; all three (device, from,
+	// to) triples are identical, so keep them identical if one ever changes.
 	const newest = `FROM system_status WHERE device_id = ? AND timestamp > ? AND timestamp <= ? ORDER BY timestamp DESC, id DESC LIMIT 1`
 	err := d.db.Raw(`SELECT COUNT(*) AS n,
 		COALESCE(AVG(cpu_usage), 0) AS cpu_avg, COALESCE(MAX(cpu_usage), 0) AS cpu_max,

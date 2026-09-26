@@ -166,7 +166,7 @@ func TestGetSystemStatusSummary_WholeWindowAndEmpty(t *testing.T) {
 	from := to.Add(-168 * time.Hour)
 	rows := make([]models.SystemStatus, 0, 2600)
 	for i := 0; i < 2600; i++ {
-		ts := from.Add(time.Duration(i)*230*time.Second + time.Minute)
+		ts := from.Add(time.Duration(i)*230*time.Second + 115*time.Second)
 		cpu := 10.0
 		if i == 2400 { // day 6: past the old 2,000-row window
 			cpu = 97

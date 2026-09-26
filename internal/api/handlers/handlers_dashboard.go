@@ -669,7 +669,9 @@ func (h *Handler) GetPublicStatusHistory(c *gin.Context) {
 
 	// The same range parser as the bandwidth tiles, so both tiles of one
 	// dashboard cover the same window. It accepts the fractional hours the
-	// 15m/30m ranges send (AUDIT-235). The default stays 24 h.
+	// 15m/30m ranges send (AUDIT-235). The default stays 24 h; an unparseable or
+	// over-cap value takes publicChartLookback's 1 h default (the page never
+	// sends one).
 	//
 	// Boundary samples across the WHOLE window. This used to read the first
 	// 2,000 rows in timestamp order — about 31 hours at ~1,500 status rows a

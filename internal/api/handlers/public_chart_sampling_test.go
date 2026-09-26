@@ -86,6 +86,11 @@ func TestGetPublicInterfaceChart_YearRangeSamplesWholeWindow(t *testing.T) {
 			t.Fatalf("rx_rate[%d] = %v Mbps, want 8 between consecutive samples", i, r)
 		}
 	}
+	// Exactly the sampler (no allowlist is set, so the name lookup does not run);
+	// an empty capture would make the loop below assert nothing.
+	if len(stmts) != 1 {
+		t.Fatalf("captured %d interface_stats statements, want exactly the sampler", len(stmts))
+	}
 	for _, s := range stmts {
 		if !strings.Contains(s, "LIMIT") {
 			t.Fatalf("an interface_stats statement without LIMIT — the window is read unbounded again: %s", s)

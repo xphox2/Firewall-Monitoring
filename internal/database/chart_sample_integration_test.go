@@ -3,9 +3,11 @@
 // Only PostgreSQL runs the LATERAL form of the public-chart sampler, so this
 // lane is its only proof: it must pick exactly the rows the portable form
 // (which the SQLite tests pin) picks, and plan as one index probe per bucket.
+// Both tables are monthly-partitioned parents on this fresh schema.
 package database
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -48,9 +50,11 @@ func TestChartSampleIntegration_LateralMatchesPortable(t *testing.T) {
 	// interface 2 for the plan check below. On a sparse series a sort of the
 	// bucket is genuinely cheaper and the planner picks it, so the check would
 	// test the fixture, not the design.
+	// Two dense interfaces on the device, so the (device_id, index, timestamp)
+	// index is the cheaper path rather than the timestamp index plus a filter.
 	if err := d.db.Exec(`INSERT INTO interface_stats (device_id, "index", name, timestamp, in_bytes, out_bytes)
-		SELECT 1, 2, 'lan1', ?::timestamptz + g * interval '2.5 seconds', g, g
-		FROM generate_series(1, 14350) g`, from).Error; err != nil {
+		SELECT 1, 2 + g % 2, 'lan', ?::timestamptz + g * interval '1.25 seconds', g, g
+		FROM generate_series(1, 28700) g`, from).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := d.db.Exec("ANALYZE interface_stats; ANALYZE system_status").Error; err != nil {
@@ -92,6 +96,11 @@ func TestChartSampleIntegration_LateralMatchesPortable(t *testing.T) {
 	if err != nil || len(got) != 9 {
 		t.Fatalf("SampleInterfaceStats: %d rows, err %v; want 9 after the same-instant dedup", len(got), err)
 	}
+	for i := 1; i < len(got); i++ {
+		if !got[i].Timestamp.After(got[i-1].Timestamp) {
+			t.Fatalf("points %d and %d are not strictly increasing in time", i-1, i)
+		}
+	}
 
 	// One index probe per bucket at production density: the index supplies the
 	// timestamp order, so under each probe's Limit there may be at most an
@@ -115,8 +124,19 @@ func TestChartSampleIntegration_LateralMatchesPortable(t *testing.T) {
 		t.Fatalf("explain rows: %v", err)
 	}
 	text := strings.Join(plan, "\n")
-	if !strings.Contains(text, "Index Cond") || !strings.Contains(text, "rows=1 loops=10") {
+	if !strings.Contains(text, "device_idx_ts") || !strings.Contains(text, "rows=1 loops=10") {
 		t.Fatalf("no index condition in the plan:\n%s", text)
+	}
+	// Total reads stay a handful per probe; reading whole buckets of a dense
+	// series would be hundreds of buffers.
+	var hit int
+	for _, line := range plan {
+		if n, err := fmt.Sscanf(strings.TrimSpace(line), "Buffers: shared hit=%d", &hit); err == nil && n == 1 {
+			break
+		}
+	}
+	if hit == 0 || hit > 8*10 {
+		t.Fatalf("top-level shared buffers = %d, want 1..80 for 10 probes:\n%s", hit, text)
 	}
 	// The root may be the outer ORDER BY's Sort over at most buckets+1 rows;
 	// any other plain Sort would sit under a probe and sort its whole bucket.

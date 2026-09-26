@@ -25,7 +25,10 @@ All notable changes to this project are documented in this file.
   peak described roughly the first day and a half, and disk usage and session
   count came from a row about 31 hours old. They are now aggregated over the
   whole window in one query, and disk usage and session count come from the
-  newest row. Daily reports were within the 2,000-row window and are unchanged.
+  newest row. On production every device writes fewer than 2,000 status rows a
+  day (at most 1,523, measured 2026-09-26), so daily reports there are unchanged;
+  a device above that rate — one with both SNMP and SSH status writers can reach
+  ~2,880 a day — now gets its whole day too.
 - **Chart timestamps are sent in UTC.** Both public charts wrote the local time
   followed by a literal `Z`; with a non-UTC server zone every label was shifted.
 
