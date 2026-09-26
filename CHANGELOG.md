@@ -64,6 +64,18 @@ Migration v67 adds `idx_vpn_status_timestamp`; on a production-shaped copy the
 plan drops the sequential scan entirely. The build is a plain `CREATE INDEX`
 (seconds at 215 MB), during which the poller's `vpn_status` inserts wait.
 
+### Changed — admin pages stop re-downloading every script and stylesheet
+
+Every response carried `Cache-Control: no-store` — correct for pages and API
+data, but it also covered the 34 files under `/static`, which had no ETag or
+Last-Modified either (the embedded files carry no modification times). Every
+admin page load fetched all of them again.
+
+`/static` now sends a content-hash `ETag` with `Cache-Control: no-cache`. The
+browser still checks on every load, so a deploy is picked up by a normal reload
+exactly as before, but an unchanged file comes back as an empty 304. All other
+responses keep `no-store`, and the other security headers still apply to assets.
+
 ## [0.11.256] - 2026-09-25
 
 ### Fixed — the daily retention pass switched off alert evaluation for as long as it ran
