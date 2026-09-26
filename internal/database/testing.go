@@ -99,7 +99,7 @@ var testModels = []interface{}{
 }
 
 // NewDatabaseForTesting creates an in-memory SQLite Database for use in tests.
-// The returned Database has no batch inserters (syslogBatch etc. are nil) since
+// The returned Database has no batch inserters (trapBatch etc. are nil) since
 // handlers use db.Gorm().Create() directly for single-record writes.
 func NewDatabaseForTesting(t interface {
 	Helper()

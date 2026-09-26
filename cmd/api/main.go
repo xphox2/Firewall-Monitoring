@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.256"
+const ServerVersion = "0.11.257"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -615,6 +615,20 @@ func main() {
 	log.Println("Server exited")
 }
 
+// registerStatic mounts /static from diskDir when it exists, else from the
+// embedded tree, behind StaticCache (ETag + revalidate instead of the global
+// no-store). Split out so a test can exercise exactly the production wiring.
+func registerStatic(router *gin.Engine, diskDir string) {
+	if info, err := os.Stat(diskDir); err == nil && info.IsDir() {
+		router.Group("/static", middleware.StaticCache(os.DirFS(diskDir))).Static("/", diskDir)
+		log.Printf("Static assets: serving from %s (disk)", diskDir)
+		return
+	}
+	subFS, _ := fs.Sub(staticFiles, "static")
+	router.Group("/static", middleware.StaticCache(subFS)).StaticFS("/", http.FS(subFS))
+	log.Println("Static assets: serving from embedded FS (disk dir not found)")
+}
+
 func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handler, authManager *auth.AuthManager, db *database.Database) {
 	router.Use(middleware.SecureHeaders())
 	router.Use(middleware.CORS(cfg))
@@ -643,14 +657,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	// embedded FS when the source dir isn't present (Docker runtime, single-
 	// binary deploys without source). Source-on-disk is intentionally
 	// preferred so operators can hot-fix without recompiling.
-	if info, err := os.Stat("./cmd/api/static"); err == nil && info.IsDir() {
-		router.Static("/static", "./cmd/api/static")
-		log.Println("Static assets: serving from ./cmd/api/static (disk)")
-	} else {
-		subFS, _ := fs.Sub(staticFiles, "static")
-		router.StaticFS("/static", http.FS(subFS))
-		log.Println("Static assets: serving from embedded FS (disk dir not found)")
-	}
+	registerStatic(router, "./cmd/api/static")
 	router.LoadHTMLGlob("./web/**/*.html")
 
 	router.GET("/", func(c *gin.Context) {
@@ -1068,7 +1075,6 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/syslog", handler.GetSyslogMessages)
 		admin.GET("/api/syslog/:id", handler.GetSyslogMessage)
 		admin.GET("/api/flows", handler.GetFlowSamples)
-		admin.GET("/api/probes/:id/stats", handler.GetProbeStats)
 
 		admin.GET("/api/devices/:id/detail", handler.GetDeviceDetail)
 		admin.GET("/api/devices/:id/interfaces/:ifIndex/history", handler.GetInterfaceHistory)
@@ -1113,10 +1119,8 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/alerts/stats", handler.GetAlertStats)
 		admin.GET("/api/traps/stats", handler.GetTrapStats)
 		admin.GET("/api/syslog/stats", handler.GetSyslogStats)
-		admin.GET("/api/dashboard/stats", handler.GetDashboardStats)
 		admin.GET("/api/dashboard/diag", handler.GetDeviceDataDiag)
 		admin.GET("/api/dashboard/summary", handler.GetDashboardSummary)
-		admin.GET("/api/dashboard/noisy", handler.GetNoisyDevices)
 		admin.GET("/api/dashboard/health", handler.GetDashboardHealth)
 		admin.GET("/api/system", handler.GetSystemHealth)
 		admin.GET("/api/system/metrics/chart", handler.GetServerMetricChart)

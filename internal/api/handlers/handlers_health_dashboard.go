@@ -372,17 +372,18 @@ func (h *Handler) computeDashboardSummary(cs *computeStatus) gin.H {
 	probePending := probeCount("probe count pending", "approval_status = ?", "pending")
 	probeStale := probeCount("probe count stale", "approval_status = ? AND status <> ?", "approved", "online")
 
-	// Syslog + trap 24h totals via bare bounded COUNTs. GetSyslogStats/GetTrapStats
-	// also compute severity + hourly-bucket breakdowns the rail never uses, so we
-	// count directly. Measured 327ms warm on production after the 2026-09-07
-	// PostgreSQL tuning (649ms before it) — acceptable in a 60s background pass,
-	// where it used to be paid on the request path by every poll.
+	// Syslog 24h comes from the ingest meter through GetSyslogStats — the same
+	// source and definition as the Syslog page's cards ("received, whole UTC
+	// hours"). The bare COUNT it replaces read ~4.7M index entries on
+	// production (2.9 s) once a minute. An empty meter (fresh install) is a
+	// genuine 0, not a failure.
+	var syslog24 int64
+	if st, err := db.GetSyslogStats(24, 0); !cs.note("summary syslog 24h", err) {
+		syslog24 = st.Total
+	}
+	// Traps stay a bare bounded COUNT: the table is small (≈200k rows total).
 	cutoff24 := time.Now().Add(-24 * time.Hour)
-	var syslog24, syslogSummary24, trap24 int64
-	cs.note("summary syslog 24h", g.Model(&models.SyslogMessage{}).Where("timestamp > ?", cutoff24).Count(&syslog24).Error)
-	cs.note("summary syslog-summary 24h", g.Model(&models.SyslogSummary{}).Where("timestamp > ?", cutoff24).
-		Select("COALESCE(SUM(count),0)").Scan(&syslogSummary24).Error)
-	syslog24 += syslogSummary24
+	var trap24 int64
 	cs.note("summary traps 24h", g.Model(&models.TrapEvent{}).Where("timestamp > ?", cutoff24).Count(&trap24).Error)
 
 	return gin.H{
@@ -419,10 +420,10 @@ type computeStatus struct {
 // note records a failure for `what` and reports whether one happened, so callers
 // can both track and branch in one expression.
 //
-// NIL-SAFE on purpose. noisyDevices is shared between this background compute
-// and the request-path GET /api/dashboard/noisy, and only the former has a
-// snapshot to mark. A nil receiver still logs and still reports the failure to
-// its caller; it just has nowhere to record it.
+// NIL-SAFE on purpose, so a helper such as noisyDevices can be called without a
+// snapshot to mark (it once also served a request-path endpoint). A nil
+// receiver still logs and still reports the failure to its caller; it just has
+// nowhere to record it.
 func (cs *computeStatus) note(what string, err error) bool {
 	if err == nil {
 		return false

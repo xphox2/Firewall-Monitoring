@@ -1,6 +1,103 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.257] - 2026-09-26
+
+### Fixed — the Syslog page could not show a 7-day or 30-day view, and 24 h took ~24 s
+
+Measured on production before the change: one 24 h Syslog page load ran three
+queries over ~4.7M `syslog_messages` rows — the total (2.9 s), the severity split
+(13.5 s) and the hourly chart (7.3 s, with a 107 MB on-disk sort). 7 d and 30 d
+could not finish inside the 30 s statement and write timeouts at all.
+
+- **Fleet-wide Syslog figures for windows of 12 h or more now come from the
+  ingest meter** (`syslog_ingest_hourly`, a few hundred rows) instead of counting
+  `syslog_messages`. Over the last 48 h on production the meter matched the raw
+  table to 35 rows in 8.9M. The 1 h and 6 h views, and any device-filtered
+  view, keep the exact path (6 h measured at ~1.8 s).
+- **What the meter counts is different, and the page now says so.** It counts
+  messages *received* per whole UTC hour, so the window starts up to 59 minutes
+  early, a collector backlog replay lands in the hour it arrived, and rows that
+  retention later deletes or summarises are still counted. The total card now
+  reads "Received since …, whole hours" when the meter answered and "Stored, last
+  Nh" when the exact path did — the label follows the response, not the selected
+  range. Where the window reaches back past the meter's history (it kept only 8
+  days until this release), the card says where its figures start.
+- **The meter's retention is 400 days** (was 8), so long windows stay covered
+  once history accumulates. At most 192 rows a day.
+- **Chart titles and bar labels follow the selected range** on the Syslog, Alerts
+  and Traps pages. The titles always read "(24h)" and 7 d / 30 d bars were
+  labelled with a time of day only.
+- **The syslog list's "of N" count stops at 10,000.** It was the same full
+  24 h count (2.9 s, more with a search); capped it measured 2.2 ms. Past the cap
+  the pager reads "10,000+" and Next stays available while full pages come back.
+  The pager counts *stored* messages matching the filters, which is why it can
+  differ from the meter-based cards at 12 h and above.
+- **The dashboard's 24 h syslog figure** (the vitals rail across the admin console)
+  now reads the meter too instead of a 2.9 s count once a minute.
+- Removed `SaveSyslogMessage` (singular) and its batch inserter: it had no
+  callers and wrote around the meter.
+
+### Fixed — the Probes page spent 20 seconds counting syslog rows on every load
+
+Each probe card's "Logs" figure was an exact `count(*) … GROUP BY probe_id` over
+all of `syslog_messages` — 136M rows, **20.2 s** on production, every visit, and
+growing with the table.
+
+- **Large tables (over a million rows) are now answered from PostgreSQL's own
+  statistics**: the table's row estimate times the probe's share of it in
+  `pg_stats`, read per partition, the same kind of figure the Data Totals card
+  already shows. Estimated figures carry a "~" and a tooltip; on production the
+  estimate was within 2% of the true count, and it can lag by up to ~10% between
+  automatic analyzes. A probe too small to appear in the statistics is still
+  counted exactly, as is everything on smaller tables. A partition that has never
+  been analyzed counts as empty until autovacuum reaches it (after its first few
+  dozen rows): future months are created ahead of time and would otherwise force
+  the slow count on every load.
+- The four "last hour" counts that endpoint also computed were never shown
+  anywhere and are gone.
+
+### Changed — `vpn_status` gets a timestamp index (migration v67)
+
+The fleet-wide "latest status per tunnel" query behind VPN alerting, VPN and
+overlay auto-detection and the VPN map filters on the last 27 hours. With no
+index leading on `timestamp`, production answered it with a sequential scan of all
+841k rows to keep 12k — 81 ms, 12 times a minute, 3.8M rows read per minute.
+Migration v67 adds `idx_vpn_status_timestamp`; on a production-shaped copy the
+plan drops the sequential scan entirely. The build is a plain `CREATE INDEX`
+(seconds at 215 MB), during which the poller's `vpn_status` inserts wait.
+
+### Changed — admin pages stop re-downloading every script and stylesheet
+
+Every response carried `Cache-Control: no-store` — correct for pages and API
+data, but it also covered `/static` — the 34 scripts, stylesheets and fonts
+`admin.html` references — which had no ETag or
+Last-Modified either (the embedded files carry no modification times). Every
+admin page load fetched all of them again.
+
+`/static` now sends a content-hash `ETag` with `Cache-Control: no-cache`. The
+browser still checks on every load, so a deploy is picked up by a normal reload
+exactly as before, but an unchanged file comes back as an empty 304. All other
+responses keep `no-store`, and the other security headers still apply to assets.
+
+### Removed — the unreachable legacy dashboard
+
+The admin dashboard is the background-snapshot health console
+(`FwmonDashboard`); the old stat-grid dashboard behind it was
+never reached, because `loadDashboard` delegated first. Removed with it:
+
+- `GET /admin/api/dashboard/noisy` and `GET /admin/api/dashboard/stats` — no page
+  called either. The noisy-device leaderboard itself is unchanged: the dashboard
+  reads it from the health snapshot.
+- `GET /admin/api/probes/:id/stats` (104 queries per call, 96 of them for an hourly
+  breakdown) — its only caller was the never-opened probe detail modal, also removed.
+- The stale-device and noisy-device cards' scripts, the dashboard activity
+  charts, and about 380 lines of unreachable JavaScript.
+
+One behaviour to know: if `admin-dashboard-modules.js` ever failed to load, the
+dashboard used to fall back to the old view; it now stays empty. Both scripts
+ship inside the same binary.
+
 ## [0.11.256] - 2026-09-25
 
 ### Fixed — the daily retention pass switched off alert evaluation for as long as it ran

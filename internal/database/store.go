@@ -135,6 +135,7 @@ type ProbeStore interface {
 	GetProbeCommandByCommandID(commandID string) (*models.ProbeCommand, error)
 	ExpireStaleProbeCommands() (int64, error)
 	CancelProbeCommand(probeID uint, commandID string) (bool, error)
+	ProbeTelemetryTotals(ids []uint) (map[uint]ProbeTotals, error)
 }
 
 // SiteStore covers site CRUD.
@@ -258,7 +259,6 @@ type ChartStore interface {
 	GetFlowInterfaceChartWindow(deviceID uint, ifIndex int, from, to time.Time) ([]InterfaceChartBucket, error)
 	GetVPNChartWindow(deviceID uint, tunnelName string, from, to time.Time) ([]VPNChartBucket, error)
 	GetVPNChartGroupWindow(deviceID uint, tunnelNames []string, from, to time.Time) ([]VPNChartBucket, error)
-	GetDashboardTimeSeries(hours int) (*DashboardTimeSeries, error)
 	GetAlertsTimeSeries(hours int) (*DashboardTimeSeries, error)
 }
 

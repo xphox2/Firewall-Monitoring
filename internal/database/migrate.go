@@ -1916,6 +1916,33 @@ func (d *Database) migrateTrapEventsTimestampIndex() error {
 	return nil
 }
 
+// migrateVPNStatusTimestampIndex (v67) adds a timestamp-leading index to
+// vpn_status. GetAllLatestVPNStatuses — run every poller telemetry cycle, by
+// VPN and overlay auto-detection, and by the VPN map page — filters the whole
+// fleet on `timestamp >= now − 27h`, and with only (device_id) and
+// (device_id, timestamp) to choose from, production ran it as a parallel
+// sequential scan of all 841k rows to keep 12k: 81 ms, 12 times a minute,
+// 3.8M tuples read per minute (measured 2026-09-26).
+//
+// The model tag carries the same index so fresh installs build it from the
+// baseline; this migration is what reaches existing databases, where the
+// baseline never runs again.
+//
+// Plain CREATE INDEX, as v57: vpn_status is 215 MB on production and builds in
+// seconds. The build holds a SHARE lock, so the poller's vpn_status inserts
+// wait for those seconds. vpn_status is never partitioned.
+func (d *Database) migrateVPNStatusTimestampIndex() error {
+	const create = `CREATE INDEX IF NOT EXISTS idx_vpn_status_timestamp ON vpn_status ("timestamp")`
+	if !d.dialect.IsPostgres() {
+		return d.db.Exec(create).Error
+	}
+	if err := d.execMaintenanceDDL(create); err != nil {
+		return fmt.Errorf("migrate v67 create idx_vpn_status_timestamp: %w", err)
+	}
+	log.Printf("migrate v67: ensured idx_vpn_status_timestamp on vpn_status")
+	return nil
+}
+
 // logSyslogIndexScale states up front why the wait is long, so the progress
 // lines that follow have context.
 func (d *Database) logSyslogIndexScale() {

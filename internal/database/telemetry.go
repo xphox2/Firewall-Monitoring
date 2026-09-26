@@ -702,11 +702,10 @@ func (d *Database) GetVPNTunnelCounts(deviceID uint) (up, total int, err error) 
 // other buried live ones.
 //
 // Grouped by CLASS as well as by tunnel (see vpnStateClass), so one scan returns
-// the newest state row AND the newest config row per tunnel. Adding a second
-// grouped scan instead would be materially worse here: vpn_status is not
-// partitioned and has no timestamp-leading index, so the fleet-wide sibling of
-// this query is already a full-scan shape run every poll cycle and every 15s by
-// the map.
+// the newest state row AND the newest config row per tunnel, rather than a
+// second grouped scan. The fleet-wide sibling (GetAllLatestVPNStatuses) runs
+// every poll cycle and every 15s from the map; until migration v67 added
+// idx_vpn_status_timestamp it was a full sequential scan of the table.
 func vpnLatestSubquery(db *gorm.DB, deviceID uint, prune time.Time) *gorm.DB {
 	return db.Model(&models.VPNStatus{}).
 		Select("tunnel_name, MAX(timestamp) as max_ts").

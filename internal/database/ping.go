@@ -211,14 +211,10 @@ func (d *Database) SaveLicenseInfo(licenses []models.LicenseInfo) error {
 	return d.db.Create(&licenses).Error
 }
 
-func (d *Database) SaveSyslogMessage(msg *models.SyslogMessage) error {
-	if d.syslogBatch != nil {
-		d.syslogBatch.Add(*msg)
-		return nil
-	}
-	return d.db.Create(msg).Error
-}
-
+// SaveSyslogMessages is the only way syslog rows are written: it is where the
+// ingest meter counts them, and the Syslog page and dashboard read their
+// fleet-wide counts from that meter. A write path that bypassed it would make
+// those counts silently wrong.
 func (d *Database) SaveSyslogMessages(msgs []models.SyslogMessage) error {
 	// Meter only the rows that landed: the fallback path drops rows it cannot
 	// salvage and still returns nil.

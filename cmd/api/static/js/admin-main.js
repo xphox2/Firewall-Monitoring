@@ -17,11 +17,6 @@
     var currentVpnMap = {};
     var currentProbes = [];
     var currentSites = [];
-    // Per-probe last-hour stats, keyed by probe id. Lets dashboard
-    // refreshes re-render probe cards with the last-known numbers instead
-    // of flashing back to the "loading..." placeholder every 30s — the
-    // placeholder should only show on the very first load of a probe.
-    var probeStatsCache = {};
     var connRefreshTimer;
     // Device purge jobs (v0.11.243): device_id -> latest job from /purge-jobs.
     // Loaded for admins only (the route is admin-only) and polled while any
@@ -74,15 +69,6 @@
     }
 
     var formatNum = AC.formatNum;
-
-    function timeAgo(dateStr) {
-        var d = new Date(dateStr);
-        var s = Math.floor((Date.now() - d) / 1000);
-        if (s < 60) return s + 's ago';
-        if (s < 3600) return Math.floor(s/60) + 'm ago';
-        if (s < 86400) return Math.floor(s/3600) + 'h ago';
-        return Math.floor(s/86400) + 'd ago';
-    }
 
     // ---- Navigation ----
     document.querySelectorAll('.nav-item[data-page]').forEach(function(item) {
@@ -156,377 +142,13 @@
     }
 
     // ---- Dashboard ----
-    // ---- Stale-device card (v0.10.216, bundle F3) ----
-    //
-    // The dashboard card lists every device whose last successful poll is
-    // older than the operator-selected threshold. Useful for catching the
-    // "device says online, but we haven't actually heard from it in 3
-    // hours" failure mode — a stuck poller, broken probe, mid-firmware
-    // upgrade, etc.
-    //
-    // Threshold is operator-controllable (15m / 30m / 1h / 3h / 12h / 24h)
-    // via the in-card <select>; default 1h. The selection is persisted in
-    // localStorage so the operator's preferred sensitivity sticks across
-    // reloads.
-    var STALE_THRESHOLD_KEY = 'fwmon-stale-threshold-min';
-    var staleDeviceListCache = [];
-
-    function getStaleThresholdMin() {
-        var sel = document.getElementById('stale-threshold-select');
-        if (sel && sel.value) return parseInt(sel.value, 10) || 60;
-        try {
-            var saved = localStorage.getItem(STALE_THRESHOLD_KEY);
-            if (saved) return parseInt(saved, 10) || 60;
-        } catch (e) { /* localStorage blocked — fall through */ }
-        return 60;
-    }
-
-    function renderStaleDevices(deviceList) {
-        staleDeviceListCache = deviceList || [];
-        var card  = document.getElementById('stale-devices-card');
-        var host  = document.getElementById('stale-devices-list');
-        var count = document.getElementById('stale-devices-count');
-        if (!card || !host) return;
-
-        var sel = document.getElementById('stale-threshold-select');
-        if (sel && !sel.__fwmonBound) {
-            sel.__fwmonBound = true;
-            try {
-                var saved = localStorage.getItem(STALE_THRESHOLD_KEY);
-                if (saved) sel.value = saved;
-            } catch (e) { /* ignore */ }
-            sel.addEventListener('change', function() {
-                try { localStorage.setItem(STALE_THRESHOLD_KEY, sel.value); } catch (e) { /* ignore */ }
-                renderStaleDevices(staleDeviceListCache);
-            });
-        }
-
-        var thresholdMs = getStaleThresholdMin() * 60 * 1000;
-        var now = Date.now();
-        var stale = staleDeviceListCache.filter(function(d) {
-            if (!d.last_polled) return true; // never polled → always stale
-            var t = new Date(d.last_polled).getTime();
-            if (!isFinite(t)) return true;
-            return (now - t) > thresholdMs;
-        });
-
-        if (stale.length === 0) {
-            card.style.display = 'none';
-            return;
-        }
-
-        // Sort: oldest last_polled first (most concerning).
-        stale.sort(function(a, b) {
-            var ta = a.last_polled ? new Date(a.last_polled).getTime() : 0;
-            var tb = b.last_polled ? new Date(b.last_polled).getTime() : 0;
-            return ta - tb;
-        });
-
-        card.style.display = '';
-        if (count) count.textContent = stale.length + ' stale';
-
-        host.innerHTML =
-            '<table style="width:100%;border-collapse:collapse;">' +
-                '<thead><tr>' +
-                    '<th style="text-align:left;color:var(--fwmon-text-faint);font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid var(--fwmon-border);">Device</th>' +
-                    '<th style="text-align:left;color:var(--fwmon-text-faint);font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid var(--fwmon-border);">IP</th>' +
-                    '<th style="text-align:left;color:var(--fwmon-text-faint);font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid var(--fwmon-border);">Last polled</th>' +
-                    '<th style="text-align:left;color:var(--fwmon-text-faint);font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid var(--fwmon-border);">Status</th>' +
-                    '<th></th>' +
-                '</tr></thead>' +
-                '<tbody>' +
-                stale.map(function(d) {
-                    var lastSeen = d.last_polled ? timeAgo(d.last_polled) : 'never';
-                    var statusBadge = '<span class="badge ' + escapeHtml(d.status || 'unknown') + '">' +
-                        escapeHtml((d.status || 'unknown').toUpperCase()) + '</span>';
-                    return '<tr>' +
-                        '<td style="padding:8px;border-bottom:1px solid var(--fwmon-border);">' +
-                            AC.deviceLink(d.id, d.name) +
-                        '</td>' +
-                        '<td class="mono" style="padding:8px;border-bottom:1px solid var(--fwmon-border);color:var(--fwmon-text-faint);">' + escapeHtml(d.ip_address || '-') + '</td>' +
-                        '<td style="padding:8px;border-bottom:1px solid var(--fwmon-border);color:var(--fwmon-text-faint);">' + lastSeen + '</td>' +
-                        '<td style="padding:8px;border-bottom:1px solid var(--fwmon-border);">' + statusBadge + '</td>' +
-                        '<td style="padding:8px;border-bottom:1px solid var(--fwmon-border);text-align:right;">' +
-                            AC.sshLaunchButton(d) +
-                        '</td>' +
-                    '</tr>';
-                }).join('') +
-                '</tbody>' +
-            '</table>';
-    }
-
-    // ---- Noisy-device leaderboard (v0.10.218, bundle G1) ----
-    //
-    // Ranks devices by recent alert + syslog volume so an operator can
-    // spot the top offenders that are filling the queue. Uses the
-    // `device_id` filter on /alerts/stats + /syslog/stats added in D4
-    // (v0.10.217) — without that filter we'd need an N+1 pattern.
-    //
-    // The naive query pattern is still N+1 *across the device list*:
-    // one /alerts/stats and one /syslog/stats call per device. Bounded
-    // by the dashboard's existing device cap (1000, per D3). We fire
-    // them in parallel and accept the request fan-out as the cost of
-    // staying frontend-only — a proper per-device aggregate endpoint
-    // could replace this in a future bundle if the request count
-    // becomes a problem.
-    var NOISY_WINDOW_KEY = 'fwmon-noisy-window-hours';
-    var noisyDeviceListCache = [];
-
-    function getNoisyWindowHours() {
-        var sel = document.getElementById('noisy-window-select');
-        if (sel && sel.value) return parseInt(sel.value, 10) || 24;
-        try {
-            var saved = localStorage.getItem(NOISY_WINDOW_KEY);
-            if (saved) return parseInt(saved, 10) || 24;
-        } catch (e) { /* ignore */ }
-        return 24;
-    }
-
-    function renderNoisyDevices(deviceList) {
-        noisyDeviceListCache = deviceList || [];
-        var card  = document.getElementById('noisy-devices-card');
-        var host  = document.getElementById('noisy-devices-list');
-        var count = document.getElementById('noisy-devices-count');
-        if (!card || !host) return;
-
-        var sel = document.getElementById('noisy-window-select');
-        if (sel && !sel.__fwmonBound) {
-            sel.__fwmonBound = true;
-            try {
-                var saved = localStorage.getItem(NOISY_WINDOW_KEY);
-                if (saved) sel.value = saved;
-            } catch (e) { /* ignore */ }
-            sel.addEventListener('change', function() {
-                try { localStorage.setItem(NOISY_WINDOW_KEY, sel.value); } catch (e) { /* ignore */ }
-                renderNoisyDevices(noisyDeviceListCache);
-            });
-        }
-
-        if (noisyDeviceListCache.length === 0) {
-            card.style.display = 'none';
-            return;
-        }
-
-        host.innerHTML = '<div class="loading" style="padding:24px;color:var(--fwmon-text-faint);">Loading top message producers…</div>';
-        card.style.display = '';
-
-        var hours = getNoisyWindowHours();
-        // Single batched request — the server computes the top-N devices by
-        // alert + syslog volume across the whole fleet in one grouped query
-        // (replaces the old 2N per-device /alerts/stats + /syslog/stats fan-out).
-        apiFetch(API_BASE + '/dashboard/noisy?hours=' + hours + '&limit=10').then(function(res) {
-            var rows = (res && res.data) ? res.data : [];
-            // Server already drops silent devices, sorts by volume, and caps to
-            // the limit — but guard defensively.
-            rows = rows.filter(function(r) { return r.total > 0; });
-            if (rows.length === 0) {
-                card.style.display = 'none';
-                return;
-            }
-            var topN = rows;
-            if (count) count.textContent = 'top ' + topN.length;
-
-            // Maximum value for bar widths (relative scale).
-            var maxTotal = topN[0].total;
-
-            host.innerHTML =
-                '<table style="width:100%;border-collapse:collapse;">' +
-                    '<thead><tr>' +
-                        '<th style="text-align:left;color:var(--fwmon-text-faint);font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid var(--fwmon-border);">Device</th>' +
-                        '<th style="text-align:right;color:var(--fwmon-text-faint);font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid var(--fwmon-border);">Alerts</th>' +
-                        '<th style="text-align:right;color:var(--fwmon-text-faint);font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid var(--fwmon-border);">Syslog</th>' +
-                        '<th style="text-align:left;color:var(--fwmon-text-faint);font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid var(--fwmon-border);width:40%;">Volume</th>' +
-                    '</tr></thead>' +
-                    '<tbody>' +
-                    topN.map(function(r) {
-                        var pct = Math.max(2, Math.round((r.total / maxTotal) * 100));
-                        var alertsCell = r.alerts > 0
-                            ? AC.filterLink('alerts', { device_id: r.device_id, hours: hours }, r.alerts.toLocaleString(),
-                                { title: 'Show alerts from this device' })
-                            : '<span style="color:var(--fwmon-text-faint);">0</span>';
-                        var syslogCell = r.syslog > 0
-                            ? AC.filterLink('syslog', { device_id: r.device_id, hours: hours }, r.syslog.toLocaleString(),
-                                { title: 'Show syslog from this device' })
-                            : '<span style="color:var(--fwmon-text-faint);">0</span>';
-                        return '<tr>' +
-                            '<td style="padding:8px;border-bottom:1px solid var(--fwmon-border);">' +
-                                AC.deviceLink(r.device_id, r.name) +
-                            '</td>' +
-                            '<td class="mono" style="padding:8px;border-bottom:1px solid var(--fwmon-border);text-align:right;">' + alertsCell + '</td>' +
-                            '<td class="mono" style="padding:8px;border-bottom:1px solid var(--fwmon-border);text-align:right;">' + syslogCell + '</td>' +
-                            '<td style="padding:8px;border-bottom:1px solid var(--fwmon-border);">' +
-                                '<div style="background:rgba(125,211,252,0.15);height:10px;border-radius:5px;width:' + pct + '%;min-width:20px;"' +
-                                ' title="' + r.total.toLocaleString() + ' total"></div>' +
-                            '</td>' +
-                        '</tr>';
-                    }).join('') +
-                    '</tbody>' +
-                '</table>';
-        }).catch(function(err) {
-            console.error('Noisy-device leaderboard failed:', err);
-            host.innerHTML = '<div class="error" style="padding:16px;color:var(--fwmon-sig-crit);">Failed to load leaderboard</div>';
-        });
-    }
-
-    // Renders the inner cells of a probe card's stats grid. When `lh`
-    // (a probe's last_hour stats) is provided we show the real numbers;
-    // when it's undefined — the very first time we see a probe, before its
-    // /stats call returns — we show the "loading..." placeholder. Driving
-    // both states through one function lets dashboard refreshes reuse the
-    // cached numbers instead of flashing back to "loading...".
-    function renderProbeStatsInner(lh) {
-        function cell(label) {
-            var hr = lh ? '+' + (lh[label.key] || 0).toLocaleString() + ' / hr' : 'loading...';
-            return '<div class="probe-stat"><div class="lbl">' + label.name +
-                '<div class="last-hour">' + hr + '</div></div></div>';
-        }
-        return cell({ name: 'Syslog', key: 'syslog' }) +
-            cell({ name: 'Traps', key: 'traps' }) +
-            cell({ name: 'Flows', key: 'flows' }) +
-            cell({ name: 'Pings', key: 'pings' });
-    }
-
+    // The dashboard is the customizable system-health console rendered by
+    // FwmonDashboard (admin-dashboard-modules.js), fed by the background
+    // /api/dashboard/health snapshot. The older stat-grid dashboard (stale and
+    // noisy device cards, probe detail modal, activity charts) was unreachable
+    // behind this delegation and was removed in v0.11.257.
     function loadDashboard() {
-        // The dashboard is now the customizable system-health console rendered by
-        // FwmonDashboard (admin-dashboard-modules.js), fed by the cached
-        // /api/dashboard/health composite. Delegate to it. The legacy stat-grid
-        // path below is unreachable (kept until a follow-up removes it); its
-        // per-probe /stats fan-out was already removed (AUDIT-198).
-        if (window.FwmonDashboard) { window.FwmonDashboard.load(); return; }
-        Promise.all([
-            AC.fetchDashboardSummary(),
-            apiFetch(API_BASE + '/probes').catch(function() { return null; })
-        ]).then(function(results) {
-            var summary = results[0];
-            var probesResult = results[1];
-            if (!summary) return;
-            var counts = summary.device_counts || {};
-            var deviceList = summary.devices || [];
-            var allProbes = probesResult && probesResult.data ? probesResult.data : [];
-            // Decommissioned probes are retired: excluded from the dashboard's
-            // active probe count and health cards. Their telemetry is preserved
-            // and still counts in the global Syslog/Trap totals below.
-            var probes = allProbes.filter(function(p) { return !p.decommissioned_at; });
-
-            document.getElementById('total-devices').textContent = counts.total || 0;
-            document.getElementById('online-devices').textContent = counts.online || 0;
-            document.getElementById('offline-devices').textContent = counts.offline || 0;
-
-            // Stale-device card (v0.10.216, bundle F3). Compares each
-            // device's last_polled to the operator-chosen threshold and
-            // surfaces anything past the cutoff. Hidden entirely when
-            // nothing is stale.
-            renderStaleDevices(deviceList);
-
-            // Noisy-device leaderboard (v0.10.218, bundle G1). Ranks
-            // devices by recent alert + syslog volume; fired after the
-            // dashboard renders so the slower per-device stats fetches
-            // don't block the initial paint.
-            renderNoisyDevices(deviceList);
-
-            document.getElementById('active-probes').textContent = summary.probe_count_active || 0;
-            document.getElementById('syslog-count').textContent = (summary.syslog_24h || 0).toLocaleString();
-            document.getElementById('trap-count').textContent = (summary.trap_24h || 0).toLocaleString();
-
-            // Probe detail modal functions
-            window.showProbeDetailModal = function(probeId, probeName) {
-                var modal = document.getElementById('probe-detail-modal');
-                if (!modal) return;
-                document.getElementById('probe-detail-name').textContent = probeName;
-                document.getElementById('probe-detail-body').innerHTML = '<div class="loading">Loading...</div>';
-                AC.openModal('probe-detail-modal');
-
-                apiFetch(API_BASE + '/probes/' + probeId + '/stats').then(function(r) {
-                    if (!r || !r.data) {
-                        document.getElementById('probe-detail-body').innerHTML = '<div class="error">Failed to load stats</div>';
-                        return;
-                    }
-                    var d = r.data;
-                    var lh = d.last_hour || {};
-
-                    var html = '<div class="probe-detail-totals">' +
-                        '<div class="detail-stat"><div class="detail-val">' + (d.syslog || 0).toLocaleString() + '</div><div class="detail-lbl">Syslog Received<span class="last-hour">+' + (lh.syslog || 0).toLocaleString() + ' / hr</span></div></div>' +
-                        '<div class="detail-stat"><div class="detail-val">' + (d.traps || 0).toLocaleString() + '</div><div class="detail-lbl">Traps Received<span class="last-hour">+' + (lh.traps || 0).toLocaleString() + ' / hr</span></div></div>' +
-                        '<div class="detail-stat"><div class="detail-val">' + (d.flows || 0).toLocaleString() + '</div><div class="detail-lbl">Flows Sampled<span class="last-hour">+' + (lh.flows || 0).toLocaleString() + ' / hr</span></div></div>' +
-                        '<div class="detail-stat"><div class="detail-val">' + (d.pings || 0).toLocaleString() + '</div><div class="detail-lbl">Pings Sent<span class="last-hour">+' + (lh.pings || 0).toLocaleString() + ' / hr</span></div></div>' +
-                        '</div>';
-
-                    // Hourly breakdown table
-                    var breakdown = d.hourly_breakdown || [];
-                    if (breakdown.length > 0) {
-                        html += '<div class="probe-detail-breakdown"><h4>Hourly Breakdown (Last 24 Hours)</h4>' +
-                            '<div class="detail-table-wrap"><table class="detail-table"><thead><tr><th>Hour</th><th>Syslog</th><th>Traps</th><th>Flows</th><th>Pings</th><th>Total</th></tr></thead><tbody>';
-                        breakdown.forEach(function(h) {
-                            var hourLabel = '';
-                            if (h.timestamp) {
-                                var d = new Date(h.timestamp);
-                                var tz = AC.getTimezone();
-                                hourLabel = d.toLocaleString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
-                            } else {
-                                hourLabel = h.hour || '';
-                            }
-                            html += '<tr><td>' + escapeHtml(hourLabel) + '</td><td>' + (h.syslog || 0).toLocaleString() + '</td><td>' + (h.traps || 0).toLocaleString() + '</td><td>' + (h.flows || 0).toLocaleString() + '</td><td>' + (h.pings || 0).toLocaleString() + '</td><td>' + (h.total || 0).toLocaleString() + '</td></tr>';
-                        });
-                        html += '</tbody></table></div></div>';
-                    }
-
-                    document.getElementById('probe-detail-body').innerHTML = html;
-                }).catch(function(err) {
-                    console.error('Failed to load probe detail:', err);
-                    document.getElementById('probe-detail-body').innerHTML = '<div class="error">Failed to load stats</div>';
-                    AC.showError('Failed to load probe statistics');
-                });
-            };
-
-            window.closeProbeDetailModal = function() {
-                AC.closeModal('probe-detail-modal');
-            };
-
-            loadDashboardCharts();
-        }).catch(function(e) {
-            console.error('Failed to load dashboard:', e);
-        });
-    }
-
-    function loadDashboardCharts() {
-        apiFetch(API_BASE + '/dashboard/stats').then(function(result) {
-            if (!result || !result.data) return;
-            var d = result.data;
-
-            // Activity trend chart
-            var actLabels = [];
-            var actSyslog = [];
-            var actTraps = [];
-            var actAlerts = [];
-            var allBuckets = {};
-            (d.syslog_over_time || []).forEach(function(b) { allBuckets[b.bucket] = true; });
-            (d.traps_over_time || []).forEach(function(b) { allBuckets[b.bucket] = true; });
-            (d.alerts_over_time || []).forEach(function(b) { allBuckets[b.bucket] = true; });
-            var sortedBuckets = Object.keys(allBuckets).sort();
-            var sysMap = {};
-            (d.syslog_over_time || []).forEach(function(b) { sysMap[b.bucket] = b.count; });
-            var trapMap = {};
-            (d.traps_over_time || []).forEach(function(b) { trapMap[b.bucket] = b.count; });
-            var alertMap = {};
-            (d.alerts_over_time || []).forEach(function(b) { alertMap[b.bucket] = b.count; });
-            sortedBuckets.forEach(function(b) {
-                actLabels.push(b.substring(11,16) || b);
-                actSyslog.push(sysMap[b] || 0);
-                actTraps.push(trapMap[b] || 0);
-                actAlerts.push(alertMap[b] || 0);
-            });
-            createChart('dashboard-activity-chart', 'line', actLabels, [
-                {label:'Syslog',data:actSyslog,borderColor:'#4c8dff',fill:true,tension: 0},
-                {label:'Traps',data:actTraps,borderColor:'#e7b53c',fill:true,tension: 0},
-                {label:'Alerts',data:actAlerts,borderColor:'#f2555a',fill:true,tension: 0}
-            ]);
-
-            // Device status doughnut
-            var devLabels = (d.device_status || []).map(function(s) { return s.key || 'unknown'; });
-            var devCounts = (d.device_status || []).map(function(s) { return s.count; });
-            var devColors = devLabels.map(function(l) { return l === 'online' ? '#3fb950' : l === 'offline' ? '#f85149' : '#8b949e'; });
-            createChart('dashboard-device-chart', 'doughnut', devLabels, [{data:devCounts,backgroundColor:devColors,borderWidth:0}]);
-        }).catch(function(e) { console.error('Failed to load dashboard charts:', e); });
+        if (window.FwmonDashboard) window.FwmonDashboard.load();
     }
 
     // "#38e1ff" / "#fff" -> "56, 225, 255" for building rgba() gradient stops.
@@ -1115,7 +737,7 @@
             var total = (result.data && result.data.total) ? result.data.total : 0;
             renderSyslogTable(messages, false);
             syslogOffset = messages.length;
-            updateSyslogPagination(messages.length, total);
+            updateSyslogPagination(messages.length, total, !!(result.data && result.data.total_capped));
             loadSyslogCharts();
         }).catch(function(e) {
             console.error('Failed to load syslog:', e);
@@ -1124,7 +746,10 @@
 
     var syslogTotalCount = 0;
 
-    function updateSyslogPagination(count, total) {
+    // total is capped server-side (total_capped): past 10,000 matching rows the
+    // exact count cost seconds, so the pager reads "10,000+" and Next stays
+    // enabled for as long as full pages keep coming back.
+    function updateSyslogPagination(count, total, capped) {
         syslogTotalCount = total;
         var container = document.getElementById('syslog-pagination');
         if (!container) return;
@@ -1132,15 +757,17 @@
             container.innerHTML = '';
             return;
         }
+        var more = capped ? '+' : '';
         var from = syslogOffset - count + 1;
         var to = syslogOffset;
         var totalPages = Math.ceil(total / 10);
         var currentPage = Math.ceil(syslogOffset / 10);
+        var atEnd = capped ? count < 10 : syslogOffset >= total;
         container.innerHTML =
-            '<span style="color:var(--fwmon-text-faint);">Showing ' + from + '-' + to + ' of ' + total.toLocaleString() + ' &nbsp;|&nbsp; </span>' +
+            '<span style="color:var(--fwmon-text-faint);">Showing ' + from + '-' + to + ' of ' + total.toLocaleString() + more + ' stored, matching filters &nbsp;|&nbsp; </span>' +
             '<button class="btn secondary sm" data-action="prev-syslog"' + (currentPage <= 1 ? ' disabled' : '') + '>Prev</button> ' +
-            '<span style="color:var(--fwmon-text-faint);">Page ' + currentPage + ' of ' + totalPages + ' &nbsp;</span>' +
-            '<button class="btn secondary sm" data-action="next-syslog"' + (syslogOffset >= total ? ' disabled' : '') + '>Next</button>';
+            '<span style="color:var(--fwmon-text-faint);">Page ' + currentPage + ' of ' + totalPages.toLocaleString() + more + ' &nbsp;</span>' +
+            '<button class="btn secondary sm" data-action="next-syslog"' + (atEnd ? ' disabled' : '') + '>Next</button>';
     }
 
     function prevSyslog() {
@@ -1154,7 +781,7 @@
             var total = (result.data && result.data.total) ? result.data.total : 0;
             renderSyslogTable(messages, false);
             syslogOffset += messages.length;
-            updateSyslogPagination(messages.length, total);
+            updateSyslogPagination(messages.length, total, !!(result.data && result.data.total_capped));
         }).catch(function(e) {
             console.error('Failed to load prev syslog:', e);
         });
@@ -1169,20 +796,42 @@
             if (messages.length > 0) {
                 renderSyslogTable(messages, false);
                 syslogOffset += messages.length;
-                updateSyslogPagination(messages.length, total);
+                updateSyslogPagination(messages.length, total, !!(result.data && result.data.total_capped));
             }
         }).catch(function(e) {
             console.error('Failed to load next syslog:', e);
         });
     }
 
+    function analyticsRangeLabel(hrs) {
+        return (hrs >= 24 && hrs % 24 === 0) ? (hrs / 24) + 'd' : hrs + 'h';
+    }
+
+    // The two sources count different things, so the card says which one it is,
+    // driven by the payload rather than by the selected pill: window_from is set
+    // only when the server answered from the ingest meter (messages RECEIVED,
+    // whole UTC hours); without it the figures are stored rows over exactly N
+    // hours — the same definition as the pager below.
+    function syslogStatsBasis(d, hrs) {
+        if (!d.window_from) return 'Stored, last ' + analyticsRangeLabel(hrs);
+        var from = new Date((d.partial && d.coverage_from) ? d.coverage_from : d.window_from);
+        if (isNaN(from.getTime())) return 'Received, whole hours';
+        var when = from.toLocaleString('en-US', { timeZone: AC.getTimezone(), month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+        return (d.partial ? 'Received since ' + when + ' (earliest counts held)' : 'Received since ' + when) + ', whole hours';
+    }
+
     function loadSyslogCharts() {
         var s = analyticsPages.syslog && analyticsPages.syslog.getState();
         var hoursParam = (s && s.hours) ? ('?hours=' + s.hours) : '';
+        var hrs = (s && s.hours) ? Number(s.hours) : 24;
         apiFetch(API_BASE + '/syslog/stats' + hoursParam).then(function(result) {
             if (!result || !result.data) return;
             var d = result.data;
             document.getElementById('syslog-total').textContent = (d.total || 0).toLocaleString();
+            var basis = document.getElementById('syslog-total-basis');
+            if (basis) basis.textContent = syslogStatsBasis(d, hrs);
+            var trendTitle = document.getElementById('syslog-trend-title');
+            if (trendTitle) trendTitle.textContent = 'Message Trend (' + analyticsRangeLabel(hrs) + ')';
             var crit = 0, warn = 0, info = 0;
             (d.by_severity || []).forEach(function(s) {
                 if (['Emergency','Alert','Critical'].indexOf(s.key) !== -1) crit += s.count;
@@ -1193,7 +842,7 @@
             document.getElementById('syslog-warning').textContent = warn.toLocaleString();
             document.getElementById('syslog-info').textContent = info.toLocaleString();
 
-            var labels = (d.over_time || []).map(function(b) { return formatBucketTime(b.bucket); });
+            var labels = (d.over_time || []).map(function(b) { return formatBucketTime(b.bucket, hrs); });
             var counts = (d.over_time || []).map(function(b) { return b.count; });
             createChart('syslog-trend-chart','bar',labels,[{label:'Messages',data:counts,backgroundColor:'#58a6ff',borderRadius:3}]);
 
@@ -2427,6 +2076,9 @@
     function loadAlertCharts() {
         var s = analyticsPages.alerts && analyticsPages.alerts.getState();
         var hoursParam = (s && s.hours) ? ('?hours=' + s.hours) : '';
+        var hrs = (s && s.hours) ? Number(s.hours) : 24;
+        var chartTitle = document.getElementById('alerts-trend-title');
+        if (chartTitle) chartTitle.textContent = 'Alert Trend (' + analyticsRangeLabel(hrs) + ')';
         apiFetch(API_BASE + '/alerts/stats' + hoursParam).then(function(result) {
             if (!result || !result.data) return;
             var d = result.data;
@@ -2441,7 +2093,7 @@
             document.getElementById('alerts-warning').textContent = warn.toLocaleString();
             document.getElementById('alerts-info').textContent = inf.toLocaleString();
 
-            var labels = (d.over_time || []).map(function(b) { return formatBucketTime(b.bucket); });
+            var labels = (d.over_time || []).map(function(b) { return formatBucketTime(b.bucket, hrs); });
             var counts = (d.over_time || []).map(function(b) { return b.count; });
             createChart('alerts-trend-chart','line',labels,[{label:'Alerts',data:counts,borderColor:'#f85149',backgroundColor:'rgba(248,81,73,0.1)',fill:true,tension: 0}]);
 
@@ -2517,6 +2169,9 @@
     function loadTrapCharts() {
         var s = analyticsPages.traps && analyticsPages.traps.getState();
         var hoursParam = (s && s.hours) ? ('?hours=' + s.hours) : '';
+        var hrs = (s && s.hours) ? Number(s.hours) : 24;
+        var chartTitle = document.getElementById('traps-freq-title');
+        if (chartTitle) chartTitle.textContent = 'Trap Frequency (' + analyticsRangeLabel(hrs) + ')';
         apiFetch(API_BASE + '/traps/stats' + hoursParam).then(function(result) {
             if (!result || !result.data) return;
             var d = result.data;
@@ -2531,7 +2186,7 @@
             document.getElementById('traps-warning').textContent = warn.toLocaleString();
             document.getElementById('traps-info').textContent = inf.toLocaleString();
 
-            var labels = (d.over_time || []).map(function(b) { return formatBucketTime(b.bucket); });
+            var labels = (d.over_time || []).map(function(b) { return formatBucketTime(b.bucket, hrs); });
             var counts = (d.over_time || []).map(function(b) { return b.count; });
             createChart('traps-freq-chart','bar',labels,[{label:'Traps',data:counts,backgroundColor:'#d2992a',borderRadius:3}]);
 
@@ -4714,7 +4369,6 @@
         'close-maint-modal': function() { closeMaintModal(); },
         'edit-maint': function(el) { showMaintModal(parseInt(el.dataset.id)); },
         'delete-maint': function(el) { deleteMaintWindow(parseInt(el.dataset.id)); },
-        'close-probe-detail-modal': function() { closeProbeDetailModal(); },
         'toggle-expand': function(el) { el.classList.toggle('expanded'); },
         'close-syslog-detail': function() { closeSyslogDetail(); },
         'close-alert-detail': function() { closeAlertDetail(); },

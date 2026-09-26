@@ -452,6 +452,10 @@ func (h *Handler) GetTraps(c *gin.Context) {
 	c.JSON(http.StatusOK, response.Success(traps))
 }
 
+// syslogPagerCountCap bounds the syslog list's "of N" count; beyond it the
+// response says total_capped and the pager reads "10,000+".
+const syslogPagerCountCap = 10000
+
 func (h *Handler) GetSyslogMessages(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
@@ -516,13 +520,24 @@ func (h *Handler) GetSyslogMessages(c *gin.Context) {
 	// AUDIT-193: surface a count-query failure as a 500 (mirroring the Find above)
 	// instead of discarding .Error, so the pager total can never read 0 alongside
 	// a populated page when the count query transiently fails.
+	//
+	// The count stops at syslogPagerCountCap+1: an exact COUNT over 24 h read
+	// ~4.7M index entries on production (2.9 s, more with a search), and past
+	// ten thousand rows nobody pages to the end anyway — the capped form
+	// measured 2.2 ms. It must be a real subquery: GORM's Count on a query that
+	// carries a Limit still counts every row.
 	var total int64
-	if err := applyFilters(db.Gorm().Model(&models.SyslogMessage{})).Count(&total).Error; err != nil {
+	capped := applyFilters(db.Gorm().Model(&models.SyslogMessage{})).Select("1").Limit(syslogPagerCountCap + 1)
+	if err := db.Gorm().Table("(?) AS t", capped).Count(&total).Error; err != nil {
 		httputil.InternalError(c, "Failed to count syslog messages", err)
 		return
 	}
+	totalCapped := total > syslogPagerCountCap
+	if totalCapped {
+		total = syslogPagerCountCap
+	}
 
-	c.JSON(http.StatusOK, response.Success(gin.H{"messages": messages, "total": total}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"messages": messages, "total": total, "total_capped": totalCapped}))
 }
 
 func (h *Handler) GetSyslogMessage(c *gin.Context) {

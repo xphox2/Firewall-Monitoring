@@ -824,10 +824,11 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		// (seconds); 2 days is far more than enough and keeps the table tiny.
 		{&models.ProcessedBatch{}, "processed_batches", 2},
 		// v59: the syslog ingest meter's hourly buckets. The Retention page
-		// reads the last 24 h; 8 days keeps a full week on hand for the
-		// disk-forecast follow-up without the table ever mattering (≤ 192
-		// rows/day).
-		{&models.SyslogIngestHourly{}, "syslog_ingest_hourly", 8},
+		// reads the last 24 h; the Syslog page and the dashboard read their
+		// fleet-wide counts from it for any window of 12 h or more (the
+		// longest the page offers is 30 d, the API accepts up to 365 d). Kept
+		// ~13 months: ≤ 192 rows/day, so ~75k rows at most.
+		{&models.SyslogIngestHourly{}, "syslog_ingest_hourly", syslogIngestRetentionDays},
 		// H4 of the 2026-07-01 audit: flow_rollups had no retention at all —
 		// terminal '1d' rollups (one row per distinct conversation per day,
 		// 10^5-10^6 rows/day on a busy network) accumulated forever. The

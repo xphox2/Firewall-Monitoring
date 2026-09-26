@@ -125,23 +125,31 @@
 
             var stats = probeStatsMap[p.id];
             var statsHtml = '';
+            // Large tables are counted from planner statistics (see
+            // ProbeTelemetryTotals); `approx` names those figures, marked "~"
+            // like the Data Totals card above.
+            function probeFig(key) {
+                var est = stats.approx && stats.approx.indexOf(key) !== -1;
+                return '<span' + (est ? ' title="Approximate — from table statistics"' : '') + '>' +
+                    (est ? '~' : '') + (stats[key] || 0).toLocaleString() + '</span>';
+            }
             if (stats && approvalStatus === 'approved') {
                 statsHtml = '<div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:6px;margin:12px 0;background:var(--fwmon-bg);border:1px solid var(--fwmon-border);border-radius:8px;padding:8px;">' +
                     '<div style="text-align:center;">' +
                         '<div style="font-size:0.58rem;text-transform:uppercase;color:var(--fwmon-text-mute);letter-spacing:0.3px;">Logs</div>' +
-                        '<div style="font-size:0.78rem;font-weight:600;color:var(--fwmon-text-dim);font-family:var(--fwmon-font-mono);">' + (stats.syslog || 0).toLocaleString() + '</div>' +
+                        '<div style="font-size:0.78rem;font-weight:600;color:var(--fwmon-text-dim);font-family:var(--fwmon-font-mono);">' + probeFig('syslog') + '</div>' +
                     '</div>' +
                     '<div style="text-align:center;">' +
                         '<div style="font-size:0.58rem;text-transform:uppercase;color:var(--fwmon-text-mute);letter-spacing:0.3px;">Traps</div>' +
-                        '<div style="font-size:0.78rem;font-weight:600;color:var(--fwmon-text-dim);font-family:var(--fwmon-font-mono);">' + (stats.traps || 0).toLocaleString() + '</div>' +
+                        '<div style="font-size:0.78rem;font-weight:600;color:var(--fwmon-text-dim);font-family:var(--fwmon-font-mono);">' + probeFig('traps') + '</div>' +
                     '</div>' +
                     '<div style="text-align:center;">' +
                         '<div style="font-size:0.58rem;text-transform:uppercase;color:var(--fwmon-text-mute);letter-spacing:0.3px;">Flows</div>' +
-                        '<div style="font-size:0.78rem;font-weight:600;color:var(--fwmon-text-dim);font-family:var(--fwmon-font-mono);">' + (stats.flows || 0).toLocaleString() + '</div>' +
+                        '<div style="font-size:0.78rem;font-weight:600;color:var(--fwmon-text-dim);font-family:var(--fwmon-font-mono);">' + probeFig('flows') + '</div>' +
                     '</div>' +
                     '<div style="text-align:center;">' +
                         '<div style="font-size:0.58rem;text-transform:uppercase;color:var(--fwmon-text-mute);letter-spacing:0.3px;">Pings</div>' +
-                        '<div style="font-size:0.78rem;font-weight:600;color:var(--fwmon-text-dim);font-family:var(--fwmon-font-mono);">' + (stats.pings || 0).toLocaleString() + '</div>' +
+                        '<div style="font-size:0.78rem;font-weight:600;color:var(--fwmon-text-dim);font-family:var(--fwmon-font-mono);">' + probeFig('pings') + '</div>' +
                     '</div>' +
                 '</div>';
             } else {
