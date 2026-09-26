@@ -21,10 +21,10 @@ could not finish inside the 30 s statement and write timeouts at all.
   retention later deletes or summarises are still counted. The total card now
   reads "Received since …, whole hours" when the meter answered and "Stored, last
   Nh" when the exact path did — the label follows the response, not the selected
-  range. Before the meter's history reaches back far enough (it began 2026-09-18),
-  the card says where counting began.
-- **The meter's retention is 400 days** (was 8), so long windows stay covered.
-  At most 192 rows a day.
+  range. Where the window reaches back past the meter's history (it kept only 8
+  days until this release), the card says where its figures start.
+- **The meter's retention is 400 days** (was 8), so long windows stay covered
+  once history accumulates. At most 192 rows a day.
 - **The chart's title and bar labels follow the selected range.** The title was
   always "Message Trend (24h)" and 7 d / 30 d bars were labelled with a time of
   day only.
@@ -67,7 +67,8 @@ plan drops the sequential scan entirely. The build is a plain `CREATE INDEX`
 ### Changed — admin pages stop re-downloading every script and stylesheet
 
 Every response carried `Cache-Control: no-store` — correct for pages and API
-data, but it also covered the 34 files under `/static`, which had no ETag or
+data, but it also covered `/static` — the 34 scripts, stylesheets and fonts
+`admin.html` references — which had no ETag or
 Last-Modified either (the embedded files carry no modification times). Every
 admin page load fetched all of them again.
 
@@ -76,10 +77,10 @@ browser still checks on every load, so a deploy is picked up by a normal reload
 exactly as before, but an unchanged file comes back as an empty 304. All other
 responses keep `no-store`, and the other security headers still apply to assets.
 
-### Removed — the unreachable pre-v0.11.200 dashboard
+### Removed — the unreachable legacy dashboard
 
-The admin dashboard has been the background-snapshot health console
-(`FwmonDashboard`) for many releases; the old stat-grid dashboard behind it was
+The admin dashboard is the background-snapshot health console
+(`FwmonDashboard`); the old stat-grid dashboard behind it was
 never reached, because `loadDashboard` delegated first. Removed with it:
 
 - `GET /admin/api/dashboard/noisy` and `GET /admin/api/dashboard/stats` — no page

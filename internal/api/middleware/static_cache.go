@@ -17,9 +17,9 @@ import (
 //
 // SecureHeaders marks every response `no-store` — right for authenticated
 // HTML and API responses, and the reason it is global — but it also covered
-// the 34 JS/CSS files under /static, and the embedded filesystem they are
-// served from has no modification times, so there was no Last-Modified or
-// ETag either. Every admin page load re-downloaded all of them.
+// /static (admin.html alone references 34 assets), and the embedded filesystem
+// has no modification times, so there was no Last-Modified or ETag either.
+// Every admin page load re-downloaded all of them.
 //
 // For /static only, this replaces that with `Cache-Control: no-cache` plus a
 // strong ETag from the file's content. The browser still asks on every load —

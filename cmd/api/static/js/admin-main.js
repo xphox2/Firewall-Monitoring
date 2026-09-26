@@ -817,7 +817,7 @@
         var from = new Date((d.partial && d.coverage_from) ? d.coverage_from : d.window_from);
         if (isNaN(from.getTime())) return 'Received, whole hours';
         var when = from.toLocaleString('en-US', { timeZone: AC.getTimezone(), month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
-        return (d.partial ? 'Received since ' + when + ' (counting began then)' : 'Received since ' + when) + ', whole hours';
+        return (d.partial ? 'Received since ' + when + ' (earliest counts held)' : 'Received since ' + when) + ', whole hours';
     }
 
     function loadSyslogCharts() {
