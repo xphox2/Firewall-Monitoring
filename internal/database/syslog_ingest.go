@@ -77,6 +77,10 @@ type syslogIngestMeter struct {
 	// beforeUpsert, when set, runs between the swap and the upsert. Tests use
 	// it to hold a flush in flight; nil in production.
 	beforeUpsert func()
+	// afterSnapshot, when set, runs in meterHours between copying memory and
+	// reading the table — the window a concurrent flush can land in. Tests use
+	// it to prove the retry; nil in production.
+	afterSnapshot func()
 }
 
 func newSyslogIngestMeter(now func() time.Time) *syslogIngestMeter {
@@ -288,6 +292,9 @@ func (d *Database) meterHours(from time.Time) (map[time.Time]*[SyslogSeverityCou
 	from = from.UTC()
 	for attempt := 0; ; attempt++ {
 		gen, mem := d.meterMemory(from)
+		if d.ingest != nil && d.ingest.afterSnapshot != nil && attempt == 0 {
+			d.ingest.afterSnapshot()
+		}
 		// The column is UTC by its only writer (upsertSyslogIngest stores the
 		// UTC hour), so the bound is UTC too: SQLite compares rendered text.
 		var rows []models.SyslogIngestHourly
