@@ -384,38 +384,23 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	}
 
 	lookback, maxPoints := publicChartLookback(rangeStr)
-	cutoff := time.Now().Add(-lookback)
+	now := time.Now()
 
-	// Get raw data points
-	var stats []models.InterfaceStats
-	err = db.Gorm().Where("device_id = ? AND \"index\" = ? AND timestamp > ?", deviceID, ifIndex, cutoff).
-		Order("timestamp ASC").Find(&stats).Error
+	// Boundary samples, not every row: the earliest row of each of maxPoints
+	// equal intervals plus the newest row (SampleInterfaceStats). This used to
+	// read the whole window and keep every Nth row in Go — 82k rows and ~600 MB
+	// of heap for one tile at the 1-year range, once per tile at the same
+	// moment. The counters are cumulative, so the rates below, computed between
+	// consecutive kept rows, are the same averages as before.
+	sampled, err := db.SampleInterfaceStats(deviceID, ifIndex, now.Add(-lookback), now, maxPoints)
 	if err != nil {
 		httputil.InternalError(c, "Failed to get interface data", err)
 		return
 	}
 
-	if len(stats) < 2 {
+	if len(sampled) < 2 {
 		c.JSON(http.StatusOK, response.Success(publicChartEmptySeries(viewType, rangeStr)))
 		return
-	}
-
-	// Downsample if too many points
-	var sampled []models.InterfaceStats
-	if len(stats) > maxPoints {
-		step := len(stats) / maxPoints
-		for i := 0; i < len(stats); i += step {
-			sampled = append(sampled, stats[i])
-			if len(sampled) >= maxPoints {
-				break
-			}
-		}
-		// Always include last point
-		if len(sampled) == 0 || sampled[len(sampled)-1].Timestamp != stats[len(stats)-1].Timestamp {
-			sampled = append(sampled, stats[len(stats)-1])
-		}
-	} else {
-		sampled = stats
 	}
 
 	labels := make([]string, 0, len(sampled))
@@ -455,7 +440,9 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 			labelFormat = "15:04" // hour:minute for 1h, 6h, 24h
 		}
 		labels = append(labels, p.Timestamp.Format(labelFormat))
-		timestamps = append(timestamps, p.Timestamp.Format("2006-01-02T15:04:05Z"))
+		// UTC before the literal Z: pgx decodes timestamptz into the process
+		// zone and the browser parses this string as UTC.
+		timestamps = append(timestamps, p.Timestamp.UTC().Format("2006-01-02T15:04:05Z"))
 		rxTotalVals = append(rxTotalVals, float64(p.InBytes))
 		txTotalVals = append(txTotalVals, float64(p.OutBytes))
 
@@ -680,30 +667,17 @@ func (h *Handler) GetPublicStatusHistory(c *gin.Context) {
 		return
 	}
 
-	// Unified parsing (v0.10.217, bundle D2). httputil.ParseHours enforces
-	// the 24h default + 8760h (1 year) cap shared by every endpoint that
-	// accepts an `hours` query parameter.
+	// The same range parser as the bandwidth tiles, so both tiles of one
+	// dashboard cover the same window. It accepts the fractional hours the
+	// 15m/30m ranges send (AUDIT-235). The default stays 24 h.
 	//
-	// AUDIT-235: the public dashboard's 15m/30m ranges send hours=0.25/0.5.
-	// ParseHours is integer-only (Atoi) and truncates those to its 24h default,
-	// so the CPU/memory history silently showed 24h. For a genuine sub-hour
-	// value, query by an explicit cutoff duration (mirrors GetSystemStatusHistory
-	// — ASC + LIMIT 2000); integer hours keep the shared helper + method.
-	var statuses []models.SystemStatus
-	var err error
-	var subHour time.Duration
-	if hq := c.Query("hours"); hq != "" {
-		if f, ferr := strconv.ParseFloat(hq, 64); ferr == nil && f > 0 && f < 1 {
-			subHour = time.Duration(f * float64(time.Hour))
-		}
-	}
-	if subHour > 0 {
-		cutoff := time.Now().Add(-subHour)
-		err = db.Gorm().Where("device_id = ? AND timestamp > ?", deviceID, cutoff).
-			Order("timestamp ASC").Limit(2000).Find(&statuses).Error
-	} else {
-		statuses, err = db.GetSystemStatusHistory(deviceID, httputil.ParseHours(c))
-	}
+	// Boundary samples across the WHOLE window. This used to read the first
+	// 2,000 rows in timestamp order — about 31 hours at ~1,500 status rows a
+	// day — so the 1w/1m/3m/1y ranges showed only the start of the window.
+	// CPU and memory are gauges, so each point is the reading at its boundary.
+	lookback, maxPoints := publicChartLookback(c.DefaultQuery("hours", "24"))
+	now := time.Now()
+	statuses, err := db.SampleSystemStatus(deviceID, now.Add(-lookback), now, maxPoints)
 	if err != nil {
 		httputil.InternalError(c, "Failed to get status history", err)
 		return
@@ -717,7 +691,7 @@ func (h *Handler) GetPublicStatusHistory(c *gin.Context) {
 	result := make([]publicPoint, 0, len(statuses))
 	for _, s := range statuses {
 		result = append(result, publicPoint{
-			Timestamp:   s.Timestamp.Format("2006-01-02T15:04:05Z"),
+			Timestamp:   s.Timestamp.UTC().Format("2006-01-02T15:04:05Z"), // UTC before the literal Z
 			CPUUsage:    s.CPUUsage,
 			MemoryUsage: s.MemoryUsage,
 		})

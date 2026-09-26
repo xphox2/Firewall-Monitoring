@@ -42,9 +42,24 @@ func TestPublicDashRange_ServerHonorsFractional_AUDIT235(t *testing.T) {
 		t.Error("AUDIT-235 regression: the sub-hour cutoff handling was removed from GetPublicInterfaceChart")
 	}
 
-	// Status/CPU history: sub-hour hours must be honored via a duration cutoff,
-	// not silently collapsed to the ParseHours 24h default.
-	if !strings.Contains(src, "strconv.ParseFloat(hq, 64)") {
-		t.Error("AUDIT-235 regression: GetPublicStatusHistory no longer honors fractional `hours` — 15m/30m show 24h")
+	// Status/CPU history: sub-hour hours must be honored, not collapsed to the
+	// ParseHours 24h default. Since v0.11.259 it resolves `hours` through the
+	// same publicChartLookback as the bandwidth tiles (which ParseFloats, per
+	// above). Scoped to the function body: publicChartLookback( also appears in
+	// GetPublicInterfaceChart, so a file-wide check would pass without it.
+	const head = "func (h *Handler) GetPublicStatusHistory("
+	i := strings.Index(src, head)
+	if i < 0 {
+		t.Fatal("GetPublicStatusHistory not found in handlers_dashboard.go")
+	}
+	body := src[i+len(head):]
+	if j := strings.Index(body, "\nfunc "); j >= 0 {
+		body = body[:j]
+	}
+	if !strings.Contains(body, "publicChartLookback(") {
+		t.Error("AUDIT-235 regression: GetPublicStatusHistory no longer resolves `hours` through publicChartLookback — 15m/30m can show 24h")
+	}
+	if strings.Contains(body, "httputil.ParseHours(c)") {
+		t.Error("AUDIT-235 regression: GetPublicStatusHistory parses `hours` with the integer-only ParseHours again — 15m/30m show 24h")
 	}
 }

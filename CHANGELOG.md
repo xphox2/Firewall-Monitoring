@@ -1,6 +1,34 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.259] - 2026-09-26
+
+### Fixed — the public dashboard read a year of rows per tile, and its CPU/memory tile showed the wrong window
+
+- **Bandwidth tiles read only the rows they draw.** Each tile used to read every
+  `interface_stats` row of its window and keep every Nth one: at the 1-year range
+  that was 82,323 rows and about 600 MB of heap for **one** tile — 5.7 s cold on
+  production — fired once per tile at the same moment. It is the query behind the
+  126 shared-memory errors of 2026-09-16. The counters are cumulative, so a
+  tile's rates only need the samples at each interval's ends; the tile now reads
+  the first row of each interval plus the newest row. On production that is
+  1,585 buffers and 6.4 ms at the 1-year range. The rates are the same averages
+  as before; points are now evenly spaced in time rather than in row count.
+- **The CPU/memory tile now spans the selected window.** It read the first 2,000
+  status rows — about 31 hours — so the 1w, 1m, 3m and 1y ranges showed only the
+  start of the window. It now takes readings across the whole window, using the
+  same range handling as the bandwidth tiles. CPU and memory are gauges, so each
+  point is the reading at that moment, not an average; a short spike between two
+  points can fall out.
+- **The emailed weekly report's CPU and memory figures cover the whole week.**
+  They were computed from the same first 2,000 rows, so a "weekly" average and
+  peak described roughly the first day and a half, and disk usage and session
+  count came from a row about 31 hours old. They are now aggregated over the
+  whole window in one query, and disk usage and session count come from the
+  newest row. Daily reports were within the 2,000-row window and are unchanged.
+- **Chart timestamps are sent in UTC.** Both public charts wrote the local time
+  followed by a literal `Z`; with a non-UTC server zone every label was shifted.
+
 ## [0.11.258] - 2026-09-26
 
 ### Fixed — parallel queries failed against the container's 64 MB `/dev/shm`

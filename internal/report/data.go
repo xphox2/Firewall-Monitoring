@@ -191,29 +191,20 @@ func GatherDeviceData(db *database.Database, device *models.Device, hours int, p
 	spikeFloorBps := spikeFloorMbps * 1e6
 	data := &DeviceReportData{}
 
-	// Get system status history
-	history, err := db.GetSystemStatusHistory(device.ID, hours)
+	// CPU/memory over the whole window, aggregated in SQL. This used to average
+	// GetSystemStatusHistory, which returns the OLDEST 2,000 rows — about 31
+	// hours — so a weekly report described its first day and a half, and took
+	// disk usage and session count from a 31-hour-old row.
+	to := time.Now()
+	sum, err := db.GetSystemStatusSummary(device.ID, to.Add(-time.Duration(hours)*time.Hour), to)
 	if err != nil {
-		log.Printf("Report: failed to get status history for %s: %v", device.Name, err)
+		log.Printf("Report: failed to get status summary for %s: %v", device.Name, err)
 	}
-
-	// Compute CPU/Mem averages and maxes
-	if len(history) > 0 {
-		var cpuSum, memSum float64
-		for _, h := range history {
-			cpuSum += h.CPUUsage
-			memSum += h.MemoryUsage
-			if h.CPUUsage > data.CPUMax {
-				data.CPUMax = h.CPUUsage
-			}
-			if h.MemoryUsage > data.MemMax {
-				data.MemMax = h.MemoryUsage
-			}
-		}
-		data.CPUAvg = cpuSum / float64(len(history))
-		data.MemAvg = memSum / float64(len(history))
-		data.DiskUsage = history[len(history)-1].DiskUsage
-		data.SessionCount = history[len(history)-1].SessionCount
+	if sum.N > 0 {
+		data.CPUAvg, data.CPUMax = sum.CPUAvg, sum.CPUMax
+		data.MemAvg, data.MemMax = sum.MemAvg, sum.MemMax
+		data.DiskUsage = sum.DiskUsage
+		data.SessionCount = sum.SessionCount
 	}
 
 	// Get alerts

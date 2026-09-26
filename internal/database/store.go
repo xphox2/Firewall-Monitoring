@@ -260,6 +260,9 @@ type ChartStore interface {
 	GetVPNChartWindow(deviceID uint, tunnelName string, from, to time.Time) ([]VPNChartBucket, error)
 	GetVPNChartGroupWindow(deviceID uint, tunnelNames []string, from, to time.Time) ([]VPNChartBucket, error)
 	GetAlertsTimeSeries(hours int) (*DashboardTimeSeries, error)
+	// Public dashboard tiles: boundary samples instead of every row (chart_sample.go).
+	SampleInterfaceStats(deviceID uint, ifIndex int, from, to time.Time, buckets int) ([]models.InterfaceStats, error)
+	SampleSystemStatus(deviceID uint, from, to time.Time, buckets int) ([]models.SystemStatus, error)
 }
 
 // EventStatsStore covers the alert/syslog/trap/flow statistics aggregates.
