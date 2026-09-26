@@ -466,3 +466,9 @@ the start; and every version, date and count in a CHANGELOG gets checked before 
 
 **(c)** Mutation harness: detect build failures explicitly. A mutant that does not
 compile prints no `--- FAIL` line and reads as "not caught" (or worse, as caught).
+
+**(d) Same day, the attribution mistake again — in a PR body.** Hours after rewriting
+history to remove Claude trailers, I opened PR #267 with "Generated with Claude Code"
+at the end, because the harness reminder asks for it on PRs and the local hook only
+sees commit messages. **Rule: PR bodies never carry that line; verify with
+`gh pr view <n> --json body -q .body | grep -ci claude` = 0 right after creating.**
