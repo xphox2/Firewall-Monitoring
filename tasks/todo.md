@@ -1,3 +1,13 @@
+# Retention must not black out alerting — v0.11.256 (plan: ~/.claude/plans/zany-pondering-snail.md)
+- [x] maintenanceLockKey ("FWMAINTN") for retention + rollup; monitoring/detect/ipsec/feeds stay on the work lock
+- [x] 40P01 retry (lockRetryable) in both batch loops; resolveOpenAlertRows logs its errors
+- [x] execCronDDL lock_timeout; DROP give-up stops per table and returns a floor ANDed onto the row-delete; EnsurePartitionsForCron
+- [x] initialCleanupDelay 5m37s, retry window 2h; skip log names the lock; comment sweep
+- [x] Tests: unit + AST guards + PG16 integration (DROP give-up floor, cron CREATE bounded wait); mutation-checked
+- [x] 6 Fable plan rounds -> sound; diff review -> 2 test fixes -> sound; PR #266 CI green, merged
+- [x] Deployed rust-01 2026-09-25 23:37:47 UTC; cleanup 23:44:02-23:46:28 with Monitoring cycle every minute during it
+- [ ] Not yet seen live: "Skipping rollup: the maintenance lock is held", "DROP lock-timed-out", "batch hit 40P01" — check logs after future passes
+
 # Admin console performance (plan: ~/.claude/plans/we-really-need-to-dreamy-plum.md)
 
 Benchmarked prod 2026-09-07 after "the /admin page takes minutes to load". The dashboard was not the
@@ -158,14 +168,19 @@ Measured after the concurrency change, replayed against prod: **24h completes in
       heaps — confirmed again by the v0.11.247 startup warnings. `migrate.go` describes a FRESH
       install, not this box.
 
-## Phase 3 remainder — other slow pages — NOT STARTED
-- [ ] Syslog page hourly chart: 7,421ms with a 103MB disk sort -> 1.96ms from `syslog_ingest_hourly`
-      (already populated; no device_id, so filtered views fall back).
-- [ ] Probes page: 4 unbounded per-probe counts, syslog one = 4,238ms. `estimateRowCount` is
-      per-TABLE so it is not a drop-in.
-- [ ] Static assets are `no-store` with no ETag: 34 files, 501KB brotli, re-fetched every load.
-- [ ] `/admin/api/dashboard/noisy` should serve from the snapshot it already contains.
-- [ ] `vpn_status`: 228k seq scans / 54.3B tuples, needs a timestamp-leading index.
+## Phase 3 remainder — v0.11.257 (plan: ~/.claude/plans/elegant-stirring-dewdrop.md)
+Re-measured on prod 2026-09-26 before planning; plan Fable-reviewed 4 rounds to "sound".
+- [x] Syslog stats: 24h cost ~24s (COUNT 2.9s + severity 13.5s + hourly 7.3s). Fleet-wide >=12h now
+      from `syslog_ingest_hourly` (matched raw to 35 rows in 8.9M/48h); 1h/6h + device keep exact path
+      (6h = 1.8s). Live + in-flight meter cells folded in (`pending` + `flushGen`). Meter retention 400d.
+- [x] Syslog pager COUNT capped at 10,001 via a real subquery (2.9s -> 2.2ms). Dashboard 24h syslog from meter.
+- [x] Probes: per-probe syslog count 20.2s -> pg_stats MCV x reltuples per leaf, `approx` per field.
+- [x] `vpn_status`: 12 seq scans/min of 841k rows -> v67 `idx_vpn_status_timestamp` (PG16 copy: seq scan gone).
+- [x] Static: ETag + no-cache on /static only (34 assets per admin load were re-downloaded every time).
+- [x] Deleted the unreachable legacy dashboard: /dashboard/noisy, /dashboard/stats, /probes/:id/stats, ~390 JS lines.
+- [x] `flow_samples` 27 seq scans/min checked and left alone: the table holds ~1h (72MB, cached).
+- [ ] Fable diff review -> PR -> CI -> merge -> user says "deploy" -> verify on rust-01 (/metrics for
+      /syslog/stats, /syslog, /probes/stats; EXPLAIN vpn uses the index; curl -I /static 304; page loads).
 
 ## Operator step — DONE 2026-09-07 23:43 UTC
 - [x] PostgreSQL tuning applied via `ALTER SYSTEM` (not a postgresql.conf edit: the entrypoint's
