@@ -9,8 +9,10 @@ PostgreSQL runs inside the `firewall-mon` container and keeps parallel-query
 state — shared hash tables, shared scan bitmaps — in `/dev/shm`, which Docker
 limits to 64 MB unless the service says otherwise. A query that outgrows it
 fails with "could not resize shared memory segment … No space left on device".
-Production's PostgreSQL log holds **126** of those, all on 2026-09-16 and all
-from the per-interface history query behind the device charts. The same limit
+Production's PostgreSQL log holds **126** of those, all on 2026-09-16 — 122 in
+a 20-minute burst — and all from the public dashboard's per-interface bandwidth
+chart query (`/api/public/interfaces/chart`), which the page issues once per
+interface tile at the same time. The same limit
 is what held `work_mem` at 16 MB instead of the 32 MB the 2026-09-07 tuning
 intended: one parallel hash join alone budgets `work_mem × 2 × 3 participants`.
 

@@ -478,9 +478,11 @@ No space left on device* instead of completing. One parallel hash join budgets
 `work_mem × hash_mem_multiplier (2) × 3 participants`, and PostgreSQL reserves
 its shared memory in growing segments, so it maps roughly a third more than
 that: about 254 MB at `work_mem = 32MB`. The compose file sets `shm_size: "1g"`
-(Docker's default is 64 MB), which covers `work_mem` 32 MB with room for the
-four concurrent two-worker queries `max_parallel_workers = 8` allows; at 64 MB,
-two at once already reach the ceiling.
+(Docker's default is 64 MB), which covers four concurrent parallel hash joins at
+`work_mem = 32MB`; at 64 MB, two at once already reach it. How many parallel
+queries run at once is bounded by client concurrency, not by
+`max_parallel_workers` — a query whose workers fail to launch still allocates
+the same shared memory.
 
 `maintenance_work_mem` has the same ceiling for one case: a manual `VACUUM` is
 parallel by default and sizes its dead-row array in `/dev/shm` from

@@ -18,7 +18,8 @@ services:
     # bitmaps in /dev/shm — which Docker caps at 64 MB unless told otherwise.
     # Past the cap a query fails with "could not resize shared memory segment
     # ... No space left on device"; production logged 126 of those on
-    # 2026-09-16, all from the per-interface history query. One parallel hash
+    # 2026-09-16, all from the public dashboard's per-interface chart query,
+    # one request per tile at once. One parallel hash
     # join alone may budget work_mem x hash_mem_multiplier (2) x 3 participants
     # (96 MB at work_mem 16 MB). The cap only limits what is allocated; unused
     # headroom costs no RAM. Takes effect on container recreate (`up -d`), not
