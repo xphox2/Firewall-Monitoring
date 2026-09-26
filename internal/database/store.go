@@ -135,6 +135,7 @@ type ProbeStore interface {
 	GetProbeCommandByCommandID(commandID string) (*models.ProbeCommand, error)
 	ExpireStaleProbeCommands() (int64, error)
 	CancelProbeCommand(probeID uint, commandID string) (bool, error)
+	ProbeTelemetryTotals(ids []uint) (map[uint]ProbeTotals, error)
 }
 
 // SiteStore covers site CRUD.

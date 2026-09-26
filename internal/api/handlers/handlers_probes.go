@@ -1285,12 +1285,10 @@ func (h *Handler) GetProbeStats(c *gin.Context) {
 	}))
 }
 
-// GetProbesStatsBatch returns total + last-hour counts for many probes in a
-// fixed number of queries (8: four totals + four last-hour, each grouped by
-// probe_id), eliminating the N+1 the probes summary page used to make — one
-// GET /probes/:id/stats per approved probe. It intentionally omits the 24h
-// hourly_breakdown that GetProbeStats computes: the summary never uses it and
-// computing it per probe is 96 extra queries each. AUDIT-064.
+// GetProbesStatsBatch returns the stored-row totals of many probes in a fixed
+// number of queries regardless of how many ids are requested, eliminating the
+// N+1 the probes summary page used to make — one request per approved probe
+// (AUDIT-064).
 func (h *Handler) GetProbesStatsBatch(c *gin.Context) {
 	db := h.reqDB(c)
 	if !httputil.RequireDB(c, db) {
@@ -1326,59 +1324,26 @@ func (h *Handler) GetProbesStatsBatch(c *gin.Context) {
 		return
 	}
 
-	hourAgo := time.Now().UTC().Add(-1 * time.Hour)
-
-	// countByProbe runs one grouped query:
-	//   SELECT probe_id, count(*) FROM <table>
-	//   WHERE probe_id IN (ids) [AND timestamp > hourAgo] GROUP BY probe_id
-	// returning probe_id -> count. Eight calls cover four tables × {total,
-	// last-hour} regardless of how many probe ids are requested.
-	countByProbe := func(model interface{}, sinceHour bool) map[uint]int64 {
-		type row struct {
-			ProbeID uint
-			Cnt     int64
-		}
-		var rows []row
-		q := db.Gorm().Model(model).
-			Select("probe_id, count(*) as cnt").
-			Where("probe_id IN ?", ids)
-		if sinceHour {
-			q = q.Where("timestamp > ?", hourAgo)
-		}
-		if err := q.Group("probe_id").Scan(&rows).Error; err != nil {
-			log.Printf("GetProbesStatsBatch: grouped count failed: %v", err)
-			return map[uint]int64{}
-		}
-		m := make(map[uint]int64, len(rows))
-		for _, r := range rows {
-			m[r.ProbeID] = r.Cnt
-		}
-		return m
+	// One Store call covers the four tables for every requested probe; large
+	// tables are answered from planner statistics (see ProbeTelemetryTotals —
+	// the exact syslog count alone took 20 s on production). The last-hour
+	// counts this endpoint used to return were never read by the page and
+	// are gone; the global Data Totals card carries its own.
+	totals, err := db.ProbeTelemetryTotals(ids)
+	if err != nil {
+		httputil.InternalError(c, "Failed to get probe stats", err)
+		return
 	}
-
-	syslogTotal := countByProbe(&models.SyslogMessage{}, false)
-	trapTotal := countByProbe(&models.TrapEvent{}, false)
-	flowTotal := countByProbe(&models.FlowSample{}, false)
-	pingTotal := countByProbe(&models.PingResult{}, false)
-	syslogHour := countByProbe(&models.SyslogMessage{}, true)
-	trapHour := countByProbe(&models.TrapEvent{}, true)
-	flowHour := countByProbe(&models.FlowSample{}, true)
-	pingHour := countByProbe(&models.PingResult{}, true)
-
 	out := make([]gin.H, 0, len(ids))
 	for _, id := range ids {
+		t := totals[id]
 		out = append(out, gin.H{
 			"probe_id": id,
-			"syslog":   syslogTotal[id],
-			"traps":    trapTotal[id],
-			"flows":    flowTotal[id],
-			"pings":    pingTotal[id],
-			"last_hour": gin.H{
-				"syslog": syslogHour[id],
-				"traps":  trapHour[id],
-				"flows":  flowHour[id],
-				"pings":  pingHour[id],
-			},
+			"syslog":   t.Syslog,
+			"traps":    t.Traps,
+			"flows":    t.Flows,
+			"pings":    t.Pings,
+			"approx":   t.Approx,
 		})
 	}
 	c.JSON(http.StatusOK, response.Success(out))

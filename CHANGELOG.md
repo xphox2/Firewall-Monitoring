@@ -38,6 +38,22 @@ could not finish inside the 30 s statement and write timeouts at all.
 - Removed `SaveSyslogMessage` (singular) and its batch inserter: it had no
   callers and wrote around the meter.
 
+### Fixed — the Probes page spent 20 seconds counting syslog rows on every load
+
+Each probe card's "Logs" figure was an exact `count(*) … GROUP BY probe_id` over
+all of `syslog_messages` — 136M rows, **20.2 s** on production, every visit, and
+growing with the table.
+
+- **Large tables (over a million rows) are now answered from PostgreSQL's own
+  statistics**: the table's row estimate times the probe's share of it in
+  `pg_stats`, read per partition, the same kind of figure the Data Totals card
+  already shows. Estimated figures carry a "~" and a tooltip; on production the
+  estimate was within 2% of the true count, and it can lag by up to ~10% between
+  automatic analyzes. A probe too small to appear in the statistics is still
+  counted exactly, as is everything on smaller tables.
+- The four "last hour" counts that endpoint also computed were never shown
+  anywhere and are gone.
+
 ## [0.11.256] - 2026-09-25
 
 ### Fixed — the daily retention pass switched off alert evaluation for as long as it ran

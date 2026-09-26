@@ -14,24 +14,23 @@ import (
 
 // statEntry mirrors one element of GetProbesStatsBatch's response array.
 type statEntry struct {
-	ProbeID  uint  `json:"probe_id"`
-	Syslog   int64 `json:"syslog"`
-	Traps    int64 `json:"traps"`
-	Flows    int64 `json:"flows"`
-	Pings    int64 `json:"pings"`
-	LastHour struct {
-		Syslog int64 `json:"syslog"`
-		Traps  int64 `json:"traps"`
-		Flows  int64 `json:"flows"`
-		Pings  int64 `json:"pings"`
-	} `json:"last_hour"`
+	ProbeID uint     `json:"probe_id"`
+	Syslog  int64    `json:"syslog"`
+	Traps   int64    `json:"traps"`
+	Flows   int64    `json:"flows"`
+	Pings   int64    `json:"pings"`
+	Approx  []string `json:"approx"`
+	// LastHour was dropped: the page never read it. Decoding it here proves
+	// the field is gone rather than silently ignored.
+	LastHour *json.RawMessage `json:"last_hour"`
 }
 
 // TestGetProbesStatsBatch_AUDIT064 verifies the batch stats endpoint returns
-// correct total + last-hour counts per probe in a single request, replacing
-// the N+1 the probes summary page used to make (one /probes/:id/stats per
-// probe). It also confirms the last-hour window and that an unrequested probe
-// is not included.
+// correct stored-row totals per probe in a single request, replacing the N+1
+// the probes summary page used to make (one request per probe), that an
+// unrequested probe is not included, and that small tables are counted exactly
+// (approx false) — the estimate path only engages above a million rows on
+// PostgreSQL.
 func TestGetProbesStatsBatch_AUDIT064(t *testing.T) {
 	h, db := setupTestHandler(t)
 
@@ -92,25 +91,20 @@ func TestGetProbesStatsBatch_AUDIT064(t *testing.T) {
 	}
 
 	s1 := byID[p1.ID]
-	if s1.Syslog != 3 || s1.LastHour.Syslog != 2 {
-		t.Errorf("p1 syslog total/hr = %d/%d, want 3/2", s1.Syslog, s1.LastHour.Syslog)
+	if s1.Syslog != 3 || s1.Traps != 2 || s1.Flows != 1 || s1.Pings != 1 {
+		t.Errorf("p1 totals = syslog %d traps %d flows %d pings %d, want 3/2/1/1", s1.Syslog, s1.Traps, s1.Flows, s1.Pings)
 	}
-	if s1.Traps != 2 || s1.LastHour.Traps != 1 {
-		t.Errorf("p1 traps total/hr = %d/%d, want 2/1", s1.Traps, s1.LastHour.Traps)
-	}
-	if s1.Flows != 1 || s1.LastHour.Flows != 1 {
-		t.Errorf("p1 flows total/hr = %d/%d, want 1/1", s1.Flows, s1.LastHour.Flows)
-	}
-	if s1.Pings != 1 || s1.LastHour.Pings != 0 {
-		t.Errorf("p1 pings total/hr = %d/%d, want 1/0", s1.Pings, s1.LastHour.Pings)
-	}
-
 	s2 := byID[p2.ID]
-	if s2.Syslog != 1 || s2.LastHour.Syslog != 1 {
-		t.Errorf("p2 syslog total/hr = %d/%d, want 1/1", s2.Syslog, s2.LastHour.Syslog)
+	if s2.Syslog != 1 || s2.Traps != 0 || s2.Flows != 0 || s2.Pings != 0 {
+		t.Errorf("p2 totals = syslog %d traps %d flows %d pings %d, want 1/0/0/0", s2.Syslog, s2.Traps, s2.Flows, s2.Pings)
 	}
-	if s2.Traps != 0 || s2.Flows != 0 || s2.Pings != 0 {
-		t.Errorf("p2 non-syslog totals = traps %d flows %d pings %d, want 0/0/0", s2.Traps, s2.Flows, s2.Pings)
+	for _, e := range []statEntry{s1, s2} {
+		if len(e.Approx) != 0 {
+			t.Errorf("probe %d: approx on a tiny SQLite table; must be exact", e.ProbeID)
+		}
+		if e.LastHour != nil {
+			t.Errorf("probe %d: last_hour still returned; nothing reads it", e.ProbeID)
+		}
 	}
 
 	if _, ok := byID[p3.ID]; ok {
