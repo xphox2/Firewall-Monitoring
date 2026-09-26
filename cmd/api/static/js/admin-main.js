@@ -803,7 +803,7 @@
         });
     }
 
-    function syslogRangeLabel(hrs) {
+    function analyticsRangeLabel(hrs) {
         return (hrs >= 24 && hrs % 24 === 0) ? (hrs / 24) + 'd' : hrs + 'h';
     }
 
@@ -813,7 +813,7 @@
     // whole UTC hours); without it the figures are stored rows over exactly N
     // hours — the same definition as the pager below.
     function syslogStatsBasis(d, hrs) {
-        if (!d.window_from) return 'Stored, last ' + syslogRangeLabel(hrs);
+        if (!d.window_from) return 'Stored, last ' + analyticsRangeLabel(hrs);
         var from = new Date((d.partial && d.coverage_from) ? d.coverage_from : d.window_from);
         if (isNaN(from.getTime())) return 'Received, whole hours';
         var when = from.toLocaleString('en-US', { timeZone: AC.getTimezone(), month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
@@ -831,7 +831,7 @@
             var basis = document.getElementById('syslog-total-basis');
             if (basis) basis.textContent = syslogStatsBasis(d, hrs);
             var trendTitle = document.getElementById('syslog-trend-title');
-            if (trendTitle) trendTitle.textContent = 'Message Trend (' + syslogRangeLabel(hrs) + ')';
+            if (trendTitle) trendTitle.textContent = 'Message Trend (' + analyticsRangeLabel(hrs) + ')';
             var crit = 0, warn = 0, info = 0;
             (d.by_severity || []).forEach(function(s) {
                 if (['Emergency','Alert','Critical'].indexOf(s.key) !== -1) crit += s.count;
@@ -2076,6 +2076,9 @@
     function loadAlertCharts() {
         var s = analyticsPages.alerts && analyticsPages.alerts.getState();
         var hoursParam = (s && s.hours) ? ('?hours=' + s.hours) : '';
+        var hrs = (s && s.hours) ? Number(s.hours) : 24;
+        var chartTitle = document.getElementById('alerts-trend-title');
+        if (chartTitle) chartTitle.textContent = 'Alert Trend (' + analyticsRangeLabel(hrs) + ')';
         apiFetch(API_BASE + '/alerts/stats' + hoursParam).then(function(result) {
             if (!result || !result.data) return;
             var d = result.data;
@@ -2090,7 +2093,7 @@
             document.getElementById('alerts-warning').textContent = warn.toLocaleString();
             document.getElementById('alerts-info').textContent = inf.toLocaleString();
 
-            var labels = (d.over_time || []).map(function(b) { return formatBucketTime(b.bucket); });
+            var labels = (d.over_time || []).map(function(b) { return formatBucketTime(b.bucket, hrs); });
             var counts = (d.over_time || []).map(function(b) { return b.count; });
             createChart('alerts-trend-chart','line',labels,[{label:'Alerts',data:counts,borderColor:'#f85149',backgroundColor:'rgba(248,81,73,0.1)',fill:true,tension: 0}]);
 
@@ -2166,6 +2169,9 @@
     function loadTrapCharts() {
         var s = analyticsPages.traps && analyticsPages.traps.getState();
         var hoursParam = (s && s.hours) ? ('?hours=' + s.hours) : '';
+        var hrs = (s && s.hours) ? Number(s.hours) : 24;
+        var chartTitle = document.getElementById('traps-freq-title');
+        if (chartTitle) chartTitle.textContent = 'Trap Frequency (' + analyticsRangeLabel(hrs) + ')';
         apiFetch(API_BASE + '/traps/stats' + hoursParam).then(function(result) {
             if (!result || !result.data) return;
             var d = result.data;
@@ -2180,7 +2186,7 @@
             document.getElementById('traps-warning').textContent = warn.toLocaleString();
             document.getElementById('traps-info').textContent = inf.toLocaleString();
 
-            var labels = (d.over_time || []).map(function(b) { return formatBucketTime(b.bucket); });
+            var labels = (d.over_time || []).map(function(b) { return formatBucketTime(b.bucket, hrs); });
             var counts = (d.over_time || []).map(function(b) { return b.count; });
             createChart('traps-freq-chart','bar',labels,[{label:'Traps',data:counts,backgroundColor:'#d2992a',borderRadius:3}]);
 

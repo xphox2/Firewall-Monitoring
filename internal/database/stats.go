@@ -33,7 +33,9 @@ type EventStatsResult struct {
 	// hour. Absent on the exact paths (raw rows over exactly N hours).
 	WindowFrom *time.Time `json:"window_from,omitempty"`
 	// Partial is true when the meter's history starts after WindowFrom, so the
-	// counts cover only CoverageFrom onward.
+	// counts cover only CoverageFrom onward. Conservative: the meter never
+	// stores empty hours, so an install whose first message arrived inside the
+	// window also reads as partial, although the earlier hours were truly zero.
 	Partial      bool       `json:"partial,omitempty"`
 	CoverageFrom *time.Time `json:"coverage_from,omitempty"`
 }

@@ -25,16 +25,16 @@ could not finish inside the 30 s statement and write timeouts at all.
   days until this release), the card says where its figures start.
 - **The meter's retention is 400 days** (was 8), so long windows stay covered
   once history accumulates. At most 192 rows a day.
-- **The chart's title and bar labels follow the selected range.** The title was
-  always "Message Trend (24h)" and 7 d / 30 d bars were labelled with a time of
-  day only.
+- **Chart titles and bar labels follow the selected range** on the Syslog, Alerts
+  and Traps pages. The titles always read "(24h)" and 7 d / 30 d bars were
+  labelled with a time of day only.
 - **The syslog list's "of N" count stops at 10,000.** It was the same full
   24 h count (2.9 s, more with a search); capped it measured 2.2 ms. Past the cap
   the pager reads "10,000+" and Next stays available while full pages come back.
   The pager counts *stored* messages matching the filters, which is why it can
   differ from the meter-based cards at 12 h and above.
-- **The dashboard's 24 h syslog figure** (vitals rail, every admin page) now
-  reads the meter too instead of a 2.9 s count once a minute.
+- **The dashboard's 24 h syslog figure** (the vitals rail across the admin console)
+  now reads the meter too instead of a 2.9 s count once a minute.
 - Removed `SaveSyslogMessage` (singular) and its batch inserter: it had no
   callers and wrote around the meter.
 
@@ -50,7 +50,10 @@ growing with the table.
   already shows. Estimated figures carry a "~" and a tooltip; on production the
   estimate was within 2% of the true count, and it can lag by up to ~10% between
   automatic analyzes. A probe too small to appear in the statistics is still
-  counted exactly, as is everything on smaller tables.
+  counted exactly, as is everything on smaller tables. A partition that has never
+  been analyzed counts as empty until autovacuum reaches it (after its first few
+  dozen rows): future months are created ahead of time and would otherwise force
+  the slow count on every load.
 - The four "last hour" counts that endpoint also computed were never shown
   anywhere and are gone.
 
@@ -86,8 +89,8 @@ never reached, because `loadDashboard` delegated first. Removed with it:
 - `GET /admin/api/dashboard/noisy` and `GET /admin/api/dashboard/stats` — no page
   called either. The noisy-device leaderboard itself is unchanged: the dashboard
   reads it from the health snapshot.
-- `GET /admin/api/probes/:id/stats` (96 queries per call) — its only caller was
-  the never-opened probe detail modal, also removed.
+- `GET /admin/api/probes/:id/stats` (104 queries per call, 96 of them for an hourly
+  breakdown) — its only caller was the never-opened probe detail modal, also removed.
 - The stale-device and noisy-device cards' scripts, the dashboard activity
   charts, and about 380 lines of unreachable JavaScript.
 

@@ -68,9 +68,12 @@ type syslogIngestMeter struct {
 	//        happen in the same lock section;
 	//   (ii) flushGen is bumped after every flush, success AND failure — a
 	//        failed flush also moves cells, from pending back to buckets;
-	//   (iii) one pending map is enough: non-final flushes run synchronously on
-	//        the ingest goroutine behind the inFlight throttle, and the final
-	//        flush runs from Close, after server.Shutdown has drained them.
+	//   (iii) one pending map is enough: the inFlight throttle lets only one
+	//        non-final flush run at a time, and the final flush runs from Close,
+	//        after server.Shutdown has normally drained them. Shutdown is capped
+	//        at 10 s while a stalled upsert can run to the 30 s statement
+	//        timeout, so at worst a shutdown loses one flush window, as it did
+	//        before pending existed — and nothing reads the meter by then.
 	pending  map[time.Time]*[SyslogSeverityCount]ingestCount
 	flushGen uint64
 	now      func() time.Time
