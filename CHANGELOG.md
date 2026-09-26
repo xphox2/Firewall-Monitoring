@@ -3,21 +3,23 @@ All notable changes to this project are documented in this file.
 
 ## [0.11.258] - 2026-09-26
 
-### Fixed — the bundled PostgreSQL had 64 MB of shared memory for parallel queries
+### Fixed — parallel queries failed against the container's 64 MB `/dev/shm`
 
 PostgreSQL runs inside the `firewall-mon` container and keeps parallel-query
-state in `/dev/shm`, which Docker limits to 64 MB unless the service says
-otherwise. A single parallel hash join may grow to `work_mem × 2 × 3
-participants` — 96 MB at the 16 MB `work_mem` production runs today — and a query
-that outgrows `/dev/shm` fails with "could not resize shared memory segment"
-rather than spilling to disk. This is also what held `work_mem` at 16 MB instead
-of the 32 MB the 2026-09-07 tuning intended.
+state — shared hash tables, shared scan bitmaps — in `/dev/shm`, which Docker
+limits to 64 MB unless the service says otherwise. A query that outgrows it
+fails with "could not resize shared memory segment … No space left on device".
+Production's PostgreSQL log holds **126** of those, all on 2026-09-16 and all
+from the per-interface history query behind the device charts. The same limit
+is what held `work_mem` at 16 MB instead of the 32 MB the 2026-09-07 tuning
+intended: one parallel hash join alone budgets `work_mem × 2 × 3 participants`.
 
 - `docker-compose.yml` sets `shm_size: "1g"`. It takes effect when the container
-  is recreated (`docker compose up -d`). tmpfs only uses RAM for what is actually
-  allocated.
-- `docs/OPERATIONS.md` gains a short section on raising PostgreSQL memory with
-  `ALTER SYSTEM` and the `/dev/shm` ceiling to check first.
+  is recreated (`docker compose up -d`); unused headroom costs no RAM.
+- `docs/OPERATIONS.md` gains a section on raising PostgreSQL memory with
+  `ALTER SYSTEM`, the `/dev/shm` ceiling (including the one case where
+  `maintenance_work_mem` hits it: a manual parallel `VACUUM`), and where the
+  persistent PostgreSQL log is.
 - A guardrail test fails if the compose file drops `shm_size` or sets it under
   512 MB.
 

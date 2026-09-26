@@ -467,18 +467,32 @@ range, so don't shrink them to "smooth" load.
 The bundled PostgreSQL starts with conservative memory settings
 (`entrypoint.sh` writes them only when PGDATA is first created). On a larger
 host, raise them with `ALTER SYSTEM` from inside the container — it writes
-`postgresql.auto.conf`, survives restarts, and `ALTER SYSTEM RESET` undoes it —
-then restart the container.
+`postgresql.auto.conf`, survives restarts, and `ALTER SYSTEM RESET` undoes it.
+`work_mem` and `maintenance_work_mem` apply after `SELECT pg_reload_conf();`;
+`shared_buffers` needs a container restart.
 
-`work_mem` has a ceiling you must check first. Parallel queries keep their
-shared hash tables in `/dev/shm` (`dynamic_shared_memory_type = posix`), and one
-parallel hash join can use `work_mem × hash_mem_multiplier (2) × 3 participants`.
-Past the container's `/dev/shm` the query fails with *could not resize shared
-memory segment … No space left on device* rather than spilling to disk. The
-compose file sets `shm_size: "1g"` (Docker's default is 64 MB), which covers
-`work_mem` up to ~64 MB with room for concurrent queries. Check the live value
-with `docker exec firewall-mon df -h /dev/shm`; a change to `shm_size` needs
-`docker compose up -d` (a recreate), not a restart.
+Check the `/dev/shm` ceiling first. Parallel queries keep their shared hash
+tables and shared scan bitmaps in `/dev/shm` (`dynamic_shared_memory_type =
+posix`); past it a query fails with *could not resize shared memory segment …
+No space left on device* instead of completing. One parallel hash join budgets
+`work_mem × hash_mem_multiplier (2) × 3 participants`, and PostgreSQL reserves
+its shared memory in growing segments, so it maps roughly a third more than
+that: about 254 MB at `work_mem = 32MB`. The compose file sets `shm_size: "1g"`
+(Docker's default is 64 MB), which covers `work_mem` 32 MB with room for the
+four concurrent two-worker queries `max_parallel_workers = 8` allows; at 64 MB,
+two at once already reach the ceiling.
+
+`maintenance_work_mem` has the same ceiling for one case: a manual `VACUUM` is
+parallel by default and sizes its dead-row array in `/dev/shm` from
+`maintenance_work_mem`. With it at 1 GB, run manual vacuums as
+`VACUUM (PARALLEL 0) …` or keep `maintenance_work_mem` under about half of
+`shm_size`. Autovacuum never runs in parallel and is unaffected.
+
+The persistent PostgreSQL log is `/data/pgdata/postgresql.log` inside the
+container (on the data volume, so it survives recreates):
+`docker exec firewall-mon grep -c 'could not resize shared memory' /data/pgdata/postgresql.log`.
+Check the live cap with `docker exec firewall-mon df -h /dev/shm`; a change to
+`shm_size` needs `docker compose up -d` (a recreate), not a restart.
 
 ## Host disk housekeeping
 
