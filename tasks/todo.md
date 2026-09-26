@@ -179,7 +179,8 @@ Re-measured on prod 2026-09-26 before planning; plan Fable-reviewed 4 rounds to 
 - [x] Static: ETag + no-cache on /static only (34 assets per admin load were re-downloaded every time).
 - [x] Deleted the unreachable legacy dashboard: /dashboard/noisy, /dashboard/stats, /probes/:id/stats, ~390 JS lines.
 - [x] `flow_samples` 27 seq scans/min checked and left alone: the table holds ~1h (72MB, cached).
-- [ ] Fable diff review -> PR -> CI -> merge -> user says "deploy" -> verify on rust-01 (/metrics for
+- [x] Fable diff review (2 rounds -> sound), PR #267, CI green, merged, DEPLOYED 2026-09-26 18:12 UTC. Live: vpn_status 0 seq scans/min (was 12), 81ms -> 11ms; /static 304.
+- [ ] Read /metrics after a logged-in load (for
       /syslog/stats, /syslog, /probes/stats; EXPLAIN vpn uses the index; curl -I /static 304; page loads).
 
 ## Operator step — DONE 2026-09-07 23:43 UTC

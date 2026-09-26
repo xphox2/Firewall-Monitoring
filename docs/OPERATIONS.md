@@ -462,6 +462,40 @@ large understatement) and the multi-row-INSERT fallback by ~2x; COPY at batch
 batch size matters — the collector's 500–1000-row batches sit in the right
 range, so don't shrink them to "smooth" load.
 
+### PostgreSQL memory and `/dev/shm`
+
+The bundled PostgreSQL starts with conservative memory settings
+(`entrypoint.sh` writes them only when PGDATA is first created). On a larger
+host, raise them with `ALTER SYSTEM` from inside the container — it writes
+`postgresql.auto.conf`, survives restarts, and `ALTER SYSTEM RESET` undoes it.
+`work_mem` and `maintenance_work_mem` apply after `SELECT pg_reload_conf();`;
+`shared_buffers` needs a container restart.
+
+Check the `/dev/shm` ceiling first. Parallel queries keep their shared hash
+tables and shared scan bitmaps in `/dev/shm` (`dynamic_shared_memory_type =
+posix`); past it a query fails with *could not resize shared memory segment …
+No space left on device* instead of completing. One parallel hash join budgets
+`work_mem × hash_mem_multiplier (2) × 3 participants`, and PostgreSQL reserves
+its shared memory in growing segments, so it maps roughly a third more than
+that: about 254 MB at `work_mem = 32MB`. The compose file sets `shm_size: "1g"`
+(Docker's default is 64 MB), which covers four concurrent parallel hash joins at
+`work_mem = 32MB`; at 64 MB, two at once already reach it. How many parallel
+queries run at once is bounded by client concurrency, not by
+`max_parallel_workers` — a query whose workers fail to launch still allocates
+the same shared memory.
+
+`maintenance_work_mem` has the same ceiling for one case: a manual `VACUUM` is
+parallel by default and sizes its dead-row array in `/dev/shm` from
+`maintenance_work_mem`. With it at 1 GB, run manual vacuums as
+`VACUUM (PARALLEL 0) …` or keep `maintenance_work_mem` under about half of
+`shm_size`. Autovacuum never runs in parallel and is unaffected.
+
+The persistent PostgreSQL log is `/data/pgdata/postgresql.log` inside the
+container (on the data volume, so it survives recreates):
+`docker exec firewall-mon grep -c 'could not resize shared memory' /data/pgdata/postgresql.log`.
+Check the live cap with `docker exec firewall-mon df -h /dev/shm`; a change to
+`shm_size` needs `docker compose up -d` (a recreate), not a restart.
+
 ## Host disk housekeeping
 
 The section above is about the **database volume**. This one is about the **root filesystem**, which
