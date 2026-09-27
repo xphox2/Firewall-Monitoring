@@ -358,6 +358,13 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 		}
 	}
 	now := time.Now()
+	// One snapshot per batch, so every row of it is classified under one set.
+	internalNets := h.internalNets.Load()
+	if internalNets == nil {
+		h.internalNetsLog.Do(func() {
+			log.Printf("internal networks: not loaded yet; flows are classified against private ranges only (class_rev 0) until they are")
+		})
+	}
 	filtered := samples[:0]
 	for i := range samples {
 		samples[i].ProbeID = probe.ID
@@ -403,8 +410,11 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 		// supplied by a collector. ClassRev stays 0 ("not yet classified under a
 		// revision") until the internal-network set stamps it.
 		samples[i].ServicePort = classify.ServicePort(samples[i].Protocol, samples[i].SrcPort, samples[i].DstPort)
-		samples[i].ClassRev = 0
-		samples[i].Direction = classify.Direction(samples[i].SrcAddr, samples[i].DstAddr, samples[i].InputIfIndex, samples[i].OutputIfIndex)
+		// Direction against the operator's own networks (RefreshInternalNetworks);
+		// ClassRev records which revision of that set classified the row. With
+		// no set loaded yet both fall back to the private defaults and rev 0.
+		samples[i].Direction = internalNets.Direction(samples[i].SrcAddr, samples[i].DstAddr)
+		samples[i].ClassRev = internalNets.Rev()
 		samples[i].ScopeLocal = classify.ScopeLocal(samples[i].SrcAddr, samples[i].DstAddr)
 		// Geo/ASN enrichment (GEOIP_ENABLED). Nil-safe: when geo is off these are
 		// no-ops returning empty/0. GeoLite2 maps only public IPs, so internal

@@ -320,7 +320,9 @@ func main() {
 
 	// Periodically reload the threat-intel matcher so feed edits and expiries
 	// take effect in the ingest path without a restart (the matcher lives on the
-	// handler because ingest — ReceiveFlowSamples — runs in this process).
+	// handler because ingest — ReceiveFlowSamples — runs in this process). The
+	// internal-network set rides the same tick: device interface addresses
+	// change as devices are polled, added and retired.
 	logging.SafeGo("threat-intel-refresh", func() {
 		ticker := time.NewTicker(15 * time.Minute)
 		defer ticker.Stop()
@@ -328,6 +330,7 @@ func main() {
 			select {
 			case <-ticker.C:
 				handler.RefreshThreatMatcher()
+				handler.RefreshInternalNetworks()
 			case <-bgCtx.Done():
 				return
 			}
@@ -799,6 +802,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		},
 		map[string]bool{ // adminOnlyRoutes — role=admin, any method
 			"/admin/api/settings":                  true,
+			"/admin/api/flows/internal-networks":   true,
 			"/admin/api/settings/test-email":       true,
 			"/admin/api/settings/test-webhook":     true,
 			"/admin/api/users":                     true,
@@ -1097,6 +1101,9 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/alerts/:id/suggested-rule", handler.SuggestEventRuleForAlert)
 		admin.GET("/api/flows/stats", handler.GetFlowStats)
 		admin.GET("/api/flows/stats/stream", handler.GetFlowStatsStream)
+		// The effective internal-network list (Settings → Flow classification).
+		// Admin-only (in adminOnlyRoutes): it reveals the network layout.
+		admin.GET("/api/flows/internal-networks", handler.GetFlowInternalNetworks)
 		admin.GET("/api/flows/detections", handler.GetFlowDetections)
 		admin.POST("/api/flows/detections/:id/ack", handler.AckFlowDetection)
 		admin.GET("/api/noc/stream", handler.GetNOCStream)

@@ -51,9 +51,9 @@ func TestFlowIngest_StampsServicePort(t *testing.T) {
 	if err := db.Gorm().Order("id").Find(&rows).Error; err != nil || len(rows) != 2 {
 		t.Fatalf("query: %v (%d rows)", err, len(rows))
 	}
-	if rows[0].ServicePort != 443 || rows[0].ClassRev != 0 {
-		t.Errorf("server reply stamped service_port=%d class_rev=%d, want 443 and 0 (collector values ignored)",
-			rows[0].ServicePort, rows[0].ClassRev)
+	if want := h.internalNets.Load().Rev(); rows[0].ServicePort != 443 || rows[0].ClassRev != want {
+		t.Errorf("server reply stamped service_port=%d class_rev=%d, want 443 and the set's revision %d (collector values ignored)",
+			rows[0].ServicePort, rows[0].ClassRev, want)
 	}
 	if rows[1].ServicePort != 0 {
 		t.Errorf("ephemeral-to-ephemeral flow stamped service_port=%d, want 0", rows[1].ServicePort)

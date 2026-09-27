@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"firewall-mon/internal/alerts"
@@ -32,8 +33,14 @@ type Handler struct {
 	notifier     *notifier.Notifier
 	geoResolver  *classify.GeoResolver
 	threatMatch  threatintel.Holder
-	nocHub       *nocHub
-	version      string
+	// internalNets is the operator's internal-network set flow direction is
+	// classified against (RefreshInternalNetworks). nil until the first
+	// successful load; ingest then classifies with the private defaults and
+	// stamps class_rev 0, which the history reclassification revisits.
+	internalNets    atomic.Pointer[classify.InternalSet]
+	internalNetsLog sync.Once
+	nocHub          *nocHub
+	version         string
 	// startTime is the process boot time, used by GetSystemHealth to report
 	// server uptime on the dashboard's Server Platform card.
 	startTime time.Time
@@ -94,6 +101,7 @@ func NewHandler(cfg *config.Config, authManager *auth.AuthManager, db *database.
 	// RefreshThreatMatcher wouldn't catch it.
 	if db != nil {
 		h.RefreshThreatMatcher()
+		h.RefreshInternalNetworks()
 		h.nocHub = newNOCHub(db, nocSnapshotInterval)
 		h.dashHub = newDashboardHealthHub(h)
 	}
@@ -130,6 +138,23 @@ func (h *Handler) RefreshThreatMatcher() {
 		return
 	}
 	h.threatMatch.Store(threatintel.New(rows, time.Now()))
+}
+
+// RefreshInternalNetworks rebuilds the internal-network set flow direction is
+// classified against and swaps it in atomically; safe beside ingest. On a DB
+// error it logs and KEEPS the previous set: a set built from the defaults
+// alone but stamped with the current revision would write rows the history
+// reclassification never revisits.
+func (h *Handler) RefreshInternalNetworks() {
+	if h.db == nil {
+		return
+	}
+	nets, err := h.db.LoadInternalNetworks()
+	if err != nil {
+		log.Printf("internal networks: refresh failed, keeping the previous set: %v", err)
+		return
+	}
+	h.internalNets.Store(database.InternalSetFrom(nets, h.db.FlowReclassTargetRev()))
 }
 
 // ReloadGeoIP re-stats the GeoLite2 databases and hot-swaps any that changed on

@@ -213,17 +213,20 @@ func DirectionName(v uint8) string {
 	return "Unknown"
 }
 
+// privateCIDRs are the ranges every internal-network set starts from (see
+// privateNets and InternalSet).
+var privateCIDRs = []string{
+	"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+	"127.0.0.0/8", "169.254.0.0/16", "100.64.0.0/10",
+	"fc00::/7", "fe80::/10", "::1/128",
+}
+
 // privateNets is the set of address ranges treated as "internal" for direction
 // classification: RFC1918, loopback, link-local, CGNAT (RFC6598), and the IPv6
 // equivalents (ULA fc00::/7, link-local fe80::/10, loopback ::1).
 var privateNets = func() []*net.IPNet {
-	cidrs := []string{
-		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
-		"127.0.0.0/8", "169.254.0.0/16", "100.64.0.0/10",
-		"fc00::/7", "fe80::/10", "::1/128",
-	}
-	nets := make([]*net.IPNet, 0, len(cidrs))
-	for _, c := range cidrs {
+	nets := make([]*net.IPNet, 0, len(privateCIDRs))
+	for _, c := range privateCIDRs {
 		if _, n, err := net.ParseCIDR(c); err == nil {
 			nets = append(nets, n)
 		}
