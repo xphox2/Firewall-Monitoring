@@ -472,3 +472,16 @@ history to remove Claude trailers, I opened PR #267 with "Generated with Claude 
 at the end, because the harness reminder asks for it on PRs and the local hook only
 sees commit messages. **Rule: PR bodies never carry that line; verify with
 `gh pr view <n> --json body -q .body | grep -ci claude` = 0 right after creating.**
+
+## 2026-09-26 — A plan-shape assertion on a tiny fixture tests the fixture, not the query
+
+The PG integration test for the public-chart sampler asserted "no plain Sort under
+a probe" against a 13-row series. The planner chose a Sort — correctly: for a
+handful of rows sorting the bucket is cheaper than an ordered index walk. I nearly
+redesigned the query around that result. At production density (~1,440 rows per
+bucket) the same statement plans as Merge Append → Incremental Sort (presorted on
+`timestamp`) → `rows=1` per probe, exactly as intended. **Rule: any EXPLAIN-shape
+assertion needs the probed series at production density; seed it with
+`generate_series`, and keep the correctness fixture separate.** Corollary from the
+same test: midpoint-only fixtures cannot see edge predicates — on PostgreSQL (which
+compares instants, no DST text hazard) add one row exactly on an edge.
