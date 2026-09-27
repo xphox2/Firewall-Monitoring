@@ -14,11 +14,11 @@ func recomputeFixture(t *testing.T) *Database {
 	t.Helper()
 	d := NewDatabaseForTesting(t)
 	oldReserve, oldForce, oldHourly := flowSummaryRecomputeReserve, flowSummaryRecomputeForceAfter, flowSummaryRecomputeHourlyRetries
-	oldDur := flowSummaryMaxCycleDuration
+	oldDur, oldCap := flowSummaryMaxCycleDuration, maxRecomputeRetries
 	t.Cleanup(func() {
 		flowSummaryRecomputeReserve, flowSummaryRecomputeForceAfter, flowSummaryRecomputeHourlyRetries = oldReserve, oldForce, oldHourly
-		flowSummaryMaxCycleDuration = oldDur
-		flowSummaryRecomputeHook, flowSummaryDirtyHook, flowSummaryBucketHook = nil, nil, nil
+		flowSummaryMaxCycleDuration, maxRecomputeRetries = oldDur, oldCap
+		flowSummaryRecomputeHook, flowSummaryDirtyHook, flowSummaryBucketHook, flowSummaryFloorProbeHook = nil, nil, nil, nil
 		recomputeBlockedCycles = 0
 	})
 	flowSummaryRecomputeReserve = 0 // tests do not wait for real time
@@ -187,6 +187,10 @@ func TestSummaryRecompute_FailingBucketIsRetriedNotSkipped(t *testing.T) {
 	if !sinceSet(d) {
 		t.Fatal("the service boundary was cleared while a bucket had failed to rebuild")
 	}
+	// The walk went on past the failing bucket: only that one remains.
+	if st := d.GetFlowSummaryRecomputeStatus(); st.Tiers["1h"] == nil || st.Tiers["1h"].Remaining != 1 {
+		t.Errorf("hourly remaining = %+v, want exactly the one failing bucket (the walk must continue past it)", st.Tiers["1h"])
+	}
 	if _, ok := d.GetSettingValue(recomputeDoneKey("1h")); ok {
 		t.Error("the hourly tier was marked done with a bucket still failing")
 	}
@@ -327,7 +331,9 @@ func TestSummaryRecompute_DroppedRetryOfAPromotedDay(t *testing.T) {
 	d.Gorm().Create(&models.SystemSetting{Key: FlowReclassDoneRevKey, Value: "1"})
 
 	// An hour of day D failed to rebuild earlier and sits on the retry list.
-	d.saveRecomputeRetries("1h", []time.Time{dayD.Add(6 * time.Hour)})
+	// The midnight hour: where the promoted daily row sits, so an undropped
+	// retry would really delete the daily summary of day D.
+	d.saveRecomputeRetries("1h", []time.Time{dayD})
 	d.setReclassSetting(recomputeCursorKey("1h"), recomputeMark{rev: 1, bucket: today}.String())
 	// Then day D is promoted: one daily row replaces its hours.
 	d.Gorm().Where("interval_type = ? AND timestamp >= ? AND timestamp < ?", "1h", dayD, dayD.Add(24*time.Hour)).Delete(&models.FlowRollup{})
@@ -462,5 +468,113 @@ func TestSummaryRecompute_OwnershipDriftMidWalk(t *testing.T) {
 	}
 	if hourly != 0 || bytes != 1000 {
 		t.Errorf("day D: %d hourly rows and %d daily bytes, want 0 and 1000 (exactly one tier)", hourly, bytes)
+	}
+}
+
+// TestSummaryRecompute_WaitsWhileARunIsDue: target above done is a run due
+// (a Reapply), not yet started — the rebuild waits for it too.
+func TestSummaryRecompute_WaitsWhileARunIsDue(t *testing.T) {
+	d := recomputeFixture(t)
+	day, _ := seedTwoTiers(t, d)
+	postRecomputeRequest(t, d, 1, day)
+	d.Gorm().Create(&models.SystemSetting{Key: FlowReclassTargetRevKey, Value: "2"})
+	runCycles(d, 4)
+	if got := cubeBytesByDirection(t, d); got[classify.DirOutbound] != 0 {
+		t.Errorf("the summary was rebuilt while a reclassification was due: %v", got)
+	}
+}
+
+// TestSummaryRecompute_RetryCapStopsTheWalk: at the retry-list bound the walk
+// stops advancing and says why, rather than hide more failures.
+func TestSummaryRecompute_RetryCapStopsTheWalk(t *testing.T) {
+	d := recomputeFixture(t)
+	maxRecomputeRetries = 2
+	day, _ := seedTwoTiers(t, d)
+	postRecomputeRequest(t, d, 1, day)
+	flowSummaryRecomputeHook = func(interval string, b time.Time) error {
+		if interval == "1h" {
+			return errors.New("injected")
+		}
+		return nil
+	}
+	runCycles(d, 3)
+	if n := len(d.recomputeRetries("1h")); n > 2 {
+		t.Errorf("the retry list grew to %d past its bound of 2", n)
+	}
+	st := d.GetFlowSummaryRecomputeStatus()
+	if st.WaitingReason == "" || !sinceSet(d) {
+		t.Errorf("status = %+v; want the stopped walk explained and the boundary kept", st)
+	}
+}
+
+// TestSummaryRecompute_DeadlineDoesNotStarveTheHourlyBackfill: however long
+// the daily rebuild takes, the hourly backfill runs first each cycle, so the
+// summary read path stays on.
+func TestSummaryRecompute_DeadlineDoesNotStarveTheHourlyBackfill(t *testing.T) {
+	d := recomputeFixture(t)
+	day, recent := seedTwoTiers(t, d)
+	postRecomputeRequest(t, d, 1, day)
+	flowSummaryMaxCycleDuration = 150 * time.Millisecond
+	flowSummaryRecomputeHook = func(interval string, b time.Time) error {
+		if interval == "1d" {
+			time.Sleep(200 * time.Millisecond) // every daily bucket overruns the cycle
+		}
+		return nil
+	}
+	for i := 0; i < 5; i++ {
+		d.Gorm().Create(&models.FlowRollup{Timestamp: recent.Add(time.Duration(4+i)*time.Hour + 5*time.Minute), DeviceID: 1,
+			IntervalType: "5m", SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6, BytesSum: 1, FlowCount: 1, ClassRev: 1})
+		d.RunFlowSummaryCycle()
+		if !d.summaryBackfillComplete() {
+			t.Fatalf("cycle %d: the hourly backfill fell behind while the daily rebuild overran the cycle", i)
+		}
+	}
+}
+
+// TestSummaryRecompute_SameRevisionRearmStartsCountsAfresh: a re-arm posts a
+// request of the same revision after a finished rebuild; its progress must not
+// inherit the previous walk's counts (it would read 99% at the start).
+func TestSummaryRecompute_SameRevisionRearmStartsCountsAfresh(t *testing.T) {
+	d := recomputeFixture(t)
+	day, _ := seedTwoTiers(t, d)
+	postRecomputeRequest(t, d, 1, day)
+	runCycles(d, 10)
+	if d.GetFlowSummaryRecomputeStatus().Active {
+		t.Fatal("precondition: the first rebuild did not finish")
+	}
+	postRecomputeRequest(t, d, 1, day)
+	calls := 0
+	flowSummaryRecomputeHook = func(interval string, b time.Time) error {
+		if interval == "1d" {
+			calls++
+		}
+		return nil
+	}
+	flowSummaryRecomputeForceAfter, flowSummaryRecomputeReserve = 1000, time.Hour // hold the daily walk
+	d.RunFlowSummaryCycle()
+	st := d.GetFlowSummaryRecomputeStatus()
+	if st.Tiers["1d"] == nil || st.Tiers["1d"].Done != int64(calls) {
+		t.Errorf("daily done count %+v after %d buckets this walk; it inherited the finished rebuild's count", st.Tiers["1d"], calls)
+	}
+}
+
+// TestSummaryRecompute_SkipsTheHourlyTierWhenTheFloorIsUncertain: a failed
+// daily-floor probe may shift the hourly range by the boundary day; the
+// recompute step would persist that, so it sits the tier out.
+func TestSummaryRecompute_SkipsTheHourlyTierWhenTheFloorIsUncertain(t *testing.T) {
+	d := recomputeFixture(t)
+	_, recent := seedTwoTiers(t, d)
+	postRecomputeRequest(t, d, 1, recent)
+	flowSummaryFloorProbeHook = func() error { return errors.New("injected") }
+	hourlyRan := false
+	flowSummaryRecomputeHook = func(interval string, b time.Time) error {
+		if interval == "1h" {
+			hourlyRan = true
+		}
+		return nil
+	}
+	d.RunFlowSummaryCycle()
+	if hourlyRan {
+		t.Error("the hourly tier was rebuilt on a cycle whose daily floor was uncertain")
 	}
 }

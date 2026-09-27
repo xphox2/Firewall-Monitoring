@@ -65,6 +65,13 @@ func flowReclassViewOf(db database.Store) flowReclassView {
 				}
 			}
 			v.RebuildTier = name
+			if tier == nil || tier.State == "done" || tier.State == "" {
+				// Only a request is pending: the walk has not begun.
+				if v.PausedReason == "" {
+					v.PausedReason = "starting"
+				}
+				tier = nil
+			}
 			if tier != nil {
 				if n := tier.Done + tier.Remaining; n > 0 {
 					v.Percent = min(99, float64(tier.Done)*100/float64(n))

@@ -70,6 +70,10 @@ var flowSummaryMaxCycleDuration = 60 * time.Second
 // one-time cost and there is no hurry; starving the rest of the cycle is worse.
 var flowSummaryMaxDailyBucketsPerCycle = 2
 
+// flowSummaryFloorProbeHook is a test-only injection point that fails the
+// daily-floor probe.
+var flowSummaryFloorProbeHook func() error
+
 // flowSummaryDirtyHook is a test-only injection point that fails a tier's
 // dirty-bucket scan.
 var flowSummaryDirtyHook func(interval string) error
@@ -181,16 +185,32 @@ func (d *Database) RunFlowSummaryCycle() bool {
 	// The daily tier runs FIRST for the same reason — it establishes the floor
 	// and clears any hourly rows left over from before a day was promoted.
 	var dailyFloor time.Time
+	// floorUncertain: a probe behind the floor failed, so the hourly tier's
+	// range may be off by the boundary day this cycle. The routine walks heal
+	// that on their own (they re-dirty); the recompute step would persist it
+	// (its cursor and retry list), so it sits the tier out for the cycle.
+	floorUncertain := false
 	for _, tier := range flowSummaryTiers {
 		if tier.interval != "1d" {
 			continue
 		}
-		if _, newest, ok, err := d.tierTimeBounds(tier.rangeSources); err == nil && ok {
+		_, newest, ok, err := d.tierTimeBounds(tier.rangeSources)
+		if err == nil && flowSummaryFloorProbeHook != nil {
+			err = flowSummaryFloorProbeHook()
+		}
+		if err != nil {
+			floorUncertain = true
+		}
+		if err == nil && ok {
 			dailyFloor = tier.bucketOf(newest).Add(tier.width)
 			// Must mirror the yieldTo cap above, or the day the daily tier gave
 			// up would sit above the hourly tier's floor and belong to neither.
 			if len(tier.yieldTo) > 0 {
-				if finerOldest, _, ok2, err2 := d.tierTimeBounds(tier.yieldTo); err2 == nil && ok2 {
+				finerOldest, _, ok2, err2 := d.tierTimeBounds(tier.yieldTo)
+				if err2 != nil {
+					floorUncertain = true
+				}
+				if err2 == nil && ok2 {
 					if boundary := tier.bucketOf(finerOldest); boundary.Before(dailyFloor) {
 						dailyFloor = boundary
 					}
@@ -224,6 +244,9 @@ func (d *Database) RunFlowSummaryCycle() bool {
 			floor = dailyFloor
 		}
 		n, b, err := d.summariseTier(tier, deadline, floor)
+		if tier.interval != "1d" && floorUncertain {
+			b.valid = false
+		}
 		bounds[tier.interval] = b
 		if n > 0 {
 			log.Printf("Flow summary: wrote %d %s bucket(s)", n, tier.interval)
@@ -373,6 +396,10 @@ type tierBounds struct {
 	// backfilled is how many buckets this pass's backfill ran — the daily
 	// tier's per-cycle cap is shared with the recompute step.
 	backfilled int
+	// clean: no bucket of this pass failed. A failed routine bucket can hold
+	// pre-reclassification rows (it is retried by the routine walks), so the
+	// service boundary is not removed on a cycle where either tier was unclean.
+	clean bool
 }
 
 func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor time.Time) (int, tierBounds, error) {
@@ -443,7 +470,7 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 		// the ceiling has been seen: otherwise the first pass after data DOES
 		// appear starts its dirty scan from id 0.
 		d.setSummaryWatermark(tier.interval, ceiling)
-		return written, tierBounds{valid: true, ownsNothing: true}, nil
+		return written, tierBounds{valid: true, ownsNothing: true, clean: true}, nil
 	}
 	ownedFrom := tier.bucketOf(oldest)
 	// The lower tier's reach defines this one's start exactly — not merely a
@@ -458,16 +485,24 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 		ownedFrom = tier.bucketOf(floor)
 	}
 	ownedTo := tier.bucketOf(newest).Add(tier.width)
+	// yieldUncertain: the yieldTo probe failed, so ownedTo may include a day
+	// the tier should have yielded. Harmless to the routine walks this cycle;
+	// the recompute step must not act on it (see tierBounds.valid).
+	yieldUncertain := false
 	// Give up any bucket a finer tier still has rows in — see yieldTo.
 	if len(tier.yieldTo) > 0 {
-		if finerOldest, _, ok, err := d.tierTimeBounds(tier.yieldTo); err == nil && ok {
+		finerOldest, _, ok, err := d.tierTimeBounds(tier.yieldTo)
+		if err != nil {
+			yieldUncertain = true
+		}
+		if err == nil && ok {
 			if boundary := tier.bucketOf(finerOldest); boundary.Before(ownedTo) {
 				ownedTo = boundary
 			}
 		}
 	}
 	if !ownedTo.After(ownedFrom) {
-		return written, tierBounds{valid: true, ownsNothing: true}, nil
+		return written, tierBounds{valid: true, ownsNothing: true, clean: true}, nil
 	}
 	owns := func(b time.Time) bool { return !b.Before(ownedFrom) && b.Before(ownedTo) }
 
@@ -636,7 +671,8 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 	if watermark == 0 || (firstErr == nil && dirtyComplete) {
 		d.setSummaryWatermark(tier.interval, ceiling)
 	}
-	return written, tierBounds{valid: true, ownedFrom: ownedFrom, ownedTo: ownedTo, caughtUp: caughtUp, backfilled: backfilledN}, firstErr
+	return written, tierBounds{valid: !yieldUncertain, clean: firstErr == nil, ownedFrom: ownedFrom, ownedTo: ownedTo,
+		caughtUp: caughtUp, backfilled: backfilledN}, firstErr
 }
 
 // dirtyBuckets lists the buckets touched by rows newer than the watermark.

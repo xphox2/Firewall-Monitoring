@@ -31,14 +31,12 @@ import (
 // the end with nothing left to retry is flow_summary_service_since removed —
 // the single thing the reader checks before trusting the service dimension.
 
-const (
-	flowSummaryRecomputeStatusKey = "flow_summary_recompute_status"
+const flowSummaryRecomputeStatusKey = "flow_summary_recompute_status"
+
+var (
 	// maxRecomputeRetries bounds a tier's retry list; at the bound the walk
 	// stops advancing (and the status says so) rather than hide failures.
 	maxRecomputeRetries = 50
-)
-
-var (
 	// flowSummaryRecomputeReserve: a daily recompute bucket costs 14-30 s, so
 	// one starts only with this much of the cycle left.
 	flowSummaryRecomputeReserve = 20 * time.Second
@@ -97,7 +95,11 @@ func (d *Database) recomputeCursor(interval string) (recomputeMark, bool) {
 	if !ok {
 		return recomputeMark{}, false
 	}
-	return parseRecomputeMark(raw)
+	m, ok := parseRecomputeMark(raw)
+	if !ok {
+		log.Printf("Flow summary: the %s recompute cursor %q is unreadable; the rebuild of that tier is stalled until a new request", interval, raw)
+	}
+	return m, ok
 }
 
 func (d *Database) recomputeRetries(interval string) []time.Time {
@@ -124,9 +126,14 @@ func (d *Database) saveRecomputeRetries(interval string, list []time.Time) {
 		d.deleteSetting(recomputeRetryKey(interval))
 		return
 	}
-	stamps := make([]string, len(list))
-	for i, t := range list {
-		stamps[i] = t.UTC().Format(time.RFC3339)
+	seen := map[string]bool{}
+	stamps := make([]string, 0, len(list))
+	for _, t := range list {
+		s := t.UTC().Format(time.RFC3339)
+		if !seen[s] {
+			seen[s] = true
+			stamps = append(stamps, s)
+		}
 	}
 	b, _ := json.Marshal(stamps)
 	_ = d.setReclassSetting(recomputeRetryKey(interval), string(b))
@@ -182,7 +189,7 @@ func (d *Database) consumeRecomputeRequest() {
 
 // FlowSummaryRecomputeTier is one tier's rebuild progress.
 type FlowSummaryRecomputeTier struct {
-	State           string   `json:"state"` // idle, waiting, rebuilding, done
+	State           string   `json:"state"` // waiting, rebuilding, done
 	Remaining       int64    `json:"remaining_buckets"`
 	Done            int64    `json:"done_buckets"`
 	BucketsPerCycle float64  `json:"buckets_per_cycle"`
@@ -254,6 +261,10 @@ func (d *Database) runSummaryRecompute(ordered []flowSummaryTier, bounds map[str
 	st.WaitingReason = ""
 	total := 0
 	anyActive := false
+	allClean := true
+	for _, b := range bounds {
+		allClean = allClean && b.valid && (b.clean || b.ownsNothing)
+	}
 	for _, tier := range ordered {
 		ts := st.Tiers[tier.interval]
 		if ts == nil {
@@ -264,7 +275,9 @@ func (d *Database) runSummaryRecompute(ordered []flowSummaryTier, bounds map[str
 		total += n
 		anyActive = anyActive || active
 	}
-	d.maybeClearServiceSince()
+	if allClean {
+		d.maybeClearServiceSince()
+	}
 	if anyActive || total > 0 {
 		st.UpdatedAt = time.Now().UTC()
 		b, _ := json.Marshal(st)
@@ -286,7 +299,15 @@ func (d *Database) recomputeTier(tier flowSummaryTier, b tierBounds, deadline ti
 		if ts.State != "done" && ts.State != "" {
 			ts.State = "done"
 		}
+		if tier.interval == "1d" {
+			recomputeBlockedCycles = 0
+		}
 		return 0, false
+	}
+	if hasCur && ts.State == "done" {
+		// A cursor on a tier recorded as done is a new walk (a same-revision
+		// re-arm): its counts start afresh.
+		*ts = FlowSummaryRecomputeTier{}
 	}
 	wait := func(reason string) (int, bool) {
 		ts.State = "waiting"
@@ -345,7 +366,14 @@ func (d *Database) recomputeTier(tier flowSummaryTier, b tierBounds, deadline ti
 		if budget == 0 {
 			return false
 		}
-		return forced || time.Now().Before(deadline)
+		if forced {
+			return true
+		}
+		if tier.interval == "1d" {
+			// Every daily bucket needs the reserve, not just the first.
+			return time.Until(deadline) >= flowSummaryRecomputeReserve
+		}
+		return time.Now().Before(deadline)
 	}
 	attempt := func(bucket time.Time) bool {
 		if budget > 0 {
@@ -394,7 +422,7 @@ func (d *Database) recomputeTier(tier flowSummaryTier, b tierBounds, deadline ti
 				st.WaitingReason = fmt.Sprintf("%d summary buckets keep failing — see the log", len(retries))
 				break
 			}
-			if !attempt(bk) {
+			if !attempt(bk) && !containsTime(retries, bk) {
 				retries = append(retries, bk)
 			}
 			cur.bucket = bk.Add(tier.width)
@@ -419,6 +447,9 @@ func (d *Database) recomputeTier(tier flowSummaryTier, b tierBounds, deadline ti
 	ts.BucketsPerCycle = 0.7*ts.BucketsPerCycle + 0.3*float64(recomputed)
 
 	if hasCur && !cur.bucket.Before(b.ownedTo) && len(retries) == 0 {
+		// Persist the cursor first: if recording the finish fails, the next
+		// cycle resumes here rather than re-walking this cycle's work.
+		_ = d.setReclassSetting(recomputeCursorKey(tier.interval), cur.String())
 		d.finishRecomputeTier(tier, cur, true, ts)
 		return recomputed, false
 	}
@@ -443,6 +474,9 @@ func (d *Database) finishRecomputeTier(tier flowSummaryTier, cur recomputeMark, 
 	d.deleteSetting(recomputeCursorKey(tier.interval))
 	d.deleteSetting(recomputeRetryKey(tier.interval))
 	ts.State, ts.Remaining, ts.Failing = "done", 0, nil
+	if tier.interval == "1d" {
+		recomputeBlockedCycles = 0
+	}
 	log.Printf("Flow summary: %s summaries rebuilt for reclassification revision %d", tier.interval, rev)
 }
 
@@ -475,4 +509,13 @@ func (d *Database) maybeClearServiceSince() {
 	}
 	d.deleteSetting(flowSummaryServiceSinceKey)
 	log.Printf("Flow summary: every bucket is rebuilt for revision %d; Top services now covers all of history", done)
+}
+
+func containsTime(list []time.Time, t time.Time) bool {
+	for _, x := range list {
+		if x.Equal(t) {
+			return true
+		}
+	}
+	return false
 }
