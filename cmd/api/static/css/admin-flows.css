@@ -947,6 +947,14 @@
     font-weight: 700;
     pointer-events: none;
 }
+/* A panel partial for its own stated reason carries the text itself. */
+.fwmon-flows-partial[data-partial]::after {
+    content: "partial — " attr(data-partial);
+    max-width: calc(100% - 16px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
 .fwmon-flows-partial-tile {
     outline: 1px dashed var(--fwmon-sig-warn);
     outline-offset: -1px;

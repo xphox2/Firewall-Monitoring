@@ -51,7 +51,7 @@ partitions are never dropped and only the severity-scoped deletes run.
 | Process stats (SSH top-N) | `process_stats` | `RETENTION_PROCESS_STATS_DAYS` | 30 | Process names may reflect customer workloads |
 | Interface errors/discards | `interface_errors` | `RETENTION_INTERFACE_ERRORS_DAYS` | 30 | No |
 | Flow records — sFlow **and, since v0.11.20, NetFlow v5/v9 + IPFIX** (5-tuple, counts; incl. unsampled ASA NSEL denied-flow events; origin labeled by `flow_source`) | `flow_samples` | `RETENTION_FLOW_DAYS` | 365 | **Yes** — src/dst IPs are PII in some jurisdictions |
-| Flow rollups (per-conversation 5m/1h/1d aggregates; since v0.11.26 also carry the allow/deny `firewall_event`) | `flow_rollups` | `RETENTION_FLOW_ROLLUP_DAYS` | 365 | **Yes** — src/dst IP conversation pairs are kept a full year by default |
+| Flow rollups (per-conversation 5m/1h/1d aggregates; since v0.11.26 also carry the allow/deny `firewall_event`, since v0.11.263 the conversation's `service_port` and classification revision `class_rev`) | `flow_rollups` | `RETENTION_FLOW_ROLLUP_DAYS` | 365 | **Yes** — src/dst IP conversation pairs are kept a full year by default |
 | Flow detections (detection-engine findings; ages on `detected_at`) | `flow_detections` | `RETENTION_FLOW_DETECTION_DAYS` | 90 | **Yes** — flagged src/dst IPs + detection message |
 | Flow interface counters | `flow_if_counters` | `RETENTION_FLOW_DAYS` | 365 | No |
 | Flow agent sample-drop windows (ages on `window_start`) | `flow_agent_drops` | `RETENTION_AGENT_DROPS_DAYS` | 30 | No |

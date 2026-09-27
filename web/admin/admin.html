@@ -562,8 +562,8 @@
                     <ul class="fwmon-toptalk-list" id="flows-top-destinations"></ul>
                 </div>
                 <div class="card fwmon-toptalk-card">
-                    <h3 class="fwmon-toptalk-title">Top Ports<span class="fwmon-toptalk-hint">click to filter</span></h3>
-                    <ul class="fwmon-toptalk-list" id="flows-top-ports"></ul>
+                    <h3 class="fwmon-toptalk-title">Top Services<span class="fwmon-toptalk-hint">by bytes · both directions</span></h3>
+                    <ul class="fwmon-toptalk-list" id="flows-top-services"></ul>
                 </div>
                 <div class="card fwmon-toptalk-card">
                     <h3 class="fwmon-toptalk-title">Protocols<span class="fwmon-toptalk-hint">by bytes · click to filter</span></h3>
@@ -651,6 +651,7 @@
                     <input type="text" id="flows-filter-src" class="fwmon-flows-input" placeholder="src IP or CIDR (10.0.0.0/24)" autocomplete="one-time-code" spellcheck="false">
                     <input type="text" id="flows-filter-dst" class="fwmon-flows-input" placeholder="dst IP or CIDR" autocomplete="one-time-code" spellcheck="false">
                     <input type="text" id="flows-filter-dport" class="fwmon-flows-input fwmon-flows-input-port" placeholder="dst port" autocomplete="one-time-code" spellcheck="false" inputmode="numeric">
+                    <input type="text" id="flows-filter-svc" class="fwmon-flows-input fwmon-flows-input-port" placeholder="service port" title="The service side of the conversation, either direction" autocomplete="one-time-code" spellcheck="false" inputmode="numeric">
                     <button type="button" class="btn secondary sm fwmon-flows-clear" id="flows-clear-filters">clear</button>
                 </div>
 
@@ -670,7 +671,7 @@
                 <!-- Flow Samples view — raw FlowSample rows, paginated -->
                 <div class="table-wrap fwmon-flows-view" id="flows-view-samples" style="max-height: 600px;" hidden>
                     <table id="flows-table" class="fwmon-flows-table">
-                        <thead><tr><th>Time</th><th>Src IP:Port</th><th></th><th>Dst IP:Port</th><th>Protocol</th><th>Source</th><th>Event</th><th class="num">Bytes</th><th class="num">Packets</th><th class="num">Rate</th></tr></thead>
+                        <thead><tr><th>Time</th><th>Src IP:Port</th><th></th><th>Dst IP:Port</th><th>Protocol</th><th>Service</th><th>Source</th><th>Event</th><th class="num">Bytes</th><th class="num">Packets</th><th class="num">Rate</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>

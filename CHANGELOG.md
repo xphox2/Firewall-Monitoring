@@ -1,6 +1,46 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.263] - 2026-09-27
+
+### Changed — Top ports becomes Top services, counted by each conversation's service port
+
+For a server, the old Top ports panel listed its clients' ports. It counted only
+the destination port, so a web server's replies (from 443 to thousands of
+client ports) showed as thousands of unrelated ports of 70–98 MB each. On
+production, a 30-day view of one server showed 443 at 6.7 GB, with the rest of
+its 401 GB spread across client ports.
+
+- **Each flow now records its service port**: the well-known side of the
+  conversation, whichever end it is on (otherwise the lower port below 32768;
+  0 when both ports are ephemeral or the protocol has none). A server's replies
+  and requests now count together under 443.
+- **Top services** replaces Top ports and ranks by that port. Clicking a row
+  filters by the port number. The old panel filtered by the row's name, so
+  clicking "HTTPS" sent `dst_port=HTTPS`, and the server silently ignored it.
+- A **service port** filter joins the filter row and the `/flows`,
+  `/flows/stats` and stream endpoints (`service_port=`). The samples table and
+  the CSV export gain a Service column.
+- History recorded before this version has no service port and is left out of
+  Top services until history is reclassified in a later version. On ranges
+  reaching back before the upgrade, the panel is marked **partial** with that
+  reason. This badge does not trigger the page-wide "last hour only" warning.
+  Other panels still show that warning only when they fell back to the last
+  hour.
+- **data_exfil** now counts only flows where the internal host is the client,
+  meaning the destination is the service or neither side is one. A server's
+  replies to external clients also travel outbound, and they are not
+  exfiltration. This comes at a cost: a compromised internal server drained by
+  external downloads no longer trips this detector. Neither does a client whose
+  ephemeral port is lower than an unknown destination port. Flows recorded
+  before this version keep today's behaviour.
+- Migration v68 adds `service_port` and `class_rev` to `flow_samples` and
+  `flow_rollups`. Adding each column is a catalog-only change, so the tables
+  are not rewritten. The rollup ladder groups by both columns. On a deployment
+  that runs the poller separately from the API, stop the poller before
+  upgrading the API. `class_rev` records which classification a row was made
+  under, and is used by the history reclassification to come.
+
 ## [0.11.262] - 2026-09-27
 
 ### Fixed — Flows panels rank by traffic, and top-10 lists see past the 10th row

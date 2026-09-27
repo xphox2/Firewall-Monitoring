@@ -36,6 +36,7 @@
         src: '',
         dst: '',
         dport: '',
+        svc: '',        // service port (either direction), drives Top services filter
         category: '',   // app_category id (classify.Category), drives By Application filter
         direction: '',  // direction id (classify.Dir*), drives By Direction filter
         country: '',    // dst ISO country code, drives Top Countries filter
@@ -48,7 +49,7 @@
 
     // URL params <-> state. URL is the source of truth on page load so
     // refresh / back / share preserves the view.
-    var URL_KEYS = ['hours', 'site_id', 'device_id', 'probe_id', 'protocol', 'src', 'dst', 'dport', 'category', 'direction', 'country', 'asn', 'source', 'event', 'tab'];
+    var URL_KEYS = ['hours', 'site_id', 'device_id', 'probe_id', 'protocol', 'src', 'dst', 'dport', 'svc', 'category', 'direction', 'country', 'asn', 'source', 'event', 'tab'];
 
     // Label <-> id maps for the classification breakdowns. These MIRROR
     // internal/classify (Category / Dir* — documented as stable). The widgets
@@ -232,6 +233,7 @@
         bindInputAuto('flows-filter-src',   'src',   400);
         bindInputAuto('flows-filter-dst',   'dst',   400);
         bindInputAuto('flows-filter-dport', 'dport', 400);
+        bindInputAuto('flows-filter-svc',   'svc',   400);
 
         // "Clear filters" button
         var clearBtn = document.getElementById('flows-clear-filters');
@@ -244,6 +246,7 @@
                 state.src = '';
                 state.dst = '';
                 state.dport = '';
+                state.svc = '';
                 state.category = '';
                 state.direction = '';
                 state.country = '';
@@ -278,7 +281,7 @@
         // Top-talker rows — event delegation. Each list rendered with
         // data-filter-key / data-filter-value attributes.
         ['flows-top-sources', 'flows-top-destinations',
-         'flows-top-ports', 'flows-top-protocols',
+         'flows-top-services', 'flows-top-protocols',
          'flows-by-category', 'flows-by-direction',
          'flows-top-countries', 'flows-top-asns'].forEach(function(id) {
             var el = document.getElementById(id);
@@ -384,6 +387,7 @@
         setVal('flows-filter-src',    state.src);
         setVal('flows-filter-dst',    state.dst);
         setVal('flows-filter-dport',  state.dport);
+        setVal('flows-filter-svc',    state.svc);
         applyTabView();
         renderActiveChips();
     }
@@ -431,6 +435,7 @@
         if (state.src)       chips.push({ key: 'src',   val: state.src,   stateKey: 'src' });
         if (state.dst)       chips.push({ key: 'dst',   val: state.dst,   stateKey: 'dst' });
         if (state.dport)     chips.push({ key: 'dport', val: state.dport, stateKey: 'dport' });
+        if (state.svc)       chips.push({ key: 'service', val: state.svc, stateKey: 'svc' });
         if (state.protocol)  chips.push({ key: 'proto', val: protocolName(state.protocol), stateKey: 'protocol' });
         if (state.category !== '')  chips.push({ key: 'app',       val: CATEGORY_LABELS[state.category]  || state.category,  stateKey: 'category' });
         if (state.direction !== '') chips.push({ key: 'direction', val: DIRECTION_LABELS[state.direction] || state.direction, stateKey: 'direction' });
@@ -499,6 +504,7 @@
         if (state.src)       params.push('src_addr='  + encodeURIComponent(state.src));
         if (state.dst)       params.push('dst_addr='  + encodeURIComponent(state.dst));
         if (state.dport)     params.push('dst_port='  + encodeURIComponent(state.dport));
+        if (state.svc)       params.push('service_port=' + encodeURIComponent(state.svc));
         if (state.category !== '')  params.push('app_category=' + encodeURIComponent(state.category));
         if (state.direction !== '') params.push('direction='   + encodeURIComponent(state.direction));
         if (state.country)   params.push('dst_country=' + encodeURIComponent(state.country));
@@ -522,6 +528,7 @@
         if (state.src)       p.push('src_addr='  + encodeURIComponent(state.src));
         if (state.dst)       p.push('dst_addr='  + encodeURIComponent(state.dst));
         if (state.dport)     p.push('dst_port='  + encodeURIComponent(state.dport));
+        if (state.svc)       p.push('service_port=' + encodeURIComponent(state.svc));
         if (state.category !== '')  p.push('app_category=' + encodeURIComponent(state.category));
         if (state.direction !== '') p.push('direction='   + encodeURIComponent(state.direction));
         if (state.country)   p.push('dst_country=' + encodeURIComponent(state.country));
@@ -649,6 +656,7 @@
         if (state.src)   parts.push('source ' + state.src);
         if (state.dst)   parts.push('destination ' + state.dst);
         if (state.dport) parts.push('port ' + state.dport);
+        if (state.svc) parts.push('service ' + state.svc);
         if (state.asn)   parts.push('AS' + state.asn);
         return parts.join(' · ');
     }
@@ -734,7 +742,7 @@
         protocols: 'flows-top-protocols', by_app_category: 'flows-by-category', by_direction: 'flows-by-direction',
         top_countries: 'flows-top-countries', top_asns: 'flows-top-asns',
         top_sources: 'flows-top-sources', top_destinations: 'flows-top-destinations',
-        top_ports: 'flows-top-ports', top_conversations: 'flows-conversations-table',
+        top_services: 'flows-top-services', top_conversations: 'flows-conversations-table',
         bytes_over_time: 'flows-bandwidth-chart'
     };
     var PANEL_NAMES = {
@@ -742,12 +750,16 @@
         local_traffic: 'Local traffic', sampling: 'Sampling rate', protocols: 'Protocols',
         by_app_category: 'Applications', by_direction: 'Direction', top_countries: 'Top countries',
         top_asns: 'Top networks (ASN)', top_sources: 'Top sources', top_destinations: 'Top destinations',
-        top_ports: 'Top ports', top_conversations: 'Top conversations', bytes_over_time: 'Traffic over time'
+        top_services: 'Top services', top_conversations: 'Top conversations', bytes_over_time: 'Traffic over time'
     };
 
-    function markPartialPanels(blocks) {
+    // reasons maps a panel to its own badge text (the server's partial_reasons,
+    // e.g. "services before 2026-09-27 not yet summarised"); a panel without one
+    // keeps the default "partial — last hour only".
+    function markPartialPanels(blocks, reasons) {
         document.querySelectorAll('#page-flows .fwmon-flows-partial, #page-flows .fwmon-flows-partial-tile').forEach(function(el) {
             el.classList.remove('fwmon-flows-partial', 'fwmon-flows-partial-tile');
+            el.removeAttribute('data-partial');
         });
         (blocks || []).forEach(function(b) {
             var el = document.getElementById(PANEL_HOSTS[b] || '');
@@ -760,6 +772,7 @@
             }
             var card = el.closest('.card') || el;
             card.classList.add('fwmon-flows-partial');
+            if (reasons && reasons[b]) card.setAttribute('data-partial', reasons[b]);
         });
     }
 
@@ -806,7 +819,9 @@
                 degradedBar.hidden = true;
             }
         }
-        markPartialPanels(blocks);
+        // Panels that are partial for their own stated reason (not the
+        // last-hour fallback) are badged without the page-wide banner.
+        markPartialPanels(blocks.concat(d.partial_blocks || []), d.partial_reasons || {});
 
         // Stat tiles
         setText('flows-total',      (d.total_flows || 0).toLocaleString());
@@ -1099,7 +1114,9 @@
     function renderTopTalkers(d) {
         renderList('flows-top-sources',      d.top_sources      || [], 'sources',   'src',      function(v) { return v; });
         renderList('flows-top-destinations', d.top_destinations || [], 'dests',     'dst',      function(v) { return v; });
-        renderList('flows-top-ports',        d.top_ports        || [], 'ports',     'dport',    function(v) { return v; });
+        // Top services filter by the port NUMBER: the row key is a display name
+        // ("HTTPS"), which the server cannot parse as a port.
+        renderList('flows-top-services',     d.top_services     || [], 'ports',     'svc',      function(v, r) { return r && r.port ? String(r.port) : ''; });
         renderList('flows-top-protocols',    d.by_protocol      || [], 'protocols', 'protocol', protocolNumber);
         // Classification breakdowns — ingest-time app/L7 category and direction.
         // Like protocols, `count` is BYTES and `records` the sampled-record count
@@ -1139,7 +1156,7 @@
 
     function clearTopTalkers() {
         ['flows-top-sources', 'flows-top-destinations',
-         'flows-top-ports', 'flows-top-protocols',
+         'flows-top-services', 'flows-top-protocols',
          'flows-by-category', 'flows-by-direction'].forEach(function(id) {
             var el = document.getElementById(id);
             if (el) el.innerHTML = '<li class="fwmon-toptalk-empty">No data</li>';
@@ -1187,7 +1204,7 @@
             var attrs = '';
             var activeCls = '';
             if (clickable) {
-                var filterVal = toFilterValue(r.key);
+                var filterVal = toFilterValue(r.key, r);
                 if (String(state[stateKey]) === String(filterVal)) activeCls = ' active';
                 attrs = ' data-filter-key="' + esc(stateKey) +
                         '" data-filter-value="' + esc(filterVal) + '"';
@@ -1309,7 +1326,7 @@
                 if (AC.showError) AC.showError('No flow samples to export');
                 return;
             }
-            var headers = ['timestamp', 'src_addr', 'src_port', 'dst_addr', 'dst_port',
+            var headers = ['timestamp', 'src_addr', 'src_port', 'dst_addr', 'dst_port', 'service_port',
                            'protocol', 'protocol_name', 'flow_source', 'firewall_event', 'bytes', 'packets', 'sampling_rate',
                            'device_id', 'probe_id', 'sampler_address',
                            'src_country', 'dst_country', 'src_asn', 'src_asn_org', 'dst_asn', 'dst_asn_org'];
@@ -1322,6 +1339,7 @@
                     f.src_port == null ? '' : f.src_port,
                     csvField(f.dst_addr),
                     f.dst_port == null ? '' : f.dst_port,
+                    f.service_port ? f.service_port : '',
                     f.protocol == null ? '' : f.protocol,
                     csvField(protocolName(f.protocol)),
                     csvField(SOURCE_LABELS[f.flow_source || 0] || ''),
@@ -1387,6 +1405,7 @@
         if (state.src)       bits.push('src-' + state.src.replace(/[^a-z0-9._-]/gi, ''));
         if (state.dst)       bits.push('dst-' + state.dst.replace(/[^a-z0-9._-]/gi, ''));
         if (state.dport)     bits.push('port' + state.dport);
+        if (state.svc)       bits.push('svc' + state.svc);
         if (state.source !== '') bits.push('src' + state.source);
         if (state.event !== '')  bits.push('evt' + state.event);
         return bits.join('-');
@@ -1417,6 +1436,7 @@
                 '<td>→</td>' +
                 '<td style="white-space:nowrap;">' + AC.ipRef(f.dst_addr, { port: f.dst_port, country: f.dst_country, asn: f.dst_asn, asn_org: f.dst_asn_org }) + '</td>' +
                 '<td>' + esc(protocolName(f.protocol)) + '</td>' +
+                '<td>' + (f.service_port ? esc(String(f.service_port)) : '—') + '</td>' +
                 '<td>' + esc(SOURCE_LABELS[f.flow_source || 0] || '—') + '</td>' +
                 // Event column: only NSEL/FortiGate event records carry IE 233;
                 // plain forwarded-traffic rows (0) render as an em dash.
@@ -1427,7 +1447,7 @@
             '</tr>';
         }).join('');
         if (append) tbody.innerHTML += html;
-        else tbody.innerHTML = html || '<tr><td colspan="10" class="empty-state">No flow samples match these filters</td></tr>';
+        else tbody.innerHTML = html || '<tr><td colspan="11" class="empty-state">No flow samples match these filters</td></tr>';
         AC.enrichIps(tbody);
     }
 
