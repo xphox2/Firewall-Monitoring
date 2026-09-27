@@ -514,10 +514,12 @@ func TestSummaryRecompute_DeadlineDoesNotStarveTheHourlyBackfill(t *testing.T) {
 	d := recomputeFixture(t)
 	day, recent := seedTwoTiers(t, d)
 	postRecomputeRequest(t, d, 1, day)
-	flowSummaryMaxCycleDuration = 150 * time.Millisecond
+	flowSummaryMaxCycleDuration = 500 * time.Millisecond
+	dailyCalls := 0
 	flowSummaryRecomputeHook = func(interval string, b time.Time) error {
 		if interval == "1d" {
-			time.Sleep(200 * time.Millisecond) // every daily bucket overruns the cycle
+			dailyCalls++
+			time.Sleep(700 * time.Millisecond) // every daily bucket overruns the cycle
 		}
 		return nil
 	}
@@ -528,6 +530,9 @@ func TestSummaryRecompute_DeadlineDoesNotStarveTheHourlyBackfill(t *testing.T) {
 		if !d.summaryBackfillComplete() {
 			t.Fatalf("cycle %d: the hourly backfill fell behind while the daily rebuild overran the cycle", i)
 		}
+	}
+	if dailyCalls == 0 {
+		t.Fatal("no daily bucket ran, so the overrun was never exercised")
 	}
 }
 

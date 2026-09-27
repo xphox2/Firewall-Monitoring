@@ -265,6 +265,10 @@ func (d *Database) runSummaryRecompute(ordered []flowSummaryTier, bounds map[str
 	for _, b := range bounds {
 		allClean = allClean && b.valid && (b.clean || b.ownsNothing)
 	}
+	stateBefore := map[string]string{}
+	for k, ts := range st.Tiers {
+		stateBefore[k] = ts.State
+	}
 	for _, tier := range ordered {
 		ts := st.Tiers[tier.interval]
 		if ts == nil {
@@ -275,10 +279,21 @@ func (d *Database) runSummaryRecompute(ordered []flowSummaryTier, bounds map[str
 		total += n
 		anyActive = anyActive || active
 	}
+	stateChanged := false
+	for k, ts := range st.Tiers {
+		if stateBefore[k] != ts.State {
+			stateChanged = true
+		}
+	}
 	if allClean {
 		d.maybeClearServiceSince()
+	} else if _, held := d.GetSettingValue(flowSummaryServiceSinceKey); held && !anyActive {
+		// Everything is rebuilt, but a routine summary bucket failed this
+		// cycle: the boundary is held until it succeeds. Say why.
+		st.WaitingReason = "a summary bucket keeps failing; see the log"
+		stateChanged = true
 	}
-	if anyActive || total > 0 {
+	if anyActive || total > 0 || stateChanged {
 		st.UpdatedAt = time.Now().UTC()
 		b, _ := json.Marshal(st)
 		_ = d.setReclassSetting(flowSummaryRecomputeStatusKey, string(b))

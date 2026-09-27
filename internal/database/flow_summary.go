@@ -200,6 +200,7 @@ func (d *Database) RunFlowSummaryCycle() bool {
 		}
 		if err != nil {
 			floorUncertain = true
+			log.Printf("Flow summary: the daily range probe failed; the hourly recompute sits this cycle out: %v", err)
 		}
 		if err == nil && ok {
 			dailyFloor = tier.bucketOf(newest).Add(tier.width)
@@ -209,6 +210,7 @@ func (d *Database) RunFlowSummaryCycle() bool {
 				finerOldest, _, ok2, err2 := d.tierTimeBounds(tier.yieldTo)
 				if err2 != nil {
 					floorUncertain = true
+					log.Printf("Flow summary: the daily yield probe failed; the hourly recompute sits this cycle out: %v", err2)
 				}
 				if err2 == nil && ok2 {
 					if boundary := tier.bucketOf(finerOldest); boundary.Before(dailyFloor) {
