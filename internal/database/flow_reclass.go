@@ -537,7 +537,17 @@ func (d *Database) reclassVerify(table string, floor int64, rev uint16, timeout 
 		// timeout: a slow disk then costs one range, not one statement over
 		// the whole table. The lock is held for the whole transaction, so no
 		// promotion can slip in between ranges.
-		for lo := floor; lo < res.tableMax; lo += reclassVerifyRange {
+		// Start at the lowest live id: flow_samples keeps only about an hour
+		// of rows while its sequence runs far ahead, so ranges from 0 would
+		// mostly count empty id space.
+		var first int64
+		if e := tx.Table(table).Select("COALESCE(MIN(id), 0)").Where("id > ?", floor).Scan(&first).Error; e != nil {
+			return e
+		}
+		if first == 0 {
+			return nil
+		}
+		for lo := first - 1; lo < res.tableMax; lo += reclassVerifyRange {
 			var agg struct {
 				N    int64
 				MinI int64
@@ -628,6 +638,7 @@ func (d *Database) RunFlowReclassStep(setFor func(rev uint16) (*classify.Interna
 			log.Printf("Flow reclassification: the target moved from %d to %d; restarting", st.Rev, t)
 			st = d.newReclassRun(t, false)
 			if set, err = setFor(st.Rev); err != nil {
+				d.writeReclassStatus(st, "paused", "the internal networks could not be loaded", false)
 				return fmt.Errorf("flow reclassification: load internal networks: %w", err)
 			}
 			st.Window = reclassInitialWindow
