@@ -53,3 +53,33 @@ func TestFlowsPage_PartialNoticeAboveFigures(t *testing.T) {
 		}
 	}
 }
+
+// The distribution panels (protocols, applications, direction) carry BYTES in
+// `count` and the sampled-record count in `records` (v0.11.262). Protocols once
+// printed a record count through formatBytes ("1.5 MB" for 1.48M records) and
+// applications/direction ranked by records, so a byte formatter must never be
+// swapped back to formatCount on these lists, and the record count must stay
+// reachable on hover.
+func TestFlowsPage_DistributionsAreBytes(t *testing.T) {
+	js := readJS(t, "admin-flows.js")
+	for _, id := range []string{"flows-top-protocols", "flows-by-category", "flows-by-direction"} {
+		i := strings.Index(js, "renderList('"+id+"'")
+		if i < 0 {
+			t.Fatalf("admin-flows.js no longer renders %s", id)
+		}
+		// The whole call, however it is wrapped: up to the closing ");".
+		call := js[i : i+strings.Index(js[i:], ");")]
+		if strings.Contains(call, "formatCount") {
+			t.Errorf("%s is rendered with formatCount; its values are bytes: %s", id, call)
+		}
+	}
+	for _, sub := range []string{
+		"if (typeof r.records === 'number') {",
+		`title="' + esc(labelTitle) + '"`,
+		"valueAria = ' aria-label=",
+	} {
+		if !strings.Contains(js, sub) {
+			t.Errorf("renderList must surface the record count on the label title and the value's aria-label (missing %q)", sub)
+		}
+	}
+}

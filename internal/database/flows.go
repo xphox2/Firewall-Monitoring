@@ -41,6 +41,18 @@ var wellKnownPorts = map[uint16]string{
 	1194: "OpenVPN", 51820: "WireGuard",
 }
 
+// FlowKeyCount is one row of a Flows distribution panel (protocols,
+// applications, direction). Count is BYTES — the panels rank by traffic, not by
+// how many sampled records a value happened to produce: on production one server
+// IP showed "Unknown" first by 938k records carrying 49 MB while "Web" carried
+// 400 GB in fewer records. Records is the sampled-record count, kept for the
+// tooltip. The shared KeyCount stays count-only for its other callers.
+type FlowKeyCount struct {
+	Key     string `json:"key"`
+	Count   int64  `json:"count"`
+	Records int64  `json:"records"`
+}
+
 type FlowStatsResult struct {
 	TotalFlows       int64              `json:"total_flows"`
 	TotalBytes       uint64             `json:"total_bytes"`
@@ -52,9 +64,9 @@ type FlowStatsResult struct {
 	BucketSeconds    int                `json:"bucket_seconds"`
 	AvgSamplingRate  float64            `json:"avg_sampling_rate"`
 	EstimatedBytes   uint64             `json:"estimated_bytes"`
-	ByProtocol       []KeyCount         `json:"by_protocol"`
-	ByCategory       []KeyCount         `json:"by_category"`
-	ByDirection      []KeyCount         `json:"by_direction"`
+	ByProtocol       []FlowKeyCount     `json:"by_protocol"`
+	ByCategory       []FlowKeyCount     `json:"by_category"`
+	ByDirection      []FlowKeyCount     `json:"by_direction"`
 	TopCountries     []KeyCount         `json:"top_countries"`
 	TopASNs          []KeyCount         `json:"top_asns"`
 	TopSources       []KeyCount         `json:"top_sources"`
@@ -153,6 +165,26 @@ func (d *Database) GetMixedFlowSourceDevices() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// Top-N panels DISPLAY flowTopDisplay rows but FETCH flowTopFetch from each
+// side (raw samples, rollups, summary tops) before merging. Cutting each side at
+// the display size loses any value that ranks #11 on both sides yet #1 on their
+// sum — the merge can only rank what it was given.
+const (
+	flowTopDisplay = 10
+	flowTopFetch   = 50
+)
+
+// firstKeyCounts returns at most n rows of an already-ordered list without
+// aliasing it, so the full list stays intact for a later merge.
+func firstKeyCounts(kc []KeyCount, n int) []KeyCount {
+	if len(kc) > n {
+		kc = kc[:n]
+	}
+	// Never nil: an empty panel serialises as [] like before. (Top ports keeps
+	// its historical null-when-empty by only calling this with rows.)
+	return append(make([]KeyCount, 0, len(kc)), kc...)
 }
 
 // topAddrsByBytes returns top N addresses grouped by addrCol, ordered by total bytes descending.
@@ -1008,13 +1040,14 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 	// (ICMP/GRE/ESP/OSPF) are intentionally kept.
 	var protocols []struct {
 		Protocol uint8
+		Bytes    int64
 		Count    int64
 	}
 	// No Limit here, unlike the other top-N panels: protocol is a uint8 with ~7
 	// live values on production, so the full group is tiny — and ProtocolCount
 	// below must count them all. The display list is truncated to 10 at the end.
-	if err := newRawBase().Where("protocol <> 0").Select("protocol, COUNT(*) as count").Group("protocol").
-		Order("count DESC").Scan(&protocols).Error; err != nil {
+	if err := newRawBase().Where("protocol <> 0").Select("protocol, COALESCE(SUM(bytes),0) as bytes, COUNT(*) as count").Group("protocol").
+		Scan(&protocols).Error; err != nil {
 		log.Printf("Flow stats protocol distribution: %v", err)
 	}
 	// finalizeProtocols publishes the protocol breakdown. It is a closure so it
@@ -1022,6 +1055,7 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 	// merge step, after the concurrent query has filled rollupProtos.
 	var rollupProtos []struct {
 		Protocol uint8
+		Bytes    int64
 		Count    int64
 	}
 	// finalizeProtocols must be IDEMPOTENT: it is called once up front to publish
@@ -1030,22 +1064,32 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 	// appended to result.ByProtocol and truncated the source slice in place, so a
 	// second call doubled the list.
 	finalizeProtocols := func() {
-		merged := make(map[uint8]int64, len(protocols)+len(rollupProtos))
-		for _, p := range protocols {
-			merged[p.Protocol] += p.Count
-		}
-		for _, p := range rollupProtos {
-			merged[p.Protocol] += p.Count
-		}
 		type protoCount struct {
 			Protocol uint8
-			Count    int64
+			Bytes    int64
+			Records  int64
+		}
+		merged := make(map[uint8]*protoCount, len(protocols)+len(rollupProtos))
+		add := func(proto uint8, bytes, records int64) {
+			pc := merged[proto]
+			if pc == nil {
+				pc = &protoCount{Protocol: proto}
+				merged[proto] = pc
+			}
+			pc.Bytes += bytes
+			pc.Records += records
+		}
+		for _, p := range protocols {
+			add(p.Protocol, p.Bytes, p.Count)
+		}
+		for _, p := range rollupProtos {
+			add(p.Protocol, p.Bytes, p.Count)
 		}
 		all := make([]protoCount, 0, len(merged))
-		for proto, count := range merged {
-			all = append(all, protoCount{proto, count})
+		for _, pc := range merged {
+			all = append(all, *pc)
 		}
-		sort.SliceStable(all, func(i, j int) bool { return all[i].Count > all[j].Count })
+		sortFlowKeyCounts(all, func(p protoCount) (int64, int64, string) { return p.Bytes, p.Records, protoName(p.Protocol) })
 		// ProtocolCount is taken BEFORE the display truncation. It used to be
 		// len(protocols) after a Limit(10), so the tile silently stopped counting
 		// at ten however many protocols the window actually carried.
@@ -1053,9 +1097,9 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 		if len(all) > 10 {
 			all = all[:10]
 		}
-		out := make([]KeyCount, 0, len(all))
+		out := make([]FlowKeyCount, 0, len(all))
 		for _, p := range all {
-			out = append(out, KeyCount{Key: protoName(p.Protocol), Count: p.Count})
+			out = append(out, FlowKeyCount{Key: protoName(p.Protocol), Count: p.Bytes, Records: p.Records})
 		}
 		result.ByProtocol = out
 	}
@@ -1068,35 +1112,46 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 	finalizeProtocols()
 	if useRollups {
 		runRollup("protocols", aggBase, func(q *gorm.DB) error {
-			return q.Where("protocol <> 0").Select("protocol, SUM(flow_count) as count").Group("protocol").
-				Order("count DESC").Scan(&rollupProtos).Error
+			return q.Where("protocol <> 0").Select("protocol, COALESCE(SUM(bytes_sum),0) as bytes, SUM(flow_count) as count").Group("protocol").
+				Scan(&rollupProtos).Error
 		}, finalizeProtocols)
 	}
 
-	// Application-category and direction distribution (by flow count), raw
+	// Application-category and direction distribution (by bytes, with the
+	// record count alongside — see FlowKeyCount), raw
 	// samples supplemented with rollups. Both are ingest-time classification
 	// columns (internal/classify) carried onto rollups, so the breakdown holds
 	// up after raw samples age out. Closure mirrors the protocol-distribution
 	// merge above for a single smallint dimension column.
 	// dimDist writes into dst rather than returning, so the rolled-up half can be
 	// scheduled and merged after its concurrent query completes.
-	dimDist := func(col string, nameFn func(uint8) string, dst *[]KeyCount) {
+	dimDist := func(col string, nameFn func(uint8) string, dst *[]FlowKeyCount) {
 		type drow struct {
 			V     uint8
+			Bytes int64
 			Count int64
 		}
 		var raws []drow
-		newRawBase().Select(col + " as v, COUNT(*) as count").Group(col).Scan(&raws)
-		m := make(map[uint8]int64, len(raws))
+		newRawBase().Select(col + " as v, COALESCE(SUM(bytes),0) as bytes, COUNT(*) as count").Group(col).Scan(&raws)
+		m := make(map[uint8]*FlowKeyCount, len(raws))
+		add := func(r drow) {
+			kc := m[r.V]
+			if kc == nil {
+				kc = &FlowKeyCount{Key: nameFn(r.V)}
+				m[r.V] = kc
+			}
+			kc.Count += r.Bytes
+			kc.Records += r.Count
+		}
 		for _, r := range raws {
-			m[r.V] += r.Count
+			add(r)
 		}
 		publish := func() {
-			out := make([]KeyCount, 0, len(m))
-			for v, c := range m {
-				out = append(out, KeyCount{Key: nameFn(v), Count: c})
+			out := make([]FlowKeyCount, 0, len(m))
+			for _, kc := range m {
+				out = append(out, *kc)
 			}
-			sort.SliceStable(out, func(i, j int) bool { return out[i].Count > out[j].Count })
+			sortFlowKeyCounts(out, func(k FlowKeyCount) (int64, int64, string) { return k.Count, k.Records, k.Key })
 			*dst = out
 		}
 		if !useRollups {
@@ -1105,10 +1160,10 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 		}
 		var rs []drow
 		runRollup("by_"+col, aggBase, func(q *gorm.DB) error {
-			return q.Select(col + " as v, SUM(flow_count) as count").Group(col).Scan(&rs).Error
+			return q.Select(col + " as v, COALESCE(SUM(bytes_sum),0) as bytes, SUM(flow_count) as count").Group(col).Scan(&rs).Error
 		}, func() {
 			for _, r := range rs {
-				m[r.V] += r.Count
+				add(r)
 			}
 			publish()
 		})
@@ -1132,7 +1187,7 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 			var rows []grow
 			base().Where("dst_country <> ?", "").
 				Select("dst_country as k, SUM(" + byteCol + ") as total").
-				Group("dst_country").Order("total DESC").Limit(10).Scan(&rows)
+				Group("dst_country").Order("total DESC").Limit(flowTopFetch).Scan(&rows)
 			out := make([]KeyCount, 0, len(rows))
 			for _, r := range rows {
 				out = append(out, KeyCount{Key: r.K, Count: r.Total})
@@ -1140,21 +1195,21 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 			return out
 		}
 		out := collect(newFilteredRawBase, "bytes")
-		result.TopCountries = out
+		result.TopCountries = firstKeyCounts(out, flowTopDisplay)
 		if useRollups {
 			var rollup []KeyCount
 			runRollup("top_countries", filteredAggBase, func(q *gorm.DB) error {
 				var rows []grow
 				err := q.Where("dst_country <> ?", "").
 					Select("dst_country as k, SUM(bytes_sum) as total").
-					Group("dst_country").Order("total DESC").Limit(10).Scan(&rows).Error
+					Group("dst_country").Order("total DESC").Limit(flowTopFetch).Scan(&rows).Error
 				rollup = rollup[:0]
 				for _, r := range rows {
 					rollup = append(rollup, KeyCount{Key: r.K, Count: r.Total})
 				}
 				return err
 			}, func() {
-				result.TopCountries = mergeKeyCounts(out, rollup, 10)
+				result.TopCountries = mergeKeyCounts(out, rollup, flowTopDisplay)
 			})
 		}
 	}
@@ -1167,7 +1222,7 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 			var rows []grow
 			base().Where("dst_asn <> 0").
 				Select("dst_asn as k, SUM(" + byteCol + ") as total").
-				Group("dst_asn").Order("total DESC").Limit(10).Scan(&rows)
+				Group("dst_asn").Order("total DESC").Limit(flowTopFetch).Scan(&rows)
 			out := make([]KeyCount, 0, len(rows))
 			for _, r := range rows {
 				out = append(out, KeyCount{Key: fmt.Sprintf("AS%d", r.K), Count: r.Total})
@@ -1175,14 +1230,14 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 			return out
 		}
 		out := collect(newFilteredRawBase, "bytes")
-		result.TopASNs = out
+		result.TopASNs = firstKeyCounts(out, flowTopDisplay)
 		if useRollups {
 			var rollup []KeyCount
-			mergeASNs := func() { result.TopASNs = mergeKeyCounts(out, rollup, 10) }
+			mergeASNs := func() { result.TopASNs = mergeKeyCounts(out, rollup, flowTopDisplay) }
 			switch {
 			case summaryTopsUsable:
 				runRollup("top_asns", newSummaryTopBase, func(q *gorm.DB) error {
-					vals, err := flowSummaryTopValues(q, flowSummaryDimDstASN, 10)
+					vals, err := flowSummaryTopValues(q, flowSummaryDimDstASN, flowTopFetch)
 					rollup = rollup[:0]
 					for _, v := range vals {
 						// Stored bare so one column serves every dimension.
@@ -1197,7 +1252,7 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 					var rows []grow
 					err := q.Where("dst_asn <> 0").
 						Select("dst_asn as k, SUM(bytes_sum) as total").
-						Group("dst_asn").Order("total DESC").Limit(10).Scan(&rows).Error
+						Group("dst_asn").Order("total DESC").Limit(flowTopFetch).Scan(&rows).Error
 					rollup = rollup[:0]
 					for _, r := range rows {
 						rollup = append(rollup, KeyCount{Key: fmt.Sprintf("AS%d", r.K), Count: r.Total})
@@ -1211,53 +1266,53 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 	geoTopASN()
 
 	// Top sources by bytes (filtered: excludes port-0 local traffic)
-	result.TopSources = topAddrsByBytes(newFilteredRawBase, "src_addr", 10)
+	rawSrc := topAddrsByBytes(newFilteredRawBase, "src_addr", flowTopFetch)
+	result.TopSources = firstKeyCounts(rawSrc, flowTopDisplay)
 	if useRollups {
-		rawSrc := result.TopSources
 		var rollupSrc []KeyCount
 		if summaryTopsUsable {
 			runRollup("top_sources", newSummaryTopBase, func(q *gorm.DB) error {
 				var err error
-				rollupSrc, err = flowSummaryTopValues(q, flowSummaryDimSrcAddr, 10)
+				rollupSrc, err = flowSummaryTopValues(q, flowSummaryDimSrcAddr, flowTopFetch)
 				return err
 			}, func() {
-				result.TopSources = mergeKeyCounts(rawSrc, rollupSrc, 10)
+				result.TopSources = mergeKeyCounts(rawSrc, rollupSrc, flowTopDisplay)
 			})
 		} else if useSummary {
 			budget.skip("top_sources")
 		} else {
 			runRollup("top_sources", newFilteredRollupBase, func(q *gorm.DB) error {
 				var err error
-				rollupSrc, err = topAddrsByBytesRollupQ(q, "src_addr", 10)
+				rollupSrc, err = topAddrsByBytesRollupQ(q, "src_addr", flowTopFetch)
 				return err
 			}, func() {
-				result.TopSources = mergeKeyCounts(rawSrc, rollupSrc, 10)
+				result.TopSources = mergeKeyCounts(rawSrc, rollupSrc, flowTopDisplay)
 			})
 		}
 	}
 
 	// Top destinations by bytes (filtered: excludes port-0 local traffic)
-	result.TopDestinations = topAddrsByBytes(newFilteredRawBase, "dst_addr", 10)
+	rawDst := topAddrsByBytes(newFilteredRawBase, "dst_addr", flowTopFetch)
+	result.TopDestinations = firstKeyCounts(rawDst, flowTopDisplay)
 	if useRollups {
-		rawDst := result.TopDestinations
 		var rollupDst []KeyCount
 		if summaryTopsUsable {
 			runRollup("top_destinations", newSummaryTopBase, func(q *gorm.DB) error {
 				var err error
-				rollupDst, err = flowSummaryTopValues(q, flowSummaryDimDstAddr, 10)
+				rollupDst, err = flowSummaryTopValues(q, flowSummaryDimDstAddr, flowTopFetch)
 				return err
 			}, func() {
-				result.TopDestinations = mergeKeyCounts(rawDst, rollupDst, 10)
+				result.TopDestinations = mergeKeyCounts(rawDst, rollupDst, flowTopDisplay)
 			})
 		} else if useSummary {
 			budget.skip("top_destinations")
 		} else {
 			runRollup("top_destinations", newFilteredRollupBase, func(q *gorm.DB) error {
 				var err error
-				rollupDst, err = topAddrsByBytesRollupQ(q, "dst_addr", 10)
+				rollupDst, err = topAddrsByBytesRollupQ(q, "dst_addr", flowTopFetch)
 				return err
 			}, func() {
-				result.TopDestinations = mergeKeyCounts(rawDst, rollupDst, 10)
+				result.TopDestinations = mergeKeyCounts(rawDst, rollupDst, flowTopDisplay)
 			})
 		}
 	}
@@ -1273,10 +1328,13 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 	}
 	if err := newFilteredRawBase().Select("src_addr, dst_addr, dst_port, protocol, SUM(bytes) as bytes, SUM(packets) as packets").
 		Group("src_addr, dst_addr, dst_port, protocol").
-		Order("bytes DESC").Limit(10).Scan(&convos).Error; err != nil {
+		Order("bytes DESC").Limit(flowTopFetch).Scan(&convos).Error; err != nil {
 		log.Printf("Flow stats top conversations: %v", err)
 	}
-	for _, c := range convos {
+	for i, c := range convos {
+		if i == flowTopDisplay {
+			break
+		}
 		result.TopConversations = append(result.TopConversations, FlowConversation{
 			SrcAddr:  c.SrcAddr,
 			DstAddr:  c.DstAddr,
@@ -1303,7 +1361,7 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 		convoQuery := func(q *gorm.DB) error {
 			return q.Select("src_addr, dst_addr, dst_port, protocol, SUM(bytes_sum) as bytes, SUM(packets_sum) as packets").
 				Group("src_addr, dst_addr, dst_port, protocol").
-				Order("bytes DESC").Limit(10).Scan(&rollupConvos).Error
+				Order("bytes DESC").Limit(flowTopFetch).Scan(&rollupConvos).Error
 		}
 		convoBase := newFilteredRollupBase
 		if summaryTopsUsable {
@@ -1319,7 +1377,7 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 				}
 				err := q.Where("dimension = ? AND scope_local = ?", flowSummaryDimConversation, false).
 					Select("value, COALESCE(SUM(bytes_sum),0) as bytes, COALESCE(SUM(packets_sum),0) as packets").
-					Group("value").Order("bytes DESC").Order("value ASC").Limit(10).Scan(&rows).Error
+					Group("value").Order("bytes DESC").Order("value ASC").Limit(flowTopFetch).Scan(&rows).Error
 				rollupConvos = rollupConvos[:0]
 				for _, r := range rows {
 					parts := strings.Split(r.Value, "|")
@@ -1380,8 +1438,8 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 					out = append(out, *merged[k])
 				}
 				sort.SliceStable(out, func(i, j int) bool { return out[i].Bytes > out[j].Bytes })
-				if len(out) > 10 {
-					out = out[:10]
+				if len(out) > flowTopDisplay {
+					out = out[:flowTopDisplay]
 				}
 				// REPLACES the raw-only list published below, rather than appending
 				// to it — the merge already folded those rows in.
@@ -1396,15 +1454,19 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 		Total int64
 	}
 	newFilteredRawBase().Select("dst_port as port, SUM(bytes) as total").
-		Where("dst_port > 0").Group("dst_port").Order("total DESC").Limit(10).Scan(&topPorts)
+		Where("dst_port > 0").Group("dst_port").Order("total DESC").Limit(flowTopFetch).Scan(&topPorts)
 	portName := func(port uint16) string {
 		if n, ok := wellKnownPorts[port]; ok {
 			return n
 		}
 		return fmt.Sprintf("%d", port)
 	}
+	rawPorts := make([]KeyCount, 0, len(topPorts))
 	for _, p := range topPorts {
-		result.TopPorts = append(result.TopPorts, KeyCount{Key: portName(p.Port), Count: p.Total})
+		rawPorts = append(rawPorts, KeyCount{Key: portName(p.Port), Count: p.Total})
+	}
+	if len(rawPorts) > 0 {
+		result.TopPorts = firstKeyCounts(rawPorts, flowTopDisplay)
 	}
 	// Same raw-only defect as Top Conversations: magnitudes ran ~19x low and
 	// port 2049 (the busiest on production) was missing entirely.
@@ -1413,7 +1475,6 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 			Port  uint16
 			Total int64
 		}
-		rawPorts := result.TopPorts
 		var summaryPorts []KeyCount
 		mergePorts := func() {
 			rollupKC := summaryPorts
@@ -1424,13 +1485,13 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 				}
 			}
 			if len(rollupKC) > 0 {
-				result.TopPorts = mergeKeyCounts(rawPorts, rollupKC, 10)
+				result.TopPorts = mergeKeyCounts(rawPorts, rollupKC, flowTopDisplay)
 			}
 		}
 		switch {
 		case summaryTopsUsable:
 			runRollup("top_ports", newSummaryTopBase, func(q *gorm.DB) error {
-				vals, err := flowSummaryTopValues(q, flowSummaryDimDstPort, 10)
+				vals, err := flowSummaryTopValues(q, flowSummaryDimDstPort, flowTopFetch)
 				summaryPorts = make([]KeyCount, 0, len(vals))
 				for _, v := range vals {
 					// The value is the port as text; name it the same way the raw
@@ -1446,7 +1507,7 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 		default:
 			runRollup("top_ports", newFilteredRollupBase, func(q *gorm.DB) error {
 				return q.Select("dst_port as port, SUM(bytes_sum) as total").
-					Where("dst_port > 0").Group("dst_port").Order("total DESC").Limit(10).Scan(&rollupPorts).Error
+					Where("dst_port > 0").Group("dst_port").Order("total DESC").Limit(flowTopFetch).Scan(&rollupPorts).Error
 			}, mergePorts)
 		}
 	}
@@ -1557,6 +1618,23 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 	return result, nil
 }
 
+// sortFlowKeyCounts orders a distribution panel by bytes, then records, then
+// key, all but the key descending. The rows come out of a map, so without the
+// tie-breaks two equal values would swap places between loads.
+func sortFlowKeyCounts[T any](rows []T, fields func(T) (bytes, records int64, key string)) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		bi, ri, ki := fields(rows[i])
+		bj, rj, kj := fields(rows[j])
+		if bi != bj {
+			return bi > bj
+		}
+		if ri != rj {
+			return ri > rj
+		}
+		return ki < kj
+	})
+}
+
 // mergeKeyCounts merges two KeyCount slices by summing counts for matching keys,
 // then returns the top N sorted by count descending.
 func mergeKeyCounts(a, b []KeyCount, limit int) []KeyCount {
@@ -1571,8 +1649,15 @@ func mergeKeyCounts(a, b []KeyCount, limit int) []KeyCount {
 	for k, c := range m {
 		merged = append(merged, KeyCount{Key: k, Count: c})
 	}
-	// Sort descending by count
-	sort.SliceStable(merged, func(i, j int) bool { return merged[i].Count > merged[j].Count })
+	// Sort descending by count, then by key: the rows come out of a map, and
+	// with 50 candidates per side competing for the displayed rows, equal
+	// totals at the cut must not swap between loads.
+	sort.SliceStable(merged, func(i, j int) bool {
+		if merged[i].Count != merged[j].Count {
+			return merged[i].Count > merged[j].Count
+		}
+		return merged[i].Key < merged[j].Key
+	})
 	if len(merged) > limit {
 		merged = merged[:limit]
 	}

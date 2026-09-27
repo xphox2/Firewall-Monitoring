@@ -50,32 +50,85 @@ func TestGetFlowStatsByCategoryAndDirection(t *testing.T) {
 		t.Fatalf("GetFlowStats: %v", err)
 	}
 
-	cat := map[string]int64{}
-	for _, kc := range res.ByCategory {
-		cat[kc.Key] = kc.Count
+	// Count is BYTES, Records the sampled-record count (FlowKeyCount).
+	check := func(name string, list []FlowKeyCount, want map[string][2]int64) {
+		t.Helper()
+		got := map[string][2]int64{}
+		for _, kc := range list {
+			got[kc.Key] = [2]int64{kc.Count, kc.Records}
+		}
+		for k, w := range want {
+			if got[k] != w {
+				t.Errorf("%s[%s] = bytes %d records %d, want bytes %d records %d. got=%v",
+					name, k, got[k][0], got[k][1], w[0], w[1], list)
+			}
+		}
 	}
-	if cat["Web"] != 2 {
-		t.Errorf("ByCategory[Web] = %d, want 2. got=%v", cat["Web"], res.ByCategory)
+	check("ByCategory", res.ByCategory, map[string][2]int64{
+		"Web": {3000, 2}, "DNS": {300, 1}, "Remote Access": {400, 1},
+	})
+	check("ByDirection", res.ByDirection, map[string][2]int64{
+		"Outbound": {3000, 2}, "Internal": {300, 1}, "Inbound": {400, 1},
+	})
+}
+
+// TestGetFlowStats_DistributionsRankByBytes pins the production defect: one
+// server showed "Unknown" first on Applications (938k records, 49 MB) while Web
+// carried 400 GB, and Protocols printed the record count as if it were bytes.
+// Many small records must lose to a few large ones on every distribution panel,
+// on the raw side AND the rolled-up side.
+func TestGetFlowStats_DistributionsRankByBytes(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	now := time.Now()
+	// Raw: twenty tiny UDP/unknown-category/inbound records ...
+	for i := 0; i < 20; i++ {
+		if err := db.Gorm().Create(&models.FlowSample{
+			Timestamp: now.Add(-20 * time.Minute), DeviceID: 1, Protocol: 17,
+			SrcAddr: "203.0.113.9", DstAddr: "10.0.0.5", SrcPort: 40000, DstPort: 40001,
+			Bytes: 10, Packets: 1,
+			AppCategory: uint8(classify.Unknown), Direction: classify.DirInbound,
+		}).Error; err != nil {
+			t.Fatalf("seed raw: %v", err)
+		}
 	}
-	if cat["DNS"] != 1 {
-		t.Errorf("ByCategory[DNS] = %d, want 1. got=%v", cat["DNS"], res.ByCategory)
-	}
-	if cat["Remote Access"] != 1 {
-		t.Errorf("ByCategory[Remote Access] = %d, want 1. got=%v", cat["Remote Access"], res.ByCategory)
+	// ... and one rolled-up TCP web outbound row carrying almost all the bytes
+	// in only three records.
+	if err := db.Gorm().Create(&models.FlowRollup{
+		Timestamp: now.Add(-20 * time.Hour), DeviceID: 1, IntervalType: "5m",
+		SrcAddr: "10.0.0.5", DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+		BytesSum: 5_000_000, PacketsSum: 4000, FlowCount: 3, SamplingRateAvg: 1,
+		AppCategory: uint8(classify.Web), Direction: classify.DirOutbound,
+	}).Error; err != nil {
+		t.Fatalf("seed rollup: %v", err)
 	}
 
-	dir := map[string]int64{}
-	for _, kc := range res.ByDirection {
-		dir[kc.Key] = kc.Count
+	res, err := db.GetFlowStats(24, FlowStatsFilter{})
+	if err != nil {
+		t.Fatalf("GetFlowStats: %v", err)
 	}
-	if dir["Outbound"] != 2 {
-		t.Errorf("ByDirection[Outbound] = %d, want 2. got=%v", dir["Outbound"], res.ByDirection)
-	}
-	if dir["Internal"] != 1 {
-		t.Errorf("ByDirection[Internal] = %d, want 1. got=%v", dir["Internal"], res.ByDirection)
-	}
-	if dir["Inbound"] != 1 {
-		t.Errorf("ByDirection[Inbound] = %d, want 1. got=%v", dir["Inbound"], res.ByDirection)
+	for _, c := range []struct {
+		name      string
+		list      []FlowKeyCount
+		wantFirst string
+		bytes     int64
+		records   int64
+	}{
+		{"ByProtocol", res.ByProtocol, "TCP", 5_000_000, 3},
+		{"ByCategory", res.ByCategory, classify.CategoryName(uint8(classify.Web)), 5_000_000, 3},
+		{"ByDirection", res.ByDirection, classify.DirectionName(classify.DirOutbound), 5_000_000, 3},
+	} {
+		if len(c.list) < 2 {
+			t.Errorf("%s = %v, want both values", c.name, c.list)
+			continue
+		}
+		top := c.list[0]
+		if top.Key != c.wantFirst || top.Count != c.bytes || top.Records != c.records {
+			t.Errorf("%s[0] = %+v, want {%s bytes=%d records=%d} — the panel must rank by bytes, "+
+				"not by how many records a value produced", c.name, top, c.wantFirst, c.bytes, c.records)
+		}
+		if second := c.list[1]; second.Count != 200 || second.Records != 20 {
+			t.Errorf("%s[1] = %+v, want bytes=200 records=20", c.name, second)
+		}
 	}
 }
 

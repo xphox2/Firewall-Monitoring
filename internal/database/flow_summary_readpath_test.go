@@ -137,9 +137,30 @@ func TestFlowSummaryRead_AgreesWithTheLivePath(t *testing.T) {
 			}
 		}
 	}
-	sameKeys("ByProtocol", summary.ByProtocol, live.ByProtocol)
-	sameKeys("ByCategory", summary.ByCategory, live.ByCategory)
-	sameKeys("ByDirection", summary.ByDirection, live.ByDirection)
+	// The distribution panels carry bytes in Count and records in Records; both
+	// must agree between the paths, so each is compared as its own list.
+	flowKeys := func(l []FlowKeyCount, records bool) []KeyCount {
+		out := make([]KeyCount, 0, len(l))
+		for _, k := range l {
+			v := k.Count
+			if records {
+				v = k.Records
+			}
+			out = append(out, KeyCount{Key: k.Key, Count: v})
+		}
+		return out
+	}
+	for _, p := range []struct {
+		name          string
+		summary, live []FlowKeyCount
+	}{
+		{"ByProtocol", summary.ByProtocol, live.ByProtocol},
+		{"ByCategory", summary.ByCategory, live.ByCategory},
+		{"ByDirection", summary.ByDirection, live.ByDirection},
+	} {
+		sameKeys(p.name+" bytes", flowKeys(p.summary, false), flowKeys(p.live, false))
+		sameKeys(p.name+" records", flowKeys(p.summary, true), flowKeys(p.live, true))
+	}
 	sameKeys("TopCountries", summary.TopCountries, live.TopCountries)
 	sameKeys("TopSources", summary.TopSources, live.TopSources)
 	sameKeys("TopDestinations", summary.TopDestinations, live.TopDestinations)

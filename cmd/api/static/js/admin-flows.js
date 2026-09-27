@@ -1102,11 +1102,13 @@
         renderList('flows-top-ports',        d.top_ports        || [], 'ports',     'dport',    function(v) { return v; });
         renderList('flows-top-protocols',    d.by_protocol      || [], 'protocols', 'protocol', protocolNumber);
         // Classification breakdowns — ingest-time app/L7 category and direction.
-        // Counts are flow counts (formatCount). Click-to-filter: the widgets show
-        // labels but filter by the numeric id the backend stores, so toFilterValue
-        // maps the clicked label -> id.
-        renderList('flows-by-category',  d.by_category  || [], 'category',  'category',  function(label) { return CATEGORY_IDS[label] || ''; }, formatCount);
-        renderList('flows-by-direction', d.by_direction || [], 'direction', 'direction', function(label) { return DIRECTION_IDS[label] || ''; }, formatCount);
+        // Like protocols, `count` is BYTES and `records` the sampled-record count
+        // (shown on hover): ranking by records put a server's many tiny "Unknown"
+        // records above the 400 GB of Web it actually carried. Click-to-filter:
+        // the widgets show labels but filter by the numeric id the backend
+        // stores, so toFilterValue maps the clicked label -> id.
+        renderList('flows-by-category',  d.by_category  || [], 'category',  'category',  function(label) { return CATEGORY_IDS[label] || ''; });
+        renderList('flows-by-direction', d.by_direction || [], 'direction', 'direction', function(label) { return DIRECTION_IDS[label] || ''; });
         // Geo/ASN breakdowns (v0.10.506) — byte-valued, destination-oriented,
         // click-to-filter (country code / ASN number). The cards stay hidden
         // unless GeoIP enrichment produced data, so deployments without GeoLite2
@@ -1191,10 +1193,21 @@
                         '" data-filter-value="' + esc(filterVal) + '"';
             }
             var labelHtml = isIp ? AC.ipRef(r.key) : esc(r.key);
+            // Distribution rows (protocols/applications/direction) carry the
+            // sampled-record count beside the bytes. It goes in the label's own
+            // title (the innermost title wins, and the label fills the row) and
+            // in the value's aria-label so it is reachable without hover.
+            var labelTitle = r.key;
+            var valueAria = '';
+            if (typeof r.records === 'number') {
+                var recText = formatCount(r.records) + (r.records === 1 ? ' flow record' : ' flow records');
+                labelTitle = r.key + ' · ' + recText;
+                valueAria = ' aria-label="' + esc(fmt(r.count) + ', ' + recText) + '"';
+            }
             html += '<li class="fwmon-toptalk-row' + activeCls + '"' + attrs +
                 ' style="--bar-pct:' + pct.toFixed(1) + '%">' +
-                '<span class="fwmon-toptalk-row-label" title="' + esc(r.key) + '">' + labelHtml + '</span>' +
-                '<span class="fwmon-toptalk-row-value">' + fmt(r.count) + '</span>' +
+                '<span class="fwmon-toptalk-row-label" title="' + esc(labelTitle) + '">' + labelHtml + '</span>' +
+                '<span class="fwmon-toptalk-row-value"' + valueAria + '>' + fmt(r.count) + '</span>' +
                 '<span class="fwmon-toptalk-row-bar"></span>' +
             '</li>';
         }
