@@ -28,10 +28,30 @@ GB, about fourteen panels, one 20 s budget.
   query as `/flows/stats`, reporting each step (`Reading day 12 of 30`, then each
   panel) and ending with exactly the synchronous response. A long filtered
   report gets an allowance scaled to its window (a minute plus three seconds a
-  day, at most fifteen minutes) instead of the synchronous endpoint's 20 s. At
+  day, at most fifteen minutes) instead of the synchronous endpoint's 20 s. A
+  failure ends the stream with a `fail` event (not `error`, which EventSource
+  reserves for a dropped connection). At
   most two such long reports run at once; a third is told to try again shortly.
   The default Flows view is never held back by that limit. `/flows/stats` keeps
   its 20 s budget and reports honestly when a cold long report does not fit.
+
+### Changed — the Flows page shows what it is loading, and says when a result is partial
+
+- **A loading panel with progress.** While the figures load, the page shows
+  what is being loaded ("Loading flows · last 30 days · source 66.179.9.156"),
+  a progress bar, the current step ("Reading day 12 of 30", "Top destinations"),
+  elapsed time and a Cancel button. The previous range's figures stay on
+  screen, dimmed, so they are never read as the new range.
+- **One load at a time.** Changing the range or a filter while a report is
+  loading stops it; a late answer for an older request can no longer replace
+  the newer one.
+- **Partial results are said at the top.** The notice moved from the bottom of
+  the page to just under the header, names the affected panels in plain words,
+  and each such panel is marked "partial — last hour only". The traffic chart
+  no longer stretches an hour of samples across a 30-day axis; it says only the
+  last hour is available.
+- **Errors clear the old figures** and offer Retry, instead of showing "Error"
+  beside the previous range's numbers.
 
 ## [0.11.259] - 2026-09-26
 

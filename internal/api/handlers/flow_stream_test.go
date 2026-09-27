@@ -105,7 +105,7 @@ func TestGetFlowStatsStream_ResultMatchesSyncEndpoint(t *testing.T) {
 }
 
 // Only long reports take a slot: with both slots held, a filtered long report
-// is refused with a 200 `error` event (never a status code, so the page never
+// is refused with a 200 `fail` event (never a status code, so the page never
 // mistakes it for a transport failure), while the default view is not gated.
 func TestGetFlowStatsStream_SlotsGateOnlyLongReports(t *testing.T) {
 	h, db := setupTestHandler(t)
@@ -121,7 +121,7 @@ func TestGetFlowStatsStream_SlotsGateOnlyLongReports(t *testing.T) {
 
 	w := getRecorder(h.GetFlowStatsStream, "/x?hours=168&src_addr=10.0.0.1")
 	evs := parseSSE(w.Body.String())
-	if w.Code != http.StatusOK || len(evs) != 1 || evs[0].name != "error" || !strings.Contains(evs[0].data, "Another long Flows report") {
+	if w.Code != http.StatusOK || len(evs) != 1 || evs[0].name != "fail" || !strings.Contains(evs[0].data, "Another long Flows report") {
 		t.Fatalf("busy reply: code %d events %+v", w.Code, evs)
 	}
 

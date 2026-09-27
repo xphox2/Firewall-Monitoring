@@ -1,0 +1,55 @@
+package shell
+
+import (
+	"os"
+	"strings"
+	"testing"
+)
+
+// The Flows page streams long reports with progress (v0.11.260). These pin the
+// behaviours that would silently regress: an EventSource that is not closed
+// after its answer reconnects and runs the whole report again; a stream that
+// dies mid-report must not be re-run as a 20 s request that can only return a
+// partial answer; responses from an older load must not overwrite a newer one;
+// and a partial result must be announced above the figures, not below them.
+func TestFlowsPage_StreamedLoadGuards(t *testing.T) {
+	js := readJS(t, "admin-flows.js")
+	must := func(sub, why string) {
+		t.Helper()
+		if !strings.Contains(js, sub) {
+			t.Errorf("admin-flows.js is missing %q — %s", sub, why)
+		}
+	}
+	must("/admin/api/flows/stats/stream?", "the page must load stats through the progress stream")
+	must("addEventListener('result', function(ev) {\n            es.close();", "the stream must be closed on its result, or EventSource reconnects and reruns the report")
+	must("addEventListener('fail', function(ev) {\n            es.close();", "the stream must be closed on the server's fail event")
+	must("es.onerror = function() {\n            es.close();", "the stream must be closed on a transport error")
+	must("if (!heard) {", "only a stream that never answered may fall back to the plain request")
+	must("The connection was lost while the report was loading.", "a stream that dies mid-report goes to the error state, not a silent re-run")
+	must("if (gen !== statsGen) return;", "events from an older load must be ignored")
+	must("{ signal: statsAbort.signal }", "the fallback request must be abortable by a newer load")
+	if n := strings.Count(js, "console."); n > 6 {
+		t.Errorf("admin-flows.js has %d console. calls; new code logs through fwmonLog (AUDIT-151)", n)
+	}
+}
+
+func TestFlowsPage_PartialNoticeAboveFigures(t *testing.T) {
+	b, err := os.ReadFile("../../web/admin/admin.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(b)
+	notice := strings.Index(html, `id="flows-degraded-warning"`)
+	grid := strings.Index(html, `id="flows-stats-grid"`)
+	if notice < 0 || grid < 0 || notice > grid {
+		t.Fatalf("the partial-result notice must sit above the stat tiles (notice at %d, tiles at %d)", notice, grid)
+	}
+	if strings.Count(html, `id="flows-degraded-warning"`) != 1 {
+		t.Fatal("exactly one partial-result notice")
+	}
+	for _, id := range []string{`id="flows-loading"`, `id="flows-loading-cancel"`, `id="flows-load-retry"`, `id="flows-loading-bar"`} {
+		if !strings.Contains(html, id) {
+			t.Errorf("admin.html is missing %s", id)
+		}
+	}
+}

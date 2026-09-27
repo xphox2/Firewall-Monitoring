@@ -496,6 +496,24 @@
                 </div>
             </div>
 
+            <!-- Loading, error and partial-data states for the aggregate views.
+                 Driven by admin-flows.js from GET /flows/stats/stream progress. -->
+            <div id="flows-loading" class="fwmon-flows-loading" role="status" aria-live="polite" hidden>
+                <div class="fwmon-flows-loading-row">
+                    <span class="fwmon-spinner" aria-hidden="true"></span>
+                    <span class="fwmon-flows-loading-title" id="flows-loading-title">Loading flows…</span>
+                    <span class="fwmon-flows-loading-elapsed" id="flows-loading-elapsed"></span>
+                    <button type="button" class="btn secondary sm" id="flows-loading-cancel">Cancel</button>
+                </div>
+                <div class="fwmon-flows-progress" aria-hidden="true"><div class="fwmon-flows-progress-bar" id="flows-loading-bar"></div></div>
+                <div class="fwmon-flows-loading-step" id="flows-loading-step"></div>
+            </div>
+            <div id="flows-load-error" class="fwmon-flows-load-error" role="alert" hidden>
+                <span id="flows-load-error-msg"></span>
+                <button type="button" class="btn secondary sm" id="flows-load-retry">Retry</button>
+            </div>
+            <div id="flows-degraded-warning" class="fwmon-flows-degraded" role="status" hidden></div>
+
             <!-- 6 stat cards — same data as before, restyled with overflow-safe typography -->
             <div class="fwmon-flows-stats" id="flows-stats-grid">
                 <div class="fwmon-stat accent-blue"><div class="fwmon-stat-label">Total Flows</div><div class="fwmon-stat-value" id="flows-total">--</div></div>
@@ -639,7 +657,6 @@
                      via BOTH sFlow and NetFlow double-counts every byte.
                      Populated by admin-flows.js from mixed_source_devices. -->
                 <div id="flows-mixed-source-warning" class="fwmon-flows-mixed-warning" hidden></div>
-                <div id="flows-degraded-warning" class="fwmon-flows-mixed-warning" hidden></div>
 
                 <!-- Conversations view — click row to filter src+dst+port and jump to Samples -->
                 <div class="table-wrap fwmon-flows-view" id="flows-view-conversations" style="max-height: 600px;">

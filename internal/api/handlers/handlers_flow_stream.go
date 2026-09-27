@@ -26,7 +26,9 @@ var flowStreamSlots = make(chan struct{}, 2)
 //
 // Events: `progress` {done,total,label,elapsed_ms} before each step (also the
 // keepalive); then exactly one of `result` (the synchronous endpoint's JSON
-// envelope) or `error` {message}. The handler returns right after either, so
+// envelope) or `fail` {message}. Not `error`: EventSource fires its own
+// `error` event on a transport failure, and the page must be able to tell a
+// server's answer from a dropped connection. The handler returns right after either, so
 // the client closes its EventSource instead of reconnecting and re-running the
 // report. Every reply is a 200 event stream — including "busy" — so a client
 // can always tell a server answer from a transport failure.
@@ -63,7 +65,7 @@ func (h *Handler) GetFlowStatsStream(c *gin.Context) {
 		flusher.Flush()
 		return true
 	}
-	fail := func(msg string) { send("error", gin.H{"message": msg}) }
+	fail := func(msg string) { send("fail", gin.H{"message": msg}) }
 
 	db := h.reqDB(c)
 	if db == nil {
