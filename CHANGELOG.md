@@ -1,6 +1,29 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.262] - 2026-09-27
+
+### Fixed — Flows panels rank by traffic, and top-10 lists see past the 10th row
+
+Checked against production for a 30-day view of one server address (about
+401 GB, where the bandwidth figures were already right):
+
+- **Protocols showed record counts formatted as bytes.** The panel ranked by
+  how many sampled records each protocol produced and the page printed that
+  number as a size, so TCP read "1.5 MB" for 1.48 million records carrying
+  401 GB. It now ranks and shows bytes.
+- **Applications and Direction ranked by record count.** "Unknown" came first
+  with 938k records carrying 49 MB, while Web carried 400 GB (99.9% of the
+  traffic) in fewer records. Both now rank and show bytes.
+- On all three panels, hovering a row shows its flow-record count. The API
+  keeps `count` for the ranked value (now bytes) and adds `records`.
+- **Top-N lists could miss the true #1.** Recent samples and older rolled-up
+  history were each cut to 10 rows before being merged, so a value ranked #11
+  on both sides — and first on their sum — never appeared. Each side now
+  supplies 50 rows (the summary tables already keep 50 per bucket) and the
+  merged list shows 10. This applies to top sources, destinations,
+  conversations, ports, countries and ASNs.
+
 ## [0.11.261] - 2026-09-27
 
 ### Changed — a streamed Flows report no longer has a time limit

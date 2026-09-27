@@ -1,6 +1,7 @@
 package database
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -333,5 +334,59 @@ func TestGetFlowStats_DegradedWhenRollupsFail(t *testing.T) {
 	if n := len(res.DegradedBlocks); n < 2 {
 		t.Errorf("DegradedBlocks has %d entries (%v); every panel that lost data should be named",
 			n, res.DegradedBlocks)
+	}
+}
+
+// TestGetFlowStats_TopNFetchesBeyondTheDisplayCut pins the merge width. Each
+// side (raw samples and rollups) used to be cut at the display size of 10 before
+// the merge, so a value ranked #11 on BOTH sides — and #1 on their sum — could
+// never appear. Here port 9999 / source 10.9.9.9 is #11 on each side and the
+// true #1 overall.
+func TestGetFlowStats_TopNFetchesBeyondTheDisplayCut(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	now := time.Now()
+	for i := 0; i < 10; i++ {
+		if err := db.Gorm().Create(&models.FlowSample{
+			Timestamp: now.Add(-20 * time.Minute), DeviceID: 1, Protocol: 6,
+			SrcAddr: fmt.Sprintf("10.1.0.%d", i+1), DstAddr: "8.8.8.8", DstPort: uint16(20000 + i),
+			Bytes: 1000, Packets: 1,
+		}).Error; err != nil {
+			t.Fatalf("seed raw: %v", err)
+		}
+		if err := db.Gorm().Create(&models.FlowRollup{
+			Timestamp: now.Add(-20 * time.Hour), DeviceID: 1, IntervalType: "5m",
+			SrcAddr: fmt.Sprintf("10.2.0.%d", i+1), DstAddr: "8.8.4.4", DstPort: uint16(30000 + i), Protocol: 6,
+			BytesSum: 1000, PacketsSum: 1, FlowCount: 1, SamplingRateAvg: 1,
+		}).Error; err != nil {
+			t.Fatalf("seed rollup: %v", err)
+		}
+	}
+	if err := db.Gorm().Create(&models.FlowSample{
+		Timestamp: now.Add(-20 * time.Minute), DeviceID: 1, Protocol: 6,
+		SrcAddr: "10.9.9.9", DstAddr: "8.8.8.8", DstPort: 9999, Bytes: 900, Packets: 1,
+	}).Error; err != nil {
+		t.Fatalf("seed raw #11: %v", err)
+	}
+	if err := db.Gorm().Create(&models.FlowRollup{
+		Timestamp: now.Add(-20 * time.Hour), DeviceID: 1, IntervalType: "5m",
+		SrcAddr: "10.9.9.9", DstAddr: "8.8.4.4", DstPort: 9999, Protocol: 6,
+		BytesSum: 900, PacketsSum: 1, FlowCount: 1, SamplingRateAvg: 1,
+	}).Error; err != nil {
+		t.Fatalf("seed rollup #11: %v", err)
+	}
+
+	res, err := db.GetFlowStats(24, FlowStatsFilter{})
+	if err != nil {
+		t.Fatalf("GetFlowStats: %v", err)
+	}
+	if len(res.TopPorts) == 0 || res.TopPorts[0].Key != "9999" || res.TopPorts[0].Count != 1800 {
+		t.Errorf("TopPorts[0] = %v, want 9999 with 1800 bytes (#11 on each side, #1 overall)", res.TopPorts)
+	}
+	if len(res.TopSources) == 0 || res.TopSources[0].Key != "10.9.9.9" || res.TopSources[0].Count != 1800 {
+		t.Errorf("TopSources[0] = %v, want 10.9.9.9 with 1800 bytes", res.TopSources)
+	}
+	if len(res.TopPorts) != 10 || len(res.TopSources) != 10 {
+		t.Errorf("display lists hold %d ports / %d sources; both must stay capped at 10",
+			len(res.TopPorts), len(res.TopSources))
 	}
 }
