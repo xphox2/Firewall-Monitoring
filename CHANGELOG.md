@@ -10,8 +10,8 @@ Checked against production for a 30-day view of one server address (about
 
 - **Protocols showed record counts formatted as bytes.** The panel ranked by
   how many sampled records each protocol produced and the page printed that
-  number as a size, so TCP read "1.5 MB" for 1.48 million records carrying
-  401 GB. It now ranks and shows bytes.
+  number as a size, so TCP read about 1.4 MB — its 1.48 million records —
+  while carrying 401 GB. It now ranks and shows bytes.
 - **Applications and Direction ranked by record count.** "Unknown" came first
   with 938k records carrying 49 MB, while Web carried 400 GB (99.9% of the
   traffic) in fewer records. Both now rank and show bytes.

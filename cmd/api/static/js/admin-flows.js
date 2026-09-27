@@ -1194,14 +1194,20 @@
             }
             var labelHtml = isIp ? AC.ipRef(r.key) : esc(r.key);
             // Distribution rows (protocols/applications/direction) carry the
-            // sampled-record count beside the bytes; surface it on hover.
+            // sampled-record count beside the bytes. It goes in the label's own
+            // title (the innermost title wins, and the label fills the row) and
+            // in the value's aria-label so it is reachable without hover.
+            var labelTitle = r.key;
+            var valueAria = '';
             if (typeof r.records === 'number') {
-                attrs += ' title="' + esc(formatCount(r.records) + (r.records === 1 ? ' flow record' : ' flow records')) + '"';
+                var recText = formatCount(r.records) + (r.records === 1 ? ' flow record' : ' flow records');
+                labelTitle = r.key + ' · ' + recText;
+                valueAria = ' aria-label="' + esc(fmt(r.count) + ', ' + recText) + '"';
             }
             html += '<li class="fwmon-toptalk-row' + activeCls + '"' + attrs +
                 ' style="--bar-pct:' + pct.toFixed(1) + '%">' +
-                '<span class="fwmon-toptalk-row-label" title="' + esc(r.key) + '">' + labelHtml + '</span>' +
-                '<span class="fwmon-toptalk-row-value">' + fmt(r.count) + '</span>' +
+                '<span class="fwmon-toptalk-row-label" title="' + esc(labelTitle) + '">' + labelHtml + '</span>' +
+                '<span class="fwmon-toptalk-row-value"' + valueAria + '>' + fmt(r.count) + '</span>' +
                 '<span class="fwmon-toptalk-row-bar"></span>' +
             '</li>';
         }

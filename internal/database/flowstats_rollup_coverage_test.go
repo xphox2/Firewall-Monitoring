@@ -390,3 +390,32 @@ func TestGetFlowStats_TopNFetchesBeyondTheDisplayCut(t *testing.T) {
 			len(res.TopPorts), len(res.TopSources))
 	}
 }
+
+// TestGetFlowStats_RawOnlyTopNStillShowsTen pins the display cap on the raw-only
+// path (a 1-hour window reads no rollups): each side now FETCHES 50 rows, so a
+// raw list published without the cut would render all of them.
+func TestGetFlowStats_RawOnlyTopNStillShowsTen(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	now := time.Now()
+	for i := 0; i < 14; i++ {
+		if err := db.Gorm().Create(&models.FlowSample{
+			Timestamp: now.Add(-10 * time.Minute), DeviceID: 1, Protocol: 6,
+			SrcAddr: fmt.Sprintf("10.3.0.%d", i+1), DstAddr: fmt.Sprintf("8.8.%d.8", i+1),
+			DstPort: uint16(40000 + i), Bytes: uint64(100 + i), Packets: 1,
+		}).Error; err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	res, err := db.GetFlowStats(1, FlowStatsFilter{})
+	if err != nil {
+		t.Fatalf("GetFlowStats: %v", err)
+	}
+	for name, n := range map[string]int{
+		"TopSources": len(res.TopSources), "TopDestinations": len(res.TopDestinations),
+		"TopPorts": len(res.TopPorts), "TopConversations": len(res.TopConversations),
+	} {
+		if n != 10 {
+			t.Errorf("%s has %d rows on the raw-only path, want 10", name, n)
+		}
+	}
+}

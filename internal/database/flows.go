@@ -182,7 +182,8 @@ func firstKeyCounts(kc []KeyCount, n int) []KeyCount {
 	if len(kc) > n {
 		kc = kc[:n]
 	}
-	// Never nil: an empty panel must still serialise as [] like before.
+	// Never nil: an empty panel serialises as [] like before. (Top ports keeps
+	// its historical null-when-empty by only calling this with rows.)
 	return append(make([]KeyCount, 0, len(kc)), kc...)
 }
 
@@ -1648,8 +1649,15 @@ func mergeKeyCounts(a, b []KeyCount, limit int) []KeyCount {
 	for k, c := range m {
 		merged = append(merged, KeyCount{Key: k, Count: c})
 	}
-	// Sort descending by count
-	sort.SliceStable(merged, func(i, j int) bool { return merged[i].Count > merged[j].Count })
+	// Sort descending by count, then by key: the rows come out of a map, and
+	// with 50 candidates per side competing for the displayed rows, equal
+	// totals at the cut must not swap between loads.
+	sort.SliceStable(merged, func(i, j int) bool {
+		if merged[i].Count != merged[j].Count {
+			return merged[i].Count > merged[j].Count
+		}
+		return merged[i].Key < merged[j].Key
+	})
 	if len(merged) > limit {
 		merged = merged[:limit]
 	}

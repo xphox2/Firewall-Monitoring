@@ -67,12 +67,19 @@ func TestFlowsPage_DistributionsAreBytes(t *testing.T) {
 		if i < 0 {
 			t.Fatalf("admin-flows.js no longer renders %s", id)
 		}
-		line := js[i : i+strings.Index(js[i:], "\n")]
-		if strings.Contains(line, "formatCount") {
-			t.Errorf("%s is rendered with formatCount; its values are bytes: %s", id, line)
+		// The whole call, however it is wrapped: up to the closing ");".
+		call := js[i : i+strings.Index(js[i:], ");")]
+		if strings.Contains(call, "formatCount") {
+			t.Errorf("%s is rendered with formatCount; its values are bytes: %s", id, call)
 		}
 	}
-	if !strings.Contains(js, "if (typeof r.records === 'number') {") {
-		t.Error("renderList must surface the record count on hover for the distribution panels")
+	for _, sub := range []string{
+		"if (typeof r.records === 'number') {",
+		`title="' + esc(labelTitle) + '"`,
+		"valueAria = ' aria-label=",
+	} {
+		if !strings.Contains(js, sub) {
+			t.Errorf("renderList must surface the record count on the label title and the value's aria-label (missing %q)", sub)
+		}
 	}
 }
