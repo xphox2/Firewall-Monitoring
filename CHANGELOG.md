@@ -1,6 +1,30 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.260] - 2026-09-27
+
+### Fixed — Flows reports filtered by an address, port or network never finished past a day or two
+
+Reported on the Flows page: 30 days filtered to one source address showed an
+empty graph and figures that were "way off". Every such request on production
+took 20.2 s and ended with each rolled-up panel logging `fell back to
+raw-only`: the page then reported roughly the last hour of raw samples under a
+30-day label.
+
+A filter on source or destination address (or range), destination port or ASN
+cannot use the summary tables, and `flow_rollups` has no index on those
+columns, so every panel scanned the whole table — 15.4 s for one panel over 20
+GB, about fourteen panels, one 20 s budget.
+
+- **Such a report now reads the window once, a day at a time,** into a
+  temporary table holding exactly the rows the filter selects, and every panel
+  is computed from that. One day costs 0.3–0.9 s on production, so 30 days is
+  about 25 s and 90 days about a minute. Nothing about the result changes
+  except that it is complete: the same filters, windows and figures as before.
+- **A partly read window is never reported.** If the time allowance runs out
+  part-way, every affected panel is marked partial instead of showing some of
+  the days under the full window's label.
+
 ## [0.11.259] - 2026-09-26
 
 ### Fixed — the public dashboard read a year of rows per tile, and its CPU/memory tile showed the wrong window

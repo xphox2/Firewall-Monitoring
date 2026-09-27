@@ -402,14 +402,28 @@ const flowStatsRollupBudget = 20 * time.Second
 // to about a quarter.
 const flowStatsRollupConcurrency = 4
 
-func newFlowStatsBudget(parent context.Context) *flowStatsBudget {
+func newFlowStatsBudget(parent context.Context, allowance time.Duration) *flowStatsBudget {
 	if parent == nil {
 		parent = context.Background()
 	}
 	return &flowStatsBudget{
 		parent:   parent,
-		deadline: time.Now().Add(flowStatsRollupBudget),
+		deadline: time.Now().Add(allowance),
 	}
+}
+
+// context returns a context bound to the budget's deadline, for statements that
+// are not built from a gorm chain (the materialized scan's INSERT). ok is false
+// when the allowance has already run out. cancel must always be called.
+func (b *flowStatsBudget) context() (ctx context.Context, cancel context.CancelFunc, ok bool) {
+	b.mu.Lock()
+	deadline := b.deadline
+	b.mu.Unlock()
+	if !time.Now().Before(deadline) {
+		return nil, func() {}, false
+	}
+	ctx, cancel = context.WithDeadline(b.parent, deadline)
+	return ctx, cancel, true
 }
 
 // bound returns q bound to the request deadline. ok is false when the allowance
@@ -419,13 +433,10 @@ func newFlowStatsBudget(parent context.Context) *flowStatsBudget {
 // There is no separate per-query cap: the panels run concurrently, so they share
 // one wall clock rather than consuming a sequence of independent timeouts.
 func (b *flowStatsBudget) bound(q *gorm.DB) (bounded *gorm.DB, cancel context.CancelFunc, ok bool) {
-	b.mu.Lock()
-	deadline := b.deadline
-	b.mu.Unlock()
-	if !time.Now().Before(deadline) {
-		return nil, func() {}, false
+	ctx, cancelFn, ok := b.context()
+	if !ok {
+		return nil, cancelFn, false
 	}
-	ctx, cancelFn := context.WithDeadline(b.parent, deadline)
 	return q.WithContext(ctx), cancelFn, true
 }
 
@@ -470,12 +481,16 @@ func (b *flowStatsBudget) stamp(result *FlowStatsResult) {
 	result.DegradedBlocks = append(result.DegradedBlocks, b.blocks...)
 }
 
-// GetFlowStats returns aggregated flow statistics, optionally narrowed by filter.
-// It queries both raw flow_samples (recent) and flow_rollups (older data).
-func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsResult, error) {
-	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+// flowStats is the body of GetFlowStats/GetFlowStatsOpts. It queries both raw
+// flow_samples (recent) and flow_rollups (older data). Everything it needs to
+// vary between the direct and the materialized run comes in through run: the
+// handle queries go through, the table the rolled-up panels read, the budget,
+// the panel concurrency and the progress reporter.
+func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRun) (*FlowStatsResult, error) {
+	cutoff := run.cutoff
 	result := &FlowStatsResult{}
-	budget := newFlowStatsBudget(d.db.Statement.Context)
+	budget := run.budget
+	run.step("Reading recent samples")
 
 	// Determine which data source to use:
 	// - hours <= 1: raw samples only (rollups haven't consumed them yet)
@@ -553,7 +568,7 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 	// clones its Statement before any chain method mutates it, so concurrent
 	// chaining off one handle is supported. Session() is kept because it states
 	// that intent locally rather than relying on the caller's clone state.
-	session := func() *gorm.DB { return d.db.Session(&gorm.Session{}) }
+	session := func() *gorm.DB { return run.h.Session(&gorm.Session{}) }
 
 	newRawBase := func() *gorm.DB {
 		q := applyCommonFilters(session().Model(&models.FlowSample{}).Where("timestamp > ?", cutoff))
@@ -576,8 +591,8 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 	// so, and it coupled this file to literals in RunFlowRollupCycle that nothing
 	// kept in step. See rollupIntervalsForWindow.
 	rollupIntervals := rollupIntervalsForWindow(hours)
-	newRollupBase := func() *gorm.DB {
-		q := applyCommonFilters(session().Model(&models.FlowRollup{}).Where("timestamp > ? AND interval_type IN ?", cutoff, rollupIntervals))
+	rollupBaseOn := func(q *gorm.DB) *gorm.DB {
+		q = applyCommonFilters(q.Where("timestamp > ? AND interval_type IN ?", cutoff, rollupIntervals))
 		if filter.ProbeID > 0 {
 			// flow_rollups carries no probe_id, so map the probe to the devices it
 			// owns — the same uncorrelated-subquery shape the site filter uses
@@ -597,6 +612,16 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 		}
 		return q
 	}
+	// newSourceRollupBase always reads flow_rollups; the materialized run fills
+	// its scope table from it. newRollupBase is what every rolled-up panel reads:
+	// flow_rollups directly, or the scope table holding exactly the rows the same
+	// predicates select (re-applying them there is a no-op, and keeps one code
+	// path for both runs).
+	newSourceRollupBase := func() *gorm.DB { return rollupBaseOn(session().Model(&models.FlowRollup{})) }
+	newRollupBase := newSourceRollupBase
+	if run.scope != "" {
+		newRollupBase = func() *gorm.DB { return rollupBaseOn(session().Table(run.scope)) }
+	}
 
 	// --- Summary bases -------------------------------------------------------
 	//
@@ -611,8 +636,9 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 	//     running its oldest bucket is later than the window start, and reading
 	//     it anyway would silently report a fraction of the range — precisely the
 	//     failure this whole change exists to remove.
-	useSummary := hours > flowSummaryMinHours && flowSummaryCompatible(filter) &&
-		d.summaryBackfillComplete()
+	// Decided by the caller before any connection is pinned (it queries through
+	// d); see GetFlowStatsOpts.
+	useSummary := run.useSummary
 	// The top-talker panels cannot honour a filter on a cube dimension: their
 	// lists are computed per bucket across all protocols and categories. Showing
 	// unfiltered talkers beside filtered totals would be a new way to mislead, so
@@ -690,8 +716,24 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 		if len(rollupJobs) == 0 {
 			return
 		}
+		run.expect(len(rollupJobs))
+		// The materialized run fills its scope table now, one day at a time. A
+		// partly filled table must never feed a panel: 18 days reported under a
+		// 30-day label is the defect this path exists to remove. So on any
+		// failure every rolled-up panel is skipped and named instead.
+		if run.fill != nil {
+			if err := run.fill(newSourceRollupBase); err != nil {
+				log.Printf("Flow stats: materialized scan stopped (%v); every rolled-up panel reported degraded", err)
+				for _, job := range rollupJobs {
+					budget.skip(job.block)
+					run.step(flowStatsPanelLabel(job.block))
+				}
+				return
+			}
+		}
+		run.step("Aggregating panels")
 		okFlags := make([]bool, len(rollupJobs))
-		sem := make(chan struct{}, flowStatsRollupConcurrency)
+		sem := make(chan struct{}, run.concurrency)
 		var wg sync.WaitGroup
 		for i, job := range rollupJobs {
 			wg.Add(1)
@@ -711,10 +753,13 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 			}(i, job)
 		}
 		wg.Wait()
+		// Progress is reported from here, on the caller's goroutine, never from
+		// the query goroutines above: the reporter may write to a response.
 		for i, job := range rollupJobs {
 			if okFlags[i] && job.merge != nil {
 				job.merge()
 			}
+			run.step(flowStatsPanelLabel(job.block))
 		}
 	}
 
