@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/netip"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 
@@ -107,8 +108,15 @@ func CanonicalInternalNetworks(ps []netip.Prefix) string {
 
 // FlowReclassTargetRev is the classification revision new flow rows carry.
 func (d *Database) FlowReclassTargetRev() uint16 {
-	v := d.GetIntSetting(FlowReclassTargetRevKey, 1)
-	if v < 1 || v > 65535 {
+	raw, _ := d.GetSettingValue(FlowReclassTargetRevKey)
+	return parseTargetRev(raw)
+}
+
+// parseTargetRev is the one rule for reading the target revision: absent,
+// unparseable or out of range means 1.
+func parseTargetRev(raw string) uint16 {
+	v, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || v < 1 || v > 65535 {
 		return 1
 	}
 	return uint16(v)

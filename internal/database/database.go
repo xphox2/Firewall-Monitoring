@@ -532,6 +532,17 @@ func (d *Database) TryAcquireMaintenanceLock() (release func(), acquired bool) {
 	return d.tryAcquireAdvisoryLock("Maintenance", maintenanceLockKey)
 }
 
+// flowReclassLockKey keeps one flow-history reclassification step running at
+// a time (see flow_reclass.go). The job needs exclusion only against itself;
+// its termination check takes maintenanceLockKey as a transaction lock.
+const flowReclassLockKey int64 = 0x464c4f5752434c53 // "FLOWRCLS"
+
+// TryAcquireFlowReclassLock is TryAcquirePollerWorkLock for the
+// reclassification job, on its own key.
+func (d *Database) TryAcquireFlowReclassLock() (release func(), acquired bool) {
+	return d.tryAcquireAdvisoryLock("Flow reclassification", flowReclassLockKey)
+}
+
 // TryAcquireFlowSummaryLock is TryAcquirePollerWorkLock for the summary pass,
 // on its own key. Same non-blocking semantics and the same bias toward doing
 // the work when the probe itself fails.

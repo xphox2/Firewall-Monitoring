@@ -188,6 +188,22 @@ func ServicePort(proto uint8, srcPort, dstPort uint16) uint16 {
 	return lower
 }
 
+// ServicePortFromDst infers a service port when only the destination port is
+// known — flow_rollups keep no source port. A known service on the destination
+// is the service; otherwise a destination port below the ephemeral range is a
+// plausible listener; otherwise nothing can be said (0). A server's replies
+// (src 443 → dst 51234) therefore read as "no service" in history recorded
+// before the service port existed; that history is labelled as such.
+func ServicePortFromDst(proto uint8, dstPort uint16) uint16 {
+	if proto != protoTCP && proto != protoUDP || dstPort == 0 {
+		return 0
+	}
+	if _, known := portCategory[dstPort]; known || dstPort < ephemeralFloor {
+		return dstPort
+	}
+	return 0
+}
+
 // Direction values (flow_samples.direction). Stable on-disk encoding.
 const (
 	DirUnknown  uint8 = 0 // address(es) unparseable

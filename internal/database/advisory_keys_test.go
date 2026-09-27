@@ -21,6 +21,7 @@ func TestAdvisoryLockKeysDistinct(t *testing.T) {
 		"startupMigrationLockKey": startupMigrationLockKey,
 		"pollerWorkLockKey":       pollerWorkLockKey,
 		"flowSummaryLockKey":      flowSummaryLockKey,
+		"flowReclassLockKey":      flowReclassLockKey,
 		"maintenanceLockKey":      maintenanceLockKey,
 		"apiSingletonLockKey":     apiSingletonLockKey,
 		"devicePurgeLockKey":      devicePurgeLockKey,
