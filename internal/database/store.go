@@ -232,6 +232,7 @@ type TelemetryReadStore interface {
 	GetFlowReclassStatus() FlowReclassStatus
 	MarkFlowReclassRearm() error
 	BumpFlowReclassTargetRev() (uint16, error)
+	GetFlowSummaryRecomputeStatus() FlowSummaryRecomputeStatus
 	GetLatestInterfaceStats() ([]models.InterfaceStats, error)
 	GetLatestProcessorStats(deviceID uint) ([]models.ProcessorStats, error)
 	GetLatestSDWANHealth(deviceID uint) ([]models.SDWANHealth, error)

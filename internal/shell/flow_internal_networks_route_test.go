@@ -103,3 +103,13 @@ func TestFlowReclassUIWired(t *testing.T) {
 		t.Error("AdminCommon.flowReclassText is not exported")
 	}
 }
+
+// The summary rebuild phase has its own status text on both pages.
+func TestFlowReclassRebuildingText(t *testing.T) {
+	common := readJS(t, "admin-common.js")
+	for _, sub := range []string{"case 'rebuilding': {", "' flow summaries — '", "summary bucket"} {
+		if !strings.Contains(common, sub) {
+			t.Errorf("admin-common.js flowReclassText is missing %q", sub)
+		}
+	}
+}

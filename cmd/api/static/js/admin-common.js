@@ -684,6 +684,12 @@
                 return 'Reclassifying flow history — paused: ' + (v.paused_reason || 'waiting') + ' (' + pct + '% done).';
             case 'waiting':
                 return 'Reclassifying flow history — waiting: ' + (v.paused_reason || 'new flows still carry the old rule') + ' (' + pct + '% done).';
+            case 'rebuilding': {
+                var text = 'Rebuilding ' + (v.rebuild_tier || 'flow') + ' flow summaries — ' + pct + '%' + eta + '. Long ranges may still show the previous rule until it finishes.';
+                if (v.paused_reason) text += ' Waiting: ' + v.paused_reason + '.';
+                if (v.failing > 0) text += ' ' + v.failing + ' summary bucket' + (v.failing === 1 ? '' : 's') + ' failing — see the server log.';
+                return text;
+            }
             default:
                 return 'Reclassifying flow history — ' + pct + '%' + eta + '. Direction and services in older history may still show the previous rule until it finishes.';
         }

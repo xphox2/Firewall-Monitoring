@@ -3506,7 +3506,7 @@
                     : 'Flow history is classified with the current networks.';
             }
             el.textContent = text;
-            if (hint) hint.hidden = !(v.phase && v.phase !== 'done' && !(list || '').trim());
+            if (hint) hint.hidden = !(v.phase && v.phase !== 'done' && v.phase !== 'rebuilding' && !(list || '').trim());
         }).catch(function(e) {
             el.textContent = '';
             if (window.fwmonLog) fwmonLog.warn('Settings: reclassification status unavailable', e);

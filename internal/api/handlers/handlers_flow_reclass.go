@@ -29,6 +29,11 @@ type flowReclassView struct {
 	PausedReason string     `json:"paused_reason,omitempty"`
 	ETAHours     float64    `json:"eta_hours,omitempty"`
 	VacuumHint   bool       `json:"vacuum_hint,omitempty"`
+	// RebuildTier names the summary tier being rebuilt ("daily" first, then
+	// "hourly") while Phase is "rebuilding"; Failing counts summary buckets
+	// that keep failing to rebuild.
+	RebuildTier string `json:"rebuild_tier,omitempty"`
+	Failing     int    `json:"failing,omitempty"`
 }
 
 func flowReclassViewOf(db database.Store) flowReclassView {
@@ -47,7 +52,41 @@ func flowReclassViewOf(db database.Store) flowReclassView {
 		v.Phase, v.Rows, v.Started, v.Finished, v.VacuumHint, v.PausedReason = "pending", 0, nil, nil, false, ""
 		v.Incremental = false
 	}
-	if v.Phase != "done" && v.Estimate > 0 {
+	// History reclassified: the summaries may still be rebuilding. Reported
+	// per tier — the daily walk runs first and costs far more per bucket, so
+	// one combined percentage would sit near zero for hours and then jump.
+	if v.Phase == "done" {
+		if rs := db.GetFlowSummaryRecomputeStatus(); rs.Active {
+			v.Phase, v.Percent, v.PausedReason = "rebuilding", 0, rs.WaitingReason
+			tier, name := rs.Tiers["1d"], "daily"
+			if tier == nil || tier.State == "done" || tier.State == "" {
+				if t := rs.Tiers["1h"]; t != nil {
+					tier, name = t, "hourly"
+				}
+			}
+			v.RebuildTier = name
+			if tier == nil || tier.State == "done" || tier.State == "" {
+				// Only a request is pending: the walk has not begun.
+				if v.PausedReason == "" {
+					v.PausedReason = "starting"
+				}
+				tier = nil
+			}
+			if tier != nil {
+				if n := tier.Done + tier.Remaining; n > 0 {
+					v.Percent = min(99, float64(tier.Done)*100/float64(n))
+				}
+				if tier.BucketsPerCycle > 0 && tier.Remaining > 0 {
+					v.ETAHours = float64(tier.Remaining) / tier.BucketsPerCycle * 5 / 60
+				}
+			}
+			for _, t := range rs.Tiers {
+				v.Failing += len(t.Failing)
+			}
+		}
+		return v
+	}
+	if v.Estimate > 0 {
 		v.Percent = min(99, float64(v.Rows)*100/float64(v.Estimate))
 		if v.Started != nil && v.Rows > 0 {
 			rate := float64(v.Rows) / time.Since(*v.Started).Hours()

@@ -1,6 +1,38 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.266] - 2026-09-27
+
+### Added — the summary tables are rebuilt after flow history is reclassified
+
+v0.11.265 re-stamps stored flow history in place. The summary tables that
+serve long Flows ranges only notice new or never-built data, so they kept the
+previous direction. Top services on those ranges also stayed marked "partial —
+since <date>".
+
+- **When a reclassification run finishes, the summary pass rebuilds every
+  bucket from the oldest re-stamped hour onward.** It uses the same
+  per-bucket rebuild as always.
+  - The rebuild runs after the routine summary work each cycle, so new data
+    keeps being summarised and long ranges keep being served from the summary
+    throughout.
+  - The daily summaries go first, then the hourly ones. The daily tier gets
+    1–2 buckets per 5-minute cycle over up to about 335 days, so expect
+    **roughly 14–28 hours**, then about 2–3 hours for the hourly tier.
+- **Progress** appears on the Flows page and on the Flow Classification card
+  as "Rebuilding daily flow summaries — N% (about X h left)", then the hourly
+  ones. It says when it is waiting: for the reclassification, for routine
+  summary work, or after a failed summary pass.
+- **A bucket that fails to rebuild is retried, never skipped.** A failed
+  rebuild keeps the bucket's old figures, so skipping it would leave a stale
+  bucket behind a "done" message. The progress line counts failing buckets
+  and the server log names them.
+- Only when every bucket has been rebuilt does Top services stop being marked
+  partial on long ranges, and it is from then on exact across all of history.
+  (The part inferred from destination ports for older rollups is unchanged.)
+- The rebuild never runs while a reclassification is due or in progress. A
+  run that finishes later asks for its own rebuild.
+
 ## [0.11.265] - 2026-09-27
 
 ### Added — stored flow history is reclassified with your own networks
