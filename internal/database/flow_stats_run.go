@@ -27,11 +27,12 @@ import (
 //
 // The materialized run reads the window ONCE, one day at a time, into a
 // session-local scope table holding exactly the rows the filter selects, and
-// every rolled-up panel then reads that table. One day of flow_rollups costs
-// 0.3-0.9 s on production (an index scan on (interval_type, timestamp); rows are
-// inserted in time order, so each day's pages sit together), so 30 days is
-// roughly 25 s with a real "day N of 30" to report, each statement far under
-// the 30 s statement_timeout. Temp tables are per session, so the whole run —
+// every rolled-up panel then reads that table. One day of flow_rollups is an
+// index scan on (interval_type, timestamp) — rows are inserted in time order, so
+// each day's pages sit together — costing 0.3-1.7 s when cached and 2.4-7.8 s
+// cold on production: a 30-day report takes about 30 s warm and 2-2.5 min cold,
+// with a real "day N of 30" to report and each statement far under the 30 s
+// statement_timeout. Temp tables are per session, so the whole run —
 // raw queries included — goes through one pinned connection with the rolled-up
 // panels run one at a time.
 
@@ -83,13 +84,21 @@ type FlowStatsOptions struct {
 }
 
 // FlowStatsLongBudget is the allowance for a streamed materialized run: a
-// minute plus three seconds a day (a day measures 0.3-0.9 s cold), capped at
-// fifteen minutes so a year-long request stays bounded.
+// minute plus eight seconds a day, capped at thirty minutes so a year-long
+// request stays bounded.
+//
+// Measured on production (2026-09-27): with the pages already in the host's
+// file cache a day reads in 0.3-1.7 s, but truly cold — off the spinning disk —
+// a day of a filtered 30-day report took 2.4-7.8 s (about 72k pages each; 30
+// days reads nearly all 20 GB of flow_rollups). The first allowance, three
+// seconds a day, was sized from the cached figure: the 30-day report used ~140
+// of its 150 s, and a cold 90-day report would have run out and reported every
+// panel partial.
 func FlowStatsLongBudget(hours int) time.Duration {
 	days := (hours + 23) / 24
-	b := time.Minute + time.Duration(days)*3*time.Second
-	if b > 15*time.Minute {
-		b = 15 * time.Minute
+	b := time.Minute + time.Duration(days)*8*time.Second
+	if b > 30*time.Minute {
+		b = 30 * time.Minute
 	}
 	return b
 }

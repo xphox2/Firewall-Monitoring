@@ -260,10 +260,10 @@ func TestFlowStatsLongBudget(t *testing.T) {
 		hours int
 		want  time.Duration
 	}{
-		{24, time.Minute + 3*time.Second},
-		{720, time.Minute + 90*time.Second},   // 30 d ≈ 25 s cold on production
-		{2160, time.Minute + 270*time.Second}, // 90 d ≈ 60 s
-		{8760, 15 * time.Minute},              // capped
+		{24, time.Minute + 8*time.Second},
+		{720, time.Minute + 240*time.Second},  // 30 d: ~2.3 min cold on production
+		{2160, time.Minute + 720*time.Second}, // 90 d: ~7 min cold
+		{8760, 30 * time.Minute},              // capped
 	} {
 		if got := FlowStatsLongBudget(tc.hours); got != tc.want {
 			t.Errorf("FlowStatsLongBudget(%d) = %v, want %v", tc.hours, got, tc.want)

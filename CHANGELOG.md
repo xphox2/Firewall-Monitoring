@@ -1,6 +1,27 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.261] - 2026-09-27
+
+### Fixed — a cold 90-day filtered Flows report would run out of time
+
+Measured on production right after v0.11.260 shipped: a Flows report for 30 days
+filtered to one source address completed with every panel exact, but took
+**2 min 20 s**, not the ~25 s v0.11.260's notes estimated. Each day's read took
+2.4–7.8 s. The same day's query run again, with its pages now in the host's file
+cache, took 1.65 s — the ~0.3–0.9 s per day the estimate came from had been
+measured with the data already cached. A filtered 30-day report reads about 72k
+pages a day, nearly all 20 GB of `flow_rollups`, and when nothing is cached that
+comes off the spinning disk.
+
+- **The long-report allowance is now a minute plus eight seconds a day (was
+  three), capped at thirty minutes (was fifteen).** The 30-day report above used
+  about 140 of its 150 seconds; a cold 90-day report (~7 minutes) would have run
+  out at 5.5 minutes and reported every panel partial. It now has 13 minutes.
+- **Corrected expectations:** a filtered 30-day report takes about 30 s when its
+  data is cached and 2–2.5 minutes cold; 90 days about 7 minutes cold. The
+  loading panel shows each day as it is read.
+
 ## [0.11.260] - 2026-09-27
 
 ### Fixed — Flows reports filtered by an address, port or network never finished past a day or two
