@@ -99,9 +99,16 @@ func (h *Handler) GetFlowStatsStream(c *gin.Context) {
 	// nginx-proxy-manager in front of the console. An SSE comment every 15 s
 	// keeps such a proxy from closing the stream, and a failed write notices a
 	// client that has stopped reading (net/http then cancels the request).
+	// The handler must not return while the keepalive can still write: a
+	// ResponseWriter may not be used after ServeHTTP returns. Deferred in this
+	// order, close(done) runs first and Wait then waits for the goroutine.
+	var kwg sync.WaitGroup
 	done := make(chan struct{})
+	kwg.Add(1)
+	defer kwg.Wait()
 	defer close(done)
 	go func() {
+		defer kwg.Done()
 		t := time.NewTicker(flowStreamKeepalive)
 		defer t.Stop()
 		for {

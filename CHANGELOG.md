@@ -29,8 +29,8 @@ and a slower system would hit that on shorter ranges.
   than failing.
 - **The stream writes a keepalive every 15 seconds** while no progress is due,
   so a reverse proxy in front of the console (nginx's default idle timeout is
-  60 s) does not close a long report, and a client that stopped reading is
-  noticed within seconds.
+  60 s) does not close a long report, and a closed connection is noticed at the
+  next write, at most 15 s later.
 - **After a minute the loading panel says** that a long range read from disk can
   take several minutes and can be cancelled at any time, and the elapsed time
   switches to minutes. A day being read in smaller pieces says so.
