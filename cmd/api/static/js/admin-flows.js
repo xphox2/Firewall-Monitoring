@@ -168,6 +168,17 @@
             exportBtn.addEventListener('click', exportCsv);
         }
 
+        // Leaving the Flows page stops a running report: it would otherwise keep
+        // a long-report slot and a database connection for a page nobody sees.
+        // The page element loses its `active` class on every page switch.
+        var flowsPage = document.getElementById('page-flows');
+        if (flowsPage && !flowsPage.__fwmonLeaveWatch && typeof MutationObserver !== 'undefined') {
+            flowsPage.__fwmonLeaveWatch = true;
+            new MutationObserver(function() {
+                if (!flowsPage.classList.contains('active') && (statsStream || statsAbort)) cancelStatsLoad();
+            }).observe(flowsPage, { attributes: true, attributeFilter: ['class'] });
+        }
+
         // Loading panel: Cancel stops the report and keeps the previous view;
         // Retry runs the same report again.
         var cancelBtn = document.getElementById('flows-loading-cancel');
@@ -578,6 +589,7 @@
             var msg = 'Failed to load flow statistics.';
             try { msg = JSON.parse(ev.data).message || msg; } catch (e) { /* keep default */ }
             finishLoading();
+            clearStatsView();
             showLoadError(msg);
         });
         es.onerror = function() {
@@ -679,6 +691,9 @@
         stopStatsLoad();
         statsGen++; // anything still in flight is now stale
         finishLoading();
+        // A first load has no previous chart to go back to; don't leave the
+        // chart area saying "loading…".
+        if (!charts.bandwidth) showChartEmpty('—');
     }
 
     function showLoadError(msg) {
@@ -725,12 +740,18 @@
     };
 
     function markPartialPanels(blocks) {
-        document.querySelectorAll('#page-flows .fwmon-flows-partial').forEach(function(el) {
-            el.classList.remove('fwmon-flows-partial');
+        document.querySelectorAll('#page-flows .fwmon-flows-partial, #page-flows .fwmon-flows-partial-tile').forEach(function(el) {
+            el.classList.remove('fwmon-flows-partial', 'fwmon-flows-partial-tile');
         });
         (blocks || []).forEach(function(b) {
             var el = document.getElementById(PANEL_HOSTS[b] || '');
             if (!el) return;
+            if (el.id === 'flows-stats-grid') {
+                // The tiles have no card around them: outline each tile rather
+                // than labelling the grid, whose badge would cover a tile.
+                el.querySelectorAll('.fwmon-stat').forEach(function(tile) { tile.classList.add('fwmon-flows-partial-tile'); });
+                return;
+            }
             var card = el.closest('.card') || el;
             card.classList.add('fwmon-flows-partial');
         });

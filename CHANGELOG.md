@@ -31,8 +31,9 @@ GB, about fourteen panels, one 20 s budget.
   day, at most fifteen minutes) instead of the synchronous endpoint's 20 s. A
   failure ends the stream with a `fail` event (not `error`, which EventSource
   reserves for a dropped connection). At
-  most two such long reports run at once; a third is told to try again shortly.
-  The default Flows view is never held back by that limit. `/flows/stats` keeps
+  most two long filtered reports (more than a day) run at once; a third is told
+  to try again shortly. The default view and short filtered views are never held
+  back by that limit. `/flows/stats` keeps
   its 20 s budget and reports honestly when a cold long report does not fit.
 
 ### Changed — the Flows page shows what it is loading, and says when a result is partial

@@ -15,9 +15,9 @@ import (
 
 // flowStreamSlots bounds how many LONG Flows reports run at once in this API
 // process (a single process is the whole deployment unless ALLOW_MULTI_API is
-// set). Only the materialized run takes a slot: it holds one connection for up
-// to a few minutes and reads a day of flow_rollups per statement. The default
-// Flows view never takes one.
+// set). Only a LONG report takes a slot (FlowStatsIsLong: materialized and
+// longer than a day): it holds one connection for up to a few minutes. The
+// default view and short filtered views never take one.
 var flowStreamSlots = make(chan struct{}, 2)
 
 // GetFlowStatsStream is GET /flows/stats as a Server-Sent Events stream, so the
@@ -73,7 +73,7 @@ func (h *Handler) GetFlowStatsStream(c *gin.Context) {
 		return
 	}
 	hours, filter := parseFlowStatsFilter(c)
-	if database.FlowStatsMaterializes(hours, filter) {
+	if database.FlowStatsIsLong(hours, filter) {
 		select {
 		case flowStreamSlots <- struct{}{}:
 			defer func() { <-flowStreamSlots }()

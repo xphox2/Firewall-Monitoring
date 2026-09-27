@@ -498,7 +498,7 @@
 
             <!-- Loading, error and partial-data states for the aggregate views.
                  Driven by admin-flows.js from GET /flows/stats/stream progress. -->
-            <div id="flows-loading" class="fwmon-flows-loading" role="status" aria-live="polite" hidden>
+            <div id="flows-loading" class="fwmon-flows-loading" hidden>
                 <div class="fwmon-flows-loading-row">
                     <span class="fwmon-spinner" aria-hidden="true"></span>
                     <span class="fwmon-flows-loading-title" id="flows-loading-title">Loading flows…</span>
@@ -506,7 +506,7 @@
                     <button type="button" class="btn secondary sm" id="flows-loading-cancel">Cancel</button>
                 </div>
                 <div class="fwmon-flows-progress" aria-hidden="true"><div class="fwmon-flows-progress-bar" id="flows-loading-bar"></div></div>
-                <div class="fwmon-flows-loading-step" id="flows-loading-step"></div>
+                <div class="fwmon-flows-loading-step" id="flows-loading-step" role="status" aria-live="polite"></div>
             </div>
             <div id="flows-load-error" class="fwmon-flows-load-error" role="alert" hidden>
                 <span id="flows-load-error-msg"></span>

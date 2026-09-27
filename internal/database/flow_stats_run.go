@@ -48,6 +48,14 @@ func FlowStatsMaterializes(hours int, filter FlowStatsFilter) bool {
 	return flowStatsMaterialize && hours > 1 && !flowSummaryCompatible(filter)
 }
 
+// FlowStatsIsLong reports whether a request is a LONG report: materialized and
+// spanning more than one day chunk. Only these take one of the stream's slots —
+// a filtered 6 h or 24 h view is one sub-second chunk and must never be told
+// to wait behind a 90-day report.
+func FlowStatsIsLong(hours int, filter FlowStatsFilter) bool {
+	return FlowStatsMaterializes(hours, filter) && hours > 24
+}
+
 // FlowStatsProgress is one step of a Flows report, for a progress display.
 type FlowStatsProgress struct {
 	Done  int    `json:"done"`
@@ -249,15 +257,25 @@ func (d *Database) flowStatsMaterialized(tx *gorm.DB, hours int, filter FlowStat
 	return res, err
 }
 
-// dropFlowScope removes the scope table even when the request was cancelled:
-// a cancel observed between statements leaves the connection alive, and it
-// would return to the pool still holding the table. If the drop fails anyway,
-// the connection is discarded rather than reused.
+// dropFlowScope removes the scope table on a context that ignores the
+// request's cancellation, so a live connection never returns to the pool
+// holding it. If the drop fails the connection is discarded instead.
+//
+// What a cancel does to the connection depends on the driver. pgx reports a
+// statement on an already-cancelled context as driver.ErrBadConn, and
+// database/sql then closes the connection — the backend ends and the
+// session-local table with it, so on PostgreSQL a cancelled run (a Cancel
+// click, a closed tab) usually arrives here with the connection already gone.
+// SQLite keeps the connection, and the drop below is what removes the table.
 func dropFlowScope(tx *gorm.DB, ctx context.Context, name string) {
 	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	if err := tx.WithContext(dctx).Exec("DROP TABLE IF EXISTS " + name).Error; err != nil {
-		log.Printf("Flow stats: dropping %s failed (%v); discarding the connection", name, err)
+		if ctx.Err() != nil {
+			log.Printf("Flow stats: report cancelled by the client; its connection and scope table were discarded")
+		} else {
+			log.Printf("Flow stats: dropping %s failed (%v); discarding the connection", name, err)
+		}
 		if c, ok := tx.Statement.ConnPool.(*sql.Conn); ok {
 			_ = c.Raw(func(any) error { return driver.ErrBadConn })
 		}

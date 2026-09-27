@@ -119,7 +119,11 @@ func TestFlowStatsMaterialized_ProgressAndCleanup(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	seedFlowWeek(t, d)
 	var steps []FlowStatsProgress
-	res, err := d.GetFlowStatsOpts(168, FlowStatsFilter{SrcAddr: "10.0.0.1"}, FlowStatsOptions{
+	// A query that escaped the pinned connection would wait forever for the
+	// harness's single connection; bound it so that fails here, fast.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	res, err := d.WithContext(ctx).GetFlowStatsOpts(168, FlowStatsFilter{SrcAddr: "10.0.0.1"}, FlowStatsOptions{
 		Progress: func(p FlowStatsProgress) { steps = append(steps, p) },
 	})
 	if err != nil || res.Degraded {

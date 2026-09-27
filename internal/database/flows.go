@@ -714,6 +714,7 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 	// connection pool.
 	flushRollups := func() {
 		if len(rollupJobs) == 0 {
+			run.expect(0)
 			return
 		}
 		run.expect(len(rollupJobs))
@@ -723,7 +724,11 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 		// failure every rolled-up panel is skipped and named instead.
 		if run.fill != nil {
 			if err := run.fill(newSourceRollupBase); err != nil {
-				log.Printf("Flow stats: materialized scan stopped (%v); every rolled-up panel reported degraded", err)
+				if ctx := run.h.Statement.Context; ctx != nil && ctx.Err() != nil {
+					log.Printf("Flow stats: report cancelled by the client during the scan")
+				} else {
+					log.Printf("Flow stats: materialized scan stopped (%v); every rolled-up panel reported degraded", err)
+				}
 				for _, job := range rollupJobs {
 					budget.skip(job.block)
 					run.step(flowStatsPanelLabel(job.block))

@@ -939,6 +939,10 @@
     font-weight: 700;
     pointer-events: none;
 }
+.fwmon-flows-partial-tile {
+    outline: 1px dashed var(--fwmon-sig-warn);
+    outline-offset: -1px;
+}
 @media (prefers-reduced-motion: reduce) {
     .fwmon-flows-progress-bar,
     .fwmon-flows.is-loading .fwmon-flows-stats,

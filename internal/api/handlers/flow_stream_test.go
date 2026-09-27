@@ -125,9 +125,11 @@ func TestGetFlowStatsStream_SlotsGateOnlyLongReports(t *testing.T) {
 		t.Fatalf("busy reply: code %d events %+v", w.Code, evs)
 	}
 
-	w = getRecorder(h.GetFlowStatsStream, "/x?hours=24")
-	evs = parseSSE(w.Body.String())
-	if len(evs) == 0 || evs[len(evs)-1].name != "result" {
-		t.Fatalf("the default view was gated: %+v", evs)
+	for _, q := range []string{"/x?hours=24", "/x?hours=24&src_addr=10.0.0.1", "/x?hours=6&dst_port=443"} {
+		w = getRecorder(h.GetFlowStatsStream, q)
+		evs = parseSSE(w.Body.String())
+		if len(evs) == 0 || evs[len(evs)-1].name != "result" {
+			t.Fatalf("%s was gated behind the long-report slots: %+v", q, evs)
+		}
 	}
 }
