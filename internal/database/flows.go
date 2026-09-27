@@ -73,7 +73,7 @@ type FlowStatsResult struct {
 	TopDestinations  []KeyCount         `json:"top_destinations"`
 	TopConversations []FlowConversation `json:"top_conversations"`
 	BytesOverTime    []TimeBucket       `json:"bytes_over_time"`
-	TopPorts         []KeyCount         `json:"top_ports"`
+	TopServices      []FlowPortCount    `json:"top_services"`
 	// LocalTraffic is the scope-local noise (link-local / multicast / broadcast /
 	// loopback) excluded from the top-N charts above. JSON name kept as
 	// `local_traffic` for API stability; the Flows notice bar surfaces it.
@@ -102,6 +102,13 @@ type FlowStatsResult struct {
 	// scheduling order, not a ranking — nothing should depend on it.
 	Degraded       bool     `json:"degraded,omitempty"`
 	DegradedBlocks []string `json:"degraded_blocks,omitempty"`
+	// PartialBlocks names panels that are incomplete for a reason OTHER than
+	// falling back to the last hour — for example Top services on a window
+	// reaching back before the summary carried a service dimension. They do
+	// not set Degraded (the page-wide "last hour only" banner); the page badges
+	// each with its PartialReasons text.
+	PartialBlocks  []string          `json:"partial_blocks,omitempty"`
+	PartialReasons map[string]string `json:"partial_reasons,omitempty"`
 	// UniqueApproximate marks UniqueSources/UniqueDests as an upper bound rather
 	// than a count. Raw and rollup tiers are counted separately and summed, and
 	// an address present in both tiers is counted twice; the true union needs a
@@ -412,6 +419,9 @@ type flowStatsBudget struct {
 	deadline time.Time
 	degraded bool
 	blocks   []string
+	// partialBlocks / partialReasons: see partial.
+	partialBlocks  []string
+	partialReasons map[string]string
 }
 
 // flowStatsRollupBudget is the wall-clock allowance for ALL rolled-up
@@ -507,11 +517,33 @@ func (b *flowStatsBudget) skip(block string) {
 	b.blocks = append(b.blocks, block)
 }
 
+// partial records a panel that is complete as far as it goes but covers less
+// than the window for a stated reason. Unlike skip it does not make the result
+// Degraded.
+func (b *flowStatsBudget) partial(block, reason string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.partialReasons == nil {
+		b.partialReasons = map[string]string{}
+	}
+	if _, dup := b.partialReasons[block]; !dup {
+		b.partialBlocks = append(b.partialBlocks, block)
+	}
+	b.partialReasons[block] = reason
+}
+
 // stamp copies the budget outcome onto the result. Called once, after every
 // rolled-up query has either run or been skipped.
 func (b *flowStatsBudget) stamp(result *FlowStatsResult) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if len(b.partialBlocks) > 0 {
+		result.PartialBlocks = append(result.PartialBlocks, b.partialBlocks...)
+		result.PartialReasons = make(map[string]string, len(b.partialReasons))
+		for k, v := range b.partialReasons {
+			result.PartialReasons[k] = v
+		}
+	}
 	// Degraded means a panel actually lost data — a query failed, or one was
 	// skipped because the allowance had run out. Do NOT key this off the
 	// deadline alone: a request whose panels all completed at 17.9s against an
@@ -1448,67 +1480,60 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 		}
 	}
 
-	// Top destination ports
-	var topPorts []struct {
+	// Top services by bytes: the SERVICE side of each conversation
+	// (classify.ServicePort), so a server's replies (src 443 → dst 51234) count
+	// under 443 with its requests instead of spreading across thousands of
+	// client ports. Rows ingested before v0.11.263 carry service_port 0 and are
+	// left out until history is reclassified.
+	var rawSvcRows []struct {
 		Port  uint16
 		Total int64
 	}
-	newFilteredRawBase().Select("dst_port as port, SUM(bytes) as total").
-		Where("dst_port > 0").Group("dst_port").Order("total DESC").Limit(flowTopFetch).Scan(&topPorts)
-	portName := func(port uint16) string {
-		if n, ok := wellKnownPorts[port]; ok {
-			return n
-		}
-		return fmt.Sprintf("%d", port)
+	newFilteredRawBase().Select("service_port as port, SUM(bytes) as total").
+		Where("service_port > 0").Group("service_port").Order("total DESC").Limit(flowTopFetch).Scan(&rawSvcRows)
+	rawSvc := make([]FlowPortCount, 0, len(rawSvcRows))
+	for _, p := range rawSvcRows {
+		rawSvc = append(rawSvc, FlowPortCount{Port: p.Port, Count: p.Total})
 	}
-	rawPorts := make([]KeyCount, 0, len(topPorts))
-	for _, p := range topPorts {
-		rawPorts = append(rawPorts, KeyCount{Key: portName(p.Port), Count: p.Total})
-	}
-	if len(rawPorts) > 0 {
-		result.TopPorts = firstKeyCounts(rawPorts, flowTopDisplay)
-	}
-	// Same raw-only defect as Top Conversations: magnitudes ran ~19x low and
-	// port 2049 (the busiest on production) was missing entirely.
+	result.TopServices = mergePortCounts(rawSvc, nil, flowTopDisplay)
 	if useRollups {
-		var rollupPorts []struct {
-			Port  uint16
-			Total int64
-		}
-		var summaryPorts []KeyCount
-		mergePorts := func() {
-			rollupKC := summaryPorts
-			if rollupKC == nil {
-				rollupKC = make([]KeyCount, 0, len(rollupPorts))
-				for _, p := range rollupPorts {
-					rollupKC = append(rollupKC, KeyCount{Key: portName(p.Port), Count: p.Total})
-				}
-			}
-			if len(rollupKC) > 0 {
-				result.TopPorts = mergeKeyCounts(rawPorts, rollupKC, flowTopDisplay)
-			}
-		}
+		var rollupSvc []FlowPortCount
+		mergeServices := func() { result.TopServices = mergePortCounts(rawSvc, rollupSvc, flowTopDisplay) }
 		switch {
-		case summaryTopsUsable:
-			runRollup("top_ports", newSummaryTopBase, func(q *gorm.DB) error {
-				vals, err := flowSummaryTopValues(q, flowSummaryDimDstPort, flowTopFetch)
-				summaryPorts = make([]KeyCount, 0, len(vals))
+		case summaryTopsUsable && run.serviceTopsUsable:
+			runRollup("top_services", newSummaryTopBase, func(q *gorm.DB) error {
+				vals, err := flowSummaryTopValues(q, flowSummaryDimServicePort, flowTopFetch)
+				rollupSvc = rollupSvc[:0]
 				for _, v := range vals {
-					// The value is the port as text; name it the same way the raw
-					// side does so the merge keys line up.
 					if n, convErr := strconv.ParseUint(v.Key, 10, 16); convErr == nil {
-						summaryPorts = append(summaryPorts, KeyCount{Key: portName(uint16(n)), Count: v.Count})
+						rollupSvc = append(rollupSvc, FlowPortCount{Port: uint16(n), Count: v.Count})
 					}
 				}
 				return err
-			}, mergePorts)
+			}, mergeServices)
+		case summaryTopsUsable:
+			// The summary buckets older than flow_summary_service_since were
+			// written before the service dimension existed. Showing the raw
+			// merge as if it were the window would understate every service,
+			// so it is shown and marked partial — without the page-wide banner,
+			// which means "these figures fell back to the last hour".
+			budget.partial("top_services", "services before "+run.serviceSince.Format("2006-01-02")+" not yet summarised")
 		case useSummary:
-			budget.skip("top_ports")
+			budget.skip("top_services")
 		default:
-			runRollup("top_ports", newFilteredRollupBase, func(q *gorm.DB) error {
-				return q.Select("dst_port as port, SUM(bytes_sum) as total").
-					Where("dst_port > 0").Group("dst_port").Order("total DESC").Limit(flowTopFetch).Scan(&rollupPorts).Error
-			}, mergePorts)
+			runRollup("top_services", newFilteredRollupBase, func(q *gorm.DB) error {
+				var rows []struct {
+					Port  uint16
+					Total int64
+				}
+				err := q.Select("service_port as port, SUM(bytes_sum) as total").
+					Where("service_port > 0").Group("service_port").Order("total DESC").Limit(flowTopFetch).Scan(&rows).Error
+				rollupSvc = rollupSvc[:0]
+				for _, r := range rows {
+					rollupSvc = append(rollupSvc, FlowPortCount{Port: r.Port, Count: r.Total})
+				}
+				return err
+			}, mergeServices)
 		}
 	}
 
@@ -1635,6 +1660,49 @@ func sortFlowKeyCounts[T any](rows []T, fields func(T) (bytes, records int64, ke
 	})
 }
 
+// FlowPortCount is one Top services row: Key is the display name ("HTTPS" or
+// the number), Port the number the page filters by, Count bytes.
+type FlowPortCount struct {
+	Key   string `json:"key"`
+	Port  uint16 `json:"port"`
+	Count int64  `json:"count"`
+}
+
+// flowPortName names a port for display: the well-known name, else the number.
+func flowPortName(port uint16) string {
+	if n, ok := wellKnownPorts[port]; ok {
+		return n
+	}
+	return strconv.Itoa(int(port))
+}
+
+// mergePortCounts merges two port lists by PORT NUMBER — the honest key; names
+// are only for display — and returns the top limit by bytes, ties by port.
+// Never nil, so an empty panel serialises as [].
+func mergePortCounts(a, b []FlowPortCount, limit int) []FlowPortCount {
+	m := make(map[uint16]int64, len(a)+len(b))
+	for _, p := range a {
+		m[p.Port] += p.Count
+	}
+	for _, p := range b {
+		m[p.Port] += p.Count
+	}
+	out := make([]FlowPortCount, 0, len(m))
+	for port, c := range m {
+		out = append(out, FlowPortCount{Key: flowPortName(port), Port: port, Count: c})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Port < out[j].Port
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
 // mergeKeyCounts merges two KeyCount slices by summing counts for matching keys,
 // then returns the top N sorted by count descending.
 func mergeKeyCounts(a, b []KeyCount, limit int) []KeyCount {
@@ -1704,6 +1772,8 @@ type rollupRow struct {
 	Protocol        uint8
 	AppCategory     uint8
 	Direction       uint8
+	ServicePort     uint16
+	ClassRev        uint16
 	ScopeLocal      bool
 	DstCountry      string
 	DstASN          uint32
@@ -1725,6 +1795,8 @@ type rollupKey struct {
 	Protocol      uint8
 	AppCategory   uint8
 	Direction     uint8
+	ServicePort   uint16
+	ClassRev      uint16
 	ScopeLocal    bool
 	DstCountry    string
 	DstASN        uint32
@@ -1736,7 +1808,8 @@ func (r rollupRow) key() rollupKey {
 	return rollupKey{
 		Bucket: r.Bucket, DeviceID: r.DeviceID, SrcAddr: r.SrcAddr, DstAddr: r.DstAddr,
 		DstPort: r.DstPort, Protocol: r.Protocol, AppCategory: r.AppCategory,
-		Direction: r.Direction, ScopeLocal: r.ScopeLocal, DstCountry: r.DstCountry,
+		Direction: r.Direction, ServicePort: r.ServicePort, ClassRev: r.ClassRev,
+		ScopeLocal: r.ScopeLocal, DstCountry: r.DstCountry,
 		DstASN: r.DstASN, FlowSource: r.FlowSource, FirewallEvent: r.FirewallEvent,
 	}
 }
@@ -1837,6 +1910,8 @@ func batchInsertRollups(tx *gorm.DB, rows []rollupRow, intervalType, bucketFmt s
 				Protocol:        r.Protocol,
 				AppCategory:     r.AppCategory,
 				Direction:       r.Direction,
+				ServicePort:     r.ServicePort,
+				ClassRev:        r.ClassRev,
 				ScopeLocal:      r.ScopeLocal,
 				DstCountry:      r.DstCountry,
 				DstASN:          r.DstASN,
@@ -1904,7 +1979,7 @@ var flowRollupWindow = time.Hour
 // erased one hour after ingest. Like flow_source it is near-functionally
 // determined per conversation (1-2 values in practice, 6 possible), so the
 // cardinality cost is bounded.
-const flowRollupGroupKey = "bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, scope_local, dst_country, dst_asn, flow_source, firewall_event"
+const flowRollupGroupKey = "bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, service_port, class_rev, scope_local, dst_country, dst_asn, flow_source, firewall_event"
 
 // aggregateFlowsToRollup groups raw FlowSamples older than cutoff into
 // 5-minute rollups, one bounded time window at a time (AUDIT-204 — see
@@ -2019,7 +2094,7 @@ func (d *Database) aggregateFlowsToRollup(cutoff time.Time, intervalType string)
 			var rows []rollupRow
 			if err := tx.Model(&models.FlowSample{}).
 				Where("timestamp >= ? AND timestamp < ? AND id <= ?", winStart, winEnd, watermark).
-				Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, scope_local, dst_country, dst_asn, flow_source, firewall_event, " +
+				Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, service_port, class_rev, scope_local, dst_country, dst_asn, flow_source, firewall_event, " +
 					"SUM(bytes) as bytes_sum, SUM(packets) as packets_sum, COUNT(*) as flow_count, " +
 					"AVG(sampling_rate) as sampling_rate_avg").
 				Group(flowRollupGroupKey).
@@ -2189,7 +2264,7 @@ func (d *Database) aggregateRollupsUp(srcInterval, dstInterval string, cutoff ti
 				var rows []rollupRow
 				if err := tx.Model(&models.FlowRollup{}).
 					Where("interval_type = ? AND timestamp >= ? AND timestamp < ? AND id <= ?", srcInterval, subStart, subEnd, watermark).
-					Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, scope_local, dst_country, dst_asn, flow_source, firewall_event, " +
+					Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, service_port, class_rev, scope_local, dst_country, dst_asn, flow_source, firewall_event, " +
 						"SUM(bytes_sum) as bytes_sum, SUM(packets_sum) as packets_sum, SUM(flow_count) as flow_count, " +
 						"CASE WHEN SUM(flow_count) > 0 THEN SUM(sampling_rate_avg * flow_count) / SUM(flow_count) ELSE 0 END as sampling_rate_avg").
 					Group(flowRollupGroupKey).

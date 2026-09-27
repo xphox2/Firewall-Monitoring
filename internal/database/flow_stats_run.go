@@ -93,12 +93,17 @@ type FlowStatsOptions struct {
 // flowStatsRun is what flowStats varies on between the direct and the
 // materialized run.
 type flowStatsRun struct {
-	h           *gorm.DB // every query goes through this handle
-	cutoff      time.Time
-	useSummary  bool
-	scope       string // table the rolled-up panels read; "" = flow_rollups
-	concurrency int
-	budget      *flowStatsBudget
+	h          *gorm.DB // every query goes through this handle
+	cutoff     time.Time
+	useSummary bool
+	// serviceTopsUsable: the summary's service_port top lists cover this whole
+	// window (see serviceTopsUsable); serviceSince is the boundary, for the
+	// partial badge when they do not.
+	serviceTopsUsable bool
+	serviceSince      time.Time
+	scope             string // table the rolled-up panels read; "" = flow_rollups
+	concurrency       int
+	budget            *flowStatsBudget
 	// fill, when set, fills the scope table from the flow_rollups base it is
 	// given, before any rolled-up panel runs.
 	fill func(source func() *gorm.DB) error
@@ -136,6 +141,25 @@ func (r *flowStatsRun) expect(panels int) {
 // finish reports the last step.
 func (r *flowStatsRun) finish() { r.step("Finishing") }
 
+// serviceTopsUsable reports whether the summary's service_port top lists cover
+// a window starting at cutoff. Summary buckets written before
+// flow_summary_service_since (set by migration v68 on an existing install,
+// cleared once history is rebuilt) have no service dimension; a bucket stamped
+// after it can only have been summarised after it, so a window whose cutoff is
+// at or past the boundary is fully covered. An unparseable value is treated as
+// "not covered" — it only costs a partial badge.
+func (d *Database) serviceTopsUsable(cutoff time.Time) (bool, time.Time) {
+	v, ok := d.GetSettingValue(flowSummaryServiceSinceKey)
+	if !ok || v == "" {
+		return true, time.Time{}
+	}
+	since, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return false, time.Now()
+	}
+	return !cutoff.Before(since), since
+}
+
 // GetFlowStats returns aggregated flow statistics, optionally narrowed by
 // filter, within the synchronous endpoint's budget.
 func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsResult, error) {
@@ -153,8 +177,13 @@ func (d *Database) GetFlowStatsOpts(hours int, filter FlowStatsFilter, opts Flow
 		// Decided here, before anything is pinned: summaryBackfillComplete
 		// queries through d.
 		useSummary := hours > flowSummaryMinHours && flowSummaryCompatible(filter) && d.summaryBackfillComplete()
+		serviceOK, serviceSince := false, time.Time{}
+		if useSummary {
+			serviceOK, serviceSince = d.serviceTopsUsable(cutoff)
+		}
 		run := &flowStatsRun{
 			h: d.db, cutoff: cutoff, useSummary: useSummary,
+			serviceTopsUsable: serviceOK, serviceSince: serviceSince,
 			concurrency: flowStatsRollupConcurrency,
 			budget:      newFlowStatsBudget(parent, flowStatsRollupBudget),
 			progress:    opts.Progress, total: 20,
@@ -193,7 +222,7 @@ func materializedAllowance(opts FlowStatsOptions) time.Duration {
 // filter on. device_id, flow_source and firewall_event are carried so the
 // shared filters re-apply cleanly on the scope table.
 const flowScopeColumns = "timestamp, device_id, interval_type, src_addr, dst_addr, dst_port, protocol, " +
-	"bytes_sum, packets_sum, flow_count, sampling_rate_avg, app_category, direction, scope_local, " +
+	"bytes_sum, packets_sum, flow_count, sampling_rate_avg, app_category, direction, service_port, scope_local, " +
 	"dst_country, dst_asn, flow_source, firewall_event"
 
 var flowScopeNameRE = regexp.MustCompile(`^flow_scope_[a-f0-9]{16}$`)
@@ -343,7 +372,7 @@ var flowStatsPanelLabels = map[string]string{
 	"top_sources":       "Top sources",
 	"top_destinations":  "Top destinations",
 	"top_conversations": "Top conversations",
-	"top_ports":         "Top ports",
+	"top_services":      "Top services",
 	"bytes_over_time":   "Traffic over time",
 }
 

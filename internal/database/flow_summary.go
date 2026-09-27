@@ -35,7 +35,7 @@ import (
 const (
 	flowSummaryDimSrcAddr      = "src_addr"
 	flowSummaryDimDstAddr      = "dst_addr"
-	flowSummaryDimDstPort      = "dst_port"
+	flowSummaryDimServicePort  = "service_port"
 	flowSummaryDimDstASN       = "dst_asn"
 	flowSummaryDimConversation = "conversation"
 )
@@ -825,7 +825,10 @@ func (d *Database) writeSummaryTops(tx *gorm.DB, src func() *gorm.DB, tier flowS
 	}{
 		{flowSummaryDimSrcAddr, "src_addr", "src_addr <> ''"},
 		{flowSummaryDimDstAddr, "dst_addr", "dst_addr <> ''"},
-		{flowSummaryDimDstPort, d.dialect.CastText("dst_port"), "dst_port > 0"},
+		// service_port replaced dst_port in v0.11.263 (Top services). Buckets
+		// written earlier carry the old dimension and none of this one; the
+		// reader gates on flow_summary_service_since for that.
+		{flowSummaryDimServicePort, d.dialect.CastText("service_port"), "service_port > 0"},
 		{flowSummaryDimDstASN, d.dialect.CastText("dst_asn"), "dst_asn <> 0"},
 		{flowSummaryDimConversation,
 			d.dialect.Concat("src_addr", "'|'", "dst_addr", "'|'", d.dialect.CastText("dst_port"), "'|'", d.dialect.CastText("protocol")),

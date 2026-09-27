@@ -1577,6 +1577,17 @@ type FlowSample struct {
 	// doesn't send them remain valid. Migration v11 adds the columns.
 	AppCategory uint8 `json:"app_category" gorm:"column:app_category;default:0;not null"`
 	Direction   uint8 `json:"direction" gorm:"column:direction;default:0;not null"`
+	// ServicePort is the conversation's service side (classify.ServicePort):
+	// the well-known or lower port, whichever end it is on, so a server's
+	// replies (src 443 → dst 51234) count under 443 like its requests do. 0 when
+	// both ports are ephemeral or the protocol has none. ClassRev is the
+	// classification revision the row was stamped under (the internal-network
+	// set it was classified against); 0 = not yet classified under any
+	// revision. The server overwrites both at ingest — a collector cannot set
+	// them — and ClassRev never leaves the server. Migration v68 adds both.
+	// type:integer, not smallint: the uint16 signedness trap above.
+	ServicePort uint16 `json:"service_port" gorm:"column:service_port;type:integer;default:0;not null"`
+	ClassRev    uint16 `json:"-" gorm:"column:class_rev;type:integer;default:0;not null"`
 	// ScopeLocal marks a flow as link-local/multicast/broadcast/loopback noise
 	// (classify.ScopeLocal, true when either endpoint is scope-local). The Flows
 	// page excludes it from top-talker charts. Computed server-side at ingest;
@@ -1819,6 +1830,16 @@ type FlowRollup struct {
 	// not increase rollup cardinality. Migration v11 adds the columns.
 	AppCategory uint8 `json:"app_category" gorm:"column:app_category;default:0;not null"`
 	Direction   uint8 `json:"direction" gorm:"column:direction;default:0;not null"`
+	// ServicePort and ClassRev carry the ingest-time service port and
+	// classification revision (see FlowSample) through the rollup. Both are
+	// GROUP BY keys. Unlike direction, service_port is NOT functionally
+	// determined by the key — rollups keep no src_port — but it can only take
+	// the dst_port or the one source port the conversation's server side uses,
+	// so it adds a small, bounded number of groups. class_rev keeps rows
+	// classified under different revisions from ever merging in a promotion.
+	// Migration v68 adds both.
+	ServicePort uint16 `json:"service_port" gorm:"column:service_port;type:integer;default:0;not null"`
+	ClassRev    uint16 `json:"-" gorm:"column:class_rev;type:integer;default:0;not null"`
 	// ScopeLocal carries the ingest-time scope-local flag through the rollup so
 	// the Flows page's scope-local exclusion survives after raw samples age out.
 	// Part of the rollup GROUP BY; functionally determined by (src_addr, dst_addr)

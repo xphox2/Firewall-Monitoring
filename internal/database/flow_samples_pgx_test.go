@@ -22,6 +22,8 @@ func TestFlowSample_UnsignedColumnsAreWideEnough(t *testing.T) {
 	want := map[string]string{
 		"SrcPort":        "integer",
 		"DstPort":        "integer",
+		"ServicePort":    "integer",
+		"ClassRev":       "integer",
 		"SequenceNumber": "bigint",
 		"SamplingRate":   "bigint",
 		"InputIfIndex":   "bigint",
@@ -73,6 +75,8 @@ func TestFlowSamplesCopyColumns_OrderAndFieldTypes(t *testing.T) {
 		"drops",
 		"app_category",
 		"direction",
+		"service_port",
+		"class_rev",
 		"scope_local",
 		"src_country",
 		"dst_country",
