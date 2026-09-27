@@ -383,7 +383,11 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			// silence the outbound detectors.
 			nets, bad := database.ParseInternalNetworks(s.Value)
 			if len(bad) > 0 {
-				c.JSON(http.StatusBadRequest, response.Error("Invalid internal networks: "+strings.Join(bad, "; ")))
+				shown := bad
+				if len(shown) > 5 {
+					shown = append(append([]string{}, bad[:5]...), fmt.Sprintf("and %d more", len(bad)-5))
+				}
+				c.JSON(http.StatusBadRequest, response.Error("Invalid internal networks: "+strings.Join(shown, "; ")))
 				return
 			}
 			s.Value = database.CanonicalInternalNetworks(nets)
@@ -578,6 +582,16 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		}
 	}
 
+	// Internal networks classify every new flow; apply an edit now rather
+	// than at the next 15-minute refresh. Before the failure return below: the
+	// rows that did save must apply even if another row failed. Idempotent.
+	for _, s := range validSettings {
+		if s.Key == database.FlowInternalAutoKey || s.Key == database.FlowInternalNetworksKey {
+			h.RefreshInternalNetworks()
+			break
+		}
+	}
+
 	if len(failedKeys) > 0 {
 		httputil.InternalError(c, fmt.Sprintf("Failed to save %d setting(s)", len(failedKeys)), nil)
 		return
@@ -597,14 +611,6 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	}
 	if refreshedAlerting {
 		h.refreshAlertConfigCache(h.reqDB(c))
-	}
-	// Internal networks classify every new flow; apply an edit now rather
-	// than at the next 15-minute refresh.
-	for _, s := range validSettings {
-		if s.Key == database.FlowInternalAutoKey || s.Key == database.FlowInternalNetworksKey {
-			h.RefreshInternalNetworks()
-			break
-		}
 	}
 
 	c.JSON(http.StatusOK, response.Success(gin.H{

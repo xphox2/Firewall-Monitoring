@@ -24,7 +24,8 @@ production, and every flow of a server on the operator's own /28.
   stored in canonical form. `0.0.0.0/0` and `::/0` are refused, because they
   would make every flow internal and silence the outbound detectors. The list
   endpoint (`/admin/api/flows/internal-networks`) is admin-only.
-- Changes apply to new traffic immediately. Flow history keeps the direction it
+- Changes apply to new traffic immediately (on a multi-instance deployment,
+  other API instances pick them up within 15 minutes). Flow history keeps the direction it
   was recorded under until it is reclassified in a later version. Each flow
   records the classification revision it was made under (`class_rev`), so that
   pass knows what to revisit. The set also refreshes every 15 minutes as devices
@@ -35,8 +36,10 @@ production, and every flow of a server on the operator's own /28.
   - data_exfil counts only flows where your host is the client (since
     v0.11.263);
   - unexpected_egress still matches only destination ports on its list;
-  - c2_beacon and the DDoS detectors already included External traffic and are
-    unchanged;
+  - c2_beacon already included External traffic and is unchanged;
+  - the DDoS detectors look at traffic arriving at a victim (Inbound or
+    External); flows from your own public hosts out to the internet are now
+    Outbound and correctly no longer count toward them;
   - the NOC's direction breakdown moves from External to Inbound, Outbound and
     Internal.
 

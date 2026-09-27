@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	"firewall-mon/internal/classify"
 	"firewall-mon/internal/models"
@@ -31,6 +32,10 @@ const (
 	maxInternalNetworks     = 1000
 	maxInternalNetworksText = 32 * 1024
 )
+
+// skippedMgmtAddrs remembers the last count of unparseable management
+// addresses, so the log line fires on change only.
+var skippedMgmtAddrs atomic.Int64
 
 // InternalNetwork is one entry of the effective internal-network list, with
 // where it came from so the operator can see why an address counts as theirs.
@@ -123,7 +128,7 @@ func (d *Database) LoadInternalNetworks() ([]InternalNetwork, error) {
 	seen := map[netip.Prefix]bool{}
 	add := func(p netip.Prefix, source, device string) {
 		p = p.Masked()
-		if seen[p] || classify.DefaultInternal(p.Addr()) {
+		if seen[p] || classify.DefaultCovers(p) {
 			return
 		}
 		seen[p] = true
@@ -171,7 +176,9 @@ func (d *Database) LoadInternalNetworks() ([]InternalNetwork, error) {
 			ip = ip.Unmap()
 			add(netip.PrefixFrom(ip, ip.BitLen()), "interface", name)
 			if cidr, ok := netclass.SubnetCIDR(a.IPAddress, a.NetMask); ok {
-				if p, err := netip.ParsePrefix(cidr); err == nil {
+				// A 0.0.0.0 or non-canonical netmask comes back as a /0; a
+				// device must never make the whole internet "internal".
+				if p, err := netip.ParsePrefix(cidr); err == nil && p.Bits() > 0 {
 					add(p, "subnet", name)
 				}
 			}
@@ -186,7 +193,8 @@ func (d *Database) LoadInternalNetworks() ([]InternalNetwork, error) {
 			ip = ip.Unmap()
 			add(netip.PrefixFrom(ip, ip.BitLen()), "management", dev.Name)
 		}
-		if skipped > 0 {
+		// Logged when the count changes, not on every 15-minute refresh.
+		if prev := skippedMgmtAddrs.Swap(int64(skipped)); skipped > 0 && int64(skipped) != prev {
 			log.Printf("internal networks: %d device management address(es) are not IP addresses and were skipped", skipped)
 		}
 	}

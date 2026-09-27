@@ -3310,6 +3310,12 @@
             // v0.11.14: saved values are the new clean baseline — hides the
             // sticky save bar. On save error the bar correctly stays up.
             if (window.FwmonSettingsUI) FwmonSettingsUI.snapshotBaseline();
+            // The server stores the network list canonically and the set in
+            // effect changes with it: re-render the card so both show now
+            // (the re-render re-snapshots the baseline when it completes).
+            if (settings.some(function(s) { return s.key === 'flow_internal_networks' || s.key === 'flow_internal_auto'; })) {
+                loadSettings();
+            }
         }).catch(function(err) {
             console.error('Settings save failed:', err);
             AC.showError('Error: ' + err.message);

@@ -150,3 +150,32 @@ var defaultSet = NewInternalSet(nil, 0)
 // operator networks (private ranges, loopback, link-local, CGNAT, multicast,
 // broadcast, unspecified).
 func DefaultInternal(a netip.Addr) bool { return defaultSet.contains(a.Unmap()) }
+
+// defaultPrefixes are the default-internal ranges as prefixes, including what
+// contains() adds by method, for whole-prefix containment checks.
+var defaultPrefixes = func() []netip.Prefix {
+	out := make([]netip.Prefix, 0, len(privateCIDRs)+5)
+	for _, c := range append(append([]string{}, privateCIDRs...),
+		"224.0.0.0/4", "ff00::/8", "255.255.255.255/32", "0.0.0.0/32", "::/128") {
+		out = append(out, netip.MustParsePrefix(c))
+	}
+	return out
+}()
+
+// DefaultCovers reports whether EVERY address of p is inside without any
+// operator networks — p lies within one default range. Testing only p's first
+// address would wrongly discard a wider range that merely starts inside one
+// (192.168.0.0/13 begins in 192.168/16 but reaches 192.175.255.255).
+func DefaultCovers(p netip.Prefix) bool {
+	a := p.Addr()
+	bits := p.Bits()
+	if a.Is4In6() && bits >= 96 {
+		a, bits = a.Unmap(), bits-96
+	}
+	for _, d := range defaultPrefixes {
+		if bits >= d.Bits() && d.Contains(a) {
+			return true
+		}
+	}
+	return false
+}

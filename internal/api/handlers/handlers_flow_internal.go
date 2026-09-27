@@ -16,11 +16,12 @@ import (
 // exactly why an address counts as inside. Admin-only (adminOnlyRoutes): it
 // reveals the network layout.
 func (h *Handler) GetFlowInternalNetworks(c *gin.Context) {
-	if h.db == nil {
+	db := h.reqDB(c)
+	if db == nil {
 		c.JSON(http.StatusServiceUnavailable, response.Error("Database not available"))
 		return
 	}
-	nets, err := h.db.LoadInternalNetworks()
+	nets, err := db.LoadInternalNetworks()
 	if err != nil {
 		httputil.InternalError(c, "Failed to load internal networks", err)
 		return
@@ -30,6 +31,6 @@ func (h *Handler) GetFlowInternalNetworks(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, response.Success(gin.H{
 		"networks": nets,
-		"auto":     h.db.GetBoolSetting(database.FlowInternalAutoKey, true),
+		"auto":     db.GetBoolSetting(database.FlowInternalAutoKey, true),
 	}))
 }

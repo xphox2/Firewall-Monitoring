@@ -56,11 +56,12 @@ func TestLoadInternalNetworks(t *testing.T) {
 		{DeviceID: fw.ID, IPAddress: "192.168.5.1", NetMask: "255.255.255.0", Timestamp: now},                            // private
 		{DeviceID: fw.ID, IPAddress: "198.51.100.9", NetMask: "255.255.255.0", Timestamp: now.Add(-18 * 24 * time.Hour)}, // stale
 		{DeviceID: gone.ID, IPAddress: "203.0.113.51", NetMask: "255.255.255.0", Timestamp: now},                         // retired device
+		{DeviceID: fw.ID, IPAddress: "198.18.0.1", NetMask: "0.0.0.0", Timestamp: now},                                   // bogus mask: never a /0
 	}
 	if err := d.Gorm().Create(&addrs).Error; err != nil {
 		t.Fatalf("seed addresses: %v", err)
 	}
-	if err := d.Gorm().Create(&models.SystemSetting{Key: FlowInternalNetworksKey, Value: "66.9.166.120\n2001:db8::/32"}).Error; err != nil {
+	if err := d.Gorm().Create(&models.SystemSetting{Key: FlowInternalNetworksKey, Value: "66.9.166.120\n2001:db8::/32\n192.168.0.0/13\n10.1.0.0/16"}).Error; err != nil {
 		t.Fatalf("seed setting: %v", err)
 	}
 
@@ -73,8 +74,12 @@ func TestLoadInternalNetworks(t *testing.T) {
 		got[n.CIDR] = n.Source + "/" + n.Device
 	}
 	want := map[string]string{
-		"66.9.166.120/32":  "manual/",
-		"2001:db8::/32":    "manual/",
+		"66.9.166.120/32": "manual/",
+		"2001:db8::/32":   "manual/",
+		// Starts inside 192.168/16 but reaches 192.175.255.255: kept.
+		"192.168.0.0/13": "manual/",
+		// The bogus-mask interface's own address is listed; its "subnet" is not.
+		"198.18.0.1/32":    "interface/nuday-fw",
 		"66.179.9.156/32":  "interface/nuday-fw",
 		"66.179.9.144/28":  "subnet/nuday-fw",
 		"76.66.145.146/32": "interface/nuday-fw",
@@ -96,7 +101,8 @@ func TestLoadInternalNetworks(t *testing.T) {
 		t.Fatalf("seed auto: %v", err)
 	}
 	nets, err = d.LoadInternalNetworks()
-	if err != nil || len(nets) != 2 {
-		t.Errorf("with auto off: %v %v, want only the two manual entries", nets, err)
+	// 10.1.0.0/16 lies wholly inside 10/8 and is always internal: not listed.
+	if err != nil || len(nets) != 3 {
+		t.Errorf("with auto off: %v %v, want only the three manual entries not already private", nets, err)
 	}
 }
