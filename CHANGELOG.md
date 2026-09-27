@@ -1,6 +1,53 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.265] - 2026-09-27
+
+### Added — stored flow history is reclassified with your own networks
+
+v0.11.263 and v0.11.264 changed how new flows are classified: service port,
+and direction against your own networks. History recorded earlier kept the old
+rule. On production that is about 127 million of 141 million rolled-up rows.
+
+- **A background job re-stamps history** in `flow_samples` and `flow_rollups`
+  with the same classifier ingest uses, so old and new traffic cannot disagree.
+  - It runs in the poller for at most **2 minutes of every 5-minute tick**,
+    beside live ingest. It works in bounded slices and resumes where it left off
+    after a restart or a deploy.
+  - It starts on its own after this upgrade.
+  - Measured:
+    - reading a slice on production takes 11–29 ms (up to 50,000 rows);
+    - a scratch PostgreSQL on SSD reclassified 360,000 rows, with a promotion
+      running alongside, at 54–82k rows/s.
+    The rewrite is what takes the time on production's spinning disk, so a
+    full run there takes hours. The status line shows a live estimate.
+  - Rolled-up rows keep no source port. For them the service port is inferred
+    from the destination, so a server's older replies still show no service.
+    Rows recorded since v0.11.263 keep their exact value.
+  - A run ends only when a count taken under the maintenance lock finds no row
+    left on the old rule. That count scans each table and holds the lock for
+    about 1–5 minutes; the retention cleanup waits for it rather than being
+    skipped.
+- **Reapply to history** (Settings → Detection → Flow Classification,
+  admin-only) re-runs the job after you change your networks. Press it after
+  adding your public ranges; a run already in progress restarts with them. The
+  card and the Flows page show the progress, with an estimate of the time left,
+  and say when the job is paused for low disk space (below 15% free).
+- If flows were stamped before the API loaded its network list (revision 0),
+  the job re-checks recent history on its own. It is triggered by a mark the
+  API leaves and by a check of the newest rows of both tables.
+- **Disk space:** rewriting most of `flow_rollups` leaves dead rows until they
+  are vacuumed. Expect the table to grow noticeably, up to its current size
+  again, while the job runs. After it finishes (the card says so), run
+  `VACUUM (ANALYZE) flow_rollups`.
+- The summary tables are not rebuilt yet: long ranges served from them keep
+  the previous direction until a following version recomputes them. Until then
+  Top services on those ranges stays marked partial. This version records the
+  request for that rebuild in `flow_summary_recompute_request`, which is unused
+  until then.
+- New endpoints: `GET /admin/api/flows/reclassify/status` (viewer) and
+  `POST /admin/api/flows/reclassify` (admin).
+
 ## [0.11.264] - 2026-09-27
 
 ### Changed — your own networks count as internal when classifying flow direction

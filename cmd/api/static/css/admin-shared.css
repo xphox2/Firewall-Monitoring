@@ -1127,6 +1127,11 @@ tr:hover {
     box-sizing: border-box;
 }
 .fwmon-flow-effective { margin-top: 14px; font-size: 0.82rem; }
+.fwmon-flow-reapply { margin-top: 12px; font-size: 0.82rem; }
+.fwmon-flow-reapply p { margin: 0 0 8px; }
+@media (max-width: 720px) {
+    .fwmon-flow-reapply .btn { width: 100%; }
+}
 .fwmon-flow-effective-title { font-size: 0.85rem; margin: 0 0 4px; }
 .fwmon-flow-effective-hint,
 .fwmon-flow-effective-empty { color: var(--fwmon-text-faint); margin: 0 0 8px; }

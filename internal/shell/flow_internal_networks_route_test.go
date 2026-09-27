@@ -51,3 +51,55 @@ func TestFlowClassificationSettingsAreSavedAndTracked(t *testing.T) {
 		}
 	}
 }
+
+// TestFlowReclassifyRoutes: Reapply rewrites all stored flow history, so it is
+// admin-only; its progress carries no network detail and stays viewer-visible
+// for the Flows page. adminOnlyRoutes keys on the path for every method, so
+// the two must be separate paths.
+func TestFlowReclassifyRoutes(t *testing.T) {
+	data, err := os.ReadFile("../../cmd/api/main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(data)
+	start := strings.Index(body, "adminOnlyRoutes — role=admin")
+	end := strings.Index(body[start:], "))")
+	adminOnly := strings.Join(strings.Fields(body[start:start+end]), "")
+	if !strings.Contains(adminOnly, `"/admin/api/flows/reclassify":true`) {
+		t.Error("POST /admin/api/flows/reclassify must be in adminOnlyRoutes")
+	}
+	if strings.Contains(adminOnly, `"/admin/api/flows/reclassify/status"`) {
+		t.Error("the reclassification status must stay viewer-visible (the Flows page shows it)")
+	}
+	for _, reg := range []string{
+		`admin.GET("/api/flows/reclassify/status", handler.GetFlowReclassStatus)`,
+		`admin.POST("/api/flows/reclassify", handler.ReapplyFlowClassification)`,
+	} {
+		if !strings.Contains(body, reg) {
+			t.Errorf("route not registered: %s", reg)
+		}
+	}
+}
+
+// The reclassification progress reaches both pages, and Reapply is wired
+// through the confirm dialog to the admin-only POST.
+func TestFlowReclassUIWired(t *testing.T) {
+	flows := readJS(t, "admin-flows.js")
+	if !strings.Contains(flows, "AC.apiFetch('/admin/api/flows/reclassify/status')") || !strings.Contains(flows, "loadReclassStatus();") {
+		t.Error("the Flows page does not load the reclassification status")
+	}
+	main := readJS(t, "admin-main.js")
+	for _, sub := range []string{
+		"'flow-reapply': function() { reapplyFlowClassification(); },",
+		"apiFetch(API_BASE + '/flows/reclassify', { method: 'POST' })",
+		"AC.confirm('Re-classify all stored flow history",
+	} {
+		if !strings.Contains(main, sub) {
+			t.Errorf("admin-main.js is missing %q", sub)
+		}
+	}
+	common := readJS(t, "admin-common.js")
+	if !strings.Contains(common, "flowReclassText: flowReclassText,") {
+		t.Error("AdminCommon.flowReclassText is not exported")
+	}
+}

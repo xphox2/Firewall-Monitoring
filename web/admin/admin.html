@@ -513,6 +513,7 @@
                 <span id="flows-load-error-msg"></span>
                 <button type="button" class="btn secondary sm" id="flows-load-retry">Retry</button>
             </div>
+            <div id="flows-reclass-status" class="fwmon-flows-degraded fwmon-flows-reclass" role="status" hidden></div>
             <div id="flows-degraded-warning" class="fwmon-flows-degraded" role="status" hidden></div>
 
             <!-- 6 stat cards — same data as before, restyled with overflow-safe typography -->
@@ -1336,6 +1337,11 @@
                 <div class="card-header"><h2>Flow Classification — Your Networks</h2></div>
                 <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">Flows between one of your networks and the rest of the internet are <strong>Outbound</strong> or <strong>Inbound</strong>; flows between two of yours are <strong>Internal</strong>. Private ranges (10/8, 172.16/12, 192.168/16, CGNAT, link-local, ULA) always count as yours. Add your public ranges here — IPv6 must be listed by hand. Changes apply to new traffic immediately; older history keeps the rule it was recorded under.</p>
                 <div id="settings-flow-classification"></div>
+                <div class="fwmon-flow-reapply" data-min-role="admin">
+                    <p id="settings-flow-reclass-status" class="fwmon-flow-effective-hint" role="status"></p>
+                    <p id="settings-flow-reclass-hint" class="fwmon-flow-effective-hint" hidden>Add your public networks above, save, and press Reapply — the running job restarts with them.</p>
+                    <button type="button" class="btn secondary" id="settings-flow-reapply" data-action="flow-reapply">Reapply to history</button>
+                </div>
                 <div id="settings-flow-effective" class="fwmon-flow-effective" aria-live="polite"></div>
             </div>
             </section>
