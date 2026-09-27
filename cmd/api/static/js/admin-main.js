@@ -3488,6 +3488,45 @@
             '<textarea id="flow-internal-networks" name="flow_internal_networks" rows="5" spellcheck="false" autocomplete="off" ' +
             'class="fwmon-flow-networks" placeholder="203.0.113.0/24&#10;198.51.100.10&#10;2001:db8::/32">' + escapeHtml(list) + '</textarea></div>';
         loadFlowEffectiveNetworks();
+        loadFlowReclassStatus(list);
+    }
+
+    // The reclassification progress on the Flow Classification card, and the
+    // hint to add public networks while a run is going and the list is empty.
+    function loadFlowReclassStatus(list) {
+        var el = document.getElementById('settings-flow-reclass-status');
+        var hint = document.getElementById('settings-flow-reclass-hint');
+        if (!el) return;
+        apiFetch(API_BASE + '/flows/reclassify/status').then(function(result) {
+            var v = (result && result.data) || {};
+            var text = AC.flowReclassText(v);
+            if (!text && v.phase === 'done') {
+                text = v.vacuum_hint
+                    ? 'Flow history is classified with the current networks. The rewrite left dead rows behind: run VACUUM (ANALYZE) flow_rollups to reclaim the space.'
+                    : 'Flow history is classified with the current networks.';
+            }
+            el.textContent = text;
+            if (hint) hint.hidden = !(v.phase && v.phase !== 'done' && !(list || '').trim());
+        }).catch(function(e) {
+            el.textContent = '';
+            if (window.fwmonLog) fwmonLog.warn('Settings: reclassification status unavailable', e);
+        });
+    }
+
+    function reapplyFlowClassification() {
+        AC.confirm('Re-classify all stored flow history with the current networks? This rewrites most flow rows in the background — hours of work on a large database, run a couple of minutes at a time. A run already in progress restarts from the beginning.', {
+            title: 'Reapply to history?',
+            confirmLabel: 'Reapply'
+        }).then(function(ok) {
+            if (!ok) return;
+            return apiFetch(API_BASE + '/flows/reclassify', { method: 'POST' }).then(function(result) {
+                AC.showSuccess('Reclassification queued — it starts within 5 minutes.');
+                var list = document.getElementById('flow-internal-networks');
+                loadFlowReclassStatus(list ? list.value : '');
+            });
+        }).catch(function(err) {
+            AC.showError('Error: ' + (err && err.message ? err.message : err));
+        });
     }
 
     function loadFlowEffectiveNetworks() {
@@ -4388,6 +4427,7 @@
         'esc-del-step': function(el) { el.closest('.esc-step-row').remove(); },
         'save-settings': function() { saveSettings(); },
         'discard-settings': function() { if (window.FwmonSettingsUI) FwmonSettingsUI.discard(); },
+        'flow-reapply': function() { reapplyFlowClassification(); },
         'test-email': function() { testEmail(); },
         'test-webhook': function(el) { testWebhook(el.dataset.type); },
         'close-device-modal': function() { closeDeviceModal(); },

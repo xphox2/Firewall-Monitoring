@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"firewall-mon/internal/alerts"
+	"firewall-mon/internal/classify"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/detect"
@@ -66,6 +67,10 @@ type Poller struct {
 	// second pass would start on top of a running one every 5 minutes and
 	// contend on the same buckets.
 	flowSummaryRunning atomic.Bool
+	// flowReclassRunning guards the async flow-history reclassification step
+	// (flow_reclass.go): at most one step at a time, each bounded to
+	// flowReclassStepBudget.
+	flowReclassRunning atomic.Bool
 
 	// cleanupRunning guards the async retention cleanup (AUDIT-188, same shape
 	// as feedSyncRunning/M9): the daily cleanup can run for hours against a
@@ -144,6 +149,43 @@ func (p *Poller) startFlowSummaryAsync() {
 		}
 		defer release()
 		p.db.RunFlowSummaryCycle()
+	})
+}
+
+// flowReclassStepBudget bounds one reclassification step. Two minutes of every
+// five-minute tick: the job rewrites a large share of flow history beside live
+// ingest on the same volume, so it leaves the disk more idle than busy.
+const flowReclassStepBudget = 2 * time.Minute
+
+// startFlowReclassAsync advances the flow-history reclassification by one
+// bounded step, off the select loop like the summary pass. The classifier is
+// built from the operator's networks for the revision the step works on; a
+// failure to load them skips the step (never classify against defaults alone
+// under the current revision).
+func (p *Poller) startFlowReclassAsync() {
+	if p.db == nil {
+		return
+	}
+	if !p.flowReclassRunning.CompareAndSwap(false, true) {
+		return
+	}
+	logging.SafeGo("flow-reclass", func() {
+		defer p.flowReclassRunning.Store(false)
+		release, acquired := p.db.TryAcquireFlowReclassLock()
+		if !acquired {
+			return
+		}
+		defer release()
+		setFor := func(rev uint16) (*classify.InternalSet, error) {
+			nets, err := p.db.LoadInternalNetworks()
+			if err != nil {
+				return nil, err
+			}
+			return database.InternalSetFrom(nets, rev), nil
+		}
+		if err := p.db.RunFlowReclassStep(setFor, flowReclassStepBudget); err != nil {
+			log.Printf("Flow reclassification: %v (will resume next tick)", err)
+		}
 	})
 }
 
@@ -466,6 +508,7 @@ func (p *Poller) Start() error {
 			// engine every tick and could trip the M30 loop-age heartbeat.
 			// Same treatment as the threat-feed sync and retention cleanup.
 			p.startFlowSummaryAsync()
+			p.startFlowReclassAsync()
 		case <-detectTicker.C:
 			p.runUnderLeaderLock("flow-detect", p.runFlowDetectionCycle)
 		case <-ipsecTelemetryTicker.C:

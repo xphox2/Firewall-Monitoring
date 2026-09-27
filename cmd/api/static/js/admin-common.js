@@ -670,6 +670,25 @@
     }
 
     // Short progress line for badges/banners: "12,345 rows · syslog_messages (3/37)".
+    // flowReclassText describes the flow-history reclassification for the
+    // Flows page status line and the Settings card; '' when there is nothing
+    // to say (the run for the current revision is complete).
+    function flowReclassText(v) {
+        if (!v || v.phase === 'done' || !v.phase) return '';
+        var pct = Math.floor(v.percent || 0);
+        var eta = v.eta_hours > 0 ? (v.eta_hours < 1 ? ', under an hour left' : ', about ' + Math.ceil(v.eta_hours) + ' h left') : '';
+        switch (v.phase) {
+            case 'pending':
+                return 'Reclassifying flow history — starting within 5 minutes. Direction and services in older history may still show the previous rule.';
+            case 'paused':
+                return 'Reclassifying flow history — paused: ' + (v.paused_reason || 'waiting') + ' (' + pct + '% done).';
+            case 'waiting':
+                return 'Reclassifying flow history — waiting: ' + (v.paused_reason || 'new flows still carry the old rule') + ' (' + pct + '% done).';
+            default:
+                return 'Reclassifying flow history — ' + pct + '%' + eta + '. Direction and services in older history may still show the previous rule until it finishes.';
+        }
+    }
+
     function purgeProgressText(job) {
         if (!job) return '';
         var parts = [formatNum(job.rows_deleted || 0) + ' rows removed'];
@@ -2024,6 +2043,7 @@
         cancelPurgeDevice: cancelPurgeDevice,
         purgeJobActive: purgeJobActive,
         purgeProgressText: purgeProgressText,
+        flowReclassText: flowReclassText,
         apiFetch: apiFetch,
         doLogout: doLogout,
         delegateEvent: delegateEvent,

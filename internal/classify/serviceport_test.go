@@ -50,3 +50,23 @@ func TestClassifyAgreesWithServicePort(t *testing.T) {
 		}
 	}
 }
+
+func TestServicePortFromDst(t *testing.T) {
+	cases := []struct {
+		proto uint8
+		dst   uint16
+		want  uint16
+	}{
+		{protoTCP, 443, 443},     // known service
+		{protoTCP, 51820, 51820}, // known service above the ephemeral floor (WireGuard)
+		{protoUDP, 1025, 1025},   // unknown but below the ephemeral range
+		{protoTCP, 51234, 0},     // a client's ephemeral port: no service
+		{protoTCP, 0, 0},
+		{protoICMP, 443, 0},
+	}
+	for _, c := range cases {
+		if got := ServicePortFromDst(c.proto, c.dst); got != c.want {
+			t.Errorf("ServicePortFromDst(%d, %d) = %d, want %d", c.proto, c.dst, got, c.want)
+		}
+	}
+}

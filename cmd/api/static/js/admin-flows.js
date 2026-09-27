@@ -96,6 +96,23 @@
         } catch (e) { return fallback; }
     }
 
+    // Flow-history reclassification status line: shown while stored history
+    // is being re-stamped with the current classification, hidden when done.
+    // Once per page visit — it changes over hours, not seconds.
+    function loadReclassStatus() {
+        var el = document.getElementById('flows-reclass-status');
+        var AC = window.AdminCommon;
+        if (!el || !AC || !AC.apiFetch) return;
+        AC.apiFetch('/admin/api/flows/reclassify/status').then(function(result) {
+            var text = AC.flowReclassText(result && result.data);
+            el.textContent = text;
+            el.hidden = !text;
+        }).catch(function(e) {
+            el.hidden = true;
+            if (window.fwmonLog) fwmonLog.warn('Flows: reclassification status unavailable', e);
+        });
+    }
+
     // ----------------------------------------------------------------------
     // Boot
     // ----------------------------------------------------------------------
@@ -106,6 +123,7 @@
             stateFromURL();
             applyStateToControls();
             reload();
+            loadReclassStatus();
             return;
         }
         inited = true;
@@ -113,6 +131,7 @@
         bindControls();
         applyStateToControls();
         reload();
+        loadReclassStatus();
         // Rebuild the bandwidth uPlot on Day/Night toggle (canvas axes can't
         // be restyled in place) from the cached payload — no refetch.
         if (!themeWired) {

@@ -364,6 +364,16 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 		h.internalNetsLog.Do(func() {
 			log.Printf("internal networks: not loaded yet; flows are classified against private ranges only (class_rev 0) until they are")
 		})
+		// Record that revision-0 rows exist, so the reclassification job
+		// revisits them. A failed write logs and is retried on the next
+		// batch; it never fails ingest.
+		if !h.rearmMarked.Load() {
+			if err := h.db.MarkFlowReclassRearm(); err != nil {
+				log.Printf("internal networks: could not record the re-check mark: %v", err)
+			} else {
+				h.rearmMarked.Store(true)
+			}
+		}
 	}
 	filtered := samples[:0]
 	for i := range samples {

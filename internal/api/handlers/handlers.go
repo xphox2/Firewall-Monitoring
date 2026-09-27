@@ -39,8 +39,12 @@ type Handler struct {
 	// stamps class_rev 0, which the history reclassification revisits.
 	internalNets    atomic.Pointer[classify.InternalSet]
 	internalNetsLog sync.Once
-	nocHub          *nocHub
-	version         string
+	// rearmMarked: this process has recorded (flow_reclass_rearm) that it
+	// stamped revision-0 rows, so the poller re-checks them once a set loads.
+	// Set only after the write succeeds, so a failed write is retried.
+	rearmMarked atomic.Bool
+	nocHub      *nocHub
+	version     string
 	// startTime is the process boot time, used by GetSystemHealth to report
 	// server uptime on the dashboard's Server Platform card.
 	startTime time.Time

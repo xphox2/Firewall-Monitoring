@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.264"
+const ServerVersion = "0.11.265"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -803,6 +803,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		map[string]bool{ // adminOnlyRoutes — role=admin, any method
 			"/admin/api/settings":                  true,
 			"/admin/api/flows/internal-networks":   true,
+			"/admin/api/flows/reclassify":          true,
 			"/admin/api/settings/test-email":       true,
 			"/admin/api/settings/test-webhook":     true,
 			"/admin/api/users":                     true,
@@ -1104,6 +1105,11 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		// The effective internal-network list (Settings → Flow classification).
 		// Admin-only (in adminOnlyRoutes): it reveals the network layout.
 		admin.GET("/api/flows/internal-networks", handler.GetFlowInternalNetworks)
+		// Flow-history reclassification: progress (viewer — the Flows page shows
+		// it) and Reapply (admin-only, in adminOnlyRoutes). Separate paths:
+		// adminOnlyRoutes keys on the path for every method.
+		admin.GET("/api/flows/reclassify/status", handler.GetFlowReclassStatus)
+		admin.POST("/api/flows/reclassify", handler.ReapplyFlowClassification)
 		admin.GET("/api/flows/detections", handler.GetFlowDetections)
 		admin.POST("/api/flows/detections/:id/ack", handler.AckFlowDetection)
 		admin.GET("/api/noc/stream", handler.GetNOCStream)
