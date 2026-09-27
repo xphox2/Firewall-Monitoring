@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"firewall-mon/internal/api/response"
@@ -19,6 +20,10 @@ import (
 // longer than a day): it holds one connection for up to a few minutes. The
 // default view and short filtered views never take one.
 var flowStreamSlots = make(chan struct{}, 2)
+
+// flowStreamKeepalive is how often the stream writes a comment line while no
+// event is due; well under the 60 s idle timeout of a default reverse proxy.
+var flowStreamKeepalive = 15 * time.Second
 
 // GetFlowStatsStream is GET /flows/stats as a Server-Sent Events stream, so the
 // Flows page can show real progress and a long filtered report can finish
@@ -47,11 +52,16 @@ func (h *Handler) GetFlowStatsStream(c *gin.Context) {
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.WriteHeader(http.StatusOK)
 
+	// Writes come from this goroutine (events) and the keepalive below, so they
+	// are serialized.
+	var wmu sync.Mutex
 	send := func(event string, v interface{}) bool {
 		b, err := json.Marshal(v)
 		if err != nil {
 			return false
 		}
+		wmu.Lock()
+		defer wmu.Unlock()
 		_ = rc.SetWriteDeadline(time.Now().Add(sseWriteTimeout))
 		if _, err := c.Writer.Write([]byte("event: " + event + "\ndata: ")); err != nil {
 			return false
@@ -82,6 +92,36 @@ func (h *Handler) GetFlowStatsStream(c *gin.Context) {
 			return
 		}
 	}
+
+	// Keepalive: a report has no time limit, and a stretch with no event —
+	// a day split after a statement timeout, a slow raw phase — can pass 60 s,
+	// the idle timeout of a default nginx (docs/nginx.conf) or
+	// nginx-proxy-manager in front of the console. An SSE comment every 15 s
+	// keeps such a proxy from closing the stream, and a failed write notices a
+	// client that has stopped reading (net/http then cancels the request).
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		t := time.NewTicker(flowStreamKeepalive)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				wmu.Lock()
+				_ = rc.SetWriteDeadline(time.Now().Add(sseWriteTimeout))
+				_, err := c.Writer.Write([]byte(": keepalive\n\n"))
+				if err == nil {
+					flusher.Flush()
+				}
+				wmu.Unlock()
+				if err != nil {
+					return
+				}
+			}
+		}
+	}()
 
 	start := time.Now()
 	stats, err := h.buildFlowStats(db, hours, filter, database.FlowStatsOptions{

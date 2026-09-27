@@ -19,15 +19,21 @@ and a slower system would hit that on shorter ranges.
 - **The streamed report now runs until it finishes or you press Cancel.** A
   fixed allowance only discarded a report someone was watching progress on, and
   hit slower systems first. It still stops when the page is closed or left, when
-  Cancel is pressed, or when the browser stops reading the stream. The plain
+  Cancel is pressed, or when the browser stops reading the stream. Each single
+  statement keeps its 30-second limit; a piece that still fails marks the panels
+  partial rather than stopping the report. The plain
   `/flows/stats` request keeps its 20 s limit (its response would be cut off at
   30 s).
 - **A day that takes longer than the 30-second per-statement limit is split in
   half and retried,** down to one-hour pieces, so a slow disk finishes rather
   than failing.
+- **The stream writes a keepalive every 15 seconds** while no progress is due,
+  so a reverse proxy in front of the console (nginx's default idle timeout is
+  60 s) does not close a long report, and a client that stopped reading is
+  noticed within seconds.
 - **After a minute the loading panel says** that a long range read from disk can
-  take several minutes and keeps going until done, and the elapsed time switches
-  to minutes.
+  take several minutes and can be cancelled at any time, and the elapsed time
+  switches to minutes. A day being read in smaller pieces says so.
 - **Expectations, measured on production:** a filtered 30-day report takes about
   30 s when its data is cached and 2–2.5 minutes cold; 90 days about 7 minutes
   cold.

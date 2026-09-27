@@ -81,11 +81,12 @@ type FlowStatsOptions struct {
 	// a stream has no such wall and shows its progress, so a fixed budget would
 	// only throw away a report someone is watching — and would fail first on
 	// exactly the slower systems that need longer. What still stops it: the
-	// client closing the page or pressing Cancel (the request context), a client
-	// that stops reading (the stream's rolling write deadline), and the 30 s
-	// statement_timeout on each single statement (a day that exceeds it is
-	// split and retried — see fillRange). Other runs keep the budget and
-	// concurrency they were tuned for.
+	// client closing the page or pressing Cancel (the request context), and a
+	// client that stops reading (the next write fails — the stream writes a
+	// keepalive every 15 s). Each single statement is still bounded by the 30 s
+	// statement_timeout: a day that exceeds it is split and retried (fillRange),
+	// and a piece that still fails degrades the panels rather than stopping the
+	// report. Other runs keep the budget and concurrency they were tuned for.
 	LongRunning bool
 }
 
@@ -239,11 +240,14 @@ func (d *Database) flowStatsMaterialized(tx *gorm.DB, hours int, filter FlowStat
 		budget:      budget, progress: progress,
 		fillSteps: days, total: 1 + days + 1 + 16 + 1,
 	}
-	// fillRange copies (a, b] into the scope table. A range whose statement hits
-	// the 30 s statement_timeout (SQLSTATE 57014) is split in half and each
-	// half retried, down to an hour: a slower disk still finishes, one smaller
-	// statement at a time. A failed INSERT inserts nothing, so a retry cannot
-	// duplicate rows.
+	// fillRange copies (a, b] into the scope table. A range whose statement is
+	// cancelled server-side (SQLSTATE 57014 — the 30 s statement_timeout, or an
+	// operator's pg_cancel_backend) is split in half and each half retried, down
+	// to an hour: a slower disk still finishes, one smaller statement at a time.
+	// A failed INSERT inserts nothing, so a retry cannot duplicate rows. A
+	// client cancel never arrives as 57014 (pgx reports it as a lost
+	// connection), and the budget check below stops the recursion anyway.
+	var dayLabel string
 	var fillRange func(source func() *gorm.DB, a, b time.Time) error
 	fillRange = func(source func() *gorm.DB, a, b time.Time) error {
 		cctx, cancel, ok := budget.context()
@@ -264,7 +268,12 @@ func (d *Database) flowStatsMaterialized(tx *gorm.DB, hours int, filter FlowStat
 		cancel()
 		if err != nil && sqlState(err) == "57014" && b.Sub(a) > time.Hour {
 			mid := a.Add(b.Sub(a) / 2)
-			log.Printf("Flow stats: reading %s..%s hit the statement timeout; splitting it", a.Format(time.RFC3339), b.Format(time.RFC3339))
+			log.Printf("Flow stats: reading %s..%s was cancelled by the server (%v); splitting it", a.Format(time.RFC3339), b.Format(time.RFC3339), err)
+			// Show the split on the progress panel without advancing the bar.
+			if run.progress != nil {
+				run.progress(FlowStatsProgress{Done: run.done - 1, Total: run.total,
+					Label: fmt.Sprintf("%s (in smaller pieces)", dayLabel)})
+			}
 			if err := fillRange(source, a, mid); err != nil {
 				return err
 			}
@@ -278,7 +287,8 @@ func (d *Database) flowStatsMaterialized(tx *gorm.DB, hours int, filter FlowStat
 			if b.After(now) {
 				b = now
 			}
-			run.step(fmt.Sprintf("Reading day %d of %d", i+1, days))
+			dayLabel = fmt.Sprintf("Reading day %d of %d", i+1, days)
+			run.step(dayLabel)
 			if err := fillRange(source, a, b); err != nil {
 				return err
 			}
