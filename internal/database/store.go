@@ -271,6 +271,7 @@ type EventStatsStore interface {
 	GetSyslogStats(hours int, deviceID uint) (*EventStatsResult, error)
 	GetTrapStats(hours int, deviceID uint) (*EventStatsResult, error)
 	GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsResult, error)
+	GetFlowStatsOpts(hours int, filter FlowStatsFilter, opts FlowStatsOptions) (*FlowStatsResult, error)
 	// GetMixedFlowSourceDevices lists devices double-reporting flows via more
 	// than one protocol in the last hour (dual-export warning banner, v29).
 	GetMixedFlowSourceDevices() []string

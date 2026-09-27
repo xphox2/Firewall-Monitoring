@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.259"
+const ServerVersion = "0.11.260"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -1096,6 +1096,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/alerts/:id", handler.GetAlert)
 		admin.GET("/api/alerts/:id/suggested-rule", handler.SuggestEventRuleForAlert)
 		admin.GET("/api/flows/stats", handler.GetFlowStats)
+		admin.GET("/api/flows/stats/stream", handler.GetFlowStatsStream)
 		admin.GET("/api/flows/detections", handler.GetFlowDetections)
 		admin.POST("/api/flows/detections/:id/ack", handler.AckFlowDetection)
 		admin.GET("/api/noc/stream", handler.GetNOCStream)

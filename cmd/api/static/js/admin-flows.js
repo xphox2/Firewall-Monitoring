@@ -168,6 +168,30 @@
             exportBtn.addEventListener('click', exportCsv);
         }
 
+        // Leaving the Flows page stops a running report: it would otherwise keep
+        // a long-report slot and a database connection for a page nobody sees.
+        // The page element loses its `active` class on every page switch.
+        var flowsPage = document.getElementById('page-flows');
+        if (flowsPage && !flowsPage.__fwmonLeaveWatch && typeof MutationObserver !== 'undefined') {
+            flowsPage.__fwmonLeaveWatch = true;
+            new MutationObserver(function() {
+                if (!flowsPage.classList.contains('active') && (statsStream || statsAbort)) cancelStatsLoad();
+            }).observe(flowsPage, { attributes: true, attributeFilter: ['class'] });
+        }
+
+        // Loading panel: Cancel stops the report and keeps the previous view;
+        // Retry runs the same report again.
+        var cancelBtn = document.getElementById('flows-loading-cancel');
+        if (cancelBtn && !cancelBtn.__fwmonBound) {
+            cancelBtn.__fwmonBound = true;
+            cancelBtn.addEventListener('click', cancelStatsLoad);
+        }
+        var retryBtn = document.getElementById('flows-load-retry');
+        if (retryBtn && !retryBtn.__fwmonBound) {
+            retryBtn.__fwmonBound = true;
+            retryBtn.addEventListener('click', loadStats);
+        }
+
         // Range pills
         var rangePills = document.getElementById('flows-range-pills');
         if (rangePills) {
@@ -510,21 +534,226 @@
     // ----------------------------------------------------------------------
     // Stats fetch → top-talkers, bandwidth chart, sampling chip, stat tiles
     // ----------------------------------------------------------------------
+    // One stats load at a time. Each load has a generation number; starting a
+    // new one closes the previous stream (or aborts its fallback fetch), and
+    // anything that arrives for an older generation is ignored — so a slow
+    // 30-day response can never overwrite the 24-hour one asked for after it.
+    var statsGen = 0, statsStream = null, statsAbort = null, statsTicker = null, statsStart = 0;
+
+    function stopStatsLoad() {
+        if (statsStream) { statsStream.close(); statsStream = null; }
+        if (statsAbort) { statsAbort.abort(); statsAbort = null; }
+        if (statsTicker) { clearInterval(statsTicker); statsTicker = null; }
+    }
+
+    function flowsLog(msg, e) {
+        if (window.fwmonLog) fwmonLog.error(msg, e);
+    }
+
     function loadStats() {
         var AC = window.AdminCommon;
         if (!AC || !AC.apiFetch) return;
-        showChartLoading();
-        AC.apiFetch(statsURL()).then(function(result) {
-            if (!result || !result.data) {
-                showChartEmpty('No data');
-                clearTopTalkers();
+        stopStatsLoad();
+        var gen = ++statsGen;
+        var url = statsURL();
+        hideLoadError();
+        showLoading();
+        if (typeof EventSource === 'undefined') { fetchStats(gen, url); return; }
+
+        // The stream reports each step of a long report and ends with exactly
+        // the /flows/stats response. It is closed after its one answer:
+        // EventSource would otherwise reconnect and run the whole report again.
+        var es = new EventSource(url.replace('/admin/api/flows/stats?', '/admin/api/flows/stats/stream?'));
+        var heard = false;
+        statsStream = es;
+        es.addEventListener('progress', function(ev) {
+            if (gen !== statsGen) return;
+            heard = true;
+            try { updateLoading(JSON.parse(ev.data)); } catch (e) { flowsLog('FwmonFlows: bad progress event', e); }
+        });
+        es.addEventListener('result', function(ev) {
+            es.close();
+            if (gen !== statsGen) return;
+            statsStream = null;
+            var result = null;
+            try { result = JSON.parse(ev.data); } catch (e) { flowsLog('FwmonFlows: bad result event', e); }
+            finishLoading();
+            applyStats(result);
+        });
+        // `fail` is the server's own answer ("busy", "failed"); a transport
+        // failure arrives as EventSource's built-in `error` instead.
+        es.addEventListener('fail', function(ev) {
+            es.close();
+            if (gen !== statsGen) return;
+            statsStream = null;
+            var msg = 'Failed to load flow statistics.';
+            try { msg = JSON.parse(ev.data).message || msg; } catch (e) { /* keep default */ }
+            finishLoading();
+            clearStatsView();
+            showLoadError(msg);
+        });
+        es.onerror = function() {
+            es.close();
+            if (gen !== statsGen) return;
+            statsStream = null;
+            if (!heard) {
+                // Nothing arrived: no stream support in between, a network
+                // problem, or a 401 (EventSource cannot see status codes).
+                // The plain request handles all three, including the login redirect.
+                fetchStats(gen, url);
                 return;
             }
-            renderStats(result.data);
+            // The stream died part-way through a report. Re-running it here as
+            // a 20-second request would only land on a partial answer.
+            finishLoading();
+            clearStatsView();
+            showLoadError('The connection was lost while the report was loading.');
+        };
+    }
+
+    function fetchStats(gen, url) {
+        var AC = window.AdminCommon;
+        statsAbort = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        AC.apiFetch(url, statsAbort ? { signal: statsAbort.signal } : {}).then(function(result) {
+            if (gen !== statsGen) return;
+            statsAbort = null;
+            finishLoading();
+            applyStats(result);
         }).catch(function(e) {
-            console.error('FwmonFlows: stats fetch failed', e);
-            showChartEmpty('Error');
-            clearTopTalkers();
+            if (gen !== statsGen || (e && e.name === 'AbortError')) return;
+            statsAbort = null;
+            flowsLog('FwmonFlows: stats fetch failed', e);
+            finishLoading();
+            clearStatsView();
+            showLoadError((e && e.message) || 'Failed to load flow statistics.');
+        });
+    }
+
+    function applyStats(result) {
+        if (!result || !result.data) {
+            clearStatsView();
+            showChartEmpty('No data');
+            return;
+        }
+        renderStats(result.data);
+    }
+
+    // ----------------------------------------------------------------------
+    // Loading / error states
+    // ----------------------------------------------------------------------
+    var RANGE_NAMES = { '1': 'last hour', '6': 'last 6 hours', '12': 'last 12 hours', '24': 'last 24 hours',
+        '168': 'last 7 days', '720': 'last 30 days', '2160': 'last 90 days' };
+
+    function loadingTitle() {
+        var parts = ['Loading flows', RANGE_NAMES[String(state.hours)] || ('last ' + state.hours + ' h')];
+        if (state.src)   parts.push('source ' + state.src);
+        if (state.dst)   parts.push('destination ' + state.dst);
+        if (state.dport) parts.push('port ' + state.dport);
+        if (state.asn)   parts.push('AS' + state.asn);
+        return parts.join(' · ');
+    }
+
+    function showLoading() {
+        var page = document.getElementById('page-flows');
+        if (page) page.classList.add('is-loading');
+        var box = document.getElementById('flows-loading');
+        if (!box) return;
+        setText('flows-loading-title', loadingTitle());
+        setText('flows-loading-step', 'Starting…');
+        setText('flows-loading-elapsed', '');
+        var bar = document.getElementById('flows-loading-bar');
+        if (bar) bar.style.width = '0%';
+        box.hidden = false;
+        statsStart = Date.now();
+        statsTicker = setInterval(function() {
+            setText('flows-loading-elapsed', Math.round((Date.now() - statsStart) / 1000) + ' s');
+        }, 1000);
+        // First load: no chart yet, so the chart area says it is loading too.
+        showChartLoading();
+    }
+
+    function updateLoading(p) {
+        if (!p) return;
+        setText('flows-loading-step', p.label || '');
+        var bar = document.getElementById('flows-loading-bar');
+        if (bar && p.total > 0) bar.style.width = Math.min(100, Math.round(((p.done + 1) / p.total) * 100)) + '%';
+    }
+
+    function finishLoading() {
+        if (statsTicker) { clearInterval(statsTicker); statsTicker = null; }
+        var page = document.getElementById('page-flows');
+        if (page) page.classList.remove('is-loading');
+        var box = document.getElementById('flows-loading');
+        if (box) box.hidden = true;
+    }
+
+    function cancelStatsLoad() {
+        stopStatsLoad();
+        statsGen++; // anything still in flight is now stale
+        finishLoading();
+        // A first load has no previous chart to go back to; don't leave the
+        // chart area saying "loading…".
+        if (!charts.bandwidth) showChartEmpty('—');
+    }
+
+    function showLoadError(msg) {
+        var box = document.getElementById('flows-load-error');
+        if (!box) return;
+        setText('flows-load-error-msg', msg);
+        box.hidden = false;
+    }
+    function hideLoadError() {
+        var box = document.getElementById('flows-load-error');
+        if (box) box.hidden = true;
+    }
+
+    // clearStatsView removes the previous range's figures, so an error or an
+    // empty answer is never shown beside numbers from another range.
+    function clearStatsView() {
+        ['flows-total', 'flows-bytes', 'flows-throughput', 'flows-packets', 'flows-fanout', 'flows-protocols',
+         'flows-sampling-rate-chip'].forEach(function(id) { setText(id, '--'); });
+        clearTopTalkers();
+        showChartEmpty('—');
+        var tbody = document.querySelector('#flows-conversations-table tbody');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No data</td></tr>';
+        var degradedBar = document.getElementById('flows-degraded-warning');
+        if (degradedBar) degradedBar.hidden = true;
+        markPartialPanels([]);
+    }
+
+    // Which card shows each server-side panel, for the "partial" badge.
+    var PANEL_HOSTS = {
+        totals: 'flows-stats-grid', unique_src_addr: 'flows-stats-grid', unique_dst_addr: 'flows-stats-grid',
+        local_traffic: 'flows-stats-grid', sampling: 'flows-stats-grid',
+        protocols: 'flows-top-protocols', by_app_category: 'flows-by-category', by_direction: 'flows-by-direction',
+        top_countries: 'flows-top-countries', top_asns: 'flows-top-asns',
+        top_sources: 'flows-top-sources', top_destinations: 'flows-top-destinations',
+        top_ports: 'flows-top-ports', top_conversations: 'flows-conversations-table',
+        bytes_over_time: 'flows-bandwidth-chart'
+    };
+    var PANEL_NAMES = {
+        totals: 'Totals', unique_src_addr: 'Unique sources', unique_dst_addr: 'Unique destinations',
+        local_traffic: 'Local traffic', sampling: 'Sampling rate', protocols: 'Protocols',
+        by_app_category: 'Applications', by_direction: 'Direction', top_countries: 'Top countries',
+        top_asns: 'Top networks (ASN)', top_sources: 'Top sources', top_destinations: 'Top destinations',
+        top_ports: 'Top ports', top_conversations: 'Top conversations', bytes_over_time: 'Traffic over time'
+    };
+
+    function markPartialPanels(blocks) {
+        document.querySelectorAll('#page-flows .fwmon-flows-partial, #page-flows .fwmon-flows-partial-tile').forEach(function(el) {
+            el.classList.remove('fwmon-flows-partial', 'fwmon-flows-partial-tile');
+        });
+        (blocks || []).forEach(function(b) {
+            var el = document.getElementById(PANEL_HOSTS[b] || '');
+            if (!el) return;
+            if (el.id === 'flows-stats-grid') {
+                // The tiles have no card around them: outline each tile rather
+                // than labelling the grid, whose badge would cover a tile.
+                el.querySelectorAll('.fwmon-stat').forEach(function(tile) { tile.classList.add('fwmon-flows-partial-tile'); });
+                return;
+            }
+            var card = el.closest('.card') || el;
+            card.classList.add('fwmon-flows-partial');
         });
     }
 
@@ -552,25 +781,26 @@
         // which holds only ~1 hour — so the tiles below can silently describe an
         // hour while the range pill says 30 days. Say so rather than letting the
         // operator read one hour as a month.
+        // Degraded-window notice, at the top of the page. A panel that could
+        // not be computed over the full range falls back to raw flow_samples,
+        // which hold only about the last hour — so it must never be read as the
+        // selected window. Deliberately does not diagnose WHY: a panel falls
+        // back when it runs out of time, but also when its query errors.
         var degradedBar = document.getElementById('flows-degraded-warning');
+        var blocks = d.degraded ? (d.degraded_blocks || []) : [];
         if (degradedBar) {
             var escD = (window.AdminCommon && AdminCommon.escapeHtml) || function(s) { return s; };
             if (d.degraded) {
-                var blocks = d.degraded_blocks || [];
                 degradedBar.hidden = false;
-                // Deliberately does not diagnose WHY. A panel falls back when its
-                // query runs out of budget on a wide window, but also when the
-                // query itself errors — asserting "too large" would misdiagnose
-                // the second case and send the operator to shorten a range that
-                // was never the problem.
-                degradedBar.innerHTML = '⚠ Some panels could not be aggregated over the full range and fall back to ' +
-                    'recent samples only, so they understate the selected window' +
-                    (blocks.length ? ': <strong>' + blocks.map(escD).join('</strong>, <strong>') + '</strong>' : '') +
-                    '. A shorter range usually returns exact figures.';
+                degradedBar.innerHTML = '⚠ <strong>Partial result.</strong> These panels cover only about the last hour, ' +
+                    'not the selected range' +
+                    (blocks.length ? ': <strong>' + blocks.map(function(b) { return escD(PANEL_NAMES[b] || b); }).join('</strong>, <strong>') + '</strong>' : '') +
+                    '. Reload to try the full range again.';
             } else {
                 degradedBar.hidden = true;
             }
         }
+        markPartialPanels(blocks);
 
         // Stat tiles
         setText('flows-total',      (d.total_flows || 0).toLocaleString());
@@ -790,6 +1020,14 @@
             return;
         }
         var points = d.bytes_over_time || [];
+        if (d.degraded && (d.degraded_blocks || []).indexOf('bytes_over_time') !== -1 && state.hours > 1) {
+            // A last-hour series spread across a category axis looks like a
+            // real month of traffic. Say what it is instead.
+            if (charts.bandwidth) { charts.bandwidth.destroy(); charts.bandwidth = null; }
+            lastBwData = null;
+            host.innerHTML = '<div class="chart-empty">Only the last hour is available for this range — reload to try again</div>';
+            return;
+        }
         if (!points.length) {
             if (charts.bandwidth) { charts.bandwidth.destroy(); charts.bandwidth = null; }
             lastBwData = null; // don't let a theme toggle redraw the prior filter's chart (audit L21)

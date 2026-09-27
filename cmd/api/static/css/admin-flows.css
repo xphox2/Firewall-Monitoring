@@ -839,3 +839,116 @@
 .fwmon-flows-mixed-warning[hidden] {
     display: none;
 }
+
+/* Loading, error and partial-data states for the aggregate views (v0.11.260).
+   A long filtered report can take a minute; the page says what it is doing
+   instead of leaving the previous range's figures on screen unmarked. */
+.fwmon-flows-loading,
+.fwmon-flows-load-error,
+.fwmon-flows-degraded {
+    margin: 0 0 var(--fwmon-sp-3, 12px);
+    padding: var(--fwmon-sp-3, 12px);
+    background: var(--fwmon-card-bg);
+    border: 1px solid var(--fwmon-border);
+    border-radius: var(--fwmon-radius, 8px);
+    color: var(--fwmon-text-dim);
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+.fwmon-flows-loading[hidden],
+.fwmon-flows-load-error[hidden],
+.fwmon-flows-degraded[hidden] {
+    display: none;
+}
+.fwmon-flows-loading-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--fwmon-sp-2, 8px);
+}
+.fwmon-flows-loading-title {
+    color: var(--fwmon-text);
+    font-weight: 600;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+.fwmon-flows-loading-elapsed {
+    font-family: var(--fwmon-font-mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--fwmon-text-faint);
+}
+.fwmon-flows-progress {
+    margin-top: var(--fwmon-sp-2, 8px);
+    height: 6px;
+    background: var(--fwmon-panel-bg);
+    border-radius: 3px;
+    overflow: hidden;
+}
+.fwmon-flows-progress-bar {
+    height: 100%;
+    width: 0;
+    background: var(--fwmon-accent);
+    transition: width 0.3s ease;
+}
+.fwmon-flows-loading-step {
+    margin-top: var(--fwmon-sp-1, 4px);
+    color: var(--fwmon-text-faint);
+    font-size: 0.82rem;
+}
+.fwmon-flows-load-error {
+    border-color: var(--fwmon-sig-crit);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--fwmon-sp-2, 8px);
+}
+.fwmon-flows-load-error > span { flex: 1 1 auto; min-width: 0; }
+.fwmon-flows-degraded {
+    border-color: var(--fwmon-sig-warn);
+    border-left-width: 4px;
+    color: var(--fwmon-text);
+}
+/* While a report loads, the previous figures stay visible but dimmed so they
+   are never read as the new range. */
+.fwmon-flows.is-loading .fwmon-flows-stats,
+.fwmon-flows.is-loading .fwmon-flows-toptalk-grid,
+.fwmon-flows.is-loading .chart-host,
+.fwmon-flows.is-loading .fwmon-flows-table {
+    opacity: 0.4;
+    transition: opacity 0.2s ease;
+}
+/* A panel computed from the last hour of raw samples only. */
+.fwmon-flows-partial {
+    position: relative;
+    outline: 1px dashed var(--fwmon-sig-warn);
+    outline-offset: -1px;
+}
+.fwmon-flows-partial::after {
+    content: "partial — last hour only";
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--fwmon-sig-warn);
+    /* Ink flips with the fill: night's warn amber is light (#e7b53c) and its
+       page background dark; day's is dark (#9a6b0e) on a light background. */
+    color: var(--fwmon-bg);
+    font-size: 0.7rem;
+    font-weight: 700;
+    pointer-events: none;
+}
+.fwmon-flows-partial-tile {
+    outline: 1px dashed var(--fwmon-sig-warn);
+    outline-offset: -1px;
+}
+@media (prefers-reduced-motion: reduce) {
+    .fwmon-flows-progress-bar,
+    .fwmon-flows.is-loading .fwmon-flows-stats,
+    .fwmon-flows.is-loading .fwmon-flows-toptalk-grid,
+    .fwmon-flows.is-loading .chart-host,
+    .fwmon-flows.is-loading .fwmon-flows-table {
+        transition: none;
+    }
+}

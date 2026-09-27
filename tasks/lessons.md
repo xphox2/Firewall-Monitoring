@@ -267,6 +267,8 @@ When bumping a version: open a new `## [X.Y.Z] - DATE` (or `## X.Y.Z - DATE`) se
 
 **The rule:** at the start of any session that touches sFlow, network flows, the NOC dashboard, or `internal/sflow`, read `tasks/SFLOW-NOC-REDESIGN-PLAN.md` and follow it. Do not improvise. The plan covers 5 phases, 18 sections, and a 9-week execution schedule. If a task falls outside the plan, update the plan first, then implement.
 
+**Superseded (checked 2026-09-27):** the plan document is now a tombstone that says "do not plan against this document" and points to `docs/FEATURE-ROADMAP.md` Part IV and the sFlow analytics expansion design. Follow those; this rule no longer applies as written.
+
 ## The 30s JSON batch is the wire protocol. Don't change it. (2026-06-11)
 
 **Context:** the sFlow redesign. The probe ships JSON over HTTPS every 30 seconds. The server receives, stores, and displays. This is the contract between `Firewall-Mon` and `Firewall-Collector`.
@@ -485,3 +487,12 @@ assertion needs the probed series at production density; seed it with
 `generate_series`, and keep the correctness fixture separate.** Corollary from the
 same test: midpoint-only fixtures cannot see edge predicates — on PostgreSQL (which
 compares instants, no DST text hazard) add one row exactly on an edge.
+
+## 2026-09-27 — A server-sent event named `error` is indistinguishable from a dropped connection
+
+EventSource fires its own `error` event on a transport failure. A stream that also
+sends `event: error` for "busy" or "failed" gives the page no way to tell a server's
+answer from a network drop — the busy reply would fall into the reconnect/fallback
+path. Name the server's failure event something else (`fail`). Also: an EventSource
+must be closed after a one-shot answer, or it reconnects about three seconds later
+and runs the whole request again.
