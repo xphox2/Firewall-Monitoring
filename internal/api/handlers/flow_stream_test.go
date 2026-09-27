@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -131,5 +132,40 @@ func TestGetFlowStatsStream_SlotsGateOnlyLongReports(t *testing.T) {
 		if len(evs) == 0 || evs[len(evs)-1].name != "result" {
 			t.Fatalf("%s was gated behind the long-report slots: %+v", q, evs)
 		}
+	}
+}
+
+// slowFlowStore stands in for a report with a long stretch and no event: its
+// GetFlowStatsOpts returns only after `wait`.
+type slowFlowStore struct {
+	database.Store
+	wait time.Duration
+}
+
+func (s *slowFlowStore) WithContextStore(context.Context) database.Store { return s }
+func (s *slowFlowStore) GetFlowStatsOpts(int, database.FlowStatsFilter, database.FlowStatsOptions) (*database.FlowStatsResult, error) {
+	time.Sleep(s.wait)
+	return &database.FlowStatsResult{TotalFlows: 1}, nil
+}
+func (s *slowFlowStore) GetMixedFlowSourceDevices() []string { return nil }
+
+// A report has no time limit, so a stretch with no event can outlast a
+// reverse proxy's idle timeout (60 s by default). The stream must write a
+// keepalive comment while nothing else is due.
+func TestGetFlowStatsStream_KeepaliveDuringASilentStretch(t *testing.T) {
+	h, _ := setupTestHandler(t)
+	h.db = &slowFlowStore{wait: 250 * time.Millisecond}
+	old := flowStreamKeepalive
+	flowStreamKeepalive = 40 * time.Millisecond
+	defer func() { flowStreamKeepalive = old }()
+
+	w := getRecorder(h.GetFlowStatsStream, "/x?hours=24")
+	body := w.Body.String()
+	if n := strings.Count(body, ": keepalive\n\n"); n < 3 {
+		t.Fatalf("%d keepalive comments during a 250 ms silent stretch at a 40 ms interval; body: %q", n, body)
+	}
+	evs := parseSSE(body)
+	if len(evs) == 0 || evs[len(evs)-1].name != "result" {
+		t.Fatalf("the stream must still end with its result: %+v", evs)
 	}
 }

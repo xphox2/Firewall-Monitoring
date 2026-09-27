@@ -10,6 +10,7 @@ import (
 
 	"firewall-mon/internal/models"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 )
 
@@ -255,19 +256,60 @@ func TestFlowStatsMaterialized_PanelsReadTheScopeTable(t *testing.T) {
 	}
 }
 
-func TestFlowStatsLongBudget(t *testing.T) {
-	for _, tc := range []struct {
-		hours int
-		want  time.Duration
-	}{
-		{24, time.Minute + 3*time.Second},
-		{720, time.Minute + 90*time.Second},   // 30 d ≈ 25 s cold on production
-		{2160, time.Minute + 270*time.Second}, // 90 d ≈ 60 s
-		{8760, 15 * time.Minute},              // capped
-	} {
-		if got := FlowStatsLongBudget(tc.hours); got != tc.want {
-			t.Errorf("FlowStatsLongBudget(%d) = %v, want %v", tc.hours, got, tc.want)
+// A day whose INSERT hits the statement timeout is split in half and retried,
+// so a slower system still finishes — with the same result as the direct run.
+func TestFlowStatsMaterialized_SplitsAChunkThatTimesOut(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	seedFlowWeek(t, d)
+	var tried []time.Duration
+	flowScopeChunkHook = func(a, b time.Time) error {
+		tried = append(tried, b.Sub(a))
+		if b.Sub(a) > 6*time.Hour {
+			return &pgconn.PgError{Code: "57014", Message: "canceling statement due to statement timeout"}
 		}
+		return nil
+	}
+	defer func() { flowScopeChunkHook = nil }()
+
+	flowStatsMaterialize = false
+	direct := flowStatsJSON(t, d, 168, FlowStatsFilter{SrcAddr: "10.0.0.1"})
+	flowStatsMaterialize = true
+	mat := flowStatsJSON(t, d, 168, FlowStatsFilter{SrcAddr: "10.0.0.1"})
+	if mat != direct {
+		t.Fatalf("split run differs from direct:\ndirect: %s\nsplit:  %s", direct, mat)
+	}
+	var small int
+	for _, d := range tried {
+		if d <= 6*time.Hour {
+			small++
+		}
+	}
+	if small < 7*4 {
+		t.Fatalf("each timed-out day must be split down to pieces under 6 h; got %d such pieces from %v", small, tried)
+	}
+}
+
+// With LongRunning there is no overall deadline: the budget never skips a panel.
+func TestFlowStatsBudget_ZeroAllowanceHasNoDeadline(t *testing.T) {
+	if got := materializedAllowance(FlowStatsOptions{LongRunning: true}); got != 0 {
+		t.Fatalf("the stream's allowance = %v, want none", got)
+	}
+	if got := materializedAllowance(FlowStatsOptions{}); got != flowStatsRollupBudget {
+		t.Fatalf("the synchronous allowance = %v, want %v", got, flowStatsRollupBudget)
+	}
+	b := newFlowStatsBudget(context.Background(), 0)
+	ctx, cancel, ok := b.context()
+	defer cancel()
+	if !ok {
+		t.Fatal("a zero allowance must never be spent")
+	}
+	if _, has := ctx.Deadline(); has {
+		t.Fatal("a zero allowance must carry no deadline")
+	}
+	parent, stop := context.WithCancel(context.Background())
+	stop()
+	if _, _, ok := newFlowStatsBudget(parent, 0).context(); ok {
+		t.Fatal("a cancelled request must still stop the run")
 	}
 }
 

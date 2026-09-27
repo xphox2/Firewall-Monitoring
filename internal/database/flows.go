@@ -402,14 +402,18 @@ const flowStatsRollupBudget = 20 * time.Second
 // to about a quarter.
 const flowStatsRollupConcurrency = 4
 
+// newFlowStatsBudget bounds the rolled-up work to allowance. A zero allowance
+// means no deadline at all: the streamed report runs until it finishes or the
+// client goes away (see FlowStatsOptions.LongRunning).
 func newFlowStatsBudget(parent context.Context, allowance time.Duration) *flowStatsBudget {
 	if parent == nil {
 		parent = context.Background()
 	}
-	return &flowStatsBudget{
-		parent:   parent,
-		deadline: time.Now().Add(allowance),
+	b := &flowStatsBudget{parent: parent}
+	if allowance > 0 {
+		b.deadline = time.Now().Add(allowance)
 	}
+	return b
 }
 
 // context returns a context bound to the budget's deadline, for statements that
@@ -419,6 +423,13 @@ func (b *flowStatsBudget) context() (ctx context.Context, cancel context.CancelF
 	b.mu.Lock()
 	deadline := b.deadline
 	b.mu.Unlock()
+	if deadline.IsZero() {
+		if b.parent.Err() != nil {
+			return nil, func() {}, false
+		}
+		ctx, cancel = context.WithCancel(b.parent)
+		return ctx, cancel, true
+	}
 	if !time.Now().Before(deadline) {
 		return nil, func() {}, false
 	}

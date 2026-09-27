@@ -496,3 +496,13 @@ answer from a network drop — the busy reply would fall into the reconnect/fall
 path. Name the server's failure event something else (`fail`). Also: an EventSource
 must be closed after a one-shot answer, or it reconnects about three seconds later
 and runs the whole request again.
+
+## 2026-09-27 — "Cold" in psql on rust-01 usually means cached by the host
+
+Before shipping v0.11.260 I measured one day of a filtered Flows scan at 0.3–0.9 s
+"cold" (`read=` buffers in EXPLAIN) and estimated 25 s for 30 days. Live it took
+2 min 20 s: 2.4–7.8 s per day. `read=` only means "not in PostgreSQL's
+shared_buffers" — on a 31 GB host the pages were still in the OS file cache. Re-running
+the same day right after the app read it: 1.65 s. **Rule: a `read=` figure is not a
+disk figure. For an I/O-bound path, measure a range nothing has touched recently, or
+state the estimate as "cached" and budget for the spinning disk (here ~5x).**

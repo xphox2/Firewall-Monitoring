@@ -664,9 +664,15 @@
         var bar = document.getElementById('flows-loading-bar');
         if (bar) bar.style.width = '0%';
         box.hidden = false;
+        var note = document.getElementById('flows-loading-note');
+        if (note) note.hidden = true;
         statsStart = Date.now();
         statsTicker = setInterval(function() {
-            setText('flows-loading-elapsed', Math.round((Date.now() - statsStart) / 1000) + ' s');
+            var secs = Math.round((Date.now() - statsStart) / 1000);
+            setText('flows-loading-elapsed', secs < 60 ? secs + ' s' : Math.floor(secs / 60) + ' min ' + (secs % 60) + ' s');
+            // The report has no time limit; after a minute, say so, so a long
+            // wait reads as working rather than stuck.
+            if (secs >= 60 && note) note.hidden = false;
         }, 1000);
         // First load: no chart yet, so the chart area says it is loading too.
         showChartLoading();

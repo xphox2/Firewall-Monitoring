@@ -896,6 +896,14 @@
     color: var(--fwmon-text-faint);
     font-size: 0.82rem;
 }
+.fwmon-flows-loading-note {
+    margin-top: var(--fwmon-sp-1, 4px);
+    color: var(--fwmon-text-dim);
+    font-size: 0.82rem;
+}
+.fwmon-flows-loading-note[hidden] {
+    display: none;
+}
 .fwmon-flows-load-error {
     border-color: var(--fwmon-sig-crit);
     display: flex;

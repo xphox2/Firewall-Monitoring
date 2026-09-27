@@ -1,6 +1,43 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.261] - 2026-09-27
+
+### Changed — a streamed Flows report no longer has a time limit
+
+Measured on production right after v0.11.260 shipped: a Flows report for 30 days
+filtered to one source address completed with every panel exact, but took
+**2 min 20 s**, not the ~25 s v0.11.260's notes estimated, and used about 140 of
+the 150 seconds it was allowed. Each day's read took 2.4–7.8 s; the same day run
+again with its pages in the host's file cache took 1.65 s — the ~0.3–0.9 s per
+day the estimate and the allowance came from had been measured with the data
+already cached. A filtered 30-day report reads about 72k pages a day, nearly all
+20 GB of `flow_rollups`, and when nothing is cached that comes off the disk. A
+cold 90-day report would have run out of time and shown every panel partial,
+and a slower system would hit that on shorter ranges.
+
+- **The streamed report now runs until it finishes or you press Cancel.** A
+  fixed allowance only discarded a report someone was watching progress on, and
+  hit slower systems first. It still stops when the page is closed or left, when
+  Cancel is pressed, or when the browser stops reading the stream. Each single
+  statement keeps its 30-second limit; a piece that still fails marks the panels
+  partial rather than stopping the report. The plain
+  `/flows/stats` request keeps its 20 s limit (its response would be cut off at
+  30 s).
+- **A day that takes longer than the 30-second per-statement limit is split in
+  half and retried,** down to one-hour pieces, so a slow disk finishes rather
+  than failing.
+- **The stream writes a keepalive every 15 seconds** while no progress is due,
+  so a reverse proxy in front of the console (nginx's default idle timeout is
+  60 s) does not close a long report, and a closed connection is noticed at the
+  next write, at most 15 s later.
+- **After a minute the loading panel says** that a long range read from disk can
+  take several minutes and can be cancelled at any time, and the elapsed time
+  switches to minutes. A day being read in smaller pieces says so.
+- **Expectations, measured on production:** a filtered 30-day report takes about
+  30 s when its data is cached and 2–2.5 minutes cold; 90 days about 7 minutes
+  cold.
+
 ## [0.11.260] - 2026-09-27
 
 ### Fixed — Flows reports filtered by an address, port or network never finished past a day or two
