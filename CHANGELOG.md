@@ -1,6 +1,45 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.264] - 2026-09-27
+
+### Changed — your own networks count as internal when classifying flow direction
+
+Only private ranges counted as "inside", so traffic to and from the operator's
+own public networks read as **External**: 73% of a day's traffic on
+production, and every flow of a server on the operator's own /28.
+
+- **Direction now uses your own networks.** A flow between one of your networks
+  and the internet is **Outbound** or **Inbound**. A flow between two of yours
+  is **Internal**. Your networks come from:
+  - the monitored devices, derived automatically: each active device's current
+    interface addresses; the subnet of each, except /30–/32 provider links; and
+    its management address;
+  - a new list under **Settings → Detection → Flow Classification**, for ranges
+    no device reports, and for all IPv6.
+  Private ranges always count as yours.
+- The same card shows the **networks in effect**, with where each came from.
+  If auto-derivation picks up a provider segment (a WAN interface with a wide
+  mask), turn it off and list your ranges instead. The list is validated and
+  stored in canonical form. `0.0.0.0/0` and `::/0` are refused, because they
+  would make every flow internal and silence the outbound detectors. The list
+  endpoint (`/admin/api/flows/internal-networks`) is admin-only.
+- Changes apply to new traffic immediately. Flow history keeps the direction it
+  was recorded under until it is reclassified in a later version. Each flow
+  records the classification revision it was made under (`class_rev`), so that
+  pass knows what to revisit. The set also refreshes every 15 minutes as devices
+  change. If it cannot be loaded, flows fall back to private ranges only, with
+  revision 0, and are picked up later.
+- **Alerts and the NOC shift accordingly.** Traffic from your own public hosts
+  is now Outbound, so **data_exfil** and **unexpected_egress** can see it:
+  - data_exfil counts only flows where your host is the client (since
+    v0.11.263);
+  - unexpected_egress still matches only destination ports on its list;
+  - c2_beacon and the DDoS detectors already included External traffic and are
+    unchanged;
+  - the NOC's direction breakdown moves from External to Inbound, Outbound and
+    Internal.
+
 ## [0.11.263] - 2026-09-27
 
 ### Changed — Top ports becomes Top services, counted by each conversation's service port

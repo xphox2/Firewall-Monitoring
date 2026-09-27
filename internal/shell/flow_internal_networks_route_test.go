@@ -29,3 +29,25 @@ func TestFlowInternalNetworksRouteAdminOnly(t *testing.T) {
 		t.Error("the internal-networks route is not registered")
 	}
 }
+
+// TestFlowClassificationSettingsAreSavedAndTracked: saveSettings and the dirty
+// tracker historically collected only input/select, so a textarea would be
+// neither saved nor marked unsaved. Both must include the network list.
+func TestFlowClassificationSettingsAreSavedAndTracked(t *testing.T) {
+	main := readJS(t, "admin-main.js")
+	for _, sub := range []string{
+		"document.querySelectorAll('#settings-flow-classification input, #settings-flow-classification textarea')",
+		`name="flow_internal_networks"`,
+		"apiFetch(API_BASE + '/flows/internal-networks')",
+	} {
+		if !strings.Contains(main, sub) {
+			t.Errorf("admin-main.js is missing %q", sub)
+		}
+	}
+	tracker := readJS(t, "admin-settings.js")
+	for _, sub := range []string{"'#settings-flow-classification',", "c + ' textarea'", "el.matches('input, select, textarea')"} {
+		if !strings.Contains(tracker, sub) {
+			t.Errorf("admin-settings.js is missing %q — the list would not mark the page unsaved", sub)
+		}
+	}
+}
