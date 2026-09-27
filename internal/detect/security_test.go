@@ -131,6 +131,44 @@ func TestDataExfilDetector(t *testing.T) {
 	}
 }
 
+// TestDataExfilDetector_ServerRepliesAreNotExfil pins the client/server gate.
+// A server's replies to an external client travel "outbound" too — with the
+// operator's public networks internal, a web server's responses would read as
+// gigabytes leaving the network. Only flows where the internal host is the
+// client count: its service is the destination's, or neither side names one.
+func TestDataExfilDetector_ServerRepliesAreNotExfil(t *testing.T) {
+	db := database.NewDatabaseForTesting(t)
+	now := time.Now()
+	big := uint64(1) << 30
+	// A web server's replies: src 443 → client's ephemeral port. Must NOT fire.
+	seedFlow(t, db, models.FlowSample{DeviceID: 1, Protocol: 6, SrcAddr: "66.179.9.156", DstAddr: "198.51.100.7", SrcPort: 443, DstPort: 51234, ServicePort: 443, Direction: classify.DirOutbound, Bytes: big + 1, Packets: 1000})
+	// A client uploading to an external service: service = dst. Fires.
+	seedFlow(t, db, models.FlowSample{DeviceID: 1, Protocol: 6, SrcAddr: "10.0.0.5", DstAddr: "203.0.113.9", SrcPort: 50000, DstPort: 443, ServicePort: 443, Direction: classify.DirOutbound, Bytes: big + 1, Packets: 1000})
+	// Two ephemeral ports (no service): counted. Fires.
+	seedFlow(t, db, models.FlowSample{DeviceID: 1, Protocol: 17, SrcAddr: "10.0.0.6", DstAddr: "203.0.113.10", SrcPort: 40000, DstPort: 41000, ServicePort: 0, Direction: classify.DirOutbound, Bytes: big + 1, Packets: 1000})
+	// A row ingested before service_port existed (0): keeps counting. Fires.
+	seedFlow(t, db, models.FlowSample{DeviceID: 1, Protocol: 6, SrcAddr: "10.0.0.7", DstAddr: "203.0.113.11", SrcPort: 443, DstPort: 51000, Direction: classify.DirOutbound, Bytes: big + 1, Packets: 1000})
+
+	w := fullWindow(now)
+	w.DB = db.Gorm()
+	got, err := dataExfilDetector{}.Detect(w)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	fired := map[string]bool{}
+	for _, d := range got {
+		fired[d.DstAddr] = true
+	}
+	if fired["198.51.100.7"] {
+		t.Error("a server's replies to an external client were flagged as data exfiltration")
+	}
+	for _, want := range []string{"203.0.113.9", "203.0.113.10", "203.0.113.11"} {
+		if !fired[want] {
+			t.Errorf("data_exfil did not fire for →%s; got %+v", want, got)
+		}
+	}
+}
+
 func TestThreatIntelDetector(t *testing.T) {
 	db := database.NewDatabaseForTesting(t)
 	now := time.Now()

@@ -265,6 +265,7 @@ type FlowStatsFilter struct {
 	ProbeID     uint    // probe_id  (flow_samples only — forces raw-only when set)
 	Protocol    *uint8  // IP protocol number; nil = all
 	DstPort     *uint16 // destination port; nil = all
+	ServicePort *uint16 // service side of the conversation (classify.ServicePort); nil = all
 	SrcAddr     string  // source IP or CIDR (cidrToLikePattern semantics)
 	DstAddr     string  // destination IP or CIDR
 	AppCategory *uint8  // classify.Category id; nil = all
@@ -602,6 +603,9 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 		}
 		if filter.DstPort != nil {
 			q = q.Where("dst_port = ?", *filter.DstPort)
+		}
+		if filter.ServicePort != nil {
+			q = q.Where("service_port = ?", *filter.ServicePort)
 		}
 		if filter.AppCategory != nil {
 			q = q.Where("app_category = ?", *filter.AppCategory)

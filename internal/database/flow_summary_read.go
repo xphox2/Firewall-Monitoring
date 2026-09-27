@@ -60,7 +60,7 @@ var flowSummaryReadIntervals = []string{"1h", "1d"}
 // work for windows the live path can serve.
 func flowSummaryCompatible(filter FlowStatsFilter) bool {
 	return filter.SrcAddr == "" && filter.DstAddr == "" &&
-		filter.DstPort == nil && filter.DstASN == nil
+		filter.DstPort == nil && filter.ServicePort == nil && filter.DstASN == nil
 }
 
 // flowSummaryDimensionFiltered reports whether the filter narrows one of the

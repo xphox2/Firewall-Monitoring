@@ -138,6 +138,14 @@ func (d dataExfilDetector) Detect(w Window) ([]Detection, error) {
 	if err := forwardedOnly(w.DB.Model(&models.FlowSample{}).
 		Where("timestamp >= ? AND timestamp < ?", w.Start, w.End)).
 		Where("direction = ?", classify.DirOutbound).
+		// Only flows where the internal host is the CLIENT: its service is the
+		// destination's, or neither side names a service. A server answering
+		// external clients sends its replies "outbound" too, and those are not
+		// exfiltration. Rows ingested before v0.11.263 carry service_port 0 and
+		// keep counting. The trade-off: a compromised internal server drained
+		// by external GETs, and a client whose ephemeral port sits below the
+		// destination's with neither known, no longer trip this detector.
+		Where("(service_port = dst_port OR service_port = 0)").
 		Select("src_addr, dst_addr, MAX(device_id) as device_id, dst_country, SUM(bytes) as bytes").
 		Group("src_addr, dst_addr, dst_country").
 		Having("SUM(bytes) >= ?", cfg.DataExfilBytes).
