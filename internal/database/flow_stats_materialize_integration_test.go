@@ -11,6 +11,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 func pgFlowScopeTablesLeft(t *testing.T, d *Database) int64 {
@@ -81,8 +82,17 @@ func TestFlowStatsMaterializedIntegration_CancelLeavesNothing(t *testing.T) {
 	if err == nil && (res == nil || !res.Degraded) {
 		t.Fatal("a cancelled scan must not report a complete result")
 	}
-	if n := pgFlowScopeTablesLeft(t, d); n != 0 {
-		t.Fatalf("%d scope tables left after cancel", n)
+	// The cancel usually costs the connection, and the server process behind it
+	// exits — dropping its session's temp table — asynchronously, so a check
+	// from another connection straight away can still see the table. Wait for
+	// the backend to go; a table on a LIVE connection would never disappear by
+	// itself, so a real leak still fails here.
+	deadline := time.Now().Add(10 * time.Second)
+	for pgFlowScopeTablesLeft(t, d) != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d scope tables still present 10 s after cancel", pgFlowScopeTablesLeft(t, d))
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	if _, err := d.GetFlowStats(24, FlowStatsFilter{}); err != nil {
 		t.Fatalf("pool unusable after a cancelled run: %v", err)
