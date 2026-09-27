@@ -1332,6 +1332,12 @@
                 <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">Tune the sFlow detection engine. Leave a field blank to use the built-in default (or the <code>DETECT_*</code> env value). Changes apply within ~5 minutes — no restart. A port scan from a known-bad source (threat feed) always escalates to critical.</p>
                 <div class="settings-grid" id="settings-detection"></div>
             </div>
+            <div class="card">
+                <div class="card-header"><h2>Flow Classification — Your Networks</h2></div>
+                <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">Flows between one of your networks and the rest of the internet are <strong>Outbound</strong> or <strong>Inbound</strong>; flows between two of yours are <strong>Internal</strong>. Private ranges (10/8, 172.16/12, 192.168/16, CGNAT, link-local, ULA) always count as yours. Add your public ranges here — IPv6 must be listed by hand. Changes apply to new traffic immediately; older history keeps the rule it was recorded under.</p>
+                <div id="settings-flow-classification"></div>
+                <div id="settings-flow-effective" class="fwmon-flow-effective" aria-live="polite"></div>
+            </div>
             </section>
             <section class="settings-section" id="settings-section-retention" data-section="retention">
             <div class="card">

@@ -226,6 +226,8 @@ type MaintenanceWindowStore interface {
 type TelemetryReadStore interface {
 	GetLatestHAStatus(deviceID uint) ([]models.HAStatus, error)
 	GetLatestInterfaceAddresses() ([]models.InterfaceAddress, error)
+	LoadInternalNetworks() ([]InternalNetwork, error)
+	FlowReclassTargetRev() uint16
 	GetLatestInterfaceStats() ([]models.InterfaceStats, error)
 	GetLatestProcessorStats(deviceID uint) ([]models.ProcessorStats, error)
 	GetLatestSDWANHealth(deviceID uint) ([]models.SDWANHealth, error)

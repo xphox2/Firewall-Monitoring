@@ -198,6 +198,9 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		// How often the background refresher rebuilds the system-health
 		// composite. Clamped server-side to 15-3600s; see dashboardHealthHub.
 		"dashboard_health_refresh_seconds": true,
+		// Flow classification (v0.11.264): the operator's own networks.
+		database.FlowInternalAutoKey:     true,
+		database.FlowInternalNetworksKey: true,
 	}
 
 	secretKeys := settingsSecretKeys // v0.10.226: shared with GetSettings
@@ -369,6 +372,25 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("Invalid value for %s: must be 0, 1, or blank", s.Key)))
 				return
 			}
+		case database.FlowInternalAutoKey:
+			if s.Value != "true" && s.Value != "false" {
+				c.JSON(http.StatusBadRequest, response.Error("Invalid value for flow_internal_auto: must be true or false"))
+				return
+			}
+		case database.FlowInternalNetworksKey:
+			// Parsed and stored canonical (one masked prefix per line). A
+			// catch-all is refused: it would make every flow internal and
+			// silence the outbound detectors.
+			nets, bad := database.ParseInternalNetworks(s.Value)
+			if len(bad) > 0 {
+				shown := bad
+				if len(shown) > 5 {
+					shown = append(append([]string{}, bad[:5]...), fmt.Sprintf("and %d more", len(bad)-5))
+				}
+				c.JSON(http.StatusBadRequest, response.Error("Invalid internal networks: "+strings.Join(shown, "; ")))
+				return
+			}
+			s.Value = database.CanonicalInternalNetworks(nets)
 		case "detect_deny_policy_pattern":
 			// Block-policy-name GLOB (only '*' is special) — NOT a regexp, so no
 			// ReDoS surface on the ingest hot path. Just length-cap it.
@@ -557,6 +579,16 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				failedKeys = append(failedKeys, s.Key)
 				continue
 			}
+		}
+	}
+
+	// Internal networks classify every new flow; apply an edit now rather
+	// than at the next 15-minute refresh. Before the failure return below: the
+	// rows that did save must apply even if another row failed. Idempotent.
+	for _, s := range validSettings {
+		if s.Key == database.FlowInternalAutoKey || s.Key == database.FlowInternalNetworksKey {
+			h.RefreshInternalNetworks()
+			break
 		}
 	}
 

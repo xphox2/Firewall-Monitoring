@@ -2546,6 +2546,8 @@
                     '" placeholder="default ' + s.def + '" step="' + s.step + '" min="0"></div>';
             }).join('');
 
+            renderFlowClassification(settings);
+
             return apiFetch(API_BASE + '/display-settings');
         }).then(function(displayResult) {
             if (displayResult && displayResult.data) {
@@ -3274,6 +3276,18 @@
             settings.push({ key: input.name, value: input.value.trim(), category: 'detection', type: 'string' });
         });
 
+        // Flow classification: the auto toggle and the network list. The list
+        // is validated and canonicalised by the server; a rejected entry fails
+        // the save with a message naming it.
+        var flowHost = document.getElementById('settings-flow-classification');
+        var flowAuto = document.getElementById('flow-internal-auto');
+        var flowList = document.getElementById('flow-internal-networks');
+        var flowChanged = !!(flowHost && flowAuto && flowList) &&
+            flowHost.getAttribute('data-loaded') !== String(flowAuto.checked) + '|' + flowList.value.trim();
+        document.querySelectorAll('#settings-flow-classification input, #settings-flow-classification textarea').forEach(function(el) {
+            settings.push({ key: el.name, value: el.type === 'checkbox' ? String(el.checked) : el.value.trim(), category: 'flows', type: el.type === 'checkbox' ? 'bool' : 'string' });
+        });
+
         document.querySelectorAll('#settings-retention input').forEach(function(input) {
             // Blank is POSTED, not skipped — that is how a severity is re-coupled
             // to the default. Blank and "0" are different: blank inherits, 0 keeps
@@ -3301,6 +3315,10 @@
             // v0.11.14: saved values are the new clean baseline — hides the
             // sticky save bar. On save error the bar correctly stays up.
             if (window.FwmonSettingsUI) FwmonSettingsUI.snapshotBaseline();
+            // The server stores the network list canonically and the set in
+            // effect changes with it: re-render the card so both show now
+            // (the re-render re-snapshots the baseline when it completes).
+            if (flowChanged) loadSettings();
         }).catch(function(err) {
             console.error('Settings save failed:', err);
             AC.showError('Error: ' + err.message);
@@ -3441,6 +3459,57 @@
             }).catch(function() {
                 window.location.href = '/';
             });
+        });
+    }
+
+    // ---- Flow classification (Settings → Detection) ----
+    // The operator's own networks: an auto toggle (derive them from the
+    // monitored devices) and a list. Below them, the EFFECTIVE list the server
+    // classifies against, with where each entry came from, so it is visible
+    // exactly why an address counts as inside — and whether a WAN segment
+    // slipped in through auto-derivation.
+    var FLOW_NET_SOURCES = { manual: 'Listed here', interface: 'Device address', subnet: 'Device subnet', management: 'Device management address' };
+
+    function renderFlowClassification(settings) {
+        var host = document.getElementById('settings-flow-classification');
+        if (!host) return;
+        var get = function(k) {
+            var f = settings.find(function(x) { return x.key === k; });
+            return f ? f.value : null;
+        };
+        var auto = get('flow_internal_auto') !== 'false';
+        var list = get('flow_internal_networks') || '';
+        // What was loaded, so a save re-renders the card only when it changed.
+        host.setAttribute('data-loaded', String(auto) + '|' + list);
+        host.innerHTML =
+            '<div class="toggle-row"><label for="flow-internal-auto">Derive from monitored devices (their interface addresses and subnets)</label>' +
+            '<input type="checkbox" id="flow-internal-auto" name="flow_internal_auto"' + (auto ? ' checked' : '') + '></div>' +
+            '<div class="setting-item"><label for="flow-internal-networks">Your networks — one per line (CIDR or address)</label>' +
+            '<textarea id="flow-internal-networks" name="flow_internal_networks" rows="5" spellcheck="false" autocomplete="off" ' +
+            'class="fwmon-flow-networks" placeholder="203.0.113.0/24&#10;198.51.100.10&#10;2001:db8::/32">' + escapeHtml(list) + '</textarea></div>';
+        loadFlowEffectiveNetworks();
+    }
+
+    function loadFlowEffectiveNetworks() {
+        var el = document.getElementById('settings-flow-effective');
+        if (!el) return;
+        el.textContent = 'Loading the networks in effect…';
+        apiFetch(API_BASE + '/flows/internal-networks').then(function(result) {
+            var nets = (result && result.data && result.data.networks) || [];
+            if (!nets.length) {
+                el.innerHTML = '<p class="fwmon-flow-effective-empty">Only the private ranges count as yours right now.</p>';
+                return;
+            }
+            el.innerHTML = '<h3 class="fwmon-flow-effective-title">In effect now (' + nets.length + ')</h3>' +
+                '<p class="fwmon-flow-effective-hint">If a provider segment appears here (a WAN interface with a wide mask), turn off deriving from devices and list your ranges instead.</p>' +
+                '<ul class="fwmon-flow-effective-list">' + nets.map(function(n) {
+                    return '<li><code>' + escapeHtml(n.cidr) + '</code> <span>' +
+                        escapeHtml(FLOW_NET_SOURCES[n.source] || n.source) +
+                        (n.device ? ' · ' + escapeHtml(n.device) : '') + '</span></li>';
+                }).join('') + '</ul>';
+        }).catch(function(e) {
+            el.textContent = 'Could not load the networks in effect.';
+            if (window.fwmonLog) fwmonLog.error('Failed to load internal networks:', e);
         });
     }
 

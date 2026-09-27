@@ -1118,6 +1118,29 @@ tr:hover {
     gap: 12px;
 }
 
+/* Flow classification (Settings → Detection): the network list and the
+   effective list below it. Monospace so prefixes align; wraps at phone width. */
+.setting-item textarea.fwmon-flow-networks {
+    font-family: var(--fwmon-font-mono, ui-monospace, monospace);
+    min-height: 7rem;
+    resize: vertical;
+    box-sizing: border-box;
+}
+.fwmon-flow-effective { margin-top: 14px; font-size: 0.82rem; }
+.fwmon-flow-effective-title { font-size: 0.85rem; margin: 0 0 4px; }
+.fwmon-flow-effective-hint,
+.fwmon-flow-effective-empty { color: var(--fwmon-text-faint); margin: 0 0 8px; }
+.fwmon-flow-effective-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+    gap: 4px 16px;
+}
+.fwmon-flow-effective-list li { overflow-wrap: anywhere; }
+.fwmon-flow-effective-list span { color: var(--fwmon-text-faint); }
+
 .setting-item {
     display: flex;
     flex-direction: column;

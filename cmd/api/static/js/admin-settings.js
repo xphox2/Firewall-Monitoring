@@ -17,6 +17,7 @@
     var TRACKED_CONTAINERS = [
         '#settings-notifications', '#settings-smtp',
         '#settings-reports', '#settings-detection',
+        '#settings-flow-classification',
         '#settings-retention',
         '#display-settings'
     ];
@@ -39,7 +40,7 @@
         var page = document.getElementById('page-settings');
         if (!page) return [];
         var sel = TRACKED_CONTAINERS.map(function (c) {
-            return c + ' input, ' + c + ' select';
+            return c + ' input, ' + c + ' select, ' + c + ' textarea';
         }).join(',');
         var fields = Array.prototype.slice.call(page.querySelectorAll(sel));
         var tz = document.getElementById('display-timezone');
@@ -172,7 +173,7 @@
             ['input', 'change'].forEach(function (evt) {
                 page.addEventListener(evt, function (e) {
                     var el = e.target;
-                    if (!el || !(el.matches && el.matches('input, select'))) return;
+                    if (!el || !(el.matches && el.matches('input, select, textarea'))) return;
                     if (el.closest(TRACKED_SELECTOR) || el.id === 'display-timezone') {
                         updateSaveBar();
                     }
