@@ -3279,6 +3279,11 @@
         // Flow classification: the auto toggle and the network list. The list
         // is validated and canonicalised by the server; a rejected entry fails
         // the save with a message naming it.
+        var flowHost = document.getElementById('settings-flow-classification');
+        var flowAuto = document.getElementById('flow-internal-auto');
+        var flowList = document.getElementById('flow-internal-networks');
+        var flowChanged = !!(flowHost && flowAuto && flowList) &&
+            flowHost.getAttribute('data-loaded') !== String(flowAuto.checked) + '|' + flowList.value.trim();
         document.querySelectorAll('#settings-flow-classification input, #settings-flow-classification textarea').forEach(function(el) {
             settings.push({ key: el.name, value: el.type === 'checkbox' ? String(el.checked) : el.value.trim(), category: 'flows', type: el.type === 'checkbox' ? 'bool' : 'string' });
         });
@@ -3313,9 +3318,7 @@
             // The server stores the network list canonically and the set in
             // effect changes with it: re-render the card so both show now
             // (the re-render re-snapshots the baseline when it completes).
-            if (settings.some(function(s) { return s.key === 'flow_internal_networks' || s.key === 'flow_internal_auto'; })) {
-                loadSettings();
-            }
+            if (flowChanged) loadSettings();
         }).catch(function(err) {
             console.error('Settings save failed:', err);
             AC.showError('Error: ' + err.message);
@@ -3476,6 +3479,8 @@
         };
         var auto = get('flow_internal_auto') !== 'false';
         var list = get('flow_internal_networks') || '';
+        // What was loaded, so a save re-renders the card only when it changed.
+        host.setAttribute('data-loaded', String(auto) + '|' + list);
         host.innerHTML =
             '<div class="toggle-row"><label for="flow-internal-auto">Derive from monitored devices (their interface addresses and subnets)</label>' +
             '<input type="checkbox" id="flow-internal-auto" name="flow_internal_auto"' + (auto ? ' checked' : '') + '></div>' +

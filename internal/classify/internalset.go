@@ -143,14 +143,6 @@ func (s *InternalSet) Direction(srcAddr, dstAddr string) uint8 {
 	}
 }
 
-// defaultSet is the private-defaults-only set.
-var defaultSet = NewInternalSet(nil, 0)
-
-// DefaultInternal reports whether an address is inside even without any
-// operator networks (private ranges, loopback, link-local, CGNAT, multicast,
-// broadcast, unspecified).
-func DefaultInternal(a netip.Addr) bool { return defaultSet.contains(a.Unmap()) }
-
 // defaultPrefixes are the default-internal ranges as prefixes, including what
 // contains() adds by method, for whole-prefix containment checks.
 var defaultPrefixes = func() []netip.Prefix {
