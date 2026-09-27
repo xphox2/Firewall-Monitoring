@@ -96,14 +96,13 @@ type flowStatsRun struct {
 	h          *gorm.DB // every query goes through this handle
 	cutoff     time.Time
 	useSummary bool
-	// serviceTopsUsable: the summary's service_port top lists cover this whole
-	// window (see serviceTopsUsable); serviceSince is the boundary, for the
-	// partial badge when they do not.
-	serviceTopsUsable bool
-	serviceSince      time.Time
-	scope             string // table the rolled-up panels read; "" = flow_rollups
-	concurrency       int
-	budget            *flowStatsBudget
+	// serviceSince is when flows began recording a service port (see
+	// serviceSinceBoundary); zero when every row has one. A window starting
+	// before it shows Top services for the part after it only.
+	serviceSince time.Time
+	scope        string // table the rolled-up panels read; "" = flow_rollups
+	concurrency  int
+	budget       *flowStatsBudget
 	// fill, when set, fills the scope table from the flow_rollups base it is
 	// given, before any rolled-up panel runs.
 	fill func(source func() *gorm.DB) error
@@ -141,23 +140,35 @@ func (r *flowStatsRun) expect(panels int) {
 // finish reports the last step.
 func (r *flowStatsRun) finish() { r.step("Finishing") }
 
-// serviceTopsUsable reports whether the summary's service_port top lists cover
-// a window starting at cutoff. Summary buckets written before
-// flow_summary_service_since (set by migration v68 on an existing install,
-// cleared once history is rebuilt) have no service dimension; a bucket stamped
-// after it can only have been summarised after it, so a window whose cutoff is
-// at or past the boundary is fully covered. An unparseable value is treated as
-// "not covered" — it only costs a partial badge.
-func (d *Database) serviceTopsUsable(cutoff time.Time) (bool, time.Time) {
+// serviceSinceBoundary returns when flows began recording a service port —
+// flow_summary_service_since, set by migration v68 on an install that already
+// held flow history and cleared once that history is reclassified — or the
+// zero time when every row carries one. Rows before it have service_port 0 in
+// flow_rollups, and summary buckets before it have no service dimension; a
+// row or bucket stamped after it can only have been written after it. An
+// unparseable value is treated as "now" — it only costs a partial badge.
+func (d *Database) serviceSinceBoundary() time.Time {
 	v, ok := d.GetSettingValue(flowSummaryServiceSinceKey)
 	if !ok || v == "" {
-		return true, time.Time{}
+		return time.Time{}
 	}
 	since, err := time.Parse(time.RFC3339, v)
 	if err != nil {
-		return false, time.Now()
+		return time.Now()
 	}
-	return !cutoff.Before(since), since
+	return since
+}
+
+// servicesCovered reports whether Top services covers the whole window: no
+// boundary, or a window starting at or after it.
+func (r *flowStatsRun) servicesCovered() bool {
+	return r.serviceSince.IsZero() || !r.cutoff.Before(r.serviceSince)
+}
+
+// servicesPartialReason is the badge text for a window that reaches back
+// before the boundary. Short on purpose: the badge sits in the card header.
+func (r *flowStatsRun) servicesPartialReason() string {
+	return "since " + r.serviceSince.Local().Format("2006-01-02") + " only"
 }
 
 // GetFlowStats returns aggregated flow statistics, optionally narrowed by
@@ -172,18 +183,15 @@ func (d *Database) GetFlowStatsOpts(hours int, filter FlowStatsFilter, opts Flow
 	now := time.Now()
 	cutoff := now.Add(-time.Duration(hours) * time.Hour)
 	parent := d.db.Statement.Context
+	// Read before anything is pinned, like useSummary: it queries through d.
+	serviceSince := d.serviceSinceBoundary()
 
 	if !FlowStatsMaterializes(hours, filter) {
 		// Decided here, before anything is pinned: summaryBackfillComplete
 		// queries through d.
 		useSummary := hours > flowSummaryMinHours && flowSummaryCompatible(filter) && d.summaryBackfillComplete()
-		serviceOK, serviceSince := false, time.Time{}
-		if useSummary {
-			serviceOK, serviceSince = d.serviceTopsUsable(cutoff)
-		}
 		run := &flowStatsRun{
-			h: d.db, cutoff: cutoff, useSummary: useSummary,
-			serviceTopsUsable: serviceOK, serviceSince: serviceSince,
+			h: d.db, cutoff: cutoff, useSummary: useSummary, serviceSince: serviceSince,
 			concurrency: flowStatsRollupConcurrency,
 			budget:      newFlowStatsBudget(parent, flowStatsRollupBudget),
 			progress:    opts.Progress, total: 20,
@@ -199,7 +207,7 @@ func (d *Database) GetFlowStatsOpts(hours int, filter FlowStatsFilter, opts Flow
 	var res *FlowStatsResult
 	var runErr error
 	connErr := d.db.Connection(func(tx *gorm.DB) error {
-		res, runErr = d.flowStatsMaterialized(tx, hours, filter, now, cutoff, allowance, opts.Progress)
+		res, runErr = d.flowStatsMaterialized(tx, hours, filter, now, cutoff, serviceSince, allowance, opts.Progress)
 		return nil
 	})
 	if connErr != nil {
@@ -244,7 +252,7 @@ func newFlowScopeName() (string, error) {
 
 // flowStatsMaterialized runs flowStats on one pinned connection, with the
 // rolled-up panels reading a scope table filled one day at a time.
-func (d *Database) flowStatsMaterialized(tx *gorm.DB, hours int, filter FlowStatsFilter, now, cutoff time.Time,
+func (d *Database) flowStatsMaterialized(tx *gorm.DB, hours int, filter FlowStatsFilter, now, cutoff, serviceSince time.Time,
 	allowance time.Duration, progress func(FlowStatsProgress)) (*FlowStatsResult, error) {
 	ctx := tx.Statement.Context
 	if ctx == nil {
@@ -264,7 +272,7 @@ func (d *Database) flowStatsMaterialized(tx *gorm.DB, hours int, filter FlowStat
 	budget := newFlowStatsBudget(ctx, allowance)
 	days := (hours + 23) / 24
 	run := &flowStatsRun{
-		h: tx, cutoff: cutoff, useSummary: false, scope: name,
+		h: tx, cutoff: cutoff, useSummary: false, scope: name, serviceSince: serviceSince,
 		concurrency: 1, // one connection: the panels run one at a time
 		budget:      budget, progress: progress,
 		fillSteps: days, total: 1 + days + 1 + 16 + 1,
@@ -290,6 +298,13 @@ func (d *Database) flowStatsMaterialized(tx *gorm.DB, hours int, filter FlowStat
 		var err error
 		if flowScopeChunkHook != nil {
 			err = flowScopeChunkHook(a, b)
+		}
+		// Never start a chunk on an already-cancelled request. pgx refuses one
+		// anyway, but SQLite's driver only interrupts asynchronously, so a fast
+		// statement could still complete after a cancel and the report carry
+		// on as if nothing had happened.
+		if err == nil {
+			err = cctx.Err()
 		}
 		if err == nil {
 			err = tx.WithContext(cctx).Exec("INSERT INTO "+name+" ("+flowScopeColumns+") SELECT "+flowScopeColumns+" FROM (?) AS src", chunk).Error

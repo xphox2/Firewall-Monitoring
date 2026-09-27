@@ -189,8 +189,7 @@ func firstKeyCounts(kc []KeyCount, n int) []KeyCount {
 	if len(kc) > n {
 		kc = kc[:n]
 	}
-	// Never nil: an empty panel serialises as [] like before. (Top ports keeps
-	// its historical null-when-empty by only calling this with rows.)
+	// Never nil: an empty panel serialises as [] like before.
 	return append(make([]KeyCount, 0, len(kc)), kc...)
 }
 
@@ -1488,7 +1487,7 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 	// (classify.ServicePort), so a server's replies (src 443 → dst 51234) count
 	// under 443 with its requests instead of spreading across thousands of
 	// client ports. Rows ingested before v0.11.263 carry service_port 0 and are
-	// left out until history is reclassified.
+	// left out until history is reclassified; the panel says so (below).
 	var rawSvcRows []struct {
 		Port  uint16
 		Total int64
@@ -1500,11 +1499,20 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 		rawSvc = append(rawSvc, FlowPortCount{Port: p.Port, Count: p.Total})
 	}
 	result.TopServices = mergePortCounts(rawSvc, nil, flowTopDisplay)
+	// Rows and summary buckets before the service boundary carry no service
+	// port, so a window reaching back past it is complete only from the
+	// boundary on. Said on the panel whichever path serves it — without the
+	// page-wide banner, which means "fell back to the last hour".
+	if !run.servicesCovered() && !(useRollups && useSummary && !summaryTopsUsable) {
+		budget.partial("top_services", run.servicesPartialReason())
+	}
 	if useRollups {
 		var rollupSvc []FlowPortCount
 		mergeServices := func() { result.TopServices = mergePortCounts(rawSvc, rollupSvc, flowTopDisplay) }
 		switch {
-		case summaryTopsUsable && run.serviceTopsUsable:
+		case summaryTopsUsable:
+			// Buckets written before the service boundary have no rows for this
+			// dimension and simply contribute nothing; the badge above says so.
 			runRollup("top_services", newSummaryTopBase, func(q *gorm.DB) error {
 				vals, err := flowSummaryTopValues(q, flowSummaryDimServicePort, flowTopFetch)
 				rollupSvc = rollupSvc[:0]
@@ -1515,13 +1523,6 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 				}
 				return err
 			}, mergeServices)
-		case summaryTopsUsable:
-			// The summary buckets older than flow_summary_service_since were
-			// written before the service dimension existed. Showing the raw
-			// merge as if it were the window would understate every service,
-			// so it is shown and marked partial — without the page-wide banner,
-			// which means "these figures fell back to the last hour".
-			budget.partial("top_services", "services before "+run.serviceSince.Format("2006-01-02")+" not yet summarised")
 		case useSummary:
 			budget.skip("top_services")
 		default:

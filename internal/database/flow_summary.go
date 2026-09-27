@@ -814,7 +814,7 @@ func (d *Database) writeSummaryBucketScalars(tx *gorm.DB, src func() *gorm.DB, t
 //
 // KNOWN LIMITATION, which the reader must respect: these lists carry no
 // dimension columns, so they answer "top talkers for this device" and nothing
-// narrower. "Top sources for TCP" or "top ports to Germany" cannot be served
+// narrower. "Top sources for TCP" or "top services to Germany" cannot be served
 // from here — a reader applying a cube filter must report these panels as
 // degraded rather than show unfiltered talkers beside filtered totals.
 func (d *Database) writeSummaryTops(tx *gorm.DB, src func() *gorm.DB, tier flowSummaryTier, bucket time.Time) error {

@@ -61,12 +61,13 @@ func TestTopServices_CountsBothDirectionsUnderTheServicePort(t *testing.T) {
 	}
 }
 
-// TestTopServices_SummaryGate pins the service-dimension boundary. Summary
-// buckets written before migration v68 have no service_port tops; a window
-// reaching back past flow_summary_service_since must show the raw merge marked
-// PARTIAL — not Degraded, which is the page-wide "last hour only" banner — and
-// a window inside it (or no boundary at all) is served from the summary.
-func TestTopServices_SummaryGate(t *testing.T) {
+// TestTopServices_ServiceBoundary pins the service boundary on every path.
+// Rows and summary buckets from before migration v68 carry no service port, so
+// a window reaching back past flow_summary_service_since shows services from
+// the boundary on — with a PARTIAL badge naming the date, never the page-wide
+// Degraded banner (which means "last hour only") — and a window inside it, or
+// no boundary at all, is complete.
+func TestTopServices_ServiceBoundary(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	base := time.Now().UTC().Add(-8 * time.Hour).Truncate(time.Hour)
 	seedReadPath(t, d, base)
@@ -74,51 +75,85 @@ func TestTopServices_SummaryGate(t *testing.T) {
 		d.RunFlowSummaryCycle()
 	}
 	orig := flowSummaryMinHours
-	flowSummaryMinHours = 1
 	defer func() { flowSummaryMinHours = orig }()
-
-	// No boundary: the summary serves Top services.
-	res, err := d.GetFlowStats(24, FlowStatsFilter{})
-	if err != nil {
-		t.Fatalf("GetFlowStats: %v", err)
-	}
-	if len(res.PartialBlocks) != 0 || len(res.TopServices) == 0 {
-		t.Fatalf("without a boundary Top services must come from the summary: partial=%v services=%v",
-			res.PartialBlocks, res.TopServices)
-	}
-
-	// A boundary newer than the window's start: partial, not degraded.
-	since := time.Now().Add(-2 * time.Hour).UTC()
-	if err := d.Gorm().Create(&models.SystemSetting{Key: flowSummaryServiceSinceKey, Value: since.Format(time.RFC3339)}).Error; err != nil {
-		t.Fatalf("set since: %v", err)
-	}
-	res, err = d.GetFlowStats(24, FlowStatsFilter{})
-	if err != nil {
-		t.Fatalf("GetFlowStats: %v", err)
-	}
-	// The summary path always degrades the unique-count panels (the cube cannot
-	// union addresses); what matters is that top_services is not among them.
-	for _, b := range res.DegradedBlocks {
-		if b == "top_services" {
-			t.Errorf("top_services was marked Degraded (%v); past the service boundary it is partial only", res.DegradedBlocks)
+	setSince := func(v time.Time) {
+		t.Helper()
+		d.Gorm().Where("\"key\" = ?", flowSummaryServiceSinceKey).Delete(&models.SystemSetting{})
+		if !v.IsZero() {
+			if err := d.Gorm().Create(&models.SystemSetting{Key: flowSummaryServiceSinceKey, Value: v.UTC().Format(time.RFC3339)}).Error; err != nil {
+				t.Fatalf("set since: %v", err)
+			}
 		}
 	}
-	if len(res.PartialBlocks) != 1 || res.PartialBlocks[0] != "top_services" || res.PartialReasons["top_services"] == "" {
-		t.Errorf("PartialBlocks = %v reasons = %v, want top_services with a reason", res.PartialBlocks, res.PartialReasons)
+	notDegraded := func(res *FlowStatsResult) {
+		t.Helper()
+		// The summary path always degrades the unique-count panels (the cube
+		// cannot union addresses); top_services must never be among them here.
+		for _, b := range res.DegradedBlocks {
+			if b == "top_services" {
+				t.Errorf("top_services was marked Degraded (%v); past the boundary it is partial only", res.DegradedBlocks)
+			}
+		}
 	}
 
-	// A window that starts after the boundary is fully covered again.
-	res, err = d.GetFlowStats(1, FlowStatsFilter{})
-	if err != nil {
-		t.Fatalf("GetFlowStats: %v", err)
+	for _, path := range []struct {
+		name     string
+		minHours int
+	}{{"summary", 1}, {"rollups", 1 << 30}} {
+		flowSummaryMinHours = path.minHours
+
+		setSince(time.Time{})
+		res, err := d.GetFlowStats(24, FlowStatsFilter{})
+		if err != nil {
+			t.Fatalf("%s: %v", path.name, err)
+		}
+		if len(res.PartialBlocks) != 0 || len(res.TopServices) == 0 {
+			t.Errorf("%s without a boundary: partial=%v services=%v, want complete and non-empty",
+				path.name, res.PartialBlocks, res.TopServices)
+		}
+
+		// A boundary inside the window: the rows after it still show, and the
+		// badge names the date.
+		since := time.Now().Add(-2 * time.Hour)
+		setSince(since)
+		res, err = d.GetFlowStats(24, FlowStatsFilter{})
+		if err != nil {
+			t.Fatalf("%s: %v", path.name, err)
+		}
+		notDegraded(res)
+		want := "since " + since.Local().Format("2006-01-02") + " only"
+		if len(res.PartialBlocks) != 1 || res.PartialBlocks[0] != "top_services" || res.PartialReasons["top_services"] != want {
+			t.Errorf("%s: PartialBlocks=%v reasons=%v, want top_services %q", path.name, res.PartialBlocks, res.PartialReasons, want)
+		}
+		if len(res.TopServices) == 0 {
+			t.Errorf("%s: Top services is empty past the boundary; the rows after it must still show", path.name)
+		}
+
+		// A boundary before the window's start: complete again.
+		setSince(time.Now().Add(-30 * time.Hour))
+		res, err = d.GetFlowStats(24, FlowStatsFilter{})
+		if err != nil {
+			t.Fatalf("%s: %v", path.name, err)
+		}
+		if len(res.PartialBlocks) != 0 || len(res.TopServices) == 0 {
+			t.Errorf("%s with the boundary before the window: partial=%v services=%v, want complete",
+				path.name, res.PartialBlocks, res.TopServices)
+		}
 	}
-	if len(res.PartialBlocks) != 0 {
-		t.Errorf("a 1h window starting after the boundary is marked partial: %v", res.PartialBlocks)
+
+	// The materialized (address-filtered) path carries the boundary too.
+	setSince(time.Now().Add(-2 * time.Hour))
+	res, err := d.GetFlowStats(24, FlowStatsFilter{SrcAddr: "10.0.0.1"})
+	if err != nil {
+		t.Fatalf("materialized: %v", err)
+	}
+	if res.PartialReasons["top_services"] == "" {
+		t.Errorf("an address-filtered window past the boundary is not marked partial: %v", res.PartialBlocks)
 	}
 }
 
 // TestMarkFlowSummaryServiceSince: v68 stamps the boundary only on an install
-// that already has summary tops, and never moves an existing one.
+// that already holds flow history, and never moves an existing one.
 func TestMarkFlowSummaryServiceSince(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	t0 := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
@@ -126,11 +161,13 @@ func TestMarkFlowSummaryServiceSince(t *testing.T) {
 		t.Fatalf("mark on empty: %v", err)
 	}
 	if _, ok := d.GetSettingValue(flowSummaryServiceSinceKey); ok {
-		t.Fatal("a fresh install (no summary tops) got a service boundary; every bucket it writes has the dimension")
+		t.Fatal("a fresh install (no flow history) got a service boundary; every row it writes has a service port")
 	}
-	if err := d.Gorm().Create(&models.FlowSummaryTop{Timestamp: t0.Add(-time.Hour), IntervalType: "1h", DeviceID: 1,
-		Dimension: "dst_port", Value: "443", BytesSum: 1}).Error; err != nil {
-		t.Fatalf("seed top: %v", err)
+	// History in the rollups alone (summary tables still empty, as on an
+	// install upgrading across v66 and v68 at once) is enough.
+	if err := d.Gorm().Create(&models.FlowRollup{Timestamp: t0.Add(-48 * time.Hour), DeviceID: 1, IntervalType: "1h",
+		SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6, BytesSum: 1, FlowCount: 1}).Error; err != nil {
+		t.Fatalf("seed rollup: %v", err)
 	}
 	if err := d.markFlowSummaryServiceSince(t0); err != nil {
 		t.Fatalf("mark: %v", err)

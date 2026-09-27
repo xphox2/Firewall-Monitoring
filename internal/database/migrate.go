@@ -1943,15 +1943,16 @@ func (d *Database) migrateVPNStatusTimestampIndex() error {
 	return nil
 }
 
-// flowSummaryServiceSinceKey records when the summary tables began carrying a
-// service_port top dimension. Buckets summarised before it have none, so a
-// window reaching back past it cannot be served Top services from the summary
-// (see serviceTopsUsable). Absent means every bucket has it — a fresh install,
-// or history rebuilt since. Internal state: never user-editable.
+// flowSummaryServiceSinceKey records when flows began recording a service
+// port. Rollups from before it carry service_port 0 and summary buckets from
+// before it have no service dimension, so a window reaching back past it shows
+// Top services from the boundary on only (see serviceSinceBoundary). Absent
+// means every row has one — a fresh install, or history reclassified since.
+// Internal state: never user-editable.
 const flowSummaryServiceSinceKey = "flow_summary_service_since"
 
 // migrateFlowServicePortClassRev (v68) adds service_port and class_rev to
-// flow_samples and flow_rollups, and — only when summary tops already exist —
+// flow_samples and flow_rollups, and — only when flow history already exists —
 // stamps flowSummaryServiceSinceKey.
 //
 // ADD COLUMN with a constant default is a catalog-only change on PostgreSQL
@@ -1980,9 +1981,12 @@ func (d *Database) migrateFlowServicePortClassRev() error {
 	return d.markFlowSummaryServiceSince(time.Now())
 }
 
-// markFlowSummaryServiceSince stamps the service-tops boundary when summary
-// tops already exist and no boundary is recorded. Idempotent: a re-run never
-// moves an existing boundary.
+// markFlowSummaryServiceSince stamps the service boundary when any flow
+// history predates the column — a flow sample, rollup or summary top — and no
+// boundary is recorded. Probing the source tables, not only the summary: an
+// install upgrading across v66 and v68 at once has empty summary tables yet a
+// year of rollups the summary backfill will later summarise without a service
+// dimension. Idempotent: a re-run never moves an existing boundary.
 func (d *Database) markFlowSummaryServiceSince(now time.Time) error {
 	var existing int64
 	if err := d.db.Model(&models.SystemSetting{}).Where("\"key\" = ?", flowSummaryServiceSinceKey).Count(&existing).Error; err != nil {
@@ -1991,19 +1995,26 @@ func (d *Database) markFlowSummaryServiceSince(now time.Time) error {
 	if existing > 0 {
 		return nil
 	}
-	var tops []models.FlowSummaryTop
-	if err := d.db.Select("id").Limit(1).Find(&tops).Error; err != nil {
-		return fmt.Errorf("migrate v68 probe flow_summary_tops: %w", err)
+	hasHistory := false
+	for _, table := range []string{"flow_rollups", "flow_samples", "flow_summary_tops"} {
+		var ids []uint
+		if err := d.db.Table(table).Select("id").Limit(1).Pluck("id", &ids).Error; err != nil {
+			return fmt.Errorf("migrate v68 probe %s: %w", table, err)
+		}
+		if len(ids) > 0 {
+			hasHistory = true
+			break
+		}
 	}
-	if len(tops) == 0 {
-		return nil // fresh install: every bucket will be written with the dimension
+	if !hasHistory {
+		return nil // fresh install: every row it writes carries a service port
 	}
 	if err := d.db.Create(&models.SystemSetting{
 		Key: flowSummaryServiceSinceKey, Value: now.UTC().Format(time.RFC3339), Category: "system",
 	}).Error; err != nil {
 		return fmt.Errorf("migrate v68 write %s: %w", flowSummaryServiceSinceKey, err)
 	}
-	log.Printf("migrate v68: summary buckets before %s carry no service dimension until history is rebuilt", now.UTC().Format(time.RFC3339))
+	log.Printf("migrate v68: flows before %s carry no service port until history is reclassified", now.UTC().Format(time.RFC3339))
 	return nil
 }
 

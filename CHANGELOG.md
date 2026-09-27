@@ -23,10 +23,11 @@ its 401 GB spread across client ports.
   the CSV export gain a Service column.
 - History recorded before this version has no service port and is left out of
   Top services until history is reclassified in a later version. On ranges
-  reaching back before the upgrade, the panel is marked **partial** with that
-  reason. This badge does not trigger the page-wide "last hour only" warning.
-  Other panels still show that warning only when they fell back to the last
-  hour.
+  reaching back before the upgrade, the panel shows services from the upgrade
+  on. It carries a **"partial — since <date> only"** badge on every path
+  (summary, rollups, and address-filtered reports). That badge does not trigger
+  the page-wide "last hour only" warning, which still marks only panels that
+  fell back to the last hour.
 - **data_exfil** now counts only flows where the internal host is the client,
   meaning the destination is the service or neither side is one. A server's
   replies to external clients also travel outbound, and they are not
