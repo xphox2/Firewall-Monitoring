@@ -40,6 +40,11 @@ import (
 // materialized result with the direct one on the same filter.
 var flowStatsMaterialize = true
 
+// flowScopeChunkHook, when set, runs before each scope-table INSERT and may
+// return an error in its place. Tests use it to simulate a statement timeout;
+// nil in production.
+var flowScopeChunkHook func(a, b time.Time) error
+
 // FlowStatsMaterializes reports whether a request would take the materialized
 // run — the long one. The stream handler uses it to decide whether the request
 // needs one of the long-report slots. It needs no database: the summary path
@@ -70,37 +75,18 @@ type FlowStatsOptions struct {
 	// Progress is called before each step, always from the goroutine that called
 	// GetFlowStatsOpts, so it may write to a response.
 	Progress func(FlowStatsProgress)
-	// LongRunning lets a materialized run take a budget scaled to its window
-	// (FlowStatsLongBudget) instead of the 20 s the synchronous endpoint must
-	// keep under its 30 s write timeout. It changes nothing for other runs,
-	// which keep the budget and concurrency they were tuned for.
-	//
-	// The stream sets it for every request, so a short filtered view (one
-	// chunk) also gets the scaled budget without taking a long-report slot
-	// (FlowStatsIsLong). That is deliberate: it holds one connection, ends with
-	// the request, and a broad port filter's cold chunk plus the panels can
-	// need more than 20 s.
+	// LongRunning removes the overall time limit from a materialized run: it
+	// runs until it finishes or the client goes away. The synchronous endpoint
+	// keeps its 20 s, because its 30 s write timeout would cut the response off;
+	// a stream has no such wall and shows its progress, so a fixed budget would
+	// only throw away a report someone is watching — and would fail first on
+	// exactly the slower systems that need longer. What still stops it: the
+	// client closing the page or pressing Cancel (the request context), a client
+	// that stops reading (the stream's rolling write deadline), and the 30 s
+	// statement_timeout on each single statement (a day that exceeds it is
+	// split and retried — see fillRange). Other runs keep the budget and
+	// concurrency they were tuned for.
 	LongRunning bool
-}
-
-// FlowStatsLongBudget is the allowance for a streamed materialized run: a
-// minute plus eight seconds a day, capped at thirty minutes so a year-long
-// request stays bounded.
-//
-// Measured on production (2026-09-27): with the pages already in the host's
-// file cache a day reads in 0.3-1.7 s, but truly cold — off the spinning disk —
-// a day of a filtered 30-day report took 2.4-7.8 s (about 72k pages each; 30
-// days reads nearly all 20 GB of flow_rollups). The first allowance, three
-// seconds a day, was sized from the cached figure: the 30-day report used ~140
-// of its 150 s, and a cold 90-day report would have run out and reported every
-// panel partial.
-func FlowStatsLongBudget(hours int) time.Duration {
-	days := (hours + 23) / 24
-	b := time.Minute + time.Duration(days)*8*time.Second
-	if b > 30*time.Minute {
-		b = 30 * time.Minute
-	}
-	return b
 }
 
 // flowStatsRun is what flowStats varies on between the direct and the
@@ -179,10 +165,7 @@ func (d *Database) GetFlowStatsOpts(hours int, filter FlowStatsFilter, opts Flow
 		return res, err
 	}
 
-	allowance := flowStatsRollupBudget
-	if opts.LongRunning {
-		allowance = FlowStatsLongBudget(hours)
-	}
+	allowance := materializedAllowance(opts)
 	var res *FlowStatsResult
 	var runErr error
 	connErr := d.db.Connection(func(tx *gorm.DB) error {
@@ -193,6 +176,16 @@ func (d *Database) GetFlowStatsOpts(hours int, filter FlowStatsFilter, opts Flow
 		return nil, connErr
 	}
 	return res, runErr
+}
+
+// materializedAllowance is the materialized run's overall time limit: none for
+// the stream (zero = no deadline; see FlowStatsOptions.LongRunning), the
+// synchronous endpoint's 20 s otherwise.
+func materializedAllowance(opts FlowStatsOptions) time.Duration {
+	if opts.LongRunning {
+		return 0
+	}
+	return flowStatsRollupBudget
 }
 
 // flowScopeColumns are the flow_rollups columns the rolled-up panels read or
@@ -246,6 +239,39 @@ func (d *Database) flowStatsMaterialized(tx *gorm.DB, hours int, filter FlowStat
 		budget:      budget, progress: progress,
 		fillSteps: days, total: 1 + days + 1 + 16 + 1,
 	}
+	// fillRange copies (a, b] into the scope table. A range whose statement hits
+	// the 30 s statement_timeout (SQLSTATE 57014) is split in half and each
+	// half retried, down to an hour: a slower disk still finishes, one smaller
+	// statement at a time. A failed INSERT inserts nothing, so a retry cannot
+	// duplicate rows.
+	var fillRange func(source func() *gorm.DB, a, b time.Time) error
+	fillRange = func(source func() *gorm.DB, a, b time.Time) error {
+		cctx, cancel, ok := budget.context()
+		if !ok {
+			return errors.New("flow stats budget spent before the scan finished")
+		}
+		// Half-open (a, b] chunks from the one captured cutoff to the one
+		// captured now: together exactly `timestamp > cutoff`, each row in
+		// exactly one chunk. The derived-table form parses on SQLite too.
+		chunk := source().Select(flowScopeColumns).Where("timestamp > ? AND timestamp <= ?", a, b)
+		var err error
+		if flowScopeChunkHook != nil {
+			err = flowScopeChunkHook(a, b)
+		}
+		if err == nil {
+			err = tx.WithContext(cctx).Exec("INSERT INTO "+name+" ("+flowScopeColumns+") SELECT "+flowScopeColumns+" FROM (?) AS src", chunk).Error
+		}
+		cancel()
+		if err != nil && sqlState(err) == "57014" && b.Sub(a) > time.Hour {
+			mid := a.Add(b.Sub(a) / 2)
+			log.Printf("Flow stats: reading %s..%s hit the statement timeout; splitting it", a.Format(time.RFC3339), b.Format(time.RFC3339))
+			if err := fillRange(source, a, mid); err != nil {
+				return err
+			}
+			return fillRange(source, mid, b)
+		}
+		return err
+	}
 	run.fill = func(source func() *gorm.DB) error {
 		for i, a := 0, cutoff; a.Before(now); i++ {
 			b := a.Add(24 * time.Hour)
@@ -253,17 +279,7 @@ func (d *Database) flowStatsMaterialized(tx *gorm.DB, hours int, filter FlowStat
 				b = now
 			}
 			run.step(fmt.Sprintf("Reading day %d of %d", i+1, days))
-			cctx, cancel, ok := budget.context()
-			if !ok {
-				return errors.New("flow stats budget spent before the scan finished")
-			}
-			// Half-open (a, b] chunks from the one captured cutoff to the one
-			// captured now: together exactly `timestamp > cutoff`, each row in
-			// exactly one chunk. The derived-table form parses on SQLite too.
-			chunk := source().Select(flowScopeColumns).Where("timestamp > ? AND timestamp <= ?", a, b)
-			err := tx.WithContext(cctx).Exec("INSERT INTO "+name+" ("+flowScopeColumns+") SELECT "+flowScopeColumns+" FROM (?) AS src", chunk).Error
-			cancel()
-			if err != nil {
+			if err := fillRange(source, a, b); err != nil {
 				return err
 			}
 			a = b

@@ -3,24 +3,34 @@ All notable changes to this project are documented in this file.
 
 ## [0.11.261] - 2026-09-27
 
-### Fixed — a cold 90-day filtered Flows report would run out of time
+### Changed — a streamed Flows report no longer has a time limit
 
 Measured on production right after v0.11.260 shipped: a Flows report for 30 days
 filtered to one source address completed with every panel exact, but took
-**2 min 20 s**, not the ~25 s v0.11.260's notes estimated. Each day's read took
-2.4–7.8 s. The same day's query run again, with its pages now in the host's file
-cache, took 1.65 s — the ~0.3–0.9 s per day the estimate came from had been
-measured with the data already cached. A filtered 30-day report reads about 72k
-pages a day, nearly all 20 GB of `flow_rollups`, and when nothing is cached that
-comes off the spinning disk.
+**2 min 20 s**, not the ~25 s v0.11.260's notes estimated, and used about 140 of
+the 150 seconds it was allowed. Each day's read took 2.4–7.8 s; the same day run
+again with its pages in the host's file cache took 1.65 s — the ~0.3–0.9 s per
+day the estimate and the allowance came from had been measured with the data
+already cached. A filtered 30-day report reads about 72k pages a day, nearly all
+20 GB of `flow_rollups`, and when nothing is cached that comes off the disk. A
+cold 90-day report would have run out of time and shown every panel partial,
+and a slower system would hit that on shorter ranges.
 
-- **The long-report allowance is now a minute plus eight seconds a day (was
-  three), capped at thirty minutes (was fifteen).** The 30-day report above used
-  about 140 of its 150 seconds; a cold 90-day report (~7 minutes) would have run
-  out at 5.5 minutes and reported every panel partial. It now has 13 minutes.
-- **Corrected expectations:** a filtered 30-day report takes about 30 s when its
-  data is cached and 2–2.5 minutes cold; 90 days about 7 minutes cold. The
-  loading panel shows each day as it is read.
+- **The streamed report now runs until it finishes or you press Cancel.** A
+  fixed allowance only discarded a report someone was watching progress on, and
+  hit slower systems first. It still stops when the page is closed or left, when
+  Cancel is pressed, or when the browser stops reading the stream. The plain
+  `/flows/stats` request keeps its 20 s limit (its response would be cut off at
+  30 s).
+- **A day that takes longer than the 30-second per-statement limit is split in
+  half and retried,** down to one-hour pieces, so a slow disk finishes rather
+  than failing.
+- **After a minute the loading panel says** that a long range read from disk can
+  take several minutes and keeps going until done, and the elapsed time switches
+  to minutes.
+- **Expectations, measured on production:** a filtered 30-day report takes about
+  30 s when its data is cached and 2–2.5 minutes cold; 90 days about 7 minutes
+  cold.
 
 ## [0.11.260] - 2026-09-27
 
