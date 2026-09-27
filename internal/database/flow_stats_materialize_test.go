@@ -270,3 +270,19 @@ func TestFlowStatsLongBudget(t *testing.T) {
 		}
 	}
 }
+
+// A raw-only window (1 h) has no rolled-up panels; its progress must still end
+// at an exact total, not two-thirds of the way along.
+func TestFlowStats_RawOnlyProgressEndsExact(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	seedFlowWeek(t, d)
+	var last FlowStatsProgress
+	if _, err := d.GetFlowStatsOpts(1, FlowStatsFilter{}, FlowStatsOptions{
+		Progress: func(p FlowStatsProgress) { last = p },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if last.Done != last.Total-1 {
+		t.Fatalf("last step %+v: the bar would stop short of the end", last)
+	}
+}

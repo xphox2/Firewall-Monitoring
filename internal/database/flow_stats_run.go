@@ -73,6 +73,12 @@ type FlowStatsOptions struct {
 	// (FlowStatsLongBudget) instead of the 20 s the synchronous endpoint must
 	// keep under its 30 s write timeout. It changes nothing for other runs,
 	// which keep the budget and concurrency they were tuned for.
+	//
+	// The stream sets it for every request, so a short filtered view (one
+	// chunk) also gets the scaled budget without taking a long-report slot
+	// (FlowStatsIsLong). That is deliberate: it holds one connection, ends with
+	// the request, and a broad port filter's cold chunk plus the panels can
+	// need more than 20 s.
 	LongRunning bool
 }
 
@@ -123,6 +129,11 @@ func (r *flowStatsRun) step(label string) {
 // the steps so far, the fill's days, "Aggregating panels", one per panel, and a
 // final step for the finishing work.
 func (r *flowStatsRun) expect(panels int) {
+	if panels == 0 {
+		// No rolled-up work (a raw-only window): only the final step remains.
+		r.total = r.done + 1
+		return
+	}
 	r.total = r.done + r.fillSteps + 1 + panels + 1
 }
 
