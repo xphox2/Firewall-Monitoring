@@ -83,3 +83,27 @@ func TestFlowsPage_DistributionsAreBytes(t *testing.T) {
 		}
 	}
 }
+
+// Top services (v0.11.263) filters by the service port NUMBER. The old Top
+// ports rows were keyed by display name, so clicking "HTTPS" sent
+// dst_port=HTTPS, which the server silently ignored. The service filter must
+// also reach both the stats and the samples requests, and a panel partial for
+// its own reason must be badged without the page-wide "last hour" banner.
+func TestFlowsPage_TopServicesFilterByNumber(t *testing.T) {
+	js := readJS(t, "admin-flows.js")
+	for _, sub := range []string{
+		"renderList('flows-top-services',     d.top_services     || [], 'ports',     'svc',      function(v, r) { return r && r.port ? String(r.port) : ''; });",
+		"var filterVal = toFilterValue(r.key, r);",
+		"params.push('service_port=' + encodeURIComponent(state.svc));",
+		"p.push('service_port=' + encodeURIComponent(state.svc));",
+		"markPartialPanels(blocks.concat(d.partial_blocks || []), d.partial_reasons || {});",
+		"el.removeAttribute('data-partial');",
+	} {
+		if !strings.Contains(js, sub) {
+			t.Errorf("admin-flows.js is missing %q", sub)
+		}
+	}
+	if strings.Contains(js, "flows-top-ports") || strings.Contains(js, "top_ports") {
+		t.Error("admin-flows.js still references the removed Top ports panel")
+	}
+}

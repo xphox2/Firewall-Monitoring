@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 
 	"firewall-mon/internal/models"
 )
@@ -506,20 +507,41 @@ func TestAggregateRollupsUp_ScansTheDayInSubRanges(t *testing.T) {
 // on the daily tier only, invisible until someone diffs row counts against the
 // source. The compiler cannot catch it because both sides are independently
 // valid.
+//
+// It compares NAMES, not just counts: swapping one column for another keeps the
+// counts equal and folds on the wrong field. Column names come from gorm's own
+// naming strategy — the one the Scan into rollupRow uses — so DstASN is dst_asn.
 func TestRollupAccumulator_KeyCoversEveryGroupedColumn(t *testing.T) {
-	// flowRollupGroupKey is a comma-separated column list.
-	grouped := 0
+	grouped := map[string]bool{}
 	for _, c := range strings.Split(flowRollupGroupKey, ",") {
-		if strings.TrimSpace(c) != "" {
-			grouped++
+		if c = strings.TrimSpace(c); c != "" {
+			grouped[c] = true
 		}
 	}
-	fields := reflect.TypeOf(rollupKey{}).NumField()
-	if fields != grouped {
-		t.Errorf("rollupKey has %d fields but flowRollupGroupKey groups by %d columns (%q). "+
-			"The sub-range merge folds by rollupKey, so a grouped column missing from the "+
-			"struct silently merges distinct groups and sums their measures together.",
-			fields, grouped, flowRollupGroupKey)
+	naming := schema.NamingStrategy{}
+	keyType := reflect.TypeOf(rollupKey{})
+	fromStruct := map[string]bool{}
+	for i := 0; i < keyType.NumField(); i++ {
+		fromStruct[naming.ColumnName("", keyType.Field(i).Name)] = true
+	}
+	for c := range grouped {
+		if !fromStruct[c] {
+			t.Errorf("flowRollupGroupKey groups by %q but rollupKey has no such field. The sub-range "+
+				"merge folds by rollupKey, so a grouped column missing from the struct silently "+
+				"merges distinct groups and sums their measures together.", c)
+		}
+	}
+	for c := range fromStruct {
+		if !grouped[c] {
+			t.Errorf("rollupKey has a %q field that flowRollupGroupKey does not group by", c)
+		}
+	}
+	// rollupRow must carry every key field too, or the scan never fills it.
+	rowType := reflect.TypeOf(rollupRow{})
+	for i := 0; i < keyType.NumField(); i++ {
+		if _, ok := rowType.FieldByName(keyType.Field(i).Name); !ok {
+			t.Errorf("rollupRow is missing key field %s", keyType.Field(i).Name)
+		}
 	}
 }
 

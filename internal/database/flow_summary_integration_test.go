@@ -29,13 +29,13 @@ func TestFlowSummaryIntegration_ExactAndEngineSafe(t *testing.T) {
 	// 443's 1700 across two rows) and the test failed against correct code.
 	rows := []models.FlowRollup{
 		{Timestamp: base.Add(5 * time.Minute), DeviceID: 1, IntervalType: "5m",
-			SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+			SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, ServicePort: 443, Protocol: 6,
 			DstCountry: "US", DstASN: 15169, BytesSum: 90000, PacketsSum: 10, FlowCount: 2},
 		{Timestamp: base.Add(10 * time.Minute), DeviceID: 1, IntervalType: "5m",
-			SrcAddr: "10.0.0.2", DstAddr: "1.1.1.1", DstPort: 53, Protocol: 17,
+			SrcAddr: "10.0.0.2", DstAddr: "1.1.1.1", DstPort: 53, ServicePort: 53, Protocol: 17,
 			BytesSum: 2000, PacketsSum: 20, FlowCount: 3},
 		{Timestamp: base.Add(15 * time.Minute), DeviceID: 1, IntervalType: "5m",
-			SrcAddr: "169.254.0.1", DstAddr: "224.0.0.1", DstPort: 0, Protocol: 2,
+			SrcAddr: "169.254.0.1", DstAddr: "224.0.0.1", DstPort: 0, ServicePort: 0, Protocol: 2,
 			ScopeLocal: true, BytesSum: 500, PacketsSum: 5, FlowCount: 1},
 	}
 	if err := d.db.Create(&rows).Error; err != nil {
@@ -82,8 +82,8 @@ func TestFlowSummaryIntegration_ExactAndEngineSafe(t *testing.T) {
 	// The casts and concatenation must have produced usable values, not empty
 	// strings or an error swallowed upstream.
 	var port, asn, convo models.FlowSummaryTop
-	if err := d.db.Where("dimension = ?", flowSummaryDimDstPort).Order("bytes_sum DESC").First(&port).Error; err != nil {
-		t.Fatalf("no port rows: %v", err)
+	if err := d.db.Where("dimension = ?", flowSummaryDimServicePort).Order("bytes_sum DESC").First(&port).Error; err != nil {
+		t.Fatalf("no service-port rows: %v", err)
 	}
 	if port.Value != "443" {
 		t.Errorf("top port value is %q, want \"443\" — the integer-to-text cast is wrong", port.Value)

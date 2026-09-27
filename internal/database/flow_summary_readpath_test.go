@@ -18,13 +18,13 @@ func seedReadPath(t *testing.T, d *Database, base time.Time) {
 		rows = append(rows,
 			models.FlowRollup{
 				Timestamp: ts, DeviceID: 1, IntervalType: "5m",
-				SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+				SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, ServicePort: 443, Protocol: 6,
 				AppCategory: 1, Direction: 1, DstCountry: "US", DstASN: 15169,
 				BytesSum: uint64(1000 * (h + 1)), PacketsSum: 10, FlowCount: 2, SamplingRateAvg: 1,
 			},
 			models.FlowRollup{
 				Timestamp: ts, DeviceID: 1, IntervalType: "5m",
-				SrcAddr: "10.0.0.2", DstAddr: "1.1.1.1", DstPort: 53, Protocol: 17,
+				SrcAddr: "10.0.0.2", DstAddr: "1.1.1.1", DstPort: 53, ServicePort: 53, Protocol: 17,
 				AppCategory: 2, Direction: 1, DstCountry: "DE", DstASN: 13335,
 				BytesSum: 500, PacketsSum: 5, FlowCount: 1, SamplingRateAvg: 1024,
 			},
@@ -164,7 +164,17 @@ func TestFlowSummaryRead_AgreesWithTheLivePath(t *testing.T) {
 	sameKeys("TopCountries", summary.TopCountries, live.TopCountries)
 	sameKeys("TopSources", summary.TopSources, live.TopSources)
 	sameKeys("TopDestinations", summary.TopDestinations, live.TopDestinations)
-	sameKeys("TopPorts", summary.TopPorts, live.TopPorts)
+	portKeys := func(l []FlowPortCount) []KeyCount {
+		out := make([]KeyCount, 0, len(l))
+		for _, p := range l {
+			out = append(out, KeyCount{Key: p.Key, Count: p.Count})
+		}
+		return out
+	}
+	if len(live.TopServices) == 0 {
+		t.Error("live TopServices is empty; the fixture carries service ports, so the comparison below would be vacuous")
+	}
+	sameKeys("TopServices", portKeys(summary.TopServices), portKeys(live.TopServices))
 	sameKeys("TopASNs", summary.TopASNs, live.TopASNs)
 
 	if len(summary.TopConversations) == 0 {
@@ -264,7 +274,7 @@ func TestFlowSummaryRead_DegradesTopPanelsUnderADimensionFilter(t *testing.T) {
 	for _, b := range res.DegradedBlocks {
 		named[b] = true
 	}
-	for _, want := range []string{"top_sources", "top_destinations", "top_ports", "top_asns", "top_conversations"} {
+	for _, want := range []string{"top_sources", "top_destinations", "top_services", "top_asns", "top_conversations"} {
 		if !named[want] {
 			t.Errorf("DegradedBlocks does not name %q (got %v)", want, res.DegradedBlocks)
 		}
@@ -305,7 +315,7 @@ func TestFlowSummaryRead_HonoursTheProbeFilter(t *testing.T) {
 			if err := d.Gorm().Create(&models.FlowRollup{
 				Timestamp: base.Add(time.Duration(h)*time.Hour + 5*time.Minute),
 				DeviceID:  dev.ID, IntervalType: "5m",
-				SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+				SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, ServicePort: 443, Protocol: 6,
 				BytesSum: uint64(1000 * (i + 1)), PacketsSum: 1, FlowCount: 1,
 			}).Error; err != nil {
 				t.Fatalf("seed rollup: %v", err)
@@ -388,7 +398,7 @@ func TestFlowSummaryRead_FallsBackWhileTheBackfillIsIncomplete(t *testing.T) {
 		if err := d.Gorm().Create(&models.FlowRollup{
 			Timestamp: base.Add(time.Duration(h)*time.Hour + 5*time.Minute),
 			DeviceID:  1, IntervalType: "5m",
-			SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+			SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443, ServicePort: 443, Protocol: 6,
 			BytesSum: 1000, PacketsSum: 1, FlowCount: 1,
 		}).Error; err != nil {
 			t.Fatalf("seed hour %d: %v", h, err)

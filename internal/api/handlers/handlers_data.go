@@ -397,6 +397,13 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 		} else {
 			samples[i].AppCategory = uint8(classify.Classify(samples[i].Protocol, samples[i].SrcPort, samples[i].DstPort, samples[i].TCPFlags))
 		}
+		// The service side of the conversation (Top services, the data_exfil
+		// client/server gate). Overwritten unconditionally, like ClassRev: the
+		// sample struct is also the collector's wire format, and neither may be
+		// supplied by a collector. ClassRev stays 0 ("not yet classified under a
+		// revision") until the internal-network set stamps it.
+		samples[i].ServicePort = classify.ServicePort(samples[i].Protocol, samples[i].SrcPort, samples[i].DstPort)
+		samples[i].ClassRev = 0
 		samples[i].Direction = classify.Direction(samples[i].SrcAddr, samples[i].DstAddr, samples[i].InputIfIndex, samples[i].OutputIfIndex)
 		samples[i].ScopeLocal = classify.ScopeLocal(samples[i].SrcAddr, samples[i].DstAddr)
 		// Geo/ASN enrichment (GEOIP_ENABLED). Nil-safe: when geo is off these are

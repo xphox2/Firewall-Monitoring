@@ -140,23 +140,52 @@ func Classify(proto uint8, srcPort, dstPort uint16, tcpFlags uint8) Category {
 		return Unknown
 	}
 
-	// Choose the service port: prefer whichever side is a known service; if both
-	// (or neither) are, prefer the lower port number, which is the conventional
-	// listener side. This makes the result independent of client/server ordering.
+	svc := ServicePort(proto, srcPort, dstPort)
+	if c, ok := portCategory[svc]; ok {
+		return c
+	}
+	return Unknown
+}
+
+// ephemeralFloor is where the ephemeral range conventionally begins (IANA
+// 49152, Linux 32768). A port below it that is not a known service is still a
+// plausible listener; two ports at or above it are two clients' ports.
+const ephemeralFloor = 32768
+
+// ServicePort returns the conversation's service side — the port the server
+// listens on — whichever end of the flow it is on, so a server's replies
+// (src 443 → dst 51234) and its requests land under the same port.
+//
+//   - a known service on exactly one side wins;
+//   - both known: the lower port, the conventional listener side;
+//   - neither known: the lower non-zero port if it is below the ephemeral
+//     range, else 0 (two ephemeral ports name no service);
+//   - a 0 port is treated as absent;
+//   - protocols without ports (ICMP, GRE, ESP, …) return 0.
+//
+// Classify picks its category from this port, so the two can never disagree.
+func ServicePort(proto uint8, srcPort, dstPort uint16) uint16 {
+	if proto != protoTCP && proto != protoUDP {
+		return 0
+	}
 	_, srcKnown := portCategory[srcPort]
 	_, dstKnown := portCategory[dstPort]
 	switch {
 	case dstKnown && !srcKnown:
-		return portCategory[dstPort]
+		return dstPort
 	case srcKnown && !dstKnown:
-		return portCategory[srcPort]
+		return srcPort
 	case srcKnown && dstKnown:
-		if srcPort < dstPort {
-			return portCategory[srcPort]
-		}
-		return portCategory[dstPort]
+		return min(srcPort, dstPort)
 	}
-	return Unknown
+	lower := min(srcPort, dstPort)
+	if lower == 0 {
+		lower = max(srcPort, dstPort) // a 0 port is absent; use the other side
+	}
+	if lower == 0 || lower >= ephemeralFloor {
+		return 0
+	}
+	return lower
 }
 
 // Direction values (flow_samples.direction). Stable on-disk encoding.

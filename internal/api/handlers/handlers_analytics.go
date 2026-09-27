@@ -611,10 +611,16 @@ func (h *Handler) GetFlowSamples(c *gin.Context) {
 			query = query.Where(frag, arg)
 		}
 	}
-	// Optional dst port filter — top-port drill-down sends this.
+	// Optional dst port filter — the conversation drill-down sends this.
 	if dport := c.Query("dst_port"); dport != "" {
 		if p, err := strconv.ParseUint(dport, 10, 16); err == nil {
 			query = query.Where("dst_port = ?", p)
+		}
+	}
+	// Service port filter — the Top services drill-down sends this.
+	if svc := c.Query("service_port"); svc != "" {
+		if p, err := strconv.ParseUint(svc, 10, 16); err == nil {
+			query = query.Where("service_port = ?", p)
 		}
 	}
 	if proto := c.Query("protocol"); proto != "" {
@@ -714,6 +720,12 @@ func parseFlowStatsFilter(c *gin.Context) (int, database.FlowStatsFilter) {
 		if v, err := strconv.ParseUint(dport, 10, 16); err == nil {
 			p := uint16(v)
 			filter.DstPort = &p
+		}
+	}
+	if svc := c.Query("service_port"); svc != "" {
+		if v, err := strconv.ParseUint(svc, 10, 16); err == nil {
+			p := uint16(v)
+			filter.ServicePort = &p
 		}
 	}
 	if cat := c.Query("app_category"); cat != "" {

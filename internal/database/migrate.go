@@ -1943,6 +1943,81 @@ func (d *Database) migrateVPNStatusTimestampIndex() error {
 	return nil
 }
 
+// flowSummaryServiceSinceKey records when flows began recording a service
+// port. Rollups from before it carry service_port 0 and summary buckets from
+// before it have no service dimension, so a window reaching back past it shows
+// Top services from the boundary on only (see serviceSinceBoundary). Absent
+// means every row has one — a fresh install, or history reclassified since.
+// Internal state: never user-editable.
+const flowSummaryServiceSinceKey = "flow_summary_service_since"
+
+// migrateFlowServicePortClassRev (v68) adds service_port and class_rev to
+// flow_samples and flow_rollups, and — only when flow history already exists —
+// stamps flowSummaryServiceSinceKey.
+//
+// ADD COLUMN with a constant default is a catalog-only change on PostgreSQL
+// 11+, so neither 140M-row table is rewritten; the brief ACCESS EXCLUSIVE lock
+// is taken while the poller (which runs the rollup ladder) is stopped by the
+// container recreate. On a fresh install flow_samples is partitioned and the
+// parent's ADD COLUMN reaches every partition.
+func (d *Database) migrateFlowServicePortClassRev() error {
+	if !d.dialect.IsPostgres() {
+		if err := d.db.AutoMigrate(&models.FlowSample{}, &models.FlowRollup{}); err != nil {
+			return err
+		}
+	} else {
+		stmts := []string{
+			`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS service_port integer NOT NULL DEFAULT 0`,
+			`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS class_rev integer NOT NULL DEFAULT 0`,
+			`ALTER TABLE flow_rollups ADD COLUMN IF NOT EXISTS service_port integer NOT NULL DEFAULT 0`,
+			`ALTER TABLE flow_rollups ADD COLUMN IF NOT EXISTS class_rev integer NOT NULL DEFAULT 0`,
+		}
+		for _, s := range stmts {
+			if err := d.execMaintenanceDDL(s); err != nil {
+				return fmt.Errorf("migrate v68 flow service_port/class_rev: %w", err)
+			}
+		}
+	}
+	return d.markFlowSummaryServiceSince(time.Now())
+}
+
+// markFlowSummaryServiceSince stamps the service boundary when any flow
+// history predates the column — a flow sample, rollup or summary top — and no
+// boundary is recorded. Probing the source tables, not only the summary: an
+// install upgrading across v66 and v68 at once has empty summary tables yet a
+// year of rollups the summary backfill will later summarise without a service
+// dimension. Idempotent: a re-run never moves an existing boundary.
+func (d *Database) markFlowSummaryServiceSince(now time.Time) error {
+	var existing int64
+	if err := d.db.Model(&models.SystemSetting{}).Where("\"key\" = ?", flowSummaryServiceSinceKey).Count(&existing).Error; err != nil {
+		return fmt.Errorf("migrate v68 read %s: %w", flowSummaryServiceSinceKey, err)
+	}
+	if existing > 0 {
+		return nil
+	}
+	hasHistory := false
+	for _, table := range []string{"flow_rollups", "flow_samples", "flow_summary_tops"} {
+		var ids []uint
+		if err := d.db.Table(table).Select("id").Limit(1).Pluck("id", &ids).Error; err != nil {
+			return fmt.Errorf("migrate v68 probe %s: %w", table, err)
+		}
+		if len(ids) > 0 {
+			hasHistory = true
+			break
+		}
+	}
+	if !hasHistory {
+		return nil // fresh install: every row it writes carries a service port
+	}
+	if err := d.db.Create(&models.SystemSetting{
+		Key: flowSummaryServiceSinceKey, Value: now.UTC().Format(time.RFC3339), Category: "system",
+	}).Error; err != nil {
+		return fmt.Errorf("migrate v68 write %s: %w", flowSummaryServiceSinceKey, err)
+	}
+	log.Printf("migrate v68: flows before %s carry no service port until history is reclassified", now.UTC().Format(time.RFC3339))
+	return nil
+}
+
 // logSyslogIndexScale states up front why the wait is long, so the progress
 // lines that follow have context.
 func (d *Database) logSyslogIndexScale() {

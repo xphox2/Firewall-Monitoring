@@ -18,7 +18,7 @@ func seedTieredFlows(t *testing.T, db *Database, now time.Time) {
 	t.Helper()
 	raw := models.FlowSample{
 		Timestamp: now.Add(-30 * time.Minute), DeviceID: 1, ProbeID: 7, Protocol: 6,
-		SrcAddr: "10.0.0.5", DstAddr: "8.8.8.8", SrcPort: 50000, DstPort: 443,
+		SrcAddr: "10.0.0.5", DstAddr: "8.8.8.8", SrcPort: 50000, DstPort: 443, ServicePort: 443,
 		Bytes: 100, Packets: 10, SamplingRate: 1,
 	}
 	if err := db.Gorm().Create(&raw).Error; err != nil {
@@ -29,7 +29,7 @@ func seedTieredFlows(t *testing.T, db *Database, now time.Time) {
 	// the rollup tier, exactly like production's NFS pair.
 	roll := models.FlowRollup{
 		Timestamp: now.Add(-23 * time.Hour), DeviceID: 1, IntervalType: "5m",
-		SrcAddr: "192.168.25.21", DstAddr: "192.168.5.25", DstPort: 2049, Protocol: 6,
+		SrcAddr: "192.168.25.21", DstAddr: "192.168.5.25", DstPort: 2049, ServicePort: 2049, Protocol: 6,
 		BytesSum: 999000, PacketsSum: 5000, FlowCount: 42, SamplingRateAvg: 1024,
 	}
 	if err := db.Gorm().Create(&roll).Error; err != nil {
@@ -64,9 +64,9 @@ func TestGetFlowStats_TopConversationsIncludesRollups(t *testing.T) {
 	}
 }
 
-// TestGetFlowStats_TopPortsIncludesRollups is the same defect on the ports card:
+// TestGetFlowStats_TopServicesIncludesRollups is the same defect on the ports card:
 // magnitudes ran ~19x low and port 2049 was missing.
-func TestGetFlowStats_TopPortsIncludesRollups(t *testing.T) {
+func TestGetFlowStats_TopServicesIncludesRollups(t *testing.T) {
 	db := NewDatabaseForTesting(t)
 	now := time.Now()
 	seedTieredFlows(t, db, now)
@@ -77,21 +77,21 @@ func TestGetFlowStats_TopPortsIncludesRollups(t *testing.T) {
 	}
 	var total int64
 	found := false
-	for _, p := range res.TopPorts {
+	for _, p := range res.TopServices {
 		total += p.Count
 		if strings.Contains(p.Key, "2049") || p.Key == "nfs" || p.Key == "NFS" {
 			found = true
 		}
 	}
 	if !found {
-		keys := make([]string, 0, len(res.TopPorts))
-		for _, p := range res.TopPorts {
+		keys := make([]string, 0, len(res.TopServices))
+		for _, p := range res.TopServices {
 			keys = append(keys, p.Key)
 		}
-		t.Errorf("TopPorts %v omits the rolled-up port 2049", keys)
+		t.Errorf("TopServices %v omits the rolled-up port 2049", keys)
 	}
 	if total < 999000 {
-		t.Errorf("TopPorts total = %d, want >= 999000 (raw-only totals run orders of magnitude low)", total)
+		t.Errorf("TopServices total = %d, want >= 999000 (raw-only totals run orders of magnitude low)", total)
 	}
 }
 
@@ -155,13 +155,13 @@ func TestGetFlowStats_ProbeFilterKeepsRollups(t *testing.T) {
 	}
 	if err := db.Gorm().Create(&models.FlowSample{
 		Timestamp: now.Add(-30 * time.Minute), DeviceID: dev.ID, ProbeID: 7, Protocol: 6,
-		SrcAddr: "10.0.0.5", DstAddr: "8.8.8.8", DstPort: 443, Bytes: 100, Packets: 10,
+		SrcAddr: "10.0.0.5", DstAddr: "8.8.8.8", DstPort: 443, ServicePort: 443, Bytes: 100, Packets: 10,
 	}).Error; err != nil {
 		t.Fatalf("seed raw: %v", err)
 	}
 	if err := db.Gorm().Create(&models.FlowRollup{
 		Timestamp: now.Add(-23 * time.Hour), DeviceID: dev.ID, IntervalType: "5m",
-		SrcAddr: "10.0.0.6", DstAddr: "8.8.4.4", DstPort: 443, Protocol: 6,
+		SrcAddr: "10.0.0.6", DstAddr: "8.8.4.4", DstPort: 443, ServicePort: 443, Protocol: 6,
 		BytesSum: 5000, PacketsSum: 50, FlowCount: 9,
 	}).Error; err != nil {
 		t.Fatalf("seed rollup: %v", err)
@@ -199,7 +199,7 @@ func TestGetFlowStats_ProtocolCountNotCappedAtTen(t *testing.T) {
 	for i, p := range protos {
 		if err := db.Gorm().Create(&models.FlowSample{
 			Timestamp: now.Add(-30 * time.Minute), DeviceID: 1, Protocol: p,
-			SrcAddr: "10.0.0.5", DstAddr: "8.8.8.8", DstPort: uint16(1000 + i),
+			SrcAddr: "10.0.0.5", DstAddr: "8.8.8.8", DstPort: uint16(1000 + i), ServicePort: uint16(1000 + i),
 			Bytes: uint64(100 * (i + 1)), Packets: 1,
 		}).Error; err != nil {
 			t.Fatalf("seed proto %d: %v", p, err)
@@ -227,7 +227,7 @@ func TestFlowAddrFilter_WideCIDRDoesNotMatchNothing(t *testing.T) {
 	now := time.Now()
 	if err := db.Gorm().Create(&models.FlowSample{
 		Timestamp: now.Add(-30 * time.Minute), DeviceID: 1, Protocol: 6,
-		SrcAddr: "10.0.0.5", DstAddr: "8.8.8.8", DstPort: 443, Bytes: 100, Packets: 1,
+		SrcAddr: "10.0.0.5", DstAddr: "8.8.8.8", DstPort: 443, ServicePort: 443, Bytes: 100, Packets: 1,
 	}).Error; err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -319,8 +319,8 @@ func TestGetFlowStats_DegradedWhenRollupsFail(t *testing.T) {
 	if len(res.ByCategory) == 0 {
 		t.Error("ByCategory is empty on a degraded window")
 	}
-	if len(res.TopPorts) == 0 {
-		t.Error("TopPorts is empty on a degraded window")
+	if len(res.TopServices) == 0 {
+		t.Error("TopServices is empty on a degraded window")
 	}
 	if len(res.TopConversations) == 0 {
 		t.Error("TopConversations is empty on a degraded window")
@@ -348,14 +348,14 @@ func TestGetFlowStats_TopNFetchesBeyondTheDisplayCut(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		if err := db.Gorm().Create(&models.FlowSample{
 			Timestamp: now.Add(-20 * time.Minute), DeviceID: 1, Protocol: 6,
-			SrcAddr: fmt.Sprintf("10.1.0.%d", i+1), DstAddr: "8.8.8.8", DstPort: uint16(20000 + i),
+			SrcAddr: fmt.Sprintf("10.1.0.%d", i+1), DstAddr: "8.8.8.8", DstPort: uint16(20000 + i), ServicePort: uint16(20000 + i),
 			Bytes: 1000, Packets: 1,
 		}).Error; err != nil {
 			t.Fatalf("seed raw: %v", err)
 		}
 		if err := db.Gorm().Create(&models.FlowRollup{
 			Timestamp: now.Add(-20 * time.Hour), DeviceID: 1, IntervalType: "5m",
-			SrcAddr: fmt.Sprintf("10.2.0.%d", i+1), DstAddr: "8.8.4.4", DstPort: uint16(30000 + i), Protocol: 6,
+			SrcAddr: fmt.Sprintf("10.2.0.%d", i+1), DstAddr: "8.8.4.4", DstPort: uint16(30000 + i), ServicePort: uint16(30000 + i), Protocol: 6,
 			BytesSum: 1000, PacketsSum: 1, FlowCount: 1, SamplingRateAvg: 1,
 		}).Error; err != nil {
 			t.Fatalf("seed rollup: %v", err)
@@ -363,13 +363,13 @@ func TestGetFlowStats_TopNFetchesBeyondTheDisplayCut(t *testing.T) {
 	}
 	if err := db.Gorm().Create(&models.FlowSample{
 		Timestamp: now.Add(-20 * time.Minute), DeviceID: 1, Protocol: 6,
-		SrcAddr: "10.9.9.9", DstAddr: "8.8.8.8", DstPort: 9999, Bytes: 900, Packets: 1,
+		SrcAddr: "10.9.9.9", DstAddr: "8.8.8.8", DstPort: 9999, ServicePort: 9999, Bytes: 900, Packets: 1,
 	}).Error; err != nil {
 		t.Fatalf("seed raw #11: %v", err)
 	}
 	if err := db.Gorm().Create(&models.FlowRollup{
 		Timestamp: now.Add(-20 * time.Hour), DeviceID: 1, IntervalType: "5m",
-		SrcAddr: "10.9.9.9", DstAddr: "8.8.4.4", DstPort: 9999, Protocol: 6,
+		SrcAddr: "10.9.9.9", DstAddr: "8.8.4.4", DstPort: 9999, ServicePort: 9999, Protocol: 6,
 		BytesSum: 900, PacketsSum: 1, FlowCount: 1, SamplingRateAvg: 1,
 	}).Error; err != nil {
 		t.Fatalf("seed rollup #11: %v", err)
@@ -379,15 +379,15 @@ func TestGetFlowStats_TopNFetchesBeyondTheDisplayCut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetFlowStats: %v", err)
 	}
-	if len(res.TopPorts) == 0 || res.TopPorts[0].Key != "9999" || res.TopPorts[0].Count != 1800 {
-		t.Errorf("TopPorts[0] = %v, want 9999 with 1800 bytes (#11 on each side, #1 overall)", res.TopPorts)
+	if len(res.TopServices) == 0 || res.TopServices[0].Key != "9999" || res.TopServices[0].Count != 1800 {
+		t.Errorf("TopServices[0] = %v, want 9999 with 1800 bytes (#11 on each side, #1 overall)", res.TopServices)
 	}
 	if len(res.TopSources) == 0 || res.TopSources[0].Key != "10.9.9.9" || res.TopSources[0].Count != 1800 {
 		t.Errorf("TopSources[0] = %v, want 10.9.9.9 with 1800 bytes", res.TopSources)
 	}
-	if len(res.TopPorts) != 10 || len(res.TopSources) != 10 {
+	if len(res.TopServices) != 10 || len(res.TopSources) != 10 {
 		t.Errorf("display lists hold %d ports / %d sources; both must stay capped at 10",
-			len(res.TopPorts), len(res.TopSources))
+			len(res.TopServices), len(res.TopSources))
 	}
 }
 
@@ -401,7 +401,7 @@ func TestGetFlowStats_RawOnlyTopNStillShowsTen(t *testing.T) {
 		if err := db.Gorm().Create(&models.FlowSample{
 			Timestamp: now.Add(-10 * time.Minute), DeviceID: 1, Protocol: 6,
 			SrcAddr: fmt.Sprintf("10.3.0.%d", i+1), DstAddr: fmt.Sprintf("8.8.%d.8", i+1),
-			DstPort: uint16(40000 + i), Bytes: uint64(100 + i), Packets: 1,
+			DstPort: uint16(40000 + i), ServicePort: uint16(40000 + i), Bytes: uint64(100 + i), Packets: 1,
 		}).Error; err != nil {
 			t.Fatalf("seed: %v", err)
 		}
@@ -412,7 +412,7 @@ func TestGetFlowStats_RawOnlyTopNStillShowsTen(t *testing.T) {
 	}
 	for name, n := range map[string]int{
 		"TopSources": len(res.TopSources), "TopDestinations": len(res.TopDestinations),
-		"TopPorts": len(res.TopPorts), "TopConversations": len(res.TopConversations),
+		"TopServices": len(res.TopServices), "TopConversations": len(res.TopConversations),
 	} {
 		if n != 10 {
 			t.Errorf("%s has %d rows on the raw-only path, want 10", name, n)
