@@ -103,3 +103,25 @@ func TestGetFlowReclassStatus_StaleRunIsPending(t *testing.T) {
 		t.Errorf("status after a Reapply = %v, want pending with no rows", data)
 	}
 }
+
+// TestGetFlowReclassStatus_Rebuilding: once history is reclassified, a pending
+// summary rebuild is reported per tier — the daily walk first.
+func TestGetFlowReclassStatus_Rebuilding(t *testing.T) {
+	h, db := setupTestHandler(t)
+	for k, v := range map[string]string{
+		database.FlowReclassDoneRevKey:  "1",
+		"flow_summary_recompute_1d":     "1|2026-08-01T00:00:00Z",
+		"flow_summary_recompute_status": `{"rev":1,"tiers":{"1d":{"state":"rebuilding","remaining_buckets":30,"done_buckets":10,"buckets_per_cycle":2},"1h":{"state":"waiting"}}}`,
+	} {
+		if err := db.Gorm().Create(&models.SystemSetting{Key: k, Value: v}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, data := callHandler(t, h.GetFlowReclassStatus, "GET")
+	if data["phase"] != "rebuilding" || data["rebuild_tier"] != "daily" || data["percent"].(float64) != 25 {
+		t.Errorf("status = %v, want rebuilding the daily tier at 25%%", data)
+	}
+	if eta, _ := data["eta_hours"].(float64); eta < 1.2 || eta > 1.3 {
+		t.Errorf("eta_hours = %v, want 30 buckets / 2 per 5-minute cycle = 1.25 h", data["eta_hours"])
+	}
+}

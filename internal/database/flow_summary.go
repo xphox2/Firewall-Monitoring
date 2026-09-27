@@ -70,6 +70,10 @@ var flowSummaryMaxCycleDuration = 60 * time.Second
 // one-time cost and there is no hurry; starving the rest of the cycle is worse.
 var flowSummaryMaxDailyBucketsPerCycle = 2
 
+// flowSummaryDirtyHook is a test-only injection point that fails a tier's
+// dirty-bucket scan.
+var flowSummaryDirtyHook func(interval string) error
+
 // flowSummaryBucketHook is a test-only injection point (see summariseBucket).
 var flowSummaryBucketHook func(interval string, bucket time.Time) error
 
@@ -162,6 +166,9 @@ var flowSummaryTiers = []flowSummaryTier{
 // Returns true if it wrote anything.
 func (d *Database) RunFlowSummaryCycle() bool {
 	deadline := time.Now().Add(flowSummaryMaxCycleDuration)
+	// A reclassification that re-stamped rollups in place asks for its
+	// buckets to be recomputed (flow_summary_recompute.go).
+	d.consumeRecomputeRequest()
 
 	// Where the daily tier's reach ends. Everything at or below this instant
 	// belongs to the daily tier; the hourly tier must not claim it.
@@ -210,12 +217,14 @@ func (d *Database) RunFlowSummaryCycle() bool {
 	}
 
 	wrote := false
+	bounds := make(map[string]tierBounds, len(ordered))
 	for _, tier := range ordered {
 		floor := time.Time{}
 		if tier.interval != "1d" {
 			floor = dailyFloor
 		}
-		n, err := d.summariseTier(tier, deadline, floor)
+		n, b, err := d.summariseTier(tier, deadline, floor)
+		bounds[tier.interval] = b
 		if n > 0 {
 			log.Printf("Flow summary: wrote %d %s bucket(s)", n, tier.interval)
 			wrote = true
@@ -223,6 +232,13 @@ func (d *Database) RunFlowSummaryCycle() bool {
 		if err != nil {
 			log.Printf("Flow summary: %s tier: %v (will resume next cycle)", tier.interval, err)
 		}
+	}
+	// Recomputing after a reclassification runs only now, after BOTH tiers'
+	// routine work: run inside the daily tier it would spend the shared
+	// deadline before the hourly backfill, stalling the hourly fill marker and
+	// switching the summary read path off for the whole rebuild.
+	if n := d.runSummaryRecompute(ordered, bounds, deadline); n > 0 {
+		wrote = true
 	}
 	return wrote
 }
@@ -342,7 +358,24 @@ func (d *Database) setSummaryWatermark(interval string, id int64) {
 
 // summariseTier computes whatever this tier owes: first the buckets changed
 // since the last pass (correctness), then unvisited history (backfill).
-func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor time.Time) (int, error) {
+// tierBounds is what one tier's pass learned about its range, for the
+// recompute step that runs after both tiers (flow_summary_recompute.go).
+type tierBounds struct {
+	// valid is false when the pass failed before it knew its range; the
+	// recompute step then leaves the tier alone this cycle.
+	valid bool
+	// ownsNothing: the tier has no source data or owns no bucket.
+	ownsNothing        bool
+	ownedFrom, ownedTo time.Time
+	// caughtUp: the contiguous backfill has reached the tier's last owned
+	// bucket, so every bucket below ownedTo exists and may be recomputed.
+	caughtUp bool
+	// backfilled is how many buckets this pass's backfill ran — the daily
+	// tier's per-cycle cap is shared with the recompute step.
+	backfilled int
+}
+
+func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor time.Time) (int, tierBounds, error) {
 	// Capture the id ceiling BEFORE reading, so rows arriving mid-pass are picked
 	// up next time rather than being skipped.
 	//
@@ -355,7 +388,7 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 	var ceiling int64
 	if err := d.db.Session(&gorm.Session{}).Model(&models.FlowRollup{}).
 		Select("COALESCE(MAX(id),0)").Scan(&ceiling).Error; err != nil {
-		return 0, fmt.Errorf("id ceiling: %w", err)
+		return 0, tierBounds{}, fmt.Errorf("id ceiling: %w", err)
 	}
 	watermark := d.summaryWatermark(tier.interval)
 
@@ -403,14 +436,14 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 	// with a day-resolution copy for no reason.
 	oldest, newest, ok, err := d.tierTimeBounds(tier.rangeSources)
 	if err != nil {
-		return written, fmt.Errorf("tier bounds: %w", err)
+		return written, tierBounds{}, fmt.Errorf("tier bounds: %w", err)
 	}
 	if !ok {
 		// No source data for this tier yet. Still record that everything up to
 		// the ceiling has been seen: otherwise the first pass after data DOES
 		// appear starts its dirty scan from id 0.
 		d.setSummaryWatermark(tier.interval, ceiling)
-		return written, nil
+		return written, tierBounds{valid: true, ownsNothing: true}, nil
 	}
 	ownedFrom := tier.bucketOf(oldest)
 	// The lower tier's reach defines this one's start exactly — not merely a
@@ -434,7 +467,7 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 		}
 	}
 	if !ownedTo.After(ownedFrom) {
-		return written, nil
+		return written, tierBounds{valid: true, ownsNothing: true}, nil
 	}
 	owns := func(b time.Time) bool { return !b.Before(ownedFrom) && b.Before(ownedTo) }
 
@@ -469,7 +502,7 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 	if watermark > 0 {
 		dirty, err := d.dirtyBuckets(tier, watermark)
 		if err != nil {
-			return written, fmt.Errorf("dirty buckets: %w", err)
+			return written, tierBounds{}, fmt.Errorf("dirty buckets: %w", err)
 		}
 		for _, b := range dirty {
 			// A bucket outside this tier's range is not this tier's problem, but
@@ -486,6 +519,8 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 		}
 	}
 
+	var caughtUp bool
+	var backfilledN int
 	// ---- 2. backfill any history never visited ----
 	//
 	// Resume from a CONTIGUOUS fill marker, not from MAX(summary timestamp).
@@ -573,6 +608,8 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 		if newFilled.After(filled) {
 			d.setSummaryFillMarker(tier.interval, newFilled)
 		}
+		caughtUp = !newFilled.IsZero() && !newFilled.Add(tier.width).Before(ownedTo)
+		backfilledN = backfilled
 	}
 
 	// Advance the watermark when this pass SAW everything up to the ceiling — not
@@ -599,11 +636,16 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 	if watermark == 0 || (firstErr == nil && dirtyComplete) {
 		d.setSummaryWatermark(tier.interval, ceiling)
 	}
-	return written, firstErr
+	return written, tierBounds{valid: true, ownedFrom: ownedFrom, ownedTo: ownedTo, caughtUp: caughtUp, backfilled: backfilledN}, firstErr
 }
 
 // dirtyBuckets lists the buckets touched by rows newer than the watermark.
 func (d *Database) dirtyBuckets(tier flowSummaryTier, watermark int64) ([]time.Time, error) {
+	if flowSummaryDirtyHook != nil {
+		if err := flowSummaryDirtyHook(tier.interval); err != nil {
+			return nil, err
+		}
+	}
 	var stamps []time.Time
 	rows, err := d.db.Session(&gorm.Session{}).Model(&models.FlowRollup{}).
 		Where("interval_type IN ? AND id > ?", tier.sumSources, watermark).
