@@ -671,7 +671,19 @@ func (h *Handler) GetFlowStats(c *gin.Context) {
 		c.JSON(http.StatusOK, response.Success(nil))
 		return
 	}
+	hours, filter := parseFlowStatsFilter(c)
+	stats, err := h.buildFlowStats(db, hours, filter, database.FlowStatsOptions{})
+	if err != nil {
+		httputil.InternalError(c, "Failed to get flow stats", err)
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(stats))
+}
 
+// parseFlowStatsFilter reads the Flows page's window and filter row. Shared by
+// the synchronous endpoint and the stream so the two can never disagree about
+// what a query string means.
+func parseFlowStatsFilter(c *gin.Context) (int, database.FlowStatsFilter) {
 	hours := httputil.ParseHours(c)
 
 	// Build the same filter set the Flow Samples list honors, so the Flows
@@ -740,10 +752,15 @@ func (h *Handler) GetFlowStats(c *gin.Context) {
 	filter.SrcAddr = c.Query("src_addr")
 	filter.DstAddr = c.Query("dst_addr")
 
-	stats, err := db.GetFlowStats(hours, filter)
+	return hours, filter
+}
+
+// buildFlowStats runs the query and adds what both endpoints report alongside
+// it, so the stream's result carries exactly the synchronous response's data.
+func (h *Handler) buildFlowStats(db database.Store, hours int, filter database.FlowStatsFilter, opts database.FlowStatsOptions) (*database.FlowStatsResult, error) {
+	stats, err := db.GetFlowStatsOpts(hours, filter, opts)
 	if err != nil {
-		httputil.InternalError(c, "Failed to get flow stats", err)
-		return
+		return nil, err
 	}
 
 	// Dual-export visibility: devices whose last hour contains more than one
@@ -756,8 +773,7 @@ func (h *Handler) GetFlowStats(c *gin.Context) {
 	// cards with a "disabled" / source hint instead of hiding them silently.
 	stats.GeoEnabled = h.config.Server.GeoIPEnabled
 	stats.GeoSource = h.geoResolver.Source()
-
-	c.JSON(http.StatusOK, response.Success(stats))
+	return stats, nil
 }
 
 // GetFlowDetections returns recent sFlow detection-engine findings (good-vs-bad

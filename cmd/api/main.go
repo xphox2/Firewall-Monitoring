@@ -1096,6 +1096,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/alerts/:id", handler.GetAlert)
 		admin.GET("/api/alerts/:id/suggested-rule", handler.SuggestEventRuleForAlert)
 		admin.GET("/api/flows/stats", handler.GetFlowStats)
+		admin.GET("/api/flows/stats/stream", handler.GetFlowStatsStream)
 		admin.GET("/api/flows/detections", handler.GetFlowDetections)
 		admin.POST("/api/flows/detections/:id/ack", handler.AckFlowDetection)
 		admin.GET("/api/noc/stream", handler.GetNOCStream)

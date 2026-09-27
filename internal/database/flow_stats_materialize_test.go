@@ -250,3 +250,19 @@ func TestFlowStatsMaterialized_PanelsReadTheScopeTable(t *testing.T) {
 		t.Fatalf("%d creates, %d inserts; want 1 and 7 (one per day)", creates, inserts)
 	}
 }
+
+func TestFlowStatsLongBudget(t *testing.T) {
+	for _, tc := range []struct {
+		hours int
+		want  time.Duration
+	}{
+		{24, time.Minute + 3*time.Second},
+		{720, time.Minute + 90*time.Second},   // 30 d ≈ 25 s cold on production
+		{2160, time.Minute + 270*time.Second}, // 90 d ≈ 60 s
+		{8760, 15 * time.Minute},              // capped
+	} {
+		if got := FlowStatsLongBudget(tc.hours); got != tc.want {
+			t.Errorf("FlowStatsLongBudget(%d) = %v, want %v", tc.hours, got, tc.want)
+		}
+	}
+}

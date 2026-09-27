@@ -24,6 +24,14 @@ GB, about fourteen panels, one 20 s budget.
 - **A partly read window is never reported.** If the time allowance runs out
   part-way, every affected panel is marked partial instead of showing some of
   the days under the full window's label.
+- **New `GET /admin/api/flows/stats/stream`** (Server-Sent Events): the same
+  query as `/flows/stats`, reporting each step (`Reading day 12 of 30`, then each
+  panel) and ending with exactly the synchronous response. A long filtered
+  report gets an allowance scaled to its window (a minute plus three seconds a
+  day, at most fifteen minutes) instead of the synchronous endpoint's 20 s. At
+  most two such long reports run at once; a third is told to try again shortly.
+  The default Flows view is never held back by that limit. `/flows/stats` keeps
+  its 20 s budget and reports honestly when a cold long report does not fit.
 
 ## [0.11.259] - 2026-09-26
 
