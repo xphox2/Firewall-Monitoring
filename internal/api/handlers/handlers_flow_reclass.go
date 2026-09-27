@@ -41,9 +41,11 @@ func flowReclassViewOf(db database.Store) flowReclassView {
 	switch {
 	case v.DoneRev >= v.Target && (v.Phase == "" || v.Phase == "done"):
 		v.Phase, v.Percent = "done", 100
-	case v.DoneRev < v.Target && (v.Phase == "" || v.Phase == "done"):
-		// Due, but the poller has not written progress for this run yet.
-		v.Phase, v.Rows, v.Started, v.Finished, v.VacuumHint = "pending", 0, nil, nil, false
+	case v.DoneRev < v.Target && (v.Phase == "" || v.Phase == "done" || st.Rev != v.Target):
+		// Due, but the poller has not written progress for THIS revision yet
+		// (right after a Reapply the last status is the previous run's).
+		v.Phase, v.Rows, v.Started, v.Finished, v.VacuumHint, v.PausedReason = "pending", 0, nil, nil, false, ""
+		v.Incremental = false
 	}
 	if v.Phase != "done" && v.Estimate > 0 {
 		v.Percent = min(99, float64(v.Rows)*100/float64(v.Estimate))

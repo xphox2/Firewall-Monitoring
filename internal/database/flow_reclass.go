@@ -126,6 +126,9 @@ type reclassState struct {
 
 // FlowReclassStatus is what the status endpoint and the pages show.
 type FlowReclassStatus struct {
+	// Rev is the revision the run that wrote this status works on; a status
+	// of an older revision says nothing about the current target.
+	Rev          uint16     `json:"rev"`
 	Phase        string     `json:"phase"` // reclassifying, paused, waiting, done
 	Table        string     `json:"table,omitempty"`
 	Rows         int64      `json:"rows"`
@@ -233,7 +236,7 @@ func (d *Database) setReclassSetting(key, value string) error {
 
 func (d *Database) writeReclassStatus(st reclassState, phase, reason string, finished bool) {
 	s := FlowReclassStatus{
-		Phase: phase, Rows: st.Rows, Updated: st.Updated, Estimate: st.Estimate,
+		Rev: st.Rev, Phase: phase, Rows: st.Rows, Updated: st.Updated, Estimate: st.Estimate,
 		Incremental: st.Incremental, PausedReason: reason, UpdatedAt: time.Now().UTC(),
 	}
 	if st.Phase == reclassTableSamples || st.Phase == reclassTableRollups {

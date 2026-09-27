@@ -83,3 +83,23 @@ func TestFlowIngest_RevisionZeroLeavesARearmMark(t *testing.T) {
 		t.Error("the mark flag was not set after a successful write")
 	}
 }
+
+// TestGetFlowReclassStatus_StaleRunIsPending: right after a Reapply the last
+// status belongs to the previous revision's run; showing its percentage would
+// claim progress on a run that has not started.
+func TestGetFlowReclassStatus_StaleRunIsPending(t *testing.T) {
+	h, db := setupTestHandler(t)
+	if err := db.Gorm().Create(&models.SystemSetting{Key: database.FlowReclassStatusKey,
+		Value: `{"rev":1,"phase":"reclassifying","rows":42,"estimate":127}`}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, data := callHandler(t, h.GetFlowReclassStatus, "GET"); data["phase"] != "reclassifying" {
+		t.Fatalf("the current run's status = %v, want reclassifying", data)
+	}
+	if _, err := db.BumpFlowReclassTargetRev(); err != nil {
+		t.Fatal(err)
+	}
+	if _, data := callHandler(t, h.GetFlowReclassStatus, "GET"); data["phase"] != "pending" || data["rows"].(float64) != 0 {
+		t.Errorf("status after a Reapply = %v, want pending with no rows", data)
+	}
+}
