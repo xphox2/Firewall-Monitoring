@@ -42,6 +42,10 @@ its 401 GB spread across client ports.
   upgrading the API. `class_rev` records which classification a row was made
   under, and is used by the history reclassification to come.
 
+### Fixed
+- A long report on SQLite could carry on after a cancel. A day's read is now
+  never started once the request is cancelled.
+
 ## [0.11.262] - 2026-09-27
 
 ### Fixed — Flows panels rank by traffic, and top-10 lists see past the 10th row

@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -181,5 +182,26 @@ func TestMarkFlowSummaryServiceSince(t *testing.T) {
 	}
 	if v2, _ := d.GetSettingValue(flowSummaryServiceSinceKey); v2 != v {
 		t.Errorf("a re-run moved the boundary from %s to %s", v, v2)
+	}
+}
+
+// TestFlowStatsBudget_DegradedWinsOverPartial: a panel both partial for its own
+// reason and fallen back to the last hour is reported Degraded only, so its
+// badge cannot claim "since <date>" coverage it does not have.
+func TestFlowStatsBudget_DegradedWinsOverPartial(t *testing.T) {
+	b := newFlowStatsBudget(context.Background(), time.Minute)
+	b.partial("top_services", "since 2026-09-27 only")
+	b.partial("top_asns", "since 2026-09-27 only")
+	b.skip("top_services")
+	res := &FlowStatsResult{}
+	b.stamp(res)
+	if len(res.PartialBlocks) != 1 || res.PartialBlocks[0] != "top_asns" {
+		t.Errorf("PartialBlocks = %v, want only top_asns", res.PartialBlocks)
+	}
+	if _, ok := res.PartialReasons["top_services"]; ok {
+		t.Error("a degraded panel kept its partial reason")
+	}
+	if !res.Degraded {
+		t.Error("the skipped panel did not mark the result Degraded")
 	}
 }

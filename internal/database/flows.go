@@ -537,12 +537,21 @@ func (b *flowStatsBudget) partial(block, reason string) {
 func (b *flowStatsBudget) stamp(result *FlowStatsResult) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if len(b.partialBlocks) > 0 {
-		result.PartialBlocks = append(result.PartialBlocks, b.partialBlocks...)
-		result.PartialReasons = make(map[string]string, len(b.partialReasons))
-		for k, v := range b.partialReasons {
-			result.PartialReasons[k] = v
+	// A panel that also fell back to the last hour is Degraded, and that is
+	// what its badge must say; its partial reason would understate the loss.
+	fellBack := make(map[string]bool, len(b.blocks))
+	for _, blk := range b.blocks {
+		fellBack[blk] = true
+	}
+	for _, blk := range b.partialBlocks {
+		if fellBack[blk] {
+			continue
 		}
+		if result.PartialReasons == nil {
+			result.PartialReasons = map[string]string{}
+		}
+		result.PartialBlocks = append(result.PartialBlocks, blk)
+		result.PartialReasons[blk] = b.partialReasons[blk]
 	}
 	// Degraded means a panel actually lost data — a query failed, or one was
 	// skipped because the allowance had run out. Do NOT key this off the
