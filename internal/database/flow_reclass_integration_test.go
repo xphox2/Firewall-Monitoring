@@ -57,14 +57,16 @@ func TestPostgresFlowReclass_RealisticVolume(t *testing.T) {
 
 	// The slice UPDATE must be a bounded index range scan on the real indexes.
 	var plan []string
-	if err := d.db.Raw(`EXPLAIN UPDATE flow_rollups AS r SET direction = v.d, service_port = v.s, class_rev = 1
+	if err := d.db.Raw(`EXPLAIN (ANALYZE, BUFFERS) UPDATE flow_rollups AS r SET direction = v.d, service_port = v.s, class_rev = 1
 		FROM unnest('{3,6,9}'::bigint[], '{1,2,3}'::smallint[], '{443,443,0}'::integer[]) AS v(id, d, s)
 		WHERE r.id = v.id AND r.id >= 3 AND r.id <= 9 AND r.class_rev < 1`).Scan(&plan).Error; err != nil {
 		t.Fatalf("explain: %v", err)
 	}
-	if joined := strings.Join(plan, "\n"); strings.Contains(joined, "Seq Scan on flow_rollups") {
+	joined := strings.Join(plan, "\n")
+	if strings.Contains(joined, "Seq Scan on flow_rollups") {
 		t.Errorf("the slice UPDATE plans a sequential scan of flow_rollups:\n%s", joined)
 	}
+	t.Logf("slice UPDATE plan:\n%s", joined)
 
 	nets := ownNets
 	setFor := func(rev uint16) (*classify.InternalSet, error) { return classify.NewInternalSet(nets, rev), nil }
@@ -108,6 +110,9 @@ func TestPostgresFlowReclass_RealisticVolume(t *testing.T) {
 		t.Fatalf("the run did not complete in %d steps: %+v", steps, d.GetFlowReclassStatus())
 	}
 	st := d.GetFlowReclassStatus()
+	if st.Estimate == 0 {
+		t.Error("the run's row estimate is 0 — the partitioned flow_samples leaves were not summed")
+	}
 	t.Logf("reclassified %d rows in %s over %d steps (%.0f rows/s, including the concurrent promotion)",
 		st.Updated, elapsed.Round(time.Millisecond), steps+1, float64(st.Updated)/elapsed.Seconds())
 

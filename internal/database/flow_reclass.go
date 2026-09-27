@@ -73,6 +73,8 @@ var (
 	reclassWriteFloor = 1000
 	// reclassInterSliceSleep paces full slices beside live ingest.
 	reclassInterSliceSleep = 200 * time.Millisecond
+	// reclassVerifyRange is the id span one verification statement counts.
+	reclassVerifyRange int64 = 20_000_000
 	// reclassMaxVerifyRounds bounds verify -> re-pass -> verify per step: each
 	// verification is a whole-table count under the maintenance lock.
 	reclassMaxVerifyRounds = 2
@@ -117,11 +119,15 @@ type reclassState struct {
 	SamplesMaxLocked int64      `json:"samples_max_locked"`
 	MinRollupTS      *time.Time `json:"min_rollup_ts,omitempty"`
 	Incremental      bool       `json:"incremental"`
-	Started          time.Time  `json:"started"`
-	Rows             int64      `json:"rows"`
-	Updated          int64      `json:"updated"`
-	Estimate         int64      `json:"estimate"`
-	Window           int64      `json:"window"`
+	// RePass: the current table walk is a re-pass seeded by verification, so
+	// it returns straight to verification — a samples re-pass must not fall
+	// through into another walk of flow_rollups.
+	RePass   bool      `json:"repass"`
+	Started  time.Time `json:"started"`
+	Rows     int64     `json:"rows"`
+	Updated  int64     `json:"updated"`
+	Estimate int64     `json:"estimate"`
+	Window   int64     `json:"window"`
 }
 
 // FlowReclassStatus is what the status endpoint and the pages show.
@@ -391,44 +397,51 @@ type reclassUpdate struct {
 // whatever the unnest estimate. A batch that times out is split in half down
 // to reclassWriteFloor; a lock timeout or deadlock is retried as retention's
 // batch delete does.
-func (d *Database) reclassWrite(table string, rev uint16, ups []reclassUpdate) error {
+func (d *Database) reclassWrite(table string, rev uint16, ups []reclassUpdate) (int64, error) {
 	if len(ups) == 0 {
-		return nil
+		return 0, nil
 	}
 	for retries := 0; ; retries++ {
-		err := d.reclassWriteOnce(table, rev, ups)
+		n, err := d.reclassWriteOnce(table, rev, ups)
 		switch {
 		case err == nil:
-			return nil
+			return n, nil
 		case sqlState(err) == "57014" && len(ups) > reclassWriteFloor:
 			mid := len(ups) / 2
 			log.Printf("Flow reclassification: a %d-row write to %s timed out; splitting it", len(ups), table)
-			if e := d.reclassWrite(table, rev, ups[:mid]); e != nil {
-				return e
+			a, e := d.reclassWrite(table, rev, ups[:mid])
+			if e != nil {
+				return a, e
 			}
-			return d.reclassWrite(table, rev, ups[mid:])
+			b, e := d.reclassWrite(table, rev, ups[mid:])
+			return a + b, e
 		case lockRetryable(err) && retries < reclassLockRetries:
 			reclassSleep(reclassLockRetrySleep * time.Duration(1+retries%5))
 			continue
 		default:
-			return err
+			return 0, err
 		}
 	}
 }
 
-func (d *Database) reclassWriteOnce(table string, rev uint16, ups []reclassUpdate) error {
+// reclassWriteOnce returns how many rows it actually re-stamped: a row that a
+// promotion or retention deleted since the read is not counted.
+func (d *Database) reclassWriteOnce(table string, rev uint16, ups []reclassUpdate) (int64, error) {
 	if reclassWriteHook != nil {
 		if err := reclassWriteHook(table, len(ups)); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	return d.db.Transaction(func(tx *gorm.DB) error {
+	var affected int64
+	err := d.db.Transaction(func(tx *gorm.DB) error {
 		if !d.dialect.IsPostgres() {
 			for _, u := range ups {
-				if err := tx.Exec("UPDATE "+table+" SET direction = ?, service_port = ?, class_rev = ? WHERE id = ? AND class_rev < ?",
-					u.dir, u.svc, rev, u.id, rev).Error; err != nil {
-					return err
+				res := tx.Exec("UPDATE "+table+" SET direction = ?, service_port = ?, class_rev = ? WHERE id = ? AND class_rev < ?",
+					u.dir, u.svc, rev, u.id, rev)
+				if res.Error != nil {
+					return res.Error
 				}
+				affected += res.RowsAffected
 			}
 			return nil
 		}
@@ -457,11 +470,17 @@ func (d *Database) reclassWriteOnce(table string, rev uint16, ups []reclassUpdat
 		ids.WriteByte('}')
 		dirs.WriteByte('}')
 		svcs.WriteByte('}')
-		return tx.Exec("UPDATE "+table+` AS r SET direction = v.d, service_port = v.s, class_rev = ?
+		res := tx.Exec("UPDATE "+table+` AS r SET direction = v.d, service_port = v.s, class_rev = ?
 			FROM unnest(?::bigint[], ?::smallint[], ?::integer[]) AS v(id, d, s)
 			WHERE r.id = v.id AND r.id >= ? AND r.id <= ? AND r.class_rev < ?`,
-			rev, ids.String(), dirs.String(), svcs.String(), lo, hi, rev).Error
+			rev, ids.String(), dirs.String(), svcs.String(), lo, hi, rev)
+		affected = res.RowsAffected
+		return res.Error
 	})
+	if err != nil {
+		return 0, err
+	}
+	return affected, nil
 }
 
 // reclassClassify computes the new classification of a slice with the ingest
@@ -511,17 +530,33 @@ func (d *Database) reclassVerify(table string, floor int64, rev uint16, timeout 
 			}
 		}
 		res.acquired = true
-		var agg struct {
-			N    int64
-			MinI int64
-			MaxI int64
-		}
-		if e := tx.Table(table).Select("COUNT(*) AS n, COALESCE(MIN(id), 0) AS min_i, COALESCE(MAX(id), 0) AS max_i").
-			Where("id > ? AND class_rev < ?", floor, rev).Scan(&agg).Error; e != nil {
+		if e := tx.Table(table).Select("COALESCE(MAX(id), 0)").Scan(&res.tableMax).Error; e != nil {
 			return e
 		}
-		res.count, res.minID, res.maxID = agg.N, agg.MinI, agg.MaxI
-		return tx.Table(table).Select("COALESCE(MAX(id), 0)").Scan(&res.tableMax).Error
+		// Counted in primary-key ranges, each its own statement under the
+		// timeout: a slow disk then costs one range, not one statement over
+		// the whole table. The lock is held for the whole transaction, so no
+		// promotion can slip in between ranges.
+		for lo := floor; lo < res.tableMax; lo += reclassVerifyRange {
+			var agg struct {
+				N    int64
+				MinI int64
+				MaxI int64
+			}
+			if e := tx.Table(table).Select("COUNT(*) AS n, COALESCE(MIN(id), 0) AS min_i, COALESCE(MAX(id), 0) AS max_i").
+				Where("id > ? AND id <= ? AND class_rev < ?", lo, lo+reclassVerifyRange, rev).Scan(&agg).Error; e != nil {
+				return e
+			}
+			if agg.N == 0 {
+				continue
+			}
+			if res.count == 0 || agg.MinI < res.minID {
+				res.minID = agg.MinI
+			}
+			res.maxID = max(res.maxID, agg.MaxI)
+			res.count += agg.N
+		}
+		return nil
 	})
 	return res, err
 }
@@ -570,6 +605,7 @@ func (d *Database) RunFlowReclassStep(setFor func(rev uint16) (*classify.Interna
 
 	set, err := setFor(st.Rev)
 	if err != nil {
+		d.writeReclassStatus(st, "paused", "the internal networks could not be loaded", false)
 		return fmt.Errorf("flow reclassification: load internal networks: %w", err)
 	}
 	if st.Window == 0 {
@@ -646,11 +682,12 @@ func (d *Database) RunFlowReclassStep(setFor func(rev uint16) (*classify.Interna
 			}
 			return fmt.Errorf("flow reclassification: read %s: %w", table, err)
 		}
-		if err := d.reclassWrite(table, st.Rev, reclassClassify(table, set, rows)); err != nil {
+		written, err := d.reclassWrite(table, st.Rev, reclassClassify(table, set, rows))
+		if err != nil {
 			return fmt.Errorf("flow reclassification: write %s: %w", table, err)
 		}
 		st.Rows += int64(len(rows))
-		st.Updated += int64(len(rows))
+		st.Updated += written
 		if table == reclassTableRollups {
 			for _, r := range rows {
 				if st.MinRollupTS == nil || r.Timestamp.Before(*st.MinRollupTS) {
@@ -703,12 +740,11 @@ func (d *Database) newReclassRun(rev uint16, incremental bool) reclassState {
 }
 
 func (d *Database) reclassNextPhase(st *reclassState) {
-	switch st.Phase {
-	case reclassTableSamples:
+	if st.Phase == reclassTableSamples && !st.RePass {
 		st.Phase, st.Cursor, st.PassMax = reclassTableRollups, st.Floor, 0
-	default:
-		st.Phase, st.Cursor, st.PassMax = reclassPhaseVerify, 0, 0
+		return
 	}
+	st.Phase, st.Cursor, st.PassMax, st.RePass = reclassPhaseVerify, 0, 0, false
 }
 
 // reclassVerifyStep runs the locked counts, samples then rollups. A non-zero
@@ -726,6 +762,9 @@ func (d *Database) reclassVerifyStep(st *reclassState) (done, yield bool, err er
 		n := d.GetIntSetting(flowReclassVerifyTimeoutsKey, 0) + 1
 		_ = d.setReclassSetting(flowReclassVerifyTimeoutsKey, strconv.Itoa(n))
 		log.Printf("Flow reclassification: verifying %s timed out (%s, %d in a row); retrying next tick", table, timeout, n)
+		if n >= 5 {
+			d.writeReclassStatus(*st, "paused", fmt.Sprintf("the final check of %s keeps timing out (%d times) — the table may need VACUUM", table, n), false)
+		}
 		return false, true, nil
 	}
 
@@ -737,17 +776,18 @@ func (d *Database) reclassVerifyStep(st *reclassState) (done, yield bool, err er
 		return false, false, err
 	}
 	if !sv.acquired {
-		d.writeReclassStatus(*st, "reclassifying", "", false)
+		d.writeReclassStatus(*st, "waiting", "for maintenance (retention cleanup or rollup) to finish", false)
 		return false, true, nil
 	}
 	if sv.count > 0 {
 		stalled := sv.maxID > st.SamplesPassMax
-		st.Phase, st.Cursor, st.PassMax = reclassTableSamples, sv.minID-1, 0
+		st.Phase, st.Cursor, st.PassMax, st.RePass = reclassTableSamples, sv.minID-1, 0, true
 		if stalled {
-			// Rows newer than the walk still carry an old revision: an API is
-			// stamping without an internal-network set. Re-walk next tick
-			// rather than every few seconds.
-			d.writeReclassStatus(*st, "waiting", "the API has no internal-network set loaded", false)
+			// Rows newer than the walk still carry an older revision: an API
+			// instance is stamping without its networks loaded (or has not
+			// picked up a Reapply yet). Re-walk next tick rather than every few
+			// seconds.
+			d.writeReclassStatus(*st, "waiting", "new flows still carry an older revision — an API instance has not loaded its networks yet", false)
 			return false, true, nil
 		}
 		return false, false, nil
@@ -762,11 +802,11 @@ func (d *Database) reclassVerifyStep(st *reclassState) (done, yield bool, err er
 		return false, false, err
 	}
 	if !rv.acquired {
-		d.writeReclassStatus(*st, "reclassifying", "", false)
+		d.writeReclassStatus(*st, "waiting", "for maintenance (retention cleanup or rollup) to finish", false)
 		return false, true, nil
 	}
 	if rv.count > 0 {
-		st.Phase, st.Cursor, st.PassMax = reclassTableRollups, rv.minID-1, 0
+		st.Phase, st.Cursor, st.PassMax, st.RePass = reclassTableRollups, rv.minID-1, 0, true
 		return false, false, nil
 	}
 	return true, false, d.completeReclassRun(*st, rv.tableMax)

@@ -25,9 +25,12 @@ rule. On production that is about 127 million of 141 million rolled-up rows.
     from the destination, so a server's older replies still show no service.
     Rows recorded since v0.11.263 keep their exact value.
   - A run ends only when a count taken under the maintenance lock finds no row
-    left on the old rule. That count scans each table and holds the lock for
-    about 1–5 minutes; the retention cleanup waits for it rather than being
-    skipped.
+    left on the old rule. The count reads each table in id ranges. Its length
+    on production's disk has not been measured yet, but expect minutes.
+    - While it holds the lock, rollup ticks are skipped (and caught up
+      afterwards), and the retention cleanup waits for it.
+    - If the check keeps timing out, the job pauses and says so, suggesting a
+      VACUUM of the table.
 - **Reapply to history** (Settings → Detection → Flow Classification,
   admin-only) re-runs the job after you change your networks. Press it after
   adding your public ranges; a run already in progress restarts with them. The
@@ -36,6 +39,9 @@ rule. On production that is about 127 million of 141 million rolled-up rows.
 - If flows were stamped before the API loaded its network list (revision 0),
   the job re-checks recent history on its own. It is triggered by a mark the
   API leaves and by a check of the newest rows of both tables.
+  - With several API instances (`ALLOW_MULTI_API`), a Reapply refreshes only
+    the instance that handled it. The others pick it up within 15 minutes, and
+    until then the job reports "waiting".
 - **Disk space:** rewriting most of `flow_rollups` leaves dead rows until they
   are vacuumed. Expect the table to grow noticeably, up to its current size
   again, while the job runs. After it finishes (the card says so), run

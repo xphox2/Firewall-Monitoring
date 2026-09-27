@@ -18,10 +18,14 @@ func reclassFixture(t *testing.T) *Database {
 	t.Helper()
 	d := NewDatabaseForTesting(t)
 	oldLimit, oldWin, oldMax, oldFloor := reclassSliceLimit, reclassInitialWindow, reclassMaxWindow, reclassWriteFloor
-	oldSleep := reclassSleep
+	oldSleep, oldRange := reclassSleep, reclassVerifyRange
 	reclassSliceLimit, reclassInitialWindow, reclassMaxWindow, reclassWriteFloor = 3, 8, 64, 1
+	// Verification counts in id ranges; a tiny range makes every test cross
+	// many of them.
+	reclassVerifyRange = 5
 	reclassSleep = func(time.Duration) {}
 	t.Cleanup(func() {
+		reclassVerifyRange = oldRange
 		reclassSliceLimit, reclassInitialWindow, reclassMaxWindow, reclassWriteFloor = oldLimit, oldWin, oldMax, oldFloor
 		reclassSleep = oldSleep
 		reclassReadHook, reclassWriteHook, reclassVerifyHook, reclassRearmReadHook = nil, nil, nil, nil
@@ -407,6 +411,13 @@ func TestFlowReclass_StallWhileTheAPIStampsRevisionZero(t *testing.T) {
 		}
 	}
 	sawWaiting := false
+	rollupsFromStart := 0
+	reclassReadHook = func(table string, lo, hi int64) error {
+		if table == reclassTableRollups && lo == 0 {
+			rollupsFromStart++
+		}
+		return nil
+	}
 	for i := 0; i < 30; i++ {
 		if err := d.RunFlowReclassStep(setForTest, time.Minute); err != nil {
 			t.Fatal(err)
@@ -422,6 +433,67 @@ func TestFlowReclass_StallWhileTheAPIStampsRevisionZero(t *testing.T) {
 		t.Error("the job never reported waiting while revision-0 rows kept arriving")
 	}
 	assertAllReclassified(t, d, 1)
+	// A samples re-pass returns to verification; it must not fall through
+	// into another walk of flow_rollups from the start (138M rows in
+	// production, on every tick an API stamps revision 0).
+	if rollupsFromStart != 1 {
+		t.Errorf("flow_rollups was walked from the start %d times, want once", rollupsFromStart)
+	}
+}
+
+// TestFlowReclass_UpdatedCountsRowsActuallyRestamped: a row deleted between
+// the read and the write (a promotion, retention) is not counted.
+func TestFlowReclass_UpdatedCountsRowsActuallyRestamped(t *testing.T) {
+	d := reclassFixture(t)
+	seedReclass(t, d, 3)
+	deleted := false
+	reclassWriteHook = func(table string, n int) error {
+		if !deleted && table == reclassTableRollups {
+			deleted = true
+			var first models.FlowRollup
+			d.Gorm().Order("id").First(&first)
+			d.Gorm().Delete(&first)
+		}
+		return nil
+	}
+	runReclassToDone(t, d, 20)
+	if st := d.GetFlowReclassStatus(); st.Updated != 5 {
+		t.Errorf("updated = %d, want 5 (6 rows read, 1 deleted before its write)", st.Updated)
+	}
+}
+
+// TestFlowReclass_StaleDiskMetricDoesNotPause: a disk figure older than the
+// poller's cadence says nothing about now; the job proceeds.
+func TestFlowReclass_StaleDiskMetricDoesNotPause(t *testing.T) {
+	d := reclassFixture(t)
+	seedReclass(t, d, 2)
+	full := 95.0
+	if err := d.Gorm().Create(&models.ServerMetric{Timestamp: time.Now().Add(-time.Hour), DataDiskPercent: &full}).Error; err != nil {
+		t.Fatal(err)
+	}
+	runReclassToDone(t, d, 20)
+	assertAllReclassified(t, d, 1)
+}
+
+// TestBumpFlowReclassTargetRev_Concurrent: concurrent Reapply presses each
+// count — the compare-and-swap never loses one.
+func TestBumpFlowReclassTargetRev_Concurrent(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	errs := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			_, err := d.BumpFlowReclassTargetRev()
+			errs <- err
+		}()
+	}
+	for i := 0; i < 2; i++ {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := d.FlowReclassTargetRev(); got != 3 {
+		t.Errorf("target after two concurrent bumps = %d, want 3", got)
+	}
 }
 
 // TestBumpFlowReclassTargetRev: absent and garbage values count as 1; two
@@ -468,5 +540,31 @@ func TestFlowReclass_RearmMarkWrittenDuringConsumeSurvives(t *testing.T) {
 	}
 	if got, ok := d.GetSettingValue(FlowReclassRearmKey); !ok || got != newer {
 		t.Errorf("mark after consumption = %q (%v), want the newer mark %q to survive", got, ok, newer)
+	}
+}
+
+// TestReclassVerify_ChunkedCountAcrossRanges: the locked count runs in id
+// ranges; the count, lowest and highest old-revision ids must span them all —
+// the re-pass starts from the lowest.
+func TestReclassVerify_ChunkedCountAcrossRanges(t *testing.T) {
+	d := reclassFixture(t) // verification range 5
+	for _, r := range []struct {
+		id  uint
+		rev uint16
+	}{{3, 1}, {12, 0}, {27, 1}, {41, 0}, {44, 0}, {58, 1}} {
+		if err := d.Gorm().Create(&models.FlowRollup{ID: r.id, ClassRev: r.rev, Timestamp: time.Now().Add(-48 * time.Hour),
+			DeviceID: 1, IntervalType: "1h", Protocol: 6, SrcAddr: "10.0.0.1", DstAddr: "8.8.8.8", DstPort: 443}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := d.reclassVerify(reclassTableRollups, 0, 1, "300s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.acquired || res.count != 3 || res.minID != 12 || res.maxID != 44 || res.tableMax != 58 {
+		t.Errorf("verify = %+v, want count 3, min 12, max 44, table max 58", res)
+	}
+	if res, _ := d.reclassVerify(reclassTableRollups, 20, 1, "300s"); res.count != 2 || res.minID != 41 {
+		t.Errorf("verify above floor 20 = %+v, want count 2 from id 41", res)
 	}
 }
