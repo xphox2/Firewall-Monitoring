@@ -531,3 +531,7 @@ commit. When a rule chooses between two sides, seed the sides with different cou
 ## 2026-09-28 — Gate the commit on QA with `&&`, and prove the baseline green before mutating
 - A `make … > log; echo exit; …; git commit && git push` chain pushed a RED test to a feature branch: `;` does not stop on failure. Always `make qa-targets && git commit … && git push`, and print the failures in the `||` branch.
 - The mutation script reported every mutation KILLED while the unmutated tree was already red (a mis-bounded test slice), so "killed" meant nothing. The script now runs the suite first and aborts on a red baseline. Never read mutation results without a green baseline.
+
+## 2026-09-28 — A guardrail that pins a line does not prove the behaviour; check event ORDER in a browser
+- Round-4 "any open dialog owns Esc" (a registry check) was dead code: the modal's Esc handler runs in the CAPTURE phase and empties the registry before the bubble-phase handler reads it. The substring test passed; the behaviour never held. Fix = `e.defaultPrevented` (the modal calls preventDefault).
+- For any fix that depends on listener order, phase, or timing, verify it in the browser (positive case AND a control) before claiming it — a source-text guardrail only prevents the line from being deleted.
