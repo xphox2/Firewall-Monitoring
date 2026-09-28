@@ -251,6 +251,7 @@ type TelemetryReadStore interface {
 	// chart-ordered for its dashboard/device/report consumers.
 	GetRecentSystemStatus(deviceID uint, hours, limit int) ([]models.SystemStatus, error)
 	GetSystemStatusBuckets(deviceID uint, rangeStr string) ([]SystemStatusBucket, error)
+	GetSystemStatusBucketsWindow(deviceID uint, from, to time.Time) ([]SystemStatusBucket, error)
 	GetSecurityStatsHistory(deviceID uint, hours int) ([]models.SecurityStats, error)
 	GetPingResultHistory(deviceID uint, hours int) ([]models.PingResult, error)
 	GetPingStatsByTarget(deviceID uint, targetIP string) (*models.PingStats, error)

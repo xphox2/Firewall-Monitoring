@@ -281,6 +281,60 @@ func (h *Handler) GetPublicInterfaces(c *gin.Context) {
 // derived cutoff was an arbitrary instant rather than the requested window.
 const maxPublicChartRangeHours = 8760
 
+// Zoom windows on the public charts (v0.11.270).
+const (
+	publicZoomMinWindow = 5 * time.Minute
+	publicZoomMaxPoints = 180 // the numeric-range budget
+)
+
+// errPublicZoomEmpty reports a zoom window that is empty once clamped.
+var errPublicZoomEmpty = errors.New("zoom window is empty")
+
+// publicZoomWindow reads a drag-to-zoom window (?from=&to=, epoch ms). ok is
+// false when none is given or it does not parse, and the caller serves its
+// preset instead: the public page stays lenient where the admin endpoint
+// answers 400. The window is clamped to now and to the public lookback cap
+// (a drag touching the left edge of the 1-year chart lands past the cap
+// minutes later); a window under publicZoomMinWindow is widened backwards, so
+// it never ends in the future. A window that is empty after clamping is an
+// error.
+func publicZoomWindow(c *gin.Context, now time.Time) (from, to time.Time, ok bool, err error) {
+	fromMs, errF := strconv.ParseInt(c.Query("from"), 10, 64)
+	toMs, errT := strconv.ParseInt(c.Query("to"), 10, 64)
+	if errF != nil || errT != nil || fromMs <= 0 || toMs <= 0 {
+		return time.Time{}, time.Time{}, false, nil
+	}
+	from, to = time.UnixMilli(fromMs), time.UnixMilli(toMs)
+	if to.After(now) {
+		to = now
+	}
+	if floor := now.Add(-maxPublicChartRangeHours * time.Hour); from.Before(floor) {
+		from = floor
+	}
+	if !to.After(from) {
+		return time.Time{}, time.Time{}, true, errPublicZoomEmpty
+	}
+	if to.Sub(from) < publicZoomMinWindow {
+		from = to.Add(-publicZoomMinWindow)
+	}
+	return from, to, true, nil
+}
+
+// publicLabelFormat picks the interface chart's label format for a zoom
+// window by its span.
+func publicLabelFormat(span time.Duration) string {
+	switch {
+	case span < time.Hour:
+		return "15:04:05"
+	case span >= 60*24*time.Hour:
+		return "01-02"
+	case span >= 7*24*time.Hour:
+		return "01-02 15:00"
+	default:
+		return "15:04"
+	}
+}
+
 // publicChartLookback resolves the `range` query value to a lookback duration
 // and a downsampling point budget. It is pure — the caller subtracts the
 // duration from now — so the whole range table is testable without a clock or
@@ -385,6 +439,16 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 
 	lookback, maxPoints := publicChartLookback(rangeStr)
 	now := time.Now()
+	from, to := now.Add(-lookback), now
+	zoomFrom, zoomTo, zoomed, zerr := publicZoomWindow(c, now)
+	if zerr != nil {
+		c.JSON(http.StatusBadRequest, response.Error("Invalid zoom window"))
+		return
+	}
+	if zoomed {
+		from, to, maxPoints = zoomFrom, zoomTo, publicZoomMaxPoints
+		lookback = to.Sub(from)
+	}
 
 	// Boundary samples, not every row: the earliest row of each of maxPoints
 	// equal intervals plus the newest row (SampleInterfaceStats). This used to
@@ -392,7 +456,7 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	// of heap for one tile at the 1-year range, once per tile at the same
 	// moment. The counters are cumulative, so the rates below, computed between
 	// consecutive kept rows, are the same averages as before.
-	sampled, err := db.SampleInterfaceStats(deviceID, ifIndex, now.Add(-lookback), now, maxPoints)
+	sampled, err := db.SampleInterfaceStats(deviceID, ifIndex, from, to, maxPoints)
 	if err != nil {
 		httputil.InternalError(c, "Failed to get interface data", err)
 		return
@@ -428,7 +492,9 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	for i, p := range sampled {
 		// Use appropriate time format based on range
 		var labelFormat string
-		if lookback < time.Hour {
+		if zoomed {
+			labelFormat = publicLabelFormat(lookback)
+		} else if lookback < time.Hour {
 			// Seconds for every sub-hour window: 5m, 15m and the AUDIT-235
 			// fractional public ranges all resolve to a lookback under an hour.
 			labelFormat = "15:04:05"
@@ -679,7 +745,16 @@ func (h *Handler) GetPublicStatusHistory(c *gin.Context) {
 	// CPU and memory are gauges, so each point is the reading at its boundary.
 	lookback, maxPoints := publicChartLookback(c.DefaultQuery("hours", "24"))
 	now := time.Now()
-	statuses, err := db.SampleSystemStatus(deviceID, now.Add(-lookback), now, maxPoints)
+	from, to := now.Add(-lookback), now
+	zoomFrom, zoomTo, zoomed, zerr := publicZoomWindow(c, now)
+	if zerr != nil {
+		c.JSON(http.StatusBadRequest, response.Error("Invalid zoom window"))
+		return
+	}
+	if zoomed {
+		from, to, maxPoints = zoomFrom, zoomTo, publicZoomMaxPoints
+	}
+	statuses, err := db.SampleSystemStatus(deviceID, from, to, maxPoints)
 	if err != nil {
 		httputil.InternalError(c, "Failed to get status history", err)
 		return
