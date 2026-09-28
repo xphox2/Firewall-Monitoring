@@ -683,7 +683,9 @@
                 return;
             }
             if (r.error) {
-                // Like Cancel: the pickers go back to the scope whose result is shown.
+                // Like Cancel: the pickers go back to the scope whose result is
+                // shown, and no "Resolving…" is left behind.
+                if (!out.querySelector('.ep-matrix-row, table, [data-ep-openprofile]')) out.innerHTML = '';
                 if (dSel) dSel.value = effShown.device;
                 if (sSel) sSel.value = effShown.site;
                 AC.chartNotice(out, 'Could not load results', { dim: false, onRetry: function () {

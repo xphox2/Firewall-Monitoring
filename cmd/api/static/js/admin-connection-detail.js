@@ -705,7 +705,7 @@
         applyTrafficRange(range);
         // Cancel restores the range on screen so the next poll does not
         // re-request the one the user just cancelled.
-        loadTrafficChart({ onCancel: function() { if (shownTrafficRange !== null) applyTrafficRange(shownTrafficRange); } });
+        loadTrafficChart({ onCancel: function() { applyTrafficRange(shownTrafficRange !== null ? shownTrafficRange : initialTrafficRange); } });
     }
 
     function loadFlowStats(opts) {
@@ -860,7 +860,7 @@
 
     function setFlowRange(hours) {
         applyFlowRange(hours);
-        loadFlowStats({ onCancel: function() { if (shownFlowHours !== null) applyFlowRange(shownFlowHours); } });
+        loadFlowStats({ onCancel: function() { applyFlowRange(shownFlowHours !== null ? shownFlowHours : initialFlowHours); } });
     }
 
     function switchTab(name, tabEl) {
@@ -901,8 +901,12 @@
     // the old '24h' literal matched none of its hour-valued options (blank).
     var trafficSelect = document.getElementById('traffic-range-select');
     if (trafficSelect && trafficSelect.value) currentTrafficRange = trafficSelect.value;
+    // Before any range has loaded, a Cancel falls back to the page's default
+    // range — never leaves a cancelled range for the 30 s refresh to load.
+    var initialTrafficRange = currentTrafficRange;
     var flowSelectInit = document.getElementById('flow-range-select');
     if (flowSelectInit && flowSelectInit.value) currentFlowHours = parseFloat(flowSelectInit.value);
+    var initialFlowHours = currentFlowHours;
     if (trafficSelect) {
         trafficSelect.addEventListener('change', function() {
             setTrafficRange(this.value);

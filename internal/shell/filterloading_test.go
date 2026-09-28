@@ -143,7 +143,7 @@ func TestFilterLoad_StateOnlyOnSuccess(t *testing.T) {
 	}
 
 	ti := readJS(t, "admin-threatintel.js")
-	search := funcBody(t, ti, `function runSearch\(offset, snap\)`)
+	search := funcBody(t, ti, `function runSearch\(offset, snap, isRefresh\)`)
 	if strings.Index(search, "searchOffset = target;") < strings.Index(search, "if (r.error) {") {
 		t.Error("runSearch sets searchOffset before the result is known")
 	}
@@ -218,9 +218,9 @@ func TestFilterLoad_ConnectionDetailPolls(t *testing.T) {
 	// Cancel restores the range whose data is on screen, recorded on success.
 	mustContain(t, "admin-connection-detail.js", js, "var shown = shownGroupRanges[gk] || '24h';", "a cancelled group range goes back to the drawn one")
 	mustContain(t, "admin-connection-detail.js", js, "if (gk) shownGroupRanges[gk] = range;", "the drawn group range is recorded on success")
-	mustContain(t, "admin-connection-detail.js", js, "if (shownTrafficRange !== null) applyTrafficRange(shownTrafficRange);", "a cancelled traffic range goes back to the drawn one")
+	mustContain(t, "admin-connection-detail.js", js, "applyTrafficRange(shownTrafficRange !== null ? shownTrafficRange : initialTrafficRange);", "a cancelled traffic range goes back to the drawn one (or the default)")
 	mustContain(t, "admin-connection-detail.js", js, "if (!result) return;\n            shownTrafficRange = range;", "the drawn traffic range is recorded on success")
-	mustContain(t, "admin-connection-detail.js", js, "if (shownFlowHours !== null) applyFlowRange(shownFlowHours);", "a cancelled flows range goes back to the drawn one")
+	mustContain(t, "admin-connection-detail.js", js, "applyFlowRange(shownFlowHours !== null ? shownFlowHours : initialFlowHours);", "a cancelled flows range goes back to the drawn one (or the default)")
 	mustContain(t, "admin-connection-detail.js", js, "if (!result) return;\n            shownFlowHours = hours;", "the drawn flows range is recorded on success")
 }
 
@@ -319,8 +319,8 @@ func TestFilterLoad_ReviewRound2(t *testing.T) {
 	if strings.Contains(er, "loadRules(currentProfileId, currentRuleFilter)") {
 		t.Error("save/delete must reload the viewed profile (viewedProfileId), not the last loaded one")
 	}
-	if n := strings.Count(er, "loadRules(viewedProfileId(), currentRuleFilter)"); n != 2 {
-		t.Errorf("both save and delete reload the viewed profile; found %d", n)
+	if n := strings.Count(er, "loadRules(viewedProfileId(), currentRuleFilter)"); n != 1 {
+		t.Errorf("save and delete reload the viewed profile through one startRulesReload; found %d direct calls", n)
 	}
 
 	main := readJS(t, "admin-main.js")
@@ -546,7 +546,7 @@ func TestFilterLoad_ReviewRound8(t *testing.T) {
 	if strings.Count(rp, "if (shown) applyChoices(shown);") != 2 {
 		t.Error("reports: both Cancel and error put the shown choices back")
 	}
-	mustContain(t, "admin-event-profiles.js", readJS(t, "admin-event-profiles.js"), "// Like Cancel: the pickers go back to the scope whose result is shown.", "effective coverage error restores")
+	mustContain(t, "admin-event-profiles.js", readJS(t, "admin-event-profiles.js"), "// Like Cancel: the pickers go back to the scope whose result is\n                // shown, and no \"Resolving…\" is left behind.", "effective coverage error restores")
 	cd := funcBody(t, readJS(t, "admin-connection-detail.js"), `function cdLoad\(key, host, url, opts\)`)
 	eb := cd[strings.Index(cd, "if (r.error) {"):]
 	if !strings.Contains(eb[:200], "if (opts.onCancel) opts.onCancel();") {
@@ -626,7 +626,7 @@ func TestFilterLoad_ReviewRound10(t *testing.T) {
 	mustContain(t, "admin-controls.js", ctl, "hasPendingEdit: function() { return !!(autoApply && autoApply.hasPending()); },", "and exposed on the page handle")
 
 	ti := readJS(t, "admin-threatintel.js")
-	mustContain(t, "admin-threatintel.js", ti, "if (AC.chartLoadBusy('ti-search', true)) { if (isRefresh) searchRefreshDeferred = true; return; }\n        runSearch(offset, lastSearch);", "search paging continues the shown search and waits")
+	mustContain(t, "admin-threatintel.js", ti, "if (AC.chartLoadBusy('ti-search', true)) { if (isRefresh) searchRefreshDeferred = true; return; }\n        runSearch(offset, lastSearch, isRefresh);", "search paging continues the shown search and waits")
 	if strings.Count(ti, "pageSearch(searchOffset") != 4 {
 		t.Error("Prev, Next and the refresh after a delete must all page through pageSearch")
 	}
@@ -703,7 +703,7 @@ func TestFilterLoad_ReviewRound13(t *testing.T) {
 	main := readJS(t, "admin-main.js")
 	ra := funcBody(t, main, `function refreshAlertsAtCurrentPage\(opts\)`)
 	mustContain(t, "admin-main.js", ra, "if (opts && opts.quiet) alertsQuietRefreshRunning = true;", "a quiet refresh is marked")
-	mustContain(t, "admin-main.js", ra, "            if (opts && opts.quiet) {\n                alertsQuietRefreshRunning = false;", "and unmarked when it settles")
+	mustContain(t, "admin-main.js", ra, "if (opts && opts.quiet) alertsQuietRefreshRunning = false;\n            // Interrupted", "and unmarked when it settles")
 	mustContain(t, "CHANGELOG.md", readFile(t, "../../CHANGELOG.md"), "(the Connections map side panel, which stays open, keeps loading)", "the panel exception is stated")
 }
 
@@ -717,4 +717,29 @@ func TestFilterLoad_ReviewRound14(t *testing.T) {
 	ra := funcBody(t, main, `function refreshAlertsAtCurrentPage\(opts\)`)
 	mustContain(t, "admin-main.js", ra, "if (res && res.superseded && AC.chartLoadBusy('filter-alerts', true)) alertsRefreshDeferred = true;", "an interrupted quiet refresh is re-armed")
 	mustContain(t, "admin-event-rules.js", readJS(t, "admin-event-rules.js"), "rulesReloadDeferred = false; // the page reloads its rules on return", "a page leave consumes the deferred rules reload")
+}
+
+// Fifteenth review (Opus 5.5; LOW only): every interrupted post-mutation
+// refresh re-arms (alerts quiet or not, threat intel, event rules); a rules
+// reload after leaving does nothing; an Effective error clears "Resolving…";
+// connection detail falls back to the default range before any has loaded.
+func TestFilterLoad_ReviewRound15(t *testing.T) {
+	main := readJS(t, "admin-main.js")
+	ra := funcBody(t, main, `function refreshAlertsAtCurrentPage\(opts\)`)
+	if strings.Contains(ra, "if (opts && opts.quiet) {\n") {
+		t.Error("the re-arm must apply to every interrupted refresh, not only the quiet one")
+	}
+	mustContain(t, "admin-main.js", ra, "if (res && res.superseded && AC.chartLoadBusy('filter-alerts', true)) alertsRefreshDeferred = true;", "re-arm")
+	ti := readJS(t, "admin-threatintel.js")
+	rs := funcBody(t, ti, `function runSearch\(offset, snap, isRefresh\)`)
+	mustContain(t, "admin-threatintel.js", rs, "if (isRefresh && AC.chartLoadBusy('ti-search', true)) searchRefreshDeferred = true;", "an interrupted threat-intel refresh re-arms")
+	mustContain(t, "admin-threatintel.js", funcBody(t, ti, `function runDeferredSearchRefresh\(\)`), "pageSearch(searchOffset, true);", "the deferred run is itself a refresh")
+	er := readJS(t, "admin-event-rules.js")
+	mustContain(t, "admin-event-rules.js", funcBody(t, er, `function startRulesReload\(\)`), "if (res && res.superseded && AC.chartLoadBusy('event-rules', true)) rulesReloadDeferred = true;", "an interrupted rules reload re-arms")
+	rv := funcBody(t, er, `function reloadViewedRules\(\)`)
+	if i := strings.Index(rv, "if (!erPage || !erPage.classList.contains('active')) { rulesReloadDeferred = false; return; }"); i < 0 || i > strings.Index(rv, "startRulesReload();") {
+		t.Error("a rules reload after leaving the page must do nothing")
+	}
+	mustContain(t, "admin-connection-detail.js", readJS(t, "admin-connection-detail.js"), "var initialTrafficRange = currentTrafficRange;", "the default range is kept as the fallback")
+	mustContain(t, "admin-event-profiles.js", readJS(t, "admin-event-profiles.js"), "shown, and no \"Resolving…\" is left behind.\n                if (!out.querySelector('.ep-matrix-row, table, [data-ep-openprofile]')) out.innerHTML = '';", "an Effective error clears the placeholder")
 }

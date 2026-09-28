@@ -290,7 +290,7 @@
     var searchRefreshDeferred = false;
     function pageSearch(offset, isRefresh) {
         if (AC.chartLoadBusy('ti-search', true)) { if (isRefresh) searchRefreshDeferred = true; return; }
-        runSearch(offset, lastSearch);
+        runSearch(offset, lastSearch, isRefresh);
     }
     function runDeferredSearchRefresh() {
         if (!searchRefreshDeferred || AC.chartLoadBusy('ti-search', true)) return;
@@ -298,7 +298,7 @@
         var tiPage = document.getElementById('page-threat-intel');
         if (!tiPage || !tiPage.classList.contains('active')) return;
         searchRefreshDeferred = false;
-        pageSearch(searchOffset);
+        pageSearch(searchOffset, true);
     }
 
     // The search form (its inputs) — Esc there cancels the search; Esc in the
@@ -318,7 +318,9 @@
 
     // snap (optional): the query to run — paging passes lastSearch; a new
     // search reads the controls.
-    function runSearch(offset, snap) {
+    // isRefresh: this search re-shows the list after a delete; if another
+    // search interrupts it, the refresh is re-armed for when that one settles.
+    function runSearch(offset, snap, isRefresh) {
         var target = offset < 0 ? 0 : offset;
         var query = snap ? Object.assign({}, snap) : searchControls();
         var params = 'offset=' + target + '&limit=' + PAGE_SIZE +
@@ -330,8 +332,11 @@
         AC.chartLoad(host, function(signal) {
             return api('/admin/api/threat-intel/search?' + params, { signal: signal });
         }, { key: 'ti-search', label: 'Searching…', escScope: searchForm() }).then(function(r) {
+            if (r.superseded) {
+                if (isRefresh && AC.chartLoadBusy('ti-search', true)) searchRefreshDeferred = true;
+                return;
+            }
             runDeferredSearchRefreshSoon();
-            if (r.superseded) return;
             // A paging load (snap) never changed the controls, so neither its
             // Cancel nor its Retry touches them — the box may hold a new,
             // unsubmitted search.

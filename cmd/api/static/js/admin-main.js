@@ -1459,13 +1459,11 @@
         // runs now (its own query started before that ack committed).
         if (opts && opts.quiet) alertsQuietRefreshRunning = true;
         if (refreshing && refreshing.then) refreshing.then(function(res) {
-            if (opts && opts.quiet) {
-                alertsQuietRefreshRunning = false;
-                // Interrupted by paging or a filter change: re-arm, so if that
-                // load is cancelled or fails the ack still shows. (Not when
-                // nothing took over — a page leave reloads on return.)
-                if (res && res.superseded && AC.chartLoadBusy('filter-alerts', true)) alertsRefreshDeferred = true;
-            }
+            if (opts && opts.quiet) alertsQuietRefreshRunning = false;
+            // Interrupted by paging or a filter change (quiet or not): re-arm,
+            // so if that load is cancelled or fails the ack still shows. (Not
+            // when nothing took over — a page leave reloads on return.)
+            if (res && res.superseded && AC.chartLoadBusy('filter-alerts', true)) alertsRefreshDeferred = true;
             updateAlertBulkToolbar();
             runDeferredAlertsRefresh();
         });

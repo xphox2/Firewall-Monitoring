@@ -184,13 +184,24 @@
     // user's click — and then reloads with whatever the view shows.
     var rulesReloadDeferred = false;
     function reloadViewedRules() {
+        // A save/delete that lands after the user left: the page reloads its
+        // rules on return (and a hidden failure would toast on another page).
+        var erPage = document.getElementById('page-event-rules');
+        if (!erPage || !erPage.classList.contains('active')) { rulesReloadDeferred = false; return; }
         if (AC.chartLoadBusy('event-rules', true)) { rulesReloadDeferred = true; return; }
-        loadRules(viewedProfileId(), currentRuleFilter);
+        startRulesReload();
     }
     function runDeferredRulesReload() {
         if (!rulesReloadDeferred || AC.chartLoadBusy('event-rules', true)) return;
         rulesReloadDeferred = false;
-        loadRules(viewedProfileId(), currentRuleFilter);
+        startRulesReload();
+    }
+    // A post-save reload that a chip/profile click interrupts is re-armed, so
+    // if that load is cancelled or fails the change still shows.
+    function startRulesReload() {
+        loadRules(viewedProfileId(), currentRuleFilter).then(function (res) {
+            if (res && res.superseded && AC.chartLoadBusy('event-rules', true)) rulesReloadDeferred = true;
+        });
     }
 
     // loadRules resolves { ok } once the rows are rendered, or { cancelled }
