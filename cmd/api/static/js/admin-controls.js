@@ -73,12 +73,17 @@
     //   selects:  [{id, stateKey}, ...],
     //   onChange: function() — called after each commit, debounced or not
     // }
-    // Returns { cancelPending } — drops any debounced text edit not yet
-    // committed (used by restore, so a pending edit cannot re-commit after a
-    // Cancel and wipe the Cancel notice with a redundant load).
+    // Returns { cancelPending, hasPending } — cancelPending drops any debounced
+    // text edit not yet committed (used by restore, so a pending edit cannot
+    // re-commit after a Cancel and wipe the Cancel notice with a redundant
+    // load); hasPending tells whether one is waiting (the user is mid-edit).
     function bindAutoApply(spec) {
         var clearers = [];
-        var handle = { cancelPending: function() { clearers.forEach(function(f) { f(); }); } };
+        var pendings = [];
+        var handle = {
+            cancelPending: function() { clearers.forEach(function(f) { f(); }); },
+            hasPending: function() { return pendings.some(function(f) { return f(); }); }
+        };
         if (!spec || !spec.onChange) return handle;
         (spec.inputs || []).forEach(function(input) {
             var el = document.getElementById(input.id);
@@ -87,13 +92,17 @@
             var debounceMs = input.debounceMs != null ? input.debounceMs : 400;
             var pending = null;
             clearers.push(function() { if (pending) { clearTimeout(pending); pending = null; } });
+            pendings.push(function() { return pending !== null; });
             var commit = function() {
                 spec.state[input.stateKey] = el.value.trim();
                 spec.onChange();
             };
             el.addEventListener('input', function() {
                 if (pending) clearTimeout(pending);
-                pending = setTimeout(commit, debounceMs);
+                // Clear the handle when it fires: hasPending() must go false
+                // once the edit has committed, or every later error would be
+                // treated as "the user is mid-edit" and skip the restore.
+                pending = setTimeout(function() { pending = null; commit(); }, debounceMs);
             });
             el.addEventListener('blur', function() {
                 if (pending) { clearTimeout(pending); pending = null; }
@@ -324,6 +333,8 @@
 
         return {
             getState: function() { return Object.assign({}, state); },
+            // hasPendingEdit: a debounced text edit is waiting to commit.
+            hasPendingEdit: function() { return !!(autoApply && autoApply.hasPending()); },
             refresh:  function() { d.onChange(state); },
             restore:  restore,
             // reseedFromURL — re-read every URL-tracked key into state

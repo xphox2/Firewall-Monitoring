@@ -41,6 +41,7 @@
         loadStormTuning();
         runSearch(0);
         var r = el('ti-lookup-result'); if (r) r.innerHTML = '';
+        shownLookupQ = null; // the result area was just cleared
     }
 
     function wire() {
@@ -53,9 +54,11 @@
         var q = el('ti-search-q');
         if (q) q.addEventListener('keydown', function(e) { if (e.key === 'Enter') { e.preventDefault(); runSearch(0); } });
         var prev = el('ti-search-prev');
-        if (prev) prev.addEventListener('click', function() { if (searchOffset > 0) runSearch(searchOffset - PAGE_SIZE); });
+        // Paging continues the search whose rows are shown (lastSearch), not
+        // what is typed in the box, and waits for a search still running.
+        if (prev) prev.addEventListener('click', function() { if (searchOffset > 0) pageSearch(searchOffset - PAGE_SIZE); });
         var next = el('ti-search-next');
-        if (next) next.addEventListener('click', function() { if (searchOffset + PAGE_SIZE < searchTotal) runSearch(searchOffset + PAGE_SIZE); });
+        if (next) next.addEventListener('click', function() { if (searchOffset + PAGE_SIZE < searchTotal) pageSearch(searchOffset + PAGE_SIZE); });
         var addForm = el('ti-add-form');
         if (addForm) addForm.addEventListener('submit', onAdd);
         var body = el('ti-search-body');
@@ -282,9 +285,16 @@
         el('ti-search-severity').value = c.severity;
     }
 
-    function runSearch(offset) {
+    function pageSearch(offset) {
+        if (AC.chartLoadBusy('ti-search', true)) return;
+        runSearch(offset, lastSearch);
+    }
+
+    // snap (optional): the query to run — paging passes lastSearch; a new
+    // search reads the controls.
+    function runSearch(offset, snap) {
         var target = offset < 0 ? 0 : offset;
-        var query = searchControls();
+        var query = snap ? Object.assign({}, snap) : searchControls();
         var params = 'offset=' + target + '&limit=' + PAGE_SIZE +
             '&q=' + encodeURIComponent(query.q) +
             '&source=' + encodeURIComponent(query.source) +
@@ -384,7 +394,7 @@
         if (!id) return;
         btn.disabled = true;
         api('/admin/api/flows/threat-intel/' + encodeURIComponent(id), { method: 'DELETE' })
-            .then(function() { runSearch(searchOffset); loadFeeds(); })
+            .then(function() { pageSearch(searchOffset); loadFeeds(); })
             .catch(function(e) { window.fwmonLog && window.fwmonLog.error('threat-intel delete failed', e); btn.disabled = false; });
     }
 

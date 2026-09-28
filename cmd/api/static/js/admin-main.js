@@ -104,6 +104,15 @@
     // a load SUCCEEDS. Cancel restores it — not the previously committed query,
     // which may itself have been superseded or failed and never displayed.
     var shownQuery = {};
+    // The query a first-page load asks for: the state handed through onChange
+    // (the page handle is not assigned yet on a first load), else the handle's
+    // committed state. Builders read this, never the DOM, so page 1 and the
+    // pages after it are always one query.
+    function firstPageQuery(page, opts) {
+        if (opts && opts.state) return Object.assign({}, opts.state);
+        var ap = analyticsPages[page];
+        return (ap && ap.getState) ? ap.getState() : null;
+    }
     // Controls that shape a page's query but are not analytics-state keys.
     // They travel with the query snapshot so Cancel/Retry restore them too.
     var PAGE_EXTRAS = {
@@ -137,7 +146,10 @@
             var gen = filterGen[key] = (filterGen[key] || 0) + 1;
             return Promise.resolve().then(function() { return run(undefined); }).then(function(data) {
                 if (filterGen[key] !== gen || !data) return;
-                if (want) shownQuery[page] = want;
+                // Only the page's TABLE load records the shown query: a charts
+                // load's query is the controls', which may be a filter that is
+                // still loading (or was dropped) rather than the rows' one.
+                if (want && key === page) shownQuery[page] = want;
                 // Fresh rows replace what a Cancel/error notice referred to.
                 if (host) AC.chartNoticeClear(host);
                 onOK(data);
@@ -177,18 +189,17 @@
                 // more would page a query whose first page never appeared.
                 // Retry re-applies the failed query first.
                 var shown = shownQuery[page] || opts.prev;
-                // Not while the user is typing a newer query in this page's
-                // filters: a background failure must not wipe their input (the
-                // pending edit commits and loads when they finish).
-                var typing = document.activeElement && document.activeElement.matches &&
-                    document.activeElement.matches('input[type="text"], input[type="search"], input:not([type]), textarea') &&
-                    document.getElementById('page-' + page) && document.getElementById('page-' + page).contains(document.activeElement);
+                // Not while the user has a newer edit PENDING in this page's
+                // filters: a background failure must not wipe it (it commits
+                // and loads when the debounce fires). Mere focus is not enough
+                // — a search box keeps focus after its own debounced load.
                 var apE = apNow();
+                var typing = !!(apE && apE.hasPendingEdit && apE.hasPendingEdit());
                 if (shown && apE && apE.restore && !siblingBusy() && !typing) restoreQuery(apE, page, shown);
                 AC.chartNotice(host, shownQuery[page] ? 'Could not load results — showing the previous results' : 'Could not load results', { dim: false, onRetry: retryCancelled });
                 return;
             }
-            if (want) shownQuery[page] = want;
+            if (want && key === page) shownQuery[page] = want;
             onOK(r.data);
         });
     }
@@ -204,7 +215,9 @@
         'threat-intel': ['ti-'],
         flows: ['flows-'],
         reports: ['report-'],
-        connections: ['panel-'],
+        // No 'connections' entry: the map side panel stays open across a page
+        // change, so its loads finish into it (its host is hidden, so Esc
+        // cannot reach them) instead of leaving a blank chart nothing reloads.
         'event-rules': ['event-rules', 'ep-']
     };
 
@@ -865,7 +878,11 @@
             }).then(function() {
                 populateFilterProbes('syslog-filter-probe');
                 populateFilterDevices('syslog-filter-device');
-                return apiFetch(API_BASE + '/syslog?' + buildSyslogParams(10), { signal: signal });
+                // From the query STATE (the same snapshot runFilterLoad records
+                // as shown), not the dropdowns: a deep-linked device/probe may
+                // not be an <option> yet, and a half-typed search box is not
+                // the committed query.
+                return apiFetch(API_BASE + '/syslog?' + buildSyslogParams(10, firstPageQuery('syslog', opts)), { signal: signal });
             });
         }, function(result) {
             var messages = (result.data && result.data.messages) ? result.data.messages : [];
@@ -1118,7 +1135,7 @@
     // the SHOWN query and wait for a running filter load.
     function auditPage(target, prev, st, paging) {
         if (paging && AC.chartLoadBusy('filter-audit', true)) return;
-        var snap = paging ? shownQuery.audit : null;
+        var snap = paging ? shownQuery.audit : firstPageQuery('audit', { state: st });
         runFilterLoad('audit', function(signal) {
             return apiFetch(API_BASE + '/audit?' + buildAuditParams(10, snap) + (target ? '&offset=' + target : ''), { signal: signal });
         }, function(result) {
@@ -1399,6 +1416,9 @@
         // when it is next shown.
         var alertsPage = document.getElementById('page-alerts');
         if (!alertsPage || !alertsPage.classList.contains('active')) return;
+        // A filter load already running will replace the rows; reloading the
+        // old page now would supersede it (same key) silently.
+        if (AC.chartLoadBusy('filter-alerts', true)) return;
         var pageSize = ALERTS_PAGE_SIZE;
         var pageEnd = alertsOffset; // current offset == end of current page
         var pageStart = Math.max(0, pageEnd - pageSize);
@@ -2232,7 +2252,7 @@
     function loadTraps(opts) {
         opts = opts || {};
         runFilterLoad('traps', function(signal) {
-            return apiFetch(API_BASE + '/traps?' + buildTrapParams(100), { signal: signal });
+            return apiFetch(API_BASE + '/traps?' + buildTrapParams(100, firstPageQuery('traps', opts)), { signal: signal });
         }, function(result) {
             var traps = result.data || [];
             renderTrapsTable(traps, false);

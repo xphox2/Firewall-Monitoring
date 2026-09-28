@@ -65,10 +65,10 @@ func TestFilterLoad_RestoreMechanics(t *testing.T) {
 	// recorded on success — not the last committed one, which may have been
 	// superseded or failed and never displayed (fresh review, HIGH).
 	mustContain(t, "admin-main.js", run, "var back = shownQuery[page] || opts.prev;", "Cancel restores the SHOWN query")
-	if n := strings.Count(run, "if (want) shownQuery[page] = want;"); n != 2 {
+	if n := strings.Count(run, "if (want && key === page) shownQuery[page] = want;"); n != 2 {
 		t.Errorf("the shown query must be recorded on BOTH success paths (user load and poll); found %d", n)
 	}
-	if !strings.Contains(run, "if (want) shownQuery[page] = want;\n            onOK(r.data);") {
+	if !strings.Contains(run, "if (want && key === page) shownQuery[page] = want;\n            onOK(r.data);") {
 		t.Error("the shown query is recorded in the success branch, right before onOK")
 	}
 	mustContain(t, "admin-main.js", run, "if (AC.chartLoadBusy(loadKey)) return Promise.resolve();", "a poll skips while the user's load runs")
@@ -143,7 +143,7 @@ func TestFilterLoad_StateOnlyOnSuccess(t *testing.T) {
 	}
 
 	ti := readJS(t, "admin-threatintel.js")
-	search := funcBody(t, ti, `function runSearch\(offset\)`)
+	search := funcBody(t, ti, `function runSearch\(offset, snap\)`)
 	if strings.Index(search, "searchOffset = target;") < strings.Index(search, "if (r.error) {") {
 		t.Error("runSearch sets searchOffset before the result is known")
 	}
@@ -194,7 +194,7 @@ func TestFilterLoad_Surfaces(t *testing.T) {
 	}
 
 	main := readJS(t, "admin-main.js")
-	for _, k := range []string{"'threat-intel': ['ti-']", "flows: ['flows-']", "reports: ['report-']", "connections: ['panel-']", "'event-rules': ['event-rules', 'ep-']", "syslog: ['filter-syslog']"} {
+	for _, k := range []string{"'threat-intel': ['ti-']", "flows: ['flows-']", "reports: ['report-']", "'event-rules': ['event-rules', 'ep-']", "syslog: ['filter-syslog']"} {
 		mustContain(t, "admin-main.js", main, k, "leaving the page stops its loads silently")
 	}
 }
@@ -539,7 +539,7 @@ func TestFilterLoad_ReviewRound8(t *testing.T) {
 	if i := strings.Index(ra, "if (!alertsPage || !alertsPage.classList.contains('active')) return;"); i < 0 || i > strings.Index(ra, "runFilterLoad(") {
 		t.Error("an alert refresh from another page must not run the Alerts load in the background")
 	}
-	mustContain(t, "admin-main.js", main, "document.getElementById('page-' + page).contains(document.activeElement);", "a background error does not wipe a field being typed in")
+	mustContain(t, "admin-main.js", main, "var typing = !!(apE && apE.hasPendingEdit && apE.hasPendingEdit());", "a background error does not wipe a pending edit")
 
 	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "// Like Cancel: Prev/Next read the controls, so they go back to\n                // the search whose rows are shown.\n                if (lastSearch) setSearchControls(lastSearch);", "search error restores")
 	rp := readJS(t, "admin-reports.js")
@@ -587,4 +587,48 @@ func TestFilterLoad_ReviewRound9(t *testing.T) {
 	mustContain(t, "admin-event-profiles.js", funcBody(t, ep, `function showGrid\(\)`), "AC.chartLoadCancel('ep-effective');", "leaving the effective view stops its lookup")
 	mustContain(t, "admin-event-profiles.js", funcBody(t, ep, `function showEffective\(\)`), "AC.chartLoadCancel('ep-effective');", "re-rendering it too")
 	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "'Could not look up — showing the previous result' : 'Could not look up', { dim: false, onRetry:", "lookup errors offer Retry")
+}
+
+// Tenth review (Opus 5.5, harness-proven HIGH): the ack refresh waits for a
+// running filter load; only TABLE loads record the shown query; first pages
+// are built from the same state snapshot as the pages after them; "typing"
+// means a pending edit; threat-intel paging continues the shown search.
+func TestFilterLoad_ReviewRound10(t *testing.T) {
+	main := readJS(t, "admin-main.js")
+	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
+	if strings.Count(run, "if (want && key === page) shownQuery[page] = want;") != 2 {
+		t.Error("both success paths must record the shown query for the TABLE load only")
+	}
+	if strings.Contains(run, "if (want) shownQuery[page] = want;") {
+		t.Error("a charts load must not record the shown query")
+	}
+	mustContain(t, "admin-main.js", run, "var typing = !!(apE && apE.hasPendingEdit && apE.hasPendingEdit());", "typing = a pending edit, not focus")
+	ra := funcBody(t, main, `function refreshAlertsAtCurrentPage\(\)`)
+	if i := strings.Index(ra, "if (AC.chartLoadBusy('filter-alerts', true)) return;"); i < 0 || i > strings.Index(ra, "runFilterLoad(") {
+		t.Error("the refresh after an ack must not supersede a running filter load")
+	}
+	mustContain(t, "admin-main.js", main, "buildSyslogParams(10, firstPageQuery('syslog', opts))", "syslog page 1 from the state snapshot")
+	mustContain(t, "admin-main.js", main, "buildTrapParams(100, firstPageQuery('traps', opts))", "traps page 1 from the state snapshot")
+	mustContain(t, "admin-main.js", main, "var snap = paging ? shownQuery.audit : firstPageQuery('audit', { state: st });", "audit page 1 from the state snapshot")
+	for _, bad := range []string{"buildSyslogParams(10)", "buildTrapParams(100)", "buildAuditParams(10)"} {
+		if strings.Contains(main, bad) {
+			t.Errorf("%s reads the DOM; every page must come from one query snapshot", bad)
+		}
+	}
+	if strings.Contains(main, "connections: ['panel-']") {
+		t.Error("leaving Connections must not stop the side panel's loads (the panel stays open)")
+	}
+	ctl := readJS(t, "admin-controls.js")
+	mustContain(t, "admin-controls.js", ctl, "pendings.push(function() { return pending !== null; });", "pending edits are observable")
+	// Caught in the browser check: without this the flag stayed true after
+	// the debounce fired, and every later error skipped its restore.
+	mustContain(t, "admin-controls.js", ctl, "pending = setTimeout(function() { pending = null; commit(); }, debounceMs);", "the pending flag clears when the edit commits")
+	mustContain(t, "admin-controls.js", ctl, "hasPendingEdit: function() { return !!(autoApply && autoApply.hasPending()); },", "and exposed on the page handle")
+
+	ti := readJS(t, "admin-threatintel.js")
+	mustContain(t, "admin-threatintel.js", ti, "if (AC.chartLoadBusy('ti-search', true)) return;\n        runSearch(offset, lastSearch);", "search paging continues the shown search and waits")
+	if strings.Count(ti, "pageSearch(searchOffset") != 3 {
+		t.Error("Prev, Next and the refresh after a delete must all page through pageSearch")
+	}
+	mustContain(t, "admin-threatintel.js", ti, "shownLookupQ = null; // the result area was just cleared", "re-entering resets the shown lookup")
 }
