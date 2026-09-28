@@ -294,6 +294,8 @@
     }
     function runDeferredSearchRefresh() {
         if (!searchRefreshDeferred || AC.chartLoadBusy('ti-search', true)) return;
+        var tiPage = document.getElementById('page-threat-intel');
+        if (!tiPage || !tiPage.classList.contains('active')) return; // init() reloads on return
         searchRefreshDeferred = false;
         pageSearch(searchOffset);
     }

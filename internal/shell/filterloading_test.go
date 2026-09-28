@@ -106,7 +106,7 @@ func TestFilterLoad_StateOnlyOnSuccess(t *testing.T) {
 		{`function loadAlerts\(opts\)`, "alertsOffset ="},
 		{`function loadAlerts\(opts\)`, "clearAlertSelection();"},
 		{`function alertsPage\(target\)`, "alertsOffset ="},
-		{`function refreshAlertsAtCurrentPage\(\)`, "alertsOffset ="},
+		{`function refreshAlertsAtCurrentPage\(opts\)`, "alertsOffset ="},
 		{`function loadTraps\(opts\)`, "trapsOffset ="},
 		{`function loadMoreTraps\(\)`, "trapsOffset ="},
 	}
@@ -184,7 +184,7 @@ func TestFilterLoad_Surfaces(t *testing.T) {
 		{"admin-device-detail.js", []string{"key: 'config-diff'", "signal: signal })", "if (!modal.classList.contains('active')) return;",
 			"if (!e.target || e.target.id !== 'config-diff-modal') return;\n        AC.chartLoadCancel('config-diff');\n        updateConfigCompareButton();"}},
 		{"admin-event-profiles.js", []string{"key: 'ep-effective'", "{ signal: signal }", "if (r.superseded) return;"}},
-		{"admin-event-rules.js", []string{"key: 'event-rules'", "{ signal: signal }", "if (r.superseded) return { cancelled: true, superseded: true };"}},
+		{"admin-event-rules.js", []string{"key: 'event-rules'", "{ signal: signal }", "if (!AC.chartLoadBusy('event-rules', true)) targetProfileId = null;\n                return { cancelled: true, superseded: true };"}},
 	}
 	for _, c := range cases {
 		js := readJS(t, c.file)
@@ -306,7 +306,7 @@ func TestFilterLoad_CancelRestoresWhatIsShown(t *testing.T) {
 	lr := funcBody(t, er, `function loadRules\(profileId, filter\)`)
 	sw := strings.Index(lr, "if (pid !== currentProfileId) {")
 	ph := strings.Index(lr, "Rules for this profile were not loaded.")
-	if sw < 0 || ph < 0 || ph < sw || ph > strings.Index(lr, "targetProfileId = null;") {
+	if sw < 0 || ph < 0 || ph < sw || ph > strings.Index(lr, "targetProfileId = null;\n                syncRuleFilterChips();") {
 		t.Error("a cancelled profile switch must replace the old profile's rows (and keep targetProfileId) before clearing the target")
 	}
 }
@@ -535,7 +535,7 @@ func TestFilterLoad_ReviewRound8(t *testing.T) {
 		t.Error("select-all-matching cannot be armed while a filter load runs")
 	}
 	mustContain(t, "admin-main.js", main, "if (pageFullySelected && hasMoreMatching && !AC.chartLoadBusy('filter-alerts', true)) {", "nor offered")
-	ra := funcBody(t, main, `function refreshAlertsAtCurrentPage\(\)`)
+	ra := funcBody(t, main, `function refreshAlertsAtCurrentPage\(opts\)`)
 	if i := strings.Index(ra, "if (!alertsPage || !alertsPage.classList.contains('active')) return;"); i < 0 || i > strings.Index(ra, "runFilterLoad(") {
 		t.Error("an alert refresh from another page must not run the Alerts load in the background")
 	}
@@ -578,7 +578,7 @@ func TestFilterLoad_ReviewRound9(t *testing.T) {
 	for _, s := range []string{"auditPage(Math.max(0, auditOffset - 20), undefined, undefined, true);", "auditPage(auditOffset, undefined, undefined, true);", "auditPage(0, opts.prev, opts.state);"} {
 		mustContain(t, "admin-main.js", main, s, "audit paging is explicit")
 	}
-	mustContain(t, "admin-main.js", funcBody(t, main, `function refreshAlertsAtCurrentPage\(\)`), "buildAlertParams(pageSize, shownQuery.alerts)", "a refresh after ack continues the shown query")
+	mustContain(t, "admin-main.js", funcBody(t, main, `function refreshAlertsAtCurrentPage\(opts\)`), "buildAlertParams(pageSize, shownQuery.alerts)", "a refresh after ack continues the shown query")
 	mustContain(t, "admin-main.js", funcBody(t, main, `function loadMoreTraps\(\)`), "buildTrapParams(100, shownQuery.traps)", "Load more continues the shown query")
 	mustContain(t, "admin-main.js", funcBody(t, main, `function alertsPage\(target\)`), "if (loading && loading.then) loading.then(function() { updateAlertBulkToolbar(); runDeferredAlertsRefresh(); });", "Prev/Next repaint the select-all banner after registering")
 
@@ -603,7 +603,7 @@ func TestFilterLoad_ReviewRound10(t *testing.T) {
 		t.Error("a charts load must not record the shown query")
 	}
 	mustContain(t, "admin-main.js", run, "var typing = !!(apE && apE.hasPendingEdit && apE.hasPendingEdit());", "typing = a pending edit, not focus")
-	ra := funcBody(t, main, `function refreshAlertsAtCurrentPage\(\)`)
+	ra := funcBody(t, main, `function refreshAlertsAtCurrentPage\(opts\)`)
 	if i := strings.Index(ra, "if (AC.chartLoadBusy('filter-alerts', true)) { alertsRefreshDeferred = true; return; }"); i < 0 || i > strings.Index(ra, "runFilterLoad(") {
 		t.Error("the refresh after an ack must not supersede a running filter load")
 	}
@@ -644,8 +644,8 @@ func TestFilterLoad_ReviewRound11(t *testing.T) {
 		t.Error("the config-diff header must name the pair being loaded before the load starts")
 	}
 	main := readJS(t, "admin-main.js")
-	if strings.Count(main, "runDeferredAlertsRefresh(); });") != 2 {
-		t.Error("both the filter load and paging must run a deferred ack refresh when they settle")
+	if strings.Count(main, "runDeferredAlertsRefresh(); });") != 3 {
+		t.Error("the filter load, paging and the ack refresh itself must run a deferred ack refresh when they settle")
 	}
 	mustContain(t, "admin-main.js", funcBody(t, main, `function runDeferredAlertsRefresh\(\)`), "if (!alertsRefreshDeferred || AC.chartLoadBusy('filter-alerts', true)) return;", "the deferred refresh waits for idle")
 	ti := readJS(t, "admin-threatintel.js")
@@ -659,4 +659,26 @@ func TestFilterLoad_ReviewRound11(t *testing.T) {
 		t.Error("showEffective must stop lookups again right before it replaces the view")
 	}
 	mustContain(t, "admin-event-profiles.js", ep, "if (!out.isConnected) return; // a view since replaced\n            effShown = want;", "a lookup for a replaced view records nothing")
+}
+
+// Twelfth review (Opus 5.5, harness-proven MEDIUM): the ack refresh runs a
+// refresh deferred WHILE it ran; deferred refreshes are quiet (no overlay, the
+// Cancel/Retry notice survives) and toast on error; Event rules picks its
+// Cancel wording from what is on screen and drops a stale target on leave.
+func TestFilterLoad_ReviewRound12(t *testing.T) {
+	main := readJS(t, "admin-main.js")
+	ra := funcBody(t, main, `function refreshAlertsAtCurrentPage\(opts\)`)
+	mustContain(t, "admin-main.js", ra, "if (refreshing && refreshing.then) refreshing.then(function() { updateAlertBulkToolbar(); runDeferredAlertsRefresh(); });", "an ack during the refresh is not lost")
+	mustContain(t, "admin-main.js", ra, "noOverlay: !!(opts && opts.quiet)", "a deferred refresh is quiet")
+	mustContain(t, "admin-main.js", funcBody(t, main, `function runDeferredAlertsRefresh\(\)`), "refreshAlertsAtCurrentPage({ quiet: true });", "deferred = quiet")
+	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
+	mustContain(t, "admin-main.js", run, "var host = opts.noOverlay ? null : document.getElementById(", "no host for a quiet load")
+	mustContain(t, "admin-main.js", run, "else AC.showError('Could not load results'); // a quiet load has no host to annotate", "a quiet load's error is visible")
+	er := readJS(t, "admin-event-rules.js")
+	mustContain(t, "admin-event-rules.js", er, "var hadRows = wrap && !wrap.querySelector('[data-rules-placeholder]');", "Cancel wording follows what is on screen")
+	mustContain(t, "admin-event-rules.js", er, "AC.chartNotice(wrap, hadRows ? 'Cancelled — showing the previous results' : 'Cancelled',", "and is used")
+	if strings.Count(er, "data-rules-placeholder style=") != 2 {
+		t.Error("both 'not loaded' placeholders must be marked")
+	}
+	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "if (!tiPage || !tiPage.classList.contains('active')) return; // init() reloads on return", "no background search after leaving")
 }

@@ -192,7 +192,12 @@
         return AC.chartLoad(host, function (signal) {
             return AC.apiFetch(url, { signal: signal });
         }, { key: 'event-rules', label: 'Loading rules…', escScope: $('ep-rules-filter') }).then(function (r) {
-            if (r.superseded) return { cancelled: true, superseded: true };
+            if (r.superseded) {
+                // Left mid-load (nothing newer took over): the profile it was
+                // opening is no longer being viewed.
+                if (!AC.chartLoadBusy('event-rules', true)) targetProfileId = null;
+                return { cancelled: true, superseded: true };
+            }
             if (r.cancelled) {
                 var retry = function () { loadRules(pid, nextFilter); };
                 if (pid !== currentProfileId) {
@@ -201,14 +206,16 @@
                     // under its header, and "+ Add rule" keeps defaulting to
                     // the profile being viewed (targetProfileId stays pid).
                     if (wrap) {
-                        wrap.innerHTML = '<div class="empty-state" style="padding:32px;text-align:center;color:var(--fwmon-text-faint)">Rules for this profile were not loaded.</div>';
+                        wrap.innerHTML = '<div class="empty-state" data-rules-placeholder style="padding:32px;text-align:center;color:var(--fwmon-text-faint)">Rules for this profile were not loaded.</div>';
                         AC.chartNotice(wrap, 'Cancelled', { dim: false, onRetry: retry });
                     }
                     return { cancelled: true };
                 }
                 targetProfileId = null;
                 syncRuleFilterChips();
-                if (wrap) AC.chartNotice(wrap, 'Cancelled — showing the previous results', { dim: false, onRetry: retry });
+                // Over the "not loaded" placeholder there are no previous rows.
+                var hadRows = wrap && !wrap.querySelector('[data-rules-placeholder]');
+                if (wrap) AC.chartNotice(wrap, hadRows ? 'Cancelled — showing the previous results' : 'Cancelled', { dim: false, onRetry: retry });
                 return { cancelled: true };
             }
             if (r.error) {
@@ -232,7 +239,7 @@
                     // the new profile's header is up, so its target stays the
                     // viewed profile and the old rows are not kept under it.
                     if (wrap) {
-                        wrap.innerHTML = '<div class="empty-state" style="padding:32px;text-align:center;color:var(--fwmon-text-faint)">Rules for this profile were not loaded.</div>';
+                        wrap.innerHTML = '<div class="empty-state" data-rules-placeholder style="padding:32px;text-align:center;color:var(--fwmon-text-faint)">Rules for this profile were not loaded.</div>';
                         AC.chartNotice(wrap, 'Could not load results', { dim: false, onRetry: function () { loadRules(pid, nextFilter); } });
                     }
                     return { error: err };

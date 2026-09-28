@@ -129,7 +129,7 @@
         opts = opts || {};
         var page = opts.page || key;
         var loadKey = 'filter-' + key;
-        var host = document.getElementById(opts.host || (key + '-load-host'));
+        var host = opts.noOverlay ? null : document.getElementById(opts.host || (key + '-load-host'));
         // The page handle is resolved when needed, not now: on a page's FIRST
         // load (attachAnalyticsPage's first commit) it has not been assigned
         // yet, and a Cancel/error must still be able to restore through it.
@@ -196,7 +196,8 @@
                 var apE = apNow();
                 var typing = !!(apE && apE.hasPendingEdit && apE.hasPendingEdit());
                 if (shown && apE && apE.restore && !siblingBusy() && !typing) restoreQuery(apE, page, shown);
-                AC.chartNotice(host, shownQuery[page] ? 'Could not load results — showing the previous results' : 'Could not load results', { dim: false, onRetry: retryCancelled });
+                if (host) AC.chartNotice(host, shownQuery[page] ? 'Could not load results — showing the previous results' : 'Could not load results', { dim: false, onRetry: retryCancelled });
+                else AC.showError('Could not load results'); // a quiet load has no host to annotate
                 return;
             }
             if (want && key === page) shownQuery[page] = want;
@@ -1413,10 +1414,13 @@
     function runDeferredAlertsRefresh() {
         if (!alertsRefreshDeferred || AC.chartLoadBusy('filter-alerts', true)) return;
         alertsRefreshDeferred = false;
-        refreshAlertsAtCurrentPage();
+        refreshAlertsAtCurrentPage({ quiet: true });
     }
 
-    function refreshAlertsAtCurrentPage() {
+    // opts.quiet: a deferred refresh after another load settled — no overlay,
+    // so it neither flashes nor wipes that load's Cancel/Retry notice (the
+    // rows it refreshes are the shown query's, which the notice describes).
+    function refreshAlertsAtCurrentPage(opts) {
         // An ack/snooze from an alert opened on another page (the #alert/ID
         // deep link) must not run the Alerts page's load in the background —
         // its restore would rewrite THAT page's URL. The Alerts page reloads
@@ -1442,14 +1446,17 @@
                 return { result: result, offset: offset };
             });
         }
-        runFilterLoad('alerts', function(signal) { return tryLoad(pageStart, signal); }, function(got) {
+        var refreshing = runFilterLoad('alerts', function(signal) { return tryLoad(pageStart, signal); }, function(got) {
             var alerts = (got.result.data && got.result.data.alerts) ? got.result.data.alerts : [];
             var total = (got.result.data && got.result.data.total) ? got.result.data.total : 0;
             renderAlertsTable(alerts, false);
             alertsOffset = got.offset + alerts.length;
             updateAlertPagination(alerts.length, total);
             loadAlertCharts();
-        }, { snap: shownQuery.alerts, retry: refreshAlertsAtCurrentPage });
+        }, { snap: shownQuery.alerts, noOverlay: !!(opts && opts.quiet), retry: refreshAlertsAtCurrentPage });
+        // An ack that arrived while THIS refresh ran was deferred; its refresh
+        // runs now (its own query started before that ack committed).
+        if (refreshing && refreshing.then) refreshing.then(function() { updateAlertBulkToolbar(); runDeferredAlertsRefresh(); });
     }
 
     function clearAlertSelection() {
