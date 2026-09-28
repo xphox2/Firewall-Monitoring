@@ -2,7 +2,9 @@ package database
 
 import (
 	"fmt"
+	"log"
 	"sort"
+	"sync"
 	"time"
 
 	"firewall-mon/internal/models"
@@ -32,7 +34,13 @@ type NOCSnapshot struct {
 	ByDirection     []KeyCount `json:"by_direction"` // Key = classify.Dir* id (string)
 	TopCountries    []KeyCount `json:"top_countries"`
 
-	Detections []models.FlowDetection `json:"detections"` // recent, most-severe first
+	// Feed is the live alert/detection ticker. The broadcaster sends it as its
+	// own SSE event (only when it changes) and clears it here; the one-shot
+	// snapshot endpoint returns it inline. Fleet-only.
+	Feed *NOCFeed `json:"feed,omitempty"`
+	// ThreatTop is the last minute's threat-intel traffic by session initiator.
+	// Fleet-only.
+	ThreatTop *NOCThreatTop `json:"threat_top,omitempty"`
 
 	ProbesOnline      int   `json:"probes_online"`
 	ProbesOffline     int   `json:"probes_offline"`
@@ -84,16 +92,6 @@ type SiteBreakdown struct {
 	Devices        []DeviceRow `json:"devices"`
 }
 
-// NOC "Live Detections" feed window/limit. A 15-minute window left the feed almost
-// always empty: ~90% of detections escalate to alerts (excluded here by design) and
-// the un-alerted remainder averages only a few per hour, so nearly every 15-minute
-// window had zero rows. A 6h window keeps the feed live and populated without
-// overwhelming it (the Flows-page detections card uses the same 24h-class lookback).
-const (
-	nocDetectionsWindow = 6 * time.Hour
-	nocDetectionsLimit  = 30
-)
-
 // GetNOCSnapshot computes the fleet-wide NOCSnapshot over the trailing window
 // (what the hub broadcasts to every viewer). It includes the per-site breakdown.
 func (d *Database) GetNOCSnapshot(window time.Duration) (*NOCSnapshot, error) {
@@ -104,7 +102,7 @@ func (d *Database) GetNOCSnapshot(window time.Duration) (*NOCSnapshot, error) {
 // site or device for the NOC drill-down. All flow aggregates are bounded (top-N)
 // and run against the raw flow_samples indexes. Errors on optional sub-queries
 // are tolerated (the field stays zero) so a single failing aggregate doesn't
-// blank the whole dashboard. In filtered mode the fleet-only fields (detections,
+// blank the whole dashboard. In filtered mode the fleet-only fields (feed, threats,
 // probe counts, threat-intel, Sites) are omitted so a drill-down never shows
 // unrelated fleet data; the device online/offline counts are scoped to the filter.
 func (d *Database) GetNOCSnapshotFiltered(window time.Duration, filter NOCFilter) (*NOCSnapshot, error) {
@@ -205,11 +203,20 @@ func (d *Database) GetNOCSnapshotFiltered(window time.Duration, filter NOCFilter
 		}
 	}
 
-	// Fleet-only signals: detections, probe counts, threat-intel, and the site
-	// breakdown. Omitted on a filtered drill-down.
+	// Fleet-only signals: the live feed, threat lists, probe counts,
+	// threat-intel, and the site breakdown. Omitted on a filtered drill-down.
 	if !filtered {
-		if dets, err := d.GetRecentDetections(time.Now().Add(-nocDetectionsWindow), nocDetectionsLimit, false, false); err == nil {
-			snap.Detections = dets
+		// Optional like the other fleet extras: a failure leaves the card empty
+		// rather than failing the whole snapshot.
+		if feed, err := d.GetNOCFeed(); err == nil {
+			snap.Feed = feed
+		} else {
+			nocLogThrottled("feed", "noc snapshot: live feed: %v", err)
+		}
+		if top, err := d.getNOCThreatTop(); err == nil {
+			snap.ThreatTop = top
+		} else {
+			nocLogThrottled("threats", "noc snapshot: threat lists: %v", err)
 		}
 		if probes, err := d.GetAllProbes(); err == nil {
 			for _, p := range probes {
@@ -525,3 +532,24 @@ func itoaInt64(v int64) string {
 	}
 	return string(b[pos:])
 }
+
+// nocLogThrottled logs an optional-card failure at most once a minute per key:
+// the snapshot is rebuilt every few seconds, so an unthrottled persistent
+// failure would flood the log.
+func nocLogThrottled(key, format string, args ...interface{}) {
+	nocLogMu.Lock()
+	last, seen := nocLogLast[key]
+	now := time.Now()
+	if seen && now.Sub(last) < time.Minute {
+		nocLogMu.Unlock()
+		return
+	}
+	nocLogLast[key] = now
+	nocLogMu.Unlock()
+	log.Printf(format, args...)
+}
+
+var (
+	nocLogMu   sync.Mutex
+	nocLogLast = map[string]time.Time{}
+)

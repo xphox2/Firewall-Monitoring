@@ -15,7 +15,10 @@
 // GROUP BY them directly instead of re-deriving on every read.
 package classify
 
-import "net"
+import (
+	"net"
+	"sort"
+)
 
 // Category is the application/L7 class of a flow. The integer values are the
 // on-the-wire/on-disk encoding (flow_samples.app_category) and MUST remain
@@ -106,6 +109,19 @@ var portCategory = map[uint16]Category{
 	// P2P
 	6881: P2P, 6882: P2P, 6883: P2P, 6884: P2P, 6885: P2P, 6886: P2P, 6887: P2P,
 	6888: P2P, 6889: P2P, 51413: P2P,
+}
+
+// KnownServicePorts returns the well-known service ports ServicePort treats as
+// "known", sorted ascending. SQL that must agree with ServicePort (the NOC
+// threat classification) embeds this list, and sorting keeps the SQL text
+// byte-stable.
+func KnownServicePorts() []uint16 {
+	ports := make([]uint16, 0, len(portCategory))
+	for p := range portCategory {
+		ports = append(ports, p)
+	}
+	sort.Slice(ports, func(i, j int) bool { return ports[i] < ports[j] })
+	return ports
 }
 
 // IP protocol numbers used by the protocol-only fallback.

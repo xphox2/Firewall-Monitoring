@@ -3,8 +3,9 @@
  *
  * Subscribes to the server's Server-Sent Events stream (/admin/api/noc/stream),
  * which pushes a fresh snapshot every few seconds. The snapshot carries fleet
- * vitals, a live per-site/device health breakdown (snapshot.sites) and a recent
- * detections feed — the whole page renders from that ONE stream (no extra poll).
+ * vitals, a live per-site/device health breakdown (snapshot.sites) and the
+ * last minute's threat lists; a named "feed" event carries the live alert and
+ * detection ticker. The whole page renders from that ONE stream (no extra poll).
  *
  * Every site/device card is a link into Alert History, filtered to that entity:
  *   - site card    → /admin/alerts?site_id=ID   (or ?site_id=unassigned)
@@ -83,8 +84,11 @@
         if (!d) return;
         latest = d;
         renderVitals(d);
-        renderDetections(d);
+        renderThreats(d);
         renderBreakdown(d);
+        // The one-shot fallback carries the feed inline; the stream sends it as
+        // its own event.
+        if (d.feed) onFeed(d.feed);
     }
 
     function renderVitals(d) {
@@ -203,23 +207,6 @@
         el.innerHTML = html;
     }
 
-    // ── Detections feed ─────────────────────────────────────────────────────
-
-    // deviceNameMap builds an id→name lookup from the snapshot's site breakdown so
-    // a detection's device_id can be shown as a name (no extra fetch). The
-    // breakdown holds ACTIVE devices only, so a detection attributed to a
-    // retired device is not in the map and renders through renderDetections'
-    // 'DEV-<id>' fallback — this page has no other name source.
-    function deviceNameMap(d) {
-        var map = {};
-        var sites = (d && d.sites) || [];
-        for (var i = 0; i < sites.length; i++) {
-            var devs = sites[i].devices || [];
-            for (var j = 0; j < devs.length; j++) map[String(devs[j].id)] = devs[j].name;
-        }
-        return map;
-    }
-
     // ipRef renders an IP as a threat-intel-enrichable reference (populated by
     // AdminCommon.enrichIps after paint), falling back to plain text.
     function ipRef(addr) {
@@ -228,40 +215,331 @@
         return (AC && AC.ipRef) ? AC.ipRef(addr) : esc(addr);
     }
 
-    function renderDetections(d) {
-        var body = document.getElementById('noc-detections-body');
-        if (!body) return;
-        var rows = (d && d.detections) || [];
-        if (!rows.length) {
-            body.innerHTML = '<tr><td colspan="7" class="fwmon-ti-empty">No detections in the last 6 hours.</td></tr>';
-            return;
+    // ── Live feed (v0.11.269) ───────────────────────────────────────────────
+    //
+    // The stream's named "feed" event carries three capped lists (alerts, live
+    // detections, silenced detections); this merges, filters and slices them.
+    // The list is diffed in place — never rebuilt — so a new item can slide in
+    // and a screen reader is not read the whole list every few seconds.
+
+    var FEED_COUNTS = [10, 20, 50, 100];
+    var FEED_KINDS = ['all', 'alerts', 'detections'];
+    var NEW_WINDOW_MS = 20 * 60 * 1000;   // "new" and "still firing" horizon
+    var ANNOUNCE_EVERY_MS = 15 * 1000;
+    var PREF = { count: 'fwmon.noc.feed.count', kind: 'fwmon.noc.feed.kind', silenced: 'fwmon.noc.feed.silenced' };
+
+    var feedState = {
+        count: 20, kind: 'all', silenced: false,
+        feed: null,            // latest feed frame received
+        prevKeys: null,        // keys of the last RENDERED frame (all lists); null = nothing rendered yet
+        paused: false, hoverPaused: false, focusPaused: false,
+        pendingAnnounce: 0, lastAnnounce: 0, announceTimer: null
+    };
+
+    function prefGet(key) {
+        try { return window.localStorage.getItem(key); } catch (e) { return null; }
+    }
+    function prefSet(key, val) {
+        try { window.localStorage.setItem(key, String(val)); } catch (e) { /* private mode */ }
+    }
+    // Stored preferences are read through whitelists: a tampered or stale value
+    // falls back to the default instead of slicing to nothing.
+    function loadFeedPrefs() {
+        var c = parseInt(prefGet(PREF.count), 10);
+        feedState.count = FEED_COUNTS.indexOf(c) !== -1 ? c : 20;
+        var k = prefGet(PREF.kind);
+        feedState.kind = FEED_KINDS.indexOf(k) !== -1 ? k : 'all';
+        feedState.silenced = prefGet(PREF.silenced) === '1';
+        var el;
+        if ((el = document.getElementById('noc-feed-count'))) el.value = String(feedState.count);
+        if ((el = document.getElementById('noc-feed-kind'))) el.value = feedState.kind;
+        if ((el = document.getElementById('noc-feed-silenced'))) el.checked = feedState.silenced;
+    }
+
+    // itemKey identifies a feed item across frames. A detection episode that
+    // was already running when the window began ("truncated") is keyed on its
+    // dedup key alone, so it keeps its identity as its oldest rows age out; an
+    // alert re-fired in place (same id, new timestamp) gets a new key.
+    function itemKey(it, list) {
+        if (it.kind === 'alert') return 'alert|' + it.id + '|' + it.at;
+        return list + '|' + it.dedup_key + '|' + (it.truncated ? 'old' : it.at);
+    }
+
+    function allFeedItems(feed) {
+        var out = [];
+        var add = function (arr, list) {
+            (arr || []).forEach(function (it) { out.push({ it: it, list: list, key: itemKey(it, list) }); });
+        };
+        add(feed.alerts, 'alert');
+        add(feed.detections, 'detection');
+        add(feed.silenced, 'silenced');
+        return out;
+    }
+
+    function tms(iso) { var t = new Date(iso).getTime(); return isFinite(t) ? t : 0; }
+
+    // Newest first; ties (a detector cycle stamps all its findings alike) break
+    // the same way as on the server, so the order never shuffles.
+    function feedOrder(a, b) {
+        var d = tms(b.it.at) - tms(a.it.at);
+        if (d !== 0) return d;
+        if (a.list !== b.list) return a.list < b.list ? -1 : 1;
+        if (a.list === 'alert') return b.it.id - a.it.id;
+        return a.it.dedup_key < b.it.dedup_key ? -1 : (a.it.dedup_key > b.it.dedup_key ? 1 : 0);
+    }
+
+    function visibleFeed(all) {
+        var k = feedState.kind;
+        return all.filter(function (e) {
+            if (e.list === 'silenced' && !feedState.silenced) return false;
+            if (k === 'alerts') return e.list === 'alert';
+            if (k === 'detections') return e.list !== 'alert';
+            return true;
+        }).sort(feedOrder).slice(0, feedState.count);
+    }
+
+    function feedHref(e) {
+        if (e.list === 'alert') return '#alert/' + encodeURIComponent(e.it.id);
+        var q = 'hours=6&tab=samples';
+        if (e.it.src) q += '&src=' + encodeURIComponent(e.it.src);
+        if (e.it.dst) q += '&dst=' + encodeURIComponent(e.it.dst);
+        return '/admin/flows?' + q;
+    }
+
+    function feedRowHTML(e, genMs) {
+        var it = e.it;
+        var sev = FEED_SEVS[it.severity] ? it.severity : 'info';
+        var route = '';
+        if (it.src || it.dst) {
+            route = (it.src ? ipRef(it.src) : '—') + (it.dst ? ' → ' + ipRef(it.dst) + (it.dst_port ? ':' + esc(it.dst_port) : '') : '');
         }
-        var devNames = deviceNameMap(d);
-        rows = rows.slice().sort(function (a, b) {
-            var ra = SEV_RANK[a.severity] != null ? SEV_RANK[a.severity] : 9;
-            var rb = SEV_RANK[b.severity] != null ? SEV_RANK[b.severity] : 9;
-            if (ra !== rb) return ra - rb;
-            return new Date(b.detected_at) - new Date(a.detected_at);
+        var dev = it.device_name || (it.device_id ? 'DEV-' + it.device_id : '');
+        if (dev && it.site_name) dev += ' · ' + it.site_name;
+        var firing = e.list !== 'alert' && genMs - tms(it.last_seen) <= NEW_WINDOW_MS;
+        var when = it.truncated ? '> 6h' : ago(it.at);
+        return '<a class="fwmon-noc-feed-row" href="' + esc(feedHref(e)) + '"' + (e.list === 'alert' ? ' data-noc-alert="' + esc(it.id) + '"' : '') + '>' +
+            '<span class="fwmon-det-sev fwmon-det-sev-' + esc(sev) + '">' + esc(sev) + '</span>' +
+            '<span class="fwmon-noc-feed-type">' + esc(it.type || '') +
+                (it.repeat > 1 ? ' <span class="fwmon-noc-feed-rep" title="times seen">×' + esc(it.repeat) + '</span>' : '') +
+                (firing ? ' <span class="fwmon-noc-feed-firing" title="still firing">●</span>' : '') +
+                (e.list === 'silenced' ? ' <span class="fwmon-noc-feed-tag">silenced</span>' : '') +
+            '</span>' +
+            '<span class="fwmon-noc-feed-dev">' + esc(dev) + '</span>' +
+            '<span class="fwmon-noc-feed-route">' + route + '</span>' +
+            '<span class="fwmon-noc-feed-msg">' + esc(it.message || '') + '</span>' +
+            '<span class="fwmon-noc-feed-when" title="' + esc(it.at || '') + '">' + esc(when) + '</span>' +
+        '</a>';
+    }
+    var FEED_SEVS = { critical: 1, warning: 1, info: 1 };
+
+    function isPaused() { return feedState.paused || feedState.hoverPaused || feedState.focusPaused; }
+
+    function onFeed(feed) {
+        if (!feed) return;
+        feedState.feed = feed;
+        if (isPaused()) { showPausedBadge(); return; }
+        renderFeed();
+    }
+
+    function showPausedBadge() {
+        var badge = document.getElementById('noc-feed-paused');
+        if (!badge) return;
+        if (!isPaused()) { badge.hidden = true; return; }
+        var n = 0;
+        if (feedState.feed && feedState.prevKeys) {
+            allFeedItems(feedState.feed).forEach(function (e) { if (!feedState.prevKeys[e.key]) n++; });
+        }
+        // A manual pause says so; hover/focus only holds the list while it is read.
+        badge.textContent = (feedState.paused ? 'paused' : 'held while reading') + (n ? ' · ' + n + ' new' : '');
+        badge.hidden = false;
+    }
+
+    function renderFeed() {
+        var list = document.getElementById('noc-feed-list');
+        var feed = feedState.feed;
+        if (!list || !feed) return;
+        var genMs = tms(feed.generated_at) || Date.now();
+        var all = allFeedItems(feed);
+        var shown = visibleFeed(all);
+        var prev = feedState.prevKeys;
+        var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+        // Existing nodes by key; the list is re-ordered in place.
+        var byKey = {};
+        Array.prototype.forEach.call(list.children, function (li) { byKey[li.getAttribute('data-key')] = li; });
+        var keep = {};
+        var fresh = 0;
+        shown.forEach(function (e, i) {
+            var html = feedRowHTML(e, genMs);
+            var li = byKey[e.key];
+            if (!li) {
+                li = document.createElement('li');
+                li.setAttribute('data-key', e.key);
+                // New only if absent from the last rendered frame AND recent: the
+                // first frame, a re-keyed old episode and a toggle animate nothing.
+                if (prev && !prev[e.key] && genMs - tms(e.it.at) <= NEW_WINDOW_MS) {
+                    fresh++;
+                    if (!reduce) li.className = 'fwmon-noc-feed-new';
+                }
+            }
+            if (li.getAttribute('data-html') !== html) {
+                li.innerHTML = html;
+                li.setAttribute('data-html', html);
+            }
+            keep[e.key] = true;
+            if (list.children[i] !== li) list.insertBefore(li, list.children[i] || null);
         });
-        var html = '';
-        for (var i = 0; i < rows.length; i++) {
-            var r = rows[i];
-            var sev = r.severity || 'info';
-            var dst = r.dst_addr ? (ipRef(r.dst_addr) + (r.dst_port ? ':' + esc(r.dst_port) : '')) : '—';
-            var route = r.src_addr ? (ipRef(r.src_addr) + ' → ' + dst) : (r.dst_addr ? dst : '—');
-            var devName = (r.device_id && devNames[String(r.device_id)]) || (r.device_id ? ('DEV-' + r.device_id) : '—');
-            html += '<tr>' +
-                '<td><span class="fwmon-det-sev fwmon-det-sev-' + esc(sev) + '">' + esc(sev) + '</span></td>' +
-                '<td>' + esc(r.category || '') + '</td>' +
-                '<td><code>' + esc(r.detector || '') + '</code></td>' +
-                '<td style="font-family:var(--fwmon-font-mono,monospace);white-space:nowrap;">' + route + '</td>' +
-                '<td>' + esc(devName) + '</td>' +
-                '<td>' + esc(r.message || '') + '</td>' +
-                '<td title="' + esc(r.detected_at || '') + '">' + esc(ago(r.detected_at)) + ' ago</td>' +
-            '</tr>';
+        Object.keys(byKey).forEach(function (k) { if (!keep[k]) list.removeChild(byKey[k]); });
+
+        var next = {};
+        all.forEach(function (e) { next[e.key] = true; });
+        feedState.prevKeys = next;
+
+        renderFeedEmpty(shown.length, feed);
+        if (fresh) announce(fresh);
+        if (window.AdminCommon && window.AdminCommon.enrichIps) window.AdminCommon.enrichIps(list);
+        var badge = document.getElementById('noc-feed-paused');
+        if (badge) badge.hidden = true;
+    }
+
+    function renderFeedEmpty(shown, feed) {
+        var el = document.getElementById('noc-feed-empty');
+        if (!el) return;
+        var hidden = !feedState.silenced && (feed.silenced_total || 0) > 0 && feedState.kind !== 'alerts';
+        var msg = '';
+        if (!shown) msg = feedState.kind === 'alerts' ? 'No alerts in the last 7 days.' : 'No events to show.';
+        if (hidden) {
+            el.innerHTML = esc(msg ? msg + ' ' : '') + esc(fmtCount(feed.silenced_total)) +
+                ' silenced detections hidden — <button type="button" class="fwmon-link-btn" data-noc-show-silenced>Show silenced</button>';
+            el.hidden = false;
+        } else if (msg) {
+            el.textContent = msg;
+            el.hidden = false;
+        } else {
+            el.hidden = true;
         }
-        body.innerHTML = html;
-        if (window.AdminCommon && window.AdminCommon.enrichIps) window.AdminCommon.enrichIps(body);
+    }
+
+    // announce tells a screen reader how many events arrived, at most every
+    // ANNOUNCE_EVERY_MS, instead of a live region on the whole list.
+    function announce(n) {
+        feedState.pendingAnnounce += n;
+        var wait = feedState.lastAnnounce + ANNOUNCE_EVERY_MS - Date.now();
+        if (feedState.announceTimer) return;
+        feedState.announceTimer = setTimeout(function () {
+            feedState.announceTimer = null;
+            var el = document.getElementById('noc-feed-status');
+            if (el && feedState.pendingAnnounce) {
+                el.textContent = feedState.pendingAnnounce + ' new event' + (feedState.pendingAnnounce === 1 ? '' : 's');
+            }
+            feedState.pendingAnnounce = 0;
+            feedState.lastAnnounce = Date.now();
+        }, Math.max(0, wait));
+    }
+
+    function setPaused(on) {
+        feedState.paused = on;
+        var btn = document.getElementById('noc-feed-pause');
+        if (btn) {
+            btn.textContent = on ? 'Resume' : 'Pause';
+            btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        }
+        afterPauseChange();
+    }
+    function afterPauseChange() {
+        if (isPaused()) showPausedBadge();
+        else renderFeed();
+    }
+
+    function wireFeed() {
+        var list = document.getElementById('noc-feed-list');
+        var count = document.getElementById('noc-feed-count');
+        var kind = document.getElementById('noc-feed-kind');
+        var sil = document.getElementById('noc-feed-silenced');
+        var pause = document.getElementById('noc-feed-pause');
+        if (count) count.addEventListener('change', function () {
+            var c = parseInt(count.value, 10);
+            feedState.count = FEED_COUNTS.indexOf(c) !== -1 ? c : 20;
+            prefSet(PREF.count, feedState.count);
+            renderFeed();
+        });
+        if (kind) kind.addEventListener('change', function () {
+            feedState.kind = FEED_KINDS.indexOf(kind.value) !== -1 ? kind.value : 'all';
+            prefSet(PREF.kind, feedState.kind);
+            renderFeed();
+        });
+        if (sil) sil.addEventListener('change', function () {
+            feedState.silenced = !!sil.checked;
+            prefSet(PREF.silenced, feedState.silenced ? '1' : '0');
+            renderFeed();
+        });
+        if (pause) pause.addEventListener('click', function () { setPaused(!feedState.paused); });
+        if (list) {
+            // Hover-pause only where hovering exists: on touch a tap fires
+            // mouseenter with no mouseleave and would freeze the feed.
+            if (window.matchMedia && window.matchMedia('(hover: hover)').matches) {
+                list.addEventListener('mouseenter', function () { feedState.hoverPaused = true; afterPauseChange(); });
+                list.addEventListener('mouseleave', function () { feedState.hoverPaused = false; afterPauseChange(); });
+            }
+            list.addEventListener('focusin', function () { feedState.focusPaused = true; afterPauseChange(); });
+            list.addEventListener('focusout', function (ev) {
+                if (ev.relatedTarget && list.contains(ev.relatedTarget)) return;
+                feedState.focusPaused = false;
+                afterPauseChange();
+            });
+            // A repeat click on the same alert: clear the hash first so the
+            // hashchange route opens the detail again.
+            list.addEventListener('click', function (ev) {
+                var a = ev.target.closest && ev.target.closest('a[data-noc-alert]');
+                if (a && location.hash === a.getAttribute('href')) {
+                    history.replaceState(null, '', location.pathname + location.search);
+                }
+            });
+        }
+    }
+
+    // ── Threats — last 60 s ─────────────────────────────────────────────────
+
+    var PROTO = { 1: 'icmp', 6: 'tcp', 17: 'udp' };
+
+    function threatRowHTML(e, outbound) {
+        var svc = e.service ? esc(e.service) + '/' + esc(PROTO[e.protocol] || e.protocol) : '—';
+        var marks = '';
+        if (e.inferred) marks += ' <span class="fwmon-noc-feed-tag" title="direction inferred from a guessed service port">inferred</span>';
+        if (!e.ip_match) marks += ' <span class="fwmon-noc-feed-tag" title="only the address’s network (ASN) is on the threat list">ASN</span>';
+        if (e.blocked) marks += ' <span class="fwmon-noc-feed-tag">' + esc(fmtCount(e.blocked)) + ' blocked</span>';
+        var hosts = (e.internal_hosts || []).map(ipRef).join(', ');
+        if (e.internal_count > (e.internal_hosts || []).length) hosts += ' +' + esc(e.internal_count - e.internal_hosts.length);
+        var href = '/admin/flows?hours=1&tab=samples&' + (outbound ? 'dst=' : 'src=') + encodeURIComponent(e.addr);
+        return '<li><a class="fwmon-noc-threat-row" href="' + esc(href) + '">' +
+            '<span class="addr">' + ipRef(e.addr) + marks + '</span>' +
+            '<span class="svc">' + svc + '</span>' +
+            '<span class="req" title="request records">' + esc(fmtCount(e.requests)) + ' req · ' + esc(fmtBytes(e.bytes)) + '</span>' +
+            '<span class="hosts">' + (outbound ? 'from ' : 'to ') + (hosts || '—') + '</span>' +
+        '</a></li>';
+    }
+
+    function renderThreats(d) {
+        var top = d && d.threat_top;
+        var sum = document.getElementById('noc-threat-summary');
+        var outEl = document.getElementById('noc-threat-out');
+        var inEl = document.getElementById('noc-threat-in');
+        if (!sum || !outEl || !inEl) return;
+        if (!top) { sum.textContent = ''; outEl.innerHTML = inEl.innerHTML = ''; return; }
+        var s = top.summary || {};
+        sum.innerHTML =
+            '<span class="out"><b>' + esc(fmtCount(s.outbound)) + '</b> outbound req</span>' +
+            '<span class="in"><b>' + esc(fmtCount(s.inbound)) + '</b> inbound req</span>' +
+            '<span><b>' + esc(fmtCount(s.unclassified)) + '</b> unclassified</span>' +
+            '<span><b>' + esc(fmtCount(s.other)) + '</b> other</span>' +
+            '<span><b>' + esc(fmtCount(s.blocked)) + '</b> blocked</span>';
+        var empty = '<li class="fwmon-noc-threat-empty">No threat-intel matches in the last minute.</li>';
+        outEl.innerHTML = (top.outbound || []).length ? top.outbound.map(function (e) { return threatRowHTML(e, true); }).join('') : empty;
+        inEl.innerHTML = (top.inbound || []).length ? top.inbound.map(function (e) { return threatRowHTML(e, false); }).join('') : empty;
+        if (window.AdminCommon && window.AdminCommon.enrichIps) {
+            window.AdminCommon.enrichIps(outEl);
+            window.AdminCommon.enrichIps(inEl);
+        }
     }
 
     // ── mode toggle / interaction ───────────────────────────────────────────
@@ -284,6 +562,10 @@
         // through to the SPA click-interceptor, so no card handling is needed here.
         var modeBtn = t.closest && t.closest('.fwmon-noc-mode');
         if (modeBtn) { setMode(modeBtn.getAttribute('data-noc-mode')); return; }
+        if (t.closest && t.closest('[data-noc-show-silenced]')) {
+            var sil = document.getElementById('noc-feed-silenced');
+            if (sil) { sil.checked = true; sil.dispatchEvent(new Event('change')); }
+        }
     }
 
     function setStatus(txt, cls) {
@@ -297,12 +579,17 @@
         if (wired) return;
         var page = document.getElementById('page-noc');
         if (page) page.addEventListener('click', onClick);
+        wireFeed();
         wired = true;
     }
 
     function init() {
         stop(); // never stack streams on re-entry
         wire();
+        loadFeedPrefs();
+        // A fresh visit animates nothing on its first frame.
+        feedState.prevKeys = null;
+        feedState.feed = null;
 
         if (typeof EventSource === 'undefined') {
             setStatus('live updates unsupported', 'bad');
@@ -321,6 +608,10 @@
             try { render(JSON.parse(ev.data)); }
             catch (e) { if (window.fwmonLog) window.fwmonLog.error('FwmonNOC: bad frame', e); }
         };
+        es.addEventListener('feed', function (ev) {
+            try { onFeed(JSON.parse(ev.data)); }
+            catch (e) { if (window.fwmonLog) window.fwmonLog.error('FwmonNOC: bad feed frame', e); }
+        });
         es.onerror = function () { setStatus('reconnecting…', 'warn'); };
     }
 

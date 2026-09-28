@@ -713,22 +713,62 @@
 
             <!-- By Site: one card per site (+ Unassigned bucket). Each card links to
                  Alert History filtered to that site / device. -->
-            <div class="fwmon-noc-grid" id="noc-sites-grid" aria-live="polite">
+            <div class="fwmon-noc-grid" id="noc-sites-grid">
                 <div class="fwmon-noc-empty">Connecting to the live stream…</div>
             </div>
 
             <!-- By Device: flat, sortable device grid (Site column). -->
-            <div class="fwmon-noc-grid" id="noc-devices-grid" hidden aria-live="polite"></div>
+            <div class="fwmon-noc-grid" id="noc-devices-grid" hidden></div>
 
-            <!-- Live Detections — collapsible; a genuine NOC signal kept from the
-                 previous NOC (flow src/dst analytics now live on the Flows page). -->
-            <details class="card fwmon-flows-detections-card fwmon-noc-detections" id="noc-detections" open>
-                <summary class="fwmon-noc-det-summary"><span class="fwmon-toptalk-title">Live Detections<span class="fwmon-toptalk-hint">last 6h</span></span></summary>
-                <table class="fwmon-flows-detections-table">
-                    <thead><tr><th>Severity</th><th>Category</th><th>Detector</th><th>Source → Dest</th><th>Device</th><th>Finding</th><th>When</th></tr></thead>
-                    <tbody id="noc-detections-body"></tbody>
-                </table>
-            </details>
+            <!-- Live feed (v0.11.269): alerts and flow detections as they arrive,
+                 from the stream's "feed" event. The list is diffed in place, so it
+                 carries no aria-live; the status node announces new arrivals. -->
+            <section class="card fwmon-noc-feed-card" id="noc-feed" aria-labelledby="noc-feed-title">
+                <div class="fwmon-noc-card-head">
+                    <h3 class="fwmon-toptalk-title" id="noc-feed-title">Live feed<span class="fwmon-toptalk-hint">detections arrive on the 5-minute detector cycle</span></h3>
+                    <div class="fwmon-noc-feed-controls">
+                        <label>Show
+                            <select id="noc-feed-kind" aria-label="Which events to show">
+                                <option value="all">All</option>
+                                <option value="alerts">Alerts</option>
+                                <option value="detections">Detections</option>
+                            </select>
+                        </label>
+                        <label>Last
+                            <select id="noc-feed-count" aria-label="How many events to show">
+                                <option value="10">10</option>
+                                <option value="20" selected>20</option>
+                                <option value="50">50</option>
+                                <option value="100">100</option>
+                            </select>
+                        </label>
+                        <label class="fwmon-noc-feed-check"><input type="checkbox" id="noc-feed-silenced"> Show silenced</label>
+                        <button type="button" class="fwmon-noc-feed-pause" id="noc-feed-pause" aria-pressed="false">Pause</button>
+                        <span class="fwmon-noc-feed-paused" id="noc-feed-paused" hidden></span>
+                    </div>
+                </div>
+                <div class="fwmon-sr-only" id="noc-feed-status" role="status"></div>
+                <ol class="fwmon-noc-feed" id="noc-feed-list"></ol>
+                <p class="fwmon-noc-feed-empty" id="noc-feed-empty" hidden></p>
+            </section>
+
+            <!-- Threats in the last minute, by who started the conversation. -->
+            <section class="card fwmon-noc-threats-card" id="noc-threats" aria-labelledby="noc-threats-title">
+                <div class="fwmon-noc-card-head">
+                    <h3 class="fwmon-toptalk-title" id="noc-threats-title">Threats — last 60 s<span class="fwmon-toptalk-hint">threat-intel matches in received flows</span></h3>
+                </div>
+                <div class="fwmon-noc-threat-summary" id="noc-threat-summary"></div>
+                <div class="fwmon-noc-threat-lists">
+                    <div class="fwmon-noc-threat-col">
+                        <h4>Outbound — our hosts talking to flagged IPs</h4>
+                        <ol class="fwmon-noc-threat-list" id="noc-threat-out"></ol>
+                    </div>
+                    <div class="fwmon-noc-threat-col">
+                        <h4>Inbound — flagged sources reaching us</h4>
+                        <ol class="fwmon-noc-threat-list" id="noc-threat-in"></ol>
+                    </div>
+                </div>
+            </section>
         </div>
 
         <!-- Alerts Page (v0.10.212: pill-bar range + auto-apply filters + URL state) -->

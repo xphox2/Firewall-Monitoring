@@ -46,6 +46,10 @@ type Database struct {
 	// missing endpoint (connection_guard.go). A pointer for the same reason.
 	connSkips *autoConnSkipLog
 
+	// nocDetCache reuses the NOC feed's detection lists between hub ticks
+	// (noc_feed.go). A pointer for the same reason.
+	nocDetCache *nocDetCache
+
 	// M8 encryption key-check verdict, set once by VerifyEncryptionKey at
 	// startup and read by EncryptionVerified (health/readiness, daemon
 	// fail-fast). encKeyBroken=true means the configured key chain provably
@@ -242,6 +246,7 @@ func Connect(cfg *config.Config) (*Database, error) {
 	})
 	d.ingest = newSyslogIngestMeter(time.Now)
 	d.connSkips = newAutoConnSkipLog()
+	d.nocDetCache = newNOCDetCache()
 
 	return d, nil
 }

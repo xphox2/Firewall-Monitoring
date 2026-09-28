@@ -252,6 +252,14 @@ matches; a batch query expecting MANY wants the opposite plan. Never blanket-app
 - [ ] Docs + CHANGELOG 0.11.268 + ServerVersion/README; QA gates; Fable diff review; PR; CI; merge
 - [ ] Post-deploy (when the user says): #25513 gone and stays gone across cycles; OPNsense VPN panel unchanged
 
-## PR 2 — v0.11.269: NOC live feed + 60 s threats (own plan-mode delta first)
+## PR 2 — v0.11.269: NOC live feed + 60 s threats (delta approved 2026-09-28)
+- [x] classify.KnownServicePorts (sorted); alert_enrich.go (deviceSiteNames + EnrichAlertDeviceSite), handler call sites
+- [x] noc_feed.go: alerts / detections (90 s grace) / silenced episodes (LAG, MinutesBetween, truncated, tiebreak, silenced_total)
+- [x] noc_threats.go: initiator classification (SYN, eff_port, equal/no-port, own-side bits), entries, outbound hosts, totals, ip_match
+- [x] noc.go snapshot: Feed *NOCFeed, ThreatTop; remove Detections + dead constants; models threat_flag comment
+- [x] Hub: pre-formatted frames, unnamed snapshot + named feed, change detection on lists, 12-tick refresh, replay both
+- [x] UI: feed card (controls, whitelist prefs, DOM diff, animation rule, pause, status node, anchors), threats card, CSS, aria-live on grids
+- [x] Tests (feed, threats SQLite+PG, hub, JS guardrails), mutation checks, browser check desktop + 390 px touch
+- [ ] Prod EXPLAIN/timing of the new queries; docs + CHANGELOG 0.11.269; QA gates; Fable diff review (fresh final); PR; CI; merge
 ## PR 3 — v0.11.270: zoom re-query + loading/Cancel (own plan-mode delta first)
 ## PR 4 — v0.11.271: loading/Cancel on every server-side filter (own plan-mode delta first)
