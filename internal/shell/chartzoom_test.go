@@ -25,12 +25,12 @@ func TestChartLoad_OverlayContract(t *testing.T) {
 	must("if (chartLoads[key]) chartLoads[key].supersede();", "a newer load for the same chart supersedes the old one")
 	must("if (done) return;", "a result arriving after Cancel or supersede is ignored")
 	must("run(ctrl ? ctrl.signal : undefined)", "the fetch gets the abort signal, so Cancel stops the request")
-	must("if (mine) cancel();", "Esc cancels")
+	must("if (!owned || list.some(function(c) { return c.contains(t); })) cancel();", "Esc cancels")
 	must("c.setAttribute('aria-busy', 'true');", "the chart is marked busy while loading")
 	must("o.setAttribute('role', 'status');", "the overlay is announced")
 	must("chartLoad: chartLoad,", "exported")
 	must("chartNotice: chartNotice,", "exported")
-	must("var mine = !t || t === document.body || list.some(function(c) { return c.contains(t); });", "Esc cancels only the load whose chart has focus")
+	must("t.closest('[role=\"dialog\"], .fwmon-confirm-overlay, input, textarea, select')", "Esc cancels unless focus is in something that owns Esc (a clicked range button keeps focus)")
 	must(`'<span class="fwmon-chart-overlay-elapsed" aria-live="off"></span>'`, "the per-second counter is not re-announced")
 }
 
@@ -105,7 +105,7 @@ func TestPublicModal_ZoomRequeries(t *testing.T) {
 	must("if (modalWidgetDef) { modalWindow = null; loadModal(); }", "Reset re-fetches the dashboard range")
 	must("fetch(url, { signal: signal })", "the modal fetch is cancellable")
 	must("if (restore) restore();\n                showModalNotice(", "an empty zoom restores the previous view and says so")
-	must("showModalNotice('Could not load this range', function() { loadModal(); });", "a failed load says so, with Retry")
+	must("var failed = modalWindow; // Retry asks for the view that failed", "Retry re-asks for the window that failed")
 	if strings.Contains(js, "setTimeout(function() { onModalZoom") || strings.Contains(js, "wheelTimer") {
 		t.Error("no app-side wheel debounce: chartjs-plugin-zoom already debounces wheel before onZoomComplete")
 	}

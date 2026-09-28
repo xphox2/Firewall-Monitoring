@@ -774,8 +774,13 @@
         }, function() {
             if (requestId !== modalRequestId) return;
             stopModalLoad();
+            var failed = modalWindow; // Retry asks for the view that failed, not the one put back
             if (restore) restore();
-            showModalNotice('Could not load this range', function() { loadModal(); });
+            showModalNotice('Could not load this range', function() {
+                if (!modalWidgetDef) return;
+                modalWindow = failed;
+                loadModal(restore);
+            });
         });
     }
 

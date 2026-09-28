@@ -143,11 +143,12 @@
     function setRange(range) {
         // The active pill still reloads when nothing is drawn (a cancelled first load).
         if (range === state.range && !state.window && hasCharts()) return;
+        var prev = { range: state.range, window: state.window };
         state.range = range;
         state.window = null;
         updateRangePillState();
         updateZoomChip();
-        load(range);
+        load(range, prev);
     }
 
     // ----------------------------------------------------------------------
@@ -379,7 +380,9 @@
     // are kept (dimmed under the loading overlay) until the new data arrives;
     // only the very first paint shows a placeholder.
     // ----------------------------------------------------------------------
-    function load(range) {
+    // prev (from setRange) is restored if the user cancels a range change, so
+    // the pills and chip keep matching the chart that stays on screen.
+    function load(range, prev) {
         var AC = window.AdminCommon;
         var firstPaint = !hasCharts();
         if (firstPaint) {
@@ -404,6 +407,12 @@
                     if (r.superseded) return;
                     if (firstPaint) showEmpty('Load cancelled — pick a range');
                     else if (win) updateZoomChip(true);
+                    else if (prev) {
+                        state.range = prev.range;
+                        state.window = prev.window;
+                        updateRangePillState();
+                        updateZoomChip();
+                    }
                     return;
                 }
                 var result = r.data;
@@ -416,7 +425,7 @@
                 if (buckets.length === 0) {
                     // The chart on screen is the old data, stretched: say so.
                     if (win) updateZoomChip(true);
-                    failLoad(firstPaint, 'No data in this range', function() { load(range); });
+                    failLoad(firstPaint, 'No data in this range', null); // retrying the same window cannot help
                     return;
                 }
                 state.lastBuckets = buckets;

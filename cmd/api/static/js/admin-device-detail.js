@@ -1131,10 +1131,7 @@
                 var live = liveChart(ifaceCharts, ifIndex, canvas);
                 if (!pick) {
                     // After a zoom the chart on screen stays, with the notice over it.
-                    if (live) {
-                        AC.chartNotice(box, 'Not enough history data in this range', { onRetry: function() { loadInterfaceChart(ifIndex, range, onCancel); } });
-                        return;
-                    }
+                    if (live) { AC.chartNotice(box, 'Not enough history data in this range'); return; }
                     if (ifaceCharts[ifIndex]) { ifaceCharts[ifIndex].destroy(); delete ifaceCharts[ifIndex]; }
                     ifaceBucketMs[ifIndex] = [];
                     setIfaceChartSource(ifIndex, '');
@@ -1220,7 +1217,7 @@
                     if (r.error && window.fwmonLog) window.fwmonLog.error('Failed to load tunnel chart:', r.error);
                     if (live) {
                         AC.chartNotice(box, r.error ? 'Could not load this range' : 'Not enough history data in this range',
-                            { onRetry: function() { loadTunnelChart(tunnelName, range, onCancel); } });
+                            r.error ? { onRetry: function() { loadTunnelChart(tunnelName, range, onCancel); } } : {});
                         return;
                     }
                     if (tunnelCharts[tunnelName]) { tunnelCharts[tunnelName].destroy(); delete tunnelCharts[tunnelName]; }
@@ -2868,12 +2865,19 @@
         },
         'load-iface-chart': function(el, e) {
             e.stopPropagation();
-            // Choosing a preset range exits any drag-zoom window. Re-render the
-            // interface list so the active pill updates; filterIfaces() reloads
-            // the expanded chart at the new range.
+            // Choosing a preset range exits any drag-zoom window. Only the
+            // control strip is re-rendered; the chart stays under the loading
+            // overlay, and Cancel puts the previous range back.
+            var idx = parseInt(el.dataset.index, 10);
+            var prevRange = currentChartRange, prevWin = ifaceWin;
             currentChartRange = el.dataset.range;
             ifaceWin = null;
-            filterIfaces(currentFilter);
+            syncBwControls('chart-container-' + idx, ifaceControlsCfg(idx));
+            loadInterfaceChart(idx, currentChartRange, function() {
+                currentChartRange = prevRange;
+                ifaceWin = prevWin;
+                syncBwControls('chart-container-' + idx, ifaceControlsCfg(idx));
+            });
         },
         'set-iface-view': function(el, e) {
             e.stopPropagation();
@@ -2892,9 +2896,17 @@
         },
         'load-tunnel-chart': function(el, e) {
             e.stopPropagation();
+            var name = el.dataset.tunnel;
+            var boxId = 'tchart-container-' + cssId(name);
+            var prevRange = currentTunnelRange, prevWin = tunnelWin;
             currentTunnelRange = el.dataset.range;
             tunnelWin = null;
-            renderVPN();
+            syncBwControls(boxId, tunnelControlsCfg(name));
+            loadTunnelChart(name, currentTunnelRange, function() {
+                currentTunnelRange = prevRange;
+                tunnelWin = prevWin;
+                syncBwControls(boxId, tunnelControlsCfg(name));
+            });
         },
         'set-tunnel-view': function(el, e) {
             e.stopPropagation();

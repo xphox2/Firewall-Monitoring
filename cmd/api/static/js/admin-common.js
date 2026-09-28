@@ -2044,13 +2044,14 @@
         var resolveOuter;
         var result = new Promise(function(res) { resolveOuter = res; });
 
-        // Esc cancels only the load whose chart has focus (or when nothing
-        // else does), not every load on the page or a dialog's Esc.
+        // Esc cancels the load unless focus is somewhere that owns Esc (a
+        // dialog or a text field). A clicked range button keeps focus, so the
+        // test is "not owned elsewhere", not "focus inside the chart".
         function onKey(e) {
             if (e.key !== 'Escape') return;
             var t = e.target;
-            var mine = !t || t === document.body || list.some(function(c) { return c.contains(t); });
-            if (mine) cancel();
+            var owned = t && t.closest && t.closest('[role="dialog"], .fwmon-confirm-overlay, input, textarea, select');
+            if (!owned || list.some(function(c) { return c.contains(t); })) cancel();
         }
         function abortFetch() { if (ctrl) { try { ctrl.abort(); } catch (e) { /* ignore */ } } }
         function finish(r) {
