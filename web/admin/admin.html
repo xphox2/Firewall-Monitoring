@@ -593,7 +593,7 @@
             <!-- Detections panel — good-vs-bad traffic findings from the sFlow
                  detection engine (security / operational / policy). Hidden until
                  there are findings. Each row can be acknowledged (dismissed). -->
-            <div class="card fwmon-flows-detections-card" id="flows-detections-card" hidden>
+            <div class="card fwmon-flows-detections-card fwmon-load-host" id="flows-detections-card" hidden>
                 <div class="card-header fwmon-flows-data-header">
                     <h3 class="fwmon-toptalk-title">Detections<span class="fwmon-toptalk-hint">good-vs-bad traffic findings</span></h3>
                 </div>
@@ -672,6 +672,7 @@
                 </div>
 
                 <!-- Flow Samples view — raw FlowSample rows, paginated -->
+                <div class="fwmon-load-host" id="flows-samples-host">
                 <div class="table-wrap fwmon-flows-view" id="flows-view-samples" style="max-height: 600px;" hidden>
                     <table id="flows-table" class="fwmon-flows-table">
                         <thead><tr><th>Time</th><th>Src IP:Port</th><th></th><th>Dst IP:Port</th><th>Protocol</th><th>Service</th><th>Source</th><th>Event</th><th class="num">Bytes</th><th class="num">Packets</th><th class="num">Rate</th></tr></thead>
@@ -681,6 +682,7 @@
                 <div class="fwmon-flows-loadmore" id="flows-loadmore-row" hidden>
                     <button class="btn secondary" data-action="load-more-flows" id="flows-load-more">Load more</button>
                     <span class="fwmon-flows-loadmore-hint" id="flows-loaded-count">--</span>
+                </div>
                 </div>
             </div>
         </div>
@@ -1435,7 +1437,7 @@
                     <span id="report-status" style="color:var(--fwmon-text-faint);font-size:0.85rem;"></span>
                 </div>
             </div>
-            <div class="card" style="padding:6px;overflow:hidden;">
+            <div class="card fwmon-load-host fwmon-load-host--tall" id="report-host" style="padding:6px;overflow:hidden;">
                 <iframe id="report-frame" title="Report preview" style="width:100%;height:900px;border:0;background:var(--fwmon-bg);border-radius:8px;display:block;"></iframe>
             </div>
         </div>
@@ -1460,7 +1462,7 @@
                     <button type="submit" class="btn primary sm" id="ti-lookup-btn">Look up</button>
                 </form>
                 <div class="fwmon-ti-error" id="ti-lookup-error" hidden></div>
-                <div id="ti-lookup-result" style="margin-top:12px;"></div>
+                <div id="ti-lookup-result" class="fwmon-load-host" style="margin-top:12px;"></div>
             </div>
 
             <!-- Feed controls: master switch + storm-digest threshold (v0.11.46) -->
@@ -1507,6 +1509,7 @@
                     </select>
                     <button type="button" class="btn sm" id="ti-search-btn">Search</button>
                 </div>
+                <div class="fwmon-load-host" id="ti-search-host">
                 <div class="table-wrap" style="max-height:420px; margin-top:10px;">
                     <table class="fwmon-flows-detections-table" id="ti-search-table">
                         <thead><tr><th>CIDR / IP / AS</th><th>Category</th><th>Source</th><th>Severity</th><th>Expires</th><th></th></tr></thead>
@@ -1517,6 +1520,7 @@
                     <button type="button" class="btn sm" id="ti-search-prev">Prev</button>
                     <span class="fwmon-toptalk-hint" id="ti-search-page">--</span>
                     <button type="button" class="btn sm" id="ti-search-next">Next</button>
+                </div>
                 </div>
 
                 <!-- Manual add (accepts IP, CIDR, or AS number) -->

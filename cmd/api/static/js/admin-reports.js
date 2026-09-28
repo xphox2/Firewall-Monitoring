@@ -62,17 +62,39 @@
         } catch (e) { /* cross-origin guard — srcdoc is same-origin so this won't fire */ }
     }
 
+    // shown is the period/theme/layout of the report on screen; a cancelled
+    // load puts those choices back so the controls match what is displayed.
+    var shown = null;
+
     function loadPreview() {
         var f = frame();
         if (!f) return;
-        setStatus('Loading…');
+        var host = document.getElementById('report-host');
+        var want = { period: period(), theme: previewTheme, layout: previewLayout };
         // AdminCommon.apiFetch already parses JSON and returns the body object
         // (it calls res.json() internally) — do NOT call .json() again here.
-        AC.apiFetch('/admin/api/reports/preview?period=' + encodeURIComponent(period()) + '&theme=' + encodeURIComponent(theme()) + '&layout=' + encodeURIComponent(previewLayout))
-            .then(function (json) {
+        var url = '/admin/api/reports/preview?period=' + encodeURIComponent(want.period) + '&theme=' + encodeURIComponent(theme()) + '&layout=' + encodeURIComponent(want.layout);
+        AC.chartLoad(host, function (signal) { return AC.apiFetch(url, { signal: signal }); },
+            { key: 'report-preview', label: 'Building the report…', escScope: document.getElementById('page-reports') })
+            .then(function (r) {
+                if (r.superseded) return;
+                if (r.cancelled) {
+                    if (shown) {
+                        var sel = document.getElementById('report-period');
+                        if (sel) sel.value = shown.period;
+                        previewTheme = shown.theme;
+                        previewLayout = shown.layout;
+                        paintThemePills();
+                    }
+                    AC.chartNotice(host, loadedOnce ? 'Cancelled — showing the previous report' : 'Cancelled', { onRetry: loadPreview });
+                    return;
+                }
+                if (r.error) throw r.error;
+                var json = r.data;
                 if (!json || !json.success || !json.data || !json.data.html) {
                     throw new Error((json && json.error) || 'Empty report');
                 }
+                shown = want;
                 lastHtml = json.data.html;
                 // Write into the iframe's about:blank document (same-origin)
                 // rather than using srcdoc: the server CSP has no frame-src and
@@ -87,11 +109,9 @@
                 resizeFrame();
                 setTimeout(resizeFrame, 250);
                 loadedOnce = true;
-                setStatus('');
             })
             .catch(function (err) {
-                setStatus('');
-                AC.showError('Failed to load report: ' + err.message);
+                AC.chartNotice(host, 'Could not build the report: ' + ((err && err.message) || 'error'), { onRetry: loadPreview });
             });
     }
 

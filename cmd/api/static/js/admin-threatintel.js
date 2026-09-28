@@ -76,11 +76,18 @@
         if (!q) return;
         var errEl = el('ti-lookup-error');
         if (errEl) { errEl.hidden = true; errEl.textContent = ''; }
-        api('/admin/api/threat-intel/lookup?q=' + encodeURIComponent(q))
-            .then(function(res) { renderLookup((res && res.data) || {}); })
-            .catch(function(e) {
-                if (errEl) { errEl.textContent = (e && e.message) || 'Lookup failed.'; errEl.hidden = false; }
-            });
+        var host = el('ti-lookup-result');
+        AC.chartLoad(host, function(signal) {
+            return api('/admin/api/threat-intel/lookup?q=' + encodeURIComponent(q), { signal: signal });
+        }, { key: 'ti-lookup', label: 'Looking up…', escScope: el('ti-lookup-form') }).then(function(r) {
+            if (r.superseded) return;
+            if (r.cancelled) { AC.chartNotice(host, 'Cancelled', { dim: false }); return; }
+            if (r.error) {
+                if (errEl) { errEl.textContent = (r.error && r.error.message) || 'Lookup failed.'; errEl.hidden = false; }
+                return;
+            }
+            renderLookup((r.data && r.data.data) || {});
+        });
     }
 
     function renderLookup(d) {
@@ -237,16 +244,52 @@
     }
 
     // ---- Search ------------------------------------------------------------
+    // The search controls have no state object: lastSearch is the query whose
+    // results are on screen, written back into the controls if a newer search
+    // is cancelled. The offset changes only when results arrive.
+    var lastSearch = null;
+    function searchControls() {
+        return {
+            q: (el('ti-search-q').value || '').trim(),
+            source: (el('ti-search-source').value || '').trim(),
+            category: (el('ti-search-category').value || '').trim(),
+            severity: el('ti-search-severity').value || ''
+        };
+    }
+    function setSearchControls(c) {
+        el('ti-search-q').value = c.q;
+        el('ti-search-source').value = c.source;
+        el('ti-search-category').value = c.category;
+        el('ti-search-severity').value = c.severity;
+    }
+
     function runSearch(offset) {
-        searchOffset = offset < 0 ? 0 : offset;
-        var params = 'offset=' + searchOffset + '&limit=' + PAGE_SIZE +
-            '&q=' + encodeURIComponent((el('ti-search-q').value || '').trim()) +
-            '&source=' + encodeURIComponent((el('ti-search-source').value || '').trim()) +
-            '&category=' + encodeURIComponent((el('ti-search-category').value || '').trim()) +
-            '&severity=' + encodeURIComponent(el('ti-search-severity').value || '');
-        api('/admin/api/threat-intel/search?' + params)
-            .then(function(res) { renderSearch((res && res.data) || {}); })
-            .catch(function(e) { window.fwmonLog && window.fwmonLog.error('threat-intel search failed', e); });
+        var target = offset < 0 ? 0 : offset;
+        var query = searchControls();
+        var params = 'offset=' + target + '&limit=' + PAGE_SIZE +
+            '&q=' + encodeURIComponent(query.q) +
+            '&source=' + encodeURIComponent(query.source) +
+            '&category=' + encodeURIComponent(query.category) +
+            '&severity=' + encodeURIComponent(query.severity);
+        var host = el('ti-search-host');
+        AC.chartLoad(host, function(signal) {
+            return api('/admin/api/threat-intel/search?' + params, { signal: signal });
+        }, { key: 'ti-search', label: 'Searching…', escScope: host.parentNode }).then(function(r) {
+            if (r.superseded) return;
+            if (r.cancelled) {
+                if (lastSearch) setSearchControls(lastSearch);
+                AC.chartNotice(host, 'Cancelled — showing the previous results', { dim: false, onRetry: function() { runSearch(target); } });
+                return;
+            }
+            if (r.error) {
+                if (window.fwmonLog) window.fwmonLog.error('threat-intel search failed', r.error);
+                AC.chartNotice(host, 'Could not load results', { dim: false, onRetry: function() { runSearch(target); } });
+                return;
+            }
+            searchOffset = target;
+            lastSearch = query;
+            renderSearch((r.data && r.data.data) || {});
+        });
     }
 
     function renderSearch(d) {

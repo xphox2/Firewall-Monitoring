@@ -211,6 +211,17 @@
             retryBtn.__fwmonBound = true;
             retryBtn.addEventListener('click', loadStats);
         }
+        // Esc stops the report too, as it does every other load on the page
+        // (not while a dialog owns Esc).
+        if (!document.__fwmonFlowsEsc) {
+            document.__fwmonFlowsEsc = true;
+            document.addEventListener('keydown', function(e) {
+                if (e.key !== 'Escape' || !(statsStream || statsAbort)) return;
+                if (!flowsPage || !flowsPage.classList.contains('active')) return;
+                if (e.target && e.target.closest && e.target.closest('[role="dialog"], .fwmon-confirm-overlay')) return;
+                cancelStatsLoad();
+            });
+        }
 
         // Range pills
         var rangePills = document.getElementById('flows-range-pills');
@@ -494,7 +505,8 @@
     // Reload — schedule a debounced fetch of /flows + /flows/stats
     // ----------------------------------------------------------------------
     function reload() {
-        flowsOffset = 0;
+        // flowsOffset is set when the samples arrive (loadSamples), so a
+        // cancelled reload leaves Load more continuing the rows on screen.
         scheduleStats();
         scheduleSamples();
         loadDetections();
@@ -889,14 +901,25 @@
     // ----------------------------------------------------------------------
     // Detections panel — good-vs-bad traffic findings (sFlow detection engine)
     // ----------------------------------------------------------------------
+    // flowsLoadHost returns the element to show the loading overlay on, or
+    // an empty list while it is hidden (the overlay would float in an empty
+    // area); the load still gets Cancel/abort and the newest request wins.
+    function flowsLoadHost(id, viewId) {
+        var host = document.getElementById(id);
+        var view = viewId ? document.getElementById(viewId) : host;
+        return (host && view && !view.hidden) ? host : [];
+    }
+
     function loadDetections() {
         var AC = window.AdminCommon;
-        if (!AC || !AC.apiFetch) return;
+        if (!AC || !AC.chartLoad) return;
         var url = '/admin/api/flows/detections?unacked=true&limit=100&hours=' + encodeURIComponent(state.hours);
-        AC.apiFetch(url).then(function(result) {
-            renderDetections((result && result.data) || []);
-        }).catch(function(e) {
-            console.error('FwmonFlows: detections fetch failed', e);
+        AC.chartLoad(flowsLoadHost('flows-detections-card'), function(signal) {
+            return AC.apiFetch(url, { signal: signal });
+        }, { key: 'flows-detections', label: 'Loading…', escScope: document.getElementById('page-flows') }).then(function(r) {
+            if (r.cancelled) return; // the detections on screen stay
+            if (r.error) { if (window.fwmonLog) window.fwmonLog.error('FwmonFlows: detections fetch failed', r.error); return; }
+            renderDetections((r.data && r.data.data) || []);
         });
     }
 
@@ -1288,34 +1311,40 @@
     // ----------------------------------------------------------------------
     // Samples table (paginated raw FlowSample rows)
     // ----------------------------------------------------------------------
-    function loadSamples() {
+    // Samples load under the overlay (when the Samples view is showing) with
+    // Cancel; the newest request wins, and flowsOffset changes only when rows
+    // arrive, so a cancelled load leaves Load more continuing what is shown.
+    function samplesLoad(offset, append) {
         var AC = window.AdminCommon;
-        if (!AC || !AC.apiFetch) return;
-        AC.apiFetch(samplesURL(100, 0)).then(function(result) {
-            if (!result) return;
-            var samples = result.data || [];
-            renderSamples(samples, false);
-            flowsOffset = samples.length;
+        if (!AC || !AC.chartLoad) return;
+        var host = document.getElementById('flows-samples-host');
+        var url = samplesURL(100, offset);
+        AC.chartLoad(flowsLoadHost('flows-samples-host', 'flows-view-samples'), function(signal) {
+            return AC.apiFetch(url, { signal: signal });
+        }, { key: 'flows-samples', label: append ? 'Loading more…' : 'Loading…', escScope: document.getElementById('page-flows') }).then(function(r) {
+            if (r.superseded) return;
+            var retry = function() { samplesLoad(offset, append); };
+            if (r.cancelled) {
+                if (host) AC.chartNotice(host, 'Cancelled — showing the previous results', { dim: false, onRetry: retry });
+                return;
+            }
+            if (r.error || !r.data) {
+                if (r.error && window.fwmonLog) window.fwmonLog.error('FwmonFlows: samples fetch failed', r.error);
+                if (host) AC.chartNotice(host, 'Could not load results', { dim: false, onRetry: retry });
+                return;
+            }
+            var samples = r.data.data || [];
+            if (append && !samples.length) return;
+            renderSamples(samples, append);
+            flowsOffset = offset + samples.length;
             updateLoadedCount();
-            renderConversations(); // re-renders existing conversation rows with current click target
-        }).catch(function(e) {
-            console.error('FwmonFlows: samples fetch failed', e);
+            if (!append) renderConversations(); // re-renders existing conversation rows with current click target
         });
     }
 
-    function loadMoreSamples() {
-        var AC = window.AdminCommon;
-        if (!AC || !AC.apiFetch) return;
-        AC.apiFetch(samplesURL(100, flowsOffset)).then(function(result) {
-            if (!result || !result.data) return;
-            var samples = result.data || [];
-            renderSamples(samples, true);
-            flowsOffset += samples.length;
-            updateLoadedCount();
-        }).catch(function(e) {
-            console.error('FwmonFlows: load-more failed', e);
-        });
-    }
+    function loadSamples() { samplesLoad(0, false); }
+
+    function loadMoreSamples() { samplesLoad(flowsOffset, true); }
 
     /* ------------------------------------------------------------------
      * CSV export (v0.10.216, bundle F4).
