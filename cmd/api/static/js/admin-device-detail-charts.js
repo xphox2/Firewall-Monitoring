@@ -141,7 +141,8 @@
     }
 
     function setRange(range) {
-        if (range === state.range && !state.window) return;
+        // The active pill still reloads when nothing is drawn (a cancelled first load).
+        if (range === state.range && !state.window && hasCharts()) return;
         state.range = range;
         state.window = null;
         updateRangePillState();
@@ -323,7 +324,7 @@
     // ----------------------------------------------------------------------
     function onSelect(u) {
         // Only the chart the user dragged on: synced charts receive the same
-        // selection with no event, and a programmatic select has none either.
+        // selection with cursor.event == null.
         var ev = u.cursor && u.cursor.event;
         if (!ev || ev.type !== 'mouseup') return;
         var sel = u.select;
@@ -398,8 +399,11 @@
             .then(function(r) {
                 if (r.cancelled) {
                     // A newer load replaced this one: nothing to undo. A user
-                    // Cancel keeps the stretched preview and says so.
-                    if (!r.superseded && win) updateZoomChip(true);
+                    // Cancel keeps the stretched preview and says so; a
+                    // cancelled first load says how to start again.
+                    if (r.superseded) return;
+                    if (firstPaint) showEmpty('Load cancelled — pick a range');
+                    else if (win) updateZoomChip(true);
                     return;
                 }
                 var result = r.data;
@@ -410,7 +414,9 @@
                 }
                 var buckets = (result.data && result.data.buckets) || [];
                 if (buckets.length === 0) {
-                    failLoad(firstPaint, 'No data in this range', null);
+                    // The chart on screen is the old data, stretched: say so.
+                    if (win) updateZoomChip(true);
+                    failLoad(firstPaint, 'No data in this range', function() { load(range); });
                     return;
                 }
                 state.lastBuckets = buckets;

@@ -460,6 +460,10 @@ textarea::placeholder {
     color: var(--fwmon-text);
     font-size: 0.85rem;
 }
+/* A notice sits over the kept chart without blocking it: the chart can still be
+   dragged; only the notice's own buttons take clicks. */
+.fwmon-chart-notice { pointer-events: none; }
+.fwmon-chart-notice .fwmon-chart-overlay-box { pointer-events: auto; }
 .fwmon-chart-overlay-elapsed { color: var(--fwmon-text-dim); font-variant-numeric: tabular-nums; min-width: 2.5em; }
 @keyframes fwmon-chart-overlay-in { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {

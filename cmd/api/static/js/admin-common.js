@@ -2044,7 +2044,14 @@
         var resolveOuter;
         var result = new Promise(function(res) { resolveOuter = res; });
 
-        function onKey(e) { if (e.key === 'Escape') cancel(); }
+        // Esc cancels only the load whose chart has focus (or when nothing
+        // else does), not every load on the page or a dialog's Esc.
+        function onKey(e) {
+            if (e.key !== 'Escape') return;
+            var t = e.target;
+            var mine = !t || t === document.body || list.some(function(c) { return c.contains(t); });
+            if (mine) cancel();
+        }
         function abortFetch() { if (ctrl) { try { ctrl.abort(); } catch (e) { /* ignore */ } } }
         function finish(r) {
             if (done) return;
@@ -2071,7 +2078,7 @@
             list.forEach(function(c) {
                 var o = chartOverlayEl('', '<span class="fwmon-spinner" aria-hidden="true"></span>' +
                     '<span class="fwmon-chart-overlay-text">' + escapeHtml(opts.label || 'Loading higher-resolution data…') + '</span>' +
-                    '<span class="fwmon-chart-overlay-elapsed"></span>' +
+                    '<span class="fwmon-chart-overlay-elapsed" aria-live="off"></span>' +
                     '<button type="button" class="btn secondary sm fwmon-chart-overlay-cancel">Cancel</button>');
                 o.querySelector('button').addEventListener('click', cancel);
                 c.appendChild(o);

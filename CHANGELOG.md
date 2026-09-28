@@ -22,15 +22,17 @@ Selecting a range on a chart used to stretch the points already on screen. Now e
 
 **While it loads**
 - The chart stays visible, dimmed, under a small panel with a spinner, the seconds elapsed and **Cancel**. It appears only if loading takes longer than a quarter-second.
-- Cancel (or Esc) stops the request and keeps what was on screen.
-- A zoom into a range with no data, or a failed load, shows a notice over the chart you had, with Retry, instead of blanking it.
+- Cancel stops the request and keeps what was on screen. On the admin pages Esc does the same; on the public dashboard Esc closes the enlarged chart.
+- A zoom into a range with no data, or a failed load, shows a notice over the chart you had instead of blanking it: Dismiss, plus Retry wherever retrying can help. On the public dashboard an empty zoom also puts back the view you had.
+- If the very first load is cancelled, the chart says so, and the range buttons start it again.
 
 ### Technical
 - `GET /admin/api/devices/:id/status-history?from=&to=` (epoch ms) serves a zoom window and echoes the window it served. The bucket is never coarser than the preset the window came from: under 3 h minute, under 30 h 5 min, under 31 days hourly. A malformed window is a 400; `range=` is unchanged.
 - `/api/public/status-history` and `/api/public/interfaces/chart` accept `from`/`to`.
   - The window is clamped to now and to the 1-year public limit, and widened to at least 5 minutes.
   - Labels follow the window's span.
-  - A malformed window falls back to the dashboard range.
+  - An unparsable window falls back to the dashboard range; a window that is empty once clamped (entirely in the future, or ending before it starts) is a 400.
+- The enlarged public chart's labels now show seconds when the dashboard range is under an hour (15 or 30 minutes), as the server's labels already did.
 - The loading overlay is `AdminCommon.chartLoad`, and the notice is `AdminCommon.chartNotice`.
 - `make qa` now also runs the Tailwind freshness check that CI runs (`make tailwind-check`). Tailwind scans the JavaScript too, so a token like `!badge` changes the generated CSS.
 

@@ -1113,7 +1113,9 @@
             .then(function (r) {
                 if (ifaceChartSeq[ifIndex] !== seq) return; // a newer request superseded this one
                 if (r.cancelled) {
-                    if (!r.superseded && onCancel) onCancel();
+                    if (r.superseded) return;
+                    if (onCancel) onCancel();
+                    else if (!liveChart(ifaceCharts, ifIndex, canvas)) drawChartMessage(canvas, 'Load cancelled — pick a range');
                     return;
                 }
                 var res = r.data || [];
@@ -1129,7 +1131,10 @@
                 var live = liveChart(ifaceCharts, ifIndex, canvas);
                 if (!pick) {
                     // After a zoom the chart on screen stays, with the notice over it.
-                    if (live) { AC.chartNotice(box, 'Not enough history data in this range'); return; }
+                    if (live) {
+                        AC.chartNotice(box, 'Not enough history data in this range', { onRetry: function() { loadInterfaceChart(ifIndex, range, onCancel); } });
+                        return;
+                    }
                     if (ifaceCharts[ifIndex]) { ifaceCharts[ifIndex].destroy(); delete ifaceCharts[ifIndex]; }
                     ifaceBucketMs[ifIndex] = [];
                     setIfaceChartSource(ifIndex, '');
@@ -1204,14 +1209,20 @@
             .then(function(r) {
                 if (tunnelChartSeq[tunnelName] !== seq) return; // superseded by a newer request
                 if (r.cancelled) {
-                    if (!r.superseded && onCancel) onCancel();
+                    if (r.superseded) return;
+                    if (onCancel) onCancel();
+                    else if (!liveChart(tunnelCharts, tunnelName, canvas)) drawChartMessage(canvas, 'Load cancelled — pick a range');
                     return;
                 }
                 var live = liveChart(tunnelCharts, tunnelName, canvas);
                 var result = r.data;
                 if (r.error || !result || !result.success || !result.data || result.data.length < 2) {
                     if (r.error && window.fwmonLog) window.fwmonLog.error('Failed to load tunnel chart:', r.error);
-                    if (live) { AC.chartNotice(box, r.error ? 'Could not load this range' : 'Not enough history data in this range'); return; }
+                    if (live) {
+                        AC.chartNotice(box, r.error ? 'Could not load this range' : 'Not enough history data in this range',
+                            { onRetry: function() { loadTunnelChart(tunnelName, range, onCancel); } });
+                        return;
+                    }
                     if (tunnelCharts[tunnelName]) { tunnelCharts[tunnelName].destroy(); delete tunnelCharts[tunnelName]; }
                     tunnelBucketMs[tunnelName] = [];
                     drawChartMessage(canvas, 'Not enough history data');

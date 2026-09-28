@@ -53,6 +53,15 @@ func TestGetDeviceStatusHistory_WindowAndPresetBranches(t *testing.T) {
 		t.Errorf("a 90-minute window gave %d buckets, want ~90 minute buckets", len(buckets))
 	}
 
+	// A window longer than the readers serve is clamped, and the response says so.
+	longFrom := now.Add(-500 * 24 * time.Hour).UnixMilli()
+	code, data = statusHistoryGet(t, h, fmt.Sprintf("from=%d&to=%d", longFrom, to))
+	var gotFrom int64
+	_ = json.Unmarshal(data["from"], &gotFrom)
+	if code != http.StatusOK || gotFrom == longFrom || gotFrom != now.Add(-400*24*time.Hour).UnixMilli() {
+		t.Errorf("a 500-day window echoed from=%d, want the clamped %d", gotFrom, now.Add(-400*24*time.Hour).UnixMilli())
+	}
+
 	code, data = statusHistoryGet(t, h, "range=6h")
 	if code != http.StatusOK || string(data["range"]) != `"6h"` || data["from"] != nil {
 		t.Errorf("range=6h: status %d, keys %v; want the preset branch (range echoed, no from/to)", code, keysOf(data))
@@ -81,9 +90,10 @@ func TestGetPublicStatusHistory_ZoomWindow(t *testing.T) {
 
 	// A 2-hour window a day ago is served, sampled inside it.
 	from, to := now.Add(-26*time.Hour), now.Add(-24*time.Hour)
-	w := doPublicGet(t, h.GetPublicStatusHistory, fmt.Sprintf("/endpoint?device_id=%d&hours=48&from=%d&to=%d", dev.ID, from.UnixMilli(), to.UnixMilli()))
+	// The named 24h preset budgets 96 points; the zoom's own 180-point budget must apply.
+	w := doPublicGet(t, h.GetPublicStatusHistory, fmt.Sprintf("/endpoint?device_id=%d&hours=24h&from=%d&to=%d", dev.ID, from.UnixMilli(), to.UnixMilli()))
 	var b publicStatusBody
-	if err := json.Unmarshal(w.Body.Bytes(), &b); err != nil || w.Code != 200 || len(b.Data) < 100 {
+	if err := json.Unmarshal(w.Body.Bytes(), &b); err != nil || w.Code != 200 || len(b.Data) <= 96 {
 		t.Fatalf("status %d, %d points (err %v); want the 2 h window at up to %d points", w.Code, len(b.Data), err, publicZoomMaxPoints)
 	}
 	first, _ := time.Parse(time.RFC3339, b.Data[0].Timestamp)

@@ -690,6 +690,7 @@
 
     function closeChartModal() {
         stopModalLoad();
+        clearModalNotice();
         if (modalChart) { modalChart.destroy(); modalChart = null; }
         modalWidgetDef = null;
         modalWindow = null;
@@ -706,6 +707,11 @@
             '&view=' + bwView + '&range=' + dashRange + win;
     }
 
+    function clearModalNotice() {
+        var notice = document.querySelector('#chart-modal .chart-load-notice');
+        if (notice) notice.parentNode.removeChild(notice);
+    }
+
     function stopModalLoad() {
         if (!modalLoad) return;
         clearTimeout(modalLoad.timer);
@@ -717,11 +723,13 @@
 
     // loadModal fetches the modal chart for the dashboard range or the zoom
     // window. The overlay appears only after 250 ms; every exit clears it.
-    // onCancel restores the view when the user cancels a zoom.
-    function loadModal(onCancel) {
+    // restore puts the previous view back when the user cancels a zoom, or when
+    // it returns nothing or fails (a notice then says why).
+    function loadModal(restore) {
         var def = modalWidgetDef;
         if (!def) return;
         stopModalLoad();
+        clearModalNotice();
         modalRequestId++;
         var requestId = modalRequestId;
         var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
@@ -737,12 +745,12 @@
             o.setAttribute('role', 'status');
             o.innerHTML = '<div class="chart-load-box"><span class="chart-load-spinner" aria-hidden="true"></span>' +
                 '<span>' + (modalWindow ? 'Loading higher-resolution data…' : 'Loading…') + '</span>' +
-                '<span class="chart-load-elapsed"></span>' +
+                '<span class="chart-load-elapsed" aria-live="off"></span>' +
                 '<button type="button" class="modal-btn chart-load-cancel">Cancel</button></div>';
             o.querySelector('button').addEventListener('click', function() {
                 stopModalLoad();
                 modalRequestId++;
-                if (onCancel) onCancel();
+                if (restore) restore();
             });
             body.appendChild(o);
             load.overlay = o;
@@ -755,12 +763,42 @@
         apiFetch(modalURL(def), ctrl ? ctrl.signal : undefined).then(function(data) {
             if (requestId !== modalRequestId) return;
             stopModalLoad();
+            var empty = !data || (Array.isArray(data) ? data.length === 0 : !(data.timestamps || data.labels || []).length);
+            if (empty) {
+                if (restore) restore();
+                showModalNotice(modalChart ? 'No data in this range' : 'No data for this range', restore ? null : loadModal);
+                return;
+            }
             if (def.type === 'cpumem') renderModalCpuChart(data);
             else renderModalBandwidthChart(data);
         }, function() {
             if (requestId !== modalRequestId) return;
             stopModalLoad();
+            if (restore) restore();
+            showModalNotice('Could not load this range', function() { loadModal(); });
         });
+    }
+
+    // showModalNotice explains an empty or failed load over the chart that is
+    // kept, with Retry (when onRetry is given) and Dismiss.
+    function showModalNotice(msg, onRetry) {
+        var body = document.querySelector('#chart-modal .chart-modal-body');
+        if (!body) return;
+        clearModalNotice();
+        var o = document.createElement('div');
+        o.className = 'chart-load-overlay chart-load-notice';
+        o.setAttribute('role', 'status');
+        o.innerHTML = '<div class="chart-load-box"><span></span>' +
+            (onRetry ? '<button type="button" class="modal-btn" data-notice="retry">Retry</button>' : '') +
+            '<button type="button" class="modal-btn" data-notice="dismiss">Dismiss</button></div>';
+        o.querySelector('span').textContent = msg;
+        o.addEventListener('click', function(e) {
+            var b = e.target.closest && e.target.closest('[data-notice]');
+            if (!b) return;
+            o.parentNode.removeChild(o);
+            if (b.getAttribute('data-notice') === 'retry' && onRetry) onRetry();
+        });
+        body.appendChild(o);
     }
 
     // modalLabelOpts formats the x labels by the span on screen: the zoom
@@ -801,7 +839,8 @@
         var prev = modalWindow;
         modalWindow = { from: modalTimes[lo], to: modalTimes[hi] };
         loadModal(function() {
-            // Cancelled: back to the window on screen, and undo the stretch.
+            // Cancelled, empty or failed: back to the window on screen, and
+            // undo the stretch.
             modalWindow = prev;
             modalLastReq = null;
             if (modalChart && modalChart.resetZoom) modalChart.resetZoom();

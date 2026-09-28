@@ -65,6 +65,8 @@
         /* Zoom re-query loading overlay (v0.11.270): dims the chart kept on screen. */
         .chart-load-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(13,17,23,0.55); z-index: 5; animation: chart-load-in 0.15s ease-out; }
         .chart-load-box { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; color: #e6edf3; font-size: 0.85rem; }
+        .chart-load-notice { pointer-events: none; }
+        .chart-load-notice .chart-load-box { pointer-events: auto; }
         .chart-load-elapsed { color: #8b949e; min-width: 2.5em; font-variant-numeric: tabular-nums; }
         .chart-load-spinner { width: 14px; height: 14px; border: 2px solid #30363d; border-top-color: #58a6ff; border-radius: 50%; animation: chart-load-spin 0.8s linear infinite; }
         @keyframes chart-load-spin { to { transform: rotate(360deg); } }

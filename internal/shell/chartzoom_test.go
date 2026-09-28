@@ -25,11 +25,13 @@ func TestChartLoad_OverlayContract(t *testing.T) {
 	must("if (chartLoads[key]) chartLoads[key].supersede();", "a newer load for the same chart supersedes the old one")
 	must("if (done) return;", "a result arriving after Cancel or supersede is ignored")
 	must("run(ctrl ? ctrl.signal : undefined)", "the fetch gets the abort signal, so Cancel stops the request")
-	must("if (e.key === 'Escape') cancel();", "Esc cancels")
+	must("if (mine) cancel();", "Esc cancels")
 	must("c.setAttribute('aria-busy', 'true');", "the chart is marked busy while loading")
 	must("o.setAttribute('role', 'status');", "the overlay is announced")
 	must("chartLoad: chartLoad,", "exported")
 	must("chartNotice: chartNotice,", "exported")
+	must("var mine = !t || t === document.body || list.some(function(c) { return c.contains(t); });", "Esc cancels only the load whose chart has focus")
+	must(`'<span class="fwmon-chart-overlay-elapsed" aria-live="off"></span>'`, "the per-second counter is not re-announced")
 }
 
 func TestDeviceCharts_ZoomRequeries(t *testing.T) {
@@ -49,6 +51,8 @@ func TestDeviceCharts_ZoomRequeries(t *testing.T) {
 	must("AC.apiFetch(url, { signal: signal })", "the fetch is cancellable")
 	must("window.AdminCommon.chartNotice(hostWraps(), msg, { onRetry: onRetry });", "an empty or failed zoom keeps the charts and shows a notice")
 	must("'<div class=\"chart-host-wrap\" id=\"' + id + '-wrap\">", "the overlay mounts on a wrapper, not the host a redraw replaces")
+	must("if (firstPaint) showEmpty('Load cancelled — pick a range');", "a cancelled first load is not left on its placeholder")
+	must("if (range === state.range && !state.window && hasCharts()) return;", "the active pill reloads when nothing is drawn")
 	if strings.Contains(js, "function showEmpty") {
 		i := strings.Index(js, "function failLoad")
 		body := js[i : i+400]
@@ -100,6 +104,8 @@ func TestPublicModal_ZoomRequeries(t *testing.T) {
 	must("modalLastReq = null; // labels are re-based", "the memo resets on every render")
 	must("if (modalWidgetDef) { modalWindow = null; loadModal(); }", "Reset re-fetches the dashboard range")
 	must("fetch(url, { signal: signal })", "the modal fetch is cancellable")
+	must("if (restore) restore();\n                showModalNotice(", "an empty zoom restores the previous view and says so")
+	must("showModalNotice('Could not load this range', function() { loadModal(); });", "a failed load says so, with Retry")
 	if strings.Contains(js, "setTimeout(function() { onModalZoom") || strings.Contains(js, "wheelTimer") {
 		t.Error("no app-side wheel debounce: chartjs-plugin-zoom already debounces wheel before onZoomComplete")
 	}

@@ -69,6 +69,26 @@ func TestGetSystemStatusBucketsWindow_BoundsAndEmpty(t *testing.T) {
 	}
 }
 
+// The reader clamps a window longer than maxChartWindow itself.
+func TestGetSystemStatusBucketsWindow_ClampsLongWindow(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	now := time.Now().UTC().Truncate(time.Hour)
+	for days := 0; days <= 450; days += 10 {
+		if err := d.db.Create(&models.SystemStatus{DeviceID: 1, Timestamp: now.Add(-time.Duration(days) * 24 * time.Hour), CPUUsage: 5}).Error; err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	b, err := d.GetSystemStatusBucketsWindow(1, now.Add(-500*24*time.Hour), now)
+	if err != nil {
+		t.Fatalf("window: %v", err)
+	}
+	// Rows every 10 days; the window start is exclusive, so 400 days holds days
+	// 0..390 (40 rows) and an unclamped 500 would hold 0..450 (46).
+	if len(b) != 40 {
+		t.Errorf("a 500-day window returned %d day buckets, want 40 (clamped to 400 days)", len(b))
+	}
+}
+
 func TestClampChartWindowFrom(t *testing.T) {
 	to := time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC)
 	if got := ClampChartWindowFrom(to.Add(-500*24*time.Hour), to); !got.Equal(to.Add(-maxChartWindow)) {
