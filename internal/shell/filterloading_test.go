@@ -541,7 +541,7 @@ func TestFilterLoad_ReviewRound8(t *testing.T) {
 	}
 	mustContain(t, "admin-main.js", main, "var typing = !!(apE && apE.hasPendingEdit && apE.hasPendingEdit());", "a background error does not wipe a pending edit")
 
-	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "// Like Cancel: Prev/Next read the controls, so they go back to\n                // the search whose rows are shown.\n                if (lastSearch) setSearchControls(lastSearch);", "search error restores")
+	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "if (lastSearch && !typingNewSearch(query)) setSearchControls(lastSearch);", "search error restores (unless typing the next search)")
 	rp := readJS(t, "admin-reports.js")
 	if strings.Count(rp, "if (shown) applyChoices(shown);") != 2 {
 		t.Error("reports: both Cancel and error put the shown choices back")
@@ -553,7 +553,7 @@ func TestFilterLoad_ReviewRound8(t *testing.T) {
 		t.Error("connection detail: an error restores the drawn range too")
 	}
 	mustContain(t, "diagram-panels.js", readJS(t, "diagram-panels.js"), "if (r.cancelled || r.error) {\n                // Cancel and error alike", "panel: an error restores the drawn pill too")
-	mustContain(t, "admin-flows.js", readJS(t, "admin-flows.js"), "var cMsg = append ? 'Cancelled' :", "a cancelled Load more claims no filter change")
+	mustContain(t, "admin-flows.js", readJS(t, "admin-flows.js"), "var cMsg = (append || !shownSamplesState) ? 'Cancelled' :", "a cancelled Load more (or first load) claims no previous rows")
 }
 
 // Ninth review (Opus 5.5, proven with a harness): the page handle does not
@@ -580,7 +580,7 @@ func TestFilterLoad_ReviewRound9(t *testing.T) {
 	}
 	mustContain(t, "admin-main.js", funcBody(t, main, `function refreshAlertsAtCurrentPage\(\)`), "buildAlertParams(pageSize, shownQuery.alerts)", "a refresh after ack continues the shown query")
 	mustContain(t, "admin-main.js", funcBody(t, main, `function loadMoreTraps\(\)`), "buildTrapParams(100, shownQuery.traps)", "Load more continues the shown query")
-	mustContain(t, "admin-main.js", funcBody(t, main, `function alertsPage\(target\)`), "if (loading && loading.then) loading.then(function() { updateAlertBulkToolbar(); });", "Prev/Next repaint the select-all banner after registering")
+	mustContain(t, "admin-main.js", funcBody(t, main, `function alertsPage\(target\)`), "if (loading && loading.then) loading.then(function() { updateAlertBulkToolbar(); runDeferredAlertsRefresh(); });", "Prev/Next repaint the select-all banner after registering")
 
 	ep := readJS(t, "admin-event-profiles.js")
 	mustContain(t, "admin-event-profiles.js", ep, "if (!(lr && lr.superseded) && epPage && epPage.classList.contains('active')) routeFromHash();", "no routing (URL rewrite) after the user left the page")
@@ -604,7 +604,7 @@ func TestFilterLoad_ReviewRound10(t *testing.T) {
 	}
 	mustContain(t, "admin-main.js", run, "var typing = !!(apE && apE.hasPendingEdit && apE.hasPendingEdit());", "typing = a pending edit, not focus")
 	ra := funcBody(t, main, `function refreshAlertsAtCurrentPage\(\)`)
-	if i := strings.Index(ra, "if (AC.chartLoadBusy('filter-alerts', true)) return;"); i < 0 || i > strings.Index(ra, "runFilterLoad(") {
+	if i := strings.Index(ra, "if (AC.chartLoadBusy('filter-alerts', true)) { alertsRefreshDeferred = true; return; }"); i < 0 || i > strings.Index(ra, "runFilterLoad(") {
 		t.Error("the refresh after an ack must not supersede a running filter load")
 	}
 	mustContain(t, "admin-main.js", main, "buildSyslogParams(10, firstPageQuery('syslog', opts))", "syslog page 1 from the state snapshot")
@@ -626,9 +626,37 @@ func TestFilterLoad_ReviewRound10(t *testing.T) {
 	mustContain(t, "admin-controls.js", ctl, "hasPendingEdit: function() { return !!(autoApply && autoApply.hasPending()); },", "and exposed on the page handle")
 
 	ti := readJS(t, "admin-threatintel.js")
-	mustContain(t, "admin-threatintel.js", ti, "if (AC.chartLoadBusy('ti-search', true)) return;\n        runSearch(offset, lastSearch);", "search paging continues the shown search and waits")
-	if strings.Count(ti, "pageSearch(searchOffset") != 3 {
+	mustContain(t, "admin-threatintel.js", ti, "if (AC.chartLoadBusy('ti-search', true)) { if (isRefresh) searchRefreshDeferred = true; return; }\n        runSearch(offset, lastSearch);", "search paging continues the shown search and waits")
+	if strings.Count(ti, "pageSearch(searchOffset") != 4 {
 		t.Error("Prev, Next and the refresh after a delete must all page through pageSearch")
 	}
 	mustContain(t, "admin-threatintel.js", ti, "shownLookupQ = null; // the result area was just cleared", "re-entering resets the shown lookup")
+}
+
+// Eleventh review (Opus 5.5; no HIGH/MEDIUM): config-diff header names the
+// pair loading; an ack/delete refresh deferred by a running load runs when it
+// settles; threat-intel errors keep a search being typed; Flows first-load
+// wording; Effective coverage stops lookups against a replaced view.
+func TestFilterLoad_ReviewRound11(t *testing.T) {
+	dd := readJS(t, "admin-device-detail.js")
+	od := funcBody(t, dd, `function openConfigDiff\(fromID, toID\)`)
+	if i := strings.Index(od, "if (metaEl) metaEl.textContent = 'rev #' + fromID"); i < 0 || i > strings.Index(od, "AC.chartLoad(") {
+		t.Error("the config-diff header must name the pair being loaded before the load starts")
+	}
+	main := readJS(t, "admin-main.js")
+	if strings.Count(main, "runDeferredAlertsRefresh(); });") != 2 {
+		t.Error("both the filter load and paging must run a deferred ack refresh when they settle")
+	}
+	mustContain(t, "admin-main.js", funcBody(t, main, `function runDeferredAlertsRefresh\(\)`), "if (!alertsRefreshDeferred || AC.chartLoadBusy('filter-alerts', true)) return;", "the deferred refresh waits for idle")
+	ti := readJS(t, "admin-threatintel.js")
+	mustContain(t, "admin-threatintel.js", ti, "pageSearch(searchOffset, true);", "the refresh after a delete is deferred, not dropped")
+	mustContain(t, "admin-threatintel.js", ti, "runDeferredSearchRefreshSoon();", "and run when the search settles")
+	mustContain(t, "admin-threatintel.js", ti, "escScope: searchForm() }", "Esc cancels a search only from the search form")
+	ep := readJS(t, "admin-event-profiles.js")
+	se := funcBody(t, ep, `function showEffective\(\)`)
+	then := strings.Index(se, "]).then(function (r) {")
+	if then < 0 || !strings.Contains(se[then:then+300], "AC.chartLoadCancel('ep-effective');") {
+		t.Error("showEffective must stop lookups again right before it replaces the view")
+	}
+	mustContain(t, "admin-event-profiles.js", ep, "if (!out.isConnected) return; // a view since replaced\n            effShown = want;", "a lookup for a replaced view records nothing")
 }

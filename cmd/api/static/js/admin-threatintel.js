@@ -285,10 +285,33 @@
         el('ti-search-severity').value = c.severity;
     }
 
-    function pageSearch(offset) {
-        if (AC.chartLoadBusy('ti-search', true)) return;
+    // A refresh asked for while a search runs (after a delete) is deferred to
+    // when it settles — a cancelled/failed search keeps the old rows.
+    var searchRefreshDeferred = false;
+    function pageSearch(offset, isRefresh) {
+        if (AC.chartLoadBusy('ti-search', true)) { if (isRefresh) searchRefreshDeferred = true; return; }
         runSearch(offset, lastSearch);
     }
+    function runDeferredSearchRefresh() {
+        if (!searchRefreshDeferred || AC.chartLoadBusy('ti-search', true)) return;
+        searchRefreshDeferred = false;
+        pageSearch(searchOffset);
+    }
+
+    // The search form (its inputs) — Esc there cancels the search; Esc in the
+    // manual-add form below does not.
+    function searchForm() {
+        var q = el('ti-search-q');
+        return (q && q.closest) ? (q.closest('.fwmon-ti-form') || q.parentNode) : [];
+    }
+    function typingNewSearch(failed) {
+        var a = document.activeElement;
+        var ids = { 'ti-search-q': 'q', 'ti-search-source': 'source', 'ti-search-category': 'category' };
+        var k = a && ids[a.id];
+        return !!k && (a.value || '').trim() !== (failed[k] || '');
+    }
+    // Deferred refreshes run after the current search's .then has finished.
+    function runDeferredSearchRefreshSoon() { setTimeout(runDeferredSearchRefresh, 0); }
 
     // snap (optional): the query to run — paging passes lastSearch; a new
     // search reads the controls.
@@ -303,7 +326,8 @@
         var host = el('ti-search-host');
         AC.chartLoad(host, function(signal) {
             return api('/admin/api/threat-intel/search?' + params, { signal: signal });
-        }, { key: 'ti-search', label: 'Searching…', escScope: host.parentNode }).then(function(r) {
+        }, { key: 'ti-search', label: 'Searching…', escScope: searchForm() }).then(function(r) {
+            runDeferredSearchRefreshSoon();
             if (r.superseded) return;
             if (r.cancelled) {
                 if (lastSearch) setSearchControls(lastSearch);
@@ -312,9 +336,10 @@
             }
             if (r.error) {
                 if (window.fwmonLog) window.fwmonLog.error('threat-intel search failed', r.error);
-                // Like Cancel: Prev/Next read the controls, so they go back to
-                // the search whose rows are shown.
-                if (lastSearch) setSearchControls(lastSearch);
+                // Like Cancel, the controls go back to the search whose rows
+                // are shown — unless the user is typing the next one (a field
+                // of the form has focus and differs from the failed query).
+                if (lastSearch && !typingNewSearch(query)) setSearchControls(lastSearch);
                 AC.chartNotice(host, 'Could not load results', { dim: false, onRetry: function() { setSearchControls(query); runSearch(target); } });
                 return;
             }
@@ -394,7 +419,7 @@
         if (!id) return;
         btn.disabled = true;
         api('/admin/api/flows/threat-intel/' + encodeURIComponent(id), { method: 'DELETE' })
-            .then(function() { pageSearch(searchOffset); loadFeeds(); })
+            .then(function() { pageSearch(searchOffset, true); loadFeeds(); })
             .catch(function(e) { window.fwmonLog && window.fwmonLog.error('threat-intel delete failed', e); btn.disabled = false; });
     }
 

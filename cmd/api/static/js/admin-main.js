@@ -1397,7 +1397,7 @@
         // re-offer "select all"; and again when it settles (Cancel/error keep
         // the old rows, whose selection may be offered again).
         updateAlertBulkToolbar();
-        if (loading && loading.then) loading.then(function() { updateAlertBulkToolbar(); });
+        if (loading && loading.then) loading.then(function() { updateAlertBulkToolbar(); runDeferredAlertsRefresh(); });
     }
 
     // (Silenced-sources panel removed in v0.11.93 — source suppression is now
@@ -1409,6 +1409,13 @@
     // bounced back to page 1. If the current page would be empty after the
     // refresh (because every visible row got acked and the filter is "unack"),
     // step back one page until we find content or hit page 1.
+    var alertsRefreshDeferred = false;
+    function runDeferredAlertsRefresh() {
+        if (!alertsRefreshDeferred || AC.chartLoadBusy('filter-alerts', true)) return;
+        alertsRefreshDeferred = false;
+        refreshAlertsAtCurrentPage();
+    }
+
     function refreshAlertsAtCurrentPage() {
         // An ack/snooze from an alert opened on another page (the #alert/ID
         // deep link) must not run the Alerts page's load in the background —
@@ -1416,9 +1423,10 @@
         // when it is next shown.
         var alertsPage = document.getElementById('page-alerts');
         if (!alertsPage || !alertsPage.classList.contains('active')) return;
-        // A filter load already running will replace the rows; reloading the
-        // old page now would supersede it (same key) silently.
-        if (AC.chartLoadBusy('filter-alerts', true)) return;
+        // A filter load already running would be superseded (same key) by a
+        // reload now. Defer: run once that load settles — if it is cancelled
+        // or fails, the old rows stay and must show the ack.
+        if (AC.chartLoadBusy('filter-alerts', true)) { alertsRefreshDeferred = true; return; }
         var pageSize = ALERTS_PAGE_SIZE;
         var pageEnd = alertsOffset; // current offset == end of current page
         var pageStart = Math.max(0, pageEnd - pageSize);
@@ -1627,7 +1635,7 @@
         // The "select all matching" banner reads busy: repaint once the load is
         // registered, and again when it settles.
         updateAlertBulkToolbar();
-        if (loading && loading.then) loading.then(function() { updateAlertBulkToolbar(); });
+        if (loading && loading.then) loading.then(function() { updateAlertBulkToolbar(); runDeferredAlertsRefresh(); });
     }
 
     function prevAlerts() {

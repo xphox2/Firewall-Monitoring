@@ -627,6 +627,9 @@
             AC.apiFetch(API + '/devices').catch(function () { return { data: [] }; }),
             AC.apiFetch(API + '/sites').catch(function () { return { data: [] }; })
         ]).then(function (r) {
+            // Picks made while the lists loaded started lookups against the
+            // old view, which is about to be replaced: stop them.
+            AC.chartLoadCancel('ep-effective');
             allDevices = r[0].data || [];
             allSites = r[1].data || [];
             body.innerHTML =
@@ -690,6 +693,7 @@
                 } });
                 return;
             }
+            if (!out.isConnected) return; // a view since replaced
             effShown = want;
             var res = r.data;
             var d = (res && res.data) || {};

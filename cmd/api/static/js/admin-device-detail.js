@@ -2018,6 +2018,10 @@
             var el = document.getElementById(id);
             if (el) { el.hidden = true; el.innerHTML = ''; }
         });
+        // The modal opens before the data, so the header must name the pair
+        // being loaded — not the previous comparison — through a Cancel/error.
+        var metaEl = document.getElementById('config-diff-meta');
+        if (metaEl) metaEl.textContent = 'rev #' + fromID + ' \u2192 rev #' + toID;
         body.innerHTML = '<div class="cfgdiff-placeholder">Loading diff…</div>';
         modal.classList.remove('hidden');
         AC.openModal('config-diff-modal');
