@@ -310,14 +310,16 @@ func TestNOCThreats_OutboundSYNSession(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	seedThreatRows(t, d, now,
-		threatRow{dir: 2, src: ours, sport: 50000, dst: bad, dport: 443, flag: 2, tcp: 2, age: 2 * time.Second},
+		threatRow{dir: 2, src: ours, sport: 50000, dst: bad, dport: 443, flag: 2, tcp: 2, age: 3 * time.Second},
+		threatRow{dir: 2, src: ours, sport: 50000, dst: bad, dport: 443, flag: 2, tcp: 16, age: 2 * time.Second},
 		threatRow{dir: 1, src: bad, sport: 443, dst: ours, dport: 50000, flag: 1, tcp: 18, age: time.Second},
 	)
 	top := threatTopAt(t, d, now)
-	if e := findEntry(top.Outbound, bad); e == nil || e.Requests != 1 {
-		t.Errorf("outbound %s = %+v, want 1 request", bad, e)
+	// Two records from our side (the initiator), one reply: 2 requests.
+	if e := findEntry(top.Outbound, bad); e == nil || e.Requests != 2 {
+		t.Errorf("outbound %s = %+v, want 2 requests (our two records, not the reply)", bad, e)
 	}
-	if findEntry(top.Inbound, bad) != nil || top.Summary.Outbound != 1 || top.Summary.Inbound != 0 {
+	if findEntry(top.Inbound, bad) != nil || top.Summary.Outbound != 2 || top.Summary.Inbound != 0 {
 		t.Errorf("inbound=%+v summary=%+v, want only the outbound session", top.Inbound, top.Summary)
 	}
 }
