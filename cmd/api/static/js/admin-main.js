@@ -164,7 +164,13 @@
             }
             if (r.error || !r.data) {
                 if (r.error) fwmonLog.error('Loading ' + key + ' failed:', r.error);
-                AC.chartNotice(host, 'Could not load results', { dim: false, onRetry: opts.retry && function() { opts.retry(opts.prev); } });
+                // Same as Cancel: the rows on screen are the shown query's, so
+                // the controls go back to it — otherwise Prev/Next and Load
+                // more would page a query whose first page never appeared.
+                // Retry re-applies the failed query first.
+                var shown = shownQuery[page] || opts.prev;
+                if (shown && ap && ap.restore && !siblingBusy()) restoreQuery(ap, page, shown);
+                AC.chartNotice(host, shownQuery[page] ? 'Could not load results — showing the previous results' : 'Could not load results', { dim: false, onRetry: retryCancelled });
                 return;
             }
             if (want) shownQuery[page] = want;
@@ -1302,6 +1308,11 @@
 
     function loadAlerts(opts) {
         opts = opts || {};
+        // "Select all N matching" is bound to the FILTER, and bulk-ack builds
+        // its request from the live filter: a changed filter must drop it now,
+        // not when the new rows arrive, or an ack during/after a slow or failed
+        // load would hit a different (possibly much larger) set.
+        if (selectAllMatchingMode) { selectAllMatchingMode = false; updateAlertBulkToolbar(); }
         runFilterLoad('alerts', function(signal) {
             // Ensure the device + site lists are loaded so the filter dropdowns can be
             // populated (they back manual filtering and the deep-link chip labels).

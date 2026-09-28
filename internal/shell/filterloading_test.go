@@ -162,7 +162,7 @@ func TestFilterLoad_StateOnlyOnSuccess(t *testing.T) {
 	if n := strings.Count(ep, "window.FwmonEventRules.loadRules(0).then(function (lr) {\n"); n != 2 {
 		t.Errorf("both loadRules consumers must take the result; found %d", n)
 	}
-	if n := strings.Count(ep, "if (!lr || !lr.ok) return;"); n != 2 {
+	if n := strings.Count(ep, "if (!lr || !lr.ok) return;") + strings.Count(ep, "if (!lr || !lr.ok) { window.FwmonEventRules.keepPendingPrefill(pending); return; }"); n != 2 {
 		t.Errorf("both loadRules consumers must return unless ok; found %d", n)
 	}
 }
@@ -474,4 +474,43 @@ func TestFilterLoad_ReviewRound6(t *testing.T) {
 		t.Error("a hidden lookup's error must be shown as a toast (its table is not on screen)")
 	}
 	mustContain(t, "admin.html", readFile(t, "../../web/admin/admin.html"), `id="report-host" style="padding:6px;overflow:clip;">`, "overflow:clip keeps the sticky Cancel box working (hidden made the card its scroll container)")
+}
+
+// Seventh review (Opus 5.5): an error restores like Cancel, a filter change
+// drops "select all matching", restore drops pending debounced edits, Flows
+// says plainly which rows the list shows, and the remaining surfaces.
+func TestFilterLoad_ReviewRound7(t *testing.T) {
+	main := readJS(t, "admin-main.js")
+	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
+	errAt := strings.Index(run, "if (r.error || !r.data) {")
+	rest := strings.Index(run, "if (shown && ap && ap.restore && !siblingBusy()) restoreQuery(ap, page, shown);")
+	if errAt < 0 || rest < errAt {
+		t.Error("an error must restore the controls to the shown query, like Cancel")
+	}
+	mustContain(t, "admin-main.js", run, "'Could not load results — showing the previous results' : 'Could not load results', { dim: false, onRetry: retryCancelled });", "error Retry re-applies the failed query")
+	la := funcBody(t, main, `function loadAlerts\(opts\)`)
+	if i := strings.Index(la, "if (selectAllMatchingMode) { selectAllMatchingMode = false; updateAlertBulkToolbar(); }"); i < 0 || i > strings.Index(la, "runFilterLoad(") {
+		t.Error("a filter change must drop 'select all matching' BEFORE the load (bulk-ack uses the live filter)")
+	}
+
+	ctl := readJS(t, "admin-controls.js")
+	mustContain(t, "admin-controls.js", funcBody(t, ctl, `function restore\(snap\)`), "if (autoApply) autoApply.cancelPending();", "restore drops a pending debounced edit")
+	mustContain(t, "admin-controls.js", ctl, "autoApply = bindAutoApply({", "the handle is kept")
+
+	fl := readJS(t, "admin-flows.js")
+	mustContain(t, "admin-flows.js", fl, "else AC.showError('Could not load the flow samples');", "a hidden samples failure is visible")
+	mustContain(t, "admin-flows.js", fl, "else AC.showError('Could not load flow detections');", "a hidden detections failure is visible")
+	mustContain(t, "admin-flows.js", fl, "the list still shows the previous filter", "Flows says which rows the list shows")
+
+	cd := readJS(t, "admin-connection-detail.js")
+	mustContain(t, "admin-connection-detail.js", cd, "{ key: key, label: 'Loading…', escScope: opts.escScope }", "Esc from a range select cancels")
+	mustContain(t, "admin-connection-detail.js", cd, "escScope: document.getElementById('traffic-range-select')", "traffic select")
+	mustContain(t, "admin-connection-detail.js", cd, "escScope: document.getElementById('flow-range-select')", "flows select")
+
+	ti := readJS(t, "admin-threatintel.js")
+	mustContain(t, "admin-threatintel.js", ti, "if (shownLookupQ !== null) el('ti-lookup-q').value = shownLookupQ;", "lookup Cancel restores the shown query")
+	mustContain(t, "admin-threatintel.js", ti, "shownLookupQ = q;\n            renderLookup(", "recorded on success")
+
+	mustContain(t, "admin-event-profiles.js", readJS(t, "admin-event-profiles.js"), "if (!lr || !lr.ok) { window.FwmonEventRules.keepPendingPrefill(pending); return; }", "a create-from-alert prefill survives a failed lookup")
+	mustContain(t, "admin-event-rules.js", readJS(t, "admin-event-rules.js"), "try { sessionStorage.setItem('fwmon_rule_prefill', JSON.stringify(p)); }", "it is written back for the next visit")
 }

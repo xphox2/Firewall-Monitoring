@@ -70,6 +70,9 @@
     }
 
     // ---- Lookup ------------------------------------------------------------
+    // The lookup whose result is on screen (null before the first one).
+    var shownLookupQ = null;
+
     function onLookup(ev) {
         ev.preventDefault();
         var q = (el('ti-lookup-q').value || '').trim();
@@ -82,7 +85,9 @@
         }, { key: 'ti-lookup', label: 'Looking up…', escScope: el('ti-lookup-form') }).then(function(r) {
             if (r.superseded) return;
             if (r.cancelled) {
-                AC.chartNotice(host, 'Cancelled', { dim: false, onRetry: function() {
+                // The box goes back to the lookup whose result is shown.
+                if (shownLookupQ !== null) el('ti-lookup-q').value = shownLookupQ;
+                AC.chartNotice(host, shownLookupQ !== null ? 'Cancelled — showing the previous results' : 'Cancelled', { dim: false, onRetry: function() {
                     el('ti-lookup-q').value = q; // re-apply the cancelled lookup
                     onLookup({ preventDefault: function() {} });
                 } });
@@ -92,6 +97,7 @@
                 if (errEl) { errEl.textContent = (r.error && r.error.message) || 'Lookup failed.'; errEl.hidden = false; }
                 return;
             }
+            shownLookupQ = q;
             renderLookup((r.data && r.data.data) || {});
         });
     }

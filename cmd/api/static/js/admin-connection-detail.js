@@ -46,7 +46,7 @@
             });
         }
         return AC.chartLoad(host, function(signal) { return AC.apiFetch(url, { signal: signal }); },
-            { key: key, label: 'Loading…' }).then(function(r) {
+            { key: key, label: 'Loading…', escScope: opts.escScope }).then(function(r) {
             if (r.superseded) return null;
             if (r.cancelled) {
                 if (opts.onCancel) opts.onCancel();
@@ -641,7 +641,7 @@
         var range = currentTrafficRange;
         return cdLoad('cd-traffic', document.getElementById('traffic-load-host'),
             API_BASE + '/connections/' + connId + '/traffic?range=' + range,
-            { fromPoll: opts.fromPoll, hadResult: shownTrafficRange !== null, onCancel: opts.onCancel, retry: function() { setTrafficRange(range); } }).then(function(result) {
+            { fromPoll: opts.fromPoll, escScope: document.getElementById('traffic-range-select'), hadResult: shownTrafficRange !== null, onCancel: opts.onCancel, retry: function() { setTrafficRange(range); } }).then(function(result) {
             if (!result) return;
             shownTrafficRange = range;
             var data = result.data;
@@ -711,7 +711,7 @@
         var hours = currentFlowHours;
         return cdLoad('cd-flows', document.getElementById('flow-load-host'),
             API_BASE + '/connections/' + connId + '/flows?hours=' + hours,
-            { fromPoll: opts.fromPoll, hadResult: shownFlowHours !== null, onCancel: opts.onCancel, retry: function() { setFlowRange(hours); } }).then(function(result) {
+            { fromPoll: opts.fromPoll, escScope: document.getElementById('flow-range-select'), hadResult: shownFlowHours !== null, onCancel: opts.onCancel, retry: function() { setFlowRange(hours); } }).then(function(result) {
             if (!result) return;
             shownFlowHours = hours;
             var data = result.data;

@@ -73,14 +73,20 @@
     //   selects:  [{id, stateKey}, ...],
     //   onChange: function() — called after each commit, debounced or not
     // }
+    // Returns { cancelPending } — drops any debounced text edit not yet
+    // committed (used by restore, so a pending edit cannot re-commit after a
+    // Cancel and wipe the Cancel notice with a redundant load).
     function bindAutoApply(spec) {
-        if (!spec || !spec.onChange) return;
+        var clearers = [];
+        var handle = { cancelPending: function() { clearers.forEach(function(f) { f(); }); } };
+        if (!spec || !spec.onChange) return handle;
         (spec.inputs || []).forEach(function(input) {
             var el = document.getElementById(input.id);
             if (!el || el.__fwmonAutoBound) return;
             el.__fwmonAutoBound = true;
             var debounceMs = input.debounceMs != null ? input.debounceMs : 400;
             var pending = null;
+            clearers.push(function() { if (pending) { clearTimeout(pending); pending = null; } });
             var commit = function() {
                 spec.state[input.stateKey] = el.value.trim();
                 spec.onChange();
@@ -110,6 +116,7 @@
                 spec.onChange();
             });
         });
+        return handle;
     }
 
     // setInputValues — apply state → DOM after URL parsing.
@@ -283,8 +290,12 @@
 
         // restore puts a previous query back in the controls, chips and URL
         // WITHOUT loading — a cancelled load keeps that query's results.
+        var autoApply = null;
         function restore(snap) {
             if (!snap) return;
+            // A debounced edit still pending would re-commit after this and
+            // start a redundant load that wipes the Cancel notice.
+            if (autoApply) autoApply.cancelPending();
             allKeys.forEach(function(k) {
                 state[k] = (k in snap) ? snap[k]
                     : ((typeof d.defaults[k] === 'number') ? d.defaults[k] : '');
@@ -301,7 +312,7 @@
             }
         });
 
-        bindAutoApply({
+        autoApply = bindAutoApply({
             state:    state,
             inputs:   d.inputs || [],
             selects:  d.selects || [],

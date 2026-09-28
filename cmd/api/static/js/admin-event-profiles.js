@@ -60,7 +60,7 @@
                 // race the lookup.
                 if (pending.editId) {
                     window.FwmonEventRules.loadRules(0).then(function (lr) {
-                        if (!lr || !lr.ok) return;
+                        if (!lr || !lr.ok) { window.FwmonEventRules.keepPendingPrefill(pending); return; }
                         var r = window.FwmonEventRules.getRules().find(function (x) { return x.id === pending.editId; });
                         window.FwmonEventRules.openFromPrefill(pending);
                         showDetail((r && r.profile_id) || (defaultProfile() || {}).id || 0, 'rules');

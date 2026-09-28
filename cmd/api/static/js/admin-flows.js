@@ -931,6 +931,7 @@
             if (r.error) {
                 if (window.fwmonLog) window.fwmonLog.error('FwmonFlows: detections fetch failed', r.error);
                 if (noticeHost) AC.chartNotice(noticeHost, 'Could not load results', { dim: false, onRetry: loadDetections });
+                else AC.showError('Could not load flow detections');
                 return;
             }
             renderDetections((r.data && r.data.data) || []);
@@ -1348,13 +1349,18 @@
         }, { key: 'flows-samples', label: append ? 'Loading more…' : 'Loading…', escScope: document.getElementById('page-flows') }).then(function(r) {
             if (r.superseded) return;
             var retry = function() { samplesLoad(offset, append); };
+            // Flows keeps the new filter in its controls after a Cancel or
+            // error (the stats half may already show it), so the notice says
+            // plainly that the LIST is still the previous filter's rows; Load
+            // more continues those rows (shownSamplesState).
             if (r.cancelled) {
-                if (host) AC.chartNotice(host, 'Cancelled — showing the previous results', { dim: false, onRetry: retry });
+                if (host) AC.chartNotice(host, 'Cancelled — the list still shows the previous filter\u2019s rows', { dim: false, onRetry: retry });
                 return;
             }
             if (r.error || !r.data) {
                 if (r.error && window.fwmonLog) window.fwmonLog.error('FwmonFlows: samples fetch failed', r.error);
-                if (host) AC.chartNotice(host, 'Could not load results', { dim: false, onRetry: retry });
+                if (host) AC.chartNotice(host, 'Could not load results — the list still shows the previous filter\u2019s rows', { dim: false, onRetry: retry });
+                else AC.showError('Could not load the flow samples');
                 return;
             }
             var samples = r.data.data || [];

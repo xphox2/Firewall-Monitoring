@@ -90,6 +90,13 @@
         try { return JSON.parse(raw); } catch (e) { return null; }
     }
 
+    // keepPendingPrefill puts a prefill back when its lookup did not succeed, so
+    // the next visit to the page opens it instead of silently dropping it.
+    function keepPendingPrefill(p) {
+        if (!p) return;
+        try { sessionStorage.setItem('fwmon_rule_prefill', JSON.stringify(p)); } catch (e) { /* ignore */ }
+    }
+
     // openFromPrefill opens the editor for a suggested rule (or the existing rule
     // when "customize" targeted one), verifying the device/site scope actually took.
     function openFromPrefill(pending) {
@@ -952,6 +959,7 @@
         prepare: prepare,
         loadRules: loadRules,
         takePendingPrefill: takePendingPrefill,
+        keepPendingPrefill: keepPendingPrefill,
         openFromPrefill: openFromPrefill,
         openRuleModal: openRuleModal,
         getRules: function () { return rules; }
