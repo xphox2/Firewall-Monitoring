@@ -129,7 +129,7 @@
         // just reload the old results.
         // A charts load shares the page's controls with the table load; while a
         // newer table load runs, the controls are ITS query (see Cancel below).
-        function siblingBusy() { return key !== page && AC.chartLoadBusy('filter-' + page); }
+        function siblingBusy() { return key !== page && AC.chartLoadBusy('filter-' + page, true); }
         var retryCancelled = opts.retry && function() {
             if (want && ap.restore && !siblingBusy()) ap.restore(want);
             opts.retry(opts.prev);
@@ -2180,7 +2180,9 @@
     function loadMoreTraps() {
         // trapsOffset belongs to the rows on screen; while a filter reload is
         // running, appending from it would mix two filters' rows.
-        if (AC.chartLoadBusy('filter-traps')) return;
+        // Exact key: the charts load ('filter-traps-charts') shares the prefix
+        // but does not touch the rows, so it must not block Load more.
+        if (AC.chartLoadBusy('filter-traps', true)) return;
         var from = trapsOffset; // advances only when the rows arrive
         runFilterLoad('traps', function(signal) {
             return apiFetch(API_BASE + '/traps?' + buildTrapParams(100) + '&offset=' + from, { signal: signal });

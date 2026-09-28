@@ -2058,9 +2058,12 @@
         // elsewhere", not "focus inside the chart".
         function onKey(e) {
             if (e.key !== 'Escape') return;
-            // Any open dialog owns Esc, wherever focus is: a click on plain
-            // text inside one moves focus to <body>, and that Esc closes the
-            // dialog — it must not also cancel the page's load.
+            // An Esc something else already handled is not ours. A modal's own
+            // Esc handler runs FIRST (capture phase), closes the dialog —
+            // emptying the registry — and calls preventDefault; with focus on
+            // <body> (a click on plain text in the dialog) nothing else would
+            // tell this handler the Esc belonged to the dialog.
+            if (e.defaultPrevented) return;
             if (Object.keys(__fwmonOpenModals).length) return;
             var t = e.target;
             if (t && t.closest && t.closest('[role="dialog"], .fwmon-confirm-overlay')) return;
@@ -2121,8 +2124,9 @@
     // chartLoadBusy reports whether a load is in flight for key, or for any key
     // starting with it (a page's per-row keys share a prefix). Pollers use it to
     // stay out of the way of a load the user started.
-    function chartLoadBusy(keyOrPrefix) {
+    function chartLoadBusy(keyOrPrefix, exact) {
         if (chartLoads[keyOrPrefix]) return true;
+        if (exact) return false;
         for (var k in chartLoads) {
             if (k.indexOf(keyOrPrefix) === 0) return true;
         }

@@ -185,19 +185,21 @@
         if (!container || !host) return;
         // The first load has nothing to keep on screen; later range changes
         // keep the current table under the overlay.
-        if (!container.querySelector('table')) container.innerHTML = '<div class="loading" style="padding:20px;">Loading events...</div>';
+        if (!container.dataset.loaded) container.innerHTML = '<div class="loading" style="padding:20px;">Loading events...</div>';
 
         const url = window.AdminCommon.API_BASE + '/connections/' + connId + '/events?hours=' + hours;
         panelLoad('panel-events-' + connId, host, url, document.getElementById('panel-events-range'), () => loadPanelEvents(connId, hours)).then(function(res) {
             if (!res) {
                 // A first load that was cancelled or failed leaves no
                 // "Loading events..." behind (unless a newer load owns it).
-                if (!container.querySelector('table') && !AC.chartLoadBusy('panel-events-' + connId)) {
+                if (!container.dataset.loaded && !AC.chartLoadBusy('panel-events-' + connId)) {
                     container.innerHTML = '<div style="padding:20px;color:var(--fwmon-text-faint);text-align:center;">Events not loaded.</div>';
                 }
                 return;
             }
             if (currentPanelConnId !== connId) return;
+            // Any successful render counts as "shown" — an empty result too.
+            container.dataset.loaded = '1';
             const events = res.data || [];
             if (events.length === 0) {
                 container.innerHTML = '<div style="padding:20px;color:var(--fwmon-text-faint);text-align:center;">No events in the last ' + hours + 'h</div>';

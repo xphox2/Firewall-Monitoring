@@ -378,7 +378,7 @@ func TestFilterLoad_ReviewRound3(t *testing.T) {
 
 	main := readJS(t, "admin-main.js")
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
-	mustContain(t, "admin-main.js", run, "function siblingBusy() { return key !== page && AC.chartLoadBusy('filter-' + page); }", "a charts load never restores over a running table load")
+	mustContain(t, "admin-main.js", run, "function siblingBusy() { return key !== page && AC.chartLoadBusy('filter-' + page, true); }", "a charts load never restores over a running table load")
 	mustContain(t, "admin-main.js", run, "if (want && ap.restore && !siblingBusy()) ap.restore(want);", "nor does its Retry")
 	mustContain(t, "admin-main.js", run, "if (back && ap && ap.restore && !siblingBusy()) ap.restore(back);", "the Cancel branch")
 
@@ -405,11 +405,30 @@ func TestFilterLoad_ReviewRound4(t *testing.T) {
 	mustContain(t, "admin-common.js", ac, "if (Object.keys(__fwmonOpenModals).length) return;", "any open dialog owns Esc, even with focus on <body>")
 	main := readJS(t, "admin-main.js")
 	lmt := funcBody(t, main, `function loadMoreTraps\(\)`)
-	if i := strings.Index(lmt, "if (AC.chartLoadBusy('filter-traps')) return;"); i < 0 || i > strings.Index(lmt, "runFilterLoad(") {
+	if i := strings.Index(lmt, "if (AC.chartLoadBusy('filter-traps', true)) return;"); i < 0 || i > strings.Index(lmt, "runFilterLoad(") {
 		t.Error("Traps Load more must wait for a running filter reload")
 	}
 	mustContain(t, "admin-event-rules.js", readJS(t, "admin-event-rules.js"), "if (wrap && wrap.offsetParent) syncRuleFilterChips();", "a hidden lookup does not reset the user's chip")
 	mustContain(t, "admin-design-system.css", readFile(t, "../../cmd/api/static/css/admin-design-system.css"), ".fwmon-load-host:has(> .fwmon-chart-notice) { min-height: 120px; }", "a first-load notice gets room")
 	mustContain(t, "admin-event-profiles.js", readJS(t, "admin-event-profiles.js"), "if (!had) out.innerHTML = '';", "no Resolving… left behind")
-	mustContain(t, "diagram-panels.js", readJS(t, "diagram-panels.js"), "if (!container.querySelector('table') && !AC.chartLoadBusy('panel-events-' + connId)) {", "no Loading events… left behind")
+	mustContain(t, "diagram-panels.js", readJS(t, "diagram-panels.js"), "if (!container.dataset.loaded && !AC.chartLoadBusy('panel-events-' + connId)) {", "no Loading events… left behind")
+}
+
+// Fifth fresh review: the modal's capture-phase Esc handler closes the dialog
+// (emptying the registry) BEFORE chartLoad's handler runs, so the registry
+// check alone was dead; defaultPrevented is what survives. Behaviour is
+// verified in the browser check; these pin the lines.
+func TestFilterLoad_ReviewRound5(t *testing.T) {
+	ac := readJS(t, "admin-common.js")
+	on := funcBody(t, ac, `function onKey\(e\)`)
+	dp := strings.Index(on, "if (e.defaultPrevented) return;")
+	if dp < 0 || dp > strings.Index(on, "cancel();") {
+		t.Error("chartLoad's Esc handler must bail on defaultPrevented before cancelling")
+	}
+	mustContain(t, "admin-common.js", ac, "if (exact) return false;", "an exact-key busy check")
+	fl := readJS(t, "admin-flows.js")
+	if i := strings.Index(fl, "if (e.defaultPrevented) return; // a dialog's Esc"); i < 0 || i > strings.Index(fl, "cancelStatsLoad();\n            });") {
+		t.Error("the flows stats Esc handler must bail on defaultPrevented")
+	}
+	mustContain(t, "diagram-panels.js", readJS(t, "diagram-panels.js"), "container.dataset.loaded = '1';", "an empty result counts as shown")
 }

@@ -217,6 +217,7 @@
             document.__fwmonFlowsEsc = true;
             document.addEventListener('keydown', function(e) {
                 if (e.key !== 'Escape' || !(statsStream || statsAbort)) return;
+                if (e.defaultPrevented) return; // a dialog's Esc (it closes first, in capture)
                 if (!flowsPage || !flowsPage.classList.contains('active')) return;
                 if (e.target && e.target.closest && e.target.closest('[role="dialog"], .fwmon-confirm-overlay')) return;
                 cancelStatsLoad();
