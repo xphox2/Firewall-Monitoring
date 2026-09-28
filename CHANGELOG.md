@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.267] - 2026-09-27
+
+### Changed — task notes
+
+- `tasks/todo.md`: the admin-performance item on PostgreSQL `work_mem` is
+  marked done. It was set to 32MB on 2026-09-26, after v0.11.258 gave the
+  container a 1 GB `/dev/shm`. No code changes.
+
 ## [0.11.266] - 2026-09-27
 
 ### Added — the summary tables are rebuilt after flow history is reclassified
