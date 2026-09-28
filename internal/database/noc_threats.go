@@ -126,9 +126,13 @@ func threatClassSQL() string {
 }
 
 // threatRequestSQL is the "this row is a request" predicate over threatClassSQL:
-// in a session decided by a SYN, the SYN record; otherwise the record sent to
-// the service port.
-const threatRequestSQL = `(t.cls IN ('in', 'out') AND ((t.syn_cls IS NOT NULL AND t.syn = 1) OR (t.syn_cls IS NULL AND t.dst_port = t.eff)))`
+// a record sent by the session's initiator — in a SYN-decided session, every
+// record in the initiator's direction (direction 1 = from the flagged side);
+// otherwise every record sent to the service port. Both rules count the same
+// records, so sessions rank alike whether or not their SYN was sampled.
+const threatRequestSQL = `(t.cls IN ('in', 'out') AND (` +
+	`(t.syn_cls = 'in' AND t.direction = 1) OR (t.syn_cls = 'out' AND t.direction = 2) OR ` +
+	`(t.syn_cls IS NULL AND t.dst_port = t.eff)))`
 
 // getNOCThreatTop builds the threat card for the minute ending at nocNow.
 func (d *Database) getNOCThreatTop() (*NOCThreatTop, error) {

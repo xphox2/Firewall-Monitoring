@@ -268,3 +268,39 @@ func TestNOCThreats_InferredIsAMajorityOfRequests(t *testing.T) {
 		t.Errorf("%s = %+v, want not inferred (1 of 3 requests guessed)", bad2, e)
 	}
 }
+
+// The SYN rule applies per session, not per host pair: a scan of our SSH from a
+// flagged host must not reclassify our own, port-decided connection to that
+// host's web server.
+func TestNOCThreats_SYNSessionDoesNotLeakToAnotherSession(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	seedThreatRows(t, d, now,
+		threatRow{dir: 1, src: bad, sport: 40000, dst: ours, dport: 22, flag: 1, tcp: 2, age: time.Second},
+		threatRow{dir: 2, src: ours, sport: 50000, dst: bad, dport: 443, flag: 2, age: time.Second},
+		threatRow{dir: 1, src: bad, sport: 443, dst: ours, dport: 50000, flag: 1, age: time.Second},
+	)
+	top := threatTopAt(t, d, now)
+	if e := findEntry(top.Inbound, bad); e == nil || e.Requests != 1 || e.Service != 22 {
+		t.Errorf("inbound %s = %+v, want the SSH scan (1 request to 22)", bad, e)
+	}
+	if e := findEntry(top.Outbound, bad); e == nil || e.Requests != 1 || e.Service != 443 {
+		t.Errorf("outbound %s = %+v, want our connection to 443 (1 request)", bad, e)
+	}
+}
+
+// A SYN decides direction without any port guess, so a SYN session on an
+// unknown port is not "inferred"; its initiator's records all count.
+func TestNOCThreats_SYNSessionOnGuessedPortIsNotInferred(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	seedThreatRows(t, d, now,
+		threatRow{dir: 1, src: bad, sport: 51234, dst: ours, dport: 2222, flag: 1, tcp: 2, age: 3 * time.Second},
+		threatRow{dir: 1, src: bad, sport: 51234, dst: ours, dport: 2222, flag: 1, tcp: 16, age: 2 * time.Second},
+		threatRow{dir: 2, src: ours, sport: 2222, dst: bad, dport: 51234, flag: 2, tcp: 18, age: time.Second},
+	)
+	e := findEntry(threatTopAt(t, d, now).Inbound, bad)
+	if e == nil || e.Inferred || e.Requests != 2 {
+		t.Errorf("inbound %s = %+v, want 2 requests (both initiator records), not inferred", bad, e)
+	}
+}
