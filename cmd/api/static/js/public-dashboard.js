@@ -55,8 +55,8 @@
     function progressClass(v) { return v >= 80 ? 'high' : v >= 60 ? 'medium' : 'low'; }
 
     // ---- Fetch helpers ----
-    function apiFetch(url) {
-        return fetch(url).then(function(r) { return r.json(); }).then(function(d) {
+    function apiFetch(url, signal) {
+        return fetch(url, { signal: signal }).then(function(r) { return r.json(); }).then(function(d) {
             return d && d.success ? d.data : null;
         });
     }
@@ -621,7 +621,10 @@
             return;
         }
         if (e.target.id === 'btn-reset-zoom' || e.target.closest('#btn-reset-zoom')) {
-            if (modalChart) modalChart.resetZoom();
+            // Back to the dashboard range, re-queried. (The zoom plugin's own
+            // reset would stretch back only to the data already loaded — after
+            // a zoom that is the zoomed window — and fire a re-query of it.)
+            if (modalWidgetDef) { modalWindow = null; loadModal(); }
             return;
         }
     });
@@ -667,158 +670,293 @@
     }
 
     // ---- Chart Modal ----
+    //
+    // Drag-to-zoom (v0.11.270): selecting a range (drag or wheel) re-queries
+    // the server for that window instead of only stretching the points already
+    // loaded. The chart on screen stays until the new data arrives, under a
+    // loading overlay with Cancel. Reset returns to the dashboard range.
+    var modalWindow = null;   // {from, to} epoch ms, or null for the dashboard range
+    var modalTimes = [];      // epoch ms of each loaded point, for index -> time
+    var modalLastReq = null;  // last [lo, hi] requested; absorbs duplicate callbacks
+    var modalLoad = null;     // the in-flight load: {ctrl, timer, tick, overlay}
+
     function openChartModal(def) {
         modalWidgetDef = def;
-        modalRequestId++;
-        var myRequestId = modalRequestId;
+        modalWindow = null;
         document.getElementById('chart-modal-title').textContent = def.title;
         document.getElementById('chart-modal').classList.add('active');
-
-        if (def.type === 'cpumem') {
-            var url = API_BASE + '/public/status-history?device_id=' + def.deviceId + '&hours=' + dashRange;
-            renderModalCpuChart(url, myRequestId);
-        } else if (def.type === 'bandwidth') {
-            var url = API_BASE + '/public/interfaces/chart?device_id=' + def.iface.deviceId + '&index=' + def.iface.index + '&view=' + bwView + '&range=' + dashRange;
-            renderModalBandwidthChart(url, myRequestId);
-        }
+        loadModal();
     }
 
     function closeChartModal() {
+        stopModalLoad();
+        clearModalNotice();
         if (modalChart) { modalChart.destroy(); modalChart = null; }
         modalWidgetDef = null;
+        modalWindow = null;
         modalRequestId++;
         document.getElementById('chart-modal').classList.remove('active');
     }
 
-    function renderModalCpuChart(url, requestId) {
-        if (modalChart) { modalChart.destroy(); modalChart = null; }
-        if (requestId !== modalRequestId) return;
-        var canvas = document.getElementById('modal-chart-canvas');
+    function modalURL(def) {
+        var win = modalWindow ? '&from=' + encodeURIComponent(modalWindow.from) + '&to=' + encodeURIComponent(modalWindow.to) : '';
+        if (def.type === 'cpumem') {
+            return API_BASE + '/public/status-history?device_id=' + def.deviceId + '&hours=' + dashRange + win;
+        }
+        return API_BASE + '/public/interfaces/chart?device_id=' + def.iface.deviceId + '&index=' + def.iface.index +
+            '&view=' + bwView + '&range=' + dashRange + win;
+    }
 
-        apiFetch(url).then(function(points) {
+    function clearModalNotice() {
+        var notice = document.querySelector('#chart-modal .chart-load-notice');
+        if (notice) notice.parentNode.removeChild(notice);
+    }
+
+    function stopModalLoad() {
+        if (!modalLoad) return;
+        clearTimeout(modalLoad.timer);
+        clearInterval(modalLoad.tick);
+        if (modalLoad.overlay && modalLoad.overlay.parentNode) modalLoad.overlay.parentNode.removeChild(modalLoad.overlay);
+        try { if (modalLoad.ctrl) modalLoad.ctrl.abort(); } catch (e) { /* ignore */ }
+        modalLoad = null;
+    }
+
+    // loadModal fetches the modal chart for the dashboard range or the zoom
+    // window. The overlay appears only after 250 ms; every exit clears it.
+    // restore puts the previous view back when the user cancels a zoom, or when
+    // it returns nothing or fails (a notice then says why).
+    function loadModal(restore) {
+        var def = modalWidgetDef;
+        if (!def) return;
+        stopModalLoad();
+        clearModalNotice();
+        modalRequestId++;
+        var requestId = modalRequestId;
+        var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        var load = { ctrl: ctrl, timer: null, tick: null, overlay: null };
+        modalLoad = load;
+        var started = Date.now();
+        load.timer = setTimeout(function() {
+            if (modalLoad !== load) return;
+            var body = document.querySelector('#chart-modal .chart-modal-body');
+            if (!body) return;
+            var o = document.createElement('div');
+            o.className = 'chart-load-overlay';
+            o.setAttribute('role', 'status');
+            o.innerHTML = '<div class="chart-load-box"><span class="chart-load-spinner" aria-hidden="true"></span>' +
+                '<span>' + (modalWindow ? 'Loading higher-resolution data…' : 'Loading…') + '</span>' +
+                '<span class="chart-load-elapsed" aria-live="off"></span>' +
+                '<button type="button" class="modal-btn chart-load-cancel">Cancel</button></div>';
+            o.querySelector('button').addEventListener('click', function() {
+                stopModalLoad();
+                modalRequestId++;
+                if (restore) restore();
+            });
+            body.appendChild(o);
+            load.overlay = o;
+            load.tick = setInterval(function() {
+                var el = o.querySelector('.chart-load-elapsed');
+                if (el) el.textContent = Math.floor((Date.now() - started) / 1000) + 's';
+            }, 1000);
+        }, 250);
+
+        apiFetch(modalURL(def), ctrl ? ctrl.signal : undefined).then(function(data) {
             if (requestId !== modalRequestId) return;
-            if (!points || points.length === 0) return;
-            var labels;
-            if (dashRange >= 168) {
-                labels = points.map(function(p) { return formatInTimezone(p.timestamp, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }); });
-            } else {
-                labels = points.map(function(p) { return formatInTimezone(p.timestamp, { hour: '2-digit', minute: '2-digit' }); });
+            stopModalLoad();
+            var empty = !data || (Array.isArray(data) ? data.length === 0 : !(data.timestamps || data.labels || []).length);
+            if (empty) {
+                if (restore) restore();
+                showModalNotice(modalChart ? 'No data in this range' : 'No data for this range', restore ? null : loadModal);
+                return;
             }
-
-            modalChart = new Chart(canvas.getContext('2d'), {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [
-                        { label: 'CPU %', data: points.map(function(p) { return p.cpu_usage; }), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 },
-                        { label: 'Memory %', data: points.map(function(p) { return p.memory_usage; }), borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    animation: { duration: 0 },
-                    interaction: { intersect: false, mode: 'index' },
-                    plugins: {
-                        legend: { labels: { color: '#8b949e', font: { size: 11 } } },
-                        zoom: {
-                            zoom: {
-                                wheel: { enabled: true },
-                                drag: { enabled: true },
-                                mode: 'x'
-                            }
-                        }
-                    },
-                    scales: {
-                        x: { ticks: { color: '#484f58', maxTicksLimit: 12, maxRotation: 0 }, grid: { color: '#21262d' } },
-                        y: { min: 0, max: 100, ticks: { color: '#484f58', callback: function(v) { return v + '%'; } }, grid: { color: '#21262d' } }
-                    }
-                }
+            if (def.type === 'cpumem') renderModalCpuChart(data);
+            else renderModalBandwidthChart(data);
+        }, function() {
+            if (requestId !== modalRequestId) return;
+            stopModalLoad();
+            var failed = modalWindow; // Retry asks for the view that failed, not the one put back
+            if (restore) restore();
+            showModalNotice('Could not load this range', function() {
+                if (!modalWidgetDef) return;
+                modalWindow = failed;
+                loadModal(restore);
             });
         });
     }
 
-    function renderModalBandwidthChart(url, requestId) {
+    // showModalNotice explains an empty or failed load over the chart that is
+    // kept, with Retry (when onRetry is given) and Dismiss.
+    function showModalNotice(msg, onRetry) {
+        var body = document.querySelector('#chart-modal .chart-modal-body');
+        if (!body) return;
+        clearModalNotice();
+        var o = document.createElement('div');
+        o.className = 'chart-load-overlay chart-load-notice';
+        o.setAttribute('role', 'status');
+        o.innerHTML = '<div class="chart-load-box"><span></span>' +
+            (onRetry ? '<button type="button" class="modal-btn" data-notice="retry">Retry</button>' : '') +
+            '<button type="button" class="modal-btn" data-notice="dismiss">Dismiss</button></div>';
+        o.querySelector('span').textContent = msg;
+        o.addEventListener('click', function(e) {
+            var b = e.target.closest && e.target.closest('[data-notice]');
+            if (!b) return;
+            o.parentNode.removeChild(o);
+            if (b.getAttribute('data-notice') === 'retry' && onRetry) onRetry();
+        });
+        body.appendChild(o);
+    }
+
+    // modalLabelOpts formats the x labels by the span on screen: the zoom
+    // window when there is one, else the dashboard range.
+    function modalLabelOpts() {
+        var spanH = dashRange;
+        if (modalWindow && modalTimes.length > 1) spanH = (modalTimes[modalTimes.length - 1] - modalTimes[0]) / 3600000;
+        if (spanH >= 168) return { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' };
+        if (spanH < 1) return { hour: '2-digit', minute: '2-digit', second: '2-digit' };
+        return { hour: '2-digit', minute: '2-digit' };
+    }
+
+    function modalZoomOptions() {
+        return {
+            zoom: {
+                // The plugin already debounces wheel zoom (250 ms) before
+                // onZoomComplete; drag calls it on release.
+                wheel: { enabled: true },
+                drag: { enabled: true },
+                mode: 'x',
+                onZoomComplete: function(ctx) { onModalZoom(ctx.chart); }
+            }
+        };
+    }
+
+    // onModalZoom maps the visible x range (category indexes) to the loaded
+    // points' timestamps and re-queries that window. Index-based on purpose:
+    // the sampled points' first/last timestamps never equal a requested window.
+    function onModalZoom(chart) {
+        var n = modalTimes.length;
+        if (n < 2 || !chart || !chart.scales || !chart.scales.x) return;
+        var sx = chart.scales.x;
+        var lo = Math.max(0, Math.floor(sx.min)), hi = Math.min(n - 1, Math.ceil(sx.max));
+        if (hi - lo < 1) return;
+        if (lo <= 0 && hi >= n - 1) return; // the whole loaded range: nothing new to fetch
+        if (modalLastReq && modalLastReq[0] === lo && modalLastReq[1] === hi) return;
+        modalLastReq = [lo, hi];
+        var prev = modalWindow;
+        modalWindow = { from: modalTimes[lo], to: modalTimes[hi] };
+        loadModal(function() {
+            // Cancelled, empty or failed: back to the window on screen, and
+            // undo the stretch.
+            modalWindow = prev;
+            modalLastReq = null;
+            if (modalChart && modalChart.resetZoom) modalChart.resetZoom();
+        });
+    }
+
+    function replaceModalChart(config) {
         if (modalChart) { modalChart.destroy(); modalChart = null; }
-        if (requestId !== modalRequestId) return;
+        modalLastReq = null; // labels are re-based: a new selection may reuse indexes
         var canvas = document.getElementById('modal-chart-canvas');
+        modalChart = new Chart(canvas.getContext('2d'), config);
+    }
 
-        apiFetch(url).then(function(data) {
-            if (requestId !== modalRequestId) return;
-            if (!data) return;
+    function renderModalCpuChart(points) {
+        if (!points || points.length === 0) return;
+        modalTimes = points.map(function(p) { return new Date(p.timestamp).getTime(); });
+        var opts = modalLabelOpts();
+        var labels = points.map(function(p) { return formatInTimezone(p.timestamp, opts); });
 
-            var chartLabels;
-            if (data.timestamps && data.timestamps.length > 0) {
-                chartLabels = data.timestamps.map(function(ts) {
-                    if (dashRange >= 168) {
-                        return formatInTimezone(ts, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-                    } else {
-                        return formatInTimezone(ts, { hour: '2-digit', minute: '2-digit' });
-                    }
-                });
-            } else {
-                chartLabels = data.labels || [];
-            }
-
-            if (chartLabels.length === 0) return;
-
-            var rxRate = (data.rx_rate || []).map(Number);
-            var txRate = (data.tx_rate || []).map(Number);
-            var rxTotal = (data.rx_total || []).map(Number);
-            var txTotal = (data.tx_total || []).map(Number);
-            var deltaRx = rxTotal.map(function(v, i) { if (i === 0) return 0; var d = v - rxTotal[i - 1]; return d > 0 ? d : 0; });
-            var deltaTx = txTotal.map(function(v, i) { if (i === 0) return 0; var d = v - txTotal[i - 1]; return d > 0 ? d : 0; });
-
-            var datasets, scales;
-            if (bwView === 'rate') {
-                datasets = [
-                    { label: 'RX (Mbps)', data: rxRate, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.1)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5 },
-                    { label: 'TX (Mbps)', data: txRate, borderColor: '#ff9500', backgroundColor: 'rgba(255,149,0,0.1)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5 }
-                ];
-                scales = { y: { ticks: { color: '#484f58', callback: function(v) { return v.toFixed(1) + ' Mbps'; } }, grid: { color: '#21262d' } } };
-            } else if (bwView === 'total') {
-                datasets = [
-                    { type: 'bar', label: 'RX Transfer', data: deltaRx, backgroundColor: 'rgba(63,185,80,0.6)', borderColor: '#3fb950', borderWidth: 1 },
-                    { type: 'bar', label: 'TX Transfer', data: deltaTx, backgroundColor: 'rgba(255,149,0,0.6)', borderColor: '#ff9500', borderWidth: 1 }
-                ];
-                scales = { y: { ticks: { color: '#484f58', callback: function(v) { return formatBytes(v); } }, grid: { color: '#21262d' } } };
-            } else {
-                datasets = [
-                    { label: 'RX (Mbps)', data: rxRate, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.08)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5, yAxisID: 'y' },
-                    { label: 'TX (Mbps)', data: txRate, borderColor: '#ff9500', backgroundColor: 'rgba(255,149,0,0.08)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5, yAxisID: 'y' },
-                    { type: 'bar', label: 'RX Transfer', data: deltaRx, backgroundColor: 'rgba(63,185,80,0.3)', borderWidth: 0, yAxisID: 'y1' },
-                    { type: 'bar', label: 'TX Transfer', data: deltaTx, backgroundColor: 'rgba(255,149,0,0.3)', borderWidth: 0, yAxisID: 'y1' }
-                ];
-                scales = {
-                    y: { position: 'left', ticks: { color: '#484f58', callback: function(v) { return v.toFixed(1); } }, grid: { color: '#21262d' } },
-                    y1: { position: 'right', grid: { display: false }, ticks: { color: '#484f58', callback: function(v) { return formatBytes(v); } } }
-                };
-            }
-
-            modalChart = new Chart(canvas.getContext('2d'), {
-                type: bwView === 'total' ? 'bar' : 'line',
-                data: { labels: chartLabels, datasets: datasets },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    animation: { duration: 0 },
-                    interaction: { intersect: false, mode: 'index' },
-                    plugins: {
-                        legend: { labels: { color: '#8b949e', font: { size: 11 } } },
-                        zoom: {
-                            zoom: {
-                                wheel: { enabled: true },
-                                drag: { enabled: true },
-                                mode: 'x'
-                            }
-                        }
-                    },
-                    scales: Object.assign(
-                        { x: { ticks: { color: '#484f58', maxTicksLimit: 12, maxRotation: 0 }, grid: { color: '#21262d' } } },
-                        scales
-                    )
+        replaceModalChart({
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    { label: 'CPU %', data: points.map(function(p) { return p.cpu_usage; }), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 },
+                    { label: 'Memory %', data: points.map(function(p) { return p.memory_usage; }), borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 0 },
+                interaction: { intersect: false, mode: 'index' },
+                plugins: {
+                    legend: { labels: { color: '#8b949e', font: { size: 11 } } },
+                    zoom: modalZoomOptions()
+                },
+                scales: {
+                    x: { ticks: { color: '#484f58', maxTicksLimit: 12, maxRotation: 0 }, grid: { color: '#21262d' } },
+                    y: { min: 0, max: 100, ticks: { color: '#484f58', callback: function(v) { return v + '%'; } }, grid: { color: '#21262d' } }
                 }
-            });
+            }
+        });
+    }
+
+    function renderModalBandwidthChart(data) {
+        if (!data) return;
+
+        var chartLabels;
+        if (data.timestamps && data.timestamps.length > 0) {
+            modalTimes = data.timestamps.map(function(ts) { return new Date(ts).getTime(); });
+            var opts = modalLabelOpts();
+            chartLabels = data.timestamps.map(function(ts) { return formatInTimezone(ts, opts); });
+        } else {
+            modalTimes = []; // no timestamps: zoom stays a client-side stretch
+            chartLabels = data.labels || [];
+        }
+
+        if (chartLabels.length === 0) return;
+
+        var rxRate = (data.rx_rate || []).map(Number);
+        var txRate = (data.tx_rate || []).map(Number);
+        var rxTotal = (data.rx_total || []).map(Number);
+        var txTotal = (data.tx_total || []).map(Number);
+        var deltaRx = rxTotal.map(function(v, i) { if (i === 0) return 0; var d = v - rxTotal[i - 1]; return d > 0 ? d : 0; });
+        var deltaTx = txTotal.map(function(v, i) { if (i === 0) return 0; var d = v - txTotal[i - 1]; return d > 0 ? d : 0; });
+
+        var datasets, scales;
+        if (bwView === 'rate') {
+            datasets = [
+                { label: 'RX (Mbps)', data: rxRate, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.1)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5 },
+                { label: 'TX (Mbps)', data: txRate, borderColor: '#ff9500', backgroundColor: 'rgba(255,149,0,0.1)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5 }
+            ];
+            scales = { y: { ticks: { color: '#484f58', callback: function(v) { return v.toFixed(1) + ' Mbps'; } }, grid: { color: '#21262d' } } };
+        } else if (bwView === 'total') {
+            datasets = [
+                { type: 'bar', label: 'RX Transfer', data: deltaRx, backgroundColor: 'rgba(63,185,80,0.6)', borderColor: '#3fb950', borderWidth: 1 },
+                { type: 'bar', label: 'TX Transfer', data: deltaTx, backgroundColor: 'rgba(255,149,0,0.6)', borderColor: '#ff9500', borderWidth: 1 }
+            ];
+            scales = { y: { ticks: { color: '#484f58', callback: function(v) { return formatBytes(v); } }, grid: { color: '#21262d' } } };
+        } else {
+            datasets = [
+                { label: 'RX (Mbps)', data: rxRate, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.08)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5, yAxisID: 'y' },
+                { label: 'TX (Mbps)', data: txRate, borderColor: '#ff9500', backgroundColor: 'rgba(255,149,0,0.08)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5, yAxisID: 'y' },
+                { type: 'bar', label: 'RX Transfer', data: deltaRx, backgroundColor: 'rgba(63,185,80,0.3)', borderWidth: 0, yAxisID: 'y1' },
+                { type: 'bar', label: 'TX Transfer', data: deltaTx, backgroundColor: 'rgba(255,149,0,0.3)', borderWidth: 0, yAxisID: 'y1' }
+            ];
+            scales = {
+                y: { position: 'left', ticks: { color: '#484f58', callback: function(v) { return v.toFixed(1); } }, grid: { color: '#21262d' } },
+                y1: { position: 'right', grid: { display: false }, ticks: { color: '#484f58', callback: function(v) { return formatBytes(v); } } }
+            };
+        }
+
+
+        replaceModalChart({
+            type: bwView === 'total' ? 'bar' : 'line',
+            data: { labels: chartLabels, datasets: datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 0 },
+                interaction: { intersect: false, mode: 'index' },
+                plugins: {
+                    legend: { labels: { color: '#8b949e', font: { size: 11 } } },
+                    zoom: modalZoomOptions()
+                },
+                scales: Object.assign(
+                    { x: { ticks: { color: '#484f58', maxTicksLimit: 12, maxRotation: 0 }, grid: { color: '#21262d' } } },
+                    scales
+                )
+            }
         });
     }
 

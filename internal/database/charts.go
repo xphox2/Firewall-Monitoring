@@ -239,7 +239,50 @@ func (d *Database) GetSystemStatusBuckets(deviceID uint, rangeStr string) ([]Sys
 	}
 
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+	return d.systemStatusBuckets(deviceID, bucketExpr, cutoff, nil)
+}
 
+// ClampChartWindowFrom returns the window start the chart readers actually
+// use: at most maxChartWindow before to. Handlers echo it so a zoom chip shows
+// the window that was served.
+func ClampChartWindowFrom(from, to time.Time) time.Time {
+	if to.Sub(from) > maxChartWindow {
+		return to.Add(-maxChartWindow)
+	}
+	return from
+}
+
+// statusUnitForWindow picks the bucket for a status-history zoom window. It is
+// never coarser than the preset the window was selected from (1h minute,
+// 6h–24h 5min, 7d/30d hour, 90d+ day), so a zoom always shows at least the
+// detail that was on screen; bucketUnitForWindow would give 6hour for 30h–60d.
+func statusUnitForWindow(span time.Duration) string {
+	switch {
+	case span <= 3*time.Hour:
+		return "minute"
+	case span <= 30*time.Hour:
+		return "5min"
+	case span <= 31*24*time.Hour:
+		return "hour"
+	default:
+		return "day"
+	}
+}
+
+// GetSystemStatusBucketsWindow is GetSystemStatusBuckets for an explicit
+// [from, to] window (drag-to-zoom). The window is clamped to maxChartWindow.
+func (d *Database) GetSystemStatusBucketsWindow(deviceID uint, from, to time.Time) ([]SystemStatusBucket, error) {
+	if !to.After(from) {
+		return []SystemStatusBucket{}, nil
+	}
+	from = ClampChartWindowFrom(from, to)
+	bucketExpr := d.dialect.TimeBucket(statusUnitForWindow(to.Sub(from)), "timestamp")
+	return d.systemStatusBuckets(deviceID, bucketExpr, from, &to)
+}
+
+// systemStatusBuckets averages system_status into bucketExpr bins after from
+// (and up to and including to, when given).
+func (d *Database) systemStatusBuckets(deviceID uint, bucketExpr string, from time.Time, to *time.Time) ([]SystemStatusBucket, error) {
 	type row struct {
 		Bucket         string
 		CPUUsage       float64
@@ -257,8 +300,11 @@ func (d *Database) GetSystemStatusBuckets(deviceID uint, rangeStr string) ([]Sys
 		CPUNice        float64
 	}
 	var rows []row
-	err := d.db.Model(&models.SystemStatus{}).
-		Where("device_id = ? AND timestamp > ?", deviceID, cutoff).
+	q := d.db.Model(&models.SystemStatus{}).Where("device_id = ? AND timestamp > ?", deviceID, from)
+	if to != nil {
+		q = q.Where("timestamp <= ?", *to)
+	}
+	err := q.
 		Select(fmt.Sprintf(`%s as bucket,
 			AVG(cpu_usage) as cpu_usage,
 			AVG(memory_usage) as memory_usage,

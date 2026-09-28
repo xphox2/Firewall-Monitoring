@@ -836,6 +836,33 @@ func (h *Handler) GetDeviceStatusHistory(c *gin.Context) {
 		return
 	}
 
+	// Zoom window (v0.11.270): ?from=&to= in epoch milliseconds, the range the
+	// user selected on the chart. Parsed here rather than by
+	// httputil.ParseChartWindow, whose preset table lacks 6h/12h/365d and
+	// which falls back to a 24h window on junk; a malformed window is a 400.
+	// The response echoes the window actually served (clamped).
+	if c.Query("from") != "" {
+		fromMs, errF := strconv.ParseInt(c.Query("from"), 10, 64)
+		toMs, errT := strconv.ParseInt(c.Query("to"), 10, 64)
+		if errF != nil || errT != nil || fromMs <= 0 || toMs <= fromMs {
+			c.JSON(http.StatusBadRequest, response.Error("Invalid from/to window"))
+			return
+		}
+		to := time.UnixMilli(toMs).UTC()
+		from := database.ClampChartWindowFrom(time.UnixMilli(fromMs).UTC(), to)
+		buckets, err := db.GetSystemStatusBucketsWindow(id, from, to)
+		if err != nil {
+			httputil.InternalError(c, "Failed to get status history", err)
+			return
+		}
+		c.JSON(http.StatusOK, response.Success(gin.H{
+			"buckets": buckets,
+			"from":    from.UnixMilli(),
+			"to":      to.UnixMilli(),
+		}))
+		return
+	}
+
 	// New mode (v0.10.205+): if the client passes ?range=, return server-side
 	// bucketed data shaped for uPlot — one row per bucket with AVG-aggregated
 	// metrics. This is what the device-detail page uses now. The legacy

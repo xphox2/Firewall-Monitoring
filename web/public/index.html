@@ -61,7 +61,17 @@
         .modal-btn { background: #21262d; border: 1px solid #30363d; color: #8b949e; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
         .modal-btn:hover { border-color: #58a6ff; color: #e6edf3; }
         .modal-btn-close { font-size: 1.2rem; padding: 2px 8px; }
-        .chart-modal-body { flex: 1; overflow: hidden; padding: 16px; min-height: 0; }
+        .chart-modal-body { flex: 1; overflow: hidden; padding: 16px; min-height: 0; position: relative; }
+        /* Zoom re-query loading overlay (v0.11.270): dims the chart kept on screen. */
+        .chart-load-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(13,17,23,0.55); z-index: 5; animation: chart-load-in 0.15s ease-out; }
+        .chart-load-box { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; color: #e6edf3; font-size: 0.85rem; }
+        .chart-load-notice { pointer-events: none; }
+        .chart-load-notice .chart-load-box { pointer-events: auto; }
+        .chart-load-elapsed { color: #8b949e; min-width: 2.5em; font-variant-numeric: tabular-nums; }
+        .chart-load-spinner { width: 14px; height: 14px; border: 2px solid #30363d; border-top-color: #58a6ff; border-radius: 50%; animation: chart-load-spin 0.8s linear infinite; }
+        @keyframes chart-load-spin { to { transform: rotate(360deg); } }
+        @keyframes chart-load-in { from { opacity: 0; } to { opacity: 1; } }
+        @media (prefers-reduced-motion: reduce) { .chart-load-overlay, .chart-load-spinner { animation: none; } }
         .chart-modal-body canvas { max-height: calc(90vh - 80px); }
     </style>
 </head>
@@ -100,7 +110,7 @@
             <div class="chart-modal-header">
                 <h2 id="chart-modal-title"></h2>
                 <div class="chart-modal-controls">
-                    <button class="modal-btn" id="btn-reset-zoom" title="Reset Zoom">↺ Reset</button>
+                    <button class="modal-btn" id="btn-reset-zoom" title="Back to the dashboard range (after a zoom, zooming out stops at the zoomed window)">↺ Reset</button>
                     <button class="modal-btn modal-btn-close" id="btn-close-modal" title="Close">&times;</button>
                 </div>
             </div>

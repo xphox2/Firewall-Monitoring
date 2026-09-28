@@ -74,12 +74,20 @@
         };
     }
 
+    // Shortest zoom window a drag selects (a smaller one widens around its middle).
+    var MIN_ZOOM_MS = 5 * 60 * 1000;
+    var LOAD_KEY = 'fwmon-device-charts';
+    var HOST_IDS = ['fwmon-chart-overview', 'fwmon-chart-network', 'fwmon-chart-cpu'];
+
     var state = {
         deviceId: null,
         range: DEFAULT_RANGE,
+        // Drag-to-zoom window {from, to} in epoch ms (bucket_ms), or null for
+        // the preset range. Set when the user selects a range on a chart; the
+        // charts are then re-queried for that window.
+        window: null,
         charts: { overview: null, network: null, cpu: null },
         lastBuckets: null,
-        inFlight: null,
         resizeObserver: null,
         // Synced uPlot cursor key — must match across all instances.
         syncObj: (typeof uPlot !== 'undefined' && uPlot.sync) ? uPlot.sync(SYNC_KEY) : null
@@ -133,10 +141,14 @@
     }
 
     function setRange(range) {
-        if (range === state.range) return;
+        // The active pill still reloads when nothing is drawn (a cancelled first load).
+        if (range === state.range && !state.window && hasCharts()) return;
+        var prev = { range: state.range, window: state.window, preview: state.preview };
         state.range = range;
+        state.window = null;
         updateRangePillState();
-        load(range);
+        updateZoomChip();
+        load(range, prev);
     }
 
     // ----------------------------------------------------------------------
@@ -152,19 +164,43 @@
         if (overview) {
             overview.classList.add('chart-card');
             overview.innerHTML = renderHeader('System Overview', 'CPU / Memory / Disk', /*withRangePills*/ true) +
-                '<div class="chart-host" id="fwmon-chart-overview"></div>';
+                hostWrap('fwmon-chart-overview');
         }
         if (network) {
             network.classList.add('chart-card');
             // No legacy range select — the shared range pill row in the
             // overview card drives all three.
             network.innerHTML = renderHeader('Network Throughput', 'In / Out kbps', /*withRangePills*/ false) +
-                '<div class="chart-host" id="fwmon-chart-network"></div>';
+                hostWrap('fwmon-chart-network');
         }
         if (cpu) {
             cpu.classList.add('chart-card');
             cpu.innerHTML = renderHeader('CPU Breakdown', 'user / system / iowait / irq', /*withRangePills*/ false) +
-                '<div class="chart-host" id="fwmon-chart-cpu"></div>';
+                hostWrap('fwmon-chart-cpu');
+        }
+    }
+
+    // hostWrap puts each uPlot host in a positioned wrapper. The loading
+    // overlay mounts on the wrapper, not the host (whose content a redraw
+    // replaces) and not the card (whose header holds the range pills).
+    function hostWrap(id) {
+        return '<div class="chart-host-wrap" id="' + id + '-wrap"><div class="chart-host" id="' + id + '"></div></div>';
+    }
+
+    function hostWraps() {
+        return HOST_IDS.map(function(id) { return document.getElementById(id + '-wrap'); }).filter(Boolean);
+    }
+
+    function hasCharts() {
+        return !!(state.charts.overview || state.charts.network || state.charts.cpu);
+    }
+
+    function destroyCharts() {
+        for (var k in state.charts) {
+            if (state.charts[k]) {
+                try { state.charts[k].destroy(); } catch (e) { /* swallow */ }
+                state.charts[k] = null;
+            }
         }
     }
 
@@ -179,7 +215,8 @@
                     '" data-range="' + escapeAttr(r.value) + '">' + escapeHtml(r.label) + '</button>';
             }
             pills += '</div>';
-            pills += '<span class="chart-zoom-hint"><span>drag to zoom · dbl-click to reset</span>' +
+            pills += '<span class="chart-zoom-hint"><span class="chart-zoom-chip" id="fwmon-zoom-chip" hidden></span>' +
+                '<span id="fwmon-zoom-help">drag to zoom · dbl-click to reset</span>' +
                 '<button type="button" class="chart-reset-btn" id="fwmon-reset-zoom" title="Reset zoom">reset</button></span>';
         }
         return '<div class="chart-card-header">' +
@@ -212,7 +249,8 @@
         var pills = bar.querySelectorAll('.chart-range-pill');
         for (var i = 0; i < pills.length; i++) {
             var p = pills[i];
-            if (p.getAttribute('data-range') === state.range) {
+            // A zoom window is not one of the presets: no pill is active.
+            if (!state.window && p.getAttribute('data-range') === state.range) {
                 p.classList.add('active');
             } else {
                 p.classList.remove('active');
@@ -251,7 +289,20 @@
         return [0, 100];
     }
 
+    // resetZoom leaves a zoom window: the charts go back to the preset range,
+    // re-queried. With no window (a plain drag preview) it only rescales.
     function resetZoom() {
+        if (state.window) {
+            state.window = null;
+            updateRangePillState();
+            updateZoomChip();
+            load(state.range);
+            return;
+        }
+        rescaleToData();
+    }
+
+    function rescaleToData() {
         // setScale('x', {min: null, max: null}) is a NO-OP in uPlot — null
         // means "keep the current value," not "auto-fit." To actually clear
         // a brush-zoom we have to set the scale back to the data's full
@@ -268,58 +319,133 @@
     }
 
     // ----------------------------------------------------------------------
-    // Data fetch — one round trip per range change feeds all three charts.
+    // Drag-to-zoom (v0.11.270): a selection re-queries the window at a finer
+    // bucket instead of only stretching the points already loaded. uPlot's own
+    // drag rescale stays as the instant preview while the data loads.
     // ----------------------------------------------------------------------
-    function load(range) {
-        // Destroy old uPlot chart instances to clear memory and nullify references
-        for (var k in state.charts) {
-            if (state.charts[k]) {
-                try { state.charts[k].destroy(); } catch (e) { /* swallow */ }
-                state.charts[k] = null;
-            }
+    function onSelect(u) {
+        // Only the chart the user dragged on: synced charts receive the same
+        // selection with cursor.event == null.
+        var ev = u.cursor && u.cursor.event;
+        if (!ev || ev.type !== 'mouseup') return;
+        var sel = u.select;
+        if (!sel || sel.width < 2) return;
+        var a = u.posToVal(sel.left, 'x'), b = u.posToVal(sel.left + sel.width, 'x');
+        var from = Math.floor(Math.min(a, b) * 1000), to = Math.ceil(Math.max(a, b) * 1000);
+        if (!isFinite(from) || !isFinite(to)) return;
+        if (to - from < MIN_ZOOM_MS) {
+            var mid = (from + to) / 2;
+            from = Math.round(mid - MIN_ZOOM_MS / 2);
+            to = from + MIN_ZOOM_MS;
         }
+        zoomTo({ from: from, to: to });
+    }
 
-        var hosts = ['fwmon-chart-overview', 'fwmon-chart-network', 'fwmon-chart-cpu'];
-        for (var i = 0; i < hosts.length; i++) {
-            var h = document.getElementById(hosts[i]);
-            if (h) h.innerHTML = '<div class="chart-loading">loading ' + escapeHtml(range) + ' …</div>';
+    function zoomTo(win) {
+        state.window = win;
+        updateRangePillState();
+        updateZoomChip();
+        load(state.range);
+    }
+
+    // The chip shows the zoom window (bucket_ms is the server's wall clock
+    // encoded as UTC, as on the interface charts). "preview" marks a window
+    // whose finer data was cancelled: the chart is the old data, stretched.
+    function updateZoomChip(preview) {
+        state.preview = !!(preview && state.window);
+        var chip = document.getElementById('fwmon-zoom-chip');
+        var help = document.getElementById('fwmon-zoom-help');
+        if (!chip) return;
+        if (!state.window) {
+            chip.hidden = true;
+            chip.textContent = '';
+            if (help) help.hidden = false;
+            return;
         }
+        chip.textContent = (preview ? 'preview — cancelled · ' : 'zoomed · ') + winLabel(state.window);
+        chip.hidden = false;
+        if (help) help.hidden = true;
+    }
 
-        if (state.inFlight) {
-            // Best-effort cancellation — modern browsers honor AbortController.
-            try { state.inFlight.abort(); } catch (e) { /* swallow */ }
+    function winLabel(w) {
+        var pad = function(n) { return (n < 10 ? '0' : '') + n; };
+        var fmt = function(ms) {
+            var d = new Date(ms);
+            return pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate()) + ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes());
+        };
+        return fmt(w.from) + ' → ' + fmt(w.to);
+    }
+
+    // ----------------------------------------------------------------------
+    // Data fetch — one round trip feeds all three charts. The charts on screen
+    // are kept (dimmed under the loading overlay) until the new data arrives;
+    // only the very first paint shows a placeholder.
+    // ----------------------------------------------------------------------
+    // prev (from setRange) is restored if the user cancels a range change, so
+    // the pills and chip keep matching the chart that stays on screen.
+    function load(range, prev) {
+        var AC = window.AdminCommon;
+        var firstPaint = !hasCharts();
+        if (firstPaint) {
+            HOST_IDS.forEach(function(id) {
+                var h = document.getElementById(id);
+                if (h) h.innerHTML = '<div class="chart-loading">loading ' + escapeHtml(range) + ' …</div>';
+            });
         }
-        var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-        state.inFlight = ctrl;
+        var win = state.window;
+        var url = '/admin/api/devices/' + encodeURIComponent(state.deviceId) + '/status-history?' +
+            (win ? 'from=' + encodeURIComponent(win.from) + '&to=' + encodeURIComponent(win.to)
+                 : 'range=' + encodeURIComponent(range));
 
-        var url = '/admin/api/devices/' + encodeURIComponent(state.deviceId) +
-            '/status-history?range=' + encodeURIComponent(range);
-
-        fetch(url, {
-            credentials: 'include',
-            signal: ctrl ? ctrl.signal : undefined
-        })
-            .then(function(r) { return r.json(); })
-            .then(function(result) {
-                if (!result || !result.success) {
-                    showEmpty('Failed to load history');
+        AC.chartLoad(hostWraps(), function(signal) {
+            return AC.apiFetch(url, { signal: signal });
+        }, { key: LOAD_KEY, label: win ? 'Loading higher-resolution data…' : 'Loading ' + range + ' …' })
+            .then(function(r) {
+                if (r.cancelled) {
+                    // A newer load replaced this one: nothing to undo. A user
+                    // Cancel keeps the stretched preview and says so; a
+                    // cancelled first load says how to start again.
+                    if (r.superseded) return;
+                    if (firstPaint) showEmpty('Load cancelled — pick a range');
+                    else if (win) updateZoomChip(true);
+                    else if (prev) {
+                        state.range = prev.range;
+                        state.window = prev.window;
+                        updateRangePillState();
+                        updateZoomChip(prev.preview);
+                    }
+                    return;
+                }
+                var result = r.data;
+                if (r.error || !result || !result.success) {
+                    if (window.fwmonLog && r.error) window.fwmonLog.error('Failed to load device status history:', r.error);
+                    failLoad(firstPaint, 'Could not load this range', function() { load(range); });
                     return;
                 }
                 var buckets = (result.data && result.data.buckets) || [];
-                state.lastBuckets = buckets;
                 if (buckets.length === 0) {
-                    showEmpty('No data in range');
+                    // The chart on screen is the old data, stretched: say so.
+                    if (win) updateZoomChip(true);
+                    failLoad(firstPaint, 'No data in this range', null); // retrying the same window cannot help
                     return;
                 }
+                state.lastBuckets = buckets;
+                destroyCharts();
                 renderOverview(buckets);
                 renderNetwork(buckets);
                 renderCPUBreakdown(buckets);
-            })
-            .catch(function(e) {
-                if (e && e.name === 'AbortError') return;
-                console.error('Failed to load device status history:', e);
-                showEmpty('Error loading chart');
             });
+    }
+
+    // failLoad reports an empty or failed load. With charts on screen they are
+    // kept and the notice sits over them; only a first paint has nothing to keep.
+    function failLoad(firstPaint, msg, onRetry) {
+        if (firstPaint) {
+            destroyCharts();
+            showEmpty(msg);
+            return;
+        }
+        window.AdminCommon.chartNotice(hostWraps(), msg, { onRetry: onRetry });
     }
 
     function showEmpty(msg) {
@@ -341,10 +467,17 @@
             title: title,
             cursor: {
                 sync: { key: SYNC_KEY, setSeries: true },
-                drag: { x: true, y: false, setScale: true },
+                // dist 2: a 1-px drag neither previews nor fetches.
+                drag: { x: true, y: false, setScale: true, dist: 2 },
+                // uPlot's own double-click only rescales to the data on screen,
+                // which after a zoom is the zoomed window; reset properly.
+                bind: {
+                    dblclick: function() { return function() { resetZoom(); return null; }; }
+                },
                 points: { size: 6, fill: function(u, sIdx) { return u.series[sIdx].stroke; } }
             },
             legend: { live: true, isolate: true },
+            hooks: { setSelect: [onSelect] },
             scales: {
                 x: { time: true },
                 y: yScaleOpts || { auto: true }

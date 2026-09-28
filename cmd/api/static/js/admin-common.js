@@ -2000,8 +2000,137 @@
         return m + 'm';
     }
 
+    // ── Chart loading overlay (v0.11.270) ─────────────────────────────────
+    //
+    // chartLoad runs a chart fetch with an overlay over the chart(s) it will
+    // replace: a spinner, the elapsed seconds and Cancel. The overlay appears
+    // only after 250 ms, so a fast load never flickers. The previous chart
+    // stays visible (dimmed) underneath until the caller renders the result.
+    //
+    //   containers: a positioned element that OWNS a chart (never the chart
+    //               host itself, whose content a redraw replaces), or an array.
+    //   run(signal): returns a promise for the data; pass signal to fetch.
+    //   opts.key:   loads with the same key supersede each other.
+    //   opts.label: the overlay text.
+    //
+    // Resolves {ok: true, data} | {cancelled: true} | {error}. It never
+    // rejects. Every exit clears the timer, the elapsed interval, the Esc
+    // listener and the overlay; a result arriving after Cancel or a newer load
+    // is ignored.
+    var chartLoads = {};
+    var CHART_OVERLAY_DELAY_MS = 250;
+
+    function chartContainers(containers) {
+        var list = Array.isArray(containers) ? containers : [containers];
+        return list.filter(function(c) { return c && c.appendChild; });
+    }
+
+    function chartOverlayEl(extraClass, inner) {
+        var o = document.createElement('div');
+        o.className = 'fwmon-chart-overlay' + (extraClass ? ' ' + extraClass : '');
+        o.setAttribute('role', 'status');
+        o.innerHTML = '<div class="fwmon-chart-overlay-box">' + inner + '</div>';
+        return o;
+    }
+
+    function chartLoad(containers, run, opts) {
+        opts = opts || {};
+        var list = chartContainers(containers);
+        var key = opts.key || (list[0] && list[0].id) || 'chart';
+        if (chartLoads[key]) chartLoads[key].supersede();
+
+        var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        var done = false, overlays = [], showTimer = null, tick = null, started = Date.now();
+        var resolveOuter;
+        var result = new Promise(function(res) { resolveOuter = res; });
+
+        // Esc cancels the load unless focus is somewhere that owns Esc (a
+        // dialog or a text field). A clicked range button keeps focus, so the
+        // test is "not owned elsewhere", not "focus inside the chart".
+        function onKey(e) {
+            if (e.key !== 'Escape') return;
+            var t = e.target;
+            var owned = t && t.closest && t.closest('[role="dialog"], .fwmon-confirm-overlay, input, textarea, select');
+            if (!owned || list.some(function(c) { return c.contains(t); })) cancel();
+        }
+        function abortFetch() { if (ctrl) { try { ctrl.abort(); } catch (e) { /* ignore */ } } }
+        function finish(r) {
+            if (done) return;
+            done = true;
+            clearTimeout(showTimer);
+            clearInterval(tick);
+            document.removeEventListener('keydown', onKey);
+            overlays.forEach(function(o) { if (o.parentNode) o.parentNode.removeChild(o); });
+            overlays = [];
+            list.forEach(function(c) { c.removeAttribute('aria-busy'); });
+            if (chartLoads[key] === entry) delete chartLoads[key];
+            resolveOuter(r);
+        }
+        function cancel() { abortFetch(); finish({ cancelled: true }); }
+        var entry = { supersede: function() { abortFetch(); finish({ cancelled: true, superseded: true }); } };
+        chartLoads[key] = entry;
+
+        list.forEach(function(c) {
+            clearChartNotice(c);
+            c.setAttribute('aria-busy', 'true');
+        });
+        showTimer = setTimeout(function() {
+            if (done) return;
+            list.forEach(function(c) {
+                var o = chartOverlayEl('', '<span class="fwmon-spinner" aria-hidden="true"></span>' +
+                    '<span class="fwmon-chart-overlay-text">' + escapeHtml(opts.label || 'Loading higher-resolution data…') + '</span>' +
+                    '<span class="fwmon-chart-overlay-elapsed" aria-live="off"></span>' +
+                    '<button type="button" class="btn secondary sm fwmon-chart-overlay-cancel">Cancel</button>');
+                o.querySelector('button').addEventListener('click', cancel);
+                c.appendChild(o);
+                overlays.push(o);
+            });
+            tick = setInterval(function() {
+                var secs = Math.floor((Date.now() - started) / 1000) + 's';
+                overlays.forEach(function(o) {
+                    var el = o.querySelector('.fwmon-chart-overlay-elapsed');
+                    if (el) el.textContent = secs;
+                });
+            }, 1000);
+            document.addEventListener('keydown', onKey);
+        }, CHART_OVERLAY_DELAY_MS);
+
+        Promise.resolve()
+            .then(function() { return run(ctrl ? ctrl.signal : undefined); })
+            .then(function(data) { finish({ ok: true, data: data }); },
+                  function(err) { finish(err && err.name === 'AbortError' ? { cancelled: true } : { error: err }); });
+        return result;
+    }
+
+    // chartNotice shows a message over a chart that is kept on screen — "No
+    // data in this range" after a zoom, or a load error — with Retry (when
+    // onRetry is given) and Dismiss. The chart underneath is untouched.
+    function chartNotice(containers, msg, opts) {
+        opts = opts || {};
+        chartContainers(containers).forEach(function(c) {
+            clearChartNotice(c);
+            var o = chartOverlayEl('fwmon-chart-notice', '<span class="fwmon-chart-overlay-text">' + escapeHtml(msg) + '</span>' +
+                (opts.onRetry ? '<button type="button" class="btn secondary sm" data-chart-notice="retry">Retry</button>' : '') +
+                '<button type="button" class="btn secondary sm" data-chart-notice="dismiss">Dismiss</button>');
+            o.addEventListener('click', function(e) {
+                var b = e.target.closest && e.target.closest('[data-chart-notice]');
+                if (!b) return;
+                clearChartNotice(c);
+                if (b.getAttribute('data-chart-notice') === 'retry' && opts.onRetry) opts.onRetry();
+            });
+            c.appendChild(o);
+        });
+    }
+
+    function clearChartNotice(c) {
+        var old = c && c.querySelectorAll ? c.querySelectorAll(':scope > .fwmon-chart-notice') : [];
+        Array.prototype.forEach.call(old, function(o) { o.parentNode.removeChild(o); });
+    }
+
     window.AdminCommon = {
         API_BASE: API_BASE,
+        chartLoad: chartLoad,
+        chartNotice: chartNotice,
         tunnelClaim: tunnelClaim,
         tunnelGroupClaim: tunnelGroupClaim,
         tunnelStateBadge: tunnelStateBadge,

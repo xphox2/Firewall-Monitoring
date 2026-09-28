@@ -1005,14 +1005,51 @@
     }
 
     // fetchIfaceChart fetches one chart endpoint and resolves to its bucket
-    // array, or null on any error/empty (so the caller can fall back).
-    function fetchIfaceChart(url) {
-        return fetch(url, { credentials: 'same-origin' })
+    // array, or null on any error/empty (so the caller can fall back). An
+    // abort (Cancel, or a newer load) rejects, so the load stops.
+    function fetchIfaceChart(url, signal) {
+        return fetch(url, { credentials: 'same-origin', signal: signal })
             .then(function(resp) { return resp.ok ? resp.json() : null; })
             .then(function(result) {
                 return (result && result.success && Array.isArray(result.data)) ? result.data : null;
             })
-            .catch(function() { return null; });
+            .catch(function(e) {
+                if (e && e.name === 'AbortError') throw e;
+                return null;
+            });
+    }
+
+    // syncBwControls re-renders ONLY one chart's control strip (view, range
+    // pills, zoom chip) — a zoom, cancel or reset must not rebuild the whole
+    // table, which would blank the chart before its data arrives.
+    function syncBwControls(containerId, cfg) {
+        var box = document.getElementById(containerId);
+        var strip = box && box.previousElementSibling;
+        if (!strip || !strip.classList.contains('bw-chart-controls')) return;
+        strip.outerHTML = bwControlsHtml(cfg);
+    }
+
+    function ifaceControlsCfg(ifIndex) {
+        return {
+            viewAction: 'set-iface-view', rangeAction: 'load-iface-chart', resetAction: 'reset-iface-zoom',
+            dataAttr: 'data-index="' + ifIndex + '"', view: currentChartView, range: currentChartRange,
+            ranges: ['24h', '7d', '30d', '90d'], win: ifaceWin
+        };
+    }
+
+    function tunnelControlsCfg(tunnelName) {
+        return {
+            viewAction: 'set-tunnel-view', rangeAction: 'load-tunnel-chart', resetAction: 'reset-tunnel-zoom',
+            dataAttr: 'data-tunnel="' + esc(tunnelName).replace(/"/g, '&quot;') + '"', view: currentTunnelView,
+            range: currentTunnelRange, ranges: ['1h', '24h', '7d', '30d'], win: tunnelWin
+        };
+    }
+
+    // liveChart returns the chart instance still drawn on canvas, if any: a
+    // table re-render replaces the canvas, leaving the old instance detached.
+    function liveChart(charts, key, canvas) {
+        var c = charts[key];
+        return (c && c.canvas === canvas) ? c : null;
     }
 
     function renderIfaceChart(ifIndex, canvas, data, source) {
@@ -1038,17 +1075,15 @@
     // deployments get agent-pushed bandwidth (working even where SNMP is
     // host-restricted) while SNMP-only deployments are unchanged. Both endpoints
     // return the same bucket shape, so rendering is identical.
-    function loadInterfaceChart(ifIndex, range) {
+    //
+    // The chart on screen is kept (dimmed under the loading overlay, with
+    // Cancel) until the new data arrives. onCancel runs when the user cancels.
+    function loadInterfaceChart(ifIndex, range, onCancel) {
         currentChartRange = range;
 
         var canvas = document.getElementById('canvas-' + ifIndex);
         if (!canvas) return;
-
-        // Destroy previous chart instance
-        if (ifaceCharts[ifIndex]) {
-            ifaceCharts[ifIndex].destroy();
-            delete ifaceCharts[ifIndex];
-        }
+        var box = document.getElementById('chart-container-' + ifIndex);
 
         // In-flight staleness guard (audit L19): quickly changing the range (or
         // re-expanding) fires overlapping fetches whose responses can arrive out
@@ -1069,36 +1104,67 @@
         function lastBucketMs(series) {
             return (series && series.length) ? (series[series.length - 1].bucket_ms || 0) : 0;
         }
-        Promise.all([
-            fetchIfaceChart(base + '/sflow-chart?' + q).catch(function () { return null; }),
-            fetchIfaceChart(base + '/chart?' + q).catch(function () { return null; })
-        ]).then(function (res) {
-            if (ifaceChartSeq[ifIndex] !== seq) return; // a newer request superseded this one
-            var sflow = res[0], snmp = res[1];
-            var sflowOK = sflow && sflow.length >= 2;
-            var snmpOK = snmp && snmp.length >= 2;
-            if (sflowOK && (!snmpOK || lastBucketMs(sflow) >= lastBucketMs(snmp))) {
-                renderIfaceChart(ifIndex, canvas, sflow, 'sFlow');
-            } else if (snmpOK) {
-                renderIfaceChart(ifIndex, canvas, snmp, 'SNMP');
-            } else {
-                ifaceBucketMs[ifIndex] = [];
-                setIfaceChartSource(ifIndex, '');
-                drawChartMessage(canvas, 'Not enough history data');
-            }
-        });
+        AC.chartLoad(box, function(signal) {
+            return Promise.all([
+                fetchIfaceChart(base + '/sflow-chart?' + q, signal),
+                fetchIfaceChart(base + '/chart?' + q, signal)
+            ]);
+        }, { key: 'iface-' + ifIndex, label: ifaceWin ? 'Loading higher-resolution data…' : 'Loading ' + range + ' …' })
+            .then(function (r) {
+                if (ifaceChartSeq[ifIndex] !== seq) return; // a newer request superseded this one
+                if (r.cancelled) {
+                    if (r.superseded) return;
+                    if (onCancel) onCancel();
+                    else if (!liveChart(ifaceCharts, ifIndex, canvas)) drawChartMessage(canvas, 'Load cancelled — pick a range');
+                    return;
+                }
+                var res = r.data || [];
+                var sflow = res[0], snmp = res[1];
+                var sflowOK = sflow && sflow.length >= 2;
+                var snmpOK = snmp && snmp.length >= 2;
+                var pick = null, source = '';
+                if (sflowOK && (!snmpOK || lastBucketMs(sflow) >= lastBucketMs(snmp))) {
+                    pick = sflow; source = 'sFlow';
+                } else if (snmpOK) {
+                    pick = snmp; source = 'SNMP';
+                }
+                var live = liveChart(ifaceCharts, ifIndex, canvas);
+                if (!pick) {
+                    // After a zoom the chart on screen stays, with the notice over it.
+                    if (live) { AC.chartNotice(box, 'Not enough history data in this range'); return; }
+                    if (ifaceCharts[ifIndex]) { ifaceCharts[ifIndex].destroy(); delete ifaceCharts[ifIndex]; }
+                    ifaceBucketMs[ifIndex] = [];
+                    setIfaceChartSource(ifIndex, '');
+                    drawChartMessage(canvas, 'Not enough history data');
+                    return;
+                }
+                if (ifaceCharts[ifIndex]) { ifaceCharts[ifIndex].destroy(); delete ifaceCharts[ifIndex]; }
+                renderIfaceChart(ifIndex, canvas, pick, source);
+            });
     }
 
     // zoomIfaceTo maps the dragged category-index range to the bucket
     // timestamps at those edges, sets the window, and re-queries the backend
     // for exactly that span (at the finer adaptive bucket size).
+    //
+    // Only the control strip is re-rendered (the chip), not the table: the
+    // chart stays on screen under the loading overlay. Cancel restores the
+    // previous window and undoes Chart.js's instant stretch of the old data.
     function zoomIfaceTo(ifIndex, lo, hi) {
         var ms = ifaceBucketMs[ifIndex];
         if (!ms || hi >= ms.length || lo < 0) return;
+        if (lo <= 0 && hi >= ms.length - 1) return; // the full extent (a reset), not a zoom
         var from = ms[lo], to = ms[hi];
         if (!(to > from)) return;
+        var prev = ifaceWin;
         ifaceWin = { from: from, to: to };
-        filterIfaces(currentFilter); // re-render controls (reset chip) + reload chart for the window
+        syncBwControls('chart-container-' + ifIndex, ifaceControlsCfg(ifIndex));
+        loadInterfaceChart(ifIndex, currentChartRange, function() {
+            ifaceWin = prev;
+            syncBwControls('chart-container-' + ifIndex, ifaceControlsCfg(ifIndex));
+            var c = ifaceCharts[ifIndex];
+            if (c && c.resetZoom) c.resetZoom();
+        });
     }
 
     // A tunnel is reported as several rows under unrelated names — on a FortiGate
@@ -1117,36 +1183,49 @@
         return tunnelName;
     }
 
-    function loadTunnelChart(tunnelName, range) {
+    function loadTunnelChart(tunnelName, range, onCancel) {
         currentTunnelRange = range;
 
         var canvas = document.getElementById('tcanvas-' + cssId(tunnelName));
         if (!canvas) return;
-
-        if (tunnelCharts[tunnelName]) {
-            tunnelCharts[tunnelName].destroy();
-            delete tunnelCharts[tunnelName];
-        }
+        var box = document.getElementById('tchart-container-' + cssId(tunnelName));
 
         // In-flight staleness guard (audit L19): drop a late response once a newer
         // request for this tunnel has been issued.
         var seq = (tunnelChartSeq[tunnelName] || 0) + 1;
         tunnelChartSeq[tunnelName] = seq;
 
-        fetch('/admin/api/devices/' + deviceId + '/vpn-group-chart?group=' +
-                encodeURIComponent(groupForTunnel(tunnelName)) + '&' + chartQuery(tunnelWin, range),
-            { credentials: 'same-origin' })
-            .then(function(resp) {
+        var url = '/admin/api/devices/' + deviceId + '/vpn-group-chart?group=' +
+            encodeURIComponent(groupForTunnel(tunnelName)) + '&' + chartQuery(tunnelWin, range);
+        AC.chartLoad(box, function(signal) {
+            return fetch(url, { credentials: 'same-origin', signal: signal }).then(function(resp) {
                 if (!resp.ok) return Promise.reject(new Error('Failed'));
                 return resp.json();
-            })
-            .then(function(result) {
+            });
+        }, { key: 'tunnel-' + cssId(tunnelName), label: tunnelWin ? 'Loading higher-resolution data…' : 'Loading ' + range + ' …' })
+            .then(function(r) {
                 if (tunnelChartSeq[tunnelName] !== seq) return; // superseded by a newer request
-                if (!result.success || !result.data || result.data.length < 2) {
+                if (r.cancelled) {
+                    if (r.superseded) return;
+                    if (onCancel) onCancel();
+                    else if (!liveChart(tunnelCharts, tunnelName, canvas)) drawChartMessage(canvas, 'Load cancelled — pick a range');
+                    return;
+                }
+                var live = liveChart(tunnelCharts, tunnelName, canvas);
+                var result = r.data;
+                if (r.error || !result || !result.success || !result.data || result.data.length < 2) {
+                    if (r.error && window.fwmonLog) window.fwmonLog.error('Failed to load tunnel chart:', r.error);
+                    if (live) {
+                        AC.chartNotice(box, r.error ? 'Could not load this range' : 'Not enough history data in this range',
+                            r.error ? { onRetry: function() { loadTunnelChart(tunnelName, range, onCancel); } } : {});
+                        return;
+                    }
+                    if (tunnelCharts[tunnelName]) { tunnelCharts[tunnelName].destroy(); delete tunnelCharts[tunnelName]; }
                     tunnelBucketMs[tunnelName] = [];
                     drawChartMessage(canvas, 'Not enough history data');
                     return;
                 }
+                if (tunnelCharts[tunnelName]) { tunnelCharts[tunnelName].destroy(); delete tunnelCharts[tunnelName]; }
                 var s = normalizeTunnelSeries(result.data);
                 tunnelBucketMs[tunnelName] = s.bucketMs;
                 tunnelCharts[tunnelName] = FwmonBwChart.render(canvas, {
@@ -1156,17 +1235,27 @@
                     view: currentTunnelView, rxLabel: 'In', txLabel: 'Out',
                     onZoomSelect: function(lo, hi) { zoomTunnelTo(tunnelName, lo, hi); }
                 });
-            })
-            .catch(function(e) { console.error('Failed to load tunnel chart:', e); });
+            });
     }
 
+    // zoomTunnelTo mirrors zoomIfaceTo: re-render only the control strip, keep
+    // the chart under the overlay, and undo everything on Cancel.
     function zoomTunnelTo(tunnelName, lo, hi) {
         var ms = tunnelBucketMs[tunnelName];
         if (!ms || hi >= ms.length || lo < 0) return;
+        if (lo <= 0 && hi >= ms.length - 1) return; // the full extent (a reset), not a zoom
         var from = ms[lo], to = ms[hi];
         if (!(to > from)) return;
+        var prev = tunnelWin;
+        var boxId = 'tchart-container-' + cssId(tunnelName);
         tunnelWin = { from: from, to: to };
-        renderVPN();
+        syncBwControls(boxId, tunnelControlsCfg(tunnelName));
+        loadTunnelChart(tunnelName, currentTunnelRange, function() {
+            tunnelWin = prev;
+            syncBwControls(boxId, tunnelControlsCfg(tunnelName));
+            var c = tunnelCharts[tunnelName];
+            if (c && c.resetZoom) c.resetZoom();
+        });
     }
 
     // cssId — derive a DOM-id-safe token from an arbitrary tunnel name so a
@@ -1855,11 +1944,15 @@
         }
     });
 
+    var ifaceSearchTimer = null;
     document.addEventListener('input', function(e) {
         var t = e.target;
         if (!t) return;
         if (t.id === 'ifaceSearch') {
-            filterIfaces(currentFilter);
+            // Debounced: each keystroke re-renders the table and reloads an
+            // expanded interface's chart.
+            clearTimeout(ifaceSearchTimer);
+            ifaceSearchTimer = setTimeout(function() { filterIfaces(currentFilter); }, 400);
         } else if (t.id === 'vpnSearch') {
             vpnSearchQuery = t.value;
             renderVPN();
@@ -2772,12 +2865,19 @@
         },
         'load-iface-chart': function(el, e) {
             e.stopPropagation();
-            // Choosing a preset range exits any drag-zoom window. Re-render the
-            // interface list so the active pill updates; filterIfaces() reloads
-            // the expanded chart at the new range.
+            // Choosing a preset range exits any drag-zoom window. Only the
+            // control strip is re-rendered; the chart stays under the loading
+            // overlay, and Cancel puts the previous range back.
+            var idx = parseInt(el.dataset.index, 10);
+            var prevRange = currentChartRange, prevWin = ifaceWin;
             currentChartRange = el.dataset.range;
             ifaceWin = null;
-            filterIfaces(currentFilter);
+            syncBwControls('chart-container-' + idx, ifaceControlsCfg(idx));
+            loadInterfaceChart(idx, currentChartRange, function() {
+                currentChartRange = prevRange;
+                ifaceWin = prevWin;
+                syncBwControls('chart-container-' + idx, ifaceControlsCfg(idx));
+            });
         },
         'set-iface-view': function(el, e) {
             e.stopPropagation();
@@ -2787,16 +2887,26 @@
         'reset-iface-zoom': function(el, e) {
             e.stopPropagation();
             ifaceWin = null;
-            filterIfaces(currentFilter);
+            var idx = parseInt(el.dataset.index, 10);
+            syncBwControls('chart-container-' + idx, ifaceControlsCfg(idx));
+            loadInterfaceChart(idx, currentChartRange);
         },
         'toggle-tunnel': function(el) {
             toggleTunnel(el.dataset.tunnel);
         },
         'load-tunnel-chart': function(el, e) {
             e.stopPropagation();
+            var name = el.dataset.tunnel;
+            var boxId = 'tchart-container-' + cssId(name);
+            var prevRange = currentTunnelRange, prevWin = tunnelWin;
             currentTunnelRange = el.dataset.range;
             tunnelWin = null;
-            renderVPN();
+            syncBwControls(boxId, tunnelControlsCfg(name));
+            loadTunnelChart(name, currentTunnelRange, function() {
+                currentTunnelRange = prevRange;
+                tunnelWin = prevWin;
+                syncBwControls(boxId, tunnelControlsCfg(name));
+            });
         },
         'set-tunnel-view': function(el, e) {
             e.stopPropagation();
@@ -2806,7 +2916,9 @@
         'reset-tunnel-zoom': function(el, e) {
             e.stopPropagation();
             tunnelWin = null;
-            renderVPN();
+            var name = el.dataset.tunnel;
+            syncBwControls('tchart-container-' + cssId(name), tunnelControlsCfg(name));
+            loadTunnelChart(name, currentTunnelRange);
         },
         'toggle-public-iface': function(el, e) {
             // v0.10.229: replaces the previous inline onclick that built
