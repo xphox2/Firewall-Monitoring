@@ -2324,8 +2324,21 @@ func (p *Poller) detectVPNConnections(devices []models.Device) (int, bool) {
 		}
 	}
 
-	held := 0
+	held, upserted := 0, 0
 	for _, pi := range pairs {
+		// A pair must connect two ACTIVE devices. Several phases build pairs
+		// from evidence that is not scoped to the active set (provisioned
+		// tunnels keep a retired endpoint, and latest-row reads still return a
+		// device retired inside the grace window), so this is the one place
+		// every phase passes through. Without it a retired device's tunnel is
+		// re-created every cycle as "? <-> peer", which the map cannot draw.
+		if _, ok := deviceByID[pi.sourceID]; !ok {
+			continue
+		}
+		if _, ok := deviceByID[pi.destID]; !ok {
+			continue
+		}
+
 		// No fresh evidence => hold the connection as "stale" (amber) rather than
 		// asserting a status we can no longer justify. The upsert still advances
 		// last_check, so the ID stays stable and the sweep leaves it alone; once
@@ -2348,14 +2361,8 @@ func (p *Poller) detectVPNConnections(devices []models.Device) (int, bool) {
 		sort.Strings(names)
 		tunnelNames := strings.Join(names, ", ")
 
-		// Build a descriptive connection name
-		srcName, dstName := "?", "?"
-		if d, ok := deviceByID[pi.sourceID]; ok {
-			srcName = d.Name
-		}
-		if d, ok := deviceByID[pi.destID]; ok {
-			dstName = d.Name
-		}
+		// Build a descriptive connection name (both ends are active, checked above)
+		srcName, dstName := deviceByID[pi.sourceID].Name, deviceByID[pi.destID].Name
 		connName := fmt.Sprintf("%s ↔ %s", srcName, dstName)
 
 		// Get Phase 2 subnets from peer devices
@@ -2405,13 +2412,15 @@ func (p *Poller) detectVPNConnections(devices []models.Device) (int, bool) {
 			// a read failure: last_check was not advanced, and the sweep would read
 			// that as "the pair is gone" and delete a live edge.
 			readsOK = false
+			continue
 		}
+		upserted++
 	}
 
-	if len(pairs) > 0 {
-		log.Printf("VPN auto-detect: processed %d connection(s) across %d devices%s", len(pairs), len(devices), heldNote(held))
+	if upserted > 0 {
+		log.Printf("VPN auto-detect: processed %d connection(s) across %d devices%s", upserted, len(devices), heldNote(held))
 	}
-	return len(pairs), readsOK
+	return upserted, readsOK
 }
 
 // heldNote annotates the detect log when connections were held on stale evidence,
@@ -2592,6 +2601,11 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) (int, bool) {
 	nameGroups := make(map[string][]ifEntry)
 
 	for _, iface := range ifaces {
+		// GetAllLatestInterfaces is deliberately unscoped (retired devices keep
+		// their history), so only an active device's interface may form a pair.
+		if _, ok := deviceByID[iface.DeviceID]; !ok {
+			continue
+		}
 		// Accept overlay/local interface types, or vxlan-prefixed names
 		tn := strings.ToLower(iface.TypeName)
 		isOverlayType := overlayTypes[tn]
@@ -2734,14 +2748,8 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) (int, bool) {
 		sort.Strings(names)
 		tunnelNames := strings.Join(names, ", ")
 
-		srcName, dstName := "?", "?"
-		if d, ok := deviceByID[pi.sourceID]; ok {
-			srcName = d.Name
-		}
-		if d, ok := deviceByID[pi.destID]; ok {
-			dstName = d.Name
-		}
-		connName := fmt.Sprintf("%s ↔ %s", srcName, dstName)
+		// Both ends are active: nameGroups only holds active devices' interfaces.
+		connName := fmt.Sprintf("%s ↔ %s", deviceByID[pi.sourceID].Name, deviceByID[pi.destID].Name)
 
 		if err := p.db.UpsertAutoConnection(pi.sourceID, pi.destID, status, tunnelNames, connName, pi.connType, "name_match"); err != nil {
 			log.Printf("Overlay auto-detect: failed to upsert connection %s - %v", connName, err)

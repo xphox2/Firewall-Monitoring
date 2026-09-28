@@ -154,7 +154,7 @@ func NewDatabaseForTesting(t interface {
 	// The ingest meter is real here: SaveSyslogMessages must count on the test
 	// backend exactly as it does in production, and the meter is the only
 	// producer of syslog_ingest_hourly.
-	return &Database{db: db, dialect: sqliteDialect{}, ingest: newSyslogIngestMeter(time.Now)}
+	return &Database{db: db, dialect: sqliteDialect{}, ingest: newSyslogIngestMeter(time.Now), connSkips: newAutoConnSkipLog()}
 }
 
 // SetEncryptionKeyForTesting installs an AES key derived from secret so that

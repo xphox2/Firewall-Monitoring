@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -279,6 +280,13 @@ func TestDetectL2Links_StalenessTransitions(t *testing.T) {
 // normalization swaps the port fields with the device IDs.
 func TestUpsertAutoL2Connection_Semantics(t *testing.T) {
 	db := database.NewDatabaseForTesting(t)
+	// The upsert refuses a pair whose endpoint is not an active device, so the
+	// ids below (1..10, in creation order on a fresh database) must exist.
+	for i := 1; i <= 10; i++ {
+		if d := l2TestDevice(t, db, fmt.Sprintf("dev-%d", i), fmt.Sprintf("10.0.0.%d", i), nil); d.ID != uint(i) {
+			t.Fatalf("fixture device %d got id %d", i, d.ID)
+		}
+	}
 
 	base := database.L2LinkUpsert{
 		SourceID: 1, DestID: 2, Status: "up", Name: "a:p1 ↔ b:p2",

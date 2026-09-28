@@ -491,7 +491,7 @@ func (d *Database) collectDeviceIPs(deviceID uint, device *models.Device) map[st
 // GetConnectionDetail returns full detail for a connection with matching tunnels from both sides.
 func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, error) {
 	var conn models.DeviceConnection
-	if err := d.db.Preload("SourceDevice").Preload("DestDevice").First(&conn, connID).Error; err != nil {
+	if err := d.db.Scopes(ActiveConnections).Preload("SourceDevice").Preload("DestDevice").First(&conn, connID).Error; err != nil {
 		return nil, err
 	}
 
@@ -900,7 +900,7 @@ func (d *Database) interfaceTrafficWindow(refs []ConnInterfaceRef, hours float64
 func (d *Database) GetConnectionTraffic(connID uint, hours float64) ([]VPNChartBucket, error) {
 	// Direct links graph interface_stats, not vpn_status.
 	var conn models.DeviceConnection
-	if err := d.db.Preload("SourceDevice").Preload("DestDevice").First(&conn, connID).Error; err != nil {
+	if err := d.db.Scopes(ActiveConnections).Preload("SourceDevice").Preload("DestDevice").First(&conn, connID).Error; err != nil {
 		return nil, err
 	}
 	if connectionFamily(conn.ConnectionType) == "direct" {

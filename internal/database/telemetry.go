@@ -406,7 +406,7 @@ func (d *Database) GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, erro
 	// Cross-fill Phase 2 subnets from peer devices
 	// Find connections involving this device
 	var connections []models.DeviceConnection
-	d.db.Where("source_device_id = ? OR dest_device_id = ?", deviceID, deviceID).Find(&connections)
+	d.db.Scopes(ActiveConnections).Where("source_device_id = ? OR dest_device_id = ?", deviceID, deviceID).Find(&connections)
 
 	// Get all peer device IDs
 	peerIDs := make(map[uint]bool)

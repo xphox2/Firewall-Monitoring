@@ -1,6 +1,37 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.268] - 2026-09-28
+
+### Fixed — connections to retired devices
+
+The Connections page listed a connection to a device that had been removed
+(retired), shown as "? ↔ OPNsense", and the map drew nothing for it.
+Retiring a device deletes its connections. The poller's VPN detector then
+wrote the connection back on the next cycle, because the provisioned tunnel
+record still names the retired device. The "?" is the missing device's name.
+
+- **The poller never links a retired device.** Every VPN detection method
+  now checks that both devices are active before saving a connection, and so
+  does the overlay (VXLAN / L3 VLAN) detector. The L2 detector already
+  ignored retired devices; a test now pins that.
+- **Backstop in the database.** Saving an auto-detected connection refuses an
+  endpoint that is retired or missing. It does this without reporting an
+  error, so the cleanup of stale connections keeps running.
+- **Every list, map, status and detail read ignores a connection whose device
+  is retired**: the Connections page, the map, the dashboard, the NOC site
+  breakdown and the VPN panel's peer links. Opening such a connection returns
+  "Connection not found".
+- **Creating or editing a connection to a retired device is refused** (400).
+- **Connection names.** An auto-detected connection still named with "?" gets
+  its proper name on the next cycle. A name an operator has changed is kept.
+- **Migration v69** deletes the connections that already point at a retired
+  or missing device (one on the production server). Restoring a device
+  re-creates its auto-detected connections on the next poller cycle, as
+  before.
+- The provisioned-tunnel lookup itself is unchanged, so the surviving
+  device's VPN panel and charts still group the tunnel as before.
+
 ## [0.11.267] - 2026-09-27
 
 ### Changed — task notes
