@@ -345,16 +345,16 @@
     }
 
     function showPausedBadge() {
-        var badge = document.getElementById('noc-feed-paused');
-        if (!badge) return;
-        if (!isPaused()) { badge.hidden = true; return; }
+        var pausedEl = document.getElementById('noc-feed-paused');
+        if (!pausedEl) return;
+        if (!isPaused()) { pausedEl.hidden = true; return; }
         var n = 0;
         if (feedState.feed && feedState.prevKeys) {
             allFeedItems(feedState.feed).forEach(function (e) { if (!feedState.prevKeys[e.key]) n++; });
         }
         // A manual pause says so; hover/focus only holds the list while it is read.
-        badge.textContent = (feedState.paused ? 'paused' : 'held while reading') + (n ? ' · ' + n + ' new' : '');
-        badge.hidden = false;
+        pausedEl.textContent = (feedState.paused ? 'paused' : 'held while reading') + (n ? ' · ' + n + ' new' : '');
+        pausedEl.hidden = false;
     }
 
     function renderFeed() {
@@ -410,8 +410,8 @@
         renderFeedEmpty(shown.length, feed);
         if (fresh) announce(fresh);
         if (window.AdminCommon && window.AdminCommon.enrichIps) window.AdminCommon.enrichIps(list);
-        var badge = document.getElementById('noc-feed-paused');
-        if (badge) badge.hidden = true;
+        var pausedEl = document.getElementById('noc-feed-paused');
+        if (pausedEl) pausedEl.hidden = true;
     }
 
     function renderFeedEmpty(shown, feed) {

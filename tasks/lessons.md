@@ -506,3 +506,24 @@ shared_buffers" — on a 31 GB host the pages were still in the OS file cache. R
 the same day right after the app read it: 1.65 s. **Rule: a `read=` figure is not a
 disk figure. For an I/O-bound path, measure a range nothing has touched recently, or
 state the estimate as "cached" and budget for the spinning disk (here ~5x).**
+
+## 2026-09-28 — The last "sound" must come from a reviewer that has not seen the work
+
+I took the ghost-connection / NOC plan through three rounds with ONE resumed Fable
+reviewer, reached "sound", and went to ExitPlanMode. The user rejected it: "Have fable
+review this plan before opus implements it." A NEW Fable agent then found a HIGH the
+resumed reviewer had cleared twice (the poller filter would have missed two detection
+phases, and the proposed nil-returning `getPair` would have panicked the cycle). The
+same happened again on the PR 2 plan (a fresh reviewer found two HIGHs after five
+"clean" rounds) and on both code diffs. A resumed reviewer mostly checks whether its
+own findings were applied. **Rule: iterate with one reviewer if useful, but the final
+pass before ExitPlanMode — and before a merge — is a NEW `model:"fable"` agent told to
+ignore the review history; loop on that one until it returns an unconditional "sound".**
+
+## 2026-09-28 — Mutation-check a new test BEFORE committing it
+
+I added a test for the outbound SYN session, committed and pushed, then ran its
+mutation check: it survived. With one record in each direction, counting either
+direction gives 1, so the test could not tell the fix from its inverse. **Rule: a new
+test is not done until its mutation check has failed it; run the check before the
+commit. When a rule chooses between two sides, seed the sides with different counts.**
