@@ -54,7 +54,7 @@ func TestFilterLoad_RestoreMechanics(t *testing.T) {
 	main := readJS(t, "admin-main.js")
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
 	sup := strings.Index(run, "if (r.superseded) return;")
-	rest := strings.Index(run, "if (back && ap && ap.restore && !siblingBusy()) restoreQuery(ap, page, back);")
+	rest := strings.Index(run, "if (back && apC && apC.restore && !siblingBusy()) restoreQuery(apC, page, back);")
 	if sup < 0 || rest < 0 || sup > rest {
 		t.Error("runFilterLoad must return on a superseded load before the Cancel restore")
 	}
@@ -74,7 +74,7 @@ func TestFilterLoad_RestoreMechanics(t *testing.T) {
 	mustContain(t, "admin-main.js", run, "if (AC.chartLoadBusy(loadKey)) return Promise.resolve();", "a poll skips while the user's load runs")
 	mustContain(t, "admin-main.js", run, "if (filterGen[key] !== gen || !data) return;", "a poll in flight when the user starts a load is dropped")
 	for _, page := range []string{"loadSyslog", "loadAlerts", "loadTraps", "loadAuditLogs"} {
-		mustContain(t, "admin-main.js", main, "onChange: function(state, prev) { "+page+"({ prev: prev }); }", "the filter change hands the previous query to the loader")
+		mustContain(t, "admin-main.js", main, "onChange: function(state, prev) { "+page+"({ prev: prev, state: state }); }", "the filter change hands the previous query AND its own state to the loader (the handle does not exist yet on a first load)")
 	}
 	mustContain(t, "admin-main.js", main, "loadSyslog({ fromPoll: true });", "the syslog auto-refresh is a silent poll")
 }
@@ -85,9 +85,9 @@ func TestFilterLoad_RestoreMechanics(t *testing.T) {
 func TestFilterLoad_RetryAfterCancelReappliesQuery(t *testing.T) {
 	main := readJS(t, "admin-main.js")
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
-	mustContain(t, "admin-main.js", run, "if (want && ap.restore && !siblingBusy()) restoreQuery(ap, page, want);", "Retry re-applies the cancelled query")
+	mustContain(t, "admin-main.js", run, "var ap = apNow(); if (want && ap && ap.restore && !siblingBusy()) restoreQuery(ap, page, want);", "Retry re-applies the cancelled query")
 	mustContain(t, "admin-main.js", run, "onRetry: retryCancelled", "the Cancel notice uses that Retry")
-	mustContain(t, "admin-main.js", run, "var want = (ap && ap.getState) ? ap.getState() : null;", "the requested query is captured when the load starts")
+	mustContain(t, "admin-main.js", run, "var src = opts.snap || opts.state || ((ap0 && ap0.getState) ? ap0.getState() : null);", "the requested query is captured when the load starts, even on a first load")
 	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "onRetry: function() { setSearchControls(query); runSearch(target); }", "threat-intel Retry re-applies the cancelled search")
 	mustContain(t, "admin-reports.js", readJS(t, "admin-reports.js"), "function retryWanted() { applyChoices(want); loadPreview(); }", "reports Retry re-applies the cancelled period")
 	mustContain(t, "diagram-panels.js", readJS(t, "diagram-panels.js"), "again = () => { activatePill(wantPill); retry(); };", "panel Retry re-activates the cancelled range's pill")
@@ -102,7 +102,7 @@ func TestFilterLoad_StateOnlyOnSuccess(t *testing.T) {
 	cases := []struct{ sig, state string }{
 		{`function loadSyslog\(opts\)`, "syslogOffset ="},
 		{`function syslogPage\(target\)`, "syslogOffset ="},
-		{`function auditPage\(target, prev\)`, "auditOffset ="},
+		{`function auditPage\(target, prev, st, paging\)`, "auditOffset ="},
 		{`function loadAlerts\(opts\)`, "alertsOffset ="},
 		{`function loadAlerts\(opts\)`, "clearAlertSelection();"},
 		{`function alertsPage\(target\)`, "alertsOffset ="},
@@ -162,7 +162,7 @@ func TestFilterLoad_StateOnlyOnSuccess(t *testing.T) {
 	if n := strings.Count(ep, "window.FwmonEventRules.loadRules(0).then(function (lr) {\n"); n != 2 {
 		t.Errorf("both loadRules consumers must take the result; found %d", n)
 	}
-	if n := strings.Count(ep, "if (!lr || !lr.ok) return;") + strings.Count(ep, "if (!lr || !lr.ok) { window.FwmonEventRules.keepPendingPrefill(pending); routeFromHash(); return; }"); n != 2 {
+	if n := strings.Count(ep, "if (!lr || !lr.ok) return;") + strings.Count(ep, "if (!lr || !lr.ok) {\n                            window.FwmonEventRules.keepPendingPrefill(pending);"); n != 2 {
 		t.Errorf("both loadRules consumers must return unless ok; found %d", n)
 	}
 }
@@ -379,8 +379,8 @@ func TestFilterLoad_ReviewRound3(t *testing.T) {
 	main := readJS(t, "admin-main.js")
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
 	mustContain(t, "admin-main.js", run, "function siblingBusy() { return key !== page && AC.chartLoadBusy('filter-' + page, true); }", "a charts load never restores over a running table load")
-	mustContain(t, "admin-main.js", run, "if (want && ap.restore && !siblingBusy()) restoreQuery(ap, page, want);", "nor does its Retry")
-	mustContain(t, "admin-main.js", run, "if (back && ap && ap.restore && !siblingBusy()) restoreQuery(ap, page, back);", "the Cancel branch")
+	mustContain(t, "admin-main.js", run, "var ap = apNow(); if (want && ap && ap.restore && !siblingBusy()) restoreQuery(ap, page, want);", "nor does its Retry")
+	mustContain(t, "admin-main.js", run, "if (back && apC && apC.restore && !siblingBusy()) restoreQuery(apC, page, back);", "the Cancel branch")
 
 	cd := readJS(t, "admin-connection-detail.js")
 	body := funcBody(t, cd, `function cdLoad\(key, host, url, opts\)`)
@@ -447,7 +447,7 @@ func TestFilterLoad_ReviewRound6(t *testing.T) {
 			t.Errorf("a reseedFromURL path does not cancel other pages' loads first: %q", re)
 		}
 	}
-	mustContain(t, "admin-main.js", main, "if (want && PAGE_EXTRAS[page]) want.__extra = PAGE_EXTRAS[page].get();", "Show snoozed is part of the query snapshot")
+	mustContain(t, "admin-main.js", main, "if (want && PAGE_EXTRAS[page] && want.__extra === undefined) want.__extra = PAGE_EXTRAS[page].get();", "Show snoozed is part of the query snapshot")
 	mustContain(t, "admin-main.js", main, "if (PAGE_EXTRAS[page] && snap && snap.__extra !== undefined) PAGE_EXTRAS[page].set(snap.__extra);", "and restored with it")
 
 	ac := readJS(t, "admin-common.js")
@@ -483,7 +483,7 @@ func TestFilterLoad_ReviewRound7(t *testing.T) {
 	main := readJS(t, "admin-main.js")
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
 	errAt := strings.Index(run, "if (r.error || !r.data) {")
-	rest := strings.Index(run, "if (shown && ap && ap.restore && !siblingBusy() && !typing) restoreQuery(ap, page, shown);")
+	rest := strings.Index(run, "if (shown && apE && apE.restore && !siblingBusy() && !typing) restoreQuery(apE, page, shown);")
 	if errAt < 0 || rest < errAt {
 		t.Error("an error must restore the controls to the shown query, like Cancel")
 	}
@@ -517,7 +517,7 @@ func TestFilterLoad_ReviewRound7(t *testing.T) {
 	mustContain(t, "admin-threatintel.js", ti, "if (shownLookupQ !== null) el('ti-lookup-q').value = shownLookupQ;", "lookup Cancel restores the shown query")
 	mustContain(t, "admin-threatintel.js", ti, "shownLookupQ = q;\n            renderLookup(", "recorded on success")
 
-	mustContain(t, "admin-event-profiles.js", readJS(t, "admin-event-profiles.js"), "if (!lr || !lr.ok) { window.FwmonEventRules.keepPendingPrefill(pending); routeFromHash(); return; }", "a create-from-alert prefill survives a failed lookup and the page still routes")
+	mustContain(t, "admin-event-profiles.js", readJS(t, "admin-event-profiles.js"), "window.FwmonEventRules.keepPendingPrefill(pending);\n                            // Superseded = the user left the page", "a create-from-alert prefill survives a failed lookup")
 	mustContain(t, "admin-event-rules.js", readJS(t, "admin-event-rules.js"), "try { sessionStorage.setItem('fwmon_rule_prefill', JSON.stringify(p)); }", "it is written back for the next visit")
 }
 
@@ -554,4 +554,37 @@ func TestFilterLoad_ReviewRound8(t *testing.T) {
 	}
 	mustContain(t, "diagram-panels.js", readJS(t, "diagram-panels.js"), "if (r.cancelled || r.error) {\n                // Cancel and error alike", "panel: an error restores the drawn pill too")
 	mustContain(t, "admin-flows.js", readJS(t, "admin-flows.js"), "var cMsg = append ? 'Cancelled' :", "a cancelled Load more claims no filter change")
+}
+
+// Ninth review (Opus 5.5, proven with a harness): the page handle does not
+// exist during a page's first load, so the query must travel with onChange;
+// paging and bulk actions continue the SHOWN query and wait for a running
+// filter load; routing after a superseded lookup is skipped.
+func TestFilterLoad_ReviewRound9(t *testing.T) {
+	main := readJS(t, "admin-main.js")
+	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
+	mustContain(t, "admin-main.js", run, "function apNow() { return analyticsPages[page]; }", "the handle is resolved when the load settles")
+	for _, c := range []struct{ sig, guard, snap string }{
+		{`function syslogPage\(target\)`, "if (AC.chartLoadBusy('filter-syslog', true)) return;", "buildSyslogParams(10, snap)"},
+		{`function alertsPage\(target\)`, "if (AC.chartLoadBusy('filter-alerts', true)) return;", "buildAlertParams(10, snap)"},
+		{`function auditPage\(target, prev, st, paging\)`, "if (paging && AC.chartLoadBusy('filter-audit', true)) return;", "buildAuditParams(10, snap)"},
+	} {
+		b := funcBody(t, main, c.sig)
+		if i := strings.Index(b, c.guard); i < 0 || i > strings.Index(b, "runFilterLoad(") {
+			t.Errorf("%s must wait for a running filter load", c.sig)
+		}
+		mustContain(t, "admin-main.js", b, c.snap, "paging continues the shown query")
+	}
+	for _, s := range []string{"auditPage(Math.max(0, auditOffset - 20), undefined, undefined, true);", "auditPage(auditOffset, undefined, undefined, true);", "auditPage(0, opts.prev, opts.state);"} {
+		mustContain(t, "admin-main.js", main, s, "audit paging is explicit")
+	}
+	mustContain(t, "admin-main.js", funcBody(t, main, `function refreshAlertsAtCurrentPage\(\)`), "buildAlertParams(pageSize, shownQuery.alerts)", "a refresh after ack continues the shown query")
+	mustContain(t, "admin-main.js", funcBody(t, main, `function loadMoreTraps\(\)`), "buildTrapParams(100, shownQuery.traps)", "Load more continues the shown query")
+	mustContain(t, "admin-main.js", funcBody(t, main, `function alertsPage\(target\)`), "if (loading && loading.then) loading.then(function() { updateAlertBulkToolbar(); });", "Prev/Next repaint the select-all banner after registering")
+
+	ep := readJS(t, "admin-event-profiles.js")
+	mustContain(t, "admin-event-profiles.js", ep, "if (!(lr && lr.superseded) && epPage && epPage.classList.contains('active')) routeFromHash();", "no routing (URL rewrite) after the user left the page")
+	mustContain(t, "admin-event-profiles.js", funcBody(t, ep, `function showGrid\(\)`), "AC.chartLoadCancel('ep-effective');", "leaving the effective view stops its lookup")
+	mustContain(t, "admin-event-profiles.js", funcBody(t, ep, `function showEffective\(\)`), "AC.chartLoadCancel('ep-effective');", "re-rendering it too")
+	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "'Could not look up — showing the previous result' : 'Could not look up', { dim: false, onRetry:", "lookup errors offer Retry")
 }

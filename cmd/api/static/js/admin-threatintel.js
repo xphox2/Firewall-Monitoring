@@ -94,7 +94,14 @@
                 return;
             }
             if (r.error) {
+                // The reason (often "not an IP or ASN") stays next to the box,
+                // and the typed text is kept so it can be corrected; the notice
+                // over the previous result offers Retry.
                 if (errEl) { errEl.textContent = (r.error && r.error.message) || 'Lookup failed.'; errEl.hidden = false; }
+                AC.chartNotice(host, shownLookupQ !== null ? 'Could not look up — showing the previous result' : 'Could not look up', { dim: false, onRetry: function() {
+                    el('ti-lookup-q').value = q;
+                    onLookup({ preventDefault: function() {} });
+                } });
                 return;
             }
             shownLookupQ = q;

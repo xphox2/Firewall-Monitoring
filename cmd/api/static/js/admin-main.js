@@ -121,10 +121,17 @@
         var page = opts.page || key;
         var loadKey = 'filter-' + key;
         var host = document.getElementById(opts.host || (key + '-load-host'));
-        var ap = analyticsPages[page];
-        // The query this load asks for.
-        var want = (ap && ap.getState) ? ap.getState() : null;
-        if (want && PAGE_EXTRAS[page]) want.__extra = PAGE_EXTRAS[page].get();
+        // The page handle is resolved when needed, not now: on a page's FIRST
+        // load (attachAnalyticsPage's first commit) it has not been assigned
+        // yet, and a Cancel/error must still be able to restore through it.
+        function apNow() { return analyticsPages[page]; }
+        var ap0 = apNow();
+        // The query this load asks for: an explicit snapshot (paging continues
+        // the SHOWN query), the state handed to onChange (the first load, when
+        // there is no handle yet), or the handle's current state.
+        var src = opts.snap || opts.state || ((ap0 && ap0.getState) ? ap0.getState() : null);
+        var want = src ? Object.assign({}, src) : null;
+        if (want && PAGE_EXTRAS[page] && want.__extra === undefined) want.__extra = PAGE_EXTRAS[page].get();
         if (opts.fromPoll) {
             if (AC.chartLoadBusy(loadKey)) return Promise.resolve();
             var gen = filterGen[key] = (filterGen[key] || 0) + 1;
@@ -144,7 +151,7 @@
         // newer table load runs, the controls are ITS query (see Cancel below).
         function siblingBusy() { return key !== page && AC.chartLoadBusy('filter-' + page, true); }
         var retryCancelled = opts.retry && function() {
-            if (want && ap.restore && !siblingBusy()) restoreQuery(ap, page, want);
+            var ap = apNow(); if (want && ap && ap.restore && !siblingBusy()) restoreQuery(ap, page, want);
             opts.retry(opts.prev);
         };
         return AC.chartLoad(host, run, {
@@ -158,7 +165,8 @@
                 // A charts load shares the page's controls with the table load.
                 // If a newer table load is still running, the controls belong
                 // to IT — restoring them would put a query over rows it is not.
-                if (back && ap && ap.restore && !siblingBusy()) restoreQuery(ap, page, back);
+                var apC = apNow();
+                if (back && apC && apC.restore && !siblingBusy()) restoreQuery(apC, page, back);
                 AC.chartNotice(host, shownQuery[page] ? 'Cancelled — showing the previous results' : 'Cancelled', { dim: false, onRetry: retryCancelled });
                 return;
             }
@@ -175,7 +183,8 @@
                 var typing = document.activeElement && document.activeElement.matches &&
                     document.activeElement.matches('input[type="text"], input[type="search"], input:not([type]), textarea') &&
                     document.getElementById('page-' + page) && document.getElementById('page-' + page).contains(document.activeElement);
-                if (shown && ap && ap.restore && !siblingBusy() && !typing) restoreQuery(ap, page, shown);
+                var apE = apNow();
+                if (shown && apE && apE.restore && !siblingBusy() && !typing) restoreQuery(apE, page, shown);
                 AC.chartNotice(host, shownQuery[page] ? 'Could not load results — showing the previous results' : 'Could not load results', { dim: false, onRetry: retryCancelled });
                 return;
             }
@@ -865,7 +874,7 @@
             syslogOffset = messages.length;
             updateSyslogPagination(messages.length, total, !!(result.data && result.data.total_capped));
             loadSyslogCharts({ fromPoll: opts.fromPoll });
-        }, { prev: opts.prev, fromPoll: opts.fromPoll, label: 'Searching…', retry: function(p) { loadSyslog({ prev: p }); } });
+        }, { prev: opts.prev, state: opts.state, fromPoll: opts.fromPoll, label: 'Searching…', retry: function(p) { loadSyslog({ prev: p }); } });
     }
 
     var syslogTotalCount = 0;
@@ -897,8 +906,13 @@
     // The page offsets change only when a page arrives: a cancelled Prev or
     // Next leaves the pager on the page still shown.
     function syslogPage(target) {
+        // Paging continues the rows on screen: their query (shownQuery), not
+        // the controls; and it waits for a running filter load instead of
+        // silently superseding it.
+        if (AC.chartLoadBusy('filter-syslog', true)) return;
+        var snap = shownQuery.syslog;
         runFilterLoad('syslog', function(signal) {
-            return apiFetch(API_BASE + '/syslog?' + buildSyslogParams(10) + '&offset=' + target, { signal: signal });
+            return apiFetch(API_BASE + '/syslog?' + buildSyslogParams(10, snap) + '&offset=' + target, { signal: signal });
         }, function(result) {
             var messages = (result.data && result.data.messages) ? result.data.messages : [];
             var total = (result.data && result.data.total) ? result.data.total : 0;
@@ -906,7 +920,7 @@
             renderSyslogTable(messages, false);
             syslogOffset = target + messages.length;
             updateSyslogPagination(messages.length, total, !!(result.data && result.data.total_capped));
-        }, { retry: function() { syslogPage(target); } });
+        }, { snap: snap, retry: function() { syslogPage(target); } });
     }
 
     function prevSyslog() {
@@ -979,8 +993,18 @@
         }, { page: 'syslog', host: 'syslog-charts-host', fromPoll: opts.fromPoll, retry: function() { loadSyslogCharts(); } });
     }
 
-    function buildSyslogParams(limit) {
+    // snap (optional): a query snapshot — paging continues the SHOWN query
+    // (shownQuery.syslog), never a filter still loading or failed to load.
+    function buildSyslogParams(limit, snap) {
         var parts = ['limit=' + limit];
+        if (snap) {
+            if (snap.hours && Number(snap.hours) !== 24) parts.push('hours=' + snap.hours);
+            if (snap.probe_id) parts.push('probe_id=' + encodeURIComponent(snap.probe_id));
+            if (snap.device_id) parts.push('device_id=' + encodeURIComponent(snap.device_id));
+            if (snap.severity !== undefined && snap.severity !== '') parts.push('severity=' + encodeURIComponent(snap.severity));
+            if (snap.search) parts.push('search=' + encodeURIComponent(snap.search));
+            return parts.join('&');
+        }
         var s = analyticsPages.syslog && analyticsPages.syslog.getState();
         var probe = document.getElementById('syslog-filter-probe');
         var device = document.getElementById('syslog-filter-device');
@@ -1080,19 +1104,23 @@
                 { id: 'audit-filter-action', stateKey: 'action', chipKey: 'action' }
             ],
             selects: [],
-            onChange: function(state, prev) { loadAuditLogs({ prev: prev }); }
+            onChange: function(state, prev) { loadAuditLogs({ prev: prev, state: state }); }
         });
     }
 
     function loadAuditLogs(opts) {
         opts = opts || {};
-        auditPage(0, opts.prev);
+        auditPage(0, opts.prev, opts.state);
     }
 
-    // The offset changes only when a page arrives (see runFilterLoad).
-    function auditPage(target, prev) {
+    // The offset changes only when a page arrives (see runFilterLoad). A
+    // first-page load runs the controls' query; Prev/Next (paging) continue
+    // the SHOWN query and wait for a running filter load.
+    function auditPage(target, prev, st, paging) {
+        if (paging && AC.chartLoadBusy('filter-audit', true)) return;
+        var snap = paging ? shownQuery.audit : null;
         runFilterLoad('audit', function(signal) {
-            return apiFetch(API_BASE + '/audit?' + buildAuditParams(10) + (target ? '&offset=' + target : ''), { signal: signal });
+            return apiFetch(API_BASE + '/audit?' + buildAuditParams(10, snap) + (target ? '&offset=' + target : ''), { signal: signal });
         }, function(result) {
             var logs = (result.data && result.data.audit_logs) ? result.data.audit_logs : [];
             var total = (result.data && result.data.total) ? result.data.total : 0;
@@ -1101,11 +1129,17 @@
             renderAuditTable(logs, false);
             auditOffset = target + logs.length;
             updateAuditPagination(logs.length, total);
-        }, { prev: prev, label: 'Searching…', retry: function(p) { auditPage(target, p); } });
+        }, { prev: prev, state: st, snap: snap, label: 'Searching…', retry: function(p) { auditPage(target, p, undefined, paging); } });
     }
 
-    function buildAuditParams(limit) {
+    function buildAuditParams(limit, snap) {
         var parts = ['limit=' + limit];
+        if (snap) {
+            if (snap.hours && Number(snap.hours) !== 24) parts.push('hours=' + snap.hours);
+            if (snap.actor) parts.push('actor=' + encodeURIComponent(String(snap.actor).trim()));
+            if (snap.action) parts.push('action=' + encodeURIComponent(String(snap.action).trim()));
+            return parts.join('&');
+        }
         var s = analyticsPages.audit && analyticsPages.audit.getState();
         var actor = document.getElementById('audit-filter-actor');
         var action = document.getElementById('audit-filter-action');
@@ -1179,11 +1213,11 @@
 
     function prevAudit() {
         if (auditOffset <= 10) return;
-        auditPage(Math.max(0, auditOffset - 20));
+        auditPage(Math.max(0, auditOffset - 20), undefined, undefined, true);
     }
 
     function nextAudit() {
-        auditPage(auditOffset);
+        auditPage(auditOffset, undefined, undefined, true);
     }
 
     function showAuditDetail(id) {
@@ -1340,7 +1374,7 @@
             alertsOffset = alerts.length;
             updateAlertPagination(alerts.length, total);
             loadAlertCharts();
-        }, { prev: opts.prev, retry: function(p) { loadAlerts({ prev: p }); } });
+        }, { prev: opts.prev, state: opts.state, retry: function(p) { loadAlerts({ prev: p }); } });
         // Repaint the toolbar only AFTER the load is registered (runFilterLoad
         // starts it synchronously), so the banner sees it busy and does not
         // re-offer "select all"; and again when it settles (Cancel/error keep
@@ -1370,7 +1404,7 @@
         var pageStart = Math.max(0, pageEnd - pageSize);
 
         function tryLoad(offset, signal) {
-            return apiFetch(API_BASE + '/alerts?' + buildAlertParams(pageSize) + '&offset=' + offset, { signal: signal }).then(function(result) {
+            return apiFetch(API_BASE + '/alerts?' + buildAlertParams(pageSize, shownQuery.alerts) + '&offset=' + offset, { signal: signal }).then(function(result) {
                 if (!result) return null;
                 var alerts = (result.data && result.data.alerts) ? result.data.alerts : [];
                 if (alerts.length === 0 && offset > 0) {
@@ -1387,7 +1421,7 @@
             alertsOffset = got.offset + alerts.length;
             updateAlertPagination(alerts.length, total);
             loadAlertCharts();
-        }, { retry: refreshAlertsAtCurrentPage });
+        }, { snap: shownQuery.alerts, retry: refreshAlertsAtCurrentPage });
     }
 
     function clearAlertSelection() {
@@ -1558,8 +1592,10 @@
 
     // The offset changes only when a page arrives (see runFilterLoad).
     function alertsPage(target) {
-        runFilterLoad('alerts', function(signal) {
-            return apiFetch(API_BASE + '/alerts?' + buildAlertParams(10) + '&offset=' + target, { signal: signal });
+        if (AC.chartLoadBusy('filter-alerts', true)) return; // see syslogPage
+        var snap = shownQuery.alerts;
+        var loading = runFilterLoad('alerts', function(signal) {
+            return apiFetch(API_BASE + '/alerts?' + buildAlertParams(10, snap) + '&offset=' + target, { signal: signal });
         }, function(result) {
             var alerts = (result.data && result.data.alerts) ? result.data.alerts : [];
             var total = (result.data && result.data.total) ? result.data.total : 0;
@@ -1567,7 +1603,11 @@
             renderAlertsTable(alerts, false);
             alertsOffset = target + alerts.length;
             updateAlertPagination(alerts.length, total);
-        }, { retry: function() { alertsPage(target); } });
+        }, { snap: snap, retry: function() { alertsPage(target); } });
+        // The "select all matching" banner reads busy: repaint once the load is
+        // registered, and again when it settles.
+        updateAlertBulkToolbar();
+        if (loading && loading.then) loading.then(function() { updateAlertBulkToolbar(); });
     }
 
     function prevAlerts() {
@@ -2198,11 +2238,17 @@
             renderTrapsTable(traps, false);
             trapsOffset = traps.length;
             loadTrapCharts();
-        }, { prev: opts.prev, retry: function(p) { loadTraps({ prev: p }); } });
+        }, { prev: opts.prev, state: opts.state, retry: function(p) { loadTraps({ prev: p }); } });
     }
 
-    function buildTrapParams(limit) {
+    function buildTrapParams(limit, snap) {
         var parts = ['limit=' + limit];
+        if (snap) {
+            if (snap.hours && Number(snap.hours) !== 24) parts.push('hours=' + snap.hours);
+            if (snap.severity) parts.push('severity=' + encodeURIComponent(snap.severity));
+            if (snap.trap_type) parts.push('trap_type=' + encodeURIComponent(snap.trap_type));
+            return parts.join('&');
+        }
         var s = analyticsPages.traps && analyticsPages.traps.getState();
         var sev = document.getElementById('traps-filter-severity');
         var type = document.getElementById('traps-filter-type');
@@ -2243,12 +2289,12 @@
         if (AC.chartLoadBusy('filter-traps', true)) return;
         var from = trapsOffset; // advances only when the rows arrive
         runFilterLoad('traps', function(signal) {
-            return apiFetch(API_BASE + '/traps?' + buildTrapParams(100) + '&offset=' + from, { signal: signal });
+            return apiFetch(API_BASE + '/traps?' + buildTrapParams(100, shownQuery.traps) + '&offset=' + from, { signal: signal });
         }, function(result) {
             if (!result.data || !result.data.length) return;
             renderTrapsTable(result.data, true);
             trapsOffset = from + result.data.length;
-        }, { label: 'Loading more…', retry: loadMoreTraps });
+        }, { snap: shownQuery.traps, label: 'Loading more…', retry: loadMoreTraps });
     }
 
     function loadTrapCharts() {
@@ -4662,7 +4708,7 @@
                   chipLabel: function(v) { return probeLabel(v); } },
                 { id: 'syslog-filter-severity', stateKey: 'severity',  chipKey: 'sev' }
             ],
-            onChange: function(state, prev) { loadSyslog({ prev: prev }); }
+            onChange: function(state, prev) { loadSyslog({ prev: prev, state: state }); }
         });
     }
 
@@ -4688,7 +4734,7 @@
                 { id: 'alerts-filter-ack',      stateKey: 'acknowledged', chipKey: 'ack',
                   chipLabel: function(v) { return v === 'false' ? 'Unacknowledged' : (v === 'true' ? 'Acknowledged' : v); } }
             ],
-            onChange: function(state, prev) { loadAlerts({ prev: prev }); }
+            onChange: function(state, prev) { loadAlerts({ prev: prev, state: state }); }
         });
     }
 
@@ -4708,7 +4754,7 @@
                 { id: 'traps-filter-severity', stateKey: 'severity',  chipKey: 'sev' },
                 { id: 'traps-filter-type',     stateKey: 'trap_type', chipKey: 'type' }
             ],
-            onChange: function(state, prev) { loadTraps({ prev: prev }); }
+            onChange: function(state, prev) { loadTraps({ prev: prev, state: state }); }
         });
     }
 

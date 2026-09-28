@@ -61,7 +61,15 @@
                 if (pending.editId) {
                     window.FwmonEventRules.loadRules(0).then(function (lr) {
                         // Keep the prefill for the next visit, but still show the page.
-                        if (!lr || !lr.ok) { window.FwmonEventRules.keepPendingPrefill(pending); routeFromHash(); return; }
+                        if (!lr || !lr.ok) {
+                            window.FwmonEventRules.keepPendingPrefill(pending);
+                            // Superseded = the user left the page: routing now
+                            // would rewrite THAT page's URL (showGrid clears the
+                            // hash with replaceState).
+                            var epPage = document.getElementById('page-event-rules');
+                            if (!(lr && lr.superseded) && epPage && epPage.classList.contains('active')) routeFromHash();
+                            return;
+                        }
                         var r = window.FwmonEventRules.getRules().find(function (x) { return x.id === pending.editId; });
                         window.FwmonEventRules.openFromPrefill(pending);
                         showDetail((r && r.profile_id) || (defaultProfile() || {}).id || 0, 'rules');
@@ -131,6 +139,7 @@
     // ---- State A: grid -----------------------------------------------------
 
     function showGrid() {
+        AC.chartLoadCancel('ep-effective'); // a lookup for a view being left
         setHash('');
         setView('grid');
         loadProfiles().then(function () {
@@ -604,6 +613,9 @@
     // ---- State C: effective view -------------------------------------------
 
     function showEffective() {
+        // The view is rebuilt below; a lookup still running would render into
+        // the old node and record its scope as shown.
+        AC.chartLoadCancel('ep-effective');
         setHash('#effective');
         setView('effective');
         var body = $('ep-effective-body');
