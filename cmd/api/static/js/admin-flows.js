@@ -546,27 +546,30 @@
         return '/admin/api/flows/stats?' + params.join('&');
     }
 
-    function samplesURL(limit, offset) {
+    // st defaults to the live filter state; Load more passes the query of the
+    // rows on screen (shownSamplesState), so it continues THOSE rows.
+    function samplesURL(limit, offset, st) {
+        st = st || state;
         var p = ['limit=' + limit];
         if (offset > 0) p.push('offset=' + offset);
         // hours bounds the samples list (and the CSV export) to the page's
         // range pills — without it the "24h" label lied and the list was just
         // "newest N rows regardless of range" (LC-36).
-        if (state.hours) p.push('hours=' + encodeURIComponent(state.hours));
-        if (state.site_id)   p.push('site_id='   + encodeURIComponent(state.site_id));
-        if (state.device_id) p.push('device_id=' + encodeURIComponent(state.device_id));
-        if (state.probe_id)  p.push('probe_id='  + encodeURIComponent(state.probe_id));
-        if (state.protocol)  p.push('protocol='  + encodeURIComponent(state.protocol));
-        if (state.src)       p.push('src_addr='  + encodeURIComponent(state.src));
-        if (state.dst)       p.push('dst_addr='  + encodeURIComponent(state.dst));
-        if (state.dport)     p.push('dst_port='  + encodeURIComponent(state.dport));
-        if (state.svc)       p.push('service_port=' + encodeURIComponent(state.svc));
-        if (state.category !== '')  p.push('app_category=' + encodeURIComponent(state.category));
-        if (state.direction !== '') p.push('direction='   + encodeURIComponent(state.direction));
-        if (state.country)   p.push('dst_country=' + encodeURIComponent(state.country));
-        if (state.asn)       p.push('dst_asn='     + encodeURIComponent(state.asn));
-        if (state.source !== '') p.push('flow_source=' + encodeURIComponent(state.source));
-        if (state.event !== '')  p.push('firewall_event=' + encodeURIComponent(state.event));
+        if (st.hours) p.push('hours=' + encodeURIComponent(st.hours));
+        if (st.site_id)   p.push('site_id='   + encodeURIComponent(st.site_id));
+        if (st.device_id) p.push('device_id=' + encodeURIComponent(st.device_id));
+        if (st.probe_id)  p.push('probe_id='  + encodeURIComponent(st.probe_id));
+        if (st.protocol)  p.push('protocol='  + encodeURIComponent(st.protocol));
+        if (st.src)       p.push('src_addr='  + encodeURIComponent(st.src));
+        if (st.dst)       p.push('dst_addr='  + encodeURIComponent(st.dst));
+        if (st.dport)     p.push('dst_port='  + encodeURIComponent(st.dport));
+        if (st.svc)       p.push('service_port=' + encodeURIComponent(st.svc));
+        if (st.category !== '')  p.push('app_category=' + encodeURIComponent(st.category));
+        if (st.direction !== '') p.push('direction='   + encodeURIComponent(st.direction));
+        if (st.country)   p.push('dst_country=' + encodeURIComponent(st.country));
+        if (st.asn)       p.push('dst_asn='     + encodeURIComponent(st.asn));
+        if (st.source !== '') p.push('flow_source=' + encodeURIComponent(st.source));
+        if (st.event !== '')  p.push('firewall_event=' + encodeURIComponent(st.event));
         return '/admin/api/flows?' + p.join('&');
     }
 
@@ -1328,7 +1331,8 @@
     function samplesLoad(offset, append) {
         var AC = window.AdminCommon;
         if (!AC || !AC.chartLoad) return;
-        var url = samplesURL(100, offset);
+        var url = samplesURL(100, offset, append ? shownSamplesState : null);
+        var want = Object.assign({}, state);
         // While the Samples view is hidden the load runs with no overlay, and
         // nothing is on screen for a Cancel/error notice to refer to — so the
         // notices go only on a visible host, and a stale one is cleared here
@@ -1355,6 +1359,7 @@
             }
             var samples = r.data.data || [];
             if (append && !samples.length) return;
+            if (!append) shownSamplesState = want;
             renderSamples(samples, append);
             flowsOffset = offset + samples.length;
             updateLoadedCount();
@@ -1363,6 +1368,11 @@
     }
 
     function loadSamples() { samplesLoad(0, false); }
+
+    // The filter state whose rows the Samples list shows (set when a first-page
+    // load succeeds). After a cancelled reload the live state is the NEW
+    // filter while the rows are still the old one's.
+    var shownSamplesState = null;
 
     // Load more continues the rows on screen; while a samples load is running
     // (a filter reload whose rows have not arrived), flowsOffset still belongs

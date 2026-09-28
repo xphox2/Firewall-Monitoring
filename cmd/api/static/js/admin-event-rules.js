@@ -213,6 +213,13 @@
                     renderPlaceholder();
                     return { error: err };
                 }
+                if (!(wrap && wrap.offsetParent)) {
+                    // A hidden lookup (Customize from the matrix): nothing on
+                    // screen to annotate, so say it failed where it is seen.
+                    targetProfileId = null;
+                    AC.showError('Failed to load event rules: ' + err.message);
+                    return { error: err };
+                }
                 if (pid !== currentProfileId) {
                     // A failed profile switch is treated like a cancelled one:
                     // the new profile's header is up, so its target stays the

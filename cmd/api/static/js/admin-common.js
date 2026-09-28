@@ -2065,6 +2065,9 @@
             // tell this handler the Esc belonged to the dialog.
             if (e.defaultPrevented) return;
             if (Object.keys(__fwmonOpenModals).length) return;
+            // A load whose results are not rendered (its page was left) is
+            // not the one the user is looking at.
+            if (!list.some(function(c) { return c.getClientRects().length; })) return;
             var t = e.target;
             if (t && t.closest && t.closest('[role="dialog"], .fwmon-confirm-overlay')) return;
             var field = t && t.closest && t.closest('input, textarea, select');
@@ -2098,7 +2101,12 @@
                     '<span class="fwmon-chart-overlay-text">' + escapeHtml(opts.label || 'Loading higher-resolution data…') + '</span>' +
                     '<span class="fwmon-chart-overlay-elapsed" aria-live="off"></span>' +
                     '<button type="button" class="btn secondary sm fwmon-chart-overlay-cancel">Cancel</button>');
-                o.querySelector('button').addEventListener('click', cancel);
+                var cancelBtn = o.querySelector('button');
+                // No focus change on press: a blur would commit a pending text
+                // edit, start a new load and remove this button before the
+                // click lands.
+                cancelBtn.addEventListener('mousedown', function(ev) { ev.preventDefault(); });
+                cancelBtn.addEventListener('click', cancel);
                 c.appendChild(o);
                 overlays.push(o);
             });

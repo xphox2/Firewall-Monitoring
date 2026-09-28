@@ -95,7 +95,7 @@ func TestFlowsPage_TopServicesFilterByNumber(t *testing.T) {
 		"renderList('flows-top-services',     d.top_services     || [], 'ports',     'svc',      function(v, r) { return r && r.port ? String(r.port) : ''; });",
 		"var filterVal = toFilterValue(r.key, r);",
 		"params.push('service_port=' + encodeURIComponent(state.svc));",
-		"p.push('service_port=' + encodeURIComponent(state.svc));",
+		"p.push('service_port=' + encodeURIComponent(st.svc));",
 		"markPartialPanels(blocks.concat(d.partial_blocks || []), d.partial_reasons || {});",
 		"el.removeAttribute('data-partial');",
 	} {

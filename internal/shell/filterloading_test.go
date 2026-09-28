@@ -54,7 +54,7 @@ func TestFilterLoad_RestoreMechanics(t *testing.T) {
 	main := readJS(t, "admin-main.js")
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
 	sup := strings.Index(run, "if (r.superseded) return;")
-	rest := strings.Index(run, "if (back && ap && ap.restore && !siblingBusy()) ap.restore(back);")
+	rest := strings.Index(run, "if (back && ap && ap.restore && !siblingBusy()) restoreQuery(ap, page, back);")
 	if sup < 0 || rest < 0 || sup > rest {
 		t.Error("runFilterLoad must return on a superseded load before the Cancel restore")
 	}
@@ -85,7 +85,7 @@ func TestFilterLoad_RestoreMechanics(t *testing.T) {
 func TestFilterLoad_RetryAfterCancelReappliesQuery(t *testing.T) {
 	main := readJS(t, "admin-main.js")
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
-	mustContain(t, "admin-main.js", run, "if (want && ap.restore && !siblingBusy()) ap.restore(want);", "Retry re-applies the cancelled query")
+	mustContain(t, "admin-main.js", run, "if (want && ap.restore && !siblingBusy()) restoreQuery(ap, page, want);", "Retry re-applies the cancelled query")
 	mustContain(t, "admin-main.js", run, "onRetry: retryCancelled", "the Cancel notice uses that Retry")
 	mustContain(t, "admin-main.js", run, "var want = (ap && ap.getState) ? ap.getState() : null;", "the requested query is captured when the load starts")
 	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "onRetry: function() { setSearchControls(query); runSearch(target); }", "threat-intel Retry re-applies the cancelled search")
@@ -372,15 +372,15 @@ func TestFilterLoad_ReviewRound3(t *testing.T) {
 	// Exactly two clears on the error path: the 403 placeholder and the
 	// same-profile error. Any other would drop the viewed profile on a
 	// failed switch.
-	if n := strings.Count(errBody, "targetProfileId = null;"); n != 2 {
-		t.Errorf("the error path clears targetProfileId %d times; want 2 (403 placeholder, same-profile error)", n)
+	if n := strings.Count(errBody, "targetProfileId = null;"); n != 3 {
+		t.Errorf("the error path clears targetProfileId %d times; want 3 (403 placeholder, hidden lookup, same-profile error)", n)
 	}
 
 	main := readJS(t, "admin-main.js")
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
 	mustContain(t, "admin-main.js", run, "function siblingBusy() { return key !== page && AC.chartLoadBusy('filter-' + page, true); }", "a charts load never restores over a running table load")
-	mustContain(t, "admin-main.js", run, "if (want && ap.restore && !siblingBusy()) ap.restore(want);", "nor does its Retry")
-	mustContain(t, "admin-main.js", run, "if (back && ap && ap.restore && !siblingBusy()) ap.restore(back);", "the Cancel branch")
+	mustContain(t, "admin-main.js", run, "if (want && ap.restore && !siblingBusy()) restoreQuery(ap, page, want);", "nor does its Retry")
+	mustContain(t, "admin-main.js", run, "if (back && ap && ap.restore && !siblingBusy()) restoreQuery(ap, page, back);", "the Cancel branch")
 
 	cd := readJS(t, "admin-connection-detail.js")
 	body := funcBody(t, cd, `function cdLoad\(key, host, url, opts\)`)
@@ -431,4 +431,47 @@ func TestFilterLoad_ReviewRound5(t *testing.T) {
 		t.Error("the flows stats Esc handler must bail on defaultPrevented")
 	}
 	mustContain(t, "diagram-panels.js", readJS(t, "diagram-panels.js"), "container.dataset.loaded = '1';", "an empty result counts as shown")
+}
+
+// Sixth review (Opus 5.5 — Fable was rate-limited): every navigation path
+// stops other pages' loads, Load more follows the shown query, Show snoozed
+// travels with the query, hidden lookups report errors visibly, and Cancel
+// does not blur a pending edit.
+func TestFilterLoad_ReviewRound6(t *testing.T) {
+	main := readJS(t, "admin-main.js")
+	if n := strings.Count(main, "cancelOtherPageLoads(page);\n"); n != 4 {
+		t.Errorf("cancelOtherPageLoads must run on loadPageData and all three reseedFromURL paths; found %d calls", n)
+	}
+	for _, re := range []string{"cancelOtherPageLoads(page);\n                analyticsPages[page].reseedFromURL();", "cancelOtherPageLoads(page);\n            analyticsPages[page].reseedFromURL();"} {
+		if !strings.Contains(main, re) {
+			t.Errorf("a reseedFromURL path does not cancel other pages' loads first: %q", re)
+		}
+	}
+	mustContain(t, "admin-main.js", main, "if (want && PAGE_EXTRAS[page]) want.__extra = PAGE_EXTRAS[page].get();", "Show snoozed is part of the query snapshot")
+	mustContain(t, "admin-main.js", main, "if (PAGE_EXTRAS[page] && snap && snap.__extra !== undefined) PAGE_EXTRAS[page].set(snap.__extra);", "and restored with it")
+
+	ac := readJS(t, "admin-common.js")
+	on := funcBody(t, ac, `function onKey\(e\)`)
+	mustContain(t, "admin-common.js", on, "if (!list.some(function(c) { return c.getClientRects().length; })) return;", "Esc never cancels a load whose results are not rendered")
+	mustContain(t, "admin-common.js", ac, "cancelBtn.addEventListener('mousedown', function(ev) { ev.preventDefault(); });", "pressing Cancel does not blur a pending edit")
+
+	fl := readJS(t, "admin-flows.js")
+	sl := funcBody(t, fl, `function samplesLoad\(offset, append\)`)
+	mustContain(t, "admin-flows.js", sl, "var url = samplesURL(100, offset, append ? shownSamplesState : null);", "Load more continues the SHOWN rows' query")
+	if i := strings.Index(sl, "if (!append) shownSamplesState = want;"); i < 0 || i < strings.Index(sl, "if (r.error || !r.data) {") {
+		t.Error("the shown samples query is recorded only on success")
+	}
+	su := funcBody(t, fl, `function samplesURL\(limit, offset, st\)`)
+	if regexp.MustCompile(`\bstate\.`).MatchString(su) {
+		t.Error("samplesURL must read only st (the passed query), never the live state directly")
+	}
+
+	er := readJS(t, "admin-event-rules.js")
+	lr := funcBody(t, er, `function loadRules\(profileId, filter\)`)
+	hid := strings.Index(lr, "if (!(wrap && wrap.offsetParent)) {\n                    // A hidden lookup")
+	toast := strings.Index(lr, "AC.showError('Failed to load event rules: ' + err.message);")
+	if hid < 0 || toast < hid || toast > strings.Index(lr, "if (pid !== currentProfileId) {\n                    // A failed profile switch") {
+		t.Error("a hidden lookup's error must be shown as a toast (its table is not on screen)")
+	}
+	mustContain(t, "admin.html", readFile(t, "../../web/admin/admin.html"), `id="report-host" style="padding:6px;overflow:clip;">`, "overflow:clip keeps the sticky Cancel box working (hidden made the card its scroll container)")
 }

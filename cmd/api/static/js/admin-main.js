@@ -104,6 +104,18 @@
     // a load SUCCEEDS. Cancel restores it — not the previously committed query,
     // which may itself have been superseded or failed and never displayed.
     var shownQuery = {};
+    // Controls that shape a page's query but are not analytics-state keys.
+    // They travel with the query snapshot so Cancel/Retry restore them too.
+    var PAGE_EXTRAS = {
+        alerts: {
+            get: function() { var el = document.getElementById('alerts-show-snoozed'); return !!(el && el.checked); },
+            set: function(v) { var el = document.getElementById('alerts-show-snoozed'); if (el) el.checked = !!v; }
+        }
+    };
+    function restoreQuery(ap, page, snap) {
+        ap.restore(snap);
+        if (PAGE_EXTRAS[page] && snap && snap.__extra !== undefined) PAGE_EXTRAS[page].set(snap.__extra);
+    }
     function runFilterLoad(key, run, onOK, opts) {
         opts = opts || {};
         var page = opts.page || key;
@@ -112,6 +124,7 @@
         var ap = analyticsPages[page];
         // The query this load asks for.
         var want = (ap && ap.getState) ? ap.getState() : null;
+        if (want && PAGE_EXTRAS[page]) want.__extra = PAGE_EXTRAS[page].get();
         if (opts.fromPoll) {
             if (AC.chartLoadBusy(loadKey)) return Promise.resolve();
             var gen = filterGen[key] = (filterGen[key] || 0) + 1;
@@ -131,7 +144,7 @@
         // newer table load runs, the controls are ITS query (see Cancel below).
         function siblingBusy() { return key !== page && AC.chartLoadBusy('filter-' + page, true); }
         var retryCancelled = opts.retry && function() {
-            if (want && ap.restore && !siblingBusy()) ap.restore(want);
+            if (want && ap.restore && !siblingBusy()) restoreQuery(ap, page, want);
             opts.retry(opts.prev);
         };
         return AC.chartLoad(host, run, {
@@ -145,7 +158,7 @@
                 // A charts load shares the page's controls with the table load.
                 // If a newer table load is still running, the controls belong
                 // to IT — restoring them would put a query over rows it is not.
-                if (back && ap && ap.restore && !siblingBusy()) ap.restore(back);
+                if (back && ap && ap.restore && !siblingBusy()) restoreQuery(ap, page, back);
                 AC.chartNotice(host, shownQuery[page] ? 'Cancelled — showing the previous results' : 'Cancelled', { dim: false, onRetry: retryCancelled });
                 return;
             }
@@ -174,10 +187,18 @@
         'event-rules': ['event-rules', 'ep-']
     };
 
-    function loadPageData(page) {
+    // Every navigation path calls this — loadPageData, and the analytics
+    // pages' reseedFromURL shortcut (in-app links and browser back/forward),
+    // which skips loadPageData. A load left running on a hidden page could
+    // otherwise be cancelled later and rewrite the visible page's URL.
+    function cancelOtherPageLoads(page) {
         Object.keys(PAGE_LOAD_KEYS).forEach(function(p) {
             if (p !== page) PAGE_LOAD_KEYS[p].forEach(function(k) { AC.chartLoadCancel(k); });
         });
+    }
+
+    function loadPageData(page) {
+        cancelOtherPageLoads(page);
         // Close the NOC live stream when navigating away so the SSE connection
         // isn't left open in the background.
         if (page !== 'noc' && window.FwmonNOC && window.FwmonNOC.stop) {
@@ -4754,6 +4775,7 @@
             // syslog / alerts / traps. Re-seed from URL and let them
             // refresh the data + chips.
             if (analyticsPages[page] && analyticsPages[page].reseedFromURL) {
+                cancelOtherPageLoads(page);
                 analyticsPages[page].reseedFromURL();
             } else {
                 loadPageData(page);
@@ -4777,6 +4799,7 @@
         // cross-page deep-link like /admin/alerts?device_id=42 actually applies on
         // a repeat visit (loadPageData's refresh() would reuse stale state).
         if (analyticsPages[page] && analyticsPages[page].reseedFromURL) {
+            cancelOtherPageLoads(page);
             analyticsPages[page].reseedFromURL();
         } else {
             loadPageData(page);
@@ -4798,6 +4821,7 @@
         if (page !== 'connections') stopConnRefresh();
         if (page !== 'devices') stopPurgePolling();
         if (analyticsPages[page] && analyticsPages[page].reseedFromURL) {
+            cancelOtherPageLoads(page);
             analyticsPages[page].reseedFromURL();
         } else {
             loadPageData(page);
