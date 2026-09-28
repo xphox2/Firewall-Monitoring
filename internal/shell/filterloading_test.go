@@ -89,7 +89,7 @@ func TestFilterLoad_RetryAfterCancelReappliesQuery(t *testing.T) {
 	mustContain(t, "admin-main.js", run, "onRetry: retryCancelled", "the Cancel notice uses that Retry")
 	mustContain(t, "admin-main.js", run, "var want = (ap && ap.getState) ? ap.getState() : null;", "the requested query is captured when the load starts")
 	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "onRetry: function() { setSearchControls(query); runSearch(target); }", "threat-intel Retry re-applies the cancelled search")
-	mustContain(t, "admin-reports.js", readJS(t, "admin-reports.js"), "if (sel) sel.value = want.period;", "reports Retry re-applies the cancelled period")
+	mustContain(t, "admin-reports.js", readJS(t, "admin-reports.js"), "function retryWanted() { applyChoices(want); loadPreview(); }", "reports Retry re-applies the cancelled period")
 	mustContain(t, "diagram-panels.js", readJS(t, "diagram-panels.js"), "again = () => { activatePill(wantPill); retry(); };", "panel Retry re-activates the cancelled range's pill")
 	mustContain(t, "admin-event-rules.js", readJS(t, "admin-event-rules.js"), "if (wrap && wrap.offsetParent) syncRuleFilterChips();", "the chips follow the filter that loaded")
 }
@@ -162,7 +162,7 @@ func TestFilterLoad_StateOnlyOnSuccess(t *testing.T) {
 	if n := strings.Count(ep, "window.FwmonEventRules.loadRules(0).then(function (lr) {\n"); n != 2 {
 		t.Errorf("both loadRules consumers must take the result; found %d", n)
 	}
-	if n := strings.Count(ep, "if (!lr || !lr.ok) return;") + strings.Count(ep, "if (!lr || !lr.ok) { window.FwmonEventRules.keepPendingPrefill(pending); return; }"); n != 2 {
+	if n := strings.Count(ep, "if (!lr || !lr.ok) return;") + strings.Count(ep, "if (!lr || !lr.ok) { window.FwmonEventRules.keepPendingPrefill(pending); routeFromHash(); return; }"); n != 2 {
 		t.Errorf("both loadRules consumers must return unless ok; found %d", n)
 	}
 }
@@ -365,7 +365,7 @@ func TestFilterLoad_ReviewRound3(t *testing.T) {
 	}
 	errBody := lr[errAt : errAt+errEnd]
 	sw := strings.Index(errBody, "if (pid !== currentProfileId) {")
-	clr := strings.Index(errBody, "targetProfileId = null;\n                if (wrap) AC.chartNotice(wrap, 'Could not load results'")
+	clr := strings.Index(errBody, "targetProfileId = null;\n                syncRuleFilterChips(); // the chips name the filter whose rows are shown")
 	if sw < 0 || clr < 0 || clr < sw {
 		t.Error("a FAILED profile switch must keep targetProfileId (the viewed profile) — clear it only after the switch branch")
 	}
@@ -483,14 +483,20 @@ func TestFilterLoad_ReviewRound7(t *testing.T) {
 	main := readJS(t, "admin-main.js")
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
 	errAt := strings.Index(run, "if (r.error || !r.data) {")
-	rest := strings.Index(run, "if (shown && ap && ap.restore && !siblingBusy()) restoreQuery(ap, page, shown);")
+	rest := strings.Index(run, "if (shown && ap && ap.restore && !siblingBusy() && !typing) restoreQuery(ap, page, shown);")
 	if errAt < 0 || rest < errAt {
 		t.Error("an error must restore the controls to the shown query, like Cancel")
 	}
 	mustContain(t, "admin-main.js", run, "'Could not load results — showing the previous results' : 'Could not load results', { dim: false, onRetry: retryCancelled });", "error Retry re-applies the failed query")
 	la := funcBody(t, main, `function loadAlerts\(opts\)`)
-	if i := strings.Index(la, "if (selectAllMatchingMode) { selectAllMatchingMode = false; updateAlertBulkToolbar(); }"); i < 0 || i > strings.Index(la, "runFilterLoad(") {
+	if i := strings.Index(la, "if (selectAllMatchingMode) selectAllMatchingMode = false;"); i < 0 || i > strings.Index(la, "runFilterLoad(") {
 		t.Error("a filter change must drop 'select all matching' BEFORE the load (bulk-ack uses the live filter)")
+	}
+	// The toolbar repaint must come AFTER the load is registered, or the
+	// banner (which checks chartLoadBusy) re-offers "select all" — caught in
+	// the browser check, not by a source pin.
+	if strings.Index(la, "updateAlertBulkToolbar();") < strings.Index(la, "var loading = runFilterLoad(") {
+		t.Error("loadAlerts repaints the bulk toolbar before the load is registered")
 	}
 
 	ctl := readJS(t, "admin-controls.js")
@@ -511,6 +517,41 @@ func TestFilterLoad_ReviewRound7(t *testing.T) {
 	mustContain(t, "admin-threatintel.js", ti, "if (shownLookupQ !== null) el('ti-lookup-q').value = shownLookupQ;", "lookup Cancel restores the shown query")
 	mustContain(t, "admin-threatintel.js", ti, "shownLookupQ = q;\n            renderLookup(", "recorded on success")
 
-	mustContain(t, "admin-event-profiles.js", readJS(t, "admin-event-profiles.js"), "if (!lr || !lr.ok) { window.FwmonEventRules.keepPendingPrefill(pending); return; }", "a create-from-alert prefill survives a failed lookup")
+	mustContain(t, "admin-event-profiles.js", readJS(t, "admin-event-profiles.js"), "if (!lr || !lr.ok) { window.FwmonEventRules.keepPendingPrefill(pending); routeFromHash(); return; }", "a create-from-alert prefill survives a failed lookup and the page still routes")
 	mustContain(t, "admin-event-rules.js", readJS(t, "admin-event-rules.js"), "try { sessionStorage.setItem('fwmon_rule_prefill', JSON.stringify(p)); }", "it is written back for the next visit")
+}
+
+// Eighth review (Opus 5.5): the filter-based bulk ack acts on the SHOWN
+// query, select-all cannot be re-armed during a load, errors restore on every
+// surface, background alert refreshes stay on their page, and a background
+// error never wipes what the user is typing.
+func TestFilterLoad_ReviewRound8(t *testing.T) {
+	main := readJS(t, "admin-main.js")
+	mustContain(t, "admin-main.js", main, "var params = buildAlertParams(0, shownQuery.alerts);", "bulk ack by filter uses the shown query")
+	mustContain(t, "admin-main.js", main, "var s = snap || (analyticsPages.alerts && analyticsPages.alerts.getState()) || {};", "buildAlertParams honours the snapshot")
+	mustContain(t, "admin-main.js", main, "var withSnoozed = (snap && snap.__extra !== undefined) ? !!snap.__extra : !!(snoozed && snoozed.checked);", "including Show snoozed")
+	en := funcBody(t, main, `function enableSelectAllMatching\(\)`)
+	if !strings.HasPrefix(strings.TrimSpace(en), "// Not while a filter load runs") || !strings.Contains(en, "if (AC.chartLoadBusy('filter-alerts', true)) return;") {
+		t.Error("select-all-matching cannot be armed while a filter load runs")
+	}
+	mustContain(t, "admin-main.js", main, "if (pageFullySelected && hasMoreMatching && !AC.chartLoadBusy('filter-alerts', true)) {", "nor offered")
+	ra := funcBody(t, main, `function refreshAlertsAtCurrentPage\(\)`)
+	if i := strings.Index(ra, "if (!alertsPage || !alertsPage.classList.contains('active')) return;"); i < 0 || i > strings.Index(ra, "runFilterLoad(") {
+		t.Error("an alert refresh from another page must not run the Alerts load in the background")
+	}
+	mustContain(t, "admin-main.js", main, "document.getElementById('page-' + page).contains(document.activeElement);", "a background error does not wipe a field being typed in")
+
+	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "// Like Cancel: Prev/Next read the controls, so they go back to\n                // the search whose rows are shown.\n                if (lastSearch) setSearchControls(lastSearch);", "search error restores")
+	rp := readJS(t, "admin-reports.js")
+	if strings.Count(rp, "if (shown) applyChoices(shown);") != 2 {
+		t.Error("reports: both Cancel and error put the shown choices back")
+	}
+	mustContain(t, "admin-event-profiles.js", readJS(t, "admin-event-profiles.js"), "// Like Cancel: the pickers go back to the scope whose result is shown.", "effective coverage error restores")
+	cd := funcBody(t, readJS(t, "admin-connection-detail.js"), `function cdLoad\(key, host, url, opts\)`)
+	eb := cd[strings.Index(cd, "if (r.error) {"):]
+	if !strings.Contains(eb[:200], "if (opts.onCancel) opts.onCancel();") {
+		t.Error("connection detail: an error restores the drawn range too")
+	}
+	mustContain(t, "diagram-panels.js", readJS(t, "diagram-panels.js"), "if (r.cancelled || r.error) {\n                // Cancel and error alike", "panel: an error restores the drawn pill too")
+	mustContain(t, "admin-flows.js", readJS(t, "admin-flows.js"), "var cMsg = append ? 'Cancelled' :", "a cancelled Load more claims no filter change")
 }

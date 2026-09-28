@@ -66,11 +66,22 @@
     // load puts those choices back so the controls match what is displayed.
     var shown = null;
 
+    function applyChoices(c) {
+        var sel = document.getElementById('report-period');
+        if (sel) sel.value = c.period;
+        previewTheme = c.theme;
+        previewLayout = c.layout;
+        paintThemePills();
+    }
+
     function loadPreview() {
         var f = frame();
         if (!f) return;
         var host = document.getElementById('report-host');
         var want = { period: period(), theme: previewTheme, layout: previewLayout };
+        // Retry puts the cancelled/failed choices back first: loadPreview reads
+        // the controls, which Cancel/error just reverted.
+        function retryWanted() { applyChoices(want); loadPreview(); }
         // AdminCommon.apiFetch already parses JSON and returns the body object
         // (it calls res.json() internally) — do NOT call .json() again here.
         var url = '/admin/api/reports/preview?period=' + encodeURIComponent(want.period) + '&theme=' + encodeURIComponent(theme()) + '&layout=' + encodeURIComponent(want.layout);
@@ -79,23 +90,8 @@
             .then(function (r) {
                 if (r.superseded) return;
                 if (r.cancelled) {
-                    if (shown) {
-                        var sel = document.getElementById('report-period');
-                        if (sel) sel.value = shown.period;
-                        previewTheme = shown.theme;
-                        previewLayout = shown.layout;
-                        paintThemePills();
-                    }
-                    AC.chartNotice(host, loadedOnce ? 'Cancelled — showing the previous report' : 'Cancelled', { onRetry: function () {
-                        // Put the cancelled choices back first: loadPreview
-                        // reads the controls, which Cancel just reverted.
-                        var sel = document.getElementById('report-period');
-                        if (sel) sel.value = want.period;
-                        previewTheme = want.theme;
-                        previewLayout = want.layout;
-                        paintThemePills();
-                        loadPreview();
-                    } });
+                    if (shown) applyChoices(shown);
+                    AC.chartNotice(host, loadedOnce ? 'Cancelled — showing the previous report' : 'Cancelled', { onRetry: retryWanted });
                     return;
                 }
                 if (r.error) throw r.error;
@@ -120,7 +116,9 @@
                 loadedOnce = true;
             })
             .catch(function (err) {
-                AC.chartNotice(host, 'Could not build the report: ' + ((err && err.message) || 'error'), { onRetry: loadPreview });
+                // Like Cancel: the controls go back to the report on screen.
+                if (shown) applyChoices(shown);
+                AC.chartNotice(host, 'Could not build the report: ' + ((err && err.message) || 'error'), { onRetry: retryWanted });
             });
     }
 

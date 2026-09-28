@@ -169,7 +169,13 @@
                 // more would page a query whose first page never appeared.
                 // Retry re-applies the failed query first.
                 var shown = shownQuery[page] || opts.prev;
-                if (shown && ap && ap.restore && !siblingBusy()) restoreQuery(ap, page, shown);
+                // Not while the user is typing a newer query in this page's
+                // filters: a background failure must not wipe their input (the
+                // pending edit commits and loads when they finish).
+                var typing = document.activeElement && document.activeElement.matches &&
+                    document.activeElement.matches('input[type="text"], input[type="search"], input:not([type]), textarea') &&
+                    document.getElementById('page-' + page) && document.getElementById('page-' + page).contains(document.activeElement);
+                if (shown && ap && ap.restore && !siblingBusy() && !typing) restoreQuery(ap, page, shown);
                 AC.chartNotice(host, shownQuery[page] ? 'Could not load results — showing the previous results' : 'Could not load results', { dim: false, onRetry: retryCancelled });
                 return;
             }
@@ -1308,12 +1314,11 @@
 
     function loadAlerts(opts) {
         opts = opts || {};
-        // "Select all N matching" is bound to the FILTER, and bulk-ack builds
-        // its request from the live filter: a changed filter must drop it now,
-        // not when the new rows arrive, or an ack during/after a slow or failed
-        // load would hit a different (possibly much larger) set.
-        if (selectAllMatchingMode) { selectAllMatchingMode = false; updateAlertBulkToolbar(); }
-        runFilterLoad('alerts', function(signal) {
+        // "Select all N matching" is bound to the FILTER: a changed filter must
+        // drop it now, not when the new rows arrive, or an ack during/after a
+        // slow or failed load would hit a different (possibly much larger) set.
+        if (selectAllMatchingMode) selectAllMatchingMode = false;
+        var loading = runFilterLoad('alerts', function(signal) {
             // Ensure the device + site lists are loaded so the filter dropdowns can be
             // populated (they back manual filtering and the deep-link chip labels).
             var needs = [];
@@ -1336,6 +1341,12 @@
             updateAlertPagination(alerts.length, total);
             loadAlertCharts();
         }, { prev: opts.prev, retry: function(p) { loadAlerts({ prev: p }); } });
+        // Repaint the toolbar only AFTER the load is registered (runFilterLoad
+        // starts it synchronously), so the banner sees it busy and does not
+        // re-offer "select all"; and again when it settles (Cancel/error keep
+        // the old rows, whose selection may be offered again).
+        updateAlertBulkToolbar();
+        if (loading && loading.then) loading.then(function() { updateAlertBulkToolbar(); });
     }
 
     // (Silenced-sources panel removed in v0.11.93 — source suppression is now
@@ -1348,6 +1359,12 @@
     // refresh (because every visible row got acked and the filter is "unack"),
     // step back one page until we find content or hit page 1.
     function refreshAlertsAtCurrentPage() {
+        // An ack/snooze from an alert opened on another page (the #alert/ID
+        // deep link) must not run the Alerts page's load in the background —
+        // its restore would rewrite THAT page's URL. The Alerts page reloads
+        // when it is next shown.
+        var alertsPage = document.getElementById('page-alerts');
+        if (!alertsPage || !alertsPage.classList.contains('active')) return;
         var pageSize = ALERTS_PAGE_SIZE;
         var pageEnd = alertsOffset; // current offset == end of current page
         var pageStart = Math.max(0, pageEnd - pageSize);
@@ -1422,7 +1439,7 @@
                 '<a href="#" data-action="cancel-select-all-matching" style="color:var(--fwmon-accent);text-decoration:underline">Clear selection</a>';
             return;
         }
-        if (pageFullySelected && hasMoreMatching) {
+        if (pageFullySelected && hasMoreMatching && !AC.chartLoadBusy('filter-alerts', true)) {
             banner.style.display = '';
             banner.innerHTML =
                 Object.keys(alertSelection).length + ' selected on this page. ' +
@@ -1435,6 +1452,9 @@
     }
 
     function enableSelectAllMatching() {
+        // Not while a filter load runs: the count and the rows belong to the
+        // previous filter, and the next result replaces them.
+        if (AC.chartLoadBusy('filter-alerts', true)) return;
         selectAllMatchingMode = true;
         updateAlertBulkToolbar();
     }
@@ -1474,7 +1494,9 @@
             // meaning of "clear all alerts" is "ack the unacknowledged ones."
             // Re-acking already-acked rows would overwrite their existing notes,
             // which is rarely what an operator wants.
-            var params = buildAlertParams(0); // limit/offset are irrelevant for the UPDATE
+            // The SHOWN query (the rows the operator selected from), not the
+            // live controls: those may name a filter still loading or failed.
+            var params = buildAlertParams(0, shownQuery.alerts); // limit/offset are irrelevant for the UPDATE
             if (params.indexOf('acknowledged=') === -1) {
                 params += '&acknowledged=false';
             }
@@ -1557,14 +1579,17 @@
         alertsPage(alertsOffset);
     }
 
-    function buildAlertParams(limit) {
+    // snap (optional) is a query snapshot — shownQuery.alerts — used by the
+    // filter-based bulk ack so it acts on the query whose rows are ON SCREEN,
+    // never on a filter that is still loading or failed to load.
+    function buildAlertParams(limit, snap) {
         var parts = ['limit=' + limit];
         // Source filters from page state (getState), NOT the DOM selects: the
         // device/site dropdowns are populated asynchronously, so a deep-link like
         // /admin/alerts?device_id=42 must apply from URL state even before (or
         // without) the matching <option> existing. State is kept correct by
         // stateFromURL + bindAutoApply.
-        var s = (analyticsPages.alerts && analyticsPages.alerts.getState()) || {};
+        var s = snap || (analyticsPages.alerts && analyticsPages.alerts.getState()) || {};
         if (s.hours && Number(s.hours) !== 24) parts.push('hours=' + s.hours);
         if (s.device_id) parts.push('device_id=' + encodeURIComponent(s.device_id));
         if (s.site_id) parts.push('site_id=' + encodeURIComponent(s.site_id));
@@ -1575,7 +1600,8 @@
         // include_snoozed=true (handlers_analytics.go applyAlertFilters).
         // The "Show snoozed" toggle is the only path to view/unsnooze them.
         var snoozed = document.getElementById('alerts-show-snoozed');
-        if (snoozed && snoozed.checked) parts.push('include_snoozed=true');
+        var withSnoozed = (snap && snap.__extra !== undefined) ? !!snap.__extra : !!(snoozed && snoozed.checked);
+        if (withSnoozed) parts.push('include_snoozed=true');
         return parts.join('&');
     }
 

@@ -1354,12 +1354,15 @@
             // plainly that the LIST is still the previous filter's rows; Load
             // more continues those rows (shownSamplesState).
             if (r.cancelled) {
-                if (host) AC.chartNotice(host, 'Cancelled — the list still shows the previous filter\u2019s rows', { dim: false, onRetry: retry });
+                // A cancelled "Load more" changed no filter.
+                var cMsg = append ? 'Cancelled' : 'Cancelled — the list still shows the previous filter\u2019s rows';
+                if (host) AC.chartNotice(host, cMsg, { dim: false, onRetry: retry });
                 return;
             }
             if (r.error || !r.data) {
                 if (r.error && window.fwmonLog) window.fwmonLog.error('FwmonFlows: samples fetch failed', r.error);
-                if (host) AC.chartNotice(host, 'Could not load results — the list still shows the previous filter\u2019s rows', { dim: false, onRetry: retry });
+                var eMsg = append ? 'Could not load more rows' : 'Could not load results — the list still shows the previous filter\u2019s rows';
+                if (host) AC.chartNotice(host, eMsg, { dim: false, onRetry: retry });
                 else AC.showError('Could not load the flow samples');
                 return;
             }

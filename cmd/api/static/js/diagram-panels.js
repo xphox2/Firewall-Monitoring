@@ -35,7 +35,8 @@
     function panelLoad(key, host, url, pillsBox, retry) {
         return AC.chartLoad(host, signal => window.apiFetch(url, { signal: signal }), { key: key, label: 'Loading…' }).then(r => {
             if (r.superseded) return null;
-            if (r.cancelled) {
+            if (r.cancelled || r.error) {
+                // Cancel and error alike: the pill goes back to the range drawn.
                 const shown = pillsBox ? shownPills.get(pillsBox) : null;
                 const wantPill = pillsBox ? pillsBox.querySelector('.panel-range-pill.active') : null;
                 let again = retry;
@@ -43,11 +44,8 @@
                     activatePill(shown);
                     again = () => { activatePill(wantPill); retry(); };
                 }
-                AC.chartNotice(host, shown ? 'Cancelled — showing the previous results' : 'Cancelled', { onRetry: again });
-                return null;
-            }
-            if (r.error) {
-                AC.chartNotice(host, 'Could not load results', { onRetry: retry });
+                const msg = r.error ? 'Could not load results' : (shown ? 'Cancelled — showing the previous results' : 'Cancelled');
+                AC.chartNotice(host, msg, { onRetry: again });
                 return null;
             }
             if (pillsBox) {

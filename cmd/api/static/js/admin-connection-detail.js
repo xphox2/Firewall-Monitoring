@@ -54,6 +54,8 @@
                 return null;
             }
             if (r.error) {
+                // Like Cancel: the range controls go back to the drawn range.
+                if (opts.onCancel) opts.onCancel();
                 AC.chartNotice(host, 'Could not load results', { onRetry: opts.retry });
                 return null;
             }

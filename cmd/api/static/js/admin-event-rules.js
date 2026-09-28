@@ -238,6 +238,7 @@
                     return { error: err };
                 }
                 targetProfileId = null;
+                syncRuleFilterChips(); // the chips name the filter whose rows are shown
                 if (wrap) AC.chartNotice(wrap, 'Could not load results', { dim: false, onRetry: function () { loadRules(pid, nextFilter); } });
                 return { error: err };
             }

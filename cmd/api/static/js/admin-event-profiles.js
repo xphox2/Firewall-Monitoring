@@ -60,7 +60,8 @@
                 // race the lookup.
                 if (pending.editId) {
                     window.FwmonEventRules.loadRules(0).then(function (lr) {
-                        if (!lr || !lr.ok) { window.FwmonEventRules.keepPendingPrefill(pending); return; }
+                        // Keep the prefill for the next visit, but still show the page.
+                        if (!lr || !lr.ok) { window.FwmonEventRules.keepPendingPrefill(pending); routeFromHash(); return; }
                         var r = window.FwmonEventRules.getRules().find(function (x) { return x.id === pending.editId; });
                         window.FwmonEventRules.openFromPrefill(pending);
                         showDetail((r && r.profile_id) || (defaultProfile() || {}).id || 0, 'rules');
@@ -667,7 +668,14 @@
                 return;
             }
             if (r.error) {
-                AC.chartNotice(out, 'Could not load results', { dim: false, onRetry: function () { loadEffective(q); } });
+                // Like Cancel: the pickers go back to the scope whose result is shown.
+                if (dSel) dSel.value = effShown.device;
+                if (sSel) sSel.value = effShown.site;
+                AC.chartNotice(out, 'Could not load results', { dim: false, onRetry: function () {
+                    if (dSel) dSel.value = want.device;
+                    if (sSel) sSel.value = want.site;
+                    loadEffective(q);
+                } });
                 return;
             }
             effShown = want;

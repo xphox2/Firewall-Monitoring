@@ -295,7 +295,10 @@
             }
             if (r.error) {
                 if (window.fwmonLog) window.fwmonLog.error('threat-intel search failed', r.error);
-                AC.chartNotice(host, 'Could not load results', { dim: false, onRetry: function() { runSearch(target); } });
+                // Like Cancel: Prev/Next read the controls, so they go back to
+                // the search whose rows are shown.
+                if (lastSearch) setSearchControls(lastSearch);
+                AC.chartNotice(host, 'Could not load results', { dim: false, onRetry: function() { setSearchControls(query); runSearch(target); } });
                 return;
             }
             searchOffset = target;
