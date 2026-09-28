@@ -239,8 +239,10 @@ func (h *Handler) UpdateDeviceConnection(c *gin.Context) {
 		return
 	}
 
+	// A connection to a retired device is hidden everywhere else, so it cannot
+	// be edited either (deleting one by id is still allowed).
 	var conn models.DeviceConnection
-	if err := db.Gorm().First(&conn, id).Error; err != nil {
+	if err := db.Gorm().Scopes(database.ActiveConnections).First(&conn, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, response.Error("Connection not found"))
 		return
 	}

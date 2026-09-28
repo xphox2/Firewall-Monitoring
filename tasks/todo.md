@@ -245,7 +245,7 @@ matches; a batch query expecting MANY wants the opposite plan. Never blanket-app
 
 ## PR 1 — v0.11.268: connections never reference retired devices
 - [x] Poller: VPN upsert-loop choke point + overlay nameGroups filter; drop "?" fallback; upserted count in log/return
-- [x] DB: UpsertAutoConnection/L2 nil-returning backstop + sync.Map + AutoConnectionSkipCount; name refresh only while "?"
+- [x] DB: UpsertAutoConnection/L2 nil-returning backstop + mutex-guarded skip record + AutoConnectionSkipCount; name refresh only while "?"
 - [x] DB/handlers: active-scoped GetAllConnections/GetConnectionStatuses/dashboard/VPN cross-fill; detail/traffic/events 404; create/update reject retired
 - [x] Migration v69 delete connections to retired/missing devices
 - [x] Tests (poller-level no-row + zero skip count, L2 pin, sweep, rename survives, reads, create/update, v69 SQLite+PG); mutation checks

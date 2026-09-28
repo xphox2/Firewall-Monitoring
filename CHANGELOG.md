@@ -20,8 +20,9 @@ record still names the retired device. The "?" is the missing device's name.
   error, so the cleanup of stale connections keeps running.
 - **Every list, map, status and detail read ignores a connection whose device
   is retired**: the Connections page, the map, the dashboard, the NOC site
-  breakdown and the VPN panel's peer links. Opening such a connection, or its
-  traffic, flows or events, returns "Connection not found".
+  breakdown and the VPN panel's peer links. Opening or editing such a
+  connection, or its traffic, flows or events, returns "Connection not found".
+  It can still be deleted by id.
 - **The map's VPN panel no longer links a tunnel to a retired device.** The
   surviving device's tunnel to it is listed as Off-Net (a peer that is not a
   monitored device) instead of linking to the retired device's page.

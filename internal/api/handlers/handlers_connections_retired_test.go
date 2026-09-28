@@ -94,6 +94,12 @@ func TestConnectionDetailEndpoints_404ForRetiredEndpoint(t *testing.T) {
 			t.Errorf("GET connection%s: status = %d, want 404; body: %s", suffix, w.Code, w.Body.String())
 		}
 	}
+
+	w := doPartialUpdateRequest(t, h.UpdateDeviceConnection, "/api/connections/:id", ghost.ID,
+		map[string]interface{}{"name": "renamed"})
+	if w.Code != 404 {
+		t.Errorf("PUT connection: status = %d, want 404; body: %s", w.Code, w.Body.String())
+	}
 }
 
 func TestGetDashboardAll_HidesConnectionsToRetiredDevices(t *testing.T) {

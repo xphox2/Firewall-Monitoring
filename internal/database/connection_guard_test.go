@@ -121,6 +121,15 @@ func TestConnectionReads_ExcludeRetiredEndpoints(t *testing.T) {
 	if _, err := d.GetConnectionTraffic(ghost.ID, 24); err == nil {
 		t.Error("GetConnectionTraffic returned data for a connection whose endpoint is retired")
 	}
+	// A direct-family row (what the L2 detector writes) takes the interface
+	// path, which does not go through the tunnel-name lookup.
+	l2ghost := models.DeviceConnection{Name: "? ↔ OPNsense", SourceDeviceID: gone.ID, DestDeviceID: b.ID, ConnectionType: "ethernet", Status: "down", AutoDetected: true}
+	if err := d.db.Create(&l2ghost).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := d.GetConnectionTraffic(l2ghost.ID, 24); err == nil {
+		t.Error("GetConnectionTraffic (direct family) returned data for a connection whose endpoint is retired")
+	}
 }
 
 // v69 removes rows to retired or missing devices and nothing else.
