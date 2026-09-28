@@ -28,11 +28,13 @@ help: ## Show this help
 # true. ci.yml jobs: build-test (tidy-check, gofmt, vet, build, `go test
 # -race`), static-analysis (staticcheck, pinned), gosec (pinned + excludes),
 # vuln-scan (govulncheck, pinned). The Postgres integration job is CI-only
-# (needs a live server) and tailwind-freshness rebuilds CSS — run those via
-# `make test-integration` / `make tailwind` when relevant; every other gate
-# is mirrored here. `test` (non-race) is kept alongside `test-race` so the
-# gate still runs on hosts without a C toolchain.
-qa: tidy-check fmt-check vet staticcheck gosec vuln build test test-race ## Run the full QA gate (same as CI)
+# (needs a live server) — run it via `make test-integration`; every other
+# gate is mirrored here, including tailwind-freshness. That one is not only
+# about CSS edits: Tailwind scans the JS too, so a token like `!badge` in
+# `if (!badge)` regenerates a component class variant (v0.11.269). `test`
+# (non-race) is kept alongside `test-race` so the gate still runs on hosts
+# without a C toolchain.
+qa: tidy-check fmt-check vet staticcheck gosec vuln build test test-race tailwind-check ## Run the full QA gate (same as CI)
 	@echo "QA OK (v$(VERSION))"
 
 .PHONY: test
@@ -79,6 +81,10 @@ node_modules: package.json package-lock.json
 .PHONY: tailwind
 tailwind: node_modules ## Compile Tailwind CSS assets
 	npm run build
+
+.PHONY: tailwind-check
+tailwind-check: tailwind ## Fail if the committed tailwind.css is stale (CI tailwind-freshness)
+	@git diff --quiet -- cmd/api/static/css/tailwind.css || { echo "tailwind.css is stale: commit the regenerated file (or rename a JS token like !badge that Tailwind reads as a class)"; exit 1; }
 
 .PHONY: build
 build: tailwind ## Build all binaries into ./bin (reproducible, canonical fwmon-* names)

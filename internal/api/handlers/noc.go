@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log"
@@ -33,18 +34,32 @@ const nocWindow = 5 * time.Minute
 // live stream — it only fires when a write genuinely can't make progress.
 const sseWriteTimeout = 15 * time.Second
 
+// nocFeedRefreshTicks re-sends an unchanged live feed every Nth tick (60 s at
+// the 5 s cadence). Sends are non-blocking, so a slow client can drop a feed
+// frame; the feed otherwise changes only every few minutes, and this bounds how
+// long such a client shows a stale one.
+const nocFeedRefreshTicks = 12
+
 // nocHub is an in-process fan-out broadcaster: a single goroutine recomputes the
-// NOC snapshot on a ticker and pushes the marshaled JSON to every subscribed SSE
-// connection. One DB computation serves all viewers. Sends are non-blocking — a
-// slow client drops a frame rather than stalling the broadcaster.
+// NOC snapshot on a ticker and pushes it to every subscribed SSE connection. One
+// DB computation serves all viewers. Sends are non-blocking — a slow client
+// drops a frame rather than stalling the broadcaster.
+//
+// The channels carry complete SSE frames. The snapshot is the default (unnamed)
+// event, every tick. The live feed (v0.11.269) is a named "feed" event, sent
+// only when its lists change or every nocFeedRefreshTicks: it is several times
+// the size of the snapshot and changes on the 5-minute detector cycle.
 type nocHub struct {
 	db       database.Store
 	interval time.Duration
 
-	mu         sync.Mutex
-	subs       map[chan []byte]struct{}
-	latest     []byte    // most recent marshaled snapshot, sent to new subscribers immediately
-	lastErrLog time.Time // throttles the compute-failure log (M10); guarded by mu
+	mu             sync.Mutex
+	subs           map[chan []byte]struct{}
+	latestSnapshot []byte    // last snapshot frame, replayed to new subscribers
+	latestFeed     []byte    // last feed frame (current generated_at), replayed to new subscribers
+	lastFeedLists  []byte    // the last BROADCAST feed's lists, for change detection
+	ticks          int       // broadcasts since start, for the periodic feed refresh
+	lastErrLog     time.Time // throttles the compute-failure log (M10); guarded by mu
 }
 
 func newNOCHub(db database.Store, interval time.Duration) *nocHub {
@@ -102,28 +117,66 @@ func (h *nocHub) computeAndBroadcast() {
 		h.mu.Unlock()
 		return
 	}
+	// The feed travels separately; the snapshot frame never carries it.
+	feed := snap.Feed
+	snap.Feed = nil
 	b, err := json.Marshal(snap)
 	if err != nil {
 		return
 	}
+	frames := [][]byte{sseFrame("", b)}
+
 	h.mu.Lock()
-	h.latest = b
-	for ch := range h.subs {
-		select {
-		case ch <- b:
-		default: // subscriber buffer full — drop this frame for that client
+	defer h.mu.Unlock()
+	h.latestSnapshot = frames[0]
+	h.ticks++
+	if feed != nil {
+		// Compare the lists only: the snapshot stamps generated_at every tick,
+		// so it is cleared for the comparison and set again afterwards.
+		feed.GeneratedAt = time.Time{}
+		lists, lerr := json.Marshal(feed)
+		feed.GeneratedAt = snap.GeneratedAt
+		full, ferr := json.Marshal(feed)
+		if lerr == nil && ferr == nil {
+			h.latestFeed = sseFrame("feed", full)
+			if !bytes.Equal(lists, h.lastFeedLists) || h.ticks%nocFeedRefreshTicks == 0 {
+				h.lastFeedLists = lists
+				frames = append(frames, h.latestFeed)
+			}
 		}
 	}
-	h.mu.Unlock()
+	for ch := range h.subs {
+		for _, f := range frames {
+			select {
+			case ch <- f:
+			default: // subscriber buffer full — drop this frame for that client
+			}
+		}
+	}
+}
+
+// sseFrame renders one Server-Sent Events frame; event "" is the default event.
+func sseFrame(event string, data []byte) []byte {
+	var b bytes.Buffer
+	if event != "" {
+		b.WriteString("event: ")
+		b.WriteString(event)
+		b.WriteByte('\n')
+	}
+	b.WriteString("data: ")
+	b.Write(data)
+	b.WriteString("\n\n")
+	return b.Bytes()
 }
 
 // subscribe registers a new SSE client and returns its channel plus the latest
-// snapshot (may be nil before the first compute) for an immediate first paint.
+// frames — the snapshot, then the live feed — (nil before the first compute)
+// for an immediate first paint.
 // The 0→1 subscriber transition computes a fresh snapshot inline (M11): the
 // hub idles while nobody watches, so whatever `latest` holds may be minutes or
 // hours stale.
 func (h *nocHub) subscribe() (chan []byte, []byte) {
-	ch := make(chan []byte, 4)
+	ch := make(chan []byte, 8) // a tick can carry two frames (snapshot + feed)
 	h.mu.Lock()
 	wasIdle := len(h.subs) == 0
 	h.subs[ch] = struct{}{}
@@ -132,7 +185,10 @@ func (h *nocHub) subscribe() (chan []byte, []byte) {
 		h.computeAndBroadcast() // fresh first paint; delivered via ch and latest
 	}
 	h.mu.Lock()
-	latest := h.latest
+	var latest []byte
+	if h.latestSnapshot != nil {
+		latest = append(append(latest, h.latestSnapshot...), h.latestFeed...)
+	}
 	h.mu.Unlock()
 	return ch, latest
 }
@@ -178,8 +234,8 @@ func (h *Handler) GetNOCSnapshot(c *gin.Context) {
 
 // GetNOCStream is the Server-Sent Events endpoint feeding the live NOC dashboard.
 // Authenticated by the admin cookie (EventSource sends cookies automatically).
-// It subscribes to the hub, sends the latest snapshot immediately, then streams
-// each new snapshot until the client disconnects (ctx cancelled).
+// It subscribes to the hub, sends the latest snapshot and feed immediately, then
+// streams each new frame until the client disconnects (ctx cancelled).
 func (h *Handler) GetNOCStream(c *gin.Context) {
 	if h.nocHub == nil {
 		c.JSON(http.StatusServiceUnavailable, response.Error("NOC stream unavailable"))
@@ -208,18 +264,13 @@ func (h *Handler) GetNOCStream(c *gin.Context) {
 	ch, latest := h.nocHub.subscribe()
 	defer h.nocHub.unsubscribe(ch)
 
+	// writeSSE writes complete SSE frames (the hub formats them).
 	writeSSE := func(b []byte) bool {
 		// Rolling per-write deadline (audit L5): bound how long a single flush can
 		// block on an unresponsive client. Best-effort — if the writer chain has no
 		// deadline support this is a no-op and the write behaves as before.
 		_ = rc.SetWriteDeadline(time.Now().Add(sseWriteTimeout))
-		if _, err := c.Writer.Write([]byte("data: ")); err != nil {
-			return false
-		}
 		if _, err := c.Writer.Write(b); err != nil {
-			return false
-		}
-		if _, err := c.Writer.Write([]byte("\n\n")); err != nil {
 			return false
 		}
 		flusher.Flush()

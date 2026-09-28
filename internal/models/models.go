@@ -1612,10 +1612,11 @@ type FlowSample struct {
 	SrcASNOrg string `json:"src_asn_org,omitempty" gorm:"column:src_asn_org;type:text"`
 	DstASNOrg string `json:"dst_asn_org,omitempty" gorm:"column:dst_asn_org;type:text"`
 	// ThreatFlag is a bitfield set at ingest when an endpoint matches the
-	// threat-intel feed (internal/threatintel): bit 0 (1) = source is known-bad,
-	// bit 1 (2) = destination is known-bad. 0 = clean / no feed loaded. Migration
-	// v14 adds the column; the threat_intel detector aggregates rows where it is
-	// non-zero.
+	// threat-intel feed (internal/threatintel): 1 = source IP is known-bad,
+	// 2 = destination IP is known-bad, 4 = source ASN is known-bad, 8 =
+	// destination ASN is known-bad. 0 = clean / no feed loaded. Migration v14
+	// adds the column; the threat_intel detector aggregates rows where it is
+	// non-zero, and the NOC threat lists split them by session initiator.
 	ThreatFlag uint8 `json:"threat_flag,omitempty" gorm:"column:threat_flag;default:0;not null"`
 	// ASPath / NextHop are BGP routing context from the collector's sFlow
 	// extended_gateway parse (R5/migration v15), present only for BGP-speaking

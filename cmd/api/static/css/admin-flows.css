@@ -601,9 +601,85 @@
 
 .fwmon-noc-drill-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
-/* Live Detections collapsible summary. */
-.fwmon-noc-det-summary { cursor: pointer; list-style: none; padding: 4px 0; }
-.fwmon-noc-det-summary::-webkit-details-marker { display: none; }
+/* NOC live feed + threats (v0.11.269). */
+.fwmon-noc-feed-card, .fwmon-noc-threats-card { margin-top: 16px; }
+.fwmon-noc-card-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.fwmon-noc-feed-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 0.82rem; color: var(--fwmon-text-dim); }
+.fwmon-noc-feed-controls select { margin-left: 4px; }
+.fwmon-noc-feed-check { display: inline-flex; align-items: center; gap: 4px; }
+.fwmon-noc-feed-pause {
+    background: var(--fwmon-panel-bg); color: var(--fwmon-text); border: 1px solid var(--fwmon-border);
+    border-radius: var(--fwmon-radius-sm); padding: 3px 10px; cursor: pointer; font: inherit;
+}
+.fwmon-noc-feed-pause[aria-pressed="true"] { border-color: var(--fwmon-accent); color: var(--fwmon-accent); }
+.fwmon-noc-feed-paused { color: var(--fwmon-sig-warn); font-size: 0.78rem; }
+.fwmon-noc-feed, .fwmon-noc-threat-list { list-style: none; margin: 0; padding: 0; }
+.fwmon-noc-feed > li { border-top: 1px solid var(--fwmon-border); }
+.fwmon-noc-feed > li:first-child { border-top: 0; }
+.fwmon-noc-feed-row {
+    display: grid;
+    /* minmax(0, …) tracks shrink with the card (the spans ellipsize), so a
+       mid-width window never scrolls sideways. */
+    grid-template-columns: 5.5rem minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 2fr) 3.5rem;
+    gap: 8px; align-items: center; padding: 6px 4px; color: var(--fwmon-text); text-decoration: none; font-size: 0.82rem;
+}
+.fwmon-noc-feed-row:hover { background: var(--fwmon-hover); }
+.fwmon-noc-feed-row:focus-visible { outline: 2px solid var(--fwmon-accent); outline-offset: -2px; }
+.fwmon-noc-feed-row > span, .fwmon-noc-threat-row > span { min-width: 0; }
+.fwmon-noc-feed-type { font-family: var(--fwmon-font-mono, monospace); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fwmon-noc-feed-dev { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fwmon-noc-feed-dev, .fwmon-noc-feed-when { color: var(--fwmon-text-dim); }
+.fwmon-noc-feed-route { font-family: var(--fwmon-font-mono, monospace); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fwmon-noc-feed-msg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fwmon-noc-feed-when { text-align: right; }
+.fwmon-noc-feed-rep { color: var(--fwmon-text-dim); }
+.fwmon-noc-feed-firing { color: var(--fwmon-sig-crit); }
+.fwmon-noc-feed-tag {
+    display: inline-block; padding: 0 6px; border-radius: var(--fwmon-radius-sm);
+    border: 1px solid var(--fwmon-border); color: var(--fwmon-text-dim); font-size: 0.72rem; font-family: inherit;
+}
+.fwmon-noc-feed-new { animation: fwmon-noc-feed-in 0.6s ease-out; }
+@keyframes fwmon-noc-feed-in {
+    from { opacity: 0; transform: translateY(-6px); background: var(--fwmon-accent-bg); }
+    to   { opacity: 1; transform: none; background: transparent; }
+}
+.fwmon-noc-feed-empty { color: var(--fwmon-text-dim); font-size: 0.82rem; margin: 8px 4px 0; }
+.fwmon-link-btn { background: none; border: 0; padding: 0; color: var(--fwmon-accent); cursor: pointer; font: inherit; text-decoration: underline; }
+.fwmon-noc-threat-summary { display: flex; flex-wrap: wrap; gap: 16px; font-size: 0.82rem; color: var(--fwmon-text-dim); margin-bottom: 10px; }
+.fwmon-noc-threat-summary b { color: var(--fwmon-text); }
+.fwmon-noc-threat-summary .out b { color: var(--fwmon-sig-crit); }
+.fwmon-noc-threat-lists { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.fwmon-noc-threat-col h4 { margin: 0 0 6px; font-size: 0.85rem; color: var(--fwmon-text-dim); font-weight: 600; }
+.fwmon-noc-threat-row {
+    display: grid; grid-template-columns: minmax(0, 1.3fr) 5rem 8rem minmax(0, 1.5fr);
+    gap: 8px; align-items: center; padding: 5px 4px; border-top: 1px solid var(--fwmon-border);
+    color: var(--fwmon-text); text-decoration: none; font-size: 0.8rem;
+}
+.fwmon-noc-threat-row:hover { background: var(--fwmon-hover); }
+.fwmon-noc-threat-row:focus-visible { outline: 2px solid var(--fwmon-accent); outline-offset: -2px; }
+.fwmon-noc-threat-row .svc, .fwmon-noc-threat-row .req { font-family: var(--fwmon-font-mono, monospace); color: var(--fwmon-text-dim); }
+.fwmon-noc-threat-row .hosts { color: var(--fwmon-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fwmon-noc-threat-row .addr { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Side-by-side threat lists need room; stack them on narrower windows. */
+@media (max-width: 1140px) {
+    .fwmon-noc-threat-lists { grid-template-columns: 1fr; }
+}
+.fwmon-noc-threat-empty { color: var(--fwmon-text-dim); font-size: 0.82rem; padding: 6px 4px; }
+@media (prefers-reduced-motion: reduce) {
+    .fwmon-noc-feed-new { animation: none; }
+}
+@media (max-width: 720px) {
+    .fwmon-noc-feed-row { grid-template-columns: 5rem 1fr 3rem; }
+    .fwmon-noc-feed-row > span:empty { display: none; } /* stacked rows: no blank line for a missing route */
+    .fwmon-noc-feed-row .fwmon-noc-feed-dev,
+    .fwmon-noc-feed-row .fwmon-noc-feed-route,
+    .fwmon-noc-feed-row .fwmon-noc-feed-msg { grid-column: 1 / -1; }
+    .fwmon-noc-feed-when { grid-row: 1; grid-column: 3; }
+    .fwmon-noc-threat-lists { grid-template-columns: 1fr; }
+    .fwmon-noc-threat-row { grid-template-columns: 1fr auto; }
+    .fwmon-noc-threat-row .hosts { grid-column: 1 / -1; }
+    .fwmon-noc-feed-pause { padding: 6px 14px; }
+}
 
 /* Threat-intel form bits — now used ONLY by the dedicated Threat Intelligence
    page (/admin/threat-intel); the Flows page's feed card was removed. */

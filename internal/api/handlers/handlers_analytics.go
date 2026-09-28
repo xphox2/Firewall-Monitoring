@@ -146,7 +146,7 @@ func (h *Handler) GetAlerts(c *gin.Context) {
 		httputil.InternalError(c, "Failed to get alerts", err)
 		return
 	}
-	enrichAlertsDeviceSite(db.Gorm(), alerts)
+	database.EnrichAlertDeviceSite(db.Gorm(), alerts)
 
 	// AUDIT-193: surface a count-query failure as a 500 (mirroring the Find above)
 	// instead of discarding .Error — a transient count failure otherwise returned
@@ -175,76 +175,6 @@ func validateNumericFilter(c *gin.Context, name string) string {
 	return ""
 }
 
-// enrichAlertsDeviceSite fills each alert's transient DeviceName/SiteName from its
-// DeviceID in two batched queries (devices, then their sites), so the alerts list
-// and detail identify the device by NAME and show its site without an N+1.
-func enrichAlertsDeviceSite(g *gorm.DB, alerts []models.Alert) {
-	if len(alerts) == 0 {
-		return
-	}
-	idset := map[uint]struct{}{}
-	siteIDset := map[uint]struct{}{}
-	for _, a := range alerts {
-		if a.DeviceID != 0 {
-			idset[a.DeviceID] = struct{}{}
-		}
-		// Site-scoped alerts (e.g. the SFLOW_SECURITY_DIGEST storm rollup) carry no
-		// device but persist their own SiteID — resolve those site names too.
-		if a.SiteID != nil {
-			siteIDset[*a.SiteID] = struct{}{}
-		}
-	}
-	type devRow struct {
-		ID     uint
-		Name   string
-		SiteID *uint
-	}
-	devByID := make(map[uint]devRow)
-	if len(idset) > 0 {
-		ids := make([]uint, 0, len(idset))
-		for id := range idset {
-			ids = append(ids, id)
-		}
-		var devs []devRow
-		g.Model(&models.Device{}).Where("id IN ?", ids).Select("id, name, site_id").Scan(&devs)
-		for _, d := range devs {
-			devByID[d.ID] = d
-			if d.SiteID != nil {
-				siteIDset[*d.SiteID] = struct{}{}
-			}
-		}
-	}
-	siteName := map[uint]string{}
-	if len(siteIDset) > 0 {
-		sids := make([]uint, 0, len(siteIDset))
-		for id := range siteIDset {
-			sids = append(sids, id)
-		}
-		type siteRow struct {
-			ID   uint
-			Name string
-		}
-		var sites []siteRow
-		g.Model(&models.Site{}).Where("id IN ?", sids).Select("id, name").Scan(&sites)
-		for _, s := range sites {
-			siteName[s.ID] = s.Name
-		}
-	}
-	for i := range alerts {
-		if d, ok := devByID[alerts[i].DeviceID]; ok {
-			alerts[i].DeviceName = d.Name
-			if d.SiteID != nil {
-				alerts[i].SiteName = siteName[*d.SiteID]
-			}
-		}
-		// Fall back to the alert's own persisted SiteID (site-scoped, device-less
-		// alerts) when the device→site path didn't set a name.
-		if alerts[i].SiteName == "" && alerts[i].SiteID != nil {
-			alerts[i].SiteName = siteName[*alerts[i].SiteID]
-		}
-	}
-}
-
 func (h *Handler) GetAlert(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
@@ -261,7 +191,7 @@ func (h *Handler) GetAlert(c *gin.Context) {
 		return
 	}
 	alerts := []models.Alert{alert}
-	enrichAlertsDeviceSite(db.Gorm(), alerts)
+	database.EnrichAlertDeviceSite(db.Gorm(), alerts)
 	alert = alerts[0]
 	// The linked flow detections are the flows/detectors behind this alert — the
 	// detail view renders src→dst (with country/ASN) and which detectors fired.
@@ -289,7 +219,7 @@ func (h *Handler) SuggestEventRuleForAlert(c *gin.Context) {
 		return
 	}
 	al := []models.Alert{alert}
-	enrichAlertsDeviceSite(db.Gorm(), al)
+	database.EnrichAlertDeviceSite(db.Gorm(), al)
 	alert = al[0]
 
 	in := alerts.SuggestInput{
