@@ -1353,7 +1353,14 @@
 
     function loadSamples() { samplesLoad(0, false); }
 
-    function loadMoreSamples() { samplesLoad(flowsOffset, true); }
+    // Load more continues the rows on screen; while a samples load is running
+    // (a filter reload whose rows have not arrived), flowsOffset still belongs
+    // to the old filter, so appending from it would mix two filters.
+    function loadMoreSamples() {
+        var AC = window.AdminCommon;
+        if (AC && AC.chartLoadBusy && AC.chartLoadBusy('flows-samples')) return;
+        samplesLoad(flowsOffset, true);
+    }
 
     /* ------------------------------------------------------------------
      * CSV export (v0.10.216, bundle F4).

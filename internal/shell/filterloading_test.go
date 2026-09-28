@@ -310,3 +310,43 @@ func TestFilterLoad_CancelRestoresWhatIsShown(t *testing.T) {
 		t.Error("a cancelled profile switch must replace the old profile's rows (and keep targetProfileId) before clearing the target")
 	}
 }
+
+// Second fresh review: reloads follow the VIEWED profile, titles change with
+// the data, polls clear stale notices, Load more cannot mix filters, and the
+// config-diff Compare button is re-enabled before the closed-modal return.
+func TestFilterLoad_ReviewRound2(t *testing.T) {
+	er := readJS(t, "admin-event-rules.js")
+	if strings.Contains(er, "loadRules(currentProfileId, currentRuleFilter)") {
+		t.Error("save/delete must reload the viewed profile (viewedProfileId), not the last loaded one")
+	}
+	if n := strings.Count(er, "loadRules(viewedProfileId(), currentRuleFilter)"); n != 2 {
+		t.Errorf("both save and delete reload the viewed profile; found %d", n)
+	}
+
+	main := readJS(t, "admin-main.js")
+	for _, c := range []struct{ sig, title string }{
+		{`function loadAlertCharts\(\)`, "chartTitle.textContent = 'Alert Trend ('"},
+		{`function loadTrapCharts\(\)`, "chartTitle.textContent = 'Trap Frequency ('"},
+	} {
+		body := funcBody(t, main, c.sig)
+		ok := strings.Index(body, "}, function(result) {")
+		if i := strings.Index(body, c.title); i < 0 || ok < 0 || i < ok {
+			t.Errorf("%s must set its title in the success branch (a cancelled load would name an undrawn range)", c.sig)
+		}
+	}
+	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
+	mustContain(t, "admin-main.js", run, "if (host) AC.chartNoticeClear(host);", "a poll's fresh rows clear a stale Cancel notice")
+	mustContain(t, "admin-main.js", run, "shownQuery[page] ? 'Cancelled — showing the previous results' : 'Cancelled'", "a first-load Cancel does not claim previous results")
+	mustContain(t, "admin-common.js", readJS(t, "admin-common.js"), "chartNoticeClear: clearChartNotice,", "exported")
+
+	fl := readJS(t, "admin-flows.js")
+	mustContain(t, "admin-flows.js", funcBody(t, fl, `function loadMoreSamples\(\)`), "AC.chartLoadBusy('flows-samples')) return;", "Load more waits for a pending reload")
+
+	dd := readJS(t, "admin-device-detail.js")
+	od := funcBody(t, dd, `function openConfigDiff\(fromID, toID\)`)
+	upd := strings.Index(od, "updateConfigCompareButton();")
+	act := strings.Index(od, "if (!modal.classList.contains('active')) return;")
+	if upd < 0 || act < 0 || upd > act {
+		t.Error("Compare must be re-enabled BEFORE the closed-modal return, or closing mid-load leaves it disabled")
+	}
+}

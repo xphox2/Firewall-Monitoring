@@ -118,6 +118,8 @@
             return Promise.resolve().then(function() { return run(undefined); }).then(function(data) {
                 if (filterGen[key] !== gen || !data) return;
                 if (want) shownQuery[page] = want;
+                // Fresh rows replace what a Cancel/error notice referred to.
+                if (host) AC.chartNoticeClear(host);
                 onOK(data);
             }).catch(function(e) { fwmonLog.error('Refresh of ' + key + ' failed:', e); });
         }
@@ -138,7 +140,7 @@
             if (r.cancelled) {
                 var back = shownQuery[page] || opts.prev;
                 if (back && ap && ap.restore) ap.restore(back);
-                AC.chartNotice(host, 'Cancelled — showing the previous results', { dim: false, onRetry: retryCancelled });
+                AC.chartNotice(host, shownQuery[page] ? 'Cancelled — showing the previous results' : 'Cancelled', { dim: false, onRetry: retryCancelled });
                 return;
             }
             if (r.error || !r.data) {
@@ -2092,12 +2094,13 @@
         var s = analyticsPages.alerts && analyticsPages.alerts.getState();
         var hoursParam = (s && s.hours) ? ('?hours=' + s.hours) : '';
         var hrs = (s && s.hours) ? Number(s.hours) : 24;
-        var chartTitle = document.getElementById('alerts-trend-title');
-        if (chartTitle) chartTitle.textContent = 'Alert Trend (' + analyticsRangeLabel(hrs) + ')';
         runFilterLoad('alerts-charts', function(signal) {
             return apiFetch(API_BASE + '/alerts/stats' + hoursParam, { signal: signal });
         }, function(result) {
             if (!result.data) return;
+            // The title names the range drawn, so it changes with the data.
+            var chartTitle = document.getElementById('alerts-trend-title');
+            if (chartTitle) chartTitle.textContent = 'Alert Trend (' + analyticsRangeLabel(hrs) + ')';
             var d = result.data;
             document.getElementById('alerts-total').textContent = (d.total || 0).toLocaleString();
             var crit = 0, warn = 0, inf = 0;
@@ -2183,12 +2186,12 @@
         var s = analyticsPages.traps && analyticsPages.traps.getState();
         var hoursParam = (s && s.hours) ? ('?hours=' + s.hours) : '';
         var hrs = (s && s.hours) ? Number(s.hours) : 24;
-        var chartTitle = document.getElementById('traps-freq-title');
-        if (chartTitle) chartTitle.textContent = 'Trap Frequency (' + analyticsRangeLabel(hrs) + ')';
         runFilterLoad('traps-charts', function(signal) {
             return apiFetch(API_BASE + '/traps/stats' + hoursParam, { signal: signal });
         }, function(result) {
             if (!result.data) return;
+            var chartTitle = document.getElementById('traps-freq-title');
+            if (chartTitle) chartTitle.textContent = 'Trap Frequency (' + analyticsRangeLabel(hrs) + ')';
             var d = result.data;
             document.getElementById('traps-total').textContent = (d.total || 0).toLocaleString();
             var crit = 0, warn = 0, inf = 0;

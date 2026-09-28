@@ -163,6 +163,14 @@
     // loadRules loads + renders. profileId filters to one layer (0/undefined =
     // all rules — the legacy standalone view); filter is the Rules-tab chip
     // (all|alert|suppress|temp|disabled), applied client-side.
+    // viewedProfileId is the profile the page shows: the target of a switch
+    // that was cancelled (its header is up, its rows are not) or the loaded one.
+    // Reloads after a save/delete must use it, or a cancelled switch followed
+    // by a save would paint the OLD profile's rows under the new header.
+    function viewedProfileId() {
+        return targetProfileId !== null ? targetProfileId : currentProfileId;
+    }
+
     // loadRules resolves { ok } once the rows are rendered, or { cancelled }
     // / { error } — callers that act on the loaded rules must check ok.
     function loadRules(profileId, filter) {
@@ -829,7 +837,7 @@
                     AC.apiFetch(API + '/alerts/' + ackId + '/acknowledge', { method: 'POST', body: { notes: 'Suppressed via Event Rule' } }).catch(function () { });
                 }
                 pendingAckAlertId = null;
-                loadRules(currentProfileId, currentRuleFilter);
+                loadRules(viewedProfileId(), currentRuleFilter);
             }).catch(function (err) { AC.showError('Save failed: ' + err.message); });
         });
     }
@@ -863,7 +871,7 @@
             if (!ok) return;
             AC.apiFetch(API + '/event-rules/' + id, { method: 'DELETE' }).then(function () {
                 AC.showSuccess('Rule deleted');
-                loadRules(currentProfileId, currentRuleFilter); // keep the profile view (bare loadRules resets to all)
+                loadRules(viewedProfileId(), currentRuleFilter); // keep the profile view (bare loadRules resets to all)
             }).catch(function (err) { AC.showError('Delete failed: ' + err.message); });
         });
     }

@@ -2165,6 +2165,7 @@
         chartLoadBusy: chartLoadBusy,
         chartLoadCancel: chartLoadCancel,
         chartNotice: chartNotice,
+        chartNoticeClear: clearChartNotice,
         tunnelClaim: tunnelClaim,
         tunnelGroupClaim: tunnelGroupClaim,
         tunnelStateBadge: tunnelStateBadge,

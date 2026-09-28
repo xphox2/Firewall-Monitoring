@@ -278,7 +278,7 @@
             if (r.superseded) return;
             if (r.cancelled) {
                 if (lastSearch) setSearchControls(lastSearch);
-                AC.chartNotice(host, 'Cancelled — showing the previous results', { dim: false, onRetry: function() { setSearchControls(query); runSearch(target); } });
+                AC.chartNotice(host, lastSearch ? 'Cancelled — showing the previous results' : 'Cancelled', { dim: false, onRetry: function() { setSearchControls(query); runSearch(target); } });
                 return;
             }
             if (r.error) {
