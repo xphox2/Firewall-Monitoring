@@ -2050,14 +2050,18 @@
         var resolveOuter;
         var result = new Promise(function(res) { resolveOuter = res; });
 
-        // Esc cancels the load unless focus is somewhere that owns Esc (a
-        // dialog or a text field). A clicked range button keeps focus, so the
-        // test is "not owned elsewhere", not "focus inside the chart".
+        // Esc cancels the load unless focus is somewhere that owns Esc. A
+        // dialog always does (its Esc closes it — a load that belongs to the
+        // dialog stops via fwmon:modalclose); a text field or select does
+        // unless it is one of the load's own controls (opts.escScope). A
+        // clicked range button keeps focus, so the test is "not owned
+        // elsewhere", not "focus inside the chart".
         function onKey(e) {
             if (e.key !== 'Escape') return;
             var t = e.target;
-            var owned = t && t.closest && t.closest('[role="dialog"], .fwmon-confirm-overlay, input, textarea, select');
-            if (!owned || list.concat(escScope).some(function(c) { return c.contains(t); })) cancel();
+            if (t && t.closest && t.closest('[role="dialog"], .fwmon-confirm-overlay')) return;
+            var field = t && t.closest && t.closest('input, textarea, select');
+            if (!field || list.concat(escScope).some(function(c) { return c.contains(t); })) cancel();
         }
         function abortFetch() { if (ctrl) { try { ctrl.abort(); } catch (e) { /* ignore */ } } }
         function finish(r) {
@@ -2098,7 +2102,9 @@
                     if (el) el.textContent = secs;
                 });
             }, 1000);
-            document.addEventListener('keydown', onKey);
+            // No overlay (the results are hidden) means nothing on screen
+            // says a load is running, so Esc must not silently stop it.
+            if (overlays.length) document.addEventListener('keydown', onKey);
         }, CHART_OVERLAY_DELAY_MS);
 
         Promise.resolve()

@@ -100,25 +100,31 @@
     // started (it skips while one is running), and is dropped if the user
     // starts one while it is in flight.
     var filterGen = {};
+    // shownQuery[page] is the query whose results are on screen, recorded when
+    // a load SUCCEEDS. Cancel restores it — not the previously committed query,
+    // which may itself have been superseded or failed and never displayed.
+    var shownQuery = {};
     function runFilterLoad(key, run, onOK, opts) {
         opts = opts || {};
         var page = opts.page || key;
         var loadKey = 'filter-' + key;
         var host = document.getElementById(opts.host || (key + '-load-host'));
+        var ap = analyticsPages[page];
+        // The query this load asks for.
+        var want = (ap && ap.getState) ? ap.getState() : null;
         if (opts.fromPoll) {
             if (AC.chartLoadBusy(loadKey)) return Promise.resolve();
             var gen = filterGen[key] = (filterGen[key] || 0) + 1;
             return Promise.resolve().then(function() { return run(undefined); }).then(function(data) {
                 if (filterGen[key] !== gen || !data) return;
+                if (want) shownQuery[page] = want;
                 onOK(data);
             }).catch(function(e) { fwmonLog.error('Refresh of ' + key + ' failed:', e); });
         }
         filterGen[key] = (filterGen[key] || 0) + 1; // drops a poll already in flight
-        // The query this load asks for. A Cancel puts the controls back to
-        // opts.prev, so Retry must first re-apply this one — retrying from the
-        // restored controls would just reload the old results.
-        var ap = analyticsPages[page];
-        var want = (opts.prev && ap && ap.getState) ? ap.getState() : null;
+        // A Cancel puts the controls back to the shown query, so Retry must
+        // first re-apply this one — retrying from the restored controls would
+        // just reload the old results.
         var retryCancelled = opts.retry && function() {
             if (want && ap.restore) ap.restore(want);
             opts.retry(opts.prev);
@@ -130,15 +136,17 @@
         }).then(function(r) {
             if (r.superseded) return;
             if (r.cancelled) {
-                if (opts.prev && analyticsPages[page] && analyticsPages[page].restore) analyticsPages[page].restore(opts.prev);
+                var back = shownQuery[page] || opts.prev;
+                if (back && ap && ap.restore) ap.restore(back);
                 AC.chartNotice(host, 'Cancelled — showing the previous results', { dim: false, onRetry: retryCancelled });
                 return;
             }
             if (r.error || !r.data) {
                 if (r.error) fwmonLog.error('Loading ' + key + ' failed:', r.error);
-                AC.chartNotice(host, 'Could not load results', { dim: false, onRetry: opts.retry });
+                AC.chartNotice(host, 'Could not load results', { dim: false, onRetry: opts.retry && function() { opts.retry(opts.prev); } });
                 return;
             }
+            if (want) shownQuery[page] = want;
             onOK(r.data);
         });
     }

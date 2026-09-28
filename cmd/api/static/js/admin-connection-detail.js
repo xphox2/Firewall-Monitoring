@@ -14,6 +14,12 @@
     var tunnelCharts = {};
     var currentTrafficRange = '24h';
     var currentFlowHours = 24;
+    // The ranges whose data is on screen, set when a load succeeds. Cancel
+    // restores these — not the previously requested range, which may itself
+    // have been superseded and never drawn.
+    var shownTrafficRange = null;
+    var shownFlowHours = null;
+    var shownGroupRanges = {};
     var connDetail = null;
 
     // Per-loader generation: every load that renders bumps it, and a response
@@ -495,8 +501,6 @@
 
     function loadGroupChart(canvasId, deviceId, group, range, pillEl, hostId, fromRefresh) {
         var gk = (hostId && group) ? groupKey(hostId, group) : null;
-        var prevRange = gk ? (groupRanges[gk] || '24h') : null;
-        var prevPill = pillEl ? pillEl.parentElement.querySelector('.range-pill.active') : null;
         if (pillEl) setGroupPill(pillEl);
         // Remember the choice so the next poll re-applies it instead of snapping
         // every chart back to 24h.
@@ -511,8 +515,11 @@
                 // Cancel puts the range back, or the next poll would re-apply
                 // the range the user just cancelled.
                 onCancel: function() {
-                    if (gk) groupRanges[gk] = prevRange;
-                    if (prevPill) setGroupPill(prevPill);
+                    if (!gk) return;
+                    var shown = shownGroupRanges[gk] || '24h';
+                    groupRanges[gk] = shown;
+                    var shownPill = pillEl && pillEl.parentElement.querySelector('.range-pill[data-range="' + shown + '"]');
+                    if (shownPill) setGroupPill(shownPill);
                 },
                 retry: function() { loadGroupChart(canvasId, deviceId, group, range, pillEl, hostId, false); }
             }).then(function(result) {
@@ -520,6 +527,7 @@
             // canvas of this id can now belong to a different tunnel — cdLoad's
             // generation drops the stale response.
             if (!result) return;
+            if (gk) shownGroupRanges[gk] = range;
             var data = result.data;
             var canvas = document.getElementById(canvasId);
             if (!canvas) return;
@@ -628,6 +636,7 @@
             API_BASE + '/connections/' + connId + '/traffic?range=' + range,
             { fromPoll: opts.fromPoll, onCancel: opts.onCancel, retry: function() { setTrafficRange(range); } }).then(function(result) {
             if (!result) return;
+            shownTrafficRange = range;
             var data = result.data;
             if (!data) return;
 
@@ -684,11 +693,10 @@
     }
 
     function setTrafficRange(range) {
-        var prev = currentTrafficRange;
         applyTrafficRange(range);
-        // Cancel restores the previous range so the next poll does not
+        // Cancel restores the range on screen so the next poll does not
         // re-request the one the user just cancelled.
-        loadTrafficChart({ onCancel: function() { applyTrafficRange(prev); } });
+        loadTrafficChart({ onCancel: function() { if (shownTrafficRange !== null) applyTrafficRange(shownTrafficRange); } });
     }
 
     function loadFlowStats(opts) {
@@ -698,6 +706,7 @@
             API_BASE + '/connections/' + connId + '/flows?hours=' + hours,
             { fromPoll: opts.fromPoll, onCancel: opts.onCancel, retry: function() { setFlowRange(hours); } }).then(function(result) {
             if (!result) return;
+            shownFlowHours = hours;
             var data = result.data;
             if (!data) return;
 
@@ -841,9 +850,8 @@
     }
 
     function setFlowRange(hours) {
-        var prev = currentFlowHours;
         applyFlowRange(hours);
-        loadFlowStats({ onCancel: function() { applyFlowRange(prev); } });
+        loadFlowStats({ onCancel: function() { if (shownFlowHours !== null) applyFlowRange(shownFlowHours); } });
     }
 
     function switchTab(name, tabEl) {

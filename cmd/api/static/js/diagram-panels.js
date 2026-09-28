@@ -21,42 +21,54 @@
         panelChartInstances = {};
     }
 
+    // The pill whose range is on screen, per pills row — recorded when a load
+    // SUCCEEDS. Cancel re-activates it rather than the previously clicked pill,
+    // whose load may itself have been superseded and never drawn.
+    const shownPills = new WeakMap();
+
     // panelLoad runs one range load for a panel section under the shared
     // loading overlay (Cancel / Esc). It resolves the data on success and null
-    // otherwise. A user Cancel re-activates the previously active range pill
-    // (prevPill) and keeps what is on screen; a superseded load is silent.
-    // retry(prevPill) re-runs the same range; after a Cancel it first
-    // re-activates the cancelled range's pill, so the pills name what loads.
-    function panelLoad(key, host, url, prevPill, retry) {
+    // otherwise; a superseded load is silent. pillsBox is the section's range
+    // pills row (or null). A user Cancel keeps what is on screen and puts the
+    // shown range's pill back; its Retry first re-activates the cancelled
+    // range's pill, so the pills always name what loads.
+    function panelLoad(key, host, url, pillsBox, retry) {
         return AC.chartLoad(host, signal => window.apiFetch(url, { signal: signal }), { key: key, label: 'Loading…' }).then(r => {
             if (r.superseded) return null;
             if (r.cancelled) {
-                let again = () => retry(prevPill);
-                if (prevPill) {
-                    const wantPill = prevPill.parentElement.querySelector('.panel-range-pill.active');
-                    prevPill.parentElement.querySelectorAll('.panel-range-pill').forEach(p => p.classList.remove('active'));
-                    prevPill.classList.add('active');
-                    if (wantPill && wantPill !== prevPill) again = () => retry(activatePill(wantPill));
+                const shown = pillsBox ? shownPills.get(pillsBox) : null;
+                const wantPill = pillsBox ? pillsBox.querySelector('.panel-range-pill.active') : null;
+                let again = retry;
+                if (shown && wantPill && shown !== wantPill && shown.isConnected) {
+                    activatePill(shown);
+                    again = () => { activatePill(wantPill); retry(); };
                 }
-                AC.chartNotice(host, 'Cancelled — showing the previous results', { onRetry: again });
+                AC.chartNotice(host, shown ? 'Cancelled — showing the previous results' : 'Cancelled', { onRetry: again });
                 return null;
             }
             if (r.error) {
-                AC.chartNotice(host, 'Could not load results', { onRetry: () => retry(prevPill) });
+                AC.chartNotice(host, 'Could not load results', { onRetry: retry });
                 return null;
+            }
+            if (pillsBox) {
+                const active = pillsBox.querySelector('.panel-range-pill.active');
+                if (active) shownPills.set(pillsBox, active);
             }
             return r.data;
         });
     }
 
-    // activatePill marks el active among its sibling range pills and returns
-    // the pill that was active before, for panelLoad's Cancel restore.
+    // activatePill marks el active among its sibling range pills.
     function activatePill(el) {
-        const pills = el.parentElement.querySelectorAll('.panel-range-pill');
-        const prev = el.parentElement.querySelector('.panel-range-pill.active');
-        pills.forEach(p => p.classList.remove('active'));
+        el.parentElement.querySelectorAll('.panel-range-pill').forEach(p => p.classList.remove('active'));
         el.classList.add('active');
-        return prev === el ? null : prev;
+    }
+
+    // rowPills is the range pills row that sits just above a per-row chart
+    // container (path-table charts have none).
+    function rowPills(host) {
+        const prev = host && host.previousElementSibling;
+        return (prev && prev.classList.contains('panel-range-pills')) ? prev : null;
     }
 
     function panelChartOptions(yCallback) {
@@ -167,7 +179,7 @@
         }
     }
 
-    function loadPanelEvents(connId, hours, prevPill) {
+    function loadPanelEvents(connId, hours) {
         const container = document.getElementById('panel-events-list');
         const host = document.getElementById('panel-events-load-host');
         if (!container || !host) return;
@@ -176,7 +188,7 @@
         if (!container.querySelector('table')) container.innerHTML = '<div class="loading" style="padding:20px;">Loading events...</div>';
 
         const url = window.AdminCommon.API_BASE + '/connections/' + connId + '/events?hours=' + hours;
-        panelLoad('panel-events-' + connId, host, url, prevPill, p => loadPanelEvents(connId, hours, p)).then(function(res) {
+        panelLoad('panel-events-' + connId, host, url, document.getElementById('panel-events-range'), () => loadPanelEvents(connId, hours)).then(function(res) {
             if (!res || currentPanelConnId !== connId) return;
             const events = res.data || [];
             if (events.length === 0) {
@@ -390,12 +402,12 @@
         } catch (e) { console.error('Panel detail load failed:', e); }
     }
 
-    async function loadPanelTrafficChart(connId, range, prevPill) {
+    async function loadPanelTrafficChart(connId, range) {
         try {
             const loadHost = document.getElementById('panel-traffic-load-host');
             if (!loadHost) return;
             const resp = await panelLoad('panel-traffic-' + connId, loadHost, `${window.API_BASE}/connections/${connId}/traffic?range=${range}`,
-                prevPill, p => loadPanelTrafficChart(connId, range, p));
+                document.getElementById('panel-traffic-range'), () => loadPanelTrafficChart(connId, range));
             const data = resp && resp.data ? resp.data : resp;
             if (!data || currentPanelConnId !== connId) return;
             // M13 of the 2026-07-01 audit: operate on the stable host, and
@@ -421,18 +433,18 @@
     }
 
     function setPanelTrafficRange(el) {
-        const prev = activatePill(el);
-        if (currentPanelConnId) loadPanelTrafficChart(currentPanelConnId, el.dataset.range, prev);
+        activatePill(el);
+        if (currentPanelConnId) loadPanelTrafficChart(currentPanelConnId, el.dataset.range);
     }
 
     const PANEL_FLOW_CHARTS = ['proto', 'flowTime', 'topSrc', 'topDst'];
 
-    async function loadPanelFlowStats(connId, hours, prevPill) {
+    async function loadPanelFlowStats(connId, hours) {
         try {
             const loadHost = document.getElementById('panel-flow-load-host');
             if (!loadHost) return;
             const resp = await panelLoad('panel-flows-' + connId, loadHost, `${window.API_BASE}/connections/${connId}/flows?hours=${hours}`,
-                prevPill, p => loadPanelFlowStats(connId, hours, p));
+                document.getElementById('panel-flow-range'), () => loadPanelFlowStats(connId, hours));
             const data = resp && resp.data ? resp.data : resp;
             if (!data || currentPanelConnId !== connId) return;
             const hasData = data.total_flows > 0;
@@ -510,8 +522,8 @@
     }
 
     function setPanelFlowRange(el) {
-        const prev = activatePill(el);
-        if (currentPanelConnId) loadPanelFlowStats(currentPanelConnId, parseInt(el.dataset.hours), prev);
+        activatePill(el);
+        if (currentPanelConnId) loadPanelFlowStats(currentPanelConnId, parseInt(el.dataset.hours));
     }
 
     // Group rows into LOGICAL tunnels.
@@ -1329,12 +1341,12 @@
         }
     }
 
-    async function loadPanelInterfaceChart(rowId, deviceId, ifIndex, range, prevPill) {
+    async function loadPanelInterfaceChart(rowId, deviceId, ifIndex, range) {
         try {
             const host = panelRowChartHost(rowId);
             if (!host) return;
             const resp = await panelLoad('panel-iface-' + rowId, host, `${window.API_BASE}/devices/${deviceId}/interfaces/${ifIndex}/chart?range=${range}`,
-                prevPill, p => loadPanelInterfaceChart(rowId, deviceId, ifIndex, range, p));
+                rowPills(host), () => loadPanelInterfaceChart(rowId, deviceId, ifIndex, range));
             const data = resp && resp.data ? resp.data : resp;
             if (!Array.isArray(data)) return;
             const canvas = document.getElementById('pchart-' + rowId);
@@ -1394,12 +1406,12 @@
         return canvas ? canvas.parentElement : null;
     }
 
-    async function loadPanelTunnelChart(rowId, deviceId, tunnelName, range, prevPill) {
+    async function loadPanelTunnelChart(rowId, deviceId, tunnelName, range) {
         try {
             const host = panelRowChartHost(rowId);
             if (!host) return;
             const resp = await panelLoad('panel-tunnel-' + rowId, host, `${window.API_BASE}/devices/${deviceId}/vpn-group-chart?group=${encodeURIComponent(tunnelName)}&range=${range}`,
-                prevPill, p => loadPanelTunnelChart(rowId, deviceId, tunnelName, range, p));
+                rowPills(host), () => loadPanelTunnelChart(rowId, deviceId, tunnelName, range));
             const data = resp && resp.data ? resp.data : resp;
             if (!data) return;
             const canvas = document.getElementById('pchart-' + rowId);
@@ -1522,22 +1534,22 @@
         } else if (action === 'dp-flow-range') {
             setPanelFlowRange(el);
         } else if (action === 'dp-events-range') {
-            var prevEv = activatePill(el);
-            if (currentPanelConnId) loadPanelEvents(currentPanelConnId, parseInt(el.dataset.hours), prevEv);
+            activatePill(el);
+            if (currentPanelConnId) loadPanelEvents(currentPanelConnId, parseInt(el.dataset.hours));
         } else if (action === 'dp-toggle-tunnel') {
             togglePanelTunnel(el.dataset.row, parseInt(el.dataset.device), el.dataset.tunnel);
         } else if (action === 'dp-toggle-path') {
             togglePanelPath(el.dataset.row, parseInt(el.dataset.srcDevice), parseInt(el.dataset.dstDevice), el.dataset.tunnel);
         } else if (action === 'dp-tunnel-chart') {
             e.stopPropagation();
-            var prevT = activatePill(el);
-            loadPanelTunnelChart(el.dataset.row, parseInt(el.dataset.device), el.dataset.tunnel, el.dataset.range, prevT);
+            activatePill(el);
+            loadPanelTunnelChart(el.dataset.row, parseInt(el.dataset.device), el.dataset.tunnel, el.dataset.range);
         } else if (action === 'dp-toggle-iface') {
             togglePanelInterface(el.dataset.row, parseInt(el.dataset.device), parseInt(el.dataset.ifindex));
         } else if (action === 'dp-iface-chart') {
             e.stopPropagation();
-            var prevI = activatePill(el);
-            loadPanelInterfaceChart(el.dataset.row, parseInt(el.dataset.device), parseInt(el.dataset.ifindex), el.dataset.range, prevI);
+            activatePill(el);
+            loadPanelInterfaceChart(el.dataset.row, parseInt(el.dataset.device), parseInt(el.dataset.ifindex), el.dataset.range);
         }
     });
 

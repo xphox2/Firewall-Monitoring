@@ -655,7 +655,9 @@
             if (r.cancelled) {
                 if (dSel) dSel.value = effShown.device;
                 if (sSel) sSel.value = effShown.site;
-                AC.chartNotice(out, 'Cancelled — showing the previous results', { dim: false, onRetry: function () {
+                // Nothing has rendered yet on the first lookup — only the placeholder.
+                var had = !!out.querySelector('.ep-matrix-row, table, [data-ep-openprofile]');
+                AC.chartNotice(out, had ? 'Cancelled — showing the previous results' : 'Cancelled', { dim: false, onRetry: function () {
                     if (dSel) dSel.value = want.device;
                     if (sSel) sSel.value = want.site;
                     loadEffective(q);

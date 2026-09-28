@@ -178,12 +178,25 @@
             return AC.apiFetch(url, { signal: signal });
         }, { key: 'event-rules', label: 'Loading rules…', escScope: $('ep-rules-filter') }).then(function (r) {
             if (r.superseded) return { cancelled: true, superseded: true };
-            targetProfileId = null;
             if (r.cancelled) {
+                var retry = function () { loadRules(pid, nextFilter); };
+                if (pid !== currentProfileId) {
+                    // A cancelled profile switch: the page already shows the
+                    // new profile, so the old profile's rows must not stay
+                    // under its header, and "+ Add rule" keeps defaulting to
+                    // the profile being viewed (targetProfileId stays pid).
+                    if (wrap) {
+                        wrap.innerHTML = '<div class="empty-state" style="padding:32px;text-align:center;color:var(--fwmon-text-faint)">Rules for this profile were not loaded.</div>';
+                        AC.chartNotice(wrap, 'Cancelled', { dim: false, onRetry: retry });
+                    }
+                    return { cancelled: true };
+                }
+                targetProfileId = null;
                 syncRuleFilterChips();
-                if (wrap) AC.chartNotice(wrap, 'Cancelled — showing the previous results', { dim: false, onRetry: function () { loadRules(pid, nextFilter); } });
+                if (wrap) AC.chartNotice(wrap, 'Cancelled — showing the previous results', { dim: false, onRetry: retry });
                 return { cancelled: true };
             }
+            targetProfileId = null;
             if (r.error) {
                 // Admin-only API: operator/viewer get 403 — show a placeholder, not a
                 // broken page (no dead ends).

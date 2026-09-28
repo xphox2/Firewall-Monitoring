@@ -54,12 +54,22 @@ func TestFilterLoad_RestoreMechanics(t *testing.T) {
 	main := readJS(t, "admin-main.js")
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
 	sup := strings.Index(run, "if (r.superseded) return;")
-	rest := strings.Index(run, "analyticsPages[page].restore(opts.prev)")
+	rest := strings.Index(run, "if (back && ap && ap.restore) ap.restore(back);")
 	if sup < 0 || rest < 0 || sup > rest {
 		t.Error("runFilterLoad must return on a superseded load before the Cancel restore")
 	}
 	if strings.Index(run, "onOK(r.data);") < rest {
 		t.Error("onOK must run only after the cancel/error branches")
+	}
+	// Which query a Cancel restores: the one whose results are on screen,
+	// recorded on success — not the last committed one, which may have been
+	// superseded or failed and never displayed (fresh review, HIGH).
+	mustContain(t, "admin-main.js", run, "var back = shownQuery[page] || opts.prev;", "Cancel restores the SHOWN query")
+	if n := strings.Count(run, "if (want) shownQuery[page] = want;"); n != 2 {
+		t.Errorf("the shown query must be recorded on BOTH success paths (user load and poll); found %d", n)
+	}
+	if !strings.Contains(run, "if (want) shownQuery[page] = want;\n            onOK(r.data);") {
+		t.Error("the shown query is recorded in the success branch, right before onOK")
 	}
 	mustContain(t, "admin-main.js", run, "if (AC.chartLoadBusy(loadKey)) return Promise.resolve();", "a poll skips while the user's load runs")
 	mustContain(t, "admin-main.js", run, "if (filterGen[key] !== gen || !data) return;", "a poll in flight when the user starts a load is dropped")
@@ -77,10 +87,10 @@ func TestFilterLoad_RetryAfterCancelReappliesQuery(t *testing.T) {
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
 	mustContain(t, "admin-main.js", run, "if (want && ap.restore) ap.restore(want);", "Retry re-applies the cancelled query")
 	mustContain(t, "admin-main.js", run, "onRetry: retryCancelled", "the Cancel notice uses that Retry")
-	mustContain(t, "admin-main.js", run, "var want = (opts.prev && ap && ap.getState) ? ap.getState() : null;", "the requested query is captured when the load starts")
+	mustContain(t, "admin-main.js", run, "var want = (ap && ap.getState) ? ap.getState() : null;", "the requested query is captured when the load starts")
 	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "onRetry: function() { setSearchControls(query); runSearch(target); }", "threat-intel Retry re-applies the cancelled search")
 	mustContain(t, "admin-reports.js", readJS(t, "admin-reports.js"), "if (sel) sel.value = want.period;", "reports Retry re-applies the cancelled period")
-	mustContain(t, "diagram-panels.js", readJS(t, "diagram-panels.js"), "again = () => retry(activatePill(wantPill));", "panel Retry re-activates the cancelled range's pill")
+	mustContain(t, "diagram-panels.js", readJS(t, "diagram-panels.js"), "again = () => { activatePill(wantPill); retry(); };", "panel Retry re-activates the cancelled range's pill")
 	mustContain(t, "admin-event-rules.js", readJS(t, "admin-event-rules.js"), "syncRuleFilterChips(); // a Retry after Cancel", "the chips follow the filter that loaded")
 }
 
@@ -205,9 +215,13 @@ func TestFilterLoad_ConnectionDetailPolls(t *testing.T) {
 	mustContain(t, "admin-connection-detail.js", js, "if (!groupHostHeld('src-tunnel-charts')) renderTunnelCharts(", "the poll does not rebuild a host whose chart is loading or shows a notice")
 	mustContain(t, "admin-connection-detail.js", js, "if (!groupHostHeld('dst-tunnel-charts')) renderTunnelCharts(", "same for the destination side")
 	mustContain(t, "admin-connection-detail.js", js, "return AC.chartLoadBusy('cd-group-' + hostId) ||", "held = a prefix-busy group chart")
-	mustContain(t, "admin-connection-detail.js", js, "if (gk) groupRanges[gk] = prevRange;", "a cancelled group range is not re-applied by the next poll")
-	mustContain(t, "admin-connection-detail.js", js, "loadTrafficChart({ onCancel: function() { applyTrafficRange(prev); } });", "a cancelled traffic range is put back")
-	mustContain(t, "admin-connection-detail.js", js, "loadFlowStats({ onCancel: function() { applyFlowRange(prev); } });", "a cancelled flows range is put back")
+	// Cancel restores the range whose data is on screen, recorded on success.
+	mustContain(t, "admin-connection-detail.js", js, "var shown = shownGroupRanges[gk] || '24h';", "a cancelled group range goes back to the drawn one")
+	mustContain(t, "admin-connection-detail.js", js, "if (gk) shownGroupRanges[gk] = range;", "the drawn group range is recorded on success")
+	mustContain(t, "admin-connection-detail.js", js, "if (shownTrafficRange !== null) applyTrafficRange(shownTrafficRange);", "a cancelled traffic range goes back to the drawn one")
+	mustContain(t, "admin-connection-detail.js", js, "if (!result) return;\n            shownTrafficRange = range;", "the drawn traffic range is recorded on success")
+	mustContain(t, "admin-connection-detail.js", js, "if (shownFlowHours !== null) applyFlowRange(shownFlowHours);", "a cancelled flows range goes back to the drawn one")
+	mustContain(t, "admin-connection-detail.js", js, "if (!result) return;\n            shownFlowHours = hours;", "the drawn flows range is recorded on success")
 }
 
 // The connection-map panel's empty flows result used to REPLACE the flows
@@ -215,7 +229,7 @@ func TestFilterLoad_ConnectionDetailPolls(t *testing.T) {
 // existed.
 func TestFilterLoad_PanelEmptyFlowsKeepsMarkup(t *testing.T) {
 	js := readJS(t, "diagram-panels.js")
-	body := funcBody(t, js, `async function loadPanelFlowStats\(connId, hours, prevPill\)`)
+	body := funcBody(t, js, `async function loadPanelFlowStats\(connId, hours\)`)
 	if strings.Contains(body, "content.innerHTML") {
 		t.Error("an empty flows result must hide #panel-flow-content, not replace its markup")
 	}
@@ -271,4 +285,28 @@ func elementInner(html string, start int) string {
 		}
 	}
 	return html[start:]
+}
+
+// Panel pills, hidden loads and a cancelled profile switch (fresh review,
+// HIGH/MEDIUM): each Cancel puts back what is actually drawn.
+func TestFilterLoad_CancelRestoresWhatIsShown(t *testing.T) {
+	dp := readJS(t, "diagram-panels.js")
+	pl := funcBody(t, dp, `function panelLoad\(key, host, url, pillsBox, retry\)`)
+	mustContain(t, "diagram-panels.js", pl, "const shown = pillsBox ? shownPills.get(pillsBox) : null;", "Cancel re-activates the pill whose data is drawn")
+	mustContain(t, "diagram-panels.js", pl, "if (active) shownPills.set(pillsBox, active);", "the drawn pill is recorded on success")
+	if strings.Index(pl, "shownPills.set(") < strings.Index(pl, "if (r.error) {") {
+		t.Error("the drawn pill must be recorded only in the success branch")
+	}
+
+	fl := readJS(t, "admin-flows.js")
+	sl := funcBody(t, fl, `function samplesLoad\(offset, append\)`)
+	mustContain(t, "admin-flows.js", sl, "var host = mounted.appendChild ? mounted : null;", "a hidden samples load puts no notice on the host")
+
+	er := readJS(t, "admin-event-rules.js")
+	lr := funcBody(t, er, `function loadRules\(profileId, filter\)`)
+	sw := strings.Index(lr, "if (pid !== currentProfileId) {")
+	ph := strings.Index(lr, "Rules for this profile were not loaded.")
+	if sw < 0 || ph < 0 || ph < sw || ph > strings.Index(lr, "targetProfileId = null;") {
+		t.Error("a cancelled profile switch must replace the old profile's rows (and keep targetProfileId) before clearing the target")
+	}
 }

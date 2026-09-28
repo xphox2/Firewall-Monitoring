@@ -1317,9 +1317,18 @@
     function samplesLoad(offset, append) {
         var AC = window.AdminCommon;
         if (!AC || !AC.chartLoad) return;
-        var host = document.getElementById('flows-samples-host');
         var url = samplesURL(100, offset);
-        AC.chartLoad(flowsLoadHost('flows-samples-host', 'flows-view-samples'), function(signal) {
+        // While the Samples view is hidden the load runs with no overlay, and
+        // nothing is on screen for a Cancel/error notice to refer to — so the
+        // notices go only on a visible host, and a stale one is cleared here
+        // (chartLoad clears only the host it mounts on).
+        var mounted = flowsLoadHost('flows-samples-host', 'flows-view-samples');
+        var host = mounted.appendChild ? mounted : null;
+        var real = document.getElementById('flows-samples-host');
+        if (!host && real) {
+            Array.prototype.forEach.call(real.querySelectorAll(':scope > .fwmon-chart-notice'), function(n) { n.parentNode.removeChild(n); });
+        }
+        AC.chartLoad(mounted, function(signal) {
             return AC.apiFetch(url, { signal: signal });
         }, { key: 'flows-samples', label: append ? 'Loading more…' : 'Loading…', escScope: document.getElementById('page-flows') }).then(function(r) {
             if (r.superseded) return;
