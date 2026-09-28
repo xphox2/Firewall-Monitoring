@@ -69,6 +69,21 @@ func TestFilterLoad_RestoreMechanics(t *testing.T) {
 	mustContain(t, "admin-main.js", main, "loadSyslog({ fromPoll: true });", "the syslog auto-refresh is a silent poll")
 }
 
+// Cancel puts the controls back to the previous query, so a Retry that simply
+// reloaded from the controls would fetch the OLD results (found in the browser
+// check). Every surface re-applies the cancelled query before retrying.
+func TestFilterLoad_RetryAfterCancelReappliesQuery(t *testing.T) {
+	main := readJS(t, "admin-main.js")
+	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
+	mustContain(t, "admin-main.js", run, "if (want && ap.restore) ap.restore(want);", "Retry re-applies the cancelled query")
+	mustContain(t, "admin-main.js", run, "onRetry: retryCancelled", "the Cancel notice uses that Retry")
+	mustContain(t, "admin-main.js", run, "var want = (opts.prev && ap && ap.getState) ? ap.getState() : null;", "the requested query is captured when the load starts")
+	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "onRetry: function() { setSearchControls(query); runSearch(target); }", "threat-intel Retry re-applies the cancelled search")
+	mustContain(t, "admin-reports.js", readJS(t, "admin-reports.js"), "if (sel) sel.value = want.period;", "reports Retry re-applies the cancelled period")
+	mustContain(t, "diagram-panels.js", readJS(t, "diagram-panels.js"), "again = () => retry(activatePill(wantPill));", "panel Retry re-activates the cancelled range's pill")
+	mustContain(t, "admin-event-rules.js", readJS(t, "admin-event-rules.js"), "syncRuleFilterChips(); // a Retry after Cancel", "the chips follow the filter that loaded")
+}
+
 // Offsets and selection change only in the success branch — onOK, which starts
 // at the loader's second function argument. Before it, a cancelled Prev/Next
 // would move the pager to a page that is not on screen.

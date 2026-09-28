@@ -86,7 +86,16 @@
                         previewLayout = shown.layout;
                         paintThemePills();
                     }
-                    AC.chartNotice(host, loadedOnce ? 'Cancelled — showing the previous report' : 'Cancelled', { onRetry: loadPreview });
+                    AC.chartNotice(host, loadedOnce ? 'Cancelled — showing the previous report' : 'Cancelled', { onRetry: function () {
+                        // Put the cancelled choices back first: loadPreview
+                        // reads the controls, which Cancel just reverted.
+                        var sel = document.getElementById('report-period');
+                        if (sel) sel.value = want.period;
+                        previewTheme = want.theme;
+                        previewLayout = want.layout;
+                        paintThemePills();
+                        loadPreview();
+                    } });
                     return;
                 }
                 if (r.error) throw r.error;

@@ -879,8 +879,13 @@
         }
     });
 
-    // Traffic range select dropdown
+    // Traffic range select dropdown. The ranges start from the selects'
+    // defaults: a Cancel writes the previous range back into the select, and
+    // the old '24h' literal matched none of its hour-valued options (blank).
     var trafficSelect = document.getElementById('traffic-range-select');
+    if (trafficSelect && trafficSelect.value) currentTrafficRange = trafficSelect.value;
+    var flowSelectInit = document.getElementById('flow-range-select');
+    if (flowSelectInit && flowSelectInit.value) currentFlowHours = parseFloat(flowSelectInit.value);
     if (trafficSelect) {
         trafficSelect.addEventListener('change', function() {
             setTrafficRange(this.value);

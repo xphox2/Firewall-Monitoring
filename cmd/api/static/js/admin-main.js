@@ -114,6 +114,15 @@
             }).catch(function(e) { fwmonLog.error('Refresh of ' + key + ' failed:', e); });
         }
         filterGen[key] = (filterGen[key] || 0) + 1; // drops a poll already in flight
+        // The query this load asks for. A Cancel puts the controls back to
+        // opts.prev, so Retry must first re-apply this one — retrying from the
+        // restored controls would just reload the old results.
+        var ap = analyticsPages[page];
+        var want = (opts.prev && ap && ap.getState) ? ap.getState() : null;
+        var retryCancelled = opts.retry && function() {
+            if (want && ap.restore) ap.restore(want);
+            opts.retry(opts.prev);
+        };
         return AC.chartLoad(host, run, {
             key: loadKey,
             label: opts.label || 'Loading…',
@@ -122,7 +131,7 @@
             if (r.superseded) return;
             if (r.cancelled) {
                 if (opts.prev && analyticsPages[page] && analyticsPages[page].restore) analyticsPages[page].restore(opts.prev);
-                AC.chartNotice(host, 'Cancelled — showing the previous results', { dim: false, onRetry: opts.retry });
+                AC.chartNotice(host, 'Cancelled — showing the previous results', { dim: false, onRetry: retryCancelled });
                 return;
             }
             if (r.error || !r.data) {
@@ -807,7 +816,7 @@
             syslogOffset = messages.length;
             updateSyslogPagination(messages.length, total, !!(result.data && result.data.total_capped));
             loadSyslogCharts({ fromPoll: opts.fromPoll });
-        }, { prev: opts.prev, fromPoll: opts.fromPoll, label: 'Searching…', retry: function() { loadSyslog(); } });
+        }, { prev: opts.prev, fromPoll: opts.fromPoll, label: 'Searching…', retry: function(p) { loadSyslog({ prev: p }); } });
     }
 
     var syslogTotalCount = 0;
@@ -1043,7 +1052,7 @@
             renderAuditTable(logs, false);
             auditOffset = target + logs.length;
             updateAuditPagination(logs.length, total);
-        }, { prev: prev, label: 'Searching…', retry: function() { auditPage(target); } });
+        }, { prev: prev, label: 'Searching…', retry: function(p) { auditPage(target, p); } });
     }
 
     function buildAuditParams(limit) {
@@ -1278,7 +1287,7 @@
             alertsOffset = alerts.length;
             updateAlertPagination(alerts.length, total);
             loadAlertCharts();
-        }, { prev: opts.prev, retry: function() { loadAlerts(); } });
+        }, { prev: opts.prev, retry: function(p) { loadAlerts({ prev: p }); } });
     }
 
     // (Silenced-sources panel removed in v0.11.93 — source suppression is now
@@ -2114,7 +2123,7 @@
             renderTrapsTable(traps, false);
             trapsOffset = traps.length;
             loadTrapCharts();
-        }, { prev: opts.prev, retry: function() { loadTraps(); } });
+        }, { prev: opts.prev, retry: function(p) { loadTraps({ prev: p }); } });
     }
 
     function buildTrapParams(limit) {

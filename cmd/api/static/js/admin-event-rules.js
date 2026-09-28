@@ -198,6 +198,7 @@
             if (pid !== currentProfileId) groupCollapsed = {}; // per-profile collapse discipline
             currentProfileId = pid;
             currentRuleFilter = nextFilter;
+            syncRuleFilterChips(); // a Retry after Cancel loads a filter the chips no longer show
             rules = (r.data && r.data.data) || [];
             renderStats();
             renderTable();

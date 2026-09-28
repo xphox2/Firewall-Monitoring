@@ -25,19 +25,24 @@
     // loading overlay (Cancel / Esc). It resolves the data on success and null
     // otherwise. A user Cancel re-activates the previously active range pill
     // (prevPill) and keeps what is on screen; a superseded load is silent.
+    // retry(prevPill) re-runs the same range; after a Cancel it first
+    // re-activates the cancelled range's pill, so the pills name what loads.
     function panelLoad(key, host, url, prevPill, retry) {
         return AC.chartLoad(host, signal => window.apiFetch(url, { signal: signal }), { key: key, label: 'Loading…' }).then(r => {
             if (r.superseded) return null;
             if (r.cancelled) {
+                let again = () => retry(prevPill);
                 if (prevPill) {
+                    const wantPill = prevPill.parentElement.querySelector('.panel-range-pill.active');
                     prevPill.parentElement.querySelectorAll('.panel-range-pill').forEach(p => p.classList.remove('active'));
                     prevPill.classList.add('active');
+                    if (wantPill && wantPill !== prevPill) again = () => retry(activatePill(wantPill));
                 }
-                AC.chartNotice(host, 'Cancelled — showing the previous results', { onRetry: retry });
+                AC.chartNotice(host, 'Cancelled — showing the previous results', { onRetry: again });
                 return null;
             }
             if (r.error) {
-                AC.chartNotice(host, 'Could not load results', { onRetry: retry });
+                AC.chartNotice(host, 'Could not load results', { onRetry: () => retry(prevPill) });
                 return null;
             }
             return r.data;
@@ -171,7 +176,7 @@
         if (!container.querySelector('table')) container.innerHTML = '<div class="loading" style="padding:20px;">Loading events...</div>';
 
         const url = window.AdminCommon.API_BASE + '/connections/' + connId + '/events?hours=' + hours;
-        panelLoad('panel-events-' + connId, host, url, prevPill, () => loadPanelEvents(connId, hours)).then(function(res) {
+        panelLoad('panel-events-' + connId, host, url, prevPill, p => loadPanelEvents(connId, hours, p)).then(function(res) {
             if (!res || currentPanelConnId !== connId) return;
             const events = res.data || [];
             if (events.length === 0) {
@@ -390,7 +395,7 @@
             const loadHost = document.getElementById('panel-traffic-load-host');
             if (!loadHost) return;
             const resp = await panelLoad('panel-traffic-' + connId, loadHost, `${window.API_BASE}/connections/${connId}/traffic?range=${range}`,
-                prevPill, () => loadPanelTrafficChart(connId, range));
+                prevPill, p => loadPanelTrafficChart(connId, range, p));
             const data = resp && resp.data ? resp.data : resp;
             if (!data || currentPanelConnId !== connId) return;
             // M13 of the 2026-07-01 audit: operate on the stable host, and
@@ -427,7 +432,7 @@
             const loadHost = document.getElementById('panel-flow-load-host');
             if (!loadHost) return;
             const resp = await panelLoad('panel-flows-' + connId, loadHost, `${window.API_BASE}/connections/${connId}/flows?hours=${hours}`,
-                prevPill, () => loadPanelFlowStats(connId, hours));
+                prevPill, p => loadPanelFlowStats(connId, hours, p));
             const data = resp && resp.data ? resp.data : resp;
             if (!data || currentPanelConnId !== connId) return;
             const hasData = data.total_flows > 0;
@@ -1329,7 +1334,7 @@
             const host = panelRowChartHost(rowId);
             if (!host) return;
             const resp = await panelLoad('panel-iface-' + rowId, host, `${window.API_BASE}/devices/${deviceId}/interfaces/${ifIndex}/chart?range=${range}`,
-                prevPill, () => loadPanelInterfaceChart(rowId, deviceId, ifIndex, range));
+                prevPill, p => loadPanelInterfaceChart(rowId, deviceId, ifIndex, range, p));
             const data = resp && resp.data ? resp.data : resp;
             if (!Array.isArray(data)) return;
             const canvas = document.getElementById('pchart-' + rowId);
@@ -1394,7 +1399,7 @@
             const host = panelRowChartHost(rowId);
             if (!host) return;
             const resp = await panelLoad('panel-tunnel-' + rowId, host, `${window.API_BASE}/devices/${deviceId}/vpn-group-chart?group=${encodeURIComponent(tunnelName)}&range=${range}`,
-                prevPill, () => loadPanelTunnelChart(rowId, deviceId, tunnelName, range));
+                prevPill, p => loadPanelTunnelChart(rowId, deviceId, tunnelName, range, p));
             const data = resp && resp.data ? resp.data : resp;
             if (!data) return;
             const canvas = document.getElementById('pchart-' + rowId);
