@@ -143,7 +143,7 @@
     function setRange(range) {
         // The active pill still reloads when nothing is drawn (a cancelled first load).
         if (range === state.range && !state.window && hasCharts()) return;
-        var prev = { range: state.range, window: state.window };
+        var prev = { range: state.range, window: state.window, preview: state.preview };
         state.range = range;
         state.window = null;
         updateRangePillState();
@@ -352,6 +352,7 @@
     // encoded as UTC, as on the interface charts). "preview" marks a window
     // whose finer data was cancelled: the chart is the old data, stretched.
     function updateZoomChip(preview) {
+        state.preview = !!(preview && state.window);
         var chip = document.getElementById('fwmon-zoom-chip');
         var help = document.getElementById('fwmon-zoom-help');
         if (!chip) return;
@@ -411,7 +412,7 @@
                         state.range = prev.range;
                         state.window = prev.window;
                         updateRangePillState();
-                        updateZoomChip();
+                        updateZoomChip(prev.preview);
                     }
                     return;
                 }
