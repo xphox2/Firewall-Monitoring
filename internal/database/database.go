@@ -42,6 +42,10 @@ type Database struct {
 	// carry its own counts. nil-receiver-safe (a Database{} literal is a no-op).
 	ingest *syslogIngestMeter
 
+	// connSkips records auto-connection upserts refused for a retired or
+	// missing endpoint (connection_guard.go). A pointer for the same reason.
+	connSkips *autoConnSkipLog
+
 	// M8 encryption key-check verdict, set once by VerifyEncryptionKey at
 	// startup and read by EncryptionVerified (health/readiness, daemon
 	// fail-fast). encKeyBroken=true means the configured key chain provably
@@ -237,6 +241,7 @@ func Connect(cfg *config.Config) (*Database, error) {
 		return d.db.Create(&items).Error
 	})
 	d.ingest = newSyslogIngestMeter(time.Now)
+	d.connSkips = newAutoConnSkipLog()
 
 	return d, nil
 }

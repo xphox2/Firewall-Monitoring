@@ -783,7 +783,7 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 			log.Printf("Failed to get devices: %v", err)
 		}
 
-		if err := db.Gorm().Preload("SourceDevice").Preload("DestDevice").Limit(1000).Find(&connections).Error; err != nil {
+		if err := db.Gorm().Scopes(database.ActiveConnections).Preload("SourceDevice").Preload("DestDevice").Limit(1000).Find(&connections).Error; err != nil {
 			log.Printf("Failed to get connections: %v", err)
 		}
 

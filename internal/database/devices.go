@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"firewall-mon/internal/models"
@@ -395,16 +396,19 @@ func (d *Database) DeleteDevice(id uint) error {
 	})
 }
 
+// GetAllConnections returns every connection whose two endpoints are active
+// devices (ActiveConnections).
 func (d *Database) GetAllConnections() ([]models.DeviceConnection, error) {
 	var conns []models.DeviceConnection
-	err := d.db.Preload("SourceDevice").Preload("DestDevice").Find(&conns).Error
+	err := d.db.Scopes(ActiveConnections).Preload("SourceDevice").Preload("DestDevice").Find(&conns).Error
 	return conns, err
 }
 
-// GetConnectionStatuses returns only id and status for all connections (lightweight).
+// GetConnectionStatuses returns only id and status for the connections between
+// active devices (lightweight).
 func (d *Database) GetConnectionStatuses() ([]map[string]interface{}, error) {
 	var results []map[string]interface{}
-	err := d.db.Model(&models.DeviceConnection{}).Select("id, status").Find(&results).Error
+	err := d.db.Model(&models.DeviceConnection{}).Scopes(ActiveConnections).Select("id, status").Find(&results).Error
 	return results, err
 }
 
@@ -520,6 +524,19 @@ func (d *Database) UpsertAutoConnection(sourceID, destID uint, status, tunnelNam
 		matchMethod = "ip_match"
 	}
 
+	// Never write a connection to a retired or missing device. A skip returns
+	// nil, not an error: the poller treats an upsert error as an incomplete
+	// cycle and suspends the stale-connection sweep, which is the very thing
+	// that must run to remove an existing ghost row.
+	active, err := d.bothDevicesActive(sourceID, destID)
+	if err != nil {
+		return fmt.Errorf("upsert auto connection: check endpoints: %w", err)
+	}
+	if !active {
+		d.connSkips.record(sourceID, destID, connType)
+		return nil
+	}
+
 	existing, err := d.FindConnectionByDevicePairAndType(sourceID, destID, connType)
 	if err != nil {
 		return fmt.Errorf("upsert auto connection: lookup existing pair: %w", err)
@@ -530,13 +547,21 @@ func (d *Database) UpsertAutoConnection(sourceID, destID uint, status, tunnelNam
 			return nil // don't touch manual connections
 		}
 		// Update existing auto-detected connection
-		return d.db.Model(existing).Updates(map[string]interface{}{
+		updates := map[string]interface{}{
 			"status":          status,
 			"tunnel_names":    tunnelNames,
 			"connection_type": connType,
 			"match_method":    matchMethod,
 			"last_check":      time.Now(),
-		}).Error
+		}
+		// The name is otherwise the operator's: an auto row can be renamed and
+		// the rename must survive every cycle. Only the "? ↔ X" / "X ↔ ?"
+		// placeholder older versions wrote for an unresolved endpoint is
+		// replaced by the resolved name.
+		if isPlaceholderConnName(existing.Name) && name != "" && !isPlaceholderConnName(name) {
+			updates["name"] = name
+		}
+		return d.db.Model(&models.DeviceConnection{}).Where("id = ?", existing.ID).Updates(updates).Error
 	}
 
 	// Create new auto-detected connection with normalized direction
@@ -552,6 +577,13 @@ func (d *Database) UpsertAutoConnection(sourceID, destID uint, status, tunnelNam
 		LastCheck:      time.Now(),
 	}
 	return d.db.Create(conn).Error
+}
+
+// isPlaceholderConnName reports whether an auto-connection name is the
+// "? ↔ X" / "X ↔ ?" form the detectors wrote before an endpoint's device
+// could be resolved. An operator's name that merely contains "?" is not one.
+func isPlaceholderConnName(name string) bool {
+	return strings.HasPrefix(name, "? ↔ ") || strings.HasSuffix(name, " ↔ ?")
 }
 
 // L2LinkUpsert carries one inferred port-to-port link for UpsertAutoL2Connection.
@@ -587,9 +619,20 @@ func (d *Database) UpsertAutoL2Connection(l L2LinkUpsert) error {
 		l.SourceIfName, l.DestIfName = l.DestIfName, l.SourceIfName
 	}
 
+	// Same backstop as UpsertAutoConnection: never link a retired or missing
+	// device, and skip with nil so the poller's stale sweep keeps running.
+	active, err := d.bothDevicesActive(l.SourceID, l.DestID)
+	if err != nil {
+		return fmt.Errorf("upsert l2 connection: check endpoints: %w", err)
+	}
+	if !active {
+		d.connSkips.record(l.SourceID, l.DestID, l.ConnType)
+		return nil
+	}
+
 	// Manual connection for this pair+type → never touch, never shadow.
 	var manual int64
-	err := d.db.Model(&models.DeviceConnection{}).
+	err = d.db.Model(&models.DeviceConnection{}).
 		Where("((source_device_id = ? AND dest_device_id = ?) OR (source_device_id = ? AND dest_device_id = ?)) AND connection_type = ? AND auto_detected = ?",
 			l.SourceID, l.DestID, l.DestID, l.SourceID, l.ConnType, false).
 		Count(&manual).Error

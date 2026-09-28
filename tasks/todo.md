@@ -240,3 +240,18 @@ matches; a batch query expecting MANY wants the opposite plan. Never blanket-app
 - [x] Backend: DevicePurgeJob + v65; devicePurgeTables + reflection coverage; batchedDeleteWhere (ORDER BY, per-table batch, timeouts, retries, partitions); worker (CAS claim, advisory lock, stale requeue, shutdown flip); handlers + 5 admin routes + reauthCaller; docs; changelog 0.11.243
 - [x] UI: purge-device action, #purge-device-modal (estimate/name/password/2FA), PURGING badge + cancel, polling, detail banner
 - [x] QA gates; 2 review rounds; scratch-PG16 verification; PR #251; CI; merged; deployed rust-01 2026-09-07 04:55 UTC; v65 + worker verified, v0.11.243
+
+# Ghost connections / NOC feed / zoom re-query / filter loading (plan: ~/.claude/plans/elegant-stirring-dewdrop.md)
+
+## PR 1 — v0.11.268: connections never reference retired devices
+- [x] Poller: VPN upsert-loop choke point + overlay nameGroups filter; drop "?" fallback; upserted count in log/return
+- [x] DB: UpsertAutoConnection/L2 nil-returning backstop + mutex-guarded skip record + AutoConnectionSkipCount; name refresh only while "?"
+- [x] DB/handlers: active-scoped GetAllConnections/GetConnectionStatuses/dashboard/VPN cross-fill; detail/traffic/events 404; create/update reject retired
+- [x] Migration v69 delete connections to retired/missing devices
+- [x] Tests (poller-level no-row + zero skip count, L2 pin, sweep, rename survives, reads, create/update, v69 SQLite+PG); mutation checks
+- [ ] Docs + CHANGELOG 0.11.268 + ServerVersion/README; QA gates; Fable diff review; PR; CI; merge
+- [ ] Post-deploy (when the user says): #25513 gone and stays gone across cycles; OPNsense VPN panel unchanged
+
+## PR 2 — v0.11.269: NOC live feed + 60 s threats (own plan-mode delta first)
+## PR 3 — v0.11.270: zoom re-query + loading/Cancel (own plan-mode delta first)
+## PR 4 — v0.11.271: loading/Cancel on every server-side filter (own plan-mode delta first)

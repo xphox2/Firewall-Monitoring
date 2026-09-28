@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"firewall-mon/internal/models"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // validConnectionTypes is the server-side allowlist for the client-settable
@@ -101,7 +103,7 @@ func (h *Handler) GetConnectionEvents(c *gin.Context) {
 	}
 
 	var conn models.DeviceConnection
-	if err := db.Gorm().First(&conn, id).Error; err != nil {
+	if err := db.Gorm().Scopes(database.ActiveConnections).First(&conn, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, response.Error("Connection not found"))
 		return
 	}
@@ -193,12 +195,12 @@ func (h *Handler) CreateDeviceConnection(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("Source and destination cannot be the same device"))
 		return
 	}
-	if _, err := db.GetDevice(conn.SourceDeviceID); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("Source device not found"))
+	if msg := connectionEndpointError(db, conn.SourceDeviceID, "Source"); msg != "" {
+		c.JSON(http.StatusBadRequest, response.Error(msg))
 		return
 	}
-	if _, err := db.GetDevice(conn.DestDeviceID); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error("Destination device not found"))
+	if msg := connectionEndpointError(db, conn.DestDeviceID, "Destination"); msg != "" {
+		c.JSON(http.StatusBadRequest, response.Error(msg))
 		return
 	}
 
@@ -212,6 +214,20 @@ func (h *Handler) CreateDeviceConnection(c *gin.Context) {
 	c.JSON(http.StatusCreated, response.Success(conn))
 }
 
+// connectionEndpointError returns the 400 message for a connection endpoint
+// that cannot be linked, or "" when it can. GetDevice also returns retired
+// devices, and a connection to one would be hidden from every list and map.
+func connectionEndpointError(db database.Store, id uint, side string) string {
+	dev, err := db.GetDevice(id)
+	if err != nil {
+		return side + " device not found"
+	}
+	if dev.RetiredAt != nil {
+		return side + " device is retired"
+	}
+	return ""
+}
+
 func (h *Handler) UpdateDeviceConnection(c *gin.Context) {
 	db := h.reqDB(c)
 	if !httputil.RequireDB(c, db) {
@@ -223,8 +239,10 @@ func (h *Handler) UpdateDeviceConnection(c *gin.Context) {
 		return
 	}
 
+	// A connection to a retired device is hidden everywhere else, so it cannot
+	// be edited either (deleting one by id is still allowed).
 	var conn models.DeviceConnection
-	if err := db.Gorm().First(&conn, id).Error; err != nil {
+	if err := db.Gorm().Scopes(database.ActiveConnections).First(&conn, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, response.Error("Connection not found"))
 		return
 	}
@@ -271,8 +289,8 @@ func (h *Handler) UpdateDeviceConnection(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, response.Error("Invalid source device ID"))
 			return
 		}
-		if _, err := db.GetDevice(uint(srcID)); err != nil {
-			c.JSON(http.StatusBadRequest, response.Error("Source device not found"))
+		if msg := connectionEndpointError(db, uint(srcID), "Source"); msg != "" {
+			c.JSON(http.StatusBadRequest, response.Error(msg))
 			return
 		}
 	}
@@ -282,8 +300,8 @@ func (h *Handler) UpdateDeviceConnection(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, response.Error("Invalid destination device ID"))
 			return
 		}
-		if _, err := db.GetDevice(uint(dstID)); err != nil {
-			c.JSON(http.StatusBadRequest, response.Error("Destination device not found"))
+		if msg := connectionEndpointError(db, uint(dstID), "Destination"); msg != "" {
+			c.JSON(http.StatusBadRequest, response.Error(msg))
 			return
 		}
 	}
@@ -381,6 +399,11 @@ func (h *Handler) GetConnectionTraffic(c *gin.Context) {
 	}
 	hours := parseTrafficRangeHours(c.DefaultQuery("range", "24"))
 	data, err := db.GetConnectionTraffic(id, hours)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		// Missing, or an endpoint is retired (the list does not show it either).
+		c.JSON(http.StatusNotFound, response.Error("Connection not found"))
+		return
+	}
 	if err != nil {
 		// Log the parsed hours, not the raw query param (log-injection hygiene).
 		log.Printf("GetConnectionTraffic(%d, %gh) error: %v", id, hours, err)
@@ -513,6 +536,10 @@ func (h *Handler) GetConnectionFlows(c *gin.Context) {
 		hours = 720
 	}
 	data, err := db.GetConnectionFlowStats(id, hours)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusNotFound, response.Error("Connection not found"))
+		return
+	}
 	if err != nil {
 		httputil.InternalError(c, "Failed to get flow stats", err)
 		return
@@ -620,9 +647,12 @@ func (h *Handler) GetVPNMapData(c *gin.Context) {
 		var matchID uint
 		var matchName string
 		if peer, found := provisionedPeer(provPairs, vpn); found {
-			matchID = peer
+			// The provisioned record keeps a retired endpoint (its other readers
+			// need it). A peer that is not an active device is shown unmatched —
+			// never a link to the retired device — and there is still no fallback
+			// to the remote IP, for the NAT reason above.
 			if d, ok := deviceByID[peer]; ok {
-				matchName = d.Name
+				matchID, matchName = peer, d.Name
 			}
 		} else if vpn.TunnelType != "ipsec-dialup" {
 			if ref, found := ipToDevice[vpn.RemoteIP]; found && ref.ID != vpn.DeviceID {

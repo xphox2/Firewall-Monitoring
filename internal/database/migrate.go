@@ -3227,3 +3227,24 @@ func (d *Database) migrateSyslogIngestHourly() error {
 	}
 	return d.db.AutoMigrate(&models.ServerMetric{})
 }
+
+// migrateDeleteConnectionsToRetiredDevices (v69) removes device_connections
+// rows whose source or destination device is retired or no longer exists.
+// RetireDevice already deletes a device's connections, but before v0.11.268
+// the poller's VPN detector re-created them every cycle from the provisioned
+// tunnel table (which keeps retired endpoints), leaving a "? <-> peer" row the
+// list showed and the map could not draw. The poller no longer offers such a
+// pair; this clears the rows it already wrote. Restoring a device re-derives
+// its auto-detected connections on the next poller cycle, as before.
+func (d *Database) migrateDeleteConnectionsToRetiredDevices() error {
+	res := d.db.Where(
+		"source_device_id NOT IN (SELECT id FROM devices WHERE retired_at IS NULL) OR dest_device_id NOT IN (SELECT id FROM devices WHERE retired_at IS NULL)").
+		Delete(&models.DeviceConnection{})
+	if res.Error != nil {
+		return fmt.Errorf("migrate v69: delete connections to retired devices: %w", res.Error)
+	}
+	if res.RowsAffected > 0 {
+		log.Printf("migrate v69: deleted %d connection(s) to retired or missing devices", res.RowsAffected)
+	}
+	return nil
+}
