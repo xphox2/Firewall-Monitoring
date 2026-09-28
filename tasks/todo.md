@@ -263,10 +263,10 @@ matches; a batch query expecting MANY wants the opposite plan. Never blanket-app
 - [ ] Prod EXPLAIN/timing of the new queries; docs + CHANGELOG 0.11.269; QA gates; Fable diff review (fresh final); PR; CI; merge
 ## PR 3 — v0.11.270: zoom re-query + loading/Cancel (delta approved 2026-09-28)
 - [x] Step 0: PR #279 Tailwind gate (`!badge` rename) + `make qa` tailwind-check; merged
-- [ ] Server: GetSystemStatusBucketsWindow (statusUnitForWindow) + Store; status-history from/to (400 on junk, effective bounds); public from/to (clamp, widen, labels by span)
-- [ ] AdminCommon.chartLoad overlay (250 ms, lifecycle contract, a11y, Esc) + CSS
-- [ ] Device uPlot: chart-host-wrap, setSelect (cursor.event, dist 2), window fetch, keep charts, overlay notices, reset/dblclick
-- [ ] Iface/VPN: signal, keep chart, syncBwControls (no filterIfaces/renderVPN on zoom), cancel restores
-- [ ] Public modal: local overlay, onZoomComplete index guard + memo reset, no resetZoom, reset re-fetches, labels by span
+- [x] Server: GetSystemStatusBucketsWindow (statusUnitForWindow) + Store; status-history from/to (400 on junk, effective bounds); public from/to (clamp, widen, labels by span)
+- [x] AdminCommon.chartLoad overlay (250 ms, lifecycle contract, a11y, Esc) + CSS
+- [x] Device uPlot: chart-host-wrap, setSelect (cursor.event, dist 2), window fetch, keep charts, overlay notices, reset/dblclick
+- [x] Iface/VPN: signal, keep chart, syncBwControls (no filterIfaces/renderVPN on zoom), cancel restores
+- [x] Public modal: local overlay, onZoomComplete index guard + memo reset, no resetZoom, reset re-fetches, labels by span
 - [ ] Tests + mutation checks (before each commit); browser check; make qa (incl. tailwind-check); CHANGELOG 0.11.270; Fable diff review; PR; CI; merge
 ## PR 4 — v0.11.271: loading/Cancel on every server-side filter (own plan-mode delta first)

@@ -423,6 +423,52 @@ textarea::placeholder {
     min-height: 220px;
 }
 
+/* Chart loading overlay + notice (AdminCommon.chartLoad / chartNotice,
+   v0.11.270). Mounted on a positioned container that owns the chart, so it
+   dims the chart that is kept on screen while finer data loads. */
+.chart-host-wrap { position: relative; }
+.chart-zoom-chip { color: var(--fwmon-accent); font-family: var(--fwmon-font-mono, monospace); margin-right: 6px; }
+.fwmon-chart-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: fwmon-chart-overlay-in 0.15s ease-out;
+}
+.fwmon-chart-overlay::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--fwmon-bg);
+    opacity: 0.55;
+}
+.fwmon-chart-overlay-box {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 10px 14px;
+    max-width: calc(100% - 24px);
+    background: var(--fwmon-panel-bg);
+    border: 1px solid var(--fwmon-border);
+    border-radius: var(--fwmon-radius);
+    box-shadow: var(--fwmon-elev-2);
+    color: var(--fwmon-text);
+    font-size: 0.85rem;
+}
+.fwmon-chart-overlay-elapsed { color: var(--fwmon-text-dim); font-variant-numeric: tabular-nums; min-width: 2.5em; }
+@keyframes fwmon-chart-overlay-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+    .fwmon-chart-overlay { animation: none; }
+}
+@media (max-width: 720px) {
+    .fwmon-chart-overlay-box .btn { min-height: 36px; padding: 6px 14px; }
+}
+
 .chart-empty,
 .chart-loading {
     display: flex;

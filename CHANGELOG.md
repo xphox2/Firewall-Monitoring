@@ -1,6 +1,39 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.270] - 2026-09-28
+
+### Changed — zooming a chart loads real data for the selected range
+
+Selecting a range on a chart used to stretch the points already on screen. Now every chart that zooms asks the server for the selected window, at a finer resolution, and redraws with it.
+
+- **Device page — System Overview, Network Throughput, CPU Breakdown.**
+  - Drag across any of the three: all three redraw with the selected window, for example 1-minute points instead of the 24-hour view's 5-minute points.
+  - A chip beside the range buttons shows the zoomed window.
+  - Reset or a double-click goes back to the selected range. A range button also leaves the zoom.
+- **Device page — interface and VPN tunnel charts.**
+  - These already re-queried on zoom. Now the chart stays on screen while the new data loads, instead of going blank.
+  - Only the chart's controls update, not the whole interface table.
+  - Typing in the interface search no longer reloads an open chart on every keystroke.
+- **Public dashboard — the enlarged chart.**
+  - Dragging or scrolling to zoom loads the selected window.
+  - Reset returns to the dashboard's range.
+  - After a zoom, zooming out stops at the zoomed window; use Reset to go further.
+
+**While it loads**
+- The chart stays visible, dimmed, under a small panel with a spinner, the seconds elapsed and **Cancel**. It appears only if loading takes longer than a quarter-second.
+- Cancel (or Esc) stops the request and keeps what was on screen.
+- A zoom into a range with no data, or a failed load, shows a notice over the chart you had, with Retry, instead of blanking it.
+
+### Technical
+- `GET /admin/api/devices/:id/status-history?from=&to=` (epoch ms) serves a zoom window and echoes the window it served. The bucket is never coarser than the preset the window came from: under 3 h minute, under 30 h 5 min, under 31 days hourly. A malformed window is a 400; `range=` is unchanged.
+- `/api/public/status-history` and `/api/public/interfaces/chart` accept `from`/`to`.
+  - The window is clamped to now and to the 1-year public limit, and widened to at least 5 minutes.
+  - Labels follow the window's span.
+  - A malformed window falls back to the dashboard range.
+- The loading overlay is `AdminCommon.chartLoad`, and the notice is `AdminCommon.chartNotice`.
+- `make qa` now also runs the Tailwind freshness check that CI runs (`make tailwind-check`). Tailwind scans the JavaScript too, so a token like `!badge` changes the generated CSS.
+
 ## [0.11.269] - 2026-09-28
 
 ### Changed — NOC: live feed and last-minute threats replace Live Detections
