@@ -120,8 +120,9 @@ type NOCFeed struct {
 	SilencedTotal int           `json:"silenced_total"`
 }
 
-// GetNOCFeed builds the three feed lists. A failing list is returned empty with
-// the error, so the caller can keep the last good feed.
+// GetNOCFeed builds the three feed lists. On error it returns nil; the
+// snapshot then carries no feed and the broadcaster keeps sending the last
+// good one.
 func (d *Database) GetNOCFeed() (*NOCFeed, error) {
 	now := nocNow().UTC()
 	feed := &NOCFeed{Alerts: []NOCFeedItem{}, Detections: []NOCFeedItem{}, Silenced: []NOCFeedItem{}}

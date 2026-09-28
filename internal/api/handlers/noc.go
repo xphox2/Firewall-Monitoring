@@ -131,8 +131,9 @@ func (h *nocHub) computeAndBroadcast() {
 	h.latestSnapshot = frames[0]
 	h.ticks++
 	if feed != nil {
-		// Compare the lists only: GetNOCFeed leaves generated_at zero and it is
-		// set after this marshal, so an unchanged feed marshals identically.
+		// Compare the lists only: the snapshot stamps generated_at every tick,
+		// so it is cleared for the comparison and set again afterwards.
+		feed.GeneratedAt = time.Time{}
 		lists, lerr := json.Marshal(feed)
 		feed.GeneratedAt = snap.GeneratedAt
 		full, ferr := json.Marshal(feed)

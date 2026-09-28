@@ -204,3 +204,67 @@ func TestNOCThreats_WindowBlockedAndASNRanking(t *testing.T) {
 		t.Errorf("inbound order = %+v, want the IP match first and the ASN-only match marked", top.Inbound)
 	}
 }
+
+// A SYN decides the whole session: the reply (SYN|ACK, flags 18) must not fall
+// to the port rule and land in the opposite list. Flags 18 also pins the
+// "SYN without ACK" mask.
+func TestNOCThreats_SYNDecidesTheReplyToo(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	seedThreatRows(t, d, now,
+		threatRow{dir: 1, src: bad, sport: 443, dst: ours, dport: 51234, flag: 1, tcp: 2, age: 2 * time.Second},
+		threatRow{dir: 2, src: ours, sport: 51234, dst: bad, dport: 443, flag: 2, tcp: 18, age: time.Second},
+	)
+	top := threatTopAt(t, d, now)
+	if e := findEntry(top.Inbound, bad); e == nil || e.Requests != 1 || e.Bytes != 200 {
+		t.Errorf("inbound %s = %+v, want 1 request and both halves' bytes", bad, e)
+	}
+	if e := findEntry(top.Outbound, bad); e != nil {
+		t.Errorf("the SYN session's reply was listed outbound: %+v", e)
+	}
+	if top.Summary.Inbound != 1 || top.Summary.Outbound != 0 {
+		t.Errorf("summary = %+v, want inbound 1, outbound 0", top.Summary)
+	}
+}
+
+func TestNOCThreats_InternalHostsCappedAndCounted(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	var rows []threatRow
+	for i, host := range []string{"10.0.0.11", "10.0.0.12", "10.0.0.13", "10.0.0.14"} {
+		for j := 0; j <= i; j++ { // 10.0.0.14 makes the most requests
+			rows = append(rows, threatRow{dir: 2, src: host, sport: uint16(50000 + 10*i + j), dst: bad2, dport: 443, flag: 2, age: time.Second})
+		}
+	}
+	seedThreatRows(t, d, now, rows...)
+	e := findEntry(threatTopAt(t, d, now).Outbound, bad2)
+	if e == nil || e.InternalCount != 4 || len(e.InternalHosts) != nocThreatMaxHosts || e.InternalHosts[0] != "10.0.0.14" {
+		t.Errorf("outbound %s = %+v, want the top %d hosts (busiest first) and a count of 4", bad2, e, nocThreatMaxHosts)
+	}
+}
+
+// "inferred" means most requests rest on a guessed service port.
+func TestNOCThreats_InferredIsAMajorityOfRequests(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	seedThreatRows(t, d, now,
+		// bad: 1 known (22) + 2 guessed (2222) -> inferred
+		threatRow{dir: 1, src: bad, sport: 51000, dst: ours, dport: 22, flag: 1, age: time.Second},
+		threatRow{dir: 1, src: bad, sport: 51001, dst: ours, dport: 2222, flag: 1, age: time.Second},
+		threatRow{dir: 1, src: bad, sport: 51002, dst: ours, dport: 2222, flag: 1, age: time.Second},
+		// bad2: 2 known + 1 guessed -> not inferred
+		threatRow{dir: 1, src: bad2, sport: 51000, dst: ours, dport: 22, flag: 1, age: time.Second},
+		threatRow{dir: 1, src: bad2, sport: 51001, dst: ours, dport: 22, flag: 1, age: time.Second},
+		threatRow{dir: 1, src: bad2, sport: 51002, dst: ours, dport: 2222, flag: 1, age: time.Second},
+		// the replies of bad2's guessed request must not tip it
+		threatRow{dir: 2, src: ours, sport: 2222, dst: bad2, dport: 51002, flag: 2, age: time.Second},
+		threatRow{dir: 2, src: ours, sport: 2222, dst: bad2, dport: 51002, flag: 2, age: time.Second},
+	)
+	top := threatTopAt(t, d, now)
+	if e := findEntry(top.Inbound, bad); e == nil || !e.Inferred {
+		t.Errorf("%s = %+v, want inferred (2 of 3 requests guessed)", bad, e)
+	}
+	if e := findEntry(top.Inbound, bad2); e == nil || e.Inferred {
+		t.Errorf("%s = %+v, want not inferred (1 of 3 requests guessed)", bad2, e)
+	}
+}

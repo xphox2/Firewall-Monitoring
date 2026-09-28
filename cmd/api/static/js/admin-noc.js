@@ -87,8 +87,11 @@
         renderThreats(d);
         renderBreakdown(d);
         // The one-shot fallback carries the feed inline; the stream sends it as
-        // its own event.
+        // its own event. Between feed frames, each snapshot re-renders the feed
+        // so its relative times stay current (rows whose text is unchanged are
+        // not touched).
         if (d.feed) onFeed(d.feed);
+        else if (feedState.feed && !isPaused()) renderFeed();
     }
 
     function renderVitals(d) {
@@ -320,8 +323,8 @@
         return '<a class="fwmon-noc-feed-row" href="' + esc(feedHref(e)) + '"' + (e.list === 'alert' ? ' data-noc-alert="' + esc(it.id) + '"' : '') + '>' +
             '<span class="fwmon-det-sev fwmon-det-sev-' + esc(sev) + '">' + esc(sev) + '</span>' +
             '<span class="fwmon-noc-feed-type">' + esc(it.type || '') +
-                (it.repeat > 1 ? ' <span class="fwmon-noc-feed-rep" title="times seen">×' + esc(it.repeat) + '</span>' : '') +
-                (firing ? ' <span class="fwmon-noc-feed-firing" title="still firing">●</span>' : '') +
+                (it.repeat > 1 ? ' <span class="fwmon-noc-feed-rep" title="times seen"><span aria-hidden="true">×' + esc(it.repeat) + '</span><span class="fwmon-sr-only">seen ' + esc(it.repeat) + ' times</span></span>' : '') +
+                (firing ? ' <span class="fwmon-noc-feed-firing" title="still firing"><span aria-hidden="true">●</span><span class="fwmon-sr-only">still firing</span></span>' : '') +
                 (e.list === 'silenced' ? ' <span class="fwmon-noc-feed-tag">silenced</span>' : '') +
             '</span>' +
             '<span class="fwmon-noc-feed-dev">' + esc(dev) + '</span>' +
@@ -364,10 +367,17 @@
         var prev = feedState.prevKeys;
         var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-        // Existing nodes by key; the list is re-ordered in place.
-        var byKey = {};
-        Array.prototype.forEach.call(list.children, function (li) { byKey[li.getAttribute('data-key')] = li; });
+        // Existing nodes by key. Departed rows are removed FIRST, so a departure
+        // never displaces (and so never moves or re-animates) the rows below it;
+        // the loop then moves only rows whose rank genuinely changed.
         var keep = {};
+        shown.forEach(function (e) { keep[e.key] = true; });
+        var byKey = {};
+        Array.prototype.slice.call(list.children).forEach(function (li) {
+            var k = li.getAttribute('data-key');
+            if (keep[k]) byKey[k] = li;
+            else list.removeChild(li);
+        });
         var fresh = 0;
         shown.forEach(function (e, i) {
             var html = feedRowHTML(e, genMs);
@@ -379,17 +389,19 @@
                 // first frame, a re-keyed old episode and a toggle animate nothing.
                 if (prev && !prev[e.key] && genMs - tms(e.it.at) <= NEW_WINDOW_MS) {
                     fresh++;
-                    if (!reduce) li.className = 'fwmon-noc-feed-new';
+                    if (!reduce) {
+                        li.className = 'fwmon-noc-feed-new';
+                        // One slide-in only: a later move must not replay it.
+                        li.addEventListener('animationend', function () { li.className = ''; }, { once: true });
+                    }
                 }
             }
             if (li.getAttribute('data-html') !== html) {
                 li.innerHTML = html;
                 li.setAttribute('data-html', html);
             }
-            keep[e.key] = true;
             if (list.children[i] !== li) list.insertBefore(li, list.children[i] || null);
         });
-        Object.keys(byKey).forEach(function (k) { if (!keep[k]) list.removeChild(byKey[k]); });
 
         var next = {};
         all.forEach(function (e) { next[e.key] = true; });
@@ -410,7 +422,7 @@
         if (!shown) msg = feedState.kind === 'alerts' ? 'No alerts in the last 7 days.' : 'No events to show.';
         if (hidden) {
             el.innerHTML = esc(msg ? msg + ' ' : '') + esc(fmtCount(feed.silenced_total)) +
-                ' silenced detections hidden — <button type="button" class="fwmon-link-btn" data-noc-show-silenced>Show silenced</button>';
+                ' silenced or dismissed detections hidden — <button type="button" class="fwmon-link-btn" data-noc-show-silenced>Show silenced</button>';
             el.hidden = false;
         } else if (msg) {
             el.textContent = msg;
@@ -587,9 +599,12 @@
         stop(); // never stack streams on re-entry
         wire();
         loadFeedPrefs();
-        // A fresh visit animates nothing on its first frame.
+        // A fresh visit animates nothing on its first frame, and no hover/focus
+        // hold survives leaving the page.
         feedState.prevKeys = null;
         feedState.feed = null;
+        feedState.hoverPaused = false;
+        feedState.focusPaused = false;
 
         if (typeof EventSource === 'undefined') {
             setStatus('live updates unsupported', 'bad');

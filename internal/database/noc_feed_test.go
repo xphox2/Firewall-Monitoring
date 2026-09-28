@@ -330,3 +330,39 @@ func TestNOCFeed_AlertsOlderThanAWeekExcluded(t *testing.T) {
 		t.Errorf("alerts = %+v, want only the one inside 7 days", feed.Alerts)
 	}
 }
+
+func TestNOCFeed_AlertTiebreakAndRepeat(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	feedClock(t, now)
+	at := now.Add(-time.Minute)
+	first := seedAlert(t, d, at, false)
+	second := seedAlert(t, d, at, false)
+	if err := d.db.Model(&models.Alert{}).Where("id = ?", first.ID).Update("escalation_count", 2).Error; err != nil {
+		t.Fatalf("escalate: %v", err)
+	}
+	feed, err := d.GetNOCFeed()
+	if err != nil {
+		t.Fatalf("GetNOCFeed: %v", err)
+	}
+	if len(feed.Alerts) != 2 || feed.Alerts[0].ID != second.ID || feed.Alerts[1].ID != first.ID {
+		t.Fatalf("tied alerts must order by id DESC: %+v", feed.Alerts)
+	}
+	if feed.Alerts[1].Repeat != 3 {
+		t.Errorf("repeat = %d, want escalation_count+1 = 3", feed.Alerts[1].Repeat)
+	}
+}
+
+// A device-less, site-scoped alert (the security digest) takes its own site.
+func TestEnrichAlertDeviceSite_SiteScopedFallback(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	site := models.Site{Name: "Branch"}
+	if err := d.db.Create(&site).Error; err != nil {
+		t.Fatalf("seed site: %v", err)
+	}
+	alerts := []models.Alert{{DeviceID: 0, SiteID: &site.ID}}
+	EnrichAlertDeviceSite(d.db, alerts)
+	if alerts[0].SiteName != "Branch" {
+		t.Errorf("SiteName = %q, want Branch", alerts[0].SiteName)
+	}
+}

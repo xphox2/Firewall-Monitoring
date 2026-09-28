@@ -35,8 +35,8 @@ type NOCSnapshot struct {
 	TopCountries    []KeyCount `json:"top_countries"`
 
 	// Feed is the live alert/detection ticker. The broadcaster sends it as its
-	// own SSE event (only when it changes) and clears it here; the one-shot
-	// snapshot endpoint returns it inline. Fleet-only.
+	// own SSE event (when it changes, and every minute) and clears it here; the
+	// one-shot snapshot endpoint returns it inline. Fleet-only.
 	Feed *NOCFeed `json:"feed,omitempty"`
 	// ThreatTop is the last minute's threat-intel traffic by session initiator.
 	// Fleet-only.
@@ -209,6 +209,9 @@ func (d *Database) GetNOCSnapshotFiltered(window time.Duration, filter NOCFilter
 		// Optional like the other fleet extras: a failure leaves the card empty
 		// rather than failing the whole snapshot.
 		if feed, err := d.GetNOCFeed(); err == nil {
+			// Stamped for the one-shot endpoint; the broadcaster re-stamps it
+			// after its change comparison.
+			feed.GeneratedAt = snap.GeneratedAt
 			snap.Feed = feed
 		} else {
 			nocLogThrottled("feed", "noc snapshot: live feed: %v", err)

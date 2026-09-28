@@ -102,4 +102,7 @@ func TestGetNOCSnapshot_OneShotIncludesFeed(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"feed":{`) || !strings.Contains(w.Body.String(), `"threat_top":{`) {
 		t.Errorf("one-shot snapshot must carry feed and threat_top: %d %.300s", w.Code, w.Body.String())
 	}
+	if strings.Contains(w.Body.String(), `"generated_at":"0001-01-01`) {
+		t.Error("the one-shot feed has no generated_at; the browser's 20-minute horizon would be void")
+	}
 }

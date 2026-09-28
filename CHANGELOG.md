@@ -11,17 +11,17 @@ The NOC page's "Live Detections" table is replaced by two cards.
 - Choose how many to show (10 / 20 / 50 / 100, default 20) and which kind (All / Alerts / Detections). The choice is remembered in the browser.
 - A detection that re-fires every detector cycle is one row with a repeat count and a "still firing" dot, placed where it was first seen, instead of a new row every 5 minutes. A finding that stops and later starts again appears again at the top. One that was already running 6 hours ago shows "> 6h".
 - New items slide in; nothing animates on the first load, and "reduce motion" turns the animation off.
-- **Silenced detections** — the ones your Event Rules suppress, or whose detector you turned off — are hidden by default. A "Show silenced" switch brings them in, and the feed says how many are hidden.
+- **Silenced detections** — the ones your Event Rules suppress, whose detector you turned off, or that were dismissed — are hidden by default. A "Show silenced" switch brings them in, and the feed says how many are hidden.
 - Pause with the Pause button. On a computer the list also holds still while the pointer or keyboard focus is on it, and shows how many new events are waiting.
 - Each row is a link: an alert opens its detail, a detection opens the Flows page filtered to its addresses.
-- Screen readers hear a short "N new events" instead of the whole list.
+- Screen readers hear a short "N new events" instead of the whole list, and the repeat count and "still firing" marker are spelled out.
 - The two NOC grids no longer re-announce themselves to screen readers every few seconds.
 
 **Threats — last 60 s** — threat-intel-flagged traffic from the last minute, split by who started the conversation.
 - **Outbound — our hosts talking to flagged IPs** lists up to 10 flagged destinations, with the internal hosts that reached them.
 - **Inbound — flagged sources reaching us** lists up to 10 flagged sources, with the service they hit.
 - A summary counts outbound and inbound requests, unclassified, other and blocked records.
-- Direction comes from the session's first packet when the exporter sends TCP flags, otherwise from the service port. Flow exporters record each conversation as a request and a reply, so reading the direction of each record would have put every flagged address in both lists.
+- Direction comes from the service port, or — when the exporter sends TCP flags — from a SYN-only record, which names its source as the initiator of the whole conversation. Flow exporters record each conversation as a request and a reply, so reading the direction of each record would have put every flagged address in both lists.
 - An entry is marked **inferred** when its direction rests on a guessed service port, and **ASN** when only the address's network, not the address itself, is on the threat list. A spoofed well-known source port (both ports well-known) is judged by our side's port.
 
 ### Technical

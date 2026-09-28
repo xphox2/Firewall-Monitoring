@@ -16,7 +16,8 @@ import (
 // direction alone would put every flagged address in both lists. The session
 // initiator is decided per row, in order:
 //
-//  1. A TCP SYN without ACK: its source started the session.
+//  1. A TCP SYN without ACK: its source started the session — and decides
+//     the direction of the whole session, reply included.
 //  2. Equal ports, or no ports at all (ICMP, GRE, ESP): cannot tell.
 //  3. The service port. If the flagged side owns it, the flagged address is the
 //     server and one of our hosts connected to it (outbound, "talking back");
@@ -84,18 +85,27 @@ func threatClassSQL() string {
 	known := strings.Join(parts, ",")
 	// bad/our: the flagged external endpoint and our endpoint, by direction.
 	// own: the flag is on the external side (bits 1/4 = source, 2/8 = dest).
+	//
+	// syn_cls resolves the SYN rule per SESSION: the request and the reply of
+	// one conversation share (bad, our, bad_port, our_port, protocol), so a
+	// SYN-only record anywhere in the session decides the direction of both
+	// halves — otherwise the reply (SYN|ACK, no bare SYN) would fall to the
+	// port rule and could land in the opposite list.
 	return fmt.Sprintf(`
-		SELECT c.*,
+		SELECT s.*,
 			CASE
-				WHEN c.own = 0 THEN 'other'
-				WHEN c.syn = 1 AND c.direction = 1 THEN 'in'
-				WHEN c.syn = 1 AND c.direction = 2 THEN 'out'
-				WHEN c.protocol NOT IN (6, 17) OR c.src_port = c.dst_port OR c.eff = 0 THEN 'unclassified'
-				WHEN c.bad_port = c.eff THEN 'out'
-				WHEN c.our_port = c.eff THEN 'in'
+				WHEN s.own = 0 THEN 'other'
+				WHEN s.syn_cls IS NOT NULL THEN s.syn_cls
+				WHEN s.protocol NOT IN (6, 17) OR s.src_port = s.dst_port OR s.eff = 0 THEN 'unclassified'
+				WHEN s.bad_port = s.eff THEN 'out'
+				WHEN s.our_port = s.eff THEN 'in'
 				ELSE 'unclassified'
 			END AS cls
 		FROM (
+			SELECT c.*,
+				MAX(CASE WHEN c.syn = 1 THEN (CASE WHEN c.direction = 1 THEN 'in' ELSE 'out' END) END)
+					OVER (PARTITION BY c.bad, c.our, c.bad_port, c.our_port, c.protocol) AS syn_cls
+			FROM (
 			SELECT device_id, bytes, protocol, src_port, dst_port, direction, firewall_event,
 				CASE WHEN direction = 1 THEN src_addr ELSE dst_addr END AS bad,
 				CASE WHEN direction = 1 THEN dst_addr ELSE src_addr END AS our,
@@ -111,11 +121,14 @@ func threatClassSQL() string {
 					WHEN service_port <> 0 AND app_category = 0 THEN 1 ELSE 0 END AS guessed
 			FROM flow_samples
 			WHERE timestamp > ? AND timestamp <= ? AND threat_flag <> 0
-		) AS c`, known)
+			) AS c
+		) AS s`, known)
 }
 
-// threatRequestSQL is the "this row is a request" predicate over threatClassSQL.
-const threatRequestSQL = `(t.cls IN ('in', 'out') AND (t.syn = 1 OR t.dst_port = t.eff))`
+// threatRequestSQL is the "this row is a request" predicate over threatClassSQL:
+// in a session decided by a SYN, the SYN record; otherwise the record sent to
+// the service port.
+const threatRequestSQL = `(t.cls IN ('in', 'out') AND ((t.syn_cls IS NOT NULL AND t.syn = 1) OR (t.syn_cls IS NULL AND t.dst_port = t.eff)))`
 
 // getNOCThreatTop builds the threat card for the minute ending at nocNow.
 func (d *Database) getNOCThreatTop() (*NOCThreatTop, error) {
@@ -171,7 +184,7 @@ func (d *Database) getNOCThreatTop() (*NOCThreatTop, error) {
 	if err := d.db.Raw(fmt.Sprintf(`
 		SELECT t.cls AS cls, t.bad AS bad, t.our AS our, t.eff AS eff, t.protocol AS protocol, t.device_id AS device_id,
 			SUM(CASE WHEN %[1]s THEN 1 ELSE 0 END) AS requests,
-			SUM(CASE WHEN %[1]s AND t.syn = 0 AND t.guessed = 1 THEN 1 ELSE 0 END) AS guessed,
+			SUM(CASE WHEN %[1]s AND t.syn_cls IS NULL AND t.guessed = 1 THEN 1 ELSE 0 END) AS guessed,
 			MAX(t.ipm) AS ip_match,
 			COALESCE(SUM(t.bytes), 0) AS bytes,
 			SUM(CASE WHEN t.firewall_event = 3 THEN 1 ELSE 0 END) AS blocked

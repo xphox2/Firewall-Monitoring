@@ -40,6 +40,12 @@ func TestNOCFeed_Guards(t *testing.T) {
 	must("'&src=' + encodeURIComponent(", "flow links encode their values")
 	must("history.replaceState(null, '', location.pathname + location.search)", "a repeat click on the same alert reopens it")
 	must("prefers-reduced-motion: reduce", "animations respect reduced motion")
+	must("li.addEventListener('animationend', function () { li.className = ''; }, { once: true });", "a slide-in plays once; a later move must not replay it")
+	must("feedState.hoverPaused = false;\n        feedState.focusPaused = false;", "no hover/focus hold survives leaving the page")
+	must(`<span class="fwmon-sr-only">still firing</span>`, "the still-firing dot has screen-reader text")
+	if prune, place := strings.Index(js, "else list.removeChild(li);"), strings.Index(js, "if (list.children[i] !== li) list.insertBefore("); prune < 0 || place < 0 || prune > place {
+		t.Error("departed feed rows must be removed BEFORE the placement loop, or every row below a departure is moved and re-animated")
+	}
 	if regexp.MustCompile(`\bd\.detections\b`).MatchString(js) {
 		t.Error("admin-noc.js still reads the removed snapshot.detections")
 	}
