@@ -527,3 +527,7 @@ mutation check: it survived. With one record in each direction, counting either
 direction gives 1, so the test could not tell the fix from its inverse. **Rule: a new
 test is not done until its mutation check has failed it; run the check before the
 commit. When a rule chooses between two sides, seed the sides with different counts.**
+
+## 2026-09-28 — Gate the commit on QA with `&&`, and prove the baseline green before mutating
+- A `make … > log; echo exit; …; git commit && git push` chain pushed a RED test to a feature branch: `;` does not stop on failure. Always `make qa-targets && git commit … && git push`, and print the failures in the `||` branch.
+- The mutation script reported every mutation KILLED while the unmutated tree was already red (a mis-bounded test slice), so "killed" meant nothing. The script now runs the suite first and aborts on a red baseline. Never read mutation results without a green baseline.
