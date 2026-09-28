@@ -357,7 +357,13 @@ func TestFilterLoad_ReviewRound3(t *testing.T) {
 	er := readJS(t, "admin-event-rules.js")
 	lr := funcBody(t, er, `function loadRules\(profileId, filter\)`)
 	errAt := strings.Index(lr, "if (r.error) {")
-	errBody := lr[errAt : strings.Index(lr[errAt:], "currentProfileId = pid;")+errAt]
+	// The error branch ends where the success path begins (its own clear of
+	// targetProfileId is not part of the error path).
+	errEnd := strings.Index(lr[errAt:], "targetProfileId = null;\n            if (pid !== currentProfileId) groupCollapsed")
+	if errAt < 0 || errEnd < 0 {
+		t.Fatal("loadRules error/success boundary not found")
+	}
+	errBody := lr[errAt : errAt+errEnd]
 	sw := strings.Index(errBody, "if (pid !== currentProfileId) {")
 	clr := strings.Index(errBody, "targetProfileId = null;\n                if (wrap) AC.chartNotice(wrap, 'Could not load results'")
 	if sw < 0 || clr < 0 || clr < sw {
