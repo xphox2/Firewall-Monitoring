@@ -294,8 +294,9 @@
     }
     function runDeferredSearchRefresh() {
         if (!searchRefreshDeferred || AC.chartLoadBusy('ti-search', true)) return;
+        searchRefreshDeferred = false; // consumed either way: init() reloads on return
         var tiPage = document.getElementById('page-threat-intel');
-        if (!tiPage || !tiPage.classList.contains('active')) return; // init() reloads on return
+        if (!tiPage || !tiPage.classList.contains('active')) return;
         searchRefreshDeferred = false;
         pageSearch(searchOffset);
     }
@@ -331,9 +332,14 @@
         }, { key: 'ti-search', label: 'Searching…', escScope: searchForm() }).then(function(r) {
             runDeferredSearchRefreshSoon();
             if (r.superseded) return;
+            // A paging load (snap) never changed the controls, so neither its
+            // Cancel nor its Retry touches them — the box may hold a new,
+            // unsubmitted search.
+            var paging = !!snap;
+            var retry = function() { if (!paging) setSearchControls(query); runSearch(target, paging ? query : undefined); };
             if (r.cancelled) {
-                if (lastSearch) setSearchControls(lastSearch);
-                AC.chartNotice(host, lastSearch ? 'Cancelled — showing the previous results' : 'Cancelled', { dim: false, onRetry: function() { setSearchControls(query); runSearch(target); } });
+                if (lastSearch && !paging) setSearchControls(lastSearch);
+                AC.chartNotice(host, lastSearch ? 'Cancelled — showing the previous results' : 'Cancelled', { dim: false, onRetry: retry });
                 return;
             }
             if (r.error) {
@@ -341,8 +347,8 @@
                 // Like Cancel, the controls go back to the search whose rows
                 // are shown — unless the user is typing the next one (a field
                 // of the form has focus and differs from the failed query).
-                if (lastSearch && !typingNewSearch(query)) setSearchControls(lastSearch);
-                AC.chartNotice(host, 'Could not load results', { dim: false, onRetry: function() { setSearchControls(query); runSearch(target); } });
+                if (lastSearch && !paging && !typingNewSearch(query)) setSearchControls(lastSearch);
+                AC.chartNotice(host, 'Could not load results', { dim: false, onRetry: retry });
                 return;
             }
             searchOffset = target;

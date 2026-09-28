@@ -13,7 +13,7 @@ Every server-side search, filter and range change now shows an animated loading 
 - **Errors** show "Could not load results" over the results, with Retry, and — like Cancel — put the filters back to the results still shown, so paging never continues a search whose first page never appeared. A load that fails while its results are hidden shows an error message instead. Paging (Prev/Next, Load more) and "acknowledge all matching" always continue the search whose rows are on screen; Prev/Next and Load more are ignored while a search is still loading, and a list refresh after an acknowledgement or delete runs once it finishes. The threat-intel IP/ASN lookup keeps what you typed on an error (so a mistyped address can be corrected) and shows why, with Retry.
 - **"Select all N matching" on Alerts** is cleared as soon as the filter changes and is not offered while results load; an acknowledgement by filter always uses the filter of the alerts on screen, never one that is still loading or failed to load.
 - **Background refreshes stay out of the way.** The Syslog auto-refresh and the Connection detail 30-second refresh show no overlay, skip while one of your loads is running, and are dropped if you start a load while they are in flight — they can no longer paint an old range over the one you just picked.
-- **Leaving a page stops its loads** without a notice.
+- **Leaving a page stops its loads** without a notice (the Connections map side panel, which stays open, keeps loading).
 - **Config diff** opens straight away with the overlay, disables Compare until the diff is ready, and closing the dialog stops the load — a late result no longer reopens it.
 
 ### Fixed

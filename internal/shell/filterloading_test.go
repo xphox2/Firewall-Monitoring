@@ -88,7 +88,7 @@ func TestFilterLoad_RetryAfterCancelReappliesQuery(t *testing.T) {
 	mustContain(t, "admin-main.js", run, "var ap = apNow(); if (want && ap && ap.restore && !siblingBusy()) restoreQuery(ap, page, want);", "Retry re-applies the cancelled query")
 	mustContain(t, "admin-main.js", run, "onRetry: retryCancelled", "the Cancel notice uses that Retry")
 	mustContain(t, "admin-main.js", run, "var src = opts.snap || opts.state || ((ap0 && ap0.getState) ? ap0.getState() : null);", "the requested query is captured when the load starts, even on a first load")
-	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "onRetry: function() { setSearchControls(query); runSearch(target); }", "threat-intel Retry re-applies the cancelled search")
+	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "var retry = function() { if (!paging) setSearchControls(query); runSearch(target, paging ? query : undefined); };", "threat-intel Retry re-applies the cancelled search")
 	mustContain(t, "admin-reports.js", readJS(t, "admin-reports.js"), "function retryWanted() { applyChoices(want); loadPreview(); }", "reports Retry re-applies the cancelled period")
 	mustContain(t, "diagram-panels.js", readJS(t, "diagram-panels.js"), "again = () => { activatePill(wantPill); retry(); };", "panel Retry re-activates the cancelled range's pill")
 	mustContain(t, "admin-event-rules.js", readJS(t, "admin-event-rules.js"), "if (wrap && wrap.offsetParent) syncRuleFilterChips();", "the chips follow the filter that loaded")
@@ -147,7 +147,7 @@ func TestFilterLoad_StateOnlyOnSuccess(t *testing.T) {
 	if strings.Index(search, "searchOffset = target;") < strings.Index(search, "if (r.error) {") {
 		t.Error("runSearch sets searchOffset before the result is known")
 	}
-	mustContain(t, "admin-threatintel.js", search, "if (lastSearch) setSearchControls(lastSearch);", "Cancel puts the shown search back in the controls")
+	mustContain(t, "admin-threatintel.js", search, "if (lastSearch && !paging) setSearchControls(lastSearch);", "Cancel puts the shown search back in the controls")
 
 	er := readJS(t, "admin-event-rules.js")
 	lr := funcBody(t, er, `function loadRules\(profileId, filter\)`)
@@ -541,7 +541,7 @@ func TestFilterLoad_ReviewRound8(t *testing.T) {
 	}
 	mustContain(t, "admin-main.js", main, "var typing = !!(apE && apE.hasPendingEdit && apE.hasPendingEdit());", "a background error does not wipe a pending edit")
 
-	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "if (lastSearch && !typingNewSearch(query)) setSearchControls(lastSearch);", "search error restores (unless typing the next search)")
+	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "if (lastSearch && !paging && !typingNewSearch(query)) setSearchControls(lastSearch);", "search error restores (unless typing the next search)")
 	rp := readJS(t, "admin-reports.js")
 	if strings.Count(rp, "if (shown) applyChoices(shown);") != 2 {
 		t.Error("reports: both Cancel and error put the shown choices back")
@@ -566,7 +566,7 @@ func TestFilterLoad_ReviewRound9(t *testing.T) {
 	mustContain(t, "admin-main.js", run, "function apNow() { return analyticsPages[page]; }", "the handle is resolved when the load settles")
 	for _, c := range []struct{ sig, guard, snap string }{
 		{`function syslogPage\(target\)`, "if (AC.chartLoadBusy('filter-syslog', true)) return;", "buildSyslogParams(10, snap)"},
-		{`function alertsPage\(target\)`, "if (AC.chartLoadBusy('filter-alerts', true)) return;", "buildAlertParams(10, snap)"},
+		{`function alertsPage\(target\)`, "if (AC.chartLoadBusy('filter-alerts', true) && !alertsQuietRefreshRunning) return;", "buildAlertParams(10, snap)"},
 		{`function auditPage\(target, prev, st, paging\)`, "if (paging && AC.chartLoadBusy('filter-audit', true)) return;", "buildAuditParams(10, snap)"},
 	} {
 		b := funcBody(t, main, c.sig)
@@ -644,7 +644,7 @@ func TestFilterLoad_ReviewRound11(t *testing.T) {
 		t.Error("the config-diff header must name the pair being loaded before the load starts")
 	}
 	main := readJS(t, "admin-main.js")
-	if strings.Count(main, "runDeferredAlertsRefresh(); });") != 3 {
+	if strings.Count(main, "runDeferredAlertsRefresh(); });") != 2 || !strings.Contains(main, "            updateAlertBulkToolbar();\n            runDeferredAlertsRefresh();\n        });") {
 		t.Error("the filter load, paging and the ack refresh itself must run a deferred ack refresh when they settle")
 	}
 	mustContain(t, "admin-main.js", funcBody(t, main, `function runDeferredAlertsRefresh\(\)`), "if (!alertsRefreshDeferred || AC.chartLoadBusy('filter-alerts', true)) return;", "the deferred refresh waits for idle")
@@ -668,7 +668,7 @@ func TestFilterLoad_ReviewRound11(t *testing.T) {
 func TestFilterLoad_ReviewRound12(t *testing.T) {
 	main := readJS(t, "admin-main.js")
 	ra := funcBody(t, main, `function refreshAlertsAtCurrentPage\(opts\)`)
-	mustContain(t, "admin-main.js", ra, "if (refreshing && refreshing.then) refreshing.then(function() { updateAlertBulkToolbar(); runDeferredAlertsRefresh(); });", "an ack during the refresh is not lost")
+	mustContain(t, "admin-main.js", ra, "            updateAlertBulkToolbar();\n            runDeferredAlertsRefresh();\n        });", "an ack during the refresh is not lost")
 	mustContain(t, "admin-main.js", ra, "noOverlay: !!(opts && opts.quiet)", "a deferred refresh is quiet")
 	mustContain(t, "admin-main.js", funcBody(t, main, `function runDeferredAlertsRefresh\(\)`), "refreshAlertsAtCurrentPage({ quiet: true });", "deferred = quiet")
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
@@ -680,5 +680,29 @@ func TestFilterLoad_ReviewRound12(t *testing.T) {
 	if strings.Count(er, "data-rules-placeholder style=") != 2 {
 		t.Error("both 'not loaded' placeholders must be marked")
 	}
-	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "if (!tiPage || !tiPage.classList.contains('active')) return; // init() reloads on return", "no background search after leaving")
+	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "if (!tiPage || !tiPage.classList.contains('active')) return;", "no background search after leaving")
+}
+
+// Thirteenth review (Opus 5.5; LOW only): the threat-intel deferred refresh is
+// consumed even off-page; a save/delete rules reload defers to a running load;
+// paging may supersede a quiet ack refresh; threat-intel paging Cancel/Retry
+// never touch the search box.
+func TestFilterLoad_ReviewRound13(t *testing.T) {
+	ti := readJS(t, "admin-threatintel.js")
+	rd := funcBody(t, ti, `function runDeferredSearchRefresh\(\)`)
+	if strings.Index(rd, "searchRefreshDeferred = false;") > strings.Index(rd, "if (!tiPage") {
+		t.Error("the deferred threat-intel refresh must be consumed before the page-active check")
+	}
+	mustContain(t, "admin-threatintel.js", ti, "var paging = !!snap;", "paging loads are told apart")
+	er := readJS(t, "admin-event-rules.js")
+	if strings.Contains(er, "loadRules(viewedProfileId(), currentRuleFilter); //") || strings.Count(er, "reloadViewedRules();") != 2 {
+		t.Error("save and delete must reload through reloadViewedRules (deferred while a rules load runs)")
+	}
+	mustContain(t, "admin-event-rules.js", funcBody(t, er, `function reloadViewedRules\(\)`), "if (AC.chartLoadBusy('event-rules', true)) { rulesReloadDeferred = true; return; }", "deferred while busy")
+	mustContain(t, "admin-event-rules.js", er, "if (!(res && res.superseded)) setTimeout(runDeferredRulesReload, 0);", "and run when the load settles")
+	main := readJS(t, "admin-main.js")
+	ra := funcBody(t, main, `function refreshAlertsAtCurrentPage\(opts\)`)
+	mustContain(t, "admin-main.js", ra, "if (opts && opts.quiet) alertsQuietRefreshRunning = true;", "a quiet refresh is marked")
+	mustContain(t, "admin-main.js", ra, "if (opts && opts.quiet) alertsQuietRefreshRunning = false;", "and unmarked when it settles")
+	mustContain(t, "CHANGELOG.md", readFile(t, "../../CHANGELOG.md"), "(the Connections map side panel, which stays open, keeps loading)", "the panel exception is stated")
 }

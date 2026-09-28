@@ -1411,6 +1411,7 @@
     // refresh (because every visible row got acked and the filter is "unack"),
     // step back one page until we find content or hit page 1.
     var alertsRefreshDeferred = false;
+    var alertsQuietRefreshRunning = false;
     function runDeferredAlertsRefresh() {
         if (!alertsRefreshDeferred || AC.chartLoadBusy('filter-alerts', true)) return;
         alertsRefreshDeferred = false;
@@ -1456,7 +1457,12 @@
         }, { snap: shownQuery.alerts, noOverlay: !!(opts && opts.quiet), retry: refreshAlertsAtCurrentPage });
         // An ack that arrived while THIS refresh ran was deferred; its refresh
         // runs now (its own query started before that ack committed).
-        if (refreshing && refreshing.then) refreshing.then(function() { updateAlertBulkToolbar(); runDeferredAlertsRefresh(); });
+        if (opts && opts.quiet) alertsQuietRefreshRunning = true;
+        if (refreshing && refreshing.then) refreshing.then(function() {
+            if (opts && opts.quiet) alertsQuietRefreshRunning = false;
+            updateAlertBulkToolbar();
+            runDeferredAlertsRefresh();
+        });
     }
 
     function clearAlertSelection() {
@@ -1627,7 +1633,9 @@
 
     // The offset changes only when a page arrives (see runFilterLoad).
     function alertsPage(target) {
-        if (AC.chartLoadBusy('filter-alerts', true)) return; // see syslogPage
+        // See syslogPage. A quiet ack refresh (no overlay, nothing on screen
+        // says it runs) does not block paging: the new page reflects the ack.
+        if (AC.chartLoadBusy('filter-alerts', true) && !alertsQuietRefreshRunning) return;
         var snap = shownQuery.alerts;
         var loading = runFilterLoad('alerts', function(signal) {
             return apiFetch(API_BASE + '/alerts?' + buildAlertParams(10, snap) + '&offset=' + target, { signal: signal });

@@ -178,6 +178,21 @@
         return targetProfileId !== null ? targetProfileId : currentProfileId;
     }
 
+    // reloadViewedRules refreshes the view after a save/delete. While a rules
+    // load is running (a chip or profile the user just clicked) it is deferred
+    // to when that load settles — reloading now would silently supersede the
+    // user's click — and then reloads with whatever the view shows.
+    var rulesReloadDeferred = false;
+    function reloadViewedRules() {
+        if (AC.chartLoadBusy('event-rules', true)) { rulesReloadDeferred = true; return; }
+        loadRules(viewedProfileId(), currentRuleFilter);
+    }
+    function runDeferredRulesReload() {
+        if (!rulesReloadDeferred || AC.chartLoadBusy('event-rules', true)) return;
+        rulesReloadDeferred = false;
+        loadRules(viewedProfileId(), currentRuleFilter);
+    }
+
     // loadRules resolves { ok } once the rows are rendered, or { cancelled }
     // / { error } — callers that act on the loaded rules must check ok.
     function loadRules(profileId, filter) {
@@ -261,6 +276,11 @@
             renderStats();
             renderTable();
             return { ok: true };
+        }).then(function (res) {
+            // A reload deferred by this load runs once it settles (not when
+            // it was superseded: the newer load settles it instead).
+            if (!(res && res.superseded)) setTimeout(runDeferredRulesReload, 0);
+            return res;
         });
     }
 
@@ -874,7 +894,7 @@
                     AC.apiFetch(API + '/alerts/' + ackId + '/acknowledge', { method: 'POST', body: { notes: 'Suppressed via Event Rule' } }).catch(function () { });
                 }
                 pendingAckAlertId = null;
-                loadRules(viewedProfileId(), currentRuleFilter);
+                reloadViewedRules();
             }).catch(function (err) { AC.showError('Save failed: ' + err.message); });
         });
     }
@@ -908,7 +928,7 @@
             if (!ok) return;
             AC.apiFetch(API + '/event-rules/' + id, { method: 'DELETE' }).then(function () {
                 AC.showSuccess('Rule deleted');
-                loadRules(viewedProfileId(), currentRuleFilter); // keep the profile view (bare loadRules resets to all)
+                reloadViewedRules(); // keep the profile view (bare loadRules resets to all)
             }).catch(function (err) { AC.showError('Delete failed: ' + err.message); });
         });
     }
