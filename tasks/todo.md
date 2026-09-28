@@ -270,10 +270,13 @@ matches; a batch query expecting MANY wants the opposite plan. Never blanket-app
 - [x] Public modal: local overlay, onZoomComplete index guard + memo reset, no resetZoom, reset re-fetches, labels by span
 - [ ] Tests + mutation checks (before each commit); browser check; make qa (incl. tailwind-check); CHANGELOG 0.11.270; Fable diff review; PR; CI; merge
 ## PR 4 — v0.11.271: loading/Cancel on every server-side filter (delta approved 2026-09-28)
-- [ ] admin-common: escScope, chartLoadBusy(prefix), silent chartLoadCancel, fwmon:modalclose, chartNotice dim; .fwmon-load-host CSS
-- [ ] admin-controls: committed/prev handoff, restore() without onChange
-- [ ] Syslog/Alerts/Traps/Audit: hosts, keys, paging state in success only, cancel restore + notice, charts host, silent auto-refresh, page-leave cancel; delete dead load-more
-- [ ] Threat intel search + lookup; Flows samples/detections (+ Esc → stats cancel); Reports preview
-- [ ] Connection-map panel ranges (traffic/flows/events/iface/tunnel) + empty-flows fix; Connection detail (poll gen + busy skip + group restore)
-- [ ] Config diff (open first, modalclose cancel, no reopen); Event profiles effective; Event rules ({ok} consumers)
+- [x] admin-common: escScope, chartLoadBusy(prefix), silent chartLoadCancel, fwmon:modalclose, chartNotice dim; .fwmon-load-host CSS
+- [x] admin-controls: committed/prev handoff, restore() without onChange
+- [x] Syslog/Alerts/Traps/Audit: hosts, keys, paging state in success only, cancel restore + notice, charts host, silent auto-refresh, page-leave cancel; delete dead load-more
+- [x] Threat intel search + lookup; Flows samples/detections (+ Esc → stats cancel); Reports preview
+- [x] Connection-map panel ranges (traffic/flows/events/iface/tunnel) + empty-flows fix; Connection detail (poll gen + busy skip + group restore)
+- [x] Config diff (open first, modalclose cancel, no reopen); Event profiles effective; Event rules ({ok} consumers)
 - [ ] Guardrails + mutation checks; browser check; make qa; CHANGELOG 0.11.271; fresh Fable diff review; PR; CI; merge
+  - Done 2026-09-28: 25/25 mutations killed; browser check passed on every surface (1280 + 390 px); make qa green except local govulncheck (Go 1.26.4 vs CI 1.25.13).
+  - Browser check found + fixed: Retry after Cancel re-ran the RESTORED query (all surfaces) — now re-applies the cancelled one; connection-detail select went blank on cancel ('24h' vs hour-valued options).
+  - Follow-up (pre-existing, out of scope): admin-irc.js document-wide [data-tab] click handler throws on the map panel's tabs.
