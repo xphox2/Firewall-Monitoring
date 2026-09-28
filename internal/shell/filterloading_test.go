@@ -54,7 +54,7 @@ func TestFilterLoad_RestoreMechanics(t *testing.T) {
 	main := readJS(t, "admin-main.js")
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
 	sup := strings.Index(run, "if (r.superseded) return;")
-	rest := strings.Index(run, "if (back && ap && ap.restore) ap.restore(back);")
+	rest := strings.Index(run, "if (back && ap && ap.restore && !sibling) ap.restore(back);")
 	if sup < 0 || rest < 0 || sup > rest {
 		t.Error("runFilterLoad must return on a superseded load before the Cancel restore")
 	}
@@ -182,7 +182,7 @@ func TestFilterLoad_Surfaces(t *testing.T) {
 		{"admin-connection-detail.js", []string{"'cd-traffic'", "'cd-flows'", "'cd-group-' + canvasId", "AC.apiFetch(url, { signal: signal })",
 			"if (r.superseded) return null;", "loadTrafficChart({ fromPoll: true })", "loadFlowStats({ fromPoll: true })"}},
 		{"admin-device-detail.js", []string{"key: 'config-diff'", "signal: signal })", "if (!modal.classList.contains('active')) return;",
-			"if (e.target && e.target.id === 'config-diff-modal') AC.chartLoadCancel('config-diff');"}},
+			"if (!e.target || e.target.id !== 'config-diff-modal') return;\n        AC.chartLoadCancel('config-diff');\n        updateConfigCompareButton();"}},
 		{"admin-event-profiles.js", []string{"key: 'ep-effective'", "{ signal: signal }", "if (r.superseded) return;"}},
 		{"admin-event-rules.js", []string{"key: 'event-rules'", "{ signal: signal }", "if (r.superseded) return { cancelled: true, superseded: true };"}},
 	}
@@ -209,7 +209,7 @@ func TestFilterLoad_ConnectionDetailPolls(t *testing.T) {
 	if busy < 0 || gen < 0 || busy > gen {
 		t.Error("a poll must check busy BEFORE bumping the generation (bumping first would drop the user's own result)")
 	}
-	if strings.Count(body, "loadGen[key] === gen") != 2 {
+	if !strings.Contains(body, "if (loadGen[key] !== gen) return null;") || !strings.Contains(body, "return loadGen[key] === gen ? r.data : null;") {
 		t.Error("both the poll and the user path must drop a response that is no longer the newest")
 	}
 	mustContain(t, "admin-connection-detail.js", js, "if (!groupHostHeld('src-tunnel-charts')) renderTunnelCharts(", "the poll does not rebuild a host whose chart is loading or shows a notice")
@@ -349,4 +349,43 @@ func TestFilterLoad_ReviewRound2(t *testing.T) {
 	if upd < 0 || act < 0 || upd > act {
 		t.Error("Compare must be re-enabled BEFORE the closed-modal return, or closing mid-load leaves it disabled")
 	}
+}
+
+// Third fresh review: failed switches, charts-vs-table restores, connection
+// detail polls, and the remaining Cancel/Retry surfaces.
+func TestFilterLoad_ReviewRound3(t *testing.T) {
+	er := readJS(t, "admin-event-rules.js")
+	lr := funcBody(t, er, `function loadRules\(profileId, filter\)`)
+	errAt := strings.Index(lr, "if (r.error) {")
+	errBody := lr[errAt : strings.Index(lr[errAt:], "currentProfileId = pid;")+errAt]
+	sw := strings.Index(errBody, "if (pid !== currentProfileId) {")
+	clr := strings.Index(errBody, "targetProfileId = null;\n                if (wrap) AC.chartNotice(wrap, 'Could not load results'")
+	if sw < 0 || clr < 0 || clr < sw {
+		t.Error("a FAILED profile switch must keep targetProfileId (the viewed profile) — clear it only after the switch branch")
+	}
+	// Exactly two clears on the error path: the 403 placeholder and the
+	// same-profile error. Any other would drop the viewed profile on a
+	// failed switch.
+	if n := strings.Count(errBody, "targetProfileId = null;"); n != 2 {
+		t.Errorf("the error path clears targetProfileId %d times; want 2 (403 placeholder, same-profile error)", n)
+	}
+
+	main := readJS(t, "admin-main.js")
+	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
+	mustContain(t, "admin-main.js", run, "var sibling = key !== page && AC.chartLoadBusy('filter-' + page);", "a cancelled charts load never restores over a running table load")
+
+	cd := readJS(t, "admin-connection-detail.js")
+	body := funcBody(t, cd, `function cdLoad\(key, host, url, opts\)`)
+	mustContain(t, "admin-connection-detail.js", body, "if (host) AC.chartNoticeClear(host);", "a poll's fresh data clears a stale notice")
+	mustContain(t, "admin-connection-detail.js", body, "opts.hadResult ? 'Cancelled — showing the previous results' : 'Cancelled'", "a first-load Cancel does not claim previous results")
+
+	mustContain(t, "admin-flows.js", readJS(t, "admin-flows.js"), "AC.chartNotice(noticeHost, 'Cancelled — showing the previous results', { dim: false, onRetry: loadDetections });", "detections Cancel has a notice and Retry")
+	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "el('ti-lookup-q').value = q; // re-apply the cancelled lookup", "lookup Retry re-runs the cancelled lookup")
+
+	dd := readJS(t, "admin-device-detail.js")
+	od := funcBody(t, dd, `function openConfigDiff\(fromID, toID\)`)
+	if strings.Index(od, "if (r.superseded) return;") > strings.Index(od, "updateConfigCompareButton();") {
+		t.Error("a superseded diff load must not re-enable Compare while the newer load runs")
+	}
+	mustContain(t, "admin-event-profiles.js", readJS(t, "admin-event-profiles.js"), "// Nothing is displayed yet, so a cancelled lookup clears the pickers.\n            effShown = { device: '', site: '' };", "nothing is displayed on render, so nothing is 'shown'")
 }

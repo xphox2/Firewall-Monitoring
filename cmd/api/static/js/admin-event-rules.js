@@ -204,18 +204,30 @@
                 if (wrap) AC.chartNotice(wrap, 'Cancelled — showing the previous results', { dim: false, onRetry: retry });
                 return { cancelled: true };
             }
-            targetProfileId = null;
             if (r.error) {
                 // Admin-only API: operator/viewer get 403 — show a placeholder, not a
                 // broken page (no dead ends).
                 var err = r.error, role = (AC && AC.sessionRole) || '';
                 if (/role|forbidden|allow this action/i.test(err.message) || (role && role !== 'admin')) {
+                    targetProfileId = null;
                     renderPlaceholder();
-                } else {
-                    AC.showError('Failed to load event rules: ' + err.message);
+                    return { error: err };
                 }
+                if (pid !== currentProfileId) {
+                    // A failed profile switch is treated like a cancelled one:
+                    // the new profile's header is up, so its target stays the
+                    // viewed profile and the old rows are not kept under it.
+                    if (wrap) {
+                        wrap.innerHTML = '<div class="empty-state" style="padding:32px;text-align:center;color:var(--fwmon-text-faint)">Rules for this profile were not loaded.</div>';
+                        AC.chartNotice(wrap, 'Could not load results', { dim: false, onRetry: function () { loadRules(pid, nextFilter); } });
+                    }
+                    return { error: err };
+                }
+                targetProfileId = null;
+                if (wrap) AC.chartNotice(wrap, 'Could not load results', { dim: false, onRetry: function () { loadRules(pid, nextFilter); } });
                 return { error: err };
             }
+            targetProfileId = null;
             if (pid !== currentProfileId) groupCollapsed = {}; // per-profile collapse discipline
             currentProfileId = pid;
             currentRuleFilter = nextFilter;

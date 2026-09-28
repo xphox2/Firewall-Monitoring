@@ -38,14 +38,19 @@
         if (opts.fromPoll && AC.chartLoadBusy(key)) return Promise.resolve(null);
         var gen = loadGen[key] = (loadGen[key] || 0) + 1;
         if (opts.fromPoll) {
-            return AC.apiFetch(url).then(function(res) { return loadGen[key] === gen ? res : null; });
+            return AC.apiFetch(url).then(function(res) {
+                if (loadGen[key] !== gen) return null;
+                // Fresh data replaces what a Cancel/error notice referred to.
+                if (host) AC.chartNoticeClear(host);
+                return res;
+            });
         }
         return AC.chartLoad(host, function(signal) { return AC.apiFetch(url, { signal: signal }); },
             { key: key, label: 'Loading…' }).then(function(r) {
             if (r.superseded) return null;
             if (r.cancelled) {
                 if (opts.onCancel) opts.onCancel();
-                AC.chartNotice(host, 'Cancelled — showing the previous results', { onRetry: opts.retry });
+                AC.chartNotice(host, opts.hadResult ? 'Cancelled — showing the previous results' : 'Cancelled', { onRetry: opts.retry });
                 return null;
             }
             if (r.error) {
@@ -512,6 +517,7 @@
         return cdLoad('cd-group-' + canvasId, canvasEl ? canvasEl.parentElement : null,
             API_BASE + '/devices/' + deviceId + '/vpn-group-chart?group=' + encodeURIComponent(group) + '&range=' + range, {
                 fromPoll: fromRefresh,
+                hadResult: !!(gk && shownGroupRanges[gk]),
                 // Cancel puts the range back, or the next poll would re-apply
                 // the range the user just cancelled.
                 onCancel: function() {
@@ -634,7 +640,7 @@
         var range = currentTrafficRange;
         return cdLoad('cd-traffic', document.getElementById('traffic-load-host'),
             API_BASE + '/connections/' + connId + '/traffic?range=' + range,
-            { fromPoll: opts.fromPoll, onCancel: opts.onCancel, retry: function() { setTrafficRange(range); } }).then(function(result) {
+            { fromPoll: opts.fromPoll, hadResult: shownTrafficRange !== null, onCancel: opts.onCancel, retry: function() { setTrafficRange(range); } }).then(function(result) {
             if (!result) return;
             shownTrafficRange = range;
             var data = result.data;
@@ -704,7 +710,7 @@
         var hours = currentFlowHours;
         return cdLoad('cd-flows', document.getElementById('flow-load-host'),
             API_BASE + '/connections/' + connId + '/flows?hours=' + hours,
-            { fromPoll: opts.fromPoll, onCancel: opts.onCancel, retry: function() { setFlowRange(hours); } }).then(function(result) {
+            { fromPoll: opts.fromPoll, hadResult: shownFlowHours !== null, onCancel: opts.onCancel, retry: function() { setFlowRange(hours); } }).then(function(result) {
             if (!result) return;
             shownFlowHours = hours;
             var data = result.data;

@@ -631,7 +631,8 @@
                 '<div id="ep-eff-result" class="fwmon-load-host"></div>';
             var dSel = $('ep-eff-device'), sSel = $('ep-eff-site');
             if (selected) dSel.value = selected;
-            effShown = { device: dSel.value, site: '' };
+            // Nothing is displayed yet, so a cancelled lookup clears the pickers.
+            effShown = { device: '', site: '' };
             dSel.addEventListener('change', function () { if (dSel.value) { sSel.value = ''; loadEffective('device_id=' + dSel.value); } });
             sSel.addEventListener('change', function () { if (sSel.value) { dSel.value = ''; loadEffective('site_id=' + sSel.value); } });
         });

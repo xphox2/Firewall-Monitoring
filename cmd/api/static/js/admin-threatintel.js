@@ -81,7 +81,13 @@
             return api('/admin/api/threat-intel/lookup?q=' + encodeURIComponent(q), { signal: signal });
         }, { key: 'ti-lookup', label: 'Looking up…', escScope: el('ti-lookup-form') }).then(function(r) {
             if (r.superseded) return;
-            if (r.cancelled) { AC.chartNotice(host, 'Cancelled', { dim: false }); return; }
+            if (r.cancelled) {
+                AC.chartNotice(host, 'Cancelled', { dim: false, onRetry: function() {
+                    el('ti-lookup-q').value = q; // re-apply the cancelled lookup
+                    onLookup({ preventDefault: function() {} });
+                } });
+                return;
+            }
             if (r.error) {
                 if (errEl) { errEl.textContent = (r.error && r.error.message) || 'Lookup failed.'; errEl.hidden = false; }
                 return;

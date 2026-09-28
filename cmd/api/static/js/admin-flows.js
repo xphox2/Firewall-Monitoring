@@ -914,11 +914,21 @@
         var AC = window.AdminCommon;
         if (!AC || !AC.chartLoad) return;
         var url = '/admin/api/flows/detections?unacked=true&limit=100&hours=' + encodeURIComponent(state.hours);
-        AC.chartLoad(flowsLoadHost('flows-detections-card'), function(signal) {
+        var mount = flowsLoadHost('flows-detections-card');
+        var noticeHost = mount.appendChild ? mount : null; // nothing to annotate while hidden
+        AC.chartLoad(mount, function(signal) {
             return AC.apiFetch(url, { signal: signal });
         }, { key: 'flows-detections', label: 'Loading…', escScope: document.getElementById('page-flows') }).then(function(r) {
-            if (r.cancelled) return; // the detections on screen stay
-            if (r.error) { if (window.fwmonLog) window.fwmonLog.error('FwmonFlows: detections fetch failed', r.error); return; }
+            if (r.superseded) return;
+            if (r.cancelled) { // the detections on screen stay
+                if (noticeHost) AC.chartNotice(noticeHost, 'Cancelled — showing the previous results', { dim: false, onRetry: loadDetections });
+                return;
+            }
+            if (r.error) {
+                if (window.fwmonLog) window.fwmonLog.error('FwmonFlows: detections fetch failed', r.error);
+                if (noticeHost) AC.chartNotice(noticeHost, 'Could not load results', { dim: false, onRetry: loadDetections });
+                return;
+            }
             renderDetections((r.data && r.data.data) || []);
         });
     }

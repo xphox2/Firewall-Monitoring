@@ -2032,8 +2032,10 @@
                 return r.json();
             });
         }, { key: 'config-diff', label: 'Computing diff…' }).then(function(r) {
-            updateConfigCompareButton();
+            // A superseded load returns FIRST: the newer load owns Compare's
+            // disabled state until it settles (a close re-enables it below).
             if (r.superseded) return;
+            updateConfigCompareButton();
             if (!modal.classList.contains('active')) return;
             if (r.cancelled) {
                 body.innerHTML = '<div class="cfgdiff-placeholder">Cancelled.</div>';
@@ -2056,7 +2058,9 @@
     }
 
     document.addEventListener('fwmon:modalclose', function(e) {
-        if (e.target && e.target.id === 'config-diff-modal') AC.chartLoadCancel('config-diff');
+        if (!e.target || e.target.id !== 'config-diff-modal') return;
+        AC.chartLoadCancel('config-diff');
+        updateConfigCompareButton();
     });
 
     //

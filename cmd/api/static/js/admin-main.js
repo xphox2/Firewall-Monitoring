@@ -139,7 +139,11 @@
             if (r.superseded) return;
             if (r.cancelled) {
                 var back = shownQuery[page] || opts.prev;
-                if (back && ap && ap.restore) ap.restore(back);
+                // A charts load shares the page's controls with the table load.
+                // If a newer table load is still running, the controls belong
+                // to IT — restoring them would put a query over rows it is not.
+                var sibling = key !== page && AC.chartLoadBusy('filter-' + page);
+                if (back && ap && ap.restore && !sibling) ap.restore(back);
                 AC.chartNotice(host, shownQuery[page] ? 'Cancelled — showing the previous results' : 'Cancelled', { dim: false, onRetry: retryCancelled });
                 return;
             }
