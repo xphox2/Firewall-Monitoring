@@ -19,22 +19,26 @@ import (
 // shallow-copies the struct, and every copy must share one record.
 // nil-receiver-safe, so a Database{} literal still works.
 type autoConnSkipLog struct {
-	pairs sync.Map // pairKey -> struct{}
-	mu    sync.Mutex
-	count int
+	mu     sync.Mutex
+	logged map[string]struct{} // "src:dst:type" pairs already logged
+	count  int
 }
 
-func newAutoConnSkipLog() *autoConnSkipLog { return &autoConnSkipLog{} }
+func newAutoConnSkipLog() *autoConnSkipLog {
+	return &autoConnSkipLog{logged: make(map[string]struct{})}
+}
 
 func (l *autoConnSkipLog) record(sourceID, destID uint, connType string) {
 	if l == nil {
 		return
 	}
+	key := fmt.Sprintf("%d:%d:%s", sourceID, destID, connType)
 	l.mu.Lock()
 	l.count++
+	_, seen := l.logged[key]
+	l.logged[key] = struct{}{}
 	l.mu.Unlock()
-	key := fmt.Sprintf("%d:%d:%s", sourceID, destID, connType)
-	if _, seen := l.pairs.LoadOrStore(key, struct{}{}); !seen {
+	if !seen {
 		log.Printf("Auto-connection: skipped %s pair %d <-> %d (an endpoint is retired or missing); logged once per process", connType, sourceID, destID)
 	}
 }

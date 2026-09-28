@@ -555,10 +555,10 @@ func (d *Database) UpsertAutoConnection(sourceID, destID uint, status, tunnelNam
 			"last_check":      time.Now(),
 		}
 		// The name is otherwise the operator's: an auto row can be renamed and
-		// the rename must survive every cycle. Only a name still carrying the
-		// "?" placeholder of an unresolved endpoint (written by older versions)
-		// is replaced by the resolved one.
-		if strings.Contains(existing.Name, "?") && name != "" && !strings.Contains(name, "?") {
+		// the rename must survive every cycle. Only the "? ↔ X" / "X ↔ ?"
+		// placeholder older versions wrote for an unresolved endpoint is
+		// replaced by the resolved name.
+		if isPlaceholderConnName(existing.Name) && name != "" && !isPlaceholderConnName(name) {
 			updates["name"] = name
 		}
 		return d.db.Model(&models.DeviceConnection{}).Where("id = ?", existing.ID).Updates(updates).Error
@@ -577,6 +577,13 @@ func (d *Database) UpsertAutoConnection(sourceID, destID uint, status, tunnelNam
 		LastCheck:      time.Now(),
 	}
 	return d.db.Create(conn).Error
+}
+
+// isPlaceholderConnName reports whether an auto-connection name is the
+// "? ↔ X" / "X ↔ ?" form the detectors wrote before an endpoint's device
+// could be resolved. An operator's name that merely contains "?" is not one.
+func isPlaceholderConnName(name string) bool {
+	return strings.HasPrefix(name, "? ↔ ") || strings.HasSuffix(name, " ↔ ?")
 }
 
 // L2LinkUpsert carries one inferred port-to-port link for UpsertAutoL2Connection.

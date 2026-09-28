@@ -534,6 +534,10 @@ func (h *Handler) GetConnectionFlows(c *gin.Context) {
 		hours = 720
 	}
 	data, err := db.GetConnectionFlowStats(id, hours)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusNotFound, response.Error("Connection not found"))
+		return
+	}
 	if err != nil {
 		httputil.InternalError(c, "Failed to get flow stats", err)
 		return
@@ -641,9 +645,12 @@ func (h *Handler) GetVPNMapData(c *gin.Context) {
 		var matchID uint
 		var matchName string
 		if peer, found := provisionedPeer(provPairs, vpn); found {
-			matchID = peer
+			// The provisioned record keeps a retired endpoint (its other readers
+			// need it). A peer that is not an active device is shown unmatched —
+			// never a link to the retired device — and there is still no fallback
+			// to the remote IP, for the NAT reason above.
 			if d, ok := deviceByID[peer]; ok {
-				matchName = d.Name
+				matchID, matchName = peer, d.Name
 			}
 		} else if vpn.TunnelType != "ipsec-dialup" {
 			if ref, found := ipToDevice[vpn.RemoteIP]; found && ref.ID != vpn.DeviceID {

@@ -762,7 +762,7 @@ func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, er
 // getConnectionTunnelNames returns matching tunnel names for a connection's source and dest devices.
 func (d *Database) getConnectionTunnelNames(connID uint) (srcDeviceID, dstDeviceID uint, srcTunnelNames, dstTunnelNames []string, err error) {
 	var conn models.DeviceConnection
-	if err = d.db.Preload("SourceDevice").Preload("DestDevice").First(&conn, connID).Error; err != nil {
+	if err = d.db.Scopes(ActiveConnections).Preload("SourceDevice").Preload("DestDevice").First(&conn, connID).Error; err != nil {
 		return
 	}
 	srcDeviceID = conn.SourceDeviceID

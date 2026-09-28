@@ -73,6 +73,16 @@ func TestUpsertAutoConnection_NameRefreshOnlyReplacesPlaceholder(t *testing.T) {
 		t.Errorf("after a cycle: name=%q status=%q, want the operator's name kept and status refreshed", c.Name, c.Status)
 	}
 
+	// An operator's name that merely contains "?" is not a placeholder.
+	d.db.Model(&models.DeviceConnection{}).Where("id = ?", c.ID).Update("name", "Hub ↔ Lab?")
+	if err := d.UpsertAutoConnection(a.ID, b.ID, "up", "t1", "HUB-FW ↔ OPNsense", "ipsec", "provisioned"); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	d.db.First(&c, c.ID)
+	if c.Name != "Hub ↔ Lab?" {
+		t.Errorf("an operator name containing \"?\" was overwritten: %q", c.Name)
+	}
+
 	d.db.Model(&models.DeviceConnection{}).Where("id = ?", c.ID).Update("name", "? ↔ OPNsense")
 	if err := d.UpsertAutoConnection(a.ID, b.ID, "up", "t1", "HUB-FW ↔ OPNsense", "ipsec", "provisioned"); err != nil {
 		t.Fatalf("refresh: %v", err)
