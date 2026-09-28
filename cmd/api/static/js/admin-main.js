@@ -171,7 +171,7 @@
             label: opts.label || 'Loading…',
             escScope: document.getElementById('page-' + page)
         }).then(function(r) {
-            if (r.superseded) return;
+            if (r.superseded) return { superseded: true };
             if (r.cancelled) {
                 var back = shownQuery[page] || opts.prev;
                 // A charts load shares the page's controls with the table load.
@@ -1458,8 +1458,14 @@
         // An ack that arrived while THIS refresh ran was deferred; its refresh
         // runs now (its own query started before that ack committed).
         if (opts && opts.quiet) alertsQuietRefreshRunning = true;
-        if (refreshing && refreshing.then) refreshing.then(function() {
-            if (opts && opts.quiet) alertsQuietRefreshRunning = false;
+        if (refreshing && refreshing.then) refreshing.then(function(res) {
+            if (opts && opts.quiet) {
+                alertsQuietRefreshRunning = false;
+                // Interrupted by paging or a filter change: re-arm, so if that
+                // load is cancelled or fails the ack still shows. (Not when
+                // nothing took over — a page leave reloads on return.)
+                if (res && res.superseded && AC.chartLoadBusy('filter-alerts', true)) alertsRefreshDeferred = true;
+            }
             updateAlertBulkToolbar();
             runDeferredAlertsRefresh();
         });

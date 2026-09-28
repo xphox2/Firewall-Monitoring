@@ -210,7 +210,10 @@
             if (r.superseded) {
                 // Left mid-load (nothing newer took over): the profile it was
                 // opening is no longer being viewed.
-                if (!AC.chartLoadBusy('event-rules', true)) targetProfileId = null;
+                if (!AC.chartLoadBusy('event-rules', true)) {
+                    targetProfileId = null;
+                    rulesReloadDeferred = false; // the page reloads its rules on return
+                }
                 return { cancelled: true, superseded: true };
             }
             if (r.cancelled) {

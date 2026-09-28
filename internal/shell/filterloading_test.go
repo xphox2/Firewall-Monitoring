@@ -53,7 +53,7 @@ func TestFilterLoad_RestoreMechanics(t *testing.T) {
 
 	main := readJS(t, "admin-main.js")
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
-	sup := strings.Index(run, "if (r.superseded) return;")
+	sup := strings.Index(run, "if (r.superseded) return { superseded: true };")
 	rest := strings.Index(run, "if (back && apC && apC.restore && !siblingBusy()) restoreQuery(apC, page, back);")
 	if sup < 0 || rest < 0 || sup > rest {
 		t.Error("runFilterLoad must return on a superseded load before the Cancel restore")
@@ -184,7 +184,7 @@ func TestFilterLoad_Surfaces(t *testing.T) {
 		{"admin-device-detail.js", []string{"key: 'config-diff'", "signal: signal })", "if (!modal.classList.contains('active')) return;",
 			"if (!e.target || e.target.id !== 'config-diff-modal') return;\n        AC.chartLoadCancel('config-diff');\n        updateConfigCompareButton();"}},
 		{"admin-event-profiles.js", []string{"key: 'ep-effective'", "{ signal: signal }", "if (r.superseded) return;"}},
-		{"admin-event-rules.js", []string{"key: 'event-rules'", "{ signal: signal }", "if (!AC.chartLoadBusy('event-rules', true)) targetProfileId = null;\n                return { cancelled: true, superseded: true };"}},
+		{"admin-event-rules.js", []string{"key: 'event-rules'", "{ signal: signal }", "                    rulesReloadDeferred = false; // the page reloads its rules on return\n                }\n                return { cancelled: true, superseded: true };"}},
 	}
 	for _, c := range cases {
 		js := readJS(t, c.file)
@@ -703,6 +703,18 @@ func TestFilterLoad_ReviewRound13(t *testing.T) {
 	main := readJS(t, "admin-main.js")
 	ra := funcBody(t, main, `function refreshAlertsAtCurrentPage\(opts\)`)
 	mustContain(t, "admin-main.js", ra, "if (opts && opts.quiet) alertsQuietRefreshRunning = true;", "a quiet refresh is marked")
-	mustContain(t, "admin-main.js", ra, "if (opts && opts.quiet) alertsQuietRefreshRunning = false;", "and unmarked when it settles")
+	mustContain(t, "admin-main.js", ra, "            if (opts && opts.quiet) {\n                alertsQuietRefreshRunning = false;", "and unmarked when it settles")
 	mustContain(t, "CHANGELOG.md", readFile(t, "../../CHANGELOG.md"), "(the Connections map side panel, which stays open, keeps loading)", "the panel exception is stated")
+}
+
+// Fourteenth review (Opus 5.5, harness-proven LOW): a quiet ack refresh that
+// paging or a filter change interrupts is re-armed, so the ack still shows if
+// that load is cancelled or fails; a page leave drops a deferred rules reload.
+func TestFilterLoad_ReviewRound14(t *testing.T) {
+	main := readJS(t, "admin-main.js")
+	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
+	mustContain(t, "admin-main.js", run, "if (r.superseded) return { superseded: true };", "callers can tell a superseded load")
+	ra := funcBody(t, main, `function refreshAlertsAtCurrentPage\(opts\)`)
+	mustContain(t, "admin-main.js", ra, "if (res && res.superseded && AC.chartLoadBusy('filter-alerts', true)) alertsRefreshDeferred = true;", "an interrupted quiet refresh is re-armed")
+	mustContain(t, "admin-event-rules.js", readJS(t, "admin-event-rules.js"), "rulesReloadDeferred = false; // the page reloads its rules on return", "a page leave consumes the deferred rules reload")
 }
