@@ -190,7 +190,7 @@ Re-measured on prod 2026-09-26 before planning; plan Fable-reviewed 4 rounds to 
       effective_io_concurrency **2**, work_mem **16MB**, random_page_cost 4 (disk is rotational).
       Backup at `postgresql.conf.bak-20260907-perf`. The old VACUUM step was moot —
       relallvisible/relpages on syslog_messages is 99.99%.
-- [ ] **work_mem is 16MB, not the planned 32MB.** `/dev/shm` is the Docker default 64MB and
+- [x] **work_mem 32MB applied 2026-09-26 19:39 UTC** after v0.11.258 (PR #268) gave the container `shm_size: 1g`. The 64MB /dev/shm had already failed 126 public-dashboard chart queries on 2026-09-16. Was: work_mem 16MB, not the planned 32MB. `/dev/shm` is the Docker default 64MB and
       `dynamic_shared_memory_type = posix`, so parallel hash joins allocate work_mem-sized segments
       there; 32MB x 3 participants would fail. Needs `shm_size: 1g` on the compose service, which
       must go through a PR — editing the tracked docker-compose.yml in place on rust-01 caused the
