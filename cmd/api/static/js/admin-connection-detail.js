@@ -62,11 +62,12 @@
     }
 
     // A group-chart host is held while one of its charts is loading for the
-    // user or shows a notice: the poll's rebuild would wipe the overlay or the
-    // notice (and its Retry) out from under the user.
+    // user: the poll's rebuild would wipe the overlay out from under them. A
+    // Cancel/error notice does NOT hold it — the next refresh redraws the
+    // shown range and replaces the notice, like every other poll surface.
     function groupHostHeld(hostId) {
         var host = document.getElementById(hostId);
-        return AC.chartLoadBusy('cd-group-' + hostId) || !!(host && host.querySelector('.fwmon-chart-notice'));
+        return !!host && AC.chartLoadBusy('cd-group-' + hostId);
     }
 
     function formatBytes(bytes) {

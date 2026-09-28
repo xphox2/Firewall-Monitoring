@@ -54,7 +54,7 @@ func TestFilterLoad_RestoreMechanics(t *testing.T) {
 	main := readJS(t, "admin-main.js")
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
 	sup := strings.Index(run, "if (r.superseded) return;")
-	rest := strings.Index(run, "if (back && ap && ap.restore && !sibling) ap.restore(back);")
+	rest := strings.Index(run, "if (back && ap && ap.restore && !siblingBusy()) ap.restore(back);")
 	if sup < 0 || rest < 0 || sup > rest {
 		t.Error("runFilterLoad must return on a superseded load before the Cancel restore")
 	}
@@ -85,13 +85,13 @@ func TestFilterLoad_RestoreMechanics(t *testing.T) {
 func TestFilterLoad_RetryAfterCancelReappliesQuery(t *testing.T) {
 	main := readJS(t, "admin-main.js")
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
-	mustContain(t, "admin-main.js", run, "if (want && ap.restore) ap.restore(want);", "Retry re-applies the cancelled query")
+	mustContain(t, "admin-main.js", run, "if (want && ap.restore && !siblingBusy()) ap.restore(want);", "Retry re-applies the cancelled query")
 	mustContain(t, "admin-main.js", run, "onRetry: retryCancelled", "the Cancel notice uses that Retry")
 	mustContain(t, "admin-main.js", run, "var want = (ap && ap.getState) ? ap.getState() : null;", "the requested query is captured when the load starts")
 	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "onRetry: function() { setSearchControls(query); runSearch(target); }", "threat-intel Retry re-applies the cancelled search")
 	mustContain(t, "admin-reports.js", readJS(t, "admin-reports.js"), "if (sel) sel.value = want.period;", "reports Retry re-applies the cancelled period")
 	mustContain(t, "diagram-panels.js", readJS(t, "diagram-panels.js"), "again = () => { activatePill(wantPill); retry(); };", "panel Retry re-activates the cancelled range's pill")
-	mustContain(t, "admin-event-rules.js", readJS(t, "admin-event-rules.js"), "syncRuleFilterChips(); // a Retry after Cancel", "the chips follow the filter that loaded")
+	mustContain(t, "admin-event-rules.js", readJS(t, "admin-event-rules.js"), "if (wrap && wrap.offsetParent) syncRuleFilterChips();", "the chips follow the filter that loaded")
 }
 
 // Offsets and selection change only in the success branch — onOK, which starts
@@ -214,7 +214,7 @@ func TestFilterLoad_ConnectionDetailPolls(t *testing.T) {
 	}
 	mustContain(t, "admin-connection-detail.js", js, "if (!groupHostHeld('src-tunnel-charts')) renderTunnelCharts(", "the poll does not rebuild a host whose chart is loading or shows a notice")
 	mustContain(t, "admin-connection-detail.js", js, "if (!groupHostHeld('dst-tunnel-charts')) renderTunnelCharts(", "same for the destination side")
-	mustContain(t, "admin-connection-detail.js", js, "return AC.chartLoadBusy('cd-group-' + hostId) ||", "held = a prefix-busy group chart")
+	mustContain(t, "admin-connection-detail.js", js, "return !!host && AC.chartLoadBusy('cd-group-' + hostId);", "held = a prefix-busy group chart (a notice alone does not freeze the refresh)")
 	// Cancel restores the range whose data is on screen, recorded on success.
 	mustContain(t, "admin-connection-detail.js", js, "var shown = shownGroupRanges[gk] || '24h';", "a cancelled group range goes back to the drawn one")
 	mustContain(t, "admin-connection-detail.js", js, "if (gk) shownGroupRanges[gk] = range;", "the drawn group range is recorded on success")
@@ -378,7 +378,9 @@ func TestFilterLoad_ReviewRound3(t *testing.T) {
 
 	main := readJS(t, "admin-main.js")
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
-	mustContain(t, "admin-main.js", run, "var sibling = key !== page && AC.chartLoadBusy('filter-' + page);", "a cancelled charts load never restores over a running table load")
+	mustContain(t, "admin-main.js", run, "function siblingBusy() { return key !== page && AC.chartLoadBusy('filter-' + page); }", "a charts load never restores over a running table load")
+	mustContain(t, "admin-main.js", run, "if (want && ap.restore && !siblingBusy()) ap.restore(want);", "nor does its Retry")
+	mustContain(t, "admin-main.js", run, "if (back && ap && ap.restore && !siblingBusy()) ap.restore(back);", "the Cancel branch")
 
 	cd := readJS(t, "admin-connection-detail.js")
 	body := funcBody(t, cd, `function cdLoad\(key, host, url, opts\)`)
@@ -394,4 +396,20 @@ func TestFilterLoad_ReviewRound3(t *testing.T) {
 		t.Error("a superseded diff load must not re-enable Compare while the newer load runs")
 	}
 	mustContain(t, "admin-event-profiles.js", readJS(t, "admin-event-profiles.js"), "// Nothing is displayed yet, so a cancelled lookup clears the pickers.\n            effShown = { device: '', site: '' };", "nothing is displayed on render, so nothing is 'shown'")
+}
+
+// Fourth fresh review: Esc with any dialog open, Traps Load more during a
+// reload, hidden rule lookups, and first-load Cancel leftovers.
+func TestFilterLoad_ReviewRound4(t *testing.T) {
+	ac := readJS(t, "admin-common.js")
+	mustContain(t, "admin-common.js", ac, "if (Object.keys(__fwmonOpenModals).length) return;", "any open dialog owns Esc, even with focus on <body>")
+	main := readJS(t, "admin-main.js")
+	lmt := funcBody(t, main, `function loadMoreTraps\(\)`)
+	if i := strings.Index(lmt, "if (AC.chartLoadBusy('filter-traps')) return;"); i < 0 || i > strings.Index(lmt, "runFilterLoad(") {
+		t.Error("Traps Load more must wait for a running filter reload")
+	}
+	mustContain(t, "admin-event-rules.js", readJS(t, "admin-event-rules.js"), "if (wrap && wrap.offsetParent) syncRuleFilterChips();", "a hidden lookup does not reset the user's chip")
+	mustContain(t, "admin-design-system.css", readFile(t, "../../cmd/api/static/css/admin-design-system.css"), ".fwmon-load-host:has(> .fwmon-chart-notice) { min-height: 120px; }", "a first-load notice gets room")
+	mustContain(t, "admin-event-profiles.js", readJS(t, "admin-event-profiles.js"), "if (!had) out.innerHTML = '';", "no Resolving… left behind")
+	mustContain(t, "diagram-panels.js", readJS(t, "diagram-panels.js"), "if (!container.querySelector('table') && !AC.chartLoadBusy('panel-events-' + connId)) {", "no Loading events… left behind")
 }

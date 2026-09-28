@@ -2058,6 +2058,10 @@
         // elsewhere", not "focus inside the chart".
         function onKey(e) {
             if (e.key !== 'Escape') return;
+            // Any open dialog owns Esc, wherever focus is: a click on plain
+            // text inside one moves focus to <body>, and that Esc closes the
+            // dialog — it must not also cancel the page's load.
+            if (Object.keys(__fwmonOpenModals).length) return;
             var t = e.target;
             if (t && t.closest && t.closest('[role="dialog"], .fwmon-confirm-overlay')) return;
             var field = t && t.closest && t.closest('input, textarea, select');

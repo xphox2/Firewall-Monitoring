@@ -658,6 +658,7 @@
                 if (sSel) sSel.value = effShown.site;
                 // Nothing has rendered yet on the first lookup — only the placeholder.
                 var had = !!out.querySelector('.ep-matrix-row, table, [data-ep-openprofile]');
+                if (!had) out.innerHTML = ''; // no "Resolving…" left behind with nothing running
                 AC.chartNotice(out, had ? 'Cancelled — showing the previous results' : 'Cancelled', { dim: false, onRetry: function () {
                     if (dSel) dSel.value = want.device;
                     if (sSel) sSel.value = want.site;

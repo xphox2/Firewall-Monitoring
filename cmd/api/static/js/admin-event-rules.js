@@ -231,7 +231,10 @@
             if (pid !== currentProfileId) groupCollapsed = {}; // per-profile collapse discipline
             currentProfileId = pid;
             currentRuleFilter = nextFilter;
-            syncRuleFilterChips(); // a Retry after Cancel loads a filter the chips no longer show
+            // A Retry after Cancel loads a filter the chips no longer show. Only
+            // for the visible tab: a hidden lookup (Customize) must not reset
+            // the chip the user picked.
+            if (wrap && wrap.offsetParent) syncRuleFilterChips();
             rules = (r.data && r.data.data) || [];
             renderStats();
             renderTable();

@@ -127,8 +127,11 @@
         // A Cancel puts the controls back to the shown query, so Retry must
         // first re-apply this one — retrying from the restored controls would
         // just reload the old results.
+        // A charts load shares the page's controls with the table load; while a
+        // newer table load runs, the controls are ITS query (see Cancel below).
+        function siblingBusy() { return key !== page && AC.chartLoadBusy('filter-' + page); }
         var retryCancelled = opts.retry && function() {
-            if (want && ap.restore) ap.restore(want);
+            if (want && ap.restore && !siblingBusy()) ap.restore(want);
             opts.retry(opts.prev);
         };
         return AC.chartLoad(host, run, {
@@ -142,8 +145,7 @@
                 // A charts load shares the page's controls with the table load.
                 // If a newer table load is still running, the controls belong
                 // to IT — restoring them would put a query over rows it is not.
-                var sibling = key !== page && AC.chartLoadBusy('filter-' + page);
-                if (back && ap && ap.restore && !sibling) ap.restore(back);
+                if (back && ap && ap.restore && !siblingBusy()) ap.restore(back);
                 AC.chartNotice(host, shownQuery[page] ? 'Cancelled — showing the previous results' : 'Cancelled', { dim: false, onRetry: retryCancelled });
                 return;
             }
@@ -2176,6 +2178,9 @@
     }
 
     function loadMoreTraps() {
+        // trapsOffset belongs to the rows on screen; while a filter reload is
+        // running, appending from it would mix two filters' rows.
+        if (AC.chartLoadBusy('filter-traps')) return;
         var from = trapsOffset; // advances only when the rows arrive
         runFilterLoad('traps', function(signal) {
             return apiFetch(API_BASE + '/traps?' + buildTrapParams(100) + '&offset=' + from, { signal: signal });
