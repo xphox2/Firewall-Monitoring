@@ -16,6 +16,48 @@
     var currentFlowHours = 24;
     var connDetail = null;
 
+    // Per-loader generation: every load that renders bumps it, and a response
+    // renders only while it is still the newest. The 30s poll has no abort
+    // handle, so a poll response in flight when the user picks a range must be
+    // dropped here or it would paint the old range over the new one.
+    var loadGen = {};
+
+    // cdLoad fetches url for one chart. A user load runs under the shared
+    // loading overlay (Cancel / Esc) on host; a poll (fromPoll) shows nothing,
+    // and is skipped outright while the user's own load for the key is running
+    // — it must neither supersede nor overwrite it. Resolves the response, or
+    // null when there is nothing to render.
+    function cdLoad(key, host, url, opts) {
+        opts = opts || {};
+        if (opts.fromPoll && AC.chartLoadBusy(key)) return Promise.resolve(null);
+        var gen = loadGen[key] = (loadGen[key] || 0) + 1;
+        if (opts.fromPoll) {
+            return AC.apiFetch(url).then(function(res) { return loadGen[key] === gen ? res : null; });
+        }
+        return AC.chartLoad(host, function(signal) { return AC.apiFetch(url, { signal: signal }); },
+            { key: key, label: 'Loading…' }).then(function(r) {
+            if (r.superseded) return null;
+            if (r.cancelled) {
+                if (opts.onCancel) opts.onCancel();
+                AC.chartNotice(host, 'Cancelled — showing the previous results', { onRetry: opts.retry });
+                return null;
+            }
+            if (r.error) {
+                AC.chartNotice(host, 'Could not load results', { onRetry: opts.retry });
+                return null;
+            }
+            return loadGen[key] === gen ? r.data : null;
+        });
+    }
+
+    // A group-chart host is held while one of its charts is loading for the
+    // user or shows a notice: the poll's rebuild would wipe the overlay or the
+    // notice (and its Retry) out from under the user.
+    function groupHostHeld(hostId) {
+        var host = document.getElementById(hostId);
+        return AC.chartLoadBusy('cd-group-' + hostId) || !!(host && host.querySelector('.fwmon-chart-notice'));
+    }
+
     function formatBytes(bytes) {
         if (!bytes || bytes === 0) return '0 B';
         var units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -333,8 +375,8 @@
                 // Render tunnel tables
                 renderTunnelTable('src-tunnels-table', data.source_tunnels || [], conn.source_device_id, srcAgreed);
                 renderTunnelTable('dst-tunnels-table', data.dest_tunnels || [], conn.dest_device_id, dstAgreed);
-                renderTunnelCharts('src-tunnel-charts', data.source_tunnels || [], conn.source_device_id);
-                renderTunnelCharts('dst-tunnel-charts', data.dest_tunnels || [], conn.dest_device_id);
+                if (!groupHostHeld('src-tunnel-charts')) renderTunnelCharts('src-tunnel-charts', data.source_tunnels || [], conn.source_device_id);
+                if (!groupHostHeld('dst-tunnel-charts')) renderTunnelCharts('dst-tunnel-charts', data.dest_tunnels || [], conn.dest_device_id);
                 document.getElementById('src-tunnels-title').textContent = 'Source Tunnels (' + srcName + ')';
                 document.getElementById('dst-tunnels-title').textContent = 'Destination Tunnels (' + dstName + ')';
             }
@@ -373,12 +415,6 @@
     // FwmonBwChart.mount can't recover the sibling toggle and snaps the view back
     // to 'rate', so the operator's Combined/Transfer choice is lost every poll.
     var groupBwViews = {};
-    // Monotonic token per canvas: a click-initiated load still in flight when the
-    // refresh wipes host.innerHTML would otherwise resolve against the NEW canvas
-    // of the same positional id — possibly a different tunnel — and overwrite the
-    // fresh chart with the old group's data.
-    var groupChartGen = {};
-
     function groupKey(hostId, group) { return hostId + '|' + group; }
 
     function renderTunnelCharts(hostId, tunnels, deviceId) {
@@ -451,24 +487,39 @@
 
     // fromRefresh marks a load the user did not ask for. Those must fail quietly:
     // one API blip would otherwise pop a toast per group per side, every 30s.
+    function setGroupPill(pillEl) {
+        var pills = pillEl.parentElement.querySelectorAll('.range-pill');
+        for (var p = 0; p < pills.length; p++) { pills[p].classList.remove('active'); }
+        pillEl.classList.add('active');
+    }
+
     function loadGroupChart(canvasId, deviceId, group, range, pillEl, hostId, fromRefresh) {
-        if (pillEl) {
-            var pills = pillEl.parentElement.querySelectorAll('.range-pill');
-            for (var p = 0; p < pills.length; p++) { pills[p].classList.remove('active'); }
-            pillEl.classList.add('active');
-        }
+        var gk = (hostId && group) ? groupKey(hostId, group) : null;
+        var prevRange = gk ? (groupRanges[gk] || '24h') : null;
+        var prevPill = pillEl ? pillEl.parentElement.querySelector('.range-pill.active') : null;
+        if (pillEl) setGroupPill(pillEl);
         // Remember the choice so the next poll re-applies it instead of snapping
         // every chart back to 24h.
-        if (hostId && group) { groupRanges[groupKey(hostId, group)] = range; }
+        if (gk) { groupRanges[gk] = range; }
 
-        var gen = (groupChartGen[canvasId] || 0) + 1;
-        groupChartGen[canvasId] = gen;
-
-        return AC.apiFetch(API_BASE + '/devices/' + deviceId + '/vpn-group-chart?group=' +
-                encodeURIComponent(group) + '&range=' + range).then(function(result) {
+        var canvasEl = document.getElementById(canvasId);
+        // The key carries the canvas id, which starts with the host id, so the
+        // poll can ask whether ANY chart of a host is loading (a prefix).
+        return cdLoad('cd-group-' + canvasId, canvasEl ? canvasEl.parentElement : null,
+            API_BASE + '/devices/' + deviceId + '/vpn-group-chart?group=' + encodeURIComponent(group) + '&range=' + range, {
+                fromPoll: fromRefresh,
+                // Cancel puts the range back, or the next poll would re-apply
+                // the range the user just cancelled.
+                onCancel: function() {
+                    if (gk) groupRanges[gk] = prevRange;
+                    if (prevPill) setGroupPill(prevPill);
+                },
+                retry: function() { loadGroupChart(canvasId, deviceId, group, range, pillEl, hostId, false); }
+            }).then(function(result) {
             // A refresh may have rebuilt the DOM while this was in flight; the
-            // canvas of this id can now belong to a different tunnel.
-            if (groupChartGen[canvasId] !== gen) return;
+            // canvas of this id can now belong to a different tunnel — cdLoad's
+            // generation drops the stale response.
+            if (!result) return;
             var data = result.data;
             var canvas = document.getElementById(canvasId);
             if (!canvas) return;
@@ -570,8 +621,13 @@
         };
     }
 
-    function loadTrafficChart() {
-        return AC.apiFetch(API_BASE + '/connections/' + connId + '/traffic?range=' + currentTrafficRange).then(function(result) {
+    function loadTrafficChart(opts) {
+        opts = opts || {};
+        var range = currentTrafficRange;
+        return cdLoad('cd-traffic', document.getElementById('traffic-load-host'),
+            API_BASE + '/connections/' + connId + '/traffic?range=' + range,
+            { fromPoll: opts.fromPoll, onCancel: opts.onCancel, retry: function() { setTrafficRange(range); } }).then(function(result) {
+            if (!result) return;
             var data = result.data;
             if (!data) return;
 
@@ -617,7 +673,7 @@
         });
     }
 
-    function setTrafficRange(range) {
+    function applyTrafficRange(range) {
         currentTrafficRange = range;
         var pills = document.querySelectorAll('#traffic-range .range-pill');
         for (var i = 0; i < pills.length; i++) {
@@ -625,11 +681,23 @@
         }
         var select = document.getElementById('traffic-range-select');
         if (select) select.value = range;
-        loadTrafficChart();
     }
 
-    function loadFlowStats() {
-        return AC.apiFetch(API_BASE + '/connections/' + connId + '/flows?hours=' + currentFlowHours).then(function(result) {
+    function setTrafficRange(range) {
+        var prev = currentTrafficRange;
+        applyTrafficRange(range);
+        // Cancel restores the previous range so the next poll does not
+        // re-request the one the user just cancelled.
+        loadTrafficChart({ onCancel: function() { applyTrafficRange(prev); } });
+    }
+
+    function loadFlowStats(opts) {
+        opts = opts || {};
+        var hours = currentFlowHours;
+        return cdLoad('cd-flows', document.getElementById('flow-load-host'),
+            API_BASE + '/connections/' + connId + '/flows?hours=' + hours,
+            { fromPoll: opts.fromPoll, onCancel: opts.onCancel, retry: function() { setFlowRange(hours); } }).then(function(result) {
+            if (!result) return;
             var data = result.data;
             if (!data) return;
 
@@ -762,7 +830,7 @@
         });
     }
 
-    function setFlowRange(hours) {
+    function applyFlowRange(hours) {
         currentFlowHours = hours;
         var pills = document.querySelectorAll('#flow-range .range-pill');
         for (var i = 0; i < pills.length; i++) {
@@ -770,7 +838,12 @@
         }
         var select = document.getElementById('flow-range-select');
         if (select) select.value = hours;
-        loadFlowStats();
+    }
+
+    function setFlowRange(hours) {
+        var prev = currentFlowHours;
+        applyFlowRange(hours);
+        loadFlowStats({ onCancel: function() { applyFlowRange(prev); } });
     }
 
     function switchTab(name, tabEl) {
@@ -851,10 +924,10 @@
         refreshTimeout = Date.now();
         loadConnectionDetail().then(function() {
             if (Date.now() - refreshTimeout > 25000) return;
-            return loadTrafficChart();
+            return loadTrafficChart({ fromPoll: true });
         }).then(function() {
             if (connDetail && connDetail.has_flow_data && document.getElementById('tab-content-flows').classList.contains('active')) {
-                return loadFlowStats();
+                return loadFlowStats({ fromPoll: true });
             }
         }).catch(function(err) {
             if (err.name === 'AbortError' || err.name === 'CancelError') return;

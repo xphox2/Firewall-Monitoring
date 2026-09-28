@@ -134,12 +134,25 @@
         });
     }
 
-    var FILTER_PAGES = ['syslog', 'alerts', 'traps', 'audit'];
+    // Load keys (or key prefixes) owned by each page. Leaving a page stops its
+    // loads silently (no Cancel notice, no restore rewriting the URL of the
+    // page just opened).
+    var PAGE_LOAD_KEYS = {
+        syslog: ['filter-syslog'],
+        alerts: ['filter-alerts'],
+        traps: ['filter-traps'],
+        audit: ['filter-audit'],
+        'threat-intel': ['ti-'],
+        flows: ['flows-'],
+        reports: ['report-'],
+        connections: ['panel-'],
+        'event-rules': ['event-rules', 'ep-']
+    };
 
     function loadPageData(page) {
-        // Leaving an analytics page stops its loads silently (no Cancel notice,
-        // no restore rewriting the URL of the page just opened).
-        FILTER_PAGES.forEach(function(p) { if (p !== page) AC.chartLoadCancel('filter-' + p); });
+        Object.keys(PAGE_LOAD_KEYS).forEach(function(p) {
+            if (p !== page) PAGE_LOAD_KEYS[p].forEach(function(k) { AC.chartLoadCancel(k); });
+        });
         // Close the NOC live stream when navigating away so the SSE connection
         // isn't left open in the background.
         if (page !== 'noc' && window.FwmonNOC && window.FwmonNOC.stop) {

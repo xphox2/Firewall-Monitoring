@@ -48,6 +48,11 @@
     var profilesList = [];   // event rule profiles (v48) for the builder's layer select
     var currentProfileId = 0; // profile the rules view is filtered to (0 = all)
     var currentRuleFilter = 'all';
+    // Profile of a rules load still in flight (null when none). currentProfileId
+    // and the filter change only when a load SUCCEEDS, so a cancelled load keeps
+    // the view consistent with the rows on screen; the builder reads the target
+    // while a load runs so "+ Add rule" defaults to the profile being opened.
+    var targetProfileId = null;
     var wired = false;
     // When a rule is created from an sFlow-security alert, the alert id to ack once
     // the rule saves (the rule only drops the source from the next cycle, so the
@@ -158,25 +163,57 @@
     // loadRules loads + renders. profileId filters to one layer (0/undefined =
     // all rules — the legacy standalone view); filter is the Rules-tab chip
     // (all|alert|suppress|temp|disabled), applied client-side.
+    // loadRules resolves { ok } once the rows are rendered, or { cancelled }
+    // / { error } — callers that act on the loaded rules must check ok.
     function loadRules(profileId, filter) {
-        if ((profileId || 0) !== currentProfileId) groupCollapsed = {}; // per-profile collapse discipline
-        currentProfileId = profileId || 0;
-        if (filter) currentRuleFilter = filter; else if (!profileId) currentRuleFilter = 'all';
-        var url = API + '/event-rules' + (currentProfileId ? ('?profile_id=' + currentProfileId) : '');
-        return AC.apiFetch(url).then(function (res) {
-            rules = res.data || [];
+        var pid = profileId || 0;
+        var nextFilter = filter ? filter : (!profileId ? 'all' : currentRuleFilter);
+        targetProfileId = pid;
+        var url = API + '/event-rules' + (pid ? ('?profile_id=' + pid) : '');
+        var wrap = $('event-rules-table-wrap');
+        // No overlay while the Rules tab is hidden (a Customize lookup runs from
+        // the matrix); the load itself is the same.
+        var host = (wrap && wrap.offsetParent) ? wrap : [];
+        return AC.chartLoad(host, function (signal) {
+            return AC.apiFetch(url, { signal: signal });
+        }, { key: 'event-rules', label: 'Loading rules…', escScope: $('ep-rules-filter') }).then(function (r) {
+            if (r.superseded) return { cancelled: true, superseded: true };
+            targetProfileId = null;
+            if (r.cancelled) {
+                syncRuleFilterChips();
+                if (wrap) AC.chartNotice(wrap, 'Cancelled — showing the previous results', { dim: false, onRetry: function () { loadRules(pid, nextFilter); } });
+                return { cancelled: true };
+            }
+            if (r.error) {
+                // Admin-only API: operator/viewer get 403 — show a placeholder, not a
+                // broken page (no dead ends).
+                var err = r.error, role = (AC && AC.sessionRole) || '';
+                if (/role|forbidden|allow this action/i.test(err.message) || (role && role !== 'admin')) {
+                    renderPlaceholder();
+                } else {
+                    AC.showError('Failed to load event rules: ' + err.message);
+                }
+                return { error: err };
+            }
+            if (pid !== currentProfileId) groupCollapsed = {}; // per-profile collapse discipline
+            currentProfileId = pid;
+            currentRuleFilter = nextFilter;
+            rules = (r.data && r.data.data) || [];
             renderStats();
             renderTable();
-        }).catch(function (err) {
-            // Admin-only API: operator/viewer get 403 — show a placeholder, not a
-            // broken page (no dead ends).
-            var role = (AC && AC.sessionRole) || '';
-            if (/role|forbidden|allow this action/i.test(err.message) || (role && role !== 'admin')) {
-                renderPlaceholder();
-            } else {
-                AC.showError('Failed to load event rules: ' + err.message);
-            }
+            return { ok: true };
         });
+    }
+
+    // After a cancelled load the filter chips go back to the filter whose rows
+    // are on screen.
+    function syncRuleFilterChips() {
+        document.querySelectorAll('[data-ep-rulefilter]').forEach(function (b) {
+            b.classList.toggle('active', b.getAttribute('data-ep-rulefilter') === currentRuleFilter);
+        });
+        if (window.FwmonEventProfiles && window.FwmonEventProfiles.setRulesFilter) {
+            window.FwmonEventProfiles.setRulesFilter(currentRuleFilter);
+        }
     }
 
     function renderPlaceholder() {
@@ -373,7 +410,7 @@
                 return '<option value="' + esc(p.id) + '">' + esc(p.name) + (p.is_default ? ' (Default)' : '') + '</option>';
             }).join('') || '<option value="">Default</option>';
             var defId = (plist.find(function (p) { return p.is_default; }) || {}).id || '';
-            var want = (r && r.profile_id) || currentProfileId || defId;
+            var want = (r && r.profile_id) || (targetProfileId !== null ? targetProfileId : currentProfileId) || defId;
             // Belt-and-braces: NEVER let a missing option silently re-home the
             // rule to Default — synthesize an option for the rule's own layer.
             if (want && !plist.some(function (p) { return String(p.id) === String(want); })) {

@@ -15,8 +15,43 @@
     let pendingOverlayCharts = []; // overlay iface charts to load when the Overlay tab is first shown (avoids 0-size render on a hidden tab)
 
     function destroyPanelCharts() {
+        // A load still running for the panel being replaced is dropped silently.
+        AC.chartLoadCancel('panel-');
         Object.values(panelChartInstances).forEach(c => { if (c?.destroy) c.destroy(); });
         panelChartInstances = {};
+    }
+
+    // panelLoad runs one range load for a panel section under the shared
+    // loading overlay (Cancel / Esc). It resolves the data on success and null
+    // otherwise. A user Cancel re-activates the previously active range pill
+    // (prevPill) and keeps what is on screen; a superseded load is silent.
+    function panelLoad(key, host, url, prevPill, retry) {
+        return AC.chartLoad(host, signal => window.apiFetch(url, { signal: signal }), { key: key, label: 'Loading…' }).then(r => {
+            if (r.superseded) return null;
+            if (r.cancelled) {
+                if (prevPill) {
+                    prevPill.parentElement.querySelectorAll('.panel-range-pill').forEach(p => p.classList.remove('active'));
+                    prevPill.classList.add('active');
+                }
+                AC.chartNotice(host, 'Cancelled — showing the previous results', { onRetry: retry });
+                return null;
+            }
+            if (r.error) {
+                AC.chartNotice(host, 'Could not load results', { onRetry: retry });
+                return null;
+            }
+            return r.data;
+        });
+    }
+
+    // activatePill marks el active among its sibling range pills and returns
+    // the pill that was active before, for panelLoad's Cancel restore.
+    function activatePill(el) {
+        const pills = el.parentElement.querySelectorAll('.panel-range-pill');
+        const prev = el.parentElement.querySelector('.panel-range-pill.active');
+        pills.forEach(p => p.classList.remove('active'));
+        el.classList.add('active');
+        return prev === el ? null : prev;
     }
 
     function panelChartOptions(yCallback) {
@@ -118,20 +153,27 @@
             flushOverlayCharts();
         }
         if (tabName === 'flows' && currentPanelConnId && !panelChartInstances['proto']) {
-            loadPanelFlowStats(currentPanelConnId, 24);
+            const pill = document.querySelector('#panel-flow-range .panel-range-pill.active');
+            loadPanelFlowStats(currentPanelConnId, pill ? parseInt(pill.dataset.hours) : 24);
         }
         if (tabName === 'events' && currentPanelConnId) {
-            loadPanelEvents(currentPanelConnId, 24);
+            const pill = document.querySelector('#panel-events-range .panel-range-pill.active');
+            loadPanelEvents(currentPanelConnId, pill ? parseInt(pill.dataset.hours) : 24);
         }
     }
 
-    function loadPanelEvents(connId, hours) {
+    function loadPanelEvents(connId, hours, prevPill) {
         const container = document.getElementById('panel-events-list');
-        if (!container) return;
-        container.innerHTML = '<div class="loading" style="padding:20px;">Loading events...</div>';
+        const host = document.getElementById('panel-events-load-host');
+        if (!container || !host) return;
+        // The first load has nothing to keep on screen; later range changes
+        // keep the current table under the overlay.
+        if (!container.querySelector('table')) container.innerHTML = '<div class="loading" style="padding:20px;">Loading events...</div>';
 
-        window.apiFetch(window.AdminCommon.API_BASE + '/connections/' + connId + '/events?hours=' + hours).then(function(res) {
-            const events = res && res.data ? res.data : [];
+        const url = window.AdminCommon.API_BASE + '/connections/' + connId + '/events?hours=' + hours;
+        panelLoad('panel-events-' + connId, host, url, prevPill, () => loadPanelEvents(connId, hours)).then(function(res) {
+            if (!res || currentPanelConnId !== connId) return;
+            const events = res.data || [];
             if (events.length === 0) {
                 container.innerHTML = '<div style="padding:20px;color:var(--fwmon-text-faint);text-align:center;">No events in the last ' + hours + 'h</div>';
                 return;
@@ -156,8 +198,6 @@
                     '</tr>';
                 }).join('') +
                 '</tbody></table>';
-        }).catch(function() {
-            container.innerHTML = '<div style="padding:20px;color:var(--fwmon-sig-crit);">Failed to load events</div>';
         });
     }
 
@@ -206,7 +246,7 @@
                             <div class="panel-range-pill" data-action="dp-traffic-range" data-range="7d">7d</div>
                             <div class="panel-range-pill" data-action="dp-traffic-range" data-range="30d">30d</div>
                         </div>
-                        <div id="panel-traffic-chart-host" class="panel-chart-container"><canvas id="panel-traffic-chart"></canvas></div>
+                        <div class="fwmon-load-host" id="panel-traffic-load-host"><div id="panel-traffic-chart-host" class="panel-chart-container"><canvas id="panel-traffic-chart"></canvas></div></div>
                     </div>
                     <div class="panel-tab-content" id="ptab-tunnels">
                         <div class="tunnel-columns">
@@ -225,6 +265,8 @@
                             <div class="panel-range-pill" data-action="dp-flow-range" data-hours="168">7d</div>
                             <div class="panel-range-pill" data-action="dp-flow-range" data-hours="720">30d</div>
                         </div>
+                        <div class="fwmon-load-host" id="panel-flow-load-host">
+                        <div id="panel-flow-empty" hidden style="text-align:center;color:var(--fwmon-text-mute);padding:30px;">No sFlow data available for this connection.</div>
                         <div id="panel-flow-content">
                             <div style="display:flex;gap:12px;margin-bottom:8px;">
                                 <span style="font-size:0.78rem;color:var(--fwmon-text-faint);">Total bytes: <strong style="color:var(--fwmon-text);" id="pf-total-bytes">--</strong></span>
@@ -246,6 +288,7 @@
                                 </div>
                             </div>
                         </div>
+                        </div>
                     </div>
                     <div class="panel-tab-content" id="ptab-events">
                         <div class="panel-range-pills" id="panel-events-range">
@@ -254,8 +297,10 @@
                             <div class="panel-range-pill active" data-action="dp-events-range" data-hours="24">24h</div>
                             <div class="panel-range-pill" data-action="dp-events-range" data-hours="168">7d</div>
                         </div>
-                        <div id="panel-events-list" style="max-height:400px;overflow-y:auto;">
-                            <div class="loading" style="padding:20px;">Loading events...</div>
+                        <div class="fwmon-load-host" id="panel-events-load-host">
+                            <div id="panel-events-list" style="max-height:400px;overflow-y:auto;">
+                                <div class="loading" style="padding:20px;">Loading events...</div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -340,9 +385,12 @@
         } catch (e) { console.error('Panel detail load failed:', e); }
     }
 
-    async function loadPanelTrafficChart(connId, range) {
+    async function loadPanelTrafficChart(connId, range, prevPill) {
         try {
-            const resp = await window.apiFetch(`${window.API_BASE}/connections/${connId}/traffic?range=${range}`);
+            const loadHost = document.getElementById('panel-traffic-load-host');
+            if (!loadHost) return;
+            const resp = await panelLoad('panel-traffic-' + connId, loadHost, `${window.API_BASE}/connections/${connId}/traffic?range=${range}`,
+                prevPill, () => loadPanelTrafficChart(connId, range));
             const data = resp && resp.data ? resp.data : resp;
             if (!data || currentPanelConnId !== connId) return;
             // M13 of the 2026-07-01 audit: operate on the stable host, and
@@ -367,20 +415,33 @@
         } catch (e) { console.error('Panel traffic chart failed:', e); }
     }
 
-    function setPanelTrafficRange(range) {
-        document.querySelectorAll('#panel-traffic-range .panel-range-pill').forEach(p => p.classList.toggle('active', p.textContent === range));
-        if (currentPanelConnId) loadPanelTrafficChart(currentPanelConnId, range);
+    function setPanelTrafficRange(el) {
+        const prev = activatePill(el);
+        if (currentPanelConnId) loadPanelTrafficChart(currentPanelConnId, el.dataset.range, prev);
     }
 
-    async function loadPanelFlowStats(connId, hours) {
+    const PANEL_FLOW_CHARTS = ['proto', 'flowTime', 'topSrc', 'topDst'];
+
+    async function loadPanelFlowStats(connId, hours, prevPill) {
         try {
-            const resp = await window.apiFetch(`${window.API_BASE}/connections/${connId}/flows?hours=${hours}`);
+            const loadHost = document.getElementById('panel-flow-load-host');
+            if (!loadHost) return;
+            const resp = await panelLoad('panel-flows-' + connId, loadHost, `${window.API_BASE}/connections/${connId}/flows?hours=${hours}`,
+                prevPill, () => loadPanelFlowStats(connId, hours));
             const data = resp && resp.data ? resp.data : resp;
             if (!data || currentPanelConnId !== connId) return;
             const hasData = data.total_flows > 0;
+            // An empty range HIDES the content and drops its charts rather than
+            // replacing the markup: the canvases and tables must survive so the
+            // next range with data can render into them again.
             const content = document.getElementById('panel-flow-content');
+            const empty = document.getElementById('panel-flow-empty');
+            if (content) content.hidden = !hasData;
+            if (empty) empty.hidden = hasData;
             if (!hasData) {
-                content.innerHTML = '<div style="text-align:center;color:var(--fwmon-text-mute);padding:30px;">No sFlow data available for this connection.</div>';
+                PANEL_FLOW_CHARTS.forEach(k => {
+                    if (panelChartInstances[k]) { panelChartInstances[k].destroy(); delete panelChartInstances[k]; }
+                });
                 return;
             }
 
@@ -443,10 +504,9 @@
         } catch (e) { console.error('Panel flow stats failed:', e); }
     }
 
-    function setPanelFlowRange(hours) {
-        const labels = {1:'1h', 24:'24h', 168:'7d', 720:'30d'};
-        document.querySelectorAll('#panel-flow-range .panel-range-pill').forEach(p => p.classList.toggle('active', p.textContent === labels[hours]));
-        if (currentPanelConnId) loadPanelFlowStats(currentPanelConnId, hours);
+    function setPanelFlowRange(el) {
+        const prev = activatePill(el);
+        if (currentPanelConnId) loadPanelFlowStats(currentPanelConnId, parseInt(el.dataset.hours), prev);
     }
 
     // Group rows into LOGICAL tunnels.
@@ -1264,9 +1324,12 @@
         }
     }
 
-    async function loadPanelInterfaceChart(rowId, deviceId, ifIndex, range) {
+    async function loadPanelInterfaceChart(rowId, deviceId, ifIndex, range, prevPill) {
         try {
-            const resp = await window.apiFetch(`${window.API_BASE}/devices/${deviceId}/interfaces/${ifIndex}/chart?range=${range}`);
+            const host = panelRowChartHost(rowId);
+            if (!host) return;
+            const resp = await panelLoad('panel-iface-' + rowId, host, `${window.API_BASE}/devices/${deviceId}/interfaces/${ifIndex}/chart?range=${range}`,
+                prevPill, () => loadPanelInterfaceChart(rowId, deviceId, ifIndex, range));
             const data = resp && resp.data ? resp.data : resp;
             if (!Array.isArray(data)) return;
             const canvas = document.getElementById('pchart-' + rowId);
@@ -1319,9 +1382,19 @@
         }
     }
 
-    async function loadPanelTunnelChart(rowId, deviceId, tunnelName, range) {
+    // panelRowChartHost is the positioned container that owns a per-row
+    // chart's canvas — the loading overlay mounts there, beside the canvas.
+    function panelRowChartHost(rowId) {
+        const canvas = document.getElementById('pchart-' + rowId);
+        return canvas ? canvas.parentElement : null;
+    }
+
+    async function loadPanelTunnelChart(rowId, deviceId, tunnelName, range, prevPill) {
         try {
-            const resp = await window.apiFetch(`${window.API_BASE}/devices/${deviceId}/vpn-group-chart?group=${encodeURIComponent(tunnelName)}&range=${range}`);
+            const host = panelRowChartHost(rowId);
+            if (!host) return;
+            const resp = await panelLoad('panel-tunnel-' + rowId, host, `${window.API_BASE}/devices/${deviceId}/vpn-group-chart?group=${encodeURIComponent(tunnelName)}&range=${range}`,
+                prevPill, () => loadPanelTunnelChart(rowId, deviceId, tunnelName, range));
             const data = resp && resp.data ? resp.data : resp;
             if (!data) return;
             const canvas = document.getElementById('pchart-' + rowId);
@@ -1440,32 +1513,26 @@
         } else if (action === 'dp-switch-tab') {
             switchPanelTab(el.dataset.tab);
         } else if (action === 'dp-traffic-range') {
-            setPanelTrafficRange(el.dataset.range);
+            setPanelTrafficRange(el);
         } else if (action === 'dp-flow-range') {
-            setPanelFlowRange(parseInt(el.dataset.hours));
+            setPanelFlowRange(el);
         } else if (action === 'dp-events-range') {
-            var hrs = parseInt(el.dataset.hours);
-            el.parentElement.querySelectorAll('.panel-range-pill').forEach(function(p) { p.classList.remove('active'); });
-            el.classList.add('active');
-            if (currentPanelConnId) loadPanelEvents(currentPanelConnId, hrs);
+            var prevEv = activatePill(el);
+            if (currentPanelConnId) loadPanelEvents(currentPanelConnId, parseInt(el.dataset.hours), prevEv);
         } else if (action === 'dp-toggle-tunnel') {
             togglePanelTunnel(el.dataset.row, parseInt(el.dataset.device), el.dataset.tunnel);
         } else if (action === 'dp-toggle-path') {
             togglePanelPath(el.dataset.row, parseInt(el.dataset.srcDevice), parseInt(el.dataset.dstDevice), el.dataset.tunnel);
         } else if (action === 'dp-tunnel-chart') {
             e.stopPropagation();
-            var pills = el.parentElement.querySelectorAll('.panel-range-pill');
-            pills.forEach(function(p) { p.classList.remove('active'); });
-            el.classList.add('active');
-            loadPanelTunnelChart(el.dataset.row, parseInt(el.dataset.device), el.dataset.tunnel, el.dataset.range);
+            var prevT = activatePill(el);
+            loadPanelTunnelChart(el.dataset.row, parseInt(el.dataset.device), el.dataset.tunnel, el.dataset.range, prevT);
         } else if (action === 'dp-toggle-iface') {
             togglePanelInterface(el.dataset.row, parseInt(el.dataset.device), parseInt(el.dataset.ifindex));
         } else if (action === 'dp-iface-chart') {
             e.stopPropagation();
-            var ipills = el.parentElement.querySelectorAll('.panel-range-pill');
-            ipills.forEach(function(p) { p.classList.remove('active'); });
-            el.classList.add('active');
-            loadPanelInterfaceChart(el.dataset.row, parseInt(el.dataset.device), parseInt(el.dataset.ifindex), el.dataset.range);
+            var prevI = activatePill(el);
+            loadPanelInterfaceChart(el.dataset.row, parseInt(el.dataset.device), parseInt(el.dataset.ifindex), el.dataset.range, prevI);
         }
     });
 

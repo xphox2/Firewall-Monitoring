@@ -180,6 +180,7 @@
         .expandable-msg.expanded { max-width: none; white-space: normal; overflow: visible; text-overflow: clip; word-break: break-word; overflow-wrap: anywhere; }
         #maint-modal .form-group textarea { resize: vertical; min-height: 60px; }
         .connection-diagram { min-height: 500px; position: relative; background: var(--fwmon-bg); border-radius: var(--fwmon-radius-sm); overflow: hidden; }
+        .panel-chart-container { position: relative; }
         .panel-chart-container canvas { max-height: 200px; }
         .panel-tunnel-row { cursor: pointer; transition: background 0.15s; }
         .panel-tunnel-row:hover td { background: var(--fwmon-hover); }
@@ -1047,7 +1048,7 @@
                         <div id="ep-rules-filter" class="flex gap-2"><!-- filter chips --></div>
                         <button class="btn" id="er-create-btn" data-min-role="admin">+ Add rule</button>
                     </div>
-                    <div id="event-rules-table-wrap"><!-- table rendered by admin-event-rules.js --></div>
+                    <div id="event-rules-table-wrap" class="fwmon-load-host"><!-- table rendered by admin-event-rules.js --></div>
                 </div>
                 <div id="ep-tab-assignments" style="display:none">
                     <div id="ep-assignments"><!-- assignment chip lists --></div>
