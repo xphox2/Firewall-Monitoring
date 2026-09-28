@@ -422,7 +422,7 @@
                 <div class="stat-card"><div class="stat-label">Warning/Error</div><div class="stat-value" style="color:var(--fwmon-sig-warn)" id="syslog-warning">--</div></div>
                 <div class="stat-card"><div class="stat-label">Info/Notice</div><div class="stat-value" id="syslog-info">--</div></div>
             </div>
-            <div class="chart-row">
+            <div class="chart-row fwmon-load-host" id="syslog-charts-host">
                 <div class="chart-card">
                     <h3 id="syslog-trend-title">Message Trend (24h)</h3>
                     <canvas id="syslog-trend-chart"></canvas>
@@ -456,6 +456,7 @@
                         <label for="syslog-auto-refresh">Auto-refresh</label>
                     </div>
                 </div>
+                <div class="fwmon-load-host" id="syslog-load-host">
                 <div class="table-wrap" style="max-height: 600px;">
                     <table id="syslog-table">
                         <thead><tr><th>Time</th><th>Source IP</th><th>Hostname</th><th>Severity</th><th>Type</th><th>Message</th></tr></thead>
@@ -463,6 +464,7 @@
                     </table>
                 </div>
                 <div id="syslog-pagination" style="margin-top: 12px; text-align: center;"></div>
+                </div>
             </div>
         </div>
 
@@ -795,7 +797,7 @@
                 <div class="stat-card"><div class="stat-label">Warning</div><div class="stat-value" style="color:var(--fwmon-sig-warn)" id="alerts-warning">--</div></div>
                 <div class="stat-card"><div class="stat-label">Info</div><div class="stat-value" id="alerts-info">--</div></div>
             </div>
-            <div class="chart-row">
+            <div class="chart-row fwmon-load-host" id="alerts-charts-host">
                 <div class="chart-card">
                     <h3 id="alerts-trend-title">Alert Trend (24h)</h3>
                     <canvas id="alerts-trend-chart"></canvas>
@@ -838,6 +840,7 @@
                     <button class="btn sm secondary" id="alerts-bulk-clear-btn" disabled data-action="clear-alert-selection">Clear</button>
                 </div>
                 <div id="alerts-select-all-matching" style="display:none;margin-bottom:8px;padding:6px 10px;background:var(--fwmon-accent-bg);border:1px solid var(--fwmon-accent);border-radius:6px;color:var(--fwmon-text-dim);font-size:0.82rem;text-align:center;"></div>
+                <div class="fwmon-load-host" id="alerts-load-host">
                 <div class="table-wrap">
                     <table id="alerts-full-table">
                         <thead><tr><th style="width:32px"><input type="checkbox" id="alerts-select-page" data-action="toggle-page-selection" title="Select all on this page"></th><th>Time</th><th>Device</th><th>Site</th><th>Type</th><th>Severity</th><th>Message</th><th>Actions</th></tr></thead>
@@ -845,6 +848,7 @@
                     </table>
                 </div>
                 <div id="alerts-pagination" style="margin-top: 12px; text-align: center;"></div>
+                </div>
 
                 <!-- Bulk-ack notes modal -->
                 <div class="modal fixed top-0 left-0 right-0 bottom-0 bg-black/60 z-[200] items-center justify-center" id="alerts-bulk-ack-modal">
@@ -1098,7 +1102,7 @@
                 <div class="stat-card"><div class="stat-label">Warning</div><div class="stat-value" style="color:var(--fwmon-sig-warn)" id="traps-warning">--</div></div>
                 <div class="stat-card"><div class="stat-label">Info</div><div class="stat-value" id="traps-info">--</div></div>
             </div>
-            <div class="chart-row">
+            <div class="chart-row fwmon-load-host" id="traps-charts-host">
                 <div class="chart-card">
                     <h3 id="traps-freq-title">Trap Frequency (24h)</h3>
                     <canvas id="traps-freq-chart"></canvas>
@@ -1121,6 +1125,7 @@
                         <option value="">All Types</option>
                     </select>
                 </div>
+                <div class="fwmon-load-host" id="traps-load-host">
                 <div class="table-wrap">
                     <table id="traps-table">
                         <thead><tr><th>Time</th><th>Source IP</th><th>Type</th><th>Severity</th><th>Message</th></tr></thead>
@@ -1129,6 +1134,7 @@
                 </div>
                 <div style="margin-top: 12px; text-align: center;">
                     <button class="btn secondary" data-action="load-more-traps">Load More</button>
+                </div>
                 </div>
             </div>
         </div>
@@ -1565,6 +1571,7 @@
                     <input type="text" class="search-input" id="audit-filter-action" placeholder="Action route..." autocomplete="one-time-code">
                     <button class="btn secondary sm" id="audit-refresh-btn" data-action="refresh-audit">Refresh</button>
                 </div>
+                <div class="fwmon-load-host" id="audit-load-host">
                 <div class="table-wrap" style="max-height: 600px;">
                     <table id="audit-table">
                         <thead>
@@ -1587,6 +1594,7 @@
                         <button class="btn secondary sm" id="audit-prev" data-action="prev-audit">Prev</button>
                         <button class="btn secondary sm" id="audit-next" data-action="next-audit">Next</button>
                     </div>
+                </div>
                 </div>
             </div>
         </div>

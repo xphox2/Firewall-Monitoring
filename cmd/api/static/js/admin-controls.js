@@ -239,7 +239,10 @@
      *   inputs:         [{ id, stateKey, debounceMs?, chipKey?, chipLabel? }, ...]
      *   selects:        [{ id, stateKey, chipKey?, chipLabel?(v)? }, ...]
      *   defaults:       { hours: 24, ... }     // baseline state
-     *   onChange:       function(state)        // called after every state mutation
+     *   onChange:       function(state, prev)  // called after every state mutation;
+     *                                          // prev is the state committed before
+     *                                          // it (undefined on the first commit),
+     *                                          // for the loader's Cancel to restore()
      * }
      *
      * Returns an object exposing getState() / refresh() for the caller.
@@ -255,8 +258,12 @@
         );
         var state = stateFromURL(d.defaults, allKeys);
         d._state = state;
+        // committed is the query the page last asked for. The handlers write
+        // `state` BEFORE commit() runs, so the previous query is only
+        // available from here; commit() hands it to onChange as `prev`.
+        var committed;
 
-        function commit() {
+        function repaint() {
             setInputValues({ state: state, inputs: d.inputs, selects: d.selects });
             activatePill(d.rangePillsId, state.hours);
             renderChips(d.chipsId, state, chipDefsFrom(d), function(stateKey) {
@@ -265,7 +272,25 @@
                 commit();
             });
             syncURL(state, d.defaults, allKeys);
-            d.onChange(state);
+        }
+
+        function commit() {
+            repaint();
+            var prev = committed;
+            committed = Object.assign({}, state);
+            d.onChange(state, prev);
+        }
+
+        // restore puts a previous query back in the controls, chips and URL
+        // WITHOUT loading — a cancelled load keeps that query's results.
+        function restore(snap) {
+            if (!snap) return;
+            allKeys.forEach(function(k) {
+                state[k] = (k in snap) ? snap[k]
+                    : ((typeof d.defaults[k] === 'number') ? d.defaults[k] : '');
+            });
+            repaint();
+            committed = Object.assign({}, state);
         }
 
         bindRangePills(d.rangePillsId, {
@@ -289,6 +314,7 @@
         return {
             getState: function() { return Object.assign({}, state); },
             refresh:  function() { d.onChange(state); },
+            restore:  restore,
             // reseedFromURL — re-read every URL-tracked key into state
             // and re-paint (v0.10.219, bundle H2). Lets the SPA-aware
             // link interceptor change the URL via history.replaceState

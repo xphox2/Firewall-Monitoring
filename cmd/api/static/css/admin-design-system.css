@@ -427,6 +427,16 @@ textarea::placeholder {
    v0.11.270). Mounted on a positioned container that owns the chart, so it
    dims the chart that is kept on screen while finer data loads. */
 .chart-host-wrap { position: relative; }
+/* Results area of a search/filter (v0.11.271): the loading overlay mounts
+   here, never over the filter controls. */
+.fwmon-load-host { position: relative; }
+.fwmon-load-host[aria-busy="true"] { min-height: 120px; }
+.fwmon-load-host--chart { height: 280px; }
+/* A notice over a results table does not dim the rows. */
+.fwmon-chart-notice-plain::before { display: none; }
+/* Tall hosts (the report iframe): keep the box in view. */
+.fwmon-load-host--tall > .fwmon-chart-overlay { align-items: flex-start; }
+.fwmon-load-host--tall > .fwmon-chart-overlay .fwmon-chart-overlay-box { position: sticky; top: 80px; margin-top: 40px; }
 .chart-zoom-chip { color: var(--fwmon-accent); font-family: var(--fwmon-font-mono, monospace); margin-right: 6px; }
 .fwmon-chart-overlay {
     position: absolute;

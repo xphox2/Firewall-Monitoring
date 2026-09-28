@@ -25,7 +25,7 @@ func TestChartLoad_OverlayContract(t *testing.T) {
 	must("if (chartLoads[key]) chartLoads[key].supersede();", "a newer load for the same chart supersedes the old one")
 	must("if (done) return;", "a result arriving after Cancel or supersede is ignored")
 	must("run(ctrl ? ctrl.signal : undefined)", "the fetch gets the abort signal, so Cancel stops the request")
-	must("if (!owned || list.some(function(c) { return c.contains(t); })) cancel();", "Esc cancels")
+	must("if (!owned || list.concat(escScope).some(function(c) { return c.contains(t); })) cancel();", "Esc cancels, also from the controls in opts.escScope")
 	must("c.setAttribute('aria-busy', 'true');", "the chart is marked busy while loading")
 	must("o.setAttribute('role', 'status');", "the overlay is announced")
 	must("chartLoad: chartLoad,", "exported")

@@ -86,7 +86,60 @@
         });
     });
 
+    // ---- Search/filter loading (v0.11.271) ----
+    //
+    // runFilterLoad runs a page's search/filter request under the loading
+    // overlay (AdminCommon.chartLoad) mounted on the results area — never over
+    // the filter controls — with Cancel. The newest request wins; a superseded
+    // one is silent. A user Cancel keeps the results on screen, puts the
+    // previous query back in the controls (opts.prev, from attachAnalyticsPage)
+    // and says so, with Retry. Nothing on the page state (offsets, selection)
+    // changes until a result arrives: onOK is the only place that does.
+    //
+    // A poll (opts.fromPoll) shows no overlay, never cancels a load the user
+    // started (it skips while one is running), and is dropped if the user
+    // starts one while it is in flight.
+    var filterGen = {};
+    function runFilterLoad(key, run, onOK, opts) {
+        opts = opts || {};
+        var page = opts.page || key;
+        var loadKey = 'filter-' + key;
+        var host = document.getElementById(opts.host || (key + '-load-host'));
+        if (opts.fromPoll) {
+            if (AC.chartLoadBusy(loadKey)) return Promise.resolve();
+            var gen = filterGen[key] = (filterGen[key] || 0) + 1;
+            return Promise.resolve().then(function() { return run(undefined); }).then(function(data) {
+                if (filterGen[key] !== gen || !data) return;
+                onOK(data);
+            }).catch(function(e) { fwmonLog.error('Refresh of ' + key + ' failed:', e); });
+        }
+        filterGen[key] = (filterGen[key] || 0) + 1; // drops a poll already in flight
+        return AC.chartLoad(host, run, {
+            key: loadKey,
+            label: opts.label || 'Loading…',
+            escScope: document.getElementById('page-' + page)
+        }).then(function(r) {
+            if (r.superseded) return;
+            if (r.cancelled) {
+                if (opts.prev && analyticsPages[page] && analyticsPages[page].restore) analyticsPages[page].restore(opts.prev);
+                AC.chartNotice(host, 'Cancelled — showing the previous results', { dim: false, onRetry: opts.retry });
+                return;
+            }
+            if (r.error || !r.data) {
+                if (r.error) fwmonLog.error('Loading ' + key + ' failed:', r.error);
+                AC.chartNotice(host, 'Could not load results', { dim: false, onRetry: opts.retry });
+                return;
+            }
+            onOK(r.data);
+        });
+    }
+
+    var FILTER_PAGES = ['syslog', 'alerts', 'traps', 'audit'];
+
     function loadPageData(page) {
+        // Leaving an analytics page stops its loads silently (no Cancel notice,
+        // no restore rewriting the URL of the page just opened).
+        FILTER_PAGES.forEach(function(p) { if (p !== page) AC.chartLoadCancel('filter-' + p); });
         // Close the NOC live stream when navigating away so the SSE connection
         // isn't left open in the background.
         if (page !== 'noc' && window.FwmonNOC && window.FwmonNOC.stop) {
@@ -716,32 +769,32 @@
     }
 
     // ---- Syslog ----
-    function loadSyslog() {
-        syslogOffset = 0;
-        var p = Promise.resolve();
-        if (currentProbes.length === 0) {
-            p = apiFetch(API_BASE + '/probes').then(function(pr) { currentProbes = pr && pr.data ? pr.data : []; });
-        }
-        p.then(function() {
-            if (currentDevices.length === 0) {
-                return apiFetch(API_BASE + '/devices').then(function(dr) { currentDevices = dr && dr.data ? dr.data : []; });
+    // opts: {prev} from the filter controls (restored on Cancel), {fromPoll}
+    // from auto-refresh.
+    function loadSyslog(opts) {
+        opts = opts || {};
+        return runFilterLoad('syslog', function(signal) {
+            var p = Promise.resolve();
+            if (currentProbes.length === 0) {
+                p = apiFetch(API_BASE + '/probes', { signal: signal }).then(function(pr) { currentProbes = pr && pr.data ? pr.data : []; });
             }
-        }).then(function() {
-            populateFilterProbes('syslog-filter-probe');
-            populateFilterDevices('syslog-filter-device');
-            var params = buildSyslogParams(10);
-            return apiFetch(API_BASE + '/syslog?' + params);
-        }).then(function(result) {
-            if (!result) return;
+            return p.then(function() {
+                if (currentDevices.length === 0) {
+                    return apiFetch(API_BASE + '/devices', { signal: signal }).then(function(dr) { currentDevices = dr && dr.data ? dr.data : []; });
+                }
+            }).then(function() {
+                populateFilterProbes('syslog-filter-probe');
+                populateFilterDevices('syslog-filter-device');
+                return apiFetch(API_BASE + '/syslog?' + buildSyslogParams(10), { signal: signal });
+            });
+        }, function(result) {
             var messages = (result.data && result.data.messages) ? result.data.messages : [];
             var total = (result.data && result.data.total) ? result.data.total : 0;
             renderSyslogTable(messages, false);
             syslogOffset = messages.length;
             updateSyslogPagination(messages.length, total, !!(result.data && result.data.total_capped));
-            loadSyslogCharts();
-        }).catch(function(e) {
-            console.error('Failed to load syslog:', e);
-        });
+            loadSyslogCharts({ fromPoll: opts.fromPoll });
+        }, { prev: opts.prev, fromPoll: opts.fromPoll, label: 'Searching…', retry: function() { loadSyslog(); } });
     }
 
     var syslogTotalCount = 0;
@@ -770,37 +823,28 @@
             '<button class="btn secondary sm" data-action="next-syslog"' + (atEnd ? ' disabled' : '') + '>Next</button>';
     }
 
-    function prevSyslog() {
-        if (syslogOffset <= 10) return;
-        syslogOffset -= 20;
-        if (syslogOffset < 0) syslogOffset = 0;
-        var params = buildSyslogParams(10);
-        apiFetch(API_BASE + '/syslog?' + params + '&offset=' + syslogOffset).then(function(result) {
-            if (!result) return;
+    // The page offsets change only when a page arrives: a cancelled Prev or
+    // Next leaves the pager on the page still shown.
+    function syslogPage(target) {
+        runFilterLoad('syslog', function(signal) {
+            return apiFetch(API_BASE + '/syslog?' + buildSyslogParams(10) + '&offset=' + target, { signal: signal });
+        }, function(result) {
             var messages = (result.data && result.data.messages) ? result.data.messages : [];
             var total = (result.data && result.data.total) ? result.data.total : 0;
+            if (messages.length === 0) return;
             renderSyslogTable(messages, false);
-            syslogOffset += messages.length;
+            syslogOffset = target + messages.length;
             updateSyslogPagination(messages.length, total, !!(result.data && result.data.total_capped));
-        }).catch(function(e) {
-            console.error('Failed to load prev syslog:', e);
-        });
+        }, { retry: function() { syslogPage(target); } });
+    }
+
+    function prevSyslog() {
+        if (syslogOffset <= 10) return;
+        syslogPage(Math.max(0, syslogOffset - 20));
     }
 
     function nextSyslog() {
-        var params = buildSyslogParams(10);
-        apiFetch(API_BASE + '/syslog?' + params + '&offset=' + syslogOffset).then(function(result) {
-            if (!result) return;
-            var messages = (result.data && result.data.messages) ? result.data.messages : [];
-            var total = (result.data && result.data.total) ? result.data.total : 0;
-            if (messages.length > 0) {
-                renderSyslogTable(messages, false);
-                syslogOffset += messages.length;
-                updateSyslogPagination(messages.length, total, !!(result.data && result.data.total_capped));
-            }
-        }).catch(function(e) {
-            console.error('Failed to load next syslog:', e);
-        });
+        syslogPage(syslogOffset);
     }
 
     function analyticsRangeLabel(hrs) {
@@ -820,12 +864,15 @@
         return (d.partial ? 'Received since ' + when + ' (earliest counts held)' : 'Received since ' + when) + ', whole hours';
     }
 
-    function loadSyslogCharts() {
+    function loadSyslogCharts(opts) {
+        opts = opts || {};
         var s = analyticsPages.syslog && analyticsPages.syslog.getState();
         var hoursParam = (s && s.hours) ? ('?hours=' + s.hours) : '';
         var hrs = (s && s.hours) ? Number(s.hours) : 24;
-        apiFetch(API_BASE + '/syslog/stats' + hoursParam).then(function(result) {
-            if (!result || !result.data) return;
+        runFilterLoad('syslog-charts', function(signal) {
+            return apiFetch(API_BASE + '/syslog/stats' + hoursParam, { signal: signal });
+        }, function(result) {
+            if (!result.data) return;
             var d = result.data;
             document.getElementById('syslog-total').textContent = (d.total || 0).toLocaleString();
             var basis = document.getElementById('syslog-total-basis');
@@ -858,7 +905,7 @@
                 return '#8b949e';
             });
             createChart('syslog-severity-chart','doughnut',sevLabels,[{data:sevCounts,backgroundColor:sevColors,borderWidth:0}]);
-        }).catch(function(e) { console.error('Failed to load syslog charts:', e); });
+        }, { page: 'syslog', host: 'syslog-charts-host', fromPoll: opts.fromPoll, retry: function() { loadSyslogCharts(); } });
     }
 
     function buildSyslogParams(limit) {
@@ -941,19 +988,6 @@
     }
     function closeSyslogDetail() { AC.closeModal('syslog-detail-modal'); }
 
-    function loadMoreSyslog() {
-        var params = buildSyslogParams(100);
-        apiFetch(API_BASE + '/syslog?' + params + '&offset=' + syslogOffset).then(function(result) {
-            if (result && result.data && result.data.length) {
-                renderSyslogTable(result.data, true);
-                syslogOffset += result.data.length;
-            }
-        }).catch(function(err) {
-            console.error('Failed to load more syslog:', err);
-            AC.showError('Failed to load more syslog');
-        });
-    }
-
     // ---- Audit Logs ----
     var auditOffset = 0;
     var auditTotalCount = 0;
@@ -975,25 +1009,28 @@
                 { id: 'audit-filter-action', stateKey: 'action', chipKey: 'action' }
             ],
             selects: [],
-            onChange: function() { loadAuditLogs(); }
+            onChange: function(state, prev) { loadAuditLogs({ prev: prev }); }
         });
     }
 
-    function loadAuditLogs() {
-        auditOffset = 0;
-        var params = buildAuditParams(10);
-        apiFetch(API_BASE + '/audit?' + params).then(function(result) {
-            if (!result) return;
+    function loadAuditLogs(opts) {
+        opts = opts || {};
+        auditPage(0, opts.prev);
+    }
+
+    // The offset changes only when a page arrives (see runFilterLoad).
+    function auditPage(target, prev) {
+        runFilterLoad('audit', function(signal) {
+            return apiFetch(API_BASE + '/audit?' + buildAuditParams(10) + (target ? '&offset=' + target : ''), { signal: signal });
+        }, function(result) {
             var logs = (result.data && result.data.audit_logs) ? result.data.audit_logs : [];
             var total = (result.data && result.data.total) ? result.data.total : 0;
+            if (target > 0 && logs.length === 0) return;
             currentAuditLogs = logs;
             renderAuditTable(logs, false);
-            auditOffset = logs.length;
+            auditOffset = target + logs.length;
             updateAuditPagination(logs.length, total);
-        }).catch(function(e) {
-            fwmonLog.error('Failed to load audit logs:', e);
-            AC.showError('Failed to load audit logs');
-        });
+        }, { prev: prev, label: 'Searching…', retry: function() { auditPage(target); } });
     }
 
     function buildAuditParams(limit) {
@@ -1071,39 +1108,11 @@
 
     function prevAudit() {
         if (auditOffset <= 10) return;
-        auditOffset -= 20;
-        if (auditOffset < 0) auditOffset = 0;
-        var params = buildAuditParams(10);
-        apiFetch(API_BASE + '/audit?' + params + '&offset=' + auditOffset).then(function(result) {
-            if (!result) return;
-            var logs = (result.data && result.data.audit_logs) ? result.data.audit_logs : [];
-            var total = (result.data && result.data.total) ? result.data.total : 0;
-            currentAuditLogs = logs;
-            renderAuditTable(logs, false);
-            auditOffset += logs.length;
-            updateAuditPagination(logs.length, total);
-        }).catch(function(e) {
-            fwmonLog.error('Failed to load prev audit logs:', e);
-            AC.showError('Failed to load prev audit logs');
-        });
+        auditPage(Math.max(0, auditOffset - 20));
     }
 
     function nextAudit() {
-        var params = buildAuditParams(10);
-        apiFetch(API_BASE + '/audit?' + params + '&offset=' + auditOffset).then(function(result) {
-            if (!result) return;
-            var logs = (result.data && result.data.audit_logs) ? result.data.audit_logs : [];
-            var total = (result.data && result.data.total) ? result.data.total : 0;
-            if (logs.length > 0) {
-                currentAuditLogs = logs;
-                renderAuditTable(logs, false);
-                auditOffset += logs.length;
-                updateAuditPagination(logs.length, total);
-            }
-        }).catch(function(e) {
-            fwmonLog.error('Failed to load next audit logs:', e);
-            AC.showError('Failed to load next audit logs');
-        });
+        auditPage(auditOffset);
     }
 
     function showAuditDetail(id) {
@@ -1208,7 +1217,8 @@
         sysAutoRefreshEl.addEventListener('change', function() {
             if (this.checked) {
                 syslogRefreshTimer = AC.pollWhenVisible(function() {
-                    if (document.querySelector('#page-syslog.active')) loadSyslog();
+                    // Silent: no overlay, and it never cancels a search in progress.
+                    if (document.querySelector('#page-syslog.active')) loadSyslog({ fromPoll: true });
                 }, 10000, { immediate: false });
             } else if (syslogRefreshTimer) {
                 if (typeof syslogRefreshTimer.stop === 'function') syslogRefreshTimer.stop();
@@ -1231,33 +1241,31 @@
     var alertSelection = {}; // map id (string) -> true for currently-selected rows on the current page
     var selectAllMatchingMode = false; // true when user clicked "Select all N matching" — bulk-ack uses filter, not IDs
 
-    function loadAlerts() {
-        alertsOffset = 0;
-        clearAlertSelection();
-        // Ensure the device + site lists are loaded so the filter dropdowns can be
-        // populated (they back manual filtering and the deep-link chip labels).
-        var needs = [];
-        if (currentDevices.length === 0) {
-            needs.push(apiFetch(API_BASE + '/devices').then(function(dr) { currentDevices = dr && dr.data ? dr.data : []; }));
-        }
-        if (currentSites.length === 0) {
-            needs.push(apiFetch(API_BASE + '/sites').then(function(sr) { currentSites = sr && sr.data ? sr.data : []; }).catch(function() {}));
-        }
-        Promise.all(needs).then(function() {
-            populateAlertFilterOptions();
-            var params = buildAlertParams(ALERTS_PAGE_SIZE);
-            return apiFetch(API_BASE + '/alerts?' + params);
-        }).then(function(result) {
-            if (!result) return;
+    function loadAlerts(opts) {
+        opts = opts || {};
+        runFilterLoad('alerts', function(signal) {
+            // Ensure the device + site lists are loaded so the filter dropdowns can be
+            // populated (they back manual filtering and the deep-link chip labels).
+            var needs = [];
+            if (currentDevices.length === 0) {
+                needs.push(apiFetch(API_BASE + '/devices', { signal: signal }).then(function(dr) { currentDevices = dr && dr.data ? dr.data : []; }));
+            }
+            if (currentSites.length === 0) {
+                needs.push(apiFetch(API_BASE + '/sites', { signal: signal }).then(function(sr) { currentSites = sr && sr.data ? sr.data : []; }).catch(function() {}));
+            }
+            return Promise.all(needs).then(function() {
+                populateAlertFilterOptions();
+                return apiFetch(API_BASE + '/alerts?' + buildAlertParams(ALERTS_PAGE_SIZE), { signal: signal });
+            });
+        }, function(result) {
             var alerts = (result.data && result.data.alerts) ? result.data.alerts : [];
             var total = (result.data && result.data.total) ? result.data.total : 0;
+            clearAlertSelection(); // the selection belongs to the rows being replaced
             renderAlertsTable(alerts, false);
             alertsOffset = alerts.length;
             updateAlertPagination(alerts.length, total);
             loadAlertCharts();
-        }).catch(function(e) {
-            window.fwmonLog && window.fwmonLog.error && window.fwmonLog.error('Failed to load alerts:', e);
-        });
+        }, { prev: opts.prev, retry: function() { loadAlerts(); } });
     }
 
     // (Silenced-sources panel removed in v0.11.93 — source suppression is now
@@ -1274,25 +1282,25 @@
         var pageEnd = alertsOffset; // current offset == end of current page
         var pageStart = Math.max(0, pageEnd - pageSize);
 
-        function tryLoad(offset) {
-            var params = buildAlertParams(pageSize);
-            return apiFetch(API_BASE + '/alerts?' + params + '&offset=' + offset).then(function(result) {
-                if (!result) return;
+        function tryLoad(offset, signal) {
+            return apiFetch(API_BASE + '/alerts?' + buildAlertParams(pageSize) + '&offset=' + offset, { signal: signal }).then(function(result) {
+                if (!result) return null;
                 var alerts = (result.data && result.data.alerts) ? result.data.alerts : [];
-                var total = (result.data && result.data.total) ? result.data.total : 0;
                 if (alerts.length === 0 && offset > 0) {
                     // Page got empty (all rows acked). Try the previous page.
-                    return tryLoad(Math.max(0, offset - pageSize));
+                    return tryLoad(Math.max(0, offset - pageSize), signal);
                 }
-                renderAlertsTable(alerts, false);
-                alertsOffset = offset + alerts.length;
-                updateAlertPagination(alerts.length, total);
-                loadAlertCharts();
+                return { result: result, offset: offset };
             });
         }
-        tryLoad(pageStart).catch(function(e) {
-            console.error('Failed to refresh alerts at current page:', e);
-        });
+        runFilterLoad('alerts', function(signal) { return tryLoad(pageStart, signal); }, function(got) {
+            var alerts = (got.result.data && got.result.data.alerts) ? got.result.data.alerts : [];
+            var total = (got.result.data && got.result.data.total) ? got.result.data.total : 0;
+            renderAlertsTable(alerts, false);
+            alertsOffset = got.offset + alerts.length;
+            updateAlertPagination(alerts.length, total);
+            loadAlertCharts();
+        }, { retry: refreshAlertsAtCurrentPage });
     }
 
     function clearAlertSelection() {
@@ -1456,37 +1464,27 @@
             '<button class="btn secondary sm" data-action="next-alerts"' + (alertsOffset >= total ? ' disabled' : '') + '>Next</button>';
     }
 
-    function prevAlerts() {
-        if (alertsOffset <= 10) return;
-        alertsOffset -= 20;
-        if (alertsOffset < 0) alertsOffset = 0;
-        var params = buildAlertParams(10);
-        apiFetch(API_BASE + '/alerts?' + params + '&offset=' + alertsOffset).then(function(result) {
-            if (!result) return;
+    // The offset changes only when a page arrives (see runFilterLoad).
+    function alertsPage(target) {
+        runFilterLoad('alerts', function(signal) {
+            return apiFetch(API_BASE + '/alerts?' + buildAlertParams(10) + '&offset=' + target, { signal: signal });
+        }, function(result) {
             var alerts = (result.data && result.data.alerts) ? result.data.alerts : [];
             var total = (result.data && result.data.total) ? result.data.total : 0;
+            if (alerts.length === 0) return;
             renderAlertsTable(alerts, false);
-            alertsOffset += alerts.length;
+            alertsOffset = target + alerts.length;
             updateAlertPagination(alerts.length, total);
-        }).catch(function(e) {
-            console.error('Failed to load prev alerts:', e);
-        });
+        }, { retry: function() { alertsPage(target); } });
+    }
+
+    function prevAlerts() {
+        if (alertsOffset <= 10) return;
+        alertsPage(Math.max(0, alertsOffset - 20));
     }
 
     function nextAlerts() {
-        var params = buildAlertParams(10);
-        apiFetch(API_BASE + '/alerts?' + params + '&offset=' + alertsOffset).then(function(result) {
-            if (!result) return;
-            var alerts = (result.data && result.data.alerts) ? result.data.alerts : [];
-            var total = (result.data && result.data.total) ? result.data.total : 0;
-            if (alerts.length > 0) {
-                renderAlertsTable(alerts, false);
-                alertsOffset += alerts.length;
-                updateAlertPagination(alerts.length, total);
-            }
-        }).catch(function(e) {
-            console.error('Failed to load next alerts:', e);
-        });
+        alertsPage(alertsOffset);
     }
 
     function buildAlertParams(limit) {
@@ -2060,27 +2058,16 @@
         });
     }
 
-    function loadMoreAlerts() {
-        var params = buildAlertParams(100);
-        apiFetch(API_BASE + '/alerts?' + params + '&offset=' + alertsOffset).then(function(result) {
-            if (result && result.data && result.data.length) {
-                renderAlertsTable(result.data, true);
-                alertsOffset += result.data.length;
-            }
-        }).catch(function(err) {
-            console.error('Failed to load more alerts:', err);
-            AC.showError('Failed to load more alerts');
-        });
-    }
-
     function loadAlertCharts() {
         var s = analyticsPages.alerts && analyticsPages.alerts.getState();
         var hoursParam = (s && s.hours) ? ('?hours=' + s.hours) : '';
         var hrs = (s && s.hours) ? Number(s.hours) : 24;
         var chartTitle = document.getElementById('alerts-trend-title');
         if (chartTitle) chartTitle.textContent = 'Alert Trend (' + analyticsRangeLabel(hrs) + ')';
-        apiFetch(API_BASE + '/alerts/stats' + hoursParam).then(function(result) {
-            if (!result || !result.data) return;
+        runFilterLoad('alerts-charts', function(signal) {
+            return apiFetch(API_BASE + '/alerts/stats' + hoursParam, { signal: signal });
+        }, function(result) {
+            if (!result.data) return;
             var d = result.data;
             document.getElementById('alerts-total').textContent = (d.total || 0).toLocaleString();
             var crit = 0, warn = 0, inf = 0;
@@ -2101,22 +2088,20 @@
             var typeCounts = (d.by_type || []).map(function(t) { return t.count; });
             var typeColors = ['#f85149','#d2992a','#58a6ff','#3fb950','#bc8cff','#8b949e'];
             createChart('alerts-type-chart','doughnut',typeLabels,[{data:typeCounts,backgroundColor:typeColors.slice(0,typeLabels.length),borderWidth:0}]);
-        }).catch(function(e) { console.error('Failed to load alert charts:', e); });
+        }, { page: 'alerts', host: 'alerts-charts-host', retry: loadAlertCharts });
     }
 
     // ---- Traps ----
-    function loadTraps() {
-        trapsOffset = 0;
-        var params = buildTrapParams(100);
-        apiFetch(API_BASE + '/traps?' + params).then(function(result) {
-            if (!result) return;
+    function loadTraps(opts) {
+        opts = opts || {};
+        runFilterLoad('traps', function(signal) {
+            return apiFetch(API_BASE + '/traps?' + buildTrapParams(100), { signal: signal });
+        }, function(result) {
             var traps = result.data || [];
             renderTrapsTable(traps, false);
             trapsOffset = traps.length;
             loadTrapCharts();
-        }).catch(function(e) {
-            console.error('Failed to load traps:', e);
-        });
+        }, { prev: opts.prev, retry: function() { loadTraps(); } });
     }
 
     function buildTrapParams(limit) {
@@ -2154,16 +2139,14 @@
     }
 
     function loadMoreTraps() {
-        var params = buildTrapParams(100);
-        apiFetch(API_BASE + '/traps?' + params + '&offset=' + trapsOffset).then(function(result) {
-            if (result && result.data && result.data.length) {
-                renderTrapsTable(result.data, true);
-                trapsOffset += result.data.length;
-            }
-        }).catch(function(err) {
-            console.error('Failed to load more traps:', err);
-            AC.showError('Failed to load more traps');
-        });
+        var from = trapsOffset; // advances only when the rows arrive
+        runFilterLoad('traps', function(signal) {
+            return apiFetch(API_BASE + '/traps?' + buildTrapParams(100) + '&offset=' + from, { signal: signal });
+        }, function(result) {
+            if (!result.data || !result.data.length) return;
+            renderTrapsTable(result.data, true);
+            trapsOffset = from + result.data.length;
+        }, { label: 'Loading more…', retry: loadMoreTraps });
     }
 
     function loadTrapCharts() {
@@ -2172,8 +2155,10 @@
         var hrs = (s && s.hours) ? Number(s.hours) : 24;
         var chartTitle = document.getElementById('traps-freq-title');
         if (chartTitle) chartTitle.textContent = 'Trap Frequency (' + analyticsRangeLabel(hrs) + ')';
-        apiFetch(API_BASE + '/traps/stats' + hoursParam).then(function(result) {
-            if (!result || !result.data) return;
+        runFilterLoad('traps-charts', function(signal) {
+            return apiFetch(API_BASE + '/traps/stats' + hoursParam, { signal: signal });
+        }, function(result) {
+            if (!result.data) return;
             var d = result.data;
             document.getElementById('traps-total').textContent = (d.total || 0).toLocaleString();
             var crit = 0, warn = 0, inf = 0;
@@ -2194,7 +2179,7 @@
             var sevCounts = (d.by_severity || []).map(function(s) { return s.count; });
             var sevColors = ['#f85149','#d2992a','#58a6ff','#3fb950','#8b949e'];
             createChart('traps-severity-chart','doughnut',sevLabels,[{data:sevCounts,backgroundColor:sevColors.slice(0,sevLabels.length),borderWidth:0}]);
-        }).catch(function(e) { console.error('Failed to load trap charts:', e); });
+        }, { page: 'traps', host: 'traps-charts-host', retry: loadTrapCharts });
     }
 
     // ---- Settings ----
@@ -4405,13 +4390,11 @@
         'show-connection-modal': function(el) { showConnectionModal(el && el.dataset.id ? parseInt(el.dataset.id) : null); },
         'edit-connection': function(el) { showConnectionModal(parseInt(el.dataset.id)); },
         'load-syslog': function() { loadSyslog(); },
-        'load-more-syslog': function() { loadMoreSyslog(); },
         // LC-49: the legacy 'set-flow-range' / 'load-flows' / 'load-more-flows'
         // handlers were removed with the dead pre-v0.10.211 flows fallback.
         // Nothing in admin.html emits the first two, and FwmonFlows
         // (admin-flows.js) binds the #flows-load-more button directly.
         'load-alerts': function() { loadAlerts(); },
-        'load-more-alerts': function() { loadMoreAlerts(); },
         'prev-alerts': function() { prevAlerts(); },
         'next-alerts': function() { nextAlerts(); },
         'load-traps': function() { loadTraps(); },
@@ -4577,7 +4560,7 @@
                   chipLabel: function(v) { return probeLabel(v); } },
                 { id: 'syslog-filter-severity', stateKey: 'severity',  chipKey: 'sev' }
             ],
-            onChange: function() { loadSyslog(); }
+            onChange: function(state, prev) { loadSyslog({ prev: prev }); }
         });
     }
 
@@ -4603,7 +4586,7 @@
                 { id: 'alerts-filter-ack',      stateKey: 'acknowledged', chipKey: 'ack',
                   chipLabel: function(v) { return v === 'false' ? 'Unacknowledged' : (v === 'true' ? 'Acknowledged' : v); } }
             ],
-            onChange: function() { loadAlerts(); }
+            onChange: function(state, prev) { loadAlerts({ prev: prev }); }
         });
     }
 
@@ -4623,7 +4606,7 @@
                 { id: 'traps-filter-severity', stateKey: 'severity',  chipKey: 'sev' },
                 { id: 'traps-filter-type',     stateKey: 'trap_type', chipKey: 'type' }
             ],
-            onChange: function() { loadTraps(); }
+            onChange: function(state, prev) { loadTraps({ prev: prev }); }
         });
     }
 
