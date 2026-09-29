@@ -276,7 +276,9 @@ matches; a batch query expecting MANY wants the opposite plan. Never blanket-app
 - [x] Threat intel search + lookup; Flows samples/detections (+ Esc → stats cancel); Reports preview
 - [x] Connection-map panel ranges (traffic/flows/events/iface/tunnel) + empty-flows fix; Connection detail (poll gen + busy skip + group restore)
 - [x] Config diff (open first, modalclose cancel, no reopen); Event profiles effective; Event rules ({ok} consumers)
-- [ ] Guardrails + mutation checks; browser check; make qa; CHANGELOG 0.11.271; fresh Fable diff review; PR; CI; merge
+- [x] Guardrails + mutation checks; browser check; make qa; CHANGELOG 0.11.271; fresh Fable diff review; PR; CI; merge
   - Done 2026-09-28: 25/25 mutations killed; browser check passed on every surface (1280 + 390 px); make qa green except local govulncheck (Go 1.26.4 vs CI 1.25.13).
   - Browser check found + fixed: Retry after Cancel re-ran the RESTORED query (all surfaces) — now re-applies the cancelled one; connection-detail select went blank on cancel ('24h' vs hour-valued options).
   - Follow-up (pre-existing, out of scope): admin-irc.js document-wide [data-tab] click handler throws on the map panel's tabs.
+  - Review loop: 27 rounds (Fable r1-r5, then Opus 5.5 after the Fable usage limit, per the user). Final two fresh reviews: unconditional "sound".
+  - Optional follow-ups from the final "sound" review (LOW): Syslog stat tiles have no onFail blank like Alerts/Traps (its Total tile's basis line does name the range); a first charts-load Cancel/error says "showing the previous results" over empty canvases.
