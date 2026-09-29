@@ -21,10 +21,11 @@ import (
 //   - RFC 3849 (2001:db8::/32) for IPv6.
 //
 // TestPublicHygiene_NoRealAddressesOrHomePaths scans every tracked text file
-// for IPv4/IPv6 literals outside those ranges and for /Users/<name> or
-// /home/<name> paths. Anything else that is legitimately public (well-known
-// resolvers, placeholders, boundary values in range tests) goes on the reviewed
-// allowlist below with a reason.
+// for IPv4/IPv6 literals outside those ranges (including addresses inside
+// mib-2 table OIDs and address templates built from a public prefix) and for
+// /Users/<name>, /home/<name> or C:\Users\<name> paths. Anything else that is
+// legitimately public (well-known resolvers, placeholders, boundary values in
+// range tests) goes on the reviewed allowlist below with a reason.
 
 // hygieneAllowIPv4 lists public IPv4 literals that are allowed, with the reason.
 var hygieneAllowIPv4 = map[string]string{
@@ -48,6 +49,8 @@ var hygieneAllowIPv4 = map[string]string{
 	"34.117.0.2":      "generic cloud address used as an example destination",
 	"1.3.6.1":         "SNMP OID prefix (iso.org.dod.internet), not an address",
 	"12.2.4.1":        "dotted section number, not an address",
+	"2.2.1.1":         "ifTable OID tail (…2.2.1.<column>) after an ellipsis, not an address",
+	"2.2.1.10":        "ifTable OID tail (…2.2.1.<column>) after an ellipsis, not an address",
 }
 
 // hygieneAllowIPv6 lists public IPv6 literals that are allowed.
@@ -70,6 +73,8 @@ var (
 	dottedRun      = regexp.MustCompile(`[0-9.]*[0-9][0-9.]*`)
 	ipv6Cand       = regexp.MustCompile(`[0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,7}`)
 	homePathRe     = regexp.MustCompile(`/(?:Users|home)/[A-Za-z0-9._-]+`)
+	winHomePathRe  = regexp.MustCompile(`[A-Za-z]:\\{1,2}Users\\{1,2}[A-Za-z0-9._-]+`)
+	ellipsisRe     = regexp.MustCompile(`\.{2,}`)
 	hygieneSkipExt = regexp.MustCompile(`\.(mmdb|woff2|png|jpe?g|gif|ico)$`)
 )
 
@@ -165,83 +170,158 @@ func ipv4Excuses(a netip.Addr) bool {
 	return ok
 }
 
-// hygieneTemplateTails are what may follow "a.b.c." when the text builds
-// addresses from a prefix: Printf verbs, SQL / Go / JS concatenation and
-// template literals, and the "a.b.c.x" placeholder.
-var hygieneTemplateTails = []string{"%d", "%v", "%s", "' ||", "\" +", "\"+", "${", "x"}
+// hygieneMib2Tables maps the mib-2 tables indexed by an IPv4 address (the arc
+// after 1.3.6.1.2.1) to the positions, counted from the start of the full OID,
+// where an address starts in the index.
+var hygieneMib2Tables = []struct {
+	arc  []string
+	addr []int
+}{
+	{[]string{"4", "20", "1"}, []int{10}},          // ipAddrTable: col.ip
+	{[]string{"4", "21", "1"}, []int{10}},          // ipRouteTable: col.dest
+	{[]string{"4", "22", "1"}, []int{11}},          // ipNetToMediaTable: col.ifIndex.ip
+	{[]string{"4", "24", "4", "1"}, []int{11, 20}}, // ipCidrRouteTable: col.dest.mask.tos.nexthop
+	{[]string{"6", "13", "1"}, []int{10, 15}},      // tcpConnTable: col.local.port.remote.port
+	{[]string{"7", "5", "1"}, []int{10}},           // udpTable: col.local.port
+}
+
+// mib2TableAddrs returns where an IPv4 address starts in parts, when parts is
+// a full OID under one of hygieneMib2Tables. Enterprise OIDs (1.3.6.1.4.1…)
+// never match.
+func mib2TableAddrs(parts []string) []int {
+	if len(parts) < 8 || strings.Join(parts[:6], ".") != "1.3.6.1.2.1" {
+		return nil
+	}
+	var out []int
+	for _, tb := range hygieneMib2Tables {
+		if len(parts) < 6+len(tb.arc) || strings.Join(parts[6:6+len(tb.arc)], ".") != strings.Join(tb.arc, ".") {
+			continue
+		}
+		for _, i := range tb.addr {
+			if i+4 <= len(parts) {
+				out = append(out, i)
+			}
+		}
+	}
+	return out
+}
 
 func isASCIILetter(b byte) bool { return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b == '_' }
+
+func isWordByte(b byte) bool { return isASCIILetter(b) || b >= '0' && b <= '9' }
+
+// isTemplateTail reports whether rest, the text right after "a.b.c.", builds
+// addresses from that prefix: a Printf verb (%d, %03d, %[1]d, %v…), a format
+// or template placeholder ({i}, ${i}), a closing quote followed by a Go / JS
+// "+" or SQL "||" concatenation, or a placeholder host part (*, x, X, n, N).
+func isTemplateTail(rest string) bool {
+	if rest == "" {
+		return false
+	}
+	switch rest[0] {
+	case '\'', '"', '`':
+		r := strings.TrimLeft(rest[1:], " \t")
+		return strings.HasPrefix(r, "+") || strings.HasPrefix(r, "||")
+	case '%', '{', '$':
+		return true
+	}
+	if strings.HasPrefix(rest, "**") {
+		return false // Markdown bold after a version number, not a wildcard
+	}
+	i := 0
+	for i < len(rest) && strings.IndexByte("*xXnN", rest[i]) >= 0 {
+		i++
+	}
+	return i > 0 && (i == len(rest) || !isWordByte(rest[i]))
+}
 
 // badIPv4 returns the disallowed addresses in text, following the run rules.
 func badIPv4(text string) []string {
 	var bad []string
+	for _, loc := range dottedRun.FindAllStringIndex(text, -1) {
+		// Two or more dots in a row are an ellipsis, not part of a number:
+		// each piece between them is checked as a run of its own.
+		start := loc[0]
+		for _, m := range ellipsisRe.FindAllStringIndex(text[loc[0]:loc[1]], -1) {
+			bad = badIPv4Run(text, start, loc[0]+m[0], bad)
+			start = loc[0] + m[1]
+		}
+		bad = badIPv4Run(text, start, loc[1], bad)
+	}
+	return bad
+}
+
+// badIPv4Run checks the dotted run text[s:e] and appends what it flags.
+func badIPv4Run(text string, s, e int, bad []string) []string {
+	if s >= e {
+		return bad
+	}
 	flag := func(parts []string) {
 		if a, ok := octets(parts); ok && !ipv4Allowed(a) {
 			bad = append(bad, a.String())
 		}
 	}
-	for _, loc := range dottedRun.FindAllStringIndex(text, -1) {
-		run := text[loc[0]:loc[1]]
-		oid := false
-		if strings.HasPrefix(run, ".") {
-			// ".1.3.6.1.2" after a space, quote or bracket is an OID
-			// fragment. After a letter ("host.a.b.c.d") the dot is just a
-			// separator, so the rest of the run is checked as usual.
-			if loc[0] == 0 || !isASCIILetter(text[loc[0]-1]) {
-				oid = true
-			}
-			run = run[1:]
+	run := text[s:e]
+	oid := false
+	if strings.HasPrefix(run, ".") {
+		// ".1.3.6.1.2" after a space, quote or bracket is an OID fragment.
+		// After a letter ("host.a.b.c.d") the dot is just a separator, so the
+		// rest of the run is checked as usual.
+		if s == 0 || !isASCIILetter(text[s-1]) {
+			oid = true
 		}
-		trailingDot := strings.HasSuffix(run, ".")
-		run = strings.TrimRight(run, ".")
-		parts := strings.Split(run, ".")
-		n := len(parts)
-		if n >= 6 {
-			// IP-MIB indexes an address as 1.4.a.b.c.d (IPv4, length 4),
-			// bare or at the end of a full OID. The enterprises arc
-			// 1.3.6.1.4.1 is not such an index.
-			i := n - 6
-			enterprises := i >= 3 && parts[i-3] == "1" && parts[i-2] == "3" && parts[i-1] == "6"
-			if parts[i] == "1" && parts[i+1] == "4" && !enterprises {
-				flag(parts[n-4:])
-			}
-			continue
+		run = run[1:]
+	}
+	trailingDot := strings.HasSuffix(run, ".")
+	run = strings.TrimRight(run, ".")
+	parts := strings.Split(run, ".")
+	n := len(parts)
+	if n >= 6 {
+		seen := map[int]bool{}
+		// mib-2 tables indexed by an address carry it inside the OID.
+		for _, i := range mib2TableAddrs(parts) {
+			seen[i] = true
+			flag(parts[i : i+4])
 		}
-		if oid {
-			continue
+		// IP-MIB indexes an address as 1.4.a.b.c.d (IPv4, length 4), bare
+		// or at the end of a full OID. The enterprises arc 1.3.6.1.4.1 is
+		// not such an index, and neither is mib-2's ip group 1.3.6.1.2.1.4
+		// in a truncated OID.
+		i := n - 6
+		enterprises := i >= 3 && parts[i-3] == "1" && parts[i-2] == "3" && parts[i-1] == "6"
+		ipGroup := strings.Join(parts[:i], ".") == "1.3.6.1.2"
+		if parts[i] == "1" && parts[i+1] == "4" && !enterprises && !ipGroup && !seen[n-4] {
+			flag(parts[n-4:])
 		}
-		switch n {
-		case 3:
-			// A template prefix: "a.b.c." followed by a verb, a
-			// concatenation or a placeholder.
-			rest := text[loc[1]:]
-			if !trailingDot {
-				break
+		return bad
+	}
+	if oid {
+		return bad
+	}
+	switch n {
+	case 3:
+		// A template prefix: "a.b.c." followed by a verb, a concatenation
+		// or a placeholder.
+		if trailingDot && isTemplateTail(text[e:]) {
+			if a, ok := octets(append(parts, "1")); ok && !ipv4Allowed(a) {
+				bad = append(bad, run+".*")
 			}
-			for _, tail := range hygieneTemplateTails {
-				if strings.HasPrefix(rest, tail) {
-					if a, ok := octets(append(parts, "1")); ok && !ipv4Allowed(a) {
-						bad = append(bad, run+".*")
-					}
-					break
-				}
-			}
-		case 4:
-			flag(parts)
-		case 5:
-			// IP.index or index.IP (SNMP table OIDs): the run is fine when
-			// either window is a strongly allowed address; otherwise flag
-			// the window that is public.
-			a1, ok1 := octets(parts[:4])
-			a2, ok2 := octets(parts[1:])
-			if ok1 && ipv4Excuses(a1) || ok2 && ipv4Excuses(a2) {
-				break
-			}
-			if ok1 && !ipv4Allowed(a1) {
-				bad = append(bad, a1.String())
-			} else if ok2 && !ipv4Allowed(a2) {
-				bad = append(bad, a2.String())
-			}
+		}
+	case 4:
+		flag(parts)
+	case 5:
+		// IP.index or index.IP (SNMP table OIDs): the run is fine when either
+		// window is a strongly allowed address; otherwise flag the window
+		// that is public.
+		a1, ok1 := octets(parts[:4])
+		a2, ok2 := octets(parts[1:])
+		if ok1 && ipv4Excuses(a1) || ok2 && ipv4Excuses(a2) {
+			break
+		}
+		if ok1 && !ipv4Allowed(a1) {
+			bad = append(bad, a1.String())
+		} else if ok2 && !ipv4Allowed(a2) {
+			bad = append(bad, a2.String())
 		}
 	}
 	return bad
@@ -251,7 +331,19 @@ func badIPv6(text string) []string {
 	var bad []string
 	doc := netip.MustParsePrefix("2001:db8::/32")
 	global := netip.PrefixFrom(netip.AddrFrom16([16]byte{0x20}), 3) // the global unicast block
-	for _, c := range ipv6Cand.FindAllString(text, -1) {
+	for _, loc := range ipv6Cand.FindAllStringIndex(text, -1) {
+		c := text[loc[0]:loc[1]]
+		// A candidate that starts inside a word ("id:2a00:…" matches from
+		// the "d") has a fragment for its first group: drop it. One that
+		// starts with a lone colon ("addr:2a00:…") loses the colon.
+		if loc[0] > 0 && isWordByte(text[loc[0]-1]) {
+			if i := strings.IndexByte(c, ':'); i >= 0 {
+				c = c[i+1:]
+			}
+		}
+		if strings.HasPrefix(c, ":") && !strings.HasPrefix(c, "::") {
+			c = c[1:]
+		}
 		a, err := netip.ParseAddr(c)
 		if err != nil || !a.Is6() || !global.Contains(a) || doc.Contains(a) {
 			continue
@@ -265,9 +357,11 @@ func badIPv6(text string) []string {
 
 func badHomes(text string) []string {
 	var bad []string
-	for _, m := range homePathRe.FindAllString(text, -1) {
-		if _, ok := hygieneAllowHomes[m]; !ok {
-			bad = append(bad, m)
+	for _, re := range []*regexp.Regexp{homePathRe, winHomePathRe} {
+		for _, m := range re.FindAllString(text, -1) {
+			if _, ok := hygieneAllowHomes[m]; !ok {
+				bad = append(bad, m)
+			}
 		}
 	}
 	return bad
@@ -346,6 +440,39 @@ func TestPublicHygiene_Rules(t *testing.T) {
 		{"fmt.Sprintf(\"198.18.101.%d\", i)", 0},
 		{"ip := \"198.18.101.\" + s", 0},
 		{"version 0.11.273 and 1.3.45", 0},
+		// Addresses inside mib-2 table OIDs, with or without a leading dot.
+		{"ipAddrTable .1.3.6.1.2.1.4.20.1.1." + pub, 1},
+		{"ipAddrTable 1.3.6.1.2.1.4.20.1.2." + pub + ".1", 1},
+		{"ipRouteTable 1.3.6.1.2.1.4.21.1.7." + pub, 1},
+		{"ipRouteTable column 4 .1.3.6.1.2.1.4.21.1.4." + pub, 1},
+		{"ipNetToMediaTable .1.3.6.1.2.1.4.22.1.2.5." + pub, 1},
+		{"ipCidrRouteTable dest .1.3.6.1.2.1.4.24.4.1.4." + pub + ".255.255.255.0.0.192.168.105.1", 1},
+		{"ipCidrRouteTable next hop .1.3.6.1.2.1.4.24.4.1.4.10.0.0.0.255.0.0.0.0." + pub, 1},
+		{"tcpConnTable remote .1.3.6.1.2.1.6.13.1.1.192.168.105.10.443." + pub + ".50123", 1},
+		{"tcpConnTable both .1.3.6.1.2.1.6.13.1.1." + pub + ".443." + pub + ".50123", 2},
+		{"udpTable .1.3.6.1.2.1.7.5.1.1." + pub + ".161", 1},
+		{"ipAddrTable .1.3.6.1.2.1.4.20.1.1.192.168.105.1", 0},
+		{"ipNetToMediaTable .1.3.6.1.2.1.4.22.1.2.5.10.0.0.1", 0},
+		{"tcpConnTable .1.3.6.1.2.1.6.13.1.1.10.0.0.1.22.192.168.105.9.50000", 0},
+		{"truncated ipCidrRouteTable .1.3.6.1.2.1.4.24.4.1.4", 0},
+		{"enterprise .1.3.6.1.4.1.12356.4.20.1.1." + pub, 0},
+		// More template forms: JS / SQL concatenation and format tails.
+		{"const ip = '" + pub3 + "' + i", 1},
+		{"const ip = '" + pub3 + "'+i", 1},
+		{"SELECT '" + pub3 + "'||g", 1},
+		{"fmt.Sprintf(\"" + pub3 + "%03d\", i)", 1},
+		{"fmt.Sprintf(\"" + pub3 + "%[1]d\", i)", 1},
+		{"range " + pub3 + "*", 1},
+		{"range " + pub3 + "X", 1},
+		{"range " + pub3 + "N", 1},
+		{"f\"" + pub3 + "{i}\"", 1},
+		{"Go 1.25.12 to 1.25.13.** bumped", 0},
+		{"version 1.2.3.next", 0},
+		// An ellipsis is not an OID's leading dot.
+		{"elided ..." + pub, 1},
+		{"see..." + pub, 1},
+		{pub + "... and more", 1},
+		{"ifTable column …2.2.1.10 and ...2.2.1.1", 0},
 		{"mask 255.255.255.252", 0},
 		{"0" + pub + " is not an address", 0},
 	} {
@@ -359,7 +486,21 @@ func TestPublicHygiene_Rules(t *testing.T) {
 	if len(badIPv6("peer "+strings.Join([]string{"2a00", "1450", "4001", "", "1"}, ":"))) != 1 {
 		t.Error("a public IPv6 address was not flagged")
 	}
+	v6 := strings.Join([]string{"2a00", "1450", "4001", "", "1"}, ":")
+	for _, text := range []string{"addr:" + v6, "id:" + v6, "ip=" + v6} {
+		if len(badIPv6(text)) != 1 {
+			t.Errorf("badIPv6(%q): a public IPv6 address after a word or colon was not flagged", text)
+		}
+	}
+	if len(badIPv6("ula fd00:2a00::1 and std::string")) != 0 {
+		t.Error("non-global IPv6 forms flagged")
+	}
 	if len(badHomes("/home/fwmon/x and /"+"Users"+"/someone/src")) != 1 {
 		t.Error("home-path rule wrong")
+	}
+	for _, text := range []string{`C:\` + `Users\someone\src`, `"C:\\` + `Users\\someone"`, `d:\` + `Users\x`} {
+		if len(badHomes(text)) != 1 {
+			t.Errorf("badHomes(%q): a Windows home path was not flagged", text)
+		}
 	}
 }
