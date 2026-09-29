@@ -128,7 +128,12 @@
     // blankStatTiles: the Alerts/Traps totals come from the charts load; when
     // it is cancelled or fails they would name the previous range under the
     // new pills (the tiles carry no range label), so they show "--" instead.
-    function blankStatTiles(page) {
+    // statTilesHours[page]: the range the tiles were last drawn for. Tiles
+    // still showing the requested range (a refresh after an ack) stay.
+    var statTilesHours = {};
+    function blankStatTiles(page, hrs) {
+        if (statTilesHours[page] === hrs) return;
+        statTilesHours[page] = null;
         ['total', 'critical', 'warning', 'info'].forEach(function(k) {
             var el = document.getElementById(page + '-' + k);
             if (el) el.textContent = '--';
@@ -185,7 +190,12 @@
             label: opts.label || 'Loading…',
             escScope: document.getElementById('page-' + page)
         }).then(function(r) {
-            if (r.superseded) return { superseded: true };
+            if (r.superseded) {
+                // Stopped by leaving the page (nothing newer took over): what
+                // this load would have replaced is now stale too.
+                if (opts.onFail && !AC.chartLoadBusy(loadKey, true)) opts.onFail();
+                return { superseded: true };
+            }
             if (r.cancelled) {
                 var back = shownQuery[page] || opts.prev;
                 // A charts load shares the page's controls with the table load.
@@ -2282,6 +2292,7 @@
             document.getElementById('alerts-critical').textContent = crit.toLocaleString();
             document.getElementById('alerts-warning').textContent = warn.toLocaleString();
             document.getElementById('alerts-info').textContent = inf.toLocaleString();
+            statTilesHours.alerts = hrs;
 
             var labels = (d.over_time || []).map(function(b) { return formatBucketTime(b.bucket, hrs); });
             var counts = (d.over_time || []).map(function(b) { return b.count; });
@@ -2291,7 +2302,7 @@
             var typeCounts = (d.by_type || []).map(function(t) { return t.count; });
             var typeColors = ['#f85149','#d2992a','#58a6ff','#3fb950','#bc8cff','#8b949e'];
             createChart('alerts-type-chart','doughnut',typeLabels,[{data:typeCounts,backgroundColor:typeColors.slice(0,typeLabels.length),borderWidth:0}]);
-        }, { page: 'alerts', host: 'alerts-charts-host', retry: loadAlertCharts, onFail: function() { blankStatTiles('alerts'); } });
+        }, { page: 'alerts', host: 'alerts-charts-host', retry: loadAlertCharts, onFail: function() { blankStatTiles('alerts', hrs); } });
     }
 
     // ---- Traps ----
@@ -2384,6 +2395,7 @@
             document.getElementById('traps-critical').textContent = crit.toLocaleString();
             document.getElementById('traps-warning').textContent = warn.toLocaleString();
             document.getElementById('traps-info').textContent = inf.toLocaleString();
+            statTilesHours.traps = hrs;
 
             var labels = (d.over_time || []).map(function(b) { return formatBucketTime(b.bucket, hrs); });
             var counts = (d.over_time || []).map(function(b) { return b.count; });
@@ -2393,7 +2405,7 @@
             var sevCounts = (d.by_severity || []).map(function(s) { return s.count; });
             var sevColors = ['#f85149','#d2992a','#58a6ff','#3fb950','#8b949e'];
             createChart('traps-severity-chart','doughnut',sevLabels,[{data:sevCounts,backgroundColor:sevColors.slice(0,sevLabels.length),borderWidth:0}]);
-        }, { page: 'traps', host: 'traps-charts-host', retry: loadTrapCharts, onFail: function() { blankStatTiles('traps'); } });
+        }, { page: 'traps', host: 'traps-charts-host', retry: loadTrapCharts, onFail: function() { blankStatTiles('traps', hrs); } });
     }
 
     // ---- Settings ----

@@ -53,7 +53,7 @@ func TestFilterLoad_RestoreMechanics(t *testing.T) {
 
 	main := readJS(t, "admin-main.js")
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
-	sup := strings.Index(run, "if (r.superseded) return { superseded: true };")
+	sup := strings.Index(run, "if (r.superseded) {\n                // Stopped by leaving the page")
 	rest := strings.Index(run, "if (back && apC && apC.restore && !siblingBusy()) restoreQuery(apC, page, back);")
 	if sup < 0 || rest < 0 || sup > rest {
 		t.Error("runFilterLoad must return on a superseded load before the Cancel restore")
@@ -713,7 +713,7 @@ func TestFilterLoad_ReviewRound13(t *testing.T) {
 func TestFilterLoad_ReviewRound14(t *testing.T) {
 	main := readJS(t, "admin-main.js")
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
-	mustContain(t, "admin-main.js", run, "if (r.superseded) return { superseded: true };", "callers can tell a superseded load")
+	mustContain(t, "admin-main.js", run, "                return { superseded: true };\n            }", "callers can tell a superseded load")
 	ra := funcBody(t, main, `function refreshAlertsAtCurrentPage\(opts\)`)
 	mustContain(t, "admin-main.js", ra, "if (res && res.superseded && AC.chartLoadBusy('filter-alerts', true)) alertsRefreshDeferred = true;", "an interrupted quiet refresh is re-armed")
 	mustContain(t, "admin-event-rules.js", readJS(t, "admin-event-rules.js"), "rulesReloadDeferred = false; // the page reloads its rules on return", "a page leave consumes the deferred rules reload")
@@ -934,7 +934,8 @@ func TestFilterLoad_ReviewRound25(t *testing.T) {
 		t.Error("both the Cancel and error branches must call onFail")
 	}
 	for _, pg := range []string{"alerts", "traps"} {
-		mustContain(t, "admin-main.js", main, "onFail: function() { blankStatTiles('"+pg+"'); } });", "the "+pg+" tiles blank on a failed charts load")
+		mustContain(t, "admin-main.js", main, "onFail: function() { blankStatTiles('"+pg+"', hrs); } });", "the "+pg+" tiles blank on a failed charts load")
+		mustContain(t, "admin-main.js", main, "statTilesHours."+pg+" = hrs;", "the drawn range is recorded")
 	}
 	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "AC.chartLoadCancel('ti-lookup');\n        var r = el('ti-lookup-result');", "re-entry stops a running lookup first")
 	ac := readJS(t, "admin-common.js")
@@ -945,4 +946,14 @@ func TestFilterLoad_ReviewRound25(t *testing.T) {
 	if strings.Contains(css, `.fwmon-load-host[aria-busy="true"] { min-height`) {
 		t.Error("aria-busy is set at once; it must not carry the min-height")
 	}
+}
+
+// Twenty-sixth review (Opus 5.5, verdict "sound"; two optional LOWs fixed):
+// a charts load stopped by leaving the page blanks the tiles too, and tiles
+// already showing the requested range are left alone.
+func TestFilterLoad_ReviewRound26(t *testing.T) {
+	main := readJS(t, "admin-main.js")
+	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
+	mustContain(t, "admin-main.js", run, "if (opts.onFail && !AC.chartLoadBusy(loadKey, true)) opts.onFail();", "a load stopped by a page leave counts as failed for the tiles")
+	mustContain(t, "admin-main.js", funcBody(t, main, `function blankStatTiles\(page, hrs\)`), "if (statTilesHours[page] === hrs) return;", "tiles for the same range stay")
 }
