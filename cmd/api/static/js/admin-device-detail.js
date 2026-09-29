@@ -2022,6 +2022,11 @@
         // being loaded — not the previous comparison — through a Cancel/error.
         var metaEl = document.getElementById('config-diff-meta');
         if (metaEl) metaEl.textContent = 'rev #' + fromID + ' \u2192 rev #' + toID;
+        // The previous comparison is no longer on screen: drop it, so nothing
+        // (the resize re-render below) can paint it under the new header.
+        cdState.data = null;
+        cdState.view = 'obj';
+        cdState.cache = { obj: null, unified: null, split: null };
         body.innerHTML = '<div class="cfgdiff-placeholder">Loading diff…</div>';
         modal.classList.remove('hidden');
         AC.openModal('config-diff-modal');
@@ -2700,7 +2705,10 @@
     // re-rendering.
     window.addEventListener('resize', function() {
         var modal = document.getElementById('config-diff-modal');
-        if (!modal || modal.classList.contains('hidden')) return;
+        if (!modal || !modal.classList.contains('active')) return;
+        // Only a rendered diff is re-rendered: never while a new one loads,
+        // nor over a Cancelled/failed notice (its Retry would be wiped).
+        if (!cdState.data || AC.chartLoadBusy('config-diff', true)) return;
         if (cdState.view !== 'raw') return;
         clearTimeout(window.__cdResizeT);
         window.__cdResizeT = setTimeout(function() { renderActiveView(); }, 150);

@@ -806,3 +806,17 @@ func TestFilterLoad_ReviewRound18(t *testing.T) {
 	mustContain(t, "admin-flows.js", funcBody(t, fl, `function applyTabView\(\)`), "window.AdminCommon.chartLoadBusy('flows-samples', true)) loadSamples();", "a hidden samples load is re-issued under the overlay")
 	mustContain(t, "admin-reports.js", readJS(t, "admin-reports.js"), "if (sel) sel.addEventListener('change', function () { loadPreview(); });", "a period change always builds")
 }
+
+// Nineteenth review (Opus 5.5): the config-diff modal opens before its data,
+// so the previous comparison is dropped and the resize re-render only runs
+// over a rendered diff; a cancelled profile switch drops a waiting reload.
+func TestFilterLoad_ReviewRound19(t *testing.T) {
+	dd := readJS(t, "admin-device-detail.js")
+	od := funcBody(t, dd, `function openConfigDiff\(fromID, toID\)`)
+	if i := strings.Index(od, "cdState.data = null;"); i < 0 || i > strings.Index(od, "AC.chartLoad(") {
+		t.Error("openConfigDiff must drop the previous comparison before the load starts")
+	}
+	mustContain(t, "admin-device-detail.js", dd, "if (!cdState.data || AC.chartLoadBusy('config-diff', true)) return;", "resize re-renders only a rendered diff")
+	mustContain(t, "admin-device-detail.js", dd, "if (!modal || !modal.classList.contains('active')) return;", "and only while the dialog is open")
+	mustContain(t, "admin-event-rules.js", readJS(t, "admin-event-rules.js"), "                    rulesReloadDeferred = false;\n                    // A cancelled profile switch", "a cancelled switch drops the waiting reload")
+}

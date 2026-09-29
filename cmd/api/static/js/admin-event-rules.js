@@ -230,6 +230,9 @@
             if (r.cancelled) {
                 var retry = function () { loadRules(pid, nextFilter); };
                 if (pid !== currentProfileId) {
+                    // The user just cancelled this switch: a save reload that
+                    // was waiting for it must not start the same switch again.
+                    rulesReloadDeferred = false;
                     // A cancelled profile switch: the page already shows the
                     // new profile, so the old profile's rows must not stay
                     // under its header, and "+ Add rule" keeps defaulting to
