@@ -807,6 +807,14 @@
         if (keydownHandler) document.removeEventListener('keydown', keydownHandler, true);
         keydownHandler = function(e) {
             if (e.key === 'Escape' && Object.keys(expandedTunnels).length > 0) {
+                // Only when the map is ON SCREEN and no dialog took this Esc:
+                // the listener is global and outlives a page change, and its
+                // preventDefault would otherwise swallow the first Esc on every
+                // other page (Esc-to-cancel bails on defaultPrevented).
+                if (e.defaultPrevented) return;
+                var box = cy && cy.container();
+                if (!box || !box.getClientRects().length) return;
+                if (document.querySelector('.modal.active, [role="dialog"].active')) return;
                 // This Esc is handled here: a running side-panel load must not
                 // also be cancelled by it.
                 e.preventDefault();

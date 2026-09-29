@@ -786,3 +786,23 @@ func TestFilterLoad_ReviewRound17(t *testing.T) {
 		t.Error("both removals must pass the capture flag, or the old handler is never removed")
 	}
 }
+
+// Eighteenth review (Opus 5.5): the tunnel-collapse Esc (global, capture
+// phase) acts only while the map is on screen — it swallowed the first Esc on
+// every other page; row charts re-expand with the active pill; a hidden Flows
+// samples load is re-issued when its list is shown; a Reports period change
+// always builds.
+func TestFilterLoad_ReviewRound18(t *testing.T) {
+	cy := readJS(t, "diagram-cytoscape.js")
+	mustContain(t, "diagram-cytoscape.js", cy, "if (!box || !box.getClientRects().length) return;", "the collapse Esc acts only when the map is rendered")
+	if i := strings.Index(cy, "if (e.defaultPrevented) return;\n                var box = cy && cy.container();"); i < 0 || i > strings.Index(cy, "                e.preventDefault();\n                Object.keys(expandedTunnels)") {
+		t.Error("the collapse Esc must check defaultPrevented and visibility before claiming the key")
+	}
+	dp := readJS(t, "diagram-panels.js")
+	if strings.Count(dp, "rowActiveRange(rowId));") != 2 {
+		t.Error("both row toggles must re-expand with the active pill's range")
+	}
+	fl := readJS(t, "admin-flows.js")
+	mustContain(t, "admin-flows.js", funcBody(t, fl, `function applyTabView\(\)`), "window.AdminCommon.chartLoadBusy('flows-samples', true)) loadSamples();", "a hidden samples load is re-issued under the overlay")
+	mustContain(t, "admin-reports.js", readJS(t, "admin-reports.js"), "if (sel) sel.addEventListener('change', function () { loadPreview(); });", "a period change always builds")
+}

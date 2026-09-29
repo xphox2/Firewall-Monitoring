@@ -452,8 +452,14 @@
         // a notice about that list is dropped when leaving it.
         var sampHost = document.getElementById('flows-samples-host');
         if (sampHost) {
+            var wasHidden = sampHost.hidden;
             sampHost.hidden = (tab !== 'samples');
             if (tab !== 'samples' && window.AdminCommon && window.AdminCommon.chartNoticeClear) window.AdminCommon.chartNoticeClear(sampHost);
+            // A samples load started while the list was hidden has no overlay
+            // (no Cancel, and Load more is ignored as busy): re-issue it now
+            // that the list is shown, so it runs under the overlay.
+            if (tab === 'samples' && wasHidden && window.AdminCommon && window.AdminCommon.chartLoadBusy &&
+                window.AdminCommon.chartLoadBusy('flows-samples', true)) loadSamples();
         }
         var hint = document.getElementById('flows-view-hint');
         if (hint) {

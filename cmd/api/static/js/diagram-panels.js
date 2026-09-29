@@ -1334,6 +1334,15 @@
         pending.forEach(x => loadPanelInterfaceChart(x.rowId, x.deviceId, x.ifIndex, '24h'));
     }
 
+    // rowActiveRange is the range of the row's active pill (24h when none):
+    // re-expanding a row whose chart never finished must load the range the
+    // pills show, not always 24h.
+    function rowActiveRange(rowId) {
+        const box = rowPills(panelRowChartHost(rowId));
+        const pill = box && box.querySelector('.panel-range-pill.active');
+        return (pill && pill.dataset.range) || '24h';
+    }
+
     function togglePanelInterface(rowId, deviceId, ifIndex) {
         const expandRow = document.getElementById(rowId);
         const chev = document.getElementById('pchev-' + rowId);
@@ -1344,7 +1353,7 @@
             expandRow.classList.add('open');
             if (chev) chev.classList.add('open');
             if (!panelChartInstances['iface-' + rowId]) {
-                loadPanelInterfaceChart(rowId, deviceId, ifIndex, '24h');
+                loadPanelInterfaceChart(rowId, deviceId, ifIndex, rowActiveRange(rowId));
             }
         }
     }
@@ -1379,7 +1388,7 @@
             expandRow.classList.add('open');
             if (chev) chev.classList.add('open');
             if (!panelChartInstances['tunnel-' + rowId]) {
-                loadPanelTunnelChart(rowId, deviceId, tunnelName, '24h');
+                loadPanelTunnelChart(rowId, deviceId, tunnelName, rowActiveRange(rowId));
             }
         }
     }

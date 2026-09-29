@@ -195,7 +195,10 @@
         if (pdf) pdf.addEventListener('click', exportPdf);
         if (dl) dl.addEventListener('click', downloadHtml);
         if (send) send.addEventListener('click', sendNow);
-        if (sel) sel.addEventListener('change', function () { if (loadedOnce) loadPreview(); });
+        // Always build: after a first-load Cancel/error nothing is displayed
+        // (loadedOnce false), and a change must still load — not wait for a
+        // Retry that would put the old period back.
+        if (sel) sel.addEventListener('change', function () { loadPreview(); });
         var pills = document.getElementById('report-theme-pills');
         if (pills) pills.addEventListener('click', function (ev) {
             var b = ev.target.closest('[data-report-theme]');
