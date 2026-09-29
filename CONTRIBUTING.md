@@ -86,6 +86,23 @@ Server-repo only.
 - **No new vendored browser libraries** without the same justification + a `THIRD-PARTY-NOTICES.md` update.
 - **Tests**: prefer table-driven tests. Use `t.TempDir()` for filesystem fixtures. Mark `t.Parallel()` on safe tests.
 
+## Never commit
+
+This is a public repository. Keep anything from a real environment out of it:
+
+- **Real addresses** — no public IPs, site subnets, MAC addresses or serial numbers from a real network. Test data uses reserved ranges: RFC 5737 (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`) for outside hosts, RFC 2544 (`198.18.0.0/15`) for "our own" public space, RFC 1918 for LANs, and RFC 3849 (`2001:db8::/32`) for IPv6.
+- **Real names** — no real host names, domains, device names, user names or home-directory paths. Use `example.com` / `example.net` / `lab.example` and neutral device names.
+- **Captured data** — no real log lines, config backups, packet captures or database dumps, even "sanitised" ones. Write a synthetic fixture instead.
+- **Credentials** — no keys, tokens, passwords or community strings other than obvious placeholders.
+- **Working notes** — no task lists, lessons files, review reports, session transcripts or tool settings (`tasks/`, `CLAUDE.md`, `AGENTS.md`, `.claude/`, `docs/audit-*`). They are gitignored.
+
+`test/guardrails/public_hygiene_test.go` fails on real public addresses and home paths, and `test/guardrails/agentmemory_audit115_test.go` fails on tracked working notes. CI also runs [gitleaks](https://github.com/gitleaks/gitleaks) on every push and pull request. To catch secrets before they leave your machine, install gitleaks and add a pre-commit hook:
+
+```bash
+printf '#!/bin/sh\nexec gitleaks protect --staged --redact\n' > .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+```
+
 ## Security-sensitive contributions
 
 If your change touches authentication, encryption, secret management, the trap listener, or any of the SSRF-gated `Test*` endpoints, please:

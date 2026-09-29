@@ -1,0 +1,24 @@
+# gitleaks configuration: the default rules, plus a reviewed allowlist of test
+# fixtures whose "secrets" are deliberately fake (placeholder JWT keys, stub PEM
+# blocks such as RANDOM_IV_AAAA_body_aaaa, sample PSK/UUID values). Add a path
+# here only after confirming the value is synthetic.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Synthetic secrets in tests and the example config"
+paths = [
+  '''^config\.env\.example$''',
+  '''^internal/api/handlers/handlers_config_revision_fortigate_test\.go$''',
+  '''^internal/api/handlers/handlers_probes_lifecycle_m7_test\.go$''',
+  '''^internal/api/handlers/handlers_profile_test\.go$''',
+  '''^internal/api/handlers/handlers_totp_test\.go$''',
+  '''^internal/api/handlers/testhelper_test\.go$''',
+  '''^internal/api/middleware/pending_stage_test\.go$''',
+  '''^internal/api/middleware/token_auth_test\.go$''',
+  '''^internal/auth/auth_test\.go$''',
+  '''^internal/configdiff/linediff_test\.go$''',
+  '''^internal/configdiff/normalize_test\.go$''',
+  '''^internal/configdiff/opnsense_multiline_secret_audit200_test\.go$''',
+  '''^internal/configdiff/opnsense_test\.go$''',
+]
