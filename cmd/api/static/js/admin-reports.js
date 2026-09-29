@@ -88,7 +88,14 @@
         AC.chartLoad(host, function (signal) { return AC.apiFetch(url, { signal: signal }); },
             { key: 'report-preview', label: 'Building the report…', escScope: document.getElementById('page-reports') })
             .then(function (r) {
-                if (r.superseded) return;
+                if (r.superseded) {
+                    // Stopped by leaving the page (nothing newer took over):
+                    // the controls name a report that never rendered, so the
+                    // next visit must build it — init() only loads when this
+                    // is false (same as the stale-theme case below).
+                    if (!AC.chartLoadBusy('report-preview', true)) loadedOnce = false;
+                    return;
+                }
                 if (r.cancelled) {
                     if (shown) applyChoices(shown);
                     AC.chartNotice(host, loadedOnce ? 'Cancelled — showing the previous report' : 'Cancelled', { onRetry: retryWanted });

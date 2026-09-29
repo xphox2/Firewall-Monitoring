@@ -807,6 +807,9 @@
         if (keydownHandler) document.removeEventListener('keydown', keydownHandler);
         keydownHandler = function(e) {
             if (e.key === 'Escape' && Object.keys(expandedTunnels).length > 0) {
+                // This Esc is handled here: a running side-panel load must not
+                // also be cancelled by it.
+                e.preventDefault();
                 Object.keys(expandedTunnels).forEach(collapseTunnel);
                 if (cy) cy.animate({ fit: { eles: cy.elements(), padding: 40 } }, { duration: 400 });
             }

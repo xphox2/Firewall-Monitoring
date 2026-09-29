@@ -1458,6 +1458,9 @@
         // An ack that arrived while THIS refresh ran was deferred; its refresh
         // runs now (its own query started before that ack committed).
         if (opts && opts.quiet) alertsQuietRefreshRunning = true;
+        // The "select all matching" banner reads busy: repaint now that the
+        // refresh is registered (as loadAlerts and alertsPage do).
+        updateAlertBulkToolbar();
         if (refreshing && refreshing.then) refreshing.then(function(res) {
             if (opts && opts.quiet) alertsQuietRefreshRunning = false;
             // Interrupted by paging or a filter change (quiet or not): re-arm,

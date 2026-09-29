@@ -176,7 +176,7 @@ func TestFilterLoad_Surfaces(t *testing.T) {
 	}{
 		{"admin-threatintel.js", []string{"key: 'ti-lookup'", "key: 'ti-search'", "{ signal: signal }"}},
 		{"admin-flows.js", []string{"key: 'flows-samples'", "key: 'flows-detections'", "AC.apiFetch(url, { signal: signal })"}},
-		{"admin-reports.js", []string{"key: 'report-preview'", "AC.apiFetch(url, { signal: signal })", "if (r.superseded) return;"}},
+		{"admin-reports.js", []string{"key: 'report-preview'", "AC.apiFetch(url, { signal: signal })", "if (r.superseded) {"}},
 		{"diagram-panels.js", []string{"AC.chartLoadCancel('panel-');", "'panel-traffic-' + connId", "'panel-flows-' + connId", "'panel-events-' + connId",
 			"'panel-iface-' + rowId", "'panel-tunnel-' + rowId", "window.apiFetch(url, { signal: signal })", "if (r.superseded) return null;"}},
 		{"admin-connection-detail.js", []string{"'cd-traffic'", "'cd-flows'", "'cd-group-' + canvasId", "AC.apiFetch(url, { signal: signal })",
@@ -742,4 +742,19 @@ func TestFilterLoad_ReviewRound15(t *testing.T) {
 	}
 	mustContain(t, "admin-connection-detail.js", readJS(t, "admin-connection-detail.js"), "var initialTrafficRange = currentTrafficRange;", "the default range is kept as the fallback")
 	mustContain(t, "admin-event-profiles.js", readJS(t, "admin-event-profiles.js"), "shown, and no \"Resolving…\" is left behind.\n                if (!out.querySelector('.ep-matrix-row, table, [data-ep-openprofile]')) out.innerHTML = '';", "an Effective error clears the placeholder")
+}
+
+// Sixteenth review (Opus 5.5, harness-proven MEDIUM): leaving Reports mid-load
+// makes the next visit rebuild the chosen report; the ack refresh repaints the
+// select-all banner; a tunnel-collapse Esc is not also a load Cancel.
+func TestFilterLoad_ReviewRound16(t *testing.T) {
+	rp := readJS(t, "admin-reports.js")
+	mustContain(t, "admin-reports.js", rp, "if (!AC.chartLoadBusy('report-preview', true)) loadedOnce = false;\n                    return;", "a report stopped by leaving the page is rebuilt on return")
+	main := readJS(t, "admin-main.js")
+	ra := funcBody(t, main, `function refreshAlertsAtCurrentPage\(opts\)`)
+	if i := strings.Index(ra, "updateAlertBulkToolbar();\n        if (refreshing"); i < 0 {
+		t.Error("the ack refresh must repaint the bulk toolbar once its load is registered")
+	}
+	cy := readJS(t, "diagram-cytoscape.js")
+	mustContain(t, "diagram-cytoscape.js", cy, "                e.preventDefault();\n                Object.keys(expandedTunnels).forEach(collapseTunnel);", "the collapse Esc is marked handled")
 }
