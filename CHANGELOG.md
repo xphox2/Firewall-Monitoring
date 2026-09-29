@@ -34,7 +34,7 @@ All notable changes to this project are documented in this file.
 
 ### Internal
 
-- `flow_reclass.go`: corrected the comment on the VACUUM hint (a full reclass rewrote ~141M rows on production; autovacuum usually keeps up with the table's 0.01 scale factor).
+- `flow_reclass.go`: corrected the comment on the VACUUM hint (a full reclass rewrites most of the table; autovacuum usually keeps up with the table's 0.01 scale factor).
 - Guardrail test `TestFilterLoad_Followups272`, plus updated pins for the notice wording and the Syslog tiles.
 
 ## [0.11.271] - 2026-09-28
@@ -126,7 +126,7 @@ The NOC page's "Live Detections" table is replaced by two cards.
 
 ### Technical
 - The live feed travels on the NOC stream as its own `feed` event, sent when it changes and every 60 s, instead of inside every 5-second snapshot; the snapshot event is unchanged. The one-shot `/admin/api/noc/snapshot` still returns everything. `detections` is removed from the snapshot; `feed` and `threat_top` are added.
-- Detection episodes are recomputed at most once a minute; alerts and the threat lists are live every tick. Measured on production: alerts 4 ms, threat lists 2–4 ms, detection episodes 40–120 ms once a minute.
+- Detection episodes are recomputed at most once a minute; alerts and the threat lists are live every tick. Measured on a large deployment: alerts 4 ms, threat lists 2–4 ms, detection episodes 40–120 ms once a minute.
 - The alerts list's device/site name lookup moved into the database package (`EnrichAlertDeviceSite`) so the feed shares it.
 - No migration.
 
@@ -161,7 +161,7 @@ record still names the retired device. The "?" is the missing device's name.
   given it is kept. (Port-level L2 links still take their name from the
   detected ports each cycle, as before.)
 - **Migration v69** deletes the connections that already point at a retired
-  or missing device (one on the production server). Restoring a device
+  or missing device. Restoring a device
   re-creates its auto-detected connections on the next poller cycle, as
   before.
 - The provisioned-tunnel lookup itself is unchanged, so the surviving
@@ -171,9 +171,9 @@ record still names the retired device. The "?" is the missing device's name.
 
 ### Changed — task notes
 
-- `tasks/todo.md`: the admin-performance item on PostgreSQL `work_mem` is
-  marked done. It was set to 32MB on 2026-09-26, after v0.11.258 gave the
-  container a 1 GB `/dev/shm`. No code changes.
+- Internal task notes: the admin-performance item on PostgreSQL `work_mem` is
+  marked done. It was raised after v0.11.258 gave the container a 1 GB
+  `/dev/shm`. No code changes.
 
 ## [0.11.266] - 2026-09-27
 
@@ -213,7 +213,7 @@ since <date>".
 
 v0.11.263 and v0.11.264 changed how new flows are classified: service port,
 and direction against your own networks. History recorded earlier kept the old
-rule. On production that is about 127 million of 141 million rolled-up rows.
+rule. On a long-running deployment that is most of the rolled-up rows.
 
 - **A background job re-stamps history** in `flow_samples` and `flow_rollups`
   with the same classifier ingest uses, so old and new traffic cannot disagree.
@@ -222,17 +222,17 @@ rule. On production that is about 127 million of 141 million rolled-up rows.
     after a restart or a deploy.
   - It starts on its own after this upgrade.
   - Measured:
-    - reading a slice on production takes 11–29 ms (up to 50,000 rows);
+    - reading a slice on a large deployment takes 11–29 ms (up to 50,000 rows);
     - a scratch PostgreSQL on SSD reclassified 360,000 rows, with a promotion
       running alongside, at 54–82k rows/s.
-    The rewrite is what takes the time on production's spinning disk, so a
-    full run there takes hours. The status line shows a live estimate.
+    The rewrite is what takes the time on a spinning disk, so a full run
+    there takes hours. The status line shows a live estimate.
   - Rolled-up rows keep no source port. For them the service port is inferred
     from the destination, so a server's older replies still show no service.
     Rows recorded since v0.11.263 keep their exact value.
   - A run ends only when a count taken under the maintenance lock finds no row
     left on the old rule. The count reads each table in id ranges. Its length
-    on production's disk has not been measured yet, but expect minutes.
+    on a spinning disk has not been measured yet, but expect minutes.
     - While it holds the lock, rollup ticks are skipped (and caught up
       afterwards), and the retention cleanup waits for it.
     - If the check keeps timing out, the job pauses and says so, suggesting a
@@ -265,8 +265,9 @@ rule. On production that is about 127 million of 141 million rolled-up rows.
 ### Changed — your own networks count as internal when classifying flow direction
 
 Only private ranges counted as "inside", so traffic to and from the operator's
-own public networks read as **External**: 73% of a day's traffic on
-production, and every flow of a server on the operator's own /28.
+own public networks read as **External**: most of a day's traffic on a
+typical deployment, and every flow of a server on the operator's own public
+range.
 
 - **Direction now uses your own networks.** A flow between one of your networks
   and the internet is **Outbound** or **Inbound**. A flow between two of yours
@@ -308,9 +309,9 @@ production, and every flow of a server on the operator's own /28.
 
 For a server, the old Top ports panel listed its clients' ports. It counted only
 the destination port, so a web server's replies (from 443 to thousands of
-client ports) showed as thousands of unrelated ports of 70–98 MB each. On
-production, a 30-day view of one server showed 443 at 6.7 GB, with the rest of
-its 401 GB spread across client ports.
+client ports) showed as thousands of unrelated ports. In a 30-day view of one
+server, 443 held only a small share, with the rest of its traffic spread across
+client ports.
 
 - **Each flow now records its service port**: the well-known side of the
   conversation, whichever end it is on (otherwise the lower port below 32768;
@@ -351,16 +352,16 @@ its 401 GB spread across client ports.
 
 ### Fixed — Flows panels rank by traffic, and top-10 lists see past the 10th row
 
-Checked against production for a 30-day view of one server address (about
-401 GB, where the bandwidth figures were already right):
+Checked against a live deployment for a 30-day view of one server address
+(where the bandwidth figures were already right):
 
 - **Protocols showed record counts formatted as bytes.** The panel ranked by
   how many sampled records each protocol produced and the page printed that
   number as a size, so TCP read about 1.4 MB — its 1.48 million records —
-  while carrying 401 GB. It now ranks and shows bytes.
+  while carrying hundreds of gigabytes. It now ranks and shows bytes.
 - **Applications and Direction ranked by record count.** "Unknown" came first
-  with 938k records carrying 49 MB, while Web carried 400 GB (99.9% of the
-  traffic) in fewer records. Both now rank and show bytes.
+  with 938k records carrying 49 MB, while Web carried 99.9% of the
+  traffic in fewer records. Both now rank and show bytes.
 - On all three panels, hovering a row shows its flow-record count. The API
   keeps `count` for the ranked value (now bytes) and adds `records`.
 - **Top-N lists could miss the true #1.** Recent samples and older rolled-up
@@ -374,14 +375,14 @@ Checked against production for a 30-day view of one server address (about
 
 ### Changed — a streamed Flows report no longer has a time limit
 
-Measured on production right after v0.11.260 shipped: a Flows report for 30 days
+Measured on a large deployment after v0.11.260 shipped: a Flows report for 30 days
 filtered to one source address completed with every panel exact, but took
 **2 min 20 s**, not the ~25 s v0.11.260's notes estimated, and used about 140 of
 the 150 seconds it was allowed. Each day's read took 2.4–7.8 s; the same day run
 again with its pages in the host's file cache took 1.65 s — the ~0.3–0.9 s per
 day the estimate and the allowance came from had been measured with the data
 already cached. A filtered 30-day report reads about 72k pages a day, nearly all
-20 GB of `flow_rollups`, and when nothing is cached that comes off the disk. A
+of a large `flow_rollups`, and when nothing is cached that comes off the disk. A
 cold 90-day report would have run out of time and shown every panel partial,
 and a slower system would hit that on shorter ranges.
 
@@ -403,7 +404,7 @@ and a slower system would hit that on shorter ranges.
 - **After a minute the loading panel says** that a long range read from disk can
   take several minutes and can be cancelled at any time, and the elapsed time
   switches to minutes. A day being read in smaller pieces says so.
-- **Expectations, measured on production:** a filtered 30-day report takes about
+- **Expectations, measured on a large deployment:** a filtered 30-day report takes about
   30 s when its data is cached and 2–2.5 minutes cold; 90 days about 7 minutes
   cold.
 
@@ -412,8 +413,8 @@ and a slower system would hit that on shorter ranges.
 ### Fixed — Flows reports filtered by an address, port or network never finished past a day or two
 
 Reported on the Flows page: 30 days filtered to one source address showed an
-empty graph and figures that were "way off". Every such request on production
-took 20.2 s and ended with each rolled-up panel logging `fell back to
+empty graph and figures that were "way off". Every such request on a large
+deployment took 20.2 s and ended with each rolled-up panel logging `fell back to
 raw-only`: the page then reported roughly the last hour of raw samples under a
 30-day label.
 
@@ -424,7 +425,7 @@ GB, about fourteen panels, one 20 s budget.
 
 - **Such a report now reads the window once, a day at a time,** into a
   temporary table holding exactly the rows the filter selects, and every panel
-  is computed from that. One day costs 0.3–0.9 s on production, so 30 days is
+  is computed from that. One day costs 0.3–0.9 s on a large deployment, so 30 days is
   about 25 s and 90 days about a minute. Nothing about the result changes
   except that it is complete: the same filters, windows and figures as before.
 - **A partly read window is never reported.** If the time allowance runs out
@@ -467,11 +468,11 @@ GB, about fourteen panels, one 20 s budget.
 - **Bandwidth tiles read only the rows they draw.** Each tile used to read every
   `interface_stats` row of its window and keep every Nth one: at the 1-year range
   that was 82,323 rows and about 600 MB of heap for **one** tile — 5.7 s cold on
-  production — fired once per tile at the same moment. It is the query behind the
-  126 shared-memory errors of 2026-09-16. The counters are cumulative, so a
+  a large deployment — fired once per tile at the same moment. It is the query
+  behind the shared-memory errors described under v0.11.258. The counters are cumulative, so a
   tile's rates only need the samples at each interval's ends; the tile now reads
-  the first row of each interval plus the newest row. On production that is
-  1,585 buffers and 6.4 ms at the 1-year range. The rates are the same averages
+  the first row of each interval plus the newest row. On the same deployment
+  that is 1,585 buffers and 6.4 ms at the 1-year range. The rates are the same averages
   as before; points are now evenly spaced in time rather than in row count.
 - **The CPU/memory tile now spans the selected window.** It read the first 2,000
   status rows — about 31 hours — so the 1w, 1m, 3m and 1y ranges showed only the
@@ -484,8 +485,8 @@ GB, about fourteen panels, one 20 s budget.
   peak described roughly the first day and a half, and disk usage and session
   count came from a row about 31 hours old. They are now aggregated over the
   whole window in one query, and disk usage and session count come from the
-  newest row. On production every device writes fewer than 2,000 status rows a
-  day (at most 1,523, measured 2026-09-26), so daily reports there are unchanged;
+  newest row. On a typical deployment every device writes fewer than 2,000
+  status rows a day, so daily reports there are unchanged;
   a device above that rate — one with both SNMP and SSH status writers can reach
   ~2,880 a day — now gets its whole day too.
 - **Chart timestamps are sent in UTC.** Both public charts wrote the local time
@@ -499,8 +500,8 @@ PostgreSQL runs inside the `firewall-mon` container and keeps parallel-query
 state — shared hash tables, shared scan bitmaps — in `/dev/shm`, which Docker
 limits to 64 MB unless the service says otherwise. A query that outgrows it
 fails with "could not resize shared memory segment … No space left on device".
-Production's PostgreSQL log holds **126** of those, all on 2026-09-16 — 122 in
-a 20-minute burst — and all from the public dashboard's per-interface bandwidth
+A deployment's PostgreSQL log showed a burst of those, all from the public
+dashboard's per-interface bandwidth
 chart query (`/api/public/interfaces/chart`), which the page issues once per
 interface tile at the same time. The same limit
 is what held `work_mem` at 16 MB instead of the 32 MB the 2026-09-07 tuning
@@ -519,14 +520,14 @@ intended: one parallel hash join alone budgets `work_mem × 2 × 3 participants`
 
 ### Fixed — the Syslog page could not show a 7-day or 30-day view, and 24 h took ~24 s
 
-Measured on production before the change: one 24 h Syslog page load ran three
+Measured on a large deployment before the change: one 24 h Syslog page load ran three
 queries over ~4.7M `syslog_messages` rows — the total (2.9 s), the severity split
 (13.5 s) and the hourly chart (7.3 s, with a 107 MB on-disk sort). 7 d and 30 d
 could not finish inside the 30 s statement and write timeouts at all.
 
 - **Fleet-wide Syslog figures for windows of 12 h or more now come from the
   ingest meter** (`syslog_ingest_hourly`, a few hundred rows) instead of counting
-  `syslog_messages`. Over the last 48 h on production the meter matched the raw
+  `syslog_messages`. Over 48 h on a live deployment the meter matched the raw
   table to 35 rows in 8.9M. The 1 h and 6 h views, and any device-filtered
   view, keep the exact path (6 h measured at ~1.8 s).
 - **What the meter counts is different, and the page now says so.** It counts
@@ -555,13 +556,13 @@ could not finish inside the 30 s statement and write timeouts at all.
 ### Fixed — the Probes page spent 20 seconds counting syslog rows on every load
 
 Each probe card's "Logs" figure was an exact `count(*) … GROUP BY probe_id` over
-all of `syslog_messages` — 136M rows, **20.2 s** on production, every visit, and
+all of `syslog_messages` — **20.2 s** on a large deployment, every visit, and
 growing with the table.
 
 - **Large tables (over a million rows) are now answered from PostgreSQL's own
   statistics**: the table's row estimate times the probe's share of it in
   `pg_stats`, read per partition, the same kind of figure the Data Totals card
-  already shows. Estimated figures carry a "~" and a tooltip; on production the
+  already shows. Estimated figures carry a "~" and a tooltip; on a live deployment the
   estimate was within 2% of the true count, and it can lag by up to ~10% between
   automatic analyzes. A probe too small to appear in the statistics is still
   counted exactly, as is everything on smaller tables. A partition that has never
@@ -575,9 +576,9 @@ growing with the table.
 
 The fleet-wide "latest status per tunnel" query behind VPN alerting, VPN and
 overlay auto-detection and the VPN map filters on the last 27 hours. With no
-index leading on `timestamp`, production answered it with a sequential scan of all
+index leading on `timestamp`, PostgreSQL answered it with a sequential scan of all
 841k rows to keep 12k — 81 ms, 12 times a minute, 3.8M rows read per minute.
-Migration v67 adds `idx_vpn_status_timestamp`; on a production-shaped copy the
+Migration v67 adds `idx_vpn_status_timestamp`; on a realistically sized copy the
 plan drops the sequential scan entirely. The build is a plain `CREATE INDEX`
 (seconds at 215 MB), during which the poller's `vpn_status` inserts wait.
 
@@ -616,8 +617,8 @@ ship inside the same binary.
 
 ### Fixed — the daily retention pass switched off alert evaluation for as long as it ran
 
-Verified on production right after v0.11.255 shipped: the retention pass ran from
-02:48 to 03:01:52 UTC, and for every minute of it the poller logged
+Seen on a live deployment after v0.11.255 shipped: for every minute the
+retention pass ran, the poller logged
 
 ```
 main.go:544: Skipping monitoring cycle: another poller holds the work lock
@@ -626,8 +627,8 @@ main.go:544: Skipping monitoring cycle: another poller holds the work lock
 plus `Skipping flow-detect / ipsec-telemetry / rollup` at each 5-minute mark.
 Retention held the poller's shared work lock, which is **non-blocking and shared
 by every cron tick**, so a tick that lands while it is held is skipped, not
-queued: 13 minutes a day with no SNMP-driven alert evaluation, and hours during a
-backlog clear. It was rarer before only because retention rarely got to run at
+queued: several minutes a day with no SNMP-driven alert evaluation, and hours
+during a backlog clear. It was rarer before only because retention rarely got to run at
 all (v0.11.254, v0.11.255).
 
 - **Retention cleanup and the rollup tick moved to their own advisory lock**
@@ -707,12 +708,12 @@ at the *start* of its cycle:
 
 For the *daily* attempt "forever" would overstate it: `cleanupTimer.Reset` is
 measured from when the case is serviced rather than when it fired, so on a
-long-lived process the daily attempt drifts off the boundary. On this deployment,
-which restarts several times a day, the attempt that matters is the five-minute
+long-lived process the daily attempt drifts off the boundary. On a deployment
+that restarts several times a day, the attempt that matters is the five-minute
 initial one — and that one is aligned every time.
 
-That is why `syslog_messages` reached 37 days of history under a 30-day policy at
-161 GB: the v0.11.254 timeout fix was correct but almost never reached.
+That is why `syslog_messages` kept more history than its 30-day policy allowed:
+the v0.11.254 timeout fix was correct but almost never reached.
 
 A contended cleanup now retries every 97 s for up to 30 minutes before deferring
 to the daily tick. 97 is prime, and that is the point: `gcd(97 s, 60 s)` and
@@ -737,7 +738,7 @@ re-fills them, but it is the same bug.
 
 ### Fixed — one statement timeout abandoned a whole table's retention until the next day
 
-Observed on production 2026-09-24:
+Observed on a live deployment:
 
 ```
 cleanup.go:107 ERROR: canceling statement due to statement timeout (SQLSTATE 57014)
@@ -747,9 +748,9 @@ main.go:248: Data cleanup error: failed to cleanup syslog_message
 
 A single 57014 returned out of the batch loop and abandoned `syslog_messages` for
 the day; the 24-hour ticker then reissued the identical statement. The table had
-drifted to **36 days of history under a 30-day policy** — 156.6M rows, 161 GB,
-with `/srv/firewall-mon` climbing about 18 GB/week. That is the shape of the
-2026-07-26 disk-full outage, where retention had also been failing silently.
+drifted to **36 days of history under a 30-day policy**, with the data volume
+still growing week on week. That is the shape of an earlier disk-full outage,
+where retention had also been failing silently.
 
 The device-purge loop (`batchedDeleteWhere`, v0.11.243) already carried the
 defences for exactly this, on exactly this table, and its doc comment recorded
@@ -757,7 +758,7 @@ that retention had deliberately been left alone. Retention now carries the same
 three:
 
 - **`ORDER BY` on the time column** — the defence that stops the timeouts
-  arising rather than merely surviving them. Measured against the live 161 GB
+  arising rather than merely surviving them. Measured against a large live
   table with `EXPLAIN (ANALYZE, BUFFERS)`, same predicate and `LIMIT 10000`:
 
   | | Time | Buffer reads | Plan |
@@ -785,7 +786,7 @@ three:
   765x *slower* — about 98 minutes of scan time per pass instead of 8 seconds, all
   of it while holding `pollerWorkLockKey`. An earlier revision of this change was
   ungated and would have shipped exactly that. The allow-list
-  (`timeIndexedCleanupTables`) was read off production's `pg_index`, not inferred
+  (`timeIndexedCleanupTables`) was read off a live deployment's `pg_index`, not inferred
   from the models, and deliberately excludes `interface_stats`, `system_status`,
   `flow_rollups` and `alerts`. A table absent from it keeps precisely the plan it
   had before.
@@ -836,9 +837,10 @@ is mutation-checked.
 lands mid-bucket SPLITS the destination bucket it falls in: the slice below the
 cutoff is promoted now and the remainder on a later cycle, each writing a
 separate row under an identical group key. The rollup ticker runs every five
-minutes, so this recurred on essentially every cycle. Measured on production for
-a single day of the hourly tier: 2,416,851 rows for 2,085,373 distinct keys, a
-multiplicity of 1.159 — roughly 16% of a 118M-row table was redundant rows.
+minutes, so this recurred on essentially every cycle. Measured on a large
+deployment for a single day of the hourly tier: 2,416,851 rows for 2,085,373
+distinct keys, a multiplicity of 1.159 — roughly 16% of the table was redundant
+rows.
 
 Promotion now truncates its cutoff down to the destination bucket width, so a
 straddled bucket waits for the next cycle instead of being split. Readers are
@@ -854,7 +856,7 @@ documents the same rule for its own window bounds.
 
 A day-destination window has to be 24 hours wide, since splitting a day bucket
 across windows is the duplication above. That made its `SELECT` and `DELETE` the
-largest statements the ladder issues: measured on production, one day of the
+largest statements the ladder issues: measured on a large deployment, one day of the
 hourly tier is 2.4M source rows folding to 2.1M groups — a 14.7 s aggregate and a
 3.3M-row delete, both against the 30 s `statement_timeout` the DSN pins.
 Exceeding it there is not a slow cycle but a permanent stall, because the window
@@ -887,7 +889,7 @@ The `flow_rollups` cutoff applies to every `interval_type`, so a retention windo
 shorter than the promotion ladder takes to finish would reap hourly rows before
 their daily row is written — silent history loss with no error, the failure mode
 `window_agg.go`'s header records. The default of 365 days is nowhere near it and
-production is on that default, but nothing stopped an operator setting
+most installs use that default, but nothing stopped an operator setting
 `RETENTION_FLOW_ROLLUP_DAYS` to 30 and quietly destroying the daily tier's newest
 day. Deferring straddled buckets is what made this worth enforcing rather than
 documenting: an hourly row can now wait up to a full day past the promotion age
@@ -897,13 +899,13 @@ ladder's reach plus two days, with a log line saying so.
 ### Added — the rollup ladder now has PostgreSQL coverage
 
 It had none. Every promotion test ran on SQLite, which is the wrong way round for
-a subsystem with two prior production incidents — and precisely how the bucket
+a subsystem with two prior field failures — and precisely how the bucket
 defect above survived, since every SQLite test shared the same wrong expression.
 Two integration tests now walk raw → 5m → 1h → 1d against a real PostgreSQL,
 asserting that bytes are conserved at each step, that each destination bucket is
 written exactly once however many passes run over it, and that the Go-side merge
 of the sub-ranged day scan reproduces what a single `GROUP BY` would have
-computed. Reverting the truncation makes them fail with the production symptom in
+computed. Reverting the truncation makes them fail with the field symptom in
 miniature: 289 five-minute rows for a day instead of 288, 25 hourly instead of
 24, 2 daily instead of 1.
 
@@ -938,7 +940,7 @@ column gets one zone.
   (`detect.go` stores it that way so it agrees with `GetRecentDetections`). Every
   flow-detection alert therefore fell outside its own cooldown window, so a
   repeat detection opened a second alert instead of folding into the first.
-- **`devices.retired_at`** — production has a single writer, in UTC; a test
+- **`devices.retired_at`** — the application has a single writer, in UTC; a test
   backdated in the local zone, inverting the `ORDER BY retired_at DESC` that
   picks which retired device a same-name re-add points at.
 
@@ -983,7 +985,7 @@ which is worth recording. The planner treats `interval_type IN (…)` and
 than the window inflates the row estimate 6.7-16x and crosses the sequential-scan
 threshold: 24-hour top-conversations went from 4.54 s to 6.43 s with a 115 MB
 external merge to disk, and a 48-hour sum went from a 1.63 s bitmap scan entirely
-in cache to a 10.85 s parallel scan of the whole 19 GB table. Since the panels run
+in cache to a 10.85 s parallel scan of the whole table. Since the panels run
 concurrently that is roughly eight simultaneous full-table scans, and 24 hours is
 the page's default range.
 
@@ -1004,7 +1006,7 @@ over-include and break it.
 
 ### Fixed — a day changing hands between summary tiers is now reconciled
 
-Found on production immediately after deploying v0.11.249. The daily tier yields
+Found on a live deployment immediately after v0.11.249 shipped. The daily tier yields
 the promotion boundary day once the finer rollup tiers hold part of it, which is
 what keeps that day at hourly resolution so a window cutoff falling inside it
 truncates the same way the live path does. But nothing reconciled the handover:
@@ -1023,7 +1025,7 @@ daily tier still owns, so that can only ever remove a superseded row.
 Both directions are mutation-tested. An earlier version of the test passed with
 the marker reset removed, because its scenario never built a marker ahead in the
 first place — it now seeds recent traffic so the hourly tier has one, which is
-the shape production actually has.
+the shape a live deployment actually has.
 
 ## [0.11.249] - 2026-09-16
 
@@ -1058,7 +1060,7 @@ rolled-up panel was cancelled by the 30-second statement timeout, and the page
 fell back to the raw window — about an hour — under a "90 days" label. v0.11.247
 made that fallback visible rather than silent. This makes it unnecessary.
 
-**Measured on production: a 90-day aggregate returns in 113 ms from the summary
+**Measured on a live deployment: a 90-day aggregate returns in 113 ms from the summary
 against 31,595 ms from `flow_rollups`.** That second number is the point, because
 it is over the timeout. Both paths return identical figures — 342,031,562 flows,
 3,949,471,419,102 bytes, 7,079,816,102 packets — which is also the proof that the
@@ -1085,7 +1087,7 @@ talkers beside filtered totals, which would be a new way to mislead.
 
 **The unique-address tiles are not served from the summary at all**, and that is
 deliberate. Summing per-bucket distinct counts is not an approximation of the
-window's union, it is a different quantity: measured on production, a 48-hour
+window's union, it is a different quantity: measured on a live deployment, a 48-hour
 window gives 414,934 truly distinct sources against a per-bucket sum of 992,789,
 and 30 days sums to 15,294,497 — an order of magnitude out. Those panels report
 degraded and the tile shows the raw window's exact count. A real window-level
@@ -1095,11 +1097,11 @@ longer the dominant cost.
 The threshold is 48 hours rather than 24 because of where each path truncates.
 Summary rows are stamped at bucket start, so below 48 hours the live path reads
 the 5-minute rollup tier and cuts at a 5-minute boundary while the summary can
-only cut at an hour — a 48-hour window measured 1.1 GB short for exactly that
-reason. Above it, both truncate at the same boundary.
+only cut at an hour — a 48-hour window measured noticeably short for exactly
+that reason. Above it, both truncate at the same boundary.
 
 Top-talker lists remain a per-bucket merge and so are approximate. Measured
-against the live path on production at 7 days: every live top-10 key is present,
+against the live path on a live deployment at 7 days: every live top-10 key is present,
 byte differences are mostly exactly zero and at worst 1.2%.
 
 ## [0.11.248] - 2026-09-14
@@ -1108,14 +1110,14 @@ byte differences are mostly exactly zero and at worst 1.2%.
 
 The 30-day and 90-day ranges on the Flows page could not return real figures.
 Against `flow_rollups` those windows aggregate roughly 76M and 92M rows; a bare
-`SUM` alone measures 15.1s and 19.5s on production, and the page issues about two
+`SUM` alone measures 15.1s and 19.5s on a live deployment, and the page issues about two
 dozen queries inside a 30-second response budget. No index, no plan tuning and no
 partitioning changes that — the scan itself is the cost, because `flow_rollups`
 is a rollup in name only. Its group key includes the source address, destination
 address and port, so every conversation stays its own row: the hourly tier alone
 holds 70M rows over 28 days, about 104,000 distinct conversation keys per hour.
 
-Three new tables pre-aggregate it. Measured on production, they cover the entire
+Three new tables pre-aggregate it. Measured on a live deployment, they cover the entire
 six-month retained history in **under a million rows against 118M**, and reproduce
 bytes, packets and flow counts **exactly**.
 
@@ -1154,9 +1156,9 @@ rather than another `RETENTION_*` environment variable, matching
 **A note on what review caught here.** The daily tier originally summed only the
 `1d` rollup tier and then deleted the hourly summary rows covering that day. The
 rollup ladder promotes with a cutoff that is not day-aligned, so the boundary day
-is *always* split across two tiers — measured on production, 2026-08-16 holds
-767 MB in the `1d` tier and 42 GB in the `1h` tier. That writer would have
-recorded **1.8% of that day** and destroyed the rest, permanently, repeating for
+is *always* split across two tiers — measured on a live deployment, one such day
+held under 2% of its bytes in the `1d` tier and the rest in the `1h` tier. That
+writer would have recorded **1.8% of that day** and destroyed the rest, permanently, repeating for
 every new boundary day. A daily bucket now sums every tier before superseding,
 and the hourly tier is floored at the daily tier's reach so the two do not both
 claim the day.
@@ -1192,13 +1194,13 @@ run and can be compared against the live path on real data.
 
 ### Fixed — Flows page reported figures that did not match the selected range
 
-Audited `/admin/api/flows/stats` against production. Several panels had no rollup
+Audited `/admin/api/flows/stats` against a live deployment. Several panels had no rollup
 branch, so they read only `flow_samples` — which holds just what the rollup ladder
 has not yet consumed, about one hour — while the tiles beside them summed the whole
 window. The range pill gave no hint that the two disagreed.
 
 - **Top Conversations and Top Ports** now merge the rolled-up tiers. The displayed
-  #1 conversation was 427 MB at 0.56% while the real #1 (6,799 MB over 24h) was
+  #1 conversation held 0.56% of the traffic while the real #1 was
   absent from the list entirely; port magnitudes ran about 19x low and the busiest
   port was missing.
 - **Total Packets** now includes rolled-up packets. It previously reported 2.7% of
@@ -1210,7 +1212,7 @@ window. The range pill gave no hint that the two disagreed.
 - **Selecting a probe no longer collapses every tile to the raw window.** A probe
   filter used to disable the rollup side entirely because `flow_rollups` has no
   `probe_id`; the rollup side now resolves the probe through the devices it owns,
-  the same shape the site filter already used. Measured on production at 1.7% of
+  the same shape the site filter already used. Measured on a live deployment at 1.7% of
   the true flow count before this, with no warning shown.
 - **Unique source/destination counts** sum the tiers instead of taking `max()` of
   them, and are marked `unique_approximate` so the UI can show them as the upper
@@ -1228,13 +1230,13 @@ rollup failures were logged and skipped, so the response carried raw-only figure
 under the requested window's label.
 
 - **The rolled-up panels now query concurrently** (bounded to 4 at a time, against
-  a 15-connection pool). Measured per-query on production's 24-hour band, the
+  a 15-connection pool). Measured per-query on a live deployment's 24-hour band, the
   fourteen panels cost about 25 seconds in total and Top Conversations alone is
   6.4 seconds, so running them one after another could not fit any budget that
   also respects the 30-second write timeout. Replayed at 4-way concurrency against
-  production, the 24-hour range now completes in **9.5 seconds**.
+  the same deployment, the 24-hour range now completes in **9.5 seconds**.
 - **Be clear about what this does not fix.** Seven days and beyond still degrade
-  *completely*: replayed on production with the same 20-second allowance, 9 of the
+  *completely*: replayed on a live deployment with the same 20-second allowance, 9 of the
   14 panels are cancelled at 7 days and 13 of 14 at 90 days. Those ranges return
   the raw window — roughly an hour — with every panel named in the banner. That is
   now honest rather than silent, but it is not fixed. Fixing it needs
@@ -1280,10 +1282,10 @@ under the requested window's label.
   rounded up to the enclosing octet boundary, so a `/25` returned the whole `/24`,
   and anything wider than `/8` (including `0.0.0.0/0`) matched nothing at all.
   PostgreSQL now filters with exact `inet` containment, keeping the prefix match as
-  an index-friendly pre-filter. Verified on production: `192.168.105.128/25` now
+  an index-friendly pre-filter. Verified on a live deployment: `192.168.105.128/25` now
   matches 0 rows where prefix matching returned all 427,386 rows of the `/24`.
-  The containment test guards against empty address values, which production
-  carries 2,377 of — `''::inet` raises a syntax error that aborts the whole
+  The containment test guards against empty address values, which live data
+  can carry — `''::inet` raises a syntax error that aborts the whole
   statement rather than skipping the row.
 - **The detection detail modal's "Sampled flows" panel always failed**, requesting
   an unregistered path that returned 404.
@@ -1295,7 +1297,7 @@ under the requested window's label.
 
 ### Added
 
-**`tasks/docker-disk-gc.sh` plus a runbook for the host's root filesystem, which has hit 88% twice.** A manual cleanup on 2026-09-08 reclaimed 47 GB and took it from 88% to 23%. This documents why it fills and adds a tool for when it already has.
+**A Docker disk-cleanup script plus a runbook for the host's root filesystem, which can fill with Docker build cache and orphaned images.** This documents why it fills and adds a tool for when it already has.
 
 - The root filesystem and the database volume fill for unrelated reasons, and the fix for one does nothing for the other. `docs/OPERATIONS.md` gains a **Host disk housekeeping** section that says which is which, and a `Failure modes` row for the case the existing `Disk filling up` row does not cover — that row is scoped to `syslog_messages` bloat on the data volume.
 - The script removes untagged images and caps each builder's build cache with `--max-used-space`. It will never run a system prune, pass `--volumes`, pass `-a` to an image prune, or stop a container. Those exclusions are asserted by `internal/shell/dockerdiskgc_test.go` rather than left to good intentions, because the tempting one-liner that undoes them also removes unused **tagged** images and would force a re-pull of every base image on the box. It exits non-zero when the disk is still above 85% afterwards, which is the signal that Docker was not the cause. Applying the policy needs a real `systemctl restart docker` — the daemon's reload path does not cover builder config, so a reload appears to succeed and changes nothing — and `dockerd --validate` only checks JSON shape, silently ignoring an unknown key nested under `builder.gc`, so the policy must be confirmed with `docker buildx inspect` afterwards.
@@ -1305,7 +1307,7 @@ under the requested window's label.
 
 **The root cause is a misconfiguration, not a missing cleanup job.** The runbook records it, because the obvious diagnosis is wrong in three separate ways:
 
-- **BuildKit already garbage-collects.** It keeps filling because its default policy is a **fraction of the filesystem** — reserve 10%, min free 20%, max used 80% — and there is one such allowance *per builder*. Two builders at 80% each is more than the disk holds, and the min-free floor is why such a host climbs to ~88% and then *sits* there rather than filling completely, landing just above the app's own 85% `DISK_HIGH` line. Those fractions are resolved once at daemon or builder start and then frozen, which is why `docker buildx inspect` reports numbers that look arbitrary and drift — on the reference host they still describe a filesystem that was grown afterwards. The real control is the GC policy (`daemon.json` `builder.gc`, or `--buildkitd-config` for a container-driver builder), and the doc gives both, using the current `defaultReservedSpace`/`maxUsedSpace` spellings rather than the deprecated `keepStorage` aliases.
+- **BuildKit already garbage-collects.** It keeps filling because its default policy is a **fraction of the filesystem** — reserve 10%, min free 20%, max used 80% — and there is one such allowance *per builder*. Two builders at 80% each is more than the disk holds, and the min-free floor is why such a host climbs to ~88% and then *sits* there rather than filling completely, landing just above the app's own 85% `DISK_HIGH` line. Those fractions are resolved once at daemon or builder start and then frozen, which is why `docker buildx inspect` reports numbers that look arbitrary and drift — they can still describe a filesystem that was grown afterwards. The real control is the GC policy (`daemon.json` `builder.gc`, or `--buildkitd-config` for a container-driver builder), and the doc gives both, using the current `defaultReservedSpace`/`maxUsedSpace` spellings rather than the deprecated `keepStorage` aliases.
 - **`du` on `/var/lib/docker` will convince you Docker is innocent**, because with the containerd image store the layers are under `/var/lib/containerd`. And `docker system df` under-reports as well: a `docker-container` driver builder keeps its cache in its own volume, and it once reported `Build Cache 3.846MB` while that builder held gigabytes. The honest number is `docker buildx du --builder <name>`.
 - **There is more than one builder, and it may not be the default.** `docker compose build` can run on a builder created by an entirely different project, because that is what `~/.docker/buildx/current` selects — so `docker builder prune` with no `--builder` appears to do nothing.
 
@@ -1315,18 +1317,18 @@ under the requested window's label.
 
 ### Changed
 
-**The dashboard summary is now served from the background snapshot, not computed on the request.** `/admin/api/dashboard/summary` was the last aggregate still computed on the request path. It sat behind a 15-second TTL cache while the client polls it every 30 seconds, so **every single poll missed** and paid the full cost — 545 ms median and 1.55 s worst, measured on production — from the vitals rail, which appears on *every* admin page rather than just the dashboard. That is the identical TTL-shorter-than-poll bug v0.11.206 diagnosed and fixed for `/dashboard/health`, and simply never fixed here.
+**The dashboard summary is now served from the background snapshot, not computed on the request.** `/admin/api/dashboard/summary` was the last aggregate still computed on the request path. It sat behind a 15-second TTL cache while the client polls it every 30 seconds, so **every single poll missed** and paid the full cost — 545 ms median and 1.55 s worst, measured on a live deployment — from the vitals rail, which appears on *every* admin page rather than just the dashboard. That is the identical TTL-shorter-than-poll bug v0.11.206 diagnosed and fixed for `/dashboard/health`, and simply never fixed here.
 
 - `computeDashboardSummary` moved into `handlers_health_dashboard.go` and is now published by `dashboardHealthHub` from the **same compute pass** as the health payload, so both are published together and share the `age_seconds` the UI reads for staleness. (Each payload also keeps its own inner `generated_at`, stamped as that half finishes, so those two differ by the summary compute's duration; no client reads them.) It lives in that file specifically because `reqdb_audit032_test.go`'s `backgroundStoreAllowed` check asserts that file computes on the background store and never reaches for the request-scoped one — the guarantee the summary needs. (That check is a literal substring match on the source, so even a comment naming the request-scoped call trips it.)
 - `GetDashboardSummary` never touches the database. It serves the published snapshot through the same helper as `GetDashboardHealth`, with the same `{"status":"computing"}` sentinel and `age_seconds`, and carries the `h.dashHub == nil` guard that `GetDashboardHealth` already had — `NewHandler` only builds the hub inside its `db != nil` branch, so a store-without-hub Handler is reachable and would otherwise nil-deref.
 - **The refresh default moves from 30 to 60 seconds**, which is what makes a per-minute snapshot the shipped behaviour rather than a setting to discover. The `dashboard_health_refresh_seconds` knob, its 15–3600 clamp and its validation are unchanged; the settings-page placeholder and its "blank uses N seconds" hint were both updated to match.
 - **The 5-minute idle gate is deliberately KEPT.** Removing it was considered and rejected: the refresher is not primary-gated (unlike the device-purge worker), so with the gate gone every `ALLOW_MULTI_API` follower would recompute the whole aggregate every 60 s against the same database — precisely the M11 regression `noc.go` records. Primary-gating instead is not a fix either, since a follower would then serve `computing` forever. The gate is also weaker than it looks now that the rail touches the hub from every admin page: the snapshot stays warm whenever anyone is looking.
 
-**Noisy-device counts no longer scan a 135-million-row index.** `noisyDevices` grouped by `device_id` over `syslog_messages`, where the only index carrying `device_id` has `timestamp` as its *trailing* column — a predicate on a trailing column cannot bound the scan, so it walked every index entry applying the timestamp as a filter: **15,704 ms reading 5.4 GB** on production, and one execution was killed outright by the 30-second `statement_timeout`. Driving the counts from the small `devices` table makes `device_id` equality-bound and `timestamp` a usable range: **594 ms** warm, with no new index. Two things are deliberate and documented at the call site so they are not "tidied" into bugs: the driving scan is **not** scoped to active devices (the existing name lookup is unscoped, so a retired device still producing syslog appears in today's leaderboard, and changing that is a product decision), and zero counts are **skipped** (the grouped form only ever returned rows for devices that had syslog, so folding them in unfiltered would list silent devices on a "noisy devices" board with a total of 0). The sibling `GROUP BY` over `syslog_summaries` deliberately stays: that table is 71 MB, where the grouped scan costs milliseconds.
+**Noisy-device counts no longer scan a whole large index.** `noisyDevices` grouped by `device_id` over `syslog_messages`, where the only index carrying `device_id` has `timestamp` as its *trailing* column — a predicate on a trailing column cannot bound the scan, so it walked every index entry applying the timestamp as a filter: **15,704 ms reading 5.4 GB** on a live deployment, and one execution was killed outright by the 30-second `statement_timeout`. Driving the counts from the small `devices` table makes `device_id` equality-bound and `timestamp` a usable range: **594 ms** warm, with no new index. Two things are deliberate and documented at the call site so they are not "tidied" into bugs: the driving scan is **not** scoped to active devices (the existing name lookup is unscoped, so a retired device still producing syslog appears in today's leaderboard, and changing that is a product decision), and zero counts are **skipped** (the grouped form only ever returned rows for devices that had syslog, so folding them in unfiltered would list silent devices on a "noisy devices" board with a total of 0). The sibling `GROUP BY` over `syslog_summaries` deliberately stays: that table is small, where the grouped scan costs milliseconds.
 
 ### Added
 
-- **A partial snapshot is now labelled as partial.** Every block of both computes degrades rather than aborting, which is right — one bad aggregate should not blank the console — but a dropped block previously left no trace: a statement killed by the 30-second timeout published a confident zero under a fresh `generated_at`, and the UI rendered it as current truth. Production has already hit exactly this, when the noisy-devices scan was killed at 30,006 ms and the resulting empty leaderboard was indistinguishable from a genuinely quiet fleet. The snapshot now carries `partial` plus the names of the failed blocks, stamped once after both computes finish so the value is complete for each. **`noisyDevices` reports its own failures into that tracker** — without which the flag would have been blind to the very incident it was built for. Both consumers surface it: the vitals rail refuses to conclude NOMINAL from a dropped block's zero (a genuine critical or warning state still wins, since a real outage outranks the caveat), and the dashboard banner names the readings that could not be computed.
+- **A partial snapshot is now labelled as partial.** Every block of both computes degrades rather than aborting, which is right — one bad aggregate should not blank the console — but a dropped block previously left no trace: a statement killed by the 30-second timeout published a confident zero under a fresh `generated_at`, and the UI rendered it as current truth. This has already happened on a live deployment, when the noisy-devices scan was killed at 30,006 ms and the resulting empty leaderboard was indistinguishable from a genuinely quiet fleet. The snapshot now carries `partial` plus the names of the failed blocks, stamped once after both computes finish so the value is complete for each. **`noisyDevices` reports its own failures into that tracker** — without which the flag would have been blind to the very incident it was built for. Both consumers surface it: the vitals rail refuses to conclude NOMINAL from a dropped block's zero (a genuine critical or warning state still wins, since a real outage outranks the caveat), and the dashboard banner names the readings that could not be computed.
 - **The vitals rail branches on the `computing` sentinel.** It previously guarded only with `if (!s) return;`. A sentinel is a truthy object, so it passed that guard and every field below defaulted to 0 — which would not merely blank the tiles but compute a severity of "ok" and label the rail NOMINAL, actively reporting a healthy fleet after every restart on every admin page. Guarded by a new `internal/shell` test alongside the equivalent assertion for the dashboard modules.
 
 ### Removed
@@ -1337,9 +1339,9 @@ under the requested window's label.
 
 ### Fixed
 
-**Four unbounded or mis-planned queries that dominated database I/O, found by benchmarking production rather than by reading code.** `interface_stats` had read 52.9 billion blocks since the counters were reset — five times the 134 GB `syslog_messages` table — from a 5 GB table. The cause was one query with no time bound running roughly four times a minute, forever.
+**Four unbounded or mis-planned queries that dominated database I/O, found by benchmarking a live deployment rather than by reading code.** `interface_stats` had read billions of blocks since the counters were reset — several times the size of the far larger `syslog_messages` table — from a comparatively small table. The cause was one query with no time bound running roughly four times a minute, forever.
 
-- **`GetAllLatestInterfaces` no longer scans the whole table.** It joined `interface_stats` against an unbounded `SELECT device_id, MAX(timestamp) ... GROUP BY device_id`, which no index can serve: production measured a Parallel Seq Scan over 15.4M rows reading **423,092 buffers (3.5 GB) in ~1,700 ms**, called from four sites in the poller's 60 s monitoring cycle. It is now a correlated subquery driven from the small `devices` table, which Postgres folds into `Index Cond: ((device_id = d.id) AND (timestamp = (SubPlan 2)))` over `idx_iface_device_ts`: **60 buffers and 0.836 ms**, returning the same 146 rows on production today. One deliberate behaviour delta, since the result is not identical in general: the old query derived its device set from `interface_stats` itself, so telemetry orphaned by a pre-v0.11.239 hard delete (which intentionally left the 11 telemetry tables behind) was returned with no device attached. Driving from `devices` drops those rows. Every consumer already discarded them by looking the device up in a map, except the tunnel-overlay match in `detectVPNConnections`, which keyed on the raw `device_id` and could previously pair a live device against a deleted one's frozen rows. A time bound was measured (26,117 buffers, 255 ms) and rejected — `checkRelayedTelemetry` needs the 24 h stale lookback or the interface signal in `evaluateTelemetryStale` becomes unfireable, `detectVPNConnections` needs at least `VPNEvidenceGrace` or `CleanupStaleAutoConnectionsBefore` deletes connections early, and `detectOverlayConnections` has no freshness gate at all, so any bound would delete live overlay edges. Correlating on `device_id` removes the window entirely, so a device silent for a month still reports its last known interfaces. `GetLatestInterfaceAddresses` carries the identical shape and deliberately **keeps** it: `SaveInterfaceAddresses` UPSERTs on a unique index, so that table is structurally bounded by fleet size rather than by time (67 rows across 2.5 months on production) and the GROUP BY is a 6-page seq scan that measurably beats the correlated form there, 0.857 ms against 1.282 ms. The reasoning is recorded at both call sites so the difference reads as deliberate. The rewritten query is a correlated subquery rather than `LATERAL` because `LATERAL` is a syntax error on SQLite, which is what every `cmd/poller` test runs on.
+- **`GetAllLatestInterfaces` no longer scans the whole table.** It joined `interface_stats` against an unbounded `SELECT device_id, MAX(timestamp) ... GROUP BY device_id`, which no index can serve: a live deployment measured a Parallel Seq Scan over 15.4M rows reading **423,092 buffers (3.5 GB) in ~1,700 ms**, called from four sites in the poller's 60 s monitoring cycle. It is now a correlated subquery driven from the small `devices` table, which Postgres folds into `Index Cond: ((device_id = d.id) AND (timestamp = (SubPlan 2)))` over `idx_iface_device_ts`: **60 buffers and 0.836 ms**, returning the same rows as before. One deliberate behaviour delta, since the result is not identical in general: the old query derived its device set from `interface_stats` itself, so telemetry orphaned by a pre-v0.11.239 hard delete (which intentionally left the 11 telemetry tables behind) was returned with no device attached. Driving from `devices` drops those rows. Every consumer already discarded them by looking the device up in a map, except the tunnel-overlay match in `detectVPNConnections`, which keyed on the raw `device_id` and could previously pair a live device against a deleted one's frozen rows. A time bound was measured (26,117 buffers, 255 ms) and rejected — `checkRelayedTelemetry` needs the 24 h stale lookback or the interface signal in `evaluateTelemetryStale` becomes unfireable, `detectVPNConnections` needs at least `VPNEvidenceGrace` or `CleanupStaleAutoConnectionsBefore` deletes connections early, and `detectOverlayConnections` has no freshness gate at all, so any bound would delete live overlay edges. Correlating on `device_id` removes the window entirely, so a device silent for a month still reports its last known interfaces. `GetLatestInterfaceAddresses` carries the identical shape and deliberately **keeps** it: `SaveInterfaceAddresses` UPSERTs on a unique index, so that table is structurally bounded by fleet size rather than by time (a few dozen rows after months on a live deployment) and the GROUP BY is a 6-page seq scan that measurably beats the correlated form there, 0.857 ms against 1.282 ms. The reasoning is recorded at both call sites so the difference reads as deliberate. The rewritten query is a correlated subquery rather than `LATERAL` because `LATERAL` is a syntax error on SQLite, which is what every `cmd/poller` test runs on.
 - **Three `SELECT 1 ... LIMIT 1` work probes deleted, two fixed, one deliberately left alone.** `LIMIT 1` prices a sequential scan as (total cost ÷ expected matches), so a large enough row estimate makes scanning the whole relation look nearly free. On `flow_rollups` that estimate was 21 M against zero actual matches, and the probe read **1,971,092 buffers over 23,234 ms to return nothing, every five minutes** — 31.6 minutes of scanning in a 9.4 hour window. The probes in `aggregateRollupsUp`, `aggregateFlowsToRollup` and `aggregateSyslogToSummary` were each redundant with the `oldestEligibleTimestamp` call that immediately follows and answers the same question correctly from the same index (measured at 1.9 ms on the same zero-eligible case), so they are removed rather than patched: the whole no-work path now costs about 7.7 ms. The probe in `promoteSyslogSummaries` is kept, because it has no such successor, and it deliberately does **not** get an `ORDER BY` — `syslog_summaries` has no `(interval_type, timestamp)` composite, so ordering adds a `Sort` node that must materialise every match before returning one, which is the opposite of what a `LIMIT 1` existence check wants. The reasoning is recorded at the call site so a future sweep does not blanket-apply the fix.
 - **The connection-detail page's two sFlow existence probes were sequentially scanning `flow_samples` on the request path.** `ORDER BY device_id` makes `idx_flow_samples_device_id` the only way to satisfy the query: **0.303 ms and 8 buffers**.
 
@@ -1351,7 +1353,7 @@ under the requested window's label.
 
 ### Added
 
-**Permanent purge of a retired device's data — admin-only, re-authenticated, batched, resumable, cancellable.** Retire (v0.11.239) keeps every row; this release adds the explicit "remove the data too" path as a background job, because on a populated deployment it is a very large removal (one production device alone holds 1.28M `interface_stats` rows, and `syslog_messages` is 134M rows) that must never take a long lock or be lost to a restart.
+**Permanent purge of a retired device's data — admin-only, re-authenticated, batched, resumable, cancellable.** Retire (v0.11.239) keeps every row; this release adds the explicit "remove the data too" path as a background job, because on a populated deployment it is a very large removal (a single device can hold over a million `interface_stats` rows, and `syslog_messages` can reach hundreds of millions) that must never take a long lock or be lost to a restart.
 
 - `POST /admin/api/devices/:id/purge` (body `{confirm_name, password, totp_code}`) queues a job for a **retired** device only (`409 device must be retired first`), after the typed name matches (`400`), no IPSec tunnel on either end is `deploying`/`verifying`/`rolling_back` (`409` naming the tunnels — the purge deletes the shared tunnel intent and would otherwise bypass the tunnel delete guard), the caller re-verifies their own password and, when enrolled, a fresh TOTP code (`403`; replay guard namespaced `purge`), and no job for the device is already `pending`/`running`/`cancelling` (`409` with `job_id`). Returns `202` with the job and writes an audit row `purge_device` (device id, uuid, name, job id). Login-rate-limited like `reveal-secret`. The password/TOTP step-up is now one shared `reauthCaller` helper used by both routes.
 - `POST /admin/api/devices/:id/purge/cancel` (`pending` → `cancelled`; `running` → `cancelling`, finished as `cancelled` by the worker between batches; audit `purge_device_cancel`), `GET /admin/api/devices/:id/purge` (latest job), `GET /admin/api/purge-jobs` (active jobs plus the 20 most recent terminal ones), `GET /admin/api/devices/:id/purge/estimate` (per-table counts capped at 100,000 with a `capped` flag, the total, and the IPSec tunnels that will be removed with their peer device name; a table whose count fails is reported with rows 0 and an `error` field and the rest of the estimate still counts — the estimate is advisory and never blocks the purge). All five are admin-only (`adminOnlyRoutes`). The already-queued check (`409` with `job_id`) runs before the password/TOTP step-up so a conflict never consumes a single-use authenticator code.
@@ -1463,7 +1465,7 @@ under the requested window's label.
 
 ### Removed
 
-Deleted the server's dead SNMP VPN-walk chain, resolving **AUDIT-320** and closing out **AUDIT-321** (`docs/audit-2026-08-27-consolidated.md`).
+Deleted the server's dead SNMP VPN-walk chain, resolving **AUDIT-320** and closing out **AUDIT-321** (2026-08-27 audit).
 
 Collectors have owned all device polling since v0.11.74, and the entry point `SNMPClient.GetAllVPNTunnels()` had no callers anywhere — so none of this code could execute. Removed: the entry point, the `GetAllVPNTunnels` method on the `VendorProfile` interface and its eight per-vendor implementations, the `linux`/`bsd`/`paloalto` walk helpers, FortiGate's `ParseVPNDialupStatus` and `ParseGRETunnels`, and the FortiGate dialup OID constants.
 
@@ -1477,7 +1479,7 @@ A guardrail test fails if any server-side VPN walk or the dialup OIDs reappear u
 
 ### Fixed
 
-Follow-up findings raised during the 2026-08-27 audit remediation, now verified and numbered AUDIT-319/322/323/325 in `docs/audit-2026-08-27-consolidated.md`.
+Follow-up findings raised during the 2026-08-27 audit remediation, now verified and numbered AUDIT-319/322/323/325 in the 2026-08-27 audit report.
 
 - **AUDIT-319 — IRC connections were stranded when SASL authentication failed.** go-ircevent opens the socket and starts its read, write and ping loops *before* it negotiates capabilities, and returns a negotiation error without unwinding any of it. A server that rejected the bot's SASL credentials therefore left the write and ping loops running against an open socket on every attempt, and the reconnect sweep repeated that every 30 seconds for the life of the process. Failed connections are now torn down — QUIT first, so the read loop stops promptly instead of waiting out its 16-minute deadline. The teardown deliberately runs only when the loops actually exist: a connection that failed validation or the dial has nothing to unwind, and tearing it down there would block forever.
 - **AUDIT-322 — a late deploy response could hijack another tunnel's progress modal.** The deploy, rollback and recheck actions checked their own liveness against the *current* modal generation, which is always its own value, so only the "a modal is open" half of the guard did anything. If a POST resolved after the operator had opened a different tunnel's progress modal, it could start a second polling loop against that modal. Each action now pins the generation its own modal opened with.
@@ -1492,7 +1494,7 @@ The public interface chart's range resolution moved out of the handler into a pu
 
 ### Changed
 
-Finalized the 2026-08-27 audit disposition ledger (`docs/audit-2026-08-27-consolidated.md`) — the capstone of the batched remediation program. All 148 findings are now recorded as resolved (147) or refuted (1), with zero unresolved. The final 13 findings that had shipped since the ledger was first built were flipped from ⚠️ UNRESOLVED to ✅ RESOLVED, each carrying its resolving version and PR:
+Finalized the 2026-08-27 audit disposition ledger — the capstone of the batched remediation program. All 148 findings are now recorded as resolved (147) or refuted (1), with zero unresolved. The final 13 findings that had shipped since the ledger was first built were flipped from ⚠️ UNRESOLVED to ✅ RESOLVED, each carrying its resolving version and PR:
 
 - **AUDIT-176** — serverhealth regression tests (server v0.11.232 · PR #240), the last remaining HIGH.
 - **AUDIT-216, 237, 263, 282, 283, 284, 305, 306, 307, 317** — the collector ingest-hardening set (collector v1.3.43 · PR #107): bounded trap/varbind logging, ifaceIPMap pruning, case-insensitive parseBool, IPFIX field-spec bounds, NetFlow seqTracker TTL eviction, v9 0xFFFF template rejection, UDP syslog parse-error metric, tracked TFTP writeHandler goroutine, handleRRQ allowlist/rate-limit parity, and constant-time trap community comparison.
@@ -1504,7 +1506,7 @@ The roll-up table and note were updated to 147 resolved / 1 refuted / 0 unresolv
 
 ### Added
 
-Regression test coverage for the incident-derived serverhealth invariants (audit batch: AUDIT-176). `internal/serverhealth/` had zero test files, leaving two load-bearing invariants from the 2026-07-26 disk-full outage unguarded. The code was already correct; this pins it so a careless refactor can't silently reproduce the outage blind spot.
+Regression test coverage for the incident-derived serverhealth invariants (audit batch: AUDIT-176). `internal/serverhealth/` had zero test files, leaving two load-bearing invariants from an earlier disk-full outage unguarded. The code was already correct; this pins it so a careless refactor can't silently reproduce the outage blind spot.
 
 - **AUDIT-176 — crash-loop data-directory fallback (`internal/serverhealth/probe.go`).** Added `probe_test.go` covering `DataDirLocator`: caches on success, falls back to the last cached path with `ok=true` and the original error passed through when the lookup fails (so a crash-looping Postgres does not blind the disk check), reports `ok=false` when nothing is cached yet, treats an empty scan as a non-overwriting failure, short-circuits on a non-postgres/nil dialector, and rate-limits `ShouldWarn` to the 1h `WarnInterval`. To make invariant (a) testable without a live Postgres, extracted a minimal `dataDirLookup` injection: `DataDirectory` keeps its exact signature and every branch, delegating the cache/fallback policy to an unexported `directory(lookup)` — structural only, no behavior change.
 - **AUDIT-176 — `dataOK` nil-vs-zero strictness (`cmd/poller/serverhealth.go`).** Added `cmd/poller/serverhealth_test.go` over the in-memory sqlite `newTestPoller` harness: `recordServerMetrics` populates the `DataDiskPercent`/`DataDiskFreeBytes` pointer fields only when `dataOK`, leaves them nil (never zero) when `dataOK` is false even if a stale `data`-labeled volume is present, always records the root volume independently of `dataOK`, and `collectServerVolumes` returns `dataOK=false` when `p.db == nil`. A zero here would draw a "disk empty" flatline — the failure-reads-as-healthy shape of the outage.
@@ -1522,7 +1524,7 @@ Documentation-accuracy and anti-drift pass (audit batch 22a): corrected stale/fa
 - **AUDIT-240 — config.env.example is now a complete inventory.** Added the ~22 live keys the file was missing while claiming completeness: `PUBLIC_BASE_URL`, `SPIKE_MIN_THROUGHPUT_MBPS`, `RETENTION_DENIED_EVENT_DAYS`, and the full `DETECT_DDOS_*` / `DETECT_DDOS_PREFIX_*` / `DETECT_SAMPRATE_MIN_ROWS` / `DETECT_SAMPLING_RATE_CHANGE_ENABLED` / `DETECT_DENY_STORM_*` / `DETECT_DENIED_THEN_ALLOWED_*` / `DETECT_DENY_POLICY_PATTERN` detector families — each with an accurate comment and its real built-in default.
 - **AUDIT-271 — orphaned migration doc comment.** The ~28-line v10 doc comment for `migrateFlowSamplesAddDropsColumn` ran with no blank line straight into `migrateSystemStatusSource` (v52), so godoc bound the whole block to the v52 function and the v10 function had no doc. Moved the v10 comment to sit directly above its own function; each function's comment now starts with its own name.
 - **AUDIT-308 — stale admin-page references.** Removed the non-existent `probe-pending.html` from `web/admin/README.md`, and corrected the admin SPA route list in `README.md` (dropped `probe-pending`, `interfaces`, and `network`, which register no route, and added the routes that actually exist).
-- **Stale "image-free" report claims.** The scheduled email report now embeds PNG charts as inline `cid:` attachments via `renderEmailWithCharts`. Corrected the three live claims (`README.md`, `docs/FEATURES.md`, `docs/FEATURE-ROADMAP.md`) to say the report is image-free in-browser/PDF while the email variant embeds inline charts. (Historical CHANGELOG entries and the AUDIT-291-scoped `internal/report/email.go` comments left untouched.)
+- **Stale "image-free" report claims.** The scheduled email report now embeds PNG charts as inline `cid:` attachments via `renderEmailWithCharts`. Corrected the three live claims (`README.md`, `docs/FEATURES.md`, the feature roadmap) to say the report is image-free in-browser/PDF while the email variant embeds inline charts. (Historical CHANGELOG entries and the AUDIT-291-scoped `internal/report/email.go` comments left untouched.)
 - **Deferred cleanup.** Removed the 15-line LEGACY `PROBE_*` / `PROBE_SYSLOG_*` / `PROBE_SFLOW_*` / `SYSLOG_ALLOWED_SOURCES` / `SFLOW_ALLOWED_SOURCES` commented block from config.env.example (dead since the `ProbeConfig` removal — no code reads these), and corrected `deploy.sh`'s server-port comment from `(8080, 162/udp, 6343/udp)` to `(8080, 162/udp)` (no server binary binds sFlow's 6343/udp).
 - **Anti-drift guardrails** (`internal/shell/`): `TestReadmeVersionBadge_MatchesServerVersion` fails if the README version badge diverges from the `ServerVersion` const (guards AUDIT-228), and `TestConfigEnvExample_DocumentsEveryConfigGoKey` fails if any env key `config.go` reads is absent from config.env.example (guards AUDIT-240; a small `CONFIG_FILE`-only allowlist covers the bootstrap pointer that can't be set inside the file). The completeness check matches each key line-anchored (`^#?\s*KEY=`) so a new key that is a suffix of a documented one (e.g. `SECRET` inside `WEBHOOK_SECRET=`) can't pass silently. Both guardrails were confirmed to fail on a reverted regression.
 
@@ -1561,7 +1563,7 @@ Wired the uptime tracker end-to-end as real, honest per-device availability, and
 Dead-code removal from the 2026-08-27 engineering audit — seven findings. `cmd/probe` was retired long ago (collectors now poll and parse at the edge), which orphaned three server packages as dead forks of the collector's live versions plus several unreferenced helpers. Each removal was re-verified to have zero non-test, non-self callers across both repos (`go list -deps ./cmd/...` excludes them, whole-repo and cross-repo grep clean) before deletion; the full test suite still passes, proving nothing depended on the removed code.
 
 - **Removed the three orphaned dead packages `internal/syslog`, `internal/sflow`, `internal/ping` (AUDIT-286, AUDIT-304, AUDIT-316).** These were `cmd/probe`-era listeners with no importer anywhere in the server binaries; `internal/sflow` also carried a latent use-after-overwrite bug that was moot because unreachable. Live server ingest is unchanged: `ReceiveSyslogMessages`/`ReceiveFlowSamples` in `handlers_data.go` bind already-parsed models relayed from the collector.
-- **Corrected docs that advertised nonexistent server-side syslog/sFlow/ICMP listeners (AUDIT-182).** `README.md` (server "Listens on" row, feature list, repo tree, network-ports table, security caveat), `docker-compose.yml` (dropped the phantom `514/udp`, `514/tcp`, `6343/udp`, `8089` port mappings), `Dockerfile` (`EXPOSE 8080 162/udp`), `docs/FEATURES.md` (syslog/sFlow/ICMP rows re-attributed from `[Server]` to `[Probe]`, dead `SYSLOG_ALLOWED_SOURCES` mention dropped), `docs/FEATURE-ROADMAP.md` (syslog/sFlow/ICMP rows re-scoped from "Both" to "Collector" with an explicit "server runs no raw listener" note) and `KNOWN-ISSUES.md` (single-binary heading `8080 / 162 / 514 / 6343` → `8080 / 162`) now reflect reality: the server runs only the SNMP trap receiver (UDP/162) and the collector-relay HTTP endpoints on 8080; raw syslog/sFlow/ICMP are parsed at the edge collector. Removed the entire dead `ProbeConfig` block — the `Config.Probe` field, the `ProbeConfig` struct (all 17 fields, none read anywhere since `cmd/probe` was retired) and its loader — not just the two most-obviously-dead fields. Also reworded three code comments in `internal/detect/security.go`, `internal/database/migrate.go` and `internal/database/flow_samples_sampling_scale_test.go` that still pointed at the deleted `internal/sflow/sflow.go` so they cite the collector-side parser instead.
+- **Corrected docs that advertised nonexistent server-side syslog/sFlow/ICMP listeners (AUDIT-182).** `README.md` (server "Listens on" row, feature list, repo tree, network-ports table, security caveat), `docker-compose.yml` (dropped the phantom `514/udp`, `514/tcp`, `6343/udp`, `8089` port mappings), `Dockerfile` (`EXPOSE 8080 162/udp`), `docs/FEATURES.md` (syslog/sFlow/ICMP rows re-attributed from `[Server]` to `[Probe]`, dead `SYSLOG_ALLOWED_SOURCES` mention dropped), the feature roadmap (syslog/sFlow/ICMP rows re-scoped from "Both" to "Collector" with an explicit "server runs no raw listener" note) and `KNOWN-ISSUES.md` (single-binary heading `8080 / 162 / 514 / 6343` → `8080 / 162`) now reflect reality: the server runs only the SNMP trap receiver (UDP/162) and the collector-relay HTTP endpoints on 8080; raw syslog/sFlow/ICMP are parsed at the edge collector. Removed the entire dead `ProbeConfig` block — the `Config.Probe` field, the `ProbeConfig` struct (all 17 fields, none read anywhere since `cmd/probe` was retired) and its loader — not just the two most-obviously-dead fields. Also reworded three code comments in `internal/detect/security.go`, `internal/database/migrate.go` and `internal/database/flow_samples_sampling_scale_test.go` that still pointed at the deleted `internal/sflow/sflow.go` so they cite the collector-side parser instead.
 - **Removed the dead `syslogPartitionDropDays` helper and its dedicated test (AUDIT-267).** The live wholesale-partition-drop path in `cleanup.go` uses `syslogMaxWindow(sevDays[:])`, which is untouched.
 - **Removed the dead `Database.SaveConfigRevision` (AUDIT-268).** Zero callers in either repo; it was not part of the `Store` interface. The live write path is `ReceiveConfigRevision` (`handlers_data.go`) and retention is `CleanupConfigRevisions` (per-device cap 500), both untouched.
 - **Removed the dead `RollingStats` type, `NewRollingStats` constructor, `AddAndCheck` method and their `circularBuffer` helper from `internal/report/spike.go` (AUDIT-292).** Zero callers, no tests; it z-scored a raw cumulative counter rather than a delta. The live spike-detection path (exercised by the remaining spike test files) is untouched.
@@ -1574,7 +1576,7 @@ Audit remediation of the 2026-08-27 engineering audit — five data-integrity fi
 
 - **L2 inference no longer duplicates a link when a neighbor advertised an unresolvable remote port (AUDIT-279).** `resolveRemotePort` returns a name-only raw fallback (`portRef{0, name}`) when an LLDP neighbor names its remote port by an identifier that matches none of the far device's interfaces. Because that fallback name is non-empty it counted as "known", so the far device's own mirrored row — which names the same physical port correctly — matched neither exactly nor as fillable, the LLDP-vs-LLDP conflict gate exempted it, and `mergeCandidate` appended a SECOND link claiming the same local port. The merge now treats a raw-fallback side (ifIndex 0, name set) as upgradable by the authoritatively-resolved port (ifIndex > 0) for the same LLDP pair, so the mirrored rows collapse to one link and the raw name is corrected to the resolved one. Scoped to LLDP so no weaker tier can rewrite a port attribution, and distinct parallel links (both sides resolved) are untouched.
 - **OPNsense/pfSense structured log fields and deny projection now work (AUDIT-280).** `logfields.opnsenseExtractor.Extract` (and pfSense) was a no-op stub, so any Event Rule matching structured `filterlog` fields for an OPNsense device silently never matched, and OPNsense block/reject verdicts never reached `denied_events` (the projector hard-coded `fortigate`). Both extractors now parse the pf `filterlog` CSV — action, interface, reason, direction, ipversion, protocol (numeric + text), src/dst IP and ports, for both IPv4 and IPv6 — via a shared parser. `deny.ProjectVendor` routes each syslog message by its device vendor: FortiGate keeps its action="deny"/block-policy heuristics, OPNsense/pfSense project block/reject filterlog verdicts (same IP-validation and scope-local noise drops as the FortiGate path). The ingest handler resolves each distinct device's vendor once per batch.
-- **Three acronym-heavy model fields are pinned to their existing column names (AUDIT-281).** `IPSVersion`, `WFHTTPSBlocked` and `TrapOID` carried no `column:` tag, so GORM's NamingStrategy mangled them to `ip_s_version`, `wf_http_s_blocked` and `trap_o_id` (the `CIDR`→`c_id_r` precedent). They now carry an explicit `column:` pin set to those EXISTING mangled names — locking the schema against future NamingStrategy drift with NO migration and NO data movement, because the pinned name equals what AutoMigrate already created in production. A schema test asserts both the pin's presence and that it still equals the default strategy output.
+- **Three acronym-heavy model fields are pinned to their existing column names (AUDIT-281).** `IPSVersion`, `WFHTTPSBlocked` and `TrapOID` carried no `column:` tag, so GORM's NamingStrategy mangled them to `ip_s_version`, `wf_http_s_blocked` and `trap_o_id` (the `CIDR`→`c_id_r` precedent). They now carry an explicit `column:` pin set to those EXISTING mangled names — locking the schema against future NamingStrategy drift with NO migration and NO data movement, because the pinned name equals what AutoMigrate already created on existing installs. A schema test asserts both the pin's presence and that it still equals the default strategy output.
 - **Report throughput no longer inflates across polling gaps (AUDIT-290).** `computeTraffic` divided each counter delta by the NOMINAL bucket width and computed the average window from the nominal width × bucket count, but `GetInterfaceChartData` does a plain GROUP BY with no gap-fill — so after any missed poll the real bucket span exceeded the nominal width and throughput inflated 3-5x with phantom spikes. The rate and the average window now use the ACTUAL span between consecutive bucket timestamps (nominal width remains the fallback for unparseable timestamps or non-positive spans from clock skew); the cumulative-counter delta/reset-clamp logic is unchanged. A uniformly-spaced series is byte-for-byte unchanged.
 - **Exported report wrappers no longer discard their chart attachments (AUDIT-291, latent).** `BuildDailyReport`/`BuildWeeklyReport`→`BuildReport` render the email variant (which embeds `cid:` chart images and produces the matching PNG attachments) but dropped the attachments on the floor — so any caller of these exported wrappers would get `cid:` image references with no attachments (broken images). This was latent: the live daily/weekly send path uses `BuildReportWithOps` directly and already carries the attachments, so no email in production was ever broken; the fix hardens the exported wrappers before anyone wires them up. Their signatures now propagate the `[]notifier.Attachment` alongside the html so the send path can attach them; the stale "no attachments" doc comments were corrected.
 - **Alert-timeline bucketing is now deterministically clocked (AUDIT-215 follow-up).** `bucketAlerts` read `time.Now()` internally, so the v0.11.226 timezone test rendered the same alert set twice (each call reading its own clock) and, for an alert near a bucket boundary, the two renderings could land it in different bucket indices — a ~67%-under-`-race` flake in `TestBucketAlerts_RespectsReportTimezone`. The reference instant is now injected (the caller passes `time.Now()`), so a test can pin one clock for both renderings and the bucketing is deterministic. No behavior change in production (the caller still passes the wall clock).
@@ -1734,12 +1736,12 @@ Audit remediation batch 6 of the 2026-08-27 engineering audit — authentication
 
 ### Fixed
 
-Audit remediation batch 4 of the 2026-08-27 engineering audit — data-pipeline correctness and resilience (AUDIT-174, AUDIT-188, AUDIT-203, AUDIT-204). Every finding was re-verified line-by-line against current master and against the live production database before being fixed.
+Audit remediation batch 4 of the 2026-08-27 engineering audit — data-pipeline correctness and resilience (AUDIT-174, AUDIT-188, AUDIT-203, AUDIT-204). Every finding was re-verified line-by-line against current master and against a live database before being fixed.
 
-- **AUDIT-174 (High): fresh installs no longer build duplicate per-partition indexes.** Migration v54 creates `idx_syslog_sev_ts` on the `syslog_messages` parent and v57 creates `idx_trap_events_timestamp` on the `trap_events` parent; PostgreSQL cascades a parent-level partitioned index to every new monthly leaf automatically, while `EnsurePartitions` created its own identically-columned per-leaf index under a different name (`IF NOT EXISTS` matches by name only). On a fresh install, every monthly partition of the volume-dominant syslog table therefore carried two physically identical `(severity, timestamp)` btrees — double index write amplification and disk, forever, invisible to the name-keyed tests. `EnsurePartitions` now consults the catalog for each parent's non-unique partitioned indexes and skips any per-leaf plan entry whose columns they already cover — catalog-driven on purpose, because a hard-coded exclusion list would reintroduce exactly the drift the derived index plan (LC-19) exists to prevent. This is deliberately a code-only fix with **no migration** — this production deployment has zero duplicate indexes (its high-volume tables are plain heaps, and its one partitioned table has no parent-level indexes), but fresh installs created from the published images between v0.11.183 and v0.11.213 do carry the twins, so `EnsurePartitions` now also drops the exact plan-named duplicate on any leaf a covering parent index already serves — surgical (exact names, proven-covered suffixes only), idempotent, and a no-op here. Review hardening: a partial parent index, INCLUDE columns, or an invalid index can never claim coverage (each would have silently suppressed a needed per-leaf index). A PG integration test now asserts no child partition carries two non-unique indexes over the same key columns — the exact gap the old name-based check could not see.
-- **AUDIT-188: a multi-hour retention cleanup can no longer blind the server-disk check.** The daily retention cleanup ran inline in the poller's single select loop; clearing a large backlog on the non-partitioned production syslog heap can take hours (thousands of 10k-row DELETE batches with a 100ms pause between each), and for that whole time the loop was parked — so the 5-minute server-volume check added after the 2026-07-26 disk-full outage could not fire, exactly while large DELETEs were transiently growing WAL and dead-tuple usage on the database volume. The cleanup now launches off the loop with a single-flight guard, mirroring the threat-feed sync's async shape. Two subtleties made the naive move a no-op and are handled explicitly: the poller's work lock is one shared per-connection advisory lock, so a lock-guarded health check would have been rejected for the cleanup's whole runtime ("another poller holds the work lock") — the blindness merely relocated — and the server-health check therefore runs without the lock (it is nearly free, the alert layer has its own dedup, and a duplicate metrics row from a second poller is far cheaper than a silent outage); and the loop-liveness heartbeat is no longer stamped from background goroutines (cleanup or threat-feed), which would have masked a genuinely hung loop from `/readyz`. Rollup/aggregation deliberately stays on the shared lock: cleanup and rollups remain serialized, and the AUDIT-204 rewrite below keeps each serialized pause short.
+- **AUDIT-174 (High): fresh installs no longer build duplicate per-partition indexes.** Migration v54 creates `idx_syslog_sev_ts` on the `syslog_messages` parent and v57 creates `idx_trap_events_timestamp` on the `trap_events` parent; PostgreSQL cascades a parent-level partitioned index to every new monthly leaf automatically, while `EnsurePartitions` created its own identically-columned per-leaf index under a different name (`IF NOT EXISTS` matches by name only). On a fresh install, every monthly partition of the volume-dominant syslog table therefore carried two physically identical `(severity, timestamp)` btrees — double index write amplification and disk, forever, invisible to the name-keyed tests. `EnsurePartitions` now consults the catalog for each parent's non-unique partitioned indexes and skips any per-leaf plan entry whose columns they already cover — catalog-driven on purpose, because a hard-coded exclusion list would reintroduce exactly the drift the derived index plan (LC-19) exists to prevent. This is deliberately a code-only fix with **no migration** — an install that predates partitioning has zero duplicate indexes (its high-volume tables are plain heaps, and its one partitioned table has no parent-level indexes), but fresh installs created from the published images between v0.11.183 and v0.11.213 do carry the twins, so `EnsurePartitions` now also drops the exact plan-named duplicate on any leaf a covering parent index already serves — surgical (exact names, proven-covered suffixes only), idempotent, and a no-op here. Review hardening: a partial parent index, INCLUDE columns, or an invalid index can never claim coverage (each would have silently suppressed a needed per-leaf index). A PG integration test now asserts no child partition carries two non-unique indexes over the same key columns — the exact gap the old name-based check could not see.
+- **AUDIT-188: a multi-hour retention cleanup can no longer blind the server-disk check.** The daily retention cleanup ran inline in the poller's single select loop; clearing a large backlog on a non-partitioned syslog heap can take hours (thousands of 10k-row DELETE batches with a 100ms pause between each), and for that whole time the loop was parked — so the 5-minute server-volume check added after an earlier disk-full outage could not fire, exactly while large DELETEs were transiently growing WAL and dead-tuple usage on the database volume. The cleanup now launches off the loop with a single-flight guard, mirroring the threat-feed sync's async shape. Two subtleties made the naive move a no-op and are handled explicitly: the poller's work lock is one shared per-connection advisory lock, so a lock-guarded health check would have been rejected for the cleanup's whole runtime ("another poller holds the work lock") — the blindness merely relocated — and the server-health check therefore runs without the lock (it is nearly free, the alert layer has its own dedup, and a duplicate metrics row from a second poller is far cheaper than a silent outage); and the loop-liveness heartbeat is no longer stamped from background goroutines (cleanup or threat-feed), which would have masked a genuinely hung loop from `/readyz`. Rollup/aggregation deliberately stays on the shared lock: cleanup and rollups remain serialized, and the AUDIT-204 rewrite below keeps each serialized pause short.
 - **AUDIT-203: aggregation no longer swallows bucket-parse failures.** The rollup and syslog-summary batch inserters discarded `time.Parse` errors on the bucket string, so any future bucket-format drift would have committed year-0001 rows in the same transaction that deletes the raw rows — and retention would then reap the mis-dated aggregates: history vanishing with no log line. Both inserters now return a wrapped error; the enclosing transaction rolls back and the raw rows are preserved for the next cycle. This closes the write-path half of the silent-zero family whose read path was fixed as AUDIT-145.
-- **AUDIT-204: aggregation backlogs can now actually be cleared.** The flow-rollup and syslog-aggregation passes paged their `GROUP BY` with `LIMIT/OFFSET`, but the bucket expression is unindexable, so every page re-aggregated and re-sorted the entire backlog before slicing one page out — and once a real backlog accumulated, the first page alone exceeded the 30-second statement timeout: a rollback retried identically every 5 minutes forever, while cleanup kept deleting never-summarised raw rows past retention (permanent silent history loss). Lifting the statement timeout for the pass was evaluated and rejected: a single unbounded sort over the 124GB production syslog heap risks a temp-file spill on the nearly-full data volume and pins xmin for the whole multi-hour statement. Instead all three passes (syslog-to-summary, flows-to-rollup, rollup promotion) now walk the backlog in bounded time windows from the oldest eligible row — each window's reads and deletes are served by existing indexes, and each window commits its summary insert and raw-row delete in its own transaction, so a failure mid-backlog keeps all earlier progress instead of redoing everything. The `MAX(id)` watermark mechanism that fixed the earlier statement-timeout wedge is preserved exactly, as is the invariant that a window's raw-row delete shares a transaction with its summary insert. Review fix folded in: the window walk is additionally bounded by NON-EMPTY windows, not by time span — after each window it probes the next eligible row's timestamp (a first-tuple index stop) and jumps there, because one pathologically ancient stored timestamp (the collector's generic BSD syslog parser emits year-0 values for Cisco/Palo Alto/legacy-OPNsense messages — the format has no year) would otherwise have stretched a single pass across millennia of empty per-window transactions while holding the poller work lock. The ingest clamp now also rejects implausibly ancient timestamps (pre-2000 → now), closing the source; rows already stored are handled by the jump.
+- **AUDIT-204: aggregation backlogs can now actually be cleared.** The flow-rollup and syslog-aggregation passes paged their `GROUP BY` with `LIMIT/OFFSET`, but the bucket expression is unindexable, so every page re-aggregated and re-sorted the entire backlog before slicing one page out — and once a real backlog accumulated, the first page alone exceeded the 30-second statement timeout: a rollback retried identically every 5 minutes forever, while cleanup kept deleting never-summarised raw rows past retention (permanent silent history loss). Lifting the statement timeout for the pass was evaluated and rejected: a single unbounded sort over a large syslog heap risks a temp-file spill on a nearly-full data volume and pins xmin for the whole multi-hour statement. Instead all three passes (syslog-to-summary, flows-to-rollup, rollup promotion) now walk the backlog in bounded time windows from the oldest eligible row — each window's reads and deletes are served by existing indexes, and each window commits its summary insert and raw-row delete in its own transaction, so a failure mid-backlog keeps all earlier progress instead of redoing everything. The `MAX(id)` watermark mechanism that fixed the earlier statement-timeout wedge is preserved exactly, as is the invariant that a window's raw-row delete shares a transaction with its summary insert. Review fix folded in: the window walk is additionally bounded by NON-EMPTY windows, not by time span — after each window it probes the next eligible row's timestamp (a first-tuple index stop) and jumps there, because one pathologically ancient stored timestamp (the collector's generic BSD syslog parser emits year-0 values for Cisco/Palo Alto/legacy-OPNsense messages — the format has no year) would otherwise have stretched a single pass across millennia of empty per-window transactions while holding the poller work lock. The ingest clamp now also rejects implausibly ancient timestamps (pre-2000 → now), closing the source; rows already stored are handled by the jump.
 ## [0.11.213] - 2026-08-28
 
 ### Added
@@ -1748,7 +1750,7 @@ Audit remediation batch 4 of the 2026-08-27 engineering audit — data-pipeline 
 ## [0.11.212] - 2026-08-28
 
 ### Added
-- Roadmap note **P2-6** in `docs/FEATURE-ROADMAP.md` (nice-to-have): publish GitHub releases/tags for shipped versions. The repo currently publishes no tags or releases, so the example.com System Monitor — which resolves each project's live version via the GitHub API (`releases/latest`, then `tags`) — can never resolve this repo and permanently falls back to its stale hardcoded baseline (v0.11.122). A CI step that tags `v<ServerVersion>` on master when the constant changes would make the website update automatically with every release. Docs-only; no behavior changes.
+- Roadmap note **P2-6** in the feature roadmap (nice-to-have): publish GitHub releases/tags for shipped versions. The repo currently publishes no tags or releases, so the example.com System Monitor — which resolves each project's live version via the GitHub API (`releases/latest`, then `tags`) — can never resolve this repo and permanently falls back to its stale hardcoded baseline (v0.11.122). A CI step that tags `v<ServerVersion>` on master when the constant changes would make the website update automatically with every release. Docs-only; no behavior changes.
 
 ## [0.11.211] - 2026-08-28
 
@@ -1765,7 +1767,7 @@ Audit remediation batch 1 of the 2026-08-27 engineering audit — startup and de
 ## [0.11.210] - 2026-08-27
 
 ### Added
-- Engineering audit report `docs/audit-2026-08-27-consolidated.md` — a deep dual-repo (Firewall-Mon + Firewall-Collector) adversarial multi-agent review sweeping 100% of both repos' source. Every candidate was screened against a do-not-re-flag list and adjudicated by three independent verification lenses (reproduce-from-source, exploitability/materiality, mitigation-or-intent), surviving only on two or more confirmations; the highest-severity findings were then independently re-derived. 148 findings confirmed (AUDIT-171..AUDIT-318): 6 High, 47 Medium, 85 Low, 10 Info. This release publishes the audit only — no code behavior changes; remediation ships in subsequent versioned PRs.
+- Engineering audit report (2026-08-27) — a deep dual-repo (Firewall-Mon + Firewall-Collector) review sweeping 100% of both repos' source. Every candidate was screened against a do-not-re-flag list and adjudicated by three independent verification lenses (reproduce-from-source, exploitability/materiality, mitigation-or-intent), surviving only on two or more confirmations; the highest-severity findings were then independently re-derived. 148 findings confirmed (AUDIT-171..AUDIT-318): 6 High, 47 Medium, 85 Low, 10 Info. This release publishes the audit only — no code behavior changes; remediation ships in subsequent versioned PRs.
 
 ## [0.11.209] - 2026-08-24
 
@@ -1791,7 +1793,7 @@ Every IRC write is now timeout-bounded (15 s, far beyond any healthy drain of th
 
 ### Fixed
 
-**The Dashboard no longer takes minutes to load.** Opening the system-health console showed "Loading system health…" for seconds to minutes, every time. Measured against production: a single `GET /api/dashboard/health` took **32.57 seconds**, while the next request served from cache took 1.16 ms. The endpoint now answers in **under a millisecond on every request, including the first one after a restart**.
+**The Dashboard no longer takes minutes to load.** Opening the system-health console showed "Loading system health…" for seconds to minutes, every time. Measured against a live deployment: a single `GET /api/dashboard/health` took **32.57 seconds**, while the next request served from cache took 1.16 ms. The endpoint now answers in **under a millisecond on every request, including the first one after a restart**.
 
 The composite was computed lazily by whichever request found the cache expired. With a 10-second TTL against a 30-second client poll, a single operator with one tab missed the cache on *every* poll and paid the whole aggregation. Worse, 32.57 s exceeds the 30 s `WriteTimeout`, so the connection was torn down mid-flight — and the client's `catch` swallowed that silently, leaving the placeholder on screen indefinitely with nothing to click.
 
@@ -1799,15 +1801,15 @@ A background refresher now owns the computation, modelled on the existing NOC sn
 
 The payload now carries `age_seconds`, and the browser distinguishes three states instead of two — `computing`, `stale` and `fresh`. This is load-bearing: every module body defaults its missing keys to zero, so rendering the pre-first-compute sentinel as data would have painted "Database — Reachable: No" with a critical dot, an empty fleet and no services, on every restart.
 
-**All-time telemetry totals no longer count 88 GB of rows to render a rounded number.** `GetTelemetryTotals` ran four unbounded `COUNT(*)`s; the `syslog_messages` one alone was measured at 4.07 s warm and substantially worse cold. They now come from the planner catalog — accurate to a few percent, a single lookup — and are rendered with a `~` prefix so they never claim a precision they don't have. Last-hour figures remain exact. Where no statistic exists (SQLite, a never-analyzed table, an empty table) it falls back to an exact count rather than reporting a fabricated zero. This also speeds up the Probes page, which serves the same figures through `/api/probes/stats/global` and was paying the identical cost on the request path.
+**All-time telemetry totals no longer count whole large tables to render a rounded number.** `GetTelemetryTotals` ran four unbounded `COUNT(*)`s; the `syslog_messages` one alone was measured at 4.07 s warm and substantially worse cold. They now come from the planner catalog — accurate to a few percent, a single lookup — and are rendered with a `~` prefix so they never claim a precision they don't have. Last-hour figures remain exact. Where no statistic exists (SQLite, a never-analyzed table, an empty table) it falls back to an exact count rather than reporting a fabricated zero. This also speeds up the Probes page, which serves the same figures through `/api/probes/stats/global` and was paying the identical cost on the request path.
 
 **The system-health composite built three time series nothing displays.** It called `GetDashboardTimeSeries`, which aggregates hourly counts over flows, alerts, syslog and traps — but the dashboard renders one sparkline and reads only `alerts_over_time`. The syslog series alone measured 7.0 s (an external merge sort spilling 52 MB to disk). It now requests the alerts series only, in the same envelope.
 
-**`/api/dashboard/summary` is now cached.** The vitals rail polls it every 30 s from *every* admin page, and its 24-hour `COUNT(*)` over `syslog_messages` measured 1.49–1.81 s on production, uncached. It is a pure global aggregate, so it now shares the existing TTL + singleflight cache. The cached computation deliberately runs on the background store: bound to the leader request's context, one client navigating away would cancel the query for every caller coalesced behind it, and since errors aren't cached the entry would never warm.
+**`/api/dashboard/summary` is now cached.** The vitals rail polls it every 30 s from *every* admin page, and its 24-hour `COUNT(*)` over `syslog_messages` measured 1.49–1.81 s on a live deployment, uncached. It is a pure global aggregate, so it now shares the existing TTL + singleflight cache. The cached computation deliberately runs on the background store: bound to the leader request's context, one client navigating away would cancel the query for every caller coalesced behind it, and since errors aren't cached the entry would never warm.
 
 **Visibility maps on the high-ingest tables were never being maintained.** Per-table autovacuum tuning covered dead-tuple vacuums only. Append-only telemetry produces almost no dead tuples, so the vacuum that maintains the *visibility map* fell back to the global insert scale factor of 0.2 — roughly 19M inserts on a 99M-row table, against an ingest of ~4.5M rows/day. The most recent day of rows therefore never had its visibility map set, and every index-only scan over the recent window degraded into millions of random heap fetches: the dashboard's 24-hour `GROUP BY device_id` measured 10.0 s with 4,299,238 heap fetches. `autovacuum_vacuum_insert_scale_factor` and `autovacuum_vacuum_insert_threshold` are now set as well, issued as a separate `ALTER TABLE` so that on a pre-13 PostgreSQL the statement can be rejected without also discarding the four settings already applied.
 
-Five of the largest relations were absent from the tuned list entirely, including `flow_rollups` — the second-biggest table in production at 49.7M rows / 9.4 GB, written continuously by the rollup ladder.
+Five of the largest relations were absent from the tuned list entirely, including `flow_rollups` — typically the second-biggest table, written continuously by the rollup ladder.
 
 **`trap_events` had no standalone timestamp index** (migration v57). It carried only `(device_id, timestamp)`, which cannot serve the fleet-wide `MAX(timestamp)` the composite runs to decide whether the trap receiver is up — a full scan for one status badge. Syslog, flow and ping tables all declared one; this table was simply missed.
 
@@ -1837,9 +1839,9 @@ The hint states the trap explicitly rather than leaving the validator to reject 
 
 ### Fixed
 
-**Aggregated syslog summaries were destroyed by the cleanup that immediately followed them.** Summary pruning reused the per-severity *raw* retention windows — but aggregation creates a summary from rows that are already older than that same window, so every summary was born past its own prune cutoff. Production made the shape unmistakable: 282 summary rows, every one stamped at exactly the 7-day raw cutoff, in a `syslog_summaries` table that had never retained a row for a full day since the deployment existed.
+**Aggregated syslog summaries were destroyed by the cleanup that immediately followed them.** Summary pruning reused the per-severity *raw* retention windows — but aggregation creates a summary from rows that are already older than that same window, so every summary was born past its own prune cutoff. A live deployment made the shape unmistakable: every summary row was stamped at exactly the 7-day raw cutoff, in a `syslog_summaries` table that had never retained a row for a full day.
 
-Summaries now have their own window, `syslog_summary_retention_days`, defaulting to **365 days**. That setting is the sole owner of summary pruning; the per-severity windows govern only when raw rows are aggregated and deleted. The two must be decoupled, because the entire purpose of a summary is to outlive the raw rows behind it — and they are cheap enough to keep for a year, since a correctly-grouped production day is roughly 1,200 rows against 5.6 million raw.
+Summaries now have their own window, `syslog_summary_retention_days`, defaulting to **365 days**. That setting is the sole owner of summary pruning; the per-severity windows govern only when raw rows are aggregated and deleted. The two must be decoupled, because the entire purpose of a summary is to outlive the raw rows behind it — and they are cheap enough to keep for a year, since a correctly-grouped day is roughly a thousand rows against millions raw.
 
 Blank inherits the default, `0` keeps forever, `1`–`3650` sets days — the same three shapes the raw windows use.
 
@@ -1853,17 +1855,17 @@ Five tests cover it, the central one being the direct regression: a summary aggr
 
 **Dropped a redundant index on `syslog_messages`, reclaiming 881 MB.** `idx_syslog_messages_device_id` covers `(device_id)`, which is a strict leading prefix of `idx_syslog_device_ts` `(device_id, timestamp)` — so the composite serves every lookup the single-column index could. Dropping it removes no capability; those lookups move onto an index that is already present and already maintained, and each write stops paying to update a second structure for the same column.
 
-Measured on production: **881 MB for 14 scans across the entire life of the database**, beside a composite that answered the same access shape 126 times. The real consumer of device-scoped syslog is the device-filtered search page, and it depends on the *composite*, not this — its plan takes both predicates as an `Index Cond` and satisfies `ORDER BY timestamp DESC` from the backward scan, turning 16.2 million matching rows into a 50-row walk. That plan is untouched.
+Measured on a live deployment: **a large index used for only 14 scans across the entire life of the database**, beside a composite that answered the same access shape 126 times. The real consumer of device-scoped syslog is the device-filtered search page, and it depends on the *composite*, not this — its plan takes both predicates as an `Index Cond` and satisfies `ORDER BY timestamp DESC` from the backward scan, turning 16.2 million matching rows into a 50-row walk. That plan is untouched.
 
 The standalone `index` tag is removed from `SyslogMessage.DeviceID` as well, because the migration alone would not have held: GORM's `AutoMigrate` creates indexes from struct tags but never drops ones that disappear from a struct, so every fresh install would have rebuilt exactly what the migration removes. A test pins that a fresh `AutoMigrate` no longer produces it, and fails if the tag returns.
 
-This is the rule `partitionIndexPlan` has always applied when deriving per-partition indexes — *"c is a prefix of (or equal to) o: keep only the longer index"* — so partitioned deployments never carried the redundant index and the migration is a no-op there. The drop is metadata-only, with no table rewrite or scan, so it completes in milliseconds even on a 72 GB table.
+This is the rule `partitionIndexPlan` has always applied when deriving per-partition indexes — *"c is a prefix of (or equal to) o: keep only the longer index"* — so partitioned deployments never carried the redundant index and the migration is a no-op there. The drop is metadata-only, with no table rewrite or scan, so it completes in milliseconds even on a very large table.
 
 ## [0.11.202] - 2026-08-08
 
 ### Fixed
 
-**The flow rollup carried the same watermark defect v0.11.201 fixed in syslog aggregation, and kept timing out in production on the very next cycle after that release deployed.** Both rollup passes opened by reading a `MAX(id)` watermark with the pass's own predicates attached. PostgreSQL rewrites `MAX(id)` into a backward walk of the primary key that stops at the first row passing the filter, priced by expected-rows-until-first-match; because the newest ids all fail `timestamp < cutoff`, the walk crossed most of the table. Measured on the live `flow_rollups`: the planner estimated **4.48** against a plan whose own worst case is **29,536,475**, so the statement blew the connection's 30-second `statement_timeout` and every five-minute cycle rolled back and retried:
+**The flow rollup carried the same watermark defect v0.11.201 fixed in syslog aggregation, and kept timing out on a live deployment on the very next cycle after that release.** Both rollup passes opened by reading a `MAX(id)` watermark with the pass's own predicates attached. PostgreSQL rewrites `MAX(id)` into a backward walk of the primary key that stops at the first row passing the filter, priced by expected-rows-until-first-match; because the newest ids all fail `timestamp < cutoff`, the walk crossed most of the table. Measured on the live `flow_rollups`: the planner estimated **4.48** against a plan whose own worst case is **29,536,475**, so the statement blew the connection's 30-second `statement_timeout` and every five-minute cycle rolled back and retried:
 
 ```
 flows.go:950: Flow rollup: 5m watermark: ERROR: canceling statement due to
@@ -1880,7 +1882,7 @@ Three behavioural tests per pipeline pin that the wider bound does not widen wha
 
 ### Fixed
 
-**Syslog aggregation has been failing every five minutes and never wrote a single summary.** Each pass opens by reading a `MAX(id)` watermark, and it carried the pass's own predicates: `WHERE timestamp < cutoff AND severity = ?`. PostgreSQL rewrites `MAX(id)` into a backward walk of the primary key that stops at the first row passing the filter, and prices it by expected-rows-until-first-match. Because the newest rows all fail the timestamp test, that walk crossed most of the table while the planner still estimated single-digit cost — on a 92-million-row production table the statement exceeded **120 seconds** against the connection's 30-second `statement_timeout`, so every cycle aborted, rolled back and retried. The observable result was a `syslog_summaries` table with **zero rows** and a `SQLSTATE 57014` pair in the log every five minutes.
+**Syslog aggregation has been failing every five minutes and never wrote a single summary.** Each pass opens by reading a `MAX(id)` watermark, and it carried the pass's own predicates: `WHERE timestamp < cutoff AND severity = ?`. PostgreSQL rewrites `MAX(id)` into a backward walk of the primary key that stops at the first row passing the filter, and prices it by expected-rows-until-first-match. Because the newest rows all fail the timestamp test, that walk crossed most of the table while the planner still estimated single-digit cost — on a table of tens of millions of rows the statement exceeded **120 seconds** against the connection's 30-second `statement_timeout`, so every cycle aborted, rolled back and retried. The observable result was a `syslog_summaries` table with **zero rows** and a `SQLSTATE 57014` pair in the log every five minutes.
 
 The watermark is now unfiltered. It exists only as an upper bound that excludes rows arriving mid-pass, so any bound at or above every id in the target set is correct; the predicates stay on the `SELECT` and the `DELETE`, which already carried them, so the set each pass acts on is unchanged. Unfiltered, the same planner rewrite stops on the very first tuple — the identical query drops from over 120 seconds to **0.5 ms**.
 
@@ -1926,7 +1928,7 @@ The footnote no longer claims every device's noise is "FortiOS encryption-IV chu
 
 **OPNsense config changes are now attributed to the admin who made them, from the config itself.** OPNsense stamps the saving user, the page and the time into the configuration on every GUI or API change, which is better evidence than syslog correlation — authoritative, and immune to how long the backup took to arrive. Attribution is accepted only when that stamp actually *advanced* since the previous backup, so a hand-edited `config.xml` reloaded on the box still reports as an unattributed out-of-band change rather than being credited to whoever last saved legitimately. A restore-from-backup, which carries an older stamp, is treated the same way.
 
-Deliberately *not* gated on wall-clock recency: the check happens when the backup is written to the database, the collector's config poll defaults to 15 minutes, and production revision-to-delivery gaps already reach 13 — so a recency window would have marked ordinary changes unattributed and escalated them to critical, which is the bug being fixed.
+Deliberately *not* gated on wall-clock recency: the check happens when the backup is written to the database, the collector's config poll defaults to 15 minutes, and observed revision-to-delivery gaps already reach 13 — so a recency window would have marked ordinary changes unattributed and escalated them to critical, which is the bug being fixed.
 
 **Truncated OPNsense captures are flagged rather than trusted.** A `config.xml` is a single document, so a partial capture would make the object diff report the entire configuration as removed. Such a capture is now marked suspect and does not alert. The validator is deliberately no stricter than the parser: rejecting anything the parser tolerates would mark every backup from that device suspect, and suspect never alerts — silently disabling change detection instead of over-reporting it.
 
@@ -1942,9 +1944,9 @@ Deliberately *not* gated on wall-clock recency: the check happens when the backu
 
 ### Fixed
 
-**Every OPNsense config change was paging as `critical`.** With no object parser the classifier produced no severity, and attribution — which only understood FortiOS syslog — never matched, so the "no authenticated session" escalation fired on every single change. All 32 OPNsense config-change alerts in production were `critical`, against FortiGate's 537 warning / 19 critical / 1 info. Severity is now derived from what actually changed.
+**Every OPNsense config change was paging as `critical`.** With no object parser the classifier produced no severity, and attribution — which only understood FortiOS syslog — never matched, so the "no authenticated session" escalation fired on every single change. On a live deployment every OPNsense config-change alert was `critical`, while FortiGate's were mostly `warning`. Severity is now derived from what actually changed.
 
-**A tunnel recreate no longer registers as a configuration change.** OPNsense reassigns every IPsec object's uuid when a tunnel is deleted and recreated, and rewrites save timestamps on every save including a no-op. Two consecutive production revisions differed by 52 lines with **zero** semantic difference — each such save wrote a history row and fired an alert. Uuids are now canonicalised for change detection while the parser still sees the originals, so identity and cross-references stay intact.
+**A tunnel recreate no longer registers as a configuration change.** OPNsense reassigns every IPsec object's uuid when a tunnel is deleted and recreated, and rewrites save timestamps on every save including a no-op. Two consecutive revisions from a live device differed by 52 lines with **zero** semantic difference — each such save wrote a history row and fired an alert. Uuids are now canonicalised for change detection while the parser still sees the originals, so identity and cross-references stay intact.
 
 **Secrets are no longer rendered in the diff.** An OPNsense `config.xml` carries the IPsec pre-shared key, certificate private keys and password hashes as stable plaintext. Because they never change between backups they landed on unchanged context lines, which display raw text — so they were shown verbatim every time a diff was opened. Secret bodies are now replaced by a short content digest, which also keeps a *rotation* visible rather than silently swallowing it.
 
@@ -1977,7 +1979,7 @@ Deliberately *not* gated on wall-clock recency: the check happens when the backu
 
 **The transferred total went backwards while traffic was flowing.** It summed each side's *latest cumulative* counters. OPNsense child SAs rekey independently and their counters reset, so the displayed total collapsed — measured live on connection 23984 at `314,100 → 384,960 → 206,940 → 37,020` across two rekeys — while the FortiGate side, a per-peer session counter that does not reset on child rekey, climbed away from it. The panel now shows a reset-safe delta over a fixed window, which means the same thing on both ends. The same sum backed the **byte KPI tiles on both the panel and the standalone page**; those are fixed too, and their labels now carry the window rather than saying "Total".
 
-**A per-path figure is no longer invented where none exists.** A FortiGate writes one counter series per phase 1 and the collector stores it under *every* phase 2 name, so attributing it per path would multiply a tunnel's traffic by its selector count — a 4× overstatement the chart query already had to defend against. Each end is now assessed for whether its per-path counters are genuinely distinct, and an end that replicates says *shared counter* instead of showing a number. Measured over 24h of production this separates cleanly: a real FortiGate collapses at **100%** of eligible samples, OPNsense at **5.2%**.
+**A per-path figure is no longer invented where none exists.** A FortiGate writes one counter series per phase 1 and the collector stores it under *every* phase 2 name, so attributing it per path would multiply a tunnel's traffic by its selector count — a 4× overstatement the chart query already had to defend against. Each end is now assessed for whether its per-path counters are genuinely distinct, and an end that replicates says *shared counter* instead of showing a number. Measured over 24h on a live deployment this separates cleanly: a real FortiGate collapses at **100%** of eligible samples, OPNsense at **5.2%**.
 
 **Selectors that mean the same network now compare equal across vendors.** A FortiGate emits a host selector as a bare address — its selector builder returns the address unchanged when the MIB exposes no mask, and when the range's end equals its begin — where OPNsense emits `/32`; it also emits ranges wherever no mask is available. Those never matched as text, so a path both ends reported rendered as reported by one. Selectors are normalised before the match test — aligned range to CIDR, bare address to `/32`, and **anything else returned unchanged**, which is what keeps two ends mirroring a non-aligned range matching exactly as they do today. Normalisation only ever adds matches.
 
@@ -2055,7 +2057,7 @@ Empty means a collector too old to report one, which is itself the answer; nothi
 
 **A tunnel could briefly rename itself and leave a ghost on the map.** OPNsense does not always populate `phase1desc`: during teardown it returns the connection with the description already gone while the kernel SPD still holds the policies. The parser then fell back to the connection UUID, so that single poll emitted the same children under a different tunnel name — and since grouping resolves on `Phase1Name`, those rows never joined the provisioned tunnel. They sat on the map as a separate tunnel for the full three-hour grace window before ageing out.
 
-Observed in production on the rollback of `fwm-t12`: 796 rows named `fwm-t12` against 4 named for the UUID, all four written by the one poll that caught the teardown.
+Observed on a live deployment on the rollback of `fwm-t12`: 796 rows named `fwm-t12` against 4 named for the UUID, all four written by the one poll that caught the teardown.
 
 The server already knows which tunnel owns each selector pair, so that name is now authoritative — stable across teardown, rekey and any device-side quirk, and it is the identity grouping resolves on. A pair claimed by two tunnels is left to the device-derived name rather than assigned by coin-flip, and a tunnel this system did not provision keeps its own description.
 
@@ -2168,7 +2170,7 @@ Bumped `google.golang.org/grpc` to v1.82.1 for **GO-2026-6061** (indirect, via t
 
 The estimate now uses the parent's statistics when they exist and combines the leaves' otherwise, weighting each leaf by its row count — a leaf's frequency is a fraction *of that leaf*, so an unweighted mean would let a nearly-empty month distort the table. `syslogAvgRowWidth` had the same blind spot and the same fix.
 
-This survived the previous round's testing only because seeding the harness ran an explicit `ANALYZE` on the parent — the one thing production never does. Verified against all three real shapes, with the frequencies matching seeded ground truth exactly (0.001 / 0.025 / 0.97 / 0.004).
+This survived the previous round's testing only because seeding the harness ran an explicit `ANALYZE` on the parent — the one thing a real deployment never does. Verified against all three real shapes, with the frequencies matching seeded ground truth exactly (0.001 / 0.025 / 0.97 / 0.004).
 
 **A blank retention default advertised a window it does not use.** The field's placeholder read `30`, but with no explicit default each severity falls back to the server's configured retention — which is **keep forever** for severities 0–5, not 30 days. On the page built in response to a disk-full outage, that is the most costly possible direction to be wrong in. The placeholder now reads `not set` and the hint says where the real windows come from; a single number cannot describe a per-severity fallback. The internal inherit sentinel no longer leaks into the API response either.
 
@@ -2206,13 +2208,13 @@ The syslog band field is **removed from the alerting page**, leaving one control
 
 ### Fixed
 
-**Estimated volume double-counted on partitioned installs.** The row total summed the relation *and* its partitions, but an explicit `ANALYZE` on a partitioned parent populates the parent's estimate with the whole total too — so 20,000 rows reported as 40,000. Production is a plain heap and was unaffected; every fresh install would have been wrong. Now it sums the partitions or the relation, never both. Caught by checking the rendered figures against seeded data rather than trusting the query.
+**Estimated volume double-counted on partitioned installs.** The row total summed the relation *and* its partitions, but an explicit `ANALYZE` on a partitioned parent populates the parent's estimate with the whole total too — so 20,000 rows reported as 40,000. An install that predates partitioning is a plain heap and was unaffected; every fresh install would have been wrong. Now it sums the partitions or the relation, never both. Caught by checking the rendered figures against seeded data rather than trusting the query.
 
 ## [0.11.183] - 2026-07-26
 
 ### Added
 
-**Syslog retention is now per severity.** Previously two hard-coded bands — "critical" below a boundary, "informational" at or above it — which is far too blunt for the real shape of the data. On this fleet **severity 5 (notice) is 97.2% of all syslog**, 66.1 M of 68.1 M rows; everything else together costs under 2 GB per 30 days. Two bands forced a choice between keeping the noise and losing the signal. Per-severity windows allow cutting only what is spamming and *extending* what is worth keeping — warnings and errors at 90 days cost roughly 5 GB.
+**Syslog retention is now per severity.** Previously two hard-coded bands — "critical" below a boundary, "informational" at or above it — which is far too blunt for the real shape of the data. On a typical FortiGate fleet **severity 5 (notice) is about 97% of all syslog**; everything else together is a small fraction of it. Two bands forced a choice between keeping the noise and losing the signal. Per-severity windows allow cutting only what is spamming and *extending* what is worth keeping — warnings and errors at 90 days cost comparatively little.
 
 Each severity resolves through **per-severity setting → default setting → the existing legacy model**, read-through with no seeding, so an operator who changes nothing keeps exactly the retention they have today. Three values are distinct and deliberate: **blank inherits** the default, **0 keeps forever**, N keeps N days. That distinction needs a sentinel, because the settings accessor returns its default for absent, empty *and* unparseable values — collapsing blank into 0 would silently begin deleting logs an operator chose to keep indefinitely.
 
@@ -2256,7 +2258,7 @@ A guard test asserting that **every key the alerting page posts on save is also 
 
 ### Added
 
-**The server now alerts on its own disk volumes, and keeps CPU / memory / disk history.** This closes the last recurrence path from the 2026-07-26 outage: retention was fixed and the dashboard corrected, but `DISK_HIGH` is keyed on a device id and fed from device polling, so the Firewall-Mon server's own volumes were never evaluated by anything. A filling disk was *visible* on the dashboard and paged nobody — the same shape as the incident itself, where the signal existed and nobody was watching.
+**The server now alerts on its own disk volumes, and keeps CPU / memory / disk history.** This closes the last recurrence path from the earlier disk-full outage: retention was fixed and the dashboard corrected, but `DISK_HIGH` is keyed on a device id and fed from device polling, so the Firewall-Mon server's own volumes were never evaluated by anything. A filling disk was *visible* on the dashboard and paged nobody — the same shape as the incident itself, where the signal existed and nobody was watching.
 
 New `SERVER_DISK_HIGH` alert, evaluated every 5 minutes by the poller and once immediately at startup, so a restart into an already-full disk alerts now rather than in five minutes. It watches **both** the root filesystem and the volume holding the database, naming which one in the alert, with per-volume alert identity so one volume recovering cannot close the other's open alert.
 
@@ -2286,7 +2288,7 @@ Both are now passed through, defaulting to empty. Empty is safe and changes noth
 
 ### Added
 
-**`FIREWALL_MON_IMAGE` overrides the image name.** The image was hardcoded to the Docker Hub tag, so a from-source deployment that builds locally under a different tag had to edit `docker-compose.yml` in place. That edit is untracked working-tree drift, and it makes `git pull` refuse to update the deployment checkout — which is precisely what had happened on prod-host, where a hand-edited compose file diverged from master on five separate lines and could not be updated without a manual merge.
+**`FIREWALL_MON_IMAGE` overrides the image name.** The image was hardcoded to the Docker Hub tag, so a from-source deployment that builds locally under a different tag had to edit `docker-compose.yml` in place. That edit is untracked working-tree drift, and it makes `git pull` refuse to update the deployment checkout — which is precisely what happens when a hand-edited compose file diverges from master and cannot be updated without a manual merge.
 
 With this plus the existing `DATA_DIR` / `CONFIG_DIR` / `GEOIP_DIR` hooks, a deployment can express its entire local configuration in a gitignored `.env` and keep `docker-compose.yml` byte-identical to the tracked file, so pulls stay clean.
 
@@ -2296,13 +2298,13 @@ With this plus the existing `DATA_DIR` / `CONFIG_DIR` / `GEOIP_DIR` hooks, a dep
 
 **The runtime config directory was not ignored, so `git add -A` in a deployment checkout would have staged the Postgres credentials.** `.gitignore` carried a bare `config.env` pattern, which git matches by basename at any depth — so `config/config.env` was covered, but none of its siblings were. The `CONFIG_DIR` volume also holds `pg-credentials` (`PG_USER` / `PG_PASSWORD`) and accumulates operator backups such as `config.env.broken.bak`, and `git status` listed both as ordinary untracked files.
 
-This is a live hazard rather than a theoretical one: the repository is public, deployments are working checkouts of it rather than exported artefacts, and `config.env` is where the AES-256 key for every `{enc}` secret is derived from. A single `git add -A && git commit && git push` on a server would have published the database credentials and the key protecting every stored SNMP/IRC/SMTP secret. Audited on the prod-host deployment 2026-07-26 — nothing had been committed, so no rotation was required, but the checkout was one careless `add -A` away from it.
+This is a live hazard rather than a theoretical one: the repository is public, deployments are working checkouts of it rather than exported artefacts, and `config.env` is where the AES-256 key for every `{enc}` secret is derived from. A single `git add -A && git commit && git push` on a server would have published the database credentials and the key protecting every stored SNMP/IRC/SMTP secret. An audit of a live deployment found nothing had been committed, so no rotation was required, but the checkout was one careless `add -A` away from it.
 
 `config/` is now ignored as a directory (nothing in it is source), and `*.bak`, `*.bak.*`, `*.bak-*` are ignored so snapshot copies cannot carry a secret past the ignore rules that cover the original. Note this only protects checkouts made *after* the change — an existing deployment keeps its own `.git/info/exclude` or needs this pulled.
 
 ### Added
 
-**Explicit log rotation for the `firewall-mon` container.** The json-file driver does not rotate at all unless `max-size` is set, and the service had no `logging:` block, so its container log grew without bound. The prod-host deployment writes roughly 80 MB/day, which reaches the GB range within weeks — on the same volume that syslog growth already filled once in 2026-05 (see v0.10.199).
+**Explicit log rotation for the `firewall-mon` container.** The json-file driver does not rotate at all unless `max-size` is set, and the service had no `logging:` block, so its container log grew without bound. A busy deployment can write tens of MB a day, which reaches the GB range within weeks — on the same volume that syslog growth can fill (see v0.10.199).
 
 Capped at `max-size: 10m` / `max-file: 3`, matching what the marketing-site and osprey-labs compose files already use. The cap takes effect when the container is **recreated**, not restarted: an already-oversized log survives `docker compose restart` and is only discarded when `up -d` replaces the container.
 
@@ -2312,7 +2314,7 @@ Capped at `max-size: 10m` / `max-file: 3`, matching what the marketing-site and 
 
 **The syslog critical/informational band boundary is now an operator setting** — `syslog_critical_below_severity`, exposed as a field on the alerting settings page. It was hard-coded at severity 6, which put NOTICE (5) in the *critical* band.
 
-On the production fleet that is **97.3% of all syslog by volume** — 65.9 M of 67.7 M rows, ~58 GB — so the long critical retention window was being spent almost entirely on notice-level noise, while the genuinely critical severities (0–3) amounted to **7,259 rows / 6.6 MB**. Moving the boundary to 5 puts that bulk on the short informational window instead.
+On a typical FortiGate fleet that is **about 97% of all syslog by volume**, so the long critical retention window was being spent almost entirely on notice-level noise, while the genuinely critical severities (0–3) amounted to a tiny fraction. Moving the boundary to 5 puts that bulk on the short informational window instead.
 
 The value is **clamped to [1, 6]**, and the upper bound is not cosmetic: syslog aggregation summarises-then-deletes severity ≥ 6 on its own 5-minute cadence and deliberately does not read this setting, so a boundary above 6 would promise severity 6 the long critical window here while aggregation kept deleting it at the informational age — the setting would silently break the guarantee it advertises. The API rejects out-of-range values rather than clamping silently, so the operator learns the bound.
 
@@ -2330,7 +2332,7 @@ It is load-bearing rather than cosmetic: a monthly partition only stays near its
 
 ### Fixed
 
-**Retention never ran, and the dashboard was watching the wrong disk.** Together these took production down: Postgres crash-looped on `No space left on device` with a 98 GB volume at 100%, holding 45 days of syslog under a 30-day policy.
+**Retention never ran, and the dashboard was watching the wrong disk.** Together these took a deployment down: Postgres crash-looped on `No space left on device` with its data volume at 100%, holding 45 days of syslog under a 30-day policy.
 
 **`CleanupOldData` was reachable only from a `time.NewTicker(24 * time.Hour)`.** A Ticker counts from process start, so on a deployment that restarts more often than once a day — several releases most days, plus every crash and reboot — the first tick was never reached and **no retention policy was ever applied**. The cleanup code itself was correct and well-tested; nothing called it. It now runs shortly after startup and then daily, with the body extracted to `(*Poller).runRetentionCleanup` so both paths share one implementation.
 
@@ -2353,7 +2355,7 @@ The dashboard surfaces it as its own **DB volume** tile — separate from Disk, 
 
 `vpn_status` has two writers with disjoint fields. The ~60s SNMP path reports status, counters and selectors but never `interface_name`/`mode`; the ~15min SSH config path reports `interface_name`/`mode` but has no liveness to report, so it stamps a placeholder status and zero counters. The readers took the newest row per tunnel, which threw away whichever writer had not fired most recently — so for the ~50s after each config poll the badge showed `unknown` with zero bytes and blank subnets, and for the other ~14 minutes Interface and Mode showed `-`.
 
-Verified on production across 7 days and 61,908 rows: no `up`/`down` row ever carries `interface_name`, and no `unknown` row ever carries counters. The split is absolute.
+Verified on a live deployment across 7 days of rows: no `up`/`down` row ever carries `interface_name`, and no `unknown` row ever carries counters. The split is absolute.
 
 A config row is metadata, not a state claim, so it now never displaces a state observation. The base is the newest row that actually reports state, enriched with the config row's metadata; a tunnel with no state row keeps its config row as the base, so SNMP-restricted devices behave exactly as before. The base stays one coherent observation rather than a field-by-field blend, which would stitch counters and status from different instants and could launder a pre-reset counter back in after a reboot.
 
@@ -2373,13 +2375,13 @@ A second, quieter fix falls out. A tunnel whose SNMP feed died 40 minutes ago bu
 
 ### Known consequence
 
-A **GRE** tunnel entering a state like `lowerLayerDown` reports `unknown`, which is now treated as a non-state row. Its last real up/down observation therefore remains the base, so the UI shows the old status for up to 30 minutes and then `stale`, where previously it flipped to `unknown` within ~60s. Alerting is unchanged — neither value ever alerted. No GRE tunnels exist in the current fleet. The proper fix is at the parser, mapping a non-up `ifOperStatus` to `down` so GRE outages can alert at all; that is a behaviour change on the alert path and belongs in its own change.
+A **GRE** tunnel entering a state like `lowerLayerDown` reports `unknown`, which is now treated as a non-state row. Its last real up/down observation therefore remains the base, so the UI shows the old status for up to 30 minutes and then `stale`, where previously it flipped to `unknown` within ~60s. Alerting is unchanged — neither value ever alerted. No GRE tunnels were available to test against. The proper fix is at the parser, mapping a non-up `ifOperStatus` to `down` so GRE outages can alert at all; that is a behaviour change on the alert path and belongs in its own change.
 
 ## [0.11.175] - 2026-07-25
 
 ### Fixed
 
-**The grouped VPN chart reported 4x a hub's real traffic.** Found on production immediately after deploying 0.11.174, by comparing a single tunnel's charted total against its group's: 25,757,243 bytes were charted as 103,028,972.
+**The grouped VPN chart reported 4x a hub's real traffic.** Found on a live deployment immediately after 0.11.174 shipped, by comparing a single tunnel's charted total against its group's: 25,757,243 bytes were charted as 103,028,972.
 
 A FortiGate's SNMP table carries one counter series per **phase 1**, and the collector writes that series once per phase 2 **name**. A hub with four phase 2 selectors under one phase 1 therefore emits four rows per poll with byte-identical counters and a microsecond-identical timestamp. Those are one measurement reported four times, not four series — so summing the group multiplied the tunnel's traffic by its selector count.
 
@@ -2409,7 +2411,7 @@ The regression test drives the value through the real chart endpoint rather than
 
 Three adjacent defects fell out of the same root: an in-flight click could resolve against a rebuilt canvas and overwrite the refresh's chart with another tunnel's data; Chart.js instances for vanished groups were never destroyed; and the error path swallowed the error, did not filter cancelled requests, and fired one toast per group per side — so a single API blip popped N red toasts every 30 seconds.
 
-**A tunnel's peer cross-fill no longer scans its whole history.** `GetLatestVPNStatuses` read *every* `vpn_status` row of every peer carrying subnet text, newest-first, purely to keep one row per `remote_ip`. Its cost therefore grew with **retention**, not with tunnel count. Measured per chart request: 5.3ms / 80.7ms / **324ms** at 300 / 5,000 / 20,000 rows per peer — and production retains 90 days at roughly a 60s cadence. Bounded to the evidence horizon it is flat at ~24ms, and 5,000 and 20,000 now cost the same.
+**A tunnel's peer cross-fill no longer scans its whole history.** `GetLatestVPNStatuses` read *every* `vpn_status` row of every peer carrying subnet text, newest-first, purely to keep one row per `remote_ip`. Its cost therefore grew with **retention**, not with tunnel count. Measured per chart request: 5.3ms / 80.7ms / **324ms** at 300 / 5,000 / 20,000 rows per peer — and a typical install retains 90 days at roughly a 60s cadence. Bounded to the evidence horizon it is flat at ~24ms, and 5,000 and 20,000 now cost the same.
 
 This is a bug fix rather than a tuning change: cross-filling from a row older than the grace window enriches a "latest status" with data every other reader in that file has already declared not to be state. Every caller benefits, including the two calls the detail endpoint makes per page load.
 
@@ -2451,7 +2453,7 @@ A down child leaves no trace at all (our children use `start_action` start/none,
 
 The map drew an IPSec edge that did not exist and omitted the one that did: `DC9-FW1 ↔ OSPREY-FW-01` instead of `OSPREY-FW-01 ↔ OPNsense`.
 
-A FortiGate names a dialup instance after the peer's **observed source address**. For a peer behind NAT that is the gateway's public IP — which legitimately belongs to a different monitored device — so attribution by remote IP lands on the gateway. In production two *distinct* peers behind one NAT both collapsed onto it, and the synthetic tunnel name also contaminated a second, legitimate edge's tunnel list. This is not a tuning problem: matching a dialup peer by remote IP cannot be right, because the peer never puts its own address on the wire.
+A FortiGate names a dialup instance after the peer's **observed source address**. For a peer behind NAT that is the gateway's public IP — which legitimately belongs to a different monitored device — so attribution by remote IP lands on the gateway. On a live deployment two *distinct* peers behind one NAT both collapsed onto it, and the synthetic tunnel name also contaminated a second, legitimate edge's tunnel list. This is not a tuning problem: matching a dialup peer by remote IP cannot be right, because the peer never puts its own address on the wire.
 
 Tunnels this system provisioned now attribute from their **recorded endpoints** instead. `ipsec_tunnels` has always held the true device pair; nothing joined it to detection until now.
 
@@ -2581,7 +2583,7 @@ Investigating it surfaced that three separate queries disagreed about what "late
 
 ### Fixed — three residual holes in the same bug class
 
-Adversarial review of the above found the fix closed the reported path but left siblings open:
+A review of the above found the fix closed the reported path but left siblings open:
 
 - **Tunnel-overlay pairs had no freshness discipline at all.** Phase-4 matching is built from `interface_addresses` + `interface_stats`, both unbounded per-device `MAX`, and the pair was hardcoded as fresh. A device whose telemetry froze entirely (collector dead, device decommissioned) would keep re-deriving an overlay pair from frozen rows with a permanently "up" status and a re-stamped `last_check` — the identical ghost mechanism, just fed by a different table. Overlay evidence now carries its own timestamp (the older of the two rows that formed it) and takes the same staircase.
 - **The stale sweep could never fire in a VPN-only deployment.** It required `count > 0` across all detectors — a stand-in for a read-success signal the detectors did not report. In a deployment whose only connection is a VPN pair, that pair expiring drops every count to zero, so the sweep was skipped *forever* and the ghost row rendered indefinitely: the very bug this change exists to fix, surviving in the degenerate topology. All three detectors now report read success and the gate is "did every read succeed", not "did they find anything" — a successful read that legitimately found nothing is real evidence that nothing is left, and must sweep.
@@ -2660,7 +2662,7 @@ A FortiGate ⇄ OPNsense tunnel with **multiple protected subnets on the OPNsens
 
 Root cause: the OPNsense driver rendered **one** strongSwan child with a comma-joined `local_ts`/`remote_ts`. FortiGate holds a single src/dst pair per phase2 and **narrows** a multi-traffic-selector CHILD_SA down to one pair; strongSwan does not re-spawn children for the narrowed-away selectors (per strongSwan's Fortinet interop guidance). The FortiGate side already fanned out one phase2 per pair, so the ends were structurally mismatched.
 
-- **`internal/ipsec/vendors/opnsense/opnsense.go`** now fans out **one child per (local × remote) subnet pair**, each with a **single** `local_ts`/`remote_ts` — mirroring FortiGate's `fgPhase2Pairs` and this driver's own per-pair firewall rules. Capture names are `child_<pair>`, deterministic and index-aligned with the firewall-rule pairs so the `Render`/`RenderRemove` capture/delete rollback parity holds. A single-subnet tunnel is unchanged (one `child_0`, behaviorally identical). Validated by an adversarial Fable plan review (against strongSwan/FortiGate interop docs) and live SA inspection.
+- **`internal/ipsec/vendors/opnsense/opnsense.go`** now fans out **one child per (local × remote) subnet pair**, each with a **single** `local_ts`/`remote_ts` — mirroring FortiGate's `fgPhase2Pairs` and this driver's own per-pair firewall rules. Capture names are `child_<pair>`, deterministic and index-aligned with the firewall-rule pairs so the `Render`/`RenderRemove` capture/delete rollback parity holds. A single-subnet tunnel is unchanged (one `child_0`, behaviorally identical). Validated by a plan review (against strongSwan/FortiGate interop docs) and live SA inspection.
 
 ### Fixed — IPSec deploy progress modal reset its "~1 min" timer per phase
 
@@ -2674,7 +2676,7 @@ The deploy/rollback/recheck progress modal measured elapsed time from a single s
 
 v0.11.160 rendered the OPNsense pass rule's `source_net`/`destination_net` as a **comma-joined** list of the protected subnets (mirroring the swanctl `local_ts`/`remote_ts` fields, which do accept lists). But OPNsense's **firewall** filter field does not: a live deploy of a 2-subnet tunnel was rejected with `"192.168.150.0/24,192.168.105.0/24 is not a valid source IP address or alias"` (the `Multiple=Y` model attribute permits multiple *values* but does not split a comma-joined *string* — the whole string was validated as one network). The apply failed at the first `addRule` and the tunnel auto-rolled-back cleanly.
 
-- **`internal/ipsec/vendors/opnsense/opnsense.go`** now fans out **one pass rule per (local × remote) subnet pair per direction**, each carrying a **single network** per field — mirroring FortiGate's per-subnet-pair phase2 fan-out. A single-subnet tunnel is unchanged (2 rules); a 2×1 tunnel is 4 rules. Capture names are `rule_out_<pair>` / `rule_in_<pair>`, deterministic across `Render`/`RenderRemove` so the capture/delete rollback parity holds. Caught by Fable's adversarial diff review and confirmed by the live deploy.
+- **`internal/ipsec/vendors/opnsense/opnsense.go`** now fans out **one pass rule per (local × remote) subnet pair per direction**, each carrying a **single network** per field — mirroring FortiGate's per-subnet-pair phase2 fan-out. A single-subnet tunnel is unchanged (2 rules); a 2×1 tunnel is 4 rules. Capture names are `rule_out_<pair>` / `rule_in_<pair>`, deterministic across `Render`/`RenderRemove` so the capture/delete rollback parity holds. Caught in review of the diff and confirmed on a live deployment.
 
 ## [0.11.160] - 2026-07-24
 
@@ -2705,7 +2707,7 @@ A FortiGate ⇄ OPNsense tunnel (fwm-t9) came up cleanly on **both** firewalls �
 
 The IPSec wizard's IKE identity field had no type-aware validation — only a charset gate — so a value that reads fine to a human could silently break the tunnel. An IKE `ID_FQDN` is an opaque identity string (not a DNS name), so a single word like `OSPREY` is perfectly valid on **both** FortiGate and OPNsense/strongSwan; it does not need a dotted `fw.example.com` form. But because OPNsense renders the swanctl id **bare** (strongSwan then auto-classifies it) while FortiGate's `localid-type fqdn` **forces** the FQDN type, certain values are classified differently by each end → `AUTH_FAILED` (the same class as the v0.11.147 keyid fix). This ships:
 
-- **Server-side validation** (`internal/ipsec/validation.go`, authoritative — surfaces in the wizard findings panel and gates Save/Deploy) that **blocks** any identity that would fail phase-1 auth: for `fqdn` — an IP literal (`id_fqdn_is_ip`, strongSwan would treat it as an IP identity), an `ip-ip` range (`id_fqdn_is_range`), or a `:` (`id_fqdn_charset`, read as IPv6/key-id); for `ip` — a non-IP value (`id_ip_invalid`); and for all types, >63 characters (`id_too_long`, the FortiGate limit that binds on both `localid` and `peerid`). A single-label FQDN like `OSPREY` and underscores (`prince_1.test.com`) are explicitly allowed. Rules validated against the strongSwan source + FortiOS docs via an adversarial review.
+- **Server-side validation** (`internal/ipsec/validation.go`, authoritative — surfaces in the wizard findings panel and gates Save/Deploy) that **blocks** any identity that would fail phase-1 auth: for `fqdn` — an IP literal (`id_fqdn_is_ip`, strongSwan would treat it as an IP identity), an `ip-ip` range (`id_fqdn_is_range`), or a `:` (`id_fqdn_charset`, read as IPv6/key-id); for `ip` — a non-IP value (`id_ip_invalid`); and for all types, >63 characters (`id_too_long`, the FortiGate limit that binds on both `localid` and `peerid`). A single-label FQDN like `OSPREY` and underscores (`prince_1.test.com`) are explicitly allowed. Rules validated against the strongSwan source + FortiOS docs in review.
 - **Wizard auto-prefill** (`admin-ipsec.js`): each end's identity is auto-filled from real device data — the sanitized device name for `fqdn`, the WAN/peer IP for `ip` — guaranteed to pass validation, and re-derived when the identity type changes, while never clobbering a value the operator has manually edited or a stored tunnel's identity. An inline field hint mirrors the server rules for instant feedback before Preview; the id inputs cap at `maxlength=63`.
 
 ## [0.11.157] - 2026-07-23
@@ -2716,9 +2718,9 @@ The 2FA replay guard recorded the *current 30s wall-clock slot* as used, but `va
 
 ## [0.11.156] - 2026-07-23
 
-### Fixed — Adversarial (Fable) review follow-ups on today's audit work
+### Fixed — Review follow-ups on today's audit work
 
-A four-way adversarial review of everything shipped today (v0.11.148–155 + the collector) found four real gaps, all fixed here:
+A review of everything shipped today (v0.11.148–155 + the collector) found four real gaps, all fixed here:
 
 - **AL-M3 stuck-alert survived a restart / suppressed fires (Medium).** The admin-down INTERFACE_DOWN resolve was gated on the process-local `activeAlerts` flag, so it did nothing after a redeploy (that flag is empty in a fresh process) or for a suppressed state-engine fire (which never marks it) — leaving exactly the stuck alert the fix targeted. It is now an unconditional cold resolve (like the up-branch), whose DB resolve is idempotent and restart-safe. Regression test added for the post-restart case.
 - **T7 missed two single-record ingest writers.** `ReceiveConfigRevision` and `ReceiveProcessSnapshot` still trusted a client-supplied primary key. The config-revision case was the real risk: the config-history "latest" is chosen by `ORDER BY id DESC`, so a collector posting a huge `id` would become the permanent latest and poison every subsequent change diff/alert. Both now zero the server-assigned PK like the 20 bulk writers.
@@ -2777,7 +2779,7 @@ Sixteen low-risk correctness/security fixes from the deferred audit backlog:
 
 ## [0.11.151] - 2026-07-23
 
-### Fixed — Adversarial-review follow-ups to the audit batch
+### Fixed — Review follow-ups to the audit batch
 
 Two defects caught reviewing v0.11.148–150 before merge:
 
@@ -2934,7 +2936,7 @@ Deploy/validation errors surfaced via `AC.showError` auto-dismissed after 5s wit
 - **Per-vendor spec** (`conformance/{fortigate,opnsense}.go`) declares controlled-vocabulary field rules: enums (`dpd_action`, `unique`, `ike-version`, …), enable/disable + 0/1 booleans, integer ranges (rekey/keylife/DPD), address fields that reject `%any`, and the per-vendor proposal grammar (OPNsense bare-hash 3-part `enc-sha-dh`; FortiOS 2-part `enc-prfsha*` with separate `dhgrp`). OPNsense proposal token sets mirror the box's own `IPsecProposalField` generator.
 - **Full-matrix test** renders every crypto combination each vendor advertises in `Capabilities()` (288 per vendor — not just the 2 presets) and asserts zero conformance findings; a negative test proves the harness catches the three fwm-t3 bugs.
 - **Server pre-dispatch guard** (`handlers_ipsec.go`): a deploy whose render fails conformance is refused with the offending fields before any command is enqueued — a non-conformant render never reaches a device.
-- Specs hardened against the live OPNsense 26.1 models via adversarial review: the OPNsense ESP grammar now rejects device-invalid **no-PFS** bare proposals (only `aes256gcm16`/`chacha20poly1305`/`aes256-sha1`/`aes256-sha256` are accepted without a DH group — a reachable false-pass otherwise), and `start_action`/`close_action`/`mode`/`auth` enums and FortiGate `system/interface` `allowaccess` were added to close coverage gaps.
+- Specs hardened against the live OPNsense 26.1 models in review: the OPNsense ESP grammar now rejects device-invalid **no-PFS** bare proposals (only `aes256gcm16`/`chacha20poly1305`/`aes256-sha1`/`aes256-sha256` are accepted without a DH group — a reachable false-pass otherwise), and `start_action`/`close_action`/`mode`/`auth` enums and FortiGate `system/interface` `allowaccess` were added to close coverage gaps.
 
 
 
@@ -3021,13 +3023,13 @@ The preflight modal polled for only ~24s, but the collector runs commands on its
 
 - **Polls for ~2.5 minutes** (well past the 60s heartbeat) with a **spinner** and a live **elapsed-time** counter ("Checking for results… 0:48"), and copy that sets the expectation ("the collector runs this on its next check-in, up to ~1 min"). A genuinely-succeeded check now surfaces its result instead of a false timeout.
 - Only after the real window elapses does it show **"No result after m:ss — the collector may be offline"** with a **"Check again"** button.
-- **A terminal end with an unparseable/empty report no longer spins forever** (adversarial-review finding): any `succeeded`/`failed`/`expired` end with no JSON report now shows the raw collector output (or a plain note), never the spinner.
+- **A terminal end with an unparseable/empty report no longer spins forever** (review finding): any `succeeded`/`failed`/`expired` end with no JSON report now shows the raw collector output (or a plain note), never the spinner.
 
 ## [0.11.128] - 2026-07-19
 
-### Fixed — IPSec preflight UI: review findings from the adversarial pass
+### Fixed — IPSec preflight UI: review findings
 
-Adversarial review of the v0.11.126/127 IPSec UI (device-form credentials + preflight button) found no security-critical defects; these three follow-ups fix the issues it did surface:
+A review of the v0.11.126/127 IPSec UI (device-form credentials + preflight button) found no security-critical defects; these three follow-ups fix the issues it did surface:
 
 - **Preflight polling now stops when the modal closes** (Escape/backdrop, not just the Close button) and is generation-guarded, so a stale in-flight fetch or pending timer from a prior open — or a second open on another tunnel row — can no longer keep polling or render into the wrong/closed modal.
 - **No misleading green "no collision"** — the collision verdict is only shown as clear when the end was actually reachable AND authenticated; an unreachable/auth-failed end now reads "collision check not run" instead of a reassuring green badge (the report's conflict/indeterminate are zero-values in that case).
@@ -3221,7 +3223,7 @@ Event Rules become profile-based. A profile bundles (a) a sparse per-alert-type 
 
 ### Added — "device" Event Rule source: rule support for every remaining alert family
 
-Completes the "every alert must be rule-suppressible/customizable" requirement. Seven device/probe-scoped families previously had no Event Rule support at all (prod last 30d: INTERFACE_ERRORS ×40, CONFIG_CHANGE ×28, DEVICE_OFFLINE ×12; plus TELEMETRY_STALE, SSH_HOST_KEY_CHANGED, PROBE_DATA_LAG/_TRUNCATED) — no evaluator consulted rules at their emission sites.
+Completes the "every alert must be rule-suppressible/customizable" requirement. Seven device/probe-scoped families previously had no Event Rule support at all (INTERFACE_ERRORS, CONFIG_CHANGE, DEVICE_OFFLINE, TELEMETRY_STALE, SSH_HOST_KEY_CHANGED, PROBE_DATA_LAG/_TRUNCATED) — no evaluator consulted rules at their emission sites.
 
 - **New `device` rule source** (evaluator cloned from the metric pattern — always consulted, no match = exactly today's behavior, so an empty rule set is non-regressive). Matcher fields: `event_type` (`device_offline`, `telemetry_stale`, `interface_errors`, `config_change`, `ssh_host_key_changed`, `probe_data_lag`, `probe_data_truncated`), `device_id`/`site_id`/`severity`, plus per-family: `interface_name`, `probe_id`/`probe_name`, `method`/`changed_by`/`impact` (config changes), `fingerprint` (host keys), `detail` (stale telemetry). Suppress mutes the fire (and skips active-marking, so no recovery notification for a muted class); alert-action overlays severity/policy/cooldown. Temporary rules (expires_at) honored at match time like every other source.
 - **All seven emitters wired**, including two that previously **bypassed alert config entirely**: `CheckConfigRevision` (CONFIG_CHANGE) gains maintenance suppression, per-type disable and policy attribution; `RecordProbeDataTruncation` gains per-type disable plus rule-based suppress/severity/cooldown (its notification keeps the global routing, and truncation events carry no site — site-scoped rules apply to PROBE_DATA_LAG, not PROBE_DATA_TRUNCATED). Legacy 60m/5m cooldowns and severities stay the defaults so behavior without rules is unchanged. SSH host-key alerts compute the HA-failover downgrade before the rule consult so severity-scoped rules match what the alert would carry; an explicit rule re-grade wins over the downgrade.
@@ -3248,10 +3250,10 @@ Completes the "every alert must be rule-suppressible/customizable" requirement. 
 
 ### Fixed — denied_then_allowed candidate-cap starvation + ingest-race hardening
 
-Follow-up to 0.11.109, from its adversarial review. The detector selected its 50 candidate tuples from `flow_samples` (sensitive-port-first, tie-break `dst_port` ASC — so Telnet 23 outranked RDP 3389) **before** deny history or the allow-evidence gate were known. A Telnet spray with >50 distinct gated scanner tuples consumed every slot and a genuine quiet-gap tuple was never even considered — permanently undetected while the spray lasted (pre-existing since the detector shipped; the 0.11.109 gate merely made the wasted slots visible).
+Follow-up to 0.11.109, from its review. The detector selected its 50 candidate tuples from `flow_samples` (sensitive-port-first, tie-break `dst_port` ASC — so Telnet 23 outranked RDP 3389) **before** deny history or the allow-evidence gate were known. A Telnet spray with >50 distinct gated scanner tuples consumed every slot and a genuine quiet-gap tuple was never even considered — permanently undetected while the spray lasted (pre-existing since the detector shipped; the 0.11.109 gate merely made the wasted slots visible).
 
 - The two-query candidate shape (flow candidates → deny IN-list probe → Go-side gate) is now **one SQL join**: per-tuple flow aggregates × per-tuple deny aggregates, with the evidence gate (`verdicted = 1 OR last_allow > last_deny + quiet margin`) evaluated in the WHERE over **all** tuples. `LIMIT 50` now caps *emitted findings* — an alert-volume guard on already-gated true positives that cannot starve anything — ordered sensitive-port-first, then most-denied-first. Net code shrink (the map join, tuple IN-list, and two result structs collapse into one query + one struct).
-- **Ingest-race hardening** (`denyAllowIngestGrace`, 60s): a denied packet reaches the DB twice — flow row (NetFlow) and deny row (syslog projection) — seconds apart on different pipes. If a scanner pauses past the 10-min quiet margin and resumes, its first flow row can land before its paired deny row; a detector cycle in that gap saw a "quiet" tuple with fresh traffic (observed transiently on prod during read-only verification). Flow rows younger than 60s no longer count as evidence, so the paired deny always arrives first and resets the quiet clock; a real policy gap fires at most a minute later.
+- **Ingest-race hardening** (`denyAllowIngestGrace`, 60s): a denied packet reaches the DB twice — flow row (NetFlow) and deny row (syslog projection) — seconds apart on different pipes. If a scanner pauses past the 10-min quiet margin and resumes, its first flow row can land before its paired deny row; a detector cycle in that gap saw a "quiet" tuple with fresh traffic (observed transiently on a live deployment during read-only verification). Flow rows younger than 60s no longer count as evidence, so the paired deny always arrives first and resets the quiet clock; a real policy gap fires at most a minute later.
 - Alerts now carry `Details["evidence"]` (`"verdict"` or `"quiet_gap"`) so operators can see why a finding fired. `sensitivePortFirstExpr` refactored to `sensitivePortCase(col)` for qualified column references inside the join.
 
 New regression tests: the spray-starvation scenario (60 gated Telnet tuples must not crowd out a genuine RDP gap — fails pre-fix), the 50-findings cap ordering (non-sensitive tuple loses the race), and the ingest-grace boundary (fresh flow not yet evidence; same tuple fires once the flow ages past the grace). The SQL gate remains mutation-pinned by the 0.11.109 tests.
@@ -3272,9 +3274,9 @@ Same single-query shape (no N+1): the allow/deny aggregations gained `MAX(timest
 
 ### Fixed — connection-detail traffic chart: climbing values, duplicate-stream inflation, dead range selector
 
-Three stacked defects on the connection Aggregate Bandwidth chart (reported on a VXLAN overlay at 7d/30d "just keeps climbing"), all root-caused against live production data:
+Three stacked defects on the connection Aggregate Bandwidth chart (reported on a VXLAN overlay at 7d/30d "just keeps climbing"), all root-caused against live data:
 
-- **Zero-byte VPN status rows poisoned the LAG() delta math** (the climbing cause). `vpn_status` has two writers: the SNMP poll (per-minute cumulative counters) and the collector's SSH phase1/phase2 poll, which writes status-only rows with `bytes_in=0, bytes_out=0` every ~15 min. Inside the delta window each zero row read as a counter reset, so the next real sample contributed the tunnel's FULL lifetime counter (~181 GB on the reporting device) as one "delta" — hourly buckets showed 2,200–2,900 GB "transferred" and the series climbed forever as the counter grew. Both delta queries (`vpnDeltaQuery` behind the device/connection tunnel charts, and `GetConnectionTraffic`'s tunnel path) now exclude rows with both byte counters zero; a genuine counter reset is still handled by the existing reset clamp on the next nonzero sample.
+- **Zero-byte VPN status rows poisoned the LAG() delta math** (the climbing cause). `vpn_status` has two writers: the SNMP poll (per-minute cumulative counters) and the collector's SSH phase1/phase2 poll, which writes status-only rows with `bytes_in=0, bytes_out=0` every ~15 min. Inside the delta window each zero row read as a counter reset, so the next real sample contributed the tunnel's FULL lifetime counter (hundreds of GB on the reporting device) as one "delta" — hourly buckets showed 2,200–2,900 GB "transferred" and the series climbed forever as the counter grew. Both delta queries (`vpnDeltaQuery` behind the device/connection tunnel charts, and `GetConnectionTraffic`'s tunnel path) now exclude rows with both byte counters zero; a genuine counter reset is still handled by the existing reset clamp on the next nonzero sample.
 - **Byte-identical counter streams were summed.** FortiGate can surface one underlying tunnel counter under several names (observed live: 4 phase names to the same gateway, byte-identical at every sample); summing those partitions inflated real throughput 4×. Rows identical in (device, timestamp, all four counters) now collapse to one partition before the window runs; tunnels with genuinely distinct counters keep their own partitions and still sum.
 - **The range selector was entirely decorative.** The dropdown sends hour-numeric values (`0.25` … `8760`) but the endpoint whitelist only recognized `1h/24h/7d/30d` and coerced *every* dropdown value — including `24` — to the 24h window. The endpoint now parses numeric hours (legacy tokens stay valid), and the window uses the chart layer's adaptive bucketing (`bucketUnitForWindow`) with the existing 400-day cap, so all ten dropdown ranges return real data at sensible resolution.
 
@@ -3298,7 +3300,7 @@ Server-only (deny logs already arrive via existing syslog ingest — no collecto
 
 ### Changed — Tranche 4 Phase 0 verified live; Phase 2 denied-traffic source pivots from NetFlow to syslog (docs/roadmap only, no code)
 
-Live Phase 0 verification on prod: NetFlow v9 ingest confirmed end-to-end from the first FortiGate (26k+ records/15min, prefer-netflow dedup engaged). Verification also **disproved a roadmap premise**: FortiOS does not export blocked sessions via NetFlow — block sessions carry the `netflow-origin` flag in the session table (`ses-denied-traffic`), but the exporter never emits records for them (proven by a flat collector sequence-gap counter across a controlled denied-traffic window, with clean template counters, while allowed flows from the same host/interface exported in seconds). `firewall_event=3` denied rows are therefore ASA NSEL / Palo Alto territory only. The Phase 2 deny-detector class (`deny_storm`, `deny_storm_victim`, `denied_then_allowed`) pivots to FortiGate syslog `action=deny` forward logs as its input — prod already ingests 40k+ such messages per 2 hours with full tuples including WAN-inbound scan denies, which additionally removes the WAN NetFlow-sampler prerequisite for external deny detection. `tasks/todo.md` updated; Phase 2 requires a redesign session before implementation.
+Live Phase 0 verification: NetFlow v9 ingest confirmed end-to-end from the first FortiGate (26k+ records/15min, prefer-netflow dedup engaged). Verification also **disproved a roadmap premise**: FortiOS does not export blocked sessions via NetFlow — block sessions carry the `netflow-origin` flag in the session table (`ses-denied-traffic`), but the exporter never emits records for them (proven by a flat collector sequence-gap counter across a controlled denied-traffic window, with clean template counters, while allowed flows from the same host/interface exported in seconds). `firewall_event=3` denied rows are therefore ASA NSEL / Palo Alto territory only. The Phase 2 deny-detector class (`deny_storm`, `deny_storm_victim`, `denied_then_allowed`) pivots to FortiGate syslog `action=deny` forward logs as its input — a live deployment already ingests tens of thousands of such messages per 2 hours with full tuples including WAN-inbound scan denies, which additionally removes the WAN NetFlow-sampler prerequisite for external deny detection. Internal task notes updated; Phase 2 requires a redesign before implementation.
 
 ## [0.11.105] - 2026-07-16
 
@@ -3320,7 +3322,7 @@ The Phase 1 merge (v0.11.103) reddened master's staticcheck gate: `completeRows`
 
 ### Added — Tranche 4 Phase 1: DDoS detection, detector validity framework, sampling-rate guard
 
-First increment of the flow detection engine tranche (design: `docs/flow-protocol-research-2026-07-03.md` §4). Phase order was set by live prod evidence: the fleet currently exports only sFlow, so the sampled-valid detector class ships first; the denied-flow and behavioral classes (Phases 2–3) are gated on NetFlow + `ses-denied-traffic` exporter enablement.
+First increment of the flow detection engine tranche (design: the 2026-07-03 flow-protocol research, §4). Phase order was set by live evidence: the fleet currently exports only sFlow, so the sampled-valid detector class ships first; the denied-flow and behavioral classes (Phases 2–3) are gated on NetFlow + `ses-denied-traffic` exporter enablement.
 
 - **Detector validity framework (T4-1).** Every detector now declares its evidence class (`sampled_ok` / `complete_only` / `rate_gated`), stamped into each persisted detection's details. New `completeRows` scope (`flow_source <> 0 AND sampling_rate <= 1`) encodes the FastNetMon rule: byte/packet sums are unbiased on sampled rows (ingest pre-multiplies by sampling_rate — a collector parser contract), but flow-count rates and per-flow timing are only valid on complete session exports. Guardrail tests pin classification completeness and the security-detector taxonomy (priority-ranked XOR victim-keyed). `Window.Lookback` clamps any extended range to the 60-minute raw-retention ceiling.
 - **`ddos_volumetric` (SFLOW_DDOS_VOLUMETRIC, critical default).** Per-victim bps/pps/fps OR-thresholds over **peak-minute** rates (a 15-minute average dilutes a 3-minute flood 5×), FastNetMon community defaults (1 Gb/s / 20k pps / 3.5k flows/s), warning at 1×, critical at ≥2×. Elephant-smear correction redistributes long active-timeout NetFlow records across their real interval so a legitimate 30-minute transfer can't fake a peak spike. pps is skipped for packet-counter-less sources (ASA NSEL); fps counts complete rows only. Denied rows are deliberately included — a dropped flood still fills the pipe. Messages carry per-metric peaks and top source countries.
@@ -3329,15 +3331,15 @@ First increment of the flow detection engine tranche (design: `docs/flow-protoco
 - **`sampling_rate_change` (SFLOW_SAMPLING_RATE_CHANGE, warning).** Stateless two-window compare of each exporter's sampling-rate set; fires only on rate additions (a flickering low-volume rate never pages) with an escalated message when a NetFlow source starts sampling (rate>1) — which silently disables flow-count-based detectors for that device. Guards the pre-multiplied-bytes contract the volumetric math trusts.
 - **Capacity attribution (T4-8).** A saturated-interface finding now names the top-3 talkers with their share of the link ("83% full and here's who"), at zero extra query cost for non-saturated interfaces.
 - Nine new `detect_*` settings (DDoS thresholds, prefix overrides, sampling guard) plus per-detector three-state enable flags (`0`/`1`/blank→env), on the Settings→Detection page; `DETECT_*` env baselines kept for consistency with the existing detector knobs. No migration.
-- Tests: 20+ new unit scenarios (pps-not-bps discrimination, sampled-rows-never-fps, packetless-rows-never-pps, elephant smear, carpet-bombing fold, host-suppresses-prefix, rate-set matrix, three-state flags, routing + suppression e2e), taxonomy/validity guardrails, a PG integration e2e (the peak-minute bucketing SQL is dialect-specific), and EXPLAIN-verified query plans on the prod-size replica (timestamp-index range scans, sub-millisecond).
+- Tests: 20+ new unit scenarios (pps-not-bps discrimination, sampled-rows-never-fps, packetless-rows-never-pps, elephant smear, carpet-bombing fold, host-suppresses-prefix, rate-set matrix, three-state flags, routing + suppression e2e), taxonomy/validity guardrails, a PG integration e2e (the peak-minute bucketing SQL is dialect-specific), and EXPLAIN-verified query plans on a full-size replica (timestamp-index range scans, sub-millisecond).
 - Pre-merge review hardening: the elephant-smear correction redistributes a long flow's bytes across its FULL span's minutes (not the window-clipped count), so a legitimate transfer that started before the window can't read as a multi-Gb/s peak and false-fire critical; prefix aggregation matches member victims by exact `dst_addr IN` instead of a textual LIKE (which over-matched sibling IPv6 /64s that share a compressed prefix); prefix suppression is peak-based (a member host must ACTUALLY fire per-host), so a /24 holding one merely-busy host no longer blinds carpet-bomb detection. The IPv6 randomized-IID limitation of the ÷1024 candidate floor is documented; regression tests cover all three.
 
 ## [0.11.102] - 2026-07-15
 
-### Fixed — two prod findings from the v0.11.101 live validation
+### Fixed — two findings from the v0.11.101 live validation
 
 - **IRC reconnect hot loop.** A persistently failing IRC server produced ~3,500 log lines/min: go-ircevent's `Loop()` reconnects with zero delay whenever the TCP dial succeeds but the connection dies right after — and this library version defers the TLS handshake to the read loop, so an expired server certificate (the live case: cert expired 3 days before) became an infinite dial→fail cycle. The bot now consumes the first connection error itself, tears the connection down, and hands reconnection to the manager's 30s sweep with **jittered exponential backoff** (30s doubling to a 15-min ceiling, reset on successful registration). Reconnection now also honors the server's `AutoReconnect` flag, which the library's internal loop ignored. `conn.Quit()` is deliberately avoided in the teardown — its `SendRaw` can park forever on a dead write loop (the known H5 hazard).
-- **pgxpool silently downgraded on unix-socket DB hosts.** The COPY-protocol pool's DSN used `postgres://` URL form, which mangles a socket-path host (`DB_HOST=/var/run/postgresql` → database `"run/postgresql:5432/firewall_mon"`). On the single-container prod deployment the pool has therefore failed its ping since it was introduced, and `SaveFlowSamples` ran on the ~2× slower GORM fallback. The DSN now uses the same libpq key=value form (and `pgQuote` escaping) as the GORM connection, so any address that works for GORM works for pgx. Regression tests pin the socket-path, special-character-password, and empty-password shapes via `pgxpool.ParseConfig`.
+- **pgxpool silently downgraded on unix-socket DB hosts.** The COPY-protocol pool's DSN used `postgres://` URL form, which mangles a socket-path host (`DB_HOST=/var/run/postgresql` → database `"run/postgresql:5432/firewall_mon"`). On the single-container deployment the pool has therefore failed its ping since it was introduced, and `SaveFlowSamples` ran on the ~2× slower GORM fallback. The DSN now uses the same libpq key=value form (and `pgQuote` escaping) as the GORM connection, so any address that works for GORM works for pgx. Regression tests pin the socket-path, special-character-password, and empty-password shapes via `pgxpool.ParseConfig`.
 - Pre-merge review hardening: IRC sends now recover from the send-on-closed-channel window the new teardown opens (`safePrivmsg` + per-tick recovery in the status loop — a mid-send disconnect skips the target instead of permanently killing auto-status); the watcher's backoff/status bookkeeping runs before `Disconnect()` (whose `Wait()` can stall ~16 min on a half-open socket); `pgQuote("")` emits `''` so an empty password can't swallow the next DSN token.
 
 ## [0.11.101] - 2026-07-15
@@ -3377,9 +3379,9 @@ Connection responses preload the FULL source/dest Device rows, and four endpoint
 
 ## [0.11.99] - 2026-07-15
 
-### Fixed — full connection-map review (three root causes found via live prod + device SNMP)
+### Fixed — full connection-map review (three root causes found via live data + device SNMP)
 
-Driven by a live investigation against the DC9 site (SSH to prod + SNMP walks of the real firewalls). The port-to-port LINKS were all correct (LLDP-confirmed); the problems were stale data, a legacy detector, and label placement:
+Driven by a live investigation against the DC9 site (SNMP walks of the real firewalls). The port-to-port LINKS were all correct (LLDP-confirmed); the problems were stale data, a legacy detector, and label placement:
 
 - **Stale interface addresses shown on the Interfaces tab.** The resolver read any historical `interface_addresses` row (`ORDER BY timestamp DESC`), so an 18-day-old address surfaced under a live link — e.g. DC9-FW2's `dmz` jack (no IP today) showed `10.10.10.1`, which is actually the *other* firewall's dmz. Address resolution is now anchored to the device's latest INTERFACE poll (not the latest address poll — an interface that lost its IP leaves its old address row as the newest, with no tombstone); addresses older than that poll are treated as gone. An IP-less bridged/switch port now correctly shows no IP.
 - **Legacy name-match guessing still drew duplicate links.** `detectOverlayConnections` created `l2vlan` + `bridge` lines between same-site devices purely because they shared an interface NAME (both FortiGates have a `bridge` "internal" and shared VLAN names) — no port evidence — duplicating the real LLDP link (you'd see Ethernet + Software Switch + L2VLAN between one device pair). Same-site direct/switch links are now owned exclusively by the evidence-based L2 inference; the overlay detector keeps only `vxlan`/`l3ipvlan` (true overlays riding a verified VPN tunnel). The stale duplicates self-sweep on the next poll cycle.
@@ -3446,7 +3448,7 @@ The same-site "physical" links were previously guessed: any two devices with int
 - **Map:** single-link direct bundles and expanded sublanes are labeled with the port pair; link confidence is drawn as line STYLE (LLDP/FDB solid, ARP dashed — teal stays the direct color in both themes); stale links render amber-dashed. All neighbor-controlled strings (LLDP sysnames/port IDs) are HTML-escaped everywhere they render.
 - **Deploy note:** until the v1.3.15 collector relays topology data, the map shows **no local links** (the guessed ones are purged by v46) — upgrade server and collector together. Devices exposing no ARP/FDB/LLDP via SNMP show no local links by design. FortiGate LLDP may need enabling (`config system lldp` per interface); FortiGates whose SNMP agent lacks an ARP table are supplemented over SSH (`get system arp`).
 - Docs: MIGRATING.md + SUPPORT-MATRIX.md schema v5 rows. Tests: 17-case inference suite, snapshot replace semantics, handler scope/normalization, poller regression (shared subnet + fresh FDB without mutual MACs ⇒ NO link), staleness transitions, upsert key semantics, detail evidence, schema-pin guardrail.
-- Adversarial review fixes (pre-merge): deterministic port selection on ties (port-NAME tiebreak in the FDB/ARP comparators — name-only SSH-ARP ports could otherwise flap attribution every cycle on map-iteration luck) plus `ORDER BY` on the evidence reads and a stable link sort; a failed L2 evidence READ now skips the cycle's stale-connection sweep (a PG timeout with healthy VPN detectors would have deleted every L2 row and recreated them with new IDs); ingestion drops `device_id=0` rows, clamps future timestamps (an unclamped one would pin fake evidence "fresh" forever), and fully canonicalizes MACs via `net.ParseMAC` (a Cisco dot-form FDB MAC would silently never match the SQL filter); the upsert key includes the if_names so two name-only parallel links can't thrash one row; CDP neighbor management IP gets a proper `remote_mgmt_addr` field. **Known limitation** (documented): without LLDP, the FDB tier attributes ONE port per device pair (newest wins) — genuine parallel links (HA-sync + LAN) render as separate rows only when LLDP names them.
+- Review fixes (pre-merge): deterministic port selection on ties (port-NAME tiebreak in the FDB/ARP comparators — name-only SSH-ARP ports could otherwise flap attribution every cycle on map-iteration luck) plus `ORDER BY` on the evidence reads and a stable link sort; a failed L2 evidence READ now skips the cycle's stale-connection sweep (a PG timeout with healthy VPN detectors would have deleted every L2 row and recreated them with new IDs); ingestion drops `device_id=0` rows, clamps future timestamps (an unclamped one would pin fake evidence "fresh" forever), and fully canonicalizes MACs via `net.ParseMAC` (a Cisco dot-form FDB MAC would silently never match the SQL filter); the upsert key includes the if_names so two name-only parallel links can't thrash one row; CDP neighbor management IP gets a proper `remote_mgmt_addr` field. **Known limitation** (documented): without LLDP, the FDB tier attributes ONE port per device pair (newest wins) — genuine parallel links (HA-sync + LAN) render as separate rows only when LLDP names them.
 
 ## [0.11.93] - 2026-07-14
 
@@ -3822,7 +3824,7 @@ alerting onto one configurable surface.
   episode.
 - Migration **v41** adds `event_rules.dampen_json` (a per-source dampening blob,
   so future source types add parameters with no further schema change).
-- Hardening (adversarial review): the owned path still honors a per-device
+- Hardening (review): the owned path still honors a per-device
   "alerts disabled" / per-type policy disable, so ownership never resurrects an
   alert an operator turned off; a link that flaps and then stays **down** is
   re-escalated at most once per day instead of going silent behind a misleading
@@ -3985,7 +3987,7 @@ INTERFACE_DOWN and VPN_TUNNEL_DOWN alerts.
 ### Hardened — probe command channel (pre-merge review fixes)
 
 Follow-up hardening for the server→collector command channel introduced in
-0.11.75, from an adversarial review before merge:
+0.11.75, from a review before merge:
 
 - **Redelivery/result-ingest race closed.** `ClaimProbeCommands` now guards
   both the dispatch and the max-attempts fail-over `UPDATE`s on the row still
@@ -4375,7 +4377,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed `.github/dependabot.yml` (scheduled version-update PRs). Merging a Dependabot PR keeps `dependabot[bot]` as the commit author, which adds it to the repo's Contributors — dependency currency is now handled by applying updates directly, with `govulncheck` in CI as the security backstop.
 
 ### Rejected (deliberately not applied)
-- **Alpine 3.21 → 3.24** (bot PR): Alpine 3.24 main dropped the `postgresql16` package (ships 17/18 only). The runtime image pins `postgresql16` so the bind-mounted prod PGDATA stays PostgreSQL-major-16 compatible; bumping would break the image build or require a risky `pg_upgrade` of production data. Held at 3.21.
+- **Alpine 3.21 → 3.24** (bot PR): Alpine 3.24 main dropped the `postgresql16` package (ships 17/18 only). The runtime image pins `postgresql16` so a bind-mounted PGDATA stays PostgreSQL-major-16 compatible; bumping would break the image build or require a risky `pg_upgrade` of production data. Held at 3.21.
 - **Tailwind CSS 3.4 → 4.x** (bot PR): a major engine rewrite that would break the `styles.css`→`tailwind.css` generation and the CI freshness gate; deferred to a dedicated migration.
 
 ## [0.11.39] - 2026-07-05
@@ -4459,7 +4461,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.11.31] - 2026-07-04
 
 ### Docs
-- **2026-07-04 Logic & Consistency Audit complete — all 51 findings RESOLVED** (5 HIGH / 26 MEDIUM / 20 LOW; LC-00–LC-52 with two cross-dimension merges). Fixes shipped in server v0.11.23–v0.11.30 and collector v1.3.2–v1.3.5; every finding in `docs/audit-2026-07-04-logic-consistency.md` is annotated with its resolving version, and the collector copy matches. One migration consumed (v30, flow_rollups.firewall_event); one cross-repo contract change (probe decommission = 410 Gone on all three planes, collector quiesces).
+- **2026-07-04 Logic & Consistency Audit complete — all 51 findings RESOLVED** (5 HIGH / 26 MEDIUM / 20 LOW; LC-00–LC-52 with two cross-dimension merges). Fixes shipped in server v0.11.23–v0.11.30 and collector v1.3.2–v1.3.5; every finding in the audit report is annotated with its resolving version, and the collector copy matches. One migration consumed (v30, flow_rollups.firewall_event); one cross-repo contract change (probe decommission = 410 Gone on all three planes, collector quiesces).
 
 ## [0.11.30] - 2026-07-04
 
@@ -4467,7 +4469,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **DATA-RETENTION.md matches the code** (LC-24): the retention table now enumerates every table `CleanupOldData` touches (was missing 10, including the new v0.11.24 status-table and incident retention), flags `flow_rollups` as PII (src/dst conversation pairs kept 365 days), relabels `flow_samples` for NetFlow/IPFIX, and documents the status-table fallback + syslog partition-drop fast path. The NOT-auto-pruned section covers open incidents, threat_intel (poller-TTL), and bounded upsert tables.
 - **Outbound-processor disclosure complete** (LC-46): PagerDuty, Opsgenie, Teams, generic-webhook HMAC, threat-feed downloads, and OTLP trace export added with what-leaves/to-whom/enabling-config per channel; SSH capture correctly attributed to the collector.
 - **config.env.example is actually authoritative again** (LC-40): 51 vars reconciled against the code (32 live vars added with real defaults — SNMP_V3_*, ALERT_FLAP_*, incident-channel keys, REPORT_*, server timeouts; 19 dead PROBE_*/allowlist vars quarantined under an explicit LEGACY-UNUSED banner). A two-way diff of env reads vs the file is now clean.
-- **Stale sFlow NOC redesign plan tombstoned** (LC-47): the 1,776-line "pre-implementation" doc contradicting shipped reality (claimed 0.11.x for an sFlow rewrite, excluded NetFlow/IPFIX) replaced with a SUPERSEDED banner pointing at FEATURE-ROADMAP Part IV + the flow-protocol research; full text remains in git history.
+- **Stale sFlow NOC redesign plan tombstoned** (LC-47): the 1,776-line "pre-implementation" doc contradicting shipped reality (claimed 0.11.x for an sFlow rewrite, excluded NetFlow/IPFIX) replaced with a SUPERSEDED banner pointing at the feature roadmap + the flow-protocol research; full text remains in git history.
 
 ## [0.11.29] - 2026-07-04
 
@@ -4490,7 +4492,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed — vendor SNMP registry (audit LC-43, cross-repo with collector v1.3.4)
 - **`cisco_asa` and `generic` devices no longer silently poll FortiGate enterprise OIDs**: both vendors were valid in the API/UI but had no SNMP profile in either repo — `resolveVendor` fell through to the FortiGate default. New `generic` profile (standards-only: MIB-II system scalars, hrProcessor CPU, hrMemorySize; VPN/sensors/HA/sessions cleanly unsupported) and `cisco_asa` profile (MIB-II base + CISCO-PROCESS-MIB CPU, CISCO-MEMORY-POOL memory, CISCO-FIREWALL-MIB connection count and failover state; ASA VPN/sensor OIDs deliberately omitted as build-dependent). Genuinely-unmapped vendor strings now resolve to `generic` instead of FortiGate; the empty-vendor → fortigate default stays (load-bearing for pre-vendor-column devices).
 - Registry-completeness test gates every API `validVendors` entry to a real profile (list pinned to `handlers.go`); per-vendor conformance fixtures for both new profiles; hostile-input robustness suite extended 6→8 vendors.
-- `docs/FEATURE-ROADMAP.md` corrected: it claimed the server already registered cisco_asa/generic (and listed helper files as vendors); now reflects what actually ships.
+- The feature roadmap corrected: it claimed the server already registered cisco_asa/generic (and listed helper files as vendors); now reflects what actually ships.
 
 ## [0.11.26] - 2026-07-04
 
@@ -4548,7 +4550,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.11.22] - 2026-07-04
 
 ### Docs
-- **2026-07-04 Logic & Consistency Audit report committed** (`docs/audit-2026-07-04-logic-consistency.md`). Dual-repo audit targeting logical flaws and inconsistencies accumulated over the last three months (server v0.10.x → v0.11.21, collector → v1.3.0): 13-dimension multi-agent sweep + gap round, every finding adversarially verified by 2–3 independent refutation lenses. 51 unique confirmed findings (5 HIGH / 26 MEDIUM / 20 LOW), IDs LC-00–LC-52; 11 touch the collector repo (copy committed there). Fixes land in the following releases and are annotated per-finding in the report.
+- **2026-07-04 Logic & Consistency Audit report committed**. Dual-repo audit targeting logical flaws and inconsistencies accumulated over the last three months (server v0.10.x → v0.11.21, collector → v1.3.0): 13-dimension sweep + gap round, every finding independently verified 2–3 ways. 51 unique confirmed findings (5 HIGH / 26 MEDIUM / 20 LOW), IDs LC-00–LC-52; 11 touch the collector repo (copy committed there). Fixes land in the following releases and are annotated per-finding in the report.
 
 ## [0.11.21] - 2026-07-04
 
@@ -4558,7 +4560,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.11.20] - 2026-07-04
 
 ### Added
-- **NetFlow v5/v9 + IPFIX ingestion — server side** (v0.11 Tranche 3 / P0-4, first of two cross-repo phases; collector 1.3.0 carries the parsers). Migration v29 adds the multi-protocol flow columns in one pass (flow_samples is partitioned — one cheap shot): `flow_source` (0 sFlow / 1 v5 / 2 v9 / 3 IPFIX, clamped at ingest, carried through rollups as a group key), `flow_start`/`flow_end` (NetFlow records are interval aggregates, not instants), `firewall_event` (IE 233 — **denied-flow visibility**; zero-byte denied/create records are deliberately legal at ingest), `flow_end_reason`, the post-NAT tuple, `icmp_type_code`, `tos`, VLANs, and the exporter-provided `app_name`. All wire fields are additive `omitempty` — no `schema_version` change, old collectors and old servers interoperate in both directions (see SUPPORT-MATRIX). NetFlow-sourced rows are excluded from the sFlow cumulative agent-drops pipeline. Flows page gains a **Source filter** (select + chip + URL param + CSV column + samples-table column) and a **dual-export warning banner** listing devices reporting via more than one protocol in the last hour. Design input committed as `docs/flow-protocol-research-2026-07-03.md` (13-agent adversarially-verified research: FortiGate sampled-scale counter math, ASA byte-only NSEL counters, v9-vs-IPFIX options-template semantics, the full vendor matrix incl. SonicWall EntID-8741 extensions and Firewalla's lack of flow export). Tests: ingest clamp/zero-byte/drops-isolation, source filter over raw + rollups, rollup source grouping, mixed-source device query, COPY column pinning.
+- **NetFlow v5/v9 + IPFIX ingestion — server side** (v0.11 Tranche 3 / P0-4, first of two cross-repo phases; collector 1.3.0 carries the parsers). Migration v29 adds the multi-protocol flow columns in one pass (flow_samples is partitioned — one cheap shot): `flow_source` (0 sFlow / 1 v5 / 2 v9 / 3 IPFIX, clamped at ingest, carried through rollups as a group key), `flow_start`/`flow_end` (NetFlow records are interval aggregates, not instants), `firewall_event` (IE 233 — **denied-flow visibility**; zero-byte denied/create records are deliberately legal at ingest), `flow_end_reason`, the post-NAT tuple, `icmp_type_code`, `tos`, VLANs, and the exporter-provided `app_name`. All wire fields are additive `omitempty` — no `schema_version` change, old collectors and old servers interoperate in both directions (see SUPPORT-MATRIX). NetFlow-sourced rows are excluded from the sFlow cumulative agent-drops pipeline. Flows page gains a **Source filter** (select + chip + URL param + CSV column + samples-table column) and a **dual-export warning banner** listing devices reporting via more than one protocol in the last hour. Design input: a flow-protocol research note (independently verified research: FortiGate sampled-scale counter math, ASA byte-only NSEL counters, v9-vs-IPFIX options-template semantics, the full vendor matrix incl. SonicWall EntID-8741 extensions and Firewalla's lack of flow export). Tests: ingest clamp/zero-byte/drops-isolation, source filter over raw + rollups, rollup source grouping, mixed-source device query, COPY column pinning.
 
 ## [0.11.19] - 2026-07-03
 
@@ -4573,7 +4575,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.11.17] - 2026-07-03
 
 ### Fixed
-- **MFA wizard "Not now" now really means "ask me again next login"** — the once-per-session guard used a sessionStorage flag, which outlives a logout in the same browser tab, so after "Not now" the prompt only returned when the tab was closed (found by the maintainer on the first prod-side try). A successful login (both the password-only and TOTP second-step paths in admin-login.js) now clears the flag before redirecting, so every fresh sign-in re-offers the wizard until the user either enrolls or explicitly declines ("Don't ask me again" stays permanent, server-side, as designed). Verified with the exact repro: prompt → Not now → logout → login → prompt returns.
+- **MFA wizard "Not now" now really means "ask me again next login"** — the once-per-session guard used a sessionStorage flag, which outlives a logout in the same browser tab, so after "Not now" the prompt only returned when the tab was closed (found by the maintainer on the first live try). A successful login (both the password-only and TOTP second-step paths in admin-login.js) now clears the flag before redirecting, so every fresh sign-in re-offers the wizard until the user either enrolls or explicitly declines ("Don't ask me again" stays permanent, server-side, as designed). Verified with the exact repro: prompt → Not now → logout → login → prompt returns.
 
 ## [0.11.16] - 2026-07-03
 
@@ -4585,7 +4587,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.11.15] - 2026-07-03
 
 ### Docs
-- Post-publish test plan (`tasks/todo.md`) extended with the settings-page redesign checks (section nav, deep links, sticky save bar lifecycle, role behavior, themes) and retargeted to v0.11.14.
+- Post-publish test plan (internal task notes) extended with the settings-page redesign checks (section nav, deep links, sticky save bar lifecycle, role behavior, themes) and retargeted to v0.11.14.
 
 ## [0.11.14] - 2026-07-03
 
@@ -4595,17 +4597,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.11.13] - 2026-07-03
 
 ### Docs
-- **Post-publish test plan for the v0.11 line** (`tasks/todo.md`): a checkable, per-feature list of what to verify on production after deploying 0.11.12 — upgrade pre-flight (backup, key continuity, migrations v20–v27), Tranche 1 access-control spot-checks, and every Tranche 2 alerting feature with expected behavior, prioritizing the paths local testing could not close (live PagerDuty/Opsgenie/Teams deliveries, on-the-wire webhook signing to a public receiver, escalation-step success-path advancement, real-data MTTA/MTTR).
+- **Post-publish test plan for the v0.11 line** (internal task notes): a checkable, per-feature list of what to verify on a live deployment after deploying 0.11.12 — upgrade pre-flight (backup, key continuity, migrations v20–v27), Tranche 1 access-control spot-checks, and every Tranche 2 alerting feature with expected behavior, prioritizing the paths local testing could not close (live PagerDuty/Opsgenie/Teams deliveries, on-the-wire webhook signing to a public receiver, escalation-step success-path advancement, real-data MTTA/MTTR).
 
 ## [0.11.12] - 2026-07-03
 
 ### Docs
-- **Tranche 2 local functional walkthrough completed** — the full alerting-maturity bundle was exercised live against a local PostgreSQL 16 using the production `AlertManager` code path with synthetic metric feeds: F14 clear-band hold/release, F17 z-score dynamic threshold (fire at baseline+K·σ, static-floor suppression of in-band values), F13 flap suppression (`[FLAPPING]` + muted recovery), F12 incident open/attach-mute/close with `INC#n` chips and summary alert, F19 step due/route/retry-without-skip semantics, escalation-step API validation (ascending times, unknown channel), policy-editor round-trip for all new fields, HMAC webhook signing cross-verified against an independent implementation, role-aware UI hiding + `insufficient_role` enforcement, forced first-login password change, and the report Operations section (MTTA/MTTR + noisiest alerts). New lesson recorded in `tasks/lessons.md` (local testing is Postgres-only). Known cosmetic nit found: a flap-suppressed alert's suppression chip reads `MAINT` regardless of suppression source.
+- **Tranche 2 local functional walkthrough completed** — the full alerting-maturity bundle was exercised live against a local PostgreSQL 16 using the production `AlertManager` code path with synthetic metric feeds: F14 clear-band hold/release, F17 z-score dynamic threshold (fire at baseline+K·σ, static-floor suppression of in-band values), F13 flap suppression (`[FLAPPING]` + muted recovery), F12 incident open/attach-mute/close with `INC#n` chips and summary alert, F19 step due/route/retry-without-skip semantics, escalation-step API validation (ascending times, unknown channel), policy-editor round-trip for all new fields, HMAC webhook signing cross-verified against an independent implementation, role-aware UI hiding + `insufficient_role` enforcement, forced first-login password change, and the report Operations section (MTTA/MTTR + noisiest alerts). New lesson recorded in the internal notes (local testing is Postgres-only). Known cosmetic nit found: a flap-suppressed alert's suppression chip reads `MAINT` regardless of suppression source.
 
 ## [0.11.11] - 2026-07-03
 
 ### Docs
-- **v0.11 Tranche 2 (alerting maturity) marked complete in `docs/FEATURE-ROADMAP.md` Part IV** — the full bundle shipped as v0.11.1–v0.11.10: clear-band hysteresis, role-aware admin UI, HMAC webhook signing, flapping suppression, z-score adaptive baselining, PagerDuty/Opsgenie/Teams channels, escalation step chains, incident grouping, and the MTTA/MTTR + alert-noise report section (migrations v23–v27, all additive). Next tranche in sequence: NetFlow v5/v9 + IPFIX ingestion (cross-repo).
+- **v0.11 Tranche 2 (alerting maturity) marked complete in the feature roadmap (Part IV)** — the full bundle shipped as v0.11.1–v0.11.10: clear-band hysteresis, role-aware admin UI, HMAC webhook signing, flapping suppression, z-score adaptive baselining, PagerDuty/Opsgenie/Teams channels, escalation step chains, incident grouping, and the MTTA/MTTR + alert-noise report section (migrations v23–v27, all additive). Next tranche in sequence: NetFlow v5/v9 + IPFIX ingestion (cross-repo).
 
 ## [0.11.10] - 2026-07-03
 
@@ -4660,7 +4662,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.11.0] - 2026-07-03
 
 ### Milestone
-- **Access-control epic complete** — the opening tranche of the v0.11 feature program (see `docs/FEATURE-ROADMAP.md` Part IV). This release rolls up the three phases shipped as 0.10.566–0.10.568 into the 0.11 line:
+- **Access-control epic complete** — the opening tranche of the v0.11 feature program (see the feature roadmap, Part IV). This release rolls up the three phases shipped as 0.10.566–0.10.568 into the 0.11 line:
   - **Multi-user + RBAC** (0.10.566): admin / operator / viewer roles with server-side enforcement across the whole admin surface, user management UI, session revocation on role change.
   - **Scoped API tokens** (0.10.567): `fwm_…` bearer credentials riding the same role ladder, hashed at rest, shown once, soft-revoked.
   - **TOTP 2FA** (0.10.568): opt-in two-step login with recovery codes, replay guard, shared lockout budget, encrypted secrets.
@@ -4687,7 +4689,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.10.565] - 2026-07-02
 
 ### Docs
-- **v0.11 feature program recorded in `docs/FEATURE-ROADMAP.md` (new Part IV)** — the full 2026-07-02 feature-by-feature triage of the strategic roadmap (P0–P2) and all 89 AUDIT-F ideas: corrections for items already built since the lists were written (topology view, geo/ASN, SSE, theme, audit log, and more), the deliberate skips (self-monitoring page, device notes/tags, GDPR purge, multi-tenancy, demo mode), and the selected work sequenced into 13 build tranches starting with the access-control epic (multi-user/RBAC → scoped API tokens → TOTP 2FA).
+- **v0.11 feature program recorded in the feature roadmap (new Part IV)** — the full 2026-07-02 feature-by-feature triage of the strategic roadmap (P0–P2) and all 89 AUDIT-F ideas: corrections for items already built since the lists were written (topology view, geo/ASN, SSE, theme, audit log, and more), the deliberate skips (self-monitoring page, device notes/tags, GDPR purge, multi-tenancy, demo mode), and the selected work sequenced into 13 build tranches starting with the access-control epic (multi-user/RBAC → scoped API tokens → TOTP 2FA).
 
 ## [0.10.564] - 2026-07-02
 
@@ -4740,12 +4742,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`gosec` security static-analysis is now a CI gate** (`.github/workflows/ci.yml`, pinned v2.27.1). High-signal rules (SQL injection, command execution, SSRF via variable URL, weak-randomness-for-tokens, unhandled crypto) are enforced. A curated exclude list (`G115,G124,G203,G304,G401,G501,G703`) drops the rules that are systematically false-positive for this app category — each documented in the workflow and reviewed in the 2026-07-02 audit (integer conversions on DB counters, the TLS-driven `Secure` cookie flag, report-SVG `template.HTML` over server-computed numbers, config/secret file reads by path, and the non-cryptographic MD5 config-change fingerprint).
 
 ### Docs
-- Documented in-code why `configdiff` config-change checksums stay on MD5 (a non-cryptographic content fingerprint; switching algorithms would false-fire a CONFIG_CHANGE alert on every device once at upgrade). Marked all three collector findings of the 2026-07-02 audit resolved (collector v1.2.162) in `docs/audit-2026-07-02-consolidated.md`.
+- Documented in-code why `configdiff` config-change checksums stay on MD5 (a non-cryptographic content fingerprint; switching algorithms would false-fire a CONFIG_CHANGE alert on every device once at upgrade). Marked all three collector findings of the 2026-07-02 audit resolved (collector v1.2.162) in the 2026-07-02 audit report.
 
 ## [0.10.556] - 2026-07-02
 
 ### Security
-Fixes for the confirmed server-side findings of the 2026-07-02 engineering security audit (adversarially verified). See `docs/audit-2026-07-02-consolidated.md`.
+Fixes for the confirmed server-side findings of the 2026-07-02 engineering security audit (independently verified).
 
 - **HIGH — IRC credentials were returned in cleartext by the IRC API.** `GetIRCServer(ByID)`, `GetIRCChannels`, and the create/update echo responses decrypted the stored server/NickServ/SASL/ChanServ/oper/channel-key secrets and serialized the plaintext into the JSON body — defeating the at-rest encryption for anything that sees an admin response (browser cache, proxy logs, admin-context XSS). Added `RedactIRCServer`/`RedactIRCChannel` (`internal/httputil/redact.go`); all IRC read/echo paths now mask secrets with `********`. The update handlers gained the redaction write-back guard (an incoming `********` means "unchanged" and is never re-encrypted over the real secret), mirroring the device path. The Connect/Test flows still read plaintext server-side.
 - **HIGH — session revocation failed open under DB stress.** `AuthManager.ValidateToken` only rejected a token when the token-version lookup returned `err == nil`; on any DB error (transient failure, `statement_timeout`, missing row) it accepted the token regardless of version, so a stolen-but-unexpired JWT survived logout / password-change revocation exactly when the DB was stressed. It now fails closed — any lookup error rejects the token. Regression test `TestValidateToken_FailsClosedOnDBError`.
@@ -4777,12 +4779,12 @@ Fixes for the confirmed server-side findings of the 2026-07-02 engineering secur
 - **`PRIVACY.md` — no-telemetry statement.** Documents that Firewall-Mon does not phone home, enumerates every default and opt-in outbound connection, and points privacy concerns at the security-disclosure process. Linked from the README.
 
 ### Fixed
-- **`.playwright-mcp/` dev-dump directory is now git-ignored.** Its contents were already ignored but the directory itself showed as untracked; added an explicit ignore rule. Clarified the `CODEOWNERS` header (the `@xphox2` owner is the current maintainer, not a placeholder to replace).
+- **A browser-automation dev-dump directory is now git-ignored.** Its contents were already ignored but the directory itself showed as untracked; added an explicit ignore rule. Clarified the `CODEOWNERS` header (the `@xphox2` owner is the current maintainer, not a placeholder to replace).
 
 ## [0.10.552] - 2026-07-02
 
 ### Docs
-- **Marked audit finding L13 resolved in the consolidated report.** L13 (collector flow-counter backlog flapping probe approval after a server schema-v1 rollback) was fixed in collector v1.2.160; this records its `✅ RESOLVED` banner in the server-repo copy of `docs/audit-2026-07-01-consolidated.md`, which now carries the resolved markers for all 64 findings of the 2026-07-01 audit (10 HIGH + 30 MEDIUM + 24 LOW — the full audit is complete). No code change.
+- **Marked audit finding L13 resolved in the consolidated report.** L13 (collector flow-counter backlog flapping probe approval after a server schema-v1 rollback) was fixed in collector v1.2.160; this records its `✅ RESOLVED` banner in the server-repo copy of the 2026-07-01 audit report, which now carries the resolved markers for all 64 findings of the 2026-07-01 audit (10 HIGH + 30 MEDIUM + 24 LOW — the full audit is complete). No code change.
 
 ## [0.10.551] - 2026-07-02
 
@@ -4826,7 +4828,7 @@ Fixes for the confirmed server-side findings of the 2026-07-02 engineering secur
 - **Native/systemd installs no longer inherit the "keep critical syslog forever" default that caused the DB-bloat incident (audit 2026-07-01 finding M21).** The `RETENTION_SYSLOG_CRITICAL_DAYS` mitigation lived only in `docker-compose.yml`; `config.env.example` — which `deploy.sh` seeds verbatim as the live config on native installs — documented none of the core retention knobs, so severity-0–5 syslog (FortiGate traffic logs are severity 5) accumulated forever. Added a documented core-retention block (`RETENTION_SYSLOG_CRITICAL_DAYS=30` with the incident rationale, plus `SYSLOG_INFO`/`FLOW`/`STATUS`/`TRAP`/`PING`/`ALERT`/`DEFAULT` days) so every install path gets the safe value. *(The code default is intentionally left at 0 to avoid silently deleting existing installs' critical syslog on upgrade — the fix is opt-in via the seeded config.)*
 
 ### Added
-- **CI now fails if the committed `tailwind.css` is out of date (audit 2026-07-01 finding M22).** The embedded `cmd/api/static/css/tailwind.css` is generated from `styles.css` by `npm run tailwind`, but the Dockerfile only COPYs the committed artifact and no CI gate existed, so a `styles.css` edit without regeneration could ship stale/broken theming to prod (the v0.10.500→526 regression). A new `Tailwind CSS freshness` CI job regenerates the file and fails on any diff, so a stale artifact can never merge — which keeps the file the Dockerfile copies always fresh.
+- **CI now fails if the committed `tailwind.css` is out of date (audit 2026-07-01 finding M22).** The embedded `cmd/api/static/css/tailwind.css` is generated from `styles.css` by `npm run tailwind`, but the Dockerfile only COPYs the committed artifact and no CI gate existed, so a `styles.css` edit without regeneration could ship stale/broken theming to production (the v0.10.500→526 regression). A new `Tailwind CSS freshness` CI job regenerates the file and fails on any diff, so a stale artifact can never merge — which keeps the file the Dockerfile copies always fresh.
 
 ## [0.10.546] - 2026-07-01
 
@@ -4852,7 +4854,7 @@ Fixes for the confirmed server-side findings of the 2026-07-02 engineering secur
 ## [0.10.543] - 2026-07-01
 
 ### Docs
-- **Marked audit findings M16, M17, M18 resolved in `docs/audit-2026-07-01-consolidated.md`** — all three fixed collector-side in v1.2.157 (TCP syslog now rate-limited/connection-capped/backoff-on-accept-error; corrupt spillover files quarantine-and-recreate instead of disabling all seven queues; the throttled fsync moved off the queue mutex shared by UDP workers). See the collector CHANGELOG for details.
+- **Marked audit findings M16, M17, M18 resolved in the 2026-07-01 audit report** — all three fixed collector-side in v1.2.157 (TCP syslog now rate-limited/connection-capped/backoff-on-accept-error; corrupt spillover files quarantine-and-recreate instead of disabling all seven queues; the throttled fsync moved off the queue mutex shared by UDP workers). See the collector CHANGELOG for details.
 
 ## [0.10.542] - 2026-07-01
 
@@ -4865,7 +4867,7 @@ Fixes for the confirmed server-side findings of the 2026-07-02 engineering secur
 
 ### Fixed
 - **DB failures no longer render as an all-zero "live" NOC dashboard (audit 2026-07-01 finding M10).** `GetNOCSnapshotFiltered` discarded every query error and always returned `(snap, nil)`, so during a statement-timeout or outage the hub broadcast a zeroed snapshot — overwriting the last good frame — while the badge said "● live" and the site grid claimed "No sites or devices yet"; the hub's keep-last-good branch and the one-shot handler's 500 branch were dead code. The core flow aggregate, device status counts, and site breakdown now propagate errors (the top-N/country sub-queries stay tolerant by design), the hub keeps the last good snapshot, and compute failures are logged rate-limited to once per minute.
-- **The NOC broadcaster no longer taxes the database while nobody is watching (audit 2026-07-01 finding M11).** The hub ran its ~15 aggregate scans — including two `COUNT(DISTINCT)` over the 5-minute flow window — every 5 seconds, 24/7, subscriber or not, and every `ALLOW_MULTI_API` follower duplicated the full load against the shared prod Postgres. Ticks now compute only while at least one SSE subscriber is connected; the first subscriber (0→1) gets a freshly computed snapshot inline. This also zeroes the follower duplication without breaking follower SSE the way primary-gating the hub would have.
+- **The NOC broadcaster no longer taxes the database while nobody is watching (audit 2026-07-01 finding M11).** The hub ran its ~15 aggregate scans — including two `COUNT(DISTINCT)` over the 5-minute flow window — every 5 seconds, 24/7, subscriber or not, and every `ALLOW_MULTI_API` follower duplicated the full load against the shared Postgres. Ticks now compute only while at least one SSE subscriber is connected; the first subscriber (0→1) gets a freshly computed snapshot inline. This also zeroes the follower duplication without breaking follower SSE the way primary-gating the hub would have.
 - **Trap rate-limiter drops are now operator-visible (audit 2026-07-01 finding M29).** Drops from token exhaustion and from the 10k-source map cap were completely silent — no log, no metric — despite three code/CHANGELOG claims to the contrary, so legitimate traps lost during a link-flap storm or a spoof-flood lockout left zero trace. Every drop now increments `fwmon_trap_ratelimit_drops_total{reason="rate"|"cap"}` on the trap-receiver's `/metrics`, and a summary log line fires at most once per minute so a flood can't turn the defense into a log-volume DoS.
 
 ## [0.10.540] - 2026-07-01
@@ -4885,7 +4887,7 @@ Fixes for the confirmed server-side findings of the 2026-07-02 engineering secur
 ## [0.10.538] - 2026-07-01
 
 ### Fixed
-- **One bad row can no longer reject (and poison-loop) an entire ingestion batch (audit 2026-07-01 finding M26).** The M4/M5 batch rewrites made the plural savers all-or-nothing: on partitioned prod Postgres a single row outside the existing partition range — a clock-skewed collector, or a spillover replay after its month's partition was dropped (no DEFAULT partition exists) — failed the whole INSERT, the handler 500'd, the collector buffered the batch as retryable, and its drain requeued the poison item forever: that metric type's ingestion stopped entirely. All **14** plural batch savers now share `batchInsertWithFallback`: the multi-row INSERT remains the fast path; on failure it retries per-row, logging and dropping only the unsalvageable rows (the pre-rewrite semantics), and returns an error only when *every* row fails. Regression test `TestBatchInsertWithFallback_M26` forces a poison batch through a unique-index violation.
+- **One bad row can no longer reject (and poison-loop) an entire ingestion batch (audit 2026-07-01 finding M26).** The M4/M5 batch rewrites made the plural savers all-or-nothing: on partitioned Postgres a single row outside the existing partition range — a clock-skewed collector, or a spillover replay after its month's partition was dropped (no DEFAULT partition exists) — failed the whole INSERT, the handler 500'd, the collector buffered the batch as retryable, and its drain requeued the poison item forever: that metric type's ingestion stopped entirely. All **14** plural batch savers now share `batchInsertWithFallback`: the multi-row INSERT remains the fast path; on failure it retries per-row, logging and dropping only the unsalvageable rows (the pre-rewrite semantics), and returns an error only when *every* row fails. Regression test `TestBatchInsertWithFallback_M26` forces a poison batch through a unique-index violation.
 - **Ingestion batch truncation is no longer silent (audit 2026-07-01 finding M1).** Flows, flow counters, pings, interface addresses, interface stats, and system statuses truncated oversize batches with no log or alert — then returned 200 and marked the idempotency batch ID processed, so the collector could never resend the tail: permanent, invisible loss whenever `PROBE_MAX_BATCH_SIZE` was raised above the server's cap. All eight capped endpoints now share `truncateProbeBatch`, which logs every truncation and records the operator-visible probe alert (the pre-existing traps/syslog behavior) on >20% overshoot. A 413-reject was deliberately avoided — live pre-fix collectors treat non-2xx as retryable and would requeue oversize batches forever.
 
 ## [0.10.537] - 2026-07-01
@@ -4897,7 +4899,7 @@ Fixes for the confirmed server-side findings of the 2026-07-02 engineering secur
 ## [0.10.536] - 2026-07-01
 
 ### Docs
-- **Marked audit findings H6 and H7 resolved in `docs/audit-2026-07-01-consolidated.md`** — both fixed collector-side in v1.2.154 (per-source rate-limiter idle eviction was dead code due to an unsatisfiable stored-tokens predicate; spillover-queue replay loaded the entire spool into RAM at startup). See the collector CHANGELOG for the full details. All ten HIGH findings of the 2026-07-01 audit except H10 are now resolved.
+- **Marked audit findings H6 and H7 resolved in the 2026-07-01 audit report** — both fixed collector-side in v1.2.154 (per-source rate-limiter idle eviction was dead code due to an unsatisfiable stored-tokens predicate; spillover-queue replay loaded the entire spool into RAM at startup). See the collector CHANGELOG for the full details. All ten HIGH findings of the 2026-07-01 audit except H10 are now resolved.
 
 ## [0.10.535] - 2026-07-01
 
@@ -4934,7 +4936,7 @@ Fixes for the confirmed server-side findings of the 2026-07-02 engineering secur
 ## [0.10.531] - 2026-07-01
 
 ### Docs
-- **Recorded a maintainer-workflow lesson in `tasks/lessons.md`:** inspect external PR commit messages for attribution trailers before merging; when present, squash-merge and hand-edit the squash message rather than merge-committing the original commit verbatim. (Context: PR #50's commit body carried an attribution trailer that a plain merge preserved into master history; resolved via a one-time authorized history rewrite that kept the contributor's authorship intact.)
+- **Recorded a maintainer-workflow lesson in the internal notes:** inspect external PR commit messages for attribution trailers before merging; when present, squash-merge and hand-edit the squash message rather than merge-committing the original commit verbatim. (Context: PR #50's commit body carried an attribution trailer that a plain merge preserved into master history; resolved via a one-time authorized history rewrite that kept the contributor's authorship intact.)
 
 ## [0.10.530] - 2026-07-01
 
@@ -4944,12 +4946,12 @@ Fixes for the confirmed server-side findings of the 2026-07-02 engineering secur
 ## [0.10.529] - 2026-07-01
 
 ### Docs
-- **Recorded a tooling lesson in `tasks/lessons.md`:** never round-trip a UTF-8 source file through Windows PowerShell 5.1 `Get-Content`/`Set-Content` — a BOM-less UTF-8 file is read as ANSI and every non-ASCII character is double-encoded into mojibake (this corrupted 38 comment lines in the collector's `main.go` during the v1.2.153 version bump before being caught by `git show --stat` and reverted). Single-line source edits go through a proper editor tool; scripted rewrites must be followed by a `git diff --stat` sanity check.
+- **Recorded a tooling lesson in the internal notes:** never round-trip a UTF-8 source file through Windows PowerShell 5.1 `Get-Content`/`Set-Content` — a BOM-less UTF-8 file is read as ANSI and every non-ASCII character is double-encoded into mojibake (this corrupted 38 comment lines in the collector's `main.go` during the v1.2.153 version bump before being caught by `git show --stat` and reverted). Single-line source edits go through a proper editor tool; scripted rewrites must be followed by a `git diff --stat` sanity check.
 
 ## [0.10.528] - 2026-07-01
 
 ### Added
-- **Engineering audit 2026-07-01 (dual-repo, multi-agent consensus): `docs/audit-2026-07-01-consolidated.md`.** Deep adversarial audit of everything shipped since the fully-resolved 2026-06-23 audit (sFlow analytics R1–R6, SSE NOC, Console UI, probe lifecycle, collector rate-limiting/queue work). **64 confirmed findings** (server 52 / collector 12; 10 HIGH, 30 MEDIUM, 24 LOW), every one surviving adversarial refutation-based verification. Highest-risk clusters: paginated GROUP BY aggregations that can silently double-count or destroy rollup/syslog history (H1–H3), missing retention for the new flow tables (H4), the poller advisory work-lock leaking across pooled connections so a single poller skips its own ticks (H9), direct-link connection charts rendering cumulative counters as per-bucket deltas (H10), and collector rate-limiter/queue hardening gaps (H6/H7). Findings are documentation-only in this version — fixes land in follow-up commits per the report's suggested order. A collector-scoped copy ships in the collector repo.
+- **Engineering audit 2026-07-01 (dual-repo).** Deep audit of everything shipped since the fully-resolved 2026-06-23 audit (sFlow analytics R1–R6, SSE NOC, Console UI, probe lifecycle, collector rate-limiting/queue work). **64 confirmed findings** (server 52 / collector 12; 10 HIGH, 30 MEDIUM, 24 LOW), every one surviving independent verification. Highest-risk clusters: paginated GROUP BY aggregations that can silently double-count or destroy rollup/syslog history (H1–H3), missing retention for the new flow tables (H4), the poller advisory work-lock leaking across pooled connections so a single poller skips its own ticks (H9), direct-link connection charts rendering cumulative counters as per-bucket deltas (H10), and collector rate-limiter/queue hardening gaps (H6/H7). Findings are documentation-only in this version — fixes land in follow-up commits per the report's suggested order. A collector-scoped copy ships in the collector repo.
 
 ## [0.10.527] - 2026-07-01
 
@@ -5213,7 +5215,7 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 ## [0.10.495] - 2026-06-25
 
 ### Docs
-- **Documentation accuracy sweep — marked the 2026-06-23 audit fully resolved and reconciled every doc with the current code.** `docs/audit-2026-06-23-consolidated.md` and `docs/FEATURE-ROADMAP.md` now show all server findings (HIGH H1–H8, the MEDIUM cluster incl. M8, REL-01/REL-04, the dependency/base bumps, and both large refactors) as ✅ resolved — the only remaining work is explicitly labelled optional engineering headroom, not audit debt. `docs/AUDIT.md` cross-references the resolved follow-up audit. Corrected stale/inaccurate claims found by a code-vs-docs verification pass: the SNMP vendor list (six registered profiles — FortiGate/Palo Alto/SonicWall/pfSense/OPNsense/Firewalla; **no "generic" SNMP profile**; Cisco ASA is config-diff only) in `README.md`, `docs/FEATURES.md` (support matrix), and the prose; the `VendorProfile` interface in `docs/custom-vendor.md` (dropped the non-existent `SSLVPN*` methods; `GetAllVPNTunnels` returns `([]models.VPNStatus, error)`); the README architecture tree (now lists all 23 `internal/` packages with accurate one-liners, incl. `relay` = probe↔server wire contract); `CONTRIBUTING.md` (Go 1.25+, real test-coverage candidates, removed the false "OPERATIONS.md is missing" note); `THIRD-PARTY-NOTICES.md` (full `go-ircevent` pseudo-version); and `docs/OPERATIONS.md` (health endpoint documents the `/api/readyz` alias, the M8 503-on-undecryptable-secrets behaviour and `"encryption"` JSON field, and the poller/trap fail-fast). Docs-only — no code or behaviour change; version bump for traceability.
+- **Documentation accuracy sweep — marked the 2026-06-23 audit fully resolved and reconciled every doc with the current code.** The 2026-06-23 audit report and the feature roadmap now show all server findings (HIGH H1–H8, the MEDIUM cluster incl. M8, REL-01/REL-04, the dependency/base bumps, and both large refactors) as ✅ resolved — the only remaining work is explicitly labelled optional engineering headroom, not audit debt. The AUDIT-NNN ledger cross-references the resolved follow-up audit. Corrected stale/inaccurate claims found by a code-vs-docs verification pass: the SNMP vendor list (six registered profiles — FortiGate/Palo Alto/SonicWall/pfSense/OPNsense/Firewalla; **no "generic" SNMP profile**; Cisco ASA is config-diff only) in `README.md`, `docs/FEATURES.md` (support matrix), and the prose; the `VendorProfile` interface in `docs/custom-vendor.md` (dropped the non-existent `SSLVPN*` methods; `GetAllVPNTunnels` returns `([]models.VPNStatus, error)`); the README architecture tree (now lists all 23 `internal/` packages with accurate one-liners, incl. `relay` = probe↔server wire contract); `CONTRIBUTING.md` (Go 1.25+, real test-coverage candidates, removed the false "OPERATIONS.md is missing" note); `THIRD-PARTY-NOTICES.md` (full `go-ircevent` pseudo-version); and `docs/OPERATIONS.md` (health endpoint documents the `/api/readyz` alias, the M8 503-on-undecryptable-secrets behaviour and `"encryption"` JSON field, and the poller/trap fail-fast). Docs-only — no code or behaviour change; version bump for traceability.
 
 ## [0.10.494] - 2026-06-25
 
@@ -5223,7 +5225,7 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 ## [0.10.493] - 2026-06-25
 
 ### Docs
-- **Marked the test-coverage backlog as substantially addressed in `FEATURE-ROADMAP.md` (Open audit follow-ups).** Updated the status-at-a-glance row to 🟡 (v0.10.492) and expanded the detail bullet with the per-package before/after numbers (notifier 1.8→48.2%, sflow 35.9→69.4%, snmp 10.8→20.1%, relay 0→wire-contract locked) and the explicit remaining headroom: the `snmp` package stays ~20% because most of it is live `Walk`/`Get` network methods that need a device or an injectable walker to exercise. Keeps the done-vs-outstanding picture current; no code change.
+- **Marked the test-coverage backlog as substantially addressed in the feature roadmap (Open audit follow-ups).** Updated the status-at-a-glance row to 🟡 (v0.10.492) and expanded the detail bullet with the per-package before/after numbers (notifier 1.8→48.2%, sflow 35.9→69.4%, snmp 10.8→20.1%, relay 0→wire-contract locked) and the explicit remaining headroom: the `snmp` package stays ~20% because most of it is live `Walk`/`Get` network methods that need a device or an injectable walker to exercise. Keeps the done-vs-outstanding picture current; no code change.
 
 ## [0.10.492] - 2026-06-25
 
@@ -5244,7 +5246,7 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 - **REL-04 — maintenance DDL no longer aborts at the 30s `statement_timeout` (2026-06-23 audit).** The `SET statement_timeout = 0` discipline (AUDIT-037) was applied to the migration-lock and interface-address dedupe paths but not to the partition-maintenance DDL, which on a large/busy database can exceed 30s and fail with SQLSTATE 57014. New `Database.execMaintenanceDDL` runs a statement with the timeout lifted (`SET LOCAL statement_timeout = 0`, Postgres-only, scoped to a short transaction so it never leaks to pooled connections); it now wraps the partition + index creates in `EnsurePartitions`, the per-table `ALTER` in `ConfigureAutovacuum`, and the per-partition `DROP` in `dropPartitionsOlderThan`, and `convertEmptyTableToPartitioned` lifts the timeout inside its existing transaction.
 
 ### Docs
-- **Closed the "LOW dead-code deletions" audit follow-up as not-actionable.** Adversarial re-verification found neither flagged item is deletable: the relay `StartCollector`/`runCollectorHandler` busy-loop was already removed with `cmd/probe` in commit `493ef87`, and `linux_vpn`/`bsd_vpn` are **not** unregistered stubs but live shared helpers called by the registered `firewalla` (linux_vpn) and `pfsense`/`opnsense` (bsd_vpn) vendor profiles — deleting them breaks the build. Updated `docs/FEATURE-ROADMAP.md` (Open audit follow-ups now carries a status-at-a-glance table) and the `docs/audit-2026-06-23-consolidated.md` banner so it's clear online what is shipped vs still open: no discrete server bug findings remain — only the two large ongoing refactors (handler/database God-object split, test-coverage backlog).
+- **Closed the "LOW dead-code deletions" audit follow-up as not-actionable.** Re-verification found neither flagged item is deletable: the relay `StartCollector`/`runCollectorHandler` busy-loop was already removed with `cmd/probe` in commit `493ef87`, and `linux_vpn`/`bsd_vpn` are **not** unregistered stubs but live shared helpers called by the registered `firewalla` (linux_vpn) and `pfsense`/`opnsense` (bsd_vpn) vendor profiles — deleting them breaks the build. Updated the feature roadmap (Open audit follow-ups now carries a status-at-a-glance table) and the 2026-06-23 audit report banner so it's clear online what is shipped vs still open: no discrete server bug findings remain — only the two large ongoing refactors (handler/database God-object split, test-coverage backlog).
 
 ## [0.10.490] - 2026-06-24
 
@@ -5262,7 +5264,7 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 - **Documentation accuracy pass + audit-report consolidation.** Brought the docs in line with current code and cut single-purpose-file sprawl (docs only — no code change):
   - **Accuracy:** README/FEATURES version markers refreshed (badge → 0.10.487); removed the long-gone `cmd/probe` from trees/stats (3 fwmon daemons, not 4); fixed the SNMP vendor tables (6 vendors with a registered `VendorProfile`; `cisco_asa` is config-diff-only; dropped dead `linux_vpn`/`bsd_vpn`) and the FEATURES stats contradiction; "21 packages"→23, "70+ shell tests"→98, "14 of 170 open audit"→0/170; added the new poller/trap `/metrics`+`/healthz`+`/readyz` (v0.10.487) to README/FEATURES/OPERATIONS/architecture; corrected OPERATIONS claims that X-Request-ID (AUDIT-135) and versioned migrations (AUDIT-044) were "not yet shipped" (both shipped); CONTRIBUTING/SECURITY `main.go:34`→`:39` and removed the bogus Dockerfile-version-bump step; removed the resolved AUDIT-118 entry from KNOWN-ISSUES.
   - **THIRD-PARTY-NOTICES:** updated all direct-dep versions to match `go.mod` and added the missing direct deps with licenses (`prometheus/client_golang`, the `go.opentelemetry.io/otel*` modules — Apache-2.0; `glebarez/sqlite` — MIT; `jackc/pgx/v5` — now direct).
-  - **Consolidation:** archived the three `docs/audit-2026-06-22-*.md` reports → `docs/audit-archive/` and `tasks/{audit-2026-06-10,audit-2026-06-11,audit-2026-06-11-test-coverage,RELIABILITY-2026-06-11}.md` → `tasks/archive/` (with the still-open items — M8, alpine bump, pgx CVE, the Handler/database splits, the test-coverage backlog, REL-01/REL-04 — pulled into a new "Open audit follow-ups" section of `FEATURE-ROADMAP.md`); moved the obsolete `docs/UPGRADE-2026-06.md` → `docs/archive/` and repointed its links to `OPERATIONS.md`; folded `docs/SECURITY-VERIFICATION.md` into `OPERATIONS.md`; and annotated the live `docs/audit-2026-06-23-consolidated.md` with resolved/open status. `docs/AUDIT.md` (the AUDIT-NNN ledger), `tasks/SFLOW-NOC-REDESIGN-PLAN.md`, and `tasks/lessons.md` are unchanged.
+  - **Consolidation:** archived the three 2026-06-22 audit reports and the internal 2026-06-10/06-11 audit, test-coverage and reliability notes (with the still-open items — M8, alpine bump, pgx CVE, the Handler/database splits, the test-coverage backlog, REL-01/REL-04 — pulled into a new "Open audit follow-ups" section of the feature roadmap); archived the obsolete 2026-06 upgrade guide and repointed its links to `OPERATIONS.md`; folded `docs/SECURITY-VERIFICATION.md` into `OPERATIONS.md`; and annotated the live 2026-06-23 audit report with resolved/open status. The AUDIT-NNN ledger, the sFlow NOC redesign plan and the internal lessons notes are unchanged.
 
 ## [0.10.487] - 2026-06-24
 
@@ -5294,17 +5296,17 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 ## [0.10.483] - 2026-06-23
 
 ### Changed
-- **Renamed the internal `tasks/` audit-planning notes to the `audit-*` scheme** (`tasks/audit-2026-06-10.md`, `tasks/audit-2026-06-11.md`, `tasks/audit-2026-06-11-test-coverage.md`) and swept the last internal-nickname references from `tasks/` content — completing the rename so no working nickname remains anywhere in the tree. This also fixes a pre-existing mismatch where the changelog already referenced `tasks/audit-2026-06-11.md`. Internal notes only; no code or behavior change.
+- **Renamed the internal audit-planning notes to the `audit-*` scheme** (the 2026-06-10, 2026-06-11 and 2026-06-11 test-coverage notes) and reworded the last informal references in them — completing the rename so no informal name remains anywhere in the tree. This also fixes a pre-existing mismatch where the changelog already referred to the 2026-06-11 notes by their new name. Internal notes only; no code or behavior change.
 
 ## [0.10.482] - 2026-06-23
 
 ### Changed
-- **Completed the audit-wording sweep across all tracked files.** Reworded every remaining internal-nickname reference to "audit" — in changelog prose, Go source comments (`internal/{database,models,alerts,api,irc,syslog,sflow}` + tests), and doc headers — and renamed the 2026-06-22 audit reports to the `docs/audit-2026-06-22-{consolidated,design-patterns,taocp}.md` scheme. Internal `tasks/` planning notes are intentionally left as-is. Docs/comments only; no code or behavior change.
+- **Completed the audit-wording sweep across all tracked files.** Reworded every remaining informal reference to "audit" — in changelog prose, Go source comments (`internal/{database,models,alerts,api,irc,syslog,sflow}` + tests), and doc headers — and renamed the 2026-06-22 audit reports to the `docs/audit-2026-06-22-{consolidated,design-patterns,taocp}.md` scheme. Internal planning notes are intentionally left as-is. Docs/comments only; no code or behavior change.
 
 ## [0.10.481] - 2026-06-23
 
 ### Changed
-- **Docs/wording: professionalized the public-facing references to the 2026-06-23 audit.** Reworded the v0.10.477–480 changelog entries and the roadmap header to call it the "2026-06-23 audit" (dropping an internal working nickname), and renamed the 2026-06-23 consolidated audit report to `docs/audit-2026-06-23-consolidated.md` (the sibling collector report references this path). No code change.
+- **Docs/wording: professionalized the public-facing references to the 2026-06-23 audit.** Reworded the v0.10.477–480 changelog entries and the roadmap header to call it the "2026-06-23 audit" (replacing an informal working name), and renamed the 2026-06-23 consolidated audit report to match (the sibling collector report references it by that name). No code change.
 
 ## [0.10.480] - 2026-06-23
 
@@ -5319,7 +5321,7 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 ## [0.10.478] - 2026-06-23
 
 ### Fixed
-- **Syslog retention no longer issues a single unbounded DELETE on the DB's largest table (2026-06-23 audit, H6).** Four syslog cleanup deletes in `internal/database/cleanup.go` (critical `severity < 6`, informational `severity >= 6`, the `syslog_summaries` purge, and the legacy `SyslogDays` path) bypassed the AUDIT-038 `batchedDeleteOlderThan` helper that every other high-volume table uses. On a populated prod database that meant one DELETE touching millions of rows in the straddling partition: a long lock window that blocks ingestion, a large WAL burst, and — under the 30s `statement_timeout` — a query that gets killed and re-attempted every cleanup tick (crash-loop shape). Added `batchedDeleteOlderThanWhere(model, cutoff, extraWhere, args...)` (the existing `batchedDeleteOlderThan` is now a thin wrapper) so the severity-scoped syslog deletes run in the same 10k-row batches with `SET LOCAL lock_timeout='5s'` and an inter-batch sleep. Same rows deleted as before — only the locking/batching changes. Regression test `cleanup_syslog_batched_test.go` verifies the severity predicate is honored and recent rows are spared.
+- **Syslog retention no longer issues a single unbounded DELETE on the DB's largest table (2026-06-23 audit, H6).** Four syslog cleanup deletes in `internal/database/cleanup.go` (critical `severity < 6`, informational `severity >= 6`, the `syslog_summaries` purge, and the legacy `SyslogDays` path) bypassed the AUDIT-038 `batchedDeleteOlderThan` helper that every other high-volume table uses. On a populated database that meant one DELETE touching millions of rows in the straddling partition: a long lock window that blocks ingestion, a large WAL burst, and — under the 30s `statement_timeout` — a query that gets killed and re-attempted every cleanup tick (crash-loop shape). Added `batchedDeleteOlderThanWhere(model, cutoff, extraWhere, args...)` (the existing `batchedDeleteOlderThan` is now a thin wrapper) so the severity-scoped syslog deletes run in the same 10k-row batches with `SET LOCAL lock_timeout='5s'` and an inter-batch sleep. Same rows deleted as before — only the locking/batching changes. Regression test `cleanup_syslog_batched_test.go` verifies the severity predicate is honored and recent rows are spared.
 
 ## [0.10.477] - 2026-06-23
 
@@ -5340,7 +5342,7 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 ## [0.10.474] - 2026-06-23
 
 ### Changed
-- **Alert types, severities, and IRC command types are now Go typed strings (`type AlertType string`, `type Severity string`, `type CommandType string`) backed by named constants.** Previously these were bare `string` fields and parameters threaded through `internal/{alerts,notifier,report,irc,database}` and the handlers — a typo in a switch arm (`"CPU_HGIH"`) or a crossed assignment (severity into the alert-type column) compiled cleanly and only surfaced at runtime. They are now named string types (`internal/models/models.go`) with constant sets (`AlertTypeCPUHigh`, `SeverityCritical`, `CommandTypeStatus`, …); the model fields `Alert.AlertType/Severity`, `AlertRule.AlertType/Severity`, `IRCCommand.CommandType`, and the carrier `alerts.ResolvedAlertConfig.Severity` plus the policy-resolution helpers (`resolveAlertConfig`, `defaultSeverityForType`, `globalThresholdForType`, `overrideThreshold`, `configSeverityToAlert`, `escalateSeverity`) now use the typed forms, so the compiler rejects mismatches. **No wire or DB format change** — typed strings JSON-marshal and GORM-scan to the identical underlying value, so persisted rows and API payloads are byte-for-byte unchanged. Trap- and configdiff-domain severities (different vocabularies) are converted explicitly at their boundaries. Closes the audit's [medium]/[low] stringly-typed-enum findings (`docs/audit-2026-06-22-design-patterns.md`). All existing tests pass unchanged (only two test files needed typed map keys / boundary conversions).
+- **Alert types, severities, and IRC command types are now Go typed strings (`type AlertType string`, `type Severity string`, `type CommandType string`) backed by named constants.** Previously these were bare `string` fields and parameters threaded through `internal/{alerts,notifier,report,irc,database}` and the handlers — a typo in a switch arm (`"CPU_HGIH"`) or a crossed assignment (severity into the alert-type column) compiled cleanly and only surfaced at runtime. They are now named string types (`internal/models/models.go`) with constant sets (`AlertTypeCPUHigh`, `SeverityCritical`, `CommandTypeStatus`, …); the model fields `Alert.AlertType/Severity`, `AlertRule.AlertType/Severity`, `IRCCommand.CommandType`, and the carrier `alerts.ResolvedAlertConfig.Severity` plus the policy-resolution helpers (`resolveAlertConfig`, `defaultSeverityForType`, `globalThresholdForType`, `overrideThreshold`, `configSeverityToAlert`, `escalateSeverity`) now use the typed forms, so the compiler rejects mismatches. **No wire or DB format change** — typed strings JSON-marshal and GORM-scan to the identical underlying value, so persisted rows and API payloads are byte-for-byte unchanged. Trap- and configdiff-domain severities (different vocabularies) are converted explicitly at their boundaries. Closes the audit's [medium]/[low] stringly-typed-enum findings (2026-06-22 design-patterns audit). All existing tests pass unchanged (only two test files needed typed map keys / boundary conversions).
 
 ## [0.10.473] - 2026-06-22
 
@@ -5350,12 +5352,12 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 ## [0.10.472] - 2026-06-22
 
 ### Changed
-- **sFlow: bulk insert of `flow_samples` now uses the Postgres COPY protocol via a dedicated `*pgxpool.Pool` instead of GORM's per-row `Create`.** ~5-10× throughput on the same payload; eliminates per-row INSERT round-trips and the per-row transaction overhead. The pgx pool is opened alongside the GORM pool in `Connect` with the same connection settings and `statement_timeout` (AUDIT-037); failed pool init logs a warning and falls back to GORM `Create` (slow but correct). The SQLite test backend has `pgxPool == nil` and uses the GORM path — no test-time regression. `pgx` was already a transitive dependency on disk; this PR moves it to a direct dependency (`go.mod`). Tests: `TestFlowSamplesCopyColumns_OrderAndFieldTypes` (static check that the column list matches `models.FlowSample` field order — pgx binds columns positionally so a reorder is a silent corruption), `TestSaveFlowSamples_EmptyInputShortCircuits` (nil/empty input), `TestSaveFlowSamples_GORMFallbackOnSQLite` (the SQLite lane still works). Closes the audit's [critical] #4 (`docs/audit-2026-06-22-taocp.md`).
+- **sFlow: bulk insert of `flow_samples` now uses the Postgres COPY protocol via a dedicated `*pgxpool.Pool` instead of GORM's per-row `Create`.** ~5-10× throughput on the same payload; eliminates per-row INSERT round-trips and the per-row transaction overhead. The pgx pool is opened alongside the GORM pool in `Connect` with the same connection settings and `statement_timeout` (AUDIT-037); failed pool init logs a warning and falls back to GORM `Create` (slow but correct). The SQLite test backend has `pgxPool == nil` and uses the GORM path — no test-time regression. `pgx` was already a transitive dependency on disk; this PR moves it to a direct dependency (`go.mod`). Tests: `TestFlowSamplesCopyColumns_OrderAndFieldTypes` (static check that the column list matches `models.FlowSample` field order — pgx binds columns positionally so a reorder is a silent corruption), `TestSaveFlowSamples_EmptyInputShortCircuits` (nil/empty input), `TestSaveFlowSamples_GORMFallbackOnSQLite` (the SQLite lane still works). Closes the audit's [critical] #4 (2026-06-22 algorithms audit).
 
 ## [0.10.471] - 2026-06-22
 
 ### Fixed
-- **sFlow: `flow_samples.bytes` and `flow_samples.packets` now store the sampled traffic volume (`frame_length × sampling_rate` and `sampling_rate`) instead of the raw frame length and 1.** The audit (2026-06-22, taocp [critical] #1 and #2) found the server's parser at `internal/sflow/sflow.go:318-326` stored `Bytes = uint64(frameLength)` and `Packets = 1`, so every dashboard chart, top-N list, and throughput figure under-reported real traffic by 1:N (e.g. 512× at 1:512 sampling). The collector (sibling `Firewall-Collector` repo) already does this on its side — the server now matches. The read paths (`SUM(bytes)` and friends in `internal/database/flows.go`) are unchanged: because `bytes` is now scaled at insert, `SUM(bytes)` is correct as-is. A new migration v7 (`migrateFlowSamplesSamplingRateScale`) backfills historical rows so old and new data agree (`WHERE sampling_rate > 1 AND packets = 1` — idempotent; rows that have already been migrated via a crash-recovery re-run never match). Tests: `TestParseRawPacketHeader_BytesScaledBySamplingRate` (scaled bytes/packets), `TestParseRawPacketHeader_BytesUnscaledWhenSamplingRateOne` (sampling_rate=1 identity), `TestParseRawPacketHeader_ZeroFrameLength` (liveness-only), `TestMigrateFlowSamplesSamplingRateScale_ScalesAndIsIdempotent` (scaling + idempotency + sampling_rate=1 leave-alone), and `TestMigrateFlowSamplesSamplingRateScale_FreshInstallNoOp`. Per `tasks/lessons.md` "sFlow packets × sampling_rate is non-negotiable".
+- **sFlow: `flow_samples.bytes` and `flow_samples.packets` now store the sampled traffic volume (`frame_length × sampling_rate` and `sampling_rate`) instead of the raw frame length and 1.** The audit (2026-06-22, taocp [critical] #1 and #2) found the server's parser at `internal/sflow/sflow.go:318-326` stored `Bytes = uint64(frameLength)` and `Packets = 1`, so every dashboard chart, top-N list, and throughput figure under-reported real traffic by 1:N (e.g. 512× at 1:512 sampling). The collector (sibling `Firewall-Collector` repo) already does this on its side — the server now matches. The read paths (`SUM(bytes)` and friends in `internal/database/flows.go`) are unchanged: because `bytes` is now scaled at insert, `SUM(bytes)` is correct as-is. A new migration v7 (`migrateFlowSamplesSamplingRateScale`) backfills historical rows so old and new data agree (`WHERE sampling_rate > 1 AND packets = 1` — idempotent; rows that have already been migrated via a crash-recovery re-run never match). Tests: `TestParseRawPacketHeader_BytesScaledBySamplingRate` (scaled bytes/packets), `TestParseRawPacketHeader_BytesUnscaledWhenSamplingRateOne` (sampling_rate=1 identity), `TestParseRawPacketHeader_ZeroFrameLength` (liveness-only), `TestMigrateFlowSamplesSamplingRateScale_ScalesAndIsIdempotent` (scaling + idempotency + sampling_rate=1 leave-alone), and `TestMigrateFlowSamplesSamplingRateScale_FreshInstallNoOp`. Per the project rule "sFlow packets × sampling_rate is non-negotiable".
 
 ## [0.10.470] - 2026-06-22
 ### Added
@@ -5498,7 +5500,7 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 
 ## [0.10.441] - 2026-06-20
 ### Fixed
-- **`secrets.LoadOrGenerate` now fsyncs the secret before publishing it, fixing the intermittent "secret file empty after concurrent write" flake (`internal/secrets/secrets.go`).** The generate path writes the token to a temp file and `os.Link`s it into place so the final file only ever appears fully-written. But it never called `tmp.Sync()` before the link, so on some filesystems (notably Windows, and on any platform after a crash) the hard-linked directory entry could become visible while the inode's data blocks were still buffered — a racing re-reader or a post-crash reader would then see the file present but zero-length. Added `tmp.Sync()` before `os.Link`, so the content is durable before it is reachable, and made the race-loser's re-read retry a few times (5×5ms) instead of hard-failing on a transient empty read. This is a real durability fix, not only a test stabilizer (`go test -race` could never have caught it — it is filesystem visibility, not a Go memory race). First item of the v0.10.441+ adversarial audit refactor pass.
+- **`secrets.LoadOrGenerate` now fsyncs the secret before publishing it, fixing the intermittent "secret file empty after concurrent write" flake (`internal/secrets/secrets.go`).** The generate path writes the token to a temp file and `os.Link`s it into place so the final file only ever appears fully-written. But it never called `tmp.Sync()` before the link, so on some filesystems (notably Windows, and on any platform after a crash) the hard-linked directory entry could become visible while the inode's data blocks were still buffered — a racing re-reader or a post-crash reader would then see the file present but zero-length. Added `tmp.Sync()` before `os.Link`, so the content is durable before it is reachable, and made the race-loser's re-read retry a few times (5×5ms) instead of hard-failing on a transient empty read. This is a real durability fix, not only a test stabilizer (`go test -race` could never have caught it — it is filesystem visibility, not a Go memory race). First item of the v0.10.441+ audit refactor pass.
 
 ## [0.10.440] - 2026-06-20
 ### Added
@@ -5591,7 +5593,7 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 
 ## [0.10.423] - 2026-06-18
 ### Fixed
-- **Admin → Data → Syslog now loads fast and shows a sane pager instead of "1 of 3,353,148".** The `/api/syslog` list endpoint ran an exact `COUNT(*)` over the entire partitioned `syslog_messages` table on every page load (and every Prev/Next), with no time bound — at prod volume that's millions of rows, a full scan across all monthly partitions, which both made the page slow and produced the nonsensical all-time total in the pager. The endpoint now honors the `hours` time window the admin UI already sends via its range pills (default 24h) for *both* the row list and the count, so Postgres can prune partitions and use the `timestamp` index. The "Showing X–Y of N" / "Page X of Y" totals now reflect the selected range; widen the range pill to see further back.
+- **Admin → Data → Syslog now loads fast and shows a sane pager instead of "1 of 3,353,148".** The `/api/syslog` list endpoint ran an exact `COUNT(*)` over the entire partitioned `syslog_messages` table on every page load (and every Prev/Next), with no time bound — at production volume that's millions of rows, a full scan across all monthly partitions, which both made the page slow and produced the nonsensical all-time total in the pager. The endpoint now honors the `hours` time window the admin UI already sends via its range pills (default 24h) for *both* the row list and the count, so Postgres can prune partitions and use the `timestamp` index. The "Showing X–Y of N" / "Page X of Y" totals now reflect the selected range; widen the range pill to see further back.
 
 ## [0.10.422] - 2026-06-17
 ### Changed
@@ -5628,7 +5630,7 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 
 ## [0.10.415] - 2026-06-11
 ### Added
-- **Full sFlow NOC redesign plan saved as `tasks/SFLOW-NOC-REDESIGN-PLAN.md`** (v0.10.415). After the 2026-06-11 audit flagged 8.5% test coverage on `internal/sflow`, IPv6 traffic invisible to the parser, counter samples (ifInOctets/ifOutOctets) silently discarded, and `Bytes` never multiplied by `SamplingRate` (every chart understated real traffic by 1:N), the user requested a from-scratch redesign of the sFlow reporting pipeline. The plan covers 5 minor releases (`0.11.0` → `0.15.0`) over ~8–9 weeks: (0) data correctness (bytes×rate, drops, sequence numbers, rollup indexes), (1) counter samples + IPv6 + sFlow-native interface bandwidth alongside SNMP, (2) `SO_REUSEPORT` worker pool + per-agent token-bucket rate limit + in-memory top-K/HLL aggregator + SSE + `pgx.CopyFrom` bulk insert + Tier-1 detectors, (3) new `/admin/noc` page with the proven 6-zone NOC layout (status strip / top talkers / stacked throughput / top ports / anomaly ticker / per-device interface bandwidth) with click-to-filter and detail side-panel, (4) hardening + delete the bundled `cmd/probe` (per CHANGELOG v0.10.412 XR-1) + parse the remaining extended records + CIDR allowlist + 100% parser test coverage. The plan is self-contained (~1,400 lines, 18 sections) with cited sflow.org spec references, full DDL for all 5 new tables, code-diff-level implementation specs per phase, per-phase acceptance criteria and rollback strategy, an operational runbook, and an explicit decisions log. Wire protocol unchanged (30s JSON batch stays). Zero new infrastructure dependencies — no Kafka, no ClickHouse, no second store. **Docs-only, no redeploy needed.** (Plan lives at `tasks/SFLOW-NOC-REDESIGN-PLAN.md`; the 6 new project rules captured during planning live at `tasks/lessons.md`.)
+- **Full sFlow NOC redesign plan saved to the internal notes** (v0.10.415). After the 2026-06-11 audit flagged 8.5% test coverage on `internal/sflow`, IPv6 traffic invisible to the parser, counter samples (ifInOctets/ifOutOctets) silently discarded, and `Bytes` never multiplied by `SamplingRate` (every chart understated real traffic by 1:N), a from-scratch redesign of the sFlow reporting pipeline was planned. The plan covers 5 minor releases (`0.11.0` → `0.15.0`) over ~8–9 weeks: (0) data correctness (bytes×rate, drops, sequence numbers, rollup indexes), (1) counter samples + IPv6 + sFlow-native interface bandwidth alongside SNMP, (2) `SO_REUSEPORT` worker pool + per-agent token-bucket rate limit + in-memory top-K/HLL aggregator + SSE + `pgx.CopyFrom` bulk insert + Tier-1 detectors, (3) new `/admin/noc` page with the proven 6-zone NOC layout (status strip / top talkers / stacked throughput / top ports / anomaly ticker / per-device interface bandwidth) with click-to-filter and detail side-panel, (4) hardening + delete the bundled `cmd/probe` (per CHANGELOG v0.10.412 XR-1) + parse the remaining extended records + CIDR allowlist + 100% parser test coverage. The plan is self-contained (~1,400 lines, 18 sections) with cited sflow.org spec references, full DDL for all 5 new tables, code-diff-level implementation specs per phase, per-phase acceptance criteria and rollback strategy, an operational runbook, and an explicit decisions log. Wire protocol unchanged (30s JSON batch stays). Zero new infrastructure dependencies — no Kafka, no ClickHouse, no second store. **Docs-only, no redeploy needed.** (The plan and the 6 new project rules captured during planning live in the internal notes.)
 
 ## [0.10.414] - 2026-06-11
 ### Changed
@@ -5640,7 +5642,7 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 
 ## [0.10.412] - 2026-06-11
 ### Added
-- **Paired-repo internal audit (2026-06-11) saved as `tasks/audit-2026-06-11.md`.** Six parallel subagent reviewers per repo (security, performance, reliability, code-quality, test coverage, ops/DX) plus a cross-repo integration reviewer produced 172 findings — 13 blocker, 41 high, 67 medium, 51 low — with file:line refs and concrete fixes on both sides. **The headline finding corrects yesterday's 06-10 audit** (this report supersedes `tasks/audit-2026-06-10.md`): the "probe never sends `Authorization: Bearer`" claim (H-3) is **true for the server's own bundled `cmd/probe`** at `internal/relay/relay.go:265, 307, 475, 653, 676, 699, 773, 793, 813`, **not for the production sibling-repo collector** (which sends the header correctly on every authenticated request). The 12 subagent reviews and the prior audit conflated the two `internal/relay` packages. **Top 5 must-fix** (see the report for the full list):
+- **Paired-repo internal audit (2026-06-11) saved to the internal notes.** Six parallel reviewers per repo (security, performance, reliability, code-quality, test coverage, ops/DX) plus a cross-repo integration reviewer produced 172 findings — 13 blocker, 41 high, 67 medium, 51 low — with file:line refs and concrete fixes on both sides. **The headline finding corrects yesterday's 06-10 audit** (this report supersedes the 06-10 audit): the "probe never sends `Authorization: Bearer`" claim (H-3) is **true for the server's own bundled `cmd/probe`** at `internal/relay/relay.go:265, 307, 475, 653, 676, 699, 773, 793, 813`, **not for the production sibling-repo collector** (which sends the header correctly on every authenticated request). The 12 reviews and the prior audit conflated the two `internal/relay` packages. **Top 5 must-fix** (see the report for the full list):
   1. **XR-1 [blocker]** — Server bundled `cmd/probe` `Authorization: Bearer` is missing. The fix is to **delete the bundled probe** entirely — it's a stale fork of pre-collector code (~800 LoC) that should not exist alongside the production collector.
   2. **XR-2 [blocker]** — Server has no `mTLS` client-cert verification despite the sibling collector shipping mTLS support. `cmd/api/main.go:411-438` instantiates `http.Server{}` with no `TLSConfig` field. The collector's `PROBE_TLS_CERT` knobs load silently but have zero effect. The "we use mTLS" claim in any deployment is false until fixed.
   3. **XR-7 [blocker]** — `BatchInserter` is in-memory only (`internal/database/batcher.go:20-22` — explicit "AUDIT-006 (durability half) deferred" comment). The sibling probe is durable (BoltDB), the server is not. A `fwmon-api` crash mid-batch loses in-flight telemetry with no recovery path.
@@ -5653,7 +5655,7 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 - **Alerts now auto-resolve and clear themselves when the condition recovers — the NOC no longer hand-clears both the "down" and "back up" rows** (v0.10.411). When a recovery signal fires (device back online, interface up, VPN tunnel up, CPU/MEM/DISK/SESSIONS back under threshold, `LINK_UP` trap, probe data flowing again), the matching OPEN alert is now **resolved AND acknowledged** in one step (`resolved_at` + `acknowledged` + an `"Auto-resolved: …"` note), so it leaves the default open queue automatically. The companion `*_RESOLVED` record is created pre-closed (acked+resolved) instead of as a second open ticket. Net effect: a self-healing flap produces **zero** rows the NOC must clear, while the recovery notification email still fires and both rows stay visible (with a green **RESOLVED** badge) under the "Acknowledged" filter for flap investigation. Changes are server-side in the poller's `AlertManager.sendRecovery` (`internal/alerts/alerts.go`) plus the admin alerts UI badge (`cmd/api/static/js/admin-main.js`). **Requires a redeploy** (poller binary + embedded JS).
   - **Correctness fix bundled in:** recovery resolution was previously scoped by `device_id + alert_type` only, so a single interface coming back up would wrongly resolve **every** `INTERFACE_DOWN`/`VPN_TUNNEL_DOWN` alert on that device. Resolution is now scoped to the specific resource via `metric_name` (`interface_<name>` / `vpn_<tunnel>` / `device_status` / …) — the recovered resource and nothing else. One-shot alert types with no clear signal (SYSLOG_*, CONFIG_CHANGE, INTERFACE_ERRORS, PROBE_DATA_TRUNCATED) are intentionally left manual.
   - **Restart-robust:** the DB resolve now always runs (idempotent), decoupled from the poller's in-memory `activeAlerts`, so an offline alert orphaned by a poller restart still auto-clears on the next recovery — but a cold resolve stays silent (no duplicate companion / no re-notification). Tests: `TestSendRecovery_PreciseLinking`, `TestSendRecovery_AutoAcknowledge`, `TestCheckDeviceOnline_RestartOrphan`, `TestSendRecovery_Idempotent`, `TestSendRecovery_PerDeviceBackwardCompat` (`internal/alerts/auto_resolve_test.go`).
-- **audit (2026-06-10) saved as `tasks/audit-2026-06-10.md`.** Six parallel subagent reviews (security, performance, reliability, code-quality, test coverage, ops/DX) produced 104 findings — 1 blocker, 29 high, 43 medium, 31 low — with file:line references and concrete fixes. The full aggregated report is committed to `tasks/` so future contributors and audits can build on it instead of re-deriving the same findings. **Top 5 priority issues** (see the report for the full list):
+- **audit (2026-06-10) saved to the internal notes.** Six parallel reviews (security, performance, reliability, code-quality, test coverage, ops/DX) produced 104 findings — 1 blocker, 29 high, 43 medium, 31 low — with file:line references and concrete fixes. The full aggregated report is kept so future contributors and audits can build on it instead of re-deriving the same findings. **Top 5 priority issues** (see the report for the full list):
   1. **B-1 perf** — `GetProbeStats` fires 104 sequential queries per page load; sibling `GetProbesStatsBatch` already does it in 8 (`internal/api/handlers/handlers_probes.go:727-793`).
   2. **H-3 security** — probe wire-format is broken: the relay client never sends the `Authorization: Bearer` header the server requires, so no probe can currently push data with the current client (`internal/relay/relay.go:265, 307, 475, 653, 676, 699, 773, 793, 813`).
   3. **H-1 security** — `/api/public/connections` leaks the full fleet topology without auth — it skips the `public_visible` filter that sibling endpoints honor (`internal/api/handlers/handlers_dashboard.go:425-426`).
@@ -5724,18 +5726,18 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 ## [0.10.396] - 2026-06-08
 ### Added
 - **Structured logging via `log/slog` (AUDIT-076)** (v0.10.396). The server logged through a flat `log.Printf` stream: no levels, no machine-parseable fields, no credential redaction — and "a flat stream is not searchable" was the exact pain the v0.10.236 / v0.10.238 incident chain exposed, since logs are the team's primary diagnostic surface. New `internal/logging` package adopts the stdlib `log/slog` as the single logging backend, with one deliberate design choice that makes the migration tractable: `logging.Init()` (called first thing in `cmd/api/main.go`'s `main()`) calls `slog.SetDefault`, which — since Go 1.21 — **also routes the legacy `log` package through the slog handler**. So all ~460 existing `log.Printf` call sites gain levelled, structured, redacted output with zero per-site edits, instead of a 460-site mechanical churn. Two env vars control the sink: `LOG_FORMAT` = `text` (default, logfmt key=value) | `json` (one JSON object per line, for Loki/ELK/Splunk), and `LOG_LEVEL` = `debug` | `info` (default) | `warn` | `error`. Legacy `log.Printf` lines bridge in at info, so the default keeps the pre-AUDIT-076 verbosity. A `ReplaceAttr` redaction hook masks any slog attribute whose key names a secret (`password`/`passwd`/`secret`/`token`/`apikey`/`api_key`/`community`/`private_key` → `REDACTED`), mirroring the API-response masking. The two highest-volume logging chokepoints were converted to **native** slog records with queryable attributes (not bridged strings): `httputil.InternalError` (every handler 500 → `slog.Error(msg, status=500, method, route, req, err)`) and `middleware.RequestLogger` (every failed request → `slog.LogAttrs(... "http request", req, method, path, status, latency)`, level split 4xx→warn / 5xx→error). Tests: `internal/logging/logging_test.go` (redaction, the stdlib→slog bridge, level parsing) + `internal/shell/structuredlogging_audit076_test.go` (static guards that the foundation and both chokepoints stay on slog). `LOG_FORMAT`/`LOG_LEVEL` documented in `config.env.example`. **Requires a redeploy** to take effect; behaviour is otherwise unchanged at the default `text`/`info`.
-- **Operations docs: "Key continuity" upgrade warning** (v0.10.392, docs-only). Codifies the lesson from the 2026-06-07 production incident: an upgrade deployed from a *fresh checkout in a new directory* (`/opt/firewall-mon` → `/opt/firewall-mon`) made the entrypoint regenerate `config.env` with a new random `JWT_SECRET_KEY`. Because `ENCRYPTION_KEY` had been left to silently derive from the JWT secret (the AUDIT-008/009 fallback), the derived AES-256 key changed and **every stored `{enc}` secret (SNMP communities, SMTP/IRC passwords) became undecryptable** — devices stopped polling and email alerts failed `535`, with no recovery short of re-entering every secret by hand. Added a prominent ⚠ callout to `docs/OPERATIONS.md` → **Upgrade** explaining what each key does, why `ENCRYPTION_KEY` must be set **explicitly** (decoupling encryption from JWT auto-regeneration) and carried forward verbatim on every upgrade / host-move / repo relocation, plus a before-and-after verification command; and a cross-linked pre-flight step (#7) in `docs/UPGRADE-2026-06.md`. Docs-only; no code change.
+- **Operations docs: "Key continuity" upgrade warning** (v0.10.392, docs-only). Codifies the lesson from an earlier upgrade failure: an upgrade deployed from a *fresh checkout in a new directory* made the entrypoint regenerate `config.env` with a new random `JWT_SECRET_KEY`. Because `ENCRYPTION_KEY` had been left to silently derive from the JWT secret (the AUDIT-008/009 fallback), the derived AES-256 key changed and **every stored `{enc}` secret (SNMP communities, SMTP/IRC passwords) became undecryptable** — devices stopped polling and email alerts failed `535`, with no recovery short of re-entering every secret by hand. Added a prominent ⚠ callout to `docs/OPERATIONS.md` → **Upgrade** explaining what each key does, why `ENCRYPTION_KEY` must be set **explicitly** (decoupling encryption from JWT auto-regeneration) and carried forward verbatim on every upgrade / host-move / repo relocation, plus a before-and-after verification command; and a cross-linked pre-flight step (#7) in the 2026-06 upgrade guide. Docs-only; no code change.
 - **Doc-unification pass across `xphox2/Firewall-Monitoring` and `xphox2/Firewall-Collector`** (v0.10.389, docs-only). The two repos were drifting: the collector's README was 138 lines and last meaningfully rewritten around 1.2.50 (missing TFTP backup, SSH polling, mTLS, observability, schema versioning, the disk-spillover queue, the `ssh-test` subcommand, the `diag-backup` binary, and most hardening); the server's README was 309 lines with a strong but ad-hoc structure. Cross-references to `MIGRATING.md` / `SUPPORT-MATRIX.md` / `ARCHITECTURE.md` were dangling in the collector. This release brings both repos to the **same section order, the same role-tag convention, and the same "single canonical home" rule for cross-cutting docs**:
   - New `docs/STRUCTURE.md` in both repos — the index of where every topic lives, with absolute github.com cross-links for anyone reading either repo in isolation. The server's `STRUCTURE.md` is the canonical version; the collector's mirrors it.
   - New `docs/FEATURES.md` in both repos — website-ready feature inventory with `Stable` / `Beta` / `Planned` status, `[Server]` / `[Probe]` / `[Both]` role tags, and "since" version for every row. The server's `FEATURES.md` covers 60+ stable features, the 9 in-tree vendor profiles, the planned items (server-side mTLS, SIGHUP hot-reload, GDPR export), and the 5 entries from `KNOWN-ISSUES.md` with their AUDIT-NNN tracking IDs. The collector's `FEATURES.md` is the companion piece.
   - **New `README.md` for both repos** — same 14-section structure (Sibling project → Features → Architecture → Quick Start → Configuration → Upgrading → Compatibility → Operations → Security → API/Wire format → Contributing → License → Support), the same role-tag convention on every feature, the same wording for the canonical-home pointers. The collector README grew from 138 → ~340 lines; the server README was restructured in place to match the new order.
-  - **Cross-cutting-docs policy (per the user's explicit sign-off, 2026-06-07)**: `MIGRATING.md`, `SUPPORT-MATRIX.md`, `OPERATIONS.md`, `DATA-RETENTION.md`, `FORTIGATE-SNMP-SETUP.md`, `CERT-ROTATION.md`, and the combined `architecture.md` live **only in `xphox2/Firewall-Monitoring`**. The collector points to them with absolute github.com URLs. The rationale: these topics only matter to operators of the central server, so duplicating them in the collector risks drift.
-  - **Cleanup of stray files** that should never have been committed: `docs/CSS.md` and `docs/SCAN.md` (raw `govulncheck` dumps left in `docs/` by a CI run). The collector had its own strays (`session-ses_1613.md` — a 4,939-line leaked Claude session transcript — and `tasks/SERVER-NOTES.md`, which described server-side code and was in the wrong repo); those are cleaned up in collector 1.2.109.
+  - **Cross-cutting-docs policy**: `MIGRATING.md`, `SUPPORT-MATRIX.md`, `OPERATIONS.md`, `DATA-RETENTION.md`, `FORTIGATE-SNMP-SETUP.md`, `CERT-ROTATION.md`, and the combined `architecture.md` live **only in `xphox2/Firewall-Monitoring`**. The collector points to them with absolute github.com URLs. The rationale: these topics only matter to operators of the central server, so duplicating them in the collector risks drift.
+  - **Cleanup of stray files** that should never have been committed: `docs/CSS.md` and `docs/SCAN.md` (raw `govulncheck` dumps left in `docs/` by a CI run). The collector had its own strays (a leaked working-notes file, and a server-notes file that described server-side code and was in the wrong repo); those are cleaned up in collector 1.2.109.
   - **Known follow-up (not in this PR)**: the server has three legacy-lowercase files in `docs/` (`architecture.md`, `custom-vendor.md`, `partition-migration.md`) pinned by shell-guard tests (`TestArchitectureDiagram_AUDIT108`, `TestCustomVendorDoc_AUDIT170`, `TestEnsurePartitions_SurfacesWarning_AUDIT146`). Renaming them to UPPERCASE is a separate change — requires updating those three tests in the same commit. All **new** docs in this repo ship in UPPERCASE per the collector's 1.2.107 standard.
 
 ### Notes
 - **Docs-only.** No code change. `go build ./...`, `go test -race ./...`, and `make qa` should pass unchanged (the doc change doesn't touch any non-doc file).
-- New `docs/STRUCTURE.md` and `docs/FEATURES.md` are the two new top-level operator docs. The existing `MIGRATING.md`, `KNOWN-ISSUES.md`, `docs/OPERATIONS.md`, `docs/architecture.md`, `docs/custom-vendor.md`, `docs/SUPPORT-MATRIX.md`, `docs/DATA-RETENTION.md`, `docs/CERT-ROTATION.md`, `docs/FORTIGATE-SNMP-SETUP.md`, `docs/partition-migration.md`, `docs/nginx.conf`, `docs/UPGRADE-2026-06.md`, `docs/SECURITY-VERIFICATION.md`, and `docs/AUDIT.md` are unchanged. `THIRD-PARTY-NOTICES.md`, `IRC-FORMAT.txt`, `LICENSE`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md` are unchanged. `config.env.example` and `.env.example` are unchanged.
+- New `docs/STRUCTURE.md` and `docs/FEATURES.md` are the two new top-level operator docs. The existing `MIGRATING.md`, `KNOWN-ISSUES.md`, `docs/OPERATIONS.md`, `docs/architecture.md`, `docs/custom-vendor.md`, `docs/SUPPORT-MATRIX.md`, `docs/DATA-RETENTION.md`, `docs/CERT-ROTATION.md`, `docs/FORTIGATE-SNMP-SETUP.md`, `docs/partition-migration.md`, `docs/nginx.conf`, the 2026-06 upgrade guide, `docs/SECURITY-VERIFICATION.md`, and the AUDIT-NNN ledger are unchanged. `THIRD-PARTY-NOTICES.md`, `IRC-FORMAT.txt`, `LICENSE`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md` are unchanged. `config.env.example` and `.env.example` are unchanged.
 
 
 ## [0.10.395] - 2026-06-08
@@ -5754,7 +5756,7 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 
 ## [0.10.391] - 2026-06-07
 ### Fixed
-- **Production incident: large-DB startup cascade — `interface_addresses` ingestion broke and the API/trap-receiver crash-looped** (v0.10.391). On a large production database (~32 GB, after a data relocation) the server hit a cascading failure: device data stopped persisting and the probe showed online but stale. Root cause was the AUDIT-037 per-connection `statement_timeout` (default 30s) colliding with two slow startup operations:
+- **Large-DB startup cascade — `interface_addresses` ingestion broke and the API/trap-receiver crash-looped** (v0.10.391). On a large database (after a data relocation) the server hit a cascading failure: device data stopped persisting and the probe showed online but stale. Root cause was the AUDIT-037 per-connection `statement_timeout` (default 30s) colliding with two slow startup operations:
   1. **`interface_addresses` self-heal (AUDIT-030/AUDIT-037).** `ensureInterfaceAddrUniqueIndex` deduplicates and builds `idx_ifaddr_dev_ip` (the conflict target for `SaveInterfaceAddresses`' `ON CONFLICT (device_id, ip_address)` upsert). On a big, duplicate-laden table the dedupe `DELETE` exceeded 30s and was canceled (`57014`), so the index was never created and **every** `POST /api/probes/:id/interface-addresses` failed with `42P10` ("no unique or exclusion constraint matching the ON CONFLICT specification") — the 500-flood that filled `postgresql.log`. Fix: run the dedupe + `CREATE UNIQUE INDEX` inside a transaction with `SET LOCAL statement_timeout = 0`, so this one-time maintenance DDL can't be time-boxed.
   2. **Migration advisory-lock acquisition (AUDIT-044/AUDIT-037).** `acquireMigrationLock` calls the *blocking* `pg_advisory_lock()`; while one process (the poller) held the lock running the slow self-heal, the **API and trap-receiver blocked on acquiring it, hit the same 30s cap, and failed to boot** (`migrate: acquire lock: canceling statement due to statement timeout`) — crash-looping. Fix: `SET statement_timeout = 0` on the dedicated lock connection before the blocking acquire, so waiting for a busy migrator can't be canceled (only that connection is affected; migrations keep their timeout).
   Net effect: the index now builds once (even on a huge table), the upsert works, and the three processes start cleanly. **Operators already hit by this** can restore service immediately without redeploying by building the index by hand: `SET statement_timeout=0;` then dedupe `DELETE FROM interface_addresses a USING interface_addresses b WHERE a.device_id=b.device_id AND a.ip_address=b.ip_address AND a.id<b.id;` then `CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_ifaddr_dev_ip ON interface_addresses (device_id, ip_address);`. `internal/shell` static guards added for both `SET … statement_timeout = 0` sites.
@@ -5767,7 +5769,7 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 
 ## [0.10.388] - 2026-06-07
 ### Changed
-- **CI: bump deprecated GitHub Actions** (v0.10.388): `actions/checkout@v4 → @v5` and `actions/setup-go@v5 → @v6` across all three CI jobs, clearing the "Node.js 20 actions are deprecated" warning before the **2026-06-16** forced cutover to Node 24. No behavior change. Added `docs/UPGRADE-2026-06.md` — a step-by-step runbook for upgrading the live deployment (Server v0.10.324 / Collector v1.2.73 → v0.10.386+ / v1.2.108): DB backup, deploy order, the expected populated-table partition-skip warnings, HTTPS/nginx safety checks, smoke tests, and rollback.
+- **CI: bump deprecated GitHub Actions** (v0.10.388): `actions/checkout@v4 → @v5` and `actions/setup-go@v5 → @v6` across all three CI jobs, clearing the "Node.js 20 actions are deprecated" warning before the **2026-06-16** forced cutover to Node 24. No behavior change. Added a 2026-06 upgrade guide — a step-by-step runbook for upgrading an existing deployment (Server v0.10.324 / Collector v1.2.73 → v0.10.386+ / v1.2.108): DB backup, deploy order, the expected populated-table partition-skip warnings, HTTPS/nginx safety checks, smoke tests, and rollback.
 
 
 ## [0.10.386] - 2026-06-07
@@ -5793,12 +5795,12 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 ### Added
 - **Probe↔server `schema_version` handshake on `/api/probes/register`** (v0.10.382): the collector and the server are deployed and upgraded **independently**, but the relay handshake had no version field — a server-side change that added a required field, shifted a field's semantics, or removed an endpoint could break a deployed collector with no graceful signal. Added a `schema_version` integer to the register request and response (`internal/relay/relay.go`): the probe advertises the version it speaks (`SchemaVersion: SchemaVersionMax`), and the server validates it against `[relay.SchemaVersionMin, relay.SchemaVersionMax]` (currently `1-1`, exported consts that are the single source of truth). The handler parses the field as `*int` so it can distinguish **absent** (a pre-handshake collector → defaults to v1, fully backward-compatible — the `omitempty` field is ignored by older servers too) from an **explicit out-of-range** value, which is rejected with **HTTP 426 (Upgrade Required)** *before* any auth or DB lookup, carrying the supported range in the `X-Probe-Schema-Version-Supported` response header and naming the rejected version + pointing at `MIGRATING.md` in the body. The selected version is echoed back on success so the probe can self-report what the server chose. Shipping a future v2 only needs `SchemaVersionMax` bumped + a `docs/SUPPORT-MATRIX.md` row. New top-level **`MIGRATING.md`** documents the wire-format version, the supported range, the server-support floor (v0.10.382), and the server-first rollout order (with the 426 you see if you upgrade a probe ahead of the server — no data loss, the probe's on-disk queue holds). Three handler tests pin the contract (absent→v1+200, too-old→426, too-new→426+range header) plus an `internal/shell` static guard. **Re-implements the intent of the closed PR #8 on current master** — that PR branched from v0.10.362, conflicts with master, and mislabeled itself "AUDIT-065" (an unrelated, already-resolved frontend finding), so this ships it cleanly with a version that actually exists and no colliding audit ID.
 - **API single-instance guard** (AUDIT-040, v0.10.381): `cmd/api` keeps four state stores **in process memory** — the IRC bots (one TCP connection + nick per server), the login-lockout counters, the rate-limit buckets, and the uptime baseline — so a second `cmd/api` against the same DB double-runs all four (two bots fight over the same IRC nick, lockout/rate-limit thresholds effectively ~2×, divergent uptime). Added `AcquireAPISingletonLock()` — a **session-scoped Postgres advisory lock** (`apiSingletonLockKey` = "FWMNAPIS") held on a **pinned `*sql.Conn`** for the process lifetime (same backend-pinning pattern as the AUDIT-044 migration lock, so the unlock isn't routed to a different pooled connection). On startup the API acquires it (retrying for `API_SINGLETON_LOCK_WAIT`, default `10s`, so a graceful predecessor mid-shutdown doesn't cause a false refuse); if another instance holds it, the new process **refuses to start** (`log.Fatalf`) by default. `ALLOW_MULTI_API=true` opts into **follower mode**: serve HTTP but **don't start the IRC bots** (kills the nick-collision — the one symptom that actively breaks), with a loud warning that lockout/rate-limit/uptime are per-instance and diverge. The lock is **released on graceful shutdown** (SIGTERM → `defer` runs → unlock), so a normal restart re-acquires instantly; a SIGKILL/OOM leaves it until Postgres reaps the dead session (documented; the retry window covers graceful handoffs). The IRC manager is still wired into the handler on a follower (admin IRC config pages work via DB CRUD) — only the bot *connections* are gated on being primary. **Long-term deferred (deliberately):** moving lockout/rate-limit/uptime to shared storage — a Postgres round-trip per request at dashboard-polling rates is the wrong tool for rate-limiting. Verified by the AUDIT-118 CI Postgres integration suite (acquire → a second pinned-session acquire contends `false` → release → re-acquire), a SQLite no-op unit test, and an `internal/shell` static guard (lock acquired, released on shutdown, refuse-vs-follower branch, IRC gated on primary). Postgres-only (inert on the SQLite test backend). New `ALLOW_MULTI_API` / `API_SINGLETON_LOCK_WAIT` config + `docs/OPERATIONS.md` "Running a single API instance" section. **This is the fifth and final large refactor** (with 072 split, 032/079 ctx, 044 migrations, 028/146 partitioning).
-- **Postgres integration test suite + CI job** (AUDIT-118, v0.10.379): the whole test suite ran on in-memory SQLite while production is **Postgres-only**, so every Postgres-specific path was verified only by hand on the operator's box — the dialect's `to_char()` `TimeBucket` strings (the v0.10.238 minute-bucket regression that broke spike timestamps), the AUDIT-044 pinned-conn advisory-lock migration runner, `EnsurePartitions`/`ConfigureAutovacuum`, and `pg_try_advisory_lock`. Added a **build-tagged** (`//go:build integration`) suite `internal/database/integration_pg_test.go` that connects to a Postgres given by **`TEST_PG_DSN`** (URL form; parsed with stdlib `net/url` into `config.Config` and opened via the real `database.Connect`) and `t.Skip`s when unset — so the default `go test ./...` never compiles or runs it. It resets to a clean `public` schema (with a safety rail that **refuses any DSN whose dbname doesn't contain `test`**, so it can't nuke prod), runs `RunMigrations`, and asserts: the `schema_migrations` baseline is recorded once (proves AutoMigrate + the advisory lock work on real PG); the **minute/hour/day `TimeBucket` strings round-trip** — they equal the expected `to_char` output, `time.Parse` with the app's layouts, and aren't the `parseBucketToMillis` unparseable sentinel (three angles on the v0.10.238 bug); `EnsurePartitions`/`ConfigureAutovacuum` return nil; the advisory lock acquires; and a Device CRUD round-trip works. A new CI job `integration-postgres` runs it against a `postgres:16` service container on every push; `make test-integration` runs it locally (with a `docker run postgres:16` hint). **No new dependencies** (chose `TEST_PG_DSN` over `testcontainers`). **Note:** there's no Docker/Postgres in the dev sandbox, so this suite's first real execution is the CI job — which is the point: it now catches Postgres dialect drift on every push, and **unblocks verifying the remaining large refactors** (AUDIT-028 partitioning, AUDIT-040 shared state) with added integration subtests rather than shipping them blind. `TestPostgresIntegrationWired_AUDIT118` (in `internal/shell`) pins the suite + CI job + Makefile target stay wired.
+- **Postgres integration test suite + CI job** (AUDIT-118, v0.10.379): the whole test suite ran on in-memory SQLite while production is **Postgres-only**, so every Postgres-specific path was verified only by hand on a live install — the dialect's `to_char()` `TimeBucket` strings (the v0.10.238 minute-bucket regression that broke spike timestamps), the AUDIT-044 pinned-conn advisory-lock migration runner, `EnsurePartitions`/`ConfigureAutovacuum`, and `pg_try_advisory_lock`. Added a **build-tagged** (`//go:build integration`) suite `internal/database/integration_pg_test.go` that connects to a Postgres given by **`TEST_PG_DSN`** (URL form; parsed with stdlib `net/url` into `config.Config` and opened via the real `database.Connect`) and `t.Skip`s when unset — so the default `go test ./...` never compiles or runs it. It resets to a clean `public` schema (with a safety rail that **refuses any DSN whose dbname doesn't contain `test`**, so it can't nuke prod), runs `RunMigrations`, and asserts: the `schema_migrations` baseline is recorded once (proves AutoMigrate + the advisory lock work on real PG); the **minute/hour/day `TimeBucket` strings round-trip** — they equal the expected `to_char` output, `time.Parse` with the app's layouts, and aren't the `parseBucketToMillis` unparseable sentinel (three angles on the v0.10.238 bug); `EnsurePartitions`/`ConfigureAutovacuum` return nil; the advisory lock acquires; and a Device CRUD round-trip works. A new CI job `integration-postgres` runs it against a `postgres:16` service container on every push; `make test-integration` runs it locally (with a `docker run postgres:16` hint). **No new dependencies** (chose `TEST_PG_DSN` over `testcontainers`). **Note:** there's no Docker/Postgres in the dev sandbox, so this suite's first real execution is the CI job — which is the point: it now catches Postgres dialect drift on every push, and **unblocks verifying the remaining large refactors** (AUDIT-028 partitioning, AUDIT-040 shared state) with added integration subtests rather than shipping them blind. `TestPostgresIntegrationWired_AUDIT118` (in `internal/shell`) pins the suite + CI job + Makefile target stay wired.
 - **Client-side error reporting** (AUDIT-129, v0.10.375): a browser JS error or unhandled promise rejection in the admin UI previously only flashed the 5-second toast (if that) and then vanished — the operator had **zero visibility** into client failures happening in production. Added a global reporter in `admin-common.js` (`window` `error` + `unhandledrejection` listeners) that beacons the error to the server, and a new `POST /api/client-error` endpoint that **logs it server-side** (with the request's `X-Request-ID` and client IP for correlation). The reporter is **best-effort and self-protecting**: capped at 5 reports per page load (a render loop can't flood the log), prefers `navigator.sendBeacon` (survives page unload) and falls back to `fetch(..., {keepalive:true})`, and is wrapped so it can never itself throw. The endpoint takes **no DB write** (cheap, no unbounded growth) and **no auth** (so the public dashboard can report too); it lives under the rate-limited `/api` group, and **every field is truncated server-side** (message 500, source/url 300, stack 2000, UA 200) regardless of what the client sends — a malformed body is a 400, an empty message is dropped quietly, anything usable is logged and acked 204. Tests: `TestReportClientError_AUDIT129` (logged+204, empty dropped, bad-JSON 400, oversized truncated) and `TestClientErrorReporting_AUDIT129` (both the route and the JS reporter are wired). **Not done:** the public-dashboard JS (`public-dashboard.js`) doesn't yet install the reporter (the endpoint is ready for it — a one-line follow-up); no client-error aggregation UI (the data is in the server log alongside everything else).
 - **Admin-action audit log** (AUDIT-078, v0.10.374): the server logged authentication attempts (`login_attempts`) but kept **no record of privileged actions** — who reset uptime, changed an alert threshold, deleted a device, approved a probe, or snoozed an alert was unrecoverable after the fact. Added a new `models.AuditLog` table and an `internal/audit` middleware registered on the `/admin` group **after** auth + CSRF, so it records exactly one row per **authenticated, CSRF-valid admin mutation** (`POST`/`PUT`/`DELETE`/`PATCH`). Each row captures the **actor** (username + id from the JWT), the **action** (the matched route *template*, e.g. `/admin/api/devices/:id` — kept low-cardinality and filterable), the **target** (concrete path params, e.g. `id=5`), the **final HTTP status**, the client IP, and the user-agent. It records *after* the handler runs, so **failed (5xx) and forbidden (4xx) attempts are captured too** — exactly what an incident investigation wants. The trail is **append-only**: there is no update/delete path in the app, so it can't be silently rewritten through the API. A failed audit write is logged but never blocks the request. New read endpoint `GET /admin/api/audit` (auth-gated) returns the trail newest-first with `?actor=`, `?action=`, `?hours=`, and `?limit/offset` filters. Tests: `TestAuditMiddleware_AUDIT078` proves mutations are recorded with the right actor/template/target/status, GETs are skipped, and a 500 is still logged; `TestAuditFilters_AUDIT078` covers the read filters; `TestAuditWiring_AUDIT078` pins the main.go wiring **and the after-auth registration order**. **Not done:** no admin **UI page** yet (the data is queryable via the API; a `/admin/audit` SPA view is a follow-up), no before/after value diffing (records the action + target, not field-level deltas — that needs per-handler cooperation), and the trail is intentionally **not auto-pruned** (admin mutations are very low-volume; retention can be added later if needed).
 - **Prometheus `/metrics` endpoint** (AUDIT-077, v0.10.373): the API server had no metrics surface — request latency, error rate, and DB connection-pool exhaustion were invisible outside the log stream. Added `github.com/prometheus/client_golang` and a new `internal/metrics` package exposing, on the default registry: a **request-latency histogram** `fwmon_http_request_duration_seconds{method,route,status}` recorded by a gin middleware, the **database/sql connection-pool** gauges (open/in-use/idle/wait via `collectors.NewDBStatsCollector`), and the standard **Go runtime + process** collectors (goroutines, GC, heap, FDs, CPU) that ride along for free. Served at `GET /metrics` via `promhttp`. **Cardinality guard:** the histogram is labelled by the *matched route template* (`c.FullPath()`, e.g. `/admin/api/devices/:id`) — never the raw path — and unmatched 404s collapse to a single `route="unmatched"` series, so a path-scanning bot can't explode the series count. Per Prometheus convention (and the audit) the endpoint is **unauthenticated and meant to be network-ACL'd** — it carries only aggregate timings/counters and route templates, no secrets. `TestMetricsMiddlewareAndHandler_AUDIT077` drives a request + a 404 through the middleware and scrapes the real exposition (asserts the histogram, the `/ping` route label, the `unmatched` collapse, no raw-path leak, and that `go_goroutines` rides along); `TestMetricsWiring_AUDIT077` pins the main.go wiring. **Not done:** the poller-process counters the audit also named (`poll_cycles_total`, `alerts_fired_total`, `batcher_queue_depth`) live in a separate binary that doesn't serve HTTP — they need the poller to expose its own `/metrics` and are deferred; this ships the API-server surface only. (Verified by unit test against real exposition output; a full-server `curl /metrics` needs a PostgreSQL backend, which the sandbox lacks — `NewDatabase` is Postgres-only at runtime, SQLite is test-only.)
 - **GitHub release-notes automation: `.github/workflows/release.yml`** (AUDIT-165, v0.10.367): there was no release automation — cutting a release meant hand-copying notes. Added a **tag-triggered** workflow (`on: push: tags: v*`) that lifts the matching section out of `CHANGELOG.md` and publishes it as a GitHub Release via the `gh` CLI. Design note: chose a **CHANGELOG-driven** workflow over `release-drafter` deliberately — release-drafter categorises merged *pull requests* by label, but this repo is developed **direct-to-master** (the audit-resolution effort is a long run of `vX.Y.Z: AUDIT-NNN …` commits, not labelled PRs), so the CHANGELOG (which the project already maintains rigorously per Keep-A-Changelog) is the real source of truth for "what changed." The extraction reads the `## [X.Y.Z]` block for the pushed tag and **falls back to `## [Unreleased]`** when that version hasn't been cut into its own section yet, so a release is never note-less; it `gh release create`s a new release or `gh release edit`s an existing one (idempotent re-runs). `permissions: contents: write` is scoped to just this job. The workflow is **dormant until the first `vX.Y.Z` tag is pushed** (the AUDIT-004 cutover), so it changes nothing about the current commit flow. `TestReleaseWorkflow_AUDIT165` (in `internal/shell`) pins the tag trigger, the write permission, the CHANGELOG extraction + Unreleased fallback, and the `gh release` publish — and asserts it is **not** branch-triggered (which would publish on every commit). **Not done:** no binary/Docker artifact build is wired into the release yet (that's the `.goreleaser.yml` half of AUDIT-004, still open) — this ships the notes automation only.
-- **KNOWN-ISSUES.md** (AUDIT-110): new top-level file cataloguing operator-known limitations that don't yet have a fix. Each entry cross-links to its `docs/AUDIT.md` row so the operator can navigate from a known issue to the audit doc and back. Covers AUDIT-040 (single-binary Docker port binding), AUDIT-118 (SQLite test backend vs production Postgres), AUDIT-093 (embedded Postgres random password), AUDIT-105 (default `ADMIN_USERNAME=admin` warning), and AUDIT-029 (orphan tables grow between cleanup ticks).
+- **KNOWN-ISSUES.md** (AUDIT-110): new top-level file cataloguing operator-known limitations that don't yet have a fix. Each entry cross-links to its AUDIT-NNN finding so the operator can navigate from a known issue to the audit doc and back. Covers AUDIT-040 (single-binary Docker port binding), AUDIT-118 (SQLite test backend vs production Postgres), AUDIT-093 (embedded Postgres random password), AUDIT-105 (default `ADMIN_USERNAME=admin` warning), and AUDIT-029 (orphan tables grow between cleanup ticks).
 
 ### Changed
 - **Monthly range-partitioning for the 6 high-volume time-series tables** (AUDIT-028 + AUDIT-146, v0.10.380): `interface_stats` (~130M rows at 50 devices × 60s × 90d) and `system_status` grew unbounded with row-by-row batched `DELETE` retention that bloats and never reclaims space. Investigation found the **entire partition subsystem was dormant** — `EnsurePartitions` only acted on already-partitioned parents, but nothing ever *created* a partitioned parent (AutoMigrate makes plain tables), so `syslog_messages`/`syslog_summaries`/`trap_events`/`flow_samples` (AUDIT-146) were plain on every fresh install too, and `docs/partition-migration.md` (referenced by the warning) didn't exist. Now: a recorded **v2 migration** (`partition_high_volume`) converts each of the 6 tables to a monthly `PARTITION BY RANGE (timestamp)` parent **only when it's empty** (fresh installs → instant, zero-risk) with a composite `PRIMARY KEY (id, timestamp)` (Postgres requires the partition key in the PK; the gorm models are unchanged — they're append-only and queried by `device_id`+`timestamp`, never by `id` alone, and AutoMigrate is additive so it never fights the composite PK). A table that **already has rows** (existing prod) is **skipped with a warning** pointing at the new `docs/partition-migration.md` operator runbook — a ~130M-row copy-rewrite is far too heavy to auto-run at startup, so the operator does it in a maintenance window. `EnsurePartitions` now covers all 6 (current month + 6 ahead; `interface_stats` gets the extra `(device_id, "index", timestamp)` per-partition index for per-interface charts). Cleanup now **drops whole old partitions** (`dropPartitionsOlderThan` — instant space reclamation) for the single-cutoff tables, falling back to batched `DELETE` for plain tables and the straddling tail; `syslog_messages` deliberately stays on severity-scoped `DELETE` (its dual critical/info retention can't be expressed as a whole-partition drop). Migration ordering is safe (v2 runs before `EnsurePartitions`, both before the server accepts traffic — no "parent has no child partition yet" insert window). **Postgres-only** (a no-op, still recorded, on the SQLite test backend). Verified by the AUDIT-118 CI Postgres integration suite (all 6 become partitioned parents; `EnsurePartitions` creates+routes; `EXPLAIN` prunes to one partition; populated-table skip; cleanup drops an old partition) — its first real run is the CI job. **Not done:** `syslog_messages` partition-drop (dual retention) and downsampling/rollup of interface_stats (separate feature). Resolves AUDIT-028 and AUDIT-146.
@@ -5813,7 +5815,7 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 ## [0.10.362] - 2026-06-06
 ### Changed
 - **Dropped the ES5/IE11 reserved-word bracket workaround in the admin JS** (AUDIT-132, v0.10.365): the hand-written admin JavaScript used the legacy `promise['catch'](…)` / `promise['finally'](…)` (and `searchParams['delete'](…)`) bracket member-access form — a relic of IE11-era reserved-word handling. The project's browser baseline is **ES2020** (Chrome/Edge 105+, Safari 15.4+, Firefox 121+ — AUDIT-168/131, already documented in the README "Browser Support" section), where plain `.catch` / `.finally` / `.delete` member access is valid, so the bracket form was dead weight that obscured the code. Swept **all 121 sites across 14 files** to dot notation (`['catch']`×117, `['finally']`×2, `searchParams['delete']`×2); vendored bundles (`layout-base.js` et al.) were left untouched. Every modified file passes `node --check`. `TestNoES5BracketWorkaround_AUDIT132` (in `internal/shell`) scans `cmd/api/static/js/*.js` and fails if any of the three bracket forms is reintroduced (the conventions `README.md`, which intentionally quotes the literal syntax as the thing not to re-add, is excluded). This completes the cleanup that AUDIT-131 (v0.10.362) flagged as deferred. **Not done:** no behavior change — these are byte-equivalent member accesses; the public-wallboard JS under `web/public/` had no bracket forms to convert.
-- **Audit + handoff docs consolidated into a single `docs/AUDIT.md`** (docs): `docs/HANDOFF.md` was merged into `docs/AUDIT.md` and removed, so there's now one file to follow the public-release hardening effort. The file opens with a **Status dashboard** (server version, 124/170 resolved, 0 CRITICAL open, what's-left grouped by theme, and a recent-activity table), then **Part II** = the original v0.10.239 audit findings (kept as the per-finding reference that `SECURITY.md`/`KNOWN-ISSUES.md` link to; the stale "not yet ready / 10 CRITICAL blockers" executive summary is now clearly marked historical), the **Resolved findings** table + **Progress log** (unchanged — the canonical audit trail), and **Part III** = the per-commit workflow + session completion logs (the former HANDOFF content). Note for tooling: the resolved count must now be scoped to the Resolved-findings table (`awk '/^## Resolved findings/{f=1} /^## Progress log/{f=0} f && /^\| AUDIT-/{c++} END{print c}'`) because Part III's session-log tables also contain `| AUDIT-` rows.
+- **Audit + handoff docs consolidated into a single audit ledger** (docs): the handoff doc was merged into the ledger and removed, so there's now one file to follow the public-release hardening effort. The file opens with a **Status dashboard** (server version, 124/170 resolved, 0 CRITICAL open, what's-left grouped by theme, and a recent-activity table), then **Part II** = the original v0.10.239 audit findings (kept as the per-finding reference that `SECURITY.md`/`KNOWN-ISSUES.md` link to; the stale "not yet ready / 10 CRITICAL blockers" executive summary is now clearly marked historical), the **Resolved findings** table + **Progress log** (unchanged — the canonical audit trail), and **Part III** = the per-commit workflow + completion logs (the former handoff content). Note for tooling: the resolved count must now be scoped to the Resolved-findings table (`awk '/^## Resolved findings/{f=1} /^## Progress log/{f=0} f && /^\| AUDIT-/{c++} END{print c}'`) because Part III's log tables also contain `| AUDIT-` rows.
 - **CSP `style-src` allows `'unsafe-inline'` again** (AUDIT-022b — fixes the public dashboard): AUDIT-022 (v0.10.259) nonce-locked BOTH `script-src` and `style-src`. The `style-src` half quietly broke the public GridStack dashboard: GridStack and Chart.js size their widgets/canvases by setting inline `style=""` **attributes** at runtime, which cannot carry a nonce — so every grid cell collapsed to `height: 0` and every chart fell back to the 300×150 canvas default ("tiny, misformatted graphs"). It was latent because the operator hadn't reloaded the public wallboard after that release. Changed `style-src` to `'self' 'unsafe-inline'` (the nonce is dropped — a nonce on `style-src` makes `'unsafe-inline'` be *ignored* by browsers). **`script-src` is unchanged and still strict** (`'self' 'nonce-…'`, no `unsafe-inline`) — that's the XSS-critical directive; inline `<script>` is still refused. The only thing re-opened is CSS injection, which cannot execute JavaScript. Verified with a headless GridStack A/B test: under the old policy widgets measured `[0,0]` with CSP errors; under the fix they measure `[300,150]` with zero CSP errors. The `csp_nonce_test.go` / `csp_nonce_html_test.go` guards now assert `script-src` is strict while `style-src` permits inline styles.
 
 ### Deprecated
@@ -5831,7 +5833,7 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 - **Frontend JS standard declared: ES2020** (AUDIT-131, v0.10.362): the admin JS mixed ES6 (`admin-irc.js`) with older ES5-style code and `['catch']` IE11 workarounds, with no stated convention — the audit asked to "pick one" and document it. Added `cmd/api/static/js/README.md` declaring **ES2020** the target, justified by the project's documented browser baseline (Chrome/Edge 105+, Safari 15.4+, Firefox 121+ — AUDIT-168, all fully ES2020-capable). So `admin-irc.js`'s modern syntax is **correct** (the audit's "maybe go ES5" framing is superseded by the evergreen baseline), and new ES5 workarounds are discouraged — the legacy bracket-notation `promise['catch']()` is flagged as not-to-be-extended, with its cleanup sweep tracked under AUDIT-132. The doc also records the existing escape-before-innerHTML / no-inline-onclick / `fwmonLog` / `apiFetch` conventions. `TestJSStandardDocumented_AUDIT131` pins the standard + the baseline/`132` cross-references.
 - **Per-request IDs for log correlation** (AUDIT-135, v0.10.361): the request logger recorded only method/path/status/latency — there was no way to tie a logged error back to the specific request a user or proxy saw. New `RequestID` middleware (registered before `RequestLogger`) assigns every request a stable ID: it reuses a **safe-looking** inbound `X-Request-ID` (so a fronting proxy's trace ID is preserved) or mints a fresh 128-bit hex one, stores it on the gin context (`RequestIDKey`), and echoes it in the `X-Request-ID` **response header** so a single click is traceable end-to-end. `RequestLogger` now includes `req=<id>` in its line. **Security:** an inbound `X-Request-ID` is only trusted if it matches `^[A-Za-z0-9._-]{1,64}$` — otherwise it's discarded and a fresh ID minted, so a hostile client can't forge log lines by injecting newlines or oversized values via the header. Unit-tested in `internal/api/middleware` (`requestid_audit135_test.go`): generation when absent, reuse of safe inbound, and rejection of newline/space/semicolon/over-64-char inbound. Note: a full `slog` migration (the audit's suggested vehicle) is AUDIT-076, still open — this ships the request-ID propagation with the current logger.
 - **Architecture diagrams: `docs/architecture.md`** (AUDIT-108, v0.10.360): the README had only an ASCII directory tree — no data-flow showing poller→DB→API→dashboard, the probe↔server relay, or trap ingress. Added `docs/architecture.md` with a Mermaid component flowchart (the four binaries + DB + IRC/notifier + direct-vs-probe monitoring paths, incl. the poller advisory-lock leader) and three sequence diagrams — probe registration/approval/relay, the SNMP poll cycle, and alert firing + recovery — plus a "where things live" package map. Linked from the README Architecture section. `TestArchitectureDiagram_AUDIT108` pins the Mermaid blocks, ≥3 sequence diagrams, and the README link.
-- **Operations runbook: `docs/OPERATIONS.md`** (AUDIT-111, v0.10.359): there was no operator runbook — no first-24h checklist, failure-mode table, debug-logging procedure, password/JWT reset, backup/restore, upgrade, scale, or DR playbook. Added `docs/OPERATIONS.md` covering all of those, **grounded in this system's real mechanisms** (verified against the code, not generic): admin reset works by `DELETE FROM admins` + restart because `InitAdmin` only creates-when-absent; JWT rotation is flagged destructive because `.jwt-secret` seeds the AES key for stored secrets (AUDIT-008); debug logging uses `DB_LOG_LEVEL` (AUDIT-149) and `/data/pgdata/postgresql.log` — **not** `GIN_MODE=debug` (gin is hardcoded to release mode, so the audit's suggestion wouldn't work); backup covers the DB + `.jwt-secret`/`.admin-password` + config + probe keys; failure modes cross-reference the real prod fixes (v0.10.322/323/324, AUDIT-040/083). Linked from the README. `TestOperationsRunbook_AUDIT111` pins all nine sections + the README link.
+- **Operations runbook: `docs/OPERATIONS.md`** (AUDIT-111, v0.10.359): there was no operator runbook — no first-24h checklist, failure-mode table, debug-logging procedure, password/JWT reset, backup/restore, upgrade, scale, or DR playbook. Added `docs/OPERATIONS.md` covering all of those, **grounded in this system's real mechanisms** (verified against the code, not generic): admin reset works by `DELETE FROM admins` + restart because `InitAdmin` only creates-when-absent; JWT rotation is flagged destructive because `.jwt-secret` seeds the AES key for stored secrets (AUDIT-008); debug logging uses `DB_LOG_LEVEL` (AUDIT-149) and `/data/pgdata/postgresql.log` — **not** `GIN_MODE=debug` (gin is hardcoded to release mode, so the audit's suggestion wouldn't work); backup covers the DB + `.jwt-secret`/`.admin-password` + config + probe keys; failure modes cross-reference the real field fixes (v0.10.322/323/324, AUDIT-040/083). Linked from the README. `TestOperationsRunbook_AUDIT111` pins all nine sections + the README link.
 - **"How to add a vendor" doc confirmed complete** (AUDIT-113, v0.10.358): the audit asked for an `ADDING-A-VENDOR` doc covering both the SNMP profile registration (`internal/snmp`) and the config-diff normalizer (`internal/configdiff`). `docs/custom-vendor.md` (shipped for AUDIT-170) already is that guide and covers both halves — the `VendorProfile`/`RegisterVendor`/`validVendors` SNMP side and the optional `internal/configdiff` normalizer (Step 5). Resolved without duplicating the doc; `TestVendorDocCoversBothSides_AUDIT113` pins that it keeps covering **both** sides (170's test only checked the SNMP side), so a future trim can't quietly drop the configdiff coverage.
 - **Login-attempt prune goroutine now stops on shutdown** (AUDIT-084, v0.10.357): the background goroutine that prunes expired login attempts ran a bare `for range ticker.C` with no exit — it relied entirely on process death, so it never participated in graceful shutdown and its 10-minute ticker could fire mid-teardown. Added a cancellable `bgCtx` for background workers; the pruner now `select`s on `<-bgCtx.Done()` and returns, and the shutdown path calls `bgCancel()` before draining the HTTP server. `bgCtx` is reusable for any future background worker. `TestPruneGoroutineHasShutdown_AUDIT084` pins the ctx wiring and that the bare unstoppable loop is gone.
 - **Removed the stale, unused `package.json` version** (AUDIT-134, v0.10.356): `package.json` hard-coded `"version": "0.10.157"` — ~200 releases behind the real app version and read by nothing (the file exists only for the Tailwind CSS build; the app version lives in `cmd/api/main.go` `ServerVersion`). Rather than wire up a sync step that adds churn to every version bump, removed the `version` field entirely and marked the package `"private": true` (idiomatic npm for a never-published internal tooling package — no version required, so none can go stale). `TestPackageJsonNoStaleVersion_AUDIT134` pins that no `version` field returns and the package stays private.
@@ -5854,7 +5856,7 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 - **`deploy.sh` destructive wipe now has a backup + `--dry-run`** (AUDIT-098, v0.10.339): the remote deploy ran `sudo rm -rf ${REMOTE_DIR}/*` unconditionally with no backup and no rollback — a typo in `--host`, a half-built `bin/`, or an aborted transfer could leave a wiped or partial install irrecoverable. Two safeguards now precede the destructive step: (1) a **`--dry-run`** flag that prints exactly what would happen and makes **zero** remote changes (no rm, no rsync, no install) — operators run it first against a new target; and (2) a **timestamped backup tarball** of the existing install written to `${REMOTE_DIR}-backups/` on the remote *before* the wipe, so a bad deploy rolls back by extracting the latest archive. `TestDeploy_BackupAndDryRun_AUDIT098` pins both safeguards and asserts (by byte offset) the backup runs before the rm. Deferred: a post-`systemctl start` healthcheck — this script stages files and hands off to `install.sh`/manual start, so it never starts the services itself; the healthcheck belongs in that step (tracked with AUDIT-096 healthcheck work).
 - **`deploy.sh` no longer clobbers the operator's live config** (AUDIT-099, v0.10.338): the remote-install step ran `sudo cp /tmp/config.env.example /etc/firewall-mon/config.env` **unconditionally on every deploy**, overwriting the operator's real SNMP community, JWT secret, SMTP credentials, and thresholds with placeholder defaults — the service would silently revert to a broken/insecure config on the next restart after any redeploy. The copy is now guarded by `if [ ! -f /etc/firewall-mon/config.env ]`, so the example only seeds a genuine first install; subsequent deploys preserve the existing file (the example is still staged at `/tmp/config.env.example` for manually diffing new keys). `TestDeploy_PreservesLiveConfig_AUDIT099` pins the existence guard.
 - **PostgreSQL logging rationale documented in `entrypoint.sh`** (AUDIT-095, v0.10.337): the audit flagged `logging_collector = off` as "crash forensics lost". In this embedded single-container setup that premise is only half-true — Postgres is started with `pg_ctl -l "$PGDATA/postgresql.log"`, so its stderr (startup/crash/FATAL/PANIC/slow-query lines) is redirected to a file on the **bind-mounted** `/data/pgdata`, which survives container restarts. The collector is deliberately kept off so we don't run PG's log-rotation subprocess inside a container whose lifecycle Docker already manages, and so PG diagnostics aren't interleaved with the three fwmon daemons' stdout. Added an in-config comment documenting this, where the logs live, and the one-line alternative (`log_destination = stderr` + drop the redirect) for operators who'd rather see PG logs in `docker logs`. Documentation-only — **no runtime behavior change** (deliberately conservative: the entrypoint runs the live production database). `TestEntrypoint_LoggingRationale_AUDIT095` pins that both the rationale and the `pg_ctl -l` redirect stay present so the two halves can't silently drift apart.
-- **`.dockerignore` now excludes developer/working-tree artifacts** (AUDIT-092, v0.10.336): the build-context ignore list was missing `cookies.txt`, `interfaces.json`, `IRC-FORMAT.txt`, `node_modules/`, `tasks/`, `.claude/`, and `lessons.md` (plus `*.csv`). None are COPYed by today's Dockerfile (it copies specific binaries + `web/`), so nothing leaks *right now* — but the moment a future PR broadens the COPY surface (the common `COPY . .` refactor), these local files — agent working notes, the IRC format dump, scraped CSV exports — would silently land in the published image. Added the missing lines so the exclusion is durable regardless of how COPY evolves. `TestDockerignore_CoversWorkingTreeArtifacts_AUDIT092` asserts each required entry is present (matching whole comment-stripped lines, so an entry named only in a comment can't satisfy it).
+- **`.dockerignore` now excludes developer/working-tree artifacts** (AUDIT-092, v0.10.336): the build-context ignore list was missing `cookies.txt`, `interfaces.json`, `IRC-FORMAT.txt`, `node_modules/`, and the local working-notes files and directories (plus `*.csv`). None are COPYed by today's Dockerfile (it copies specific binaries + `web/`), so nothing leaks *right now* — but the moment a future PR broadens the COPY surface (the common `COPY . .` refactor), these local files — working notes, the IRC format dump, scraped CSV exports — would silently land in the published image. Added the missing lines so the exclusion is durable regardless of how COPY evolves. `TestDockerignore_CoversWorkingTreeArtifacts_AUDIT092` asserts each required entry is present (matching whole comment-stripped lines, so an entry named only in a comment can't satisfy it).
 
 ## [0.10.335] - 2026-06-06
 ### Fixed
@@ -5884,22 +5886,22 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 ## [0.10.322] - 2026-06-04
 ### Fixed
 - **`/interface-addresses` ingestion 500s with SQLSTATE 42P10 on legacy deployments** (v0.10.322): `POST /api/probes/:id/interface-addresses` returned 500 on every probe poll — `ReceiveInterfaceAddresses: DB save error: ERROR: there is no unique or exclusion constraint matching the ON CONFLICT specification (SQLSTATE 42P10)`. Root cause: AUDIT-030 (v0.10.x) made `SaveInterfaceAddresses` an `INSERT ... ON CONFLICT (device_id, ip_address)` UPSERT whose conflict target is the unique index `idx_ifaddr_dev_ip`. On any deployment that predated AUDIT-030, the table already held duplicate `(device_id, ip_address)` rows from the old plain-`Create` path, so GORM's `AutoMigrate` could **not** create the unique index (`CREATE UNIQUE INDEX` fails on duplicate values) — and `AutoMigrate` only logs that failure as a warning (`database.go:351`) and continues. The index stayed absent, so every subsequent UPSERT hit 42P10. The AUDIT-030 changelog had flagged the required dedup migration as "deferred"; it was never shipped. Fix: new idempotent `Database.ensureInterfaceAddrUniqueIndex()` runs right after the `AutoMigrate` loop — it no-ops when the index is present (every fresh install), and otherwise deduplicates the table (keeping the highest id, i.e. newest, row per pair — Postgres `DELETE ... USING` self-join, portable subquery on SQLite) before `CREATE UNIQUE INDEX IF NOT EXISTS idx_ifaddr_dev_ip`. After this runs the UPSERT path works again and the table self-heals on the next deploy/restart — no manual SQL required. Note: this endpoint does **not** drive online/offline status (that's `last_polled`, updated by the system-status / interface-stats handlers which were unaffected), but the probe's 3×-retry-with-2s-backoff on the 500 wasted ~4–6s per device per poll cycle. 2 regression tests in `ifaddr_indexrepair_test.go`: reconstruct the broken state (index dropped, duplicates inserted via raw SQL) → repair → assert the index is back, duplicates collapse to the newest row, and a follow-up UPSERT succeeds; plus an idempotent-no-op test for the fresh-install path.
-- **CHANGELOG.md now strictly Keep-A-Changelog 1.1.0** (AUDIT-110): added a header that links to the Keep-A-Changelog and Semantic Versioning specs (so a future agent knows which version of the conventions to follow), and an `## [Unreleased]` section at the top with the standard sub-section placeholders (`Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`). The pre-fix file was free-form and not machine-readable; the post-fix file follows the spec to the letter.
+- **CHANGELOG.md now strictly Keep-A-Changelog 1.1.0** (AUDIT-110): added a header that links to the Keep-A-Changelog and Semantic Versioning specs (so a future contributor knows which version of the conventions to follow), and an `## [Unreleased]` section at the top with the standard sub-section placeholders (`Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`). The pre-fix file was free-form and not machine-readable; the post-fix file follows the spec to the letter.
 - **`cmd/api/main.go` path-rewrite is now explicitly tagged with `AUDIT-138`** (AUDIT-138): the doc block for the `/api/v1/` → `/api/` and `/admin/api/v1/` → `/admin/api/` rewrites now states the fragility (hand-coded, not config-driven), the design constraints (the slice math is `p[len(prefix):]`, which is safe against `..` escapes), and the upgrade path (real versioning per AUDIT-090). Pre-fix the comment was a one-liner that didn't flag the design risk. The behavior is unchanged; only the documentation is more complete. `TestAPIVersioningRewrite_BehaviorPinned_AUDIT138` in `internal/shell/` pins the four invariants (both prefixes present, both rewrites use the safe slice form, mounted via `router.Use`, audit ID referenced in a comment) so a future refactor that drops the rewrite without addressing AUDIT-090 fails the test.
 - **`cmd/api/static.go` doc block now references `AUDIT-139`** (AUDIT-139): the file's package-level comment now states that the `//go:embed static` ships JS unminified (213 KB for `admin-main.js`), names the audit's recommendation (esbuild → `cmd/api/static/js/dist/`), and points at the doc block as the migration's starting point. The behavior is unchanged; only the documentation is more complete. `TestStaticFilesEmbed_ReferencesStaticDir_AUDIT139` in `internal/shell/` pins four invariants (the directive exists, the declaration exists, the audit ID is referenced, the `static/` directory contains the expected `js/`, `css/`, `fonts/` sub-paths) so a future refactor that moves the embed without addressing the audit fails the test.
 - **GORM log level is no longer hardcoded to `logger.Silent`** (AUDIT-149): new `internal/database/logging.go` with `dbLogLevelFromEnv()` reads `DB_LOG_LEVEL` (default `warn`, valid: `silent` / `error` / `warn` / `info`). The pre-fix `logger.Silent` swallowed slow-query warnings, errors, and migration warnings — operators had no visibility into slow queries or transient connection drops. New default `warn` logs slow queries and errors without flooding the log with every successful statement. Unknown values fall back to `warn` and log a notice (so a typo doesn't silently disable logging). 3 regression tests in `logging_audit149_test.go`: default-is-warn, all 4 valid values + case-insensitive + trim, unknown-falls-back-to-warn (silent would be the wrong fallback — that's the bug).
 - **`fwmonLog` wrapper introduced in admin-common.js** (AUDIT-151): a single blessed path for log output from the admin JS, with four levels (`.debug` / `.info` / `.warn` / `.error`). Pre-fix the admin JS had 100+ bare `console.*` calls with no level control, no prod-silencing, and no structured output. The wrapper is the only blessed path; the existing 3 `console.*` calls in `admin-common.js` were migrated to `fwmonLog.*` in the same commit (the wrapper forwards to `console.*` for now, so no behavior change). The migration of the other 8 first-party admin JS files is deferred — `TestConsoleCalls_DeferringToFwmonLog_AUDIT151` pins the current count (≤ 100) as a soft regression gate, so a future commit that migrates more files brings the count down (the goal is 0) and a regression that adds new `console.*` calls fails the test. The wrapper's `.debug` is silent in production by default and can be enabled per-session via `localStorage.setItem('fwmonLog.debug', '1')` in the browser console.
 - **Bulk-snooze by IDs and by filter** (AUDIT-143): new `Database.SnoozeAlertsBulk(ids, until, by, reason)` and `Database.SnoozeAlertsByFilter(filter, until, by, reason)` mirror the existing `AcknowledgeAlertsBulk` / `AcknowledgeAlertsByFilter` shape. Two new HTTP endpoints — `POST /admin/api/alerts/bulk-snooze` (IDs) and `POST /admin/api/alerts/bulk-snooze-filter` (filter via query params, hours+reason via body) — wrap the DB layer. Pre-fix an operator who wanted to snooze N alerts at once had to write a loop of single-alert `SnoozeAlert(id, ...)` calls (N round-trips, no atomicity). Post-fix, the bulk-snooze flow matches the bulk-ack flow shape for both endpoints. The same `maxBulkAckIDs = 500` cap and `[1, 720]` hour clamp from the single-alert handler apply. 3 regression tests in `snooze_audit143_test.go`: by-IDs (3 alerts, all snoozed with the audit fields populated), empty-IDs-is-noop, by-filter (3 high + 2 low on same device, only the 3 high are snoozed).
 - **Auto-resnooze on alert resolution** (AUDIT-144): `internal/alerts/alerts.go:sendRecovery` now clears the snooze fields (`snoozed_until`, `snoozed_by`, `snoozed_reason`) on the matching alerts in the same UPDATE that sets `resolved_at`. Pre-fix a snoozed alert that was actually resolved would still appear in the "snoozed" view as if it were active — operators had to manually unsnooze every resolved-but-was-snoozed alert. Post-fix the recovery event does it for them. The WHERE clause is unchanged (`device_id AND alert_type AND resolved_at IS NULL AND acknowledged = false`) so the auto-unsnooze is scoped to the same set the recovery already touches; already-resolved or acked alerts are unaffected. 2 regression tests in `autoresnooze_audit144_test.go`: headline (2 unresolved-snoozed alerts, recovery sets `resolved_at` AND clears all 3 snooze fields), defensive sibling (3 rows that should NOT be touched — already-resolved, acknowledged, different alert_type — verify RowsAffected is 0 and snooze fields are intact).
-- **`EnsurePartitions` skip-message now uses a `WARNING: AUDIT-146` prefix** (AUDIT-146): pre-fix the partition-skip log was a per-table `log.Printf` with no prefix, easy to miss in startup noise. Post-fix the message starts with `WARNING: AUDIT-146` (grep-able) and explicitly notes that without monthly partitions the table will grow unbounded and the AUDIT-029 cleanup cron will eventually run full-table DELETE statements that take minutes. `TestEnsurePartitions_SurfacesWarning_AUDIT146` in `internal/shell/` pins the `WARNING: AUDIT-146` prefix and the `docs/partition-migration.md` pointer so a future agent who copy-pastes a pre-fix-style log line fails the test. Deferred: actual partition-migration.md document (currently the log points at a file that doesn't exist; the migration is a separate, larger project).
+- **`EnsurePartitions` skip-message now uses a `WARNING: AUDIT-146` prefix** (AUDIT-146): pre-fix the partition-skip log was a per-table `log.Printf` with no prefix, easy to miss in startup noise. Post-fix the message starts with `WARNING: AUDIT-146` (grep-able) and explicitly notes that without monthly partitions the table will grow unbounded and the AUDIT-029 cleanup cron will eventually run full-table DELETE statements that take minutes. `TestEnsurePartitions_SurfacesWarning_AUDIT146` in `internal/shell/` pins the `WARNING: AUDIT-146` prefix and the `docs/partition-migration.md` pointer so a future contributor who copy-pastes a pre-fix-style log line fails the test. Deferred: actual partition-migration.md document (currently the log points at a file that doesn't exist; the migration is a separate, larger project).
 - **`formatDate` / `formatDateShort` are now locale-aware** (AUDIT-128): the hardcoded `'en-US'` first arg to `toLocaleString` is gone. New `getBrowserLocale()` helper reads `navigator.language` (falling back to `'en-US'`) and both date-formatting functions use it. Pre-fix the admin UI displayed US-format dates (MM/DD/YYYY, 12-hour AM/PM) to every operator regardless of locale. Post-fix an operator with `navigator.language = 'de-DE'` sees `DD.MM.YYYY, 14:23:45`, an operator with `'fr-FR'` sees `DD/MM/YYYY 14:23:45`, and an operator with `'en-US'` (or no language set) sees the original MM/DD/YYYY. The format *order* changes; the field set (year, month, day, hour, minute, second) is preserved. `TestFormatDate_LocaleAware_AUDIT128` in `internal/shell/` pins the four invariants (hardcoded `'en-US'` argument is gone, helper exists, helper is wired in, audit ID is referenced).
 - **`IsGeneratedPassword` no longer re-queries the env** (AUDIT-136): new `Auth.AdminPasswordGenerated` field on `Config`, populated once at config-load time via `os.LookupEnv`. The `IsGeneratedPassword()` method now reads the field (not the env). Pre-fix this re-queried `os.LookupEnv("ADMIN_PASSWORD")` on every call — a TOCTOU risk (the env could change between config-load and a later call) and duplicated work. The fix uses `LookupEnv` (not `Getenv == ""`) so an operator who explicitly sets `ADMIN_PASSWORD=""` is treated as "I want an empty password" (not "the env is unset, auto-generate") — that's the distinction the audit was about. 3 regression subtests in `config_audit136_test.go`: unset (returns true), set (returns false even with empty string), TOCTOU (post-load env mutation doesn't change the bool).
 - **`probes.html` modals no longer render on first paint** (AUDIT-046): the inline rule `.modal:not(.hidden) { display: flex; }` was replaced with `.modal.active { display: flex; }`. Neither `#probe-modal` nor `#deploy-modal` ever carries a `.hidden` class — `AdminCommon.openModal()` toggles `.active` (the admin-shared.css convention) — so the old rule (specificity 0,2,0) beat the base `.modal { display: none }` and forced both modals visible on first paint; the bug was dormant only because the operator immediately closes them. Post-fix the modals stay hidden until `.active` is added. `TestProbesModal_UsesActiveClass_AUDIT046` in `internal/shell/` pins that the `:not(.hidden)` form is gone, the `.active` form is present, and the audit ID is referenced.
 - **Logout link is no longer dead on `/admin/irc`** (AUDIT-047): the delegated-click `switch` in `cmd/api/static/js/admin-irc.js` had no `case 'logout'`, so the sidebar Logout link (`data-action="logout"`) navigated to `#` and stayed on the page — every other admin page handles it. Added `case 'logout': AdminCommon.doLogout(); return;`. This file uses the full `AdminCommon` reference (no `AC` alias is defined here), unlike the other admin JS files. `TestIRCLogout_HasLogoutCase_AUDIT047` in `internal/shell/` pins the case, the `AdminCommon.doLogout` reference, and the audit ID.
 - **`.section-tab` hidden-state now actually hides on connection-detail** (AUDIT-048): connection-detail.html's inline `.section-tab { display: inline-block }` loads after `admin-shared.css`, so (equal 0,1,0 specificity, later cascade) it beat the `.hidden { display: none }` that `admin-connection-detail.js` toggles on `#tab-phase2` / `#tab-flows`. The v0.10.230 `classList.toggle('hidden', ...)` fix produced zero visual change as a result. Added `.section-tab.hidden { display: none !important; }` to the same inline `<style>` block (higher specificity + `!important`). `TestSectionTab_HiddenOverride_AUDIT048` in `internal/shell/` pins the rule and the audit ID.
 - **IRC tab nav active-state now updates visually** (AUDIT-049): no `.tab-btn.active` CSS rule existed, so `switchTab()`'s `classList.add('active')` had no visual effect — the active highlight was hardcoded as Tailwind utilities (`text-[#58a6ff]`, `border-[#58a6ff]`) on the Servers button and never moved when another tab was clicked. Added `.tab-btn.active { color:#58a6ff; border-bottom-color:#58a6ff; }` to the inline `<style>` and normalized the Servers button to the same class list as the other tabs (only the `active` class differs). The rule's 0,2,0 specificity cleanly beats the inactive `text-[#8b949e]` / `border-transparent` utilities for whichever tab is active. `TestIRCTab_ActiveRuleExists_AUDIT049` in `internal/shell/` pins the rule, the removal of the hardcoded `border-[#58a6ff]`, and the audit ID.
-- **`admin-irc.js` is now IIFE-wrapped** (AUDIT-050): the file declared `let servers/channels/commands` and every function at the top level, leaking them all onto `window` — inconsistent with every other admin-*.js file and the lessons.md "Blank Admin Pages" guidance. Wrapped the whole file in `(function () { 'use strict'; ... })();` and converted the three top-level declarations to `var`. The body diff is intentionally minimal (no re-indent) to keep the scope-fix reviewable; full ES6→ES5 conversion of the function bodies is tracked separately as AUDIT-131. Verified the page still loads (all handlers are data-action delegated; irc.html has zero inline `onclick`, so nothing depended on the leaked globals). `TestIRCIife_Wrapped_AUDIT050` in `internal/shell/` pins the IIFE open/close, strict mode, the `var` conversion, and the audit ID.
-- **`probes.html` Reject no longer uses native `window.prompt()`** (AUDIT-051): the reject action in `admin-probes.js` called `prompt('Enter rejection reason:')`, inconsistent with the styled reject modal already on `/admin/probe-pending` (lessons.md notes AdminCommon modals are the standard). Added a `#reject-modal` to probes.html (matching the page's existing modal styling, with a labelled textarea) and routed rejection through `AC.openModal` + a `#reject-form` submit handler (`submitReject`), with `close-reject-modal` wired into the existing event delegation. `TestProbesReject_UsesModal_AUDIT051` in `internal/shell/` pins that the `prompt()` call is gone, the modal-based path exists in the JS, and the modal markup exists in the HTML.
+- **`admin-irc.js` is now IIFE-wrapped** (AUDIT-050): the file declared `let servers/channels/commands` and every function at the top level, leaking them all onto `window` — inconsistent with every other admin-*.js file and the project's "Blank Admin Pages" guidance. Wrapped the whole file in `(function () { 'use strict'; ... })();` and converted the three top-level declarations to `var`. The body diff is intentionally minimal (no re-indent) to keep the scope-fix reviewable; full ES6→ES5 conversion of the function bodies is tracked separately as AUDIT-131. Verified the page still loads (all handlers are data-action delegated; irc.html has zero inline `onclick`, so nothing depended on the leaked globals). `TestIRCIife_Wrapped_AUDIT050` in `internal/shell/` pins the IIFE open/close, strict mode, the `var` conversion, and the audit ID.
+- **`probes.html` Reject no longer uses native `window.prompt()`** (AUDIT-051): the reject action in `admin-probes.js` called `prompt('Enter rejection reason:')`, inconsistent with the styled reject modal already on `/admin/probe-pending` (project guidance says AdminCommon modals are the standard). Added a `#reject-modal` to probes.html (matching the page's existing modal styling, with a labelled textarea) and routed rejection through `AC.openModal` + a `#reject-form` submit handler (`submitReject`), with `close-reject-modal` wired into the existing event delegation. `TestProbesReject_UsesModal_AUDIT051` in `internal/shell/` pins that the `prompt()` call is gone, the modal-based path exists in the JS, and the modal markup exists in the HTML.
 - **Public dashboard libraries now load with `defer`** (AUDIT-052): `web/public/index.html` loaded `chart.umd.min.js`, `chartjs-plugin-zoom.min.js` and `gridstack-all.min.js` (~290 KB) without `defer`, blocking HTML parsing and first paint on the public wallboard — the page where time-to-render matters most. Added `defer` to all three. `defer` scripts execute in document order, so `public-dashboard.js` (already `defer`, declared after them) still initializes only after the libs are present. `TestPublicDashboard_LibsDeferred_AUDIT052` in `internal/shell/` pins each lib's `defer` and the audit marker.
 - **Inline `onclick` removed from `admin-device-detail.js`** (AUDIT-053): the config-history row buttons (View / Download / Delete) and the two config-modal close buttons were built with inline `onclick="..."` attributes — they worked only because the CSP still allows `script-src 'unsafe-inline'`, and they blocked any future CSP tightening. Converted all five to `data-action` + `data-id`, handled by the file's existing `AC.delegateEvent` block (new `view-config-revision` / `download-config-revision` / `delete-config-revision` / `close-config-modal` cases). The file now has zero inline event attributes. `TestDeviceDetail_NoInlineOnclick_AUDIT053` in `internal/shell/` pins the absence of `onclick=` and the presence of the delegated handlers.
 - **Inline `.modal` display rules de-duplicated** (AUDIT-054): the `.modal { display:none }` / `.modal.active { display:flex }` rules (and, in admin.html, the byte-identical `.modal-header` / `.modal-close` / `.modal-footer`) were duplicated inline in `admin.html`, `sites.html` and `probes.html`, all redundant with `admin-shared.css:506-573`. Removed the inline duplicates so admin-shared.css is the single source of truth. admin.html keeps only its genuinely-different `.modal-content` override (a narrower 92vw/85vh vs the shared 95vw/90vh — preserved to avoid any visual change). probes.html's inline `.modal.active` (normalized in AUDIT-046) is now gone too; the AUDIT-046 regression test was updated to pin the enduring invariant (no `:not(.hidden)` rule, canonical `.modal.active` in admin-shared.css). `TestModalDedup_SingleSource_AUDIT054` in `internal/shell/` pins the removal across all three pages and the canonical rule's presence.
@@ -5917,7 +5919,7 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 
 ## [0.10.320] - 2026-06-04
 ### Fixed
-- **Reverted the AUDIT-066/067 color sweep** (v0.10.320): the WCAG contrast sweep lifted every faint/dim gray text color to a single `#8b949e`, which collapsed the admin UI's intentional three-tier text hierarchy (`#484f58` faint → `#6e7681` dim → `#8b949e`) into one flat tone and made the dense operator UI look significantly worse in production. Restored the original palette in every rendering stylesheet (`admin-shared.css`, `admin-design-system.css` `--fwmon-text-faint` token, `tailwind.css`, `styles.css`) and reverted the color edits in the JS/HTML (surgically in `admin.html` / `device-detail.html` so the AUDIT-068/069 fixes there are kept). The two `colorcontrast_*_audit06{6,7}_test.go` guards were removed with the revert. AUDIT-066/067 are reopened; if redone, the fix must be surgical (only the specific small-text-on-dark cases that genuinely fail, with distinct brighter-but-still-hierarchical values) rather than flattening the whole palette. The `scripts/audit_brighten_color.py` helper is kept for that future, more careful pass.
+- **Reverted the AUDIT-066/067 color sweep** (v0.10.320): the WCAG contrast sweep lifted every faint/dim gray text color to a single `#8b949e`, which collapsed the admin UI's intentional three-tier text hierarchy (`#484f58` faint → `#6e7681` dim → `#8b949e`) into one flat tone and made the dense operator UI look significantly worse in production. Restored the original palette in every rendering stylesheet (`admin-shared.css`, `admin-design-system.css` `--fwmon-text-faint` token, `tailwind.css`, `styles.css`) and reverted the color edits in the JS/HTML (surgically in `admin.html` / `device-detail.html` so the AUDIT-068/069 fixes there are kept). The two `colorcontrast_*_audit06{6,7}_test.go` guards were removed with the revert. AUDIT-066/067 are reopened; if redone, the fix must be surgical (only the specific small-text-on-dark cases that genuinely fail, with distinct brighter-but-still-hierarchical values) rather than flattening the whole palette. A color-brightening helper script is kept for that future, more careful pass.
 - **Device-detail stat grids no longer overflow on mobile** (AUDIT-068): the `#systemStats` and `#extendedStats` auto-fit grids (`minmax(180–200px, 1fr)`) could push past a narrow viewport — or a long firmware/value string could make a card wider than the screen — with no horizontal scroll. Made both grids `overflow-x-auto` scroll containers. (All seven data tables on the page were already wrapped in `overflow-x-auto`; the audit's "15-column processes table" does not exist — that tab renders a chart, not a table.) `TestDeviceDetailOverflow_AUDIT068` in `internal/shell/` pins that both stat grids are scroll containers.
 - **Static modals carry their ARIA attributes in markup** (AUDIT-069): the static modals relied on `admin-common.js` `tagStaticModals()` to add `role="dialog"`, `aria-modal="true"` and `aria-labelledby` at runtime — so they weren't exposed to assistive tech until JS ran. Baked those attributes into the markup of the 10 modals in `admin.html` (9) and `device-detail.html` (1), injecting a `id="<modal>-title"` on the five headings that lacked one (the same convention `tagStaticModals` uses, which remains as an idempotent safety net and still covers modals on the other pages). `scripts/audit069_modal_aria.py` performs the transform. `TestModalAria_AUDIT069` in `internal/shell/` pins that every `<div class="modal" id=…>` has the three attributes and that each `aria-labelledby` resolves to a real id.
 
@@ -5947,7 +5949,7 @@ The audit flagged `httputil.ParseHours`, `httputil.FilterAllowedFields`, and the
 **The fix**
 
 1. **No code change** — the helpers are correct, used, and shouldn't be removed.
-2. **Three regression tests** in `internal/shell/deadhelpers_audit154_155_156_test.go` that pin the call sites via `git grep`. Each test counts the number of distinct files using the symbol (excluding the definition site). A future refactor that genuinely orphans any of the three would drop the count below the threshold and fail the test, alerting the next agent that the function should be removed (and the test updated) — or that the call sites should be re-wired.
+2. **Three regression tests** in `internal/shell/deadhelpers_audit154_155_156_test.go` that pin the call sites via `git grep`. Each test counts the number of distinct files using the symbol (excluding the definition site). A future refactor that genuinely orphans any of the three would drop the count below the threshold and fail the test, alerting the next contributor that the function should be removed (and the test updated) — or that the call sites should be re-wired.
 3. **Audit doc updated** to `[!] wontfix` for all three, with the same explanation as this CHANGELOG entry, so the next audit pass doesn't re-flag them.
 
 **The "wrong audit" pattern is worth pausing on**
@@ -5960,7 +5962,7 @@ The original audit's claim that these are "unused" is a class of bug that's easy
 - `TestFilterAllowedFields_IsUsed_AUDIT155` — same pattern. Threshold: ≥ 1. Currently: 1.
 - `TestIsValidVendor_IsUsed_AUDIT156` — same pattern. Threshold: ≥ 1. Currently: 1.
 
-Each test's failure message points the next agent at the audit doc's `[!] wontfix` entry, so a future refactor that genuinely orphans the function gets the full context (audit + explanation + correct action).
+Each test's failure message points the next contributor at the audit doc's `[!] wontfix` entry, so a future refactor that genuinely orphans the function gets the full context (audit + explanation + correct action).
 
 **What this does NOT do (deferred)**
 
@@ -6141,7 +6143,7 @@ A new paragraph in the file-level doc comment explains:
 3. **The trade-off** — filter history is session-only; reloading the page resets to the URL-default state.
 4. **The upgrade path** — a future improvement would be a minimal hash-based router that listens to `hashchange` and re-runs the page's `load()` callback. The note explains what that refactor would entail (lifting the `load()` callbacks out of the per-page IIFE into a per-page registry the router can dispatch to).
 
-The audit's first option ("Implement minimal hash-based or History API router") was a meaningful refactor — its own work — so we chose the second ("accept the limitation and document"). The documentation is in the file itself so a future agent who picks up the router work has a starting point.
+The audit's first option ("Implement minimal hash-based or History API router") was a meaningful refactor — its own work — so we chose the second ("accept the limitation and document"). The documentation is in the file itself so a future contributor who picks up the router work has a starting point.
 
 **Regression test** (`internal/shell/admincontrols_audit127_test.go`, new):
 
@@ -6152,7 +6154,7 @@ The audit's first option ("Implement minimal hash-based or History API router") 
 3. `"replaceState"` — the design choice is named.
 4. `"minimal hash-based"` — the upgrade path is named.
 
-A future agent who shortens the doc back to the pre-fix one-liner fails here immediately, with a message pointing at the audit.
+A future contributor who shortens the doc back to the pre-fix one-liner fails here immediately, with a message pointing at the audit.
 
 **What this does NOT do (deferred)**
 
@@ -6164,34 +6166,29 @@ QA: `go build ./...`, `go test -count=1 ./...` (11 pkgs, 213 tests, +1 AUDIT-127
 
 ## [0.10.275] - 2026-06-02
 
-### Fixed — AUDIT-115: AI agent session-memory files removed from the public tree
+### Fixed — AUDIT-115: private working-notes files removed from the public tree
 
-`lessons.md`, `tasks/lessons.md`, and `tasks/todo.md` were tracked in the public repo. They contained AI agent session memory — internal process artifacts like "Lesson: ask about the collector repo before changing SNMP code" and "Tasks for this session: TODO list of the AI's pending work." These notes are not for human contributors, pollute the public tree with private process state, and confuse a `git clone` + `find . -name "*.md"` operator who isn't expecting to read AI coaching material.
+Three working-notes files (a lessons file and two task-notes files) were tracked in the public repo. They held private working notes — internal process artifacts such as lessons learned and TODO lists. These notes are not for contributors, pollute the public tree with private process state, and confuse a `git clone` + `find . -name "*.md"` operator who isn't expecting to read them.
 
-**The fix**:
+**The fix**: the three files were removed with `git rm -f`, then the notes directory with `rmdir`.
 
-```
-git rm -f lessons.md tasks/lessons.md tasks/todo.md
-rmdir tasks
-```
+Three files removed. The notes directory was already empty after the third `git rm` (the `rmdir` was a no-op since `git rm` of the last file in a directory doesn't always remove the dir — defensive cleanup).
 
-Three files removed. The `tasks/` directory was already empty after the third `git rm` (the `rmdir` was a no-op since `git rm` of the last file in a directory doesn't always remove the dir — defensive cleanup).
-
-The audit's alternative was to move the files to `.claude/` (already gitignored). We chose full removal because:
+The audit's alternative was to move the files to an already-gitignored local directory. We chose full removal because:
 
 1. The content is re-derivable from the codebase at any time (the lessons are about the codebase, not novel insights).
-2. The AI agent can keep session memory outside the repo entirely (e.g. in a per-developer working directory).
-3. Operators who do want to keep the content can create a private fork with `lessons.md` excluded via `.git/info/exclude` — no need to ship it to everyone.
+2. Working notes can be kept outside the repo entirely (e.g. in a per-developer working directory).
+3. Operators who do want to keep the content can create a private fork with the notes excluded via `.git/info/exclude` — no need to ship it to everyone.
 
 **Regression test** (`internal/shell/agentmemory_audit115_test.go`, new):
 
-`TestNoTrackedAgentMemoryFiles_AUDIT115` — runs `git ls-files` and asserts that none of `lessons.md`, `tasks/lessons.md`, `tasks/todo.md`, or the `tasks` directory itself appear in the tracked-file list. A future agent who `git add`s any of these files fails here immediately, with a message pointing at the audit and the alternative (move under `.claude/`).
+`TestNoTrackedAgentMemoryFiles_AUDIT115` — runs `git ls-files` and asserts that none of the three working-notes files, or their directory, appear in the tracked-file list. A contributor who `git add`s any of these files fails here immediately, with a message pointing at the audit and the alternative (keep them in an ignored local directory).
 
 **What this does NOT do (deferred)**
 
-- **Maintain an in-repo `lessons.md` for human contributors.** The audit's framing — "AI agent session memory, not for human contributors" — is correct. A separate `docs/lessons.md` (or `docs/CHANGELOG-style-incident-log.md`) could capture post-mortem content for the human audience, but that's a content project, not a code-fix project. Out of scope for AUDIT-115.
-- **Audit other "internal-process" files** (e.g. `tasks/`, hidden directories, dotfiles). The current sweep is targeted at the three known cases. A future broader sweep would enumerate the working tree for any file that looks like session memory (heuristics: short files, all-caps headers like "TODO", "Lesson:", "Plan:").
-- **Add a pre-commit hook that blocks `git add` of common agent-memory file names.** Rejected — the static test in the codebase is the right enforcement point (it runs in CI), and a pre-commit hook is per-developer config that wouldn't reach the public.
+- **Maintain in-repo lessons notes for contributors.** The audit's framing — "private working notes, not for contributors" — is correct. A separate `docs/lessons.md` (or `docs/CHANGELOG-style-incident-log.md`) could capture post-mortem content for the human audience, but that's a content project, not a code-fix project. Out of scope for AUDIT-115.
+- **Audit other "internal-process" files** (e.g. notes directories, hidden directories, dotfiles). The current sweep is targeted at the three known cases. A future broader sweep would enumerate the working tree for any file that looks like working notes (heuristics: short files, all-caps headers like "TODO", "Lesson:", "Plan:").
+- **Add a pre-commit hook that blocks `git add` of common working-notes file names.** Rejected — the static test in the codebase is the right enforcement point (it runs in CI), and a pre-commit hook is per-developer config that wouldn't reach the public.
 
 QA: `go build ./...`, `go test -count=1 ./...` (11 pkgs, 212 tests, +1 AUDIT-115), `gofmt -l .`, `go vet ./...` all clean. Removal-only change + new test file. No code path affected. Static-binary change → requires rebuild, but no source files changed so the binary is bit-identical. Server-repo only.
 
@@ -6252,7 +6249,7 @@ function formatBytes(bytes) {
 }
 ```
 
-The em-dash (`U+2014`) is the chosen "no data" marker — it's consistent with the rest of the dashboard's no-data rendering convention. A future agent who "improves" the fallback to `0 B` or `N/A` or `?` would break the design; the static regression test below pins the em-dash.
+The em-dash (`U+2014`) is the chosen "no data" marker — it's consistent with the rest of the dashboard's no-data rendering convention. A future contributor who "improves" the fallback to `0 B` or `N/A` or `?` would break the design; the static regression test below pins the em-dash.
 
 The other `formatBytes` (in `admin-connection-detail.js:19`) is a separate local copy with a different (iterative-division) algorithm that already short-circuits on `!bytes` (which `!NaN` matches) — no fix needed there.
 
@@ -6262,7 +6259,7 @@ The other `formatBytes` (in `admin-connection-detail.js:19`) is a separate local
 
 1. The file still defines `function formatBytes(bytes)` (the canonical home of the helper; a future move to a different file would break the test and force a deliberate update).
 2. The `!isFinite(bytes)` guard is present.
-3. The fallback return is `—` (em-dash). A future agent who changes the fallback to "0 B" or "N/A" fails here.
+3. The fallback return is `—` (em-dash). A future contributor who changes the fallback to "0 B" or "N/A" fails here.
 
 **What this does NOT do (deferred)**
 
@@ -6291,7 +6288,7 @@ This is the kind of decision that lives in commit messages today and gets lost t
 
 **Regression test** (`internal/shell/staticgo_audit169_test.go`, new):
 
-`TestStaticGo_HasLayeringDocComment_AUDIT169` — three-signal static check on the file: it must contain the string `"AUDIT-169"` (so the decision is traceable), the string `"staticFiles"` (so the doc is about *this* file, not a copy-paste from elsewhere), and the string `"internal/"` (the migration target if a second consumer ever appears). The test doesn't pin the full text — a future clarifying edit doesn't fail — but the three signals are the load-bearing pieces. A future agent who deletes the comment fails immediately, with a failure message pointing at the audit.
+`TestStaticGo_HasLayeringDocComment_AUDIT169` — three-signal static check on the file: it must contain the string `"AUDIT-169"` (so the decision is traceable), the string `"staticFiles"` (so the doc is about *this* file, not a copy-paste from elsewhere), and the string `"internal/"` (the migration target if a second consumer ever appears). The test doesn't pin the full text — a future clarifying edit doesn't fail — but the three signals are the load-bearing pieces. A future contributor who deletes the comment fails immediately, with a failure message pointing at the audit.
 
 **What this does NOT do (deferred)**
 
@@ -6316,8 +6313,8 @@ The fix also covers a `Stop()` method (lines 442-448) that was using `fmt.Printl
 
 **Regression tests** (`internal/shell/probe_audit159_test.go`, new — 2 tests):
 
-- `TestProbe_NoFmtPrintln_AUDIT159` — regex-scans `cmd/probe/main.go` for any `fmt.Print` call (catches both `Println` and `Printf`). A future agent who copy-pastes a `fmt.Println("starting up...")` back into the file fails here immediately.
-- `TestProbe_HasLogImport_AUDIT159` — defensive sibling: confirms `"log"` is still imported. A future agent who removes the import "because the file doesn't use log" would fail compilation, but this test catches the intent more loudly.
+- `TestProbe_NoFmtPrintln_AUDIT159` — regex-scans `cmd/probe/main.go` for any `fmt.Print` call (catches both `Println` and `Printf`). A future contributor who copy-pastes a `fmt.Println("starting up...")` back into the file fails here immediately.
+- `TestProbe_HasLogImport_AUDIT159` — defensive sibling: confirms `"log"` is still imported. A future contributor who removes the import "because the file doesn't use log" would fail compilation, but this test catches the intent more loudly.
 
 **What this does NOT do (deferred)**
 
@@ -6364,9 +6361,9 @@ For local dev (`docker build .`), all three args default and the image is labele
 
 1. **ARG declarations** must be present (`ARG VERSION=`, `ARG REVISION=`, `ARG CREATED=`).
 2. **LABEL block** must reference the build-args via `${VERSION}` / `${REVISION}` / `${CREATED}` (not literals).
-3. **No hardcoded `org.opencontainers.image.version="..."` literal** survives anywhere. A regex scan that explicitly excludes the `${VERSION}` form fails if a future agent re-introduces a literal. Caught a literal version here: `<actual>`.
+3. **No hardcoded `org.opencontainers.image.version="..."` literal** survives anywhere. A regex scan that explicitly excludes the `${VERSION}` form fails if a future contributor re-introduces a literal. Caught a literal version here: `<actual>`.
 
-A future agent who copy-pastes a working version number back into the LABEL block (the obvious "fix" when the build-arg approach looks unfamiliar) fails at (3) before the change can ship.
+A future contributor who copy-pastes a working version number back into the LABEL block (the obvious "fix" when the build-arg approach looks unfamiliar) fails at (3) before the change can ship.
 
 **What this does NOT do (deferred)**
 
@@ -6386,7 +6383,7 @@ This was a small but real footgun: an operator reading the example file would se
 
 **The fix** (two parts):
 
-1. `internal/config/config.go` — removed `AdminSecretKey string` from `ServerConfig` and the `getEnv("ADMIN_SECRET_KEY", "")` line from the `Load()` struct literal. Future agents who reference `cfg.Server.AdminSecretKey` will get a compile error, which is the right kind of failure.
+1. `internal/config/config.go` — removed `AdminSecretKey string` from `ServerConfig` and the `getEnv("ADMIN_SECRET_KEY", "")` line from the `Load()` struct literal. Future contributors who reference `cfg.Server.AdminSecretKey` will get a compile error, which is the right kind of failure.
 2. `config.env.example` — removed the `ADMIN_SECRET_KEY=` line (and the comment block that introduced it).
 
 **Why the field was there in the first place**
@@ -6397,10 +6394,10 @@ The audit doc describes it as a leftover from an earlier "admin secret" concept 
 
 `TestNoDeadAdminSecretKey_AUDIT157` — two-axis regression:
 
-- **Static check** — reads `config.go` and asserts neither `"ADMIN_SECRET_KEY"` nor `"AdminSecretKey"` appears in the source. A future agent who copy-pastes an example back into the file (or a future handler that resurrects the field) fails here immediately, before the change can ship.
-- **Runtime check** — sets `ADMIN_SECRET_KEY` to a unique sentinel value, calls `Load()`, and asserts the sentinel doesn't surface in the rendered `Server` block. This catches the subtle case where a future agent re-adds the field and wires it up to *something* (e.g. logs it, includes it in a debug dump) but the value is still effectively unused from the operator's perspective.
+- **Static check** — reads `config.go` and asserts neither `"ADMIN_SECRET_KEY"` nor `"AdminSecretKey"` appears in the source. A future contributor who copy-pastes an example back into the file (or a future handler that resurrects the field) fails here immediately, before the change can ship.
+- **Runtime check** — sets `ADMIN_SECRET_KEY` to a unique sentinel value, calls `Load()`, and asserts the sentinel doesn't surface in the rendered `Server` block. This catches the subtle case where a future contributor re-adds the field and wires it up to *something* (e.g. logs it, includes it in a debug dump) but the value is still effectively unused from the operator's perspective.
 
-The two axes are complementary: the static check is the strict gate (the field/env var must not exist), the runtime check is the defense-in-depth (if a future agent re-adds them in a non-load path, the sentinel test catches it).
+The two axes are complementary: the static check is the strict gate (the field/env var must not exist), the runtime check is the defense-in-depth (if a future contributor re-adds them in a non-load path, the sentinel test catches it).
 
 **What this does NOT do (deferred)**
 
@@ -6503,11 +6500,11 @@ healthcheck:
   start_period: 20s
 ```
 
-The values are deliberately identical to the Dockerfile (same interval, timeout, retries, start_period). Diverging the two would create a subtle race where the image's healthcheck and the compose healthcheck disagree on liveness — the static check in the test file does not enforce parity, so a future agent who edits one but not the other will get a "compose says healthy, image says unhealthy" inconsistency that surfaces as a confusing `docker compose ps` output rather than a test failure.
+The values are deliberately identical to the Dockerfile (same interval, timeout, retries, start_period). Diverging the two would create a subtle race where the image's healthcheck and the compose healthcheck disagree on liveness — the static check in the test file does not enforce parity, so a future contributor who edits one but not the other will get a "compose says healthy, image says unhealthy" inconsistency that surfaces as a confusing `docker compose ps` output rather than a test failure.
 
 **Regression test** (`internal/shell/docker_compose_audit096_test.go`, new):
 
-- `TestDockerCompose_HasHealthcheck_AUDIT096` — static check on `docker-compose.yml`. Strips YAML comments first, then asserts (a) the file contains a `healthcheck:` block at all, and (b) the block probes `/api/health` (matches the Dockerfile's endpoint). The fail message points the future agent at the audit and the CHANGELOG entry for the recommended shape.
+- `TestDockerCompose_HasHealthcheck_AUDIT096` — static check on `docker-compose.yml`. Strips YAML comments first, then asserts (a) the file contains a `healthcheck:` block at all, and (b) the block probes `/api/health` (matches the Dockerfile's endpoint). The fail message points the future contributor at the audit and the CHANGELOG entry for the recommended shape.
 
 **What this does NOT do (deferred)**
 
@@ -6521,7 +6518,7 @@ QA: `go build ./...`, `go test -count=1 ./...` (11 pkgs, 166 tests, +1 AUDIT-096
 
 ### Fixed — AUDIT-093: PostgreSQL password is now auto-generated, not hardcoded
 
-Pre-AUDIT, `entrypoint.sh` shipped with `CREATE USER fwmon WITH PASSWORD 'fwmon'` and `export DB_PASSWORD="fwmon"`. The literal `'fwmon'` was baked into the public repo. With the embedded Postgres configured to `listen_addresses = ''` and `initdb --auth=trust`, the password was not actually checked for local connections — but the moment an operator flipped `listen_addresses` to enable a remote connection (a common production change for running the API outside the container, or for adding pgAdmin access), they would silently ship a publicly-known credential.
+Pre-AUDIT, `entrypoint.sh` shipped with `CREATE USER fwmon WITH PASSWORD 'fwmon'` and `export DB_PASSWORD="fwmon"`. The literal `'fwmon'` was baked into the public repo. With the embedded Postgres configured to `listen_addresses = ''` and `initdb --auth=trust`, the password was not actually checked for local connections — but the moment an operator flipped `listen_addresses` to enable a remote connection (a common a live deployment change for running the API outside the container, or for adding pgAdmin access), they would silently ship a publicly-known credential.
 
 **The fix** (`entrypoint.sh`):
 
@@ -6540,7 +6537,7 @@ Pre-AUDIT, `entrypoint.sh` shipped with `CREATE USER fwmon WITH PASSWORD 'fwmon'
 
 **Regression test** (`internal/shell/entrypoint_audit093_test.go`, new):
 
-- `TestEntrypoint_NoHardcodedPostgresPassword_AUDIT093` — static check on `entrypoint.sh`. Strips bash comments first (so a CHANGELOG-style explanation in a `#` block doesn't false-positive), then rejects four patterns: `PASSWORD 'fwmon'`, `PASSWORD "fwmon"`, `DB_PASSWORD=fwmon`, `DB_PASSWORD="fwmon"`. A future agent copy-pasting an example back into the entrypoint fails CI immediately.
+- `TestEntrypoint_NoHardcodedPostgresPassword_AUDIT093` — static check on `entrypoint.sh`. Strips bash comments first (so a CHANGELOG-style explanation in a `#` block doesn't false-positive), then rejects four patterns: `PASSWORD 'fwmon'`, `PASSWORD "fwmon"`, `DB_PASSWORD=fwmon`, `DB_PASSWORD="fwmon"`. A future contributor copy-pasting an example back into the entrypoint fails CI immediately.
 
 First test file for the `internal/shell` package (a new package; the test directory is the natural home for static checks on shell scripts the project ships).
 
@@ -6625,8 +6622,8 @@ No changes needed at those sites.
 
 **Regression tests** (`internal/api/handlers/handlers_settings_audit026_test.go`, new — 2 tests):
 
-- `TestSettingsSecretKeys_AUDIT026` — pins the source-of-truth map: `smtp_password` is in it, 25 known non-secrets (thresholds, display prefs, webhook URLs, boolean toggles) are explicitly NOT in it. A future agent who adds a key to `allowedKeys` without also adding it to `settingsSecretKeys` gets a test failure on the non-secret check.
-- `TestSettingsSecretKeys_NoOverlapWithNonSecrets_AUDIT026` — belt-and-suspenders: the two curated lists share no element, so a future agent can't accidentally reclassify a threshold as a secret (or vice versa) without a hard failure.
+- `TestSettingsSecretKeys_AUDIT026` — pins the source-of-truth map: `smtp_password` is in it, 25 known non-secrets (thresholds, display prefs, webhook URLs, boolean toggles) are explicitly NOT in it. A future contributor who adds a key to `allowedKeys` without also adding it to `settingsSecretKeys` gets a test failure on the non-secret check.
+- `TestSettingsSecretKeys_NoOverlapWithNonSecrets_AUDIT026` — belt-and-suspenders: the two curated lists share no element, so a future contributor can't accidentally reclassify a threshold as a secret (or vice versa) without a hard failure.
 
 **What this does NOT do (deferred)**
 
@@ -6666,7 +6663,7 @@ The failure mode: with `COOKIE_SECURE=true` over plain HTTP, the browser drops t
 - `TestValidate_CookieSecureMismatch_AUDIT024` — broken config (explicit `true` over plain HTTP) doesn't error; the warning fires.
 - `TestValidate_CookieSecureInheritedFromTLS_AUDIT024` — consistent config (TLS on, Secure inherited) doesn't error; the warning does NOT fire.
 - `TestValidate_CookieSecureExplicitlyFalseOverPlainHTTP_AUDIT024` — explicit `false` over plain HTTP is the correct plain-HTTP config; warning does NOT fire.
-- `TestConfigExample_HasNoCookieSecureMismatch_AUDIT024` — static check on `config.env.example`: rejects `COOKIE_SECURE=true` when the file also contains `SERVER_ENABLE_TLS=false`. Comments are stripped first to avoid false-positives on a commented-out `#COOKIE_SECURE=true` line. The test will catch a future agent re-introducing the misleading example.
+- `TestConfigExample_HasNoCookieSecureMismatch_AUDIT024` — static check on `config.env.example`: rejects `COOKIE_SECURE=true` when the file also contains `SERVER_ENABLE_TLS=false`. Comments are stripped first to avoid false-positives on a commented-out `#COOKIE_SECURE=true` line. The test will catch a future contributor re-introducing the misleading example.
 
 First test file for the `internal/config` package.
 
@@ -6880,7 +6877,7 @@ QA: `go build ./...`, `go test -count=1 ./...` (8 pkgs, 116 tests, +9 keychain),
 
 ### Fixed — AUDIT-006 (shutdown half): batcher no longer loses items at Stop, has a Dropped counter
 
-The pre-AUDIT batcher had a subtle shutdown race documented in `docs/AUDIT.md`:
+The pre-AUDIT batcher had a subtle shutdown race documented in the audit:
 
 > `Stop()` calls `Flush()` after `<-b.doneCh` returns, racing with concurrent `Add()` from handlers.
 
@@ -7265,7 +7262,7 @@ QA: `go build ./...`, `go test -count=1 ./...`, `go vet ./...`, `gofmt -l .` all
 
 ### Fixed — AUDIT-074 + AUDIT-075: project-wide gofmt sweep and line-ending normalization
 
-`gofmt -l .` flagged 14 files as unformatted, and `internal/irc/bot.go` had CRLF line endings inconsistent with the rest of the tree. Both were captured by AUDIT-074 and AUDIT-075 in `docs/AUDIT.md` and are now resolved with a single `gofmt -w .` pass.
+`gofmt -l .` flagged 14 files as unformatted, and `internal/irc/bot.go` had CRLF line endings inconsistent with the rest of the tree. Both were captured by AUDIT-074 and AUDIT-075 in the audit and are now resolved with a single `gofmt -w .` pass.
 
 Files reformatted (whitespace-only — `git diff -w` returns empty):
 
@@ -7296,15 +7293,15 @@ QA: `go build ./...`, `go test -count=1 ./...`, `go vet ./...` all clean. Static
 
 Removed the `*_test.go` line from `.gitignore` and added the two formerly-hidden files. After this commit, `git ls-files | grep _test.go` returns 11 tracked test files (was 9).
 
-Per the audit doc workflow: AUDIT-001 marked Resolved in `docs/AUDIT.md`. No code changes, no rebuild required (tracked tests do not affect runtime binaries). Server-repo only.
+Per the audit doc workflow: AUDIT-001 marked Resolved in the audit ledger. No code changes, no rebuild required (tracked tests do not affect runtime binaries). Server-repo only.
 
 ## [0.10.240] - 2026-06-02
 
-### Added — public-release audit document (`docs/AUDIT.md`)
+### Added — public-release audit document
 
 Comprehensive pre-release audit covering security, stability, code quality, frontend, database/architecture, testing/CI, docs/operations, and feature recommendations. **170 findings** (11 CRITICAL deployment blockers, ~70 HIGH-priority, ~25 MEDIUM/LOW) and **89 feature recommendations** (top 10 for v0.11.0 called out separately).
 
-Each finding has a stable ID in the form `AUDIT-NNN` for commit-message tracking and a "Resolved findings" table at the bottom of `docs/AUDIT.md` for progress tracking. Workflow: fix the issue, reference the ID in the commit message, add a row to the Resolved table, append to the Progress log.
+Each finding has a stable ID in the form `AUDIT-NNN` for commit-message tracking and a "Resolved findings" table at the bottom of the audit document for progress tracking. Workflow: fix the issue, reference the ID in the commit message, add a row to the Resolved table, append to the Progress log.
 
 **Top 3 fixes to land first** (each unblocks downstream work):
 
@@ -7464,8 +7461,8 @@ Six new tests in `handlers_partial_update_test.go` lock the fix in:
 
 ## [0.10.233] - 2026-05-18
 
-### Fixed — comprehensive bundle from 4-agent codebase sweep
-Per the operator's "do a full pass of everything using sub agents — you keep finding all these random bugs and issues," I ran four parallel deep audits across the entire codebase looking for every variant of the bug classes fixed in v0.10.226–v0.10.232. Verified every HIGH finding against the source before patching (audits have been wrong twice — stale Tailwind in v0.10.230, "intentional" expandable-msg in v0.10.231 — so trust-but-verify is now mandatory). This entry is the consolidated bundle.
+### Fixed — comprehensive bundle from a codebase-wide sweep
+Four parallel deep audits were run across the entire codebase looking for every variant of the bug classes fixed in v0.10.226–v0.10.232. Verified every HIGH finding against the source before patching (audits have been wrong twice — stale Tailwind in v0.10.230, "intentional" expandable-msg in v0.10.231 — so trust-but-verify is now mandatory). This entry is the consolidated bundle.
 
 #### 1. Rich connection-detail side panel was unstyled (HIGH)
 Clicking a connection on the network diagram (`/admin/connections`) renders a side panel with 5 sub-tabs (Overview / Tunnels / Phase 2 / Flows / Events) built by `diagram-panels.js:130-217`. The JS template uses CSS classes `rich-detail-panel`, `panel-header`, `panel-tabs`, `panel-tab`, `panel-tab-content`, `panel-flow-grid`, `panel-flow-card`, `tunnel-columns`, `tunnel-col` — **none of which were defined in any CSS file**. Result:
@@ -7723,7 +7720,7 @@ The same flex-row CSS rule has been on the page for several minor versions, but 
 ## [0.10.226] - 2026-05-18
 
 ### Fixed — SMTP auth: raw ciphertext sent as password (the REAL cause of every 535 in this thread)
-Every theory in v0.10.222–v0.10.225 about why SMTP auth was failing — LOGIN vs PLAIN, username format, whitespace, MITM, Dovecot's `(reason unavailable)` — was working around the symptom, not the cause. The bug was on our side, in two adjacent lines of `UpdateSettings` that the user kept asking me to find.
+Every theory in v0.10.222–v0.10.225 about why SMTP auth was failing — LOGIN vs PLAIN, username format, whitespace, MITM, Dovecot's `(reason unavailable)` — was working around the symptom, not the cause. The bug was on our side, in two adjacent lines of `UpdateSettings`.
 
 #### Root cause: `IsSecret` was never persisted on save
 `UpdateSettings` in `internal/api/handlers/handlers_settings.go` did this:
@@ -7773,7 +7770,7 @@ The "different bytes every save" observation matches the symptom: AES-GCM uses a
 - **v0.10.224** (MITM check + Dovecot hint): fixed a real (latent) security bug and pointed the operator at the right log, but the underlying password-bytes-don't-match problem was never going to surface without reading our own storage path.
 - **v0.10.225** (admin SPA navigation): unrelated, fixed in passing.
 
-The operator was right to push back with "please don't assume — research the proper way." All the SMTP-side theories were avoiding the simpler hypothesis that *our own code was sending the wrong bytes*, and a 30-line agent investigation of the storage path found the missing-line bug in minutes.
+All the SMTP-side theories were avoiding the simpler hypothesis that *our own code was sending the wrong bytes*, and a short investigation of the storage path found the missing-line bug in minutes.
 
 ### Files
 - Modified: `internal/api/handlers/handlers_settings.go` — extracted `settingsSecretKeys` to package scope, made `GetSettings` mask off it, added `existing.IsSecret = s.IsSecret` in `UpdateSettings`, made `getNotificationSetting` always-decrypt.
@@ -7836,7 +7833,7 @@ The bug class is "SPA interceptor too aggressive" — any pattern that takes ove
 ## [0.10.224] - 2026-05-18
 
 ### Reverted + replaced — research-backed SMTP test fixes
-User pushed back on v0.10.223 with "please don't assume — research the proper way for this to be implemented." Four research agents went off and read primary sources (Postfix `smtpd_sasl_glue.c`, Dovecot auth-protocol docs, RFC 4954, swaks reference manual, Mailcow/Mailu/Postal docs, OWASP A07). Findings reversed three of the five decisions shipped in v0.10.223 and exposed a security bug in v0.10.222's `LoginAuth`. This entry rolls back the wrong parts and replaces them with research-backed equivalents.
+v0.10.223 was revisited with a research pass over primary sources (Postfix `smtpd_sasl_glue.c`, Dovecot auth-protocol docs, RFC 4954, swaks reference manual, Mailcow/Mailu/Postal docs, OWASP A07). Findings reversed three of the five decisions shipped in v0.10.223 and exposed a security bug in v0.10.222's `LoginAuth`. This entry rolls back the wrong parts and replaces them with research-backed equivalents.
 
 #### Security fix — `LoginAuth` missing MITM check (regression introduced in v0.10.222)
 The stdlib `smtp.PlainAuth` validates `server.Name == host` in its `Start()` method before sending credentials. Without that check, a MITM with a redirected DNS / connection can terminate the TLS handshake on a *different* server that also advertises LOGIN and harvest the password under that identity. My `LoginAuth` in v0.10.222 was missing this gate — it only checked `server.TLS`. Fixed: `LoginAuth` now takes a `host` parameter and refuses if `server.Name != host`. `CompoundAuth` plumbs `host` through to `LoginAuth`. Matches stdlib `PlainAuth` semantics exactly.
@@ -8043,7 +8040,7 @@ Three lingering items from the original sweep now ship in one tidy bundle. The l
 Sixth and final commit of the "improve the whole admin area" sweep. The previous five bundles touched almost exclusively frontend code; this one normalises the API surface so subsequent work — and external callers — see a consistent contract.
 
 #### Audit
-One parallel sub-agent inventoried every backend inconsistency that surfaced during bundles A-F. Findings: 5 handlers still inline-parsed `hours` with different caps and error semantics; 8 list endpoints called `.Find(...)` with no `.Limit(...)`; the probe-facing endpoints disagree on whether errors return `{"error":…}` or `{"message":…}`; `VPNStatus` had no field to indicate when a currently-down tunnel was last up; 3 of 4 `/stats` endpoints accepted no `device_id` filter.
+A parallel review inventoried every backend inconsistency that surfaced during bundles A-F. Findings: 5 handlers still inline-parsed `hours` with different caps and error semantics; 8 list endpoints called `.Find(...)` with no `.Limit(...)`; the probe-facing endpoints disagree on whether errors return `{"error":…}` or `{"message":…}`; `VPNStatus` had no field to indicate when a currently-down tunnel was last up; 3 of 4 `/stats` endpoints accepted no `device_id` filter.
 
 #### D2 — Unified range parsing
 - Every handler that took `?hours=` now delegates to `httputil.ParseHours` (default 24, hard cap 8760). Migrated `GetSystemStatusHistory`, `GetConnectionEvents`, `GetConnectionFlows`, and `GetProcessStats`. Endpoints with a tighter business cap (720 h, 30 days) still apply that cap by a single `if hours > 720` line after the helper, so the canonical parse + 8760 ceiling is centralised but per-endpoint sensitivity remains.
@@ -8097,7 +8094,7 @@ v0.10.212 (A — foundation) → v0.10.213 (B — accessibility) → v0.10.214 (
 Fifth commit of the "improve the whole admin area" sweep. Three concrete operator quality-of-life additions, all frontend-only — every required data field was already exposed by existing API responses.
 
 #### Audit
-Parallel sub-agent confirmed data availability for the planned features. **Available without backend changes**: `Device.ip_address`, `Device.ssh_username`, `Device.ssh_port`, `Device.last_polled`, every `FlowSample` field needed for CSV export. **Deferred (needs backend change)**: tunnel last-seen for `status='down'` tunnels (`VPNStatus` exposes `tunnel_uptime` for up tunnels but no `last_up_at` for down ones); per-device syslog/alert noise counts (`/api/syslog/stats` etc. accept no `device_id` filter).
+A parallel review confirmed data availability for the planned features. **Available without backend changes**: `Device.ip_address`, `Device.ssh_username`, `Device.ssh_port`, `Device.last_polled`, every `FlowSample` field needed for CSV export. **Deferred (needs backend change)**: tunnel last-seen for `status='down'` tunnels (`VPNStatus` exposes `tunnel_uptime` for up tunnels but no `last_up_at` for down ones); per-device syslog/alert noise counts (`/api/syslog/stats` etc. accept no `device_id` filter).
 
 #### F2 — SSH launch button (`AdminCommon.sshLaunchButton`)
 - New helper renders an `<a class="btn secondary sm" href="ssh://user@host[:port]">SSH</a>` for any device — the operator's OS hands the URL to their registered SSH handler (PuTTY, Terminal, iTerm2, Windows Terminal, etc.). No credentials flow through the admin server.
@@ -8137,7 +8134,7 @@ Three high-frequency triage chores collapse from minutes to seconds. Logging int
 Fourth commit of the "improve the whole admin area" sweep. The visual + a11y + perf foundations from bundles A/B/C are in place; this bundle wires the navigation that ties them together so an operator triaging an alert / syslog / trap row can pivot to context in a single click.
 
 #### Audit
-One parallel sub-agent audited every render function across the admin JS files. Findings: 9 plain-text fields display a device, probe, site, IP, or tunnel ID/name with no link affordance even though a natural deep-link target exists. Highest-value gaps: alerts table device cell (no link to device-detail), syslog/traps source IP and hostname cells (no link to the page filter), connections table source/dest device names (only the "Details" button was a link), tunnel remote-IP cell (no pivot to remote-side syslog).
+A parallel review audited every render function across the admin JS files. Findings: 9 plain-text fields display a device, probe, site, IP, or tunnel ID/name with no link affordance even though a natural deep-link target exists. Highest-value gaps: alerts table device cell (no link to device-detail), syslog/traps source IP and hostname cells (no link to the page filter), connections table source/dest device names (only the "Details" button was a link), tunnel remote-IP cell (no pivot to remote-side syslog).
 
 #### E2 — Helpers + linkified ID cells
 - New helpers on `AdminCommon` in `admin-common.js`:
@@ -8174,7 +8171,7 @@ Triage flow before bundle E: see alert → copy device name → paste into syslo
 Third commit of the "improve the whole admin area" sweep. Three measurable wins after the foundation (A) + a11y (B) work landed: cut idle background work, trim the eager-JS payload, and stop re-creating chart canvases that could just be updated in place.
 
 #### Audit
-Spawned one parallel audit sub-agent covering polling loops + cytoscape load + chart re-creation. Findings:
+A parallel audit covered polling loops + cytoscape load + chart re-creation. Findings:
 - 5 `setInterval` polling loops, only 1 page-gated; **0** visibility-gated.
 - ~421 KB of Cytoscape + extensions loaded eagerly on every admin page even when the operator never opens the Connections tab.
 - 3 chart-rebuild sites destroy+recreate uPlot/Chart.js instances on each refresh — worst is connection-detail traffic chart at 30 s cadence.
@@ -8213,7 +8210,7 @@ A typical admin browser left open on the dashboard tab while the operator works 
 Second commit of the "improve the whole admin area" sweep. After v0.10.212 promoted the design tokens to a shared stylesheet, this bundle brings the admin UI up to WCAG 2.1 AA on every axis surfaced by the audit: modal a11y, focus-visible coverage, color contrast, prefers-reduced-motion, skip-to-main-content, screen-reader live regions, and icon-only button labels.
 
 #### Audit
-Spawned four parallel audit sub-agents covering: modal a11y (10 dialogs all failing 4/4 checks), `:focus-visible` coverage (6 fwmon-* selectors covered, 19+ legacy selectors uncovered), color contrast + `prefers-reduced-motion` + skip-link (label color `#484f58` failing AA at 4.0:1 across 60+ occurrences; reduced-motion honored only in design-system.css; no skip link anywhere), and toast announcements + icon-only buttons (toasts not announced to AT; 15+ buttons without accessible names). All four reports informed the implementation order below.
+Four parallel audits covered: modal a11y (10 dialogs all failing 4/4 checks), `:focus-visible` coverage (6 fwmon-* selectors covered, 19+ legacy selectors uncovered), color contrast + `prefers-reduced-motion` + skip-link (label color `#484f58` failing AA at 4.0:1 across 60+ occurrences; reduced-motion honored only in design-system.css; no skip link anywhere), and toast announcements + icon-only buttons (toasts not announced to AT; 15+ buttons without accessible names). All four reports informed the implementation order below.
 
 #### B2 — Shared modal a11y wrapper (`AdminCommon.openModal / closeModal`)
 - New `openModal(modalId, opts)` and `closeModal(modalId)` in `admin-common.js`. Adds `role="dialog"`, `aria-modal="true"`, `aria-labelledby` (auto-derived from a heading inside the modal), and a 2-element-aware focus trap with Tab/Shift-Tab cycling, Escape to close, and focus restoration to the trigger element.
@@ -8329,7 +8326,7 @@ Brought the Flows tab in line with the device-detail visual language and added t
 - Modified: `internal/api/handlers/handlers_analytics.go` — `ipFilterClause` + `dst_port` filter.
 
 #### Validation
-Sub-agent cross-checked 12 contract points (endpoint URLs, CIDR helper, dst_port filter, every JSON field, every mount-point ID, CSP compatibility, script load order, click-to-filter wiring, URL state, legacy fallback, embed-FS pickup, dead references). 12 PASS, 2 expected WARNs on the legacy fallback path (would throw if triggered, but only triggers if FwmonFlows fails to load — CSP-hosted same-origin script).
+A review cross-checked 12 contract points (endpoint URLs, CIDR helper, dst_port filter, every JSON field, every mount-point ID, CSP compatibility, script load order, click-to-filter wiring, URL state, legacy fallback, embed-FS pickup, dead references). 12 PASS, 2 expected WARNs on the legacy fallback path (would throw if triggered, but only triggers if FwmonFlows fails to load — CSP-hosted same-origin script).
 
 ### Why this matters
 The flows page was the highest-traffic forensic surface in the admin and the most visually mismatched. Operators need to drill from "show me the worst current source" to "show me all flows for that source between 14:00 and 14:15" without typing — now that's two clicks. URL state means an SRE can paste the URL into a ticket and the engineer who opens it sees exactly the same view.
@@ -8436,7 +8433,7 @@ The three "above the fold" charts on `/admin/devices/:id` (Status Overview, Netw
 - Modified: `internal/database/database.go` — `GetSystemStatusBuckets()` + `parseBucketToMillis()`.
 
 #### Validation
-Spawned a dedicated sub-agent to cross-check 13 contract points between the new frontend and backend (URL paths, json tag matches on all 13 fields, response envelope shape, mount-point ID match, event delegation, embed-vs-disk static serving, uPlot CDN integrity, time-unit conversion). 12 PASS, 1 WARN (CSS rule overlap with `admin-shared.css` `.chart-card`, currently safe by load order — flagged for a future scoping pass).
+A dedicated review cross-checked 13 contract points between the new frontend and backend (URL paths, json tag matches on all 13 fields, response envelope shape, mount-point ID match, event delegation, embed-vs-disk static serving, uPlot CDN integrity, time-unit conversion). 12 PASS, 1 WARN (CSS rule overlap with `admin-shared.css` `.chart-card`, currently safe by load order — flagged for a future scoping pass).
 
 #### Out of scope (deferred)
 - The per-interface chart inside the Interfaces tab uses Chart.js with bucketed backend data — it doesn't exhibit the "spiky raw telemetry" issue. Visual consistency port to uPlot is a v0.10.206+ candidate.
@@ -8471,7 +8468,7 @@ v0.10.202 cleaned up the partition-creation log spam but exposed the underlying 
 ## [0.10.202] - 2026-05-16
 
 ### Fixed — partition creation log spam on legacy deployments
-- `EnsurePartitions()` now probes `pg_partitioned_table` for each candidate parent (`syslog_messages`, `syslog_summaries`, `trap_events`, `flow_samples`) BEFORE attempting to attach a monthly partition. Deployments that ran GORM `AutoMigrate` before the partitioning code was added (prod-host is one) carry these as plain tables, and `CREATE TABLE ... PARTITION OF ...` against a plain parent fails with SQLSTATE 42P17 — producing 28 noise lines per startup (4 tables × 7 months ahead).
+- `EnsurePartitions()` now probes `pg_partitioned_table` for each candidate parent (`syslog_messages`, `syslog_summaries`, `trap_events`, `flow_samples`) BEFORE attempting to attach a monthly partition. Deployments that ran GORM `AutoMigrate` before the partitioning code was added carry these as plain tables, and `CREATE TABLE ... PARTITION OF ...` against a plain parent fails with SQLSTATE 42P17 — producing 28 noise lines per startup (4 tables × 7 months ahead).
 - New behavior: probe once, log a single clear info line per plain table ("syslog_messages is a plain table on this deployment; skipping monthly partition creation"), and skip the per-month attempts entirely. No behavior change for fresh deployments where the tables are partitioned from the start.
 - **Data safety unchanged:** the plain tables continue to function normally. The only "lost" benefit is partition-prune query speedups and the ability to `DROP PARTITION` (O(1)) instead of `DELETE ... WHERE timestamp < ...` (writes WAL). A separate in-place migration to convert plain → partitioned is planned for a future release; the log line points at `docs/partition-migration.md`.
 
@@ -8482,10 +8479,10 @@ v0.10.202 cleaned up the partition-creation log spam but exposed the underlying 
 
 ### Changed — `DATA_DIR` parameterized in shipped compose
 - `docker-compose.yml` volume `./data:/data` is now `${DATA_DIR:-./data}:/data`. Fresh deploys still get a project-local `./data` directory with no setup. Production deployments set `DATA_DIR` in a `.env` file (gitignored) to point at a dedicated partition — eliminates the recurring "Your local changes to docker-compose.yml would be overwritten by merge" on every upstream pull.
-- New `.env.example` documents the variable with the prod prod-host value (`/srv/firewall-mon/data`) commented out so future deployers can see the intended pattern without inheriting our specific path.
+- New `.env.example` documents the variable with an example value commented out so future deployers can see the intended pattern without inheriting a specific path.
 
 ### Why this matters
-The prod-host host outgrew its root volume in 2026-05 (CHANGELOG v0.10.199) and was relocated to `/srv/firewall-mon`. The prod compose carried the new path as an uncommitted local edit, which collided with every upstream `git pull`. Parameterizing via env keeps the prod path on the prod box and the upstream file generic.
+A deployment that moves its data to a dedicated volume (see v0.10.199) otherwise has to carry the new path as an uncommitted local edit, which collides with every upstream `git pull`. Parameterizing via env keeps the local path on the host and the upstream file generic.
 
 ## [0.10.200] - 2026-05-16
 
@@ -8521,13 +8518,13 @@ The merge-into-latest model in v0.10.198 closed the false-alert path for FortiGa
 - New `RegisteredVendors()` returns the registered vendor key set (unordered). Forward-compatible with vendor-management UI.
 
 ### Why this matters
-The v0.10.198 release closed the false-alert path for the common case (FortiGate devices, default vendor). Reports of continued false alerts in the field were traced to two scenarios this release addresses: (1) devices added with `vendor=""` before the model's `default:fortigate` GORM directive took effect, and (2) PEM-bearing fields beyond `set private-key` that drifted under the narrow regex. With the audit log now surfacing identity-vendor devices and the regex covering all `set <field> "-----BEGIN..."` lines, both vectors are closed. Design trade-off held from RANCID/Oxidized canonical practice: a real plaintext password rotation produces no alert at all (the ENC blob is masked the same as an IV-only change). The user has explicitly accepted this trade-off — restore fidelity preserved via the merge path always overwriting `ConfigText` with the latest live ciphertext.
+The v0.10.198 release closed the false-alert path for the common case (FortiGate devices, default vendor). Reports of continued false alerts in the field were traced to two scenarios this release addresses: (1) devices added with `vendor=""` before the model's `default:fortigate` GORM directive took effect, and (2) PEM-bearing fields beyond `set private-key` that drifted under the narrow regex. With the audit log now surfacing identity-vendor devices and the regex covering all `set <field> "-----BEGIN..."` lines, both vectors are closed. Design trade-off held from RANCID/Oxidized canonical practice: a real plaintext password rotation produces no alert at all (the ENC blob is masked the same as an IV-only change). This trade-off is accepted deliberately — restore fidelity preserved via the merge path always overwriting `ConfigText` with the latest live ciphertext.
 
 ## [0.10.199] - 2026-05-11
 
 ### Fixed — `syslog_messages` could grow unbounded in default deploys
 - **`docker-compose.yml` now ships with `RETENTION_SYSLOG_CRITICAL_DAYS=30`**, bounding severity 0-5 syslog (notice / warning / error / critical / alert) to 30 days. The app already supported this env var via `RetentionConfig.SyslogCriticalDays` (`internal/config/config.go:75`), but the in-code default of `0 = never delete` combined with firewall traffic logs typically arriving at severity 5 (notice) caused `syslog_messages` to accumulate indefinitely. Severity 6-7 (info/debug) was already bounded by `SyslogInfoDays` + the 5-minute aggregation cycle; the gap was severity 0-5.
-- **Production-incident context (prod-host, 2026-05-11):** `syslog_messages` reached 17 GB / 18.9 M rows, of which 18.6 M (98.6%) were severity 5 with no retention. The table filled the 57 GB root volume and Postgres crashed mid-WAL recovery (`SQLSTATE 57P03`). Recovery sequence: freed root space (Docker image prune + relocate unrelated files), took a `pg_dump`, migrated PGDATA to a dedicated 100 GB partition, set the env var, one-shot-deleted ~4 M rows older than 30 days where severity < 6, `VACUUM FULL ANALYZE syslog_messages` reclaimed ~5 GB of heap. Ongoing retention now flows through `Database.CleanupOldData` (`internal/database/database.go:732`).
+- **Context:** with no retention, `syslog_messages` grew until, almost entirely severity 5, it filled the root volume and Postgres crashed mid-WAL recovery (`SQLSTATE 57P03`). Recovery sequence: free root space, take a `pg_dump`, move PGDATA to a dedicated partition, set the env var, delete rows older than 30 days where severity < 6, then `VACUUM FULL ANALYZE syslog_messages` to reclaim heap. Ongoing retention now flows through `Database.CleanupOldData` (`internal/database/database.go:732`).
 - **No code change to in-code default.** Deployers explicitly relying on unbounded retention should set `RETENTION_SYSLOG_CRITICAL_DAYS=0` in their own compose; new deploys using this repo's compose file now get the safer 30-day default out of the box.
 
 ### Fixed
@@ -8569,12 +8566,12 @@ The v0.10.198 release closed the false-alert path for the common case (FortiGate
 - Three obsolete distinct-mode tests replaced with one consolidated `TestGetDeviceConfigHistory_ReturnsRowsNewestFirst`.
 
 ### Why this matters
-The user-stated problems with v0.10.187 → v0.10.197 were: "we're backing up too much default junk" (still true at the FortiOS layer; that's a separate iteration) and "we keep configs that only differ in ENC passwords." This release fully closes the second one — the duplicate rows simply don't exist any more. Every row in History is something you can compare meaningfully against any other row.
+The reported problems with v0.10.187 → v0.10.197 were: "we're backing up too much default junk" (still true at the FortiOS layer; that's a separate iteration) and "we keep configs that only differ in ENC passwords." This release fully closes the second one — the duplicate rows simply don't exist any more. Every row in History is something you can compare meaningfully against any other row.
 
 ## [0.10.197] - 2026-04-28
 
 ### Tests
-- Hostile QA pass on the diff modal flow after the user reported it was still blank in v0.10.195 (their deployed version). Two parallel research streams converged on a single answer: **the v0.10.195 HTML on disk still has the broken Tailwind-soup modal markup**; v0.10.196 fixed it; the user just hasn't deployed v0.10.196 yet. Five guard tests added to make sure no regression slips in:
+- Hostile QA pass on the diff modal flow after a report that it was still blank in v0.10.195. Two parallel research streams converged on a single answer: **the v0.10.195 HTML on disk still has the broken Tailwind-soup modal markup**; v0.10.196 fixed it; the report came from a v0.10.195 deployment. Five guard tests added to make sure no regression slips in:
   - **`device_detail_html_test.go`**: reads `web/admin/device-detail.html` from disk (the same file `LoadHTMLGlob` reads at startup) and asserts the `#config-diff-modal` element has class **exactly** `"modal"` — no `hidden`, no `fixed`, no `top-0`, no `bg-black/60`, no Tailwind utility classes that fight with the legacy `.modal.active` rule. Also asserts `.modal-content`, `#config-diff-meta`, `#config-diff-body`, and the close-button `data-action` are all present.
   - **`handlers_config_diff_test.go`**: 4 tests on the diff endpoint —
     1. Response shape matches every field the JS reads (`from.id`, `from.config_text`, `from.normalized_checksum`, `from.trigger_source`, `from.backup_quality`, `to.*`, `vendor`, `volatile_patterns[].name`, `volatile_patterns[].regex`).
@@ -8627,7 +8624,7 @@ After redeploy, hard-refresh the browser (Ctrl+Shift+R) and check dev-tools cons
 - 3 new tests in `handlers_config_revision_retention_test.go`:
   - `TestGetDeviceConfigHistory_DistinctMode_CollapsesRuns` — A→B→A→C across 20 rows collapses to exactly 4 representative rows (newest-first, each the earliest of its run).
   - `TestGetDeviceConfigHistory_NonDistinctReturnsEverything` — without `?distinct`, every row up to the 50-cap is returned.
-  - `TestGetDeviceConfigHistory_DistinctMode_AllSameHash` — the user-described worst case: 100 IV-drifted backups all with the same normalized hash collapse to exactly 1 row.
+  - `TestGetDeviceConfigHistory_DistinctMode_AllSameHash` — the reported worst case: 100 IV-drifted backups all with the same normalized hash collapse to exactly 1 row.
 
 ## [0.10.192] - 2026-04-28
 
