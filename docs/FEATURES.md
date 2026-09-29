@@ -196,7 +196,7 @@ To add a vendor: see [custom-vendor.md](custom-vendor.md).
 | Internal packages | 23 | `internal/{alerts,api,audit,auth,config,configdiff,database,httputil,irc,logging,metrics,models,notifier,ping,relay,report,secrets,sflow,shell,snmp,syslog,tracing,uptime}` (`api` groups `handlers`/`middleware`/`response`) |
 | Binaries built | 3 fwmon daemons | `cmd/{api,poller,trap-receiver}` (`cmd/configcheck` is a CLI; `cmd/probe` was removed) |
 | Vendors with a registered SNMP `VendorProfile` | 6 | fortigate, paloalto, sonicwall, pfsense, opnsense, firewalla (cisco_asa is config-diff only) |
-| Static guard tests in `test/guardrails` | 142 | `ls test/guardrails/*_test.go` |
+| Static guard tests in `test/guardrails` | 144 | `ls test/guardrails/*_test.go` |
 | API endpoints | ~174 | `cmd/api/main.go` |
 
 ## Known limitations (catalogued in [KNOWN-ISSUES.md](../KNOWN-ISSUES.md))

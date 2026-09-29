@@ -6,9 +6,8 @@
 useDefault = true
 
 [[allowlists]]
-description = "Synthetic secrets in tests and the example config"
+description = "Synthetic secrets in tests"
 paths = [
-  '''^config\.env\.example$''',
   '''^internal/api/handlers/handlers_config_revision_fortigate_test\.go$''',
   '''^internal/api/handlers/handlers_probes_lifecycle_m7_test\.go$''',
   '''^internal/api/handlers/handlers_profile_test\.go$''',
@@ -22,3 +21,14 @@ paths = [
   '''^internal/configdiff/opnsense_multiline_secret_audit200_test\.go$''',
   '''^internal/configdiff/opnsense_test\.go$''',
 ]
+
+# The example config leaves ADMIN_PASSWORD empty on purpose. The generic rule
+# then reads the next line as its value; allow exactly that match and nothing
+# else in the file.
+[[allowlists]]
+description = "Empty ADMIN_PASSWORD line in the example config"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^config\.env\.example$''']
+regexTarget = "match"
+regexes = ['''^ADMIN_PASSWORD=\s*\n\s*BCRYPT_COST=12$''']

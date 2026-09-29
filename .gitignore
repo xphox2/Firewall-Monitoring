@@ -71,7 +71,7 @@ coverage.out
 coverage.html
 /api
 /poller
-tasks/
+/tasks/
 
 # Internal working material — never part of the public repository.
 # (test/guardrails/agentmemory_audit115_test.go enforces the same list;

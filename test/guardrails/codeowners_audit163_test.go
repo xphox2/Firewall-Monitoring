@@ -7,8 +7,8 @@ import (
 )
 
 // TestCodeownersExists_AUDIT163 pins that .github/CODEOWNERS exists and has
-// a catch-all default owner. The HANDOFF noted the CHANGELOG referenced this
-// file before it actually existed on disk; this guards against it going
+// a catch-all default owner. The CHANGELOG once referenced this file before
+// it actually existed on disk; this guards against it going
 // missing again and ensures the catch-all line is present (without a `*`
 // rule, paths with no specific owner get no auto-review).
 func TestCodeownersExists_AUDIT163(t *testing.T) {

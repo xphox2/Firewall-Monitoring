@@ -14,7 +14,7 @@ All notable changes to this project are documented in this file.
 
 - `test/guardrails/public_hygiene_test.go` fails on public IPv4/IPv6 addresses outside the reserved ranges (with a short reviewed allowlist of well-known resolvers and placeholders) and on home-directory paths in any tracked file. `agentmemory_audit115_test.go` now checks the whole repository for tracked working notes, internal reports, helper scripts and tool settings. Before, it ran from its own directory and saw none of them.
 - `test/guardrails/private_denylist_test.go`: a local-only check against a private list of sensitive tokens kept outside the repository. It is skipped unless `FWMON_DENYLIST` is set, so it never runs in CI.
-- **Secret scanning.** A `Secret scan` workflow runs gitleaks 8.30.1 (pinned, checksum-verified) on every push and pull request, over the commits being added. `.gitleaks.toml` allowlists the reviewed synthetic test secrets by path.
+- **Secret scanning.** A `Secret scan` workflow runs gitleaks 8.30.1 (pinned, checksum-verified) on pushes to master/main and on pull requests, over the commits being added. `.gitleaks.toml` allowlists the reviewed synthetic test secrets by path (and the example config's one empty-password line by exact match), and `.gitleaksignore` records the one reviewed false positive in history.
 - CONTRIBUTING: a "Never commit" section and a local gitleaks pre-commit hook.
 
 ## [0.11.273] - 2026-09-29
