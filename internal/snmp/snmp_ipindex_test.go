@@ -6,7 +6,7 @@ func TestIPv4FromTableIndex(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"192.168.125.1", "192.168.125.1"},       // clean 4-octet (newer FortiOS)
 		{"192.168.125.254.1", "192.168.125.254"}, // FortiOS quirk: extra .1 sub-index
-		{"10.25.25.1.1", "10.25.25.1"},           // quirk on a low-octet IP
+		{"10.0.25.1.1", "10.0.25.1"},             // quirk on a low-octet IP
 		{"203.0.113.142.1", "203.0.113.142"},     // quirk on a public IP
 		{"1.2.3", ""},                            // too short
 		{"999.1.1.1", ""},                        // not a valid IPv4

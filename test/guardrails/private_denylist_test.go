@@ -20,7 +20,10 @@ import (
 //
 // Matching is case-insensitive over the raw text. Tokens that contain letters
 // are also matched with '-', '_' and '.' removed from both sides, so a compound
-// token is caught whichever separator it is written with.
+// token is caught whichever separator it is written with. A short all-letter
+// token (3-5 letters, typically a site or owner name) is also caught when it
+// is glued to other letters or digits in that separator-stripped form, such
+// as "<name>fw", "fw<name>" or "<name>01".
 func TestPrivateDenylist(t *testing.T) {
 	listPath := os.Getenv("FWMON_DENYLIST")
 	if listPath == "" {
@@ -55,6 +58,7 @@ func denylistHits(text string, tokens, keep []string) []int {
 	var lines []int
 	kept := keptSpans(text, keep)
 	for _, tok := range tokens {
+		rawLines := map[int]bool{}
 		for from := 0; ; {
 			i := strings.Index(text[from:], tok)
 			if i < 0 {
@@ -62,9 +66,23 @@ func denylistHits(text string, tokens, keep []string) []int {
 			}
 			at := from + i
 			if onBoundary(text, tok, at) && !insideSpan(kept, at, at+len(tok)) {
-				lines = append(lines, strings.Count(text[:at], "\n")+1)
+				n := strings.Count(text[:at], "\n") + 1
+				lines = append(lines, n)
+				rawLines[n] = true
 			}
 			from = at + 1
+		}
+		if shortAlphaToken(tok) {
+			// Glued compound pass, per separator-stripped line.
+			for n, line := range strings.Split(text, "\n") {
+				if rawLines[n+1] || !strings.Contains(denySeparators.ReplaceAllString(line, ""), tok) {
+					continue
+				}
+				if gluedMatch(denySeparators.ReplaceAllString(line, ""), tok) && !lineFullyKept(line, keep) {
+					lines = append(lines, n+1)
+				}
+			}
+			continue
 		}
 		if !strings.ContainsAny(tok, "abcdefghijklmnopqrstuvwxyz") || len(tok) < 6 {
 			continue
@@ -83,10 +101,41 @@ func denylistHits(text string, tokens, keep []string) []int {
 	return lines
 }
 
+// shortAlphaToken reports whether tok is 3-5 letters and nothing else.
+func shortAlphaToken(tok string) bool {
+	if len(tok) < 3 || len(tok) > 5 {
+		return false
+	}
+	for i := 0; i < len(tok); i++ {
+		if tok[i] < 'a' || tok[i] > 'z' {
+			return false
+		}
+	}
+	return true
+}
+
+// gluedMatch reports whether tok occurs in s touching a letter or digit on
+// at least one side.
+func gluedMatch(s, tok string) bool {
+	alnum := func(b byte) bool { return b >= 'a' && b <= 'z' || b >= '0' && b <= '9' }
+	for from := 0; ; {
+		i := strings.Index(s[from:], tok)
+		if i < 0 {
+			return false
+		}
+		at, end := from+i, from+i+len(tok)
+		if at > 0 && alnum(s[at-1]) || end < len(s) && alnum(s[end]) {
+			return true
+		}
+		from = at + 1
+	}
+}
+
 // onBoundary reports whether the token at text[at:] stands on its own: an
 // alphanumeric token edge must not touch another alphanumeric character, so
-// "10.0.1." does not match inside "110.0.1.5" and a short name does not match
-// inside a longer word.
+// the prefix "10.0.1." does not match inside a longer first octet and a
+// long name does not match inside a longer word. (Short all-letter names get
+// the extra glued pass in denylistHits.)
 func onBoundary(text, tok string, at int) bool {
 	alnum := func(b byte) bool { return b >= 'a' && b <= 'z' || b >= '0' && b <= '9' }
 	if at > 0 && alnum(tok[0]) && alnum(text[at-1]) {
@@ -153,7 +202,7 @@ func readTokenFile(t *testing.T, path string) []string {
 }
 
 func TestPrivateDenylist_Matching(t *testing.T) {
-	tokens := []string{"examplecorp-fw-01", "secret.example", "203.0.113.77", "10.0.1."}
+	tokens := []string{"examplecorp-fw-01", "secret.example", "203.0.113.77", "10.0.1.", "kiwi"}
 	keep := []string{"security@secret.example"}
 	for _, tc := range []struct {
 		text string
@@ -168,7 +217,16 @@ func TestPrivateDenylist_Matching(t *testing.T) {
 		{"peer 203.0.113.7", 0},
 		{"peer 203.0.113.771", 0},
 		{"lan 10.0.1.5", 1},
-		{"lan 110.0.1.5 and 10.0.15.1", 0},
+		{"lan " + sampleIP(110, 0, 1, 5) + " and 10.0.15.1", 0},
+		// A short name, alone, with separators, or glued to letters/digits.
+		{"site kiwi", 1},
+		{"device KIWI-FW and FW_KIWI", 2},
+		{"device kiwifw online", 1},
+		{"device fwkiwi online", 1},
+		{"device kiwi01 online", 1},
+		{"device fw-kiwi-lan online", 1},
+		{"device fw.kiwi.lan and kiwilan", 1},
+		{"a kiw i split", 0},
 		{"nothing here", 0},
 	} {
 		if got := len(denylistHits(strings.ToLower(tc.text), tokens, keep)); got != tc.want {
