@@ -460,6 +460,12 @@
             // that the list is shown, so it runs under the overlay.
             if (tab === 'samples' && wasHidden && window.AdminCommon && window.AdminCommon.chartLoadBusy &&
                 window.AdminCommon.chartLoadBusy('flows-samples', true)) loadSamples();
+            // Otherwise, if the list holds rows of a different filter than the
+            // chips name (a cancelled or failed samples load), say so again —
+            // the notice was dropped when the view was left.
+            else if (tab === 'samples' && wasHidden && samplesStale() && window.AdminCommon) {
+                window.AdminCommon.chartNotice(sampHost, 'The list still shows the previous filter\u2019s rows', { dim: false, onRetry: loadSamples });
+            }
         }
         var hint = document.getElementById('flows-view-hint');
         if (hint) {
@@ -1392,6 +1398,15 @@
     }
 
     function loadSamples() { samplesLoad(0, false); }
+
+    // samplesStale: the rows shown were fetched for a different filter than
+    // the live one (the view and paging are not part of the query).
+    function samplesStale() {
+        if (!shownSamplesState) return false;
+        var a = Object.assign({}, shownSamplesState), b = Object.assign({}, state);
+        delete a.tab; delete b.tab;
+        return JSON.stringify(a) !== JSON.stringify(b);
+    }
 
     // The filter state whose rows the Samples list shows (set when a first-page
     // load succeeds). After a cancelled reload the live state is the NEW

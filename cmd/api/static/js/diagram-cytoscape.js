@@ -814,7 +814,7 @@
                 if (e.defaultPrevented) return;
                 var box = cy && cy.container();
                 if (!box || !box.getClientRects().length) return;
-                if (document.querySelector('.modal.active, [role="dialog"].active')) return;
+                if (document.querySelector('.modal.active, [role="dialog"].active, .fwmon-confirm-overlay')) return;
                 // This Esc is handled here: a running side-panel load must not
                 // also be cancelled by it.
                 e.preventDefault();

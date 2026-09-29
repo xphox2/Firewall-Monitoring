@@ -76,6 +76,9 @@
         if (sel) sel.value = c.period;
         previewTheme = c.theme;
         previewLayout = c.layout;
+        // "Follow the app theme" no longer names the report on screen when
+        // the app theme changed since it was built: pin the theme it has.
+        if (!previewTheme && c.resolved && c.resolved !== theme()) previewTheme = c.resolved;
         paintThemePills();
     }
 
@@ -83,7 +86,7 @@
         var f = frame();
         if (!f) return;
         var host = document.getElementById('report-host');
-        var want = { period: period(), theme: previewTheme, layout: previewLayout };
+        var want = { period: period(), theme: previewTheme, layout: previewLayout, resolved: theme() };
         // Retry puts the cancelled/failed choices back first: loadPreview reads
         // the controls, which Cancel/error just reverted.
         function retryWanted() { applyChoices(want); loadPreview(); }

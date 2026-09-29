@@ -212,6 +212,11 @@
         targetProfileId = pid;
         var url = API + '/event-rules' + (pid ? ('?profile_id=' + pid) : '');
         var wrap = $('event-rules-table-wrap');
+        // Switching profile: the old profile's rows must not show (let alone
+        // be clickable) under the new header while this one loads.
+        if (wrap && pid !== currentProfileId && !wrap.querySelector('[data-rules-placeholder]')) {
+            wrap.innerHTML = '<div class="empty-state" data-rules-placeholder style="padding:32px;text-align:center;color:var(--fwmon-text-faint)">Loading rules\u2026</div>';
+        }
         // No overlay while the Rules tab is hidden (a Customize lookup runs from
         // the matrix); the load itself is the same.
         var host = (wrap && wrap.offsetParent) ? wrap : [];

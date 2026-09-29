@@ -288,8 +288,9 @@
     // A refresh asked for while a search runs (after a delete) is deferred to
     // when it settles — a cancelled/failed search keeps the old rows.
     var searchRefreshDeferred = false;
+    var searchRefreshOffset = 0; // the page a deferred refresh shows (0 after an add)
     function pageSearch(offset, isRefresh) {
-        if (AC.chartLoadBusy('ti-search', true)) { if (isRefresh) searchRefreshDeferred = true; return; }
+        if (AC.chartLoadBusy('ti-search', true)) { if (isRefresh) { searchRefreshDeferred = true; searchRefreshOffset = offset; } return; }
         runSearch(offset, lastSearch, isRefresh);
     }
     function runDeferredSearchRefresh() {
@@ -298,7 +299,7 @@
         var tiPage = document.getElementById('page-threat-intel');
         if (!tiPage || !tiPage.classList.contains('active')) return;
         searchRefreshDeferred = false;
-        pageSearch(searchOffset, true);
+        pageSearch(searchRefreshOffset, true);
     }
 
     // The search form (its inputs) — Esc there cancels the search; Esc in the
@@ -333,7 +334,7 @@
             return api('/admin/api/threat-intel/search?' + params, { signal: signal });
         }, { key: 'ti-search', label: 'Searching…', escScope: searchForm() }).then(function(r) {
             if (r.superseded) {
-                if (isRefresh && AC.chartLoadBusy('ti-search', true)) searchRefreshDeferred = true;
+                if (isRefresh && AC.chartLoadBusy('ti-search', true)) { searchRefreshDeferred = true; searchRefreshOffset = target; }
                 // Left the page (nothing newer took over): init() reloads on
                 // return, so a deferred refresh is consumed, not replayed.
                 else if (!AC.chartLoadBusy('ti-search', true)) searchRefreshDeferred = false;

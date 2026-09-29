@@ -626,8 +626,8 @@ func TestFilterLoad_ReviewRound10(t *testing.T) {
 	mustContain(t, "admin-controls.js", ctl, "hasPendingEdit: function() { return !!(autoApply && autoApply.hasPending()); },", "and exposed on the page handle")
 
 	ti := readJS(t, "admin-threatintel.js")
-	mustContain(t, "admin-threatintel.js", ti, "if (AC.chartLoadBusy('ti-search', true)) { if (isRefresh) searchRefreshDeferred = true; return; }\n        runSearch(offset, lastSearch, isRefresh);", "search paging continues the shown search and waits")
-	if strings.Count(ti, "pageSearch(searchOffset") != 4 {
+	mustContain(t, "admin-threatintel.js", ti, "if (AC.chartLoadBusy('ti-search', true)) { if (isRefresh) { searchRefreshDeferred = true; searchRefreshOffset = offset; } return; }\n        runSearch(offset, lastSearch, isRefresh);", "search paging continues the shown search and waits")
+	if strings.Count(ti, "pageSearch(searchOffset") != 3 {
 		t.Error("Prev, Next and the refresh after a delete must all page through pageSearch")
 	}
 	mustContain(t, "admin-threatintel.js", ti, "shownLookupQ = null; // the result area was just cleared", "re-entering resets the shown lookup")
@@ -677,7 +677,7 @@ func TestFilterLoad_ReviewRound12(t *testing.T) {
 	er := readJS(t, "admin-event-rules.js")
 	mustContain(t, "admin-event-rules.js", er, "var hadRows = wrap && !wrap.querySelector('[data-rules-placeholder]');", "Cancel wording follows what is on screen")
 	mustContain(t, "admin-event-rules.js", er, "AC.chartNotice(wrap, hadRows ? 'Cancelled — showing the previous results' : 'Cancelled',", "and is used")
-	if strings.Count(er, "data-rules-placeholder style=") != 2 {
+	if strings.Count(er, "data-rules-placeholder style=") != 3 {
 		t.Error("both 'not loaded' placeholders must be marked")
 	}
 	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "if (!tiPage || !tiPage.classList.contains('active')) return;", "no background search after leaving")
@@ -732,8 +732,8 @@ func TestFilterLoad_ReviewRound15(t *testing.T) {
 	mustContain(t, "admin-main.js", ra, "if (res && res.superseded && AC.chartLoadBusy('filter-alerts', true)) alertsRefreshDeferred = true;", "re-arm")
 	ti := readJS(t, "admin-threatintel.js")
 	rs := funcBody(t, ti, `function runSearch\(offset, snap, isRefresh\)`)
-	mustContain(t, "admin-threatintel.js", rs, "if (isRefresh && AC.chartLoadBusy('ti-search', true)) searchRefreshDeferred = true;", "an interrupted threat-intel refresh re-arms")
-	mustContain(t, "admin-threatintel.js", funcBody(t, ti, `function runDeferredSearchRefresh\(\)`), "pageSearch(searchOffset, true);", "the deferred run is itself a refresh")
+	mustContain(t, "admin-threatintel.js", rs, "if (isRefresh && AC.chartLoadBusy('ti-search', true)) { searchRefreshDeferred = true; searchRefreshOffset = target; }", "an interrupted threat-intel refresh re-arms")
+	mustContain(t, "admin-threatintel.js", funcBody(t, ti, `function runDeferredSearchRefresh\(\)`), "pageSearch(searchRefreshOffset, true);", "the deferred run is itself a refresh, at the page it was asked for")
 	er := readJS(t, "admin-event-rules.js")
 	mustContain(t, "admin-event-rules.js", funcBody(t, er, `function startRulesReload\(\)`), "if (res && res.superseded && AC.chartLoadBusy('event-rules', true)) rulesReloadDeferred = true;", "an interrupted rules reload re-arms")
 	rv := funcBody(t, er, `function reloadViewedRules\(\)`)
@@ -819,4 +819,26 @@ func TestFilterLoad_ReviewRound19(t *testing.T) {
 	mustContain(t, "admin-device-detail.js", dd, "if (!cdState.data || AC.chartLoadBusy('config-diff', true)) return;", "resize re-renders only a rendered diff")
 	mustContain(t, "admin-device-detail.js", dd, "if (!modal || !modal.classList.contains('active')) return;", "and only while the dialog is open")
 	mustContain(t, "admin-event-rules.js", readJS(t, "admin-event-rules.js"), "                    rulesReloadDeferred = false;\n                    // A cancelled profile switch", "a cancelled switch drops the waiting reload")
+}
+
+// Twentieth review (Opus 5.5, harness-proven MEDIUM): a stale Flows samples
+// list gets its marker back when the view is shown again; Reports pins the
+// theme a report was built with; a profile switch never shows the old rows;
+// the collapse Esc leaves confirm dialogs alone; a deferred post-add refresh
+// shows page 0.
+func TestFilterLoad_ReviewRound20(t *testing.T) {
+	fl := readJS(t, "admin-flows.js")
+	av := funcBody(t, fl, `function applyTabView\(\)`)
+	mustContain(t, "admin-flows.js", av, "else if (tab === 'samples' && wasHidden && samplesStale() && window.AdminCommon) {", "a stale list is marked again")
+	mustContain(t, "admin-flows.js", funcBody(t, fl, `function samplesStale\(\)`), "delete a.tab; delete b.tab;", "the view is not part of the query")
+	rp := readJS(t, "admin-reports.js")
+	mustContain(t, "admin-reports.js", rp, "resolved: theme() };", "the built theme is recorded")
+	mustContain(t, "admin-reports.js", funcBody(t, rp, `function applyChoices\(c\)`), "if (!previewTheme && c.resolved && c.resolved !== theme()) previewTheme = c.resolved;", "and pinned when the app theme moved on")
+	er := readJS(t, "admin-event-rules.js")
+	lr := funcBody(t, er, `function loadRules\(profileId, filter\)`)
+	if i := strings.Index(lr, "if (wrap && pid !== currentProfileId && !wrap.querySelector('[data-rules-placeholder]')) {"); i < 0 || i > strings.Index(lr, "AC.chartLoad(") {
+		t.Error("a profile switch must replace the old rows before the load starts")
+	}
+	mustContain(t, "diagram-cytoscape.js", readJS(t, "diagram-cytoscape.js"), "[role=\"dialog\"].active, .fwmon-confirm-overlay')) return;", "confirm dialogs keep their Esc")
+	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "searchRefreshOffset = offset; }", "the deferred refresh remembers its page")
 }
