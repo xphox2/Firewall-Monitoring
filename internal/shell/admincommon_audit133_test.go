@@ -22,7 +22,7 @@ import (
 //     (not a copy-paste in some other file that also defines one).
 //  2. The `isFinite` guard is present (so the NaN class of input
 //     is rejected before `Math.log` runs).
-//  3. The em-dash is the chosen fallback (so a future agent who
+//  3. The em-dash is the chosen fallback (so a future contributor who
 //     "fixes" the test by changing the return value to "0 B" or
 //     "N/A" or "?" fails the test — the em-dash matches the
 //     existing dashboard no-data convention).
@@ -53,7 +53,7 @@ func TestAdminCommon_FormatBytesHandlesNaN_AUDIT133(t *testing.T) {
 
 	// (3) The em-dash is the chosen fallback. The em-dash is U+2014
 	// (—, three bytes in UTF-8: 0xE2 0x80 0x94). Accepting only the
-	// literal "—" string pins the design choice: a future agent
+	// literal "—" string pins the design choice: a future contributor
 	// who "improves" the fallback to "0 B" or "N/A" or "?" would
 	// break the "no data" rendering convention the rest of the
 	// dashboard uses.

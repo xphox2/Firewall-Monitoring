@@ -314,7 +314,7 @@ func TestFilterLoad_CancelRestoresWhatIsShown(t *testing.T) {
 // Second fresh review: reloads follow the VIEWED profile, titles change with
 // the data, polls clear stale notices, Load more cannot mix filters, and the
 // config-diff Compare button is re-enabled before the closed-modal return.
-func TestFilterLoad_ReviewRound2(t *testing.T) {
+func TestFilterLoad_Regression2(t *testing.T) {
 	er := readJS(t, "admin-event-rules.js")
 	if strings.Contains(er, "loadRules(currentProfileId, currentRuleFilter)") {
 		t.Error("save/delete must reload the viewed profile (viewedProfileId), not the last loaded one")
@@ -353,7 +353,7 @@ func TestFilterLoad_ReviewRound2(t *testing.T) {
 
 // Third fresh review: failed switches, charts-vs-table restores, connection
 // detail polls, and the remaining Cancel/Retry surfaces.
-func TestFilterLoad_ReviewRound3(t *testing.T) {
+func TestFilterLoad_Regression3(t *testing.T) {
 	er := readJS(t, "admin-event-rules.js")
 	lr := funcBody(t, er, `function loadRules\(profileId, filter, lopts\)`)
 	errAt := strings.Index(lr, "if (r.error) {")
@@ -400,7 +400,7 @@ func TestFilterLoad_ReviewRound3(t *testing.T) {
 
 // Fourth fresh review: Esc with any dialog open, Traps Load more during a
 // reload, hidden rule lookups, and first-load Cancel leftovers.
-func TestFilterLoad_ReviewRound4(t *testing.T) {
+func TestFilterLoad_Regression4(t *testing.T) {
 	ac := readJS(t, "admin-common.js")
 	mustContain(t, "admin-common.js", ac, "if (Object.keys(__fwmonOpenModals).length) return;", "any open dialog owns Esc, even with focus on <body>")
 	main := readJS(t, "admin-main.js")
@@ -418,7 +418,7 @@ func TestFilterLoad_ReviewRound4(t *testing.T) {
 // (emptying the registry) BEFORE chartLoad's handler runs, so the registry
 // check alone was dead; defaultPrevented is what survives. Behaviour is
 // verified in the browser check; these pin the lines.
-func TestFilterLoad_ReviewRound5(t *testing.T) {
+func TestFilterLoad_Regression5(t *testing.T) {
 	ac := readJS(t, "admin-common.js")
 	on := funcBody(t, ac, `function onKey\(e\)`)
 	dp := strings.Index(on, "if (e.defaultPrevented) return;")
@@ -433,11 +433,11 @@ func TestFilterLoad_ReviewRound5(t *testing.T) {
 	mustContain(t, "diagram-panels.js", readJS(t, "diagram-panels.js"), "container.dataset.loaded = '1';", "an empty result counts as shown")
 }
 
-// Sixth review (Opus 5.5 — Fable was rate-limited): every navigation path
+// Sixth review: every navigation path
 // stops other pages' loads, Load more follows the shown query, Show snoozed
 // travels with the query, hidden lookups report errors visibly, and Cancel
 // does not blur a pending edit.
-func TestFilterLoad_ReviewRound6(t *testing.T) {
+func TestFilterLoad_Regression6(t *testing.T) {
 	main := readJS(t, "admin-main.js")
 	if n := strings.Count(main, "cancelOtherPageLoads(page);\n"); n != 4 {
 		t.Errorf("cancelOtherPageLoads must run on loadPageData and all three reseedFromURL paths; found %d calls", n)
@@ -476,10 +476,10 @@ func TestFilterLoad_ReviewRound6(t *testing.T) {
 	mustContain(t, "admin.html", readFile(t, "../../web/admin/admin.html"), `id="report-host" style="padding:6px;overflow:clip;">`, "overflow:clip keeps the sticky Cancel box working (hidden made the card its scroll container)")
 }
 
-// Seventh review (Opus 5.5): an error restores like Cancel, a filter change
+// Seventh review: an error restores like Cancel, a filter change
 // drops "select all matching", restore drops pending debounced edits, Flows
 // says plainly which rows the list shows, and the remaining surfaces.
-func TestFilterLoad_ReviewRound7(t *testing.T) {
+func TestFilterLoad_Regression7(t *testing.T) {
 	main := readJS(t, "admin-main.js")
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
 	errAt := strings.Index(run, "if (r.error || !r.data) {")
@@ -521,11 +521,11 @@ func TestFilterLoad_ReviewRound7(t *testing.T) {
 	mustContain(t, "admin-event-rules.js", readJS(t, "admin-event-rules.js"), "try { sessionStorage.setItem('fwmon_rule_prefill', JSON.stringify(p)); }", "it is written back for the next visit")
 }
 
-// Eighth review (Opus 5.5): the filter-based bulk ack acts on the SHOWN
+// Eighth review: the filter-based bulk ack acts on the SHOWN
 // query, select-all cannot be re-armed during a load, errors restore on every
 // surface, background alert refreshes stay on their page, and a background
 // error never wipes what the user is typing.
-func TestFilterLoad_ReviewRound8(t *testing.T) {
+func TestFilterLoad_Regression8(t *testing.T) {
 	main := readJS(t, "admin-main.js")
 	mustContain(t, "admin-main.js", main, "var params = buildAlertParams(0, shownQuery.alerts);", "bulk ack by filter uses the shown query")
 	mustContain(t, "admin-main.js", main, "var s = snap || (analyticsPages.alerts && analyticsPages.alerts.getState()) || {};", "buildAlertParams honours the snapshot")
@@ -556,11 +556,11 @@ func TestFilterLoad_ReviewRound8(t *testing.T) {
 	mustContain(t, "admin-flows.js", readJS(t, "admin-flows.js"), "var cMsg = (append || !samplesStale()) ? 'Cancelled' :", "a cancelled Load more (or first load) claims no previous rows")
 }
 
-// Ninth review (Opus 5.5, proven with a harness): the page handle does not
+// Ninth review: the page handle does not
 // exist during a page's first load, so the query must travel with onChange;
 // paging and bulk actions continue the SHOWN query and wait for a running
 // filter load; routing after a superseded lookup is skipped.
-func TestFilterLoad_ReviewRound9(t *testing.T) {
+func TestFilterLoad_Regression9(t *testing.T) {
 	main := readJS(t, "admin-main.js")
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
 	mustContain(t, "admin-main.js", run, "function apNow() { return analyticsPages[page]; }", "the handle is resolved when the load settles")
@@ -589,11 +589,11 @@ func TestFilterLoad_ReviewRound9(t *testing.T) {
 	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "'Could not look up — showing the previous result' : 'Could not look up', { dim: false, onRetry:", "lookup errors offer Retry")
 }
 
-// Tenth review (Opus 5.5, harness-proven HIGH): the ack refresh waits for a
+// Tenth review: the ack refresh waits for a
 // running filter load; only TABLE loads record the shown query; first pages
 // are built from the same state snapshot as the pages after them; "typing"
 // means a pending edit; threat-intel paging continues the shown search.
-func TestFilterLoad_ReviewRound10(t *testing.T) {
+func TestFilterLoad_Regression10(t *testing.T) {
 	main := readJS(t, "admin-main.js")
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
 	if strings.Count(run, "if (want && key === page) shownQuery[page] = want;") != 2 {
@@ -633,11 +633,11 @@ func TestFilterLoad_ReviewRound10(t *testing.T) {
 	mustContain(t, "admin-threatintel.js", ti, "shownLookupQ = null; // the result area was just cleared", "re-entering resets the shown lookup")
 }
 
-// Eleventh review (Opus 5.5; no HIGH/MEDIUM): config-diff header names the
+// Eleventh review: config-diff header names the
 // pair loading; an ack/delete refresh deferred by a running load runs when it
 // settles; threat-intel errors keep a search being typed; Flows first-load
 // wording; Effective coverage stops lookups against a replaced view.
-func TestFilterLoad_ReviewRound11(t *testing.T) {
+func TestFilterLoad_Regression11(t *testing.T) {
 	dd := readJS(t, "admin-device-detail.js")
 	od := funcBody(t, dd, `function openConfigDiff\(fromID, toID\)`)
 	if i := strings.Index(od, "if (metaEl) metaEl.textContent = 'rev #' + fromID"); i < 0 || i > strings.Index(od, "AC.chartLoad(") {
@@ -661,11 +661,11 @@ func TestFilterLoad_ReviewRound11(t *testing.T) {
 	mustContain(t, "admin-event-profiles.js", ep, "if (!out.isConnected) return; // a view since replaced\n            effShown = want;", "a lookup for a replaced view records nothing")
 }
 
-// Twelfth review (Opus 5.5, harness-proven MEDIUM): the ack refresh runs a
+// Twelfth review: the ack refresh runs a
 // refresh deferred WHILE it ran; deferred refreshes are quiet (no overlay, the
 // Cancel/Retry notice survives) and toast on error; Event rules picks its
 // Cancel wording from what is on screen and drops a stale target on leave.
-func TestFilterLoad_ReviewRound12(t *testing.T) {
+func TestFilterLoad_Regression12(t *testing.T) {
 	main := readJS(t, "admin-main.js")
 	ra := funcBody(t, main, `function refreshAlertsAtCurrentPage\(opts\)`)
 	mustContain(t, "admin-main.js", ra, "            updateAlertBulkToolbar();\n            runDeferredAlertsRefresh();\n        });", "an ack during the refresh is not lost")
@@ -683,11 +683,11 @@ func TestFilterLoad_ReviewRound12(t *testing.T) {
 	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "if (!tiPage || !tiPage.classList.contains('active')) return;", "no background search after leaving")
 }
 
-// Thirteenth review (Opus 5.5; LOW only): the threat-intel deferred refresh is
+// Thirteenth review: the threat-intel deferred refresh is
 // consumed even off-page; a save/delete rules reload defers to a running load;
 // paging may supersede a quiet ack refresh; threat-intel paging Cancel/Retry
 // never touch the search box.
-func TestFilterLoad_ReviewRound13(t *testing.T) {
+func TestFilterLoad_Regression13(t *testing.T) {
 	ti := readJS(t, "admin-threatintel.js")
 	rd := funcBody(t, ti, `function runDeferredSearchRefresh\(\)`)
 	if strings.Index(rd, "searchRefreshDeferred = false;") > strings.Index(rd, "if (!tiPage") {
@@ -707,10 +707,10 @@ func TestFilterLoad_ReviewRound13(t *testing.T) {
 	mustContain(t, "CHANGELOG.md", readFile(t, "../../CHANGELOG.md"), "(the Connections map side panel, which stays open, keeps loading)", "the panel exception is stated")
 }
 
-// Fourteenth review (Opus 5.5, harness-proven LOW): a quiet ack refresh that
+// Fourteenth review: a quiet ack refresh that
 // paging or a filter change interrupts is re-armed, so the ack still shows if
 // that load is cancelled or fails; a page leave drops a deferred rules reload.
-func TestFilterLoad_ReviewRound14(t *testing.T) {
+func TestFilterLoad_Regression14(t *testing.T) {
 	main := readJS(t, "admin-main.js")
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
 	mustContain(t, "admin-main.js", run, "                return { superseded: true };\n            }", "callers can tell a superseded load")
@@ -719,11 +719,11 @@ func TestFilterLoad_ReviewRound14(t *testing.T) {
 	mustContain(t, "admin-event-rules.js", readJS(t, "admin-event-rules.js"), "rulesReloadDeferred = false; // the page reloads its rules on return", "a page leave consumes the deferred rules reload")
 }
 
-// Fifteenth review (Opus 5.5; LOW only): every interrupted post-mutation
+// Fifteenth review: every interrupted post-mutation
 // refresh re-arms (alerts quiet or not, threat intel, event rules); a rules
 // reload after leaving does nothing; an Effective error clears "Resolving…";
 // connection detail falls back to the default range before any has loaded.
-func TestFilterLoad_ReviewRound15(t *testing.T) {
+func TestFilterLoad_Regression15(t *testing.T) {
 	main := readJS(t, "admin-main.js")
 	ra := funcBody(t, main, `function refreshAlertsAtCurrentPage\(opts\)`)
 	if strings.Contains(ra, "if (opts && opts.quiet) {\n") {
@@ -744,10 +744,10 @@ func TestFilterLoad_ReviewRound15(t *testing.T) {
 	mustContain(t, "admin-event-profiles.js", readJS(t, "admin-event-profiles.js"), "shown, and no \"Resolving…\" is left behind.\n                if (!out.querySelector('.ep-matrix-row, table, [data-ep-openprofile]')) out.innerHTML = '';", "an Effective error clears the placeholder")
 }
 
-// Sixteenth review (Opus 5.5, harness-proven MEDIUM): leaving Reports mid-load
+// Sixteenth review: leaving Reports mid-load
 // makes the next visit rebuild the chosen report; the ack refresh repaints the
 // select-all banner; a tunnel-collapse Esc is not also a load Cancel.
-func TestFilterLoad_ReviewRound16(t *testing.T) {
+func TestFilterLoad_Regression16(t *testing.T) {
 	rp := readJS(t, "admin-reports.js")
 	mustContain(t, "admin-reports.js", rp, "if (!AC.chartLoadBusy('report-preview', true)) rebuildOnInit = true;\n                    return;", "a report stopped by leaving the page is rebuilt on return")
 	main := readJS(t, "admin-main.js")
@@ -759,12 +759,12 @@ func TestFilterLoad_ReviewRound16(t *testing.T) {
 	mustContain(t, "diagram-cytoscape.js", cy, "                e.preventDefault();\n                Object.keys(expandedTunnels).forEach(collapseTunnel);", "the collapse Esc is marked handled")
 }
 
-// Seventeenth review (Opus 5.5): the Flows samples host follows its view; the
+// Seventeenth review: the Flows samples host follows its view; the
 // Reports rebuild flag is separate from "a report is displayed"; a threat-intel
 // deferred refresh is consumed on leave and an add refreshes like a delete;
 // the tunnel-collapse Esc runs in the capture phase so its preventDefault
 // always precedes the load-Cancel handler.
-func TestFilterLoad_ReviewRound17(t *testing.T) {
+func TestFilterLoad_Regression17(t *testing.T) {
 	fl := readJS(t, "admin-flows.js")
 	av := funcBody(t, fl, `function applyTabView\(\)`)
 	mustContain(t, "admin-flows.js", av, "sampHost.hidden = (tab !== 'samples');", "the samples host hides with its view")
@@ -787,12 +787,12 @@ func TestFilterLoad_ReviewRound17(t *testing.T) {
 	}
 }
 
-// Eighteenth review (Opus 5.5): the tunnel-collapse Esc (global, capture
+// Eighteenth review: the tunnel-collapse Esc (global, capture
 // phase) acts only while the map is on screen — it swallowed the first Esc on
 // every other page; row charts re-expand with the active pill; a hidden Flows
 // samples load is re-issued when its list is shown; a Reports period change
 // always builds.
-func TestFilterLoad_ReviewRound18(t *testing.T) {
+func TestFilterLoad_Regression18(t *testing.T) {
 	cy := readJS(t, "diagram-cytoscape.js")
 	mustContain(t, "diagram-cytoscape.js", cy, "if (!box || !box.getClientRects().length) return;", "the collapse Esc acts only when the map is rendered")
 	if i := strings.Index(cy, "if (e.defaultPrevented) return;\n                var box = cy && cy.container();"); i < 0 || i > strings.Index(cy, "                e.preventDefault();\n                Object.keys(expandedTunnels)") {
@@ -807,10 +807,10 @@ func TestFilterLoad_ReviewRound18(t *testing.T) {
 	mustContain(t, "admin-reports.js", readJS(t, "admin-reports.js"), "if (sel) sel.addEventListener('change', function () { loadPreview(); });", "a period change always builds")
 }
 
-// Nineteenth review (Opus 5.5): the config-diff modal opens before its data,
+// Nineteenth review: the config-diff modal opens before its data,
 // so the previous comparison is dropped and the resize re-render only runs
 // over a rendered diff; a cancelled profile switch drops a waiting reload.
-func TestFilterLoad_ReviewRound19(t *testing.T) {
+func TestFilterLoad_Regression19(t *testing.T) {
 	dd := readJS(t, "admin-device-detail.js")
 	od := funcBody(t, dd, `function openConfigDiff\(fromID, toID\)`)
 	if i := strings.Index(od, "cdState.data = null;"); i < 0 || i > strings.Index(od, "AC.chartLoad(") {
@@ -821,12 +821,12 @@ func TestFilterLoad_ReviewRound19(t *testing.T) {
 	mustContain(t, "admin-event-rules.js", readJS(t, "admin-event-rules.js"), "                    rulesReloadDeferred = false;\n                    // A cancelled profile switch", "a cancelled switch drops the waiting reload")
 }
 
-// Twentieth review (Opus 5.5, harness-proven MEDIUM): a stale Flows samples
+// Twentieth review: a stale Flows samples
 // list gets its marker back when the view is shown again; Reports pins the
 // theme a report was built with; a profile switch never shows the old rows;
 // the collapse Esc leaves confirm dialogs alone; a deferred post-add refresh
 // shows page 0.
-func TestFilterLoad_ReviewRound20(t *testing.T) {
+func TestFilterLoad_Regression20(t *testing.T) {
 	fl := readJS(t, "admin-flows.js")
 	av := funcBody(t, fl, `function applyTabView\(\)`)
 	mustContain(t, "admin-flows.js", av, "else if (tab === 'samples' && wasHidden && samplesStale() && window.AdminCommon) {", "a stale list is marked again")
@@ -845,12 +845,12 @@ func TestFilterLoad_ReviewRound20(t *testing.T) {
 	}
 }
 
-// Twenty-first review (Opus 5.5, harness-proven): a deferred threat-intel
+// Twenty-first review: a deferred threat-intel
 // refresh keeps its intent, not a frozen offset (which paired an old offset
 // with a new search); a delete after leaving does nothing; Flows re-issues
 // only a samples load that started hidden (a visible Load more keeps its
 // rows); config-diff errors offer Retry.
-func TestFilterLoad_ReviewRound21(t *testing.T) {
+func TestFilterLoad_Regression21(t *testing.T) {
 	ti := readJS(t, "admin-threatintel.js")
 	mustContain(t, "admin-threatintel.js", ti, "if (tiPage && tiPage.classList.contains('active')) pageSearch(searchOffset, true);", "a delete refresh is page-gated")
 	fl := readJS(t, "admin-flows.js")
@@ -862,12 +862,12 @@ func TestFilterLoad_ReviewRound21(t *testing.T) {
 	}
 }
 
-// Twenty-second review (Opus 5.5; LOW only): the threat-intel refresh intent
+// Twenty-second review: the threat-intel refresh intent
 // is reset wherever the refresh is consumed; deferred threat-intel and rules
 // refreshes are quiet (no overlay flash over a Cancel/error notice, errors
 // toast); a stale "Loading rules…" is settled; a theme change during the
 // first report build rebuilds it in the new theme.
-func TestFilterLoad_ReviewRound22(t *testing.T) {
+func TestFilterLoad_Regression22(t *testing.T) {
 	ti := readJS(t, "admin-threatintel.js")
 	rd := funcBody(t, ti, `function runDeferredSearchRefresh\(\)`)
 	if strings.Index(rd, "searchRefreshToStart = false;") > strings.Index(rd, "if (!tiPage") {
@@ -888,13 +888,13 @@ func TestFilterLoad_ReviewRound22(t *testing.T) {
 	mustContain(t, "admin-reports.js", rp, "if (page && page.classList.contains('active') && AC.chartLoadBusy('report-preview', true)) loadPreview();", "a theme change during the first build rebuilds it")
 }
 
-// Twenty-third review (Opus 5.5; LOW only): Flows claims stale rows only when
+// Twenty-third review: Flows claims stale rows only when
 // they are; connection-detail init never supersedes a range already picked;
 // a Reports Retry follows the current app theme and downloads are named after
 // the report shown; threat-intel paging is not blocked by a quiet refresh and
 // Retry never overwrites a new search being typed; a prefill is re-kept only
 // on failure or when the page was left.
-func TestFilterLoad_ReviewRound23(t *testing.T) {
+func TestFilterLoad_Regression23(t *testing.T) {
 	cd := readJS(t, "admin-connection-detail.js")
 	in := funcBody(t, cd, `function init\(\)`)
 	mustContain(t, "admin-connection-detail.js", in, "if (AC.chartLoadBusy('cd-traffic', true)) return;\n            return setTrafficRange(currentTrafficRange);", "init never supersedes a picked range")
@@ -909,10 +909,10 @@ func TestFilterLoad_ReviewRound23(t *testing.T) {
 	mustContain(t, "admin-event-profiles.js", ep, "if (!(lr && lr.superseded) || !onPage) window.FwmonEventRules.keepPendingPrefill(pending);", "a prefill is re-kept only on failure or leave")
 }
 
-// Twenty-fourth review (Opus 5.5, harness-proven LOW): a deferred page-1
+// Twenty-fourth review: a deferred page-1
 // refresh interrupted by user paging re-arms without its page-1 intent; a
 // charts Retry does nothing while a newer table load runs.
-func TestFilterLoad_ReviewRound24(t *testing.T) {
+func TestFilterLoad_Regression24(t *testing.T) {
 	ti := readJS(t, "admin-threatintel.js")
 	mustContain(t, "admin-threatintel.js", funcBody(t, ti, `function pageSearch\(offset, isRefresh\)`), "if (!isRefresh) searchPagingTookOver = true;", "a paging load is marked")
 	main := readJS(t, "admin-main.js")
@@ -923,11 +923,11 @@ func TestFilterLoad_ReviewRound24(t *testing.T) {
 	}
 }
 
-// Twenty-fifth review (Opus 5.5; LOW only): Alerts/Traps stat tiles blank
+// Twenty-fifth review: Alerts/Traps stat tiles blank
 // when their charts load is cancelled or fails; a same-page threat-intel
 // re-entry stops a running lookup before clearing it; the host grows only
 // once the overlay shows.
-func TestFilterLoad_ReviewRound25(t *testing.T) {
+func TestFilterLoad_Regression25(t *testing.T) {
 	main := readJS(t, "admin-main.js")
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
 	if strings.Count(run, "if (opts.onFail) opts.onFail();") != 2 {
@@ -948,10 +948,10 @@ func TestFilterLoad_ReviewRound25(t *testing.T) {
 	}
 }
 
-// Twenty-sixth review (Opus 5.5, verdict "sound"; two optional LOWs fixed):
+// Twenty-sixth review:
 // a charts load stopped by leaving the page blanks the tiles too, and tiles
 // already showing the requested range are left alone.
-func TestFilterLoad_ReviewRound26(t *testing.T) {
+func TestFilterLoad_Regression26(t *testing.T) {
 	main := readJS(t, "admin-main.js")
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
 	mustContain(t, "admin-main.js", run, "if (opts.onFail && !AC.chartLoadBusy(loadKey, true)) opts.onFail();", "a load stopped by a page leave counts as failed for the tiles")

@@ -25,7 +25,7 @@ import (
 //  3. A forward-pointer to the future router work (so a future
 //     agent picking this up knows what to do)
 //
-// A future agent who deletes the documentation (or shortens it
+// A future contributor who deletes the documentation (or shortens it
 // to the pre-fix one-liner) fails here immediately, with a
 // message pointing at the audit.
 func TestAdminControls_DocumentsRouterLimitation_AUDIT127(t *testing.T) {

@@ -276,8 +276,7 @@
     </div>
 
     <!-- AUDIT-056: form <label> elements carry for="<input id>" so screen
-         readers pair each label with its control. See scripts/audit056_labels.py
-         for the sweep; the invariant (every for= resolves to an id) is pinned by
+         readers pair each label with its control. The invariant (every for= resolves to an id) is pinned by
          TestLabelFor_AUDIT056 in internal/shell/. -->
     <main class="main" id="main-content" tabindex="-1" style="position: relative; overflow: hidden;">
         <div class="page-header" style="position: relative; z-index: 1; display: none;">
@@ -2508,8 +2507,7 @@
 
     <!-- AUDIT-069: static modals carry role="dialog" aria-modal="true"
          aria-labelledby="<title-id>" directly in markup (not only via
-         admin-common.js tagStaticModals at runtime). See
-         scripts/audit069_modal_aria.py. -->
+         admin-common.js tagStaticModals at runtime). -->
     <!-- Device Modal -->
     <!-- MFA onboarding wizard (v0.11.16). Offered once per login session to
          accounts without 2FA that haven't declined; steps rendered into the

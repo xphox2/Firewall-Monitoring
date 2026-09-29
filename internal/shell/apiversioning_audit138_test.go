@@ -27,7 +27,7 @@ import (
 //  3. The middleware is mounted before route registration
 //     (so the rewrite happens before route matching).
 //  4. The audit ID is referenced in a comment (so the
-//     fragility is documented, and a future agent who
+//     fragility is documented, and a future contributor who
 //     removes the rewrite without addressing AUDIT-090 fails
 //     the test).
 //
@@ -62,7 +62,7 @@ func TestAPIVersioningRewrite_BehaviorPinned_AUDIT138(t *testing.T) {
 	}
 
 	// 3. The middleware must be registered with `router.Use`
-	// (so it runs before route matching). A future agent who
+	// (so it runs before route matching). A future contributor who
 	// accidentally moves the rewrite into a per-route handler
 	// would still let the request hit the canonical routes
 	// without the rewrite, which is a routing-regression
@@ -72,7 +72,7 @@ func TestAPIVersioningRewrite_BehaviorPinned_AUDIT138(t *testing.T) {
 	}
 
 	// 4. The audit ID must be referenced in a comment. A
-	// future agent who removes the rewrite without addressing
+	// future contributor who removes the rewrite without addressing
 	// AUDIT-090 fails here loudly with the audit ID.
 	if !strings.Contains(body, "AUDIT-138") {
 		t.Errorf("main.go's path-rewrite is no longer tagged with `AUDIT-138` in a comment; the fragility is undocumented and a future refactor is more likely to drop the rewrite silently. Add the audit ID to the doc block (e.g. `// AUDIT-138: ...`).")

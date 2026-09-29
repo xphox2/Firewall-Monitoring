@@ -35,7 +35,7 @@ func TestDeploy_WebCopiedWithPrefix_AUDIT171(t *testing.T) {
 			t.Errorf("deploy.sh contains the flattening copy %q, which strips the web/ prefix LoadHTMLGlob depends on (AUDIT-171).", bad)
 		}
 	}
-	// Adjacent AUDIT-171 fix: scripts/ holds only *.py dev helpers, so a
+	// Adjacent AUDIT-171 fix: no shell scripts ship in scripts/, so a
 	// `cp scripts/*.sh` glob never expands and, under set -e, aborted the
 	// install before the systemd units were created.
 	if strings.Contains(body, "cp scripts/*.sh") {

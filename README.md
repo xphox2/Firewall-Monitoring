@@ -519,7 +519,6 @@ The grouped overview below covers every category.
 - [docs/custom-vendor.md](docs/custom-vendor.md) — step-by-step tutorial for adding a new SNMP vendor profile.
 - [docs/FORTIGATE-SNMP-SETUP.md](docs/FORTIGATE-SNMP-SETUP.md) — FortiGate device-side setup.
 - [docs/FEATURES.md](docs/FEATURES.md) — website-ready feature inventory.
-- [docs/AUDIT.md](docs/AUDIT.md) — public-release audit and progress log.
 - [docs/OPERATIONS.md §Upgrade](docs/OPERATIONS.md#upgrade) — production upgrade runbook.
 - [MIGRATING.md](MIGRATING.md) — probe↔server wire format (`schema_version`).
 - [KNOWN-ISSUES.md](KNOWN-ISSUES.md) — current limitations with AUDIT-NNN cross-links.
@@ -542,7 +541,7 @@ ES2020 JavaScript:
 **Alpha.** The core feature set (SNMP polling, trap/syslog/sFlow ingestion,
 alerting, config-change tracking, remote probes, reporting) is implemented and
 runs in the maintainer's own environment, and the codebase has been through
-several internal engineering and security audits (see [`docs/AUDIT.md`](docs/AUDIT.md)).
+several engineering and security reviews.
 That said, it is early:
 
 - **Breaking changes may land between minor versions.** Pin a version and read

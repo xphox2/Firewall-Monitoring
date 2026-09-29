@@ -18,7 +18,7 @@ import (
 //     `healthcheck:` block in the dependent's service definition.
 //
 // The Dockerfile has its own HEALTHCHECK (v0.10.264); this test
-// pins the compose-level block independently so a future agent
+// pins the compose-level block independently so a future contributor
 // who edits the compose file and removes the block fails CI here
 // even if the image is still healthy.
 func TestDockerCompose_HasHealthcheck_AUDIT096(t *testing.T) {

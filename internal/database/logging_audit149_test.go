@@ -25,7 +25,7 @@ func TestDBLogLevel_DefaultIsWarn_AUDIT149(t *testing.T) {
 }
 
 // TestDBLogLevel_AllValidValues_AUDIT149 — the four valid
-// values must map correctly. A future agent who adds a fifth
+// values must map correctly. A future contributor who adds a fifth
 // value (e.g. `trace`) but forgets to update the test would
 // fail here.
 func TestDBLogLevel_AllValidValues_AUDIT149(t *testing.T) {

@@ -9,8 +9,8 @@ import (
 // TestIRCIife_Wrapped_AUDIT050 is a static regression for the audit:
 // `cmd/api/static/js/admin-irc.js` was NOT IIFE-wrapped, so its module state
 // (`let servers/channels/commands`) and every function leaked onto the global
-// window object — inconsistent with every other admin-*.js file and the
-// lessons.md "Blank Admin Pages" guidance. The fix wraps the whole file in an
+// window object — inconsistent with every other admin-*.js file (an unscoped
+// script can blank the admin pages). The fix wraps the whole file in an
 // IIFE with 'use strict' and converts the top-level declarations to `var`.
 // (Full ES6->ES5 body conversion is tracked separately as AUDIT-131.)
 func TestIRCIife_Wrapped_AUDIT050(t *testing.T) {

@@ -11,7 +11,7 @@ import (
 // `PASSWORD 'fwmon'` and `DB_PASSWORD="fwmon"`, baking a credential
 // into the public repo. The fix is to generate a random password on
 // first init and persist it to /config/pg-credentials. This test
-// pins the source file so a future agent who copy-pastes an example
+// pins the source file so a future contributor who copy-pastes an example
 // back into the entrypoint fails CI immediately.
 //
 // The user *name* `fwmon` is fine — it's the application user, not a
@@ -61,7 +61,7 @@ func TestEntrypoint_NoHardcodedPostgresPassword_AUDIT093(t *testing.T) {
 //     (the comment is a docstring, not a real command).
 //
 // This is intentionally simple — the test is checking for one
-// specific anti-pattern, not parsing bash. If a future agent
+// specific anti-pattern, not parsing bash. If a future contributor
 // constructs a more complex false-positive, refine this helper
 // rather than weakening the assertion.
 func stripBashComments(s string) string {

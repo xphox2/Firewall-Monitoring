@@ -49,7 +49,7 @@ data/
 *.key
 *.pem
 
-# Claude Code local settings (user-specific tool permissions)
+# Local editor/tool settings (user-specific)
 .claude/
 
 # Cookies / session files

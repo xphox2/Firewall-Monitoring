@@ -26,6 +26,3 @@
 /deploy.sh              @xphox2
 /.github/               @xphox2
 
-# --- The public-release audit + handoff docs. ---
-/docs/AUDIT.md          @xphox2
-/docs/HANDOFF.md        @xphox2

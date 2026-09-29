@@ -102,7 +102,7 @@ func TestSaveInterfaceAddresses_PerDeviceDedup_AUDIT030(t *testing.T) {
 // must produce three rows. Defends against a future regression
 // where someone "optimizes" the function by deduping in-process
 // (which would be correct, but the unique-index test above is
-// the source of truth — and a future agent might remove the
+// the source of truth — and a future contributor might remove the
 // in-Go dedup and rely on the DB).
 func TestSaveInterfaceAddresses_MultipleAddressesSameCall_AUDIT030(t *testing.T) {
 	d := NewDatabaseForTesting(t)

@@ -90,7 +90,7 @@ func TestTrapRule_NoRuleFallsBackToLegacy(t *testing.T) {
 	}
 }
 
-// TestTrapRule_SiteScopedMatches is the regression guard for the Fable HIGH
+// TestTrapRule_SiteScopedMatches is the regression guard for a HIGH-severity review
 // finding: ProcessTrap gets siteID=nil, so a site-scoped trap rule must match via
 // the device's own SiteID (from deviceMeta) — otherwise scoping is silently dead.
 func TestTrapRule_SiteScopedMatches(t *testing.T) {

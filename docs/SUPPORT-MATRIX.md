@@ -66,8 +66,7 @@ required field, a removed endpoint, a `schema_version` bump) will:
 
 ## Flow-export vendor matrix (NetFlow v5/v9 · IPFIX · sFlow)
 
-What each firewall vendor can export and what to watch for. Full sourced
-detail in `docs/flow-protocol-research-2026-07-03.md` §5. **Configure ONE
+What each firewall vendor can export and what to watch for. **Configure ONE
 flow protocol per device** — dual-exporting the same interfaces double-counts
 every byte (the collector's `PROBE_FLOW_DEDUP` policy defends against this,
 default `prefer-netflow`, and the Flows page warns when it sees mixed

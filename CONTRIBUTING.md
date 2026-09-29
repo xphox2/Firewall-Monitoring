@@ -1,6 +1,6 @@
 # Contributing to Firewall-Mon
 
-Thanks for considering a contribution. This document covers the dev environment, testing requirements, and PR conventions. The audit doc (`docs/AUDIT.md`) is the canonical source for known issues and roadmap items.
+Thanks for considering a contribution. This document covers the dev environment, testing requirements, and PR conventions. Known limitations are listed in [`KNOWN-ISSUES.md`](KNOWN-ISSUES.md); bugs and feature requests are tracked as GitHub issues.
 
 ## Dev environment
 
@@ -20,8 +20,8 @@ go test ./...
 
 ## What is in scope
 
-- Bug fixes (point to the AUDIT-NNN ID from `docs/AUDIT.md` in the PR title when applicable).
-- Test coverage for the still-thin packages (`internal/snmp` vendor poll paths behind a mockable SNMP walker, `internal/notifier` SMTP send, `internal/relay` beyond the wire-contract tests — see the test-coverage notes in `docs/FEATURE-ROADMAP.md`).
+- Bug fixes (reference the GitHub issue, or the AUDIT-NNN label when the code already carries one).
+- Test coverage for the still-thin packages (`internal/snmp` vendor poll paths behind a mockable SNMP walker, `internal/notifier` SMTP send, `internal/relay` beyond the wire-contract tests).
 - Vendor profile additions (`internal/snmp/vendor_*.go` + `internal/configdiff/vendor_*.go` — see AUDIT-113 for the "how").
 - Documentation improvements across `docs/` (operator runbooks, the architecture and support-matrix docs, vendor guides).
 
@@ -29,7 +29,7 @@ go test ./...
 
 - Multi-tenant features (see AUDIT-F86; ~XL effort, single-tenant is the v0 scope).
 - Replacing GORM with sqlc / Bun / something else (the cost of touching every query exceeds the win).
-- Adding new vendored JS libraries without a strong story for why local-only + no CDN is unacceptable (the project has zero CDN deps by design — see `tasks/lessons.md`'s CSP rule).
+- Adding new vendored JS libraries without a strong story for why local-only + no CDN is unacceptable (the project has zero CDN deps by design — the CSP allows only same-origin scripts, styles and fonts).
 
 If unsure, open a [discussion](https://github.com/xphox2/Firewall-Monitoring/discussions) before writing code.
 
@@ -51,7 +51,7 @@ If unsure, open a [discussion](https://github.com/xphox2/Firewall-Monitoring/dis
    ```
 4. **Update `CHANGELOG.md`** with a new entry **at the top of the file** describing the change. Use the version pattern `[0.10.N+1] - YYYY-MM-DD`. Include the AUDIT-NNN ID if applicable.
 5. **Bump `ServerVersion`** in `cmd/api/main.go:39` to the version your CHANGELOG entry uses. (The Dockerfile uses `ARG VERSION=dev` and needs no edit — the build stamps the version in.)
-6. **For resolved audit items**, append a row to the "Resolved findings" table in `docs/AUDIT.md` and a line to the "Progress log" at the bottom — both with the version and commit SHA. (You can leave SHA `(pending)` in the PR; a maintainer will update on merge.)
+6. **If your change resolves a limitation** listed in `KNOWN-ISSUES.md`, remove that entry in the same PR.
 7. **Open the PR**. Title format: `vX.Y.Z: AUDIT-NNN - short description` or `vX.Y.Z: <area> - short description` for non-audit work.
 8. **CI** runs `go build`, `go test -race`, `gofmt -l`, `go vet`, `govulncheck` on every PR — must be green before merge.
 9. **Squash-merge** is the default; the merge commit message becomes the canonical changelog entry on `master`.
@@ -90,7 +90,7 @@ Server-repo only.
 
 If your change touches authentication, encryption, secret management, the trap listener, or any of the SSRF-gated `Test*` endpoints, please:
 
-1. Reference the specific audit findings the change addresses (`docs/AUDIT.md`).
+1. Reference the issue (or AUDIT-NNN label) the change addresses.
 2. Add a regression test that *fails* without your fix (or document why a test is infeasible).
 3. Update `SECURITY.md` if the change affects the threat model.
 

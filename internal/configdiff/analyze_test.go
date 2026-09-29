@@ -32,8 +32,7 @@ func buildFortiFullConfig() string {
 }
 
 // These fixtures are synthetic but reproduce the exact volatility patterns found
-// in real FortiGate FGT60F-7.4.12 backups (tasks/config_1_30* during the
-// v0.10.439 investigation). Real backups are NOT committed because they carry
+// in real FortiGate backups. Real backups are NOT committed because they carry
 // cert private keys and IPsec PSK seeds.
 
 // fortiShowBackup is a plain `show` backup: indented, non-default settings only,

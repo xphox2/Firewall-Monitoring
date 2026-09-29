@@ -43,7 +43,7 @@ func TestFwmonLogWrapper_Exists_AUDIT151(t *testing.T) {
 		// A simple substring match is sufficient because the
 		// level names are distinctive.
 		if !strings.Contains(body, level) {
-			t.Errorf("admin-common.js fwmonLog is missing the %q level (AUDIT-151: the audit called for debug/info/warn/error; a future agent who adds a fifth level should update this test).", level)
+			t.Errorf("admin-common.js fwmonLog is missing the %q level (AUDIT-151: the audit called for debug/info/warn/error; a future contributor who adds a fifth level should update this test).", level)
 		}
 	}
 
@@ -54,7 +54,7 @@ func TestFwmonLogWrapper_Exists_AUDIT151(t *testing.T) {
 
 	// 4. The audit ID is referenced.
 	if !strings.Contains(body, "AUDIT-151") {
-		t.Errorf("admin-common.js's fwmonLog comment no longer references AUDIT-151; the migration's design rationale is undocumented and a future agent is more likely to silently remove the wrapper.")
+		t.Errorf("admin-common.js's fwmonLog comment no longer references AUDIT-151; the migration's design rationale is undocumented and a future contributor is more likely to silently remove the wrapper.")
 	}
 }
 

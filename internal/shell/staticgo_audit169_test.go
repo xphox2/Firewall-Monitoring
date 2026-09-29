@@ -8,7 +8,7 @@ import (
 
 // TestStaticGo_HasLayeringDocComment_AUDIT169 — the audit's
 // recommendation was "Acceptable as-is. Document the choice."
-// This test pins the documentation: any future agent who deletes
+// This test pins the documentation: any future contributor who deletes
 // the long comment block from cmd/api/static.go fails here, and
 // the failure message points at the audit so they know to either
 // re-add the comment or move the embed to internal/ (which the

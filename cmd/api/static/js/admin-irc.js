@@ -1,6 +1,6 @@
 // AUDIT-050: IIFE-wrapped so module state (servers/channels/commands) and
 // every function stay out of the global window scope, matching every other
-// admin-*.js file (see lessons.md "Blank Admin Pages"). Full ES6->ES5
+// admin-*.js file (an unscoped script can blank the admin pages). Full ES6->ES5
 // conversion of the function bodies is tracked separately as AUDIT-131.
 (function () {
     'use strict';

@@ -19,7 +19,7 @@ import (
 // axes:
 //
 //  1. Static — grep config.go for the strings "ADMIN_SECRET_KEY"
-//     and "AdminSecretKey". A future agent who copy-pastes an
+//     and "AdminSecretKey". A future contributor who copy-pastes an
 //     example back into the file fails here immediately. A future
 //     handler that references the (removed) field would also fail
 //     to compile, which is its own kind of test.
@@ -27,7 +27,7 @@ import (
 //  2. Runtime — set ADMIN_SECRET_KEY to a sentinel value, load
 //     the config, and confirm the sentinel doesn't surface
 //     anywhere in the rendered Server block. This catches the
-//     case where a future agent re-adds the field and the
+//     case where a future contributor re-adds the field and the
 //     runtime check passes (because they wired it up) but the
 //     field is still dead from the operator's perspective.
 func TestNoDeadAdminSecretKey_AUDIT157(t *testing.T) {
@@ -40,7 +40,7 @@ func TestNoDeadAdminSecretKey_AUDIT157(t *testing.T) {
 		t.Skipf("config.go not found at ./config.go (tests must run from internal/config/); err: %v", err)
 	}
 	if strings.Contains(string(src), "ADMIN_SECRET_KEY") {
-		t.Errorf("config.go still references the env var name 'ADMIN_SECRET_KEY' (AUDIT-157). Remove the line from config.Load() so the dead env var doesn't get resurrected by a future agent who copy-pastes an example.")
+		t.Errorf("config.go still references the env var name 'ADMIN_SECRET_KEY' (AUDIT-157). Remove the line from config.Load() so the dead env var doesn't get resurrected by a future contributor who copy-pastes an example.")
 	}
 	if strings.Contains(string(src), "AdminSecretKey") {
 		t.Errorf("config.go still references the field 'AdminSecretKey' (AUDIT-157). Remove the struct field so the dead field doesn't get resurrected.")

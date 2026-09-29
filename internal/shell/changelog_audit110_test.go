@@ -33,7 +33,7 @@ func TestChangelog_KeepAChangelogHeader_AUDIT110(t *testing.T) {
 
 	// The file must reference Keep-A-Changelog in the header.
 	if !strings.Contains(body, "Keep a Changelog") {
-		t.Errorf("CHANGELOG.md is missing the Keep-A-Changelog reference in the header (AUDIT-110). The header must link to https://keepachangelog.com/ so a future agent who edits the file knows which version of the spec to follow. Currently the body has %d characters.", len(body))
+		t.Errorf("CHANGELOG.md is missing the Keep-A-Changelog reference in the header (AUDIT-110). The header must link to https://keepachangelog.com/ so a future contributor who edits the file knows which version of the spec to follow. Currently the body has %d characters.", len(body))
 	}
 
 	// The file must reference Semantic Versioning.
@@ -71,7 +71,7 @@ func TestKnownIssues_Exists_AUDIT110(t *testing.T) {
 
 	// The file must reference at least one of the audit IDs that
 	// drove its creation. We check the highest-impact ones; a
-	// future agent who deletes all of these references fails here.
+	// future contributor who deletes all of these references fails here.
 	expectedRefs := []string{"AUDIT-040", "AUDIT-118", "AUDIT-093", "AUDIT-105", "AUDIT-029"}
 	found := 0
 	for _, ref := range expectedRefs {
@@ -80,6 +80,6 @@ func TestKnownIssues_Exists_AUDIT110(t *testing.T) {
 		}
 	}
 	if found < 3 {
-		t.Errorf("KNOWN-ISSUES.md mentions only %d of the %d AUDIT-NNN references the file should cross-link to. A future agent who strips the cross-links is removing the value of having a separate file — readers can no longer navigate from a known issue to its audit doc row.", found, len(expectedRefs))
+		t.Errorf("KNOWN-ISSUES.md mentions only %d of the %d AUDIT-NNN references the file should cross-link to. A future contributor who strips the cross-links is removing the value of having a separate file — readers can no longer navigate from a known issue to its audit doc row.", found, len(expectedRefs))
 	}
 }

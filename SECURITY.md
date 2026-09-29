@@ -50,13 +50,13 @@ Out of scope:
 
 ## Hardening guidance for operators
 
-See `docs/AUDIT.md` for the current audit baseline. The most impactful operator-side controls:
+The most impactful operator-side controls:
 
 - Set `JWT_SECRET_KEY`, `ADMIN_PASSWORD`, and `SNMP_TRAP_COMMUNITY` explicitly rather than relying on auto-generation.
 - Front the admin panel with a reverse proxy that terminates TLS (`docker-compose.proxy.yml` provides a starting point) and configure `CORS_ALLOWED_ORIGINS` to your operator origin only.
 - Run the database backups (`pg_dump` plus `/data/.jwt-secret` and `/data/.admin-password`) in step — losing the JWT secret makes every `{enc}` ciphertext in the DB unreadable.
 - Keep `cmd/trap-receiver` reachable only from the device management VLAN, not the public internet.
-- Review `tasks/lessons.md` and the audit findings in `docs/AUDIT.md` before exposing the panel to a hostile network.
+- Review `KNOWN-ISSUES.md` and `docs/OPERATIONS.md` before exposing the panel to a hostile network.
 
 ## Hall of fame
 

@@ -158,7 +158,7 @@ func TestBuildStateCandidate_DailyCapZeroHonored(t *testing.T) {
 	}
 }
 
-// TestBuildStateCandidate_DisabledAlertSkipped covers Fable finding #1: when
+// TestBuildStateCandidate_DisabledAlertSkipped covers review finding #1: when
 // alerting is disabled for a device (AlertsEnabled=false), the owned path must
 // NOT build a candidate — ownership must never resurrect an alert the operator
 // turned off.
@@ -212,7 +212,7 @@ func TestBuildStateCandidate_MinUpZeroHonored(t *testing.T) {
 	}
 }
 
-// TestDecideStateFire_StuckAfterFlapReEscalates covers Fable finding #2: a link
+// TestDecideStateFire_StuckAfterFlapReEscalates covers review finding #2: a link
 // that flapped (last notify within 24h) and then STAYED down leaves a suppressed
 // open marker; once that marker is ≥24h old and the daily budget has room, the
 // engine re-escalates so the outage isn't silent forever.

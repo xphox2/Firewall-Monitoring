@@ -12,8 +12,7 @@
   covered by tests.
 - **Beta** — shipping but the audit row says "not done" or there's a known
   follow-up. Safe to use, but read the linked caveat.
-- **Planned** — a public `AUDIT-NNN` row exists in [AUDIT.md](AUDIT.md) or
-  the CHANGELOG mentions it as deferred. Do not depend on it in production.
+- **Planned** — the CHANGELOG or `KNOWN-ISSUES.md` mentions it as deferred. Do not depend on it in production.
 
 **Role legend**
 
@@ -159,7 +158,7 @@
 The server ships with a SNMP `VendorProfile` registry. The list is verified
 in `internal/snmp/vendor_test.go`. Six vendors have a registered SNMP polling
 profile; `cisco_asa` is supported for config-diff only and has **no** SNMP
-profile (see [config-diff-roadmap.md](config-diff-roadmap.md) and the
+profile (see the
 `validVendors` list in `internal/api/handlers/handlers.go`).
 
 | Vendor | SNMP profile | HA | SD-WAN | Security stats | License | VPN |
@@ -199,7 +198,6 @@ To add a vendor: see [custom-vendor.md](custom-vendor.md).
 | Vendors with a registered SNMP `VendorProfile` | 6 | fortigate, paloalto, sonicwall, pfsense, opnsense, firewalla (cisco_asa is config-diff only) |
 | Static guard tests in `internal/shell` | 98 | `ls internal/shell/*_test.go` |
 | API endpoints | ~174 | `cmd/api/main.go` |
-| Open audit findings | 0 of 170 (all resolved) | [AUDIT.md](AUDIT.md) Part I |
 
 ## Known limitations (catalogued in [KNOWN-ISSUES.md](../KNOWN-ISSUES.md))
 

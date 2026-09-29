@@ -107,7 +107,7 @@ services:
     # The values mirror the Dockerfile HEALTHCHECK (see v0.10.264
     # CHANGELOG). If you change them here, change them there too —
     # the static check in `internal/shell/` does not currently
-    # enforce parity, so a future agent who diverges the two will
+    # enforce parity, so a future contributor who diverges the two will
     # get a subtle "compose says healthy, image says unhealthy" race.
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/health"]

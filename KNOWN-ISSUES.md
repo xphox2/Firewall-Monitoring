@@ -5,9 +5,8 @@ in the current Firewall-Mon release. The intent is two-fold:
 
 1. **Operator awareness** — so a deployer doesn't lose an hour debugging
    something we already know about.
-2. **Tracking** — every entry here should also be a tracked item in
-   `docs/AUDIT.md` (search for the AUDIT-NNN ID), so a fix automatically
-   removes both the doc entry and the audit doc row.
+2. **Tracking** — entries carry their AUDIT-NNN label where one exists, so a
+   fix can find and remove the matching entry.
 
 ## Active limitations
 
@@ -51,8 +50,8 @@ an `entrypoint.sh` change; not currently configurable).
 
 ## Reporting a new issue
 
-1. Search `docs/AUDIT.md` for the symptom — many common issues
-   already have an entry.
+1. Search this file and the existing GitHub issues for the symptom —
+   many common issues already have an entry.
 2. If not present, open a GitHub issue with the symptom + a
    minimal repro (config snippet, log line, expected vs actual).
 3. Critical-severity issues (security, data loss, crash) follow
@@ -64,8 +63,7 @@ When an issue is fixed:
 1. The fix's commit message should reference the AUDIT-NNN ID.
 2. The fix's commit should also remove the entry from this file
    (in the same commit, ideally in the same diff as the fix).
-3. The fix's commit should update `docs/AUDIT.md` to mark the
-   entry resolved (per the AUDIT doc's own progress log).
+3. The CHANGELOG entry for the fix should name the AUDIT-NNN label.
 
 A "this file" gate isn't currently automated; the existing
 AUDIT-tracking discipline is the closest thing.

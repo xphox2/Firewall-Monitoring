@@ -16,7 +16,7 @@ import (
 // which is grep-able and self-documents. The test pins:
 //
 //  1. The WARNING prefix is present in the skip-message
-//     template (so a future agent who copy-pastes a
+//     template (so a future contributor who copy-pastes a
 //     pre-fix-style log line fails the test).
 //  2. The audit ID is referenced in a comment (so the
 //     rationale for the WARNING prefix is documented).
@@ -30,7 +30,7 @@ func TestEnsurePartitions_SurfacesWarning_AUDIT146(t *testing.T) {
 
 	// 1. The WARNING prefix is present in the partition-skip
 	// log message. We look for the exact substring
-	// `WARNING: AUDIT-146` so a future agent who "improves"
+	// `WARNING: AUDIT-146` so a future contributor who "improves"
 	// the message (e.g. removes the WARNING prefix) fails here.
 	if !strings.Contains(body, "WARNING: AUDIT-146") {
 		t.Errorf("internal/database/database.go is missing the `WARNING: AUDIT-146` log prefix (AUDIT-146: the partition-skip message must surface as a warning, not a per-table info line, so an operator who needs to migrate to a partitioned table sees the message in startup noise).")
