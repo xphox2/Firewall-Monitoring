@@ -430,7 +430,7 @@ textarea::placeholder {
 /* Results area of a search/filter (v0.11.271): the loading overlay mounts
    here, never over the filter controls. */
 .fwmon-load-host { position: relative; }
-.fwmon-load-host[aria-busy="true"] { min-height: 120px; }
+.fwmon-load-host.fwmon-loading { min-height: 120px; }
 /* A notice on a host that is still empty (a first-load Cancel) needs room. */
 .fwmon-load-host:has(> .fwmon-chart-notice) { min-height: 120px; }
 .fwmon-load-host--chart { height: 280px; }

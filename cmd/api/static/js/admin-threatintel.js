@@ -40,6 +40,9 @@
         loadFeeds();
         loadStormTuning();
         runSearch(0);
+        // A lookup still running would lose its overlay (and Cancel) to the
+        // clear below — stop it first.
+        AC.chartLoadCancel('ti-lookup');
         var r = el('ti-lookup-result'); if (r) r.innerHTML = '';
         shownLookupQ = null; // the result area was just cleared
     }

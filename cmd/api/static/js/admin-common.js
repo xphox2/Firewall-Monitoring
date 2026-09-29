@@ -2082,7 +2082,7 @@
             document.removeEventListener('keydown', onKey);
             overlays.forEach(function(o) { if (o.parentNode) o.parentNode.removeChild(o); });
             overlays = [];
-            list.forEach(function(c) { c.removeAttribute('aria-busy'); });
+            list.forEach(function(c) { c.removeAttribute('aria-busy'); c.classList.remove('fwmon-loading'); });
             if (chartLoads[key] === entry) delete chartLoads[key];
             resolveOuter(r);
         }
@@ -2097,6 +2097,10 @@
         showTimer = setTimeout(function() {
             if (done) return;
             list.forEach(function(c) {
+                // The host grows to fit the overlay only when it shows — a
+                // fast load must not jump the layout (aria-busy is set at once
+                // for assistive tech, so it cannot carry the min-height).
+                c.classList.add('fwmon-loading');
                 var o = chartOverlayEl('', '<span class="fwmon-spinner" aria-hidden="true"></span>' +
                     '<span class="fwmon-chart-overlay-text">' + escapeHtml(opts.label || 'Loading higher-resolution data…') + '</span>' +
                     '<span class="fwmon-chart-overlay-elapsed" aria-live="off"></span>' +

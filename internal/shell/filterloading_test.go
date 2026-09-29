@@ -922,3 +922,27 @@ func TestFilterLoad_ReviewRound24(t *testing.T) {
 		t.Error("a charts Retry must do nothing while a newer table load runs")
 	}
 }
+
+// Twenty-fifth review (Opus 5.5; LOW only): Alerts/Traps stat tiles blank
+// when their charts load is cancelled or fails; a same-page threat-intel
+// re-entry stops a running lookup before clearing it; the host grows only
+// once the overlay shows.
+func TestFilterLoad_ReviewRound25(t *testing.T) {
+	main := readJS(t, "admin-main.js")
+	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
+	if strings.Count(run, "if (opts.onFail) opts.onFail();") != 2 {
+		t.Error("both the Cancel and error branches must call onFail")
+	}
+	for _, pg := range []string{"alerts", "traps"} {
+		mustContain(t, "admin-main.js", main, "onFail: function() { blankStatTiles('"+pg+"'); } });", "the "+pg+" tiles blank on a failed charts load")
+	}
+	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "AC.chartLoadCancel('ti-lookup');\n        var r = el('ti-lookup-result');", "re-entry stops a running lookup first")
+	ac := readJS(t, "admin-common.js")
+	mustContain(t, "admin-common.js", ac, "c.classList.add('fwmon-loading');", "the loading class is added when the overlay shows")
+	mustContain(t, "admin-common.js", ac, "c.removeAttribute('aria-busy'); c.classList.remove('fwmon-loading');", "and removed on finish")
+	css := readFile(t, "../../cmd/api/static/css/admin-design-system.css")
+	mustContain(t, "admin-design-system.css", css, ".fwmon-load-host.fwmon-loading { min-height: 120px; }", "min-height follows the overlay")
+	if strings.Contains(css, `.fwmon-load-host[aria-busy="true"] { min-height`) {
+		t.Error("aria-busy is set at once; it must not carry the min-height")
+	}
+}

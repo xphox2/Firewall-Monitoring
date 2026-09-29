@@ -125,6 +125,16 @@
         ap.restore(snap);
         if (PAGE_EXTRAS[page] && snap && snap.__extra !== undefined) PAGE_EXTRAS[page].set(snap.__extra);
     }
+    // blankStatTiles: the Alerts/Traps totals come from the charts load; when
+    // it is cancelled or fails they would name the previous range under the
+    // new pills (the tiles carry no range label), so they show "--" instead.
+    function blankStatTiles(page) {
+        ['total', 'critical', 'warning', 'info'].forEach(function(k) {
+            var el = document.getElementById(page + '-' + k);
+            if (el) el.textContent = '--';
+        });
+    }
+
     function runFilterLoad(key, run, onOK, opts) {
         opts = opts || {};
         var page = opts.page || key;
@@ -181,6 +191,7 @@
                 // A charts load shares the page's controls with the table load.
                 // If a newer table load is still running, the controls belong
                 // to IT — restoring them would put a query over rows it is not.
+                if (opts.onFail) opts.onFail();
                 var apC = apNow();
                 if (back && apC && apC.restore && !siblingBusy()) restoreQuery(apC, page, back);
                 AC.chartNotice(host, shownQuery[page] ? 'Cancelled — showing the previous results' : 'Cancelled', { dim: false, onRetry: retryCancelled });
@@ -188,6 +199,7 @@
             }
             if (r.error || !r.data) {
                 if (r.error) fwmonLog.error('Loading ' + key + ' failed:', r.error);
+                if (opts.onFail) opts.onFail();
                 // Same as Cancel: the rows on screen are the shown query's, so
                 // the controls go back to it — otherwise Prev/Next and Load
                 // more would page a query whose first page never appeared.
@@ -2279,7 +2291,7 @@
             var typeCounts = (d.by_type || []).map(function(t) { return t.count; });
             var typeColors = ['#f85149','#d2992a','#58a6ff','#3fb950','#bc8cff','#8b949e'];
             createChart('alerts-type-chart','doughnut',typeLabels,[{data:typeCounts,backgroundColor:typeColors.slice(0,typeLabels.length),borderWidth:0}]);
-        }, { page: 'alerts', host: 'alerts-charts-host', retry: loadAlertCharts });
+        }, { page: 'alerts', host: 'alerts-charts-host', retry: loadAlertCharts, onFail: function() { blankStatTiles('alerts'); } });
     }
 
     // ---- Traps ----
@@ -2381,7 +2393,7 @@
             var sevCounts = (d.by_severity || []).map(function(s) { return s.count; });
             var sevColors = ['#f85149','#d2992a','#58a6ff','#3fb950','#8b949e'];
             createChart('traps-severity-chart','doughnut',sevLabels,[{data:sevCounts,backgroundColor:sevColors.slice(0,sevLabels.length),borderWidth:0}]);
-        }, { page: 'traps', host: 'traps-charts-host', retry: loadTrapCharts });
+        }, { page: 'traps', host: 'traps-charts-host', retry: loadTrapCharts, onFail: function() { blankStatTiles('traps'); } });
     }
 
     // ---- Settings ----
