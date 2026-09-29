@@ -749,7 +749,7 @@ func TestFilterLoad_ReviewRound15(t *testing.T) {
 // select-all banner; a tunnel-collapse Esc is not also a load Cancel.
 func TestFilterLoad_ReviewRound16(t *testing.T) {
 	rp := readJS(t, "admin-reports.js")
-	mustContain(t, "admin-reports.js", rp, "if (!AC.chartLoadBusy('report-preview', true)) loadedOnce = false;\n                    return;", "a report stopped by leaving the page is rebuilt on return")
+	mustContain(t, "admin-reports.js", rp, "if (!AC.chartLoadBusy('report-preview', true)) rebuildOnInit = true;\n                    return;", "a report stopped by leaving the page is rebuilt on return")
 	main := readJS(t, "admin-main.js")
 	ra := funcBody(t, main, `function refreshAlertsAtCurrentPage\(opts\)`)
 	if i := strings.Index(ra, "updateAlertBulkToolbar();\n        if (refreshing"); i < 0 {
@@ -757,4 +757,32 @@ func TestFilterLoad_ReviewRound16(t *testing.T) {
 	}
 	cy := readJS(t, "diagram-cytoscape.js")
 	mustContain(t, "diagram-cytoscape.js", cy, "                e.preventDefault();\n                Object.keys(expandedTunnels).forEach(collapseTunnel);", "the collapse Esc is marked handled")
+}
+
+// Seventeenth review (Opus 5.5): the Flows samples host follows its view; the
+// Reports rebuild flag is separate from "a report is displayed"; a threat-intel
+// deferred refresh is consumed on leave and an add refreshes like a delete;
+// the tunnel-collapse Esc runs in the capture phase so its preventDefault
+// always precedes the load-Cancel handler.
+func TestFilterLoad_ReviewRound17(t *testing.T) {
+	fl := readJS(t, "admin-flows.js")
+	av := funcBody(t, fl, `function applyTabView\(\)`)
+	mustContain(t, "admin-flows.js", av, "sampHost.hidden = (tab !== 'samples');", "the samples host hides with its view")
+	mustContain(t, "admin-flows.js", av, "window.AdminCommon.chartNoticeClear(sampHost);", "its notice is dropped when leaving")
+	rp := readJS(t, "admin-reports.js")
+	if strings.Count(rp, "loadedOnce = false") != 1 || !strings.Contains(rp, "var loadedOnce = false; // a report is displayed") {
+		t.Error("loadedOnce must keep meaning 'a report is displayed' (use rebuildOnInit)")
+	}
+	mustContain(t, "admin-reports.js", rp, "if (!loadedOnce || rebuildOnInit) { rebuildOnInit = false; loadPreview(); }", "init rebuilds when stale")
+	mustContain(t, "admin-reports.js", rp, "else rebuildOnInit = true; // stale — init() refetches on next visit", "a hidden theme change marks stale the same way")
+	ti := readJS(t, "admin-threatintel.js")
+	mustContain(t, "admin-threatintel.js", ti, "else if (!AC.chartLoadBusy('ti-search', true)) searchRefreshDeferred = false;", "a page leave consumes the deferred refresh")
+	if strings.Contains(ti, "runSearch(0); loadFeeds();") {
+		t.Error("an add must refresh through pageSearch (gated), not an unconditional runSearch")
+	}
+	cy := readJS(t, "diagram-cytoscape.js")
+	mustContain(t, "diagram-cytoscape.js", cy, "document.addEventListener('keydown', keydownHandler, true);", "capture phase")
+	if strings.Count(cy, "document.removeEventListener('keydown', keydownHandler, true)") != 2 {
+		t.Error("both removals must pass the capture flag, or the old handler is never removed")
+	}
 }

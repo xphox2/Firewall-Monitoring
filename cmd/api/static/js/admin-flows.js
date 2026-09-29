@@ -446,6 +446,15 @@
         if (convView) convView.hidden = (tab !== 'conversations');
         if (sampView) sampView.hidden = (tab !== 'samples');
         if (loadMore) loadMore.hidden = (tab !== 'samples');
+        // The samples load host (overlay, notice, min-height) belongs to the
+        // Samples view: hidden with it, so no floating box sits under
+        // Conversations and Esc cannot cancel a list that is not on screen;
+        // a notice about that list is dropped when leaving it.
+        var sampHost = document.getElementById('flows-samples-host');
+        if (sampHost) {
+            sampHost.hidden = (tab !== 'samples');
+            if (tab !== 'samples' && window.AdminCommon && window.AdminCommon.chartNoticeClear) window.AdminCommon.chartNoticeClear(sampHost);
+        }
         var hint = document.getElementById('flows-view-hint');
         if (hint) {
             hint.textContent = (tab === 'samples')

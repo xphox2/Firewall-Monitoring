@@ -695,7 +695,7 @@
         stopParticles();
         pulsingNodes = {}; // pulse loops self-terminate once cy is destroyed
         expandedTunnels = {};
-        if (keydownHandler) { document.removeEventListener('keydown', keydownHandler); keydownHandler = null; }
+        if (keydownHandler) { document.removeEventListener('keydown', keydownHandler, true); keydownHandler = null; }
         if (cy) { cy.destroy(); cy = null; }
     }
 
@@ -804,7 +804,7 @@
         });
 
         // Escape key collapses all expanded tunnels (store ref for cleanup)
-        if (keydownHandler) document.removeEventListener('keydown', keydownHandler);
+        if (keydownHandler) document.removeEventListener('keydown', keydownHandler, true);
         keydownHandler = function(e) {
             if (e.key === 'Escape' && Object.keys(expandedTunnels).length > 0) {
                 // This Esc is handled here: a running side-panel load must not
@@ -814,7 +814,10 @@
                 if (cy) cy.animate({ fit: { eles: cy.elements(), padding: 40 } }, { duration: 400 });
             }
         };
-        document.addEventListener('keydown', keydownHandler);
+        // Capture phase: its preventDefault must precede the bubble-phase
+        // load-Cancel handler whatever order the two were registered in (a
+        // re-render re-registers this one later).
+        document.addEventListener('keydown', keydownHandler, true);
     }
 
     // ---- 1f. Tunnel Inline Expansion ----

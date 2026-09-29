@@ -334,6 +334,9 @@
         }, { key: 'ti-search', label: 'Searching…', escScope: searchForm() }).then(function(r) {
             if (r.superseded) {
                 if (isRefresh && AC.chartLoadBusy('ti-search', true)) searchRefreshDeferred = true;
+                // Left the page (nothing newer took over): init() reloads on
+                // return, so a deferred refresh is consumed, not replayed.
+                else if (!AC.chartLoadBusy('ti-search', true)) searchRefreshDeferred = false;
                 return;
             }
             runDeferredSearchRefreshSoon();
@@ -419,7 +422,11 @@
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
         }).then(function() {
             el('ti-add-cidr').value = ''; el('ti-add-source').value = ''; el('ti-add-expires').value = '';
-            runSearch(0); loadFeeds();
+            // Like a delete: refresh the shown search (deferred while one runs,
+            // nothing when the page was left — init() reloads on return).
+            var tiPage = document.getElementById('page-threat-intel');
+            if (tiPage && tiPage.classList.contains('active')) pageSearch(0, true);
+            loadFeeds();
         }).catch(function(e) {
             if (errEl) { errEl.textContent = (e && e.message) || 'Failed to add — check the value.'; errEl.hidden = false; }
         }).then(function() { if (btn) btn.disabled = false; });

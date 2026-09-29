@@ -10,7 +10,12 @@
 
     var AC = window.AdminCommon;
     var bound = false;
-    var loadedOnce = false;
+    var loadedOnce = false; // a report is displayed
+    // The controls name a report that is not the one displayed (a build was
+    // stopped by leaving the page, or the theme changed while hidden): the
+    // next init() rebuilds. Kept apart from loadedOnce, which the period
+    // select and Day/Night switch rely on to know a report is on screen.
+    var rebuildOnInit = false;
     var lastHtml = '';
     // Preview theme (v0.11.116): defaults to the SPA's Day/Night choice, and
     // the pills override per-preview. Emailed reports use the Email Theme
@@ -93,7 +98,7 @@
                     // the controls name a report that never rendered, so the
                     // next visit must build it — init() only loads when this
                     // is false (same as the stale-theme case below).
-                    if (!AC.chartLoadBusy('report-preview', true)) loadedOnce = false;
+                    if (!AC.chartLoadBusy('report-preview', true)) rebuildOnInit = true;
                     return;
                 }
                 if (r.cancelled) {
@@ -217,14 +222,14 @@
             if (!loadedOnce) return;
             var page = document.getElementById('page-reports');
             if (page && page.classList.contains('active')) loadPreview();
-            else loadedOnce = false; // stale — init() refetches on next visit
+            else rebuildOnInit = true; // stale — init() refetches on next visit
         });
     }
 
     function init() {
         bind();
         paintThemePills();
-        if (!loadedOnce) loadPreview();
+        if (!loadedOnce || rebuildOnInit) { rebuildOnInit = false; loadPreview(); }
     }
 
     window.AdminReports = { init: init };
