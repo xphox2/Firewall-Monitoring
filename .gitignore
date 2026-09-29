@@ -71,3 +71,4 @@ coverage.out
 coverage.html
 /api
 /poller
+tasks/

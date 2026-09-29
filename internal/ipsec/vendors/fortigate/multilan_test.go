@@ -104,7 +104,7 @@ func TestPolicy_MultipleLANIfacesAreMembersNotExtraPolicies(t *testing.T) {
 func TestPolicy_ManySubnetsOneInterface(t *testing.T) {
 	in := t9Intent()
 	in.Ends[0].LANIfaces = []string{"port3"}
-	in.Ends[0].ProtectedSubnets = []string{"192.168.13.0/24", "192.168.14.0/24", "192.168.15.0/24"}
+	in.Ends[0].ProtectedSubnets = []string{"192.168.113.0/24", "192.168.14.0/24", "192.168.15.0/24"}
 
 	bodies := policyBodies(t, in)
 	if len(bodies) != 2 {

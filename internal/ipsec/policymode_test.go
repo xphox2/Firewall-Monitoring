@@ -23,7 +23,7 @@ func TestPolicyBased_OPNsense_NoVTIFootprint(t *testing.T) {
 	}
 	// Must create the connection/child/PSK with policy-based child fields.
 	all := allBodies(art)
-	for _, want := range []string{`"policies":"1"`, `"local_ts":"192.168.50.0/24"`, `"remote_ts":"10.10.10.0/24"`} {
+	for _, want := range []string{`"policies":"1"`, `"local_ts":"192.168.150.0/24"`, `"remote_ts":"10.10.10.0/24"`} {
 		if !strings.Contains(all, want) {
 			t.Errorf("policy-based OPNsense child missing %q:\n%s", want, all)
 		}
@@ -52,7 +52,7 @@ func TestPolicyBased_FortiGate_SpecificSelectors(t *testing.T) {
 	in := canonicalIntent() // policy-based
 	all := allBodies(render(t, "fortigate", 0, in))
 	if !strings.Contains(all, `"src-subnet":"10.10.10.0 255.255.255.0"`) ||
-		!strings.Contains(all, `"dst-subnet":"192.168.50.0 255.255.255.0"`) {
+		!strings.Contains(all, `"dst-subnet":"192.168.150.0 255.255.255.0"`) {
 		t.Errorf("FortiGate policy-based phase2 must use specific selectors:\n%s", all)
 	}
 	if strings.Contains(all, `"src-subnet":"0.0.0.0 0.0.0.0"`) {

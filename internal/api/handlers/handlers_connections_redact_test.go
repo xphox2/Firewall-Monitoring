@@ -21,13 +21,13 @@ func seedConnectionWithSecrets(t *testing.T, h *Handler) (conn *models.DeviceCon
 	db := h.db
 	src := &models.Device{
 		Name:          "fw-a",
-		IPAddress:     "192.168.5.1",
+		IPAddress:     "192.168.105.1",
 		SNMPCommunity: db.EncryptField("snmp-secret-a"),
 		SSHPassword:   db.EncryptField("ssh-secret-a"),
 	}
 	dst := &models.Device{
 		Name:          "fw-b",
-		IPAddress:     "192.168.5.2",
+		IPAddress:     "192.168.105.2",
 		SNMPCommunity: db.EncryptField("snmp-secret-b"),
 		SSHPassword:   db.EncryptField("ssh-secret-b"),
 	}

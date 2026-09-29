@@ -287,11 +287,11 @@ func TestSuggestRule_FlowDetectionTypes(t *testing.T) {
 	}
 
 	// denied_then_allowed WITH a source: detector AND source_ip, 24h temporary.
-	r = SuggestRuleForAlert(SuggestInput{AlertType: models.AlertTypeSFlowDeniedThenAllowed, DeviceID: 3, SourceAddr: "172.69.130.140"})
+	r = SuggestRuleForAlert(SuggestInput{AlertType: models.AlertTypeSFlowDeniedThenAllowed, DeviceID: 3, SourceAddr: "203.0.113.140"})
 	if !r.Supported || r.Rule == nil {
 		t.Fatalf("SFLOW_DENIED_THEN_ALLOWED must be supported; got %+v", r)
 	}
-	if !strings.Contains(r.Rule.MatchJSON, "denied_then_allowed") || !strings.Contains(r.Rule.MatchJSON, "172.69.130.140") {
+	if !strings.Contains(r.Rule.MatchJSON, "denied_then_allowed") || !strings.Contains(r.Rule.MatchJSON, "203.0.113.140") {
 		t.Errorf("match should key on detector+source_ip, got %s", r.Rule.MatchJSON)
 	}
 	if r.Rule.ExpiresHours != 24 {

@@ -10,17 +10,17 @@ import "testing"
 func TestNormalizeSelector(t *testing.T) {
 	tests := []struct{ name, in, want string }{
 		// Already CIDR — untouched.
-		{"cidr passes through", "192.168.13.0/24", "192.168.13.0/24"},
-		{"host cidr passes through", "192.168.13.7/32", "192.168.13.7/32"},
+		{"cidr passes through", "192.168.113.0/24", "192.168.113.0/24"},
+		{"host cidr passes through", "192.168.113.7/32", "192.168.113.7/32"},
 		{"default route passes through", "0.0.0.0/0", "0.0.0.0/0"},
 
 		// Bare address -> /32. This is the arm that makes an IKEv2-narrowed host
 		// pair comparable: FortiGate's buildCIDR refuses /30 and tighter, so it
 		// emits the bare address where OPNsense emits /32.
-		{"bare host becomes /32", "192.168.13.7", "192.168.13.7/32"},
+		{"bare host becomes /32", "192.168.113.7", "192.168.113.7/32"},
 
 		// Aligned ranges -> CIDR.
-		{"aligned /24 range", "192.168.13.0 - 192.168.13.255", "192.168.13.0/24"},
+		{"aligned /24 range", "192.168.113.0 - 192.168.113.255", "192.168.113.0/24"},
 		{"aligned /25 range", "10.0.0.0 - 10.0.0.127", "10.0.0.0/25"},
 		{"aligned /31 range", "10.0.0.2 - 10.0.0.3", "10.0.0.2/31"},
 		{"single-address range", "10.0.0.5 - 10.0.0.5", "10.0.0.5/32"},

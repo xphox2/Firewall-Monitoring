@@ -172,7 +172,7 @@ func TestGetLatestVPNStatuses_IgnoresConnectionsToRetiredPeers(t *testing.T) {
 	if err := d.SaveVPNStatuses([]models.VPNStatus{
 		{DeviceID: a.ID, TunnelName: "t1", TunnelType: "ipsec", RemoteIP: gone.IPAddress, Status: "up", Timestamp: now},
 		{DeviceID: gone.ID, TunnelName: "t1", TunnelType: "ipsec", RemoteIP: a.IPAddress, Status: "up",
-			LocalSubnet: "192.168.13.0/24", RemoteSubnet: "192.168.50.0/24", Timestamp: now},
+			LocalSubnet: "192.168.113.0/24", RemoteSubnet: "192.168.150.0/24", Timestamp: now},
 	}); err != nil {
 		t.Fatalf("save vpn: %v", err)
 	}

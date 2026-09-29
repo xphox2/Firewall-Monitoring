@@ -143,19 +143,19 @@ func TestGetConnectionTraffic_DirectUsesInterfaceStats(t *testing.T) {
 }
 
 // TestResolveConnectionInterfaces_NormalizedBothEnds covers the "end not
-// monitored" bug: a name_match L2 link (e.g. DC2-FW1 <-> DC2-FW2) where the two
+// monitored" bug: a name_match L2 link (e.g. DC9-FW1 <-> DC9-FW2) where the two
 // devices spell the interface differently and TunnelNames may list only one
 // spelling. Both ends must still resolve via normalized matching.
 func TestResolveConnectionInterfaces_NormalizedBothEnds(t *testing.T) {
 	d := NewDatabaseForTesting(t)
-	if err := d.db.Create(&models.Device{ID: 1, Name: "DC2-FW1"}).Error; err != nil {
+	if err := d.db.Create(&models.Device{ID: 1, Name: "DC9-FW1"}).Error; err != nil {
 		t.Fatalf("dev1: %v", err)
 	}
-	if err := d.db.Create(&models.Device{ID: 2, Name: "DC2-FW2"}).Error; err != nil {
+	if err := d.db.Create(&models.Device{ID: 2, Name: "DC9-FW2"}).Error; err != nil {
 		t.Fatalf("dev2: %v", err)
 	}
 	conn := models.DeviceConnection{
-		Name: "DC2-FW1 <-> DC2-FW2", SourceDeviceID: 1, DestDeviceID: 2,
+		Name: "DC9-FW1 <-> DC9-FW2", SourceDeviceID: 1, DestDeviceID: 2,
 		ConnectionType: "l2vlan", Status: "up",
 		TunnelNames: "vlan100", // only one literal spelling stored
 		MatchMethod: "name_match", AutoDetected: true,
@@ -183,10 +183,10 @@ func TestResolveConnectionInterfaces_NormalizedBothEnds(t *testing.T) {
 		}
 	}
 	if !haveSrc {
-		t.Error("source end (DC2-FW1 vlan100) did not resolve")
+		t.Error("source end (DC9-FW1 vlan100) did not resolve")
 	}
 	if !haveDst {
-		t.Error("dest end (DC2-FW2 VLAN-100) did not resolve — normalized match failed (the 'end not monitored' bug)")
+		t.Error("dest end (DC9-FW2 VLAN-100) did not resolve — normalized match failed (the 'end not monitored' bug)")
 	}
 }
 

@@ -56,13 +56,13 @@ type ifaceSeed = []struct {
 	Addrs    [][2]string
 }
 
-// twoPortFortiGate mirrors the real box: port2 = 192.168.25.0/24,
-// port3 = 192.168.13.0/24.
+// twoPortFortiGate mirrors the real box: port2 = 192.168.125.0/24,
+// port3 = 192.168.113.0/24.
 func twoPortFortiGate(t *testing.T, db *database.Database, deviceID uint) {
 	t.Helper()
 	seedIfaces(t, db, deviceID, ifaceSeed{
-		{Name: "port2", Index: 2, TypeName: "ethernet", Addrs: [][2]string{{"192.168.25.1", "255.255.255.0"}}},
-		{Name: "port3", Index: 3, TypeName: "ethernet", Addrs: [][2]string{{"192.168.13.1", "255.255.255.0"}}},
+		{Name: "port2", Index: 2, TypeName: "ethernet", Addrs: [][2]string{{"192.168.125.1", "255.255.255.0"}}},
+		{Name: "port3", Index: 3, TypeName: "ethernet", Addrs: [][2]string{{"192.168.113.1", "255.255.255.0"}}},
 	})
 }
 
@@ -74,7 +74,7 @@ func coherenceIntent(lanIfaces []string, subnets []string) *ipsec.TunnelIntent {
 	}
 	in.Ends[1] = ipsec.EndpointSpec{
 		DeviceID: 2, Vendor: "opnsense", EgressIface: "wan",
-		ProtectedSubnets: []string{"192.168.50.0/24"},
+		ProtectedSubnets: []string{"192.168.150.0/24"},
 	}
 	return in
 }
@@ -93,7 +93,7 @@ func TestLANCoherence_WarnsAndNamesTheRealCarrier(t *testing.T) {
 	h, db := setupTestHandler(t)
 	twoPortFortiGate(t, db, 1)
 
-	f := mismatchFinding(h.lanCoherenceFindings(db, coherenceIntent([]string{"port3"}, []string{"192.168.25.0/24"})))
+	f := mismatchFinding(h.lanCoherenceFindings(db, coherenceIntent([]string{"port3"}, []string{"192.168.125.0/24"})))
 	if f == nil {
 		t.Fatal("a subnet on an unselected interface must warn — this is the exact incident")
 	}
@@ -111,8 +111,8 @@ func TestLANCoherence_SilentOnLegitimateShapes(t *testing.T) {
 	twoPortFortiGate(t, db, 1)
 
 	cases := map[string]*ipsec.TunnelIntent{
-		"subnet is on the selected interface": coherenceIntent([]string{"port3"}, []string{"192.168.13.0/24"}),
-		"both interfaces selected":            coherenceIntent([]string{"port2", "port3"}, []string{"192.168.13.0/24", "192.168.25.0/24"}),
+		"subnet is on the selected interface": coherenceIntent([]string{"port3"}, []string{"192.168.113.0/24"}),
+		"both interfaces selected":            coherenceIntent([]string{"port2", "port3"}, []string{"192.168.113.0/24", "192.168.125.0/24"}),
 		// Routed via a downstream L3 device: on no local interface at all, so there
 		// is no carrier to name and nothing is wrong.
 		"subnet routed behind the LAN": coherenceIntent([]string{"port3"}, []string{"10.99.0.0/24"}),
@@ -120,7 +120,7 @@ func TestLANCoherence_SilentOnLegitimateShapes(t *testing.T) {
 		// either direction counts as a match.
 		"supernet of the selected interface": coherenceIntent([]string{"port3"}, []string{"192.168.0.0/16"}),
 		// Several subnets behind ONE port is a normal topology, not a mismatch.
-		"many subnets on one selected port": coherenceIntent([]string{"port3"}, []string{"192.168.13.0/24", "10.20.0.0/24"}),
+		"many subnets on one selected port": coherenceIntent([]string{"port3"}, []string{"192.168.113.0/24", "10.20.0.0/24"}),
 	}
 	for name, in := range cases {
 		if f := mismatchFinding(h.lanCoherenceFindings(db, in)); f != nil {
@@ -133,7 +133,7 @@ func TestLANCoherence_SilentOnLegitimateShapes(t *testing.T) {
 // only honest answer — a guessed warning would be worse than none.
 func TestLANCoherence_SilentWithoutDeviceData(t *testing.T) {
 	h, db := setupTestHandler(t)
-	if f := mismatchFinding(h.lanCoherenceFindings(db, coherenceIntent([]string{"port3"}, []string{"192.168.25.0/24"}))); f != nil {
+	if f := mismatchFinding(h.lanCoherenceFindings(db, coherenceIntent([]string{"port3"}, []string{"192.168.125.0/24"}))); f != nil {
 		t.Errorf("a never-polled device must produce no finding; got %q", f.Message)
 	}
 }
@@ -145,9 +145,9 @@ func TestLANCoherence_SkipsVendorsThatDoNotNameInterfaces(t *testing.T) {
 	seedIfaces(t, db, 2, ifaceSeed{
 		{Name: "lan", Index: 1, TypeName: "ethernet", Addrs: [][2]string{{"192.168.99.1", "255.255.255.0"}}},
 	})
-	in := coherenceIntent([]string{"port3"}, []string{"192.168.13.0/24"})
+	in := coherenceIntent([]string{"port3"}, []string{"192.168.113.0/24"})
 	in.Ends[1].LANIfaces = []string{"lan"}
-	in.Ends[1].ProtectedSubnets = []string{"192.168.50.0/24"} // not on "lan"
+	in.Ends[1].ProtectedSubnets = []string{"192.168.150.0/24"} // not on "lan"
 
 	if f := mismatchFinding(h.lanCoherenceFindings(db, in)); f != nil {
 		t.Errorf("the OPNsense end must be skipped entirely; got %q", f.Message)
@@ -160,7 +160,7 @@ func TestLANCoherence_LegacySingularCounts(t *testing.T) {
 	h, db := setupTestHandler(t)
 	twoPortFortiGate(t, db, 1)
 
-	in := coherenceIntent(nil, []string{"192.168.13.0/24"})
+	in := coherenceIntent(nil, []string{"192.168.113.0/24"})
 	in.Ends[0].LANIface = "port3"
 
 	if f := mismatchFinding(h.lanCoherenceFindings(db, in)); f != nil {
@@ -177,12 +177,12 @@ func TestLANCoherence_CarriesEndAndSubject(t *testing.T) {
 	// All three interfaces in ONE call: the latest-snapshot join keys on
 	// MAX(timestamp), so a second seeding pass would hide the first.
 	seedIfaces(t, db, 1, ifaceSeed{
-		{Name: "port2", Index: 2, TypeName: "ethernet", Addrs: [][2]string{{"192.168.25.1", "255.255.255.0"}}},
-		{Name: "port3", Index: 3, TypeName: "ethernet", Addrs: [][2]string{{"192.168.13.1", "255.255.255.0"}}},
+		{Name: "port2", Index: 2, TypeName: "ethernet", Addrs: [][2]string{{"192.168.125.1", "255.255.255.0"}}},
+		{Name: "port3", Index: 3, TypeName: "ethernet", Addrs: [][2]string{{"192.168.113.1", "255.255.255.0"}}},
 		{Name: "port4", Index: 4, TypeName: "ethernet", Addrs: [][2]string{{"10.20.0.1", "255.255.255.0"}}},
 	})
 	// Two subnets carried by ports that are NOT selected — two mismatches, one end.
-	in := coherenceIntent([]string{"port3"}, []string{"192.168.25.0/24", "10.20.0.0/24"})
+	in := coherenceIntent([]string{"port3"}, []string{"192.168.125.0/24", "10.20.0.0/24"})
 
 	var got []ipsec.Finding
 	for _, f := range h.lanCoherenceFindings(db, in) {

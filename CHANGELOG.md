@@ -445,7 +445,7 @@ GB, about fourteen panels, one 20 s budget.
 ### Changed — the Flows page shows what it is loading, and says when a result is partial
 
 - **A loading panel with progress.** While the figures load, the page shows
-  what is being loaded ("Loading flows · last 30 days · source 66.179.9.156"),
+  what is being loaded ("Loading flows · last 30 days · source 198.19.9.156"),
   a progress bar, the current step ("Reading day 12 of 30", "Top destinations"),
   elapsed time and a Cancel button. The previous range's figures stay on
   screen, dimmed, so they are never read as the new range.
@@ -748,7 +748,7 @@ main.go:248: Data cleanup error: failed to cleanup syslog_message
 A single 57014 returned out of the batch loop and abandoned `syslog_messages` for
 the day; the 24-hour ticker then reissued the identical statement. The table had
 drifted to **36 days of history under a 30-day policy** — 156.6M rows, 161 GB,
-with `/mnt/STORAGE` climbing about 18 GB/week. That is the shape of the
+with `/srv/firewall-mon` climbing about 18 GB/week. That is the shape of the
 2026-07-26 disk-full outage, where retention had also been failing silently.
 
 The device-purge loop (`batchedDeleteWhere`, v0.11.243) already carried the
@@ -1280,7 +1280,7 @@ under the requested window's label.
   rounded up to the enclosing octet boundary, so a `/25` returned the whole `/24`,
   and anything wider than `/8` (including `0.0.0.0/0`) matched nothing at all.
   PostgreSQL now filters with exact `inet` containment, keeping the prefix match as
-  an index-friendly pre-filter. Verified on production: `192.168.5.128/25` now
+  an index-friendly pre-filter. Verified on production: `192.168.105.128/25` now
   matches 0 rows where prefix matching returned all 427,386 rows of the `/24`.
   The containment test guards against empty address values, which production
   carries 2,377 of — `''::inet` raises a syntax error that aborts the whole
@@ -1743,12 +1743,12 @@ Audit remediation batch 4 of the 2026-08-27 engineering audit — data-pipeline 
 ## [0.11.213] - 2026-08-28
 
 ### Added
-- **GitHub releases/tags are now published automatically (roadmap P2-6).** A new `release-tag` workflow runs on every master push: it reads `ServerVersion` from `cmd/api/main.go` and, when no `v<version>` tag exists yet, creates the tag and a GitHub release whose notes are that version's CHANGELOG section. Idempotent — doc-only pushes and re-runs are no-ops. This is the fix for the gap recorded in 0.11.212: the repo published zero tags/releases, so the technicallabs.org System Monitor (which resolves live versions via the GitHub API, `releases/latest` then `tags`) permanently showed a stale baseline. `v0.11.211` was backfilled manually so the API resolves immediately; every later version tags itself. The workflow carries the repo's only `contents: write` grant, scoped to exactly this job; CI keeps `contents: read`.
+- **GitHub releases/tags are now published automatically (roadmap P2-6).** A new `release-tag` workflow runs on every master push: it reads `ServerVersion` from `cmd/api/main.go` and, when no `v<version>` tag exists yet, creates the tag and a GitHub release whose notes are that version's CHANGELOG section. Idempotent — doc-only pushes and re-runs are no-ops. This is the fix for the gap recorded in 0.11.212: the repo published zero tags/releases, so the example.com System Monitor (which resolves live versions via the GitHub API, `releases/latest` then `tags`) permanently showed a stale baseline. `v0.11.211` was backfilled manually so the API resolves immediately; every later version tags itself. The workflow carries the repo's only `contents: write` grant, scoped to exactly this job; CI keeps `contents: read`.
 
 ## [0.11.212] - 2026-08-28
 
 ### Added
-- Roadmap note **P2-6** in `docs/FEATURE-ROADMAP.md` (nice-to-have): publish GitHub releases/tags for shipped versions. The repo currently publishes no tags or releases, so the technicallabs.org System Monitor — which resolves each project's live version via the GitHub API (`releases/latest`, then `tags`) — can never resolve this repo and permanently falls back to its stale hardcoded baseline (v0.11.122). A CI step that tags `v<ServerVersion>` on master when the constant changes would make the website update automatically with every release. Docs-only; no behavior changes.
+- Roadmap note **P2-6** in `docs/FEATURE-ROADMAP.md` (nice-to-have): publish GitHub releases/tags for shipped versions. The repo currently publishes no tags or releases, so the example.com System Monitor — which resolves each project's live version via the GitHub API (`releases/latest`, then `tags`) — can never resolve this repo and permanently falls back to its stale hardcoded baseline (v0.11.122). A CI step that tags `v<ServerVersion>` on master when the constant changes would make the website update automatically with every release. Docs-only; no behavior changes.
 
 ## [0.11.211] - 2026-08-28
 
@@ -1973,7 +1973,7 @@ Deliberately *not* gated on wall-clock recency: the check happens when the backu
 
 ### Fixed
 
-**The two ends of a tunnel are now one row each, not two tables you have to line up by eye.** The connection panel rendered source and destination tunnels as independent tables in a two-column grid. The ends name the same path differently (`fwm-t12-2` vs `fwm-t12:192.168.50.0-192.168.13.0`) and describe it from opposite perspectives (`13.0→50.0` vs `50.0→13.0`), so row *n* on the left had nothing to do with row *n* on the right — and nothing on screen said so. The tunnel family now renders **one table, one row per path**, with each end's state in its own column. Alignment is structural: a path *is* a row, so it cannot drift.
+**The two ends of a tunnel are now one row each, not two tables you have to line up by eye.** The connection panel rendered source and destination tunnels as independent tables in a two-column grid. The ends name the same path differently (`fwm-t12-2` vs `fwm-t12:192.168.150.0-192.168.113.0`) and describe it from opposite perspectives (`13.0→50.0` vs `50.0→13.0`), so row *n* on the left had nothing to do with row *n* on the right — and nothing on screen said so. The tunnel family now renders **one table, one row per path**, with each end's state in its own column. Alignment is structural: a path *is* a row, so it cannot drift.
 
 **The transferred total went backwards while traffic was flowing.** It summed each side's *latest cumulative* counters. OPNsense child SAs rekey independently and their counters reset, so the displayed total collapsed — measured live on connection 23984 at `314,100 → 384,960 → 206,940 → 37,020` across two rekeys — while the FortiGate side, a per-peer session counter that does not reset on child rekey, climbed away from it. The panel now shows a reset-safe delta over a fixed window, which means the same thing on both ends. The same sum backed the **byte KPI tiles on both the panel and the standalone page**; those are fixed too, and their labels now carry the window rather than saying "Total".
 
@@ -2027,7 +2027,7 @@ Correcting the counter at its source is a cross-repo change that also moves aler
 ### Changed
 
 - The three-way state decision, the counters predicate and the uptime formatter live in `admin-common.js` and are shared by all three tunnel renderers. Independent opinions is how the same bug shipped four times.
-- Phase 2 selector matching is bounded by logical tunnel and tolerates IKEv2 narrowing, falling back to exact equality for selector formats that are not CIDR — FortiGate's SNMP walk emits ranges like `192.168.5.0 - 192.168.5.255`, which no CIDR parser can read.
+- Phase 2 selector matching is bounded by logical tunnel and tolerates IKEv2 narrowing, falling back to exact equality for selector formats that are not CIDR — FortiGate's SNMP walk emits ranges like `192.168.105.0 - 192.168.105.255`, which no CIDR parser can read.
 
 ## [0.11.192] - 2026-07-30
 
@@ -2286,7 +2286,7 @@ Both are now passed through, defaulting to empty. Empty is safe and changes noth
 
 ### Added
 
-**`FIREWALL_MON_IMAGE` overrides the image name.** The image was hardcoded to the Docker Hub tag, so a from-source deployment that builds locally under a different tag had to edit `docker-compose.yml` in place. That edit is untracked working-tree drift, and it makes `git pull` refuse to update the deployment checkout — which is precisely what had happened on rust-01, where a hand-edited compose file diverged from master on five separate lines and could not be updated without a manual merge.
+**`FIREWALL_MON_IMAGE` overrides the image name.** The image was hardcoded to the Docker Hub tag, so a from-source deployment that builds locally under a different tag had to edit `docker-compose.yml` in place. That edit is untracked working-tree drift, and it makes `git pull` refuse to update the deployment checkout — which is precisely what had happened on prod-host, where a hand-edited compose file diverged from master on five separate lines and could not be updated without a manual merge.
 
 With this plus the existing `DATA_DIR` / `CONFIG_DIR` / `GEOIP_DIR` hooks, a deployment can express its entire local configuration in a gitignored `.env` and keep `docker-compose.yml` byte-identical to the tracked file, so pulls stay clean.
 
@@ -2296,15 +2296,15 @@ With this plus the existing `DATA_DIR` / `CONFIG_DIR` / `GEOIP_DIR` hooks, a dep
 
 **The runtime config directory was not ignored, so `git add -A` in a deployment checkout would have staged the Postgres credentials.** `.gitignore` carried a bare `config.env` pattern, which git matches by basename at any depth — so `config/config.env` was covered, but none of its siblings were. The `CONFIG_DIR` volume also holds `pg-credentials` (`PG_USER` / `PG_PASSWORD`) and accumulates operator backups such as `config.env.broken.bak`, and `git status` listed both as ordinary untracked files.
 
-This is a live hazard rather than a theoretical one: the repository is public, deployments are working checkouts of it rather than exported artefacts, and `config.env` is where the AES-256 key for every `{enc}` secret is derived from. A single `git add -A && git commit && git push` on a server would have published the database credentials and the key protecting every stored SNMP/IRC/SMTP secret. Audited on the rust-01 deployment 2026-07-26 — nothing had been committed, so no rotation was required, but the checkout was one careless `add -A` away from it.
+This is a live hazard rather than a theoretical one: the repository is public, deployments are working checkouts of it rather than exported artefacts, and `config.env` is where the AES-256 key for every `{enc}` secret is derived from. A single `git add -A && git commit && git push` on a server would have published the database credentials and the key protecting every stored SNMP/IRC/SMTP secret. Audited on the prod-host deployment 2026-07-26 — nothing had been committed, so no rotation was required, but the checkout was one careless `add -A` away from it.
 
 `config/` is now ignored as a directory (nothing in it is source), and `*.bak`, `*.bak.*`, `*.bak-*` are ignored so snapshot copies cannot carry a secret past the ignore rules that cover the original. Note this only protects checkouts made *after* the change — an existing deployment keeps its own `.git/info/exclude` or needs this pulled.
 
 ### Added
 
-**Explicit log rotation for the `firewall-mon` container.** The json-file driver does not rotate at all unless `max-size` is set, and the service had no `logging:` block, so its container log grew without bound. The rust-01 deployment writes roughly 80 MB/day, which reaches the GB range within weeks — on the same volume that syslog growth already filled once in 2026-05 (see v0.10.199).
+**Explicit log rotation for the `firewall-mon` container.** The json-file driver does not rotate at all unless `max-size` is set, and the service had no `logging:` block, so its container log grew without bound. The prod-host deployment writes roughly 80 MB/day, which reaches the GB range within weeks — on the same volume that syslog growth already filled once in 2026-05 (see v0.10.199).
 
-Capped at `max-size: 10m` / `max-file: 3`, matching what the marketing-site and technical-labs compose files already use. The cap takes effect when the container is **recreated**, not restarted: an already-oversized log survives `docker compose restart` and is only discarded when `up -d` replaces the container.
+Capped at `max-size: 10m` / `max-file: 3`, matching what the marketing-site and osprey-labs compose files already use. The cap takes effect when the container is **recreated**, not restarted: an already-oversized log survives `docker compose restart` and is only discarded when `up -d` replaces the container.
 
 ## [0.11.178] - 2026-07-26
 
@@ -2449,7 +2449,7 @@ A down child leaves no trace at all (our children use `start_action` start/none,
 
 ### Fixed — connection map attributed NAT'd IPSec tunnels to the NAT gateway
 
-The map drew an IPSec edge that did not exist and omitted the one that did: `DC2-FW1 ↔ TECHLABS-FW-01` instead of `TECHLABS-FW-01 ↔ OPNsense`.
+The map drew an IPSec edge that did not exist and omitted the one that did: `DC9-FW1 ↔ OSPREY-FW-01` instead of `OSPREY-FW-01 ↔ OPNsense`.
 
 A FortiGate names a dialup instance after the peer's **observed source address**. For a peer behind NAT that is the gateway's public IP — which legitimately belongs to a different monitored device — so attribution by remote IP lands on the gateway. In production two *distinct* peers behind one NAT both collapsed onto it, and the synthetic tunnel name also contaminated a second, legitimate edge's tunnel list. This is not a tuning problem: matching a dialup peer by remote IP cannot be right, because the peer never puts its own address on the wire.
 
@@ -2566,7 +2566,7 @@ Making the stale sweep unconditional in v0.11.166 removed an incidental protecti
 
 ### Fixed — VPN telemetry: "last known" was being served as "current state"
 
-A rolled-back IPSec tunnel kept rendering on the connection map as a live-looking edge for days after it was deleted from the device. Live-confirmed: an edge `DC2-FW2 ↔ OPNsense / tunnel_names=fwm-t7 / status=down` whose `last_check` was still being refreshed every 60 seconds two days after the tunnel's `ipsec_tunnels` row was gone and the device's own config backup showed no trace of it.
+A rolled-back IPSec tunnel kept rendering on the connection map as a live-looking edge for days after it was deleted from the device. Live-confirmed: an edge `DC9-FW2 ↔ OPNsense / tunnel_names=fwm-t7 / status=down` whose `last_check` was still being refreshed every 60 seconds two days after the tunnel's `ipsec_tunnels` row was gone and the device's own config backup showed no trace of it.
 
 Root cause: the collector only POSTs VPN status when the list is non-empty, so a device with **zero** tunnels writes no rows at all and its snapshot freezes. `GetAllLatestVPNStatuses` had **no age predicate**, so it served that frozen snapshot forever; `detectVPNConnections` never inspected the row timestamps, re-derived the pair every cycle, and `UpsertAutoConnection` re-stamped `last_check`. The reaper (`CleanupStaleAutoConnectionsBefore`) was correct all along — it was **starved**, never broken, because the row was refreshed before every sweep.
 
@@ -2640,7 +2640,7 @@ A deploy installs one static route per remote protected subnet via the tunnel in
 - **distance below 10** — the existing route stays preferred and traffic never enters the tunnel.
 - **distance equal to 10** — FortiOS installs both and ECMP-balances, so roughly half the traffic leaves the wrong way.
 
-Found on the live fwm-t9 tunnel: `edit 1 / set dst 192.168.5.0 255.255.255.0 / set gateway 192.168.25.254 / set device port3` with no explicit distance — an exact tie with the tunnel's own route for `192.168.5.0/24`.
+Found on the live fwm-t9 tunnel: `edit 1 / set dst 192.168.105.0 255.255.255.0 / set gateway 192.168.125.254 / set device port3` with no explicit distance — an exact tie with the tunnel's own route for `192.168.105.0/24`.
 
 The preflight now reads the device's static-route table and reports each competing route as an **advisory**: which `seq-num` it is, the prefix and next-hop, why it conflicts, and the concrete `set distance` fix. Advisories are **non-blocking by construction** and never gate Deploy.
 
@@ -2656,7 +2656,7 @@ Requires Firewall-Collector v1.3.29 to echo the advisory bodies; on an older col
 
 ### Fixed — OPNsense IPSec child fan-out per subnet pair (multi-subnet tunnels only brought up one pair)
 
-A FortiGate ⇄ OPNsense tunnel with **multiple protected subnets on the OPNsense end** only ever installed **one** subnet pair. Live-confirmed on fwm-t9 (OPNsense `[192.168.50.0/24, 192.168.5.0/24]` ↔ FortiGate `192.168.25.0/24`): the OPNsense child config carried both subnets in a comma-joined `local_ts`, but the *installed* CHILD_SA had narrowed to `192.168.50.0/24` only, and the FortiGate monitor showed a single proxyid up — so the second subnet (a user's Mac LAN) could not use the tunnel.
+A FortiGate ⇄ OPNsense tunnel with **multiple protected subnets on the OPNsense end** only ever installed **one** subnet pair. Live-confirmed on fwm-t9 (OPNsense `[192.168.150.0/24, 192.168.105.0/24]` ↔ FortiGate `192.168.125.0/24`): the OPNsense child config carried both subnets in a comma-joined `local_ts`, but the *installed* CHILD_SA had narrowed to `192.168.150.0/24` only, and the FortiGate monitor showed a single proxyid up — so the second subnet (a user's Mac LAN) could not use the tunnel.
 
 Root cause: the OPNsense driver rendered **one** strongSwan child with a comma-joined `local_ts`/`remote_ts`. FortiGate holds a single src/dst pair per phase2 and **narrows** a multi-traffic-selector CHILD_SA down to one pair; strongSwan does not re-spawn children for the narrowed-away selectors (per strongSwan's Fortinet interop guidance). The FortiGate side already fanned out one phase2 per pair, so the ends were structurally mismatched.
 
@@ -2672,7 +2672,7 @@ The deploy/rollback/recheck progress modal measured elapsed time from a single s
 
 ### Fixed — OPNsense firewall rule rejected multi-subnet tunnels (comma-joined source_net)
 
-v0.11.160 rendered the OPNsense pass rule's `source_net`/`destination_net` as a **comma-joined** list of the protected subnets (mirroring the swanctl `local_ts`/`remote_ts` fields, which do accept lists). But OPNsense's **firewall** filter field does not: a live deploy of a 2-subnet tunnel was rejected with `"192.168.50.0/24,192.168.5.0/24 is not a valid source IP address or alias"` (the `Multiple=Y` model attribute permits multiple *values* but does not split a comma-joined *string* — the whole string was validated as one network). The apply failed at the first `addRule` and the tunnel auto-rolled-back cleanly.
+v0.11.160 rendered the OPNsense pass rule's `source_net`/`destination_net` as a **comma-joined** list of the protected subnets (mirroring the swanctl `local_ts`/`remote_ts` fields, which do accept lists). But OPNsense's **firewall** filter field does not: a live deploy of a 2-subnet tunnel was rejected with `"192.168.150.0/24,192.168.105.0/24 is not a valid source IP address or alias"` (the `Multiple=Y` model attribute permits multiple *values* but does not split a comma-joined *string* — the whole string was validated as one network). The apply failed at the first `addRule` and the tunnel auto-rolled-back cleanly.
 
 - **`internal/ipsec/vendors/opnsense/opnsense.go`** now fans out **one pass rule per (local × remote) subnet pair per direction**, each carrying a **single network** per field — mirroring FortiGate's per-subnet-pair phase2 fan-out. A single-subnet tunnel is unchanged (2 rules); a 2×1 tunnel is 4 rules. Capture names are `rule_out_<pair>` / `rule_in_<pair>`, deterministic across `Render`/`RenderRemove` so the capture/delete rollback parity holds. Caught by Fable's adversarial diff review and confirmed by the live deploy.
 
@@ -2703,9 +2703,9 @@ A FortiGate ⇄ OPNsense tunnel (fwm-t9) came up cleanly on **both** firewalls �
 
 ### Added — IPSec IKE identity validation + auto-prefill (block anything that would fail the tunnel)
 
-The IPSec wizard's IKE identity field had no type-aware validation — only a charset gate — so a value that reads fine to a human could silently break the tunnel. An IKE `ID_FQDN` is an opaque identity string (not a DNS name), so a single word like `TECHLABS` is perfectly valid on **both** FortiGate and OPNsense/strongSwan; it does not need a dotted `fw.example.com` form. But because OPNsense renders the swanctl id **bare** (strongSwan then auto-classifies it) while FortiGate's `localid-type fqdn` **forces** the FQDN type, certain values are classified differently by each end → `AUTH_FAILED` (the same class as the v0.11.147 keyid fix). This ships:
+The IPSec wizard's IKE identity field had no type-aware validation — only a charset gate — so a value that reads fine to a human could silently break the tunnel. An IKE `ID_FQDN` is an opaque identity string (not a DNS name), so a single word like `OSPREY` is perfectly valid on **both** FortiGate and OPNsense/strongSwan; it does not need a dotted `fw.example.com` form. But because OPNsense renders the swanctl id **bare** (strongSwan then auto-classifies it) while FortiGate's `localid-type fqdn` **forces** the FQDN type, certain values are classified differently by each end → `AUTH_FAILED` (the same class as the v0.11.147 keyid fix). This ships:
 
-- **Server-side validation** (`internal/ipsec/validation.go`, authoritative — surfaces in the wizard findings panel and gates Save/Deploy) that **blocks** any identity that would fail phase-1 auth: for `fqdn` — an IP literal (`id_fqdn_is_ip`, strongSwan would treat it as an IP identity), an `ip-ip` range (`id_fqdn_is_range`), or a `:` (`id_fqdn_charset`, read as IPv6/key-id); for `ip` — a non-IP value (`id_ip_invalid`); and for all types, >63 characters (`id_too_long`, the FortiGate limit that binds on both `localid` and `peerid`). A single-label FQDN like `TECHLABS` and underscores (`prince_1.test.com`) are explicitly allowed. Rules validated against the strongSwan source + FortiOS docs via an adversarial review.
+- **Server-side validation** (`internal/ipsec/validation.go`, authoritative — surfaces in the wizard findings panel and gates Save/Deploy) that **blocks** any identity that would fail phase-1 auth: for `fqdn` — an IP literal (`id_fqdn_is_ip`, strongSwan would treat it as an IP identity), an `ip-ip` range (`id_fqdn_is_range`), or a `:` (`id_fqdn_charset`, read as IPv6/key-id); for `ip` — a non-IP value (`id_ip_invalid`); and for all types, >63 characters (`id_too_long`, the FortiGate limit that binds on both `localid` and `peerid`). A single-label FQDN like `OSPREY` and underscores (`prince_1.test.com`) are explicitly allowed. Rules validated against the strongSwan source + FortiOS docs via an adversarial review.
 - **Wizard auto-prefill** (`admin-ipsec.js`): each end's identity is auto-filled from real device data — the sanitized device name for `fqdn`, the WAN/peer IP for `ip` — guaranteed to pass validation, and re-derived when the identity type changes, while never clobbering a value the operator has manually edited or a stored tunnel's identity. An inline field hint mirrors the server rules for instant feedback before Preview; the id inputs cap at `maxlength=63`.
 
 ## [0.11.157] - 2026-07-23
@@ -3379,13 +3379,13 @@ Connection responses preload the FULL source/dest Device rows, and four endpoint
 
 ### Fixed — full connection-map review (three root causes found via live prod + device SNMP)
 
-Driven by a live investigation against the DC2 site (SSH to prod + SNMP walks of the real firewalls). The port-to-port LINKS were all correct (LLDP-confirmed); the problems were stale data, a legacy detector, and label placement:
+Driven by a live investigation against the DC9 site (SSH to prod + SNMP walks of the real firewalls). The port-to-port LINKS were all correct (LLDP-confirmed); the problems were stale data, a legacy detector, and label placement:
 
-- **Stale interface addresses shown on the Interfaces tab.** The resolver read any historical `interface_addresses` row (`ORDER BY timestamp DESC`), so an 18-day-old address surfaced under a live link — e.g. DC2-FW2's `dmz` jack (no IP today) showed `10.10.10.1`, which is actually the *other* firewall's dmz. Address resolution is now anchored to the device's latest INTERFACE poll (not the latest address poll — an interface that lost its IP leaves its old address row as the newest, with no tombstone); addresses older than that poll are treated as gone. An IP-less bridged/switch port now correctly shows no IP.
+- **Stale interface addresses shown on the Interfaces tab.** The resolver read any historical `interface_addresses` row (`ORDER BY timestamp DESC`), so an 18-day-old address surfaced under a live link — e.g. DC9-FW2's `dmz` jack (no IP today) showed `10.10.10.1`, which is actually the *other* firewall's dmz. Address resolution is now anchored to the device's latest INTERFACE poll (not the latest address poll — an interface that lost its IP leaves its old address row as the newest, with no tombstone); addresses older than that poll are treated as gone. An IP-less bridged/switch port now correctly shows no IP.
 - **Legacy name-match guessing still drew duplicate links.** `detectOverlayConnections` created `l2vlan` + `bridge` lines between same-site devices purely because they shared an interface NAME (both FortiGates have a `bridge` "internal" and shared VLAN names) — no port evidence — duplicating the real LLDP link (you'd see Ethernet + Software Switch + L2VLAN between one device pair). Same-site direct/switch links are now owned exclusively by the evidence-based L2 inference; the overlay detector keeps only `vxlan`/`l3ipvlan` (true overlays riding a verified VPN tunnel). The stale duplicates self-sweep on the next poll cycle.
 - **Map labels.** Port names are now ALWAYS shown on the wire as endpoint labels (at each device's end); the connection TYPE name (Ethernet / Software Switch / L2VLAN) is never on the collapsed line — it appears only when the link is expanded. This replaces the v0.11.98 hover-to-reveal behavior.
 
-Tests pin all three against the real DC2 data shape (stale-address-not-shown, no name_match l2vlan/bridge, endpoint resolution).
+Tests pin all three against the real DC9 data shape (stale-address-not-shown, no name_match l2vlan/bridge, endpoint resolution).
 
 ## [0.11.98] - 2026-07-15
 
@@ -3399,10 +3399,10 @@ Live feedback: the always-on type names ("Ethernet, Software Switch, L2VLAN", tu
 
 ### Changed — port labels moved to the link ENDPOINTS; label text no longer blocks clicking links
 
-Live feedback from the DC2 validation: the combined center label ("dmz ↔ dtsec1") left port OWNERSHIP ambiguous — the reader couldn't tell whose `dmz` it was (it's DC2-FW2's hardware DMZ jack) — and stacked text over the exact line segment users click for detail.
+Live feedback from the DC9 validation: the combined center label ("dmz ↔ dtsec1") left port OWNERSHIP ambiguous — the reader couldn't tell whose `dmz` it was (it's DC9-FW2's hardware DMZ jack) — and stacked text over the exact line segment users click for detail.
 
 - **Map:** port names now render as Cytoscape `source-label`/`target-label` at each device's END of the edge — the label visually touches the node that owns the port, and the line's clickable midsection stays clear. Applied to single-link direct bundles and expanded sublanes (sublane center labels are back to the type only). All labeled edges get `text-events: yes`, so label text is part of the edge's click target instead of dead space covering it.
-- **NOC panel + connection page:** the port summary is device-qualified — `DC2-FW2:dmz ↔ OPNsense:dtsec1`, never a bare `dmz ↔ dtsec1`.
+- **NOC panel + connection page:** the port summary is device-qualified — `DC9-FW2:dmz ↔ OPNsense:dtsec1`, never a bare `dmz ↔ dtsec1`.
 
 ### Fixed — Interfaces tab paired UNRELATED same-named interfaces across devices (mismatched IP mapping)
 
@@ -3415,7 +3415,7 @@ Second live finding: FortiGates share hardware port names (`internal1`, `dmz`, �
 
 ### Fixed — name-only FDB rows now participate in link inference (FortiGate SSH bridge-FDB support)
 
-Completes the DC2 daisy-chain investigation: snmpwalks against the live devices showed **no BRIDGE-MIB and no LLDP on any of them**, and ARP alone cannot see an L2-only hop (OPNsense and DC2-FW2 never exchange L3 traffic, so neither is in the other's ARP cache) — the v0.11.95 transitive suppression had no evidence to fire on. Collector 1.3.16 adds the FortiGate SSH bridge-FDB supplement (`diagnose netlink brctl`), which reports MACs per member-port **name**; this release makes the inference consume those rows:
+Completes the DC9 daisy-chain investigation: snmpwalks against the live devices showed **no BRIDGE-MIB and no LLDP on any of them**, and ARP alone cannot see an L2-only hop (OPNsense and DC9-FW2 never exchange L3 traffic, so neither is in the other's ARP cache) — the v0.11.95 transitive suppression had no evidence to fire on. Collector 1.3.16 adds the FortiGate SSH bridge-FDB supplement (`diagnose netlink brctl`), which reports MACs per member-port **name**; this release makes the inference consume those rows:
 
 - `l2infer.FDBRow` gains `IfName`; FDB port resolution now matches by name (like ARP already did) and the per-port accumulator keys on ifIndex+name so name-only ports can't collide.
 - With FW2's bridge FDB present, the false transitive OPNsense↔FW1 link is suppressed **from FW1's viewpoint** (FW1 sees OPNsense and FW2 through one port; FW2's FDB distinguishes them) — it works even though OPNsense never ARPs FW2 — and the true OPNsense↔FW2 link is drawn from FW2's FDB alone, carrying the member port name. Test pins the exact live-network evidence shape.
@@ -3424,12 +3424,12 @@ Completes the DC2 daisy-chain investigation: snmpwalks against the live devices 
 
 ## [0.11.95] - 2026-07-14
 
-### Fixed — false transitive links through a MONITORED middle device (live-found on the DC2 daisy chain)
+### Fixed — false transitive links through a MONITORED middle device (live-found on the DC9 daisy chain)
 
-First live validation of the v0.11.94 port-to-port map surfaced a wrong link: OPNsense → DC2-FW2 → DC2-FW1 are daisy-chained on one broadcast domain, and the map drew **OPNsense ↔ DC2-FW1** — FW1's MAC table legitimately contains OPNsense's MAC (learned through the FW2 uplink) and OPNsense's ARP contains FW1, but that path is FW2's job to draw, twice. The "FDB works through switches" attribution is correct only when the switch in the middle is *unmanaged*.
+First live validation of the v0.11.94 port-to-port map surfaced a wrong link: OPNsense → DC9-FW2 → DC9-FW1 are daisy-chained on one broadcast domain, and the map drew **OPNsense ↔ DC9-FW1** — FW1's MAC table legitimately contains OPNsense's MAC (learned through the FW2 uplink) and OPNsense's ARP contains FW1, but that path is FW2's job to draw, twice. The "FDB works through switches" attribution is correct only when the switch in the middle is *unmanaged*.
 
 - `internal/l2infer` now applies **transitive suppression**: a non-LLDP link A↔C is dropped when a monitored device B exists where one endpoint reaches both B and the far end through the SAME local port (they're down the same wire from its view) while B reaches A and C through DIFFERENT ports (B genuinely forwards between them). Directional port attributions are collected per evidence tier (LLDP local > FDB > ARP, LLDP remote ports as fallback).
-- Safety properties (all tested): LLDP-confirmed adjacency is NEVER suppressed (the protocol's word beats the inference); partial middle-device data fails safe (no proof → link stays); links through unmanaged switches are unaffected (no monitored B exists). The reproduction test pins the exact DC2 topology.
+- Safety properties (all tested): LLDP-confirmed adjacency is NEVER suppressed (the protocol's word beats the inference); partial middle-device data fails safe (no proof → link stays); links through unmanaged switches are unaffected (no monitored B exists). The reproduction test pins the exact DC9 topology.
 - Deploy note: the stale false link disappears on the first poller cycle after upgrade (the detector stops refreshing it; the existing cleanup sweeps it).
 
 ## [0.11.94] - 2026-07-14
@@ -5364,7 +5364,7 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 
 ## [0.10.470] - 2026-06-22
 ### Fixed
-- **Direct-link Interfaces tab stopped pairing — it showed two unlinked columns.** Regression from v0.10.468: paired "network segment" cards required a shared **IP subnet** on both ends, but Layer-2 links (VLAN/bridge, no IP) never matched, so every interface fell into the single two-column "Other interfaces" card with nothing visibly paired. `renderPanelInterfaceTab` (`diagram-panels.js`) now pairs the way the detector actually matched the link — **two passes: first by shared IP subnet, then by shared (normalized) interface name** — so L2 `name_match` links pair by interface name (🔗 vlan100 · DC2-FW1 ↔ DC2-FW2) and ethernet/lag pair by network (🌐 10.0.5.0/24). Only interfaces that genuinely can't be paired to the other end fall into "Other interfaces".
+- **Direct-link Interfaces tab stopped pairing — it showed two unlinked columns.** Regression from v0.10.468: paired "network segment" cards required a shared **IP subnet** on both ends, but Layer-2 links (VLAN/bridge, no IP) never matched, so every interface fell into the single two-column "Other interfaces" card with nothing visibly paired. `renderPanelInterfaceTab` (`diagram-panels.js`) now pairs the way the detector actually matched the link — **two passes: first by shared IP subnet, then by shared (normalized) interface name** — so L2 `name_match` links pair by interface name (🔗 vlan100 · DC9-FW1 ↔ DC9-FW2) and ethernet/lag pair by network (🌐 10.0.5.0/24). Only interfaces that genuinely can't be paired to the other end fall into "Other interfaces".
 
 ## [0.10.469] - 2026-06-22
 ### Added
@@ -5377,7 +5377,7 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 
 ## [0.10.468] - 2026-06-22
 ### Fixed
-- **Direct-link interfaces failed to pair, falsely showing "end not monitored" on the peer (e.g. DC2-FW1 ↔ DC2-FW2).** Three compounding causes, all fixed:
+- **Direct-link interfaces failed to pair, falsely showing "end not monitored" on the peer (e.g. DC9-FW1 ↔ DC9-FW2).** Three compounding causes, all fixed:
   1. **Overlay detector stored only one side's interface name** (`cmd/poller/main.go` `detectOverlayConnections`): for `name_match` links (l2vlan/bridge/vxlan/l3ipvlan) it recorded `a.name` but not `b.name`, so `TunnelNames` omitted the peer's interface and the far end couldn't be resolved. Now stores **both** endpoints' names (matching the physical detector).
   2. **The detail resolver matched interface names with exact SQL equality** while the detector matches *normalized* names — so a link named `vlan100` on one device and `VLAN-100` on the other never resolved the second end. `resolveConnectionInterfaces` (`internal/database/connection_detail.go`) now matches **normalized** names against each device's latest interface set (new `normalizeIfName`, `latestInterfacesForDevice`), resolving both ends regardless of spelling.
   3. **The UI implied an end was unmonitored whenever a subnet didn't line up.** `renderPanelInterfaceTab` (`diagram-panels.js`) now only builds a "network segment" card for a subnet present on **both** ends; all other interfaces (Layer-2 links with no IP, or one-sided subnets) go into a single **"Other interfaces"** card that still shows both devices' columns. A side only reads "no interfaces reported" when it genuinely has none — no more misleading "end not monitored".
@@ -5424,7 +5424,7 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 
 ## [0.10.459] - 2026-06-21
 ### Fixed
-- **Interface IP addresses are now parsed correctly on FortiOS builds that append an extra sub-identifier to the `ipAddrTable` index (`internal/snmp/snmp.go`).** Some FortiGates return `ipAdEntIfIndex`/`ipAdEntNetMask` OIDs indexed with a 5th octet — `.1.3.6.1.2.1.4.20.1.2.192.168.25.254.1` instead of `…192.168.25.254` — and `GetInterfaceAddresses` stored the whole suffix (`192.168.25.254.1`) as the IP. That fails `net.ParseIP`, so the subnet/overlay connection detectors silently skipped every address from such a device. The parser now extracts just the first four octets via `ipv4FromTableIndex` and validates them. This is the server-direct counterpart to the same fix in the collector (which polls the affected device in the field). Adds a unit test. (Operators carrying historical malformed `interface_addresses` rows can clear them with `DELETE FROM interface_addresses WHERE ip_address !~ '^([0-9]{1,3}\.){3}[0-9]{1,3}$';` — the next poll repopulates clean rows.)
+- **Interface IP addresses are now parsed correctly on FortiOS builds that append an extra sub-identifier to the `ipAddrTable` index (`internal/snmp/snmp.go`).** Some FortiGates return `ipAdEntIfIndex`/`ipAdEntNetMask` OIDs indexed with a 5th octet — `.1.3.6.1.2.1.4.20.1.2.192.168.125.254.1` instead of `…192.168.125.254` — and `GetInterfaceAddresses` stored the whole suffix (`192.168.125.254.1`) as the IP. That fails `net.ParseIP`, so the subnet/overlay connection detectors silently skipped every address from such a device. The parser now extracts just the first four octets via `ipv4FromTableIndex` and validates them. This is the server-direct counterpart to the same fix in the collector (which polls the affected device in the field). Adds a unit test. (Operators carrying historical malformed `interface_addresses` rows can clear them with `DELETE FROM interface_addresses WHERE ip_address !~ '^([0-9]{1,3}\.){3}[0-9]{1,3}$';` — the next poll repopulates clean rows.)
 
 ## [0.10.458] - 2026-06-21
 ### Added
@@ -5432,11 +5432,11 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 
 ## [0.10.457] - 2026-06-21
 ### Fixed
-- **Connection auto-detection no longer falsely links two FortiGates through their FortiLink fabric ports or link-local interfaces (`cmd/poller/main.go`).** A live SNMP sweep of four FortiGates showed every unit carries a `fortilink` interface (firewall↔FortiSwitch) on a *default, identical* subnet — `169.254.1.1/24` (bridge) and `10.255.1.1/24` (lag) recurred verbatim across devices. Because v0.10.456 broadened the subnet detector to accept `bridge`/`lag`/`l2vlan`, any two same-site units would otherwise be cross-connected through those shared FortiLink subnets (and the name-matching overlay detector had the same exposure, since the interface is named `fortilink` everywhere). Both detectors now exclude FortiLink interfaces (by name) and link-local `169.254.0.0/16` addresses (RFC 3927), which are never routed inter-device LAN segments. Real shared LANs (e.g. two firewalls' `internal` switches on `192.168.5.0/24`) still connect; the FortiLink/HA-sync noise does not. Adds a poller characterization test built from the observed FortiLink subnets.
+- **Connection auto-detection no longer falsely links two FortiGates through their FortiLink fabric ports or link-local interfaces (`cmd/poller/main.go`).** A live SNMP sweep of four FortiGates showed every unit carries a `fortilink` interface (firewall↔FortiSwitch) on a *default, identical* subnet — `169.254.1.1/24` (bridge) and `10.255.1.1/24` (lag) recurred verbatim across devices. Because v0.10.456 broadened the subnet detector to accept `bridge`/`lag`/`l2vlan`, any two same-site units would otherwise be cross-connected through those shared FortiLink subnets (and the name-matching overlay detector had the same exposure, since the interface is named `fortilink` everywhere). Both detectors now exclude FortiLink interfaces (by name) and link-local `169.254.0.0/16` addresses (RFC 3927), which are never routed inter-device LAN segments. Real shared LANs (e.g. two firewalls' `internal` switches on `192.168.105.0/24`) still connect; the FortiLink/HA-sync noise does not. Adds a poller characterization test built from the observed FortiLink subnets.
 
 ## [0.10.456] - 2026-06-21
 ### Fixed
-- **Same-LAN device pairs are no longer missed when the shared subnet lives on a FortiGate switch or VLAN interface (`cmd/poller/main.go` `detectPhysicalConnections`).** The auto-connection subnet detector only grouped interfaces typed `ethernet`/`lag`, but on FortiGate the LAN gateway IP almost never sits on a bare port — it lives on the hardware/software switch (`internal`/`lan`, reported as SNMP ifType 209 `bridge`) or a VLAN sub-interface (ifType 135 `l2vlan`). A live SNMP walk of two FortiGates sharing `192.168.25.0/24` confirmed it: one carried the subnet IP on `port3` (ethernet) and the other on `internal` (bridge), so the bridge side was filtered out, the subnet group never reached two devices, and no connection was drawn. The detector now also accepts `bridge`, `l2vlan`, and `propVirtual` (software switch/zone) as valid LAN-segment interface types, while still excluding tunnel/GRE/loopback/MPLS and the overlay-over-tunnel types (`l3ipvlan`, `vxlan`), which the VPN/overlay detectors own. The same-site, shared-subnet, and non-/30 guards are unchanged. Adds poller characterization tests covering the real ethernet↔bridge case plus the cross-site and tunnel exclusions; `DeviceConnection` added to the in-memory test harness.
+- **Same-LAN device pairs are no longer missed when the shared subnet lives on a FortiGate switch or VLAN interface (`cmd/poller/main.go` `detectPhysicalConnections`).** The auto-connection subnet detector only grouped interfaces typed `ethernet`/`lag`, but on FortiGate the LAN gateway IP almost never sits on a bare port — it lives on the hardware/software switch (`internal`/`lan`, reported as SNMP ifType 209 `bridge`) or a VLAN sub-interface (ifType 135 `l2vlan`). A live SNMP walk of two FortiGates sharing `192.168.125.0/24` confirmed it: one carried the subnet IP on `port3` (ethernet) and the other on `internal` (bridge), so the bridge side was filtered out, the subnet group never reached two devices, and no connection was drawn. The detector now also accepts `bridge`, `l2vlan`, and `propVirtual` (software switch/zone) as valid LAN-segment interface types, while still excluding tunnel/GRE/loopback/MPLS and the overlay-over-tunnel types (`l3ipvlan`, `vxlan`), which the VPN/overlay detectors own. The same-site, shared-subnet, and non-/30 guards are unchanged. Adds poller characterization tests covering the real ethernet↔bridge case plus the cross-site and tunnel exclusions; `DeviceConnection` added to the in-memory test harness.
 
 ## [0.10.455] - 2026-06-21
 ### Removed
@@ -5513,7 +5513,7 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 ### Added
 - **`configcheck` tool to validate firewall config change-detection against real backups (`cmd/configcheck`).** Point it at two config files — `go run ./cmd/configcheck --vendor fortigate old.conf new.conf` — and it normalizes both, reports whether they would raise a config-change alert, prints the exact residual line diff that survived normalization (so you can see *why* an alert fired), and flags capture-mode mismatches. Built to triage false-positive config-change alerts from the field and to confirm a new volatile pattern is neutralized before shipping. Backed by a new reusable `configdiff.Analyze(vendor, a, b) Report` engine.
 ### Fixed
-- **Eliminated three FortiGate config-change false-positive sources discovered from real FGT60F-7.4.12 backups.** The normalizer (`internal/configdiff/vendor_fortigate.go`) now: (1) **strips the per-admin `config gui-dashboard ... end` block** — pure GUI widget layout that FortiOS omits from `show full-configuration` but includes in a plain `show`, the single largest diff source between capture modes (depth-counted `config`/`end` matching, robust to nesting/indentation); (2) **masks `set last-updated <epoch>`** GUI widget timestamps that bump on every dashboard interaction; (3) **strips an echoed CLI prompt** (e.g. `FW-HOME # `) from console-captured backups so the following `#config-version` header still normalizes. On the real sample pair these cut the residual diff from 100 lines to 10 (all remaining lines explained by capture-mode difference).
+- **Eliminated three FortiGate config-change false-positive sources discovered from real FGT60F-7.4.12 backups.** The normalizer (`internal/configdiff/vendor_fortigate.go`) now: (1) **strips the per-admin `config gui-dashboard ... end` block** — pure GUI widget layout that FortiOS omits from `show full-configuration` but includes in a plain `show`, the single largest diff source between capture modes (depth-counted `config`/`end` matching, robust to nesting/indentation); (2) **masks `set last-updated <epoch>`** GUI widget timestamps that bump on every dashboard interaction; (3) **strips an echoed CLI prompt** (e.g. `FW-HERON # `) from console-captured backups so the following `#config-version` header still normalizes. On the real sample pair these cut the residual diff from 100 lines to 10 (all remaining lines explained by capture-mode difference).
 - **Capture-mode mismatch detection (`configdiff.CaptureModeDetector`).** A new optional vendor capability classifies a FortiGate backup as `full-configuration` vs `show` by counting `set` lines in `config system global` (real samples: 207 vs 18; threshold 80). When the two backups were captured in different modes, `Analyze` flags it loudly — those can never hash-match regardless of normalization, so the fix is collector-side (capture consistently), not a phantom config change.
 
 ## [0.10.438] - 2026-06-19
@@ -5724,7 +5724,7 @@ _Note: regenerating `tailwind.css` against this settled markup produced no chang
 ## [0.10.396] - 2026-06-08
 ### Added
 - **Structured logging via `log/slog` (AUDIT-076)** (v0.10.396). The server logged through a flat `log.Printf` stream: no levels, no machine-parseable fields, no credential redaction — and "a flat stream is not searchable" was the exact pain the v0.10.236 / v0.10.238 incident chain exposed, since logs are the team's primary diagnostic surface. New `internal/logging` package adopts the stdlib `log/slog` as the single logging backend, with one deliberate design choice that makes the migration tractable: `logging.Init()` (called first thing in `cmd/api/main.go`'s `main()`) calls `slog.SetDefault`, which — since Go 1.21 — **also routes the legacy `log` package through the slog handler**. So all ~460 existing `log.Printf` call sites gain levelled, structured, redacted output with zero per-site edits, instead of a 460-site mechanical churn. Two env vars control the sink: `LOG_FORMAT` = `text` (default, logfmt key=value) | `json` (one JSON object per line, for Loki/ELK/Splunk), and `LOG_LEVEL` = `debug` | `info` (default) | `warn` | `error`. Legacy `log.Printf` lines bridge in at info, so the default keeps the pre-AUDIT-076 verbosity. A `ReplaceAttr` redaction hook masks any slog attribute whose key names a secret (`password`/`passwd`/`secret`/`token`/`apikey`/`api_key`/`community`/`private_key` → `REDACTED`), mirroring the API-response masking. The two highest-volume logging chokepoints were converted to **native** slog records with queryable attributes (not bridged strings): `httputil.InternalError` (every handler 500 → `slog.Error(msg, status=500, method, route, req, err)`) and `middleware.RequestLogger` (every failed request → `slog.LogAttrs(... "http request", req, method, path, status, latency)`, level split 4xx→warn / 5xx→error). Tests: `internal/logging/logging_test.go` (redaction, the stdlib→slog bridge, level parsing) + `internal/shell/structuredlogging_audit076_test.go` (static guards that the foundation and both chokepoints stay on slog). `LOG_FORMAT`/`LOG_LEVEL` documented in `config.env.example`. **Requires a redeploy** to take effect; behaviour is otherwise unchanged at the default `text`/`info`.
-- **Operations docs: "Key continuity" upgrade warning** (v0.10.392, docs-only). Codifies the lesson from the 2026-06-07 production incident: an upgrade deployed from a *fresh checkout in a new directory* (`/home/xphox/firewall-mon` → `/opt/Firewall-Monitoring`) made the entrypoint regenerate `config.env` with a new random `JWT_SECRET_KEY`. Because `ENCRYPTION_KEY` had been left to silently derive from the JWT secret (the AUDIT-008/009 fallback), the derived AES-256 key changed and **every stored `{enc}` secret (SNMP communities, SMTP/IRC passwords) became undecryptable** — devices stopped polling and email alerts failed `535`, with no recovery short of re-entering every secret by hand. Added a prominent ⚠ callout to `docs/OPERATIONS.md` → **Upgrade** explaining what each key does, why `ENCRYPTION_KEY` must be set **explicitly** (decoupling encryption from JWT auto-regeneration) and carried forward verbatim on every upgrade / host-move / repo relocation, plus a before-and-after verification command; and a cross-linked pre-flight step (#7) in `docs/UPGRADE-2026-06.md`. Docs-only; no code change.
+- **Operations docs: "Key continuity" upgrade warning** (v0.10.392, docs-only). Codifies the lesson from the 2026-06-07 production incident: an upgrade deployed from a *fresh checkout in a new directory* (`/opt/firewall-mon` → `/opt/firewall-mon`) made the entrypoint regenerate `config.env` with a new random `JWT_SECRET_KEY`. Because `ENCRYPTION_KEY` had been left to silently derive from the JWT secret (the AUDIT-008/009 fallback), the derived AES-256 key changed and **every stored `{enc}` secret (SNMP communities, SMTP/IRC passwords) became undecryptable** — devices stopped polling and email alerts failed `535`, with no recovery short of re-entering every secret by hand. Added a prominent ⚠ callout to `docs/OPERATIONS.md` → **Upgrade** explaining what each key does, why `ENCRYPTION_KEY` must be set **explicitly** (decoupling encryption from JWT auto-regeneration) and carried forward verbatim on every upgrade / host-move / repo relocation, plus a before-and-after verification command; and a cross-linked pre-flight step (#7) in `docs/UPGRADE-2026-06.md`. Docs-only; no code change.
 - **Doc-unification pass across `xphox2/Firewall-Monitoring` and `xphox2/Firewall-Collector`** (v0.10.389, docs-only). The two repos were drifting: the collector's README was 138 lines and last meaningfully rewritten around 1.2.50 (missing TFTP backup, SSH polling, mTLS, observability, schema versioning, the disk-spillover queue, the `ssh-test` subcommand, the `diag-backup` binary, and most hardening); the server's README was 309 lines with a strong but ad-hoc structure. Cross-references to `MIGRATING.md` / `SUPPORT-MATRIX.md` / `ARCHITECTURE.md` were dangling in the collector. This release brings both repos to the **same section order, the same role-tag convention, and the same "single canonical home" rule for cross-cutting docs**:
   - New `docs/STRUCTURE.md` in both repos — the index of where every topic lives, with absolute github.com cross-links for anyone reading either repo in isolation. The server's `STRUCTURE.md` is the canonical version; the collector's mirrors it.
   - New `docs/FEATURES.md` in both repos — website-ready feature inventory with `Stable` / `Beta` / `Planned` status, `[Server]` / `[Probe]` / `[Both]` role tags, and "since" version for every row. The server's `FEATURES.md` covers 60+ stable features, the 9 in-tree vendor profiles, the planned items (server-side mTLS, SIGHUP hot-reload, GDPR export), and the 5 entries from `KNOWN-ISSUES.md` with their AUDIT-NNN tracking IDs. The collector's `FEATURES.md` is the companion piece.
@@ -7254,7 +7254,7 @@ Static-binary change → requires `docker compose up -d --build`. Server-repo on
 Five small audit items, batched because each is a one-or-two-line change with no functional risk:
 
 - **AUDIT-002** — added top-level `LICENSE` with standard MIT text (`Copyright (c) 2026 Firewall-Mon Contributors`). README has claimed MIT since v0.10.140 but no license file shipped; without it, Berne Convention defaults the codebase to All Rights Reserved.
-- **AUDIT-010** — `internal/config/config.go:247`: changed `PROBE_SERVER_URL` default from `https://stats.technicallabs.org` to `""`. The probe binary itself already required the env var (`cmd/probe/main.go:67` fails if empty), but the hardcoded third-party domain in the server config was a public-release smell. Server side does not actually consume `cfg.Probe.ServerURL` anywhere — this is defensive cleanup.
+- **AUDIT-010** — `internal/config/config.go:247`: changed `PROBE_SERVER_URL` default from `https://stats.example.com` to `""`. The probe binary itself already required the env var (`cmd/probe/main.go:67` fails if empty), but the hardcoded third-party domain in the server config was a public-release smell. Server side does not actually consume `cfg.Probe.ServerURL` anywhere — this is defensive cleanup.
 - **AUDIT-023** — `cmd/api/main.go:216`: added `ReadHeaderTimeout: 10 * time.Second` on the HTTP server. `ReadTimeout` was 30s but `ReadHeaderTimeout` was unset, so a slow-loris attacker holding partial headers could tie up a goroutine per connection up to the existing 30s body limit. 10s is conservative for the longest practical real header.
 - **AUDIT-025** — `internal/api/middleware/middleware.go:253`: added `Permissions-Policy` header denying camera, microphone, geolocation, USB, payment, accelerometer, gyroscope, magnetometer, midi, sync-xhr. The admin panel has no use for any of these; sending the deny header tells the browser to block them even if a future UI bug accidentally calls one.
 - **AUDIT-122** — `internal/api/handlers/handlers_config_revision_retention_test.go:282`: deleted the 60-line `_unused_legacy_top50_test` orphan that was left in place with a leading underscore when the old retention policy was removed.
@@ -7310,7 +7310,7 @@ Each finding has a stable ID in the form `AUDIT-NNN` for commit-message tracking
 
 - **AUDIT-001** — remove `*_test.go` from `.gitignore` and `git add -f` the two regression-net test files: `internal/configdiff/normalize_test.go` (631 LOC) and `internal/report/report_test.go` (192 LOC). Public clones currently lose them silently. Recent CHANGELOG entries (v0.10.236, 0.10.238, 0.10.239) cite these as the regression net; the net doesn't exist for downstream users.
 - **AUDIT-002** — add `LICENSE` (MIT text). README claims MIT but no license file ships, so the project is "All Rights Reserved" by default under Berne Convention.
-- **AUDIT-010** — change `PROBE_SERVER_URL` default to `""` (currently hardcodes `https://stats.technicallabs.org`).
+- **AUDIT-010** — change `PROBE_SERVER_URL` default to `""` (currently hardcodes `https://stats.example.com`).
 
 **Other critical findings called out:** no CI / no git tags (AUDIT-004), trap-receiver drops every trap silently (AUDIT-005), batcher not crash-durable (AUDIT-006), no poller leader lock (AUDIT-007), auto-generated JWT secret breaks AES decrypt on restart (AUDIT-008), crypto key rotation impossible (AUDIT-009), no SECURITY.md / no runbook (AUDIT-011).
 
@@ -7750,7 +7750,7 @@ if s.IsSecret { return h.db.DecryptField(s.Value) }
 return s.Value   // <-- raw "{enc}<base64>" returned to caller
 ```
 
-So when `runSMTPDiagnostic` called `getNotificationSetting("smtp_password")`, it got back the literal string `"{enc}AAAA...base64..."` and passed it to `smtp.PlainAuth("", username, password, host)` as the password. Postfix forwarded that string verbatim over the Dovecot SASL socket. Dovecot's SQL passdb compared it against the actual stored password column for `support@technicallabs.org` and (correctly) returned `Password mismatch`. IMAP login from the operator's webmail worked because the operator typed the real password into the browser — only firewall-mon was sending ciphertext.
+So when `runSMTPDiagnostic` called `getNotificationSetting("smtp_password")`, it got back the literal string `"{enc}AAAA...base64..."` and passed it to `smtp.PlainAuth("", username, password, host)` as the password. Postfix forwarded that string verbatim over the Dovecot SASL socket. Dovecot's SQL passdb compared it against the actual stored password column for `support@example.com` and (correctly) returned `Password mismatch`. IMAP login from the operator's webmail worked because the operator typed the real password into the browser — only firewall-mon was sending ciphertext.
 
 The "different bytes every save" observation matches the symptom: AES-GCM uses a random nonce per encrypt, so each save produced different ciphertext, all of which looked nothing like the real password.
 
@@ -8471,7 +8471,7 @@ v0.10.202 cleaned up the partition-creation log spam but exposed the underlying 
 ## [0.10.202] - 2026-05-16
 
 ### Fixed — partition creation log spam on legacy deployments
-- `EnsurePartitions()` now probes `pg_partitioned_table` for each candidate parent (`syslog_messages`, `syslog_summaries`, `trap_events`, `flow_samples`) BEFORE attempting to attach a monthly partition. Deployments that ran GORM `AutoMigrate` before the partitioning code was added (rust-01 is one) carry these as plain tables, and `CREATE TABLE ... PARTITION OF ...` against a plain parent fails with SQLSTATE 42P17 — producing 28 noise lines per startup (4 tables × 7 months ahead).
+- `EnsurePartitions()` now probes `pg_partitioned_table` for each candidate parent (`syslog_messages`, `syslog_summaries`, `trap_events`, `flow_samples`) BEFORE attempting to attach a monthly partition. Deployments that ran GORM `AutoMigrate` before the partitioning code was added (prod-host is one) carry these as plain tables, and `CREATE TABLE ... PARTITION OF ...` against a plain parent fails with SQLSTATE 42P17 — producing 28 noise lines per startup (4 tables × 7 months ahead).
 - New behavior: probe once, log a single clear info line per plain table ("syslog_messages is a plain table on this deployment; skipping monthly partition creation"), and skip the per-month attempts entirely. No behavior change for fresh deployments where the tables are partitioned from the start.
 - **Data safety unchanged:** the plain tables continue to function normally. The only "lost" benefit is partition-prune query speedups and the ability to `DROP PARTITION` (O(1)) instead of `DELETE ... WHERE timestamp < ...` (writes WAL). A separate in-place migration to convert plain → partitioned is planned for a future release; the log line points at `docs/partition-migration.md`.
 
@@ -8482,10 +8482,10 @@ v0.10.202 cleaned up the partition-creation log spam but exposed the underlying 
 
 ### Changed — `DATA_DIR` parameterized in shipped compose
 - `docker-compose.yml` volume `./data:/data` is now `${DATA_DIR:-./data}:/data`. Fresh deploys still get a project-local `./data` directory with no setup. Production deployments set `DATA_DIR` in a `.env` file (gitignored) to point at a dedicated partition — eliminates the recurring "Your local changes to docker-compose.yml would be overwritten by merge" on every upstream pull.
-- New `.env.example` documents the variable with the prod rust-01 value (`/mnt/STORAGE/firewall-mon-data`) commented out so future deployers can see the intended pattern without inheriting our specific path.
+- New `.env.example` documents the variable with the prod prod-host value (`/srv/firewall-mon/data`) commented out so future deployers can see the intended pattern without inheriting our specific path.
 
 ### Why this matters
-The rust-01 host outgrew its root volume in 2026-05 (CHANGELOG v0.10.199) and was relocated to `/mnt/STORAGE`. The prod compose carried the new path as an uncommitted local edit, which collided with every upstream `git pull`. Parameterizing via env keeps the prod path on the prod box and the upstream file generic.
+The prod-host host outgrew its root volume in 2026-05 (CHANGELOG v0.10.199) and was relocated to `/srv/firewall-mon`. The prod compose carried the new path as an uncommitted local edit, which collided with every upstream `git pull`. Parameterizing via env keeps the prod path on the prod box and the upstream file generic.
 
 ## [0.10.200] - 2026-05-16
 
@@ -8527,7 +8527,7 @@ The v0.10.198 release closed the false-alert path for the common case (FortiGate
 
 ### Fixed — `syslog_messages` could grow unbounded in default deploys
 - **`docker-compose.yml` now ships with `RETENTION_SYSLOG_CRITICAL_DAYS=30`**, bounding severity 0-5 syslog (notice / warning / error / critical / alert) to 30 days. The app already supported this env var via `RetentionConfig.SyslogCriticalDays` (`internal/config/config.go:75`), but the in-code default of `0 = never delete` combined with firewall traffic logs typically arriving at severity 5 (notice) caused `syslog_messages` to accumulate indefinitely. Severity 6-7 (info/debug) was already bounded by `SyslogInfoDays` + the 5-minute aggregation cycle; the gap was severity 0-5.
-- **Production-incident context (rust-01, 2026-05-11):** `syslog_messages` reached 17 GB / 18.9 M rows, of which 18.6 M (98.6%) were severity 5 with no retention. The table filled the 57 GB root volume and Postgres crashed mid-WAL recovery (`SQLSTATE 57P03`). Recovery sequence: freed root space (Docker image prune + relocate unrelated files), took a `pg_dump`, migrated PGDATA to a dedicated 100 GB partition, set the env var, one-shot-deleted ~4 M rows older than 30 days where severity < 6, `VACUUM FULL ANALYZE syslog_messages` reclaimed ~5 GB of heap. Ongoing retention now flows through `Database.CleanupOldData` (`internal/database/database.go:732`).
+- **Production-incident context (prod-host, 2026-05-11):** `syslog_messages` reached 17 GB / 18.9 M rows, of which 18.6 M (98.6%) were severity 5 with no retention. The table filled the 57 GB root volume and Postgres crashed mid-WAL recovery (`SQLSTATE 57P03`). Recovery sequence: freed root space (Docker image prune + relocate unrelated files), took a `pg_dump`, migrated PGDATA to a dedicated 100 GB partition, set the env var, one-shot-deleted ~4 M rows older than 30 days where severity < 6, `VACUUM FULL ANALYZE syslog_messages` reclaimed ~5 GB of heap. Ongoing retention now flows through `Database.CleanupOldData` (`internal/database/database.go:732`).
 - **No code change to in-code default.** Deployers explicitly relying on unbounded retention should set `RETENTION_SYSLOG_CRITICAL_DAYS=0` in their own compose; new deploys using this repo's compose file now get the safer 30-day default out of the box.
 
 ### Fixed
@@ -9603,7 +9603,7 @@ The drift is FortiOS-specific behavior — by design — and the canonical indus
 ## [0.10.80] - 2026-03-04
 
 ### Added
-- Configurable public dashboard modules - pick and choose what to show on stats.technicallabs.org
+- Configurable public dashboard modules - pick and choose what to show on stats.example.com
 - New public APIs: `/api/public/vpn` (IPSec tunnel status), `/api/public/connections` (connection map)
 - New display settings: bandwidth graphs, VPN tunnels, connection map
 - Interface selection now grouped by type (Physical, VLAN, IPSec, VXLAN, Tunnel, etc.)
@@ -9674,14 +9674,14 @@ The drift is FortiOS-specific behavior — by design — and the canonical indus
 ## [0.10.72] - 2026-03-04
 
 ### Fixed
-- Cross-fill empty Phase 2 subnets from paired tunnel in connection detail — hub-side ADVPN tunnels (e.g. NUDAY_LAN) now show local/remote subnet inferred from the spoke side's data
+- Cross-fill empty Phase 2 subnets from paired tunnel in connection detail — hub-side ADVPN tunnels (e.g. KESTREL_LAN) now show local/remote subnet inferred from the spoke side's data
 
 ## [0.10.71] - 2026-03-04
 
 ### Fixed
 - Fix connection detail page showing empty dest tunnels for NAT'd hub-spoke VPNs (tunnel_indirect/wan_inferred matches)
   - Infers source device WAN IPs from dest tunnel remote IPs for indirectly matched connections
-  - Example: NUDAY-FW's `dialup-76.64.79.217` tunnel now correctly appears as dest tunnel for DC2-FW1 ↔ NUDAY-FW
+  - Example: KESTREL-FW's `dialup-198.19.64.217` tunnel now correctly appears as dest tunnel for DC9-FW1 ↔ KESTREL-FW
 - Fix overlay detector assigning wrong connection type ("ipsec") to vxlan-named interfaces with empty/non-overlay TypeName
   - Interfaces accepted by name prefix (e.g., vxlan500) now get effective type "vxlan" if their SNMP TypeName isn't an overlay type
 
@@ -9861,7 +9861,7 @@ The drift is FortiOS-specific behavior — by design — and the canonical indus
 ## [0.10.53] - 2026-03-03
 
 ### Added
-- **Indirect VPN detection for NAT'd tunnels**: When VPN tunnel remote IPs don't match any known device (common with NAT'd IPSec), the poller now tries matching the VPN tunnel name against device names (e.g., tunnel "NUDAY_LAN" on DC2-FW1 matches device "NUDAY-FW"). Creates connections with match method `tunnel_indirect`.
+- **Indirect VPN detection for NAT'd tunnels**: When VPN tunnel remote IPs don't match any known device (common with NAT'd IPSec), the poller now tries matching the VPN tunnel name against device names (e.g., tunnel "KESTREL_LAN" on DC9-FW1 matches device "KESTREL-FW"). Creates connections with match method `tunnel_indirect`.
 - **Database-backed `hasDirectLink` fallback**: The overlay validation check now also queries the database for existing tunnel/ipsec connections, not just in-memory VPN status data. This allows overlays (l3ipvlan/vxlan) to be detected once the underlying IPSec tunnel is established by any method (IP match, tunnel_indirect, or manual).
 
 ## [0.10.52] - 2026-03-03
@@ -10396,7 +10396,7 @@ The drift is FortiOS-specific behavior — by design — and the canonical indus
 - **Probe Command**: New `cmd/probe` for running probe collectors at remote sites
 - **Per-Site Databases**: Database-per-site architecture for easier device cleanup
 - **Probe Heartbeat**: Track probe online/offline status
-- **Server URL**: Default set to stats.technicallabs.org
+- **Server URL**: Default set to stats.example.com
 
 ### Admin UI
 - **Probes Page**: Full CRUD, approval actions, registration key management
@@ -10406,7 +10406,7 @@ The drift is FortiOS-specific behavior — by design — and the canonical indus
 
 ### Configuration
 - PROBE_NAME, PROBE_SITE_ID, PROBE_REGISTRATION_KEY (required for probe)
-- PROBE_SERVER_URL (default: https://stats.technicallabs.org)
+- PROBE_SERVER_URL (default: https://stats.example.com)
 
 ## [0.9.0] - 2026-02-28
 

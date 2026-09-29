@@ -1113,7 +1113,7 @@ func noisyDevices(g *gorm.DB, hours, limit int, cs *computeStatus) []noisyRow {
 	//
 	//  1. NO ActiveDevices scope. The name lookup below is unscoped, so a retired
 	//     device that is still producing syslog appears in today's leaderboard —
-	//     production has exactly one (TECHLABS-FW-01, retired 2026-09-07).
+	//     production has exactly one (OSPREY-FW-01, retired 2026-09-07).
 	//     Excluding retired devices may well be better, but that is a product
 	//     decision and must not ride in on a performance fix.
 	//  2. Zero counts are SKIPPED. The grouped form only ever returned rows for

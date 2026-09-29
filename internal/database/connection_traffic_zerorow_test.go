@@ -127,7 +127,7 @@ func TestGetVPNChartWindow_ZeroRowsExcluded(t *testing.T) {
 
 // TestGetConnectionTraffic_DuplicateCounterStreamsCollapse pins the 4x
 // inflation fix: FortiGate can surface ONE underlying counter under several
-// tunnel names (observed live: DMZ/HUB/NUDAY_LAN/TL-IKEv2 to the same gateway,
+// tunnel names (observed live: DMZ/HUB/KESTREL_LAN/OS-IKEv2 to the same gateway,
 // byte-identical at every sample). Byte-identical rows at the same timestamp
 // must collapse to one partition; tunnels with genuinely distinct counters
 // must keep their own partitions and still sum.

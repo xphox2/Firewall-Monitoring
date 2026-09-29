@@ -16,7 +16,7 @@ import (
 const opnsenseA = `<?xml version="1.0"?>
 <opnsense>
   <revision>
-    <username>root@192.168.5.15</username>
+    <username>root@192.168.105.15</username>
     <description>/firewall_rules_edit.php made changes</description>
     <time>1785449422.77</time>
   </revision>
@@ -43,7 +43,7 @@ const opnsenseA = `<?xml version="1.0"?>
     </wan>
     <lan>
       <if>dtsec0</if>
-      <ipaddr>192.168.5.1</ipaddr>
+      <ipaddr>192.168.105.1</ipaddr>
     </lan>
   </interfaces>
   <filter>
@@ -58,7 +58,7 @@ const opnsenseA = `<?xml version="1.0"?>
       </destination>
       <log/>
       <updated>
-        <username>root@192.168.5.15</username>
+        <username>root@192.168.105.15</username>
         <time>1783781766.84</time>
       </updated>
     </rule>
@@ -75,14 +75,14 @@ const opnsenseA = `<?xml version="1.0"?>
       <children>
         <child uuid="a1ddd125-1836-4139-9a8e-28c25e13f648">
           <connection>ea805861-84eb-4769-a3c1-0331b4d9ea61</connection>
-          <local_ts>192.168.50.0/24</local_ts>
-          <remote_ts>192.168.25.0/24</remote_ts>
+          <local_ts>192.168.150.0/24</local_ts>
+          <remote_ts>192.168.125.0/24</remote_ts>
           <description>fwm-t12</description>
         </child>
         <child uuid="dfe6c8af-f31e-475c-abe8-31d3b1e4efcd">
           <connection>ea805861-84eb-4769-a3c1-0331b4d9ea61</connection>
-          <local_ts>192.168.50.0/24</local_ts>
-          <remote_ts>192.168.13.0/24</remote_ts>
+          <local_ts>192.168.150.0/24</local_ts>
+          <remote_ts>192.168.113.0/24</remote_ts>
           <description>fwm-t12</description>
         </child>
       </children>
@@ -91,7 +91,7 @@ const opnsenseA = `<?xml version="1.0"?>
       <preSharedKeys>
         <preSharedKey uuid="a252b745-4f1a-487c-93f5-aa9c07c696b3">
           <ident>opnsense</ident>
-          <remote_ident>techlabs-fw-01</remote_ident>
+          <remote_ident>osprey-fw-01</remote_ident>
           <Key>EucWSuperSecretPreSharedKeyMaterial</Key>
         </preSharedKey>
       </preSharedKeys>
@@ -257,7 +257,7 @@ func TestOPNsenseParsesShapes(t *testing.T) {
 		"interfaces/lan",
 		"system",           // top-level singleton
 		"system.user/root", // key table by <name>, not uuid
-		"OPNsense.Swanctl.children.child/fwm-t12|192.168.50.0/24|192.168.25.0/24", // composite key
+		"OPNsense.Swanctl.children.child/fwm-t12|192.168.150.0/24|192.168.125.0/24", // composite key
 	} {
 		if _, ok := byPath[want]; !ok {
 			t.Errorf("missing object %q", want)
@@ -427,7 +427,7 @@ func TestOPNsenseParserIsTolerant(t *testing.T) {
 // the advancement gate.
 func revWith(user, desc, ts string) string {
 	old := `<revision>
-    <username>root@192.168.5.15</username>
+    <username>root@192.168.105.15</username>
     <description>/firewall_rules_edit.php made changes</description>
     <time>1785449422.77</time>
   </revision>`
@@ -440,7 +440,7 @@ func revWith(user, desc, ts string) string {
 // advanced, so the saving user is authoritative without any syslog correlation.
 func TestOPNsenseAttributionFromConfig(t *testing.T) {
 	t.Parallel()
-	prev := revWith("root@192.168.5.15", "/firewall_rules_edit.php made changes", "1785449422.77")
+	prev := revWith("root@192.168.105.15", "/firewall_rules_edit.php made changes", "1785449422.77")
 	cur := revWith("alice@10.0.0.9", "/firewall_rules_edit.php made changes", "1785449999.10")
 
 	att, ok := AttributionFromConfig("opnsense", []byte(cur), []byte(prev))
@@ -460,7 +460,7 @@ func TestOPNsenseAttributionFromConfig(t *testing.T) {
 // must NOT be credited to the previous legitimate admin.
 func TestOPNsenseUnadvancedRevisionIsNotAttribution(t *testing.T) {
 	t.Parallel()
-	prev := revWith("root@192.168.5.15", "/firewall_rules_edit.php made changes", "1785449422.77")
+	prev := revWith("root@192.168.105.15", "/firewall_rules_edit.php made changes", "1785449422.77")
 
 	// Same stamp, different content: an unattributed edit.
 	cur := strings.Replace(prev, "<hostname>fw1</hostname>", "<hostname>pwned</hostname>", 1)
@@ -469,7 +469,7 @@ func TestOPNsenseUnadvancedRevisionIsNotAttribution(t *testing.T) {
 	}
 
 	// Backwards stamp: a restore-from-backup carries an older block.
-	older := revWith("root@192.168.5.15", "/firewall_rules_edit.php made changes", "1785000000.00")
+	older := revWith("root@192.168.105.15", "/firewall_rules_edit.php made changes", "1785000000.00")
 	if _, ok := AttributionFromConfig("opnsense", []byte(older), []byte(prev)); ok {
 		t.Error("a backwards revision stamp must not attribute")
 	}
@@ -490,7 +490,7 @@ func TestOPNsenseUnadvancedRevisionIsNotAttribution(t *testing.T) {
 // recency would mark legitimate changes unattributed and escalate them.
 func TestOPNsenseAttributionSurvivesLateDelivery(t *testing.T) {
 	t.Parallel()
-	prev := revWith("root@192.168.5.15", "x.php made changes", "1000000000.00")
+	prev := revWith("root@192.168.105.15", "x.php made changes", "1000000000.00")
 	// Stamped long ago in wall-clock terms; still the newer of the two.
 	cur := revWith("bob@10.0.0.5", "x.php made changes", "1000000001.00")
 

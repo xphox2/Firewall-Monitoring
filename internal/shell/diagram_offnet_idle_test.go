@@ -13,8 +13,8 @@ import (
 // An unmatched tunnel that is not up is an idle remote-access / dialup phase1
 // — a config row with no SA — not a failure. The earlier build set the edge's
 // status to 'down' whenever no unmatched tunnel was up, which crossed out every
-// remote-access endpoint that simply had nobody dialled in (DC2-FW1 and
-// NUDAY-FW on prod, 2026-09-05). Reverting to a status-driven edge, or building
+// remote-access endpoint that simply had nobody dialled in (DC9-FW1 and
+// KESTREL-FW on prod, 2026-09-05). Reverting to a status-driven edge, or building
 // it from a raw "unmatched" count, would bring that false warning back.
 func TestDiagramOffnetEdgeOnlyWhileConnected(t *testing.T) {
 	data, err := os.ReadFile("../../cmd/api/static/js/diagram-cytoscape.js")

@@ -197,7 +197,7 @@ func TestAdvisory_DialupUsesInjectedRouteDistance(t *testing.T) {
 	d := fgDriver(t)
 	// A pre-existing route at distance 12: harmless against a static peer's
 	// distance-10 route, but it BEATS a dialup peer's distance-15 injected route.
-	body := `{"results":[{"seq-num":7,"dst":"192.168.50.0 255.255.255.0","gateway":"10.0.0.1","device":"port2","distance":12,"blackhole":"disable","status":"enable"}]}`
+	body := `{"results":[{"seq-num":7,"dst":"192.168.150.0 255.255.255.0","gateway":"10.0.0.1","device":"port2","distance":12,"blackhole":"disable","status":"enable"}]}`
 
 	dyn := d.Advisories(ipsec.ViewFor(dialupIntent(true), 0), map[string]string{checkRouteTable: body})
 	if len(dyn) != 1 {
@@ -230,10 +230,10 @@ func TestDialupPeer_NoPeerHostRoute(t *testing.T) {
 	// Arrange the exact trigger: a Gateway on this end, and the peer's address
 	// sitting inside its own protected subnets.
 	in.Ends[0].Gateway = "203.0.113.254"
-	in.Ends[1].PeerIP = "192.168.5.107" // inside 192.168.5.0/24
+	in.Ends[1].PeerIP = "192.168.105.107" // inside 192.168.105.0/24
 	_, all := renderBodies(t, in)
 
-	if strings.Contains(all, `"dst":"192.168.5.107 255.255.255.255"`) {
+	if strings.Contains(all, `"dst":"192.168.105.107 255.255.255.255"`) {
 		t.Errorf("dialup render must not pin a /32 host route to the peer — it would "+
 			"shadow the injected /24 and blackhole a legitimate in-tunnel host:\n%s", all)
 	}
@@ -252,7 +252,7 @@ func TestDialupPeer_NoPeerHostRoute(t *testing.T) {
 	// The same shape with a STATIC peer must STILL warn — the gate must not have
 	// disabled the check wholesale.
 	sta := dialupIntent(false)
-	sta.Ends[1].PeerIP = "192.168.5.107"
+	sta.Ends[1].PeerIP = "192.168.105.107"
 	sta.Ends[0].Gateway = ""
 	var warned bool
 	for _, f := range ipsec.Validate(sta, caps) {
@@ -275,12 +275,12 @@ func TestDialupPeer_BroadCoverPrefixStillBlocks(t *testing.T) {
 	// No overlap with the local side, so subnet_overlap stays silent and this
 	// test can only pass via the broad-prefix block.
 	in.Ends[1].ProtectedSubnets = []string{"0.0.0.0/2"}
-	// 192.168.5.107 is OUTSIDE 0.0.0.0/2 (which covers 0.0.0.0-63.255.255.255), so
+	// 192.168.105.107 is OUTSIDE 0.0.0.0/2 (which covers 0.0.0.0-63.255.255.255), so
 	// the n.Contains(peerIP) test is FALSE and only the unconditional dynamic-peer
 	// clause can raise the block. (A PeerIP inside the prefix would pass even under
 	// the old contains-gated code, and prove nothing.)
-	in.Ends[1].PeerIP = "192.168.5.107"
-	in.Ends[0].ProtectedSubnets = []string{"192.168.25.0/24"}
+	in.Ends[1].PeerIP = "192.168.105.107"
+	in.Ends[0].ProtectedSubnets = []string{"192.168.125.0/24"}
 
 	caps := [2]ipsec.CapabilityDescriptor{fgDriver(t).Capabilities(), fgDriver(t).Capabilities()}
 	var blocked bool

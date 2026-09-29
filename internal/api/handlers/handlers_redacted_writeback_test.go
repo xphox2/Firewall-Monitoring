@@ -28,7 +28,7 @@ func TestUpdateDevice_RedactedCommunityNotWrittenBack(t *testing.T) {
 	const realCommunity = "s3cr3t-snmp-comm"
 	dev := &models.Device{
 		Name:          "fw-edge",
-		IPAddress:     "192.168.5.1",
+		IPAddress:     "192.168.105.1",
 		SNMPVersion:   "2c",
 		SNMPCommunity: db.EncryptField(realCommunity),
 		Enabled:       true,
@@ -76,7 +76,7 @@ func TestUpdateDevice_RealCommunityStillUpdates(t *testing.T) {
 
 	dev := &models.Device{
 		Name:          "fw-edge",
-		IPAddress:     "192.168.5.2",
+		IPAddress:     "192.168.105.2",
 		SNMPVersion:   "2c",
 		SNMPCommunity: db.EncryptField("old-comm"),
 		Enabled:       true,

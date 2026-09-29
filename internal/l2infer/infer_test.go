@@ -9,8 +9,8 @@ var site1, site2 = uint(1), uint(2)
 
 func twoDevices() []DeviceMeta {
 	return []DeviceMeta{
-		{ID: 1, Name: "fw-core", SiteID: &site1, IPs: []string{"192.168.5.1"}},
-		{ID: 2, Name: "fw-branch.lab.local", SiteID: &site1, IPs: []string{"192.168.5.107"}},
+		{ID: 1, Name: "fw-core", SiteID: &site1, IPs: []string{"192.168.105.1"}},
+		{ID: 2, Name: "fw-branch.lab.local", SiteID: &site1, IPs: []string{"192.168.105.107"}},
 	}
 }
 
@@ -95,8 +95,8 @@ func TestInferLinks_FDBOneSided(t *testing.T) {
 // ARP-only, both directions: MAC-ownership matching attributes both ports.
 func TestInferLinks_ARPBothDirections(t *testing.T) {
 	arp := []ARPRow{
-		{DeviceID: 1, IfIndex: 5, IP: "192.168.5.107", MAC: "aa:bb:cc:00:01:03", Ts: ts()},
-		{DeviceID: 2, IfIndex: 3, IP: "192.168.5.1", MAC: "aa:bb:cc:00:00:05", Ts: ts()},
+		{DeviceID: 1, IfIndex: 5, IP: "192.168.105.107", MAC: "aa:bb:cc:00:01:03", Ts: ts()},
+		{DeviceID: 2, IfIndex: 3, IP: "192.168.105.1", MAC: "aa:bb:cc:00:00:05", Ts: ts()},
 	}
 	links := InferLinks(twoDevices(), twoDeviceIfaces(), nil, arp, nil)
 	if len(links) != 1 {
@@ -112,7 +112,7 @@ func TestInferLinks_ARPBothDirections(t *testing.T) {
 // (e.g. unreported ifPhysAddress) but the IP belongs to device 2.
 func TestInferLinks_ARPIPFallback(t *testing.T) {
 	arp := []ARPRow{
-		{DeviceID: 1, IfIndex: 5, IP: "192.168.5.107", MAC: "11:22:33:44:55:66", Ts: ts()},
+		{DeviceID: 1, IfIndex: 5, IP: "192.168.105.107", MAC: "11:22:33:44:55:66", Ts: ts()},
 	}
 	links := InferLinks(twoDevices(), twoDeviceIfaces(), nil, arp, nil)
 	if len(links) != 1 || links[0].B != 2 {
@@ -123,7 +123,7 @@ func TestInferLinks_ARPIPFallback(t *testing.T) {
 // SSH-sourced ARP rows carry interface NAMES; they must resolve to the ifIndex.
 func TestInferLinks_ARPByIfName(t *testing.T) {
 	arp := []ARPRow{
-		{DeviceID: 1, IfName: "port5", IP: "192.168.5.107", MAC: "aa:bb:cc:00:01:03", Ts: ts()},
+		{DeviceID: 1, IfName: "port5", IP: "192.168.105.107", MAC: "aa:bb:cc:00:01:03", Ts: ts()},
 	}
 	links := InferLinks(twoDevices(), twoDeviceIfaces(), nil, arp, nil)
 	if len(links) != 1 || links[0].AIfIndex != 5 || links[0].AIfName != "port5" {
@@ -345,7 +345,7 @@ func TestInferLinks_LLDPParallelRawFallbackKeepsBothEdges(t *testing.T) {
 // different port (logical VLAN subif vs the physical port is the same wire).
 func TestInferLinks_ARPNeverSpawnsParallel(t *testing.T) {
 	fdb := []FDBRow{{DeviceID: 1, IfIndex: 5, MAC: "aa:bb:cc:00:01:03", Ts: ts()}}
-	arp := []ARPRow{{DeviceID: 1, IfIndex: 6, IP: "192.168.5.107", MAC: "aa:bb:cc:00:01:03", Ts: ts()}}
+	arp := []ARPRow{{DeviceID: 1, IfIndex: 6, IP: "192.168.105.107", MAC: "aa:bb:cc:00:01:03", Ts: ts()}}
 	links := InferLinks(twoDevices(), twoDeviceIfaces(), fdb, arp, nil)
 	if len(links) != 1 {
 		t.Fatalf("ARP spawned a parallel link: %+v", links)
@@ -373,7 +373,7 @@ func TestInferLinks_Deterministic(t *testing.T) {
 		{DeviceID: 1, IfIndex: 5, MAC: "aa:bb:cc:00:01:04", VLANID: 20, Ts: ts()},
 		{DeviceID: 2, IfIndex: 3, MAC: "aa:bb:cc:00:00:05", Ts: ts()},
 	}
-	arp := []ARPRow{{DeviceID: 2, IfIndex: 3, IP: "192.168.5.1", MAC: "aa:bb:cc:00:00:05", Ts: ts()}}
+	arp := []ARPRow{{DeviceID: 2, IfIndex: 3, IP: "192.168.105.1", MAC: "aa:bb:cc:00:00:05", Ts: ts()}}
 	first := InferLinks(twoDevices(), twoDeviceIfaces(), fdb, arp, nil)
 	for i := 0; i < 20; i++ {
 		again := InferLinks(twoDevices(), twoDeviceIfaces(), fdb, arp, nil)

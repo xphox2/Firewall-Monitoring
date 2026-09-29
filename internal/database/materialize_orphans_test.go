@@ -13,7 +13,7 @@ func TestParseDeviceStatusMessage(t *testing.T) {
 	cases := []struct {
 		msg, name, ip string
 	}{
-		{"Device TECHLABS-FW-01 (192.168.25.1) is offline", "TECHLABS-FW-01", "192.168.25.1"},
+		{"Device OSPREY-FW-01 (192.168.125.1) is offline", "OSPREY-FW-01", "192.168.125.1"},
 		{"Device Edge (lab) (10.0.0.5) is back online", "Edge (lab)", "10.0.0.5"},
 		{"Device v6 (2001:db8::1) is offline", "v6", "2001:db8::1"},
 		{"Device X (not-an-ip) is offline", "", ""},

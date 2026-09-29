@@ -113,8 +113,8 @@ func SubnetCIDR(ipAddr, netMask string) (cidr string, ok bool) {
 // returns its first address.
 //
 // Two formats occur, from two different code paths in the FortiGate SNMP
-// profile: proper CIDR ("192.168.13.0/24") and an inclusive RANGE
-// ("192.168.13.0 - 192.168.13.255"), emitted where the MIB exposes begin/end
+// profile: proper CIDR ("192.168.113.0/24") and an inclusive RANGE
+// ("192.168.113.0 - 192.168.113.255"), emitted where the MIB exposes begin/end
 // addresses instead of addr/mask. A CIDR-only parse silently fails on the
 // latter, which would leave a healthy tunnel unattributed.
 //
@@ -186,7 +186,7 @@ func SelectorPrefixLen(s string) int {
 // the MIB exposes a mask; an inclusive RANGE "10.0.1.0 - 10.0.1.255" when it does
 // not; and a BARE ADDRESS when there is no mask to build from, or when the
 // range's end equals its begin. OPNsense emits CIDR throughout. So a host pair
-// that IKEv2 narrowed reads "192.168.13.7" on one end and "192.168.13.7/32" on
+// that IKEv2 narrowed reads "192.168.113.7" on one end and "192.168.113.7/32" on
 // the other, and today those never compare equal.
 //
 // Three arms, and the third is the one that matters:

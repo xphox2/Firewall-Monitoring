@@ -26,17 +26,17 @@ func canonicalIntent() *ipsec.TunnelIntent {
 		VTISubnet:       "169.254.1.28/30",
 		Ends: [2]ipsec.EndpointSpec{
 			{ // A = FortiGate, public WAN, dynamic responder (peer B is behind NAT)
-				DeviceID: 1, Vendor: "fortigate", PeerIP: "66.179.9.155",
+				DeviceID: 1, Vendor: "fortigate", PeerIP: "198.19.9.155",
 				EgressIface: "port1", LANIface: "port3",
 				LocalID:          ipsec.IKEIdentity{Type: ipsec.IDTypeFQDN, Value: "fwm-t7-a"},
 				ProtectedSubnets: []string{"10.10.10.0/24"},
 				InnerIP:          innerA, Reqid: 7, MSSClamp: 1350, ChildLifetimeSecs: 7200,
 			},
 			{ // B = OPNsense, private WAN, sole initiator
-				DeviceID: 2, Vendor: "opnsense", PeerIP: "192.168.5.107", Dynamic: true,
+				DeviceID: 2, Vendor: "opnsense", PeerIP: "192.168.105.107", Dynamic: true,
 				EgressIface: "wan", LANIface: "lan",
 				LocalID:          ipsec.IKEIdentity{Type: ipsec.IDTypeFQDN, Value: "fwm-t7-b"},
-				ProtectedSubnets: []string{"192.168.50.0/24"},
+				ProtectedSubnets: []string{"192.168.150.0/24"},
 				InnerIP:          innerB, Reqid: 7, MSSClamp: 1350, ChildLifetimeSecs: 3600,
 			},
 		},
@@ -122,7 +122,7 @@ func TestFortiGate_RendersModernProposal(t *testing.T) {
 		`"proposal":"aes256gcm-prfsha384"`, `"dhgrp":"20"`,
 		// canonicalIntent is policy-based ⇒ phase2 carries the SPECIFIC selectors,
 		// not 0/0 (end0 local subnet ↔ end1 remote subnet).
-		`"src-subnet":"10.10.10.0 255.255.255.0"`, `"dst-subnet":"192.168.50.0 255.255.255.0"`,
+		`"src-subnet":"10.10.10.0 255.255.255.0"`, `"dst-subnet":"192.168.150.0 255.255.255.0"`,
 		`"type":"dynamic"`, // peer B is dynamic
 		`"tcp-mss-sender":1350`, `"localid":"fwm-t7-a"`, `"peerid":"fwm-t7-b"`,
 		// net-device=enable (since v0.11.144): the phase1 POST auto-creates the
@@ -156,7 +156,7 @@ func TestOPNsense_RendersModernProposal(t *testing.T) {
 	all := allBodies(art)
 	// End B is the initiator but it dials a static peer A, so its remote_addrs is
 	// A's public IP.
-	if !strings.Contains(all, "66.179.9.155") {
+	if !strings.Contains(all, "198.19.9.155") {
 		t.Errorf("opnsense render should dial peer A's public IP")
 	}
 	// This end (B) is dynamic → local_addrs must be EMPTY, never the literal
@@ -214,7 +214,7 @@ func TestValidate_CatchesFootguns(t *testing.T) {
 	// v0.11.91 this is an acknowledgeable WARNING (safe with a pinned peer route),
 	// not a hard block, so the operator can still save/deploy.
 	lock := canonicalIntent()
-	lock.Ends[0].ProtectedSubnets = []string{"66.179.9.0/24"} // contains A's peer IP 66.179.9.155
+	lock.Ends[0].ProtectedSubnets = []string{"198.19.9.0/24"} // contains A's peer IP 198.19.9.155
 	lockFS := ipsec.Validate(lock, c)
 	if !hasCode(lockFS, "self_lockout") {
 		t.Error("expected self_lockout finding")
@@ -238,7 +238,7 @@ func TestValidate_CatchesFootguns(t *testing.T) {
 	// that also captures the peer — it must still hard-block, not slip through as a
 	// self-lockout warning.
 	split := canonicalIntent()
-	split.Ends[0].ProtectedSubnets = []string{"0.0.0.0/1", "128.0.0.0/1"} // covers A's peer 66.179.9.155
+	split.Ends[0].ProtectedSubnets = []string{"0.0.0.0/1", "128.0.0.0/1"} // covers A's peer 198.19.9.155
 	splitFS := ipsec.Validate(split, c)
 	if !ipsec.HasBlock(splitFS) || !hasCode(splitFS, "default_route_over_vti") {
 		t.Errorf("a /1+/1 full-tunnel split covering the peer must hard-block; got %+v", splitFS)

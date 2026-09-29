@@ -212,7 +212,7 @@ the key problem loudly (see “Failure modes”).
 >   out (annoying, not destructive).
 >
 > **The trap (2026-06-07 prod incident):** deploying from a *fresh checkout in a
-> new directory* (e.g. `/home/xphox/firewall-mon` → `/opt/Firewall-Monitoring`)
+> new directory* (e.g. `/opt/firewall-mon` → `/opt/firewall-mon`)
 > makes the entrypoint generate a **brand-new** `config.env` with a **random**
 > `JWT_SECRET_KEY`. If `ENCRYPTION_KEY` was never set explicitly (so encryption
 > was silently derived from the JWT secret — the AUDIT-008/009 fallback), the

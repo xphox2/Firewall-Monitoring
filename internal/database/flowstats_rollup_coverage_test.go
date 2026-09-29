@@ -29,7 +29,7 @@ func seedTieredFlows(t *testing.T, db *Database, now time.Time) {
 	// the rollup tier, exactly like production's NFS pair.
 	roll := models.FlowRollup{
 		Timestamp: now.Add(-23 * time.Hour), DeviceID: 1, IntervalType: "5m",
-		SrcAddr: "192.168.25.21", DstAddr: "192.168.5.25", DstPort: 2049, ServicePort: 2049, Protocol: 6,
+		SrcAddr: "192.168.125.21", DstAddr: "192.168.105.25", DstPort: 2049, ServicePort: 2049, Protocol: 6,
 		BytesSum: 999000, PacketsSum: 5000, FlowCount: 42, SamplingRateAvg: 1024,
 	}
 	if err := db.Gorm().Create(&roll).Error; err != nil {

@@ -13,7 +13,7 @@ import (
 // certainty and with no correlation window — no dependency on syslog reaching
 // us, and no sensitivity to how long the backup took to arrive.
 type ChangeAttribution struct {
-	User        string // "root@192.168.5.15" or "(root)"
+	User        string // "root@192.168.105.15" or "(root)"
 	Source      string // source IP, when the username carries one
 	Method      string // GUI | API | "" when it cannot be determined
 	Description string // the saving page, e.g. "/firewall_rules_edit.php made changes"

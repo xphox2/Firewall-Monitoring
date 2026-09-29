@@ -71,7 +71,7 @@ var (
 	fortiLastUpdatedRegex = regexp.MustCompile(`(?m)` + fortiLastUpdatedBody)
 
 	// A FortiOS CLI prompt echoed into a console-captured backup, e.g.
-	// `FW-HOME # #config-version=...` or `FW-HOME (global) # config system ...`.
+	// `FW-HERON # #config-version=...` or `FW-HERON (global) # config system ...`.
 	// The prompt is a capture artifact, not config content; stripping it lets the
 	// rest of the line (notably the #config-version header) normalize correctly.
 	fortiPromptPrefixRegex = regexp.MustCompile(`(?m)` + fortiPromptPrefixBody)

@@ -13,7 +13,7 @@ func denyMsg(body string) *models.SyslogMessage {
 }
 
 const sampleDeny = `subtype="forward" srcip=203.0.113.9 srcport=44000 srcintf="wan1" srcintfrole="wan" ` +
-	`dstip=66.179.9.150 dstport=3389 dstintf="root" srccountry="Mauritania" proto=6 action="deny" ` +
+	`dstip=198.19.9.150 dstport=3389 dstintf="root" srccountry="Mauritania" proto=6 action="deny" ` +
 	`policyid=20 policytype="policy" service="RDP" policyname="IP_BLOCK-2"`
 
 func TestProject_ActionDeny(t *testing.T) {
@@ -21,7 +21,7 @@ func TestProject_ActionDeny(t *testing.T) {
 	if !ok {
 		t.Fatal("expected a projected deny event")
 	}
-	if ev.SrcAddr != "203.0.113.9" || ev.DstAddr != "66.179.9.150" || ev.DstPort != 3389 {
+	if ev.SrcAddr != "203.0.113.9" || ev.DstAddr != "198.19.9.150" || ev.DstPort != 3389 {
 		t.Errorf("addr/port = %s->%s:%d", ev.SrcAddr, ev.DstAddr, ev.DstPort)
 	}
 	if ev.SrcIntfRole != models.IntfRoleWAN || ev.Subtype != models.DenySubtypeForward {
@@ -37,14 +37,14 @@ func TestProject_NonDenySkipped(t *testing.T) {
 		t.Error("accept must not project")
 	}
 	// action="start" without a matching block-policy pattern must not project.
-	start := `action="start" srcip=203.0.113.9 dstip=66.179.9.150 policyname="IP_BLOCK-2"`
+	start := `action="start" srcip=203.0.113.9 dstip=198.19.9.150 policyname="IP_BLOCK-2"`
 	if _, ok := Project(denyMsg(start), nil, PatternConfig{}); ok {
 		t.Error("action=start must not project when pattern is empty")
 	}
 }
 
 func TestProject_BlockPolicyPattern(t *testing.T) {
-	start := `subtype="forward" srcip=203.0.113.9 srcintfrole="wan" dstip=66.179.9.150 dstport=3389 ` +
+	start := `subtype="forward" srcip=203.0.113.9 srcintfrole="wan" dstip=198.19.9.150 dstport=3389 ` +
 		`proto=6 action="start" policyname="IP_BLOCK-2"`
 	ev, ok := Project(denyMsg(start), nil, PatternConfig{Pattern: "IP_BLOCK*"})
 	if !ok {
@@ -54,7 +54,7 @@ func TestProject_BlockPolicyPattern(t *testing.T) {
 		t.Errorf("signal = %d, want pattern(%d)", ev.Signal, models.DenySignalPattern)
 	}
 	// A non-matching policy name must not project.
-	other := `action="start" srcip=203.0.113.9 dstip=66.179.9.150 policyname="ALLOW-WEB"`
+	other := `action="start" srcip=203.0.113.9 dstip=198.19.9.150 policyname="ALLOW-WEB"`
 	if _, ok := Project(denyMsg(other), nil, PatternConfig{Pattern: "IP_BLOCK*"}); ok {
 		t.Error("non-matching policy must not project")
 	}
@@ -62,7 +62,7 @@ func TestProject_BlockPolicyPattern(t *testing.T) {
 
 func TestProject_ScopeLocalDropped(t *testing.T) {
 	// Multicast dst — pure noise, must be dropped at projection.
-	mc := `srcip=192.168.25.50 dstip=224.0.0.251 dstport=5353 proto=17 action="deny"`
+	mc := `srcip=192.168.125.50 dstip=224.0.0.251 dstport=5353 proto=17 action="deny"`
 	if _, ok := Project(denyMsg(mc), nil, PatternConfig{}); ok {
 		t.Error("multicast dst deny must be dropped")
 	}
@@ -99,7 +99,7 @@ func TestProject_StartGateLiteralPrefilter(t *testing.T) {
 		t.Error("literal pre-filter should reject a start line with no IP_BLOCK token")
 	}
 	// The block-named start line passes the pre-filter and projects.
-	block := `subtype="forward" srcip=203.0.113.9 srcintfrole="wan" dstip=66.179.9.150 dstport=3389 proto=6 action="start" policyname="IP_BLOCK-2"`
+	block := `subtype="forward" srcip=203.0.113.9 srcintfrole="wan" dstip=198.19.9.150 dstport=3389 proto=6 action="start" policyname="IP_BLOCK-2"`
 	if !hasDenySignal(block, cfg) {
 		t.Error("block-named start line must pass the pre-filter")
 	}

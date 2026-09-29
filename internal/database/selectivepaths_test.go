@@ -21,16 +21,16 @@ func TestAttribution_ExistentialOverEnabledPaths(t *testing.T) {
 	pp := ProvisionedTunnelPair{
 		Name: "fwm-t7", A: 1, B: 2,
 		ASubnets: []string{"10.0.0.0/16", "10.0.13.0/24"},
-		BSubnets: []string{"192.168.50.0/24"},
+		BSubnets: []string{"192.168.150.0/24"},
 		// 10.0.13.0/24 ↔ 50.0/24 is DISABLED; 10.0.0.0/16 ↔ 50.0/24 is enabled.
-		EnabledPaths: [][2]string{{"10.0.0.0/16", "192.168.50.0/24"}},
+		EnabledPaths: [][2]string{{"10.0.0.0/16", "192.168.150.0/24"}},
 		PathDetail:   true,
 	}
 	pairs := map[string]ProvisionedTunnelPair{"fwm-t7": pp}
 
 	// A row narrowed to a host that sits inside BOTH entries. It belongs to the
 	// enabled /16 child, so it must still attribute.
-	row := models.VPNStatus{DeviceID: 1, LocalSubnet: "10.0.13.7/32", RemoteSubnet: "192.168.50.9/32"}
+	row := models.VPNStatus{DeviceID: 1, LocalSubnet: "10.0.13.7/32", RemoteSubnet: "192.168.150.9/32"}
 	if _, ok := MatchProvisionedBySubnets(pairs, row); !ok {
 		t.Error("a row from the ENABLED overlapping /16 child was refused. The predicate " +
 			"must ask whether ANY enabled pair covers it, not whether the most specific " +

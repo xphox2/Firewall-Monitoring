@@ -21,13 +21,13 @@ func opnPathIntent(disabled ...string) *ipsec.TunnelIntent {
 	in.Ends[0] = ipsec.EndpointSpec{
 		DeviceID: 1, Vendor: "opnsense", PeerIP: "203.0.113.9", EgressIface: "wan",
 		LocalID:          ipsec.IKEIdentity{Type: ipsec.IDTypeFQDN, Value: "a"},
-		ProtectedSubnets: []string{"192.168.50.0/24", "192.168.5.0/24"},
+		ProtectedSubnets: []string{"192.168.150.0/24", "192.168.105.0/24"},
 	}
 	in.Ends[1] = ipsec.EndpointSpec{
 		DeviceID: 2, Vendor: "fortigate", PeerIP: "203.0.113.10", EgressIface: "port1",
 		LANIfaces:        []string{"port2"},
 		LocalID:          ipsec.IKEIdentity{Type: ipsec.IDTypeFQDN, Value: "b"},
-		ProtectedSubnets: []string{"192.168.13.0/24", "192.168.25.0/24"},
+		ProtectedSubnets: []string{"192.168.113.0/24", "192.168.125.0/24"},
 		Dynamic:          true,
 	}
 	return in
@@ -66,7 +66,7 @@ func TestOPN_DisablingAPathDoesNotShiftTokens(t *testing.T) {
 
 	// Disable index 1 for END 0: local 50.0/24 × remote 25.0/24.
 	// End 0 is tunnel A, so the key is already in A|B orientation.
-	partial := opnTokens(render(opnPathIntent(ipsec.PathKey("192.168.50.0/24", "192.168.25.0/24"))), "child_")
+	partial := opnTokens(render(opnPathIntent(ipsec.PathKey("192.168.150.0/24", "192.168.125.0/24"))), "child_")
 	if len(partial) != 3 {
 		t.Fatalf("expected 3 children with one path off, got %v", partial)
 	}
@@ -84,7 +84,7 @@ func TestOPN_DisablingAPathDoesNotShiftTokens(t *testing.T) {
 // emitting deletes for never-captured tokens breaks capture/delete parity.
 func TestOPN_RemoveMatchesRenderExactly(t *testing.T) {
 	d, _ := ipsec.Driver("opnsense")
-	in := opnPathIntent(ipsec.PathKey("192.168.50.0/24", "192.168.25.0/24"))
+	in := opnPathIntent(ipsec.PathKey("192.168.150.0/24", "192.168.125.0/24"))
 
 	art, err := d.Render(ipsec.ViewFor(in, 0))
 	if err != nil {

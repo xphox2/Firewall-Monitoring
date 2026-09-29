@@ -23,7 +23,7 @@ func buildIntent(vendor string, ike ipsec.IKEProposal, esp ipsec.ESPProposal, ve
 		PSK: "abcDEF012345678901234567890XYZ", VTISubnet: "169.254.1.28/30",
 		Ends: [2]ipsec.EndpointSpec{
 			{
-				DeviceID: 1, Vendor: vendor, PeerIP: "66.179.9.155",
+				DeviceID: 1, Vendor: vendor, PeerIP: "198.19.9.155",
 				EgressIface: "port1", LANIface: "port3",
 				LocalID:          ipsec.IKEIdentity{Type: ipsec.IDTypeFQDN, Value: "fwm-t7-a"},
 				ProtectedSubnets: []string{"10.10.10.0/24"},
@@ -33,7 +33,7 @@ func buildIntent(vendor string, ike ipsec.IKEProposal, esp ipsec.ESPProposal, ve
 				DeviceID: 2, Vendor: vendor, PeerIP: "198.51.100.9", Dynamic: true,
 				EgressIface: "port1", LANIface: "port3",
 				LocalID:          ipsec.IKEIdentity{Type: ipsec.IDTypeFQDN, Value: "fwm-t7-b"},
-				ProtectedSubnets: []string{"192.168.50.0/24"},
+				ProtectedSubnets: []string{"192.168.150.0/24"},
 				InnerIP:          innerB, Reqid: 7, MSSClamp: 1350, ChildLifetimeSecs: 3600,
 			},
 		},
@@ -132,7 +132,7 @@ func TestConformance_CatchesKnownBugs(t *testing.T) {
 // before dispatch (the fwm-t3 value-typo bug class, now for firewall rules).
 func TestConformance_FirewallRule(t *testing.T) {
 	good := []ipsec.ApplyStep{{Kind: ipsec.StepHTTPAPI, Method: "POST", Path: "/api/firewall/filter/addRule",
-		Body: `{"rule":{"enabled":"1","action":"pass","quick":"1","interface":"","direction":"in","ipprotocol":"inet","protocol":"any","source_net":"192.168.50.0/24","destination_net":"10.10.10.0/24","description":"fwm-t9"}}`}}
+		Body: `{"rule":{"enabled":"1","action":"pass","quick":"1","interface":"","direction":"in","ipprotocol":"inet","protocol":"any","source_net":"192.168.150.0/24","destination_net":"10.10.10.0/24","description":"fwm-t9"}}`}}
 	if f := conformance.Validate("opnsense", good); len(f) > 0 {
 		t.Errorf("valid firewall rule should conform; got %v", findingsStr(f))
 	}

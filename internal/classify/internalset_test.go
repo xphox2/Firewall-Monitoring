@@ -10,7 +10,7 @@ import (
 // zoned, and junk.
 var flowAddrs = []string{
 	"10.0.0.5", "172.16.3.4", "192.168.1.1", "127.0.0.1", "169.254.1.1", "100.64.0.9",
-	"8.8.8.8", "66.179.9.156", "203.0.113.9", "224.0.0.251", "239.255.255.250",
+	"8.8.8.8", "198.19.9.156", "203.0.113.9", "224.0.0.251", "239.255.255.250",
 	"255.255.255.255", "0.0.0.0", "fd00::1", "fe80::1", "::1", "2001:db8::1", "ff02::fb",
 	"::", "::ffff:10.0.0.5", "::ffff:8.8.8.8", "fe80::1%eth0", "", "garbage", "1.2.3", "010.1.1.1",
 }
@@ -32,8 +32,8 @@ func TestInternalSet_DefaultsMatchDirection(t *testing.T) {
 
 func TestInternalSet_OwnNetworksAreInternal(t *testing.T) {
 	s := NewInternalSet([]netip.Prefix{
-		netip.MustParsePrefix("66.179.9.144/28"),
-		netip.MustParsePrefix("66.9.166.120/32"),
+		netip.MustParsePrefix("198.19.9.144/28"),
+		netip.MustParsePrefix("198.19.66.120/32"),
 		netip.MustParsePrefix("2001:db8:1::/48"),
 		netip.MustParsePrefix("::ffff:198.51.100.0/120"), // an IPv4-mapped prefix means its IPv4 range
 	}, 2)
@@ -41,16 +41,16 @@ func TestInternalSet_OwnNetworksAreInternal(t *testing.T) {
 		src, dst string
 		want     uint8
 	}{
-		{"66.179.9.156", "203.0.113.9", DirOutbound},
-		{"203.0.113.9", "66.179.9.156", DirInbound},
-		{"66.179.9.156", "10.0.0.5", DirInternal},
-		{"66.179.9.160", "203.0.113.9", DirExternal}, // just outside the /28
-		{"66.9.166.120", "8.8.8.8", DirOutbound},
-		{"66.9.166.121", "8.8.8.8", DirExternal},
+		{"198.19.9.156", "203.0.113.9", DirOutbound},
+		{"203.0.113.9", "198.19.9.156", DirInbound},
+		{"198.19.9.156", "10.0.0.5", DirInternal},
+		{"198.19.9.160", "203.0.113.9", DirExternal}, // just outside the /28
+		{"198.19.66.120", "8.8.8.8", DirOutbound},
+		{"198.19.66.121", "8.8.8.8", DirExternal},
 		{"2001:db8:1::5", "2001:db8:2::5", DirOutbound},
-		{"::ffff:66.179.9.156", "8.8.8.8", DirOutbound}, // mapped form of an own address
+		{"::ffff:198.19.9.156", "8.8.8.8", DirOutbound}, // mapped form of an own address
 		{"198.51.100.7", "8.8.8.8", DirOutbound},
-		{"fe80::1%eth0", "66.179.9.156", DirUnknown},
+		{"fe80::1%eth0", "198.19.9.156", DirUnknown},
 	}
 	for _, c := range cases {
 		if got := s.Direction(c.src, c.dst); got != c.want {

@@ -7,8 +7,8 @@ import (
 )
 
 // TestValidate_PeerUnroutable_PrivateStaticVsPublicPeer is the fwm-t9 regression:
-// a behind-NAT end (OPNsense, private 192.168.5.107) left as a STATIC peer while
-// its far end is public (FortiGate 66.179.9.155) makes the private address the
+// a behind-NAT end (OPNsense, private 192.168.105.107) left as a STATIC peer while
+// its far end is public (FortiGate 198.19.9.155) makes the private address the
 // FortiGate's `remote-gw` — unroutable across the internet, a guaranteed dead
 // tunnel. That must BLOCK, not merely warn. Marking the end dynamic (dialup)
 // clears it; a genuine LAN-to-LAN pair (both private) stays a soft warn.
@@ -23,7 +23,7 @@ func TestValidate_PeerUnroutable_PrivateStaticVsPublicPeer(t *testing.T) {
 	// The t9 breakage: End B (private) flipped to a STATIC peer while End A is
 	// public → hard block with the actionable code.
 	broken := canonicalIntent()
-	broken.Ends[1].Dynamic = false // OPNsense now a static peer at 192.168.5.107
+	broken.Ends[1].Dynamic = false // OPNsense now a static peer at 192.168.105.107
 	fs := ipsec.Validate(broken, c)
 	if !hasCode(fs, "peer_unroutable") {
 		t.Fatalf("expected peer_unroutable block for private-static-vs-public-peer; got %+v", fs)
@@ -46,7 +46,7 @@ func TestValidate_PeerUnroutable_PrivateStaticVsPublicPeer(t *testing.T) {
 	// Giving the behind-NAT end its real public IP also clears the block.
 	pub := canonicalIntent()
 	pub.Ends[1].Dynamic = false
-	pub.Ends[1].PeerIP = "76.66.145.98" // OPNsense's public NAT address
+	pub.Ends[1].PeerIP = "198.19.76.98" // OPNsense's public NAT address
 	if hasCode(ipsec.Validate(pub, c), "peer_unroutable") {
 		t.Error("a public static endpoint must not be flagged unroutable")
 	}

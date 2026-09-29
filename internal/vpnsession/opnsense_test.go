@@ -7,30 +7,30 @@ import (
 )
 
 // Fixtures captured from the live OPNsense 26.1 box (device 5, tunnel fwm-t11
-// to the FortiGate at 66.179.9.155), via the API controllers' own backing
+// to the FortiGate at 198.19.9.155), via the API controllers' own backing
 // commands. The shapes here are load-bearing: two of them encode differences
 // between endpoints that a "tidier" single struct would silently break.
 
 // NOTE phase1desc IS present here — the connection description is exposed by
 // sessions/searchPhase1 even though the SAD/SPD documents cannot carry it.
 const phase1Fixture = `{"total":1,"rowCount":1,"rows":[
- {"local-addrs":"%any","remote-addrs":"66.179.9.155","local-id":"opnsense","remote-id":"techlabs-fw-01",
+ {"local-addrs":"%any","remote-addrs":"198.19.9.155","local-id":"opnsense","remote-id":"osprey-fw-01",
   "version":"IKEv2","connected":true,"ikeid":"91f25bb5-f9c9-41e6-876b-6232560cc1f3",
   "phase1desc":"fwm-t11","name":"91f25bb5-f9c9-41e6-876b-6232560cc1f3","install-time":"55"}]}`
 
 // reqid is a STRING here.
 const spdFixture = `{"rowCount":2,"rows":[
- {"src":"192.168.13.0/24","dst":"192.168.50.0/24","dir":"in","reqid":"2",
-  "src-dst":["66.179.9.155","192.168.5.107"]},
- {"src":"192.168.50.0/24","dst":"192.168.13.0/24","dir":"out","reqid":"2",
-  "src-dst":["192.168.5.107","66.179.9.155"]}]}`
+ {"src":"192.168.113.0/24","dst":"192.168.150.0/24","dir":"in","reqid":"2",
+  "src-dst":["198.19.9.155","192.168.105.107"]},
+ {"src":"192.168.150.0/24","dst":"192.168.113.0/24","dir":"out","reqid":"2",
+  "src-dst":["192.168.105.107","198.19.9.155"]}]}`
 
 // reqid is a NUMBER here — the same field, typed differently by the other
 // endpoint. Verified on the live box.
 const sadFixture = `{"rowCount":2,"rows":[
- {"src":"192.168.5.107[4500]","dst":"66.179.9.155[4500]","spi":"ad878099","reqid":2,
+ {"src":"192.168.105.107[4500]","dst":"198.19.9.155[4500]","spi":"ad878099","reqid":2,
   "state":"mature","bytes_current":381524,"addtime_diff":1677},
- {"src":"66.179.9.155[4500]","dst":"192.168.5.107[4500]","spi":"c11c373a","reqid":2,
+ {"src":"198.19.9.155[4500]","dst":"192.168.105.107[4500]","spi":"c11c373a","reqid":2,
   "state":"mature","bytes_current":197340,"addtime_diff":1677}]}`
 
 func parse(t *testing.T, p1, sad, spd string, exp ...ExpectedChild) []rowView {
@@ -62,12 +62,12 @@ func TestParseOPNsense_PerChildRow(t *testing.T) {
 	if r.status != "up" {
 		t.Errorf("status = %q, want up", r.status)
 	}
-	if r.local != "192.168.50.0/24" || r.remote != "192.168.13.0/24" {
+	if r.local != "192.168.150.0/24" || r.remote != "192.168.113.0/24" {
 		t.Errorf("selectors = %s → %s, want the OUT direction (local→remote)", r.local, r.remote)
 	}
 	// Direction is decided by which SA's source is this box.
 	if r.out != 381524 {
-		t.Errorf("bytes_out = %d, want 381524 (the SA sourced from 192.168.5.107)", r.out)
+		t.Errorf("bytes_out = %d, want 381524 (the SA sourced from 192.168.105.107)", r.out)
 	}
 	if r.in != 197340 {
 		t.Errorf("bytes_in = %d, want 197340", r.in)
@@ -80,11 +80,11 @@ func TestParseOPNsense_PerChildRow(t *testing.T) {
 // connection map's provisioned attribution still matches.
 func TestParseOPNsense_MultiChildNamingIsDistinctButShareaParent(t *testing.T) {
 	spd := `{"rows":[
-	 {"src":"192.168.50.0/24","dst":"192.168.13.0/24","dir":"out","reqid":"2","src-dst":["192.168.5.107","66.179.9.155"]},
-	 {"src":"192.168.50.0/24","dst":"192.168.25.0/24","dir":"out","reqid":"3","src-dst":["192.168.5.107","66.179.9.155"]}]}`
+	 {"src":"192.168.150.0/24","dst":"192.168.113.0/24","dir":"out","reqid":"2","src-dst":["192.168.105.107","198.19.9.155"]},
+	 {"src":"192.168.150.0/24","dst":"192.168.125.0/24","dir":"out","reqid":"3","src-dst":["192.168.105.107","198.19.9.155"]}]}`
 	sad := `{"rows":[
-	 {"src":"192.168.5.107[4500]","reqid":2,"bytes_current":100,"addtime_diff":10},
-	 {"src":"192.168.5.107[4500]","reqid":3,"bytes_current":200,"addtime_diff":10}]}`
+	 {"src":"192.168.105.107[4500]","reqid":2,"bytes_current":100,"addtime_diff":10},
+	 {"src":"192.168.105.107[4500]","reqid":3,"bytes_current":200,"addtime_diff":10}]}`
 
 	rows := parse(t, phase1Fixture, sad, spd)
 	if len(rows) != 2 {
@@ -117,7 +117,7 @@ func TestParseOPNsense_TunnelNameIsURLPathSafe(t *testing.T) {
 // literal down row, never fires.
 func TestParseOPNsense_ExpectedChildAbsentIsReportedDown(t *testing.T) {
 	rows := parse(t, phase1Fixture, `{"rows":[]}`, `{"rows":[]}`,
-		ExpectedChild{TunnelName: "fwm-t11", Local: "192.168.50.0/24", Remote: "192.168.13.0/24"})
+		ExpectedChild{TunnelName: "fwm-t11", Local: "192.168.150.0/24", Remote: "192.168.113.0/24"})
 
 	if len(rows) != 1 {
 		t.Fatalf("an expected-but-absent child must produce a down row, got %d rows", len(rows))
@@ -137,7 +137,7 @@ func TestParseOPNsense_ExpectedChildAbsentIsReportedDown(t *testing.T) {
 // A child that IS present must not also be synthesized as down.
 func TestParseOPNsense_PresentChildIsNotDuplicatedAsDown(t *testing.T) {
 	rows := parse(t, phase1Fixture, sadFixture, spdFixture,
-		ExpectedChild{TunnelName: "fwm-t11", Local: "192.168.50.0/24", Remote: "192.168.13.0/24"})
+		ExpectedChild{TunnelName: "fwm-t11", Local: "192.168.150.0/24", Remote: "192.168.113.0/24"})
 	if len(rows) != 1 {
 		t.Fatalf("want exactly 1 row, got %d: %+v", len(rows), rows)
 	}
@@ -151,8 +151,8 @@ func TestParseOPNsense_PresentChildIsNotDuplicatedAsDown(t *testing.T) {
 // downstream reset-clamp re-counts as a full cumulative, spiking every chart.
 func TestParseOPNsense_RekeyOverlapTakesNewestNotSum(t *testing.T) {
 	sad := `{"rows":[
-	 {"src":"192.168.5.107[4500]","reqid":2,"bytes_current":900,"addtime_diff":3900,"state":"dying"},
-	 {"src":"192.168.5.107[4500]","reqid":2,"bytes_current":50,"addtime_diff":30,"state":"mature"}]}`
+	 {"src":"192.168.105.107[4500]","reqid":2,"bytes_current":900,"addtime_diff":3900,"state":"dying"},
+	 {"src":"192.168.105.107[4500]","reqid":2,"bytes_current":50,"addtime_diff":30,"state":"mature"}]}`
 
 	rows := parse(t, phase1Fixture, sad, spdFixture)
 	if len(rows) != 1 {
@@ -170,8 +170,8 @@ func TestParseOPNsense_RekeyOverlapTakesNewestNotSum(t *testing.T) {
 // Guessing would put an authoritative-looking name on the wrong tunnel.
 func TestParseOPNsense_AmbiguousPeerFallsBackFromTheDescription(t *testing.T) {
 	p1 := `{"rows":[
-	 {"remote-addrs":"66.179.9.155","phase1desc":"fwm-t11","name":"uuid-a"},
-	 {"remote-addrs":"66.179.9.155","phase1desc":"fwm-t99","name":"uuid-b"}]}`
+	 {"remote-addrs":"198.19.9.155","phase1desc":"fwm-t11","name":"uuid-a"},
+	 {"remote-addrs":"198.19.9.155","phase1desc":"fwm-t99","name":"uuid-b"}]}`
 
 	rows := parse(t, p1, sadFixture, spdFixture)
 	if len(rows) != 1 {
@@ -185,7 +185,7 @@ func TestParseOPNsense_AmbiguousPeerFallsBackFromTheDescription(t *testing.T) {
 // A tunnel we did not provision has no description; the UUID is the only stable
 // identity available.
 func TestParseOPNsense_UnnamedTunnelUsesTheConnectionUUID(t *testing.T) {
-	p1 := `{"rows":[{"remote-addrs":"66.179.9.155","phase1desc":"","name":"91f25bb5-uuid"}]}`
+	p1 := `{"rows":[{"remote-addrs":"198.19.9.155","phase1desc":"","name":"91f25bb5-uuid"}]}`
 	rows := parse(t, p1, sadFixture, spdFixture)
 	if len(rows) != 1 || !strings.HasPrefix(rows[0].name, "91f25bb5-uuid") {
 		t.Errorf("want the UUID as the name stem, got %+v", rows)
@@ -230,11 +230,11 @@ func TestParseOPNsense_ConnectedWithNoInstalledChildIsDown(t *testing.T) {
 // GetAllLatestVPNStatuses keeps only the newest.
 func TestParseOPNsense_MultiLocalSubnetChildrenDoNotCollide(t *testing.T) {
 	spd := `{"rows":[
-	 {"src":"192.168.50.0/24","dst":"192.168.13.0/24","dir":"out","reqid":"2","src-dst":["192.168.5.107","66.179.9.155"]},
-	 {"src":"192.168.60.0/24","dst":"192.168.13.0/24","dir":"out","reqid":"3","src-dst":["192.168.5.107","66.179.9.155"]}]}`
+	 {"src":"192.168.150.0/24","dst":"192.168.113.0/24","dir":"out","reqid":"2","src-dst":["192.168.105.107","198.19.9.155"]},
+	 {"src":"192.168.60.0/24","dst":"192.168.113.0/24","dir":"out","reqid":"3","src-dst":["192.168.105.107","198.19.9.155"]}]}`
 	sad := `{"rows":[
-	 {"src":"192.168.5.107[4500]","reqid":2,"bytes_current":100,"addtime_diff":10},
-	 {"src":"192.168.5.107[4500]","reqid":3,"bytes_current":200,"addtime_diff":10}]}`
+	 {"src":"192.168.105.107[4500]","reqid":2,"bytes_current":100,"addtime_diff":10},
+	 {"src":"192.168.105.107[4500]","reqid":3,"bytes_current":200,"addtime_diff":10}]}`
 
 	rows := parse(t, phase1Fixture, sad, spd)
 	if len(rows) != 2 {
@@ -293,7 +293,7 @@ func TestParseOPNsense_UnnamedButPresentChildIsNotAlsoReportedDown(t *testing.T)
 	 {"remote-addrs":"%any","phase1desc":"fwm-t99","name":"uuid-b"}]}`
 
 	rows := parse(t, p1, sadFixture, spdFixture,
-		ExpectedChild{TunnelName: "fwm-t11", Local: "192.168.50.0/24", Remote: "192.168.13.0/24"})
+		ExpectedChild{TunnelName: "fwm-t11", Local: "192.168.150.0/24", Remote: "192.168.113.0/24"})
 
 	var up, down int
 	for _, r := range rows {
@@ -318,7 +318,7 @@ func TestParseOPNsense_UnnamedButPresentChildIsNotAlsoReportedDown(t *testing.T)
 // poll-to-poll, and the downstream reset-clamp re-counts each downward swap as
 // a full cumulative — a traffic spike out of nothing, with bytes_out flat at 0.
 func TestParseOPNsense_PolicyWithoutEndpointsIsSkipped(t *testing.T) {
-	spd := `{"rows":[{"src":"192.168.50.0/24","dst":"192.168.13.0/24","dir":"out","reqid":"2"}]}`
+	spd := `{"rows":[{"src":"192.168.150.0/24","dst":"192.168.113.0/24","dir":"out","reqid":"2"}]}`
 	rows := parse(t, phase1Fixture, sadFixture, spd)
 	if len(rows) != 0 {
 		t.Errorf("a policy with no src-dst must be skipped rather than guessed at; got %+v", rows)
@@ -335,7 +335,7 @@ func TestParseOPNsense_ErrorShapedBodyIsNotZeroTunnels(t *testing.T) {
 		"error envelope": `{"errorMessage":"authentication failed"}`,
 	} {
 		_, err := ParseOPNsense(5, time.Now(), body, sadFixture, spdFixture,
-			[]ExpectedChild{{TunnelName: "fwm-t11", Local: "192.168.50.0/24", Remote: "192.168.13.0/24"}})
+			[]ExpectedChild{{TunnelName: "fwm-t11", Local: "192.168.150.0/24", Remote: "192.168.113.0/24"}})
 		if err == nil {
 			t.Errorf("%s: must be rejected, not read as zero tunnels — otherwise every "+
 				"expected child is synthesized down and the whole device false-alarms", name)
@@ -350,13 +350,13 @@ func TestParseOPNsense_ErrorShapedBodyIsNotZeroTunnels(t *testing.T) {
 // child stops being recognised — synthesizing a phantom down row beside the
 // working one.
 func TestParseOPNsense_HostNarrowedSelectorStillMatchesItsExpectedChild(t *testing.T) {
-	// The box installed 192.168.13.7/32, inside the configured 192.168.13.0/24.
-	spd := `{"rows":[{"src":"192.168.50.0/24","dst":"192.168.13.7/32","dir":"out","reqid":"2",
-	  "src-dst":["192.168.5.107","66.179.9.155"]}]}`
-	sad := `{"rows":[{"src":"192.168.5.107[4500]","reqid":2,"bytes_current":500,"addtime_diff":10}]}`
+	// The box installed 192.168.113.7/32, inside the configured 192.168.113.0/24.
+	spd := `{"rows":[{"src":"192.168.150.0/24","dst":"192.168.113.7/32","dir":"out","reqid":"2",
+	  "src-dst":["192.168.105.107","198.19.9.155"]}]}`
+	sad := `{"rows":[{"src":"192.168.105.107[4500]","reqid":2,"bytes_current":500,"addtime_diff":10}]}`
 
 	rows := parse(t, phase1Fixture, sad, spd,
-		ExpectedChild{TunnelName: "fwm-t11", Local: "192.168.50.0/24", Remote: "192.168.13.0/24"})
+		ExpectedChild{TunnelName: "fwm-t11", Local: "192.168.150.0/24", Remote: "192.168.113.0/24"})
 
 	if len(rows) != 1 {
 		t.Fatalf("the narrowed child must be recognised as the expected one, not reported "+
@@ -373,10 +373,10 @@ func TestParseOPNsense_HostNarrowedSelectorStillMatchesItsExpectedChild(t *testi
 // swallowed real outage is silent, which is strictly worse — and is exactly what
 // the expected-children mechanism exists to prevent.
 func TestParseOPNsense_WideIntentDoesNotSwallowAnotherTunnelsOutage(t *testing.T) {
-	// One child is up, carrying 192.168.50.0/24 ↔ 192.168.13.0/24.
+	// One child is up, carrying 192.168.150.0/24 ↔ 192.168.113.0/24.
 	rows := parse(t, phase1Fixture, sadFixture, spdFixture,
 		// tunnel A: the one that is actually up.
-		ExpectedChild{TunnelName: "fwm-t11", Local: "192.168.50.0/24", Remote: "192.168.13.0/24"},
+		ExpectedChild{TunnelName: "fwm-t11", Local: "192.168.150.0/24", Remote: "192.168.113.0/24"},
 		// tunnel B: a full-tunnel intent that CONTAINS A's selectors but has no
 		// policy of its own — it is DOWN and must say so.
 		ExpectedChild{TunnelName: "fwm-t99", Local: "0.0.0.0/0", Remote: "0.0.0.0/0"},
@@ -423,13 +423,13 @@ func TestParseOPNsense_ContainmentWillNotCrossTunnels(t *testing.T) {
 // it — the most specific — or the other's real outage is silently swallowed.
 func TestParseOPNsense_OnePolicySatisfiesOnlyOneExpectedChild(t *testing.T) {
 	// One installed child, host-narrowed to .13.7 — inside BOTH expectations.
-	spd := `{"rows":[{"src":"192.168.50.0/24","dst":"192.168.13.7/32","dir":"out","reqid":"2",
-	  "src-dst":["192.168.5.107","66.179.9.155"]}]}`
-	sad := `{"rows":[{"src":"192.168.5.107[4500]","reqid":2,"bytes_current":500,"addtime_diff":10}]}`
+	spd := `{"rows":[{"src":"192.168.150.0/24","dst":"192.168.113.7/32","dir":"out","reqid":"2",
+	  "src-dst":["192.168.105.107","198.19.9.155"]}]}`
+	sad := `{"rows":[{"src":"192.168.105.107[4500]","reqid":2,"bytes_current":500,"addtime_diff":10}]}`
 
 	rows := parse(t, phase1Fixture, sad, spd,
-		ExpectedChild{TunnelName: "fwm-t11", Local: "192.168.50.0/24", Remote: "192.168.0.0/16"},
-		ExpectedChild{TunnelName: "fwm-t11", Local: "192.168.50.0/24", Remote: "192.168.13.0/24"},
+		ExpectedChild{TunnelName: "fwm-t11", Local: "192.168.150.0/24", Remote: "192.168.0.0/16"},
+		ExpectedChild{TunnelName: "fwm-t11", Local: "192.168.150.0/24", Remote: "192.168.113.0/24"},
 	)
 
 	var down int
@@ -466,15 +466,15 @@ func TestParseOPNsense_OnePolicySatisfiesOnlyOneExpectedChild(t *testing.T) {
 func TestParseOPNsense_NameSurvivesMissingPhase1Desc(t *testing.T) {
 	// Same connection, but phase1desc absent — exactly the teardown shape.
 	phase1 := `{"total":1,"rowCount":1,"rows":[{"local-addrs":"%any",
-		"remote-addrs":"66.179.9.155","ikeid":"57be1aa0-08bc-40e7-888b-f1998dc42d7c",
+		"remote-addrs":"198.19.9.155","ikeid":"57be1aa0-08bc-40e7-888b-f1998dc42d7c",
 		"name":"57be1aa0-08bc-40e7-888b-f1998dc42d7c","connected":true}]}`
 	spd := `{"total":1,"rowCount":1,"rows":[{"reqid":"1","dir":"out",
-		"src":"192.168.50.0/24","dst":"192.168.13.0/24",
-		"src-dst":["192.168.5.107","66.179.9.155"]}]}`
+		"src":"192.168.150.0/24","dst":"192.168.113.0/24",
+		"src-dst":["192.168.105.107","198.19.9.155"]}]}`
 	sad := `{"total":0,"rowCount":0,"rows":[]}`
 
 	expected := []ExpectedChild{
-		{TunnelName: "fwm-t12", Local: "192.168.50.0/24", Remote: "192.168.13.0/24"},
+		{TunnelName: "fwm-t12", Local: "192.168.150.0/24", Remote: "192.168.113.0/24"},
 	}
 
 	rows, err := ParseOPNsense(5, time.Now(), phase1, sad, spd, expected)
@@ -503,7 +503,7 @@ func TestParseOPNsense_UnprovisionedKeepsDeviceIdentity(t *testing.T) {
 		"phase1desc":"hand-built","connected":true}]}`
 	spd := `{"total":1,"rowCount":1,"rows":[{"reqid":"7","dir":"out",
 		"src":"10.9.0.0/24","dst":"10.8.0.0/24",
-		"src-dst":["192.168.5.107","203.0.113.9"]}]}`
+		"src-dst":["192.168.105.107","203.0.113.9"]}]}`
 	sad := `{"total":0,"rowCount":0,"rows":[]}`
 
 	rows, err := ParseOPNsense(5, time.Now(), phase1, sad, spd, nil)

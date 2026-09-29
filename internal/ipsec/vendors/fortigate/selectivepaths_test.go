@@ -25,13 +25,13 @@ func fgPathIntent(t *testing.T, disabled ...string) *ipsec.TunnelIntent {
 		DeviceID: 1, Vendor: "fortigate", PeerIP: "203.0.113.9", EgressIface: "port1",
 		LANIfaces: []string{"port2", "port3"}, InnerIP: "169.254.1.1", Reqid: 7,
 		LocalID:          ipsec.IKEIdentity{Type: ipsec.IDTypeFQDN, Value: "a"},
-		ProtectedSubnets: []string{"192.168.13.0/24", "192.168.25.0/24"},
+		ProtectedSubnets: []string{"192.168.113.0/24", "192.168.125.0/24"},
 	}
 	in.Ends[1] = ipsec.EndpointSpec{
 		DeviceID: 2, Vendor: "fortigate", PeerIP: "203.0.113.10", EgressIface: "port1",
 		LANIfaces: []string{"port2"}, InnerIP: "169.254.1.2", Reqid: 7,
 		LocalID:          ipsec.IKEIdentity{Type: ipsec.IDTypeFQDN, Value: "b"},
-		ProtectedSubnets: []string{"192.168.50.0/24", "192.168.5.0/24"},
+		ProtectedSubnets: []string{"192.168.150.0/24", "192.168.105.0/24"},
 	}
 	return in
 }
@@ -94,7 +94,7 @@ func TestFG_DisablingAPathLeavesTheOtherMkeysAlone(t *testing.T) {
 	}
 
 	// index 1 == 13.0/24 ↔ 5.0/24, the MIDDLE of the enumeration
-	partial := phase2Keys(fgRender(t, fgPathIntent(t, ipsec.PathKey("192.168.13.0/24", "192.168.5.0/24")), 0))
+	partial := phase2Keys(fgRender(t, fgPathIntent(t, ipsec.PathKey("192.168.113.0/24", "192.168.105.0/24")), 0))
 	if len(partial) != 3 {
 		t.Fatalf("expected 3 phase2s with one path off, got %v", partial)
 	}
@@ -124,7 +124,7 @@ func TestFG_DisablingAPathLeavesTheOtherMkeysAlone(t *testing.T) {
 // to it by phase1name and the disabled path is back on the wire. Keeping every
 // slot in the remove snapshot is what lets the next rollback reap it.
 func TestFG_RemoveSweepsDisabledPathsToo(t *testing.T) {
-	disabled := ipsec.PathKey("192.168.13.0/24", "192.168.5.0/24")
+	disabled := ipsec.PathKey("192.168.113.0/24", "192.168.105.0/24")
 	in := fgPathIntent(t, disabled)
 
 	rendered := phase2Keys(fgRender(t, in, 0))
@@ -160,7 +160,7 @@ func TestFG_RemoveSweepsDisabledPathsToo(t *testing.T) {
 // Probing a disabled mkey would demand it be ABSENT, and the collector re-runs
 // these post-write expecting PRESENT.
 func TestFG_PreflightProbesOnlyEnabledPhase2s(t *testing.T) {
-	in := fgPathIntent(t, ipsec.PathKey("192.168.13.0/24", "192.168.5.0/24"))
+	in := fgPathIntent(t, ipsec.PathKey("192.168.113.0/24", "192.168.105.0/24"))
 	d, _ := ipsec.Driver("fortigate")
 
 	n := 0

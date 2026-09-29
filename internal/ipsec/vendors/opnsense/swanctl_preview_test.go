@@ -11,7 +11,7 @@ import (
 // the operator-facing swanctl preview text.
 func swanctlPreviewFor(v ipsec.IKEVersion) string {
 	in := &ipsec.TunnelIntent{IKEVersion: v, Mode: ipsec.ModePolicyBased}
-	in.Ends[0] = ipsec.EndpointSpec{Vendor: "opnsense", LocalID: ipsec.IKEIdentity{Value: "site-a"}, ProtectedSubnets: []string{"192.168.50.0/24"}}
+	in.Ends[0] = ipsec.EndpointSpec{Vendor: "opnsense", LocalID: ipsec.IKEIdentity{Value: "site-a"}, ProtectedSubnets: []string{"192.168.150.0/24"}}
 	in.Ends[1] = ipsec.EndpointSpec{Vendor: "fortigate", LocalID: ipsec.IKEIdentity{Value: "site-b"}, ProtectedSubnets: []string{"10.10.10.0/24"}}
 	return swanctlPreview("fwm-t7", "aes256-sha256-modp2048", "aes256gcm16", "1.1.1.1", "2.2.2.2", &in.Ends[0], &in.Ends[1], in, 0)
 }

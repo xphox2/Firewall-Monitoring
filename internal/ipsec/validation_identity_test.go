@@ -11,7 +11,7 @@ import (
 
 // TestValidate_Identity covers the type-aware IKE identity validation: block any
 // value that would fail phase-1 auth on a FortiGate⇄OPNsense tunnel, while
-// allowing legitimate FQDN identities (including a single label like "TECHLABS"
+// allowing legitimate FQDN identities (including a single label like "OSPREY"
 // and an underscore, which both vendors accept).
 func TestValidate_Identity(t *testing.T) {
 	c := [2]ipsec.CapabilityDescriptor{caps(t, "fortigate"), caps(t, "opnsense")}
@@ -24,7 +24,7 @@ func TestValidate_Identity(t *testing.T) {
 
 	// --- FQDN type: values that MUST block (would fail the tunnel) ---
 	blockFQDN := []struct{ val, code string }{
-		{"192.168.5.1", "id_fqdn_is_ip"},          // IPv4 literal → strongSwan ID_IPV4_ADDR
+		{"192.168.105.1", "id_fqdn_is_ip"},        // IPv4 literal → strongSwan ID_IPV4_ADDR
 		{"fe80::1", "id_fqdn_is_ip"},              // IPv6 literal
 		{"10.0.0.1-10.0.0.9", "id_fqdn_is_range"}, // ip-ip range → ID_IPV4_ADDR_RANGE
 		{"site:one", "id_fqdn_charset"},           // ':' → IPv6/KEY_ID/type-prefix
@@ -51,7 +51,7 @@ func TestValidate_Identity(t *testing.T) {
 	}
 
 	// --- FQDN type: values that MUST pass (they establish fine on both vendors) ---
-	for _, val := range []string{"TECHLABS", "fw.technicallabs.org", "prince_1.test.com", "my-fw.example.com"} {
+	for _, val := range []string{"OSPREY", "fw.example.com", "prince_1.test.com", "my-fw.example.com"} {
 		if fs := ipsec.Validate(withID(ipsec.IDTypeFQDN, val), c); ipsec.HasBlock(fs) {
 			t.Errorf("fqdn %q should be a valid identity, got blocks %+v", val, fs)
 		}

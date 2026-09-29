@@ -34,8 +34,8 @@ func TestPostgresFlowReclass_RealisticVolume(t *testing.T) {
 	if err := d.db.Exec(`INSERT INTO flow_rollups (id, timestamp, device_id, interval_type, src_addr, dst_addr, dst_port, protocol,
 			bytes_sum, packets_sum, flow_count, sampling_rate_avg, direction, service_port)
 		SELECT g * 3, now() - (g * interval '10 seconds'), 1, '1h',
-			CASE WHEN g % 2 = 0 THEN '66.179.9.' || (144 + g % 16) ELSE '198.51.100.' || (g % 250) END,
-			CASE WHEN g % 2 = 0 THEN '203.0.113.' || (g % 250) ELSE '66.179.9.' || (144 + g % 16) END,
+			CASE WHEN g % 2 = 0 THEN '198.19.9.' || (144 + g % 16) ELSE '198.51.100.' || (g % 250) END,
+			CASE WHEN g % 2 = 0 THEN '203.0.113.' || (g % 250) ELSE '198.19.9.' || (144 + g % 16) END,
 			CASE WHEN g % 5 = 0 THEN 51000 + g % 1000 ELSE 443 END, 6, 100, 1, 1, 1, 4,
 			CASE WHEN g % 7 = 0 THEN 8443 ELSE 0 END
 		FROM generate_series(1, ?) AS g`, rollups).Error; err != nil {
@@ -47,7 +47,7 @@ func TestPostgresFlowReclass_RealisticVolume(t *testing.T) {
 	if err := d.db.Exec(`INSERT INTO flow_samples (timestamp, device_id, probe_id, sampler_address, src_addr, dst_addr, src_port, dst_port,
 			protocol, bytes, packets, sampling_rate, direction, created_at)
 		SELECT now() - (g * interval '50 milliseconds'), 1, 0, '10.9.1.1',
-			'66.179.9.' || (144 + g % 16), '203.0.113.' || (g % 250), 443, 40000 + g % 20000, 6, 100, 1, 1, 4, now()
+			'198.19.9.' || (144 + g % 16), '203.0.113.' || (g % 250), 443, 40000 + g % 20000, 6, 100, 1, 1, 4, now()
 		FROM generate_series(1, ?) AS g`, samples).Error; err != nil {
 		t.Fatalf("seed samples: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestPostgresFlowReclass_RealisticVolume(t *testing.T) {
 		if promotedOld == 0 && table == reclassTableRollups && lo > 300000 {
 			if err := d.db.Exec(`INSERT INTO flow_samples (timestamp, device_id, probe_id, sampler_address, src_addr, dst_addr,
 					src_port, dst_port, protocol, bytes, packets, sampling_rate, direction, created_at)
-				SELECT now() - interval '70 minutes' + (g * interval '1 second'), 2, 0, '10.9.1.1', '66.179.9.150', '203.0.113.' || (g % 250),
+				SELECT now() - interval '70 minutes' + (g * interval '1 second'), 2, 0, '10.9.1.1', '198.19.9.150', '203.0.113.' || (g % 250),
 					443, 41000 + g, 6, 100, 1, 1, 4, now()
 				FROM generate_series(1, 500) AS g`).Error; err != nil {
 				return err

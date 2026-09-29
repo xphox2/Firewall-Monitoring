@@ -38,8 +38,8 @@ func TestParseObjectsFortiGateBasic(t *testing.T) {
 		if g.Name != "" {
 			t.Errorf("singleton Name should be empty, got %q", g.Name)
 		}
-		if g.Attrs["hostname"] != `"FW-HOME"` {
-			t.Errorf("system.global hostname = %q, want \"FW-HOME\"", g.Attrs["hostname"])
+		if g.Attrs["hostname"] != `"FW-HERON"` {
+			t.Errorf("system.global hostname = %q, want \"FW-HERON\"", g.Attrs["hostname"])
 		}
 	}
 

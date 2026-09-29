@@ -35,7 +35,7 @@ func reclassFixture(t *testing.T) *Database {
 
 // ownNets is the operator's network used throughout: the /28 a production
 // server lives on.
-var ownNets = []netip.Prefix{netip.MustParsePrefix("66.179.9.144/28")}
+var ownNets = []netip.Prefix{netip.MustParsePrefix("198.19.9.144/28")}
 
 func setForTest(rev uint16) (*classify.InternalSet, error) {
 	return classify.NewInternalSet(ownNets, rev), nil
@@ -50,7 +50,7 @@ func seedReclass(t *testing.T, d *Database, n int) {
 	for i := 0; i < n; i++ {
 		if err := d.Gorm().Create(&models.FlowSample{
 			Timestamp: base, DeviceID: 1, Protocol: 6,
-			SrcAddr: "66.179.9.156", DstAddr: "198.51.100.7", SrcPort: 443, DstPort: uint16(50000 + i),
+			SrcAddr: "198.19.9.156", DstAddr: "198.51.100.7", SrcPort: 443, DstPort: uint16(50000 + i),
 			Bytes: 100, Packets: 1, Direction: classify.DirExternal,
 		}).Error; err != nil {
 			t.Fatalf("seed sample: %v", err)
@@ -61,7 +61,7 @@ func seedReclass(t *testing.T, d *Database, n int) {
 		}
 		if err := d.Gorm().Create(&models.FlowRollup{
 			Timestamp: base.Add(-time.Duration(24+i) * time.Hour), DeviceID: 1, IntervalType: "1h", Protocol: 6,
-			SrcAddr: "198.51.100.7", DstAddr: "66.179.9.156", DstPort: 443, ServicePort: svc,
+			SrcAddr: "198.51.100.7", DstAddr: "198.19.9.156", DstPort: 443, ServicePort: svc,
 			BytesSum: 100, FlowCount: 1, SamplingRateAvg: 1, Direction: classify.DirExternal,
 		}).Error; err != nil {
 			t.Fatalf("seed rollup: %v", err)
@@ -296,7 +296,7 @@ func TestFlowReclass_VerificationRePassesFromTheLowestOldRow(t *testing.T) {
 	// Rollup ids 1..4 exist; leave a hole at 50 and put rows at 100..103.
 	for i := int64(0); i < 4; i++ {
 		if err := d.Gorm().Create(&models.FlowRollup{ID: uint(100 + i), Timestamp: time.Now().Add(-48 * time.Hour), DeviceID: 1,
-			IntervalType: "1h", Protocol: 6, SrcAddr: "10.0.0.1", DstAddr: "66.179.9.150", DstPort: 443, BytesSum: 1, FlowCount: 1}).Error; err != nil {
+			IntervalType: "1h", Protocol: 6, SrcAddr: "10.0.0.1", DstAddr: "198.19.9.150", DstPort: 443, BytesSum: 1, FlowCount: 1}).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -310,7 +310,7 @@ func TestFlowReclass_VerificationRePassesFromTheLowestOldRow(t *testing.T) {
 			inserted = true
 			// Promoted mid-walk into the hole already passed, still old-rev.
 			if err := d.Gorm().Create(&models.FlowRollup{ID: 50, Timestamp: time.Now().Add(-48 * time.Hour), DeviceID: 1,
-				IntervalType: "1h", Protocol: 6, SrcAddr: "10.0.0.1", DstAddr: "66.179.9.150", DstPort: 443, BytesSum: 1, FlowCount: 1}).Error; err != nil {
+				IntervalType: "1h", Protocol: 6, SrcAddr: "10.0.0.1", DstAddr: "198.19.9.150", DstPort: 443, BytesSum: 1, FlowCount: 1}).Error; err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -340,7 +340,7 @@ func TestFlowReclass_RearmAndProbes(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := d.Gorm().Create(&models.FlowSample{Timestamp: time.Now(), DeviceID: 1, Protocol: 6,
-		SrcAddr: "66.179.9.156", DstAddr: "8.8.8.8", SrcPort: 443, DstPort: 51000, Bytes: 1, Packets: 1}).Error; err != nil {
+		SrcAddr: "198.19.9.156", DstAddr: "8.8.8.8", SrcPort: 443, DstPort: 51000, Bytes: 1, Packets: 1}).Error; err != nil {
 		t.Fatal(err)
 	}
 	var walkedBelowFloor bool
@@ -383,7 +383,7 @@ func TestFlowReclass_RearmAndProbes(t *testing.T) {
 
 	// No mark: a stale rollup promoted after the run is found by the probe.
 	if err := d.Gorm().Create(&models.FlowRollup{Timestamp: time.Now().Add(-2 * time.Hour), DeviceID: 1, IntervalType: "5m",
-		Protocol: 6, SrcAddr: "66.179.9.156", DstAddr: "8.8.8.8", DstPort: 443, BytesSum: 1, FlowCount: 1}).Error; err != nil {
+		Protocol: 6, SrcAddr: "198.19.9.156", DstAddr: "8.8.8.8", DstPort: 443, BytesSum: 1, FlowCount: 1}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := d.RunFlowReclassStep(setForTest, time.Minute); err != nil {
@@ -406,7 +406,7 @@ func TestFlowReclass_StallWhileTheAPIStampsRevisionZero(t *testing.T) {
 		}
 		stamped = true
 		if err := d.Gorm().Create(&models.FlowSample{Timestamp: time.Now(), DeviceID: 1, Protocol: 6,
-			SrcAddr: "66.179.9.156", DstAddr: "8.8.8.8", SrcPort: 443, DstPort: 51001, Bytes: 1, Packets: 1}).Error; err != nil {
+			SrcAddr: "198.19.9.156", DstAddr: "8.8.8.8", SrcPort: 443, DstPort: 51001, Bytes: 1, Packets: 1}).Error; err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -58,7 +58,7 @@ end
 const fortigateRawA = `#config-version=FGT60F-7.4.4-FW-build2660-240514:opmode=0:vdom=0:user=admin
 #conf_file_ver=58388916466111111
 config system global
-    set hostname "FW-HOME"
+    set hostname "FW-HERON"
     set admin-port 443
 end
 config system admin
@@ -86,7 +86,7 @@ end
 const fortigateRawB = `#config-version=FGT60F-7.4.4-FW-build2660-240514:opmode=0:vdom=0:user=admin
 #conf_file_ver=58388916466222222
 config system global
-    set hostname "FW-HOME"
+    set hostname "FW-HERON"
     set admin-port 443
 end
 config system admin
@@ -115,7 +115,7 @@ end
 const fortigateRawC = `#config-version=FGT60F-7.4.4-FW-build2660-240514:opmode=0:vdom=0:user=admin
 #conf_file_ver=58388916466333333
 config system global
-    set hostname "FW-HOME"
+    set hostname "FW-HERON"
     set admin-port 443
 end
 config system admin
@@ -160,7 +160,7 @@ func setupFortiGateProbeDevice(t *testing.T) (*Handler, *models.Probe, *models.D
 	probe.RegistrationKey = probeKey // expose plaintext for the Bearer token
 	device := &models.Device{
 		Name:      "fgt-1",
-		IPAddress: "192.168.5.2",
+		IPAddress: "192.168.105.2",
 		Vendor:    "fortigate", // critical: routes through configdiff.vendor_fortigate
 		ProbeID:   &probe.ID,
 	}

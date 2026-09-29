@@ -201,7 +201,7 @@
         var parts = [];
         if (conn.source_if_name || conn.dest_if_name) {
             // Device-qualified so port ownership is unambiguous
-            // ("DC2-FW2:dmz ↔ OPNsense:dtsec1", never a bare "dmz").
+            // ("DC9-FW2:dmz ↔ OPNsense:dtsec1", never a bare "dmz").
             var qual = function(dev, port) {
                 return '<span style="color:var(--fwmon-text-faint);font-weight:400;">' + AC.escapeHtml(dev || '?') + ':</span>' + AC.escapeHtml(port || '?');
             };

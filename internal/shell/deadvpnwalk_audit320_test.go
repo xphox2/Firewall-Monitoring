@@ -84,10 +84,10 @@ func TestNoServerSideVPNWalk_AUDIT320(t *testing.T) {
 // this guard and the roots it actually scans to the SAME set, in both
 // directions.
 //
-// The scope sentence in the CHANGELOG and the audit ledger drifted twice: each
-// time the guard gained a root, the two sentences kept naming the old, narrower
-// set. That matters because the ledger is the permanent record a future audit
-// reads — a reader who believes a package is unguarded either re-does the work
+// The scope sentence in the CHANGELOG drifted twice: each time the guard gained
+// a root, the sentence kept naming the old, narrower set. That matters because
+// the CHANGELOG is the permanent record a later reader relies on — a reader who
+// believes a package is unguarded either re-does the work
 // or treats a regression there as out of scope by design, which is the same
 // class of misleading documentation AUDIT-320 existed to delete. The reverse
 // error is worse still: prose that claims a root the guard no longer scans
@@ -135,7 +135,7 @@ func TestDeadVPNWalkGuardScopeIsDocumented_AUDIT320(t *testing.T) {
 	const anchor = "VPN walk or the dialup OIDs reappear under"
 	backticked := regexp.MustCompile("`([^`]+)`")
 
-	for _, doc := range []string{"../../CHANGELOG.md", "../../docs/audit-2026-08-27-consolidated.md"} {
+	for _, doc := range []string{"../../CHANGELOG.md"} {
 		b, err := os.ReadFile(doc)
 		if err != nil {
 			t.Fatalf("read %s: %v", doc, err)
@@ -144,7 +144,7 @@ func TestDeadVPNWalkGuardScopeIsDocumented_AUDIT320(t *testing.T) {
 		// The FIRST occurrence, not the only one: the CHANGELOG is newest-first,
 		// so a later entry that widens this guard describes the current state,
 		// while released entries stay historically accurate and are never
-		// rewritten. The ledger carries exactly one.
+		// rewritten.
 		at := strings.Index(text, anchor)
 		if at < 0 {
 			t.Errorf("%s no longer describes the AUDIT-320 guard scope — the sentence was removed "+

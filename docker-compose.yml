@@ -9,7 +9,7 @@ services:
     # Overridable so a from-source deployment can tag its local build something
     # other than the Hub name (FIREWALL_MON_IMAGE=firewall-mon:latest) without
     # editing this file. Editing it in place is what produced the untracked
-    # working-tree drift on rust-01 that blocked `git pull` — see v0.11.179.
+    # working-tree drift on prod-host that blocked `git pull` — see v0.11.179.
     image: ${FIREWALL_MON_IMAGE:-xphox/firewall-mon:latest}
     container_name: firewall-mon
     restart: unless-stopped
@@ -26,7 +26,7 @@ services:
     # restart.
     shm_size: "1g"
     # Without an explicit cap the json-file driver grows without bound — Docker
-    # only rotates when max-size is set. On the rust-01 deployment this service
+    # only rotates when max-size is set. On the prod-host deployment this service
     # writes ~80 MB/day, so an uncapped log reaches the GB range in weeks on the
     # same volume that already filled once in 2026-05 (see v0.10.199). The cap
     # applies from container *recreate*, not restart: an existing oversized log

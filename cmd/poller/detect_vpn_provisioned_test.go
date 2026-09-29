@@ -16,8 +16,8 @@ import (
 // therefore lands on the NAT gateway — in production, two distinct peers behind
 // one NAT both collapsed onto it.
 //
-// These tests are built from the real production shape: TECHLABS-FW-01 (a
-// FortiGate) ↔ OPNsense behind DC2-FW1's NAT, provisioned as fwm-t11.
+// These tests are built from the real production shape: OSPREY-FW-01 (a
+// FortiGate) ↔ OPNsense behind DC9-FW1's NAT, provisioned as fwm-t11.
 
 type mapFixture struct {
 	p       *Poller
@@ -47,9 +47,9 @@ func newMapFixture(t *testing.T) *mapFixture {
 		return d
 	}
 	f := &mapFixture{p: p, db: db}
-	f.natGw = mk("DC2-FW1", "10.0.0.1", siteB)
-	f.fgt = mk("TECHLABS-FW-01", "10.0.0.2", siteA)
-	f.opn = mk("OPNsense", "192.168.5.107", siteB)
+	f.natGw = mk("DC9-FW1", "10.0.0.1", siteB)
+	f.fgt = mk("OSPREY-FW-01", "10.0.0.2", siteA)
+	f.opn = mk("OPNsense", "192.168.105.107", siteB)
 	f.devices = []models.Device{f.natGw, f.fgt, f.opn}
 
 	// The NAT gateway owns the public address the dialup rows report arriving
@@ -60,7 +60,7 @@ func newMapFixture(t *testing.T) *mapFixture {
 		t.Fatalf("save iface: %v", err)
 	}
 	if err := db.SaveInterfaceAddresses([]models.InterfaceAddress{
-		{DeviceID: f.natGw.ID, IfIndex: 19, IPAddress: "76.66.145.98", NetMask: "255.255.255.248", Timestamp: time.Now()},
+		{DeviceID: f.natGw.ID, IfIndex: 19, IPAddress: "198.19.76.98", NetMask: "255.255.255.248", Timestamp: time.Now()},
 	}); err != nil {
 		t.Fatalf("save addr: %v", err)
 	}
@@ -118,8 +118,8 @@ func (f *mapFixture) connFor(t *testing.T, a, b uint) *models.DeviceConnection {
 // synthesized from the peer's observed source address.
 func dialupRow(deviceID uint, localSub, remoteSub string) models.VPNStatus {
 	return models.VPNStatus{
-		DeviceID: deviceID, TunnelName: "dialup-76.66.145.98", TunnelType: "ipsec-dialup",
-		RemoteIP: "76.66.145.98", Status: "up", LocalSubnet: localSub, RemoteSubnet: remoteSub,
+		DeviceID: deviceID, TunnelName: "dialup-198.19.76.98", TunnelType: "ipsec-dialup",
+		RemoteIP: "198.19.76.98", Status: "up", LocalSubnet: localSub, RemoteSubnet: remoteSub,
 		Timestamp: time.Now(),
 	}
 }
@@ -138,11 +138,11 @@ func parentRow(deviceID uint, name string) models.VPNStatus {
 // no edge may be drawn to the NAT gateway.
 func TestDetectVPN_ProvisionedTunnelBeatsNATGatewayIPMatch(t *testing.T) {
 	f := newMapFixture(t)
-	f.provision(t, "fwm-t11", f.fgt, f.opn, []string{"192.168.13.0/24"}, []string{"192.168.50.0/24"})
+	f.provision(t, "fwm-t11", f.fgt, f.opn, []string{"192.168.113.0/24"}, []string{"192.168.150.0/24"})
 
 	if err := f.db.SaveVPNStatuses([]models.VPNStatus{
 		parentRow(f.fgt.ID, "fwm-t11"),
-		dialupRow(f.fgt.ID, "192.168.13.0/24", "192.168.50.0/32"),
+		dialupRow(f.fgt.ID, "192.168.113.0/24", "192.168.150.0/32"),
 	}); err != nil {
 		t.Fatalf("save vpn: %v", err)
 	}
@@ -191,9 +191,9 @@ func TestDetectVPN_DialupRowsNeverContaminateALegitimatePair(t *testing.T) {
 	rows := []models.VPNStatus{
 		// Legitimate named tunnel, both directions — this pair SHOULD exist.
 		{DeviceID: f.natGw.ID, TunnelName: "REAL-LINK", TunnelType: "ipsec", RemoteIP: "203.0.113.7", Status: "up", Timestamp: time.Now()},
-		{DeviceID: f.fgt.ID, TunnelName: "REAL-LINK", TunnelType: "ipsec", RemoteIP: "76.66.145.98", Status: "up", Timestamp: time.Now()},
+		{DeviceID: f.fgt.ID, TunnelName: "REAL-LINK", TunnelType: "ipsec", RemoteIP: "198.19.76.98", Status: "up", Timestamp: time.Now()},
 		// A dialup row on the FortiGate whose peer is actually behind the NAT.
-		dialupRow(f.fgt.ID, "192.168.13.0/24", "192.168.50.0/32"),
+		dialupRow(f.fgt.ID, "192.168.113.0/24", "192.168.150.0/32"),
 	}
 	if err := f.db.SaveVPNStatuses(rows); err != nil {
 		t.Fatalf("save vpn: %v", err)
@@ -232,8 +232,8 @@ func TestDetectVPN_OutcomeIsIndependentOfRowOrder(t *testing.T) {
 		}
 		rows := []models.VPNStatus{
 			{DeviceID: f.natGw.ID, TunnelName: "REAL-LINK", TunnelType: "ipsec", RemoteIP: "203.0.113.7", Status: "up", Timestamp: time.Now()},
-			{DeviceID: f.fgt.ID, TunnelName: "REAL-LINK", TunnelType: "ipsec", RemoteIP: "76.66.145.98", Status: "up", Timestamp: time.Now()},
-			dialupRow(f.fgt.ID, "192.168.13.0/24", "192.168.50.0/32"),
+			{DeviceID: f.fgt.ID, TunnelName: "REAL-LINK", TunnelType: "ipsec", RemoteIP: "198.19.76.98", Status: "up", Timestamp: time.Now()},
+			dialupRow(f.fgt.ID, "192.168.113.0/24", "192.168.150.0/32"),
 		}
 		if reversed {
 			for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
@@ -262,7 +262,7 @@ func TestDetectVPN_OutcomeIsIndependentOfRowOrder(t *testing.T) {
 // provisioned pair — that failure would wear the highest-confidence label.
 func TestDetectVPN_ProvisionedNameFromAnUnrelatedDeviceIsIgnored(t *testing.T) {
 	f := newMapFixture(t)
-	f.provision(t, "fwm-t11", f.fgt, f.opn, []string{"192.168.13.0/24"}, []string{"192.168.50.0/24"})
+	f.provision(t, "fwm-t11", f.fgt, f.opn, []string{"192.168.113.0/24"}, []string{"192.168.150.0/24"})
 
 	// The NAT gateway is not an endpoint of fwm-t11, but reports that name.
 	if err := f.db.SaveVPNStatuses([]models.VPNStatus{
@@ -285,7 +285,7 @@ func TestDetectVPN_ProvisionedNameFromAnUnrelatedDeviceIsIgnored(t *testing.T) {
 // reap it.
 func TestDetectVPN_ProvisionedTunnelWithNoTelemetryDrawsNothing(t *testing.T) {
 	f := newMapFixture(t)
-	f.provision(t, "fwm-t11", f.fgt, f.opn, []string{"192.168.13.0/24"}, []string{"192.168.50.0/24"})
+	f.provision(t, "fwm-t11", f.fgt, f.opn, []string{"192.168.113.0/24"}, []string{"192.168.150.0/24"})
 
 	if _, ok := f.p.detectVPNConnections(f.devices); !ok {
 		t.Fatal("detectVPNConnections reported a failed read")
@@ -301,10 +301,10 @@ func TestDetectVPN_ProvisionedTunnelWithNoTelemetryDrawsNothing(t *testing.T) {
 // than the wrong-but-visible edge this change replaces.
 func TestDetectVPN_DialupChildAloneStillAttributesItsTunnel(t *testing.T) {
 	f := newMapFixture(t)
-	f.provision(t, "fwm-t11", f.fgt, f.opn, []string{"192.168.13.0/24"}, []string{"192.168.50.0/24"})
+	f.provision(t, "fwm-t11", f.fgt, f.opn, []string{"192.168.113.0/24"}, []string{"192.168.150.0/24"})
 
 	if err := f.db.SaveVPNStatuses([]models.VPNStatus{
-		dialupRow(f.fgt.ID, "192.168.13.0/24", "192.168.50.0/32"),
+		dialupRow(f.fgt.ID, "192.168.113.0/24", "192.168.150.0/32"),
 	}); err != nil {
 		t.Fatalf("save vpn: %v", err)
 	}
@@ -328,10 +328,10 @@ func TestDetectVPN_DialupChildAloneStillAttributesItsTunnel(t *testing.T) {
 // tunnel unattributed.
 func TestDetectVPN_RangeFormatSelectorsAreUnderstood(t *testing.T) {
 	f := newMapFixture(t)
-	f.provision(t, "fwm-t11", f.fgt, f.opn, []string{"192.168.13.0/24"}, []string{"192.168.50.0/24"})
+	f.provision(t, "fwm-t11", f.fgt, f.opn, []string{"192.168.113.0/24"}, []string{"192.168.150.0/24"})
 
 	if err := f.db.SaveVPNStatuses([]models.VPNStatus{
-		dialupRow(f.fgt.ID, "192.168.13.0 - 192.168.13.255", "192.168.50.0 - 192.168.50.255"),
+		dialupRow(f.fgt.ID, "192.168.113.0 - 192.168.113.255", "192.168.150.0 - 192.168.150.255"),
 	}); err != nil {
 		t.Fatalf("save vpn: %v", err)
 	}
@@ -349,11 +349,11 @@ func TestDetectVPN_RangeFormatSelectorsAreUnderstood(t *testing.T) {
 func TestDetectVPN_AmbiguousSubnetMatchAttributesNothing(t *testing.T) {
 	f := newMapFixture(t)
 	// Two tunnels from the same device with selectors that both cover the row.
-	f.provision(t, "fwm-t20", f.fgt, f.opn, []string{"192.168.13.0/24"}, []string{"192.168.50.0/24"})
-	f.provision(t, "fwm-t21", f.fgt, f.natGw, []string{"192.168.13.0/24"}, []string{"192.168.50.0/24"})
+	f.provision(t, "fwm-t20", f.fgt, f.opn, []string{"192.168.113.0/24"}, []string{"192.168.150.0/24"})
+	f.provision(t, "fwm-t21", f.fgt, f.natGw, []string{"192.168.113.0/24"}, []string{"192.168.150.0/24"})
 
 	if err := f.db.SaveVPNStatuses([]models.VPNStatus{
-		dialupRow(f.fgt.ID, "192.168.13.0/24", "192.168.50.0/32"),
+		dialupRow(f.fgt.ID, "192.168.113.0/24", "192.168.150.0/32"),
 	}); err != nil {
 		t.Fatalf("save vpn: %v", err)
 	}
@@ -375,7 +375,7 @@ func TestDetectVPN_AmbiguousSubnetMatchAttributesNothing(t *testing.T) {
 // two inferences agreeing. Corroboration must not downgrade the label.
 func TestDetectVPN_ProvisionedIsTerminalAgainstBidirectional(t *testing.T) {
 	f := newMapFixture(t)
-	f.provision(t, "fwm-t11", f.fgt, f.opn, []string{"192.168.13.0/24"}, []string{"192.168.50.0/24"})
+	f.provision(t, "fwm-t11", f.fgt, f.opn, []string{"192.168.113.0/24"}, []string{"192.168.150.0/24"})
 
 	// Give both ends addresses that resolve to each other, so the bidirectional
 	// check would otherwise fire on this pair.
