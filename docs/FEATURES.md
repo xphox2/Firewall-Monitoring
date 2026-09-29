@@ -141,7 +141,7 @@
 | Graceful shutdown on SIGINT/SIGTERM (drain in-flight requests, close DB) | Stable | [Server] | 0.1 |
 | Async batcher with `Dropped` counter (bounded queue) | Stable | [Server] | 0.1 (AUDIT-006) |
 | `apiFetch` (5xx retry + jittered backoff on the browser side) | Stable | [Server] | 0.10.355 (AUDIT-130) |
-| `internal/shell` static guard tests (one per resolved AUDIT-NNN) | Stable | [Server] | 0.1 |
+| `test/guardrails` static guard tests (one per resolved AUDIT-NNN) | Stable | [Server] | 0.1 |
 
 ## Observability
 
@@ -196,7 +196,7 @@ To add a vendor: see [custom-vendor.md](custom-vendor.md).
 | Internal packages | 23 | `internal/{alerts,api,audit,auth,config,configdiff,database,httputil,irc,logging,metrics,models,notifier,ping,relay,report,secrets,sflow,shell,snmp,syslog,tracing,uptime}` (`api` groups `handlers`/`middleware`/`response`) |
 | Binaries built | 3 fwmon daemons | `cmd/{api,poller,trap-receiver}` (`cmd/configcheck` is a CLI; `cmd/probe` was removed) |
 | Vendors with a registered SNMP `VendorProfile` | 6 | fortigate, paloalto, sonicwall, pfsense, opnsense, firewalla (cisco_asa is config-diff only) |
-| Static guard tests in `internal/shell` | 98 | `ls internal/shell/*_test.go` |
+| Static guard tests in `test/guardrails` | 142 | `ls test/guardrails/*_test.go` |
 | API endpoints | ~174 | `cmd/api/main.go` |
 
 ## Known limitations (catalogued in [KNOWN-ISSUES.md](../KNOWN-ISSUES.md))

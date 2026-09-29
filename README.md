@@ -260,14 +260,15 @@ firewall-mon/
 │   ├── logging/       # slog setup + SafeGo panic recovery
 │   ├── tracing/       # OpenTelemetry (OTLP) tracing
 │   ├── httputil/      # Shared HTTP helpers (SSRF guard, error responses)
-│   ├── shell/         # Static-source guard tests (cross-cutting invariants)
 │   └── api/
 │       ├── handlers/  # HTTP handlers (split per domain)
 │       └── middleware/ # Security middleware
+├── test/
+│   └── guardrails/    # Static-source guard tests (cross-cutting invariants)
 ├── web/
 │   ├── public/        # Public dashboard
 │   └── admin/         # Admin panel
-├── docs/              # Operator runbooks, AUDIT log, compatibility matrix
+├── docs/              # Operator runbooks, compatibility matrix
 └── deploy.sh          # Deployment script
 ```
 
