@@ -705,7 +705,7 @@
         applyTrafficRange(range);
         // Cancel restores the range on screen so the next poll does not
         // re-request the one the user just cancelled.
-        loadTrafficChart({ onCancel: function() { applyTrafficRange(shownTrafficRange !== null ? shownTrafficRange : initialTrafficRange); } });
+        return loadTrafficChart({ onCancel: function() { applyTrafficRange(shownTrafficRange !== null ? shownTrafficRange : initialTrafficRange); } });
     }
 
     function loadFlowStats(opts) {
@@ -926,10 +926,15 @@
         AC.fetchCsrfToken().then(function() {
             return loadConnectionDetail();
         }).then(function() {
-            return loadTrafficChart();
+            // A range the user picked while the page was opening already runs
+            // under its own Cancel/restore — don't supersede it; otherwise the
+            // first load goes through the same path (Cancel falls back to the
+            // default range).
+            if (AC.chartLoadBusy('cd-traffic', true)) return;
+            return setTrafficRange(currentTrafficRange);
         }).then(function() {
-            if (connDetail && connDetail.has_flow_data) {
-                loadFlowStats();
+            if (connDetail && connDetail.has_flow_data && !AC.chartLoadBusy('cd-flows', true)) {
+                setFlowRange(currentFlowHours);
             }
         }).catch(function(err) {
             console.error('[ConnectionDetail] Init error:', err);

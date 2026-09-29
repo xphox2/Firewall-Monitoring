@@ -293,8 +293,11 @@
     // the offset: a newer search or page change in between must not be paired
     // with an offset from before it.
     var searchRefreshToStart = false;
+    // A quiet refresh (no overlay) does not block paging — the new page shows
+    // the change anyway; the interrupted refresh re-arms itself.
+    var searchQuietRunning = false;
     function pageSearch(offset, isRefresh) {
-        if (AC.chartLoadBusy('ti-search', true)) { if (isRefresh) { searchRefreshDeferred = true; searchRefreshToStart = searchRefreshToStart || offset === 0; } return; }
+        if (AC.chartLoadBusy('ti-search', true) && !(searchQuietRunning && !isRefresh)) { if (isRefresh) { searchRefreshDeferred = true; searchRefreshToStart = searchRefreshToStart || offset === 0; } return; }
         runSearch(offset, lastSearch, isRefresh);
     }
     function runDeferredSearchRefresh() {
@@ -338,9 +341,11 @@
             '&category=' + encodeURIComponent(query.category) +
             '&severity=' + encodeURIComponent(query.severity);
         var host = el('ti-search-host');
+        if (quiet) searchQuietRunning = true;
         AC.chartLoad(quiet ? [] : host, function(signal) {
             return api('/admin/api/threat-intel/search?' + params, { signal: signal });
         }, { key: 'ti-search', label: 'Searching…', escScope: searchForm() }).then(function(r) {
+            if (quiet) searchQuietRunning = false;
             if (r.superseded) {
                 if (isRefresh && AC.chartLoadBusy('ti-search', true)) { searchRefreshDeferred = true; searchRefreshToStart = searchRefreshToStart || target === 0; }
                 // Left the page (nothing newer took over): init() reloads on
@@ -353,7 +358,9 @@
             // Cancel nor its Retry touches them — the box may hold a new,
             // unsubmitted search.
             var paging = !!snap;
-            var retry = function() { if (!paging) setSearchControls(query); runSearch(target, paging ? query : undefined); };
+            // Retry re-applies the failed search — but never over a new one
+            // the user has started typing.
+            var retry = function() { if (!paging && !typingNewSearch(query)) setSearchControls(query); runSearch(target, paging ? query : undefined); };
             if (r.cancelled) {
                 if (lastSearch && !paging) setSearchControls(lastSearch);
                 AC.chartNotice(host, lastSearch ? 'Cancelled — showing the previous results' : 'Cancelled', { dim: false, onRetry: retry });

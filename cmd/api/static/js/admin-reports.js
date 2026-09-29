@@ -89,7 +89,9 @@
         var want = { period: period(), theme: previewTheme, layout: previewLayout, resolved: theme() };
         // Retry puts the cancelled/failed choices back first: loadPreview reads
         // the controls, which Cancel/error just reverted.
-        function retryWanted() { applyChoices(want); loadPreview(); }
+        // resolved is dropped: a Retry must follow the app theme as it is now,
+        // not pin the one in force when the cancelled build started.
+        function retryWanted() { applyChoices(Object.assign({}, want, { resolved: '' })); loadPreview(); }
         // AdminCommon.apiFetch already parses JSON and returns the body object
         // (it calls res.json() internally) — do NOT call .json() again here.
         var url = '/admin/api/reports/preview?period=' + encodeURIComponent(want.period) + '&theme=' + encodeURIComponent(theme()) + '&layout=' + encodeURIComponent(want.layout);
@@ -155,7 +157,9 @@
         var a = document.createElement('a');
         var stamp = new Date().toISOString().slice(0, 10);
         a.href = url;
-        a.download = 'firewall-report-' + period() + '-' + stamp + '.html';
+        // Named after the report on screen (lastHtml), not a period whose
+        // build is still running or was cancelled.
+        a.download = 'firewall-report-' + ((shown && shown.period) || period()) + '-' + stamp + '.html';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);

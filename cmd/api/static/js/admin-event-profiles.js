@@ -62,11 +62,15 @@
                     window.FwmonEventRules.loadRules(0).then(function (lr) {
                         // Keep the prefill for the next visit, but still show the page.
                         if (!lr || !lr.ok) {
-                            window.FwmonEventRules.keepPendingPrefill(pending);
+                            var epPage = document.getElementById('page-event-rules');
+                            var onPage = epPage && epPage.classList.contains('active');
+                            // Kept for the next visit on a real failure or when
+                            // the page was left — not when the user simply
+                            // clicked on (a Rules tab superseded the lookup).
+                            if (!(lr && lr.superseded) || !onPage) window.FwmonEventRules.keepPendingPrefill(pending);
                             // Superseded = the user left the page: routing now
                             // would rewrite THAT page's URL (showGrid clears the
                             // hash with replaceState).
-                            var epPage = document.getElementById('page-event-rules');
                             if (!(lr && lr.superseded) && epPage && epPage.classList.contains('active')) routeFromHash();
                             return;
                         }
