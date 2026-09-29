@@ -474,7 +474,7 @@ the statements over stdin rather than several in one `psql -c` (which runs
 them as one transaction):
 
 ```sh
-docker exec -i firewall-mon psql -v ON_ERROR_STOP=1 -U postgres -d firewall_mon <<'SQL'
+docker exec -i firewall-mon psql -h /run/postgresql -v ON_ERROR_STOP=1 -U postgres -d firewall_mon <<'SQL'
 ALTER SYSTEM SET work_mem = '32MB';
 SELECT pg_reload_conf();
 SQL
@@ -484,9 +484,10 @@ SQL
 `SELECT pg_reload_conf();` (check with `SHOW` from a new session — the reload
 is asynchronous); `shared_buffers` needs a container restart.
 `ALTER SYSTEM RESET` removes an override, which falls back to the value
-`entrypoint.sh` wrote into `postgresql.conf` — for `maintenance_work_mem` that
-is 64 MB, not a previously tuned value, so to go back, `SET` the old value
-instead.
+`entrypoint.sh` wrote into `postgresql.conf` or, if it wrote none, the built-in
+default (`autovacuum_work_mem` = -1, which inherits `maintenance_work_mem`).
+For `maintenance_work_mem` that is 64 MB, not a previously tuned value, so to
+go back, `SET` the old value instead.
 
 Check the `/dev/shm` ceiling first. Parallel queries keep their shared hash
 tables and shared scan bitmaps in `/dev/shm` (`dynamic_shared_memory_type =
@@ -502,8 +503,10 @@ queries run at once is bounded by client concurrency, not by
 the same shared memory.
 
 `maintenance_work_mem` has the same ceiling for one case: a manual `VACUUM` is
-parallel by default and reserves its whole dead-row array in `/dev/shm` up
-front, sized from `maintenance_work_mem` (up to 1 GB). At 1 GB that alone
+parallel by default (on a table with at least two indexes above
+`min_parallel_index_scan_size`) and reserves its whole dead-row array in
+`/dev/shm` up front, sized from `maintenance_work_mem` (up to 1 GB, and never
+more than the table's pages × 291 row slots, so small tables reserve less). At 1 GB that alone
 fills a 1 GB `shm_size`, and the VACUUM fails at once. Keep
 `maintenance_work_mem` under about half of `shm_size` — 256 MB with the
 compose file's 1 GB, which leaves room for about three parallel hash joins
@@ -523,7 +526,7 @@ the outcome unknown:
 
 ```sh
 nohup docker exec -e PGOPTIONS='-c maintenance_work_mem=1GB' firewall-mon \
-  psql -U fwmon -d firewall_mon -c 'VACUUM (PARALLEL 0, ANALYZE) flow_rollups' \
+  psql -h /run/postgresql -U fwmon -d firewall_mon -c 'VACUUM (PARALLEL 0, ANALYZE) flow_rollups' \
   > vacuum-flow_rollups.log 2>&1 &
 ```
 

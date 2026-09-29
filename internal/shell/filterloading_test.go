@@ -999,7 +999,7 @@ func TestFilterLoad_Followups272(t *testing.T) {
 		t.Fatal("VACUUM hint not found")
 	}
 	hint := main[i : i+strings.Index(main[i:], "'")]
-	for _, w := range []string{"PARALLEL 0", "maintenance_work_mem", "1GB", "OPERATIONS.md"} {
+	for _, w := range []string{"PARALLEL 0", "flow_rollups", "maintenance_work_mem", "1GB", "OPERATIONS.md"} {
 		if !strings.Contains(hint, w) {
 			t.Errorf("the VACUUM hint must name %q", w)
 		}
