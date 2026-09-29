@@ -86,7 +86,180 @@
         });
     });
 
+    // ---- Search/filter loading (v0.11.271) ----
+    //
+    // runFilterLoad runs a page's search/filter request under the loading
+    // overlay (AdminCommon.chartLoad) mounted on the results area — never over
+    // the filter controls — with Cancel. The newest request wins; a superseded
+    // one is silent. A user Cancel keeps the results on screen, puts the
+    // previous query back in the controls (opts.prev, from attachAnalyticsPage)
+    // and says so, with Retry. Nothing on the page state (offsets, selection)
+    // changes until a result arrives: onOK is the only place that does.
+    //
+    // A poll (opts.fromPoll) shows no overlay, never cancels a load the user
+    // started (it skips while one is running), and is dropped if the user
+    // starts one while it is in flight.
+    var filterGen = {};
+    // shownQuery[page] is the query whose results are on screen, recorded when
+    // a load SUCCEEDS. Cancel restores it — not the previously committed query,
+    // which may itself have been superseded or failed and never displayed.
+    var shownQuery = {};
+    // The query a first-page load asks for: the state handed through onChange
+    // (the page handle is not assigned yet on a first load), else the handle's
+    // committed state. Builders read this, never the DOM, so page 1 and the
+    // pages after it are always one query.
+    function firstPageQuery(page, opts) {
+        if (opts && opts.state) return Object.assign({}, opts.state);
+        var ap = analyticsPages[page];
+        return (ap && ap.getState) ? ap.getState() : null;
+    }
+    // Controls that shape a page's query but are not analytics-state keys.
+    // They travel with the query snapshot so Cancel/Retry restore them too.
+    var PAGE_EXTRAS = {
+        alerts: {
+            get: function() { var el = document.getElementById('alerts-show-snoozed'); return !!(el && el.checked); },
+            set: function(v) { var el = document.getElementById('alerts-show-snoozed'); if (el) el.checked = !!v; }
+        }
+    };
+    function restoreQuery(ap, page, snap) {
+        ap.restore(snap);
+        if (PAGE_EXTRAS[page] && snap && snap.__extra !== undefined) PAGE_EXTRAS[page].set(snap.__extra);
+    }
+    // blankStatTiles: the Alerts/Traps totals come from the charts load; when
+    // it is cancelled or fails they would name the previous range under the
+    // new pills (the tiles carry no range label), so they show "--" instead.
+    // statTilesHours[page]: the range the tiles were last drawn for. Tiles
+    // still showing the requested range (a refresh after an ack) stay.
+    var statTilesHours = {};
+    function blankStatTiles(page, hrs) {
+        if (statTilesHours[page] === hrs) return;
+        statTilesHours[page] = null;
+        ['total', 'critical', 'warning', 'info'].forEach(function(k) {
+            var el = document.getElementById(page + '-' + k);
+            if (el) el.textContent = '--';
+        });
+    }
+
+    function runFilterLoad(key, run, onOK, opts) {
+        opts = opts || {};
+        var page = opts.page || key;
+        var loadKey = 'filter-' + key;
+        var host = opts.noOverlay ? null : document.getElementById(opts.host || (key + '-load-host'));
+        // The page handle is resolved when needed, not now: on a page's FIRST
+        // load (attachAnalyticsPage's first commit) it has not been assigned
+        // yet, and a Cancel/error must still be able to restore through it.
+        function apNow() { return analyticsPages[page]; }
+        var ap0 = apNow();
+        // The query this load asks for: an explicit snapshot (paging continues
+        // the SHOWN query), the state handed to onChange (the first load, when
+        // there is no handle yet), or the handle's current state.
+        var src = opts.snap || opts.state || ((ap0 && ap0.getState) ? ap0.getState() : null);
+        var want = src ? Object.assign({}, src) : null;
+        if (want && PAGE_EXTRAS[page] && want.__extra === undefined) want.__extra = PAGE_EXTRAS[page].get();
+        if (opts.fromPoll) {
+            if (AC.chartLoadBusy(loadKey)) return Promise.resolve();
+            var gen = filterGen[key] = (filterGen[key] || 0) + 1;
+            return Promise.resolve().then(function() { return run(undefined); }).then(function(data) {
+                if (filterGen[key] !== gen || !data) return;
+                // Only the page's TABLE load records the shown query: a charts
+                // load's query is the controls', which may be a filter that is
+                // still loading (or was dropped) rather than the rows' one.
+                if (want && key === page) shownQuery[page] = want;
+                // Fresh rows replace what a Cancel/error notice referred to.
+                if (host) AC.chartNoticeClear(host);
+                onOK(data);
+            }).catch(function(e) { fwmonLog.error('Refresh of ' + key + ' failed:', e); });
+        }
+        filterGen[key] = (filterGen[key] || 0) + 1; // drops a poll already in flight
+        // A Cancel puts the controls back to the shown query, so Retry must
+        // first re-apply this one — retrying from the restored controls would
+        // just reload the old results.
+        // A charts load shares the page's controls with the table load; while a
+        // newer table load runs, the controls are ITS query (see Cancel below).
+        function siblingBusy() { return key !== page && AC.chartLoadBusy('filter-' + page, true); }
+        var retryCancelled = opts.retry && function() {
+            // A charts Retry while a newer table load runs would draw charts for
+            // a query that may never be shown; that table's success reloads the
+            // charts anyway.
+            if (siblingBusy()) return;
+            var ap = apNow(); if (want && ap && ap.restore && !siblingBusy()) restoreQuery(ap, page, want);
+            opts.retry(opts.prev);
+        };
+        return AC.chartLoad(host, run, {
+            key: loadKey,
+            label: opts.label || 'Loading…',
+            escScope: document.getElementById('page-' + page)
+        }).then(function(r) {
+            if (r.superseded) {
+                // Stopped by leaving the page (nothing newer took over): what
+                // this load would have replaced is now stale too.
+                if (opts.onFail && !AC.chartLoadBusy(loadKey, true)) opts.onFail();
+                return { superseded: true };
+            }
+            if (r.cancelled) {
+                var back = shownQuery[page] || opts.prev;
+                // A charts load shares the page's controls with the table load.
+                // If a newer table load is still running, the controls belong
+                // to IT — restoring them would put a query over rows it is not.
+                if (opts.onFail) opts.onFail();
+                var apC = apNow();
+                if (back && apC && apC.restore && !siblingBusy()) restoreQuery(apC, page, back);
+                AC.chartNotice(host, shownQuery[page] ? 'Cancelled — showing the previous results' : 'Cancelled', { dim: false, onRetry: retryCancelled });
+                return;
+            }
+            if (r.error || !r.data) {
+                if (r.error) fwmonLog.error('Loading ' + key + ' failed:', r.error);
+                if (opts.onFail) opts.onFail();
+                // Same as Cancel: the rows on screen are the shown query's, so
+                // the controls go back to it — otherwise Prev/Next and Load
+                // more would page a query whose first page never appeared.
+                // Retry re-applies the failed query first.
+                var shown = shownQuery[page] || opts.prev;
+                // Not while the user has a newer edit PENDING in this page's
+                // filters: a background failure must not wipe it (it commits
+                // and loads when the debounce fires). Mere focus is not enough
+                // — a search box keeps focus after its own debounced load.
+                var apE = apNow();
+                var typing = !!(apE && apE.hasPendingEdit && apE.hasPendingEdit());
+                if (shown && apE && apE.restore && !siblingBusy() && !typing) restoreQuery(apE, page, shown);
+                if (host) AC.chartNotice(host, shownQuery[page] ? 'Could not load results — showing the previous results' : 'Could not load results', { dim: false, onRetry: retryCancelled });
+                else AC.showError('Could not load results'); // a quiet load has no host to annotate
+                return;
+            }
+            if (want && key === page) shownQuery[page] = want;
+            onOK(r.data);
+        });
+    }
+
+    // Load keys (or key prefixes) owned by each page. Leaving a page stops its
+    // loads silently (no Cancel notice, no restore rewriting the URL of the
+    // page just opened).
+    var PAGE_LOAD_KEYS = {
+        syslog: ['filter-syslog'],
+        alerts: ['filter-alerts'],
+        traps: ['filter-traps'],
+        audit: ['filter-audit'],
+        'threat-intel': ['ti-'],
+        flows: ['flows-'],
+        reports: ['report-'],
+        // No 'connections' entry: the map side panel stays open across a page
+        // change, so its loads finish into it (its host is hidden, so Esc
+        // cannot reach them) instead of leaving a blank chart nothing reloads.
+        'event-rules': ['event-rules', 'ep-']
+    };
+
+    // Every navigation path calls this — loadPageData, and the analytics
+    // pages' reseedFromURL shortcut (in-app links and browser back/forward),
+    // which skips loadPageData. A load left running on a hidden page could
+    // otherwise be cancelled later and rewrite the visible page's URL.
+    function cancelOtherPageLoads(page) {
+        Object.keys(PAGE_LOAD_KEYS).forEach(function(p) {
+            if (p !== page) PAGE_LOAD_KEYS[p].forEach(function(k) { AC.chartLoadCancel(k); });
+        });
+    }
+
     function loadPageData(page) {
+        cancelOtherPageLoads(page);
         // Close the NOC live stream when navigating away so the SSE connection
         // isn't left open in the background.
         if (page !== 'noc' && window.FwmonNOC && window.FwmonNOC.stop) {
@@ -716,32 +889,36 @@
     }
 
     // ---- Syslog ----
-    function loadSyslog() {
-        syslogOffset = 0;
-        var p = Promise.resolve();
-        if (currentProbes.length === 0) {
-            p = apiFetch(API_BASE + '/probes').then(function(pr) { currentProbes = pr && pr.data ? pr.data : []; });
-        }
-        p.then(function() {
-            if (currentDevices.length === 0) {
-                return apiFetch(API_BASE + '/devices').then(function(dr) { currentDevices = dr && dr.data ? dr.data : []; });
+    // opts: {prev} from the filter controls (restored on Cancel), {fromPoll}
+    // from auto-refresh.
+    function loadSyslog(opts) {
+        opts = opts || {};
+        return runFilterLoad('syslog', function(signal) {
+            var p = Promise.resolve();
+            if (currentProbes.length === 0) {
+                p = apiFetch(API_BASE + '/probes', { signal: signal }).then(function(pr) { currentProbes = pr && pr.data ? pr.data : []; });
             }
-        }).then(function() {
-            populateFilterProbes('syslog-filter-probe');
-            populateFilterDevices('syslog-filter-device');
-            var params = buildSyslogParams(10);
-            return apiFetch(API_BASE + '/syslog?' + params);
-        }).then(function(result) {
-            if (!result) return;
+            return p.then(function() {
+                if (currentDevices.length === 0) {
+                    return apiFetch(API_BASE + '/devices', { signal: signal }).then(function(dr) { currentDevices = dr && dr.data ? dr.data : []; });
+                }
+            }).then(function() {
+                populateFilterProbes('syslog-filter-probe');
+                populateFilterDevices('syslog-filter-device');
+                // From the query STATE (the same snapshot runFilterLoad records
+                // as shown), not the dropdowns: a deep-linked device/probe may
+                // not be an <option> yet, and a half-typed search box is not
+                // the committed query.
+                return apiFetch(API_BASE + '/syslog?' + buildSyslogParams(10, firstPageQuery('syslog', opts)), { signal: signal });
+            });
+        }, function(result) {
             var messages = (result.data && result.data.messages) ? result.data.messages : [];
             var total = (result.data && result.data.total) ? result.data.total : 0;
             renderSyslogTable(messages, false);
             syslogOffset = messages.length;
             updateSyslogPagination(messages.length, total, !!(result.data && result.data.total_capped));
-            loadSyslogCharts();
-        }).catch(function(e) {
-            console.error('Failed to load syslog:', e);
-        });
+            loadSyslogCharts({ fromPoll: opts.fromPoll });
+        }, { prev: opts.prev, state: opts.state, fromPoll: opts.fromPoll, label: 'Searching…', retry: function(p) { loadSyslog({ prev: p }); } });
     }
 
     var syslogTotalCount = 0;
@@ -770,37 +947,33 @@
             '<button class="btn secondary sm" data-action="next-syslog"' + (atEnd ? ' disabled' : '') + '>Next</button>';
     }
 
-    function prevSyslog() {
-        if (syslogOffset <= 10) return;
-        syslogOffset -= 20;
-        if (syslogOffset < 0) syslogOffset = 0;
-        var params = buildSyslogParams(10);
-        apiFetch(API_BASE + '/syslog?' + params + '&offset=' + syslogOffset).then(function(result) {
-            if (!result) return;
+    // The page offsets change only when a page arrives: a cancelled Prev or
+    // Next leaves the pager on the page still shown.
+    function syslogPage(target) {
+        // Paging continues the rows on screen: their query (shownQuery), not
+        // the controls; and it waits for a running filter load instead of
+        // silently superseding it.
+        if (AC.chartLoadBusy('filter-syslog', true)) return;
+        var snap = shownQuery.syslog;
+        runFilterLoad('syslog', function(signal) {
+            return apiFetch(API_BASE + '/syslog?' + buildSyslogParams(10, snap) + '&offset=' + target, { signal: signal });
+        }, function(result) {
             var messages = (result.data && result.data.messages) ? result.data.messages : [];
             var total = (result.data && result.data.total) ? result.data.total : 0;
+            if (messages.length === 0) return;
             renderSyslogTable(messages, false);
-            syslogOffset += messages.length;
+            syslogOffset = target + messages.length;
             updateSyslogPagination(messages.length, total, !!(result.data && result.data.total_capped));
-        }).catch(function(e) {
-            console.error('Failed to load prev syslog:', e);
-        });
+        }, { snap: snap, retry: function() { syslogPage(target); } });
+    }
+
+    function prevSyslog() {
+        if (syslogOffset <= 10) return;
+        syslogPage(Math.max(0, syslogOffset - 20));
     }
 
     function nextSyslog() {
-        var params = buildSyslogParams(10);
-        apiFetch(API_BASE + '/syslog?' + params + '&offset=' + syslogOffset).then(function(result) {
-            if (!result) return;
-            var messages = (result.data && result.data.messages) ? result.data.messages : [];
-            var total = (result.data && result.data.total) ? result.data.total : 0;
-            if (messages.length > 0) {
-                renderSyslogTable(messages, false);
-                syslogOffset += messages.length;
-                updateSyslogPagination(messages.length, total, !!(result.data && result.data.total_capped));
-            }
-        }).catch(function(e) {
-            console.error('Failed to load next syslog:', e);
-        });
+        syslogPage(syslogOffset);
     }
 
     function analyticsRangeLabel(hrs) {
@@ -820,12 +993,15 @@
         return (d.partial ? 'Received since ' + when + ' (earliest counts held)' : 'Received since ' + when) + ', whole hours';
     }
 
-    function loadSyslogCharts() {
+    function loadSyslogCharts(opts) {
+        opts = opts || {};
         var s = analyticsPages.syslog && analyticsPages.syslog.getState();
         var hoursParam = (s && s.hours) ? ('?hours=' + s.hours) : '';
         var hrs = (s && s.hours) ? Number(s.hours) : 24;
-        apiFetch(API_BASE + '/syslog/stats' + hoursParam).then(function(result) {
-            if (!result || !result.data) return;
+        runFilterLoad('syslog-charts', function(signal) {
+            return apiFetch(API_BASE + '/syslog/stats' + hoursParam, { signal: signal });
+        }, function(result) {
+            if (!result.data) return;
             var d = result.data;
             document.getElementById('syslog-total').textContent = (d.total || 0).toLocaleString();
             var basis = document.getElementById('syslog-total-basis');
@@ -858,11 +1034,21 @@
                 return '#8b949e';
             });
             createChart('syslog-severity-chart','doughnut',sevLabels,[{data:sevCounts,backgroundColor:sevColors,borderWidth:0}]);
-        }).catch(function(e) { console.error('Failed to load syslog charts:', e); });
+        }, { page: 'syslog', host: 'syslog-charts-host', fromPoll: opts.fromPoll, retry: function() { loadSyslogCharts(); } });
     }
 
-    function buildSyslogParams(limit) {
+    // snap (optional): a query snapshot — paging continues the SHOWN query
+    // (shownQuery.syslog), never a filter still loading or failed to load.
+    function buildSyslogParams(limit, snap) {
         var parts = ['limit=' + limit];
+        if (snap) {
+            if (snap.hours && Number(snap.hours) !== 24) parts.push('hours=' + snap.hours);
+            if (snap.probe_id) parts.push('probe_id=' + encodeURIComponent(snap.probe_id));
+            if (snap.device_id) parts.push('device_id=' + encodeURIComponent(snap.device_id));
+            if (snap.severity !== undefined && snap.severity !== '') parts.push('severity=' + encodeURIComponent(snap.severity));
+            if (snap.search) parts.push('search=' + encodeURIComponent(snap.search));
+            return parts.join('&');
+        }
         var s = analyticsPages.syslog && analyticsPages.syslog.getState();
         var probe = document.getElementById('syslog-filter-probe');
         var device = document.getElementById('syslog-filter-device');
@@ -941,19 +1127,6 @@
     }
     function closeSyslogDetail() { AC.closeModal('syslog-detail-modal'); }
 
-    function loadMoreSyslog() {
-        var params = buildSyslogParams(100);
-        apiFetch(API_BASE + '/syslog?' + params + '&offset=' + syslogOffset).then(function(result) {
-            if (result && result.data && result.data.length) {
-                renderSyslogTable(result.data, true);
-                syslogOffset += result.data.length;
-            }
-        }).catch(function(err) {
-            console.error('Failed to load more syslog:', err);
-            AC.showError('Failed to load more syslog');
-        });
-    }
-
     // ---- Audit Logs ----
     var auditOffset = 0;
     var auditTotalCount = 0;
@@ -975,29 +1148,42 @@
                 { id: 'audit-filter-action', stateKey: 'action', chipKey: 'action' }
             ],
             selects: [],
-            onChange: function() { loadAuditLogs(); }
+            onChange: function(state, prev) { loadAuditLogs({ prev: prev, state: state }); }
         });
     }
 
-    function loadAuditLogs() {
-        auditOffset = 0;
-        var params = buildAuditParams(10);
-        apiFetch(API_BASE + '/audit?' + params).then(function(result) {
-            if (!result) return;
+    function loadAuditLogs(opts) {
+        opts = opts || {};
+        auditPage(0, opts.prev, opts.state);
+    }
+
+    // The offset changes only when a page arrives (see runFilterLoad). A
+    // first-page load runs the controls' query; Prev/Next (paging) continue
+    // the SHOWN query and wait for a running filter load.
+    function auditPage(target, prev, st, paging) {
+        if (paging && AC.chartLoadBusy('filter-audit', true)) return;
+        var snap = paging ? shownQuery.audit : firstPageQuery('audit', { state: st });
+        runFilterLoad('audit', function(signal) {
+            return apiFetch(API_BASE + '/audit?' + buildAuditParams(10, snap) + (target ? '&offset=' + target : ''), { signal: signal });
+        }, function(result) {
             var logs = (result.data && result.data.audit_logs) ? result.data.audit_logs : [];
             var total = (result.data && result.data.total) ? result.data.total : 0;
+            if (target > 0 && logs.length === 0) return;
             currentAuditLogs = logs;
             renderAuditTable(logs, false);
-            auditOffset = logs.length;
+            auditOffset = target + logs.length;
             updateAuditPagination(logs.length, total);
-        }).catch(function(e) {
-            fwmonLog.error('Failed to load audit logs:', e);
-            AC.showError('Failed to load audit logs');
-        });
+        }, { prev: prev, state: st, snap: snap, label: 'Searching…', retry: function(p) { auditPage(target, p, undefined, paging); } });
     }
 
-    function buildAuditParams(limit) {
+    function buildAuditParams(limit, snap) {
         var parts = ['limit=' + limit];
+        if (snap) {
+            if (snap.hours && Number(snap.hours) !== 24) parts.push('hours=' + snap.hours);
+            if (snap.actor) parts.push('actor=' + encodeURIComponent(String(snap.actor).trim()));
+            if (snap.action) parts.push('action=' + encodeURIComponent(String(snap.action).trim()));
+            return parts.join('&');
+        }
         var s = analyticsPages.audit && analyticsPages.audit.getState();
         var actor = document.getElementById('audit-filter-actor');
         var action = document.getElementById('audit-filter-action');
@@ -1071,39 +1257,11 @@
 
     function prevAudit() {
         if (auditOffset <= 10) return;
-        auditOffset -= 20;
-        if (auditOffset < 0) auditOffset = 0;
-        var params = buildAuditParams(10);
-        apiFetch(API_BASE + '/audit?' + params + '&offset=' + auditOffset).then(function(result) {
-            if (!result) return;
-            var logs = (result.data && result.data.audit_logs) ? result.data.audit_logs : [];
-            var total = (result.data && result.data.total) ? result.data.total : 0;
-            currentAuditLogs = logs;
-            renderAuditTable(logs, false);
-            auditOffset += logs.length;
-            updateAuditPagination(logs.length, total);
-        }).catch(function(e) {
-            fwmonLog.error('Failed to load prev audit logs:', e);
-            AC.showError('Failed to load prev audit logs');
-        });
+        auditPage(Math.max(0, auditOffset - 20), undefined, undefined, true);
     }
 
     function nextAudit() {
-        var params = buildAuditParams(10);
-        apiFetch(API_BASE + '/audit?' + params + '&offset=' + auditOffset).then(function(result) {
-            if (!result) return;
-            var logs = (result.data && result.data.audit_logs) ? result.data.audit_logs : [];
-            var total = (result.data && result.data.total) ? result.data.total : 0;
-            if (logs.length > 0) {
-                currentAuditLogs = logs;
-                renderAuditTable(logs, false);
-                auditOffset += logs.length;
-                updateAuditPagination(logs.length, total);
-            }
-        }).catch(function(e) {
-            fwmonLog.error('Failed to load next audit logs:', e);
-            AC.showError('Failed to load next audit logs');
-        });
+        auditPage(auditOffset, undefined, undefined, true);
     }
 
     function showAuditDetail(id) {
@@ -1208,7 +1366,8 @@
         sysAutoRefreshEl.addEventListener('change', function() {
             if (this.checked) {
                 syslogRefreshTimer = AC.pollWhenVisible(function() {
-                    if (document.querySelector('#page-syslog.active')) loadSyslog();
+                    // Silent: no overlay, and it never cancels a search in progress.
+                    if (document.querySelector('#page-syslog.active')) loadSyslog({ fromPoll: true });
                 }, 10000, { immediate: false });
             } else if (syslogRefreshTimer) {
                 if (typeof syslogRefreshTimer.stop === 'function') syslogRefreshTimer.stop();
@@ -1231,33 +1390,41 @@
     var alertSelection = {}; // map id (string) -> true for currently-selected rows on the current page
     var selectAllMatchingMode = false; // true when user clicked "Select all N matching" — bulk-ack uses filter, not IDs
 
-    function loadAlerts() {
-        alertsOffset = 0;
-        clearAlertSelection();
-        // Ensure the device + site lists are loaded so the filter dropdowns can be
-        // populated (they back manual filtering and the deep-link chip labels).
-        var needs = [];
-        if (currentDevices.length === 0) {
-            needs.push(apiFetch(API_BASE + '/devices').then(function(dr) { currentDevices = dr && dr.data ? dr.data : []; }));
-        }
-        if (currentSites.length === 0) {
-            needs.push(apiFetch(API_BASE + '/sites').then(function(sr) { currentSites = sr && sr.data ? sr.data : []; }).catch(function() {}));
-        }
-        Promise.all(needs).then(function() {
-            populateAlertFilterOptions();
-            var params = buildAlertParams(ALERTS_PAGE_SIZE);
-            return apiFetch(API_BASE + '/alerts?' + params);
-        }).then(function(result) {
-            if (!result) return;
+    function loadAlerts(opts) {
+        opts = opts || {};
+        // "Select all N matching" is bound to the FILTER: a changed filter must
+        // drop it now, not when the new rows arrive, or an ack during/after a
+        // slow or failed load would hit a different (possibly much larger) set.
+        if (selectAllMatchingMode) selectAllMatchingMode = false;
+        var loading = runFilterLoad('alerts', function(signal) {
+            // Ensure the device + site lists are loaded so the filter dropdowns can be
+            // populated (they back manual filtering and the deep-link chip labels).
+            var needs = [];
+            if (currentDevices.length === 0) {
+                needs.push(apiFetch(API_BASE + '/devices', { signal: signal }).then(function(dr) { currentDevices = dr && dr.data ? dr.data : []; }));
+            }
+            if (currentSites.length === 0) {
+                needs.push(apiFetch(API_BASE + '/sites', { signal: signal }).then(function(sr) { currentSites = sr && sr.data ? sr.data : []; }).catch(function() {}));
+            }
+            return Promise.all(needs).then(function() {
+                populateAlertFilterOptions();
+                return apiFetch(API_BASE + '/alerts?' + buildAlertParams(ALERTS_PAGE_SIZE), { signal: signal });
+            });
+        }, function(result) {
             var alerts = (result.data && result.data.alerts) ? result.data.alerts : [];
             var total = (result.data && result.data.total) ? result.data.total : 0;
+            clearAlertSelection(); // the selection belongs to the rows being replaced
             renderAlertsTable(alerts, false);
             alertsOffset = alerts.length;
             updateAlertPagination(alerts.length, total);
             loadAlertCharts();
-        }).catch(function(e) {
-            window.fwmonLog && window.fwmonLog.error && window.fwmonLog.error('Failed to load alerts:', e);
-        });
+        }, { prev: opts.prev, state: opts.state, retry: function(p) { loadAlerts({ prev: p }); } });
+        // Repaint the toolbar only AFTER the load is registered (runFilterLoad
+        // starts it synchronously), so the banner sees it busy and does not
+        // re-offer "select all"; and again when it settles (Cancel/error keep
+        // the old rows, whose selection may be offered again).
+        updateAlertBulkToolbar();
+        if (loading && loading.then) loading.then(function() { updateAlertBulkToolbar(); runDeferredAlertsRefresh(); });
     }
 
     // (Silenced-sources panel removed in v0.11.93 — source suppression is now
@@ -1269,29 +1436,65 @@
     // bounced back to page 1. If the current page would be empty after the
     // refresh (because every visible row got acked and the filter is "unack"),
     // step back one page until we find content or hit page 1.
-    function refreshAlertsAtCurrentPage() {
+    var alertsRefreshDeferred = false;
+    var alertsQuietRefreshRunning = false;
+    function runDeferredAlertsRefresh() {
+        if (!alertsRefreshDeferred || AC.chartLoadBusy('filter-alerts', true)) return;
+        alertsRefreshDeferred = false;
+        refreshAlertsAtCurrentPage({ quiet: true });
+    }
+
+    // opts.quiet: a deferred refresh after another load settled — no overlay,
+    // so it neither flashes nor wipes that load's Cancel/Retry notice (the
+    // rows it refreshes are the shown query's, which the notice describes).
+    function refreshAlertsAtCurrentPage(opts) {
+        // An ack/snooze from an alert opened on another page (the #alert/ID
+        // deep link) must not run the Alerts page's load in the background —
+        // its restore would rewrite THAT page's URL. The Alerts page reloads
+        // when it is next shown.
+        var alertsPage = document.getElementById('page-alerts');
+        if (!alertsPage || !alertsPage.classList.contains('active')) return;
+        // A filter load already running would be superseded (same key) by a
+        // reload now. Defer: run once that load settles — if it is cancelled
+        // or fails, the old rows stay and must show the ack.
+        if (AC.chartLoadBusy('filter-alerts', true)) { alertsRefreshDeferred = true; return; }
         var pageSize = ALERTS_PAGE_SIZE;
         var pageEnd = alertsOffset; // current offset == end of current page
         var pageStart = Math.max(0, pageEnd - pageSize);
 
-        function tryLoad(offset) {
-            var params = buildAlertParams(pageSize);
-            return apiFetch(API_BASE + '/alerts?' + params + '&offset=' + offset).then(function(result) {
-                if (!result) return;
+        function tryLoad(offset, signal) {
+            return apiFetch(API_BASE + '/alerts?' + buildAlertParams(pageSize, shownQuery.alerts) + '&offset=' + offset, { signal: signal }).then(function(result) {
+                if (!result) return null;
                 var alerts = (result.data && result.data.alerts) ? result.data.alerts : [];
-                var total = (result.data && result.data.total) ? result.data.total : 0;
                 if (alerts.length === 0 && offset > 0) {
                     // Page got empty (all rows acked). Try the previous page.
-                    return tryLoad(Math.max(0, offset - pageSize));
+                    return tryLoad(Math.max(0, offset - pageSize), signal);
                 }
-                renderAlertsTable(alerts, false);
-                alertsOffset = offset + alerts.length;
-                updateAlertPagination(alerts.length, total);
-                loadAlertCharts();
+                return { result: result, offset: offset };
             });
         }
-        tryLoad(pageStart).catch(function(e) {
-            console.error('Failed to refresh alerts at current page:', e);
+        var refreshing = runFilterLoad('alerts', function(signal) { return tryLoad(pageStart, signal); }, function(got) {
+            var alerts = (got.result.data && got.result.data.alerts) ? got.result.data.alerts : [];
+            var total = (got.result.data && got.result.data.total) ? got.result.data.total : 0;
+            renderAlertsTable(alerts, false);
+            alertsOffset = got.offset + alerts.length;
+            updateAlertPagination(alerts.length, total);
+            loadAlertCharts();
+        }, { snap: shownQuery.alerts, noOverlay: !!(opts && opts.quiet), retry: refreshAlertsAtCurrentPage });
+        // An ack that arrived while THIS refresh ran was deferred; its refresh
+        // runs now (its own query started before that ack committed).
+        if (opts && opts.quiet) alertsQuietRefreshRunning = true;
+        // The "select all matching" banner reads busy: repaint now that the
+        // refresh is registered (as loadAlerts and alertsPage do).
+        updateAlertBulkToolbar();
+        if (refreshing && refreshing.then) refreshing.then(function(res) {
+            if (opts && opts.quiet) alertsQuietRefreshRunning = false;
+            // Interrupted by paging or a filter change (quiet or not): re-arm,
+            // so if that load is cancelled or fails the ack still shows. (Not
+            // when nothing took over — a page leave reloads on return.)
+            if (res && res.superseded && AC.chartLoadBusy('filter-alerts', true)) alertsRefreshDeferred = true;
+            updateAlertBulkToolbar();
+            runDeferredAlertsRefresh();
         });
     }
 
@@ -1344,7 +1547,7 @@
                 '<a href="#" data-action="cancel-select-all-matching" style="color:var(--fwmon-accent);text-decoration:underline">Clear selection</a>';
             return;
         }
-        if (pageFullySelected && hasMoreMatching) {
+        if (pageFullySelected && hasMoreMatching && !AC.chartLoadBusy('filter-alerts', true)) {
             banner.style.display = '';
             banner.innerHTML =
                 Object.keys(alertSelection).length + ' selected on this page. ' +
@@ -1357,6 +1560,9 @@
     }
 
     function enableSelectAllMatching() {
+        // Not while a filter load runs: the count and the rows belong to the
+        // previous filter, and the next result replaces them.
+        if (AC.chartLoadBusy('filter-alerts', true)) return;
         selectAllMatchingMode = true;
         updateAlertBulkToolbar();
     }
@@ -1396,7 +1602,9 @@
             // meaning of "clear all alerts" is "ack the unacknowledged ones."
             // Re-acking already-acked rows would overwrite their existing notes,
             // which is rarely what an operator wants.
-            var params = buildAlertParams(0); // limit/offset are irrelevant for the UPDATE
+            // The SHOWN query (the rows the operator selected from), not the
+            // live controls: those may name a filter still loading or failed.
+            var params = buildAlertParams(0, shownQuery.alerts); // limit/offset are irrelevant for the UPDATE
             if (params.indexOf('acknowledged=') === -1) {
                 params += '&acknowledged=false';
             }
@@ -1456,47 +1664,48 @@
             '<button class="btn secondary sm" data-action="next-alerts"' + (alertsOffset >= total ? ' disabled' : '') + '>Next</button>';
     }
 
-    function prevAlerts() {
-        if (alertsOffset <= 10) return;
-        alertsOffset -= 20;
-        if (alertsOffset < 0) alertsOffset = 0;
-        var params = buildAlertParams(10);
-        apiFetch(API_BASE + '/alerts?' + params + '&offset=' + alertsOffset).then(function(result) {
-            if (!result) return;
+    // The offset changes only when a page arrives (see runFilterLoad).
+    function alertsPage(target) {
+        // See syslogPage. A quiet ack refresh (no overlay, nothing on screen
+        // says it runs) does not block paging: the new page reflects the ack.
+        if (AC.chartLoadBusy('filter-alerts', true) && !alertsQuietRefreshRunning) return;
+        var snap = shownQuery.alerts;
+        var loading = runFilterLoad('alerts', function(signal) {
+            return apiFetch(API_BASE + '/alerts?' + buildAlertParams(10, snap) + '&offset=' + target, { signal: signal });
+        }, function(result) {
             var alerts = (result.data && result.data.alerts) ? result.data.alerts : [];
             var total = (result.data && result.data.total) ? result.data.total : 0;
+            if (alerts.length === 0) return;
             renderAlertsTable(alerts, false);
-            alertsOffset += alerts.length;
+            alertsOffset = target + alerts.length;
             updateAlertPagination(alerts.length, total);
-        }).catch(function(e) {
-            console.error('Failed to load prev alerts:', e);
-        });
+        }, { snap: snap, retry: function() { alertsPage(target); } });
+        // The "select all matching" banner reads busy: repaint once the load is
+        // registered, and again when it settles.
+        updateAlertBulkToolbar();
+        if (loading && loading.then) loading.then(function() { updateAlertBulkToolbar(); runDeferredAlertsRefresh(); });
+    }
+
+    function prevAlerts() {
+        if (alertsOffset <= 10) return;
+        alertsPage(Math.max(0, alertsOffset - 20));
     }
 
     function nextAlerts() {
-        var params = buildAlertParams(10);
-        apiFetch(API_BASE + '/alerts?' + params + '&offset=' + alertsOffset).then(function(result) {
-            if (!result) return;
-            var alerts = (result.data && result.data.alerts) ? result.data.alerts : [];
-            var total = (result.data && result.data.total) ? result.data.total : 0;
-            if (alerts.length > 0) {
-                renderAlertsTable(alerts, false);
-                alertsOffset += alerts.length;
-                updateAlertPagination(alerts.length, total);
-            }
-        }).catch(function(e) {
-            console.error('Failed to load next alerts:', e);
-        });
+        alertsPage(alertsOffset);
     }
 
-    function buildAlertParams(limit) {
+    // snap (optional) is a query snapshot — shownQuery.alerts — used by the
+    // filter-based bulk ack so it acts on the query whose rows are ON SCREEN,
+    // never on a filter that is still loading or failed to load.
+    function buildAlertParams(limit, snap) {
         var parts = ['limit=' + limit];
         // Source filters from page state (getState), NOT the DOM selects: the
         // device/site dropdowns are populated asynchronously, so a deep-link like
         // /admin/alerts?device_id=42 must apply from URL state even before (or
         // without) the matching <option> existing. State is kept correct by
         // stateFromURL + bindAutoApply.
-        var s = (analyticsPages.alerts && analyticsPages.alerts.getState()) || {};
+        var s = snap || (analyticsPages.alerts && analyticsPages.alerts.getState()) || {};
         if (s.hours && Number(s.hours) !== 24) parts.push('hours=' + s.hours);
         if (s.device_id) parts.push('device_id=' + encodeURIComponent(s.device_id));
         if (s.site_id) parts.push('site_id=' + encodeURIComponent(s.site_id));
@@ -1507,7 +1716,8 @@
         // include_snoozed=true (handlers_analytics.go applyAlertFilters).
         // The "Show snoozed" toggle is the only path to view/unsnooze them.
         var snoozed = document.getElementById('alerts-show-snoozed');
-        if (snoozed && snoozed.checked) parts.push('include_snoozed=true');
+        var withSnoozed = (snap && snap.__extra !== undefined) ? !!snap.__extra : !!(snoozed && snoozed.checked);
+        if (withSnoozed) parts.push('include_snoozed=true');
         return parts.join('&');
     }
 
@@ -2060,27 +2270,17 @@
         });
     }
 
-    function loadMoreAlerts() {
-        var params = buildAlertParams(100);
-        apiFetch(API_BASE + '/alerts?' + params + '&offset=' + alertsOffset).then(function(result) {
-            if (result && result.data && result.data.length) {
-                renderAlertsTable(result.data, true);
-                alertsOffset += result.data.length;
-            }
-        }).catch(function(err) {
-            console.error('Failed to load more alerts:', err);
-            AC.showError('Failed to load more alerts');
-        });
-    }
-
     function loadAlertCharts() {
         var s = analyticsPages.alerts && analyticsPages.alerts.getState();
         var hoursParam = (s && s.hours) ? ('?hours=' + s.hours) : '';
         var hrs = (s && s.hours) ? Number(s.hours) : 24;
-        var chartTitle = document.getElementById('alerts-trend-title');
-        if (chartTitle) chartTitle.textContent = 'Alert Trend (' + analyticsRangeLabel(hrs) + ')';
-        apiFetch(API_BASE + '/alerts/stats' + hoursParam).then(function(result) {
-            if (!result || !result.data) return;
+        runFilterLoad('alerts-charts', function(signal) {
+            return apiFetch(API_BASE + '/alerts/stats' + hoursParam, { signal: signal });
+        }, function(result) {
+            if (!result.data) return;
+            // The title names the range drawn, so it changes with the data.
+            var chartTitle = document.getElementById('alerts-trend-title');
+            if (chartTitle) chartTitle.textContent = 'Alert Trend (' + analyticsRangeLabel(hrs) + ')';
             var d = result.data;
             document.getElementById('alerts-total').textContent = (d.total || 0).toLocaleString();
             var crit = 0, warn = 0, inf = 0;
@@ -2092,6 +2292,7 @@
             document.getElementById('alerts-critical').textContent = crit.toLocaleString();
             document.getElementById('alerts-warning').textContent = warn.toLocaleString();
             document.getElementById('alerts-info').textContent = inf.toLocaleString();
+            statTilesHours.alerts = hrs;
 
             var labels = (d.over_time || []).map(function(b) { return formatBucketTime(b.bucket, hrs); });
             var counts = (d.over_time || []).map(function(b) { return b.count; });
@@ -2101,26 +2302,30 @@
             var typeCounts = (d.by_type || []).map(function(t) { return t.count; });
             var typeColors = ['#f85149','#d2992a','#58a6ff','#3fb950','#bc8cff','#8b949e'];
             createChart('alerts-type-chart','doughnut',typeLabels,[{data:typeCounts,backgroundColor:typeColors.slice(0,typeLabels.length),borderWidth:0}]);
-        }).catch(function(e) { console.error('Failed to load alert charts:', e); });
+        }, { page: 'alerts', host: 'alerts-charts-host', retry: loadAlertCharts, onFail: function() { blankStatTiles('alerts', hrs); } });
     }
 
     // ---- Traps ----
-    function loadTraps() {
-        trapsOffset = 0;
-        var params = buildTrapParams(100);
-        apiFetch(API_BASE + '/traps?' + params).then(function(result) {
-            if (!result) return;
+    function loadTraps(opts) {
+        opts = opts || {};
+        runFilterLoad('traps', function(signal) {
+            return apiFetch(API_BASE + '/traps?' + buildTrapParams(100, firstPageQuery('traps', opts)), { signal: signal });
+        }, function(result) {
             var traps = result.data || [];
             renderTrapsTable(traps, false);
             trapsOffset = traps.length;
             loadTrapCharts();
-        }).catch(function(e) {
-            console.error('Failed to load traps:', e);
-        });
+        }, { prev: opts.prev, state: opts.state, retry: function(p) { loadTraps({ prev: p }); } });
     }
 
-    function buildTrapParams(limit) {
+    function buildTrapParams(limit, snap) {
         var parts = ['limit=' + limit];
+        if (snap) {
+            if (snap.hours && Number(snap.hours) !== 24) parts.push('hours=' + snap.hours);
+            if (snap.severity) parts.push('severity=' + encodeURIComponent(snap.severity));
+            if (snap.trap_type) parts.push('trap_type=' + encodeURIComponent(snap.trap_type));
+            return parts.join('&');
+        }
         var s = analyticsPages.traps && analyticsPages.traps.getState();
         var sev = document.getElementById('traps-filter-severity');
         var type = document.getElementById('traps-filter-type');
@@ -2154,26 +2359,31 @@
     }
 
     function loadMoreTraps() {
-        var params = buildTrapParams(100);
-        apiFetch(API_BASE + '/traps?' + params + '&offset=' + trapsOffset).then(function(result) {
-            if (result && result.data && result.data.length) {
-                renderTrapsTable(result.data, true);
-                trapsOffset += result.data.length;
-            }
-        }).catch(function(err) {
-            console.error('Failed to load more traps:', err);
-            AC.showError('Failed to load more traps');
-        });
+        // trapsOffset belongs to the rows on screen; while a filter reload is
+        // running, appending from it would mix two filters' rows.
+        // Exact key: the charts load ('filter-traps-charts') shares the prefix
+        // but does not touch the rows, so it must not block Load more.
+        if (AC.chartLoadBusy('filter-traps', true)) return;
+        var from = trapsOffset; // advances only when the rows arrive
+        runFilterLoad('traps', function(signal) {
+            return apiFetch(API_BASE + '/traps?' + buildTrapParams(100, shownQuery.traps) + '&offset=' + from, { signal: signal });
+        }, function(result) {
+            if (!result.data || !result.data.length) return;
+            renderTrapsTable(result.data, true);
+            trapsOffset = from + result.data.length;
+        }, { snap: shownQuery.traps, label: 'Loading more…', retry: loadMoreTraps });
     }
 
     function loadTrapCharts() {
         var s = analyticsPages.traps && analyticsPages.traps.getState();
         var hoursParam = (s && s.hours) ? ('?hours=' + s.hours) : '';
         var hrs = (s && s.hours) ? Number(s.hours) : 24;
-        var chartTitle = document.getElementById('traps-freq-title');
-        if (chartTitle) chartTitle.textContent = 'Trap Frequency (' + analyticsRangeLabel(hrs) + ')';
-        apiFetch(API_BASE + '/traps/stats' + hoursParam).then(function(result) {
-            if (!result || !result.data) return;
+        runFilterLoad('traps-charts', function(signal) {
+            return apiFetch(API_BASE + '/traps/stats' + hoursParam, { signal: signal });
+        }, function(result) {
+            if (!result.data) return;
+            var chartTitle = document.getElementById('traps-freq-title');
+            if (chartTitle) chartTitle.textContent = 'Trap Frequency (' + analyticsRangeLabel(hrs) + ')';
             var d = result.data;
             document.getElementById('traps-total').textContent = (d.total || 0).toLocaleString();
             var crit = 0, warn = 0, inf = 0;
@@ -2185,6 +2395,7 @@
             document.getElementById('traps-critical').textContent = crit.toLocaleString();
             document.getElementById('traps-warning').textContent = warn.toLocaleString();
             document.getElementById('traps-info').textContent = inf.toLocaleString();
+            statTilesHours.traps = hrs;
 
             var labels = (d.over_time || []).map(function(b) { return formatBucketTime(b.bucket, hrs); });
             var counts = (d.over_time || []).map(function(b) { return b.count; });
@@ -2194,7 +2405,7 @@
             var sevCounts = (d.by_severity || []).map(function(s) { return s.count; });
             var sevColors = ['#f85149','#d2992a','#58a6ff','#3fb950','#8b949e'];
             createChart('traps-severity-chart','doughnut',sevLabels,[{data:sevCounts,backgroundColor:sevColors.slice(0,sevLabels.length),borderWidth:0}]);
-        }).catch(function(e) { console.error('Failed to load trap charts:', e); });
+        }, { page: 'traps', host: 'traps-charts-host', retry: loadTrapCharts, onFail: function() { blankStatTiles('traps', hrs); } });
     }
 
     // ---- Settings ----
@@ -4405,13 +4616,11 @@
         'show-connection-modal': function(el) { showConnectionModal(el && el.dataset.id ? parseInt(el.dataset.id) : null); },
         'edit-connection': function(el) { showConnectionModal(parseInt(el.dataset.id)); },
         'load-syslog': function() { loadSyslog(); },
-        'load-more-syslog': function() { loadMoreSyslog(); },
         // LC-49: the legacy 'set-flow-range' / 'load-flows' / 'load-more-flows'
         // handlers were removed with the dead pre-v0.10.211 flows fallback.
         // Nothing in admin.html emits the first two, and FwmonFlows
         // (admin-flows.js) binds the #flows-load-more button directly.
         'load-alerts': function() { loadAlerts(); },
-        'load-more-alerts': function() { loadMoreAlerts(); },
         'prev-alerts': function() { prevAlerts(); },
         'next-alerts': function() { nextAlerts(); },
         'load-traps': function() { loadTraps(); },
@@ -4577,7 +4786,7 @@
                   chipLabel: function(v) { return probeLabel(v); } },
                 { id: 'syslog-filter-severity', stateKey: 'severity',  chipKey: 'sev' }
             ],
-            onChange: function() { loadSyslog(); }
+            onChange: function(state, prev) { loadSyslog({ prev: prev, state: state }); }
         });
     }
 
@@ -4603,7 +4812,7 @@
                 { id: 'alerts-filter-ack',      stateKey: 'acknowledged', chipKey: 'ack',
                   chipLabel: function(v) { return v === 'false' ? 'Unacknowledged' : (v === 'true' ? 'Acknowledged' : v); } }
             ],
-            onChange: function() { loadAlerts(); }
+            onChange: function(state, prev) { loadAlerts({ prev: prev, state: state }); }
         });
     }
 
@@ -4623,7 +4832,7 @@
                 { id: 'traps-filter-severity', stateKey: 'severity',  chipKey: 'sev' },
                 { id: 'traps-filter-type',     stateKey: 'trap_type', chipKey: 'type' }
             ],
-            onChange: function() { loadTraps(); }
+            onChange: function(state, prev) { loadTraps({ prev: prev, state: state }); }
         });
     }
 
@@ -4727,6 +4936,7 @@
             // syslog / alerts / traps. Re-seed from URL and let them
             // refresh the data + chips.
             if (analyticsPages[page] && analyticsPages[page].reseedFromURL) {
+                cancelOtherPageLoads(page);
                 analyticsPages[page].reseedFromURL();
             } else {
                 loadPageData(page);
@@ -4750,6 +4960,7 @@
         // cross-page deep-link like /admin/alerts?device_id=42 actually applies on
         // a repeat visit (loadPageData's refresh() would reuse stale state).
         if (analyticsPages[page] && analyticsPages[page].reseedFromURL) {
+            cancelOtherPageLoads(page);
             analyticsPages[page].reseedFromURL();
         } else {
             loadPageData(page);
@@ -4771,6 +4982,7 @@
         if (page !== 'connections') stopConnRefresh();
         if (page !== 'devices') stopPurgePolling();
         if (analyticsPages[page] && analyticsPages[page].reseedFromURL) {
+            cancelOtherPageLoads(page);
             analyticsPages[page].reseedFromURL();
         } else {
             loadPageData(page);

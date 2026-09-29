@@ -180,6 +180,7 @@
         .expandable-msg.expanded { max-width: none; white-space: normal; overflow: visible; text-overflow: clip; word-break: break-word; overflow-wrap: anywhere; }
         #maint-modal .form-group textarea { resize: vertical; min-height: 60px; }
         .connection-diagram { min-height: 500px; position: relative; background: var(--fwmon-bg); border-radius: var(--fwmon-radius-sm); overflow: hidden; }
+        .panel-chart-container { position: relative; }
         .panel-chart-container canvas { max-height: 200px; }
         .panel-tunnel-row { cursor: pointer; transition: background 0.15s; }
         .panel-tunnel-row:hover td { background: var(--fwmon-hover); }
@@ -422,7 +423,7 @@
                 <div class="stat-card"><div class="stat-label">Warning/Error</div><div class="stat-value" style="color:var(--fwmon-sig-warn)" id="syslog-warning">--</div></div>
                 <div class="stat-card"><div class="stat-label">Info/Notice</div><div class="stat-value" id="syslog-info">--</div></div>
             </div>
-            <div class="chart-row">
+            <div class="chart-row fwmon-load-host" id="syslog-charts-host">
                 <div class="chart-card">
                     <h3 id="syslog-trend-title">Message Trend (24h)</h3>
                     <canvas id="syslog-trend-chart"></canvas>
@@ -456,6 +457,7 @@
                         <label for="syslog-auto-refresh">Auto-refresh</label>
                     </div>
                 </div>
+                <div class="fwmon-load-host" id="syslog-load-host">
                 <div class="table-wrap" style="max-height: 600px;">
                     <table id="syslog-table">
                         <thead><tr><th>Time</th><th>Source IP</th><th>Hostname</th><th>Severity</th><th>Type</th><th>Message</th></tr></thead>
@@ -463,6 +465,7 @@
                     </table>
                 </div>
                 <div id="syslog-pagination" style="margin-top: 12px; text-align: center;"></div>
+                </div>
             </div>
         </div>
 
@@ -591,7 +594,7 @@
             <!-- Detections panel — good-vs-bad traffic findings from the sFlow
                  detection engine (security / operational / policy). Hidden until
                  there are findings. Each row can be acknowledged (dismissed). -->
-            <div class="card fwmon-flows-detections-card" id="flows-detections-card" hidden>
+            <div class="card fwmon-flows-detections-card fwmon-load-host" id="flows-detections-card" hidden>
                 <div class="card-header fwmon-flows-data-header">
                     <h3 class="fwmon-toptalk-title">Detections<span class="fwmon-toptalk-hint">good-vs-bad traffic findings</span></h3>
                 </div>
@@ -670,6 +673,7 @@
                 </div>
 
                 <!-- Flow Samples view — raw FlowSample rows, paginated -->
+                <div class="fwmon-load-host" id="flows-samples-host">
                 <div class="table-wrap fwmon-flows-view" id="flows-view-samples" style="max-height: 600px;" hidden>
                     <table id="flows-table" class="fwmon-flows-table">
                         <thead><tr><th>Time</th><th>Src IP:Port</th><th></th><th>Dst IP:Port</th><th>Protocol</th><th>Service</th><th>Source</th><th>Event</th><th class="num">Bytes</th><th class="num">Packets</th><th class="num">Rate</th></tr></thead>
@@ -679,6 +683,7 @@
                 <div class="fwmon-flows-loadmore" id="flows-loadmore-row" hidden>
                     <button class="btn secondary" data-action="load-more-flows" id="flows-load-more">Load more</button>
                     <span class="fwmon-flows-loadmore-hint" id="flows-loaded-count">--</span>
+                </div>
                 </div>
             </div>
         </div>
@@ -795,7 +800,7 @@
                 <div class="stat-card"><div class="stat-label">Warning</div><div class="stat-value" style="color:var(--fwmon-sig-warn)" id="alerts-warning">--</div></div>
                 <div class="stat-card"><div class="stat-label">Info</div><div class="stat-value" id="alerts-info">--</div></div>
             </div>
-            <div class="chart-row">
+            <div class="chart-row fwmon-load-host" id="alerts-charts-host">
                 <div class="chart-card">
                     <h3 id="alerts-trend-title">Alert Trend (24h)</h3>
                     <canvas id="alerts-trend-chart"></canvas>
@@ -838,6 +843,7 @@
                     <button class="btn sm secondary" id="alerts-bulk-clear-btn" disabled data-action="clear-alert-selection">Clear</button>
                 </div>
                 <div id="alerts-select-all-matching" style="display:none;margin-bottom:8px;padding:6px 10px;background:var(--fwmon-accent-bg);border:1px solid var(--fwmon-accent);border-radius:6px;color:var(--fwmon-text-dim);font-size:0.82rem;text-align:center;"></div>
+                <div class="fwmon-load-host" id="alerts-load-host">
                 <div class="table-wrap">
                     <table id="alerts-full-table">
                         <thead><tr><th style="width:32px"><input type="checkbox" id="alerts-select-page" data-action="toggle-page-selection" title="Select all on this page"></th><th>Time</th><th>Device</th><th>Site</th><th>Type</th><th>Severity</th><th>Message</th><th>Actions</th></tr></thead>
@@ -845,6 +851,7 @@
                     </table>
                 </div>
                 <div id="alerts-pagination" style="margin-top: 12px; text-align: center;"></div>
+                </div>
 
                 <!-- Bulk-ack notes modal -->
                 <div class="modal fixed top-0 left-0 right-0 bottom-0 bg-black/60 z-[200] items-center justify-center" id="alerts-bulk-ack-modal">
@@ -1041,7 +1048,7 @@
                         <div id="ep-rules-filter" class="flex gap-2"><!-- filter chips --></div>
                         <button class="btn" id="er-create-btn" data-min-role="admin">+ Add rule</button>
                     </div>
-                    <div id="event-rules-table-wrap"><!-- table rendered by admin-event-rules.js --></div>
+                    <div id="event-rules-table-wrap" class="fwmon-load-host"><!-- table rendered by admin-event-rules.js --></div>
                 </div>
                 <div id="ep-tab-assignments" style="display:none">
                     <div id="ep-assignments"><!-- assignment chip lists --></div>
@@ -1098,7 +1105,7 @@
                 <div class="stat-card"><div class="stat-label">Warning</div><div class="stat-value" style="color:var(--fwmon-sig-warn)" id="traps-warning">--</div></div>
                 <div class="stat-card"><div class="stat-label">Info</div><div class="stat-value" id="traps-info">--</div></div>
             </div>
-            <div class="chart-row">
+            <div class="chart-row fwmon-load-host" id="traps-charts-host">
                 <div class="chart-card">
                     <h3 id="traps-freq-title">Trap Frequency (24h)</h3>
                     <canvas id="traps-freq-chart"></canvas>
@@ -1121,6 +1128,7 @@
                         <option value="">All Types</option>
                     </select>
                 </div>
+                <div class="fwmon-load-host" id="traps-load-host">
                 <div class="table-wrap">
                     <table id="traps-table">
                         <thead><tr><th>Time</th><th>Source IP</th><th>Type</th><th>Severity</th><th>Message</th></tr></thead>
@@ -1129,6 +1137,7 @@
                 </div>
                 <div style="margin-top: 12px; text-align: center;">
                     <button class="btn secondary" data-action="load-more-traps">Load More</button>
+                </div>
                 </div>
             </div>
         </div>
@@ -1429,7 +1438,7 @@
                     <span id="report-status" style="color:var(--fwmon-text-faint);font-size:0.85rem;"></span>
                 </div>
             </div>
-            <div class="card" style="padding:6px;overflow:hidden;">
+            <div class="card fwmon-load-host fwmon-load-host--tall" id="report-host" style="padding:6px;overflow:clip;">
                 <iframe id="report-frame" title="Report preview" style="width:100%;height:900px;border:0;background:var(--fwmon-bg);border-radius:8px;display:block;"></iframe>
             </div>
         </div>
@@ -1454,7 +1463,7 @@
                     <button type="submit" class="btn primary sm" id="ti-lookup-btn">Look up</button>
                 </form>
                 <div class="fwmon-ti-error" id="ti-lookup-error" hidden></div>
-                <div id="ti-lookup-result" style="margin-top:12px;"></div>
+                <div id="ti-lookup-result" class="fwmon-load-host" style="margin-top:12px;"></div>
             </div>
 
             <!-- Feed controls: master switch + storm-digest threshold (v0.11.46) -->
@@ -1501,6 +1510,7 @@
                     </select>
                     <button type="button" class="btn sm" id="ti-search-btn">Search</button>
                 </div>
+                <div class="fwmon-load-host" id="ti-search-host">
                 <div class="table-wrap" style="max-height:420px; margin-top:10px;">
                     <table class="fwmon-flows-detections-table" id="ti-search-table">
                         <thead><tr><th>CIDR / IP / AS</th><th>Category</th><th>Source</th><th>Severity</th><th>Expires</th><th></th></tr></thead>
@@ -1511,6 +1521,7 @@
                     <button type="button" class="btn sm" id="ti-search-prev">Prev</button>
                     <span class="fwmon-toptalk-hint" id="ti-search-page">--</span>
                     <button type="button" class="btn sm" id="ti-search-next">Next</button>
+                </div>
                 </div>
 
                 <!-- Manual add (accepts IP, CIDR, or AS number) -->
@@ -1565,6 +1576,7 @@
                     <input type="text" class="search-input" id="audit-filter-action" placeholder="Action route..." autocomplete="one-time-code">
                     <button class="btn secondary sm" id="audit-refresh-btn" data-action="refresh-audit">Refresh</button>
                 </div>
+                <div class="fwmon-load-host" id="audit-load-host">
                 <div class="table-wrap" style="max-height: 600px;">
                     <table id="audit-table">
                         <thead>
@@ -1587,6 +1599,7 @@
                         <button class="btn secondary sm" id="audit-prev" data-action="prev-audit">Prev</button>
                         <button class="btn secondary sm" id="audit-next" data-action="next-audit">Next</button>
                     </div>
+                </div>
                 </div>
             </div>
         </div>

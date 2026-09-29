@@ -527,3 +527,15 @@ mutation check: it survived. With one record in each direction, counting either
 direction gives 1, so the test could not tell the fix from its inverse. **Rule: a new
 test is not done until its mutation check has failed it; run the check before the
 commit. When a rule chooses between two sides, seed the sides with different counts.**
+
+## 2026-09-28 — Gate the commit on QA with `&&`, and prove the baseline green before mutating
+- A `make … > log; echo exit; …; git commit && git push` chain pushed a RED test to a feature branch: `;` does not stop on failure. Always `make qa-targets && git commit … && git push`, and print the failures in the `||` branch.
+- The mutation script reported every mutation KILLED while the unmutated tree was already red (a mis-bounded test slice), so "killed" meant nothing. The script now runs the suite first and aborts on a red baseline. Never read mutation results without a green baseline.
+
+## 2026-09-28 — A guardrail that pins a line does not prove the behaviour; check event ORDER in a browser
+- Round-4 "any open dialog owns Esc" (a registry check) was dead code: the modal's Esc handler runs in the CAPTURE phase and empties the registry before the bubble-phase handler reads it. The substring test passed; the behaviour never held. Fix = `e.defaultPrevented` (the modal calls preventDefault).
+- For any fix that depends on listener order, phase, or timing, verify it in the browser (positive case AND a control) before claiming it — a source-text guardrail only prevents the line from being deleted.
+
+## 2026-09-29 — A test helper can be shared with the PostgreSQL integration lane; run that lane locally before pushing
+- A SQLite-only seeding helper (`pragma_table_info`, `?` placeholders) passed `make qa` and broke CI's Integration (PostgreSQL) job: `seedStatusSeries` is also called by a `//go:build integration` test. Grep callers across build tags (`grep -rn helper( internal`) before changing a shared test helper.
+- The PG lane runs locally: `TEST_PG_DSN="postgres://xphox@localhost:5432/firewall_mon_test?sslmode=disable" go test -tags=integration -p 1 -count=1 -timeout=5m ./internal/database/... ./internal/api/handlers/... ./cmd/poller/...` — run it whenever test helpers or SQL change.

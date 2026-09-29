@@ -9,13 +9,17 @@ import (
 
 func seedStatusSeries(t *testing.T, d *Database, deviceID uint, from, to time.Time, step time.Duration) {
 	t.Helper()
-	var rows []models.SystemStatus
+	var stamps []time.Time
 	for ts := from; !ts.After(to); ts = ts.Add(step) {
-		rows = append(rows, models.SystemStatus{DeviceID: deviceID, Timestamp: ts, CPUUsage: 10, MemoryUsage: 20})
+		stamps = append(stamps, ts)
 	}
-	if err := d.db.CreateInBatches(rows, 500).Error; err != nil {
+	// One row through GORM, the rest cloned from it (cloneRows).
+	tmpl := models.SystemStatus{DeviceID: deviceID, Timestamp: stamps[0], CPUUsage: 10, MemoryUsage: 20}
+	if err := d.db.Create(&tmpl).Error; err != nil {
 		t.Fatalf("seed status: %v", err)
 	}
+	cloneRows(t, d.db, "system_status", tmpl.ID, []string{"timestamp"}, len(stamps)-1,
+		func(i int) []any { return []any{stamps[i+1]} })
 }
 
 // A zoom never shows coarser buckets than the preset it was selected from:

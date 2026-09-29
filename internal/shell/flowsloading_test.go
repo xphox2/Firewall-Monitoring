@@ -28,7 +28,7 @@ func TestFlowsPage_StreamedLoadGuards(t *testing.T) {
 	must("The connection was lost while the report was loading.", "a stream that dies mid-report goes to the error state, not a silent re-run")
 	must("if (gen !== statsGen) return;", "events from an older load must be ignored")
 	must("{ signal: statsAbort.signal }", "the fallback request must be abortable by a newer load")
-	if n := strings.Count(js, "console."); n > 6 {
+	if n := strings.Count(js, "console."); n > 3 {
 		t.Errorf("admin-flows.js has %d console. calls; new code logs through fwmonLog (AUDIT-151)", n)
 	}
 }
@@ -95,7 +95,7 @@ func TestFlowsPage_TopServicesFilterByNumber(t *testing.T) {
 		"renderList('flows-top-services',     d.top_services     || [], 'ports',     'svc',      function(v, r) { return r && r.port ? String(r.port) : ''; });",
 		"var filterVal = toFilterValue(r.key, r);",
 		"params.push('service_port=' + encodeURIComponent(state.svc));",
-		"p.push('service_port=' + encodeURIComponent(state.svc));",
+		"p.push('service_port=' + encodeURIComponent(st.svc));",
 		"markPartialPanels(blocks.concat(d.partial_blocks || []), d.partial_reasons || {});",
 		"el.removeAttribute('data-partial');",
 	} {

@@ -35,15 +35,15 @@ func TestGetPublicInterfaceChart_YearRangeSamplesWholeWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().Truncate(time.Hour)
-	const bytesPerHour = 3_600_000_000 // 8 Mbps
-	rows := make([]models.InterfaceStats, 0, 8700)
-	for i := 8700; i >= 1; i-- {
-		ts := now.Add(-time.Duration(i)*time.Hour + 30*time.Minute) // mid-bucket, see chart_sample_test.go
-		rows = append(rows, models.InterfaceStats{DeviceID: dev.ID, Index: 1, Name: "wan1", Timestamp: ts, InBytes: uint64((8700 - i) * bytesPerHour)})
-	}
-	if err := db.Gorm().CreateInBatches(&rows, 500).Error; err != nil {
+	const bytesPerHour = 3_600_000_000                                                           // 8 Mbps
+	at := func(i int) time.Time { return now.Add(-time.Duration(i)*time.Hour + 30*time.Minute) } // mid-bucket, see chart_sample_test.go
+	// The oldest row goes through GORM; the rest are cloned from it (cloneRows).
+	tmpl := models.InterfaceStats{DeviceID: dev.ID, Index: 1, Name: "wan1", Timestamp: at(8700), InBytes: 0}
+	if err := db.Gorm().Create(&tmpl).Error; err != nil {
 		t.Fatal(err)
 	}
+	cloneRows(t, db.Gorm(), "interface_stats", tmpl.ID, []string{"timestamp", "in_bytes"}, 8699,
+		func(k int) []any { i := 8699 - k; return []any{at(i), uint64((8700 - i) * bytesPerHour)} })
 
 	var stmts []string
 	capture := func(tx *gorm.DB) {
@@ -75,8 +75,8 @@ func TestGetPublicInterfaceChart_YearRangeSamplesWholeWindow(t *testing.T) {
 	if err1 != nil || err2 != nil {
 		t.Fatalf("timestamps not RFC3339 UTC: %q %q", b.Data.Timestamps[0], b.Data.Timestamps[n-1])
 	}
-	if !last.Equal(rows[len(rows)-1].Timestamp) {
-		t.Fatalf("last point %v, want the newest row %v — a local time followed by a literal Z shifts every label", last, rows[len(rows)-1].Timestamp.UTC())
+	if newest := at(1); !last.Equal(newest) {
+		t.Fatalf("last point %v, want the newest row %v — a local time followed by a literal Z shifts every label", last, newest.UTC())
 	}
 	if last.Sub(first) < 8000*time.Hour {
 		t.Fatalf("points span %v, want nearly the whole year", last.Sub(first))
@@ -109,14 +109,19 @@ type publicStatusBody struct {
 func seedStatusRows(t *testing.T, h *Handler, devID uint, span time.Duration, every time.Duration) time.Time {
 	t.Helper()
 	now := time.Now()
-	var rows []models.SystemStatus
+	var stamps []time.Time
 	for ts := now.Add(-span + every/2); ts.Before(now); ts = ts.Add(every) {
-		rows = append(rows, models.SystemStatus{DeviceID: devID, Timestamp: ts, CPUUsage: 5})
+		stamps = append(stamps, ts)
 	}
-	if err := h.db.Gorm().CreateInBatches(&rows, 500).Error; err != nil {
+	// The first row goes through GORM (the real writer's formats and zero
+	// values); the rest are cloned from it — see cloneRows.
+	tmpl := models.SystemStatus{DeviceID: devID, Timestamp: stamps[0], CPUUsage: 5}
+	if err := h.db.Gorm().Create(&tmpl).Error; err != nil {
 		t.Fatal(err)
 	}
-	return rows[len(rows)-1].Timestamp
+	cloneRows(t, h.db.Gorm(), "system_status", tmpl.ID, []string{"timestamp"}, len(stamps)-1,
+		func(i int) []any { return []any{stamps[i+1]} })
+	return stamps[len(stamps)-1]
 }
 
 func statusSpan(t *testing.T, h *Handler, url string) (int, time.Duration) {

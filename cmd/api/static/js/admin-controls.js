@@ -73,21 +73,36 @@
     //   selects:  [{id, stateKey}, ...],
     //   onChange: function() — called after each commit, debounced or not
     // }
+    // Returns { cancelPending, hasPending } — cancelPending drops any debounced
+    // text edit not yet committed (used by restore, so a pending edit cannot
+    // re-commit after a Cancel and wipe the Cancel notice with a redundant
+    // load); hasPending tells whether one is waiting (the user is mid-edit).
     function bindAutoApply(spec) {
-        if (!spec || !spec.onChange) return;
+        var clearers = [];
+        var pendings = [];
+        var handle = {
+            cancelPending: function() { clearers.forEach(function(f) { f(); }); },
+            hasPending: function() { return pendings.some(function(f) { return f(); }); }
+        };
+        if (!spec || !spec.onChange) return handle;
         (spec.inputs || []).forEach(function(input) {
             var el = document.getElementById(input.id);
             if (!el || el.__fwmonAutoBound) return;
             el.__fwmonAutoBound = true;
             var debounceMs = input.debounceMs != null ? input.debounceMs : 400;
             var pending = null;
+            clearers.push(function() { if (pending) { clearTimeout(pending); pending = null; } });
+            pendings.push(function() { return pending !== null; });
             var commit = function() {
                 spec.state[input.stateKey] = el.value.trim();
                 spec.onChange();
             };
             el.addEventListener('input', function() {
                 if (pending) clearTimeout(pending);
-                pending = setTimeout(commit, debounceMs);
+                // Clear the handle when it fires: hasPending() must go false
+                // once the edit has committed, or every later error would be
+                // treated as "the user is mid-edit" and skip the restore.
+                pending = setTimeout(function() { pending = null; commit(); }, debounceMs);
             });
             el.addEventListener('blur', function() {
                 if (pending) { clearTimeout(pending); pending = null; }
@@ -110,6 +125,7 @@
                 spec.onChange();
             });
         });
+        return handle;
     }
 
     // setInputValues — apply state → DOM after URL parsing.
@@ -239,7 +255,10 @@
      *   inputs:         [{ id, stateKey, debounceMs?, chipKey?, chipLabel? }, ...]
      *   selects:        [{ id, stateKey, chipKey?, chipLabel?(v)? }, ...]
      *   defaults:       { hours: 24, ... }     // baseline state
-     *   onChange:       function(state)        // called after every state mutation
+     *   onChange:       function(state, prev)  // called after every state mutation;
+     *                                          // prev is the state committed before
+     *                                          // it (undefined on the first commit),
+     *                                          // for the loader's Cancel to restore()
      * }
      *
      * Returns an object exposing getState() / refresh() for the caller.
@@ -255,8 +274,12 @@
         );
         var state = stateFromURL(d.defaults, allKeys);
         d._state = state;
+        // committed is the query the page last asked for. The handlers write
+        // `state` BEFORE commit() runs, so the previous query is only
+        // available from here; commit() hands it to onChange as `prev`.
+        var committed;
 
-        function commit() {
+        function repaint() {
             setInputValues({ state: state, inputs: d.inputs, selects: d.selects });
             activatePill(d.rangePillsId, state.hours);
             renderChips(d.chipsId, state, chipDefsFrom(d), function(stateKey) {
@@ -265,7 +288,29 @@
                 commit();
             });
             syncURL(state, d.defaults, allKeys);
-            d.onChange(state);
+        }
+
+        function commit() {
+            repaint();
+            var prev = committed;
+            committed = Object.assign({}, state);
+            d.onChange(state, prev);
+        }
+
+        // restore puts a previous query back in the controls, chips and URL
+        // WITHOUT loading — a cancelled load keeps that query's results.
+        var autoApply = null;
+        function restore(snap) {
+            if (!snap) return;
+            // A debounced edit still pending would re-commit after this and
+            // start a redundant load that wipes the Cancel notice.
+            if (autoApply) autoApply.cancelPending();
+            allKeys.forEach(function(k) {
+                state[k] = (k in snap) ? snap[k]
+                    : ((typeof d.defaults[k] === 'number') ? d.defaults[k] : '');
+            });
+            repaint();
+            committed = Object.assign({}, state);
         }
 
         bindRangePills(d.rangePillsId, {
@@ -276,7 +321,7 @@
             }
         });
 
-        bindAutoApply({
+        autoApply = bindAutoApply({
             state:    state,
             inputs:   d.inputs || [],
             selects:  d.selects || [],
@@ -288,7 +333,10 @@
 
         return {
             getState: function() { return Object.assign({}, state); },
+            // hasPendingEdit: a debounced text edit is waiting to commit.
+            hasPendingEdit: function() { return !!(autoApply && autoApply.hasPending()); },
             refresh:  function() { d.onChange(state); },
+            restore:  restore,
             // reseedFromURL — re-read every URL-tracked key into state
             // and re-paint (v0.10.219, bundle H2). Lets the SPA-aware
             // link interceptor change the URL via history.replaceState

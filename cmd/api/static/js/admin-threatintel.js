@@ -40,7 +40,11 @@
         loadFeeds();
         loadStormTuning();
         runSearch(0);
+        // A lookup still running would lose its overlay (and Cancel) to the
+        // clear below — stop it first.
+        AC.chartLoadCancel('ti-lookup');
         var r = el('ti-lookup-result'); if (r) r.innerHTML = '';
+        shownLookupQ = null; // the result area was just cleared
     }
 
     function wire() {
@@ -53,9 +57,11 @@
         var q = el('ti-search-q');
         if (q) q.addEventListener('keydown', function(e) { if (e.key === 'Enter') { e.preventDefault(); runSearch(0); } });
         var prev = el('ti-search-prev');
-        if (prev) prev.addEventListener('click', function() { if (searchOffset > 0) runSearch(searchOffset - PAGE_SIZE); });
+        // Paging continues the search whose rows are shown (lastSearch), not
+        // what is typed in the box, and waits for a search still running.
+        if (prev) prev.addEventListener('click', function() { if (searchOffset > 0) pageSearch(searchOffset - PAGE_SIZE); });
         var next = el('ti-search-next');
-        if (next) next.addEventListener('click', function() { if (searchOffset + PAGE_SIZE < searchTotal) runSearch(searchOffset + PAGE_SIZE); });
+        if (next) next.addEventListener('click', function() { if (searchOffset + PAGE_SIZE < searchTotal) pageSearch(searchOffset + PAGE_SIZE); });
         var addForm = el('ti-add-form');
         if (addForm) addForm.addEventListener('submit', onAdd);
         var body = el('ti-search-body');
@@ -70,17 +76,43 @@
     }
 
     // ---- Lookup ------------------------------------------------------------
+    // The lookup whose result is on screen (null before the first one).
+    var shownLookupQ = null;
+
     function onLookup(ev) {
         ev.preventDefault();
         var q = (el('ti-lookup-q').value || '').trim();
         if (!q) return;
         var errEl = el('ti-lookup-error');
         if (errEl) { errEl.hidden = true; errEl.textContent = ''; }
-        api('/admin/api/threat-intel/lookup?q=' + encodeURIComponent(q))
-            .then(function(res) { renderLookup((res && res.data) || {}); })
-            .catch(function(e) {
-                if (errEl) { errEl.textContent = (e && e.message) || 'Lookup failed.'; errEl.hidden = false; }
-            });
+        var host = el('ti-lookup-result');
+        AC.chartLoad(host, function(signal) {
+            return api('/admin/api/threat-intel/lookup?q=' + encodeURIComponent(q), { signal: signal });
+        }, { key: 'ti-lookup', label: 'Looking up…', escScope: el('ti-lookup-form') }).then(function(r) {
+            if (r.superseded) return;
+            if (r.cancelled) {
+                // The box goes back to the lookup whose result is shown.
+                if (shownLookupQ !== null) el('ti-lookup-q').value = shownLookupQ;
+                AC.chartNotice(host, shownLookupQ !== null ? 'Cancelled — showing the previous results' : 'Cancelled', { dim: false, onRetry: function() {
+                    el('ti-lookup-q').value = q; // re-apply the cancelled lookup
+                    onLookup({ preventDefault: function() {} });
+                } });
+                return;
+            }
+            if (r.error) {
+                // The reason (often "not an IP or ASN") stays next to the box,
+                // and the typed text is kept so it can be corrected; the notice
+                // over the previous result offers Retry.
+                if (errEl) { errEl.textContent = (r.error && r.error.message) || 'Lookup failed.'; errEl.hidden = false; }
+                AC.chartNotice(host, shownLookupQ !== null ? 'Could not look up — showing the previous result' : 'Could not look up', { dim: false, onRetry: function() {
+                    el('ti-lookup-q').value = q;
+                    onLookup({ preventDefault: function() {} });
+                } });
+                return;
+            }
+            shownLookupQ = q;
+            renderLookup((r.data && r.data.data) || {});
+        });
     }
 
     function renderLookup(d) {
@@ -237,16 +269,131 @@
     }
 
     // ---- Search ------------------------------------------------------------
-    function runSearch(offset) {
-        searchOffset = offset < 0 ? 0 : offset;
-        var params = 'offset=' + searchOffset + '&limit=' + PAGE_SIZE +
-            '&q=' + encodeURIComponent((el('ti-search-q').value || '').trim()) +
-            '&source=' + encodeURIComponent((el('ti-search-source').value || '').trim()) +
-            '&category=' + encodeURIComponent((el('ti-search-category').value || '').trim()) +
-            '&severity=' + encodeURIComponent(el('ti-search-severity').value || '');
-        api('/admin/api/threat-intel/search?' + params)
-            .then(function(res) { renderSearch((res && res.data) || {}); })
-            .catch(function(e) { window.fwmonLog && window.fwmonLog.error('threat-intel search failed', e); });
+    // The search controls have no state object: lastSearch is the query whose
+    // results are on screen, written back into the controls if a newer search
+    // is cancelled. The offset changes only when results arrive.
+    var lastSearch = null;
+    function searchControls() {
+        return {
+            q: (el('ti-search-q').value || '').trim(),
+            source: (el('ti-search-source').value || '').trim(),
+            category: (el('ti-search-category').value || '').trim(),
+            severity: el('ti-search-severity').value || ''
+        };
+    }
+    function setSearchControls(c) {
+        el('ti-search-q').value = c.q;
+        el('ti-search-source').value = c.source;
+        el('ti-search-category').value = c.category;
+        el('ti-search-severity').value = c.severity;
+    }
+
+    // A refresh asked for while a search runs (after a delete) is deferred to
+    // when it settles — a cancelled/failed search keeps the old rows.
+    var searchRefreshDeferred = false;
+    // Whether a deferred refresh goes back to page 1 (after an add) or re-shows
+    // the page on screen WHEN IT RUNS (after a delete). The intent is kept, not
+    // the offset: a newer search or page change in between must not be paired
+    // with an offset from before it.
+    var searchRefreshToStart = false;
+    // A quiet refresh (no overlay) does not block paging — the new page shows
+    // the change anyway; the interrupted refresh re-arms itself.
+    var searchQuietRunning = false;
+    // Set when a user paging load starts: if it supersedes a deferred refresh,
+    // the refresh re-arms WITHOUT its back-to-page-1 intent — the page the user
+    // moved to already shows the change, and must not be yanked back.
+    var searchPagingTookOver = false;
+    function pageSearch(offset, isRefresh) {
+        if (AC.chartLoadBusy('ti-search', true) && !(searchQuietRunning && !isRefresh)) { if (isRefresh) { searchRefreshDeferred = true; searchRefreshToStart = searchRefreshToStart || offset === 0; } return; }
+        if (!isRefresh) searchPagingTookOver = true;
+        runSearch(offset, lastSearch, isRefresh);
+    }
+    function runDeferredSearchRefresh() {
+        if (!searchRefreshDeferred || AC.chartLoadBusy('ti-search', true)) return;
+        searchRefreshDeferred = false; // consumed either way: init() reloads on return
+        var toStart = searchRefreshToStart;
+        searchRefreshToStart = false;
+        var tiPage = document.getElementById('page-threat-intel');
+        if (!tiPage || !tiPage.classList.contains('active')) return;
+        // Quiet (no overlay): it neither flashes nor wipes the Cancel/error
+        // notice (and its Retry) of the search it waited for.
+        runSearch(toStart ? 0 : searchOffset, lastSearch, true, true);
+    }
+
+    // The search form (its inputs) — Esc there cancels the search; Esc in the
+    // manual-add form below does not.
+    function searchForm() {
+        var q = el('ti-search-q');
+        return (q && q.closest) ? (q.closest('.fwmon-ti-form') || q.parentNode) : [];
+    }
+    function typingNewSearch(failed) {
+        var a = document.activeElement;
+        var ids = { 'ti-search-q': 'q', 'ti-search-source': 'source', 'ti-search-category': 'category' };
+        var k = a && ids[a.id];
+        return !!k && (a.value || '').trim() !== (failed[k] || '');
+    }
+    // Deferred refreshes run after the current search's .then has finished.
+    function runDeferredSearchRefreshSoon() { setTimeout(runDeferredSearchRefresh, 0); }
+
+    // snap (optional): the query to run — paging passes lastSearch; a new
+    // search reads the controls.
+    // isRefresh: this search re-shows the list after a delete; if another
+    // search interrupts it, the refresh is re-armed for when that one settles.
+    // quiet: a deferred refresh — no overlay (so no Cancel), errors toast.
+    function runSearch(offset, snap, isRefresh, quiet) {
+        var target = offset < 0 ? 0 : offset;
+        var query = snap ? Object.assign({}, snap) : searchControls();
+        var params = 'offset=' + target + '&limit=' + PAGE_SIZE +
+            '&q=' + encodeURIComponent(query.q) +
+            '&source=' + encodeURIComponent(query.source) +
+            '&category=' + encodeURIComponent(query.category) +
+            '&severity=' + encodeURIComponent(query.severity);
+        var host = el('ti-search-host');
+        if (quiet) searchQuietRunning = true;
+        AC.chartLoad(quiet ? [] : host, function(signal) {
+            return api('/admin/api/threat-intel/search?' + params, { signal: signal });
+        }, { key: 'ti-search', label: 'Searching…', escScope: searchForm() }).then(function(r) {
+            if (quiet) searchQuietRunning = false;
+            if (!isRefresh) searchPagingTookOver = false;
+            if (r.superseded) {
+                if (isRefresh && AC.chartLoadBusy('ti-search', true)) {
+                    searchRefreshDeferred = true;
+                    searchRefreshToStart = searchPagingTookOver ? false : (searchRefreshToStart || target === 0);
+                }
+                // Left the page (nothing newer took over): init() reloads on
+                // return, so a deferred refresh is consumed, not replayed.
+                else if (!AC.chartLoadBusy('ti-search', true)) { searchRefreshDeferred = false; searchRefreshToStart = false; }
+                return;
+            }
+            runDeferredSearchRefreshSoon();
+            // A paging load (snap) never changed the controls, so neither its
+            // Cancel nor its Retry touches them — the box may hold a new,
+            // unsubmitted search.
+            var paging = !!snap;
+            var retry = function() { if (!paging) setSearchControls(query); runSearch(target, paging ? query : undefined); };
+            if (r.cancelled) {
+                if (lastSearch && !paging) setSearchControls(lastSearch);
+                AC.chartNotice(host, lastSearch ? 'Cancelled — showing the previous results' : 'Cancelled', { dim: false, onRetry: retry });
+                return;
+            }
+            if (r.error && quiet) {
+                if (window.fwmonLog) window.fwmonLog.error('threat-intel refresh failed', r.error);
+                AC.showError('Could not refresh the indicator list');
+                return;
+            }
+            if (r.error) {
+                if (window.fwmonLog) window.fwmonLog.error('threat-intel search failed', r.error);
+                // Like Cancel, the controls go back to the search whose rows
+                // are shown — unless the user is typing the next one (a field
+                // of the form has focus and differs from the failed query).
+                if (lastSearch && !paging && !typingNewSearch(query)) setSearchControls(lastSearch);
+                AC.chartNotice(host, 'Could not load results', { dim: false, onRetry: retry });
+                return;
+            }
+            searchOffset = target;
+            lastSearch = query;
+            renderSearch((r.data && r.data.data) || {});
+        });
     }
 
     function renderSearch(d) {
@@ -306,7 +453,11 @@
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
         }).then(function() {
             el('ti-add-cidr').value = ''; el('ti-add-source').value = ''; el('ti-add-expires').value = '';
-            runSearch(0); loadFeeds();
+            // Like a delete: refresh the shown search (deferred while one runs,
+            // nothing when the page was left — init() reloads on return).
+            var tiPage = document.getElementById('page-threat-intel');
+            if (tiPage && tiPage.classList.contains('active')) pageSearch(0, true);
+            loadFeeds();
         }).catch(function(e) {
             if (errEl) { errEl.textContent = (e && e.message) || 'Failed to add — check the value.'; errEl.hidden = false; }
         }).then(function() { if (btn) btn.disabled = false; });
@@ -319,7 +470,12 @@
         if (!id) return;
         btn.disabled = true;
         api('/admin/api/flows/threat-intel/' + encodeURIComponent(id), { method: 'DELETE' })
-            .then(function() { runSearch(searchOffset); loadFeeds(); })
+            .then(function() {
+                // Like an add: nothing when the page was left (init() reloads).
+                var tiPage = document.getElementById('page-threat-intel');
+                if (tiPage && tiPage.classList.contains('active')) pageSearch(searchOffset, true);
+                loadFeeds();
+            })
             .catch(function(e) { window.fwmonLog && window.fwmonLog.error('threat-intel delete failed', e); btn.disabled = false; });
     }
 

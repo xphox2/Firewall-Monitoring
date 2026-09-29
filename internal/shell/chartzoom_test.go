@@ -25,12 +25,14 @@ func TestChartLoad_OverlayContract(t *testing.T) {
 	must("if (chartLoads[key]) chartLoads[key].supersede();", "a newer load for the same chart supersedes the old one")
 	must("if (done) return;", "a result arriving after Cancel or supersede is ignored")
 	must("run(ctrl ? ctrl.signal : undefined)", "the fetch gets the abort signal, so Cancel stops the request")
-	must("if (!owned || list.some(function(c) { return c.contains(t); })) cancel();", "Esc cancels")
+	must("if (!field || list.concat(escScope).some(function(c) { return c.contains(t); })) cancel();", "Esc cancels, also from the controls in opts.escScope")
+	must("if (t && t.closest && t.closest('[role=\"dialog\"], .fwmon-confirm-overlay')) return;", "Esc inside a dialog closes the dialog and never cancels the page's load")
+	must("if (overlays.length) document.addEventListener('keydown', onKey);", "a load with no visible overlay cannot be stopped by an Esc meant for something else")
 	must("c.setAttribute('aria-busy', 'true');", "the chart is marked busy while loading")
 	must("o.setAttribute('role', 'status');", "the overlay is announced")
 	must("chartLoad: chartLoad,", "exported")
 	must("chartNotice: chartNotice,", "exported")
-	must("t.closest('[role=\"dialog\"], .fwmon-confirm-overlay, input, textarea, select')", "Esc cancels unless focus is in something that owns Esc (a clicked range button keeps focus)")
+	must("var field = t && t.closest && t.closest('input, textarea, select');", "Esc cancels unless focus is in a field that owns Esc (a clicked range button keeps focus)")
 	must(`'<span class="fwmon-chart-overlay-elapsed" aria-live="off"></span>'`, "the per-second counter is not re-announced")
 }
 

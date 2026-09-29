@@ -10,7 +10,12 @@
 
     var AC = window.AdminCommon;
     var bound = false;
-    var loadedOnce = false;
+    var loadedOnce = false; // a report is displayed
+    // The controls name a report that is not the one displayed (a build was
+    // stopped by leaving the page, or the theme changed while hidden): the
+    // next init() rebuilds. Kept apart from loadedOnce, which the period
+    // select and Day/Night switch rely on to know a report is on screen.
+    var rebuildOnInit = false;
     var lastHtml = '';
     // Preview theme (v0.11.116): defaults to the SPA's Day/Night choice, and
     // the pills override per-preview. Emailed reports use the Email Theme
@@ -62,17 +67,56 @@
         } catch (e) { /* cross-origin guard — srcdoc is same-origin so this won't fire */ }
     }
 
+    // shown is the period/theme/layout of the report on screen; a cancelled
+    // load puts those choices back so the controls match what is displayed.
+    var shown = null;
+
+    function applyChoices(c) {
+        var sel = document.getElementById('report-period');
+        if (sel) sel.value = c.period;
+        previewTheme = c.theme;
+        previewLayout = c.layout;
+        // "Follow the app theme" no longer names the report on screen when
+        // the app theme changed since it was built: pin the theme it has.
+        if (!previewTheme && c.resolved && c.resolved !== theme()) previewTheme = c.resolved;
+        paintThemePills();
+    }
+
     function loadPreview() {
         var f = frame();
         if (!f) return;
-        setStatus('Loading…');
+        var host = document.getElementById('report-host');
+        var want = { period: period(), theme: previewTheme, layout: previewLayout, resolved: theme() };
+        // Retry puts the cancelled/failed choices back first: loadPreview reads
+        // the controls, which Cancel/error just reverted.
+        // resolved is dropped: a Retry must follow the app theme as it is now,
+        // not pin the one in force when the cancelled build started.
+        function retryWanted() { applyChoices(Object.assign({}, want, { resolved: '' })); loadPreview(); }
         // AdminCommon.apiFetch already parses JSON and returns the body object
         // (it calls res.json() internally) — do NOT call .json() again here.
-        AC.apiFetch('/admin/api/reports/preview?period=' + encodeURIComponent(period()) + '&theme=' + encodeURIComponent(theme()) + '&layout=' + encodeURIComponent(previewLayout))
-            .then(function (json) {
+        var url = '/admin/api/reports/preview?period=' + encodeURIComponent(want.period) + '&theme=' + encodeURIComponent(theme()) + '&layout=' + encodeURIComponent(want.layout);
+        AC.chartLoad(host, function (signal) { return AC.apiFetch(url, { signal: signal }); },
+            { key: 'report-preview', label: 'Building the report…', escScope: document.getElementById('page-reports') })
+            .then(function (r) {
+                if (r.superseded) {
+                    // Stopped by leaving the page (nothing newer took over):
+                    // the controls name a report that never rendered, so the
+                    // next visit must build it — init() only loads when this
+                    // is false (same as the stale-theme case below).
+                    if (!AC.chartLoadBusy('report-preview', true)) rebuildOnInit = true;
+                    return;
+                }
+                if (r.cancelled) {
+                    if (shown) applyChoices(shown);
+                    AC.chartNotice(host, loadedOnce ? 'Cancelled — showing the previous report' : 'Cancelled', { onRetry: retryWanted });
+                    return;
+                }
+                if (r.error) throw r.error;
+                var json = r.data;
                 if (!json || !json.success || !json.data || !json.data.html) {
                     throw new Error((json && json.error) || 'Empty report');
                 }
+                shown = want;
                 lastHtml = json.data.html;
                 // Write into the iframe's about:blank document (same-origin)
                 // rather than using srcdoc: the server CSP has no frame-src and
@@ -87,11 +131,11 @@
                 resizeFrame();
                 setTimeout(resizeFrame, 250);
                 loadedOnce = true;
-                setStatus('');
             })
             .catch(function (err) {
-                setStatus('');
-                AC.showError('Failed to load report: ' + err.message);
+                // Like Cancel: the controls go back to the report on screen.
+                if (shown) applyChoices(shown);
+                AC.chartNotice(host, 'Could not build the report: ' + ((err && err.message) || 'error'), { onRetry: retryWanted });
             });
     }
 
@@ -113,7 +157,9 @@
         var a = document.createElement('a');
         var stamp = new Date().toISOString().slice(0, 10);
         a.href = url;
-        a.download = 'firewall-report-' + period() + '-' + stamp + '.html';
+        // Named after the report on screen (lastHtml), not a period whose
+        // build is still running or was cancelled.
+        a.download = 'firewall-report-' + ((shown && shown.period) || period()) + '-' + stamp + '.html';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -156,7 +202,10 @@
         if (pdf) pdf.addEventListener('click', exportPdf);
         if (dl) dl.addEventListener('click', downloadHtml);
         if (send) send.addEventListener('click', sendNow);
-        if (sel) sel.addEventListener('change', function () { if (loadedOnce) loadPreview(); });
+        // Always build: after a first-load Cancel/error nothing is displayed
+        // (loadedOnce false), and a change must still load — not wait for a
+        // Retry that would put the old period back.
+        if (sel) sel.addEventListener('change', function () { loadPreview(); });
         var pills = document.getElementById('report-theme-pills');
         if (pills) pills.addEventListener('click', function (ev) {
             var b = ev.target.closest('[data-report-theme]');
@@ -180,17 +229,22 @@
         window.addEventListener('fwmon:themechange', function () {
             if (previewTheme) return; // explicit pill choice wins
             paintThemePills();
-            if (!loadedOnce) return;
             var page = document.getElementById('page-reports');
+            if (!loadedOnce) {
+                // The first build is still running in the old theme: rebuild
+                // it in the new one so the pills match what renders.
+                if (page && page.classList.contains('active') && AC.chartLoadBusy('report-preview', true)) loadPreview();
+                return;
+            }
             if (page && page.classList.contains('active')) loadPreview();
-            else loadedOnce = false; // stale — init() refetches on next visit
+            else rebuildOnInit = true; // stale — init() refetches on next visit
         });
     }
 
     function init() {
         bind();
         paintThemePills();
-        if (!loadedOnce) loadPreview();
+        if (!loadedOnce || rebuildOnInit) { rebuildOnInit = false; loadPreview(); }
     }
 
     window.AdminReports = { init: init };

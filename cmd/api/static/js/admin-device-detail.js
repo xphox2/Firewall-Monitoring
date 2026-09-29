@@ -1996,44 +1996,83 @@
     });
 
     // CFGDIFF-UI:BEGIN
+    // The diff can take seconds on a large config, so the modal opens at once
+    // with the loading overlay (Cancel) on its body, and Compare is disabled
+    // until the load settles — a double-click used to fire parallel requests.
+    // Closing the modal (button, Esc, backdrop) stops the load silently via
+    // fwmon:modalclose, and a result that lands after the close is dropped
+    // rather than re-opening the modal.
+    function showConfigDiffError(title, detail) {
+        var body = document.getElementById('config-diff-body');
+        if (!body) return;
+        body.innerHTML = '<div class="cfgdiff-placeholder cfgdiff-error">' +
+            '<strong>' + esc(title) + '</strong><br>' + esc(detail) + '</div>';
+    }
+
     function openConfigDiff(fromID, toID) {
         fwmonLog.debug('[diff] opening compare from=' + fromID + ' to=' + toID + ' device=' + deviceId);
+        var modal = document.getElementById('config-diff-modal');
+        var body  = document.getElementById('config-diff-body');
+        if (!modal || !body) return;
+        ['config-diff-verdict', 'config-diff-controls', 'config-diff-note'].forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el) { el.hidden = true; el.innerHTML = ''; }
+        });
+        // The modal opens before the data, so the header must name the pair
+        // being loaded — not the previous comparison — through a Cancel/error.
+        var metaEl = document.getElementById('config-diff-meta');
+        if (metaEl) metaEl.textContent = 'rev #' + fromID + ' \u2192 rev #' + toID;
+        // The previous comparison is no longer on screen: drop it, so nothing
+        // (the resize re-render below) can paint it under the new header.
+        cdState.data = null;
+        cdState.view = 'obj';
+        cdState.cache = { obj: null, unified: null, split: null };
+        body.innerHTML = '<div class="cfgdiff-placeholder">Loading diff…</div>';
+        modal.classList.remove('hidden');
+        AC.openModal('config-diff-modal');
+
+        var btn = document.getElementById('configCompareBtn');
+        if (btn) btn.disabled = true;
+
         var url = '/admin/api/devices/' + deviceId + '/config-history/diff?from=' + fromID + '&to=' + toID;
-        fetch(url, { credentials: 'same-origin' })
-            .then(function(r) {
+        AC.chartLoad(body, function(signal) {
+            return fetch(url, { credentials: 'same-origin', signal: signal }).then(function(r) {
                 fwmonLog.debug('[diff] HTTP ' + r.status + ' ' + r.statusText);
                 return r.json();
-            })
-            .then(function(result) {
-                fwmonLog.debug('[diff] response:', result);
-                if (!result.success || !result.data) {
-                    var modal = document.getElementById('config-diff-modal');
-                    var body  = document.getElementById('config-diff-body');
-                    if (modal && body) {
-                        body.innerHTML = '<div class="cfgdiff-placeholder cfgdiff-error">' +
-                            '<strong>Server returned an error.</strong><br>' +
-                            esc(String((result && result.error) || 'unknown')) +
-                            '</div>';
-                        modal.classList.remove('hidden');
-                        AC.openModal('config-diff-modal');
-                    }
-                    return;
-                }
-                renderConfigDiff(result.data);
-            }).catch(function(e) {
-                fwmonLog.error('[diff] fetch failed:', e);
-                var modal = document.getElementById('config-diff-modal');
-                var body  = document.getElementById('config-diff-body');
-                if (modal && body) {
-                    body.innerHTML = '<div class="cfgdiff-placeholder cfgdiff-error">' +
-                        '<strong>Failed to load diff.</strong><br>' +
-                        esc(String(e && e.message || e)) +
-                        '</div>';
-                    modal.classList.remove('hidden');
-                    AC.openModal('config-diff-modal');
-                }
             });
+        }, { key: 'config-diff', label: 'Computing diff…' }).then(function(r) {
+            // A superseded load returns FIRST: the newer load owns Compare's
+            // disabled state until it settles (a close re-enables it below).
+            if (r.superseded) return;
+            updateConfigCompareButton();
+            if (!modal.classList.contains('active')) return;
+            if (r.cancelled) {
+                body.innerHTML = '<div class="cfgdiff-placeholder">Cancelled.</div>';
+                AC.chartNotice(body, 'Cancelled', { dim: false, onRetry: function() { openConfigDiff(fromID, toID); } });
+                return;
+            }
+            if (r.error) {
+                fwmonLog.error('[diff] fetch failed:', r.error);
+                showConfigDiffError('Failed to load diff.', String(r.error && r.error.message || r.error));
+                AC.chartNotice(body, 'Could not load results', { dim: false, onRetry: function() { openConfigDiff(fromID, toID); } });
+                return;
+            }
+            var result = r.data;
+            fwmonLog.debug('[diff] response:', result);
+            if (!result || !result.success || !result.data) {
+                showConfigDiffError('Server returned an error.', String((result && result.error) || 'unknown'));
+                AC.chartNotice(body, 'Could not load results', { dim: false, onRetry: function() { openConfigDiff(fromID, toID); } });
+                return;
+            }
+            renderConfigDiff(result.data);
+        });
     }
+
+    document.addEventListener('fwmon:modalclose', function(e) {
+        if (!e.target || e.target.id !== 'config-diff-modal') return;
+        AC.chartLoadCancel('config-diff');
+        updateConfigCompareButton();
+    });
 
     //
     // Config-diff modal. Colour is NEVER selected here — the renderer emits
@@ -2668,7 +2707,10 @@
     // re-rendering.
     window.addEventListener('resize', function() {
         var modal = document.getElementById('config-diff-modal');
-        if (!modal || modal.classList.contains('hidden')) return;
+        if (!modal || !modal.classList.contains('active')) return;
+        // Only a rendered diff is re-rendered: never while a new one loads,
+        // nor over a Cancelled/failed notice (its Retry would be wiped).
+        if (!cdState.data || AC.chartLoadBusy('config-diff', true)) return;
         if (cdState.view !== 'raw') return;
         clearTimeout(window.__cdResizeT);
         window.__cdResizeT = setTimeout(function() { renderActiveView(); }, 150);

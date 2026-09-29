@@ -59,7 +59,21 @@
                 // showDetail so the tab's async profile-filtered reload can't
                 // race the lookup.
                 if (pending.editId) {
-                    window.FwmonEventRules.loadRules(0).then(function () {
+                    window.FwmonEventRules.loadRules(0).then(function (lr) {
+                        // Keep the prefill for the next visit, but still show the page.
+                        if (!lr || !lr.ok) {
+                            var epPage = document.getElementById('page-event-rules');
+                            var onPage = epPage && epPage.classList.contains('active');
+                            // Kept for the next visit on a real failure or when
+                            // the page was left — not when the user simply
+                            // clicked on (a Rules tab superseded the lookup).
+                            if (!(lr && lr.superseded) || !onPage) window.FwmonEventRules.keepPendingPrefill(pending);
+                            // Superseded = the user left the page: routing now
+                            // would rewrite THAT page's URL (showGrid clears the
+                            // hash with replaceState).
+                            if (!(lr && lr.superseded) && epPage && epPage.classList.contains('active')) routeFromHash();
+                            return;
+                        }
                         var r = window.FwmonEventRules.getRules().find(function (x) { return x.id === pending.editId; });
                         window.FwmonEventRules.openFromPrefill(pending);
                         showDetail((r && r.profile_id) || (defaultProfile() || {}).id || 0, 'rules');
@@ -129,6 +143,7 @@
     // ---- State A: grid -----------------------------------------------------
 
     function showGrid() {
+        AC.chartLoadCancel('ep-effective'); // a lookup for a view being left
         setHash('');
         setView('grid');
         loadProfiles().then(function () {
@@ -400,12 +415,14 @@
     // then any alert-action rule, lowest priority/id. If the operator deleted
     // the seed, prefills a fresh copy from the shipped template endpoint.
     // ONE unfiltered load feeds both the pick and the modal lookup (a second
-    // fetch could silently go stale — loadRules swallows transient errors and
-    // resolves with the previous profile-filtered list). The modal opens
+    // fetch could silently go stale). loadRules resolves ok only when the
+    // unfiltered list actually loaded — on an error or Cancel the in-memory
+    // list is still the previous profile-filtered one, so nothing opens. The modal opens
     // BEFORE showDetail so the Rules tab's async profile-filtered reload
     // can't race the in-memory lookup (same discipline as pending.editId).
     function openCustomize(type) {
-        window.FwmonEventRules.loadRules(0).then(function () {
+        window.FwmonEventRules.loadRules(0).then(function (lr) {
+            if (!lr || !lr.ok) return;
             var all = window.FwmonEventRules.getRules() || [];
             var defId = (defaultProfile() || {}).id || 0;
             var pick = function (pid) {
@@ -600,6 +617,9 @@
     // ---- State C: effective view -------------------------------------------
 
     function showEffective() {
+        // The view is rebuilt below; a lookup still running would render into
+        // the old node and record its scope as shown.
+        AC.chartLoadCancel('ep-effective');
         setHash('#effective');
         setView('effective');
         var body = $('ep-effective-body');
@@ -611,6 +631,9 @@
             AC.apiFetch(API + '/devices').catch(function () { return { data: [] }; }),
             AC.apiFetch(API + '/sites').catch(function () { return { data: [] }; })
         ]).then(function (r) {
+            // Picks made while the lists loaded started lookups against the
+            // old view, which is about to be replaced: stop them.
+            AC.chartLoadCancel('ep-effective');
             allDevices = r[0].data || [];
             allSites = r[1].data || [];
             body.innerHTML =
@@ -625,19 +648,61 @@
                 '<div class="form-group"><label for="ep-eff-site">…or site</label>' +
                 '<select id="ep-eff-site"><option value="">— pick a site —</option>' +
                 allSites.map(function (s) { return '<option value="' + s.id + '">' + esc(s.name) + '</option>'; }).join('') + '</select></div></div>' +
-                '<div id="ep-eff-result"></div>';
+                '<div id="ep-eff-result" class="fwmon-load-host"></div>';
             var dSel = $('ep-eff-device'), sSel = $('ep-eff-site');
             if (selected) dSel.value = selected;
+            // Nothing is displayed yet, so a cancelled lookup clears the pickers.
+            effShown = { device: '', site: '' };
             dSel.addEventListener('change', function () { if (dSel.value) { sSel.value = ''; loadEffective('device_id=' + dSel.value); } });
             sSel.addEventListener('change', function () { if (sSel.value) { dSel.value = ''; loadEffective('site_id=' + sSel.value); } });
         });
     }
 
+    // effShown is the device/site whose coverage is on screen — a cancelled
+    // lookup puts the pickers back to it so they never name a scope whose
+    // result is not the one displayed.
+    var effShown = { device: '', site: '' };
+
     function loadEffective(q) {
         var out = $('ep-eff-result');
-        out.innerHTML = '<div style="color:var(--fwmon-text-faint);padding:12px">Resolving…</div>';
-        AC.apiFetch(API + '/event-config/effective?' + q).then(function (res) {
-            var d = res.data || {};
+        if (!out) return;
+        if (!out.firstChild) out.innerHTML = '<div style="color:var(--fwmon-text-faint);padding:12px">Resolving…</div>';
+        var dSel = $('ep-eff-device'), sSel = $('ep-eff-site');
+        var want = { device: dSel ? dSel.value : '', site: sSel ? sSel.value : '' };
+        AC.chartLoad(out, function (signal) {
+            return AC.apiFetch(API + '/event-config/effective?' + q, { signal: signal });
+        }, { key: 'ep-effective', label: 'Resolving…', escScope: [dSel, sSel] }).then(function (r) {
+            if (r.superseded) return;
+            if (r.cancelled) {
+                if (dSel) dSel.value = effShown.device;
+                if (sSel) sSel.value = effShown.site;
+                // Nothing has rendered yet on the first lookup — only the placeholder.
+                var had = !!out.querySelector('.ep-matrix-row, table, [data-ep-openprofile]');
+                if (!had) out.innerHTML = ''; // no "Resolving…" left behind with nothing running
+                AC.chartNotice(out, had ? 'Cancelled — showing the previous results' : 'Cancelled', { dim: false, onRetry: function () {
+                    if (dSel) dSel.value = want.device;
+                    if (sSel) sSel.value = want.site;
+                    loadEffective(q);
+                } });
+                return;
+            }
+            if (r.error) {
+                // Like Cancel: the pickers go back to the scope whose result is
+                // shown, and no "Resolving…" is left behind.
+                if (!out.querySelector('.ep-matrix-row, table, [data-ep-openprofile]')) out.innerHTML = '';
+                if (dSel) dSel.value = effShown.device;
+                if (sSel) sSel.value = effShown.site;
+                AC.chartNotice(out, 'Could not load results', { dim: false, onRetry: function () {
+                    if (dSel) dSel.value = want.device;
+                    if (sSel) sSel.value = want.site;
+                    loadEffective(q);
+                } });
+                return;
+            }
+            if (!out.isConnected) return; // a view since replaced
+            effShown = want;
+            var res = r.data;
+            var d = (res && res.data) || {};
             var chain = (d.chain || []).map(function (l) {
                 return '<span class="ep-layer-badge ' + esc(l.layer) + '">' + esc(l.layer.toUpperCase()) + '</span> ' +
                     '<a href="#profile-' + l.profile_id + '/toggles" data-ep-openprofile="' + l.profile_id + '" style="margin-right:14px">' + esc(l.profile_name || ('#' + l.profile_id)) + '</a>';
@@ -669,7 +734,7 @@
                 '<div style="margin:10px 0 16px"><span style="color:var(--fwmon-text-faint);font-size:0.8rem;margin-right:10px">Chain:</span>' + chain + '</div>' +
                 '<h3 style="font-size:0.9rem;margin:14px 0 4px">Alert type toggles</h3>' + togglesHTML +
                 '<h3 style="font-size:0.9rem;margin:18px 0 4px">Match rules that apply (evaluation order)</h3>' + rulesHTML;
-        }).catch(function (err) { out.innerHTML = ''; AC.showError('Effective lookup failed: ' + err.message); });
+        });
     }
 
     // ---- profile modal (create / rename / clone) ---------------------------
@@ -802,6 +867,9 @@
     window.FwmonEventProfiles = {
         init: init,
         // getProfiles feeds the rule builder's profile select + entity modals.
-        getProfiles: function () { return profiles; }
+        getProfiles: function () { return profiles; },
+        // setRulesFilter lets the rules module put the Rules-tab filter back
+        // after a cancelled load, so the next render keeps the shown filter.
+        setRulesFilter: function (f) { rulesFilter = f; }
     };
 })();

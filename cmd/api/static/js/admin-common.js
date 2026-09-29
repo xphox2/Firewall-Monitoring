@@ -1391,6 +1391,9 @@
         if (!modal) return;
         var id = modal.id;
         modal.classList.remove('active');
+        // Lets a load that belongs to the dialog stop when it closes, however it
+        // closed (button, Esc, action).
+        try { modal.dispatchEvent(new CustomEvent('fwmon:modalclose', { bubbles: true })); } catch (e) { /* old browsers */ }
         var record = __fwmonOpenModals[id];
         if (!record) return;
         document.removeEventListener('keydown', record.keyHandler, true);
@@ -2012,6 +2015,8 @@
     //   run(signal): returns a promise for the data; pass signal to fetch.
     //   opts.key:   loads with the same key supersede each other.
     //   opts.label: the overlay text.
+    //   opts.escScope: element(s) where focus also lets Esc cancel — the
+    //               filter controls that started the load keep focus.
     //
     // Resolves {ok: true, data} | {cancelled: true} | {error}. It never
     // rejects. Every exit clears the timer, the elapsed interval, the Esc
@@ -2036,6 +2041,7 @@
     function chartLoad(containers, run, opts) {
         opts = opts || {};
         var list = chartContainers(containers);
+        var escScope = chartContainers(opts.escScope || []);
         var key = opts.key || (list[0] && list[0].id) || 'chart';
         if (chartLoads[key]) chartLoads[key].supersede();
 
@@ -2044,14 +2050,28 @@
         var resolveOuter;
         var result = new Promise(function(res) { resolveOuter = res; });
 
-        // Esc cancels the load unless focus is somewhere that owns Esc (a
-        // dialog or a text field). A clicked range button keeps focus, so the
-        // test is "not owned elsewhere", not "focus inside the chart".
+        // Esc cancels the load unless focus is somewhere that owns Esc. A
+        // dialog always does (its Esc closes it — a load that belongs to the
+        // dialog stops via fwmon:modalclose); a text field or select does
+        // unless it is one of the load's own controls (opts.escScope). A
+        // clicked range button keeps focus, so the test is "not owned
+        // elsewhere", not "focus inside the chart".
         function onKey(e) {
             if (e.key !== 'Escape') return;
+            // An Esc something else already handled is not ours. A modal's own
+            // Esc handler runs FIRST (capture phase), closes the dialog —
+            // emptying the registry — and calls preventDefault; with focus on
+            // <body> (a click on plain text in the dialog) nothing else would
+            // tell this handler the Esc belonged to the dialog.
+            if (e.defaultPrevented) return;
+            if (Object.keys(__fwmonOpenModals).length) return;
+            // A load whose results are not rendered (its page was left) is
+            // not the one the user is looking at.
+            if (!list.some(function(c) { return c.getClientRects().length; })) return;
             var t = e.target;
-            var owned = t && t.closest && t.closest('[role="dialog"], .fwmon-confirm-overlay, input, textarea, select');
-            if (!owned || list.some(function(c) { return c.contains(t); })) cancel();
+            if (t && t.closest && t.closest('[role="dialog"], .fwmon-confirm-overlay')) return;
+            var field = t && t.closest && t.closest('input, textarea, select');
+            if (!field || list.concat(escScope).some(function(c) { return c.contains(t); })) cancel();
         }
         function abortFetch() { if (ctrl) { try { ctrl.abort(); } catch (e) { /* ignore */ } } }
         function finish(r) {
@@ -2062,7 +2082,7 @@
             document.removeEventListener('keydown', onKey);
             overlays.forEach(function(o) { if (o.parentNode) o.parentNode.removeChild(o); });
             overlays = [];
-            list.forEach(function(c) { c.removeAttribute('aria-busy'); });
+            list.forEach(function(c) { c.removeAttribute('aria-busy'); c.classList.remove('fwmon-loading'); });
             if (chartLoads[key] === entry) delete chartLoads[key];
             resolveOuter(r);
         }
@@ -2077,11 +2097,20 @@
         showTimer = setTimeout(function() {
             if (done) return;
             list.forEach(function(c) {
+                // The host grows to fit the overlay only when it shows — a
+                // fast load must not jump the layout (aria-busy is set at once
+                // for assistive tech, so it cannot carry the min-height).
+                c.classList.add('fwmon-loading');
                 var o = chartOverlayEl('', '<span class="fwmon-spinner" aria-hidden="true"></span>' +
                     '<span class="fwmon-chart-overlay-text">' + escapeHtml(opts.label || 'Loading higher-resolution data…') + '</span>' +
                     '<span class="fwmon-chart-overlay-elapsed" aria-live="off"></span>' +
                     '<button type="button" class="btn secondary sm fwmon-chart-overlay-cancel">Cancel</button>');
-                o.querySelector('button').addEventListener('click', cancel);
+                var cancelBtn = o.querySelector('button');
+                // No focus change on press: a blur would commit a pending text
+                // edit, start a new load and remove this button before the
+                // click lands.
+                cancelBtn.addEventListener('mousedown', function(ev) { ev.preventDefault(); });
+                cancelBtn.addEventListener('click', cancel);
                 c.appendChild(o);
                 overlays.push(o);
             });
@@ -2092,7 +2121,9 @@
                     if (el) el.textContent = secs;
                 });
             }, 1000);
-            document.addEventListener('keydown', onKey);
+            // No overlay (the results are hidden) means nothing on screen
+            // says a load is running, so Esc must not silently stop it.
+            if (overlays.length) document.addEventListener('keydown', onKey);
         }, CHART_OVERLAY_DELAY_MS);
 
         Promise.resolve()
@@ -2102,6 +2133,27 @@
         return result;
     }
 
+    // chartLoadBusy reports whether a load is in flight for key, or for any key
+    // starting with it (a page's per-row keys share a prefix). Pollers use it to
+    // stay out of the way of a load the user started.
+    function chartLoadBusy(keyOrPrefix, exact) {
+        if (chartLoads[keyOrPrefix]) return true;
+        if (exact) return false;
+        for (var k in chartLoads) {
+            if (k.indexOf(keyOrPrefix) === 0) return true;
+        }
+        return false;
+    }
+
+    // chartLoadCancel stops the load(s) under key or prefix SILENTLY: they
+    // resolve as superseded, so no Cancel notice or state restore runs (used
+    // when the user leaves a page or closes the dialog the load belongs to).
+    function chartLoadCancel(keyOrPrefix) {
+        Object.keys(chartLoads).forEach(function(k) {
+            if (k === keyOrPrefix || k.indexOf(keyOrPrefix) === 0) chartLoads[k].supersede();
+        });
+    }
+
     // chartNotice shows a message over a chart that is kept on screen — "No
     // data in this range" after a zoom, or a load error — with Retry (when
     // onRetry is given) and Dismiss. The chart underneath is untouched.
@@ -2109,7 +2161,7 @@
         opts = opts || {};
         chartContainers(containers).forEach(function(c) {
             clearChartNotice(c);
-            var o = chartOverlayEl('fwmon-chart-notice', '<span class="fwmon-chart-overlay-text">' + escapeHtml(msg) + '</span>' +
+            var o = chartOverlayEl('fwmon-chart-notice' + (opts.dim === false ? ' fwmon-chart-notice-plain' : ''), '<span class="fwmon-chart-overlay-text">' + escapeHtml(msg) + '</span>' +
                 (opts.onRetry ? '<button type="button" class="btn secondary sm" data-chart-notice="retry">Retry</button>' : '') +
                 '<button type="button" class="btn secondary sm" data-chart-notice="dismiss">Dismiss</button>');
             o.addEventListener('click', function(e) {
@@ -2130,7 +2182,10 @@
     window.AdminCommon = {
         API_BASE: API_BASE,
         chartLoad: chartLoad,
+        chartLoadBusy: chartLoadBusy,
+        chartLoadCancel: chartLoadCancel,
         chartNotice: chartNotice,
+        chartNoticeClear: clearChartNotice,
         tunnelClaim: tunnelClaim,
         tunnelGroupClaim: tunnelGroupClaim,
         tunnelStateBadge: tunnelStateBadge,

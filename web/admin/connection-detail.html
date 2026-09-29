@@ -126,7 +126,7 @@
                         <option value="8760">1y</option>
                     </select>
                 </div>
-                <div id="traffic-chart-host" style="height:340px;margin-bottom:16px;"><canvas id="traffic-chart"></canvas></div>
+                <div class="fwmon-load-host" id="traffic-load-host"><div id="traffic-chart-host" style="height:340px;margin-bottom:16px;"><canvas id="traffic-chart"></canvas></div></div>
             </div>
             <div class="card mb-4">
                 <h2 class="text-base font-semibold mb-4">Live Throughput</h2>
@@ -208,6 +208,7 @@
                         <option value="8760">1y</option>
                     </select>
                 </div>
+                <div class="fwmon-load-host" id="flow-load-host">
                 <div id="flow-empty" class="hidden bg-[rgba(56,139,253,0.08)] border border-[rgba(56,139,253,0.2)] text-[#58a6ff] p-3.5 rounded-lg text-sm mb-4">sFlow is enabled but no traffic samples match this connection's tunnel interfaces yet.</div>
                 <div id="flow-content">
                     <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
@@ -244,6 +245,7 @@
                             </table>
                         </div>
                     </div>
+                </div>
                 </div>
             </div>
         </div>

@@ -48,6 +48,11 @@
     var profilesList = [];   // event rule profiles (v48) for the builder's layer select
     var currentProfileId = 0; // profile the rules view is filtered to (0 = all)
     var currentRuleFilter = 'all';
+    // Profile of a rules load still in flight (null when none). currentProfileId
+    // and the filter change only when a load SUCCEEDS, so a cancelled load keeps
+    // the view consistent with the rows on screen; the builder reads the target
+    // while a load runs so "+ Add rule" defaults to the profile being opened.
+    var targetProfileId = null;
     var wired = false;
     // When a rule is created from an sFlow-security alert, the alert id to ack once
     // the rule saves (the rule only drops the source from the next cycle, so the
@@ -83,6 +88,13 @@
         if (!raw) return null;
         try { sessionStorage.removeItem('fwmon_rule_prefill'); } catch (e) { /* ignore */ }
         try { return JSON.parse(raw); } catch (e) { return null; }
+    }
+
+    // keepPendingPrefill puts a prefill back when its lookup did not succeed, so
+    // the next visit to the page opens it instead of silently dropping it.
+    function keepPendingPrefill(p) {
+        if (!p) return;
+        try { sessionStorage.setItem('fwmon_rule_prefill', JSON.stringify(p)); } catch (e) { /* ignore */ }
     }
 
     // openFromPrefill opens the editor for a suggested rule (or the existing rule
@@ -158,25 +170,168 @@
     // loadRules loads + renders. profileId filters to one layer (0/undefined =
     // all rules — the legacy standalone view); filter is the Rules-tab chip
     // (all|alert|suppress|temp|disabled), applied client-side.
-    function loadRules(profileId, filter) {
-        if ((profileId || 0) !== currentProfileId) groupCollapsed = {}; // per-profile collapse discipline
-        currentProfileId = profileId || 0;
-        if (filter) currentRuleFilter = filter; else if (!profileId) currentRuleFilter = 'all';
-        var url = API + '/event-rules' + (currentProfileId ? ('?profile_id=' + currentProfileId) : '');
-        return AC.apiFetch(url).then(function (res) {
-            rules = res.data || [];
+    // viewedProfileId is the profile the page shows: the target of a switch
+    // that was cancelled (its header is up, its rows are not) or the loaded one.
+    // Reloads after a save/delete must use it, or a cancelled switch followed
+    // by a save would paint the OLD profile's rows under the new header.
+    function viewedProfileId() {
+        return targetProfileId !== null ? targetProfileId : currentProfileId;
+    }
+
+    // reloadViewedRules refreshes the view after a save/delete. While a rules
+    // load is running (a chip or profile the user just clicked) it is deferred
+    // to when that load settles — reloading now would silently supersede the
+    // user's click — and then reloads with whatever the view shows.
+    var rulesReloadDeferred = false;
+    function reloadViewedRules() {
+        // A save/delete that lands after the user left: the page reloads its
+        // rules on return (and a hidden failure would toast on another page).
+        var erPage = document.getElementById('page-event-rules');
+        if (!erPage || !erPage.classList.contains('active')) { rulesReloadDeferred = false; return; }
+        if (AC.chartLoadBusy('event-rules', true)) { rulesReloadDeferred = true; return; }
+        startRulesReload();
+    }
+    function runDeferredRulesReload() {
+        if (!rulesReloadDeferred || AC.chartLoadBusy('event-rules', true)) return;
+        rulesReloadDeferred = false;
+        startRulesReload(true); // quiet: no overlay flash over a Cancel/error notice
+    }
+    // A post-save reload that a chip/profile click interrupts is re-armed, so
+    // if that load is cancelled or fails the change still shows.
+    function startRulesReload(quiet) {
+        loadRules(viewedProfileId(), currentRuleFilter, { quiet: !!quiet }).then(function (res) {
+            if (res && res.superseded && AC.chartLoadBusy('event-rules', true)) rulesReloadDeferred = true;
+        });
+    }
+
+    // loadRules resolves { ok } once the rows are rendered, or { cancelled }
+    // / { error } — callers that act on the loaded rules must check ok.
+    // lopts.quiet: a deferred post-save reload — no overlay, errors toast.
+    function loadRules(profileId, filter, lopts) {
+        var quiet = !!(lopts && lopts.quiet);
+        var pid = profileId || 0;
+        var nextFilter = filter ? filter : (!profileId ? 'all' : currentRuleFilter);
+        targetProfileId = pid;
+        var url = API + '/event-rules' + (pid ? ('?profile_id=' + pid) : '');
+        var wrap = $('event-rules-table-wrap');
+        // Switching profile: the old profile's rows must not show (let alone
+        // be clickable) under the new header while this one loads.
+        // Only for a visible table: a hidden lookup must not leave it behind.
+        if (wrap && wrap.offsetParent && !quiet && pid !== currentProfileId && !wrap.querySelector('[data-rules-placeholder]')) {
+            wrap.innerHTML = '<div class="empty-state" data-rules-placeholder style="padding:32px;text-align:center;color:var(--fwmon-text-faint)">Loading rules\u2026</div>';
+        }
+        // No overlay while the Rules tab is hidden (a Customize lookup runs from
+        // the matrix); the load itself is the same.
+        var host = (wrap && wrap.offsetParent && !quiet) ? wrap : [];
+        return AC.chartLoad(host, function (signal) {
+            return AC.apiFetch(url, { signal: signal });
+        }, { key: 'event-rules', label: 'Loading rules…', escScope: $('ep-rules-filter') }).then(function (r) {
+            if (r.superseded) {
+                // Left mid-load (nothing newer took over): the profile it was
+                // opening is no longer being viewed.
+                if (!AC.chartLoadBusy('event-rules', true)) {
+                    targetProfileId = null;
+                    rulesReloadDeferred = false; // the page reloads its rules on return
+                }
+                return { cancelled: true, superseded: true };
+            }
+            if (r.cancelled) {
+                var retry = function () { loadRules(pid, nextFilter); };
+                if (pid !== currentProfileId) {
+                    // The user just cancelled this switch: a save reload that
+                    // was waiting for it must not start the same switch again.
+                    rulesReloadDeferred = false;
+                    // A cancelled profile switch: the page already shows the
+                    // new profile, so the old profile's rows must not stay
+                    // under its header, and "+ Add rule" keeps defaulting to
+                    // the profile being viewed (targetProfileId stays pid).
+                    if (wrap) {
+                        wrap.innerHTML = '<div class="empty-state" data-rules-placeholder style="padding:32px;text-align:center;color:var(--fwmon-text-faint)">Rules for this profile were not loaded.</div>';
+                        AC.chartNotice(wrap, 'Cancelled', { dim: false, onRetry: retry });
+                    }
+                    return { cancelled: true };
+                }
+                targetProfileId = null;
+                syncRuleFilterChips();
+                settleLoadingPlaceholder();
+                // Over the "not loaded" placeholder there are no previous rows.
+                var hadRows = wrap && !wrap.querySelector('[data-rules-placeholder]');
+                if (wrap) AC.chartNotice(wrap, hadRows ? 'Cancelled — showing the previous results' : 'Cancelled', { dim: false, onRetry: retry });
+                return { cancelled: true };
+            }
+            if (r.error) {
+                // Admin-only API: operator/viewer get 403 — show a placeholder, not a
+                // broken page (no dead ends).
+                var err = r.error, role = (AC && AC.sessionRole) || '';
+                if (/role|forbidden|allow this action/i.test(err.message) || (role && role !== 'admin')) {
+                    targetProfileId = null;
+                    renderPlaceholder();
+                    return { error: err };
+                }
+                if (quiet) {
+                    AC.showError('Could not refresh the rules: ' + err.message);
+                    return { error: err };
+                }
+                if (!(wrap && wrap.offsetParent)) {
+                    // A hidden lookup (Customize from the matrix): nothing on
+                    // screen to annotate, so say it failed where it is seen.
+                    targetProfileId = null;
+                    AC.showError('Failed to load event rules: ' + err.message);
+                    return { error: err };
+                }
+                if (pid !== currentProfileId) {
+                    // A failed profile switch is treated like a cancelled one:
+                    // the new profile's header is up, so its target stays the
+                    // viewed profile and the old rows are not kept under it.
+                    if (wrap) {
+                        wrap.innerHTML = '<div class="empty-state" data-rules-placeholder style="padding:32px;text-align:center;color:var(--fwmon-text-faint)">Rules for this profile were not loaded.</div>';
+                        AC.chartNotice(wrap, 'Could not load results', { dim: false, onRetry: function () { loadRules(pid, nextFilter); } });
+                    }
+                    return { error: err };
+                }
+                targetProfileId = null;
+                syncRuleFilterChips(); // the chips name the filter whose rows are shown
+                settleLoadingPlaceholder();
+                if (wrap) AC.chartNotice(wrap, 'Could not load results', { dim: false, onRetry: function () { loadRules(pid, nextFilter); } });
+                return { error: err };
+            }
+            targetProfileId = null;
+            if (pid !== currentProfileId) groupCollapsed = {}; // per-profile collapse discipline
+            currentProfileId = pid;
+            currentRuleFilter = nextFilter;
+            // A Retry after Cancel loads a filter the chips no longer show. Only
+            // for the visible tab: a hidden lookup (Customize) must not reset
+            // the chip the user picked.
+            if (wrap && wrap.offsetParent) syncRuleFilterChips();
+            rules = (r.data && r.data.data) || [];
             renderStats();
             renderTable();
-        }).catch(function (err) {
-            // Admin-only API: operator/viewer get 403 — show a placeholder, not a
-            // broken page (no dead ends).
-            var role = (AC && AC.sessionRole) || '';
-            if (/role|forbidden|allow this action/i.test(err.message) || (role && role !== 'admin')) {
-                renderPlaceholder();
-            } else {
-                AC.showError('Failed to load event rules: ' + err.message);
-            }
+            return { ok: true };
+        }).then(function (res) {
+            // A reload deferred by this load runs once it settles (not when
+            // it was superseded: the newer load settles it instead).
+            if (!(res && res.superseded)) setTimeout(runDeferredRulesReload, 0);
+            return res;
         });
+    }
+
+    // A "Loading rules…" placeholder left by an earlier switch, when this
+    // load ends without rows, must not claim a load is still running.
+    function settleLoadingPlaceholder() {
+        var wrap = $('event-rules-table-wrap');
+        var ph = wrap && wrap.querySelector('[data-rules-placeholder]');
+        if (ph) ph.textContent = 'Rules for this profile were not loaded.';
+    }
+
+    // After a cancelled load the filter chips go back to the filter whose rows
+    // are on screen.
+    function syncRuleFilterChips() {
+        document.querySelectorAll('[data-ep-rulefilter]').forEach(function (b) {
+            b.classList.toggle('active', b.getAttribute('data-ep-rulefilter') === currentRuleFilter);
+        });
+        if (window.FwmonEventProfiles && window.FwmonEventProfiles.setRulesFilter) {
+            window.FwmonEventProfiles.setRulesFilter(currentRuleFilter);
+        }
     }
 
     function renderPlaceholder() {
@@ -373,7 +528,7 @@
                 return '<option value="' + esc(p.id) + '">' + esc(p.name) + (p.is_default ? ' (Default)' : '') + '</option>';
             }).join('') || '<option value="">Default</option>';
             var defId = (plist.find(function (p) { return p.is_default; }) || {}).id || '';
-            var want = (r && r.profile_id) || currentProfileId || defId;
+            var want = (r && r.profile_id) || (targetProfileId !== null ? targetProfileId : currentProfileId) || defId;
             // Belt-and-braces: NEVER let a missing option silently re-home the
             // rule to Default — synthesize an option for the rule's own layer.
             if (want && !plist.some(function (p) { return String(p.id) === String(want); })) {
@@ -778,7 +933,7 @@
                     AC.apiFetch(API + '/alerts/' + ackId + '/acknowledge', { method: 'POST', body: { notes: 'Suppressed via Event Rule' } }).catch(function () { });
                 }
                 pendingAckAlertId = null;
-                loadRules(currentProfileId, currentRuleFilter);
+                reloadViewedRules();
             }).catch(function (err) { AC.showError('Save failed: ' + err.message); });
         });
     }
@@ -812,7 +967,7 @@
             if (!ok) return;
             AC.apiFetch(API + '/event-rules/' + id, { method: 'DELETE' }).then(function () {
                 AC.showSuccess('Rule deleted');
-                loadRules(currentProfileId, currentRuleFilter); // keep the profile view (bare loadRules resets to all)
+                reloadViewedRules(); // keep the profile view (bare loadRules resets to all)
             }).catch(function (err) { AC.showError('Delete failed: ' + err.message); });
         });
     }
@@ -871,6 +1026,7 @@
         prepare: prepare,
         loadRules: loadRules,
         takePendingPrefill: takePendingPrefill,
+        keepPendingPrefill: keepPendingPrefill,
         openFromPrefill: openFromPrefill,
         openRuleModal: openRuleModal,
         getRules: function () { return rules; }

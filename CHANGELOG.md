@@ -1,6 +1,35 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.271] - 2026-09-28
+
+### Changed — searches and filters show a loading overlay and can be cancelled
+
+Every server-side search, filter and range change now shows an animated loading overlay after a quarter of a second, with elapsed seconds and a **Cancel** button (Esc also cancels, including from the search box you are typing in). The overlay covers only the results, so the filters stay usable while it runs, and a newer search replaces an older one.
+
+- **Covered:** Syslog, Alerts, Traps and Audit (filters, Prev/Next, Traps "Load more", the charts on those pages); Threat intel search and IP/ASN lookup; Flows samples, "Load more" and detections; Reports preview; the Connections map side panel (traffic, flows, events and per-tunnel/interface chart ranges); the Connection detail page (traffic and flows ranges, tunnel chart ranges); the device Config diff; Event profiles "Effective coverage" and the Event rules filters.
+- **Cancel keeps what you had.** The previous results stay on screen (except when switching Event rules profiles, where the new profile's page says its rules were not loaded), and the filters, chips, range buttons and page URL go back to the query those results belong to. A notice says so, with **Retry**, which runs the cancelled search again. On the Flows page the filters keep the new choice (its summary may already show it); the notice says the list still shows the previous filter's rows, and "Load more" continues those rows.
+- **Paging is only updated when a page arrives.** A cancelled or failed Prev/Next leaves the pager on the page still shown; the alert selection clears only when new rows replace it.
+- **Errors** show "Could not load results" over the results, with Retry, and — like Cancel — put the filters back to the results still shown, so paging never continues a search whose first page never appeared. A load that fails while its results are hidden shows an error message instead. Paging (Prev/Next, Load more) and "acknowledge all matching" always continue the search whose rows are on screen; Prev/Next and Load more are ignored while a search is still loading, and a list refresh after an acknowledgement or delete runs once it finishes. The threat-intel IP/ASN lookup keeps what you typed on an error (so a mistyped address can be corrected) and shows why, with Retry.
+- **"Select all N matching" on Alerts** is cleared as soon as the filter changes and is not offered while results load; an acknowledgement by filter always uses the filter of the alerts on screen, never one that is still loading or failed to load.
+- **Background refreshes stay out of the way.** The Syslog auto-refresh and the Connection detail 30-second refresh show no overlay, skip while one of your loads is running, and are dropped if you start a load while they are in flight — they can no longer paint an old range over the one you just picked.
+- **Leaving a page stops its loads** without a notice (the Connections map side panel, which stays open, keeps loading).
+- **Config diff** opens straight away with the overlay, disables Compare until the diff is ready, and closing the dialog stops the load — a late result no longer reopens it.
+
+### Fixed
+
+- The Connections map side panel's Flows tab stopped working for the rest of the session after one range with no flow data (the empty message replaced the charts it later wrote into). It now hides them and brings them back on the next range with data.
+- The Connections map side panel's Flows and Events tabs reloaded at 24 hours when reopened, whatever range was selected.
+- The Connection detail range selects went blank if a load was cancelled at the default range.
+
+### Removed
+
+- The unused "load more" code for Syslog and Alerts (nothing on the page could trigger it, and it could not have worked).
+
+### Internal
+
+- The handlers test package had crept past CI's 10-minute `-race` limit (546 s → 566 s → timed out). Four public-chart tests spent ~2 minutes inserting their sample rows through GORM; they now clone one GORM-written row with a prepared SQL insert (same values and timestamp format), cutting them from ~123 s to ~12 s with unchanged assertions. The same fix in `internal/database` (three system-status sampling tests, ~68 s → ~6 s) brings the CI test job back under its 15-minute limit, which the previous passing runs had missed by seconds.
+
 ## [0.11.270] - 2026-09-28
 
 ### Changed — zooming a chart loads real data for the selected range

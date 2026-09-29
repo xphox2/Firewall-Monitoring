@@ -211,6 +211,18 @@
             retryBtn.__fwmonBound = true;
             retryBtn.addEventListener('click', loadStats);
         }
+        // Esc stops the report too, as it does every other load on the page
+        // (not while a dialog owns Esc).
+        if (!document.__fwmonFlowsEsc) {
+            document.__fwmonFlowsEsc = true;
+            document.addEventListener('keydown', function(e) {
+                if (e.key !== 'Escape' || !(statsStream || statsAbort)) return;
+                if (e.defaultPrevented) return; // a dialog's Esc (it closes first, in capture)
+                if (!flowsPage || !flowsPage.classList.contains('active')) return;
+                if (e.target && e.target.closest && e.target.closest('[role="dialog"], .fwmon-confirm-overlay')) return;
+                cancelStatsLoad();
+            });
+        }
 
         // Range pills
         var rangePills = document.getElementById('flows-range-pills');
@@ -434,6 +446,27 @@
         if (convView) convView.hidden = (tab !== 'conversations');
         if (sampView) sampView.hidden = (tab !== 'samples');
         if (loadMore) loadMore.hidden = (tab !== 'samples');
+        // The samples load host (overlay, notice, min-height) belongs to the
+        // Samples view: hidden with it, so no floating box sits under
+        // Conversations and Esc cannot cancel a list that is not on screen;
+        // a notice about that list is dropped when leaving it.
+        var sampHost = document.getElementById('flows-samples-host');
+        if (sampHost) {
+            var wasHidden = sampHost.hidden;
+            sampHost.hidden = (tab !== 'samples');
+            if (tab !== 'samples' && window.AdminCommon && window.AdminCommon.chartNoticeClear) window.AdminCommon.chartNoticeClear(sampHost);
+            // A samples load started while the list was hidden has no overlay
+            // (no Cancel, and Load more is ignored as busy): re-issue it now
+            // that the list is shown, so it runs under the overlay.
+            if (tab === 'samples' && wasHidden && samplesLoadHidden && window.AdminCommon && window.AdminCommon.chartLoadBusy &&
+                window.AdminCommon.chartLoadBusy('flows-samples', true)) loadSamples();
+            // Otherwise, if the list holds rows of a different filter than the
+            // chips name (a cancelled or failed samples load), say so again —
+            // the notice was dropped when the view was left.
+            else if (tab === 'samples' && wasHidden && samplesStale() && window.AdminCommon) {
+                window.AdminCommon.chartNotice(sampHost, 'The list still shows the previous filter\u2019s rows', { dim: false, onRetry: loadSamples });
+            }
+        }
         var hint = document.getElementById('flows-view-hint');
         if (hint) {
             hint.textContent = (tab === 'samples')
@@ -494,7 +527,8 @@
     // Reload — schedule a debounced fetch of /flows + /flows/stats
     // ----------------------------------------------------------------------
     function reload() {
-        flowsOffset = 0;
+        // flowsOffset is set when the samples arrive (loadSamples), so a
+        // cancelled reload leaves Load more continuing the rows on screen.
         scheduleStats();
         scheduleSamples();
         loadDetections();
@@ -533,27 +567,30 @@
         return '/admin/api/flows/stats?' + params.join('&');
     }
 
-    function samplesURL(limit, offset) {
+    // st defaults to the live filter state; Load more passes the query of the
+    // rows on screen (shownSamplesState), so it continues THOSE rows.
+    function samplesURL(limit, offset, st) {
+        st = st || state;
         var p = ['limit=' + limit];
         if (offset > 0) p.push('offset=' + offset);
         // hours bounds the samples list (and the CSV export) to the page's
         // range pills — without it the "24h" label lied and the list was just
         // "newest N rows regardless of range" (LC-36).
-        if (state.hours) p.push('hours=' + encodeURIComponent(state.hours));
-        if (state.site_id)   p.push('site_id='   + encodeURIComponent(state.site_id));
-        if (state.device_id) p.push('device_id=' + encodeURIComponent(state.device_id));
-        if (state.probe_id)  p.push('probe_id='  + encodeURIComponent(state.probe_id));
-        if (state.protocol)  p.push('protocol='  + encodeURIComponent(state.protocol));
-        if (state.src)       p.push('src_addr='  + encodeURIComponent(state.src));
-        if (state.dst)       p.push('dst_addr='  + encodeURIComponent(state.dst));
-        if (state.dport)     p.push('dst_port='  + encodeURIComponent(state.dport));
-        if (state.svc)       p.push('service_port=' + encodeURIComponent(state.svc));
-        if (state.category !== '')  p.push('app_category=' + encodeURIComponent(state.category));
-        if (state.direction !== '') p.push('direction='   + encodeURIComponent(state.direction));
-        if (state.country)   p.push('dst_country=' + encodeURIComponent(state.country));
-        if (state.asn)       p.push('dst_asn='     + encodeURIComponent(state.asn));
-        if (state.source !== '') p.push('flow_source=' + encodeURIComponent(state.source));
-        if (state.event !== '')  p.push('firewall_event=' + encodeURIComponent(state.event));
+        if (st.hours) p.push('hours=' + encodeURIComponent(st.hours));
+        if (st.site_id)   p.push('site_id='   + encodeURIComponent(st.site_id));
+        if (st.device_id) p.push('device_id=' + encodeURIComponent(st.device_id));
+        if (st.probe_id)  p.push('probe_id='  + encodeURIComponent(st.probe_id));
+        if (st.protocol)  p.push('protocol='  + encodeURIComponent(st.protocol));
+        if (st.src)       p.push('src_addr='  + encodeURIComponent(st.src));
+        if (st.dst)       p.push('dst_addr='  + encodeURIComponent(st.dst));
+        if (st.dport)     p.push('dst_port='  + encodeURIComponent(st.dport));
+        if (st.svc)       p.push('service_port=' + encodeURIComponent(st.svc));
+        if (st.category !== '')  p.push('app_category=' + encodeURIComponent(st.category));
+        if (st.direction !== '') p.push('direction='   + encodeURIComponent(st.direction));
+        if (st.country)   p.push('dst_country=' + encodeURIComponent(st.country));
+        if (st.asn)       p.push('dst_asn='     + encodeURIComponent(st.asn));
+        if (st.source !== '') p.push('flow_source=' + encodeURIComponent(st.source));
+        if (st.event !== '')  p.push('firewall_event=' + encodeURIComponent(st.event));
         return '/admin/api/flows?' + p.join('&');
     }
 
@@ -889,14 +926,36 @@
     // ----------------------------------------------------------------------
     // Detections panel — good-vs-bad traffic findings (sFlow detection engine)
     // ----------------------------------------------------------------------
+    // flowsLoadHost returns the element to show the loading overlay on, or
+    // an empty list while it is hidden (the overlay would float in an empty
+    // area); the load still gets Cancel/abort and the newest request wins.
+    function flowsLoadHost(id, viewId) {
+        var host = document.getElementById(id);
+        var view = viewId ? document.getElementById(viewId) : host;
+        return (host && view && !view.hidden) ? host : [];
+    }
+
     function loadDetections() {
         var AC = window.AdminCommon;
-        if (!AC || !AC.apiFetch) return;
+        if (!AC || !AC.chartLoad) return;
         var url = '/admin/api/flows/detections?unacked=true&limit=100&hours=' + encodeURIComponent(state.hours);
-        AC.apiFetch(url).then(function(result) {
-            renderDetections((result && result.data) || []);
-        }).catch(function(e) {
-            console.error('FwmonFlows: detections fetch failed', e);
+        var mount = flowsLoadHost('flows-detections-card');
+        var noticeHost = mount.appendChild ? mount : null; // nothing to annotate while hidden
+        AC.chartLoad(mount, function(signal) {
+            return AC.apiFetch(url, { signal: signal });
+        }, { key: 'flows-detections', label: 'Loading…', escScope: document.getElementById('page-flows') }).then(function(r) {
+            if (r.superseded) return;
+            if (r.cancelled) { // the detections on screen stay
+                if (noticeHost) AC.chartNotice(noticeHost, 'Cancelled — showing the previous results', { dim: false, onRetry: loadDetections });
+                return;
+            }
+            if (r.error) {
+                if (window.fwmonLog) window.fwmonLog.error('FwmonFlows: detections fetch failed', r.error);
+                if (noticeHost) AC.chartNotice(noticeHost, 'Could not load results', { dim: false, onRetry: loadDetections });
+                else AC.showError('Could not load flow detections');
+                return;
+            }
+            renderDetections((r.data && r.data.data) || []);
         });
     }
 
@@ -1288,33 +1347,85 @@
     // ----------------------------------------------------------------------
     // Samples table (paginated raw FlowSample rows)
     // ----------------------------------------------------------------------
-    function loadSamples() {
+    // Samples load under the overlay (when the Samples view is showing) with
+    // Cancel; the newest request wins, and flowsOffset changes only when rows
+    // arrive, so a cancelled load leaves Load more continuing what is shown.
+    function samplesLoad(offset, append) {
         var AC = window.AdminCommon;
-        if (!AC || !AC.apiFetch) return;
-        AC.apiFetch(samplesURL(100, 0)).then(function(result) {
-            if (!result) return;
-            var samples = result.data || [];
-            renderSamples(samples, false);
-            flowsOffset = samples.length;
+        if (!AC || !AC.chartLoad) return;
+        var url = samplesURL(100, offset, append ? shownSamplesState : null);
+        var want = Object.assign({}, state);
+        // While the Samples view is hidden the load runs with no overlay, and
+        // nothing is on screen for a Cancel/error notice to refer to — so the
+        // notices go only on a visible host, and a stale one is cleared here
+        // (chartLoad clears only the host it mounts on).
+        var mounted = flowsLoadHost('flows-samples-host', 'flows-view-samples');
+        var host = mounted.appendChild ? mounted : null;
+        // Only a load that started while the list was hidden (always a
+        // first-page load of the live filter) is re-issued when the list is
+        // shown; a visible Load more keeps its overlay and its rows.
+        samplesLoadHidden = !host;
+        var real = document.getElementById('flows-samples-host');
+        if (!host && real) {
+            Array.prototype.forEach.call(real.querySelectorAll(':scope > .fwmon-chart-notice'), function(n) { n.parentNode.removeChild(n); });
+        }
+        AC.chartLoad(mounted, function(signal) {
+            return AC.apiFetch(url, { signal: signal });
+        }, { key: 'flows-samples', label: append ? 'Loading more…' : 'Loading…', escScope: document.getElementById('page-flows') }).then(function(r) {
+            if (r.superseded) return;
+            var retry = function() { samplesLoad(offset, append); };
+            // Flows keeps the new filter in its controls after a Cancel or
+            // error (the stats half may already show it), so the notice says
+            // plainly that the LIST is still the previous filter's rows; Load
+            // more continues those rows (shownSamplesState).
+            if (r.cancelled) {
+                // A cancelled "Load more" changed no filter.
+                var cMsg = (append || !samplesStale()) ? 'Cancelled' : 'Cancelled — the list still shows the previous filter\u2019s rows';
+                if (host) AC.chartNotice(host, cMsg, { dim: false, onRetry: retry });
+                return;
+            }
+            if (r.error || !r.data) {
+                if (r.error && window.fwmonLog) window.fwmonLog.error('FwmonFlows: samples fetch failed', r.error);
+                var eMsg = append ? 'Could not load more rows' : (samplesStale() ? 'Could not load results — the list still shows the previous filter\u2019s rows' : 'Could not load results');
+                if (host) AC.chartNotice(host, eMsg, { dim: false, onRetry: retry });
+                else AC.showError('Could not load the flow samples');
+                return;
+            }
+            var samples = r.data.data || [];
+            if (append && !samples.length) return;
+            if (!append) shownSamplesState = want;
+            renderSamples(samples, append);
+            flowsOffset = offset + samples.length;
             updateLoadedCount();
-            renderConversations(); // re-renders existing conversation rows with current click target
-        }).catch(function(e) {
-            console.error('FwmonFlows: samples fetch failed', e);
+            if (!append) renderConversations(); // re-renders existing conversation rows with current click target
         });
     }
 
+    function loadSamples() { samplesLoad(0, false); }
+
+    // samplesStale: the rows shown were fetched for a different filter than
+    // the live one (the view and paging are not part of the query).
+    function samplesStale() {
+        if (!shownSamplesState) return false;
+        var a = Object.assign({}, shownSamplesState), b = Object.assign({}, state);
+        delete a.tab; delete b.tab;
+        return JSON.stringify(a) !== JSON.stringify(b);
+    }
+
+    // The filter state whose rows the Samples list shows (set when a first-page
+    // load succeeds). After a cancelled reload the live state is the NEW
+    // filter while the rows are still the old one's.
+    var shownSamplesState = null;
+    // The running samples load was started with no visible host (see samplesLoad).
+    var samplesLoadHidden = false;
+
+    // Load more continues the rows on screen; while a samples load is running
+    // (a filter reload whose rows have not arrived), flowsOffset still belongs
+    // to the old filter, so appending from it would mix two filters.
     function loadMoreSamples() {
         var AC = window.AdminCommon;
-        if (!AC || !AC.apiFetch) return;
-        AC.apiFetch(samplesURL(100, flowsOffset)).then(function(result) {
-            if (!result || !result.data) return;
-            var samples = result.data || [];
-            renderSamples(samples, true);
-            flowsOffset += samples.length;
-            updateLoadedCount();
-        }).catch(function(e) {
-            console.error('FwmonFlows: load-more failed', e);
-        });
+        if (AC && AC.chartLoadBusy && AC.chartLoadBusy('flows-samples')) return;
+        samplesLoad(flowsOffset, true);
     }
 
     /* ------------------------------------------------------------------
