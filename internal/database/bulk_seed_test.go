@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -23,7 +24,14 @@ func cloneRows(t *testing.T, gdb *gorm.DB, table string, templateID uint, overri
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows, err := sqlDB.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	// Works on SQLite (unit tests) and PostgreSQL (the integration lane
+	// shares these helpers): column list and placeholders per dialect.
+	pg := gdb.Dialector.Name() == "postgres"
+	colQuery := `SELECT name FROM pragma_table_info(?)`
+	if pg {
+		colQuery = `SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 ORDER BY ordinal_position`
+	}
+	rows, err := sqlDB.Query(colQuery, table)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,10 +56,16 @@ func cloneRows(t *testing.T, gdb *gorm.DB, table string, templateID uint, overri
 	quoted := make([]string, len(cols))
 	sel := make([]string, len(cols))
 	var order []string
+	ph := func() string {
+		if pg {
+			return "$" + strconv.Itoa(len(order)+1)
+		}
+		return "?"
+	}
 	for i, c := range cols {
 		quoted[i] = `"` + c + `"`
 		if isOverride[c] {
-			sel[i] = "?"
+			sel[i] = ph()
 			order = append(order, c)
 		} else {
 			sel[i] = `"` + c + `"`
@@ -60,7 +74,11 @@ func cloneRows(t *testing.T, gdb *gorm.DB, table string, templateID uint, overri
 	if len(order) != len(override) {
 		t.Fatalf("override columns %v not all in %s", override, table)
 	}
-	q := `INSERT INTO "` + table + `" (` + strings.Join(quoted, ",") + `) SELECT ` + strings.Join(sel, ",") + ` FROM "` + table + `" WHERE id = ?`
+	idPH := "?"
+	if pg {
+		idPH = "$" + strconv.Itoa(len(order)+1)
+	}
+	q := `INSERT INTO "` + table + `" (` + strings.Join(quoted, ",") + `) SELECT ` + strings.Join(sel, ",") + ` FROM "` + table + `" WHERE id = ` + idPH
 	tx, err := sqlDB.Begin()
 	if err != nil {
 		t.Fatal(err)

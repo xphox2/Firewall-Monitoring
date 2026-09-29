@@ -535,3 +535,7 @@ commit. When a rule chooses between two sides, seed the sides with different cou
 ## 2026-09-28 — A guardrail that pins a line does not prove the behaviour; check event ORDER in a browser
 - Round-4 "any open dialog owns Esc" (a registry check) was dead code: the modal's Esc handler runs in the CAPTURE phase and empties the registry before the bubble-phase handler reads it. The substring test passed; the behaviour never held. Fix = `e.defaultPrevented` (the modal calls preventDefault).
 - For any fix that depends on listener order, phase, or timing, verify it in the browser (positive case AND a control) before claiming it — a source-text guardrail only prevents the line from being deleted.
+
+## 2026-09-29 — A test helper can be shared with the PostgreSQL integration lane; run that lane locally before pushing
+- A SQLite-only seeding helper (`pragma_table_info`, `?` placeholders) passed `make qa` and broke CI's Integration (PostgreSQL) job: `seedStatusSeries` is also called by a `//go:build integration` test. Grep callers across build tags (`grep -rn helper( internal`) before changing a shared test helper.
+- The PG lane runs locally: `TEST_PG_DSN="postgres://xphox@localhost:5432/firewall_mon_test?sslmode=disable" go test -tags=integration -p 1 -count=1 -timeout=5m ./internal/database/... ./internal/api/handlers/... ./cmd/poller/...` — run it whenever test helpers or SQL change.
