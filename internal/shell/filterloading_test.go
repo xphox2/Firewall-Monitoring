@@ -336,7 +336,7 @@ func TestFilterLoad_ReviewRound2(t *testing.T) {
 	}
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
 	mustContain(t, "admin-main.js", run, "if (host) AC.chartNoticeClear(host);", "a poll's fresh rows clear a stale Cancel notice")
-	mustContain(t, "admin-main.js", run, "shownQuery[page] ? 'Cancelled — showing the previous results' : 'Cancelled'", "a first-load Cancel does not claim previous results")
+	mustContain(t, "admin-main.js", run, "hadResults ? 'Cancelled — showing the previous results' : 'Cancelled'", "a first-load Cancel does not claim previous results")
 	mustContain(t, "admin-common.js", readJS(t, "admin-common.js"), "chartNoticeClear: clearChartNotice,", "exported")
 
 	fl := readJS(t, "admin-flows.js")
@@ -933,7 +933,7 @@ func TestFilterLoad_ReviewRound25(t *testing.T) {
 	if strings.Count(run, "if (opts.onFail) opts.onFail();") != 2 {
 		t.Error("both the Cancel and error branches must call onFail")
 	}
-	for _, pg := range []string{"alerts", "traps"} {
+	for _, pg := range []string{"alerts", "traps", "syslog"} {
 		mustContain(t, "admin-main.js", main, "onFail: function() { blankStatTiles('"+pg+"', hrs); } });", "the "+pg+" tiles blank on a failed charts load")
 		mustContain(t, "admin-main.js", main, "statTilesHours."+pg+" = hrs;", "the drawn range is recorded")
 	}
@@ -956,4 +956,55 @@ func TestFilterLoad_ReviewRound26(t *testing.T) {
 	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
 	mustContain(t, "admin-main.js", run, "if (opts.onFail && !AC.chartLoadBusy(loadKey, true)) opts.onFail();", "a load stopped by a page leave counts as failed for the tiles")
 	mustContain(t, "admin-main.js", funcBody(t, main, `function blankStatTiles\(page, hrs\)`), "if (statTilesHours[page] === hrs) return;", "tiles for the same range stay")
+}
+
+// v0.11.272 follow-ups: Syslog's stat tiles (and the basis line under its
+// total) blank like Alerts/Traps; a charts notice claims "previous results"
+// only once that chart has drawn; the post-reclass VACUUM hint names the
+// serial form with a 1GB session (a parallel VACUUM's dead-row segment does
+// not fit a 1 GB /dev/shm at 1GB), not a command that fails.
+func TestFilterLoad_Followups272(t *testing.T) {
+	main := readJS(t, "admin-main.js")
+	sys := funcBody(t, main, `function loadSyslogCharts\(opts\)`)
+	info := strings.Index(sys, "document.getElementById('syslog-info').textContent")
+	rec := strings.Index(sys, "statTilesHours.syslog = hrs;")
+	if info < 0 || rec < 0 || rec < info {
+		t.Error("loadSyslogCharts records statTilesHours.syslog after the tiles are written")
+	}
+	mustContain(t, "admin-main.js", funcBody(t, main, `function blankStatTiles\(page, hrs\)`),
+		"var basis = document.getElementById(page + '-total-basis');\n        if (basis) basis.textContent = '';", "the basis line goes back to empty")
+
+	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
+	for _, c := range []struct{ line, next string }{
+		{"if (key !== page && data.data) chartsDrawn[key] = true;", "if (want && key === page) shownQuery[page] = want;"},
+		{"if (key !== page && r.data.data) chartsDrawn[key] = true;", "if (want && key === page) shownQuery[page] = want;"},
+	} {
+		if n := strings.Count(run, c.line); n != 1 {
+			t.Errorf("%q: found %d, want 1", c.line, n)
+			continue
+		}
+		i := strings.Index(run, c.line)
+		if j := strings.Index(run[i:], c.next); j < 0 || j > len(c.line)+60 {
+			t.Errorf("%q must sit just before the shownQuery line", c.line)
+		}
+	}
+	mustContain(t, "admin-main.js", run, "var hadResults = (key === page) ? !!shownQuery[page] : !!chartsDrawn[key];", "charts judge by their own draws")
+	mustContain(t, "admin-main.js", run, "hadResults ? 'Could not load results — showing the previous results' : 'Could not load results'", "the error notice too")
+	if strings.Contains(run, "shownQuery[page] ? '") {
+		t.Error("a notice still picks its wording from the table's shownQuery")
+	}
+
+	i := strings.Index(main, "The rewrite left dead rows behind.")
+	if i < 0 {
+		t.Fatal("VACUUM hint not found")
+	}
+	hint := main[i : i+strings.Index(main[i:], "'")]
+	for _, w := range []string{"PARALLEL 0", "maintenance_work_mem", "1GB", "OPERATIONS.md"} {
+		if !strings.Contains(hint, w) {
+			t.Errorf("the VACUUM hint must name %q", w)
+		}
+	}
+	if strings.Contains(hint, "SET ") {
+		t.Error("the hint must not offer a SET …; VACUUM line: one psql -c runs it as one transaction and VACUUM fails")
+	}
 }

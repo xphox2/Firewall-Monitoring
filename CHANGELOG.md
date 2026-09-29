@@ -1,6 +1,27 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.272] - 2026-09-29
+
+### Fixed — Syslog stat tiles and first-load chart notices
+
+- **Syslog stat tiles blank like Alerts and Traps.** When the Syslog charts load is cancelled, fails, or is stopped by leaving the page after a range change, the Total, Critical, Warning and Info tiles show "--" and the line under the total is cleared, instead of keeping the previous range's counts under the new range button. A background refresh that fails still keeps the tiles, and a refresh for the same range leaves them alone.
+- **A first charts load no longer claims "previous results".** On Syslog, Alerts and Traps, when the very first charts load is cancelled or fails (after the table arrived), the notice now says "Cancelled" or "Could not load results". It says "…showing the previous results" only once those charts have drawn.
+
+### Changed — VACUUM advice after a flow reclassification
+
+- The Settings message shown when a flow reclassification finishes now recommends `VACUUM (PARALLEL 0, ANALYZE) flow_rollups` with `maintenance_work_mem` set to 1GB for that session, and points to `docs/OPERATIONS.md` for the exact command. The previous advice, a plain `VACUUM (ANALYZE) flow_rollups`, fails at once with *could not resize shared memory segment* when `maintenance_work_mem` is more than about half of the container's `shm_size`: a parallel VACUUM reserves its whole dead-row array in `/dev/shm` up front.
+- `docs/OPERATIONS.md` (PostgreSQL memory and `/dev/shm`):
+  - `ALTER SYSTEM` needs the `postgres` superuser and must not be combined with other statements in one `psql -c`; the section shows the heredoc form.
+  - `ALTER SYSTEM RESET maintenance_work_mem` falls back to the entrypoint's 64 MB, not a previously tuned value.
+  - Recommended settings: `maintenance_work_mem` under half of `shm_size` (256 MB with the compose file's 1 GB) and `autovacuum_work_mem` 1 GB (autovacuum is never parallel and uses private memory).
+  - A single-statement, detached command for a large manual VACUUM, and a warning that `-c "SET …; VACUUM …"` fails.
+
+### Internal
+
+- `flow_reclass.go`: corrected the comment on the VACUUM hint (a full reclass rewrote ~141M rows on production; autovacuum usually keeps up with the table's 0.01 scale factor).
+- Guardrail test `TestFilterLoad_Followups272`, plus updated pins for the notice wording and the Syslog tiles.
+
 ## [0.11.271] - 2026-09-28
 
 ### Changed — searches and filters show a loading overlay and can be cancelled

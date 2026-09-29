@@ -255,8 +255,10 @@ func (d *Database) writeReclassStatus(st reclassState, phase, reason string, fin
 	if finished {
 		now := time.Now().UTC()
 		s.Finished = &now
-		// ~127M in-place updates on production leave dead tuples behind;
-		// flow_rollups is not autovacuumed aggressively, so say so.
+		// A full reclass rewrites every row (~141M in-place updates on
+		// production, 2026-09-28). Autovacuum usually keeps up (flow_rollups
+		// has a 0.01 scale factor), but a one-off VACUUM (ANALYZE) afterwards
+		// refreshes statistics and the visibility map without waiting on it.
 		s.VacuumHint = !st.Incremental && st.Updated > 0
 	}
 	b, _ := json.Marshal(s)
