@@ -1,6 +1,22 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.274] - 2026-09-29
+
+### Changed — repository hygiene for a public project
+
+- **Internal material removed from the repository.** Working notes, internal review reports, one-off helper scripts and an internal design note are no longer part of the public tree. Docs and code comments that pointed at them now stand on their own.
+- **Test data uses reserved addresses and neutral names.** Test fixtures and examples no longer contain addresses, device names, host names, MAC addresses, serial numbers or paths from a real environment. Outside hosts use RFC 5737 ranges, "our own" public space uses RFC 2544 `198.18.0.0/15`, LANs use RFC 1918, and names use `example.*` and neutral device names. Every replacement keeps each test's meaning: the same subnet and range membership, and no two addresses merged.
+- **Guardrail tests moved to `test/guardrails/`** (from `internal/shell/`), where repo-wide checks conventionally live in a Go project. Unit tests stay next to their code.
+- **Changelog wording.** Older entries keep their content, with deployment-specific details (host names, sizes, incident dates) described in general terms.
+
+### Added
+
+- `test/guardrails/public_hygiene_test.go` fails on public IPv4/IPv6 addresses outside the reserved ranges (with a short reviewed allowlist of well-known resolvers and placeholders) and on home-directory paths in any tracked file. `agentmemory_audit115_test.go` now checks the whole repository for tracked working notes, internal reports, helper scripts and tool settings. Before, it ran from its own directory and saw none of them.
+- `test/guardrails/private_denylist_test.go`: a local-only check against a private list of sensitive tokens kept outside the repository. It is skipped unless `FWMON_DENYLIST` is set, so it never runs in CI.
+- **Secret scanning.** A `Secret scan` workflow runs gitleaks 8.30.1 (pinned, checksum-verified) on every push and pull request, over the commits being added. `.gitleaks.toml` allowlists the reviewed synthetic test secrets by path.
+- CONTRIBUTING: a "Never commit" section and a local gitleaks pre-commit hook.
+
 ## [0.11.273] - 2026-09-29
 
 ### Fixed — country flags show on every browser
