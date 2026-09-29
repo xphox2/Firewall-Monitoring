@@ -458,7 +458,7 @@
             // A samples load started while the list was hidden has no overlay
             // (no Cancel, and Load more is ignored as busy): re-issue it now
             // that the list is shown, so it runs under the overlay.
-            if (tab === 'samples' && wasHidden && window.AdminCommon && window.AdminCommon.chartLoadBusy &&
+            if (tab === 'samples' && wasHidden && samplesLoadHidden && window.AdminCommon && window.AdminCommon.chartLoadBusy &&
                 window.AdminCommon.chartLoadBusy('flows-samples', true)) loadSamples();
             // Otherwise, if the list holds rows of a different filter than the
             // chips name (a cancelled or failed samples load), say so again —
@@ -1361,6 +1361,10 @@
         // (chartLoad clears only the host it mounts on).
         var mounted = flowsLoadHost('flows-samples-host', 'flows-view-samples');
         var host = mounted.appendChild ? mounted : null;
+        // Only a load that started while the list was hidden (always a
+        // first-page load of the live filter) is re-issued when the list is
+        // shown; a visible Load more keeps its overlay and its rows.
+        samplesLoadHidden = !host;
         var real = document.getElementById('flows-samples-host');
         if (!host && real) {
             Array.prototype.forEach.call(real.querySelectorAll(':scope > .fwmon-chart-notice'), function(n) { n.parentNode.removeChild(n); });
@@ -1412,6 +1416,8 @@
     // load succeeds). After a cancelled reload the live state is the NEW
     // filter while the rows are still the old one's.
     var shownSamplesState = null;
+    // The running samples load was started with no visible host (see samplesLoad).
+    var samplesLoadHidden = false;
 
     // Load more continues the rows on screen; while a samples load is running
     // (a filter reload whose rows have not arrived), flowsOffset still belongs

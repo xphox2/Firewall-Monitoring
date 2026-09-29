@@ -626,7 +626,7 @@ func TestFilterLoad_ReviewRound10(t *testing.T) {
 	mustContain(t, "admin-controls.js", ctl, "hasPendingEdit: function() { return !!(autoApply && autoApply.hasPending()); },", "and exposed on the page handle")
 
 	ti := readJS(t, "admin-threatintel.js")
-	mustContain(t, "admin-threatintel.js", ti, "if (AC.chartLoadBusy('ti-search', true)) { if (isRefresh) { searchRefreshDeferred = true; searchRefreshOffset = offset; } return; }\n        runSearch(offset, lastSearch, isRefresh);", "search paging continues the shown search and waits")
+	mustContain(t, "admin-threatintel.js", ti, "if (AC.chartLoadBusy('ti-search', true)) { if (isRefresh) { searchRefreshDeferred = true; searchRefreshToStart = searchRefreshToStart || offset === 0; } return; }\n        runSearch(offset, lastSearch, isRefresh);", "search paging continues the shown search and waits")
 	if strings.Count(ti, "pageSearch(searchOffset") != 3 {
 		t.Error("Prev, Next and the refresh after a delete must all page through pageSearch")
 	}
@@ -732,8 +732,8 @@ func TestFilterLoad_ReviewRound15(t *testing.T) {
 	mustContain(t, "admin-main.js", ra, "if (res && res.superseded && AC.chartLoadBusy('filter-alerts', true)) alertsRefreshDeferred = true;", "re-arm")
 	ti := readJS(t, "admin-threatintel.js")
 	rs := funcBody(t, ti, `function runSearch\(offset, snap, isRefresh\)`)
-	mustContain(t, "admin-threatintel.js", rs, "if (isRefresh && AC.chartLoadBusy('ti-search', true)) { searchRefreshDeferred = true; searchRefreshOffset = target; }", "an interrupted threat-intel refresh re-arms")
-	mustContain(t, "admin-threatintel.js", funcBody(t, ti, `function runDeferredSearchRefresh\(\)`), "pageSearch(searchRefreshOffset, true);", "the deferred run is itself a refresh, at the page it was asked for")
+	mustContain(t, "admin-threatintel.js", rs, "if (isRefresh && AC.chartLoadBusy('ti-search', true)) { searchRefreshDeferred = true; searchRefreshToStart = searchRefreshToStart || target === 0; }", "an interrupted threat-intel refresh re-arms")
+	mustContain(t, "admin-threatintel.js", funcBody(t, ti, `function runDeferredSearchRefresh\(\)`), "pageSearch(toStart ? 0 : searchOffset, true);", "the deferred run is itself a refresh, at the page on screen when it runs")
 	er := readJS(t, "admin-event-rules.js")
 	mustContain(t, "admin-event-rules.js", funcBody(t, er, `function startRulesReload\(\)`), "if (res && res.superseded && AC.chartLoadBusy('event-rules', true)) rulesReloadDeferred = true;", "an interrupted rules reload re-arms")
 	rv := funcBody(t, er, `function reloadViewedRules\(\)`)
@@ -840,5 +840,24 @@ func TestFilterLoad_ReviewRound20(t *testing.T) {
 		t.Error("a profile switch must replace the old rows before the load starts")
 	}
 	mustContain(t, "diagram-cytoscape.js", readJS(t, "diagram-cytoscape.js"), "[role=\"dialog\"].active, .fwmon-confirm-overlay')) return;", "confirm dialogs keep their Esc")
-	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "searchRefreshOffset = offset; }", "the deferred refresh remembers its page")
+	if strings.Contains(readJS(t, "admin-threatintel.js"), "searchRefreshOffset") {
+		t.Error("the deferred refresh must keep its intent (to page 1 or not), never a frozen offset")
+	}
+}
+
+// Twenty-first review (Opus 5.5, harness-proven): a deferred threat-intel
+// refresh keeps its intent, not a frozen offset (which paired an old offset
+// with a new search); a delete after leaving does nothing; Flows re-issues
+// only a samples load that started hidden (a visible Load more keeps its
+// rows); config-diff errors offer Retry.
+func TestFilterLoad_ReviewRound21(t *testing.T) {
+	ti := readJS(t, "admin-threatintel.js")
+	mustContain(t, "admin-threatintel.js", ti, "if (tiPage && tiPage.classList.contains('active')) pageSearch(searchOffset, true);", "a delete refresh is page-gated")
+	fl := readJS(t, "admin-flows.js")
+	mustContain(t, "admin-flows.js", funcBody(t, fl, `function samplesLoad\(offset, append\)`), "samplesLoadHidden = !host;", "a hidden start is recorded")
+	mustContain(t, "admin-flows.js", funcBody(t, fl, `function applyTabView\(\)`), "wasHidden && samplesLoadHidden &&", "only a hidden-started load is re-issued")
+	dd := readJS(t, "admin-device-detail.js")
+	if strings.Count(dd, "AC.chartNotice(body, 'Could not load results', { dim: false, onRetry: function() { openConfigDiff(fromID, toID); } });") != 2 {
+		t.Error("both config-diff error paths must offer Retry")
+	}
 }

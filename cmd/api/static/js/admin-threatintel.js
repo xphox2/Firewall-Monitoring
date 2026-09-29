@@ -288,9 +288,13 @@
     // A refresh asked for while a search runs (after a delete) is deferred to
     // when it settles — a cancelled/failed search keeps the old rows.
     var searchRefreshDeferred = false;
-    var searchRefreshOffset = 0; // the page a deferred refresh shows (0 after an add)
+    // Whether a deferred refresh goes back to page 1 (after an add) or re-shows
+    // the page on screen WHEN IT RUNS (after a delete). The intent is kept, not
+    // the offset: a newer search or page change in between must not be paired
+    // with an offset from before it.
+    var searchRefreshToStart = false;
     function pageSearch(offset, isRefresh) {
-        if (AC.chartLoadBusy('ti-search', true)) { if (isRefresh) { searchRefreshDeferred = true; searchRefreshOffset = offset; } return; }
+        if (AC.chartLoadBusy('ti-search', true)) { if (isRefresh) { searchRefreshDeferred = true; searchRefreshToStart = searchRefreshToStart || offset === 0; } return; }
         runSearch(offset, lastSearch, isRefresh);
     }
     function runDeferredSearchRefresh() {
@@ -299,7 +303,9 @@
         var tiPage = document.getElementById('page-threat-intel');
         if (!tiPage || !tiPage.classList.contains('active')) return;
         searchRefreshDeferred = false;
-        pageSearch(searchRefreshOffset, true);
+        var toStart = searchRefreshToStart;
+        searchRefreshToStart = false;
+        pageSearch(toStart ? 0 : searchOffset, true);
     }
 
     // The search form (its inputs) — Esc there cancels the search; Esc in the
@@ -334,7 +340,7 @@
             return api('/admin/api/threat-intel/search?' + params, { signal: signal });
         }, { key: 'ti-search', label: 'Searching…', escScope: searchForm() }).then(function(r) {
             if (r.superseded) {
-                if (isRefresh && AC.chartLoadBusy('ti-search', true)) { searchRefreshDeferred = true; searchRefreshOffset = target; }
+                if (isRefresh && AC.chartLoadBusy('ti-search', true)) { searchRefreshDeferred = true; searchRefreshToStart = searchRefreshToStart || target === 0; }
                 // Left the page (nothing newer took over): init() reloads on
                 // return, so a deferred refresh is consumed, not replayed.
                 else if (!AC.chartLoadBusy('ti-search', true)) searchRefreshDeferred = false;
@@ -440,7 +446,12 @@
         if (!id) return;
         btn.disabled = true;
         api('/admin/api/flows/threat-intel/' + encodeURIComponent(id), { method: 'DELETE' })
-            .then(function() { pageSearch(searchOffset, true); loadFeeds(); })
+            .then(function() {
+                // Like an add: nothing when the page was left (init() reloads).
+                var tiPage = document.getElementById('page-threat-intel');
+                if (tiPage && tiPage.classList.contains('active')) pageSearch(searchOffset, true);
+                loadFeeds();
+            })
             .catch(function(e) { window.fwmonLog && window.fwmonLog.error('threat-intel delete failed', e); btn.disabled = false; });
     }
 

@@ -2054,12 +2054,14 @@
             if (r.error) {
                 fwmonLog.error('[diff] fetch failed:', r.error);
                 showConfigDiffError('Failed to load diff.', String(r.error && r.error.message || r.error));
+                AC.chartNotice(body, 'Could not load results', { dim: false, onRetry: function() { openConfigDiff(fromID, toID); } });
                 return;
             }
             var result = r.data;
             fwmonLog.debug('[diff] response:', result);
             if (!result || !result.success || !result.data) {
                 showConfigDiffError('Server returned an error.', String((result && result.error) || 'unknown'));
+                AC.chartNotice(body, 'Could not load results', { dim: false, onRetry: function() { openConfigDiff(fromID, toID); } });
                 return;
             }
             renderConfigDiff(result.data);
