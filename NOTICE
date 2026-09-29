@@ -1,7 +1,7 @@
 Firewall-Mon
 Copyright (c) Firewall-Mon contributors
 
-This product includes third-party data:
+This product includes third-party data and fonts:
 
 IP Geolocation by DB-IP (https://db-ip.com)
   DB-IP Lite databases (IP-to-Country Lite, IP-to-ASN Lite) are bundled for the
@@ -10,6 +10,10 @@ IP Geolocation by DB-IP (https://db-ip.com)
   https://creativecommons.org/licenses/by/4.0/
   Files: internal/classify/geoipdata/dbip-country-lite.mmdb,
          internal/classify/geoipdata/dbip-asn-lite.mmdb
+
+Twemoji Country Flags (font)
+  Flag glyphs for the admin UI's country flags. Twemoji graphics © 2019 Twitter, Inc and other contributors (CC BY 4.0, https://creativecommons.org/licenses/by/4.0/) → "Twemoji Mozilla" 0.6.0 COLR font by Mozilla (https://github.com/mozilla/twemoji-colr) → flag-only subset by TalkJS (country-flag-emoji-polyfill 0.1.10); redistributed unmodified.
+  File: cmd/api/static/fonts/twemoji-country-flags.woff2
 
 Threat-intelligence feeds (fetched at runtime, per deployment; not redistributed):
   Spamhaus DROP and ASN-DROP (© The Spamhaus Project), abuse.ch Feodo Tracker

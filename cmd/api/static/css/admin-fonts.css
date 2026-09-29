@@ -1,11 +1,12 @@
-/* admin-fonts.css — self-hosted Inter + JetBrains Mono (variable, latin subset).
+/* admin-fonts.css — self-hosted Inter, JetBrains Mono and Archivo (the text
+ * faces: variable, latin subset) plus Twemoji Country Flags (flag glyphs only).
  *
- * Both families are variable fonts: a single .woff2 carries every weight from
- * 100–900 via OpenType variations, so the browser interpolates intermediate
- * weights at zero per-weight download cost. Total payload: ~80 KB.
+ * The three text faces are variable fonts: a single .woff2 carries every weight
+ * from 100–900 via OpenType variations, so the browser interpolates
+ * intermediate weights at zero per-weight download cost.
  *
- * Subsetted to latin (U+0000–00FF + a handful of European punctuation) — the
- * admin UI's full text content fits inside this subset. If we ever ship UI
+ * The text faces are subsetted to latin (U+0000–00FF + a handful of European
+ * punctuation) — the admin UI's full text content fits inside this subset. If we ever ship UI
  * translations into Cyrillic / Greek / Vietnamese, fetch the matching
  * subset.woff2 from `fonts.gstatic.com/s/{family}/v{N}/...` and add a second
  * @font-face block with the matching unicode-range.
@@ -13,7 +14,7 @@
  * Files are committed to cmd/api/static/fonts/ so they're embedded into the
  * binary by `//go:embed static` and served same-origin under /static/fonts/.
  * No CDN, no Google Fonts fetch, no third-party origin in any request — clean
- * with the existing `font-src 'self'` CSP at middleware.go:257.
+ * with the existing `font-src 'self'` CSP (internal/api/middleware/middleware.go).
  */
 
 @font-face {
@@ -47,4 +48,24 @@
     font-display: swap;
     src: url("/static/fonts/archivo-latin.woff2") format("woff2-variations"),
          url("/static/fonts/archivo-latin.woff2") format("woff2");
+}
+
+/* Twemoji Country Flags — flag glyphs for AC.flagEmoji (span.fwmon-flag).
+ * Windows ships no flag glyphs, so Chrome and Edge there draw a regional-
+ * indicator pair as two letters ("US") beside the ISO code the row already
+ * shows. This face covers only the flag code points (unicode-range), so the
+ * browser fetches it only on a page that shows a flag and uses it for nothing
+ * else; flags then look the same on every OS. Same-origin, font-src 'self'.
+ * Attribution: Twemoji graphics © 2019 Twitter, Inc and other contributors (CC BY 4.0, https://creativecommons.org/licenses/by/4.0/) → "Twemoji Mozilla" 0.6.0 COLR font by Mozilla (https://github.com/mozilla/twemoji-colr) → flag-only subset by TalkJS (country-flag-emoji-polyfill 0.1.10); redistributed unmodified.
+ * (The font's internal name is "Twemoji Mozilla".) See NOTICE. */
+@font-face {
+    font-family: "Twemoji Country Flags";
+    unicode-range: U+1F1E6-1F1FF, U+1F3F4, U+E0062-E0063, U+E0065, U+E0067,
+        U+E006C, U+E006E, U+E0073-E0074, U+E0077, U+E007F;
+    font-display: swap;
+    src: url("/static/fonts/twemoji-country-flags.woff2") format("woff2");
+}
+
+.fwmon-flag {
+    font-family: "Twemoji Country Flags", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
 }

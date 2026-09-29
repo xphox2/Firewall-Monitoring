@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-Firewall-Mon includes the following third-party software. Each component is listed with its license terms; full license texts follow the inventory.
+Firewall-Mon includes the following third-party software, fonts and data. Each component is listed with its license terms; full license texts follow the inventory.
 
 ---
 
@@ -90,6 +90,34 @@ Compiled output included as `cmd/api/static/css/tailwind.css`. Build-time only.
 - **Copyright**: Copyright (c) JetBrains s.r.o. and contributors
 - **Source**: https://github.com/JetBrains/JetBrainsMono
 - **File**: `cmd/api/static/fonts/jetbrains-mono-latin.woff2`
+
+### Archivo (font) — SIL Open Font License 1.1
+
+- **Copyright**: Copyright 2020 The Archivo Project Authors (https://github.com/Omnibus-Type/Archivo)
+- **Source**: https://github.com/Omnibus-Type/Archivo
+- **File**: `cmd/api/static/fonts/archivo-latin.woff2`
+
+### Twemoji Country Flags (font) — CC-BY-4.0
+
+- **Version**: country-flag-emoji-polyfill 0.1.10 (font internally named "Twemoji Mozilla" 0.6.0)
+- **Copyright**: Copyright 2019 Twitter, Inc and other contributors
+- **Attribution and changes**: Twemoji graphics © 2019 Twitter, Inc and other contributors (CC BY 4.0, https://creativecommons.org/licenses/by/4.0/) → "Twemoji Mozilla" 0.6.0 COLR font by Mozilla (https://github.com/mozilla/twemoji-colr) → flag-only subset by TalkJS (country-flag-emoji-polyfill 0.1.10); redistributed unmodified.
+- **Source**: https://www.npmjs.com/package/country-flag-emoji-polyfill, https://github.com/talkjs/country-flag-emoji-polyfill, https://github.com/mozilla/twemoji-colr, https://github.com/twitter/twemoji
+- **License**: https://creativecommons.org/licenses/by/4.0/
+- **File**: `cmd/api/static/fonts/twemoji-country-flags.woff2`
+- Only the font is vendored; the package's MIT-licensed JavaScript is not used.
+
+---
+
+## Bundled data (embedded in the server binary)
+
+### DB-IP Lite databases — CC-BY-4.0
+
+IP Geolocation by DB-IP. Used for the default free country/ASN enrichment tier; credited with a link to DB-IP.com on every admin page. See also `NOTICE`.
+
+- **Source**: https://db-ip.com
+- **License**: https://creativecommons.org/licenses/by/4.0/
+- **Files**: `internal/classify/geoipdata/dbip-country-lite.mmdb`, `internal/classify/geoipdata/dbip-asn-lite.mmdb`
 
 ---
 
@@ -219,7 +247,13 @@ Applies to: layout-base (including the embedded JAMA SVD routine), prometheus/cl
 
 Full text: https://openfontlicense.org/
 
-Applies to: Inter, JetBrains Mono.
+Applies to: Inter, JetBrains Mono, Archivo.
+
+### Creative Commons Attribution 4.0 International
+
+Full text: https://creativecommons.org/licenses/by/4.0/legalcode
+
+Applies to: Twemoji Country Flags, DB-IP Lite databases.
 
 ---
 
