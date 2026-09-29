@@ -194,19 +194,21 @@
     function runDeferredRulesReload() {
         if (!rulesReloadDeferred || AC.chartLoadBusy('event-rules', true)) return;
         rulesReloadDeferred = false;
-        startRulesReload();
+        startRulesReload(true); // quiet: no overlay flash over a Cancel/error notice
     }
     // A post-save reload that a chip/profile click interrupts is re-armed, so
     // if that load is cancelled or fails the change still shows.
-    function startRulesReload() {
-        loadRules(viewedProfileId(), currentRuleFilter).then(function (res) {
+    function startRulesReload(quiet) {
+        loadRules(viewedProfileId(), currentRuleFilter, { quiet: !!quiet }).then(function (res) {
             if (res && res.superseded && AC.chartLoadBusy('event-rules', true)) rulesReloadDeferred = true;
         });
     }
 
     // loadRules resolves { ok } once the rows are rendered, or { cancelled }
     // / { error } — callers that act on the loaded rules must check ok.
-    function loadRules(profileId, filter) {
+    // lopts.quiet: a deferred post-save reload — no overlay, errors toast.
+    function loadRules(profileId, filter, lopts) {
+        var quiet = !!(lopts && lopts.quiet);
         var pid = profileId || 0;
         var nextFilter = filter ? filter : (!profileId ? 'all' : currentRuleFilter);
         targetProfileId = pid;
@@ -214,12 +216,13 @@
         var wrap = $('event-rules-table-wrap');
         // Switching profile: the old profile's rows must not show (let alone
         // be clickable) under the new header while this one loads.
-        if (wrap && pid !== currentProfileId && !wrap.querySelector('[data-rules-placeholder]')) {
+        // Only for a visible table: a hidden lookup must not leave it behind.
+        if (wrap && wrap.offsetParent && !quiet && pid !== currentProfileId && !wrap.querySelector('[data-rules-placeholder]')) {
             wrap.innerHTML = '<div class="empty-state" data-rules-placeholder style="padding:32px;text-align:center;color:var(--fwmon-text-faint)">Loading rules\u2026</div>';
         }
         // No overlay while the Rules tab is hidden (a Customize lookup runs from
         // the matrix); the load itself is the same.
-        var host = (wrap && wrap.offsetParent) ? wrap : [];
+        var host = (wrap && wrap.offsetParent && !quiet) ? wrap : [];
         return AC.chartLoad(host, function (signal) {
             return AC.apiFetch(url, { signal: signal });
         }, { key: 'event-rules', label: 'Loading rules…', escScope: $('ep-rules-filter') }).then(function (r) {
@@ -250,6 +253,7 @@
                 }
                 targetProfileId = null;
                 syncRuleFilterChips();
+                settleLoadingPlaceholder();
                 // Over the "not loaded" placeholder there are no previous rows.
                 var hadRows = wrap && !wrap.querySelector('[data-rules-placeholder]');
                 if (wrap) AC.chartNotice(wrap, hadRows ? 'Cancelled — showing the previous results' : 'Cancelled', { dim: false, onRetry: retry });
@@ -262,6 +266,10 @@
                 if (/role|forbidden|allow this action/i.test(err.message) || (role && role !== 'admin')) {
                     targetProfileId = null;
                     renderPlaceholder();
+                    return { error: err };
+                }
+                if (quiet) {
+                    AC.showError('Could not refresh the rules: ' + err.message);
                     return { error: err };
                 }
                 if (!(wrap && wrap.offsetParent)) {
@@ -283,6 +291,7 @@
                 }
                 targetProfileId = null;
                 syncRuleFilterChips(); // the chips name the filter whose rows are shown
+                settleLoadingPlaceholder();
                 if (wrap) AC.chartNotice(wrap, 'Could not load results', { dim: false, onRetry: function () { loadRules(pid, nextFilter); } });
                 return { error: err };
             }
@@ -304,6 +313,14 @@
             if (!(res && res.superseded)) setTimeout(runDeferredRulesReload, 0);
             return res;
         });
+    }
+
+    // A "Loading rules…" placeholder left by an earlier switch, when this
+    // load ends without rows, must not claim a load is still running.
+    function settleLoadingPlaceholder() {
+        var wrap = $('event-rules-table-wrap');
+        var ph = wrap && wrap.querySelector('[data-rules-placeholder]');
+        if (ph) ph.textContent = 'Rules for this profile were not loaded.';
     }
 
     // After a cancelled load the filter chips go back to the filter whose rows

@@ -143,14 +143,14 @@ func TestFilterLoad_StateOnlyOnSuccess(t *testing.T) {
 	}
 
 	ti := readJS(t, "admin-threatintel.js")
-	search := funcBody(t, ti, `function runSearch\(offset, snap, isRefresh\)`)
+	search := funcBody(t, ti, `function runSearch\(offset, snap, isRefresh, quiet\)`)
 	if strings.Index(search, "searchOffset = target;") < strings.Index(search, "if (r.error) {") {
 		t.Error("runSearch sets searchOffset before the result is known")
 	}
 	mustContain(t, "admin-threatintel.js", search, "if (lastSearch && !paging) setSearchControls(lastSearch);", "Cancel puts the shown search back in the controls")
 
 	er := readJS(t, "admin-event-rules.js")
-	lr := funcBody(t, er, `function loadRules\(profileId, filter\)`)
+	lr := funcBody(t, er, `function loadRules\(profileId, filter, lopts\)`)
 	okAt := strings.Index(lr, "rules = (r.data && r.data.data) || [];")
 	for _, st := range []string{"currentProfileId = pid;", "currentRuleFilter = nextFilter;", "groupCollapsed = {};"} {
 		if i := strings.Index(lr, st); i < 0 || i > okAt || i < strings.Index(lr, "if (r.error) {") {
@@ -303,7 +303,7 @@ func TestFilterLoad_CancelRestoresWhatIsShown(t *testing.T) {
 	mustContain(t, "admin-flows.js", sl, "var host = mounted.appendChild ? mounted : null;", "a hidden samples load puts no notice on the host")
 
 	er := readJS(t, "admin-event-rules.js")
-	lr := funcBody(t, er, `function loadRules\(profileId, filter\)`)
+	lr := funcBody(t, er, `function loadRules\(profileId, filter, lopts\)`)
 	sw := strings.Index(lr, "if (pid !== currentProfileId) {")
 	ph := strings.Index(lr, "Rules for this profile were not loaded.")
 	if sw < 0 || ph < 0 || ph < sw || ph > strings.Index(lr, "targetProfileId = null;\n                syncRuleFilterChips();") {
@@ -319,7 +319,7 @@ func TestFilterLoad_ReviewRound2(t *testing.T) {
 	if strings.Contains(er, "loadRules(currentProfileId, currentRuleFilter)") {
 		t.Error("save/delete must reload the viewed profile (viewedProfileId), not the last loaded one")
 	}
-	if n := strings.Count(er, "loadRules(viewedProfileId(), currentRuleFilter)"); n != 1 {
+	if n := strings.Count(er, "loadRules(viewedProfileId(), currentRuleFilter, { quiet: !!quiet })"); n != 1 {
 		t.Errorf("save and delete reload the viewed profile through one startRulesReload; found %d direct calls", n)
 	}
 
@@ -355,7 +355,7 @@ func TestFilterLoad_ReviewRound2(t *testing.T) {
 // detail polls, and the remaining Cancel/Retry surfaces.
 func TestFilterLoad_ReviewRound3(t *testing.T) {
 	er := readJS(t, "admin-event-rules.js")
-	lr := funcBody(t, er, `function loadRules\(profileId, filter\)`)
+	lr := funcBody(t, er, `function loadRules\(profileId, filter, lopts\)`)
 	errAt := strings.Index(lr, "if (r.error) {")
 	// The error branch ends where the success path begins (its own clear of
 	// targetProfileId is not part of the error path).
@@ -467,7 +467,7 @@ func TestFilterLoad_ReviewRound6(t *testing.T) {
 	}
 
 	er := readJS(t, "admin-event-rules.js")
-	lr := funcBody(t, er, `function loadRules\(profileId, filter\)`)
+	lr := funcBody(t, er, `function loadRules\(profileId, filter, lopts\)`)
 	hid := strings.Index(lr, "if (!(wrap && wrap.offsetParent)) {\n                    // A hidden lookup")
 	toast := strings.Index(lr, "AC.showError('Failed to load event rules: ' + err.message);")
 	if hid < 0 || toast < hid || toast > strings.Index(lr, "if (pid !== currentProfileId) {\n                    // A failed profile switch") {
@@ -731,11 +731,11 @@ func TestFilterLoad_ReviewRound15(t *testing.T) {
 	}
 	mustContain(t, "admin-main.js", ra, "if (res && res.superseded && AC.chartLoadBusy('filter-alerts', true)) alertsRefreshDeferred = true;", "re-arm")
 	ti := readJS(t, "admin-threatintel.js")
-	rs := funcBody(t, ti, `function runSearch\(offset, snap, isRefresh\)`)
+	rs := funcBody(t, ti, `function runSearch\(offset, snap, isRefresh, quiet\)`)
 	mustContain(t, "admin-threatintel.js", rs, "if (isRefresh && AC.chartLoadBusy('ti-search', true)) { searchRefreshDeferred = true; searchRefreshToStart = searchRefreshToStart || target === 0; }", "an interrupted threat-intel refresh re-arms")
-	mustContain(t, "admin-threatintel.js", funcBody(t, ti, `function runDeferredSearchRefresh\(\)`), "pageSearch(toStart ? 0 : searchOffset, true);", "the deferred run is itself a refresh, at the page on screen when it runs")
+	mustContain(t, "admin-threatintel.js", funcBody(t, ti, `function runDeferredSearchRefresh\(\)`), "runSearch(toStart ? 0 : searchOffset, lastSearch, true, true);", "the deferred run is itself a (quiet) refresh, at the page on screen when it runs")
 	er := readJS(t, "admin-event-rules.js")
-	mustContain(t, "admin-event-rules.js", funcBody(t, er, `function startRulesReload\(\)`), "if (res && res.superseded && AC.chartLoadBusy('event-rules', true)) rulesReloadDeferred = true;", "an interrupted rules reload re-arms")
+	mustContain(t, "admin-event-rules.js", funcBody(t, er, `function startRulesReload\(quiet\)`), "if (res && res.superseded && AC.chartLoadBusy('event-rules', true)) rulesReloadDeferred = true;", "an interrupted rules reload re-arms")
 	rv := funcBody(t, er, `function reloadViewedRules\(\)`)
 	if i := strings.Index(rv, "if (!erPage || !erPage.classList.contains('active')) { rulesReloadDeferred = false; return; }"); i < 0 || i > strings.Index(rv, "startRulesReload();") {
 		t.Error("a rules reload after leaving the page must do nothing")
@@ -776,7 +776,7 @@ func TestFilterLoad_ReviewRound17(t *testing.T) {
 	mustContain(t, "admin-reports.js", rp, "if (!loadedOnce || rebuildOnInit) { rebuildOnInit = false; loadPreview(); }", "init rebuilds when stale")
 	mustContain(t, "admin-reports.js", rp, "else rebuildOnInit = true; // stale — init() refetches on next visit", "a hidden theme change marks stale the same way")
 	ti := readJS(t, "admin-threatintel.js")
-	mustContain(t, "admin-threatintel.js", ti, "else if (!AC.chartLoadBusy('ti-search', true)) searchRefreshDeferred = false;", "a page leave consumes the deferred refresh")
+	mustContain(t, "admin-threatintel.js", ti, "else if (!AC.chartLoadBusy('ti-search', true)) { searchRefreshDeferred = false; searchRefreshToStart = false; }", "a page leave consumes the deferred refresh")
 	if strings.Contains(ti, "runSearch(0); loadFeeds();") {
 		t.Error("an add must refresh through pageSearch (gated), not an unconditional runSearch")
 	}
@@ -835,8 +835,8 @@ func TestFilterLoad_ReviewRound20(t *testing.T) {
 	mustContain(t, "admin-reports.js", rp, "resolved: theme() };", "the built theme is recorded")
 	mustContain(t, "admin-reports.js", funcBody(t, rp, `function applyChoices\(c\)`), "if (!previewTheme && c.resolved && c.resolved !== theme()) previewTheme = c.resolved;", "and pinned when the app theme moved on")
 	er := readJS(t, "admin-event-rules.js")
-	lr := funcBody(t, er, `function loadRules\(profileId, filter\)`)
-	if i := strings.Index(lr, "if (wrap && pid !== currentProfileId && !wrap.querySelector('[data-rules-placeholder]')) {"); i < 0 || i > strings.Index(lr, "AC.chartLoad(") {
+	lr := funcBody(t, er, `function loadRules\(profileId, filter, lopts\)`)
+	if i := strings.Index(lr, "if (wrap && wrap.offsetParent && !quiet && pid !== currentProfileId && !wrap.querySelector('[data-rules-placeholder]')) {"); i < 0 || i > strings.Index(lr, "AC.chartLoad(") {
 		t.Error("a profile switch must replace the old rows before the load starts")
 	}
 	mustContain(t, "diagram-cytoscape.js", readJS(t, "diagram-cytoscape.js"), "[role=\"dialog\"].active, .fwmon-confirm-overlay')) return;", "confirm dialogs keep their Esc")
@@ -860,4 +860,30 @@ func TestFilterLoad_ReviewRound21(t *testing.T) {
 	if strings.Count(dd, "AC.chartNotice(body, 'Could not load results', { dim: false, onRetry: function() { openConfigDiff(fromID, toID); } });") != 2 {
 		t.Error("both config-diff error paths must offer Retry")
 	}
+}
+
+// Twenty-second review (Opus 5.5; LOW only): the threat-intel refresh intent
+// is reset wherever the refresh is consumed; deferred threat-intel and rules
+// refreshes are quiet (no overlay flash over a Cancel/error notice, errors
+// toast); a stale "Loading rules…" is settled; a theme change during the
+// first report build rebuilds it in the new theme.
+func TestFilterLoad_ReviewRound22(t *testing.T) {
+	ti := readJS(t, "admin-threatintel.js")
+	rd := funcBody(t, ti, `function runDeferredSearchRefresh\(\)`)
+	if strings.Index(rd, "searchRefreshToStart = false;") > strings.Index(rd, "if (!tiPage") {
+		t.Error("the refresh intent must be reset before the page-active return")
+	}
+	rs := funcBody(t, ti, `function runSearch\(offset, snap, isRefresh, quiet\)`)
+	mustContain(t, "admin-threatintel.js", rs, "AC.chartLoad(quiet ? [] : host,", "a quiet refresh mounts no overlay")
+	mustContain(t, "admin-threatintel.js", rs, "if (r.error && quiet) {", "a quiet refresh toasts on error")
+	er := readJS(t, "admin-event-rules.js")
+	mustContain(t, "admin-event-rules.js", funcBody(t, er, `function runDeferredRulesReload\(\)`), "startRulesReload(true);", "the deferred rules reload is quiet")
+	lr := funcBody(t, er, `function loadRules\(profileId, filter, lopts\)`)
+	mustContain(t, "admin-event-rules.js", lr, "var host = (wrap && wrap.offsetParent && !quiet) ? wrap : [];", "quiet = no overlay")
+	mustContain(t, "admin-event-rules.js", funcBody(t, er, `function settleLoadingPlaceholder\(\)`), "if (ph) ph.textContent = 'Rules for this profile were not loaded.';", "the stale Loading text is replaced")
+	if strings.Count(lr, "settleLoadingPlaceholder();") != 2 {
+		t.Error("both same-profile Cancel and error must settle a stale Loading placeholder")
+	}
+	rp := readJS(t, "admin-reports.js")
+	mustContain(t, "admin-reports.js", rp, "if (page && page.classList.contains('active') && AC.chartLoadBusy('report-preview', true)) loadPreview();", "a theme change during the first build rebuilds it")
 }

@@ -300,12 +300,13 @@
     function runDeferredSearchRefresh() {
         if (!searchRefreshDeferred || AC.chartLoadBusy('ti-search', true)) return;
         searchRefreshDeferred = false; // consumed either way: init() reloads on return
-        var tiPage = document.getElementById('page-threat-intel');
-        if (!tiPage || !tiPage.classList.contains('active')) return;
-        searchRefreshDeferred = false;
         var toStart = searchRefreshToStart;
         searchRefreshToStart = false;
-        pageSearch(toStart ? 0 : searchOffset, true);
+        var tiPage = document.getElementById('page-threat-intel');
+        if (!tiPage || !tiPage.classList.contains('active')) return;
+        // Quiet (no overlay): it neither flashes nor wipes the Cancel/error
+        // notice (and its Retry) of the search it waited for.
+        runSearch(toStart ? 0 : searchOffset, lastSearch, true, true);
     }
 
     // The search form (its inputs) — Esc there cancels the search; Esc in the
@@ -327,7 +328,8 @@
     // search reads the controls.
     // isRefresh: this search re-shows the list after a delete; if another
     // search interrupts it, the refresh is re-armed for when that one settles.
-    function runSearch(offset, snap, isRefresh) {
+    // quiet: a deferred refresh — no overlay (so no Cancel), errors toast.
+    function runSearch(offset, snap, isRefresh, quiet) {
         var target = offset < 0 ? 0 : offset;
         var query = snap ? Object.assign({}, snap) : searchControls();
         var params = 'offset=' + target + '&limit=' + PAGE_SIZE +
@@ -336,14 +338,14 @@
             '&category=' + encodeURIComponent(query.category) +
             '&severity=' + encodeURIComponent(query.severity);
         var host = el('ti-search-host');
-        AC.chartLoad(host, function(signal) {
+        AC.chartLoad(quiet ? [] : host, function(signal) {
             return api('/admin/api/threat-intel/search?' + params, { signal: signal });
         }, { key: 'ti-search', label: 'Searching…', escScope: searchForm() }).then(function(r) {
             if (r.superseded) {
                 if (isRefresh && AC.chartLoadBusy('ti-search', true)) { searchRefreshDeferred = true; searchRefreshToStart = searchRefreshToStart || target === 0; }
                 // Left the page (nothing newer took over): init() reloads on
                 // return, so a deferred refresh is consumed, not replayed.
-                else if (!AC.chartLoadBusy('ti-search', true)) searchRefreshDeferred = false;
+                else if (!AC.chartLoadBusy('ti-search', true)) { searchRefreshDeferred = false; searchRefreshToStart = false; }
                 return;
             }
             runDeferredSearchRefreshSoon();
@@ -355,6 +357,11 @@
             if (r.cancelled) {
                 if (lastSearch && !paging) setSearchControls(lastSearch);
                 AC.chartNotice(host, lastSearch ? 'Cancelled — showing the previous results' : 'Cancelled', { dim: false, onRetry: retry });
+                return;
+            }
+            if (r.error && quiet) {
+                if (window.fwmonLog) window.fwmonLog.error('threat-intel refresh failed', r.error);
+                AC.showError('Could not refresh the indicator list');
                 return;
             }
             if (r.error) {

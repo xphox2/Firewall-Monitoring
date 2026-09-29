@@ -225,8 +225,13 @@
         window.addEventListener('fwmon:themechange', function () {
             if (previewTheme) return; // explicit pill choice wins
             paintThemePills();
-            if (!loadedOnce) return;
             var page = document.getElementById('page-reports');
+            if (!loadedOnce) {
+                // The first build is still running in the old theme: rebuild
+                // it in the new one so the pills match what renders.
+                if (page && page.classList.contains('active') && AC.chartLoadBusy('report-preview', true)) loadPreview();
+                return;
+            }
             if (page && page.classList.contains('active')) loadPreview();
             else rebuildOnInit = true; // stale — init() refetches on next visit
         });
