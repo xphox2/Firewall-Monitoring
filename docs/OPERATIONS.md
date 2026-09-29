@@ -467,9 +467,27 @@ range, so don't shrink them to "smooth" load.
 The bundled PostgreSQL starts with conservative memory settings
 (`entrypoint.sh` writes them only when PGDATA is first created). On a larger
 host, raise them with `ALTER SYSTEM` from inside the container — it writes
-`postgresql.auto.conf`, survives restarts, and `ALTER SYSTEM RESET` undoes it.
-`work_mem` and `maintenance_work_mem` apply after `SELECT pg_reload_conf();`;
-`shared_buffers` needs a container restart.
+`postgresql.auto.conf` and survives restarts. `ALTER SYSTEM` and
+`pg_reload_conf()` need the `postgres` superuser (the app role `fwmon` cannot
+run them), and `ALTER SYSTEM` cannot run inside a transaction block, so send
+the statements over stdin rather than several in one `psql -c` (which runs
+them as one transaction):
+
+```sh
+docker exec -i firewall-mon psql -h /run/postgresql -v ON_ERROR_STOP=1 -U postgres -d firewall_mon <<'SQL'
+ALTER SYSTEM SET work_mem = '32MB';
+SELECT pg_reload_conf();
+SQL
+```
+
+`work_mem`, `maintenance_work_mem` and `autovacuum_work_mem` apply after
+`SELECT pg_reload_conf();` (check with `SHOW` from a new session — the reload
+is asynchronous); `shared_buffers` needs a container restart.
+`ALTER SYSTEM RESET` removes an override, which falls back to the value
+`entrypoint.sh` wrote into `postgresql.conf` or, if it wrote none, the built-in
+default (`autovacuum_work_mem` = -1, which inherits `maintenance_work_mem`).
+For `maintenance_work_mem` that is 64 MB, not a previously tuned value, so to
+go back, `SET` the old value instead.
 
 Check the `/dev/shm` ceiling first. Parallel queries keep their shared hash
 tables and shared scan bitmaps in `/dev/shm` (`dynamic_shared_memory_type =
@@ -485,10 +503,36 @@ queries run at once is bounded by client concurrency, not by
 the same shared memory.
 
 `maintenance_work_mem` has the same ceiling for one case: a manual `VACUUM` is
-parallel by default and sizes its dead-row array in `/dev/shm` from
-`maintenance_work_mem`. With it at 1 GB, run manual vacuums as
-`VACUUM (PARALLEL 0) …` or keep `maintenance_work_mem` under about half of
-`shm_size`. Autovacuum never runs in parallel and is unaffected.
+parallel by default (on a table with at least two indexes above
+`min_parallel_index_scan_size`) and reserves its whole dead-row array in
+`/dev/shm` up front, sized from `maintenance_work_mem` (up to 1 GB, and never
+more than the table's pages × 291 row slots, so small tables reserve less). At 1 GB that alone
+fills a 1 GB `shm_size`, and the VACUUM fails at once. Keep
+`maintenance_work_mem` under about half of `shm_size` — 256 MB with the
+compose file's 1 GB, which leaves room for about three parallel hash joins
+while a parallel VACUUM runs — and give autovacuum its own, larger budget with
+`autovacuum_work_mem` (e.g. 1 GB): autovacuum never runs in parallel and keeps
+its array in private memory. Parallel index builds sort in private memory and
+are unaffected, but they do use `maintenance_work_mem`, so a large manual
+`CREATE INDEX` should set a bigger session value itself.
+
+For a large manual VACUUM — the Settings page suggests one after a flow
+reclassification rewrites `flow_rollups` — run it serially with a 1 GB session
+value. Serial VACUUM keeps its dead-row array in private memory, so it cannot
+hit `/dev/shm`, and 1 GB covers ~179M dead rows in one pass over the indexes.
+Parallelism buys little here anyway: each index goes to one worker, and the
+primary key dominates. Run it detached so a dropped SSH session does not leave
+the outcome unknown:
+
+```sh
+nohup docker exec -e PGOPTIONS='-c maintenance_work_mem=1GB' firewall-mon \
+  psql -h /run/postgresql -U fwmon -d firewall_mon -c 'VACUUM (PARALLEL 0, ANALYZE) flow_rollups' \
+  > vacuum-flow_rollups.log 2>&1 &
+```
+
+Do not write it as `psql -c "SET maintenance_work_mem = '1GB'; VACUUM …"`: a
+multi-statement `-c` runs as one transaction, and VACUUM fails with *VACUUM
+cannot run inside a transaction block*.
 
 The persistent PostgreSQL log is `/data/pgdata/postgresql.log` inside the
 container (on the data volume, so it survives recreates):

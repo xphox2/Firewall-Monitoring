@@ -104,6 +104,11 @@
     // a load SUCCEEDS. Cancel restores it — not the previously committed query,
     // which may itself have been superseded or failed and never displayed.
     var shownQuery = {};
+    // chartsDrawn[key]: a charts load (key !== page) has drawn at least once.
+    // Its Cancel/error notice says "showing the previous results" only then —
+    // shownQuery tracks the table, and the first charts load can fail after
+    // the table arrived, over empty canvases.
+    var chartsDrawn = {};
     // The query a first-page load asks for: the state handed through onChange
     // (the page handle is not assigned yet on a first load), else the handle's
     // committed state. Builders read this, never the DOM, so page 1 and the
@@ -125,9 +130,10 @@
         ap.restore(snap);
         if (PAGE_EXTRAS[page] && snap && snap.__extra !== undefined) PAGE_EXTRAS[page].set(snap.__extra);
     }
-    // blankStatTiles: the Alerts/Traps totals come from the charts load; when
-    // it is cancelled or fails they would name the previous range under the
-    // new pills (the tiles carry no range label), so they show "--" instead.
+    // blankStatTiles: the Alerts/Traps/Syslog totals come from the charts
+    // load; when it is cancelled or fails they would name the previous range
+    // under the new pills (the tiles carry no range label), so they show "--"
+    // instead, and a basis line under the total (Syslog's) goes back to empty.
     // statTilesHours[page]: the range the tiles were last drawn for. Tiles
     // still showing the requested range (a refresh after an ack) stay.
     var statTilesHours = {};
@@ -138,6 +144,8 @@
             var el = document.getElementById(page + '-' + k);
             if (el) el.textContent = '--';
         });
+        var basis = document.getElementById(page + '-total-basis');
+        if (basis) basis.textContent = '';
     }
 
     function runFilterLoad(key, run, onOK, opts) {
@@ -164,6 +172,7 @@
                 // Only the page's TABLE load records the shown query: a charts
                 // load's query is the controls', which may be a filter that is
                 // still loading (or was dropped) rather than the rows' one.
+                if (key !== page && data.data) chartsDrawn[key] = true;
                 if (want && key === page) shownQuery[page] = want;
                 // Fresh rows replace what a Cancel/error notice referred to.
                 if (host) AC.chartNoticeClear(host);
@@ -196,6 +205,7 @@
                 if (opts.onFail && !AC.chartLoadBusy(loadKey, true)) opts.onFail();
                 return { superseded: true };
             }
+            var hadResults = (key === page) ? !!shownQuery[page] : !!chartsDrawn[key];
             if (r.cancelled) {
                 var back = shownQuery[page] || opts.prev;
                 // A charts load shares the page's controls with the table load.
@@ -204,7 +214,7 @@
                 if (opts.onFail) opts.onFail();
                 var apC = apNow();
                 if (back && apC && apC.restore && !siblingBusy()) restoreQuery(apC, page, back);
-                AC.chartNotice(host, shownQuery[page] ? 'Cancelled — showing the previous results' : 'Cancelled', { dim: false, onRetry: retryCancelled });
+                AC.chartNotice(host, hadResults ? 'Cancelled — showing the previous results' : 'Cancelled', { dim: false, onRetry: retryCancelled });
                 return;
             }
             if (r.error || !r.data) {
@@ -222,10 +232,11 @@
                 var apE = apNow();
                 var typing = !!(apE && apE.hasPendingEdit && apE.hasPendingEdit());
                 if (shown && apE && apE.restore && !siblingBusy() && !typing) restoreQuery(apE, page, shown);
-                if (host) AC.chartNotice(host, shownQuery[page] ? 'Could not load results — showing the previous results' : 'Could not load results', { dim: false, onRetry: retryCancelled });
+                if (host) AC.chartNotice(host, hadResults ? 'Could not load results — showing the previous results' : 'Could not load results', { dim: false, onRetry: retryCancelled });
                 else AC.showError('Could not load results'); // a quiet load has no host to annotate
                 return;
             }
+            if (key !== page && r.data.data) chartsDrawn[key] = true;
             if (want && key === page) shownQuery[page] = want;
             onOK(r.data);
         });
@@ -1017,6 +1028,7 @@
             document.getElementById('syslog-critical').textContent = crit.toLocaleString();
             document.getElementById('syslog-warning').textContent = warn.toLocaleString();
             document.getElementById('syslog-info').textContent = info.toLocaleString();
+            statTilesHours.syslog = hrs;
 
             var labels = (d.over_time || []).map(function(b) { return formatBucketTime(b.bucket, hrs); });
             var counts = (d.over_time || []).map(function(b) { return b.count; });
@@ -1034,7 +1046,7 @@
                 return '#8b949e';
             });
             createChart('syslog-severity-chart','doughnut',sevLabels,[{data:sevCounts,backgroundColor:sevColors,borderWidth:0}]);
-        }, { page: 'syslog', host: 'syslog-charts-host', fromPoll: opts.fromPoll, retry: function() { loadSyslogCharts(); } });
+        }, { page: 'syslog', host: 'syslog-charts-host', fromPoll: opts.fromPoll, retry: function() { loadSyslogCharts(); }, onFail: function() { blankStatTiles('syslog', hrs); } });
     }
 
     // snap (optional): a query snapshot — paging continues the SHOWN query
@@ -3713,7 +3725,7 @@
             var text = AC.flowReclassText(v);
             if (!text && v.phase === 'done') {
                 text = v.vacuum_hint
-                    ? 'Flow history is classified with the current networks. The rewrite left dead rows behind: run VACUUM (ANALYZE) flow_rollups to reclaim the space.'
+                    ? 'Flow history is classified with the current networks. The rewrite left dead rows behind. To reclaim the space, run VACUUM (PARALLEL 0, ANALYZE) flow_rollups with maintenance_work_mem set to 1GB for that session. docs/OPERATIONS.md has the exact command.'
                     : 'Flow history is classified with the current networks.';
             }
             el.textContent = text;
