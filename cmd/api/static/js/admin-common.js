@@ -1722,6 +1722,9 @@
     // ------------------------------------------------------------------
     var geoCache = {}; // baseIP -> {country, asn, asn_org, asn_prefix} | null (resolved, no data)
 
+    // flagEmoji: the flag is a regional-indicator pair drawn by the Twemoji
+    // Country Flags face (admin-fonts.css, .fwmon-flag) — Windows has no flag
+    // glyphs of its own. The faint ISO code beside it is the readable label.
     function flagEmoji(cc) {
         if (!cc || cc.length !== 2) return '';
         cc = cc.toUpperCase();

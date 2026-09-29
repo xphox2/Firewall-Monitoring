@@ -1,6 +1,21 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.273] - 2026-09-29
+
+### Fixed — country flags show on every browser
+
+- Country flags next to IP addresses (Flows, NOC, Threat intel, the connection map panel, Connection detail) now render as flag icons in Chrome and Edge on Windows. Windows has no flag glyphs, so those browsers drew the two letters of the flag ("US") next to the country code the row already shows, which read as the code twice with no icon. A small self-hosted flag-only font now supplies the glyphs. The browser fetches it only on pages that show a flag, it touches no other text, and flags look the same on every OS.
+
+### Added
+
+- An "IP Geolocation by DB-IP" link in the sidebar footer of every admin page. The bundled DB-IP Lite databases (CC BY 4.0) supply the country and ASN data behind the flags and AS chips, and their terms ask for a link back on every page that shows those results. Before, the credit appeared only on the Threat intel page.
+
+### Docs / legal
+
+- `NOTICE` and `THIRD-PARTY-NOTICES.md` credit the flag font: Twemoji graphics (Twitter, CC BY 4.0), built into a font by Mozilla and cut down to flags by TalkJS.
+- `THIRD-PARTY-NOTICES.md` gains the entries it was missing: the Archivo font (OFL 1.1) and the DB-IP Lite databases (new "Bundled data" section), plus a CC BY 4.0 license block.
+
 ## [0.11.272] - 2026-09-29
 
 ### Fixed — Syslog stat tiles and first-load chart notices
