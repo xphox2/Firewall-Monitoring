@@ -56,8 +56,8 @@ type ifaceSeed = []struct {
 	Addrs    [][2]string
 }
 
-// twoPortFortiGate mirrors the real box: port2 = 192.168.125.0/24,
-// port3 = 192.168.113.0/24.
+// twoPortFortiGate models a representative two-port FortiGate:
+// port2 = 192.168.125.0/24, port3 = 192.168.113.0/24.
 func twoPortFortiGate(t *testing.T, db *database.Database, deviceID uint) {
 	t.Helper()
 	seedIfaces(t, db, deviceID, ifaceSeed{

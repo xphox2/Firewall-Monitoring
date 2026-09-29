@@ -35,8 +35,8 @@ func TestParseStatus_Established(t *testing.T) {
 	}
 }
 
-// TestParseStatus_ConnectedBool is the real sessions/searchPhase1 shape (fwm-t9):
-// phase1 liveness is a BOOLEAN "connected", with no string status field. The
+// TestParseStatus_ConnectedBool is the sessions/searchPhase1 shape OPNsense
+// emits (fwm-t9): phase1 liveness is a BOOLEAN "connected", with no string status field. The
 // row must be read as up — the string-only path misread it as unknown.
 func TestParseStatus_ConnectedBool(t *testing.T) {
 	d, _ := ipsec.Driver("opnsense")

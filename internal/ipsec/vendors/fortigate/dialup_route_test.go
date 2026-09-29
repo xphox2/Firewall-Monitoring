@@ -7,7 +7,7 @@ import (
 	"firewall-mon/internal/ipsec"
 )
 
-// These tests pin the fix for the live fwm-t9 failure: a FortiGate ⇄ OPNsense
+// These tests pin the fix for the fwm-t9 failure: a FortiGate ⇄ OPNsense
 // tunnel came up with every SA installed and correct selectors, decrypted inbound
 // traffic, and encrypted NOTHING outbound — so it silently carried no traffic.
 //

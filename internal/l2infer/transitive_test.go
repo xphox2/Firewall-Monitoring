@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// The live DC9 topology that surfaced the bug (2026-07-14): OPNsense →
+// A representative DC9 topology that surfaces the bug: OPNsense →
 // DC9-FW2 → DC9-FW1 daisy-chained on ONE broadcast domain. FW1's FDB
 // legitimately contains OPNsense's MAC (learned through the FW2 uplink) and
 // OPNsense's ARP contains FW1 — but OPNsense↔FW1 is not a cable.
@@ -140,7 +140,7 @@ func TestInferLinks_TransitiveUnmanagedSwitchUnaffected(t *testing.T) {
 	}
 }
 
-// The live DC9 network as it ACTUALLY reports (2026-07-14 snmpwalk): no
+// A DC9 network in the shape its SNMP agents report: no
 // BRIDGE-MIB anywhere, no LLDP; OPNsense's ARP knows only FW1 (its gateway),
 // FW2's ARP knows only FW1. The FortiGate SSH bridge-FDB supplement provides
 // the missing per-member-port attribution as NAME-ONLY rows — with it, the
@@ -201,13 +201,13 @@ func TestInferLinks_SSHNameOnlyFDBSuppressesTransitive(t *testing.T) {
 	}
 }
 
-// The live DC9 evidence AFTER the user enabled LLDP on both FortiGates
-// (2026-07-14 snmpwalk): FW1 knows FW2 via LLDP (physical member port 23)
+// The same DC9 network once LLDP is enabled on both FortiGates, in the
+// shape SNMP reports it: FW1 knows FW2 via LLDP (physical member port 23)
 // but knows OPNsense only via ARP (logical switch ifIndex 6) — DIFFERENT
 // port identities for the same wire, which is why suppression must compare
 // within a single tier: FW1's ARP sees both peers on ifIndex 6, and FW2's
 // LLDP distinguishes them (ports 3 vs 4).
-func TestInferLinks_MixedTierSuppression_LiveLLDPShape(t *testing.T) {
+func TestInferLinks_MixedTierSuppression_LLDPShape(t *testing.T) {
 	site := uint(1)
 	devs := []DeviceMeta{
 		{ID: 1, Name: "FW-OSPREY_LABS", SiteID: &site, IPs: []string{"192.168.105.1"}},

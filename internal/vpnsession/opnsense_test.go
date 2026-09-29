@@ -6,17 +6,17 @@ import (
 	"time"
 )
 
-// Fixtures captured from the live OPNsense 26.1 box (device 5, tunnel fwm-t11
-// to the FortiGate at 198.19.9.155), via the API controllers' own backing
-// commands. The shapes here are load-bearing: two of them encode differences
-// between endpoints that a "tidier" single struct would silently break.
+// Fixtures in the shape OPNsense 26.1 emits from the API controllers' own
+// backing commands (device 5, tunnel fwm-t11 to a FortiGate at 198.19.9.155).
+// The shapes here are load-bearing: two of them encode differences between
+// endpoints that a "tidier" single struct would silently break.
 
 // NOTE phase1desc IS present here — the connection description is exposed by
 // sessions/searchPhase1 even though the SAD/SPD documents cannot carry it.
 const phase1Fixture = `{"total":1,"rowCount":1,"rows":[
  {"local-addrs":"%any","remote-addrs":"198.19.9.155","local-id":"opnsense","remote-id":"osprey-fw-01",
-  "version":"IKEv2","connected":true,"ikeid":"91f25bb5-f9c9-41e6-876b-6232560cc1f3",
-  "phase1desc":"fwm-t11","name":"91f25bb5-f9c9-41e6-876b-6232560cc1f3","install-time":"55"}]}`
+  "version":"IKEv2","connected":true,"ikeid":"00000000-0000-4000-8000-000000000001",
+  "phase1desc":"fwm-t11","name":"00000000-0000-4000-8000-000000000001","install-time":"55"}]}`
 
 // reqid is a STRING here.
 const spdFixture = `{"rowCount":2,"rows":[
@@ -26,11 +26,11 @@ const spdFixture = `{"rowCount":2,"rows":[
   "src-dst":["192.168.105.107","198.19.9.155"]}]}`
 
 // reqid is a NUMBER here — the same field, typed differently by the other
-// endpoint. Verified on the live box.
+// endpoint, as OPNsense emits it.
 const sadFixture = `{"rowCount":2,"rows":[
- {"src":"192.168.105.107[4500]","dst":"198.19.9.155[4500]","spi":"ad878099","reqid":2,
+ {"src":"192.168.105.107[4500]","dst":"198.19.9.155[4500]","spi":"c0000001","reqid":2,
   "state":"mature","bytes_current":381524,"addtime_diff":1677},
- {"src":"198.19.9.155[4500]","dst":"192.168.105.107[4500]","spi":"c11c373a","reqid":2,
+ {"src":"198.19.9.155[4500]","dst":"192.168.105.107[4500]","spi":"c0000002","reqid":2,
   "state":"mature","bytes_current":197340,"addtime_diff":1677}]}`
 
 func parse(t *testing.T, p1, sad, spd string, exp ...ExpectedChild) []rowView {
@@ -185,9 +185,9 @@ func TestParseOPNsense_AmbiguousPeerFallsBackFromTheDescription(t *testing.T) {
 // A tunnel we did not provision has no description; the UUID is the only stable
 // identity available.
 func TestParseOPNsense_UnnamedTunnelUsesTheConnectionUUID(t *testing.T) {
-	p1 := `{"rows":[{"remote-addrs":"198.19.9.155","phase1desc":"","name":"91f25bb5-uuid"}]}`
+	p1 := `{"rows":[{"remote-addrs":"198.19.9.155","phase1desc":"","name":"00000001-uuid"}]}`
 	rows := parse(t, p1, sadFixture, spdFixture)
-	if len(rows) != 1 || !strings.HasPrefix(rows[0].name, "91f25bb5-uuid") {
+	if len(rows) != 1 || !strings.HasPrefix(rows[0].name, "00000001-uuid") {
 		t.Errorf("want the UUID as the name stem, got %+v", rows)
 	}
 }
@@ -345,8 +345,8 @@ func TestParseOPNsense_ErrorShapedBodyIsNotZeroTunnels(t *testing.T) {
 
 // IKEv2 NARROWS a selector during negotiation, so a peer can install a policy
 // for a specific host inside the configured subnet. The prefix-stripping key
-// already tolerates /24 → /32 on the same network address (the narrowing seen in
-// production), but a HOST-specific narrowing changes the address itself and the
+// already tolerates /24 → /32 on the same network address (the common
+// narrowing), but a HOST-specific narrowing changes the address itself and the
 // child stops being recognised — synthesizing a phantom down row beside the
 // working one.
 func TestParseOPNsense_HostNarrowedSelectorStillMatchesItsExpectedChild(t *testing.T) {
@@ -461,13 +461,13 @@ func TestParseOPNsense_OnePolicySatisfiesOnlyOneExpectedChild(t *testing.T) {
 // rows do not join the provisioned tunnel. They linger as a ghost tunnel for the
 // full 3-hour grace window.
 //
-// Seen in production on 2026-07-30: 796 rows named fwm-t12 and 4 named for the
-// UUID, all four written by the one poll that caught the rollback.
+// The symptom: hundreds of rows named fwm-t12 and a handful named for the UUID,
+// all of the latter written by the one poll that caught the rollback.
 func TestParseOPNsense_NameSurvivesMissingPhase1Desc(t *testing.T) {
 	// Same connection, but phase1desc absent — exactly the teardown shape.
 	phase1 := `{"total":1,"rowCount":1,"rows":[{"local-addrs":"%any",
-		"remote-addrs":"198.19.9.155","ikeid":"57be1aa0-08bc-40e7-888b-f1998dc42d7c",
-		"name":"57be1aa0-08bc-40e7-888b-f1998dc42d7c","connected":true}]}`
+		"remote-addrs":"198.19.9.155","ikeid":"00000000-0000-4000-8000-000000000002",
+		"name":"00000000-0000-4000-8000-000000000002","connected":true}]}`
 	spd := `{"total":1,"rowCount":1,"rows":[{"reqid":"1","dir":"out",
 		"src":"192.168.150.0/24","dst":"192.168.113.0/24",
 		"src-dst":["192.168.105.107","198.19.9.155"]}]}`

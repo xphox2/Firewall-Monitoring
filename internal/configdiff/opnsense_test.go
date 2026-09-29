@@ -7,11 +7,11 @@ import (
 	"testing"
 )
 
-// Fixtures are hand-reduced from a real production config.xml, preserving the
-// exact shapes that matter: uuid-keyed lists, a named map, a singleton with a
-// nested value group, self-closing empty elements, and one truncated base64
-// blob per secret class. The full 63 KB document is deliberately NOT committed —
-// a reviewer cannot tell which line a test is about.
+// Fixtures are representative config.xml fragments in the shape OPNsense
+// emits, preserving the exact shapes that matter: uuid-keyed lists, a named
+// map, a singleton with a nested value group, self-closing empty elements, and
+// one truncated base64 blob per secret class. A full document is deliberately
+// NOT used — a reviewer could not tell which line a test is about.
 
 const opnsenseA = `<?xml version="1.0"?>
 <opnsense>
@@ -26,7 +26,7 @@ const opnsenseA = `<?xml version="1.0"?>
       <protocol>https</protocol>
     </webgui>
     <ssh/>
-    <user uuid="2977294e-c9e4-494e-bc08-a70f4e64b6d2">
+    <user uuid="00000000-0000-4000-8000-000000000001">
       <name>root</name>
       <uid>0</uid>
       <shell/>
@@ -47,7 +47,7 @@ const opnsenseA = `<?xml version="1.0"?>
     </lan>
   </interfaces>
   <filter>
-    <rule uuid="a58d71aa-ff3a-4846-85b6-ec6ba0116a2a">
+    <rule uuid="00000000-0000-4000-8000-000000000002">
       <type>pass</type>
       <interface>wan</interface>
       <source>
@@ -66,21 +66,21 @@ const opnsenseA = `<?xml version="1.0"?>
   <OPNsense>
     <Swanctl version="1.0.0" persisted_at="1785449420.74">
       <Connections>
-        <Connection uuid="ea805861-84eb-4769-a3c1-0331b4d9ea61">
+        <Connection uuid="00000000-0000-4000-8000-000000000003">
           <proposals>aes256-sha256-modp2048</proposals>
           <aggressive>0</aggressive>
           <description>fwm-t12</description>
         </Connection>
       </Connections>
       <children>
-        <child uuid="a1ddd125-1836-4139-9a8e-28c25e13f648">
-          <connection>ea805861-84eb-4769-a3c1-0331b4d9ea61</connection>
+        <child uuid="00000000-0000-4000-8000-000000000004">
+          <connection>00000000-0000-4000-8000-000000000003</connection>
           <local_ts>192.168.150.0/24</local_ts>
           <remote_ts>192.168.125.0/24</remote_ts>
           <description>fwm-t12</description>
         </child>
-        <child uuid="dfe6c8af-f31e-475c-abe8-31d3b1e4efcd">
-          <connection>ea805861-84eb-4769-a3c1-0331b4d9ea61</connection>
+        <child uuid="00000000-0000-4000-8000-000000000005">
+          <connection>00000000-0000-4000-8000-000000000003</connection>
           <local_ts>192.168.150.0/24</local_ts>
           <remote_ts>192.168.113.0/24</remote_ts>
           <description>fwm-t12</description>
@@ -89,7 +89,7 @@ const opnsenseA = `<?xml version="1.0"?>
     </Swanctl>
     <IPsec>
       <preSharedKeys>
-        <preSharedKey uuid="a252b745-4f1a-487c-93f5-aa9c07c696b3">
+        <preSharedKey uuid="00000000-0000-4000-8000-000000000006">
           <ident>opnsense</ident>
           <remote_ident>osprey-fw-01</remote_ident>
           <Key>EucWSuperSecretPreSharedKeyMaterial</Key>
@@ -101,13 +101,13 @@ const opnsenseA = `<?xml version="1.0"?>
 
 // opnsenseBSameContent is opnsenseA with EVERY Swanctl/IPsec uuid reassigned,
 // persisted_at and the revision block rewritten, and the per-rule updated/time
-// bumped — exactly what a production tunnel recreate produced, where 52 raw
-// lines differed and nothing semantic changed.
+// bumped — the shape a tunnel recreate produces, where dozens of raw lines
+// differ and nothing semantic changes.
 var opnsenseBSameContent = strings.NewReplacer(
-	"ea805861-84eb-4769-a3c1-0331b4d9ea61", "ad130d82-cae7-4534-8ca5-b132247146be",
-	"a1ddd125-1836-4139-9a8e-28c25e13f648", "cfa1b8a3-4988-42a6-bbff-a67570405792",
-	"dfe6c8af-f31e-475c-abe8-31d3b1e4efcd", "c845f2bb-b792-497c-afd3-d65ed5006bfd",
-	"a252b745-4f1a-487c-93f5-aa9c07c696b3", "ef9f2c77-df87-453f-b5d9-62cbd7ddb30e",
+	"00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000007",
+	"00000000-0000-4000-8000-000000000004", "00000000-0000-4000-8000-000000000008",
+	"00000000-0000-4000-8000-000000000005", "00000000-0000-4000-8000-000000000009",
+	"00000000-0000-4000-8000-000000000006", "00000000-0000-4000-8000-00000000000a",
 	"1785449420.74", "1785447271.15",
 	"1785449422.77", "1785447273.17",
 	"1783781766.84", "1783781999.11",
@@ -148,11 +148,11 @@ func TestOPNsenseObjectDiffIgnoresUUIDChurn(t *testing.T) {
 func TestOPNsenseParseInputKeepsOriginalUUIDs(t *testing.T) {
 	t.Parallel()
 	in := parseInputFor("opnsense", []byte(opnsenseA))
-	if !strings.Contains(string(in), "ea805861-84eb-4769-a3c1-0331b4d9ea61") {
+	if !strings.Contains(string(in), "00000000-0000-4000-8000-000000000003") {
 		t.Error("ParseInput stripped the original uuids the parser needs for identity")
 	}
 	norm, _ := Normalize("opnsense", []byte(opnsenseA))
-	if strings.Contains(string(norm), "ea805861-84eb-4769-a3c1-0331b4d9ea61") {
+	if strings.Contains(string(norm), "00000000-0000-4000-8000-000000000003") {
 		t.Error("Normalize left a raw uuid in the hash input")
 	}
 }
@@ -252,7 +252,7 @@ func TestOPNsenseParsesShapes(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"filter.rule/a58d71aa-ff3a-4846-85b6-ec6ba0116a2a", // keyed list
+		"filter.rule/00000000-0000-4000-8000-000000000002", // keyed list
 		"interfaces/wan", // named map
 		"interfaces/lan",
 		"system",           // top-level singleton
@@ -267,10 +267,10 @@ func TestOPNsenseParsesShapes(t *testing.T) {
 	if got := byPath["system"].Attrs["webgui.protocol"]; got != "https" {
 		t.Errorf("nested value group not flattened: webgui.protocol = %q", got)
 	}
-	if got := byPath["filter.rule/a58d71aa-ff3a-4846-85b6-ec6ba0116a2a"].Attrs["destination.port"]; got != "443" {
+	if got := byPath["filter.rule/00000000-0000-4000-8000-000000000002"].Attrs["destination.port"]; got != "443" {
 		t.Errorf("dotted flattening failed: destination.port = %q", got)
 	}
-	if got := byPath["filter.rule/a58d71aa-ff3a-4846-85b6-ec6ba0116a2a"].Attrs["source.any"]; got != attrPresentValue {
+	if got := byPath["filter.rule/00000000-0000-4000-8000-000000000002"].Attrs["source.any"]; got != attrPresentValue {
 		t.Errorf("empty element lost its presence sentinel: source.any = %q", got)
 	}
 	for _, o := range objs {
@@ -486,7 +486,7 @@ func TestOPNsenseUnadvancedRevisionIsNotAttribution(t *testing.T) {
 
 // TestOPNsenseAttributionSurvivesLateDelivery pins the regression a wall-clock
 // window would have caused: the collector's config poll defaults to 15 minutes
-// and production revision-to-delivery gaps already reach ~13, so gating on
+// and revision-to-delivery gaps can approach that, so gating on
 // recency would mark legitimate changes unattributed and escalate them.
 func TestOPNsenseAttributionSurvivesLateDelivery(t *testing.T) {
 	t.Parallel()

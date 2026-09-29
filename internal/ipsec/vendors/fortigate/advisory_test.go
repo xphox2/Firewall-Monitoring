@@ -7,7 +7,7 @@ import (
 	"firewall-mon/internal/ipsec"
 )
 
-// t9Intent mirrors the live fwm-t9 tunnel: a FortiGate end protecting
+// t9Intent models a representative fwm-t9 tunnel: a FortiGate end protecting
 // 192.168.125.0/24 against an OPNsense end protecting 192.168.150.0/24 and
 // 192.168.105.0/24. ViewFor(in, 0) therefore makes the OPNsense subnets "remote",
 // which is what the route advisory reasons about.
@@ -44,17 +44,16 @@ func advise(t *testing.T, body string) []ipsec.Advisory {
 	return fgDriver(t).Advisories(ipsec.ViewFor(t9Intent(), 0), map[string]string{checkRouteTable: body})
 }
 
-// TestAdvisories_RealT9CompetingRoute is the case that motivated the check: the
-// live FortiGate carries a hand-made route for 192.168.105.0/24 out port3 with no
+// TestAdvisories_T9CompetingRoute is the case that motivated the check: the
+// FortiGate carries a hand-made route for 192.168.105.0/24 out port3 with no
 // explicit distance (so FortiOS default 10 — the same distance the tunnel route
 // gets). Both install and traffic ECMP-splits away from the tunnel, silently.
-func TestAdvisories_RealT9CompetingRoute(t *testing.T) {
-	// Captured verbatim from device 4's stored config revision, expressed in the
-	// cmdb JSON shape the advisory GET returns.
+func TestAdvisories_T9CompetingRoute(t *testing.T) {
+	// A static route in the cmdb JSON shape FortiOS emits for the advisory GET.
 	body := `{"results":[{"seq-num":1,"dst":"192.168.105.0 255.255.255.0","gateway":"192.168.125.254","device":"port3","distance":10,"priority":0,"blackhole":"disable","status":"enable","comment":""}]}`
 	got := advise(t, body)
 	if len(got) != 1 {
-		t.Fatalf("want exactly 1 advisory for the real t9 route table, got %d: %+v", len(got), got)
+		t.Fatalf("want exactly 1 advisory for the t9 route table, got %d: %+v", len(got), got)
 	}
 	a := got[0]
 	if a.Subject != "192.168.105.0/24" {
@@ -76,7 +75,7 @@ func TestAdvisories_RealT9CompetingRoute(t *testing.T) {
 	if !strings.Contains(a.Remedy, "set distance") {
 		t.Errorf("remedy should give the concrete fix; got %q", a.Remedy)
 	}
-	t.Logf("REAL t9 advisory → %s | %s", a.Title, a.Remedy)
+	t.Logf("t9 advisory → %s | %s", a.Title, a.Remedy)
 }
 
 // A lower-distance route defeats the tunnel outright rather than splitting with

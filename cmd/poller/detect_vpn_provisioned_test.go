@@ -13,10 +13,10 @@ import (
 // that did. A FortiGate's dialup instance is named after the peer's OBSERVED
 // SOURCE address; for a peer behind NAT that is the gateway's public IP, which
 // legitimately belongs to a different monitored device. Attribution by remote IP
-// therefore lands on the NAT gateway — in production, two distinct peers behind
-// one NAT both collapsed onto it.
+// therefore lands on the NAT gateway — two distinct peers behind one NAT both
+// collapse onto it.
 //
-// These tests are built from the real production shape: OSPREY-FW-01 (a
+// These tests model a representative topology: OSPREY-FW-01 (a
 // FortiGate) ↔ OPNsense behind DC9-FW1's NAT, provisioned as fwm-t11.
 
 type mapFixture struct {

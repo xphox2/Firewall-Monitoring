@@ -24,7 +24,7 @@ func arpPair(net1, net2, dev1IP, dev2IP string) ([]DeviceMeta, []Iface, []ARPRow
 	return devs, ifaces, arp
 }
 
-// TestInferLinks_ARPSharedSubnetSuppressed: the real DC9-FW1↔OPNsense case —
+// TestInferLinks_ARPSharedSubnetSuppressed: the DC9-FW1↔OPNsense case —
 // both on a shared /24 with ARP-only evidence → NO link (a shared switch is
 // not a point-to-point cable).
 func TestInferLinks_ARPSharedSubnetSuppressed(t *testing.T) {
