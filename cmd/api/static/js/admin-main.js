@@ -163,6 +163,10 @@
         // newer table load runs, the controls are ITS query (see Cancel below).
         function siblingBusy() { return key !== page && AC.chartLoadBusy('filter-' + page, true); }
         var retryCancelled = opts.retry && function() {
+            // A charts Retry while a newer table load runs would draw charts for
+            // a query that may never be shown; that table's success reloads the
+            // charts anyway.
+            if (siblingBusy()) return;
             var ap = apNow(); if (want && ap && ap.restore && !siblingBusy()) restoreQuery(ap, page, want);
             opts.retry(opts.prev);
         };

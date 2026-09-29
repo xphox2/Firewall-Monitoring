@@ -88,7 +88,7 @@ func TestFilterLoad_RetryAfterCancelReappliesQuery(t *testing.T) {
 	mustContain(t, "admin-main.js", run, "var ap = apNow(); if (want && ap && ap.restore && !siblingBusy()) restoreQuery(ap, page, want);", "Retry re-applies the cancelled query")
 	mustContain(t, "admin-main.js", run, "onRetry: retryCancelled", "the Cancel notice uses that Retry")
 	mustContain(t, "admin-main.js", run, "var src = opts.snap || opts.state || ((ap0 && ap0.getState) ? ap0.getState() : null);", "the requested query is captured when the load starts, even on a first load")
-	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "var retry = function() { if (!paging && !typingNewSearch(query)) setSearchControls(query); runSearch(target, paging ? query : undefined); };", "threat-intel Retry re-applies the cancelled search")
+	mustContain(t, "admin-threatintel.js", readJS(t, "admin-threatintel.js"), "var retry = function() { if (!paging) setSearchControls(query); runSearch(target, paging ? query : undefined); };", "threat-intel Retry re-applies the cancelled search")
 	mustContain(t, "admin-reports.js", readJS(t, "admin-reports.js"), "function retryWanted() { applyChoices(Object.assign({}, want, { resolved: '' })); loadPreview(); }", "reports Retry re-applies the cancelled period")
 	mustContain(t, "diagram-panels.js", readJS(t, "diagram-panels.js"), "again = () => { activatePill(wantPill); retry(); };", "panel Retry re-activates the cancelled range's pill")
 	mustContain(t, "admin-event-rules.js", readJS(t, "admin-event-rules.js"), "if (wrap && wrap.offsetParent) syncRuleFilterChips();", "the chips follow the filter that loaded")
@@ -626,7 +626,7 @@ func TestFilterLoad_ReviewRound10(t *testing.T) {
 	mustContain(t, "admin-controls.js", ctl, "hasPendingEdit: function() { return !!(autoApply && autoApply.hasPending()); },", "and exposed on the page handle")
 
 	ti := readJS(t, "admin-threatintel.js")
-	mustContain(t, "admin-threatintel.js", ti, "if (AC.chartLoadBusy('ti-search', true) && !(searchQuietRunning && !isRefresh)) { if (isRefresh) { searchRefreshDeferred = true; searchRefreshToStart = searchRefreshToStart || offset === 0; } return; }\n        runSearch(offset, lastSearch, isRefresh);", "search paging continues the shown search and waits")
+	mustContain(t, "admin-threatintel.js", ti, "if (AC.chartLoadBusy('ti-search', true) && !(searchQuietRunning && !isRefresh)) { if (isRefresh) { searchRefreshDeferred = true; searchRefreshToStart = searchRefreshToStart || offset === 0; } return; }\n        if (!isRefresh) searchPagingTookOver = true;\n        runSearch(offset, lastSearch, isRefresh);", "search paging continues the shown search and waits")
 	if strings.Count(ti, "pageSearch(searchOffset") != 3 {
 		t.Error("Prev, Next and the refresh after a delete must all page through pageSearch")
 	}
@@ -732,7 +732,7 @@ func TestFilterLoad_ReviewRound15(t *testing.T) {
 	mustContain(t, "admin-main.js", ra, "if (res && res.superseded && AC.chartLoadBusy('filter-alerts', true)) alertsRefreshDeferred = true;", "re-arm")
 	ti := readJS(t, "admin-threatintel.js")
 	rs := funcBody(t, ti, `function runSearch\(offset, snap, isRefresh, quiet\)`)
-	mustContain(t, "admin-threatintel.js", rs, "if (isRefresh && AC.chartLoadBusy('ti-search', true)) { searchRefreshDeferred = true; searchRefreshToStart = searchRefreshToStart || target === 0; }", "an interrupted threat-intel refresh re-arms")
+	mustContain(t, "admin-threatintel.js", rs, "searchRefreshToStart = searchPagingTookOver ? false : (searchRefreshToStart || target === 0);", "an interrupted threat-intel refresh re-arms")
 	mustContain(t, "admin-threatintel.js", funcBody(t, ti, `function runDeferredSearchRefresh\(\)`), "runSearch(toStart ? 0 : searchOffset, lastSearch, true, true);", "the deferred run is itself a (quiet) refresh, at the page on screen when it runs")
 	er := readJS(t, "admin-event-rules.js")
 	mustContain(t, "admin-event-rules.js", funcBody(t, er, `function startRulesReload\(quiet\)`), "if (res && res.superseded && AC.chartLoadBusy('event-rules', true)) rulesReloadDeferred = true;", "an interrupted rules reload re-arms")
@@ -907,4 +907,18 @@ func TestFilterLoad_ReviewRound23(t *testing.T) {
 	mustContain(t, "admin-threatintel.js", rs, "if (quiet) searchQuietRunning = false;", "and unmarked")
 	ep := readJS(t, "admin-event-profiles.js")
 	mustContain(t, "admin-event-profiles.js", ep, "if (!(lr && lr.superseded) || !onPage) window.FwmonEventRules.keepPendingPrefill(pending);", "a prefill is re-kept only on failure or leave")
+}
+
+// Twenty-fourth review (Opus 5.5, harness-proven LOW): a deferred page-1
+// refresh interrupted by user paging re-arms without its page-1 intent; a
+// charts Retry does nothing while a newer table load runs.
+func TestFilterLoad_ReviewRound24(t *testing.T) {
+	ti := readJS(t, "admin-threatintel.js")
+	mustContain(t, "admin-threatintel.js", funcBody(t, ti, `function pageSearch\(offset, isRefresh\)`), "if (!isRefresh) searchPagingTookOver = true;", "a paging load is marked")
+	main := readJS(t, "admin-main.js")
+	run := funcBody(t, main, `function runFilterLoad\(key, run, onOK, opts\)`)
+	i := strings.Index(run, "var retryCancelled = opts.retry && function() {")
+	if i < 0 || !strings.Contains(run[i:i+400], "if (siblingBusy()) return;") {
+		t.Error("a charts Retry must do nothing while a newer table load runs")
+	}
 }
