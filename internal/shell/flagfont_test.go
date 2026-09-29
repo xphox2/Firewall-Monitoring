@@ -73,6 +73,8 @@ func adminPagesUsingCommon(t *testing.T) map[string]string {
 }
 
 func TestFlagFont_EveryFlagPageLoadsFaceAndCredit(t *testing.T) {
+	// The footer block ends at the first closing div on its own line.
+	footerEnd := regexp.MustCompile(`\r?\n[ \t]*</div>`)
 	credit := regexp.MustCompile(`<a class="fwmon-geo-credit" href="https://db-ip\.com"[^>]*>IP Geolocation by DB-IP</a>`)
 	for name, src := range adminPagesUsingCommon(t) {
 		mustContain(t, name, src, `href="/static/css/admin-fonts.css"`, "the flag face must be loaded wherever flags render")
@@ -81,8 +83,8 @@ func TestFlagFont_EveryFlagPageLoadsFaceAndCredit(t *testing.T) {
 			t.Errorf("%s: no sidebar-footer", name)
 			continue
 		}
-		end := strings.Index(src[i:], "\n        </div>")
-		if end < 0 || !credit.MatchString(src[i:i+end]) {
+		end := footerEnd.FindStringIndex(src[i:])
+		if end == nil || !credit.MatchString(src[i:i+end[0]]) {
 			t.Errorf("%s: the sidebar footer must link DB-IP.com (\"IP Geolocation by DB-IP\") — DB-IP Lite's CC BY 4.0 terms", name)
 		}
 	}
