@@ -671,11 +671,24 @@ Reclaim Docker's share without touching volumes or running containers:
 ```bash
 docker system df                              # what is using the space
 docker image prune -f                         # untagged images only
-docker buildx prune -f --keep-storage 10gb    # cap the build cache
 ```
 
+Then cap the build cache of **every** builder. `docker buildx prune` without `--builder` only
+touches the selected builder (see the traps above), so loop over all of them:
+
+```bash
+for b in $(docker buildx ls --format json | jq -r .Name); do
+  docker buildx prune -f --builder "$b" --max-used-space 10gb
+done
+```
+
+`--max-used-space` is the current spelling. Older buildx releases only have `--keep-storage`, which
+newer ones still accept as a deprecated alias; check `docker buildx prune --help` and substitute it if
+needed. Without `jq`, run `docker buildx ls`, note each builder name (the unindented rows) and run
+the `prune` line once per name.
+
 If the disk is still above 85% afterwards, Docker was **not** the cause. Look at `sudo du -xhd1 /var /home /opt | sort -h | tail` next — journald, apt, snap revisions
-and container logs are the usual suspects, and none of them are this script's business.
+and container logs are the usual suspects, and none of them are Docker's.
 
 ---
 
