@@ -141,13 +141,13 @@ func TestSampleSystemStatus_SpansTheWholeWindow(t *testing.T) {
 	from := to.Add(-168 * time.Hour)
 	// 2,500 rows over the week — more than the old 2,000-row cap, which stopped
 	// the tile about 31 hours in.
-	rows := make([]models.SystemStatus, 0, 2500)
-	for i := 0; i < 2500; i++ {
-		rows = append(rows, models.SystemStatus{DeviceID: 7, Timestamp: from.Add(time.Duration(i)*4*time.Minute + 2*time.Minute), CPUUsage: float64(i % 100)})
-	}
-	if err := d.db.CreateInBatches(&rows, 500).Error; err != nil {
+	at := func(i int) time.Time { return from.Add(time.Duration(i)*4*time.Minute + 2*time.Minute) }
+	tmpl := models.SystemStatus{DeviceID: 7, Timestamp: at(0), CPUUsage: 0}
+	if err := d.db.Create(&tmpl).Error; err != nil {
 		t.Fatal(err)
 	}
+	cloneRows(t, d.db, "system_status", tmpl.ID, []string{"timestamp", "cpu_usage"}, 2499,
+		func(k int) []any { i := k + 1; return []any{at(i), float64(i % 100)} })
 	got, err := d.SampleSystemStatus(7, from, to, 180)
 	if err != nil {
 		t.Fatal(err)
@@ -164,18 +164,19 @@ func TestGetSystemStatusSummary_WholeWindowAndEmpty(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	to := time.Now().Truncate(time.Second)
 	from := to.Add(-168 * time.Hour)
-	rows := make([]models.SystemStatus, 0, 2600)
-	for i := 0; i < 2600; i++ {
-		ts := from.Add(time.Duration(i)*230*time.Second + 115*time.Second)
-		cpu := 10.0
+	at := func(i int) time.Time { return from.Add(time.Duration(i)*230*time.Second + 115*time.Second) }
+	cpuAt := func(i int) float64 {
 		if i == 2400 { // day 6: past the old 2,000-row window
-			cpu = 97
+			return 97
 		}
-		rows = append(rows, models.SystemStatus{DeviceID: 3, Timestamp: ts, CPUUsage: cpu, MemoryUsage: 40, DiskUsage: float64(i), SessionCount: i})
+		return 10
 	}
-	if err := d.db.CreateInBatches(&rows, 500).Error; err != nil {
+	tmpl := models.SystemStatus{DeviceID: 3, Timestamp: at(0), CPUUsage: cpuAt(0), MemoryUsage: 40, DiskUsage: 0, SessionCount: 0}
+	if err := d.db.Create(&tmpl).Error; err != nil {
 		t.Fatal(err)
 	}
+	cloneRows(t, d.db, "system_status", tmpl.ID, []string{"timestamp", "cpu_usage", "disk_usage", "session_count"}, 2599,
+		func(k int) []any { i := k + 1; return []any{at(i), cpuAt(i), float64(i), i} })
 	s, err := d.GetSystemStatusSummary(3, from, to)
 	if err != nil {
 		t.Fatal(err)

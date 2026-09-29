@@ -28,7 +28,7 @@ Every server-side search, filter and range change now shows an animated loading 
 
 ### Internal
 
-- The handlers test package had crept past CI's 10-minute `-race` limit (546 s → 566 s → timed out). Four public-chart tests spent ~2 minutes inserting their sample rows through GORM; they now clone one GORM-written row with a prepared SQL insert (same values and timestamp format), cutting them from ~123 s to ~12 s with unchanged assertions.
+- The handlers test package had crept past CI's 10-minute `-race` limit (546 s → 566 s → timed out). Four public-chart tests spent ~2 minutes inserting their sample rows through GORM; they now clone one GORM-written row with a prepared SQL insert (same values and timestamp format), cutting them from ~123 s to ~12 s with unchanged assertions. The same fix in `internal/database` (three system-status sampling tests, ~68 s → ~6 s) brings the CI test job back under its 15-minute limit, which the previous passing runs had missed by seconds.
 
 ## [0.11.270] - 2026-09-28
 
