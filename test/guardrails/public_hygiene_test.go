@@ -59,6 +59,13 @@ var hygieneAllowHomes = map[string]string{
 	"/home/fwmon": "the service user created by deploy.sh",
 }
 
+// hygieneSelf are the guard files themselves: their rule tests contain sample
+// violations on purpose.
+var hygieneSelf = map[string]bool{
+	"test/guardrails/public_hygiene_test.go":   true,
+	"test/guardrails/private_denylist_test.go": true,
+}
+
 var hygieneReserved = mustPrefixes(
 	"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
 	"172.16.0.0/12", "192.0.2.0/24", "192.168.0.0/16", "198.18.0.0/15",
@@ -95,7 +102,7 @@ func hygieneRepoFiles(t *testing.T) (string, []string) {
 	}
 	var files []string
 	for _, f := range strings.Split(string(out), "\x00") {
-		if f != "" && !hygieneSkip.MatchString(f) {
+		if f != "" && !hygieneSkip.MatchString(f) && !hygieneSelf[f] {
 			files = append(files, f)
 		}
 	}
