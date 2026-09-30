@@ -681,6 +681,43 @@ and container logs are the usual suspects, and none of them are this script's bu
 
 ---
 
+## Behind a reverse proxy (TRUSTED_PROXIES)
+
+By default the API trusts **no** proxy headers: the client IP is the TCP peer.
+Behind nginx / nginx-proxy-manager that peer is the proxy, so every user shares
+one login-lockout bucket and one rate-limit bucket (one attacker's failed
+logins lock everyone out for `LOCKOUT_DURATION`), and audit logs show the
+proxy's IP.
+
+Set `TRUSTED_PROXIES` (comma-separated IPs and/or CIDRs) to the proxy's
+address. The API then reads **only** `X-Forwarded-For` — and only when the TCP
+peer is a listed proxy; it takes the right-most address that is not a trusted
+proxy, so a client-supplied `X-Forwarded-For` is ignored. Invalid entries are
+logged at startup and skipped (never fatal); empty = the default behaviour.
+
+**nginx-proxy-manager (docker-compose.proxy.yml):** NPM already sends
+`X-Forwarded-For`. Find the address the API sees it on — the NPM container's IP
+on the network it shares with `firewall-mon` (tightest), or that network's
+subnet:
+
+```bash
+docker network inspect <network> \
+  --format '{{range .Containers}}{{.Name}} {{.IPv4Address}}{{"\n"}}{{end}}{{range .IPAM.Config}}subnet {{.Subnet}}{{end}}'
+```
+
+then set e.g. `TRUSTED_PROXIES=172.20.0.5` (or `172.20.0.0/16`) in
+`config.env` and restart the API. Check that the audit log and login attempts
+now show real client IPs.
+
+**Do not trust more than the proxy.** Anything that can reach port `8080`
+from inside a trusted range can choose the client IP it is attributed to. A
+whole Docker subnet includes its gateway (`.1`), which is the source address of
+connections arriving through a *published* port via Docker's userland proxy —
+so if you trust a subnet, stop publishing `8080` publicly (bind it to
+`127.0.0.1` or drop the `ports:` entry) and let only the proxy reach the API.
+
+---
+
 ## Running a single API instance (AUDIT-040)
 
 The API process keeps four pieces of state **in memory**, not in the database:

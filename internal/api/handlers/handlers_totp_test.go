@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -28,16 +29,48 @@ type totpFakeStore struct {
 	recoveryHash  string
 	recoveryUsed  bool
 	loginAttempts []models.LoginAttempt
+
+	// Failure/race injection for the completeLogin and D1 tests.
+	usernameCalls    int                 // GetAdminByUsername call counter
+	failUsernameCall int                 // 1-based call that errors (0 = never)
+	byIDErr          error               // GetAdminByID returns this error
+	byIDMutate       func(*models.Admin) // edits the by-ID view (simulates a concurrent change)
+	totpCleared      bool                // ClearAdminTOTP was called
 }
 
 func (f *totpFakeStore) WithContextStore(ctx context.Context) database.Store { return f }
 
 func (f *totpFakeStore) GetAdminByUsername(u string) (*auth.AdminAuth, error) {
+	f.usernameCalls++
+	if f.failUsernameCall != 0 && f.usernameCalls == f.failUsernameCall {
+		return nil, errors.New("injected username lookup failure")
+	}
 	if f.admin != nil && f.admin.Username == u {
 		cp := *f.admin
 		return &cp, nil
 	}
 	return nil, nil
+}
+func (f *totpFakeStore) GetAdminByID(id uint) (*models.Admin, error) {
+	if f.byIDErr != nil {
+		return nil, f.byIDErr
+	}
+	if f.admin == nil || f.admin.ID != id {
+		return nil, nil
+	}
+	a := &models.Admin{
+		ID: f.admin.ID, Username: f.admin.Username, Password: f.admin.Password,
+		TokenVersion: f.admin.TokenVersion, MustChangePassword: f.admin.MustChangePassword,
+		Role: f.admin.Role, Disabled: f.admin.Disabled, TOTPEnabled: f.admin.TOTPEnabled,
+	}
+	if f.byIDMutate != nil {
+		f.byIDMutate(a)
+	}
+	return a, nil
+}
+func (f *totpFakeStore) ClearAdminTOTP(id uint) error {
+	f.totpCleared = true
+	return nil
 }
 func (f *totpFakeStore) GetAdminTokenVersion(id uint) (uint, error) { return f.admin.TokenVersion, nil }
 func (f *totpFakeStore) IncrementAdminTokenVersion(id uint) error   { return nil }

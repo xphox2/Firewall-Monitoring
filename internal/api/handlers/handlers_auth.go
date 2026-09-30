@@ -9,6 +9,7 @@ import (
 	"firewall-mon/internal/api/middleware"
 	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/auth"
+	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 
@@ -95,29 +96,24 @@ func (h *Handler) Login(c *gin.Context) {
 		}
 	}
 
-	// Get admin record to use real ID, token version, and role in JWT
-	var adminID uint = 1
-	var tokenVersion uint
-	var mustChangePassword bool
-	totpEnabled := false
-	role := auth.RoleAdmin
-	if db != nil {
-		adminRecord, adminErr := db.GetAdminByUsername(creds.Username)
-		if adminErr == nil && adminRecord != nil {
-			adminID = adminRecord.ID
-			tokenVersion = adminRecord.TokenVersion
-			mustChangePassword = adminRecord.MustChangePassword
-			totpEnabled = adminRecord.TOTPEnabled
-			if adminRecord.Role != "" {
-				role = adminRecord.Role
-			}
-		}
+	// D1: the session belongs to exactly the row whose password was just
+	// verified — never a fallback identity. If that row cannot be loaded the
+	// login fails with a 500 and no cookies (fail closed); it must not mint a
+	// session for another account or skip the TOTP stage.
+	if db == nil {
+		httputil.InternalError(c, "Failed to load account", nil)
+		return
+	}
+	adminRecord, adminErr := db.GetAdminByUsername(creds.Username)
+	if adminErr != nil || adminRecord == nil {
+		httputil.InternalError(c, "Failed to load account", adminErr)
+		return
 	}
 
 	// 2FA-enabled accounts don't get a session yet: they get a short-lived
 	// pending token that only unlocks POST /api/auth/totp (P0-3).
-	if totpEnabled {
-		pending, perr := h.authManager.GeneratePendingToken(creds.Username, adminID, tokenVersion)
+	if adminRecord.TOTPEnabled {
+		pending, perr := h.authManager.GeneratePendingToken(creds.Username, adminRecord.ID, adminRecord.TokenVersion)
 		if perr != nil {
 			httputil.InternalError(c, "Failed to generate token", perr)
 			return
@@ -138,10 +134,74 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
-	h.issueSession(c, creds.Username, adminID, tokenVersion, role, gin.H{
+	h.completeLogin(c, db, adminRecord.ID, loginMethodPassword)
+}
+
+// Login methods accepted by completeLogin. In-code values only (no DB column
+// yet); each maps to the generic failure message its entry point has always
+// returned, so the refactor changes no response body.
+const (
+	loginMethodPassword = "password"
+	loginMethodTOTP     = "totp"
+)
+
+// loginFailureMessage returns the generic failure text of a login method's
+// entry point, and false for an unknown method.
+func loginFailureMessage(method string) (string, bool) {
+	switch method {
+	case loginMethodPassword:
+		return "Invalid credentials", true
+	case loginMethodTOTP:
+		return "Pending login invalid — start over", true
+	}
+	return "", false
+}
+
+// completeLogin is the single tail of every fully-authenticated login
+// (password-only and the TOTP second step). It re-reads the account BY ID so
+// the session reflects the row's CURRENT disabled flag, role and token
+// version — never values captured earlier in the request — and fails closed:
+//   - DB error → 500, no cookies;
+//   - account gone, disabled, or holding an empty/unknown role (D5) → 401 with
+//     the entry point's usual generic message, no cookies;
+//   - method "password" on an account that now has 2FA enabled → the same
+//     generic 401 (the second factor is owed; Login routes such accounts to
+//     the pending_2fa stage before ever getting here).
+//
+// On success it clears pending_2fa (TOTP stage only, as before) and mints the
+// JWT + CSRF cookies via issueSession.
+func (h *Handler) completeLogin(c *gin.Context, db database.Store, adminID uint, method string) {
+	failMsg, known := loginFailureMessage(method)
+	if !known {
+		httputil.InternalError(c, "Unknown login method", nil)
+		return
+	}
+	admin, err := db.GetAdminByID(adminID)
+	if err != nil {
+		httputil.InternalError(c, "Failed to load account", err)
+		return
+	}
+	if admin == nil || admin.Disabled || (method == loginMethodPassword && admin.TOTPEnabled) {
+		c.JSON(http.StatusUnauthorized, response.Error(failMsg))
+		return
+	}
+	if !auth.ValidRole(admin.Role) {
+		log.Printf("login refused for admin id %d: role %q is not a valid role", admin.ID, admin.Role)
+		c.JSON(http.StatusUnauthorized, response.Error(failMsg))
+		return
+	}
+
+	if method == loginMethodTOTP {
+		cookieSecure, cookieSameSite, _ := h.sessionCookieParams()
+		http.SetCookie(c.Writer, &http.Cookie{
+			Name: "pending_2fa", Value: "", MaxAge: -1, Path: "/",
+			Secure: cookieSecure, HttpOnly: true, SameSite: cookieSameSite,
+		})
+	}
+
+	h.issueSession(c, admin.Username, admin.ID, admin.TokenVersion, admin.Role, gin.H{
 		"message":              "Login successful",
-		"csrf_token":           "", // filled by issueSession
-		"must_change_password": mustChangePassword,
+		"must_change_password": admin.MustChangePassword,
 	})
 }
 

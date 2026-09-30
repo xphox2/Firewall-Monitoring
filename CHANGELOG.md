@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.275] - 2026-09-30
+
+### Security — login hardening (groundwork for passkey sign-in)
+
+- **No fallback session after a failed account lookup.** If the password checked out but the server then failed to load that account, login used to fall back to a session for user id 1 with the admin role, and skipped the two-factor step. It now returns a 500 with no cookies.
+- **An empty or unknown role never means admin.** An account row with an empty or unrecognised role is refused at login (password and two-factor step alike) instead of being treated as admin. A session token whose role is empty or unknown is rejected, so its holder must sign in again; before, such a token was treated as admin. Migration v20 guarantees every account has a role, so no real account is affected.
+- **Deleting a user deletes their 2FA recovery codes** in the same transaction as the account.
+- **One replay guard for every two-factor code.** A code accepted once — at login, when disabling 2FA, revealing a device secret or purging a device — is refused by every other action for the rest of its ~90 s validity window. Before, each action kept its own list, so the same code could be used once per action, and disabling 2FA had no replay check at all.
+- **Login completion re-reads the account.** Both the password-only login and the two-factor step now finish in one place that re-reads the account by id just before issuing the session, so a user disabled (or switched to 2FA) in the meantime gets the usual login failure instead of a session. Status codes, cookies, response bodies and login-attempt records are otherwise unchanged. If this final step fails after a recovery code was accepted, that code stays used; the pending login stays open so the user can retry with another code.
+
+### Added — `TRUSTED_PROXIES`
+
+- New setting: a comma-separated list of reverse-proxy IPs/CIDRs. When set, the API takes the client IP from `X-Forwarded-For` (only that header, only when the connection comes from a listed proxy), so login lockout, rate limits and audit logs see the real client instead of the proxy. Empty (the default) keeps today's behaviour of ignoring forwarding headers. Invalid entries are logged and skipped; they never stop the server. Documented in the example config files, `docker-compose.yml`, the README and `docs/OPERATIONS.md` (with a nginx-proxy-manager note).
+
 ## [0.11.274] - 2026-09-30
 
 ### Changed — Go toolchain 1.25 → 1.26

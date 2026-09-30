@@ -101,9 +101,13 @@ func (h *Handler) TOTPLogin(c *gin.Context) {
 	// as the fallback path.
 	authenticated := false
 	if validateTOTPCode(req.Code, admin.TOTPSecret) {
-		authenticated = h.authManager.MarkTOTPSlotUsed(admin.ID, "login", req.Code)
+		authenticated = h.authManager.MarkTOTPSlotUsed(admin.ID, req.Code)
 	}
 	if !authenticated {
+		// A recovery code consumed here stays consumed even if completeLogin
+		// then fails (DB error, or the account was disabled in the meantime):
+		// fail closed rather than un-burn a credential. The user still holds
+		// the other codes, and an admin can reset 2FA (ResetUser2FA).
 		used, cerr := db.ConsumeRecoveryCode(admin.ID, database.HashAPIToken(req.Code))
 		if cerr != nil {
 			httputil.InternalError(c, "Failed to verify recovery code", cerr)
@@ -118,20 +122,7 @@ func (h *Handler) TOTPLogin(c *gin.Context) {
 	}
 
 	h.authManager.ClearFailures(claims.Username, ip)
-	cookieSecure, cookieSameSite, _ := h.sessionCookieParams()
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name: "pending_2fa", Value: "", MaxAge: -1, Path: "/",
-		Secure: cookieSecure, HttpOnly: true, SameSite: cookieSameSite,
-	})
-
-	role := admin.Role
-	if role == "" {
-		role = auth.RoleAdmin
-	}
-	h.issueSession(c, admin.Username, admin.ID, admin.TokenVersion, role, gin.H{
-		"message":              "Login successful",
-		"must_change_password": admin.MustChangePassword,
-	})
+	h.completeLogin(c, db, admin.ID, loginMethodTOTP)
 }
 
 type totpSetupRequest struct {
@@ -296,7 +287,10 @@ func (h *Handler) Disable2FA(c *gin.Context) {
 		c.JSON(http.StatusForbidden, response.Error("Password is incorrect"))
 		return
 	}
-	codeOK := validateTOTPCode(req.Code, admin.TOTPSecret)
+	// Shared replay guard: a code already spent on login (or any other TOTP
+	// action) within its validity window is not accepted here.
+	codeOK := validateTOTPCode(req.Code, admin.TOTPSecret) &&
+		h.authManager.MarkTOTPSlotUsed(admin.ID, req.Code)
 	if !codeOK {
 		used, cerr := db.ConsumeRecoveryCode(admin.ID, database.HashAPIToken(req.Code))
 		if cerr != nil {
