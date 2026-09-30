@@ -36,6 +36,7 @@ type totpFakeStore struct {
 	byIDErr          error               // GetAdminByID returns this error
 	byIDMutate       func(*models.Admin) // edits the by-ID view (simulates a concurrent change)
 	totpCleared      bool                // ClearAdminTOTP was called
+	recoveryReplaced bool                // ReplaceRecoveryCodes was called
 }
 
 func (f *totpFakeStore) WithContextStore(ctx context.Context) database.Store { return f }
@@ -70,6 +71,15 @@ func (f *totpFakeStore) GetAdminByID(id uint) (*models.Admin, error) {
 }
 func (f *totpFakeStore) ClearAdminTOTP(id uint) error {
 	f.totpCleared = true
+	return nil
+}
+func (f *totpFakeStore) EncryptField(p string) string { return p }
+func (f *totpFakeStore) SetAdminTOTP(id uint, enc string, enabled bool) error {
+	f.admin.TOTPEnabled = enabled
+	return nil
+}
+func (f *totpFakeStore) ReplaceRecoveryCodes(id uint, hashes []string) error {
+	f.recoveryReplaced = true
 	return nil
 }
 func (f *totpFakeStore) GetAdminTokenVersion(id uint) (uint, error) { return f.admin.TokenVersion, nil }

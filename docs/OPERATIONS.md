@@ -689,32 +689,47 @@ one login-lockout bucket and one rate-limit bucket (one attacker's failed
 logins lock everyone out for `LOCKOUT_DURATION`), and audit logs show the
 proxy's IP.
 
-Set `TRUSTED_PROXIES` (comma-separated IPs and/or CIDRs) to the proxy's
-address. The API then reads **only** `X-Forwarded-For` — and only when the TCP
-peer is a listed proxy; it takes the right-most address that is not a trusted
-proxy, so a client-supplied `X-Forwarded-For` is ignored. Invalid entries are
-logged at startup and skipped (never fatal); empty = the default behaviour.
+Set `TRUSTED_PROXIES` to **the reverse proxy's single IP address**. The API
+then reads **only** `X-Forwarded-For` — and only when the TCP peer is that
+proxy; it takes the right-most address that is not a trusted proxy, so a
+client-supplied `X-Forwarded-For` is ignored. Invalid entries are logged at
+startup and skipped (never fatal); empty = the default behaviour.
+
+**Never trust a whole subnet (e.g. a Docker network CIDR).** Port `8080` stays
+published because remote collectors post to it directly. On Docker Desktop,
+rootless Docker, and for IPv6 clients, connections to a published port reach
+the container from the network's **gateway** address — which is inside the
+Docker subnet. Trusting the subnet therefore lets any outside client send its
+own `X-Forwarded-For` and pick the IP it is attributed to: a free pass around
+the per-IP rate limit and the login lockout. Trust exactly one address: the
+proxy container's, pinned so it cannot change.
 
 **nginx-proxy-manager (docker-compose.proxy.yml):** NPM already sends
-`X-Forwarded-For`. Find the address the API sees it on — the NPM container's IP
-on the network it shares with `firewall-mon` (tightest), or that network's
-subnet:
+`X-Forwarded-For`. Give NPM a fixed address on a network it shares with
+`firewall-mon`, e.g. a user-defined network created once:
 
 ```bash
-docker network inspect <network> \
-  --format '{{range .Containers}}{{.Name}} {{.IPv4Address}}{{"\n"}}{{end}}{{range .IPAM.Config}}subnet {{.Subnet}}{{end}}'
+docker network create --subnet 172.30.0.0/24 fwmon-proxy
 ```
 
-then set e.g. `TRUSTED_PROXIES=172.20.0.5` (or `172.20.0.0/16`) in
-`config.env` and restart the API. Check that the audit log and login attempts
-now show real client IPs.
+then, in a compose override for NPM (and attach `firewall-mon` to the same
+network in its own override):
 
-**Do not trust more than the proxy.** Anything that can reach port `8080`
-from inside a trusted range can choose the client IP it is attributed to. A
-whole Docker subnet includes its gateway (`.1`), which is the source address of
-connections arriving through a *published* port via Docker's userland proxy —
-so if you trust a subnet, stop publishing `8080` publicly (bind it to
-`127.0.0.1` or drop the `ports:` entry) and let only the proxy reach the API.
+```yaml
+services:
+  nginx-proxy-manager:
+    networks:
+      fwmon-proxy:
+        ipv4_address: 172.30.0.10
+networks:
+  fwmon-proxy:
+    external: true
+```
+
+Point the NPM proxy host at `firewall-mon:8080`, set
+`TRUSTED_PROXIES=172.30.0.10` in `config.env` and restart the API. Check that
+the audit log and login attempts now show real client IPs. If NPM runs on the
+host network or another machine, use the single IP the API sees it connect from.
 
 ---
 

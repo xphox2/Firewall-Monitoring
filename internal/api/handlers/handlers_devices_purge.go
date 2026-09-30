@@ -64,7 +64,7 @@ func (h *Handler) reauthCaller(c *gin.Context, db database.Store, password, totp
 		// (handlers_totp.go). Without it a valid code could be replayed within
 		// its ~30–90s validity window to repeat the action.
 		if !h.authManager.MarkTOTPSlotUsed(admin.ID, totpCode) {
-			c.JSON(http.StatusForbidden, response.Error("Authenticator code already used — wait for the next code"))
+			c.JSON(http.StatusForbidden, response.Error(totpCodeAlreadyUsedMsg))
 			return "", 0, false
 		}
 	}

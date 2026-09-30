@@ -64,36 +64,33 @@ func (h *Handler) Login(c *gin.Context) {
 		userAgent = userAgent[:512]
 	}
 
-	if err := h.authManager.ValidateCredentials(creds.Username, creds.Password, ip); err != nil {
-		if db != nil {
-			if dbErr := db.SaveLoginAttempt(&models.LoginAttempt{
-				Timestamp: time.Now(),
-				Username:  creds.Username,
-				IPAddress: ip,
-				Success:   false,
-				UserAgent: userAgent,
-			}); dbErr != nil {
-				log.Printf("Failed to save login attempt: %v", dbErr)
-			}
+	// recordAttempt writes the login_attempts row. The success row is written
+	// only once the password step has actually produced its outcome (pending
+	// 2FA token, or a session from completeLogin); a refusal after the password
+	// check is recorded as a failure. Lockout counting is unaffected.
+	recordAttempt := func(success bool) {
+		if db == nil {
+			return
 		}
+		if dbErr := db.SaveLoginAttempt(&models.LoginAttempt{
+			Timestamp: time.Now(),
+			Username:  creds.Username,
+			IPAddress: ip,
+			Success:   success,
+			UserAgent: userAgent,
+		}); dbErr != nil {
+			log.Printf("Failed to save login attempt: %v", dbErr)
+		}
+	}
+
+	if err := h.authManager.ValidateCredentials(creds.Username, creds.Password, ip); err != nil {
+		recordAttempt(false)
 		if err == auth.ErrAccountLocked {
 			c.JSON(http.StatusTooManyRequests, response.Error("Account temporarily locked due to too many failed attempts"))
 			return
 		}
 		c.JSON(http.StatusUnauthorized, response.Error("Invalid credentials"))
 		return
-	}
-
-	if db != nil {
-		if dbErr := db.SaveLoginAttempt(&models.LoginAttempt{
-			Timestamp: time.Now(),
-			Username:  creds.Username,
-			IPAddress: ip,
-			Success:   true,
-			UserAgent: userAgent,
-		}); dbErr != nil {
-			log.Printf("Failed to save login attempt: %v", dbErr)
-		}
 	}
 
 	// D1: the session belongs to exactly the row whose password was just
@@ -106,6 +103,7 @@ func (h *Handler) Login(c *gin.Context) {
 	}
 	adminRecord, adminErr := db.GetAdminByUsername(creds.Username)
 	if adminErr != nil || adminRecord == nil {
+		recordAttempt(false)
 		httputil.InternalError(c, "Failed to load account", adminErr)
 		return
 	}
@@ -115,9 +113,11 @@ func (h *Handler) Login(c *gin.Context) {
 	if adminRecord.TOTPEnabled {
 		pending, perr := h.authManager.GeneratePendingToken(creds.Username, adminRecord.ID, adminRecord.TokenVersion)
 		if perr != nil {
+			recordAttempt(false)
 			httputil.InternalError(c, "Failed to generate token", perr)
 			return
 		}
+		recordAttempt(true) // password step complete; the TOTP step writes no row
 		cookieSecure, cookieSameSite, _ := h.sessionCookieParams()
 		http.SetCookie(c.Writer, &http.Cookie{
 			Name:     "pending_2fa",
@@ -134,7 +134,7 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
-	h.completeLogin(c, db, adminRecord.ID, loginMethodPassword)
+	recordAttempt(h.completeLogin(c, db, adminRecord.ID, loginMethodPassword))
 }
 
 // Login methods accepted by completeLogin. In-code values only (no DB column
@@ -169,26 +169,27 @@ func loginFailureMessage(method string) (string, bool) {
 //     the pending_2fa stage before ever getting here).
 //
 // On success it clears pending_2fa (TOTP stage only, as before) and mints the
-// JWT + CSRF cookies via issueSession.
-func (h *Handler) completeLogin(c *gin.Context, db database.Store, adminID uint, method string) {
+// JWT + CSRF cookies via issueSession. It reports whether a session was issued
+// (the response has been written either way).
+func (h *Handler) completeLogin(c *gin.Context, db database.Store, adminID uint, method string) bool {
 	failMsg, known := loginFailureMessage(method)
 	if !known {
 		httputil.InternalError(c, "Unknown login method", nil)
-		return
+		return false
 	}
 	admin, err := db.GetAdminByID(adminID)
 	if err != nil {
 		httputil.InternalError(c, "Failed to load account", err)
-		return
+		return false
 	}
 	if admin == nil || admin.Disabled || (method == loginMethodPassword && admin.TOTPEnabled) {
 		c.JSON(http.StatusUnauthorized, response.Error(failMsg))
-		return
+		return false
 	}
 	if !auth.ValidRole(admin.Role) {
 		log.Printf("login refused for admin id %d: role %q is not a valid role", admin.ID, admin.Role)
 		c.JSON(http.StatusUnauthorized, response.Error(failMsg))
-		return
+		return false
 	}
 
 	if method == loginMethodTOTP {
@@ -199,7 +200,7 @@ func (h *Handler) completeLogin(c *gin.Context, db database.Store, adminID uint,
 		})
 	}
 
-	h.issueSession(c, admin.Username, admin.ID, admin.TokenVersion, admin.Role, gin.H{
+	return h.issueSession(c, admin.Username, admin.ID, admin.TokenVersion, admin.Role, gin.H{
 		"message":              "Login successful",
 		"must_change_password": admin.MustChangePassword,
 	})
@@ -222,12 +223,12 @@ func (h *Handler) sessionCookieParams() (secure bool, sameSite http.SameSite, ma
 // issueSession mints the JWT + CSRF pair and sets both cookies — the tail of
 // a fully-completed authentication, shared by password-only logins and the
 // TOTP second step. extra is merged into the success payload (csrf_token is
-// always set/overwritten here).
-func (h *Handler) issueSession(c *gin.Context, username string, adminID uint, tokenVersion uint, role string, extra gin.H) {
+// always set/overwritten here). Reports whether the session was issued.
+func (h *Handler) issueSession(c *gin.Context, username string, adminID uint, tokenVersion uint, role string, extra gin.H) bool {
 	token, err := h.authManager.GenerateToken(username, adminID, tokenVersion, role)
 	if err != nil {
 		httputil.InternalError(c, "Failed to generate token", err)
-		return
+		return false
 	}
 
 	// Generate HMAC-signed CSRF token tied to the auth token
@@ -260,6 +261,7 @@ func (h *Handler) issueSession(c *gin.Context, username string, adminID uint, to
 	payload["csrf_token"] = csrfToken
 
 	c.JSON(http.StatusOK, response.Success(payload))
+	return true
 }
 
 func (h *Handler) Logout(c *gin.Context) {

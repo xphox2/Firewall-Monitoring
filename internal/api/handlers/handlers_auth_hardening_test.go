@@ -231,6 +231,11 @@ type loginSuccessBody struct {
 
 func assertSessionIssued(t *testing.T, rec *httptest.ResponseRecorder, wantUser string, wantUID uint, wantVersion uint, h *Handler) {
 	t.Helper()
+	assertSessionIssuedAs(t, rec, wantUser, wantUID, wantVersion, auth.RoleAdmin, false, h)
+}
+
+func assertSessionIssuedAs(t *testing.T, rec *httptest.ResponseRecorder, wantUser string, wantUID uint, wantVersion uint, wantRole string, wantMustChange bool, h *Handler) {
+	t.Helper()
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d (body=%s)", rec.Code, rec.Body.String())
 	}
@@ -250,7 +255,7 @@ func assertSessionIssued(t *testing.T, rec *httptest.ResponseRecorder, wantUser 
 	}
 	if !body.Success || len(body.Data) != 3 ||
 		body.Data["message"] != "Login successful" ||
-		body.Data["must_change_password"] != false ||
+		body.Data["must_change_password"] != wantMustChange ||
 		body.Data["csrf_token"] != csrfCk.Value {
 		t.Errorf("success body changed: %s", rec.Body.String())
 	}
@@ -259,7 +264,7 @@ func assertSessionIssued(t *testing.T, rec *httptest.ResponseRecorder, wantUser 
 		t.Fatalf("issued token invalid: %v", err)
 	}
 	if claims.Username != wantUser || claims.UserID != wantUID || claims.TokenVersion != wantVersion ||
-		claims.Role != auth.RoleAdmin || claims.Stage != "" {
+		claims.Role != wantRole || claims.Stage != "" {
 		t.Errorf("claims changed: %+v", claims)
 	}
 }
@@ -312,5 +317,151 @@ func TestLogin_PasswordPlusTOTP_Unchanged(t *testing.T) {
 	}
 	if len(store.loginAttempts) != 1 {
 		t.Errorf("TOTP step must not add login_attempts rows: %+v", store.loginAttempts)
+	}
+}
+
+// TestLogin_RolesAndMustChange_Unchanged: viewer/operator logins carry their
+// own role, and must_change_password=true is reported, exactly as before.
+func TestLogin_RolesAndMustChange_Unchanged(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		role       string
+		mustChange bool
+	}{
+		{auth.RoleViewer, false},
+		{auth.RoleOperator, false},
+		{auth.RoleAdmin, true},
+	}
+	for _, tc := range cases {
+		h, store := totpTestHandler(t, hardeningTOTPSecret)
+		store.admin.TOTPEnabled = false
+		store.admin.Role = tc.role
+		store.admin.MustChangePassword = tc.mustChange
+		rec := loginReq(h)
+		assertSessionIssuedAs(t, rec, "root", 1, 4, tc.role, tc.mustChange, h)
+		if len(rec.Result().Cookies()) != 2 {
+			t.Errorf("%s: want exactly 2 cookies, got %v", tc.role, rec.Result().Cookies())
+		}
+		if len(store.loginAttempts) != 1 || !store.loginAttempts[0].Success {
+			t.Errorf("%s: login_attempts rows changed: %+v", tc.role, store.loginAttempts)
+		}
+	}
+}
+
+// --- review follow-ups -----------------------------------------------------
+
+// TestTOTPLogin_PendingTokenForOtherUserID: the pending token names user id 99
+// but the username now resolves to id 1 — not the account the password was
+// verified for, so the second step refuses.
+func TestTOTPLogin_PendingTokenForOtherUserID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, _ := totpTestHandler(t, hardeningTOTPSecret)
+	pending, err := h.authManager.GeneratePendingToken("root", 99, 4)
+	if err != nil {
+		t.Fatalf("GeneratePendingToken: %v", err)
+	}
+	code, _ := totp.GenerateCode(hardeningTOTPSecret, time.Now())
+	rec := totpReq(h, pending, code)
+	if rec.Code != http.StatusUnauthorized || errorBody(t, rec) != "Pending login invalid — start over" {
+		t.Fatalf("status = %d body=%s, want 401 generic", rec.Code, rec.Body.String())
+	}
+	assertNoSession(t, rec)
+}
+
+// TestTOTPLogin_ReplayedCode_DistinctMessageNoFailure: a valid-but-spent code
+// gets the "already used" message and does not count toward lockout.
+func TestTOTPLogin_ReplayedCode_DistinctMessageNoFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, _ := totpTestHandler(t, hardeningTOTPSecret) // MaxLoginAttempts = 3
+	pending, _ := h.authManager.GeneratePendingToken("root", 1, 4)
+	code, _ := totp.GenerateCode(hardeningTOTPSecret, time.Now())
+	if rec := totpReq(h, pending, code); rec.Code != http.StatusOK {
+		t.Fatalf("first use: status = %d", rec.Code)
+	}
+	for i := 0; i < 4; i++ {
+		rec := totpReq(h, pending, code)
+		if rec.Code != http.StatusUnauthorized || errorBody(t, rec) != totpCodeAlreadyUsedMsg {
+			t.Fatalf("replay %d: status = %d body=%s", i, rec.Code, rec.Body.String())
+		}
+	}
+	if h.authManager.IsLocked("root", "192.0.2.1") {
+		t.Fatal("replayed valid codes must not count toward lockout")
+	}
+}
+
+// TestDisable2FA_ReplayedCode_DistinctMessage: same message at disable-2FA.
+func TestDisable2FA_ReplayedCode_DistinctMessage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, store := totpTestHandler(t, hardeningTOTPSecret)
+	code, _ := totp.GenerateCode(hardeningTOTPSecret, time.Now())
+	if !h.authManager.MarkTOTPSlotUsed(1, code) {
+		t.Fatal("seed use failed")
+	}
+	c, rec := jsonReq(http.MethodPost, "/admin/api/auth/2fa/disable", `{"password":"correct-horse","code":"`+code+`"}`)
+	c.Set("username", "root")
+	h.Disable2FA(c)
+	if rec.Code != http.StatusForbidden || errorBody(t, rec) != totpCodeAlreadyUsedMsg {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.totpCleared {
+		t.Fatal("2FA cleared with a replayed code")
+	}
+}
+
+func verifyReq(h *Handler, code string) *httptest.ResponseRecorder {
+	c, rec := jsonReq(http.MethodPost, "/admin/api/auth/2fa/verify", `{"code":"`+code+`"}`)
+	c.Set("username", "root")
+	h.Verify2FA(c)
+	return rec
+}
+
+// TestVerify2FA_RejectsWhenAlreadyEnabled: re-verifying an enrolled account
+// must not re-mint its recovery codes.
+func TestVerify2FA_RejectsWhenAlreadyEnabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, store := totpTestHandler(t, hardeningTOTPSecret) // TOTPEnabled: true
+	code, _ := totp.GenerateCode(hardeningTOTPSecret, time.Now())
+	rec := verifyReq(h, code)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if store.recoveryReplaced {
+		t.Fatal("recovery codes must not be replaced on an enrolled account")
+	}
+}
+
+// TestVerify2FA_ConsumesCode: the enrolment code goes through the shared
+// replay guard — it cannot be replayed on verify or used elsewhere.
+func TestVerify2FA_ConsumesCode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, store := totpTestHandler(t, hardeningTOTPSecret)
+	store.admin.TOTPEnabled = false
+	code, _ := totp.GenerateCode(hardeningTOTPSecret, time.Now())
+	if rec := verifyReq(h, code); rec.Code != http.StatusOK {
+		t.Fatalf("verify: status = %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if h.authManager.MarkTOTPSlotUsed(1, code) {
+		t.Fatal("enrolment code must be marked used by Verify2FA")
+	}
+}
+
+// TestLogin_AttemptRow_FailureWhenCompletionRefuses: a password that verifies
+// but whose login is refused at completion records a FAILED attempt row.
+func TestLogin_AttemptRow_FailureWhenCompletionRefuses(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for name, setup := range map[string]func(*totpFakeStore){
+		"disabled": func(s *totpFakeStore) { s.byIDMutate = func(a *models.Admin) { a.Disabled = true } },
+		"db-error": func(s *totpFakeStore) { s.byIDErr = errors.New("injected") },
+	} {
+		h, store := totpTestHandler(t, hardeningTOTPSecret)
+		store.admin.TOTPEnabled = false
+		setup(store)
+		rec := loginReq(h)
+		if rec.Code == http.StatusOK {
+			t.Fatalf("%s: login succeeded", name)
+		}
+		if len(store.loginAttempts) != 1 || store.loginAttempts[0].Success {
+			t.Errorf("%s: want one failed attempt row, got %+v", name, store.loginAttempts)
+		}
 	}
 }

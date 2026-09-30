@@ -201,7 +201,7 @@ func (am *AuthManager) ClearFailures(username, ip string) {
 const totpReplayWindow = 90 * time.Second
 
 // totpReplayNamespace is the single replay-guard namespace shared by EVERY
-// TOTP consumer (2FA login, disable-2FA, reveal, purge). One namespace means a
+// TOTP consumer (2FA login, enrolment verify, disable-2FA, reveal, purge). One namespace means a
 // code accepted by any endpoint is rejected by every other endpoint for the
 // rest of its validity window — an intercepted code cannot be spent twice by
 // routing it to a different action.
