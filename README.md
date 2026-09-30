@@ -10,9 +10,9 @@
 > is a sibling repo, [Firewall-Collector](https://github.com/xphox2/Firewall-Collector).
 
 [![CI](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml/badge.svg)](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.11.273-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.11.274-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Go](https://img.shields.io/badge/go-1.25.13+-00ADD8)](go.mod)
+[![Go](https://img.shields.io/badge/go-1.26.8+-00ADD8)](go.mod)
 [![Status](https://img.shields.io/badge/status-alpha-orange)](#project-status)
 
 > ⚠️ **Alpha.** This project is under active development and is published for early
@@ -279,7 +279,7 @@ registration, poll cycle, alert firing/recovery) is in
 
 ### Prerequisites
 
-- **Go 1.25.13** (the version pinned in `go.mod`; uses `log/slog`-era
+- **Go 1.26.8** (the version pinned in `go.mod`; uses `log/slog`-era
   stdlib; CI builds on the same toolchain).
 - **Linux server** (tested on Ubuntu/Debian). The native installer uses
   **systemd**; macOS/Windows can build and run the binaries but the
