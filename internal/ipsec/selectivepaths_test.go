@@ -29,12 +29,12 @@ func pathIntent(aNets, bNets []string, disabled ...string) *ipsec.TunnelIntent {
 // Compacting would slide fwm-t7-3 down to -2 and silently re-point a live
 // phase2 at a different selector pair — worse than renumbering.
 func TestPaths_DisablingOnePathDoesNotMoveTheOthers(t *testing.T) {
-	a := []string{"192.168.13.0/24", "192.168.25.0/24"}
-	b := []string{"192.168.50.0/24", "192.168.5.0/24"}
+	a := []string{"192.168.113.0/24", "192.168.125.0/24"}
+	b := []string{"192.168.150.0/24", "192.168.105.0/24"}
 
 	full := pathIntent(a, b)
 	// Disable the MIDDLE path (index 1: 13.0/24 ↔ 5.0/24).
-	partial := pathIntent(a, b, ipsec.PathKey("192.168.13.0/24", "192.168.5.0/24"))
+	partial := pathIntent(a, b, ipsec.PathKey("192.168.113.0/24", "192.168.105.0/24"))
 
 	fullPaths, partialPaths := full.PathsFor(0), partial.PathsFor(0)
 	if len(fullPaths) != 4 || len(partialPaths) != 4 {
@@ -66,9 +66,9 @@ func TestPaths_DisablingOnePathDoesNotMoveTheOthers(t *testing.T) {
 // end sails straight past it, so assert both ends agree on the same LOGICAL
 // pair — using an ASYMMETRIC selection, which is the only kind that can fail.
 func TestPaths_BothEndsDisableTheSameLogicalPair(t *testing.T) {
-	a := []string{"192.168.13.0/24", "192.168.25.0/24"}
-	b := []string{"192.168.50.0/24", "192.168.5.0/24"}
-	in := pathIntent(a, b, ipsec.PathKey("192.168.25.0/24", "192.168.50.0/24"))
+	a := []string{"192.168.113.0/24", "192.168.125.0/24"}
+	b := []string{"192.168.150.0/24", "192.168.105.0/24"}
+	in := pathIntent(a, b, ipsec.PathKey("192.168.125.0/24", "192.168.150.0/24"))
 
 	enabledSet := func(self int) map[string]bool {
 		out := map[string]bool{}
@@ -96,10 +96,10 @@ func TestPaths_BothEndsDisableTheSameLogicalPair(t *testing.T) {
 				"pair is disabled, so one side provisions a selector the other refuses", k)
 		}
 	}
-	if aSide["192.168.25.0/24|192.168.50.0/24"] {
+	if aSide["192.168.125.0/24|192.168.150.0/24"] {
 		t.Error("the disabled pair is still enabled on end A")
 	}
-	if bSide["192.168.25.0/24|192.168.50.0/24"] {
+	if bSide["192.168.125.0/24|192.168.150.0/24"] {
 		t.Error("the disabled pair is still enabled on end B — the A|B key was almost " +
 			"certainly built without swapping local/remote back for self=1")
 	}
@@ -110,8 +110,8 @@ func TestPaths_BothEndsDisableTheSameLogicalPair(t *testing.T) {
 // every read path (deploy included) unmarshals straight from intent_json.
 func TestPaths_LegacyIntentJSONKeepsTheFullMesh(t *testing.T) {
 	raw := `{"id":7,"name":"fwm-t7","mode":"policy-based","ends":[
-		{"protected_subnets":["192.168.13.0/24","192.168.25.0/24"]},
-		{"protected_subnets":["192.168.50.0/24","192.168.5.0/24"]}]}`
+		{"protected_subnets":["192.168.113.0/24","192.168.125.0/24"]},
+		{"protected_subnets":["192.168.150.0/24","192.168.105.0/24"]}]}`
 	if strings.Contains(raw, "disabled_paths") {
 		t.Fatal("fixture must not mention disabled_paths")
 	}
@@ -138,8 +138,8 @@ func TestPaths_LegacyIntentJSONKeepsTheFullMesh(t *testing.T) {
 // Reformatting a subnet must not quietly re-enable a path. Keys are canonical
 // precisely so this fails closed.
 func TestPaths_KeyIsCanonicalNotRaw(t *testing.T) {
-	in := pathIntent([]string{"10.0.0.1/8"}, []string{"192.168.50.0/24"},
-		ipsec.PathKey("10.0.0.0/8", "192.168.50.0/24"))
+	in := pathIntent([]string{"10.0.0.1/8"}, []string{"192.168.150.0/24"},
+		ipsec.PathKey("10.0.0.0/8", "192.168.150.0/24"))
 	paths := in.PathsFor(0)
 	if len(paths) != 1 {
 		t.Fatalf("expected 1 path, got %d", len(paths))
@@ -153,8 +153,8 @@ func TestPaths_KeyIsCanonicalNotRaw(t *testing.T) {
 // Route-based negotiates one 0.0.0.0/0 child and steers by route, so there is
 // no per-path selector to switch off.
 func TestPaths_RouteBasedIsASingleEnabledPath(t *testing.T) {
-	in := pathIntent([]string{"192.168.13.0/24"}, []string{"192.168.50.0/24"},
-		ipsec.PathKey("192.168.13.0/24", "192.168.50.0/24"))
+	in := pathIntent([]string{"192.168.113.0/24"}, []string{"192.168.150.0/24"},
+		ipsec.PathKey("192.168.113.0/24", "192.168.150.0/24"))
 	in.Mode = ipsec.ModeRouteBased
 
 	paths := in.PathsFor(0)
@@ -176,8 +176,8 @@ func TestPaths_EmptyListsYieldNoPathsNotWideOpen(t *testing.T) {
 		a, b []string
 	}{
 		{"both empty", nil, nil},
-		{"A empty", nil, []string{"192.168.50.0/24"}},
-		{"B empty", []string{"192.168.13.0/24"}, nil},
+		{"A empty", nil, []string{"192.168.150.0/24"}},
+		{"B empty", []string{"192.168.113.0/24"}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			paths := pathIntent(tc.a, tc.b).PathsFor(0)
@@ -195,9 +195,9 @@ func TestPaths_EmptyListsYieldNoPathsNotWideOpen(t *testing.T) {
 // orientation or with a typo leaves the path carrying traffic while the stored
 // intent looks like it was switched off.
 func TestPaths_UnknownDisabledEntryIsFlagged(t *testing.T) {
-	in := pathIntent([]string{"192.168.13.0/24"}, []string{"192.168.50.0/24"},
+	in := pathIntent([]string{"192.168.113.0/24"}, []string{"192.168.150.0/24"},
 		// reversed orientation: B|A instead of A|B
-		ipsec.PathKey("192.168.50.0/24", "192.168.13.0/24"))
+		ipsec.PathKey("192.168.150.0/24", "192.168.113.0/24"))
 
 	if !in.PathsFor(0)[0].Enabled {
 		t.Fatal("fixture wrong: the reversed key should NOT match, leaving the path enabled")
@@ -221,8 +221,8 @@ func TestPaths_UnknownDisabledEntryIsFlagged(t *testing.T) {
 func TestPaths_ShadowedByBroaderEnabledPathIsFlagged(t *testing.T) {
 	in := pathIntent(
 		[]string{"10.0.0.0/16", "10.0.1.0/24"},
-		[]string{"192.168.50.0/24"},
-		ipsec.PathKey("10.0.1.0/24", "192.168.50.0/24"))
+		[]string{"192.168.150.0/24"},
+		ipsec.PathKey("10.0.1.0/24", "192.168.150.0/24"))
 
 	var found bool
 	for _, f := range ipsec.Validate(in, capsForPair(t, "fortigate", "fortigate")) {

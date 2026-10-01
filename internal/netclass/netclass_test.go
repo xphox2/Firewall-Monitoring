@@ -17,7 +17,7 @@ func TestIsLANType(t *testing.T) {
 }
 
 func TestIsPublicIP(t *testing.T) {
-	for _, ip := range []string{"66.179.9.155", "203.0.113.9", "8.8.8.8", "1.1.1.1"} {
+	for _, ip := range []string{"198.19.9.155", "203.0.113.9", "8.8.8.8", "1.1.1.1"} {
 		if !IsPublicIP(ip) {
 			t.Errorf("IsPublicIP(%q) = false, want true (globally routable)", ip)
 		}

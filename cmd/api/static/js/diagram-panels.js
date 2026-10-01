@@ -756,7 +756,7 @@
     // ONE table, one row per path, both ends' state on the same line.
     //
     // The two ends name the same path differently (fwm-t12-2 vs
-    // fwm-t12:192.168.50.0-192.168.13.0) and describe it from opposite
+    // fwm-t12:192.168.150.0-192.168.113.0) and describe it from opposite
     // perspectives (13.0 -> 50.0 vs 50.0 -> 13.0), so two independent tables put
     // unrelated rows on the same visual line and nothing on screen says so.
     // Pairing here is structural: a path IS a row, so it cannot drift.

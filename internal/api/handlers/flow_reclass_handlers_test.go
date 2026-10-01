@@ -73,7 +73,7 @@ func TestGetFlowReclassStatus_Done(t *testing.T) {
 func TestFlowIngest_RevisionZeroLeavesARearmMark(t *testing.T) {
 	h, db := setupTestHandler(t)
 	h.internalNets.Store(nil)
-	flow := []map[string]interface{}{{"sampler_address": "10.9.1.1", "src_addr": "66.179.9.156", "dst_addr": "203.0.113.9",
+	flow := []map[string]interface{}{{"sampler_address": "10.9.1.1", "src_addr": "198.19.9.156", "dst_addr": "203.0.113.9",
 		"src_port": 443, "dst_port": 51234, "protocol": 6, "bytes": 100, "packets": 1}}
 	postFlows(t, h, db, "rearm", flow)
 	if v, ok := db.GetSettingValue(database.FlowReclassRearmKey); !ok || v == "" {

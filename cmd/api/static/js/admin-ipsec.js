@@ -734,7 +734,7 @@
         if (dev && typeof dev.uuid === 'string' && dev.uuid !== '') { return 'fwm-' + dev.uuid; }
         // Fallback for a device with no UUID (pre-deploy payload): sanitized name.
         var s = sanitizeFqdnId(dev && dev.name);
-        // A device NAMED like an IP (e.g. "192.168.5.107") sanitizes to an IP-shaped
+        // A device NAMED like an IP (e.g. "192.168.105.107") sanitizes to an IP-shaped
         // string, which the fqdn rules would then block — so the prefill must not
         // produce one. Fall back to a guaranteed-valid non-IP default.
         if (!s || isIPv4(s) || isIPv4Range(s)) { s = 'site-' + pfx; }

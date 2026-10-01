@@ -13,7 +13,7 @@ import (
 )
 
 // runResetAuthCmd implements the break-glass `fwmon-api reset-auth --user
-// <name> [--keep-2fa] [--keep-passkeys]` (passkey plan, PR 2). It works with
+// <name> [--keep-2fa] [--keep-passkeys]` (v0.11.277). It works with
 // no web UI and no running API: it connects straight to the database and, in
 // one transaction (database.ResetAuth), sets a new random temporary password
 // (printed once), flags must_change_password, clears TOTP + recovery codes

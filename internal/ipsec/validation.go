@@ -590,7 +590,7 @@ func safeToken(s string) bool {
 // ID_IPV4/6_ADDR, an "ip-ip" range → ID_IPV4_ADDR_RANGE, a value with `:` →
 // IPv6-or-KEY_ID, else → ID_FQDN). If the two ends disagree on the type the SA
 // fails with AUTH_FAILED (the same class as the v0.11.147 keyid fix). A
-// single-label value like "TECHLABS" is fine — both vendors accept it as an
+// single-label value like "OSPREY" is fine — both vendors accept it as an
 // FQDN identity, so it is deliberately NOT flagged. The generic charset gate
 // (safeToken) has already run in the caller; this adds the type-specific rules.
 func validateIdentity(intent *TunnelIntent, i int) []Finding {

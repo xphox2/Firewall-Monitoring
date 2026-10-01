@@ -35,13 +35,13 @@ func TestParseStatus_Established(t *testing.T) {
 	}
 }
 
-// TestParseStatus_ConnectedBool is the real sessions/searchPhase1 shape (fwm-t9):
-// phase1 liveness is a BOOLEAN "connected", with no string status field. The
+// TestParseStatus_ConnectedBool is the sessions/searchPhase1 shape OPNsense
+// emits (fwm-t9): phase1 liveness is a BOOLEAN "connected", with no string status field. The
 // row must be read as up — the string-only path misread it as unknown.
 func TestParseStatus_ConnectedBool(t *testing.T) {
 	d, _ := ipsec.Driver("opnsense")
 	raw := `{"total":1,"rowCount":1,"rows":[
-		{"local-addrs":"%any","remote-addrs":"198.51.100.1","local-id":"opnsense","remote-id":"techlabs-fw-01","version":"IKEv2","connected":true,"install-time":"55","bytes-in":0,"bytes-out":0}
+		{"local-addrs":"%any","remote-addrs":"198.51.100.1","local-id":"opnsense","remote-id":"osprey-fw-01","version":"IKEv2","connected":true,"install-time":"55","bytes-in":0,"bytes-out":0}
 	]}`
 	st, err := d.ParseStatus(raw, testView("198.51.100.1"))
 	if err != nil {

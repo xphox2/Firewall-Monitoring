@@ -5,39 +5,39 @@ import (
 	"time"
 )
 
-// The live DC2 topology that surfaced the bug (2026-07-14): OPNsense →
-// DC2-FW2 → DC2-FW1 daisy-chained on ONE broadcast domain. FW1's FDB
+// A representative DC9 topology that surfaces the bug: OPNsense →
+// DC9-FW2 → DC9-FW1 daisy-chained on ONE broadcast domain. FW1's FDB
 // legitimately contains OPNsense's MAC (learned through the FW2 uplink) and
 // OPNsense's ARP contains FW1 — but OPNsense↔FW1 is not a cable.
-func dc2Topology() ([]DeviceMeta, []Iface, []FDBRow, []ARPRow) {
+func dc9Topology() ([]DeviceMeta, []Iface, []FDBRow, []ARPRow) {
 	site := uint(1)
 	devs := []DeviceMeta{
-		{ID: 1, Name: "DC2-FW2", SiteID: &site, IPs: []string{"192.168.5.1"}},
-		{ID: 2, Name: "DC2-FW1", SiteID: &site, IPs: []string{"192.168.5.2"}},
-		{ID: 3, Name: "OPNsense", SiteID: &site, IPs: []string{"192.168.5.107"}},
+		{ID: 1, Name: "DC9-FW2", SiteID: &site, IPs: []string{"192.168.105.1"}},
+		{ID: 2, Name: "DC9-FW1", SiteID: &site, IPs: []string{"192.168.105.2"}},
+		{ID: 3, Name: "OPNsense", SiteID: &site, IPs: []string{"192.168.105.107"}},
 	}
 	ifaces := []Iface{
 		// FW2: switch port to OPNsense (port3) + uplink to FW1 (port7)
-		{DeviceID: 1, IfIndex: 3, Name: "port3", MAC: "AC:71:2E:6F:94:C8", Status: "up", TypeName: "ethernet"},
-		{DeviceID: 1, IfIndex: 7, Name: "port7", MAC: "AC:71:2E:6F:94:C9", Status: "up", TypeName: "ethernet"},
+		{DeviceID: 1, IfIndex: 3, Name: "port3", MAC: "02:A1:00:35:CE:C8", Status: "up", TypeName: "ethernet"},
+		{DeviceID: 1, IfIndex: 7, Name: "port7", MAC: "02:A1:00:35:CE:C9", Status: "up", TypeName: "ethernet"},
 		// FW1: one internal port toward FW2
-		{DeviceID: 2, IfIndex: 4, Name: "internal", MAC: "E0:23:FF:6A:E5:D8", Status: "up", TypeName: "bridge"},
+		{DeviceID: 2, IfIndex: 4, Name: "internal", MAC: "02:A2:00:30:BF:D8", Status: "up", TypeName: "bridge"},
 		// OPNsense LAN
-		{DeviceID: 3, IfIndex: 2, Name: "lan", MAC: "E8:F6:D7:00:10:5B", Status: "up", TypeName: "ethernet"},
+		{DeviceID: 3, IfIndex: 2, Name: "lan", MAC: "02:A3:00:5A:4A:5B", Status: "up", TypeName: "ethernet"},
 	}
 	ts := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	fdb := []FDBRow{
 		// FW2: OPNsense on the direct port, FW1 on the uplink — DIFFERENT ports.
-		{DeviceID: 1, IfIndex: 3, MAC: "e8:f6:d7:00:10:5b", Ts: ts},
-		{DeviceID: 1, IfIndex: 7, MAC: "e0:23:ff:6a:e5:d8", Ts: ts},
+		{DeviceID: 1, IfIndex: 3, MAC: "02:a3:00:5a:4a:5b", Ts: ts},
+		{DeviceID: 1, IfIndex: 7, MAC: "02:a2:00:30:bf:d8", Ts: ts},
 		// FW1: FW2 and OPNsense both through the SAME port (the FW2 cable).
-		{DeviceID: 2, IfIndex: 4, MAC: "ac:71:2e:6f:94:c9", Ts: ts},
-		{DeviceID: 2, IfIndex: 4, MAC: "e8:f6:d7:00:10:5b", Ts: ts},
+		{DeviceID: 2, IfIndex: 4, MAC: "02:a1:00:35:ce:c9", Ts: ts},
+		{DeviceID: 2, IfIndex: 4, MAC: "02:a3:00:5a:4a:5b", Ts: ts},
 	}
 	arp := []ARPRow{
 		// OPNsense sees both FortiGates on its single lan interface.
-		{DeviceID: 3, IfIndex: 2, IP: "192.168.5.1", MAC: "ac:71:2e:6f:94:c8", Ts: ts},
-		{DeviceID: 3, IfIndex: 2, IP: "192.168.5.2", MAC: "e0:23:ff:6a:e5:d8", Ts: ts},
+		{DeviceID: 3, IfIndex: 2, IP: "192.168.105.1", MAC: "02:a1:00:35:ce:c8", Ts: ts},
+		{DeviceID: 3, IfIndex: 2, IP: "192.168.105.2", MAC: "02:a2:00:30:bf:d8", Ts: ts},
 	}
 	return devs, ifaces, fdb, arp
 }
@@ -46,7 +46,7 @@ func dc2Topology() ([]DeviceMeta, []Iface, []FDBRow, []ARPRow) {
 // two physical links; the OPNsense↔FW1 attribution (through monitored FW2)
 // is suppressed.
 func TestInferLinks_TransitiveSuppression(t *testing.T) {
-	devs, ifaces, fdb, arp := dc2Topology()
+	devs, ifaces, fdb, arp := dc9Topology()
 	links := InferLinks(devs, ifaces, fdb, arp, nil)
 
 	if len(links) != 2 {
@@ -54,7 +54,7 @@ func TestInferLinks_TransitiveSuppression(t *testing.T) {
 	}
 	for _, l := range links {
 		if (l.A == 2 && l.B == 3) || (l.A == 3 && l.B == 2) {
-			t.Fatalf("false transitive link OPNsense↔DC2-FW1 survived: %+v", l)
+			t.Fatalf("false transitive link OPNsense↔DC9-FW1 survived: %+v", l)
 		}
 	}
 	// The surviving links carry the correct port attributions.
@@ -81,10 +81,10 @@ func TestInferLinks_TransitiveSuppression(t *testing.T) {
 // LLDP-confirmed adjacency is NEVER suppressed, even when the FDB pattern
 // would call it transitive — the protocol's word beats the inference.
 func TestInferLinks_TransitiveNeverSuppressesLLDP(t *testing.T) {
-	devs, ifaces, fdb, arp := dc2Topology()
+	devs, ifaces, fdb, arp := dc9Topology()
 	nbrs := []NeighborRow{
 		// A (hypothetical) direct LLDP adjacency OPNsense↔FW1.
-		{DeviceID: 3, LocalIfIndex: 2, ChassisID: "e0:23:ff:6a:e5:d8", PortID: "internal", SysName: "DC2-FW1", Ts: time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)},
+		{DeviceID: 3, LocalIfIndex: 2, ChassisID: "02:a2:00:30:bf:d8", PortID: "internal", SysName: "DC9-FW1", Ts: time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)},
 	}
 	links := InferLinks(devs, ifaces, fdb, arp, nbrs)
 	found := false
@@ -102,7 +102,7 @@ func TestInferLinks_TransitiveNeverSuppressesLLDP(t *testing.T) {
 // suppression cannot prove FW2 is between, so the link stays (better a
 // through-link than a hole).
 func TestInferLinks_TransitivePartialDataKeepsLink(t *testing.T) {
-	devs, ifaces, _, arp := dc2Topology()
+	devs, ifaces, _, arp := dc9Topology()
 	// No FDB at all — only OPNsense's ARP (sees both FWs on one port). FW2
 	// has no attributions, so nothing proves it sits between.
 	links := InferLinks(devs, ifaces, nil, arp, nil)
@@ -140,7 +140,7 @@ func TestInferLinks_TransitiveUnmanagedSwitchUnaffected(t *testing.T) {
 	}
 }
 
-// The live DC2 network as it ACTUALLY reports (2026-07-14 snmpwalk): no
+// A DC9 network in the shape its SNMP agents report: no
 // BRIDGE-MIB anywhere, no LLDP; OPNsense's ARP knows only FW1 (its gateway),
 // FW2's ARP knows only FW1. The FortiGate SSH bridge-FDB supplement provides
 // the missing per-member-port attribution as NAME-ONLY rows — with it, the
@@ -149,29 +149,29 @@ func TestInferLinks_TransitiveUnmanagedSwitchUnaffected(t *testing.T) {
 func TestInferLinks_SSHNameOnlyFDBSuppressesTransitive(t *testing.T) {
 	site := uint(1)
 	devs := []DeviceMeta{
-		{ID: 1, Name: "DC2-FW2", SiteID: &site, IPs: []string{"192.168.5.1"}},
-		{ID: 2, Name: "DC2-FW1", SiteID: &site, IPs: []string{"192.168.5.2"}},
-		{ID: 3, Name: "OPNsense", SiteID: &site, IPs: []string{"192.168.5.107"}},
+		{ID: 1, Name: "DC9-FW2", SiteID: &site, IPs: []string{"192.168.105.1"}},
+		{ID: 2, Name: "DC9-FW1", SiteID: &site, IPs: []string{"192.168.105.2"}},
+		{ID: 3, Name: "OPNsense", SiteID: &site, IPs: []string{"192.168.105.107"}},
 	}
 	ifaces := []Iface{
 		// FW2's switch member ports exist in interface stats by NAME.
-		{DeviceID: 1, IfIndex: 11, Name: "internal1", MAC: "AC:71:2E:6F:94:C8", Status: "up", TypeName: "ethernet"},
-		{DeviceID: 1, IfIndex: 13, Name: "internal3", MAC: "AC:71:2E:6F:94:CA", Status: "up", TypeName: "ethernet"},
-		{DeviceID: 2, IfIndex: 6, Name: "internal", MAC: "E0:23:FF:6A:E5:D8", Status: "up", TypeName: "bridge"},
-		{DeviceID: 3, IfIndex: 2, Name: "lan", MAC: "E8:F6:D7:00:10:5B", Status: "up", TypeName: "ethernet"},
+		{DeviceID: 1, IfIndex: 11, Name: "internal1", MAC: "02:A1:00:35:CE:C8", Status: "up", TypeName: "ethernet"},
+		{DeviceID: 1, IfIndex: 13, Name: "internal3", MAC: "02:A1:00:35:CE:CA", Status: "up", TypeName: "ethernet"},
+		{DeviceID: 2, IfIndex: 6, Name: "internal", MAC: "02:A2:00:30:BF:D8", Status: "up", TypeName: "bridge"},
+		{DeviceID: 3, IfIndex: 2, Name: "lan", MAC: "02:A3:00:5A:4A:5B", Status: "up", TypeName: "ethernet"},
 	}
 	ts := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	// SSH bridge FDB from FW2 only — name-only rows, no ifIndex.
 	fdb := []FDBRow{
-		{DeviceID: 1, IfName: "internal3", MAC: "e8:f6:d7:00:10:5b", Ts: ts}, // OPNsense on member port 3
-		{DeviceID: 1, IfName: "internal1", MAC: "e0:23:ff:6a:e5:d8", Ts: ts}, // FW1 on member port 1
+		{DeviceID: 1, IfName: "internal3", MAC: "02:a3:00:5a:4a:5b", Ts: ts}, // OPNsense on member port 3
+		{DeviceID: 1, IfName: "internal1", MAC: "02:a2:00:30:bf:d8", Ts: ts}, // FW1 on member port 1
 	}
 	// The ARP reality: OPNsense↔FW1 mutual (gateway traffic), FW2→FW1 only.
 	arp := []ARPRow{
-		{DeviceID: 3, IfIndex: 2, IP: "192.168.5.2", MAC: "e0:23:ff:6a:e5:d8", Ts: ts},
-		{DeviceID: 2, IfIndex: 6, IP: "192.168.5.107", MAC: "e8:f6:d7:00:10:5b", Ts: ts},
-		{DeviceID: 2, IfIndex: 6, IP: "192.168.5.1", MAC: "ac:71:2e:6f:94:c8", Ts: ts},
-		{DeviceID: 1, IfIndex: 15, IP: "192.168.5.2", MAC: "e0:23:ff:6a:e5:d8", Ts: ts},
+		{DeviceID: 3, IfIndex: 2, IP: "192.168.105.2", MAC: "02:a2:00:30:bf:d8", Ts: ts},
+		{DeviceID: 2, IfIndex: 6, IP: "192.168.105.107", MAC: "02:a3:00:5a:4a:5b", Ts: ts},
+		{DeviceID: 2, IfIndex: 6, IP: "192.168.105.1", MAC: "02:a1:00:35:ce:c8", Ts: ts},
+		{DeviceID: 1, IfIndex: 15, IP: "192.168.105.2", MAC: "02:a2:00:30:bf:d8", Ts: ts},
 	}
 
 	links := InferLinks(devs, ifaces, fdb, arp, nil)
@@ -201,45 +201,45 @@ func TestInferLinks_SSHNameOnlyFDBSuppressesTransitive(t *testing.T) {
 	}
 }
 
-// The live DC2 evidence AFTER the user enabled LLDP on both FortiGates
-// (2026-07-14 snmpwalk): FW1 knows FW2 via LLDP (physical member port 23)
+// The same DC9 network once LLDP is enabled on both FortiGates, in the
+// shape SNMP reports it: FW1 knows FW2 via LLDP (physical member port 23)
 // but knows OPNsense only via ARP (logical switch ifIndex 6) — DIFFERENT
 // port identities for the same wire, which is why suppression must compare
 // within a single tier: FW1's ARP sees both peers on ifIndex 6, and FW2's
 // LLDP distinguishes them (ports 3 vs 4).
-func TestInferLinks_MixedTierSuppression_LiveLLDPShape(t *testing.T) {
+func TestInferLinks_MixedTierSuppression_LLDPShape(t *testing.T) {
 	site := uint(1)
 	devs := []DeviceMeta{
-		{ID: 1, Name: "FW-TECHNICAL_LABS", SiteID: &site, IPs: []string{"192.168.5.1"}},
-		{ID: 2, Name: "FW-HOME.xphox.local", SiteID: &site, IPs: []string{"192.168.5.2"}},
-		{ID: 3, Name: "HOME-FW.xphox.local", SiteID: &site, IPs: []string{"192.168.5.107"}},
+		{ID: 1, Name: "FW-OSPREY_LABS", SiteID: &site, IPs: []string{"192.168.105.1"}},
+		{ID: 2, Name: "FW-HERON.lab.example", SiteID: &site, IPs: []string{"192.168.105.2"}},
+		{ID: 3, Name: "HERON-FW.lab.example", SiteID: &site, IPs: []string{"192.168.105.107"}},
 	}
 	ifaces := []Iface{
-		{DeviceID: 1, IfIndex: 3, Name: "internal3", MAC: "AC:71:2E:6F:94:C8", Status: "up", TypeName: "ethernet"},
-		{DeviceID: 1, IfIndex: 4, Name: "internal4", MAC: "AC:71:2E:6F:94:C9", Status: "up", TypeName: "ethernet"},
-		{DeviceID: 2, IfIndex: 6, Name: "internal", MAC: "E0:23:FF:6A:E5:D8", Status: "up", TypeName: "bridge"},
-		{DeviceID: 2, IfIndex: 23, Name: "port23", MAC: "E0:23:FF:6A:E5:DA", Status: "up", TypeName: "ethernet"},
-		{DeviceID: 3, IfIndex: 2, Name: "dtsec1", MAC: "E8:F6:D7:00:10:5B", Status: "up", TypeName: "ethernet"},
+		{DeviceID: 1, IfIndex: 3, Name: "internal3", MAC: "02:A1:00:35:CE:C8", Status: "up", TypeName: "ethernet"},
+		{DeviceID: 1, IfIndex: 4, Name: "internal4", MAC: "02:A1:00:35:CE:C9", Status: "up", TypeName: "ethernet"},
+		{DeviceID: 2, IfIndex: 6, Name: "internal", MAC: "02:A2:00:30:BF:D8", Status: "up", TypeName: "bridge"},
+		{DeviceID: 2, IfIndex: 23, Name: "port23", MAC: "02:A2:00:30:BF:DA", Status: "up", TypeName: "ethernet"},
+		{DeviceID: 3, IfIndex: 2, Name: "dtsec1", MAC: "02:A3:00:5A:4A:5B", Status: "up", TypeName: "ethernet"},
 	}
 	ts := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	nbrs := []NeighborRow{
 		// FW2's LLDP: OPNsense on local port 3 (sysname match — the chassis
 		// ID is the neighbor's BASE MAC, one off from its port MAC, so
 		// ownership misses), FW1 on local port 4.
-		{DeviceID: 1, LocalIfIndex: 3, ChassisID: "e8:f6:d7:00:10:5a", PortID: "dtsec1", SysName: "HOME-FW", Ts: ts},
-		{DeviceID: 1, LocalIfIndex: 4, ChassisID: "e0:23:ff:6a:e5:d9", PortID: "internal1", SysName: "FW-HOME.xphox.local", Ts: ts},
+		{DeviceID: 1, LocalIfIndex: 3, ChassisID: "02:a3:00:5a:4a:5a", PortID: "dtsec1", SysName: "HERON-FW", Ts: ts},
+		{DeviceID: 1, LocalIfIndex: 4, ChassisID: "02:a2:00:30:bf:d9", PortID: "internal1", SysName: "FW-HERON.lab.example", Ts: ts},
 		// FW1's LLDP: FW2 on local port 23. NO OPNsense row (FW2 intercepts
 		// its LLDP frames).
-		{DeviceID: 2, LocalIfIndex: 23, ChassisID: "ac:71:2e:6f:94:ce", PortID: "internal1", SysName: "FW-TECHNICAL_LABS", Ts: ts},
+		{DeviceID: 2, LocalIfIndex: 23, ChassisID: "02:a1:00:35:ce:ce", PortID: "internal1", SysName: "FW-OSPREY_LABS", Ts: ts},
 	}
 	arp := []ARPRow{
 		// FW1's ARP: BOTH peers on the logical switch interface 6.
-		{DeviceID: 2, IfIndex: 6, IP: "192.168.5.107", MAC: "e8:f6:d7:00:10:5b", Ts: ts},
-		{DeviceID: 2, IfIndex: 6, IP: "192.168.5.1", MAC: "ac:71:2e:6f:94:c8", Ts: ts},
+		{DeviceID: 2, IfIndex: 6, IP: "192.168.105.107", MAC: "02:a3:00:5a:4a:5b", Ts: ts},
+		{DeviceID: 2, IfIndex: 6, IP: "192.168.105.1", MAC: "02:a1:00:35:ce:c8", Ts: ts},
 		// OPNsense's ARP: only its gateway FW1.
-		{DeviceID: 3, IfIndex: 2, IP: "192.168.5.2", MAC: "e0:23:ff:6a:e5:d8", Ts: ts},
+		{DeviceID: 3, IfIndex: 2, IP: "192.168.105.2", MAC: "02:a2:00:30:bf:d8", Ts: ts},
 		// FW2's ARP: only FW1.
-		{DeviceID: 1, IfIndex: 15, IP: "192.168.5.2", MAC: "e0:23:ff:6a:e5:d8", Ts: ts},
+		{DeviceID: 1, IfIndex: 15, IP: "192.168.105.2", MAC: "02:a2:00:30:bf:d8", Ts: ts},
 	}
 
 	links := InferLinks(devs, ifaces, nil, arp, nbrs)

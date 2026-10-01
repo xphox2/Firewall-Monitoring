@@ -781,7 +781,7 @@ type LoginAttempt struct {
 	UserAgent string    `json:"user_agent"`
 	// Method is how the attempt authenticated: "password" or "passkey"
 	// (migration v70). NULL on rows written before v70. The TOTP second step
-	// writes no row of its own (PR 1), so "totp" is reserved but not written.
+	// writes no row of its own, so "totp" is reserved but not written.
 	Method *string `json:"method,omitempty" gorm:"column:method"`
 }
 
@@ -1665,8 +1665,7 @@ type FlowSample struct {
 	NextHop string `json:"next_hop,omitempty" gorm:"column:next_hop;type:varchar(45)"`
 	// ---- Tranche 3 (NetFlow v5/v9 + IPFIX) columns, migration v29. All
 	// additive omitempty: pre-1.3.0 collectors never send them (zero values =
-	// sFlow semantics), pre-0.11.20 servers drop the unknown JSON keys. Full
-	// rationale: docs/flow-protocol-research-2026-07-03.md §2.1.
+	// sFlow semantics), pre-0.11.20 servers drop the unknown JSON keys.
 
 	// FlowSource labels the exporting protocol: 0/absent = sFlow (and every
 	// pre-adoption collector), 1 = NetFlow v5, 2 = NetFlow v9, 3 = IPFIX.
@@ -1835,8 +1834,7 @@ func (FlowInterfaceCounter) TableName() string { return "flow_if_counters" }
 // agent-side congestion was undetectable. Storing it here lets alert
 // policies fire on `drops_last_5m` and surfaces it in the NOC strip.
 //
-// The flow_agent_drops table is intentionally NOT partitioned (see
-// docs/SFLOW-NOC-REDESIGN-PLAN.md §6.2). Per-(agent, sampling_rate)
+// The flow_agent_drops table is intentionally NOT partitioned. Per-(agent, sampling_rate)
 // row count is bounded by the number of monitored agents (typical
 // deployments: tens to low hundreds); no monthly rollup needed.
 type AgentDrops struct {

@@ -24,11 +24,11 @@ func arpPair(net1, net2, dev1IP, dev2IP string) ([]DeviceMeta, []Iface, []ARPRow
 	return devs, ifaces, arp
 }
 
-// TestInferLinks_ARPSharedSubnetSuppressed: the real DC2-FW1↔OPNsense case —
+// TestInferLinks_ARPSharedSubnetSuppressed: the DC9-FW1↔OPNsense case —
 // both on a shared /24 with ARP-only evidence → NO link (a shared switch is
 // not a point-to-point cable).
 func TestInferLinks_ARPSharedSubnetSuppressed(t *testing.T) {
-	devs, ifaces, arp := arpPair("192.168.5.0/24", "192.168.5.0/24", "192.168.5.1", "192.168.5.107")
+	devs, ifaces, arp := arpPair("192.168.105.0/24", "192.168.105.0/24", "192.168.105.1", "192.168.105.107")
 	if links := InferLinks(devs, ifaces, nil, arp, nil); len(links) != 0 {
 		t.Fatalf("shared /24 ARP must produce NO link, got %d: %+v", len(links), links)
 	}
@@ -53,7 +53,7 @@ func TestInferLinks_ARPPointToPointKept(t *testing.T) {
 // TestInferLinks_SharedSubnetFDBUnaffected: suppression is ARP-tier only — a
 // shared /24 with FDB evidence still produces the (confirmed) link.
 func TestInferLinks_SharedSubnetFDBUnaffected(t *testing.T) {
-	devs, ifaces, _ := arpPair("192.168.5.0/24", "192.168.5.0/24", "192.168.5.1", "192.168.5.107")
+	devs, ifaces, _ := arpPair("192.168.105.0/24", "192.168.105.0/24", "192.168.105.1", "192.168.105.107")
 	fdb := []FDBRow{
 		{DeviceID: 1, IfIndex: 5, MAC: "aa:bb:cc:00:01:03", VLANID: 10, Ts: ts()},
 		{DeviceID: 2, IfIndex: 3, MAC: "aa:bb:cc:00:00:05", VLANID: 10, Ts: ts()},
@@ -68,8 +68,8 @@ func TestInferLinks_SharedSubnetFDBUnaffected(t *testing.T) {
 // interface is on a multi-host /24 but the target's IP is on a DIFFERENT
 // network, so they don't actually share that segment → link kept.
 func TestInferLinks_ARPTargetOutsideSubnetKept(t *testing.T) {
-	// port5 on 192.168.5.0/24; device 2's only IP is 172.16.9.2 (elsewhere).
-	devs, ifaces, arp := arpPair("192.168.5.0/24", "172.16.9.0/24", "192.168.5.1", "172.16.9.2")
+	// port5 on 192.168.105.0/24; device 2's only IP is 172.16.9.2 (elsewhere).
+	devs, ifaces, arp := arpPair("192.168.105.0/24", "172.16.9.0/24", "192.168.105.1", "172.16.9.2")
 	if links := InferLinks(devs, ifaces, nil, arp, nil); len(links) != 1 {
 		t.Fatalf("ARP where target IP is outside the reporter subnet must keep the link, got %d: %+v", len(links), links)
 	}
@@ -83,12 +83,12 @@ func TestInferLinks_ARPResolvedIPPrecision(t *testing.T) {
 	devs := []DeviceMeta{
 		{ID: 1, Name: "fw-core", SiteID: &site1, IPs: []string{"10.0.0.1"}},
 		// target owns both the /30 peer IP and a /24 mgmt IP.
-		{ID: 2, Name: "opnsense", SiteID: &site1, IPs: []string{"10.0.0.2", "192.168.5.107"}},
+		{ID: 2, Name: "opnsense", SiteID: &site1, IPs: []string{"10.0.0.2", "192.168.105.107"}},
 	}
 	ifaces := []Iface{
 		// reporter's transit port carries the /30 AND a secondary /24.
 		{DeviceID: 1, IfIndex: 5, Name: "port5", MAC: "AA:BB:CC:00:00:05", Status: "up", TypeName: "ethernet",
-			Networks: []string{"10.0.0.0/30", "192.168.5.0/24"}},
+			Networks: []string{"10.0.0.0/30", "192.168.105.0/24"}},
 		{DeviceID: 2, IfIndex: 3, Name: "dtsec1", MAC: "aa:bb:cc:00:01:03", Status: "up", TypeName: "ethernet",
 			Networks: []string{"10.0.0.0/30"}},
 	}
@@ -120,7 +120,7 @@ func TestNetworkIsMultiHost(t *testing.T) {
 		}
 		return networkIsMultiHost(n)
 	}
-	for _, c := range []string{"192.168.5.0/24", "10.0.0.0/29", "10.0.0.0/25"} {
+	for _, c := range []string{"192.168.105.0/24", "10.0.0.0/29", "10.0.0.0/25"} {
 		if !mk(c) {
 			t.Errorf("%s should be multi-host", c)
 		}

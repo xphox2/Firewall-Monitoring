@@ -23,10 +23,10 @@ func validPreviewIntent(psk string) ipsec.TunnelIntent {
 		IKE: m.IKE, ESP: m.ESP, IKELifetimeSecs: m.IKELifetimeSecs,
 		DPD: ipsec.DPD{DelaySecs: 30}, PSK: psk,
 		Ends: [2]ipsec.EndpointSpec{
-			{DeviceID: 1, Vendor: "fortigate", PeerIP: "66.179.9.155", EgressIface: "port1", LANIface: "port3",
+			{DeviceID: 1, Vendor: "fortigate", PeerIP: "198.19.9.155", EgressIface: "port1", LANIface: "port3",
 				LocalID: ipsec.IKEIdentity{Type: ipsec.IDTypeKeyID, Value: "site-a"}, ProtectedSubnets: []string{"10.10.10.0/24"}, ChildLifetimeSecs: 7200},
-			{DeviceID: 2, Vendor: "opnsense", PeerIP: "192.168.5.107", Dynamic: true, EgressIface: "wan", LANIface: "lan",
-				LocalID: ipsec.IKEIdentity{Type: ipsec.IDTypeKeyID, Value: "site-b"}, ProtectedSubnets: []string{"192.168.50.0/24"}, ChildLifetimeSecs: 3600},
+			{DeviceID: 2, Vendor: "opnsense", PeerIP: "192.168.105.107", Dynamic: true, EgressIface: "wan", LANIface: "lan",
+				LocalID: ipsec.IKEIdentity{Type: ipsec.IDTypeKeyID, Value: "site-b"}, ProtectedSubnets: []string{"192.168.150.0/24"}, ChildLifetimeSecs: 3600},
 		},
 	}
 }

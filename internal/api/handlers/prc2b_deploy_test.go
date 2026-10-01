@@ -46,7 +46,7 @@ func createTunnelRow(t *testing.T, db *database.Database, vA, vB string, devA, d
 			{DeviceID: devA, Vendor: vA, PeerIP: "203.0.113.1", EgressIface: "port1", LANIface: "port3",
 				LocalID: ipsec.IKEIdentity{Type: ipsec.IDTypeKeyID, Value: "a"}, ProtectedSubnets: subs, MSSClamp: 1350},
 			{DeviceID: devB, Vendor: vB, PeerIP: "198.51.100.1", EgressIface: "wan", LANIface: "lan",
-				LocalID: ipsec.IKEIdentity{Type: ipsec.IDTypeKeyID, Value: "b"}, ProtectedSubnets: []string{"192.168.50.0/24"}, MSSClamp: 1350},
+				LocalID: ipsec.IKEIdentity{Type: ipsec.IDTypeKeyID, Value: "b"}, ProtectedSubnets: []string{"192.168.150.0/24"}, MSSClamp: 1350},
 		},
 	}
 	row, err := database.IPSecIntentToModel(in)

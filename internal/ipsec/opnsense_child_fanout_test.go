@@ -17,8 +17,8 @@ import (
 // can never desynchronize.
 func TestOPNsense_Children_FanOutPerPair(t *testing.T) {
 	d, _ := ipsec.Driver("opnsense")
-	in := canonicalIntent()                                                     // end 1 = OPNsense (local), end 0 = FortiGate (remote 10.10.10.0/24)
-	in.Ends[1].ProtectedSubnets = []string{"192.168.50.0/24", "192.168.5.0/24"} // 2 local × 1 remote = 2 pairs
+	in := canonicalIntent()                                                        // end 1 = OPNsense (local), end 0 = FortiGate (remote 10.10.10.0/24)
+	in.Ends[1].ProtectedSubnets = []string{"192.168.150.0/24", "192.168.105.0/24"} // 2 local × 1 remote = 2 pairs
 	art, err := d.Render(ipsec.ViewFor(in, 1))
 	if err != nil {
 		t.Fatalf("render: %v", err)
@@ -54,10 +54,10 @@ func TestOPNsense_Children_FanOutPerPair(t *testing.T) {
 	if c0 == "" || c1 == "" {
 		t.Fatalf("expected child_0 and child_1 captures, got %v", names)
 	}
-	if !strings.Contains(c0, `"local_ts":"192.168.50.0/24"`) || !strings.Contains(c0, `"remote_ts":"10.10.10.0/24"`) {
+	if !strings.Contains(c0, `"local_ts":"192.168.150.0/24"`) || !strings.Contains(c0, `"remote_ts":"10.10.10.0/24"`) {
 		t.Errorf("child_0 orientation wrong: %s", c0)
 	}
-	if !strings.Contains(c1, `"local_ts":"192.168.5.0/24"`) || !strings.Contains(c1, `"remote_ts":"10.10.10.0/24"`) {
+	if !strings.Contains(c1, `"local_ts":"192.168.105.0/24"`) || !strings.Contains(c1, `"remote_ts":"10.10.10.0/24"`) {
 		t.Errorf("child_1 orientation wrong: %s", c1)
 	}
 

@@ -15,11 +15,11 @@ func TestTopServices_CountsBothDirectionsUnderTheServicePort(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	now := time.Now()
 	seed := []models.FlowSample{
-		{Timestamp: now.Add(-10 * time.Minute), DeviceID: 1, Protocol: 6, SrcAddr: "66.179.9.156", DstAddr: "198.51.100.7",
+		{Timestamp: now.Add(-10 * time.Minute), DeviceID: 1, Protocol: 6, SrcAddr: "198.19.9.156", DstAddr: "198.51.100.7",
 			SrcPort: 443, DstPort: 51234, ServicePort: 443, Bytes: 9000, Packets: 1},
-		{Timestamp: now.Add(-10 * time.Minute), DeviceID: 1, Protocol: 6, SrcAddr: "198.51.100.7", DstAddr: "66.179.9.156",
+		{Timestamp: now.Add(-10 * time.Minute), DeviceID: 1, Protocol: 6, SrcAddr: "198.51.100.7", DstAddr: "198.19.9.156",
 			SrcPort: 51234, DstPort: 443, ServicePort: 443, Bytes: 1000, Packets: 1},
-		{Timestamp: now.Add(-10 * time.Minute), DeviceID: 1, Protocol: 6, SrcAddr: "66.179.9.156", DstAddr: "198.51.100.8",
+		{Timestamp: now.Add(-10 * time.Minute), DeviceID: 1, Protocol: 6, SrcAddr: "198.19.9.156", DstAddr: "198.51.100.8",
 			SrcPort: 443, DstPort: 51235, ServicePort: 443, Bytes: 500, Packets: 1},
 	}
 	if err := d.Gorm().Create(&seed).Error; err != nil {
@@ -27,7 +27,7 @@ func TestTopServices_CountsBothDirectionsUnderTheServicePort(t *testing.T) {
 	}
 	if err := d.Gorm().Create(&models.FlowRollup{
 		Timestamp: now.Add(-20 * time.Hour), DeviceID: 1, IntervalType: "5m", Protocol: 6,
-		SrcAddr: "66.179.9.156", DstAddr: "198.51.100.9", DstPort: 52000, ServicePort: 443,
+		SrcAddr: "198.19.9.156", DstAddr: "198.51.100.9", DstPort: 52000, ServicePort: 443,
 		BytesSum: 100000, PacketsSum: 10, FlowCount: 5, SamplingRateAvg: 1,
 	}).Error; err != nil {
 		t.Fatalf("seed rollup: %v", err)

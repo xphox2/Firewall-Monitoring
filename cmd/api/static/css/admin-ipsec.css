@@ -609,7 +609,7 @@
     .ipsec-preview-panes { grid-template-columns: 1fr; }
 
     /* Scoped to the wizard: the global .form-row stays two-up at 390px, which
-       truncates both device names to "TECHLABS-FW-0…" — the one thing on the
+       truncates both device names to "OSPREY-FW-0…" — the one thing on the
        panel you must be able to read to know what you are building. */
     .ipsec-wiz .form-row { display: block; }
     .ipsec-wiz .form-row > .form-group { width: auto; }

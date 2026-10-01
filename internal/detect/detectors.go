@@ -23,7 +23,7 @@ const minFlows = 3
 // stopped. port_scan/super_spreader intentionally KEEP denied rows — a blocked
 // probe is still scan evidence. Detectors FOR denied traffic (deny storms,
 // denied-then-allowed) are a separate class deferred to the Tranche 4
-// detection backlog (docs/flow-protocol-research-2026-07-03.md §4 item 3) —
+// detection backlog —
 // do not bolt them onto the forwarded-traffic detectors here.
 func forwardedOnly(q *gorm.DB) *gorm.DB {
 	return q.Where("firewall_event <> ?", models.FirewallEventDenied)

@@ -1994,7 +1994,7 @@ func (p *Poller) detectVPNConnections(devices []models.Device) (int, bool) {
 	// Phase 2: Indirect matching for NAT'd tunnels.
 	// When a VPN tunnel's remote_ip doesn't resolve to any known device IP (common with
 	// NAT'd IPSec), try matching the tunnel name against device names.
-	// e.g., tunnel "NUDAY_LAN" on DC2-FW1 contains "nuday" → matches device "NUDAY-FW".
+	// e.g., tunnel "KESTREL_LAN" on DC9-FW1 contains "kestrel" → matches device "KESTREL-FW".
 	deviceNameParts := make(map[uint][]string, len(devices))
 	for i := range devices {
 		name := strings.ToLower(devices[i].Name)

@@ -176,8 +176,8 @@ func TestGetConnectionDetail_L2Evidence(t *testing.T) {
 		}
 		return d
 	}
-	core := mk("fw-core", "192.168.5.1")
-	branch := mk("fw-branch", "192.168.5.107")
+	core := mk("fw-core", "192.168.105.1")
+	branch := mk("fw-branch", "192.168.105.107")
 
 	now := time.Now()
 	if err := db.SaveInterfaceStats([]models.InterfaceStats{
@@ -263,7 +263,7 @@ func TestGetConnectionDetail_L2Evidence(t *testing.T) {
 func TestResolveL2EndpointInterfaces_NoCrossDeviceNameCollision(t *testing.T) {
 	db := NewDatabaseForTesting(t)
 
-	site := &models.Site{Name: "DC2"}
+	site := &models.Site{Name: "DC9"}
 	if err := db.CreateSite(site); err != nil {
 		t.Fatalf("create site: %v", err)
 	}
@@ -274,8 +274,8 @@ func TestResolveL2EndpointInterfaces_NoCrossDeviceNameCollision(t *testing.T) {
 		}
 		return d
 	}
-	fw2 := mk("FW-TECHNICAL_LABS", "192.168.5.1")
-	fw1 := mk("FW-HOME", "192.168.5.2")
+	fw2 := mk("FW-OSPREY_LABS", "192.168.105.1")
+	fw1 := mk("FW-HERON", "192.168.105.2")
 
 	now := time.Now()
 	// BOTH FortiGates have an interface named internal1 — different roles.
@@ -296,7 +296,7 @@ func TestResolveL2EndpointInterfaces_NoCrossDeviceNameCollision(t *testing.T) {
 
 	if err := db.UpsertAutoL2Connection(L2LinkUpsert{
 		SourceID: fw2.ID, DestID: fw1.ID, Status: "up",
-		Name: "FW-TECHNICAL_LABS:internal1 ↔ FW-HOME:port23", ConnType: "ethernet",
+		Name: "FW-OSPREY_LABS:internal1 ↔ FW-HERON:port23", ConnType: "ethernet",
 		MatchMethod:   "lldp_neighbor",
 		SourceIfIndex: 4, SourceIfName: "internal1",
 		DestIfIndex: 23, DestIfName: "port23",
@@ -335,18 +335,18 @@ func TestResolveL2EndpointInterfaces_NoCrossDeviceNameCollision(t *testing.T) {
 	}
 }
 
-// TestConnectionDetail_StaleAddressNotShown reproduces the live DC2 bug: FW2's
+// TestConnectionDetail_StaleAddressNotShown reproduces the live DC9 bug: FW2's
 // dmz (ifIndex 3) has NO IP in the current poll, but an 18-day-old
 // interface_addresses row carried 10.10.10.1 (which is actually FW1's dmz).
 // The interfaces tab must show the CURRENT state (no IP), never the stale row.
 func TestConnectionDetail_StaleAddressNotShown(t *testing.T) {
 	db := NewDatabaseForTesting(t)
-	site := &models.Site{Name: "DC2"}
+	site := &models.Site{Name: "DC9"}
 	if err := db.CreateSite(site); err != nil {
 		t.Fatalf("site: %v", err)
 	}
-	fw2 := models.Device{Name: "DC2-FW2", IPAddress: "192.168.5.1", Vendor: "fortigate", Enabled: true, SiteID: &site.ID}
-	opn := models.Device{Name: "OPNsense", IPAddress: "192.168.5.107", Vendor: "opnsense", Enabled: true, SiteID: &site.ID}
+	fw2 := models.Device{Name: "DC9-FW2", IPAddress: "192.168.105.1", Vendor: "fortigate", Enabled: true, SiteID: &site.ID}
+	opn := models.Device{Name: "OPNsense", IPAddress: "192.168.105.107", Vendor: "opnsense", Enabled: true, SiteID: &site.ID}
 	if err := db.CreateDevice(&fw2); err != nil {
 		t.Fatal(err)
 	}
@@ -366,13 +366,13 @@ func TestConnectionDetail_StaleAddressNotShown(t *testing.T) {
 	// Address rows: a STALE 10.10.10.1 on FW2 dmz (old poll) + the current OPNsense IP.
 	if err := db.SaveInterfaceAddresses([]models.InterfaceAddress{
 		{DeviceID: fw2.ID, IfIndex: 3, IPAddress: "10.10.10.1", NetMask: "255.255.255.0", Timestamp: old},
-		{DeviceID: opn.ID, IfIndex: 2, IPAddress: "192.168.5.107", NetMask: "255.255.255.0", Timestamp: now},
+		{DeviceID: opn.ID, IfIndex: 2, IPAddress: "192.168.105.107", NetMask: "255.255.255.0", Timestamp: now},
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	if err := db.UpsertAutoL2Connection(L2LinkUpsert{
-		SourceID: fw2.ID, DestID: opn.ID, Status: "up", Name: "DC2-FW2:dmz ↔ OPNsense:dtsec1",
+		SourceID: fw2.ID, DestID: opn.ID, Status: "up", Name: "DC9-FW2:dmz ↔ OPNsense:dtsec1",
 		ConnType: "ethernet", MatchMethod: "lldp_neighbor",
 		SourceIfIndex: 3, SourceIfName: "dmz", DestIfIndex: 2, DestIfName: "dtsec1",
 		TunnelNames: "dmz, dtsec1",
@@ -387,13 +387,13 @@ func TestConnectionDetail_StaleAddressNotShown(t *testing.T) {
 	for _, r := range detail.Interfaces {
 		if r.DeviceID == fw2.ID {
 			if r.IPAddress == "10.10.10.1" {
-				t.Fatalf("stale 18-day-old address surfaced on DC2-FW2:dmz: %+v", r)
+				t.Fatalf("stale 18-day-old address surfaced on DC9-FW2:dmz: %+v", r)
 			}
 			if r.IPAddress != "" {
-				t.Errorf("DC2-FW2:dmz should have NO IP in the current poll, got %q", r.IPAddress)
+				t.Errorf("DC9-FW2:dmz should have NO IP in the current poll, got %q", r.IPAddress)
 			}
 		}
-		if r.DeviceID == opn.ID && r.IPAddress != "192.168.5.107" {
+		if r.DeviceID == opn.ID && r.IPAddress != "192.168.105.107" {
 			t.Errorf("OPNsense:dtsec1 current IP wrong: %q", r.IPAddress)
 		}
 	}

@@ -41,11 +41,11 @@ func TestDenyStorm_ExternalFires(t *testing.T) {
 	db := database.NewDatabaseForTesting(t)
 	now := time.Now()
 	for i := 0; i < 6; i++ {
-		seedDeny(t, db, models.DeniedEvent{DeviceID: 1, SrcAddr: "203.0.113.9", DstAddr: "66.179.9.150",
+		seedDeny(t, db, models.DeniedEvent{DeviceID: 1, SrcAddr: "203.0.113.9", DstAddr: "198.19.9.150",
 			DstPort: uint16(1000 + i), Protocol: 6, SrcIntfRole: models.IntfRoleWAN, Subtype: models.DenySubtypeLocal,
 			Timestamp: now.Add(-time.Duration(i) * time.Second)})
 	}
-	seedDeny(t, db, models.DeniedEvent{DeviceID: 1, SrcAddr: "203.0.113.10", DstAddr: "66.179.9.150",
+	seedDeny(t, db, models.DeniedEvent{DeviceID: 1, SrcAddr: "203.0.113.10", DstAddr: "198.19.9.150",
 		DstPort: 22, Protocol: 6, SrcIntfRole: models.IntfRoleWAN, Timestamp: now})
 
 	got, err := denyStormDetector{}.Detect(denyWindow(db, denyTestConfig(), now))
@@ -66,7 +66,7 @@ func TestDenyStorm_InternalLowerFloor(t *testing.T) {
 	db := database.NewDatabaseForTesting(t)
 	now := time.Now()
 	for i := 0; i < 3; i++ { // == internal floor 3, below external floor 5
-		seedDeny(t, db, models.DeniedEvent{DeviceID: 1, SrcAddr: "192.168.25.50", DstAddr: "10.0.0.9",
+		seedDeny(t, db, models.DeniedEvent{DeviceID: 1, SrcAddr: "192.168.125.50", DstAddr: "10.0.0.9",
 			DstPort: uint16(3000 + i), Protocol: 6, SrcIntfRole: models.IntfRoleLAN,
 			Subtype: models.DenySubtypeForward, Timestamp: now.Add(-time.Duration(i) * time.Second)})
 	}
@@ -74,7 +74,7 @@ func TestDenyStorm_InternalLowerFloor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Detect: %v", err)
 	}
-	if len(got) != 1 || got[0].DedupKey != "denystorm_int_192.168.25.50" {
+	if len(got) != 1 || got[0].DedupKey != "denystorm_int_192.168.125.50" {
 		t.Fatalf("want 1 internal detection, got %+v", got)
 	}
 }
@@ -85,7 +85,7 @@ func TestDenyStorm_ThreatEscalates(t *testing.T) {
 	db := database.NewDatabaseForTesting(t)
 	now := time.Now()
 	for i := 0; i < 6; i++ {
-		seedDeny(t, db, models.DeniedEvent{DeviceID: 1, SrcAddr: "203.0.113.66", DstAddr: "66.179.9.150",
+		seedDeny(t, db, models.DeniedEvent{DeviceID: 1, SrcAddr: "203.0.113.66", DstAddr: "198.19.9.150",
 			DstPort: uint16(1000 + i), Protocol: 6, SrcIntfRole: models.IntfRoleWAN, ThreatFlag: 1,
 			Timestamp: now.Add(-time.Duration(i) * time.Second)})
 	}
@@ -103,7 +103,7 @@ func TestDenyStorm_Disabled(t *testing.T) {
 	db := database.NewDatabaseForTesting(t)
 	now := time.Now()
 	for i := 0; i < 6; i++ {
-		seedDeny(t, db, models.DeniedEvent{DeviceID: 1, SrcAddr: "203.0.113.9", DstAddr: "66.179.9.150",
+		seedDeny(t, db, models.DeniedEvent{DeviceID: 1, SrcAddr: "203.0.113.9", DstAddr: "198.19.9.150",
 			DstPort: uint16(1000 + i), SrcIntfRole: models.IntfRoleWAN, Timestamp: now})
 	}
 	cfg := denyTestConfig()
@@ -124,17 +124,17 @@ func TestDenyStormVictim_ManySources(t *testing.T) {
 	now := time.Now()
 	for i := 0; i < 5; i++ { // 5 distinct sources >= victim floor 4
 		seedDeny(t, db, models.DeniedEvent{DeviceID: 1, SrcAddr: fmt.Sprintf("198.51.100.%d", i+1),
-			DstAddr: "66.179.9.151", DstPort: 3389, Protocol: 6, SrcIntfRole: models.IntfRoleWAN,
+			DstAddr: "198.19.9.151", DstPort: 3389, Protocol: 6, SrcIntfRole: models.IntfRoleWAN,
 			Timestamp: now.Add(-time.Duration(i) * time.Second)})
 	}
 	got, err := denyStormVictimDetector{}.Detect(denyWindow(db, denyTestConfig(), now))
 	if err != nil {
 		t.Fatalf("Detect: %v", err)
 	}
-	if len(got) != 1 || got[0].DstAddr != "66.179.9.151" || got[0].SrcAddr != "" {
+	if len(got) != 1 || got[0].DstAddr != "198.19.9.151" || got[0].SrcAddr != "" {
 		t.Fatalf("want 1 victim-keyed detection (empty SrcAddr), got %+v", got)
 	}
-	if got[0].DedupKey != "denyvictim_66.179.9.151" {
+	if got[0].DedupKey != "denyvictim_198.19.9.151" {
 		t.Errorf("dedup key = %q", got[0].DedupKey)
 	}
 }
@@ -201,13 +201,13 @@ func TestDeniedThenAllowed_ConcurrentDenies_NoFire(t *testing.T) {
 	now := time.Now()
 	// Denies spanning the lookback, the newest 1m ago (well inside the margin).
 	for _, ago := range []time.Duration{50 * time.Minute, 30 * time.Minute, 10 * time.Minute, time.Minute} {
-		seedDeny(t, db, models.DeniedEvent{DeviceID: 1, SrcAddr: "80.251.153.178", DstAddr: "66.179.9.152",
+		seedDeny(t, db, models.DeniedEvent{DeviceID: 1, SrcAddr: "203.0.113.178", DstAddr: "198.19.9.152",
 			DstPort: 23, Protocol: 6, SrcIntfRole: models.IntfRoleWAN, Timestamp: now.Add(-ago)})
 	}
 	// The same denied traffic seen through the flow pipe: verdict-less rows
 	// throughout the window, newest also ~now.
 	for _, ago := range []time.Duration{12 * time.Minute, 6 * time.Minute, 30 * time.Second} {
-		seedFlow(t, db, models.FlowSample{DeviceID: 1, SrcAddr: "80.251.153.178", DstAddr: "66.179.9.152",
+		seedFlow(t, db, models.FlowSample{DeviceID: 1, SrcAddr: "203.0.113.178", DstAddr: "198.19.9.152",
 			DstPort: 23, Protocol: 6, FirewallEvent: 0, Timestamp: now.Add(-ago)})
 	}
 	got, err := deniedThenAllowedDetector{}.Detect(denyWindow(db, denyTestConfig(), now))
@@ -289,10 +289,10 @@ func TestDeniedThenAllowed_SprayCannotStarveGenuineGap(t *testing.T) {
 	for i := 0; i < 60; i++ {
 		src := fmt.Sprintf("203.0.113.%d", i+1)
 		for _, ago := range []time.Duration{20 * time.Minute, time.Minute} {
-			seedDeny(t, db, models.DeniedEvent{DeviceID: 1, SrcAddr: src, DstAddr: "66.179.9.152",
+			seedDeny(t, db, models.DeniedEvent{DeviceID: 1, SrcAddr: src, DstAddr: "198.19.9.152",
 				DstPort: 23, Protocol: 6, SrcIntfRole: models.IntfRoleWAN, Timestamp: now.Add(-ago)})
 		}
-		seedFlow(t, db, models.FlowSample{DeviceID: 1, SrcAddr: src, DstAddr: "66.179.9.152",
+		seedFlow(t, db, models.FlowSample{DeviceID: 1, SrcAddr: src, DstAddr: "198.19.9.152",
 			DstPort: 23, Protocol: 6, FirewallEvent: 0, Timestamp: now.Add(-90 * time.Second)})
 	}
 	// One genuine quiet-gap RDP tuple: denies stopped 25m ago, traffic still
@@ -333,9 +333,9 @@ func TestDeniedThenAllowed_FindingsCapAndOrdering(t *testing.T) {
 			DstPort: port, Protocol: 6, FirewallEvent: 0, Timestamp: now.Add(-time.Minute)})
 	}
 	for i := 0; i < 51; i++ { // 51 sensitive (SMB) quiet gaps
-		seedGap(fmt.Sprintf("198.51.101.%d", i+1), 445)
+		seedGap(fmt.Sprintf("198.18.101.%d", i+1), 445)
 	}
-	seedGap("198.51.102.1", 8080) // 1 non-sensitive quiet gap — must lose the cap race
+	seedGap("198.18.102.1", 8080) // 1 non-sensitive quiet gap — must lose the cap race
 
 	got, err := deniedThenAllowedDetector{}.Detect(denyWindow(db, denyTestConfig(), now))
 	if err != nil {
@@ -370,8 +370,8 @@ func TestDeniedThenAllowed_IngestGraceExcludesFreshFlows(t *testing.T) {
 		seedFlow(t, db, models.FlowSample{DeviceID: 1, SrcAddr: src, DstAddr: "10.0.0.70",
 			DstPort: 445, Protocol: 6, FirewallEvent: 0, Timestamp: now.Add(-flowAgo)})
 	}
-	seed("198.51.103.1", 10*time.Second) // flow inside the grace window -> not evidence yet
-	seed("198.51.103.2", 2*time.Minute)  // flow past the grace, denies quiet 13m -> fires
+	seed("198.18.103.1", 10*time.Second) // flow inside the grace window -> not evidence yet
+	seed("198.18.103.2", 2*time.Minute)  // flow past the grace, denies quiet 13m -> fires
 
 	got, err := deniedThenAllowedDetector{}.Detect(w)
 	if err != nil {
@@ -380,7 +380,7 @@ func TestDeniedThenAllowed_IngestGraceExcludesFreshFlows(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("want exactly 1 detection (grace must exclude the fresh flow), got %d: %+v", len(got), got)
 	}
-	if got[0].SrcAddr != "198.51.103.2" {
-		t.Errorf("fired tuple src = %q, want 198.51.103.2", got[0].SrcAddr)
+	if got[0].SrcAddr != "198.18.103.2" {
+		t.Errorf("fired tuple src = %q, want 198.18.103.2", got[0].SrcAddr)
 	}
 }

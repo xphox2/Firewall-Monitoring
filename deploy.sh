@@ -144,7 +144,7 @@ deploy_remote() {
     # destructive expansion so a future refactor can't wipe the remote root.
     # Require exactly /opt/<single-component> — a bare `/opt/*` glob would also
     # match /opt/.. (→ rm -rf /*) or /opt/ (→ rm -rf /opt/*), so validate the
-    # basename too (AUDIT — Fable).
+    # basename too.
     base="${REMOTE_DIR#/opt/}"
     case "${REMOTE_DIR}" in
         /opt/"$base") : ;;
@@ -237,9 +237,8 @@ install_local() {
         log_warn "Please edit ${CONFIG_DIR}/config.env with your settings"
     fi
 
-    # AUDIT-171 (adjacent): the old scripts-copy block is gone. scripts/
-    # holds development-time audit helpers (*.py) only — no shell scripts
-    # exist there, so under `set -e` the unexpanded shell-script glob made
+    # AUDIT-171 (adjacent): the old scripts-copy block is gone. No shell
+    # scripts ship in scripts/, so under `set -e` the unexpanded shell-script glob made
     # cp fail and aborted the install before the systemd units were ever
     # created.
 

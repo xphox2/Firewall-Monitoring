@@ -47,7 +47,7 @@ func seedGroupedTunnel(t *testing.T, db *database.Database) {
 	if err := db.Gorm().Create(&models.IPSecTunnel{
 		Name: "fwm-t11", Status: "up", ADeviceID: 1, BDeviceID: 2,
 		AVendor: "fortigate", BVendor: "opnsense",
-		IntentJSON: `{"name":"fwm-t11","ends":[{"device_id":1,"vendor":"fortigate","protected_subnets":["192.168.13.0/24"]},{"device_id":2,"vendor":"opnsense","protected_subnets":["192.168.50.0/24"]}]}`,
+		IntentJSON: `{"name":"fwm-t11","ends":[{"device_id":1,"vendor":"fortigate","protected_subnets":["192.168.113.0/24"]},{"device_id":2,"vendor":"opnsense","protected_subnets":["192.168.150.0/24"]}]}`,
 	}).Error; err != nil {
 		t.Fatalf("seed tunnel: %v", err)
 	}
@@ -63,9 +63,9 @@ func seedGroupedTunnel(t *testing.T, db *database.Database) {
 		})
 		// SNMP-sourced: the counters, no phase1 name.
 		rows = append(rows, models.VPNStatus{
-			DeviceID: 1, TunnelName: "dialup-76.66.145.98", TunnelType: "ipsec-dialup",
-			Status: "up", RemoteIP: "76.66.145.98",
-			LocalSubnet: "192.168.13.0/24", RemoteSubnet: "192.168.50.0/24",
+			DeviceID: 1, TunnelName: "dialup-198.19.76.98", TunnelType: "ipsec-dialup",
+			Status: "up", RemoteIP: "198.19.76.98",
+			LocalSubnet: "192.168.113.0/24", RemoteSubnet: "192.168.150.0/24",
 			BytesIn: uint64(1000 + i*100), BytesOut: uint64(2000 + i*200), Timestamp: ts,
 		})
 	}

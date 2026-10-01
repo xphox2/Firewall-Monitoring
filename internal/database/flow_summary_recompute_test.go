@@ -40,7 +40,7 @@ func seedTwoTiers(t *testing.T, d *Database) (day time.Time, recent time.Time) {
 	day = floorDay.Add(-2 * 24 * time.Hour)
 	if err := d.Gorm().Create(&models.FlowRollup{
 		Timestamp: floorDay, DeviceID: 1, IntervalType: "1h",
-		SrcAddr: "66.179.9.156", DstAddr: "203.0.113.9", DstPort: 51000, Protocol: 6,
+		SrcAddr: "198.19.9.156", DstAddr: "203.0.113.9", DstPort: 51000, Protocol: 6,
 		BytesSum: 10, PacketsSum: 1, FlowCount: 1, Direction: classify.DirExternal,
 	}).Error; err != nil {
 		t.Fatalf("seed 1h: %v", err)
@@ -48,7 +48,7 @@ func seedTwoTiers(t *testing.T, d *Database) (day time.Time, recent time.Time) {
 	for i := 0; i < 2; i++ {
 		if err := d.Gorm().Create(&models.FlowRollup{
 			Timestamp: day.Add(time.Duration(i) * 24 * time.Hour), DeviceID: 1, IntervalType: "1d",
-			SrcAddr: "66.179.9.156", DstAddr: "203.0.113.9", DstPort: 51000, Protocol: 6,
+			SrcAddr: "198.19.9.156", DstAddr: "203.0.113.9", DstPort: 51000, Protocol: 6,
 			BytesSum: 1000, PacketsSum: 10, FlowCount: 1, Direction: classify.DirExternal,
 		}).Error; err != nil {
 			t.Fatalf("seed 1d: %v", err)
@@ -57,7 +57,7 @@ func seedTwoTiers(t *testing.T, d *Database) (day time.Time, recent time.Time) {
 	for h := 0; h < 4; h++ {
 		if err := d.Gorm().Create(&models.FlowRollup{
 			Timestamp: recent.Add(time.Duration(h)*time.Hour + 5*time.Minute), DeviceID: 1, IntervalType: "5m",
-			SrcAddr: "66.179.9.156", DstAddr: "203.0.113.9", DstPort: 51000, Protocol: 6,
+			SrcAddr: "198.19.9.156", DstAddr: "203.0.113.9", DstPort: 51000, Protocol: 6,
 			BytesSum: 100, PacketsSum: 1, FlowCount: 1, Direction: classify.DirExternal,
 		}).Error; err != nil {
 			t.Fatalf("seed 5m: %v", err)
@@ -313,7 +313,7 @@ func TestSummaryRecompute_DroppedRetryOfAPromotedDay(t *testing.T) {
 	mk := func(ts time.Time, interval string, bytes uint64) {
 		t.Helper()
 		if err := d.Gorm().Create(&models.FlowRollup{Timestamp: ts, DeviceID: 1, IntervalType: interval,
-			SrcAddr: "66.179.9.156", DstAddr: "203.0.113.9", DstPort: 51000, Protocol: 6, BytesSum: bytes,
+			SrcAddr: "198.19.9.156", DstAddr: "203.0.113.9", DstPort: 51000, Protocol: 6, BytesSum: bytes,
 			FlowCount: 1, Direction: classify.DirOutbound, ClassRev: 1}).Error; err != nil {
 			t.Fatal(err)
 		}
@@ -433,7 +433,7 @@ func TestSummaryRecompute_OwnershipDriftMidWalk(t *testing.T) {
 	mk := func(ts time.Time, interval string, bytes uint64, dir uint8) {
 		t.Helper()
 		if err := d.Gorm().Create(&models.FlowRollup{Timestamp: ts, DeviceID: 1, IntervalType: interval,
-			SrcAddr: "66.179.9.156", DstAddr: "203.0.113.9", DstPort: 51000, Protocol: 6, BytesSum: bytes,
+			SrcAddr: "198.19.9.156", DstAddr: "203.0.113.9", DstPort: 51000, Protocol: 6, BytesSum: bytes,
 			FlowCount: 1, Direction: dir, ClassRev: 1}).Error; err != nil {
 			t.Fatal(err)
 		}

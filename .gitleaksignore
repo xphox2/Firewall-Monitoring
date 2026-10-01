@@ -1,0 +1,5 @@
+# Reviewed gitleaks findings that are not secrets (one fingerprint per line).
+#
+# An early version of internal/httputil/redact.go cleared a password field
+# (`= ""`); the generic rule read the next line's field name as the value.
+18de6d19c122ff97f56cf020871c13b4b895444e:internal/httputil/redact.go:generic-api-key:10

@@ -25,12 +25,12 @@ func provisioned(t *testing.T, name string, a, b uint, aNets, bNets []string) ma
 // group them: one has the name and no counters, the other has the counters and
 // no phase1 name.
 func TestTunnelGroup_UnitesTheFortiGateNamedAndDialupRows(t *testing.T) {
-	pp := provisioned(t, "fwm-t11", 4, 5, []string{"192.168.13.0/24"}, []string{"192.168.50.0/24"})
+	pp := provisioned(t, "fwm-t11", 4, 5, []string{"192.168.113.0/24"}, []string{"192.168.150.0/24"})
 
 	named := models.VPNStatus{DeviceID: 4, TunnelName: "fwm-t11", Phase1Name: "fwm-t11", Status: "unknown"}
 	dialup := models.VPNStatus{
-		DeviceID: 4, TunnelName: "dialup-76.66.145.98", TunnelType: "ipsec-dialup",
-		LocalSubnet: "192.168.13.0/24", RemoteSubnet: "192.168.50.0/32", Status: "up",
+		DeviceID: 4, TunnelName: "dialup-198.19.76.98", TunnelType: "ipsec-dialup",
+		LocalSubnet: "192.168.113.0/24", RemoteSubnet: "192.168.150.0/32", Status: "up",
 	}
 
 	gNamed := tunnelGroupFor(pp, named)
@@ -48,12 +48,12 @@ func TestTunnelGroup_UnitesTheFortiGateNamedAndDialupRows(t *testing.T) {
 // SELECTORS. Subnet matching is the path that would otherwise capture an
 // unrelated box carrying the same networks.
 func TestTunnelGroup_NonEndpointDeviceIsNotCapturedBySubnets(t *testing.T) {
-	pp := provisioned(t, "fwm-t11", 4, 5, []string{"192.168.13.0/24"}, []string{"192.168.50.0/24"})
+	pp := provisioned(t, "fwm-t11", 4, 5, []string{"192.168.113.0/24"}, []string{"192.168.150.0/24"})
 
 	// Same networks, unrelated name, and NOT an endpoint of fwm-t11.
 	stranger := models.VPNStatus{
 		DeviceID: 99, TunnelName: "SOME-OTHER-TUNNEL",
-		LocalSubnet: "192.168.13.0/24", RemoteSubnet: "192.168.50.0/24",
+		LocalSubnet: "192.168.113.0/24", RemoteSubnet: "192.168.150.0/24",
 	}
 	if g := tunnelGroupFor(pp, stranger); g == "fwm-t11" {
 		t.Errorf("a device outside the recorded endpoints must not be grouped into that "+
@@ -90,7 +90,7 @@ func TestTunnelGroup_NameMatchRequiresAnEndpoint(t *testing.T) {
 // required anyway: the two ENDS of one tunnel report the same traffic from
 // their own side, so a chart summing across devices would double every byte.
 func TestTunnelGroup_IsDeviceScopedByContract(t *testing.T) {
-	pp := provisioned(t, "fwm-t11", 4, 5, []string{"192.168.13.0/24"}, []string{"192.168.50.0/24"})
+	pp := provisioned(t, "fwm-t11", 4, 5, []string{"192.168.113.0/24"}, []string{"192.168.150.0/24"})
 
 	endpoint := models.VPNStatus{DeviceID: 4, TunnelName: "fwm-t11", Phase1Name: "fwm-t11"}
 	stranger := models.VPNStatus{DeviceID: 99, TunnelName: "fwm-t11", Phase1Name: "fwm-t11"}
@@ -124,10 +124,10 @@ func TestTunnelGroup_AlwaysFallsBackRatherThanEmpty(t *testing.T) {
 // per-child split lives in the table, not in the chart.
 func TestTunnelGroup_MultiSubnetChildrenShareOneGroup(t *testing.T) {
 	pp := provisioned(t, "fwm-t11", 4, 5,
-		[]string{"192.168.13.0/24", "192.168.25.0/24"}, []string{"192.168.50.0/24"})
+		[]string{"192.168.113.0/24", "192.168.125.0/24"}, []string{"192.168.150.0/24"})
 
-	a := models.VPNStatus{DeviceID: 4, Phase1Name: "fwm-t11", TunnelName: "fwm-t11:192.168.13.0-192.168.50.0"}
-	b := models.VPNStatus{DeviceID: 4, Phase1Name: "fwm-t11", TunnelName: "fwm-t11:192.168.25.0-192.168.50.0"}
+	a := models.VPNStatus{DeviceID: 4, Phase1Name: "fwm-t11", TunnelName: "fwm-t11:192.168.113.0-192.168.150.0"}
+	b := models.VPNStatus{DeviceID: 4, Phase1Name: "fwm-t11", TunnelName: "fwm-t11:192.168.125.0-192.168.150.0"}
 
 	if tunnelGroupFor(pp, a) != tunnelGroupFor(pp, b) {
 		t.Error("children of one tunnel must share a group")

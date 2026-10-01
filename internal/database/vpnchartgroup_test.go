@@ -150,7 +150,7 @@ func TestGetVPNChartGroupWindow_IdenticalStreamsAreOneMeasurement(t *testing.T) 
 	base := time.Now().Add(-20 * time.Minute).Truncate(time.Minute)
 
 	// The production shape: four phase2 names, one counter series, same instants.
-	names := []string{"HUB", "DMZ", "NUDAY_LAN", "TL-IKEv2"}
+	names := []string{"HUB", "DMZ", "KESTREL_LAN", "OS-IKEv2"}
 	for _, n := range names {
 		seedTunnelSamples(t, d, 1, n, base, 1000, 1100, 1200)
 	}
@@ -182,9 +182,9 @@ func TestGetVPNChartGroupWindow_IndependentStreamsStillSum(t *testing.T) {
 
 	// Same timestamps, DIFFERENT counters: two real series.
 	seedTunnelSamples(t, d, 1, "fwm-t11", base, 1000, 1100, 1200)             // +200
-	seedTunnelSamples(t, d, 1, "dialup-76.66.145.98", base, 5000, 5300, 5600) // +600
+	seedTunnelSamples(t, d, 1, "dialup-198.19.76.98", base, 5000, 5300, 5600) // +600
 
-	rows, err := d.GetVPNChartGroupWindow(1, []string{"fwm-t11", "dialup-76.66.145.98"},
+	rows, err := d.GetVPNChartGroupWindow(1, []string{"fwm-t11", "dialup-198.19.76.98"},
 		base.Add(-time.Minute), time.Now())
 	if err != nil {
 		t.Fatalf("group window: %v", err)

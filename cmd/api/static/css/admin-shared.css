@@ -262,7 +262,7 @@
 }
 
 /* The tunnel name is the only genuinely variable-width cell — a child selector
-   row reads "192.168.12.0/24 -> 192.168.13.0/24" — so it is the one that yields
+   row reads "192.168.112.0/24 -> 192.168.113.0/24" — so it is the one that yields
    space. Without this it holds the table wide and squeezes every other column
    until their headers wrap, which is what broke the pairing. */
 .vpn-detail-table td:nth-child(2) {

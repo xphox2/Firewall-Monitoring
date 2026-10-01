@@ -18,7 +18,7 @@ func TestRollupLadder_CarriesServicePortAndClassRev(t *testing.T) {
 	mk := func(svc, rev uint16, bytes uint64) models.FlowSample {
 		return models.FlowSample{
 			Timestamp: base, DeviceID: 1, Protocol: 6,
-			SrcAddr: "66.179.9.156", DstAddr: "8.8.8.8", SrcPort: 443, DstPort: 51234,
+			SrcAddr: "198.19.9.156", DstAddr: "8.8.8.8", SrcPort: 443, DstPort: 51234,
 			Bytes: bytes, Packets: 1, SamplingRate: 1,
 			ServicePort: svc, ClassRev: rev,
 		}

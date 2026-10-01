@@ -141,7 +141,7 @@ func TestDataExfilDetector_ServerRepliesAreNotExfil(t *testing.T) {
 	now := time.Now()
 	big := uint64(1) << 30
 	// A web server's replies: src 443 → client's ephemeral port. Must NOT fire.
-	seedFlow(t, db, models.FlowSample{DeviceID: 1, Protocol: 6, SrcAddr: "66.179.9.156", DstAddr: "198.51.100.7", SrcPort: 443, DstPort: 51234, ServicePort: 443, Direction: classify.DirOutbound, Bytes: big + 1, Packets: 1000})
+	seedFlow(t, db, models.FlowSample{DeviceID: 1, Protocol: 6, SrcAddr: "198.19.9.156", DstAddr: "198.51.100.7", SrcPort: 443, DstPort: 51234, ServicePort: 443, Direction: classify.DirOutbound, Bytes: big + 1, Packets: 1000})
 	// A client uploading to an external service: service = dst. Fires.
 	seedFlow(t, db, models.FlowSample{DeviceID: 1, Protocol: 6, SrcAddr: "10.0.0.5", DstAddr: "203.0.113.9", SrcPort: 50000, DstPort: 443, ServicePort: 443, Direction: classify.DirOutbound, Bytes: big + 1, Packets: 1000})
 	// Two ephemeral ports (no service): counted. Fires.

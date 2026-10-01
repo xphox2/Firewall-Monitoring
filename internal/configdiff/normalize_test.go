@@ -22,7 +22,7 @@ const fortigateUnchangedA = `#config-version=FGT60F-7.4.4-FW-build2660-240514:op
 #conf_file_ver=58388916466111111
 #buildno=2660
 config system global
-    set hostname "FW-HOME"
+    set hostname "FW-HERON"
     set admin-port 443
 end
 config system admin
@@ -60,7 +60,7 @@ const fortigateUnchangedB = `#config-version=FGT60F-7.4.4-FW-build2660-240514:op
 #conf_file_ver=58388916466222222
 #buildno=2660
 config system global
-    set hostname "FW-HOME"
+    set hostname "FW-HERON"
     set admin-port 443
 end
 config system admin
@@ -99,7 +99,7 @@ const fortigatePolicyAdded = `#config-version=FGT60F-7.4.4-FW-build2660-240514:o
 #conf_file_ver=58388916466333333
 #buildno=2660
 config system global
-    set hostname "FW-HOME"
+    set hostname "FW-HERON"
     set admin-port 443
 end
 config system admin
@@ -144,12 +144,12 @@ const fortigateInterfaceIPChanged = `#config-version=FGT60F-7.4.4-FW-build2660-2
 #conf_file_ver=58388916466444444
 #buildno=2660
 config system global
-    set hostname "FW-HOME"
+    set hostname "FW-HERON"
     set admin-port 443
 end
 config system interface
     edit "lan"
-        set ip 192.168.5.1 255.255.255.0
+        set ip 192.168.105.1 255.255.255.0
     next
 end
 config system admin
@@ -172,7 +172,7 @@ const fortigatePasswordOnly = `#config-version=FGT60F-7.4.4-FW-build2660-240514:
 #conf_file_ver=58388916466555555
 #buildno=2660
 config system global
-    set hostname "FW-HOME"
+    set hostname "FW-HERON"
     set admin-port 443
 end
 config system admin
@@ -290,7 +290,7 @@ func TestFortiGateVolatilePatternStripping(t *testing.T) {
 
 	// Stable structural content must still be present.
 	required := []string{
-		`set hostname "FW-HOME"`,
+		`set hostname "FW-HERON"`,
 		`set admin-port 443`,
 		`set accprofile "super_admin"`,
 		`edit "admin"`,

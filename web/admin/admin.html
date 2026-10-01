@@ -276,9 +276,8 @@
     </div>
 
     <!-- AUDIT-056: form <label> elements carry for="<input id>" so screen
-         readers pair each label with its control. See scripts/audit056_labels.py
-         for the sweep; the invariant (every for= resolves to an id) is pinned by
-         TestLabelFor_AUDIT056 in internal/shell/. -->
+         readers pair each label with its control. The invariant (every for= resolves to an id) is pinned by
+         TestLabelFor_AUDIT056 in test/guardrails/. -->
     <main class="main" id="main-content" tabindex="-1" style="position: relative; overflow: hidden;">
         <div class="page-header" style="position: relative; z-index: 1; display: none;">
             <h1 id="page-title">Dashboard</h1>
@@ -2508,8 +2507,7 @@
 
     <!-- AUDIT-069: static modals carry role="dialog" aria-modal="true"
          aria-labelledby="<title-id>" directly in markup (not only via
-         admin-common.js tagStaticModals at runtime). See
-         scripts/audit069_modal_aria.py. -->
+         admin-common.js tagStaticModals at runtime). -->
     <!-- Device Modal -->
     <!-- MFA onboarding wizard (v0.11.16). Offered once per login session to
          accounts without 2FA that haven't declined; steps rendered into the
@@ -2984,7 +2982,7 @@
 
                                     <div class="form-group">
                                         <label for="ipsec-a-subnets">Networks this site shares</label>
-                                        <textarea id="ipsec-a-subnets" rows="3" placeholder="192.168.13.0/24"></textarea>
+                                        <textarea id="ipsec-a-subnets" rows="3" placeholder="192.168.113.0/24"></textarea>
                                         <p class="ipsec-hint">One per line. These become the tunnel's traffic selectors.</p>
                                         <div class="ipsec-anchor" data-anchor="a-subnets"></div>
                                     </div>
@@ -3002,7 +3000,7 @@
                                         <div class="form-group">
                                             <label for="ipsec-a-peer">Public address</label>
                                             <select id="ipsec-a-peer"><option value="__custom__">Custom…</option></select>
-                                            <input type="text" id="ipsec-a-peer-custom" placeholder="e.g. 66.179.9.155" style="display:none;margin-top:6px;">
+                                            <input type="text" id="ipsec-a-peer-custom" placeholder="e.g. 203.0.113.10" style="display:none;margin-top:6px;">
                                             <div class="ipsec-anchor" data-anchor="a-peer"></div>
                                         </div>
                                         <label class="toggle-label"><span class="toggle-switch"><input type="checkbox" id="ipsec-a-dyn"><span class="toggle-slider"></span></span><span>No fixed public address — this site initiates</span></label>
@@ -3037,7 +3035,7 @@
 
                                     <div class="form-group">
                                         <label for="ipsec-b-subnets">Networks this site shares</label>
-                                        <textarea id="ipsec-b-subnets" rows="3" placeholder="192.168.50.0/24"></textarea>
+                                        <textarea id="ipsec-b-subnets" rows="3" placeholder="192.168.150.0/24"></textarea>
                                         <p class="ipsec-hint">One per line. These become the tunnel's traffic selectors.</p>
                                         <div class="ipsec-anchor" data-anchor="b-subnets"></div>
                                     </div>

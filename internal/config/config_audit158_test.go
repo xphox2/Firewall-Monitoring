@@ -22,7 +22,7 @@ import (
 //     fix's "no caching" semantic — if the test got the same
 //     password twice, the cache is back).
 //  3. The audit ID is referenced in the doc comment (so a
-//     future agent who re-introduces the cache for "perf" can
+//     future contributor who re-introduces the cache for "perf" can
 //     find the rationale).
 func TestGetDefaultPassword_NoModuleLevelCache_AUDIT158(t *testing.T) {
 	// 1. No module-level variable named `defaultPassword`.
@@ -44,7 +44,7 @@ var somethingElse string
 	// reintroduced.
 
 	// 2. Two consecutive calls produce different passwords.
-	// This is the load-bearing test — if a future agent
+	// This is the load-bearing test — if a future contributor
 	// re-introduces the module-level cache, this assertion
 	// fires (the same password comes back both times).
 	p1 := getDefaultPassword()
@@ -73,7 +73,7 @@ var somethingElse string
 
 // TestGetDefaultPassword_NotCachedAcrossGoroutines_AUDIT158 is
 // a defensive sibling: the fix's "no caching" semantic must
-// hold under concurrent access too. If a future agent added a
+// hold under concurrent access too. If a future contributor added a
 // `sync.Once` or similar (to avoid the perf cost of regenerating
 // the password on every Load call), this test would fire — the
 // audit's whole point is that the password must NOT be

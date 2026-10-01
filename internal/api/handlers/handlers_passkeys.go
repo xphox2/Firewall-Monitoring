@@ -27,9 +27,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// Passkey (WebAuthn) login, registration and management (PR 2 of
-// tasks/PASSKEYS-PLAN.md). Design invariants, each covered by a test in
-// handlers_passkeys_test.go:
+// Passkey (WebAuthn) login, registration and management. Design invariants,
+// each covered by a test in handlers_passkeys_test.go:
 //
 //   - Kill switch: with h.passkeys == nil (WEBAUTHN_ENABLED unset/false or an
 //     invalid configuration) every passkey endpoint answers 404 and the public

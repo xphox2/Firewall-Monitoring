@@ -459,7 +459,7 @@
     }
 
     // AUDIT-051: reject now uses the styled #reject-modal instead of the
-    // native window.prompt() (lessons.md: AdminCommon modals are the standard).
+    // native window.prompt() (AdminCommon modals are the standard).
     function rejectProbe(id) {
         document.getElementById('reject-probe-id').value = id;
         document.getElementById('reject-reason').value = '';

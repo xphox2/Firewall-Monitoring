@@ -13,11 +13,11 @@ import (
 // two represent the same device captured two different ways.
 func buildFortiFullConfig() string {
 	var b strings.Builder
-	b.WriteString("FW-HOME # #config-version=FGT60F-7.4.12-FW-build2902-260505:opmode=1:vdom=0:user=backup\n")
+	b.WriteString("FW-HERON # #config-version=FGT60F-7.4.0-FW-build0000-000000:opmode=1:vdom=0:user=backup\n")
 	b.WriteString("#conf_file_ver=376277789922848\n")
 	b.WriteString("config system global\n")
 	b.WriteString("set admin-port 81\n")
-	b.WriteString("set hostname \"FW-HOME\"\n")
+	b.WriteString("set hostname \"FW-HERON\"\n")
 	for i := range 150 {
 		fmt.Fprintf(&b, "set default-setting-%d enable\n", i)
 	}
@@ -32,17 +32,16 @@ func buildFortiFullConfig() string {
 }
 
 // These fixtures are synthetic but reproduce the exact volatility patterns found
-// in real FortiGate FGT60F-7.4.12 backups (tasks/config_1_30* during the
-// v0.10.439 investigation). Real backups are NOT committed because they carry
+// in real FortiGate backups. Real backups are NOT committed because they carry
 // cert private keys and IPsec PSK seeds.
 
 // fortiShowBackup is a plain `show` backup: indented, non-default settings only,
 // includes the per-admin gui-dashboard block with volatile last-updated stamps.
-const fortiShowBackup = `#config-version=FGT60F-7.4.12-FW-build2902-260505:opmode=0:vdom=0:user=backup
+const fortiShowBackup = `#config-version=FGT60F-7.4.0-FW-build0000-000000:opmode=0:vdom=0:user=backup
 #conf_file_ver=376277789922848
 config system global
     set admin-port 81
-    set hostname "FW-HOME"
+    set hostname "FW-HERON"
 end
 config system admin
     edit "admin"
@@ -67,7 +66,7 @@ end`
 // `show full-configuration`: a CLI prompt is echoed onto line 1, opmode differs
 // in the header, there is no indentation, and FortiOS omits gui-dashboard while
 // emitting every default. It must still normalize to the same non-default core.
-const fortiConsoleFullConfig = `FW-HOME # #config-version=FGT60F-7.4.12-FW-build2902-260505:opmode=1:vdom=0:user=backup
+const fortiConsoleFullConfig = `FW-HERON # #config-version=FGT60F-7.4.0-FW-build0000-000000:opmode=1:vdom=0:user=backup
 #conf_file_ver=376277789922848
 config system global
 set admin-concurrent enable
@@ -86,7 +85,7 @@ set arp-max-entry 131072
 set av-failopen pass
 set cfg-save automatic
 set gui-theme jade
-set hostname "FW-HOME"
+set hostname "FW-HERON"
 set timezone 04
 end
 config system admin
@@ -109,7 +108,7 @@ func TestFortinet_GuiDashboardStripped(t *testing.T) {
 		t.Error("gui-dashboard block was not replaced with its marker")
 	}
 	// Content outside the block must remain.
-	if !strings.Contains(s, `set hostname "FW-HOME"`) {
+	if !strings.Contains(s, `set hostname "FW-HERON"`) {
 		t.Error("non-dashboard config was wrongly stripped")
 	}
 }
@@ -117,7 +116,7 @@ func TestFortinet_GuiDashboardStripped(t *testing.T) {
 func TestFortinet_PromptPrefixStripped(t *testing.T) {
 	out, _ := Normalize("fortigate", []byte(fortiConsoleFullConfig))
 	s := string(out)
-	if strings.Contains(s, "FW-HOME #") {
+	if strings.Contains(s, "FW-HERON #") {
 		t.Error("console prompt prefix survived normalization")
 	}
 	// With the prompt stripped, the config-version header must normalize.

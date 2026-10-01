@@ -36,8 +36,8 @@ func l2TestDevice(t *testing.T, db *database.Database, name, ip string, siteID *
 func TestDetectL2Links_FDBCreatesPortLink(t *testing.T) {
 	p, db := newTestPoller(t)
 	site := l2TestSite(t, db)
-	core := l2TestDevice(t, db, "fw-core", "192.168.5.1", &site.ID)
-	branch := l2TestDevice(t, db, "fw-branch", "192.168.5.107", &site.ID)
+	core := l2TestDevice(t, db, "fw-core", "192.168.105.1", &site.ID)
+	branch := l2TestDevice(t, db, "fw-branch", "192.168.105.107", &site.ID)
 
 	now := time.Now()
 	if err := db.SaveInterfaceStats([]models.InterfaceStats{
@@ -130,7 +130,7 @@ func TestDetectL2Links_NoSubnetGuess(t *testing.T) {
 // l2ARPPairTest runs the shared-vs-P2P ARP scenario end-to-end: two same-site
 // devices, each with an ARP entry resolving the other's interface MAC/IP on
 // the given mask. wantConns is 0 for a shared multi-host subnet (v0.11.123
-// suppression — the DC2-FW1↔OPNsense case) and 1 for a genuine point-to-point
+// suppression — the DC9-FW1↔OPNsense case) and 1 for a genuine point-to-point
 // transit.
 func l2ARPPairTest(t *testing.T, mask string, wantConns int) {
 	t.Helper()
@@ -172,7 +172,7 @@ func l2ARPPairTest(t *testing.T, mask string, wantConns int) {
 }
 
 // TestDetectL2Links_SharedSubnetARPSuppressed: the exact reported bug —
-// DC2-FW1↔OPNsense on a shared /24 with ARP evidence draws NO edge.
+// DC9-FW1↔OPNsense on a shared /24 with ARP evidence draws NO edge.
 func TestDetectL2Links_SharedSubnetARPSuppressed(t *testing.T) {
 	l2ARPPairTest(t, "255.255.255.0", 0) // /24 → shared LAN → suppress
 }
@@ -219,8 +219,8 @@ func TestDetectL2Links_CrossSiteIgnored(t *testing.T) {
 func TestDetectL2Links_StalenessTransitions(t *testing.T) {
 	p, db := newTestPoller(t)
 	site := l2TestSite(t, db)
-	core := l2TestDevice(t, db, "fw-core", "192.168.5.1", &site.ID)
-	branch := l2TestDevice(t, db, "fw-branch", "192.168.5.107", &site.ID)
+	core := l2TestDevice(t, db, "fw-core", "192.168.105.1", &site.ID)
+	branch := l2TestDevice(t, db, "fw-branch", "192.168.105.107", &site.ID)
 
 	now := time.Now()
 	if err := db.SaveInterfaceStats([]models.InterfaceStats{
@@ -398,7 +398,7 @@ func TestUpsertAutoL2Connection_Semantics(t *testing.T) {
 	}
 }
 
-// TestDetectOverlay_NoNameMatchL2VLANBridge is the live DC2 regression: the
+// TestDetectOverlay_NoNameMatchL2VLANBridge is the live DC9 regression: the
 // overlay detector used to draw spurious l2vlan + bridge lines between two
 // same-site FortiGates purely because they share interface names (both have a
 // `bridge` "internal" and shared VLAN names), duplicating the real
@@ -407,8 +407,8 @@ func TestUpsertAutoL2Connection_Semantics(t *testing.T) {
 func TestDetectOverlay_NoNameMatchL2VLANBridge(t *testing.T) {
 	p, db := newTestPoller(t)
 	site := l2TestSite(t, db)
-	fw1 := l2TestDevice(t, db, "DC2-FW1", "192.168.5.2", &site.ID)
-	fw2 := l2TestDevice(t, db, "DC2-FW2", "192.168.5.1", &site.ID)
+	fw1 := l2TestDevice(t, db, "DC9-FW1", "192.168.105.2", &site.ID)
+	fw2 := l2TestDevice(t, db, "DC9-FW2", "192.168.105.1", &site.ID)
 
 	now := time.Now()
 	// Both firewalls have a bridge "internal" and a shared-named VLAN — the

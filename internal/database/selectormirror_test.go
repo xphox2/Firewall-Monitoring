@@ -20,50 +20,50 @@ func TestSelectorMirrors(t *testing.T) {
 	}{
 		// The four provisioned pairs of fwm-t12. Disjoint /24s, so containment
 		// degenerates to equality and the answer must not depend on the flag.
-		{"exact pair, narrowing off", "192.168.25.0/24", "192.168.25.0/24", false, true},
-		{"exact pair, narrowing on", "192.168.25.0/24", "192.168.25.0/24", true, true},
-		{"different /24s never match", "192.168.25.0/24", "192.168.13.0/24", true, false},
+		{"exact pair, narrowing off", "192.168.125.0/24", "192.168.125.0/24", false, true},
+		{"exact pair, narrowing on", "192.168.125.0/24", "192.168.125.0/24", true, true},
+		{"different /24s never match", "192.168.125.0/24", "192.168.113.0/24", true, false},
 
 		// IKEv2 narrowing: the FortiGate's SNMP dialup row reports the configured
 		// /24 as the /32 actually in use. Within one logical tunnel that is the
 		// same path; across tunnels we have no evidence that it is.
-		{"narrowed /32 inside its /24", "192.168.50.0/32", "192.168.50.0/24", true, true},
-		{"narrowed /32, other direction", "192.168.50.0/24", "192.168.50.0/32", true, true},
-		{"narrowing rejected when not same tunnel", "192.168.50.0/32", "192.168.50.0/24", false, false},
+		{"narrowed /32 inside its /24", "192.168.150.0/32", "192.168.150.0/24", true, true},
+		{"narrowed /32, other direction", "192.168.150.0/24", "192.168.150.0/32", true, true},
+		{"narrowing rejected when not same tunnel", "192.168.150.0/32", "192.168.150.0/24", false, false},
 
 		// FortiGate's SNMP walk serialises selectors as RANGES. net.ParseCIDR
 		// cannot read them at all, so equality is the ONLY test that works —
 		// without the equality-first ordering these pairs would silently stop
 		// matching and the marker would vanish from every FortiGate SNMP row.
-		{"identical range strings", "192.168.5.0 - 192.168.5.255", "192.168.5.0 - 192.168.5.255", true, true},
-		{"identical range strings, narrowing off", "192.168.5.0 - 192.168.5.255", "192.168.5.0 - 192.168.5.255", false, true},
-		{"different ranges", "192.168.5.0 - 192.168.5.255", "192.168.6.0 - 192.168.6.255", true, false},
+		{"identical range strings", "192.168.105.0 - 192.168.105.255", "192.168.105.0 - 192.168.105.255", true, true},
+		{"identical range strings, narrowing off", "192.168.105.0 - 192.168.105.255", "192.168.105.0 - 192.168.105.255", false, true},
+		{"different ranges", "192.168.105.0 - 192.168.105.255", "192.168.6.0 - 192.168.6.255", true, false},
 		// Cross-vendor: an ALIGNED range against the CIDR it equals. These are the
 		// same network written two ways, so since normalisation they match without
 		// needing narrowing tolerance at all — the sameTunnel gate exists to bound
 		// CONTAINMENT (a /32 inside a /24, or 0.0.0.0/0 swallowing everything),
 		// not to stop two spellings of one network being recognised as one.
-		{"aligned range equals its CIDR, same tunnel", "192.168.5.0 - 192.168.5.255", "192.168.5.0/24", true, true},
-		{"aligned range equals its CIDR, narrowing off", "192.168.5.0 - 192.168.5.255", "192.168.5.0/24", false, true},
-		{"range vs unrelated CIDR", "192.168.5.0 - 192.168.5.255", "192.168.9.0/24", true, false},
+		{"aligned range equals its CIDR, same tunnel", "192.168.105.0 - 192.168.105.255", "192.168.105.0/24", true, true},
+		{"aligned range equals its CIDR, narrowing off", "192.168.105.0 - 192.168.105.255", "192.168.105.0/24", false, true},
+		{"range vs unrelated CIDR", "192.168.105.0 - 192.168.105.255", "192.168.9.0/24", true, false},
 
 		// The wildcard. A route-based tunnel negotiates 0.0.0.0/0, which CONTAINS
 		// every other selector — so with narrowing allowed it matches anything.
 		// That is why the caller only allows narrowing within one logical tunnel:
 		// unbounded, this would pair rows of unrelated tunnels.
 		{"route-based both ends", "0.0.0.0/0", "0.0.0.0/0", false, true},
-		{"wildcard swallows a /24 when narrowing allowed", "0.0.0.0/0", "192.168.25.0/24", true, true},
-		{"wildcard confined when narrowing refused", "0.0.0.0/0", "192.168.25.0/24", false, false},
+		{"wildcard swallows a /24 when narrowing allowed", "0.0.0.0/0", "192.168.125.0/24", true, true},
+		{"wildcard confined when narrowing refused", "0.0.0.0/0", "192.168.125.0/24", false, false},
 
-		{"empty never matches a real selector", "", "192.168.25.0/24", true, false},
+		{"empty never matches a real selector", "", "192.168.125.0/24", true, false},
 
 		// Cross-vendor host pair. IKEv2 narrows a /24 to the host actually in
 		// use; the FortiGate then emits a BARE address because buildCIDR refuses
 		// /30 and tighter, while OPNsense emits /32. Before normalisation these
 		// never compared equal, and the path silently rendered as reported by one
 		// end only.
-		{"bare host vs /32, narrowing off", "192.168.13.7", "192.168.13.7/32", false, true},
-		{"bare host vs a different /32", "192.168.13.7", "192.168.13.8/32", false, false},
+		{"bare host vs /32, narrowing off", "192.168.113.7", "192.168.113.7/32", false, true},
+		{"bare host vs a different /32", "192.168.113.7", "192.168.113.8/32", false, false},
 
 		// Refusal is identity, and this is the case that proves it: two ends
 		// mirroring the SAME non-aligned range have no CIDR form, so they can
@@ -90,17 +90,17 @@ func TestSelectorMirrors(t *testing.T) {
 func TestSelectorMirrors_Conn23984FullMesh(t *testing.T) {
 	type row struct{ local, remote string }
 	fgt := []row{
-		{"192.168.25.0/24", "192.168.50.0/24"},
-		{"192.168.25.0/24", "192.168.12.0/24"},
-		{"192.168.13.0/24", "192.168.50.0/24"},
-		{"192.168.13.0/24", "192.168.12.0/24"},
-		{"192.168.25.0/24", "192.168.50.0/32"}, // SNMP dialup, narrowed
+		{"192.168.125.0/24", "192.168.150.0/24"},
+		{"192.168.125.0/24", "192.168.112.0/24"},
+		{"192.168.113.0/24", "192.168.150.0/24"},
+		{"192.168.113.0/24", "192.168.112.0/24"},
+		{"192.168.125.0/24", "192.168.150.0/32"}, // SNMP dialup, narrowed
 	}
 	opn := []row{
-		{"192.168.50.0/24", "192.168.25.0/24"},
-		{"192.168.12.0/24", "192.168.25.0/24"},
-		{"192.168.50.0/24", "192.168.13.0/24"},
-		{"192.168.12.0/24", "192.168.13.0/24"},
+		{"192.168.150.0/24", "192.168.125.0/24"},
+		{"192.168.112.0/24", "192.168.125.0/24"},
+		{"192.168.150.0/24", "192.168.113.0/24"},
+		{"192.168.112.0/24", "192.168.113.0/24"},
 	}
 
 	matches := 0

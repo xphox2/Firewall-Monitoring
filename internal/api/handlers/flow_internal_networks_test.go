@@ -46,7 +46,7 @@ func postFlows(t *testing.T, h *Handler, db *database.Database, key string, batc
 // the private defaults with class_rev 0 — never the current revision.
 func TestFlowIngest_ClassifiesAgainstOwnNetworks(t *testing.T) {
 	h, db := setupTestHandler(t)
-	flow := []map[string]interface{}{{"sampler_address": "10.9.1.1", "src_addr": "66.179.9.156", "dst_addr": "203.0.113.9",
+	flow := []map[string]interface{}{{"sampler_address": "10.9.1.1", "src_addr": "198.19.9.156", "dst_addr": "203.0.113.9",
 		"src_port": 443, "dst_port": 51234, "protocol": 6, "bytes": 100, "packets": 1, "direction": 3, "class_rev": 9}}
 
 	h.internalNets.Store(nil)
@@ -56,7 +56,7 @@ func TestFlowIngest_ClassifiesAgainstOwnNetworks(t *testing.T) {
 			classify.DirectionName(rows[0].Direction), rows[0].ClassRev)
 	}
 
-	if err := db.Gorm().Create(&models.SystemSetting{Key: database.FlowInternalNetworksKey, Value: "66.179.9.144/28"}).Error; err != nil {
+	if err := db.Gorm().Create(&models.SystemSetting{Key: database.FlowInternalNetworksKey, Value: "198.19.9.144/28"}).Error; err != nil {
 		t.Fatalf("seed networks: %v", err)
 	}
 	h.RefreshInternalNetworks()
@@ -71,7 +71,7 @@ func TestFlowIngest_ClassifiesAgainstOwnNetworks(t *testing.T) {
 // not swap in a defaults-only set stamped with the current revision.
 func TestRefreshInternalNetworks_KeepsPreviousSetOnError(t *testing.T) {
 	h, db := setupTestHandler(t)
-	if err := db.Gorm().Create(&models.SystemSetting{Key: database.FlowInternalNetworksKey, Value: "66.179.9.144/28"}).Error; err != nil {
+	if err := db.Gorm().Create(&models.SystemSetting{Key: database.FlowInternalNetworksKey, Value: "198.19.9.144/28"}).Error; err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	h.RefreshInternalNetworks()
@@ -105,13 +105,13 @@ func TestUpdateSettings_InternalNetworks(t *testing.T) {
 	if code := post(database.FlowInternalAutoKey, "maybe"); code != http.StatusBadRequest {
 		t.Errorf("auto=maybe: code %d, want 400", code)
 	}
-	if code := post(database.FlowInternalNetworksKey, "66.179.9.150/28, 66.9.166.120"); code != http.StatusOK {
+	if code := post(database.FlowInternalNetworksKey, "198.19.9.150/28, 198.19.66.120"); code != http.StatusOK {
 		t.Fatalf("valid list: code %d", code)
 	}
-	if v, _ := db.GetSettingValue(database.FlowInternalNetworksKey); v != "66.179.9.144/28\n66.9.166.120/32" {
+	if v, _ := db.GetSettingValue(database.FlowInternalNetworksKey); v != "198.19.9.144/28\n198.19.66.120/32" {
 		t.Errorf("stored %q, want the canonical form", v)
 	}
-	if got := h.internalNets.Load().Direction("66.9.166.120", "8.8.8.8"); got != classify.DirOutbound {
+	if got := h.internalNets.Load().Direction("198.19.66.120", "8.8.8.8"); got != classify.DirOutbound {
 		t.Errorf("the saved list did not apply on save: %s", classify.DirectionName(got))
 	}
 }
@@ -119,7 +119,7 @@ func TestUpdateSettings_InternalNetworks(t *testing.T) {
 // TestGetFlowInternalNetworks lists each entry with its source.
 func TestGetFlowInternalNetworks(t *testing.T) {
 	h, db := setupTestHandler(t)
-	if err := db.Gorm().Create(&models.SystemSetting{Key: database.FlowInternalNetworksKey, Value: "66.9.166.120/32"}).Error; err != nil {
+	if err := db.Gorm().Create(&models.SystemSetting{Key: database.FlowInternalNetworksKey, Value: "198.19.66.120/32"}).Error; err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	gin.SetMode(gin.TestMode)
@@ -136,7 +136,7 @@ func TestGetFlowInternalNetworks(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil || w.Code != http.StatusOK {
 		t.Fatalf("code %d body %s err %v", w.Code, w.Body.String(), err)
 	}
-	if len(resp.Data.Networks) != 1 || resp.Data.Networks[0].CIDR != "66.9.166.120/32" || resp.Data.Networks[0].Source != "manual" || !resp.Data.Auto {
+	if len(resp.Data.Networks) != 1 || resp.Data.Networks[0].CIDR != "198.19.66.120/32" || resp.Data.Networks[0].Source != "manual" || !resp.Data.Auto {
 		t.Errorf("got %+v", resp.Data)
 	}
 }

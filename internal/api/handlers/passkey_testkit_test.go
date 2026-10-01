@@ -44,7 +44,7 @@ const (
 
 // pkSelfServiceRoutes / pkAdminOnlyRoutes mirror the passkey-relevant
 // entries of cmd/api/main.go's RequireRole maps (pinned there by
-// internal/shell/passkey_routes_test.go).
+// test/guardrails/passkey_routes_test.go).
 var pkSelfServiceRoutes = map[string]bool{
 	"/admin/api/settings/password":        true,
 	"/admin/api/me":                       true,

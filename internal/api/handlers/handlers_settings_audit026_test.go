@@ -18,9 +18,9 @@ import (
 //   - a sampling of the most obvious non-secrets are NOT present,
 //   - no key is silently added without being intentional.
 //
-// A future agent who adds a new secret to allowedKeys MUST also add
+// A future contributor who adds a new secret to allowedKeys MUST also add
 // it to settingsSecretKeys, and the corresponding test case here. A
-// future agent who refactors the map away entirely will get a compile
+// future contributor who refactors the map away entirely will get a compile
 // error in the test (because it references the symbol), which is the
 // right kind of break — they have to think about the migration.
 func TestSettingsSecretKeys_AUDIT026(t *testing.T) {
@@ -85,7 +85,7 @@ func TestSettingsSecretKeys_AUDIT026(t *testing.T) {
 
 // TestSettingsSecretKeys_NoOverlapWithNonSecrets_AUDIT026 is a
 // belt-and-suspenders check: the two slices above must not share any
-// element. If a future agent accidentally reclassifies a non-secret
+// element. If a future contributor accidentally reclassifies a non-secret
 // as a secret (or vice versa), this catches the contradiction
 // directly.
 func TestSettingsSecretKeys_NoOverlapWithNonSecrets_AUDIT026(t *testing.T) {

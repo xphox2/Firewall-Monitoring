@@ -1,5 +1,5 @@
 #!/bin/bash
-# fwmon-reset-auth — break-glass account reset (passkey plan, PR 2).
+# fwmon-reset-auth — break-glass account reset.
 #
 #   docker exec -it <container> fwmon-reset-auth --user <name> [--keep-2fa] [--keep-passkeys]
 #

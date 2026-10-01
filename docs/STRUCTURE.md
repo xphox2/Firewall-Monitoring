@@ -31,18 +31,12 @@ runtime (the collector talks HTTP to the server).
 | FortiGate device setup (SNMP, syslog, SSH, TFTP) | [FORTIGATE-SNMP-SETUP.md](FORTIGATE-SNMP-SETUP.md) | [FORTIGATE-SETUP.md](https://github.com/xphox2/Firewall-Collector/blob/master/docs/FORTIGATE-SETUP.md) (collector-side) |
 | Database migrations | [partition-migration.md](partition-migration.md) | n/a |
 | Production-hardened nginx config | [nginx.conf](nginx.conf) | n/a |
-| Production upgrade runbook | [OPERATIONS.md §Upgrade](OPERATIONS.md#upgrade) (the standalone `UPGRADE-2026-06.md` is archived under [archive/](archive/UPGRADE-2026-06.md)) | n/a |
+| Production upgrade runbook | [OPERATIONS.md §Upgrade](OPERATIONS.md#upgrade) | n/a |
 | Pre-release security checklist | [OPERATIONS.md §Pre-release / deployment security checklist](OPERATIONS.md#pre-release--deployment-security-checklist) | n/a |
-| Config-diff roadmap (NOC/SOC-grade design) | [config-diff-roadmap.md](config-diff-roadmap.md) | n/a |
-| Audit log (170/170 findings resolved) | [AUDIT.md](AUDIT.md) | n/a |
-| Living feature inventory & roadmap | [FEATURE-ROADMAP.md](FEATURE-ROADMAP.md) | n/a |
-| Latest internal audit (2026-06-23, live) | [audit-2026-06-23-consolidated.md](audit-2026-06-23-consolidated.md) | n/a |
-| Historical audit reports (point-in-time) | [audit-archive/](audit-archive/README.md) | n/a |
 
 ## Filename case convention (known inconsistency)
 
-The collector standardized on **UPPERCASE** filenames in commit 1.2.107
-(see `tasks/PLAN.md` for the rationale). The server has not yet had the
+The collector standardized on **UPPERCASE** filenames in 1.2.107. The server has not yet had the
 same sweep — three legacy files are still lowercase:
 
 - `docs/architecture.md` (should be `ARCHITECTURE.md`)
@@ -53,5 +47,4 @@ Renaming them is a separate PR — the shell-guard tests
 (`TestArchitectureDiagram_AUDIT108`, `TestCustomVendorDoc_AUDIT170`,
 `TestEnsurePartitions_SurfacesWarning_AUDIT146`) pin the lowercase
 names and must be updated in the same change. **All new docs in this
-repo ship in UPPERCASE** to match the collector's convention. Tracked
-in [xphox2/Firewall-Collector/tasks/PLAN.md](https://github.com/xphox2/Firewall-Collector/blob/master/tasks/PLAN.md).
+repo ship in UPPERCASE** to match the collector's convention.

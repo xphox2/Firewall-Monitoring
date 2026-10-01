@@ -38,13 +38,13 @@ func seedFlowWeek(t *testing.T, d *Database) {
 			{"10.0.0.1", "1.1.1.1", 53, 13335, 700},
 			{"10.0.0.2", "8.8.8.8", 443, 15169, 400},
 			{"10.0.1.9", "9.9.9.9", 853, 19281, 250},
-			{"192.168.5.5", "10.0.0.1", 22, 0, 90},
+			{"192.168.105.5", "10.0.0.1", 22, 0, 90},
 		} {
 			rows = append(rows, models.FlowRollup{
 				Timestamp: ts.Add(time.Duration(i) * time.Minute), DeviceID: 1, IntervalType: tier,
 				SrcAddr: c.src, DstAddr: c.dst, DstPort: c.port, Protocol: 6, DstASN: c.asn,
 				BytesSum: c.bytes * uint64(day+1), PacketsSum: uint64(day + 1), FlowCount: int64(i + 1 + day),
-				SamplingRateAvg: 1, DstCountry: "US", ScopeLocal: c.src == "192.168.5.5",
+				SamplingRateAvg: 1, DstCountry: "US", ScopeLocal: c.src == "192.168.105.5",
 			})
 		}
 	}

@@ -26,7 +26,7 @@ func ipsecCreateBody() string {
 			{DeviceID: 1, Vendor: "fortigate", PeerIP: "203.0.113.1", EgressIface: "port1", LANIface: "port3",
 				LocalID: ipsec.IKEIdentity{Type: ipsec.IDTypeKeyID, Value: "a"}, ProtectedSubnets: []string{"10.10.10.0/24"}, MSSClamp: 1350},
 			{DeviceID: 2, Vendor: "opnsense", PeerIP: "198.51.100.1", Dynamic: true, EgressIface: "wan", LANIface: "lan",
-				LocalID: ipsec.IKEIdentity{Type: ipsec.IDTypeKeyID, Value: "b"}, ProtectedSubnets: []string{"192.168.50.0/24"}, MSSClamp: 1350},
+				LocalID: ipsec.IKEIdentity{Type: ipsec.IDTypeKeyID, Value: "b"}, ProtectedSubnets: []string{"192.168.150.0/24"}, MSSClamp: 1350},
 		},
 	}
 	b, _ := json.Marshal(&in)
@@ -327,7 +327,7 @@ func TestIPSec_EndpointHints_PolledOverLAN(t *testing.T) {
 		t.Fatalf("create ifaces: %v", err)
 	}
 	addrs := []models.InterfaceAddress{
-		{DeviceID: dev.ID, Timestamp: ts, IfIndex: 1, IPAddress: "66.179.9.155", NetMask: "255.255.255.0"}, // WAN /24 (would-be self-lockout)
+		{DeviceID: dev.ID, Timestamp: ts, IfIndex: 1, IPAddress: "198.19.9.155", NetMask: "255.255.255.0"}, // WAN /24 (would-be self-lockout)
 		{DeviceID: dev.ID, Timestamp: ts, IfIndex: 2, IPAddress: "10.0.0.1", NetMask: "255.255.255.0"},     // mgmt LAN
 		{DeviceID: dev.ID, Timestamp: ts, IfIndex: 3, IPAddress: "172.16.5.1", NetMask: "255.255.255.0"},   // real LAN
 	}
@@ -353,13 +353,13 @@ func TestIPSec_EndpointHints_PolledOverLAN(t *testing.T) {
 	if resp.SuggestedEgress != "port1" {
 		t.Errorf("suggested_egress = %q, want port1 (the public WAN uplink, not the mgmt iface)", resp.SuggestedEgress)
 	}
-	if resp.SuggestedPeerIP != "66.179.9.155" {
-		t.Errorf("suggested_peer_ip = %q, want 66.179.9.155 (the WAN public IP)", resp.SuggestedPeerIP)
+	if resp.SuggestedPeerIP != "198.19.9.155" {
+		t.Errorf("suggested_peer_ip = %q, want 198.19.9.155 (the WAN public IP)", resp.SuggestedPeerIP)
 	}
 	// The WAN subnet must NOT be a protected subnet; the real LANs are.
 	for _, s := range resp.LANSubnets {
-		if s == "66.179.9.0/24" {
-			t.Error("the WAN subnet 66.179.9.0/24 must NEVER be an auto-suggested protected subnet (phantom self-lockout)")
+		if s == "198.19.9.0/24" {
+			t.Error("the WAN subnet 198.19.9.0/24 must NEVER be an auto-suggested protected subnet (phantom self-lockout)")
 		}
 	}
 	// Belt-and-suspenders: no auto-suggested subnet may contain the peer's WAN IP,

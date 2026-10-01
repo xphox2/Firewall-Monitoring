@@ -7,9 +7,9 @@ import (
 	"firewall-mon/internal/ipsec"
 )
 
-// t9Intent mirrors the live fwm-t9 tunnel: a FortiGate end protecting
-// 192.168.25.0/24 against an OPNsense end protecting 192.168.50.0/24 and
-// 192.168.5.0/24. ViewFor(in, 0) therefore makes the OPNsense subnets "remote",
+// t9Intent models a representative fwm-t9 tunnel: a FortiGate end protecting
+// 192.168.125.0/24 against an OPNsense end protecting 192.168.150.0/24 and
+// 192.168.105.0/24. ViewFor(in, 0) therefore makes the OPNsense subnets "remote",
 // which is what the route advisory reasons about.
 func t9Intent() *ipsec.TunnelIntent {
 	in := &ipsec.TunnelIntent{
@@ -19,13 +19,13 @@ func t9Intent() *ipsec.TunnelIntent {
 	}
 	in.Ends[0] = ipsec.EndpointSpec{
 		Vendor: "fortigate", PeerIP: "203.0.113.1", EgressIface: "port1", LANIface: "port3",
-		LocalID:          ipsec.IKEIdentity{Type: ipsec.IDTypeFQDN, Value: "techlabs-fw-01"},
-		ProtectedSubnets: []string{"192.168.25.0/24"}, InnerIP: "169.254.1.37",
+		LocalID:          ipsec.IKEIdentity{Type: ipsec.IDTypeFQDN, Value: "osprey-fw-01"},
+		ProtectedSubnets: []string{"192.168.125.0/24"}, InnerIP: "169.254.1.37",
 	}
 	in.Ends[1] = ipsec.EndpointSpec{
 		Vendor: "opnsense", PeerIP: "198.51.100.1", EgressIface: "dtsec1", LANIface: "dtsec0",
 		LocalID:          ipsec.IKEIdentity{Type: ipsec.IDTypeFQDN, Value: "opnsense"},
-		ProtectedSubnets: []string{"192.168.50.0/24", "192.168.5.0/24"}, InnerIP: "169.254.1.38",
+		ProtectedSubnets: []string{"192.168.150.0/24", "192.168.105.0/24"}, InnerIP: "169.254.1.38",
 	}
 	return in
 }
@@ -44,21 +44,20 @@ func advise(t *testing.T, body string) []ipsec.Advisory {
 	return fgDriver(t).Advisories(ipsec.ViewFor(t9Intent(), 0), map[string]string{checkRouteTable: body})
 }
 
-// TestAdvisories_RealT9CompetingRoute is the case that motivated the check: the
-// live FortiGate carries a hand-made route for 192.168.5.0/24 out port3 with no
+// TestAdvisories_T9CompetingRoute is the case that motivated the check: the
+// FortiGate carries a hand-made route for 192.168.105.0/24 out port3 with no
 // explicit distance (so FortiOS default 10 — the same distance the tunnel route
 // gets). Both install and traffic ECMP-splits away from the tunnel, silently.
-func TestAdvisories_RealT9CompetingRoute(t *testing.T) {
-	// Captured verbatim from device 4's stored config revision, expressed in the
-	// cmdb JSON shape the advisory GET returns.
-	body := `{"results":[{"seq-num":1,"dst":"192.168.5.0 255.255.255.0","gateway":"192.168.25.254","device":"port3","distance":10,"priority":0,"blackhole":"disable","status":"enable","comment":""}]}`
+func TestAdvisories_T9CompetingRoute(t *testing.T) {
+	// A static route in the cmdb JSON shape FortiOS emits for the advisory GET.
+	body := `{"results":[{"seq-num":1,"dst":"192.168.105.0 255.255.255.0","gateway":"192.168.125.254","device":"port3","distance":10,"priority":0,"blackhole":"disable","status":"enable","comment":""}]}`
 	got := advise(t, body)
 	if len(got) != 1 {
-		t.Fatalf("want exactly 1 advisory for the real t9 route table, got %d: %+v", len(got), got)
+		t.Fatalf("want exactly 1 advisory for the t9 route table, got %d: %+v", len(got), got)
 	}
 	a := got[0]
-	if a.Subject != "192.168.5.0/24" {
-		t.Errorf("subject = %q, want the conflicting protected subnet 192.168.5.0/24", a.Subject)
+	if a.Subject != "192.168.105.0/24" {
+		t.Errorf("subject = %q, want the conflicting protected subnet 192.168.105.0/24", a.Subject)
 	}
 	if a.Check != checkRouteTable {
 		t.Errorf("check = %q, want %q", a.Check, checkRouteTable)
@@ -68,7 +67,7 @@ func TestAdvisories_RealT9CompetingRoute(t *testing.T) {
 	if !strings.Contains(a.Title, "ties with") {
 		t.Errorf("equal-distance advisory should describe a tie; got title %q", a.Title)
 	}
-	for _, want := range []string{"seq-num 1", "192.168.25.254 on port3", "ECMP"} {
+	for _, want := range []string{"seq-num 1", "192.168.125.254 on port3", "ECMP"} {
 		if !strings.Contains(a.Detail, want) {
 			t.Errorf("detail should name %q so the operator can find the route; got %q", want, a.Detail)
 		}
@@ -76,13 +75,13 @@ func TestAdvisories_RealT9CompetingRoute(t *testing.T) {
 	if !strings.Contains(a.Remedy, "set distance") {
 		t.Errorf("remedy should give the concrete fix; got %q", a.Remedy)
 	}
-	t.Logf("REAL t9 advisory → %s | %s", a.Title, a.Remedy)
+	t.Logf("t9 advisory → %s | %s", a.Title, a.Remedy)
 }
 
 // A lower-distance route defeats the tunnel outright rather than splitting with
 // it; that is a materially different failure and must read differently.
 func TestAdvisories_LowerDistanceOutranksTunnel(t *testing.T) {
-	body := `{"results":[{"seq-num":7,"dst":"192.168.50.0 255.255.255.0","gateway":"10.0.0.1","device":"port2","distance":5,"blackhole":"disable","status":"enable"}]}`
+	body := `{"results":[{"seq-num":7,"dst":"192.168.150.0 255.255.255.0","gateway":"10.0.0.1","device":"port2","distance":5,"blackhole":"disable","status":"enable"}]}`
 	got := advise(t, body)
 	if len(got) != 1 {
 		t.Fatalf("want 1 advisory, got %d", len(got))
@@ -108,9 +107,9 @@ func TestAdvisories_SupernetOverlapIsCaught(t *testing.T) {
 // advisory becomes noise the operator learns to ignore.
 func TestAdvisories_NonCompetingRoutesAreSilent(t *testing.T) {
 	cases := map[string]string{
-		"higher distance loses to ours":  `{"results":[{"seq-num":3,"dst":"192.168.5.0 255.255.255.0","gateway":"10.0.0.1","device":"port2","distance":20,"blackhole":"disable","status":"enable"}]}`,
-		"administratively disabled":      `{"results":[{"seq-num":3,"dst":"192.168.5.0 255.255.255.0","gateway":"10.0.0.1","device":"port2","distance":1,"blackhole":"disable","status":"disable"}]}`,
-		"blackhole is not a path":        `{"results":[{"seq-num":3,"dst":"192.168.5.0 255.255.255.0","device":"","distance":1,"blackhole":"enable","status":"enable"}]}`,
+		"higher distance loses to ours":  `{"results":[{"seq-num":3,"dst":"192.168.105.0 255.255.255.0","gateway":"10.0.0.1","device":"port2","distance":20,"blackhole":"disable","status":"enable"}]}`,
+		"administratively disabled":      `{"results":[{"seq-num":3,"dst":"192.168.105.0 255.255.255.0","gateway":"10.0.0.1","device":"port2","distance":1,"blackhole":"disable","status":"disable"}]}`,
+		"blackhole is not a path":        `{"results":[{"seq-num":3,"dst":"192.168.105.0 255.255.255.0","device":"","distance":1,"blackhole":"enable","status":"enable"}]}`,
 		"unrelated prefix":               `{"results":[{"seq-num":3,"dst":"10.9.9.0 255.255.255.0","gateway":"10.0.0.1","device":"port2","distance":1,"blackhole":"disable","status":"enable"}]}`,
 		"dstaddr object, prefix unknown": `{"results":[{"seq-num":3,"dst":"","dstaddr":"some-group","gateway":"10.0.0.1","device":"port2","distance":1,"blackhole":"disable","status":"enable"}]}`,
 	}
@@ -127,8 +126,8 @@ func TestAdvisories_NonCompetingRoutesAreSilent(t *testing.T) {
 func TestAdvisories_OwnRoutesAreNotConflicts(t *testing.T) {
 	own := ipsec.FGRouteKey(9, 0)
 	body := `{"results":[` +
-		`{"seq-num":` + itoa(own) + `,"dst":"192.168.50.0 255.255.255.0","device":"fwm-t9","distance":10,"blackhole":"disable","status":"enable","comment":"fwm-t9"},` +
-		`{"seq-num":9001,"dst":"192.168.5.0 255.255.255.0","gateway":"10.0.0.1","device":"port2","distance":10,"blackhole":"disable","status":"enable","comment":"fwm-t9"}` +
+		`{"seq-num":` + itoa(own) + `,"dst":"192.168.150.0 255.255.255.0","device":"fwm-t9","distance":10,"blackhole":"disable","status":"enable","comment":"fwm-t9"},` +
+		`{"seq-num":9001,"dst":"192.168.105.0 255.255.255.0","gateway":"10.0.0.1","device":"port2","distance":10,"blackhole":"disable","status":"enable","comment":"fwm-t9"}` +
 		`]}`
 	if got := advise(t, body); len(got) != 0 {
 		t.Errorf("routes owned by this tunnel must never be advisories, got %+v", got)
@@ -146,7 +145,7 @@ func TestAdvisories_UnreadableInputYieldsNothing(t *testing.T) {
 		"empty body":                         {checkRouteTable: ""},
 		"not JSON":                           {checkRouteTable: "<html>login</html>"},
 		"JSON but not a cmdb list":           {checkRouteTable: `{"status":"error"}`},
-		"body under a different check":       {"phase1": `{"results":[{"seq-num":1,"dst":"192.168.5.0 255.255.255.0","distance":1,"status":"enable"}]}`},
+		"body under a different check":       {"phase1": `{"results":[{"seq-num":1,"dst":"192.168.105.0 255.255.255.0","distance":1,"status":"enable"}]}`},
 	}
 	for name, bodies := range cases {
 		if got := d.Advisories(v, bodies); len(got) != 0 {
@@ -158,7 +157,7 @@ func TestAdvisories_UnreadableInputYieldsNothing(t *testing.T) {
 // FortiOS quotes numerics inconsistently across builds; a string "10" must be
 // read as a distance, not silently dropped.
 func TestAdvisories_StringNumericsParse(t *testing.T) {
-	body := `{"results":[{"seq-num":"1","dst":"192.168.5.0 255.255.255.0","gateway":"10.0.0.1","device":"port2","distance":"5","blackhole":"disable","status":"enable"}]}`
+	body := `{"results":[{"seq-num":"1","dst":"192.168.105.0 255.255.255.0","gateway":"10.0.0.1","device":"port2","distance":"5","blackhole":"disable","status":"enable"}]}`
 	got := advise(t, body)
 	if len(got) != 1 {
 		t.Fatalf("string-quoted numerics must parse, got %d advisories", len(got))

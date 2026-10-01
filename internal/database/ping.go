@@ -244,8 +244,7 @@ func (d *Database) GetSyslogMessages(limit int) ([]models.SyslogMessage, error) 
 // the dedicated *pgxpool.Pool (initialized in Connect) and the COPY protocol —
 // measured ~30-70x over per-row Create and ~120k rows/s at batch 1000
 // (bench_ingest_integration_test.go; docs/OPERATIONS.md), which clears the
-// 100k samples/sec design target from the audit at
-// docs/audit-archive/audit-2026-06-22-taocp.md [critical] #4. On the SQLite test backend the
+// 100k samples/sec design target. On the SQLite test backend the
 // pgxPool is nil and we fall back to GORM Create, which works correctly but
 // is the slow path; this is intentional (tests use SQLite in-memory and the
 // performance differential doesn't matter).

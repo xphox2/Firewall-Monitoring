@@ -49,7 +49,7 @@ data/
 *.key
 *.pem
 
-# Claude Code local settings (user-specific tool permissions)
+# Local editor/tool settings (user-specific)
 .claude/
 
 # Cookies / session files
@@ -71,3 +71,20 @@ coverage.out
 coverage.html
 /api
 /poller
+/tasks/
+
+# Internal working material — never part of the public repository.
+# (test/guardrails/agentmemory_audit115_test.go enforces the same list;
+# scripts/ is guarded there but not ignored, so a public script can be
+# added deliberately.)
+CLAUDE.md
+AGENTS.md
+lessons.md
+session-ses_*.md
+docs/AUDIT.md
+docs/audit-20*
+docs/audit-archive/
+*.dump
+*.sql
+*.pcap
+/*.txt

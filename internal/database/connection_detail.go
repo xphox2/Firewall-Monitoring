@@ -20,7 +20,7 @@ import (
 // tunnel — describe the same side of the same path.
 //
 // Exact equality is tried FIRST, and is not merely an optimisation: FortiGate's
-// SNMP walk serialises selectors as RANGES ("192.168.5.0 - 192.168.5.255", see
+// SNMP walk serialises selectors as RANGES ("192.168.105.0 - 192.168.105.255", see
 // snmp.vendor_fortigate), and net.ParseCIDR — which is what SelectorCovered
 // requires of its CONFIGURED argument — cannot read one. Containment therefore
 // only resolves for a range when the other side is a parseable CIDR, so two
@@ -34,9 +34,9 @@ import (
 // unbounded relaxation would pair rows from unrelated tunnels.
 // Both sides are NORMALIZED before the equality test, because the two vendors
 // serialise the same network differently: a FortiGate reports a host pair as the
-// bare address "192.168.13.7" (its selector builder returns the address as-is
+// bare address "192.168.113.7" (its selector builder returns the address as-is
 // when the MIB exposes no mask, and when end == begin) while OPNsense
-// reports "192.168.13.7/32", and those never compare equal as text. Normalizing
+// reports "192.168.113.7/32", and those never compare equal as text. Normalizing
 // only ever ADDS matches — NormalizeSelector returns anything it cannot convert
 // unchanged, so two mirrored ranges still match each other exactly as before.
 func selectorMirrors(a, b string, allowNarrowing bool) bool {

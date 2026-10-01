@@ -103,7 +103,7 @@ func TestValidate_CookieSecureExplicitlyFalseOverPlainHTTP_AUDIT024(t *testing.T
 // contains `SERVER_ENABLE_TLS=false`, but allows the operator-comment
 // form (i.e. the line being commented out, or a non-true value).
 //
-// The fail message points the future agent at the audit and the fix.
+// The fail message points the future contributor at the audit and the fix.
 func TestConfigExample_HasNoCookieSecureMismatch_AUDIT024(t *testing.T) {
 	const path = "../../config.env.example"
 	data, err := os.ReadFile(path)

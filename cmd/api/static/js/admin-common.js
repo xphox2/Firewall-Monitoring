@@ -17,7 +17,7 @@
 // audit's call-site count is the source of truth for the
 // migration's progress; see
 // TestConsoleCalls_DeferringToFwmonLog_AUDIT151 in
-// internal/shell/).
+// test/guardrails/).
 (function() {
     'use strict';
 

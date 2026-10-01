@@ -273,8 +273,8 @@ working. It ships **disabled**.
 > - **`JWT_SECRET_KEY`** — signs login sessions; if it changes everyone is logged
 >   out (annoying, not destructive).
 >
-> **The trap (2026-06-07 prod incident):** deploying from a *fresh checkout in a
-> new directory* (e.g. `/home/xphox/firewall-mon` → `/opt/Firewall-Monitoring`)
+> **The trap:** deploying from a *fresh checkout in a
+> new directory* (e.g. `/opt/firewall-mon` → `/srv/firewall-mon`)
 > makes the entrypoint generate a **brand-new** `config.env` with a **random**
 > `JWT_SECRET_KEY`. If `ENCRYPTION_KEY` was never set explicitly (so encryption
 > was silently derived from the JWT secret — the AUDIT-008/009 fallback), the
@@ -728,18 +728,29 @@ not the config's `Created`, which a cache-hit rebuild leaves at its old value. S
 
 ### When the disk is full right now
 
-`tasks/docker-disk-gc.sh` reports and reclaims. It removes untagged images and caps each builder's
-cache, and it will never run a system prune, touch volumes, or stop a container.
+Reclaim Docker's share without touching volumes or running containers:
 
 ```bash
-./tasks/docker-disk-gc.sh report      # what is using the space
-./tasks/docker-disk-gc.sh --dry-run   # what it would remove
-./tasks/docker-disk-gc.sh             # do it
+docker system df                              # what is using the space
+docker image prune -f                         # untagged images only
 ```
 
-It exits non-zero if the disk is still above 85% afterwards, which means Docker was **not** the
-cause. Look at `sudo du -xhd1 /var /home /opt | sort -h | tail` next — journald, apt, snap revisions
-and container logs are the usual suspects, and none of them are this script's business.
+Then cap the build cache of **every** builder. `docker buildx prune` without `--builder` only
+touches the selected builder (see the traps above), so loop over all of them:
+
+```bash
+for b in $(docker buildx ls --format json | jq -r .Name); do
+  docker buildx prune -f --builder "$b" --max-used-space 10gb
+done
+```
+
+`--max-used-space` is the current spelling. Older buildx releases only have `--keep-storage`, which
+newer ones still accept as a deprecated alias; check `docker buildx prune --help` and substitute it if
+needed. Without `jq`, run `docker buildx ls`, note each builder name (the unindented rows) and run
+the `prune` line once per name.
+
+If the disk is still above 85% afterwards, Docker was **not** the cause. Look at `sudo du -xhd1 /var /home /opt | sort -h | tail` next — journald, apt, snap revisions
+and container logs are the usual suspects, and none of them are Docker's.
 
 ---
 

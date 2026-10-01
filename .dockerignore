@@ -56,7 +56,7 @@ README.md
 # AUDIT-092: developer/working-tree artifacts that must never land in the
 # image. None are COPYed today, but the Dockerfile is free to broaden its
 # COPY surface in a future PR — these lines keep that from silently shipping
-# local debris, secrets-adjacent dumps, or the agent working files.
+# local debris, secrets-adjacent dumps, or local working notes.
 cookies.txt
 interfaces.json
 IRC-FORMAT.txt

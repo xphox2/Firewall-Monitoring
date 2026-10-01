@@ -20,7 +20,7 @@ func TestRender_EmptyInnerIP_FailsFast(t *testing.T) {
 	in.Ends[0] = ipsec.EndpointSpec{Vendor: "fortigate", PeerIP: "203.0.113.1", EgressIface: "port1", LANIface: "port3",
 		LocalID: ipsec.IKEIdentity{Type: ipsec.IDTypeKeyID, Value: "a"}, ProtectedSubnets: []string{"10.10.10.0/24"}}
 	in.Ends[1] = ipsec.EndpointSpec{Vendor: "opnsense", PeerIP: "198.51.100.1", EgressIface: "wan", LANIface: "lan",
-		LocalID: ipsec.IKEIdentity{Type: ipsec.IDTypeKeyID, Value: "b"}, ProtectedSubnets: []string{"192.168.50.0/24"}}
+		LocalID: ipsec.IKEIdentity{Type: ipsec.IDTypeKeyID, Value: "b"}, ProtectedSubnets: []string{"192.168.150.0/24"}}
 	// No InnerIP on either end (pre-fix persisted shape).
 
 	if _, err := d.Render(ipsec.ViewFor(in, 0)); err == nil {

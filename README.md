@@ -10,7 +10,7 @@
 > is a sibling repo, [Firewall-Collector](https://github.com/xphox2/Firewall-Collector).
 
 [![CI](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml/badge.svg)](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.11.277-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.11.278-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.26.8+-00ADD8)](go.mod)
 [![Status](https://img.shields.io/badge/status-alpha-orange)](#project-status)
@@ -260,14 +260,15 @@ firewall-mon/
 │   ├── logging/       # slog setup + SafeGo panic recovery
 │   ├── tracing/       # OpenTelemetry (OTLP) tracing
 │   ├── httputil/      # Shared HTTP helpers (SSRF guard, error responses)
-│   ├── shell/         # Static-source guard tests (cross-cutting invariants)
 │   └── api/
 │       ├── handlers/  # HTTP handlers (split per domain)
 │       └── middleware/ # Security middleware
+├── test/
+│   └── guardrails/    # Static-source guard tests (cross-cutting invariants)
 ├── web/
 │   ├── public/        # Public dashboard
 │   └── admin/         # Admin panel
-├── docs/              # Operator runbooks, AUDIT log, compatibility matrix
+├── docs/              # Operator runbooks, compatibility matrix
 └── deploy.sh          # Deployment script
 ```
 
@@ -523,7 +524,6 @@ The grouped overview below covers every category.
 - [docs/custom-vendor.md](docs/custom-vendor.md) — step-by-step tutorial for adding a new SNMP vendor profile.
 - [docs/FORTIGATE-SNMP-SETUP.md](docs/FORTIGATE-SNMP-SETUP.md) — FortiGate device-side setup.
 - [docs/FEATURES.md](docs/FEATURES.md) — website-ready feature inventory.
-- [docs/AUDIT.md](docs/AUDIT.md) — public-release audit and progress log.
 - [docs/OPERATIONS.md §Upgrade](docs/OPERATIONS.md#upgrade) — production upgrade runbook.
 - [MIGRATING.md](MIGRATING.md) — probe↔server wire format (`schema_version`).
 - [KNOWN-ISSUES.md](KNOWN-ISSUES.md) — current limitations with AUDIT-NNN cross-links.
@@ -546,7 +546,7 @@ ES2020 JavaScript:
 **Alpha.** The core feature set (SNMP polling, trap/syslog/sFlow ingestion,
 alerting, config-change tracking, remote probes, reporting) is implemented and
 runs in the maintainer's own environment, and the codebase has been through
-several internal engineering and security audits (see [`docs/AUDIT.md`](docs/AUDIT.md)).
+several engineering and security reviews.
 That said, it is early:
 
 - **Breaking changes may land between minor versions.** Pin a version and read

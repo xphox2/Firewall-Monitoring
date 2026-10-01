@@ -16,7 +16,7 @@ func seedStateRow(t *testing.T, d *Database, dev uint, name, status string, ts t
 	t.Helper()
 	if err := d.SaveVPNStatuses([]models.VPNStatus{{
 		DeviceID: dev, TunnelName: name, TunnelType: "ipsec", Status: status,
-		BytesIn: 1000, BytesOut: 2000, LocalSubnet: "192.168.5.0/24",
+		BytesIn: 1000, BytesOut: 2000, LocalSubnet: "192.168.105.0/24",
 		Timestamp: ts,
 	}}); err != nil {
 		t.Fatalf("seed state row: %v", err)
@@ -241,7 +241,7 @@ func TestVPNWriterMerge_StripsFortiOSConfigQuotes(t *testing.T) {
 func TestVPNWriterMerge_CountsDoNotCollapseDistinctTunnels(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	now := time.Now()
-	for _, name := range []string{"DMZ", "HUB", "NUDAY_LAN"} {
+	for _, name := range []string{"DMZ", "HUB", "KESTREL_LAN"} {
 		seedStateRow(t, d, 1, name, "up", now.Add(-90*time.Second))
 		seedConfigRow(t, d, 1, name, now.Add(-30*time.Second))
 	}
@@ -260,7 +260,7 @@ func TestVPNWriterMerge_CountsDoNotCollapseDistinctTunnels(t *testing.T) {
 }
 
 // The merge is keyed per DEVICE as well as per name. Two devices commonly run
-// tunnels with the same name (DMZ, HUB and NUDAY_LAN all appear on more than one
+// tunnels with the same name (DMZ, HUB and KESTREL_LAN all appear on more than one
 // firewall in a hub-and-spoke), and the fleet-wide reader sees them together.
 func TestVPNWriterMerge_SameTunnelNameOnTwoDevicesStaysSeparate(t *testing.T) {
 	d := NewDatabaseForTesting(t)

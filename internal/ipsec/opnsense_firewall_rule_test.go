@@ -14,7 +14,7 @@ import (
 // but no packet forwards (the fwm-t9 outage).
 func TestOPNsense_FirewallRules_Rendered(t *testing.T) {
 	d, _ := ipsec.Driver("opnsense")
-	in := canonicalIntent() // end 1 = OPNsense (192.168.50.0/24), end 0 = FortiGate (10.10.10.0/24)
+	in := canonicalIntent() // end 1 = OPNsense (192.168.150.0/24), end 0 = FortiGate (10.10.10.0/24)
 	art, err := d.Render(ipsec.ViewFor(in, 1))
 	if err != nil {
 		t.Fatalf("render: %v", err)
@@ -64,10 +64,10 @@ func TestOPNsense_FirewallRules_Rendered(t *testing.T) {
 	if out == "" || in2 == "" {
 		t.Fatalf("expected rule_out_0 and rule_in_0 captures, got %v", byCap)
 	}
-	if !strings.Contains(out, `"source_net":"192.168.50.0/24"`) || !strings.Contains(out, `"destination_net":"10.10.10.0/24"`) {
+	if !strings.Contains(out, `"source_net":"192.168.150.0/24"`) || !strings.Contains(out, `"destination_net":"10.10.10.0/24"`) {
 		t.Errorf("rule_out_0 orientation wrong: %s", out)
 	}
-	if !strings.Contains(in2, `"source_net":"10.10.10.0/24"`) || !strings.Contains(in2, `"destination_net":"192.168.50.0/24"`) {
+	if !strings.Contains(in2, `"source_net":"10.10.10.0/24"`) || !strings.Contains(in2, `"destination_net":"192.168.150.0/24"`) {
 		t.Errorf("rule_in_0 orientation wrong: %s", in2)
 	}
 }
@@ -78,7 +78,7 @@ func TestOPNsense_FirewallRules_Rendered(t *testing.T) {
 func TestOPNsense_FirewallRules_MultiSubnet(t *testing.T) {
 	d, _ := ipsec.Driver("opnsense")
 	in := canonicalIntent()
-	in.Ends[1].ProtectedSubnets = []string{"192.168.50.0/24", "192.168.51.0/24"} // OPNsense=local (2)
+	in.Ends[1].ProtectedSubnets = []string{"192.168.150.0/24", "192.168.51.0/24"} // OPNsense=local (2)
 	// remote (FortiGate) has 1 subnet → 2 pairs × 2 directions = 4 rules.
 	art, err := d.Render(ipsec.ViewFor(in, 1))
 	if err != nil {
@@ -155,7 +155,7 @@ func TestOPNsense_RenderRemove_DeletesRulesAndApplies(t *testing.T) {
 func TestOPNsense_MixedFamily_FailsLoud(t *testing.T) {
 	d, _ := ipsec.Driver("opnsense")
 	in := canonicalIntent()
-	in.Ends[1].ProtectedSubnets = []string{"192.168.50.0/24", "2001:db8::/64"}
+	in.Ends[1].ProtectedSubnets = []string{"192.168.150.0/24", "2001:db8::/64"}
 	if _, err := d.Render(ipsec.ViewFor(in, 1)); err == nil {
 		t.Fatal("mixed IPv4/IPv6 protected subnets must fail the render (documented dual-stack follow-up)")
 	}

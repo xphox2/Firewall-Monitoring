@@ -88,9 +88,9 @@ func TestPeerRoute_ConditionalBothVendors(t *testing.T) {
 	fg.Ends[1].Dynamic = false
 	fg.Ends[1].PeerIP = "203.0.113.9"
 	fg.Ends[1].ProtectedSubnets = []string{"203.0.113.0/24"}
-	fg.Ends[0].Gateway = "66.179.9.1"
+	fg.Ends[0].Gateway = "198.19.9.1"
 	art := render(t, "fortigate", 0, fg)
-	if !strings.Contains(stepsText(art), `"dst":"203.0.113.9 255.255.255.255"`) || !strings.Contains(stepsText(art), `"gateway":"66.179.9.1"`) {
+	if !strings.Contains(stepsText(art), `"dst":"203.0.113.9 255.255.255.255"`) || !strings.Contains(stepsText(art), `"gateway":"198.19.9.1"`) {
 		t.Errorf("fortigate: expected peer /32 route via gateway; got:\n%s", stepsText(art))
 	}
 	// Same overlap but NO gateway → no /32 (validation will warn instead).
@@ -132,14 +132,14 @@ func TestValidate_TooManySubnetsBlocks(t *testing.T) {
 func TestValidate_SelfLockoutClearedByGateway(t *testing.T) {
 	c := [2]ipsec.CapabilityDescriptor{caps(t, "fortigate"), caps(t, "opnsense")}
 	in := canonicalIntent()
-	in.Ends[0].ProtectedSubnets = []string{"66.179.9.0/24"} // contains end0 peer 66.179.9.155
+	in.Ends[0].ProtectedSubnets = []string{"198.19.9.0/24"} // contains end0 peer 198.19.9.155
 
 	// No gateway on the end that routes it (end 1 installs end0's subnets) → warn.
 	if !hasCode(ipsec.Validate(in, c), "self_lockout") {
 		t.Fatal("expected self_lockout without a gateway")
 	}
 	// Supply end 1's WAN gateway → the /32 will be pinned → no self_lockout.
-	in.Ends[1].Gateway = "192.168.5.1"
+	in.Ends[1].Gateway = "192.168.105.1"
 	if hasCode(ipsec.Validate(in, c), "self_lockout") {
 		t.Error("self_lockout should be cleared once the routing end has a Gateway")
 	}

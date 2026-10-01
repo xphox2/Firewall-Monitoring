@@ -21,7 +21,7 @@ import (
 // a real DB fixture (deferred).
 func TestParseBucketToMillis_AUDIT145(t *testing.T) {
 	// The sentinel is exposed via a getter so the test doesn't
-	// need to read the unexported constant. A future agent who
+	// need to read the unexported constant. A future contributor who
 	// changes the sentinel value (e.g. to math.MinInt64) would
 	// fail the tests below on the "unparseable" cases anyway, so
 	// we don't pin the value here.
@@ -84,7 +84,7 @@ func TestParseBucketToMillis_AUDIT145(t *testing.T) {
 // stdlib parser the production code does. It exists so the test
 // doesn't pin hand-computed ms values (which would be fragile to
 // a future Go release changing how the format string is
-// interpreted, or to a future agent who adjusts the format
+// interpreted, or to a future contributor who adjusts the format
 // string subtly).
 func expectedMilli(t *testing.T, value, format string) int64 {
 	t.Helper()

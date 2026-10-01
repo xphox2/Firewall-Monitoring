@@ -54,13 +54,13 @@ func activeDevices(t *testing.T, db *database.Database) []models.Device {
 // endpoint by design (other consumers rely on it), so the poller must drop it.
 func TestDetectVPN_RetiredProvisionedEndpointIsNotLinked(t *testing.T) {
 	f := newMapFixture(t)
-	f.provision(t, "fwm-t12", f.fgt, f.opn, []string{"192.168.13.0/24"}, []string{"192.168.50.0/24"})
+	f.provision(t, "fwm-t12", f.fgt, f.opn, []string{"192.168.113.0/24"}, []string{"192.168.150.0/24"})
 	// The surviving peer still reports the provisioned tunnel.
 	if err := f.db.SaveVPNStatuses([]models.VPNStatus{
 		{DeviceID: f.opn.ID, TunnelName: "fwm-t12", TunnelType: "ipsec", Status: "down", Timestamp: time.Now()},
 		// The retired device's own rows are still inside the grace window.
 		parentRow(f.fgt.ID, "fwm-t12"),
-		dialupRow(f.fgt.ID, "192.168.13.0/24", "192.168.50.0/32"),
+		dialupRow(f.fgt.ID, "192.168.113.0/24", "192.168.150.0/32"),
 	}); err != nil {
 		t.Fatalf("save vpn: %v", err)
 	}
@@ -176,8 +176,8 @@ func TestDetectOverlay_RetiredDeviceInterfacesAreNotLinked(t *testing.T) {
 func TestDetectL2_RetiredMACOwnerIsNotLinked(t *testing.T) {
 	p, db := newTestPoller(t)
 	site := l2TestSite(t, db)
-	core := l2TestDevice(t, db, "fw-core", "192.168.5.1", &site.ID)
-	branch := l2TestDevice(t, db, "fw-branch", "192.168.5.107", &site.ID)
+	core := l2TestDevice(t, db, "fw-core", "192.168.105.1", &site.ID)
+	branch := l2TestDevice(t, db, "fw-branch", "192.168.105.107", &site.ID)
 
 	now := time.Now()
 	if err := db.SaveInterfaceStats([]models.InterfaceStats{

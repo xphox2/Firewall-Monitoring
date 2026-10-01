@@ -147,8 +147,8 @@ func TestGetVPNMapData_RetiredProvisionedPeerIsUnmatched(t *testing.T) {
 	gone := seedRetiredDevice(t, h)
 
 	in := &ipsec.TunnelIntent{Name: "fwm-t12", Enabled: true, IKEVersion: ipsec.IKEv2, Mode: ipsec.ModePolicyBased}
-	in.Ends[0] = ipsec.EndpointSpec{DeviceID: gone.ID, Vendor: "fortigate", EgressIface: "port1", ProtectedSubnets: []string{"192.168.13.0/24"}}
-	in.Ends[1] = ipsec.EndpointSpec{DeviceID: opn.ID, Vendor: "opnsense", EgressIface: "wan", ProtectedSubnets: []string{"192.168.50.0/24"}}
+	in.Ends[0] = ipsec.EndpointSpec{DeviceID: gone.ID, Vendor: "fortigate", EgressIface: "port1", ProtectedSubnets: []string{"192.168.113.0/24"}}
+	in.Ends[1] = ipsec.EndpointSpec{DeviceID: opn.ID, Vendor: "opnsense", EgressIface: "wan", ProtectedSubnets: []string{"192.168.150.0/24"}}
 	m, err := database.IPSecIntentToModel(in)
 	if err != nil {
 		t.Fatalf("to model: %v", err)

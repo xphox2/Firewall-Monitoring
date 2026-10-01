@@ -440,7 +440,7 @@ func childKey(localSel, remoteSel string) string {
 
 // ---- small helpers -----------------------------------------------------
 
-// networkOf strips a prefix length: "192.168.13.0/24" → "192.168.13.0".
+// networkOf strips a prefix length: "192.168.113.0/24" → "192.168.113.0".
 func networkOf(cidr string) string {
 	if i := strings.IndexByte(cidr, '/'); i >= 0 {
 		return cidr[:i]

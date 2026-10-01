@@ -15,11 +15,11 @@ import (
 func TestProject_UnparseableIPRejected(t *testing.T) {
 	cases := []string{
 		// Garbage src.
-		`srcip=not-an-ip dstip=66.179.9.150 dstport=3389 proto=6 action="deny"`,
+		`srcip=not-an-ip dstip=198.19.9.150 dstport=3389 proto=6 action="deny"`,
 		// Garbage dst.
 		`srcip=203.0.113.9 dstip=garbage dstport=3389 proto=6 action="deny"`,
 		// A multi-KB "srcip" — the btree-overflow shape from the audit.
-		`srcip=` + strings.Repeat("A", 4096) + ` dstip=66.179.9.150 proto=6 action="deny"`,
+		`srcip=` + strings.Repeat("A", 4096) + ` dstip=198.19.9.150 proto=6 action="deny"`,
 	}
 	for _, msg := range cases {
 		if ev, ok := Project(denyMsg(msg), nil, PatternConfig{}); ok {
@@ -27,7 +27,7 @@ func TestProject_UnparseableIPRejected(t *testing.T) {
 		}
 	}
 	// Valid IPs (v4 and v6) still project.
-	v6 := `srcip=2001:db8::9 dstip=66.179.9.150 dstport=3389 proto=6 action="deny"`
+	v6 := `srcip=2001:db8::9 dstip=198.19.9.150 dstport=3389 proto=6 action="deny"`
 	if _, ok := Project(denyMsg(v6), nil, PatternConfig{}); !ok {
 		t.Errorf("valid IPv6 src must still project")
 	}
@@ -37,7 +37,7 @@ func TestProject_PolicyNameServiceCapped(t *testing.T) {
 	// 10KB policyname; "é" (2 bytes) starts at byte 63, so it straddles the
 	// 64-byte cut — the cut must back up to the rune boundary, not split it.
 	long := strings.Repeat("a", 63) + "é" + strings.Repeat("b", 10*1024)
-	msg := `srcip=203.0.113.9 dstip=66.179.9.150 dstport=3389 proto=6 action="deny" ` +
+	msg := `srcip=203.0.113.9 dstip=198.19.9.150 dstport=3389 proto=6 action="deny" ` +
 		`policyname="` + long + `" service="` + long + `"`
 	ev, ok := Project(denyMsg(msg), nil, PatternConfig{})
 	if !ok {

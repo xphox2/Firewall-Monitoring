@@ -31,7 +31,7 @@ func TestFlowIngest_StampsServicePort(t *testing.T) {
 	batch := []map[string]interface{}{
 		// A server's reply: src 443 → client port. Collector-supplied values
 		// for the two server-owned fields must be ignored.
-		{"sampler_address": "10.9.1.1", "src_addr": "66.179.9.156", "dst_addr": "198.51.100.7",
+		{"sampler_address": "10.9.1.1", "src_addr": "198.19.9.156", "dst_addr": "198.51.100.7",
 			"src_port": 443, "dst_port": 51234, "protocol": 6, "bytes": 100, "packets": 1,
 			"service_port": 9999, "class_rev": 7},
 		// Two ephemeral ports: no service.

@@ -1650,8 +1650,7 @@ func (d *Database) migrateConfigRevisionAttribution() error {
 // existing rows conform to the new sFlow sampling-rate scaling convention:
 // the bytes/packets columns now hold `frame_length × sampling_rate` and
 // `sampling_rate` respectively (instead of the raw `frame_length` and `1`).
-// The audit (2026-06-22, docs/audit-archive/audit-2026-06-22-taocp.md [critical] #1
-// and #2) found the server had been storing frame_length verbatim, so every
+// A review found the server had been storing frame_length verbatim, so every
 // dashboard chart / top-N list under-reported real traffic by 1:N.
 //
 // Idempotency: the WHERE clause selects only rows that haven't been migrated
@@ -2852,8 +2851,7 @@ func (d *Database) migrateSpikeRuleInheritSettings() error {
 // metadata-only on PG11+ (no table rewrite), the ALTER propagates to all
 // monthly children on the partitioned-parent case, and the populated
 // plain-table prod case (skipped by the v2 partition conversion) takes the
-// same statement. Column rationale: docs/flow-protocol-research-2026-07-03.md
-// §2.1 — flow_start/flow_end because NetFlow records are interval aggregates
+// same statement. Column rationale: flow_start/flow_end because NetFlow records are interval aggregates
 // (up to 30-min active timeouts) not instants; firewall_event because
 // denied-flow visibility is the headline NetFlow win (zero-byte rows are
 // legal); flow_end_reason for future flow stitching (2 = active timeout);
