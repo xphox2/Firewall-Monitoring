@@ -52,6 +52,13 @@ RUN chmod +x fwmon-*
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
 
+# Break-glass account reset (docs/OPERATIONS.md "Admin password reset"):
+# `docker exec -it <container> fwmon-reset-auth --user <name>`. The wrapper
+# loads the same DB environment entrypoint.sh exports and runs
+# `./fwmon-api reset-auth` as fwmon. Root-owned, on PATH.
+COPY scripts/fwmon-reset-auth /usr/local/bin/fwmon-reset-auth
+RUN chmod 0755 /usr/local/bin/fwmon-reset-auth
+
 RUN chown -R fwmon:fwmon /app
 
 # Web UI/API + probe relay ingest (8080) and the SNMP trap receiver (162/udp).

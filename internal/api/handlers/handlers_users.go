@@ -269,6 +269,13 @@ func (h *Handler) ResetUserPassword(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// D-RESET: an admin password reset always removes the account's passkeys
+	// (a rogue passkey must not outlive the recovery). First, so a failure
+	// changes nothing.
+	if _, err := db.DeleteAdminPasskeys(id); err != nil {
+		httputil.InternalError(c, "Failed to remove passkeys", err)
+		return
+	}
 	tempPassword, err := auth.GenerateSecureToken(20)
 	if err != nil {
 		httputil.InternalError(c, "Failed to generate temporary password", err)

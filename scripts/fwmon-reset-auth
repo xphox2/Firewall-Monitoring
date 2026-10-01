@@ -1,0 +1,45 @@
+#!/bin/bash
+# fwmon-reset-auth — break-glass account reset (passkey plan, PR 2).
+#
+#   docker exec -it <container> fwmon-reset-auth --user <name> [--keep-2fa] [--keep-passkeys]
+#
+# Sets a new random temporary password (printed once), forces a password change
+# at the next login, clears TOTP 2FA + recovery codes and deletes all passkeys
+# (unless the --keep-* flags are given), ends every session of the account and
+# writes an audit-log row. See docs/OPERATIONS.md "Admin password reset".
+#
+# A plain `docker exec` does not have the database environment: entrypoint.sh
+# exports it only to the daemons it starts. This wrapper rebuilds exactly that
+# environment from the same sources entrypoint.sh uses, then runs the API
+# binary's reset-auth subcommand as the fwmon user (like the daemons).
+set -euo pipefail
+
+PG_CRED_FILE="/config/pg-credentials"
+PGRUN="/run/postgresql"
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "fwmon-reset-auth: run as root (the default for docker exec)" >&2
+    exit 1
+fi
+if [ ! -r "$PG_CRED_FILE" ]; then
+    echo "fwmon-reset-auth: $PG_CRED_FILE not found — is this the Firewall-Mon container, and has it started once?" >&2
+    exit 1
+fi
+if [ ! -S "$PGRUN/.s.PGSQL.5432" ]; then
+    echo "fwmon-reset-auth: PostgreSQL is not running (no socket in $PGRUN) — start the container first" >&2
+    exit 1
+fi
+
+# shellcheck disable=SC1090
+. "$PG_CRED_FILE"
+
+export DB_TYPE=postgres
+export DB_HOST="$PGRUN"
+export DB_PORT=5432
+export DB_NAME=firewall_mon
+export DB_USER="$PG_USER"
+export DB_PASSWORD="$PG_PASSWORD"
+export CONFIG_FILE=/config/config.env
+
+cd /app
+exec su-exec fwmon ./fwmon-api reset-auth "$@"

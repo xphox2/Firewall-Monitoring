@@ -3248,3 +3248,53 @@ func (d *Database) migrateDeleteConnectionsToRetiredDevices() error {
 	}
 	return nil
 }
+
+// passkeysPostgresDDL is migration v70 on Postgres. Every statement is
+// idempotent (IF NOT EXISTS), so a run interrupted half-way — migrations are
+// not transactional and a failure is fatal at startup — completes on the next
+// boot. The webauthn_credentials.admin_id foreign key (ON DELETE CASCADE) is
+// only a backstop: DeleteAdmin deletes the rows explicitly.
+var passkeysPostgresDDL = []string{
+	`ALTER TABLE admins ADD COLUMN IF NOT EXISTS webauthn_user_handle bytea`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_admins_webauthn_user_handle ON admins (webauthn_user_handle)`,
+	`ALTER TABLE admins ADD COLUMN IF NOT EXISTS passkey_notice_seen_at timestamptz`,
+	`ALTER TABLE login_attempts ADD COLUMN IF NOT EXISTS method text`,
+	`CREATE TABLE IF NOT EXISTS webauthn_credentials (
+		id bigserial PRIMARY KEY,
+		admin_id bigint NOT NULL REFERENCES admins(id) ON DELETE CASCADE,
+		credential_id bytea NOT NULL,
+		public_key bytea NOT NULL,
+		attestation_type text NOT NULL DEFAULT '',
+		aaguid bytea,
+		sign_count bigint NOT NULL DEFAULT 0,
+		backup_eligible boolean NOT NULL DEFAULT false,
+		backup_state boolean NOT NULL DEFAULT false,
+		transports text NOT NULL DEFAULT '',
+		name text NOT NULL DEFAULT '',
+		created_at timestamptz,
+		last_used_at timestamptz
+	)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_webauthn_credentials_credential_id ON webauthn_credentials (credential_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_webauthn_credentials_admin_id ON webauthn_credentials (admin_id)`,
+}
+
+// migratePasskeys (v70, passkey login) adds the WebAuthn user handle and the
+// new-passkey notice timestamp to admins, the method column to
+// login_attempts, and the webauthn_credentials table. All additive and NULL /
+// empty by default: nothing changes for an existing account until it
+// registers a passkey, and the feature itself ships disabled.
+func (d *Database) migratePasskeys() error {
+	if !d.dialect.IsPostgres() {
+		if err := d.db.AutoMigrate(&models.Admin{}, &models.LoginAttempt{}, &models.WebAuthnCredential{}); err != nil {
+			return fmt.Errorf("migrate v70 passkeys: %w", err)
+		}
+		return nil
+	}
+	for _, stmt := range passkeysPostgresDDL {
+		if err := d.execMaintenanceDDL(stmt); err != nil {
+			return fmt.Errorf("migrate v70 passkeys: %w", err)
+		}
+	}
+	log.Printf("migrate v70 passkeys: ensured admins.webauthn_user_handle/passkey_notice_seen_at, login_attempts.method, webauthn_credentials")
+	return nil
+}

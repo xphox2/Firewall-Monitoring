@@ -298,6 +298,14 @@ type AuthConfig struct {
 	// duplicated work. The flag is captured once at config-load
 	// time and read by every consumer.
 	AdminPasswordGenerated bool
+	// WebAuthn (passkey login). Shipped DISABLED: nothing passkey-related is
+	// reachable unless WebAuthnEnabled is true AND the RP ID / origins pass
+	// the separate, non-fatal validation in internal/passkey (an invalid
+	// value disables passkeys with a loud log; the server still starts and
+	// password login is unaffected). Never derived from Host/X-Forwarded-*.
+	WebAuthnEnabled bool   // WEBAUTHN_ENABLED (default false) — also the kill switch
+	WebAuthnRPID    string // WEBAUTHN_RP_ID (default: the PUBLIC_BASE_URL host)
+	WebAuthnOrigins string // WEBAUTHN_ORIGINS — comma list of https://host[:port] (default: the PUBLIC_BASE_URL origin)
 }
 
 type AlertsConfig struct {
@@ -534,6 +542,9 @@ func Load() *Config {
 			TokenExpiry:            getDurationEnv("TOKEN_EXPIRY", 24*time.Hour),
 			MaxLoginAttempts:       getIntEnv("MAX_LOGIN_ATTEMPTS", 5),
 			LockoutDuration:        getDurationEnv("LOCKOUT_DURATION", 15*time.Minute),
+			WebAuthnEnabled:        getBoolEnv("WEBAUTHN_ENABLED", false),
+			WebAuthnRPID:           getEnv("WEBAUTHN_RP_ID", ""),
+			WebAuthnOrigins:        getEnv("WEBAUTHN_ORIGINS", ""),
 		},
 		Alerts: AlertsConfig{
 			EmailEnabled:             getBoolEnv("EMAIL_ENABLED", false),

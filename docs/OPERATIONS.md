@@ -124,20 +124,35 @@ configured = unsigned requests, exactly as before.
 
 `InitAdmin` only **creates** the admin when none exists — it does **not**
 overwrite an existing admin, so changing `ADMIN_PASSWORD` and restarting has no
-effect on an already-initialized install. To reset:
+effect on an already-initialized install.
 
-1. Stop the API (or the whole container).
-2. Connect to the DB and remove the admin row:
-   ```sql
-   DELETE FROM admins;
-   ```
-   (In the single container: `docker exec -it <c> su-exec postgres psql -h /run/postgresql -d firewall_mon -c "DELETE FROM admins;"`)
-3. Start with `ADMIN_USERNAME` + `ADMIN_PASSWORD` set — `InitAdmin` recreates
-   the admin from those env values on boot.
+- **Another admin can still log in:** Settings → Users → *Reset password*
+  (issues a temporary password) or *Reset 2FA*. Both also delete all of that
+  user's passkeys.
+- **Nobody can log in (break-glass):** run the reset tool inside the container.
+  It needs no web UI and no working login:
 
-Note: with multiple users (v0.11 RBAC), `DELETE FROM admins WHERE username='<name>';`
-targets one account; deleting all rows removes every user and re-bootstraps only
-the env-configured admin.
+  ```sh
+  docker exec -it <container> fwmon-reset-auth --user <name>
+  ```
+
+  In one transaction it sets a new random **temporary password (printed
+  once)**, flags the account to choose a new password at its next login, clears
+  its TOTP 2FA and recovery codes, deletes all of its passkeys, ends every
+  session of the account, and writes an audit-log row (`reset_auth`).
+  `--keep-2fa` keeps the 2FA enrolment and `--keep-passkeys` keeps the
+  passkeys; both are off by default. It does not re-enable a disabled account.
+
+  Login lockouts (too many failed attempts) are kept in the API's memory, not
+  the database: if the account is currently locked out, restart the container
+  (`docker restart <container>`) after the reset. The tool prints this
+  reminder too.
+
+  `fwmon-reset-auth` is a wrapper installed in the image: it loads the same
+  database environment `entrypoint.sh` exports (`/config/pg-credentials`, the
+  Postgres socket in `/run/postgresql`, `CONFIG_FILE=/config/config.env`) and
+  runs `./fwmon-api reset-auth` as the `fwmon` user. A plain
+  `docker exec … ./fwmon-api reset-auth` would not have that environment.
 
 ---
 
@@ -145,15 +160,10 @@ the env-configured admin.
 
 If a user loses both their authenticator and recovery codes, any **admin** can
 clear their 2FA from Settings → Users → *Reset 2FA*. If the **last admin** is
-the one locked out, clear the flag directly in the database:
-
-```sql
-UPDATE admins SET totp_enabled = false, totp_secret = '' WHERE username = '<name>';
-DELETE FROM admin_recovery_codes WHERE admin_id = (SELECT id FROM admins WHERE username = '<name>');
-```
-
-(In the single container: wrap in the same `docker exec … psql` as above.) The
-user then logs in with password only and can re-enroll.
+the one locked out, use the break-glass reset above
+(`docker exec -it <container> fwmon-reset-auth --user <name>`): it clears 2FA
+and issues a temporary password; the user then logs in, sets a new password
+and can re-enroll.
 
 Two design notes worth knowing during an incident: **API tokens bypass TOTP by
 design** (they are their own credential class — revoke them from Settings → API
@@ -161,6 +171,33 @@ Tokens if an account is suspect), and TOTP secrets are encrypted with the same
 field-encryption key chain as device credentials — if `ENCRYPTION_KEY` is lost,
 TOTP validation fails closed (codes stop working) and the startup canary flags
 the key problem loudly (see “Failure modes”).
+
+---
+
+## Passkeys (WebAuthn)
+
+Passkey login is an **additional** way in: password (+TOTP) login always keeps
+working. It ships **disabled**.
+
+- `WEBAUTHN_ENABLED=true` turns it on. Setting it back to `false` is the kill
+  switch: every passkey endpoint returns 404 and the login page stops offering
+  passkeys; stored passkeys are kept and work again when re-enabled.
+- `WEBAUTHN_RP_ID` is the relying-party ID — a DNS name, never an IP address.
+  Default: the host of `PUBLIC_BASE_URL`. Prefer the exact host users browse to.
+- `WEBAUTHN_ORIGINS` is the comma-separated list of exact origins passkeys may
+  be used from (`https://host[:port]`; plain `http` only for `localhost`), each
+  equal to or within the RP ID. Default: the `PUBLIC_BASE_URL` origin.
+- Neither value is ever derived from the request's `Host` or `X-Forwarded-*`
+  headers. A value that fails validation disables passkeys with a loud
+  `ERROR: passkeys DISABLED` block in the API log; the API still starts.
+- Passkeys require user verification (PIN/biometric), so a passkey login is a
+  full session without the TOTP step.
+- Every reset path removes a user's passkeys: admin *Reset password*, admin
+  *Reset 2FA*, `fwmon-reset-auth`, and a self-service password change (unless
+  the request explicitly keeps them). Deleting a passkey ends the user's other
+  sessions.
+- Changing the RP ID orphans existing passkeys (browsers bind them to the RP
+  ID); users then sign in with their password and register new ones.
 
 ---
 

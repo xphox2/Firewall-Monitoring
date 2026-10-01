@@ -1,3 +1,13 @@
+# Passkey (WebAuthn) login (plan: tasks/PASSKEYS-PLAN.md, v3, decisions 2026-09-30)
+- [x] Research: current auth map + WebAuthn pitfalls; plan drafted
+- [x] Adversarial review x2 (lockout, wrong-user) -> plan v2; user decisions recorded -> v3
+- [x] PR 0 — Go 1.26 toolchain bump (go.mod, Dockerfile, CI) — #284
+- [x] PR 1 — hardening: D1 user-1 fallback, D5 empty-role, D7 recovery-code cleanup, D3 TRUSTED_PROXIES, shared TOTP replay purpose, completeLogin — #285 (v0.11.276); purge-test flake fix #286
+- [ ] PR 2 — IN PROGRESS (branch feat/passkeys-backend, v0.11.277) — backend: v70 (idempotent), config + kill switch, in-memory ceremonies, login/registration/management, resets delete passkeys, fwmon-reset-auth wrapper, audit (default off)
+- [ ] PR 3 — UI + docs: login button, profile management + new-key notice, admin action, OPERATIONS.md
+- [ ] Rollout: deploy disabled; prove fwmon-reset-auth in prod; enable; verify login/delete/kill switch
+- [ ] Separately tracked: D2 TOTP budget reset, D4 re-auth rate limits, D6 cookie Secure/HSTS behind proxy, D8 username-keyed lookups, D9 /metrics auth
+
 # Retention must not black out alerting — v0.11.256 (plan: ~/.claude/plans/zany-pondering-snail.md)
 - [x] maintenanceLockKey ("FWMAINTN") for retention + rollup; monitoring/detect/ipsec/feeds stay on the work lock
 - [x] 40P01 retry (lockRetryable) in both batch loops; resolveOpenAlertRows logs its errors

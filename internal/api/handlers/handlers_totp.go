@@ -341,7 +341,8 @@ func (h *Handler) Disable2FA(c *gin.Context) {
 }
 
 // ResetUser2FA (admin-only) clears another account's 2FA — the recovery path
-// when an operator loses both the authenticator and the recovery codes.
+// when an operator loses both the authenticator and the recovery codes — and
+// deletes all of its passkeys (D-RESET).
 func (h *Handler) ResetUser2FA(c *gin.Context) {
 	db := h.reqDB(c)
 	if !httputil.RequireDB(c, db) {
@@ -349,6 +350,11 @@ func (h *Handler) ResetUser2FA(c *gin.Context) {
 	}
 	id, _, ok := h.loadUserParam(c)
 	if !ok {
+		return
+	}
+	// D-RESET: an admin 2FA reset always removes the account's passkeys too.
+	if _, err := db.DeleteAdminPasskeys(id); err != nil {
+		httputil.InternalError(c, "Failed to remove passkeys", err)
 		return
 	}
 	if err := db.ClearAdminTOTP(id); err != nil {
