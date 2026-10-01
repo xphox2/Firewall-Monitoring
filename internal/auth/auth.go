@@ -28,11 +28,11 @@ type Claims struct {
 	Username     string `json:"username"`
 	UserID       uint   `json:"user_id"`
 	TokenVersion uint   `json:"token_version"`
-	// Role is the RBAC role baked into the session at login. Tokens minted
-	// before the RBAC upgrade have no role claim; EffectiveRole defaults those
-	// to admin — safe because pre-upgrade exactly one user existed and it was
-	// the admin, and such tokens age out within TokenExpiry (≤24h). Role
-	// changes bump TokenVersion, so a stale role can't outlive revocation.
+	// Role is the RBAC role baked into the session at login. A full-session
+	// token whose role is empty or unknown grants NOTHING (EffectiveRole
+	// returns "" and the auth middleware rejects it, forcing a re-login) —
+	// it never defaults to admin (D5). Role changes bump TokenVersion, so a
+	// stale role can't outlive revocation.
 	Role string `json:"role,omitempty"`
 	// Stage marks a partially-authenticated token. "" = full session;
 	// StageTOTP = password verified, TOTP code still owed (P0-3). Every
@@ -49,11 +49,14 @@ const StageTOTP = "totp"
 // its TOTP code before starting over.
 const PendingTokenExpiry = 5 * time.Minute
 
-// EffectiveRole returns the role this session grants, defaulting legacy
-// pre-RBAC tokens (no role claim) to admin. See the Role field comment.
+// EffectiveRole returns the role this session grants, or "" when the claim is
+// empty or not one of the defined roles. Fail closed (D5): an empty role used
+// to default to admin for pre-RBAC tokens; every token minted since the RBAC
+// upgrade carries an explicit role, so "" now means "no access" — callers
+// must treat it as an unauthenticated session.
 func (c *Claims) EffectiveRole() string {
-	if c.Role == "" {
-		return RoleAdmin
+	if !ValidRole(c.Role) {
+		return ""
 	}
 	return c.Role
 }
@@ -86,12 +89,12 @@ type AuthManager struct {
 	loginAttempts map[string][]time.Time
 	attemptsMu    sync.RWMutex
 	// usedTOTPCodes remembers each successfully-validated TOTP code (hashed,
-	// namespaced by {purpose,user}) until it can no longer be accepted — the
+	// namespaced by user) until it can no longer be accepted — the
 	// replay guard. Keyed on the CODE, not the wall-clock slot: validateTOTPCode
 	// uses Skew:1, so a code is valid for ~90s across three 30s slots, and a
 	// slot-based guard let an intercepted code replay once in the adjacent slot.
-	// Value = unix expiry (first-use + totpReplayWindow). Keyed by purpose so
-	// independent flows ("login" vs "reveal") don't lock each other out. Only
+	// Value = unix expiry (first-use + totpReplayWindow). One namespace for all
+	// consumers, so a code spent on one action can't be replayed on another. Only
 	// valid codes reach here (callers validate first), so the map holds at most a
 	// few entries per user per window and is swept on each call. PER-PROCESS:
 	// under the AUDIT-040 singleton exactly one cmd/api serves logins, so the
@@ -197,17 +200,24 @@ func (am *AuthManager) ClearFailures(username, ip string) {
 // gap regardless of where a wall-clock slot boundary falls.
 const totpReplayWindow = 90 * time.Second
 
+// totpReplayNamespace is the single replay-guard namespace shared by EVERY
+// TOTP consumer (2FA login, enrolment verify, disable-2FA, reveal, purge). One namespace means a
+// code accepted by any endpoint is rejected by every other endpoint for the
+// rest of its validity window — an intercepted code cannot be spent twice by
+// routing it to a different action.
+const totpReplayNamespace = "totp"
+
 // MarkTOTPSlotUsed records a successfully-validated TOTP code as consumed for a
-// {purpose,user}, returning false if that exact code was already used within its
+// user, returning false if that exact code was already used within its
 // validity window — the replay guard: an intercepted still-fresh code cannot be
-// used a second time for the SAME action, even across a 30s slot boundary
-// (validateTOTPCode's Skew:1 keeps a code valid for ~90s). Distinct purposes
-// ("login" vs "reveal") have independent guards so one doesn't lock out the
-// other. Callers MUST validate the code first; only valid codes reach here.
-func (am *AuthManager) MarkTOTPSlotUsed(userID uint, purpose, code string) bool {
+// used a second time for ANY action, even across a 30s slot boundary
+// (validateTOTPCode's Skew:1 keeps a code valid for ~90s). The guard is shared
+// by every TOTP consumer (see totpReplayNamespace). Callers MUST validate the
+// code first; only valid codes reach here.
+func (am *AuthManager) MarkTOTPSlotUsed(userID uint, code string) bool {
 	now := time.Now()
-	// Hash so we don't hold plaintext codes in memory; namespace by purpose+user.
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%s", purpose, userID, code)))
+	// Hash so we don't hold plaintext codes in memory; namespace by user.
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%s", totpReplayNamespace, userID, code)))
 	key := hex.EncodeToString(sum[:])
 
 	am.attemptsMu.Lock()

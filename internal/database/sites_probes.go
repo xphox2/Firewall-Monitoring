@@ -272,10 +272,27 @@ func (d *Database) SetAdminMFAPromptDismissed(id uint) error {
 // DeleteAdmin removes the account and revokes its API tokens in the same
 // transaction (LC-15). The token rows are kept (soft revoke) for the audit
 // trail; the auth middleware also rejects any token whose creator row is
-// gone, so the revoke is belt-and-braces.
+// gone, so the revoke is belt-and-braces. The account's 2FA recovery codes
+// are deleted in the same transaction (D7) — they are credentials of a user
+// that no longer exists and must not outlive it. So are its passkeys (v70):
+// deleted explicitly here because SQLite does not enforce the foreign key,
+// and a username reused later must never inherit a credential.
+//
+// Lock order: like every transaction that touches an account's passkeys
+// (see lockAdminRow), it locks the admins row FIRST, so it cannot deadlock
+// against a concurrent reset or registration of the same account.
 func (d *Database) DeleteAdmin(id uint) error {
 	return d.db.Transaction(func(tx *gorm.DB) error {
+		if _, err := d.lockAdminRow(tx, id); err != nil {
+			return err
+		}
 		if err := revokeAPITokensForAdmin(tx, id); err != nil {
+			return err
+		}
+		if err := tx.Where("admin_id = ?", id).Delete(&models.AdminRecoveryCode{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("admin_id = ?", id).Delete(&models.WebAuthnCredential{}).Error; err != nil {
 			return err
 		}
 		return tx.Delete(&models.Admin{}, id).Error

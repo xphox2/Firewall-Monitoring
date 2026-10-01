@@ -18,6 +18,7 @@ import (
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/irc"
 	"firewall-mon/internal/notifier"
+	"firewall-mon/internal/passkey"
 	"firewall-mon/internal/snmp"
 	"firewall-mon/internal/threatintel"
 
@@ -58,6 +59,11 @@ type Handler struct {
 	// GORM-backed *database.Database supplied by NewHandler.
 	db database.Store
 	mu sync.RWMutex
+
+	// passkeys is the enabled WebAuthn service, or nil when passkeys are
+	// disabled (WEBAUTHN_ENABLED unset/false, or an invalid configuration) —
+	// every passkey endpoint then answers 404. Set once at startup.
+	passkeys *passkey.Service
 
 	// agentDropsLast tracks the last CUMULATIVE sFlow sample-pool drops
 	// counter seen per (agent, sampling rate) pair, so recordAgentDrops (M2

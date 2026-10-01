@@ -13,6 +13,7 @@ paths = [
   '''^internal/api/handlers/handlers_profile_test\.go$''',
   '''^internal/api/handlers/handlers_totp_test\.go$''',
   '''^internal/api/handlers/testhelper_test\.go$''',
+  '''^internal/api/middleware/auth_hardening_test\.go$''',
   '''^internal/api/middleware/pending_stage_test\.go$''',
   '''^internal/api/middleware/token_auth_test\.go$''',
   '''^internal/auth/auth_test\.go$''',

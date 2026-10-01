@@ -48,6 +48,7 @@ func allTablers() []tabler {
 		ServerMetric{}, EventRule{}, EventRuleProfile{}, EventRuleProfileToggle{},
 		Incident{}, DiskUsage{}, LoadAverage{}, TopologyEntry{}, TopologyNeighbor{},
 		AdminRecoveryCode{}, ApiToken{}, ProbeCommand{}, IPSecTunnel{}, DeniedEvent{}, DevicePurgeJob{},
+		WebAuthnCredential{},
 		ThreatIntel{}, ThreatFeedStatus{}, FlowSourceSuppression{}, FlowInterfaceCounter{},
 		AgentDrops{}, FlowDetection{},
 	}

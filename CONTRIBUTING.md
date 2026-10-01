@@ -4,7 +4,7 @@ Thanks for considering a contribution. This document covers the dev environment,
 
 ## Dev environment
 
-- **Go**: 1.25+ (check `go.mod` for the exact module-level Go version).
+- **Go**: 1.26+ (check `go.mod` for the exact module-level Go version).
 - **Postgres**: 14+ (production target). Tests use the in-memory SQLite shim — `:memory:` from `modernc.org/sqlite` — so you can `go test ./...` without a live database.
 - **Node**: 20+ only if you need to rebuild `cmd/api/static/css/tailwind.css` via `npm run tailwind`. Most contributors will not touch CSS.
 - **OS**: Linux / macOS / WSL2. Native Windows builds work but a few helper scripts (`deploy.sh`, `entrypoint.sh`) assume bash + `su-exec`.

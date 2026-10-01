@@ -1,7 +1,7 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
-## [0.11.274] - 2026-09-29
+## [0.11.278] - 2026-10-01
 
 ### Changed — repository hygiene for a public project
 
@@ -16,6 +16,59 @@ All notable changes to this project are documented in this file.
 - `test/guardrails/private_denylist_test.go`: a local-only check against a private list of sensitive tokens kept outside the repository. It is skipped unless `FWMON_DENYLIST` is set, so it never runs in CI.
 - **Secret scanning.** A `Secret scan` workflow runs gitleaks 8.30.1 (pinned, checksum-verified) on pushes to master/main and on pull requests, over the commits being added. `.gitleaks.toml` allowlists the reviewed synthetic test secrets by path (and the example config's one empty-password line by exact match), and `.gitleaksignore` records the one reviewed false positive in history.
 - CONTRIBUTING: a "Never commit" section and a local gitleaks pre-commit hook.
+- Brought up to date with 0.11.277: the passkey route-wiring test lives in `test/guardrails/` with the other repo-wide checks, the passkey design note is no longer tracked (code comments no longer point at it), and `scripts/fwmon-reset-auth` (shipped in the image) is the one reviewed script the internal-files guard allows under `scripts/`.
+
+## [0.11.277] - 2026-10-01
+
+### Added — passkey (WebAuthn) sign-in, backend only, OFF by default
+
+- **New, disabled by default.** `WEBAUTHN_ENABLED` (default `false`), `WEBAUTHN_RP_ID` (default: the `PUBLIC_BASE_URL` host) and `WEBAUTHN_ORIGINS` (default: the `PUBLIC_BASE_URL` origin). The relying-party ID must be a DNS name, never an IP address; each origin must be `https://host[:port]` (plain `http` only for `localhost`) and equal to or within the RP ID. Neither is ever taken from request headers. An invalid value disables passkeys with a loud log block — the server still starts and password login is unaffected. `WEBAUTHN_ENABLED=false` is the kill switch: every passkey endpoint returns 404 and stored passkeys are kept. Passed through `docker-compose.yml` (empty does not override `config.env`). There is no login-page or profile UI yet; that comes in the next release.
+- **Usernameless passkey login** (`POST /api/auth/passkey/login/begin` and `/finish`, own login rate-limit bucket, plus `GET /api/auth/passkey/config` for the login page). The credential decides the account: credential → owner by id → the owner's stored random user handle must match the one the authenticator returns (constant-time) → the owner must exist and be enabled. User verification (PIN/biometric) is required and checked on every assertion, so a passkey login is a full session without the TOTP step; the account is re-read at completion (disabled / unknown role → refused), and a forced password change still applies. A signature counter that does not advance (possible cloned authenticator) is refused and audited. Every failure returns the same message; details go to the server log, `login_attempts` and the audit log only. Ceremonies live in API memory: single use, 5-minute expiry, login and registration in separate stores each capped at 1000 (so a flood of unauthenticated sign-in attempts can never evict a registration), sign-in bound to an HttpOnly SameSite=Strict cookie (`webauthn_login`, path `/api/auth/passkey`) that is cleared on every outcome.
+- **Managing your own passkeys** (`/admin/api/passkeys…`, every role, browser sessions only — API tokens get 403): register (needs your current password plus a fresh 2FA code when 2FA is on, per-user rate limit; at most 10 passkeys; a key already registered anywhere is refused), list, rename, and delete (same re-check; ends your other sessions and re-issues the current one in the same response). The account's 64-byte random user handle is created on its first registration. A registration only commits if the account is still enabled and unchanged since the registering session began (same token version, checked under a row lock), so it cannot slip in around a concurrent reset. Admins can remove all passkeys of a user (`DELETE /admin/api/users/:id/passkeys`, ends that user's sessions; an admin doing this to their own account gets their session re-issued). Registration, rename, deletion, removal, logins and clone warnings are written to the audit log.
+- **New-passkey notice.** After a passkey is added, the next login response and the passkey list name it ("passkey X added on <date>") until acknowledged (`POST /admin/api/passkeys/notices/ack`). A session can only acknowledge passkeys created before it signed in, so the session that registered a key cannot hide that key's notice. Only present when passkeys are enabled and a notice is pending; the password login response is otherwise unchanged.
+- **Migration v70 `passkeys`** (every statement idempotent, so a half-applied run completes on the next boot): `admins.webauthn_user_handle` (unique, nullable), `admins.passkey_notice_seen_at`, `login_attempts.method` (`password` / `passkey` from now on), and the `webauthn_credentials` table (credential id unique; `admin_id` foreign key with ON DELETE CASCADE as a backstop).
+- Library: `github.com/go-webauthn/webauthn` pinned at exactly v0.18.2 (resident key and user verification required, no attestation, enforced 5-minute timeouts). Pulling it in moves `golang.org/x/crypto` to v0.57.0, `x/net` to v0.58.0, `x/sys` v0.48.0, `x/text` v0.42.0 and `x/sync` v0.23.0.
+
+### Changed — every account reset removes passkeys
+
+- An admin **password reset** and an admin **2FA reset** now also delete all of that user's passkeys, so a passkey registered by someone else cannot outlive the recovery. A **self-service password change** deletes your passkeys too unless the request sends `"remove_passkeys": false` (absent means remove). Each reset — and deleting one passkey — happens in one database transaction that locks the account row: passkeys deleted, password / 2FA changes applied and sessions ended together, or nothing at all; a self-service password change is now atomic in the same way. Resets also drop any registration in progress for that account. Deleting a user deletes their passkeys in the same transaction, and takes the same account-row lock first, so a delete and a reset of the same user cannot deadlock.
+
+### Added — break-glass `fwmon-reset-auth`
+
+- `docker exec -it <container> fwmon-reset-auth --user <name>` resets an account with no web UI: a new random temporary password (printed once), forced password change at next login, 2FA and recovery codes cleared, all passkeys deleted, every session ended, an audit-log row — all in one transaction. `--keep-2fa` / `--keep-passkeys` keep those. The wrapper (installed on `PATH` in the image) loads the same database environment as `entrypoint.sh` and runs `./fwmon-api reset-auth` as `fwmon`. It reminds you to restart the container to clear in-memory login lockouts. `docs/OPERATIONS.md` now documents this instead of the manual SQL for "Admin password reset" and "Two-factor authentication lockout", and gains a "Passkeys (WebAuthn)" section. If the container is crash-looping, the same reset runs from a one-off container of the same image on the same volumes (stop the looping container first); `docs/OPERATIONS.md` gives the exact commands.
+
+## [0.11.276] - 2026-10-01
+
+### Security — login hardening (groundwork for passkey sign-in)
+
+- **No fallback session after a failed account lookup.** If the password checked out but the server then failed to load that account, login used to fall back to a session for user id 1 with the admin role, and skipped the two-factor step. It now returns a 500 with no cookies.
+- **An empty or unknown role never means admin.** An account row with an empty or unrecognised role is refused at login (password and two-factor step alike) instead of being treated as admin. A session token whose role is empty or unknown is rejected, so its holder must sign in again; before, such a token was treated as admin. Migration v20 guarantees every account has a role, so no real account is affected.
+- **Deleting a user deletes their 2FA recovery codes** in the same transaction as the account.
+- **One replay guard for every two-factor code.** A code accepted once — at login, when confirming 2FA enrolment, disabling 2FA, revealing a device secret or purging a device — is refused by every one of those actions for the rest of its ~90 s validity window. Before, each action kept its own list (so the same code could be used once per action), and enrolment and disabling 2FA had no replay check at all. A refused, already-used code gets the message "Authenticator code already used — wait for the next code" and does not count toward login lockout.
+- **Confirming 2FA enrolment on an account that already has 2FA is refused** (409), as starting setup already was. Before, it replaced the account's recovery codes with only a session.
+- **The two-factor step checks it is finishing the same account.** The pending login is bound to the user id whose password was checked; if that username now belongs to a different account, the step fails.
+- **Login completion re-reads the account.** Both the password-only login and the two-factor step now finish in one place that re-reads the account by id just before issuing the session, so a user disabled (or switched to 2FA) in the meantime gets the usual login failure instead of a session. A password login refused at that point is now recorded as a failed login attempt; the successful-attempt row is written only once the session (or the two-factor prompt) is actually issued. Status codes, cookies and response bodies are otherwise unchanged. If this final step fails after a recovery code was accepted, that code stays used; the pending login stays open so the user can retry with another code.
+
+### Added — `TRUSTED_PROXIES`
+
+- New setting: the reverse proxy's IP (a comma-separated list of IPs/CIDRs is accepted, but only the proxy's single pinned IP is safe — never a whole Docker subnet while port 8080 is published). When set, the API takes the client IP from `X-Forwarded-For` (only that header, only when the connection comes from a listed proxy), so login lockout, rate limits and audit logs see the real client instead of the proxy. Empty (the default) keeps today's behaviour of ignoring forwarding headers. Invalid entries are logged and skipped; they never stop the server. Documented in the example config files, `docker-compose.yml`, the README and `docs/OPERATIONS.md` (with a nginx-proxy-manager note).
+
+## [0.11.275] - 2026-10-01
+
+### Fixed — month-boundary flake in the PostgreSQL purge integration test (test-only)
+
+- `TestPGPurge_RemovesDeviceAcrossPartitions` failed in CI on 2026-10-01 00:20 UTC. It seeded its 200,000 `interface_stats` rows counting back from `now()`, and monthly leaves exist only from the current month forward. In the first hours of a month the current-month leaf therefore held only a few dozen rows. PostgreSQL correctly seq-scanned that near-empty leaf, which failed the per-leaf index-scan assertion. The seeds in `purge_pg_integration_test.go` (`interface_stats` and `denied_events`, all three purge tests) are now anchored to the leaf catalog (the oldest monthly leaf = the month `EnsurePartitions` treated as current) instead of `now()`. Every targeted leaf now gets a fixed, large share of rows on any date: next month ≥ 63k, current month ≥ 63k and DEFAULT ≥ 59k of device A's rows. The test now also fails fast if a populated leaf holds fewer than 20k of A's rows, or if fewer than two monthly leaves are populated. Verified on PostgreSQL 16 at simulated 1st-of-month 00:20, mid-month and last-day 23:50 dates, and on the real clock at 2026-10-01 00:46 UTC, where the old test failed. No production code changed.
+
+## [0.11.274] - 2026-09-30
+
+### Changed — Go toolchain 1.25 → 1.26
+
+- The server now builds with Go 1.26.8. The `go` directive in `go.mod` moves from 1.25.13 to 1.26.8 and the Docker builder image from `golang:1.25-alpine` to `golang:1.26-alpine`. CI reads the version from `go.mod` (`go-version-file`), so it follows automatically. The upcoming passkey (WebAuthn) sign-in work needs this first, because the `go-webauthn` v0.18.2 library it will use requires Go 1.26.
+- No functional changes. `go mod tidy` changed nothing but the `go` line; no other dependency moved.
+
+### Docs
+
+- README (Go badge and prerequisites) and CONTRIBUTING state Go 1.26.8 / 1.26+ as the required toolchain.
 
 ## [0.11.273] - 2026-09-29
 

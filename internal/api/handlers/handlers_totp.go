@@ -27,6 +27,11 @@ import (
 
 const recoveryCodeCount = 10
 
+// totpCodeAlreadyUsedMsg is returned when a valid TOTP code has already been
+// spent within its validity window (shared replay guard) — the same text the
+// reveal/purge step-up uses.
+const totpCodeAlreadyUsedMsg = "Authenticator code already used — wait for the next code"
+
 // validateTOTPCode checks a 6-digit code against the shared secret with ±1
 // period of clock skew (RFC 6238 recommendation).
 func validateTOTPCode(code, secret string) bool {
@@ -92,18 +97,31 @@ func (h *Handler) TOTPLogin(c *gin.Context) {
 	}
 
 	admin, err := db.GetAdminByUsername(claims.Username)
-	if err != nil || admin == nil || admin.Disabled || !admin.TOTPEnabled {
+	// The row must be the very account the pending token was minted for: a
+	// username now owned by a different id (deleted and re-created) is not it.
+	if err != nil || admin == nil || admin.ID != claims.UserID || admin.Disabled || !admin.TOTPEnabled {
 		c.JSON(http.StatusUnauthorized, response.Error("Pending login invalid — start over"))
 		return
 	}
 
-	// TOTP code first (with single-use-per-slot replay guard); recovery code
-	// as the fallback path.
+	// TOTP code first (with the shared replay guard); recovery code as the
+	// fallback path.
 	authenticated := false
 	if validateTOTPCode(req.Code, admin.TOTPSecret) {
-		authenticated = h.authManager.MarkTOTPSlotUsed(admin.ID, "login", req.Code)
+		// A valid code that was already spent (here or on any other TOTP
+		// action) proves possession of the factor, so it is not counted as a
+		// guessing failure — but it is refused.
+		if !h.authManager.MarkTOTPSlotUsed(admin.ID, req.Code) {
+			c.JSON(http.StatusUnauthorized, response.Error(totpCodeAlreadyUsedMsg))
+			return
+		}
+		authenticated = true
 	}
 	if !authenticated {
+		// A recovery code consumed here stays consumed even if completeLogin
+		// then fails (DB error, or the account was disabled in the meantime):
+		// fail closed rather than un-burn a credential. The user still holds
+		// the other codes, and an admin can reset 2FA (ResetUser2FA).
 		used, cerr := db.ConsumeRecoveryCode(admin.ID, database.HashAPIToken(req.Code))
 		if cerr != nil {
 			httputil.InternalError(c, "Failed to verify recovery code", cerr)
@@ -118,20 +136,7 @@ func (h *Handler) TOTPLogin(c *gin.Context) {
 	}
 
 	h.authManager.ClearFailures(claims.Username, ip)
-	cookieSecure, cookieSameSite, _ := h.sessionCookieParams()
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name: "pending_2fa", Value: "", MaxAge: -1, Path: "/",
-		Secure: cookieSecure, HttpOnly: true, SameSite: cookieSameSite,
-	})
-
-	role := admin.Role
-	if role == "" {
-		role = auth.RoleAdmin
-	}
-	h.issueSession(c, admin.Username, admin.ID, admin.TokenVersion, role, gin.H{
-		"message":              "Login successful",
-		"must_change_password": admin.MustChangePassword,
-	})
+	h.completeLogin(c, db, admin.ID, loginMethodTOTP)
 }
 
 type totpSetupRequest struct {
@@ -230,12 +235,22 @@ func (h *Handler) Verify2FA(c *gin.Context) {
 		httputil.InternalError(c, "Failed to load account", err)
 		return
 	}
+	// Re-verifying an ENROLLED account would re-mint (replace) its recovery
+	// codes on a session alone; like Setup2FA, refuse — disable first.
+	if admin.TOTPEnabled {
+		c.JSON(http.StatusConflict, response.Error("Two-factor authentication is already enabled. Disable it first (password + current code) to re-enroll."))
+		return
+	}
 	if admin.TOTPSecret == "" {
 		c.JSON(http.StatusBadRequest, response.Error("No pending 2FA setup — run setup first"))
 		return
 	}
 	if !validateTOTPCode(req.Code, admin.TOTPSecret) {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid code — check your authenticator app"))
+		return
+	}
+	if !h.authManager.MarkTOTPSlotUsed(admin.ID, req.Code) {
+		c.JSON(http.StatusBadRequest, response.Error(totpCodeAlreadyUsedMsg))
 		return
 	}
 
@@ -296,7 +311,13 @@ func (h *Handler) Disable2FA(c *gin.Context) {
 		c.JSON(http.StatusForbidden, response.Error("Password is incorrect"))
 		return
 	}
+	// Shared replay guard: a code already spent on login (or any other TOTP
+	// action) within its validity window is not accepted here.
 	codeOK := validateTOTPCode(req.Code, admin.TOTPSecret)
+	if codeOK && !h.authManager.MarkTOTPSlotUsed(admin.ID, req.Code) {
+		c.JSON(http.StatusForbidden, response.Error(totpCodeAlreadyUsedMsg))
+		return
+	}
 	if !codeOK {
 		used, cerr := db.ConsumeRecoveryCode(admin.ID, database.HashAPIToken(req.Code))
 		if cerr != nil {
@@ -320,7 +341,8 @@ func (h *Handler) Disable2FA(c *gin.Context) {
 }
 
 // ResetUser2FA (admin-only) clears another account's 2FA — the recovery path
-// when an operator loses both the authenticator and the recovery codes.
+// when an operator loses both the authenticator and the recovery codes — and
+// deletes all of its passkeys (D-RESET).
 func (h *Handler) ResetUser2FA(c *gin.Context) {
 	db := h.reqDB(c)
 	if !httputil.RequireDB(c, db) {
@@ -330,12 +352,12 @@ func (h *Handler) ResetUser2FA(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := db.ClearAdminTOTP(id); err != nil {
+	// D-RESET: one transaction clears TOTP + recovery codes, deletes every
+	// passkey and bumps token_version.
+	if _, err := db.ResetAdminCredentials(id, database.AdminReset{ClearTOTP: true}); err != nil {
 		httputil.InternalError(c, "Failed to reset 2FA", err)
 		return
 	}
-	if err := db.IncrementAdminTokenVersion(id); err != nil {
-		log.Printf("Failed to bump token version after 2FA reset: %v", err)
-	}
+	h.discardRegistration(id)
 	c.JSON(http.StatusOK, response.Success(gin.H{"reset": id}))
 }

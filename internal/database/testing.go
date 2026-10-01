@@ -84,6 +84,8 @@ var testModels = []interface{}{
 	&models.Admin{},
 	&models.ApiToken{},
 	&models.AdminRecoveryCode{},
+	// v70: passkeys.
+	&models.WebAuthnCredential{},
 	&models.Incident{},
 	// v0.11.46: flow-source silencing table.
 	&models.FlowSourceSuppression{},

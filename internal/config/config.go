@@ -112,6 +112,13 @@ type ServerConfig struct {
 	// this flag to fire only when the mismatch is the operator's own
 	// doing, not the safe default.
 	CookieSecureExplicit bool
+	// TrustedProxies is the raw TRUSTED_PROXIES value: a comma-separated list
+	// of reverse-proxy IPs/CIDRs whose X-Forwarded-For the API honours for the
+	// client IP (lockout buckets, rate limits, audit logs). Empty (default) =
+	// trust no proxy, exactly the pre-existing behaviour. Parsed and applied by
+	// middleware.ConfigureTrustedProxies; invalid entries are logged and
+	// skipped, never fatal.
+	TrustedProxies string
 	// AllowMultiAPI opts out of the AUDIT-040 singleton guard. Default false:
 	// a second cmd/api refuses to start (the IRC bots / login-lockout /
 	// rate-limit / uptime state is in-process and would double-run). true =>
@@ -291,6 +298,14 @@ type AuthConfig struct {
 	// duplicated work. The flag is captured once at config-load
 	// time and read by every consumer.
 	AdminPasswordGenerated bool
+	// WebAuthn (passkey login). Shipped DISABLED: nothing passkey-related is
+	// reachable unless WebAuthnEnabled is true AND the RP ID / origins pass
+	// the separate, non-fatal validation in internal/passkey (an invalid
+	// value disables passkeys with a loud log; the server still starts and
+	// password login is unaffected). Never derived from Host/X-Forwarded-*.
+	WebAuthnEnabled bool   // WEBAUTHN_ENABLED (default false) — also the kill switch
+	WebAuthnRPID    string // WEBAUTHN_RP_ID (default: the PUBLIC_BASE_URL host)
+	WebAuthnOrigins string // WEBAUTHN_ORIGINS — comma list of https://host[:port] (default: the PUBLIC_BASE_URL origin)
 }
 
 type AlertsConfig struct {
@@ -379,6 +394,7 @@ func Load() *Config {
 			CookieSecure:         getBoolEnv("COOKIE_SECURE", getBoolEnv("SERVER_ENABLE_TLS", false)),
 			CookieSecureExplicit: os.Getenv("COOKIE_SECURE") != "",
 			CookieSameSite:       getEnv("COOKIE_SAMESITE", "Strict"),
+			TrustedProxies:       getEnv("TRUSTED_PROXIES", ""),
 			AllowMultiAPI:        getBoolEnv("ALLOW_MULTI_API", false),
 			GeoIPEnabled:         getBoolEnv("GEOIP_ENABLED", true),
 			GeoIPDBDir:           getEnv("GEOIP_DB_DIR", "/etc/firewall-mon/geoip"),
@@ -526,6 +542,9 @@ func Load() *Config {
 			TokenExpiry:            getDurationEnv("TOKEN_EXPIRY", 24*time.Hour),
 			MaxLoginAttempts:       getIntEnv("MAX_LOGIN_ATTEMPTS", 5),
 			LockoutDuration:        getDurationEnv("LOCKOUT_DURATION", 15*time.Minute),
+			WebAuthnEnabled:        getBoolEnv("WEBAUTHN_ENABLED", false),
+			WebAuthnRPID:           getEnv("WEBAUTHN_RP_ID", ""),
+			WebAuthnOrigins:        getEnv("WEBAUTHN_ORIGINS", ""),
 		},
 		Alerts: AlertsConfig{
 			EmailEnabled:             getBoolEnv("EMAIL_ENABLED", false),

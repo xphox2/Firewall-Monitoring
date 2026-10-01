@@ -25,6 +25,7 @@ import (
 	"firewall-mon/internal/metrics"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/notifier"
+	"firewall-mon/internal/passkey"
 	"firewall-mon/internal/secrets"
 	"firewall-mon/internal/snmp"
 	"firewall-mon/internal/tracing"
@@ -37,7 +38,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.274"
+const ServerVersion = "0.11.278"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -96,6 +97,8 @@ func main() {
 		case "migrate-status":
 			runMigrateStatusCmd()
 			return
+		case "reset-auth":
+			os.Exit(runResetAuthCmd(os.Args[2:]))
 		}
 	}
 
@@ -139,7 +142,10 @@ func main() {
 
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.Default()
-	router.SetTrustedProxies(nil) // Do not trust proxy headers for client IP
+	// Client IP: trust no proxy headers unless TRUSTED_PROXIES lists the
+	// reverse proxy (D-D3). Empty = SetTrustedProxies(nil), the historical
+	// behaviour; invalid entries are logged and skipped, never fatal.
+	middleware.ConfigureTrustedProxies(router, cfg.Server.TrustedProxies)
 
 	// API versioning aliases (v0.10.219, bundle H1).
 	//
@@ -317,6 +323,10 @@ func main() {
 	cfg.Auth.AdminPassword = ""
 
 	handler := handlers.NewHandler(cfg, authManager, db)
+	// Passkeys (WebAuthn) ship disabled. Setup returns nil — every passkey
+	// endpoint then 404s — unless WEBAUTHN_ENABLED=true and the RP ID/origins
+	// validate; an invalid value is logged loudly and NEVER stops startup.
+	handler.SetPasskeys(passkey.Setup(cfg))
 
 	// Periodically reload the threat-intel matcher so feed edits and expiries
 	// take effect in the ingest path without a restart (the matcher lives on the
@@ -730,6 +740,14 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		// 2FA second step (P0-3): exchanges the pending_2fa cookie + a TOTP or
 		// recovery code for a session. Same rate limiter as login.
 		api.POST("/auth/totp", middleware.LoginRateLimiter(), handler.TOTPLogin)
+		// Passkey (WebAuthn) usernameless login. Its own LoginRateLimiter
+		// instance (separate bucket from password login); like the rest of
+		// /api/auth/* it is pre-session, so no CSRF. 404 while disabled; the
+		// config endpoint reports {"enabled": false} instead.
+		passkeyLimiter := middleware.LoginRateLimiter()
+		api.GET("/auth/passkey/config", handler.GetPasskeyConfig)
+		api.POST("/auth/passkey/login/begin", passkeyLimiter, handler.PasskeyLoginBegin)
+		api.POST("/auth/passkey/login/finish", passkeyLimiter, handler.PasskeyLoginFinish)
 
 		// AUDIT T6: rate-limit registration like every other probe endpoint — it
 		// is unauthenticated (presents a registration key) and hits the DB, so an
@@ -799,6 +817,13 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			"/admin/api/2fa/setup":         true,
 			"/admin/api/2fa/verify":        true,
 			"/admin/api/2fa/disable":       true,
+			// Passkeys: every role manages its OWN passkeys (handlers scope
+			// every query by the session's user id and refuse API tokens).
+			"/admin/api/passkeys":                 true,
+			"/admin/api/passkeys/:id":             true,
+			"/admin/api/passkeys/register/begin":  true,
+			"/admin/api/passkeys/register/finish": true,
+			"/admin/api/passkeys/notices/ack":     true,
 		},
 		map[string]bool{ // adminOnlyRoutes — role=admin, any method
 			"/admin/api/settings":                  true,
@@ -810,6 +835,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			"/admin/api/users/:id":                 true,
 			"/admin/api/users/:id/reset-password":  true,
 			"/admin/api/users/:id/reset-2fa":       true,
+			"/admin/api/users/:id/passkeys":        true,
 			"/admin/api/tokens":                    true,
 			"/admin/api/tokens/:id":                true,
 			"/admin/api/probes/:id/regenerate-key": true,
@@ -1235,6 +1261,15 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.POST("/api/2fa/verify", handler.Verify2FA)
 		admin.POST("/api/2fa/disable", handler.Disable2FA)
 		admin.POST("/api/users/:id/reset-2fa", handler.ResetUser2FA)
+		// Passkeys (WebAuthn): self-service management (selfServiceRoutes,
+		// session-only, owner-scoped) + admin-only "remove all for user X".
+		admin.GET("/api/passkeys", handler.ListPasskeys)
+		admin.POST("/api/passkeys/register/begin", middleware.LoginRateLimiter(), handler.PasskeyRegisterBegin)
+		admin.POST("/api/passkeys/register/finish", handler.PasskeyRegisterFinish)
+		admin.POST("/api/passkeys/notices/ack", handler.AckPasskeyNotices)
+		admin.PUT("/api/passkeys/:id", handler.RenamePasskey)
+		admin.DELETE("/api/passkeys/:id", handler.DeletePasskey)
+		admin.DELETE("/api/users/:id/passkeys", handler.RemoveUserPasskeys)
 		// Scoped API tokens (P0-2) — admin-only; creation is session-only
 		// (enforced in the handler: no token-mints-token).
 		admin.GET("/api/tokens", handler.ListAPITokens)

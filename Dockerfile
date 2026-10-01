@@ -1,5 +1,5 @@
 # Stage 1: Build the Go binaries
-FROM golang:1.25-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 WORKDIR /build
 
@@ -51,6 +51,13 @@ RUN chmod +x fwmon-*
 
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
+
+# Break-glass account reset (docs/OPERATIONS.md "Admin password reset"):
+# `docker exec -it <container> fwmon-reset-auth --user <name>`. The wrapper
+# loads the same DB environment entrypoint.sh exports and runs
+# `./fwmon-api reset-auth` as fwmon. Root-owned, on PATH.
+COPY scripts/fwmon-reset-auth /usr/local/bin/fwmon-reset-auth
+RUN chmod 0755 /usr/local/bin/fwmon-reset-auth
 
 RUN chown -R fwmon:fwmon /app
 

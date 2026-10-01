@@ -9,6 +9,7 @@ import (
 	"firewall-mon/internal/api/middleware"
 	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/auth"
+	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 
@@ -63,18 +64,28 @@ func (h *Handler) Login(c *gin.Context) {
 		userAgent = userAgent[:512]
 	}
 
-	if err := h.authManager.ValidateCredentials(creds.Username, creds.Password, ip); err != nil {
-		if db != nil {
-			if dbErr := db.SaveLoginAttempt(&models.LoginAttempt{
-				Timestamp: time.Now(),
-				Username:  creds.Username,
-				IPAddress: ip,
-				Success:   false,
-				UserAgent: userAgent,
-			}); dbErr != nil {
-				log.Printf("Failed to save login attempt: %v", dbErr)
-			}
+	// recordAttempt writes the login_attempts row. The success row is written
+	// only once the password step has actually produced its outcome (pending
+	// 2FA token, or a session from completeLogin); a refusal after the password
+	// check is recorded as a failure. Lockout counting is unaffected.
+	recordAttempt := func(success bool) {
+		if db == nil {
+			return
 		}
+		if dbErr := db.SaveLoginAttempt(&models.LoginAttempt{
+			Timestamp: time.Now(),
+			Username:  creds.Username,
+			IPAddress: ip,
+			Success:   success,
+			UserAgent: userAgent,
+			Method:    strPtr(loginMethodPassword),
+		}); dbErr != nil {
+			log.Printf("Failed to save login attempt: %v", dbErr)
+		}
+	}
+
+	if err := h.authManager.ValidateCredentials(creds.Username, creds.Password, ip); err != nil {
+		recordAttempt(false)
 		if err == auth.ErrAccountLocked {
 			c.JSON(http.StatusTooManyRequests, response.Error("Account temporarily locked due to too many failed attempts"))
 			return
@@ -83,45 +94,31 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
-	if db != nil {
-		if dbErr := db.SaveLoginAttempt(&models.LoginAttempt{
-			Timestamp: time.Now(),
-			Username:  creds.Username,
-			IPAddress: ip,
-			Success:   true,
-			UserAgent: userAgent,
-		}); dbErr != nil {
-			log.Printf("Failed to save login attempt: %v", dbErr)
-		}
+	// D1: the session belongs to exactly the row whose password was just
+	// verified — never a fallback identity. If that row cannot be loaded the
+	// login fails with a 500 and no cookies (fail closed); it must not mint a
+	// session for another account or skip the TOTP stage.
+	if db == nil {
+		httputil.InternalError(c, "Failed to load account", nil)
+		return
 	}
-
-	// Get admin record to use real ID, token version, and role in JWT
-	var adminID uint = 1
-	var tokenVersion uint
-	var mustChangePassword bool
-	totpEnabled := false
-	role := auth.RoleAdmin
-	if db != nil {
-		adminRecord, adminErr := db.GetAdminByUsername(creds.Username)
-		if adminErr == nil && adminRecord != nil {
-			adminID = adminRecord.ID
-			tokenVersion = adminRecord.TokenVersion
-			mustChangePassword = adminRecord.MustChangePassword
-			totpEnabled = adminRecord.TOTPEnabled
-			if adminRecord.Role != "" {
-				role = adminRecord.Role
-			}
-		}
+	adminRecord, adminErr := db.GetAdminByUsername(creds.Username)
+	if adminErr != nil || adminRecord == nil {
+		recordAttempt(false)
+		httputil.InternalError(c, "Failed to load account", adminErr)
+		return
 	}
 
 	// 2FA-enabled accounts don't get a session yet: they get a short-lived
 	// pending token that only unlocks POST /api/auth/totp (P0-3).
-	if totpEnabled {
-		pending, perr := h.authManager.GeneratePendingToken(creds.Username, adminID, tokenVersion)
+	if adminRecord.TOTPEnabled {
+		pending, perr := h.authManager.GeneratePendingToken(creds.Username, adminRecord.ID, adminRecord.TokenVersion)
 		if perr != nil {
+			recordAttempt(false)
 			httputil.InternalError(c, "Failed to generate token", perr)
 			return
 		}
+		recordAttempt(true) // password step complete; the TOTP step writes no row
 		cookieSecure, cookieSameSite, _ := h.sessionCookieParams()
 		http.SetCookie(c.Writer, &http.Cookie{
 			Name:     "pending_2fa",
@@ -138,11 +135,88 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
-	h.issueSession(c, creds.Username, adminID, tokenVersion, role, gin.H{
+	recordAttempt(h.completeLogin(c, db, adminRecord.ID, loginMethodPassword))
+}
+
+// Login methods accepted by completeLogin. Each maps to the generic failure
+// message its entry point has always returned, so the refactor changes no
+// response body. loginMethodPasskey (handlers_passkeys.go) is the third.
+const (
+	loginMethodPassword = "password"
+	loginMethodTOTP     = "totp"
+)
+
+// loginFailureMessage returns the generic failure text of a login method's
+// entry point, and false for an unknown method.
+func loginFailureMessage(method string) (string, bool) {
+	switch method {
+	case loginMethodPassword:
+		return "Invalid credentials", true
+	case loginMethodTOTP:
+		return "Pending login invalid — start over", true
+	case loginMethodPasskey:
+		return passkeyLoginFailedMsg, true
+	}
+	return "", false
+}
+
+// completeLogin is the single tail of every fully-authenticated login
+// (password-only and the TOTP second step). It re-reads the account BY ID so
+// the session reflects the row's CURRENT disabled flag, role and token
+// version — never values captured earlier in the request — and fails closed:
+//   - DB error → 500, no cookies;
+//   - account gone, disabled, or holding an empty/unknown role (D5) → 401 with
+//     the entry point's usual generic message, no cookies;
+//   - method "password" on an account that now has 2FA enabled → the same
+//     generic 401 (the second factor is owed; Login routes such accounts to
+//     the pending_2fa stage before ever getting here).
+//
+// Method "passkey" issues a full session with NO TOTP stage: the assertion
+// was user-verified (checked by the caller), which is itself multi-factor.
+//
+// On success it clears pending_2fa (TOTP and passkey methods; the password
+// method is unchanged) and mints the JWT + CSRF cookies via issueSession.
+// When passkeys are enabled and the account has new-passkey notices pending,
+// the success payload also carries passkey_notices (absent otherwise, so the
+// password response is unchanged for accounts without them). It reports
+// whether a session was issued (the response has been written either way).
+func (h *Handler) completeLogin(c *gin.Context, db database.Store, adminID uint, method string) bool {
+	failMsg, known := loginFailureMessage(method)
+	if !known {
+		httputil.InternalError(c, "Unknown login method", nil)
+		return false
+	}
+	admin, err := db.GetAdminByID(adminID)
+	if err != nil {
+		httputil.InternalError(c, "Failed to load account", err)
+		return false
+	}
+	if admin == nil || admin.Disabled || (method == loginMethodPassword && admin.TOTPEnabled) {
+		c.JSON(http.StatusUnauthorized, response.Error(failMsg))
+		return false
+	}
+	if !auth.ValidRole(admin.Role) {
+		log.Printf("login refused for admin id %d: role %q is not a valid role", admin.ID, admin.Role)
+		c.JSON(http.StatusUnauthorized, response.Error(failMsg))
+		return false
+	}
+
+	if method == loginMethodTOTP || method == loginMethodPasskey {
+		cookieSecure, cookieSameSite, _ := h.sessionCookieParams()
+		http.SetCookie(c.Writer, &http.Cookie{
+			Name: "pending_2fa", Value: "", MaxAge: -1, Path: "/",
+			Secure: cookieSecure, HttpOnly: true, SameSite: cookieSameSite,
+		})
+	}
+
+	extra := gin.H{
 		"message":              "Login successful",
-		"csrf_token":           "", // filled by issueSession
-		"must_change_password": mustChangePassword,
-	})
+		"must_change_password": admin.MustChangePassword,
+	}
+	if notices := h.passkeyNotices(db, admin.ID); len(notices) > 0 {
+		extra["passkey_notices"] = notices
+	}
+	return h.issueSession(c, admin.Username, admin.ID, admin.TokenVersion, admin.Role, extra)
 }
 
 // sessionCookieParams derives the cookie attributes every auth cookie shares.
@@ -162,12 +236,12 @@ func (h *Handler) sessionCookieParams() (secure bool, sameSite http.SameSite, ma
 // issueSession mints the JWT + CSRF pair and sets both cookies — the tail of
 // a fully-completed authentication, shared by password-only logins and the
 // TOTP second step. extra is merged into the success payload (csrf_token is
-// always set/overwritten here).
-func (h *Handler) issueSession(c *gin.Context, username string, adminID uint, tokenVersion uint, role string, extra gin.H) {
+// always set/overwritten here). Reports whether the session was issued.
+func (h *Handler) issueSession(c *gin.Context, username string, adminID uint, tokenVersion uint, role string, extra gin.H) bool {
 	token, err := h.authManager.GenerateToken(username, adminID, tokenVersion, role)
 	if err != nil {
 		httputil.InternalError(c, "Failed to generate token", err)
-		return
+		return false
 	}
 
 	// Generate HMAC-signed CSRF token tied to the auth token
@@ -200,6 +274,7 @@ func (h *Handler) issueSession(c *gin.Context, username string, adminID uint, to
 	payload["csrf_token"] = csrfToken
 
 	c.JSON(http.StatusOK, response.Success(payload))
+	return true
 }
 
 func (h *Handler) Logout(c *gin.Context) {
@@ -271,6 +346,10 @@ func (h *Handler) GetCSRFToken(c *gin.Context) {
 type ChangePasswordRequest struct {
 	CurrentPassword string `json:"current_password" binding:"required"`
 	NewPassword     string `json:"new_password" binding:"required"`
+	// RemovePasskeys (D-RESET): also delete every passkey of the account.
+	// ABSENT means TRUE — a password change removes passkeys unless the
+	// caller explicitly sends false.
+	RemovePasskeys *bool `json:"remove_passkeys"`
 }
 
 func (h *Handler) ChangePassword(c *gin.Context) {
@@ -347,21 +426,26 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	err = db.UpdateAdminPassword(userIDUint, hashedPassword)
+	// One transaction (D-RESET): new password, clear the forced-change flag,
+	// delete every passkey (unless remove_passkeys is explicitly false) and
+	// bump token_version to invalidate all existing sessions. Either all of
+	// it happens or none of it does.
+	removePasskeys := req.RemovePasskeys == nil || *req.RemovePasskeys
+	mustChange := false
+	removed, err := db.ResetAdminCredentials(userIDUint, database.AdminReset{
+		PasswordHash:       hashedPassword,
+		MustChangePassword: &mustChange,
+		KeepPasskeys:       !removePasskeys,
+	})
 	if err != nil {
 		httputil.InternalError(c, "Failed to update password", err)
 		return
 	}
-
-	// Clear the forced-change flag now that the operator has set their own
-	// password. Best-effort: a failure here only means the user is re-prompted.
-	if err := db.SetAdminMustChangePassword(userIDUint, false); err != nil {
-		log.Printf("Failed to clear must_change_password after password change: %v", err)
+	if removePasskeys {
+		h.discardRegistration(userIDUint)
 	}
-
-	// Invalidate all existing tokens by incrementing token version
-	if err := db.IncrementAdminTokenVersion(userIDUint); err != nil {
-		log.Printf("Failed to increment token version after password change: %v", err)
+	if removed > 0 {
+		log.Printf("password change for admin %d removed %d passkey(s)", userIDUint, removed)
 	}
 
 	c.JSON(http.StatusOK, response.Message("Password changed successfully. Please log in again."))

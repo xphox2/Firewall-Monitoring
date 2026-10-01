@@ -43,6 +43,7 @@ type Store interface {
 	UserStore
 	TokenStore
 	TOTPStore
+	PasskeyStore
 	IncidentStore
 	AuditStore
 	SecretStore
@@ -389,6 +390,23 @@ type TOTPStore interface {
 	ClearAdminTOTP(id uint) error
 	ReplaceRecoveryCodes(adminID uint, hashes []string) error
 	ConsumeRecoveryCode(adminID uint, codeHash string) (bool, error)
+}
+
+// PasskeyStore covers WebAuthn credentials (migration v70, passkeys.go).
+// Everything except GetPasskeyByCredentialID (the usernameless-login lookup)
+// is scoped by admin_id.
+type PasskeyStore interface {
+	GetPasskeyByCredentialID(credentialID []byte) (*models.WebAuthnCredential, error)
+	ListPasskeys(adminID uint) ([]models.WebAuthnCredential, error)
+	CountPasskeys(adminID uint) (int64, error)
+	CreatePasskey(cred *models.WebAuthnCredential, sessionTokenVersion uint) error
+	RecordPasskeyUse(id, adminID uint, signCount uint32, backupState bool, usedAt time.Time) (bool, error)
+	RenamePasskey(id, adminID uint, name string) (bool, error)
+	DeletePasskeyAndEndSessions(id, adminID uint) (bool, error)
+	ResetAdminCredentials(adminID uint, r AdminReset) (int64, error)
+	EnsureWebAuthnUserHandle(adminID uint, candidate []byte) ([]byte, error)
+	ListPasskeyNotices(adminID uint) ([]models.WebAuthnCredential, error)
+	AckPasskeyNotices(adminID uint, sessionIssuedAt time.Time) error
 }
 
 // IncidentStore covers F12 incident grouping (read side for the API; the

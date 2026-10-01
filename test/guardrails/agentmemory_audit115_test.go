@@ -14,7 +14,8 @@ import (
 //
 // The paths below must never be tracked. `.gitignore` lists the same set (except
 // scripts/, which is not ignored so a public script can still be added on
-// purpose — it just has to be a deliberate, reviewed decision).
+// purpose — it just has to be a deliberate, reviewed decision, recorded in
+// publicScripts).
 //
 // `git ls-files --full-name` is run from the repository root: run from this
 // package's directory, `git ls-files` lists only files below it and the check
@@ -40,6 +41,13 @@ func TestNoTrackedInternalFiles_AUDIT115(t *testing.T) {
 	}
 }
 
+// publicScripts are the scripts/ files that were reviewed and are part of the
+// shipped product. Add a path here only after reviewing the script.
+var publicScripts = map[string]bool{
+	// Break-glass account reset, installed on PATH by the Dockerfile.
+	"scripts/fwmon-reset-auth": true,
+}
+
 // internalPath reports why a tracked path is not allowed, or "" if it is fine.
 func internalPath(p string) string {
 	base := p
@@ -49,7 +57,7 @@ func internalPath(p string) string {
 	switch {
 	case strings.HasPrefix(p, "tasks/"):
 		return "it is a working note or internal task file"
-	case strings.HasPrefix(p, "scripts/"):
+	case strings.HasPrefix(p, "scripts/") && !publicScripts[p]:
 		return "it is an unreviewed helper script"
 	case strings.HasPrefix(p, ".claude/") || strings.Contains(p, "/.claude/"):
 		return "it is local tool settings"
@@ -72,7 +80,7 @@ func TestInternalPathClassifier(t *testing.T) {
 		}
 	}
 	for _, p := range []string{"docs/OPERATIONS.md", "docs/audit-log.md", "internal/audit/audit.go",
-		"README.md", "cmd/api/main.go", "internal/tasks/x.go"} {
+		"README.md", "cmd/api/main.go", "internal/tasks/x.go", "scripts/fwmon-reset-auth"} {
 		if why := internalPath(p); why != "" {
 			t.Errorf("%q wrongly classified as internal: %s", p, why)
 		}

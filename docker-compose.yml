@@ -56,6 +56,17 @@ services:
       # unset variable here leaves existing key derivation exactly as it was.
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
+      # D-D3: the reverse proxy's single pinned IP whose X-Forwarded-For sets
+      # the client IP (never a whole Docker subnet — see docs/OPERATIONS.md).
+      # Empty (default) = trust no proxy; empty here also lets a value in
+      # config.env apply (same fill-in rule as above). See docs/OPERATIONS.md.
+      - TRUSTED_PROXIES=${TRUSTED_PROXIES:-}
+      # Passkey (WebAuthn) login — off unless WEBAUTHN_ENABLED=true. Empty
+      # (default) here lets config.env's values apply (same fill-in rule as
+      # above). See docs/OPERATIONS.md "Passkeys".
+      - WEBAUTHN_ENABLED=${WEBAUTHN_ENABLED:-}
+      - WEBAUTHN_RP_ID=${WEBAUTHN_RP_ID:-}
+      - WEBAUTHN_ORIGINS=${WEBAUTHN_ORIGINS:-}
     ports:
       - "8080:8080"       # Web UI / API + probe relay ingest
       - "162:162/udp"     # SNMP traps

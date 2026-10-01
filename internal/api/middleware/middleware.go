@@ -313,12 +313,27 @@ func AdminAuth(authManager *auth.AuthManager, tokens TokenAuthStore) gin.Handler
 			handleAuthFailure(c)
 			return
 		}
+		// D5: a session whose role claim is empty/unknown is not a session —
+		// reject it (forces a re-login) instead of granting any role.
+		role := claims.EffectiveRole()
+		if role == "" {
+			handleAuthFailure(c)
+			return
+		}
 
 		c.Set("username", claims.Username)
 		c.Set("user_id", claims.UserID)
 		c.Set("is_admin", true)
-		c.Set("role", claims.EffectiveRole())
+		c.Set("role", role)
 		c.Set("auth_method", "session")
+		// The session's own token version and issue time (passkeys: a
+		// registration only commits if the account's token_version still
+		// equals the session's, and a notice ack covers only passkeys
+		// created before the session began).
+		c.Set("token_version", claims.TokenVersion)
+		if claims.IssuedAt != nil {
+			c.Set("session_issued_at", claims.IssuedAt.Time)
+		}
 		c.Next()
 	}
 }
@@ -334,9 +349,10 @@ func CheckAdminAuth(authManager *auth.AuthManager) gin.HandlerFunc {
 		}
 
 		claims, err := authManager.ValidateToken(token)
-		if err != nil || claims.Stage != "" {
+		if err != nil || claims.Stage != "" || claims.EffectiveRole() == "" {
 			// Invalid — or a pending 2FA token, which must not count as an
-			// admin session anywhere (P0-3).
+			// admin session anywhere (P0-3), or a session with no valid role
+			// claim (D5).
 			c.Set("is_admin", false)
 			c.Next()
 			return

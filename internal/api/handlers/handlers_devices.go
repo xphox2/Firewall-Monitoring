@@ -617,8 +617,9 @@ func (h *Handler) RevealDeviceSecret(c *gin.Context) {
 
 	// Re-verify the caller's own password (+ TOTP when enrolled) — the shared
 	// step-up helper (handlers_devices_purge.go); the TOTP replay guard is
-	// namespaced "reveal" so a code spent here can't be replayed on a purge.
-	usernameStr, userID, ok := h.reauthCaller(c, db, req.Password, req.TOTPCode, "reveal")
+	// shared by every TOTP consumer, so a code spent here can't be replayed on
+	// a purge, a login or a 2FA disable (and vice versa).
+	usernameStr, userID, ok := h.reauthCaller(c, db, req.Password, req.TOTPCode)
 	if !ok {
 		return
 	}
