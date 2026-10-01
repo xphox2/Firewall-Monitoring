@@ -1,6 +1,17 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.274] - 2026-09-30
+
+### Changed — Go toolchain 1.25 → 1.26
+
+- The server now builds with Go 1.26.8. The `go` directive in `go.mod` moves from 1.25.13 to 1.26.8 and the Docker builder image from `golang:1.25-alpine` to `golang:1.26-alpine`. CI reads the version from `go.mod` (`go-version-file`), so it follows automatically. The upcoming passkey (WebAuthn) sign-in work needs this first, because the `go-webauthn` v0.18.2 library it will use requires Go 1.26.
+- No functional changes. `go mod tidy` changed nothing but the `go` line; no other dependency moved.
+
+### Docs
+
+- README (Go badge and prerequisites) and CONTRIBUTING state Go 1.26.8 / 1.26+ as the required toolchain.
+
 ## [0.11.273] - 2026-09-29
 
 ### Fixed — country flags show on every browser
