@@ -38,7 +38,7 @@ func TestResetAuthCmd(t *testing.T) {
 	if err := db.SetAdminTOTP(admin.ID, "secret", true); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreatePasskey(&models.WebAuthnCredential{AdminID: admin.ID, CredentialID: []byte("k"), PublicKey: []byte{1}}); err != nil {
+	if err := db.CreatePasskey(&models.WebAuthnCredential{AdminID: admin.ID, CredentialID: []byte("k"), PublicKey: []byte{1}}, 0); err != nil {
 		t.Fatal(err)
 	}
 	open := func() (resetAuthStore, error) { return keepOpen{db}, nil }

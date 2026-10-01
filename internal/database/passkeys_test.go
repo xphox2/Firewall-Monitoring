@@ -23,7 +23,7 @@ func pkAdmin(t *testing.T, d *Database, name string) *models.Admin {
 func pkCred(t *testing.T, d *Database, adminID uint, id string) *models.WebAuthnCredential {
 	t.Helper()
 	c := &models.WebAuthnCredential{AdminID: adminID, CredentialID: []byte(id), PublicKey: []byte{1, 2, 3}, Name: strings.ToValidUTF8(strings.ReplaceAll(id, "\x00", ""), ""), CreatedAt: time.Now()}
-	if err := d.CreatePasskey(c); err != nil {
+	if err := d.CreatePasskey(c, 0); err != nil {
 		t.Fatalf("CreatePasskey(%s): %v", id, err)
 	}
 	return c
@@ -73,19 +73,19 @@ func TestPasskeyStore_ScopedAndLimits(t *testing.T) {
 	if ok, err := d.RenamePasskey(ca.ID, b.ID, "x"); err != nil || ok {
 		t.Fatalf("rename across accounts: ok=%v err=%v", ok, err)
 	}
-	if ok, err := d.DeletePasskey(ca.ID, b.ID); err != nil || ok {
+	if ok, err := d.DeletePasskeyAndEndSessions(ca.ID, b.ID); err != nil || ok {
 		t.Fatalf("delete across accounts: ok=%v err=%v", ok, err)
 	}
 	if ok, err := d.RecordPasskeyUse(ca.ID, b.ID, 9, true, time.Now()); err != nil || ok {
 		t.Fatalf("use across accounts: ok=%v err=%v", ok, err)
 	}
-	if err := d.CreatePasskey(&models.WebAuthnCredential{AdminID: b.ID, CredentialID: []byte("a1"), PublicKey: []byte{1}}); !errors.Is(err, ErrPasskeyDuplicate) {
+	if err := d.CreatePasskey(&models.WebAuthnCredential{AdminID: b.ID, CredentialID: []byte("a1"), PublicKey: []byte{1}}, 0); !errors.Is(err, ErrPasskeyDuplicate) {
 		t.Fatalf("duplicate credential id: %v", err)
 	}
 	for i := 1; i < MaxPasskeysPerUser; i++ {
 		pkCred(t, d, a.ID, "a-extra-"+string(rune('a'+i)))
 	}
-	if err := d.CreatePasskey(&models.WebAuthnCredential{AdminID: a.ID, CredentialID: []byte("eleven"), PublicKey: []byte{1}}); !errors.Is(err, ErrPasskeyLimit) {
+	if err := d.CreatePasskey(&models.WebAuthnCredential{AdminID: a.ID, CredentialID: []byte("eleven"), PublicKey: []byte{1}}, 0); !errors.Is(err, ErrPasskeyLimit) {
 		t.Fatalf("11th credential: %v", err)
 	}
 	h1, err := d.EnsureWebAuthnUserHandle(a.ID, bytes.Repeat([]byte{7}, 64))
@@ -218,5 +218,55 @@ func TestResetAuth_WithoutPasskeyTable(t *testing.T) {
 	}
 	if got, _ := d.GetAdminByID(a.ID); got.Password != "new" || !got.MustChangePassword {
 		t.Fatalf("not reset: %+v", got)
+	}
+}
+
+// TestCreatePasskey_StaleSessionRefused: the insert re-reads the account in
+// its transaction — a session whose token_version is behind (a reset ran) or
+// a disabled account is refused and nothing is stored.
+func TestCreatePasskey_StaleSessionRefused(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	a := pkAdmin(t, d, "a")
+	if err := d.IncrementAdminTokenVersion(a.ID); err != nil {
+		t.Fatal(err)
+	}
+	stale := &models.WebAuthnCredential{AdminID: a.ID, CredentialID: []byte("s"), PublicKey: []byte{1}}
+	if err := d.CreatePasskey(stale, 0); !errors.Is(err, ErrPasskeyStale) {
+		t.Fatalf("stale token version: %v", err)
+	}
+	if err := d.SetAdminDisabled(a.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	cur, _ := d.GetAdminByID(a.ID)
+	if err := d.CreatePasskey(&models.WebAuthnCredential{AdminID: a.ID, CredentialID: []byte("d"), PublicKey: []byte{1}}, cur.TokenVersion); !errors.Is(err, ErrPasskeyStale) {
+		t.Fatalf("disabled account: %v", err)
+	}
+	if n := countCreds(t, d, a.ID); n != 0 {
+		t.Fatalf("%d credentials stored", n)
+	}
+}
+
+// TestResetAdminCredentials_Atomic: when any part of a reset fails, none of
+// it happens — the passkeys stay and token_version does not move.
+func TestResetAdminCredentials_Atomic(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	a := pkAdmin(t, d, "a")
+	pkCred(t, d, a.ID, "k1")
+	// Make the recovery-code step fail.
+	if err := d.db.Exec(`DROP TABLE admin_recovery_codes`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.ResetAdminCredentials(a.ID, AdminReset{PasswordHash: "new", ClearTOTP: true}); err == nil {
+		t.Fatal("reset should have failed")
+	}
+	got, _ := d.GetAdminByID(a.ID)
+	if n := countCreds(t, d, a.ID); n != 1 || got.TokenVersion != 0 || got.Password != "old-hash" {
+		t.Fatalf("partial reset applied: creds=%d tv=%d pw=%s", n, got.TokenVersion, got.Password)
+	}
+	// A successful reset deletes and bumps together.
+	n, err := d.ResetAdminCredentials(a.ID, AdminReset{})
+	got, _ = d.GetAdminByID(a.ID)
+	if err != nil || n != 1 || got.TokenVersion != 1 || countCreds(t, d, a.ID) != 0 {
+		t.Fatalf("reset: n=%d err=%v tv=%d", n, err, got.TokenVersion)
 	}
 }

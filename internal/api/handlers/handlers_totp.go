@@ -352,17 +352,12 @@ func (h *Handler) ResetUser2FA(c *gin.Context) {
 	if !ok {
 		return
 	}
-	// D-RESET: an admin 2FA reset always removes the account's passkeys too.
-	if _, err := db.DeleteAdminPasskeys(id); err != nil {
-		httputil.InternalError(c, "Failed to remove passkeys", err)
-		return
-	}
-	if err := db.ClearAdminTOTP(id); err != nil {
+	// D-RESET: one transaction clears TOTP + recovery codes, deletes every
+	// passkey and bumps token_version.
+	if _, err := db.ResetAdminCredentials(id, database.AdminReset{ClearTOTP: true}); err != nil {
 		httputil.InternalError(c, "Failed to reset 2FA", err)
 		return
 	}
-	if err := db.IncrementAdminTokenVersion(id); err != nil {
-		log.Printf("Failed to bump token version after 2FA reset: %v", err)
-	}
+	h.discardRegistration(id)
 	c.JSON(http.StatusOK, response.Success(gin.H{"reset": id}))
 }

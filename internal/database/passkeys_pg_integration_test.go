@@ -93,6 +93,31 @@ func TestPasskeysPostgres(t *testing.T) {
 		}
 	})
 
+	t.Run("ResetLocksAndIsAtomic", func(t *testing.T) {
+		a := pkAdmin(t, d, "pg-reset")
+		pkCred(t, d, a.ID, "pg-reset-1")
+		if _, err := d.ResetAdminCredentials(a.ID, AdminReset{ClearTOTP: true}); err != nil {
+			t.Fatalf("ResetAdminCredentials (FOR UPDATE): %v", err)
+		}
+		got, _ := d.GetAdminByID(a.ID)
+		if countCreds(t, d, a.ID) != 0 || got.TokenVersion != 1 {
+			t.Fatalf("reset: tv=%d", got.TokenVersion)
+		}
+		err := d.CreatePasskey(&models.WebAuthnCredential{AdminID: a.ID, CredentialID: []byte("pg-stale"), PublicKey: []byte{1}}, 0)
+		if err != ErrPasskeyStale {
+			t.Fatalf("stale CreatePasskey on Postgres: %v", err)
+		}
+		if err := d.CreatePasskey(&models.WebAuthnCredential{AdminID: a.ID, CredentialID: []byte("pg-fresh"), PublicKey: []byte{1}}, 1); err != nil {
+			t.Fatalf("fresh CreatePasskey on Postgres: %v", err)
+		}
+		if ok, err := d.DeletePasskeyAndEndSessions(1<<30, a.ID); ok || err != nil {
+			t.Fatalf("delete of a missing id: %v %v", ok, err)
+		}
+		if got, _ := d.GetAdminByID(a.ID); got.TokenVersion != 1 {
+			t.Fatal("a no-op delete bumped token_version")
+		}
+	})
+
 	t.Run("ResetAuth", func(t *testing.T) {
 		testResetAuth(t, d)
 	})

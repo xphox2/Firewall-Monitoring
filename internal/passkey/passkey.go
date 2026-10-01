@@ -129,12 +129,17 @@ func validateOrigin(raw, rpID string) (string, error) {
 }
 
 // Service is the enabled passkey feature: the configured library instance,
-// the ceremony store and the per-user re-authentication limiter.
+// the ceremony stores and the per-user re-authentication limiter.
+//
+// Login and registration ceremonies live in SEPARATE stores, each with its
+// own cap: unauthenticated login/begin floods can fill (and evict within)
+// only the login store, never an in-flight registration.
 type Service struct {
-	WebAuthn   *webauthn.WebAuthn
-	Ceremonies *CeremonyStore
-	Reauth     *ReauthLimiter
-	Settings   Settings
+	WebAuthn           *webauthn.WebAuthn
+	LoginCeremonies    *CeremonyStore
+	RegisterCeremonies *CeremonyStore
+	Reauth             *ReauthLimiter
+	Settings           Settings
 }
 
 // New builds a Service from validated settings with the security-relevant
@@ -161,10 +166,11 @@ func New(s Settings) (*Service, error) {
 		return nil, err
 	}
 	return &Service{
-		WebAuthn:   wa,
-		Ceremonies: NewCeremonyStore(CeremonyTimeout, DefaultCeremonyCap),
-		Reauth:     NewReauthLimiter(),
-		Settings:   s,
+		WebAuthn:           wa,
+		LoginCeremonies:    NewCeremonyStore(CeremonyTimeout, DefaultCeremonyCap),
+		RegisterCeremonies: NewCeremonyStore(CeremonyTimeout, DefaultCeremonyCap),
+		Reauth:             NewReauthLimiter(),
+		Settings:           s,
 	}, nil
 }
 

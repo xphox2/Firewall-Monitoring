@@ -198,7 +198,7 @@ func TestPasskey_KillSwitch404(t *testing.T) {
 	e := newPasskeyEnv(t, false)
 	root := e.createUser("root", auth.RoleAdmin, false)
 	// A credential stored while the feature was on.
-	if err := e.db.CreatePasskey(&models.WebAuthnCredential{AdminID: root.ID, CredentialID: []byte("kept-credential"), PublicKey: []byte{1}, Name: "old"}); err != nil {
+	if err := e.db.CreatePasskey(&models.WebAuthnCredential{AdminID: root.ID, CredentialID: []byte("kept-credential"), PublicKey: []byte{1}, Name: "old"}, 0); err != nil {
 		t.Fatal(err)
 	}
 	s := e.login("root", "")
@@ -288,7 +288,7 @@ func TestPasskey_APITokenForbidden(t *testing.T) {
 		Scope: "admin", CreatedBy: "root", CreatedByID: root.ID}); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.db.CreatePasskey(&models.WebAuthnCredential{AdminID: root.ID, CredentialID: []byte("cred"), PublicKey: []byte{1}, Name: "k"}); err != nil {
+	if err := e.db.CreatePasskey(&models.WebAuthnCredential{AdminID: root.ID, CredentialID: []byte("cred"), PublicKey: []byte{1}, Name: "k"}, 0); err != nil {
 		t.Fatal(err)
 	}
 	for _, ep := range allPasskeyEndpoints(root.ID) {
@@ -520,7 +520,7 @@ func TestPasskey_CeremonyExpiredFails(t *testing.T) {
 	_, a, _ := e.registered("alice", auth.RoleOperator)
 	challenge, ck := e.loginBegin()
 	future := time.Now().Add(passkey.CeremonyTimeout + time.Second)
-	e.h.passkeys.Ceremonies.SetClockForTesting(func() time.Time { return future })
+	e.h.passkeys.LoginCeremonies.SetClockForTesting(func() time.Time { return future })
 	assertGenericPasskeyFailure(t, e.loginFinish(ck, a.assertionBody(challenge, a.userHandle)))
 }
 
@@ -558,7 +558,7 @@ func TestPasskey_CeremonyWrongKindFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := passkey.RegistrationKey(alice.ID)
-	e.h.passkeys.Ceremonies.Put(key, passkey.Ceremony{Kind: passkey.KindRegister, AdminID: alice.ID, Session: *sess})
+	e.h.passkeys.LoginCeremonies.Put(key, passkey.Ceremony{Kind: passkey.KindRegister, AdminID: alice.ID, Session: *sess})
 	assertGenericPasskeyFailure(t, e.loginFinish(&http.Cookie{Name: passkeyLoginCookie, Value: key}, a.assertionBody(sess.Challenge, a.userHandle)))
 }
 
@@ -655,7 +655,7 @@ func TestPasskey_RegisterReauthRequired(t *testing.T) {
 			t.Errorf("%s: status %d, want 403 (%s)", tc.name, rec.Code, rec.Body.String())
 		}
 	}
-	if _, ok := e.h.passkeys.Ceremonies.Take(passkey.KindRegister, passkey.RegistrationKey(root.ID)); ok {
+	if _, ok := e.h.passkeys.RegisterCeremonies.Take(passkey.KindRegister, passkey.RegistrationKey(root.ID)); ok {
 		t.Fatal("a refused re-auth left a registration ceremony behind")
 	}
 	// A wrong password here never feeds the login lockout.
@@ -736,7 +736,7 @@ func TestPasskey_RegisterLimit(t *testing.T) {
 	u := e.createUser("alice", auth.RoleOperator, false)
 	s := e.login("alice", "")
 	for i := 0; i < database.MaxPasskeysPerUser-1; i++ {
-		if err := e.db.CreatePasskey(&models.WebAuthnCredential{AdminID: u.ID, CredentialID: []byte(fmt.Sprintf("seed-%d", i)), PublicKey: []byte{1}}); err != nil {
+		if err := e.db.CreatePasskey(&models.WebAuthnCredential{AdminID: u.ID, CredentialID: []byte(fmt.Sprintf("seed-%d", i)), PublicKey: []byte{1}}, 0); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -745,7 +745,7 @@ func TestPasskey_RegisterLimit(t *testing.T) {
 	if beg.Code != http.StatusOK {
 		t.Fatalf("begin with 9: %d", beg.Code)
 	}
-	if err := e.db.CreatePasskey(&models.WebAuthnCredential{AdminID: u.ID, CredentialID: []byte("seed-race"), PublicKey: []byte{1}}); err != nil {
+	if err := e.db.CreatePasskey(&models.WebAuthnCredential{AdminID: u.ID, CredentialID: []byte("seed-race"), PublicKey: []byte{1}}, 0); err != nil {
 		t.Fatal(err)
 	}
 	o := decodeOptions(t, beg)
@@ -861,23 +861,32 @@ func TestPasskey_AdminRemoveAll(t *testing.T) {
 }
 
 // TestPasskey_NewKeyNotice: after a registration the next password login and
-// the list carry the notice until acknowledged.
+// the list carry the notice. The session that registered the key cannot
+// acknowledge it (a hijacked session must not hide its own rogue key); a
+// later login can.
 func TestPasskey_NewKeyNotice(t *testing.T) {
 	e := newPasskeyEnv(t, true)
-	e.registered("alice", auth.RoleOperator)
+	_, _, s := e.registered("alice", auth.RoleOperator) // key registered in session s
+	if ack := s.do(http.MethodPost, "/admin/api/passkeys/notices/ack", ""); ack.Code != http.StatusOK {
+		t.Fatalf("ack: %d", ack.Code)
+	}
+	if list := s.do(http.MethodGet, "/admin/api/passkeys", ""); !strings.Contains(list.Body.String(), `"notices":[{"name":"alice-key"`) {
+		t.Fatalf("the registering session hid its own key's notice: %s", list.Body.String())
+	}
+
+	// JWT iat has 1-second resolution: start the next session in a later
+	// second than the registration.
+	time.Sleep(time.Until(time.Now().Truncate(time.Second).Add(1100 * time.Millisecond)))
 	rec := e.passwordLogin("alice", "")
 	if !strings.Contains(rec.Body.String(), `"passkey_notices":[{"name":"alice-key"`) {
 		t.Fatalf("password login carries no notice: %s", rec.Body.String())
 	}
-	s := e.sessionFrom(rec)
-	if list := s.do(http.MethodGet, "/admin/api/passkeys", ""); !strings.Contains(list.Body.String(), `"notices":[{"name":"alice-key"`) {
-		t.Fatalf("list carries no notice: %s", list.Body.String())
-	}
-	if ack := s.do(http.MethodPost, "/admin/api/passkeys/notices/ack", ""); ack.Code != http.StatusOK {
-		t.Fatalf("ack: %d", ack.Code)
+	s2 := e.sessionFrom(rec)
+	if ack := s2.do(http.MethodPost, "/admin/api/passkeys/notices/ack", ""); ack.Code != http.StatusOK {
+		t.Fatalf("ack in s2: %d", ack.Code)
 	}
 	if rec := e.passwordLogin("alice", ""); strings.Contains(rec.Body.String(), "passkey_notices") {
-		t.Fatalf("notice survived the ack: %s", rec.Body.String())
+		t.Fatalf("notice survived the ack from a later session: %s", rec.Body.String())
 	}
 }
 
@@ -965,4 +974,159 @@ func TestPasskey_ChangePasswordRemovePasskeys(t *testing.T) {
 
 func decodeB64u(s string) ([]byte, error) {
 	return base64.RawURLEncoding.DecodeString(s)
+}
+
+// --- review follow-ups -------------------------------------------------------------
+
+// TestPasskey_RegisterFinishAfterResetRejected simulates the reset vs.
+// in-flight registration interleaving: register-finish has already passed
+// the auth middleware (session token_version N) and taken its ceremony when
+// an admin reset bumps the account to N+1 and deletes its passkeys. The
+// insert must be refused and nothing stored.
+func TestPasskey_RegisterFinishAfterResetRejected(t *testing.T) {
+	e := newPasskeyEnv(t, true)
+	e.createUser("root", auth.RoleAdmin, false)
+	alice := e.createUser("alice", auth.RoleOperator, false)
+	sa := e.login("alice", "")
+	beg := sa.registerBegin(pkTestPass, "", "late-key")
+	o := decodeOptions(t, beg)
+	a := newSoftAuth(t)
+	body := a.registrationBody(o.Data.PublicKey.Challenge, mustB64(t, o.Data.PublicKey.User.ID))
+	key := passkey.RegistrationKey(alice.ID)
+	ceremony, ok := e.h.passkeys.RegisterCeremonies.Take(passkey.KindRegister, key)
+	if !ok {
+		t.Fatal("no ceremony after begin")
+	}
+	staleTV := e.admin(alice.ID).TokenVersion
+
+	// The reset lands now.
+	rs := e.login("root", "")
+	if rec := rs.do(http.MethodPost, fmt.Sprintf("/admin/api/users/%d/reset-password", alice.ID), ""); rec.Code != http.StatusOK {
+		t.Fatalf("reset: %d %s", rec.Code, rec.Body.String())
+	}
+	if e.admin(alice.ID).TokenVersion == staleTV {
+		t.Fatal("reset did not bump token_version")
+	}
+
+	// The finish that was already past the middleware continues.
+	e.h.passkeys.RegisterCeremonies.Put(key, ceremony)
+	c, rec := jsonReq(http.MethodPost, "/admin/api/passkeys/register/finish", body)
+	c.Set("auth_method", "session")
+	c.Set("user_id", alice.ID)
+	c.Set("username", "alice")
+	c.Set("token_version", staleTV)
+	e.h.PasskeyRegisterFinish(c)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("registration committed after the reset: %s", rec.Body.String())
+	}
+	if n := len(e.passkeyRows(alice.ID)); n != 0 {
+		t.Fatalf("%d passkeys stored after the reset", n)
+	}
+}
+
+// TestPasskey_ResetDiscardsRegistrationCeremony: every reset drops the
+// account's outstanding registration ceremony.
+func TestPasskey_ResetDiscardsRegistrationCeremony(t *testing.T) {
+	for _, path := range []string{"reset-password", "reset-2fa", "passkeys"} {
+		e := newPasskeyEnv(t, true)
+		e.createUser("root", auth.RoleAdmin, false)
+		alice := e.createUser("alice", auth.RoleOperator, false)
+		if rec := e.login("alice", "").registerBegin(pkTestPass, "", "k"); rec.Code != http.StatusOK {
+			t.Fatalf("begin: %d", rec.Code)
+		}
+		rs := e.login("root", "")
+		method := http.MethodPost
+		if path == "passkeys" {
+			method = http.MethodDelete
+		}
+		if rec := rs.do(method, fmt.Sprintf("/admin/api/users/%d/%s", alice.ID, path), ""); rec.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", path, rec.Code, rec.Body.String())
+		}
+		if _, ok := e.h.passkeys.RegisterCeremonies.Take(passkey.KindRegister, passkey.RegistrationKey(alice.ID)); ok {
+			t.Fatalf("%s left the registration ceremony in place", path)
+		}
+	}
+}
+
+// TestPasskey_AdminRemoveAllOwnAccountReissues: an admin removing their own
+// passkeys gets their session re-issued in the response.
+func TestPasskey_AdminRemoveAllOwnAccountReissues(t *testing.T) {
+	e := newPasskeyEnv(t, true)
+	root, _, rs := e.registered("root", auth.RoleAdmin)
+	rec := rs.do(http.MethodDelete, fmt.Sprintf("/admin/api/users/%d/passkeys", root.ID), "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("remove own: %d %s", rec.Code, rec.Body.String())
+	}
+	if len(e.passkeyRows(root.ID)) != 0 {
+		t.Fatal("passkeys not removed")
+	}
+	if r := rs.do(http.MethodGet, "/admin/api/me", ""); r.Code != http.StatusUnauthorized {
+		t.Fatalf("old session survived: %d", r.Code)
+	}
+	if r := e.sessionFrom(rec).do(http.MethodGet, "/admin/api/passkeys", ""); r.Code != http.StatusOK {
+		t.Fatalf("re-issued session rejected: %d", r.Code)
+	}
+}
+
+// TestPasskey_LoginFloodCannotEvictRegistration: filling the login ceremony
+// store (unauthenticated) never evicts an in-flight registration.
+func TestPasskey_LoginFloodCannotEvictRegistration(t *testing.T) {
+	e := newPasskeyEnv(t, true)
+	alice := e.createUser("alice", auth.RoleOperator, false)
+	s := e.login("alice", "")
+	beg := s.registerBegin(pkTestPass, "", "k")
+	o := decodeOptions(t, beg)
+	for i := 0; i < passkey.DefaultCeremonyCap+50; i++ {
+		if rec := e.do(http.MethodPost, "/api/auth/passkey/login/begin", "", nil, nil); rec.Code != http.StatusOK {
+			t.Fatalf("login begin %d: %d", i, rec.Code)
+		}
+	}
+	if n := e.h.passkeys.LoginCeremonies.Len(); n != passkey.DefaultCeremonyCap {
+		t.Fatalf("login store holds %d", n)
+	}
+	a := newSoftAuth(t)
+	fin := s.do(http.MethodPost, "/admin/api/passkeys/register/finish", a.registrationBody(o.Data.PublicKey.Challenge, mustB64(t, o.Data.PublicKey.User.ID)))
+	if fin.Code != http.StatusOK {
+		t.Fatalf("registration after a login flood: %d %s", fin.Code, fin.Body.String())
+	}
+	if len(e.passkeyRows(alice.ID)) != 1 {
+		t.Fatal("passkey not stored")
+	}
+}
+
+// TestPasskey_WrongOriginRPIDTypeRejected: real library verification refuses
+// an assertion/attestation from another origin, for another RP ID, or (login)
+// with the creation clientData type.
+func TestPasskey_WrongOriginRPIDTypeRejected(t *testing.T) {
+	const evilOrigin, evilRPID = "https://evil.example.test", "evil.example.test"
+	login := map[string]func(a *softAuth){
+		"origin": func(a *softAuth) { a.origin = evilOrigin },
+		"rp id":  func(a *softAuth) { a.rpID = evilRPID },
+		"type":   func(a *softAuth) { a.assertType = "webauthn.create" },
+	}
+	for name, mutate := range login {
+		e := newPasskeyEnv(t, true)
+		alice, a, _ := e.registered("alice", auth.RoleOperator)
+		mutate(a)
+		assertGenericPasskeyFailure(t, e.passkeyLogin(a, a.userHandle))
+		if r := e.passkeyRows(alice.ID)[0]; r.LastUsedAt != nil {
+			t.Fatalf("login %s: credential updated", name)
+		}
+	}
+	reg := map[string]func(a *softAuth){
+		"origin": func(a *softAuth) { a.origin = evilOrigin },
+		"rp id":  func(a *softAuth) { a.rpID = evilRPID },
+	}
+	for name, mutate := range reg {
+		e := newPasskeyEnv(t, true)
+		u := e.createUser("alice", auth.RoleOperator, false)
+		s := e.login("alice", "")
+		o := decodeOptions(t, s.registerBegin(pkTestPass, "", "k"))
+		a := newSoftAuth(t)
+		mutate(a)
+		fin := s.do(http.MethodPost, "/admin/api/passkeys/register/finish", a.registrationBody(o.Data.PublicKey.Challenge, mustB64(t, o.Data.PublicKey.User.ID)))
+		if fin.Code != http.StatusBadRequest || len(e.passkeyRows(u.ID)) != 0 {
+			t.Fatalf("registration %s: %d %s", name, fin.Code, fin.Body.String())
+		}
+	}
 }

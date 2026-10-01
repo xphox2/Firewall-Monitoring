@@ -110,6 +110,14 @@ func (s *CeremonyStore) Take(kind, key string) (Ceremony, bool) {
 	return e.c, true
 }
 
+// Discard drops the entry stored under key, if any (a reset discards the
+// account's outstanding registration ceremony).
+func (s *CeremonyStore) Discard(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.m, key)
+}
+
 // Len reports the number of live entries (tests, diagnostics).
 func (s *CeremonyStore) Len() int {
 	s.mu.Lock()

@@ -399,14 +399,14 @@ type PasskeyStore interface {
 	GetPasskeyByCredentialID(credentialID []byte) (*models.WebAuthnCredential, error)
 	ListPasskeys(adminID uint) ([]models.WebAuthnCredential, error)
 	CountPasskeys(adminID uint) (int64, error)
-	CreatePasskey(cred *models.WebAuthnCredential) error
+	CreatePasskey(cred *models.WebAuthnCredential, sessionTokenVersion uint) error
 	RecordPasskeyUse(id, adminID uint, signCount uint32, backupState bool, usedAt time.Time) (bool, error)
 	RenamePasskey(id, adminID uint, name string) (bool, error)
-	DeletePasskey(id, adminID uint) (bool, error)
-	DeleteAdminPasskeys(adminID uint) (int64, error)
+	DeletePasskeyAndEndSessions(id, adminID uint) (bool, error)
+	ResetAdminCredentials(adminID uint, r AdminReset) (int64, error)
 	EnsureWebAuthnUserHandle(adminID uint, candidate []byte) ([]byte, error)
 	ListPasskeyNotices(adminID uint) ([]models.WebAuthnCredential, error)
-	AckPasskeyNotices(adminID uint, at time.Time) error
+	AckPasskeyNotices(adminID uint, sessionIssuedAt time.Time) error
 }
 
 // IncidentStore covers F12 incident grouping (read side for the API; the

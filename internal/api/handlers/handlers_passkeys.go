@@ -230,7 +230,7 @@ func (h *Handler) PasskeyLoginBegin(c *gin.Context) {
 		httputil.InternalError(c, "Failed to start passkey sign-in", err)
 		return
 	}
-	svc.Ceremonies.Put(id, passkey.Ceremony{Kind: passkey.KindLogin, Session: *session})
+	svc.LoginCeremonies.Put(id, passkey.Ceremony{Kind: passkey.KindLogin, Session: *session})
 	h.setPasskeyLoginCookie(c, id, int(passkey.CeremonyTimeout.Seconds()))
 	c.JSON(http.StatusOK, response.Success(assertion))
 }
@@ -282,7 +282,7 @@ func (h *Handler) PasskeyLoginFinish(c *gin.Context) {
 		fail("no ceremony cookie")
 		return
 	}
-	ceremony, ok := svc.Ceremonies.Take(passkey.KindLogin, ceremonyID)
+	ceremony, ok := svc.LoginCeremonies.Take(passkey.KindLogin, ceremonyID)
 	if !ok {
 		fail("ceremony unknown, expired, already used or of the wrong kind")
 		return
@@ -561,7 +561,7 @@ func (h *Handler) PasskeyRegisterBegin(c *gin.Context) {
 		httputil.InternalError(c, "Failed to start passkey registration", err)
 		return
 	}
-	svc.Ceremonies.Put(passkey.RegistrationKey(admin.ID), passkey.Ceremony{
+	svc.RegisterCeremonies.Put(passkey.RegistrationKey(admin.ID), passkey.Ceremony{
 		Kind: passkey.KindRegister, AdminID: admin.ID, Name: name, Session: *session,
 	})
 	c.JSON(http.StatusOK, response.Success(creation))
@@ -590,7 +590,7 @@ func (h *Handler) PasskeyRegisterFinish(c *gin.Context) {
 		passkeyAudit(c, db, actor, adminID, "passkey_register_failure", "reason="+reason, status)
 		c.JSON(status, response.Error(msg))
 	}
-	ceremony, ok := svc.Ceremonies.Take(passkey.KindRegister, passkey.RegistrationKey(adminID))
+	ceremony, ok := svc.RegisterCeremonies.Take(passkey.KindRegister, passkey.RegistrationKey(adminID))
 	if !ok || ceremony.AdminID != adminID {
 		refuse(http.StatusBadRequest, "No passkey registration in progress — start again", "no ceremony for this account")
 		return
@@ -646,7 +646,16 @@ func (h *Handler) PasskeyRegisterFinish(c *gin.Context) {
 		Name:            ceremony.Name,
 		CreatedAt:       time.Now(),
 	}
-	switch err := db.CreatePasskey(row); {
+	sessionTV, tvOK := c.Get("token_version")
+	tv, _ := sessionTV.(uint)
+	if !tvOK {
+		refuse(http.StatusBadRequest, "Passkey registration failed", "session carries no token version")
+		return
+	}
+	switch err := db.CreatePasskey(row, tv); {
+	case errors.Is(err, database.ErrPasskeyStale):
+		refuse(http.StatusBadRequest, "Passkey registration failed", "account changed since the session began (reset, disable or version bump)")
+		return
 	case errors.Is(err, database.ErrPasskeyLimit):
 		refuse(http.StatusConflict, fmt.Sprintf("You already have the maximum of %d passkeys", database.MaxPasskeysPerUser), "limit reached")
 		return
@@ -712,7 +721,8 @@ func (h *Handler) ListPasskeys(c *gin.Context) {
 }
 
 // AckPasskeyNotices (POST /admin/api/passkeys/notices/ack) marks the caller's
-// pending new-passkey notices as seen.
+// new-passkey notices as seen — only those of passkeys created before the
+// calling session was issued.
 func (h *Handler) AckPasskeyNotices(c *gin.Context) {
 	if _, ok := h.passkeysOr404(c); !ok {
 		return
@@ -725,7 +735,12 @@ func (h *Handler) AckPasskeyNotices(c *gin.Context) {
 	if !httputil.RequireDB(c, db) {
 		return
 	}
-	if err := db.AckPasskeyNotices(adminID, time.Now()); err != nil {
+	// Only notices of passkeys created BEFORE this session began are
+	// acknowledged: a key registered during this session stays pending until a
+	// later login, so a hijacked session cannot hide its own rogue key.
+	iatVal, _ := c.Get("session_issued_at")
+	iat, _ := iatVal.(time.Time)
+	if err := db.AckPasskeyNotices(adminID, iat); err != nil {
 		httputil.InternalError(c, "Failed to update notices", err)
 		return
 	}
@@ -806,7 +821,8 @@ func (h *Handler) DeletePasskey(c *gin.Context) {
 	if h.reauthPasskeyCaller(c, db, svc, adminID, req) == nil {
 		return
 	}
-	found, err := db.DeletePasskey(id, adminID)
+	// Delete + token_version bump in one transaction.
+	found, err := db.DeletePasskeyAndEndSessions(id, adminID)
 	if err != nil {
 		httputil.InternalError(c, "Failed to delete passkey", err)
 		return
@@ -815,25 +831,36 @@ func (h *Handler) DeletePasskey(c *gin.Context) {
 		c.JSON(http.StatusNotFound, response.Error("Passkey not found"))
 		return
 	}
-	actor := c.GetString("username")
-	passkeyAudit(c, db, actor, adminID, "passkey_delete", fmt.Sprintf("id=%d", id), http.StatusOK)
-	if err := db.IncrementAdminTokenVersion(adminID); err != nil {
-		httputil.InternalError(c, "Passkey deleted, but other sessions could not be ended — sign out and back in", err)
-		return
-	}
-	admin, err := db.GetAdminByID(adminID)
-	if err != nil || admin == nil || admin.Disabled || !auth.ValidRole(admin.Role) {
-		httputil.InternalError(c, "Passkey deleted; please sign in again", err)
-		return
-	}
-	h.issueSession(c, admin.Username, admin.ID, admin.TokenVersion, admin.Role, gin.H{
+	passkeyAudit(c, db, c.GetString("username"), adminID, "passkey_delete", fmt.Sprintf("id=%d", id), http.StatusOK)
+	h.reissueOwnSession(c, db, adminID, gin.H{
 		"deleted": id,
 		"message": "Passkey deleted. Other sessions have been signed out.",
 	})
 }
 
+// reissueOwnSession mints a fresh session for the caller after an action that
+// bumped their own token_version, re-reading the account by id.
+func (h *Handler) reissueOwnSession(c *gin.Context, db database.Store, adminID uint, extra gin.H) {
+	admin, err := db.GetAdminByID(adminID)
+	if err != nil || admin == nil || admin.Disabled || !auth.ValidRole(admin.Role) {
+		httputil.InternalError(c, "Done; please sign in again", err)
+		return
+	}
+	h.issueSession(c, admin.Username, admin.ID, admin.TokenVersion, admin.Role, extra)
+}
+
+// discardRegistration drops any outstanding registration ceremony of the
+// account (every reset does this; CreatePasskey's token_version check is the
+// backstop).
+func (h *Handler) discardRegistration(adminID uint) {
+	if h.passkeys != nil {
+		h.passkeys.RegisterCeremonies.Discard(passkey.RegistrationKey(adminID))
+	}
+}
+
 // RemoveUserPasskeys (DELETE /admin/api/users/:id/passkeys, admin-only)
-// removes every passkey of account :id and ends its sessions.
+// removes every passkey of account :id and ends its sessions (one
+// transaction). When :id is the caller, the caller's session is re-issued.
 func (h *Handler) RemoveUserPasskeys(c *gin.Context) {
 	if _, ok := h.passkeysOr404(c); !ok {
 		return
@@ -850,16 +877,19 @@ func (h *Handler) RemoveUserPasskeys(c *gin.Context) {
 	if !ok {
 		return
 	}
-	n, err := db.DeleteAdminPasskeys(id)
+	// Delete all + token_version bump in one transaction.
+	n, err := db.ResetAdminCredentials(id, database.AdminReset{})
 	if err != nil {
 		httputil.InternalError(c, "Failed to remove passkeys", err)
 		return
 	}
-	if err := db.IncrementAdminTokenVersion(id); err != nil {
-		httputil.InternalError(c, "Passkeys removed, but the user's sessions could not be ended", err)
-		return
-	}
+	h.discardRegistration(id)
 	passkeyAudit(c, db, c.GetString("username"), callerID, "passkey_admin_remove_all",
 		fmt.Sprintf("user=%s id=%d removed=%d", target.Username, id, n), http.StatusOK)
+	if id == callerID {
+		// The bump ended the caller's own session: re-issue it.
+		h.reissueOwnSession(c, db, callerID, gin.H{"user_id": id, "removed": n})
+		return
+	}
 	c.JSON(http.StatusOK, response.Success(gin.H{"user_id": id, "removed": n}))
 }

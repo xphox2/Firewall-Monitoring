@@ -326,6 +326,14 @@ func AdminAuth(authManager *auth.AuthManager, tokens TokenAuthStore) gin.Handler
 		c.Set("is_admin", true)
 		c.Set("role", role)
 		c.Set("auth_method", "session")
+		// The session's own token version and issue time (passkeys: a
+		// registration only commits if the account's token_version still
+		// equals the session's, and a notice ack covers only passkeys
+		// created before the session began).
+		c.Set("token_version", claims.TokenVersion)
+		if claims.IssuedAt != nil {
+			c.Set("session_issued_at", claims.IssuedAt.Time)
+		}
 		c.Next()
 	}
 }

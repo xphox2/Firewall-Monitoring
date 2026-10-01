@@ -426,33 +426,26 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	// D-RESET: passkeys go first, so a failure leaves the password unchanged.
-	if req.RemovePasskeys == nil || *req.RemovePasskeys {
-		removed, perr := db.DeleteAdminPasskeys(userIDUint)
-		if perr != nil {
-			httputil.InternalError(c, "Failed to remove passkeys", perr)
-			return
-		}
-		if removed > 0 {
-			log.Printf("password change for admin %d removed %d passkey(s)", userIDUint, removed)
-		}
-	}
-
-	err = db.UpdateAdminPassword(userIDUint, hashedPassword)
+	// One transaction (D-RESET): new password, clear the forced-change flag,
+	// delete every passkey (unless remove_passkeys is explicitly false) and
+	// bump token_version to invalidate all existing sessions. Either all of
+	// it happens or none of it does.
+	removePasskeys := req.RemovePasskeys == nil || *req.RemovePasskeys
+	mustChange := false
+	removed, err := db.ResetAdminCredentials(userIDUint, database.AdminReset{
+		PasswordHash:       hashedPassword,
+		MustChangePassword: &mustChange,
+		KeepPasskeys:       !removePasskeys,
+	})
 	if err != nil {
 		httputil.InternalError(c, "Failed to update password", err)
 		return
 	}
-
-	// Clear the forced-change flag now that the operator has set their own
-	// password. Best-effort: a failure here only means the user is re-prompted.
-	if err := db.SetAdminMustChangePassword(userIDUint, false); err != nil {
-		log.Printf("Failed to clear must_change_password after password change: %v", err)
+	if removePasskeys {
+		h.discardRegistration(userIDUint)
 	}
-
-	// Invalidate all existing tokens by incrementing token version
-	if err := db.IncrementAdminTokenVersion(userIDUint); err != nil {
-		log.Printf("Failed to increment token version after password change: %v", err)
+	if removed > 0 {
+		log.Printf("password change for admin %d removed %d passkey(s)", userIDUint, removed)
 	}
 
 	c.JSON(http.StatusOK, response.Message("Password changed successfully. Please log in again."))

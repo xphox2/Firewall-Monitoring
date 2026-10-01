@@ -9,6 +9,7 @@ import (
 	"firewall-mon/internal/models"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Passkey (WebAuthn) persistence (migration v70). Every method except the
@@ -18,6 +19,11 @@ import (
 // ErrPasskeyLimit is returned by CreatePasskey when the account already holds
 // MaxPasskeysPerUser credentials.
 var ErrPasskeyLimit = errors.New("passkey limit reached")
+
+// ErrPasskeyStale is returned by CreatePasskey when the account changed
+// since the registering session was issued (token_version bumped by a reset,
+// a passkey deletion, a role change...) or the account is disabled or gone.
+var ErrPasskeyStale = errors.New("account changed since this session started")
 
 // ErrPasskeyDuplicate is returned by CreatePasskey when the credential id is
 // already registered (to any account).
@@ -58,15 +64,46 @@ func (d *Database) CountPasskeys(adminID uint) (int64, error) {
 	return n, err
 }
 
+// lockAdminRow re-reads the account row inside tx, locking it (SELECT ...
+// FOR UPDATE) on Postgres; SQLite serialises writers, and the read-then-
+// write transaction gives the same ordering there. Every passkey reset and
+// CreatePasskey take this lock first, so a registration can never commit
+// between a reset's delete and its token_version bump. Returns nil, nil when
+// the row does not exist.
+func (d *Database) lockAdminRow(tx *gorm.DB, adminID uint) (*models.Admin, error) {
+	q := tx
+	if d.dialect.IsPostgres() {
+		q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	var a models.Admin
+	err := q.Select("id", "username", "token_version", "disabled").Where("id = ?", adminID).First(&a).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
 // CreatePasskey stores a new credential for cred.AdminID. Inside one
-// transaction it re-checks the per-account limit and the credential id's
-// uniqueness (the unique index is the backstop for a concurrent insert, which
-// is mapped to ErrPasskeyDuplicate as well).
-func (d *Database) CreatePasskey(cred *models.WebAuthnCredential) error {
+// transaction it locks and re-reads the account row and requires it to be
+// enabled with token_version == sessionTokenVersion (else ErrPasskeyStale —
+// closes the race with a concurrent reset), then re-checks the per-account
+// limit and the credential id's uniqueness (the unique index is the backstop
+// for a concurrent insert, which is mapped to ErrPasskeyDuplicate as well).
+func (d *Database) CreatePasskey(cred *models.WebAuthnCredential, sessionTokenVersion uint) error {
 	if cred == nil || cred.AdminID == 0 || len(cred.CredentialID) == 0 {
 		return errors.New("create passkey: admin id and credential id are required")
 	}
 	err := d.db.Transaction(func(tx *gorm.DB) error {
+		admin, err := d.lockAdminRow(tx, cred.AdminID)
+		if err != nil {
+			return err
+		}
+		if admin == nil || admin.Disabled || admin.TokenVersion != sessionTokenVersion {
+			return ErrPasskeyStale
+		}
 		var n int64
 		if err := tx.Model(&models.WebAuthnCredential{}).Where("admin_id = ?", cred.AdminID).Count(&n).Error; err != nil {
 			return err
@@ -83,7 +120,8 @@ func (d *Database) CreatePasskey(cred *models.WebAuthnCredential) error {
 		}
 		return tx.Create(cred).Error
 	})
-	if err != nil && !errors.Is(err, ErrPasskeyLimit) && !errors.Is(err, ErrPasskeyDuplicate) && isUniqueViolation(err) {
+	if err != nil && !errors.Is(err, ErrPasskeyLimit) && !errors.Is(err, ErrPasskeyDuplicate) &&
+		!errors.Is(err, ErrPasskeyStale) && isUniqueViolation(err) {
 		return ErrPasskeyDuplicate
 	}
 	return err
@@ -123,18 +161,86 @@ func (d *Database) RenamePasskey(id, adminID uint, name string) (bool, error) {
 	return res.RowsAffected == 1, res.Error
 }
 
-// DeletePasskey removes one credential. Scoped by admin_id; reports whether a
-// row was deleted.
-func (d *Database) DeletePasskey(id, adminID uint) (bool, error) {
-	res := d.db.Where("id = ? AND admin_id = ?", id, adminID).Delete(&models.WebAuthnCredential{})
-	return res.RowsAffected == 1, res.Error
+// DeletePasskeyAndEndSessions removes one credential (scoped by admin_id)
+// and bumps the account's token_version in ONE transaction under the row
+// lock. Reports whether a credential was deleted; nothing changes if not.
+func (d *Database) DeletePasskeyAndEndSessions(id, adminID uint) (bool, error) {
+	deleted := false
+	err := d.db.Transaction(func(tx *gorm.DB) error {
+		if _, err := d.lockAdminRow(tx, adminID); err != nil {
+			return err
+		}
+		res := tx.Where("id = ? AND admin_id = ?", id, adminID).Delete(&models.WebAuthnCredential{})
+		if res.Error != nil || res.RowsAffected != 1 {
+			return res.Error
+		}
+		deleted = true
+		return bumpTokenVersion(tx, adminID)
+	})
+	return deleted && err == nil, err
 }
 
-// DeleteAdminPasskeys removes every credential of the account and returns how
-// many were deleted. Used by every reset path (D-RESET).
-func (d *Database) DeleteAdminPasskeys(adminID uint) (int64, error) {
-	res := d.db.Where("admin_id = ?", adminID).Delete(&models.WebAuthnCredential{})
-	return res.RowsAffected, res.Error
+func bumpTokenVersion(tx *gorm.DB, adminID uint) error {
+	return tx.Model(&models.Admin{}).Where("id = ?", adminID).
+		UpdateColumn("token_version", gorm.Expr("token_version + 1")).Error
+}
+
+// AdminReset describes one atomic account reset (D-RESET). Every reset
+// deletes all passkeys (unless KeepPasskeys) and bumps token_version; the optional parts below are
+// applied in the same transaction, under the account row lock.
+type AdminReset struct {
+	PasswordHash       string // non-empty: set this password hash
+	MustChangePassword *bool  // non-nil: set must_change_password
+	ClearTOTP          bool   // clear TOTP + delete recovery codes
+	// KeepPasskeys skips the passkey deletion — ONLY for a self-service
+	// password change that explicitly sent remove_passkeys=false.
+	KeepPasskeys bool
+}
+
+// ResetAdminCredentials applies r to the account in ONE transaction: lock the
+// row, delete every passkey, apply the optional password / flag / TOTP
+// changes, bump token_version. Returns how many passkeys were deleted.
+// Used by self password change, admin password reset, admin 2FA reset and
+// admin remove-all.
+func (d *Database) ResetAdminCredentials(adminID uint, r AdminReset) (int64, error) {
+	var removed int64
+	err := d.db.Transaction(func(tx *gorm.DB) error {
+		admin, err := d.lockAdminRow(tx, adminID)
+		if err != nil {
+			return err
+		}
+		if admin == nil {
+			return fmt.Errorf("reset: admin %d not found", adminID)
+		}
+		if !r.KeepPasskeys {
+			res := tx.Where("admin_id = ?", adminID).Delete(&models.WebAuthnCredential{})
+			if res.Error != nil {
+				return res.Error
+			}
+			removed = res.RowsAffected
+		}
+		updates := map[string]interface{}{}
+		if r.PasswordHash != "" {
+			updates["password"] = r.PasswordHash
+		}
+		if r.MustChangePassword != nil {
+			updates["must_change_password"] = *r.MustChangePassword
+		}
+		if r.ClearTOTP {
+			updates["totp_secret"] = ""
+			updates["totp_enabled"] = false
+			updates["totp_confirmed_at"] = nil
+			if err := tx.Where("admin_id = ?", adminID).Delete(&models.AdminRecoveryCode{}).Error; err != nil {
+				return err
+			}
+		}
+		updates["token_version"] = gorm.Expr("token_version + 1")
+		return tx.Model(&models.Admin{}).Where("id = ?", adminID).UpdateColumns(updates).Error
+	})
+	if err != nil {
+		return 0, err
+	}
+	return removed, nil
 }
 
 // EnsureWebAuthnUserHandle sets the account's user handle to candidate if it
@@ -176,10 +282,18 @@ func (d *Database) ListPasskeyNotices(adminID uint) ([]models.WebAuthnCredential
 	return creds, err
 }
 
-// AckPasskeyNotices marks every current notice as seen.
-func (d *Database) AckPasskeyNotices(adminID uint, at time.Time) error {
-	return d.db.Model(&models.Admin{}).Where("id = ?", adminID).
-		UpdateColumn("passkey_notice_seen_at", at).Error
+// AckPasskeyNotices acknowledges the notices of passkeys created up to
+// sessionIssuedAt — the acknowledging session's JWT issued-at. A passkey
+// registered DURING that session therefore stays pending: a session that
+// registered a (possibly rogue) key cannot hide its own notice, only a later
+// login can. The mark never moves backwards; a zero time changes nothing.
+func (d *Database) AckPasskeyNotices(adminID uint, sessionIssuedAt time.Time) error {
+	if sessionIssuedAt.IsZero() {
+		return nil
+	}
+	return d.db.Model(&models.Admin{}).
+		Where("id = ? AND (passkey_notice_seen_at IS NULL OR passkey_notice_seen_at < ?)", adminID, sessionIssuedAt).
+		UpdateColumn("passkey_notice_seen_at", sessionIssuedAt).Error
 }
 
 // ResetAuthResult describes what ResetAuth changed.
@@ -203,12 +317,18 @@ func (d *Database) ResetAuth(username, passwordHash string, keep2FA, keepPasskey
 		return nil, errors.New("reset-auth: username and password hash are required")
 	}
 	res := &ResetAuthResult{}
-	// The credentials table only exists once v70 ran; a break-glass reset must
-	// still work against an older schema (e.g. an API that failed to boot).
+	// The credentials table only exists once v70 ran. reset-auth connects
+	// without migrating, so it can be run (see docs/OPERATIONS.md, "Admin
+	// password reset" — the crash-loop procedure) against a database whose
+	// schema predates v70, e.g. after a failed upgrade.
 	hasPasskeyTable := d.db.Migrator().HasTable(&models.WebAuthnCredential{})
 	err := d.db.Transaction(func(tx *gorm.DB) error {
 		var admin models.Admin
-		if err := tx.Where("username = ?", username).First(&admin).Error; err != nil {
+		q := tx
+		if d.dialect.IsPostgres() {
+			q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		if err := q.Where("username = ?", username).First(&admin).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return fmt.Errorf("reset-auth: no user named %q", username)
 			}

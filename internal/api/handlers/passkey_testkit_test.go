@@ -292,6 +292,8 @@ type softAuth struct {
 	// regFlags / loginFlags are the authenticator-data flags it reports.
 	regFlags   protocol.AuthenticatorFlags
 	loginFlags protocol.AuthenticatorFlags
+	// assertType overrides clientDataJSON.type of assertions ("" = webauthn.get).
+	assertType string
 }
 
 func newSoftAuth(t *testing.T) *softAuth {
@@ -387,7 +389,11 @@ func (a *softAuth) assertionBody(challenge string, handle []byte) string {
 	a.t.Helper()
 	a.counter++
 	ad := a.authData(a.loginFlags, a.counter, nil)
-	cd := a.clientData("webauthn.get", challenge)
+	typ := "webauthn.get"
+	if a.assertType != "" {
+		typ = a.assertType
+	}
+	cd := a.clientData(typ, challenge)
 	cdHash := sha256.Sum256(cd)
 	digest := sha256.Sum256(append(append([]byte(nil), ad...), cdHash[:]...))
 	sig, err := ecdsa.SignASN1(rand.Reader, a.key, digest[:])

@@ -154,6 +154,31 @@ effect on an already-initialized install.
   runs `./fwmon-api reset-auth` as the `fwmon` user. A plain
   `docker exec … ./fwmon-api reset-auth` would not have that environment.
 
+- **The container is crash-looping (or will not stay up):** `docker exec`
+  needs a running container, and the entrypoint tears the whole container down
+  (Postgres included) whenever the API exits. Run the reset in a one-off
+  container from the **same image** against the **same volumes** instead.
+  **Stop the crash-looping container first** — two Postgres servers must never
+  run on the same data directory at once:
+
+  ```sh
+  docker stop <container>
+  docker run --rm -it --network none --volumes-from <container> \
+    --entrypoint bash "$(docker inspect -f '{{.Config.Image}}' <container>)" -c '
+      mkdir -p /run/postgresql && chown postgres:postgres /run/postgresql &&
+      su-exec postgres pg_ctl -D /data/pgdata -l /data/pgdata/postgresql.log -w start &&
+      fwmon-reset-auth --user <name>; rc=$?
+      su-exec postgres pg_ctl -D /data/pgdata -m fast stop; exit $rc'
+  docker start <container>
+  ```
+
+  With Docker Compose the same thing is
+  `docker compose stop firewall-mon` followed by
+  `docker compose run --rm --no-deps --entrypoint bash firewall-mon -c '…'`
+  (same quoted script as above), then `docker compose start firewall-mon`.
+  The reset tool connects without running migrations, so it also works on a
+  database an upgrade left half-migrated.
+
 ---
 
 ## Two-factor authentication lockout (last admin)
