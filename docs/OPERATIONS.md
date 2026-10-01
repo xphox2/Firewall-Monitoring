@@ -224,6 +224,59 @@ working. It ships **disabled**.
 - Changing the RP ID orphans existing passkeys (browsers bind them to the RP
   ID); users then sign in with their password and register new ones.
 
+### Enabling passkeys
+
+**Requirements.** Browsers only offer passkeys to a page served over **HTTPS
+from a real DNS name**. An IP address (`https://192.0.2.10`) never works,
+and neither does plain `http` (except `http://localhost` for development).
+Users must reach the console at exactly the name you configure.
+
+1. **Pick the name** users type, e.g. `fwmon.example.com`, and make sure it
+   resolves and serves a valid certificate (your reverse proxy terminates TLS).
+2. **Set the relying-party ID to that exact host**, not a parent domain.
+   `WEBAUTHN_RP_ID=fwmon.example.com` binds passkeys to this console only; a
+   parent such as `example.com` would also let other sites under that domain
+   request them.
+3. **List every origin** users browse from, comma-separated, scheme + host
+   (+ port when it is not 443): `WEBAUTHN_ORIGINS=https://fwmon.example.com`.
+   An origin must be the RP ID or a subdomain of it. If `PUBLIC_BASE_URL` is
+   already `https://fwmon.example.com`, both values default from it.
+4. **Turn it on:** `WEBAUTHN_ENABLED=true` in `config.env`, then restart the
+   API. Check the log: an invalid value prints `ERROR: passkeys DISABLED` and
+   the console keeps running with passwords only.
+5. **Register a passkey** from Profile → Passkeys (password, plus the 2FA
+   code when 2FA is on), sign out, and use *Sign in with a passkey* on the
+   login page. Keep an existing session open in a second browser until it
+   works.
+
+**Behind nginx-proxy-manager** (or any reverse proxy): the browser-facing
+name is what counts, not the container address. Create an NPM proxy host for
+`fwmon.example.com` → `firewall-mon:8080` with an SSL certificate and *Force
+SSL*, set the RP ID and origins to that name as above, and set
+`COOKIE_SECURE=true`. The RP ID and origins are **never** read from `Host` or
+`X-Forwarded-*`, so no proxy header changes are needed; `TRUSTED_PROXIES`
+(see "Behind a reverse proxy") is still recommended so login lockouts and the
+audit log see real client IPs.
+
+**When the button does not appear.** The login page shows *Sign in with a
+passkey* only when passkeys are enabled, the browser supports them, the page
+is HTTPS (a secure context), and the page's origin is in
+`WEBAUTHN_ORIGINS`. Browsing by IP or by another name hides it; password
+login is unaffected. `GET /api/auth/passkey/config` shows what the server
+has configured.
+
+**Kill switch.** Set `WEBAUTHN_ENABLED=false` (or remove it) and restart:
+the passkey UI disappears, every passkey endpoint returns 404, and stored
+passkeys are kept for when you turn it back on. Password (+TOTP) login works
+throughout.
+
+**Break-glass.** Passkeys never replace the password, so the usual recovery
+applies: an admin uses Settings → Users → *Reset password* / *Reset 2FA* /
+*Remove passkeys*, and when nobody can sign in,
+`docker exec -it <container> fwmon-reset-auth --user <name>` (see "Admin
+password reset") resets the password, clears 2FA and deletes all passkeys of
+that account.
+
 ---
 
 ## JWT secret rotation

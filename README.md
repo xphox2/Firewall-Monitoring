@@ -10,7 +10,7 @@
 > is a sibling repo, [Firewall-Collector](https://github.com/xphox2/Firewall-Collector).
 
 [![CI](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml/badge.svg)](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.11.278-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.11.280-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.26.8+-00ADD8)](go.mod)
 [![Status](https://img.shields.io/badge/status-alpha-orange)](#project-status)
@@ -167,6 +167,12 @@ public AUDIT-NNN row exists.
 
 - **[Server] JWT-based admin auth** (HS256, `golang-jwt/jwt/v5`).
 - **[Server] bcrypt** (configurable cost, default 12).
+- **[Server] Passkey (WebAuthn) sign-in** — off by default
+  (`WEBAUTHN_ENABLED`). Usernameless, user verification (PIN/biometric)
+  required, password (+TOTP) always keeps working. Users add, rename and
+  delete their own passkeys on the Profile page (password + 2FA re-check);
+  admins can remove all passkeys of a user. Needs a real DNS name over
+  HTTPS — see [docs/OPERATIONS.md](docs/OPERATIONS.md#enabling-passkeys).
 - **[Server] Account lockout** (5 attempts, 15 min).
 - **[Server] Rate limiting** — per-IP LRU cap; separate buckets for
   login / public / probe (AUDIT-083).
@@ -483,6 +489,7 @@ The grouped overview below covers every category.
 ### Authentication
 
 - `POST /api/auth/login` — obtain the JWT cookie
+- `GET /api/auth/passkey/config`, `POST /api/auth/passkey/login/{begin,finish}` — passkey sign-in (404 unless `WEBAUTHN_ENABLED=true`; the config endpoint always answers)
 - `POST /admin/api/logout` — clear the session
 - `GET /admin/api/csrf-token` — fetch the CSRF token for mutating requests
 
@@ -502,7 +509,8 @@ The grouped overview below covers every category.
 - **Telemetry queries:** `GET /syslog`, `/syslog/:id`, `/syslog/stats`, `/flows`, `/flows/stats`, `/traps`, `/traps/stats`, `/interfaces`
 - **IRC:** `GET/POST /irc/{servers,channels,commands}`, `PUT/DELETE /irc/{servers,channels,commands}/:id`, `POST /irc/servers/:id/{connect,disconnect}`, `POST /irc/{send,servers/test}`
 - **Reports:** `GET /reports/preview`, `POST /reports/send`
-- **Settings:** `GET/POST /settings`, `POST /settings/{password,test-email,test-webhook}`, `GET /display-settings`
+- **Settings:** `GET/POST /settings`, `POST /settings/{password,test-email,test-webhook}` (`/settings/password` also removes all your passkeys unless `"remove_passkeys": false`), `GET /display-settings`
+- **Passkeys** (browser sessions only, every role, own passkeys): `GET /passkeys`, `POST /passkeys/register/{begin,finish}`, `PUT/DELETE /passkeys/:id`, `POST /passkeys/notices/ack`; admin-only `DELETE /users/:id/passkeys`
 - **Dashboard / uptime:** `GET /dashboard[/:id|/diag]`, `GET /dashboard/{health,summary}`, `GET /uptime`, `POST /uptime/reset`
 
 ### Probe ingestion (probe → server, per-probe key auth) — base `/api/probes`

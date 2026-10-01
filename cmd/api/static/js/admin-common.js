@@ -372,6 +372,22 @@
         var next = field('New password (min 8 characters)', 'force-pw-new');
         var conf = field('Confirm new password', 'force-pw-confirm');
 
+        // "Also remove all passkeys": ticked by default (the server's default
+        // too) and only shown when passkeys are enabled on this server.
+        var pkWrap = document.createElement('label');
+        pkWrap.style.cssText = 'display:none;align-items:center;gap:8px;font-size:12px;margin-bottom:12px;cursor:pointer;';
+        var pkBox = document.createElement('input');
+        pkBox.type = 'checkbox';
+        pkBox.id = 'force-pw-remove-passkeys';
+        pkBox.checked = true;
+        pkWrap.appendChild(pkBox);
+        pkWrap.appendChild(document.createTextNode('Also remove all my passkeys'));
+        if (window.FwmonPasskey) {
+            window.FwmonPasskey.getConfig().then(function(cfg) {
+                if (cfg && cfg.enabled) pkWrap.style.display = 'flex';
+            });
+        }
+
         var errBox = document.createElement('div');
         errBox.style.cssText = 'color:var(--fwmon-danger,#f85149);font-size:12px;min-height:16px;margin-bottom:8px;';
 
@@ -391,7 +407,7 @@
                 method: 'POST',
                 headers: { 'X-CSRF-Token': getCsrfToken(), 'Content-Type': 'application/json' },
                 credentials: 'same-origin',
-                body: JSON.stringify({ current_password: c, new_password: n })
+                body: JSON.stringify({ current_password: c, new_password: n, remove_passkeys: pkBox.checked })
             }).then(function(res) {
                 return res.json().then(function(body) { return { ok: res.ok, body: body }; });
             }).then(function(r) {
@@ -414,6 +430,7 @@
         card.appendChild(cur.wrap);
         card.appendChild(next.wrap);
         card.appendChild(conf.wrap);
+        card.appendChild(pkWrap);
         card.appendChild(errBox);
         card.appendChild(btn);
         overlay.appendChild(card);
@@ -1066,14 +1083,22 @@
      * Falls back to window.confirm() if document is not available
      * (defensive — shouldn't happen in browser code).
      */
-    /* dialogModal is the one builder behind confirm / choose / promptText:
-     * same overlay, role="dialog", aria-modal, aria-labelledby, focus trap,
-     * Escape-cancels and focus-return. `spec` describes what differs:
-     *   buttons:     [{label, value, className, isDefault}] left-to-right
+    /* dialogModal is the one builder behind confirm / choose / promptText /
+     * promptFields: same overlay, role="dialog", aria-modal, aria-labelledby,
+     * focus trap, Escape-cancels and focus-return. `spec` describes what
+     * differs:
+     *   buttons:     [{label, value, className, isDefault, run}] left-to-right;
+     *                run() (optional) is called synchronously in the click
+     *                handler and its result is resolved instead of value
      *   input:       optional {label, defaultValue} — a labelled text field
      *                above the buttons; Enter inside it submits `input.value`
+     *   inputs:      optional [{label, defaultValue, type, autocomplete,
+     *                inputmode, maxLength}] — several labelled fields (used
+     *                instead of `input`); Enter in any of them submits
      *   cancelValue: what Escape / overlay click / the cancel button resolve
-     *   submit:      optional function(value, inputEl) → resolved value
+     *   validate:    optional function(inputEls) → error text; a non-empty
+     *                result keeps the dialog open and shows the text
+     *   submit:      optional function(value, inputEl, inputEls) → resolved value
      */
     function dialogModal(message, opts, spec) {
         opts = opts || {};
@@ -1103,23 +1128,35 @@
             dialog.appendChild(title);
             dialog.appendChild(body);
 
-            var inputEl = null;
-            if (spec.input) {
-                var inputId = 'fwmon-confirm-input-' + uid;
+            var fieldSpecs = spec.inputs || (spec.input ? [spec.input] : []);
+            var inputEls = fieldSpecs.map(function(f, i) {
+                var inputId = 'fwmon-confirm-input-' + uid + '-' + i;
                 var label = document.createElement('label');
                 label.htmlFor = inputId;
-                label.textContent = spec.input.label || '';
+                label.textContent = f.label || '';
                 label.style.cssText = 'display:block;font-family:var(--fwmon-font-ui);font-size:0.78rem;color:var(--fwmon-text-dim);margin-bottom:6px;';
-                inputEl = document.createElement('input');
-                inputEl.type = 'text';
-                inputEl.id = inputId;
-                inputEl.value = spec.input.defaultValue != null ? String(spec.input.defaultValue) : '';
-                inputEl.autocomplete = 'off';
-                inputEl.style.cssText = 'display:block;width:100%;box-sizing:border-box;padding:7px 10px;margin:0 0 16px;' +
+                var el = document.createElement('input');
+                el.type = f.type || 'text';
+                el.id = inputId;
+                el.value = f.defaultValue != null ? String(f.defaultValue) : '';
+                el.autocomplete = f.autocomplete || 'off';
+                if (f.inputmode) el.setAttribute('inputmode', f.inputmode);
+                if (f.maxLength) el.maxLength = f.maxLength;
+                el.style.cssText = 'display:block;width:100%;box-sizing:border-box;padding:7px 10px;margin:0 0 16px;' +
                     'border:1px solid var(--fwmon-border);border-radius:6px;background:var(--fwmon-panel-bg);' +
                     'color:var(--fwmon-text);font-family:var(--fwmon-font-ui);font-size:0.9rem;';
-                if (spec.input.label) dialog.appendChild(label);
-                dialog.appendChild(inputEl);
+                if (f.label) dialog.appendChild(label);
+                dialog.appendChild(el);
+                return el;
+            });
+            var inputEl = inputEls[0] || null;
+
+            var errorEl = null;
+            if (spec.validate) {
+                errorEl = document.createElement('div');
+                errorEl.setAttribute('role', 'alert');
+                errorEl.style.cssText = 'color:var(--fwmon-crit,#f85149);font-size:0.8rem;min-height:1em;margin:-8px 0 12px;';
+                dialog.appendChild(errorEl);
             }
 
             var actions = document.createElement('div');
@@ -1129,7 +1166,10 @@
                 btn.type = 'button';
                 btn.className = 'fwmon-confirm-btn ' + b.className;
                 btn.textContent = b.label;
-                btn.addEventListener('click', function() { cleanup(b.value); });
+                // b.run (gestureModal): called synchronously INSIDE the click
+                // so a browser API that needs a user gesture (WebAuthn) runs
+                // with it; the dialog resolves with whatever run() returns.
+                btn.addEventListener('click', function() { cleanup(b.run ? b.run() : b.value); });
                 actions.appendChild(btn);
                 return btn;
             });
@@ -1138,24 +1178,31 @@
             document.body.appendChild(overlay);
 
             function cleanup(result) {
+                if (spec.validate && result !== spec.cancelValue) {
+                    var problem = spec.validate(inputEls);
+                    if (problem) {
+                        errorEl.textContent = problem;
+                        return;
+                    }
+                }
                 document.removeEventListener('keydown', onKey, true);
                 if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
                 if (trigger && trigger.focus) {
                     try { trigger.focus(); } catch (e) { /* ignore */ }
                 }
-                resolve(spec.submit ? spec.submit(result, inputEl) : result);
+                resolve(spec.submit ? spec.submit(result, inputEl, inputEls) : result);
             }
 
             function onKey(ev) {
                 if (ev.key === 'Escape') {
                     ev.preventDefault();
                     cleanup(spec.cancelValue);
-                } else if (ev.key === 'Enter' && inputEl && document.activeElement === inputEl) {
+                } else if (ev.key === 'Enter' && inputEls.indexOf(document.activeElement) !== -1) {
                     ev.preventDefault();
                     cleanup(spec.submitValue);
                 } else if (ev.key === 'Tab') {
-                    // Focus trap over every control in the dialog (input first).
-                    var focusables = (inputEl ? [inputEl] : []).concat(buttons);
+                    // Focus trap over every control in the dialog (inputs first).
+                    var focusables = inputEls.concat(buttons);
                     var idx = focusables.indexOf(document.activeElement);
                     if (idx === -1) {
                         ev.preventDefault();
@@ -1173,8 +1220,8 @@
             });
             document.addEventListener('keydown', onKey, true);
 
-            // Initial focus — the text field when there is one, otherwise the
-            // first button flagged isDefault, otherwise the first (cancel)
+            // Initial focus — the first text field when there is one, otherwise
+            // the first button flagged isDefault, otherwise the first (cancel)
             // button so the user can't Enter-spam through a destructive prompt.
             setTimeout(function() {
                 if (inputEl) { inputEl.focus(); inputEl.select(); return; }
@@ -1235,6 +1282,86 @@
                 return text === '' ? null : text;
             }
         });
+    }
+
+    /* promptFieldsModal(message, {title, fields, confirmLabel, cancelLabel, danger})
+     * → Promise<object|null>. fields: [{name, label, type, autocomplete,
+     * inputmode, maxLength, required}]. Resolves {name: value} (values are
+     * NOT trimmed — passwords keep their spaces) or null on Cancel / Escape /
+     * overlay click. A required field left empty keeps the dialog open with
+     * an inline message. Used for re-authentication (password + 2FA code).
+     */
+    function promptFieldsModal(message, opts) {
+        opts = opts || {};
+        var SUBMIT = {};
+        var fields = opts.fields || [];
+        return dialogModal(message, opts, {
+            cancelValue: null,
+            submitValue: SUBMIT,
+            inputs: fields,
+            buttons: [
+                { label: opts.cancelLabel || 'Cancel', value: null, className: 'cancel' },
+                { label: opts.confirmLabel || 'OK', value: SUBMIT, className: 'confirm' + (opts.danger ? ' danger' : '') }
+            ],
+            validate: function(inputEls) {
+                for (var i = 0; i < fields.length; i++) {
+                    if (fields[i].required && !inputEls[i].value.trim()) {
+                        return (fields[i].label || 'This field') + ' is required.';
+                    }
+                }
+                return '';
+            },
+            submit: function(result, inputEl, inputEls) {
+                if (result !== SUBMIT) return null;
+                var out = {};
+                fields.forEach(function(f, i) { out[f.name] = inputEls[i].value; });
+                return out;
+            }
+        });
+    }
+
+    /* gestureModal(message, {title, confirmLabel, cancelLabel, run})
+     * → Promise: whatever run() returns (a Promise is followed), or null on
+     * Cancel / Escape / overlay click. run() is called synchronously inside
+     * the confirm button's click handler — use it for browser APIs that
+     * Safari/WebKit only allow during a user gesture (navigator.credentials
+     * .create / .get), after async preparation has finished.
+     */
+    function gestureModal(message, opts) {
+        opts = opts || {};
+        return dialogModal(message, opts, {
+            cancelValue: null,
+            buttons: [
+                { label: opts.cancelLabel || 'Cancel', value: null, className: 'cancel' },
+                { label: opts.confirmLabel || 'Continue', className: 'confirm', isDefault: true, run: opts.run }
+            ]
+        });
+    }
+
+    /* withAuthRedirectHold(fn): run fn() (→ Promise) with the 401-redirect
+     * hold raised (window.__fwmonAuthRedirectHold, honoured by apiFetch),
+     * restoring the previous value when it settles. For requests that bump
+     * the caller's own token version and re-issue the session in the
+     * response (passkey delete, remove-all on your own account): a
+     * background poll (vitals / health, every 30s) landing between the bump
+     * and the new cookie would 401 and yank the tab to the login page.
+     * fn must adopt the new CSRF token inside its chain, before it settles.
+     */
+    function withAuthRedirectHold(fn) {
+        var prev = window.__fwmonAuthRedirectHold;
+        window.__fwmonAuthRedirectHold = true;
+        var p;
+        try { p = Promise.resolve(fn()); } catch (e) { p = Promise.reject(e); }
+        return p.finally(function() { window.__fwmonAuthRedirectHold = prev; });
+    }
+
+    /* setCsrfToken(t): adopt the CSRF token a response just re-issued with a
+     * new session (passkey delete / remove-all on your own account bump the
+     * token version and mint a fresh session in the same response). Without
+     * it every later mutation would 403 "CSRF token invalid" until a reload.
+     */
+    function setCsrfToken(t) {
+        if (typeof t === 'string' && t) csrfTokenCache = t;
     }
 
     /* deviceOptionLabel(d): a device's name for pickers and chips — plain
@@ -2206,6 +2333,8 @@
         whenMe: whenMe,
         fetchCsrfToken: fetchCsrfToken,
         getCsrfToken: getCsrfToken,
+        setCsrfToken: setCsrfToken,
+        withAuthRedirectHold: withAuthRedirectHold,
         escapeHtml: escapeHtml,
         formatBytes: formatBytes,
         formatNum: formatNum,
@@ -2219,6 +2348,8 @@
         confirm: confirmModal,
         choose: chooseModal,
         promptText: promptTextModal,
+        promptFields: promptFieldsModal,
+        gestureModal: gestureModal,
         deviceOptionLabel: deviceOptionLabel,
         openModal: openModal,
         closeModal: closeModal,

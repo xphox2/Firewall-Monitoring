@@ -97,6 +97,270 @@
             render2FA();
         }
         // else: the fwmon:me-resolved listener renders when /me lands.
+        loadPasskeys();
+    }
+
+    /* ---------------- Passkeys (WebAuthn) ----------------
+     *
+     * The card stays hidden unless the server reports passkeys enabled
+     * (FwmonPasskey.getConfig) — with passkeys off there is no UI, no
+     * request to /admin/api/passkeys and no error. Passkey names are
+     * user-controlled: they reach the DOM through textContent / input.value
+     * only, never parsed as HTML. Ids are the server's numeric row ids; credential
+     * ids never reach this page. Every mutation goes through AC.apiFetch
+     * (X-CSRF-Token header). Deleting a passkey bumps the account's token
+     * version and the response re-issues this session — adoptSession picks
+     * up the new CSRF token so the page keeps working.
+     */
+    var MAX_PASSKEY_NAME = 64;
+    var passkeys = { cfg: null, items: [], max: 10, busy: false, noticesDismissed: false };
+
+    function passkeyDate(v) {
+        if (!v) { return ''; }
+        var d = new Date(v);
+        return isNaN(d.getTime()) ? '' : d.toLocaleString();
+    }
+
+    function syncLabel(p) {
+        if (p.backup_eligible && p.backup_state) { return 'Synced'; }
+        if (p.backup_eligible) { return 'Can sync (not backed up yet)'; }
+        return 'This device only';
+    }
+
+    function adoptSession(res) {
+        var d = res && res.data;
+        if (d && d.csrf_token && AC.setCsrfToken) { AC.setCsrfToken(d.csrf_token); }
+    }
+
+    function el(tag, className, text) {
+        var n = document.createElement(tag);
+        if (className) { n.className = className; }
+        if (text != null) { n.textContent = text; }
+        return n;
+    }
+
+    function renderPasskeyList() {
+        var list = $('passkey-list');
+        if (!list) { return; }
+        list.textContent = '';
+        if (passkeys.items.length === 0) {
+            list.appendChild(el('p', 'passkey-empty', 'You have no passkeys yet.'));
+        } else {
+            var wrap = el('div', 'passkey-list');
+            passkeys.items.forEach(function (p) {
+                var row = el('div', 'passkey-row');
+                var info = el('div');
+                info.appendChild(el('div', 'passkey-name', String(p.name || 'Passkey')));
+                var meta = 'Added ' + (passkeyDate(p.created_at) || '—') + ' · ' +
+                    (p.last_used_at ? 'last used ' + passkeyDate(p.last_used_at) : 'never used') + ' · ' + syncLabel(p);
+                info.appendChild(el('div', 'passkey-meta', meta));
+                var actionsEl = el('div', 'passkey-actions');
+                var rename = el('button', 'btn secondary', 'Rename');
+                rename.type = 'button';
+                rename.dataset.action = 'passkey-rename';
+                rename.dataset.id = String(p.id);
+                var del = el('button', 'btn danger', 'Delete');
+                del.type = 'button';
+                del.dataset.action = 'passkey-delete';
+                del.dataset.id = String(p.id);
+                actionsEl.appendChild(rename);
+                actionsEl.appendChild(del);
+                row.appendChild(info);
+                row.appendChild(actionsEl);
+                wrap.appendChild(row);
+            });
+            list.appendChild(wrap);
+        }
+        var add = $('passkey-add-btn');
+        if (add) {
+            var full = passkeys.items.length >= passkeys.max;
+            add.disabled = !window.FwmonPasskey || !window.FwmonPasskey.usable(passkeys.cfg) || full;
+            add.title = full ? 'You already have the maximum of ' + passkeys.max + ' passkeys' : '';
+        }
+    }
+
+    function renderPasskeySupport() {
+        var note = $('passkey-support-note');
+        var PK = window.FwmonPasskey;
+        if (!note || !PK) { return; }
+        var msg = '';
+        if (!PK.browserSupported()) {
+            msg = 'This browser cannot create passkeys here (passkeys need a supporting browser and an HTTPS page).';
+        } else if (!PK.originAllowed(passkeys.cfg)) {
+            msg = 'Passkeys can only be added from ' + (passkeys.cfg.origins || []).join(', ') + ' — you are on ' + window.location.origin + '.';
+        }
+        note.textContent = msg;
+        note.hidden = !msg;
+    }
+
+    function renderPasskeyNotices(notices) {
+        var box = $('passkey-notices');
+        if (!box) { return; }
+        box.textContent = '';
+        if (passkeys.noticesDismissed || !notices.length) { box.hidden = true; return; }
+        box.appendChild(el('strong', null, 'New passkey on your account'));
+        var ul = el('ul');
+        notices.forEach(function (n) {
+            var when = passkeyDate(n && n.created_at);
+            ul.appendChild(el('li', null, '"' + String((n && n.name) || 'Passkey') + '"' + (when ? ' — added ' + when : '')));
+        });
+        box.appendChild(ul);
+        box.appendChild(el('p', null, 'If you did not add it, delete it below and change your password. ' +
+            'A passkey added during this sign-in keeps being listed until your next sign-in.'));
+        var dismiss = el('button', 'btn secondary', 'Dismiss');
+        dismiss.type = 'button';
+        dismiss.dataset.action = 'passkey-notices-ack';
+        box.appendChild(dismiss);
+        box.hidden = false;
+    }
+
+    function loadPasskeys() {
+        var card = $('card-passkeys');
+        var PK = window.FwmonPasskey;
+        if (!card || !PK) { return; }
+        PK.getConfig().then(function (cfg) {
+            passkeys.cfg = cfg;
+            var pwRow = $('change-password-passkeys-row');
+            if (pwRow) { pwRow.hidden = !cfg.enabled; }
+            if (!cfg.enabled) { card.hidden = true; return null; }
+            card.hidden = false;
+            renderPasskeySupport();
+            return AC.apiFetch(API_BASE + '/passkeys').then(function (res) {
+                var d = (res && res.data) || {};
+                passkeys.items = Array.isArray(d.passkeys) ? d.passkeys : [];
+                passkeys.max = d.max || 10;
+                renderPasskeyList();
+                renderPasskeyNotices(Array.isArray(d.notices) ? d.notices : []);
+            });
+        }).catch(function (err) { AC.showError((err && err.message) || 'Failed to load passkeys'); });
+    }
+
+    function findPasskey(id) {
+        for (var i = 0; i < passkeys.items.length; i++) {
+            if (String(passkeys.items[i].id) === String(id)) { return passkeys.items[i]; }
+        }
+        return null;
+    }
+
+    // reauthPrompt asks for the current password, plus a 2FA code when the
+    // account has 2FA on (unknown → offered as optional). Resolves
+    // {password, totp_code} or null when cancelled. Nothing is stored.
+    function reauthPrompt(message, opts) {
+        var totpOn = me ? !!me.totp_enabled : null;
+        var fields = [{ name: 'password', label: 'Current password', type: 'password', autocomplete: 'current-password', required: true }];
+        if (totpOn !== false) {
+            fields.push({ name: 'totp_code', label: totpOn ? 'Authenticator code' : 'Authenticator code (if 2FA is on)',
+                type: 'text', autocomplete: 'one-time-code', inputmode: 'numeric', maxLength: 32, required: !!totpOn });
+        }
+        return AC.promptFields(message, {
+            title: opts.title, confirmLabel: opts.confirmLabel, danger: !!opts.danger, fields: fields
+        }).then(function (v) {
+            if (!v) { return null; }
+            return { password: v.password, totp_code: (v.totp_code || '').trim() };
+        });
+    }
+
+    function nameTooLong(name) {
+        return Array.from(name).length > MAX_PASSKEY_NAME;
+    }
+
+    function addPasskey() {
+        var PK = window.FwmonPasskey;
+        if (passkeys.busy || !PK || !PK.usable(passkeys.cfg)) { return; }
+        passkeys.busy = true;
+        var name = null;
+        AC.promptText('Name this passkey so you can tell it apart later, for example "Work laptop" or "Phone".', {
+            title: 'Add a passkey', label: 'Passkey name', defaultValue: 'Passkey', confirmLabel: 'Next'
+        }).then(function (n) {
+            if (n === null) { return null; }
+            if (nameTooLong(n)) { throw new Error('Passkey names can be at most ' + MAX_PASSKEY_NAME + ' characters.'); }
+            name = n;
+            return reauthPrompt('Confirm it is you before adding a passkey to your account.', {
+                title: 'Confirm your identity', confirmLabel: 'Continue'
+            });
+        }).then(function (creds) {
+            if (!creds) { return null; }
+            return AC.apiFetch(API_BASE + '/passkeys/register/begin', {
+                method: 'POST', body: { name: name, password: creds.password, totp_code: creds.totp_code }
+            }).then(function (res) {
+                var pk = res && res.data && res.data.publicKey;
+                if (!pk) { throw new Error('Passkey registration failed'); }
+                // Safari/WebKit only allow create() inside a user gesture, and
+                // the prompts + fetch above have used it up. One extra click:
+                // create() runs synchronously in this button's handler.
+                return AC.gestureModal('Your browser or device will now ask you to create the passkey ' +
+                    '(fingerprint, face, PIN or security key).', {
+                    title: 'Create the passkey', confirmLabel: 'Continue with passkey',
+                    run: function () {
+                        try {
+                            return navigator.credentials.create({ publicKey: PK.creationOptions(pk) });
+                        } catch (e) {
+                            return Promise.reject(e);
+                        }
+                    }
+                });
+            }).then(function (cred) {
+                if (cred === null) { return null; } // closed the dialog
+                if (!cred) { throw new Error('Passkey registration failed'); }
+                return AC.apiFetch(API_BASE + '/passkeys/register/finish', { method: 'POST', body: PK.attestationJSON(cred) })
+                    .then(function () {
+                        AC.showSuccess('Passkey added. You can now sign in with it; your password still works.');
+                        loadPasskeys();
+                    });
+            });
+        }).catch(function (err) {
+            if (PK.isCancel(err)) { return; }
+            if (err && err.name === 'InvalidStateError') {
+                AC.showError('This authenticator already holds a passkey for your account.');
+                return;
+            }
+            AC.showError((err && err.message) || 'Failed to add passkey');
+        }).finally(function () { passkeys.busy = false; });
+    }
+
+    function renamePasskey(btn) {
+        var p = findPasskey(btn.dataset.id);
+        if (!p || passkeys.busy) { return; }
+        AC.promptText('Enter a new name for this passkey.', {
+            title: 'Rename passkey', label: 'Passkey name', defaultValue: String(p.name || ''), confirmLabel: 'Rename'
+        }).then(function (n) {
+            if (n === null) { return null; }
+            if (nameTooLong(n)) { throw new Error('Passkey names can be at most ' + MAX_PASSKEY_NAME + ' characters.'); }
+            return AC.apiFetch(API_BASE + '/passkeys/' + encodeURIComponent(String(p.id)), { method: 'PUT', body: { name: n } })
+                .then(function () { AC.showSuccess('Passkey renamed'); loadPasskeys(); });
+        }).catch(function (err) { AC.showError((err && err.message) || 'Failed to rename passkey'); });
+    }
+
+    function deletePasskey(btn) {
+        var p = findPasskey(btn.dataset.id);
+        if (!p || passkeys.busy) { return; }
+        passkeys.busy = true;
+        reauthPrompt('Delete the passkey "' + String(p.name || 'Passkey') + '"? You will no longer be able to sign in with it, ' +
+            'and your other sessions will be signed out. Enter your password to confirm.', {
+            title: 'Delete passkey', confirmLabel: 'Delete passkey', danger: true
+        }).then(function (creds) {
+            if (!creds) { return null; }
+            // The delete bumps our token version; hold the 401 redirect until
+            // the re-issued session's CSRF token is adopted.
+            return AC.withAuthRedirectHold(function () {
+                return AC.apiFetch(API_BASE + '/passkeys/' + encodeURIComponent(String(p.id)), {
+                    method: 'DELETE', body: { password: creds.password, totp_code: creds.totp_code }
+                }).then(function (res) { adoptSession(res); return res; });
+            }).then(function (res) {
+                AC.showSuccess((res && res.data && res.data.message) || 'Passkey deleted');
+                loadPasskeys();
+            });
+        }).catch(function (err) { AC.showError((err && err.message) || 'Failed to delete passkey'); })
+            .finally(function () { passkeys.busy = false; });
+    }
+
+    function ackPasskeyNotices() {
+        AC.apiFetch(API_BASE + '/passkeys/notices/ack', { method: 'POST', body: {} })
+            .then(function () {
+                passkeys.noticesDismissed = true;
+                renderPasskeyNotices([]);
+            })
+            .catch(function (err) { AC.showError((err && err.message) || 'Failed to dismiss the notice'); });
     }
 
     function saveProfile(btn) {
@@ -404,7 +668,11 @@
         },
 
         /* Profile page actions */
-        'profile-save': function (el) { saveProfile(el); },
+        'profile-save': function (btn) { saveProfile(btn); },
+        'passkey-add': function () { addPasskey(); },
+        'passkey-rename': function (btn) { renamePasskey(btn); },
+        'passkey-delete': function (btn) { deletePasskey(btn); },
+        'passkey-notices-ack': function () { ackPasskeyNotices(); },
         'twofa-disable': function () {
             var pw = $('twofa-disable-pw') ? $('twofa-disable-pw').value : '';
             var code = $('twofa-disable-code') ? $('twofa-disable-code').value.trim() : '';

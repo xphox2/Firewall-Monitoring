@@ -14,6 +14,14 @@
         if (!card) { return; }
 
         var me = null;
+        // Passkeys enabled on this server? Gates the per-user "Remove
+        // passkeys" action (admin-only route; the server enforces that too).
+        var passkeysEnabled = false;
+
+        function passkeyButton(u) {
+            if (!passkeysEnabled) { return ''; }
+            return '<button class="btn secondary" data-action="user-remove-passkeys" data-id="' + esc(u.id) + '" data-name="' + esc(u.username) + '">Remove passkeys</button> ';
+        }
 
         function esc(s) { return AC.escapeHtml(String(s == null ? '' : s)); }
 
@@ -37,7 +45,8 @@
                     '<td>' + status + '</td>' +
                     '<td>' + (u.totp_enabled ? '<span style="color:var(--fwmon-sig-ok,#36c98a)">on</span>' : '<span style="color:var(--fwmon-text-faint)">off</span>') + '</td>' +
                     '<td style="white-space:nowrap">' +
-                        (self ? '' :
+                        (self ? passkeyButton(u) :
+                            passkeyButton(u) +
                             '<button class="btn secondary" data-action="user-toggle-disabled" data-id="' + u.id + '" data-disabled="' + (!u.disabled) + '">' + (u.disabled ? 'Enable' : 'Disable') + '</button> ' +
                             '<button class="btn secondary" data-action="user-reset-password" data-id="' + u.id + '" data-name="' + esc(u.username) + '">Reset PW</button> ' +
                             (u.totp_enabled ? '<button class="btn secondary" data-action="user-reset-2fa" data-id="' + u.id + '" data-name="' + esc(u.username) + '">Reset 2FA</button> ' : '') +
@@ -112,6 +121,35 @@
                     AC.apiFetch(API_BASE + '/users/' + el.dataset.id + '/reset-2fa', { method: 'POST' })
                         .then(function () { AC.showSuccess('2FA reset'); loadUsers(); })
                         .catch(function (err) { AC.showError((err && err.message) || 'Failed to reset 2FA'); });
+                });
+            },
+            'user-remove-passkeys': function (el) {
+                var self = me && String(me.id) === el.dataset.id;
+                var msg = self
+                    ? 'Remove ALL of your own passkeys? Your other sessions will be signed out; this session stays signed in. Your password keeps working.'
+                    : 'Remove ALL passkeys of "' + el.dataset.name + '"? Their sessions will be signed out. Their password keeps working.';
+                AC.confirm(msg, { title: 'Remove all passkeys?', danger: true, confirmLabel: 'Remove passkeys' }).then(function (ok) {
+                    if (!ok) { return; }
+                    // Own account: the server bumps our token version and
+                    // re-issues the session in the response — hold the 401
+                    // redirect (background polls) until the new CSRF token is
+                    // adopted, or every later mutation would 403.
+                    var call = function () {
+                        return AC.apiFetch(API_BASE + '/users/' + encodeURIComponent(el.dataset.id) + '/passkeys', { method: 'DELETE' })
+                            .then(function (res) {
+                                var d = (res && res.data) || {};
+                                if (d.csrf_token && AC.setCsrfToken) { AC.setCsrfToken(d.csrf_token); }
+                                return res;
+                            });
+                    };
+                    (self ? AC.withAuthRedirectHold(call) : call())
+                        .then(function (res) {
+                            var d = (res && res.data) || {};
+                            var n = typeof d.removed === 'number' ? d.removed : 0;
+                            AC.showSuccess(n === 1 ? 'Removed 1 passkey' : 'Removed ' + n + ' passkeys');
+                            loadUsers();
+                        })
+                        .catch(function (err) { AC.showError((err && err.message) || 'Failed to remove passkeys'); });
                 });
             },
             'user-delete': function (el) {
@@ -211,7 +249,10 @@
             me = resolved;
             if (me && me.role === 'admin') {
                 card.style.display = '';
-                loadUsers();
+                var cfgReady = window.FwmonPasskey
+                    ? window.FwmonPasskey.getConfig().then(function (cfg) { passkeysEnabled = !!(cfg && cfg.enabled); })
+                    : Promise.resolve();
+                cfgReady.then(loadUsers);
                 if (tokensCard) {
                     tokensCard.style.display = '';
                     loadTokens();

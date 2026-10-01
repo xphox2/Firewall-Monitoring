@@ -89,12 +89,37 @@
                 </div>
             </form>
 
-            <div class="text-center mt-6">
+            <!-- Passkey sign-in (WebAuthn). Hidden by default: admin-login.js
+                 reveals it only when GET /api/auth/passkey/config says passkeys
+                 are enabled AND this browser supports WebAuthn in a secure
+                 context AND this page's origin is a configured origin. The
+                 password form above is always available. -->
+            <div id="passkey-section" class="hidden mt-6">
+                <div class="flex items-center gap-3 mb-6 text-xs uppercase tracking-wider text-[#8b949e]">
+                    <span class="flex-1 h-px bg-white/10"></span><span>or</span><span class="flex-1 h-px bg-white/10"></span>
+                </div>
+                <button type="button" id="passkey-btn" class="w-full px-4 py-3.5 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-white text-base font-semibold cursor-pointer transition-colors disabled:opacity-60 disabled:cursor-not-allowed">Sign in with a passkey</button>
+            </div>
+
+            <!-- New-passkey notice: shown after a successful login when the
+                 server reports passkeys added since the last acknowledgement.
+                 Names are rendered with textContent by admin-login.js. -->
+            <div id="passkey-notice" class="hidden" role="alert">
+                <h2 class="text-lg font-semibold mb-2">New passkey on your account</h2>
+                <p class="text-sm text-[#c9d1d9] mb-3">These passkeys were added since you last checked:</p>
+                <ul id="passkey-notice-list" class="text-sm text-[#e6edf3] mb-3 list-disc pl-5"></ul>
+                <p class="text-sm text-[#8b949e] mb-6">If you did not add them, remove them on your Profile page and change your password. This notice keeps appearing at sign-in until you dismiss it on your Profile page.</p>
+                <a href="/admin/profile" id="passkey-notice-review" class="block w-full text-center px-4 py-3.5 rounded-xl border-none btn-gradient text-white text-base font-bold no-underline mb-3">Review passkeys</a>
+                <a href="/admin" id="passkey-notice-continue" class="block w-full text-center px-4 py-3 rounded-xl border border-white/15 text-white text-sm font-semibold no-underline hover:bg-white/10 transition-colors">Continue</a>
+            </div>
+
+            <div class="text-center mt-6" id="back-link">
                 <a href="/" class="text-sm font-medium text-[#7dd3fc] hover:text-[#c4b5fd] no-underline transition-colors">&larr; Back to Dashboard</a>
             </div>
         </div>
     </div>
 
+    <script defer src="/static/js/fwmon-passkey.js"></script>
     <script defer src="/static/js/admin-login.js"></script>
 </body>
 </html>

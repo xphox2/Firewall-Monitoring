@@ -1,6 +1,37 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.280] - 2026-10-01
+
+### Fixed — passkey UI review follow-ups
+
+- **Safari/WebKit user gesture.** The browser passkey prompt is now always opened directly from a click. The login page fetches the sign-in options when the passkey button appears (again after each attempt, and when they are more than 4 minutes old), so the click opens the prompt straight away. Adding a passkey on the Profile page ends with a one-click "Continue with passkey" step that opens the prompt. If the login page has to fall back to fetching the options at click time and the browser then refuses the prompt, it says so ("Your browser blocked the passkey prompt — click to try again") instead of doing nothing; a cancel inside a direct click stays silent.
+- **No surprise logout after deleting a passkey.** Deleting a passkey, or removing all passkeys of your own account, ends your old session and re-issues it in the response. A background status poll landing in between could get a 401 and send the tab to the login page. These requests now hold the 401 redirect (`AC.withAuthRedirectHold`) until the new session's CSRF token is adopted.
+- **Passkey config check times out.** `GET /api/auth/passkey/config` is aborted after 5 seconds and treated as "passkeys disabled", so a hung request can no longer delay the users table or any other page.
+- The new-passkey notice at sign-in now says it keeps appearing until dismissed on the Profile page.
+- Guardrail tests: the redirect hold around delete / own remove-all, the config timeout, and that the WebAuthn calls run inside the click.
+
+## [0.11.279] - 2026-10-01
+
+### Added — passkey (WebAuthn) user interface
+
+Passkeys stay **off by default** (`WEBAUTHN_ENABLED=false`). With them off, none of the UI below appears and nothing new is requested beyond the public `GET /api/auth/passkey/config` check.
+
+- **Login page: "Sign in with a passkey".** Shown only when the server reports passkeys enabled, the browser supports WebAuthn, the page is a secure context (HTTPS) and the page's origin is one of `WEBAUTHN_ORIGINS`. Usernameless: the browser offers the passkeys it holds for this site. Any failure shows one generic message; cancelling the browser prompt shows nothing. Success goes to `/admin` exactly like a password login, so a forced password change still applies. The username/password (+2FA) form is unchanged and always available.
+- **New-passkey notice at sign-in.** When a passkey was added to the account since the notice was last dismissed, every sign-in method (password, 2FA, passkey) first shows "New passkey on your account" with the passkey names and dates, and the choice to review them or continue.
+- **Profile → Passkeys** (every role, own passkeys only): list with name, when added, when last used, and whether the passkey is synced or kept on this device only; **Add a passkey** (name, then your current password plus a 2FA code when 2FA is on, then the browser's passkey prompt); **Rename**; **Delete** (password + 2FA re-check; your other sessions are signed out and this one continues with its re-issued session and CSRF token). New-passkey notices appear as a banner with a Dismiss button. The card explains that a passkey is an extra way in and the password keeps working. If this browser or address cannot create passkeys, the card says why and disables Add.
+- **Settings → Users: "Remove passkeys"** per user, admin only, with a confirmation. Also offered on your own row; your session is re-issued and the page keeps working.
+- **Change-password forms** (Profile and the forced first-login change) have **"Also remove all my passkeys"**, ticked by default and sent as `remove_passkeys`. The box is shown only when passkeys are enabled.
+- Shared helpers: `cmd/api/static/js/fwmon-passkey.js` (`window.FwmonPasskey`: config check, base64url ↔ ArrayBuffer conversion, WebAuthn request/response encoding; no storage of any kind) and `AC.promptFields` (one dialog with several labelled fields, used for the password + 2FA re-check) plus `AC.setCsrfToken`. Passkey names are user-controlled and are only ever written with `textContent` / `value`.
+
+### Docs
+
+- `docs/OPERATIONS.md` gains **"Enabling passkeys"**: HTTPS on a real DNS name, RP ID = the exact host, the origins list, nginx-proxy-manager setup, why the button may be hidden, the kill switch and break-glass recovery. README: passkeys under Auth & security and the passkey endpoints under API Endpoints.
+
+### Tests
+
+- `test/guardrails/passkey_ui_test.go`: the login page's passkey section is hidden in the markup and only revealed after `FwmonPasskey.usable(...)` on the server config; `usable` requires enabled config, WebAuthn, a secure context and an allowed origin; no inline event handlers or inline scripts in the passkey UI; passkey names never reach `innerHTML`; admin passkey calls go through `AC.apiFetch` (X-CSRF-Token); the re-issued CSRF token is adopted after delete / remove-all; both change-password forms send `remove_passkeys`; nothing passkey-related touches `localStorage` / `sessionStorage`.
+
 ## [0.11.278] - 2026-10-01
 
 ### Changed — repository hygiene for a public project
