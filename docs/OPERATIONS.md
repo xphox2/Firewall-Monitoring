@@ -681,6 +681,58 @@ and container logs are the usual suspects, and none of them are this script's bu
 
 ---
 
+## Behind a reverse proxy (TRUSTED_PROXIES)
+
+By default the API trusts **no** proxy headers: the client IP is the TCP peer.
+Behind nginx / nginx-proxy-manager that peer is the proxy, so every user shares
+one login-lockout bucket and one rate-limit bucket (one attacker's failed
+logins lock everyone out for `LOCKOUT_DURATION`), and audit logs show the
+proxy's IP.
+
+Set `TRUSTED_PROXIES` to **the reverse proxy's single IP address**. The API
+then reads **only** `X-Forwarded-For` — and only when the TCP peer is that
+proxy; it takes the right-most address that is not a trusted proxy, so a
+client-supplied `X-Forwarded-For` is ignored. Invalid entries are logged at
+startup and skipped (never fatal); empty = the default behaviour.
+
+**Never trust a whole subnet (e.g. a Docker network CIDR).** Port `8080` stays
+published because remote collectors post to it directly. On Docker Desktop,
+rootless Docker, and for IPv6 clients, connections to a published port reach
+the container from the network's **gateway** address — which is inside the
+Docker subnet. Trusting the subnet therefore lets any outside client send its
+own `X-Forwarded-For` and pick the IP it is attributed to: a free pass around
+the per-IP rate limit and the login lockout. Trust exactly one address: the
+proxy container's, pinned so it cannot change.
+
+**nginx-proxy-manager (docker-compose.proxy.yml):** NPM already sends
+`X-Forwarded-For`. Give NPM a fixed address on a network it shares with
+`firewall-mon`, e.g. a user-defined network created once:
+
+```bash
+docker network create --subnet 172.30.0.0/24 fwmon-proxy
+```
+
+then, in a compose override for NPM (and attach `firewall-mon` to the same
+network in its own override):
+
+```yaml
+services:
+  nginx-proxy-manager:
+    networks:
+      fwmon-proxy:
+        ipv4_address: 172.30.0.10
+networks:
+  fwmon-proxy:
+    external: true
+```
+
+Point the NPM proxy host at `firewall-mon:8080`, set
+`TRUSTED_PROXIES=172.30.0.10` in `config.env` and restart the API. Check that
+the audit log and login attempts now show real client IPs. If NPM runs on the
+host network or another machine, use the single IP the API sees it connect from.
+
+---
+
 ## Running a single API instance (AUDIT-040)
 
 The API process keeps four pieces of state **in memory**, not in the database:

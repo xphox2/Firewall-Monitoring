@@ -6,6 +6,11 @@
 # or HSTS. For a config-as-code alternative, a complete hardened plain-nginx
 # config is shipped at docs/nginx.conf; the commented `nginx` service below
 # mounts it. Pick ONE of the two services.
+#
+# Real client IP: the API ignores X-Forwarded-For until TRUSTED_PROXIES (in
+# config.env) lists this proxy's single, pinned IP (never a whole subnet) —
+# see docs/OPERATIONS.md
+# "Behind a reverse proxy (TRUSTED_PROXIES)".
 version: '3.8'
 
 services:

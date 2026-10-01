@@ -10,7 +10,7 @@
 > is a sibling repo, [Firewall-Collector](https://github.com/xphox2/Firewall-Collector).
 
 [![CI](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml/badge.svg)](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.11.275-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.11.276-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.26.8+-00ADD8)](go.mod)
 [![Status](https://img.shields.io/badge/status-alpha-orange)](#project-status)
@@ -392,6 +392,7 @@ The most important ones:
 | `SLACK_WEBHOOK_URL` / `DISCORD_WEBHOOK_URL` | _(empty)_ | Chat alerting |
 | `DB_TYPE` / `DB_HOST` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` | `postgres` (prod) | Database connection (SQLite is used for tests) |
 | `RETENTION_*_DAYS` | varies | Per-table data retention (see [DATA-RETENTION.md](docs/DATA-RETENTION.md)) |
+| `TRUSTED_PROXIES` | _(empty — trust no proxy)_ | Your reverse proxy's single, pinned IP (never a whole Docker subnet); its `X-Forwarded-For` then sets the client IP for lockout, rate limits and audit logs. See [docs/OPERATIONS.md](docs/OPERATIONS.md#behind-a-reverse-proxy-trusted_proxies). |
 | `ALLOW_MULTI_API` | `false` | Opt out of the single-API-instance guard (AUDIT-040); follower mode serves HTTP only, no IRC bots. See [docs/OPERATIONS.md](docs/OPERATIONS.md). |
 | `SERVER_READ_TIMEOUT` / `SERVER_WRITE_TIMEOUT` | `30s` / `30s` | HTTP server read/write timeouts |
 | `DB_MAX_OPEN_CONNS` | per-process (15/10/5) | Connection-pool ceiling per daemon |

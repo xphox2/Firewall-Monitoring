@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.275"
+const ServerVersion = "0.11.276"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -139,7 +139,10 @@ func main() {
 
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.Default()
-	router.SetTrustedProxies(nil) // Do not trust proxy headers for client IP
+	// Client IP: trust no proxy headers unless TRUSTED_PROXIES lists the
+	// reverse proxy (D-D3). Empty = SetTrustedProxies(nil), the historical
+	// behaviour; invalid entries are logged and skipped, never fatal.
+	middleware.ConfigureTrustedProxies(router, cfg.Server.TrustedProxies)
 
 	// API versioning aliases (v0.10.219, bundle H1).
 	//

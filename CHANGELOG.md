@@ -1,6 +1,22 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.276] - 2026-10-01
+
+### Security — login hardening (groundwork for passkey sign-in)
+
+- **No fallback session after a failed account lookup.** If the password checked out but the server then failed to load that account, login used to fall back to a session for user id 1 with the admin role, and skipped the two-factor step. It now returns a 500 with no cookies.
+- **An empty or unknown role never means admin.** An account row with an empty or unrecognised role is refused at login (password and two-factor step alike) instead of being treated as admin. A session token whose role is empty or unknown is rejected, so its holder must sign in again; before, such a token was treated as admin. Migration v20 guarantees every account has a role, so no real account is affected.
+- **Deleting a user deletes their 2FA recovery codes** in the same transaction as the account.
+- **One replay guard for every two-factor code.** A code accepted once — at login, when confirming 2FA enrolment, disabling 2FA, revealing a device secret or purging a device — is refused by every one of those actions for the rest of its ~90 s validity window. Before, each action kept its own list (so the same code could be used once per action), and enrolment and disabling 2FA had no replay check at all. A refused, already-used code gets the message "Authenticator code already used — wait for the next code" and does not count toward login lockout.
+- **Confirming 2FA enrolment on an account that already has 2FA is refused** (409), as starting setup already was. Before, it replaced the account's recovery codes with only a session.
+- **The two-factor step checks it is finishing the same account.** The pending login is bound to the user id whose password was checked; if that username now belongs to a different account, the step fails.
+- **Login completion re-reads the account.** Both the password-only login and the two-factor step now finish in one place that re-reads the account by id just before issuing the session, so a user disabled (or switched to 2FA) in the meantime gets the usual login failure instead of a session. A password login refused at that point is now recorded as a failed login attempt; the successful-attempt row is written only once the session (or the two-factor prompt) is actually issued. Status codes, cookies and response bodies are otherwise unchanged. If this final step fails after a recovery code was accepted, that code stays used; the pending login stays open so the user can retry with another code.
+
+### Added — `TRUSTED_PROXIES`
+
+- New setting: the reverse proxy's IP (a comma-separated list of IPs/CIDRs is accepted, but only the proxy's single pinned IP is safe — never a whole Docker subnet while port 8080 is published). When set, the API takes the client IP from `X-Forwarded-For` (only that header, only when the connection comes from a listed proxy), so login lockout, rate limits and audit logs see the real client instead of the proxy. Empty (the default) keeps today's behaviour of ignoring forwarding headers. Invalid entries are logged and skipped; they never stop the server. Documented in the example config files, `docker-compose.yml`, the README and `docs/OPERATIONS.md` (with a nginx-proxy-manager note).
+
 ## [0.11.275] - 2026-10-01
 
 ### Fixed — month-boundary flake in the PostgreSQL purge integration test (test-only)

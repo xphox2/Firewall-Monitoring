@@ -112,6 +112,13 @@ type ServerConfig struct {
 	// this flag to fire only when the mismatch is the operator's own
 	// doing, not the safe default.
 	CookieSecureExplicit bool
+	// TrustedProxies is the raw TRUSTED_PROXIES value: a comma-separated list
+	// of reverse-proxy IPs/CIDRs whose X-Forwarded-For the API honours for the
+	// client IP (lockout buckets, rate limits, audit logs). Empty (default) =
+	// trust no proxy, exactly the pre-existing behaviour. Parsed and applied by
+	// middleware.ConfigureTrustedProxies; invalid entries are logged and
+	// skipped, never fatal.
+	TrustedProxies string
 	// AllowMultiAPI opts out of the AUDIT-040 singleton guard. Default false:
 	// a second cmd/api refuses to start (the IRC bots / login-lockout /
 	// rate-limit / uptime state is in-process and would double-run). true =>
@@ -379,6 +386,7 @@ func Load() *Config {
 			CookieSecure:         getBoolEnv("COOKIE_SECURE", getBoolEnv("SERVER_ENABLE_TLS", false)),
 			CookieSecureExplicit: os.Getenv("COOKIE_SECURE") != "",
 			CookieSameSite:       getEnv("COOKIE_SAMESITE", "Strict"),
+			TrustedProxies:       getEnv("TRUSTED_PROXIES", ""),
 			AllowMultiAPI:        getBoolEnv("ALLOW_MULTI_API", false),
 			GeoIPEnabled:         getBoolEnv("GEOIP_ENABLED", true),
 			GeoIPDBDir:           getEnv("GEOIP_DB_DIR", "/etc/firewall-mon/geoip"),

@@ -26,12 +26,12 @@ import (
 // reauthCaller re-verifies the caller's OWN credentials for a step-up action:
 // the admin is resolved by the JWT username (never a request-supplied
 // identity), the password is re-checked, and — when the account has 2FA
-// enrolled — a valid, not-yet-used TOTP code is required as well, with the
-// replay guard namespaced by purpose so a code spent on one action can't be
-// replayed on another. On success it returns the caller's username and id; on
+// enrolled — a valid, not-yet-used TOTP code is required as well. The replay
+// guard is shared with every other TOTP consumer (login, disable-2FA), so a
+// code spent anywhere can't be replayed here, nor a code spent here elsewhere. On success it returns the caller's username and id; on
 // failure it has already written the response (401 when not authenticated at
 // all, 403 otherwise — the RevealDeviceSecret precedent) and returns ok=false.
-func (h *Handler) reauthCaller(c *gin.Context, db database.Store, password, totpCode, purpose string) (username string, userID uint, ok bool) {
+func (h *Handler) reauthCaller(c *gin.Context, db database.Store, password, totpCode string) (username string, userID uint, ok bool) {
 	usernameVal, _ := c.Get("username")
 	userIDVal, _ := c.Get("user_id")
 	username, _ = usernameVal.(string)
@@ -60,11 +60,11 @@ func (h *Handler) reauthCaller(c *gin.Context, db database.Store, password, totp
 			c.JSON(http.StatusForbidden, response.Error("Authenticator code is incorrect"))
 			return "", 0, false
 		}
-		// AUDIT L3: single-use-per-slot replay guard, same as the 2FA login path
+		// AUDIT L3: single-use replay guard, shared with the 2FA login path
 		// (handlers_totp.go). Without it a valid code could be replayed within
 		// its ~30–90s validity window to repeat the action.
-		if !h.authManager.MarkTOTPSlotUsed(admin.ID, purpose, totpCode) {
-			c.JSON(http.StatusForbidden, response.Error("Authenticator code already used — wait for the next code"))
+		if !h.authManager.MarkTOTPSlotUsed(admin.ID, totpCode) {
+			c.JSON(http.StatusForbidden, response.Error(totpCodeAlreadyUsedMsg))
 			return "", 0, false
 		}
 	}
@@ -171,7 +171,7 @@ func (h *Handler) PurgeDevice(c *gin.Context) {
 		})
 		return
 	}
-	username, userID, ok := h.reauthCaller(c, db, req.Password, req.TOTPCode, "purge")
+	username, userID, ok := h.reauthCaller(c, db, req.Password, req.TOTPCode)
 	if !ok {
 		return
 	}
