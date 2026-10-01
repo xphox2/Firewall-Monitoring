@@ -130,13 +130,21 @@
                     : 'Remove ALL passkeys of "' + el.dataset.name + '"? Their sessions will be signed out. Their password keeps working.';
                 AC.confirm(msg, { title: 'Remove all passkeys?', danger: true, confirmLabel: 'Remove passkeys' }).then(function (ok) {
                     if (!ok) { return; }
-                    AC.apiFetch(API_BASE + '/users/' + encodeURIComponent(el.dataset.id) + '/passkeys', { method: 'DELETE' })
+                    // Own account: the server bumps our token version and
+                    // re-issues the session in the response — hold the 401
+                    // redirect (background polls) until the new CSRF token is
+                    // adopted, or every later mutation would 403.
+                    var call = function () {
+                        return AC.apiFetch(API_BASE + '/users/' + encodeURIComponent(el.dataset.id) + '/passkeys', { method: 'DELETE' })
+                            .then(function (res) {
+                                var d = (res && res.data) || {};
+                                if (d.csrf_token && AC.setCsrfToken) { AC.setCsrfToken(d.csrf_token); }
+                                return res;
+                            });
+                    };
+                    (self ? AC.withAuthRedirectHold(call) : call())
                         .then(function (res) {
                             var d = (res && res.data) || {};
-                            // Own account: the response re-issued this session
-                            // (new auth cookie + CSRF token); adopt the token
-                            // or every later mutation would 403.
-                            if (d.csrf_token && AC.setCsrfToken) { AC.setCsrfToken(d.csrf_token); }
                             var n = typeof d.removed === 'number' ? d.removed : 0;
                             AC.showSuccess(n === 1 ? 'Removed 1 passkey' : 'Removed ' + n + ' passkeys');
                             loadUsers();

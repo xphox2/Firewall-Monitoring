@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.280] - 2026-10-01
+
+### Fixed — passkey UI review follow-ups
+
+- **Safari/WebKit user gesture.** The browser passkey prompt is now always opened directly from a click. The login page fetches the sign-in options when the passkey button appears (again after each attempt, and when they are more than 4 minutes old), so the click opens the prompt straight away. Adding a passkey on the Profile page ends with a one-click "Continue with passkey" step that opens the prompt. If the login page has to fall back to fetching the options at click time and the browser then refuses the prompt, it says so ("Your browser blocked the passkey prompt — click to try again") instead of doing nothing; a cancel inside a direct click stays silent.
+- **No surprise logout after deleting a passkey.** Deleting a passkey, or removing all passkeys of your own account, ends your old session and re-issues it in the response. A background status poll landing in between could get a 401 and send the tab to the login page. These requests now hold the 401 redirect (`AC.withAuthRedirectHold`) until the new session's CSRF token is adopted.
+- **Passkey config check times out.** `GET /api/auth/passkey/config` is aborted after 5 seconds and treated as "passkeys disabled", so a hung request can no longer delay the users table or any other page.
+- The new-passkey notice at sign-in now says it keeps appearing until dismissed on the Profile page.
+- Guardrail tests: the redirect hold around delete / own remove-all, the config timeout, and that the WebAuthn calls run inside the click.
+
 ## [0.11.279] - 2026-10-01
 
 ### Added — passkey (WebAuthn) user interface

@@ -1087,7 +1087,9 @@
      * promptFields: same overlay, role="dialog", aria-modal, aria-labelledby,
      * focus trap, Escape-cancels and focus-return. `spec` describes what
      * differs:
-     *   buttons:     [{label, value, className, isDefault}] left-to-right
+     *   buttons:     [{label, value, className, isDefault, run}] left-to-right;
+     *                run() (optional) is called synchronously in the click
+     *                handler and its result is resolved instead of value
      *   input:       optional {label, defaultValue} — a labelled text field
      *                above the buttons; Enter inside it submits `input.value`
      *   inputs:      optional [{label, defaultValue, type, autocomplete,
@@ -1164,7 +1166,10 @@
                 btn.type = 'button';
                 btn.className = 'fwmon-confirm-btn ' + b.className;
                 btn.textContent = b.label;
-                btn.addEventListener('click', function() { cleanup(b.value); });
+                // b.run (gestureModal): called synchronously INSIDE the click
+                // so a browser API that needs a user gesture (WebAuthn) runs
+                // with it; the dialog resolves with whatever run() returns.
+                btn.addEventListener('click', function() { cleanup(b.run ? b.run() : b.value); });
                 actions.appendChild(btn);
                 return btn;
             });
@@ -1313,6 +1318,41 @@
                 return out;
             }
         });
+    }
+
+    /* gestureModal(message, {title, confirmLabel, cancelLabel, run})
+     * → Promise: whatever run() returns (a Promise is followed), or null on
+     * Cancel / Escape / overlay click. run() is called synchronously inside
+     * the confirm button's click handler — use it for browser APIs that
+     * Safari/WebKit only allow during a user gesture (navigator.credentials
+     * .create / .get), after async preparation has finished.
+     */
+    function gestureModal(message, opts) {
+        opts = opts || {};
+        return dialogModal(message, opts, {
+            cancelValue: null,
+            buttons: [
+                { label: opts.cancelLabel || 'Cancel', value: null, className: 'cancel' },
+                { label: opts.confirmLabel || 'Continue', className: 'confirm', isDefault: true, run: opts.run }
+            ]
+        });
+    }
+
+    /* withAuthRedirectHold(fn): run fn() (→ Promise) with the 401-redirect
+     * hold raised (window.__fwmonAuthRedirectHold, honoured by apiFetch),
+     * restoring the previous value when it settles. For requests that bump
+     * the caller's own token version and re-issue the session in the
+     * response (passkey delete, remove-all on your own account): a
+     * background poll (vitals / health, every 30s) landing between the bump
+     * and the new cookie would 401 and yank the tab to the login page.
+     * fn must adopt the new CSRF token inside its chain, before it settles.
+     */
+    function withAuthRedirectHold(fn) {
+        var prev = window.__fwmonAuthRedirectHold;
+        window.__fwmonAuthRedirectHold = true;
+        var p;
+        try { p = Promise.resolve(fn()); } catch (e) { p = Promise.reject(e); }
+        return p.finally(function() { window.__fwmonAuthRedirectHold = prev; });
     }
 
     /* setCsrfToken(t): adopt the CSRF token a response just re-issued with a
@@ -2294,6 +2334,7 @@
         fetchCsrfToken: fetchCsrfToken,
         getCsrfToken: getCsrfToken,
         setCsrfToken: setCsrfToken,
+        withAuthRedirectHold: withAuthRedirectHold,
         escapeHtml: escapeHtml,
         formatBytes: formatBytes,
         formatNum: formatNum,
@@ -2308,6 +2349,7 @@
         choose: chooseModal,
         promptText: promptTextModal,
         promptFields: promptFieldsModal,
+        gestureModal: gestureModal,
         deviceOptionLabel: deviceOptionLabel,
         openModal: openModal,
         closeModal: closeModal,

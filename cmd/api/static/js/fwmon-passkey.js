@@ -45,12 +45,26 @@
             !!(navigator.credentials && navigator.credentials.get && navigator.credentials.create);
     }
 
-    // getConfig → Promise<{enabled, origins, rp_id}>; never rejects. Cached
-    // per page load.
+    // getConfig → Promise<{enabled, origins, rp_id}>; never rejects and
+    // settles within CONFIG_TIMEOUT_MS: a hung request is aborted and counts
+    // as "disabled", so callers that wait on it (the users table, the login
+    // button) never block. Cached per page load.
+    var CONFIG_TIMEOUT_MS = 5000;
     function getConfig() {
         if (!configPromise) {
-            configPromise = fetch(CONFIG_URL, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+            var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+            var timer = setTimeout(function () { if (ctrl) { ctrl.abort(); } }, CONFIG_TIMEOUT_MS);
+            var timeout = new Promise(function (resolve) {
+                setTimeout(function () { resolve(null); }, CONFIG_TIMEOUT_MS + 100);
+            });
+            var request = fetch(CONFIG_URL, {
+                credentials: 'same-origin',
+                headers: { 'Accept': 'application/json' },
+                signal: ctrl ? ctrl.signal : undefined
+            })
                 .then(function (res) { return res.ok ? res.json() : null; })
+                .finally(function () { clearTimeout(timer); });
+            configPromise = Promise.race([request, timeout])
                 .then(function (body) {
                     var d = body && body.success && body.data;
                     if (!d || d.enabled !== true) { return { enabled: false, origins: [] }; }

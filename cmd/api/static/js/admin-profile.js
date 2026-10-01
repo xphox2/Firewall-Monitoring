@@ -285,13 +285,28 @@
             }).then(function (res) {
                 var pk = res && res.data && res.data.publicKey;
                 if (!pk) { throw new Error('Passkey registration failed'); }
-                return navigator.credentials.create({ publicKey: PK.creationOptions(pk) });
+                // Safari/WebKit only allow create() inside a user gesture, and
+                // the prompts + fetch above have used it up. One extra click:
+                // create() runs synchronously in this button's handler.
+                return AC.gestureModal('Your browser or device will now ask you to create the passkey ' +
+                    '(fingerprint, face, PIN or security key).', {
+                    title: 'Create the passkey', confirmLabel: 'Continue with passkey',
+                    run: function () {
+                        try {
+                            return navigator.credentials.create({ publicKey: PK.creationOptions(pk) });
+                        } catch (e) {
+                            return Promise.reject(e);
+                        }
+                    }
+                });
             }).then(function (cred) {
+                if (cred === null) { return null; } // closed the dialog
                 if (!cred) { throw new Error('Passkey registration failed'); }
-                return AC.apiFetch(API_BASE + '/passkeys/register/finish', { method: 'POST', body: PK.attestationJSON(cred) });
-            }).then(function () {
-                AC.showSuccess('Passkey added. You can now sign in with it; your password still works.');
-                loadPasskeys();
+                return AC.apiFetch(API_BASE + '/passkeys/register/finish', { method: 'POST', body: PK.attestationJSON(cred) })
+                    .then(function () {
+                        AC.showSuccess('Passkey added. You can now sign in with it; your password still works.');
+                        loadPasskeys();
+                    });
             });
         }).catch(function (err) {
             if (PK.isCancel(err)) { return; }
@@ -325,10 +340,13 @@
             title: 'Delete passkey', confirmLabel: 'Delete passkey', danger: true
         }).then(function (creds) {
             if (!creds) { return null; }
-            return AC.apiFetch(API_BASE + '/passkeys/' + encodeURIComponent(String(p.id)), {
-                method: 'DELETE', body: { password: creds.password, totp_code: creds.totp_code }
+            // The delete bumps our token version; hold the 401 redirect until
+            // the re-issued session's CSRF token is adopted.
+            return AC.withAuthRedirectHold(function () {
+                return AC.apiFetch(API_BASE + '/passkeys/' + encodeURIComponent(String(p.id)), {
+                    method: 'DELETE', body: { password: creds.password, totp_code: creds.totp_code }
+                }).then(function (res) { adoptSession(res); return res; });
             }).then(function (res) {
-                adoptSession(res);
                 AC.showSuccess((res && res.data && res.data.message) || 'Passkey deleted');
                 loadPasskeys();
             });

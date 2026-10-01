@@ -63,46 +63,109 @@
     // this origin listed), WebAuthn support and a secure context. Every
     // failure shows ONE generic message; a cancelled browser prompt is
     // silent. The password form is never touched.
+    //
+    // User gesture (Safari/WebKit): navigator.credentials.get() must run
+    // inside the click, not after an awaited fetch, or WebKit refuses it
+    // with NotAllowedError. So the begin options are PREFETCHED when the
+    // button appears (and again after each attempt, or when older than
+    // PREFETCH_MAX_AGE_MS — the server ceremony lives 5 minutes), and the
+    // click handler calls get() synchronously. Only when no fresh options
+    // are at hand does it fall back to fetch-then-get; a NotAllowedError on
+    // that path is reported as a blocked prompt instead of staying silent.
     var PASSKEY_FAILED = 'Passkey sign-in failed. Try again, or sign in with your password.';
+    var PASSKEY_BLOCKED = 'Your browser blocked the passkey prompt — click "Sign in with a passkey" to try again.';
+    var PREFETCH_MAX_AGE_MS = 4 * 60 * 1000;
     function setupPasskeyLogin() {
         var PK = window.FwmonPasskey;
         var section = document.getElementById('passkey-section');
         var btn = document.getElementById('passkey-btn');
         if (!PK || !section || !btn) { return; }
+
+        // At most one begin in flight: each begin replaces the webauthn_login
+        // ceremony cookie, so the options used must come from the LAST begin.
+        var prefetched = null;   // { publicKey, at }
+        var inflight = null;     // Promise<{publicKey, at}|null>
+        function fetchOptions() {
+            if (inflight) { return inflight; }
+            inflight = postJSON(API_BASE + '/auth/passkey/login/begin', {})
+                .then(function(begin) {
+                    if (!begin || !begin.success || !begin.data || !begin.data.publicKey) { return null; }
+                    prefetched = { publicKey: begin.data.publicKey, at: Date.now() };
+                    return prefetched;
+                })
+                .catch(function() { return null; })
+                .finally(function() { inflight = null; });
+            return inflight;
+        }
+        function takeFresh() {
+            var p = prefetched;
+            prefetched = null;
+            if (!inflight && p && Date.now() - p.at < PREFETCH_MAX_AGE_MS) { return p; }
+            return null;
+        }
+
+        function callGet(publicKey) {
+            try {
+                return navigator.credentials.get({ publicKey: PK.requestOptions(publicKey) });
+            } catch (e) {
+                return Promise.reject(e);
+            }
+        }
+
+        function finish(credPromise, viaGesture) {
+            return credPromise
+                .then(function(cred) {
+                    if (!cred) { throw new Error('no credential'); }
+                    return postJSON(API_BASE + '/auth/passkey/login/finish', PK.assertionJSON(cred));
+                })
+                .then(function(fin) {
+                    if (fin && fin.success) {
+                        completeLogin(fin.data);
+                        return true;
+                    }
+                    showError(PASSKEY_FAILED);
+                    return false;
+                })
+                .catch(function(err) {
+                    if (PK.isCancel(err)) {
+                        // Inside a direct click this is the user dismissing
+                        // the prompt: stay silent. After an awaited fetch it
+                        // may be the browser refusing a non-gesture call.
+                        if (!viaGesture) { showError(PASSKEY_BLOCKED); }
+                        return false;
+                    }
+                    showError(PASSKEY_FAILED);
+                    return false;
+                });
+        }
+
         PK.getConfig().then(function(cfg) {
             if (!PK.usable(cfg)) { return; }
             section.classList.remove('hidden');
+            fetchOptions();
             btn.addEventListener('click', function() {
                 if (btn.disabled) { return; }
+                var fresh = takeFresh();
+                var attempt;
+                if (fresh) {
+                    // Gesture path: get() is the first thing the click does.
+                    attempt = finish(callGet(fresh.publicKey), true);
+                } else {
+                    attempt = fetchOptions().then(function(opts) {
+                        prefetched = null;
+                        if (!opts) { showError(PASSKEY_FAILED); return false; }
+                        return finish(callGet(opts.publicKey), false);
+                    });
+                }
                 btn.disabled = true;
                 btn.textContent = 'Waiting for passkey...';
                 document.getElementById('error').classList.add('hidden');
-                postJSON(API_BASE + '/auth/passkey/login/begin', {})
-                    .then(function(begin) {
-                        if (!begin || !begin.success || !begin.data || !begin.data.publicKey) {
-                            throw new Error('begin failed');
-                        }
-                        return navigator.credentials.get({ publicKey: PK.requestOptions(begin.data.publicKey) });
-                    })
-                    .then(function(cred) {
-                        if (!cred) { throw new Error('no credential'); }
-                        return postJSON(API_BASE + '/auth/passkey/login/finish', PK.assertionJSON(cred));
-                    })
-                    .then(function(fin) {
-                        if (fin && fin.success) {
-                            completeLogin(fin.data);
-                            return;
-                        }
-                        showError(PASSKEY_FAILED);
-                    })
-                    .catch(function(err) {
-                        if (PK.isCancel(err)) { return; }
-                        showError(PASSKEY_FAILED);
-                    })
-                    .finally(function() {
-                        btn.disabled = false;
-                        btn.textContent = 'Sign in with a passkey';
-                    });
+                attempt.then(function(ok) {
+                    if (ok) { return; }
+                    btn.disabled = false;
+                    btn.textContent = 'Sign in with a passkey';
+                    fetchOptions(); // fresh options for the next click
+                });
             });
         });
     }
