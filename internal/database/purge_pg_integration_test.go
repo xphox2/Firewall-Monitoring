@@ -90,32 +90,65 @@ func pgCountPerChild(t *testing.T, d *Database, parent string, deviceID uint) ma
 	return out
 }
 
+// pgFirstMonth returns the start (UTC) of the oldest monthly leaf of parent —
+// the month EnsurePartitions treated as "current" (it creates that month + 6
+// ahead and no past months; everything older lands in the DEFAULT child).
+// Seeds are anchored here, NOT at now(): a now()-relative spread puts only a
+// handful of rows in the current-month leaf in the first hours of a month
+// (CI 2026-10-01 00:20 UTC: 34 of 200,000), and the planner then correctly
+// seq-scans that near-empty leaf, failing the index-scan assertion. Reading
+// the anchor from the catalog also keeps seed and leaf layout consistent if
+// the month rolls over between EnsurePartitions and the seed.
+func pgFirstMonth(t *testing.T, d *Database, parent string) time.Time {
+	t.Helper()
+	var first time.Time
+	for _, ch := range pgChildren(t, d, parent) {
+		suffix := strings.TrimPrefix(ch, parent+"_")
+		if suffix == "default" {
+			continue
+		}
+		m, err := time.Parse("200601", suffix)
+		if err != nil {
+			t.Fatalf("unexpected leaf %s of %s: %v", ch, parent, err)
+		}
+		if first.IsZero() || m.Before(first) {
+			first = m
+		}
+	}
+	if first.IsZero() {
+		t.Fatalf("%s has no monthly leaf", parent)
+	}
+	return first.UTC()
+}
+
 // seedIfaceStats inserts n interface_stats rows for deviceID in ONE statement,
-// timestamps stepping back `step` per row from the SQL expression base:
-// n*step covers the spread. From now(), rows in the current month land in its
-// leaf and older ones in the DEFAULT child (EnsurePartitions creates no past
-// months), so a 3-month spread exercises both.
-func seedIfaceStats(t *testing.T, d *Database, deviceID uint, n int, step time.Duration, base string) {
+// timestamps stepping back `step` per row from base (exclusive): n*step covers
+// the spread. Callers anchor base on pgFirstMonth so which leaf each row lands
+// in does not depend on the wall-clock date.
+func seedIfaceStats(t *testing.T, d *Database, deviceID uint, n int, step time.Duration, base time.Time) {
 	t.Helper()
 	start := time.Now()
-	if err := d.db.Exec(fmt.Sprintf(`INSERT INTO interface_stats (timestamp, device_id, name, status, "index", in_bytes, out_bytes)
-		SELECT %s - (g * ?::interval), ?, 'port' || (g %% 8), 'up', g %% 8, g * 1000, g * 500
-		FROM generate_series(1, ?) AS g`, base), step.String(), deviceID, n).Error; err != nil {
+	if err := d.db.Exec(`INSERT INTO interface_stats (timestamp, device_id, name, status, "index", in_bytes, out_bytes)
+		SELECT ?::timestamptz - (g * ?::interval), ?, 'port' || (g % 8), 'up', g % 8, g * 1000, g * 500
+		FROM generate_series(1, ?) AS g`, base, step.String(), deviceID, n).Error; err != nil {
 		t.Fatalf("seed interface_stats device %d: %v", deviceID, err)
 	}
 	t.Logf("seeded %d interface_stats rows for device %d in %s", n, deviceID, time.Since(start).Round(time.Millisecond))
 }
 
 // seedDeniedEvents inserts perBucket rows for deviceID into three buckets:
-// the current month (its leaf), next month (its leaf) and two months back
-// (no leaf → DEFAULT child). Returns the rows inserted.
+// the first (current) monthly leaf, the next month's leaf and two months
+// before the first leaf (no leaf → DEFAULT child), each starting at its
+// month's first minute. Returns the rows inserted.
 func seedDeniedEvents(t *testing.T, d *Database, deviceID uint, perBucket int) int64 {
 	t.Helper()
-	for _, offset := range []string{"0 months", "1 month", "-2 months"} {
+	first := pgFirstMonth(t, d, "denied_events")
+	for _, months := range []int{0, 1, -2} {
+		bucket := first.AddDate(0, months, 0)
 		if err := d.db.Exec(`INSERT INTO denied_events (timestamp, device_id, src_addr, dst_addr, src_port, dst_port, protocol)
-			SELECT date_trunc('month', now()) + ?::interval + (g * interval '1 minute'), ?, '10.0.0.' || (g % 250), '8.8.8.8', 40000 + g, 443, 6
-			FROM generate_series(1, ?) AS g`, offset, deviceID, perBucket).Error; err != nil {
-			t.Fatalf("seed denied_events device %d bucket %s: %v", deviceID, offset, err)
+			SELECT ?::timestamptz + (g * interval '1 minute'), ?, '10.0.0.' || (g % 250), '8.8.8.8', 40000 + g, 443, 6
+			FROM generate_series(1, ?) AS g`, bucket, deviceID, perBucket).Error; err != nil {
+			t.Fatalf("seed denied_events device %d bucket %s: %v", deviceID, bucket.Format("2006-01"), err)
 		}
 	}
 	return int64(3 * perBucket)
@@ -291,7 +324,8 @@ func deviceRetired(t *testing.T, d *Database, id uint) bool {
 }
 
 // TestPGPurge_RemovesDeviceAcrossPartitions: 200,000 interface_stats rows over
-// three months (current-month leaf + DEFAULT child), denied_events in two
+// ~88 days ending at the start of month+2 (next-month leaf, current-month leaf,
+// DEFAULT child — each holds ≥59k of them whatever the date), denied_events in two
 // monthly leaves AND the DEFAULT child, one row each in alerts / vpn_status /
 // device_config_revisions, the shared A↔B ipsec_tunnels intent and an A→B
 // device_connections row — the purge removes every A row from every relation,
@@ -308,9 +342,14 @@ func TestPGPurge_RemovesDeviceAcrossPartitions(t *testing.T) {
 	c := newDevice(t, d, "fw-c-peer", "10.0.0.3")
 
 	const ifaceA, ifaceB = 200000, 5000
-	// 200,000 rows × 38 s ≈ 88 days; 5,000 rows × 25 min ≈ 87 days.
-	seedIfaceStats(t, d, a.ID, ifaceA, 38*time.Second, "now()")
-	seedIfaceStats(t, d, b.ID, ifaceB, 25*time.Minute, "now()")
+	// 200,000 rows × 38 s ≈ 88 days; 5,000 rows × 25 min ≈ 87 days, both
+	// counting back from the start of month+2. Next and current month are
+	// 28–31 days each, so each of the two monthly leaves receives ≥ 28 d of
+	// rows (A ≥ 63k, B ≥ 1.6k) and the DEFAULT child the remaining ≥ 26 d
+	// (A ≥ 59k, B ≥ 1.4k) — independent of the day and hour the test runs.
+	ifaceBase := pgFirstMonth(t, d, "interface_stats").AddDate(0, 2, 0)
+	seedIfaceStats(t, d, a.ID, ifaceA, 38*time.Second, ifaceBase)
+	seedIfaceStats(t, d, b.ID, ifaceB, 25*time.Minute, ifaceBase)
 	deniedA := seedDeniedEvents(t, d, a.ID, 300)
 	deniedB := seedDeniedEvents(t, d, b.ID, 50)
 	plannedA := int64(ifaceA) + deniedA + seedSmallRows(t, d, a, "a")
@@ -362,6 +401,22 @@ func TestPGPurge_RemovesDeviceAcrossPartitions(t *testing.T) {
 	ifaceBefore := pgCountPerChild(t, d, "interface_stats", a.ID)
 	if ifaceBefore["interface_stats_default"] == 0 || pgCount(t, d, "interface_stats", "device_id", a.ID) != ifaceA {
 		t.Fatalf("interface_stats seed for A: %v (want %d total with rows in the DEFAULT child)", ifaceBefore, ifaceA)
+	}
+	// Every populated leaf must hold a sizable share of A, or the per-leaf
+	// index-scan assertions below test the fixture (a near-empty leaf is
+	// rightly seq-scanned) instead of the purge. The anchored seed guarantees
+	// ≥ 59k per leaf; 20k is the floor this check enforces.
+	ifaceMonthly := 0
+	for ch, n := range ifaceBefore {
+		if n > 0 && n < ifaceA/10 {
+			t.Fatalf("interface_stats seed for A: leaf %s holds only %d rows (want 0 or ≥ %d): %v", ch, n, ifaceA/10, ifaceBefore)
+		}
+		if n > 0 && ch != "interface_stats_default" {
+			ifaceMonthly++
+		}
+	}
+	if ifaceMonthly < 2 {
+		t.Fatalf("interface_stats seed for A: %d monthly leaves with rows, want ≥2: %v", ifaceMonthly, ifaceBefore)
 	}
 	t.Logf("interface_stats A per child: %v", ifaceBefore)
 	t.Logf("denied_events A per child: %v; B per child: %v", deniedBeforeA, deniedBeforeB)
@@ -478,8 +533,9 @@ func TestPGPurge_CancelMidwayThenResume(t *testing.T) {
 	// All 5,000 rows inside NEXT month's leaf (it always exists: current+6),
 	// so the first non-empty relation holds > 2 batches whatever the date —
 	// counting back from now() would straddle a month edge in the first ~80
-	// minutes of a month and split the rows across two relations.
-	seedIfaceStats(t, d, a.ID, rows, time.Second, "date_trunc('month', now()) + interval '2 months'")
+	// minutes of a month and split the rows across two relations. Anchored on
+	// the leaf catalog (pgFirstMonth), like every seed in this file.
+	seedIfaceStats(t, d, a.ID, rows, time.Second, pgFirstMonth(t, d, "interface_stats").AddDate(0, 2, 0))
 	small := seedSmallRows(t, d, a, "cancel")
 
 	entry := planEntry(t, "interface_stats")
