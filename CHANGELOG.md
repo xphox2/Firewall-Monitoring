@@ -14,7 +14,7 @@ All notable changes to this project are documented in this file.
 
 ### Changed — every account reset removes passkeys
 
-- An admin **password reset** and an admin **2FA reset** now also delete all of that user's passkeys, so a passkey registered by someone else cannot outlive the recovery. A **self-service password change** deletes your passkeys too unless the request sends `"remove_passkeys": false` (absent means remove). Each reset — and deleting one passkey — happens in one database transaction that locks the account row: passkeys deleted, password / 2FA changes applied and sessions ended together, or nothing at all; a self-service password change is now atomic in the same way. Resets also drop any registration in progress for that account. Deleting a user deletes their passkeys in the same transaction.
+- An admin **password reset** and an admin **2FA reset** now also delete all of that user's passkeys, so a passkey registered by someone else cannot outlive the recovery. A **self-service password change** deletes your passkeys too unless the request sends `"remove_passkeys": false` (absent means remove). Each reset — and deleting one passkey — happens in one database transaction that locks the account row: passkeys deleted, password / 2FA changes applied and sessions ended together, or nothing at all; a self-service password change is now atomic in the same way. Resets also drop any registration in progress for that account. Deleting a user deletes their passkeys in the same transaction, and takes the same account-row lock first, so a delete and a reset of the same user cannot deadlock.
 
 ### Added — break-glass `fwmon-reset-auth`
 

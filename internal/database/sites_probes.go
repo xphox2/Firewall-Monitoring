@@ -277,8 +277,15 @@ func (d *Database) SetAdminMFAPromptDismissed(id uint) error {
 // that no longer exists and must not outlive it. So are its passkeys (v70):
 // deleted explicitly here because SQLite does not enforce the foreign key,
 // and a username reused later must never inherit a credential.
+//
+// Lock order: like every transaction that touches an account's passkeys
+// (see lockAdminRow), it locks the admins row FIRST, so it cannot deadlock
+// against a concurrent reset or registration of the same account.
 func (d *Database) DeleteAdmin(id uint) error {
 	return d.db.Transaction(func(tx *gorm.DB) error {
+		if _, err := d.lockAdminRow(tx, id); err != nil {
+			return err
+		}
 		if err := revokeAPITokensForAdmin(tx, id); err != nil {
 			return err
 		}

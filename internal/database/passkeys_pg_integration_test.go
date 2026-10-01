@@ -3,6 +3,9 @@
 package database
 
 import (
+	"fmt"
+	"strings"
+	"sync"
 	"testing"
 
 	"firewall-mon/internal/models"
@@ -115,6 +118,40 @@ func TestPasskeysPostgres(t *testing.T) {
 		}
 		if got, _ := d.GetAdminByID(a.ID); got.TokenVersion != 1 {
 			t.Fatal("a no-op delete bumped token_version")
+		}
+	})
+
+	// Lock-order regression guard: DeleteAdmin and ResetAdminCredentials on
+	// the same account, concurrently, 200 times. Both lock the admins row
+	// first, so neither may fail with a deadlock (40P01): the reset either
+	// completes or finds the account gone.
+	t.Run("ConcurrentDeleteAndResetNoDeadlock", func(t *testing.T) {
+		for i := 0; i < 200; i++ {
+			a := pkAdmin(t, d, fmt.Sprintf("race-%d", i))
+			for k := 0; k < 3; k++ {
+				pkCred(t, d, a.ID, fmt.Sprintf("race-%d-%d", i, k))
+			}
+			var wg sync.WaitGroup
+			var delErr, resetErr error
+			start := make(chan struct{})
+			wg.Add(2)
+			go func() { defer wg.Done(); <-start; delErr = d.DeleteAdmin(a.ID) }()
+			go func() {
+				defer wg.Done()
+				<-start
+				_, resetErr = d.ResetAdminCredentials(a.ID, AdminReset{ClearTOTP: true})
+			}()
+			close(start)
+			wg.Wait()
+			if delErr != nil {
+				t.Fatalf("iteration %d: DeleteAdmin: %v", i, delErr)
+			}
+			if resetErr != nil && !strings.Contains(resetErr.Error(), "not found") {
+				t.Fatalf("iteration %d: ResetAdminCredentials: %v", i, resetErr)
+			}
+			if n := countCreds(t, d, a.ID); n != 0 {
+				t.Fatalf("iteration %d: %d credentials left", i, n)
+			}
 		}
 	})
 

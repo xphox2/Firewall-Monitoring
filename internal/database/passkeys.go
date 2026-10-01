@@ -66,10 +66,16 @@ func (d *Database) CountPasskeys(adminID uint) (int64, error) {
 
 // lockAdminRow re-reads the account row inside tx, locking it (SELECT ...
 // FOR UPDATE) on Postgres; SQLite serialises writers, and the read-then-
-// write transaction gives the same ordering there. Every passkey reset and
-// CreatePasskey take this lock first, so a registration can never commit
-// between a reset's delete and its token_version bump. Returns nil, nil when
-// the row does not exist.
+// write transaction gives the same ordering there. Returns nil, nil when the
+// row does not exist.
+//
+// LOCK-ORDER RULE: every transaction that writes an account's passkeys
+// (webauthn_credentials) must take this admins-row lock as its FIRST
+// statement — CreatePasskey, DeletePasskeyAndEndSessions,
+// ResetAdminCredentials, ResetAuth and DeleteAdmin all do. One order
+// (admins, then credentials) means no 40P01 deadlock between them, and a
+// registration can never commit between a reset's delete and its
+// token_version bump.
 func (d *Database) lockAdminRow(tx *gorm.DB, adminID uint) (*models.Admin, error) {
 	q := tx
 	if d.dialect.IsPostgres() {
