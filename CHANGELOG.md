@@ -1,11 +1,22 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
-## [0.11.276] - 2026-10-01
+## [0.11.275] - 2026-10-01
 
 ### Fixed — month-boundary flake in the PostgreSQL purge integration test (test-only)
 
-- `TestPGPurge_RemovesDeviceAcrossPartitions` failed in CI on 2026-10-01 00:20 UTC. It seeded its 200,000 `interface_stats` rows counting back from `now()`, and monthly leaves exist only from the current month forward. In the first hours of a month the current-month leaf therefore held only a few dozen rows. PostgreSQL correctly seq-scanned that near-empty leaf, which failed the per-leaf index-scan assertion. The seeds in `purge_pg_integration_test.go` (`interface_stats` and `denied_events`, all three purge tests) are now anchored to the leaf catalog (the oldest monthly leaf = the month `EnsurePartitions` treated as current) instead of `now()`. Every targeted leaf now gets a fixed, large share of rows on any date: next month ≥ 63k, current month ≥ 63k and DEFAULT ≥ 59k of device A's rows. The test now also fails fast if a populated leaf holds fewer than 20k of A's rows, or if fewer than two monthly leaves are populated. Verified on PostgreSQL 16 at simulated 1st-of-month 00:20, mid-month and last-day 23:50 dates, and on the real clock at 2026-10-01 00:46 UTC, where the old test failed. No production code changed; ServerVersion is unchanged.
+- `TestPGPurge_RemovesDeviceAcrossPartitions` failed in CI on 2026-10-01 00:20 UTC. It seeded its 200,000 `interface_stats` rows counting back from `now()`, and monthly leaves exist only from the current month forward. In the first hours of a month the current-month leaf therefore held only a few dozen rows. PostgreSQL correctly seq-scanned that near-empty leaf, which failed the per-leaf index-scan assertion. The seeds in `purge_pg_integration_test.go` (`interface_stats` and `denied_events`, all three purge tests) are now anchored to the leaf catalog (the oldest monthly leaf = the month `EnsurePartitions` treated as current) instead of `now()`. Every targeted leaf now gets a fixed, large share of rows on any date: next month ≥ 63k, current month ≥ 63k and DEFAULT ≥ 59k of device A's rows. The test now also fails fast if a populated leaf holds fewer than 20k of A's rows, or if fewer than two monthly leaves are populated. Verified on PostgreSQL 16 at simulated 1st-of-month 00:20, mid-month and last-day 23:50 dates, and on the real clock at 2026-10-01 00:46 UTC, where the old test failed. No production code changed.
+
+## [0.11.274] - 2026-09-30
+
+### Changed — Go toolchain 1.25 → 1.26
+
+- The server now builds with Go 1.26.8. The `go` directive in `go.mod` moves from 1.25.13 to 1.26.8 and the Docker builder image from `golang:1.25-alpine` to `golang:1.26-alpine`. CI reads the version from `go.mod` (`go-version-file`), so it follows automatically. The upcoming passkey (WebAuthn) sign-in work needs this first, because the `go-webauthn` v0.18.2 library it will use requires Go 1.26.
+- No functional changes. `go mod tidy` changed nothing but the `go` line; no other dependency moved.
+
+### Docs
+
+- README (Go badge and prerequisites) and CONTRIBUTING state Go 1.26.8 / 1.26+ as the required toolchain.
 
 ## [0.11.273] - 2026-09-29
 
