@@ -53,6 +53,86 @@
     word-break: break-word;
 }
 
+/* ---- Passkeys (WebAuthn) ---- */
+
+#card-passkeys[hidden],
+.profile-passkey-remove[hidden],
+.passkey-notices[hidden],
+.passkey-support-note[hidden] {
+    display: none;
+}
+
+.profile-passkey-remove {
+    display: flex;
+    align-items: center;
+    gap: var(--fwmon-sp-2);
+    margin: 0 0 var(--fwmon-sp-3);
+    color: var(--fwmon-text-dim);
+    font-size: var(--fwmon-t-body);
+    cursor: pointer;
+}
+
+.passkey-notices {
+    margin-bottom: var(--fwmon-sp-3);
+    padding: var(--fwmon-sp-3) var(--fwmon-sp-4);
+    border: 1px solid var(--fwmon-sig-warn, #d29922);
+    border-radius: var(--fwmon-radius);
+    color: var(--fwmon-text-dim);
+    font-size: var(--fwmon-t-body);
+}
+
+.passkey-notices ul {
+    margin: var(--fwmon-sp-2) 0;
+    padding-left: 1.2em;
+}
+
+.passkey-support-note {
+    margin-bottom: var(--fwmon-sp-3);
+    color: var(--fwmon-sig-warn, #d29922);
+    font-size: 0.85rem;
+}
+
+.passkey-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--fwmon-sp-2);
+    margin-bottom: var(--fwmon-sp-3);
+}
+
+.passkey-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--fwmon-sp-3);
+    flex-wrap: wrap;
+    padding: var(--fwmon-sp-2) var(--fwmon-sp-3);
+    background: var(--fwmon-panel-bg);
+    border: 1px solid var(--fwmon-border);
+    border-radius: var(--fwmon-radius);
+}
+
+.passkey-name {
+    color: var(--fwmon-text);
+    font-weight: 600;
+    word-break: break-word;
+}
+
+.passkey-meta {
+    color: var(--fwmon-text-faint);
+    font-size: 0.8rem;
+}
+
+.passkey-actions {
+    display: flex;
+    gap: var(--fwmon-sp-2);
+}
+
+.passkey-empty {
+    color: var(--fwmon-text-faint);
+    font-size: 0.85rem;
+    margin-bottom: var(--fwmon-sp-3);
+}
+
 /* ---- MFA wizard modal ---- */
 
 .mfa-wizard .mfa-wizard-content {

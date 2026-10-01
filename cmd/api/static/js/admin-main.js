@@ -3422,15 +3422,21 @@
         if (!current || !newPass || !confirmPass) { alert('Please fill in all password fields'); return; }
         if (newPass !== confirmPass) { alert('New passwords do not match'); return; }
         if (newPass.length < 8) { alert('Password must be at least 8 characters'); return; }
+        // "Also remove all my passkeys" (ticked by default; the row is only
+        // visible when passkeys are enabled). The server treats an absent
+        // field as true, so a missing checkbox keeps that default explicit.
+        var removePasskeysBox = document.getElementById('change-password-remove-passkeys');
+        var removePasskeys = removePasskeysBox ? removePasskeysBox.checked : true;
         apiFetch(API_BASE + '/settings/password', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ current_password: current, new_password: newPass })
+            body: JSON.stringify({ current_password: current, new_password: newPass, remove_passkeys: removePasskeys })
         }).then(function(result) {
             if (result && result.success) {
                 alert(result.message);
                 document.getElementById('current-password').value = '';
                 document.getElementById('new-password').value = '';
                 document.getElementById('confirm-password').value = '';
+                if (removePasskeysBox) { removePasskeysBox.checked = true; }
             } else { alert('Error: ' + (result && result.error ? result.error : 'Unknown error')); }
         }).catch(function(err) {
             console.error('Password change failed:', err);

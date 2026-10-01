@@ -1,6 +1,27 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.279] - 2026-10-01
+
+### Added — passkey (WebAuthn) user interface
+
+Passkeys stay **off by default** (`WEBAUTHN_ENABLED=false`). With them off, none of the UI below appears and nothing new is requested beyond the public `GET /api/auth/passkey/config` check.
+
+- **Login page: "Sign in with a passkey".** Shown only when the server reports passkeys enabled, the browser supports WebAuthn, the page is a secure context (HTTPS) and the page's origin is one of `WEBAUTHN_ORIGINS`. Usernameless: the browser offers the passkeys it holds for this site. Any failure shows one generic message; cancelling the browser prompt shows nothing. Success goes to `/admin` exactly like a password login, so a forced password change still applies. The username/password (+2FA) form is unchanged and always available.
+- **New-passkey notice at sign-in.** When a passkey was added to the account since the notice was last dismissed, every sign-in method (password, 2FA, passkey) first shows "New passkey on your account" with the passkey names and dates, and the choice to review them or continue.
+- **Profile → Passkeys** (every role, own passkeys only): list with name, when added, when last used, and whether the passkey is synced or kept on this device only; **Add a passkey** (name, then your current password plus a 2FA code when 2FA is on, then the browser's passkey prompt); **Rename**; **Delete** (password + 2FA re-check; your other sessions are signed out and this one continues with its re-issued session and CSRF token). New-passkey notices appear as a banner with a Dismiss button. The card explains that a passkey is an extra way in and the password keeps working. If this browser or address cannot create passkeys, the card says why and disables Add.
+- **Settings → Users: "Remove passkeys"** per user, admin only, with a confirmation. Also offered on your own row; your session is re-issued and the page keeps working.
+- **Change-password forms** (Profile and the forced first-login change) have **"Also remove all my passkeys"**, ticked by default and sent as `remove_passkeys`. The box is shown only when passkeys are enabled.
+- Shared helpers: `cmd/api/static/js/fwmon-passkey.js` (`window.FwmonPasskey`: config check, base64url ↔ ArrayBuffer conversion, WebAuthn request/response encoding; no storage of any kind) and `AC.promptFields` (one dialog with several labelled fields, used for the password + 2FA re-check) plus `AC.setCsrfToken`. Passkey names are user-controlled and are only ever written with `textContent` / `value`.
+
+### Docs
+
+- `docs/OPERATIONS.md` gains **"Enabling passkeys"**: HTTPS on a real DNS name, RP ID = the exact host, the origins list, nginx-proxy-manager setup, why the button may be hidden, the kill switch and break-glass recovery. README: passkeys under Auth & security and the passkey endpoints under API Endpoints.
+
+### Tests
+
+- `test/guardrails/passkey_ui_test.go`: the login page's passkey section is hidden in the markup and only revealed after `FwmonPasskey.usable(...)` on the server config; `usable` requires enabled config, WebAuthn, a secure context and an allowed origin; no inline event handlers or inline scripts in the passkey UI; passkey names never reach `innerHTML`; admin passkey calls go through `AC.apiFetch` (X-CSRF-Token); the re-issued CSRF token is adopted after delete / remove-all; both change-password forms send `remove_passkeys`; nothing passkey-related touches `localStorage` / `sessionStorage`.
+
 ## [0.11.278] - 2026-10-01
 
 ### Changed — repository hygiene for a public project

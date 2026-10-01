@@ -228,6 +228,7 @@
            cytoscape.min.js, layout-base.js, cose-base.js, cytoscape-fcose.js,
            diagram-cytoscape.js, diagram-panels.js
          All six are now injected on demand. -->
+    <script defer src="/static/js/fwmon-passkey.js"></script>
     <script defer src="/static/js/admin-common.js"></script>
     <script defer src="/static/js/admin-users.js"></script>
     <script defer src="/static/js/admin-settings.js"></script>
@@ -1190,6 +1191,13 @@
                         <input type="password" id="confirm-password" autocomplete="new-password">
                     </div>
                 </div>
+                <!-- Shown only when passkeys are enabled (admin-profile.js);
+                     the server removes passkeys on a password change unless
+                     remove_passkeys is false, so the box is ticked by default. -->
+                <label class="profile-passkey-remove" id="change-password-passkeys-row" hidden>
+                    <input type="checkbox" id="change-password-remove-passkeys" checked>
+                    Also remove all my passkeys
+                </label>
                 <button class="btn" data-action="change-password">Change Password</button>
             </div>
             <!-- Two-factor authentication (P0-3). Self-service: visible to
@@ -1204,6 +1212,21 @@
                 </p>
                 <div id="twofa-status" style="margin-bottom:12px;"></div>
                 <div id="twofa-flow"></div>
+            </div>
+            <!-- Passkeys (WebAuthn). Hidden unless GET /api/auth/passkey/config
+                 says passkeys are enabled; every role manages only their own.
+                 Driven by admin-profile.js (names rendered with textContent). -->
+            <div class="card" id="card-passkeys" hidden>
+                <div class="card-header"><h2>Passkeys</h2></div>
+                <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">
+                    A passkey lets you sign in with your device's fingerprint, face or PIN instead of typing a password.
+                    It is an extra way in: your password (and 2FA code) keep working. Adding or deleting a passkey asks
+                    for your password again; deleting one signs out your other sessions.
+                </p>
+                <div class="passkey-notices" id="passkey-notices" hidden role="alert"></div>
+                <p class="passkey-support-note" id="passkey-support-note" hidden></p>
+                <div id="passkey-list"></div>
+                <button class="btn" data-action="passkey-add" id="passkey-add-btn">Add a passkey</button>
             </div>
         </div>
 
