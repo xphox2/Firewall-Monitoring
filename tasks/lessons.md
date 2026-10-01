@@ -1,5 +1,13 @@
 # Lessons
 
+## Push and open the PR without asking; only merges need approval (2026-09-30)
+
+**Correction:** after showing QA for passkey PR 1 I asked "Should I push it and open the PR?". User:
+"you always push and open the PR, I just confirm if we merge."
+
+**Rule:** once QA passes and results are shown, push the feature branch and open the PR in the same
+turn. Ask only before merging. Never force-push, never push to master directly.
+
 ## Benchmark the system, not the thing the user pointed at (2026-09-07)
 
 **Context:** user reported "/admin takes minutes to load on first login". The dashboard had already

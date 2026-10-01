@@ -78,6 +78,7 @@ func (h *Handler) Login(c *gin.Context) {
 			IPAddress: ip,
 			Success:   success,
 			UserAgent: userAgent,
+			Method:    strPtr(loginMethodPassword),
 		}); dbErr != nil {
 			log.Printf("Failed to save login attempt: %v", dbErr)
 		}
@@ -137,9 +138,9 @@ func (h *Handler) Login(c *gin.Context) {
 	recordAttempt(h.completeLogin(c, db, adminRecord.ID, loginMethodPassword))
 }
 
-// Login methods accepted by completeLogin. In-code values only (no DB column
-// yet); each maps to the generic failure message its entry point has always
-// returned, so the refactor changes no response body.
+// Login methods accepted by completeLogin. Each maps to the generic failure
+// message its entry point has always returned, so the refactor changes no
+// response body. loginMethodPasskey (handlers_passkeys.go) is the third.
 const (
 	loginMethodPassword = "password"
 	loginMethodTOTP     = "totp"
@@ -153,6 +154,8 @@ func loginFailureMessage(method string) (string, bool) {
 		return "Invalid credentials", true
 	case loginMethodTOTP:
 		return "Pending login invalid — start over", true
+	case loginMethodPasskey:
+		return passkeyLoginFailedMsg, true
 	}
 	return "", false
 }
@@ -168,9 +171,15 @@ func loginFailureMessage(method string) (string, bool) {
 //     generic 401 (the second factor is owed; Login routes such accounts to
 //     the pending_2fa stage before ever getting here).
 //
-// On success it clears pending_2fa (TOTP stage only, as before) and mints the
-// JWT + CSRF cookies via issueSession. It reports whether a session was issued
-// (the response has been written either way).
+// Method "passkey" issues a full session with NO TOTP stage: the assertion
+// was user-verified (checked by the caller), which is itself multi-factor.
+//
+// On success it clears pending_2fa (TOTP and passkey methods; the password
+// method is unchanged) and mints the JWT + CSRF cookies via issueSession.
+// When passkeys are enabled and the account has new-passkey notices pending,
+// the success payload also carries passkey_notices (absent otherwise, so the
+// password response is unchanged for accounts without them). It reports
+// whether a session was issued (the response has been written either way).
 func (h *Handler) completeLogin(c *gin.Context, db database.Store, adminID uint, method string) bool {
 	failMsg, known := loginFailureMessage(method)
 	if !known {
@@ -192,7 +201,7 @@ func (h *Handler) completeLogin(c *gin.Context, db database.Store, adminID uint,
 		return false
 	}
 
-	if method == loginMethodTOTP {
+	if method == loginMethodTOTP || method == loginMethodPasskey {
 		cookieSecure, cookieSameSite, _ := h.sessionCookieParams()
 		http.SetCookie(c.Writer, &http.Cookie{
 			Name: "pending_2fa", Value: "", MaxAge: -1, Path: "/",
@@ -200,10 +209,14 @@ func (h *Handler) completeLogin(c *gin.Context, db database.Store, adminID uint,
 		})
 	}
 
-	return h.issueSession(c, admin.Username, admin.ID, admin.TokenVersion, admin.Role, gin.H{
+	extra := gin.H{
 		"message":              "Login successful",
 		"must_change_password": admin.MustChangePassword,
-	})
+	}
+	if notices := h.passkeyNotices(db, admin.ID); len(notices) > 0 {
+		extra["passkey_notices"] = notices
+	}
+	return h.issueSession(c, admin.Username, admin.ID, admin.TokenVersion, admin.Role, extra)
 }
 
 // sessionCookieParams derives the cookie attributes every auth cookie shares.
@@ -333,6 +346,10 @@ func (h *Handler) GetCSRFToken(c *gin.Context) {
 type ChangePasswordRequest struct {
 	CurrentPassword string `json:"current_password" binding:"required"`
 	NewPassword     string `json:"new_password" binding:"required"`
+	// RemovePasskeys (D-RESET): also delete every passkey of the account.
+	// ABSENT means TRUE — a password change removes passkeys unless the
+	// caller explicitly sends false.
+	RemovePasskeys *bool `json:"remove_passkeys"`
 }
 
 func (h *Handler) ChangePassword(c *gin.Context) {
@@ -409,21 +426,26 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	err = db.UpdateAdminPassword(userIDUint, hashedPassword)
+	// One transaction (D-RESET): new password, clear the forced-change flag,
+	// delete every passkey (unless remove_passkeys is explicitly false) and
+	// bump token_version to invalidate all existing sessions. Either all of
+	// it happens or none of it does.
+	removePasskeys := req.RemovePasskeys == nil || *req.RemovePasskeys
+	mustChange := false
+	removed, err := db.ResetAdminCredentials(userIDUint, database.AdminReset{
+		PasswordHash:       hashedPassword,
+		MustChangePassword: &mustChange,
+		KeepPasskeys:       !removePasskeys,
+	})
 	if err != nil {
 		httputil.InternalError(c, "Failed to update password", err)
 		return
 	}
-
-	// Clear the forced-change flag now that the operator has set their own
-	// password. Best-effort: a failure here only means the user is re-prompted.
-	if err := db.SetAdminMustChangePassword(userIDUint, false); err != nil {
-		log.Printf("Failed to clear must_change_password after password change: %v", err)
+	if removePasskeys {
+		h.discardRegistration(userIDUint)
 	}
-
-	// Invalidate all existing tokens by incrementing token version
-	if err := db.IncrementAdminTokenVersion(userIDUint); err != nil {
-		log.Printf("Failed to increment token version after password change: %v", err)
+	if removed > 0 {
+		log.Printf("password change for admin %d removed %d passkey(s)", userIDUint, removed)
 	}
 
 	c.JSON(http.StatusOK, response.Message("Password changed successfully. Please log in again."))

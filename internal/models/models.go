@@ -779,6 +779,10 @@ type LoginAttempt struct {
 	IPAddress string    `json:"ip_address"`
 	Success   bool      `json:"success"`
 	UserAgent string    `json:"user_agent"`
+	// Method is how the attempt authenticated: "password" or "passkey"
+	// (migration v70). NULL on rows written before v70. The TOTP second step
+	// writes no row of its own (PR 1), so "totp" is reserved but not written.
+	Method *string `json:"method,omitempty" gorm:"column:method"`
 }
 
 // SchemaMigration records one applied DB migration (AUDIT-044). The
@@ -1058,9 +1062,44 @@ type Admin struct {
 	TOTPSecret      string     `json:"-"`
 	TOTPEnabled     bool       `json:"totp_enabled" gorm:"default:false"`
 	TOTPConfirmedAt *time.Time `json:"-"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	// WebAuthnUserHandle is the account's WebAuthn user handle (migration
+	// v70): 64 random bytes generated on the first passkey registration, never
+	// derived from the username or ID and never reused by another account.
+	// NULL until then. A passkey assertion is only accepted when the handle
+	// the authenticator returns matches this stored value (constant time).
+	WebAuthnUserHandle []byte `json:"-" gorm:"column:webauthn_user_handle;uniqueIndex:idx_admins_webauthn_user_handle"`
+	// PasskeyNoticeSeenAt is when the user last acknowledged the "new passkey
+	// added" notice (v70). Passkeys created after it (or all of them while it
+	// is NULL) are reported on the next login and in the passkey list.
+	PasskeyNoticeSeenAt *time.Time `json:"-" gorm:"column:passkey_notice_seen_at"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
 }
+
+// WebAuthnCredential is one registered passkey (migration v70). Rows belong
+// to exactly one account (AdminID); every read and write outside the login
+// lookup is scoped by admin_id. Postgres declares admin_id as a foreign key
+// with ON DELETE CASCADE as a backstop, but DeleteAdmin deletes the rows
+// explicitly (SQLite does not enforce foreign keys).
+type WebAuthnCredential struct {
+	ID      uint `json:"id" gorm:"primaryKey"`
+	AdminID uint `json:"-" gorm:"index:idx_webauthn_credentials_admin_id;not null"`
+	// CredentialID is the authenticator's credential id (raw bytes).
+	CredentialID    []byte `json:"-" gorm:"uniqueIndex:idx_webauthn_credentials_credential_id;not null"`
+	PublicKey       []byte `json:"-" gorm:"not null"`
+	AttestationType string `json:"-"`
+	AAGUID          []byte `json:"-" gorm:"column:aaguid"`
+	// SignCount holds the authenticator's uint32 signature counter.
+	SignCount      int64      `json:"-"`
+	BackupEligible bool       `json:"backup_eligible"`
+	BackupState    bool       `json:"backup_state"`
+	Transports     string     `json:"-"` // comma-separated AuthenticatorTransport values
+	Name           string     `json:"name"`
+	CreatedAt      time.Time  `json:"created_at"`
+	LastUsedAt     *time.Time `json:"last_used_at"`
+}
+
+func (WebAuthnCredential) TableName() string { return "webauthn_credentials" }
 
 // AdminRecoveryCode is a single-use 2FA fallback code (P0-3). Only the
 // sha256: hash is stored (same at-rest scheme as probe keys / API tokens);

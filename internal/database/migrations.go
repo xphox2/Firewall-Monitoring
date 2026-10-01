@@ -119,6 +119,7 @@ var registeredMigrations = []migration{
 	{version: 67, name: "vpn_status_timestamp_index", run: (*Database).migrateVPNStatusTimestampIndex},
 	{version: 68, name: "flow_service_port_class_rev", run: (*Database).migrateFlowServicePortClassRev},
 	{version: 69, name: "delete_connections_to_retired_devices", run: (*Database).migrateDeleteConnectionsToRetiredDevices},
+	{version: 70, name: "passkeys", run: (*Database).migratePasskeys},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

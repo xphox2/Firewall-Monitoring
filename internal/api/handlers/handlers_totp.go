@@ -341,7 +341,8 @@ func (h *Handler) Disable2FA(c *gin.Context) {
 }
 
 // ResetUser2FA (admin-only) clears another account's 2FA — the recovery path
-// when an operator loses both the authenticator and the recovery codes.
+// when an operator loses both the authenticator and the recovery codes — and
+// deletes all of its passkeys (D-RESET).
 func (h *Handler) ResetUser2FA(c *gin.Context) {
 	db := h.reqDB(c)
 	if !httputil.RequireDB(c, db) {
@@ -351,12 +352,12 @@ func (h *Handler) ResetUser2FA(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := db.ClearAdminTOTP(id); err != nil {
+	// D-RESET: one transaction clears TOTP + recovery codes, deletes every
+	// passkey and bumps token_version.
+	if _, err := db.ResetAdminCredentials(id, database.AdminReset{ClearTOTP: true}); err != nil {
 		httputil.InternalError(c, "Failed to reset 2FA", err)
 		return
 	}
-	if err := db.IncrementAdminTokenVersion(id); err != nil {
-		log.Printf("Failed to bump token version after 2FA reset: %v", err)
-	}
+	h.discardRegistration(id)
 	c.JSON(http.StatusOK, response.Success(gin.H{"reset": id}))
 }
