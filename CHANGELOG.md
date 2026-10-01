@@ -1,6 +1,12 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.276] - 2026-10-01
+
+### Fixed — month-boundary flake in the PostgreSQL purge integration test (test-only)
+
+- `TestPGPurge_RemovesDeviceAcrossPartitions` failed in CI on 2026-10-01 00:20 UTC. It seeded its 200,000 `interface_stats` rows counting back from `now()`, and monthly leaves exist only from the current month forward. In the first hours of a month the current-month leaf therefore held only a few dozen rows. PostgreSQL correctly seq-scanned that near-empty leaf, which failed the per-leaf index-scan assertion. The seeds in `purge_pg_integration_test.go` (`interface_stats` and `denied_events`, all three purge tests) are now anchored to the leaf catalog (the oldest monthly leaf = the month `EnsurePartitions` treated as current) instead of `now()`. Every targeted leaf now gets a fixed, large share of rows on any date: next month ≥ 63k, current month ≥ 63k and DEFAULT ≥ 59k of device A's rows. The test now also fails fast if a populated leaf holds fewer than 20k of A's rows, or if fewer than two monthly leaves are populated. Verified on PostgreSQL 16 at simulated 1st-of-month 00:20, mid-month and last-day 23:50 dates, and on the real clock at 2026-10-01 00:46 UTC, where the old test failed. No production code changed; ServerVersion is unchanged.
+
 ## [0.11.273] - 2026-09-29
 
 ### Fixed — country flags show on every browser
