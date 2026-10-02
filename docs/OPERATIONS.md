@@ -857,6 +857,34 @@ Point the NPM proxy host at `firewall-mon:8080`, set
 the audit log and login attempts now show real client IPs. If NPM runs on the
 host network or another machine, use the single IP the API sees it connect from.
 
+### Optional: behind Cloudflare (or another CDN) as well
+
+Skip this unless your hostname is proxied by Cloudflare (orange-cloud DNS). In
+that case every request passes **two** proxies — Cloudflare, then your reverse
+proxy — and with only the reverse proxy trusted, the API attributes each request
+to the **Cloudflare edge server** that forwarded it, not the visitor. Users who
+reach the same edge share one lockout and rate-limit bucket, and the audit log
+shows Cloudflare addresses.
+
+Append Cloudflare's published ranges to the reverse proxy's address:
+
+```bash
+CF=$(curl -fsS https://www.cloudflare.com/ips-v4; echo; curl -fsS https://www.cloudflare.com/ips-v6)
+echo "TRUSTED_PROXIES=192.0.2.10,$(echo "$CF" | grep / | paste -sd, -)"
+```
+
+Put the printed line in `config.env` and restart the API.
+
+- This is per installation. The default stays empty, and these entries change
+  nothing for traffic that does not arrive from a Cloudflare address, so a
+  deployment that is not behind Cloudflare should simply not add them.
+- It cannot be spoofed: a visitor's own `X-Forwarded-For` entries end up to the
+  left of the address Cloudflare appends, and the API stops at the right-most
+  untrusted address.
+- Cloudflare rarely changes these ranges; re-run the command if it announces a
+  change. A stale list only degrades attribution back to the edge address — it
+  never blocks requests.
+
 ---
 
 ## Running a single API instance (AUDIT-040)

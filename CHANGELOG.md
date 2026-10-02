@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.281] - 2026-10-02
+
+### Security — OpenTelemetry v1.45.0 (GO-2026-6505)
+
+- `go.opentelemetry.io/otel`, `otel/sdk`, `otel/trace`, `otel/metric` and the OTLP trace exporters move from v1.44.0 to v1.45.0 (with `go.opentelemetry.io/proto/otlp` v1.11.0 and the `genproto` / `go-logr` minimums they require). `govulncheck` reports GO-2026-6505 as reachable from `internal/tracing`. No code changes.
+
+### Docs — TRUSTED_PROXIES behind Cloudflare
+
+- `docs/OPERATIONS.md` gains an optional "behind Cloudflare (or another CDN) as well" section. With only the reverse proxy trusted, a Cloudflare-proxied site attributes every request to the Cloudflare edge that forwarded it, so visitors on the same edge share one login-lockout and rate-limit bucket and the audit log shows Cloudflare addresses. The section shows how to append Cloudflare's published ranges to `TRUSTED_PROXIES` and states that this is per installation: the default stays empty and the entries are inert for traffic not arriving from Cloudflare. README's `TRUSTED_PROXIES` row links to it. No code changes.
+
 ## [0.11.280] - 2026-10-01
 
 ### Fixed — passkey UI review follow-ups
