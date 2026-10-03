@@ -10,7 +10,7 @@
 > is a sibling repo, [Firewall-Collector](https://github.com/xphox2/Firewall-Collector).
 
 [![CI](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml/badge.svg)](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.11.283-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.11.286-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.26.8+-00ADD8)](go.mod)
 [![Status](https://img.shields.io/badge/status-alpha-orange)](#project-status)
@@ -363,7 +363,7 @@ make tarball               # package dist/firewall-mon-<version>.tar.gz
 ### Deploy to a remote server
 
 ```bash
-./deploy.sh deploy -h your-server.com -u root -k ~/.ssh/id_rsa
+./deploy.sh deploy -h your-server.example.com -u root -k ~/.ssh/id_rsa
 ```
 
 ### Install locally
@@ -420,7 +420,7 @@ operator-facing step-by-step (backup, migrate, restart, verify).
 # server (Docker)
 docker compose pull && docker compose up -d
 # server (native)
-./deploy.sh deploy -h your-server.com -u root -k ~/.ssh/id_rsa
+./deploy.sh deploy -h your-server.example.com -u root -k ~/.ssh/id_rsa
 # probe
 docker compose -f /path/to/probe/docker-compose.yml pull && up -d
 ```

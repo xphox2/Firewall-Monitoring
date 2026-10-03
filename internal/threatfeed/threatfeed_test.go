@@ -38,7 +38,7 @@ func TestParse(t *testing.T) {
 }
 
 func TestParseExtraFeeds(t *testing.T) {
-	feeds := ParseExtraFeeds(" my-list|https://example.com/bad.txt|malware|critical , minimal|https://e.com/m.txt , |skip-no-name , skip-no-url| ")
+	feeds := ParseExtraFeeds(" my-list|https://example.com/bad.txt|malware|critical , minimal|https://e.example/m.txt , |skip-no-name , skip-no-url| ")
 	if len(feeds) != 2 {
 		t.Fatalf("got %d feeds, want 2: %+v", len(feeds), feeds)
 	}
@@ -46,7 +46,7 @@ func TestParseExtraFeeds(t *testing.T) {
 		t.Errorf("feed[0] = %+v", feeds[0])
 	}
 	// Minimal record defaults category=custom, severity=warning, kind=ip.
-	if feeds[1] != (Feed{Name: "minimal", URL: "https://e.com/m.txt", Category: "custom", Severity: "warning", Kind: FeedKindIP}) {
+	if feeds[1] != (Feed{Name: "minimal", URL: "https://e.example/m.txt", Category: "custom", Severity: "warning", Kind: FeedKindIP}) {
 		t.Errorf("feed[1] = %+v", feeds[1])
 	}
 	if ParseExtraFeeds("") != nil {

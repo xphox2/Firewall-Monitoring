@@ -134,7 +134,7 @@ func startFakeSMTP(t *testing.T) (port int, rcpts func() []string) {
 	}
 }
 
-// TestSendEmail_SplitsCommaRecipients (AUDIT-209): "a@x.com, b@y.com" must
+// TestSendEmail_SplitsCommaRecipients (AUDIT-209): "a@example.com, b@example.org" must
 // produce one RCPT TO per address on the wire. sendEmail used to hand the RAW
 // comma string to the envelope as a single recipient, which multi-recipient
 // relays reject — every alert email to more than one address silently failed
@@ -145,8 +145,8 @@ func TestSendEmail_SplitsCommaRecipients(t *testing.T) {
 		to   string
 		want []string
 	}{
-		{"two recipients", "a@x.com, b@y.com", []string{"a@x.com", "b@y.com"}},
-		{"single recipient", "a@x.com", []string{"a@x.com"}},
+		{"two recipients", "a@example.com, b@example.org", []string{"a@example.com", "b@example.org"}},
+		{"single recipient", "a@example.com", []string{"a@example.com"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -2,12 +2,12 @@ package guardrails
 
 import (
 	"bytes"
+	"fmt"
 	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -75,6 +75,7 @@ var (
 	homePathRe     = regexp.MustCompile(`/(?:Users|home)/[A-Za-z0-9._-]+`)
 	winHomePathRe  = regexp.MustCompile(`[A-Za-z]:\\{1,2}Users\\{1,2}[A-Za-z0-9._-]+`)
 	ellipsisRe     = regexp.MustCompile(`\.{2,}`)
+	dashedIPv4Re   = regexp.MustCompile(`[0-9]{1,3}(?:-[0-9]{1,3}){3}`)
 	hygieneSkipExt = regexp.MustCompile(`\.(mmdb|woff2|png|jpe?g|gif|ico)$`)
 )
 
@@ -125,11 +126,12 @@ func hygieneRepoFiles(t *testing.T) (string, []string) {
 	return root, files
 }
 
-// octets parses dotted parts as IPv4 octets (no leading zeros, 0-255).
+// octets parses dotted parts as IPv4 octets (0-255). Leading zeros are
+// accepted, so a zero-padded form (010.000.000.001) is the same address.
 func octets(parts []string) (netip.Addr, bool) {
 	var b [4]byte
 	for i, p := range parts {
-		if len(p) == 0 || len(p) > 3 || (len(p) > 1 && p[0] == '0') {
+		if len(p) == 0 || len(p) > 3 {
 			return netip.Addr{}, false
 		}
 		n := 0
@@ -327,6 +329,38 @@ func badIPv4Run(text string, s, e int, bad []string) []string {
 	return bad
 }
 
+// badDashedIPv4 returns public addresses written with dashes instead of dots,
+// the form reverse-DNS names use (A-B-C-D.rev.example.net, and after a word
+// such as cpe-A-B-C-D.example.net when a domain follows). A run that is part
+// of a longer token (a timestamp 2026-10-03T19-42-15, SVG path data
+// "s-3-2-3-9h18", a version) is not one.
+func badDashedIPv4(text string) []string {
+	var bad []string
+	isLetter := func(b byte) bool { return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' }
+	isDigit := func(b byte) bool { return b >= '0' && b <= '9' }
+	for _, loc := range dashedIPv4Re.FindAllStringIndex(text, -1) {
+		s, e := loc[0], loc[1]
+		next, after := byte(0), byte(0)
+		if e < len(text) {
+			next = text[e]
+		}
+		if e+1 < len(text) {
+			after = text[e+1]
+		}
+		domainFollows := next == '.' && isLetter(after)
+		if s > 0 && (isWordByte(text[s-1]) || text[s-1] == '.' || text[s-1] == '-' && !domainFollows) {
+			continue
+		}
+		if isWordByte(next) || next == '-' || next == '.' && isDigit(after) {
+			continue
+		}
+		if a, ok := octets(strings.Split(text[s:e], "-")); ok && !ipv4Allowed(a) {
+			bad = append(bad, text[s:e])
+		}
+	}
+	return bad
+}
+
 func badIPv6(text string) []string {
 	var bad []string
 	doc := netip.MustParsePrefix("2001:db8::/32")
@@ -380,6 +414,7 @@ func TestPublicHygiene_NoRealAddressesOrHomePaths(t *testing.T) {
 			hits []string
 		}{
 			{"public IPv4 address", badIPv4(text)},
+			{"public IPv4 address (dashed form)", badDashedIPv4(text)},
 			{"public IPv6 address", badIPv6(text)},
 			{"home-directory path", badHomes(text)},
 		} {
@@ -393,11 +428,16 @@ func TestPublicHygiene_NoRealAddressesOrHomePaths(t *testing.T) {
 // The rule samples below are assembled at run time, so this file holds no
 // literal public address or home path and is scanned like any other file.
 
-// sampleIP formats a dotted address from its octets.
-func sampleIP(o ...int) string {
+// sampleIP formats a dotted address from its octets. A trailing format verb
+// ("%03d") zero-pads each octet.
+func sampleIP(o ...any) string {
+	format := "%d"
+	if f, ok := o[len(o)-1].(string); ok {
+		format, o = f, o[:len(o)-1]
+	}
 	s := make([]string, len(o))
 	for i, v := range o {
-		s[i] = strconv.Itoa(v)
+		s[i] = fmt.Sprintf(format, v)
 	}
 	return strings.Join(s, ".")
 }
@@ -474,10 +514,35 @@ func TestPublicHygiene_Rules(t *testing.T) {
 		{pub + "... and more", 1},
 		{"ifTable column …2.2.1.10 and ...2.2.1.1", 0},
 		{"mask 255.255.255.252", 0},
-		{"0" + pub + " is not an address", 0},
+		// Zero-padded octets are the same address.
+		{"0" + pub + " is an address", 1},
+		{"peer " + sampleIP(81, 2, 69, 160, "%03d"), 1},
+		{"peer " + sampleIP(10, 0, 0, 1, "%03d"), 0},
 	} {
 		if got := len(badIPv4(tc.text)); got != tc.bad {
 			t.Errorf("badIPv4(%q) = %d hits, want %d", tc.text, got, tc.bad)
+		}
+	}
+	dashed := strings.ReplaceAll(pub, ".", "-")
+	for _, tc := range []struct {
+		text string
+		bad  int
+	}{
+		{"peer " + dashed, 1},
+		{"peer " + dashed + ".", 1},
+		{"rdns " + dashed + ".rev.example.net", 1},
+		{"rdns cpe-" + dashed + ".example.net", 1},
+		{"rdns " + strings.ReplaceAll(sampleIP(81, 2, 69, 160, "%03d"), ".", "-"), 1},
+		{"host ip-10-0-0-1 and 203-0-113-7.example.com", 0},
+		{"placeholder 1-2-3-4", 0},
+		{"stamp 2026-10-03-14-30 and 10-03-14-30-00 and T19-42-15-24h", 0},
+		{"build 1.2-3-4-5-6 and v" + dashed, 0},
+		{"range " + dashed + ".5 and " + dashed + "-7", 0},
+		{`<path d="M6 8c0 7-3 9-3 9h18s-3-2-3-9"/> and "11-8 11-8-11-8-11-8z"`, 0},
+		{"host ip-" + dashed, 0}, // a word before the dash: only an address with a domain after it counts
+	} {
+		if got := len(badDashedIPv4(tc.text)); got != tc.bad {
+			t.Errorf("badDashedIPv4(%q) = %d hits, want %d", tc.text, got, tc.bad)
 		}
 	}
 	if len(badIPv6("dns 2606:4700:4700::1111 doc 2001:db8::1 mac aa:bb:cc:dd:ee:ff port 2055:2055")) != 0 {

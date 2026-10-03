@@ -225,7 +225,7 @@ func TestPrivateDenylist_Matching(t *testing.T) {
 		{"device fwkiwi online", 1},
 		{"device kiwi01 online", 1},
 		{"device fw-kiwi-lan online", 1},
-		{"device fw.kiwi.lan and kiwilan", 1},
+		{"device fw.kiwi.example and kiwilan", 1},
 		{"a kiw i split", 0},
 		{"nothing here", 0},
 	} {

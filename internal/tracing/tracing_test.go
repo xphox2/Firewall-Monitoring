@@ -103,7 +103,7 @@ func TestCrossProcessPropagation(t *testing.T) {
 		return &http.Response{StatusCode: 200, Body: http.NoBody, Header: make(http.Header)}, nil
 	})
 	client := &http.Client{Transport: WrapTransport(base)}
-	req, _ := http.NewRequest("POST", "http://api.local/api/probes/1/system-statuses", nil)
+	req, _ := http.NewRequest("POST", "http://api.example/api/probes/1/system-statuses", nil)
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("client.Do: %v", err)

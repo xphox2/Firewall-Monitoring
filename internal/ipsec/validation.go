@@ -645,7 +645,7 @@ func isIPRange(s string) bool {
 // fqdnCharsOK reports whether every rune is in [A-Za-z0-9._-] — the interop-safe
 // FQDN-identity charset. Stricter than safeToken (which also allows ':') and
 // deliberately includes '_' (strongSwan classifies it as FQDN, OPNsense allows
-// it, and Fortinet's own docs use e.g. prince_1.test.com).
+// it, and Fortinet's own docs use e.g. prince_1.example.com).
 func fqdnCharsOK(s string) bool {
 	for _, r := range s {
 		switch {

@@ -74,7 +74,7 @@ func TestBuildPGXDSN_EmptyPassword(t *testing.T) {
 // TestBuildPGXDSN_TCPHost: the ordinary host:port shape keeps working.
 func TestBuildPGXDSN_TCPHost(t *testing.T) {
 	cfg := &config.Config{}
-	cfg.Database.Host = "db.example.internal"
+	cfg.Database.Host = "db.example.net"
 	cfg.Database.Port = 5433
 	cfg.Database.User = "fwmon"
 	cfg.Database.Password = "plain"
@@ -85,7 +85,7 @@ func TestBuildPGXDSN_TCPHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseConfig: %v", err)
 	}
-	if pc.ConnConfig.Host != "db.example.internal" || pc.ConnConfig.Port != 5433 {
+	if pc.ConnConfig.Host != "db.example.net" || pc.ConnConfig.Port != 5433 {
 		t.Errorf("host/port = %q/%d", pc.ConnConfig.Host, pc.ConnConfig.Port)
 	}
 }

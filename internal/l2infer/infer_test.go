@@ -10,7 +10,7 @@ var site1, site2 = uint(1), uint(2)
 func twoDevices() []DeviceMeta {
 	return []DeviceMeta{
 		{ID: 1, Name: "fw-core", SiteID: &site1, IPs: []string{"192.168.105.1"}},
-		{ID: 2, Name: "fw-branch.lab.local", SiteID: &site1, IPs: []string{"192.168.105.107"}},
+		{ID: 2, Name: "fw-branch.lab.example", SiteID: &site1, IPs: []string{"192.168.105.107"}},
 	}
 }
 

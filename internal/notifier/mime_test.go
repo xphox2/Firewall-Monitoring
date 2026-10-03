@@ -88,7 +88,7 @@ func base64Decoder(r io.Reader) io.Reader {
 func TestBuildMIMEMessage_AlternativeTree(t *testing.T) {
 	textBody := "PLAIN threshold=90 naïve café\r\n"
 	htmlBody := "<html><body>HTML threshold=90 — naïve café</body></html>"
-	raw, err := buildMIMEMessage("from@x.net", "to@x.net", "Subject A", textBody, htmlBody, nil)
+	raw, err := buildMIMEMessage("from@example.net", "to@example.net", "Subject A", textBody, htmlBody, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestBuildMIMEMessage_AlternativeTree(t *testing.T) {
 func TestBuildMIMEMessage_RelatedOverAlternative(t *testing.T) {
 	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 	atts := []Attachment{{ContentID: "chart1", Data: png, MIMEType: "image/png"}}
-	raw, err := buildMIMEMessage("from@x.net", "to@x.net", "Subject B", "PLAIN", `<img src="cid:chart1">`, atts)
+	raw, err := buildMIMEMessage("from@example.net", "to@example.net", "Subject B", "PLAIN", `<img src="cid:chart1">`, atts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestBuildMIMEMessage_RelatedOverAlternative(t *testing.T) {
 // bare QP text/html without images (the 8bit path is retired — uniform QP),
 // and related-over-html with images.
 func TestBuildMIMEMessage_LegacyShapes(t *testing.T) {
-	raw, err := buildMIMEMessage("f@x.net", "t@x.net", "S", "", "<p>hi threshold=90</p>", nil)
+	raw, err := buildMIMEMessage("f@example.net", "t@example.net", "S", "", "<p>hi threshold=90</p>", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestBuildMIMEMessage_LegacyShapes(t *testing.T) {
 		t.Errorf("QP round-trip mismatch: %q", body)
 	}
 
-	raw, err = buildMIMEMessage("f@x.net", "t@x.net", "S", "", `<img src="cid:c">`,
+	raw, err = buildMIMEMessage("f@example.net", "t@example.net", "S", "", `<img src="cid:c">`,
 		[]Attachment{{ContentID: "c", Data: []byte{1, 2, 3}, MIMEType: "image/png"}})
 	if err != nil {
 		t.Fatal(err)
@@ -217,7 +217,7 @@ func TestBuildMIMEMessage_LegacyShapes(t *testing.T) {
 // TestBuildMIMEMessage_HeaderSanitized pins CRLF stripping on all address /
 // subject headers (header-injection guard, AUDIT-014 family).
 func TestBuildMIMEMessage_HeaderSanitized(t *testing.T) {
-	raw, err := buildMIMEMessage("f@x.net", "t@x.net", "evil\r\nBcc: spam@x.net", "T", "<p>h</p>", nil)
+	raw, err := buildMIMEMessage("f@example.net", "t@example.net", "evil\r\nBcc: spam@example.net", "T", "<p>h</p>", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +230,7 @@ func TestBuildMIMEMessage_HeaderSanitized(t *testing.T) {
 	}
 
 	// CRLF in an attachment ContentID must not forge part headers either.
-	raw, err = buildMIMEMessage("f@x.net", "t@x.net", "S", "T", `<img src="cid:c">`,
+	raw, err = buildMIMEMessage("f@example.net", "t@example.net", "S", "T", `<img src="cid:c">`,
 		[]Attachment{{ContentID: "c\r\nX-Evil: 1", Data: []byte{1}, MIMEType: "image/png"}})
 	if err != nil {
 		t.Fatal(err)
@@ -250,7 +250,7 @@ func TestBuildMIMEMessage_HeaderSanitized(t *testing.T) {
 // recover the original text. ASCII-only subjects pass through unencoded.
 func TestBuildMIMEMessage_SubjectRFC2047(t *testing.T) {
 	subject := "Firewall Monitor — Daily Report — 2026-07-18"
-	raw, err := buildMIMEMessage("f@x.net", "t@x.net", subject, "T", "<p>h</p>", nil)
+	raw, err := buildMIMEMessage("f@example.net", "t@example.net", subject, "T", "<p>h</p>", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestBuildMIMEMessage_SubjectRFC2047(t *testing.T) {
 		t.Fatalf("round-trip failed: %q (err %v), want %q", decoded, err, subject)
 	}
 
-	raw, err = buildMIMEMessage("f@x.net", "t@x.net", "Plain ASCII subject", "T", "<p>h</p>", nil)
+	raw, err = buildMIMEMessage("f@example.net", "t@example.net", "Plain ASCII subject", "T", "<p>h</p>", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
