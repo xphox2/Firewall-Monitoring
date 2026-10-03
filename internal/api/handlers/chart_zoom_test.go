@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -71,6 +72,31 @@ func TestGetDeviceStatusHistory_WindowAndPresetBranches(t *testing.T) {
 		if code, _ := statusHistoryGet(t, h, q); code != http.StatusBadRequest {
 			t.Errorf("%s: status %d, want 400", q, code)
 		}
+	}
+}
+
+// A `to` in the future is not a window a drag can select. It used to be
+// accepted, and clamping `from` against it served a window lying entirely
+// ahead of the data (to=max int64 placed it 292 million years out).
+func TestGetDeviceStatusHistory_RejectsFutureTo(t *testing.T) {
+	h, db := setupTestHandler(t)
+	dev := &models.Device{Name: "fw", IPAddress: "192.0.2.10"}
+	if err := db.Gorm().Create(dev).Error; err != nil {
+		t.Fatalf("seed device: %v", err)
+	}
+	now := time.Now().UTC()
+	from := now.Add(-time.Hour).UnixMilli()
+	for _, q := range []string{
+		fmt.Sprintf("from=%d&to=%d", from, int64(math.MaxInt64)),
+		fmt.Sprintf("from=%d&to=%d", from, now.Add(2*time.Hour).UnixMilli()),
+	} {
+		if code, _ := statusHistoryGet(t, h, q); code != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400 for a window ending in the future", q, code)
+		}
+	}
+	// Clock skew of under an hour is tolerated.
+	if code, _ := statusHistoryGet(t, h, fmt.Sprintf("from=%d&to=%d", from, now.Add(30*time.Minute).UnixMilli())); code != http.StatusOK {
+		t.Errorf("a window ending 30 minutes ahead: status %d, want 200", code)
 	}
 }
 

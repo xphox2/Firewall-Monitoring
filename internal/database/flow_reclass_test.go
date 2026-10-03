@@ -568,3 +568,44 @@ func TestReclassVerify_ChunkedCountAcrossRanges(t *testing.T) {
 		t.Errorf("verify above floor 20 = %+v, want count 2 from id 41", res)
 	}
 }
+
+// TestFlowReclass_FullRunWithNoRollupsStillRequestsTheRebuild: the first run
+// on an install whose flow_rollups held no old-revision row (empty at the
+// time) re-stamps nothing there, so no earliest rollup timestamp exists. It
+// used to post no summary rebuild request — and the service-port boundary
+// (flow_summary_service_since) is cleared only once the rebuild has marked
+// both tiers done for the revision, so it never cleared. The run now requests
+// the rebuild from its own start, which finishes trivially.
+func TestFlowReclass_FullRunWithNoRollupsStillRequestsTheRebuild(t *testing.T) {
+	d := reclassFixture(t)
+	base := time.Now().Add(-30 * time.Minute)
+	for i := 0; i < 4; i++ {
+		if err := d.Gorm().Create(&models.FlowSample{
+			Timestamp: base, DeviceID: 1, Protocol: 6,
+			SrcAddr: "198.19.9.156", DstAddr: "198.51.100.7", SrcPort: 443, DstPort: uint16(50000 + i),
+			Bytes: 100, Packets: 1, Direction: classify.DirExternal,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := d.Gorm().Create(&models.SystemSetting{Key: flowSummaryServiceSinceKey, Value: time.Now().UTC().Format(time.RFC3339)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	runReclassToDone(t, d, 20)
+
+	raw, ok := d.GetSettingValue(flowSummaryRecomputeRequestKey)
+	if !ok || raw == "" {
+		t.Fatal("a full run that re-stamped no rollup posted no summary rebuild request; the service boundary would never clear")
+	}
+	req, ok := parseRecomputeMark(raw)
+	if !ok || req.rev != 1 {
+		t.Fatalf("request %q, want revision 1", raw)
+	}
+	// The rebuild has nothing to do and clears the boundary.
+	for i := 0; i < 6; i++ {
+		d.RunFlowSummaryCycle()
+	}
+	if _, held := d.GetSettingValue(flowSummaryServiceSinceKey); held {
+		t.Error("the service-port boundary is still set after the rebuild")
+	}
+}

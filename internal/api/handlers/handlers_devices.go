@@ -850,6 +850,13 @@ func (h *Handler) GetDeviceStatusHistory(c *gin.Context) {
 			return
 		}
 		to := time.UnixMilli(toMs).UTC()
+		// A drag cannot select the future; a `to` past now (plus an hour of
+		// clock skew) is junk, and clamping `from` against it would otherwise
+		// serve a window that lies entirely ahead of the data.
+		if to.After(time.Now().Add(time.Hour)) {
+			c.JSON(http.StatusBadRequest, response.Error("Invalid from/to window"))
+			return
+		}
 		from := database.ClampChartWindowFrom(time.UnixMilli(fromMs).UTC(), to)
 		buckets, err := db.GetSystemStatusBucketsWindow(id, from, to)
 		if err != nil {

@@ -504,6 +504,10 @@ func reclassClassify(table string, set *classify.InternalSet, rows []reclassRow)
 	return ups
 }
 
+// reclassVerifyLogHold is the maintenance-lock hold above which reclassVerify
+// logs its duration.
+const reclassVerifyLogHold = time.Second
+
 // reclassVerifyResult is one locked verification of one table.
 type reclassVerifyResult struct {
 	acquired     bool
@@ -518,6 +522,15 @@ type reclassVerifyResult struct {
 // space), so no promotion is in flight during the count.
 func (d *Database) reclassVerify(table string, floor int64, rev uint16, timeout string) (reclassVerifyResult, error) {
 	var res reclassVerifyResult
+	start := time.Now()
+	defer func() {
+		// The lock is held for the whole chunked count, during which the
+		// rollup tick and retention are skipped; say how long that was when
+		// it is long enough to matter.
+		if held := time.Since(start); res.acquired && held >= reclassVerifyLogHold {
+			log.Printf("Flow reclassification: verifying %s held the maintenance lock for %s", table, held.Round(time.Second))
+		}
+	}()
 	err := d.db.Transaction(func(tx *gorm.DB) error {
 		if d.dialect.IsPostgres() {
 			var got bool
@@ -838,8 +851,17 @@ func (d *Database) completeReclassRun(st reclassState, rollupsMax int64) error {
 		flowReclassRollupsProbeKey:   strconv.FormatInt(rollupsMax, 10),
 		flowReclassVerifyTimeoutsKey: "0",
 	}
-	if st.MinRollupTS != nil {
+	switch {
+	case st.MinRollupTS != nil:
 		sets[flowSummaryRecomputeRequestKey] = fmt.Sprintf("%d|%s", st.Rev, st.MinRollupTS.UTC().Truncate(time.Hour).Format(time.RFC3339))
+	case !st.Incremental:
+		// A full run that met no old-revision rollup (none existed yet) has
+		// nothing to rebuild, but the summary rebuild is still what records
+		// each tier as done for this revision — and the service-port
+		// boundary (flow_summary_service_since) is cleared only once it has.
+		// Request it from the run's start: every bucket from there is at
+		// this revision already, so the rebuild finishes trivially.
+		sets[flowSummaryRecomputeRequestKey] = fmt.Sprintf("%d|%s", st.Rev, st.Started.UTC().Truncate(time.Hour).Format(time.RFC3339))
 	}
 	for k, v := range sets {
 		if err := d.setReclassSetting(k, v); err != nil {

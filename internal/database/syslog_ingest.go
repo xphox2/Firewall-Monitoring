@@ -66,23 +66,40 @@ type syslogIngestMeter struct {
 	// keep a reader from missing or double-counting a cell:
 	//   (i)  on failure the merge-back into buckets and the clear of pending
 	//        happen in the same lock section;
-	//   (ii) flushGen is bumped after every flush, success AND failure — a
-	//        failed flush also moves cells, from pending back to buckets;
+	//   (ii) flushStartGen is bumped when a flush swaps the maps, BEFORE its
+	//        upsert, and flushGen after every flush, success AND failure — a
+	//        failed flush also moves cells, from pending back to buckets. A
+	//        reader that saw either move, or a flush in flight, re-reads: the
+	//        upsert commits outside the lock, so the only moment a reader can
+	//        trust the table against its memory copy is one with no flush
+	//        under way at either end of the read;
 	//   (iii) one pending map is enough: the inFlight throttle lets only one
 	//        non-final flush run at a time, and the final flush runs from Close,
 	//        after server.Shutdown has normally drained them. Shutdown is capped
 	//        at 10 s while a stalled upsert can run to the 30 s statement
 	//        timeout, so at worst a shutdown loses one flush window, as it did
 	//        before pending existed — and nothing reads the meter by then.
-	pending  map[time.Time]*[SyslogSeverityCount]ingestCount
-	flushGen uint64
-	now      func() time.Time
+	pending       map[time.Time]*[SyslogSeverityCount]ingestCount
+	flushStartGen uint64
+	flushGen      uint64
+	// flushDone is closed when every flush that has swapped the maps has
+	// finished (upsert committed or failed, maps settled); nil when none is in
+	// flight. flushing counts them: normally at most one, but the final flush
+	// bypasses the inFlight throttle. meterHours waits on it rather than
+	// polling.
+	flushDone chan struct{}
+	flushing  int
+	now       func() time.Time
 	// beforeUpsert, when set, runs between the swap and the upsert. Tests use
 	// it to hold a flush in flight; nil in production.
 	beforeUpsert func()
+	// afterUpsert, when set, runs between the upsert and the lock section
+	// that settles the maps and bumps flushGen — the moment a committed flush
+	// is in the table AND still in pending. Tests use it; nil in production.
+	afterUpsert func()
 	// afterSnapshot, when set, runs in meterHours between copying memory and
-	// reading the table — the window a concurrent flush can land in. Tests use
-	// it to prove the retry; nil in production.
+	// reading the table — the window a concurrent flush can land in — on
+	// every attempt. Tests use it to prove the retry; nil in production.
 	afterSnapshot func()
 }
 
@@ -152,6 +169,11 @@ func (d *Database) flushSyslogIngest(final bool) error {
 	m.buckets = make(map[time.Time]*[SyslogSeverityCount]ingestCount)
 	m.pending = swapped
 	m.inFlight = true
+	m.flushStartGen++
+	if m.flushing == 0 {
+		m.flushDone = make(chan struct{})
+	}
+	m.flushing++
 	m.lastFlush = m.now()
 	hook := m.beforeUpsert
 	m.mu.Unlock()
@@ -160,11 +182,19 @@ func (d *Database) flushSyslogIngest(final bool) error {
 		hook()
 	}
 	err := d.upsertSyslogIngest(swapped)
+	if m.afterUpsert != nil {
+		m.afterUpsert()
+	}
 
 	m.mu.Lock()
 	m.inFlight = false
 	m.pending = nil
 	m.flushGen++
+	m.flushing--
+	if m.flushing == 0 {
+		close(m.flushDone)
+		m.flushDone = nil
+	}
 	if err != nil && !final {
 		// Additive merge: counts that arrived meanwhile for the same hour are
 		// kept, and the swapped ones are retried on the next flush.
@@ -287,15 +317,22 @@ func (d *Database) SyslogIngestRate(now time.Time) (perSev [SyslogSeverityCount]
 // table, and a request-scoped copy of Database shares the same meter pointer.
 //
 // The read is optimistic: snapshot memory under the lock, read the table
-// without it, and if a flush finished in between (flushGen moved) the cells it
-// carried may now be in both places, so read once more. A second flush cannot
-// land within one read — the next is at least syslogIngestFlushInterval away —
-// so one retry settles it.
+// without it, and check afterwards that no flush touched the maps meanwhile.
+// A flush that started (flushStartGen moved) may have committed cells the
+// snapshot copied from the live map; one that finished (flushGen moved) may
+// have committed cells copied from pending; and one that was already in
+// flight at the snapshot may commit during the read and only settle after
+// the check — its commit is not visible under the lock. In every case the
+// cells may be in both places, so the read waits for an in-flight flush to
+// settle and reads again. A flush that is not in flight at either end of a
+// read cannot have landed inside it. Bounded: a flush stalled on the database
+// (30 s statement timeout) is waited for meterHoursFlushWait, then the read
+// proceeds with what it has rather than stalling the page.
 func (d *Database) meterHours(from time.Time) (map[time.Time]*[SyslogSeverityCount]int64, error) {
 	from = from.UTC()
 	for attempt := 0; ; attempt++ {
 		gen, mem := d.meterMemory(from)
-		if d.ingest != nil && d.ingest.afterSnapshot != nil && attempt == 0 {
+		if d.ingest != nil && d.ingest.afterSnapshot != nil {
 			d.ingest.afterSnapshot()
 		}
 		// The column is UTC by its only writer (upsertSyslogIngest stores the
@@ -304,12 +341,24 @@ func (d *Database) meterHours(from time.Time) (map[time.Time]*[SyslogSeverityCou
 		if err := d.db.Where("timestamp >= ?", from).Find(&rows).Error; err != nil {
 			return nil, err
 		}
-		if attempt == 0 && d.ingest != nil {
+		if attempt < meterHoursMaxRetries && d.ingest != nil {
 			d.ingest.mu.Lock()
-			moved := d.ingest.flushGen != gen
+			moved := d.ingest.flushStartGen != gen.start || d.ingest.flushGen != gen.done
+			wait := d.ingest.flushDone
 			d.ingest.mu.Unlock()
 			if moved {
 				continue
+			}
+			if gen.inFlight {
+				// Still in flight (wait is non-nil: had it settled, flushGen
+				// would have moved). Its upsert may have committed during the
+				// read; wait for it to settle and read again — unless it is
+				// stalled on the database, then proceed with this read.
+				select {
+				case <-wait:
+					continue
+				case <-time.After(meterHoursFlushWait):
+				}
 			}
 		}
 		for _, r := range rows {
@@ -329,13 +378,30 @@ func (d *Database) meterHours(from time.Time) (map[time.Time]*[SyslogSeverityCou
 	}
 }
 
+// meterHoursMaxRetries bounds meterHours' re-reads: three reads cover a flush
+// that starts during the first and finishes during the second; the next
+// flush is at least syslogIngestFlushInterval away.
+const meterHoursMaxRetries = 3
+
+// meterHoursFlushWait bounds how long a read waits for an in-flight flush to
+// settle before proceeding with what it has (a flush stalled on the database
+// runs to the 30 s statement timeout; the page must not). A var so tests can
+// shrink it.
+var meterHoursFlushWait = 2 * time.Second
+
+// meterGen is the flush state a memory snapshot was taken under.
+type meterGen struct {
+	start, done uint64
+	inFlight    bool // a flush had swapped the maps and not yet settled
+}
+
 // meterMemory copies the not-yet-persisted counts at or after from, and the
-// flush generation they belong to.
-func (d *Database) meterMemory(from time.Time) (uint64, map[time.Time]*[SyslogSeverityCount]int64) {
+// flush generations they belong to.
+func (d *Database) meterMemory(from time.Time) (meterGen, map[time.Time]*[SyslogSeverityCount]int64) {
 	out := make(map[time.Time]*[SyslogSeverityCount]int64)
 	m := d.ingest
 	if m == nil {
-		return 0, out
+		return meterGen{}, out
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -354,7 +420,7 @@ func (d *Database) meterMemory(from time.Time) (uint64, map[time.Time]*[SyslogSe
 			}
 		}
 	}
-	return m.flushGen, out
+	return meterGen{start: m.flushStartGen, done: m.flushGen, inFlight: m.flushing > 0}, out
 }
 
 // oldestMeterHour is the first hour the meter holds anything for, persisted or

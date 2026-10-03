@@ -1,6 +1,21 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.285] - 2026-10-03
+
+### Fixed — robustness review follow-ups (low severity)
+
+- **Daily retention cleanup no longer stops at the first failing table.** One table whose cleanup failed for good — `system_status` timing out at the 500-row batch floor, say — ended the whole pass there, so `syslog_messages`, alerts and incidents were skipped that day, and every day the failure persisted. Each table's failure is now collected (`errors.Join`) and the pass runs on; the joined error is logged as before. The maintenance lock and timeout handling are unchanged.
+- **A retention batch halved after a statement timeout grows back.** After a 57014 the rest of the table's pass ran at the halved size (floor 500). It now doubles again after four consecutive full batches, never past the configured 10,000.
+- **The streamed Flows report stops when the client stops reading.** The report now runs on a context the handler cancels on any failed write (a progress event or a keepalive) instead of running to completion on a dead connection while holding one of the two long-report slots. The streamed report's window is also capped at 2160 hours (the page's largest preset, 90 days); the synchronous `/flows/stats` keeps accepting up to a year.
+- **Admin status-history zoom rejects a `to` in the future.** `GET /devices/:id/status-history?from=&to=` accepted any `to` (`9223372036854775807` placed the window 292 million years out and the clamped `from` with it); a `to` more than an hour past now is a 400 like the other malformed windows.
+- **A public WAN port's connected subnet is no longer auto-derived as internal.** With auto-detection on, an interface at `x.x.x.57/22` on an ISP's access network marked the provider's ~1000 other customers "internal". A public address's connected subnet is now derived only at /24 or longer — the operator's own public /28 on the LAN side still is — and a larger public range goes in the manual list. Private, CGNAT and other non-public subnets are unchanged.
+- **The first NOC viewer no longer receives the first snapshot and feed twice.** The 0→1 subscriber's inline compute was delivered on the channel and again in the replay; the channel is now registered after it.
+- **Syslog meter: no transient double count of a committed flush.** A flush's upsert commits outside the meter lock, so a read that snapshotted memory before the flush started (or while it was in flight) and read the table after the commit could count the flushed cells from both places until the flush settled. The flush now bumps a start generation at the swap, and the read re-reads when either generation moved or a flush was in flight at the snapshot, waiting up to 2 s for it to settle (a flush stalled on the database no longer delays the page beyond that).
+- **Syslog pager count subquery is ordered.** The capped `COUNT` over a `LIMIT 10001` subquery had no `ORDER BY`; it now carries `ORDER BY timestamp DESC` like the list query so the planner serves the limit from the timestamp index. The count is unchanged.
+- **Service-port boundary clears after a first reclassification that met no rollup.** A full run that re-stamped zero `flow_rollups` rows (none existed yet) posted no summary rebuild request, and `flow_summary_service_since` is cleared only once the rebuild has marked both tiers done — so the Top services badge stayed "since … only" forever. Such a run now requests the rebuild from its own start, which finishes trivially and clears the boundary.
+- Reclassification verification logs how long it held the maintenance lock when that is a second or more (no behaviour change).
+
 ## [0.11.283] - 2026-10-03
 
 ### Security — auth review follow-ups (low severity)
