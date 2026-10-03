@@ -186,6 +186,8 @@ func (h *nocHub) subscribe() (chan []byte, []byte) {
 	}
 	h.mu.Unlock()
 	if wasIdle {
+		// Two first subscribers arriving together both compute: one spare
+		// computation, no duplicate frames — acceptable.
 		h.computeAndBroadcast() // fresh first paint; delivered via latest
 	}
 	h.mu.Lock()

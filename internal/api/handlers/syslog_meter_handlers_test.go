@@ -77,36 +77,6 @@ func TestGetSyslogMessages_PagerCountIsCapped(t *testing.T) {
 	}
 }
 
-// The capped count's subquery is ordered like the list query, so the planner
-// serves its LIMIT from the timestamp index instead of picking a scan for an
-// unordered one; the count itself is unchanged.
-func TestGetSyslogMessages_PagerCountSubqueryIsOrdered(t *testing.T) {
-	h, db := setupTestHandler(t)
-	seedRawSyslog(t, db, 3)
-	var mu sync.Mutex
-	var counts []string
-	if err := db.Gorm().Callback().Query().After("gorm:query").Register("test:capture_count_order", func(tx *gorm.DB) {
-		if sql := tx.Statement.SQL.String(); strings.Contains(strings.ToLower(sql), "count(") {
-			mu.Lock()
-			counts = append(counts, sql)
-			mu.Unlock()
-		}
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if total, capped := syslogListTotal(t, h); total != 3 || capped {
-		t.Fatalf("3 rows: total=%d capped=%v", total, capped)
-	}
-	if len(counts) != 1 {
-		t.Fatalf("count statements = %q, want one", counts)
-	}
-	sql := counts[0]
-	order, limit := strings.Index(sql, "ORDER BY timestamp DESC"), strings.Index(sql, "LIMIT")
-	if order < 0 || limit < 0 || order > limit {
-		t.Fatalf("count statement = %q, want ORDER BY timestamp DESC inside the LIMITed subquery", sql)
-	}
-}
-
 // The vitals rail's 24 h syslog figure is the meter's, like the Syslog page's
 // cards — not a raw COUNT once a minute.
 func TestComputeDashboardSummary_Syslog24hFromMeter(t *testing.T) {

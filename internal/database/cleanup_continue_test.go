@@ -139,3 +139,41 @@ func TestRetentionDelete_HalvedBatchGrowsBack(t *testing.T) {
 		t.Errorf("%d rows survived", left)
 	}
 }
+
+// Where the full size times out every time and the halved size never does,
+// an unbounded grow-back would re-try the full size after every few
+// successes and burn the 120 s statement_timeout plus a rollback each time.
+// At most one grow-back per pass: two timeouts in all, and the pass completes
+// at the halved size.
+func TestRetentionDelete_GrowBackIsOncePerPass(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	seedOldSyslog(t, d, 60, time.Now().Add(-48*time.Hour))
+
+	origBatch, origFloor, origSleep, origGrow := cleanupDeleteBatchSize, batchDeleteFloor, batchDeleteInterSleep, batchDeleteGrowAfter
+	cleanupDeleteBatchSize, batchDeleteFloor, batchDeleteInterSleep, batchDeleteGrowAfter = 8, 1, 0, 2
+	defer func() {
+		cleanupDeleteBatchSize, batchDeleteFloor, batchDeleteInterSleep, batchDeleteGrowAfter = origBatch, origFloor, origSleep, origGrow
+	}()
+
+	timeouts := 0
+	cleanupBatchHook = func(batchSize int) error {
+		if batchSize == 8 {
+			timeouts++
+			return pgTimeout()
+		}
+		return nil
+	}
+	defer func() { cleanupBatchHook = nil }()
+
+	if err := d.batchedDeleteOlderThanOn(&models.SyslogMessage{}, "timestamp", "timestamp", time.Now(), ""); err != nil {
+		t.Fatalf("the pass must complete at the halved size: %v", err)
+	}
+	if timeouts != 2 {
+		t.Fatalf("%d statement timeouts in one pass; want exactly 2 (the first, and one grow-back attempt)", timeouts)
+	}
+	var left int64
+	d.Gorm().Model(&models.SyslogMessage{}).Count(&left)
+	if left != 0 {
+		t.Errorf("%d rows survived", left)
+	}
+}

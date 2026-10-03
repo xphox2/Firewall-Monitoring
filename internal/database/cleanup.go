@@ -199,7 +199,12 @@ func (d *Database) batchedDeleteOlderThanWhere(model interface{}, table string, 
 //     abandoning the table until tomorrow. A halved batch grows back — doubled
 //     after batchDeleteGrowAfter consecutive full batches, never past the
 //     configured size — so one slow stretch of the heap does not pin the rest
-//     of the table's pass at the floor.
+//     of the table's pass at the floor. ONE grow-back per pass: where the full
+//     size times out consistently and the halved one does not, growing back
+//     after every run of successes would burn the 120 s statement_timeout
+//     plus a rollback every few batches — hours added to a pass under the
+//     maintenance lock — so after a grow-back the pass stays at whatever
+//     size the next timeout leaves it.
 //
 // LOCK-HOLD NOTE, because a pass that finishes instead of bailing costs something.
 // runRetentionCleanup holds maintenanceLockKey (cmd/poller) for the whole pass,
@@ -225,6 +230,7 @@ func (d *Database) batchedDeleteOlderThanOn(model interface{}, timeColumn, order
 	batchSize := cleanupDeleteBatchSize
 	lockRetries := 0
 	fullBatches := 0 // consecutive full batches since the last halving
+	grewBack := false
 	for {
 		var affected int64
 		err := d.db.Transaction(func(tx *gorm.DB) error {
@@ -284,13 +290,14 @@ func (d *Database) batchedDeleteOlderThanOn(model interface{}, timeColumn, order
 		if affected < int64(batchSize) {
 			return nil // last (partial) batch — nothing more to delete
 		}
-		if batchSize < cleanupDeleteBatchSize {
+		if batchSize < cleanupDeleteBatchSize && !grewBack {
 			fullBatches++
 			if fullBatches >= batchDeleteGrowAfter {
 				next := min(batchSize*2, cleanupDeleteBatchSize)
-				log.Printf("cleanup: %d batches of %d succeeded; growing back to %d", fullBatches, batchSize, next)
+				log.Printf("cleanup: %d batches of %d succeeded; growing back to %d (once per pass)", fullBatches, batchSize, next)
 				batchSize = next
 				fullBatches = 0
+				grewBack = true
 			}
 		}
 		time.Sleep(batchDeleteInterSleep)
@@ -307,8 +314,8 @@ var (
 	batchDeleteFloor = 500
 	// batchDeleteGrowAfter is how many consecutive full batches a halved
 	// retention batch must complete before it is doubled again (capped at
-	// cleanupDeleteBatchSize). Without it one timeout pinned the rest of the
-	// table's pass at the halved size.
+	// cleanupDeleteBatchSize; once per pass). Without it one timeout pinned
+	// the rest of the table's pass at the halved size.
 	batchDeleteGrowAfter = 4
 	// batchDeleteLockRetries bounds the 55P03 (lock timeout) retries of ONE batch,
 	// e.g. when the poller's partition DROP is queued ahead of the delete.
