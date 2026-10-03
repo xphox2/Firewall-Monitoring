@@ -240,7 +240,12 @@ func badHosts(text string, used map[string]bool) []hostFinding {
 			continue // user@1.2.3, pkg@1.0.0: not a mailbox
 		}
 		if why, by := classifyHost(domain); why != "" {
-			out = append(out, hostFinding{strings.Count(text[:loc[0]], "\n") + 1, m, "e-mail address at a " + why})
+			if strings.HasPrefix(why, "host name ") {
+				why = "e-mail address " + strings.TrimPrefix(why, "host name ")
+			} else {
+				why = "e-mail address at a " + why
+			}
+			out = append(out, hostFinding{strings.Count(text[:loc[0]], "\n") + 1, m, why})
 		} else if ok, by2 := hostAllowed(domain); ok {
 			note(by2)
 		} else {
