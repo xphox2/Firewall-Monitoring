@@ -2,6 +2,7 @@ package database
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -295,10 +296,11 @@ func TestFlowSummary_LateRowBelowTheFloorDoesNotResetTheMarker(t *testing.T) {
 	if n := summaryBytesBetween(d, "1d", lateDay, dayEnd); n != 0 {
 		t.Errorf("the acquired day still has a daily summary row (%d bytes) beside its hourly rows", n)
 	}
-	// The days ABOVE the acquired one were not rebuilt: their daily rows still
-	// stand, and the hourly tier wrote nothing into them.
-	if n := summaryBytesBetween(d, "1h", dayEnd, today.AddDate(0, 0, -2)); n != 0 {
-		t.Errorf("the hourly tier rebuilt %d bytes of days it did not newly acquire", n)
+	// Every day of the acquired range is held by exactly one tier and adds up.
+	for day := lateDay; day.Before(today.AddDate(0, 0, -2)); day = day.AddDate(0, 0, 1) {
+		if got, want := summaryBytesBetween(d, "", day, day.AddDate(0, 0, 1)), rollupBytesBetween(d, day, day.AddDate(0, 0, 1)); got != want {
+			t.Errorf("day %s holds %d bytes in the summary against %d in the source", day.Format("2006-01-02"), got, want)
+		}
 	}
 	// And the whole history still adds up.
 	if got, want := summaryBytesBetween(d, "", lateDay.AddDate(0, 0, -10), today.AddDate(0, 0, -2)), rollupBytesBetween(d, lateDay.AddDate(0, 0, -10), today.AddDate(0, 0, -2)); got != want {
@@ -364,5 +366,136 @@ func TestFlowSummary_PromotionDuringTheCycleIsNotDoubleCounted(t *testing.T) {
 				"a floor probed before the promotion let the hourly tier add the 1d row beside its own rows", i, got, want)
 		}
 		d.RunFlowSummaryCycle()
+	}
+}
+
+// runTwoLateDaysScenario is the reviewer's reproduction of the hole the
+// MIN(timestamp) resume point left: late 5m rows land in TWO fully promoted
+// days in one cycle. The hourly floor drops to the older day; the dirty walk
+// writes the two late buckets, each of which supersedes its day's daily row;
+// a span resumed from MIN(summary timestamp) then started at the older late
+// bucket and never rebuilt the newer day's midnight bucket — its whole 1d
+// row — above the new minimum and below the fill marker, with the read path
+// on. Shared by the SQLite test and the PostgreSQL integration test.
+func runTwoLateDaysScenario(t *testing.T, d *Database) {
+	t.Helper()
+	origDur := flowSummaryMaxCycleDuration
+	t.Cleanup(func() { flowSummaryMaxCycleDuration = origDur })
+	now := time.Now().UTC()
+	today := now.Truncate(24 * time.Hour)
+	for days := 60; days >= 3; days-- {
+		seedDailyRollup(t, d, today.AddDate(0, 0, -days), 1000)
+	}
+	seedRecentRollups(t, d)
+	cyclesUntilComplete(t, d, 60)
+	window := 38 * 24
+	if s, l := statsBothWays(t, d, window, FlowStatsFilter{}); s.TotalBytes != l.TotalBytes {
+		t.Fatalf("precondition: summary %d vs live %d", s.TotalBytes, l.TotalBytes)
+	}
+
+	dayA, dayB := today.AddDate(0, 0, -35), today.AddDate(0, 0, -33)
+	for _, late := range []time.Time{dayA.Add(14*time.Hour + 5*time.Minute), dayB.Add(10*time.Hour + 5*time.Minute)} {
+		if err := d.Gorm().Create(&models.FlowRollup{
+			Timestamp: late, DeviceID: 1, IntervalType: "5m",
+			SrcAddr: "10.0.0.9", DstAddr: "9.9.9.9", DstPort: 443, Protocol: 6,
+			BytesSum: 7, PacketsSum: 1, FlowCount: 1,
+		}).Error; err != nil {
+			t.Fatalf("seed late row: %v", err)
+		}
+	}
+	dayTotals := func(label string) {
+		t.Helper()
+		for _, day := range []time.Time{dayA, dayB} {
+			got, want := summaryBytesBetween(d, "", day, day.AddDate(0, 0, 1)), rollupBytesBetween(d, day, day.AddDate(0, 0, 1))
+			if got != want {
+				t.Errorf("%s: day %s holds %d bytes in the summary against %d in the source", label, day.Format("2006-01-02"), got, want)
+			}
+		}
+	}
+	// A cycle with no time for the backfill walks: the dirty walk still writes
+	// the two late buckets (and supersedes their days' daily rows), so the
+	// acquired span is now half-built and the read path must know it.
+	flowSummaryMaxCycleDuration = 0
+	d.RunFlowSummaryCycle()
+	if !d.summaryBackfillComplete() {
+		t.Error("cycle 1: the top of the summary is intact; summaryBackfillComplete must stay true")
+	}
+	cutoff := now.Add(-time.Duration(window) * time.Hour)
+	if d.summaryCoversCutoff(cutoff) {
+		t.Errorf("cycle 1: a %dh window is reported covered while the hourly tier's acquired span is unwalked", window)
+	}
+	if s, l := statsBothWays(t, d, window, FlowStatsFilter{}); s.TotalBytes != l.TotalBytes {
+		t.Errorf("cycle 1: %dh window: %d via summary, %d via live; the read path served a half-built span", window, s.TotalBytes, l.TotalBytes)
+	}
+
+	flowSummaryMaxCycleDuration = origDur
+	for i := 2; i <= 6; i++ {
+		d.RunFlowSummaryCycle()
+		if d.summaryCoversCutoff(cutoff) {
+			dayTotals(fmt.Sprintf("cycle %d", i))
+			if s, l := statsBothWays(t, d, window, FlowStatsFilter{}); s.TotalBytes != l.TotalBytes {
+				t.Errorf("cycle %d: %dh window: %d via summary, %d via live", i, window, s.TotalBytes, l.TotalBytes)
+			}
+		}
+	}
+	if !d.summaryBackfillComplete() || !d.summaryCoversCutoff(cutoff) {
+		t.Fatalf("after 6 cycles the %dh window is still not served from the summary (complete=%v covered=%v)",
+			window, d.summaryBackfillComplete(), d.summaryCoversCutoff(cutoff))
+	}
+	dayTotals("final")
+	if n := summaryBytesBetween(d, "1h", dayB, dayB.Add(time.Hour)); n != 1000 {
+		t.Errorf("day B's midnight hourly bucket holds %d bytes, want its 1d row's 1000", n)
+	}
+	for _, day := range []time.Time{dayA, dayB} {
+		if n := summaryBytesBetween(d, "1d", day, day.AddDate(0, 0, 1)); n != 0 {
+			t.Errorf("day %s still has a daily summary row beside its hourly rows", day.Format("2006-01-02"))
+		}
+	}
+}
+
+func TestFlowSummary_TwoLateDaysBelowTheFloorAreRebuilt(t *testing.T) {
+	runTwoLateDaysScenario(t, NewDatabaseForTesting(t))
+}
+
+// TestFlowSummary_SpanWalkContinuesPastAFailedBucket: a bucket that fails
+// permanently inside an acquired span holds the low marker (so it is retried
+// and the span stays flagged) but must not wall off everything older.
+func TestFlowSummary_SpanWalkContinuesPastAFailedBucket(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	t.Cleanup(func() { flowSummaryBucketHook = nil })
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	for days := 12; days >= 3; days-- {
+		seedDailyRollup(t, d, today.AddDate(0, 0, -days), 1000)
+	}
+	seedRecentRollups(t, d)
+	cyclesUntilComplete(t, d, 20)
+
+	lateDay := today.AddDate(0, 0, -8)
+	if err := d.Gorm().Create(&models.FlowRollup{
+		Timestamp: lateDay.Add(14*time.Hour + 5*time.Minute), DeviceID: 1, IntervalType: "5m",
+		SrcAddr: "10.0.0.9", DstAddr: "9.9.9.9", DstPort: 443, Protocol: 6,
+		BytesSum: 777, PacketsSum: 7, FlowCount: 1,
+	}).Error; err != nil {
+		t.Fatalf("seed late row: %v", err)
+	}
+	poison := lateDay.Add(5 * time.Hour)
+	flowSummaryBucketHook = func(interval string, b time.Time) error {
+		if interval == "1h" && b.Equal(poison) {
+			return errors.New("synthetic permanent failure")
+		}
+		return nil
+	}
+	d.RunFlowSummaryCycle()
+	if n := summaryBytesBetween(d, "1h", lateDay, lateDay.Add(time.Hour)); n != 1000 {
+		t.Errorf("the acquired day's midnight bucket holds %d bytes, want 1000; a failing bucket above it stopped the span walk", n)
+	}
+	if from := d.summaryFillFromMarker("1h"); !from.After(poison) {
+		t.Errorf("low marker is %s; it must stay above the failing bucket %s so the bucket is retried", from, poison)
+	}
+	if !d.summaryAcquiring("1h") {
+		t.Error("the span is still open at the failing bucket but the tier is not flagged as acquiring")
+	}
+	if d.summaryCoversCutoff(time.Now().UTC().AddDate(0, 0, -10)) {
+		t.Error("a window reaching into the open span is reported covered")
 	}
 }

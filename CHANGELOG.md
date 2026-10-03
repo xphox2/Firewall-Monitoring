@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.283] - 2026-10-03
+
+### Fixed — flow summary acquired-span tracking (review of 0.11.282)
+
+- **Acquired spans are tracked by a persisted low marker, not `MIN(timestamp)`.** 0.11.282 resumed the backfill of a newly acquired span from the summary's oldest bucket, probed after the dirty walk had already written into that span. Late rows landing in two fully promoted days in one cycle left the newer day's midnight bucket (its whole 1d row) unbuilt — above the new minimum, below the fill marker — with the read path on. Each tier now keeps `flow_summary_filled_from_<tier>`, the bottom of its reliable range, which moves down through unbroken successes as the span is walked newest-first (a failed bucket is retried without stopping the walk) and up when ownership rises. An existing tier initialises it from its oldest built bucket on the first pass.
+- **The read path refuses a window reaching into an open span.** While a tier is walking a span (`flow_summary_acquiring_<tier>`), `summaryCoversCutoff` does not serve a window that starts below that tier's low marker; the live rollup path answers instead. The recompute step waits for the span the same way it waits for the forward backfill.
+- **Ownership probes come from one snapshot.** A pass reads its own bounds, the hourly floor and the yield boundary inside a single `REPEATABLE READ` transaction on PostgreSQL, and its dirty walk is bounded by the id ceiling taken before that snapshot, so a promotion committing between two probes cannot leave the floor describing a different ladder than the bounds. The one residual — a day recomputed by a backfill walk while its own promotion commits — is documented at `dailyFloorOn` and heals on the next cycle.
+- Tests: the two-late-days scenario on SQLite and PostgreSQL (fails on 0.11.282), a permanently failing bucket inside a span, and a read path that ignores the flag.
+
 ## [0.11.282] - 2026-10-03
 
 ### Fixed — flow summary retention and ownership

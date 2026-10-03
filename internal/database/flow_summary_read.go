@@ -127,54 +127,54 @@ func (d *Database) summaryBackfillComplete() bool {
 // summaryCoversCutoff reports whether the summary holds every bucket a window
 // starting at cutoff reads, which summaryBackfillComplete alone does not say.
 //
-// The fill markers prove the summary is contiguous from its oldest bucket UP to
-// the tiers' newest; they say nothing about where it starts. That start moves:
-// the summariser owns nothing below FlowSummaryRetentionKey and cleanup prunes
-// to it, so with a 30-day window on the summary a 90-day request would have read
-// 30 days of history under a 90-day label — silently, since nothing else would
-// hint at it. A window the summary does not reach falls back to the live
-// rollup path, which is slow but right.
+// The fill markers prove the summary is contiguous from each tier's low marker
+// (flowSummaryFillFromKeyPrefix) UP to its fill marker; summaryBackfillComplete
+// checks the top, this checks the bottom. That bottom moves: the summariser
+// owns nothing below FlowSummaryRetentionKey and cleanup prunes to it, so with
+// a 30-day window on the summary a 90-day request would have read 30 days of
+// history under a 90-day label — silently, since nothing else would hint at
+// it. A window the summary does not reach falls back to the live rollup path,
+// which is slow but right.
 //
-// The oldest bucket is taken per tier (an equality probe stops at the first
-// index tuple; an IN list does not — see tierTimeBounds) and compared at the
-// width of the tier that holds it: summary rows are stamped at bucket START and
-// readers use `timestamp > cutoff`, so the first bucket a window reads is the
-// one AFTER the bucket the cutoff falls in. Coverage is exact at that boundary:
-// a 30-day window on a 30-day retention is served (the straddling bucket is
-// outside the window on both paths), a 31-day one is not.
+// A tier is compared at its own width: summary rows are stamped at bucket
+// START and readers use `timestamp > cutoff`, so the first bucket a window
+// reads is the one AFTER the bucket the cutoff falls in. Coverage is exact at
+// that boundary: a 30-day window on a 30-day retention is served (the
+// straddling bucket is outside the window on both paths), a 31-day one is not.
 //
-// A summary that starts AFTER the window does still covers it when it starts
-// where the data starts — a young installation, or a window wider than the
-// rollups' own history. Only then are the rollup tiers probed, so a window the
-// first test answers costs nothing more than the two MIN probes.
-//
-// The summary's oldest bucket is also the resume point of a tier walking a
-// span it has newly acquired (summariseTier), which walks NEWEST first — so
-// while a tier is still filling such a span, windows reaching into it fall back
-// rather than read the half-built part.
+// A tier still walking a span it has newly acquired (flowSummaryAcquiringKeyPrefix)
+// is half-built below its low marker — the dirty walk may already have written
+// there and superseded the other tier's rows — so a window reaching below that
+// marker is not served, whatever the other tier holds. Otherwise the summary
+// covers the window when some tier's reliable range reaches it, or when the
+// summary starts where the DATA starts — a young installation, or a window
+// wider than the rollups' own history; only that last case probes the rollup
+// tiers, so a window the markers answer costs nothing more than the settings
+// reads.
 func (d *Database) summaryCoversCutoff(cutoff time.Time) bool {
-	var oldest time.Time
-	var width time.Duration
-	var bucketOf func(time.Time) time.Time
+	var lowest time.Time
+	var lowestBucketOf func(time.Time) time.Time
+	anyReaches := false
 	for _, tier := range flowSummaryTiers {
-		t, ok, err := aggregateTimestamp(
-			d.db.Session(&gorm.Session{}).Model(&models.FlowSummary{}).
-				Where("interval_type = ?", tier.interval),
-			"MIN(timestamp)")
-		if err != nil {
-			return false
-		}
-		if !ok {
+		from := d.summaryFillFromMarker(tier.interval)
+		if from.IsZero() {
 			continue
 		}
-		if b := tier.bucketOf(t); bucketOf == nil || b.Before(oldest) {
-			oldest, width, bucketOf = b, tier.width, tier.bucketOf
+		reaches := !from.After(tier.bucketOf(cutoff).Add(tier.width))
+		if !reaches && d.summaryAcquiring(tier.interval) {
+			return false
+		}
+		if reaches {
+			anyReaches = true
+		}
+		if lowestBucketOf == nil || from.Before(lowest) {
+			lowest, lowestBucketOf = from, tier.bucketOf
 		}
 	}
-	if bucketOf == nil {
+	if lowestBucketOf == nil {
 		return false
 	}
-	if !oldest.After(bucketOf(cutoff).Add(width)) {
+	if anyReaches {
 		return true
 	}
 	seen := map[string]bool{}
@@ -190,7 +190,7 @@ func (d *Database) summaryCoversCutoff(cutoff time.Time) bool {
 			if err != nil {
 				return false
 			}
-			if ok && bucketOf(t).Before(oldest) {
+			if ok && lowestBucketOf(t).Before(lowest) {
 				return false
 			}
 		}

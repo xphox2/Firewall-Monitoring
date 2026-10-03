@@ -249,9 +249,16 @@ func aggregateTimestamp(q *gorm.DB, expr string) (time.Time, bool, error) {
 // run every five minutes forever. This is the exact planner trap the rollup
 // ladder's own comments document.
 func (d *Database) tierTimeBounds(intervals []string) (oldest, newest time.Time, ok bool, err error) {
+	return tierTimeBoundsOn(d.db, intervals)
+}
+
+// tierTimeBoundsOn is tierTimeBounds through a given handle, so a pass can
+// take every ownership probe inside one snapshot transaction (see
+// summariseTier).
+func tierTimeBoundsOn(h *gorm.DB, intervals []string) (oldest, newest time.Time, ok bool, err error) {
 	for _, iv := range intervals {
 		base := func() *gorm.DB {
-			return d.db.Session(&gorm.Session{}).Model(&models.FlowRollup{}).Where("interval_type = ?", iv)
+			return h.Session(&gorm.Session{}).Model(&models.FlowRollup{}).Where("interval_type = ?", iv)
 		}
 		lo, haveLo, e := aggregateTimestamp(base(), "MIN(timestamp)")
 		if e != nil {
@@ -301,12 +308,23 @@ func (d *Database) tierTimeBounds(intervals []string) (oldest, newest time.Time,
 // daily tier's yieldTo IS the hourly tier's rangeSources, so finerOldest is the
 // value that cap would probe. Zero when there is no daily data yet, or no daily
 // tier (tests substitute a single-tier ladder).
-func (d *Database) dailyFloor(finerOldest time.Time) (time.Time, error) {
+//
+// h is the pass's snapshot handle: the hourly bounds and the 1d probe here are
+// read inside one REPEATABLE READ transaction, so a promotion cannot commit
+// between them and leave the floor describing a different ladder than the
+// bounds do. The dirty walk is bounded by the id ceiling taken before that
+// snapshot, so a promotion that commits after it is simply next cycle's work.
+// What remains uncovered is a bucket RECOMPUTED by a backfill walk while a
+// promotion of that same day commits underneath it — the walk reads live rows,
+// so the day can come out double-counted for one cycle, until the daily pass
+// (dirtied by the new 1d row) supersedes it. That exposure exists only while
+// the exact day being promoted is also being backfilled, and heals by itself.
+func dailyFloorOn(h *gorm.DB, finerOldest time.Time) (time.Time, error) {
 	for _, daily := range flowSummaryTiers {
 		if daily.interval != "1d" {
 			continue
 		}
-		_, newest, ok, err := d.tierTimeBounds(daily.rangeSources)
+		_, newest, ok, err := tierTimeBoundsOn(h, daily.rangeSources)
 		if err == nil && flowSummaryFloorProbeHook != nil {
 			err = flowSummaryFloorProbeHook()
 		}
@@ -386,6 +404,86 @@ func (d *Database) setSummaryFillMarker(interval string, at time.Time) {
 	}); err != nil {
 		log.Printf("Flow summary: persist %s fill marker: %v", interval, err)
 	}
+}
+
+// flowSummaryFillFromKeyPrefix names the per-tier LOW marker: the oldest bucket
+// such that every bucket from it up to the fill marker has been summarised
+// successfully. Together the two markers bound the only range of the summary a
+// reader may rely on. It moves DOWN as a tier backfills a span it has newly
+// acquired (newest first) and UP when ownership rises (a promoted day, a
+// shorter retention window).
+//
+// A persisted marker, not MIN(summary timestamp): the dirty walk writes into
+// an acquired span before the span is walked, and each such write below the
+// previous oldest bucket pulled MIN down past buckets that had never been
+// built — a late row in each of two promoted days left the second day's
+// midnight bucket (its whole 1d row) unbuilt, above the new MIN and below the
+// fill marker, with the read path on. Measured in a harness: 7 bytes against
+// 1,007 for that day.
+const flowSummaryFillFromKeyPrefix = "flow_summary_filled_from_"
+
+// flowSummaryAcquiringKeyPrefix flags a tier whose acquired span is still
+// being walked: the summary below its low marker is being rebuilt and must
+// not be read (summaryCoversCutoff).
+const flowSummaryAcquiringKeyPrefix = "flow_summary_acquiring_"
+
+func (d *Database) summaryFillFromMarker(interval string) time.Time {
+	v, ok := d.GetSettingValue(flowSummaryFillFromKeyPrefix + interval)
+	if !ok || strings.TrimSpace(v) == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(v))
+	if err != nil {
+		return time.Time{}
+	}
+	return t.UTC()
+}
+
+func (d *Database) setSummaryFillFromMarker(interval string, at time.Time) {
+	if err := d.UpsertSetting(&models.SystemSetting{
+		Key:      flowSummaryFillFromKeyPrefix + interval,
+		Value:    at.UTC().Format(time.RFC3339),
+		Category: "system",
+		Type:     "string",
+		Label:    "Flow summary backfill low marker (" + interval + ")",
+	}); err != nil {
+		log.Printf("Flow summary: persist %s low marker: %v", interval, err)
+	}
+}
+
+func (d *Database) summaryAcquiring(interval string) bool {
+	v, ok := d.GetSettingValue(flowSummaryAcquiringKeyPrefix + interval)
+	return ok && strings.TrimSpace(v) == "1"
+}
+
+func (d *Database) setSummaryAcquiring(interval string, pending bool) {
+	if d.summaryAcquiring(interval) == pending {
+		return
+	}
+	value := "0"
+	if pending {
+		value = "1"
+	}
+	if err := d.UpsertSetting(&models.SystemSetting{
+		Key:      flowSummaryAcquiringKeyPrefix + interval,
+		Value:    value,
+		Category: "system",
+		Type:     "string",
+		Label:    "Flow summary acquired span pending (" + interval + ")",
+	}); err != nil {
+		log.Printf("Flow summary: persist %s acquiring flag: %v", interval, err)
+	}
+}
+
+// settleFillFrom records where a tier's reliable range now starts when the
+// tier has no span to walk: the low marker rises to ownedFrom (buckets below
+// it are no longer maintained and may be pruned) and the acquiring flag is
+// cleared.
+func (d *Database) settleFillFrom(tier flowSummaryTier, ownedFrom time.Time) {
+	if from := d.summaryFillFromMarker(tier.interval); from.IsZero() || from.Before(ownedFrom) {
+		d.setSummaryFillFromMarker(tier.interval, ownedFrom)
+	}
+	d.setSummaryAcquiring(tier.interval, false)
 }
 
 func (d *Database) summaryWatermark(interval string) int64 {
@@ -498,8 +596,40 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time) (int,
 	// and it supersedes the hourly rows for the days it owns. Letting it claim a
 	// day with no 1d rows at all would delete correct hourly rows and replace them
 	// with a day-resolution copy for no reason.
-	oldest, newest, ok, err := d.tierTimeBounds(tier.rangeSources)
-	if err != nil {
+	//
+	// Every probe that decides ownership — this tier's bounds, the hourly floor
+	// (dailyFloorOn) and the yield boundary — is read inside ONE snapshot
+	// transaction, so they describe the same state of the ladder even though
+	// the ladder may commit a promotion at any moment (it holds a different
+	// advisory lock). On PostgreSQL that is REPEATABLE READ; SQLite's
+	// transaction reads are a snapshot by construction.
+	var (
+		oldest, newest time.Time
+		ok             bool
+		floor          time.Time
+		floorErr       error
+		finerOldest    time.Time
+		haveFiner      bool
+		yieldErr       error
+	)
+	if err := d.db.Transaction(func(tx *gorm.DB) error {
+		if d.dialect.IsPostgres() {
+			if e := tx.Exec("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ").Error; e != nil {
+				return e
+			}
+		}
+		var e error
+		if oldest, newest, ok, e = tierTimeBoundsOn(tx, tier.rangeSources); e != nil || !ok {
+			return e
+		}
+		if tier.interval != "1d" {
+			floor, floorErr = dailyFloorOn(tx, oldest)
+		}
+		if len(tier.yieldTo) > 0 {
+			finerOldest, _, haveFiner, yieldErr = tierTimeBoundsOn(tx, tier.yieldTo)
+		}
+		return nil
+	}); err != nil {
 		return written, tierBounds{}, fmt.Errorf("tier bounds: %w", err)
 	}
 	if !ok {
@@ -524,10 +654,9 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time) (int,
 		// the day's already-promoted 1d row — belonged to neither tier and its
 		// traffic vanished. Anchoring on the floor closes that. Buckets below the
 		// first real row are simply empty and write nothing.
-		floor, err := d.dailyFloor(oldest)
-		if err != nil {
+		if floorErr != nil {
 			floorUncertain = true
-			log.Printf("Flow summary: the daily range probe failed; the %s recompute sits this cycle out: %v", tier.interval, err)
+			log.Printf("Flow summary: the daily range probe failed; the %s recompute sits this cycle out: %v", tier.interval, floorErr)
 		}
 		// On error the floor stays zero and this tier temporarily owns
 		// everything. That is self-healing rather than harmful: the same rows
@@ -553,17 +682,17 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time) (int,
 	yieldUncertain := false
 	// Give up any bucket a finer tier still has rows in — see yieldTo.
 	if len(tier.yieldTo) > 0 {
-		finerOldest, _, ok, err := d.tierTimeBounds(tier.yieldTo)
-		if err != nil {
+		if yieldErr != nil {
 			yieldUncertain = true
 		}
-		if err == nil && ok {
+		if yieldErr == nil && haveFiner {
 			if boundary := tier.bucketOf(finerOldest); boundary.Before(ownedTo) {
 				ownedTo = boundary
 			}
 		}
 	}
 	if !ownedTo.After(ownedFrom) {
+		d.settleFillFrom(tier, ownedFrom)
 		return written, tierBounds{valid: !floorUncertain, ownsNothing: true, clean: true}, nil
 	}
 	owns := func(b time.Time) bool { return !b.Before(ownedFrom) && b.Before(ownedTo) }
@@ -597,7 +726,7 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time) (int,
 	// or that day silently keeps its pre-replay figures.
 	dirtyComplete := true
 	if watermark > 0 {
-		dirty, err := d.dirtyBuckets(tier, watermark)
+		dirty, err := d.dirtyBuckets(tier, watermark, ceiling)
 		if err != nil {
 			return written, tierBounds{}, fmt.Errorf("dirty buckets: %w", err)
 		}
@@ -620,14 +749,19 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time) (int,
 	var backfilledN int
 	// ---- 2. backfill any history never visited ----
 	//
-	// Resume from a CONTIGUOUS fill marker, not from MAX(summary timestamp).
+	// Two CONTIGUOUS markers bound what this tier has built: filled at the top
+	// and filledFrom at the bottom (flowSummaryFillFromKeyPrefix). Every bucket
+	// between them has been summarised successfully, and nothing outside them
+	// may be relied on. Resume from them, not from MIN/MAX(summary timestamp).
 	// Using the max meant a bucket that failed while a later one succeeded was
 	// never revisited: the max jumped past it and the walk resumed beyond the
 	// gap, leaving a permanent hole in the middle of history that nothing would
-	// ever notice. The marker advances only through unbroken successes, so a
+	// ever notice. The markers advance only through unbroken successes, so a
 	// failed bucket is retried every cycle while later buckets still progress.
 	{
 		filled := d.summaryFillMarker(tier.interval)
+		storedFrom := d.summaryFillFromMarker(tier.interval)
+		filledFrom := storedFrom
 		// Self-heal if the summary was emptied underneath us. MAX(summary
 		// timestamp) used to re-backfill automatically after a TRUNCATE or a
 		// failed migration; a persisted marker does not, so a cleared table would
@@ -643,9 +777,34 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time) (int,
 				Where("interval_type = ?", tier.interval).
 				Select("id").Limit(1).Find(&probe).Error; err == nil && len(probe) == 0 {
 				log.Printf("Flow summary: %s tier has a fill marker but no rows; restarting its backfill", tier.interval)
-				filled = time.Time{}
+				filled, filledFrom = time.Time{}, time.Time{}
 			}
 		}
+		if filled.IsZero() {
+			// A fresh backfill starts at ownedFrom, so that is where the reliable
+			// range will begin.
+			filledFrom = ownedFrom
+		} else if filledFrom.IsZero() {
+			// A tier built before the low marker existed. Its forward walk was
+			// contiguous from where its range then started, so the oldest bucket
+			// it holds is where its reliable range begins; anything it has since
+			// acquired below that is walked as a span like any other.
+			if oldestBuilt, ok, err := aggregateTimestamp(
+				d.db.Session(&gorm.Session{}).Model(&models.FlowSummary{}).
+					Where("interval_type = ?", tier.interval),
+				"MIN(timestamp)"); err == nil && ok {
+				filledFrom = tier.bucketOf(oldestBuilt)
+			} else {
+				filledFrom = ownedFrom
+			}
+		}
+		// Ownership moved UP (a day was promoted away, a shorter retention):
+		// buckets below ownedFrom are no longer maintained and may be pruned,
+		// so the reliable range starts at ownedFrom now.
+		if ownedFrom.After(filledFrom) {
+			filledFrom = ownedFrom
+		}
+
 		// backfilled counts the buckets the two walks below WROTE, against the
 		// per-tier cap. Counted SEPARATELY from written: the cap exists to stop a
 		// cold start monopolising a cycle, and the dirty walk is not a cold start
@@ -659,59 +818,68 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time) (int,
 		backfilled := 0
 		capped := func() bool { return tier.maxPerPass > 0 && backfilled >= tier.maxPerPass }
 
-		// If this tier now owns buckets OLDER than anything it has built, its
-		// ownership boundary has moved down: the fill marker still describes the
-		// range above it correctly, but the span [ownedFrom, oldestBuilt) has
-		// never been visited.
+		// ---- 2a. the span this tier has newly acquired ----
 		//
-		// This happens for real: the daily tier yields the promotion boundary day
-		// once the finer tiers hold part of it (see yieldTo), which hands that day
-		// to this tier; a late row replayed below the floor pulls the floor down
-		// to its day; a raised retention window reaches further back. Before the
-		// span was walked on its own the marker was RESET to zero instead, which
-		// rebuilt every owned bucket from the start — ~15 hours on production for
-		// one boundary day — with the read path off (summaryBackfillComplete)
+		// If this tier now owns buckets OLDER than its reliable range, its
+		// ownership boundary has moved down: the fill marker still describes the
+		// range above correctly, but [ownedFrom, filledFrom) has never been
+		// visited. This happens for real: the daily tier yields the promotion
+		// boundary day once the finer tiers hold part of it (see yieldTo), which
+		// hands that day to this tier; a late row replayed below the floor pulls
+		// the floor down to its day; a raised retention window reaches further
+		// back. Before the span was walked on its own the fill marker was RESET
+		// to zero instead, which rebuilt every owned bucket from the start — ~15
+		// hours on production for one boundary day — with the read path off
 		// throughout.
 		//
-		// The span is walked NEWEST FIRST and stops at the first failure, so the
-		// summary's MIN(timestamp) is itself the resume point: whatever this pass
-		// did not reach is still below the oldest built bucket next pass, and a
-		// failed bucket is retried before anything older is attempted. Empty
-		// buckets below the last written one are re-probed each pass until the
-		// span closes, which is one indexed existence probe per bucket.
-		if !filled.IsZero() {
-			if oldestBuilt, ok, err := aggregateTimestamp(
-				d.db.Session(&gorm.Session{}).Model(&models.FlowSummary{}).
-					Where("interval_type = ?", tier.interval),
-				"MIN(timestamp)"); err == nil && ok && ownedFrom.Before(tier.bucketOf(oldestBuilt)) {
-				acquiredTo := tier.bucketOf(oldestBuilt)
-				spanWrote, spanDone := 0, true
-				for b := acquiredTo.Add(-tier.width); !b.Before(ownedFrom); b = b.Add(-tier.width) {
-					if capped() {
-						spanDone = false
-						break
-					}
-					keepGoing, ok, wrote := runBounded(b)
-					if wrote {
-						backfilled++
-						spanWrote++
-					}
-					if !keepGoing || !ok {
-						spanDone = false
-						break
-					}
+		// The span is walked NEWEST FIRST, moving the low marker down through
+		// unbroken successes, so whatever a pass does not reach is still below
+		// the marker next pass. A failed bucket holds the marker (and is retried
+		// next pass) but does not stop the walk, exactly like the forward walk:
+		// a permanently failing bucket must not wall off everything older. While
+		// the span is open the tier is flagged as acquiring and the read path
+		// does not serve a window reaching below the low marker: the dirty walk
+		// may already have written into the span (and superseded daily rows
+		// there), so that band is neither the old summary nor the new one yet.
+		newFilledFrom := filledFrom
+		if ownedFrom.Before(filledFrom) {
+			spanWrote := 0
+			contiguousDown := true
+			for b := filledFrom.Add(-tier.width); !b.Before(ownedFrom) && !capped(); b = b.Add(-tier.width) {
+				keepGoing, ok, wrote := runBounded(b)
+				if !keepGoing {
+					break
 				}
-				// Silent when the span held nothing: a tier anchored at a day
-				// with no rows (an outage between the bands) re-probes that
-				// span every pass, and a log line each time would say nothing.
-				if spanWrote > 0 || !spanDone {
-					log.Printf("Flow summary: %s tier acquired buckets below %s; backfilled %d (%s)",
-						tier.interval, acquiredTo.Format(time.RFC3339), spanWrote,
-						map[bool]string{true: "span complete", false: "resumes next cycle"}[spanDone])
+				if wrote {
+					backfilled++
+					spanWrote++
+				}
+				if ok && contiguousDown {
+					newFilledFrom = b
+				}
+				if !ok {
+					contiguousDown = false
 				}
 			}
+			// Silent when the span held nothing: a tier anchored at a day with
+			// no rows (an outage between the bands) walks that span once and
+			// closes it without a word.
+			if spanWrote > 0 || newFilledFrom.After(ownedFrom) {
+				state := "span complete"
+				if newFilledFrom.After(ownedFrom) {
+					state = "resumes next cycle"
+				}
+				log.Printf("Flow summary: %s tier acquired buckets below %s; backfilled %d (%s)",
+					tier.interval, filledFrom.Format(time.RFC3339), spanWrote, state)
+			}
 		}
+		pending := newFilledFrom.After(ownedFrom)
+		if !newFilledFrom.Equal(storedFrom) {
+			d.setSummaryFillFromMarker(tier.interval, newFilledFrom)
+		}
+		d.setSummaryAcquiring(tier.interval, pending)
 
+		// ---- 2b. forward ----
 		start := ownedFrom
 		if !filled.IsZero() {
 			if next := tier.bucketOf(filled).Add(tier.width); next.After(start) {
@@ -742,7 +910,7 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time) (int,
 		if newFilled.After(filled) {
 			d.setSummaryFillMarker(tier.interval, newFilled)
 		}
-		caughtUp = !newFilled.IsZero() && !newFilled.Add(tier.width).Before(ownedTo)
+		caughtUp = !pending && !newFilled.IsZero() && !newFilled.Add(tier.width).Before(ownedTo)
 		backfilledN = backfilled
 	}
 
@@ -774,8 +942,13 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time) (int,
 		caughtUp: caughtUp, backfilled: backfilledN}, firstErr
 }
 
-// dirtyBuckets lists the buckets touched by rows newer than the watermark.
-func (d *Database) dirtyBuckets(tier flowSummaryTier, watermark int64) ([]time.Time, error) {
+// dirtyBuckets lists the buckets touched by rows newer than the watermark and
+// not newer than this pass's id ceiling. Rows above the ceiling arrived after
+// the ownership snapshot was taken and may describe a ladder the snapshot has
+// not seen (a promotion that has just moved a day between tiers); they are
+// next pass's work, and the watermark stops at the ceiling so they are not
+// lost.
+func (d *Database) dirtyBuckets(tier flowSummaryTier, watermark, ceiling int64) ([]time.Time, error) {
 	if flowSummaryDirtyHook != nil {
 		if err := flowSummaryDirtyHook(tier.interval); err != nil {
 			return nil, err
@@ -783,7 +956,7 @@ func (d *Database) dirtyBuckets(tier flowSummaryTier, watermark int64) ([]time.T
 	}
 	var stamps []time.Time
 	rows, err := d.db.Session(&gorm.Session{}).Model(&models.FlowRollup{}).
-		Where("interval_type IN ? AND id > ?", tier.sumSources, watermark).
+		Where("interval_type IN ? AND id > ? AND id <= ?", tier.sumSources, watermark, ceiling).
 		Select("DISTINCT timestamp").Order("timestamp ASC").Rows()
 	if err != nil {
 		return nil, err
