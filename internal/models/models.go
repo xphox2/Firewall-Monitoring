@@ -779,9 +779,10 @@ type LoginAttempt struct {
 	IPAddress string    `json:"ip_address"`
 	Success   bool      `json:"success"`
 	UserAgent string    `json:"user_agent"`
-	// Method is how the attempt authenticated: "password" or "passkey"
-	// (migration v70). NULL on rows written before v70. The TOTP second step
-	// writes no row of its own, so "totp" is reserved but not written.
+	// Method is how the attempt authenticated: "password", "totp" or
+	// "passkey" (migration v70). NULL on rows written before v70. For a 2FA
+	// account the password step writes no row; the TOTP second step records
+	// the login's outcome as "totp" (both its own failures and the session).
 	Method *string `json:"method,omitempty" gorm:"column:method"`
 }
 

@@ -294,6 +294,9 @@ type softAuth struct {
 	loginFlags protocol.AuthenticatorFlags
 	// assertType overrides clientDataJSON.type of assertions ("" = webauthn.get).
 	assertType string
+	// zeroCounter models an authenticator without a signature counter (most
+	// synced passkeys): every assertion reports 0 instead of advancing.
+	zeroCounter bool
 }
 
 func newSoftAuth(t *testing.T) *softAuth {
@@ -384,10 +387,13 @@ func (a *softAuth) registrationBody(challenge string, userHandle []byte) string 
 }
 
 // assertionBody answers a login challenge, presenting handle as userHandle
-// (normally the one learned at registration). The counter advances first.
+// (normally the one learned at registration). The counter advances first
+// (unless zeroCounter).
 func (a *softAuth) assertionBody(challenge string, handle []byte) string {
 	a.t.Helper()
-	a.counter++
+	if !a.zeroCounter {
+		a.counter++
+	}
 	ad := a.authData(a.loginFlags, a.counter, nil)
 	typ := "webauthn.get"
 	if a.assertType != "" {

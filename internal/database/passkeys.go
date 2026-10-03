@@ -147,11 +147,21 @@ func isUniqueViolation(err error) bool {
 // RecordPasskeyUse persists the outcome of a verified assertion: the new
 // signature counter, the backup-state flag and the time of use. Scoped by
 // admin_id; reports whether a row was updated.
+//
+// The counter write is compare-and-set: the row is updated only while the
+// stored counter is still below the asserted one, or both are zero
+// (authenticators that never count — most synced passkeys — always report
+// 0, which the library's clone check accepts for the same reason). Two
+// assertions carrying the same counter that both passed the handler's clone
+// check against the same stale read therefore cannot both succeed: the
+// second finds the row already advanced, gets false, and the caller treats
+// that as a clone warning.
 func (d *Database) RecordPasskeyUse(id, adminID uint, signCount uint32, backupState bool, usedAt time.Time) (bool, error) {
+	count := int64(signCount)
 	res := d.db.Model(&models.WebAuthnCredential{}).
-		Where("id = ? AND admin_id = ?", id, adminID).
+		Where("id = ? AND admin_id = ? AND (sign_count < ? OR (sign_count = 0 AND ? = 0))", id, adminID, count, count).
 		UpdateColumns(map[string]interface{}{
-			"sign_count":   int64(signCount),
+			"sign_count":   count,
 			"backup_state": backupState,
 			"last_used_at": usedAt,
 		})

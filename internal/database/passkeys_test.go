@@ -79,6 +79,7 @@ func TestPasskeyStore_ScopedAndLimits(t *testing.T) {
 	if ok, err := d.RecordPasskeyUse(ca.ID, b.ID, 9, true, time.Now()); err != nil || ok {
 		t.Fatalf("use across accounts: ok=%v err=%v", ok, err)
 	}
+
 	if err := d.CreatePasskey(&models.WebAuthnCredential{AdminID: b.ID, CredentialID: []byte("a1"), PublicKey: []byte{1}}, 0); !errors.Is(err, ErrPasskeyDuplicate) {
 		t.Fatalf("duplicate credential id: %v", err)
 	}
@@ -95,6 +96,66 @@ func TestPasskeyStore_ScopedAndLimits(t *testing.T) {
 	h2, err := d.EnsureWebAuthnUserHandle(a.ID, bytes.Repeat([]byte{9}, 64))
 	if err != nil || !bytes.Equal(h1, h2) || h1[0] != 7 {
 		t.Fatalf("handle must be set once and kept: %x / %x (%v)", h1[:2], h2[:2], err)
+	}
+}
+
+// TestPasskeyStore_RecordUseIsCompareAndSet: the counter write succeeds only
+// while the stored counter is below the asserted one — a replay of the same
+// value (two racing assertions from a cloned authenticator) is refused and
+// leaves the row untouched — while an authenticator that never counts (always
+// 0) is accepted every time.
+func TestPasskeyStore_RecordUseIsCompareAndSet(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	a := pkAdmin(t, d, "a")
+	c := pkCred(t, d, a.ID, "counting")
+	z := pkCred(t, d, a.ID, "zero")
+
+	stored := func(id uint) (int64, *time.Time) {
+		t.Helper()
+		var row models.WebAuthnCredential
+		if err := d.db.First(&row, id).Error; err != nil {
+			t.Fatal(err)
+		}
+		return row.SignCount, row.LastUsedAt
+	}
+
+	use := func(id uint, count uint32) bool {
+		t.Helper()
+		ok, err := d.RecordPasskeyUse(id, a.ID, count, false, time.Now())
+		if err != nil {
+			t.Fatalf("RecordPasskeyUse(%d, %d): %v", id, count, err)
+		}
+		return ok
+	}
+	for _, step := range []struct {
+		count uint32
+		want  bool
+	}{
+		{5, true},  // 0 → 5
+		{5, false}, // replay of the committed value
+		{4, false}, // below it
+		{0, false}, // a counting authenticator never goes back to 0
+		{6, true},  // advances again
+	} {
+		if got := use(c.ID, step.count); got != step.want {
+			t.Fatalf("counting authenticator: use(%d) = %v, want %v", step.count, got, step.want)
+		}
+	}
+	if sc, used := stored(c.ID); sc != 6 || used == nil {
+		t.Fatalf("counting authenticator stored = %d used=%v, want 6", sc, used)
+	}
+
+	for i := 0; i < 3; i++ {
+		if !use(z.ID, 0) {
+			t.Fatalf("zero-counter authenticator refused on use %d", i+1)
+		}
+	}
+	if sc, used := stored(z.ID); sc != 0 || used == nil {
+		t.Fatalf("zero-counter authenticator stored = %d used=%v, want 0 and a last_used_at", sc, used)
+	}
+	// Once such an authenticator starts counting, the usual rule applies.
+	if !use(z.ID, 3) || use(z.ID, 0) || use(z.ID, 3) {
+		t.Fatal("zero-counter authenticator: counted use must be accepted once and then only advance")
 	}
 }
 

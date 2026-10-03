@@ -1,6 +1,13 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.283] - 2026-10-03
+
+### Security — auth review follow-ups (low severity)
+
+- **Passkey signature counter is now compare-and-set.** `RecordPasskeyUse` wrote the asserted counter unconditionally; the clone check ran only on the row read earlier in the request. Two assertions carrying the same counter (a cloned authenticator racing the original) could both pass that check and both get a session. The update now matches only while the stored counter is still below the asserted one — or both are 0, so synced passkeys that never count keep working — and an assertion whose write matches no row is refused like the library's clone warning: `passkey_clone_warning` audit row, failed `login_attempts` row, no session (a credential deleted mid-ceremony is refused without the clone audit). Tests: a stale-row read with the same counter is refused at commit, two racing finishes with the same counter issue exactly one session, a zero-counter authenticator logs in repeatedly, and the store refuses a replay of the committed value.
+- **TOTP second-step outcomes appear in login history.** `POST /api/auth/totp` wrote no `login_attempts` row, while the password step of a 2FA account had already recorded `success=true` before the second factor was checked, so a wrong, replayed or locked-out code was invisible in the table and a password-only compromise of a 2FA account looked like a successful login. The password step of a 2FA account now writes no row (it issues nothing), and the TOTP step writes the row under method `totp`: a failure for a wrong or replayed code, a lockout, or a pending login that no longer matches the account, and the success row when the session is issued (same username, client IP and user agent fields as password rows). Lockout counting is unchanged. Nothing in the server reads `login_attempts` except the retention purge; the earlier `TestLogin_PasswordPlusTOTP_Unchanged` pin of the old rows was updated deliberately.
+
 ## [0.11.281] - 2026-10-02
 
 ### Security — OpenTelemetry v1.45.0 (GO-2026-6505)
