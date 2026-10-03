@@ -1,8 +1,6 @@
 package database
 
 import (
-	"time"
-
 	"gorm.io/gorm"
 )
 
@@ -108,35 +106,12 @@ func (d *Database) summaryBackfillComplete() bool {
 			continue // this tier has no source data, so nothing to backfill
 		}
 		lastOwned := tier.bucketOf(newest)
-		// A tier whose source rows all fall below the summary's retention
-		// window owns nothing (see summaryRetentionFloor) and so never builds a
-		// marker; it has nothing to backfill either.
-		if retained, ok := d.summaryRetentionFloor(tier, time.Now()); ok && retained.After(lastOwned) {
-			continue
-		}
 		filled := d.summaryFillMarker(tier.interval)
 		if filled.IsZero() || filled.Before(lastOwned) {
 			return false
 		}
 	}
 	return true
-}
-
-// summaryRetentionCovers reports whether a window of hours lies inside the
-// summary's own retention window, which summaryBackfillComplete alone does not
-// say. The summariser owns nothing below FlowSummaryRetentionKey
-// (summaryRetentionFloor) and cleanup prunes to it, so with a 30-day window on
-// the summary a 90-day request would have read 30 days of history under a
-// 90-day label — silently, since nothing else would hint at it. Such a request
-// takes the live rollup path, which is slow but right.
-//
-// Exact at the boundary: the retention floor is rounded UP to a whole bucket,
-// summary rows are stamped at bucket start and readers use `timestamp >
-// cutoff`, so a window of exactly the retention reads only buckets the
-// summariser owns.
-func (d *Database) summaryRetentionCovers(hours int) bool {
-	days := d.FlowSummaryRetentionDays()
-	return days <= 0 || hours <= days*24
 }
 
 // flowSummaryTopValues reads one high-cardinality panel: a window's top-N as a

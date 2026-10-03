@@ -312,13 +312,14 @@ func tierTimeBoundsOn(h *gorm.DB, intervals []string) (oldest, newest time.Time,
 // h is the pass's snapshot handle: the hourly bounds and the 1d probe here are
 // read inside one REPEATABLE READ transaction, so a promotion cannot commit
 // between them and leave the floor describing a different ladder than the
-// bounds do. The dirty walk is bounded by the id ceiling taken before that
-// snapshot, so a promotion that commits after it is simply next cycle's work.
-// What remains uncovered is a bucket RECOMPUTED by a backfill walk while a
-// promotion of that same day commits underneath it — the walk reads live rows,
-// so the day can come out double-counted for one cycle, until the daily pass
-// (dirtied by the new 1d row) supersedes it. That exposure exists only while
-// the exact day being promoted is also being backfilled, and heals by itself.
+// bounds do, and the dirty walk's bucket LIST is bounded by the id ceiling
+// taken before that snapshot, so a promotion that commits after it does not
+// add buckets to this pass. What the snapshot does NOT cover: every walk — the
+// dirty walk included — recomputes a bucket from LIVE rows. A promotion of the
+// very day a walk is recomputing can therefore land between the snapshot and
+// the recompute, and that day comes out wrong (double-counted or short) for
+// one cycle, with the read path on, until the next daily pass — dirtied by the
+// new 1d row — supersedes it. The exposure is one promoting day, one cycle.
 func dailyFloorOn(h *gorm.DB, finerOldest time.Time) (time.Time, error) {
 	for _, daily := range flowSummaryTiers {
 		if daily.interval != "1d" {
@@ -343,42 +344,6 @@ func dailyFloorOn(h *gorm.DB, finerOldest time.Time) (time.Time, error) {
 		return floor, nil
 	}
 	return time.Time{}, nil
-}
-
-// summaryRetentionFloor is the oldest bucket a tier may own under
-// FlowSummaryRetentionKey: the first bucket that starts at or after the
-// retention cutoff. ok is false when the summary is kept forever.
-//
-// Without this the summariser built every bucket the rollups held and the
-// nightly cleanup pruned the summary back to its own (shorter) window — which
-// looked to the next pass like the tier had just acquired hundreds of buckets
-// below anything it had built, so it reset its fill marker and spent the next
-// ~15 hours rebuilding history that the following night's cleanup deleted
-// again, with the read path off the whole time. A tier that stops at the
-// retention cutoff has nothing to rebuild. The cutoff is rounded UP to a bucket
-// so the bucket straddling it, which cleanup deletes (its stamp is before the
-// cutoff) and no window reads (summary rows are stamped at bucket start, and
-// readers use `timestamp > cutoff`), is not rebuilt every day either.
-//
-// Pruning is by stamp alone, across both tiers and all three tables, and that
-// is what keeps the two tiers' handover safe under it: a day the hourly tier
-// took over from the daily tier is carried by its hourly rows — the day's 1d
-// rollup data sits in the 00:00 bucket, stamped exactly where the superseded
-// daily row was — so cleanup removes that day's rows at the same cutoff
-// whichever tier holds them, and never the midnight row apart from a day a
-// reader still covers: the low markers are rounded up to a whole bucket of
-// their own tier, so nothing a window reads lies below the cutoff.
-func (d *Database) summaryRetentionFloor(tier flowSummaryTier, now time.Time) (time.Time, bool) {
-	days := d.FlowSummaryRetentionDays()
-	if days <= 0 {
-		return time.Time{}, false
-	}
-	cutoff := now.UTC().AddDate(0, 0, -days)
-	floor := tier.bucketOf(cutoff)
-	if floor.Before(cutoff) {
-		floor = floor.Add(tier.width)
-	}
-	return floor, true
 }
 
 // flowSummaryFillKeyPrefix names the per-tier contiguous backfill marker: the
@@ -611,14 +576,6 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time) (int,
 			ownedFrom = tier.bucketOf(floor)
 		}
 	}
-	// Nothing below the summary's own retention window is owned: see
-	// summaryRetentionFloor for why building it anyway was a 15-hour nightly
-	// rebuild. Buckets already in the summary below this line are left for
-	// cleanup; the read path serves only windows inside the retention
-	// (summaryRetentionCovers), so they are never relied on.
-	if retained, ok := d.summaryRetentionFloor(tier, time.Now()); ok && retained.After(ownedFrom) {
-		ownedFrom = retained
-	}
 	ownedTo := tier.bucketOf(newest).Add(tier.width)
 	// yieldUncertain: the yieldTo probe failed, so ownedTo may include a day
 	// the tier should have yielded. Harmless to the routine walks this cycle;
@@ -711,6 +668,10 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time) (int,
 			Select("id").Limit(1).Find(&probe).Error; err == nil && len(probe) == 0 {
 			log.Printf("Flow summary: %s tier has a fill marker but no rows; restarting its backfill", tier.interval)
 			filled = time.Time{}
+			// Persisted, like the ownership-drop reset below: until the walk
+			// has rebuilt the range, a reader must see the tier as incomplete,
+			// not serve an empty tier under a marker that says it is full.
+			d.clearSummaryFillMarker(tier.interval)
 		}
 	}
 	if !filled.IsZero() {

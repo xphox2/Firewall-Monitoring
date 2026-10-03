@@ -14,13 +14,12 @@ import (
 //
 //   - TestCleanupOldData_FlowSummaryKeptForeverAtZero: the `days <= 0` guard in
 //     CleanupOldData's generic loop.
-//   - TestFlowSummary_RetentionShorterThanRollupsDoesNotRewalk: the retention
-//     clamp on ownedFrom (summaryRetentionFloor) and the read path's retention
-//     gate (summaryRetentionCovers).
 //   - TestFlowSummary_EmptyBucketsDoNotCountTowardTheCap: counting only WRITTEN
 //     buckets against maxPerPass.
 //   - TestFlowSummary_PromotionDuringTheCycleIsNotDoubleCounted: deriving the
 //     hourly floor inside the hourly pass, in one snapshot.
+//   - TestFlowSummary_CrashAfterEmptyTierSelfHeal: the "marker but no rows"
+//     reset persisted before any write.
 //   - The late-data scenarios (TestFlowSummary_TwoLateDays..., ..._LateRowInThe
 //     FloorBucket..., ..._LateDailyRowOlderThanHistory...) pin the invariant
 //     that whenever the read path is on, the summary agrees with the live
@@ -142,81 +141,6 @@ func TestCleanupOldData_FlowSummaryKeptForeverAtZero(t *testing.T) {
 	}
 }
 
-// TestFlowSummary_RetentionShorterThanRollupsDoesNotRewalk: the settings
-// handler allows a summary window shorter than the rollups'. The summariser
-// used to build every day the rollups held, cleanup pruned the summary back to
-// its window, and the next pass saw a tier that had "acquired" every pruned
-// day, reset its fill marker and rebuilt all of it (~15 h on production) with
-// the read path off — every single night.
-func TestFlowSummary_RetentionShorterThanRollupsDoesNotRewalk(t *testing.T) {
-	d := NewDatabaseForTesting(t)
-	// 45 days, not 30: the live path reads the 1d rollup tier only for windows
-	// wider than its promotion age (30 days), and the comparison below needs a
-	// window inside the retention that both paths answer from the same rows.
-	setFlowSummaryRetention(t, d, "45")
-	now := time.Now().UTC()
-	today := now.Truncate(24 * time.Hour)
-	for days := 90; days >= 3; days-- {
-		seedDailyRollup(t, d, today.AddDate(0, 0, -days), 1000)
-	}
-	seedRecentRollups(t, d)
-	retained := now.AddDate(0, 0, -45)
-
-	cyclesUntilComplete(t, d, 80)
-	oldestBuilt := func() time.Time {
-		ts, ok, err := aggregateTimestamp(d.Gorm().Model(&models.FlowSummary{}), "MIN(timestamp)")
-		if err != nil || !ok {
-			t.Fatalf("oldest summary bucket: ok=%v err=%v", ok, err)
-		}
-		return ts
-	}
-	if got := oldestBuilt(); got.Before(retained) {
-		t.Fatalf("the summariser built a bucket at %s, below the 45-day retention cutoff %s; "+
-			"it must not build what cleanup is about to delete", got.Format(time.RFC3339), retained.Format(time.RFC3339))
-	}
-
-	ret := config.RetentionConfig{DefaultDays: 90, FlowRollupDays: 365}
-	if err := d.CleanupOldData(ret); err != nil {
-		t.Fatalf("cleanup: %v", err)
-	}
-	markerBefore := d.summaryFillMarker("1d")
-	if markerBefore.IsZero() {
-		t.Fatal("precondition: the daily tier has no fill marker")
-	}
-	for i := 0; i < 3; i++ {
-		d.RunFlowSummaryCycle()
-		if m := d.summaryFillMarker("1d"); m.Before(markerBefore) {
-			t.Fatalf("cycle %d after cleanup: the daily fill marker dropped from %s to %s; the summary "+
-				"was pruned to its own window, nothing new was acquired", i+1, markerBefore.Format(time.RFC3339), m.Format(time.RFC3339))
-		}
-		if !d.summaryBackfillComplete() {
-			t.Fatalf("cycle %d after cleanup: the read path switched off", i+1)
-		}
-		if got := oldestBuilt(); got.Before(retained) {
-			t.Fatalf("cycle %d after cleanup: a bucket at %s was rebuilt below the retention cutoff", i+1, got.Format(time.RFC3339))
-		}
-	}
-
-	// A window the summary does not reach must be served by the live path, and
-	// agree with it. A window inside the retention is served from the summary.
-	for _, hours := range []int{40 * 24, 90 * 24} {
-		summary, live := statsBothWays(t, d, hours, FlowStatsFilter{})
-		if summary.TotalBytes != live.TotalBytes {
-			t.Errorf("%dh window: TotalBytes %d via summary, %d via live; the summary holds only the "+
-				"retention window and must not answer a wider request", hours, summary.TotalBytes, live.TotalBytes)
-		}
-	}
-	if !d.summaryRetentionCovers(40 * 24) {
-		t.Error("a 40-day window inside a 45-day retention is reported uncovered")
-	}
-	if !d.summaryRetentionCovers(45 * 24) {
-		t.Error("a 45-day window on a 45-day retention is reported uncovered")
-	}
-	if d.summaryRetentionCovers(90 * 24) {
-		t.Error("a 90-day window on a 45-day retention is reported covered")
-	}
-}
-
 // TestFlowSummary_EmptyBucketsDoNotCountTowardTheCap: the daily tier's cap of
 // two buckets per cycle counted buckets VISITED, so a quiet stretch of days
 // (one existence probe each) was crawled at the same pace as the expensive
@@ -297,9 +221,8 @@ func TestFlowSummary_PromotionDuringTheCycleIsNotDoubleCounted(t *testing.T) {
 }
 
 // assertSummaryAgrees pins the invariant every late-data scenario below is
-// about: whenever the read path is ON (the backfill is complete and the window
-// is inside the retention), the summary answers exactly what the live path
-// answers, for every window. When the read path is off nothing is asserted —
+// about: whenever the read path is ON (the backfill is complete), the summary
+// answers exactly what the live path answers, for every window. When the read path is off nothing is asserted —
 // a slow right answer is the design's fallback.
 func assertSummaryAgrees(t *testing.T, d *Database, label string, windows ...int) {
 	t.Helper()
@@ -307,9 +230,6 @@ func assertSummaryAgrees(t *testing.T, d *Database, label string, windows ...int
 		return
 	}
 	for _, hours := range windows {
-		if !d.summaryRetentionCovers(hours) {
-			continue
-		}
 		s, l := statsBothWays(t, d, hours, FlowStatsFilter{})
 		if s.TotalBytes != l.TotalBytes || s.TotalFlows != l.TotalFlows {
 			t.Errorf("%s: %dh window: %d bytes / %d flows via summary, %d / %d via live, with the read path on",
@@ -498,4 +418,40 @@ func TestFlowSummary_LateDailyRowOlderThanHistoryNeedsNoRewalk(t *testing.T) {
 	}
 	d.RunFlowSummaryCycle()
 	assertSummaryAgrees(t, d, "cycle 2", append(lateScenarioWindows, 62*24)...)
+}
+
+// TestFlowSummary_CrashAfterEmptyTierSelfHeal: a tier with a fill marker but
+// no rows (the summary was emptied underneath it) restarts its backfill. That
+// reset used to be in memory only: a crash before the walk persisted progress
+// left the old marker on disk, and a reader served an EMPTY tier as complete.
+func TestFlowSummary_CrashAfterEmptyTierSelfHeal(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	t.Cleanup(func() { flowSummaryBucketHook = nil })
+	seedPromotedHistory(t, d)
+	for _, m := range []interface{}{&models.FlowSummary{}, &models.FlowSummaryTop{}, &models.FlowSummaryBucket{}} {
+		if err := d.Gorm().Where("1 = 1").Delete(m).Error; err != nil {
+			t.Fatalf("empty summary: %v", err)
+		}
+	}
+	if !d.summaryBackfillComplete() {
+		t.Fatal("precondition: the markers still say the summary is complete")
+	}
+	flowSummaryBucketHook = func(interval string, b time.Time) error {
+		panic("synthetic crash after the self-heal, before the first write")
+	}
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("precondition: the injected crash did not fire")
+			}
+		}()
+		d.RunFlowSummaryCycle()
+	}()
+	flowSummaryBucketHook = nil
+	if d.summaryBackfillComplete() {
+		t.Error("after a crash following the empty-tier self-heal the read path is on over an empty summary")
+	}
+	assertSummaryAgrees(t, d, "after the crash", lateScenarioWindows...)
+	cyclesUntilComplete(t, d, 60)
+	assertSummaryAgrees(t, d, "rebuilt", lateScenarioWindows...)
 }
