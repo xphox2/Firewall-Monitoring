@@ -74,7 +74,10 @@ jobs:
         # own default) still does that with margin. Raising it is the honest fix
         # here; the alternative is a gate that fails at random and teaches people
         # to re-run rather than read.
-        run: go test -race -count=1 -timeout=10m ./...
+        # 20m: under -race on GitHub runners internal/database and
+        # internal/api/handlers each take ~9.3 minutes, so the old 10m
+        # budget left no headroom for added tests.
+        run: go test -race -count=1 -timeout=20m ./...
 
   static-analysis:
     name: staticcheck
