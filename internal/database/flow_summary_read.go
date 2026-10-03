@@ -156,12 +156,31 @@ func (d *Database) summaryCoversCutoff(cutoff time.Time) bool {
 	var lowestBucketOf func(time.Time) time.Time
 	anyReaches := false
 	for _, tier := range flowSummaryTiers {
+		acquiring := d.summaryAcquiring(tier.interval)
 		from := d.summaryFillFromMarker(tier.interval)
+		if from.IsZero() && !acquiring {
+			// A tier built before the low marker existed (an upgrade, before
+			// its first new pass): its forward walk was contiguous from where
+			// its range started, so its oldest built bucket is where its
+			// reliable range begins — the same derivation the summariser makes
+			// on that first pass. Without this every wide window went to the
+			// live path until that pass ran, and the 90-day one times out there.
+			oldest, ok, err := aggregateTimestamp(
+				d.db.Session(&gorm.Session{}).Model(&models.FlowSummary{}).
+					Where("interval_type = ?", tier.interval),
+				"MIN(timestamp)")
+			if err != nil {
+				return false
+			}
+			if ok {
+				from = tier.bucketOf(oldest)
+			}
+		}
 		if from.IsZero() {
 			continue
 		}
 		reaches := !from.After(tier.bucketOf(cutoff).Add(tier.width))
-		if !reaches && d.summaryAcquiring(tier.interval) {
+		if !reaches && acquiring {
 			return false
 		}
 		if reaches {
