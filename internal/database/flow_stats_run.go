@@ -188,9 +188,9 @@ func (d *Database) GetFlowStatsOpts(hours int, filter FlowStatsFilter, opts Flow
 
 	if !FlowStatsMaterializes(hours, filter) {
 		// Decided here, before anything is pinned: summaryBackfillComplete and
-		// summaryCoversCutoff query through d.
+		// summaryRetentionCovers query through d.
 		useSummary := hours > flowSummaryMinHours && flowSummaryCompatible(filter) &&
-			d.summaryBackfillComplete() && d.summaryCoversCutoff(cutoff)
+			d.summaryRetentionCovers(hours) && d.summaryBackfillComplete()
 		run := &flowStatsRun{
 			h: d.db, cutoff: cutoff, useSummary: useSummary, serviceSince: serviceSince,
 			concurrency: flowStatsRollupConcurrency,

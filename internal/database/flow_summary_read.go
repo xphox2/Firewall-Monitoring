@@ -3,8 +3,6 @@ package database
 import (
 	"time"
 
-	"firewall-mon/internal/models"
-
 	"gorm.io/gorm"
 )
 
@@ -124,97 +122,21 @@ func (d *Database) summaryBackfillComplete() bool {
 	return true
 }
 
-// summaryCoversCutoff reports whether the summary holds every bucket a window
-// starting at cutoff reads, which summaryBackfillComplete alone does not say.
+// summaryRetentionCovers reports whether a window of hours lies inside the
+// summary's own retention window, which summaryBackfillComplete alone does not
+// say. The summariser owns nothing below FlowSummaryRetentionKey
+// (summaryRetentionFloor) and cleanup prunes to it, so with a 30-day window on
+// the summary a 90-day request would have read 30 days of history under a
+// 90-day label — silently, since nothing else would hint at it. Such a request
+// takes the live rollup path, which is slow but right.
 //
-// The fill markers prove the summary is contiguous from each tier's low marker
-// (flowSummaryFillFromKeyPrefix) UP to its fill marker; summaryBackfillComplete
-// checks the top, this checks the bottom. That bottom moves: the summariser
-// owns nothing below FlowSummaryRetentionKey and cleanup prunes to it, so with
-// a 30-day window on the summary a 90-day request would have read 30 days of
-// history under a 90-day label — silently, since nothing else would hint at
-// it. A window the summary does not reach falls back to the live rollup path,
-// which is slow but right.
-//
-// A tier is compared at its own width: summary rows are stamped at bucket
-// START and readers use `timestamp > cutoff`, so the first bucket a window
-// reads is the one AFTER the bucket the cutoff falls in. Coverage is exact at
-// that boundary: a 30-day window on a 30-day retention is served (the
-// straddling bucket is outside the window on both paths), a 31-day one is not.
-//
-// A tier still walking a span it has newly acquired (flowSummaryAcquiringKeyPrefix)
-// is half-built below its low marker — the dirty walk may already have written
-// there and superseded the other tier's rows — so a window reaching below that
-// marker is not served, whatever the other tier holds. Otherwise the summary
-// covers the window when some tier's reliable range reaches it, or when the
-// summary starts where the DATA starts — a young installation, or a window
-// wider than the rollups' own history; only that last case probes the rollup
-// tiers, so a window the markers answer costs nothing more than the settings
-// reads.
-func (d *Database) summaryCoversCutoff(cutoff time.Time) bool {
-	var lowest time.Time
-	var lowestBucketOf func(time.Time) time.Time
-	anyReaches := false
-	for _, tier := range flowSummaryTiers {
-		acquiring := d.summaryAcquiring(tier.interval)
-		from := d.summaryFillFromMarker(tier.interval)
-		if from.IsZero() && !acquiring {
-			// A tier built before the low marker existed (an upgrade, before
-			// its first new pass): its forward walk was contiguous from where
-			// its range started, so its oldest built bucket is where its
-			// reliable range begins — the same derivation the summariser makes
-			// on that first pass. Without this every wide window went to the
-			// live path until that pass ran, and the 90-day one times out there.
-			oldest, ok, err := aggregateTimestamp(
-				d.db.Session(&gorm.Session{}).Model(&models.FlowSummary{}).
-					Where("interval_type = ?", tier.interval),
-				"MIN(timestamp)")
-			if err != nil {
-				return false
-			}
-			if ok {
-				from = tier.bucketOf(oldest)
-			}
-		}
-		if from.IsZero() {
-			continue
-		}
-		reaches := !from.After(tier.bucketOf(cutoff).Add(tier.width))
-		if !reaches && acquiring {
-			return false
-		}
-		if reaches {
-			anyReaches = true
-		}
-		if lowestBucketOf == nil || from.Before(lowest) {
-			lowest, lowestBucketOf = from, tier.bucketOf
-		}
-	}
-	if lowestBucketOf == nil {
-		return false
-	}
-	if anyReaches {
-		return true
-	}
-	seen := map[string]bool{}
-	for _, tier := range flowSummaryTiers {
-		for _, iv := range tier.rangeSources {
-			if seen[iv] {
-				continue
-			}
-			seen[iv] = true
-			t, ok, err := aggregateTimestamp(
-				d.db.Session(&gorm.Session{}).Model(&models.FlowRollup{}).Where("interval_type = ?", iv),
-				"MIN(timestamp)")
-			if err != nil {
-				return false
-			}
-			if ok && lowestBucketOf(t).Before(lowest) {
-				return false
-			}
-		}
-	}
-	return true
+// Exact at the boundary: the retention floor is rounded UP to a whole bucket,
+// summary rows are stamped at bucket start and readers use `timestamp >
+// cutoff`, so a window of exactly the retention reads only buckets the
+// summariser owns.
+func (d *Database) summaryRetentionCovers(hours int) bool {
+	days := d.FlowSummaryRetentionDays()
+	return days <= 0 || hours <= days*24
 }
 
 // flowSummaryTopValues reads one high-cardinality panel: a window's top-N as a
