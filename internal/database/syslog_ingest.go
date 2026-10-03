@@ -349,9 +349,9 @@ func (d *Database) meterHours(from time.Time) (map[time.Time]*[SyslogSeverityCou
 			if moved {
 				continue
 			}
-			if gen.inFlight {
-				// Still in flight (wait is non-nil: had it settled, flushGen
-				// would have moved). Its upsert may have committed during the
+			if gen.inFlight && wait != nil {
+				// Still in flight (had it settled, flushGen would have moved
+				// and wait be nil). Its upsert may have committed during the
 				// read; wait for it to settle and read again — unless it is
 				// stalled on the database, then proceed with this read.
 				select {

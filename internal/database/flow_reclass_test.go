@@ -574,8 +574,9 @@ func TestReclassVerify_ChunkedCountAcrossRanges(t *testing.T) {
 // time) re-stamps nothing there, so no earliest rollup timestamp exists. It
 // used to post no summary rebuild request — and the service-port boundary
 // (flow_summary_service_since) is cleared only once the rebuild has marked
-// both tiers done for the revision, so it never cleared. The run now requests
-// the rebuild from its own start, which finishes trivially.
+// both tiers done for the revision, so it never cleared. Every run now
+// requests the rebuild (from its own start when it met no rollup), which
+// finishes trivially.
 func TestFlowReclass_FullRunWithNoRollupsStillRequestsTheRebuild(t *testing.T) {
 	d := reclassFixture(t)
 	base := time.Now().Add(-30 * time.Minute)

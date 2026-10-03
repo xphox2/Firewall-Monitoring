@@ -851,18 +851,17 @@ func (d *Database) completeReclassRun(st reclassState, rollupsMax int64) error {
 		flowReclassRollupsProbeKey:   strconv.FormatInt(rollupsMax, 10),
 		flowReclassVerifyTimeoutsKey: "0",
 	}
-	switch {
-	case st.MinRollupTS != nil:
-		sets[flowSummaryRecomputeRequestKey] = fmt.Sprintf("%d|%s", st.Rev, st.MinRollupTS.UTC().Truncate(time.Hour).Format(time.RFC3339))
-	case !st.Incremental:
-		// A full run that met no old-revision rollup (none existed yet) has
-		// nothing to rebuild, but the summary rebuild is still what records
-		// each tier as done for this revision — and the service-port
-		// boundary (flow_summary_service_since) is cleared only once it has.
-		// Request it from the run's start: every bucket from there is at
-		// this revision already, so the rebuild finishes trivially.
-		sets[flowSummaryRecomputeRequestKey] = fmt.Sprintf("%d|%s", st.Rev, st.Started.UTC().Truncate(time.Hour).Format(time.RFC3339))
+	// A run that met no old-revision rollup (none existed yet, or none above
+	// an incremental run's floor) has nothing to rebuild, but the summary
+	// rebuild is still what records each tier as done for this revision — and
+	// the service-port boundary (flow_summary_service_since) is cleared only
+	// once it has. Such a run requests the rebuild from its own start: every
+	// bucket from there is at this revision already, so it finishes trivially.
+	from := st.Started
+	if st.MinRollupTS != nil {
+		from = *st.MinRollupTS
 	}
+	sets[flowSummaryRecomputeRequestKey] = fmt.Sprintf("%d|%s", st.Rev, from.UTC().Truncate(time.Hour).Format(time.RFC3339))
 	for k, v := range sets {
 		if err := d.setReclassSetting(k, v); err != nil {
 			return err
