@@ -809,6 +809,10 @@
         top_services: 'Top services', top_conversations: 'Top conversations', bytes_over_time: 'Traffic over time'
     };
 
+    // Stat-grid panels that belong to ONE tile. The rest of the grid's panels
+    // feed several tiles and outline them all.
+    var PANEL_TILES = { unique_src_addr: 'flows-fanout', unique_dst_addr: 'flows-fanout' };
+
     // reasons maps a panel to its own badge text (the server's partial_reasons,
     // e.g. "services before 2026-09-27 not yet summarised"); a panel without one
     // keeps the default "partial — last hour only".
@@ -816,14 +820,24 @@
         document.querySelectorAll('#page-flows .fwmon-flows-partial, #page-flows .fwmon-flows-partial-tile').forEach(function(el) {
             el.classList.remove('fwmon-flows-partial', 'fwmon-flows-partial-tile');
             el.removeAttribute('data-partial');
+            el.removeAttribute('title');
         });
         (blocks || []).forEach(function(b) {
             var el = document.getElementById(PANEL_HOSTS[b] || '');
             if (!el) return;
             if (el.id === 'flows-stats-grid') {
                 // The tiles have no card around them: outline each tile rather
-                // than labelling the grid, whose badge would cover a tile.
-                el.querySelectorAll('.fwmon-stat').forEach(function(tile) { tile.classList.add('fwmon-flows-partial-tile'); });
+                // than labelling the grid, whose badge would cover a tile. A
+                // panel with a tile of its own outlines only that tile, with
+                // its reason as the tooltip — on a summary-served window the
+                // unique-address tile is partial by design, and outlining the
+                // whole grid for it read as every figure being suspect.
+                var own = document.getElementById(PANEL_TILES[b] || '');
+                var tiles = own ? [own.closest('.fwmon-stat') || own] : el.querySelectorAll('.fwmon-stat');
+                tiles.forEach(function(tile) {
+                    tile.classList.add('fwmon-flows-partial-tile');
+                    if (reasons && reasons[b]) tile.setAttribute('title', 'Partial — ' + reasons[b]);
+                });
                 return;
             }
             var card = el.closest('.card') || el;

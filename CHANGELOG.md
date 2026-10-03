@@ -1,6 +1,17 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.282] - 2026-10-03
+
+### Fixed — flow summary retention and ownership
+
+- **`flow_summary_retention_days = 0` deleted the whole summary nightly.** The setting documents 0 as "keep forever" (and the settings handler accepts it as such), but the generic cleanup loop turned it into a cutoff of *now* and emptied `flow_summaries`, `flow_summary_tops` and `flow_summary_buckets` every night — after which the summariser spent ~15 h rebuilding them with the read path off. The loop now skips a table whose window is 0, exactly as the syslog windows already did.
+- **A summary window shorter than the rollups' no longer rebuilds history every night.** The summariser built every day the rollups held; cleanup pruned the summary back to its own window; the next pass saw a tier that had "acquired" every pruned day, reset its fill marker and rebuilt all of it. Each tier now owns nothing below the summary retention cutoff, so there is nothing to rebuild. The read path gains a coverage check (`summaryCoversCutoff`): a window reaching further back than the summary holds is served by the live rollup path rather than silently short.
+- **Acquiring buckets below the fill marker no longer resets it.** When a tier's ownership moves down — the daily tier yields the promotion boundary day (#261), a late row replays into a day below the hourly floor, or the retention window is raised — only the newly acquired span is backfilled (newest first, resuming from the summary's oldest bucket), and the read path stays on. Empty buckets no longer count toward the daily tier's two-buckets-per-cycle cap, so a quiet stretch is crossed in one pass instead of two days per cycle.
+- **A promotion committing mid-cycle could double-count a day for one cycle.** The summariser and the rollup ladder hold different advisory locks, and the hourly floor was probed once at the start of the cycle; a day promoted during the daily pass was still "owned" by the hourly pass, whose dirty walk put the new 1d row beside the hourly buckets already holding it. The floor is now derived inside the hourly pass from the same probe as its own bounds. The id-ceiling comment in `summariseTier` now states what the guarantee actually rests on (one `flow_rollups` writer at a time under the maintenance lock), not on the summariser's own lock.
+- **Wide windows no longer show "Partial result … Reload to try the full range again" on every load.** On a summary-served window (7d/30d/90d) the Unique Src / Dst tile deliberately shows the raw window only, but it was recorded as a skipped panel, which marks the whole result Degraded. It is now a partial panel with its own reason ("not available for summary windows (last hour only)"): the Flows page badges that one tile with the reason as its tooltip instead of outlining every tile and raising the page-wide banner.
+- Tests: each fix has a regression that fails with it reverted (`flow_summary_retention_test.go`); the read-path tests now assert the unique tiles are partial, not degraded.
+
 ## [0.11.281] - 2026-10-02
 
 ### Security — OpenTelemetry v1.45.0 (GO-2026-6505)

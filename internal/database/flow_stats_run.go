@@ -187,9 +187,10 @@ func (d *Database) GetFlowStatsOpts(hours int, filter FlowStatsFilter, opts Flow
 	serviceSince := d.serviceSinceBoundary()
 
 	if !FlowStatsMaterializes(hours, filter) {
-		// Decided here, before anything is pinned: summaryBackfillComplete
-		// queries through d.
-		useSummary := hours > flowSummaryMinHours && flowSummaryCompatible(filter) && d.summaryBackfillComplete()
+		// Decided here, before anything is pinned: summaryBackfillComplete and
+		// summaryCoversCutoff query through d.
+		useSummary := hours > flowSummaryMinHours && flowSummaryCompatible(filter) &&
+			d.summaryBackfillComplete() && d.summaryCoversCutoff(cutoff)
 		run := &flowStatsRun{
 			h: d.db, cutoff: cutoff, useSummary: useSummary, serviceSince: serviceSince,
 			concurrency: flowStatsRollupConcurrency,

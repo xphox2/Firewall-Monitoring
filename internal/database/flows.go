@@ -517,6 +517,11 @@ func (b *flowStatsBudget) skip(block string) {
 	b.blocks = append(b.blocks, block)
 }
 
+// flowUniqueSummaryReason is the PartialReasons text for the unique-address
+// tiles on a summary-served window: they show the raw window only, by design
+// (see the unique panels in flowStats), not because anything ran out of time.
+const flowUniqueSummaryReason = "not available for summary windows (last hour only)"
+
 // partial records a panel that is complete as far as it goes but covers less
 // than the window for a stated reason. Unlike skip it does not make the result
 // Degraded.
@@ -976,13 +981,17 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 				// the union, it is a different quantity, and labelling it
 				// "approximate" would not make it honest.
 				//
-				// The tile therefore shows the raw window's exact count and the
-				// panel is named as degraded. Publishing a real window-level
-				// unique count from the summary needs a sketch (HyperLogLog),
-				// which is worth revisiting now that scanning is no longer the
-				// dominant cost.
+				// The tile therefore shows the raw window's exact count, badged
+				// with its own reason. NOT skip(): that marks the whole result
+				// Degraded, and since every summary-path load (7d/30d/90d) takes
+				// this branch the page showed "Partial result ... Reload to try
+				// the full range again" on every wide window, for two tiles that
+				// no reload can ever fill. Publishing a real window-level unique
+				// count from the summary needs a sketch (HyperLogLog), which is
+				// worth revisiting now that scanning is no longer the dominant
+				// cost.
 				_ = u.sumCol
-				budget.skip("unique_" + u.col)
+				budget.partial("unique_"+u.col, flowUniqueSummaryReason)
 				continue
 			}
 			// The base here is d.db, not a rollup base: the rollup query is the

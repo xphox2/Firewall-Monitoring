@@ -174,58 +174,9 @@ func (d *Database) RunFlowSummaryCycle() bool {
 	// buckets to be recomputed (flow_summary_recompute.go).
 	d.consumeRecomputeRequest()
 
-	// Where the daily tier's reach ends. Everything at or below this instant
-	// belongs to the daily tier; the hourly tier must not claim it.
-	//
-	// Without this floor the two tiers fight over the boundary day forever: the
-	// daily pass supersedes the hourly rows, and the next hourly pass writes them
-	// straight back (the 1h rollup rows are still there), leaving BOTH tiers
-	// holding the day so a reader summing them double-counts it.
-	//
-	// The daily tier runs FIRST for the same reason — it establishes the floor
-	// and clears any hourly rows left over from before a day was promoted.
-	var dailyFloor time.Time
-	// floorUncertain: a probe behind the floor failed, so the hourly tier's
-	// range may be off by the boundary day this cycle. The routine walks heal
-	// that on their own (they re-dirty); the recompute step would persist it
-	// (its cursor and retry list), so it sits the tier out for the cycle.
-	floorUncertain := false
-	for _, tier := range flowSummaryTiers {
-		if tier.interval != "1d" {
-			continue
-		}
-		_, newest, ok, err := d.tierTimeBounds(tier.rangeSources)
-		if err == nil && flowSummaryFloorProbeHook != nil {
-			err = flowSummaryFloorProbeHook()
-		}
-		if err != nil {
-			floorUncertain = true
-			log.Printf("Flow summary: the daily range probe failed; the hourly recompute sits this cycle out: %v", err)
-		}
-		if err == nil && ok {
-			dailyFloor = tier.bucketOf(newest).Add(tier.width)
-			// Must mirror the yieldTo cap above, or the day the daily tier gave
-			// up would sit above the hourly tier's floor and belong to neither.
-			if len(tier.yieldTo) > 0 {
-				finerOldest, _, ok2, err2 := d.tierTimeBounds(tier.yieldTo)
-				if err2 != nil {
-					floorUncertain = true
-					log.Printf("Flow summary: the daily yield probe failed; the hourly recompute sits this cycle out: %v", err2)
-				}
-				if err2 == nil && ok2 {
-					if boundary := tier.bucketOf(finerOldest); boundary.Before(dailyFloor) {
-						dailyFloor = boundary
-					}
-				}
-			}
-		}
-		// On error the floor stays zero and the hourly tier temporarily owns
-		// everything. That is self-healing rather than harmful: the same rows
-		// leave the daily tier's watermark unadvanced, so the next pass redirties
-		// those days and the daily tier supersedes any hourly rows written in the
-		// meantime. The exposure is one cycle of double-counting at worst.
-	}
-
+	// The daily tier runs FIRST: it establishes the floor the hourly tier is
+	// anchored on (see dailyFloor) and clears any hourly rows left over from
+	// before a day was promoted.
 	ordered := []flowSummaryTier{}
 	for _, t := range flowSummaryTiers {
 		if t.interval == "1d" {
@@ -241,14 +192,7 @@ func (d *Database) RunFlowSummaryCycle() bool {
 	wrote := false
 	bounds := make(map[string]tierBounds, len(ordered))
 	for _, tier := range ordered {
-		floor := time.Time{}
-		if tier.interval != "1d" {
-			floor = dailyFloor
-		}
-		n, b, err := d.summariseTier(tier, deadline, floor)
-		if tier.interval != "1d" && floorUncertain {
-			b.valid = false
-		}
+		n, b, err := d.summariseTier(tier, deadline)
 		bounds[tier.interval] = b
 		if n > 0 {
 			log.Printf("Flow summary: wrote %d %s bucket(s)", n, tier.interval)
@@ -331,6 +275,85 @@ func (d *Database) tierTimeBounds(intervals []string) (oldest, newest time.Time,
 	return oldest, newest, ok, nil
 }
 
+// dailyFloor is where the daily tier's reach ends. Everything below it belongs
+// to the daily tier; the hourly tier must not claim it.
+//
+// Without this floor the two tiers fight over the boundary day forever: the
+// daily pass supersedes the hourly rows, and the next hourly pass writes them
+// straight back (the 1h rollup rows are still there), leaving BOTH tiers
+// holding the day so a reader summing them double-counts it.
+//
+// finerOldest is the oldest row of the finer rollup tiers — the hourly tier's
+// own range probe, which is why this is computed INSIDE the hourly pass rather
+// than once at the start of the cycle. The summariser and the rollup ladder
+// hold different advisory locks (flowSummaryLockKey / maintenanceLockKey), so a
+// 1h→1d promotion can commit while a cycle is running. A floor probed at the
+// start of the cycle and used by the hourly pass a minute later then said the
+// hourly tier still owned a day that had meanwhile been promoted: its dirty
+// walk found the new 1d row, recomputed the day's midnight bucket with the
+// whole day in it, and left the other hourly buckets standing — the day was
+// counted twice until the next cycle's daily pass superseded them. Deriving the
+// floor from the same probe as the hourly tier's own bounds makes ownership and
+// the walk agree on one view of the ladder.
+//
+// The yield cap mirrors flowSummaryTier.yieldTo: the day the daily tier gave up
+// must not sit above the hourly floor, or it would belong to neither tier. The
+// daily tier's yieldTo IS the hourly tier's rangeSources, so finerOldest is the
+// value that cap would probe. Zero when there is no daily data yet, or no daily
+// tier (tests substitute a single-tier ladder).
+func (d *Database) dailyFloor(finerOldest time.Time) (time.Time, error) {
+	for _, daily := range flowSummaryTiers {
+		if daily.interval != "1d" {
+			continue
+		}
+		_, newest, ok, err := d.tierTimeBounds(daily.rangeSources)
+		if err == nil && flowSummaryFloorProbeHook != nil {
+			err = flowSummaryFloorProbeHook()
+		}
+		if err != nil {
+			return time.Time{}, err
+		}
+		if !ok {
+			return time.Time{}, nil
+		}
+		floor := daily.bucketOf(newest).Add(daily.width)
+		if len(daily.yieldTo) > 0 {
+			if boundary := daily.bucketOf(finerOldest); boundary.Before(floor) {
+				floor = boundary
+			}
+		}
+		return floor, nil
+	}
+	return time.Time{}, nil
+}
+
+// summaryRetentionFloor is the oldest bucket a tier may own under
+// FlowSummaryRetentionKey: the first bucket that starts at or after the
+// retention cutoff. ok is false when the summary is kept forever.
+//
+// Without this the summariser built every bucket the rollups held and the
+// nightly cleanup pruned the summary back to its own (shorter) window — which
+// looked to the next pass like the tier had just acquired hundreds of buckets
+// below anything it had built, so it reset its fill marker and spent the next
+// ~15 hours rebuilding history that the following night's cleanup deleted
+// again, with the read path off the whole time. A tier that stops at the
+// retention cutoff has nothing to rebuild. The cutoff is rounded UP to a bucket
+// so the bucket straddling it, which cleanup deletes (its stamp is before the
+// cutoff) and no window reads (summary rows are stamped at bucket start, and
+// readers use `timestamp > cutoff`), is not rebuilt every day either.
+func (d *Database) summaryRetentionFloor(tier flowSummaryTier, now time.Time) (time.Time, bool) {
+	days := d.FlowSummaryRetentionDays()
+	if days <= 0 {
+		return time.Time{}, false
+	}
+	cutoff := now.UTC().AddDate(0, 0, -days)
+	floor := tier.bucketOf(cutoff)
+	if floor.Before(cutoff) {
+		floor = floor.Add(tier.width)
+	}
+	return floor, true
+}
+
 // flowSummaryFillKeyPrefix names the per-tier contiguous backfill marker: the
 // newest bucket such that every bucket from the tier's start up to it has been
 // summarised successfully. Distinct from the id watermark, which tracks CHANGES.
@@ -404,16 +427,22 @@ type tierBounds struct {
 	clean bool
 }
 
-func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor time.Time) (int, tierBounds, error) {
+func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time) (int, tierBounds, error) {
 	// Capture the id ceiling BEFORE reading, so rows arriving mid-pass are picked
 	// up next time rather than being skipped.
 	//
-	// This is safe because the pass holds an advisory lock and the rollup ladder
-	// allocates its ids inside a transaction: an id becomes visible at commit, so
-	// a ceiling taken here cannot straddle a half-written window. The ladder's own
-	// watermark rests on the same property. It DOES depend on that lock — on
-	// SQLite (tests) the lock is a no-op, which is acceptable because nothing runs
-	// concurrently there.
+	// This is safe because flow_rollups has ONE writer at a time — every insert
+	// path (the ladder's aggregation and promotion, reclassification) runs under
+	// maintenanceLockKey — and that writer allocates its ids inside a
+	// transaction: an id becomes visible at commit, and no other transaction can
+	// have taken a lower id that is still uncommitted, so a ceiling taken here
+	// cannot straddle a half-written window. The ladder's own watermark rests on
+	// the same property. Note what it does NOT rest on: this pass's own lock
+	// (flowSummaryLockKey) excludes only another summariser, not the ladder, so
+	// the ladder can and does commit while a pass runs — which is why the hourly
+	// floor is derived inside the pass (see dailyFloor). On SQLite (tests) the
+	// locks are no-ops, which is acceptable because nothing runs concurrently
+	// there.
 	var ceiling int64
 	if err := d.db.Session(&gorm.Session{}).Model(&models.FlowRollup{}).
 		Select("COALESCE(MAX(id),0)").Scan(&ceiling).Error; err != nil {
@@ -434,27 +463,33 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 	// That is a deliberate trade — loud and degrading beats silent and wrong —
 	// but it is not free, and an operator seeing this log line repeatedly should
 	// act on it.
-	// run summarises one bucket. keepGoing is false only when the time bound has
-	// expired, which the BACKFILL walk respects; the dirty walk ignores it and
-	// always finishes (see below).
-	run := func(b time.Time) (keepGoing, succeeded bool) {
-		if err := d.summariseBucket(tier, b); err != nil {
+	// run summarises one bucket. wrote is false for a bucket that had nothing to
+	// do (no source rows and no stale summary rows), which the backfill walks
+	// do not count against the per-tier cap.
+	run := func(b time.Time) (succeeded, wrote bool) {
+		wrote, err := d.summariseBucket(tier, b)
+		if err != nil {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("bucket %s: %w", b.Format(time.RFC3339), err)
 			}
 			log.Printf("Flow summary: %s bucket %s failed, skipping: %v",
 				tier.interval, b.Format(time.RFC3339), err)
-			return true, false // keep going, but this bucket is NOT filled
+			return false, false // keep going, but this bucket is NOT filled
 		}
-		written++
-		return true, true
+		if wrote {
+			written++
+		}
+		return true, wrote
 	}
-	// runBounded is run() with the time bound applied, for the backfill walk.
-	runBounded := func(b time.Time) (keepGoing, succeeded bool) {
+	// runBounded is run() with the time bound applied, for the backfill walks.
+	// keepGoing is false only when the time bound has expired, which those walks
+	// respect; the dirty walk ignores it and always finishes (see below).
+	runBounded := func(b time.Time) (keepGoing, succeeded, wrote bool) {
 		if time.Now().After(deadline) {
-			return false, false
+			return false, false, false
 		}
-		return run(b)
+		succeeded, wrote = run(b)
+		return true, succeeded, wrote
 	}
 
 	// Which buckets this tier OWNS, from its range sources alone. A tier must not
@@ -475,16 +510,41 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 		return written, tierBounds{valid: true, ownsNothing: true, clean: true}, nil
 	}
 	ownedFrom := tier.bucketOf(oldest)
-	// The lower tier's reach defines this one's start exactly — not merely a
-	// minimum. Taking max(oldest, floor) left a hole at the promotion boundary:
-	// when the daily tier YIELDS a half-promoted day (see yieldTo) the floor drops
-	// to that day's midnight, but this tier's own range sources start at its first
-	// hour, so the midnight bucket — which holds the day's already-promoted 1d row
-	// — belonged to neither tier and its traffic vanished. Anchoring on the floor
-	// closes that. Buckets below the first real row are simply empty and write
-	// nothing.
-	if !floor.IsZero() {
-		ownedFrom = tier.bucketOf(floor)
+	// floorUncertain: the probe behind the hourly floor failed, so this tier's
+	// range may be off by the boundary day this cycle. The routine walks heal
+	// that on their own (they re-dirty); the recompute step would persist it
+	// (its cursor and retry list), so it sits the tier out (tierBounds.valid).
+	floorUncertain := false
+	if tier.interval != "1d" {
+		// The lower tier's reach defines this one's start exactly — not merely a
+		// minimum. Taking max(oldest, floor) left a hole at the promotion
+		// boundary: when the daily tier YIELDS a half-promoted day (see yieldTo)
+		// the floor drops to that day's midnight, but this tier's own range
+		// sources start at its first hour, so the midnight bucket — which holds
+		// the day's already-promoted 1d row — belonged to neither tier and its
+		// traffic vanished. Anchoring on the floor closes that. Buckets below the
+		// first real row are simply empty and write nothing.
+		floor, err := d.dailyFloor(oldest)
+		if err != nil {
+			floorUncertain = true
+			log.Printf("Flow summary: the daily range probe failed; the %s recompute sits this cycle out: %v", tier.interval, err)
+		}
+		// On error the floor stays zero and this tier temporarily owns
+		// everything. That is self-healing rather than harmful: the same rows
+		// leave the daily tier's watermark unadvanced, so the next pass redirties
+		// those days and the daily tier supersedes any hourly rows written in the
+		// meantime. The exposure is one cycle of double-counting at worst.
+		if !floor.IsZero() {
+			ownedFrom = tier.bucketOf(floor)
+		}
+	}
+	// Nothing below the summary's own retention window is owned: see
+	// summaryRetentionFloor for why building it anyway was a 15-hour nightly
+	// rebuild. Buckets already in the summary below this line are left for
+	// cleanup; the read path checks its window against what the summary
+	// actually holds (summaryCoversCutoff), so they are never relied on.
+	if retained, ok := d.summaryRetentionFloor(tier, time.Now()); ok && retained.After(ownedFrom) {
+		ownedFrom = retained
 	}
 	ownedTo := tier.bucketOf(newest).Add(tier.width)
 	// yieldUncertain: the yieldTo probe failed, so ownedTo may include a day
@@ -504,7 +564,7 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 		}
 	}
 	if !ownedTo.After(ownedFrom) {
-		return written, tierBounds{valid: true, ownsNothing: true, clean: true}, nil
+		return written, tierBounds{valid: !floorUncertain, ownsNothing: true, clean: true}, nil
 	}
 	owns := func(b time.Time) bool { return !b.Before(ownedFrom) && b.Before(ownedTo) }
 
@@ -547,7 +607,7 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 			if !owns(b) {
 				continue
 			}
-			if _, ok := run(b); !ok {
+			if ok, _ := run(b); !ok {
 				// firstErr is already set; keep going so one poison bucket does
 				// not hide the rest, and let firstErr hold the watermark so the
 				// whole list is retried next pass.
@@ -586,24 +646,56 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 				filled = time.Time{}
 			}
 		}
+		// backfilled counts the buckets the two walks below WROTE, against the
+		// per-tier cap. Counted SEPARATELY from written: the cap exists to stop a
+		// cold start monopolising a cycle, and the dirty walk is not a cold start
+		// — sharing one counter let routine change-work consume the cap and
+		// starve the backfill, so on the daily tier (cap 2) a single dirty
+		// boundary day every cycle would have halved backfill throughput for no
+		// reason. Nor does an EMPTY bucket count: it costs one existence probe
+		// and writes nothing, and counting it meant a tier whose range crossed a
+		// quiet stretch — the daily tier starts at the floor's midnight, weeks
+		// of hours with no 1d row — crawled it two buckets a cycle.
+		backfilled := 0
+		capped := func() bool { return tier.maxPerPass > 0 && backfilled >= tier.maxPerPass }
+
 		// If this tier now owns buckets OLDER than anything it has built, its
-		// ownership boundary has moved down and the fill marker is stale — it
-		// points at the far end of a range that no longer starts where it did.
-		// Reset it so the newly acquired span is backfilled.
+		// ownership boundary has moved down: the fill marker still describes the
+		// range above it correctly, but the span [ownedFrom, oldestBuilt) has
+		// never been visited.
 		//
 		// This happens for real: the daily tier yields the promotion boundary day
 		// once the finer tiers hold part of it (see yieldTo), which hands that day
-		// to this tier. Without this the marker sat weeks ahead, the day was never
-		// built here, and it stayed represented only by the stale daily row that
-		// the yield was meant to replace.
+		// to this tier; a late row replayed below the floor pulls the floor down
+		// to its day; a raised retention window reaches further back. Before the
+		// span was walked on its own the marker was RESET to zero instead, which
+		// rebuilt every owned bucket from the start — ~15 hours on production for
+		// one boundary day — with the read path off (summaryBackfillComplete)
+		// throughout.
+		//
+		// The span is walked NEWEST FIRST and stops at the first failure, so the
+		// summary's MIN(timestamp) is itself the resume point: whatever this pass
+		// did not reach is still below the oldest built bucket next pass, and a
+		// failed bucket is retried before anything older is attempted. Empty
+		// buckets below the last written one are re-probed each pass until the
+		// span closes, which is one indexed existence probe per bucket.
 		if !filled.IsZero() {
 			if oldestBuilt, ok, err := aggregateTimestamp(
 				d.db.Session(&gorm.Session{}).Model(&models.FlowSummary{}).
 					Where("interval_type = ?", tier.interval),
 				"MIN(timestamp)"); err == nil && ok && ownedFrom.Before(tier.bucketOf(oldestBuilt)) {
-				log.Printf("Flow summary: %s tier acquired buckets below %s; restarting its backfill",
-					tier.interval, tier.bucketOf(oldestBuilt).Format(time.RFC3339))
-				filled = time.Time{}
+				acquiredTo := tier.bucketOf(oldestBuilt)
+				log.Printf("Flow summary: %s tier acquired buckets below %s; backfilling them",
+					tier.interval, acquiredTo.Format(time.RFC3339))
+				for b := acquiredTo.Add(-tier.width); !b.Before(ownedFrom) && !capped(); b = b.Add(-tier.width) {
+					keepGoing, ok, wrote := runBounded(b)
+					if wrote {
+						backfilled++
+					}
+					if !keepGoing || !ok {
+						break
+					}
+				}
 			}
 		}
 
@@ -619,19 +711,11 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 		// neither.
 		contiguous := true
 		newFilled := filled
-		// backfilled is counted SEPARATELY from written. The per-tier cap exists
-		// to stop a cold start monopolising a cycle, and the dirty walk is not a
-		// cold start — sharing one counter let routine change-work consume the
-		// cap and starve the backfill, so on the daily tier (cap 2) a single
-		// dirty boundary day every cycle would have halved backfill throughput
-		// for no reason.
-		backfilled := 0
-		for b := start; b.Before(ownedTo); b = b.Add(tier.width) {
-			if tier.maxPerPass > 0 && backfilled >= tier.maxPerPass {
-				break
+		for b := start; b.Before(ownedTo) && !capped(); b = b.Add(tier.width) {
+			keepGoing, ok, wrote := runBounded(b)
+			if wrote {
+				backfilled++
 			}
-			keepGoing, ok := runBounded(b)
-			backfilled++
 			if ok && contiguous {
 				newFilled = b
 			}
@@ -673,7 +757,7 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, floor
 	if watermark == 0 || (firstErr == nil && dirtyComplete) {
 		d.setSummaryWatermark(tier.interval, ceiling)
 	}
-	return written, tierBounds{valid: !yieldUncertain, clean: firstErr == nil, ownedFrom: ownedFrom, ownedTo: ownedTo,
+	return written, tierBounds{valid: !yieldUncertain && !floorUncertain, clean: firstErr == nil, ownedFrom: ownedFrom, ownedTo: ownedTo,
 		caughtUp: caughtUp, backfilled: backfilledN}, firstErr
 }
 
@@ -718,13 +802,17 @@ func (d *Database) dirtyBuckets(tier flowSummaryTier, watermark int64) ([]time.T
 // below the cut in the first pass are gone, so a second pass could not restore
 // them. Recomputing from the source rows yields the same answer for the same
 // input, whatever ran before.
-func (d *Database) summariseBucket(tier flowSummaryTier, bucket time.Time) error {
+//
+// wrote is false when the bucket had nothing to do — no source rows and no
+// stale summary rows — so the backfill walks can leave such buckets out of
+// their per-pass cap.
+func (d *Database) summariseBucket(tier flowSummaryTier, bucket time.Time) (wrote bool, err error) {
 	// Test seam. A permanently-failing bucket is the case that used to leave a
 	// silent hole in history, and there is no other way to provoke one
 	// deterministically. Nil in production.
 	if flowSummaryBucketHook != nil {
 		if err := flowSummaryBucketHook(tier.interval, bucket); err != nil {
-			return err
+			return false, err
 		}
 	}
 	end := bucket.Add(tier.width)
@@ -741,21 +829,21 @@ func (d *Database) summariseBucket(tier flowSummaryTier, bucket time.Time) error
 	if err := d.db.Session(&gorm.Session{}).Model(&models.FlowRollup{}).
 		Where("interval_type IN ? AND timestamp >= ? AND timestamp < ?", tier.sumSources, bucket, end).
 		Select("id").Limit(1).Find(&srcProbe).Error; err != nil {
-		return fmt.Errorf("probe bucket: %w", err)
+		return false, fmt.Errorf("probe bucket: %w", err)
 	}
 	if len(srcProbe) == 0 {
 		var sumProbe []uint
 		if err := d.db.Session(&gorm.Session{}).Model(&models.FlowSummary{}).
 			Where("interval_type = ? AND timestamp = ?", tier.interval, bucket).
 			Select("id").Limit(1).Find(&sumProbe).Error; err != nil {
-			return fmt.Errorf("probe summary bucket: %w", err)
+			return false, fmt.Errorf("probe summary bucket: %w", err)
 		}
 		if len(sumProbe) == 0 {
-			return nil
+			return false, nil
 		}
 	}
 
-	return d.db.Transaction(func(tx *gorm.DB) error {
+	err = d.db.Transaction(func(tx *gorm.DB) error {
 		src := func() *gorm.DB {
 			return tx.Model(&models.FlowRollup{}).
 				Where("interval_type IN ? AND timestamp >= ? AND timestamp < ?", tier.sumSources, bucket, end)
@@ -809,6 +897,7 @@ func (d *Database) summariseBucket(tier flowSummaryTier, bucket time.Time) error
 		}
 		return nil
 	})
+	return err == nil, err
 }
 
 // writeSummaryCube materialises the low-cardinality cross product.

@@ -838,10 +838,11 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		// were broken or disabled.
 		{&models.FlowRollup{}, "flow_rollups", flowRollupRetentionFloor(ret.Days(ret.FlowRollupDays))},
 		// v66: the flow summary ladder. Pruned on its own SystemSetting rather
-		// than a RETENTION_* env var (see FlowSummaryRetentionKey). All three
-		// tables share the window — they are written together per bucket, so
-		// keeping one longer than the others would leave a window that reports
-		// totals with no top-talkers, or vice versa.
+		// than a RETENTION_* env var (see FlowSummaryRetentionKey); 0 keeps
+		// forever and is skipped by the loop below. All three tables share the
+		// window — they are written together per bucket, so keeping one longer
+		// than the others would leave a window that reports totals with no
+		// top-talkers, or vice versa.
 		{&models.FlowSummary{}, "flow_summaries", d.FlowSummaryRetentionDays()},
 		{&models.FlowSummaryTop{}, "flow_summary_tops", d.FlowSummaryRetentionDays()},
 		{&models.FlowSummaryBucket{}, "flow_summary_buckets", d.FlowSummaryRetentionDays()},
@@ -873,6 +874,14 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	}
 
 	for _, e := range entries {
+		// 0 means KEEP FOREVER, exactly as it does for the syslog windows below.
+		// Only the flow summary tables can carry it (every other entry resolves
+		// through ret.Days / statusFallback, which are always positive); without
+		// this guard a cutoff of "now" deleted the whole summary every night and
+		// the summariser spent the next ~15 h rebuilding it.
+		if e.days <= 0 {
+			continue
+		}
 		cutoff := time.Now().AddDate(0, 0, -e.days)
 		// AUDIT-028: if the table is RANGE-partitioned, drop whole old
 		// partitions first (instant, reclaims space); a no-op for plain tables.

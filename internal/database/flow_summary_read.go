@@ -1,6 +1,10 @@
 package database
 
 import (
+	"time"
+
+	"firewall-mon/internal/models"
+
 	"gorm.io/gorm"
 )
 
@@ -106,9 +110,89 @@ func (d *Database) summaryBackfillComplete() bool {
 			continue // this tier has no source data, so nothing to backfill
 		}
 		lastOwned := tier.bucketOf(newest)
+		// A tier whose source rows all fall below the summary's retention
+		// window owns nothing (see summaryRetentionFloor) and so never builds a
+		// marker; it has nothing to backfill either.
+		if retained, ok := d.summaryRetentionFloor(tier, time.Now()); ok && retained.After(lastOwned) {
+			continue
+		}
 		filled := d.summaryFillMarker(tier.interval)
 		if filled.IsZero() || filled.Before(lastOwned) {
 			return false
+		}
+	}
+	return true
+}
+
+// summaryCoversCutoff reports whether the summary holds every bucket a window
+// starting at cutoff reads, which summaryBackfillComplete alone does not say.
+//
+// The fill markers prove the summary is contiguous from its oldest bucket UP to
+// the tiers' newest; they say nothing about where it starts. That start moves:
+// the summariser owns nothing below FlowSummaryRetentionKey and cleanup prunes
+// to it, so with a 30-day window on the summary a 90-day request would have read
+// 30 days of history under a 90-day label — silently, since nothing else would
+// hint at it. A window the summary does not reach falls back to the live
+// rollup path, which is slow but right.
+//
+// The oldest bucket is taken per tier (an equality probe stops at the first
+// index tuple; an IN list does not — see tierTimeBounds) and compared at the
+// width of the tier that holds it: summary rows are stamped at bucket START and
+// readers use `timestamp > cutoff`, so the first bucket a window reads is the
+// one AFTER the bucket the cutoff falls in. Coverage is exact at that boundary:
+// a 30-day window on a 30-day retention is served (the straddling bucket is
+// outside the window on both paths), a 31-day one is not.
+//
+// A summary that starts AFTER the window does still covers it when it starts
+// where the data starts — a young installation, or a window wider than the
+// rollups' own history. Only then are the rollup tiers probed, so a window the
+// first test answers costs nothing more than the two MIN probes.
+//
+// The summary's oldest bucket is also the resume point of a tier walking a
+// span it has newly acquired (summariseTier), which walks NEWEST first — so
+// while a tier is still filling such a span, windows reaching into it fall back
+// rather than read the half-built part.
+func (d *Database) summaryCoversCutoff(cutoff time.Time) bool {
+	var oldest time.Time
+	var width time.Duration
+	var bucketOf func(time.Time) time.Time
+	for _, tier := range flowSummaryTiers {
+		t, ok, err := aggregateTimestamp(
+			d.db.Session(&gorm.Session{}).Model(&models.FlowSummary{}).
+				Where("interval_type = ?", tier.interval),
+			"MIN(timestamp)")
+		if err != nil {
+			return false
+		}
+		if !ok {
+			continue
+		}
+		if b := tier.bucketOf(t); bucketOf == nil || b.Before(oldest) {
+			oldest, width, bucketOf = b, tier.width, tier.bucketOf
+		}
+	}
+	if bucketOf == nil {
+		return false
+	}
+	if !oldest.After(bucketOf(cutoff).Add(width)) {
+		return true
+	}
+	seen := map[string]bool{}
+	for _, tier := range flowSummaryTiers {
+		for _, iv := range tier.rangeSources {
+			if seen[iv] {
+				continue
+			}
+			seen[iv] = true
+			t, ok, err := aggregateTimestamp(
+				d.db.Session(&gorm.Session{}).Model(&models.FlowRollup{}).Where("interval_type = ?", iv),
+				"MIN(timestamp)")
+			if err != nil {
+				return false
+			}
+			if ok && bucketOf(t).Before(oldest) {
+				return false
+			}
 		}
 	}
 	return true

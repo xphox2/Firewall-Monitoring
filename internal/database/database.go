@@ -502,7 +502,10 @@ func (d *Database) TryAcquirePollerWorkLock() (release func(), acquired bool) {
 // flow_rollups and writes only the summary tables, and because it RECOMPUTES a
 // bucket rather than merging, a rollup cycle mutating flow_rollups underneath it
 // is harmless: promotion INSERTS before deleting, so the new ids redirty the
-// affected buckets.
+// affected buckets. The one thing a pass must not do is decide tier ownership
+// from a probe taken before the ladder committed and act on it after — see
+// dailyFloor in flow_summary.go, which is derived inside the hourly pass for
+// exactly that reason.
 //
 // One gap that argument does NOT cover: retention cleanup DELETES flow_rollups
 // rows, and a delete leaves no new id, so a bucket summarised mid-delete at the
