@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -195,7 +196,15 @@ func (d *Database) batchedDeleteOlderThanWhere(model interface{}, table string, 
 //
 //   - 57014 halves the batch (floor batchDeleteFloor) and retries; 55P03 sleeps
 //     and retries the same batch. Either way the pass makes progress instead of
-//     abandoning the table until tomorrow.
+//     abandoning the table until tomorrow. A halved batch grows back — doubled
+//     after batchDeleteGrowAfter consecutive full batches, never past the
+//     configured size — so one slow stretch of the heap does not pin the rest
+//     of the table's pass at the floor. ONE grow-back per pass: where the full
+//     size times out consistently and the halved one does not, growing back
+//     after every run of successes would burn the 120 s statement_timeout
+//     plus a rollback every few batches — hours added to a pass under the
+//     maintenance lock — so after a grow-back the pass stays at whatever
+//     size the next timeout leaves it.
 //
 // LOCK-HOLD NOTE, because a pass that finishes instead of bailing costs something.
 // runRetentionCleanup holds maintenanceLockKey (cmd/poller) for the whole pass,
@@ -220,6 +229,8 @@ func (d *Database) batchedDeleteOlderThanWhere(model interface{}, table string, 
 func (d *Database) batchedDeleteOlderThanOn(model interface{}, timeColumn, orderBy string, cutoff time.Time, extraWhere string, args ...interface{}) error {
 	batchSize := cleanupDeleteBatchSize
 	lockRetries := 0
+	fullBatches := 0 // consecutive full batches since the last halving
+	grewBack := false
 	for {
 		var affected int64
 		err := d.db.Transaction(func(tx *gorm.DB) error {
@@ -260,6 +271,7 @@ func (d *Database) batchedDeleteOlderThanOn(model interface{}, timeColumn, order
 					}
 					log.Printf("cleanup: batch of %d hit statement_timeout; retrying with %d", batchSize, next)
 					batchSize = next
+					fullBatches = 0
 					continue
 				}
 			case lockRetryable(err): // see lockRetryable
@@ -278,6 +290,16 @@ func (d *Database) batchedDeleteOlderThanOn(model interface{}, timeColumn, order
 		if affected < int64(batchSize) {
 			return nil // last (partial) batch — nothing more to delete
 		}
+		if batchSize < cleanupDeleteBatchSize && !grewBack {
+			fullBatches++
+			if fullBatches >= batchDeleteGrowAfter {
+				next := min(batchSize*2, cleanupDeleteBatchSize)
+				log.Printf("cleanup: %d batches of %d succeeded; growing back to %d (once per pass)", fullBatches, batchSize, next)
+				batchSize = next
+				fullBatches = 0
+				grewBack = true
+			}
+		}
 		time.Sleep(batchDeleteInterSleep)
 	}
 }
@@ -290,6 +312,11 @@ var (
 	// batchDeleteFloor is the smallest batch the 57014 (statement timeout)
 	// halving retry will go to before giving up.
 	batchDeleteFloor = 500
+	// batchDeleteGrowAfter is how many consecutive full batches a halved
+	// retention batch must complete before it is doubled again (capped at
+	// cleanupDeleteBatchSize; once per pass). Without it one timeout pinned
+	// the rest of the table's pass at the halved size.
+	batchDeleteGrowAfter = 4
 	// batchDeleteLockRetries bounds the 55P03 (lock timeout) retries of ONE batch,
 	// e.g. when the poller's partition DROP is queued ahead of the delete.
 	batchDeleteLockRetries = 10
@@ -838,10 +865,11 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		// were broken or disabled.
 		{&models.FlowRollup{}, "flow_rollups", flowRollupRetentionFloor(ret.Days(ret.FlowRollupDays))},
 		// v66: the flow summary ladder. Pruned on its own SystemSetting rather
-		// than a RETENTION_* env var (see FlowSummaryRetentionKey). All three
-		// tables share the window — they are written together per bucket, so
-		// keeping one longer than the others would leave a window that reports
-		// totals with no top-talkers, or vice versa.
+		// than a RETENTION_* env var (see FlowSummaryRetentionKey); 0 keeps
+		// forever and is skipped by the loop below. All three tables share the
+		// window — they are written together per bucket, so keeping one longer
+		// than the others would leave a window that reports totals with no
+		// top-talkers, or vice versa.
 		{&models.FlowSummary{}, "flow_summaries", d.FlowSummaryRetentionDays()},
 		{&models.FlowSummaryTop{}, "flow_summary_tops", d.FlowSummaryRetentionDays()},
 		{&models.FlowSummaryBucket{}, "flow_summary_buckets", d.FlowSummaryRetentionDays()},
@@ -872,7 +900,21 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		{&models.DeniedEvent{}, "denied_events", denyDays},
 	}
 
+	// One table's failure must not skip the tables after it: a permanently
+	// failing early table (system_status timing out at the batch floor, say)
+	// used to abandon syslog_messages, alerts and incidents for the day — and
+	// for every day it kept failing. Errors are collected per table and joined
+	// at the end; the caller's lock and timeout handling is unchanged.
+	var errs []error
 	for _, e := range entries {
+		// 0 means KEEP FOREVER, exactly as it does for the syslog windows below.
+		// Only the flow summary tables can carry it (every other entry resolves
+		// through ret.Days / statusFallback, which are always positive); without
+		// this guard a cutoff of "now" deleted the whole summary every night and
+		// the summariser spent the next ~15 h rebuilding it.
+		if e.days <= 0 {
+			continue
+		}
 		cutoff := time.Now().AddDate(0, 0, -e.days)
 		// AUDIT-028: if the table is RANGE-partitioned, drop whole old
 		// partitions first (instant, reclaims space); a no-op for plain tables.
@@ -885,7 +927,7 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		}
 		where, args := andFloor("", nil, floor)
 		if err := d.batchedDeleteOlderThanWhere(e.model, e.name, cutoff, where, args...); err != nil {
-			return fmt.Errorf("failed to cleanup %s: %w", e.name, err)
+			errs = append(errs, fmt.Errorf("failed to cleanup %s: %w", e.name, err))
 		}
 	}
 
@@ -898,11 +940,11 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	// was wrong because windows accumulate. Neither table is partitioned.
 	detCutoff := time.Now().AddDate(0, 0, -ret.Days(ret.FlowDetectionDays))
 	if err := d.batchedDeleteOlderThanOn(&models.FlowDetection{}, "detected_at", cleanupOrderBy("flow_detections", "detected_at"), detCutoff, ""); err != nil {
-		return fmt.Errorf("failed to cleanup flow_detections: %w", err)
+		errs = append(errs, fmt.Errorf("failed to cleanup flow_detections: %w", err))
 	}
 	dropsCutoff := time.Now().AddDate(0, 0, -ret.Days(ret.AgentDropsDays))
 	if err := d.batchedDeleteOlderThanOn(&models.AgentDrops{}, "window_start", cleanupOrderBy("flow_agent_drops", "window_start"), dropsCutoff, ""); err != nil {
-		return fmt.Errorf("failed to cleanup flow_agent_drops: %w", err)
+		errs = append(errs, fmt.Errorf("failed to cleanup flow_agent_drops: %w", err))
 	}
 
 	// Relay schema v4 (server→collector command channel): TERMINAL
@@ -914,14 +956,14 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	cmdCutoff := time.Now().AddDate(0, 0, -30)
 	if err := d.batchedDeleteOlderThanOn(&models.ProbeCommand{}, "updated_at", cleanupOrderBy("probe_commands", "updated_at"), cmdCutoff,
 		"status IN ('succeeded','failed','expired')"); err != nil {
-		return fmt.Errorf("failed to cleanup probe_commands: %w", err)
+		errs = append(errs, fmt.Errorf("failed to cleanup probe_commands: %w", err))
 	}
 	// v0.11.243: TERMINAL device purge jobs (done/failed/cancelled) are the
 	// same kind of audit trail — 30 days on updated_at (the terminal-transition
 	// time). Live rows (pending/running/cancelling) are never touched here.
 	if err := d.batchedDeleteOlderThanOn(&models.DevicePurgeJob{}, "updated_at", cleanupOrderBy("device_purge_jobs", "updated_at"), cmdCutoff,
 		"status IN (?)", []string{DevicePurgeStatusDone, DevicePurgeStatusFailed, DevicePurgeStatusCancelled}); err != nil {
-		return fmt.Errorf("failed to cleanup device_purge_jobs: %w", err)
+		errs = append(errs, fmt.Errorf("failed to cleanup device_purge_jobs: %w", err))
 	}
 
 	// Syslog: one retention window PER SEVERITY.
@@ -956,8 +998,8 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		where, args := andFloor("severity IN ?", []interface{}{severities}, syslogFloor)
 		if err := d.batchedDeleteOlderThanWhere(&models.SyslogMessage{}, "syslog_messages", cutoff,
 			where, args...); err != nil {
-			return fmt.Errorf("failed to cleanup syslog_message (severities %v, %dd): %w",
-				severities, days, err)
+			errs = append(errs, fmt.Errorf("failed to cleanup syslog_message (severities %v, %dd): %w",
+				severities, days, err))
 		}
 	}
 
@@ -983,7 +1025,7 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 			where, args := andFloor("severity = ?", []interface{}{sev}, summaryFloor)
 			if err := d.batchedDeleteOlderThanWhere(&models.SyslogSummary{}, "syslog_summaries", summaryCutoff,
 				where, args...); err != nil {
-				return fmt.Errorf("failed to cleanup syslog_summary (severity %d): %w", sev, err)
+				errs = append(errs, fmt.Errorf("failed to cleanup syslog_summary (severity %d): %w", sev, err))
 			}
 		}
 	}
@@ -1020,7 +1062,7 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	// 10k-row batched loop (lock_timeout=5s + inter-batch sleep) every other
 	// time-series table uses.
 	if err := d.batchedDeleteOlderThanWhere(&models.Alert{}, "alerts", alertCutoff, "acknowledged = ?", true); err != nil {
-		return fmt.Errorf("failed to cleanup acked alerts: %w", err)
+		errs = append(errs, fmt.Errorf("failed to cleanup acked alerts: %w", err))
 	}
 	unackCutoff := time.Now().AddDate(0, 0, -ret.Days(ret.UnackAlertDays))
 	if unackCutoff.After(alertCutoff) {
@@ -1038,13 +1080,15 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	// but bound it — log a count plus a small sample — then delete in batches.
 	var staleCount int64
 	if err := d.db.Model(&models.Alert{}).Where("acknowledged = false AND timestamp < ?", unackCutoff).Count(&staleCount).Error; err != nil {
-		return fmt.Errorf("failed to count stale unack alerts: %w", err)
+		errs = append(errs, fmt.Errorf("failed to count stale unack alerts: %w", err))
+		staleCount = 0 // the delete below is skipped, as before
 	}
 	if staleCount > 0 {
 		var sample []models.Alert
 		if err := d.db.Where("acknowledged = false AND timestamp < ?", unackCutoff).
 			Order("timestamp ASC").Limit(20).Find(&sample).Error; err != nil {
-			return fmt.Errorf("failed to sample stale unack alerts: %w", err)
+			errs = append(errs, fmt.Errorf("failed to sample stale unack alerts: %w", err))
+			sample = nil // the trace is lost; the delete still runs
 		}
 		for _, a := range sample {
 			log.Printf("WARNING: AUDIT-031 auto-archiving stale unacked alert ID=%d device_id=%d severity=%s message=%q timestamp=%s (older than %d days; an operator should have acked this)",
@@ -1055,7 +1099,7 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 				staleCount-int64(len(sample)), ret.Days(ret.UnackAlertDays), len(sample))
 		}
 		if err := d.batchedDeleteOlderThanWhere(&models.Alert{}, "alerts", unackCutoff, "acknowledged = ?", false); err != nil {
-			return fmt.Errorf("failed to cleanup stale unack alerts: %w", err)
+			errs = append(errs, fmt.Errorf("failed to cleanup stale unack alerts: %w", err))
 		}
 	}
 
@@ -1070,7 +1114,7 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	incidentCutoff := time.Now().AddDate(0, 0, -ret.Days(ret.IncidentDays))
 	if err := d.db.Where("resolved_at IS NOT NULL AND resolved_at < ?", incidentCutoff).
 		Delete(&models.Incident{}).Error; err != nil {
-		return fmt.Errorf("failed to cleanup resolved incidents: %w", err)
+		errs = append(errs, fmt.Errorf("failed to cleanup resolved incidents: %w", err))
 	}
 
 	// v0.11.93: expired TEMPORARY event rules. A "suppress this source for 24h"
@@ -1081,7 +1125,7 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		log.Printf("cleanup: prune expired event rules warning: %v", err)
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 // auditDeviceVendors backfills empty vendor → "fortigate" (the in-code default)

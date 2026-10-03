@@ -400,7 +400,7 @@ func (d *Database) recomputeTier(tier flowSummaryTier, b tierBounds, deadline ti
 			err = flowSummaryRecomputeHook(tier.interval, bucket)
 		}
 		if err == nil {
-			err = d.summariseBucket(tier, bucket)
+			_, err = d.summariseBucket(tier, bucket)
 		}
 		if err != nil {
 			log.Printf("Flow summary: recomputing %s bucket %s failed; it will be retried: %v",

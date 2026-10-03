@@ -103,12 +103,24 @@ func TestTopServices_ServiceBoundary(t *testing.T) {
 	}{{"summary", 1}, {"rollups", 1 << 30}} {
 		flowSummaryMinHours = path.minHours
 
+		// The unique-address tiles are partial by design on the summary path
+		// (they show the raw window only); they are not what this test is about.
+		partial := func(res *FlowStatsResult) []string {
+			var out []string
+			for _, b := range res.PartialBlocks {
+				if b != "unique_src_addr" && b != "unique_dst_addr" {
+					out = append(out, b)
+				}
+			}
+			return out
+		}
+
 		setSince(time.Time{})
 		res, err := d.GetFlowStats(24, FlowStatsFilter{})
 		if err != nil {
 			t.Fatalf("%s: %v", path.name, err)
 		}
-		if len(res.PartialBlocks) != 0 || len(res.TopServices) == 0 {
+		if len(partial(res)) != 0 || len(res.TopServices) == 0 {
 			t.Errorf("%s without a boundary: partial=%v services=%v, want complete and non-empty",
 				path.name, res.PartialBlocks, res.TopServices)
 		}
@@ -123,7 +135,7 @@ func TestTopServices_ServiceBoundary(t *testing.T) {
 		}
 		notDegraded(res)
 		want := "since " + since.Local().Format("2006-01-02") + " only"
-		if len(res.PartialBlocks) != 1 || res.PartialBlocks[0] != "top_services" || res.PartialReasons["top_services"] != want {
+		if p := partial(res); len(p) != 1 || p[0] != "top_services" || res.PartialReasons["top_services"] != want {
 			t.Errorf("%s: PartialBlocks=%v reasons=%v, want top_services %q", path.name, res.PartialBlocks, res.PartialReasons, want)
 		}
 		if len(res.TopServices) == 0 {
@@ -136,7 +148,7 @@ func TestTopServices_ServiceBoundary(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", path.name, err)
 		}
-		if len(res.PartialBlocks) != 0 || len(res.TopServices) == 0 {
+		if len(partial(res)) != 0 || len(res.TopServices) == 0 {
 			t.Errorf("%s with the boundary before the window: partial=%v services=%v, want complete",
 				path.name, res.PartialBlocks, res.TopServices)
 		}
