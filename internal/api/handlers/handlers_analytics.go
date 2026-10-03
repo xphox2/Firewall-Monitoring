@@ -456,6 +456,16 @@ func (h *Handler) GetSyslogMessages(c *gin.Context) {
 	// ten thousand rows nobody pages to the end anyway — the capped form
 	// measured 2.2 ms. It must be a real subquery: GORM's Count on a query that
 	// carries a Limit still counts every row.
+	//
+	// Deliberately NO ORDER BY inside the subquery (unlike the list query):
+	// only the number of rows matters, not which ones, and EXPLAIN on the
+	// production table shows an order making every shape strictly worse — a
+	// severity filter over 30 days goes from an Index Only Scan on the
+	// (severity, timestamp) index to the same scan plus a Sort (1.7x the
+	// cost), and a rare LIKE search from a Parallel Seq Scan that stops at the
+	// 10,001st match to a full scan of the window plus Sort and Gather Merge
+	// (1.3x, and it must read the whole window). An unordered LIMIT can stop
+	// at the first rows it finds; an ordered one cannot.
 	var total int64
 	capped := applyFilters(db.Gorm().Model(&models.SyslogMessage{})).Select("1").Limit(syslogPagerCountCap + 1)
 	if err := db.Gorm().Table("(?) AS t", capped).Count(&total).Error; err != nil {

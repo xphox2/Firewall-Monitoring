@@ -49,17 +49,31 @@ func TestNOCHub_FeedIsSeparateAndSentOnChange(t *testing.T) {
 	if !bytes.Contains(latest, []byte("event: feed\n")) || !bytes.HasPrefix(latest, []byte("data: ")) {
 		t.Fatalf("new subscriber replay must be the snapshot then the feed; got %.120q", latest)
 	}
-	first := drain(ch)
-	if len(first) != 2 || feedFrames(first) != 1 {
-		t.Fatalf("first broadcast: %d frames (%d feed), want snapshot + feed", len(first), feedFrames(first))
+	// The first subscriber's fresh compute arrives in `latest` only: the
+	// channel is registered after it, so the first paint is not sent twice.
+	if first := drain(ch); len(first) != 0 {
+		t.Fatalf("first subscriber: %d frame(s) on the channel besides the replay; the inline compute must not be delivered twice", len(first))
 	}
-	if !bytes.HasPrefix(first[0], []byte("data: ")) || bytes.Contains(first[0], []byte(`"feed"`)) {
-		t.Errorf("snapshot frame must be an unnamed event without the feed: %.200q", first[0])
+	if bytes.Contains(latest[:bytes.Index(latest, []byte("\n\n"))], []byte(`"feed"`)) {
+		t.Errorf("snapshot frame must be an unnamed event without the feed: %.200q", latest)
 	}
+
+	// A second subscriber while one is watching: registered at once, replayed
+	// from `latest`, and gets the next tick on its channel.
+	ch2, latest2 := hub.subscribe()
+	if !bytes.Equal(latest2, latest) || len(drain(ch2)) != 0 {
+		t.Fatalf("second subscriber: replay differs or the channel already carries frames")
+	}
+	hub.computeAndBroadcast()
+	if frames := drain(ch2); len(frames) != 1 || feedFrames(frames) != 0 {
+		t.Fatalf("second subscriber on the next tick: %d frames (%d feed), want the snapshot", len(frames), feedFrames(frames))
+	}
+	hub.unsubscribe(ch2)
+	drain(ch) // the tick above (tick 2) on the first channel
 
 	// Unchanged data: the snapshot goes out every tick, the feed does not —
 	// until the periodic refresh.
-	for tick := 2; tick <= nocFeedRefreshTicks; tick++ {
+	for tick := 3; tick <= nocFeedRefreshTicks; tick++ {
 		hub.computeAndBroadcast()
 		frames := drain(ch)
 		wantFeed := 0

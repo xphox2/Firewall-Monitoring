@@ -174,17 +174,26 @@ func sseFrame(event string, data []byte) []byte {
 // for an immediate first paint.
 // The 0→1 subscriber transition computes a fresh snapshot inline (M11): the
 // hub idles while nobody watches, so whatever `latest` holds may be minutes or
-// hours stale.
+// hours stale. The channel is registered only after that compute: registered
+// before it, the first subscriber received the fresh snapshot and feed on the
+// channel AND in `latest`, and painted them twice.
 func (h *nocHub) subscribe() (chan []byte, []byte) {
 	ch := make(chan []byte, 8) // a tick can carry two frames (snapshot + feed)
 	h.mu.Lock()
 	wasIdle := len(h.subs) == 0
-	h.subs[ch] = struct{}{}
+	if !wasIdle {
+		h.subs[ch] = struct{}{}
+	}
 	h.mu.Unlock()
 	if wasIdle {
-		h.computeAndBroadcast() // fresh first paint; delivered via ch and latest
+		// Two first subscribers arriving together both compute: one spare
+		// computation, no duplicate frames — acceptable.
+		h.computeAndBroadcast() // fresh first paint; delivered via latest
 	}
 	h.mu.Lock()
+	if wasIdle {
+		h.subs[ch] = struct{}{}
+	}
 	var latest []byte
 	if h.latestSnapshot != nil {
 		latest = append(append(latest, h.latestSnapshot...), h.latestFeed...)

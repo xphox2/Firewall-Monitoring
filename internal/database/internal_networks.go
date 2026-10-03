@@ -122,12 +122,20 @@ func parseTargetRev(raw string) uint16 {
 	return uint16(v)
 }
 
+// autoInternalPublicMinBits is the shortest connected subnet LoadInternalNetworks
+// derives from an interface whose address is public (netclass.IsPublicIP):
+// /24 and longer. A WAN interface carries the provider's whole access network
+// as its connected subnet, and that is not the operator's own.
+const autoInternalPublicMinBits = 24
+
 // LoadInternalNetworks returns the effective list of the operator's own
 // networks: the manual list, plus — unless FlowInternalAutoKey is off — every
 // address of every active device from its latest interface snapshot (as a host
 // prefix), that address's connected subnet when netclass.SubnetCIDR accepts it
-// (it rejects /30–/32, which are provider links), and each device's management
-// address. Private ranges are always internal and are not listed.
+// (it rejects /30–/32, which are provider links; a PUBLIC address's subnet is
+// also skipped when shorter than /24, see autoInternalPublicMinBits), and each
+// device's management address. Private ranges are always internal and are not
+// listed.
 //
 // interface_addresses comes from SNMP ipAddrTable, which is IPv4 only, so IPv6
 // networks must be listed by hand.
@@ -186,7 +194,13 @@ func (d *Database) LoadInternalNetworks() ([]InternalNetwork, error) {
 			if cidr, ok := netclass.SubnetCIDR(a.IPAddress, a.NetMask); ok {
 				// A 0.0.0.0 or non-canonical netmask comes back as a /0; a
 				// device must never make the whole internet "internal".
-				if p, err := netip.ParsePrefix(cidr); err == nil && p.Bits() > 0 {
+				// A public address's connected subnet is derived only up to
+				// a /24: the operator's own public /28 on the LAN side is
+				// internal, but a WAN port on an ISP's /22 would otherwise
+				// make a thousand of the provider's other customers
+				// "internal". A larger public range goes in the manual list.
+				if p, err := netip.ParsePrefix(cidr); err == nil && p.Bits() > 0 &&
+					(p.Bits() >= autoInternalPublicMinBits || !netclass.IsPublicIP(a.IPAddress)) {
 					add(p, "subnet", name)
 				}
 			}
