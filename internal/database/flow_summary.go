@@ -685,16 +685,29 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time) (int,
 					Where("interval_type = ?", tier.interval),
 				"MIN(timestamp)"); err == nil && ok && ownedFrom.Before(tier.bucketOf(oldestBuilt)) {
 				acquiredTo := tier.bucketOf(oldestBuilt)
-				log.Printf("Flow summary: %s tier acquired buckets below %s; backfilling them",
-					tier.interval, acquiredTo.Format(time.RFC3339))
-				for b := acquiredTo.Add(-tier.width); !b.Before(ownedFrom) && !capped(); b = b.Add(-tier.width) {
+				spanWrote, spanDone := 0, true
+				for b := acquiredTo.Add(-tier.width); !b.Before(ownedFrom); b = b.Add(-tier.width) {
+					if capped() {
+						spanDone = false
+						break
+					}
 					keepGoing, ok, wrote := runBounded(b)
 					if wrote {
 						backfilled++
+						spanWrote++
 					}
 					if !keepGoing || !ok {
+						spanDone = false
 						break
 					}
+				}
+				// Silent when the span held nothing: a tier anchored at a day
+				// with no rows (an outage between the bands) re-probes that
+				// span every pass, and a log line each time would say nothing.
+				if spanWrote > 0 || !spanDone {
+					log.Printf("Flow summary: %s tier acquired buckets below %s; backfilled %d (%s)",
+						tier.interval, acquiredTo.Format(time.RFC3339), spanWrote,
+						map[bool]string{true: "span complete", false: "resumes next cycle"}[spanDone])
 				}
 			}
 		}
