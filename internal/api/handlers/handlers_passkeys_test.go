@@ -1144,11 +1144,23 @@ func TestPasskey_WrongOriginRPIDTypeRejected(t *testing.T) {
 type staleRowsStore struct {
 	database.Store
 	rows []models.WebAuthnCredential
+	// staleCred, when set, is what the FIRST GetPasskeyByCredentialID (the
+	// login lookup) returns; later calls (the post-write re-check) are live.
+	staleCred   *models.WebAuthnCredential
+	credLookups int
 }
 
 func (s *staleRowsStore) WithContextStore(context.Context) database.Store { return s }
 func (s *staleRowsStore) ListPasskeys(uint) ([]models.WebAuthnCredential, error) {
 	return append([]models.WebAuthnCredential(nil), s.rows...), nil
+}
+func (s *staleRowsStore) GetPasskeyByCredentialID(id []byte) (*models.WebAuthnCredential, error) {
+	s.credLookups++
+	if s.staleCred != nil && s.credLookups == 1 {
+		cp := *s.staleCred
+		return &cp, nil
+	}
+	return s.Store.GetPasskeyByCredentialID(id)
 }
 
 // TestPasskey_StaleCounterRead_RefusedAtCommit: an assertion that passed the
@@ -1266,5 +1278,32 @@ func TestPasskey_ZeroCounterAuthenticatorLogsInRepeatedly(t *testing.T) {
 	}
 	if e.hasAudit("passkey_clone_warning") {
 		t.Fatalf("zero-counter authenticator flagged as a clone: %v", e.auditActions())
+	}
+}
+
+// TestPasskey_CredentialRemovedBeforeCommit: the counter write matches no
+// row because the credential was deleted after the login lookup read it —
+// refused and recorded, but NOT audited as a clone warning.
+func TestPasskey_CredentialRemovedBeforeCommit(t *testing.T) {
+	e := newPasskeyEnv(t, true)
+	alice, a, _ := e.registered("alice", auth.RoleOperator)
+	stale := e.passkeyRows(alice.ID)
+	st := &staleRowsStore{Store: e.db, rows: stale, staleCred: &stale[0]}
+	e.h.db = st
+	if ok, err := e.db.DeletePasskeyAndEndSessions(stale[0].ID, alice.ID); err != nil || !ok {
+		t.Fatalf("delete: ok=%v err=%v", ok, err)
+	}
+	// The login lookup still sees the row (stale snapshot), the assertion
+	// verifies, the counter write matches nothing, and the live re-check
+	// finds the credential gone.
+	assertGenericPasskeyFailure(t, e.passkeyLogin(a, a.userHandle))
+	if st.credLookups != 2 {
+		t.Fatalf("credential lookups = %d, want 2 (login lookup + post-write re-check)", st.credLookups)
+	}
+	if e.hasAudit("passkey_clone_warning") {
+		t.Fatalf("deleted credential audited as a clone: %v", e.auditActions())
+	}
+	if !e.hasAudit("passkey_login_failure") {
+		t.Fatalf("refusal not audited: %v", e.auditActions())
 	}
 }

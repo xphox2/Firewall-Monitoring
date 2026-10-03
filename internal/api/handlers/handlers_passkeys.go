@@ -378,7 +378,12 @@ func (h *Handler) PasskeyLoginFinish(c *gin.Context) {
 		// racing the original) already advanced it after the clone check above
 		// read the row. Same outcome as the library's clone warning — unless
 		// the row simply vanished (credential deleted mid-ceremony).
-		if cur, lerr := db.GetPasskeyByCredentialID(credential.ID); lerr == nil && cur == nil {
+		cur, lerr := db.GetPasskeyByCredentialID(credential.ID)
+		if lerr != nil {
+			fail(fmt.Sprintf("could not re-check credential after refused counter write: %v", lerr))
+			return
+		}
+		if cur == nil {
 			fail("credential removed during the ceremony")
 			return
 		}

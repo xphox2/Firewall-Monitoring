@@ -105,8 +105,13 @@ func TestPasskeyStore_ScopedAndLimits(t *testing.T) {
 // leaves the row untouched — while an authenticator that never counts (always
 // 0) is accepted every time.
 func TestPasskeyStore_RecordUseIsCompareAndSet(t *testing.T) {
-	d := NewDatabaseForTesting(t)
-	a := pkAdmin(t, d, "a")
+	testRecordUseCompareAndSet(t, NewDatabaseForTesting(t))
+}
+
+// testRecordUseCompareAndSet is shared with the Postgres suite.
+func testRecordUseCompareAndSet(t *testing.T, d *Database) {
+	t.Helper()
+	a := pkAdmin(t, d, "cas-a")
 	c := pkCred(t, d, a.ID, "counting")
 	z := pkCred(t, d, a.ID, "zero")
 
@@ -131,18 +136,19 @@ func TestPasskeyStore_RecordUseIsCompareAndSet(t *testing.T) {
 		count uint32
 		want  bool
 	}{
-		{5, true},  // 0 → 5
-		{5, false}, // replay of the committed value
-		{4, false}, // below it
-		{0, false}, // a counting authenticator never goes back to 0
-		{6, true},  // advances again
+		{5, true},       // 0 → 5
+		{5, false},      // replay of the committed value
+		{4, false},      // below it
+		{0, false},      // a counting authenticator never goes back to 0
+		{6, true},       // advances again
+		{1 << 31, true}, // full uint32 range: no int4 parameter on Postgres
 	} {
 		if got := use(c.ID, step.count); got != step.want {
 			t.Fatalf("counting authenticator: use(%d) = %v, want %v", step.count, got, step.want)
 		}
 	}
-	if sc, used := stored(c.ID); sc != 6 || used == nil {
-		t.Fatalf("counting authenticator stored = %d used=%v, want 6", sc, used)
+	if sc, used := stored(c.ID); sc != 1<<31 || used == nil {
+		t.Fatalf("counting authenticator stored = %d used=%v, want %d", sc, used, 1<<31)
 	}
 
 	for i := 0; i < 3; i++ {

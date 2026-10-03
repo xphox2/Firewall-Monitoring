@@ -158,13 +158,20 @@ func isUniqueViolation(err error) bool {
 // that as a clone warning.
 func (d *Database) RecordPasskeyUse(id, adminID uint, signCount uint32, backupState bool, usedAt time.Time) (bool, error) {
 	count := int64(signCount)
-	res := d.db.Model(&models.WebAuthnCredential{}).
-		Where("id = ? AND admin_id = ? AND (sign_count < ? OR (sign_count = 0 AND ? = 0))", id, adminID, count, count).
-		UpdateColumns(map[string]interface{}{
-			"sign_count":   count,
-			"backup_state": backupState,
-			"last_used_at": usedAt,
-		})
+	// "sign_count < ? OR (sign_count = 0 AND ? = 0)", with the second branch
+	// decided here: a bare "? = 0" parameter is untyped on Postgres (pgx
+	// would infer int4 and refuse an int64 counter above 2^31-1).
+	q := d.db.Model(&models.WebAuthnCredential{}).Where("id = ? AND admin_id = ?", id, adminID)
+	if count == 0 {
+		q = q.Where("sign_count = 0")
+	} else {
+		q = q.Where("sign_count < ?", count)
+	}
+	res := q.UpdateColumns(map[string]interface{}{
+		"sign_count":   count,
+		"backup_state": backupState,
+		"last_used_at": usedAt,
+	})
 	return res.RowsAffected == 1, res.Error
 }
 
