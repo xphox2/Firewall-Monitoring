@@ -755,8 +755,8 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time) (int,
 		// boundary day every cycle would have halved backfill throughput for no
 		// reason. Nor does an EMPTY bucket count: it costs one existence probe
 		// and writes nothing, and counting it meant a tier whose range crossed a
-		// quiet stretch — the daily tier starts at the floor's midnight, weeks
-		// of hours with no 1d row — crawled it two buckets a cycle.
+		// quiet stretch of days with no source rows crawled it two buckets a
+		// cycle on the daily tier (the only capped tier).
 		backfilled := 0
 		for b := start; b.Before(ownedTo); b = b.Add(tier.width) {
 			if tier.maxPerPass > 0 && backfilled >= tier.maxPerPass {

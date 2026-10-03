@@ -10,7 +10,7 @@ import (
 )
 
 // Regressions for the flow summary's retention and ownership handling
-// (v0.11.284). Each test here fails with its fix reverted:
+// (v0.11.286). Each test here fails with its fix reverted:
 //
 //   - TestCleanupOldData_FlowSummaryKeptForeverAtZero: the `days <= 0` guard in
 //     CleanupOldData's generic loop.
