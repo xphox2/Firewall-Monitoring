@@ -166,6 +166,11 @@ func TestSyslogStats_InFlightFlushCountedOnce(t *testing.T) {
 	if err := d.SaveSyslogMessages(ingestMsgs(5, 6, "x")); err != nil {
 		t.Fatal(err)
 	}
+	// The read waits for an in-flight flush to settle; this one is held, so
+	// the read must give up waiting and count the in-flight copy.
+	oldWait := meterHoursFlushWait
+	meterHoursFlushWait = 20 * time.Millisecond
+	defer func() { meterHoursFlushWait = oldWait }()
 	entered, release := make(chan struct{}), make(chan struct{})
 	d.ingest.beforeUpsert = func() { close(entered); <-release }
 	done := make(chan error)
@@ -225,5 +230,92 @@ func TestEventStatsResult_NewFieldsOmittedWhenUnset(t *testing.T) {
 		if strings.Contains(string(b), k) {
 			t.Fatalf("%s leaked into %s", k, b)
 		}
+	}
+}
+
+// A flush whose upsert has COMMITTED but which has not yet taken the lock to
+// settle the maps: its cells are in the table and still in pending. A reader
+// that snapshots memory before the flush starts, reads the table after the
+// commit and checks before the settle used to count them twice — the finish
+// generation had not moved. The start generation, bumped at the swap, makes
+// the reader wait for the flush and read again.
+func TestSyslogStats_CommittedUnsettledFlushNotDoubled(t *testing.T) {
+	d := meterTestDB(t)
+	if err := d.SaveSyslogMessages(ingestMsgs(5, 7, "x")); err != nil {
+		t.Fatal(err)
+	}
+	committed, release := make(chan struct{}), make(chan struct{})
+	d.ingest.afterUpsert = func() { close(committed); <-release }
+	flushErr := make(chan error, 1)
+	attempt := 0
+	d.ingest.afterSnapshot = func() {
+		attempt++
+		switch attempt {
+		case 1:
+			// The snapshot copied the live map. Now the flush swaps, upserts
+			// and commits — and stays unsettled while the table is read.
+			go func() { flushErr <- d.flushSyslogIngest(false) }()
+			<-committed
+		case 2:
+			// Let the flush settle before the re-read.
+			close(release)
+			if err := <-flushErr; err != nil {
+				t.Errorf("flush: %v", err)
+			}
+		}
+	}
+	r, err := d.GetSyslogStats(24, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Total != 7 {
+		t.Fatalf("total = %d, want 7 — the committed, unsettled flush was counted from the table AND from pending", r.Total)
+	}
+	if attempt < 2 {
+		t.Fatalf("%d read attempt(s); a flush that started during the read must force a re-read", attempt)
+	}
+}
+
+// A flush already in flight at the snapshot may commit during the table read
+// and settle only after the check: neither generation moves, yet its cells
+// are in the table and were copied from pending. The reader must wait for
+// the flush to settle and read again.
+func TestSyslogStats_FlushInFlightAtSnapshotIsWaitedFor(t *testing.T) {
+	d := meterTestDB(t)
+	if err := d.SaveSyslogMessages(ingestMsgs(4, 9, "x")); err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	committed, settle := make(chan struct{}), make(chan struct{})
+	d.ingest.beforeUpsert = func() { close(entered); <-release }
+	d.ingest.afterUpsert = func() { close(committed); <-settle }
+	flushErr := make(chan error, 1)
+	go func() { flushErr <- d.flushSyslogIngest(false) }()
+	<-entered // swapped: the cells are in pending, the upsert not yet run
+
+	attempt := 0
+	d.ingest.afterSnapshot = func() {
+		attempt++
+		if attempt == 1 {
+			// Snapshot taken with the flush in flight. It now commits, and
+			// settles a little later — after the reader's check unless the
+			// reader waits for it.
+			close(release)
+			<-committed
+			go func() {
+				time.Sleep(50 * time.Millisecond)
+				close(settle)
+			}()
+		}
+	}
+	r, err := d.GetSyslogStats(24, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-flushErr; err != nil {
+		t.Fatal(err)
+	}
+	if r.Total != 9 {
+		t.Fatalf("total = %d, want 9 — counted from the table AND from the in-flight copy", r.Total)
 	}
 }

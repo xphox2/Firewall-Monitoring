@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -24,6 +25,13 @@ var flowStreamSlots = make(chan struct{}, 2)
 // flowStreamKeepalive is how often the stream writes a comment line while no
 // event is due; well under the 60 s idle timeout of a default reverse proxy.
 var flowStreamKeepalive = 15 * time.Second
+
+// flowStreamMaxHours caps the streamed report's window at the Flows page's
+// largest preset (90 days). ParseHours accepts up to a year for the
+// synchronous endpoint's bounded queries; a streamed report has no time limit
+// and holds one of two slots, so a hand-crafted hours=8760 must not run four
+// times the longest report the page can ask for.
+const flowStreamMaxHours = 2160
 
 // GetFlowStatsStream is GET /flows/stats as a Server-Sent Events stream, so the
 // Flows page can show real progress and a long filtered report can finish
@@ -82,7 +90,17 @@ func (h *Handler) GetFlowStatsStream(c *gin.Context) {
 		fail("Database not available")
 		return
 	}
+	// The report runs on a context this handler cancels when a write fails:
+	// a client that has stopped reading (or gone away behind a proxy that has
+	// not yet closed the upstream side) then stops the report instead of
+	// holding a connection and a slot until it finishes on its own.
+	ctx, cancel := context.WithCancel(c.Request.Context())
+	defer cancel()
+	db = db.WithContextStore(ctx)
 	hours, filter := parseFlowStatsFilter(c)
+	if hours > flowStreamMaxHours {
+		hours = flowStreamMaxHours
+	}
 	if database.FlowStatsIsLong(hours, filter) {
 		select {
 		case flowStreamSlots <- struct{}{}:
@@ -124,6 +142,7 @@ func (h *Handler) GetFlowStatsStream(c *gin.Context) {
 				}
 				wmu.Unlock()
 				if err != nil {
+					cancel() // the client stopped reading: stop the report
 					return
 				}
 			}
@@ -136,12 +155,14 @@ func (h *Handler) GetFlowStatsStream(c *gin.Context) {
 		// Called on this goroutine only (GetFlowStatsOpts' contract), so it may
 		// write to the response.
 		Progress: func(p database.FlowStatsProgress) {
-			send("progress", gin.H{"done": p.Done, "total": p.Total, "label": p.Label,
-				"elapsed_ms": time.Since(start).Milliseconds()})
+			if !send("progress", gin.H{"done": p.Done, "total": p.Total, "label": p.Label,
+				"elapsed_ms": time.Since(start).Milliseconds()}) {
+				cancel() // the client stopped reading: stop the report
+			}
 		},
 	})
 	if err != nil {
-		if c.Request.Context().Err() == nil {
+		if ctx.Err() == nil {
 			log.Printf("Flow stats stream: %v", err)
 		}
 		fail("Failed to get flow stats")

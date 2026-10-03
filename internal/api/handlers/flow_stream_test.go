@@ -3,9 +3,11 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -167,5 +169,120 @@ func TestGetFlowStatsStream_KeepaliveDuringASilentStretch(t *testing.T) {
 	evs := parseSSE(body)
 	if len(evs) == 0 || evs[len(evs)-1].name != "result" {
 		t.Fatalf("the stream must still end with its result: %+v", evs)
+	}
+}
+
+// failingWriter is a recorder whose writes fail once `fail` is set — a client
+// that has stopped reading, as net/http reports it to the handler.
+type failingWriter struct {
+	*httptest.ResponseRecorder
+	fail atomic.Bool
+}
+
+func (w *failingWriter) Write(b []byte) (int, error) {
+	if w.fail.Load() {
+		return 0, errors.New("write: broken pipe")
+	}
+	return w.ResponseRecorder.Write(b)
+}
+
+// cancelAwareStore reports progress once and then waits for its context to
+// be cancelled, or for `patience` to pass.
+type cancelAwareStore struct {
+	database.Store
+	ctx       context.Context
+	patience  time.Duration
+	cancelled atomic.Bool
+}
+
+func (s *cancelAwareStore) WithContextStore(ctx context.Context) database.Store {
+	s.ctx = ctx
+	return s
+}
+func (s *cancelAwareStore) GetFlowStatsOpts(_ int, _ database.FlowStatsFilter, opts database.FlowStatsOptions) (*database.FlowStatsResult, error) {
+	opts.Progress(database.FlowStatsProgress{Done: 1, Total: 2, Label: "x"})
+	select {
+	case <-s.ctx.Done():
+		s.cancelled.Store(true)
+		return nil, s.ctx.Err()
+	case <-time.After(s.patience):
+		return &database.FlowStatsResult{TotalFlows: 1}, nil
+	}
+}
+func (s *cancelAwareStore) GetMixedFlowSourceDevices() []string { return nil }
+
+// A client that stops reading must stop the report: the first failed write
+// (a progress event here) cancels the context the report runs on, instead of
+// the report running to completion on a dead connection.
+func TestGetFlowStatsStream_FailedWriteCancelsTheReport(t *testing.T) {
+	h, _ := setupTestHandler(t)
+	store := &cancelAwareStore{patience: 3 * time.Second}
+	h.db = store
+
+	w := &failingWriter{ResponseRecorder: httptest.NewRecorder()}
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/x?hours=24", nil)
+	w.fail.Store(true) // every event write fails, headers already went out
+	start := time.Now()
+	h.GetFlowStatsStream(c)
+	if !store.cancelled.Load() {
+		t.Fatalf("the report's context was not cancelled after a failed write (handler took %s)", time.Since(start))
+	}
+}
+
+// The same through the keepalive: no event is due, the keepalive write fails,
+// the report is cancelled.
+func TestGetFlowStatsStream_FailedKeepaliveCancelsTheReport(t *testing.T) {
+	h, _ := setupTestHandler(t)
+	store := &cancelAwareStore{patience: 3 * time.Second}
+	h.db = store
+	old := flowStreamKeepalive
+	flowStreamKeepalive = 20 * time.Millisecond
+	defer func() { flowStreamKeepalive = old }()
+
+	w := &failingWriter{ResponseRecorder: httptest.NewRecorder()}
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/x?hours=24", nil)
+	go func() {
+		time.Sleep(50 * time.Millisecond) // after the progress event, before a keepalive
+		w.fail.Store(true)
+	}()
+	h.GetFlowStatsStream(c)
+	if !store.cancelled.Load() {
+		t.Fatal("the report's context was not cancelled after a failed keepalive write")
+	}
+}
+
+// hoursStore records the window the stream asked for.
+type hoursStore struct {
+	database.Store
+	hours int
+}
+
+func (s *hoursStore) WithContextStore(context.Context) database.Store { return s }
+func (s *hoursStore) GetFlowStatsOpts(hours int, _ database.FlowStatsFilter, _ database.FlowStatsOptions) (*database.FlowStatsResult, error) {
+	s.hours = hours
+	return &database.FlowStatsResult{}, nil
+}
+func (s *hoursStore) GetMixedFlowSourceDevices() []string { return nil }
+
+// The streamed report has no time limit and holds one of two slots, so its
+// window is capped at the page's largest preset (90 days); the synchronous
+// endpoint keeps ParseHours' year.
+func TestGetFlowStatsStream_WindowCappedAtLargestPreset(t *testing.T) {
+	h, _ := setupTestHandler(t)
+	store := &hoursStore{}
+	h.db = store
+	getRecorder(h.GetFlowStatsStream, "/x?hours=8760")
+	if store.hours != flowStreamMaxHours {
+		t.Fatalf("stream ran hours=%d, want %d", store.hours, flowStreamMaxHours)
+	}
+	getRecorder(h.GetFlowStatsStream, "/x?hours=720")
+	if store.hours != 720 {
+		t.Fatalf("stream ran hours=%d, want 720 (under the cap, unchanged)", store.hours)
+	}
+	getRecorder(h.GetFlowStats, "/x?hours=8760")
+	if store.hours != 8760 {
+		t.Fatalf("the synchronous endpoint ran hours=%d, want 8760 (not capped)", store.hours)
 	}
 }

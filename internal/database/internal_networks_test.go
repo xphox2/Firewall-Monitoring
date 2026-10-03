@@ -106,3 +106,44 @@ func TestLoadInternalNetworks(t *testing.T) {
 		t.Errorf("with auto off: %v %v, want only the three manual entries not already private", nets, err)
 	}
 }
+
+// A WAN port's connected subnet is the provider's access network, not the
+// operator's: a public x.x.x.57/22 used to make a thousand of the ISP's other
+// customers "internal". A public address's subnet is derived only at /24 or
+// longer (the operator's own public /28 stays); private subnets are unchanged.
+func TestLoadInternalNetworks_PublicWANSubnetNotDerived(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	now := time.Now()
+	fw := models.Device{Name: "edge", IPAddress: "198.19.9.155"}
+	if err := d.Gorm().Create(&fw).Error; err != nil {
+		t.Fatal(err)
+	}
+	addrs := []models.InterfaceAddress{
+		{DeviceID: fw.ID, IPAddress: "198.18.9.57", NetMask: "255.255.252.0", Timestamp: now},    // public /22 WAN
+		{DeviceID: fw.ID, IPAddress: "198.51.100.9", NetMask: "255.255.255.0", Timestamp: now},   // public /24: kept
+		{DeviceID: fw.ID, IPAddress: "198.19.9.156", NetMask: "255.255.255.240", Timestamp: now}, // public /28 LAN: kept
+		{DeviceID: fw.ID, IPAddress: "172.16.8.1", NetMask: "255.255.0.0", Timestamp: now},       // private: always internal, never listed
+	}
+	if err := d.Gorm().Create(&addrs).Error; err != nil {
+		t.Fatal(err)
+	}
+	nets, err := d.LoadInternalNetworks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, n := range nets {
+		got[n.CIDR] = n.Source
+	}
+	if got["198.18.8.0/22"] != "" {
+		t.Errorf("the WAN port's /22 was derived as an internal subnet: %v", got)
+	}
+	if got["198.18.9.57/32"] != "interface" {
+		t.Errorf("the WAN address itself must still be listed: %v", got)
+	}
+	for _, cidr := range []string{"198.51.100.0/24", "198.19.9.144/28"} {
+		if got[cidr] != "subnet" {
+			t.Errorf("%s: got %q, want a derived subnet", cidr, got[cidr])
+		}
+	}
+}
