@@ -79,14 +79,13 @@ func TestFlowSummaryRead_AgreesWithTheLivePath(t *testing.T) {
 
 	summary, live := statsBothWays(t, d, 24, FlowStatsFilter{})
 
-	// The unique-address panels ARE expected to degrade: summing per-bucket
+	// The unique-address panels ARE expected to be partial: summing per-bucket
 	// distinct counts is a different quantity, not an approximation of the union,
-	// so the summary declines to publish them. Nothing else may degrade.
-	for _, b := range summary.DegradedBlocks {
-		if b != "unique_src_addr" && b != "unique_dst_addr" {
-			t.Fatalf("the summary path degraded %q; only the unique-address panels should (%v)",
-				b, summary.DegradedBlocks)
-		}
+	// so the summary declines to publish them. That is by design, not a lost
+	// query, so nothing may be Degraded.
+	if summary.Degraded || len(summary.DegradedBlocks) != 0 {
+		t.Fatalf("the summary path was marked degraded (%v); the unique-address panels are partial by design, not a fallback",
+			summary.DegradedBlocks)
 	}
 	if summary.TotalBytes != live.TotalBytes {
 		t.Errorf("TotalBytes: summary %d, live %d", summary.TotalBytes, live.TotalBytes)
@@ -364,14 +363,25 @@ func TestFlowSummaryRead_DoesNotPublishInflatedUniqueCounts(t *testing.T) {
 	}
 
 	named := map[string]bool{}
-	for _, b := range res.DegradedBlocks {
+	for _, b := range res.PartialBlocks {
 		named[b] = true
 	}
 	for _, want := range []string{"unique_src_addr", "unique_dst_addr"} {
 		if !named[want] {
-			t.Errorf("DegradedBlocks does not name %q (got %v); the summary must decline to "+
-				"publish a sum of per-bucket distinct counts", want, res.DegradedBlocks)
+			t.Errorf("PartialBlocks does not name %q (got %v); the summary must decline to "+
+				"publish a sum of per-bucket distinct counts", want, res.PartialBlocks)
 		}
+		if got := res.PartialReasons[want]; got != flowUniqueSummaryReason {
+			t.Errorf("PartialReasons[%q] = %q, want %q", want, got, flowUniqueSummaryReason)
+		}
+	}
+	// Partial, not Degraded: Degraded is the page-wide "last hour only, reload
+	// to try again" banner, and every summary-served window (7d/30d/90d) takes
+	// this branch, so it showed on every wide load for two tiles no reload can
+	// fill.
+	if res.Degraded || len(res.DegradedBlocks) != 0 {
+		t.Errorf("Degraded=%v DegradedBlocks=%v; the unique tiles must not trip the page-wide partial banner",
+			res.Degraded, res.DegradedBlocks)
 	}
 	// The seed has 3 distinct sources across 6 buckets. A summed-per-bucket
 	// figure would be around 18; the raw-only count must be far below that.
