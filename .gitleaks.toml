@@ -1,26 +1,68 @@
-# gitleaks configuration: the default rules, plus a reviewed allowlist of test
-# fixtures whose "secrets" are deliberately fake (placeholder JWT keys, stub PEM
-# blocks such as RANDOM_IV_AAAA_body_aaaa, sample PSK/UUID values). Add a path
-# here only after confirming the value is synthetic.
+# gitleaks configuration: the default rules, plus allowlists for test
+# fixtures whose "secrets" are deliberately fake. Every entry is scoped to one
+# rule, to test files, and to the exact shape of the placeholder, so a real
+# value pasted into the same file is still reported. Add an entry only after
+# confirming the value is synthetic; a single reviewed finding that is not a
+# secret goes in .gitleaksignore by fingerprint instead.
 [extend]
 useDefault = true
 
+# Placeholder keys assigned in tests: "test-…" strings for the JWT signing key
+# and the probe registration key, and the lifecycle test's pending-key label.
 [[allowlists]]
-description = "Synthetic secrets in tests"
-paths = [
-  '''^internal/api/handlers/handlers_config_revision_fortigate_test\.go$''',
-  '''^internal/api/handlers/handlers_probes_lifecycle_m7_test\.go$''',
-  '''^internal/api/handlers/handlers_profile_test\.go$''',
-  '''^internal/api/handlers/handlers_totp_test\.go$''',
-  '''^internal/api/handlers/testhelper_test\.go$''',
-  '''^internal/api/middleware/auth_hardening_test\.go$''',
-  '''^internal/api/middleware/pending_stage_test\.go$''',
-  '''^internal/api/middleware/token_auth_test\.go$''',
-  '''^internal/auth/auth_test\.go$''',
-  '''^internal/configdiff/linediff_test\.go$''',
-  '''^internal/configdiff/normalize_test\.go$''',
-  '''^internal/configdiff/opnsense_multiline_secret_audit200_test\.go$''',
-  '''^internal/configdiff/opnsense_test\.go$''',
+description = "Placeholder keys assigned in tests"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''_test\.go$''']
+regexTarget = "match"
+regexes = [
+  '''^(?:cfg\.Server\.JWTSecretKey = |probeKey = |RegistrationKey: )"test-[a-z0-9-]+"$''',
+  '''^pendKey := "lc01-pending-key"$''',
+]
+
+# OPNsense config fixture: the uuid attribute of a preSharedKey element is an
+# identifier, not key material (the <Key> child is checked as usual).
+[[allowlists]]
+description = "OPNsense preSharedKey element uuid attribute"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^internal/configdiff/opnsense_test\.go$''']
+regexTarget = "match"
+regexes = ['''^preSharedKey uuid="[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"$''']
+
+# FortiGate config fixtures: a `set private-key` PEM block whose body is a
+# placeholder — an "…_IV_AAAA" line (plus one short second line), an
+# "…_IV_AAAA_body_aaaa" line, or "body-line-N" lines in Go string
+# concatenation. The rule needs 64 characters between the markers, so a
+# one-line body makes the match run on to the next block's BEGIN marker;
+# the second pattern below allows exactly that span.
+[[allowlists]]
+description = "FortiGate fixture PEM blocks with placeholder bodies"
+targetRules = ["private-key"]
+condition = "AND"
+paths = ['''^internal/(?:configdiff|api/handlers)/[a-z0-9_]+_test\.go$''']
+regexTarget = "match"
+regexes = [
+  '''^-----BEGIN ENCRYPTED PRIVATE KEY-----\n[A-Za-z0-9]+_IV_[A-Z]{4}\n[A-Za-z0-9+/=]{1,40}\n-----END ENCRYPTED PRIVATE KEY-----$''',
+  '''^-----BEGIN ENCRYPTED PRIVATE KEY-----\n[A-Z]+_IV_[A-Z]{4}_body_[a-z]{4}\n-----END ENCRYPTED PRIVATE KEY-----"\n(?:[^\n]*\n){0,40}[^\n]*set private-key "-----BEGIN ENCRYPTED PRIVATE KEY-----$''',
+  '''^-----BEGIN ENCRYPTED PRIVATE KEY-----\\n" \+\n(?:\s*"body-line-[0-9]\\n" \+\n)+\s*"-----END ENCRYPTED PRIVATE KEY-----$''',
+]
+
+# OPNsense fixture: a base64 <prv> element (and the same text split into Go
+# string fragments) that decodes to a PEM block whose body is a few short
+# lines — no run of more than 44 base64 characters, where the smallest real
+# PKCS#8 key is a 64-character line. gitleaks reports the decoded text; the
+# generic rule also sees the decoded fragment boundary `KEY-----",\n"…` as a
+# key assignment.
+[[allowlists]]
+description = "OPNsense fixture <prv> element with a placeholder body"
+targetRules = ["private-key", "generic-api-key"]
+condition = "AND"
+paths = ['''^internal/configdiff/opnsense_multiline_secret_audit200_test\.go$''']
+regexTarget = "match"
+regexes = [
+  '''^-----BEGIN PRIVATE KEY-----(?:[A-Za-z0-9+/=]{0,44}[^A-Za-z0-9+/=]){1,16}-----END PRIVATE KEY-----$''',
+  '''^KEY-----",\s{1,4}"[A-Za-z0-9+/=]{1,44}$''',
 ]
 
 # The example config leaves ADMIN_PASSWORD empty on purpose. The generic rule

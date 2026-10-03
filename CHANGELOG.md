@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.287] - 2026-10-03
+
+### Added
+- **Host-name and e-mail guard** (`test/guardrails/public_hostnames_test.go`): every tracked text file is scanned for host names and mailboxes. Only documentation names (example.com / example.net / example.org and the reserved .example, .test, .invalid and .localhost top-level domains) and a reviewed allowlist of public vendor, documentation and Go-module domains pass. Site-local names (.local, .lan, .internal, .home.arpa, …) and reverse-DNS names are rejected whatever the allowlist says, and an in-addr.arpa name is checked as the address it spells. The allowlist stays tight: an entry nothing in the tree references fails the test, as does an entry without a reason.
+- The IP-literal guard also catches zero-padded octets (010.000.000.001 is 10.0.0.1) and dash-separated reverse-DNS forms (A-B-C-D.rev.example.net).
+
+### Changed
+- `.gitleaks.toml`: the 13-file path allowlist is gone. gitleaks 8.30.1 with the default rules still reports the synthetic fixtures in those files, so each is now a rule-scoped entry that matches only the exact placeholder shape (`test-…` keys, the pending-key label, `…_IV_AAAA` and `body-line-N` PEM bodies, the short decoded `<prv>` fixture, a preSharedKey uuid attribute). A real value pasted into one of those files is reported again. The tree and the full history scan clean; `.gitleaksignore` stays the only fingerprint exception.
+- Test fixtures and examples use documentation names only: mailboxes at placeholder domains, site-local fixture hosts and a few non-reserved example domains became example.com / .example names (older CHANGELOG mentions updated to match).
+
 ## [0.11.286] - 2026-10-03
 
 ### Fixed — flow summary cleanup, ownership handover and partial badges
@@ -2851,7 +2861,7 @@ A FortiGate ⇄ OPNsense tunnel (fwm-t9) came up cleanly on **both** firewalls �
 
 The IPSec wizard's IKE identity field had no type-aware validation — only a charset gate — so a value that reads fine to a human could silently break the tunnel. An IKE `ID_FQDN` is an opaque identity string (not a DNS name), so a single word like `OSPREY` is perfectly valid on **both** FortiGate and OPNsense/strongSwan; it does not need a dotted `fw.example.com` form. But because OPNsense renders the swanctl id **bare** (strongSwan then auto-classifies it) while FortiGate's `localid-type fqdn` **forces** the FQDN type, certain values are classified differently by each end → `AUTH_FAILED` (the same class as the v0.11.147 keyid fix). This ships:
 
-- **Server-side validation** (`internal/ipsec/validation.go`, authoritative — surfaces in the wizard findings panel and gates Save/Deploy) that **blocks** any identity that would fail phase-1 auth: for `fqdn` — an IP literal (`id_fqdn_is_ip`, strongSwan would treat it as an IP identity), an `ip-ip` range (`id_fqdn_is_range`), or a `:` (`id_fqdn_charset`, read as IPv6/key-id); for `ip` — a non-IP value (`id_ip_invalid`); and for all types, >63 characters (`id_too_long`, the FortiGate limit that binds on both `localid` and `peerid`). A single-label FQDN like `OSPREY` and underscores (`prince_1.test.com`) are explicitly allowed. Rules validated against the strongSwan source + FortiOS docs in review.
+- **Server-side validation** (`internal/ipsec/validation.go`, authoritative — surfaces in the wizard findings panel and gates Save/Deploy) that **blocks** any identity that would fail phase-1 auth: for `fqdn` — an IP literal (`id_fqdn_is_ip`, strongSwan would treat it as an IP identity), an `ip-ip` range (`id_fqdn_is_range`), or a `:` (`id_fqdn_charset`, read as IPv6/key-id); for `ip` — a non-IP value (`id_ip_invalid`); and for all types, >63 characters (`id_too_long`, the FortiGate limit that binds on both `localid` and `peerid`). A single-label FQDN like `OSPREY` and underscores (`prince_1.example.com`) are explicitly allowed. Rules validated against the strongSwan source + FortiOS docs in review.
 - **Wizard auto-prefill** (`admin-ipsec.js`): each end's identity is auto-filled from real device data — the sanitized device name for `fqdn`, the WAN/peer IP for `ip` — guaranteed to pass validation, and re-derived when the identity type changes, while never clobbering a value the operator has manually edited or a stored tunnel's identity. An inline field hint mirrors the server rules for instant feedback before Preview; the id inputs cap at `maxlength=63`.
 
 ## [0.11.157] - 2026-07-23
@@ -7381,7 +7391,7 @@ Changes:
 
 Regression tests:
 
-- `internal/notifier/notifier_test.go` — `TestSanitizeHeader_StripsCRLF` (11 table cases including a literal `Bcc: attacker@evil.com` payload) + `FuzzSanitizeHeader` (property: result never contains CR or LF, ~180k execs in 3s).
+- `internal/notifier/notifier_test.go` — `TestSanitizeHeader_StripsCRLF` (11 table cases including a literal `Bcc: attacker@evil.example` payload) + `FuzzSanitizeHeader` (property: result never contains CR or LF, ~180k execs in 3s).
 - `internal/report/email_test.go` — `TestBuildCriticalAlertEmail_SubjectSanitizesCRLF` builds a critical alert with CRLF-laden `Device.Name`, `Device.IPAddress`, `Alert.AlertType` and asserts the returned subject contains none of `\r`/`\n` while still preserving the visible substrings (`CPU_HIGH`, `router-1`, `10.0.0.1`).
 
 QA: `go build ./...`, `go test -count=1 ./...`, `go vet ./...`, `gofmt -l .` all clean. Notifier package now has its first test file (previously 0% coverage — closes part of AUDIT-117).

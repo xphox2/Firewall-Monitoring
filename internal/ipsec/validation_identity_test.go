@@ -51,7 +51,7 @@ func TestValidate_Identity(t *testing.T) {
 	}
 
 	// --- FQDN type: values that MUST pass (they establish fine on both vendors) ---
-	for _, val := range []string{"OSPREY", "fw.example.com", "prince_1.test.com", "my-fw.example.com"} {
+	for _, val := range []string{"OSPREY", "fw.example.com", "prince_1.example.com", "my-fw.example.com"} {
 		if fs := ipsec.Validate(withID(ipsec.IDTypeFQDN, val), c); ipsec.HasBlock(fs) {
 			t.Errorf("fqdn %q should be a valid identity, got blocks %+v", val, fs)
 		}

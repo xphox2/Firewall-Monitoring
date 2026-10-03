@@ -23,7 +23,7 @@ func TestSanitizeHeader_StripsCRLF(t *testing.T) {
 		{"multiple CRLF", "a\r\nb\r\nc", "abc"},
 		{"trailing CRLF", "abc\r\n", "abc"},
 		{"leading CRLF", "\r\nabc", "abc"},
-		{"injection attempt", "Critical Alert\r\nBcc: attacker@evil.com", "Critical AlertBcc: attacker@evil.com"},
+		{"injection attempt", "Critical Alert\r\nBcc: attacker@evil.example", "Critical AlertBcc: attacker@evil.example"},
 		{"only newlines", "\r\n\r\n", ""},
 		{"unicode preserved", "Critical \u26a0\ufe0f", "Critical \u26a0\ufe0f"},
 	}
