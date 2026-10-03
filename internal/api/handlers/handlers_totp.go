@@ -14,6 +14,7 @@ import (
 	"firewall-mon/internal/auth"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
+	"firewall-mon/internal/models"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pquerna/otp"
@@ -91,7 +92,30 @@ func (h *Handler) TOTPLogin(c *gin.Context) {
 	}
 
 	ip := c.ClientIP()
+	userAgent := c.Request.UserAgent()
+	if len(userAgent) > 512 {
+		userAgent = userAgent[:512]
+	}
+	// recordAttempt writes this login's login_attempts row under method
+	// "totp" — the password step of a 2FA account writes none (Login), so
+	// every outcome of the second factor (wrong, replayed or locked code,
+	// invalid pending login, refused or issued session) is visible in the
+	// history with the same fields as a password attempt.
+	recordAttempt := func(success bool) {
+		if dbErr := db.SaveLoginAttempt(&models.LoginAttempt{
+			Timestamp: time.Now(),
+			Username:  claims.Username,
+			IPAddress: ip,
+			Success:   success,
+			UserAgent: userAgent,
+			Method:    strPtr(loginMethodTOTP),
+		}); dbErr != nil {
+			log.Printf("Failed to save login attempt: %v", dbErr)
+		}
+	}
+
 	if h.authManager.IsLocked(claims.Username, ip) {
+		recordAttempt(false)
 		c.JSON(http.StatusTooManyRequests, response.Error("Account temporarily locked due to too many failed attempts"))
 		return
 	}
@@ -100,6 +124,7 @@ func (h *Handler) TOTPLogin(c *gin.Context) {
 	// The row must be the very account the pending token was minted for: a
 	// username now owned by a different id (deleted and re-created) is not it.
 	if err != nil || admin == nil || admin.ID != claims.UserID || admin.Disabled || !admin.TOTPEnabled {
+		recordAttempt(false)
 		c.JSON(http.StatusUnauthorized, response.Error("Pending login invalid — start over"))
 		return
 	}
@@ -112,6 +137,7 @@ func (h *Handler) TOTPLogin(c *gin.Context) {
 		// action) proves possession of the factor, so it is not counted as a
 		// guessing failure — but it is refused.
 		if !h.authManager.MarkTOTPSlotUsed(admin.ID, req.Code) {
+			recordAttempt(false)
 			c.JSON(http.StatusUnauthorized, response.Error(totpCodeAlreadyUsedMsg))
 			return
 		}
@@ -124,6 +150,7 @@ func (h *Handler) TOTPLogin(c *gin.Context) {
 		// the other codes, and an admin can reset 2FA (ResetUser2FA).
 		used, cerr := db.ConsumeRecoveryCode(admin.ID, database.HashAPIToken(req.Code))
 		if cerr != nil {
+			recordAttempt(false)
 			httputil.InternalError(c, "Failed to verify recovery code", cerr)
 			return
 		}
@@ -131,12 +158,13 @@ func (h *Handler) TOTPLogin(c *gin.Context) {
 	}
 	if !authenticated {
 		h.authManager.RecordFailure(claims.Username, ip)
+		recordAttempt(false)
 		c.JSON(http.StatusUnauthorized, response.Error("Invalid code"))
 		return
 	}
 
 	h.authManager.ClearFailures(claims.Username, ip)
-	h.completeLogin(c, db, admin.ID, loginMethodTOTP)
+	recordAttempt(h.completeLogin(c, db, admin.ID, loginMethodTOTP))
 }
 
 type totpSetupRequest struct {

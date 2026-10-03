@@ -64,10 +64,11 @@ func (h *Handler) Login(c *gin.Context) {
 		userAgent = userAgent[:512]
 	}
 
-	// recordAttempt writes the login_attempts row. The success row is written
-	// only once the password step has actually produced its outcome (pending
-	// 2FA token, or a session from completeLogin); a refusal after the password
-	// check is recorded as a failure. Lockout counting is unaffected.
+	// recordAttempt writes the login_attempts row. A success row means a
+	// session was issued; a refusal after the password check is recorded as a
+	// failure. For a 2FA account the password step alone issues nothing, so it
+	// writes no row: TOTPLogin records that login's outcome under method
+	// "totp". Lockout counting is unaffected.
 	recordAttempt := func(success bool) {
 		if db == nil {
 			return
@@ -118,7 +119,9 @@ func (h *Handler) Login(c *gin.Context) {
 			httputil.InternalError(c, "Failed to generate token", perr)
 			return
 		}
-		recordAttempt(true) // password step complete; the TOTP step writes no row
+		// No row here: the password step of a 2FA login is an intermediate
+		// stage, not a login. TOTPLogin writes the "totp" success or failure
+		// row once the second factor has been decided.
 		cookieSecure, cookieSameSite, _ := h.sessionCookieParams()
 		http.SetCookie(c.Writer, &http.Cookie{
 			Name:     "pending_2fa",
