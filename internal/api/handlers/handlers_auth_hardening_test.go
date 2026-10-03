@@ -302,8 +302,11 @@ func TestLogin_PasswordPlusTOTP_Unchanged(t *testing.T) {
 	if len(cks) != 1 || cks[0].Name != "pending_2fa" || !cks[0].HttpOnly || cks[0].MaxAge != int(auth.PendingTokenExpiry.Seconds()) {
 		t.Fatalf("password step cookies changed: %v", cks)
 	}
-	if len(store.loginAttempts) != 1 || !store.loginAttempts[0].Success {
-		t.Errorf("login_attempts rows changed: %+v", store.loginAttempts)
+	// v0.11.283: the password step of a 2FA account is an intermediate stage
+	// and writes NO login_attempts row (it used to write success=true before
+	// the second factor was checked); the TOTP step records the outcome.
+	if len(store.loginAttempts) != 0 {
+		t.Errorf("password step of a 2FA login must write no login_attempts row: %+v", store.loginAttempts)
 	}
 
 	code, _ := totp.GenerateCode(hardeningTOTPSecret, time.Now())
@@ -315,8 +318,9 @@ func TestLogin_PasswordPlusTOTP_Unchanged(t *testing.T) {
 	if len(rec.Result().Cookies()) != 3 {
 		t.Errorf("want exactly 3 cookies (pending clear + session pair), got %v", rec.Result().Cookies())
 	}
-	if len(store.loginAttempts) != 1 {
-		t.Errorf("TOTP step must not add login_attempts rows: %+v", store.loginAttempts)
+	if len(store.loginAttempts) != 1 || !store.loginAttempts[0].Success || store.loginAttempts[0].Username != "root" ||
+		store.loginAttempts[0].Method == nil || *store.loginAttempts[0].Method != loginMethodTOTP {
+		t.Errorf("TOTP step must write exactly one success row with method totp: %+v", store.loginAttempts)
 	}
 }
 

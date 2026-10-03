@@ -155,6 +155,10 @@ func TestPasskeysPostgres(t *testing.T) {
 		}
 	})
 
+	t.Run("RecordUseCompareAndSet", func(t *testing.T) {
+		testRecordUseCompareAndSet(t, d)
+	})
+
 	t.Run("ResetAuth", func(t *testing.T) {
 		testResetAuth(t, d)
 	})

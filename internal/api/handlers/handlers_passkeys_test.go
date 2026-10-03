@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"sort"
 	"strings"
 	"sync"
@@ -65,8 +67,10 @@ func TestPasskey_RegisterAndLogin(t *testing.T) {
 	if !last.Success || last.Method == nil || *last.Method != "passkey" || last.Username != "root" {
 		t.Fatalf("last login attempt = %+v", last)
 	}
-	if attempts[0].Method == nil || *attempts[0].Method != "password" {
-		t.Fatalf("password attempt method = %v", attempts[0].Method)
+	// root signed in with password+TOTP: the password step writes no row and
+	// the TOTP step records the login as "totp" (v0.11.283).
+	if len(attempts) != 2 || attempts[0].Method == nil || *attempts[0].Method != "totp" || !attempts[0].Success {
+		t.Fatalf("password+TOTP login attempt rows = %+v", attempts)
 	}
 
 	// A second registration reuses the same handle and lists the first key
@@ -1128,5 +1132,178 @@ func TestPasskey_WrongOriginRPIDTypeRejected(t *testing.T) {
 		if fin.Code != http.StatusBadRequest || len(e.passkeyRows(u.ID)) != 0 {
 			t.Fatalf("registration %s: %d %s", name, fin.Code, fin.Body.String())
 		}
+	}
+}
+
+// --- sign-count compare-and-set (v0.11.283) ------------------------------------------
+
+// staleRowsStore serves the login lookup a frozen snapshot of the owner's
+// credential rows while every write goes to the real database. It reproduces
+// the window in which a clone's assertion read the row before the original's
+// counter write committed, deterministically.
+type staleRowsStore struct {
+	database.Store
+	rows []models.WebAuthnCredential
+	// staleCred, when set, is what the FIRST GetPasskeyByCredentialID (the
+	// login lookup) returns; later calls (the post-write re-check) are live.
+	staleCred   *models.WebAuthnCredential
+	credLookups int
+}
+
+func (s *staleRowsStore) WithContextStore(context.Context) database.Store { return s }
+func (s *staleRowsStore) ListPasskeys(uint) ([]models.WebAuthnCredential, error) {
+	return append([]models.WebAuthnCredential(nil), s.rows...), nil
+}
+func (s *staleRowsStore) GetPasskeyByCredentialID(id []byte) (*models.WebAuthnCredential, error) {
+	s.credLookups++
+	if s.staleCred != nil && s.credLookups == 1 {
+		cp := *s.staleCred
+		return &cp, nil
+	}
+	return s.Store.GetPasskeyByCredentialID(id)
+}
+
+// TestPasskey_StaleCounterRead_RefusedAtCommit: an assertion that passed the
+// clone check against a stale row (counter 5 > stale 0) is refused when the
+// counter write finds the row already at 5 — audited as a clone warning, no
+// session, counter untouched. Before v0.11.283 the write was unconditional
+// and this login succeeded.
+func TestPasskey_StaleCounterRead_RefusedAtCommit(t *testing.T) {
+	e := newPasskeyEnv(t, true)
+	alice, a, _ := e.registered("alice", auth.RoleOperator)
+	stale := e.passkeyRows(alice.ID) // sign_count 0, never used
+
+	a.counter = 4 // the genuine assertion reports 5
+	if rec := e.passkeyLogin(a, a.userHandle); rec.Code != http.StatusOK {
+		t.Fatalf("first login: %d %s", rec.Code, rec.Body.String())
+	}
+	if r := e.passkeyRows(alice.ID)[0]; r.SignCount != 5 {
+		t.Fatalf("stored counter = %d, want 5", r.SignCount)
+	}
+
+	e.h.db = &staleRowsStore{Store: e.db, rows: stale}
+	a.counter = 4 // the clone also reports 5, having read the row at 0
+	var before []models.LoginAttempt
+	e.db.Gorm().Find(&before)
+	assertGenericPasskeyFailure(t, e.passkeyLogin(a, a.userHandle))
+
+	if !e.hasAudit("passkey_clone_warning") {
+		t.Fatalf("clone warning not audited: %v", e.auditActions())
+	}
+	if r := e.passkeyRows(alice.ID)[0]; r.SignCount != 5 {
+		t.Fatalf("stored counter = %d, want 5 (unchanged by the refused assertion)", r.SignCount)
+	}
+	var after []models.LoginAttempt
+	e.db.Gorm().Order("id").Find(&after)
+	if len(after) != len(before)+1 {
+		t.Fatalf("login_attempts rows: %d → %d, want one new failure row", len(before), len(after))
+	}
+	if last := after[len(after)-1]; last.Success || last.Username != "alice" || last.Method == nil || *last.Method != "passkey" {
+		t.Fatalf("refused assertion recorded as %+v", last)
+	}
+}
+
+// TestPasskey_ConcurrentSameCounter_OneSession: two finishes carrying the
+// same counter race each other — whichever interleaving the scheduler picks,
+// exactly one session is issued and the other is refused as a clone.
+func TestPasskey_ConcurrentSameCounter_OneSession(t *testing.T) {
+	e := newPasskeyEnv(t, true)
+	alice, a, _ := e.registered("alice", auth.RoleOperator)
+
+	const n = 2
+	var bodies [n]string
+	var cookies [n]*http.Cookie
+	for i := range bodies {
+		challenge, ck := e.loginBegin()
+		a.counter = 4 // both assertions report 5
+		bodies[i], cookies[i] = a.assertionBody(challenge, a.userHandle), ck
+	}
+	var wg sync.WaitGroup
+	recs := make([]*httptest.ResponseRecorder, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			recs[i] = e.loginFinish(cookies[i], bodies[i])
+		}(i)
+	}
+	wg.Wait()
+
+	sessions := 0
+	for i, rec := range recs {
+		switch rec.Code {
+		case http.StatusOK:
+			sessions++
+			e.sessionFrom(rec)
+		case http.StatusUnauthorized:
+			assertGenericPasskeyFailure(t, rec)
+		default:
+			t.Fatalf("finish %d: unexpected status %d %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	if sessions != 1 {
+		t.Fatalf("%d sessions issued for two assertions with the same counter, want exactly 1", sessions)
+	}
+	if !e.hasAudit("passkey_clone_warning") {
+		t.Fatalf("clone warning not audited: %v", e.auditActions())
+	}
+	if r := e.passkeyRows(alice.ID)[0]; r.SignCount != 5 {
+		t.Fatalf("stored counter = %d, want 5", r.SignCount)
+	}
+}
+
+// TestPasskey_ZeroCounterAuthenticatorLogsInRepeatedly: an authenticator
+// that never counts (every assertion reports 0 — most synced passkeys) keeps
+// working: the compare-and-set accepts 0 over a stored 0 every time. This
+// also passed before the compare-and-set; it guards its "both zero" clause
+// against a stricter variant (plain sign_count < ?).
+func TestPasskey_ZeroCounterAuthenticatorLogsInRepeatedly(t *testing.T) {
+	e := newPasskeyEnv(t, true)
+	e.createUser("alice", auth.RoleOperator, false)
+	s := e.login("alice", "")
+	a := newSoftAuth(t)
+	a.zeroCounter = true
+	s.register(a, "", "synced")
+
+	for i := 0; i < 3; i++ {
+		rec := e.passkeyLogin(a, a.userHandle)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("login %d with a zero counter: %d %s", i+1, rec.Code, rec.Body.String())
+		}
+		e.sessionFrom(rec)
+	}
+	alice, _ := e.db.GetAdminByUsername("alice")
+	if r := e.passkeyRows(alice.ID)[0]; r.SignCount != 0 || r.LastUsedAt == nil {
+		t.Fatalf("zero-counter row = sign_count %d last_used %v", r.SignCount, r.LastUsedAt)
+	}
+	if e.hasAudit("passkey_clone_warning") {
+		t.Fatalf("zero-counter authenticator flagged as a clone: %v", e.auditActions())
+	}
+}
+
+// TestPasskey_CredentialRemovedBeforeCommit: the counter write matches no
+// row because the credential was deleted after the login lookup read it —
+// refused and recorded, but NOT audited as a clone warning.
+func TestPasskey_CredentialRemovedBeforeCommit(t *testing.T) {
+	e := newPasskeyEnv(t, true)
+	alice, a, _ := e.registered("alice", auth.RoleOperator)
+	stale := e.passkeyRows(alice.ID)
+	st := &staleRowsStore{Store: e.db, rows: stale, staleCred: &stale[0]}
+	e.h.db = st
+	if ok, err := e.db.DeletePasskeyAndEndSessions(stale[0].ID, alice.ID); err != nil || !ok {
+		t.Fatalf("delete: ok=%v err=%v", ok, err)
+	}
+	// The login lookup still sees the row (stale snapshot), the assertion
+	// verifies, the counter write matches nothing, and the live re-check
+	// finds the credential gone.
+	assertGenericPasskeyFailure(t, e.passkeyLogin(a, a.userHandle))
+	if st.credLookups != 2 {
+		t.Fatalf("credential lookups = %d, want 2 (login lookup + post-write re-check)", st.credLookups)
+	}
+	if e.hasAudit("passkey_clone_warning") {
+		t.Fatalf("deleted credential audited as a clone: %v", e.auditActions())
+	}
+	if !e.hasAudit("passkey_login_failure") {
+		t.Fatalf("refusal not audited: %v", e.auditActions())
 	}
 }

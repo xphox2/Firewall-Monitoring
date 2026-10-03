@@ -255,3 +255,100 @@ func TestTOTPLogin_RequiresPendingToken(t *testing.T) {
 		t.Errorf("full token as pending: status = %d, want 401", rec.Code)
 	}
 }
+
+// TestTOTPLogin_FailuresRecorded (v0.11.283): every outcome of the second
+// step writes a login_attempts row under method "totp" with the same fields
+// as a password attempt — wrong code, replayed code, invalid pending login,
+// lockout — and the issued session writes the success row. Before, the TOTP
+// step wrote nothing and the password step had already recorded success.
+func TestTOTPLogin_FailuresRecorded(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const secret = "JBSWY3DPEHPK3PXP"
+	h, store := totpTestHandler(t, secret)
+	store.recoveryHash = database.HashAPIToken("recover-me")
+
+	pendingTok, err := h.authManager.GeneratePendingToken("root", 1, 4)
+	if err != nil {
+		t.Fatalf("GeneratePendingToken: %v", err)
+	}
+	totpStep := func(body string) *httptest.ResponseRecorder {
+		c, rec := jsonReq(http.MethodPost, "/api/auth/totp", body)
+		c.Request.Header.Set("User-Agent", "totp-test-agent")
+		c.Request.AddCookie(&http.Cookie{Name: "pending_2fa", Value: pendingTok})
+		h.TOTPLogin(c)
+		return rec
+	}
+	lastRow := func(step string, wantSuccess bool) {
+		t.Helper()
+		if len(store.loginAttempts) == 0 {
+			t.Fatalf("%s: no login_attempts row written", step)
+		}
+		row := store.loginAttempts[len(store.loginAttempts)-1]
+		if row.Success != wantSuccess || row.Username != "root" || row.IPAddress == "" ||
+			row.UserAgent != "totp-test-agent" || row.Method == nil || *row.Method != loginMethodTOTP || row.Timestamp.IsZero() {
+			t.Fatalf("%s: row = %+v, want success=%v username=root method=totp with ip/agent/timestamp", step, row, wantSuccess)
+		}
+	}
+
+	// Wrong code: failure row; counts toward lockout.
+	if rec := totpStep(`{"code":"000000"}`); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong code: %d", rec.Code)
+	}
+	lastRow("wrong code", false)
+	if len(store.loginAttempts) != 1 {
+		t.Fatalf("wrong code: %d rows, want 1", len(store.loginAttempts))
+	}
+
+	// Valid code: the session's success row.
+	code, _ := totp.GenerateCode(secret, time.Now())
+	if rec := totpStep(`{"code":"` + code + `"}`); rec.Code != http.StatusOK {
+		t.Fatalf("valid code: %d %s", rec.Code, rec.Body.String())
+	}
+	lastRow("valid code", true)
+
+	// Replayed code: refused (distinct message, no lockout count) but still a
+	// failure row.
+	if rec := totpStep(`{"code":"` + code + `"}`); rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), totpCodeAlreadyUsedMsg) {
+		t.Fatalf("replayed code: %d %s", rec.Code, rec.Body.String())
+	}
+	lastRow("replayed code", false)
+
+	// Recovery code: success row.
+	if rec := totpStep(`{"code":"recover-me"}`); rec.Code != http.StatusOK {
+		t.Fatalf("recovery code: %d %s", rec.Code, rec.Body.String())
+	}
+	lastRow("recovery code", true)
+
+	// Pending login no longer valid (account disabled): failure row.
+	store.admin.Disabled = true
+	if rec := totpStep(`{"code":"000000"}`); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("disabled: %d", rec.Code)
+	}
+	lastRow("disabled account", false)
+	store.admin.Disabled = false
+
+	// Lockout (MaxLoginAttempts = 3): the locked refusal is recorded too.
+	for i := 0; i < 3; i++ {
+		totpStep(`{"code":"000000"}`)
+	}
+	if rec := totpStep(`{"code":"000000"}`); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("locked: %d, want 429", rec.Code)
+	}
+	lastRow("locked", false)
+	if got := len(store.loginAttempts); got != 9 {
+		t.Fatalf("%d rows written, want 9 (one per outcome)", got)
+	}
+}
+
+// TestTOTPLogin_NoPendingLogin_NoRow: without a usable pending token there is
+// no username to attribute, so the refusal is not a login attempt row (a
+// guard against recording unattributed rows, not a regression test).
+func TestTOTPLogin_NoPendingLogin_NoRow(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, store := totpTestHandler(t, "JBSWY3DPEHPK3PXP")
+	c, rec := jsonReq(http.MethodPost, "/api/auth/totp", `{"code":"123456"}`)
+	h.TOTPLogin(c)
+	if rec.Code != http.StatusUnauthorized || len(store.loginAttempts) != 0 {
+		t.Fatalf("no cookie: status %d rows %+v", rec.Code, store.loginAttempts)
+	}
+}

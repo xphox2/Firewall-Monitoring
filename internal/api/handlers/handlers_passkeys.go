@@ -368,8 +368,27 @@ func (h *Handler) PasskeyLoginFinish(c *gin.Context) {
 		return
 	}
 	updated, err := db.RecordPasskeyUse(row.ID, owner.ID, credential.Authenticator.SignCount, flags.HasBackupState(), time.Now())
-	if err != nil || !updated {
-		fail(fmt.Sprintf("could not persist credential use (updated=%t err=%v)", updated, err))
+	if err != nil {
+		fail(fmt.Sprintf("could not persist credential use: %v", err))
+		return
+	}
+	if !updated {
+		// The compare-and-set found the stored counter no longer below the
+		// asserted one: a concurrent assertion with the same counter (a clone
+		// racing the original) already advanced it after the clone check above
+		// read the row. Same outcome as the library's clone warning — unless
+		// the row simply vanished (credential deleted mid-ceremony).
+		cur, lerr := db.GetPasskeyByCredentialID(credential.ID)
+		if lerr != nil {
+			fail(fmt.Sprintf("could not re-check credential after refused counter write: %v", lerr))
+			return
+		}
+		if cur == nil {
+			fail("credential removed during the ceremony")
+			return
+		}
+		passkeyAudit(c, db, username, ownerID, "passkey_clone_warning", detail, http.StatusUnauthorized)
+		fail("clone warning: signature counter did not advance at commit (concurrent assertion)")
 		return
 	}
 
