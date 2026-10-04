@@ -130,7 +130,7 @@ func TestTrustedProxySet_Contains(t *testing.T) {
 		"192.0.2.11":        false,
 		"198.51.100.1":      true,
 		"198.51.100.0":      true,
-		"198.51.101.1":      false,
+		"203.0.113.1":       false,
 		"2001:db8::10":      true,
 		"2001:db8::11":      false,
 		"::ffff:192.0.2.10": true,

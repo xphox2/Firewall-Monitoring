@@ -90,6 +90,14 @@ func TestMetricsGuard_Token_RequiredAndChecked(t *testing.T) {
 	if ok.Code != http.StatusOK || ok.Body.String() != "fwmon_up 1\n" {
 		t.Fatalf("correct token from a remote peer: status=%d body=%q, want 200 + metrics", ok.Code, ok.Body.String())
 	}
+	// The auth scheme is case-insensitive (RFC 9110), the credential is not.
+	if rec := scrape(r, "127.0.0.1:40000", map[string]string{"Authorization": "bearer " + token}); rec.Code != http.StatusOK {
+		t.Errorf("lower-case scheme with the correct token: status=%d, want 200", rec.Code)
+	}
+	// A whitespace-only METRICS_TOKEN is "unset", not a token nobody can present.
+	if rec := scrape(metricsRouter(t, "  "), "127.0.0.1:40000", nil); rec.Code != http.StatusOK {
+		t.Errorf("blank token, loopback peer: status=%d, want 200 (loopback rule)", rec.Code)
+	}
 
 	cases := []struct {
 		name string

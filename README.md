@@ -228,7 +228,9 @@ public AUDIT-NNN row exists.
   retries, AUDIT-091).
 - **[Server] Prometheus `/metrics`** (request-latency histogram by
   matched route template, DB-pool gauges, Go runtime + process
-  collectors, AUDIT-077).
+  collectors, AUDIT-077). Loopback peers only unless `METRICS_TOKEN`
+  is set (then `Authorization: Bearer`), since port 8080 is usually
+  internet-facing — see [docs/monitoring](docs/monitoring/README.md).
 - **[Server] Poller + trap-receiver `/metrics`, `/healthz`, `/readyz`**
   (v0.10.487; `POLLER_METRICS_ADDR` default `:9101`, `TRAP_METRICS_ADDR`
   default `:9102`; set to `off` to disable).

@@ -10,7 +10,9 @@
 # Real client IP: the API ignores X-Forwarded-For until TRUSTED_PROXIES (in
 # config.env) lists this proxy's single, pinned IP (never a whole subnet) —
 # see docs/OPERATIONS.md
-# "Behind a reverse proxy (TRUSTED_PROXIES)".
+# "Behind a reverse proxy (TRUSTED_PROXIES)". The same setting lets the proxy's
+# X-Forwarded-Proto: https mark requests as HTTPS, which gives the session
+# cookies their Secure flag and turns on HSTS without any COOKIE_SECURE setting.
 version: '3.8'
 
 services:

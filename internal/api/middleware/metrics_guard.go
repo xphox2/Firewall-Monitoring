@@ -31,11 +31,12 @@ import (
 // not used: it honours X-Forwarded-For from a trusted proxy, and a proxy must
 // never be able to turn a remote scrape into a "local" one.
 func MetricsGuard(token string) gin.HandlerFunc {
+	token = strings.TrimSpace(token) // a whitespace-only value would lock everyone out
 	want := sha256.Sum256([]byte(token))
 	return func(c *gin.Context) {
 		if token != "" {
-			got, ok := strings.CutPrefix(c.GetHeader("Authorization"), "Bearer ")
-			sum := sha256.Sum256([]byte(strings.TrimSpace(got)))
+			got, ok := bearerToken(c.GetHeader("Authorization"))
+			sum := sha256.Sum256([]byte(got))
 			if !ok || subtle.ConstantTimeCompare(sum[:], want[:]) != 1 {
 				c.Header("WWW-Authenticate", `Bearer realm="metrics"`)
 				c.AbortWithStatus(http.StatusUnauthorized)
@@ -50,4 +51,14 @@ func MetricsGuard(token string) gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+// bearerToken extracts the credential from an Authorization header. The
+// scheme is case-insensitive (RFC 9110 §11.1), the credential is not.
+func bearerToken(header string) (string, bool) {
+	const scheme = "bearer "
+	if len(header) <= len(scheme) || !strings.EqualFold(header[:len(scheme)], scheme) {
+		return "", false
+	}
+	return strings.TrimSpace(header[len(scheme):]), true
 }

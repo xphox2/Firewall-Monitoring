@@ -647,9 +647,16 @@ func (c *Config) Validate() error {
 	if c.Server.CookieSecure && !c.Server.EnableTLS && c.Server.CookieSecureExplicit {
 		log.Println("WARNING: COOKIE_SECURE=true is set explicitly, but SERVER_ENABLE_TLS=false.")
 		log.Println("         Browsers will silently drop the session cookie over plain HTTP, so")
-		log.Println("         login will appear to do nothing. Either set COOKIE_SECURE=false")
-		log.Println("         (recommended for plain-HTTP deployments), or enable TLS by setting")
-		log.Println("         SERVER_ENABLE_TLS=true and configuring SERVER_TLS_CERT / SERVER_TLS_KEY.")
+		log.Println("         login will appear to do nothing. Either leave COOKIE_SECURE unset (the")
+		log.Println("         flag then follows each request: in-process TLS, or a TRUSTED_PROXIES")
+		log.Println("         peer sending X-Forwarded-Proto: https), set COOKIE_SECURE=false, or")
+		log.Println("         enable TLS with SERVER_ENABLE_TLS=true + SERVER_TLS_CERT / SERVER_TLS_KEY.")
+	}
+
+	// METRICS_TOKEN guards an internet-facing endpoint, so a short value is
+	// worth a warning (never fatal: the endpoint carries no secrets).
+	if tok := strings.TrimSpace(c.Server.MetricsToken); tok != "" && len(tok) < 16 {
+		log.Printf("WARNING: METRICS_TOKEN is only %d characters; /metrics is reachable from the network when it is set. Use a long random value (openssl rand -hex 32).", len(tok))
 	}
 
 	// Secrets warnings.
