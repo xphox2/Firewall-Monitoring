@@ -22,9 +22,11 @@ type CEF struct {
 // header in front of it is tolerated (see HasCEF).
 const cefPrefix = "CEF:"
 
-// HasCEF is the cheap gate: the record marker appears at the start or after a
-// space within the first cefSniffLen bytes (a body that merely mentions CEF
-// deep inside is not a record).
+// HasCEF is the cheap gate: the record marker is at the start, or after a
+// space within the first cefSniffLen bytes with nothing but header-like
+// tokens before it (no '='). A key=value line whose quoted value mentions a
+// CEF record (`msg="saw CEF:0|…"`) is not a CEF record — the FortiGate order
+// tries CEF first, so this gate must not steal FortiOS lines.
 func HasCEF(s string) bool {
 	return cefStart(s) >= 0
 }
@@ -40,7 +42,7 @@ func cefStart(s string) int {
 		lim = cefSniffLen
 	}
 	i := strings.Index(s[:lim], " "+cefPrefix)
-	if i < 0 {
+	if i < 0 || strings.IndexByte(s[:i], '=') >= 0 {
 		return -1
 	}
 	return i + 1

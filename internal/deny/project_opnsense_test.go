@@ -66,3 +66,17 @@ func TestProjectVendor_OPNsenseFilterlog(t *testing.T) {
 		t.Error("fortigate deny line under opnsense vendor must not project")
 	}
 }
+
+// TestProjectVendor_ICMPFilterlogNoPorts (0.11.293): for ICMP the filterlog
+// columns after the destination are the type and id, not ports; the row must
+// not carry them (pre-change: DstPort = 1234, the ICMP id).
+func TestProjectVendor_ICMPFilterlogNoPorts(t *testing.T) {
+	icmp := `filterlog[42]: 5,,,1000000103,igb0,match,block,in,4,0x0,,64,1,0,none,1,icmp,84,203.0.113.9,198.51.100.10,request,1234,5678`
+	ev, ok := ProjectVendor("opnsense", filterlogMsg(icmp), nil, PatternConfig{})
+	if !ok {
+		t.Fatal("icmp block must project")
+	}
+	if ev.Protocol != 1 || ev.SrcPort != 0 || ev.DstPort != 0 {
+		t.Errorf("icmp row = proto %d ports %d/%d, want 1 and no ports", ev.Protocol, ev.SrcPort, ev.DstPort)
+	}
+}

@@ -27,8 +27,17 @@ import (
 // tokens are added when a normalizer family recognised the line (also when
 // the mapper reported the line Unparsed — a FortiOS line of an unmapped type
 // still exposes its kv pairs); the `event.*` keys only when the line mapped
-// to an Event. Base severity/facility stay authoritative over a native key of
-// the same name.
+// to an Event.
+//
+// Base keys versus natives: severity and facility are always the syslog
+// header's. For the FortiOS key=value family the other three base keys keep
+// the behaviour the FortiGate extractor always had — a kv pair may override
+// them, and FortiOS webfilter logs do write `hostname="<url host>"`, which
+// operator rules match on. For every other family (filterlog never emits
+// such keys; CEF extensions, generic k=v and the text catalogue are new to
+// rules in 0.11.293) hostname, app_name and message stay the header's, so a
+// device whose body happens to contain `hostname=` or `message=` cannot
+// change what an existing rule on those base fields sees.
 //
 // C2 (review): a pre-1.3.48 collector's RFC 5424 space-split consumed the
 // first tokens of a FortiGate key=value line into Hostname/AppName/ProcessID/
@@ -47,9 +56,15 @@ func Fields(vendor string, msg *models.SyslogMessage) map[string]string {
 	dst["app_name"] = msg.AppName
 	dst["hostname"] = msg.Hostname
 	dst["message"] = msg.Message
+	protectAll := out.Family != normalize.FamilyFortiOSKV
 	for k, v := range ev.Native {
-		if k == "severity" || k == "facility" {
+		switch k {
+		case "severity", "facility":
 			continue
+		case "hostname", "app_name", "message":
+			if protectAll {
+				continue
+			}
 		}
 		dst[k] = v
 	}

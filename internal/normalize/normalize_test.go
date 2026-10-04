@@ -324,20 +324,100 @@ func TestCountry(t *testing.T) {
 	}
 }
 
-// TestNormalize_FormatHintReorders: a `cef` hint on a FortiGate device tries
-// the CEF family first; the KV family would otherwise claim a CEF record
-// (its extension is key=value) and map nothing useful.
-func TestNormalize_FormatHintReorders(t *testing.T) {
+// TestNormalize_FortiGateCEF_HintOrNot (review S-2a #1): a FortiGate switched
+// to CEF output normalizes the same whether the collector's `format: cef`
+// hint is present (live ingest) or not (a row re-read from the database for
+// the backfill or the rule tester). The CEF family comes first in the
+// FortiGate order because the key=value gate would otherwise claim the
+// record's extension and map nothing.
+func TestNormalize_FortiGateCEF_HintOrNot(t *testing.T) {
 	t.Parallel()
-	msg := &models.SyslogMessage{Message: `CEF:0|Fortinet|Fortigate|v7.4|0000000013|forward|5|src=192.0.2.10 dst=203.0.113.20 spt=51514 dpt=443 proto=TCP act=deny`}
-	ev, out := Normalize("fortigate", msg)
-	if out.Kind != OutcomeUnparsed {
-		t.Fatalf("without the hint the KV family claims the record: got %s %q", out.Kind, out.Reason)
+	line := `CEF:0|Fortinet|Fortigate|v7.4.3|0000000013|traffic:forward close|3|deviceExternalId=FGT60FTK00000000 FTNTFGTlogid=0000000013 cat=traffic:forward act=deny src=192.0.2.10 spt=51514 dst=203.0.113.20 dpt=443 proto=6`
+	hinted, hOut := Normalize("fortigate", &models.SyslogMessage{Message: line, Format: "cef"})
+	stored, sOut := Normalize("fortigate", &models.SyslogMessage{Message: line})
+	for _, c := range []struct {
+		name string
+		ev   Event
+		out  Outcome
+	}{{"hinted", hinted, hOut}, {"stored", stored, sOut}} {
+		if c.out.Kind != OutcomeOK || c.out.Family != FamilyCEF || c.ev.Action != ActionDeny || c.ev.SrcIP.String() != "192.0.2.10" || c.ev.Native["cef_id"] != "0000000013" {
+			t.Errorf("%s: %s %q family=%v action=%v src=%v cef_id=%q", c.name, c.out.Kind, c.out.Reason, c.out.Family, c.ev.Action, c.ev.SrcIP, c.ev.Native["cef_id"])
+		}
 	}
-	msg.Format = "cef"
-	ev, out = Normalize("fortigate", msg)
-	if out.Kind != OutcomeOK || ev.Action != ActionDeny || ev.SrcIP.String() != "192.0.2.10" {
-		t.Fatalf("with format=cef: %s %q action=%v src=%v", out.Kind, out.Reason, ev.Action, ev.SrcIP)
+	hm, sm := map[string]string{}, map[string]string{}
+	hinted.Fields(hm)
+	stored.Fields(sm)
+	diffMaps(t, "hinted vs stored", hm, sm)
+}
+
+// TestNormalize_FortiGateKV_MentioningCEF: with CEF tried first for
+// FortiGate, a FortiOS key=value line whose quoted msg contains a CEF record
+// must still be a FortiOS line — the CEF gate rejects a non-leading marker
+// preceded by any '='.
+func TestNormalize_FortiGateKV_MentioningCEF(t *testing.T) {
+	t.Parallel()
+	line := `date=2026-10-04 msg="saw CEF:0|a|b|c|d|e|f|x=1 in payload" time=12:00:00 devname="fw-example-01" logid="0100044547" type="event" subtype="system" level="information" vd="root" logdesc="Object attribute configured" user="alice" ui="GUI(192.0.2.10)" action="Edit" cfgpath="log.syslogd.setting" cfgobj="format" cfgattr="format[default->cef]"`
+	ev, out := Normalize("fortigate", &models.SyslogMessage{Message: line})
+	if out.Kind != OutcomeOK || out.Family != FamilyFortiOSKV || ev.Class != ClassConfigChange || ev.Native["subtype"] != "system" {
+		t.Fatalf("got %s %q family=%v class=%v subtype=%q", out.Kind, out.Reason, out.Family, ev.Class, ev.Native["subtype"])
+	}
+	if _, cef := ev.Native["cef_id"]; cef {
+		t.Errorf("CEF natives leaked into a FortiOS line: %v", ev.Native)
+	}
+	// A real record after a plain syslog header (no '=' before the marker) is still CEF.
+	if _, out := Normalize("fortigate", &models.SyslogMessage{Message: `fw-example-01 CEF:0|Fortinet|Fortigate|v7|0000000013|forward|3|src=192.0.2.1 dst=203.0.113.1 act=deny`}); out.Family != FamilyCEF {
+		t.Errorf("header-prefixed record: family=%v %s %q", out.Family, out.Kind, out.Reason)
+	}
+}
+
+// TestFortiGateTypeInference: logid typing applies to the 10-digit FortiOS
+// form only; anything else falls to the subtype vocabulary, and the UTM
+// prefix table names every UTM log type so an unmapped one is reported as
+// utm/<subtype>.
+func TestFortiGateTypeInference(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		line   string
+		class  Class
+		kind   OutcomeKind
+		reason string
+	}{
+		{`logid=13 subtype="forward" srcip=203.0.113.9 dstip=198.51.100.10 proto=6 action="deny"`, ClassNetwork, OutcomeOK, ""},
+		{`logid=13 srcip=203.0.113.9 action="deny"`, 0, OutcomeUnparsed, "fortigate: not a FortiOS log (no type/logid)"},
+		{`logid=2000000001 subtype="virtual-patch" srcip=203.0.113.9 action="blocked"`, 0, OutcomeUnparsed, "fortigate: utm/virtual-patch not mapped"},
+		{`logid=0800000001 subtype="voip" srcip=203.0.113.9`, 0, OutcomeUnparsed, "fortigate: utm/voip not mapped"},
+		{`logid=0100032001 user="alice" logdesc="Admin login successful" srcip=192.0.2.10 ui="GUI(192.0.2.10)" subtype="system"`, ClassAuth, OutcomeOK, ""},
+	} {
+		ev, out := Normalize("fortigate", &models.SyslogMessage{Message: tc.line})
+		if out.Kind != tc.kind || out.Reason != tc.reason || (tc.kind == OutcomeOK && ev.Class != tc.class) {
+			t.Errorf("%.50s: %s %q class=%v, want %s %q class=%v", tc.line, out.Kind, out.Reason, ev.Class, tc.kind, tc.reason, tc.class)
+		}
+	}
+}
+
+// TestEvent_SlabOverflowKeepsValues: more pointer columns than the slab holds
+// fall back to individual boxes; every value must survive copying the Event.
+func TestEvent_SlabOverflowKeepsValues(t *testing.T) {
+	t.Parallel()
+	line := `type="traffic" subtype="forward" policyid=1 sentbyte=2 rcvdbyte=3 sentpkt=4 rcvdpkt=5 duration=6 srcip=192.0.2.1 dstip=192.0.2.2 transip=192.0.2.3 tranip=192.0.2.4 trandisp="snat+dnat" srcport=1 dstport=2 transport=3 tranport=4 proto=6 apprisk="high" action="accept"`
+	ev, out := Normalize("fortigate", &models.SyslogMessage{Message: line})
+	if out.Kind != OutcomeOK {
+		t.Fatal(out)
+	}
+	cp := ev
+	if *cp.RuleID != 1 || *cp.BytesOut != 2 || *cp.BytesIn != 3 || *cp.PktsOut != 4 || *cp.PktsIn != 5 || *cp.DurationMS != 6000 ||
+		*cp.NatSrcPort != 3 || *cp.NatDstPort != 4 || cp.NatDstIP.String() != "192.0.2.4" || *cp.AppRisk != 4 || *cp.SrcPort != 1 {
+		t.Errorf("values wrong after copy: %+v", cp)
+	}
+	var e Event
+	var ptrs []*int64
+	for i := int64(0); i < 20; i++ {
+		ptrs = append(ptrs, e.p64(i))
+	}
+	for i, p := range ptrs {
+		if *p != int64(i) {
+			t.Errorf("slot %d = %d", i, *p)
+		}
 	}
 }
 

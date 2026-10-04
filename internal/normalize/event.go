@@ -149,10 +149,12 @@ func (k OutcomeKind) String() string {
 	}
 }
 
-// Outcome is Normalize's verdict on one line.
+// Outcome is Normalize's verdict on one line. Family is the tokenizer that
+// claimed it (0 for OutcomeNoFamily).
 type Outcome struct {
 	Kind   OutcomeKind
 	Reason string
+	Family Family
 }
 
 func ok() Outcome { return Outcome{Kind: OutcomeOK} }

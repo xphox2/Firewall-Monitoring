@@ -99,6 +99,37 @@
     }
   },
   {
+    "name": "filterlog_block_icmp_no_ports",
+    "outcome": "ok",
+    "native": {
+      "action": "block",
+      "dir": "in",
+      "dstip": "198.51.100.10",
+      "dstport": "1234",
+      "interface": "igb0",
+      "ipversion": "4",
+      "proto": "1",
+      "protoname": "icmp",
+      "reason": "match",
+      "srcip": "203.0.113.9",
+      "srcport": "request"
+    },
+    "event": {
+      "event.action": "deny",
+      "event.activity": "packet",
+      "event.class": "network",
+      "event.dst_ip": "198.51.100.10",
+      "event.extra.reason": "match",
+      "event.proto": "1",
+      "event.rule_id": "5",
+      "event.rule_key": "u:1000000103",
+      "event.rule_uid": "1000000103",
+      "event.src_if": "igb0",
+      "event.src_ip": "203.0.113.9",
+      "event.vendor_event_id": "filterlog"
+    }
+  },
+  {
     "name": "filterlog_rdr_unmapped",
     "outcome": "no_family",
     "reason": "opnsense: no family recognised the line"

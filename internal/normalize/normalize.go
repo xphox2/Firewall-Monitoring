@@ -112,6 +112,7 @@ func Normalize(vendor string, msg *models.SyslogMessage) (Event, Outcome) {
 			}
 			ev.Native = tok.native()
 			out := m.Map(tok, msg, &ev)
+			out.Family = f
 			if out.Kind == OutcomeOK {
 				finalize(&ev)
 			}

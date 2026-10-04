@@ -74,10 +74,10 @@ func (ev *Event) sevWord(s string) *int16 {
 		return ev.p16(5)
 	case "high", "error":
 		return ev.p16(7)
-	case "critical", "alert", "emergency":
+	case "critical", "alert", "emergency", "very-high", "very high":
 		return ev.p16(9)
 	}
-	return ev.i16(s) // CEF already uses 0-10
+	return ev.i16(s) // CEF already uses 0-10 (Low / Medium / High / Very-High are its word form)
 }
 
 // dnsQType maps a record-type mnemonic to its RR type number.
@@ -183,10 +183,28 @@ func mapFilterlog(fl *family.Filterlog, ev *Event) Outcome {
 		ev.SrcIf = fl.Interface
 	}
 	ev.SrcIP, ev.DstIP = ev.ip(fl.Src), ev.ip(fl.Dst)
-	ev.SrcPort, ev.DstPort = ev.port(fl.SrcPort), ev.port(fl.DstPort)
 	ev.Proto = ev.protoNum(fl.Proto)
+	// The two columns after dst are ports for TCP / UDP / SCTP only; for ICMP
+	// they are the type / id (the native srcport / dstport keys keep them, as
+	// the extractor always has, but they are not ports).
+	if hasPorts(fl.Proto, fl.ProtoName) {
+		ev.SrcPort, ev.DstPort = ev.port(fl.SrcPort), ev.port(fl.DstPort)
+	}
 	ev.extra("reason", fl.Reason)
 	return ok()
+}
+
+// hasPorts reports whether a protocol (numeric or named) carries L4 ports.
+func hasPorts(num, name string) bool {
+	switch num {
+	case "6", "17", "132":
+		return true
+	}
+	switch strings.ToLower(name) {
+	case "tcp", "udp", "sctp":
+		return true
+	}
+	return false
 }
 
 // mapCEFGeneric is the vendor-agnostic CEF mapping (generic vendor, or a
