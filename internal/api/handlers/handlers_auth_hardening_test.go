@@ -138,6 +138,8 @@ func TestTOTP_CodeUsedAtLoginRejectedAtDisable(t *testing.T) {
 	c, rec := jsonReq(http.MethodPost, "/admin/api/auth/2fa/disable",
 		`{"password":"correct-horse","code":"`+code+`"}`)
 	c.Set("username", "root")
+	c.Set("user_id", uint(1))
+	c.Set("auth_method", "session")
 	h.Disable2FA(c)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("replayed code at disable: status = %d, want 403 (body=%s)", rec.Code, rec.Body.String())
@@ -403,6 +405,8 @@ func TestDisable2FA_ReplayedCode_DistinctMessage(t *testing.T) {
 	}
 	c, rec := jsonReq(http.MethodPost, "/admin/api/auth/2fa/disable", `{"password":"correct-horse","code":"`+code+`"}`)
 	c.Set("username", "root")
+	c.Set("user_id", uint(1))
+	c.Set("auth_method", "session")
 	h.Disable2FA(c)
 	if rec.Code != http.StatusForbidden || errorBody(t, rec) != totpCodeAlreadyUsedMsg {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
@@ -415,6 +419,8 @@ func TestDisable2FA_ReplayedCode_DistinctMessage(t *testing.T) {
 func verifyReq(h *Handler, code string) *httptest.ResponseRecorder {
 	c, rec := jsonReq(http.MethodPost, "/admin/api/auth/2fa/verify", `{"code":"`+code+`"}`)
 	c.Set("username", "root")
+	c.Set("user_id", uint(1))
+	c.Set("auth_method", "session")
 	h.Verify2FA(c)
 	return rec
 }

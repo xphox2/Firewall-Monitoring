@@ -185,14 +185,9 @@ func (h *Handler) Setup2FA(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("password is required"))
 		return
 	}
-	username := c.GetString("username")
-	admin, err := db.GetAdminByUsername(username)
-	if err != nil || admin == nil {
-		httputil.InternalError(c, "Failed to load account", err)
-		return
-	}
-	if !h.authManager.CheckPassword(req.Password, admin.Password) {
-		c.JSON(http.StatusForbidden, response.Error("Password is incorrect"))
+	// Session-only, rate-limited, by the session's own id (handlers_reauth.go).
+	admin := h.reauthPassword(c, db, req.Password, "Password is incorrect")
+	if admin == nil {
 		return
 	}
 
@@ -210,7 +205,7 @@ func (h *Handler) Setup2FA(c *gin.Context) {
 
 	key, err := totp.Generate(totp.GenerateOpts{
 		Issuer:      "Firewall-Mon",
-		AccountName: username,
+		AccountName: admin.Username,
 	})
 	if err != nil {
 		httputil.InternalError(c, "Failed to generate TOTP secret", err)
@@ -257,10 +252,10 @@ func (h *Handler) Verify2FA(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("code is required"))
 		return
 	}
-	username := c.GetString("username")
-	admin, err := db.GetAdminByUsername(username)
-	if err != nil || admin == nil {
-		httputil.InternalError(c, "Failed to load account", err)
+	// Session-only, by the session's own id (handlers_reauth.go): an API
+	// token must not be able to finish an enrollment on its creator's account.
+	admin := h.loadSessionAccount(c, db)
+	if admin == nil {
 		return
 	}
 	// Re-verifying an ENROLLED account would re-mint (replace) its recovery
@@ -269,11 +264,14 @@ func (h *Handler) Verify2FA(c *gin.Context) {
 		c.JSON(http.StatusConflict, response.Error("Two-factor authentication is already enabled. Disable it first (password + current code) to re-enroll."))
 		return
 	}
-	if admin.TOTPSecret == "" {
+	// The row holds the secret encrypted; an empty decryption (nothing staged,
+	// or the key is unavailable) validates no code — fail closed.
+	secret := db.DecryptField(admin.TOTPSecret)
+	if secret == "" {
 		c.JSON(http.StatusBadRequest, response.Error("No pending 2FA setup — run setup first"))
 		return
 	}
-	if !validateTOTPCode(req.Code, admin.TOTPSecret) {
+	if !validateTOTPCode(req.Code, secret) {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid code — check your authenticator app"))
 		return
 	}
@@ -295,7 +293,8 @@ func (h *Handler) Verify2FA(c *gin.Context) {
 		httputil.InternalError(c, "Failed to store recovery codes", err)
 		return
 	}
-	if err := db.SetAdminTOTP(admin.ID, db.EncryptField(admin.TOTPSecret), true); err != nil {
+	// admin.TOTPSecret is the stored ciphertext — written back as is.
+	if err := db.SetAdminTOTP(admin.ID, admin.TOTPSecret, true); err != nil {
 		httputil.InternalError(c, "Failed to enable 2FA", err)
 		return
 	}
@@ -329,19 +328,16 @@ func (h *Handler) Disable2FA(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("password and code are required"))
 		return
 	}
-	username := c.GetString("username")
-	admin, err := db.GetAdminByUsername(username)
-	if err != nil || admin == nil {
-		httputil.InternalError(c, "Failed to load account", err)
-		return
-	}
-	if !h.authManager.CheckPassword(req.Password, admin.Password) {
-		c.JSON(http.StatusForbidden, response.Error("Password is incorrect"))
+	// Session-only, rate-limited, by the session's own id (handlers_reauth.go).
+	admin := h.reauthPassword(c, db, req.Password, "Password is incorrect")
+	if admin == nil {
 		return
 	}
 	// Shared replay guard: a code already spent on login (or any other TOTP
-	// action) within its validity window is not accepted here.
-	codeOK := validateTOTPCode(req.Code, admin.TOTPSecret)
+	// action) within its validity window is not accepted here. (Not
+	// reauthTOTP: a recovery code is accepted here, and nothing is owed when
+	// 2FA is not enabled.)
+	codeOK := validateTOTPCode(req.Code, db.DecryptField(admin.TOTPSecret))
 	if codeOK && !h.authManager.MarkTOTPSlotUsed(admin.ID, req.Code) {
 		c.JSON(http.StatusForbidden, response.Error(totpCodeAlreadyUsedMsg))
 		return

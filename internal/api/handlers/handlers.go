@@ -65,6 +65,12 @@ type Handler struct {
 	// every passkey endpoint then answers 404. Set once at startup.
 	passkeys *passkey.Service
 
+	// reauth is the per-account budget for every in-session re-authentication
+	// (password change, 2FA setup / disable, credential reveal, device purge,
+	// passkey registration / deletion): burst 5, then one a minute, separate
+	// from the login lockout. Zero value ready (handlers_reauth.go).
+	reauth auth.ReauthLimiter
+
 	// agentDropsLast tracks the last CUMULATIVE sFlow sample-pool drops
 	// counter seen per (agent, sampling rate) pair, so recordAgentDrops (M2
 	// of the 2026-07-01 audit) can fold per-batch deltas into

@@ -23,52 +23,29 @@ import (
 // itself is a background job run by the API primary's DevicePurgeWorker —
 // these handlers only queue, cancel and report it.
 
-// reauthCaller re-verifies the caller's OWN credentials for a step-up action:
-// the admin is resolved by the JWT username (never a request-supplied
-// identity), the password is re-checked, and — when the account has 2FA
-// enrolled — a valid, not-yet-used TOTP code is required as well. The replay
-// guard is shared with every other TOTP consumer (login, disable-2FA), so a
-// code spent anywhere can't be replayed here, nor a code spent here elsewhere. On success it returns the caller's username and id; on
+// reauthCaller re-verifies the caller's OWN credentials for a step-up action
+// (credential reveal, device purge): the account is the session's user_id
+// (never a request-supplied identity, never the username claim), API-token
+// principals are refused, attempts are rate-limited per account, the password
+// is re-checked, and — when the account has 2FA enrolled — a valid,
+// not-yet-used TOTP code is required as well (handlers_reauth.go). On
+// success it returns the caller's username (for the audit row) and id; on
 // failure it has already written the response (401 when not authenticated at
-// all, 403 otherwise — the RevealDeviceSecret precedent) and returns ok=false.
+// all, 403 otherwise — the RevealDeviceSecret precedent, 429 when the budget
+// is spent) and returns ok=false.
 func (h *Handler) reauthCaller(c *gin.Context, db database.Store, password, totpCode string) (username string, userID uint, ok bool) {
-	usernameVal, _ := c.Get("username")
-	userIDVal, _ := c.Get("user_id")
-	username, _ = usernameVal.(string)
-	userID, _ = userIDVal.(uint)
-	if username == "" {
-		c.JSON(http.StatusUnauthorized, response.Error("Not authenticated"))
+	if _, ok := sessionUserID(c); !ok {
 		return "", 0, false
 	}
 	if password == "" {
 		c.JSON(http.StatusForbidden, response.Error("Password is required"))
 		return "", 0, false
 	}
-	admin, err := db.GetAdminByUsername(username)
-	if err != nil || admin == nil || !h.authManager.CheckPassword(password, admin.Password) {
-		c.JSON(http.StatusForbidden, response.Error("Password is incorrect"))
+	admin := h.reauthPassword(c, db, password, "Password is incorrect")
+	if admin == nil || !h.reauthTOTP(c, db, admin, totpCode) {
 		return "", 0, false
 	}
-	// Step-up: a phished password + stolen session (which alone couldn't pass a
-	// fresh 2FA login) must not be enough for a credential reveal or a purge.
-	if admin.TOTPEnabled {
-		if totpCode == "" {
-			c.JSON(http.StatusForbidden, response.Error("Authenticator code required"))
-			return "", 0, false
-		}
-		if !validateTOTPCode(totpCode, admin.TOTPSecret) {
-			c.JSON(http.StatusForbidden, response.Error("Authenticator code is incorrect"))
-			return "", 0, false
-		}
-		// AUDIT L3: single-use replay guard, shared with the 2FA login path
-		// (handlers_totp.go). Without it a valid code could be replayed within
-		// its ~30–90s validity window to repeat the action.
-		if !h.authManager.MarkTOTPSlotUsed(admin.ID, totpCode) {
-			c.JSON(http.StatusForbidden, response.Error(totpCodeAlreadyUsedMsg))
-			return "", 0, false
-		}
-	}
-	return username, userID, true
+	return admin.Username, admin.ID, true
 }
 
 // ipsecPurgeBlockingStatuses are the tunnel states in which a purge is refused:

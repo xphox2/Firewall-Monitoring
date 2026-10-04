@@ -397,39 +397,14 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	// Get username and user ID from JWT claims
-	username, exists := c.Get("username")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, response.Error("Not authenticated"))
+	// The account is the session's own user_id (D8); API-token principals are
+	// refused; the current password is re-verified through the per-account
+	// re-auth limiter (D4) — never the login lockout (handlers_reauth.go).
+	admin := h.reauthPassword(c, db, req.CurrentPassword, "Current password is incorrect")
+	if admin == nil {
 		return
 	}
-	userID, uidExists := c.Get("user_id")
-	if !uidExists {
-		c.JSON(http.StatusUnauthorized, response.Error("Not authenticated"))
-		return
-	}
-
-	usernameStr, ok := username.(string)
-	if !ok {
-		httputil.InternalError(c, "Invalid session data", nil)
-		return
-	}
-	userIDUint, ok := userID.(uint)
-	if !ok {
-		httputil.InternalError(c, "Invalid session data", nil)
-		return
-	}
-
-	// Verify current password directly (bypass rate limiter — user is already authenticated)
-	admin, adminErr := db.GetAdminByUsername(usernameStr)
-	if adminErr != nil || admin == nil {
-		c.JSON(http.StatusForbidden, response.Error("Current password is incorrect"))
-		return
-	}
-	if !h.authManager.CheckPassword(req.CurrentPassword, admin.Password) {
-		c.JSON(http.StatusForbidden, response.Error("Current password is incorrect"))
-		return
-	}
+	userIDUint := admin.ID
 
 	hashedPassword, err := h.authManager.HashPassword(req.NewPassword)
 	if err != nil {

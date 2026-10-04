@@ -47,6 +47,7 @@ func profileReq(method, path, body, username, role string, userID uint) (*gin.Co
 	c.Set("username", username)
 	c.Set("role", role)
 	c.Set("user_id", userID)
+	c.Set("auth_method", "session")
 	return c, rec.Body
 }
 

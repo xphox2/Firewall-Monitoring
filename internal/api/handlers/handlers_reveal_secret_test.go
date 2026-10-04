@@ -25,6 +25,7 @@ func revealCtx(deviceID uint, username string, userID uint, body string) (*gin.C
 	c.Params = gin.Params{{Key: "id", Value: strconv.FormatUint(uint64(deviceID), 10)}}
 	c.Set("username", username)
 	c.Set("user_id", userID)
+	c.Set("auth_method", "session")
 	return c, rec
 }
 

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
-	"golang.org/x/time/rate"
 )
 
 // Ceremony kinds. A ceremony is only ever consumed as the kind it was stored
@@ -141,31 +140,4 @@ func NewLoginCeremonyID() (string, error) {
 // with a base64url login ceremony id.
 func RegistrationKey(adminID uint) string {
 	return "register:" + strconv.FormatUint(uint64(adminID), 10)
-}
-
-// ReauthLimiter is the dedicated per-user limiter for the passkey
-// re-authentication endpoints (register-begin, delete): a burst of 5, then one
-// attempt per minute. It counts every attempt, successful or not, and is
-// separate from the login lockout (a wrong password here never locks the
-// account's login).
-type ReauthLimiter struct {
-	mu sync.Mutex
-	m  map[uint]*rate.Limiter
-}
-
-// NewReauthLimiter returns an empty limiter set.
-func NewReauthLimiter() *ReauthLimiter {
-	return &ReauthLimiter{m: map[uint]*rate.Limiter{}}
-}
-
-// Allow reports whether the account may attempt a re-authentication now.
-func (r *ReauthLimiter) Allow(adminID uint) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	l, ok := r.m[adminID]
-	if !ok {
-		l = rate.NewLimiter(rate.Every(time.Minute), 5)
-		r.m[adminID] = l
-	}
-	return l.Allow()
 }

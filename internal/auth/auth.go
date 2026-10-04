@@ -338,8 +338,16 @@ func (am *AuthManager) ValidateCredentials(username, password string, ips ...str
 		return ErrInvalidCredentials
 	}
 
-	// Successful login clears attempts for this IP
-	delete(am.loginAttempts, lockoutKey)
+	// A password-only account is fully authenticated here, so its bucket is
+	// cleared. A 2FA account is NOT (D2): the password stage only buys a
+	// pending token, and clearing here would hand whoever holds the password
+	// a fresh second-factor budget per password round-trip — the TOTP guesses
+	// would never accumulate. Its bucket is cleared by ClearFailures once the
+	// login completes (TOTPLogin), so password and TOTP failures keep sharing
+	// one budget until a session is actually issued.
+	if !admin.TOTPEnabled {
+		delete(am.loginAttempts, lockoutKey)
+	}
 	return nil
 }
 
