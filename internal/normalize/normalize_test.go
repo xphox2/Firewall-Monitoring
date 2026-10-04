@@ -213,7 +213,10 @@ func TestFixtures_Hygiene(t *testing.T) {
 			t.Fatal(err)
 		}
 		for n, line := range strings.Split(string(raw), "\n") {
-			for _, lit := range append(ipv4Lit.FindAllString(line, -1), ipv6Lit.FindAllString(line, -1)...) {
+			// A netfilter MAC= field (dst + src + ethertype, 14 colon-separated
+			// bytes) parses as an IPv6 literal; strip MAC-shaped runs first.
+			noMAC := macLit.ReplaceAllString(line, "")
+			for _, lit := range append(ipv4Lit.FindAllString(line, -1), ipv6Lit.FindAllString(noMAC, -1)...) {
 				a, err := netip.ParseAddr(lit)
 				if err != nil {
 					continue // a version string or a MAC-shaped token

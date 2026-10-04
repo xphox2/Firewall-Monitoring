@@ -4,6 +4,7 @@
     "outcome": "ok",
     "native": {
       "act": "deny",
+      "app": "RDP",
       "cef_id": "1001",
       "cef_name": "Connection denied",
       "cef_product": "Edge Firewall",
@@ -22,6 +23,7 @@
     "event": {
       "event.action": "deny",
       "event.activity": "traffic",
+      "event.app": "RDP",
       "event.class": "network",
       "event.dst_ip": "198.51.100.10",
       "event.dst_port": "3389",

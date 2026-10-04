@@ -1,9 +1,9 @@
 // Package family holds the syslog tokenizers the normalizer dispatches to
-// (roadmap §2.1): FortiOS / generic key=value, ArcSight CEF, the pf filterlog
-// CSV and a small free-text regex catalogue (the Linux netfilter LOG prefix
-// and the Cisco Meraki positional body arrive with their mappers in S-2b). A
-// tokenizer knows the SHAPE of a line and nothing about what the keys mean —
-// that is the vendor mapper's job in internal/normalize. Everything here is non-regex and allocation-light where
+// (roadmap §2.1): FortiOS / generic key=value, ArcSight CEF, Linux netfilter
+// LOG prefixes, Cisco Meraki positional bodies, the pf filterlog CSV and a
+// small free-text regex catalogue. A tokenizer knows the SHAPE of a line and
+// nothing about what the keys mean — that is the vendor mapper's job in
+// internal/normalize. Everything here is non-regex and allocation-light where
 // it sits on the syslog hot path (KV, filterlog); the regex catalogue only
 // runs for lines nothing cheaper claimed.
 package family

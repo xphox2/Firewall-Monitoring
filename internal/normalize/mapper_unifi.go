@@ -89,7 +89,7 @@ func unifiCEF(c *family.CEF, ev *Event) Outcome {
 		ev.Class, ev.Activity, ev.Action = ClassAuth, ActivityLogon, ActionAllow
 		ev.AdminUser = firstNonEmpty(x["unifiadmin"], x["suser"])
 		ev.AdminSrcIP = x["src"]
-		ev.AdminMethod = strings.ToLower(firstNonEmpty(x["unifiaccessmethod"], "gui"))
+		ev.AdminMethod = unifiAccessMethod(x["unifiaccessmethod"])
 	case "578": // Network Updated (application version)
 		ev.Class, ev.Activity = ClassDeviceHealth, ActivitySoftware
 		ev.extra("version", x["unifiapplicationversion"])
@@ -106,6 +106,20 @@ func unifiCEF(c *family.CEF, ev *Event) Outcome {
 		return unparsed("unifi: cef " + c.SignatureID + " (" + c.Name + ") not mapped")
 	}
 	return ok()
+}
+
+// unifiAccessMethod folds UNIFIaccessMethod (Local / Cloud / Remote …) into
+// the admin_method vocabulary: a local controller login is the GUI, a cloud
+// SSO one is cloud; anything else keeps its lowercased word.
+func unifiAccessMethod(s string) string {
+	switch l := strings.ToLower(s); l {
+	case "", "local", "gui", "web":
+		return "gui"
+	case "cloud", "remote", "sso":
+		return "cloud"
+	default:
+		return l
+	}
 }
 
 func unifiAct(s string) Action {
@@ -139,6 +153,10 @@ func unifiNetfilter(nf *family.Netfilter, ev *Event) Outcome {
 	if d := f["descr"]; d != "" && !strings.EqualFold(d, "no rule description") {
 		ev.RuleName = d
 	}
+	// Tier x (roadmap §1.3): the chain position is the identity; DESCR is a
+	// description netfilter truncates at ~28 chars, kept for display only.
+	// The API poller resolves the real name through fw_rules later.
+	ev.RuleKey = RuleKey("", nil, "", nf.Ruleset, ev.RuleIndex)
 	ev.SrcIf, ev.DstIf = f["in"], f["out"]
 	ev.SrcIP, ev.DstIP = ev.ip(f["src"]), ev.ip(f["dst"])
 	ev.SrcPort, ev.DstPort = ev.port(f["spt"]), ev.port(f["dpt"])

@@ -1,3 +1,5 @@
 # pfSense shares the pf filterlog schema with OPNsense; the mapper is the same, so one block + one text case pins the registration.
 {"name":"filterlog_block_v4","msg":{"hostname":"fw-example-03","app_name":"filterlog","process_id":"9","severity":4,"facility":4,"format":"rfc3164","message":"5,,,1000000103,igb0,match,block,in,4,0x0,,64,12345,0,none,6,tcp,60,203.0.113.9,198.51.100.10,54321,443,0,S,1234567890,,65535,,mss;nop"}}
 {"name":"openvpn_disconnected","msg":{"hostname":"fw-example-03","app_name":"openvpn","process_id":"900","severity":6,"facility":3,"format":"rfc3164","message":"alice/203.0.113.60:1194 SIGTERM[soft,remote-exit] received, client-instance exiting"}}
+{"name":"sshd_failed","msg":{"hostname":"fw-example-03","app_name":"sshd","process_id":"1234","severity":6,"facility":10,"format":"rfc3164","message":"Failed password for bob from 203.0.113.9 port 2222 ssh2"}}
+{"name":"charon_deleted","msg":{"hostname":"fw-example-03","app_name":"charon","process_id":"77","severity":6,"facility":3,"format":"rfc3164","message":"05[IKE] <con1|6> deleting IKE_SA con1[6] between 203.0.113.1[203.0.113.1]...203.0.113.50[203.0.113.50]"}}

@@ -1,6 +1,24 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.294] - 2026-10-04
+
+### Added — UniFi and Meraki syslog normalizers + capability profiles (Phase 1, S-2b; no database change)
+
+- **UniFi mapper** (`internal/normalize/mapper_unifi.go`), both syslog streams. Gateway syslog: the kernel netfilter LOG line `[<chain>-<A|D|R|RET>-<index>] DESCR="…" IN= OUT= MAC= SRC= DST= PROTO= SPT= DPT=` becomes a per-packet network event — verdict → allow / deny / reject (RET → other), chain → `ruleset`, index → `rule_index`, rule key tier **x** (`x:WAN_LOCAL/2147483647`; `DESCR` is a truncated description kept in `rule_name` for display, the API poller resolves names later), `MAC=` split into dst / src MAC; dnsmasq `query[…]` → DNS activity, `DHCPACK` → DHCP identity (IP ↔ MAC ↔ hostname). SIEM integration (CEF, Network 8.5+): 201 Threat Detected and Blocked → finding (signature id / name, policy, zones, bytes / packets, session id, direction, client hostname / MAC), 100 / 112 / 113 → device_health wan_down / latency (`latency_ms`) / packet_loss (`packet_loss_pct`), 400 / 401 / 402 → auth connect / disconnect / roam (client MAC / IP / hostname, SSID and AP in Extra), 512 → device_offline, 544 → admin logon (`UNIFIadmin`, `src`, access method folded to gui / cloud), 578 → software update, UniFi OS 1005 → config_change parsed from the free-text `<admin> changed <setting> from "old" to "new". Source IP: …`. Unknown CEF ids report `Unparsed` with the id and name. New tokenizers `family/netfilter.go` (prefix grammar incl. zone-pair chains and index-less prefixes) and `family/meraki.go`.
+- **Meraki mapper** (`mapper_meraki.go`), MX / MR / MS roles: `flows` / `firewall` / `vpn_firewall` / `cellular_firewall` → network traffic with the verdict from `pattern: allow|deny|1|0 <rule text>` (or the newer leading verdict word) and the rule text as `rule_name` (tier **n**; `vpn_firewall` / `cellular_firewall` qualify it as the ruleset); `urls` → HTTP (host / path / method); `ids-alerts` and `security_event ids_alerted` → finding (Snort `gid:sid:rev`, priority → severity, `decision=blocked` → deny, ingress / egress → direction, client MAC); `security_event security_filtering_*` → finding (file name, sha256, disposition, action); `events` → `vpn_connectivity_change` tunnel up / down with peer, `client_vpn_connect` / `anyconnect_vpn_connect` (user, local IP, peer), `8021x_*` and `association` / `disassociation` → auth, `failover to wanN` → device_health, `dhcp lease …` → DHCP identity; `airmarshal_events` → finding; `ip_flow_start` / `ip_flow_end` → open / close with the translated (NAT) tuple. Meraki syslog carries no bytes, rule ids or admin audit — those are API-only and stay `NULL`.
+- **Static capability matrix** (`internal/normalize/capability`, roadmap §1.4): `Profile{Vendor, Hardware, Fields map[Field]Spec{Source: syslog|netflow|api|none, Completeness: full|config_dependent|partial, Note}}` for fortigate, opnsense, pfsense, unifi, meraki and generic, written from the per-vendor field mapping table; `Features` names the fields each feature needs (deny_analytics, policy_hits, policy_bytes, identity_inventory, user_attribution, app_visibility, utm_trends, web_categories, dns_visibility, vpn_sessions, config_audit, admin_login_audit, wan_health, nat_forensics, geo) and `Feature(feature, vendor)` returns supported / degraded / unsupported with the fields that caused it — the vocabulary the S-4 capability API and the UI badges consume. `TestCapabilityProfile_NoDrift`: every field a profile claims from syslog is produced by at least one fixture of that vendor, so a profile cannot promise what the mapper does not deliver.
+- Every UniFi and Meraki fixture, profile and mapper is **built from the vendor documentation and untested on real hardware** (`Profile.Hardware` says so; the golden tests pin the documented shapes, not observed ones).
+
+### Changed
+
+- `docs/custom-vendor.md` Step 5b also covers the capability profile.
+- Fixture hygiene scan ignores MAC-shaped runs (a 14-byte netfilter `MAC=` field parses as an IPv6 literal).
+
+### Tests
+
+- `TestNormalize_Golden` gains `testdata/unifi` (19 cases) and `testdata/meraki` (19 cases); `TestFixtures_NoSilentDrops` lists the two known gaps (UniFi CEF 530 AP channel change, Meraki MS port status text); `TestParseNetfilter`, `TestParseMeraki` (family); `TestCapabilityProfile_NoDrift`, `TestLookup_FallsBackToGeneric`, `TestFeature` (capability).
+
 ## [0.11.293] - 2026-10-04
 
 ### Added — vendor-neutral syslog normalizer (Phase 1, S-2a; no database change)

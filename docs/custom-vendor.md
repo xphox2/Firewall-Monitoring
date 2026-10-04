@@ -201,7 +201,7 @@ func (acmeMapper) Map(tok Tokens, _ *models.SyslogMessage, ev *Event) Outcome {
 ```
 
 Pick the tokenizer families from `internal/normalize/family` (key=value, CEF,
-pf filterlog, a free-text regex catalogue; netfilter and Meraki follow) and
+netfilter, Meraki positional, pf filterlog, a free-text regex catalogue) and
 return `unparsed("acme: … not mapped")` for shapes you do not map yet — the
 line keeps its native fields, nothing is dropped silently. Use the `ev.ip` /
 `ev.port` / `ev.i64` constructors for pointer columns (NULL when the vendor
@@ -211,7 +211,12 @@ Add synthetic fixtures under `internal/normalize/testdata/acme/cases.jsonl`
 (documentation addresses only — `TestFixtures_Hygiene` enforces it) and run
 `go test ./internal/normalize -update` once to write the golden; every case
 must map or be listed in `unparsed.txt`. `mapper_fortigate.go` is the full
-worked example, `mapper_filterlog.go` the two-family minimal one.
+worked example, `mapper_filterlog.go` the two-family minimal one. Then add a
+`capability.Profile` for the vendor in
+[`internal/normalize/capability/profile.go`](../internal/normalize/capability/profile.go)
+— which `event.*` fields the vendor can supply, through which transport and
+how completely; `TestCapabilityProfile_NoDrift` fails if a syslog field the
+profile claims is produced by none of your fixtures.
 
 ## Step 6 — build, test, tag a device
 
