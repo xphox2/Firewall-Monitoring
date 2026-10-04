@@ -21,10 +21,10 @@ const minFlows = 3
 // in a window) produced perpetual false "cleartext traffic" / "leaving the
 // network" / "known-bad traffic" findings for connections the firewall
 // stopped. port_scan/super_spreader intentionally KEEP denied rows — a blocked
-// probe is still scan evidence. Detectors FOR denied traffic (deny storms,
-// denied-then-allowed) are a separate class deferred to the Tranche 4
-// detection backlog —
-// do not bolt them onto the forwarded-traffic detectors here.
+// probe is still scan evidence. Detectors FOR denied traffic (deny_storm,
+// deny_storm_victim, denied_then_allowed) are a separate class that runs over
+// denied_events, not flow_samples — see deny.go; do not bolt them onto the
+// forwarded-traffic detectors here.
 func forwardedOnly(q *gorm.DB) *gorm.DB {
 	return q.Where("firewall_event <> ?", models.FirewallEventDenied)
 }

@@ -289,19 +289,28 @@ func (h *Handler) TestEventRule(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid match_json: "+err.Error()))
 		return
 	}
-	vendor := req.VendorScope
-	if vendor == "" {
-		vendor = "fortigate" // the only extracting vendor today
-	}
 	msgs, err := db.RecentSyslogForTest(req.Limit)
 	if err != nil {
 		httputil.InternalError(c, "Failed to load recent syslog", err)
 		return
 	}
+	// With no vendor scope the live engine extracts each message with ITS
+	// device's vendor (alerts.EvaluateSyslog), so the preview does the same
+	// through the cached deviceVendor resolver — before, an unscoped preview
+	// ran every message through the FortiGate extractor, so a rule on a
+	// FortiOS field "matched" lines from a pfSense or Palo Alto device that
+	// the engine would never have fired on. An explicit scope keeps the
+	// previous behaviour: every message is extracted with that vendor.
+	vendorFor := func(m *models.SyslogMessage) string {
+		if req.VendorScope != "" {
+			return req.VendorScope
+		}
+		return h.deviceVendor(m.DeviceID)
+	}
 	matched := 0
 	samples := make([]string, 0, 20)
 	for i := range msgs {
-		if rule.MatchSyslog(vendor, &msgs[i]) {
+		if rule.MatchSyslog(vendorFor(&msgs[i]), &msgs[i]) {
 			matched++
 			if len(samples) < 20 {
 				samples = append(samples, msgs[i].Message)
@@ -317,7 +326,7 @@ func (h *Handler) TestEventRule(c *gin.Context) {
 		"matched": matched,
 		"rate":    rate,
 		"samples": samples,
-		"vendor":  vendor,
+		"vendor":  req.VendorScope, // "" = each message's own device vendor
 		"note":    "Scans up to the last 24h / 5000 messages; sev6-7 notice traffic is aggregated-and-deleted, so old bulk traffic isn't testable.",
 	}))
 }

@@ -1498,14 +1498,17 @@ type DeniedEvent struct {
 	DstPort  uint16 `json:"dst_port" gorm:"type:integer"`
 	Protocol uint8  `json:"protocol"`
 
-	// SrcIntfRole is the FortiGate-authoritative direction oracle (srcintfrole):
-	// 0 unknown, 1 wan, 2 lan, 3 dmz, 4 undefined. Better than the flow CIDR
-	// guess (classify.Direction) — the deny_storm variants split on it.
+	// SrcIntfRole is the source interface's role as the VENDOR reports it, when
+	// it does (FortiGate srcintfrole; the filterlog projection has none and
+	// leaves 0): 0 unknown, 1 wan, 2 lan, 3 dmz, 4 undefined. Better than the
+	// flow CIDR guess (classify.Direction) when supplied — the deny_storm
+	// variants split on it.
 	SrcIntfRole uint8 `json:"src_intf_role" gorm:"default:0;not null"`
 	// Subtype separates local-in denies (traffic TO the firewall's own IPs) from
 	// transit/forward denies: 0 unknown, 1 local, 2 forward.
 	Subtype uint8 `json:"subtype" gorm:"default:0;not null"`
-	// FortiGate emits full country NAMES (e.g. "United States"), not ISO codes.
+	// Stored as the vendor supplies it: FortiGate emits full country NAMES
+	// (e.g. "United States"), not ISO codes; filterlog carries no country.
 	SrcCountry string `json:"src_country"`
 	DstCountry string `json:"dst_country"`
 
@@ -1526,8 +1529,9 @@ type DeniedEvent struct {
 
 func (DeniedEvent) TableName() string { return "denied_events" }
 
-// FortiGate srcintfrole → DeniedEvent.SrcIntfRole enum. Kept in models so both
-// the projection (internal/deny) and detectors (internal/detect) agree.
+// DeniedEvent.SrcIntfRole enum — the vendor-reported interface role when one is
+// supplied (FortiGate srcintfrole maps 1:1). Kept in models so both the
+// projection (internal/deny) and detectors (internal/detect) agree.
 const (
 	IntfRoleUnknown   uint8 = 0
 	IntfRoleWAN       uint8 = 1

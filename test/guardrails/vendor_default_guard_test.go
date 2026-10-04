@@ -55,9 +55,6 @@ var vendorDefaultPatterns = []*regexp.Regexp{
 
 // vendorDefaultAllow: file → exact trimmed line → reason.
 var vendorDefaultAllow = map[string]map[string]string{
-	"internal/api/handlers/handlers_event_rules.go": {
-		`vendor = "fortigate" // the only extracting vendor today`: "rule-tester default; S-1c resolves each message's device vendor instead (drop this entry with that change)",
-	},
 	"internal/api/handlers/handlers.go": {
 		`const legacySNMPVendor = "fortigate"`: "the legacy single-device SNMP_HOST client predates the vendor column and has only ever polled a FortiGate; explicit so the generic default does not change what that (mostly dead) path returns",
 	},
