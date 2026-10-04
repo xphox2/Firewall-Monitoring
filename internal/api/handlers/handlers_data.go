@@ -229,31 +229,13 @@ func (h *Handler) projectDeniedEvents(msgs []models.SyslogMessage) {
 		return
 	}
 	cfg := deny.PatternConfig{Pattern: h.denyPolicyPattern()}
-	// Resolve each distinct device's vendor once (few devices per batch), so a
+	// deviceVendor is TTL-cached per device (few devices per batch), so a
 	// FortiGate batch pays no extra lookups and OPNsense/pfSense route to the
-	// filterlog parser. A device with no vendor (or DeviceID 0) defaults to the
-	// historical FortiGate behaviour.
-	vendors := make(map[uint]string)
-	for i := range msgs {
-		id := msgs[i].DeviceID
-		if id == 0 {
-			continue
-		}
-		if _, seen := vendors[id]; seen {
-			continue
-		}
-		vendor := "fortigate"
-		if dev, err := h.db.GetDevice(id); err == nil && dev != nil && dev.Vendor != "" {
-			vendor = dev.Vendor
-		}
-		vendors[id] = vendor
-	}
+	// filterlog parser. A device with no vendor (or DeviceID 0) is "generic",
+	// which deny.ProjectVendor never projects.
 	events := make([]models.DeniedEvent, 0, len(msgs))
 	for i := range msgs {
-		vendor := vendors[msgs[i].DeviceID]
-		if vendor == "" {
-			vendor = "fortigate"
-		}
+		vendor := h.deviceVendor(msgs[i].DeviceID)
 		if ev, ok := deny.ProjectVendor(vendor, &msgs[i], &h.threatMatch, cfg); ok {
 			events = append(events, ev)
 		}

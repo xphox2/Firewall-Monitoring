@@ -156,7 +156,7 @@ func (h *Handler) GetPublicDashboard(c *gin.Context) {
 
 	// Try SNMP first (only for legacy single-device mode without device_id param)
 	if !hasDevice && h.snmpClient != nil {
-		status, err := h.snmpClient.GetSystemStatus()
+		status, err := h.snmpClient.GetSystemStatus(legacySNMPVendor)
 		if err == nil {
 			// Legacy single-device SNMP path (mostly dead post-v0.11.74): no
 			// device_id, so no per-device availability to compute (AUDIT-318).
@@ -787,7 +787,7 @@ func (h *Handler) GetAdminDashboard(c *gin.Context) {
 
 	// Try SNMP first
 	if h.snmpClient != nil {
-		s, err := h.snmpClient.GetSystemStatus()
+		s, err := h.snmpClient.GetSystemStatus(legacySNMPVendor)
 		if err == nil {
 			status = s
 		}

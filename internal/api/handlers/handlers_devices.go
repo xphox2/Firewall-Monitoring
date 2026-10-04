@@ -76,12 +76,14 @@ func (h *Handler) CreateDevice(c *gin.Context) {
 		return
 	}
 
-	// Default and validate vendor
+	// Default and validate vendor. An omitted vendor is "generic" (the
+	// standards-only SNMP profile, no deny projection) — the operator picks
+	// FortiGate explicitly; nothing is assumed to be one.
 	if device.Vendor == "" {
-		device.Vendor = "fortigate"
+		device.Vendor = GenericVendor
 	}
 	if !isValidVendor(device.Vendor) {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid vendor: must be fortigate, paloalto, cisco_asa, sonicwall, firewalla, pfsense, opnsense, or generic"))
+		c.JSON(http.StatusBadRequest, response.Error(invalidVendorMessage()))
 		return
 	}
 
@@ -309,7 +311,7 @@ func prepareDeviceUpdates(c *gin.Context, db database.Store, device *models.Devi
 	if vendorVal, ok := filteredUpdates["vendor"]; ok {
 		vendorStr, isStr := vendorVal.(string)
 		if !isStr || !isValidVendor(vendorStr) {
-			c.JSON(http.StatusBadRequest, response.Error("Invalid vendor: must be fortigate, paloalto, cisco_asa, sonicwall, firewalla, pfsense, opnsense, or generic"))
+			c.JSON(http.StatusBadRequest, response.Error(invalidVendorMessage()))
 			return nil, false
 		}
 	}
@@ -419,6 +421,12 @@ func (h *Handler) writeDeviceUpdates(c *gin.Context, db database.Store, id uint,
 			}
 			httputil.InternalError(c, "Failed to update device", err)
 			return
+		}
+		if _, ok := filteredUpdates["vendor"]; ok {
+			// The ingest paths must see the new vendor now, not after the
+			// cache TTL (a re-tagged FortiGate starts projecting denies at
+			// once).
+			h.forgetDeviceVendor(id)
 		}
 	}
 	respondDevice(c, db, id, device)
@@ -1022,12 +1030,35 @@ type TestDeviceRequest struct {
 	SNMPV3PrivType string `json:"snmpv3_priv_type"`
 	SNMPV3PrivPass string `json:"snmpv3_priv_pass"`
 	ProbeID        *uint  `json:"probe_id"`
+	// Vendor picks the SNMP profile the test polls with (the form's vendor
+	// select). Empty is generic: MIB-II only, so a FortiGate tested without
+	// its vendor answers with sysDescr and 0% CPU / memory.
+	Vendor string `json:"vendor"`
+}
+
+// systemStatusPoller is what TestDeviceConnection needs from an SNMP client;
+// newTestSNMPClient is the seam a test replaces to see which vendor the
+// handler polls with (no SNMP agent in unit tests).
+type systemStatusPoller interface {
+	GetSystemStatus(vendor ...string) (*models.SystemStatus, error)
+	Close() error
+}
+
+var newTestSNMPClient = func(cfg *config.Config) (systemStatusPoller, error) {
+	return snmp.NewSNMPClient(cfg)
 }
 
 func (h *Handler) TestDeviceConnection(c *gin.Context) {
 	var req TestDeviceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
+		return
+	}
+	if req.Vendor == "" {
+		req.Vendor = GenericVendor
+	}
+	if !isValidVendor(req.Vendor) {
+		c.JSON(http.StatusBadRequest, response.Error(invalidVendorMessage()))
 		return
 	}
 
@@ -1079,7 +1110,7 @@ func (h *Handler) TestDeviceConnection(c *gin.Context) {
 		},
 	}
 
-	client, err := snmp.NewSNMPClient(cfg)
+	client, err := newTestSNMPClient(cfg)
 	if err != nil {
 		log.Printf("TestDevice connect error for %s: %v", req.IPAddress, err)
 		c.JSON(http.StatusOK, response.Success(gin.H{
@@ -1091,7 +1122,7 @@ func (h *Handler) TestDeviceConnection(c *gin.Context) {
 	}
 	defer client.Close()
 
-	status, err := client.GetSystemStatus()
+	status, err := client.GetSystemStatus(req.Vendor)
 	if err != nil {
 		log.Printf("TestDevice poll error for %s: %v", req.IPAddress, err)
 		c.JSON(http.StatusOK, response.Success(gin.H{

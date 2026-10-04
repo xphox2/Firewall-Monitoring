@@ -41,7 +41,7 @@
         updateFootNote();
     }
     function esc(s) { return AC.escapeHtml(String(s == null ? '' : s)); }
-    function vendorOf(d) { return (d.vendor || 'fortigate'); }
+    function vendorOf(d) { return (d.vendor || 'generic'); }
 
     // ---- list -----------------------------------------------------------
     function init() {

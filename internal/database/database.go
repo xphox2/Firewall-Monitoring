@@ -388,8 +388,8 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 	// now ships as rules, so this must run before syslog ingestion serves.
 	d.EnsureDefaultRules()
 
-	// Backfill empty vendor → fortigate (the in-code default per
-	// internal/models/models.go) and audit the fleet's vendor distribution.
+	// Audit the fleet's vendor distribution (read-only since 0.11.290; the
+	// empty-vendor backfill is migration v71 and an empty vendor is generic).
 	// Any device whose vendor lacks a rich normalizer in internal/configdiff
 	// will silently false-alert on every config backup, because byte-equality
 	// hashing makes random-IV ENC ciphertext look like a real change. The

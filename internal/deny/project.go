@@ -119,18 +119,22 @@ func Project(msg *models.SyslogMessage, tm *threatintel.Holder, cfg PatternConfi
 
 // ProjectVendor derives a DeniedEvent from a syslog message under the device's
 // vendor (AUDIT-280). FortiGate uses the action="deny"/block-policy heuristics;
-// OPNsense/pfSense parse the pf `filterlog` block/reject verdict. Unknown
-// vendors fall through to the FortiGate parser (the historical default) so no
-// existing FortiGate deny stops projecting.
+// OPNsense/pfSense parse the pf `filterlog` block/reject verdict. Any other
+// vendor — "generic", "", or one without a deny parser — never projects: a
+// device's deny stream is only understood once its vendor says which format
+// it speaks (a FortiGate left as "generic" must be re-tagged, see CHANGELOG
+// 0.11.290).
 func ProjectVendor(vendor string, msg *models.SyslogMessage, tm *threatintel.Holder, cfg PatternConfig) (models.DeniedEvent, bool) {
 	if msg == nil {
 		return models.DeniedEvent{}, false
 	}
 	switch strings.ToLower(strings.TrimSpace(vendor)) {
+	case "fortigate":
+		return projectFortiGate(msg, tm, cfg)
 	case "opnsense", "pfsense":
 		return projectFilterlog(vendor, msg, tm)
 	default:
-		return projectFortiGate(msg, tm, cfg)
+		return models.DeniedEvent{}, false
 	}
 }
 

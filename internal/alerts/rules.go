@@ -522,6 +522,8 @@ func (am *AlertManager) flushEventRuleHits(db *database.Database) {
 func (am *AlertManager) EvaluateSyslog(msg *models.SyslogMessage, siteID *uint) error {
 	am.mu.RLock()
 	meta, hasMeta := am.deviceMeta[msg.DeviceID]
+	// Same fallback as handlers.deviceVendor (handlers_vendor.go): no device,
+	// no row or an empty value is "generic". Keep the two in step.
 	vendor := "generic"
 	effSite := siteID
 	if msg.DeviceID != 0 && hasMeta {
