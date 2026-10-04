@@ -50,9 +50,19 @@ func InternalError(c *gin.Context, msg string, err error) {
 // ParsePagination extracts limit and offset from query parameters.
 // Default limit is 100, max is 500. Default offset is 0.
 func ParsePagination(c *gin.Context) (limit, offset int) {
+	return ParsePaginationMax(c, 500)
+}
+
+// ParsePaginationMax is ParsePagination with a caller-chosen ceiling for
+// `limit`. A `limit` above maxLimit (or non-numeric, or <= 0) is ignored and the
+// default of 100 applies — the same silent fallback ParsePagination has always
+// had, which is why the Flows CSV export asking for 10 000 rows through the
+// 500-capped parser got 100 rows and no error. Endpoints that serve an export
+// pass their own ceiling; JSON list endpoints stay on ParsePagination's 500.
+func ParsePaginationMax(c *gin.Context, maxLimit int) (limit, offset int) {
 	limit = 100
 	if l := c.Query("limit"); l != "" {
-		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 500 {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= maxLimit {
 			limit = parsed
 		}
 	}

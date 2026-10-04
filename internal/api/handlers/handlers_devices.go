@@ -721,22 +721,20 @@ func (h *Handler) GetDeviceDetail(c *gin.Context) {
 				continue
 			}
 			haveIdx[idx] = struct{}{}
-			status := "up"
-			if ctr.IfStatus == 0 {
-				status = "unknown"
-			}
+			status, adminStatus := sflowIfStatus(ctr.IfStatus)
 			interfaces = append(interfaces, models.InterfaceStats{
-				DeviceID:  id,
-				Timestamp: ctr.Timestamp,
-				Name:      fmt.Sprintf("if%d", idx), // sFlow counters carry no ifName
-				Index:     idx,
-				Type:      int(ctr.IfType),
-				Speed:     ctr.IfSpeed,
-				Status:    status,
-				InBytes:   ctr.InOctets,
-				InErrors:  ctr.InErrors,
-				OutBytes:  ctr.OutOctets,
-				OutErrors: ctr.OutErrors,
+				DeviceID:    id,
+				Timestamp:   ctr.Timestamp,
+				Name:        fmt.Sprintf("if%d", idx), // sFlow counters carry no ifName
+				Index:       idx,
+				Type:        int(ctr.IfType),
+				Speed:       ctr.IfSpeed,
+				Status:      status,
+				AdminStatus: adminStatus,
+				InBytes:     ctr.InOctets,
+				InErrors:    ctr.InErrors,
+				OutBytes:    ctr.OutOctets,
+				OutErrors:   ctr.OutErrors,
 			})
 		}
 	}
@@ -1526,4 +1524,29 @@ func (h *Handler) GetDeviceInterfaceErrors(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, response.Success(gin.H{"interface_errors": errs}))
+}
+
+// sflowIfStatus decodes the sFlow v5 generic interface counter ifStatus bit
+// field (sflow_version_5.txt: "bit 0 = ifAdminStatus (0 = down, 1 = up),
+// bit 1 = ifOperStatus (0 = down, 1 = up)") into the InterfaceStats
+// Status / AdminStatus vocabulary the SNMP poller writes ("up" / "down"), so
+// an sFlow-only interface card renders the same way as a polled one. The
+// pre-fix code treated every non-zero value as "up", so an admin-up /
+// oper-down interface (ifStatus 1) was shown as up.
+//
+// 0 is kept as "unknown" with no admin status: it is both "admin down, oper
+// down" on the wire and "field absent" (the relay struct marks if_status
+// omitempty), and the two cannot be told apart here.
+func sflowIfStatus(bits uint32) (status, adminStatus string) {
+	if bits == 0 {
+		return "unknown", ""
+	}
+	status, adminStatus = "down", "down"
+	if bits&0x1 != 0 {
+		adminStatus = "up"
+	}
+	if bits&0x2 != 0 {
+		status = "up"
+	}
+	return status, adminStatus
 }

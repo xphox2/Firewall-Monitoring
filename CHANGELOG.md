@@ -1,6 +1,22 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.292] - 2026-10-04
+
+### Fixed
+
+- **Flows CSV export returned 100 rows, not 10 000.** The export is built client-side from `GET /admin/api/flows` with `limit=10000` (`admin-flows.js` `EXPORT_MAX`), but the handler parsed it through `httputil.ParsePagination`, whose hard 500 cap silently discards a larger value and falls back to the default of 100 — so an "export capped at 10,000 rows" download never held more than 100 rows and nothing reported it. New `httputil.ParsePaginationMax(c, max)`; `GetFlowSamples` passes `flowSamplesLimitMax` (10000, kept equal to `EXPORT_MAX`). Every other list endpoint stays on `ParsePagination`'s 500. Test `TestParsePaginationMax` (`limit=10000` under a 10000 ceiling → 10000; pre-change the only parser gave 100).
+- **sFlow-only interface cards always showed "up".** The synthetic interface card the device page builds for an interface known only from sFlow `if_counters` treated every non-zero `if_status` as `up`. sFlow v5's `ifStatus` is a bit field (bit 0 = ifAdminStatus up, bit 1 = ifOperStatus up — `sflow_version_5.txt`), so an admin-up / oper-down interface (value 1) was rendered up. `sflowIfStatus` now decodes both bits into the SNMP poller's `Status` / `AdminStatus` vocabulary (`3` → up/up, `1` → down/up, `2` → up/down); `0` stays `unknown` with no admin status because it is also the relay's `omitempty` "field absent" encoding. Test `TestSflowIfStatus` (pre-change: value 1 → `up`).
+- **Event-rule preview assumed every device is a FortiGate.** `POST /admin/api/event-rules/test` with no vendor scope ran every recent message through the FortiGate extractor, so a rule on a FortiOS field (`subtype eq vpn`) "matched" lines from a pfSense or Palo Alto device that the live engine — which extracts with each device's own vendor — would never fire on. The preview now resolves each message's vendor through the cached `handlers.deviceVendor` (generic for an unknown device), exactly as the engine does; an explicit vendor scope keeps its previous behaviour (every message extracted with that vendor). The response's `vendor` field echoes the scope (`""` = per device). This removes the last rule-tester entry from the `vendor_default_guard` allowlist. Test `TestTestEventRule_UnscopedUsesDeviceVendor` (fortigate + opnsense devices with the same FortiOS-shaped line: unscoped matched = 1; pre-change: 2).
+
+### Changed — documentation and comment drift
+
+- `docs/DATA-RETENTION.md`: raw `flow_samples` live about an hour (the 5-minute rollup cycle folds rows older than 1 h into `flow_rollups` and deletes them — `RunFlowRollupCycle`), so `RETENTION_FLOW_DAYS` is an upper bound that in practice governs `flow_if_counters`; the tuning guidance now points at `RETENTION_FLOW_ROLLUP_DAYS` for size. `THREAT_FEEDS_ENABLED` defaults **on** (`config.go`), not off.
+- `docs/OPERATIONS.md`: the informational-syslog retention variable is `RETENTION_SYSLOG_INFO_DAYS` (the documented `RETENTION_SYSLOG_INFORMATIONAL_DAYS` never existed).
+- `internal/detect/detectors.go`: the deny detectors (`deny_storm`, `deny_storm_victim`, `denied_then_allowed`) shipped in `deny.go` over `denied_events`; the comment no longer calls them "deferred to the backlog".
+- `models.DeniedEvent`: `SrcIntfRole` / `SrcCountry` / the `IntfRole*` enum are described as the vendor-reported role and country when supplied (FortiGate `srcintfrole` maps 1:1; the filterlog projection leaves them empty) rather than "FortiGate-authoritative".
+- Flows page: the firewall-event filter's tooltip names the field (NetFlow/IPFIX IE 233 `firewallEvent`: Cisco ASA NSEL, FortiGate) and that sFlow and most other exporters do not carry it.
+
 ## [0.11.291] - 2026-10-04
 
 ### Changed — vendor-neutral attribution and trap names

@@ -498,6 +498,12 @@ func (h *Handler) GetSyslogMessage(c *gin.Context) {
 	c.JSON(http.StatusOK, response.Success(msg))
 }
 
+// flowSamplesLimitMax is the `limit` ceiling of GET /admin/api/flows. The Flows
+// page's CSV export is built client-side from this endpoint (admin-flows.js
+// samplesURL(EXPORT_MAX, 0), EXPORT_MAX = 10000) and must stay equal to it; the
+// list view asks for 100.
+const flowSamplesLimitMax = 10000
+
 func (h *Handler) GetFlowSamples(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
@@ -505,7 +511,10 @@ func (h *Handler) GetFlowSamples(c *gin.Context) {
 		return
 	}
 
-	limit, offset := httputil.ParsePagination(c)
+	// ParsePagination's 500 cap silently dropped the export's limit=10000 back
+	// to the default 100, so an "export capped at 10,000 rows" download never
+	// held more than 100 rows. Every other list endpoint stays on the 500 cap.
+	limit, offset := httputil.ParsePaginationMax(c, flowSamplesLimitMax)
 
 	query := db.Gorm().Order("timestamp DESC").Limit(limit).Offset(offset)
 

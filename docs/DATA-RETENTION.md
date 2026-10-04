@@ -50,10 +50,10 @@ partitions are never dropped and only the severity-scoped deletes run.
 | Processor stats | `processor_stats` | `RETENTION_PROCESSOR_STATS_DAYS` | 30 | No |
 | Process stats (SSH top-N) | `process_stats` | `RETENTION_PROCESS_STATS_DAYS` | 30 | Process names may reflect customer workloads |
 | Interface errors/discards | `interface_errors` | `RETENTION_INTERFACE_ERRORS_DAYS` | 30 | No |
-| Flow records — sFlow **and, since v0.11.20, NetFlow v5/v9 + IPFIX** (5-tuple, counts; incl. unsampled ASA NSEL denied-flow events; origin labeled by `flow_source`) | `flow_samples` | `RETENTION_FLOW_DAYS` | 365 | **Yes** — src/dst IPs are PII in some jurisdictions |
+| Flow records — sFlow **and, since v0.11.20, NetFlow v5/v9 + IPFIX** (5-tuple, counts; incl. unsampled ASA NSEL denied-flow events; origin labeled by `flow_source`) | `flow_samples` | `RETENTION_FLOW_DAYS` | 365 — an upper bound only: the 5-minute rollup cycle folds raw rows older than 1 h into `flow_rollups` and deletes them, so raw samples live about an hour (see the note below) | **Yes** — src/dst IPs are PII in some jurisdictions |
 | Flow rollups (per-conversation 5m/1h/1d aggregates; since v0.11.26 also carry the allow/deny `firewall_event`, since v0.11.263 the conversation's `service_port` and classification revision `class_rev`) | `flow_rollups` | `RETENTION_FLOW_ROLLUP_DAYS` | 365 | **Yes** — src/dst IP conversation pairs are kept a full year by default |
 | Flow detections (detection-engine findings; ages on `detected_at`) | `flow_detections` | `RETENTION_FLOW_DETECTION_DAYS` | 90 | **Yes** — flagged src/dst IPs + detection message |
-| Flow interface counters | `flow_if_counters` | `RETENTION_FLOW_DAYS` | 365 | No |
+| Flow interface counters (sFlow `if_counters`; the table `RETENTION_FLOW_DAYS` governs in practice, since raw `flow_samples` are rolled up long before) | `flow_if_counters` | `RETENTION_FLOW_DAYS` | 365 | No |
 | Flow agent sample-drop windows (ages on `window_start`) | `flow_agent_drops` | `RETENTION_AGENT_DROPS_DAYS` | 30 | No |
 | SNMP traps | `trap_events` | `RETENTION_TRAP_DAYS` | 0 → 90 | Source IP may identify a site |
 | Ping results | `ping_results` | `RETENTION_PING_DAYS` | 0 → 90 | No |
@@ -179,7 +179,7 @@ separate binary on the operator's own network, which pushes the results in.)
 
 **Opt-in external fetches / exports:**
 
-- **Threat-intelligence feeds** (`THREAT_FEEDS_ENABLED`, default off,
+- **Threat-intelligence feeds** (`THREAT_FEEDS_ENABLED`, default **on** — set `false` to disable,
   v0.10.514) — outbound HTTPS `GET`s to public blocklist URLs (blocklist.de,
   CINS, Spamhaus DROP, Emerging Threats, Tor exit list, plus any
   `THREAT_FEEDS_EXTRA_URLS`). Only the HTTP request itself leaves the server
@@ -204,11 +204,14 @@ the data path, and no automatic update checks or phone-home.
 
 The defaults balance disk against forensic value. For high-volume deployments,
 the biggest wins are: set `RETENTION_SYSLOG_CRITICAL_DAYS` to a finite value
-(e.g. `30`), and lower `RETENTION_FLOW_DAYS` (e.g. `30`) — `flow_samples` and
-`syslog_messages` dominate database size. Privacy-minded deployments should
-also consider lowering `RETENTION_FLOW_ROLLUP_DAYS` (default 365): rollups
-retain per-conversation src/dst IP pairs for a full year even after the raw
-`flow_samples` rows have aged out.
+(e.g. `30`), and lower `RETENTION_FLOW_ROLLUP_DAYS` (e.g. `30`) — `flow_rollups`
+and `syslog_messages` dominate database size. `RETENTION_FLOW_DAYS` has little
+effect on size: raw `flow_samples` are folded into `flow_rollups` and deleted by
+the 5-minute rollup cycle once older than 1 h, so in practice it only governs
+`flow_if_counters`. Privacy-minded deployments should also note that rollups
+retain per-conversation src/dst IP pairs for the full `RETENTION_FLOW_ROLLUP_DAYS`
+window (default 365) even though the raw `flow_samples` rows are gone after about an
+hour (the rollup cycle aggregates them in hour windows once they are older than 1 h).
 
 ## Syslog retention
 

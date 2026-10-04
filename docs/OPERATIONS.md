@@ -562,7 +562,7 @@ estimate from the drivers:
   much syslog/sFlow your devices emit — halve the retention window, roughly
   halve the steady-state size for that table.
 - **Bounding it:** set every `RETENTION_*` var (see `docs/DATA-RETENTION.md`),
-  and prefer `RETENTION_SYSLOG_INFORMATIONAL_DAYS` low (informational syslog is
+  and prefer `RETENTION_SYSLOG_INFO_DAYS` low (informational syslog is
   the bulk) while keeping critical longer. The 24 h retention cleanup runs in
   the poller.
 - **Measure, don't guess:** once running, size it from your own data —
