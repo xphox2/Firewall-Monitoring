@@ -1,0 +1,3 @@
+# fixtures expected NOT to map (TestFixtures_NoSilentDrops); remove a name once its mapping ships
+event_router_unmapped   # event/router: routing-protocol notices have no class yet
+free_text_no_family     # not key=value: no family claims it

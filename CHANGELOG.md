@@ -1,6 +1,29 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.293] - 2026-10-04
+
+### Added — vendor-neutral syslog normalizer (Phase 1, S-2a; no database change)
+
+- **`internal/normalize`: one typed Event per syslog line, for every vendor.** `normalize.Normalize(vendor, msg)` dispatches a line through the device vendor's ordered list of tokenizer families (`internal/normalize/family`: FortiOS / generic `key=value`, ArcSight CEF, pf `filterlog` CSV, a small free-text regex catalogue for dnsmasq / sshd / charon / OpenVPN) and the vendor's mapper gives the tokens their meaning. The Event carries OCSF-numbered class and activity / action enums (`enums.go`, mirrored in `cmd/api/static/js/enums.js` under a drift guard), a typed endpoint tuple, the rule identity in four tiers (`rulekey.go`: `u:<uuid>` > `i:[<ruleset>/]<id>` > `n:[<ruleset>/]<name>` > `x:[<ruleset>/]<index>`; the ruleset — FortiGate `vd=` VDOM, UniFi chain, Meraki firewall role — qualifies every tier but the UUID one, per the VDOM decision), ISO 3166 country codes from FortiGate's country names (`country.go`; unmapped names such as `Reserved` are kept in `Extra`), and the vendor leftovers the typed columns cannot hold. Pointer columns are NULL when the vendor did not supply the field. Mappers in this release: **FortiGate** (traffic incl. VDOM / NAT / app / identity; UTM ips / anomaly / virus / app-ctrl / webfilter / dns; event vpn incl. SSL-VPN logins, admin login / logout, cfgpath config changes with `attr[old->new]`, HA, SD-WAN health checks, user auth), **OPNsense / pfSense** (filterlog pass / block / reject with tracker as the stable rule id, plus sshd / charon / OpenVPN text), **generic** (CEF, filterlog, common `key=value` names incl. the `ip:port:intf` compound; the fallback for every vendor without a mapper). An unmapped shape is reported `Unparsed` with a reason — the line keeps its native fields, nothing is dropped silently. The collector's `format` hint (1.3.48+) is accepted on the syslog JSON (`SyslogMessage.Format`, not persisted) and only reorders the family list, so rows from older collectors and rows re-read from the database take the same path.
+- **Event rules can match canonical `event.*` fields beside the unchanged vendor-native keys** (operator decision, plan §7.1). `logfields.Fields` is now the rule engine's view over one `Normalize` call: base fields, the vendor's native tokens exactly as before (FortiOS kv pairs, filterlog columns), and `event.class` / `event.action` / `event.src_ip` / `event.rule_key` / … when the line mapped. `{"op":"eq","field":"event.action","value":"deny"}` matches a FortiGate `action="deny"` and a pf `block` alike, while `action eq deny` and the shipped seeds keep matching exactly what they did. The rule editor's field hints list the `event.*` keys; the suggest-rule discriminator falls back to `event.rule_key` / `event.sig_id` after the FortiOS keys.
+- **`deny.FromEvent`** — the vendor-neutral successor of `deny.ProjectVendor`, producing a `DeniedEvent` from a normalized Event. Not wired to ingest yet (S-4); `TestDenyParity` proves it yields the identical row for every FortiGate / pf deny fixture, including the block-policy pattern signal. A UTM web-filter or DNS block normalizes to `event.action=deny` but is NOT a denied-traffic row (as today).
+- `docs/custom-vendor.md` Step 5b: how to add a mapper and fixtures for a new vendor.
+
+### Changed
+
+- **A device with no vendor (`generic`) or an unprofiled one now exposes the tokens of self-describing lines to event rules** — the keys of a `key=value` line, a CEF record's extension keys (lowercased, plus `cef_id` / `cef_name` / `cef_severity` / `cef_vendor` / `cef_product`) or the filterlog columns — where before only the five base fields were matchable. Free text still yields the base fields only.
+- `internal/logfields` no longer carries its own FortiGate / pf tokenizers; they moved to `internal/normalize/family` unchanged in behaviour (the `kv.go` walker and the filterlog signature gate from AUDIT-280 are the same code, now shared).
+- **Benchmark** (`BenchmarkFields_FortiGate`, FortiOS forward-traffic line, Apple M5): 3646 → 3858 ns/op, 9074 → 10704 B/op, 17 → 23 allocs/op for the extraction the rule engine runs per message — within the plan's ≤ 1.5x allocation gate. Pointer columns and addresses are carved from one per-Event slab and the `event.*` numbers are rendered into one buffer, so the canonical view costs six allocations, not thirty.
+
+### Deferred to S-2b (`feat/normalize-unifi-meraki`, draft)
+
+- The UniFi (netfilter + CEF 100/112/113/201/400-402/512/544/578/1005 + dnsmasq) and Meraki (flows / firewall / urls / ids-alerts / security_event / events / airmarshal) mappers and the per-vendor capability profiles (`internal/normalize/capability`) were written with this change and split out to keep the review within bounds; the netfilter and Meraki tokenizers, the mappers, fixtures and the profile drift guard follow together. Until then UniFi and Meraki devices take the generic mapper (CEF records map; netfilter and Meraki bodies report `no_family`).
+
+### Tests
+
+- `TestNormalize_Golden` (per-vendor JSONL fixtures → golden native + `event.*` maps; `-update` rewrites), `TestFixtures_NoSilentDrops`, `TestFixtures_Hygiene` (documentation addresses / MACs / hosts only), `TestEnumsJSMirror`, `TestRuleKey`, `TestCountry`, `TestNormalize_FormatHintReorders`, `TestNormalize_UnknownVendorIsGeneric`; `family_test.go` for the CEF / KV / filterlog / text tokenizers; `TestFields_EventViewBesideNatives` and the reworked `TestFortiGateExtract` (pre-change: every `event.*` key empty); `TestFields_SeedRulesStillMatch` (the real seeds compiled from the database package; pre-change the `event.action eq deny` cross-vendor rule matched neither line); `TestDenyParity`, `TestFromEvent_UTMBlockIsNotADeny` (pre-change: `undefined: FromEvent`).
+
 ## [0.11.292] - 2026-10-04
 
 ### Fixed

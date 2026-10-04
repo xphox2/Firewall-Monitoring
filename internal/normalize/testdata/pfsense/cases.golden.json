@@ -1,0 +1,56 @@
+[
+  {
+    "name": "filterlog_block_v4",
+    "outcome": "ok",
+    "native": {
+      "action": "block",
+      "dir": "in",
+      "dstip": "198.51.100.10",
+      "dstport": "443",
+      "interface": "igb0",
+      "ipversion": "4",
+      "proto": "6",
+      "protoname": "tcp",
+      "reason": "match",
+      "srcip": "203.0.113.9",
+      "srcport": "54321"
+    },
+    "event": {
+      "event.action": "deny",
+      "event.activity": "packet",
+      "event.class": "network",
+      "event.dst_ip": "198.51.100.10",
+      "event.dst_port": "443",
+      "event.extra.reason": "match",
+      "event.proto": "6",
+      "event.rule_id": "5",
+      "event.rule_key": "u:1000000103",
+      "event.rule_uid": "1000000103",
+      "event.src_if": "igb0",
+      "event.src_ip": "203.0.113.9",
+      "event.src_port": "54321",
+      "event.vendor_event_id": "filterlog"
+    }
+  },
+  {
+    "name": "openvpn_disconnected",
+    "outcome": "ok",
+    "native": {
+      "peer": "203.0.113.60",
+      "port": "1194",
+      "text_kind": "openvpn_disconnected",
+      "user": "alice"
+    },
+    "event": {
+      "event.action": "unknown",
+      "event.activity": "client_disconnect",
+      "event.class": "vpn_session",
+      "event.src_ip": "203.0.113.60",
+      "event.src_port": "1194",
+      "event.tunnel_peer": "203.0.113.60",
+      "event.tunnel_type": "openvpn",
+      "event.user": "alice",
+      "event.vendor_event_id": "openvpn_disconnected"
+    }
+  }
+]

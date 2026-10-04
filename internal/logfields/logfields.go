@@ -1,11 +1,17 @@
-// Package logfields extracts vendor-specific, matchable fields from a syslog
-// message so the event-rule engine can match on structured content (FortiGate
-// subtype/level/logid/action/…) rather than only facility/severity.
+// Package logfields builds the matchable field map the event-rule engine
+// evaluates a syslog message against: the base syslog columns, the vendor's
+// own tokens (every FortiOS key=value pair, the pf filterlog columns, CEF
+// extension keys …) under their native names, and the canonical `event.*`
+// view of the normalized Event (internal/normalize) beside them.
 //
-// Extraction is vendor-aware via the same registry idiom used by
-// internal/configdiff and internal/snmp: each vendor registers an Extractor in
-// init(); Lookup(vendor) returns it (or a generic fallback). FortiGate parses
-// its key=value stream; OPNsense and pfSense parse the shared pf `filterlog` CSV.
+// Since 0.11.293 the tokenizing lives in internal/normalize/family and the
+// per-vendor meaning in internal/normalize; this package is the rule engine's
+// view over one Normalize call. Native keys are unchanged from the earlier
+// per-vendor extractors (FortiGate: lowercased kv pairs; OPNsense / pfSense:
+// interface, reason, action, dir, ipversion, proto, protoname, srcip, dstip,
+// srcport, dstport), so every operator rule keeps matching; the canonical
+// keys are namespaced because `action` is already taken by FortiOS
+// `action="deny"` and filterlog `action=block` (plan §7.1).
 package logfields
 
 import (
@@ -13,73 +19,44 @@ import (
 	"strings"
 
 	"firewall-mon/internal/models"
+	"firewall-mon/internal/normalize"
 )
 
-// Extractor adds vendor-specific fields into dst. The base fields (severity,
-// facility, app_name, hostname, message) are already populated by Fields; an
-// Extractor reads the reconstructed raw line and adds whatever its vendor log
-// format exposes (for FortiGate, every key=value pair).
-type Extractor interface {
-	Vendor() string
-	Extract(raw string, dst map[string]string)
-}
-
-var registry = map[string]Extractor{}
-
-// Register records an Extractor under its (lowercased) vendor name. Called from
-// each vendor file's init(); a later registration for the same vendor wins.
-func Register(e Extractor) {
-	registry[strings.ToLower(strings.TrimSpace(e.Vendor()))] = e
-}
-
-// Lookup returns the Extractor for vendor, or the generic fallback when the
-// vendor is unknown/未-profiled. Never returns nil.
-func Lookup(vendor string) Extractor {
-	if e, ok := registry[strings.ToLower(strings.TrimSpace(vendor))]; ok {
-		return e
-	}
-	return genericExtractor{}
-}
-
-// Has reports whether vendor has a registered (non-generic) rich extractor.
-func Has(vendor string) bool {
-	_, ok := registry[strings.ToLower(strings.TrimSpace(vendor))]
-	return ok
-}
-
 // Fields builds the full matchable field map for a syslog message under the
-// given device vendor. Base fields are always present; the vendor extractor
-// adds structured fields.
+// given device vendor. Base fields are always present; the vendor's native
+// tokens are added when a normalizer family recognised the line (also when
+// the mapper reported the line Unparsed — a FortiOS line of an unmapped type
+// still exposes its kv pairs); the `event.*` keys only when the line mapped
+// to an Event. Base severity/facility stay authoritative over a native key of
+// the same name.
 //
-// C2 (review): the collector's RFC5424 space-split consumes the first tokens of
-// a FortiGate key=value line into Hostname/AppName/ProcessID/MessageID/
-// StructuredData, so date/devname/devid — and sometimes logid/type — land
-// OUTSIDE msg.Message. We reconstruct the original stream by re-joining those
-// base parts with Message before extracting, so a rule on logid/type/devname is
-// reliable regardless of where the split fell (and across mixed collector
-// versions).
+// C2 (review): a pre-1.3.48 collector's RFC 5424 space-split consumed the
+// first tokens of a FortiGate key=value line into Hostname/AppName/ProcessID/
+// MessageID/StructuredData, so date/devname/devid — and sometimes logid/type
+// — land OUTSIDE msg.Message. normalize.Reframe re-joins them before
+// tokenizing, so a rule on logid/type/devname is reliable regardless of where
+// the split fell (and across mixed collector versions).
 func Fields(vendor string, msg *models.SyslogMessage) map[string]string {
-	dst := make(map[string]string, 24)
+	ev, out := normalize.Normalize(vendor, msg)
+	// Size once: base 5 + native (a FortiOS traffic line has ~40 pairs) + up
+	// to ~45 event.* keys. Growing a map through rehashes costs more than the
+	// slack here.
+	dst := make(map[string]string, 5+len(ev.Native)+48)
 	dst["severity"] = itoa(msg.Severity)
 	dst["facility"] = itoa(msg.Facility)
 	dst["app_name"] = msg.AppName
 	dst["hostname"] = msg.Hostname
 	dst["message"] = msg.Message
-	Lookup(vendor).Extract(reconstruct(msg), dst)
-	return dst
-}
-
-// reconstruct rebuilds the raw log line from the collector's split fields so KV
-// extraction sees the whole key=value stream. Empty/placeholder ("-") parts are
-// dropped so they don't inject spurious tokens.
-func reconstruct(msg *models.SyslogMessage) string {
-	parts := make([]string, 0, 6)
-	for _, p := range []string{msg.Hostname, msg.AppName, msg.ProcessID, msg.MessageID, msg.StructuredData, msg.Message} {
-		if p != "" && p != "-" {
-			parts = append(parts, p)
+	for k, v := range ev.Native {
+		if k == "severity" || k == "facility" {
+			continue
 		}
+		dst[k] = v
 	}
-	return strings.Join(parts, " ")
+	if out.Kind == normalize.OutcomeOK {
+		ev.Fields(dst)
+	}
+	return dst
 }
 
 var (
@@ -90,7 +67,8 @@ var (
 // Normalize collapses variable tokens (numbers, IP octets) in a message into a
 // stable template, so distinct-but-equivalent messages group together. Powers
 // the rule-tester "top patterns" view and the syslog_summaries.message_pattern
-// fix. Deliberately cheap and approximate.
+// fix. Deliberately cheap and approximate. (Unrelated to internal/normalize,
+// which maps a line to a typed Event.)
 func Normalize(message string) string {
 	s := reDigits.ReplaceAllString(message, "#")
 	s = reSpace.ReplaceAllString(s, " ")

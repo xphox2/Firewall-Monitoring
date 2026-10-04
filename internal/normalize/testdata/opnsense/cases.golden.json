@@ -1,0 +1,197 @@
+[
+  {
+    "name": "filterlog_block_v4",
+    "outcome": "ok",
+    "native": {
+      "action": "block",
+      "dir": "in",
+      "dstip": "198.51.100.10",
+      "dstport": "443",
+      "interface": "igb0",
+      "ipversion": "4",
+      "proto": "6",
+      "protoname": "tcp",
+      "reason": "match",
+      "srcip": "203.0.113.9",
+      "srcport": "54321"
+    },
+    "event": {
+      "event.action": "deny",
+      "event.activity": "packet",
+      "event.class": "network",
+      "event.dst_ip": "198.51.100.10",
+      "event.dst_port": "443",
+      "event.extra.reason": "match",
+      "event.proto": "6",
+      "event.rule_id": "5",
+      "event.rule_key": "u:1000000103",
+      "event.rule_uid": "1000000103",
+      "event.src_if": "igb0",
+      "event.src_ip": "203.0.113.9",
+      "event.src_port": "54321",
+      "event.vendor_event_id": "filterlog"
+    }
+  },
+  {
+    "name": "filterlog_pass_v6",
+    "outcome": "ok",
+    "native": {
+      "action": "pass",
+      "dir": "out",
+      "dstip": "2001:db8::2",
+      "dstport": "5353",
+      "interface": "igb1",
+      "ipversion": "6",
+      "proto": "17",
+      "protoname": "udp",
+      "reason": "match",
+      "srcip": "2001:db8::1",
+      "srcport": "5353"
+    },
+    "event": {
+      "event.action": "allow",
+      "event.activity": "packet",
+      "event.class": "network",
+      "event.dst_if": "igb1",
+      "event.dst_ip": "2001:db8::2",
+      "event.dst_port": "5353",
+      "event.extra.reason": "match",
+      "event.proto": "17",
+      "event.rule_id": "12",
+      "event.rule_key": "u:900",
+      "event.rule_uid": "900",
+      "event.src_ip": "2001:db8::1",
+      "event.src_port": "5353",
+      "event.vendor_event_id": "filterlog"
+    }
+  },
+  {
+    "name": "filterlog_reject_v4_v5_split",
+    "outcome": "ok",
+    "native": {
+      "action": "reject",
+      "dir": "in",
+      "dstip": "198.51.100.10",
+      "dstport": "22",
+      "interface": "igb0",
+      "ipversion": "4",
+      "proto": "6",
+      "protoname": "tcp",
+      "reason": "match",
+      "srcip": "203.0.113.9",
+      "srcport": "3000"
+    },
+    "event": {
+      "event.action": "reject",
+      "event.activity": "packet",
+      "event.class": "network",
+      "event.dst_ip": "198.51.100.10",
+      "event.dst_port": "22",
+      "event.extra.reason": "match",
+      "event.proto": "6",
+      "event.rule_id": "5",
+      "event.rule_key": "u:1",
+      "event.rule_uid": "1",
+      "event.src_if": "igb0",
+      "event.src_ip": "203.0.113.9",
+      "event.src_port": "3000",
+      "event.vendor_event_id": "filterlog"
+    }
+  },
+  {
+    "name": "filterlog_rdr_unmapped",
+    "outcome": "no_family",
+    "reason": "opnsense: no family recognised the line"
+  },
+  {
+    "name": "sshd_failed",
+    "outcome": "ok",
+    "native": {
+      "method": "password",
+      "port": "2222",
+      "src": "203.0.113.9",
+      "text_kind": "sshd_failed",
+      "user": "bob"
+    },
+    "event": {
+      "event.action": "deny",
+      "event.activity": "logon",
+      "event.admin_method": "ssh",
+      "event.admin_src_ip": "203.0.113.9",
+      "event.admin_user": "bob",
+      "event.class": "auth",
+      "event.extra.auth_method": "password",
+      "event.src_ip": "203.0.113.9",
+      "event.src_port": "2222",
+      "event.vendor_event_id": "sshd_failed"
+    }
+  },
+  {
+    "name": "sshd_accepted",
+    "outcome": "ok",
+    "native": {
+      "method": "publickey",
+      "port": "50000",
+      "src": "192.0.2.10",
+      "text_kind": "sshd_accepted",
+      "user": "alice"
+    },
+    "event": {
+      "event.action": "allow",
+      "event.activity": "logon",
+      "event.admin_method": "ssh",
+      "event.admin_src_ip": "192.0.2.10",
+      "event.admin_user": "alice",
+      "event.class": "auth",
+      "event.extra.auth_method": "publickey",
+      "event.src_ip": "192.0.2.10",
+      "event.src_port": "50000",
+      "event.vendor_event_id": "sshd_accepted"
+    }
+  },
+  {
+    "name": "charon_established",
+    "outcome": "ok",
+    "native": {
+      "local": "203.0.113.1",
+      "peer": "203.0.113.50",
+      "text_kind": "charon_established",
+      "tunnel": "con1"
+    },
+    "event": {
+      "event.action": "unknown",
+      "event.activity": "tunnel_up",
+      "event.class": "vpn_session",
+      "event.tunnel_name": "con1",
+      "event.tunnel_peer": "203.0.113.50",
+      "event.tunnel_type": "ipsec",
+      "event.vendor_event_id": "charon_established"
+    }
+  },
+  {
+    "name": "openvpn_connected",
+    "outcome": "ok",
+    "native": {
+      "peer": "203.0.113.60",
+      "port": "1194",
+      "text_kind": "openvpn_connected",
+      "user": "alice"
+    },
+    "event": {
+      "event.action": "unknown",
+      "event.activity": "client_connect",
+      "event.class": "vpn_session",
+      "event.src_ip": "203.0.113.60",
+      "event.src_port": "1194",
+      "event.tunnel_peer": "203.0.113.60",
+      "event.tunnel_type": "openvpn",
+      "event.user": "alice",
+      "event.vendor_event_id": "openvpn_connected"
+    }
+  },
+  {
+    "name": "plain_notice_no_family",
+    "outcome": "no_family",
+    "reason": "opnsense: no family recognised the line"
+  }
+]

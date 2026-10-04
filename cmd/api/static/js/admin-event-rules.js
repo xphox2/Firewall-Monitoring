@@ -22,9 +22,16 @@
     var OPS = ['eq', 'neq', 'contains', 'not_contains', 'regex', 'gt', 'lt', 'in', 'exists'];
     var OP_SET = OPS.reduce(function (m, o) { m[o] = 1; return m; }, {});
     var GROUP_OPS = { and: 1, or: 1 };
-    // Common FortiGate fields offered as datalist suggestions (free-text still allowed).
+    // Common FortiGate fields offered as datalist suggestions (free-text still
+    // allowed), then the canonical event.* fields every vendor's normalizer
+    // fills (internal/normalize, 0.11.293) — the same names for a FortiGate
+    // deny and a pf block.
     var FIELD_HINTS = ['subtype', 'level', 'logid', 'logdesc', 'action', 'srcintf', 'dstintf',
-        'srcip', 'dstip', 'srcport', 'dstport', 'user', 'service', 'severity', 'facility', 'app_name', 'message'];
+        'srcip', 'dstip', 'srcport', 'dstport', 'user', 'service', 'severity', 'facility', 'app_name', 'message',
+        'event.class', 'event.activity', 'event.action', 'event.src_ip', 'event.dst_ip', 'event.src_port',
+        'event.dst_port', 'event.proto', 'event.rule_key', 'event.rule_name', 'event.ruleset', 'event.user',
+        'event.app', 'event.sig_id', 'event.sig_name', 'event.severity', 'event.admin_user', 'event.tunnel_name',
+        'event.config_path', 'event.url_host', 'event.dns_qname'];
     // Default state-rule dampening (mirrors the server seed + defaults).
     var STATE_DEFAULT_MIN_UP_MIN = 60; // 3600s
     var STATE_DEFAULT_DAILY_CAP = 1;

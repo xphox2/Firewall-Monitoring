@@ -1,0 +1,151 @@
+[
+  {
+    "name": "cef_generic_deny",
+    "outcome": "ok",
+    "native": {
+      "act": "deny",
+      "cef_id": "1001",
+      "cef_name": "Connection denied",
+      "cef_product": "Edge Firewall",
+      "cef_severity": "6",
+      "cef_vendor": "Example",
+      "cef_version": "2.1",
+      "cs1": "Block-RDP",
+      "deviceinboundinterface": "eth0",
+      "dpt": "3389",
+      "dst": "198.51.100.10",
+      "msg": "denied by policy",
+      "proto": "TCP",
+      "spt": "44000",
+      "src": "203.0.113.9"
+    },
+    "event": {
+      "event.action": "deny",
+      "event.activity": "traffic",
+      "event.class": "network",
+      "event.dst_ip": "198.51.100.10",
+      "event.dst_port": "3389",
+      "event.message": "denied by policy",
+      "event.proto": "6",
+      "event.rule_key": "n:block-rdp",
+      "event.rule_name": "Block-RDP",
+      "event.severity": "6",
+      "event.src_if": "eth0",
+      "event.src_ip": "203.0.113.9",
+      "event.src_port": "44000",
+      "event.vendor_event_id": "Example/Edge Firewall/1001"
+    }
+  },
+  {
+    "name": "cef_finding_escaped",
+    "outcome": "ok",
+    "native": {
+      "cef_id": "SIG-7",
+      "cef_name": "Suspicious pipe | in name",
+      "cef_product": "IDS|Sensor",
+      "cef_severity": "8",
+      "cef_vendor": "Example",
+      "cef_version": "1.0",
+      "msg": "equals sign=ok and a pipe | kept",
+      "request": "https://www.example.com/a?b=c",
+      "suser": "alice"
+    },
+    "event": {
+      "event.action": "unknown",
+      "event.activity": "detect",
+      "event.class": "finding",
+      "event.message": "equals sign=ok and a pipe | kept",
+      "event.severity": "8",
+      "event.sig_id": "SIG-7",
+      "event.sig_name": "Suspicious pipe | in name",
+      "event.url_host": "www.example.com",
+      "event.url_path": "/a?b=c",
+      "event.user": "alice",
+      "event.vendor_event_id": "Example/IDS|Sensor/SIG-7"
+    }
+  },
+  {
+    "name": "filterlog_block",
+    "outcome": "ok",
+    "native": {
+      "action": "block",
+      "dir": "in",
+      "dstip": "198.51.100.10",
+      "dstport": "443",
+      "interface": "igb0",
+      "ipversion": "4",
+      "proto": "6",
+      "protoname": "tcp",
+      "reason": "match",
+      "srcip": "203.0.113.9",
+      "srcport": "54321"
+    },
+    "event": {
+      "event.action": "deny",
+      "event.activity": "packet",
+      "event.class": "network",
+      "event.dst_ip": "198.51.100.10",
+      "event.dst_port": "443",
+      "event.extra.reason": "match",
+      "event.proto": "6",
+      "event.rule_id": "5",
+      "event.rule_key": "u:1000000103",
+      "event.rule_uid": "1000000103",
+      "event.src_if": "igb0",
+      "event.src_ip": "203.0.113.9",
+      "event.src_port": "54321",
+      "event.vendor_event_id": "filterlog"
+    }
+  },
+  {
+    "name": "kv_sonicwall_like",
+    "outcome": "ok",
+    "native": {
+      "c": "1024",
+      "dst": "198.51.100.10:3389:X0",
+      "fw": "203.0.113.1",
+      "fw_action": "drop",
+      "id": "firewall",
+      "m": "36",
+      "msg": "TCP connection dropped",
+      "n": "12",
+      "pri": "6",
+      "proto": "tcp/3389",
+      "rule": "Deny RDP (WAN-\u003eLAN)",
+      "sn": "0000000000",
+      "src": "203.0.113.9:44000:X1",
+      "time": "2026-10-04 12:00:00"
+    },
+    "event": {
+      "event.action": "deny",
+      "event.activity": "traffic",
+      "event.class": "network",
+      "event.dst_if": "X0",
+      "event.dst_ip": "198.51.100.10",
+      "event.dst_port": "3389",
+      "event.message": "TCP connection dropped",
+      "event.proto": "6",
+      "event.rule_key": "n:deny rdp (wan-\u003elan)",
+      "event.rule_name": "Deny RDP (WAN-\u003eLAN)",
+      "event.src_if": "X1",
+      "event.src_ip": "203.0.113.9",
+      "event.src_port": "44000",
+      "event.vendor_event_id": "firewall"
+    }
+  },
+  {
+    "name": "kv_without_endpoints_unmapped",
+    "outcome": "unparsed",
+    "reason": "generic: kv without src/dst/action",
+    "native": {
+      "pid": "123",
+      "state": "running",
+      "uptime": "4000"
+    }
+  },
+  {
+    "name": "free_text_no_family",
+    "outcome": "no_family",
+    "reason": "generic: no family recognised the line"
+  }
+]

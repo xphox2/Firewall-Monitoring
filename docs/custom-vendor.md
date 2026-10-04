@@ -163,6 +163,56 @@ through to identity hashing; `configdiff.HasRichNormalizer("acme")` reports
 which path a vendor takes. `vendor_fortigate.go` / `vendor_paloalto.go` /
 `vendor_cisco_asa.go` in that package are the worked examples.
 
+## Step 5b — (optional) syslog normalizer mapper
+
+Event rules match a device's syslog on two layers of fields
+(`internal/logfields`): the vendor's own tokens under their native names
+(`subtype`, `logid`, `srcip` …) and the canonical `event.*` view that every
+vendor shares (`event.action`, `event.src_ip`, `event.rule_key`, …). Both come
+from one `normalize.Normalize(vendor, msg)` call in
+[`internal/normalize/`](../internal/normalize/). A vendor without a mapper
+takes the generic one, which understands self-describing shapes only (a CEF
+record, a pf `filterlog` CSV, space-separated `key=value`) and maps the common
+key names; to give `acme` lines their full meaning, add a `Mapper`:
+
+```go
+// internal/normalize/mapper_acme.go
+package normalize
+
+func init() { Register(acmeMapper{}) }
+
+type acmeMapper struct{}
+
+func (acmeMapper) Vendor() string     { return "acme" }
+func (acmeMapper) Families() []Family { return []Family{FamilyKV, FamilyCEF} } // ordered, cheap gates
+
+func (acmeMapper) Map(tok Tokens, _ *models.SyslogMessage, ev *Event) Outcome {
+    if tok.Family == FamilyCEF {
+        return mapCEFGeneric(tok.CEF, ev)
+    }
+    kv := tok.KV // lowercased keys; already in ev.Native for the rule engine
+    ev.Class, ev.Activity = ClassNetwork, ActivityTraffic
+    ev.Action = actionWord(kv["fw_action"])
+    ev.SrcIP, ev.DstIP = ev.ip(kv["src"]), ev.ip(kv["dst"])
+    ev.DstPort = ev.port(kv["dport"])
+    ev.RuleName = kv["rule"]
+    return ok()
+}
+```
+
+Pick the tokenizer families from `internal/normalize/family` (key=value, CEF,
+pf filterlog, a free-text regex catalogue; netfilter and Meraki follow) and
+return `unparsed("acme: … not mapped")` for shapes you do not map yet — the
+line keeps its native fields, nothing is dropped silently. Use the `ev.ip` /
+`ev.port` / `ev.i64` constructors for pointer columns (NULL when the vendor
+did not supply the field) and leave `RuleKey` to `finalize`, which derives it
+from `RuleUID` > `RuleID` > `RuleName` > `RuleIndex` qualified by `Ruleset`.
+Add synthetic fixtures under `internal/normalize/testdata/acme/cases.jsonl`
+(documentation addresses only — `TestFixtures_Hygiene` enforces it) and run
+`go test ./internal/normalize -update` once to write the golden; every case
+must map or be listed in `unparsed.txt`. `mapper_fortigate.go` is the full
+worked example, `mapper_filterlog.go` the two-family minimal one.
+
 ## Step 6 — build, test, tag a device
 
 ```bash
@@ -184,5 +234,6 @@ new vendor accounted for in the logs.
 - [ ] `init()` calls `RegisterVendor(&<Name>Profile{})`
 - [ ] vendor name added to `validVendors` in `handlers.go`
 - [ ] (optional) a `configdiff` normalizer for config-backup
+- [ ] (optional) an `internal/normalize` mapper + `testdata/<name>/` fixtures for the `event.*` rule fields
 - [ ] `go build ./...` and `go test ./internal/snmp/...` pass
 ```
