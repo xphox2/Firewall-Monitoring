@@ -321,3 +321,68 @@ func TestReauth_NoIdentity_401(t *testing.T) {
 		t.Fatalf("status = %d, want 401 (body=%s)", rec.Code, rec.Body.String())
 	}
 }
+
+// TestTOTP_EnrollVerifyDisable_RealDB pins the whole self-service 2FA cycle
+// over the real store, now that the handlers read the row by id: the staged
+// secret is written encrypted, Verify2FA validates through the decryption
+// chain and writes the stored ciphertext back UNCHANGED (not re-encrypted),
+// the login path then sees the same plaintext secret, and Disable2FA
+// (password + current code) clears it.
+func TestTOTP_EnrollVerifyDisable_RealDB(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, db, u := profileTestHandler(t, "admin1", auth.RoleAdmin, "s3cret-pw")
+	db.SetEncryptionKeyForTesting("test-field-encryption-key") // real {enc} ciphertext, not the keyless identity
+
+	c, rec := sessionCtx(http.MethodPost, "/admin/api/2fa/setup", `{"password":"s3cret-pw"}`, "admin1", u.ID, "session")
+	h.Setup2FA(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("setup: %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	var setup struct {
+		Data struct {
+			Secret string `json:"secret"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &setup); err != nil || setup.Data.Secret == "" {
+		t.Fatalf("setup body: %v %s", err, rec.Body.String())
+	}
+	staged, _ := db.GetAdminByID(u.ID)
+	if staged.TOTPSecret == setup.Data.Secret {
+		t.Fatal("staged secret is stored in plaintext")
+	}
+
+	code, _ := totp.GenerateCode(setup.Data.Secret, time.Now())
+	c, rec = sessionCtx(http.MethodPost, "/admin/api/2fa/verify", `{"code":"`+code+`"}`, "admin1", u.ID, "session")
+	h.Verify2FA(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("verify: %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	enabled, _ := db.GetAdminByID(u.ID)
+	if !enabled.TOTPEnabled || enabled.TOTPSecret != staged.TOTPSecret {
+		t.Fatalf("verify must enable 2FA and keep the stored ciphertext as is: enabled=%v same=%v", enabled.TOTPEnabled, enabled.TOTPSecret == staged.TOTPSecret)
+	}
+	// The login path (by username, decrypted by the store) sees the secret.
+	authRow, err := db.GetAdminByUsername("admin1")
+	if err != nil || authRow == nil || !authRow.TOTPEnabled || authRow.TOTPSecret != setup.Data.Secret {
+		t.Fatalf("login view of the enrolled secret is wrong: %v %+v", err, authRow)
+	}
+
+	// Disable with the password and a FRESH code (the verify code is spent).
+	c, rec = sessionCtx(http.MethodPost, "/admin/api/2fa/disable", `{"password":"s3cret-pw","code":"`+code+`"}`, "admin1", u.ID, "session")
+	h.Disable2FA(c)
+	if rec.Code != http.StatusForbidden || errorBody(t, rec) != totpCodeAlreadyUsedMsg {
+		t.Fatalf("disable with the spent verify code: %d %s", rec.Code, rec.Body.String())
+	}
+	fresh, _ := totp.GenerateCode(setup.Data.Secret, time.Now().Add(-30*time.Second))
+	if fresh == code {
+		fresh, _ = totp.GenerateCode(setup.Data.Secret, time.Now().Add(30*time.Second))
+	}
+	c, rec = sessionCtx(http.MethodPost, "/admin/api/2fa/disable", `{"password":"s3cret-pw","code":"`+fresh+`"}`, "admin1", u.ID, "session")
+	h.Disable2FA(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("disable: %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if after, _ := db.GetAdminByID(u.ID); after.TOTPEnabled || after.TOTPSecret != "" {
+		t.Fatalf("2FA not cleared: %+v", after)
+	}
+}

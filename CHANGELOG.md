@@ -11,7 +11,7 @@ All notable changes to this project are documented in this file.
 
 ### Added
 - `auth.ReauthLimiter` (`internal/auth/reauth.go`, zero value ready) and the shared step-up helpers `sessionUserID`, `loadSessionAccount`, `reauthPassword`, `reauthTOTP` (`internal/api/handlers/handlers_reauth.go`).
-- Tests: `auth_d2_test.go` (password stage keeps the 2FA account's bucket, completed login clears it, password-only unchanged, limiter burst), `handlers_reauth_test.go` (end-to-end D2 attack walk → 429 on both stages; per-endpoint 5×403 then 429 with the login lockout untouched and another account unaffected; token principal refused on every self-service action with the creator's row untouched; a session whose username claim names another account acts only on its own id; no identity → 401). Existing 2FA / reveal / purge / profile fixtures now set `auth_method: session` as `AdminAuth` does.
+- Tests: `auth_d2_test.go` (password stage keeps the 2FA account's bucket, completed login clears it, password-only unchanged, limiter burst), `handlers_reauth_test.go` (end-to-end D2 attack walk → 429 on both stages; per-endpoint 5×403 then 429 with the login lockout untouched and another account unaffected; token principal refused on every self-service action with the creator's row untouched; a session whose username claim names another account acts only on its own id; no identity → 401; the full setup → verify → disable cycle over the real store with a field-encryption key, pinning that Verify2FA keeps the stored ciphertext as is and the login path decrypts the same secret). Existing 2FA / reveal / purge / profile fixtures now set `auth_method: session` as `AdminAuth` does.
 
 ## [0.11.288] - 2026-10-04
 
