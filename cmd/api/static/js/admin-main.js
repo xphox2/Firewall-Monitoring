@@ -3010,7 +3010,8 @@
         btn.textContent = 'Testing...';
         btn.disabled = true;
 
-        var testData = { ip_address: ip, snmp_port: parseInt(port), snmp_community: community, snmp_version: version };
+        var testData = { ip_address: ip, snmp_port: parseInt(port), snmp_community: community, snmp_version: version,
+            vendor: document.getElementById('device-vendor').value || 'generic' };
         var probeVal = document.getElementById('device-probe').value;
         if (probeVal) testData.probe_id = parseInt(probeVal);
         if (version === '3') {

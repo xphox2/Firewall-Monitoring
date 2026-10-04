@@ -56,6 +56,14 @@ func (h *Handler) deviceVendor(id uint) string {
 	return vendor
 }
 
+// forgetDeviceVendor drops id's cached vendor so the next deviceVendor call
+// re-reads the row. Called when a device's vendor is written.
+func (h *Handler) forgetDeviceVendor(id uint) {
+	h.mu.Lock()
+	delete(h.deviceVendorCache, id)
+	h.mu.Unlock()
+}
+
 // validVendorList returns the accepted vendor names, sorted, for error
 // messages — built from validVendors so adding a vendor is a one-map change.
 func validVendorList() string {

@@ -240,6 +240,14 @@ func (h *Handler) alertsConfigSnapshot() config.AlertsConfig {
 	return config.AlertsConfig{}
 }
 
+// legacySNMPVendor is the profile the legacy single-device SNMP client
+// (SNMP_HOST, pre-multi-device mode; "mostly dead post-v0.11.74") polls with.
+// That mode predates the vendor column and has only ever meant a FortiGate,
+// so it keeps the profile it always had — explicitly, now that an EMPTY vendor
+// is generic (0.11.290). Per-device polling takes the vendor from the device
+// row. Allowlisted in vendor_default_guard_test.go.
+const legacySNMPVendor = "fortigate"
+
 func (h *Handler) SetSNMPClient(client *snmp.SNMPClient) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

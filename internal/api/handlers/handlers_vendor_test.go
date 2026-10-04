@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"firewall-mon/internal/config"
 	"firewall-mon/internal/models"
 )
 
@@ -149,5 +150,87 @@ func TestCreateDevice_DefaultVendorIsGeneric(t *testing.T) {
 		if !strings.Contains(errResp.Error, v) {
 			t.Errorf("400 body %q does not list vendor %q", errResp.Error, v)
 		}
+	}
+}
+
+// fakeStatusPoller records the vendor TestDeviceConnection polls with.
+type fakeStatusPoller struct {
+	vendors []string
+}
+
+func (f *fakeStatusPoller) GetSystemStatus(vendor ...string) (*models.SystemStatus, error) {
+	f.vendors = append(f.vendors, strings.Join(vendor, ","))
+	return &models.SystemStatus{Hostname: "fw-example-01", CPUUsage: 7}, nil
+}
+
+func (f *fakeStatusPoller) Close() error { return nil }
+
+// TestTestDeviceConnection_VendorReachesProfile: the connection test polls
+// with the vendor the form sends (resolveVendor maps it to that vendor's
+// profile — TestResolveVendor_FallbackSemantics), "generic" when it sends
+// none, and refuses a name outside validVendors. Before 0.11.290 the handler
+// called GetSystemStatus() with no vendor at all.
+func TestTestDeviceConnection_VendorReachesProfile(t *testing.T) {
+	h, _ := setupTestHandler(t)
+	fake := &fakeStatusPoller{}
+	orig := newTestSNMPClient
+	newTestSNMPClient = func(cfg *config.Config) (systemStatusPoller, error) { return fake, nil }
+	t.Cleanup(func() { newTestSNMPClient = orig })
+
+	post := func(body string) (int, string) {
+		c, rec := jsonReq(http.MethodPost, "/x", body)
+		h.TestDeviceConnection(c)
+		return rec.Code, rec.Body.String()
+	}
+	if code, body := post(`{"ip_address":"192.0.2.10","snmp_community":"public","vendor":"paloalto"}`); code != http.StatusOK || !strings.Contains(body, `"cpu":7`) {
+		t.Fatalf("paloalto test = %d %s", code, body)
+	}
+	if code, body := post(`{"ip_address":"192.0.2.10","snmp_community":"public"}`); code != http.StatusOK {
+		t.Fatalf("no-vendor test = %d %s", code, body)
+	}
+	if want := []string{"paloalto", "generic"}; strings.Join(fake.vendors, " ") != strings.Join(want, " ") {
+		t.Fatalf("GetSystemStatus vendors = %q, want %q", fake.vendors, want)
+	}
+	code, body := post(`{"ip_address":"192.0.2.10","snmp_community":"public","vendor":"acme"}`)
+	if code != http.StatusBadRequest || !strings.Contains(body, "Invalid vendor") {
+		t.Fatalf("unknown vendor = %d %s, want 400", code, body)
+	}
+	if len(fake.vendors) != 2 {
+		t.Fatalf("unknown vendor still polled: %q", fake.vendors)
+	}
+}
+
+// TestUpdateDevice_VendorChangeInvalidatesCache: PUT with a new vendor is
+// visible to deviceVendor at once, inside the cache TTL; a PUT that leaves
+// the vendor alone keeps the cached entry.
+func TestUpdateDevice_VendorChangeInvalidatesCache(t *testing.T) {
+	h, db := setupTestHandler(t)
+	dev := &models.Device{Name: "fw-example-01", IPAddress: "192.0.2.1", Vendor: "generic"}
+	if err := db.Gorm().Create(dev).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got := h.deviceVendor(dev.ID); got != "generic" {
+		t.Fatalf("deviceVendor before = %q", got)
+	}
+	c, rec := jsonReq(http.MethodPut, "/x", `{"description":"edge"}`)
+	c.Params = idParam(dev.ID)
+	h.UpdateDevice(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update description = %d %s", rec.Code, rec.Body.String())
+	}
+	h.mu.RLock()
+	_, cached := h.deviceVendorCache[dev.ID]
+	h.mu.RUnlock()
+	if !cached {
+		t.Error("a non-vendor update dropped the cached vendor")
+	}
+	c, rec = jsonReq(http.MethodPut, "/x", `{"vendor":"fortigate"}`)
+	c.Params = idParam(dev.ID)
+	h.UpdateDevice(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update vendor = %d %s", rec.Code, rec.Body.String())
+	}
+	if got := h.deviceVendor(dev.ID); got != "fortigate" {
+		t.Errorf("deviceVendor after vendor PUT = %q, want fortigate (cache not invalidated)", got)
 	}
 }
