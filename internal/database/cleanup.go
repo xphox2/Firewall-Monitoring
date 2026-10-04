@@ -1128,25 +1128,15 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	return errors.Join(errs...)
 }
 
-// auditDeviceVendors backfills empty vendor → "fortigate" (the in-code default)
-// and logs the fleet's vendor distribution at startup. For each distinct
-// vendor value, it cross-references configdiff.HasRichNormalizer — any vendor
-// with config revisions but no rich normalizer is flagged in the log as a
-// likely source of false CONFIG_CHANGE alerts. No data is mutated beyond the
-// empty-vendor backfill.
+// auditDeviceVendors logs the fleet's vendor distribution at startup. For
+// each distinct vendor value, it cross-references configdiff.HasRichNormalizer
+// — any vendor with config revisions but no rich normalizer is flagged in the
+// log as a likely source of false CONFIG_CHANGE alerts. Audit only: nothing is
+// mutated. The one-time empty-vendor → "fortigate" backfill that used to run
+// here is migration v71 (migrateVendorBackfillFinal); since then an empty or
+// unknown vendor means "generic" everywhere (handlers.deviceVendor).
 func (d *Database) auditDeviceVendors() {
-	// Step 1: backfill empty vendor to the in-code default. This preserves
-	// pre-vendor-field behavior for any rows that predate the column.
-	res := d.db.Exec("UPDATE devices SET vendor = 'fortigate' WHERE vendor = '' OR vendor IS NULL")
-	if res.Error != nil {
-		log.Printf("vendor backfill: %v", res.Error)
-		return
-	}
-	if res.RowsAffected > 0 {
-		log.Printf("vendor backfill: set %d devices with empty vendor → 'fortigate'", res.RowsAffected)
-	}
-
-	// Step 2: count active devices per vendor.
+	// Step 1: count active devices per vendor.
 	type vendorCount struct {
 		Vendor string
 		N      int64
@@ -1163,7 +1153,7 @@ func (d *Database) auditDeviceVendors() {
 		return
 	}
 
-	// Step 3: log distribution + warn on missing rich normalizer.
+	// Step 2: log distribution + warn on missing rich normalizer.
 	// A device with no rich normalizer will hash by byte equality, which makes
 	// random-IV ENC ciphertext look like a real change every backup. That's
 	// the false-alert root cause we already fixed for fortigate.

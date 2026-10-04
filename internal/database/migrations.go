@@ -120,6 +120,7 @@ var registeredMigrations = []migration{
 	{version: 68, name: "flow_service_port_class_rev", run: (*Database).migrateFlowServicePortClassRev},
 	{version: 69, name: "delete_connections_to_retired_devices", run: (*Database).migrateDeleteConnectionsToRetiredDevices},
 	{version: 70, name: "passkeys", run: (*Database).migratePasskeys},
+	{version: 71, name: "vendor_backfill_final", run: (*Database).migrateVendorBackfillFinal},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

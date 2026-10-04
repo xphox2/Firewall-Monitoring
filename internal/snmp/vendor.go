@@ -72,9 +72,10 @@ func GetVendorProfile(name string) VendorProfile {
 	return nil
 }
 
-// DefaultVendor returns the FortiGate vendor profile.
+// DefaultVendor returns the generic (standards-only MIB-II) vendor profile,
+// the profile a device without a usable vendor is polled with.
 func DefaultVendor() VendorProfile {
-	p := GetVendorProfile("fortigate")
+	p := GetVendorProfile("generic")
 	if p != nil {
 		return p
 	}

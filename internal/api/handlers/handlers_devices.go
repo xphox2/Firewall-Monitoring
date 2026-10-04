@@ -76,12 +76,14 @@ func (h *Handler) CreateDevice(c *gin.Context) {
 		return
 	}
 
-	// Default and validate vendor
+	// Default and validate vendor. An omitted vendor is "generic" (the
+	// standards-only SNMP profile, no deny projection) — the operator picks
+	// FortiGate explicitly; nothing is assumed to be one.
 	if device.Vendor == "" {
-		device.Vendor = "fortigate"
+		device.Vendor = GenericVendor
 	}
 	if !isValidVendor(device.Vendor) {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid vendor: must be fortigate, paloalto, cisco_asa, sonicwall, firewalla, pfsense, opnsense, or generic"))
+		c.JSON(http.StatusBadRequest, response.Error(invalidVendorMessage()))
 		return
 	}
 
@@ -309,7 +311,7 @@ func prepareDeviceUpdates(c *gin.Context, db database.Store, device *models.Devi
 	if vendorVal, ok := filteredUpdates["vendor"]; ok {
 		vendorStr, isStr := vendorVal.(string)
 		if !isStr || !isValidVendor(vendorStr) {
-			c.JSON(http.StatusBadRequest, response.Error("Invalid vendor: must be fortigate, paloalto, cisco_asa, sonicwall, firewalla, pfsense, opnsense, or generic"))
+			c.JSON(http.StatusBadRequest, response.Error(invalidVendorMessage()))
 			return nil, false
 		}
 	}

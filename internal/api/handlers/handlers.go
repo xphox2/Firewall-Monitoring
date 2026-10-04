@@ -85,6 +85,10 @@ type Handler struct {
 	// syslog-ingest deny projection (Tranche 4 Phase 2), guarded by h.mu.
 	denyPatternCached string
 	denyPatternExpiry time.Time
+
+	// deviceVendorCache is the TTL-cached device id → vendor map behind
+	// deviceVendor (handlers_vendor.go), guarded by h.mu.
+	deviceVendorCache map[uint]deviceVendorEntry
 }
 
 func NewHandler(cfg *config.Config, authManager *auth.AuthManager, db *database.Database) *Handler {

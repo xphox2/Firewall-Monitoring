@@ -634,8 +634,8 @@ func TestPostgresIntegration(t *testing.T) {
 		if got.Name != "it-dev-1" || got.IPAddress != "10.0.0.1" {
 			t.Fatalf("round-trip mismatch: %+v", got)
 		}
-		if got.Vendor != "fortigate" {
-			t.Fatalf("Vendor default not applied: %q", got.Vendor)
+		if got.Vendor != "generic" {
+			t.Fatalf("Vendor default not applied (generic since 0.11.290): %q", got.Vendor)
 		}
 	})
 

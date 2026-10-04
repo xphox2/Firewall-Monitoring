@@ -1,6 +1,19 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.290] - 2026-10-04
+
+### Changed — an empty or unknown vendor is `generic` everywhere (upgrade note)
+
+- **No device is assumed to be a FortiGate any more.** Until now an empty vendor meant FortiGate in six independent places — the `devices.vendor` column default, `POST /admin/api/devices`, the deny projection on syslog ingest, the SNMP vendor resolver, the device form's pre-selected option and a startup `UPDATE` that rewrote `''` to `fortigate` on every boot — and each could drift on its own. Now: the column default and the create API default to `generic`; `deny.ProjectVendor` projects only `fortigate` (action="deny" / block-policy) and `opnsense` / `pfsense` (filterlog) and returns nothing for any other vendor; `snmp.resolveVendor("")` and `snmp.DefaultVendor()` are the standards-only generic profile; the device form pre-selects Generic (the admin JS fallbacks follow). One TTL-cached resolver, `handlers.deviceVendor` (`handlers_vendor.go`, 60 s per device id, `generic` for id 0 / a missing row / an empty value), now answers every ingest-side "which vendor is this device" question; the deny projection uses it, attribution and normalization will in the next PRs. `alerts.EvaluateSyslog`'s own `generic` fallback is cross-referenced to it.
+- **Migration v71 `vendor_backfill_final`** sets every `''` / NULL vendor to `fortigate` once (the exact value the removed startup `UPDATE` would have given those rows, so no existing device changes behaviour on upgrade; the row count is logged) and flips the Postgres column default to `'generic'`. Idempotent; the startup vendor audit (`auditDeviceVendors`) is read-only now.
+- **A FortiGate registered as `generic` no longer projects denies or matches the FortiGate seed rules** — set its vendor. Devices that were never given a vendor are `fortigate` after v71 (above); this note is for devices an operator tagged `generic` by hand.
+- The `400` for an unknown vendor now lists the accepted names from `validVendors` itself (`Invalid vendor: must be one of cisco_asa, firewalla, …`) instead of a hand-maintained string in two places.
+
+### Added
+- **CI guard `test/guardrails/vendor_default_guard_test.go`**: every tracked non-test Go file and the admin JS/HTML is scanned for a line that defaults a vendor to FortiGate (`vendor := "fortigate"`, `gorm:"default:fortigate"`, `case "fortigate", ""`, `d.vendor || 'fortigate'`, a pre-selected FortiGate option); comparisons and `case "fortigate":` dispatch arms are not matched. Exceptions are keyed by file and exact line with a reason, and an entry no line uses fails the test. One entry today: the event-rule tester's default, which a follow-up PR replaces.
+- Tests: `TestProjectDeniedEvents_NoVendorIsGeneric` (a FortiOS deny line under device id 0, a `generic` device and an empty-vendor row projects nothing; a `fortigate` device still does), `TestDeviceVendor_FallbacksAndCache`, `TestCreateDevice_DefaultVendorIsGeneric`, `TestProjectVendor_UnknownVendorNeverProjects`, `TestMigrateV71_Idempotent` (SQLite) and `TestVendorBackfillV71Postgres` (integration lane: backfill once, re-run is a no-op, column default flipped from `'fortigate'`, an INSERT without vendor gets `generic`); `TestResolveVendor_FallbackSemantics` now pins `""` → generic.
+
 ## [0.11.289] - 2026-10-04
 
 ### Security — auth hardening (deferred items D2, D4, D8 of the passkey plan)

@@ -2915,7 +2915,7 @@
             document.getElementById('device-v3-auth-pass').value = '';
             document.getElementById('device-v3-priv-type').value = d.snmpv3_priv_type || '';
             document.getElementById('device-v3-priv-pass').value = '';
-            document.getElementById('device-vendor').value = d.vendor || 'fortigate';
+            document.getElementById('device-vendor').value = d.vendor || 'generic';
             document.getElementById('device-probe').value = d.probe_id || '';
             document.getElementById('device-site').value = d.site_id || '';
             document.getElementById('device-location').value = d.location || '';
@@ -2969,7 +2969,7 @@
     // Bearer token; OPNsense uses an API key + secret (HTTP basic). Vendors
     // without a config-automation driver hide the whole section.
     function toggleApiFields() {
-        var vendor = (document.getElementById('device-vendor').value || 'fortigate');
+        var vendor = (document.getElementById('device-vendor').value || 'generic');
         var section = document.getElementById('api-fields');
         var fg = document.getElementById('api-fortigate-group');
         var opn = document.getElementById('api-opnsense-group');
@@ -3060,7 +3060,7 @@
                 ip_address: document.getElementById('device-ip').value,
                 snmp_port: parseInt(document.getElementById('device-snmp-port').value),
                 snmp_version: snmpVersion,
-                vendor: document.getElementById('device-vendor').value || 'fortigate',
+                vendor: document.getElementById('device-vendor').value || 'generic',
                 location: document.getElementById('device-location').value,
                 description: document.getElementById('device-description').value,
                 wan_speed_mbps: parseInt(document.getElementById('device-wan-speed').value),

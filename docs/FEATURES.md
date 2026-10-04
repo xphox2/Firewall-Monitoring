@@ -26,6 +26,7 @@
 |---|---|---|---|
 | SNMP polling (v1 / v2c / v3, MD5/SHA/SHA2, DES/AES/AES192/256) | Stable | [Server] | 0.1 |
 | Per-device SNMP vendor OID profile (FortiGate, Palo Alto, SonicWall, pfSense, OPNsense, Firewalla) | Stable | [Server] | 0.1 |
+| Vendor-neutral default: a device without a vendor is `generic` everywhere (column default, create API, device form, SNMP resolver, deny projection); one cached resolver (`handlers.deviceVendor`) and a CI guard against a `"fortigate"` default creeping back | Stable | [Server] | 0.11.290 (migration v71) |
 | SNMP trap receiver (UDP/162, V1 enterprise + V2c specific-trap, per-source-IP rate-limit, community filter) | Stable | [Server] | 0.1 |
 | Syslog receiver — TCP + UDP, RFC 5424 + RFC 3164, source allow-list (parsed at the edge, relayed to the server) | Stable | [Probe] | 0.1 |
 | sFlow v5 datagram parser (parsed at the edge, relayed to the server) | Stable | [Probe] | 0.1 |
@@ -162,20 +163,21 @@
 
 The server ships with a SNMP `VendorProfile` registry. The list is verified
 in `internal/snmp/vendor_test.go`. Six vendors have a registered SNMP polling
-profile; `cisco_asa` is supported for config-diff only and has **no** SNMP
-profile (see the
-`validVendors` list in `internal/api/handlers/handlers.go`).
+profile, plus the standards-only `generic` profile (MIB-II / HOST-RESOURCES
+only, no enterprise OIDs) that a device without a vendor is polled with;
+`cisco_asa` is supported for config-diff only and has **no** SNMP profile
+(see the `validVendors` list in `internal/api/handlers/handlers.go`).
 
 | Vendor | SNMP profile | HA | SD-WAN | Security stats | License | VPN |
 |---|---|---|---|---|---|---|
-| **fortigate** (default) | full | ✅ | ✅ | ✅ | ✅ | site-to-site + dialup + SSL |
+| **fortigate** | full | ✅ | ✅ | ✅ | ✅ | site-to-site + dialup + SSL |
 | **paloalto** | full | ✅ | ✅ | ✅ | ✅ | site-to-site + SSL |
 | **sonicwall** | full | ✅ | — | — | ✅ | site-to-site |
 | **pfsense** | full | ✅ (CARP) | — | — | — | IPsec |
 | **opnsense** | full | ✅ (CARP) | — | — | — | IPsec |
 | **firewalla** | basic | — | — | — | — | — |
 | **cisco_asa** | _config-diff only — no SNMP profile_ | — | — | — | — | — |
-| **generic** | _no SNMP profile — config-diff identity-hash only_ | — | — | — | — | — |
+| **generic** (default) | _standards-only MIB-II profile — config-diff identity-hash only, no deny projection_ | — | — | — | — | — |
 
 To add a vendor: see [custom-vendor.md](custom-vendor.md).
 

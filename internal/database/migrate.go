@@ -3296,3 +3296,30 @@ func (d *Database) migratePasskeys() error {
 	log.Printf("migrate v70 passkeys: ensured admins.webauthn_user_handle/passkey_notice_seen_at, login_attempts.method, webauthn_credentials")
 	return nil
 }
+
+// migrateVendorBackfillFinal (v71) is the last empty-vendor → "fortigate"
+// backfill. Until 0.11.289 auditDeviceVendors ran the same UPDATE at every
+// startup, which is what kept "" meaning FortiGate on every read path. From
+// 0.11.290 an empty or unknown vendor is "generic" everywhere (models.Device
+// default, handlers.deviceVendor, deny.ProjectVendor, snmp.resolveVendor), so
+// the rows that relied on the old mapping are set once, here, to the value the
+// startup code would have given them — no device changes behaviour on upgrade.
+// On Postgres the column default is then flipped to 'generic' (metadata only;
+// the model tag already says so for fresh installs). Idempotent: the UPDATE
+// matches nothing the second time and SET DEFAULT is a no-op.
+func (d *Database) migrateVendorBackfillFinal() error {
+	res := d.db.Exec("UPDATE devices SET vendor = 'fortigate' WHERE vendor = '' OR vendor IS NULL")
+	if res.Error != nil {
+		return fmt.Errorf("migrate v71 vendor_backfill_final: backfill: %w", res.Error)
+	}
+	log.Printf("migrate v71 vendor_backfill_final: set %d device(s) with empty vendor → 'fortigate' (last time; empty now means 'generic')", res.RowsAffected)
+	if !d.dialect.IsPostgres() {
+		// SQLite cannot ALTER a column default; the test schema is created
+		// from the model tag, which already carries default:generic.
+		return nil
+	}
+	if err := d.execMaintenanceDDL("ALTER TABLE devices ALTER COLUMN vendor SET DEFAULT 'generic'"); err != nil {
+		return fmt.Errorf("migrate v71 vendor_backfill_final: column default: %w", err)
+	}
+	return nil
+}

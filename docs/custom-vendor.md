@@ -137,7 +137,14 @@ var validVendors = map[string]bool{
 }
 ```
 
-Without this, `POST /admin/api/devices` with `"vendor":"acme"` is rejected.
+Without this, `POST /admin/api/devices` with `"vendor":"acme"` is rejected
+(the 400 lists every accepted name, built from the same map). A device created
+without a vendor is `generic` — the standards-only profile, no deny projection
+— so a device of your new vendor must be tagged `acme` explicitly; nothing is
+assumed to be a FortiGate. Ingest paths resolve a device's vendor through
+`handlers.deviceVendor` (`handlers_vendor.go`), and the
+`vendor_default_guard_test.go` guardrail fails CI on any new
+`vendor = "fortigate"` default.
 
 ## Step 5 — (optional) config-backup normalization
 

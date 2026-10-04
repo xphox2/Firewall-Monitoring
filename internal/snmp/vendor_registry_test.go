@@ -38,10 +38,14 @@ func TestVendorRegistry_EveryValidVendorHasProfile(t *testing.T) {
 func TestResolveVendor_FallbackSemantics(t *testing.T) {
 	s := &SNMPClient{} // resolveVendor does not touch connection state
 
-	// Empty/legacy vendor stays FortiGate: Device.Vendor defaults to
-	// "fortigate" and pre-vendor-column devices rely on this mapping.
-	if got := s.resolveVendor("").Name(); got != "fortigate" {
-		t.Errorf("resolveVendor(\"\") = %q, want fortigate (load-bearing legacy default)", got)
+	// An empty vendor is generic (0.11.290): migration v71 pinned the rows
+	// that relied on the old ""→fortigate mapping, so nothing is assumed to
+	// be a FortiGate any more.
+	if got := s.resolveVendor("").Name(); got != "generic" {
+		t.Errorf("resolveVendor(\"\") = %q, want generic", got)
+	}
+	if got := DefaultVendor().Name(); got != "generic" {
+		t.Errorf("DefaultVendor() = %q, want generic", got)
 	}
 
 	// Unknown vendor strings must resolve to the standards-only generic
