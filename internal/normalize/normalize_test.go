@@ -347,6 +347,51 @@ func TestNormalize_FortiGateCEF_HintOrNot(t *testing.T) {
 	diffMaps(t, "hinted vs stored", hm, sm)
 }
 
+// TestNormalize_FortiGateKV_MentioningCEF: with CEF tried first for
+// FortiGate, a FortiOS key=value line whose quoted msg contains a CEF record
+// must still be a FortiOS line — the CEF gate rejects a non-leading marker
+// preceded by any '='.
+func TestNormalize_FortiGateKV_MentioningCEF(t *testing.T) {
+	t.Parallel()
+	line := `date=2026-10-04 msg="saw CEF:0|a|b|c|d|e|f|x=1 in payload" time=12:00:00 devname="fw-example-01" logid="0100044547" type="event" subtype="system" level="information" vd="root" logdesc="Object attribute configured" user="alice" ui="GUI(192.0.2.10)" action="Edit" cfgpath="log.syslogd.setting" cfgobj="format" cfgattr="format[default->cef]"`
+	ev, out := Normalize("fortigate", &models.SyslogMessage{Message: line})
+	if out.Kind != OutcomeOK || out.Family != FamilyFortiOSKV || ev.Class != ClassConfigChange || ev.Native["subtype"] != "system" {
+		t.Fatalf("got %s %q family=%v class=%v subtype=%q", out.Kind, out.Reason, out.Family, ev.Class, ev.Native["subtype"])
+	}
+	if _, cef := ev.Native["cef_id"]; cef {
+		t.Errorf("CEF natives leaked into a FortiOS line: %v", ev.Native)
+	}
+	// A real record after a plain syslog header (no '=' before the marker) is still CEF.
+	if _, out := Normalize("fortigate", &models.SyslogMessage{Message: `fw-example-01 CEF:0|Fortinet|Fortigate|v7|0000000013|forward|3|src=192.0.2.1 dst=203.0.113.1 act=deny`}); out.Family != FamilyCEF {
+		t.Errorf("header-prefixed record: family=%v %s %q", out.Family, out.Kind, out.Reason)
+	}
+}
+
+// TestFortiGateTypeInference: logid typing applies to the 10-digit FortiOS
+// form only; anything else falls to the subtype vocabulary, and the UTM
+// prefix table names every UTM log type so an unmapped one is reported as
+// utm/<subtype>.
+func TestFortiGateTypeInference(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		line   string
+		class  Class
+		kind   OutcomeKind
+		reason string
+	}{
+		{`logid=13 subtype="forward" srcip=203.0.113.9 dstip=198.51.100.10 proto=6 action="deny"`, ClassNetwork, OutcomeOK, ""},
+		{`logid=13 srcip=203.0.113.9 action="deny"`, 0, OutcomeUnparsed, "fortigate: not a FortiOS log (no type/logid)"},
+		{`logid=2000000001 subtype="virtual-patch" srcip=203.0.113.9 action="blocked"`, 0, OutcomeUnparsed, "fortigate: utm/virtual-patch not mapped"},
+		{`logid=0800000001 subtype="voip" srcip=203.0.113.9`, 0, OutcomeUnparsed, "fortigate: utm/voip not mapped"},
+		{`logid=0100032001 user="alice" logdesc="Admin login successful" srcip=192.0.2.10 ui="GUI(192.0.2.10)" subtype="system"`, ClassAuth, OutcomeOK, ""},
+	} {
+		ev, out := Normalize("fortigate", &models.SyslogMessage{Message: tc.line})
+		if out.Kind != tc.kind || out.Reason != tc.reason || (tc.kind == OutcomeOK && ev.Class != tc.class) {
+			t.Errorf("%.50s: %s %q class=%v, want %s %q class=%v", tc.line, out.Kind, out.Reason, ev.Class, tc.kind, tc.reason, tc.class)
+		}
+	}
+}
+
 // TestEvent_SlabOverflowKeepsValues: more pointer columns than the slab holds
 // fall back to individual boxes; every value must survive copying the Event.
 func TestEvent_SlabOverflowKeepsValues(t *testing.T) {

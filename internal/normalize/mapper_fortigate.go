@@ -48,10 +48,12 @@ func (fortigateMapper) Map(tok Tokens, _ *models.SyslogMessage, ev *Event) Outco
 }
 
 // fgType returns the FortiOS log type, inferring it when `type=` is missing:
-// the first two digits of logid are the type (00 traffic, 01 event, the rest
-// UTM: 02 virus, 03 webfilter, 04 ips, 05 emailfilter, 07 anomaly, 09 dlp,
-// 10 app-ctrl, 12 waf, 13 dns, 14 ssh, 15 ssl, 16 cifs, 17 file-filter,
-// 18 icap), and failing that the subtype vocabulary is unambiguous per type.
+// the first two digits of a 10-digit logid are the type (00 traffic,
+// 01 event, the rest UTM: 02 virus, 03 webfilter, 04 ips, 05 emailfilter,
+// 07 anomaly, 08 voip, 09 dlp, 10 app-ctrl, 12 waf, 13 dns, 14 ssh, 15 ssl,
+// 16 cifs, 17 file-filter, 18 icap, 19 sctp-filter, 20 virtual-patch,
+// 21 casb); a logid of any other length is not the FortiOS form and the
+// subtype vocabulary, unambiguous per type, decides instead.
 // A line with none of the three is not a FortiOS log. This keeps a truncated
 // or hand-fed line (`action="deny" srcip=… policyid=…`) on the same path the
 // deny projection has always taken for it.
@@ -59,13 +61,13 @@ func fgType(kv map[string]string) string {
 	if t := kv["type"]; t != "" {
 		return t
 	}
-	if id := kv["logid"]; len(id) >= 2 {
+	if id := kv["logid"]; len(id) == 10 {
 		switch id[:2] {
 		case "00":
 			return "traffic"
 		case "01":
 			return "event"
-		case "02", "03", "04", "05", "07", "09", "10", "12", "13", "14", "15", "16", "17", "18":
+		case "02", "03", "04", "05", "07", "08", "09", "10", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21":
 			return "utm"
 		}
 	}
