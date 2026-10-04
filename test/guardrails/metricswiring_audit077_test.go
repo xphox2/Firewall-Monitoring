@@ -23,6 +23,7 @@ func TestMetricsWiring_AUDIT077(t *testing.T) {
 		{"metrics.Middleware()", "the request-latency middleware must be registered (AUDIT-077)"},
 		{`"/metrics"`, "the /metrics route must be served (AUDIT-077)"},
 		{"metrics.Handler()", "/metrics must be served by the Prometheus handler (AUDIT-077)"},
+		{"middleware.MetricsGuard(cfg.Server.MetricsToken)", "/metrics must sit behind MetricsGuard: Bearer METRICS_TOKEN when set, loopback-only (404 otherwise) when not — port 8080 is internet-facing on a typical install (v0.11.288)"},
 		{"metrics.RegisterDBPool(", "the DB connection-pool collector must be wired (AUDIT-077)"},
 	}
 	for _, r := range required {

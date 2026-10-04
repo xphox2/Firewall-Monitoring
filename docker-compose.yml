@@ -61,6 +61,11 @@ services:
       # Empty (default) = trust no proxy; empty here also lets a value in
       # config.env apply (same fill-in rule as above). See docs/OPERATIONS.md.
       - TRUSTED_PROXIES=${TRUSTED_PROXIES:-}
+      # Prometheus /metrics on the API port: empty (default) = loopback peers
+      # only, 404 for everyone else; set = remote scrapers send it as a Bearer
+      # token. Empty here lets config.env's value apply (same fill-in rule).
+      # See docs/monitoring/README.md.
+      - METRICS_TOKEN=${METRICS_TOKEN:-}
       # Passkey (WebAuthn) login — off unless WEBAUTHN_ENABLED=true. Empty
       # (default) here lets config.env's values apply (same fill-in rule as
       # above). See docs/OPERATIONS.md "Passkeys".

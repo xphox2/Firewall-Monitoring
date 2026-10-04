@@ -198,7 +198,7 @@ func (h *Handler) GetPasskeyConfig(c *gin.Context) {
 }
 
 func (h *Handler) setPasskeyLoginCookie(c *gin.Context, value string, maxAge int) {
-	secure, _, _ := h.sessionCookieParams()
+	secure, _, _ := h.sessionCookieParams(c)
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     passkeyLoginCookie,
 		Value:    value,

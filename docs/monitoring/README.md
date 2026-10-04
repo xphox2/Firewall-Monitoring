@@ -3,15 +3,28 @@
 Firewall-Mon exposes Prometheus metrics on all three daemons. This directory has
 a ready-to-adapt [`prometheus.yml`](prometheus.yml) scrape config.
 
-> `/metrics` is **unauthenticated by design** (Prometheus convention). Bind it to
-> an internal interface or firewall the scrape ports — it carries only aggregate
-> timings/counters and route *templates*, never secrets.
+> The metrics carry only aggregate timings/counters and route *templates*, never
+> secrets. The poller and trap-receiver listeners are unauthenticated
+> (Prometheus convention) and default to loopback — bind them to an internal
+> interface or firewall the scrape ports. The **API** endpoint shares port 8080
+> with the collectors, which is usually internet-facing, so it is gated (v0.11.288):
+>
+> - `METRICS_TOKEN` **unset** (default): served only to a loopback peer
+>   (`127.0.0.1` / `::1`); every other client gets a 404. A Prometheus in the
+>   same container (or a host-networked one) can scrape it; a Prometheus on
+>   the Docker host reaches a bridge-networked container from the bridge
+>   gateway, not loopback, so it needs `METRICS_TOKEN`.
+> - `METRICS_TOKEN` **set** (`openssl rand -hex 32`): every request — loopback
+>   included — must send `Authorization: Bearer <token>`; anything else is 401.
+>   In `prometheus.yml`: `authorization: { credentials: "<token>" }` (or
+>   `credentials_file`). The peer is the socket address, never
+>   `X-Forwarded-For`, so a scrape through the reverse proxy needs the token too.
 
 ## Endpoints
 
 | Daemon | Address | Notes |
 |---|---|---|
-| API | `:8080/metrics` | HTTP latency histogram + Go runtime + process + DB pool |
+| API | `:8080/metrics` | HTTP latency histogram + Go runtime + process + DB pool. Loopback only, or `Authorization: Bearer $METRICS_TOKEN` |
 | Poller | `POLLER_METRICS_ADDR` (default `127.0.0.1:9101`) | set to a reachable interface, or `"off"` to disable |
 | Trap receiver | `TRAP_METRICS_ADDR` (default `127.0.0.1:9102`) | as above |
 

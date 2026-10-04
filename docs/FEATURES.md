@@ -150,6 +150,8 @@
 | `GET /api/health` (Postgres ping, 1s timeout) | Stable | [Server] | 0.1 (AUDIT-091) |
 | Docker `HEALTHCHECK` calls `/api/health` (30s interval, 3s timeout, 3 retries) | Stable | [Server] | 0.10.264 |
 | Prometheus `/metrics` (request-latency histogram by matched route template, DB-pool gauges, Go runtime + process collectors) | Stable | [Server] | 0.10.373 (AUDIT-077) |
+| API `/metrics` gated: loopback peers only (404 otherwise), or `Authorization: Bearer $METRICS_TOKEN` when set | Stable | [Server] | 0.11.288 |
+| Cookie `Secure` flag and HSTS follow how the request arrived (in-process TLS, or a `TRUSTED_PROXIES` peer sending `X-Forwarded-Proto: https`) unless `COOKIE_SECURE` is set | Stable | [Server] | 0.11.288 |
 | Poller + trap-receiver `/metrics` + `/healthz` + `/readyz` (`POLLER_METRICS_ADDR` `:9101`, `TRAP_METRICS_ADDR` `:9102`, `off` disables) | Stable | [Server] | 0.10.487 |
 | Structured logging (slog) with request-ID correlation | Stable | [Server] | 0.1 |
 

@@ -45,9 +45,24 @@ Pairs with [`KNOWN-ISSUES.md`](../KNOWN-ISSUES.md) (current limitations) and
   binary, so a browser refresh alone won't update the UI).
 - **Container:** `docker ps` health column, and `docker logs <container>` for
   the three daemons' stdout + PostgreSQL (see Debug logging).
+- **API `/metrics` (Prometheus):** on port 8080, which is internet-facing on a
+  typical install, so it is not open. `METRICS_TOKEN` unset (default): served
+  only to a loopback TCP peer (`127.0.0.1` / `::1` — a scraper in the same
+  container, e.g. `docker exec <container> wget -qO- http://127.0.0.1:8080/metrics`;
+  a scraper on the Docker host reaches a bridge-networked container from the
+  bridge gateway, not loopback, so it needs `METRICS_TOKEN` or host networking) and a plain 404 for everyone else, so the endpoint is not
+  advertised. `METRICS_TOKEN` set: every request, loopback included, must send
+  `Authorization: Bearer <token>` (Prometheus: `authorization.credentials`),
+  anything else is 401 with a `WWW-Authenticate` challenge — a misconfigured
+  scraper then shows an auth failure in its target status instead of a vanished
+  target. The peer is the socket address, never `X-Forwarded-For`, so a proxy
+  cannot turn a remote scrape into a local one; a scraper behind the reverse
+  proxy therefore needs the token. See [monitoring/README.md](monitoring/README.md).
 - **Poller / trap-receiver:** both now expose `/healthz`, `/readyz`, and
   Prometheus `/metrics` on their own listeners (`POLLER_METRICS_ADDR` default
   `:9101`, `TRAP_METRICS_ADDR` default `:9102`; set either to `off` to disable).
+  Those listeners have no token check: they default to loopback, and
+  `METRICS_TOKEN` does not apply to them.
 - **Encryption-key fail-fast (M8):** unlike the API (which stays up and reports
   unhealthy), the poller and trap-receiver **exit immediately** (`log.Fatal`) at
   startup if the configured `ENCRYPTION_KEY` can't decrypt stored secrets — they
@@ -252,10 +267,12 @@ Users must reach the console at exactly the name you configure.
 **Behind nginx-proxy-manager** (or any reverse proxy): the browser-facing
 name is what counts, not the container address. Create an NPM proxy host for
 `fwmon.example.com` → `firewall-mon:8080` with an SSL certificate and *Force
-SSL*, set the RP ID and origins to that name as above, and set
-`COOKIE_SECURE=true`. The RP ID and origins are **never** read from `Host` or
-`X-Forwarded-*`, so no proxy header changes are needed; `TRUSTED_PROXIES`
-(see "Behind a reverse proxy") is still recommended so login lockouts and the
+SSL*, and set the RP ID and origins to that name as above. The session cookies
+must be `Secure` for a passkey origin: with `TRUSTED_PROXIES` set to NPM's
+address that happens by itself (NPM sends `X-Forwarded-Proto: https`); without
+it, set `COOKIE_SECURE=true` explicitly. The RP ID and origins are **never**
+read from `Host` or `X-Forwarded-*`, so no proxy header changes are needed;
+`TRUSTED_PROXIES` (see "Behind a reverse proxy") is recommended so login lockouts and the
 audit log see real client IPs.
 
 **When the button does not appear.** The login page shows *Sign in with a

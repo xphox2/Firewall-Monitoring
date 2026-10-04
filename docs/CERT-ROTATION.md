@@ -43,8 +43,11 @@ SERVER_TLS_KEY=/etc/firewall-mon/tls.key    # default
 If `SERVER_ENABLE_TLS=true` and either path is empty, the server refuses to
 start. Note the cookie interplay (AUDIT-024): set `COOKIE_SECURE=true` only
 when TLS is actually terminated at or before this server, or browsers silently
-drop the session cookie. For a plain-HTTP deployment behind a TLS-terminating
-proxy, keep `SERVER_ENABLE_TLS=false` and let the proxy hold the cert.
+drop the session cookie. Leaving it unset is usually right: the `Secure` flag
+then follows each request — in-process TLS, or a `TRUSTED_PROXIES` peer sending
+`X-Forwarded-Proto: https`. For a plain-HTTP deployment behind a TLS-terminating
+proxy, keep `SERVER_ENABLE_TLS=false`, let the proxy hold the cert and set
+`TRUSTED_PROXIES` to its address.
 
 ### Production: Let's Encrypt
 
