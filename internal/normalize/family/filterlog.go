@@ -37,6 +37,9 @@ func HasFilterlog(s string) bool { return FindFilterlog(s) != "" }
 // signature gate stops a comma-dense token from an UNRELATED daemon on a
 // pf/opnsense-vendor device from polluting the structured fields.
 func FindFilterlog(raw string) string {
+	if strings.Count(raw, ",") < 8 {
+		return "" // cheap pre-gate: strings.Fields allocates, most lines are not CSV
+	}
 	for _, tok := range strings.Fields(raw) {
 		if strings.Count(tok, ",") < 8 {
 			continue

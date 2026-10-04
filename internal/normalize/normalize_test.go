@@ -321,20 +321,55 @@ func TestCountry(t *testing.T) {
 	}
 }
 
-// TestNormalize_FormatHintReorders: a `cef` hint on a FortiGate device tries
-// the CEF family first; the KV family would otherwise claim a CEF record
-// (its extension is key=value) and map nothing useful.
-func TestNormalize_FormatHintReorders(t *testing.T) {
+// TestNormalize_FortiGateCEF_HintOrNot (review S-2a #1): a FortiGate switched
+// to CEF output normalizes the same whether the collector's `format: cef`
+// hint is present (live ingest) or not (a row re-read from the database for
+// the backfill or the rule tester). The CEF family comes first in the
+// FortiGate order because the key=value gate would otherwise claim the
+// record's extension and map nothing.
+func TestNormalize_FortiGateCEF_HintOrNot(t *testing.T) {
 	t.Parallel()
-	msg := &models.SyslogMessage{Message: `CEF:0|Fortinet|Fortigate|v7.4|0000000013|forward|5|src=192.0.2.10 dst=203.0.113.20 spt=51514 dpt=443 proto=TCP act=deny`}
-	ev, out := Normalize("fortigate", msg)
-	if out.Kind != OutcomeUnparsed {
-		t.Fatalf("without the hint the KV family claims the record: got %s %q", out.Kind, out.Reason)
+	line := `CEF:0|Fortinet|Fortigate|v7.4.3|0000000013|traffic:forward close|3|deviceExternalId=FGT60FTK00000000 FTNTFGTlogid=0000000013 cat=traffic:forward act=deny src=192.0.2.10 spt=51514 dst=203.0.113.20 dpt=443 proto=6`
+	hinted, hOut := Normalize("fortigate", &models.SyslogMessage{Message: line, Format: "cef"})
+	stored, sOut := Normalize("fortigate", &models.SyslogMessage{Message: line})
+	for _, c := range []struct {
+		name string
+		ev   Event
+		out  Outcome
+	}{{"hinted", hinted, hOut}, {"stored", stored, sOut}} {
+		if c.out.Kind != OutcomeOK || c.out.Family != FamilyCEF || c.ev.Action != ActionDeny || c.ev.SrcIP.String() != "192.0.2.10" || c.ev.Native["cef_id"] != "0000000013" {
+			t.Errorf("%s: %s %q family=%v action=%v src=%v cef_id=%q", c.name, c.out.Kind, c.out.Reason, c.out.Family, c.ev.Action, c.ev.SrcIP, c.ev.Native["cef_id"])
+		}
 	}
-	msg.Format = "cef"
-	ev, out = Normalize("fortigate", msg)
-	if out.Kind != OutcomeOK || ev.Action != ActionDeny || ev.SrcIP.String() != "192.0.2.10" {
-		t.Fatalf("with format=cef: %s %q action=%v src=%v", out.Kind, out.Reason, ev.Action, ev.SrcIP)
+	hm, sm := map[string]string{}, map[string]string{}
+	hinted.Fields(hm)
+	stored.Fields(sm)
+	diffMaps(t, "hinted vs stored", hm, sm)
+}
+
+// TestEvent_SlabOverflowKeepsValues: more pointer columns than the slab holds
+// fall back to individual boxes; every value must survive copying the Event.
+func TestEvent_SlabOverflowKeepsValues(t *testing.T) {
+	t.Parallel()
+	line := `type="traffic" subtype="forward" policyid=1 sentbyte=2 rcvdbyte=3 sentpkt=4 rcvdpkt=5 duration=6 srcip=192.0.2.1 dstip=192.0.2.2 transip=192.0.2.3 tranip=192.0.2.4 trandisp="snat+dnat" srcport=1 dstport=2 transport=3 tranport=4 proto=6 apprisk="high" action="accept"`
+	ev, out := Normalize("fortigate", &models.SyslogMessage{Message: line})
+	if out.Kind != OutcomeOK {
+		t.Fatal(out)
+	}
+	cp := ev
+	if *cp.RuleID != 1 || *cp.BytesOut != 2 || *cp.BytesIn != 3 || *cp.PktsOut != 4 || *cp.PktsIn != 5 || *cp.DurationMS != 6000 ||
+		*cp.NatSrcPort != 3 || *cp.NatDstPort != 4 || cp.NatDstIP.String() != "192.0.2.4" || *cp.AppRisk != 4 || *cp.SrcPort != 1 {
+		t.Errorf("values wrong after copy: %+v", cp)
+	}
+	var e Event
+	var ptrs []*int64
+	for i := int64(0); i < 20; i++ {
+		ptrs = append(ptrs, e.p64(i))
+	}
+	for i, p := range ptrs {
+		if *p != int64(i) {
+			t.Errorf("slot %d = %d", i, *p)
+		}
 	}
 }
 

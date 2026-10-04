@@ -13,18 +13,24 @@ func init() { Register(fortigateMapper{}) }
 // switched to CEF output takes the generic CEF mapping. Country names become
 // ISO codes (country.go); `vd=` is the ruleset so policy ids are qualified by
 // VDOM.
+//
+// CEF is tried first: its gate is the exact `CEF:` record marker, while the
+// key=value gate (any `k=v`) would also claim a CEF record's extension and
+// map nothing useful. The order must not depend on the collector's format
+// hint — a row re-read from the database (backfill, rule tester) has none
+// and must normalize exactly as it did at ingest.
 type fortigateMapper struct{}
 
 func (fortigateMapper) Vendor() string     { return "fortigate" }
-func (fortigateMapper) Families() []Family { return []Family{FamilyFortiOSKV, FamilyCEF} }
+func (fortigateMapper) Families() []Family { return []Family{FamilyCEF, FamilyFortiOSKV} }
 
 func (fortigateMapper) Map(tok Tokens, _ *models.SyslogMessage, ev *Event) Outcome {
 	if tok.Family == FamilyCEF {
 		return mapCEFGeneric(tok.CEF, ev)
 	}
 	kv := tok.KV
-	typ := kv["type"]
-	if typ == "" && kv["logid"] == "" {
+	typ := fgType(kv)
+	if typ == "" {
 		return unparsed("fortigate: not a FortiOS log (no type/logid)")
 	}
 	ev.VendorEventID = kv["logid"]
@@ -39,6 +45,39 @@ func (fortigateMapper) Map(tok Tokens, _ *models.SyslogMessage, ev *Event) Outco
 		return fgEvent(kv, ev)
 	}
 	return unparsed("fortigate: type=" + typ + " not mapped")
+}
+
+// fgType returns the FortiOS log type, inferring it when `type=` is missing:
+// the first two digits of logid are the type (00 traffic, 01 event, the rest
+// UTM: 02 virus, 03 webfilter, 04 ips, 05 emailfilter, 07 anomaly, 09 dlp,
+// 10 app-ctrl, 12 waf, 13 dns, 14 ssh, 15 ssl, 16 cifs, 17 file-filter,
+// 18 icap), and failing that the subtype vocabulary is unambiguous per type.
+// A line with none of the three is not a FortiOS log. This keeps a truncated
+// or hand-fed line (`action="deny" srcip=… policyid=…`) on the same path the
+// deny projection has always taken for it.
+func fgType(kv map[string]string) string {
+	if t := kv["type"]; t != "" {
+		return t
+	}
+	if id := kv["logid"]; len(id) >= 2 {
+		switch id[:2] {
+		case "00":
+			return "traffic"
+		case "01":
+			return "event"
+		case "02", "03", "04", "05", "07", "09", "10", "12", "13", "14", "15", "16", "17", "18":
+			return "utm"
+		}
+	}
+	switch kv["subtype"] {
+	case "forward", "local", "multicast", "sniffer":
+		return "traffic"
+	case "vpn", "system", "ha", "sdwan", "user", "router", "wireless", "endpoint", "connector", "fortiextender", "security-rating", "switch-controller":
+		return "event"
+	case "ips", "anomaly", "virus", "app-ctrl", "webfilter", "dns", "emailfilter", "dlp", "waf", "ssh", "ssl", "cifs", "file-filter", "icap":
+		return "utm"
+	}
+	return ""
 }
 
 // fgEndpoints fills the tuple, interfaces, identity and geo every FortiOS log
@@ -71,12 +110,17 @@ func fgStr(s string) string {
 	return s
 }
 
+// fgCountry maps the FortiOS country name to its ISO code. The raw name is
+// kept in Extra whenever it is not the canonical spelling for that code
+// (unmapped buckets such as "Reserved", and alternates such as "Czechia" or
+// "Russia"), so deny.FromEvent can store exactly the name the device wrote —
+// the same value ProjectVendor stores today.
 func fgCountry(name, extraKey string, ev *Event) string {
 	if name == "" {
 		return ""
 	}
 	cc := CountryCode(name)
-	if cc == "" {
+	if cc == "" || name != CountryName(cc) {
 		ev.extra(extraKey, name)
 	}
 	return cc
@@ -114,12 +158,18 @@ func fgTraffic(kv map[string]string, ev *Event) Outcome {
 		ev.Activity, ev.Action = ActivityClose, ActionAllow
 	case "timeout":
 		ev.Activity, ev.Action = ActivityClose, ActionTimeoutClose
-	case "deny", "blocked":
+	case "deny":
 		ev.Activity, ev.Action = ActivityTraffic, ActionDeny
 	case "ip-conn", "dns":
 		ev.Activity, ev.Action = ActivityClose, ActionOther
+	case "":
+		ev.Activity, ev.Action = ActivityTraffic, ActionUnknown
 	default:
-		ev.Activity, ev.Action = ActivityTraffic, actionWord(action)
+		// The FortiOS traffic verdict vocabulary is the list above; any other
+		// word (a UTM verdict such as "blocked" leaking into a traffic line,
+		// a future FortiOS value) is recorded as other rather than guessed,
+		// so denied_events parity with the literal action="deny" gate holds.
+		ev.Activity, ev.Action = ActivityTraffic, ActionOther
 	}
 	fgRule(kv, ev)
 	ev.App, ev.AppCat = kv["app"], kv["appcat"]

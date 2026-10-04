@@ -170,14 +170,19 @@ func projectFilterlog(vendor string, msg *models.SyslogMessage, tm *threatintel.
 		ProbeID:   msg.ProbeID,
 		SrcAddr:   src,
 		DstAddr:   dst,
-		SrcPort:   atoiU16(f["srcport"]),
-		DstPort:   atoiU16(f["dstport"]),
 		Protocol:  atoiU8(f["proto"]),
 		// filterlog names the interface, not a wan/lan/dmz role, and carries no
 		// forward/local subtype — leave both Unknown rather than guess.
 		SrcIntfRole: models.IntfRoleUnknown,
 		Subtype:     models.DenySubtypeUnknown,
 		Signal:      models.DenySignalAction,
+	}
+	// The two filterlog columns after the destination are L4 ports for TCP /
+	// UDP / SCTP only; for ICMP they hold the type and id (0.11.293: an ICMP
+	// deny used to land with DstPort = the ICMP id).
+	switch ev.Protocol {
+	case 6, 17, 132:
+		ev.SrcPort, ev.DstPort = atoiU16(f["srcport"]), atoiU16(f["dstport"])
 	}
 	if tm != nil {
 		if _, ok := tm.Match(src); ok {
@@ -191,7 +196,9 @@ func projectFilterlog(vendor string, msg *models.SyslogMessage, tm *threatintel.
 }
 
 // projectFortiGate is the original FortiOS action="deny" / block-policy
-// projection.
+// projection. Since 0.11.293 logfields.Fields runs the full normalizer, so a
+// deny-gated line pays one Normalize here and another in the rule engine;
+// S-4 replaces this path with FromEvent on the Event ingest already holds.
 func projectFortiGate(msg *models.SyslogMessage, tm *threatintel.Holder, cfg PatternConfig) (models.DeniedEvent, bool) {
 	if !hasDenySignal(msg.Message, cfg) {
 		return models.DeniedEvent{}, false

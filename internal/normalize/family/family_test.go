@@ -42,6 +42,16 @@ func TestParseKV_Filterlog_Text(t *testing.T) {
 	if !ok || fl.Tracker != "1000000103" || fl.Action != "block" || fl.Proto != "6" || fl.Src != "203.0.113.9" || fl.DstPort != "443" {
 		t.Fatalf("filterlog: %+v ok=%v", fl, ok)
 	}
+	// ICMP: the two columns after dst are type / id; the tokenizer keeps them
+	// (the native srcport / dstport keys always carried them) and the mapper
+	// decides they are not ports.
+	icmp, ok := ParseFilterlog(`5,,,1000000103,igb0,match,block,in,4,0x0,,64,1,0,none,1,icmp,84,203.0.113.9,198.51.100.10,request,1234,5678`)
+	if !ok || icmp.Proto != "1" || icmp.SrcPort != "request" || icmp.DstPort != "1234" {
+		t.Fatalf("icmp filterlog: %+v ok=%v", icmp, ok)
+	}
+	if FindFilterlog("no commas here at all") != "" || FindFilterlog("a,b,c,d,e,f,g") != "" {
+		t.Error("pre-gate")
+	}
 	tx, ok := ParseText(`dnsmasq[123]: query[AAAA] www.example.com from 192.0.2.10`)
 	if !ok || tx.Kind != "dnsmasq_query" || tx.Fields["qtype"] != "AAAA" || tx.Fields["qname"] != "www.example.com" || tx.Fields["src"] != "192.0.2.10" {
 		t.Fatalf("text: %+v ok=%v", tx, ok)

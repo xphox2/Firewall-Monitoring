@@ -14,8 +14,8 @@ const benchFortiTraffic = `date=2026-10-04 time=12:00:01 devname="fw-example-01"
 
 // BenchmarkFields_FortiGate measures the per-message cost of the rule engine's
 // field extraction on the dominant FortiGate traffic shape. 0.11.293 added the
-// canonical event.* view on top of the native keys: 3646 → 3858 ns/op,
-// 9074 → 10704 B/op, 17 → 23 allocs/op on the development machine (Apple M5).
+// canonical event.* view on top of the native keys: 3646 → 3990 ns/op,
+// 9074 → 10832 B/op, 17 → 24 allocs/op on the development machine (Apple M5).
 // Re-measure when touching internal/normalize's hot path; the manual
 // Benchmark workflow is informational, this is the gate (≤ 1.5x allocs/op).
 func BenchmarkFields_FortiGate(b *testing.B) {
