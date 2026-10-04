@@ -13,6 +13,12 @@ one.
 > [`vendor_pfsense.go`](../internal/snmp/vendor_pfsense.go) (shallow) and
 > [`vendor_sonicwall.go`](../internal/snmp/vendor_sonicwall.go) /
 > [`vendor_fortigate.go`](../internal/snmp/vendor_fortigate.go) (full).
+> A device family that only answers standard MIB-II needs no OID work at all:
+> embed `GenericProfile` and override `Name()`, as
+> [`vendor_unifi.go`](../internal/snmp/vendor_unifi.go) and
+> [`vendor_meraki.go`](../internal/snmp/vendor_meraki.go) do (both built from
+> vendor docs and untested on real hardware — the registration still gives the
+> device its own vendor for rules and the device form).
 
 ## The `VendorProfile` interface
 

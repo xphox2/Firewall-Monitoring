@@ -120,7 +120,7 @@ func buildAdversarialPDUs(p VendorProfile) []gosnmp.SnmpPDU {
 }
 
 func TestVendorParsers_NoPanicOnHostileInput(t *testing.T) {
-	vendors := []string{"cisco_asa", "firewalla", "fortigate", "generic", "opnsense", "paloalto", "pfsense", "sonicwall"}
+	vendors := []string{"cisco_asa", "firewalla", "fortigate", "generic", "meraki", "opnsense", "paloalto", "pfsense", "sonicwall", "unifi"}
 
 	// Input variants each parser must survive.
 	inputs := map[string]func(p VendorProfile) []gosnmp.SnmpPDU{

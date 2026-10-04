@@ -29,6 +29,18 @@ type fortigateNormalizer struct{}
 
 func (fortigateNormalizer) Vendor() string { return "fortigate" }
 
+// ParseSyslogAudit implements SyslogAuditParser over the FortiOS config-change
+// event log (ParseFortiAuditEvent): FortiGate is the one vendor whose syslog
+// carries who/where/how for a config change natively, so it is the only
+// normalizer with this capability.
+func (fortigateNormalizer) ParseSyslogAudit(msg string) (ChangeAttribution, bool) {
+	ev := ParseFortiAuditEvent(msg)
+	if !ev.IsConfigChange {
+		return ChangeAttribution{}, false
+	}
+	return ChangeAttribution{User: ev.User, Source: ev.Source, Method: ev.Method}, true
+}
+
 // Volatile pattern bodies are declared ONCE here so the compiled regexes used by
 // Normalize (which feed the change-detection hash) and the VolatilePattern
 // strings returned to the UI can never silently drift apart — editing the body

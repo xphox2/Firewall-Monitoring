@@ -82,6 +82,7 @@ sources for one device).
 | Firewalla | **No flow export** | — | Flows are internal to the Firewalla app/MSP API only. |
 | pfSense | Plus 24.03+: pflow v5 + IPFIX; CE: softflowd v5/v9/IPFIX | Unsampled | Use IPFIX mode on CE — softflowd's v9 has known timestamp bugs. |
 | OPNsense | NetFlow v5/v9 | Unsampled | v5 = IPv4 only. |
+| Cisco Meraki MX / Z (some MS) | NetFlow v9 only | Unsampled | Seven-field template (5-tuple, bytes, packets); IE 23/24 carry **reverse (biflow)** counters, not post-NAT ones, and `OUT_*` is gone in MX 14.53+; no ifIndex, no application ID, no policy; only routed/NATed (CPU-path) traffic is exported. The Dashboard API is the primary analytics source. Vendor `meraki` (0.11.291) is untested on real hardware — built from vendor docs. |
 | MikroTik | v1/v5/v9/IPFIX | ROS 7+ | ROS 6.49.x has a byte-order bug in the exported sampling rate (fixed 7.10) — use a per-exporter rate override, never trust auto-detection. Fasttrack/HW-offloaded traffic is invisible to traffic-flow. |
 | Juniper SRX | J-Flow v9/IPFIX | Sampled | Rate arrives via options templates. |
 | Sophos XG/XGS | NetFlow v5 only | Unsampled | IPv4 only (vendor limit). |

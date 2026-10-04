@@ -18,7 +18,7 @@
     // validVendors mirrors the server set (handlers.go). vendor_scope filters
     // which devices a rule applies to; only fortigate/opnsense/pfsense extract
     // structured fields today (others fall back to base fields).
-    var VENDORS = ['fortigate', 'opnsense', 'pfsense', 'paloalto', 'cisco_asa', 'sonicwall', 'firewalla', 'generic'];
+    var VENDORS = ['fortigate', 'opnsense', 'pfsense', 'paloalto', 'cisco_asa', 'sonicwall', 'firewalla', 'unifi', 'meraki', 'generic'];
     var OPS = ['eq', 'neq', 'contains', 'not_contains', 'regex', 'gt', 'lt', 'in', 'exists'];
     var OP_SET = OPS.reduce(function (m, o) { m[o] = 1; return m; }, {});
     var GROUP_OPS = { and: 1, or: 1 };

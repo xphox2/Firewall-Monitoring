@@ -423,13 +423,27 @@ func formatLinkMessage(trapType, ifIndex, ifDescr, ifOperStatus string) string {
 	return sanitizeTrapField(strings.Join(parts, " "))
 }
 
+// NormalizeTrapType puts a trap type name in the canonical form the alert
+// types (models.AlertType), the seeded trap rules (`trap_type eq
+// HA_STATE_CHANGE`) and the FortiGate profile use: upper-case, `-` to `_`.
+// The Palo Alto and SonicWall profiles name their traps in lower-kebab form
+// (`ha-state-change`), so a PAN HA transition never matched the HA_STATE_CHANGE
+// seed; applying this at the one lookup (and at the relay ingest for a
+// collector that still sends the raw profile name) makes the casing a
+// non-issue everywhere downstream.
+func NormalizeTrapType(s string) string {
+	return strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(s), "-", "_"))
+}
+
 // lookupTrapOID searches all registered vendor profiles for the given trap OID.
+// The returned type is normalized (NormalizeTrapType), whatever the profile's
+// own spelling.
 func lookupTrapOID(oid string) (trapType string, severity string) {
 	vendorMu.RLock()
 	defer vendorMu.RUnlock()
 	for _, profile := range vendorRegistry {
 		if def, ok := profile.TrapOIDs()[oid]; ok {
-			return def.Type, def.Severity
+			return NormalizeTrapType(def.Type), def.Severity
 		}
 	}
 	return "", ""

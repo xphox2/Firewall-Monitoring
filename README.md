@@ -10,7 +10,7 @@
 > is a sibling repo, [Firewall-Collector](https://github.com/xphox2/Firewall-Collector).
 
 [![CI](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml/badge.svg)](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.11.290-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.11.291-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.26.8+-00ADD8)](go.mod)
 [![Status](https://img.shields.io/badge/status-alpha-orange)](#project-status)
@@ -42,9 +42,9 @@ the edge**, this repo **runs at HQ**.
 
 Self-hosted network/security teams and small-to-mid MSPs running a
 **firewall fleet across multiple sites** — primarily FortiGate today, with
-SNMP profiles for Palo Alto, Cisco ASA, SonicWall, pfSense, OPNsense and
-Firewalla, plus config-diff normalization for FortiGate, Palo Alto and Cisco
-ASA. It gives you one pane of glass (status, interfaces, VPN tunnels,
+SNMP profiles for Palo Alto, Cisco ASA, SonicWall, pfSense, OPNsense,
+Firewalla, UniFi and Meraki (the last two untested on real hardware), plus
+config-diff normalization for FortiGate, Palo Alto and Cisco ASA. It gives you one pane of glass (status, interfaces, VPN tunnels,
 syslog, sFlow, alerts, reports) with **lightweight remote probes** that
 relay SNMP/syslog/sFlow/ICMP from sites you can't poll directly — without
 standing up a heavyweight NMS.
@@ -91,8 +91,10 @@ public AUDIT-NNN row exists.
 
 - **[Probe] SNMP device polling** (v1/v2c/v3, MD5/SHA/SHA2, DES/AES/AES192/256).
   Per-device `VendorProfile` registry. SNMP-pollable profiles: FortiGate,
-  Palo Alto, Cisco ASA, SonicWall, pfSense, OPNsense, Firewalla (seven vendor
-  profiles plus a generic fallback). Cisco ASA has both a full SNMP polling profile
+  Palo Alto, Cisco ASA, SonicWall, pfSense, OPNsense, Firewalla, UniFi and
+  Meraki (nine vendor profiles plus a generic fallback; UniFi and Meraki are
+  standards-only clones of the generic profile, built from vendor docs and
+  untested on real hardware). Cisco ASA has both a full SNMP polling profile
   (CISCO-PROCESS-MIB CPU, CISCO-MEMORY-POOL-MIB memory, CISCO-FIREWALL-MIB
   connection count + failover HA, CDP neighbors) and per-vendor config-diff
   normalization. **The server never polls devices itself** (the direct poll loop

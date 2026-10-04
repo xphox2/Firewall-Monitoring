@@ -146,6 +146,13 @@ end
 
 func setupFortiGateProbeDevice(t *testing.T) (*Handler, *models.Probe, *models.Device) {
 	t.Helper()
+	return setupVendorProbeDevice(t, "fortigate") // critical: routes through configdiff.vendor_fortigate
+}
+
+// setupVendorProbeDevice seeds an approved probe and one device of the given
+// vendor assigned to it, for ReceiveConfigRevision tests.
+func setupVendorProbeDevice(t *testing.T, vendor string) (*Handler, *models.Probe, *models.Device) {
+	t.Helper()
 	h, db := setupTestHandler(t)
 	const probeKey = "test-key-abc123"
 	probe := &models.Probe{
@@ -161,7 +168,7 @@ func setupFortiGateProbeDevice(t *testing.T) (*Handler, *models.Probe, *models.D
 	device := &models.Device{
 		Name:      "fgt-1",
 		IPAddress: "192.168.105.2",
-		Vendor:    "fortigate", // critical: routes through configdiff.vendor_fortigate
+		Vendor:    vendor,
 		ProbeID:   &probe.ID,
 	}
 	if err := db.Gorm().Create(device).Error; err != nil {

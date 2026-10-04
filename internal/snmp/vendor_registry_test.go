@@ -16,6 +16,8 @@ var apiValidVendors = []string{
 	"pfsense",
 	"opnsense",
 	"generic",
+	"unifi",
+	"meraki",
 }
 
 // TestVendorRegistry_EveryValidVendorHasProfile is the registry-completeness
