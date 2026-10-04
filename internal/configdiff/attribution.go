@@ -46,6 +46,37 @@ func HasConfigAttribution(vendor string) bool {
 	return ok
 }
 
+// SyslogAuditParser is the other optional attribution capability: the vendor
+// emits a config-change AUDIT event on syslog (who, from where, how) that the
+// server correlates with a detected change. Only a vendor that implements it
+// is ever correlated — running the FortiOS key=value parser over another
+// vendor's syslog (which the ingest path did until 0.11.291) credits a change
+// to whatever `user=` / `cfgpath=` happens to appear in an unrelated line.
+//
+// ok is true only for a line that IS a config-change audit event; the caller
+// keeps scanning on false.
+type SyslogAuditParser interface {
+	ParseSyslogAudit(msg string) (ChangeAttribution, bool)
+}
+
+// ParseSyslogAudit parses one stored syslog line as a config-change audit
+// event for the vendor, or ok=false when the vendor has no syslog audit
+// format or the line is not such an event.
+func ParseSyslogAudit(vendor, msg string) (ChangeAttribution, bool) {
+	p, ok := Lookup(vendor).(SyslogAuditParser)
+	if !ok {
+		return ChangeAttribution{}, false
+	}
+	return p.ParseSyslogAudit(msg)
+}
+
+// HasSyslogAudit reports whether the vendor emits config-change audit events
+// on syslog — the gate for the syslog correlation in ReceiveConfigRevision.
+func HasSyslogAudit(vendor string) bool {
+	_, ok := Lookup(vendor).(SyslogAuditParser)
+	return ok
+}
+
 var (
 	opnRevisionBlockRe = regexp.MustCompile(`(?s)<revision>(.*?)</revision>`)
 	opnRevUsernameRe   = regexp.MustCompile(`<username>([^<]*)</username>`)

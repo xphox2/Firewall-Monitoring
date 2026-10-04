@@ -394,6 +394,12 @@ var validVendors = map[string]bool{
 	"pfsense":   true,
 	"opnsense":  true,
 	"generic":   true,
+	// unifi / meraki (0.11.291): standards-only SNMP profiles built from the
+	// vendor docs, untested on real hardware. The device form and the event
+	// rule editor's vendor list mirror this map (guarded by
+	// test/guardrails/vendor_lists_in_sync_test.go).
+	"unifi":  true,
+	"meraki": true,
 }
 
 func isValidVendor(vendor string) bool {

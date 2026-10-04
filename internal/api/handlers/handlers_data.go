@@ -296,6 +296,10 @@ func (h *Handler) ReceiveTrapEvents(c *gin.Context) {
 		traps[i].ProbeID = probe.ID
 		traps[i].Timestamp = clampIngestTimestamp(traps[i].Timestamp, now)
 		traps[i].ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
+		// A collector older than 1.3.49 relays the profile's raw spelling
+		// (`ha-state-change`); store the canonical form so rows match the alert
+		// types and the seeded trap rules whichever side classified the trap.
+		traps[i].TrapType = snmp.NormalizeTrapType(traps[i].TrapType)
 		filtered = append(filtered, traps[i])
 	}
 	if err := h.db.SaveTrapEvents(filtered); err != nil {
@@ -1142,10 +1146,11 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 	// alerts compare against — raw checksums drift on every backup for FortiOS
 	// devices because of random-IV ENC ciphertext, so they're useless for "did
 	// the operator actually change something?".
-	vendor := ""
-	if dev, err := h.db.GetDevice(rev.DeviceID); err == nil && dev != nil {
-		vendor = dev.Vendor
-	}
+	//
+	// One resolver answers "which vendor is this device" for the whole handler
+	// (normalizer, validator, object diff, attribution): generic for a missing
+	// row or an empty value, never an implicit FortiGate.
+	vendor := h.deviceVendor(rev.DeviceID)
 	normalized, quality := configdiff.Normalize(vendor, []byte(rev.ConfigText))
 	normalizedSum := md5.Sum(normalized) // (gosec G401 excluded in CI: non-crypto config-change checksum)
 	rev.NormalizedChecksum = hex.EncodeToString(normalizedSum[:])
@@ -1306,16 +1311,15 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 
 		// Some vendors record who saved the config INSIDE the config itself
 		// (OPNsense's <revision> block). That is authoritative and needs no syslog
-		// correlation, so prefer it; fall back to the FortiOS config-change event
-		// log for vendors that don't. Both sides are passed because the in-config
-		// stamp only counts when it ADVANCED — a hand-edited config.xml + reload
+		// correlation, so prefer it; fall back to the vendor's config-change
+		// syslog audit event for vendors that emit one (FortiOS today). A vendor
+		// with neither is left unattributed rather than run through another
+		// vendor's parser. Both sides are passed because the in-config stamp
+		// only counts when it ADVANCED — a hand-edited config.xml + reload
 		// leaves it untouched and must not be credited to the previous admin.
 		att, found := configdiff.AttributionFromConfig(vendor, []byte(rev.ConfigText), []byte(prevConfigText))
-		if !found {
-			if ev, ok := h.attributeConfigChange(rev.DeviceID, now); ok {
-				att = configdiff.ChangeAttribution{User: ev.User, Source: ev.Source, Method: ev.Method}
-				found = true
-			}
+		if !found && configdiff.HasSyslogAudit(vendor) {
+			att, found = h.attributeConfigChange(vendor, rev.DeviceID, now)
 		}
 		if found {
 			info.ChangedBy = att.User
@@ -1350,14 +1354,16 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 }
 
 // attributeConfigChange correlates a detected config change with the most recent
-// FortiGate config-change syslog event for the device, to populate who/how/from.
-// FortiGate emits these audit events natively (no TACACS+ required); the messages
-// are already stored server-side in syslog_messages. found is false when no
-// matching authenticated session exists within the lookback window — a possible
-// out-of-band change.
-func (h *Handler) attributeConfigChange(deviceID uint, when time.Time) (ev configdiff.FortiAuditEvent, found bool) {
+// config-change syslog audit event the device's vendor emits, to populate
+// who/how/from. The line is parsed by the vendor's configdiff.SyslogAuditParser
+// (FortiGate emits these natively, no TACACS+ required); a vendor without one
+// never matches, so the caller gates on configdiff.HasSyslogAudit to skip the
+// query. The messages are already stored server-side in syslog_messages. found
+// is false when no matching authenticated session exists within the lookback
+// window — a possible out-of-band change.
+func (h *Handler) attributeConfigChange(vendor string, deviceID uint, when time.Time) (att configdiff.ChangeAttribution, found bool) {
 	if h.db == nil {
-		return ev, false
+		return att, false
 	}
 	// A change-detection backup can lag the actual edit (poll cadence), so look
 	// back generously but accept only events at/just-after the edit.
@@ -1367,17 +1373,17 @@ func (h *Handler) attributeConfigChange(deviceID uint, when time.Time) (ev confi
 	if err := h.db.Gorm().
 		Where("device_id = ? AND timestamp >= ? AND timestamp <= ?", deviceID, start, end).
 		Order("timestamp DESC").Limit(100).Find(&msgs).Error; err != nil {
-		return ev, false
+		return att, false
 	}
 	for _, m := range msgs {
-		if parsed := configdiff.ParseFortiAuditEvent(m.Message); parsed.IsConfigChange {
+		if parsed, ok := configdiff.ParseSyslogAudit(vendor, m.Message); ok {
 			if parsed.Source == "" {
 				parsed.Source = m.SourceIP
 			}
 			return parsed, true
 		}
 	}
-	return ev, false
+	return att, false
 }
 
 func (h *Handler) ReceiveProcessSnapshot(c *gin.Context) {

@@ -54,8 +54,10 @@ func TestParseTrap_ClassifiesByTrapOIDValue(t *testing.T) {
 	if trap == nil {
 		t.Fatal("parseTrap returned nil for a trap whose notification OID is in snmpTrapOID.0's value (pre-fix drop); want a classified TrapEvent")
 	}
-	if trap.TrapType != "vpn-tunnel-down" {
-		t.Errorf("TrapType = %q, want vpn-tunnel-down", trap.TrapType)
+	// The profile spells it vpn-tunnel-down; lookupTrapOID normalizes to the
+	// alert-type form (0.11.291).
+	if trap.TrapType != "VPN_TUNNEL_DOWN" {
+		t.Errorf("TrapType = %q, want VPN_TUNNEL_DOWN", trap.TrapType)
 	}
 	if trap.Severity != "critical" {
 		t.Errorf("Severity = %q, want critical", trap.Severity)
@@ -88,8 +90,8 @@ func TestParseTrap_NameBasedFallbackStillWorks(t *testing.T) {
 	if trap == nil {
 		t.Fatal("parseTrap returned nil; name-based fallback must still classify a notification OID sent as a varbind name")
 	}
-	if trap.TrapType != "vpn-tunnel-up" {
-		t.Errorf("TrapType = %q, want vpn-tunnel-up", trap.TrapType)
+	if trap.TrapType != "VPN_TUNNEL_UP" {
+		t.Errorf("TrapType = %q, want VPN_TUNNEL_UP", trap.TrapType)
 	}
 }
 

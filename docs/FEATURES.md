@@ -27,6 +27,9 @@
 | SNMP polling (v1 / v2c / v3, MD5/SHA/SHA2, DES/AES/AES192/256) | Stable | [Server] | 0.1 |
 | Per-device SNMP vendor OID profile (FortiGate, Palo Alto, SonicWall, pfSense, OPNsense, Firewalla) | Stable | [Server] | 0.1 |
 | Vendor-neutral default: a device without a vendor is `generic` everywhere (column default, create API, device form, SNMP resolver, deny projection); one cached resolver (`handlers.deviceVendor`) and a CI guard against a `"fortigate"` default creeping back | Stable | [Server] | 0.11.290 (migration v71) |
+| `unifi` and `meraki` vendors: accepted by the API, the device form and the event-rule vendor scope; standards-only SNMP profiles (clones of `generic`, built from vendor docs — untested on real hardware) | Experimental | [Server] | 0.11.291 |
+| Config-change syslog attribution is gated per vendor (`configdiff.SyslogAuditParser`, FortiGate only): a non-FortiGate device's change is never credited to a `user=` found in unrelated syslog | Stable | [Server] | 0.11.291 |
+| Trap type names are canonical (`HA_STATE_CHANGE`, never `ha-state-change`) at the trap receiver and the relay ingest, so Palo Alto / SonicWall HA and VPN traps match the alert types and the seeded trap rules | Stable | [Server] | 0.11.291 |
 | SNMP trap receiver (UDP/162, V1 enterprise + V2c specific-trap, per-source-IP rate-limit, community filter) | Stable | [Server] | 0.1 |
 | Syslog receiver — TCP + UDP, RFC 5424 + RFC 3164, source allow-list (parsed at the edge, relayed to the server) | Stable | [Probe] | 0.1 |
 | sFlow v5 datagram parser (parsed at the edge, relayed to the server) | Stable | [Probe] | 0.1 |
