@@ -48,8 +48,9 @@ Pairs with [`KNOWN-ISSUES.md`](../KNOWN-ISSUES.md) (current limitations) and
 - **API `/metrics` (Prometheus):** on port 8080, which is internet-facing on a
   typical install, so it is not open. `METRICS_TOKEN` unset (default): served
   only to a loopback TCP peer (`127.0.0.1` / `::1` — a scraper in the same
-  container or on the host; `docker exec <container> wget -qO- http://127.0.0.1:8080/metrics`
-  still works) and a plain 404 for everyone else, so the endpoint is not
+  container, e.g. `docker exec <container> wget -qO- http://127.0.0.1:8080/metrics`;
+  a scraper on the Docker host reaches a bridge-networked container from the
+  bridge gateway, not loopback, so it needs `METRICS_TOKEN` or host networking) and a plain 404 for everyone else, so the endpoint is not
   advertised. `METRICS_TOKEN` set: every request, loopback included, must send
   `Authorization: Bearer <token>` (Prometheus: `authorization.credentials`),
   anything else is 401 with a `WWW-Authenticate` challenge — a misconfigured

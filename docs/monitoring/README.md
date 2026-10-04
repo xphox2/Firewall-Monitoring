@@ -11,7 +11,9 @@ a ready-to-adapt [`prometheus.yml`](prometheus.yml) scrape config.
 >
 > - `METRICS_TOKEN` **unset** (default): served only to a loopback peer
 >   (`127.0.0.1` / `::1`); every other client gets a 404. A Prometheus in the
->   same container or on the same host can scrape it as before.
+>   same container (or a host-networked one) can scrape it; a Prometheus on
+>   the Docker host reaches a bridge-networked container from the bridge
+>   gateway, not loopback, so it needs `METRICS_TOKEN`.
 > - `METRICS_TOKEN` **set** (`openssl rand -hex 32`): every request — loopback
 >   included — must send `Authorization: Bearer <token>`; anything else is 401.
 >   In `prometheus.yml`: `authorization: { credentials: "<token>" }` (or

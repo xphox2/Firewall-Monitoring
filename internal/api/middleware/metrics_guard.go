@@ -46,7 +46,10 @@ func MetricsGuard(token string) gin.HandlerFunc {
 			return
 		}
 		if ip := net.ParseIP(c.RemoteIP()); ip == nil || !ip.IsLoopback() {
-			c.AbortWithStatus(http.StatusNotFound)
+			// Same body as gin's unknown-route 404, so the gated endpoint is
+			// indistinguishable from a route that does not exist.
+			c.String(http.StatusNotFound, "404 page not found")
+			c.Abort()
 			return
 		}
 		c.Next()
