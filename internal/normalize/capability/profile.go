@@ -241,20 +241,25 @@ func init() {
 
 	untested := "untested on real hardware — built from vendor documentation"
 	nfLogged := "netfilter LOG prefix: only rules with the Syslog toggle; per packet"
+	// Every CEF-sourced cell is config_dependent: the SIEM integration
+	// (Settings > Control Plane > Integrations, Network 8.5+) must be enabled.
+	siem := "SIEM integration (CEF) must be enabled; "
 	register(Profile{Vendor: "unifi", Hardware: untested, Fields: map[Field]Spec{
 		Action: s(SourceSyslog, ConfigDependent, nfLogged), SrcIP: syslogFull, DstIP: syslogFull, SrcPort: syslogFull, DstPort: syslogFull,
 		Proto: syslogFull, SrcMAC: s(SourceSyslog, Partial, "netfilter MAC= field and CEF client events"), SrcIf: s(SourceSyslog, ConfigDependent, nfLogged),
-		SrcZone: s(SourceSyslog, Partial, "CEF 201 (IPS) only"),
-		RuleKey: s(SourceSyslog, ConfigDependent, nfLogged), RuleIndex: s(SourceSyslog, ConfigDependent, nfLogged), RuleName: s(SourceSyslog, Partial, "netfilter DESCR (truncated) and CEF policy name"),
+		SrcZone: s(SourceSyslog, ConfigDependent, siem+"CEF 201 only"),
+		RuleKey: s(SourceSyslog, ConfigDependent, nfLogged), RuleIndex: s(SourceSyslog, ConfigDependent, nfLogged), RuleName: s(SourceSyslog, Partial, "netfilter DESCR (truncated) and CEF 201 policy name"),
 		Ruleset: s(SourceSyslog, ConfigDependent, nfLogged),
-		App:     s(SourceSyslog, Partial, "CEF 201 (IPS) only"), SrcHostname: s(SourceSyslog, Partial, "CEF client events and DHCP leases"),
+		App:     s(SourceSyslog, ConfigDependent, siem+"CEF 201 only"), SrcHostname: s(SourceSyslog, Partial, "CEF client events and DHCP leases"),
 		BytesOut: s(SourceNetFlow, Partial, "IPFIX on supported gateways (sampled); CEF 201 per IPS flow"), BytesIn: s(SourceNetFlow, Partial, "IPFIX on supported gateways (sampled); CEF 201 per IPS flow"),
-		SessionID: s(SourceSyslog, Partial, "CEF 201 only"),
+		SessionID: s(SourceSyslog, ConfigDependent, siem+"CEF 201 only"),
 		DNSQName:  s(SourceSyslog, ConfigDependent, "dnsmasq query logging"),
-		Severity:  s(SourceSyslog, Partial, "CEF only"), SigID: s(SourceSyslog, Full, "CEF 201"), SigName: s(SourceSyslog, Full, "CEF 201"),
-		AdminUser: s(SourceSyslog, Partial, "CEF 544 successes; failures unverified"), AdminSrcIP: s(SourceSyslog, Partial, "CEF 544"), AdminMethod: s(SourceSyslog, Partial, "CEF 544"),
-		ConfigPath: s(SourceSyslog, Partial, "UniFi OS CEF 1005 free text"), ConfigOld: s(SourceSyslog, Partial, "UniFi OS CEF 1005 free text"),
-		WANName: s(SourceSyslog, Full, "CEF 100/112/113"), MetricValue: s(SourceSyslog, Full, "CEF 112/113"),
+		Severity:  s(SourceSyslog, ConfigDependent, siem+"CEF header"),
+		SigID:     s(SourceSyslog, Partial, siem+"CEF 201 IPS/IDS hits carry a signature id; blocklist and honeypot hits do not"),
+		SigName:   s(SourceSyslog, Partial, siem+"CEF 201 IPS/IDS signature, else the CEF event name"),
+		AdminUser: s(SourceSyslog, ConfigDependent, siem+"CEF 544 successes; failures unverified"), AdminSrcIP: s(SourceSyslog, ConfigDependent, siem+"CEF 544"), AdminMethod: s(SourceSyslog, ConfigDependent, siem+"CEF 544"),
+		ConfigPath: s(SourceSyslog, ConfigDependent, siem+"UniFi OS CEF 1005 free text"), ConfigOld: s(SourceSyslog, ConfigDependent, siem+"UniFi OS CEF 1005 free text"),
+		WANName: s(SourceSyslog, ConfigDependent, siem+"CEF 100/112/113"), MetricValue: s(SourceSyslog, Partial, siem+"CEF 112 (latency) only; 113 carries no loss figure"),
 	}})
 
 	flagged := "only L3 rules with the Syslog box checked; per flow, no bytes"

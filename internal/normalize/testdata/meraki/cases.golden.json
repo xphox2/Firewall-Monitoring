@@ -54,6 +54,58 @@
     }
   },
   {
+    "name": "flows_allow_inbound_numeric",
+    "outcome": "ok",
+    "native": {
+      "category": "flows",
+      "dport": "443",
+      "dst": "198.51.100.5",
+      "pattern": "0 all",
+      "protocol": "tcp",
+      "sport": "44002",
+      "src": "203.0.113.9"
+    },
+    "event": {
+      "event.action": "allow",
+      "event.activity": "traffic",
+      "event.class": "network",
+      "event.dst_ip": "198.51.100.5",
+      "event.dst_port": "443",
+      "event.proto": "6",
+      "event.rule_key": "n:all",
+      "event.rule_name": "all",
+      "event.src_ip": "203.0.113.9",
+      "event.src_port": "44002",
+      "event.vendor_event_id": "flows"
+    }
+  },
+  {
+    "name": "flows_allow_numeric_port_rule",
+    "outcome": "ok",
+    "native": {
+      "category": "flows",
+      "dport": "443",
+      "dst": "198.51.100.5",
+      "pattern": "0 (tcp||udp) \u0026\u0026 dst port 443",
+      "protocol": "tcp",
+      "sport": "44003",
+      "src": "203.0.113.9"
+    },
+    "event": {
+      "event.action": "allow",
+      "event.activity": "traffic",
+      "event.class": "network",
+      "event.dst_ip": "198.51.100.5",
+      "event.dst_port": "443",
+      "event.proto": "6",
+      "event.rule_key": "n:(tcp||udp) \u0026\u0026 dst port 443",
+      "event.rule_name": "(tcp||udp) \u0026\u0026 dst port 443",
+      "event.src_ip": "203.0.113.9",
+      "event.src_port": "44003",
+      "event.vendor_event_id": "flows"
+    }
+  },
+  {
     "name": "flows_newer_verdict_first",
     "outcome": "ok",
     "native": {
@@ -61,7 +113,6 @@
       "dport": "23",
       "dst": "198.51.100.5",
       "mac": "00:00:5E:00:53:0C",
-      "pattern": "Block telnet",
       "protocol": "tcp",
       "sport": "44001",
       "src": "203.0.113.9",
@@ -74,12 +125,89 @@
       "event.dst_ip": "198.51.100.5",
       "event.dst_port": "23",
       "event.proto": "6",
-      "event.rule_key": "n:block telnet",
-      "event.rule_name": "Block telnet",
       "event.src_ip": "203.0.113.9",
       "event.src_mac": "00:00:5e:00:53:0c",
       "event.src_port": "44001",
       "event.vendor_event_id": "flows"
+    }
+  },
+  {
+    "name": "firewall_hostname_is_category_word",
+    "outcome": "ok",
+    "native": {
+      "category": "firewall",
+      "dport": "9100",
+      "dst": "203.0.113.20",
+      "pattern": "deny firewall rule for printers",
+      "protocol": "tcp",
+      "sport": "51514",
+      "src": "192.0.2.10"
+    },
+    "event": {
+      "event.action": "deny",
+      "event.activity": "traffic",
+      "event.class": "network",
+      "event.dst_ip": "203.0.113.20",
+      "event.dst_port": "9100",
+      "event.proto": "6",
+      "event.rule_key": "n:firewall rule for printers",
+      "event.rule_name": "firewall rule for printers",
+      "event.src_ip": "192.0.2.10",
+      "event.src_port": "51514",
+      "event.vendor_event_id": "firewall"
+    }
+  },
+  {
+    "name": "firewall_v5_split_hostname_is_category_word",
+    "outcome": "ok",
+    "native": {
+      "category": "firewall",
+      "dport": "9100",
+      "dst": "203.0.113.20",
+      "pattern": "deny firewall rule for printers",
+      "protocol": "tcp",
+      "sport": "51514",
+      "src": "192.0.2.10"
+    },
+    "event": {
+      "event.action": "deny",
+      "event.activity": "traffic",
+      "event.class": "network",
+      "event.dst_ip": "203.0.113.20",
+      "event.dst_port": "9100",
+      "event.proto": "6",
+      "event.rule_key": "n:firewall rule for printers",
+      "event.rule_name": "firewall rule for printers",
+      "event.src_ip": "192.0.2.10",
+      "event.src_port": "51514",
+      "event.vendor_event_id": "firewall"
+    }
+  },
+  {
+    "name": "bridge_anyconnect_vpn_firewall_allow",
+    "outcome": "ok",
+    "native": {
+      "category": "bridge_anyconnect_client_vpn_firewall",
+      "dport": "443",
+      "dst": "192.0.2.50",
+      "pattern": "allow all",
+      "protocol": "tcp",
+      "sport": "52000",
+      "src": "192.0.2.224"
+    },
+    "event": {
+      "event.action": "allow",
+      "event.activity": "traffic",
+      "event.class": "network",
+      "event.dst_ip": "192.0.2.50",
+      "event.dst_port": "443",
+      "event.proto": "6",
+      "event.rule_key": "n:bridge_anyconnect_client_vpn_firewall/all",
+      "event.rule_name": "all",
+      "event.ruleset": "bridge_anyconnect_client_vpn_firewall",
+      "event.src_ip": "192.0.2.224",
+      "event.src_port": "52000",
+      "event.vendor_event_id": "bridge_anyconnect_client_vpn_firewall"
     }
   },
   {
@@ -202,6 +330,7 @@
     "native": {
       "category": "security_event",
       "decision": "blocked",
+      "dhost": "00:00:5E:00:53:0D",
       "direction": "ingress",
       "dst": "192.0.2.10:80",
       "message": "GPL ATTACK_RESPONSE id check returned root",
@@ -219,6 +348,7 @@
       "event.class": "finding",
       "event.direction": "inbound",
       "event.dst_ip": "192.0.2.10",
+      "event.dst_mac": "00:00:5e:00:53:0d",
       "event.dst_port": "80",
       "event.proto": "6",
       "event.severity": "7",
@@ -227,6 +357,41 @@
       "event.src_ip": "203.0.113.9",
       "event.src_mac": "00:00:5e:00:53:0a",
       "event.src_port": "51514",
+      "event.threat_cat": "ids",
+      "event.vendor_event_id": "security_event/ids_alerted"
+    }
+  },
+  {
+    "name": "security_event_ids_reset",
+    "outcome": "ok",
+    "native": {
+      "action": "rst",
+      "category": "security_event",
+      "direction": "ingress",
+      "dst": "192.0.2.10:80",
+      "message": "GPL ATTACK_RESPONSE id check returned root",
+      "priority": "2",
+      "protocol": "tcp/ip",
+      "shost": "00:00:5E:00:53:0A",
+      "signature": "1:2100498:7",
+      "src": "203.0.113.9:51515",
+      "subtype": "ids_alerted",
+      "timestamp": "1759579202.123456"
+    },
+    "event": {
+      "event.action": "reject",
+      "event.activity": "detect",
+      "event.class": "finding",
+      "event.direction": "inbound",
+      "event.dst_ip": "192.0.2.10",
+      "event.dst_port": "80",
+      "event.proto": "6",
+      "event.severity": "7",
+      "event.sig_id": "1:2100498:7",
+      "event.sig_name": "GPL ATTACK_RESPONSE id check returned root",
+      "event.src_ip": "203.0.113.9",
+      "event.src_mac": "00:00:5e:00:53:0a",
+      "event.src_port": "51515",
       "event.threat_cat": "ids",
       "event.vendor_event_id": "security_event/ids_alerted"
     }
@@ -260,6 +425,37 @@
       "event.threat_cat": "malicious",
       "event.url_host": "files.example.com",
       "event.url_path": "/eicar.txt",
+      "event.vendor_event_id": "security_event/security_filtering_file_scanned"
+    }
+  },
+  {
+    "name": "security_event_file_scanned_clean",
+    "outcome": "ok",
+    "native": {
+      "action": "allow",
+      "category": "security_event",
+      "disposition": "clean",
+      "dst": "203.0.113.41:80",
+      "mac": "00:00:5E:00:53:0A",
+      "name": "report.pdf",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000001",
+      "src": "192.0.2.10:51801",
+      "subtype": "security_filtering_file_scanned",
+      "url": "http://files.example.com/report.pdf"
+    },
+    "event": {
+      "event.action": "allow",
+      "event.activity": "http",
+      "event.class": "network",
+      "event.dst_ip": "203.0.113.41",
+      "event.dst_port": "80",
+      "event.extra.disposition": "clean",
+      "event.extra.sha256": "0000000000000000000000000000000000000000000000000000000000000001",
+      "event.src_ip": "192.0.2.10",
+      "event.src_mac": "00:00:5e:00:53:0a",
+      "event.src_port": "51801",
+      "event.url_host": "files.example.com",
+      "event.url_path": "/report.pdf",
       "event.vendor_event_id": "security_event/security_filtering_file_scanned"
     }
   },
@@ -323,6 +519,45 @@
       "event.tunnel_type": "client_vpn",
       "event.user": "alice@example.com",
       "event.vendor_event_id": "events/client_vpn_connect"
+    }
+  },
+  {
+    "name": "events_vpn_peer_ident_with_apostrophe",
+    "outcome": "ok",
+    "native": {
+      "category": "events",
+      "connectivity": "true",
+      "peer_contact": "203.0.113.6:500",
+      "peer_ident": "o'brien branch",
+      "type": "vpn_connectivity_change",
+      "vpn_type": "site-to-site"
+    },
+    "event": {
+      "event.action": "unknown",
+      "event.activity": "tunnel_up",
+      "event.class": "vpn_session",
+      "event.tunnel_name": "o'brien branch",
+      "event.tunnel_peer": "203.0.113.6",
+      "event.tunnel_type": "site-to-site",
+      "event.vendor_event_id": "events/vpn_connectivity_change"
+    }
+  },
+  {
+    "name": "events_8021x_deauth",
+    "outcome": "ok",
+    "native": {
+      "category": "events",
+      "identity": "bob",
+      "port": "3",
+      "type": "8021x_deauth"
+    },
+    "event": {
+      "event.action": "unknown",
+      "event.activity": "logoff",
+      "event.class": "auth",
+      "event.src_if": "3",
+      "event.user": "bob",
+      "event.vendor_event_id": "events/8021x_deauth"
     }
   },
   {
@@ -419,7 +654,8 @@
       "rssi": "21",
       "src": "00:00:5E:00:53:30",
       "ssid": "example-rogue",
-      "type": "rogue_ssid_detected",
+      "subtype": "rogue_ssid_detected",
+      "type": "",
       "vlan_id": "0",
       "wired_mac": "00:00:5E:00:53:31"
     },

@@ -182,11 +182,21 @@ func tokenize(f Family, raw string, msg *models.SyslogMessage) (Tokens, bool) {
 		}
 		tok.NF = &nf
 	case FamilyMeraki:
-		cat := ""
+		// With the category in app_name the body is tokenized alone: the
+		// 1.3.48+ collector's Message IS the body, and a pre-1.3.48 re-joined
+		// line is `<host> <category> <body>` — strip exactly that header rather
+		// than searching for the category word, which a rule comment or a host
+		// named `firewall` would also contain.
+		cat, body := "", raw
 		if family.IsMerakiCategory(msg.AppName) {
 			cat = msg.AppName
+			if msg.Format == "meraki" {
+				body = msg.Message
+			} else if prefix := merakiHeader(msg); strings.HasPrefix(raw, prefix) {
+				body = raw[len(prefix):]
+			}
 		}
-		mk, ok := family.ParseMeraki(cat, raw)
+		mk, ok := family.ParseMeraki(cat, body)
 		if !ok {
 			return tok, false
 		}
@@ -210,6 +220,15 @@ func tokenize(f Family, raw string, msg *models.SyslogMessage) (Tokens, bool) {
 		return tok, false
 	}
 	return tok, true
+}
+
+// merakiHeader is the `<host> <category> ` prefix Reframe puts in front of a
+// Meraki body whose category sits in app_name.
+func merakiHeader(msg *models.SyslogMessage) string {
+	if msg.Hostname != "" && msg.Hostname != "-" {
+		return msg.Hostname + " " + msg.AppName + " "
+	}
+	return msg.AppName + " "
 }
 
 // native returns the vendor's own key→value view of the tokens: the map

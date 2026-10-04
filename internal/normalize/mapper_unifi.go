@@ -34,7 +34,10 @@ func (unifiMapper) Map(tok Tokens, _ *models.SyslogMessage, ev *Event) Outcome {
 
 // unifiConfigMsg is UniFi OS event 1005's free-text body:
 // `alice changed Device Name from "old" to "new". Source IP: 192.0.2.10`
-var unifiConfigMsg = regexp.MustCompile(`^(?P<admin>\S+) changed (?P<setting>.+?) from "(?P<old>[^"]*)" to "(?P<new>[^"]*)"\.?(?: Source IP: (?P<ip>[0-9a-fA-F.:]+))?`)
+// `Alice B. changed Syslog Settings Mode setting from "off" to "external". Source IP: 192.0.2.10`
+// — the admin display name may contain spaces, so it runs lazily up to
+// ` changed `.
+var unifiConfigMsg = regexp.MustCompile(`^(?P<admin>.+?) changed (?P<setting>.+?) from "(?P<old>[^"]*)" to "(?P<new>[^"]*)"\.?(?: Source IP: (?P<ip>[0-9a-fA-F.:]+))?`)
 
 func unifiCEF(c *family.CEF, ev *Event) Outcome {
 	x := c.Ext
@@ -44,8 +47,11 @@ func unifiCEF(c *family.CEF, ev *Event) Outcome {
 	switch c.SignatureID {
 	case "201": // Threat Detected and Blocked (IPS/IDS, blocklists)
 		ev.Class, ev.Activity = ClassFinding, ActivityDetect
+		// Blocklist / honeypot hits carry no signature keys; the CEF name
+		// stands in for the signature name and the id stays NULL.
 		ev.SigID, ev.SigName = x["unifiipssignatureid"], firstNonEmpty(x["unifiipssignature"], c.Name)
 		ev.ThreatCat = strings.ToLower(firstNonEmpty(x["unifipolicytype"], "ips"))
+		ev.Ruleset = ev.ThreatCat // the policy name is unique per policy type (IDS / IPS / …)
 		ev.Action = unifiAct(x["act"])
 		ev.SrcIP, ev.DstIP = ev.ip(x["src"]), ev.ip(x["dst"])
 		ev.SrcPort, ev.DstPort = ev.port(x["spt"]), ev.port(x["dpt"])
@@ -57,9 +63,9 @@ func unifiCEF(c *family.CEF, ev *Event) Outcome {
 		ev.PktsOut, ev.PktsIn = ev.i64(x["unifipacketssent"]), ev.i64(x["unifipacketsreceived"])
 		ev.SessionID = x["unifiipssessionid"]
 		switch strings.ToLower(x["unifidirection"]) {
-		case "inbound":
+		case "inbound", "incoming":
 			ev.Direction = ptrDir(DirectionInbound)
-		case "outbound":
+		case "outbound", "outgoing":
 			ev.Direction = ptrDir(DirectionOutbound)
 		}
 		ev.extra("risk", x["unifirisk"])
@@ -70,10 +76,10 @@ func unifiCEF(c *family.CEF, ev *Event) Outcome {
 		ev.Class, ev.Activity = ClassDeviceHealth, ActivityLatency
 		ev.WANName, ev.MetricName = x["unifiwanname"], "latency_ms"
 		ev.MetricValue = ev.f64(strings.TrimSuffix(strings.TrimSpace(x["unifiwanlatency"]), "ms"))
-	case "113": // Packet Loss Detected
+	case "113": // Packet Loss Detected — the record names the WAN (name / id / ISP / subnet / SLA) but carries no loss figure
 		ev.Class, ev.Activity = ClassDeviceHealth, ActivityPacketLoss
-		ev.WANName, ev.MetricName = x["unifiwanname"], "packet_loss_pct"
-		ev.MetricValue = ev.f64(strings.TrimSuffix(strings.TrimSpace(x["unifiwanpacketloss"]), "%"))
+		ev.WANName = x["unifiwanname"]
+		ev.extra("wan_sla", x["unifiwansla"])
 	case "400", "401", "402": // WiFi client connected / disconnected / roamed
 		ev.Class, ev.Action = ClassAuth, ActionAllow
 		ev.Activity = map[string]Activity{"400": ActivityConnect, "401": ActivityDisconnect, "402": ActivityRoam}[c.SignatureID]

@@ -28,7 +28,7 @@ func (merakiMapper) Map(tok Tokens, _ *models.SyslogMessage, ev *Event) Outcome 
 	f := mk.Fields
 	ev.VendorEventID = mk.Category
 	switch mk.Category {
-	case "flows", "firewall", "vpn_firewall", "cellular_firewall":
+	case "flows", "firewall", "vpn_firewall", "cellular_firewall", "bridge_anyconnect_client_vpn_firewall":
 		return merakiFlow(mk, ev)
 	case "ip_flow_start", "ip_flow_end":
 		ev.Class, ev.Activity, ev.Action = ClassNetwork, ActivityOpen, ActionAllow
@@ -54,7 +54,7 @@ func (merakiMapper) Map(tok Tokens, _ *models.SyslogMessage, ev *Event) Outcome 
 		return merakiEvent(mk, ev)
 	case "airmarshal_events":
 		ev.Class, ev.Activity = ClassFinding, ActivityDetect
-		ev.SigName, ev.ThreatCat = f["type"], "airmarshal"
+		ev.SigName, ev.ThreatCat = merakiType(mk), "airmarshal"
 		ev.SrcMAC = parseMAC(f["bssid"])
 		ev.extra("ssid", f["ssid"])
 		ev.extra("channel", f["channel"])
@@ -74,34 +74,54 @@ func merakiTuple(f map[string]string, ev *Event) {
 	ev.SrcMAC = parseMAC(firstNonEmpty(f["mac"], f["shost"]))
 }
 
-// merakiFlow: `pattern: <verdict> <rule text>` where the verdict is `allow`
-// or `deny`, or the numeric form of the default rules (`1 all` is the inbound
-// default deny, `0 all` a deny — per the documented samples). Newer firmware
-// writes the verdict before `src=` instead; it then arrives as the subtype.
+// merakiFlow: the verdict is the first word of `pattern:` (`allow` / `deny`,
+// or the numeric form of the inbound rules — the Meraki Syslog Server
+// Overview states "for inbound rules, 1 = deny and 0 = allow") or, on newer
+// firmware, the word before `src=` (it arrives as the subtype). The rest of
+// the pattern is the rule text, which is the rule's only identity in syslog
+// (tier n): `allow all` → "all", `0 (tcp||udp) && dst port 443` → the
+// expression. A verdict-first line without a pattern reports no rule.
 func merakiFlow(mk *family.Meraki, ev *Event) Outcome {
 	ev.Class, ev.Activity = ClassNetwork, ActivityTraffic
 	merakiTuple(mk.Fields, ev)
-	if mk.Category == "vpn_firewall" || mk.Category == "cellular_firewall" {
-		ev.Ruleset = mk.Category
+	if mk.Category != "flows" && mk.Category != "firewall" {
+		ev.Ruleset = mk.Category // vpn_firewall, cellular_firewall, bridge_anyconnect_client_vpn_firewall
 	}
-	verdict, rule := mk.Subtype, ""
+	verdict, rule := "", ""
 	if mk.TailKind == "pattern" {
-		verdict, rule, _ = strings.Cut(mk.Tail, " ")
-		if mk.Subtype != "" {
-			verdict, rule = mk.Subtype, mk.Tail
+		if first, rest, _ := strings.Cut(mk.Tail, " "); merakiVerdict(first) != ActionUnknown {
+			verdict, rule = first, rest
+		} else {
+			rule = mk.Tail
 		}
 	}
-	switch strings.ToLower(verdict) {
-	case "allow":
-		ev.Action = ActionAllow
-	case "deny", "0", "1":
-		ev.Action = ActionDeny
-	default:
-		ev.Action = ActionUnknown
-		rule = strings.TrimSpace(verdict + " " + rule)
+	if mk.Subtype != "" {
+		verdict = firstWord(mk.Subtype)
 	}
+	ev.Action = merakiVerdict(verdict)
 	ev.RuleName = strings.TrimSpace(rule)
 	return ok()
+}
+
+// merakiVerdict maps the pattern / subtype verdict word.
+func merakiVerdict(s string) Action {
+	switch strings.ToLower(s) {
+	case "allow", "0":
+		return ActionAllow
+	case "deny", "1":
+		return ActionDeny
+	}
+	return ActionUnknown
+}
+
+// merakiType returns the `type=` value, also in the documented
+// `type= rogue_ssid_detected` spelling (space after `=`), where the value
+// arrives as the first subtype word.
+func merakiType(mk *family.Meraki) string {
+	if t, ok := mk.Fields["type"]; ok && t == "" {
+		return firstWord(mk.Subtype)
+	}
+	return mk.Fields["type"]
 }
 
 // merakiSecurity: Snort IDS alerts (`signature=gid:sid:rev priority=
@@ -130,17 +150,29 @@ func merakiSecurity(mk *family.Meraki, ev *Event) Outcome {
 		case "ingress":
 			ev.Direction = ptrDir(DirectionInbound)
 		}
-		if strings.EqualFold(f["decision"], "blocked") {
+		ev.DstMAC = parseMAC(f["dhost"])
+		switch {
+		case strings.EqualFold(f["decision"], "blocked"), strings.EqualFold(f["action"], "block"), strings.EqualFold(f["action"], "drop"):
 			ev.Action = ActionDeny
-		} else {
+		case strings.EqualFold(f["action"], "rst"), strings.EqualFold(f["action"], "reset"):
+			ev.Action = ActionReject
+		default:
 			ev.Action = ActionAllow
 		}
 	case "security_filtering_file_scanned", "security_filtering_disposition_change":
-		ev.SigName, ev.FileHash, ev.ThreatCat = f["name"], f["sha256"], strings.ToLower(f["disposition"])
-		ev.Action = actionWord(f["action"])
+		disposition := strings.ToLower(f["disposition"])
 		if u := f["url"]; u != "" {
 			ev.URLHost, ev.URLPath = splitURL(u)
 		}
+		if disposition == "clean" {
+			// A clean AMP scan is a file download that passed, not a finding.
+			ev.Class, ev.Activity, ev.Action = ClassNetwork, ActivityHTTP, ActionAllow
+			ev.extra("disposition", disposition)
+			ev.extra("sha256", f["sha256"])
+			return ok()
+		}
+		ev.SigName, ev.FileHash, ev.ThreatCat = f["name"], f["sha256"], disposition
+		ev.Action = actionWord(f["action"])
 	default:
 		return unparsed("meraki: security_event " + sub + " not mapped")
 	}
@@ -166,7 +198,7 @@ func (ev *Event) merakiPriority(s string) *int16 {
 // text (`failover to wan1`, `dhcp lease of ip …`).
 func merakiEvent(mk *family.Meraki, ev *Event) Outcome {
 	f := mk.Fields
-	typ := f["type"]
+	typ := merakiType(mk)
 	ev.VendorEventID = "events/" + firstNonEmpty(typ, firstWord(mk.Subtype))
 	switch typ {
 	case "vpn_connectivity_change":
@@ -187,8 +219,11 @@ func merakiEvent(mk *family.Meraki, ev *Event) Outcome {
 	case "8021x_auth", "8021x_eap_success":
 		ev.Class, ev.Activity, ev.Action = ClassAuth, ActivityLogon, ActionAllow
 		ev.User, ev.SrcIf = f["identity"], f["port"]
-	case "8021x_eap_failure", "8021x_deauth":
+	case "8021x_eap_failure":
 		ev.Class, ev.Activity, ev.Action = ClassAuth, ActivityLogon, ActionDeny
+		ev.User, ev.SrcIf = f["identity"], f["port"]
+	case "8021x_deauth": // the supplicant left; not a failed logon
+		ev.Class, ev.Activity, ev.Action = ClassAuth, ActivityLogoff, ActionUnknown
 		ev.User, ev.SrcIf = f["identity"], f["port"]
 	case "association", "disassociation":
 		ev.Class, ev.Activity, ev.Action = ClassAuth, ActivityConnect, ActionAllow

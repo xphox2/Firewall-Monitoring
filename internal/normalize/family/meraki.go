@@ -32,22 +32,23 @@ var merakiCategories = map[string]bool{
 	"flows": true, "firewall": true, "vpn_firewall": true, "cellular_firewall": true,
 	"urls": true, "ids-alerts": true, "security_event": true, "events": true,
 	"airmarshal_events": true, "ip_flow_start": true, "ip_flow_end": true,
+	"bridge_anyconnect_client_vpn_firewall": true,
 }
 
 // IsMerakiCategory reports whether tok is a known Meraki role token.
 func IsMerakiCategory(tok string) bool { return merakiCategories[tok] }
 
 // ParseMeraki tokenizes a Meraki body. category may be supplied by the caller
-// (the collector's app_name); when empty, the first known category token in s
-// is used and the body starts after it. ok=false when no category is found.
+// (the collector's app_name) — s is then the body alone, the caller having
+// removed any re-joined header (a body may legitimately contain a category
+// word, e.g. a rule comment "firewall rule for printers", so the tokenizer
+// never searches for it when told the category); when empty, the first known
+// category token in s is used and the body starts after it. ok=false when no
+// category is found.
 func ParseMeraki(category, s string) (Meraki, bool) {
 	m := Meraki{Fields: make(map[string]string, 12)}
 	if category != "" && merakiCategories[category] {
 		m.Category = category
-		// A re-joined line may still carry the category token; skip it.
-		if i := strings.Index(s, category+" "); i >= 0 && (i == 0 || s[i-1] == ' ') {
-			s = s[i+len(category)+1:]
-		}
 	} else {
 		found := false
 		rest := s
@@ -74,9 +75,10 @@ func ParseMeraki(category, s string) (Meraki, bool) {
 			key := strings.ToLower(tok[:eq])
 			val := tok[eq+1:]
 			if strings.HasPrefix(val, "'") {
-				// single-quoted value may span spaces: find the closing quote in s
-				q := strings.Index(s[eq+2:], "'")
-				if q >= 0 {
+				// A single-quoted value may span spaces; it ends at a quote
+				// followed by a space or the end of the line, so an apostrophe
+				// inside the value (`peer_ident='o'brien branch'`) stays in it.
+				if q := closingQuote(s[eq+2:]); q >= 0 {
 					val = s[eq+2 : eq+2+q]
 					after = strings.TrimLeft(s[eq+2+q+1:], " ")
 				} else {
@@ -98,6 +100,17 @@ func ParseMeraki(category, s string) (Meraki, bool) {
 	}
 	m.Subtype = strings.Join(subtype, " ")
 	return m, true
+}
+
+// closingQuote returns the index of the first `'` in s that is followed by a
+// space or ends the string, or -1.
+func closingQuote(s string) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\'' && (i+1 == len(s) || s[i+1] == ' ') {
+			return i
+		}
+	}
+	return -1
 }
 
 func nextToken(s string) (string, string) {

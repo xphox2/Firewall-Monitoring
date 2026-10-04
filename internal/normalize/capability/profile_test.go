@@ -42,7 +42,8 @@ func TestFeature(t *testing.T) {
 		{"nat_forensics", "meraki", Unsupported, []Field{NatSrcIP}},
 		{"admin_login_audit", "meraki", Unsupported, []Field{AdminSrcIP}}, // admin_user is API-sourced (exists), admin_src_ip has no source at all
 		{"admin_login_audit", "fortigate", Supported, nil},
-		{"wan_health", "unifi", Supported, nil},
+		{"wan_health", "unifi", Degraded, []Field{WANName, MetricValue}}, // SIEM integration must be on; 113 has no loss figure
+		{"utm_trends", "unifi", Degraded, []Field{SigID, SigName, Severity}},
 		{"config_audit", "unifi", Degraded, []Field{ConfigPath, AdminUser}},
 		{"no_such_feature", "fortigate", Supported, nil},
 	} {

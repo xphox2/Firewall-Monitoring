@@ -61,6 +61,18 @@ func TestParseMeraki(t *testing.T) {
 	if !ok || m.Fields["type"] != "vpn_connectivity_change" || m.Fields["peer_ident"] != "branch two" || m.Fields["connectivity"] != "false" {
 		t.Fatalf("events: %+v ok=%v", m, ok)
 	}
+	// An apostrophe inside a quoted value is part of it; the quote ends only
+	// before a space or at the end.
+	m, ok = ParseMeraki("events", `type=vpn_connectivity_change peer_ident='o'brien branch' connectivity='true'`)
+	if !ok || m.Fields["peer_ident"] != "o'brien branch" || m.Fields["connectivity"] != "true" || m.Subtype != "" {
+		t.Fatalf("apostrophe: %+v ok=%v", m, ok)
+	}
+	// With the category given, the body is never searched for it: a rule
+	// comment containing "firewall" stays in the pattern.
+	m, ok = ParseMeraki("firewall", `src=192.0.2.10 dst=203.0.113.20 pattern: deny firewall rule for printers`)
+	if !ok || m.Tail != "deny firewall rule for printers" || m.Fields["src"] != "192.0.2.10" {
+		t.Fatalf("category word in body: %+v ok=%v", m, ok)
+	}
 	// Free text: everything is subtype.
 	m, ok = ParseMeraki("events", `failover to wan1`)
 	if !ok || m.Subtype != "failover to wan1" || len(m.Fields) != 0 {
