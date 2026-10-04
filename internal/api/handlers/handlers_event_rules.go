@@ -300,7 +300,9 @@ func (h *Handler) TestEventRule(c *gin.Context) {
 	// ran every message through the FortiGate extractor, so a rule on a
 	// FortiOS field "matched" lines from a pfSense or Palo Alto device that
 	// the engine would never have fired on. An explicit scope keeps the
-	// previous behaviour: every message is extracted with that vendor.
+	// previous behaviour: every message is extracted with that vendor. A
+	// retired device resolves to its real vendor here while the engine treats
+	// it as generic — moot, since retired devices do not ingest.
 	vendorFor := func(m *models.SyslogMessage) string {
 		if req.VendorScope != "" {
 			return req.VendorScope

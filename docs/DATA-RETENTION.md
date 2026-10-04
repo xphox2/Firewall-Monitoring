@@ -210,8 +210,8 @@ effect on size: raw `flow_samples` are folded into `flow_rollups` and deleted by
 the 5-minute rollup cycle once older than 1 h, so in practice it only governs
 `flow_if_counters`. Privacy-minded deployments should also note that rollups
 retain per-conversation src/dst IP pairs for the full `RETENTION_FLOW_ROLLUP_DAYS`
-window (default 365) even though the raw `flow_samples` rows are gone within the
-hour.
+window (default 365) even though the raw `flow_samples` rows are gone after about an
+hour (the rollup cycle aggregates them in hour windows once they are older than 1 h).
 
 ## Syslog retention
 
