@@ -18,24 +18,16 @@ import (
 // manage its OWN account; the request body carries no id/username/role
 // fields, so this path can never touch another account or escalate.
 
-// loadOwnAccount resolves the calling session to its full admins row. Returns
-// nil after writing the error response.
+// loadOwnAccount resolves the calling session to its full admins row — by
+// the session's user_id, browser sessions only (an API token would otherwise
+// act on its creator's profile; handlers_reauth.go). Returns nil after
+// writing the error response.
 func (h *Handler) loadOwnAccount(c *gin.Context) *models.Admin {
 	db := h.reqDB(c)
 	if !httputil.RequireDB(c, db) {
 		return nil
 	}
-	authRow, err := db.GetAdminByUsername(c.GetString("username"))
-	if err != nil || authRow == nil {
-		httputil.InternalError(c, "Failed to load account", err)
-		return nil
-	}
-	admin, err := db.GetAdminByID(authRow.ID)
-	if err != nil || admin == nil {
-		httputil.InternalError(c, "Failed to load account", err)
-		return nil
-	}
-	return admin
+	return h.loadSessionAccount(c, db)
 }
 
 type updateProfileRequest struct {

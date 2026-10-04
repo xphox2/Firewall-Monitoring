@@ -64,17 +64,18 @@ func (h *Handler) GetMe(c *gin.Context) {
 		mustChange         bool
 		mfaPromptDismissed bool
 	)
-	if db := h.reqDB(c); db != nil {
-		if name, ok := username.(string); ok {
-			if authRow, err := db.GetAdminByUsername(name); err == nil && authRow != nil {
-				if admin, err := db.GetAdminByID(authRow.ID); err == nil && admin != nil {
-					totpEnabled = admin.TOTPEnabled
-					email = admin.Email
-					fullName = admin.FullName
-					createdAt = &admin.CreatedAt
-					mustChange = admin.MustChangePassword
-					mfaPromptDismissed = admin.MFAPromptDismissedAt != nil
-				}
+	// The profile block is the SESSION's own row, by its user_id (D8). An
+	// API-token principal keeps the identity fields only: its user_id is the
+	// creator's, whose profile is not the token's to read.
+	if db := h.reqDB(c); db != nil && c.GetString("auth_method") == "session" {
+		if id, ok := userID.(uint); ok && id != 0 {
+			if admin, err := db.GetAdminByID(id); err == nil && admin != nil {
+				totpEnabled = admin.TOTPEnabled
+				email = admin.Email
+				fullName = admin.FullName
+				createdAt = &admin.CreatedAt
+				mustChange = admin.MustChangePassword
+				mfaPromptDismissed = admin.MFAPromptDismissedAt != nil
 			}
 		}
 	}

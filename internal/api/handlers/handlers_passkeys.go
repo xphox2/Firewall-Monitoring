@@ -429,19 +429,14 @@ func (h *Handler) passkeyNotices(db database.Store, adminID uint) []passkeyNotic
 // --- Self-service management (/admin/api/passkeys...) ------------------------
 
 // passkeySessionUser enforces the session-only rule (API tokens never reach
-// passkey management) and returns the session's own account id.
+// passkey management) and returns the session's own account id — the shared
+// sessionUserID (handlers_reauth.go) with the passkey wording on refusal.
 func passkeySessionUser(c *gin.Context) (uint, bool) {
 	if c.GetString("auth_method") != "session" {
 		c.JSON(http.StatusForbidden, response.Error("Passkeys can only be managed from a signed-in browser session"))
 		return 0, false
 	}
-	v, _ := c.Get("user_id")
-	id, ok := v.(uint)
-	if !ok || id == 0 {
-		c.JSON(http.StatusUnauthorized, response.Error("Not authenticated"))
-		return 0, false
-	}
-	return id, true
+	return sessionUserID(c)
 }
 
 type passkeyReauthRequest struct {
@@ -449,43 +444,14 @@ type passkeyReauthRequest struct {
 	TOTPCode string `json:"totp_code"`
 }
 
-// reauthPasskeyCaller re-verifies the session's OWN account, loaded by id:
-// current password via CheckPassword (never ValidateCredentials, so a wrong
-// password here does not feed the login lockout) and, when 2FA is enrolled,
-// a valid TOTP code not used before (shared replay guard). Rate-limited per
-// user. Writes the response and returns nil on any failure.
-func (h *Handler) reauthPasskeyCaller(c *gin.Context, db database.Store, svc *passkey.Service, adminID uint, req passkeyReauthRequest) *models.Admin {
-	if !svc.Reauth.Allow(adminID) {
-		c.JSON(http.StatusTooManyRequests, response.Error("Too many attempts — wait a minute and try again"))
+// reauthPasskeyCaller re-verifies the session's OWN account for a passkey
+// change: the shared step-up (reauthPassword — session-only, per-account
+// limiter, row by id, CheckPassword) plus a fresh TOTP code when 2FA is
+// enrolled (reauthTOTP). Writes the response and returns nil on any failure.
+func (h *Handler) reauthPasskeyCaller(c *gin.Context, db database.Store, req passkeyReauthRequest) *models.Admin {
+	admin := h.reauthPassword(c, db, req.Password, "Password is incorrect")
+	if admin == nil || !h.reauthTOTP(c, db, admin, req.TOTPCode) {
 		return nil
-	}
-	admin, err := db.GetAdminByID(adminID)
-	if err != nil {
-		httputil.InternalError(c, "Failed to load account", err)
-		return nil
-	}
-	if admin == nil || admin.Disabled {
-		c.JSON(http.StatusForbidden, response.Error("Password is incorrect"))
-		return nil
-	}
-	if req.Password == "" || len(req.Password) > 1024 || h.authManager == nil ||
-		!h.authManager.CheckPassword(req.Password, admin.Password) {
-		c.JSON(http.StatusForbidden, response.Error("Password is incorrect"))
-		return nil
-	}
-	if admin.TOTPEnabled {
-		if req.TOTPCode == "" {
-			c.JSON(http.StatusForbidden, response.Error("Authenticator code required"))
-			return nil
-		}
-		if !validateTOTPCode(req.TOTPCode, db.DecryptField(admin.TOTPSecret)) {
-			c.JSON(http.StatusForbidden, response.Error("Authenticator code is incorrect"))
-			return nil
-		}
-		if !h.authManager.MarkTOTPSlotUsed(admin.ID, req.TOTPCode) {
-			c.JSON(http.StatusForbidden, response.Error(totpCodeAlreadyUsedMsg))
-			return nil
-		}
 	}
 	return admin
 }
@@ -521,8 +487,7 @@ func (h *Handler) PasskeyRegisterBegin(c *gin.Context) {
 	if !ok {
 		return
 	}
-	adminID, ok := passkeySessionUser(c)
-	if !ok {
+	if _, ok := passkeySessionUser(c); !ok {
 		return
 	}
 	db := h.reqDB(c)
@@ -539,7 +504,7 @@ func (h *Handler) PasskeyRegisterBegin(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("Passkey name must be at most 64 printable characters"))
 		return
 	}
-	admin := h.reauthPasskeyCaller(c, db, svc, adminID, req.passkeyReauthRequest)
+	admin := h.reauthPasskeyCaller(c, db, req.passkeyReauthRequest)
 	if admin == nil {
 		return
 	}
@@ -815,8 +780,7 @@ func (h *Handler) RenamePasskey(c *gin.Context) {
 // token_version — ending every other session, in case the key was
 // compromised — and re-issues the caller's session in the same response.
 func (h *Handler) DeletePasskey(c *gin.Context) {
-	svc, ok := h.passkeysOr404(c)
-	if !ok {
+	if _, ok := h.passkeysOr404(c); !ok {
 		return
 	}
 	adminID, ok := passkeySessionUser(c)
@@ -836,7 +800,7 @@ func (h *Handler) DeletePasskey(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("password is required"))
 		return
 	}
-	if h.reauthPasskeyCaller(c, db, svc, adminID, req) == nil {
+	if h.reauthPasskeyCaller(c, db, req) == nil {
 		return
 	}
 	// Delete + token_version bump in one transaction.

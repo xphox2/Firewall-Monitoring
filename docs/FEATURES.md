@@ -100,6 +100,9 @@
 | JWT-based admin auth (HS256, `golang-jwt/jwt/v5`) | Stable | [Server] | 0.1 |
 | bcrypt password hashing (configurable cost, default 12) | Stable | [Server] | 0.1 |
 | Account lockout (5 attempts, 15 min) | Stable | [Server] | 0.1 |
+| 2FA retry budget shared across the password stage (a correct password no longer resets the lockout bucket of a 2FA account; cleared only when the login completes) | Stable | [Server] | 0.11.289 |
+| In-session re-authentication limiter (password change, 2FA setup/disable, secret reveal, device purge, passkey registration/deletion: 5 attempts per account, then 1/min, `429`; separate from the login lockout) | Stable | [Server] | 0.11.289 |
+| Self-service account actions resolve the account by the session's user id; API-token principals refused (`403`) | Stable | [Server] | 0.11.289 |
 | Rate limiting (per-IP LRU cap; separate buckets for login / public / probe) | Stable | [Server] | 0.1 (AUDIT-083) |
 | CSRF protection (admin mutations) | Stable | [Server] | 0.1 |
 | Secure HTTP headers (HSTS, CSP nonce, X-Frame-Options) | Stable | [Server] | 0.1 |

@@ -22,6 +22,7 @@ func purgeCtx(method string, deviceID uint, username string, userID uint, body s
 	c.Set("username", username)
 	c.Set("user_id", userID)
 	c.Set("role", auth.RoleAdmin)
+	c.Set("auth_method", "session")
 	return c, rec
 }
 

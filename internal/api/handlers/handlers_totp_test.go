@@ -63,6 +63,7 @@ func (f *totpFakeStore) GetAdminByID(id uint) (*models.Admin, error) {
 		ID: f.admin.ID, Username: f.admin.Username, Password: f.admin.Password,
 		TokenVersion: f.admin.TokenVersion, MustChangePassword: f.admin.MustChangePassword,
 		Role: f.admin.Role, Disabled: f.admin.Disabled, TOTPEnabled: f.admin.TOTPEnabled,
+		TOTPSecret: f.admin.TOTPSecret,
 	}
 	if f.byIDMutate != nil {
 		f.byIDMutate(a)
@@ -74,6 +75,7 @@ func (f *totpFakeStore) ClearAdminTOTP(id uint) error {
 	return nil
 }
 func (f *totpFakeStore) EncryptField(p string) string { return p }
+func (f *totpFakeStore) DecryptField(p string) string { return p }
 func (f *totpFakeStore) SetAdminTOTP(id uint, enc string, enabled bool) error {
 	f.admin.TOTPEnabled = enabled
 	return nil
