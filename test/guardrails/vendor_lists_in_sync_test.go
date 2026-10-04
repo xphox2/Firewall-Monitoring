@@ -8,13 +8,15 @@ import (
 	"testing"
 )
 
-// TestVendorListsInSync pins the three hand-maintained copies of the vendor
+// TestVendorListsInSync pins the four hand-maintained copies of the vendor
 // set to each other: the API allow-list (handlers.go validVendors), the
-// device form's <select id="device-vendor"> (admin.html) and the event-rule
-// editor's VENDORS array (admin-event-rules.js). A vendor accepted by the API
-// but missing from the form cannot be selected; one in the form but not the
-// API is a 400 on save; one missing from the rule editor cannot be scoped.
-// internal/snmp's apiValidVendors pins the SNMP registry to the same set.
+// device form's <select id="device-vendor"> (admin.html), the event-rule
+// editor's VENDORS array (admin-event-rules.js) and internal/snmp's
+// apiValidVendors (vendor_registry_test.go), which in turn pins the SNMP
+// registry to the set. A vendor accepted by the API but missing from the form
+// cannot be selected; one in the form but not the API is a 400 on save; one
+// missing from the rule editor cannot be scoped; one missing from
+// apiValidVendors escapes the registry-completeness test.
 func TestVendorListsInSync(t *testing.T) {
 	read := func(path string) string {
 		t.Helper()
@@ -58,12 +60,23 @@ func TestVendorListsInSync(t *testing.T) {
 	}
 	rules := names(regexp.MustCompile(`'([a-z_]+)'`), arr[1], "VENDORS")
 
+	snmpSrc := read("../../internal/snmp/vendor_registry_test.go")
+	pin := regexp.MustCompile(`(?s)var apiValidVendors = \[\]string\{(.*?)\n\}`).FindStringSubmatch(snmpSrc)
+	if pin == nil {
+		t.Fatal("vendor_registry_test.go: apiValidVendors slice literal not found")
+	}
+	snmp := names(regexp.MustCompile(`(?m)^\s*"([a-z_]+)",`), pin[1], "apiValidVendors")
+
 	for _, other := range []struct {
 		what  string
 		names []string
-	}{{"admin.html device-vendor options", form}, {"admin-event-rules.js VENDORS", rules}} {
+	}{
+		{"admin.html device-vendor options", form},
+		{"admin-event-rules.js VENDORS", rules},
+		{"internal/snmp apiValidVendors", snmp},
+	} {
 		if strings.Join(other.names, ",") != strings.Join(api, ",") {
-			t.Errorf("%s = %v, but handlers.go validVendors = %v — the three lists must carry the same vendor set", other.what, other.names, api)
+			t.Errorf("%s = %v, but handlers.go validVendors = %v — the four lists must carry the same vendor set", other.what, other.names, api)
 		}
 	}
 }
