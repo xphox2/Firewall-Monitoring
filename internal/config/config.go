@@ -91,27 +91,36 @@ type ThreatFeedConfig struct {
 }
 
 type ServerConfig struct {
-	Host           string
-	Port           string
-	ReadTimeout    time.Duration
-	WriteTimeout   time.Duration
-	IdleTimeout    time.Duration
-	EnableTLS      bool
-	TLSCertFile    string
-	TLSKeyFile     string
-	JWTSecretKey   string
-	EncryptionKey  string
+	Host          string
+	Port          string
+	ReadTimeout   time.Duration
+	WriteTimeout  time.Duration
+	IdleTimeout   time.Duration
+	EnableTLS     bool
+	TLSCertFile   string
+	TLSKeyFile    string
+	JWTSecretKey  string
+	EncryptionKey string
+	// CookieSecure is the explicit COOKIE_SECURE value. It is only honoured
+	// when CookieSecureExplicit is true; otherwise the Secure flag is decided
+	// per request (middleware.RequestOverHTTPS: in-process TLS, or a trusted
+	// proxy saying X-Forwarded-Proto: https), so a deployment behind a
+	// TLS-terminating proxy gets Secure cookies without any setting.
 	CookieSecure   bool
 	CookieSameSite string
 	// CookieSecureExplicit tracks whether the operator explicitly set
-	// COOKIE_SECURE=true in config.env, as opposed to inheriting the
-	// default from SERVER_ENABLE_TLS. AUDIT-024: when CookieSecure is
-	// true but EnableTLS is false, browsers silently drop the session
-	// cookie on every response and the operator gets a "login button
-	// does nothing" report. The startup warning in Validate() keys off
-	// this flag to fire only when the mismatch is the operator's own
-	// doing, not the safe default.
+	// COOKIE_SECURE in config.env, as opposed to leaving the per-request
+	// rule in charge. AUDIT-024: when CookieSecure is true but EnableTLS is
+	// false, browsers silently drop the session cookie on every response
+	// and the operator gets a "login button does nothing" report. The
+	// startup warning in Validate() keys off this flag to fire only when
+	// the mismatch is the operator's own doing, not the safe default.
 	CookieSecureExplicit bool
+	// MetricsToken is the optional METRICS_TOKEN. Set: GET /metrics requires
+	// `Authorization: Bearer <token>` from every peer. Unset: /metrics is
+	// served to loopback peers only and is a 404 for everyone else. See
+	// middleware.MetricsGuard.
+	MetricsToken string
 	// TrustedProxies is the raw TRUSTED_PROXIES value: a comma-separated list
 	// of reverse-proxy IPs/CIDRs whose X-Forwarded-For the API honours for the
 	// client IP (lockout buckets, rate limits, audit logs). Empty (default) =
@@ -395,6 +404,7 @@ func Load() *Config {
 			CookieSecureExplicit: os.Getenv("COOKIE_SECURE") != "",
 			CookieSameSite:       getEnv("COOKIE_SAMESITE", "Strict"),
 			TrustedProxies:       getEnv("TRUSTED_PROXIES", ""),
+			MetricsToken:         getEnv("METRICS_TOKEN", ""),
 			AllowMultiAPI:        getBoolEnv("ALLOW_MULTI_API", false),
 			GeoIPEnabled:         getBoolEnv("GEOIP_ENABLED", true),
 			GeoIPDBDir:           getEnv("GEOIP_DB_DIR", "/etc/firewall-mon/geoip"),

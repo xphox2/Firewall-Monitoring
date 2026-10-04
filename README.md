@@ -10,7 +10,7 @@
 > is a sibling repo, [Firewall-Collector](https://github.com/xphox2/Firewall-Collector).
 
 [![CI](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml/badge.svg)](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.11.287-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.11.288-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.26.8+-00ADD8)](go.mod)
 [![Status](https://img.shields.io/badge/status-alpha-orange)](#project-status)
@@ -399,7 +399,9 @@ The most important ones:
 | `SLACK_WEBHOOK_URL` / `DISCORD_WEBHOOK_URL` | _(empty)_ | Chat alerting |
 | `DB_TYPE` / `DB_HOST` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` | `postgres` (prod) | Database connection (SQLite is used for tests) |
 | `RETENTION_*_DAYS` | varies | Per-table data retention (see [DATA-RETENTION.md](docs/DATA-RETENTION.md)) |
-| `TRUSTED_PROXIES` | _(empty — trust no proxy)_ | Your reverse proxy's single, pinned IP (never a whole Docker subnet); its `X-Forwarded-For` then sets the client IP for lockout, rate limits and audit logs. See [docs/OPERATIONS.md](docs/OPERATIONS.md#behind-a-reverse-proxy-trusted_proxies). Behind Cloudflare as well, append its published ranges — see OPERATIONS.md. |
+| `TRUSTED_PROXIES` | _(empty — trust no proxy)_ | Your reverse proxy's single, pinned IP (never a whole Docker subnet); its `X-Forwarded-For` then sets the client IP for lockout, rate limits and audit logs. See [docs/OPERATIONS.md](docs/OPERATIONS.md#behind-a-reverse-proxy-trusted_proxies). Behind Cloudflare as well, append its published ranges — see OPERATIONS.md. Its `X-Forwarded-Proto: https` also marks a request as HTTPS-arrived (Secure cookies, HSTS) when `COOKIE_SECURE` is unset. |
+| `METRICS_TOKEN` | _(empty — loopback only)_ | Prometheus `GET /metrics` on the API port. Unset: served to loopback peers only, 404 for everyone else. Set (e.g. `openssl rand -hex 32`): a remote scraper sends `Authorization: Bearer <token>`; anything else is 401. See [docs/monitoring/README.md](docs/monitoring/README.md). |
+| `COOKIE_SECURE` | _(unset — per request)_ | Unset: session cookies are `Secure` when the request arrived over HTTPS (in-process TLS, or a `TRUSTED_PROXIES` peer sending `X-Forwarded-Proto: https`); plain-HTTP direct logins keep working. `true`/`false` overrides that rule. |
 | `WEBAUTHN_ENABLED` | `false` | Passkey (WebAuthn) login. Off by default and also the kill switch: `false` makes every passkey endpoint return 404 while stored passkeys are kept. Password (+TOTP) login is unaffected either way. See [docs/OPERATIONS.md](docs/OPERATIONS.md#passkeys-webauthn). |
 | `WEBAUTHN_RP_ID` | _(the `PUBLIC_BASE_URL` host)_ | Passkey relying-party ID: a DNS name, never an IP address. Invalid → passkeys disabled with a startup log; the server still starts. |
 | `WEBAUTHN_ORIGINS` | _(the `PUBLIC_BASE_URL` origin)_ | Comma-separated exact origins (`https://host[:port]`; `http` only for `localhost`), each equal to or within the RP ID. Never taken from request headers. |

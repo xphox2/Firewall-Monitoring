@@ -122,7 +122,7 @@ func (h *Handler) Login(c *gin.Context) {
 		// No row here: the password step of a 2FA login is an intermediate
 		// stage, not a login. TOTPLogin writes the "totp" success or failure
 		// row once the second factor has been decided.
-		cookieSecure, cookieSameSite, _ := h.sessionCookieParams()
+		cookieSecure, cookieSameSite, _ := h.sessionCookieParams(c)
 		http.SetCookie(c.Writer, &http.Cookie{
 			Name:     "pending_2fa",
 			Value:    pending,
@@ -205,7 +205,7 @@ func (h *Handler) completeLogin(c *gin.Context, db database.Store, adminID uint,
 	}
 
 	if method == loginMethodTOTP || method == loginMethodPasskey {
-		cookieSecure, cookieSameSite, _ := h.sessionCookieParams()
+		cookieSecure, cookieSameSite, _ := h.sessionCookieParams(c)
 		http.SetCookie(c.Writer, &http.Cookie{
 			Name: "pending_2fa", Value: "", MaxAge: -1, Path: "/",
 			Secure: cookieSecure, HttpOnly: true, SameSite: cookieSameSite,
@@ -223,8 +223,20 @@ func (h *Handler) completeLogin(c *gin.Context, db database.Store, adminID uint,
 }
 
 // sessionCookieParams derives the cookie attributes every auth cookie shares.
-func (h *Handler) sessionCookieParams() (secure bool, sameSite http.SameSite, maxAge int) {
-	secure = h.config != nil && h.config.Server.CookieSecure
+//
+// Secure: an explicit COOKIE_SECURE always wins. Otherwise the flag follows
+// how THIS request arrived (middleware.RequestOverHTTPS): in-process TLS, or
+// a trusted proxy (TRUSTED_PROXIES) saying X-Forwarded-Proto: https. So a
+// deployment behind a TLS-terminating proxy gets Secure cookies without any
+// setting, while a plain-HTTP direct login still works — a Secure cookie
+// there would be dropped by the browser and the login would silently fail
+// (AUDIT-024).
+func (h *Handler) sessionCookieParams(c *gin.Context) (secure bool, sameSite http.SameSite, maxAge int) {
+	if h.config != nil && h.config.Server.CookieSecureExplicit {
+		secure = h.config.Server.CookieSecure
+	} else {
+		secure = middleware.RequestOverHTTPS(c)
+	}
 	sameSite = http.SameSiteStrictMode
 	if h.config != nil && h.config.Server.CookieSameSite != "" {
 		sameSite = parseSameSite(h.config.Server.CookieSameSite)
@@ -249,7 +261,7 @@ func (h *Handler) issueSession(c *gin.Context, username string, adminID uint, to
 
 	// Generate HMAC-signed CSRF token tied to the auth token
 	csrfToken := middleware.GenerateCSRFToken(token, h.config.Server.JWTSecretKey)
-	cookieSecure, cookieSameSite, cookieMaxAge := h.sessionCookieParams()
+	cookieSecure, cookieSameSite, cookieMaxAge := h.sessionCookieParams(c)
 
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     "auth_token",
@@ -299,11 +311,7 @@ func (h *Handler) Logout(c *gin.Context) {
 		}
 	}
 
-	cookieSecure := h.config != nil && h.config.Server.CookieSecure
-	cookieSameSite := http.SameSiteStrictMode
-	if h.config != nil && h.config.Server.CookieSameSite != "" {
-		cookieSameSite = parseSameSite(h.config.Server.CookieSameSite)
-	}
+	cookieSecure, cookieSameSite, _ := h.sessionCookieParams(c)
 
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     "auth_token",

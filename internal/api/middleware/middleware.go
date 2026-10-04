@@ -567,9 +567,21 @@ func SecureHeaders() gin.HandlerFunc {
 		// AUDIT-025: deny browser APIs we don't use; admin panel has no
 		// reason to access camera, microphone, geolocation, USB, etc.
 		c.Header("Permissions-Policy", "camera=(), microphone=(), geolocation=(), usb=(), payment=(), accelerometer=(), gyroscope=(), magnetometer=(), midi=(), sync-xhr=()")
-		// Only send HSTS over TLS to avoid issues with plain HTTP setups
-		if c.Request.TLS != nil {
+		// HSTS only when the request really arrived over HTTPS — never on
+		// plain HTTP, where it would pin browsers to a scheme the deployment
+		// does not serve. In-process TLS keeps its historical directive.
+		// Behind a TLS-terminating proxy (RequestOrigin: trusted peer +
+		// X-Forwarded-Proto: https) the header is sent without
+		// includeSubDomains or preload: the app sees only its own host and
+		// cannot know that every subdomain of the operator's domain serves
+		// HTTPS, and a preload listing is a long-lived, hard-to-reverse
+		// commitment the operator must make deliberately (the bundled
+		// nginx.conf is where to widen the policy).
+		switch {
+		case c.Request.TLS != nil:
 			c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		case RequestOverHTTPS(c):
+			c.Header("Strict-Transport-Security", "max-age=31536000")
 		}
 		// AUDIT-022: per-request nonce replaces 'unsafe-inline' in script-src
 		// (the XSS-critical directive). The nonce is generated above, stored on

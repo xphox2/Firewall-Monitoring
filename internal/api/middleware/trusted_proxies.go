@@ -44,17 +44,22 @@ func ParseTrustedProxies(raw string) []string {
 //     X-Forwarded-For from an untrusted peer is ignored.
 //
 // If gin rejects the list anyway, fall back to trusting nothing (fail closed).
-func ConfigureTrustedProxies(engine *gin.Engine, raw string) {
+//
+// It returns the list gin actually trusts (nil when it trusts nobody) so the
+// X-Forwarded-Proto check in RequestOrigin is built from exactly the same
+// set, including the fail-closed case.
+func ConfigureTrustedProxies(engine *gin.Engine, raw string) []string {
 	proxies := ParseTrustedProxies(raw)
 	if len(proxies) == 0 {
 		_ = engine.SetTrustedProxies(nil) // nil never errors
-		return
+		return nil
 	}
 	if err := engine.SetTrustedProxies(proxies); err != nil {
 		log.Printf("WARNING: TRUSTED_PROXIES could not be applied (%v) — trusting no proxy", err)
 		_ = engine.SetTrustedProxies(nil)
-		return
+		return nil
 	}
 	engine.RemoteIPHeaders = []string{"X-Forwarded-For"}
 	log.Printf("Trusting X-Forwarded-For from proxies: %s", strings.Join(proxies, ", "))
+	return proxies
 }

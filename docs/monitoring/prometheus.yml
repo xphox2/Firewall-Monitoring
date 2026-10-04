@@ -1,14 +1,18 @@
 # Example Prometheus scrape config for Firewall-Mon.
 #
-# All three daemons expose Prometheus metrics. /metrics is intentionally
-# UNAUTHENTICATED (Prometheus convention) — bind it to an internal interface or
-# firewall the scrape ports; it exposes only aggregate timings/counters and route
-# templates, never secrets.
+# All three daemons expose Prometheus metrics; they carry only aggregate
+# timings/counters and route templates, never secrets.
 #
-#   API server  : http://<host>:8080/metrics
+#   API server  : http://<host>:8080/metrics — port 8080 is internet-facing on
+#                 a typical install, so this one is gated: with METRICS_TOKEN
+#                 unset only a loopback peer is served (404 for everyone else);
+#                 set it and scrape with `Authorization: Bearer <token>` (the
+#                 `authorization` block below). See README.md in this directory.
 #   Poller      : POLLER_METRICS_ADDR (default 127.0.0.1:9101; set to an
-#                 interface Prometheus can reach, or ":9101")
-#   Trap recv   : TRAP_METRICS_ADDR   (default 127.0.0.1:9102)
+#                 interface Prometheus can reach, or ":9101"). Unauthenticated
+#                 (Prometheus convention) — bind it to an internal interface or
+#                 firewall the scrape port.
+#   Trap recv   : TRAP_METRICS_ADDR   (default 127.0.0.1:9102), as the poller.
 #
 # Adjust targets to your deployment. Behind the bundled single container the
 # poller/trap metrics addresses default to loopback — set the *_METRICS_ADDR env
@@ -20,6 +24,12 @@ global:
 
 scrape_configs:
   - job_name: fwmon-api
+    # Required unless this Prometheus reaches the API from 127.0.0.1 / ::1.
+    # Put the METRICS_TOKEN value in a file Prometheus can read (mode 0600)
+    # rather than inline here.
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/fwmon-metrics-token
     static_configs:
       - targets: ["firewall-mon:8080"]
         labels:

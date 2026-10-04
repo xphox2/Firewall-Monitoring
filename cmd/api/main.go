@@ -38,7 +38,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.287"
+const ServerVersion = "0.11.288"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -145,7 +145,12 @@ func main() {
 	// Client IP: trust no proxy headers unless TRUSTED_PROXIES lists the
 	// reverse proxy (D-D3). Empty = SetTrustedProxies(nil), the historical
 	// behaviour; invalid entries are logged and skipped, never fatal.
-	middleware.ConfigureTrustedProxies(router, cfg.Server.TrustedProxies)
+	trustedProxies := middleware.ConfigureTrustedProxies(router, cfg.Server.TrustedProxies)
+	// Did the request arrive over HTTPS? In-process TLS, or the SAME trusted
+	// proxy set saying X-Forwarded-Proto: https. Drives the cookie Secure
+	// flag (unless COOKIE_SECURE is explicit) and HSTS, so it is registered
+	// before SecureHeaders and every route.
+	router.Use(middleware.RequestOrigin(middleware.NewTrustedProxySet(trustedProxies)))
 
 	// API versioning aliases (v0.10.219, bundle H1).
 	//
@@ -683,11 +688,13 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		c.JSON(http.StatusOK, gin.H{"version": ServerVersion})
 	})
 
-	// AUDIT-077: Prometheus exposition. Intentionally unauthenticated — the
-	// convention is to protect /metrics at the network layer (firewall the
-	// scrape port / bind internally). It exposes only aggregate timings and
-	// route templates, no secrets.
-	router.GET("/metrics", gin.WrapH(metrics.Handler()))
+	// AUDIT-077: Prometheus exposition. It exposes only aggregate timings and
+	// route templates, no secrets — but port 8080 is published for the
+	// collectors, so "protect it at the network layer" never happened on a
+	// typical install. MetricsGuard: with METRICS_TOKEN set, a Bearer token
+	// is required (401 otherwise); unset, only a loopback TCP peer is served
+	// and everyone else sees a 404.
+	router.GET("/metrics", middleware.MetricsGuard(cfg.Server.MetricsToken), gin.WrapH(metrics.Handler()))
 
 	// Minimal SVG favicon to prevent 404
 	router.GET("/favicon.ico", func(c *gin.Context) {
