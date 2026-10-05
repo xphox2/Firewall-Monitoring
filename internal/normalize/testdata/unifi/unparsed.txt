@@ -1,0 +1,3 @@
+# UniFi fixtures expected NOT to map (TestFixtures_NoSilentDrops)
+cef_530_channel_change_unmapped   # AP channel change: no class yet (radio telemetry)
+charon_text_no_family_match       # strongSwan line outside the two catalogue patterns

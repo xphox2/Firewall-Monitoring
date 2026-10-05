@@ -15,12 +15,15 @@ import (
 //	x:[<ruleset>/]<n>    position (UniFi chain index) — breaks on reorder
 //	""                   no rule reported (NULL)
 //
-// The ruleset (FortiGate VDOM `vd=`, UniFi chain, Meraki firewall ruleset)
-// qualifies every tier but the UUID one because ids, names and positions are
-// only unique within it: policy 12 in VDOM root and policy 12 in VDOM dmz are
-// different policies (operator decision: VDOM support required, ruleset in
-// the rollup key). Names are lower-cased and whitespace-collapsed so the
-// Meraki `pattern: allow  All` spellings group together.
+// The ruleset (FortiGate VDOM `vd=`, UniFi chain or policy type, Meraki
+// firewall ruleset) qualifies every tier but the UUID one because ids, names
+// and positions are only unique within it: policy 12 in VDOM root and policy
+// 12 in VDOM dmz are different policies (operator decision: VDOM support
+// required, ruleset in the rollup key). `/` separates the ruleset from the
+// value, so a `/` inside the ruleset itself (UniFi policy type `IDS/IPS`)
+// becomes `_` — `n:ids_ips/<name>` is unambiguous, `n:ids/ips/<name>` is not.
+// Names are lower-cased and whitespace-collapsed so the Meraki
+// `pattern: allow  All` spellings group together.
 func RuleKey(uid string, id *int64, name, ruleset string, index *int32) string {
 	switch {
 	case uid != "":
@@ -39,7 +42,7 @@ func qualify(ruleset, v string) string {
 	if ruleset == "" {
 		return v
 	}
-	return ruleset + "/" + v
+	return strings.ReplaceAll(ruleset, "/", "_") + "/" + v
 }
 
 // normalizeName lower-cases and collapses runs of whitespace to one space.

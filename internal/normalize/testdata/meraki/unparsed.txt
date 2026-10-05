@@ -1,0 +1,2 @@
+# Meraki fixtures expected NOT to map (TestFixtures_NoSilentDrops)
+events_port_status_unmapped   # MS port state text: no class yet (interface telemetry lives in the SNMP poller)

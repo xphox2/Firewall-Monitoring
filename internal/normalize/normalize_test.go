@@ -213,7 +213,10 @@ func TestFixtures_Hygiene(t *testing.T) {
 			t.Fatal(err)
 		}
 		for n, line := range strings.Split(string(raw), "\n") {
-			for _, lit := range append(ipv4Lit.FindAllString(line, -1), ipv6Lit.FindAllString(line, -1)...) {
+			// A netfilter MAC= field (dst + src + ethertype, 14 colon-separated
+			// bytes) parses as an IPv6 literal; strip MAC-shaped runs first.
+			noMAC := macLit.ReplaceAllString(line, "")
+			for _, lit := range append(ipv4Lit.FindAllString(line, -1), ipv6Lit.FindAllString(noMAC, -1)...) {
 				a, err := netip.ParseAddr(lit)
 				if err != nil {
 					continue // a version string or a MAC-shaped token
@@ -299,6 +302,8 @@ func TestRuleKey(t *testing.T) {
 		{id: &id, want: "i:12"},
 		{name: "Allow  All", ruleset: "", want: "n:allow all"},
 		{name: "x", ruleset: "vpn_firewall", want: "n:vpn_firewall/x"},
+		{name: "IPS Default Policy", ruleset: "ids/ips", want: "n:ids_ips/ips default policy"}, // '/' in the ruleset would be ambiguous
+		{idx: &idx, ruleset: "a/b/c", want: "x:a_b_c/2000"},
 		{idx: &idx, ruleset: "WAN_LOCAL", want: "x:WAN_LOCAL/2000"},
 		{want: ""},
 	} {

@@ -32,8 +32,8 @@ const (
 	FamilyFortiOSKV Family = iota + 1 // FortiOS `key="value"` stream
 	FamilyKV                          // generic space-separated k=v
 	FamilyCEF                         // ArcSight CEF record
-	FamilyNetfilter                   // Linux netfilter LOG prefix (tokenizer + UniFi mapper: S-2b)
-	FamilyMeraki                      // Meraki `<category> k=v … tail: text` (tokenizer + mapper: S-2b)
+	FamilyNetfilter                   // Linux netfilter LOG prefix
+	FamilyMeraki                      // Meraki `<category> k=v … tail: text`
 	FamilyFilterlog                   // pf filterlog CSV
 	FamilyText                        // free-text daemon regex catalogue
 )
@@ -46,12 +46,13 @@ var familyNames = map[Family]string{
 func (f Family) String() string { return familyNames[f] }
 
 // Tokens is the output of one family's tokenizer; exactly one of the typed
-// members is set, named by Family. (The netfilter and Meraki members arrive
-// with their tokenizers in S-2b.)
+// members is set, named by Family.
 type Tokens struct {
 	Family Family
 	KV     map[string]string
 	CEF    *family.CEF
+	NF     *family.Netfilter
+	MK     *family.Meraki
 	FL     *family.Filterlog
 	TX     *family.Text
 }
@@ -157,7 +158,7 @@ func Reframe(msg *models.SyslogMessage) string {
 }
 
 // tokenize runs family f's gate and tokenizer over raw.
-func tokenize(f Family, raw string, _ *models.SyslogMessage) (Tokens, bool) {
+func tokenize(f Family, raw string, msg *models.SyslogMessage) (Tokens, bool) {
 	tok := Tokens{Family: f}
 	switch f {
 	case FamilyFortiOSKV, FamilyKV:
@@ -171,6 +172,35 @@ func tokenize(f Family, raw string, _ *models.SyslogMessage) (Tokens, bool) {
 			return tok, false
 		}
 		tok.CEF = &c
+	case FamilyNetfilter:
+		if !family.HasNetfilter(raw) {
+			return tok, false
+		}
+		nf, ok := family.ParseNetfilter(raw)
+		if !ok {
+			return tok, false
+		}
+		tok.NF = &nf
+	case FamilyMeraki:
+		// With the category in app_name the body is tokenized alone: the
+		// 1.3.48+ collector's Message IS the body, and a pre-1.3.48 re-joined
+		// line is `<host> <category> <body>` — strip exactly that header rather
+		// than searching for the category word, which a rule comment or a host
+		// named `firewall` would also contain.
+		cat, body := "", raw
+		if family.IsMerakiCategory(msg.AppName) {
+			cat = msg.AppName
+			if msg.Format == "meraki" {
+				body = msg.Message
+			} else if prefix := merakiHeader(msg); strings.HasPrefix(raw, prefix) {
+				body = raw[len(prefix):]
+			}
+		}
+		mk, ok := family.ParseMeraki(cat, body)
+		if !ok {
+			return tok, false
+		}
+		tok.MK = &mk
 	case FamilyFilterlog:
 		fl, ok := family.ParseFilterlog(raw)
 		if !ok {
@@ -192,6 +222,15 @@ func tokenize(f Family, raw string, _ *models.SyslogMessage) (Tokens, bool) {
 	return tok, true
 }
 
+// merakiHeader is the `<host> <category> ` prefix Reframe puts in front of a
+// Meraki body whose category sits in app_name.
+func merakiHeader(msg *models.SyslogMessage) string {
+	if msg.Hostname != "" && msg.Hostname != "-" {
+		return msg.Hostname + " " + msg.AppName + " "
+	}
+	return msg.AppName + " "
+}
+
 // native returns the vendor's own key→value view of the tokens: the map
 // internal/logfields has always exposed to event rules for KV and filterlog
 // lines, and the equivalent flat, lowercased map for the new families.
@@ -203,6 +242,23 @@ func (t *Tokens) native() map[string]string {
 		m := t.CEF.Ext
 		m["cef_vendor"], m["cef_product"], m["cef_version"] = t.CEF.Vendor, t.CEF.Product, t.CEF.DeviceVersion
 		m["cef_id"], m["cef_name"], m["cef_severity"] = t.CEF.SignatureID, t.CEF.Name, t.CEF.Severity
+		return m
+	case FamilyNetfilter:
+		m := t.NF.Fields
+		m["chain"], m["verdict"] = t.NF.Ruleset, t.NF.Verdict
+		if t.NF.Index != "" {
+			m["rule_index"] = t.NF.Index
+		}
+		return m
+	case FamilyMeraki:
+		m := t.MK.Fields
+		m["category"] = t.MK.Category
+		if t.MK.Subtype != "" {
+			m["subtype"] = t.MK.Subtype
+		}
+		if t.MK.TailKind != "" {
+			m[t.MK.TailKind] = t.MK.Tail
+		}
 		return m
 	case FamilyFilterlog:
 		m := make(map[string]string, 12)
