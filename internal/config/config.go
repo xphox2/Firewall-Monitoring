@@ -23,6 +23,7 @@ type Config struct {
 	Detect     DetectConfig
 	ThreatFeed ThreatFeedConfig
 	Normalize  NormalizeConfig
+	Archive    ArchiveConfig
 }
 
 // NormalizeConfig is the Phase 1 (S-4) syslog normalization switch. Disabled
@@ -635,7 +636,34 @@ func Load() *Config {
 			PublicBaseURL:            strings.TrimRight(getEnv("PUBLIC_BASE_URL", ""), "/"),
 			ProbeDataLagAlertMinutes: getIntEnv("PROBE_DATA_LAG_ALERT_MINUTES", 60),
 		},
+		Archive: loadArchiveConfig(),
 	}
+}
+
+// loadArchiveConfig reads the ARCHIVE_* keys (see ArchiveConfig). Numbers and
+// booleans are parsed strictly: a value that is set but malformed is recorded
+// and fails Validate rather than falling back to the default. Blank counts as
+// unset, like every other key here.
+func loadArchiveConfig() ArchiveConfig {
+	var bad []string
+	a := ArchiveConfig{
+		SyslogEnabled:        strictBoolEnv("ARCHIVE_SYSLOG_ENABLED", false, &bad),
+		FlowsEnabled:         strictBoolEnv("ARCHIVE_FLOWS_ENABLED", false, &bad),
+		Endpoint:             strings.TrimSpace(getEnv("ARCHIVE_S3_ENDPOINT", "")),
+		Region:               strings.TrimSpace(getEnv("ARCHIVE_S3_REGION", "")),
+		Bucket:               strings.TrimSpace(getEnv("ARCHIVE_S3_BUCKET", "")),
+		Prefix:               strings.TrimSpace(getEnv("ARCHIVE_S3_PREFIX", "")),
+		AccessKeyID:          strings.TrimSpace(getEnv("ARCHIVE_S3_ACCESS_KEY_ID", "")),
+		SecretAccessKey:      Secret(strings.TrimSpace(getEnv("ARCHIVE_S3_SECRET_ACCESS_KEY", ""))),
+		PathStyle:            strictBoolEnv("ARCHIVE_S3_PATH_STYLE", true, &bad),
+		ObjectLockDays:       strictIntEnv("ARCHIVE_OBJECT_LOCK_DAYS", 0, &bad),
+		ObjectLockMode:       strings.TrimSpace(getEnv("ARCHIVE_OBJECT_LOCK_MODE", "")),
+		MinAgeHours:          strictIntEnv("ARCHIVE_MIN_AGE_HOURS", 2, &bad),
+		AllowHTTP:            strictBoolEnv("ARCHIVE_ALLOW_HTTP", false, &bad),
+		AllowPrivateEndpoint: strictBoolEnv("ARCHIVE_ALLOW_PRIVATE_ENDPOINT", false, &bad),
+	}
+	a.invalid = bad
+	return a
 }
 
 // Validate checks configuration for common mistakes and logs warnings.
@@ -765,6 +793,11 @@ func (c *Config) Validate() error {
 	// PostgreSQL requires DB_HOST
 	if c.Database.Type == "postgres" && c.Database.Host == "" {
 		return fmt.Errorf("DB_HOST is required when DB_TYPE=postgres")
+	}
+
+	// Raw archive: a no-op unless ARCHIVE_SYSLOG_ENABLED / ARCHIVE_FLOWS_ENABLED.
+	if err := c.Archive.Validate(); err != nil {
+		return err
 	}
 
 	return nil
@@ -901,6 +934,36 @@ func getBoolEnv(key string, defaultValue bool) bool {
 		}
 	}
 	return defaultValue
+}
+
+// strictIntEnv is getIntEnv for keys where a silent fallback would be unsafe:
+// a set, non-blank value that does not parse is appended to *bad and the
+// default is returned. Validate turns *bad into a startup error.
+func strictIntEnv(key string, defaultValue int, bad *[]string) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return defaultValue
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil {
+		*bad = append(*bad, fmt.Sprintf("%s=%q is not an integer", key, value))
+		return defaultValue
+	}
+	return n
+}
+
+// strictBoolEnv is the boolean counterpart of strictIntEnv.
+func strictBoolEnv(key string, defaultValue bool, bad *[]string) bool {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return defaultValue
+	}
+	b, err := strconv.ParseBool(value)
+	if err != nil {
+		*bad = append(*bad, fmt.Sprintf("%s=%q is not a boolean (true/false)", key, value))
+		return defaultValue
+	}
+	return b
 }
 
 func getDurationEnv(key string, defaultValue time.Duration) time.Duration {
