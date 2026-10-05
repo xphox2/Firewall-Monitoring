@@ -16,6 +16,7 @@ import (
 	"firewall-mon/internal/deny"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
+	"firewall-mon/internal/relay"
 	"firewall-mon/internal/snmp"
 
 	"github.com/gin-gonic/gin"
@@ -170,9 +171,16 @@ func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 			ipToDevice = h.db.ResolveDevicesByIPs(ips)
 		}
 	}
+	// The format hint is stored only under the framing contract (see
+	// models.SyslogMessage.StoredFormat); a v5 row keeps it in memory for
+	// normalizeIngest and stores NULL.
+	framedProbe := probe.SchemaVersion >= relay.SchemaVersionFramed
 	filtered := messages[:0]
 	for i := range messages {
 		messages[i].ProbeID = probe.ID
+		if framedProbe {
+			messages[i].StoredFormat = models.SyslogFormatCode(messages[i].Format)
+		}
 		messages[i].Timestamp = clampIngestTimestamp(messages[i].Timestamp, now)
 		messages[i].ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
 		if messages[i].DeviceID == 0 && messages[i].SourceIP != "" {

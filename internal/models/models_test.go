@@ -182,3 +182,39 @@ func TestSystemStatus_ToJSON_AUDIT117(t *testing.T) {
 		t.Errorf("ToJSON round-trip mismatch: %+v", back)
 	}
 }
+
+// TestSyslogFormatCodes pins the stored codes of syslog_messages.format
+// (v74): they are written to every database and archive, so a renumbering
+// would silently change what old rows mean. Every collector dispatcher value
+// round-trips; empty and unknown hints store NULL; an unknown code reads "".
+func TestSyslogFormatCodes(t *testing.T) {
+	want := map[string]int16{"fortios_kv": 1, "rfc5424": 2, "rfc3164": 3, "meraki": 4, "cef": 5, "raw": 6}
+	for name, code := range want {
+		got := SyslogFormatCode(name)
+		if got == nil || *got != code {
+			shown := "nil"
+			if got != nil {
+				shown = fmt.Sprint(*got)
+			}
+			t.Errorf("SyslogFormatCode(%q) = %s, want %d", name, shown, code)
+			continue
+		}
+		if back := SyslogFormatName(got); back != name {
+			t.Errorf("SyslogFormatName(%d) = %q, want %q", code, back, name)
+		}
+	}
+	for _, name := range []string{"", "nonesuch", "FORTIOS_KV"} {
+		if got := SyslogFormatCode(name); got != nil {
+			t.Errorf("SyslogFormatCode(%q) = %d, want nil", name, *got)
+		}
+	}
+	for _, code := range []int16{0, -1, 7, 32767} {
+		c := code
+		if got := SyslogFormatName(&c); got != "" {
+			t.Errorf("SyslogFormatName(%d) = %q, want \"\"", code, got)
+		}
+	}
+	if got := SyslogFormatName(nil); got != "" {
+		t.Errorf("SyslogFormatName(nil) = %q, want \"\"", got)
+	}
+}

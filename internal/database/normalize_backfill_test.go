@@ -1059,3 +1059,48 @@ func TestNormalizeBackfill_FwRulesCommitWithBatch(t *testing.T) {
 		t.Fatalf("fw_rules rows = %d, want the fixture's 3 policies", rules)
 	}
 }
+
+// TestNormalizeBackfill_UsesStoredFormat (v74): the backfill normalizes a row
+// the way the live ingest did. Two generic RFC 5424 rows whose structured
+// data carries `src=`: with a stored format (a framing-contract row) the body
+// is tokenized alone, so the event has no source; without one the re-framing
+// join folds the structured data in and the source appears. Before v74 the
+// backfill re-framed both.
+func TestNormalizeBackfill_UsesStoredFormat(t *testing.T) {
+	d, f, _, _ := bfSetup(t, 30)
+	gen := &models.Device{Name: "fw-example-09", IPAddress: "192.0.2.9", Vendor: "generic"}
+	if err := d.db.Create(gen).Error; err != nil {
+		t.Fatal(err)
+	}
+	ts := f.first.Add(time.Hour)
+	mk := func(dst string, stored *int16) models.SyslogMessage {
+		return models.SyslogMessage{Timestamp: ts, DeviceID: gen.ID, ProbeID: 1, Hostname: "fw-example-09", AppName: "fwd", ProcessID: "-", MessageID: "-",
+			StructuredData: `[meta src="198.51.100.66"]`, Message: "action=deny proto=tcp dst=" + dst, Severity: 4, Facility: 16, CreatedAt: ts, StoredFormat: stored}
+	}
+	framed, legacy := mk("203.0.113.5", models.SyslogFormatCode("rfc5424")), mk("203.0.113.6", nil)
+	for _, m := range []*models.SyslogMessage{&framed, &legacy} {
+		if err := d.db.Create(m).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	job := bfQueue(t, d, &gen.ID)
+	if job, err := bfRun(t, d, job.ID); err != nil || job.Status != NormalizeBackfillStatusDone || job.RowsWritten != 2 {
+		t.Fatalf("job: err=%v %+v; want done with 2 rows written", err, job)
+	}
+	src := func(raw uint) string {
+		var ev models.NetEvent
+		if err := d.db.Where("raw_id = ?", raw).First(&ev).Error; err != nil {
+			t.Fatalf("net_events for raw row %d: %v", raw, err)
+		}
+		if ev.SrcIP == nil {
+			return ""
+		}
+		return *ev.SrcIP
+	}
+	if got := src(framed.ID); got != "" {
+		t.Errorf("stored-format row: src_ip %q, want none — a framed row's structured data is not the body (NormalizeFramed)", got)
+	}
+	if got := src(legacy.ID); got != "198.51.100.66" {
+		t.Errorf("format-less row: src_ip %q, want 198.51.100.66 from the re-framing join", got)
+	}
+}

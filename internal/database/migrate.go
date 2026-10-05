@@ -2228,6 +2228,88 @@ func (d *Database) migrateNormalizeBackfillJobs() error {
 	return d.db.AutoMigrate(&models.NormalizeBackfillJob{})
 }
 
+// v74's lock bounds. Package vars so the PostgreSQL test can shrink them.
+var (
+	// syslogFormatLockTimeout bounds each attempt as a WHOLE: it is both the
+	// lock_timeout and the statement_timeout of the ALTER. lock_timeout alone
+	// applies per lock wait, and on a partitioned table the ALTER holds ACCESS
+	// EXCLUSIVE on the parent while it waits for each leaf in turn, so readers
+	// on several leaves could stall every insert for (leaves+1) x the timeout.
+	// The statement_timeout caps the whole statement, which is safe because
+	// the ALTER itself is metadata-only (milliseconds once it has its locks).
+	syslogFormatLockTimeout = 2 * time.Second
+	// syslogFormatLockRetries / syslogFormatRetrySleep: ~3.5 min of attempts
+	// before the migration fails (and the process exits to be restarted).
+	syslogFormatLockRetries = 30
+	syslogFormatRetrySleep  = 5 * time.Second
+)
+
+// migrateSyslogFormatColumn (v74) adds syslog_messages.format, the stored
+// collector format hint (models.SyslogMessage.StoredFormat).
+//
+// It must be metadata-only: on production syslog_messages is a ~161 GB plain
+// heap under constant ingest. ADD COLUMN of a nullable column with no default
+// never rewrites the table (PostgreSQL 11+; it only adds a pg_attribute row,
+// existing tuples read NULL), on a plain heap and on a partitioned parent,
+// which propagates the column to every leaf the same way. No default, no NOT
+// NULL, no index. The one cost is the ACCESS EXCLUSIVE lock, held for
+// milliseconds but QUEUED behind any running reader — and every insert queues
+// behind the waiting ALTER (on a partitioned table it also holds the parent
+// while it waits for each leaf). So each attempt runs under a short
+// lock_timeout AND statement_timeout of the same bound, and a lock timeout,
+// statement timeout or deadlock is retried after a pause: ingest stalls at
+// most about syslogFormatLockTimeout per attempt, whatever the number of
+// leaves. Long readers are not cancelled by the queued lock (an
+// anti-wraparound autovacuum, a pg_dump, an idle-in-transaction psql), so the
+// operator pre-flight in MIGRATING.md checks for them first. The catalog is read first so a
+// fresh install (the baseline AutoMigrate already created the column) takes no
+// lock at all.
+//
+// Failing is correct when the lock never comes: the model writes the column
+// on every insert, so a binary must not run against a table without it.
+func (d *Database) migrateSyslogFormatColumn() error {
+	if !d.dialect.IsPostgres() {
+		// SQLite test backend: ADD COLUMN IF NOT EXISTS is not SQLite syntax.
+		if d.db.Migrator().HasColumn(&models.SyslogMessage{}, "format") {
+			return nil
+		}
+		return d.db.Migrator().AddColumn(&models.SyslogMessage{}, "StoredFormat")
+	}
+	var exists bool
+	if err := d.db.Raw(`SELECT EXISTS (SELECT 1 FROM pg_attribute
+		WHERE attrelid = to_regclass('syslog_messages') AND attname = 'format' AND NOT attisdropped)`).Scan(&exists).Error; err != nil {
+		return fmt.Errorf("migrate v74: probe syslog_messages.format: %w", err)
+	}
+	if exists {
+		log.Printf("migrate v74 syslog_messages.format: column already present")
+		return nil
+	}
+	const ddl = `ALTER TABLE syslog_messages ADD COLUMN IF NOT EXISTS format smallint`
+	for attempt := 1; ; attempt++ {
+		err := d.db.Transaction(func(tx *gorm.DB) error {
+			// Rendered literals, never input: a package duration (see execCronDDL).
+			ms := syslogFormatLockTimeout.Milliseconds()
+			if err := tx.Exec(fmt.Sprintf("SET LOCAL lock_timeout = '%dms'", ms)).Error; err != nil {
+				return fmt.Errorf("set lock_timeout: %w", err)
+			}
+			if err := tx.Exec(fmt.Sprintf("SET LOCAL statement_timeout = '%dms'", ms)).Error; err != nil {
+				return fmt.Errorf("set statement_timeout: %w", err)
+			}
+			return tx.Exec(ddl).Error
+		})
+		if err == nil {
+			log.Printf("migrate v74 syslog_messages.format: added (smallint, nullable, no default — metadata only)")
+			return nil
+		}
+		if !(lockRetryable(err) || sqlState(err) == "57014") || attempt >= syslogFormatLockRetries {
+			return fmt.Errorf("migrate v74 add syslog_messages.format (attempt %d/%d): %w", attempt, syslogFormatLockRetries, err)
+		}
+		log.Printf("migrate v74 syslog_messages.format: locks not granted within %s (attempt %d/%d, SQLSTATE %s); retrying in %s",
+			syslogFormatLockTimeout, attempt, syslogFormatLockRetries, sqlState(err), syslogFormatRetrySleep)
+		time.Sleep(syslogFormatRetrySleep)
+	}
+}
+
 // migrateFlowSummaries (v66) creates the three flow-summary tables. They are
 // deliberately NOT partitioned: the whole point is that they are small — under
 // a million rows for six months of history against 118M in flow_rollups — so

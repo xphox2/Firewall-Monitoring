@@ -79,15 +79,18 @@ func TestPartitionLookbackDays(t *testing.T) {
 	}
 }
 
-// TestRegisteredMigrations_V72IsLast pins the version number the plan and
+// TestRegisteredMigrations_V74IsLast pins the version numbers the plans and
 // CHANGELOG cite.
-func TestRegisteredMigrations_V73IsLast(t *testing.T) {
+func TestRegisteredMigrations_V74IsLast(t *testing.T) {
 	last := registeredMigrations[len(registeredMigrations)-1]
-	if last.version != 73 || last.name != "normalize_backfill_jobs" {
-		t.Fatalf("last migration = {%d %q}, want {73 normalize_backfill_jobs}", last.version, last.name)
+	if last.version != 74 || last.name != "syslog_format_column" {
+		t.Fatalf("last migration = {%d %q}, want {74 syslog_format_column}", last.version, last.name)
 	}
-	if m := registeredMigrations[len(registeredMigrations)-2]; m.version != 72 || m.name != "normalized_event_tables" {
-		t.Fatalf("migration before last = {%d %q}, want {72 normalized_event_tables}", m.version, m.name)
+	if m := registeredMigrations[len(registeredMigrations)-2]; m.version != 73 || m.name != "normalize_backfill_jobs" {
+		t.Fatalf("migration before last = {%d %q}, want {73 normalize_backfill_jobs}", m.version, m.name)
+	}
+	if m := registeredMigrations[len(registeredMigrations)-3]; m.version != 72 || m.name != "normalized_event_tables" {
+		t.Fatalf("migration two before last = {%d %q}, want {72 normalized_event_tables}", m.version, m.name)
 	}
 }
 
