@@ -278,46 +278,55 @@ func TestNormalizedTables_PG(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "default partition") {
 			t.Fatalf("plain CREATE ... PARTITION OF must fail while the default holds the day's rows; got %v", err)
 		}
-		// The fix: EnsurePartitions absorbs the rows, in batches — and a row
+		// The fix: EnsurePartitions absorbs the rows, in batches — and rows
 		// that ingest commits into the default between the batched move and
-		// the attach (the hook) is moved under the lock, so the attach holds.
-		orig := cleanupDeleteBatchSize
-		cleanupDeleteBatchSize = 2 // two batches for three rows
-		defer func() { cleanupDeleteBatchSize = orig }()
-		concurrent := strays[0]
-		concurrent.ID = 0
-		concurrent.Ts = day.Add(15 * time.Hour)
-		hooked := 0
-		leafAttachHook = func(l string) {
+		// the attach (the hook) are handled too: more than the locked-move
+		// cap (2 here, 3 arrive) makes the locked attempt roll back and the
+		// loop drain them unlocked first, then the attach holds.
+		orig, origCap := cleanupDeleteBatchSize, leafAttachRemainderCap
+		cleanupDeleteBatchSize, leafAttachRemainderCap = 2, 2
+		defer func() { cleanupDeleteBatchSize, leafAttachRemainderCap = orig, origCap }()
+		var concurrent []models.NetEvent
+		for i := 0; i < 3; i++ {
+			r := strays[0]
+			r.ID = 0
+			r.Ts = day.Add(time.Duration(15+i) * time.Hour)
+			concurrent = append(concurrent, r)
+		}
+		attempts := 0
+		leafAttachHook = func(l string, attempt int) {
 			if l != leaf {
 				return
 			}
-			hooked++
-			if err := d.SaveNetEvents([]models.NetEvent{concurrent}); err != nil {
+			attempts++
+			if attempt != 1 {
+				return // the second round must find the default drained
+			}
+			if err := d.SaveNetEvents(concurrent); err != nil {
 				t.Errorf("concurrent insert: %v", err)
 			}
-			if n := pgRows(t, d, "net_events_default"); n != 1 {
-				t.Errorf("the concurrent row should sit in the default child before the attach, default holds %d", n)
+			if n := pgRows(t, d, "net_events_default"); n != 3 {
+				t.Errorf("the concurrent rows should sit in the default child before the attach, default holds %d", n)
 			}
 		}
 		defer func() { leafAttachHook = nil }()
 		if err := d.EnsurePartitionsForCron(); err != nil {
 			t.Fatalf("EnsurePartitionsForCron: %v", err)
 		}
-		if hooked != 1 {
-			t.Fatalf("attach hook ran %d times, want 1", hooked)
+		if attempts != 2 {
+			t.Fatalf("locked attach attempts = %d, want 2 (first rolled back over the cap, second attached)", attempts)
 		}
 		if !contains(pgLeaves(t, d, "net_events"), leaf) {
 			t.Fatalf("%s was not created and attached", leaf)
 		}
-		if n := pgRows(t, d, leaf); n != 4 {
-			t.Fatalf("%s holds %d rows, want the 3 moved strays + the concurrent row", leaf, n)
+		if n := pgRows(t, d, leaf); n != 6 {
+			t.Fatalf("%s holds %d rows, want the 3 moved strays + the 3 concurrent rows", leaf, n)
 		}
 		if n := pgRows(t, d, "net_events_default"); n != 0 {
 			t.Fatalf("default child still holds %d rows", n)
 		}
-		if after := pgRows(t, d, "net_events"); after != before+1 {
-			t.Fatalf("parent row count %d -> %d: rows lost or duplicated by the move (want +1, the concurrent row)", before, after)
+		if after := pgRows(t, d, "net_events"); after != before+3 {
+			t.Fatalf("parent row count %d -> %d: rows lost or duplicated by the move (want +3, the concurrent rows)", before, after)
 		}
 		// The range CHECK used to skip the attach scan is gone again; the PK
 		// is the parent's, adopted rather than rebuilt.
@@ -337,7 +346,7 @@ func TestNormalizedTables_PG(t *testing.T) {
 		if err := d.SaveNetEvents([]models.NetEvent{late}); err != nil {
 			t.Fatal(err)
 		}
-		if n := pgRows(t, d, leaf); n != 5 {
+		if n := pgRows(t, d, leaf); n != 7 {
 			t.Fatalf("a new row for the day went elsewhere (%s holds %d)", leaf, n)
 		}
 		if idx := childNonUniqueIndexCols(t, d, leaf); len(idx) < 5 {

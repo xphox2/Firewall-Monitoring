@@ -1,6 +1,7 @@
 package database
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -886,41 +887,85 @@ func (d *Database) ensureLeaf(def partitionDef, w partitionWindow, startStr, end
 	} else {
 		log.Printf("WARNING: %s exists but is not attached to %s (an interrupted earlier pass); resuming the move from %s and the attach",
 			w.name, def.tableName, def_)
-	}
-	// Bulk of the move: unlocked, batched, while ingest keeps writing the
-	// day's rows into the default.
-	moved, err := d.moveDefaultRowsIntoLeaf(def_, w.name, def.column, w.start, w.end)
-	if err != nil {
-		return fmt.Errorf("move rows from %s: %w", def_, err)
+		// A leaf left unattached across a schema migration no longer matches
+		// the default's shape; INSERT ... SELECT * then fails on a column
+		// mismatch. Say so plainly before it does: the operator rescues the
+		// leaf's rows and drops it (or ALTERs it to match).
+		var leafCols, defCols int
+		d.db.Raw(`SELECT COUNT(*) FROM pg_attribute WHERE attrelid = to_regclass(?) AND attnum > 0 AND NOT attisdropped`, w.name).Scan(&leafCols)
+		d.db.Raw(`SELECT COUNT(*) FROM pg_attribute WHERE attrelid = to_regclass(?) AND attnum > 0 AND NOT attisdropped`, def_).Scan(&defCols)
+		if leafCols != defCols {
+			log.Printf("WARNING: unattached %s has %d columns but %s has %d — the table changed shape while the leaf sat unattached; the move below will fail until %s is dropped (after rescuing its rows) or altered to match",
+				w.name, leafCols, def_, defCols, w.name)
+		}
 	}
 	// Give the leaf everything ATTACH would otherwise have to build or verify
 	// under the lock: the range CHECK (so the attach skips scanning the leaf),
 	// the parent's partitioned indexes incl. the PK (so it attaches them
 	// instead of building them). No contention — the leaf is still standalone.
+	// Done before the move so the PK also rejects a duplicate id early.
 	if err := d.prepareLeafForAttach(def, w, startStr, endStr); err != nil {
 		return fmt.Errorf("prepare %s for attach: %w", w.name, err)
 	}
-	if leafAttachHook != nil {
-		leafAttachHook(w.name) // test seam: a row for this day arrives now
-	}
-	// Final step, ONE transaction: lock the default (ACCESS EXCLUSIVE, bounded
-	// by lockTimeout on the cron), move the remainder that arrived since the
-	// batched pass — small, so the hold is a scan of the default — and attach.
-	// Separate statements here were the bug: a row committed into the default
-	// between the last batch and the ATTACH failed the attach ("default
-	// partition would be violated") every pass until the day was over, while
-	// the moved rows sat invisible in the standalone leaf.
-	remainder, err := d.attachLeafLocked(def, w, startStr, endStr, lockTimeout)
-	if err != nil {
-		return fmt.Errorf("attach (%d row(s) moved out of %s and kept in the standalone leaf; retried next pass): %w", moved, def_, err)
+	var moved, remainder int64
+	for attempt := 1; ; attempt++ {
+		// Bulk of the move: unlocked, batched, while ingest keeps writing the
+		// day's rows into the default.
+		n, err := d.moveDefaultRowsIntoLeaf(def_, w.name, def.column, w.start, w.end)
+		moved += n
+		if err != nil {
+			return fmt.Errorf("move rows from %s: %w", def_, err)
+		}
+		if leafAttachHook != nil {
+			leafAttachHook(w.name, attempt) // test seam: rows for this day arrive now
+		}
+		// Final step, ONE transaction: lock the default (ACCESS EXCLUSIVE,
+		// bounded by lockTimeout on the cron), move the remainder that arrived
+		// since the batched pass and attach. Separate statements here were the
+		// bug: a row committed into the default between the last batch and the
+		// ATTACH failed the attach ("default partition would be violated")
+		// every pass until the day was over, while the moved rows sat
+		// invisible in the standalone leaf. The remainder must be SMALL for
+		// the lock hold to be a scan of the default: when a backlog replay has
+		// stuffed more than leafAttachRemainderCap rows into the range since
+		// the batched pass, the transaction rolls back before moving anything
+		// and the loop goes round again unlocked, a bounded number of times.
+		remainder, err = d.attachLeafLocked(def, w, startStr, endStr, lockTimeout)
+		if errors.Is(err, errLeafRemainderTooLarge) {
+			if attempt >= leafAttachMaxAttempts {
+				return fmt.Errorf("attach: the default kept receiving more than %d rows for [%s, %s) between the batched move and the lock on %d attempts (%d row(s) moved so far, kept in the standalone leaf; retried next pass)",
+					leafAttachRemainderCap, startStr, endStr, attempt, moved)
+			}
+			log.Printf("Partition %s: more than %d rows arrived in %s for [%s, %s) since the batched move; moving them unlocked first (attempt %d/%d)",
+				w.name, leafAttachRemainderCap, def_, startStr, endStr, attempt, leafAttachMaxAttempts)
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("attach (%d row(s) moved out of %s and kept in the standalone leaf; retried next pass): %w", moved, def_, err)
+		}
+		break
 	}
 	log.Printf("Created partition: %s (attached after moving %d+%d row(s) out of %s)", w.name, moved, remainder, def_)
 	return nil
 }
 
-// leafAttachHook, when non-nil, runs between the batched move and the locked
-// attach — where a concurrent ingest row can land in the default child.
-var leafAttachHook func(leaf string)
+// leafAttachHook, when non-nil, runs on every attempt between the batched move
+// and the locked attach — where concurrent ingest rows can land in the default
+// child — with the attempt number, so a test can inject rows and count rounds.
+var leafAttachHook func(leaf string, attempt int)
+
+// errLeafRemainderTooLarge is attachLeafLocked's refusal to move more than
+// leafAttachRemainderCap rows under the default's ACCESS EXCLUSIVE lock.
+var errLeafRemainderTooLarge = errors.New("remainder in the default exceeds the locked-move cap")
+
+var (
+	// leafAttachRemainderCap is the most rows attachLeafLocked moves while
+	// holding the default's lock; a day's worth from a backlog replay is far
+	// above it and goes through the unlocked batched move instead.
+	leafAttachRemainderCap = 50000
+	// leafAttachMaxAttempts bounds the move → locked-attach loop per pass.
+	leafAttachMaxAttempts = 5
+)
 
 // defaultMoveStmt is the DELETE ... RETURNING → INSERT that moves rows of
 // [start, end) from the DEFAULT child into the leaf; with limit > 0 one batch
@@ -1060,6 +1105,17 @@ func (d *Database) attachLeafLocked(def partitionDef, w partitionWindow, startSt
 		}
 		if err := tx.Exec(fmt.Sprintf(`LOCK TABLE %s IN ACCESS EXCLUSIVE MODE`, def_)).Error; err != nil {
 			return fmt.Errorf("lock %s: %w", def_, err)
+		}
+		// Bounded probe (stops at cap+1): a remainder above the cap is not
+		// moved under this lock — roll back and let the caller drain it
+		// unlocked first.
+		var pending int64
+		if err := tx.Raw(fmt.Sprintf(`SELECT COUNT(*) FROM (SELECT 1 FROM %s WHERE %s >= ? AND %s < ? LIMIT ?) s`,
+			def_, def.column, def.column), w.start, w.end, leafAttachRemainderCap+1).Scan(&pending).Error; err != nil {
+			return fmt.Errorf("count remainder: %w", err)
+		}
+		if pending > int64(leafAttachRemainderCap) {
+			return errLeafRemainderTooLarge
 		}
 		res := tx.Exec(defaultMoveStmt(def_, w.name, def.column, false), w.start, w.end)
 		if res.Error != nil {
