@@ -19,6 +19,7 @@ All notable changes to this project are documented in this file.
 ### Tests
 
 - SQLite: `TestPartitionWindows`, `TestPartitionLookbackDays`, `TestRegisteredMigrations_V72IsLast`, `TestMigrateV72_Idempotent`, `TestNetEventsCopyColumns_MatchModel`, `TestNetEventFromEvent_NullDiscipline`, `TestSecEventFromEvent_MessageCapAndAddresses`, `TestSaveNetEvents_SQLiteFallback`, `TestUpsertFwRules_MergeAndGreatest`, `TestFlushFieldObserved_Accumulates`, `TestNetEventRollup_SQLite` (additive hour folds, exact day close, idempotent repeat, closed-day rewind; one INSERT per group to exercise the multi-statement upsert), `TestNetEventRollup_EmptyTableIsQuiet`, `TestCleanupSecEvents_ConfigChangeKeptForever`, `TestCleanupOldData_NeverRowDeletesNetEvents`. PostgreSQL (`TestNormalizedTables_PG`, `TEST_PG_DSN`): v72 parents, 38 daily leaves + default with the five-index plan, 10 000 COPY rows routed into three day leaves with typed columns round-tripping, an expired leaf dropped and the DEFAULT child trimmed with every in-window row kept, `sec_events` per class (leaf kept while `config_change` is forever, dropped once both windows pass), the same rollup fixture as SQLite, and v72 converting an empty plain table left behind. `TestRegisteredMigrations_V71IsLast` became `_V71Pinned` (by index).
+
 ## [0.11.294] - 2026-10-04
 
 ### Added — UniFi and Meraki syslog normalizers + capability profiles (Phase 1, S-2b; no database change)
