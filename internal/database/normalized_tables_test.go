@@ -561,20 +561,35 @@ func TestNetEventRollup_CloseGiveUp(t *testing.T) {
 		return nil
 	}
 	defer func() { netEventRollupCloseHook = nil }()
+	// Ticks one minute apart count; a tick inside the spacing does not (a
+	// transient outage spanning several 5-minute ticks must not spend the
+	// budget). Kept inside the fixture's hour so the fold expectations hold.
+	origSpacing := netEventRollupFailureSpacing
+	netEventRollupFailureSpacing = time.Minute
+	defer func() { netEventRollupFailureSpacing = origSpacing }()
 
 	for attempt := 1; attempt < netEventRollupCloseGiveUp; attempt++ {
-		_, days, err := d.runNetEventRollupCycle(rollupFixtureNow)
+		at := rollupFixtureNow.Add(time.Duration(attempt-1) * time.Minute)
+		_, days, err := d.runNetEventRollupCycle(at)
 		if err == nil || !strings.Contains(err.Error(), "injected") || days != 0 {
 			t.Fatalf("attempt %d: days=%d err=%v, want the injected error and no closed day", attempt, days, err)
 		}
 		if _, ok, _ := d.netEventRollupClosedDay(); ok {
 			t.Fatalf("attempt %d: the cursor moved before the give-up threshold", attempt)
 		}
-		if v, _ := d.GetSettingValue(netEventRollupCloseFailuresKey); v != fmt.Sprintf("2026-10-01:%d", attempt) {
-			t.Fatalf("attempt %d: failure counter = %q", attempt, v)
+		want := fmt.Sprintf("2026-10-01:%d:%s", attempt, at.Format(time.RFC3339))
+		if v, _ := d.GetSettingValue(netEventRollupCloseFailuresKey); v != want {
+			t.Fatalf("attempt %d: failure counter = %q, want %q", attempt, v, want)
+		}
+		// A retry 20 s later fails the same way but is NOT counted.
+		if _, _, err := d.runNetEventRollupCycle(at.Add(20 * time.Second)); err == nil {
+			t.Fatalf("attempt %d: the in-spacing retry should still fail", attempt)
+		}
+		if v, _ := d.GetSettingValue(netEventRollupCloseFailuresKey); v != want {
+			t.Fatalf("attempt %d: a failure inside the spacing was counted: %q", attempt, v)
 		}
 	}
-	_, days, err := d.runNetEventRollupCycle(rollupFixtureNow)
+	_, days, err := d.runNetEventRollupCycle(rollupFixtureNow.Add(time.Duration(netEventRollupCloseGiveUp-1) * time.Minute))
 	if err != nil || days != 2 {
 		t.Fatalf("give-up cycle: days=%d err=%v, want 2 (one skipped, one closed) and no error", days, err)
 	}

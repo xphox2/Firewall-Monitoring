@@ -278,24 +278,57 @@ func TestNormalizedTables_PG(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "default partition") {
 			t.Fatalf("plain CREATE ... PARTITION OF must fail while the default holds the day's rows; got %v", err)
 		}
-		// The fix: EnsurePartitions absorbs the rows, in batches.
+		// The fix: EnsurePartitions absorbs the rows, in batches — and a row
+		// that ingest commits into the default between the batched move and
+		// the attach (the hook) is moved under the lock, so the attach holds.
 		orig := cleanupDeleteBatchSize
 		cleanupDeleteBatchSize = 2 // two batches for three rows
 		defer func() { cleanupDeleteBatchSize = orig }()
+		concurrent := strays[0]
+		concurrent.ID = 0
+		concurrent.Ts = day.Add(15 * time.Hour)
+		hooked := 0
+		leafAttachHook = func(l string) {
+			if l != leaf {
+				return
+			}
+			hooked++
+			if err := d.SaveNetEvents([]models.NetEvent{concurrent}); err != nil {
+				t.Errorf("concurrent insert: %v", err)
+			}
+			if n := pgRows(t, d, "net_events_default"); n != 1 {
+				t.Errorf("the concurrent row should sit in the default child before the attach, default holds %d", n)
+			}
+		}
+		defer func() { leafAttachHook = nil }()
 		if err := d.EnsurePartitionsForCron(); err != nil {
 			t.Fatalf("EnsurePartitionsForCron: %v", err)
+		}
+		if hooked != 1 {
+			t.Fatalf("attach hook ran %d times, want 1", hooked)
 		}
 		if !contains(pgLeaves(t, d, "net_events"), leaf) {
 			t.Fatalf("%s was not created and attached", leaf)
 		}
-		if n := pgRows(t, d, leaf); n != 3 {
-			t.Fatalf("%s holds %d rows, want the 3 moved strays", leaf, n)
+		if n := pgRows(t, d, leaf); n != 4 {
+			t.Fatalf("%s holds %d rows, want the 3 moved strays + the concurrent row", leaf, n)
 		}
 		if n := pgRows(t, d, "net_events_default"); n != 0 {
 			t.Fatalf("default child still holds %d rows", n)
 		}
-		if after := pgRows(t, d, "net_events"); after != before {
-			t.Fatalf("parent row count %d -> %d: rows lost or duplicated by the move", before, after)
+		if after := pgRows(t, d, "net_events"); after != before+1 {
+			t.Fatalf("parent row count %d -> %d: rows lost or duplicated by the move (want +1, the concurrent row)", before, after)
+		}
+		// The range CHECK used to skip the attach scan is gone again; the PK
+		// is the parent's, adopted rather than rebuilt.
+		var n int64
+		d.Gorm().Raw(`SELECT COUNT(*) FROM pg_constraint WHERE conrelid = to_regclass(?) AND contype = 'c'`, leaf).Scan(&n)
+		if n != 0 {
+			t.Fatalf("%s still carries %d CHECK constraint(s) after the attach", leaf, n)
+		}
+		d.Gorm().Raw(`SELECT COUNT(*) FROM pg_inherits WHERE inhrelid = (SELECT indexrelid FROM pg_index WHERE indrelid = to_regclass(?) AND indisprimary)`, leaf).Scan(&n)
+		if n != 1 {
+			t.Fatalf("%s's primary key index is not attached to the parent's partitioned PK (%d)", leaf, n)
 		}
 		// Routing afterwards goes to the leaf, and the leaf has the plan's indexes.
 		late := strays[0]
@@ -304,7 +337,7 @@ func TestNormalizedTables_PG(t *testing.T) {
 		if err := d.SaveNetEvents([]models.NetEvent{late}); err != nil {
 			t.Fatal(err)
 		}
-		if n := pgRows(t, d, leaf); n != 4 {
+		if n := pgRows(t, d, leaf); n != 5 {
 			t.Fatalf("a new row for the day went elsewhere (%s holds %d)", leaf, n)
 		}
 		if idx := childNonUniqueIndexCols(t, d, leaf); len(idx) < 5 {

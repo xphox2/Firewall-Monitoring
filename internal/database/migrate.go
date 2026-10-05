@@ -643,7 +643,7 @@ func (d *Database) execCronDDL(sql string, args ...interface{}) error {
 // This is safe for existing servers - it only creates new partitions, never modifies existing data.
 // Startup variant; the retention cron calls EnsurePartitionsForCron.
 func (d *Database) EnsurePartitions() error {
-	return d.ensurePartitions(d.execMaintenanceDDL)
+	return d.ensurePartitions(d.execMaintenanceDDL, 0)
 }
 
 // EnsurePartitionsForCron is EnsurePartitions for the daily retention pass: the
@@ -660,13 +660,14 @@ func (d *Database) EnsurePartitions() error {
 // day to this pass — one ACCESS EXCLUSIVE acquisition on the parent (and its
 // DEFAULT child) per day, bounded by cronDDLLockTimeout like the monthly ones;
 // a timed-out day is retried the next pass, and the seven-day lead means
-// ingest never waits on it. The same bound covers the ATTACH PARTITION that
-// ensureLeaf uses when the DEFAULT child already holds the day's rows.
+// ingest never waits on it. The same bound covers the locked move-and-attach
+// transaction ensureLeaf uses when the DEFAULT child already holds the day's
+// rows (lockTimeout below; 0 = wait, the startup variant).
 func (d *Database) EnsurePartitionsForCron() error {
-	return d.ensurePartitions(d.execCronDDL)
+	return d.ensurePartitions(d.execCronDDL, cronDDLLockTimeout)
 }
 
-func (d *Database) ensurePartitions(createPartition func(sql string, args ...interface{}) error) error {
+func (d *Database) ensurePartitions(createPartition func(sql string, args ...interface{}) error, lockTimeout time.Duration) error {
 	if !d.dialect.IsPostgres() {
 		return nil // Partitioning is PostgreSQL-only
 	}
@@ -795,7 +796,7 @@ func (d *Database) ensurePartitions(createPartition func(sql string, args ...int
 			endStr := w.end.Format("2006-01-02 15:04:05-07:00")
 
 			partitionName := w.name
-			if err := d.ensureLeaf(def, w, startStr, endStr, createPartition); err != nil {
+			if err := d.ensureLeaf(def, w, startStr, endStr, createPartition, lockTimeout); err != nil {
 				log.Printf("Partition creation warning for %s: %v", partitionName, err)
 				continue
 			}
@@ -845,7 +846,7 @@ func (d *Database) ensurePartitions(createPartition func(sql string, args ...int
 // table keeps it). Rows are unreadable through the parent only between their
 // move and the attach — they were strays in the default to begin with.
 func (d *Database) ensureLeaf(def partitionDef, w partitionWindow, startStr, endStr string,
-	createPartition func(sql string, args ...interface{}) error) error {
+	createPartition func(sql string, args ...interface{}) error, lockTimeout time.Duration) error {
 	var attached bool
 	if err := d.db.Raw(`SELECT EXISTS (SELECT 1 FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid WHERE c.relname = ?)`,
 		w.name).Scan(&attached).Error; err != nil {
@@ -886,16 +887,51 @@ func (d *Database) ensureLeaf(def partitionDef, w partitionWindow, startStr, end
 		log.Printf("WARNING: %s exists but is not attached to %s (an interrupted earlier pass); resuming the move from %s and the attach",
 			w.name, def.tableName, def_)
 	}
+	// Bulk of the move: unlocked, batched, while ingest keeps writing the
+	// day's rows into the default.
 	moved, err := d.moveDefaultRowsIntoLeaf(def_, w.name, def.column, w.start, w.end)
 	if err != nil {
 		return fmt.Errorf("move rows from %s: %w", def_, err)
 	}
-	if err := createPartition(fmt.Sprintf(`ALTER TABLE %s ATTACH PARTITION %s FOR VALUES FROM ('%s') TO ('%s')`,
-		def.tableName, w.name, startStr, endStr)); err != nil {
+	// Give the leaf everything ATTACH would otherwise have to build or verify
+	// under the lock: the range CHECK (so the attach skips scanning the leaf),
+	// the parent's partitioned indexes incl. the PK (so it attaches them
+	// instead of building them). No contention — the leaf is still standalone.
+	if err := d.prepareLeafForAttach(def, w, startStr, endStr); err != nil {
+		return fmt.Errorf("prepare %s for attach: %w", w.name, err)
+	}
+	if leafAttachHook != nil {
+		leafAttachHook(w.name) // test seam: a row for this day arrives now
+	}
+	// Final step, ONE transaction: lock the default (ACCESS EXCLUSIVE, bounded
+	// by lockTimeout on the cron), move the remainder that arrived since the
+	// batched pass — small, so the hold is a scan of the default — and attach.
+	// Separate statements here were the bug: a row committed into the default
+	// between the last batch and the ATTACH failed the attach ("default
+	// partition would be violated") every pass until the day was over, while
+	// the moved rows sat invisible in the standalone leaf.
+	remainder, err := d.attachLeafLocked(def, w, startStr, endStr, lockTimeout)
+	if err != nil {
 		return fmt.Errorf("attach (%d row(s) moved out of %s and kept in the standalone leaf; retried next pass): %w", moved, def_, err)
 	}
-	log.Printf("Created partition: %s (attached after moving %d row(s) out of %s)", w.name, moved, def_)
+	log.Printf("Created partition: %s (attached after moving %d+%d row(s) out of %s)", w.name, moved, remainder, def_)
 	return nil
+}
+
+// leafAttachHook, when non-nil, runs between the batched move and the locked
+// attach — where a concurrent ingest row can land in the default child.
+var leafAttachHook func(leaf string)
+
+// defaultMoveStmt is the DELETE ... RETURNING → INSERT that moves rows of
+// [start, end) from the DEFAULT child into the leaf; with limit > 0 one batch
+// of that many rows, otherwise every matching row.
+func defaultMoveStmt(defaultChild, leaf, column string, limit bool) string {
+	sel := fmt.Sprintf(`SELECT id FROM %s WHERE %s >= ? AND %s < ?`, defaultChild, column, column)
+	if limit {
+		sel += fmt.Sprintf(` ORDER BY %s LIMIT ?`, column)
+	}
+	return fmt.Sprintf(`WITH moved AS (DELETE FROM %s WHERE id IN (%s) RETURNING *) INSERT INTO %s SELECT * FROM moved`,
+		defaultChild, sel, leaf)
 }
 
 // moveDefaultRowsIntoLeaf moves the rows of [start, end) from the DEFAULT child
@@ -904,11 +940,7 @@ func (d *Database) ensureLeaf(def partitionDef, w partitionWindow, startStr, end
 // table or the other at every commit. Lock / statement timeouts match the
 // retention pass's batched deletes. Returns the rows moved.
 func (d *Database) moveDefaultRowsIntoLeaf(defaultChild, leaf, column string, start, end time.Time) (int64, error) {
-	stmt := fmt.Sprintf(`WITH moved AS (
-			DELETE FROM %s WHERE id IN (
-				SELECT id FROM %s WHERE %s >= ? AND %s < ? ORDER BY %s LIMIT ?
-			) RETURNING *)
-		INSERT INTO %s SELECT * FROM moved`, defaultChild, defaultChild, column, column, column, leaf)
+	stmt := defaultMoveStmt(defaultChild, leaf, column, true)
 	var total int64
 	for {
 		var n int64
@@ -932,6 +964,115 @@ func (d *Database) moveDefaultRowsIntoLeaf(defaultChild, leaf, column string, st
 		}
 		time.Sleep(batchDeleteInterSleep)
 	}
+}
+
+// prepareLeafForAttach adds to the standalone leaf what ATTACH PARTITION would
+// otherwise do under its locks: a CHECK constraint equal to the partition
+// bound (Postgres then skips the leaf scan that proves every row fits) and a
+// matching index for each of the parent's partitioned indexes — the PK (id,
+// column) and any v54/v57-style parent index — which the attach then adopts
+// instead of building. Idempotent: every step probes the catalog first, so a
+// pass resumed after a crash adds only what is missing.
+func (d *Database) prepareLeafForAttach(def partitionDef, w partitionWindow, startStr, endStr string) error {
+	check := w.name + "_range"
+	var hasCheck bool
+	if err := d.db.Raw(`SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = ? AND conrelid = to_regclass(?))`,
+		check, w.name).Scan(&hasCheck).Error; err != nil {
+		return fmt.Errorf("check probe: %w", err)
+	}
+	if !hasCheck {
+		if err := d.execMaintenanceDDL(fmt.Sprintf(`ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s IS NOT NULL AND %s >= '%s' AND %s < '%s')`,
+			w.name, check, def.column, def.column, startStr, def.column, endStr)); err != nil {
+			return fmt.Errorf("add range check: %w", err)
+		}
+	}
+	var hasPK bool
+	if err := d.db.Raw(`SELECT EXISTS (SELECT 1 FROM pg_index WHERE indrelid = to_regclass(?) AND indisprimary)`, w.name).
+		Scan(&hasPK).Error; err != nil {
+		return fmt.Errorf("pk probe: %w", err)
+	}
+	if !hasPK {
+		if err := d.execMaintenanceDDL(fmt.Sprintf(`ALTER TABLE %s ADD PRIMARY KEY (id, %s)`, w.name, def.column)); err != nil {
+			return fmt.Errorf("add primary key: %w", err)
+		}
+	}
+	// The parent's other partitioned indexes, rendered by the catalog as
+	// "CREATE [UNIQUE] INDEX <name> ON ONLY <parent> USING ..." — re-aimed at
+	// the leaf under a leaf-prefixed name.
+	var defs []struct {
+		Name string
+		Def  string
+	}
+	if err := d.db.Raw(`SELECT i.relname AS name, pg_get_indexdef(i.oid) AS def
+		FROM pg_index x JOIN pg_class i ON i.oid = x.indexrelid
+		WHERE x.indrelid = to_regclass(?) AND NOT x.indisprimary`, def.tableName).Scan(&defs).Error; err != nil {
+		return fmt.Errorf("parent index probe: %w", err)
+	}
+	for _, ix := range defs {
+		stmt := parentIndexDefForLeaf(ix.Def, ix.Name, w.name)
+		if stmt == "" {
+			log.Printf("Partition %s: cannot re-aim parent index %s at the leaf (%q); ATTACH will build it", w.name, ix.Name, ix.Def)
+			continue
+		}
+		if err := d.execMaintenanceDDL(stmt); err != nil {
+			return fmt.Errorf("create %s on leaf: %w", ix.Name, err)
+		}
+	}
+	return nil
+}
+
+// parentIndexDefForLeaf rewrites a partitioned index's pg_get_indexdef output
+// ("CREATE [UNIQUE] INDEX name ON ONLY [schema.]parent USING ...") into the
+// equivalent "CREATE [UNIQUE] INDEX IF NOT EXISTS <leaf>_<name> ON <leaf>
+// USING ..." for a standalone leaf; "" when the text is not that shape.
+func parentIndexDefForLeaf(indexDef, indexName, leaf string) string {
+	const marker = " ON ONLY "
+	i := strings.Index(indexDef, marker)
+	using := strings.Index(indexDef, " USING ")
+	if i < 0 || using < i {
+		return ""
+	}
+	head := indexDef[:i] // CREATE [UNIQUE] INDEX name
+	head = strings.TrimSuffix(head, " "+indexName)
+	if !strings.HasPrefix(head, "CREATE ") || !strings.HasSuffix(head, "INDEX") {
+		return ""
+	}
+	return fmt.Sprintf("%s IF NOT EXISTS %s_%s ON %s%s", head, leaf, indexName, leaf, indexDef[using:])
+}
+
+// attachLeafLocked is the final step of absorbing a day from the DEFAULT child,
+// in ONE transaction: lock the default (ACCESS EXCLUSIVE, so no row can be
+// routed into it meanwhile), move whatever arrived since the batched pass,
+// attach the prepared leaf, drop its now-redundant range CHECK. lockTimeout
+// bounds the lock wait (0 = wait, startup). Returns the rows moved here.
+func (d *Database) attachLeafLocked(def partitionDef, w partitionWindow, startStr, endStr string, lockTimeout time.Duration) (int64, error) {
+	def_ := def.tableName + "_default"
+	var remainder int64
+	err := d.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SET LOCAL statement_timeout = 0").Error; err != nil {
+			return fmt.Errorf("lift statement_timeout: %w", err)
+		}
+		if lockTimeout > 0 {
+			// Rendered literal, never input: a package duration (see execCronDDL).
+			if err := tx.Exec(fmt.Sprintf("SET LOCAL lock_timeout = '%dms'", lockTimeout.Milliseconds())).Error; err != nil {
+				return fmt.Errorf("set lock_timeout: %w", err)
+			}
+		}
+		if err := tx.Exec(fmt.Sprintf(`LOCK TABLE %s IN ACCESS EXCLUSIVE MODE`, def_)).Error; err != nil {
+			return fmt.Errorf("lock %s: %w", def_, err)
+		}
+		res := tx.Exec(defaultMoveStmt(def_, w.name, def.column, false), w.start, w.end)
+		if res.Error != nil {
+			return fmt.Errorf("move remainder: %w", res.Error)
+		}
+		remainder = res.RowsAffected
+		if err := tx.Exec(fmt.Sprintf(`ALTER TABLE %s ATTACH PARTITION %s FOR VALUES FROM ('%s') TO ('%s')`,
+			def.tableName, w.name, startStr, endStr)).Error; err != nil {
+			return err
+		}
+		return tx.Exec(fmt.Sprintf(`ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s_range`, w.name, w.name)).Error
+	})
+	return remainder, err
 }
 
 // ensureLeafIndexes creates the plan's indexes on one leaf partition as

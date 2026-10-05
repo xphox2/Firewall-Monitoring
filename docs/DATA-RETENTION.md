@@ -85,7 +85,8 @@ holds only what no leaf accepted (a clock-skewed collector, or a day whose leaf
 did not exist yet) and is trimmed with the batched-delete loop. If a day's
 leaf is missing while its rows already sit in the default child, the partition
 pass creates the leaf standalone, moves the rows out in batches and attaches
-it — otherwise the leaf could never be created. `sec_events` keeps a window per
+it in one locked transaction that also sweeps up any row that arrived
+meanwhile — otherwise the leaf could never be created. `sec_events` keeps a window per
 class: `config_change` rows are kept forever by default (operator decision: in
 the same table, not a separate one) while the other classes follow
 `RETENTION_SEC_EVENT_DAYS`; a monthly leaf is dropped only once both windows

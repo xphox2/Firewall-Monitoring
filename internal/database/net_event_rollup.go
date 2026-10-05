@@ -89,13 +89,20 @@ var (
 	// day closes, which read a day's rows each (hour by hour).
 	maxNetEventRollupHoursPerCycle = 24
 	maxNetEventRollupDaysPerCycle  = 2
-	// netEventRollupDistinctBudget caps the (group, src_ip) pairs a day close
-	// holds in memory for an exact distinct_src — roughly 50 bytes each, so
-	// ~25 MB at the cap. Past it the day keeps the hour folds' lower bound.
+	// netEventRollupDistinctBudget caps the per-hour (group, src_ip) GROUP BY
+	// rows a day close reads before it stops merging distinct sources — a
+	// source seen in several hours counts once per hour. Each retained entry
+	// is a map key of ~100 bytes resident, so ~50 MB at the cap, plus the
+	// transient scan of one hour's group rows. Past it the day keeps the hour
+	// folds' lower bound.
 	netEventRollupDistinctBudget = 500000
 	// netEventRollupCloseGiveUp is the number of consecutive failed closes of
-	// one day after which it is skipped (see the file comment).
-	netEventRollupCloseGiveUp = 3
+	// one day after which it is skipped (see the file comment). Failures
+	// closer together than netEventRollupFailureSpacing count once, so a
+	// transient outage spanning a few 5-minute ticks cannot spend the budget
+	// by itself.
+	netEventRollupCloseGiveUp    = 3
+	netEventRollupFailureSpacing = 10 * time.Minute
 	// netEventRollupInsertBatch sizes the rollup upsert INSERTs (14 columns;
 	// well under the 65535-parameter limit). A var so a test can shrink it
 	// to exercise the multi-statement path.
@@ -207,7 +214,7 @@ func (d *Database) runNetEventRollupCycle(now time.Time) (hours, days int, err e
 			break
 		}
 		if err := d.closeNetEventRollupDay(cand); err != nil {
-			skipped, ferr := d.noteNetEventRollupCloseFailure(cand, err)
+			skipped, ferr := d.noteNetEventRollupCloseFailure(cand, now, err)
 			if ferr != nil {
 				return hours, days, ferr
 			}
@@ -491,24 +498,34 @@ func (d *Database) closeNetEventRollupDay(day time.Time) error {
 	})
 }
 
-// noteNetEventRollupCloseFailure records one failed close of day. After
-// netEventRollupCloseGiveUp consecutive failures of the SAME day it skips the
-// day: the hour-fold rows stay (distinct_src_exact = false), the closed-day
-// cursor advances past it, a WARNING is logged and the skip metric counts it.
-// skipped reports whether that happened; err is a settings error only.
-func (d *Database) noteNetEventRollupCloseFailure(day time.Time, cause error) (skipped bool, err error) {
+// noteNetEventRollupCloseFailure records one failed close of day at `now`.
+// After netEventRollupCloseGiveUp counted failures of the SAME day — a
+// failure within netEventRollupFailureSpacing of the previous counted one is
+// not counted — it skips the day: the hour-fold rows stay (distinct_src_exact
+// = false), the closed-day cursor advances past it, a WARNING is logged and
+// the skip metric counts it. skipped reports whether that happened; err is a
+// settings error only. The setting holds "YYYY-MM-DD:n:<RFC 3339 of the last
+// counted failure>".
+func (d *Database) noteNetEventRollupCloseFailure(day, now time.Time, cause error) (skipped bool, err error) {
 	ds := day.Format("2006-01-02")
 	n := 1
 	if v, ok := d.GetSettingValue(netEventRollupCloseFailuresKey); ok {
-		if prev, cnt, found := strings.Cut(v, ":"); found && prev == ds {
-			if c, err := strconv.Atoi(cnt); err == nil {
+		if parts := strings.SplitN(v, ":", 3); len(parts) == 3 && parts[0] == ds {
+			c, cerr := strconv.Atoi(parts[1])
+			last, terr := time.Parse(time.RFC3339, parts[2])
+			if cerr == nil && terr == nil {
+				if now.Sub(last) < netEventRollupFailureSpacing {
+					log.Printf("Net event rollup: closing day %s failed again within %s of the last counted failure (%d/%d, not counted): %v",
+						ds, netEventRollupFailureSpacing, c, netEventRollupCloseGiveUp, cause)
+					return false, nil
+				}
 				n = c + 1
 			}
 		}
 	}
 	if n < netEventRollupCloseGiveUp {
 		log.Printf("Net event rollup: closing day %s failed (%d/%d): %v", ds, n, netEventRollupCloseGiveUp, cause)
-		return false, d.setSetting(d.db, netEventRollupCloseFailuresKey, fmt.Sprintf("%s:%d", ds, n))
+		return false, d.setSetting(d.db, netEventRollupCloseFailuresKey, fmt.Sprintf("%s:%d:%s", ds, n, now.UTC().Format(time.RFC3339)))
 	}
 	log.Printf("WARNING: Net event rollup: giving up on the exact recompute of day %s after %d failures (%v); its rollup rows keep the hour folds' values with distinct_src as a lower bound (distinct_src_exact = false)",
 		ds, n, cause)
