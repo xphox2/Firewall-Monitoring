@@ -33,6 +33,7 @@
 | Event-rule preview extracts each message with its own device's vendor (as the live engine does) when no vendor scope is set, instead of assuming FortiGate | Stable | [Server] | 0.11.292 |
 | sFlow-only interface cards decode the sFlow v5 `ifStatus` bit field into oper / admin status (`up` / `down`; `0` stays `unknown`) | Stable | [Server] | 0.11.292 |
 | Flows CSV export honours its 10 000-row cap (`GET /admin/api/flows` accepts `limit` up to 10000; other lists stay at 500) | Stable | [Server] | 0.11.292 |
+| Vendor-neutral syslog normalizer (`internal/normalize`): every line maps to one typed Event (class / activity / action enums, rule identity key with VDOM-qualified tiers, ISO country codes); event rules can match the canonical `event.*` fields (`event.action eq deny` covers a FortiGate deny and a pf block) beside the unchanged vendor-native keys. Mappers: FortiGate, OPNsense, pfSense, generic (CEF / filterlog / key=value); UniFi and Meraki follow in S-2b | Stable | [Server] | 0.11.293 |
 | SNMP trap receiver (UDP/162, V1 enterprise + V2c specific-trap, per-source-IP rate-limit, community filter) | Stable | [Server] | 0.1 |
 | Syslog receiver — TCP + UDP, RFC 5424 + RFC 3164, source allow-list (parsed at the edge, relayed to the server) | Stable | [Probe] | 0.1 |
 | sFlow v5 datagram parser (parsed at the edge, relayed to the server) | Stable | [Probe] | 0.1 |

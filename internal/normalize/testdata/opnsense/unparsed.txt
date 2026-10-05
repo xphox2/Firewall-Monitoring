@@ -1,0 +1,2 @@
+filterlog_rdr_unmapped    # rdr / nat / binat verdicts are translations, not firewall decisions
+plain_notice_no_family    # free text outside the catalogue

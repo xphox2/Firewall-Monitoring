@@ -345,8 +345,11 @@ func SuggestRuleForAlert(in SuggestInput) SuggestResult {
 func syslogMatch(in SuggestInput) (string, string, bool) {
 	raw := stripSyslogPrefix(in.Message, in.MetricName)
 	fields := logfields.Fields(in.Vendor, &models.SyslogMessage{Message: raw})
-	// Preference order among KV-extracted (non-base) fields.
-	for _, key := range []string{"logid", "subtype", "logdesc", "level"} {
+	// Preference order among extracted (non-base) fields: the vendor's own
+	// stable discriminators first, then the canonical rule / signature
+	// identity every vendor's normalizer fills (0.11.293) so a suggestion
+	// exists for a pf / CEF line that has no logid-like key.
+	for _, key := range []string{"logid", "subtype", "logdesc", "level", "event.rule_key", "event.sig_id"} {
 		if v, ok := fields[key]; ok && v != "" && !baseSyslogFields[key] {
 			return mustJSON(eqNode(key, v)), fmt.Sprintf("Suppress syslog events where %s=%s.", key, v), true
 		}

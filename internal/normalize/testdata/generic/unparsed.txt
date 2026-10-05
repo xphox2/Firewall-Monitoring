@@ -1,0 +1,2 @@
+kv_without_endpoints_unmapped   # k=v with no src / dst / action is not a firewall event
+free_text_no_family             # no family claims free text under the generic vendor

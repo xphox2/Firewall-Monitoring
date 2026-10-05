@@ -1450,6 +1450,13 @@ type SyslogMessage struct {
 	Severity       int       `json:"severity" gorm:"index:idx_syslog_sev_ts,priority:1"`
 	SourceIP       string    `json:"source_ip"`
 	CreatedAt      time.Time `json:"created_at"`
+	// Format is the syslog framing the collector (1.3.48+) parsed the line
+	// with: fortios_kv, rfc5424, rfc3164, meraki, cef or raw. A hint only —
+	// internal/normalize reorders its family list by it and copes without it
+	// (older collectors omit the key; rows re-read from the database never
+	// have it). Not persisted: the raw columns stay the source of truth and a
+	// parser fix must apply to stored rows too.
+	Format string `json:"format,omitempty" gorm:"-"`
 }
 
 // SyslogIngestHourly is one hour × severity of accepted syslog ingest, written
