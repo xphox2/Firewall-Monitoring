@@ -33,11 +33,20 @@ func seedBurst(t *testing.T, db *database.Database, dst string, n int, bytes, pa
 	}
 }
 
+// ddosNow is the clock every DDoS test anchors on: the real time, moved to the
+// middle of its minute. The detector buckets by EPOCH MINUTE and the fixtures
+// seed their burst at now-3m spread over 50 ms, so a plain time.Now() within
+// 50 ms of a minute boundary split the burst across two buckets and halved
+// the peak rate — CI: "severity = warning, want critical at 2.5x", about one
+// run in 1 200. Mid-minute, a 50 ms burst can never straddle a boundary; the
+// window still ends a minute after `now`, so nothing seeded is excluded.
+func ddosNow() time.Time { return time.Now().Truncate(time.Minute).Add(30 * time.Second) }
+
 // TestDDoSVolumetric_PpsFiresNotBps: a packet flood (high pps, low bytes) must
 // fire the pps threshold and not bps.
 func TestDDoSVolumetric_PpsFiresNotBps(t *testing.T) {
 	db := database.NewDatabaseForTesting(t)
-	now := time.Now()
+	now := ddosNow()
 	// 120 rows × 60 packets in one minute = 7200 packets/min = 120 pps peak
 	// (>100 threshold); bytes stay tiny.
 	seedBurst(t, db, "192.0.2.10", 120, 60, 60, models.FlowSourceNetFlowV9, 1, now.Add(-3*time.Minute))
@@ -69,7 +78,7 @@ func TestDDoSVolumetric_PpsFiresNotBps(t *testing.T) {
 // packets) are valid for pps but must never count toward fps.
 func TestDDoSVolumetric_SampledRowsFirePpsButNeverFps(t *testing.T) {
 	db := database.NewDatabaseForTesting(t)
-	now := time.Now()
+	now := ddosNow()
 	// sFlow: 20 rows, each representing 2000 sampled packets → 40000 pkts/min
 	// = 667 pps peak. Flow count 20 is far over a 0.1 fps threshold — but as
 	// sampled rows they must not register as fps at all.
@@ -98,7 +107,7 @@ func TestDDoSVolumetric_SampledRowsFirePpsButNeverFps(t *testing.T) {
 // packets) must never fire pps, but their complete-row flow count fires fps.
 func TestDDoSVolumetric_PacketlessRowsFireFpsNotPps(t *testing.T) {
 	db := database.NewDatabaseForTesting(t)
-	now := time.Now()
+	now := ddosNow()
 	// 700 complete zero-packet rows in one minute ≈ 11.7 fps (>10 threshold).
 	seedBurst(t, db, "192.0.2.12", 700, 40, 0, models.FlowSourceIPFIX, 1, now.Add(-3*time.Minute))
 
@@ -126,7 +135,7 @@ func TestDDoSVolumetric_PacketlessRowsFireFpsNotPps(t *testing.T) {
 // spike.
 func TestDDoSVolumetric_ElephantSmearNoFinding(t *testing.T) {
 	db := database.NewDatabaseForTesting(t)
-	now := time.Now()
+	now := ddosNow()
 	start := now.Add(-14 * time.Minute)
 	end := now.Add(-2 * time.Minute)
 	// 90 MB over 12 minutes = 1 Mb/s average — at threshold boundary but the
@@ -157,7 +166,7 @@ func TestDDoSVolumetric_ElephantSmearNoFinding(t *testing.T) {
 // past the window edge must not read as a multi-Gb/s peak and false-fire.
 func TestDDoSVolumetric_ElephantSmearWindowStraddle(t *testing.T) {
 	db := database.NewDatabaseForTesting(t)
-	now := time.Now()
+	now := ddosNow()
 	// 30-minute flow at a steady 500 Mb/s; window is the last 15 minutes, so
 	// the flow started 15 minutes before the window opened. Bytes over 30 min
 	// at 500 Mb/s = 500e6/8 * 1800 = 112.5 GB.
@@ -188,7 +197,7 @@ func TestDDoSVolumetric_ElephantSmearWindowStraddle(t *testing.T) {
 // TestDDoSVolumetric_CriticalAtTwoTimes: ≥2x threshold escalates to critical.
 func TestDDoSVolumetric_CriticalAtTwoTimes(t *testing.T) {
 	db := database.NewDatabaseForTesting(t)
-	now := time.Now()
+	now := ddosNow()
 	// 250 pps peak vs 100 threshold = 2.5x.
 	seedBurst(t, db, "192.0.2.14", 250, 60, 60, models.FlowSourceNetFlowV9, 1, now.Add(-3*time.Minute))
 
@@ -207,7 +216,7 @@ func TestDDoSVolumetric_CriticalAtTwoTimes(t *testing.T) {
 // TestDDoSVolumetric_Disabled: the kill switch silences the detector.
 func TestDDoSVolumetric_Disabled(t *testing.T) {
 	db := database.NewDatabaseForTesting(t)
-	now := time.Now()
+	now := ddosNow()
 	seedBurst(t, db, "192.0.2.15", 250, 60, 60, models.FlowSourceNetFlowV9, 1, now.Add(-3*time.Minute))
 
 	w := fullWindow(now)
@@ -228,7 +237,7 @@ func TestDDoSVolumetric_Disabled(t *testing.T) {
 // per-host findings.
 func TestDDoSPrefix_CarpetBombing(t *testing.T) {
 	db := database.NewDatabaseForTesting(t)
-	now := time.Now()
+	now := ddosNow()
 	at := now.Add(-3 * time.Minute)
 	// 60 victims × 25 packets/min each = 1500 pkts/min for the /24 → 25 pps
 	// prefix peak vs prefix threshold 100×0.75=75... use bigger: 60 victims ×
@@ -271,7 +280,7 @@ func TestDDoSPrefix_CarpetBombing(t *testing.T) {
 // threshold must yield a per-host finding and NO prefix finding.
 func TestDDoSPrefix_SuppressedWhenHostFired(t *testing.T) {
 	db := database.NewDatabaseForTesting(t)
-	now := time.Now()
+	now := ddosNow()
 	seedBurst(t, db, "192.0.2.20", 200, 60, 60, models.FlowSourceNetFlowV9, 1, now.Add(-3*time.Minute))
 	// A second host in the prefix keeps hosts>=2 true so only hostFired gates.
 	seedBurst(t, db, "192.0.2.21", 30, 60, 60, models.FlowSourceNetFlowV9, 1, now.Add(-3*time.Minute))
@@ -323,7 +332,7 @@ func TestPrefixOf(t *testing.T) {
 // automatic; the test pins it against a LIKE-pattern regression.
 func TestDDoSPrefix_IPv6DistinctSubnetsNotConflated(t *testing.T) {
 	db := database.NewDatabaseForTesting(t)
-	now := time.Now()
+	now := ddosNow()
 	at := now.Add(-3 * time.Minute)
 	// Attack: 40 hosts in 2001:db8:aaaa:1::/64, each 30 pps → 1200 pps.
 	for v := 1; v <= 40; v++ {
@@ -380,7 +389,7 @@ func TestDDoSPrefix_IPv6DistinctSubnetsNotConflated(t *testing.T) {
 // window-floor-based.
 func TestDDoSPrefix_BusyHostDoesNotBlindCarpet(t *testing.T) {
 	db := database.NewDatabaseForTesting(t)
-	now := time.Now()
+	now := ddosNow()
 	at := now.Add(-3 * time.Minute)
 	// Busy-but-not-attacking host: high WINDOW bytes spread evenly so its
 	// peak-minute never crosses the per-host bps threshold. 8 GB over the
