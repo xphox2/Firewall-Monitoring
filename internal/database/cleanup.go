@@ -1167,8 +1167,17 @@ func (d *Database) cleanupNormalizedEventTables(ret config.RetentionConfig) []er
 	now := time.Now()
 
 	netCutoff := now.AddDate(0, 0, -ret.NetEventWindow())
-	if _, _, err := d.dropPartitionsOlderThan("net_events", netCutoff); err != nil {
+	_, partitioned, err := d.dropPartitionsOlderThan("net_events", netCutoff)
+	if err != nil {
 		log.Printf("cleanup: drop-old-partitions warning for net_events: %v", err)
+	}
+	if d.dialect.IsPostgres() && !partitioned {
+		// Partition drop is the ONLY retention this table has: a plain
+		// net_events grows without bound (and would need the batched DELETE
+		// this design deliberately avoids). v72 converts an empty plain table
+		// on the next migration pass; a populated one needs
+		// docs/partition-migration.md.
+		log.Printf("WARNING: cleanup: net_events is not a partitioned parent on this deployment; no retention applies to it until it is converted (docs/partition-migration.md)")
 	}
 	if err := d.trimDefaultPartitionRows("net_events", "ts", netCutoff); err != nil {
 		errs = append(errs, fmt.Errorf("failed to cleanup net_events_default: %w", err))
@@ -1210,11 +1219,13 @@ func (d *Database) cleanupNormalizedEventTables(ret config.RetentionConfig) []er
 
 // trimDefaultPartitionRows deletes rows older than cutoff from a partitioned
 // table's DEFAULT child, for the tables whose retention is otherwise
-// partition-drop only. The default child holds only rows no leaf accepted,
-// so this is a bounded statement on a near-empty relation — it still runs
-// under the retention pass's 5 s lock_timeout / 120 s statement_timeout
-// discipline. A no-op on SQLite and when the child does not exist (a plain,
-// unconverted table).
+// partition-drop only. The default child normally holds only strays, but a
+// poller down for longer than the leaf lead, or ingest before the first
+// EnsurePartitions, can leave whole days there — so this goes through the
+// purge's batched loop (batchedDeleteWhere: 5 s lock_timeout, 120 s
+// statement_timeout, 57014 halves the batch, 55P03 retries) rather than one
+// unbounded DELETE. A no-op on SQLite and when the child does not exist (a
+// plain, unconverted table).
 func (d *Database) trimDefaultPartitionRows(table, column string, cutoff time.Time) error {
 	if !d.dialect.IsPostgres() {
 		return nil
@@ -1227,22 +1238,13 @@ func (d *Database) trimDefaultPartitionRows(table, column string, cutoff time.Ti
 	if !exists {
 		return nil
 	}
-	return d.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec("SET LOCAL lock_timeout = '5s'").Error; err != nil {
-			return err
-		}
-		if err := tx.Exec("SET LOCAL statement_timeout = '120s'").Error; err != nil {
-			return err
-		}
-		res := tx.Exec(fmt.Sprintf("DELETE FROM %s WHERE %s < ?", child, column), cutoff)
-		if res.Error != nil {
-			return res.Error
-		}
-		if res.RowsAffected > 0 {
-			log.Printf("cleanup: trimmed %d stray row(s) older than %s from %s", res.RowsAffected, cutoff.Format("2006-01-02"), child)
-		}
-		return nil
-	})
+	var trimmed int64
+	err := d.batchedDeleteWhere(context.Background(), child, column+" < ?", column, cleanupDeleteBatchSize,
+		[]interface{}{cutoff}, func(rows int64) { trimmed += rows })
+	if trimmed > 0 {
+		log.Printf("cleanup: trimmed %d stray row(s) older than %s from %s", trimmed, cutoff.Format("2006-01-02"), child)
+	}
+	return err
 }
 
 // auditDeviceVendors logs the fleet's vendor distribution at startup. For

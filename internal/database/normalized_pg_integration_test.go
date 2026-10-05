@@ -8,6 +8,7 @@ package database
 import (
 	"fmt"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -242,6 +243,94 @@ func TestNormalizedTables_PG(t *testing.T) {
 		}
 		if n := pgRows(t, d, "sec_events"); n != 1 {
 			t.Fatalf("sec_events rows = %d, want 1 (the recent auth row)", n)
+		}
+	})
+
+	// A day whose leaf is missing while rows for it sit in the DEFAULT child
+	// (poller down longer than the lead, or ingest before the first
+	// EnsurePartitions). Reproduced first: the plain CREATE ... PARTITION OF
+	// fails on PG16 — and would fail on every pass — then the absorbing path
+	// creates the leaf, moves the rows and attaches it.
+	t.Run("MissingLeafWithDefaultRows", func(t *testing.T) {
+		day := utcDay(time.Now()).AddDate(0, 0, -5)
+		leaf := "net_events_" + day.Format("20060102")
+		if err := d.Gorm().Exec(`DROP TABLE ` + leaf).Error; err != nil {
+			t.Fatal(err)
+		}
+		base, _ := rollupFixture()
+		var strays []models.NetEvent
+		for i := 0; i < 3; i++ {
+			r := base[i]
+			r.ID = 0
+			r.Ts = day.Add(time.Duration(6+i) * time.Hour)
+			strays = append(strays, r)
+		}
+		if err := d.SaveNetEvents(strays); err != nil {
+			t.Fatal(err)
+		}
+		if n := pgRows(t, d, "net_events_default"); n != 3 {
+			t.Fatalf("default child holds %d rows, want the 3 strays", n)
+		}
+		before := pgRows(t, d, "net_events")
+		// The reproduction: the pre-fix statement.
+		s, e := day.Format("2006-01-02 15:04:05-07:00"), day.AddDate(0, 0, 1).Format("2006-01-02 15:04:05-07:00")
+		err := d.Gorm().Exec(fmt.Sprintf(`CREATE TABLE %s PARTITION OF net_events FOR VALUES FROM ('%s') TO ('%s')`, leaf, s, e)).Error
+		if err == nil || !strings.Contains(err.Error(), "default partition") {
+			t.Fatalf("plain CREATE ... PARTITION OF must fail while the default holds the day's rows; got %v", err)
+		}
+		// The fix: EnsurePartitions absorbs the rows, in batches.
+		orig := cleanupDeleteBatchSize
+		cleanupDeleteBatchSize = 2 // two batches for three rows
+		defer func() { cleanupDeleteBatchSize = orig }()
+		if err := d.EnsurePartitionsForCron(); err != nil {
+			t.Fatalf("EnsurePartitionsForCron: %v", err)
+		}
+		if !contains(pgLeaves(t, d, "net_events"), leaf) {
+			t.Fatalf("%s was not created and attached", leaf)
+		}
+		if n := pgRows(t, d, leaf); n != 3 {
+			t.Fatalf("%s holds %d rows, want the 3 moved strays", leaf, n)
+		}
+		if n := pgRows(t, d, "net_events_default"); n != 0 {
+			t.Fatalf("default child still holds %d rows", n)
+		}
+		if after := pgRows(t, d, "net_events"); after != before {
+			t.Fatalf("parent row count %d -> %d: rows lost or duplicated by the move", before, after)
+		}
+		// Routing afterwards goes to the leaf, and the leaf has the plan's indexes.
+		late := strays[0]
+		late.ID = 0
+		late.Ts = day.Add(20 * time.Hour)
+		if err := d.SaveNetEvents([]models.NetEvent{late}); err != nil {
+			t.Fatal(err)
+		}
+		if n := pgRows(t, d, leaf); n != 4 {
+			t.Fatalf("a new row for the day went elsewhere (%s holds %d)", leaf, n)
+		}
+		if idx := childNonUniqueIndexCols(t, d, leaf); len(idx) < 5 {
+			t.Fatalf("%s has %d non-unique indexes, want the 5-index plan: %v", leaf, len(idx), idx)
+		}
+
+		// The DEFAULT trim is batched too: 5 strays older than the window with
+		// a batch of 2 are all gone after cleanup.
+		var old []models.NetEvent
+		for i := 0; i < 5; i++ {
+			r := base[0]
+			r.ID = 0
+			r.Ts = utcDay(time.Now()).AddDate(0, 0, -45).Add(time.Duration(i) * time.Minute)
+			old = append(old, r)
+		}
+		if err := d.SaveNetEvents(old); err != nil {
+			t.Fatal(err)
+		}
+		if n := pgRows(t, d, "net_events_default"); n != 5 {
+			t.Fatalf("default child holds %d rows, want 5 old strays", n)
+		}
+		if errs := d.cleanupNormalizedEventTables(ret); len(errs) > 0 {
+			t.Fatalf("cleanup: %v", errs)
+		}
+		if n := pgRows(t, d, "net_events_default"); n != 0 {
+			t.Fatalf("batched default trim left %d rows", n)
 		}
 	})
 

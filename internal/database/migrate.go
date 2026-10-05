@@ -655,6 +655,13 @@ func (d *Database) EnsurePartitions() error {
 // when it exists, and CREATE INDEX takes SHARE, which never queues behind a
 // reader — under a lock_timeout its daily no-op would instead fail behind any
 // long COPY.
+//
+// Since v72 the daily tables (net_events) add one CREATE ... PARTITION OF per
+// day to this pass — one ACCESS EXCLUSIVE acquisition on the parent (and its
+// DEFAULT child) per day, bounded by cronDDLLockTimeout like the monthly ones;
+// a timed-out day is retried the next pass, and the seven-day lead means
+// ingest never waits on it. The same bound covers the ATTACH PARTITION that
+// ensureLeaf uses when the DEFAULT child already holds the day's rows.
 func (d *Database) EnsurePartitionsForCron() error {
 	return d.ensurePartitions(d.execCronDDL)
 }
@@ -788,20 +795,9 @@ func (d *Database) ensurePartitions(createPartition func(sql string, args ...int
 			endStr := w.end.Format("2006-01-02 15:04:05-07:00")
 
 			partitionName := w.name
-			// Check if partition already exists
-			var count int
-			d.db.Raw("SELECT COUNT(*) FROM pg_tables WHERE tablename = ?", partitionName).Scan(&count)
-			if count == 0 {
-				// Create the partition
-				sql := fmt.Sprintf(`
-					CREATE TABLE %s PARTITION OF %s
-					FOR VALUES FROM ('%s') TO ('%s')`,
-					partitionName, def.tableName, startStr, endStr)
-				if err := createPartition(sql); err != nil {
-					log.Printf("Partition creation warning for %s: %v", partitionName, err)
-					continue
-				}
-				log.Printf("Created partition: %s", partitionName)
+			if err := d.ensureLeaf(def, w, startStr, endStr, createPartition); err != nil {
+				log.Printf("Partition creation warning for %s: %v", partitionName, err)
+				continue
 			}
 
 			// Ensure the per-partition indexes exist. LC-19: the list is derived
@@ -816,6 +812,126 @@ func (d *Database) ensurePartitions(createPartition func(sql string, args ...int
 	}
 
 	return nil
+}
+
+// ensureLeaf makes w's leaf an attached child of def's parent, creating it
+// when absent. The plain path is unchanged — one CREATE TABLE ... PARTITION OF
+// through createPartition (lock-bounded on the cron). The other path exists
+// because a leaf can be needed for a range the DEFAULT child already holds
+// rows for: a poller down for longer than the lead, or ingest before the first
+// EnsurePartitions, puts a day's rows in <table>_default, and from then on
+// `CREATE TABLE ... PARTITION OF ... FOR VALUES` fails every pass with
+// "updated partition constraint for default partition would be violated by
+// some row" — the leaf never appears, every later row of that day lands in
+// the default too, and partition-drop retention never reaches any of them.
+// Reproduced on PostgreSQL 16 (TestNormalizedTables_PG/MissingLeafWith
+// DefaultRows). So when the default holds rows in [start, end):
+//
+//  1. create the leaf as a STANDALONE table shaped like the parent (LIKE ...
+//     INCLUDING DEFAULTS, which carries the id sequence default) — invisible
+//     to readers until attached, so a crash leaves nothing half-visible;
+//  2. move the rows out of the default in bounded batches, each one
+//     DELETE ... RETURNING feeding an INSERT in a single transaction under the
+//     retention pass's lock / statement timeouts (moveDefaultRowsIntoLeaf);
+//  3. ATTACH PARTITION through createPartition (ACCESS EXCLUSIVE on the
+//     now-near-empty default, SHARE UPDATE EXCLUSIVE on the parent, lock-
+//     bounded on the cron). Postgres builds the parent's partitioned
+//     indexes — the PK — on the leaf at attach; the plan indexes follow from
+//     the caller as for any leaf.
+//
+// Idempotent across a crash at any point: an existing but unattached leaf is
+// recognised and the move + attach resume; a moved row is never duplicated
+// (the DELETE and INSERT share a transaction) and never lost (the standalone
+// table keeps it). Rows are unreadable through the parent only between their
+// move and the attach — they were strays in the default to begin with.
+func (d *Database) ensureLeaf(def partitionDef, w partitionWindow, startStr, endStr string,
+	createPartition func(sql string, args ...interface{}) error) error {
+	var attached bool
+	if err := d.db.Raw(`SELECT EXISTS (SELECT 1 FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid WHERE c.relname = ?)`,
+		w.name).Scan(&attached).Error; err != nil {
+		return fmt.Errorf("attached probe: %w", err)
+	}
+	if attached {
+		return nil
+	}
+	var exists bool
+	if err := d.db.Raw(`SELECT to_regclass(?) IS NOT NULL`, w.name).Scan(&exists).Error; err != nil {
+		return fmt.Errorf("exists probe: %w", err)
+	}
+	def_ := def.tableName + "_default"
+	var strays bool
+	if err := d.db.Raw(fmt.Sprintf(`SELECT to_regclass(?) IS NOT NULL AND EXISTS (SELECT 1 FROM %s WHERE %s >= ? AND %s < ?)`,
+		def_, def.column, def.column), def_, w.start, w.end).Scan(&strays).Error; err != nil {
+		// The default child is created above in every pass; a probe error here
+		// means the relation is missing or unreadable — fall through to the
+		// plain CREATE, which reports the real problem.
+		strays = false
+	}
+	if !exists && !strays {
+		if err := createPartition(fmt.Sprintf(`
+					CREATE TABLE %s PARTITION OF %s
+					FOR VALUES FROM ('%s') TO ('%s')`, w.name, def.tableName, startStr, endStr)); err != nil {
+			return err
+		}
+		log.Printf("Created partition: %s", w.name)
+		return nil
+	}
+	if !exists {
+		log.Printf("WARNING: %s already holds rows for [%s, %s); creating %s as a standalone table, moving them, then attaching it",
+			def_, startStr, endStr, w.name)
+		if err := d.execMaintenanceDDL(fmt.Sprintf(`CREATE TABLE %s (LIKE %s INCLUDING DEFAULTS)`, w.name, def.tableName)); err != nil {
+			return fmt.Errorf("create standalone leaf: %w", err)
+		}
+	} else {
+		log.Printf("WARNING: %s exists but is not attached to %s (an interrupted earlier pass); resuming the move from %s and the attach",
+			w.name, def.tableName, def_)
+	}
+	moved, err := d.moveDefaultRowsIntoLeaf(def_, w.name, def.column, w.start, w.end)
+	if err != nil {
+		return fmt.Errorf("move rows from %s: %w", def_, err)
+	}
+	if err := createPartition(fmt.Sprintf(`ALTER TABLE %s ATTACH PARTITION %s FOR VALUES FROM ('%s') TO ('%s')`,
+		def.tableName, w.name, startStr, endStr)); err != nil {
+		return fmt.Errorf("attach (%d row(s) moved out of %s and kept in the standalone leaf; retried next pass): %w", moved, def_, err)
+	}
+	log.Printf("Created partition: %s (attached after moving %d row(s) out of %s)", w.name, moved, def_)
+	return nil
+}
+
+// moveDefaultRowsIntoLeaf moves the rows of [start, end) from the DEFAULT child
+// into an unattached leaf, cleanupDeleteBatchSize rows per transaction, each
+// batch a DELETE ... RETURNING feeding the INSERT so a row is either in one
+// table or the other at every commit. Lock / statement timeouts match the
+// retention pass's batched deletes. Returns the rows moved.
+func (d *Database) moveDefaultRowsIntoLeaf(defaultChild, leaf, column string, start, end time.Time) (int64, error) {
+	stmt := fmt.Sprintf(`WITH moved AS (
+			DELETE FROM %s WHERE id IN (
+				SELECT id FROM %s WHERE %s >= ? AND %s < ? ORDER BY %s LIMIT ?
+			) RETURNING *)
+		INSERT INTO %s SELECT * FROM moved`, defaultChild, defaultChild, column, column, column, leaf)
+	var total int64
+	for {
+		var n int64
+		err := d.db.Transaction(func(tx *gorm.DB) error {
+			if e := tx.Exec("SET LOCAL lock_timeout = '5s'").Error; e != nil {
+				return e
+			}
+			if e := tx.Exec("SET LOCAL statement_timeout = '120s'").Error; e != nil {
+				return e
+			}
+			res := tx.Exec(stmt, start, end, cleanupDeleteBatchSize)
+			n = res.RowsAffected
+			return res.Error
+		})
+		if err != nil {
+			return total, err
+		}
+		total += n
+		if n < int64(cleanupDeleteBatchSize) {
+			return total, nil
+		}
+		time.Sleep(batchDeleteInterSleep)
+	}
 }
 
 // ensureLeafIndexes creates the plan's indexes on one leaf partition as
@@ -1088,6 +1204,13 @@ func (d *Database) ConfigureAutovacuum() error {
 		// for that to happen; at a 20% scale factor on a multi-GB partition it does
 		// not, and the partition grows toward its full ingest size instead.
 		for _, target := range d.autovacuumTargets(table) {
+			// A leaf that already carries both parameter sets needs nothing: an
+			// ALTER TABLE SET takes SHARE UPDATE EXCLUSIVE on the leaf and
+			// rewrites its pg_class row, and with the v72 daily leaves there
+			// are ~40 of them per boot — the catalog read is the cheaper no-op.
+			if d.autovacuumConfigured(target) {
+				continue
+			}
 			sql := fmt.Sprintf(`
 			ALTER TABLE %s SET (
 				autovacuum_vacuum_scale_factor = 0.01,
@@ -1138,6 +1261,20 @@ func (d *Database) ConfigureAutovacuum() error {
 	}
 
 	return nil
+}
+
+// autovacuumConfigured reports whether rel's reloptions already carry the
+// settings ConfigureAutovacuum applies — both statements' worth, so a
+// pre-PG13 server (where the insert parameters are rejected) keeps retrying
+// them exactly as before. False on any probe error, which re-applies.
+func (d *Database) autovacuumConfigured(rel string) bool {
+	var opts string
+	if err := d.db.Raw(`SELECT COALESCE(array_to_string(reloptions, ','), '') FROM pg_class WHERE oid = to_regclass(?)`, rel).
+		Scan(&opts).Error; err != nil {
+		return false
+	}
+	return strings.Contains(opts, "autovacuum_vacuum_scale_factor=0.01") &&
+		strings.Contains(opts, "autovacuum_vacuum_insert_threshold=100000")
 }
 
 // autovacuumTargets resolves a configured table name to the relations that can

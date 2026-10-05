@@ -447,20 +447,21 @@ func (d *Database) UpsertFwRules(rules []models.FwRule) error {
 		if r.Source > m.Source {
 			m.Source = r.Source
 		}
+		// Same rule as the ON CONFLICT below: the newest non-nil value wins.
 		fillStr(&m.RuleUID, r.RuleUID)
 		fillStr(&m.RuleName, r.RuleName)
 		fillStr(&m.Ruleset, r.Ruleset)
 		fillStr(&m.Extra, r.Extra)
-		if m.RuleID == nil {
+		if r.RuleID != nil {
 			m.RuleID = r.RuleID
 		}
-		if m.RuleIndex == nil {
+		if r.RuleIndex != nil {
 			m.RuleIndex = r.RuleIndex
 		}
-		if m.Enabled == nil {
+		if r.Enabled != nil {
 			m.Enabled = r.Enabled
 		}
-		if m.Position == nil {
+		if r.Position != nil {
 			m.Position = r.Position
 		}
 	}
@@ -485,8 +486,11 @@ func (d *Database) UpsertFwRules(rules []models.FwRule) error {
 	}).CreateInBatches(&merged, normalizedInsertBatch).Error
 }
 
+// fillStr overwrites dst when src is supplied — COALESCE(excluded, existing)
+// applied batch-wise, so the later non-nil value wins exactly as it would
+// have had the rows arrived in separate batches.
 func fillStr(dst **string, src *string) {
-	if *dst == nil {
+	if src != nil {
 		*dst = src
 	}
 }

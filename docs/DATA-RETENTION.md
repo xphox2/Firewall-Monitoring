@@ -81,15 +81,22 @@ no row `DELETE` ever runs over the table — this is the traffic-class volume
 that made the batched syslog `DELETE` a multi-hour job. Leaves are created from
 `RETENTION_NET_EVENT_DAYS` days back through seven days ahead, so the one-time
 30-day backfill writes into droppable leaves; the `net_events_default` child
-only ever holds strays (a clock-skewed collector) and is trimmed with one
-bounded `DELETE`. `sec_events` keeps a window per class: `config_change` rows
-are kept forever by default (operator decision: in the same table, not a
-separate one) while the other classes follow `RETENTION_SEC_EVENT_DAYS`; a
-monthly leaf is dropped only once both windows have passed it. The 5-minute
-rollup tick folds each completed hour of `net_events` into `net_event_rollups`
-and, once a UTC day is complete, recomputes that day exactly from its partition
-(`distinct_src` is a lower bound until then). Raw syslog retention is unchanged
-by any of this.
+holds only what no leaf accepted (a clock-skewed collector, or a day whose leaf
+did not exist yet) and is trimmed with the batched-delete loop. If a day's
+leaf is missing while its rows already sit in the default child, the partition
+pass creates the leaf standalone, moves the rows out in batches and attaches
+it — otherwise the leaf could never be created. `sec_events` keeps a window per
+class: `config_change` rows are kept forever by default (operator decision: in
+the same table, not a separate one) while the other classes follow
+`RETENTION_SEC_EVENT_DAYS`; a monthly leaf is dropped only once both windows
+have passed it. The 5-minute rollup tick folds each completed hour of
+`net_events` into `net_event_rollups` and, once a UTC day is complete,
+recomputes that day exactly — hour by hour, never one statement over the whole
+day — and sets `distinct_src_exact` (`distinct_src` is a lower bound until
+then, and stays one, flagged, if the day exceeded the in-memory distinct budget
+or its recompute failed three cycles running;
+`fwmon_net_event_rollup_day_skips_total` counts the latter). Raw syslog
+retention is unchanged by any of this.
 
 ### Tables that are NOT auto-pruned
 

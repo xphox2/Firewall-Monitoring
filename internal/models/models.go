@@ -1748,7 +1748,12 @@ type NetEventRollup struct {
 	BytesIn     int64     `json:"bytes_in" gorm:"not null;default:0"`
 	BytesOut    int64     `json:"bytes_out" gorm:"not null;default:0"`
 	DistinctSrc int64     `json:"distinct_src" gorm:"not null;default:0"`
-	LastTs      time.Time `json:"last_ts"`
+	// DistinctSrcExact is true once the day close recomputed DistinctSrc over
+	// the whole day; false while the row is built from hour folds (a lower
+	// bound), when the exact recompute exceeded its budget, or when the day
+	// close was skipped after repeated failures.
+	DistinctSrcExact bool      `json:"distinct_src_exact" gorm:"not null;default:false"`
+	LastTs           time.Time `json:"last_ts"`
 }
 
 func (NetEventRollup) TableName() string { return "net_event_rollups" }

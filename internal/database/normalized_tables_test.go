@@ -328,6 +328,30 @@ func TestUpsertFwRules_MergeAndGreatest(t *testing.T) {
 	}
 }
 
+// TestUpsertFwRules_BatchMergeNewestWins: within one batch the later non-nil
+// value wins, exactly as COALESCE(excluded, existing) would across batches.
+func TestUpsertFwRules_BatchMergeNewestWins(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	t0 := time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC)
+	first, second := "first", "second"
+	idx := int32(7)
+	batch := []models.FwRule{
+		{DeviceID: 1, RuleKey: "x:WAN_LOCAL/2000", RuleName: &first, RuleIndex: &idx, FirstSeen: t0, LastSeen: t0},
+		{DeviceID: 1, RuleKey: "x:WAN_LOCAL/2000", RuleName: &second, FirstSeen: t0, LastSeen: t0},
+		{DeviceID: 1, RuleKey: "x:WAN_LOCAL/2000", FirstSeen: t0, LastSeen: t0},
+	}
+	if err := d.UpsertFwRules(batch); err != nil {
+		t.Fatal(err)
+	}
+	var got models.FwRule
+	if err := d.db.First(&got).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.RuleName == nil || *got.RuleName != second || got.RuleIndex == nil || *got.RuleIndex != 7 {
+		t.Fatalf("merged row name=%v index=%v, want second / 7 (newest non-nil wins; nil never overwrites)", got.RuleName, got.RuleIndex)
+	}
+}
+
 // TestFlushFieldObserved_Accumulates: counts add across flushes (and within
 // one), last_seen keeps the latest.
 func TestFlushFieldObserved_Accumulates(t *testing.T) {
@@ -390,15 +414,17 @@ func rollupFixture() ([]models.NetEvent, []models.NetEventRollup) {
 		ev(d3.Add(9*time.Hour+30*time.Minute), 2, str("i:root/12"), normalize.ActionAllow, nil, nil, str("root"), "192.0.2.21", i64(70), i64(7)),
 		ev(d3.Add(11*time.Hour+50*time.Minute), 2, str("i:root/12"), normalize.ActionAllow, nil, nil, str("root"), "192.0.2.22", i64(90), i64(9)),
 	}
+	// Closed days (d1, d2) are exact; the open day (d3) is the hour fold's
+	// lower bound.
 	want := []models.NetEventRollup{
 		{Day: d1, DeviceID: 1, RuleKey: "", Action: int16(normalize.ActionDeny), Direction: 0, AppCat: "", Ruleset: "",
-			Hits: 2, BytesIn: 0, BytesOut: 0, DistinctSrc: 1, LastTs: d1.Add(10*time.Hour + 31*time.Minute)},
+			Hits: 2, BytesIn: 0, BytesOut: 0, DistinctSrc: 1, DistinctSrcExact: true, LastTs: d1.Add(10*time.Hour + 31*time.Minute)},
 		{Day: d1, DeviceID: 1, RuleKey: "u:a", Action: int16(normalize.ActionAllow), Direction: dir, AppCat: "Web", Ruleset: "root",
-			Hits: 3, BytesIn: 600, BytesOut: 60, DistinctSrc: 3, LastTs: d1.Add(11*time.Hour + 15*time.Minute)},
+			Hits: 3, BytesIn: 600, BytesOut: 60, DistinctSrc: 3, DistinctSrcExact: true, LastTs: d1.Add(11*time.Hour + 15*time.Minute)},
 		{Day: d2, DeviceID: 2, RuleKey: "i:root/12", Action: int16(normalize.ActionAllow), Direction: 0, AppCat: "", Ruleset: "root",
-			Hits: 1, BytesIn: 50, BytesOut: 5, DistinctSrc: 1, LastTs: d2.Add(23*time.Hour + 40*time.Minute)},
+			Hits: 1, BytesIn: 50, BytesOut: 5, DistinctSrc: 1, DistinctSrcExact: true, LastTs: d2.Add(23*time.Hour + 40*time.Minute)},
 		{Day: d3, DeviceID: 2, RuleKey: "i:root/12", Action: int16(normalize.ActionAllow), Direction: 0, AppCat: "", Ruleset: "root",
-			Hits: 1, BytesIn: 70, BytesOut: 7, DistinctSrc: 1, LastTs: d3.Add(9*time.Hour + 30*time.Minute)},
+			Hits: 1, BytesIn: 70, BytesOut: 7, DistinctSrc: 1, DistinctSrcExact: false, LastTs: d3.Add(9*time.Hour + 30*time.Minute)},
 	}
 	return rows, want
 }
@@ -417,7 +443,7 @@ func checkRollups(t *testing.T, d *Database, want []models.NetEventRollup) {
 		g, w := got[i], want[i]
 		if !g.Day.Equal(w.Day) || g.DeviceID != w.DeviceID || g.RuleKey != w.RuleKey || g.Action != w.Action || g.Direction != w.Direction ||
 			g.AppCat != w.AppCat || g.Ruleset != w.Ruleset || g.Hits != w.Hits || g.BytesIn != w.BytesIn || g.BytesOut != w.BytesOut ||
-			g.DistinctSrc != w.DistinctSrc || !g.LastTs.Equal(w.LastTs) {
+			g.DistinctSrc != w.DistinctSrc || g.DistinctSrcExact != w.DistinctSrcExact || !g.LastTs.Equal(w.LastTs) {
 			t.Errorf("rollup row %d:\n got %s\nwant %s", i, dumpRollups([]models.NetEventRollup{g}), dumpRollups([]models.NetEventRollup{w}))
 		}
 	}
@@ -426,8 +452,8 @@ func checkRollups(t *testing.T, d *Database, want []models.NetEventRollup) {
 func dumpRollups(rows []models.NetEventRollup) string {
 	var b strings.Builder
 	for _, r := range rows {
-		fmt.Fprintf(&b, "  %s dev=%d rule=%q action=%d dir=%d app=%q ruleset=%q hits=%d in=%d out=%d distinct=%d last=%s\n",
-			r.Day.Format("2006-01-02"), r.DeviceID, r.RuleKey, r.Action, r.Direction, r.AppCat, r.Ruleset, r.Hits, r.BytesIn, r.BytesOut, r.DistinctSrc, r.LastTs.UTC().Format(time.RFC3339))
+		fmt.Fprintf(&b, "  %s dev=%d rule=%q action=%d dir=%d app=%q ruleset=%q hits=%d in=%d out=%d distinct=%d exact=%v last=%s\n",
+			r.Day.Format("2006-01-02"), r.DeviceID, r.RuleKey, r.Action, r.Direction, r.AppCat, r.Ruleset, r.Hits, r.BytesIn, r.BytesOut, r.DistinctSrc, r.DistinctSrcExact, r.LastTs.UTC().Format(time.RFC3339))
 	}
 	return b.String()
 }
@@ -457,6 +483,8 @@ func runRollupScenario(t *testing.T, d *Database) {
 		t.Fatalf("cycle 1 folded %d hours, closed %d days; want 2 / 0", hours, days)
 	}
 	open := []models.NetEventRollup{want[0], want[1]}
+	open[0].DistinctSrcExact = false
+	open[1].DistinctSrcExact = false
 	open[1].DistinctSrc = 2 // hours 10 (2 sources) and 11 (1 source): the lower bound
 	checkRollups(t, d, open)
 	if wm, ok, _ := d.netEventRollupWatermark(); !ok || !wm.Equal(time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)) {
@@ -512,6 +540,101 @@ func runRollupScenario(t *testing.T, d *Database) {
 // TestNetEventRollup_SQLite runs the shared scenario on the SQLite lane.
 func TestNetEventRollup_SQLite(t *testing.T) {
 	runRollupScenario(t, NewDatabaseForTesting(t))
+}
+
+// TestNetEventRollup_CloseGiveUp: a day whose exact recompute fails three
+// cycles running is skipped — its hour-fold rows stay (distinct_src a lower
+// bound, exact = false), the closed-day cursor moves past it and the failure
+// counter is cleared — while the next day still closes exactly. Before the
+// third failure the cursor must NOT move.
+func TestNetEventRollup_CloseGiveUp(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	rows, want := rollupFixture()
+	if err := d.SaveNetEvents(rows); err != nil {
+		t.Fatal(err)
+	}
+	bad := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	netEventRollupCloseHook = func(day, _ time.Time) error {
+		if day.Equal(bad) {
+			return fmt.Errorf("injected: partition unreadable")
+		}
+		return nil
+	}
+	defer func() { netEventRollupCloseHook = nil }()
+
+	for attempt := 1; attempt < netEventRollupCloseGiveUp; attempt++ {
+		_, days, err := d.runNetEventRollupCycle(rollupFixtureNow)
+		if err == nil || !strings.Contains(err.Error(), "injected") || days != 0 {
+			t.Fatalf("attempt %d: days=%d err=%v, want the injected error and no closed day", attempt, days, err)
+		}
+		if _, ok, _ := d.netEventRollupClosedDay(); ok {
+			t.Fatalf("attempt %d: the cursor moved before the give-up threshold", attempt)
+		}
+		if v, _ := d.GetSettingValue(netEventRollupCloseFailuresKey); v != fmt.Sprintf("2026-10-01:%d", attempt) {
+			t.Fatalf("attempt %d: failure counter = %q", attempt, v)
+		}
+	}
+	_, days, err := d.runNetEventRollupCycle(rollupFixtureNow)
+	if err != nil || days != 2 {
+		t.Fatalf("give-up cycle: days=%d err=%v, want 2 (one skipped, one closed) and no error", days, err)
+	}
+	if closed, ok, _ := d.netEventRollupClosedDay(); !ok || closed.Format("2006-01-02") != "2026-10-02" {
+		t.Fatalf("closed day = %v %v, want 2026-10-02", closed, ok)
+	}
+	if v, ok := d.GetSettingValue(netEventRollupCloseFailuresKey); ok {
+		t.Fatalf("failure counter must be cleared after the skip, got %q", v)
+	}
+	// 2026-10-01 keeps the hour folds' values; 2026-10-02 and the open day are as usual.
+	skipped := make([]models.NetEventRollup, len(want))
+	copy(skipped, want)
+	skipped[0].DistinctSrcExact = false
+	skipped[1].DistinctSrcExact = false
+	skipped[1].DistinctSrc = 2
+	checkRollups(t, d, skipped)
+}
+
+// TestNetEventRollup_DistinctBudget: past the pair budget the day close keeps
+// hits / bytes exact but reports distinct_src as the lower bound and flags it.
+func TestNetEventRollup_DistinctBudget(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	rows, want := rollupFixture()
+	if err := d.SaveNetEvents(rows); err != nil {
+		t.Fatal(err)
+	}
+	orig := netEventRollupDistinctBudget
+	netEventRollupDistinctBudget = 1 // the first hour of 2026-10-01 alone has 3 pairs
+	defer func() { netEventRollupDistinctBudget = orig }()
+	if _, days, err := d.runNetEventRollupCycle(rollupFixtureNow); err != nil || days != 2 {
+		t.Fatalf("days=%d err=%v", days, err)
+	}
+	// The budget is per day close: 2026-10-01 (3 pairs in its first hour)
+	// degrades, 2026-10-02 (one pair) stays exact.
+	approx := make([]models.NetEventRollup, len(want))
+	copy(approx, want)
+	approx[0].DistinctSrcExact = false
+	approx[1].DistinctSrcExact = false
+	approx[1].DistinctSrc = 2 // hour 10's two sources; hour 11's third is never merged
+	checkRollups(t, d, approx)
+}
+
+// TestNetEventRollup_StrayRowDoesNotDragCursors: a row dated far outside the
+// retention window (a clock-skewed collector, in the DEFAULT partition on
+// Postgres) must not start the hour watermark or the day cursor there.
+func TestNetEventRollup_StrayRowDoesNotDragCursors(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	rows, want := rollupFixture()
+	stray := rows[0]
+	stray.Ts = time.Date(2000, 1, 1, 12, 0, 0, 0, time.UTC)
+	if err := d.SaveNetEvents(append([]models.NetEvent{stray}, rows...)); err != nil {
+		t.Fatal(err)
+	}
+	if _, days, err := d.runNetEventRollupCycle(rollupFixtureNow); err != nil || days != 2 {
+		t.Fatalf("days=%d err=%v, want the two fixture days closed in one cycle", days, err)
+	}
+	checkRollups(t, d, want) // and no rollup row for the year 2000
+	if closed, _, _ := d.netEventRollupClosedDay(); closed.Year() != 2026 {
+		t.Fatalf("closed-day cursor = %s, dragged back by the stray row", closed)
+	}
 }
 
 // TestNetEventRollup_EmptyTableIsQuiet: no events, no settings written.
