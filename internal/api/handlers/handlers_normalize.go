@@ -211,10 +211,15 @@ type denyTuple struct {
 }
 
 // collapsePacketDeny reports whether this deny is a repeat of an identical
-// per-packet deny seen within denyCollapseWindow (see the constant). Only
-// the netfilter family logs per packet without a session abstraction;
-// filterlog rows are per packet too but ProjectVendor always projected them
-// one-to-one and the deny parity with it is kept.
+// per-packet deny whose event time lies within denyCollapseWindow of the
+// one last projected for the tuple — on either side, so a batch delivered
+// out of order collapses the same packets and an OLDER row (a spool drain
+// replaying this morning's denies after a live mark) is never swallowed as
+// a repeat of a later one. Only the netfilter family logs per packet
+// without a session abstraction; filterlog rows are per packet too but
+// ProjectVendor always projected them one-to-one and the deny parity with
+// it is kept. ICMP and other port-less protocols collapse on (device, src,
+// dst, proto) with both ports zero — one ping burst, one row.
 func (h *Handler) collapsePacketDeny(ev *normalize.Event, fam normalize.Family) bool {
 	if fam != normalize.FamilyNetfilter || ev.Activity != normalize.ActivityPacket {
 		return false
@@ -231,10 +236,12 @@ func (h *Handler) collapsePacketDeny(ev *normalize.Event, fam normalize.Family) 
 	if ev.Proto != nil {
 		k.proto = *ev.Proto
 	}
-	if h.denyCollapse.recent(k, ev.Ts) {
+	if h.denyCollapse.near(k, ev.Ts) {
 		return true
 	}
-	h.denyCollapse.mark(k, ev.Ts)
+	// A newer distinct deny moves the mark forward; an older distinct one
+	// (spool replay) is projected without dragging the mark back in time.
+	h.denyCollapse.markLatest(k, ev.Ts)
 	return false
 }
 
@@ -248,7 +255,7 @@ func (h *Handler) markNormalizeIngestStarted(now time.Time) {
 	if h.normalizeStarted.Load() {
 		return
 	}
-	_, err := h.db.InsertSettingIfAbsent(&models.SystemSetting{
+	inserted, err := h.db.InsertSettingIfAbsent(&models.SystemSetting{
 		Key:      normalizeIngestStartedSetting,
 		Value:    now.UTC().Format(time.RFC3339),
 		Type:     "string",
@@ -258,6 +265,9 @@ func (h *Handler) markNormalizeIngestStarted(now time.Time) {
 	if err != nil {
 		log.Printf("normalizeIngest: record %s: %v", normalizeIngestStartedSetting, err)
 		return
+	}
+	if inserted {
+		log.Printf("normalizeIngest: normalize ingest watermark recorded at %s (%s)", now.UTC().Format(time.RFC3339), normalizeIngestStartedSetting)
 	}
 	h.normalizeStarted.Store(true)
 }
@@ -422,15 +432,19 @@ type fwRuleKey struct {
 
 type recentEntry[K comparable] struct {
 	key    K
-	expiry time.Time
+	at     time.Time // when the key was marked (event time for the collapse window)
+	expiry time.Time // at + ttl
 }
 
 // recentKeys remembers keys for a fixed window (ttl) and holds at most max
 // of them, evicting the least recently touched. Two-phase on purpose: recent
-// asks, mark records — so a caller can mark only after the write the key
-// stands for succeeded (fw_rules), and a repeat inside the window does not
-// extend it (a steady SYN-retry stream still projects once per window).
-// Zero value ready except for ttl / max, which NewHandler sets.
+// / near ask, mark / markLatest record — so a caller can mark only after the
+// write the key stands for succeeded (fw_rules), and a repeat inside the
+// window does not extend it (a steady SYN-retry stream still projects once
+// per window). recent is the wall-clock form (now before the expiry);
+// near is the event-time form (|at − mark| < ttl, bounded on BOTH sides, for
+// rows that may arrive out of order or long after the fact). Zero value
+// ready except for ttl / max, which NewHandler sets.
 type recentKeys[K comparable] struct {
 	ttl time.Duration
 	max int
@@ -453,6 +467,37 @@ func (r *recentKeys[K]) recent(key K, now time.Time) bool {
 	return now.Before(el.Value.(*recentEntry[K]).expiry)
 }
 
+// near reports whether key was marked within ttl of at, in either direction:
+// a row older than the mark by more than ttl is NOT near it, so a mark can
+// never swallow earlier distinct events.
+func (r *recentKeys[K]) near(key K, at time.Time) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	el, ok := r.m[key]
+	if !ok {
+		return false
+	}
+	r.ll.MoveToFront(el)
+	d := at.Sub(el.Value.(*recentEntry[K]).at)
+	if d < 0 {
+		d = -d
+	}
+	return d < r.ttl
+}
+
+// markLatest is mark, except that an existing mark is only moved FORWARD:
+// an older at (a replayed row) leaves the newer mark in place.
+func (r *recentKeys[K]) markLatest(key K, at time.Time) {
+	r.mu.Lock()
+	if el, ok := r.m[key]; ok && !at.After(el.Value.(*recentEntry[K]).at) {
+		r.ll.MoveToFront(el)
+		r.mu.Unlock()
+		return
+	}
+	r.mu.Unlock()
+	r.mark(key, at)
+}
+
 // mark records key as seen at now (window restarts), evicting the least
 // recently touched keys past max.
 func (r *recentKeys[K]) mark(key K, now time.Time) {
@@ -463,7 +508,8 @@ func (r *recentKeys[K]) mark(key K, now time.Time) {
 		r.ll = list.New()
 	}
 	if el, ok := r.m[key]; ok {
-		el.Value.(*recentEntry[K]).expiry = now.Add(r.ttl)
+		e := el.Value.(*recentEntry[K])
+		e.at, e.expiry = now, now.Add(r.ttl)
 		r.ll.MoveToFront(el)
 		return
 	}
@@ -472,7 +518,7 @@ func (r *recentKeys[K]) mark(key K, now time.Time) {
 		delete(r.m, back.Value.(*recentEntry[K]).key)
 		r.ll.Remove(back)
 	}
-	r.m[key] = r.ll.PushFront(&recentEntry[K]{key: key, expiry: now.Add(r.ttl)})
+	r.m[key] = r.ll.PushFront(&recentEntry[K]{key: key, at: now, expiry: now.Add(r.ttl)})
 }
 
 // size is the number of keys held (tests).

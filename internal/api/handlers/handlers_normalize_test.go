@@ -602,6 +602,71 @@ func TestIngest_NetfilterDenyCollapsed(t *testing.T) {
 	}
 }
 
+// TestIngest_NetfilterDenyCollapse_OutOfOrderAndSpool: the collapse window
+// is bounded on both sides of the mark. A batch delivered out of order
+// collapses the same SYN retries whichever came first; a row OLDER than the
+// mark by more than the window (a spool drain replaying earlier denies after
+// a live one was projected) is projected, not swallowed; a newer distinct
+// deny moves the mark forward and its own retries collapse against it.
+func TestIngest_NetfilterDenyCollapse_OutOfOrderAndSpool(t *testing.T) {
+	f := newNormalizeFixture(t, 6, nil)
+	t0 := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	at := func(ts time.Time) map[string]interface{} {
+		m := f.msg("unifi", "kernel", "rfc3164", ufNetfilter)
+		m["timestamp"] = ts
+		return m
+	}
+	batch := []map[string]interface{}{
+		at(t0.Add(1900 * time.Millisecond)), // A: first seen → projected, mark 1.9 s
+		at(t0.Add(300 * time.Millisecond)),  // B: out of order, 1.6 s before the mark → repeat
+		at(t0.Add(-10 * time.Second)),       // C: spool row from well before → projected, mark stays
+		at(t0.Add(4 * time.Second)),         // D: 2.1 s after the mark → projected, mark moves to 4 s
+		at(t0.Add(5500 * time.Millisecond)), // E: 1.5 s after the new mark → repeat
+	}
+	f.post(t, batch)
+	if n := countRows(t, f.db, &models.NetEvent{}, ""); int(n) != len(batch) {
+		t.Errorf("net_events = %d, want %d", n, len(batch))
+	}
+	if n := countRows(t, f.db, &models.DeniedEvent{}, "device_id = ?", f.dev["unifi"].ID); n != 3 {
+		t.Errorf("UniFi denied_events = %d, want 3 (A, the older spool row C, the later distinct D)", n)
+	}
+	var tsList []time.Time
+	f.db.Gorm().Model(&models.DeniedEvent{}).Where("device_id = ?", f.dev["unifi"].ID).Order("timestamp").Pluck("timestamp", &tsList)
+	if len(tsList) == 3 && !tsList[0].Equal(t0.Add(-10*time.Second)) {
+		t.Errorf("oldest projected deny = %v, want the spool row at %v", tsList[0], t0.Add(-10*time.Second))
+	}
+}
+
+// TestRecentKeys_NearIsTwoSided: near is |at − mark| < ttl on both sides and
+// markLatest never moves a mark backwards.
+func TestRecentKeys_NearIsTwoSided(t *testing.T) {
+	r := recentKeys[int]{ttl: 2 * time.Second, max: 10}
+	m := time.Unix(1_759_579_200, 0)
+	r.mark(1, m)
+	for _, tc := range []struct {
+		at   time.Time
+		want bool
+	}{
+		{m.Add(1900 * time.Millisecond), true}, {m.Add(2 * time.Second), false},
+		{m.Add(-1900 * time.Millisecond), true}, {m.Add(-2 * time.Second), false}, {m.Add(-time.Hour), false},
+	} {
+		if got := r.near(1, tc.at); got != tc.want {
+			t.Errorf("near(mark%+v) = %v, want %v", tc.at.Sub(m), got, tc.want)
+		}
+	}
+	r.markLatest(1, m.Add(-time.Hour))
+	if !r.near(1, m) {
+		t.Error("markLatest with an older time moved the mark backwards")
+	}
+	r.markLatest(1, m.Add(10*time.Second))
+	if r.near(1, m) || !r.near(1, m.Add(11*time.Second)) {
+		t.Error("markLatest with a newer time did not move the mark forward")
+	}
+	if r.near(2, m) {
+		t.Error("an unmarked key is never near")
+	}
+}
+
 // TestRunObservedFlusher_FlushesOnCancelThenFinal: the loop flushes what it
 // holds when its context is cancelled and returns; what a draining request
 // records after that reaches the table through the caller's final flush.
