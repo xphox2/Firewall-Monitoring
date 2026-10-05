@@ -57,6 +57,12 @@ type Database struct {
 	// check not run) reports verified.
 	encKeyBroken bool
 	encKeyDetail string
+
+	// netEventRetentionDays is RETENTION_NET_EVENT_DAYS as resolved by Connect
+	// (RetentionConfig.NetEventWindow), read by partitionLookbackDays so the
+	// daily net_events leaves reach exactly as far back as retention does. 0
+	// (the SQLite harness) falls back to defaultNetEventLookbackDays.
+	netEventRetentionDays int
 }
 
 func (d *Database) Gorm() *gorm.DB {
@@ -221,7 +227,11 @@ func Connect(cfg *config.Config) (*Database, error) {
 		}
 	}
 
-	d := &Database{db: db, encKeys: keyChain{current: encKey, legacy: legacyKeys}, dialect: dial}
+	d := &Database{db: db, encKeys: keyChain{current: encKey, legacy: legacyKeys}, dialect: dial,
+		// The daily net_events leaves are created as far back as retention
+		// reaches (partitionLookbackDays), so EnsurePartitions needs the window
+		// CleanupOldData will use — recorded here once, from the same config.
+		netEventRetentionDays: cfg.Retention.NetEventWindow()}
 
 	// Initialize the pgx pool alongside GORM. pgxpool gives us direct access
 	// to the Postgres COPY protocol for bulk inserts (SaveFlowSamples on the

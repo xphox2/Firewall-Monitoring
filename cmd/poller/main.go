@@ -551,12 +551,14 @@ func (p *Poller) Start() error {
 	}
 }
 
-// runRollupCycle is the rollup tick's body: flow rollup promotion and the syslog
-// aggregation pass. Always called under the maintenance lock.
+// runRollupCycle is the rollup tick's body: flow rollup promotion, the syslog
+// aggregation pass and the net_events daily rollup (v72). Always called under
+// the maintenance lock.
 func (p *Poller) runRollupCycle() {
 	if p.db != nil {
 		p.db.RunFlowRollupCycle()
 		p.db.RunSyslogAggregationCycle(p.cfg.Retention)
+		p.db.RunNetEventRollupCycle()
 	}
 }
 

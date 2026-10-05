@@ -1560,6 +1560,249 @@ const (
 	DenySignalPattern uint8 = 2 // action="start" on a block-policy-name match
 )
 
+// NetEvent is one normalized network-class event (roadmap §1.2; migration
+// v72). The columns are the normalize.Event fields of the network class, typed
+// for Postgres: enums as smallint, addresses as inet / macaddr, country codes
+// as char(2), vendor leftovers as jsonb. Every nullable column follows one
+// rule — NULL = the vendor did not supply the field, 0 = the vendor supplied
+// zero — so a pointer field here is nil exactly when the Event's is (a string
+// column is NULL when the Event's string is empty). Activity, Action and
+// ThreatFlag are value types on the Event and therefore NOT NULL here.
+//
+// The table is RANGE-partitioned on ts by DAY on Postgres (the one daily
+// table; every other partitioned table is monthly) with a lookback equal to
+// RETENTION_NET_EVENT_DAYS so the 30-day backfill never lands in the DEFAULT
+// partition. ts is written in UTC: the COPY writer binds instants and the
+// GORM fallback is the SQLite test lane. Retention is partition-drop only.
+// The index tags are what partitionIndexPlan turns into the per-leaf index
+// set — (device_id, ts), (ts), (rule_key, ts), (src_ip, ts), (dst_ip, ts) —
+// so a new index belongs here, never in a hand-written DDL list (LC-19).
+type NetEvent struct {
+	ID       uint      `json:"id" gorm:"primaryKey"`
+	Ts       time.Time `json:"ts" gorm:"index:idx_net_events_ts;index:idx_net_events_device_ts,priority:2;index:idx_net_events_rule_ts,priority:2;index:idx_net_events_src_ts,priority:2;index:idx_net_events_dst_ts,priority:2"`
+	DeviceID uint      `json:"device_id" gorm:"index:idx_net_events_device_ts,priority:1"`
+	ProbeID  uint      `json:"probe_id"`
+
+	Activity      int16   `json:"activity" gorm:"not null;default:0"`
+	Action        int16   `json:"action" gorm:"not null;default:0"`
+	VendorEventID *string `json:"vendor_event_id"`
+
+	// endpoints
+	SrcIP     *string `json:"src_ip" gorm:"type:inet;index:idx_net_events_src_ts,priority:1"`
+	SrcPort   *int32  `json:"src_port"`
+	DstIP     *string `json:"dst_ip" gorm:"type:inet;index:idx_net_events_dst_ts,priority:1"`
+	DstPort   *int32  `json:"dst_port"`
+	Proto     *int16  `json:"proto"`
+	SrcMAC    *string `json:"src_mac" gorm:"type:macaddr"`
+	DstMAC    *string `json:"dst_mac" gorm:"type:macaddr"`
+	SrcIf     *string `json:"src_if"`
+	DstIf     *string `json:"dst_if"`
+	SrcZone   *string `json:"src_zone"`
+	DstZone   *string `json:"dst_zone"`
+	SrcRole   *int16  `json:"src_role"`
+	DstRole   *int16  `json:"dst_role"`
+	Direction *int16  `json:"direction"`
+
+	// rule (roadmap §1.3) — rule_key carries its tier prefix (u:/i:/n:/x:)
+	RuleKey   *string `json:"rule_key" gorm:"index:idx_net_events_rule_ts,priority:1"`
+	RuleUID   *string `json:"rule_uid"`
+	RuleID    *int64  `json:"rule_id"`
+	RuleName  *string `json:"rule_name"`
+	RuleIndex *int32  `json:"rule_index"`
+	Ruleset   *string `json:"ruleset"`
+
+	// identity & app
+	UserName    *string `json:"user_name"`
+	UserGroup   *string `json:"user_group"`
+	App         *string `json:"app"`
+	AppCat      *string `json:"app_cat"`
+	AppRisk     *int16  `json:"app_risk"`
+	DevType     *string `json:"dev_type"`
+	OSName      *string `json:"os_name"`
+	SrcHostname *string `json:"src_hostname"`
+
+	// counters
+	BytesOut   *int64  `json:"bytes_out"`
+	BytesIn    *int64  `json:"bytes_in"`
+	PktsOut    *int64  `json:"pkts_out"`
+	PktsIn     *int64  `json:"pkts_in"`
+	DurationMS *int32  `json:"duration_ms"`
+	SessionID  *string `json:"session_id"`
+
+	// NAT
+	NatSrcIP   *string `json:"nat_src_ip" gorm:"type:inet"`
+	NatSrcPort *int32  `json:"nat_src_port"`
+	NatDstIP   *string `json:"nat_dst_ip" gorm:"type:inet"`
+	NatDstPort *int32  `json:"nat_dst_port"`
+
+	// geo / threat
+	SrcCountry *string `json:"src_country" gorm:"type:char(2)"`
+	DstCountry *string `json:"dst_country" gorm:"type:char(2)"`
+	ThreatFlag int16   `json:"threat_flag" gorm:"not null;default:0"`
+
+	// web / dns
+	URLHost  *string `json:"url_host"`
+	URLPath  *string `json:"url_path"`
+	DNSQName *string `json:"dns_qname" gorm:"column:dns_qname"`
+	DNSQType *int16  `json:"dns_qtype" gorm:"column:dns_qtype"`
+	WebCat   *string `json:"web_cat"`
+
+	// provenance: the syslog_messages row the event came from (its PK is
+	// (id, timestamp) on partitioned installs, hence both), and the vendor
+	// leftovers the typed columns cannot hold, as a JSON object.
+	RawID *int64     `json:"raw_id"`
+	RawTS *time.Time `json:"raw_ts"`
+	Extra *string    `json:"extra" gorm:"type:jsonb"`
+}
+
+func (NetEvent) TableName() string { return "net_events" }
+
+// SecEvent is one normalized event of every class but network: finding,
+// auth, config_change, vpn_session, device_health (roadmap §1.2; migration
+// v72). Same NULL discipline as NetEvent. Monthly RANGE partitions on ts;
+// retention is per class — config_change rows are kept forever by default
+// (RETENTION_SEC_CONFIG_CHANGE_DAYS=0), the rest follow
+// RETENTION_SEC_EVENT_DAYS — so the cleanup is a per-class batched delete
+// and a partition drop only once every class in the partition has expired.
+type SecEvent struct {
+	ID       uint      `json:"id" gorm:"primaryKey"`
+	Ts       time.Time `json:"ts" gorm:"index:idx_sec_events_ts;index:idx_sec_events_device_ts,priority:2;index:idx_sec_events_class_ts,priority:2"`
+	DeviceID uint      `json:"device_id" gorm:"index:idx_sec_events_device_ts,priority:1"`
+	ProbeID  uint      `json:"probe_id"`
+
+	Class         int16   `json:"class" gorm:"not null;default:0;index:idx_sec_events_class_ts,priority:1"`
+	Activity      int16   `json:"activity" gorm:"not null;default:0"`
+	Action        int16   `json:"action" gorm:"not null;default:0"`
+	Severity      *int16  `json:"severity"` // 0-10, CEF scale
+	VendorEventID *string `json:"vendor_event_id"`
+
+	SrcIP       *string `json:"src_ip" gorm:"type:inet"`
+	SrcPort     *int32  `json:"src_port"`
+	DstIP       *string `json:"dst_ip" gorm:"type:inet"`
+	DstPort     *int32  `json:"dst_port"`
+	Proto       *int16  `json:"proto"`
+	SrcMAC      *string `json:"src_mac" gorm:"type:macaddr"`
+	UserName    *string `json:"user_name"`
+	UserGroup   *string `json:"user_group"`
+	SrcHostname *string `json:"src_hostname"`
+
+	AdminUser   *string `json:"admin_user"`
+	AdminSrcIP  *string `json:"admin_src_ip" gorm:"type:inet"`
+	AdminMethod *string `json:"admin_method"` // gui / ssh / api / console / cloud
+
+	SigID     *string `json:"sig_id"`
+	SigName   *string `json:"sig_name"`
+	ThreatCat *string `json:"threat_cat"`
+	FileHash  *string `json:"file_hash"`
+	URLHost   *string `json:"url_host"`
+
+	TunnelName *string `json:"tunnel_name"`
+	TunnelType *string `json:"tunnel_type"`
+	TunnelPeer *string `json:"tunnel_peer" gorm:"type:inet"`
+
+	ConfigPath *string `json:"config_path"`
+	ConfigObj  *string `json:"config_obj"`
+	ConfigOld  *string `json:"config_old"`
+	ConfigNew  *string `json:"config_new"`
+
+	WANName     *string  `json:"wan_name"`
+	MetricName  *string  `json:"metric_name"`
+	MetricValue *float64 `json:"metric_value"`
+	// Message is the vendor's human text, capped at SecEventMessageMax bytes.
+	Message *string `json:"message"`
+
+	RawID *int64     `json:"raw_id"`
+	RawTS *time.Time `json:"raw_ts"`
+	Extra *string    `json:"extra" gorm:"type:jsonb"`
+}
+
+func (SecEvent) TableName() string { return "sec_events" }
+
+// SecEventMessageMax caps SecEvent.Message (roadmap §1.2: "≤512 B").
+const SecEventMessageMax = 512
+
+// NetEventRollup is one day of net_events per (device, rule, action,
+// direction, app category, ruleset) — what policy analytics, zero-hit and
+// reports read, so raw net_events can have a short TTL (roadmap §1.2; the
+// ruleset / VDOM is in the key by operator decision). Written by
+// RunNetEventRollupCycle: completed hours are folded in additively as they
+// close, then each day is recomputed exactly from its partition once it is
+// complete, which also makes distinct_src exact (a lower bound before that).
+//
+// The key columns are NOT NULL with the empty string / 0 for "not reported": a
+// NULL in a unique index never conflicts with anything, so the additive
+// upsert would otherwise insert a fresh row for every hour. day is UTC
+// midnight (the DB buckets in UTC — Postgres under the DSN's TimeZone=UTC,
+// SQLite's strftime), stored as a timestamp rather than a date so the two
+// dialects compare it the same way.
+type NetEventRollup struct {
+	ID          uint      `json:"id" gorm:"primaryKey"`
+	Day         time.Time `json:"day" gorm:"not null;uniqueIndex:idx_net_event_rollups_key,priority:1"`
+	DeviceID    uint      `json:"device_id" gorm:"not null;uniqueIndex:idx_net_event_rollups_key,priority:2"`
+	RuleKey     string    `json:"rule_key" gorm:"not null;default:'';uniqueIndex:idx_net_event_rollups_key,priority:3"`
+	Action      int16     `json:"action" gorm:"not null;default:0;uniqueIndex:idx_net_event_rollups_key,priority:4"`
+	Direction   int16     `json:"direction" gorm:"not null;default:0;uniqueIndex:idx_net_event_rollups_key,priority:5"`
+	AppCat      string    `json:"app_cat" gorm:"not null;default:'';uniqueIndex:idx_net_event_rollups_key,priority:6"`
+	Ruleset     string    `json:"ruleset" gorm:"not null;default:'';uniqueIndex:idx_net_event_rollups_key,priority:7"`
+	Hits        int64     `json:"hits" gorm:"not null;default:0"`
+	BytesIn     int64     `json:"bytes_in" gorm:"not null;default:0"`
+	BytesOut    int64     `json:"bytes_out" gorm:"not null;default:0"`
+	DistinctSrc int64     `json:"distinct_src" gorm:"not null;default:0"`
+	LastTs      time.Time `json:"last_ts"`
+}
+
+func (NetEventRollup) TableName() string { return "net_event_rollups" }
+
+// FwRule is the rule catalog (roadmap §1.2): one row per (device, rule_key),
+// fed by every normalized event that names a rule (Source 1), and later by
+// the config-backup object parsers (2) and the collector's API poller (3),
+// which is what resolves a UniFi rule index to a policy name. The four raw
+// identity parts are kept beside the key so a re-key is an UPDATE here, never
+// a rewrite of net_events. The natural key is the unique index (the surrogate
+// id exists so the device purge's generic `id IN (...)` batches apply).
+type FwRule struct {
+	ID        uint    `json:"id" gorm:"primaryKey"`
+	DeviceID  uint    `json:"device_id" gorm:"not null;uniqueIndex:idx_fw_rules_key,priority:1"`
+	RuleKey   string  `json:"rule_key" gorm:"not null;uniqueIndex:idx_fw_rules_key,priority:2"`
+	RuleUID   *string `json:"rule_uid"`
+	RuleID    *int64  `json:"rule_id"`
+	RuleName  *string `json:"rule_name"`
+	RuleIndex *int32  `json:"rule_index"`
+	Ruleset   *string `json:"ruleset"`
+	// Source: 1 log / 2 config backup / 3 api (FwRuleSource*).
+	Source    int16     `json:"source" gorm:"not null;default:1"`
+	FirstSeen time.Time `json:"first_seen"`
+	LastSeen  time.Time `json:"last_seen"`
+	Enabled   *bool     `json:"enabled"`
+	Position  *int32    `json:"position"`
+	Extra     *string   `json:"extra" gorm:"type:jsonb"`
+}
+
+func (FwRule) TableName() string { return "fw_rules" }
+
+// FwRule.Source enum.
+const (
+	FwRuleSourceLog          int16 = 1
+	FwRuleSourceConfigBackup int16 = 2
+	FwRuleSourceAPI          int16 = 3
+)
+
+// DeviceFieldObserved is the observed half of the capability matrix (roadmap
+// §1.4): how many events of a class carried a non-NULL value for a field on
+// a device, and when it was last seen. The ingest keeps the counts in memory
+// and flushes them every few minutes (FlushFieldObserved upsert), so the
+// table stays at devices × classes × fields rows.
+type DeviceFieldObserved struct {
+	ID       uint      `json:"id" gorm:"primaryKey"`
+	DeviceID uint      `json:"device_id" gorm:"not null;uniqueIndex:idx_device_field_observed_key,priority:1"`
+	Class    int16     `json:"class" gorm:"not null;uniqueIndex:idx_device_field_observed_key,priority:2"`
+	Field    string    `json:"field" gorm:"not null;size:64;uniqueIndex:idx_device_field_observed_key,priority:3"`
+	Count    int64     `json:"count" gorm:"not null;default:0"`
+	LastSeen time.Time `json:"last_seen"`
+}
+
+func (DeviceFieldObserved) TableName() string { return "device_field_observed" }
+
 type SyslogSummary struct {
 	ID             uint      `json:"id" gorm:"primaryKey"`
 	Timestamp      time.Time `json:"timestamp" gorm:"index;index:idx_syslog_summary_device_ts,priority:2"` // standalone + composite

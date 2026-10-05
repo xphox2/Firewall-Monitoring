@@ -98,6 +98,12 @@ var testModels = []interface{}{
 	&models.SyslogIngestHourly{},
 	// v65: device purge jobs.
 	&models.DevicePurgeJob{},
+	// v72: normalized event tables (plain tables here; partitioned on PG).
+	&models.NetEvent{},
+	&models.SecEvent{},
+	&models.NetEventRollup{},
+	&models.FwRule{},
+	&models.DeviceFieldObserved{},
 }
 
 // NewDatabaseForTesting creates an in-memory SQLite Database for use in tests.

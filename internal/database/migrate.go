@@ -86,6 +86,14 @@ var baselineModels = []interface{}{
 	&models.SyslogIngestHourly{},
 	// v65: device purge jobs.
 	&models.DevicePurgeJob{},
+	// v72: normalized event tables. On a fresh install v1 creates the two
+	// partitioned ones plain and v2 converts them (the denied_events path);
+	// on an existing install v72 does both. The three small ones are plain.
+	&models.NetEvent{},
+	&models.SecEvent{},
+	&models.NetEventRollup{},
+	&models.FwRule{},
+	&models.DeviceFieldObserved{},
 }
 
 // migrateBaseline is the v1 "baseline" migration (AUDIT-044): it brings an empty
@@ -230,6 +238,101 @@ var partitionTables = []partitionDef{
 	{"trap_events", "timestamp"},
 	{"flow_samples", "timestamp"},
 	{"denied_events", "timestamp"},
+	// v72: the normalized event tables (Phase 1, S-3). net_events is the one
+	// DAILY-partitioned table (dailyPartitionTables); sec_events is monthly
+	// like the rest.
+	{"net_events", "ts"},
+	{"sec_events", "ts"},
+}
+
+// dailyPartitionTables are the partitionTables entries whose leaves are one
+// DAY wide instead of one month: net_events, whose retention (30 days by
+// default) is shorter than a month, so a monthly leaf could never be dropped
+// whole and the table would be row-deleted instead. A side set rather than a
+// partitionDef field so the existing two-field literals above stay as they are.
+// Daily tables are created with a LOOKBACK (partitionLookbackDays) as well as
+// the lead, so a backfill of the retention window lands in real leaves and not
+// in the DEFAULT partition.
+var dailyPartitionTables = map[string]bool{
+	"net_events": true,
+}
+
+// daily reports whether the table's leaves are one day wide.
+func (p partitionDef) daily() bool { return dailyPartitionTables[p.tableName] }
+
+// partitionLeadMonths / partitionLeadDays are how far ahead EnsurePartitions
+// creates leaves: six months for the monthly tables (unchanged), seven days
+// for the daily ones (a week of missed cron passes before rows fall into the
+// DEFAULT partition).
+const (
+	partitionLeadMonths = 6
+	partitionLeadDays   = 7
+)
+
+// defaultNetEventLookbackDays is the daily-table lookback when no
+// configuration reached the Database (the SQLite harness; a Connect without
+// retention config). Equals the RETENTION_NET_EVENT_DAYS default.
+const defaultNetEventLookbackDays = 30
+
+// partitionLookbackDays is how many days BEFORE today a daily table gets
+// leaves for: net_events gets its retention window (RETENTION_NET_EVENT_DAYS,
+// recorded on the Database by Connect), so the S-5 backfill of that window
+// never lands in the DEFAULT partition — where retention could not drop it.
+// Monthly tables keep no lookback (0): their rows are live ingest only.
+func (d *Database) partitionLookbackDays(def partitionDef) int {
+	if !def.daily() {
+		return 0
+	}
+	if d.netEventRetentionDays > 0 {
+		return d.netEventRetentionDays
+	}
+	return defaultNetEventLookbackDays
+}
+
+// partitionWindow is one leaf to ensure: its name and half-open [start, end)
+// range, both UTC-anchored.
+type partitionWindow struct {
+	name       string
+	start, end time.Time
+}
+
+// partitionWindows lists the leaves a table must have at `now`: for a monthly
+// table the current month plus partitionLeadMonths ahead (named
+// <table>_YYYYMM, exactly as before); for a daily table lookbackDays before
+// today through partitionLeadDays after it (named <table>_YYYYMMDD). Bounds
+// are UTC midnights: the partition key is timestamptz and the DSN pins the
+// session to UTC, so a leaf's range is the same instant range everywhere.
+func partitionWindows(def partitionDef, now time.Time, lookbackDays int) []partitionWindow {
+	now = now.UTC()
+	if def.daily() {
+		today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		out := make([]partitionWindow, 0, lookbackDays+partitionLeadDays+1)
+		for i := -lookbackDays; i <= partitionLeadDays; i++ {
+			start := today.AddDate(0, 0, i)
+			out = append(out, partitionWindow{
+				name:  fmt.Sprintf("%s_%s", def.tableName, start.Format("20060102")),
+				start: start,
+				end:   start.AddDate(0, 0, 1),
+			})
+		}
+		return out
+	}
+	out := make([]partitionWindow, 0, partitionLeadMonths+1)
+	for i := 0; i <= partitionLeadMonths; i++ {
+		year, month, _ := now.Date()
+		month += time.Month(i)
+		for month > 12 {
+			month -= 12
+			year++
+		}
+		start := time.Date(year, month, 1, 0, 0, 0, 0, time.UTC)
+		out = append(out, partitionWindow{
+			name:  fmt.Sprintf("%s_%d%02d", def.tableName, year, month),
+			start: start,
+			end:   start.AddDate(0, 1, 0),
+		})
+	}
+	return out
 }
 
 // partitionModels maps each partitioned table to its GORM model so the
@@ -252,6 +355,8 @@ var partitionModels = map[string]interface{}{
 	"trap_events":      &models.TrapEvent{},
 	"flow_samples":     &models.FlowSample{},
 	"denied_events":    &models.DeniedEvent{},
+	"net_events":       &models.NetEvent{},
+	"sec_events":       &models.SecEvent{},
 }
 
 // partitionIndex is one per-partition index to (re)create: the physical name
@@ -666,32 +771,23 @@ func (d *Database) ensurePartitions(createPartition func(sql string, args ...int
 		d.ensureLeafIndexes(def.tableName+"_default", indexPlans[def.tableName])
 	}
 
-	// Create partitions for current month + 6 months ahead
+	// Create the leaves each table needs: current month + 6 ahead for the
+	// monthly tables, lookback..today+7 days for the daily ones
+	// (partitionWindows).
 	now := time.Now()
-	for i := 0; i <= 6; i++ {
-		year, month, _ := now.Date()
-		month = month + time.Month(i)
-		yearOffset := 0
-		for month > 12 {
-			month -= 12
-			yearOffset++
-		}
-		year += yearOffset
-		partitionStart := time.Date(year, month, 1, 0, 0, 0, 0, time.UTC)
-		partitionEnd := partitionStart.AddDate(0, 1, 0)
+	for _, def := range partitioned {
+		for _, w := range partitionWindows(def, now, d.partitionLookbackDays(def)) {
+			// Render the RANGE bounds with an EXPLICIT UTC offset (not a bare date) so
+			// the literal is interpreted identically regardless of the PG session
+			// TimeZone. The partition key is timestamptz, and a bare-date literal is
+			// anchored in the session TZ at CREATE time — so once D4 pins the session
+			// to UTC, an explicit +00 keeps every new partition aligned with the
+			// existing UTC-created ones (no boundary overlap/gap). parsePartition-
+			// UpperBound already accepts this rendering.
+			startStr := w.start.Format("2006-01-02 15:04:05-07:00")
+			endStr := w.end.Format("2006-01-02 15:04:05-07:00")
 
-		// Render the RANGE bounds with an EXPLICIT UTC offset (not a bare date) so
-		// the literal is interpreted identically regardless of the PG session
-		// TimeZone. The partition key is timestamptz, and a bare-date literal is
-		// anchored in the session TZ at CREATE time — so once D4 pins the session
-		// to UTC, an explicit +00 keeps every new monthly partition aligned with
-		// the existing UTC-created ones (no boundary overlap/gap). parsePartition-
-		// UpperBound already accepts this rendering.
-		startStr := partitionStart.Format("2006-01-02 15:04:05-07:00")
-		endStr := partitionEnd.Format("2006-01-02 15:04:05-07:00")
-
-		for _, def := range partitioned {
-			partitionName := fmt.Sprintf("%s_%d%02d", def.tableName, year, month)
+			partitionName := w.name
 			// Check if partition already exists
 			var count int
 			d.db.Raw("SELECT COUNT(*) FROM pg_tables WHERE tablename = ?", partitionName).Scan(&count)
@@ -929,6 +1025,13 @@ var defaultAutovacuumTables = []string{
 	"hardware_sensors",
 	"security_stats",
 	"disk_usage",
+	// v72 normalized event tables: net_events is the traffic class of syslog
+	// re-typed (the same volume as the dominant syslog_messages stream, in
+	// daily leaves), net_event_rollups is upserted every hour and rewritten
+	// once per day, sec_events is small but partitioned like the rest.
+	"net_events",
+	"sec_events",
+	"net_event_rollups",
 }
 
 // autovacuumTables returns the tables to tune. By default that's

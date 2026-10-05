@@ -56,6 +56,13 @@ var devicePurgeTables = []purgeTable{
 	{table: "flow_samples", columns: []string{"device_id"}, orderBy: "timestamp", batch: 2000},
 	{table: "trap_events", columns: []string{"device_id"}, orderBy: "timestamp"},
 	{table: "denied_events", columns: []string{"device_id"}, orderBy: "timestamp"},
+	// v72 normalized event tables. net_events is syslog-sized (walk the
+	// (device_id, ts) leaf index, syslog's batch); the others are small.
+	{table: "net_events", columns: []string{"device_id"}, orderBy: "ts", batch: 2000},
+	{table: "sec_events", columns: []string{"device_id"}, orderBy: "ts"},
+	{table: "net_event_rollups", columns: []string{"device_id"}, orderBy: "id"},
+	{table: "fw_rules", columns: []string{"device_id"}, orderBy: "id"},
+	{table: "device_field_observed", columns: []string{"device_id"}, orderBy: "id"},
 	{table: "syslog_summaries", columns: []string{"device_id"}, orderBy: "timestamp"},
 	{table: "flow_if_counters", columns: []string{"device_id"}, orderBy: "timestamp"},
 	{table: "flow_rollups", columns: []string{"device_id"}, orderBy: "timestamp"},

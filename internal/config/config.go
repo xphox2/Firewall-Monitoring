@@ -276,6 +276,29 @@ type RetentionConfig struct {
 	// RETENTION_ALERT_DAYS defaults. Open incidents are never deleted; the
 	// device-recovery path (or a device delete, LC-21) closes them first.
 	IncidentDays int // resolved incidents (default 0 = RETENTION_DEFAULT_DAYS)
+	// Phase 1 (S-3) normalized event tables. net_events is the traffic class
+	// re-typed — the same volume as the dominant syslog stream — so its window
+	// is short and, unlike every other knob, 0/unset means 30 and NOT
+	// RETENTION_DEFAULT_DAYS (NetEventWindow): tripling that table by leaving
+	// a knob blank would be a storage surprise, and the daily partition
+	// lookback follows the same number. sec_events is small and kept a year;
+	// its config_change class is kept forever unless given its own window.
+	// Rollups are the long-term policy history and keep a year.
+	NetEventDays        int // net_events          (default 30; 0 = 30, never DefaultDays)
+	SecEventDays        int // sec_events          (default 365)
+	SecConfigChangeDays int // sec_events class config_change (default 0 = forever)
+	NetEventRollupDays  int // net_event_rollups   (default 365)
+}
+
+// NetEventWindow is the net_events retention in days: NetEventDays when
+// positive, otherwise 30. It deliberately does not fall back to DefaultDays
+// (see the field doc); CleanupOldData and the daily partition lookback both
+// read it so the two can never disagree.
+func (r *RetentionConfig) NetEventWindow() int {
+	if r.NetEventDays > 0 {
+		return r.NetEventDays
+	}
+	return 30
 }
 
 type AuthConfig struct {
@@ -484,6 +507,11 @@ func Load() *Config {
 			SDWANHealthDays:   getIntEnv("RETENTION_SDWAN_HEALTH_DAYS", 0),
 			LicenseInfoDays:   getIntEnv("RETENTION_LICENSE_INFO_DAYS", 365),
 			IncidentDays:      getIntEnv("RETENTION_INCIDENT_DAYS", 0),
+			// Phase 1 (S-3): see the field docs above.
+			NetEventDays:        getIntEnv("RETENTION_NET_EVENT_DAYS", 30),
+			SecEventDays:        getIntEnv("RETENTION_SEC_EVENT_DAYS", 365),
+			SecConfigChangeDays: getIntEnv("RETENTION_SEC_CONFIG_CHANGE_DAYS", 0),
+			NetEventRollupDays:  getIntEnv("RETENTION_NET_EVENT_ROLLUP_DAYS", 365),
 		},
 		Detect: DetectConfig{
 			PortScanPorts:      getIntEnv("DETECT_PORT_SCAN_PORTS", 0),

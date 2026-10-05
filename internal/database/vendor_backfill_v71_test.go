@@ -68,11 +68,11 @@ func TestMigrateV71_Idempotent(t *testing.T) {
 	}
 }
 
-// TestRegisteredMigrations_V71IsLast pins the version number the plan and
-// CHANGELOG cite.
-func TestRegisteredMigrations_V71IsLast(t *testing.T) {
-	last := registeredMigrations[len(registeredMigrations)-1]
-	if last.version != 71 || last.name != "vendor_backfill_final" {
-		t.Fatalf("last migration = {%d %q}, want {71 vendor_backfill_final}", last.version, last.name)
+// TestRegisteredMigrations_V71Pinned pins the version number the plan and
+// CHANGELOG cite (v72 followed it in 0.11.295; see normalized_tables_test.go).
+func TestRegisteredMigrations_V71Pinned(t *testing.T) {
+	m := registeredMigrations[70]
+	if m.version != 71 || m.name != "vendor_backfill_final" {
+		t.Fatalf("registeredMigrations[70] = {%d %q}, want {71 vendor_backfill_final}", m.version, m.name)
 	}
 }

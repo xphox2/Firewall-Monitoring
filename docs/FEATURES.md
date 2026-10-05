@@ -136,6 +136,7 @@
 | SQLite backend (tests only — AUDIT-118) | Stable | [Server] | 0.1 |
 | Embedded PostgreSQL in the Docker image (auto-generated password in `/config/pg-credentials`, chmod 600) | Stable | [Server] | 0.1 (AUDIT-093) |
 | Versioned, recorded DB migrations (`schema_migrations` table, advisory-lock-gated runner, `migrate` / `migrate-status` subcommands) | Stable | [Server] | 0.10.378 (AUDIT-044) |
+| Normalized event tables (`net_events` daily-partitioned with a retention-deep lookback, `sec_events` monthly, `net_event_rollups` per device / rule / action / direction / app category / ruleset per day, `fw_rules` catalog, `device_field_observed`); COPY writer, per-class retention (`config_change` kept forever by default), partition-drop-only `net_events` retention, hourly rollup with exact day close. Written by nothing yet — the ingest wiring is S-4 | Stable | [Server] | 0.11.295 (migration v72) |
 | Monthly range-partitioning for the 6 high-volume tables (`interface_stats`, `system_status`, `syslog_messages`, `syslog_summaries`, `trap_events`, `flow_samples`) | Stable | [Server] | 0.10.380 (AUDIT-028 + AUDIT-146) |
 | Autovacuum tuning for high-write tables | Stable | [Server] | 0.10.353 (AUDIT-147) |
 | Per-table data retention (14 `RETENTION_*_DAYS` env vars) | Stable | [Server] | 0.1 |
