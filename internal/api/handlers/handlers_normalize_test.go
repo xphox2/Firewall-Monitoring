@@ -127,10 +127,12 @@ func countRows(t *testing.T, db *database.Database, model interface{}, where str
 // posted batch lands typed rows in net_events / sec_events, catalog rows in
 // fw_rules, observed-field counters (after a flush) in device_field_observed,
 // deny rows in denied_events, and every raw syslog row — with raw_id linking
-// each typed row to its raw row. Run at schema v6 (framing contract) and v5
-// (the v5 run also carries a pre-1.3.48 positional-split FortiGate row that
-// only the re-framing fallback can normalize). Fails on the pre-S-4 ingest
-// with zero rows in every normalized table.
+// each typed row to its raw row. Run at schema v6 (framing contract) and v5;
+// both runs carry a pre-1.3.48 positional-split FortiGate row (no format
+// hint) that only the re-framing join can normalize — under a v6 probe that
+// is the bbolt spool a collector upgraded straight from < 1.3.48 replays, so
+// the framed decision must be per row, not per probe. Fails on the pre-S-4
+// ingest with zero rows in every normalized table.
 func TestReceiveSyslog_NormalizesMixedVendorBatch(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
@@ -139,7 +141,7 @@ func TestReceiveSyslog_NormalizesMixedVendorBatch(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newNormalizeFixture(t, tc.schemaVersion, nil)
 			batch := f.mixedBatch()
-			if tc.schemaVersion < 6 {
+			{
 				// A pre-1.3.48 collector's positional RFC 5424 split: the first
 				// FortiOS pairs sit in the header columns and there is no format
 				// hint. Reframe re-joins them; the line is a deny on policy 20.
@@ -155,6 +157,23 @@ func TestReceiveSyslog_NormalizesMixedVendorBatch(t *testing.T) {
 					"structured_data": `type="traffic"`,
 					"message":         fgV5SplitBody,
 				})
+				// The same pre-1.3.48 split of a Meraki `flows` line: src= / dst=
+				// / mac= sit in process_id / message_id / structured_data. Without
+				// the join the body has no endpoints and cannot map; the FortiOS
+				// split above still maps from its body alone, so this row is the
+				// one that proves the per-row framed decision.
+				batch = append(batch, map[string]interface{}{
+					"device_id":       f.dev["meraki"].ID,
+					"timestamp":       time.Now().UTC(),
+					"severity":        6,
+					"facility":        16,
+					"hostname":        "fw-example-08",
+					"app_name":        "flows",
+					"process_id":      "src=192.0.2.10",
+					"message_id":      "dst=203.0.113.20",
+					"structured_data": "mac=00:00:5E:00:53:0A",
+					"message":         "protocol=tcp sport=51514 dport=443 pattern: allow all",
+				})
 			}
 			f.post(t, batch)
 
@@ -162,10 +181,13 @@ func TestReceiveSyslog_NormalizesMixedVendorBatch(t *testing.T) {
 				t.Fatalf("syslog_messages = %d, want %d (raw rows are saved first, always)", n, len(batch))
 			}
 			// Network class: FG close + FG deny + PF block + UF netfilter + MK
-			// flows + generic CEF (+ the v5 split deny).
-			wantNet := int64(6)
-			if tc.schemaVersion < 6 {
-				wantNet++
+			// flows + generic CEF + the two positional-split rows.
+			wantNet := int64(8)
+			if n := countRows(t, f.db, &models.NetEvent{}, "device_id = ? AND src_ip = ?", f.dev["meraki"].ID, "192.0.2.10"); n != 1 {
+				t.Errorf("net_events for the positional-split Meraki row = %d, want 1 — a format-less row must be re-framed under a v%d probe", n, tc.schemaVersion)
+			}
+			if n := countRows(t, f.db, &models.FwRule{}, "device_id = ? AND rule_key = ?", f.dev["fortigate"].ID, "i:root/20"); n != 1 {
+				t.Errorf("fw_rules for the positional-split row (i:root/20) = %d, want 1 — the format-less row must be re-framed under a v%d probe", n, tc.schemaVersion)
 			}
 			if n := countRows(t, f.db, &models.NetEvent{}, ""); n != wantNet {
 				t.Errorf("net_events = %d, want %d", n, wantNet)
@@ -190,11 +212,9 @@ func TestReceiveSyslog_NormalizesMixedVendorBatch(t *testing.T) {
 			}
 			// Deny projection through deny.FromEvent: every network-class deny
 			// with routable endpoints — FG local deny, PF block, UF drop, MK
-			// deny, generic CEF deny (+ v5 split deny); the FG close is not.
-			wantDenied := int64(5)
-			if tc.schemaVersion < 6 {
-				wantDenied++
-			}
+			// deny, generic CEF deny, the positional-split deny; the FG close
+			// is not.
+			wantDenied := int64(6)
 			if n := countRows(t, f.db, &models.DeniedEvent{}, ""); n != wantDenied {
 				t.Errorf("denied_events = %d, want %d", n, wantDenied)
 			}
@@ -235,8 +255,8 @@ func TestReceiveSyslog_NormalizesMixedVendorBatch(t *testing.T) {
 			var fgSrc models.DeviceFieldObserved
 			if err := f.db.Gorm().Where("device_id = ? AND class = ? AND field = ?", f.dev["fortigate"].ID, int16(normalize.ClassNetwork), "src_ip").First(&fgSrc).Error; err != nil {
 				t.Errorf("device_field_observed (fortigate, network, src_ip): %v", err)
-			} else if want := int64(wantNet - 4); fgSrc.Count != want {
-				// FG network rows: close + local deny (+ v5 split).
+			} else if want := int64(3); fgSrc.Count != want {
+				// FG network rows: close + local deny + positional split.
 				t.Errorf("observed src_ip count = %d, want %d", fgSrc.Count, want)
 			}
 			if n := countRows(t, f.db, &models.DeviceFieldObserved{}, "device_id = ? AND field = ?", f.dev["fortigate"].ID, "bytes_in"); n != 1 {
@@ -251,8 +271,8 @@ func TestReceiveSyslog_NormalizesMixedVendorBatch(t *testing.T) {
 			// A second flush with nothing new writes nothing (and does not
 			// double the counts).
 			f.h.FlushFieldObserved()
-			if err := f.db.Gorm().Where("id = ?", fgSrc.ID).First(&fgSrc).Error; err == nil && fgSrc.Count != wantNet-4 {
-				t.Errorf("observed src_ip count after an empty flush = %d, want %d", fgSrc.Count, wantNet-4)
+			if err := f.db.Gorm().Where("id = ?", fgSrc.ID).First(&fgSrc).Error; err == nil && fgSrc.Count != 3 {
+				t.Errorf("observed src_ip count after an empty flush = %d, want 3", fgSrc.Count)
 			}
 			// The S-5 watermark is recorded once.
 			if v, ok := f.db.GetSettingValue(normalizeIngestStartedSetting); !ok {

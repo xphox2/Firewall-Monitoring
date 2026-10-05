@@ -68,9 +68,15 @@ const (
 
 // normalizeIngest derives every normalized consumer's input from one saved
 // batch (see the file comment). probe carries the negotiated schema version:
-// a framing-contract (v6) probe's rows skip the re-framing join.
+// a framing-contract (v6) probe's rows skip the re-framing join — per ROW,
+// gated on the row actually carrying the format hint. A collector upgraded
+// straight from < 1.3.48 to 1.3.50 registers at v6 and then replays its spool
+// of rows the old parser framed positionally (header columns split, no
+// `format`); those rows need the join, and the S-5 backfill never revisits a
+// live-ingested raw row, so a per-probe decision would store them wrong for
+// good.
 func (h *Handler) normalizeIngest(msgs []models.SyslogMessage, probe *models.Probe) {
-	framed := probe != nil && probe.SchemaVersion >= relay.SchemaVersionFramed
+	framedProbe := probe != nil && probe.SchemaVersion >= relay.SchemaVersionFramed
 	cfg := deny.PatternConfig{Pattern: h.denyPolicyPattern()}
 	now := time.Now()
 	var (
@@ -93,7 +99,7 @@ func (h *Handler) normalizeIngest(msgs []models.SyslogMessage, probe *models.Pro
 			ev  normalize.Event
 			out normalize.Outcome
 		)
-		if framed {
+		if framedProbe && msg.Format != "" {
 			ev, out = normalize.NormalizeFramed(vendor, msg)
 		} else {
 			ev, out = normalize.Normalize(vendor, msg)

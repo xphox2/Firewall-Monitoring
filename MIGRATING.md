@@ -79,11 +79,11 @@ Version history:
   columns, so the server normalizes its rows without the re-framing fallback
   it still applies to v5 rows. Deploy the server first; a 1.3.50 collector
   against an older server renegotiates down to v5. `SchemaVersionMin` stays
-  at 1 — dropping the fallback is a later transition release. One edge: a
-  collector upgraded straight from < 1.3.48 to 1.3.50 may replay a spool its
-  old parser framed positionally; registered at v6 the server does not
-  re-frame those rows, so they normalize as unparsed (raw rows are saved
-  regardless) and the 30-day backfill, which always re-frames, recovers them.
+  at 1 — dropping the fallback is a later transition release. The skip is
+  per row, gated on the row carrying the `format` hint: a collector upgraded
+  straight from < 1.3.48 to 1.3.50 replays a spool its old parser framed
+  positionally (no hint), and those rows are still re-framed under the v6
+  registration.
 
 The consts in `internal/relay/relay.go` are the single source of truth —
 shipping a future version only requires bumping `SchemaVersionMax` there and

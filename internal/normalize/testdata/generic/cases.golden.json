@@ -149,5 +149,76 @@
     "name": "free_text_no_family",
     "outcome": "no_family",
     "reason": "generic: no family recognised the line"
+  },
+  {
+    "name": "cef_over_rfc5424",
+    "outcome": "ok",
+    "native": {
+      "act": "deny",
+      "app": "RDP",
+      "cef_id": "1001",
+      "cef_name": "Connection denied",
+      "cef_product": "Edge Firewall",
+      "cef_severity": "6",
+      "cef_vendor": "Example",
+      "cef_version": "2.1",
+      "cs1": "Block-RDP",
+      "deviceinboundinterface": "eth0",
+      "dpt": "3389",
+      "dst": "198.51.100.10",
+      "proto": "TCP",
+      "spt": "44001",
+      "src": "203.0.113.9"
+    },
+    "event": {
+      "event.action": "deny",
+      "event.activity": "traffic",
+      "event.app": "RDP",
+      "event.class": "network",
+      "event.dst_ip": "198.51.100.10",
+      "event.dst_port": "3389",
+      "event.proto": "6",
+      "event.rule_key": "n:block-rdp",
+      "event.rule_name": "Block-RDP",
+      "event.severity": "6",
+      "event.src_if": "eth0",
+      "event.src_ip": "203.0.113.9",
+      "event.src_port": "44001",
+      "event.vendor_event_id": "Example/Edge Firewall/1001"
+    }
+  },
+  {
+    "name": "kv_over_rfc5424",
+    "outcome": "ok",
+    "native": {
+      "c": "1024",
+      "dst": "198.51.100.10:3389:X0",
+      "fw": "203.0.113.1",
+      "fw_action": "drop",
+      "id": "firewall",
+      "m": "36",
+      "msg": "TCP connection dropped",
+      "pri": "6",
+      "proto": "tcp/3389",
+      "rule": "Deny RDP (WAN-\u003eLAN)",
+      "sn": "0000000000",
+      "src": "203.0.113.9:44003:X1"
+    },
+    "event": {
+      "event.action": "deny",
+      "event.activity": "traffic",
+      "event.class": "network",
+      "event.dst_if": "X0",
+      "event.dst_ip": "198.51.100.10",
+      "event.dst_port": "3389",
+      "event.message": "TCP connection dropped",
+      "event.proto": "6",
+      "event.rule_key": "n:deny rdp (wan-\u003elan)",
+      "event.rule_name": "Deny RDP (WAN-\u003eLAN)",
+      "event.src_if": "X1",
+      "event.src_ip": "203.0.113.9",
+      "event.src_port": "44003",
+      "event.vendor_event_id": "firewall"
+    }
   }
 ]
