@@ -26,6 +26,9 @@ var purgeCoveredElsewhere = map[string]string{
 	// The job queue itself: keyed by device_id so the latest-job lookup works;
 	// terminal rows are the audit trail (30-day retention), never purged.
 	"device_purge_jobs": "audit trail",
+	// The backfill queue (v73): device_id is an optional FILTER on the raw
+	// rows to walk, not a row owner; terminal rows are the audit trail.
+	"normalize_backfill_jobs": "audit trail",
 }
 
 // deviceKeyedTables reflects over the given model lists and returns, per table

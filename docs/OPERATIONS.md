@@ -533,6 +533,66 @@ retire → confirm the replacement works → purge the old one.
 
 ---
 
+## Backfilling the normalized tables (one-time, 30 days)
+
+The normalized tables (`net_events`, `sec_events`, `fw_rules`,
+`device_field_observed`; v0.11.295) are written by the syslog ingest from the
+moment v0.11.296 started (the `normalize_ingest_started_at` setting, written
+once and never moved). The raw rows received before that can be normalized
+after the fact, **once**, by the backfill job (v0.11.297):
+
+```
+docker exec <container> fwmon-api normalize-backfill --since 30d        # queue
+docker exec <container> fwmon-api normalize-backfill --status           # progress
+docker exec <container> fwmon-api normalize-backfill --cancel | --resume
+```
+
+or `POST /admin/api/normalize/backfill` (`{since_days, device_id?,
+rate_rows_per_sec?, window?, password, totp_code}`; admin-only and
+re-authenticated like the purge). What to expect:
+
+- **Window.** `since` is at most 30 days back from now and never before the
+  oldest `net_events` day leaf (a row older than the retention lookback would
+  land in `net_events_default`); `until` is always the ingest watermark. A
+  device-scoped job (`--device`) walks only that device's rows.
+- **Load.** The poller runs it (within 15 s of queueing), one job at a time,
+  under its own advisory lock, in batches of 5 000 raw rows read oldest-first
+  from each `syslog_messages` leaf through its `(timestamp)` index — no sort,
+  no sequential scan — and held to `--rate` rows per second (default 2 000:
+  about 90 M rows in 12.5 h). Writes are one COPY per batch into the day
+  leaves. Set `--window 22:00-06:00` (server local time; or the
+  `normalize_backfill_window` setting as the default) to run at night: outside
+  the window the job shows `paused` and waits.
+- **Disk.** The job is refused when the data volume's free space is under
+  twice the estimated write (received rows in the window × 0.5 KB; see the
+  Retention page for the measured per-row cost once a few days have landed).
+  Plan on ~35 % of the raw syslog volume of the window.
+- **Exactly once.** A raw row is in scope only when both its message time and
+  its arrival (`created_at`) precede the watermark, and every batch checks the
+  typed tables for rows the live ingest already wrote; each batch's rows and
+  the cursor commit in one transaction. Re-running a finished backfill writes
+  nothing (`rows_skipped` counts the rows it found already normalized), a
+  crash or restart resumes from the committed cursor, and cancel keeps the
+  cursor so `--resume` continues where it stopped.
+- **Rollups.** When a job that wrote rows ends, the rollup cycle rewinds its
+  closed-day cursor to the day before the window and recomputes the
+  backfilled days exactly over the following ticks (two days per 5-minute
+  tick); `distinct_src` is a lower bound for a day until its recompute lands.
+- **Not touched.** `denied_events` and the alert rules (live-stream
+  consumers), raw syslog, and anything the live ingest has normalized.
+  `device_field_observed.last_seen` takes the event time, so the capability
+  matrix does not report a field "observed in the last 24 h" because of a
+  month-old row.
+- **Rollback.** Cancel the job. Backfilled rows live in the day leaves of
+  their event time; a leaf before the watermark's day holds backfilled rows
+  plus whatever the live ingest wrote there late (a replayed collector
+  spool), so `DROP TABLE net_events_YYYYMMDD` removes both — acceptable when
+  the backfill must be undone, and the retention pass drops the leaf on
+  schedule anyway (the partition pass recreates an empty leaf inside the
+  lookback). Nothing outside the normalized tables is touched.
+
+---
+
 ## Scale & HA
 
 - **Single API instance only** (enforced — see below). A second `cmd/api`

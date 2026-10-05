@@ -687,6 +687,62 @@ type DevicePurgeJob struct {
 // share one literal.
 func (DevicePurgeJob) TableName() string { return "device_purge_jobs" }
 
+// NormalizeBackfillJob is the one-time, throttled backfill of the normalized
+// event tables (net_events / sec_events, plus the fw_rules and
+// device_field_observed catalogs) from the syslog_messages already stored
+// before the normalizing ingest started (Phase 1, S-5; v0.11.297, migration
+// v73). The poller's NormalizeBackfillWorker claims a pending row and walks
+// the raw rows oldest-first in keyset-paged batches; every batch's typed rows
+// and the cursor advance commit in ONE transaction, so a crash resumes from
+// the last committed batch without a duplicate or a gap.
+//
+// Status lifecycle: pending → running ⇄ paused (outside Window) → done |
+// failed | cancelled, with the transient `cancelling` set by the cancel
+// endpoint on a running / paused job (the worker observes it between batches
+// and finishes as `cancelled`). A cancelled or failed job keeps its cursor
+// and can be resumed (→ pending). UpdatedAt is the worker's heartbeat, as for
+// DevicePurgeJob. At most one job is non-terminal at a time.
+type NormalizeBackfillJob struct {
+	ID          uint   `json:"id" gorm:"primaryKey"`
+	RequestedBy string `json:"requested_by"`
+	Status      string `json:"status" gorm:"default:pending;index"`
+	// Since / Until bound the raw rows' message timestamp: [Since, Until).
+	// Until is the normalize_ingest_started_at watermark, so the backfill and
+	// the live ingest never cover the same raw rows.
+	Since time.Time `json:"since"`
+	Until time.Time `json:"until"`
+	// DeviceID restricts the backfill to one device; nil = every device.
+	DeviceID *uint `json:"device_id"`
+	// Window is the optional local-time run window "HH:MM-HH:MM" (e.g.
+	// 22:00-06:00); outside it the job pauses. Empty = run any time.
+	Window string `json:"window"`
+	// RateRowsPerSec is the raw-row scan rate the worker holds (default 2000).
+	RateRowsPerSec int `json:"rate_rows_per_sec"`
+	// Progress. CurrentPartition is the syslog_messages leaf being walked;
+	// CursorTs / CursorID is the last raw row of that leaf whose batch
+	// committed (nil cursor = nothing committed yet).
+	CurrentPartition string     `json:"current_partition"`
+	CursorTs         *time.Time `json:"cursor_ts"`
+	CursorID         int64      `json:"cursor_id"`
+	RowsScanned      int64      `json:"rows_scanned"`
+	// RowsWritten counts net_events + sec_events rows committed; RowsSkipped
+	// the raw rows that already had a normalized row (the live ingest's, or an
+	// earlier run's) and were not written again; RowsUnparsed the rows no
+	// mapper could turn into an Event (nothing is stored for those).
+	RowsWritten  int64      `json:"rows_written"`
+	RowsSkipped  int64      `json:"rows_skipped"`
+	RowsUnparsed int64      `json:"rows_unparsed"`
+	Error        string     `json:"error" gorm:"type:text"`
+	StartedAt    *time.Time `json:"started_at"`
+	FinishedAt   *time.Time `json:"finished_at"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+}
+
+// TableName pins the table name so the migration and the worker's raw SQL
+// share one literal.
+func (NormalizeBackfillJob) TableName() string { return "normalize_backfill_jobs" }
+
 type DeviceAlertConfig struct {
 	ID       uint  `json:"id" gorm:"primaryKey"`
 	DeviceID uint  `json:"device_id" gorm:"uniqueIndex;not null"`

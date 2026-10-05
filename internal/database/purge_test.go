@@ -38,8 +38,8 @@ func seedDeviceRows(t *testing.T, d *Database, deviceID uint, tag string) (plann
 		if err != nil {
 			t.Fatalf("schema.Parse(%T): %v", m, err)
 		}
-		if s.Table == "device_purge_jobs" {
-			continue
+		if _, audit := purgeCoveredElsewhere[s.Table]; audit && s.Table != "device_connections" {
+			continue // the job queues: device_id is a filter / audit key, never purged
 		}
 		var keyCols []string
 		for _, f := range s.Fields {
@@ -99,7 +99,7 @@ func countDeviceRows(t *testing.T, d *Database, deviceID uint) (total int64, per
 	t.Helper()
 	perTable = map[string]int64{}
 	for table, cols := range deviceKeyedTables(t, testModels) {
-		if table == "device_purge_jobs" {
+		if _, audit := purgeCoveredElsewhere[table]; audit && table != "device_connections" {
 			continue
 		}
 		for _, col := range cols {

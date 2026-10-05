@@ -80,7 +80,10 @@ older than `RETENTION_NET_EVENT_DAYS` is dropped (instant, returns space), and
 no row `DELETE` ever runs over the table — this is the traffic-class volume
 that made the batched syslog `DELETE` a multi-hour job. Leaves are created from
 `RETENTION_NET_EVENT_DAYS` days back through seven days ahead, so the one-time
-30-day backfill writes into droppable leaves; the `net_events_default` child
+30-day backfill (v0.11.297, `POST /admin/api/normalize/backfill` /
+`fwmon-api normalize-backfill`; never earlier than the oldest leaf, at most 30
+days, resumable, one transaction per batch so it is exactly-once beside the
+live ingest — see docs/OPERATIONS.md) writes into droppable leaves; the `net_events_default` child
 holds only what no leaf accepted (a clock-skewed collector, or a day whose leaf
 did not exist yet) and is trimmed with the batched-delete loop. If a day's
 leaf is missing while its rows already sit in the default child, the partition

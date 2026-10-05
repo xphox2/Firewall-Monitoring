@@ -324,6 +324,37 @@ func netEventCopyRow(e *models.NetEvent) []any {
 	}
 }
 
+// secEventsCopyColumns / secEventCopyRow are the sec_events COPY pair the S-5
+// backfill uses inside its batch transaction (the live ingest's SaveSecEvents
+// keeps the GORM insert: under 1% of its volume). Same contract as the
+// net_events pair: model field order minus `id`, pinned by
+// TestSecEventsCopyColumns_MatchModel.
+var secEventsCopyColumns = []string{
+	"ts", "device_id", "probe_id",
+	"class", "activity", "action", "severity", "vendor_event_id",
+	"src_ip", "src_port", "dst_ip", "dst_port", "proto", "src_mac", "user_name", "user_group", "src_hostname",
+	"admin_user", "admin_src_ip", "admin_method",
+	"sig_id", "sig_name", "threat_cat", "file_hash", "url_host",
+	"tunnel_name", "tunnel_type", "tunnel_peer",
+	"config_path", "config_obj", "config_old", "config_new",
+	"wan_name", "metric_name", "metric_value", "message",
+	"raw_id", "raw_ts", "extra",
+}
+
+func secEventCopyRow(e *models.SecEvent) []any {
+	return []any{
+		e.Ts, int64(e.DeviceID), int64(e.ProbeID),
+		e.Class, e.Activity, e.Action, e.Severity, e.VendorEventID,
+		inetValue(e.SrcIP), e.SrcPort, inetValue(e.DstIP), e.DstPort, e.Proto, macValue(e.SrcMAC), e.UserName, e.UserGroup, e.SrcHostname,
+		e.AdminUser, inetValue(e.AdminSrcIP), e.AdminMethod,
+		e.SigID, e.SigName, e.ThreatCat, e.FileHash, e.URLHost,
+		e.TunnelName, e.TunnelType, inetValue(e.TunnelPeer),
+		e.ConfigPath, e.ConfigObj, e.ConfigOld, e.ConfigNew,
+		e.WANName, e.MetricName, e.MetricValue, e.Message,
+		e.RawID, e.RawTS, e.Extra,
+	}
+}
+
 // inetValue is the COPY value for an inet column: nil, a netip.Addr, or —
 // for text that is not an address, which the mapping never produces — the
 // text itself for pgx to reject with a clear error.

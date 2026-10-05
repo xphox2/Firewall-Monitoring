@@ -38,7 +38,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.296"
+const ServerVersion = "0.11.297"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -99,6 +99,8 @@ func main() {
 			return
 		case "reset-auth":
 			os.Exit(runResetAuthCmd(os.Args[2:]))
+		case "normalize-backfill":
+			os.Exit(runNormalizeBackfillCmd(os.Args[2:]))
 		}
 	}
 
@@ -939,8 +941,14 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			// and which features the fleet can report — admin-only.
 			"/admin/api/devices/:id/capabilities": true,
 			"/admin/api/capabilities":             true,
-			"/admin/api/sites/:id/event-profile":  true,
-			"/admin/api/event-config/effective":   true,
+			// One-time normalized-event backfill (S-5): a long-running job over
+			// the whole raw syslog history — admin-only end to end, status included.
+			"/admin/api/normalize/backfill":        true,
+			"/admin/api/normalize/backfill/status": true,
+			"/admin/api/normalize/backfill/cancel": true,
+			"/admin/api/normalize/backfill/resume": true,
+			"/admin/api/sites/:id/event-profile":   true,
+			"/admin/api/event-config/effective":    true,
 			// Suggests a suppress/customize rule from an alert (rule creation is
 			// admin-only, and the syslog path reads raw log content) — admin-only.
 			"/admin/api/alerts/:id/suggested-rule": true,
@@ -1146,6 +1154,14 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		// fields (24 h). Admin-only (in adminOnlyRoutes).
 		admin.GET("/api/devices/:id/capabilities", handler.GetDeviceCapabilities)
 		admin.GET("/api/capabilities", handler.GetCapabilities)
+		// One-time normalized-event backfill (Phase 1, S-5; v0.11.297): a job
+		// the poller's NormalizeBackfillWorker runs. All admin-only (in
+		// adminOnlyRoutes); start and resume re-verify the caller's password
+		// (+ TOTP) like the purge, so they are login-rate-limited.
+		admin.POST("/api/normalize/backfill", middleware.LoginRateLimiter(), handler.StartNormalizeBackfill)
+		admin.GET("/api/normalize/backfill/status", handler.GetNormalizeBackfill)
+		admin.POST("/api/normalize/backfill/cancel", handler.CancelNormalizeBackfill)
+		admin.POST("/api/normalize/backfill/resume", middleware.LoginRateLimiter(), handler.ResumeNormalizeBackfill)
 
 		admin.POST("/api/alerts/:id/acknowledge", handler.AcknowledgeAlert)
 		admin.POST("/api/alerts/:id/snooze", handler.SnoozeAlert)

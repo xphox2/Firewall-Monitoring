@@ -122,6 +122,7 @@ var registeredMigrations = []migration{
 	{version: 70, name: "passkeys", run: (*Database).migratePasskeys},
 	{version: 71, name: "vendor_backfill_final", run: (*Database).migrateVendorBackfillFinal},
 	{version: 72, name: "normalized_event_tables", run: (*Database).migrateNormalizedEventTables},
+	{version: 73, name: "normalize_backfill_jobs", run: (*Database).migrateNormalizeBackfillJobs},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

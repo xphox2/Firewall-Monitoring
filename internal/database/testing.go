@@ -104,6 +104,8 @@ var testModels = []interface{}{
 	&models.NetEventRollup{},
 	&models.FwRule{},
 	&models.DeviceFieldObserved{},
+	// v73: the normalized-event backfill job queue.
+	&models.NormalizeBackfillJob{},
 }
 
 // NewDatabaseForTesting creates an in-memory SQLite Database for use in tests.

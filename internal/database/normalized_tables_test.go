@@ -81,10 +81,13 @@ func TestPartitionLookbackDays(t *testing.T) {
 
 // TestRegisteredMigrations_V72IsLast pins the version number the plan and
 // CHANGELOG cite.
-func TestRegisteredMigrations_V72IsLast(t *testing.T) {
+func TestRegisteredMigrations_V73IsLast(t *testing.T) {
 	last := registeredMigrations[len(registeredMigrations)-1]
-	if last.version != 72 || last.name != "normalized_event_tables" {
-		t.Fatalf("last migration = {%d %q}, want {72 normalized_event_tables}", last.version, last.name)
+	if last.version != 73 || last.name != "normalize_backfill_jobs" {
+		t.Fatalf("last migration = {%d %q}, want {73 normalize_backfill_jobs}", last.version, last.name)
+	}
+	if m := registeredMigrations[len(registeredMigrations)-2]; m.version != 72 || m.name != "normalized_event_tables" {
+		t.Fatalf("migration before last = {%d %q}, want {72 normalized_event_tables}", m.version, m.name)
 	}
 }
 

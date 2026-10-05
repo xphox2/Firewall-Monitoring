@@ -692,6 +692,14 @@ const devicePurgeLockKey int64 = 0x46574d4e50524745
 //
 // SQLite (tests / single-process) returns acquired=true + a no-op release.
 func (d *Database) AcquireDevicePurgeLock() (release func(), acquired bool, err error) {
+	return d.acquireJobLock("device-purge", devicePurgeLockKey)
+}
+
+// acquireJobLock is the shared body of AcquireDevicePurgeLock and
+// AcquireNormalizeBackfillLock (v0.11.297): the job workers' non-blocking,
+// session-scoped advisory lock on a pinned connection, released on that same
+// connection. label prefixes the one log line a failed unlock produces.
+func (d *Database) acquireJobLock(label string, key int64) (release func(), acquired bool, err error) {
 	if !d.dialect.IsPostgres() {
 		return func() {}, true, nil
 	}
@@ -705,7 +713,7 @@ func (d *Database) AcquireDevicePurgeLock() (release func(), acquired bool, err 
 		return func() {}, false, err
 	}
 	var got bool
-	if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", devicePurgeLockKey).Scan(&got); err != nil {
+	if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", key).Scan(&got); err != nil {
 		conn.Close()
 		return func() {}, false, err
 	}
@@ -714,8 +722,8 @@ func (d *Database) AcquireDevicePurgeLock() (release func(), acquired bool, err 
 		return func() {}, false, nil
 	}
 	return func() {
-		if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", devicePurgeLockKey); err != nil {
-			log.Printf("device-purge: advisory unlock failed (%v); it releases on connection close", err)
+		if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", key); err != nil {
+			log.Printf("%s: advisory unlock failed (%v); it releases on connection close", label, err)
 		}
 		conn.Close()
 	}, true, nil
