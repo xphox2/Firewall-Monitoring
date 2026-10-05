@@ -152,6 +152,10 @@ func (p *Poller) startFlowSummaryAsync() {
 	})
 }
 
+// normalizeBackfillTick is how often the backfill worker looks for a pending
+// job (one cheap count on a small table when the queue is idle).
+const normalizeBackfillTick = 15 * time.Second
+
 // flowReclassStepBudget bounds one reclassification step. Two minutes of every
 // five-minute tick: the job rewrites a large share of flow history beside live
 // ingest on the same volume, so it leaves the disk more idle than busy.
@@ -460,6 +464,34 @@ func (p *Poller) Start() error {
 	// Roll up flow data every 5 minutes
 	rollupTicker := time.NewTicker(5 * time.Minute)
 	defer rollupTicker.Stop()
+
+	// One-time normalized-event backfill (Phase 1, S-5): a queue the admin API
+	// / CLI fills and this goroutine drains, one job at a time, under its OWN
+	// advisory lock (database.NormalizeBackfillWorker) — never the shared work
+	// lock, which would skip every monitoring tick for the hours a backfill
+	// takes. Off the select loop like the retention cleanup, so the loop (and
+	// its M30 heartbeat) stays truthful. The context ends with this loop: a
+	// job caught mid-run flips itself back to pending and the next start
+	// resumes it from its committed cursor.
+	backfillCtx, cancelBackfill := context.WithCancel(context.Background())
+	defer cancelBackfill()
+	if p.db != nil && !p.cfg.Normalize.Disabled {
+		worker := database.NewNormalizeBackfillWorker(p.db)
+		logging.SafeGo("normalize-backfill", func() {
+			t := time.NewTicker(normalizeBackfillTick)
+			defer t.Stop()
+			for {
+				select {
+				case <-backfillCtx.Done():
+					return
+				case <-t.C:
+					worker.Tick(backfillCtx)
+				}
+			}
+		})
+	} else if p.db != nil {
+		log.Println("normalize-backfill: worker disabled (NORMALIZE_ENABLED=false)")
+	}
 
 	// Run the sFlow detection engine every 5 minutes, over a recent window of
 	// raw flow_samples (before the rollup consumes them at 1h).

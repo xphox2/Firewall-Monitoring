@@ -95,6 +95,8 @@ var baselineModels = []interface{}{
 	&models.NetEventRollup{},
 	&models.FwRule{},
 	&models.DeviceFieldObserved{},
+	// v73: the normalized-event backfill job queue (S-5).
+	&models.NormalizeBackfillJob{},
 }
 
 // migrateBaseline is the v1 "baseline" migration (AUDIT-044): it brings an empty
@@ -2217,6 +2219,13 @@ func (d *Database) migrateServerMetrics() error {
 // idempotent, so a fresh install (baseline already built it) is a no-op.
 func (d *Database) migrateDevicePurgeJobs() error {
 	return d.db.AutoMigrate(&models.DevicePurgeJob{})
+}
+
+// migrateNormalizeBackfillJobs (v73) creates normalize_backfill_jobs, the
+// queue/progress table of the one-time normalized-event backfill (Phase 1,
+// S-5; v0.11.297). Same shape as v65: a small AutoMigrate, idempotent.
+func (d *Database) migrateNormalizeBackfillJobs() error {
+	return d.db.AutoMigrate(&models.NormalizeBackfillJob{})
 }
 
 // migrateFlowSummaries (v66) creates the three flow-summary tables. They are

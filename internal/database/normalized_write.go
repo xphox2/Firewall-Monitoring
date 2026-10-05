@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"sort"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -324,6 +325,37 @@ func netEventCopyRow(e *models.NetEvent) []any {
 	}
 }
 
+// secEventsCopyColumns / secEventCopyRow are the sec_events COPY pair the S-5
+// backfill uses inside its batch transaction (the live ingest's SaveSecEvents
+// keeps the GORM insert: under 1% of its volume). Same contract as the
+// net_events pair: model field order minus `id`, pinned by
+// TestSecEventsCopyColumns_MatchModel.
+var secEventsCopyColumns = []string{
+	"ts", "device_id", "probe_id",
+	"class", "activity", "action", "severity", "vendor_event_id",
+	"src_ip", "src_port", "dst_ip", "dst_port", "proto", "src_mac", "user_name", "user_group", "src_hostname",
+	"admin_user", "admin_src_ip", "admin_method",
+	"sig_id", "sig_name", "threat_cat", "file_hash", "url_host",
+	"tunnel_name", "tunnel_type", "tunnel_peer",
+	"config_path", "config_obj", "config_old", "config_new",
+	"wan_name", "metric_name", "metric_value", "message",
+	"raw_id", "raw_ts", "extra",
+}
+
+func secEventCopyRow(e *models.SecEvent) []any {
+	return []any{
+		e.Ts, int64(e.DeviceID), int64(e.ProbeID),
+		e.Class, e.Activity, e.Action, e.Severity, e.VendorEventID,
+		inetValue(e.SrcIP), e.SrcPort, inetValue(e.DstIP), e.DstPort, e.Proto, macValue(e.SrcMAC), e.UserName, e.UserGroup, e.SrcHostname,
+		e.AdminUser, inetValue(e.AdminSrcIP), e.AdminMethod,
+		e.SigID, e.SigName, e.ThreatCat, e.FileHash, e.URLHost,
+		e.TunnelName, e.TunnelType, inetValue(e.TunnelPeer),
+		e.ConfigPath, e.ConfigObj, e.ConfigOld, e.ConfigNew,
+		e.WANName, e.MetricName, e.MetricValue, e.Message,
+		e.RawID, e.RawTS, e.Extra,
+	}
+}
+
 // inetValue is the COPY value for an inet column: nil, a netip.Addr, or —
 // for text that is not an address, which the mapping never produces — the
 // text itself for pgx to reject with a clear error.
@@ -413,16 +445,64 @@ func insertInChunks[T any](db *gorm.DB, kind string, rows []T) error {
 }
 
 // UpsertFwRules merges rule catalog rows into fw_rules on (device_id,
-// rule_key): first_seen keeps the earliest, last_seen the latest (so a
-// backfill replaying older rows cannot move either the wrong way), the
-// identity parts and the API-fed fields fill in when the new row supplies
-// them and are kept otherwise, and source never downgrades (api > config
-// backup > log). Duplicates within the batch are merged first — Postgres
-// rejects an INSERT ... ON CONFLICT that touches the same row twice.
+// rule_key): first_seen keeps the earliest, last_seen the latest, source
+// never downgrades (api > config backup > log), and the attribute columns
+// (identity parts and the API-fed fields) follow the NEWER sighting: a row
+// whose last_seen is at or after the stored one overwrites them where it
+// supplies a value, an OLDER row only fills the ones still NULL. That is what
+// keeps the backfill — which replays events up to 30 days old — from
+// overwriting a rule name the live ingest saw yesterday with last month's.
+// Duplicates within the batch are merged first by the same rule (Postgres
+// rejects an INSERT ... ON CONFLICT that touches the same row twice).
 func (d *Database) UpsertFwRules(rules []models.FwRule) error {
-	if len(rules) == 0 {
+	return d.upsertFwRulesOn(d.db, rules)
+}
+
+// upsertFwRulesOn is UpsertFwRules on a given handle (the backfill's batch
+// transaction on the SQLite lane).
+func (d *Database) upsertFwRulesOn(db *gorm.DB, rules []models.FwRule) error {
+	merged := mergeFwRules(rules)
+	if len(merged) == 0 {
 		return nil
 	}
+	set := map[string]interface{}{}
+	for _, a := range fwRuleConflictSet(d.dialect) {
+		set[a.col] = gorm.Expr(a.expr)
+	}
+	return db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "device_id"}, {Name: "rule_key"}},
+		DoUpdates: clause.Assignments(set),
+	}).CreateInBatches(&merged, normalizedInsertBatch).Error
+}
+
+// fwRuleAttrColumns are the columns that follow the newer sighting.
+var fwRuleAttrColumns = []string{"rule_uid", "rule_id", "rule_name", "rule_index", "ruleset", "enabled", "position", "extra"}
+
+// fwRuleAssignment is one `col = expr` of the fw_rules ON CONFLICT update.
+type fwRuleAssignment struct{ col, expr string }
+
+// fwRuleConflictSet is the ON CONFLICT DO UPDATE of fw_rules, shared by the
+// GORM path and the backfill's pgx batch transaction so the two can never
+// disagree. Every expression reads the PRE-update row (SQL SET semantics), so
+// the last_seen comparison sees the stored value, not the GREATEST result.
+func fwRuleConflictSet(dl Dialect) []fwRuleAssignment {
+	out := []fwRuleAssignment{
+		{"first_seen", dl.Least("fw_rules.first_seen", "excluded.first_seen")},
+		{"last_seen", dl.Greatest("fw_rules.last_seen", "excluded.last_seen")},
+		{"source", dl.Greatest("fw_rules.source", "excluded.source")},
+	}
+	for _, c := range fwRuleAttrColumns {
+		out = append(out, fwRuleAssignment{c, fmt.Sprintf(
+			"CASE WHEN excluded.last_seen >= fw_rules.last_seen THEN COALESCE(excluded.%[1]s, fw_rules.%[1]s) ELSE COALESCE(fw_rules.%[1]s, excluded.%[1]s) END", c)})
+	}
+	return out
+}
+
+// mergeFwRules folds rows with the same (device_id, rule_key) into one, by
+// the same rule as the ON CONFLICT: LEAST / GREATEST on first_seen /
+// last_seen / source, and the attributes from the newer sighting (an older
+// one only fills what is still nil). The result is sorted by key.
+func mergeFwRules(rules []models.FwRule) []models.FwRule {
 	type key struct {
 		dev uint
 		rk  string
@@ -438,6 +518,15 @@ func (d *Database) UpsertFwRules(rules []models.FwRule) error {
 			continue
 		}
 		m := &merged[i]
+		newer := !r.LastSeen.Before(m.LastSeen) // decided before last_seen moves
+		fillPtr(&m.RuleUID, r.RuleUID, newer)
+		fillPtr(&m.RuleName, r.RuleName, newer)
+		fillPtr(&m.Ruleset, r.Ruleset, newer)
+		fillPtr(&m.Extra, r.Extra, newer)
+		fillPtr(&m.RuleID, r.RuleID, newer)
+		fillPtr(&m.RuleIndex, r.RuleIndex, newer)
+		fillPtr(&m.Enabled, r.Enabled, newer)
+		fillPtr(&m.Position, r.Position, newer)
 		if r.FirstSeen.Before(m.FirstSeen) {
 			m.FirstSeen = r.FirstSeen
 		}
@@ -447,52 +536,87 @@ func (d *Database) UpsertFwRules(rules []models.FwRule) error {
 		if r.Source > m.Source {
 			m.Source = r.Source
 		}
-		// Same rule as the ON CONFLICT below: the newest non-nil value wins.
-		fillStr(&m.RuleUID, r.RuleUID)
-		fillStr(&m.RuleName, r.RuleName)
-		fillStr(&m.Ruleset, r.Ruleset)
-		fillStr(&m.Extra, r.Extra)
-		if r.RuleID != nil {
-			m.RuleID = r.RuleID
-		}
-		if r.RuleIndex != nil {
-			m.RuleIndex = r.RuleIndex
-		}
-		if r.Enabled != nil {
-			m.Enabled = r.Enabled
-		}
-		if r.Position != nil {
-			m.Position = r.Position
-		}
 	}
-	keep := func(col string) clause.Expr {
-		return gorm.Expr(fmt.Sprintf("COALESCE(excluded.%s, fw_rules.%s)", col, col))
-	}
-	return d.db.Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "device_id"}, {Name: "rule_key"}},
-		DoUpdates: clause.Assignments(map[string]interface{}{
-			"first_seen": gorm.Expr(d.dialect.Least("fw_rules.first_seen", "excluded.first_seen")),
-			"last_seen":  gorm.Expr(d.dialect.Greatest("fw_rules.last_seen", "excluded.last_seen")),
-			"source":     gorm.Expr(d.dialect.Greatest("fw_rules.source", "excluded.source")),
-			"rule_uid":   keep("rule_uid"),
-			"rule_id":    keep("rule_id"),
-			"rule_name":  keep("rule_name"),
-			"rule_index": keep("rule_index"),
-			"ruleset":    keep("ruleset"),
-			"enabled":    keep("enabled"),
-			"position":   keep("position"),
-			"extra":      keep("extra"),
-		}),
-	}).CreateInBatches(&merged, normalizedInsertBatch).Error
+	// Key order: every writer (live ingest, backfill batch transaction) then
+	// takes the fw_rules row locks in the same order and two concurrent upserts
+	// cannot deadlock on each other.
+	sort.Slice(merged, func(i, j int) bool {
+		if merged[i].DeviceID != merged[j].DeviceID {
+			return merged[i].DeviceID < merged[j].DeviceID
+		}
+		return merged[i].RuleKey < merged[j].RuleKey
+	})
+	return merged
 }
 
-// fillStr overwrites dst when src is supplied — COALESCE(excluded, existing)
-// applied batch-wise, so the later non-nil value wins exactly as it would
-// have had the rows arrived in separate batches.
-func fillStr(dst **string, src *string) {
-	if src != nil {
+// fillPtr applies the attribute rule batch-wise: a newer src that is
+// supplied overwrites, an older one only fills a nil dst.
+func fillPtr[T any](dst **T, src *T, newer bool) {
+	if src != nil && (newer || *dst == nil) {
 		*dst = src
 	}
+}
+
+// fwRulesCopyColumns is the fw_rules column list the pgx upsert binds, in
+// fwRuleValues order.
+var fwRulesCopyColumns = []string{
+	"device_id", "rule_key", "rule_uid", "rule_id", "rule_name", "rule_index", "ruleset",
+	"source", "first_seen", "last_seen", "enabled", "position", "extra",
+}
+
+func fwRuleValues(r *models.FwRule) []any {
+	return []any{
+		int64(r.DeviceID), r.RuleKey, r.RuleUID, r.RuleID, r.RuleName, r.RuleIndex, r.Ruleset,
+		r.Source, r.FirstSeen, r.LastSeen, r.Enabled, r.Position, r.Extra,
+	}
+}
+
+// upsertFwRulesPgx is UpsertFwRules inside a pgx transaction (the backfill's
+// batch transaction, so the catalog rows commit or roll back with the events
+// and the cursor). Same merge, same ON CONFLICT; chunked so a statement stays
+// far below the bind-parameter limit.
+func upsertFwRulesPgx(ctx context.Context, tx pgx.Tx, dl Dialect, rules []models.FwRule) error {
+	merged := mergeFwRules(rules)
+	if len(merged) == 0 {
+		return nil
+	}
+	var set strings.Builder
+	for i, a := range fwRuleConflictSet(dl) {
+		if i > 0 {
+			set.WriteString(", ")
+		}
+		set.WriteString(a.col + " = " + a.expr)
+	}
+	const chunk = 1000
+	nc := len(fwRulesCopyColumns)
+	for start := 0; start < len(merged); start += chunk {
+		end := start + chunk
+		if end > len(merged) {
+			end = len(merged)
+		}
+		var sb strings.Builder
+		sb.WriteString("INSERT INTO fw_rules (" + strings.Join(fwRulesCopyColumns, ", ") + ") VALUES ")
+		args := make([]any, 0, (end-start)*nc)
+		for i := start; i < end; i++ {
+			if i > start {
+				sb.WriteString(", ")
+			}
+			sb.WriteByte('(')
+			for c := 0; c < nc; c++ {
+				if c > 0 {
+					sb.WriteString(", ")
+				}
+				fmt.Fprintf(&sb, "$%d", len(args)+c+1)
+			}
+			sb.WriteByte(')')
+			args = append(args, fwRuleValues(&merged[i])...)
+		}
+		sb.WriteString(" ON CONFLICT (device_id, rule_key) DO UPDATE SET " + set.String())
+		if _, err := tx.Exec(ctx, sb.String(), args...); err != nil {
+			return fmt.Errorf("upsert %d fw_rules row(s): %w", end-start, err)
+		}
+	}
+	return nil
 }
 
 // FlushFieldObserved adds the in-memory (device, class, field) counters to

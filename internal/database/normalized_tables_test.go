@@ -81,10 +81,13 @@ func TestPartitionLookbackDays(t *testing.T) {
 
 // TestRegisteredMigrations_V72IsLast pins the version number the plan and
 // CHANGELOG cite.
-func TestRegisteredMigrations_V72IsLast(t *testing.T) {
+func TestRegisteredMigrations_V73IsLast(t *testing.T) {
 	last := registeredMigrations[len(registeredMigrations)-1]
-	if last.version != 72 || last.name != "normalized_event_tables" {
-		t.Fatalf("last migration = {%d %q}, want {72 normalized_event_tables}", last.version, last.name)
+	if last.version != 73 || last.name != "normalize_backfill_jobs" {
+		t.Fatalf("last migration = {%d %q}, want {73 normalize_backfill_jobs}", last.version, last.name)
+	}
+	if m := registeredMigrations[len(registeredMigrations)-2]; m.version != 72 || m.name != "normalized_event_tables" {
+		t.Fatalf("migration before last = {%d %q}, want {72 normalized_event_tables}", m.version, m.name)
 	}
 }
 
@@ -328,8 +331,9 @@ func TestUpsertFwRules_MergeAndGreatest(t *testing.T) {
 	}
 }
 
-// TestUpsertFwRules_BatchMergeNewestWins: within one batch the later non-nil
-// value wins, exactly as COALESCE(excluded, existing) would across batches.
+// TestUpsertFwRules_BatchMergeNewestWins: within one batch of equal last_seen
+// the later non-nil value wins, exactly as the ON CONFLICT would across
+// batches (an equal last_seen counts as newer).
 func TestUpsertFwRules_BatchMergeNewestWins(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	t0 := time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC)
@@ -349,6 +353,65 @@ func TestUpsertFwRules_BatchMergeNewestWins(t *testing.T) {
 	}
 	if got.RuleName == nil || *got.RuleName != second || got.RuleIndex == nil || *got.RuleIndex != 7 {
 		t.Fatalf("merged row name=%v index=%v, want second / 7 (newest non-nil wins; nil never overwrites)", got.RuleName, got.RuleIndex)
+	}
+}
+
+// TestUpsertFwRules_OlderSightingOnlyFillsNulls: the backfill replays events
+// up to 30 days old. A sighting OLDER than the stored last_seen must not
+// overwrite an attribute the live ingest set (the live rule name stays), it
+// may only fill a NULL one; first_seen still moves earlier, last_seen never
+// back. A newer sighting overwrites, as on the live path; within one batch
+// the newer row wins regardless of its position.
+func TestUpsertFwRules_OlderSightingOnlyFillsNulls(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	now := time.Date(2026, 10, 5, 10, 0, 0, 0, time.UTC)
+	str := func(s string) *string { return &s }
+	idx := int32(3)
+	key := "i:root/10"
+	get := func() models.FwRule {
+		t.Helper()
+		var r models.FwRule
+		if err := d.db.Where("device_id = ? AND rule_key = ?", 1, key).First(&r).Error; err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	live := models.FwRule{DeviceID: 1, RuleKey: key, RuleName: str("LAN-to-WAN-v2"), Source: models.FwRuleSourceLog, FirstSeen: now, LastSeen: now}
+	if err := d.UpsertFwRules([]models.FwRule{live}); err != nil {
+		t.Fatal(err)
+	}
+	old := models.FwRule{DeviceID: 1, RuleKey: key, RuleName: str("LAN-to-WAN-v1"), Ruleset: str("root"), RuleIndex: &idx, Source: models.FwRuleSourceLog,
+		FirstSeen: now.AddDate(0, 0, -10), LastSeen: now.AddDate(0, 0, -10)}
+	if err := d.UpsertFwRules([]models.FwRule{old}); err != nil {
+		t.Fatal(err)
+	}
+	got := get()
+	if got.RuleName == nil || *got.RuleName != "LAN-to-WAN-v2" {
+		t.Fatalf("rule_name = %v after an older sighting, want the live LAN-to-WAN-v2 kept", got.RuleName)
+	}
+	if got.Ruleset == nil || *got.Ruleset != "root" || got.RuleIndex == nil || *got.RuleIndex != 3 {
+		t.Fatalf("ruleset / rule_index = %v / %v, want the older sighting to fill the NULLs", got.Ruleset, got.RuleIndex)
+	}
+	if !got.FirstSeen.Equal(old.FirstSeen) || !got.LastSeen.Equal(now) {
+		t.Fatalf("first_seen / last_seen = %s / %s", got.FirstSeen, got.LastSeen)
+	}
+	// A newer sighting overwrites (the live path).
+	if err := d.UpsertFwRules([]models.FwRule{{DeviceID: 1, RuleKey: key, RuleName: str("LAN-to-WAN-v3"), Source: models.FwRuleSourceLog, FirstSeen: now.Add(time.Hour), LastSeen: now.Add(time.Hour)}}); err != nil {
+		t.Fatal(err)
+	}
+	if got = get(); got.RuleName == nil || *got.RuleName != "LAN-to-WAN-v3" || !got.LastSeen.Equal(now.Add(time.Hour)) {
+		t.Fatalf("after a newer sighting: name %v last_seen %s", got.RuleName, got.LastSeen)
+	}
+	// One batch, newer row first: the older row behind it does not win.
+	batch := []models.FwRule{
+		{DeviceID: 1, RuleKey: key, RuleName: str("LAN-to-WAN-v5"), Source: models.FwRuleSourceLog, FirstSeen: now.Add(3 * time.Hour), LastSeen: now.Add(3 * time.Hour)},
+		{DeviceID: 1, RuleKey: key, RuleName: str("LAN-to-WAN-v4"), Source: models.FwRuleSourceLog, FirstSeen: now.Add(2 * time.Hour), LastSeen: now.Add(2 * time.Hour)},
+	}
+	if err := d.UpsertFwRules(batch); err != nil {
+		t.Fatal(err)
+	}
+	if got = get(); got.RuleName == nil || *got.RuleName != "LAN-to-WAN-v5" {
+		t.Fatalf("batch merge: name %v, want the newer LAN-to-WAN-v5", got.RuleName)
 	}
 }
 

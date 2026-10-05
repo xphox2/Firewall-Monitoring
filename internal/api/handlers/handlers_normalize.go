@@ -60,10 +60,11 @@ const (
 	// denyCollapseMax bounds the collapse window's key set.
 	denyCollapseMax = 65536
 	// normalizeIngestStartedSetting is written once, on the first batch that
-	// landed normalized rows: the S-5 backfill's default upper bound, so the
-	// backfill and live ingest never cover the same raw rows. Insert-only —
-	// it is never overwritten (InsertSettingIfAbsent).
-	normalizeIngestStartedSetting = "normalize_ingest_started_at"
+	// landed normalized rows: the S-5 backfill's upper bound, so the backfill
+	// and live ingest never cover the same raw rows. Insert-only — it is never
+	// overwritten (InsertSettingIfAbsent). The key is the database package's:
+	// the backfill (database.NormalizeBackfillBounds) reads it.
+	normalizeIngestStartedSetting = database.NormalizeIngestStartedSetting
 )
 
 // normalizeIngest derives every normalized consumer's input from one saved

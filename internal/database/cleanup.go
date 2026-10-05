@@ -627,35 +627,7 @@ func andFloorOn(column, where string, args []interface{}, floor time.Time) (stri
 // anything. Accept the date-only, timestamp, and timestamptz renderings, and
 // fall back to the leading YYYY-MM-DD date (which is all a monthly bound needs).
 func parsePartitionUpperBound(bound string) (time.Time, bool) {
-	const marker = "TO ('"
-	i := strings.Index(bound, marker)
-	if i < 0 {
-		return time.Time{}, false
-	}
-	rest := bound[i+len(marker):]
-	j := strings.Index(rest, "'")
-	if j < 0 {
-		return time.Time{}, false
-	}
-	val := rest[:j]
-	for _, layout := range []string{
-		"2006-01-02",
-		"2006-01-02 15:04:05",
-		"2006-01-02 15:04:05-07",
-		"2006-01-02 15:04:05-07:00",
-	} {
-		if t, err := time.Parse(layout, val); err == nil {
-			return t, true
-		}
-	}
-	// Fall back to the leading date portion (monthly bounds are first-of-month
-	// midnight, so the date alone is sufficient and unambiguous).
-	if len(val) >= 10 {
-		if t, err := time.Parse("2006-01-02", val[:10]); err == nil {
-			return t, true
-		}
-	}
-	return time.Time{}, false
+	return parsePartitionBound(bound, "TO ('")
 }
 
 // statusFallback resolves a per-table retention knob for the charted per-poll
@@ -979,6 +951,11 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	if err := d.batchedDeleteOlderThanOn(&models.DevicePurgeJob{}, "updated_at", cleanupOrderBy("device_purge_jobs", "updated_at"), cmdCutoff,
 		"status IN (?)", []string{DevicePurgeStatusDone, DevicePurgeStatusFailed, DevicePurgeStatusCancelled}); err != nil {
 		errs = append(errs, fmt.Errorf("failed to cleanup device_purge_jobs: %w", err))
+	}
+	// v0.11.297: terminal normalize_backfill_jobs rows, the same 30-day trail.
+	if err := d.batchedDeleteOlderThanOn(&models.NormalizeBackfillJob{}, "updated_at", cleanupOrderBy("normalize_backfill_jobs", "updated_at"), cmdCutoff,
+		"status IN (?)", []string{NormalizeBackfillStatusDone, NormalizeBackfillStatusFailed, NormalizeBackfillStatusCancelled}); err != nil {
+		errs = append(errs, fmt.Errorf("failed to cleanup normalize_backfill_jobs: %w", err))
 	}
 
 	// Syslog: one retention window PER SEVERITY.

@@ -135,6 +135,13 @@ func (d *Database) runNetEventRollupCycle(now time.Time) (hours, days int, err e
 	// dated years back must not drag either cursor there.
 	floor := utcDay(now).AddDate(0, 0, -d.partitionLookbackDays(partitionDef{"net_events", "ts"}))
 
+	// A finished S-5 backfill asks for its days to be re-closed by leaving a
+	// rewind marker; consumed here, under the maintenance lock, before either
+	// cursor is read.
+	if err := d.applyNetEventRollupRewind(); err != nil {
+		return 0, 0, fmt.Errorf("apply rollup rewind: %w", err)
+	}
+
 	wm, ok, err := d.netEventRollupWatermark()
 	if err != nil {
 		return 0, 0, err

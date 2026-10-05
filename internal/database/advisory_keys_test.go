@@ -18,14 +18,15 @@ import (
 // test if a *LockKey constant exists that the list does not cover.
 func TestAdvisoryLockKeysDistinct(t *testing.T) {
 	keys := map[string]int64{
-		"startupMigrationLockKey": startupMigrationLockKey,
-		"pollerWorkLockKey":       pollerWorkLockKey,
-		"flowSummaryLockKey":      flowSummaryLockKey,
-		"flowReclassLockKey":      flowReclassLockKey,
-		"maintenanceLockKey":      maintenanceLockKey,
-		"apiSingletonLockKey":     apiSingletonLockKey,
-		"devicePurgeLockKey":      devicePurgeLockKey,
-		"migrationLockKey":        migrationLockKey,
+		"startupMigrationLockKey":  startupMigrationLockKey,
+		"pollerWorkLockKey":        pollerWorkLockKey,
+		"flowSummaryLockKey":       flowSummaryLockKey,
+		"flowReclassLockKey":       flowReclassLockKey,
+		"maintenanceLockKey":       maintenanceLockKey,
+		"apiSingletonLockKey":      apiSingletonLockKey,
+		"devicePurgeLockKey":       devicePurgeLockKey,
+		"migrationLockKey":         migrationLockKey,
+		"normalizeBackfillLockKey": normalizeBackfillLockKey,
 	}
 	seen := make(map[int64]string, len(keys))
 	for name, k := range keys {

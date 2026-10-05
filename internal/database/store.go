@@ -50,6 +50,7 @@ type Store interface {
 	MaintenanceOpsStore
 	IPSecStore
 	DevicePurgeStore
+	NormalizeBackfillStore
 
 	// Gorm exposes the raw *gorm.DB for handlers that build ad-hoc queries
 	// (partial updates, one-off lookups). Unchanged escape hatch.
@@ -82,6 +83,21 @@ type DevicePurgeStore interface {
 	CancelDevicePurgeJob(id uint) (status string, applied bool, err error)
 	EstimateDevicePurge(deviceID uint) (*DevicePurgeEstimate, error)
 	ListIPSecTunnelsForDevice(deviceID uint) ([]models.IPSecTunnel, error)
+}
+
+// NormalizeBackfillStore covers the one-time normalized-event backfill queue
+// (v0.11.297, normalize_backfill.go). The worker (RunNormalizeBackfill,
+// NormalizeBackfillWorker) runs on the poller's concrete *Database.
+type NormalizeBackfillStore interface {
+	NormalizeBackfillBounds(sinceDays int, now time.Time) (since, until time.Time, err error)
+	EstimateNormalizeBackfill(since, until time.Time) (NormalizeBackfillEstimate, error)
+	CreateNormalizeBackfillJob(job *models.NormalizeBackfillJob) error
+	GetNormalizeBackfillJob(id uint) (*models.NormalizeBackfillJob, error)
+	GetLatestNormalizeBackfillJob() (*models.NormalizeBackfillJob, error)
+	GetActiveNormalizeBackfillJob() (*models.NormalizeBackfillJob, error)
+	ListNormalizeBackfillJobs(limit int) ([]models.NormalizeBackfillJob, error)
+	CancelNormalizeBackfillJob(id uint) (status string, applied bool, err error)
+	ResumeNormalizeBackfillJob(id uint) (applied bool, err error)
 }
 
 // IPSecStore covers IPSec provisioning-wizard tunnel CRUD (PSK encrypted at
