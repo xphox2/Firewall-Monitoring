@@ -151,6 +151,7 @@ func TestArchiveConfig_RejectsInvalid(t *testing.T) {
 		{"key id space", "ARCHIVE_S3_ACCESS_KEY_ID", "ab cd", "ARCHIVE_S3_ACCESS_KEY_ID"},
 		{"lock days malformed", "ARCHIVE_OBJECT_LOCK_DAYS", "400d", "ARCHIVE_OBJECT_LOCK_DAYS"},
 		{"lock days negative", "ARCHIVE_OBJECT_LOCK_DAYS", "-1", "ARCHIVE_OBJECT_LOCK_DAYS"},
+		{"lock days above B2 max", "ARCHIVE_OBJECT_LOCK_DAYS", "3001", "ARCHIVE_OBJECT_LOCK_DAYS"},
 		{"lock mode bad", "ARCHIVE_OBJECT_LOCK_MODE", "LEGAL", "ARCHIVE_OBJECT_LOCK_MODE"},
 		{"lock mode empty", "ARCHIVE_OBJECT_LOCK_MODE", "", "ARCHIVE_OBJECT_LOCK_MODE"},
 		{"min age zero", "ARCHIVE_MIN_AGE_HOURS", "0", "ARCHIVE_MIN_AGE_HOURS"},
@@ -188,6 +189,13 @@ func TestArchiveConfig_RejectsInvalid(t *testing.T) {
 	setArchiveEnv(t, map[string]string{"ARCHIVE_SYSLOG_ENABLED": "yes"})
 	if err := Load().Archive.Validate(); err == nil || !strings.Contains(err.Error(), "ARCHIVE_SYSLOG_ENABLED") {
 		t.Errorf("malformed enable flag: %v", err)
+	}
+	// The B2 maximum itself is accepted.
+	env = validArchiveEnv()
+	env["ARCHIVE_OBJECT_LOCK_DAYS"] = "3000"
+	setArchiveEnv(t, env)
+	if err := Load().Archive.Validate(); err != nil {
+		t.Errorf("lock days 3000: %v", err)
 	}
 	// http is accepted with the escape hatch.
 	env = validArchiveEnv()

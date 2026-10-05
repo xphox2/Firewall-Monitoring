@@ -88,3 +88,47 @@ func TestB2Strict_RejectsWhatB2Rejects(t *testing.T) {
 		t.Errorf("delete count = %d, want 1", s.Count(OpDeleteObject))
 	}
 }
+
+// TestB2Strict_ObjectLockBucketAndPartSize: lock headers are refused on a
+// bucket without Object Lock, and a multipart upload with a non-final part
+// under 5 MiB is refused at completion.
+func TestB2Strict_ObjectLockBucketAndPartSize(t *testing.T) {
+	ctx := context.Background()
+	s := NewB2Strict(t, "example-bucket", WithoutObjectLock())
+	c := rawClient(t, s, true)
+	body := []byte("x")
+	sum := md5.Sum(body) // #nosec G401
+	_, err := c.PutObject(ctx, &awss3.PutObjectInput{
+		Bucket: aws.String("example-bucket"), Key: aws.String("a"), Body: bytes.NewReader(body),
+		ContentMD5: aws.String(base64.StdEncoding.EncodeToString(sum[:])), ObjectLockMode: types.ObjectLockModeGovernance,
+		ObjectLockRetainUntilDate: aws.Time(time.Now().Add(time.Hour)),
+	})
+	if err == nil || !strings.Contains(err.Error(), "Object Lock") {
+		t.Errorf("locked PutObject on a bucket without Object Lock = %v", err)
+	}
+	if _, err := c.GetObjectLockConfiguration(ctx, &awss3.GetObjectLockConfigurationInput{Bucket: aws.String("example-bucket")}); err == nil {
+		t.Error("GetObjectLockConfiguration succeeded on a bucket without Object Lock")
+	}
+
+	up, err := c.CreateMultipartUpload(ctx, &awss3.CreateMultipartUploadInput{Bucket: aws.String("example-bucket"), Key: aws.String("m")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parts []types.CompletedPart
+	for i, n := range []int{1 << 20, 1 << 20} {
+		b := bytes.Repeat([]byte{byte(i)}, n)
+		ps := md5.Sum(b) // #nosec G401
+		out, err := c.UploadPart(ctx, &awss3.UploadPartInput{Bucket: aws.String("example-bucket"), Key: aws.String("m"),
+			UploadId: up.UploadId, PartNumber: aws.Int32(int32(i + 1)), Body: bytes.NewReader(b),
+			ContentMD5: aws.String(base64.StdEncoding.EncodeToString(ps[:]))})
+		if err != nil {
+			t.Fatal(err)
+		}
+		parts = append(parts, types.CompletedPart{ETag: out.ETag, PartNumber: aws.Int32(int32(i + 1))})
+	}
+	_, err = c.CompleteMultipartUpload(ctx, &awss3.CompleteMultipartUploadInput{Bucket: aws.String("example-bucket"), Key: aws.String("m"),
+		UploadId: up.UploadId, MultipartUpload: &types.CompletedMultipartUpload{Parts: parts}})
+	if err == nil || !strings.Contains(err.Error(), "EntityTooSmall") {
+		t.Errorf("complete with a 1 MiB first part = %v, want EntityTooSmall", err)
+	}
+}

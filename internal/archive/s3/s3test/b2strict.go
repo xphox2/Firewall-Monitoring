@@ -13,8 +13,12 @@
 //     the body (B2 requires it whenever Object Lock applies; the archive sends
 //     it always, so the fake requires it always);
 //   - Object Lock headers must come as a valid pair (GOVERNANCE|COMPLIANCE and
-//     a future RFC 3339 date); they are recorded per key and reported back on
-//     HEAD / GET, which gofakes3 does not do;
+//     a future RFC 3339 date) and are refused on a bucket without Object Lock
+//     (WithoutObjectLock); they are recorded per key and reported back on
+//     HEAD / GET, which gofakes3 does not do. GetObjectLockConfiguration
+//     answers from the same flag;
+//   - every multipart part except the last must be at least 5 MiB
+//     (EntityTooSmall at CompleteMultipartUpload);
 //   - HEAD / GET of a multipart object report the S3 composite ETag
 //     ("<md5 of part md5s>-<n>") as B2 and S3 do (gofakes3 reports the MD5
 //     of the whole body);
@@ -56,6 +60,7 @@ const (
 	OpHeadObject     Op = "HeadObject"
 	OpGetObject      Op = "GetObject"
 	OpListObjects    Op = "ListObjects"
+	OpGetLockConfig  Op = "GetObjectLockConfiguration"
 	OpDeleteObject   Op = "DeleteObject"
 	OpDeleteObjects  Op = "DeleteObjects"
 	OpOther          Op = "Other"
@@ -88,16 +93,28 @@ type Server struct {
 	// of passing the request on.
 	Fail func(op Op, r *http.Request) (status int, code string)
 
-	inner http.Handler
-	mu    sync.Mutex
-	reqs  []Request
-	lock  map[string]Retention
-	etags map[string]string // multipart composite ETag by key
+	inner      http.Handler
+	objectLock bool // bucket created with Object Lock enabled
+	mu         sync.Mutex
+	reqs       []Request
+	lock       map[string]Retention
+	etags      map[string]string        // multipart composite ETag by key
+	partSizes  map[string]map[int]int64 // uploadId -> part number -> bytes
 }
 
-// NewB2Strict starts a server with one empty bucket. It is closed when the
-// test ends.
-func NewB2Strict(t testing.TB, bucket string) *Server {
+// MinPartSize is the smallest multipart part B2 accepts, except the last.
+const MinPartSize = 5 << 20
+
+// Option configures NewB2Strict.
+type Option func(*Server)
+
+// WithoutObjectLock creates the bucket without Object Lock: lock headers are
+// refused and GetObjectLockConfiguration reports none.
+func WithoutObjectLock() Option { return func(s *Server) { s.objectLock = false } }
+
+// NewB2Strict starts a server with one empty bucket (Object Lock enabled
+// unless WithoutObjectLock). It is closed when the test ends.
+func NewB2Strict(t testing.TB, bucket string, opts ...Option) *Server {
 	t.Helper()
 	backend := s3mem.New()
 	if err := backend.CreateBucket(bucket); err != nil {
@@ -109,10 +126,15 @@ func NewB2Strict(t testing.TB, bucket string) *Server {
 		gofakes3.WithoutVersioning(),
 	)
 	s := &Server{
-		Bucket: bucket,
-		inner:  fake.Server(),
-		lock:   map[string]Retention{},
-		etags:  map[string]string{},
+		Bucket:     bucket,
+		inner:      fake.Server(),
+		objectLock: true,
+		lock:       map[string]Retention{},
+		etags:      map[string]string{},
+		partSizes:  map[string]map[int]int64{},
+	}
+	for _, o := range opts {
+		o(s)
 	}
 	s.Server = httptest.NewUnstartedServer(http.HandlerFunc(s.serve))
 	// Handshake failures are what some tests provoke; keep them out of the log.
@@ -174,6 +196,8 @@ func classify(r *http.Request, bucket string) (Op, string) {
 		return OpHeadObject, key
 	case r.Method == http.MethodGet && key != "":
 		return OpGetObject, key
+	case r.Method == http.MethodGet && key == "" && q.Has("object-lock"):
+		return OpGetLockConfig, key
 	case r.Method == http.MethodGet && key == "":
 		return OpListObjects, key
 	}
@@ -227,6 +251,9 @@ func (s *Server) check(op Op, r *http.Request, body []byte) (int, string, string
 		if mode == "" && until == "" {
 			break
 		}
+		if !s.objectLock {
+			return http.StatusBadRequest, "InvalidRequest", "Bucket is missing Object Lock Configuration"
+		}
 		if mode != "GOVERNANCE" && mode != "COMPLIANCE" {
 			return http.StatusBadRequest, "InvalidArgument", fmt.Sprintf("Invalid object lock mode %q", mode)
 		}
@@ -234,6 +261,20 @@ func (s *Server) check(op Op, r *http.Request, body []byte) (int, string, string
 		if err != nil || !ts.After(time.Now()) {
 			return http.StatusBadRequest, "InvalidArgument", fmt.Sprintf("Invalid retain-until date %q", until)
 		}
+	case OpCompleteUpload:
+		s.mu.Lock()
+		sizes := s.partSizes[r.URL.Query().Get("uploadId")]
+		last := 0
+		for n := range sizes {
+			last = max(last, n)
+		}
+		for n, size := range sizes {
+			if n != last && size < MinPartSize {
+				s.mu.Unlock()
+				return http.StatusBadRequest, "EntityTooSmall", fmt.Sprintf("Part %d is %d bytes; the minimum is %d except for the last part.", n, size, MinPartSize)
+			}
+		}
+		s.mu.Unlock()
 	}
 	return 0, "", ""
 }
@@ -250,6 +291,17 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	if status, code, msg := s.check(op, r, body); status != 0 {
 		s.record(op, key, r, status)
 		writeError(w, status, code, msg)
+		return
+	}
+	if op == OpGetLockConfig {
+		if !s.objectLock {
+			s.record(op, key, r, http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "ObjectLockConfigurationNotFoundError", "Object Lock configuration does not exist for this bucket")
+			return
+		}
+		s.record(op, key, r, http.StatusOK)
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?><ObjectLockConfiguration><ObjectLockEnabled>Enabled</ObjectLockEnabled></ObjectLockConfiguration>`)
 		return
 	}
 	if op == OpDeleteObject || op == OpDeleteObjects {
@@ -300,6 +352,14 @@ func (s *Server) after(op Op, key string, r *http.Request, h http.Header, body [
 		if op == OpPutObject {
 			delete(s.etags, key)
 		}
+	case OpUploadPart:
+		id := r.URL.Query().Get("uploadId")
+		if s.partSizes[id] == nil {
+			s.partSizes[id] = map[int]int64{}
+		}
+		var n int
+		_, _ = fmt.Sscan(r.URL.Query().Get("partNumber"), &n)
+		s.partSizes[id][n] = r.ContentLength
 	case OpCompleteUpload:
 		var res struct {
 			ETag string `xml:"ETag"`

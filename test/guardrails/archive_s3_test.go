@@ -67,6 +67,8 @@ func TestArchive_ClientChecksumSettings(t *testing.T) {
 		`ResponseChecksumValidation:\s+aws\.ResponseChecksumValidationWhenRequired,`,
 		`CheckRedirect:\s+func\(\*http\.Request, \[\]\*http\.Request\) error \{ return http\.ErrUseLastResponse \}`,
 		`tr\.DialContext = httputil\.SafeDialContext\(`,
+		`tr\.Proxy = nil`,
+		`ContinueHeaderThresholdBytes:\s+-1,`,
 	} {
 		if !regexp.MustCompile(want).MatchString(body) {
 			t.Errorf("internal/archive/s3/client.go lost %s", want)

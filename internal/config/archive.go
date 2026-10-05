@@ -56,6 +56,12 @@ type ArchiveConfig struct {
 	invalid []string
 }
 
+// MaxArchiveObjectLockDays is the longest Object Lock retention accepted:
+// Backblaze B2's documented maximum (its Object Lock documentation: "between
+// one and 3,000 days"). AWS allows longer; one
+// limit for every service keeps a config portable between them.
+const MaxArchiveObjectLockDays = 3000
+
 // Enabled reports whether any archive stream is switched on.
 func (a ArchiveConfig) Enabled() bool { return a.SyslogEnabled || a.FlowsEnabled }
 
@@ -173,8 +179,8 @@ func (a ArchiveConfig) ValidateS3() error {
 		return fmt.Errorf("ARCHIVE_S3_ACCESS_KEY_ID contains whitespace")
 	}
 	switch {
-	case a.ObjectLockDays < 0 || a.ObjectLockDays > 36500:
-		return fmt.Errorf("ARCHIVE_OBJECT_LOCK_DAYS must be 0-36500, got %d", a.ObjectLockDays)
+	case a.ObjectLockDays < 0 || a.ObjectLockDays > MaxArchiveObjectLockDays:
+		return fmt.Errorf("ARCHIVE_OBJECT_LOCK_DAYS must be 0-%d, got %d", MaxArchiveObjectLockDays, a.ObjectLockDays)
 	case a.ObjectLockDays > 0 && a.LockMode() == "":
 		return fmt.Errorf("ARCHIVE_OBJECT_LOCK_DAYS=%d requires ARCHIVE_OBJECT_LOCK_MODE=GOVERNANCE or COMPLIANCE, got %q", a.ObjectLockDays, a.ObjectLockMode)
 	case a.ObjectLockDays == 0 && a.ObjectLockMode != "":

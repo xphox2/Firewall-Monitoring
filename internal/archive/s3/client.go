@@ -25,6 +25,12 @@
 //     ARCHIVE_ALLOW_PRIVATE_ENDPOINT is set every dial is pinned to a
 //     validated public address (httputil.SafeDialContext, the webhook rule),
 //     redirects are never followed, and TLS uses the system roots.
+//   - HTTP(S)_PROXY / NO_PROXY are ignored: a proxy would resolve and dial the
+//     endpoint itself, out of reach of the pinned dial (and a private proxy
+//     address would push operators to ARCHIVE_ALLOW_PRIVATE_ENDPOINT). The
+//     archive always connects to the endpoint directly.
+//   - No "Expect: 100-continue" (its handling by non-AWS services is
+//     unverified); the body follows the headers.
 //   - SDK logging is off, and the secret is masked in every error returned.
 package s3
 
@@ -74,7 +80,7 @@ type Client struct {
 	prefix   string
 	lockDays int
 	lockMode types.ObjectLockMode
-	secret   string
+	secret   config.Secret // only for masking errors; Reveal()ed for the signer in New
 	partSize int64
 	now      func() time.Time
 }
@@ -112,6 +118,7 @@ func New(cfg config.ArchiveConfig, opts ...option) (*Client, error) {
 	}
 
 	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.Proxy = nil // see the package doc: never via an environment proxy
 	if !cfg.AllowPrivateEndpoint {
 		tr.DialContext = httputil.SafeDialContext(dialTimeout)
 	}
@@ -125,26 +132,27 @@ func New(cfg config.ArchiveConfig, opts ...option) (*Client, error) {
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 
-	secret := cfg.SecretAccessKey.Reveal()
 	api := awss3.New(awss3.Options{
 		Region:       cfg.Region,
 		BaseEndpoint: aws.String(endpoint.String()),
 		UsePathStyle: cfg.PathStyle,
-		Credentials:  credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, secret, ""),
+		Credentials:  credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.SecretAccessKey.Reveal(), ""),
 		HTTPClient:   hc,
 		// See the package doc: never send x-amz-checksum-* / aws-chunked.
-		RequestChecksumCalculation:  aws.RequestChecksumCalculationWhenRequired,
-		ResponseChecksumValidation:  aws.ResponseChecksumValidationWhenRequired,
-		Logger:                      logging.Nop{},
-		ClientLogMode:               0,
-		DisableS3ExpressSessionAuth: aws.Bool(true),
+		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
+		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
+		Logger:                     logging.Nop{},
+		ClientLogMode:              0,
+		// Never send "Expect: 100-continue" (the SDK does above 2 MiB).
+		ContinueHeaderThresholdBytes: -1,
+		DisableS3ExpressSessionAuth:  aws.Bool(true),
 	})
 
 	c := &Client{
 		api:      api,
 		bucket:   cfg.Bucket,
 		prefix:   cfg.Prefix,
-		secret:   secret,
+		secret:   cfg.SecretAccessKey,
 		partSize: s.partSize,
 		now:      s.now,
 	}
@@ -433,8 +441,12 @@ func (c *Client) VerifyFull(ctx context.Context, want PutResult, w io.Writer) er
 	return nil
 }
 
-// Preflight lists at most one key under the prefix. It proves the
-// credentials, bucket and prefix scope work without writing anything.
+// Preflight lists at most one key under the prefix, which proves the
+// credentials, bucket and prefix scope work without writing anything. When
+// ARCHIVE_OBJECT_LOCK_DAYS > 0 it also reads the bucket's Object Lock
+// configuration (B2 key capability readBucketRetentions) and fails unless
+// Object Lock is enabled: a PUT with lock headers to a bucket without it is
+// rejected, and finding that out on the first chunk is too late.
 func (c *Client) Preflight(ctx context.Context) error {
 	_, err := c.api.ListObjectsV2(ctx, &awss3.ListObjectsV2Input{
 		Bucket:  aws.String(c.bucket),
@@ -444,6 +456,16 @@ func (c *Client) Preflight(ctx context.Context) error {
 	if err != nil {
 		return c.wrap("preflight list", c.prefix+"/", err)
 	}
+	if c.lockDays == 0 {
+		return nil
+	}
+	out, err := c.api.GetObjectLockConfiguration(ctx, &awss3.GetObjectLockConfigurationInput{Bucket: aws.String(c.bucket)})
+	if err != nil {
+		return c.wrap("preflight object lock configuration of bucket", c.bucket, err)
+	}
+	if out.ObjectLockConfiguration == nil || out.ObjectLockConfiguration.ObjectLockEnabled != types.ObjectLockEnabledEnabled {
+		return fmt.Errorf("archive s3: bucket %s does not have Object Lock enabled, but ARCHIVE_OBJECT_LOCK_DAYS=%d; enable it on the bucket or set the days to 0", c.bucket, c.lockDays)
+	}
 	return nil
 }
 
@@ -451,13 +473,13 @@ func (c *Client) Preflight(ctx context.Context) error {
 // for errors.Is / errors.As.
 type redactedError struct {
 	err    error
-	secret string
+	secret config.Secret
 }
 
 func (e *redactedError) Error() string {
 	msg := e.err.Error()
-	if e.secret != "" {
-		msg = strings.ReplaceAll(msg, e.secret, config.RedactedSecret)
+	if s := e.secret.Reveal(); s != "" {
+		msg = strings.ReplaceAll(msg, s, config.RedactedSecret)
 	}
 	return msg
 }

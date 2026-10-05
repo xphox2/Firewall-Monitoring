@@ -12,7 +12,9 @@ import (
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,6 +30,29 @@ const (
 	testSecret = "TESTSECRETdoNotLeak0123456789abcdefABCDEF"
 	testPart   = 5 << 20
 )
+
+// proxyHits counts requests to the environment proxy TestMain installs.
+var proxyHits atomic.Int64
+
+// TestMain points HTTPS_PROXY / HTTP_PROXY at a recorder before any request
+// (net/http reads the proxy environment once per process). Requests to
+// 127.0.0.1 / localhost are never proxied by net/http, so only
+// TestClient_IgnoresEnvironmentProxy could reach it.
+func TestMain(m *testing.M) {
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxyHits.Add(1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	for _, k := range []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"} {
+		os.Setenv(k, proxy.URL)
+	}
+	for _, k := range []string{"NO_PROXY", "no_proxy"} {
+		os.Unsetenv(k)
+	}
+	code := m.Run()
+	proxy.Close()
+	os.Exit(code)
+}
 
 func testConfig(endpoint string) config.ArchiveConfig {
 	return config.ArchiveConfig{
@@ -333,9 +358,88 @@ func TestNew_PrivateEndpointPinned(t *testing.T) {
 		t.Errorf("Preflight with ARCHIVE_ALLOW_PRIVATE_ENDPOINT: %v", err)
 	}
 	reqs := srv.Requests()
-	if len(reqs) != 1 || reqs[0].Op != s3test.OpListObjects || !strings.Contains(reqs[0].Query, "max-keys=1") ||
-		!strings.Contains(reqs[0].Query, "prefix="+strings.ReplaceAll(testPrefix, "/", "%2F")+"%2F") {
-		t.Errorf("preflight requests = %+v, want one ListObjectsV2 max-keys=1 under the prefix", reqs)
+	if len(reqs) != 2 || reqs[0].Op != s3test.OpListObjects || !strings.Contains(reqs[0].Query, "max-keys=1") ||
+		!strings.Contains(reqs[0].Query, "prefix="+strings.ReplaceAll(testPrefix, "/", "%2F")+"%2F") ||
+		reqs[1].Op != s3test.OpGetLockConfig {
+		t.Errorf("preflight requests = %+v, want ListObjectsV2 max-keys=1 under the prefix, then GetObjectLockConfiguration", reqs)
+	}
+}
+
+// TestPreflight_ObjectLock: with lock days configured, Preflight fails on a
+// bucket without Object Lock (where every locked PUT would be refused) and
+// passes on one with it; with days 0 it does not ask.
+func TestPreflight_ObjectLock(t *testing.T) {
+	ctx := context.Background()
+	noLock := s3test.NewB2Strict(t, testBucket, s3test.WithoutObjectLock())
+	cl, err := New(testConfig(noLock.URL), withRoots(certPool(noLock.Server)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cl.Preflight(ctx); err == nil || !strings.Contains(err.Error(), "object lock configuration") {
+		t.Errorf("Preflight on a bucket without Object Lock = %v, want a failure", err)
+	}
+	if _, err := cl.Put(ctx, "x/f.json", bytes.NewReader([]byte("{}")), 2, nil); err == nil || !strings.Contains(err.Error(), "Object Lock") {
+		t.Errorf("locked Put to a bucket without Object Lock = %v, want a refusal", err)
+	}
+
+	cfg := testConfig(noLock.URL)
+	cfg.ObjectLockDays, cfg.ObjectLockMode = 0, ""
+	cl, err = New(cfg, withRoots(certPool(noLock.Server)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := noLock.Count(s3test.OpGetLockConfig)
+	if err := cl.Preflight(ctx); err != nil {
+		t.Errorf("Preflight without lock days = %v", err)
+	}
+	if n := noLock.Count(s3test.OpGetLockConfig) - before; n != 0 {
+		t.Errorf("Preflight without lock days read the lock configuration %d times", n)
+	}
+
+	cl, _ = newFakeClient(t, nil)
+	if err := cl.Preflight(ctx); err != nil {
+		t.Errorf("Preflight on an Object Lock bucket = %v", err)
+	}
+}
+
+// TestClient_IgnoresEnvironmentProxy: HTTPS_PROXY (set for the whole package
+// in TestMain, before any request) is never used, pinned or not. The
+// endpoint names a host under .example that never resolves, so a direct
+// connection fails at DNS while a proxied one would reach the recorder.
+func TestClient_IgnoresEnvironmentProxy(t *testing.T) {
+	for _, allowPrivate := range []bool{false, true} {
+		cfg := testConfig("https://archive-proxy-test.example:443")
+		cfg.AllowPrivateEndpoint = allowPrivate
+		cl, err := New(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = cl.Preflight(context.Background())
+		if err == nil {
+			t.Fatalf("allowPrivate=%v: Preflight succeeded", allowPrivate)
+		}
+		// Pinned, a proxied request would be refused at the proxy's
+		// 127.0.0.1 dial; unpinned, it would reach the recorder.
+		if strings.Contains(err.Error(), "refusing to dial") || strings.Contains(err.Error(), "proxyconnect") {
+			t.Errorf("allowPrivate=%v: request went to the environment proxy: %v", allowPrivate, err)
+		}
+	}
+	if n := proxyHits.Load(); n != 0 {
+		t.Errorf("environment proxy received %d requests", n)
+	}
+}
+
+// TestPut_NoExpectContinue: large uploads do not send Expect: 100-continue.
+func TestPut_NoExpectContinue(t *testing.T) {
+	cl, srv := newFakeClient(t, nil)
+	data := payload(3<<20, 8)
+	if _, err := cl.Put(context.Background(), "x/g.bin", bytes.NewReader(data), int64(len(data)), nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range srv.Requests() {
+		if r.Header.Get("Expect") != "" {
+			t.Errorf("%s sent Expect: %s", r.Op, r.Header.Get("Expect"))
+		}
 	}
 }
 

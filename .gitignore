@@ -28,7 +28,11 @@ config.env
 # The bare `config.env` pattern above matches that one file at any depth, but NOT
 # its siblings, so a `git add -A` in a deployment checkout would stage the
 # Postgres credentials. Ignore the whole directory; nothing in it is source.
+# The pattern matches at any depth (a CONFIG_DIR may sit in a subdirectory), so
+# the one source directory of that name is re-included explicitly — otherwise a
+# new file under internal/config/ is silently left out of a commit.
 config/
+!/internal/config/
 
 # Backup copies. Operators leave these beside the file they snapshot
 # (config.env.broken.bak, docker-compose.yml.bak-<tag>, *.db.bak.<timestamp>),
