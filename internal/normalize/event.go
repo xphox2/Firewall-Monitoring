@@ -220,14 +220,6 @@ func (e *Event) i64(s string) *int64 {
 	return e.p64(n)
 }
 
-func (e *Event) i32(s string) *int32 {
-	n, ok := atoi(s)
-	if !ok || n < -2147483648 || n > 2147483647 {
-		return nil
-	}
-	return e.p32(int32(n))
-}
-
 func (e *Event) i16(s string) *int16 {
 	n, ok := atoi(s)
 	if !ok || n < -32768 || n > 32767 {
@@ -334,8 +326,7 @@ func atoi(s string) (int64, bool) {
 	return n, true
 }
 
-func ptrRole(r Role) *Role          { return &r }
-func ptrDir(d Direction) *Direction { return &d }
+func ptrRole(r Role) *Role { return &r }
 
 func parseMAC(s string) net.HardwareAddr {
 	if s == "" {
