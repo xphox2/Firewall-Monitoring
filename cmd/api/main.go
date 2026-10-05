@@ -340,8 +340,15 @@ func main() {
 	// change as devices are polled, added and retired.
 	// Phase 1 (S-4): the syslog ingest counts observed normalized fields per
 	// device in memory; this flushes them to device_field_observed every five
-	// minutes and once more at shutdown (bgCancel).
-	logging.SafeGo("normalize-observed-flush", func() { handler.RunObservedFlusher(bgCtx) })
+	// minutes. Shutdown waits for the loop to exit (observedFlushDone) and
+	// flushes once more AFTER server.Shutdown has drained the in-flight
+	// batches, so nothing recorded between bgCancel and the last request is
+	// lost.
+	observedFlushDone := make(chan struct{})
+	logging.SafeGo("normalize-observed-flush", func() {
+		defer close(observedFlushDone)
+		handler.RunObservedFlusher(bgCtx)
+	})
 
 	logging.SafeGo("threat-intel-refresh", func() {
 		ticker := time.NewTicker(15 * time.Minute)
@@ -634,6 +641,13 @@ func main() {
 		// snmpClient.Close. Log the error and let main return so defers run.
 		log.Printf("Server.Shutdown error: %v", err)
 	}
+	// The flusher loop has exited (bgCancel); flush what the drained requests
+	// recorded after its final pass. Bounded by the same shutdown deadline.
+	select {
+	case <-observedFlushDone:
+	case <-ctx.Done():
+	}
+	handler.FlushFieldObserved()
 
 	log.Println("Server exited")
 }

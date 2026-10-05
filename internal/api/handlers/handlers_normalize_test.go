@@ -1,8 +1,11 @@
 package handlers
 
 import (
+	"context"
+	"errors"
 	"net"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -383,26 +386,229 @@ func TestIngest_OneParsePerMessage(t *testing.T) {
 	}
 }
 
-// TestFwRuleLRU_TTLAndBound: a key is allowed once per TTL and the LRU never
-// exceeds fwRuleSeenMax keys.
-func TestFwRuleLRU_TTLAndBound(t *testing.T) {
-	var l fwRuleLRU
+// TestRecentKeys_TTLAndBound: a key is recent only after mark and only inside
+// the window, a repeat inside the window does not extend it, and the set
+// never exceeds max keys.
+func TestRecentKeys_TTLAndBound(t *testing.T) {
+	l := recentKeys[fwRuleKey]{ttl: fwRuleSeenTTL, max: fwRuleSeenMax}
 	now := time.Unix(1_759_579_200, 0)
 	k := fwRuleKey{dev: 1, rk: "u:a"}
-	if !l.allow(k, now) {
-		t.Fatal("first sight must be allowed")
+	if l.recent(k, now) {
+		t.Fatal("an unmarked key must not be recent")
 	}
-	if l.allow(k, now.Add(fwRuleSeenTTL-time.Second)) {
-		t.Error("second sight inside the TTL must be suppressed")
+	l.mark(k, now)
+	if !l.recent(k, now.Add(fwRuleSeenTTL-time.Second)) {
+		t.Error("a marked key inside the window must be recent")
 	}
-	if !l.allow(k, now.Add(fwRuleSeenTTL+time.Second)) {
-		t.Error("sight after the TTL must be allowed again")
+	if l.recent(k, now.Add(fwRuleSeenTTL+time.Second)) {
+		t.Error("a marked key past the window must not be recent (recent() must not extend it)")
 	}
 	for i := 0; i < fwRuleSeenMax+100; i++ {
-		l.allow(fwRuleKey{dev: 2, rk: string(rune('a'+i%26)) + string(rune('a'+(i/26)%26)) + string(rune('a'+(i/676)%26))}, now)
+		l.mark(fwRuleKey{dev: 2, rk: string(rune('a'+i%26)) + string(rune('a'+(i/26)%26)) + string(rune('a'+(i/676)%26))}, now)
 	}
 	if got := l.size(); got > fwRuleSeenMax {
-		t.Errorf("LRU holds %d keys, cap is %d", got, fwRuleSeenMax)
+		t.Errorf("window holds %d keys, cap is %d", got, fwRuleSeenMax)
+	}
+}
+
+// failingStore wraps the real test store and fails selected writes a given
+// number of times, to prove the retry contracts of the ingest.
+type failingStore struct {
+	database.Store
+	failInsertSetting int
+	failUpsertRules   int
+	dropFirstID       bool
+	insertCalls       int
+}
+
+func (f *failingStore) WithContextStore(context.Context) database.Store { return f }
+
+func (f *failingStore) InsertSettingIfAbsent(s *models.SystemSetting) (bool, error) {
+	f.insertCalls++
+	if f.failInsertSetting > 0 {
+		f.failInsertSetting--
+		return false, errors.New("injected: settings unavailable")
+	}
+	return f.Store.InsertSettingIfAbsent(s)
+}
+
+func (f *failingStore) UpsertFwRules(rules []models.FwRule) error {
+	if f.failUpsertRules > 0 {
+		f.failUpsertRules--
+		return errors.New("injected: fw_rules unavailable")
+	}
+	return f.Store.UpsertFwRules(rules)
+}
+
+// SaveSyslogMessages saves normally, then forgets the first row's id — what
+// the per-row fallback leaves behind for a row it could not salvage.
+func (f *failingStore) SaveSyslogMessages(msgs []models.SyslogMessage) error {
+	err := f.Store.SaveSyslogMessages(msgs)
+	if f.dropFirstID && len(msgs) > 0 {
+		msgs[0].ID = 0
+	}
+	return err
+}
+
+// TestIngest_WatermarkInsertOnly: a failed insert leaves the in-process flag
+// clear so the next batch retries; once recorded, later inserts are no-ops
+// and the stored value never changes — even when the flag is cleared (a
+// restart) and the setting read path is not consulted at all.
+func TestIngest_WatermarkInsertOnly(t *testing.T) {
+	f := newNormalizeFixture(t, 6, nil)
+	fs := &failingStore{Store: f.h.db, failInsertSetting: 1}
+	f.h.db = fs
+	f.post(t, f.mixedBatch())
+	if f.h.normalizeStarted.Load() {
+		t.Fatal("flag set although the insert failed")
+	}
+	if _, ok := f.db.GetSettingValue(normalizeIngestStartedSetting); ok {
+		t.Fatal("setting recorded although the insert failed")
+	}
+	f.post(t, f.mixedBatch())
+	first, ok := f.db.GetSettingValue(normalizeIngestStartedSetting)
+	if !ok || !f.h.normalizeStarted.Load() {
+		t.Fatalf("setting not recorded on the retry (ok=%v flag=%v)", ok, f.h.normalizeStarted.Load())
+	}
+	// Restart: flag cold, insert attempted again, value must not move.
+	f.h.normalizeStarted.Store(false)
+	time.Sleep(1100 * time.Millisecond) // RFC 3339 second resolution
+	calls := fs.insertCalls
+	f.post(t, f.mixedBatch())
+	if fs.insertCalls != calls+1 {
+		t.Errorf("insert attempts = %d, want %d (one retry after the cold flag)", fs.insertCalls, calls+1)
+	}
+	if again, _ := f.db.GetSettingValue(normalizeIngestStartedSetting); again != first {
+		t.Errorf("%s moved from %q to %q; ON CONFLICT DO NOTHING must keep the first", normalizeIngestStartedSetting, first, again)
+	}
+	if !f.h.normalizeStarted.Load() {
+		t.Error("flag not set after the no-op insert found the row")
+	}
+	// Direct check of the store contract.
+	inserted, err := f.db.InsertSettingIfAbsent(&models.SystemSetting{Key: normalizeIngestStartedSetting, Value: "later"})
+	if err != nil || inserted {
+		t.Errorf("InsertSettingIfAbsent on an existing key = (%v, %v), want (false, nil)", inserted, err)
+	}
+}
+
+// TestIngest_FwRulesMarkedAfterSuccess: a failed fw_rules upsert leaves the
+// keys unmarked, so the next batch retries them; after a success the same
+// keys are not upserted again inside the window.
+func TestIngest_FwRulesMarkedAfterSuccess(t *testing.T) {
+	f := newNormalizeFixture(t, 6, nil)
+	fs := &failingStore{Store: f.h.db, failUpsertRules: 1}
+	f.h.db = fs
+	f.post(t, f.mixedBatch())
+	if n := countRows(t, f.db, &models.FwRule{}, ""); n != 0 {
+		t.Fatalf("fw_rules = %d after the injected failure, want 0", n)
+	}
+	if f.h.fwRuleSeen.size() != 0 {
+		t.Fatalf("%d keys marked seen although the upsert failed", f.h.fwRuleSeen.size())
+	}
+	f.post(t, f.mixedBatch())
+	// Seven rules: the six network-class ones plus the UniFi CEF 201 policy.
+	if n := countRows(t, f.db, &models.FwRule{}, ""); n != 7 {
+		t.Errorf("fw_rules = %d after the retry, want 7", n)
+	}
+	if f.h.fwRuleSeen.size() != 7 {
+		t.Errorf("keys marked seen = %d, want 7", f.h.fwRuleSeen.size())
+	}
+}
+
+// TestIngest_UnsavedRawRowStoredNowhere: a row whose raw save left no id
+// (per-row fallback dropped it) produces no net_events / denied_events /
+// fw_rules / observed rows — a typed row without raw_id would be
+// unreconcilable for the backfill.
+func TestIngest_UnsavedRawRowStoredNowhere(t *testing.T) {
+	f := newNormalizeFixture(t, 6, nil)
+	f.h.db = &failingStore{Store: f.h.db, dropFirstID: true}
+	batch := []map[string]interface{}{
+		f.msg("fortigate", "traffic", "fortios_kv", fgLocalDeny), // id dropped
+		f.msg("fortigate", "traffic", "fortios_kv", fgClose),
+	}
+	f.post(t, batch)
+	if n := countRows(t, f.db, &models.NetEvent{}, ""); n != 1 {
+		t.Errorf("net_events = %d, want 1 (the unsaved row must not be stored)", n)
+	}
+	if n := countRows(t, f.db, &models.DeniedEvent{}, ""); n != 0 {
+		t.Errorf("denied_events = %d, want 0 (the deny was the unsaved row)", n)
+	}
+	if n := countRows(t, f.db, &models.FwRule{}, "rule_key = ?", "i:root/0"); n != 0 {
+		t.Errorf("fw_rules for the unsaved row = %d, want 0", n)
+	}
+	f.h.FlushFieldObserved()
+	var obs models.DeviceFieldObserved
+	if err := f.db.Gorm().Where("device_id = ? AND field = ?", f.dev["fortigate"].ID, "src_ip").First(&obs).Error; err != nil || obs.Count != 1 {
+		t.Errorf("observed src_ip count = %d (%v), want 1", obs.Count, err)
+	}
+}
+
+// TestIngest_NetfilterDenyCollapsed: five identical UniFi netfilter drops
+// within two seconds (one blocked TCP connect's SYN retries) project ONE
+// denied_events row while every packet keeps its net_events row; a different
+// tuple and the same tuple after the window each project again. pf filterlog
+// (also per packet) is not collapsed — parity with the previous projection.
+func TestIngest_NetfilterDenyCollapsed(t *testing.T) {
+	f := newNormalizeFixture(t, 6, nil)
+	// In the past so clampIngestTimestamp leaves the spacing alone (a future
+	// timestamp is clamped to the server's now).
+	t0 := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	at := func(m map[string]interface{}, ts time.Time) map[string]interface{} { m["timestamp"] = ts; return m }
+	other := strings.Replace(ufNetfilter, "SPT=51514", "SPT=51515", 1)
+	batch := []map[string]interface{}{
+		at(f.msg("unifi", "kernel", "rfc3164", ufNetfilter), t0),
+		at(f.msg("unifi", "kernel", "rfc3164", ufNetfilter), t0.Add(300*time.Millisecond)),
+		at(f.msg("unifi", "kernel", "rfc3164", ufNetfilter), t0.Add(900*time.Millisecond)),
+		at(f.msg("unifi", "kernel", "rfc3164", ufNetfilter), t0.Add(1500*time.Millisecond)),
+		at(f.msg("unifi", "kernel", "rfc3164", ufNetfilter), t0.Add(1900*time.Millisecond)),
+		at(f.msg("unifi", "kernel", "rfc3164", other), t0.Add(time.Second)),                 // different source port
+		at(f.msg("unifi", "kernel", "rfc3164", ufNetfilter), t0.Add(2500*time.Millisecond)), // past the window
+		at(f.msg("pfsense", "filterlog", "rfc3164", pfBlock), t0),
+		at(f.msg("pfsense", "filterlog", "rfc3164", pfBlock), t0.Add(500*time.Millisecond)),
+	}
+	f.post(t, batch)
+	if n := countRows(t, f.db, &models.NetEvent{}, ""); int(n) != len(batch) {
+		t.Errorf("net_events = %d, want %d (storage keeps every packet)", n, len(batch))
+	}
+	if n := countRows(t, f.db, &models.DeniedEvent{}, "device_id = ?", f.dev["unifi"].ID); n != 3 {
+		t.Errorf("UniFi denied_events = %d, want 3 (first of the burst, the other tuple, the one past the window)", n)
+	}
+	if n := countRows(t, f.db, &models.DeniedEvent{}, "device_id = ?", f.dev["pfsense"].ID); n != 2 {
+		t.Errorf("pf denied_events = %d, want 2 (filterlog is not collapsed)", n)
+	}
+	var row models.DeniedEvent
+	if err := f.db.Gorm().Where("device_id = ?", f.dev["unifi"].ID).First(&row).Error; err == nil && row.SrcIntfRole != models.IntfRoleWAN {
+		t.Errorf("UniFi WAN_LOCAL deny src_intf_role = %d, want wan (%d) so deny_storm counts it", row.SrcIntfRole, models.IntfRoleWAN)
+	}
+}
+
+// TestRunObservedFlusher_FlushesOnCancelThenFinal: the loop flushes what it
+// holds when its context is cancelled and returns; what a draining request
+// records after that reaches the table through the caller's final flush.
+func TestRunObservedFlusher_FlushesOnCancelThenFinal(t *testing.T) {
+	f := newNormalizeFixture(t, 6, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); f.h.RunObservedFlusher(ctx) }()
+	f.post(t, f.mixedBatch())
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunObservedFlusher did not return after cancel")
+	}
+	if n := countRows(t, f.db, &models.DeviceFieldObserved{}, ""); n == 0 {
+		t.Fatal("no observed rows flushed on cancel")
+	}
+	// A request that drained after the loop exited.
+	f.post(t, f.mixedBatch())
+	var before, after models.DeviceFieldObserved
+	q := f.db.Gorm().Where("device_id = ? AND class = ? AND field = ?", f.dev["fortigate"].ID, int16(normalize.ClassNetwork), "src_ip")
+	q.First(&before)
+	f.h.FlushFieldObserved() // what main does after server.Shutdown
+	q.First(&after)
+	if after.Count != before.Count*2 {
+		t.Errorf("observed src_ip count after the final flush = %d, want %d (post-cancel records must reach the table)", after.Count, before.Count*2)
 	}
 }
 

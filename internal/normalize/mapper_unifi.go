@@ -163,6 +163,7 @@ func unifiNetfilter(nf *family.Netfilter, ev *Event) Outcome {
 	// description netfilter truncates at ~28 chars, kept for display only.
 	// The API poller resolves the real name through fw_rules later.
 	ev.RuleKey = RuleKey("", nil, "", nf.Ruleset, ev.RuleIndex)
+	ev.SrcRole, ev.DstRole = unifiChainRoles(nf.Ruleset)
 	ev.SrcIf, ev.DstIf = f["in"], f["out"]
 	ev.SrcIP, ev.DstIP = ev.ip(f["src"]), ev.ip(f["dst"])
 	ev.SrcPort, ev.DstPort = ev.port(f["spt"]), ev.port(f["dpt"])
@@ -173,4 +174,37 @@ func unifiNetfilter(nf *family.Netfilter, ev *Event) Outcome {
 	}
 	ev.extra("len", f["len"])
 	return ok()
+}
+
+// unifiChainRoles derives the interface roles the classic ruleset names
+// state outright: `WAN_IN` / `WAN_LOCAL` is traffic arriving on a WAN
+// interface, `WAN_OUT` traffic leaving on one, and the `LAN_*` / `GUEST_*`
+// chains the same for LAN-side interfaces (the guest network is a LAN
+// segment). Only the side the name speaks for is set — WAN_IN says nothing
+// about which internal interface the packet is for. A zone-based chain
+// (Network 9.0+, `<zone>-to-<zone>`) carries operator-named zones, so both
+// roles stay unknown (NULL) rather than guessed. The deny_storm detector
+// keys its external / internal thresholds on src_role, which is why the WAN
+// side matters most.
+func unifiChainRoles(chain string) (src, dst *Role) {
+	i := strings.LastIndexByte(chain, '_')
+	if i <= 0 {
+		return nil, nil
+	}
+	var role Role
+	switch strings.ToUpper(chain[:i]) {
+	case "WAN":
+		role = RoleWAN
+	case "LAN", "GUEST":
+		role = RoleLAN
+	default:
+		return nil, nil
+	}
+	switch strings.ToUpper(chain[i+1:]) {
+	case "IN", "LOCAL":
+		return ptrRole(role), nil
+	case "OUT":
+		return nil, ptrRole(role)
+	}
+	return nil, nil
 }

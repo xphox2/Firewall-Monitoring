@@ -305,6 +305,7 @@ func init() {
 		Action: s(SourceSyslog, ConfigDependent, nfLogged), SrcIP: syslogFull, DstIP: syslogFull, SrcPort: syslogFull, DstPort: syslogFull,
 		Proto: syslogFull, SrcMAC: s(SourceSyslog, Partial, "netfilter MAC= field and CEF client events"), SrcIf: s(SourceSyslog, ConfigDependent, nfLogged),
 		SrcZone: s(SourceSyslog, ConfigDependent, siem+"CEF 201 only"),
+		SrcRole: s(SourceSyslog, Partial, "derived from the classic WAN_* / LAN_* / GUEST_* chain name; zone-based chains carry none"),
 		RuleKey: s(SourceSyslog, ConfigDependent, nfLogged), RuleIndex: s(SourceSyslog, ConfigDependent, nfLogged), RuleName: s(SourceSyslog, Partial, "netfilter DESCR (truncated) and CEF 201 policy name"),
 		Ruleset: s(SourceSyslog, ConfigDependent, nfLogged),
 		App:     s(SourceSyslog, ConfigDependent, siem+"CEF 201 only"), SrcHostname: s(SourceSyslog, Partial, "CEF client events and DHCP leases"),

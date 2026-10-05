@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"context"
 	"log"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -25,7 +26,7 @@ import (
 // (ProcessSyslogEvent, no second parse), the deny projection
 // (deny.FromEvent; denied_events keeps being written through Phase 1, an
 // operator decision), the typed tables (net_events by COPY, sec_events) and
-// the two catalog tables (fw_rules through a per-key LRU so a hot rule is
+// the two catalog tables (fw_rules through a per-key window so a hot rule is
 // upserted once per fwRuleSeenTTL, device_field_observed through an
 // in-memory counter buffer flushed every observedFlushInterval).
 //
@@ -42,15 +43,26 @@ const (
 	// Past the cap new pairs are not recorded until the next flush (logged
 	// once); existing pairs keep counting.
 	observedMaxKeys = 4096
-	// fwRuleSeenTTL is how long a (device, rule_key) stays in the LRU after
-	// an upsert: fw_rules.last_seen is therefore at most this stale.
+	// fwRuleSeenTTL is how long a (device, rule_key) counts as recently
+	// upserted: fw_rules.last_seen is therefore at most this stale.
 	fwRuleSeenTTL = 5 * time.Minute
-	// fwRuleSeenMax bounds the LRU; the least recently seen key is evicted
-	// (and simply upserted again on its next event).
+	// fwRuleSeenMax bounds the fw_rules window; the least recently seen key
+	// is evicted (and simply upserted again on its next event).
 	fwRuleSeenMax = 16384
+	// denyCollapseWindow: a per-PACKET deny log (UniFi netfilter) writes one
+	// line per packet, so one blocked TCP connect is 3-5 lines of SYN retries
+	// over ~2 s. deny_victim / deny_storm count denied_events rows, and a
+	// FortiGate or pf session log would have contributed ONE row for the same
+	// attempt, so identical netfilter 5-tuples within this window project
+	// once. net_events keeps every packet row (nothing is dropped from
+	// storage); only the detector projection is collapsed.
+	denyCollapseWindow = 2 * time.Second
+	// denyCollapseMax bounds the collapse window's key set.
+	denyCollapseMax = 65536
 	// normalizeIngestStartedSetting is written once, on the first batch that
 	// landed normalized rows: the S-5 backfill's default upper bound, so the
-	// backfill and live ingest never cover the same raw rows.
+	// backfill and live ingest never cover the same raw rows. Insert-only —
+	// it is never overwritten (InsertSettingIfAbsent).
 	normalizeIngestStartedSetting = "normalize_ingest_started_at"
 )
 
@@ -62,13 +74,17 @@ func (h *Handler) normalizeIngest(msgs []models.SyslogMessage, probe *models.Pro
 	cfg := deny.PatternConfig{Pattern: h.denyPolicyPattern()}
 	now := time.Now()
 	var (
-		nets   []models.NetEvent
-		secs   []models.SecEvent
-		denied []models.DeniedEvent
-		rules  []models.FwRule
-		nOK    int
-		nUnp   int
-		nNoFam int
+		// Sized for the dominant shape: a FortiGate `logtraffic all` batch is
+		// all network class; the other slices stay small.
+		nets       = make([]models.NetEvent, 0, len(msgs))
+		secs       []models.SecEvent
+		denied     []models.DeniedEvent
+		rules      []models.FwRule
+		batchRules map[fwRuleKey]struct{}
+		nOK        int
+		nUnp       int
+		nNoFam     int
+		nUnsaved   int
 	)
 	for i := range msgs {
 		msg := &msgs[i]
@@ -100,7 +116,14 @@ func (h *Handler) normalizeIngest(msgs []models.SyslogMessage, probe *models.Pro
 			nNoFam++
 			continue
 		}
-		if de, ok := deny.FromEvent(&ev, &h.threatMatch, cfg); ok {
+		// A row the raw save's per-row fallback dropped has no ID: nothing
+		// derived from it may be stored (raw_id would be NULL and the backfill
+		// could not reconcile it), so it stops here.
+		if msg.ID == 0 {
+			nUnsaved++
+			continue
+		}
+		if de, ok := deny.FromEvent(&ev, &h.threatMatch, cfg); ok && !h.collapsePacketDeny(&ev, out.Family) {
 			denied = append(denied, de)
 		}
 		rawID := int64(msg.ID)
@@ -113,13 +136,21 @@ func (h *Handler) normalizeIngest(msgs []models.SyslogMessage, probe *models.Pro
 			continue // no device, no capability row and no rule catalog entry
 		}
 		h.observed.record(msg.DeviceID, ev.Class, ev.Present(), now)
-		if r, ok := database.FwRuleFromEvent(&ev, ev.Ts); ok && h.fwRuleSeen.allow(fwRuleKey{dev: msg.DeviceID, rk: ev.RuleKey}, now) {
-			rules = append(rules, r)
+		if r, ok := database.FwRuleFromEvent(&ev, ev.Ts); ok {
+			k := fwRuleKey{dev: msg.DeviceID, rk: ev.RuleKey}
+			if _, dup := batchRules[k]; !dup && !h.fwRuleSeen.recent(k, now) {
+				if batchRules == nil {
+					batchRules = make(map[fwRuleKey]struct{})
+				}
+				batchRules[k] = struct{}{}
+				rules = append(rules, r)
+			}
 		}
 	}
 	metrics.AddNormalizeOutcome("ok", nOK)
 	metrics.AddNormalizeOutcome("unparsed", nUnp)
 	metrics.AddNormalizeOutcome("no_family", nNoFam)
+	metrics.AddNormalizeOutcome("unsaved", nUnsaved)
 	if h.db == nil {
 		return
 	}
@@ -149,10 +180,14 @@ func (h *Handler) normalizeIngest(msgs []models.SyslogMessage, probe *models.Pro
 	}
 	if len(rules) > 0 {
 		if err := h.db.UpsertFwRules(rules); err != nil {
+			// Not marked as seen: the next batch retries these keys.
 			metrics.IncNormalizeWriteError("fw_rules")
 			log.Printf("normalizeIngest: upsert %d fw_rules row(s): %v", len(rules), err)
 		} else {
 			metrics.AddNormalizeRows("fw_rules", len(rules))
+			for k := range batchRules {
+				h.fwRuleSeen.mark(k, now)
+			}
 		}
 	}
 	if landed {
@@ -160,20 +195,54 @@ func (h *Handler) normalizeIngest(msgs []models.SyslogMessage, probe *models.Pro
 	}
 }
 
-// markNormalizeIngestStarted writes normalizeIngestStartedSetting once per
-// database (never overwritten: the watermark must stay at the FIRST normalized
-// batch, or a restart would open a gap the backfill does not cover). The
-// in-process flag is set only after the row is known to exist, so a failed
-// write is retried on the next batch.
+// denyTuple is the collapse key for per-packet deny logs: one blocked
+// connection attempt is one (device, 5-tuple).
+type denyTuple struct {
+	dev          uint
+	src, dst     netip.Addr
+	sport, dport int32
+	proto        int16
+}
+
+// collapsePacketDeny reports whether this deny is a repeat of an identical
+// per-packet deny seen within denyCollapseWindow (see the constant). Only
+// the netfilter family logs per packet without a session abstraction;
+// filterlog rows are per packet too but ProjectVendor always projected them
+// one-to-one and the deny parity with it is kept.
+func (h *Handler) collapsePacketDeny(ev *normalize.Event, fam normalize.Family) bool {
+	if fam != normalize.FamilyNetfilter || ev.Activity != normalize.ActivityPacket {
+		return false
+	}
+	k := denyTuple{dev: ev.DeviceID}
+	k.src, _ = netip.AddrFromSlice(ev.SrcIP)
+	k.dst, _ = netip.AddrFromSlice(ev.DstIP)
+	if ev.SrcPort != nil {
+		k.sport = *ev.SrcPort
+	}
+	if ev.DstPort != nil {
+		k.dport = *ev.DstPort
+	}
+	if ev.Proto != nil {
+		k.proto = *ev.Proto
+	}
+	if h.denyCollapse.recent(k, ev.Ts) {
+		return true
+	}
+	h.denyCollapse.mark(k, ev.Ts)
+	return false
+}
+
+// markNormalizeIngestStarted records normalizeIngestStartedSetting once per
+// database. The write is insert-only (ON CONFLICT DO NOTHING), so neither a
+// restart nor a transient read failure can move the watermark off the FIRST
+// normalized batch — the S-5 backfill's upper bound. The in-process flag is
+// set only after the insert statement succeeded (inserted, or found the row
+// already there), so a failed write is retried on the next batch.
 func (h *Handler) markNormalizeIngestStarted(now time.Time) {
 	if h.normalizeStarted.Load() {
 		return
 	}
-	if _, ok := h.db.GetSettingValue(normalizeIngestStartedSetting); ok {
-		h.normalizeStarted.Store(true)
-		return
-	}
-	err := h.db.UpsertSetting(&models.SystemSetting{
+	_, err := h.db.InsertSettingIfAbsent(&models.SystemSetting{
 		Key:      normalizeIngestStartedSetting,
 		Value:    now.UTC().Format(time.RFC3339),
 		Type:     "string",
@@ -188,8 +257,9 @@ func (h *Handler) markNormalizeIngestStarted(now time.Time) {
 }
 
 // FlushFieldObserved drains the observed-field counters into
-// device_field_observed. Called by RunObservedFlusher and at shutdown; safe
-// to call any time (a failed flush puts the rows back so they are retried).
+// device_field_observed. Called by RunObservedFlusher, by main after the HTTP
+// server has drained at shutdown, and by tests; safe to call any time (a
+// failed flush puts the rows back so they are retried).
 func (h *Handler) FlushFieldObserved() {
 	rows := h.observed.drain()
 	if len(rows) == 0 || h.db == nil {
@@ -205,7 +275,9 @@ func (h *Handler) FlushFieldObserved() {
 }
 
 // RunObservedFlusher flushes every observedFlushInterval until ctx is done,
-// then once more so a clean shutdown loses nothing.
+// flushes once more and returns. The caller (cmd/api) waits for it to return
+// and flushes again after the HTTP server has drained, since requests still
+// in flight at cancellation record after this loop's last pass.
 func (h *Handler) RunObservedFlusher(ctx context.Context) {
 	ticker := time.NewTicker(observedFlushInterval)
 	defer ticker.Stop()
@@ -335,60 +407,71 @@ func (b *observedBuffer) restore(rows []models.DeviceFieldObserved) {
 	}
 }
 
-// ── fw_rules per-key LRU ──────────────────────────────────────────────────────
+// ── recently-seen key window (fw_rules dedup, per-packet deny collapse) ───────
 
 type fwRuleKey struct {
 	dev uint
 	rk  string
 }
 
-type fwRuleSeenEntry struct {
-	key    fwRuleKey
+type recentEntry[K comparable] struct {
+	key    K
 	expiry time.Time
 }
 
-// fwRuleLRU remembers which (device, rule_key) pairs were upserted into
-// fw_rules within fwRuleSeenTTL so the catalog is not rewritten for every
-// hit of a hot rule (a `logtraffic all` FortiGate hits its top policies
-// thousands of times a minute). Bounded at fwRuleSeenMax entries by
-// least-recent eviction; an evicted or expired key is simply allowed again.
-// Zero value ready.
-type fwRuleLRU struct {
+// recentKeys remembers keys for a fixed window (ttl) and holds at most max
+// of them, evicting the least recently touched. Two-phase on purpose: recent
+// asks, mark records — so a caller can mark only after the write the key
+// stands for succeeded (fw_rules), and a repeat inside the window does not
+// extend it (a steady SYN-retry stream still projects once per window).
+// Zero value ready except for ttl / max, which NewHandler sets.
+type recentKeys[K comparable] struct {
+	ttl time.Duration
+	max int
+
 	mu sync.Mutex
 	ll *list.List
-	m  map[fwRuleKey]*list.Element
+	m  map[K]*list.Element
 }
 
-// allow reports whether key should be upserted now (not seen, or seen longer
-// than fwRuleSeenTTL ago) and records it as seen when so.
-func (l *fwRuleLRU) allow(key fwRuleKey, now time.Time) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.m == nil {
-		l.m = make(map[fwRuleKey]*list.Element)
-		l.ll = list.New()
+// recent reports whether key was marked less than ttl ago. Touching it keeps
+// it from eviction; it does not insert or extend.
+func (r *recentKeys[K]) recent(key K, now time.Time) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	el, ok := r.m[key]
+	if !ok {
+		return false
 	}
-	if el, ok := l.m[key]; ok {
-		e := el.Value.(*fwRuleSeenEntry)
-		l.ll.MoveToFront(el)
-		if now.Before(e.expiry) {
-			return false
-		}
-		e.expiry = now.Add(fwRuleSeenTTL)
-		return true
+	r.ll.MoveToFront(el)
+	return now.Before(el.Value.(*recentEntry[K]).expiry)
+}
+
+// mark records key as seen at now (window restarts), evicting the least
+// recently touched keys past max.
+func (r *recentKeys[K]) mark(key K, now time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.m == nil {
+		r.m = make(map[K]*list.Element)
+		r.ll = list.New()
 	}
-	for l.ll.Len() >= fwRuleSeenMax {
-		back := l.ll.Back()
-		delete(l.m, back.Value.(*fwRuleSeenEntry).key)
-		l.ll.Remove(back)
+	if el, ok := r.m[key]; ok {
+		el.Value.(*recentEntry[K]).expiry = now.Add(r.ttl)
+		r.ll.MoveToFront(el)
+		return
 	}
-	l.m[key] = l.ll.PushFront(&fwRuleSeenEntry{key: key, expiry: now.Add(fwRuleSeenTTL)})
-	return true
+	for r.max > 0 && r.ll.Len() >= r.max {
+		back := r.ll.Back()
+		delete(r.m, back.Value.(*recentEntry[K]).key)
+		r.ll.Remove(back)
+	}
+	r.m[key] = r.ll.PushFront(&recentEntry[K]{key: key, expiry: now.Add(r.ttl)})
 }
 
 // size is the number of keys held (tests).
-func (l *fwRuleLRU) size() int {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return len(l.m)
+func (r *recentKeys[K]) size() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.m)
 }

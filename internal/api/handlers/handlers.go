@@ -95,7 +95,8 @@ type Handler struct {
 	// per-key LRU, and whether normalize_ingest_started_at is known to be
 	// recorded. All zero-value ready and self-locking.
 	observed         observedBuffer
-	fwRuleSeen       fwRuleLRU
+	fwRuleSeen       recentKeys[fwRuleKey]
+	denyCollapse     recentKeys[denyTuple]
 	normalizeStarted atomic.Bool
 }
 
@@ -116,11 +117,13 @@ func NewHandler(cfg *config.Config, authManager *auth.AuthManager, db *database.
 		log.Printf("geoip: %v — geo/ASN enrichment disabled", err)
 	}
 	h := &Handler{
-		config:      cfg,
-		authManager: authManager,
-		geoResolver: geo,
-		db:          db,
-		startTime:   time.Now(),
+		config:       cfg,
+		authManager:  authManager,
+		geoResolver:  geo,
+		db:           db,
+		startTime:    time.Now(),
+		fwRuleSeen:   recentKeys[fwRuleKey]{ttl: fwRuleSeenTTL, max: fwRuleSeenMax},
+		denyCollapse: recentKeys[denyTuple]{ttl: denyCollapseWindow, max: denyCollapseMax},
 	}
 	// Load the initial threat-intel matcher from the DB. A background refresh
 	// goroutine (cmd/api) reloads it periodically so feed edits + expiries apply.

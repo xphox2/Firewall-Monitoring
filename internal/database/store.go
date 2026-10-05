@@ -344,9 +344,10 @@ type IngestStore interface {
 	// GetFieldObserved is the observed half of the capability matrix (rows
 	// since the given time, summed across classes; deviceID 0 = all).
 	GetFieldObserved(deviceID uint, since time.Time) ([]models.DeviceFieldObserved, error)
-	// UpsertSetting writes one system setting (the ingest records the
-	// normalize_ingest_started_at watermark the S-5 backfill bounds itself by).
-	UpsertSetting(setting *models.SystemSetting) error
+	// InsertSettingIfAbsent writes a system setting only when the key is new
+	// (the ingest records the normalize_ingest_started_at watermark the S-5
+	// backfill bounds itself by; it must never be overwritten).
+	InsertSettingIfAbsent(setting *models.SystemSetting) (bool, error)
 	SaveSystemStatuses(statuses []models.SystemStatus) error
 	// SaveUptimeRecord persists one per-device availability snapshot (AUDIT-318).
 	// Written by the periodic uptime-snapshot worker in cmd/api.

@@ -569,3 +569,17 @@ func (d *Database) GetFieldObserved(deviceID uint, since time.Time) ([]models.De
 	}
 	return out, nil
 }
+
+// InsertSettingIfAbsent writes a system setting only when its key does not
+// exist yet (INSERT ... ON CONFLICT (key) DO NOTHING) and reports whether this
+// call inserted it. It is for write-once watermarks such as
+// normalize_ingest_started_at: a read-then-upsert would move the watermark
+// whenever the read failed transiently, and the S-5 backfill bounds itself by
+// it, so the row must never be overwritten by the ingest.
+func (d *Database) InsertSettingIfAbsent(setting *models.SystemSetting) (bool, error) {
+	res := d.db.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "key"}}, DoNothing: true}).Create(setting)
+	if res.Error != nil {
+		return false, fmt.Errorf("insert setting %q if absent: %w", setting.Key, res.Error)
+	}
+	return res.RowsAffected > 0, nil
+}

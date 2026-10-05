@@ -41,6 +41,7 @@
       "event.src_ip": "203.0.113.9",
       "event.src_mac": "00:00:5e:00:53:02",
       "event.src_port": "51514",
+      "event.src_role": "wan",
       "event.vendor_event_id": "WAN_LOCAL"
     }
   },
@@ -84,6 +85,7 @@
       "event.src_ip": "192.0.2.40",
       "event.src_mac": "00:00:5e:00:53:04",
       "event.src_port": "40000",
+      "event.src_role": "lan",
       "event.vendor_event_id": "LAN_IN"
     }
   },
@@ -170,6 +172,7 @@
       "event.src_ip": "192.0.2.41",
       "event.src_mac": "00:00:5e:00:53:08",
       "event.src_port": "68",
+      "event.src_role": "lan",
       "event.vendor_event_id": "LAN_LOCAL"
     }
   },
