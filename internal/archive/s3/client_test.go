@@ -27,7 +27,7 @@ import (
 const (
 	testBucket = "example-bucket"
 	testPrefix = "fwmon-test/archive"
-	testSecret = "TESTSECRETdoNotLeak0123456789abcdefABCDEF"
+	testSecret = "not-a-real-secret-archive-test-fixture"
 	testPart   = 5 << 20
 )
 

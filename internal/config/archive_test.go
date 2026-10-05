@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-const archiveTestSecret = "TESTSECRETdoNotLeak0123456789abcdefABCDEF"
+const archiveTestSecret = "not-a-real-secret-archive-test-fixture"
 
 var archiveKeys = []string{
 	"ARCHIVE_SYSLOG_ENABLED", "ARCHIVE_FLOWS_ENABLED", "ARCHIVE_S3_ENDPOINT", "ARCHIVE_S3_REGION",
