@@ -37,6 +37,16 @@ type Dialect interface {
 	// spell this `||`, but it is behind the interface so a future dialect that
 	// does not is a compile error rather than a runtime surprise.
 	Concat(parts ...string) string
+
+	// Greatest returns a SQL expression yielding the larger of two values —
+	// GREATEST() on Postgres, the two-argument scalar MAX() on SQLite. Used by
+	// the v72 upserts to keep a last-seen timestamp monotonic when a backfill
+	// replays older rows.
+	Greatest(a, b string) string
+
+	// Least is Greatest's mirror — LEAST() on Postgres, scalar MIN() on
+	// SQLite — for a first-seen timestamp that a backfill may move earlier.
+	Least(a, b string) string
 }
 
 // ---------- PostgreSQL ----------
@@ -87,6 +97,10 @@ func (postgresDialect) AddrInCIDR(column string) (string, bool) {
 func (postgresDialect) CastText(expr string) string { return fmt.Sprintf("CAST(%s AS TEXT)", expr) }
 
 func (postgresDialect) Concat(parts ...string) string { return strings.Join(parts, " || ") }
+
+func (postgresDialect) Greatest(a, b string) string { return fmt.Sprintf("GREATEST(%s, %s)", a, b) }
+
+func (postgresDialect) Least(a, b string) string { return fmt.Sprintf("LEAST(%s, %s)", a, b) }
 
 // ---------- SQLite (test only) ----------
 
@@ -143,3 +157,7 @@ func (sqliteDialect) AddrInCIDR(string) (string, bool) { return "", false }
 func (sqliteDialect) CastText(expr string) string { return fmt.Sprintf("CAST(%s AS TEXT)", expr) }
 
 func (sqliteDialect) Concat(parts ...string) string { return strings.Join(parts, " || ") }
+
+func (sqliteDialect) Greatest(a, b string) string { return fmt.Sprintf("MAX(%s, %s)", a, b) }
+
+func (sqliteDialect) Least(a, b string) string { return fmt.Sprintf("MIN(%s, %s)", a, b) }

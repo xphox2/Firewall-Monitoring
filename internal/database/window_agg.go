@@ -158,7 +158,14 @@ func walkAggregationWindows(db *gorm.DB, window time.Duration, start, cutoff tim
 // SQLite driver returns a string while Postgres returns time.Time, and GORM
 // can map neither into a portable struct field.
 func oldestEligibleTimestamp(q *gorm.DB) (time.Time, bool, error) {
-	rows, err := q.Select("MIN(timestamp)").Rows()
+	return oldestEligibleOn(q, "timestamp")
+}
+
+// oldestEligibleOn is oldestEligibleTimestamp over a named time column
+// (net_events ages on `ts`). column is always a compile-time literal from
+// this package.
+func oldestEligibleOn(q *gorm.DB, column string) (time.Time, bool, error) {
+	rows, err := q.Select("MIN(" + column + ")").Rows()
 	if err != nil {
 		return time.Time{}, false, err
 	}

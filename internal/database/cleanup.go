@@ -12,6 +12,7 @@ import (
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/configdiff"
 	"firewall-mon/internal/models"
+	"firewall-mon/internal/normalize"
 
 	"gorm.io/gorm"
 )
@@ -128,6 +129,10 @@ var timeIndexedCleanupTables = map[string]bool{
 	"irc_message_logs":     true,
 	"processed_batches":    true,
 	"audit_logs":           true, // created_at
+	// v72: every leaf of sec_events carries the plan's (ts) index, and the
+	// rollup table's unique key leads with `day`.
+	"sec_events":        true, // ts
+	"net_event_rollups": true, // day
 }
 
 func (d *Database) batchedDeleteOlderThan(model interface{}, table string, cutoff time.Time) error {
@@ -594,13 +599,19 @@ func (d *Database) dropPartitionWithLockRetry(name string) error {
 // row-delete. A zero floor returns where/args untouched, so on a normal day the
 // DELETE is byte-identical to the one it replaces (and SQLite never sees it).
 func andFloor(where string, args []interface{}, floor time.Time) (string, []interface{}) {
+	return andFloorOn("timestamp", where, args, floor)
+}
+
+// andFloorOn is andFloor over a named time column (sec_events ages on `ts`).
+// column is always a compile-time literal from this package.
+func andFloorOn(column, where string, args []interface{}, floor time.Time) (string, []interface{}) {
 	if floor.IsZero() {
 		return where, args
 	}
 	if where == "" {
-		return "timestamp >= ?", []interface{}{floor}
+		return column + " >= ?", []interface{}{floor}
 	}
-	return where + " AND timestamp >= ?", append(append([]interface{}{}, args...), floor)
+	return where + " AND " + column + " >= ?", append(append([]interface{}{}, args...), floor)
 }
 
 // parsePartitionUpperBound pulls the exclusive upper bound date out of a
@@ -931,6 +942,10 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		}
 	}
 
+	// v72 normalized event tables age on `ts` / `day` with their own shapes
+	// (partition-drop only, per-class windows); see cleanupNormalizedEventTables.
+	errs = append(errs, d.cleanupNormalizedEventTables(ret)...)
+
 	// H4 of the 2026-07-01 audit: flow_detections and flow_agent_drops age on
 	// their own time columns (detected_at / window_start), so they can't ride
 	// the `timestamp`-keyed entries loop above. flow_detections rows are
@@ -1126,6 +1141,110 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// cleanupNormalizedEventTables is the retention pass over the v72 tables
+// (Phase 1, S-3; docs/DATA-RETENTION.md):
+//
+//   - net_events: PARTITION DROP ONLY. The table is the traffic class of syslog
+//     re-typed — the volume that made syslog_messages' batched DELETE a
+//     multi-hour job — and its leaves are one day wide, so retention is exact
+//     to the day without a single row DELETE: every leaf whose range ends at
+//     or before the cutoff is dropped. The one exception is the DEFAULT
+//     partition, which only ever holds strays (a clock-skewed collector, a
+//     replay older than the lookback) and is trimmed with a plain bounded
+//     DELETE so even those cannot accumulate.
+//   - sec_events: per CLASS. config_change rows are kept forever by default
+//     (RETENTION_SEC_CONFIG_CHANGE_DAYS=0, operator decision: in-table, not a
+//     separate table), the other classes follow RETENTION_SEC_EVENT_DAYS. A
+//     monthly leaf is dropped only once BOTH windows have passed it (never
+//     while config_change is kept forever); the straddling tail and the
+//     keep-forever case are batched DELETEs with a class predicate — the
+//     table is under 1% of the event volume, so that is cheap.
+//   - net_event_rollups: a plain table, batched DELETE on `day`.
+func (d *Database) cleanupNormalizedEventTables(ret config.RetentionConfig) []error {
+	var errs []error
+	now := time.Now()
+
+	netCutoff := now.AddDate(0, 0, -ret.NetEventWindow())
+	_, partitioned, err := d.dropPartitionsOlderThan("net_events", netCutoff)
+	if err != nil {
+		log.Printf("cleanup: drop-old-partitions warning for net_events: %v", err)
+	}
+	if d.dialect.IsPostgres() && !partitioned {
+		// Partition drop is the ONLY retention this table has: a plain
+		// net_events grows without bound (and would need the batched DELETE
+		// this design deliberately avoids). v72 converts an empty plain table
+		// on the next migration pass; a populated one needs
+		// docs/partition-migration.md.
+		log.Printf("WARNING: cleanup: net_events is not a partitioned parent on this deployment; no retention applies to it until it is converted (docs/partition-migration.md)")
+	}
+	if err := d.trimDefaultPartitionRows("net_events", "ts", netCutoff); err != nil {
+		errs = append(errs, fmt.Errorf("failed to cleanup net_events_default: %w", err))
+	}
+
+	secDays := ret.Days(ret.SecEventDays)
+	secCutoff := now.AddDate(0, 0, -secDays)
+	var secFloor time.Time
+	if cfgDays := ret.SecConfigChangeDays; cfgDays > 0 {
+		// Both classes expire: a leaf older than the LONGER window holds
+		// nothing anyone keeps.
+		dropDays := secDays
+		if cfgDays > dropDays {
+			dropDays = cfgDays
+		}
+		var err error
+		if secFloor, _, err = d.dropPartitionsOlderThan("sec_events", now.AddDate(0, 0, -dropDays)); err != nil {
+			log.Printf("cleanup: drop-old-partitions warning for sec_events: %v", err)
+		}
+		where, args := andFloorOn("ts", "class = ?", []interface{}{int16(normalize.ClassConfigChange)}, secFloor)
+		if err := d.batchedDeleteOlderThanOn(&models.SecEvent{}, "ts", cleanupOrderBy("sec_events", "ts"),
+			now.AddDate(0, 0, -cfgDays), where, args...); err != nil {
+			errs = append(errs, fmt.Errorf("failed to cleanup sec_events (config_change, %dd): %w", cfgDays, err))
+		}
+	}
+	where, args := andFloorOn("ts", "class <> ?", []interface{}{int16(normalize.ClassConfigChange)}, secFloor)
+	if err := d.batchedDeleteOlderThanOn(&models.SecEvent{}, "ts", cleanupOrderBy("sec_events", "ts"),
+		secCutoff, where, args...); err != nil {
+		errs = append(errs, fmt.Errorf("failed to cleanup sec_events (%dd): %w", secDays, err))
+	}
+
+	rollupCutoff := now.AddDate(0, 0, -ret.Days(ret.NetEventRollupDays))
+	if err := d.batchedDeleteOlderThanOn(&models.NetEventRollup{}, "day", cleanupOrderBy("net_event_rollups", "day"),
+		rollupCutoff, ""); err != nil {
+		errs = append(errs, fmt.Errorf("failed to cleanup net_event_rollups: %w", err))
+	}
+	return errs
+}
+
+// trimDefaultPartitionRows deletes rows older than cutoff from a partitioned
+// table's DEFAULT child, for the tables whose retention is otherwise
+// partition-drop only. The default child normally holds only strays, but a
+// poller down for longer than the leaf lead, or ingest before the first
+// EnsurePartitions, can leave whole days there — so this goes through the
+// purge's batched loop (batchedDeleteWhere: 5 s lock_timeout, 120 s
+// statement_timeout, 57014 halves the batch, 55P03 retries) rather than one
+// unbounded DELETE. A no-op on SQLite and when the child does not exist (a
+// plain, unconverted table).
+func (d *Database) trimDefaultPartitionRows(table, column string, cutoff time.Time) error {
+	if !d.dialect.IsPostgres() {
+		return nil
+	}
+	child := table + "_default"
+	var exists bool
+	if err := d.db.Raw(`SELECT to_regclass(?) IS NOT NULL`, child).Scan(&exists).Error; err != nil {
+		return fmt.Errorf("probe %s: %w", child, err)
+	}
+	if !exists {
+		return nil
+	}
+	var trimmed int64
+	err := d.batchedDeleteWhere(context.Background(), child, column+" < ?", column, cleanupDeleteBatchSize,
+		[]interface{}{cutoff}, func(rows int64) { trimmed += rows })
+	if trimmed > 0 {
+		log.Printf("cleanup: trimmed %d stray row(s) older than %s from %s", trimmed, cutoff.Format("2006-01-02"), child)
+	}
+	return err
 }
 
 // auditDeviceVendors logs the fleet's vendor distribution at startup. For

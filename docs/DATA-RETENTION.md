@@ -66,6 +66,38 @@ partitions are never dropped and only the severity-scoped deletes run.
 | IRC bot message log | `irc_message_logs` | `RETENTION_IRC_MESSAGE_LOG_DAYS` | 7 | Operator's own ops-channel chatter |
 | Login attempts | `login_attempts` | `RETENTION_DEFAULT_DAYS` | 90 | Username + client IP |
 | Batch idempotency keys | `processed_batches` | (fixed) | 2 | No |
+| Normalized network events (v0.11.295, migration v72; one typed row per traffic-class syslog line — not written until the S-4 ingest wiring) | `net_events` | `RETENTION_NET_EVENT_DAYS` | 30 — **0 means 30**, not the default | **Yes** — src/dst IPs, MACs, user names, URL hosts, DNS names |
+| Normalized security events (findings, auth, VPN sessions, device health) | `sec_events` | `RETENTION_SEC_EVENT_DAYS` | 365 | **Yes** — admin users, source IPs, signatures |
+| Normalized config-change events (class `config_change` inside `sec_events`) | `sec_events` | `RETENTION_SEC_CONFIG_CHANGE_DAYS` | **0 = forever** | Admin user + source IP of every change |
+| Net event rollups (per device / rule / action / direction / app category / ruleset per UTC day) | `net_event_rollups` | `RETENTION_NET_EVENT_ROLLUP_DAYS` | 365 | No (counts only; no addresses) |
+| Rule catalog, observed-field counters | `fw_rules`, `device_field_observed` | (none) | kept; removed with the device purge | No |
+
+### Normalized event tables (v0.11.295)
+
+`net_events` is RANGE-partitioned by **day** (every other partitioned table is
+monthly) and its retention is **partition-drop only**: a leaf whose whole day is
+older than `RETENTION_NET_EVENT_DAYS` is dropped (instant, returns space), and
+no row `DELETE` ever runs over the table — this is the traffic-class volume
+that made the batched syslog `DELETE` a multi-hour job. Leaves are created from
+`RETENTION_NET_EVENT_DAYS` days back through seven days ahead, so the one-time
+30-day backfill writes into droppable leaves; the `net_events_default` child
+holds only what no leaf accepted (a clock-skewed collector, or a day whose leaf
+did not exist yet) and is trimmed with the batched-delete loop. If a day's
+leaf is missing while its rows already sit in the default child, the partition
+pass creates the leaf standalone, moves the rows out in batches and attaches
+it in one locked transaction that also sweeps up any row that arrived
+meanwhile — otherwise the leaf could never be created. `sec_events` keeps a window per
+class: `config_change` rows are kept forever by default (operator decision: in
+the same table, not a separate one) while the other classes follow
+`RETENTION_SEC_EVENT_DAYS`; a monthly leaf is dropped only once both windows
+have passed it. The 5-minute rollup tick folds each completed hour of
+`net_events` into `net_event_rollups` and, once a UTC day is complete,
+recomputes that day exactly — hour by hour, never one statement over the whole
+day — and sets `distinct_src_exact` (`distinct_src` is a lower bound until
+then, and stays one, flagged, if the day exceeded the in-memory distinct budget
+or its recompute failed three cycles running;
+`fwmon_net_event_rollup_day_skips_total` counts the latter). Raw syslog
+retention is unchanged by any of this.
 
 ### Tables that are NOT auto-pruned
 

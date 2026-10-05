@@ -1,6 +1,7 @@
 package database
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -86,6 +87,14 @@ var baselineModels = []interface{}{
 	&models.SyslogIngestHourly{},
 	// v65: device purge jobs.
 	&models.DevicePurgeJob{},
+	// v72: normalized event tables. On a fresh install v1 creates the two
+	// partitioned ones plain and v2 converts them (the denied_events path);
+	// on an existing install v72 does both. The three small ones are plain.
+	&models.NetEvent{},
+	&models.SecEvent{},
+	&models.NetEventRollup{},
+	&models.FwRule{},
+	&models.DeviceFieldObserved{},
 }
 
 // migrateBaseline is the v1 "baseline" migration (AUDIT-044): it brings an empty
@@ -230,6 +239,101 @@ var partitionTables = []partitionDef{
 	{"trap_events", "timestamp"},
 	{"flow_samples", "timestamp"},
 	{"denied_events", "timestamp"},
+	// v72: the normalized event tables (Phase 1, S-3). net_events is the one
+	// DAILY-partitioned table (dailyPartitionTables); sec_events is monthly
+	// like the rest.
+	{"net_events", "ts"},
+	{"sec_events", "ts"},
+}
+
+// dailyPartitionTables are the partitionTables entries whose leaves are one
+// DAY wide instead of one month: net_events, whose retention (30 days by
+// default) is shorter than a month, so a monthly leaf could never be dropped
+// whole and the table would be row-deleted instead. A side set rather than a
+// partitionDef field so the existing two-field literals above stay as they are.
+// Daily tables are created with a LOOKBACK (partitionLookbackDays) as well as
+// the lead, so a backfill of the retention window lands in real leaves and not
+// in the DEFAULT partition.
+var dailyPartitionTables = map[string]bool{
+	"net_events": true,
+}
+
+// daily reports whether the table's leaves are one day wide.
+func (p partitionDef) daily() bool { return dailyPartitionTables[p.tableName] }
+
+// partitionLeadMonths / partitionLeadDays are how far ahead EnsurePartitions
+// creates leaves: six months for the monthly tables (unchanged), seven days
+// for the daily ones (a week of missed cron passes before rows fall into the
+// DEFAULT partition).
+const (
+	partitionLeadMonths = 6
+	partitionLeadDays   = 7
+)
+
+// defaultNetEventLookbackDays is the daily-table lookback when no
+// configuration reached the Database (the SQLite harness; a Connect without
+// retention config). Equals the RETENTION_NET_EVENT_DAYS default.
+const defaultNetEventLookbackDays = 30
+
+// partitionLookbackDays is how many days BEFORE today a daily table gets
+// leaves for: net_events gets its retention window (RETENTION_NET_EVENT_DAYS,
+// recorded on the Database by Connect), so the S-5 backfill of that window
+// never lands in the DEFAULT partition — where retention could not drop it.
+// Monthly tables keep no lookback (0): their rows are live ingest only.
+func (d *Database) partitionLookbackDays(def partitionDef) int {
+	if !def.daily() {
+		return 0
+	}
+	if d.netEventRetentionDays > 0 {
+		return d.netEventRetentionDays
+	}
+	return defaultNetEventLookbackDays
+}
+
+// partitionWindow is one leaf to ensure: its name and half-open [start, end)
+// range, both UTC-anchored.
+type partitionWindow struct {
+	name       string
+	start, end time.Time
+}
+
+// partitionWindows lists the leaves a table must have at `now`: for a monthly
+// table the current month plus partitionLeadMonths ahead (named
+// <table>_YYYYMM, exactly as before); for a daily table lookbackDays before
+// today through partitionLeadDays after it (named <table>_YYYYMMDD). Bounds
+// are UTC midnights: the partition key is timestamptz and the DSN pins the
+// session to UTC, so a leaf's range is the same instant range everywhere.
+func partitionWindows(def partitionDef, now time.Time, lookbackDays int) []partitionWindow {
+	now = now.UTC()
+	if def.daily() {
+		today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		out := make([]partitionWindow, 0, lookbackDays+partitionLeadDays+1)
+		for i := -lookbackDays; i <= partitionLeadDays; i++ {
+			start := today.AddDate(0, 0, i)
+			out = append(out, partitionWindow{
+				name:  fmt.Sprintf("%s_%s", def.tableName, start.Format("20060102")),
+				start: start,
+				end:   start.AddDate(0, 0, 1),
+			})
+		}
+		return out
+	}
+	out := make([]partitionWindow, 0, partitionLeadMonths+1)
+	for i := 0; i <= partitionLeadMonths; i++ {
+		year, month, _ := now.Date()
+		month += time.Month(i)
+		for month > 12 {
+			month -= 12
+			year++
+		}
+		start := time.Date(year, month, 1, 0, 0, 0, 0, time.UTC)
+		out = append(out, partitionWindow{
+			name:  fmt.Sprintf("%s_%d%02d", def.tableName, year, month),
+			start: start,
+			end:   start.AddDate(0, 1, 0),
+		})
+	}
+	return out
 }
 
 // partitionModels maps each partitioned table to its GORM model so the
@@ -252,6 +356,8 @@ var partitionModels = map[string]interface{}{
 	"trap_events":      &models.TrapEvent{},
 	"flow_samples":     &models.FlowSample{},
 	"denied_events":    &models.DeniedEvent{},
+	"net_events":       &models.NetEvent{},
+	"sec_events":       &models.SecEvent{},
 }
 
 // partitionIndex is one per-partition index to (re)create: the physical name
@@ -538,7 +644,7 @@ func (d *Database) execCronDDL(sql string, args ...interface{}) error {
 // This is safe for existing servers - it only creates new partitions, never modifies existing data.
 // Startup variant; the retention cron calls EnsurePartitionsForCron.
 func (d *Database) EnsurePartitions() error {
-	return d.ensurePartitions(d.execMaintenanceDDL)
+	return d.ensurePartitions(d.execMaintenanceDDL, 0)
 }
 
 // EnsurePartitionsForCron is EnsurePartitions for the daily retention pass: the
@@ -550,11 +656,19 @@ func (d *Database) EnsurePartitions() error {
 // when it exists, and CREATE INDEX takes SHARE, which never queues behind a
 // reader — under a lock_timeout its daily no-op would instead fail behind any
 // long COPY.
+//
+// Since v72 the daily tables (net_events) add one CREATE ... PARTITION OF per
+// day to this pass — one ACCESS EXCLUSIVE acquisition on the parent (and its
+// DEFAULT child) per day, bounded by cronDDLLockTimeout like the monthly ones;
+// a timed-out day is retried the next pass, and the seven-day lead means
+// ingest never waits on it. The same bound covers the locked move-and-attach
+// transaction ensureLeaf uses when the DEFAULT child already holds the day's
+// rows (lockTimeout below; 0 = wait, the startup variant).
 func (d *Database) EnsurePartitionsForCron() error {
-	return d.ensurePartitions(d.execCronDDL)
+	return d.ensurePartitions(d.execCronDDL, cronDDLLockTimeout)
 }
 
-func (d *Database) ensurePartitions(createPartition func(sql string, args ...interface{}) error) error {
+func (d *Database) ensurePartitions(createPartition func(sql string, args ...interface{}) error, lockTimeout time.Duration) error {
 	if !d.dialect.IsPostgres() {
 		return nil // Partitioning is PostgreSQL-only
 	}
@@ -666,46 +780,26 @@ func (d *Database) ensurePartitions(createPartition func(sql string, args ...int
 		d.ensureLeafIndexes(def.tableName+"_default", indexPlans[def.tableName])
 	}
 
-	// Create partitions for current month + 6 months ahead
+	// Create the leaves each table needs: current month + 6 ahead for the
+	// monthly tables, lookback..today+7 days for the daily ones
+	// (partitionWindows).
 	now := time.Now()
-	for i := 0; i <= 6; i++ {
-		year, month, _ := now.Date()
-		month = month + time.Month(i)
-		yearOffset := 0
-		for month > 12 {
-			month -= 12
-			yearOffset++
-		}
-		year += yearOffset
-		partitionStart := time.Date(year, month, 1, 0, 0, 0, 0, time.UTC)
-		partitionEnd := partitionStart.AddDate(0, 1, 0)
+	for _, def := range partitioned {
+		for _, w := range partitionWindows(def, now, d.partitionLookbackDays(def)) {
+			// Render the RANGE bounds with an EXPLICIT UTC offset (not a bare date) so
+			// the literal is interpreted identically regardless of the PG session
+			// TimeZone. The partition key is timestamptz, and a bare-date literal is
+			// anchored in the session TZ at CREATE time — so once D4 pins the session
+			// to UTC, an explicit +00 keeps every new partition aligned with the
+			// existing UTC-created ones (no boundary overlap/gap). parsePartition-
+			// UpperBound already accepts this rendering.
+			startStr := w.start.Format("2006-01-02 15:04:05-07:00")
+			endStr := w.end.Format("2006-01-02 15:04:05-07:00")
 
-		// Render the RANGE bounds with an EXPLICIT UTC offset (not a bare date) so
-		// the literal is interpreted identically regardless of the PG session
-		// TimeZone. The partition key is timestamptz, and a bare-date literal is
-		// anchored in the session TZ at CREATE time — so once D4 pins the session
-		// to UTC, an explicit +00 keeps every new monthly partition aligned with
-		// the existing UTC-created ones (no boundary overlap/gap). parsePartition-
-		// UpperBound already accepts this rendering.
-		startStr := partitionStart.Format("2006-01-02 15:04:05-07:00")
-		endStr := partitionEnd.Format("2006-01-02 15:04:05-07:00")
-
-		for _, def := range partitioned {
-			partitionName := fmt.Sprintf("%s_%d%02d", def.tableName, year, month)
-			// Check if partition already exists
-			var count int
-			d.db.Raw("SELECT COUNT(*) FROM pg_tables WHERE tablename = ?", partitionName).Scan(&count)
-			if count == 0 {
-				// Create the partition
-				sql := fmt.Sprintf(`
-					CREATE TABLE %s PARTITION OF %s
-					FOR VALUES FROM ('%s') TO ('%s')`,
-					partitionName, def.tableName, startStr, endStr)
-				if err := createPartition(sql); err != nil {
-					log.Printf("Partition creation warning for %s: %v", partitionName, err)
-					continue
-				}
-				log.Printf("Created partition: %s", partitionName)
+			partitionName := w.name
+			if err := d.ensureLeaf(def, w, startStr, endStr, createPartition, lockTimeout); err != nil {
+				log.Printf("Partition creation warning for %s: %v", partitionName, err)
+				continue
 			}
 
 			// Ensure the per-partition indexes exist. LC-19: the list is derived
@@ -720,6 +814,321 @@ func (d *Database) ensurePartitions(createPartition func(sql string, args ...int
 	}
 
 	return nil
+}
+
+// ensureLeaf makes w's leaf an attached child of def's parent, creating it
+// when absent. The plain path is unchanged — one CREATE TABLE ... PARTITION OF
+// through createPartition (lock-bounded on the cron). The other path exists
+// because a leaf can be needed for a range the DEFAULT child already holds
+// rows for: a poller down for longer than the lead, or ingest before the first
+// EnsurePartitions, puts a day's rows in <table>_default, and from then on
+// `CREATE TABLE ... PARTITION OF ... FOR VALUES` fails every pass with
+// "updated partition constraint for default partition would be violated by
+// some row" — the leaf never appears, every later row of that day lands in
+// the default too, and partition-drop retention never reaches any of them.
+// Reproduced on PostgreSQL 16 (TestNormalizedTables_PG/MissingLeafWith
+// DefaultRows). So when the default holds rows in [start, end):
+//
+//  1. create the leaf as a STANDALONE table shaped like the parent (LIKE ...
+//     INCLUDING DEFAULTS, which carries the id sequence default) — invisible
+//     to readers until attached, so a crash leaves nothing half-visible;
+//  2. move the rows out of the default in bounded batches, each one
+//     DELETE ... RETURNING feeding an INSERT in a single transaction under the
+//     retention pass's lock / statement timeouts (moveDefaultRowsIntoLeaf);
+//  3. ATTACH PARTITION through createPartition (ACCESS EXCLUSIVE on the
+//     now-near-empty default, SHARE UPDATE EXCLUSIVE on the parent, lock-
+//     bounded on the cron). Postgres builds the parent's partitioned
+//     indexes — the PK — on the leaf at attach; the plan indexes follow from
+//     the caller as for any leaf.
+//
+// Idempotent across a crash at any point: an existing but unattached leaf is
+// recognised and the move + attach resume; a moved row is never duplicated
+// (the DELETE and INSERT share a transaction) and never lost (the standalone
+// table keeps it). Rows are unreadable through the parent only between their
+// move and the attach — they were strays in the default to begin with.
+func (d *Database) ensureLeaf(def partitionDef, w partitionWindow, startStr, endStr string,
+	createPartition func(sql string, args ...interface{}) error, lockTimeout time.Duration) error {
+	var attached bool
+	if err := d.db.Raw(`SELECT EXISTS (SELECT 1 FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid WHERE c.relname = ?)`,
+		w.name).Scan(&attached).Error; err != nil {
+		return fmt.Errorf("attached probe: %w", err)
+	}
+	if attached {
+		return nil
+	}
+	var exists bool
+	if err := d.db.Raw(`SELECT to_regclass(?) IS NOT NULL`, w.name).Scan(&exists).Error; err != nil {
+		return fmt.Errorf("exists probe: %w", err)
+	}
+	def_ := def.tableName + "_default"
+	var strays bool
+	if err := d.db.Raw(fmt.Sprintf(`SELECT to_regclass(?) IS NOT NULL AND EXISTS (SELECT 1 FROM %s WHERE %s >= ? AND %s < ?)`,
+		def_, def.column, def.column), def_, w.start, w.end).Scan(&strays).Error; err != nil {
+		// The default child is created above in every pass; a probe error here
+		// means the relation is missing or unreadable — fall through to the
+		// plain CREATE, which reports the real problem.
+		strays = false
+	}
+	if !exists && !strays {
+		if err := createPartition(fmt.Sprintf(`
+					CREATE TABLE %s PARTITION OF %s
+					FOR VALUES FROM ('%s') TO ('%s')`, w.name, def.tableName, startStr, endStr)); err != nil {
+			return err
+		}
+		log.Printf("Created partition: %s", w.name)
+		return nil
+	}
+	if !exists {
+		log.Printf("WARNING: %s already holds rows for [%s, %s); creating %s as a standalone table, moving them, then attaching it",
+			def_, startStr, endStr, w.name)
+		if err := d.execMaintenanceDDL(fmt.Sprintf(`CREATE TABLE %s (LIKE %s INCLUDING DEFAULTS)`, w.name, def.tableName)); err != nil {
+			return fmt.Errorf("create standalone leaf: %w", err)
+		}
+	} else {
+		log.Printf("WARNING: %s exists but is not attached to %s (an interrupted earlier pass); resuming the move from %s and the attach",
+			w.name, def.tableName, def_)
+		// A leaf left unattached across a schema migration no longer matches
+		// the default's shape; INSERT ... SELECT * then fails on a column
+		// mismatch. Say so plainly before it does: the operator rescues the
+		// leaf's rows and drops it (or ALTERs it to match).
+		var leafCols, defCols int
+		d.db.Raw(`SELECT COUNT(*) FROM pg_attribute WHERE attrelid = to_regclass(?) AND attnum > 0 AND NOT attisdropped`, w.name).Scan(&leafCols)
+		d.db.Raw(`SELECT COUNT(*) FROM pg_attribute WHERE attrelid = to_regclass(?) AND attnum > 0 AND NOT attisdropped`, def_).Scan(&defCols)
+		if leafCols != defCols {
+			log.Printf("WARNING: unattached %s has %d columns but %s has %d — the table changed shape while the leaf sat unattached; the move below will fail until %s is dropped (after rescuing its rows) or altered to match",
+				w.name, leafCols, def_, defCols, w.name)
+		}
+	}
+	// Give the leaf everything ATTACH would otherwise have to build or verify
+	// under the lock: the range CHECK (so the attach skips scanning the leaf),
+	// the parent's partitioned indexes incl. the PK (so it attaches them
+	// instead of building them). No contention — the leaf is still standalone.
+	// Done before the move so the PK also rejects a duplicate id early.
+	if err := d.prepareLeafForAttach(def, w, startStr, endStr); err != nil {
+		return fmt.Errorf("prepare %s for attach: %w", w.name, err)
+	}
+	var moved, remainder int64
+	for attempt := 1; ; attempt++ {
+		// Bulk of the move: unlocked, batched, while ingest keeps writing the
+		// day's rows into the default.
+		n, err := d.moveDefaultRowsIntoLeaf(def_, w.name, def.column, w.start, w.end)
+		moved += n
+		if err != nil {
+			return fmt.Errorf("move rows from %s: %w", def_, err)
+		}
+		if leafAttachHook != nil {
+			leafAttachHook(w.name, attempt) // test seam: rows for this day arrive now
+		}
+		// Final step, ONE transaction: lock the default (ACCESS EXCLUSIVE,
+		// bounded by lockTimeout on the cron), move the remainder that arrived
+		// since the batched pass and attach. Separate statements here were the
+		// bug: a row committed into the default between the last batch and the
+		// ATTACH failed the attach ("default partition would be violated")
+		// every pass until the day was over, while the moved rows sat
+		// invisible in the standalone leaf. The remainder must be SMALL for
+		// the lock hold to be a scan of the default: when a backlog replay has
+		// stuffed more than leafAttachRemainderCap rows into the range since
+		// the batched pass, the transaction rolls back before moving anything
+		// and the loop goes round again unlocked, a bounded number of times.
+		remainder, err = d.attachLeafLocked(def, w, startStr, endStr, lockTimeout)
+		if errors.Is(err, errLeafRemainderTooLarge) {
+			if attempt >= leafAttachMaxAttempts {
+				return fmt.Errorf("attach: the default kept receiving more than %d rows for [%s, %s) between the batched move and the lock on %d attempts (%d row(s) moved so far, kept in the standalone leaf; retried next pass)",
+					leafAttachRemainderCap, startStr, endStr, attempt, moved)
+			}
+			log.Printf("Partition %s: more than %d rows arrived in %s for [%s, %s) since the batched move; moving them unlocked first (attempt %d/%d)",
+				w.name, leafAttachRemainderCap, def_, startStr, endStr, attempt, leafAttachMaxAttempts)
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("attach (%d row(s) moved out of %s and kept in the standalone leaf; retried next pass): %w", moved, def_, err)
+		}
+		break
+	}
+	log.Printf("Created partition: %s (attached after moving %d+%d row(s) out of %s)", w.name, moved, remainder, def_)
+	return nil
+}
+
+// leafAttachHook, when non-nil, runs on every attempt between the batched move
+// and the locked attach — where concurrent ingest rows can land in the default
+// child — with the attempt number, so a test can inject rows and count rounds.
+var leafAttachHook func(leaf string, attempt int)
+
+// errLeafRemainderTooLarge is attachLeafLocked's refusal to move more than
+// leafAttachRemainderCap rows under the default's ACCESS EXCLUSIVE lock.
+var errLeafRemainderTooLarge = errors.New("remainder in the default exceeds the locked-move cap")
+
+var (
+	// leafAttachRemainderCap is the most rows attachLeafLocked moves while
+	// holding the default's lock; a day's worth from a backlog replay is far
+	// above it and goes through the unlocked batched move instead.
+	leafAttachRemainderCap = 50000
+	// leafAttachMaxAttempts bounds the move → locked-attach loop per pass.
+	leafAttachMaxAttempts = 5
+)
+
+// defaultMoveStmt is the DELETE ... RETURNING → INSERT that moves rows of
+// [start, end) from the DEFAULT child into the leaf; with limit > 0 one batch
+// of that many rows, otherwise every matching row.
+func defaultMoveStmt(defaultChild, leaf, column string, limit bool) string {
+	sel := fmt.Sprintf(`SELECT id FROM %s WHERE %s >= ? AND %s < ?`, defaultChild, column, column)
+	if limit {
+		sel += fmt.Sprintf(` ORDER BY %s LIMIT ?`, column)
+	}
+	return fmt.Sprintf(`WITH moved AS (DELETE FROM %s WHERE id IN (%s) RETURNING *) INSERT INTO %s SELECT * FROM moved`,
+		defaultChild, sel, leaf)
+}
+
+// moveDefaultRowsIntoLeaf moves the rows of [start, end) from the DEFAULT child
+// into an unattached leaf, cleanupDeleteBatchSize rows per transaction, each
+// batch a DELETE ... RETURNING feeding the INSERT so a row is either in one
+// table or the other at every commit. Lock / statement timeouts match the
+// retention pass's batched deletes. Returns the rows moved.
+func (d *Database) moveDefaultRowsIntoLeaf(defaultChild, leaf, column string, start, end time.Time) (int64, error) {
+	stmt := defaultMoveStmt(defaultChild, leaf, column, true)
+	var total int64
+	for {
+		var n int64
+		err := d.db.Transaction(func(tx *gorm.DB) error {
+			if e := tx.Exec("SET LOCAL lock_timeout = '5s'").Error; e != nil {
+				return e
+			}
+			if e := tx.Exec("SET LOCAL statement_timeout = '120s'").Error; e != nil {
+				return e
+			}
+			res := tx.Exec(stmt, start, end, cleanupDeleteBatchSize)
+			n = res.RowsAffected
+			return res.Error
+		})
+		if err != nil {
+			return total, err
+		}
+		total += n
+		if n < int64(cleanupDeleteBatchSize) {
+			return total, nil
+		}
+		time.Sleep(batchDeleteInterSleep)
+	}
+}
+
+// prepareLeafForAttach adds to the standalone leaf what ATTACH PARTITION would
+// otherwise do under its locks: a CHECK constraint equal to the partition
+// bound (Postgres then skips the leaf scan that proves every row fits) and a
+// matching index for each of the parent's partitioned indexes — the PK (id,
+// column) and any v54/v57-style parent index — which the attach then adopts
+// instead of building. Idempotent: every step probes the catalog first, so a
+// pass resumed after a crash adds only what is missing.
+func (d *Database) prepareLeafForAttach(def partitionDef, w partitionWindow, startStr, endStr string) error {
+	check := w.name + "_range"
+	var hasCheck bool
+	if err := d.db.Raw(`SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = ? AND conrelid = to_regclass(?))`,
+		check, w.name).Scan(&hasCheck).Error; err != nil {
+		return fmt.Errorf("check probe: %w", err)
+	}
+	if !hasCheck {
+		if err := d.execMaintenanceDDL(fmt.Sprintf(`ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s IS NOT NULL AND %s >= '%s' AND %s < '%s')`,
+			w.name, check, def.column, def.column, startStr, def.column, endStr)); err != nil {
+			return fmt.Errorf("add range check: %w", err)
+		}
+	}
+	var hasPK bool
+	if err := d.db.Raw(`SELECT EXISTS (SELECT 1 FROM pg_index WHERE indrelid = to_regclass(?) AND indisprimary)`, w.name).
+		Scan(&hasPK).Error; err != nil {
+		return fmt.Errorf("pk probe: %w", err)
+	}
+	if !hasPK {
+		if err := d.execMaintenanceDDL(fmt.Sprintf(`ALTER TABLE %s ADD PRIMARY KEY (id, %s)`, w.name, def.column)); err != nil {
+			return fmt.Errorf("add primary key: %w", err)
+		}
+	}
+	// The parent's other partitioned indexes, rendered by the catalog as
+	// "CREATE [UNIQUE] INDEX <name> ON ONLY <parent> USING ..." — re-aimed at
+	// the leaf under a leaf-prefixed name.
+	var defs []struct {
+		Name string
+		Def  string
+	}
+	if err := d.db.Raw(`SELECT i.relname AS name, pg_get_indexdef(i.oid) AS def
+		FROM pg_index x JOIN pg_class i ON i.oid = x.indexrelid
+		WHERE x.indrelid = to_regclass(?) AND NOT x.indisprimary`, def.tableName).Scan(&defs).Error; err != nil {
+		return fmt.Errorf("parent index probe: %w", err)
+	}
+	for _, ix := range defs {
+		stmt := parentIndexDefForLeaf(ix.Def, ix.Name, w.name)
+		if stmt == "" {
+			log.Printf("Partition %s: cannot re-aim parent index %s at the leaf (%q); ATTACH will build it", w.name, ix.Name, ix.Def)
+			continue
+		}
+		if err := d.execMaintenanceDDL(stmt); err != nil {
+			return fmt.Errorf("create %s on leaf: %w", ix.Name, err)
+		}
+	}
+	return nil
+}
+
+// parentIndexDefForLeaf rewrites a partitioned index's pg_get_indexdef output
+// ("CREATE [UNIQUE] INDEX name ON ONLY [schema.]parent USING ...") into the
+// equivalent "CREATE [UNIQUE] INDEX IF NOT EXISTS <leaf>_<name> ON <leaf>
+// USING ..." for a standalone leaf; "" when the text is not that shape.
+func parentIndexDefForLeaf(indexDef, indexName, leaf string) string {
+	const marker = " ON ONLY "
+	i := strings.Index(indexDef, marker)
+	using := strings.Index(indexDef, " USING ")
+	if i < 0 || using < i {
+		return ""
+	}
+	head := indexDef[:i] // CREATE [UNIQUE] INDEX name
+	head = strings.TrimSuffix(head, " "+indexName)
+	if !strings.HasPrefix(head, "CREATE ") || !strings.HasSuffix(head, "INDEX") {
+		return ""
+	}
+	return fmt.Sprintf("%s IF NOT EXISTS %s_%s ON %s%s", head, leaf, indexName, leaf, indexDef[using:])
+}
+
+// attachLeafLocked is the final step of absorbing a day from the DEFAULT child,
+// in ONE transaction: lock the default (ACCESS EXCLUSIVE, so no row can be
+// routed into it meanwhile), move whatever arrived since the batched pass,
+// attach the prepared leaf, drop its now-redundant range CHECK. lockTimeout
+// bounds the lock wait (0 = wait, startup). Returns the rows moved here.
+func (d *Database) attachLeafLocked(def partitionDef, w partitionWindow, startStr, endStr string, lockTimeout time.Duration) (int64, error) {
+	def_ := def.tableName + "_default"
+	var remainder int64
+	err := d.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SET LOCAL statement_timeout = 0").Error; err != nil {
+			return fmt.Errorf("lift statement_timeout: %w", err)
+		}
+		if lockTimeout > 0 {
+			// Rendered literal, never input: a package duration (see execCronDDL).
+			if err := tx.Exec(fmt.Sprintf("SET LOCAL lock_timeout = '%dms'", lockTimeout.Milliseconds())).Error; err != nil {
+				return fmt.Errorf("set lock_timeout: %w", err)
+			}
+		}
+		if err := tx.Exec(fmt.Sprintf(`LOCK TABLE %s IN ACCESS EXCLUSIVE MODE`, def_)).Error; err != nil {
+			return fmt.Errorf("lock %s: %w", def_, err)
+		}
+		// Bounded probe (stops at cap+1): a remainder above the cap is not
+		// moved under this lock — roll back and let the caller drain it
+		// unlocked first.
+		var pending int64
+		if err := tx.Raw(fmt.Sprintf(`SELECT COUNT(*) FROM (SELECT 1 FROM %s WHERE %s >= ? AND %s < ? LIMIT ?) s`,
+			def_, def.column, def.column), w.start, w.end, leafAttachRemainderCap+1).Scan(&pending).Error; err != nil {
+			return fmt.Errorf("count remainder: %w", err)
+		}
+		if pending > int64(leafAttachRemainderCap) {
+			return errLeafRemainderTooLarge
+		}
+		res := tx.Exec(defaultMoveStmt(def_, w.name, def.column, false), w.start, w.end)
+		if res.Error != nil {
+			return fmt.Errorf("move remainder: %w", res.Error)
+		}
+		remainder = res.RowsAffected
+		if err := tx.Exec(fmt.Sprintf(`ALTER TABLE %s ATTACH PARTITION %s FOR VALUES FROM ('%s') TO ('%s')`,
+			def.tableName, w.name, startStr, endStr)).Error; err != nil {
+			return err
+		}
+		return tx.Exec(fmt.Sprintf(`ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s_range`, w.name, w.name)).Error
+	})
+	return remainder, err
 }
 
 // ensureLeafIndexes creates the plan's indexes on one leaf partition as
@@ -929,6 +1338,13 @@ var defaultAutovacuumTables = []string{
 	"hardware_sensors",
 	"security_stats",
 	"disk_usage",
+	// v72 normalized event tables: net_events is the traffic class of syslog
+	// re-typed (the same volume as the dominant syslog_messages stream, in
+	// daily leaves), net_event_rollups is upserted every hour and rewritten
+	// once per day, sec_events is small but partitioned like the rest.
+	"net_events",
+	"sec_events",
+	"net_event_rollups",
 }
 
 // autovacuumTables returns the tables to tune. By default that's
@@ -985,6 +1401,13 @@ func (d *Database) ConfigureAutovacuum() error {
 		// for that to happen; at a 20% scale factor on a multi-GB partition it does
 		// not, and the partition grows toward its full ingest size instead.
 		for _, target := range d.autovacuumTargets(table) {
+			// A leaf that already carries both parameter sets needs nothing: an
+			// ALTER TABLE SET takes SHARE UPDATE EXCLUSIVE on the leaf and
+			// rewrites its pg_class row, and with the v72 daily leaves there
+			// are ~40 of them per boot — the catalog read is the cheaper no-op.
+			if d.autovacuumConfigured(target) {
+				continue
+			}
 			sql := fmt.Sprintf(`
 			ALTER TABLE %s SET (
 				autovacuum_vacuum_scale_factor = 0.01,
@@ -1035,6 +1458,20 @@ func (d *Database) ConfigureAutovacuum() error {
 	}
 
 	return nil
+}
+
+// autovacuumConfigured reports whether rel's reloptions already carry the
+// settings ConfigureAutovacuum applies — both statements' worth, so a
+// pre-PG13 server (where the insert parameters are rejected) keeps retrying
+// them exactly as before. False on any probe error, which re-applies.
+func (d *Database) autovacuumConfigured(rel string) bool {
+	var opts string
+	if err := d.db.Raw(`SELECT COALESCE(array_to_string(reloptions, ','), '') FROM pg_class WHERE oid = to_regclass(?)`, rel).
+		Scan(&opts).Error; err != nil {
+		return false
+	}
+	return strings.Contains(opts, "autovacuum_vacuum_scale_factor=0.01") &&
+		strings.Contains(opts, "autovacuum_vacuum_insert_threshold=100000")
 }
 
 // autovacuumTargets resolves a configured table name to the relations that can
