@@ -844,7 +844,11 @@ func backfillProbeQuery(tx *gorm.DB, table string, rows []models.SyslogMessage, 
 // live ingest normalized it (handlers.normalizeIngest): a row with a stored
 // format (v74; only ever written for a framing-contract probe) gets its hint
 // back and skips the re-framing join; a row without one — older than v74, a
-// v5 probe's, a format-less spool replay — keeps the fallback.
+// v5 probe's, a format-less spool replay — keeps the fallback. One case
+// differs from the live path: a v6 row whose hint this server did not know
+// was stored NULL, so it is re-framed here where the live ingest used
+// NormalizeFramed. A v6 collector only emits the six known values (a new one
+// is a relay schema bump), and re-framing is the conservative direction.
 func normalizeStored(vendor string, msg *models.SyslogMessage) (normalize.Event, normalize.Outcome) {
 	msg.Format = models.SyslogFormatName(msg.StoredFormat)
 	if msg.Format != "" {

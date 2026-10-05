@@ -117,6 +117,45 @@ its register fails. Roll the server forward (or the probe back) and the probe
 registers. There is **no data loss** — the probe keeps unsent data in its
 on-disk queue until the server can accept it again.
 
+## Database migration pre-flight: server 0.11.298 (migration v74)
+
+v74 adds `syslog_messages.format` (`smallint`, nullable, no default, no
+index). On PostgreSQL 11+ that is a catalog change only — no table rewrite on
+a plain heap or a partitioned parent — but it needs a brief ACCESS EXCLUSIVE
+lock on `syslog_messages` (and on every leaf when partitioned). While the
+ALTER waits for that lock, every syslog insert waits behind it, so each
+attempt is capped at 2 s (`lock_timeout` and `statement_timeout`) and retried
+every 5 s, 30 times (about 3.5 minutes) before the migration fails.
+
+Readers the queued lock does **not** cancel will hold it off:
+an anti-wraparound autovacuum, a `pg_dump`, a `psql` session left idle in a
+transaction, a long report query. Before deploying:
+
+```sql
+-- sessions touching syslog_messages (or a leaf), oldest transaction first
+SELECT pid, state, now() - xact_start AS xact_age, left(query, 80) AS query
+FROM pg_stat_activity
+WHERE xact_start IS NOT NULL AND pid <> pg_backend_pid()
+ORDER BY xact_start;
+
+-- vacuums in progress (an anti-wraparound one reads as "to prevent wraparound"
+-- in pg_stat_activity.query and is not cancelled by a lock waiter)
+SELECT p.pid, p.relid::regclass, p.phase, a.query
+FROM pg_stat_progress_vacuum p JOIN pg_stat_activity a USING (pid);
+```
+
+Wait for, or end (`SELECT pg_terminate_backend(<pid>)`), anything old that
+holds `syslog_messages` before you restart. Restart the API and the poller
+together (they share the migration lock; the poller's normalized-event
+backfill, while one runs, issues reads of up to 120 s each).
+
+If the processes crash-loop with `migrate v74 add syslog_messages.format
+(attempt 30/30): ... SQLSTATE 55P03` (or `57014`), a blocker outlasted the
+retries: find it with the queries above, wait for it or terminate it, and
+the next restart applies v74 in milliseconds. An interrupted attempt leaves
+nothing behind: the ALTER is one transaction, and until it commits the table
+is unchanged.
+
 ## Header / field reference
 
 For operators debugging a `curl` or a probe that won't register:

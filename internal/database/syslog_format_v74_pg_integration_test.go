@@ -8,11 +8,15 @@ package database
 
 import (
 	"context"
+	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"firewall-mon/internal/models"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // syslogRelfilenodes maps each heap relation of syslog_messages (the table
@@ -231,11 +235,79 @@ func TestSyslogFormatColumnV74_PG(t *testing.T) {
 			<-res
 			t.Fatal("v74 still waiting after 5s behind a reader; each attempt must give up at its lock_timeout")
 		}
-		if err == nil || sqlState(err) != "55P03" || !strings.Contains(err.Error(), "attempt 3/3") {
-			t.Fatalf("v74 under a permanent reader = %v, want a 55P03 failure after 3 attempts", err)
+		if st := sqlState(err); err == nil || (st != "55P03" && st != "57014") || !strings.Contains(err.Error(), "attempt 3/3") {
+			t.Fatalf("v74 under a permanent reader = %v, want a lock/statement timeout (55P03/57014) after 3 attempts", err)
 		}
 		if err := d.migrateSyslogFormatColumn(); err != nil {
 			t.Fatalf("v74 retry once the reader is gone: %v", err)
+		}
+		assertFormatColumn(t, d)
+	})
+
+	t.Run("StaggeredLeafReadersBoundInsertStall", func(t *testing.T) {
+		// lock_timeout is per lock wait, and the ALTER holds ACCESS EXCLUSIVE
+		// on the parent while it waits for each leaf in OID order (the order
+		// find_all_inheritors locks them). Readers on every leaf, released one
+		// by one just inside the lock_timeout, would walk the ALTER through
+		// all of them with the parent held the whole time — every insert
+		// stalled for about leaves x 250 ms. The statement_timeout caps each
+		// attempt at the bound instead.
+		const bound = 300 * time.Millisecond
+		shrinkV74Lock(t, bound, 100, 100*time.Millisecond)
+		if err := d.Gorm().Exec(`ALTER TABLE syslog_messages DROP COLUMN IF EXISTS format`).Error; err != nil {
+			t.Fatal(err)
+		}
+		var leaves []string
+		if err := d.Gorm().Raw(`SELECT c.relname FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid
+			WHERE i.inhparent = 'syslog_messages'::regclass ORDER BY c.oid`).Scan(&leaves).Error; err != nil {
+			t.Fatal(err)
+		}
+		if len(leaves) < 4 {
+			t.Fatalf("%d leaves; the test needs several", len(leaves))
+		}
+		releases := make([]func(), len(leaves))
+		for i, leaf := range leaves {
+			releases[i] = holdReader(t, d, leaf)
+		}
+		done := make(chan error, 1)
+		go func() { done <- d.migrateSyslogFormatColumn() }()
+		go func() {
+			for _, release := range releases {
+				time.Sleep(250 * time.Millisecond)
+				release()
+			}
+		}()
+		time.Sleep(50 * time.Millisecond) // the first attempt holds the parent and waits on leaf 1
+		var worst time.Duration
+		for migrated := false; !migrated; {
+			start := time.Now()
+			inserted := make(chan error, 1)
+			go func() {
+				inserted <- d.Gorm().Exec(`INSERT INTO syslog_messages ("timestamp", message, severity) VALUES (now(), 'during-v74-staggered', 5)`).Error
+			}()
+			select {
+			case err := <-inserted:
+				if err != nil {
+					t.Fatalf("insert during v74: %v", err)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("insert still blocked after 10s")
+			}
+			if w := time.Since(start); w > worst {
+				worst = w
+			}
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("v74 with staggered leaf readers: %v", err)
+				}
+				migrated = true
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+		t.Logf("%d leaves; longest insert wait while v74 retried: %s (bound %s)", len(leaves), worst, bound)
+		if worst > 3*bound {
+			t.Errorf("an insert waited %s behind v74 (bound %s): the attempt must be capped as a whole, not per lock wait", worst, bound)
 		}
 		assertFormatColumn(t, d)
 	})
@@ -270,24 +342,35 @@ func shrinkV74Lock(t *testing.T, timeout time.Duration, retries int, sleep time.
 // ACCESS EXCLUSIVE must queue behind. The returned func ends it.
 func holdSyslogReader(t *testing.T, d *Database) func() {
 	t.Helper()
-	sqlDB, err := d.Gorm().DB()
+	return holdReader(t, d, "syslog_messages")
+}
+
+// holdReader is holdSyslogReader for any relation (a single leaf). Each
+// reader gets its own connection outside the Database pool, so holding
+// several never starves the code under test. The release func is safe to
+// call from another goroutine and more than once.
+func holdReader(t *testing.T, d *Database, rel string) func() {
+	t.Helper()
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, os.Getenv("TEST_PG_DSN"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	tx, err := sqlDB.BeginTx(context.Background(), nil)
+	tx, err := conn.Begin(ctx)
 	if err != nil {
+		_ = conn.Close(ctx)
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(`SELECT count(*) FROM (SELECT 1 FROM syslog_messages LIMIT 1) s`); err != nil {
-		_ = tx.Rollback()
+	if _, err := tx.Exec(ctx, `SELECT count(*) FROM (SELECT 1 FROM `+rel+` LIMIT 1) s`); err != nil {
+		_ = conn.Close(ctx)
 		t.Fatal(err)
 	}
-	var once bool
+	var once sync.Once
 	release := func() {
-		if !once {
-			once = true
-			_ = tx.Rollback()
-		}
+		once.Do(func() {
+			_ = tx.Rollback(ctx)
+			_ = conn.Close(ctx)
+		})
 	}
 	t.Cleanup(release)
 	return release
