@@ -258,4 +258,7 @@ func printBackfillJob(w io.Writer, job *models.NormalizeBackfillJob) {
 	if job.Error != "" {
 		fmt.Fprintf(w, "  error     %s\n", job.Error)
 	}
+	if ok, hint := database.NormalizeBackfillResumable(job); ok {
+		fmt.Fprintf(w, "  next      %s (fwmon-api normalize-backfill --resume)\n", hint)
+	}
 }

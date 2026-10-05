@@ -141,6 +141,16 @@ func TestStartNormalizeBackfill(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("cancel with nothing active: %d, want 404", rec.Code)
 	}
+	// Status of the cancelled job names the next step.
+	c, rec = backfillCtx(http.MethodGet, "/admin/api/normalize/backfill/status", "admin1", u.ID, "")
+	h.GetNormalizeBackfill(c)
+	var st struct {
+		Resumable bool   `json:"resumable"`
+		Hint      string `json:"hint"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil || !st.Resumable || !strings.Contains(st.Hint, "resume") {
+		t.Fatalf("status of a cancelled job: %v %s", err, rec.Body.String())
+	}
 
 	// Resume: wrong password 403, then → pending (202) with the same id.
 	c, rec = backfillCtx(http.MethodPost, "/admin/api/normalize/backfill/resume", "admin1", u.ID, `{"password":"WRONG"}`)

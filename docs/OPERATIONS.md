@@ -562,8 +562,11 @@ re-authenticated like the purge). What to expect:
   id — never a sequential scan), and held to `--rate` rows per second
   (default 2 000: about 90 M rows in 12.5 h). A leaf with no usable
   `(timestamp)` index (for a `--device` job, `(device_id, timestamp)` also
-  serves) is skipped with a WARNING in the log and named in the job's `error`
-  note — create the index and queue a new job over the window. Writes are one
+  serves) is never seq-scanned: the job stops `failed` with a WARNING in the
+  log, the reason in its `error` and its cursor parked at the start of that
+  leaf — create the index, then `--resume` (or the API's resume) and it
+  continues from there. `--status` and the status API name that next step
+  for a failed or cancelled job. Writes are one
   COPY per batch into the day leaves. A cancel lands within about a second,
   even mid-sleep at a low rate. Set `--window 22:00-06:00` (server local time; or the
   `normalize_backfill_window` setting as the default) to run at night: outside

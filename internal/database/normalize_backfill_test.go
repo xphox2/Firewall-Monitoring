@@ -898,28 +898,94 @@ func TestEstimateNormalizeBackfill_IgnoresStaleSample(t *testing.T) {
 	}
 }
 
-// TestNormalizeBackfill_SkipsUnindexedRelation: a raw relation the keyset
-// page cannot be served from by index is skipped (nothing read from it, the
-// job says so in its error note) instead of being seq-scanned per batch.
-func TestNormalizeBackfill_SkipsUnindexedRelation(t *testing.T) {
-	d, _, _, _ := bfSetup(t, 100)
+// TestNormalizeBackfill_StopsAtUnindexedRelation: a raw relation the keyset
+// page cannot be served from by index is never seq-scanned: the job stops
+// failed (resumable) with its cursor parked at the start of that relation
+// and the reason in its error; once the index exists, resume continues there
+// and completes — no new job over the whole window.
+func TestNormalizeBackfill_StopsAtUnindexedRelation(t *testing.T) {
+	d, f, _, _ := bfSetup(t, 100)
 	orig := backfillLeafIndexProbe
+	indexed := false
 	var probed []string
 	backfillLeafIndexProbe = func(_ *Database, table string, _ bool) (bool, error) {
 		probed = append(probed, table)
-		return false, nil
+		return indexed, nil
 	}
 	t.Cleanup(func() { backfillLeafIndexProbe = orig })
 	job, err := bfRun(t, d, bfQueue(t, d, nil).ID)
-	if err == nil || !strings.Contains(err.Error(), "no usable timestamp index") {
-		t.Fatalf("run: %v, want the skipped-relation warning", err)
+	if err == nil || !strings.Contains(err.Error(), "no usable (timestamp) index") {
+		t.Fatalf("run: %v, want the missing-index failure", err)
 	}
-	if job.Status != NormalizeBackfillStatusDone || job.RowsScanned != 0 || job.RowsWritten != 0 ||
-		!strings.Contains(job.Error, "syslog_messages") || !strings.Contains(job.Error, "no usable timestamp index") {
-		t.Fatalf("job: %+v", job)
+	if job.Status != NormalizeBackfillStatusFailed || job.RowsScanned != 0 || job.RowsWritten != 0 ||
+		!strings.Contains(job.Error, "syslog_messages") || !strings.Contains(job.Error, "resume") {
+		t.Fatalf("job: %+v, want failed with the reason", job)
 	}
-	if len(probed) != 1 || probed[0] != "syslog_messages" {
-		t.Fatalf("index probe calls = %v, want one for syslog_messages", probed)
+	if job.CurrentPartition != "syslog_messages" || job.CursorTs == nil || !job.CursorTs.Equal(job.Since) || job.CursorID != 0 {
+		t.Fatalf("cursor %s/%v/%d, want parked at the relation's start %s/0", job.CurrentPartition, job.CursorTs, job.CursorID, job.Since)
+	}
+	if ok, hint := NormalizeBackfillResumable(job); !ok || !strings.Contains(hint, "resume") {
+		t.Fatalf("resumable=%v hint=%q", ok, hint)
+	}
+	// The operator creates the index and resumes: the run continues there.
+	indexed = true
+	if applied, err := d.ResumeNormalizeBackfillJob(job.ID); err != nil || !applied {
+		t.Fatalf("resume: %v %v", applied, err)
+	}
+	if job, err = bfRun(t, d, job.ID); err != nil || job.Status != NormalizeBackfillStatusDone ||
+		job.RowsScanned != int64(len(f.rows)) || job.RowsWritten != int64(f.net+f.sec) {
+		t.Fatalf("resumed: %v %+v", err, job)
+	}
+	if n, s, distinct := bfCounts(t, d); n != int64(f.net) || s != int64(f.sec) || distinct != int64(f.net+f.sec) {
+		t.Fatalf("after resume net=%d sec=%d distinct=%d", n, s, distinct)
+	}
+	if len(probed) != 2 {
+		t.Fatalf("index probe calls = %v, want one per run", probed)
+	}
+}
+
+// TestNormalizeBackfill_ObservedCountsOnlyCommittedBatches: a batch whose
+// transaction rolls back adds nothing to device_field_observed — it is
+// counted once, when the resumed run commits it — so a failed-then-resumed
+// job ends with exactly the counts of a clean run.
+func TestNormalizeBackfill_ObservedCountsOnlyCommittedBatches(t *testing.T) {
+	total := func(d *Database) int64 {
+		var n int64
+		if err := d.db.Raw("SELECT COALESCE(SUM(count), 0) FROM device_field_observed").Scan(&n).Error; err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	clean, _, _, _ := bfSetup(t, 200)
+	if job, err := bfRun(t, clean, bfQueue(t, clean, nil).ID); err != nil || job.Status != NormalizeBackfillStatusDone {
+		t.Fatalf("clean run: %v %+v", err, job)
+	}
+	want := total(clean)
+	if want == 0 {
+		t.Fatal("the clean run observed no fields")
+	}
+
+	d, _, _, _ := bfSetup(t, 200)
+	normalizeBackfillTxHook = func(batch int) error {
+		if batch == 3 {
+			return errors.New("injected crash")
+		}
+		return nil
+	}
+	t.Cleanup(func() { normalizeBackfillTxHook = nil })
+	job, err := bfRun(t, d, bfQueue(t, d, nil).ID)
+	if err == nil || job.Status != NormalizeBackfillStatusFailed || job.RowsScanned != 100 {
+		t.Fatalf("injected failure: %v %+v", err, job)
+	}
+	normalizeBackfillTxHook = nil
+	if applied, err := d.ResumeNormalizeBackfillJob(job.ID); err != nil || !applied {
+		t.Fatalf("resume: %v %v", applied, err)
+	}
+	if job, err = bfRun(t, d, job.ID); err != nil || job.Status != NormalizeBackfillStatusDone {
+		t.Fatalf("resumed: %v %+v", err, job)
+	}
+	if got := total(d); got != want {
+		t.Fatalf("device_field_observed total = %d after fail + resume, want %d (the clean run's): the rolled-back batch was counted", got, want)
 	}
 }
 

@@ -156,7 +156,8 @@ func optUint(v *uint) string {
 }
 
 // GetNormalizeBackfill reports the latest job in any state (404 when none was
-// ever queued) and the 10 before it. GET /admin/api/normalize/backfill/status.
+// ever queued) and the 10 before it, with `resumable` and a `hint` naming the
+// next step for a failed / cancelled job. GET /admin/api/normalize/backfill/status.
 func (h *Handler) GetNormalizeBackfill(c *gin.Context) {
 	db := h.reqDB(c)
 	if !httputil.RequireDB(c, db) {
@@ -179,7 +180,8 @@ func (h *Handler) GetNormalizeBackfill(c *gin.Context) {
 	if len(history) > 0 {
 		history = history[1:] // the latest is `job`
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": job, "history": history})
+	resumable, hint := database.NormalizeBackfillResumable(job)
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": job, "history": history, "resumable": resumable, "hint": hint})
 }
 
 // CancelNormalizeBackfill cancels the active job: pending → cancelled at once,

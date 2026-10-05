@@ -78,6 +78,9 @@ func TestNormalizeBackfillCmd(t *testing.T) {
 	if code, out, _ := run("--cancel"); code != 0 || !strings.Contains(out, "job 1: cancelled") {
 		t.Fatalf("--cancel: %d %q", code, out)
 	}
+	if code, out, _ := run("--status"); code != 0 || !strings.Contains(out, "next      cancelled: resume") || !strings.Contains(out, "--resume") {
+		t.Fatalf("--status of a cancelled job: %d %q", code, out)
+	}
 	if code, _, errb := run("--cancel"); code != 1 || !strings.Contains(errb, "no active job") {
 		t.Fatalf("--cancel with nothing active: %d %q", code, errb)
 	}

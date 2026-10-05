@@ -441,3 +441,103 @@ func TestLeafHasUsableIndex_PG(t *testing.T) {
 		}
 	}
 }
+
+// TestNormalizeBackfill_PG_DeviceScoped: a device-scoped job for a SPARSE
+// device (1 500 rows over three days) beside a DENSE one (300 000 raw rows,
+// all already normalized). The page and the dedup probe must be served by
+// the per-leaf (device_id, ...) indexes — a probe over the sparse batch's
+// ts range without the device scope would read the dense device's rows of
+// the whole span — and the job writes exactly the sparse device's rows.
+func TestNormalizeBackfill_PG_DeviceScoped(t *testing.T) {
+	d := NewIntegrationDB(t)
+	d.netEventRetentionDays = 30
+	if err := d.EnsurePartitions(); err != nil {
+		t.Fatalf("EnsurePartitions: %v", err)
+	}
+	sparse := &models.Device{Name: "fw-example-01", IPAddress: "192.0.2.1", Vendor: "fortigate"}
+	dense := &models.Device{Name: "fw-example-02", IPAddress: "192.0.2.2", Vendor: "fortigate"}
+	for _, dv := range []*models.Device{sparse, dense} {
+		if err := d.db.Create(dv).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	start, span := now.Add(-72*time.Hour), 71*time.Hour
+	f := seedBackfillRows(t, d, sparse.ID, start, span, 1500)
+	const denseRows = 300000
+	if err := d.db.Exec(`INSERT INTO syslog_messages (timestamp, device_id, probe_id, hostname, app_name, message, severity, facility, created_at, source_ip)
+		SELECT t, ?, 1, 'fw-example-02', 'traffic', 'dense fixture row', 5, 20, t, '192.0.2.2'
+		FROM (SELECT ?::timestamptz + g * (?::bigint * interval '1 microsecond') AS t FROM generate_series(1, ?) g) s`,
+		dense.ID, start, span.Microseconds()/denseRows, denseRows).Error; err != nil {
+		t.Fatalf("seed dense syslog: %v", err)
+	}
+	// The dense device's rows were all normalized (live, or by an earlier job).
+	if err := d.db.Exec(`INSERT INTO net_events (ts, device_id, probe_id, activity, action, raw_id, raw_ts)
+		SELECT timestamp, device_id, 1, 1, 1, id, timestamp FROM syslog_messages WHERE device_id = ?`, dense.ID).Error; err != nil {
+		t.Fatalf("seed dense net_events: %v", err)
+	}
+	until := now.Add(-30 * time.Minute)
+	if _, err := d.InsertSettingIfAbsent(&models.SystemSetting{Key: NormalizeIngestStartedSetting, Value: until.Format(time.RFC3339), Type: "string"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.db.Exec("ANALYZE syslog_messages; ANALYZE net_events; ANALYZE sec_events").Error; err != nil {
+		t.Fatal(err)
+	}
+	since, _, err := d.NormalizeBackfillBounds(30, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ranges, err := d.backfillRanges(since, until)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := normalizeBackfillBatchSize
+	normalizeBackfillBatchSize = 5000
+	t.Cleanup(func() { normalizeBackfillBatchSize = orig })
+
+	// The page, device-scoped, on every leaf holding the sparse device.
+	checked := 0
+	for _, r := range ranges {
+		var n int64
+		if err := d.db.Raw(fmt.Sprintf("SELECT COUNT(*) FROM ONLY %s WHERE device_id = ?", r.table), sparse.ID).Scan(&n).Error; err != nil {
+			t.Fatal(err)
+		}
+		if n == 0 {
+			continue
+		}
+		checked++
+		stmt := backfillPageQuery(d.db.Session(&gorm.Session{DryRun: true}), r, r.lo, 0, until, &sparse.ID, normalizeBackfillBatchSize).Find(&[]models.SyslogMessage{}).Statement
+		if plan := assertBackfillPlan(t, d, "device-scoped page "+r.table, stmt); !strings.Contains(plan, "device") {
+			t.Fatalf("device-scoped page on %s does not use the (device_id, timestamp) index:\n%s", r.table, plan)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no leaf holds the sparse device's rows")
+	}
+	// The probe of a sparse batch (its 5 000-row batch is the whole device,
+	// spanning ~71 h of the dense device's traffic): (device_id, ts) only.
+	var batch []models.SyslogMessage
+	if err := d.db.Table("syslog_messages").Where("device_id = ?", sparse.ID).Order("timestamp, id").Limit(normalizeBackfillBatchSize).Find(&batch).Error; err != nil || len(batch) != len(f.rows) {
+		t.Fatalf("sparse batch: %d rows, %v", len(batch), err)
+	}
+	stmt := backfillProbeQuery(d.db.Session(&gorm.Session{DryRun: true}), "net_events", batch, &sparse.ID).Find(&[]map[string]any{}).Statement
+	if plan := assertBackfillPlan(t, d, "device-scoped probe net_events", stmt); !strings.Contains(plan, "device_id_ts") {
+		t.Fatalf("device-scoped probe does not use the (device_id, ts) index:\n%s", plan)
+	}
+
+	// The job writes exactly the sparse device's rows; the dense device's
+	// normalized rows are untouched.
+	job := &models.NormalizeBackfillJob{RequestedBy: "test", Since: since, Until: until, DeviceID: &sparse.ID, RateRowsPerSec: NormalizeBackfillMaxRate}
+	if err := d.CreateNormalizeBackfillJob(job); err != nil {
+		t.Fatal(err)
+	}
+	job, err = bfRun(t, d, job.ID)
+	if err != nil || job.Status != NormalizeBackfillStatusDone || job.RowsScanned != int64(len(f.rows)) || job.RowsWritten != int64(f.net+f.sec) || job.RowsSkipped != 0 {
+		t.Fatalf("device-scoped job: %v %+v; want scanned %d written %d", err, job, len(f.rows), f.net+f.sec)
+	}
+	var denseNet int64
+	d.db.Model(&models.NetEvent{}).Where("device_id = ?", dense.ID).Count(&denseNet)
+	if denseNet != denseRows {
+		t.Fatalf("dense device net_events = %d, want %d untouched", denseNet, denseRows)
+	}
+}

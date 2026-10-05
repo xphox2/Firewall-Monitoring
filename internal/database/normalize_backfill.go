@@ -36,8 +36,10 @@ import (
 // presorted on timestamp — only the rows sharing one timestamp are sorted by
 // id — and never a statement over the whole table). A leaf with no usable
 // index — neither (timestamp) nor, for a device-scoped job, (device_id,
-// timestamp) — is skipped with a WARNING and named in the job's error note
-// rather than seq-scanned once per batch. Each row is normalized exactly as
+// timestamp) — stops the job with a WARNING, failed and resumable, its cursor
+// parked at the start of that relation and the reason in its error, rather
+// than seq-scanning it once per batch: create the index, resume, and the run
+// continues there. Each row is normalized exactly as
 // the ingest does it (normalize.Normalize with the re-framing fallback — a
 // stored row has no format hint and may be a pre-1.3.48 positional split) under
 // its device's vendor, and the network class goes to net_events, every other
@@ -269,6 +271,19 @@ func NormalizeBackfillRemaining(job *models.NormalizeBackfillJob) (from, until t
 		from = *job.CursorTs
 	}
 	return from, job.Until
+}
+
+// NormalizeBackfillResumable reports whether a job can be resumed from its
+// cursor, and the operator-facing next step the status views (API, CLI)
+// print for it; "" for a job that needs none.
+func NormalizeBackfillResumable(job *models.NormalizeBackfillJob) (bool, string) {
+	switch job.Status {
+	case NormalizeBackfillStatusFailed:
+		return true, "failed: fix the cause shown in error (e.g. create the missing index), then resume — it continues from the cursor"
+	case NormalizeBackfillStatusCancelled:
+		return true, "cancelled: resume continues from the cursor"
+	}
+	return false, ""
 }
 
 // ── job rows ──────────────────────────────────────────────────────────────────
@@ -997,6 +1012,23 @@ type observedAcc struct {
 	last   time.Time
 }
 
+// mergeObserved folds a committed batch's counts into the run's accumulator.
+func mergeObserved(dst, src map[observedKey]*observedAcc) {
+	for k, b := range src {
+		a := dst[k]
+		if a == nil {
+			dst[k] = b
+			continue
+		}
+		for i := range a.counts {
+			a.counts[i] += b.counts[i]
+		}
+		if b.last.After(a.last) {
+			a.last = b.last
+		}
+	}
+}
+
 func flushObserved(d *Database, acc map[observedKey]*observedAcc) {
 	if len(acc) == 0 {
 		return
@@ -1126,8 +1158,7 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint, runner 
 	observed := map[observedKey]*observedAcc{}
 	batch := 0
 	floorWarned := false
-	var unindexed []string // relations skipped for want of a usable index
-	checked := -1          // the range index whose index set has been verified
+	checked := -1 // the range index whose index set has been verified
 	finish := func(status string, cause error) error {
 		flushObserved(d, observed)
 		return d.finishBackfillJob(jobID, runner, status, cause)
@@ -1169,24 +1200,33 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint, runner 
 		if checked != idx {
 			// Once per relation, before its first page: a relation the page
 			// cannot be served from by index would be seq-scanned once per
-			// batch — skip it, loudly, and say so on the job.
+			// batch. Stop instead — failed, resumable — with the cursor
+			// parked at the start of this relation (or kept where it is
+			// inside it), so that once the index exists `resume` continues
+			// right here rather than a new job re-reading the whole window.
 			ok, err := backfillLeafIndexProbe(d, r.table, job.DeviceID != nil)
 			if err != nil {
 				return finish(NormalizeBackfillStatusFailed, err)
 			}
 			checked = idx
 			if !ok {
-				log.Printf("normalize-backfill: WARNING: job %d: skipping %s: it has no usable (timestamp) index%s, and paging it would seq-scan it once per batch; create the index, then queue a new job over this window (already-written rows are skipped)",
-					jobID, r.table, map[bool]string{true: " or (device_id, timestamp) index", false: ""}[job.DeviceID != nil])
-				unindexed = append(unindexed, r.table)
-				if err := nextRange(); err != nil {
+				want := "(timestamp)"
+				if job.DeviceID != nil {
+					want = "(timestamp) or (device_id, timestamp)"
+				}
+				log.Printf("normalize-backfill: WARNING: job %d: %s has no usable %s index; paging it would seq-scan it once per batch. Stopping (failed, resumable) with the cursor parked at it", jobID, r.table, want)
+				if err := d.updateBackfillJob(ctx, jobID, runner, map[string]interface{}{
+					"current_partition": r.table, "cursor_ts": cursorTs, "cursor_id": cursorID,
+				}); err != nil {
 					if errors.Is(err, errBackfillJobLost) {
 						flushObserved(d, observed)
 						return fmt.Errorf("backfill job %d: %w", jobID, err)
 					}
 					return finish(NormalizeBackfillStatusFailed, err)
 				}
-				continue
+				return finish(NormalizeBackfillStatusFailed, fmt.Errorf(
+					"%s has no usable %s index (paging it would seq-scan it once per batch); create the index on it, then resume this job — it continues from %s",
+					r.table, want, r.table))
 			}
 		}
 		started := time.Now()
@@ -1215,6 +1255,10 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint, runner 
 			nets  = make([]models.NetEvent, 0, len(rows))
 			secs  []models.SecEvent
 			rules []models.FwRule
+			// This batch's device_field_observed counts: folded into the
+			// run's accumulator only once the batch has committed, so a
+			// rolled-back batch (counted again when it is redone) adds nothing.
+			batchObs = map[observedKey]*observedAcc{}
 		)
 		for i := range rows {
 			msg := &rows[i]
@@ -1254,10 +1298,10 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint, runner 
 			}
 			if p := ev.Present(); p != 0 {
 				k := observedKey{dev: msg.DeviceID, class: ev.Class}
-				a := observed[k]
+				a := batchObs[k]
 				if a == nil {
 					a = &observedAcc{}
-					observed[k] = a
+					batchObs[k] = a
 				}
 				for fi := range normalize.ObservedFields {
 					if p.Has(fi) {
@@ -1287,6 +1331,7 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint, runner 
 		}
 		cursorTs, cursorID = last.Timestamp, int64(last.ID)
 		batch++
+		mergeObserved(observed, batchObs)
 
 		// device_field_observed after the commit: an additive count, flushed
 		// every few batches; a lost stretch only leaves the capability matrix
@@ -1306,10 +1351,6 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint, runner 
 	}
 	log.Printf("normalize-backfill: job %d done: %d raw rows scanned, %d written, %d skipped (already normalized), %d unparsed, %d batch(es)",
 		jobID, progress.scanned, progress.written, progress.skipped, progress.unparsed, batch)
-	if len(unindexed) > 0 {
-		return finish(NormalizeBackfillStatusDone, fmt.Errorf("WARNING: skipped %d relation(s) with no usable timestamp index (not backfilled): %s; create the index and queue a new job over this window",
-			len(unindexed), strings.Join(unindexed, ", ")))
-	}
 	return finish(NormalizeBackfillStatusDone, nil)
 }
 
