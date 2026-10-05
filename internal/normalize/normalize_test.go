@@ -302,6 +302,8 @@ func TestRuleKey(t *testing.T) {
 		{id: &id, want: "i:12"},
 		{name: "Allow  All", ruleset: "", want: "n:allow all"},
 		{name: "x", ruleset: "vpn_firewall", want: "n:vpn_firewall/x"},
+		{name: "IPS Default Policy", ruleset: "ids/ips", want: "n:ids_ips/ips default policy"}, // '/' in the ruleset would be ambiguous
+		{idx: &idx, ruleset: "a/b/c", want: "x:a_b_c/2000"},
 		{idx: &idx, ruleset: "WAN_LOCAL", want: "x:WAN_LOCAL/2000"},
 		{want: ""},
 	} {
