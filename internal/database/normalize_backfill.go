@@ -40,9 +40,10 @@ import (
 // parked at the start of that relation and the reason in its error, rather
 // than seq-scanning it once per batch: create the index, resume, and the run
 // continues there. Each row is normalized exactly as
-// the ingest does it (normalize.Normalize with the re-framing fallback — a
-// stored row has no format hint and may be a pre-1.3.48 positional split) under
-// its device's vendor, and the network class goes to net_events, every other
+// the ingest does it (normalizeStored: the stored format, v74, decides per row
+// between normalize.NormalizeFramed and the re-framing fallback — a row with
+// no stored format may be a pre-1.3.48 positional split) under its device's
+// vendor, and the network class goes to net_events, every other
 // class to sec_events, with raw_id / raw_ts naming the syslog row. The
 // catalogs are fed too: fw_rules through the UpsertFwRules merge (LEAST /
 // GREATEST on first_seen / last_seen, so replaying old rows can only widen the
@@ -839,6 +840,19 @@ func backfillProbeQuery(tx *gorm.DB, table string, rows []models.SyslogMessage, 
 	return q
 }
 
+// normalizeStored normalizes a row read back from syslog_messages the way the
+// live ingest normalized it (handlers.normalizeIngest): a row with a stored
+// format (v74; only ever written for a framing-contract probe) gets its hint
+// back and skips the re-framing join; a row without one — older than v74, a
+// v5 probe's, a format-less spool replay — keeps the fallback.
+func normalizeStored(vendor string, msg *models.SyslogMessage) (normalize.Event, normalize.Outcome) {
+	msg.Format = models.SyslogFormatName(msg.StoredFormat)
+	if msg.Format != "" {
+		return normalize.NormalizeFramed(vendor, msg)
+	}
+	return normalize.Normalize(vendor, msg)
+}
+
 // fetchBackfillBatch reads the next keyset page of range r and the raw_ids of
 // that page that already have a normalized row (the dedup probe). One bounded
 // read transaction (120 s statement_timeout on Postgres).
@@ -1281,7 +1295,7 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint, runner 
 			if !ok {
 				vendor = "generic"
 			}
-			ev, out := normalize.Normalize(vendor, msg)
+			ev, out := normalizeStored(vendor, msg)
 			if out.Kind != normalize.OutcomeOK {
 				progress.unparsed++
 				continue

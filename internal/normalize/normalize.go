@@ -9,8 +9,9 @@
 // legitimately emits several formats (UniFi: netfilter + CEF + dnsmasq;
 // FortiGate: key=value, or CEF when switched to it), which is why the list is
 // per vendor. The collector's `format` hint (models.SyslogMessage.Format,
-// 1.3.48+) only reorders the list — a row from an older collector or one
-// re-read from the database has no hint and goes through the same list.
+// 1.3.48+) only reorders the list — a row from an older collector, or one
+// re-read from the database without a stored format (StoredFormat, v74), has
+// no hint and goes through the same list.
 //
 // The registry idiom (Register in init(), Lookup with a generic fallback) is
 // the one internal/logfields, internal/configdiff and internal/snmp use.

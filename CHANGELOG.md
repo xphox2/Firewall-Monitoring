@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.298] - 2026-10-05
+
+### Added — the collector's syslog `format` hint is stored (archive plan PR 1; migration v74)
+
+- **`syslog_messages.format`** (`smallint`, nullable, no default, no index; `models.SyslogMessage.StoredFormat`, codes `fortios_kv`=1, `rfc5424`=2, `rfc3164`=3, `meraki`=4, `cef`=5, `raw`=6 — append-only, pinned by `TestSyslogFormatCodes`). The ingest stores the hint only for a row of a probe registered at the framing contract (relay schema ≥ 6) that carried a known value, so a non-NULL code means "the collector guaranteed this row's framing". A v5 or older probe's rows, a format-less spool replay and an unknown hint store NULL; rows stored before v74 read NULL. The wire field `format` is unchanged and still drives the live normalize path; the stored code is never taken from the request body. This is what lets the planned raw-syslog archive carry `format` for every row of the month it ships in.
+- **The normalized-event backfill uses the stored format.** A re-read row with a stored code gets its hint back and is normalized with `normalize.NormalizeFramed` (no re-framing join), exactly as the live ingest normalized it; a row without one keeps the re-framing fallback (`normalizeStored`). The S-5 window lies before the normalizing ingest started, so its rows are all NULL today; the rule matters for any later re-read (the archive restore's `renormalize`).
+- **Migration v74 is metadata-only and bounded.** `ALTER TABLE syslog_messages ADD COLUMN IF NOT EXISTS format smallint` never rewrites the table on PostgreSQL 11+ — a plain heap (production's ~161 GB shape) or a partitioned parent (every leaf gets the column the same way). The catalog is read first, so a fresh install (the baseline already has the column) takes no lock. Otherwise each attempt runs under `lock_timeout = 2s` and a lock timeout or deadlock is retried every 5 s, up to 30 attempts (~3.5 min): while the ALTER queues for its ACCESS EXCLUSIVE lock behind a long reader every insert queues behind it, so an attempt gives up rather than stall ingest. If the lock never comes the migration fails and the process exits to be restarted — the model writes the column on every insert, so a binary must not run without it.
+
+### Tests
+
+- `TestSyslogFormatCodes` (code table round trip; empty / unknown hints and unknown codes). `TestReceiveSyslog_StoresFormat` (v6: every dispatcher value stored, format-less / unknown / a body-supplied `StoredFormat` key stored NULL; v5: all NULL). `TestNormalizeBackfill_UsesStoredFormat` (two generic RFC 5424 rows with `src=` in the structured data: the stored-format row's event has no source, the format-less row's gets it from the join — fails with the pre-change `normalize.Normalize` call). PostgreSQL (`TestSyslogFormatColumnV74_PG`, `-tags=integration`): the fresh-install partitioned parent and every leaf carry `format` (int2, nullable, no default, no missing value, no index) with an ingest round trip; v74 re-run on the partitioned parent (8 leaves, 50 000 rows) and on a plain heap (200 000 rows) leaves every relfilenode unchanged (no rewrite; ~2 ms each) and existing rows NULL; with a reader holding the table an insert issued while the ALTER is queued completes within the lock timeout and v74 succeeds once the reader leaves; a permanent reader fails it with 55P03 after the configured attempts. Mutation-checked: dropping the `lock_timeout`, the retry, the ALTER, or adding a volatile default each fails the PG test.
+
 ## [0.11.297] - 2026-10-05
 
 ### Added — one-time, throttled 30-day backfill of the normalized event tables (Phase 1, S-5; migration v73)

@@ -731,3 +731,60 @@ func TestObservedBuffer_CapAndDrain(t *testing.T) {
 		t.Errorf("second drain returned %d rows, want 0", len(again))
 	}
 }
+
+// TestReceiveSyslog_StoresFormat (v74): a framing-contract (v6) probe's rows
+// keep their format hint in syslog_messages.format, one code per dispatcher
+// value; a format-less row (a pre-1.3.48 spool replay), an unknown hint and a
+// client-supplied "StoredFormat" key store NULL. A v5 probe's rows store NULL
+// even with a hint — non-NULL must mean "framed under the contract", which is
+// what lets a re-read row skip the re-framing join.
+func TestReceiveSyslog_StoresFormat(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		schemaVersion int
+		stored        bool
+	}{{"v6", 6, true}, {"v5", 5, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newNormalizeFixture(t, tc.schemaVersion, nil)
+			batch := f.mixedBatch()
+			batch = append(batch,
+				f.msg("generic", "app", "", "action=deny dst=203.0.113.5"),
+				f.msg("generic", "app", "nonesuch", "action=deny dst=203.0.113.6"),
+				f.msg("generic", "app", "raw", "action=deny dst=203.0.113.7"),
+				f.msg("generic", "app", "rfc5424", "action=deny dst=203.0.113.8"),
+			)
+			spoof := f.msg("generic", "app", "", "action=deny dst=203.0.113.9")
+			spoof["StoredFormat"], spoof["stored_format"] = 1, 1
+			batch = append(batch, spoof)
+			f.post(t, batch)
+
+			var rows []models.SyslogMessage
+			if err := f.db.Gorm().Order("id").Find(&rows).Error; err != nil {
+				t.Fatal(err)
+			}
+			if len(rows) != len(batch) {
+				t.Fatalf("%d rows stored, want %d", len(rows), len(batch))
+			}
+			for i, r := range rows {
+				hint, _ := batch[i]["format"].(string)
+				want := ""
+				if tc.stored && hint != "nonesuch" {
+					want = hint
+				}
+				if got := models.SyslogFormatName(r.StoredFormat); got != want {
+					t.Errorf("row %d (hint %q): stored format %q, want %q", i, hint, got, want)
+				}
+				if want == "" && r.StoredFormat != nil {
+					t.Errorf("row %d (hint %q): stored code %d, want NULL", i, hint, *r.StoredFormat)
+				}
+			}
+			if tc.stored {
+				var n int64
+				f.db.Gorm().Model(&models.SyslogMessage{}).Where("format = ?", models.SyslogFormatFortiOSKV).Count(&n)
+				if n != 4 {
+					t.Errorf("rows with format = fortios_kv code: %d, want the 4 FortiGate rows", n)
+				}
+			}
+		})
+	}
+}

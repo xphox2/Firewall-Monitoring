@@ -1513,10 +1513,65 @@ type SyslogMessage struct {
 	// Format is the syslog framing the collector (1.3.48+) parsed the line
 	// with: fortios_kv, rfc5424, rfc3164, meraki, cef or raw. A hint only —
 	// internal/normalize reorders its family list by it and copes without it
-	// (older collectors omit the key; rows re-read from the database never
-	// have it). Not persisted: the raw columns stay the source of truth and a
-	// parser fix must apply to stored rows too.
+	// (older collectors omit the key). The wire field: a row read back from
+	// the database has it empty until the caller fills it from StoredFormat
+	// (SyslogFormatName).
 	Format string `json:"format,omitempty" gorm:"-"`
+	// StoredFormat is Format as persisted (column `format`, smallint,
+	// migration v74; codes SyslogFormatFortiOSKV..SyslogFormatRaw). The ingest
+	// sets it only for a row of a probe registered at the framing contract
+	// (relay schema >= 6) that carried a known hint, so non-NULL means "the
+	// collector guaranteed this row's framing" and a re-read row may skip the
+	// re-framing join exactly as the live ingest did. NULL for everything
+	// else: v5 and older probes, a format-less spool replay, rows stored
+	// before v74. Never taken from the request body (json "-"). The raw
+	// columns stay the source of truth; this only records how they were cut.
+	StoredFormat *int16 `json:"-" gorm:"column:format"`
+}
+
+// Stored codes of SyslogMessage.StoredFormat (the `format` smallint column).
+// Append-only: a code once written lives in every database and archive.
+const (
+	SyslogFormatFortiOSKV int16 = 1
+	SyslogFormatRFC5424   int16 = 2
+	SyslogFormatRFC3164   int16 = 3
+	SyslogFormatMeraki    int16 = 4
+	SyslogFormatCEF       int16 = 5
+	SyslogFormatRaw       int16 = 6
+)
+
+// syslogFormatNames is indexed by code; index 0 is no code.
+var syslogFormatNames = [...]string{
+	SyslogFormatFortiOSKV: "fortios_kv",
+	SyslogFormatRFC5424:   "rfc5424",
+	SyslogFormatRFC3164:   "rfc3164",
+	SyslogFormatMeraki:    "meraki",
+	SyslogFormatCEF:       "cef",
+	SyslogFormatRaw:       "raw",
+}
+
+// SyslogFormatCode is the stored code of a collector format hint; nil (NULL)
+// for an empty or unknown hint.
+func SyslogFormatCode(name string) *int16 {
+	if name == "" {
+		return nil
+	}
+	for code, n := range syslogFormatNames {
+		if n == name {
+			c := int16(code)
+			return &c
+		}
+	}
+	return nil
+}
+
+// SyslogFormatName is the hint a stored code stands for; "" for NULL or a
+// code this build does not know.
+func SyslogFormatName(code *int16) string {
+	if code == nil || *code <= 0 || int(*code) >= len(syslogFormatNames) {
+		return ""
+	}
+	return syslogFormatNames[*code]
 }
 
 // SyslogIngestHourly is one hour × severity of accepted syslog ingest, written
