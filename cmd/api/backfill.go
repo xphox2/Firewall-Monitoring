@@ -53,6 +53,7 @@ type backfillStore interface {
 	CancelNormalizeBackfillJob(id uint) (status string, applied bool, err error)
 	ResumeNormalizeBackfillJob(id uint) (applied bool, err error)
 	GetSettingValue(key string) (string, bool)
+	GetDevice(id uint) (*models.Device, error)
 	Close() error
 }
 
@@ -154,6 +155,19 @@ func normalizeBackfill(cfg *config.Config, args []string, stdout, stderr io.Writ
 			fmt.Fprintf(stderr, "normalize-backfill: no job to resume (%v)\n", err)
 			return 1
 		}
+		if job.Status == database.NormalizeBackfillStatusCancelled || job.Status == database.NormalizeBackfillStatusFailed {
+			// The disk precheck again, over what is left (as the API's resume).
+			from, until := database.NormalizeBackfillRemaining(job)
+			est, err := db.EstimateNormalizeBackfill(from, until)
+			if err != nil {
+				fmt.Fprintf(stderr, "normalize-backfill: estimate: %v\n", err)
+				return 1
+			}
+			if !est.Enough {
+				fmt.Fprintf(stderr, "normalize-backfill: insufficient disk headroom: ~%d MB left to write, %d MB free (twice the estimate is required)\n", est.Bytes>>20, est.FreeBytes>>20)
+				return 1
+			}
+		}
 		applied, err := db.ResumeNormalizeBackfillJob(job.ID)
 		if err != nil {
 			fmt.Fprintf(stderr, "normalize-backfill: resume: %v\n", err)
@@ -167,6 +181,18 @@ func normalizeBackfill(cfg *config.Config, args []string, stdout, stderr io.Writ
 		return 0
 	}
 
+	if *device != 0 {
+		// Same check as the API: a job scoped to a device that does not exist
+		// would walk the whole window to write nothing.
+		if _, err := db.GetDevice(uint(*device)); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				fmt.Fprintf(stderr, "normalize-backfill: device %d not found\n", *device)
+			} else {
+				fmt.Fprintf(stderr, "normalize-backfill: look up device %d: %v\n", *device, err)
+			}
+			return 1
+		}
+	}
 	from, until, err := db.NormalizeBackfillBounds(sinceDays, time.Now())
 	if err != nil {
 		fmt.Fprintf(stderr, "normalize-backfill: %v\n", err)

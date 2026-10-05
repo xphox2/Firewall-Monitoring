@@ -718,6 +718,10 @@ type NormalizeBackfillJob struct {
 	Window string `json:"window"`
 	// RateRowsPerSec is the raw-row scan rate the worker holds (default 2000).
 	RateRowsPerSec int `json:"rate_rows_per_sec"`
+	// RunnerID is the owner token of the worker run that claimed the job
+	// (empty while pending): every progress write is guarded on it, so a
+	// runner whose job was requeued and claimed by another cannot commit.
+	RunnerID string `json:"runner_id"`
 	// Progress. CurrentPartition is the syslog_messages leaf being walked;
 	// CursorTs / CursorID is the last raw row of that leaf whose batch
 	// committed (nil cursor = nothing committed yet).

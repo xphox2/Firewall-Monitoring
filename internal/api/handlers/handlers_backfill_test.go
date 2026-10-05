@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -165,7 +166,7 @@ func TestStartNormalizeBackfill(t *testing.T) {
 
 // TestStartNormalizeBackfill_DiskHeadroom: the precheck refuses the job when
 // the data volume's known free space is under twice the estimated write, and
-// lets it through when free space is unknown.
+// lets it through when free space is unknown; a resume re-runs it.
 func TestStartNormalizeBackfill_DiskHeadroom(t *testing.T) {
 	h, db, u := profileTestHandler(t, "admin1", auth.RoleAdmin, "s3cret-pw")
 	wm := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
@@ -201,6 +202,33 @@ func TestStartNormalizeBackfill_DiskHeadroom(t *testing.T) {
 	h.StartNormalizeBackfill(c)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("with headroom: %d %s", rec.Code, rec.Body.String())
+	}
+	job := decodeBackfillJob(t, rec)
+
+	// Resume re-runs the precheck over the remaining window: the volume
+	// filled while the job was cancelled → 409, the job stays cancelled.
+	if _, _, err := db.CancelNormalizeBackfillJob(job.ID); err != nil {
+		t.Fatal(err)
+	}
+	filled := uint64(1 << 30)
+	if err := db.Gorm().Create(&models.ServerMetric{Timestamp: time.Now().Add(2 * time.Second), DataDiskFreeBytes: &filled}).Error; err != nil {
+		t.Fatal(err)
+	}
+	c, rec = backfillCtx(http.MethodPost, "/admin/api/normalize/backfill/resume", "admin1", u.ID, `{"password":"s3cret-pw"}`)
+	h.ResumeNormalizeBackfill(c)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "insufficient disk headroom") {
+		t.Fatalf("resume under headroom: %d %s, want 409", rec.Code, rec.Body.String())
+	}
+	if got, _ := db.GetNormalizeBackfillJob(job.ID); got.Status != database.NormalizeBackfillStatusCancelled {
+		t.Fatalf("job after a refused resume: %s, want cancelled", got.Status)
+	}
+	if err := db.Gorm().Create(&models.ServerMetric{Timestamp: time.Now().Add(3 * time.Second), DataDiskFreeBytes: &plenty}).Error; err != nil {
+		t.Fatal(err)
+	}
+	c, rec = backfillCtx(http.MethodPost, "/admin/api/normalize/backfill/resume", "admin1", u.ID, `{"password":"s3cret-pw"}`)
+	h.ResumeNormalizeBackfill(c)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("resume with headroom: %d %s", rec.Code, rec.Body.String())
 	}
 }
 

@@ -225,8 +225,9 @@ func (h *Handler) CancelNormalizeBackfill(c *gin.Context) {
 
 // ResumeNormalizeBackfill puts the latest job back to pending when it is
 // cancelled or failed, keeping its cursor — the worker continues where it
-// stopped. Re-authenticated like a start (it is one). 404 with no job, 409
-// when the latest job is not resumable or another is active.
+// stopped. Re-authenticated and disk-prechecked (over the remaining window)
+// like a start (it is one). 404 with no job, 409 when the latest job is not
+// resumable, another is active, or the headroom is short.
 // POST /admin/api/normalize/backfill/resume, body {password, totp_code}.
 func (h *Handler) ResumeNormalizeBackfill(c *gin.Context) {
 	db := h.reqDB(c)
@@ -252,6 +253,22 @@ func (h *Handler) ResumeNormalizeBackfill(c *gin.Context) {
 	}
 	if job.Status != database.NormalizeBackfillStatusCancelled && job.Status != database.NormalizeBackfillStatusFailed {
 		c.JSON(http.StatusConflict, response.Error(fmt.Sprintf("backfill job %d is %s and cannot be resumed", job.ID, job.Status)))
+		return
+	}
+	// The disk precheck again, over what is left: the volume may have filled
+	// since the job was queued. Before the step-up, like the start's.
+	from, until := database.NormalizeBackfillRemaining(job)
+	est, err := db.EstimateNormalizeBackfill(from, until)
+	if err != nil {
+		httputil.InternalError(c, "Failed to estimate the backfill", err)
+		return
+	}
+	if !est.Enough {
+		c.JSON(http.StatusConflict, gin.H{
+			"success":  false,
+			"error":    fmt.Sprintf("insufficient disk headroom: the rest of the backfill may write ~%d MB and the data volume has %d MB free (twice the estimate is required)", est.Bytes>>20, est.FreeBytes>>20),
+			"estimate": est,
+		})
 		return
 	}
 	username, userID, ok := h.reauthCaller(c, db, req.Password, req.TOTPCode)

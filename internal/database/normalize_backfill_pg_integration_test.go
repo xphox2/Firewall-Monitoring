@@ -8,6 +8,7 @@ package database
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -15,6 +16,9 @@ import (
 	"time"
 
 	"firewall-mon/internal/models"
+	"firewall-mon/internal/normalize"
+
+	"gorm.io/gorm"
 )
 
 // TestNormalizeBackfill_PG seeds 30 000 synthetic FortiGate rows over three
@@ -91,6 +95,50 @@ func TestNormalizeBackfill_PG(t *testing.T) {
 	normalizeBackfillBatchSize = 5000
 	t.Cleanup(func() { normalizeBackfillBatchSize = orig })
 
+	// The keyset page's plan on every populated leaf, all devices and
+	// device-scoped: an index walk, never a Seq Scan that costs anything
+	// (an EMPTY leaf's zero-cost seq scan is free and allowed).
+	if err := d.db.Exec("ANALYZE syslog_messages").Error; err != nil {
+		t.Fatal(err)
+	}
+	populated := 0
+	for _, r := range ranges {
+		var n int64
+		if err := d.db.Raw(fmt.Sprintf("SELECT COUNT(*) FROM ONLY %s", r.table)).Scan(&n).Error; err != nil {
+			t.Fatal(err)
+		}
+		if n == 0 {
+			continue
+		}
+		populated++
+		for _, dev := range []*uint{nil, &dev.ID} {
+			stmt := backfillPageQuery(d.db.Session(&gorm.Session{DryRun: true}), r, r.lo, 0, until, dev, normalizeBackfillBatchSize).Find(&[]models.SyslogMessage{}).Statement
+			plan := assertBackfillPlan(t, d, fmt.Sprintf("page %s device=%v", r.table, dev != nil), stmt)
+			if !strings.Contains(plan, "Index Scan") {
+				t.Fatalf("page %s: no index scan in the plan:\n%s", r.table, plan)
+			}
+		}
+	}
+	if populated == 0 {
+		t.Fatal("no populated syslog_messages leaf to check the page plan on")
+	}
+
+	// fw_rules: the live ingest has already seen one of the fixture's rules
+	// under a NEWER name (last_seen after every backfilled row). The backfill
+	// replays older sightings of it inside its batch transaction (the pgx
+	// upsert): the live name must survive, the NULL ruleset be filled, and
+	// first_seen move back to the oldest sighting.
+	ev, out := normalize.Normalize("fortigate", &f.rows[1])
+	liveRule, ok := FwRuleFromEvent(&ev, now)
+	if out.Kind != normalize.OutcomeOK || !ok || liveRule.Ruleset == nil {
+		t.Fatalf("fixture row 1 yields no rule with a ruleset: %v %+v", out.Kind, liveRule)
+	}
+	liveName := "LAN-to-WAN-renamed-live"
+	liveRule.RuleName, liveRule.Ruleset = &liveName, nil
+	if err := d.UpsertFwRules([]models.FwRule{liveRule}); err != nil {
+		t.Fatal(err)
+	}
+
 	// Cancel after the second batch, then resume: exact totals, no duplicate.
 	job := &models.NormalizeBackfillJob{RequestedBy: "test", Since: since, Until: until, RateRowsPerSec: NormalizeBackfillMaxRate}
 	if err := d.CreateNormalizeBackfillJob(job); err != nil {
@@ -152,6 +200,38 @@ func TestNormalizeBackfill_PG(t *testing.T) {
 	}
 	if probe.Src != "192.0.2.10" {
 		t.Fatalf("src_ip round-trip = %q", probe.Src)
+	}
+	var rule models.FwRule
+	if err := d.db.Where("device_id = ? AND rule_key = ?", dev.ID, liveRule.RuleKey).First(&rule).Error; err != nil {
+		t.Fatal(err)
+	}
+	if rule.RuleName == nil || *rule.RuleName != liveName || rule.Ruleset == nil || !rule.LastSeen.Equal(now) || !rule.FirstSeen.Before(f.first.Add(time.Hour)) {
+		t.Fatalf("fw_rules after the backfill: name=%v ruleset=%v first=%s last=%s; want the live name kept, the ruleset filled, last_seen %s, first_seen the oldest sighting",
+			rule.RuleName, rule.Ruleset, rule.FirstSeen, rule.LastSeen, now)
+	}
+
+	// The dedup probe's plans on the populated net_events / sec_events day
+	// leaves, all devices and device-scoped: index only.
+	if err := d.db.Exec("ANALYZE net_events; ANALYZE sec_events").Error; err != nil {
+		t.Fatal(err)
+	}
+	// The batch: 200 rows from the middle of the fixture — on production a
+	// 5000-row batch is a sliver of a day leaf holding millions; here the
+	// leaves hold ~10 000 rows, so a 200-row batch keeps the same "small
+	// fraction of the leaf" shape (a 5000-row one would cover half a leaf,
+	// where a seq scan is legitimately the cheaper plan).
+	var batch []models.SyslogMessage
+	if err := d.db.Table("syslog_messages").Where("timestamp >= ?", f.rows[n/2].Timestamp).Order("timestamp, id").Limit(200).Find(&batch).Error; err != nil || len(batch) != 200 {
+		t.Fatalf("probe batch: %d rows, %v", len(batch), err)
+	}
+	for _, table := range []string{"net_events", "sec_events"} {
+		for _, dv := range []*uint{nil, &dev.ID} {
+			stmt := backfillProbeQuery(d.db.Session(&gorm.Session{DryRun: true}), table, batch, dv).Find(&[]map[string]any{}).Statement
+			plan := assertBackfillPlan(t, d, fmt.Sprintf("probe %s device=%v", table, dv != nil), stmt)
+			if table == "net_events" && !strings.Contains(plan, "Index") {
+				t.Fatalf("probe on net_events: no index in the plan:\n%s", plan)
+			}
+		}
 	}
 
 	// Rollup rewind: the marker names the day before the window; the next
@@ -264,4 +344,100 @@ func TestNormalizeBackfill_PG(t *testing.T) {
 		t.Fatalf("after resume net=%d sec=%d distinct=%d", net, sec, distinct)
 	}
 	_ = context.Background
+}
+
+// planNode is one node of an EXPLAIN (FORMAT JSON) plan.
+type planNode struct {
+	Type      string     `json:"Node Type"`
+	Relation  string     `json:"Relation Name"`
+	Index     string     `json:"Index Name"`
+	TotalCost float64    `json:"Total Cost"`
+	Plans     []planNode `json:"Plans"`
+}
+
+// assertBackfillPlan EXPLAINs a dry-run statement exactly as the run would
+// send it (same SQL, same bound values, so the same partition pruning) and
+// fails on any Seq Scan with a cost above zero — the lesson: an EMPTY leaf's
+// seq scan is a free zero-page read, a populated one's is the defect. Returns
+// the plan, one node per line, for the caller's checks and the log.
+func assertBackfillPlan(t *testing.T, d *Database, label string, stmt *gorm.Statement) string {
+	t.Helper()
+	var raw string
+	if err := d.pgxPool.QueryRow(context.Background(), "EXPLAIN (FORMAT JSON) "+stmt.SQL.String(), stmt.Vars...).Scan(&raw); err != nil {
+		t.Fatalf("EXPLAIN %s: %v\n%s", label, err, stmt.SQL.String())
+	}
+	var top []struct {
+		Plan planNode `json:"Plan"`
+	}
+	if err := json.Unmarshal([]byte(raw), &top); err != nil || len(top) != 1 {
+		t.Fatalf("EXPLAIN %s JSON: %v", label, err)
+	}
+	var b strings.Builder
+	var walk func(n planNode, depth int)
+	walk = func(n planNode, depth int) {
+		fmt.Fprintf(&b, "%s%s %s %s (cost %.2f)\n", strings.Repeat("  ", depth), n.Type, n.Relation, n.Index, n.TotalCost)
+		if n.Type == "Seq Scan" && n.TotalCost > 0 {
+			t.Errorf("EXPLAIN %s: Seq Scan on %s costing %.2f — the backfill must read populated relations by index", label, n.Relation, n.TotalCost)
+		}
+		for _, c := range n.Plans {
+			walk(c, depth+1)
+		}
+	}
+	walk(top[0].Plan, 0)
+	t.Logf("EXPLAIN %s:\n%s", label, b.String())
+	return b.String()
+}
+
+// TestLeafHasUsableIndex_PG: the pre-scan index check on real catalogs — a
+// populated relation with no index is refused, an empty one passes, a
+// (timestamp) index serves every job, a (device_id, timestamp) one only a
+// device-scoped job, and a partial index serves none.
+func TestLeafHasUsableIndex_PG(t *testing.T) {
+	d := NewIntegrationDB(t)
+	for _, q := range []string{
+		`CREATE TABLE bf_idx_none (id bigint, "timestamp" timestamptz, device_id bigint)`,
+		`CREATE TABLE bf_idx_ts (LIKE bf_idx_none)`,
+		`CREATE TABLE bf_idx_dev (LIKE bf_idx_none)`,
+		`CREATE TABLE bf_idx_partial (LIKE bf_idx_none)`,
+		`CREATE TABLE bf_idx_empty (LIKE bf_idx_none)`,
+		`CREATE INDEX ON bf_idx_ts ("timestamp")`,
+		`CREATE INDEX ON bf_idx_dev (device_id, "timestamp")`,
+		`CREATE INDEX ON bf_idx_partial ("timestamp") WHERE device_id = 1`,
+	} {
+		if err := d.db.Exec(q).Error; err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	for _, tb := range []string{"bf_idx_none", "bf_idx_ts", "bf_idx_dev", "bf_idx_partial"} {
+		if err := d.db.Exec(fmt.Sprintf(`INSERT INTO %s SELECT g, now() - g * interval '1 second', 1 FROM generate_series(1, 1000) g`, tb)).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, c := range []struct {
+		table  string
+		scoped bool
+		want   bool
+	}{
+		{"bf_idx_none", false, false}, {"bf_idx_none", true, false},
+		{"bf_idx_ts", false, true}, {"bf_idx_ts", true, true},
+		{"bf_idx_dev", false, false}, {"bf_idx_dev", true, true},
+		{"bf_idx_partial", false, false}, {"bf_idx_partial", true, false},
+		{"bf_idx_empty", false, true},
+	} {
+		got, err := d.leafHasUsableIndex(c.table, c.scoped)
+		if err != nil || got != c.want {
+			t.Errorf("leafHasUsableIndex(%s, scoped=%v) = %v, %v; want %v", c.table, c.scoped, got, err, c.want)
+		}
+	}
+	// Every fresh-install syslog_messages leaf passes.
+	since := time.Now().UTC().AddDate(0, 0, -20)
+	ranges, err := d.backfillRanges(since, time.Now().UTC())
+	if err != nil || len(ranges) == 0 {
+		t.Fatalf("ranges: %v %v", ranges, err)
+	}
+	for _, r := range ranges {
+		if ok, err := d.leafHasUsableIndex(r.table, false); err != nil || !ok {
+			t.Errorf("fresh-install leaf %s: usable=%v err=%v", r.table, ok, err)
+		}
+	}
 }

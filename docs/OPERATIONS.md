@@ -557,20 +557,28 @@ re-authenticated like the purge). What to expect:
   device-scoped job (`--device`) walks only that device's rows.
 - **Load.** The poller runs it (within 15 s of queueing), one job at a time,
   under its own advisory lock, in batches of 5 000 raw rows read oldest-first
-  from each `syslog_messages` leaf through its `(timestamp)` index — no sort,
-  no sequential scan — and held to `--rate` rows per second (default 2 000:
-  about 90 M rows in 12.5 h). Writes are one COPY per batch into the day
-  leaves. Set `--window 22:00-06:00` (server local time; or the
+  from each `syslog_messages` leaf through its `(timestamp)` index (an index
+  scan under an incremental sort that only orders rows sharing a timestamp by
+  id — never a sequential scan), and held to `--rate` rows per second
+  (default 2 000: about 90 M rows in 12.5 h). A leaf with no usable
+  `(timestamp)` index (for a `--device` job, `(device_id, timestamp)` also
+  serves) is skipped with a WARNING in the log and named in the job's `error`
+  note — create the index and queue a new job over the window. Writes are one
+  COPY per batch into the day leaves. A cancel lands within about a second,
+  even mid-sleep at a low rate. Set `--window 22:00-06:00` (server local time; or the
   `normalize_backfill_window` setting as the default) to run at night: outside
   the window the job shows `paused` and waits.
 - **Disk.** The job is refused when the data volume's free space is under
   twice the estimated write (received rows in the window × 0.5 KB; see the
   Retention page for the measured per-row cost once a few days have landed).
+  `--resume` re-runs the check over the part of the window still to go. Only
+  a `server_metrics` sample from the last 15 minutes counts; with none, free
+  space is unknown and the check does not block.
   Plan on ~35 % of the raw syslog volume of the window.
 - **Exactly once.** A raw row is in scope only when both its message time and
   its arrival (`created_at`) precede the watermark, and every batch checks the
-  typed tables for rows the live ingest already wrote; each batch's rows and
-  the cursor commit in one transaction. Re-running a finished backfill writes
+  typed tables for rows the live ingest already wrote; each batch's rows, its
+  `fw_rules` catalog rows and the cursor commit in one transaction. Re-running a finished backfill writes
   nothing (`rows_skipped` counts the rows it found already normalized), a
   crash or restart resumes from the committed cursor, and cancel keeps the
   cursor so `--resume` continues where it stopped.
@@ -579,7 +587,9 @@ re-authenticated like the purge). What to expect:
   backfilled days exactly over the following ticks (two days per 5-minute
   tick); `distinct_src` is a lower bound for a day until its recompute lands.
 - **Not touched.** `denied_events` and the alert rules (live-stream
-  consumers), raw syslog, and anything the live ingest has normalized.
+  consumers), raw syslog, and anything the live ingest has normalized — in
+  `fw_rules` an older sighting only fills columns still empty, so a rule
+  renamed since keeps the name the live ingest saw.
   `device_field_observed.last_seen` takes the event time, so the capability
   matrix does not report a field "observed in the last 24 h" because of a
   month-old row.

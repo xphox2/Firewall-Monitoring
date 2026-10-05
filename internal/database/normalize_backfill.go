@@ -2,9 +2,12 @@ package database
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -28,14 +31,22 @@ import (
 // before the oldest net_events leaf — oldest first, one syslog_messages leaf at
 // a time, in keyset-paged batches of normalizeBackfillBatchSize rows served by
 // each leaf's (timestamp) index (`timestamp >= cursor AND (timestamp > cursor
-// OR id > cursor_id) ORDER BY timestamp, id LIMIT n`: no sort, no seq scan,
-// never a statement over the whole table). Each row is normalized exactly as
+// OR id > cursor_id) ORDER BY timestamp, id LIMIT n`; on PostgreSQL 16 the plan
+// is an Index Scan on the leaf's (timestamp) index under an Incremental Sort
+// presorted on timestamp — only the rows sharing one timestamp are sorted by
+// id — and never a statement over the whole table). A leaf with no usable
+// index — neither (timestamp) nor, for a device-scoped job, (device_id,
+// timestamp) — is skipped with a WARNING and named in the job's error note
+// rather than seq-scanned once per batch. Each row is normalized exactly as
 // the ingest does it (normalize.Normalize with the re-framing fallback — a
 // stored row has no format hint and may be a pre-1.3.48 positional split) under
 // its device's vendor, and the network class goes to net_events, every other
 // class to sec_events, with raw_id / raw_ts naming the syslog row. The
-// catalogs are fed too: fw_rules through UpsertFwRules (LEAST / GREATEST on
-// first_seen / last_seen, so replaying old rows can only widen the span) and
+// catalogs are fed too: fw_rules through the UpsertFwRules merge (LEAST /
+// GREATEST on first_seen / last_seen, so replaying old rows can only widen the
+// span, and an older sighting only fills attribute columns still NULL, so a
+// month-old rule name never overwrites the live ingest's), inside the batch
+// transaction, and
 // device_field_observed with last_seen = the EVENT time, never "now" — a field
 // a device sent a month ago must not read as observed today in the capability
 // matrix. Nothing else: no denied_events projection and no alert rules — those
@@ -46,27 +57,32 @@ import (
 // both below the watermark, so a row the live ingest saved — including a
 // collector spool replayed after the deploy with timestamps from before it —
 // is never in scope. Second, per batch, a dedup probe: the batch's [min ts,
-// max ts] window of net_events / sec_events is read for raw_ids (the (ts)
-// index per leaf; ts == raw_ts because the mappers never move an Event's Ts
-// off the syslog row's timestamp), and a raw row that already has a normalized
-// row is skipped. That closes the race at the watermark itself (the batch that
+// max ts] window of net_events / sec_events (ts == raw_ts because the mappers
+// never move an Event's Ts off the syslog row's timestamp), scoped to the
+// job's device when it has one, is read for the batch's own raw_ids (see
+// backfillProbeQuery for the bounds), and a raw row that already has a
+// normalized row is skipped. That closes the race at the watermark itself (the batch that
 // wrote it and any concurrent batch were saved a moment before it) and makes a
 // re-run over an already backfilled window write nothing. Crash safety comes
-// from the transaction: the COPY into net_events, the sec_events insert and
-// the cursor / counter UPDATE on the job row commit together (one pgx
-// transaction on PostgreSQL, one GORM transaction on the SQLite lane), so a
-// crash resumes from the last committed batch with neither a gap nor a
-// duplicate; the UPDATE is guarded on the job still being this worker's, so a
-// job requeued and claimed elsewhere cannot be written by two runners.
+// from the transaction: the COPY into net_events, the sec_events insert, the
+// fw_rules upsert and the cursor / counter UPDATE on the job row commit
+// together (one pgx transaction on PostgreSQL, one GORM transaction on the
+// SQLite lane), so a crash resumes from the last committed batch with neither
+// a gap nor a duplicate nor a lost catalog row; the UPDATE is guarded on the
+// job still being live AND on this run's owner token (runner_id, set by the
+// claim), so a job requeued and claimed elsewhere cannot be written by two
+// runners.
 //
 // Throttle and control: the worker sleeps so the raw-row scan rate stays at
-// RateRowsPerSec (default 2000: ~90 M rows in ~12.5 h), checks between batches
-// for a cancel (`cancelling` → finishes `cancelled`, cursor kept, resumable),
+// RateRowsPerSec (default 2000: ~90 M rows in ~12.5 h) — the pace sleep
+// re-reads the job every normalizeBackfillCancelPoll, so a cancel lands within
+// about a second at any rate — checks between batches for a cancel
+// (`cancelling` → finishes `cancelled`, cursor kept, resumable),
 // for shutdown (ctx cancelled → back to `pending`, the next poller resumes),
 // and for the optional local-time run window (outside it the job is `paused`
 // and heartbeats until the window opens). A disk-headroom precheck refuses a
 // job when the data volume's free space is under twice the estimated write
-// (EstimateNormalizeBackfill). Rollups: when a job that wrote rows ends, it
+// (EstimateNormalizeBackfill; a resume re-runs it over the remaining window). Rollups: when a job that wrote rows ends, it
 // leaves a `net_event_rollup_rewind_to` marker; the rollup cycle (which owns
 // its cursors, under the maintenance lock) rewinds `net_event_rollup_closed_day`
 // to the day before the backfill window on its next tick, so every backfilled
@@ -127,6 +143,16 @@ var (
 	normalizeBackfillTxHook func(batch int) error
 	// normalizeBackfillNow is the clock the run window is evaluated with.
 	normalizeBackfillNow = time.Now
+	// normalizeBackfillCancelPoll is how often the pace sleep (and a paused
+	// job's wait) re-reads the job for a cancel: the cancel latency bound.
+	normalizeBackfillCancelPoll = time.Second
+	// normalizeBackfillMetricMaxAge is the oldest server_metrics free-space
+	// sample the disk precheck trusts; an older one counts as unknown.
+	normalizeBackfillMetricMaxAge = 15 * time.Minute
+	// backfillLeafIndexProbe reports whether a raw relation has an index the
+	// keyset page can use (see leafHasUsableIndex). A var so the SQLite lane
+	// can exercise the skip path.
+	backfillLeafIndexProbe = (*Database).leafHasUsableIndex
 )
 
 var (
@@ -188,14 +214,19 @@ func (d *Database) netEventFloor(now time.Time) time.Time {
 
 // NormalizeBackfillEstimate is the disk-headroom precheck's result.
 type NormalizeBackfillEstimate struct {
+	// From is where the estimate starts: the job's Since, or a resumed job's
+	// cursor (only the remaining window is still to be written).
+	From time.Time `json:"from"`
 	// Rows is the syslog_ingest_hourly row count received in the window (every
 	// severity, every device — an upper bound for a device-scoped job).
 	Rows int64 `json:"rows"`
 	// Bytes is Rows × normalizeBackfillBytesPerRow.
 	Bytes int64 `json:"bytes"`
 	// FreeBytes is the database volume's free space from the newest server
-	// metrics sample; FreeKnown is false when no sample could see the volume
-	// (an external database), in which case the precheck cannot refuse.
+	// metrics sample of the last normalizeBackfillMetricMaxAge; FreeKnown is
+	// false when no recent sample could see the volume (an external database,
+	// or the metrics collector stopped), in which case the precheck cannot
+	// refuse — a stale figure must not refuse, or pass, a job.
 	FreeBytes int64 `json:"free_bytes"`
 	FreeKnown bool  `json:"free_known"`
 	// Enough is FreeBytes >= 2 × Bytes, or true when free space is unknown.
@@ -206,7 +237,7 @@ type NormalizeBackfillEstimate struct {
 // access: syslog_ingest_hourly is at most 192 rows/day) and compares it with
 // the data volume's free space.
 func (d *Database) EstimateNormalizeBackfill(since, until time.Time) (NormalizeBackfillEstimate, error) {
-	var est NormalizeBackfillEstimate
+	est := NormalizeBackfillEstimate{From: since.UTC()}
 	var rows *int64
 	if err := d.db.Model(&models.SyslogIngestHourly{}).Select("SUM(row_count)").
 		Where("timestamp >= ? AND timestamp < ?", since.UTC().Truncate(time.Hour), until.UTC()).Scan(&rows).Error; err != nil {
@@ -216,14 +247,28 @@ func (d *Database) EstimateNormalizeBackfill(since, until time.Time) (NormalizeB
 		est.Rows = *rows
 	}
 	est.Bytes = est.Rows * normalizeBackfillBytesPerRow
-	// The newest server_metrics sample that could see the data volume (the
-	// Retention page's source); only its free figure is needed here.
+	// The newest recent server_metrics sample that could see the data volume
+	// (the Retention page's source); only its free figure is needed here.
 	var m models.ServerMetric
-	if err := d.db.Where("data_disk_free_bytes IS NOT NULL").Order("timestamp DESC").First(&m).Error; err == nil && m.DataDiskFreeBytes != nil {
+	if err := d.db.Where("data_disk_free_bytes IS NOT NULL AND timestamp >= ?", time.Now().Add(-normalizeBackfillMetricMaxAge)).
+		Order("timestamp DESC").First(&m).Error; err == nil && m.DataDiskFreeBytes != nil {
 		est.FreeBytes, est.FreeKnown = int64(*m.DataDiskFreeBytes), true
 	}
 	est.Enough = !est.FreeKnown || est.FreeBytes >= 2*est.Bytes
 	return est, nil
+}
+
+// NormalizeBackfillRemaining is the part of a job's window still to be
+// written: from its committed cursor (or Since, before the first batch) to
+// Until. The resume paths re-run the disk precheck over it. (A cursor still in
+// the DEFAULT child, which is walked first over the whole window, under-states
+// the rest; that child is normally empty.)
+func NormalizeBackfillRemaining(job *models.NormalizeBackfillJob) (from, until time.Time) {
+	from = job.Since
+	if job.CursorTs != nil && job.CursorTs.After(from) {
+		from = *job.CursorTs
+	}
+	return from, job.Until
 }
 
 // ── job rows ──────────────────────────────────────────────────────────────────
@@ -244,7 +289,7 @@ func (d *Database) CreateNormalizeBackfillJob(job *models.NormalizeBackfillJob) 
 	}
 	job.ID = 0
 	job.Status = NormalizeBackfillStatusPending
-	job.CurrentPartition = ""
+	job.CurrentPartition, job.RunnerID = "", ""
 	job.CursorTs, job.CursorID = nil, 0
 	job.RowsScanned, job.RowsWritten, job.RowsSkipped, job.RowsUnparsed = 0, 0, 0, 0
 	job.Error = ""
@@ -348,7 +393,7 @@ func (d *Database) ResumeNormalizeBackfillJob(id uint) (applied bool, err error)
 		res := tx.Model(&models.NormalizeBackfillJob{}).
 			Where("id = ? AND status IN (?)", id, []string{NormalizeBackfillStatusCancelled, NormalizeBackfillStatusFailed}).
 			Updates(map[string]interface{}{
-				"status": NormalizeBackfillStatusPending, "finished_at": nil, "error": "", "updated_at": now,
+				"status": NormalizeBackfillStatusPending, "finished_at": nil, "error": "", "runner_id": "", "updated_at": now,
 			})
 		if res.Error != nil {
 			return res.Error
@@ -360,20 +405,25 @@ func (d *Database) ResumeNormalizeBackfillJob(id uint) (applied bool, err error)
 }
 
 // ClaimNormalizeBackfillJob is the worker's compare-and-set claim (pending →
-// running): exactly one of two workers sees RowsAffected == 1.
-func (d *Database) ClaimNormalizeBackfillJob(id uint) (bool, error) {
+// running, owner token = runner): exactly one of two workers sees
+// RowsAffected == 1, and every later write of the run is guarded on runner.
+func (d *Database) ClaimNormalizeBackfillJob(id uint, runner string) (bool, error) {
+	if runner == "" {
+		return false, errors.New("backfill claim: empty runner id")
+	}
 	now := time.Now()
 	res := d.db.Model(&models.NormalizeBackfillJob{}).
 		Where("id = ? AND status = ?", id, NormalizeBackfillStatusPending).
-		Updates(map[string]interface{}{"status": NormalizeBackfillStatusRunning, "updated_at": now})
+		Updates(map[string]interface{}{"status": NormalizeBackfillStatusRunning, "runner_id": runner, "updated_at": now})
 	if res.Error != nil {
 		return false, res.Error
 	}
 	return res.RowsAffected == 1, nil
 }
 
-// ClaimNextNormalizeBackfillJob claims the oldest pending job, or (nil, nil).
-func (d *Database) ClaimNextNormalizeBackfillJob() (*models.NormalizeBackfillJob, error) {
+// ClaimNextNormalizeBackfillJob claims the oldest pending job for runner, or
+// (nil, nil).
+func (d *Database) ClaimNextNormalizeBackfillJob(runner string) (*models.NormalizeBackfillJob, error) {
 	for {
 		var job models.NormalizeBackfillJob
 		err := d.db.Where("status = ?", NormalizeBackfillStatusPending).Order("id ASC").First(&job).Error
@@ -383,7 +433,7 @@ func (d *Database) ClaimNextNormalizeBackfillJob() (*models.NormalizeBackfillJob
 		if err != nil {
 			return nil, err
 		}
-		won, err := d.ClaimNormalizeBackfillJob(job.ID)
+		won, err := d.ClaimNormalizeBackfillJob(job.ID, runner)
 		if err != nil {
 			return nil, err
 		}
@@ -394,9 +444,19 @@ func (d *Database) ClaimNextNormalizeBackfillJob() (*models.NormalizeBackfillJob
 	}
 }
 
+// newBackfillRunnerID is a fresh owner token for one claim: host, pid and 64
+// random bits, so two runs never share one even in the same process.
+func newBackfillRunnerID() string {
+	host, _ := os.Hostname()
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return fmt.Sprintf("%s/%d/%s", host, os.Getpid(), hex.EncodeToString(b[:]))
+}
+
 // RequeueStaleNormalizeBackfillJobs puts a running / paused job whose
 // heartbeat is older than staleAfter back to pending (its cursor is the
-// checkpoint) and finishes a stale cancelling job as cancelled. Returns the
+// checkpoint; the owner token is cleared, so the old runner's next write
+// fails its guard even before the next claim) and finishes a stale cancelling job as cancelled. Returns the
 // number requeued.
 func (d *Database) RequeueStaleNormalizeBackfillJobs(staleAfter time.Duration) (int64, error) {
 	now := time.Now()
@@ -404,7 +464,7 @@ func (d *Database) RequeueStaleNormalizeBackfillJobs(staleAfter time.Duration) (
 	res := d.db.Model(&models.NormalizeBackfillJob{}).
 		Where("status IN (?) AND updated_at < ?", []string{NormalizeBackfillStatusRunning, NormalizeBackfillStatusPaused}, cutoff).
 		Updates(map[string]interface{}{
-			"status": NormalizeBackfillStatusPending, "updated_at": now, "error": "requeued: worker heartbeat lost",
+			"status": NormalizeBackfillStatusPending, "runner_id": "", "updated_at": now, "error": "requeued: worker heartbeat lost",
 		})
 	if res.Error != nil {
 		return 0, res.Error
@@ -422,19 +482,28 @@ func (d *Database) RequeueStaleNormalizeBackfillJobs(staleAfter time.Duration) (
 	return requeued, nil
 }
 
-// updateBackfillJob writes columns on the job row (progress, state).
-func (d *Database) updateBackfillJob(ctx context.Context, jobID uint, cols map[string]interface{}) error {
+// updateBackfillJob writes columns on the job row (progress, state) while it
+// is still this runner's; errBackfillJobLost otherwise.
+func (d *Database) updateBackfillJob(ctx context.Context, jobID uint, runner string, cols map[string]interface{}) error {
 	if _, ok := cols["updated_at"]; !ok {
 		cols["updated_at"] = time.Now()
 	}
-	return d.db.WithContext(ctx).Model(&models.NormalizeBackfillJob{}).Where("id = ?", jobID).Updates(cols).Error
+	res := d.db.WithContext(ctx).Model(&models.NormalizeBackfillJob{}).Where("id = ? AND runner_id = ?", jobID, runner).Updates(cols)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected != 1 {
+		return errBackfillJobLost
+	}
+	return nil
 }
 
 // touchBackfillJob is the heartbeat: updated_at only, and only while the job
-// is live (a job finished elsewhere must not look alive again).
-func (d *Database) touchBackfillJob(ctx context.Context, jobID uint) error {
+// is live and this runner's (a job finished or re-claimed elsewhere must not
+// look alive on this run's behalf).
+func (d *Database) touchBackfillJob(ctx context.Context, jobID uint, runner string) error {
 	return d.db.WithContext(ctx).Model(&models.NormalizeBackfillJob{}).
-		Where("id = ? AND status IN (?)", jobID, []string{NormalizeBackfillStatusRunning, NormalizeBackfillStatusPaused, NormalizeBackfillStatusCancelling}).
+		Where("id = ? AND runner_id = ? AND status IN (?)", jobID, runner, []string{NormalizeBackfillStatusRunning, NormalizeBackfillStatusPaused, NormalizeBackfillStatusCancelling}).
 		Update("updated_at", time.Now()).Error
 }
 
@@ -442,7 +511,8 @@ func (d *Database) touchBackfillJob(ctx context.Context, jobID uint) error {
 // rows, leaves the rollup rewind marker — in the same transaction, so a job
 // that counts as finished always has its rewind queued. The marker keeps the
 // EARLIER of an existing one and this job's (the day before the window).
-func (d *Database) finishBackfillJob(jobID uint, status string, cause error) error {
+// Guarded on the owner token: a runner that lost the job leaves it alone.
+func (d *Database) finishBackfillJob(jobID uint, runner, status string, cause error) error {
 	now := time.Now()
 	msg := ""
 	if cause != nil {
@@ -453,10 +523,14 @@ func (d *Database) finishBackfillJob(jobID uint, status string, cause error) err
 		if err := tx.First(&job, jobID).Error; err != nil {
 			return err
 		}
-		if err := tx.Model(&models.NormalizeBackfillJob{}).Where("id = ?", jobID).Updates(map[string]interface{}{
+		res := tx.Model(&models.NormalizeBackfillJob{}).Where("id = ? AND runner_id = ?", jobID, runner).Updates(map[string]interface{}{
 			"status": status, "error": msg, "finished_at": now, "updated_at": now,
-		}).Error; err != nil {
-			return err
+		})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected != 1 {
+			return errBackfillJobLost
 		}
 		if job.RowsWritten == 0 {
 			return nil
@@ -597,10 +671,12 @@ func backfillPace(rows, ratePerSec int, elapsed time.Duration) time.Duration {
 // ── raw-row ranges and paging ─────────────────────────────────────────────────
 
 // backfillRange is one syslog_messages relation to walk and the half-open
-// [lo, hi) slice of the job window it holds.
+// [lo, hi) slice of the job window it holds; isDefault marks a DEFAULT child
+// (no bound of its own: it is walked over the whole window, first).
 type backfillRange struct {
-	table  string
-	lo, hi time.Time
+	table     string
+	lo, hi    time.Time
+	isDefault bool
 }
 
 // safeRelName is the shape every relation name read from pg_inherits must
@@ -646,7 +722,7 @@ func (d *Database) backfillRanges(since, until time.Time) ([]backfillRange, erro
 		lo, okLo := parsePartitionBound(ch.Bound, "FROM ('")
 		hi, okHi := parsePartitionUpperBound(ch.Bound)
 		if !okLo || !okHi {
-			defaults = append(defaults, backfillRange{table: ch.Name, lo: since, hi: until})
+			defaults = append(defaults, backfillRange{table: ch.Name, lo: since, hi: until, isDefault: true})
 			continue
 		}
 		if lo.Before(since) {
@@ -664,29 +740,107 @@ func (d *Database) backfillRanges(since, until time.Time) ([]backfillRange, erro
 	return append(defaults, leaves...), nil
 }
 
-// fetchBackfillBatch reads the next batch of raw rows of range r after the
-// cursor (exclusive), oldest first — the keyset page — and the raw_ids in the
-// batch's timestamp window that already have a normalized row (the dedup
-// probe). One bounded read transaction (120 s statement_timeout on Postgres).
+// leafHasUsableIndex reports whether the keyset page can be served from an
+// index of the raw relation `table`: a valid, non-partial index whose leading
+// column is timestamp, or — for a device-scoped job, whose page has
+// device_id = ? — one leading (device_id, timestamp). An empty relation counts
+// as usable (scanning zero pages is free). Always true off PostgreSQL.
+func (d *Database) leafHasUsableIndex(table string, deviceScoped bool) (bool, error) {
+	if !d.dialect.IsPostgres() {
+		return true, nil
+	}
+	var size int64
+	if err := d.db.Raw("SELECT pg_relation_size(c.oid) FROM pg_class c WHERE c.relname = ? AND c.relnamespace = to_regnamespace(current_schema())", table).Scan(&size).Error; err != nil {
+		return false, fmt.Errorf("size of %s: %w", table, err)
+	}
+	if size == 0 {
+		return true, nil
+	}
+	var idx []struct {
+		C0 string
+		C1 *string
+	}
+	if err := d.db.Raw(`
+		SELECT a0.attname AS c0, a1.attname AS c1
+		FROM pg_index i
+		JOIN pg_class c ON c.oid = i.indrelid
+		JOIN pg_attribute a0 ON a0.attrelid = c.oid AND a0.attnum = i.indkey[0]
+		LEFT JOIN pg_attribute a1 ON a1.attrelid = c.oid AND a1.attnum = i.indkey[1]
+		WHERE c.relname = ? AND c.relnamespace = to_regnamespace(current_schema())
+		  AND i.indisvalid AND i.indisready AND i.indpred IS NULL`, table).Scan(&idx).Error; err != nil {
+		return false, fmt.Errorf("indexes of %s: %w", table, err)
+	}
+	for _, ix := range idx {
+		if ix.C0 == "timestamp" {
+			return true, nil
+		}
+		if deviceScoped && ix.C0 == "device_id" && ix.C1 != nil && *ix.C1 == "timestamp" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// backfillPageQuery is the keyset page of range r after the cursor
+// (exclusive), oldest first. Separate so the plan test EXPLAINs the exact
+// statement the run executes.
+func backfillPageQuery(tx *gorm.DB, r backfillRange, cursorTs time.Time, cursorID int64, until time.Time, deviceID *uint, limit int) *gorm.DB {
+	q := tx.Table(r.table).
+		Where("timestamp >= ? AND (timestamp > ? OR id > ?) AND timestamp < ? AND created_at < ?", cursorTs, cursorTs, cursorID, r.hi, until)
+	if deviceID != nil {
+		q = q.Where("device_id = ?", *deviceID)
+	}
+	return q.Order("timestamp, id").Limit(limit)
+}
+
+// backfillProbeQuery is the dedup probe of one normalized table for a batch:
+// which of the batch's raw rows already have a normalized row. Two bounds:
+//   - I/O: the [first, last] ts range of the batch, scoped to the job's
+//     device when it has one (the per-leaf (device_id, ts) index). In scope,
+//     that range holds about the batch's own rows — every in-scope raw row of
+//     the range is in the batch except the ones received after the watermark
+//     (normalized live) — however sparse the batch: a device-scoped batch
+//     that spans weeks no longer reads everyone else's rows in between.
+//   - result: `raw_id IN (the batch's ids)`, so what comes back — and lands in
+//     the caller's map — is at most the batch size whatever the range holds
+//     (a filter on the index scan; raw_id has no index of its own).
+//
+// Measured on PostgreSQL 16 (2 M rows of a dense device and 5 000 of a sparse
+// one over three day leaves, a 5 000-row batch of the sparse one): 88 shared
+// buffers against 22 786 (three Seq Scans) for the unscoped range; a dense
+// all-device batch reads 101 buffers either way. Probing each distinct
+// instant instead (`ts IN (...)`) read 15 045 buffers for that dense batch —
+// one index descent per instant — and is not used.
+func backfillProbeQuery(tx *gorm.DB, table string, rows []models.SyslogMessage, deviceID *uint) *gorm.DB {
+	lo, hi := rows[0].Timestamp.UTC(), rows[len(rows)-1].Timestamp.UTC()
+	ids := make([]int64, len(rows))
+	for i := range rows {
+		ids[i] = int64(rows[i].ID)
+	}
+	q := tx.Table(table).Where("ts >= ? AND ts <= ? AND raw_id IN ?", lo, hi, ids)
+	if deviceID != nil {
+		q = q.Where("device_id = ?", *deviceID)
+	}
+	return q
+}
+
+// fetchBackfillBatch reads the next keyset page of range r and the raw_ids of
+// that page that already have a normalized row (the dedup probe). One bounded
+// read transaction (120 s statement_timeout on Postgres).
 func (d *Database) fetchBackfillBatch(ctx context.Context, r backfillRange, cursorTs time.Time, cursorID int64, until time.Time, deviceID *uint, limit int) (rows []models.SyslogMessage, existing map[int64]struct{}, err error) {
 	err = d.WithContext(ctx).boundedRead(func(tx *gorm.DB) error {
-		q := tx.Table(r.table).
-			Where("timestamp >= ? AND (timestamp > ? OR id > ?) AND timestamp < ? AND created_at < ?", cursorTs, cursorTs, cursorID, r.hi, until)
-		if deviceID != nil {
-			q = q.Where("device_id = ?", *deviceID)
-		}
-		if err := q.Order("timestamp, id").Limit(limit).Find(&rows).Error; err != nil {
+		if err := backfillPageQuery(tx, r, cursorTs, cursorID, until, deviceID, limit).Find(&rows).Error; err != nil {
 			return fmt.Errorf("read %s after (%s, %d): %w", r.table, cursorTs.Format(time.RFC3339Nano), cursorID, err)
 		}
 		if len(rows) == 0 {
 			return nil
 		}
 		existing = make(map[int64]struct{})
-		lo, hi := rows[0].Timestamp, rows[len(rows)-1].Timestamp
 		for _, table := range []string{"net_events", "sec_events"} {
 			var ids []int64
-			if err := tx.Table(table).Where("ts >= ? AND ts <= ? AND raw_id IS NOT NULL", lo, hi).Pluck("raw_id", &ids).Error; err != nil {
-				return fmt.Errorf("dedup probe on %s [%s, %s]: %w", table, lo.Format(time.RFC3339Nano), hi.Format(time.RFC3339Nano), err)
+			if err := backfillProbeQuery(tx, table, rows, deviceID).Pluck("raw_id", &ids).Error; err != nil {
+				return fmt.Errorf("dedup probe on %s [%s, %s]: %w", table,
+					rows[0].Timestamp.Format(time.RFC3339Nano), rows[len(rows)-1].Timestamp.Format(time.RFC3339Nano), err)
 			}
 			for _, id := range ids {
 				existing[id] = struct{}{}
@@ -709,11 +863,12 @@ type backfillProgress struct {
 	unparsed  int64
 }
 
-// commitBackfillBatch writes the batch's typed rows and the job's progress in
-// ONE transaction (see the file comment). The progress UPDATE is guarded on
-// the job still being running / cancelling under this worker; zero rows
-// affected rolls the batch back and reports errBackfillJobLost.
-func (d *Database) commitBackfillBatch(ctx context.Context, jobID uint, batch int, nets []models.NetEvent, secs []models.SecEvent, p backfillProgress) error {
+// commitBackfillBatch writes the batch's typed rows, its fw_rules catalog
+// rows and the job's progress in ONE transaction (see the file comment). The
+// progress UPDATE is guarded on the job still being running / cancelling AND
+// on this run's owner token; zero rows affected rolls the batch back and
+// reports errBackfillJobLost.
+func (d *Database) commitBackfillBatch(ctx context.Context, jobID uint, runner string, batch int, nets []models.NetEvent, secs []models.SecEvent, rules []models.FwRule, p backfillProgress) error {
 	now := time.Now()
 	if d.pgxPool == nil {
 		return d.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -723,13 +878,16 @@ func (d *Database) commitBackfillBatch(ctx context.Context, jobID uint, batch in
 			if err := insertInChunks(tx, "sec_events", secs); err != nil {
 				return err
 			}
+			if err := d.upsertFwRulesOn(tx, rules); err != nil {
+				return fmt.Errorf("upsert fw_rules: %w", err)
+			}
 			if normalizeBackfillTxHook != nil {
 				if err := normalizeBackfillTxHook(batch); err != nil {
 					return err
 				}
 			}
 			res := tx.Model(&models.NormalizeBackfillJob{}).
-				Where("id = ? AND status IN (?)", jobID, []string{NormalizeBackfillStatusRunning, NormalizeBackfillStatusCancelling}).
+				Where("id = ? AND runner_id = ? AND status IN (?)", jobID, runner, []string{NormalizeBackfillStatusRunning, NormalizeBackfillStatusCancelling}).
 				Updates(map[string]interface{}{
 					"current_partition": p.partition, "cursor_ts": p.cursorTs, "cursor_id": p.cursorID,
 					"rows_scanned": p.scanned, "rows_written": p.written, "rows_skipped": p.skipped, "rows_unparsed": p.unparsed,
@@ -778,6 +936,9 @@ func (d *Database) commitBackfillBatch(ctx context.Context, jobID uint, batch in
 			return fmt.Errorf("COPY sec_events short write: %d of %d", n, len(secs))
 		}
 	}
+	if err := upsertFwRulesPgx(ctx, tx, d.dialect, rules); err != nil {
+		return err
+	}
 	if normalizeBackfillTxHook != nil {
 		if err := normalizeBackfillTxHook(batch); err != nil {
 			return err
@@ -786,9 +947,9 @@ func (d *Database) commitBackfillBatch(ctx context.Context, jobID uint, batch in
 	tag, err := tx.Exec(ctx, `UPDATE normalize_backfill_jobs
 		SET current_partition = $1, cursor_ts = $2, cursor_id = $3,
 		    rows_scanned = $4, rows_written = $5, rows_skipped = $6, rows_unparsed = $7, updated_at = $8
-		WHERE id = $9 AND status IN ($10, $11)`,
+		WHERE id = $9 AND runner_id = $10 AND status IN ($11, $12)`,
 		p.partition, p.cursorTs, p.cursorID, p.scanned, p.written, p.skipped, p.unparsed, now,
-		int64(jobID), NormalizeBackfillStatusRunning, NormalizeBackfillStatusCancelling)
+		int64(jobID), runner, NormalizeBackfillStatusRunning, NormalizeBackfillStatusCancelling)
 	if err != nil {
 		return fmt.Errorf("record batch progress: %w", err)
 	}
@@ -859,58 +1020,64 @@ func flushObserved(d *Database, acc map[observedKey]*observedAcc) {
 	}
 }
 
-// RunNormalizeBackfill executes one CLAIMED job (status running) to its end —
-// done, cancelled, failed, or (ctx cancelled: shutdown) back to pending. The
-// returned error is the run's disposition for logging; the job row is the
-// source of truth. See the file comment for the batch contract.
-func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint) error {
+// backfillResumePosition is where a run starts: a fresh job (no cursor) at
+// the first range's start; a resumed one in its partition after its cursor.
+// When that partition no longer exists (dropped by retention since), the run
+// continues at the first LEAF that starts after the cursor — a DEFAULT child
+// is never skipped to (it was walked first, over the whole window), but the
+// first leaf is a candidate like any other when there is no DEFAULT child.
+// idx == len(ranges) means nothing is left.
+func backfillResumePosition(ranges []backfillRange, partition string, cursor *time.Time, cursorID int64) (idx int, cursorTs time.Time, id int64) {
+	if len(ranges) == 0 {
+		return 0, time.Time{}, 0
+	}
+	if cursor == nil {
+		return 0, ranges[0].lo, 0
+	}
+	cursorTs = cursor.UTC()
+	for i, r := range ranges {
+		if r.table == partition {
+			return i, cursorTs, cursorID
+		}
+	}
+	for i, r := range ranges {
+		if !r.isDefault && r.lo.After(cursorTs) {
+			return i, r.lo, 0
+		}
+	}
+	return len(ranges), cursorTs, cursorID
+}
+
+// RunNormalizeBackfill executes one job CLAIMED by runner (status running,
+// runner_id = runner) to its end — done, cancelled, failed, or (ctx
+// cancelled: shutdown) back to pending. The returned error is the run's
+// disposition for logging; the job row is the source of truth. See the file
+// comment for the batch contract.
+func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint, runner string) error {
 	job, err := d.GetNormalizeBackfillJob(jobID)
 	if err != nil {
 		return fmt.Errorf("backfill job %d: load: %w", jobID, err)
 	}
-	if job.Status != NormalizeBackfillStatusRunning {
-		return fmt.Errorf("backfill job %d: status %q, want running (claim it first)", jobID, job.Status)
+	if job.Status != NormalizeBackfillStatusRunning || job.RunnerID != runner {
+		return fmt.Errorf("backfill job %d: status %q runner %q, want running under %q (claim it first)", jobID, job.Status, job.RunnerID, runner)
 	}
 	window, hasWindow, err := parseRunWindow(job.Window)
 	if err != nil {
-		return d.finishBackfillJob(jobID, NormalizeBackfillStatusFailed, err)
+		return d.finishBackfillJob(jobID, runner, NormalizeBackfillStatusFailed, err)
 	}
 	vendors, err := d.deviceVendors()
 	if err != nil {
-		return d.finishBackfillJob(jobID, NormalizeBackfillStatusFailed, err)
+		return d.finishBackfillJob(jobID, runner, NormalizeBackfillStatusFailed, err)
 	}
 	ranges, err := d.backfillRanges(job.Since, job.Until)
 	if err != nil {
-		return d.finishBackfillJob(jobID, NormalizeBackfillStatusFailed, err)
+		return d.finishBackfillJob(jobID, runner, NormalizeBackfillStatusFailed, err)
 	}
 	if len(ranges) == 0 {
-		return d.finishBackfillJob(jobID, NormalizeBackfillStatusDone, nil)
+		return d.finishBackfillJob(jobID, runner, NormalizeBackfillStatusDone, nil)
 	}
 
-	// Position: a fresh job starts at the first range; a resumed one continues
-	// in its partition after its cursor. A partition that no longer exists
-	// (dropped by retention since) is skipped to the first leaf after the
-	// cursor — the DEFAULT child is first in the list, so it has been walked.
-	idx, cursorTs, cursorID := 0, ranges[0].lo, int64(0)
-	if job.CursorTs != nil {
-		cursorTs, cursorID = job.CursorTs.UTC(), job.CursorID
-		idx = -1
-		for i, r := range ranges {
-			if r.table == job.CurrentPartition {
-				idx = i
-				break
-			}
-		}
-		if idx < 0 {
-			idx = len(ranges)
-			for i, r := range ranges {
-				if i > 0 && r.lo.After(cursorTs) {
-					idx, cursorTs, cursorID = i, r.lo, 0
-					break
-				}
-			}
-		}
-	}
+	idx, cursorTs, cursorID := backfillResumePosition(ranges, job.CurrentPartition, job.CursorTs, job.CursorID)
 	rate := job.RateRowsPerSec
 	if rate <= 0 {
 		rate = NormalizeBackfillDefaultRate
@@ -922,8 +1089,11 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint) error {
 	if idx < len(ranges) && job.CurrentPartition == "" {
 		cols["current_partition"] = ranges[idx].table
 	}
-	if err := d.updateBackfillJob(ctx, jobID, cols); err != nil {
-		return d.finishBackfillJob(jobID, NormalizeBackfillStatusFailed, err)
+	if err := d.updateBackfillJob(ctx, jobID, runner, cols); err != nil {
+		if errors.Is(err, errBackfillJobLost) {
+			return fmt.Errorf("backfill job %d: %w", jobID, err)
+		}
+		return d.finishBackfillJob(jobID, runner, NormalizeBackfillStatusFailed, err)
 	}
 	log.Printf("normalize-backfill: job %d %s window [%s, %s) over %d relation(s) at %d rows/s (cursor %s/%s/%d)",
 		jobID, map[bool]string{true: "resuming", false: "starting"}[job.CursorTs != nil],
@@ -941,7 +1111,7 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint) error {
 			case <-hbDone:
 				return
 			case <-t.C:
-				if err := d.touchBackfillJob(ctx, jobID); err != nil && ctx.Err() == nil {
+				if err := d.touchBackfillJob(ctx, jobID, runner); err != nil && ctx.Err() == nil {
 					log.Printf("normalize-backfill: job %d heartbeat: %v", jobID, err)
 				}
 			}
@@ -956,14 +1126,28 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint) error {
 	observed := map[observedKey]*observedAcc{}
 	batch := 0
 	floorWarned := false
+	var unindexed []string // relations skipped for want of a usable index
+	checked := -1          // the range index whose index set has been verified
 	finish := func(status string, cause error) error {
 		flushObserved(d, observed)
-		return d.finishBackfillJob(jobID, status, cause)
+		return d.finishBackfillJob(jobID, runner, status, cause)
+	}
+	// nextRange moves to range idx+1 (its own start) and records it.
+	nextRange := func() error {
+		idx++
+		if idx >= len(ranges) {
+			return nil
+		}
+		cursorTs, cursorID = ranges[idx].lo, 0
+		progress.partition, progress.cursorTs, progress.cursorID = ranges[idx].table, cursorTs, cursorID
+		return d.updateBackfillJob(ctx, jobID, runner, map[string]interface{}{
+			"current_partition": ranges[idx].table, "cursor_ts": cursorTs, "cursor_id": cursorID,
+		})
 	}
 
 	for idx < len(ranges) {
 		// Between batches: shutdown, cancel, requeue, run window.
-		stop, err := d.backfillCheckpoint(ctx, jobID, window, hasWindow)
+		stop, err := d.backfillCheckpoint(ctx, jobID, runner, window, hasWindow)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				flushObserved(d, observed)
@@ -982,26 +1166,46 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint) error {
 		}
 
 		r := ranges[idx]
+		if checked != idx {
+			// Once per relation, before its first page: a relation the page
+			// cannot be served from by index would be seq-scanned once per
+			// batch — skip it, loudly, and say so on the job.
+			ok, err := backfillLeafIndexProbe(d, r.table, job.DeviceID != nil)
+			if err != nil {
+				return finish(NormalizeBackfillStatusFailed, err)
+			}
+			checked = idx
+			if !ok {
+				log.Printf("normalize-backfill: WARNING: job %d: skipping %s: it has no usable (timestamp) index%s, and paging it would seq-scan it once per batch; create the index, then queue a new job over this window (already-written rows are skipped)",
+					jobID, r.table, map[bool]string{true: " or (device_id, timestamp) index", false: ""}[job.DeviceID != nil])
+				unindexed = append(unindexed, r.table)
+				if err := nextRange(); err != nil {
+					if errors.Is(err, errBackfillJobLost) {
+						flushObserved(d, observed)
+						return fmt.Errorf("backfill job %d: %w", jobID, err)
+					}
+					return finish(NormalizeBackfillStatusFailed, err)
+				}
+				continue
+			}
+		}
 		started := time.Now()
 		rows, existing, err := d.fetchBackfillBatch(ctx, r, cursorTs, cursorID, job.Until, job.DeviceID, normalizeBackfillBatchSize)
 		if err != nil {
 			if ctx.Err() != nil {
 				flushObserved(d, observed)
-				return d.backfillInterrupted(jobID, ctx.Err())
+				return d.backfillInterrupted(jobID, runner, ctx.Err())
 			}
 			return finish(NormalizeBackfillStatusFailed, err)
 		}
 		if len(rows) == 0 {
-			// This relation is done: move to the next one (its own start).
-			idx++
-			if idx < len(ranges) {
-				cursorTs, cursorID = ranges[idx].lo, 0
-				progress.partition, progress.cursorTs, progress.cursorID = ranges[idx].table, cursorTs, cursorID
-				if err := d.updateBackfillJob(ctx, jobID, map[string]interface{}{
-					"current_partition": ranges[idx].table, "cursor_ts": cursorTs, "cursor_id": cursorID,
-				}); err != nil {
-					return finish(NormalizeBackfillStatusFailed, err)
+			// This relation is done: move to the next one.
+			if err := nextRange(); err != nil {
+				if errors.Is(err, errBackfillJobLost) {
+					flushObserved(d, observed)
+					return fmt.Errorf("backfill job %d: %w", jobID, err)
 				}
+				return finish(NormalizeBackfillStatusFailed, err)
 			}
 			continue
 		}
@@ -1070,10 +1274,10 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint) error {
 		}
 		last := rows[len(rows)-1]
 		progress.partition, progress.cursorTs, progress.cursorID = r.table, last.Timestamp, int64(last.ID)
-		if err := d.commitBackfillBatch(ctx, jobID, batch+1, nets, secs, progress); err != nil {
+		if err := d.commitBackfillBatch(ctx, jobID, runner, batch+1, nets, secs, rules, progress); err != nil {
 			if ctx.Err() != nil {
 				flushObserved(d, observed)
-				return d.backfillInterrupted(jobID, ctx.Err())
+				return d.backfillInterrupted(jobID, runner, ctx.Err())
 			}
 			if errors.Is(err, errBackfillJobLost) {
 				flushObserved(d, observed)
@@ -1084,14 +1288,10 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint) error {
 		cursorTs, cursorID = last.Timestamp, int64(last.ID)
 		batch++
 
-		// Catalogs after the commit: idempotent merges (LEAST / GREATEST /
-		// COALESCE, additive counts), so a failure here is logged and the event
-		// rows stay exactly-once.
-		if len(rules) > 0 {
-			if err := d.UpsertFwRules(rules); err != nil {
-				log.Printf("normalize-backfill: job %d: upsert %d fw_rules row(s): %v", jobID, len(rules), err)
-			}
-		}
+		// device_field_observed after the commit: an additive count, flushed
+		// every few batches; a lost stretch only leaves the capability matrix
+		// a lower bound (fw_rules, which a later batch could not restore, is
+		// written inside the batch transaction).
 		if batch%normalizeBackfillObservedFlushEvery == 0 {
 			flushObserved(d, observed)
 		}
@@ -1101,15 +1301,47 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint) error {
 			}
 		}
 		if wait := backfillPace(len(rows), rate, time.Since(started)); wait > 0 {
-			select {
-			case <-ctx.Done():
-			case <-time.After(wait):
-			}
+			d.backfillSleep(ctx, jobID, wait)
 		}
 	}
 	log.Printf("normalize-backfill: job %d done: %d raw rows scanned, %d written, %d skipped (already normalized), %d unparsed, %d batch(es)",
 		jobID, progress.scanned, progress.written, progress.skipped, progress.unparsed, batch)
+	if len(unindexed) > 0 {
+		return finish(NormalizeBackfillStatusDone, fmt.Errorf("WARNING: skipped %d relation(s) with no usable timestamp index (not backfilled): %s; create the index and queue a new job over this window",
+			len(unindexed), strings.Join(unindexed, ", ")))
+	}
 	return finish(NormalizeBackfillStatusDone, nil)
+}
+
+// backfillSleep waits up to `wait` (the pace sleep, or a paused job's step)
+// but wakes early on shutdown and, re-reading the job's status every
+// normalizeBackfillCancelPoll, as soon as it is no longer running / paused —
+// a cancel, or the job lost — so the caller's checkpoint acts on it within
+// about a second whatever the rate. A failed read just keeps waiting.
+func (d *Database) backfillSleep(ctx context.Context, jobID uint, wait time.Duration) {
+	deadline := time.Now().Add(wait)
+	for {
+		left := time.Until(deadline)
+		if left <= 0 {
+			return
+		}
+		step := normalizeBackfillCancelPoll
+		if left < step {
+			step = left
+		}
+		t := time.NewTimer(step)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return
+		case <-t.C:
+		}
+		var status string
+		if err := d.db.WithContext(ctx).Model(&models.NormalizeBackfillJob{}).Where("id = ?", jobID).Pluck("status", &status).Error; err == nil &&
+			status != NormalizeBackfillStatusRunning && status != NormalizeBackfillStatusPaused {
+			return
+		}
+	}
 }
 
 // backfillCheckpoint is the between-batches control point: a cancelled ctx
@@ -1118,15 +1350,18 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint) error {
 // errBackfillJobLost; `cancelling` reports stop; outside the run window the
 // job is paused — heartbeating, re-checking the window and its status every
 // normalizeBackfillPauseStep — until the window opens or it is cancelled.
-func (d *Database) backfillCheckpoint(ctx context.Context, jobID uint, window runWindow, hasWindow bool) (stop bool, err error) {
+func (d *Database) backfillCheckpoint(ctx context.Context, jobID uint, runner string, window runWindow, hasWindow bool) (stop bool, err error) {
 	paused := false
 	for {
 		if ctx.Err() != nil {
-			return false, d.backfillInterrupted(jobID, ctx.Err())
+			return false, d.backfillInterrupted(jobID, runner, ctx.Err())
 		}
 		job, err := d.GetNormalizeBackfillJob(jobID)
 		if err != nil {
 			return false, fmt.Errorf("re-read job: %w", err)
+		}
+		if job.RunnerID != runner {
+			return false, errBackfillJobLost
 		}
 		switch job.Status {
 		case NormalizeBackfillStatusCancelling:
@@ -1139,7 +1374,7 @@ func (d *Database) backfillCheckpoint(ctx context.Context, jobID uint, window ru
 		if inWindow {
 			if paused || job.Status == NormalizeBackfillStatusPaused {
 				res := d.db.WithContext(ctx).Model(&models.NormalizeBackfillJob{}).
-					Where("id = ? AND status = ?", jobID, NormalizeBackfillStatusPaused).
+					Where("id = ? AND runner_id = ? AND status = ?", jobID, runner, NormalizeBackfillStatusPaused).
 					Updates(map[string]interface{}{"status": NormalizeBackfillStatusRunning, "updated_at": time.Now()})
 				if res.Error != nil {
 					return false, res.Error
@@ -1153,7 +1388,7 @@ func (d *Database) backfillCheckpoint(ctx context.Context, jobID uint, window ru
 		}
 		if !paused {
 			res := d.db.WithContext(ctx).Model(&models.NormalizeBackfillJob{}).
-				Where("id = ? AND status = ?", jobID, NormalizeBackfillStatusRunning).
+				Where("id = ? AND runner_id = ? AND status = ?", jobID, runner, NormalizeBackfillStatusRunning).
 				Updates(map[string]interface{}{"status": NormalizeBackfillStatusPaused, "updated_at": time.Now()})
 			if res.Error != nil {
 				return false, res.Error
@@ -1164,12 +1399,11 @@ func (d *Database) backfillCheckpoint(ctx context.Context, jobID uint, window ru
 			paused = true
 			log.Printf("normalize-backfill: job %d: outside the run window %s, paused", jobID, job.Window)
 		}
-		select {
-		case <-ctx.Done():
-			return false, d.backfillInterrupted(jobID, ctx.Err())
-		case <-time.After(normalizeBackfillPauseStep):
+		d.backfillSleep(ctx, jobID, normalizeBackfillPauseStep) // wakes on a cancel
+		if ctx.Err() != nil {
+			return false, d.backfillInterrupted(jobID, runner, ctx.Err())
 		}
-		if err := d.touchBackfillJob(ctx, jobID); err != nil && ctx.Err() == nil {
+		if err := d.touchBackfillJob(ctx, jobID, runner); err != nil && ctx.Err() == nil {
 			log.Printf("normalize-backfill: job %d heartbeat while paused: %v", jobID, err)
 		}
 	}
@@ -1178,12 +1412,12 @@ func (d *Database) backfillCheckpoint(ctx context.Context, jobID uint, window ru
 // backfillInterrupted puts a live job back to pending after a shutdown so
 // the next poller resumes it from the committed cursor. Fresh short context:
 // the run's own is already cancelled.
-func (d *Database) backfillInterrupted(jobID uint, cause error) error {
+func (d *Database) backfillInterrupted(jobID uint, runner string, cause error) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	res := d.db.WithContext(ctx).Model(&models.NormalizeBackfillJob{}).
-		Where("id = ? AND status IN (?)", jobID, []string{NormalizeBackfillStatusRunning, NormalizeBackfillStatusPaused}).
-		Updates(map[string]interface{}{"status": NormalizeBackfillStatusPending, "updated_at": time.Now(), "error": "interrupted by shutdown; resumes on the next poller start"})
+		Where("id = ? AND runner_id = ? AND status IN (?)", jobID, runner, []string{NormalizeBackfillStatusRunning, NormalizeBackfillStatusPaused}).
+		Updates(map[string]interface{}{"status": NormalizeBackfillStatusPending, "runner_id": "", "updated_at": time.Now(), "error": "interrupted by shutdown; resumes on the next poller start"})
 	if res.Error != nil {
 		log.Printf("normalize-backfill: job %d: could not requeue after shutdown (%v); the stale-heartbeat requeue will pick it up", jobID, res.Error)
 	}
@@ -1251,7 +1485,8 @@ func (w *NormalizeBackfillWorker) Tick(ctx context.Context) {
 	} else if n > 0 {
 		log.Printf("normalize-backfill: requeued %d job(s) whose worker heartbeat was lost", n)
 	}
-	job, err := w.db.ClaimNextNormalizeBackfillJob()
+	runner := newBackfillRunnerID()
+	job, err := w.db.ClaimNextNormalizeBackfillJob(runner)
 	if err != nil {
 		log.Printf("normalize-backfill: claim failed: %v", err)
 		return
@@ -1259,7 +1494,7 @@ func (w *NormalizeBackfillWorker) Tick(ctx context.Context) {
 	if job == nil {
 		return
 	}
-	if err := w.db.RunNormalizeBackfill(ctx, job.ID); err != nil && !errors.Is(err, context.Canceled) {
+	if err := w.db.RunNormalizeBackfill(ctx, job.ID, runner); err != nil && !errors.Is(err, context.Canceled) {
 		log.Printf("normalize-backfill: job %d ended: %v", job.ID, err)
 	}
 }

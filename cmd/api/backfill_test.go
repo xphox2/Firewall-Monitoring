@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -89,14 +90,43 @@ func TestNormalizeBackfillCmd(t *testing.T) {
 	if code, _, errb := run("--resume"); code != 1 || !strings.Contains(errb, "already active") {
 		t.Fatalf("--resume a pending job: %d %q", code, errb)
 	}
-	// A device filter is recorded.
+	// --device must name an existing device (as the API checks); a known one
+	// is recorded.
 	if _, _, err := db.CancelNormalizeBackfillJob(job.ID); err != nil {
 		t.Fatal(err)
 	}
-	if code, _, errb := run("--device", "7"); code != 0 {
+	if code, _, errb := run("--device", "7"); code != 1 || !strings.Contains(errb, "device 7 not found") {
+		t.Fatalf("queue with an unknown --device: %d %q, want exit 1 not found", code, errb)
+	}
+	if latest, _ := db.GetLatestNormalizeBackfillJob(); latest.ID != job.ID {
+		t.Fatalf("an unknown --device queued job %d", latest.ID)
+	}
+	dev := &models.Device{Name: "fw-example-07", IPAddress: "192.0.2.7", Vendor: "fortigate"}
+	if err := db.Gorm().Create(dev).Error; err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errb := run("--device", fmt.Sprint(dev.ID)); code != 0 {
 		t.Fatalf("queue with --device: %d %q", code, errb)
 	}
-	if job, _ = db.GetLatestNormalizeBackfillJob(); job.DeviceID == nil || *job.DeviceID != 7 {
+	if job, _ = db.GetLatestNormalizeBackfillJob(); job.DeviceID == nil || *job.DeviceID != dev.ID {
 		t.Fatalf("device filter not recorded: %+v", job)
+	}
+
+	// --resume re-runs the disk precheck over the remaining window.
+	if _, _, err := db.CancelNormalizeBackfillJob(job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Gorm().Create(&models.SyslogIngestHourly{Timestamp: wm.Add(-24 * time.Hour).Truncate(time.Hour), Severity: 5, RowCount: 10_000_000}).Error; err != nil {
+		t.Fatal(err)
+	}
+	free := uint64(1 << 30)
+	if err := db.Gorm().Create(&models.ServerMetric{Timestamp: time.Now(), DataDiskFreeBytes: &free}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errb := run("--resume"); code != 1 || !strings.Contains(errb, "insufficient disk headroom") {
+		t.Fatalf("--resume under headroom: %d %q, want exit 1", code, errb)
+	}
+	if job, _ = db.GetLatestNormalizeBackfillJob(); job.Status != database.NormalizeBackfillStatusCancelled {
+		t.Fatalf("after a refused --resume: %s, want cancelled", job.Status)
 	}
 }

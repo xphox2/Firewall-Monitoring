@@ -102,14 +102,17 @@ func bfQueue(t *testing.T, d *Database, deviceID *uint) *models.NormalizeBackfil
 	return job
 }
 
+// bfRunner is the owner token the tests claim and run jobs under.
+const bfRunner = "test-runner"
+
 // bfRun claims and runs the job like the worker does, returning the row.
 func bfRun(t *testing.T, d *Database, id uint) (*models.NormalizeBackfillJob, error) {
 	t.Helper()
-	won, err := d.ClaimNormalizeBackfillJob(id)
+	won, err := d.ClaimNormalizeBackfillJob(id, bfRunner)
 	if err != nil || !won {
 		t.Fatalf("claim job %d: won=%v err=%v", id, won, err)
 	}
-	runErr := d.RunNormalizeBackfill(context.Background(), id)
+	runErr := d.RunNormalizeBackfill(context.Background(), id, bfRunner)
 	job, err := d.GetNormalizeBackfillJob(id)
 	if err != nil {
 		t.Fatal(err)
@@ -433,14 +436,14 @@ func TestNormalizeBackfill_RollupRewind(t *testing.T) {
 		t.Fatalf("closed day moved forward to %q by a later marker", v)
 	}
 	// finishBackfillJob keeps the earlier of two markers.
-	job := &models.NormalizeBackfillJob{Since: time.Date(2026, 10, 2, 5, 0, 0, 0, time.UTC), Until: time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC), RowsWritten: 5, Status: NormalizeBackfillStatusRunning}
+	job := &models.NormalizeBackfillJob{Since: time.Date(2026, 10, 2, 5, 0, 0, 0, time.UTC), Until: time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC), RowsWritten: 5, Status: NormalizeBackfillStatusRunning, RunnerID: bfRunner}
 	if err := d.db.Create(job).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := d.setSetting(d.db, netEventRollupRewindKey, "2026-09-20"); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.finishBackfillJob(job.ID, NormalizeBackfillStatusDone, nil); err != nil {
+	if err := d.finishBackfillJob(job.ID, bfRunner, NormalizeBackfillStatusDone, nil); err != nil {
 		t.Fatal(err)
 	}
 	if v, _ := d.GetSettingValue(netEventRollupRewindKey); v != "2026-09-20" {
@@ -519,10 +522,10 @@ func TestNormalizeBackfill_JobLifecycle(t *testing.T) {
 	if applied, err := d.ResumeNormalizeBackfillJob(job.ID); err != nil || !applied {
 		t.Fatalf("resume cancelled: %v %v", applied, err)
 	}
-	if won, err := d.ClaimNormalizeBackfillJob(job.ID); err != nil || !won {
+	if won, err := d.ClaimNormalizeBackfillJob(job.ID, bfRunner); err != nil || !won {
 		t.Fatalf("claim: %v %v", won, err)
 	}
-	if won, _ := d.ClaimNormalizeBackfillJob(job.ID); won {
+	if won, _ := d.ClaimNormalizeBackfillJob(job.ID, bfRunner); won {
 		t.Fatal("claimed twice")
 	}
 	if applied, _ := d.ResumeNormalizeBackfillJob(job.ID); applied {
@@ -546,14 +549,14 @@ func TestNormalizeBackfill_JobLifecycle(t *testing.T) {
 	if err := d.CreateNormalizeBackfillJob(j2); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.ClaimNormalizeBackfillJob(j2.ID); err != nil {
+	if _, err := d.ClaimNormalizeBackfillJob(j2.ID, bfRunner); err != nil {
 		t.Fatal(err)
 	}
 	d.db.Model(&models.NormalizeBackfillJob{}).Where("id = ?", j2.ID).Update("updated_at", time.Now().Add(-time.Hour))
 	if n, _ := d.RequeueStaleNormalizeBackfillJobs(normalizeBackfillStaleAfter); n != 1 {
 		t.Fatalf("requeued %d, want 1", n)
 	}
-	next, err := d.ClaimNextNormalizeBackfillJob()
+	next, err := d.ClaimNextNormalizeBackfillJob(bfRunner)
 	if err != nil || next == nil || next.ID != j2.ID || next.Status != NormalizeBackfillStatusRunning {
 		t.Fatalf("claim next: %+v %v", next, err)
 	}
@@ -587,7 +590,7 @@ func TestNormalizeBackfill_RunWindowPauses(t *testing.T) {
 	normalizeBackfillPauseStep = 20 * time.Millisecond
 	t.Cleanup(func() { normalizeBackfillNow, normalizeBackfillPauseStep = origNow, origStep })
 
-	if _, err := d.ClaimNormalizeBackfillJob(job.ID); err != nil {
+	if _, err := d.ClaimNormalizeBackfillJob(job.ID, bfRunner); err != nil {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
@@ -595,7 +598,7 @@ func TestNormalizeBackfill_RunWindowPauses(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		runErr = d.RunNormalizeBackfill(context.Background(), job.ID)
+		runErr = d.RunNormalizeBackfill(context.Background(), job.ID, bfRunner)
 	}()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -636,10 +639,10 @@ func TestNormalizeBackfill_ShutdownRequeues(t *testing.T) {
 		return nil
 	}
 	t.Cleanup(func() { normalizeBackfillBatchHook = nil; cancel() })
-	if _, err := d.ClaimNormalizeBackfillJob(job.ID); err != nil {
+	if _, err := d.ClaimNormalizeBackfillJob(job.ID, bfRunner); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.RunNormalizeBackfill(ctx, job.ID); !errors.Is(err, context.Canceled) {
+	if err := d.RunNormalizeBackfill(ctx, job.ID, bfRunner); !errors.Is(err, context.Canceled) {
 		t.Fatalf("run under a cancelled ctx: %v", err)
 	}
 	got, _ := d.GetNormalizeBackfillJob(job.ID)
@@ -747,5 +750,246 @@ func TestParsePartitionBound(t *testing.T) {
 	}
 	if _, ok := parsePartitionBound("DEFAULT", "FROM ('"); ok {
 		t.Fatal("DEFAULT parsed as a range")
+	}
+}
+
+// TestBackfillResumePosition: a resumed job continues in its partition after
+// its cursor; when that partition was dropped it continues at the first LEAF
+// starting after the cursor — which is ranges[0] when there is no DEFAULT
+// child (a dropped-partition resume used to skip it), never a DEFAULT child.
+func TestBackfillResumePosition(t *testing.T) {
+	oct, nov, dec := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	sep20 := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
+	leaves := []backfillRange{{table: "syslog_messages_2026_10", lo: oct, hi: nov}, {table: "syslog_messages_2026_11", lo: nov, hi: dec}}
+	withDefault := append([]backfillRange{{table: "syslog_messages_default", lo: sep20, hi: dec, isDefault: true}}, leaves...)
+
+	if i, ts, id := backfillResumePosition(leaves, "", nil, 0); i != 0 || !ts.Equal(oct) || id != 0 {
+		t.Fatalf("fresh: %d %s %d", i, ts, id)
+	}
+	c := time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC)
+	if i, ts, id := backfillResumePosition(leaves, "syslog_messages_2026_11", &c, 42); i != 1 || !ts.Equal(c) || id != 42 {
+		t.Fatalf("in its partition: %d %s %d", i, ts, id)
+	}
+	// The September leaf the cursor was in has been dropped; no DEFAULT child.
+	if i, ts, id := backfillResumePosition(leaves, "syslog_messages_2026_09", &sep20, 7); i != 0 || !ts.Equal(oct) || id != 0 {
+		t.Fatalf("dropped partition, no DEFAULT: idx %d ts %s id %d, want 0 (the October leaf) from its start", i, ts, id)
+	}
+	// Same with a DEFAULT child first: it is not walked again.
+	if i, ts, _ := backfillResumePosition(withDefault, "syslog_messages_2026_09", &sep20, 7); i != 1 || !ts.Equal(oct) {
+		t.Fatalf("dropped partition, DEFAULT first: idx %d ts %s, want 1 (the October leaf)", i, ts)
+	}
+	// Past every leaf: nothing left.
+	late := dec.Add(time.Hour)
+	if i, _, _ := backfillResumePosition(leaves, "syslog_messages_2026_12", &late, 1); i != len(leaves) {
+		t.Fatalf("past the end: idx %d, want %d", i, len(leaves))
+	}
+}
+
+// TestNormalizeBackfill_OwnerTokenGuardsCommit: a runner whose job was
+// requeued and claimed by another runner cannot commit a batch — the status
+// alone (running again) would let it.
+func TestNormalizeBackfill_OwnerTokenGuardsCommit(t *testing.T) {
+	d, f, dev, _ := bfSetup(t, 10)
+	job := bfQueue(t, d, nil)
+	if won, err := d.ClaimNormalizeBackfillJob(job.ID, "runner-a"); err != nil || !won {
+		t.Fatalf("claim a: %v %v", won, err)
+	}
+	// A's heartbeat is lost: requeued, then B claims it.
+	d.db.Model(&models.NormalizeBackfillJob{}).Where("id = ?", job.ID).Update("updated_at", time.Now().Add(-time.Hour))
+	if n, err := d.RequeueStaleNormalizeBackfillJobs(normalizeBackfillStaleAfter); err != nil || n != 1 {
+		t.Fatalf("requeue: %d %v", n, err)
+	}
+	if won, err := d.ClaimNormalizeBackfillJob(job.ID, "runner-b"); err != nil || !won {
+		t.Fatalf("claim b: %v %v", won, err)
+	}
+	m := f.rows[1]
+	nets := []models.NetEvent{{Ts: m.Timestamp, DeviceID: dev.ID, RawID: ptrInt64(int64(m.ID)), RawTS: &m.Timestamp}}
+	p := backfillProgress{partition: "syslog_messages", cursorTs: m.Timestamp, cursorID: int64(m.ID), scanned: 2, written: 1}
+	if err := d.commitBackfillBatch(context.Background(), job.ID, "runner-a", 1, nets, nil, nil, p); !errors.Is(err, errBackfillJobLost) {
+		t.Fatalf("stale runner's commit: %v, want errBackfillJobLost", err)
+	}
+	if n, _, _ := bfCounts(t, d); n != 0 {
+		t.Fatalf("the stale runner's batch committed %d net_events rows", n)
+	}
+	if got, _ := d.GetNormalizeBackfillJob(job.ID); got.RunnerID != "runner-b" || got.CursorTs != nil || got.RowsScanned != 0 {
+		t.Fatalf("job after the refused commit: %+v", got)
+	}
+	// The owner commits.
+	if err := d.commitBackfillBatch(context.Background(), job.ID, "runner-b", 1, nets, nil, nil, p); err != nil {
+		t.Fatalf("owner's commit: %v", err)
+	}
+	// And the stale runner cannot finish the job either.
+	if err := d.finishBackfillJob(job.ID, "runner-a", NormalizeBackfillStatusFailed, errors.New("x")); !errors.Is(err, errBackfillJobLost) {
+		t.Fatalf("stale runner's finish: %v, want errBackfillJobLost", err)
+	}
+	if got, _ := d.GetNormalizeBackfillJob(job.ID); got.Status != NormalizeBackfillStatusRunning {
+		t.Fatalf("stale runner's finish changed the status to %s", got.Status)
+	}
+}
+
+// TestNormalizeBackfill_CancelWakesPaceSleep: at a low rate the pace sleep
+// after a batch is long; a cancel must end the run within about one
+// normalizeBackfillCancelPoll, not after the sleep.
+func TestNormalizeBackfill_CancelWakesPaceSleep(t *testing.T) {
+	d, _, _, _ := bfSetup(t, 600)
+	normalizeBackfillBatchSize = 300 // 300 rows at 100 rows/s: a 3 s pace sleep
+	origPoll := normalizeBackfillCancelPoll
+	normalizeBackfillCancelPoll = 20 * time.Millisecond
+	t.Cleanup(func() { normalizeBackfillCancelPoll = origPoll })
+	since, until, err := d.NormalizeBackfillBounds(30, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := &models.NormalizeBackfillJob{Since: since, Until: until, RateRowsPerSec: NormalizeBackfillMinRate}
+	if err := d.CreateNormalizeBackfillJob(job); err != nil {
+		t.Fatal(err)
+	}
+	var cancelledAt time.Time
+	normalizeBackfillBatchHook = func(j *models.NormalizeBackfillJob, batch int) error {
+		if batch == 1 {
+			cancelledAt = time.Now()
+			_, _, err := d.CancelNormalizeBackfillJob(j.ID)
+			return err
+		}
+		return nil
+	}
+	t.Cleanup(func() { normalizeBackfillBatchHook = nil })
+	got, err := bfRun(t, d, job.ID)
+	latency := time.Since(cancelledAt)
+	if err != nil || got.Status != NormalizeBackfillStatusCancelled || got.RowsScanned != 300 {
+		t.Fatalf("after cancel: %v %+v", err, got)
+	}
+	if latency > time.Second {
+		t.Fatalf("cancel took %s to land during a 3 s pace sleep, want well under 1 s", latency)
+	}
+}
+
+// TestEstimateNormalizeBackfill_IgnoresStaleSample: a server_metrics sample
+// older than normalizeBackfillMetricMaxAge does not count — free space is
+// unknown — while a recent one decides.
+func TestEstimateNormalizeBackfill_IgnoresStaleSample(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	until := time.Now().UTC().Truncate(time.Hour)
+	since := until.Add(-48 * time.Hour)
+	if err := d.db.Create(&models.SyslogIngestHourly{Timestamp: since.Add(time.Hour), Severity: 5, RowCount: 1_000_000}).Error; err != nil {
+		t.Fatal(err)
+	}
+	tiny := uint64(1 << 20)
+	if err := d.db.Create(&models.ServerMetric{Timestamp: time.Now().Add(-time.Hour), DataDiskFreeBytes: &tiny}).Error; err != nil {
+		t.Fatal(err)
+	}
+	est, err := d.EstimateNormalizeBackfill(since, until)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if est.FreeKnown || !est.Enough || est.Rows != 1_000_000 {
+		t.Fatalf("with only an hour-old sample: %+v, want free unknown (not refused on a stale figure)", est)
+	}
+	if err := d.db.Create(&models.ServerMetric{Timestamp: time.Now().Add(-time.Minute), DataDiskFreeBytes: &tiny}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if est, _ = d.EstimateNormalizeBackfill(since, until); !est.FreeKnown || est.Enough {
+		t.Fatalf("with a recent sample: %+v, want known and refused", est)
+	}
+	// The remaining window of a resumed job starts at its cursor.
+	cur := since.Add(24 * time.Hour)
+	if from, to := NormalizeBackfillRemaining(&models.NormalizeBackfillJob{Since: since, Until: until, CursorTs: &cur}); !from.Equal(cur) || !to.Equal(until) {
+		t.Fatalf("remaining = [%s, %s)", from, to)
+	}
+}
+
+// TestNormalizeBackfill_SkipsUnindexedRelation: a raw relation the keyset
+// page cannot be served from by index is skipped (nothing read from it, the
+// job says so in its error note) instead of being seq-scanned per batch.
+func TestNormalizeBackfill_SkipsUnindexedRelation(t *testing.T) {
+	d, _, _, _ := bfSetup(t, 100)
+	orig := backfillLeafIndexProbe
+	var probed []string
+	backfillLeafIndexProbe = func(_ *Database, table string, _ bool) (bool, error) {
+		probed = append(probed, table)
+		return false, nil
+	}
+	t.Cleanup(func() { backfillLeafIndexProbe = orig })
+	job, err := bfRun(t, d, bfQueue(t, d, nil).ID)
+	if err == nil || !strings.Contains(err.Error(), "no usable timestamp index") {
+		t.Fatalf("run: %v, want the skipped-relation warning", err)
+	}
+	if job.Status != NormalizeBackfillStatusDone || job.RowsScanned != 0 || job.RowsWritten != 0 ||
+		!strings.Contains(job.Error, "syslog_messages") || !strings.Contains(job.Error, "no usable timestamp index") {
+		t.Fatalf("job: %+v", job)
+	}
+	if len(probed) != 1 || probed[0] != "syslog_messages" {
+		t.Fatalf("index probe calls = %v, want one for syslog_messages", probed)
+	}
+}
+
+// TestBackfillProbe_ScopedAndBounded: the dedup probe of a device-scoped job
+// reads only that device's normalized rows, and returns only the batch's own
+// raw_ids — never the other rows its ts range happens to hold.
+func TestBackfillProbe_ScopedAndBounded(t *testing.T) {
+	d, f, dev, until := bfSetup(t, 30) // 30 rows over 71 h: a sparse batch
+	other := &models.Device{Name: "fw-example-02", IPAddress: "192.0.2.2", Vendor: "fortigate"}
+	if err := d.db.Create(other).Error; err != nil {
+		t.Fatal(err)
+	}
+	// Normalized rows already present: two of dev's batch rows (must be
+	// found), the other device's rows at the same instants (scope), and dev
+	// rows between the batch's instants whose raw rows are not in the batch
+	// (bound).
+	var pre []models.NetEvent
+	for _, i := range []int{3, 6} {
+		m := f.rows[i]
+		pre = append(pre, models.NetEvent{Ts: m.Timestamp, DeviceID: dev.ID, RawID: ptrInt64(int64(m.ID)), RawTS: &m.Timestamp})
+	}
+	for i := 0; i < 20; i++ {
+		ts := f.rows[i].Timestamp
+		pre = append(pre, models.NetEvent{Ts: ts, DeviceID: other.ID, RawID: ptrInt64(int64(900000 + i)), RawTS: &ts})
+		mid := ts.Add(time.Minute)
+		pre = append(pre, models.NetEvent{Ts: mid, DeviceID: dev.ID, RawID: ptrInt64(int64(800000 + i)), RawTS: &mid})
+	}
+	if err := d.SaveNetEvents(pre); err != nil {
+		t.Fatal(err)
+	}
+	r := backfillRange{table: "syslog_messages", lo: f.first, hi: until}
+	rows, existing, err := d.fetchBackfillBatch(context.Background(), r, f.first.Add(-time.Second), 0, until, &dev.ID, 30)
+	if err != nil || len(rows) != 30 {
+		t.Fatalf("fetch: %d rows, %v", len(rows), err)
+	}
+	want := map[int64]struct{}{int64(f.rows[3].ID): {}, int64(f.rows[6].ID): {}}
+	if !reflect.DeepEqual(existing, want) {
+		t.Fatalf("probe returned %d raw_ids (%v), want exactly the batch's two already-normalized rows", len(existing), existing)
+	}
+}
+
+// TestNormalizeBackfill_FwRulesCommitWithBatch: the batch's fw_rules upsert
+// is part of the batch transaction. When it fails, the batch rolls back and
+// the job fails resumable — never a committed cursor with the catalog rows
+// lost (they used to be upserted after the commit, with a failure only
+// logged). After the fault clears, resume completes with every rule present.
+func TestNormalizeBackfill_FwRulesCommitWithBatch(t *testing.T) {
+	d, f, _, _ := bfSetup(t, 150)
+	if err := d.db.Exec(`CREATE TRIGGER bf_block_fw_rules BEFORE INSERT ON fw_rules BEGIN SELECT RAISE(ABORT, 'injected fw_rules failure'); END`).Error; err != nil {
+		t.Fatal(err)
+	}
+	job, err := bfRun(t, d, bfQueue(t, d, nil).ID)
+	if err == nil || job.Status != NormalizeBackfillStatusFailed || job.CursorTs != nil || job.RowsWritten != 0 {
+		t.Fatalf("with fw_rules failing: %v %+v, want failed before any batch committed", err, job)
+	}
+	if n, s, _ := bfCounts(t, d); n != 0 || s != 0 {
+		t.Fatalf("the failed batch committed net=%d sec=%d rows", n, s)
+	}
+	if err := d.db.Exec(`DROP TRIGGER bf_block_fw_rules`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if applied, err := d.ResumeNormalizeBackfillJob(job.ID); err != nil || !applied {
+		t.Fatalf("resume: %v %v", applied, err)
+	}
+	if job, err = bfRun(t, d, job.ID); err != nil || job.Status != NormalizeBackfillStatusDone || job.RowsWritten != int64(f.net+f.sec) {
+		t.Fatalf("resumed: %v %+v", err, job)
+	}
+	var rules int64
+	d.db.Model(&models.FwRule{}).Count(&rules)
+	if rules != 3 {
+		t.Fatalf("fw_rules rows = %d, want the fixture's 3 policies", rules)
 	}
 }
