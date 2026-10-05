@@ -30,11 +30,13 @@ func TestProbeSchemaVersionHandshake(t *testing.T) {
 	relaySrc := readFile(t, "../../internal/relay/relay.go")
 	for _, needle := range []string{
 		"SchemaVersionMin = 1",
-		// v5 = L2 topology snapshots (topology-entries + topology-neighbors,
-		// the port-to-port connection map). Bump this needle in LOCKSTEP with
-		// the collector repo's relay.SchemaVersionMax and the MIGRATING.md /
-		// SUPPORT-MATRIX.md / COMPATIBILITY.md tables.
-		"SchemaVersionMax = 5",
+		// v6 = the syslog framing contract (format hint + correct header
+		// columns on every row; the server skips its re-framing fallback for
+		// v6 probes). Bump this needle in LOCKSTEP with the collector repo's
+		// relay.SchemaVersionMax and the MIGRATING.md / SUPPORT-MATRIX.md
+		// tables.
+		"SchemaVersionMax = 6",
+		"SchemaVersionFramed = 6",
 	} {
 		if !strings.Contains(relaySrc, needle) {
 			t.Errorf("internal/relay/relay.go missing %q (schema_version handshake)", needle)

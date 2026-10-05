@@ -531,3 +531,41 @@ func (d *Database) FlushFieldObserved(rows []models.DeviceFieldObserved) error {
 		}),
 	}).CreateInBatches(&merged, normalizedInsertBatch).Error
 }
+
+// GetFieldObserved returns the device_field_observed rows seen since `since`,
+// summed across classes (Class is 0 in the result) — the observed half the
+// capability API joins with the static profile. deviceID 0 means every
+// device. The table holds devices × classes × fields rows, so the rows are
+// read and folded here rather than with SUM / MAX in SQL: SQLite's MAX over a
+// datetime column comes back as text, and the fold is a few hundred rows.
+func (d *Database) GetFieldObserved(deviceID uint, since time.Time) ([]models.DeviceFieldObserved, error) {
+	q := d.db.Where("last_seen >= ?", since)
+	if deviceID != 0 {
+		q = q.Where("device_id = ?", deviceID)
+	}
+	var rows []models.DeviceFieldObserved
+	if err := q.Order("device_id, field, class").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	type key struct {
+		dev   uint
+		field string
+	}
+	out := make([]models.DeviceFieldObserved, 0, len(rows))
+	at := map[key]int{}
+	for _, r := range rows {
+		k := key{r.DeviceID, r.Field}
+		i, ok := at[k]
+		if !ok {
+			at[k] = len(out)
+			r.ID, r.Class = 0, 0
+			out = append(out, r)
+			continue
+		}
+		out[i].Count += r.Count
+		if r.LastSeen.After(out[i].LastSeen) {
+			out[i].LastSeen = r.LastSeen
+		}
+	}
+	return out, nil
+}

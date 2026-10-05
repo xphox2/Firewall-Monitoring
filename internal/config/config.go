@@ -22,6 +22,18 @@ type Config struct {
 	Retention  RetentionConfig
 	Detect     DetectConfig
 	ThreatFeed ThreatFeedConfig
+	Normalize  NormalizeConfig
+}
+
+// NormalizeConfig is the Phase 1 (S-4) syslog normalization switch. Disabled
+// is the inverse of NORMALIZE_ENABLED (default true) so the zero value — what
+// tests construct — is "on", like the DETECT_*_ENABLED knobs. With it off the
+// ingest takes the pre-0.11.296 path (the rule engine parses for itself, the
+// deny projection scans per vendor) and writes nothing to net_events /
+// sec_events / fw_rules / device_field_observed: rollback by config, no
+// restart of anything but the API server.
+type NormalizeConfig struct {
+	Disabled bool // !NORMALIZE_ENABLED (default enabled)
 }
 
 // DetectConfig holds the operator-tunable sFlow detection-engine thresholds
@@ -542,6 +554,9 @@ func Load() *Config {
 			DenyStormVictimDisabled:   !getBoolEnv("DETECT_DENY_STORM_VICTIM_ENABLED", true),
 			DeniedThenAllowedDisabled: !getBoolEnv("DETECT_DENIED_THEN_ALLOWED_ENABLED", true),
 			DenyPolicyPattern:         getEnv("DETECT_DENY_POLICY_PATTERN", "IP_BLOCK*"),
+		},
+		Normalize: NormalizeConfig{
+			Disabled: !getBoolEnv("NORMALIZE_ENABLED", true),
 		},
 		ThreatFeed: ThreatFeedConfig{
 			Enabled:       getBoolEnv("THREAT_FEEDS_ENABLED", true),

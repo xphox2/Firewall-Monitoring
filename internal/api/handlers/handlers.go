@@ -89,6 +89,14 @@ type Handler struct {
 	// deviceVendorCache is the TTL-cached device id → vendor map behind
 	// deviceVendor (handlers_vendor.go), guarded by h.mu.
 	deviceVendorCache map[uint]deviceVendorEntry
+
+	// Syslog normalization state (handlers_normalize.go, S-4): the observed-
+	// field counter buffer flushed to device_field_observed, the fw_rules
+	// per-key LRU, and whether normalize_ingest_started_at is known to be
+	// recorded. All zero-value ready and self-locking.
+	observed         observedBuffer
+	fwRuleSeen       fwRuleLRU
+	normalizeStarted atomic.Bool
 }
 
 func NewHandler(cfg *config.Config, authManager *auth.AuthManager, db *database.Database) *Handler {

@@ -191,11 +191,29 @@ func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 		}
 		filtered = append(filtered, messages[i])
 	}
+	// The raw rows are saved first and unconditionally: everything derived
+	// below (rules, deny projection, normalized tables) is best-effort and
+	// can never cost a syslog row.
 	if err := h.db.SaveSyslogMessages(filtered); err != nil {
 		log.Printf("Failed to batch save syslog messages: %v", err)
 		httputil.InternalError(c, "Failed to save syslog messages", err)
 		return
 	}
+	if h.config != nil && h.config.Normalize.Disabled {
+		h.legacySyslogDerivations(filtered)
+	} else {
+		// Phase 1 (S-4): one parse per message feeds the rule engine, the deny
+		// projection and the normalized tables (handlers_normalize.go).
+		h.normalizeIngest(filtered, probe)
+	}
+	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
+}
+
+// legacySyslogDerivations is the pre-0.11.296 ingest tail, kept verbatim
+// behind NORMALIZE_ENABLED=false: the rule engine parses each message for
+// itself and the deny projection scans per vendor. Nothing is written to the
+// normalized tables.
+func (h *Handler) legacySyslogDerivations(filtered []models.SyslogMessage) {
 	// Evaluate every message against the event-rule engine (v35). The old outer
 	// `severity <= 2` gate is gone — content-matching rules must see all
 	// severities (e.g. sev-3/4 FortiGate VPN errors). The engine fast-paths when
@@ -212,7 +230,6 @@ func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 	// deny.ProjectVendor cheap-gates non-deny messages before any parse, so the
 	// majority stream is untouched on this hot path.
 	h.projectDeniedEvents(filtered)
-	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
 // denyPatternCacheTTL bounds how stale the block-policy pattern setting may be

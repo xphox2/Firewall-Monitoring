@@ -335,6 +335,18 @@ type IngestStore interface {
 	SaveSecurityStats(stats []models.SecurityStats) error
 	SaveSyslogMessages(msgs []models.SyslogMessage) error
 	SaveDeniedEvents(events []models.DeniedEvent) error
+	// Phase 1 (S-4) normalized event writers (normalized_write.go): the syslog
+	// ingest derives these from the same parse that feeds the rule engine.
+	SaveNetEvents(events []models.NetEvent) error
+	SaveSecEvents(events []models.SecEvent) error
+	UpsertFwRules(rules []models.FwRule) error
+	FlushFieldObserved(rows []models.DeviceFieldObserved) error
+	// GetFieldObserved is the observed half of the capability matrix (rows
+	// since the given time, summed across classes; deviceID 0 = all).
+	GetFieldObserved(deviceID uint, since time.Time) ([]models.DeviceFieldObserved, error)
+	// UpsertSetting writes one system setting (the ingest records the
+	// normalize_ingest_started_at watermark the S-5 backfill bounds itself by).
+	UpsertSetting(setting *models.SystemSetting) error
 	SaveSystemStatuses(statuses []models.SystemStatus) error
 	// SaveUptimeRecord persists one per-device availability snapshot (AUDIT-318).
 	// Written by the periodic uptime-snapshot worker in cmd/api.

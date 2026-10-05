@@ -38,10 +38,10 @@ versions can talk to which server versions, and what to do when a
 in the `POST /api/probes/register` request and response bodies. It is **not**
 the semantic version of either binary; it is a small integer bumped in
 lockstep with this file whenever the relay handshake changes shape. The
-current maximum is **`5`**; v1 through v4 remain fully supported.
+current maximum is **`6`**; v1 through v5 remain fully supported.
 
 When a probe registers it sends its `schema_version`. The server validates it
-against `[relay.SchemaVersionMin, relay.SchemaVersionMax]` (currently `1`-`5`)
+against `[relay.SchemaVersionMin, relay.SchemaVersionMax]` (currently `1`-`6`)
 and, since server v0.11.75, **persists the selected version on the probe row**
 (`probes.schema_version`) — version-gated downstream features key off the
 stored value. Three outcomes:
@@ -49,8 +49,8 @@ stored value. Three outcomes:
 | Probe sends | Server response | What happens next |
 |---|---|---|
 | `schema_version` absent | 200 OK, treated as v1 | The probe registers as before (pre-handshake collectors). |
-| `schema_version: 1`–`5` | 200 OK, selected version echoed + persisted | The probe registers normally. |
-| anything outside `1-5` | **426 Upgrade Required**, header `X-Probe-Schema-Version-Supported: 1-5` | The probe refuses to register. The body names the rejected version and points here. |
+| `schema_version: 1`–`6` | 200 OK, selected version echoed + persisted | The probe registers normally. |
+| anything outside `1-6` | **426 Upgrade Required**, header `X-Probe-Schema-Version-Supported: 1-6` | The probe refuses to register. The body names the rejected version and points here. |
 
 Version history:
 
@@ -73,6 +73,13 @@ Version history:
   (device, entry_type/protocol) scope on every batch — so the collector never
   spools them (a replayed old snapshot would revert newer state) and gates
   both sends on a negotiated ≥ 5.
+- **v6** — the **syslog framing contract** (server 0.11.296, collector
+  1.3.50): no new endpoint or payload. A v6 collector guarantees the `format`
+  hint on every syslog row and correct RFC 3164 / RFC 5424 / Meraki header
+  columns, so the server normalizes its rows without the re-framing fallback
+  it still applies to v5 rows. Deploy the server first; a 1.3.50 collector
+  against an older server renegotiates down to v5. `SchemaVersionMin` stays
+  at 1 — dropping the fallback is a later transition release.
 
 The consts in `internal/relay/relay.go` are the single source of truth —
 shipping a future version only requires bumping `SchemaVersionMax` there and
@@ -101,7 +108,7 @@ The happy-path rolling upgrade is **server first, then probe**:
 
 If you do the **wrong** order (a probe whose `schema_version` is newer than
 the server supports) you will see exactly one class of error: the probe gets a
-426, logs `Probe schema_version N not supported (server supports 1-5)`, and
+426, logs `Probe schema_version N not supported (server supports 1-6)`, and
 its register fails. Roll the server forward (or the probe back) and the probe
 registers. There is **no data loss** — the probe keeps unsent data in its
 on-disk queue until the server can accept it again.
