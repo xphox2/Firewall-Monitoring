@@ -66,7 +66,7 @@ const (
 	// netEventRollupWatermarkKey holds the UTC hour boundary (RFC 3339) up to
 	// which net_events have been folded: every row with ts < watermark is in
 	// the rollups (modulo late arrivals, which the day close picks up).
-	netEventRollupWatermarkKey = "net_event_rollup_watermark"
+	netEventRollupWatermarkKey = "net_event_rollup_watermark" // #nosec G101 -- a system_settings key name, not a credential
 	// netEventRollupClosedDayKey holds the newest UTC day (YYYY-MM-DD) whose
 	// rollup rows were recomputed exactly from its partition (or skipped).
 	netEventRollupClosedDayKey = "net_event_rollup_closed_day"
