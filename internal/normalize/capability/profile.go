@@ -168,7 +168,64 @@ const (
 	Supported   FeatureState = "supported"
 	Degraded    FeatureState = "degraded"    // every field present, at least one config_dependent / partial
 	Unsupported FeatureState = "unsupported" // at least one field the vendor cannot supply
+	// Inactive is the observed half's verdict (the capability API, S-4): the
+	// profile can supply every field but the device has not sent at least
+	// one of them within the observation window. Feature never returns it.
+	Inactive FeatureState = "inactive"
 )
+
+// FieldState is the effective per-(device, field) verdict the capability
+// API reports: the profile's static cell joined with what the device was
+// observed sending within the window.
+type FieldState string
+
+const (
+	// FieldNative: the profile sources the field with Full completeness and
+	// the device sent it within the window.
+	FieldNative FieldState = "native"
+	// FieldPartial: observed, but the profile says only a subset of events
+	// carry it by nature.
+	FieldPartial FieldState = "partial"
+	// FieldConfigDependent: observed, and the profile says a vendor option
+	// governs it — the device evidently has the option on today.
+	FieldConfigDependent FieldState = "config_dependent"
+	// FieldInactive: the profile can supply it but nothing was observed
+	// within the window (option off, feature unused, or no traffic yet).
+	FieldInactive FieldState = "inactive"
+	// FieldUnsupported: the vendor cannot supply it (SourceNone).
+	FieldUnsupported FieldState = "unsupported"
+)
+
+// EffectiveState joins one profile cell with the observation fact. Only a
+// syslog-sourced cell can be observed by the syslog ingest; a NetFlow- or
+// API-sourced cell reports its static completeness (the observed half of
+// those transports is outside this matrix), and a cell with no source is
+// unsupported whatever was observed.
+func EffectiveState(spec Spec, observed bool) FieldState {
+	switch {
+	case spec.Source == SourceNone:
+		return FieldUnsupported
+	case spec.Source == SourceSyslog && !observed:
+		return FieldInactive
+	case spec.Completeness == Partial:
+		return FieldPartial
+	case spec.Completeness == ConfigDependent:
+		return FieldConfigDependent
+	default:
+		return FieldNative
+	}
+}
+
+// FeatureNames lists the Features keys, sorted (for API error messages and
+// the all-features listing).
+func FeatureNames() []string {
+	out := make([]string, 0, len(Features))
+	for f := range Features {
+		out = append(out, f)
+	}
+	sort.Strings(out)
+	return out
+}
 
 // Feature evaluates feature for vendor and returns the state with the
 // fields that caused a degradation or exclusion.
@@ -248,6 +305,7 @@ func init() {
 		Action: s(SourceSyslog, ConfigDependent, nfLogged), SrcIP: syslogFull, DstIP: syslogFull, SrcPort: syslogFull, DstPort: syslogFull,
 		Proto: syslogFull, SrcMAC: s(SourceSyslog, Partial, "netfilter MAC= field and CEF client events"), SrcIf: s(SourceSyslog, ConfigDependent, nfLogged),
 		SrcZone: s(SourceSyslog, ConfigDependent, siem+"CEF 201 only"),
+		SrcRole: s(SourceSyslog, Partial, "derived from the classic WAN_* / LAN_* / GUEST_* chain name; zone-based chains carry none"),
 		RuleKey: s(SourceSyslog, ConfigDependent, nfLogged), RuleIndex: s(SourceSyslog, ConfigDependent, nfLogged), RuleName: s(SourceSyslog, Partial, "netfilter DESCR (truncated) and CEF 201 policy name"),
 		Ruleset: s(SourceSyslog, ConfigDependent, nfLogged),
 		App:     s(SourceSyslog, ConfigDependent, siem+"CEF 201 only"), SrcHostname: s(SourceSyslog, Partial, "CEF client events and DHCP leases"),

@@ -47,6 +47,15 @@ import (
 // the split fell (and across mixed collector versions).
 func Fields(vendor string, msg *models.SyslogMessage) map[string]string {
 	ev, out := normalize.Normalize(vendor, msg)
+	return FieldsFromEvent(msg, &ev, out)
+}
+
+// FieldsFromEvent builds the same map as Fields from an already normalized
+// Event — the ingest (S-4) parses each message once and hands the result to
+// the rule engine, the deny projection and the normalized tables, so this is
+// the rule engine's entry when the parse has already happened. ev and out
+// must be the pair Normalize returned for msg.
+func FieldsFromEvent(msg *models.SyslogMessage, ev *normalize.Event, out normalize.Outcome) map[string]string {
 	// Size once: base 5 + native (a FortiOS traffic line has ~40 pairs) + up
 	// to ~45 event.* keys. Growing a map through rehashes costs more than the
 	// slack here.

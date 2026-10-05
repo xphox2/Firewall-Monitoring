@@ -12,6 +12,7 @@ import (
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/logfields"
 	"firewall-mon/internal/models"
+	"firewall-mon/internal/normalize"
 	"firewall-mon/internal/notifier"
 )
 
@@ -520,6 +521,16 @@ func (am *AlertManager) flushEventRuleHits(db *database.Database) {
 // alert fires it. Hot-path discipline preserved: the chain snapshot is taken
 // under one RLock and evaluated unlocked (partitions are immutable).
 func (am *AlertManager) EvaluateSyslog(msg *models.SyslogMessage, siteID *uint) error {
+	return am.EvaluateSyslogEvent(msg, siteID, nil, normalize.Outcome{})
+}
+
+// EvaluateSyslogEvent is EvaluateSyslog with the parse already done: ev / out
+// are what normalize.Normalize returned for msg (the ingest parses once per
+// message and shares the Event with the deny projection and the normalized
+// tables, S-4). A nil ev means "parse here", which is what EvaluateSyslog
+// does. The chain fast path still runs first, so a pre-parsed event costs
+// nothing extra when no rule is loaded.
+func (am *AlertManager) EvaluateSyslogEvent(msg *models.SyslogMessage, siteID *uint, ev *normalize.Event, out normalize.Outcome) error {
 	am.mu.RLock()
 	meta, hasMeta := am.deviceMeta[msg.DeviceID]
 	// Same fallback as handlers.deviceVendor (handlers_vendor.go): no device,
@@ -540,7 +551,14 @@ func (am *AlertManager) EvaluateSyslog(msg *models.SyslogMessage, siteID *uint) 
 		return nil // fast path: nothing on this chain to evaluate
 	}
 
-	fields := logfields.Fields(vendor, msg) // single extraction, shared across rules
+	// Single extraction, shared across rules — and shared with the rest of
+	// the ingest when the caller already parsed the message.
+	var fields map[string]string
+	if ev != nil {
+		fields = logfields.FieldsFromEvent(msg, ev, out)
+	} else {
+		fields = logfields.Fields(vendor, msg)
+	}
 	now := time.Now()
 	r := firstMatch(ch, "syslog", true, vendor, msg.DeviceID, effSite, fields, now)
 	if r == nil {

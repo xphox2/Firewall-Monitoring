@@ -94,9 +94,22 @@ func Has(vendor string) bool {
 // reports Unparsed, so a caller that only wants the vendor's own fields
 // (logfields.Fields) never tokenizes twice.
 func Normalize(vendor string, msg *models.SyslogMessage) (Event, Outcome) {
+	return normalize(vendor, msg, Reframe(msg))
+}
+
+// NormalizeFramed is Normalize for a row whose collector guarantees the
+// framing contract (relay schema v6, collector 1.3.50+): the header columns
+// are right and Message is the whole body, so the re-framing join is skipped
+// and the families tokenize Message alone. Every family locates its payload
+// by its own vocabulary, so this and Normalize agree on a correctly framed
+// row; only a pre-1.3.48 positional split needs the join.
+func NormalizeFramed(vendor string, msg *models.SyslogMessage) (Event, Outcome) {
+	return normalize(vendor, msg, msg.Message)
+}
+
+func normalize(vendor string, msg *models.SyslogMessage, raw string) (Event, Outcome) {
 	ev := Event{Ts: msg.Timestamp, DeviceID: msg.DeviceID, ProbeID: msg.ProbeID}
 	m := Lookup(vendor)
-	raw := Reframe(msg)
 	fams := m.Families()
 	// The collector's format hint moves its family to the front; the rest
 	// keep their order. Unknown hints change nothing.

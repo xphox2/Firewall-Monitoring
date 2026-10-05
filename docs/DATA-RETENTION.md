@@ -66,7 +66,7 @@ partitions are never dropped and only the severity-scoped deletes run.
 | IRC bot message log | `irc_message_logs` | `RETENTION_IRC_MESSAGE_LOG_DAYS` | 7 | Operator's own ops-channel chatter |
 | Login attempts | `login_attempts` | `RETENTION_DEFAULT_DAYS` | 90 | Username + client IP |
 | Batch idempotency keys | `processed_batches` | (fixed) | 2 | No |
-| Normalized network events (v0.11.295, migration v72; one typed row per traffic-class syslog line — not written until the S-4 ingest wiring) | `net_events` | `RETENTION_NET_EVENT_DAYS` | 30 — **0 means 30**, not the default | **Yes** — src/dst IPs, MACs, user names, URL hosts, DNS names |
+| Normalized network events (v0.11.295, migration v72; one typed row per traffic-class syslog line, written by the syslog ingest since 0.11.296 while `NORMALIZE_ENABLED` is on) | `net_events` | `RETENTION_NET_EVENT_DAYS` | 30 — **0 means 30**, not the default | **Yes** — src/dst IPs, MACs, user names, URL hosts, DNS names |
 | Normalized security events (findings, auth, VPN sessions, device health) | `sec_events` | `RETENTION_SEC_EVENT_DAYS` | 365 | **Yes** — admin users, source IPs, signatures |
 | Normalized config-change events (class `config_change` inside `sec_events`) | `sec_events` | `RETENTION_SEC_CONFIG_CHANGE_DAYS` | **0 = forever** | Admin user + source IP of every change |
 | Net event rollups (per device / rule / action / direction / app category / ruleset per UTC day) | `net_event_rollups` | `RETENTION_NET_EVENT_ROLLUP_DAYS` | 365 | No (counts only; no addresses) |

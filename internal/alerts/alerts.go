@@ -15,6 +15,7 @@ import (
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/detect"
 	"firewall-mon/internal/models"
+	"firewall-mon/internal/normalize"
 	"firewall-mon/internal/notifier"
 
 	"gorm.io/gorm"
@@ -760,6 +761,13 @@ func (am *AlertManager) CheckInterfaceErrors(interfaces []models.InterfaceStats,
 // fast-path handles the no-rules case.
 func (am *AlertManager) ProcessSyslog(msg *models.SyslogMessage, siteID *uint) error {
 	return am.EvaluateSyslog(msg, siteID)
+}
+
+// ProcessSyslogEvent is ProcessSyslog for a message the caller already
+// normalized (S-4: one parse per message on the ingest path). ev / out are
+// Normalize's result for msg.
+func (am *AlertManager) ProcessSyslogEvent(msg *models.SyslogMessage, siteID *uint, ev *normalize.Event, out normalize.Outcome) error {
+	return am.EvaluateSyslogEvent(msg, siteID, ev, out)
 }
 
 // securityEventLinkLookback bounds how far back FindOpenAlertForSource scans for

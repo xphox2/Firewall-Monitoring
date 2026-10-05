@@ -137,7 +137,9 @@
 | SQLite backend (tests only — AUDIT-118) | Stable | [Server] | 0.1 |
 | Embedded PostgreSQL in the Docker image (auto-generated password in `/config/pg-credentials`, chmod 600) | Stable | [Server] | 0.1 (AUDIT-093) |
 | Versioned, recorded DB migrations (`schema_migrations` table, advisory-lock-gated runner, `migrate` / `migrate-status` subcommands) | Stable | [Server] | 0.10.378 (AUDIT-044) |
-| Normalized event tables (`net_events` daily-partitioned with a retention-deep lookback, `sec_events` monthly, `net_event_rollups` per device / rule / action / direction / app category / ruleset per day, `fw_rules` catalog, `device_field_observed`); COPY writer, per-class retention (`config_change` kept forever by default), partition-drop-only `net_events` retention, hourly rollup with exact day close. Written by nothing yet — the ingest wiring is S-4 | Stable | [Server] | 0.11.295 (migration v72) |
+| Normalized event tables (`net_events` daily-partitioned with a retention-deep lookback, `sec_events` monthly, `net_event_rollups` per device / rule / action / direction / app category / ruleset per day, `fw_rules` catalog, `device_field_observed`); COPY writer, per-class retention (`config_change` kept forever by default), partition-drop-only `net_events` retention, hourly rollup with exact day close. Written by the syslog ingest since 0.11.296 | Stable | [Server] | 0.11.295 (migration v72) |
+| Syslog ingest normalizes every row once (`NORMALIZE_ENABLED`, default on): the same parse feeds the rule engine, the deny projection (`denied_events`, now for every vendor's network-class deny) and the `net_events` / `sec_events` / `fw_rules` / `device_field_observed` writers; raw syslog is saved first and never depends on it; v6 probes skip the re-framing fallback | Stable | [Server] | 0.11.296 |
+| Capability API (admin-only): `GET /admin/api/devices/:id/capabilities` — every normalized field's effective state (`native` / `partial` / `config_dependent` / `inactive` / `unsupported`) from the vendor profile ∩ what the device sent in the last 24 h, plus per-feature verdicts; `GET /admin/api/capabilities?feature=` — one verdict per active device for a feature | Stable | [Server] | 0.11.296 |
 | Monthly range-partitioning for the 6 high-volume tables (`interface_stats`, `system_status`, `syslog_messages`, `syslog_summaries`, `trap_events`, `flow_samples`) | Stable | [Server] | 0.10.380 (AUDIT-028 + AUDIT-146) |
 | Autovacuum tuning for high-write tables | Stable | [Server] | 0.10.353 (AUDIT-147) |
 | Per-table data retention (14 `RETENTION_*_DAYS` env vars) | Stable | [Server] | 0.1 |
@@ -167,6 +169,7 @@
 | Cookie `Secure` flag and HSTS follow how the request arrived (in-process TLS, or a `TRUSTED_PROXIES` peer sending `X-Forwarded-Proto: https`) unless `COOKIE_SECURE` is set | Stable | [Server] | 0.11.288 |
 | Poller + trap-receiver `/metrics` + `/healthz` + `/readyz` (`POLLER_METRICS_ADDR` `:9101`, `TRAP_METRICS_ADDR` `:9102`, `off` disables) | Stable | [Server] | 0.10.487 |
 | Structured logging (slog) with request-ID correlation | Stable | [Server] | 0.1 |
+| `fwmon_normalize_outcomes_total{kind}`, `fwmon_normalize_rows_total{table}`, `fwmon_normalize_write_errors_total{table}` on the API `/metrics` | Stable | [Server] | 0.11.296 |
 
 ## Vendor profiles
 

@@ -531,3 +531,55 @@ func (d *Database) FlushFieldObserved(rows []models.DeviceFieldObserved) error {
 		}),
 	}).CreateInBatches(&merged, normalizedInsertBatch).Error
 }
+
+// GetFieldObserved returns the device_field_observed rows seen since `since`,
+// summed across classes (Class is 0 in the result) — the observed half the
+// capability API joins with the static profile. deviceID 0 means every
+// device. The table holds devices × classes × fields rows, so the rows are
+// read and folded here rather than with SUM / MAX in SQL: SQLite's MAX over a
+// datetime column comes back as text, and the fold is a few hundred rows.
+func (d *Database) GetFieldObserved(deviceID uint, since time.Time) ([]models.DeviceFieldObserved, error) {
+	q := d.db.Where("last_seen >= ?", since)
+	if deviceID != 0 {
+		q = q.Where("device_id = ?", deviceID)
+	}
+	var rows []models.DeviceFieldObserved
+	if err := q.Order("device_id, field, class").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	type key struct {
+		dev   uint
+		field string
+	}
+	out := make([]models.DeviceFieldObserved, 0, len(rows))
+	at := map[key]int{}
+	for _, r := range rows {
+		k := key{r.DeviceID, r.Field}
+		i, ok := at[k]
+		if !ok {
+			at[k] = len(out)
+			r.ID, r.Class = 0, 0
+			out = append(out, r)
+			continue
+		}
+		out[i].Count += r.Count
+		if r.LastSeen.After(out[i].LastSeen) {
+			out[i].LastSeen = r.LastSeen
+		}
+	}
+	return out, nil
+}
+
+// InsertSettingIfAbsent writes a system setting only when its key does not
+// exist yet (INSERT ... ON CONFLICT (key) DO NOTHING) and reports whether this
+// call inserted it. It is for write-once watermarks such as
+// normalize_ingest_started_at: a read-then-upsert would move the watermark
+// whenever the read failed transiently, and the S-5 backfill bounds itself by
+// it, so the row must never be overwritten by the ingest.
+func (d *Database) InsertSettingIfAbsent(setting *models.SystemSetting) (bool, error) {
+	res := d.db.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "key"}}, DoNothing: true}).Create(setting)
+	if res.Error != nil {
+		return false, fmt.Errorf("insert setting %q if absent: %w", setting.Key, res.Error)
+	}
+	return res.RowsAffected > 0, nil
+}

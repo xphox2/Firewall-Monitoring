@@ -46,12 +46,25 @@ import "time"
 //     ingestion REPLACES the device's rows per (device, entry_type/protocol)
 //     scope. The collector gates both sends on a negotiated ≥ 5 and never
 //     spools them.
+//   - v6 is the syslog FRAMING CONTRACT (Phase 1, S-4 / collector 1.3.50): a
+//     v6 collector guarantees the `format` hint on every syslog row and
+//     correct RFC 3164 / RFC 5424 / Meraki header columns (the 1.3.48 framing
+//     dispatcher). No new endpoint or payload type: the server skips its
+//     re-framing fallback (normalize.Reframe) for rows from a probe registered
+//     at ≥ SchemaVersionFramed and still re-frames v5 rows, so mixed fleets
+//     keep working. Raising SchemaVersionMin to 6 (dropping the fallback) is
+//     a Phase 2 transition release, not this one.
 //
 // v1 stays supported (Min=1) throughout for mixed-version deploys.
 const (
 	SchemaVersionMin = 1
-	SchemaVersionMax = 5
+	SchemaVersionMax = 6
 )
+
+// SchemaVersionFramed is the first schema version whose collector guarantees
+// the syslog framing contract (format hint + correct header columns on every
+// row). Ingest normalizes rows from such probes without the re-framing join.
+const SchemaVersionFramed = 6
 
 // PendingCommand is one queued server→collector command as delivered on the
 // heartbeat response (schema v4). Payload is the command's type-specific JSON

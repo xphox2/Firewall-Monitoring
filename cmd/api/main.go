@@ -38,7 +38,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.295"
+const ServerVersion = "0.11.296"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -338,6 +338,18 @@ func main() {
 	// handler because ingest — ReceiveFlowSamples — runs in this process). The
 	// internal-network set rides the same tick: device interface addresses
 	// change as devices are polled, added and retired.
+	// Phase 1 (S-4): the syslog ingest counts observed normalized fields per
+	// device in memory; this flushes them to device_field_observed every five
+	// minutes. Shutdown waits for the loop to exit (observedFlushDone) and
+	// flushes once more AFTER server.Shutdown has drained the in-flight
+	// batches, so nothing recorded between bgCancel and the last request is
+	// lost.
+	observedFlushDone := make(chan struct{})
+	logging.SafeGo("normalize-observed-flush", func() {
+		defer close(observedFlushDone)
+		handler.RunObservedFlusher(bgCtx)
+	})
+
 	logging.SafeGo("threat-intel-refresh", func() {
 		ticker := time.NewTicker(15 * time.Minute)
 		defer ticker.Stop()
@@ -629,6 +641,13 @@ func main() {
 		// snmpClient.Close. Log the error and let main return so defers run.
 		log.Printf("Server.Shutdown error: %v", err)
 	}
+	// The flusher loop has exited (bgCancel); flush what the drained requests
+	// recorded after its final pass. Bounded by the same shutdown deadline.
+	select {
+	case <-observedFlushDone:
+	case <-ctx.Done():
+	}
+	handler.FlushFieldObserved()
 
 	log.Println("Server exited")
 }
@@ -916,8 +935,12 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			"/admin/api/event-rule-profiles/:id/assignments": true,
 			"/admin/api/alert-types":                         true,
 			"/admin/api/devices/:id/event-profile":           true,
-			"/admin/api/sites/:id/event-profile":             true,
-			"/admin/api/event-config/effective":              true,
+			// Capability matrix (S-4): which log options each device has on
+			// and which features the fleet can report — admin-only.
+			"/admin/api/devices/:id/capabilities": true,
+			"/admin/api/capabilities":             true,
+			"/admin/api/sites/:id/event-profile":  true,
+			"/admin/api/event-config/effective":   true,
 			// Suggests a suppress/customize rule from an alert (rule creation is
 			// admin-only, and the syslog path reads raw log content) — admin-only.
 			"/admin/api/alerts/:id/suggested-rule": true,
@@ -1119,6 +1142,10 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/devices/:id/interfaces/:ifIndex/chart", handler.GetInterfaceChart)
 		admin.GET("/api/devices/:id/interfaces/:ifIndex/sflow-chart", handler.GetInterfaceSFlowChart)
 		admin.GET("/api/devices/:id/status-history", handler.GetDeviceStatusHistory)
+		// Capability matrix (Phase 1, S-4): static vendor profile ∩ observed
+		// fields (24 h). Admin-only (in adminOnlyRoutes).
+		admin.GET("/api/devices/:id/capabilities", handler.GetDeviceCapabilities)
+		admin.GET("/api/capabilities", handler.GetCapabilities)
 
 		admin.POST("/api/alerts/:id/acknowledge", handler.AcknowledgeAlert)
 		admin.POST("/api/alerts/:id/snooze", handler.SnoozeAlert)
