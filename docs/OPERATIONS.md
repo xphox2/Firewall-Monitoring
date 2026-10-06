@@ -27,7 +27,9 @@ Pairs with [`KNOWN-ISSUES.md`](../KNOWN-ISSUES.md) (current limitations) and
    Logins over plain HTTP fail silently if `COOKIE_SECURE` is on (AUDIT-024).
 5. **Set retention.** Confirm `RETENTION_SYSLOG_CRITICAL_DAYS` (and the other
    `RETENTION_*` vars) are set — an unset critical-syslog retention lets
-   `syslog_messages` grow without bound (the #1 DB-bloat cause).
+   `syslog_messages` grow without bound (the #1 DB-bloat cause). Or set
+   `RETENTION_SYSLOG_MONTHS` for a calendar-month window over every severity
+   (see [below](#raw-archive-one-calendar-month-of-raw-syslog)).
 6. **Take a first backup** (see Backup & restore) once devices/probes are added.
 7. **Watch the logs** for one full poll cycle (default 60 s) and confirm
    devices report online and no repeated errors.
@@ -872,6 +874,41 @@ container (on the data volume, so it survives recreates):
 `docker exec firewall-mon grep -c 'could not resize shared memory' /data/pgdata/postgresql.log`.
 Check the live cap with `docker exec firewall-mon df -h /dev/shm`; a change to
 `shm_size` needs `docker compose up -d` (a recreate), not a restart.
+
+## Raw archive: one calendar month of raw syslog
+
+`RETENTION_SYSLOG_MONTHS=N` (0.11.306; 0-120, default 0 = off) keeps raw
+syslog of every severity for N calendar months. The cutoff is the same UTC
+time N months earlier, clamped to that month's last day, so one month is 28-31
+days (31 March keeps back to 28 or 29 February; Go's plain month arithmetic
+would have kept only to 3 March). It replaces `RETENTION_SYSLOG_CRITICAL_DAYS`,
+`RETENTION_SYSLOG_INFO_DAYS` and `RETENTION_SYSLOG_DAYS`, which are ignored
+while it is set; the API and the poller log a startup NOTICE naming them with their
+values. A malformed or out-of-range value refuses to start. Windows set on the
+Retention page (per severity or the default) still take precedence; while one
+does, every daily cleanup logs a WARNING naming the severity and its window
+(`severity 5 uses Retention-page 7d, not RETENTION_SYSLOG_MONTHS=1 …`) — clear
+the page setting to follow the months.
+
+- The daily cleanup and the 5-minute severity 6/7 aggregation use the month
+  cutoff; severities 6-7 stay raw for the month and are then summarised.
+- On a partitioned `syslog_messages` (fresh installs) a monthly leaf is dropped
+  once its whole month is older than the cutoff (October's leaf on 1 December);
+  the leaf the cutoff falls in is trimmed by the row DELETE.
+- With `ARCHIVE_SYSLOG_ENABLED` every one of those deletes still takes only
+  rows at or below V (see [the retention gate](#raw-archive-the-retention-gate)):
+  a leaf is dropped only when its `max(id) <= V`.
+- Setting it back to 0 restores the day windows exactly.
+
+**Production with the archive.** A compose or env file that sets
+`RETENTION_SYSLOG_CRITICAL_DAYS=30` (as the example
+[`docker-compose.yml`](../docker-compose.yml) does) keeps 30 days. To keep a
+rolling month instead, set `RETENTION_SYSLOG_MONTHS=1` and remove
+`RETENTION_SYSLOG_CRITICAL_DAYS` **in the same deploy that enables
+`ARCHIVE_SYSLOG_ENABLED`**, not before: until the archive runs, the 30-day
+window stays as it is. Leaving the old key in place is harmless (it is
+ignored and named in the NOTICE) but misleading to the next reader. One month
+against 30 days is at most one extra day of raw syslog at peak.
 
 ## Host disk housekeeping
 

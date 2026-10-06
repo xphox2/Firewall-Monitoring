@@ -38,7 +38,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.305"
+const ServerVersion = "0.11.306"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -110,6 +110,7 @@ func main() {
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("Configuration error: %v", err)
 	}
+	cfg.Retention.LogSyslogMonthsNotice()
 	database.AppVersion = ServerVersion // AUDIT-044: stamp schema_migrations rows
 
 	// AUDIT-150: OpenTelemetry tracing. OFF unless OTEL_TRACES_ENABLED=true, in

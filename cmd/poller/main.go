@@ -2898,6 +2898,7 @@ func main() {
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("Configuration error: %v", err)
 	}
+	cfg.Retention.LogSyslogMonthsNotice()
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.Println("Starting SNMP Poller...")

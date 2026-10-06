@@ -1064,14 +1064,25 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	// of all syslog, and everything else together is under 2 GB per 30 days. Two
 	// bands forced a choice between keeping the noise and losing the signal.
 	//
-	// A window of 0 means KEEP FOREVER and is simply never deleted.
-	sevDays := d.SyslogRetentionDays(ret)
+	// A window of 0 means KEEP FOREVER and is simply never deleted. With
+	// RETENTION_SYSLOG_MONTHS the fallback window is calendar months, not days
+	// (SyslogRetentionWindows); every cutoff below is taken from one instant.
+	syslogNow := time.Now()
+	sevWindows := d.SyslogRetentionWindows(ret)
+	// Months mode with a Retention-page window still in force: say so on every
+	// daily pass, or the operator who set RETENTION_SYSLOG_MONTHS=1 never learns
+	// that an old page setting (say 7 days for severity 5) still decides.
+	if over := syslogMonthsOverridden(ret, sevWindows); len(over) > 0 {
+		log.Printf("WARNING: cleanup: %s, not RETENTION_SYSLOG_MONTHS=%d (a window set on the Retention page takes precedence; clear it there to follow the months)",
+			strings.Join(over, ", "), ret.SyslogMonths)
+	}
 
 	// LC-23: partition-drop fast path for syslog_messages, the table that
 	// dominates prod DB size. A partition may only be dropped once EVERY
-	// severity inside it has expired, so syslogMaxWindow returns 0 — never drop —
-	// if any severity is kept forever. Straddling and newer partitions still
-	// rely on the per-severity DELETEs below for exact retention.
+	// severity inside it has expired, so syslogDropCutoff returns !ok — never
+	// drop — if any severity is kept forever, else the oldest cutoff.
+	// Straddling and newer partitions still rely on the per-severity DELETEs
+	// below for exact retention.
 	//
 	// With syslog archiving enabled, both the drop and the DELETEs take only
 	// rows the archive has verified (id <= V; archive_gate.go). The gate is
@@ -1079,8 +1090,7 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	// is cleared mid-pass stops the ungated deletes at the next batch.
 	syslogGate := d.archiveGateFn("syslog_messages")
 	var syslogFloor time.Time
-	if dropDays := syslogMaxWindow(sevDays[:]); dropDays > 0 {
-		dropCutoff := time.Now().AddDate(0, 0, -dropDays)
+	if dropCutoff, ok := syslogDropCutoff(sevWindows[:], syslogNow); ok {
 		var err error
 		if syslogFloor, _, err = d.dropPartitionsOlderThanGated("syslog_messages", dropCutoff, syslogGate); err != nil {
 			log.Printf("cleanup: drop-old-partitions warning for syslog_messages: %v", err)
@@ -1090,13 +1100,13 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	// One batched DELETE per DISTINCT window rather than one per severity: when
 	// nothing has been uncoupled this collapses to a single statement, no worse
 	// than the two-band model it replaces.
-	for days, severities := range syslogWindowGroups(sevDays) {
-		cutoff := time.Now().AddDate(0, 0, -days)
+	for window, severities := range syslogWindowGroups(sevWindows) {
+		cutoff := window.Cutoff(syslogNow)
 		where, args := andFloor("severity IN ?", []interface{}{severities}, syslogFloor)
 		if err := d.batchedDeleteOlderThanGated(&models.SyslogMessage{}, "syslog_messages", cutoff, syslogGate,
 			where, args...); err != nil {
-			errs = append(errs, fmt.Errorf("failed to cleanup syslog_message (severities %v, %dd): %w",
-				severities, days, err))
+			errs = append(errs, fmt.Errorf("failed to cleanup syslog_message (severities %v, %s): %w",
+				severities, window, err))
 		}
 	}
 

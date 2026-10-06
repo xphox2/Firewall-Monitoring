@@ -233,11 +233,21 @@ type RetentionConfig struct {
 	SyslogDays         int
 	SyslogInfoDays     int // days to keep raw informational syslog (severity 6-7) before aggregation (default 7)
 	SyslogCriticalDays int // days to keep raw critical syslog (severity 0-5), 0=forever (default 0)
-	FlowDays           int
-	TrapDays           int
-	StatusDays         int
-	PingDays           int
-	AlertDays          int
+	// SyslogMonths (RETENTION_SYSLOG_MONTHS, 0-120, default 0 = off): when
+	// positive, raw syslog of EVERY severity is kept N calendar months — the
+	// cutoff is the same UTC instant N months ago, clamped to that month's last
+	// day — in place of SyslogDays / SyslogInfoDays / SyslogCriticalDays, which
+	// are then ignored. The Retention page's per-severity and default windows
+	// still take precedence (database.SyslogRetentionWindows).
+	SyslogMonths int
+	// syslogMonthsInvalid is the parse error of a malformed
+	// RETENTION_SYSLOG_MONTHS; Validate refuses to start on it.
+	syslogMonthsInvalid string
+	FlowDays            int
+	TrapDays            int
+	StatusDays          int
+	PingDays            int
+	AlertDays           int
 	// AUDIT-029: the four tables that previously had no retention
 	// knob and grew unbounded. Defaults below match the audit's
 	// recommendation: 30 days for errors / processor / process
@@ -301,6 +311,36 @@ type RetentionConfig struct {
 	SecEventDays        int // sec_events          (default 365)
 	SecConfigChangeDays int // sec_events class config_change (default 0 = forever)
 	NetEventRollupDays  int // net_event_rollups   (default 365)
+}
+
+// maxSyslogMonths bounds RETENTION_SYSLOG_MONTHS (ten years).
+const maxSyslogMonths = 120
+
+// validateSyslogMonths refuses a malformed or out-of-range
+// RETENTION_SYSLOG_MONTHS (a typo must not silently fall back to the day
+// windows).
+func (r *RetentionConfig) validateSyslogMonths() error {
+	if r.syslogMonthsInvalid != "" {
+		return fmt.Errorf("%s", r.syslogMonthsInvalid)
+	}
+	if r.SyslogMonths < 0 || r.SyslogMonths > maxSyslogMonths {
+		return fmt.Errorf("RETENTION_SYSLOG_MONTHS must be 0-%d, got %d", maxSyslogMonths, r.SyslogMonths)
+	}
+	return nil
+}
+
+// LogSyslogMonthsNotice logs, when RETENTION_SYSLOG_MONTHS is on, a NOTICE
+// naming the env windows it replaces with their current values. Called once
+// by the long-running daemons (fwmon-api serve, the poller), not by every
+// Validate (the CLI subcommands validate too).
+func (r *RetentionConfig) LogSyslogMonthsNotice() {
+	if r.SyslogMonths > 0 {
+		log.Printf("NOTICE: RETENTION_SYSLOG_MONTHS=%d — raw syslog of every severity is kept %d calendar month(s) "+
+			"(cutoff: the same UTC time %d month(s) earlier, clamped to that month's last day); "+
+			"RETENTION_SYSLOG_CRITICAL_DAYS=%d, RETENTION_SYSLOG_INFO_DAYS=%d and RETENTION_SYSLOG_DAYS=%d are ignored. "+
+			"Windows set on the Retention page (per severity or default) still take precedence.",
+			r.SyslogMonths, r.SyslogMonths, r.SyslogMonths, r.SyslogCriticalDays, r.SyslogInfoDays, r.SyslogDays)
+	}
 }
 
 // NetEventWindow is the net_events retention in days: NetEventDays when
@@ -424,7 +464,8 @@ func Load() *Config {
 	// AdminPasswordGenerated can never desync on a mid-Load env mutation.
 	adminPasswordEnv := os.Getenv("ADMIN_PASSWORD")
 
-	return &Config{
+	var retentionBad []string
+	cfg := &Config{
 		Server: ServerConfig{
 			Host:                 getEnv("SERVER_HOST", "0.0.0.0"),
 			Port:                 getEnv("SERVER_PORT", "8080"),
@@ -487,6 +528,7 @@ func Load() *Config {
 			SyslogDays:         getIntEnv("RETENTION_SYSLOG_DAYS", 0),
 			SyslogInfoDays:     getIntEnv("RETENTION_SYSLOG_INFO_DAYS", 7),
 			SyslogCriticalDays: getIntEnv("RETENTION_SYSLOG_CRITICAL_DAYS", 0),
+			SyslogMonths:       strictIntEnv("RETENTION_SYSLOG_MONTHS", 0, &retentionBad),
 			FlowDays:           getIntEnv("RETENTION_FLOW_DAYS", 365),
 			TrapDays:           getIntEnv("RETENTION_TRAP_DAYS", 0),
 			StatusDays:         getIntEnv("RETENTION_STATUS_DAYS", 0),
@@ -638,6 +680,8 @@ func Load() *Config {
 		},
 		Archive: loadArchiveConfig(),
 	}
+	cfg.Retention.syslogMonthsInvalid = strings.Join(retentionBad, "; ")
+	return cfg
 }
 
 // loadArchiveConfig reads the ARCHIVE_* keys (see ArchiveConfig). Numbers and
@@ -797,6 +841,10 @@ func (c *Config) Validate() error {
 	// PostgreSQL requires DB_HOST
 	if c.Database.Type == "postgres" && c.Database.Host == "" {
 		return fmt.Errorf("DB_HOST is required when DB_TYPE=postgres")
+	}
+
+	if err := c.Retention.validateSyslogMonths(); err != nil {
+		return err
 	}
 
 	// Raw archive: a no-op unless ARCHIVE_SYSLOG_ENABLED / ARCHIVE_FLOWS_ENABLED.
