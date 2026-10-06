@@ -20,3 +20,11 @@ Threat-intelligence feeds (fetched at runtime, per deployment; not redistributed
   (CC0), blocklist.de, CINS Army, Emerging Threats open rules, and the Tor
   Project exit list. Each is fetched directly from its source by the operator's
   own server subject to that source's terms.
+
+AWS SDK for Go v2 and smithy-go (Apache License 2.0; see THIRD-PARTY-NOTICES.md)
+  Used by the raw archive's S3 client (internal/archive/s3). Their NOTICE files read:
+    AWS SDK for Go
+    Copyright 2015 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+    Copyright 2014-2015 Stripe, Inc.
+  and
+    Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.

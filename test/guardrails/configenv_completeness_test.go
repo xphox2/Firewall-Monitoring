@@ -40,10 +40,11 @@ func TestConfigEnvExample_DocumentsEveryConfigGoKey(t *testing.T) {
 	body := string(example)
 
 	// Capture the first (key) argument of every env read: the getXxxEnv helper
-	// family (getEnv/getIntEnv/getFloatEnv/getBoolEnv/getDurationEnv) plus the
-	// raw os.Getenv / os.LookupEnv calls. Helper bodies read os.Getenv(key) with
-	// a variable, not a string literal, so they never match.
-	keyRe := regexp.MustCompile(`(?:get(?:Int|Float|Bool|Duration)?Env|os\.Getenv|os\.LookupEnv)\("([A-Z][A-Z0-9_]*)"`)
+	// family (getEnv/getIntEnv/getFloatEnv/getBoolEnv/getDurationEnv), the
+	// strict parsers (strictIntEnv/strictBoolEnv, the ARCHIVE_* numbers and
+	// booleans) plus the raw os.Getenv / os.LookupEnv calls. Helper bodies read
+	// os.Getenv(key) with a variable, not a string literal, so they never match.
+	keyRe := regexp.MustCompile(`(?:get(?:Int|Float|Bool|Duration)?Env|strict(?:Int|Bool)Env|os\.Getenv|os\.LookupEnv)\("([A-Z][A-Z0-9_]*)"`)
 	matches := keyRe.FindAllStringSubmatch(string(cfgSrc), -1)
 	if len(matches) == 0 {
 		t.Fatal("found no env-var reads in config.go — the capture regex likely broke")

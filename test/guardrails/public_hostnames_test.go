@@ -41,6 +41,8 @@ var hygieneAllowDomains = map[string]string{
 	"go.opentelemetry.io":             "Go module path",
 	"go.uber.org":                     "Go module path",
 	"go.mongodb.org":                  "Go module path",
+	"go.etcd.io":                      "Go module path (go.sum: bbolt, via the gofakes3 test dependency)",
+	"go.shabbyrobe.org":               "Go module path (gocovmerge, via the gofakes3 test dependency)",
 	"gorm.io":                         "Go module path",
 	"gonum.org":                       "Go module path",
 	"modernc.org":                     "Go module path",
