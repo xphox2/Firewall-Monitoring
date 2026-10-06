@@ -595,8 +595,10 @@ that stays a standalone table until the move is done — and until the next
 pass if the attach fails. Rows in it cannot be seen through the parent, so
 while any unattached `<table>_YYYYMM[DD]` table exists the archive worker does
 not cut, export or count that table
-(`fwmon_archive_unsettled{reason="unattached_leaf"}`), a count during which a
-move started is discarded, and the gate deletes nothing of the table. A
+(`fwmon_archive_unsettled{reason="unattached_leaf"}`), an export or a count
+during which a move started is discarded and simply retried later (never a
+mismatch, so it cannot park a chunk), and the gate deletes nothing of the
+table. A
 leftover standalone table with such a name (a manual rescue, say) holds the
 table the same way until it is attached or renamed.
 

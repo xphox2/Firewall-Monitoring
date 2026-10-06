@@ -488,8 +488,7 @@ func TestArchiveGate_UnattachedLeaf_PG(t *testing.T) {
 	if g := d.archiveGate(ctx, export.TableSyslog); !g.on || g.v != v {
 		t.Fatalf("gate after the attach: %+v, want V %d", g, v)
 	}
-	res := &export.ChunkResult{}
-	d.db.Raw(`SELECT count(*) AS rows, COALESCE(sum(id), 0) AS id_sum, COALESCE(sum(` + export.IDHashSQL + `), 0) AS id_hash FROM syslog_messages`).Scan(res)
+	res := gatePGChunkResult(t, d)
 	if chk, err := d.CheckArchiveChunkCount(ctx, &chunk, res); err != nil || !chk.Verifiable() {
 		t.Fatalf("count after the attach: %+v %v", chk, err)
 	}
@@ -504,4 +503,80 @@ func TestArchiveGate_UnattachedLeaf_PG(t *testing.T) {
 	if _, err := d.CheckArchiveChunkCount(ctx, &chunk, res); !errors.Is(err, ErrArchiveLeafMove) {
 		t.Fatalf("count with a move during it: %v, want ErrArchiveLeafMove", err)
 	}
+}
+
+// TestArchiveGate_LeafMoveRacesTheRead_PG: a whole move — bump, standalone
+// leaf, rows moved — lands between the two reads of the count's "before"
+// check, and the attach lands during the count. Reading the epoch first, the
+// leaf query then sees the unattached leaf; the count is refused. (Read the
+// other way round, the before check saw no leaf and the new epoch, the count
+// missed the moved rows, and the after check matched.)
+func TestArchiveGate_LeafMoveRacesTheRead_PG(t *testing.T) {
+	d := NewIntegrationDB(t)
+	if err := d.EnsurePartitions(); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	now := time.Now().UTC()
+	m := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -4, 0)
+	gatePGSeedSyslog(t, d, m.Add(time.Hour), m.Add(5*24*time.Hour), 1000) // the DEFAULT child
+	var v int64
+	d.db.Raw("SELECT max(id) FROM syslog_messages").Scan(&v)
+	res := gatePGChunkResult(t, d)
+	chunk := models.ArchiveChunk{SourceTable: export.TableSyslog, IDLo: 0, IDHi: v}
+	leaf := fmt.Sprintf("syslog_messages_%s", m.Format("200601"))
+	bound := fmt.Sprintf("FOR VALUES FROM ('%s') TO ('%s')", m.Format("2006-01-02 15:04:05-07"), m.AddDate(0, 1, 0).Format("2006-01-02 15:04:05-07"))
+
+	fired := false
+	archiveLeafReadHook = func(table string) {
+		if fired || table != "syslog_messages" {
+			return
+		}
+		fired = true
+		if err := d.bumpArchiveLeafMoveEpoch("syslog_messages"); err != nil {
+			t.Error(err)
+		}
+		for _, q := range []string{
+			fmt.Sprintf(`CREATE TABLE %s (LIKE syslog_messages INCLUDING DEFAULTS)`, leaf),
+		} {
+			if err := d.db.Exec(q).Error; err != nil {
+				t.Error(err)
+			}
+		}
+		if err := d.db.Exec(defaultMoveStmt("syslog_messages_default", leaf, "timestamp", false), m, m.AddDate(0, 1, 0)).Error; err != nil {
+			t.Error(err)
+		}
+	}
+	archiveCountHook = func() {
+		if err := d.db.Exec(fmt.Sprintf(`ALTER TABLE syslog_messages ATTACH PARTITION %s %s`, leaf, bound)).Error; err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { archiveLeafReadHook, archiveCountHook = nil, nil })
+	chk, err := d.CheckArchiveChunkCount(ctx, &chunk, &export.ChunkResult{})
+	if !errors.Is(err, ErrArchiveLeafMove) {
+		t.Fatalf("count with a whole move between the before reads: %+v %v, want ErrArchiveLeafMove", chk, err)
+	}
+	if !fired {
+		t.Fatal("the race hook never ran")
+	}
+	// Finish as ensureLeaf would; the next count is clean and complete.
+	archiveLeafReadHook, archiveCountHook = nil, nil
+	if err := d.db.Exec(fmt.Sprintf(`ALTER TABLE syslog_messages ATTACH PARTITION %s %s`, leaf, bound)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if chk, err := d.CheckArchiveChunkCount(ctx, &chunk, res); err != nil || !chk.Verifiable() {
+		t.Fatalf("count after the attach: %+v %v", chk, err)
+	}
+}
+
+// gatePGChunkResult is what an export of every syslog_messages row would
+// report to the count check.
+func gatePGChunkResult(t *testing.T, d *Database) *export.ChunkResult {
+	t.Helper()
+	var r struct{ N, S, H int64 }
+	if err := d.db.Raw(`SELECT count(*) AS n, COALESCE(sum(id), 0) AS s, COALESCE(sum(` + export.IDHashSQL + `), 0) AS h FROM syslog_messages`).Scan(&r).Error; err != nil {
+		t.Fatal(err)
+	}
+	return &export.ChunkResult{Rows: r.N, IDSum: r.S, IDHash: r.H}
 }

@@ -124,6 +124,7 @@ type Worker struct {
 	// pass context; an error is returned from the step as if it had failed.
 	afterPut      func(ctx context.Context, c *models.ArchiveChunk, o *models.ArchiveObject) error
 	afterUploaded func(ctx context.Context, c *models.ArchiveChunk) error
+	afterExport   func(ctx context.Context, c *models.ArchiveChunk) error
 	beforeCount   func(ctx context.Context, c *models.ArchiveChunk) error
 	beforeVerify  func(ctx context.Context, c *models.ArchiveChunk) error
 	beforeMark    func(ctx context.Context, c *models.ArchiveChunk) error
@@ -477,6 +478,16 @@ func (w *Worker) workOne(ctx context.Context, table string) progress {
 		// Shutdown: leave the chunk in its state; the next run resumes it.
 		return progressNone
 	}
+	if errors.Is(err, database.ErrArchiveLeafMove) {
+		// Partition maintenance is (or was, during this export or count)
+		// moving rows through a standalone leaf: a wait, not a failure.
+		// The chunk keeps its state — an exporting one is exported again,
+		// a verifying one read back again — once the move is over.
+		metrics.SetArchiveUnsettled(table, "unattached_leaf")
+		w.logf("leaf-"+table, "%s chunk %d waits: %v", table, c.Seq, err)
+		return progressNone
+	}
+	w.clearLog("leaf-" + table)
 	stage := "db"
 	var se *stageError
 	if errors.As(err, &se) {
@@ -617,6 +628,15 @@ func (w *Worker) exportUpload(ctx context.Context, c *models.ArchiveChunk) error
 		files[id] = f
 		return f, nil
 	}
+	// A partition move (rows leaving the DEFAULT child through a standalone
+	// leaf, invisible through the parent) during the export could leave rows
+	// out of it: read the move epoch around it and wait instead (see
+	// database.ErrArchiveLeafMove). Never a mismatch: a routine partition
+	// pass must not park a chunk in needs_attention.
+	epoch, err := w.db.ArchiveLeafEpoch(ctx, c.SourceTable)
+	if err != nil {
+		return stageErr("settle", err)
+	}
 	res, err := w.db.ExportArchiveChunk(ctx, c, schema, database.ArchiveReadOptions{RowsPerSec: w.rate(c.SourceTable)}, open)
 	if err != nil {
 		var un *database.ArchiveUnsettledError
@@ -624,6 +644,16 @@ func (w *Worker) exportUpload(ctx context.Context, c *models.ArchiveChunk) error
 			return stageErr("settle", err)
 		}
 		return stageErr("read", err)
+	}
+	if w.afterExport != nil {
+		if err := w.afterExport(ctx, c); err != nil {
+			return stageErr("read", err)
+		}
+	}
+	if after, err := w.db.ArchiveLeafEpoch(ctx, c.SourceTable); err != nil {
+		return stageErr("settle", err)
+	} else if after != epoch {
+		return stageErr("settle", fmt.Errorf("%w: a partition move ran during the export of %s chunk %d", database.ErrArchiveLeafMove, c.SourceTable, c.Seq))
 	}
 
 	objs := make([]models.ArchiveObject, len(res.Objects))

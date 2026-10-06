@@ -117,3 +117,13 @@ func SetArchiveSettleForTesting(tb testing.TB, statementTimeout, margin time.Dur
 	archiveSettleFloor, archiveSettleMargin = 0, margin
 	tb.Cleanup(func() { archiveWriterStatementTimeout, archiveSettleFloor, archiveSettleMargin = ot, of, om })
 }
+
+// BumpArchiveLeafMoveEpochForTesting records a partition leaf move of table
+// as ensureLeaf does before it moves rows (archive_gate.go), for the archive
+// worker's integration tests.
+func BumpArchiveLeafMoveEpochForTesting(tb testing.TB, d *Database, table string) {
+	tb.Helper()
+	if err := d.bumpArchiveLeafMoveEpoch(table); err != nil {
+		tb.Fatal(err)
+	}
+}

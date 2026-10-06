@@ -410,13 +410,12 @@ func (d *Database) archiveLeafStateOf(ctx context.Context, table string) (archiv
 		return s, nil
 	}
 	db := d.db.WithContext(ctx)
-	if err := db.Raw(`SELECT c.relname FROM pg_class c
-		WHERE c.relkind IN ('r', 'p') AND c.relnamespace = current_schema()::regnamespace
-		  AND c.relname ~ ('^' || ? || '_[0-9]{6}([0-9]{2})?$')
-		  AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid)
-		ORDER BY c.relname`, table).Scan(&s.unattached).Error; err != nil {
-		return s, fmt.Errorf("archive: unattached leaves of %s: %w", table, err)
-	}
+	// The epoch FIRST, then the leaves. ensureLeaf commits the bump before it
+	// creates the standalone leaf, so a move that begins between the two
+	// reads is seen either as the leaf (still unattached) or, once attached,
+	// as a changed epoch at the caller's next read. Read the other way round,
+	// a move could start after the leaf query and finish before the next
+	// one, with its bump already in the epoch read here — invisible.
 	var vals []string
 	if err := db.Model(&models.SystemSetting{}).Where("\"key\" = ?", archiveLeafMovePrefix+table).Limit(1).Pluck("value", &vals).Error; err != nil {
 		return s, fmt.Errorf("archive: leaf move epoch of %s: %w", table, err)
@@ -424,7 +423,32 @@ func (d *Database) archiveLeafStateOf(ctx context.Context, table string) (archiv
 	if len(vals) > 0 {
 		fmt.Sscan(vals[0], &s.epoch) //nolint:errcheck // unparseable reads as 0; only a change matters
 	}
+	if archiveLeafReadHook != nil {
+		archiveLeafReadHook(table)
+	}
+	if err := db.Raw(`SELECT c.relname FROM pg_class c
+		WHERE c.relkind IN ('r', 'p') AND c.relnamespace = current_schema()::regnamespace
+		  AND c.relname ~ ('^' || ? || '_[0-9]{6}([0-9]{2})?$')
+		  AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid)
+		ORDER BY c.relname`, table).Scan(&s.unattached).Error; err != nil {
+		return s, fmt.Errorf("archive: unattached leaves of %s: %w", table, err)
+	}
 	return s, nil
+}
+
+// archiveLeafReadHook, when non-nil, runs between the epoch read and the leaf
+// query of archiveLeafStateOf (test seam: a move racing the read). Never set
+// in production.
+var archiveLeafReadHook func(table string)
+
+// ArchiveLeafEpoch returns table's partition-move epoch, or an error wrapping
+// ErrArchiveLeafMove while a leaf of it is unattached. The archive worker
+// reads it around an export: a changed epoch means a move ran meanwhile and
+// the export may lack rows — a reason to wait and export again, never a
+// mismatch.
+func (d *Database) ArchiveLeafEpoch(ctx context.Context, table string) (int64, error) {
+	s, err := d.archiveLeafsClear(ctx, table)
+	return s.epoch, err
 }
 
 // archiveLeafsClear returns ErrArchiveLeafMove (naming the leaves) while table
