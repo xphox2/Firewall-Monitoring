@@ -25,7 +25,8 @@
 //   - DeleteObject / DeleteObjects are 403 AccessDenied and counted: the
 //     archive's key has no deleteFiles and the app never deletes.
 //
-// Fail lets a test inject an error response for chosen requests.
+// Fail lets a test inject an error response for chosen requests, and
+// SetMutateGet a read-back that differs from what was stored.
 package s3test
 
 import (
@@ -93,6 +94,8 @@ type Server struct {
 	// of passing the request on.
 	Fail func(op Op, r *http.Request) (status int, code string)
 
+	mutateGet func(key string, body []byte) []byte // SetMutateGet
+
 	inner      http.Handler
 	objectLock bool // bucket created with Object Lock enabled
 	mu         sync.Mutex
@@ -142,6 +145,23 @@ func NewB2Strict(t testing.TB, bucket string, opts ...Option) *Server {
 	s.StartTLS()
 	t.Cleanup(s.Close)
 	return s
+}
+
+// SetFail replaces Fail under the server's lock, so a test may change it
+// while a client it started is still talking to the server.
+func (s *Server) SetFail(f func(op Op, r *http.Request) (status int, code string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Fail = f
+}
+
+// SetMutateGet passes the body of every successful GetObject through f
+// (given a copy; its result is sent with the original headers): a stored
+// object that no longer matches what was uploaded. nil turns it off.
+func (s *Server) SetMutateGet(f func(key string, body []byte) []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mutateGet = f
 }
 
 // Requests returns a copy of every request seen so far.
@@ -309,8 +329,11 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "AccessDenied", "The archive key has no deleteFiles capability.")
 		return
 	}
-	if s.Fail != nil {
-		if status, code := s.Fail(op, r); status != 0 {
+	s.mu.Lock()
+	fail, mutate := s.Fail, s.mutateGet
+	s.mu.Unlock()
+	if fail != nil {
+		if status, code := fail(op, r); status != 0 {
 			s.record(op, key, r, status)
 			writeError(w, status, code, "injected failure")
 			return
@@ -325,6 +348,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 
 	if res.StatusCode < 300 {
 		s.after(op, key, r, res.Header, out)
+		if op == OpGetObject && mutate != nil {
+			out = mutate(key, append([]byte(nil), out...))
+		}
 	}
 	s.record(op, key, r, res.StatusCode)
 	for k, v := range res.Header {
@@ -368,6 +394,11 @@ func (s *Server) after(op Op, key string, r *http.Request, h http.Header, body [
 			s.etags[key] = res.ETag
 		}
 	case OpHeadObject, OpGetObject:
+		// The bucket is unversioned (WithoutVersioning): PUT answers without
+		// a version id, but the memory backend's HEAD / GET still report its
+		// internal one, which a GET by that version then refuses (501).
+		// Report none, as an unversioned service does.
+		h.Del("X-Amz-Version-Id")
 		if etag, ok := s.etags[key]; ok {
 			h.Set("ETag", etag)
 		}

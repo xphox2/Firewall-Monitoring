@@ -15,7 +15,8 @@ var archiveKeys = []string{
 	"ARCHIVE_SYSLOG_ENABLED", "ARCHIVE_FLOWS_ENABLED", "ARCHIVE_S3_ENDPOINT", "ARCHIVE_S3_REGION",
 	"ARCHIVE_S3_BUCKET", "ARCHIVE_S3_PREFIX", "ARCHIVE_S3_ACCESS_KEY_ID", "ARCHIVE_S3_SECRET_ACCESS_KEY",
 	"ARCHIVE_S3_PATH_STYLE", "ARCHIVE_OBJECT_LOCK_DAYS", "ARCHIVE_OBJECT_LOCK_MODE", "ARCHIVE_MIN_AGE_HOURS",
-	"ARCHIVE_ALLOW_HTTP", "ARCHIVE_ALLOW_PRIVATE_ENDPOINT",
+	"ARCHIVE_ALLOW_HTTP", "ARCHIVE_ALLOW_PRIVATE_ENDPOINT", "ARCHIVE_SYSLOG_RATE_ROWS_PER_SEC",
+	"ARCHIVE_FLOW_RATE_ROWS_PER_SEC", "ARCHIVE_WINDOW", "ARCHIVE_STAGING_DIR",
 }
 
 // setArchiveEnv clears every ARCHIVE_* key, then sets kv.
@@ -40,6 +41,7 @@ func validArchiveEnv() map[string]string {
 		"ARCHIVE_S3_SECRET_ACCESS_KEY": archiveTestSecret,
 		"ARCHIVE_OBJECT_LOCK_DAYS":     "400",
 		"ARCHIVE_OBJECT_LOCK_MODE":     "governance",
+		"ARCHIVE_STAGING_DIR":          "/var/lib/fwmon/archive-staging",
 	}
 }
 
@@ -55,7 +57,8 @@ func TestArchiveConfig_DefaultsNameNoService(t *testing.T) {
 	if a.Endpoint != "" || a.Region != "" || a.Bucket != "" || a.Prefix != "" || a.AccessKeyID != "" || a.SecretAccessKey != "" || a.ObjectLockMode != "" {
 		t.Errorf("connection keys have defaults: %+v", a)
 	}
-	if !a.PathStyle || a.MinAgeHours != 2 || a.ObjectLockDays != 0 || a.AllowHTTP || a.AllowPrivateEndpoint {
+	if !a.PathStyle || a.MinAgeHours != 2 || a.ObjectLockDays != 0 || a.AllowHTTP || a.AllowPrivateEndpoint ||
+		a.SyslogRateRowsPerSec != 5000 || a.FlowRateRowsPerSec != 20000 || a.Window != "" || a.StagingDir != "" {
 		t.Errorf("defaults = %+v", a)
 	}
 	if err := a.Validate(); err != nil {
@@ -115,6 +118,13 @@ func TestArchiveConfig_RequiredWhenEnabled(t *testing.T) {
 			t.Errorf("without %s: Validate = %v", k, err)
 		}
 	}
+	// The staging directory is required too (no temp-directory default).
+	env := validArchiveEnv()
+	delete(env, "ARCHIVE_STAGING_DIR")
+	setArchiveEnv(t, env)
+	if err := Load().Archive.Validate(); err == nil || !strings.Contains(err.Error(), "ARCHIVE_STAGING_DIR") {
+		t.Errorf("without ARCHIVE_STAGING_DIR: Validate = %v", err)
+	}
 	// Config.Validate (the startup gate) surfaces it.
 	setArchiveEnv(t, map[string]string{"ARCHIVE_SYSLOG_ENABLED": "true"})
 	if err := Load().Validate(); err == nil || !strings.Contains(err.Error(), "ARCHIVE_S3_ENDPOINT") {
@@ -159,6 +169,13 @@ func TestArchiveConfig_RejectsInvalid(t *testing.T) {
 		{"min age malformed", "ARCHIVE_MIN_AGE_HOURS", "2h", "ARCHIVE_MIN_AGE_HOURS"},
 		{"path style malformed", "ARCHIVE_S3_PATH_STYLE", "yes", "ARCHIVE_S3_PATH_STYLE"},
 		{"allow http malformed", "ARCHIVE_ALLOW_HTTP", "on", "ARCHIVE_ALLOW_HTTP"},
+		{"syslog rate low", "ARCHIVE_SYSLOG_RATE_ROWS_PER_SEC", "99", "ARCHIVE_SYSLOG_RATE_ROWS_PER_SEC"},
+		{"syslog rate malformed", "ARCHIVE_SYSLOG_RATE_ROWS_PER_SEC", "5k", "ARCHIVE_SYSLOG_RATE_ROWS_PER_SEC"},
+		{"flow rate high", "ARCHIVE_FLOW_RATE_ROWS_PER_SEC", "100001", "ARCHIVE_FLOW_RATE_ROWS_PER_SEC"},
+		{"window shape", "ARCHIVE_WINDOW", "22:00", "ARCHIVE_WINDOW"},
+		{"window hour", "ARCHIVE_WINDOW", "25:00-06:00", "ARCHIVE_WINDOW"},
+		{"window empty span", "ARCHIVE_WINDOW", "06:00-06:00", "ARCHIVE_WINDOW"},
+		{"staging relative", "ARCHIVE_STAGING_DIR", "data/archive", "ARCHIVE_STAGING_DIR"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -196,6 +213,16 @@ func TestArchiveConfig_RejectsInvalid(t *testing.T) {
 	setArchiveEnv(t, env)
 	if err := Load().Archive.Validate(); err != nil {
 		t.Errorf("lock days 3000: %v", err)
+	}
+	// Pacing, window and staging at their edges.
+	env = validArchiveEnv()
+	env["ARCHIVE_SYSLOG_RATE_ROWS_PER_SEC"], env["ARCHIVE_FLOW_RATE_ROWS_PER_SEC"] = "100", "100000"
+	env["ARCHIVE_WINDOW"], env["ARCHIVE_STAGING_DIR"] = "22:00-06:00", "/var/lib/fwmon/archive-staging"
+	setArchiveEnv(t, env)
+	if a := Load().Archive; a.Validate() != nil || a.SyslogRateRowsPerSec != 100 || a.FlowRateRowsPerSec != 100000 {
+		t.Errorf("edge pacing: %v %+v", a.Validate(), a)
+	} else if s, e, ok, err := a.WindowMinutes(); err != nil || !ok || s != 22*60 || e != 6*60 {
+		t.Errorf("window 22:00-06:00 = %d-%d %v %v", s, e, ok, err)
 	}
 	// http is accepted with the escape hatch.
 	env = validArchiveEnv()

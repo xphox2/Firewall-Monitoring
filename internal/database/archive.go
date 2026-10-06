@@ -14,9 +14,9 @@ import (
 )
 
 // The raw archive's chunk planner and export reads (archive plan PR 3, §2.1).
-// Nothing here runs on its own: the archive worker that takes marks, plans,
-// exports, uploads and verifies on a timer is a later release, so this
-// release changes no behaviour.
+// Nothing here runs on its own: the archive worker (internal/archive/worker,
+// in the poller, only for an enabled stream) takes the marks, plans, exports,
+// uploads and verifies on a timer; its state machine is archive_worker.go.
 //
 // A chunk is an id range (id_lo, id_hi] of one table, cut at a UTC period
 // boundary, contiguous with the previous chunk (the first starts at id 0):

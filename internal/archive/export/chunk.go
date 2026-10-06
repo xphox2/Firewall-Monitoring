@@ -64,11 +64,11 @@ func MonthOf(t time.Time) string { return t.UTC().Format("2006-01") }
 // with name device-<id> (syslog), flows or counters. No hostnames or names:
 // device ids are internal integers.
 func ObjectKey(prefix string, id ObjectID, schema int, periodStart time.Time, hourly bool) string {
-	p := periodStart.UTC()
-	folder := p.Format(time.DateOnly)
-	if hourly {
-		folder = p.Format("2006-01-02T15")
-	}
+	return prefix + "/" + ObjectRel(id, schema, periodStart, hourly)
+}
+
+// ObjectRel is ObjectKey below the prefix (the S3 client adds the prefix).
+func ObjectRel(id ObjectID, schema int, periodStart time.Time, hourly bool) string {
 	name := "counters"
 	switch {
 	case id.HasDevice:
@@ -76,7 +76,23 @@ func ObjectKey(prefix string, id ObjectID, schema int, periodStart time.Time, ho
 	case id.Stream == StreamSFlow || id.Stream == StreamNetFlow:
 		name = "flows"
 	}
-	return fmt.Sprintf("%s/%s/v%d/%s/%s/%s.ndjson.gz", prefix, id.Stream, schema, MonthOf(p), folder, name)
+	return FolderRel(id.Stream, schema, periodStart, hourly) + "/" + name + ".ndjson.gz"
+}
+
+// ChunkManifestName is the chunk manifest's name in every chunk folder of
+// every stream the chunk is exported to (written last, after its objects
+// verified; "objects": [] for a stream with no rows in the period).
+const ChunkManifestName = "chunk.json"
+
+// FolderRel is a chunk's folder of one stream below the prefix:
+// <stream>/v<schema>/<YYYY-MM>/<YYYY-MM-DD>[THH], from the UTC period start.
+func FolderRel(stream string, schema int, periodStart time.Time, hourly bool) string {
+	p := periodStart.UTC()
+	folder := p.Format(time.DateOnly)
+	if hourly {
+		folder = p.Format("2006-01-02T15")
+	}
+	return fmt.Sprintf("%s/v%d/%s/%s", stream, schema, MonthOf(p), folder)
 }
 
 // ChunkResult describes one exported chunk: its objects (sorted by stream,

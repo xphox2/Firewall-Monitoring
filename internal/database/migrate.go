@@ -2242,6 +2242,16 @@ func (d *Database) migrateArchiveManifestTables() error {
 	return d.db.AutoMigrate(&models.ArchiveChunk{}, &models.ArchiveObject{}, &models.ArchiveMonth{}, &models.ArchiveIDMark{})
 }
 
+// migrateArchiveChunkRetryCounters (v76) adds archive_chunks.mismatches and
+// verify_failures (archive plan PR 4 review): the worker re-exports a chunk
+// only after a mismatch, at most models.ArchiveMaxMismatches times, and
+// retries a transient verification failure with backoff. Two NOT NULL
+// DEFAULT 0 columns on a small table (metadata-only on PostgreSQL ≥ 11);
+// AutoMigrate is idempotent.
+func (d *Database) migrateArchiveChunkRetryCounters() error {
+	return d.db.AutoMigrate(&models.ArchiveChunk{})
+}
+
 // v74's lock bounds. Package vars so the PostgreSQL test can shrink them.
 var (
 	// syslogFormatLockTimeout bounds each attempt as a WHOLE: it is both the

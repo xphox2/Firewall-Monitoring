@@ -1,8 +1,8 @@
 // Package export turns rows of the three archived tables into deterministic
 // gzip NDJSON objects (archive plan PR 3, §2.4-2.5). It does no I/O of its own
 // beyond the io.Writer each object is written to: the database layer feeds it
-// rows in id order and the archive worker (a later release) stages and uploads
-// what it writes.
+// rows in id order and the archive worker (internal/archive/worker) stages and
+// uploads what it writes.
 //
 // Determinism: one row is one line, the fields are exactly the model's
 // persisted columns in struct order (keys = column names), timestamps are

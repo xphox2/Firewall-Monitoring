@@ -77,10 +77,10 @@ func certPool(srv *httptest.Server) *x509.CertPool {
 	return p
 }
 
-func withRoots(p *x509.CertPool) option     { return func(s *settings) { s.rootCAs = p } }
-func withPartSize(n int64) option           { return func(s *settings) { s.partSize = n } }
-func withAttempts(n int) option             { return func(s *settings) { s.maxAttempts = n } }
-func withNow(f func() time.Time) option     { return func(s *settings) { s.now = f } }
+func withRoots(p *x509.CertPool) Option     { return func(s *settings) { s.rootCAs = p } }
+func withPartSize(n int64) Option           { return func(s *settings) { s.partSize = n } }
+func withAttempts(n int) Option             { return func(s *settings) { s.maxAttempts = n } }
+func withNow(f func() time.Time) Option     { return func(s *settings) { s.now = f } }
 func fixedNow(t time.Time) func() time.Time { return func() time.Time { return t } }
 
 func newFakeClient(t *testing.T, cfg func(*config.ArchiveConfig)) (*Client, *s3test.Server) {
@@ -508,5 +508,53 @@ func TestNew_ValidatesConfig(t *testing.T) {
 	}
 	if _, err := New(testConfig("https://s3.example.com"), withPartSize(1<<20)); err == nil {
 		t.Error("New accepted a part size below 5 MiB")
+	}
+}
+
+// TestVerify_ClassifiesMismatch: a stored object that differs from the upload
+// (another hash, another ETag, gone) is ErrMismatch; a failure of the service
+// itself (a 500 on HEAD or GET) is not — the archive worker re-exports only
+// on the former and retries verification on the latter.
+func TestVerify_ClassifiesMismatch(t *testing.T) {
+	srv := s3test.NewB2Strict(t, testBucket)
+	cl, err := New(testConfig(srv.URL), withRoots(certPool(srv.Server)), withAttempts(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	data := payload(500, 9)
+	res, err := cl.Put(ctx, "x/f.json", bytes.NewReader(data), int64(len(data)), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := res
+	bad.SHA256 = strings.Repeat("0", 64)
+	if err := cl.VerifyFull(ctx, bad, nil); !errors.Is(err, ErrMismatch) {
+		t.Errorf("hash mismatch: %v, want ErrMismatch", err)
+	}
+	otherETag := res
+	otherETag.ETag = strings.Repeat("a", 32)
+	if err := cl.VerifyHead(ctx, otherETag); !errors.Is(err, ErrMismatch) {
+		t.Errorf("ETag mismatch: %v, want ErrMismatch", err)
+	}
+	gone := res
+	gone.Rel, gone.Key = "x/never-written.json", testPrefix+"/x/never-written.json"
+	if err := cl.VerifyHead(ctx, gone); !errors.Is(err, ErrMismatch) {
+		t.Errorf("HEAD of a missing object: %v, want ErrMismatch", err)
+	}
+	if err := cl.VerifyFull(ctx, gone, nil); !errors.Is(err, ErrMismatch) {
+		t.Errorf("GET of a missing object: %v, want ErrMismatch", err)
+	}
+	srv.SetFail(func(op s3test.Op, _ *http.Request) (int, string) {
+		if op == s3test.OpHeadObject || op == s3test.OpGetObject {
+			return http.StatusInternalServerError, "InternalError"
+		}
+		return 0, ""
+	})
+	if err := cl.VerifyHead(ctx, res); err == nil || errors.Is(err, ErrMismatch) {
+		t.Errorf("HEAD 500: %v, want a non-mismatch error", err)
+	}
+	if err := cl.VerifyFull(ctx, res, nil); err == nil || errors.Is(err, ErrMismatch) {
+		t.Errorf("GET 500: %v, want a non-mismatch error", err)
 	}
 }

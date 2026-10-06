@@ -9,11 +9,13 @@
 package database
 
 import (
+	"context"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"firewall-mon/internal/config"
 )
@@ -102,4 +104,16 @@ func integrationCfgFromDSN(tb testing.TB, dsn string) *config.Config {
 	cfg.Database.StatementTimeout = 0 // migrations run DDL; don't time-box them
 	cfg.Database.MaxOpenConns = 5
 	return cfg
+}
+
+// SetArchiveSettleForTesting makes the archive's settle window
+// statementTimeout + margin with no one-minute floor, as if every writer ran
+// under statementTimeout, until the test ends — for cross-package integration
+// suites (the archive worker) that cannot wait minutes per chunk.
+func SetArchiveSettleForTesting(tb testing.TB, statementTimeout, margin time.Duration) {
+	tb.Helper()
+	ot, of, om := archiveWriterStatementTimeout, archiveSettleFloor, archiveSettleMargin
+	archiveWriterStatementTimeout = func(context.Context, *Database) (time.Duration, error) { return statementTimeout, nil }
+	archiveSettleFloor, archiveSettleMargin = 0, margin
+	tb.Cleanup(func() { archiveWriterStatementTimeout, archiveSettleFloor, archiveSettleMargin = ot, of, om })
 }
