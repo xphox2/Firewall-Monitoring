@@ -1,7 +1,7 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
-## [0.11.301] - 2026-10-06
+## [0.11.299] - 2026-10-06
 
 ### Fixed — the S-5 Postgres tests failed around UTC midnight (test clock assumptions; no production change)
 
