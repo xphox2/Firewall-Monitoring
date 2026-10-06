@@ -262,9 +262,8 @@ func (r *RestoreWorker) run(ctx context.Context, job *models.ArchiveRestoreJob, 
 	for _, o := range pending {
 		left += o.DayRows
 	}
-	if est := r.db.EstimateArchiveRestore(job.SourceTable, left); !est.Enough {
-		return fail(fmt.Errorf("not enough disk: %d rows (~%d MiB staged) need under half of the database volume's %d MiB free",
-			est.Rows, est.Bytes>>20, est.FreeBytes>>20))
+	if est := r.db.EstimateArchiveRestore(job.SourceTable, left, job.Renormalize); !est.Enough && !job.Force {
+		return fail(fmt.Errorf("disk precheck: %s", est.Refusal()))
 	}
 	if err := r.db.EnsureArchiveRestoreTable(ctx, job); err != nil {
 		return r.ended(ctx, job, runner, err, fail)
@@ -281,6 +280,14 @@ func (r *RestoreWorker) run(ctx context.Context, job *models.ArchiveRestoreJob, 
 	for i := range pending {
 		if err := r.loadObject(ctx, job, runner, &pending[i], f); err != nil {
 			return r.ended(ctx, job, runner, err, fail)
+		}
+	}
+	if job.Renormalize && job.FromBucket {
+		// The manifest is not this database's: its ids may not be either.
+		if msg, err := r.db.ArchiveRestoreIDConflict(ctx, job); err != nil {
+			return r.ended(ctx, job, runner, err, fail)
+		} else if msg != "" {
+			return fail(errors.New(msg))
 		}
 	}
 	status, err := r.db.CompleteArchiveRestoreJob(ctx, job, runner)
@@ -395,20 +402,68 @@ func (r *RestoreWorker) loadObject(ctx context.Context, job *models.ArchiveResto
 	return r.stage(ctx, job, runner, obj, f, file)
 }
 
-// stage decodes a verified object and loads its rows of the job's days and
-// device, after the object's cursor, in batches.
-func (r *RestoreWorker) stage(ctx context.Context, job *models.ArchiveRestoreJob, runner string, obj *models.ArchiveRestoreObject, f restoreFilter, file io.Reader) error {
-	dec, err := export.NewDecoder(job.SourceTable, obj.SchemaVersion)
-	if err != nil {
-		return err
-	}
+// eachLine gunzips an object file and hands every line (with its newline)
+// to fn, in order.
+func eachLine(file io.Reader, fn func(line []byte) error) error {
 	zr, err := gzip.NewReader(file)
 	if err != nil {
 		return err
 	}
 	zr.Multistream(false)
 	br := bufio.NewReaderSize(zr, 64<<10)
+	for {
+		line, err := br.ReadBytes('\n')
+		if len(line) > 0 {
+			if ferr := fn(line); ferr != nil {
+				return ferr
+			}
+		}
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
+// errDecode marks a line the decoder refused (wrapped with the line's error).
+type errDecode struct{ err error }
+
+func (e errDecode) Error() string { return e.err.Error() }
+
+// stage decodes a verified object and loads its rows of the job's days and
+// device, after the object's cursor, in batches. Every line is decoded once
+// before the first batch: a line the decoder refuses (the row format drifted
+// from what the archive wrote) refuses the whole object with nothing of it
+// staged, rather than failing after earlier batches committed — a resume
+// would stop at the same line again.
+func (r *RestoreWorker) stage(ctx context.Context, job *models.ArchiveRestoreJob, runner string, obj *models.ArchiveRestoreObject, f restoreFilter, file io.ReadSeeker) error {
+	dec, err := export.NewDecoder(job.SourceTable, obj.SchemaVersion)
+	if err != nil {
+		return err
+	}
 	b := rowBatch{table: job.SourceTable}
+	refused := func(err error) error {
+		metrics.IncArchiveRestoreRefused(job.Stream)
+		return fmt.Errorf("%w %s: %v", errRestoreRefused, obj.ObjectKey, err)
+	}
+	if err := eachLine(file, func(line []byte) error {
+		if _, _, _, derr := b.decode(dec, line); derr != nil {
+			return errDecode{derr}
+		}
+		return nil
+	}); err != nil {
+		var de errDecode
+		if errors.As(err, &de) {
+			return refused(de.err)
+		}
+		return fmt.Errorf("read %s: %w", obj.ObjectKey, err)
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+
 	size := database.ArchiveRestoreBatchSize()
 	var cursor, scanned int64 = obj.CursorID, 0
 	started := time.Now()
@@ -443,33 +498,25 @@ func (r *RestoreWorker) stage(ctx context.Context, job *models.ArchiveRestoreJob
 		started = time.Now()
 		return nil
 	}
-	for {
-		line, err := br.ReadBytes('\n')
-		if len(line) > 0 {
-			id, ts, dev, derr := b.decode(dec, line)
-			if derr != nil {
-				metrics.IncArchiveRestoreRefused(job.Stream)
-				return fmt.Errorf("%w %s: %v", errRestoreRefused, obj.ObjectKey, derr)
-			}
-			if id > obj.CursorID {
-				scanned++
-				cursor = id
-				if f.keep(ts, dev) {
-					b.keep()
-				}
-				if scanned >= int64(size) {
-					if err := flush(false); err != nil {
-						return err
-					}
-				}
-			}
+	if err := eachLine(file, func(line []byte) error {
+		id, ts, dev, derr := b.decode(dec, line)
+		if derr != nil {
+			return refused(derr) // the file changed since the validation pass
 		}
-		if errors.Is(err, io.EOF) {
-			break
+		if id <= obj.CursorID {
+			return nil
 		}
-		if err != nil {
-			return fmt.Errorf("read %s: %w", obj.ObjectKey, err)
+		scanned++
+		cursor = id
+		if f.keep(ts, dev) {
+			b.keep()
 		}
+		if scanned >= int64(size) {
+			return flush(false)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	return flush(true)
 }

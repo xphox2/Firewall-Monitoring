@@ -113,6 +113,7 @@ func TestRestore_PG(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	seedFreeSpace(t, d, 1<<40)
 	queue := func(req database.ArchiveRestoreRequest) *models.ArchiveRestoreJob {
 		req.RequestedBy = "alice"
 		job, _, err := d.QueueArchiveRestore(context.Background(), req, time.Now())

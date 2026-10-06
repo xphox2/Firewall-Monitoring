@@ -1183,8 +1183,14 @@ What happens:
   verified past the requested days (later-received rows of them are then
   still only in the live table).
 - **Disk.** Refused when the rows to stage (syslog ~1.3 KB, flows ~0.4 KB
-  per row with the indexes) would take half the database volume's free space
-  or more; the worker re-checks before it starts. Each object is downloaded
+  per row with the indexes; with `--renormalize` plus ~0.5 KB per row for the
+  normalized rows) would take half the database volume's free space or more —
+  and **also when that free space is unknown** (no `server_metrics` sample in
+  the last 15 minutes: the poller measures it). `--force` (`"force": true`,
+  re-authenticated like every queue, and recorded in the audit row) queues it
+  anyway. The worker re-checks before it loads (a bucket restore, which has
+  no rows to size until it has selected its objects, is checked only there),
+  honouring the force. Each object is downloaded
   to `ARCHIVE_STAGING_DIR/restore-<id>/` (object size + 512 MiB free
   required) and deleted once loaded.
 - **Verification — nothing unverified is loaded.** Every object is fetched
@@ -1193,7 +1199,10 @@ What happens:
   the byte and row counts, and every line JSON with an id inside its chunk's
   range, in order. Only then is it decoded, and each line must re-encode to
   exactly itself (the row format of its schema version: syslog v1 has no
-  `format`, v2 has it). A mismatch **REFUSES** the object: the job fails with
+  `format`, v2 has it) — every line of the object is decoded once **before
+  its first batch is loaded**, so a line the decoder refuses (the row format
+  drifted from what the archive wrote) refuses the whole object with nothing
+  of it staged. A mismatch **REFUSES** the object: the job fails with
   `REFUSED …` in its error, nothing of that object is staged, and
   `fwmon_archive_restore_refused_total{stream}` counts it. Treat it like a
   corrupt archive: run `fwmon-api archive --verify-month` on the month. A
@@ -1209,7 +1218,10 @@ What happens:
   job is requeued once its heartbeat is two minutes stale).
 - **Lifetime.** The staging table is dropped `--ttl-days` (default 7, max 90)
   after the job was queued, or by `--drop-restore` — never while a
-  normalized-event backfill over it is active. Retention, the archive gate,
+  normalized-event backfill over it is active (a drop and the queueing of that
+  backfill take the job row's lock, so neither can slip past the other), and
+  the TTL never drops a `loaded` restore whose re-normalize has not been
+  queued yet. Retention, the archive gate,
   partition maintenance, the device purge and the archive itself never touch
   a staging table.
 - **Flows** (`sflow`, `netflow`, `sflow-counters`) are staged only:
@@ -1227,17 +1239,36 @@ staging table once it is loaded (`backfill_job_id` on the restore; a restore
 waits as `loaded` while another backfill runs). Over a staging table the
 backfill takes every row of the requested days whenever it was received (no
 ingest watermark, no 30-day limit), skips rows of devices that no longer
-exist, and writes `net_events` only for days that still have a `net_events`
-leaf — older network rows are counted `rows_out_of_retention`, while
-`sec_events` (kept a year) still receive theirs. Follow it with
-`fwmon-api normalize-backfill --status`; cancel / resume it there.
+exist, and writes only rows inside their target table's retention: network
+rows only for days that still have a `net_events` leaf, `sec_events` rows
+only within `RETENTION_SEC_EVENT_DAYS` (config changes within
+`RETENTION_SEC_CONFIG_CHANGE_DAYS`, forever by default); the rest are counted
+`rows_out_of_retention`. Follow it with `fwmon-api normalize-backfill
+--status`; cancel / resume it there.
+
+The normalized rows keep the raw row's original id in `raw_id`. Once the
+staging table is dropped those ids point at nothing (the live row of that id
+is gone too, unless the day is still in `syslog_messages`): the normalized
+rows stay, their raw line does not. Restore the day again to read it.
+
+A `--from-bucket --renormalize` restore may be running against a database
+that is not the one the archive was written from (rebuilt, its id sequence
+restarted). Before queueing the backfill the worker compares the first live
+`syslog_messages` row in the staged id range with the staged row of that id;
+when they differ the re-normalize is **refused** (the restore fails, the
+staged rows are kept for queries) — re-normalizing would mix the restored
+rows' normalized rows with the live rows' under the same ids. It is a sample,
+not a proof: on a rebuilt database prefer staging only.
 
 Without `--replace` a raw row that already has a normalized row is skipped
 (a second run writes nothing). With `--replace` the rows a raw row already has
 in `net_events` / `sec_events` are **deleted and rewritten** in the same
 batch transaction as the new ones (`rows_replaced`), so every raw row ends
 with exactly the current parser's rows, once — however often it runs or
-crashes. The net_event rollups of those days are recomputed afterwards.
+crashes. A raw row whose re-parse writes nothing (unparsed now, or outside
+the target table's retention) **keeps** its earlier rows (`rows_kept`) rather
+than losing them. The net_event rollups of those days are recomputed
+afterwards.
 
 ### Restore a parser-fixed day
 

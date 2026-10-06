@@ -25,6 +25,7 @@ import (
 //	    [--renormalize]          syslog: then re-normalize the staged rows (normalized-event backfill)
 //	    [--replace]              with --renormalize: rewrite the normalized rows they already have
 //	    [--from-bucket]          select from the bucket's sealed months instead of the database manifest
+//	    [--force]                queue past a refused disk precheck (free space unknown / too small)
 //	    [--rate <rows/s>]        load pace (default 5000)
 //	    [--ttl-days <n>]         the staging table is dropped after (default 7, max 90)
 //	--restores                 list the restores with their staging tables' sizes
@@ -40,6 +41,7 @@ type restoreOpts struct {
 	renormalize *bool
 	replace     *bool
 	fromBucket  *bool
+	force       *bool
 	rate        *int
 	ttlDays     *int
 	list        *bool
@@ -56,6 +58,7 @@ func (o *restoreOpts) register(fs *flag.FlagSet) {
 	o.renormalize = fs.Bool("renormalize", false, "with --restore syslog: re-normalize the staged rows into net_events / sec_events once loaded")
 	o.replace = fs.Bool("replace", false, "with --renormalize: rewrite the normalized rows those raw rows already have (after a parser fix)")
 	o.fromBucket = fs.Bool("from-bucket", false, "with --restore: select the objects from the bucket's sealed months (_MONTH.json), not the database manifest")
+	o.force = fs.Bool("force", false, "with --restore: queue it although the disk precheck refuses (the database volume's free space unknown or too small)")
 	o.rate = fs.Int("rate", 0, fmt.Sprintf("with --restore: rows per second (%d-%d, default %d)", database.ArchiveRestoreMinRate, database.ArchiveRestoreMaxRate, database.ArchiveRestoreDefaultRate))
 	o.ttlDays = fs.Int("ttl-days", 0, fmt.Sprintf("with --restore: days before the staging table is dropped (1-%d, default %d)", database.ArchiveRestoreMaxTTLDays, database.ArchiveRestoreDefaultTTLDays))
 	o.list = fs.Bool("restores", false, "list the restores")
@@ -95,8 +98,8 @@ func (o *restoreOpts) check() string {
 
 // stray reports a --restore option given without --restore.
 func (o *restoreOpts) stray() string {
-	if *o.from != "" || *o.to != "" || *o.device != 0 || *o.renormalize || *o.replace || *o.fromBucket || *o.rate != 0 || *o.ttlDays != 0 {
-		return "--from, --to, --device, --renormalize, --replace, --from-bucket, --rate and --ttl-days go with --restore"
+	if *o.from != "" || *o.to != "" || *o.device != 0 || *o.renormalize || *o.replace || *o.fromBucket || *o.force || *o.rate != 0 || *o.ttlDays != 0 {
+		return "--from, --to, --device, --renormalize, --replace, --from-bucket, --force, --rate and --ttl-days go with --restore"
 	}
 	return ""
 }
@@ -192,7 +195,7 @@ func (o *restoreOpts) run(db archiveStore, cfg *config.Config, audit func(action
 		return fail("--to: %v", err)
 	}
 	req := database.ArchiveRestoreRequest{Stream: *o.stream, From: from, To: to, FromBucket: *o.fromBucket, Renormalize: *o.renormalize,
-		Replace: *o.replace, Rate: *o.rate, TTLDays: *o.ttlDays, RequestedBy: "cli"}
+		Replace: *o.replace, Rate: *o.rate, TTLDays: *o.ttlDays, Force: *o.force, RequestedBy: "cli"}
 	if *o.device != 0 {
 		d := *o.device
 		req.DeviceID = &d
@@ -205,7 +208,7 @@ func (o *restoreOpts) run(db archiveStore, cfg *config.Config, audit func(action
 	if err != nil {
 		return fail("restore: %v", err)
 	}
-	audit("archive_restore", "restore_id="+strconv.FormatUint(uint64(job.ID), 10)+" stream="+job.Stream+" days="+job.FromDay+".."+job.ToDay+" staging="+job.StagingTable)
+	audit("archive_restore", fmt.Sprintf("restore_id=%d stream=%s days=%s..%s staging=%s force=%t", job.ID, job.Stream, job.FromDay, job.ToDay, job.StagingTable, job.Force))
 	fmt.Fprintf(stdout, "restore %d queued: %s %s..%s into %s; the poller's restore worker runs it (fwmon-api archive --restores)\n",
 		job.ID, job.Stream, job.FromDay, job.ToDay, job.StagingTable)
 	if job.FromBucket {

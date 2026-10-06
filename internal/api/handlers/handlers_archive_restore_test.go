@@ -36,6 +36,10 @@ func restoreHandler(t *testing.T) (*Handler, *database.Database, *models.Admin) 
 		SchemaVersion: 2, RowCount: 3, MinTs: &lo, MaxTs: &hi, MsgDayHistogram: &hist, Status: models.ArchiveObjectVerified}).Error; err != nil {
 		t.Fatal(err)
 	}
+	big := uint64(1 << 40)
+	if err := db.Gorm().Create(&models.ServerMetric{Timestamp: time.Now().Add(-time.Minute), DataDiskFreeBytes: &big}).Error; err != nil {
+		t.Fatal(err)
+	}
 	return h, db, u
 }
 
@@ -85,7 +89,7 @@ func TestStartArchiveRestore(t *testing.T) {
 	if jobs != 0 || auditCount(db, "archive_restore") != 0 {
 		t.Fatalf("refused requests queued %d jobs", jobs)
 	}
-	db.Gorm().Where("1 = 1").Delete(&models.ServerMetric{})
+	db.Gorm().Where("data_disk_free_bytes = ?", 1000).Delete(&models.ServerMetric{})
 
 	rec = post(`{"stream":"syslog","from":"2026-10-02","to":"2026-10-02","renormalize":true,"replace":true,"password":"s3cret-pw"}`)
 	var got struct {
@@ -179,5 +183,33 @@ func TestArchiveRestore_CancelResumeDrop(t *testing.T) {
 	}
 	if code := call(http.MethodPost, "/x", "", func(c *gin.Context) { c.Params = gin.Params{{Key: "id", Value: "999"}}; h.CancelArchiveRestore(c) }).Code; code != http.StatusNotFound {
 		t.Fatalf("unknown id: %d", code)
+	}
+}
+
+// TestStartArchiveRestore_Force: with the database volume's free space
+// unknown the queue is refused (409, before the step-up); force queues it
+// (re-authenticated) and the audit row says so.
+func TestStartArchiveRestore_Force(t *testing.T) {
+	h, db, u := restoreHandler(t)
+	db.Gorm().Where("1 = 1").Delete(&models.ServerMetric{})
+	post := func(body string) *httptest.ResponseRecorder {
+		c, rec := backfillCtx(http.MethodPost, "/admin/api/archive/restores", "alice", u.ID, body)
+		h.StartArchiveRestore(c)
+		return rec
+	}
+	if rec := post(`{"stream":"syslog","from":"2026-10-02","to":"2026-10-02","password":"WRONG"}`); rec.Code != http.StatusConflict {
+		t.Fatalf("unknown free space: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := post(`{"stream":"syslog","from":"2026-10-02","to":"2026-10-02","force":true,"password":"WRONG"}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("force with a wrong password: %d", rec.Code)
+	}
+	rec := post(`{"stream":"syslog","from":"2026-10-02","to":"2026-10-02","force":true,"password":"s3cret-pw"}`)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("force: %d %s", rec.Code, rec.Body.String())
+	}
+	var n int64
+	db.Gorm().Model(&models.AuditLog{}).Where("action = ? AND target LIKE ?", "archive_restore", "%force=true%").Count(&n)
+	if n != 1 {
+		t.Fatalf("forced restore audit rows %d", n)
 	}
 }

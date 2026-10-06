@@ -258,11 +258,14 @@ type ArchiveRestoreJob struct {
 	// Renormalize (syslog only): once staged, queue a normalized-event
 	// backfill over the staging table; Replace makes it rewrite the
 	// net_events / sec_events rows those raw rows already have.
-	Renormalize    bool   `json:"renormalize" gorm:"not null;default:false"`
-	Replace        bool   `json:"replace" gorm:"not null;default:false"`
-	RateRowsPerSec int    `json:"rate_rows_per_sec"`
-	StagingTable   string `json:"staging_table" gorm:"size:64"`
-	Status         string `json:"status" gorm:"size:16;not null;default:pending;index"`
+	Renormalize    bool `json:"renormalize" gorm:"not null;default:false"`
+	Replace        bool `json:"replace" gorm:"not null;default:false"`
+	RateRowsPerSec int  `json:"rate_rows_per_sec"`
+	// Force: queued past the disk precheck (re-authenticated and audited);
+	// the worker does not refuse it for disk either.
+	Force        bool   `json:"force" gorm:"not null;default:false"`
+	StagingTable string `json:"staging_table" gorm:"size:64"`
+	Status       string `json:"status" gorm:"size:16;not null;default:pending;index"`
 	// RunnerID is the owner token of the worker run that claimed the job;
 	// every progress write is guarded on it.
 	RunnerID string `json:"runner_id"`

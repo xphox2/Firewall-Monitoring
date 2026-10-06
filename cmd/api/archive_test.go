@@ -251,6 +251,10 @@ func TestArchiveCmd_Restore(t *testing.T) {
 		SchemaVersion: 2, RowCount: 3, MinTs: &lo, MaxTs: &lo, MsgDayHistogram: &hist, Status: models.ArchiveObjectVerified}).Error; err != nil {
 		t.Fatal(err)
 	}
+	big := uint64(1 << 40)
+	if err := db.Gorm().Create(&models.ServerMetric{Timestamp: time.Now(), DataDiskFreeBytes: &big}).Error; err != nil {
+		t.Fatal(err)
+	}
 	cfg := &config.Config{}
 	open := func() (archiveStore, error) { return keepOpenArchive{db}, nil }
 	run := func(args ...string) (int, string, string) {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Archive restore to staging (archive plan PR 9). See models.ArchiveRestoreJob
@@ -143,6 +145,9 @@ type ArchiveRestoreRequest struct {
 	FromBucket  bool
 	Renormalize bool
 	Replace     bool
+	// Force queues past a refused disk precheck (the caller re-authenticated
+	// and audits it); the worker then does not refuse for disk either.
+	Force       bool
 	Rate        int // rows/s; 0 = default
 	TTLDays     int // 0 = default
 	RequestedBy string
@@ -283,23 +288,44 @@ func (d *Database) ArchiveRestoreCoverageNote(ctx context.Context, table string,
 
 // ArchiveRestoreEstimate is the disk precheck of a restore.
 type ArchiveRestoreEstimate struct {
-	Rows      int64 `json:"rows"`
-	Bytes     int64 `json:"bytes"`
-	FreeBytes int64 `json:"free_bytes"`
-	FreeKnown bool  `json:"free_known"`
-	// Enough: Bytes is under half the database volume's free space (true
-	// when the free space is unknown, as for the backfill's precheck).
+	Rows int64 `json:"rows"`
+	// Bytes: the staged rows with their indexes plus, for a re-normalize,
+	// the net_events / sec_events rows it may write (NormalizedBytes).
+	Bytes           int64 `json:"bytes"`
+	NormalizedBytes int64 `json:"normalized_bytes"`
+	FreeBytes       int64 `json:"free_bytes"`
+	// FreeKnown: a server_metrics sample of the last 15 minutes measured the
+	// database volume. Without one the precheck refuses (Enough false).
+	FreeKnown bool `json:"free_known"`
+	// Enough: the free space is known and Bytes is under half of it.
 	Enough bool `json:"enough"`
 }
 
-// EstimateArchiveRestore sizes rows staged rows of table against the database
-// volume's free space (the newest recent server_metrics sample, the
-// backfill precheck's source).
-func (d *Database) EstimateArchiveRestore(table string, rows int64) ArchiveRestoreEstimate {
+// EstimateArchiveRestore sizes rows staged rows of table (and, with
+// renormalize, their normalized rows at the backfill's per-row cost) against
+// the database volume's free space (the newest recent server_metrics sample,
+// the backfill precheck's source). Unlike the backfill's precheck an unknown
+// free space is not enough: a restore can stage tens of GB, and the staging
+// directory's check refuses an unknown free space too.
+func (d *Database) EstimateArchiveRestore(table string, rows int64, renormalize bool) ArchiveRestoreEstimate {
 	est := ArchiveRestoreEstimate{Rows: rows, Bytes: rows * archiveRestoreBytesPerRow[table]}
+	if renormalize {
+		est.NormalizedBytes = rows * normalizeBackfillBytesPerRow
+		est.Bytes += est.NormalizedBytes
+	}
 	est.FreeBytes, est.FreeKnown = d.recentDataDiskFree()
-	est.Enough = !est.FreeKnown || 2*est.Bytes < est.FreeBytes
+	est.Enough = est.FreeKnown && 2*est.Bytes < est.FreeBytes
 	return est
+}
+
+// Refusal explains why est is not enough.
+func (est ArchiveRestoreEstimate) Refusal() string {
+	if !est.FreeKnown {
+		return fmt.Sprintf("the database volume's free space is unknown (no server_metrics sample in the last 15 minutes) for ~%d MiB (%d rows); force it if you know there is room",
+			est.Bytes>>20, est.Rows)
+	}
+	return fmt.Sprintf("%d rows (~%d MiB with what they are re-normalized into) need under half of the database volume's %d MiB free",
+		est.Rows, est.Bytes>>20, est.FreeBytes>>20)
 }
 
 // ArchiveRestorePlan is a validated restore request with its selected
@@ -336,9 +362,11 @@ func (d *Database) PlanArchiveRestore(ctx context.Context, req ArchiveRestoreReq
 			return nil, err
 		}
 	}
-	p.Estimate = d.EstimateArchiveRestore(table, p.Rows)
-	if !p.Estimate.Enough {
-		return p, fmt.Errorf("%w: %d rows (~%d MiB staged) need under half of the %d MiB free", ErrArchiveRestoreDisk, p.Estimate.Rows, p.Estimate.Bytes>>20, p.Estimate.FreeBytes>>20)
+	p.Estimate = d.EstimateArchiveRestore(table, p.Rows, req.Renormalize)
+	// A bucket restore selects on the worker's first run, which prechecks
+	// the disk then; here it has no rows to size.
+	if !p.Estimate.Enough && !req.Force && !req.FromBucket {
+		return p, fmt.Errorf("%w: %s", ErrArchiveRestoreDisk, p.Estimate.Refusal())
 	}
 	return p, nil
 }
@@ -369,7 +397,7 @@ func (d *Database) CreateArchiveRestoreJob(ctx context.Context, p *ArchiveRestor
 	job := &models.ArchiveRestoreJob{
 		RequestedBy: req.RequestedBy, Stream: req.Stream, SourceTable: table,
 		FromDay: req.From.Format(time.DateOnly), ToDay: req.To.Format(time.DateOnly), DeviceID: req.DeviceID,
-		FromBucket: req.FromBucket, Renormalize: req.Renormalize, Replace: req.Replace, RateRowsPerSec: req.Rate,
+		FromBucket: req.FromBucket, Renormalize: req.Renormalize, Replace: req.Replace, RateRowsPerSec: req.Rate, Force: req.Force,
 		Status: models.ArchiveRestorePending, ExpiresAt: now.UTC().Add(time.Duration(req.TTLDays) * 24 * time.Hour), Note: p.Note,
 	}
 	objs := append([]models.ArchiveRestoreObject(nil), p.Objects...)
@@ -486,11 +514,17 @@ func (d *Database) ResumeArchiveRestoreJob(id uint) (bool, error) {
 func (d *Database) DropArchiveRestore(ctx context.Context, id uint, now time.Time) (*models.ArchiveRestoreJob, error) {
 	var job models.ArchiveRestoreJob
 	err := d.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.First(&job, id).Error; err != nil {
+		// The job row's lock serializes this with RetryLoadedArchiveRestores,
+		// which queues a backfill over the table under the same lock: the
+		// backfill count below cannot miss one queued concurrently.
+		if err := lockArchiveRestoreJob(tx, id, &job); err != nil {
 			return err
 		}
 		if !IsArchiveRestoreTable(job.StagingTable) {
 			return fmt.Errorf("restore %d: refusing staging table name %q", id, job.StagingTable)
+		}
+		if !slices.Contains(archiveRestoreDroppable, job.Status) {
+			return ErrArchiveRestoreBusy
 		}
 		var live int64
 		if err := tx.Model(&models.NormalizeBackfillJob{}).Where("source_table = ? AND status IN (?)", job.StagingTable, normalizeBackfillActiveStatuses).
@@ -519,11 +553,24 @@ func (d *Database) DropArchiveRestore(ctx context.Context, id uint, now time.Tim
 	return &job, nil
 }
 
+// lockArchiveRestoreJob reads job id into job holding its row lock (SELECT
+// ... FOR UPDATE on PostgreSQL; SQLite has one writer) until tx ends.
+func lockArchiveRestoreJob(tx *gorm.DB, id uint, job *models.ArchiveRestoreJob) error {
+	q := tx
+	if tx.Dialector.Name() == "postgres" {
+		q = tx.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	return q.First(job, id).Error
+}
+
 // ExpiredArchiveRestoreJobs lists the jobs whose staging table is due to be
-// dropped at now (finished, past ExpiresAt).
+// dropped at now: done, failed or cancelled, past ExpiresAt. A loaded job is
+// not: its re-normalize has not been queued yet (it is dropped once that
+// backfill has run and the TTL has passed).
 func (d *Database) ExpiredArchiveRestoreJobs(ctx context.Context, now time.Time) ([]models.ArchiveRestoreJob, error) {
 	var jobs []models.ArchiveRestoreJob
-	err := d.db.WithContext(ctx).Where("status IN (?) AND expires_at < ?", archiveRestoreDroppable, now).Order("id").Find(&jobs).Error
+	err := d.db.WithContext(ctx).Where("status IN (?) AND expires_at < ?",
+		[]string{models.ArchiveRestoreDone, models.ArchiveRestoreFailed, models.ArchiveRestoreCancelled}, now).Order("id").Find(&jobs).Error
 	return jobs, err
 }
 
@@ -940,6 +987,13 @@ func (d *Database) RetryLoadedArchiveRestores(ctx context.Context) (int, error) 
 		job := &jobs[i]
 		queued, busy := false, false
 		err := d.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			// Under the job row's lock (see DropArchiveRestore), still loaded.
+			if err := lockArchiveRestoreJob(tx, job.ID, job); err != nil {
+				return err
+			}
+			if job.Status != models.ArchiveRestoreLoaded {
+				return errArchiveRestoreLost
+			}
 			id, err := enqueueRestoreBackfill(tx, job)
 			if err != nil {
 				return err
@@ -947,6 +1001,9 @@ func (d *Database) RetryLoadedArchiveRestores(ctx context.Context) (int, error) 
 			if id == nil {
 				busy = true
 				return nil
+			}
+			if archiveRestoreRetryHook != nil {
+				archiveRestoreRetryHook(job)
 			}
 			now := time.Now()
 			res := tx.Model(&models.ArchiveRestoreJob{}).Where("id = ? AND status = ?", job.ID, models.ArchiveRestoreLoaded).
@@ -972,6 +1029,11 @@ func (d *Database) RetryLoadedArchiveRestores(ctx context.Context) (int, error) 
 	}
 	return n, nil
 }
+
+// archiveRestoreRetryHook, when non-nil, runs inside the queueing
+// transaction of a loaded job after its backfill row is inserted (tests: a
+// concurrent drop).
+var archiveRestoreRetryHook func(job *models.ArchiveRestoreJob)
 
 // enqueueRestoreBackfill queues the normalized-event backfill over job's
 // staging table on tx: [FromDay, ToDay + 1 day), its device, replace mode.
@@ -1022,3 +1084,52 @@ func (d *Database) ArchiveRestoreStatusCounts(ctx context.Context) (map[string]i
 
 // ArchiveRestoreBatchSize is the lines per load transaction.
 func ArchiveRestoreBatchSize() int { return archiveRestoreBatchSize }
+
+// ArchiveRestoreIDConflict looks for a sign that the staged syslog rows'
+// original ids are taken by OTHER rows in syslog_messages — a database
+// rebuilt since the archive was written (a --from-bucket restore), whose id
+// sequence restarted. Re-normalizing then would key net_events / sec_events
+// rows by ids the live rows also use (the dedup probe would skip, and replace
+// mode delete, the live rows' normalized rows). It reads the first live row
+// with an id in the staged range (one primary-key descent per leaf) and the
+// staged row of that id. It is a conflict when the two differ (received,
+// device or message time), or when no row is staged with that id although
+// the live row is of a day (and device) the restore covers. "" when none is
+// seen. A heuristic, not a proof: it samples the range's first live row.
+func (d *Database) ArchiveRestoreIDConflict(ctx context.Context, job *models.ArchiveRestoreJob) (string, error) {
+	if job.SourceTable != export.TableSyslog || !IsArchiveRestoreTable(job.StagingTable) {
+		return "", nil
+	}
+	var bounds struct{ Lo, Hi *int64 }
+	if err := d.db.WithContext(ctx).Table(job.StagingTable).Select("min(id) AS lo, max(id) AS hi").Scan(&bounds).Error; err != nil {
+		return "", err
+	}
+	if bounds.Lo == nil {
+		return "", nil
+	}
+	var live []models.SyslogMessage
+	if err := d.db.WithContext(ctx).Table(export.TableSyslog).Where("id >= ? AND id <= ?", *bounds.Lo, *bounds.Hi).Order("id").Limit(1).Find(&live).Error; err != nil {
+		return "", err
+	}
+	if len(live) == 0 {
+		return "", nil
+	}
+	var staged []models.SyslogMessage
+	if err := d.db.WithContext(ctx).Table(job.StagingTable).Where("id = ?", live[0].ID).Limit(1).Find(&staged).Error; err != nil {
+		return "", err
+	}
+	if len(staged) == 0 {
+		// The live row is not staged: a conflict only if its message day is
+		// one the restore covers (then the archive would have it).
+		from, _ := ParseArchiveRestoreDay(job.FromDay)
+		to, _ := ParseArchiveRestoreDay(job.ToDay)
+		ts := live[0].Timestamp.UTC()
+		if ts.Before(from) || !ts.Before(to.AddDate(0, 0, 1)) || (job.DeviceID != nil && *job.DeviceID != live[0].DeviceID) {
+			return "", nil
+		}
+	} else if s := staged[0]; s.CreatedAt.Equal(live[0].CreatedAt) && s.DeviceID == live[0].DeviceID && s.Timestamp.Equal(live[0].Timestamp) {
+		return "", nil
+	}
+	return fmt.Sprintf("syslog_messages id %d (received %s) is not the archived row with that id: this database's ids no longer match the archive's (rebuilt?), so re-normalizing the staged rows would mix their normalized rows with the live ones; the staged rows are kept for queries, re-normalize refused",
+		live[0].ID, live[0].CreatedAt.UTC().Format(time.RFC3339)), nil
+}

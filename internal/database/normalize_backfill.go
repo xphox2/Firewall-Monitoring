@@ -924,6 +924,7 @@ type backfillProgress struct {
 	unparsed       int64
 	replaced       int64
 	outOfRetention int64
+	kept           int64
 }
 
 // backfillDelete is a replace-mode batch's delete: the net_events /
@@ -974,7 +975,7 @@ func (d *Database) commitBackfillBatch(ctx context.Context, jobID uint, runner s
 				Updates(map[string]interface{}{
 					"current_partition": p.partition, "cursor_ts": p.cursorTs, "cursor_id": p.cursorID,
 					"rows_scanned": p.scanned, "rows_written": p.written, "rows_skipped": p.skipped, "rows_unparsed": p.unparsed,
-					"rows_replaced": p.replaced, "rows_out_of_retention": p.outOfRetention, "updated_at": now,
+					"rows_replaced": p.replaced, "rows_out_of_retention": p.outOfRetention, "rows_kept": p.kept, "updated_at": now,
 				})
 			if res.Error != nil {
 				return res.Error
@@ -1043,10 +1044,10 @@ func (d *Database) commitBackfillBatch(ctx context.Context, jobID uint, runner s
 	tag, err := tx.Exec(ctx, `UPDATE normalize_backfill_jobs
 		SET current_partition = $1, cursor_ts = $2, cursor_id = $3,
 		    rows_scanned = $4, rows_written = $5, rows_skipped = $6, rows_unparsed = $7, updated_at = $8,
-		    rows_replaced = $13, rows_out_of_retention = $14
+		    rows_replaced = $13, rows_out_of_retention = $14, rows_kept = $15
 		WHERE id = $9 AND runner_id = $10 AND status IN ($11, $12)`,
 		p.partition, p.cursorTs, p.cursorID, p.scanned, p.written, p.skipped, p.unparsed, now,
-		int64(jobID), runner, NormalizeBackfillStatusRunning, NormalizeBackfillStatusCancelling, p.replaced, p.outOfRetention)
+		int64(jobID), runner, NormalizeBackfillStatusRunning, NormalizeBackfillStatusCancelling, p.replaced, p.outOfRetention, p.kept)
 	if err != nil {
 		return fmt.Errorf("record batch progress: %w", err)
 	}
@@ -1079,6 +1080,33 @@ func (d *Database) deviceVendors() (map[uint]string, error) {
 		}
 	}
 	return m, nil
+}
+
+// secEventFloors are the sec_events retention cutoffs at now, as
+// CleanupOldData applies them: every class but config_change older than
+// RETENTION_SEC_EVENT_DAYS, config_change older than
+// RETENTION_SEC_CONFIG_CHANGE_DAYS (zero time = kept forever / no floor).
+func (d *Database) secEventFloors(now time.Time) (other, configChange time.Time) {
+	if d.secEventRetentionDays > 0 {
+		other = now.AddDate(0, 0, -d.secEventRetentionDays)
+	}
+	if d.secConfigChangeRetentDays > 0 {
+		configChange = now.AddDate(0, 0, -d.secConfigChangeRetentDays)
+	}
+	return other, configChange
+}
+
+// restoredOutOfRetention reports whether a re-parsed restored row is older
+// than its target table's retention: the net_events floor (the oldest day
+// leaf) for the network class, the sec_events cutoff of its class otherwise.
+func restoredOutOfRetention(ev *normalize.Event, ts, netFloor, secFloor, cfgFloor time.Time) bool {
+	switch ev.Class {
+	case normalize.ClassNetwork:
+		return ts.Before(netFloor)
+	case normalize.ClassConfigChange:
+		return !cfgFloor.IsZero() && ts.Before(cfgFloor)
+	}
+	return !secFloor.IsZero() && ts.Before(secFloor)
 }
 
 // deviceIDSet is the set of every device id still in devices (retired
@@ -1258,7 +1286,7 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint, runner 
 	progress := backfillProgress{
 		partition: job.CurrentPartition, cursorTs: cursorTs, cursorID: cursorID,
 		scanned: job.RowsScanned, written: job.RowsWritten, skipped: job.RowsSkipped, unparsed: job.RowsUnparsed,
-		replaced: job.RowsReplaced, outOfRetention: job.RowsOutOfRetention,
+		replaced: job.RowsReplaced, outOfRetention: job.RowsOutOfRetention, kept: job.RowsKept,
 	}
 	observed := map[observedKey]*observedAcc{}
 	batch := 0
@@ -1356,6 +1384,7 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint, runner 
 		}
 
 		floor := d.netEventFloor(time.Now())
+		secFloor, cfgFloor := d.secEventFloors(time.Now())
 		var (
 			nets  = make([]models.NetEvent, 0, len(rows))
 			secs  []models.SecEvent
@@ -1376,8 +1405,8 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint, runner 
 			}
 			if job.SourceTable != "" {
 				// Restored history. A device purged since must not get
-				// normalized rows back; the retention floor applies per
-				// target table below (sec_events keep a year).
+				// normalized rows back; the retention floors apply per
+				// target table below.
 				if !devices[msg.DeviceID] {
 					progress.skipped++
 					if !goneWarned {
@@ -1400,25 +1429,32 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint, runner 
 			if !ok {
 				vendor = "generic"
 			}
+			ev, out := normalizeStored(vendor, msg)
+			if out.Kind != normalize.OutcomeOK {
+				progress.unparsed++
+				if had {
+					progress.kept++ // nothing to replace them with: keep the earlier rows
+				}
+				continue
+			}
+			if job.SourceTable != "" && restoredOutOfRetention(&ev, msg.Timestamp, floor, secFloor, cfgFloor) {
+				// Below the target table's retention: a net_events row would
+				// land in net_events_default and be trimmed, a sec_events row
+				// be deleted by the next cleanup.
+				progress.outOfRetention++
+				if had {
+					progress.kept++
+				}
+				continue
+			}
 			if had {
 				// Replace: the raw row's earlier normalized rows go, in the
-				// batch transaction, whatever it re-parses to now.
+				// batch transaction, and the re-parse's take their place.
 				if del == nil {
 					del = &backfillDelete{lo: rows[0].Timestamp.UTC(), hi: rows[len(rows)-1].Timestamp.UTC(), deviceID: job.DeviceID}
 				}
 				del.ids = append(del.ids, int64(msg.ID))
 				progress.replaced++
-			}
-			ev, out := normalizeStored(vendor, msg)
-			if out.Kind != normalize.OutcomeOK {
-				progress.unparsed++
-				continue
-			}
-			if job.SourceTable != "" && ev.Class == normalize.ClassNetwork && msg.Timestamp.Before(floor) {
-				// Its net_events day leaf is gone: it would land in
-				// net_events_default and be trimmed.
-				progress.outOfRetention++
-				continue
 			}
 			rawID := int64(msg.ID)
 			if ev.Class == normalize.ClassNetwork {

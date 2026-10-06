@@ -93,6 +93,10 @@ func seedManifest(t *testing.T, d *Database) {
 func TestSelectArchiveRestoreObjects(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	seedManifest(t, d)
+	big := uint64(1 << 40)
+	if err := d.db.Create(&models.ServerMetric{Timestamp: time.Now(), DataDiskFreeBytes: &big}).Error; err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	objs, rows, err := d.SelectArchiveRestoreObjects(ctx, "syslog", rday(10, 1), rday(10, 1), nil)
 	if err != nil || len(objs) != 1 || rows != 2 || objs[0].DayRows != 2 || objs[0].RowCount != 5 || objs[0].ChunkIDHi != 100 || objs[0].ChunkSeq != 1 {
@@ -123,16 +127,37 @@ func TestSelectArchiveRestoreObjects(t *testing.T) {
 	}
 }
 
-// TestQueueArchiveRestore_DiskPrecheck: a restore whose staged rows would
-// take half the database volume's free space or more is refused.
+// TestQueueArchiveRestore_DiskPrecheck: a restore is refused while the
+// database volume's free space is unknown, or when its staged rows (plus,
+// re-normalized, their normalized rows) would take half of it or more;
+// force queues it anyway and the job carries the force.
 func TestQueueArchiveRestore_DiskPrecheck(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	seedManifest(t, d)
-	free := uint64(2 * 9 * 1300) // exactly twice the estimate: not under half
+	req := ArchiveRestoreRequest{Stream: "syslog", From: rday(10, 1), To: rday(10, 2)}
+	if _, est, err := d.QueueArchiveRestore(context.Background(), req, time.Now()); !errors.Is(err, ErrArchiveRestoreDisk) || est.FreeKnown || !strings.Contains(err.Error(), "unknown") {
+		t.Fatalf("unknown free space: %+v %v", est, err)
+	}
+	forced := req
+	forced.Force = true
+	if job, _, err := d.QueueArchiveRestore(context.Background(), forced, time.Now()); err != nil || !job.Force {
+		t.Fatalf("forced: %+v %v", job, err)
+	}
+	if _, _, err := d.QueueArchiveRestore(context.Background(), ArchiveRestoreRequest{Stream: "syslog", From: rday(10, 1), To: rday(10, 2), FromBucket: true}, time.Now()); err != nil {
+		t.Fatalf("a bucket restore is prechecked by the worker after its selection: %v", err)
+	}
+	free := uint64(2*9*1300 + 1) // room for the staged rows ...
+	if err := d.db.Create(&models.ServerMetric{Timestamp: time.Now().Add(-time.Second), DataDiskFreeBytes: &free}).Error; err != nil {
+		t.Fatal(err)
+	}
+	renorm := ArchiveRestoreRequest{Stream: "syslog", From: rday(10, 1), To: rday(10, 2), Renormalize: true}
+	if _, est, err := d.QueueArchiveRestore(context.Background(), renorm, time.Now()); !errors.Is(err, ErrArchiveRestoreDisk) || est.NormalizedBytes != 9*512 {
+		t.Fatalf("... not for their normalized rows too: %+v %v", est, err)
+	}
+	free = uint64(2 * 9 * 1300) // exactly twice the estimate: not under half
 	if err := d.db.Create(&models.ServerMetric{Timestamp: time.Now(), DataDiskFreeBytes: &free}).Error; err != nil {
 		t.Fatal(err)
 	}
-	req := ArchiveRestoreRequest{Stream: "syslog", From: rday(10, 1), To: rday(10, 2)}
 	_, est, err := d.QueueArchiveRestore(context.Background(), req, time.Now())
 	if !errors.Is(err, ErrArchiveRestoreDisk) || est.Bytes != 9*1300 || !est.FreeKnown || est.Enough {
 		t.Fatalf("precheck: %+v %v", est, err)
@@ -298,17 +323,35 @@ func staleRows(t *testing.T, d *Database, f rbFixture, k int) (stale int) {
 // over a restore's staging table rewrites the pre-fix rows (wrong action,
 // wrong class) so every parsed raw row has exactly one normalized row, the
 // parser's; a batch that dies inside its transaction and is resumed changes
-// nothing; a second replace run leaves the same rows. Rows of a device that
-// no longer exists are skipped, a network row older than the net_events
-// floor is counted out of retention while the old login still reaches
-// sec_events, and the rollup rewind is queued.
+// nothing; a second replace run leaves the same rows. A raw row whose re-parse
+// writes nothing — unparsed, or older than its target table's retention (the
+// old traffic row below the net_events floor, the old login below a 50-day
+// sec_events retention) — keeps its earlier rows (rows_kept). Rows of a
+// device that no longer exists are skipped, and the rollup rewind is queued.
 func TestNormalizeBackfill_RestoreReplaceExactlyOnce(t *testing.T) {
 	d := NewDatabaseForTesting(t)
+	d.secEventRetentionDays = 50
 	prevBatch := normalizeBackfillBatchSize
 	normalizeBackfillBatchSize = 40
 	t.Cleanup(func() { normalizeBackfillBatchSize = prevBatch })
 	f := restoreBackfillFixture(t, d, 300)
 	stale := staleRows(t, d, f, 30)
+	// Pre-fix rows of raw rows whose re-parse writes nothing: the first
+	// unparsed row, and the traffic row older than the net_events floor.
+	var keep []models.NetEvent
+	for _, m := range f.rows {
+		if (m.Message == bfUnparsed && len(keep) == 0) || m.ID == 90001 {
+			ts := m.Timestamp
+			keep = append(keep, models.NetEvent{Ts: ts, DeviceID: f.dev.ID, Action: 99, RawID: ptrInt64(int64(m.ID)), RawTS: &ts})
+		}
+	}
+	if len(keep) != 2 {
+		t.Fatalf("%d rows to keep", len(keep))
+	}
+	if err := d.SaveNetEvents(keep); err != nil {
+		t.Fatal(err)
+	}
+	written := f.net + f.sec - 1 // the old login is below the sec_events retention
 
 	// Batch 3 dies inside its transaction (its delete, inserts and cursor
 	// roll back together).
@@ -334,16 +377,18 @@ func TestNormalizeBackfill_RestoreReplaceExactlyOnce(t *testing.T) {
 	check := func(run string, j *models.NormalizeBackfillJob, wantReplaced int) {
 		t.Helper()
 		net, sec, distinct := bfCounts(t, d) // fails on any raw id normalized twice
-		if net != int64(f.net) || sec != int64(f.sec) || distinct != int64(f.net+f.sec) {
-			t.Fatalf("%s: %d net / %d sec / %d raw ids; want %d net, %d sec (every parsed row exactly once)", run, net, sec, distinct, f.net, f.sec)
+		if net != int64(f.net+2) || sec != int64(f.sec-1) || distinct != int64(written+2) {
+			t.Fatalf("%s: %d net / %d sec / %d raw ids; want %d net (2 kept), %d sec (every parsed row exactly once)", run, net, sec, distinct, f.net+2, f.sec-1)
 		}
 		var wrong int64
-		d.db.Model(&models.NetEvent{}).Where("action = ?", 99).Count(&wrong)
-		if wrong != 0 {
-			t.Fatalf("%s: %d pre-fix rows survived the replace", run, wrong)
+		d.db.Model(&models.NetEvent{}).Where("action = ? AND raw_id IN ?", 99, []int64{int64(*keep[0].RawID), 90001}).Count(&wrong)
+		var all99 int64
+		d.db.Model(&models.NetEvent{}).Where("action = ?", 99).Count(&all99)
+		if wrong != 2 || all99 != 2 {
+			t.Fatalf("%s: %d pre-fix rows left (%d of the two kept); want exactly the 2 kept", run, all99, wrong)
 		}
-		if j.RowsReplaced != int64(wantReplaced) || j.RowsOutOfRetention != int64(f.oldNet) || j.RowsSkipped != int64(f.gone) ||
-			j.RowsUnparsed != int64(f.unpars) || j.RowsScanned != int64(len(f.rows)) || j.RowsWritten != int64(f.net+f.sec) {
+		if j.RowsReplaced != int64(wantReplaced) || j.RowsKept != 2 || j.RowsOutOfRetention != 2 || j.RowsSkipped != int64(f.gone) ||
+			j.RowsUnparsed != int64(f.unpars) || j.RowsScanned != int64(len(f.rows)) || j.RowsWritten != int64(written) {
 			t.Fatalf("%s counters: %+v (want replaced %d)", run, j, wantReplaced)
 		}
 	}
@@ -372,7 +417,7 @@ func TestNormalizeBackfill_RestoreReplaceExactlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	check("second run", got2, f.net+f.sec) // every row written is replaced (the old network row wrote none)
+	check("second run", got2, written) // every row written is replaced
 	if o := observed(); o != obs {
 		t.Fatalf("device_field_observed counted the replaced rows again: %d, was %d", o, obs)
 	}

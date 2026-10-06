@@ -40,7 +40,10 @@ type archiveRestoreRequest struct {
 	Replace     bool `json:"replace"`
 	// FromBucket selects from the bucket's sealed months instead of the
 	// database manifest.
-	FromBucket     bool   `json:"from_bucket"`
+	FromBucket bool `json:"from_bucket"`
+	// Force queues past a refused disk precheck (an unknown free space, or
+	// too little): re-authenticated like every queue, and audited.
+	Force          bool   `json:"force"`
 	RateRowsPerSec int    `json:"rate_rows_per_sec"`
 	TTLDays        int    `json:"ttl_days"`
 	Password       string `json:"password"`
@@ -95,7 +98,8 @@ func (h *Handler) ListArchiveRestores(c *gin.Context) {
 // StartArchiveRestore queues a restore. Checks, in order: the bucket is
 // configured (409), body and days (400), device exists (404), the plan —
 // request rules (400), no archived object for the days (404), disk headroom
-// (409 with the estimate) — then re-authentication (403), so a request that
+// (409 with the estimate, also when the free space is unknown; force queues
+// past it) — then re-authentication (403), so a request that
 // cannot run never spends a TOTP code. 202 with the job and the estimate;
 // audit-logged as archive_restore.
 func (h *Handler) StartArchiveRestore(c *gin.Context) {
@@ -129,7 +133,7 @@ func (h *Handler) StartArchiveRestore(c *gin.Context) {
 		}
 	}
 	req := database.ArchiveRestoreRequest{Stream: body.Stream, From: from, To: to, DeviceID: body.DeviceID, FromBucket: body.FromBucket,
-		Renormalize: body.Renormalize, Replace: body.Replace, Rate: body.RateRowsPerSec, TTLDays: body.TTLDays}
+		Renormalize: body.Renormalize, Replace: body.Replace, Rate: body.RateRowsPerSec, TTLDays: body.TTLDays, Force: body.Force}
 	plan, err := db.PlanArchiveRestore(c.Request.Context(), req)
 	switch {
 	case errors.Is(err, database.ErrArchiveRestoreInvalid):
@@ -165,8 +169,8 @@ func archiveRestoreTarget(j *models.ArchiveRestoreJob) string {
 	if j.DeviceID != nil {
 		dev = strconv.FormatUint(uint64(*j.DeviceID), 10)
 	}
-	return fmt.Sprintf("restore_id=%d stream=%s days=%s..%s device=%s staging=%s renormalize=%t replace=%t from_bucket=%t",
-		j.ID, j.Stream, j.FromDay, j.ToDay, dev, j.StagingTable, j.Renormalize, j.Replace, j.FromBucket)
+	return fmt.Sprintf("restore_id=%d stream=%s days=%s..%s device=%s staging=%s renormalize=%t replace=%t from_bucket=%t force=%t",
+		j.ID, j.Stream, j.FromDay, j.ToDay, dev, j.StagingTable, j.Renormalize, j.Replace, j.FromBucket, j.Force)
 }
 
 // archiveRestoreJob loads the :id job, writing 400 / 404 / 500 itself.

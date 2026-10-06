@@ -1,6 +1,8 @@
 package worker
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -95,8 +97,18 @@ func (h *harness) newRestore() *RestoreWorker {
 	return r
 }
 
+// seedFreeSpace records a server_metrics sample of the database volume now
+// (the restore's disk precheck refuses an unknown free space).
+func seedFreeSpace(t *testing.T, db *database.Database, free uint64) {
+	t.Helper()
+	if err := db.Gorm().Create(&models.ServerMetric{Timestamp: time.Now(), DataDiskFreeBytes: &free}).Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (h *harness) queueRestore(req database.ArchiveRestoreRequest) *models.ArchiveRestoreJob {
 	h.t.Helper()
+	seedFreeSpace(h.t, h.db, 1<<40)
 	if req.RequestedBy == "" {
 		req.RequestedBy = "alice"
 	}
@@ -391,6 +403,12 @@ func TestRestore_RenormalizeQueuesBackfill(t *testing.T) {
 	if j := h.restoreJob(job.ID); j.Status != models.ArchiveRestoreLoaded || j.BackfillJobID != nil || j.RowsLoaded != 1 {
 		t.Fatalf("with another backfill active: %+v", j)
 	}
+	// Past its TTL while loaded: kept, its re-normalize has not run yet.
+	h.db.Gorm().Model(&models.ArchiveRestoreJob{}).Where("id = ?", job.ID).Update("expires_at", time.Now().Add(-time.Hour))
+	r.Tick(ctx)
+	if j := h.restoreJob(job.ID); j.Status != models.ArchiveRestoreLoaded || !h.db.Gorm().Migrator().HasTable(job.StagingTable) {
+		t.Fatalf("the TTL dropped a loaded restore: %+v", j)
+	}
 	h.db.Gorm().Model(&other).Update("status", database.NormalizeBackfillStatusDone)
 	r.Tick(ctx)
 	j := h.restoreJob(job.ID)
@@ -550,3 +568,114 @@ func TestRestore_BucketOutageFailsResumable(t *testing.T) {
 }
 
 var _ io.Writer = (*contentCheck)(nil)
+
+// TestRestore_FromBucketIDConflict: a bucket restore re-normalized into a
+// database whose ids match the archive's is queued; once a live row holds a
+// restored id with other content (a rebuilt database), the re-normalize is
+// refused and the staged rows are kept.
+func TestRestore_FromBucketIDConflict(t *testing.T) {
+	h := newHarness(t, day(10, 2, 22, 0), func(c *config.ArchiveConfig) { c.FlowsEnabled = false })
+	ids := sealedFixture(t, h)
+	ok := h.queueRestore(database.ArchiveRestoreRequest{Stream: export.StreamSyslog, From: day(9, 10, 0, 0), To: day(9, 10, 0, 0), FromBucket: true, Renormalize: true})
+	r := h.newRestore()
+	r.Tick(ctx)
+	if j := h.restoreJob(ok.ID); j.Status != models.ArchiveRestoreDone || j.BackfillJobID == nil {
+		t.Fatalf("no conflict: %+v", j)
+	}
+	h.db.Gorm().Model(&models.NormalizeBackfillJob{}).Where("id = ?", *h.restoreJob(ok.ID).BackfillJobID).Update("status", database.NormalizeBackfillStatusDone)
+	// The rebuilt database's own row 10 September, under a restored id.
+	live := models.SyslogMessage{ID: uint(ids[10]), Timestamp: day(9, 10, 12, 0), DeviceID: 1, ProbeID: 1, Hostname: "fw-example-01",
+		Message: "srcip=192.0.2.99", Severity: 5, CreatedAt: day(10, 2, 21, 0)}
+	if err := h.db.Gorm().Create(&live).Error; err != nil {
+		t.Fatal(err)
+	}
+	bad := h.queueRestore(database.ArchiveRestoreRequest{Stream: export.StreamSyslog, From: day(9, 10, 0, 0), To: day(9, 10, 0, 0), FromBucket: true, Renormalize: true})
+	r.Tick(ctx)
+	j := h.restoreJob(bad.ID)
+	if j.Status != models.ArchiveRestoreFailed || !strings.Contains(j.Error, "no longer match the archive") || j.BackfillJobID != nil || j.RowsLoaded != 2 {
+		t.Fatalf("conflict: %+v", j)
+	}
+	if n := len(stagedSyslog(t, h.db, bad.StagingTable)); n != 2 {
+		t.Fatalf("%d staged rows kept, want 2", n)
+	}
+}
+
+// TestRestore_DecoderRefusalBeforeAnyBatch: an object whose last line the
+// decoder refuses (the row format drifted) is refused whole — every line is
+// decoded before the first batch — so nothing of it is staged, even with
+// batches of one line.
+func TestRestore_DecoderRefusalBeforeAnyBatch(t *testing.T) {
+	h := newHarness(t, day(10, 5, 11, 50), func(c *config.ArchiveConfig) { c.FlowsEnabled = false })
+	seedSyslog(t, h.db, day(10, 4, 1, 0), day(10, 4, 2, 0), day(10, 4, 3, 0), day(10, 4, 4, 0))
+	h.tick(ctx)
+	objs := h.objects(h.chunks(export.TableSyslog)[0].ID)
+	body, found := h.get(objs[0].ObjectKey)
+	if !found {
+		t.Fatal("object missing")
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := io.ReadAll(zr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.SplitAfter(string(raw), "\n")
+	last := lines[len(lines)-2]
+	raw = append(raw, []byte(strings.Replace(last, `{"id":`, `{"extra":1,"id":`, 1))...)
+	var gz bytes.Buffer
+	zw := gzip.NewWriter(&gz)
+	zw.Write(raw)
+	zw.Close()
+	path := filepath.Join(t.TempDir(), "o.ndjson.gz")
+	if err := os.WriteFile(path, gz.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+
+	job := &models.ArchiveRestoreJob{Stream: "syslog", SourceTable: export.TableSyslog, FromDay: "2026-10-04", ToDay: "2026-10-04",
+		Status: models.ArchiveRestoreRunning, RunnerID: "runner-x", RateRowsPerSec: 100000, ExpiresAt: time.Now().Add(time.Hour)}
+	h.db.Gorm().Create(job)
+	job.StagingTable = fmt.Sprintf("restore_%d_syslog_messages", job.ID)
+	h.db.Gorm().Model(job).Update("staging_table", job.StagingTable)
+	if err := h.db.EnsureArchiveRestoreTable(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	obj := &models.ArchiveRestoreObject{JobID: job.ID, ObjectKey: objs[0].ObjectKey, SchemaVersion: objs[0].SchemaVersion, Status: models.ArchiveRestoreObjectPending}
+	h.db.Gorm().Create(obj)
+	database.SetArchiveRestoreBatchForTesting(t, 1, nil)
+	r := h.newRestore()
+	err = r.stage(ctx, job, "runner-x", obj, restoreFilter{from: day(10, 4, 0, 0), end: day(10, 5, 0, 0)}, file)
+	if err == nil || !errors.Is(err, errRestoreRefused) {
+		t.Fatalf("stage: %v", err)
+	}
+	if n := len(stagedSyslog(t, h.db, job.StagingTable)); n != 0 {
+		t.Fatalf("%d rows staged before the refused line", n)
+	}
+}
+
+// TestRestore_WorkerDiskPrecheck: the worker re-checks the disk before it
+// loads: a job queued while the free space was known fails once it is
+// unknown; a forced job runs anyway.
+func TestRestore_WorkerDiskPrecheck(t *testing.T) {
+	h := newHarness(t, day(10, 5, 11, 50), func(c *config.ArchiveConfig) { c.FlowsEnabled = false })
+	seedSyslog(t, h.db, day(10, 4, 1, 0), day(10, 4, 2, 0))
+	h.tick(ctx)
+	plain := h.queueRestore(database.ArchiveRestoreRequest{Stream: export.StreamSyslog, From: day(10, 4, 0, 0), To: day(10, 4, 0, 0)})
+	forced := h.queueRestore(database.ArchiveRestoreRequest{Stream: export.StreamSyslog, From: day(10, 4, 0, 0), To: day(10, 4, 0, 0), Force: true})
+	h.db.Gorm().Where("1 = 1").Delete(&models.ServerMetric{})
+	r := h.newRestore()
+	r.Tick(ctx)
+	r.Tick(ctx)
+	if j := h.restoreJob(plain.ID); j.Status != models.ArchiveRestoreFailed || !strings.Contains(j.Error, "unknown") || j.RowsLoaded != 0 {
+		t.Fatalf("unforced, free space unknown: %+v", j)
+	}
+	if j := h.restoreJob(forced.ID); j.Status != models.ArchiveRestoreDone || j.RowsLoaded != 2 {
+		t.Fatalf("forced: %+v", j)
+	}
+}

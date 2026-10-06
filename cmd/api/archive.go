@@ -111,7 +111,7 @@ func archiveCmd(args []string, stdout, stderr io.Writer, cfg *config.Config, ope
 		fmt.Fprintln(stderr, "       fwmon-api archive --status [--json]")
 		fmt.Fprintln(stderr, "       fwmon-api archive --verify-month syslog|sflow|netflow|sflow-counters <YYYY-MM>")
 		fmt.Fprintln(stderr, "       fwmon-api archive --restore syslog|sflow|netflow|sflow-counters --from <YYYY-MM-DD> --to <YYYY-MM-DD>")
-		fmt.Fprintln(stderr, "             [--device <id>] [--renormalize [--replace]] [--from-bucket] [--rate <rows/s>] [--ttl-days <n>]")
+		fmt.Fprintln(stderr, "             [--device <id>] [--renormalize [--replace]] [--from-bucket] [--force] [--rate <rows/s>] [--ttl-days <n>]")
 		fmt.Fprintln(stderr, "       fwmon-api archive --restores | --cancel-restore <id> | --resume-restore <id> | --drop-restore <id>")
 		fs.PrintDefaults()
 	}

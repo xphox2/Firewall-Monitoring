@@ -63,6 +63,12 @@ type Database struct {
 	// daily net_events leaves reach exactly as far back as retention does. 0
 	// (the SQLite harness) falls back to defaultNetEventLookbackDays.
 	netEventRetentionDays int
+	// secEventRetentionDays / secConfigChangeRetentDays are
+	// RETENTION_SEC_EVENT_DAYS (resolved) and RETENTION_SEC_CONFIG_CHANGE_DAYS
+	// (0 = forever): the sec_events floors of a backfill over restored
+	// history. 0 / 0 in tests = no floor.
+	secEventRetentionDays     int
+	secConfigChangeRetentDays int
 
 	// statementTimeout is DB_STATEMENT_TIMEOUT as Connect applied it to both
 	// pools (0: not set by the DSN, the server default applies). The archive's
@@ -245,8 +251,12 @@ func Connect(cfg *config.Config) (*Database, error) {
 		// reaches (partitionLookbackDays), so EnsurePartitions needs the window
 		// CleanupOldData will use — recorded here once, from the same config.
 		netEventRetentionDays: cfg.Retention.NetEventWindow(),
-		statementTimeout:      cfg.Database.StatementTimeout,
-		archiveGateCfg:        ArchiveGateConfig{Syslog: cfg.Archive.SyslogEnabled, Flows: cfg.Archive.FlowsEnabled}}
+		// sec_events retention by class, as CleanupOldData applies it: the
+		// floor a restored row's sec_events row must not fall below.
+		secEventRetentionDays:     cfg.Retention.Days(cfg.Retention.SecEventDays),
+		secConfigChangeRetentDays: cfg.Retention.SecConfigChangeDays,
+		statementTimeout:          cfg.Database.StatementTimeout,
+		archiveGateCfg:            ArchiveGateConfig{Syslog: cfg.Archive.SyslogEnabled, Flows: cfg.Archive.FlowsEnabled}}
 
 	// Initialize the pgx pool alongside GORM. pgxpool gives us direct access
 	// to the Postgres COPY protocol for bulk inserts (SaveFlowSamples on the
