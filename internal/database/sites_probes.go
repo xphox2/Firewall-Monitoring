@@ -25,11 +25,15 @@ func (d *Database) GetAllSettings() ([]models.SystemSetting, error) {
 // helpers below (v0.11.46 — admin-UI-managed settings; see the "no new env vars"
 // configuration principle).
 func (d *Database) GetSettingValue(key string) (string, bool) {
-	var s models.SystemSetting
-	if err := d.db.Where("\"key\" = ?", key).First(&s).Error; err != nil {
+	// Find + Limit, not First: an unset key is the normal case for most
+	// settings, and First's ErrRecordNotFound is logged by GORM's logger at
+	// the default level — one line per unset key on every periodic read
+	// (the syslog retention windows alone read nine every 5 minutes).
+	var ss []models.SystemSetting
+	if err := d.db.Where("\"key\" = ?", key).Limit(1).Find(&ss).Error; err != nil || len(ss) == 0 {
 		return "", false
 	}
-	return s.Value, true
+	return ss[0].Value, true
 }
 
 // GetBoolSetting reads a boolean setting, returning def when the key is absent or

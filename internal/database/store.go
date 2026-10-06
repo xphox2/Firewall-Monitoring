@@ -52,6 +52,7 @@ type Store interface {
 	DevicePurgeStore
 	NormalizeBackfillStore
 	ArchiveGateStore
+	ArchiveStatusStore
 
 	// Gorm exposes the raw *gorm.DB for handlers that build ad-hoc queries
 	// (partial updates, one-off lookups). Unchanged escape hatch.
@@ -95,6 +96,20 @@ type ArchiveGateStore interface {
 	GetArchiveChunk(id uint) (*models.ArchiveChunk, error)
 	ListArchiveChunksNeedingAttention(limit int) ([]models.ArchiveChunk, error)
 	ResetArchiveChunk(ctx context.Context, id uint, note string, at time.Time) (*models.ArchiveChunk, error)
+}
+
+// ArchiveStatusStore covers the reads behind the raw archive's status
+// (archive_status.go; internal/archive/status): the admin status API and its
+// CLI twin.
+type ArchiveStatusStore interface {
+	ArchiveTableProgress(ctx context.Context, table string) (ArchiveProgress, error)
+	ArchiveChunkStatusCounts(ctx context.Context) (map[string]map[string]int64, error)
+	ArchiveChunkMonths(ctx context.Context, table string) ([]string, error)
+	ArchiveMonthRows(ctx context.Context, stream string) ([]models.ArchiveMonth, error)
+	ArchiveTableTimes(ctx context.Context, table string) (ArchiveTableTimes, error)
+	ArchiveGateEventsOverlapping(ctx context.Context, stream string, from, to time.Time) ([]models.ArchiveGateEvent, error)
+	ArchiveWorkerState(ctx context.Context) (value string, ok bool, err error)
+	SyslogRetentionWindows(ret config.RetentionConfig) [SyslogSeverityCount]SyslogWindow
 }
 
 // NormalizeBackfillStore covers the one-time normalized-event backfill queue

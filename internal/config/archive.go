@@ -96,6 +96,15 @@ const (
 // Enabled reports whether any archive stream is switched on.
 func (a ArchiveConfig) Enabled() bool { return a.SyslogEnabled || a.FlowsEnabled }
 
+// SealGrace is ARCHIVE_SEAL_GRACE_HOURS as a duration (48 h when unset): a
+// month M is due to be sealed at the 1st of M+1, 00:00 UTC, plus it.
+func (a ArchiveConfig) SealGrace() time.Duration {
+	if a.SealGraceHours <= 0 {
+		return 48 * time.Hour
+	}
+	return time.Duration(a.SealGraceHours) * time.Hour
+}
+
 // Secret is a credential that must never reach a log line, an error string or
 // an API response by accident. Every fmt verb, encoding/json, encoding/text and
 // log/slog render it as RedactedSecret; Reveal returns the value (to check

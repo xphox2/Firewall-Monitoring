@@ -21,7 +21,14 @@
         spike_min_throughput_mbps: 'alerting-g-spike-floor',
         telemetry_stale_minutes: 'alerting-g-telemetry-stale',
         server_disk_threshold: 'alerting-g-server-disk',
-        server_disk_free_floor_gb: 'alerting-g-server-disk-floor'
+        server_disk_free_floor_gb: 'alerting-g-server-disk-floor',
+        // Raw archive alerts (internal/archive/status/alerts.go).
+        archive_lag_alert_hours_syslog: 'alerting-g-archive-lag-syslog',
+        archive_lag_alert_hours_flows: 'alerting-g-archive-lag-flows',
+        archive_lag_alert_hours_counters: 'alerting-g-archive-lag-counters',
+        archive_seal_overdue_alert_days: 'alerting-g-archive-seal',
+        retention_held_alert_hours: 'alerting-g-retention-held',
+        archive_unsettled_alert_hours: 'alerting-g-archive-wait'
     };
 
     var METRIC_LABEL = {
@@ -171,6 +178,12 @@
         pushNum('telemetry_stale_minutes', 'alerts');
         pushNum('server_disk_threshold', 'alerts');
         pushNum('server_disk_free_floor_gb', 'alerts');
+        pushNum('archive_lag_alert_hours_syslog', 'alerts');
+        pushNum('archive_lag_alert_hours_flows', 'alerts');
+        pushNum('archive_lag_alert_hours_counters', 'alerts');
+        pushNum('archive_seal_overdue_alert_days', 'alerts');
+        pushNum('retention_held_alert_hours', 'alerts');
+        pushNum('archive_unsettled_alert_hours', 'alerts');
 
         AC.apiFetch(API_BASE + '/settings', {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings)

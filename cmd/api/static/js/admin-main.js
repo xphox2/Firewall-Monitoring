@@ -69,6 +69,12 @@
     }
 
     var formatNum = AC.formatNum;
+    // Alert types raised by the Firewall-Mon server about itself (device 0):
+    // its own disk volumes and its raw archive. Their rows carry no device.
+    var SERVER_ALERT_TYPES = {
+        SERVER_DISK_HIGH: true, ARCHIVE_LAG: true, ARCHIVE_NEEDS_ATTENTION: true,
+        ARCHIVE_SEAL_OVERDUE: true, RETENTION_HELD: true, ARCHIVE_UNSETTLED_LONG: true
+    };
 
     // ---- Navigation ----
     document.querySelectorAll('.nav-item[data-page]').forEach(function(item) {
@@ -1817,7 +1823,7 @@
                 : (a.device_name ? escapeHtml(a.device_name)
                     : (a.alert_type === 'SFLOW_SECURITY_DIGEST'
                         ? '<span style="color:var(--fwmon-text-faint);" title="Site-wide storm rollup — many sources, no single device">Site-wide</span>'
-                        : a.alert_type === 'SERVER_DISK_HIGH'
+                        : SERVER_ALERT_TYPES[a.alert_type]
                             ? '<span style="color:var(--fwmon-text-faint);" title="The Firewall-Mon server itself, not a monitored device">Firewall-Mon server</span>'
                             : ''));
             var siteCell = a.site_name ? escapeHtml(a.site_name) : '<span style="color:var(--fwmon-text-faint);">—</span>';
@@ -1920,7 +1926,7 @@
             var devLinkHtml = a.device_id
                 ? AC.deviceLink(a.device_id, devName) + retiredMarker(devForAlert)
                 : (a.device_name || (a.alert_type === 'SFLOW_SECURITY_DIGEST' ? 'Site-wide'
-                    : a.alert_type === 'SERVER_DISK_HIGH' ? 'Firewall-Mon server' : 'Unknown'));
+                    : SERVER_ALERT_TYPES[a.alert_type] ? 'Firewall-Mon server' : 'Unknown'));
             // The analytics pages use device_id (not device) as their state
             // key — see FwmonControls.attachAnalyticsPage descriptors below.
             var deviceAlertsLink = a.device_id
@@ -2602,6 +2608,178 @@
         });
     }
 
+    // ---- Raw archive status (archive plan PR 8) ---------------------------
+    // GET /archive/status (admin-only): per table V, lag, chunks and why the
+    // next chunk waits; per stream the month folders; the gate overrides; the
+    // chunks parked in needs_attention, each with a Reset (re-authenticated
+    // like the purge); the worker's last failures. Read-only otherwise: the
+    // archive is configured by ARCHIVE_* env, never from the UI.
+    var archiveFaint = 'color:var(--fwmon-text-faint);';
+
+    function archiveDur(sec) {
+        if (sec == null) return '&mdash;';
+        var h = sec / 3600;
+        if (h >= 48) return (h / 24).toFixed(1) + ' days';
+        if (h >= 1) return h.toFixed(1) + ' h';
+        return Math.max(0, Math.round(sec / 60)) + ' min';
+    }
+
+    function archiveWhen(t) { return t ? escapeHtml(formatDate(t)) : '<span style="' + archiveFaint + '">never</span>'; }
+
+    function archiveLabel(v) { return String(v || '').split('_').join(' '); }
+
+    function archiveBadge(cls, text) { return '<span class="badge ' + cls + '">' + escapeHtml(text) + '</span>'; }
+
+    function archiveMonthBadge(m) {
+        var cls = m.status === 'sealed' ? 'online' : m.status === 'seal_failed' ? 'offline' : m.due ? 'warning' : 'info';
+        var out = archiveBadge(cls, m.status === 'open' && m.due ? 'due, not sealed' : archiveLabel(m.status));
+        if (m.partial) out += ' ' + archiveBadge('warning', 'partial');
+        if (m.degraded && m.degraded.length) out += ' ' + archiveBadge('warning', m.degraded.length + ' gate event' + (m.degraded.length === 1 ? '' : 's'));
+        return out;
+    }
+
+    function renderArchiveStatusHtml(st) {
+        var html = '';
+        (st.gates || []).forEach(function (g) {
+            if (!g.override_active) return;
+            html += '<div role="alert" style="border:1px solid var(--fwmon-sig-crit);border-left-width:4px;border-radius:6px;padding:10px 12px;margin-bottom:12px;">' +
+                '<strong style="color:var(--fwmon-sig-crit);">Retention gate of ' + escapeHtml(g.stream) + ' RELEASED</strong> until ' + archiveWhen(g.override_until) +
+                ': raw rows are deleted whether or not they are archived, and the archive alerts keep firing. ' +
+                '<button type="button" class="btn sm secondary" data-action="archive-reengage" data-min-role="admin" data-stream="' + escapeHtml(g.stream) + '">Re-engage now</button></div>';
+        });
+        if (!st.enabled && !(st.tables || []).some(function (t) { return t.has_chunks; })) {
+            return html + '<p style="' + archiveFaint + 'font-size:0.85rem;">Archiving is off. Set <code>ARCHIVE_SYSLOG_ENABLED</code> / <code>ARCHIVE_FLOWS_ENABLED</code> and the <code>ARCHIVE_S3_*</code> keys (see docs/OPERATIONS.md).</p>';
+        }
+        var c = st.config || {};
+        html += '<p style="font-size:0.85rem;margin:0 0 6px;">Bucket <code>' + escapeHtml(c.bucket || '') + '</code> prefix <code>' + escapeHtml(c.prefix || '') + '</code>' +
+            (c.endpoint ? ' at ' + escapeHtml(c.endpoint) : '') + (c.access_key_id ? ', key ' + escapeHtml(c.access_key_id) : '') +
+            (c.object_lock_days ? ', Object Lock ' + escapeHtml(c.object_lock_mode || '') + ' ' + c.object_lock_days + ' days' : ', no Object Lock') + '.</p>';
+        var w = st.worker;
+        if (!w) {
+            html += '<p style="font-size:0.85rem;color:var(--fwmon-sig-warn);">' + (st.worker_error
+                ? 'The archive worker&rsquo;s state could not be read: ' + escapeHtml(st.worker_error)
+                : 'The poller&rsquo;s archive worker has not recorded any state yet.') + '</p>';
+        } else {
+            var stg = w.staging || {};
+            var free = stg.error ? 'free space unknown (' + escapeHtml(stg.error) + ')'
+                : stg.free_bytes != null ? formatBytes(stg.free_bytes) + ' free' + (stg.free_bytes < stg.min_free_bytes ? ' <strong style="color:var(--fwmon-sig-crit);">below the ' + formatBytes(stg.min_free_bytes) + ' floor: nothing is exported</strong>' : '') : '';
+            html += '<p style="font-size:0.85rem;margin:0 0 6px;">Worker ' + escapeHtml(w.runner || '') + ', last seen ' + archiveWhen(w.seen_at) +
+                (w.stale ? ' <strong style="color:var(--fwmon-sig-warn);">(stale: the worker is not writing its state)</strong>' : '') +
+                (w.preflight_ok ? '' : ' <strong style="color:var(--fwmon-sig-crit);">bucket preflight not passed: nothing is archived</strong>') +
+                '. Staging <code>' + escapeHtml(stg.dir || '') + '</code>: ' + free + '.</p>';
+        }
+        var rows = (st.tables || []).filter(function (t) { return t.enabled || t.has_chunks; }).map(function (t) {
+            var chunks = Object.keys(t.chunks || {}).filter(function (k) { return t.chunks[k] > 0; }).map(function (k) {
+                return escapeHtml(archiveLabel(k)) + ' ' + formatNum(t.chunks[k]);
+            }).join(', ') || '<span style="' + archiveFaint + '">none</span>';
+            var wait = t.unsettled ? escapeHtml(archiveLabel(t.unsettled.reason)) + ' for ' + archiveDur(t.unsettled.for_seconds) : '&mdash;';
+            var held = t.retention && t.retention.held_seconds > 0
+                ? '<span style="color:var(--fwmon-sig-warn);">' + archiveDur(t.retention.held_seconds) + ' past ' + escapeHtml(t.retention.window) + '</span>' : '&mdash;';
+            return '<tr><td><strong>' + escapeHtml(t.table) + '</strong>' + (t.enabled ? '' : ' ' + archiveBadge('disabled', 'disabled')) + '</td>' +
+                '<td>' + formatNum(t.verified_through_id) + '<div style="' + archiveFaint + 'font-size:0.78rem;">' + archiveWhen(t.verified_through_end) + '</div></td>' +
+                '<td>' + archiveDur(t.lag_seconds) + '</td><td style="font-size:0.82rem;">' + chunks + '</td>' +
+                '<td style="font-size:0.82rem;" title="' + escapeHtml(t.unsettled ? t.unsettled.detail || '' : '') + '">' + wait + '</td>' +
+                '<td style="font-size:0.82rem;">' + held + '</td><td style="font-size:0.82rem;">' + archiveWhen(t.last_verified_at) + '</td></tr>';
+        }).join('');
+        html += '<table class="data-table" style="margin-top:8px;"><thead><tr><th>Table</th><th>Verified through</th><th>Lag</th><th>Chunks</th>' +
+            '<th>Waiting</th><th>Held past retention</th><th>Last verified</th></tr></thead><tbody>' + rows + '</tbody></table>';
+
+        var na = st.needs_attention || [];
+        html += '<h3 style="font-size:0.95rem;margin:16px 0 6px;">Needs attention</h3>';
+        if (!na.length) {
+            html += '<p style="' + archiveFaint + 'font-size:0.85rem;margin:0;">No chunk is parked.</p>';
+        } else {
+            html += '<table class="data-table"><thead><tr><th>Chunk</th><th>Period</th><th>Mismatches</th><th>Error</th><th></th></tr></thead><tbody>' +
+                na.map(function (p) {
+                    return '<tr><td>' + p.id + ' &middot; ' + escapeHtml(p.table) + ' seq ' + p.seq +
+                        (p.holds_gate ? ' ' + archiveBadge('offline', 'holds deletes') : '') + '</td>' +
+                        '<td style="font-size:0.82rem;">' + archiveWhen(p.period_start) + '</td><td>' + p.mismatches + '</td>' +
+                        '<td style="font-size:0.82rem;word-break:break-word;">' + escapeHtml(p.error || '') + '</td>' +
+                        '<td><button type="button" class="btn sm secondary" data-action="archive-reset-chunk" data-min-role="admin" data-id="' + p.id + '">Reset</button></td></tr>';
+                }).join('') + '</tbody></table>';
+        }
+
+        html += '<h3 style="font-size:0.95rem;margin:16px 0 6px;">Months</h3>';
+        (st.streams || []).forEach(function (s) {
+            if (!s.enabled && !(s.months || []).length) return;
+            var months = (s.months || []).map(function (m) {
+                var tip = [m.partial_note, m.error].filter(Boolean).join(' — ');
+                return '<span style="display:inline-block;margin:2px 10px 2px 0;" title="' + escapeHtml(tip) + '">' + escapeHtml(m.month) + ' ' + archiveMonthBadge(m) + '</span>';
+            }).join('') || '<span style="' + archiveFaint + '">no month yet</span>';
+            html += '<div style="font-size:0.85rem;margin-bottom:6px;"><strong>' + escapeHtml(s.stream) + '</strong>' +
+                (s.oldest_unsealed ? ' <span style="color:var(--fwmon-sig-warn);">' + escapeHtml(s.oldest_unsealed) + ' is ' + s.unsealed_days.toFixed(1) + ' days past its seal time</span>' : '') +
+                '<div>' + months + '</div></div>';
+        });
+
+        var stages = (w && w.stages) || [];
+        if (stages.length) {
+            html += '<h3 style="font-size:0.95rem;margin:16px 0 6px;">Last failures</h3><ul style="font-size:0.82rem;margin:0;padding-left:18px;">' +
+                stages.map(function (e) {
+                    return '<li><strong>' + escapeHtml(e.stage) + '</strong> ' + archiveWhen(e.at) + ' (' + e.count + '&times;): ' + escapeHtml(e.error || '') + '</li>';
+                }).join('') + '</ul>';
+        }
+        (st.problems || []).forEach(function (p) {
+            html += '<p style="color:var(--fwmon-sig-warn);font-size:0.82rem;">Could not read: ' + escapeHtml(p) + '</p>';
+        });
+        return html;
+    }
+
+    function renderArchiveStatus() {
+        var host = document.getElementById('settings-archive');
+        if (!host) return;
+        AC.whenMe().then(function (me) {
+            if (!me || me.role !== 'admin') return null;
+            return apiFetch(API_BASE + '/archive/status').then(function (res) {
+                host.innerHTML = renderArchiveStatusHtml((res && res.data) || {});
+            });
+        }).catch(function (e) {
+            fwmonLog.warn('[Settings] archive status load failed', e);
+            host.innerHTML = '<p style="' + archiveFaint + '">Archive status unavailable.</p>';
+        });
+    }
+
+    // Reset a parked chunk: a reason plus the caller's password (and 2FA
+    // code when enrolled), the same step-up as the purge and the override.
+    function resetArchiveChunk(id) {
+        var me = AC.sessionMe;
+        var totpOn = me ? !!me.totp_enabled : null;
+        var fields = [
+            { name: 'reason', label: 'Reason (recorded in the audit log)', type: 'text', maxLength: 500, required: true },
+            { name: 'password', label: 'Current password', type: 'password', autocomplete: 'current-password', required: true }
+        ];
+        if (totpOn !== false) {
+            fields.push({ name: 'totp_code', label: totpOn ? 'Authenticator code' : 'Authenticator code (if 2FA is on)',
+                type: 'text', autocomplete: 'one-time-code', inputmode: 'numeric', maxLength: 32, required: !!totpOn });
+        }
+        AC.promptFields('Put chunk ' + id + ' back in the queue? The worker exports, uploads and verifies it again on its next pass; ' +
+            'each attempt writes another Object Lock-retained copy. Fix the cause first (the chunk’s error says what differed).', {
+            title: 'Reset archive chunk', confirmLabel: 'Reset chunk', fields: fields
+        }).then(function (v) {
+            if (!v) return null;
+            return apiFetch(API_BASE + '/archive/chunks/' + id + '/reset', {
+                method: 'POST',
+                body: JSON.stringify({ reason: v.reason.trim(), password: v.password, totp_code: (v.totp_code || '').trim() })
+            }).then(function () {
+                AC.showSuccess('Chunk ' + id + ' is pending again');
+                renderArchiveStatus();
+            });
+        }).catch(function (e) {
+            AC.showError('Reset failed: ' + ((e && e.message) || e));
+        });
+    }
+
+    // Re-engaging a released gate only restores the safe state: no step-up.
+    function reengageArchiveGate(stream) {
+        apiFetch(API_BASE + '/archive/override', {
+            method: 'POST', body: JSON.stringify({ stream: stream, hours: 0, reason: 're-engaged from the Retention page' })
+        }).then(function () {
+            AC.showSuccess('Retention gate of ' + stream + ' re-engaged');
+            renderArchiveStatus();
+        }).catch(function (e) {
+            AC.showError('Re-engage failed: ' + ((e && e.message) || e));
+        });
+    }
+
     function loadSettings() {
         apiFetch(API_BASE + '/settings').then(function(result) {
             if (!result) return;
@@ -2729,6 +2907,7 @@
             // sFlow detection thresholds. Blank input = use the built-in/env
             // default (shown as the placeholder); a value overrides it live.
             renderRetentionSettings(settings);
+            renderArchiveStatus();
 
             document.getElementById('settings-detection').innerHTML = [
                 { key: 'detect_port_scan_ports', label: 'Port scan — distinct dst ports', def: '100', step: '1' },
@@ -4658,6 +4837,9 @@
         'save-settings': function() { saveSettings(); },
         'discard-settings': function() { if (window.FwmonSettingsUI) FwmonSettingsUI.discard(); },
         'flow-reapply': function() { reapplyFlowClassification(); },
+        'archive-refresh': function() { renderArchiveStatus(); },
+        'archive-reset-chunk': function(el) { resetArchiveChunk(parseInt(el.dataset.id, 10)); },
+        'archive-reengage': function(el) { reengageArchiveGate(el.dataset.stream); },
         'test-email': function() { testEmail(); },
         'test-webhook': function(el) { testWebhook(el.dataset.type); },
         'close-device-modal': function() { closeDeviceModal(); },

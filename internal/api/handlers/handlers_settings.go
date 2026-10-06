@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"firewall-mon/internal/api/response"
+	"firewall-mon/internal/archive/status"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
@@ -201,6 +202,15 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		// Flow classification (v0.11.264): the operator's own networks.
 		database.FlowInternalAutoKey:     true,
 		database.FlowInternalNetworksKey: true,
+		// Raw archive alert thresholds (archive plan PR 8), hours or days;
+		// 0 turns that alert off, blank uses the default. Read by the
+		// poller's server-health tick.
+		status.LagHoursSyslogKey:   true,
+		status.LagHoursFlowsKey:    true,
+		status.LagHoursCountersKey: true,
+		status.SealOverdueDaysKey:  true,
+		status.HeldHoursKey:        true,
+		status.UnsettledHoursKey:   true,
 	}
 
 	secretKeys := settingsSecretKeys // v0.10.226: shared with GetSettings
@@ -299,6 +309,18 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, response.Error(
 					"server_disk_threshold must be between 0 and 100 (0 disables the percentage trigger)"))
 				return
+			}
+		case status.LagHoursSyslogKey, status.LagHoursFlowsKey, status.LagHoursCountersKey,
+			status.SealOverdueDaysKey, status.HeldHoursKey, status.UnsettledHoursKey:
+			// Integers (the poller reads them with GetIntSetting); blank
+			// restores the default.
+			if v := strings.TrimSpace(s.Value); v != "" {
+				n, err := strconv.Atoi(v)
+				if err != nil || n < 0 || n > status.ThresholdMax {
+					c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf(
+						"%s must be a whole number from 0 to %d (0 turns the alert off; blank uses the default)", s.Key, status.ThresholdMax)))
+					return
+				}
 			}
 		case "server_disk_free_floor_gb":
 			// 0 disables the free-space trigger (the percentage can still fire).

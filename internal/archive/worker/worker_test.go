@@ -23,6 +23,7 @@ import (
 	"firewall-mon/internal/archive/export"
 	"firewall-mon/internal/archive/s3"
 	"firewall-mon/internal/archive/s3/s3test"
+	"firewall-mon/internal/archive/status"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/metrics"
@@ -949,5 +950,37 @@ func TestWorker_StagingRequiredAndProbed(t *testing.T) {
 	c := h.chunks(export.TableSyslog)[0]
 	if c.Status != models.ArchiveChunkFailed || !strings.Contains(c.Error, "unknown") || h.puts(`.`) != 0 {
 		t.Fatalf("free space unknown: %s %q, %d PUTs", c.Status, c.Error, h.puts(`.`))
+	}
+}
+
+// TestWorker_RuntimeStateRecorded (archive plan PR 8): every tick writes the
+// worker's runtime state to the database for the status API and the alerts —
+// the bucket preflight, the staging directory's free space, and the last
+// failure of each stage — stamped with the worker's clock.
+func TestWorker_RuntimeStateRecorded(t *testing.T) {
+	h := newHarness(t, day(10, 5, 11, 50), func(c *config.ArchiveConfig) { c.FlowsEnabled = false })
+	seedSyslog(t, h.db, day(10, 4, 1, 0), day(10, 4, 2, 0))
+	h.srv.SetFail(func(op s3test.Op, r *http.Request) (int, string) {
+		if op == s3test.OpPutObject {
+			return http.StatusServiceUnavailable, "ServiceUnavailable"
+		}
+		return 0, ""
+	})
+	h.tick(ctx)
+	raw, ok, err := h.db.ArchiveWorkerState(ctx)
+	if err != nil || !ok {
+		t.Fatalf("no worker state: %v %v", ok, err)
+	}
+	rt, err := status.ParseRuntime(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	up, failed := rt.Stages["upload"]
+	if !rt.PreflightOK || !rt.SeenAt.Equal(h.clk.now().UTC()) || rt.Staging.FreeBytes == nil || *rt.Staging.FreeBytes != 1<<40 ||
+		!failed || up.Count != 1 || !strings.Contains(up.Error, "ServiceUnavailable") || !strings.Contains(up.Error, "syslog_messages chunk 1") {
+		t.Fatalf("runtime state: %+v", rt)
+	}
+	if strings.Contains(raw, h.cfg.SecretAccessKey.Reveal()) || strings.Contains(raw, h.cfg.AccessKeyID) {
+		t.Fatalf("runtime state carries a credential: %s", raw)
 	}
 }

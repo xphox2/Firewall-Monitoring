@@ -23,8 +23,9 @@ const (
 	seedVerTrapSpike    = 4 // traffic spike + HA/LINK trap templates (Phase 3, inert)
 	seedVerFullCoverage = 5 // one editable default rule per remaining alert type
 	seedVerServerHealth = 6 // the fwmon server's own volumes (SERVER_DISK_HIGH)
+	seedVerArchive      = 7 // the raw archive's alerts (ARCHIVE_*, RETENTION_HELD)
 
-	eventRuleSeedVersion = seedVerServerHealth
+	eventRuleSeedVersion = seedVerArchive
 )
 
 // EnsureDefaultRules seeds the default event rules exactly once (guarded by a
@@ -266,6 +267,35 @@ func defaultEventRules() []models.EventRule {
 			AlertType: models.AlertTypeServerDiskHigh, SeedVersion: seedVerServerHealth,
 			CooldownMinutes: func() *int { v := 30; return &v }(),
 			MatchJSON:       `{"op":"eq","field":"event_type","value":"server_disk_high"}`},
+		// Gen 7: the raw archive (archive plan PR 8). Explicit 6 h cooldowns for
+		// the same reason as the server disk rule: the Default policy's 5
+		// minutes would otherwise re-notify a day-long lag on every 5-minute
+		// evaluation. Matchable fields: stream / table, gate_stream.
+		{Name: "Default: Archive lag", Description: "A raw archive stream's verified data is further behind than its threshold (Alerting: archive lag hours — syslog 26, flows 3, counters 26). The daily streams must stay over it for an hour (their chunk is cut 2 h after midnight). Scope with stream (syslog, sflow, netflow, sflow-counters).",
+			Enabled: true, Priority: 200, Source: "device", Action: "alert",
+			AlertType: models.AlertTypeArchiveLag, SeedVersion: seedVerArchive,
+			CooldownMinutes: func() *int { v := 360; return &v }(),
+			MatchJSON:       `{"op":"eq","field":"event_type","value":"archive_lag"}`},
+		{Name: "Default: Archive chunk needs attention", Description: "An archive chunk failed its read-back or count check three times and is parked; it holds its table's raw deletes until it is reset (fwmon-api archive --reset-chunk, or the Retention page). Scope with table.",
+			Enabled: true, Priority: 200, Source: "device", Action: "alert",
+			AlertType: models.AlertTypeArchiveNeedsAttention, SeedVersion: seedVerArchive,
+			CooldownMinutes: func() *int { v := 360; return &v }(),
+			MatchJSON:       `{"op":"eq","field":"event_type","value":"archive_needs_attention"}`},
+		{Name: "Default: Archive month seal overdue", Description: "A closed month of a raw archive stream is still not sealed this many days after its seal time (Alerting: seal overdue days, default 3). Scope with stream.",
+			Enabled: true, Priority: 200, Source: "device", Action: "alert",
+			AlertType: models.AlertTypeArchiveSealOverdue, SeedVersion: seedVerArchive,
+			CooldownMinutes: func() *int { v := 360; return &v }(),
+			MatchJSON:       `{"op":"eq","field":"event_type","value":"archive_seal_overdue"}`},
+		{Name: "Default: Retention held by the archive", Description: "The archive's retention gate keeps unarchived raw rows past their window by more than the threshold (Alerting: retention held hours, default 6) while the database volume grows. Blank severity inherits the type default (critical). Scope with table.",
+			Enabled: true, Priority: 200, Source: "device", Action: "alert",
+			AlertType: models.AlertTypeRetentionHeld, SeedVersion: seedVerArchive,
+			CooldownMinutes: func() *int { v := 360; return &v }(),
+			MatchJSON:       `{"op":"eq","field":"event_type","value":"retention_held"}`},
+		{Name: "Default: Archive export waiting long", Description: "An archive table's next chunk has waited longer than the threshold (Alerting: archive wait hours, default 6) for an open writing transaction, an unattached partition leaf, or a statement_timeout. Scope with table, reason.",
+			Enabled: true, Priority: 200, Source: "device", Action: "alert",
+			AlertType: models.AlertTypeArchiveUnsettledLong, SeedVersion: seedVerArchive,
+			CooldownMinutes: func() *int { v := 360; return &v }(),
+			MatchJSON:       `{"op":"eq","field":"event_type","value":"archive_unsettled_long"}`},
 		{Name: "Default: Interface errors", Description: "Interface error/discard delta alert. Add an interface_name condition to mute or re-grade one noisy port.",
 			Enabled: true, Priority: 200, Source: "device", Action: "alert",
 			AlertType: models.AlertTypeInterfaceErrors, SeedVersion: seedVerFullCoverage,

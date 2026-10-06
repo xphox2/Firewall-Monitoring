@@ -927,6 +927,19 @@
                         <div class="form-group"><label for="alerting-g-server-disk-floor" title="Alert when a server volume has less than this many GB free, regardless of percentage. 0 disables. A percentage is a poor proxy on a large disk — 10% of 200GB is 20GB free, while 10% of 20GB is nearly nothing — so this floor catches the real danger: PostgreSQL needs room to write WAL.">Server disk free floor (GB, 0 = off)</label><input type="number" id="alerting-g-server-disk-floor" min="0" max="10000" step="1"><div class="field-hint">Fires on whichever trips first, this or the percentage.</div></div>
                     </div>
                 </div>
+                <div style="border-top:1px solid var(--fwmon-border);margin:14px 0 12px;padding-top:12px;">
+                    <p style="color:var(--fwmon-text-faint);font-size:0.8rem;margin:0 0 10px;">Raw archive (the server&rsquo;s own archive to object storage; see Settings &rarr; Retention). 0 turns an alert off; blank uses the default.</p>
+                    <div class="form-row">
+                        <div class="form-group"><label for="alerting-g-archive-lag-syslog" title="ARCHIVE_LAG: hours the syslog archive's verified data may be behind before alerting. A day's chunk is cut 2 h after midnight UTC, so the lag peaks just past 26 h every day; the alert needs it above the threshold for an hour.">Archive lag, syslog (h)</label><input type="number" id="alerting-g-archive-lag-syslog" min="0" max="720" step="1" placeholder="26"></div>
+                        <div class="form-group"><label for="alerting-g-archive-lag-flows" title="ARCHIVE_LAG for the sflow and netflow streams (hourly chunks). While their archive lags, raw flows are kept instead of rolled up.">Archive lag, flows (h)</label><input type="number" id="alerting-g-archive-lag-flows" min="0" max="720" step="1" placeholder="3"></div>
+                        <div class="form-group"><label for="alerting-g-archive-lag-counters" title="ARCHIVE_LAG for the sflow-counters stream (daily chunks, like syslog).">Archive lag, counters (h)</label><input type="number" id="alerting-g-archive-lag-counters" min="0" max="720" step="1" placeholder="26"></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group"><label for="alerting-g-archive-seal" title="ARCHIVE_SEAL_OVERDUE: days a closed month may stay unsealed past its seal time (the 1st + ARCHIVE_SEAL_GRACE_HOURS).">Month seal overdue (days)</label><input type="number" id="alerting-g-archive-seal" min="0" max="720" step="1" placeholder="3"></div>
+                        <div class="form-group"><label for="alerting-g-retention-held" title="RETENTION_HELD: hours past their retention window the gate may hold unarchived raw rows, while the database volume grows, before alerting.">Retention held (h)</label><input type="number" id="alerting-g-retention-held" min="0" max="720" step="1" placeholder="6"></div>
+                        <div class="form-group"><label for="alerting-g-archive-wait" title="ARCHIVE_UNSETTLED_LONG: hours a table's next archive chunk may wait for an open writing transaction, an unattached partition leaf or a statement_timeout.">Archive export waiting (h)</label><input type="number" id="alerting-g-archive-wait" min="0" max="720" step="1" placeholder="6"></div>
+                    </div>
+                </div>
             </div>
 
             <div class="card" style="padding:20px;margin-bottom:20px;">
@@ -1422,6 +1435,11 @@
                 <div class="card-header"><h2>Syslog Retention</h2></div>
                 <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">How long syslog is kept, per severity. Leave a severity blank to inherit the default. Enter <strong>0</strong> to keep it <strong>forever</strong>. Volume figures are estimates from database statistics, not exact counts &mdash; they are here to show which severity is actually consuming the space.</p>
                 <div id="settings-retention"></div>
+            </div>
+            <div class="card" data-min-role="admin">
+                <div class="card-header"><h2>Raw Archive</h2><button type="button" class="btn sm secondary" data-action="archive-refresh">Refresh</button></div>
+                <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">Raw syslog and flows exported to object storage, read back and verified, then sealed per month. While a stream is archived its raw rows are deleted only once verified, so a stuck archive holds them past the windows above. Configured by the <code>ARCHIVE_*</code> environment keys; <code>fwmon-api archive --status</code> prints the same.</p>
+                <div id="settings-archive" aria-live="polite"></div>
             </div>
             </section>
             <!-- Sticky save bar: hidden until FwmonSettingsUI counts unsaved

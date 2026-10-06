@@ -1,13 +1,18 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"firewall-mon/internal/archive/status"
 	"firewall-mon/internal/auth"
+	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/models"
 
@@ -164,5 +169,100 @@ func TestResetArchiveChunk(t *testing.T) {
 	}
 	if rec := post("2", good); rec.Code != http.StatusConflict {
 		t.Fatalf("second reset: %d, want 409", rec.Code)
+	}
+}
+
+// TestGetArchiveStatus: the archive status reports a parked chunk (holding
+// its table's deletes), the worker's last failure with the credentials
+// redacted, the config with the key id cut to its last four characters — and
+// neither credential anywhere in the body.
+func TestGetArchiveStatus(t *testing.T) {
+	h, db, u := profileTestHandler(t, "alice", auth.RoleAdmin, "s3cret-pw")
+	const keyID, secret = "keyid-test-wxyz", "secret-test-value-never-shown"
+	h.config.Archive = config.ArchiveConfig{SyslogEnabled: true, Endpoint: "https://s3.example.com", Region: "us-test-1",
+		Bucket: "example-bucket", Prefix: "fwmon-test", AccessKeyID: keyID, SecretAccessKey: config.Secret(secret), StagingDir: "/tmp/x"}
+	day := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	for _, c := range []models.ArchiveChunk{
+		{SourceTable: "syslog_messages", Seq: 1, IDLo: 0, IDHi: 10, PeriodStart: day, PeriodEnd: day.AddDate(0, 0, 1), Month: "2026-09", Status: models.ArchiveChunkVerified},
+		{SourceTable: "syslog_messages", Seq: 2, IDLo: 10, IDHi: 20, PeriodStart: day.AddDate(0, 0, 1), PeriodEnd: day.AddDate(0, 0, 2), Month: "2026-09",
+			Status: models.ArchiveChunkNeedsAttention, Mismatches: 3, Error: "read-back sha256 differs"},
+	} {
+		if err := db.Gorm().Create(&c).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := status.NewRecorder("fw-example-01-7", "/tmp/x", 1<<30, secret, keyID)
+	rec.Failed("upload", errors.New("403 for "+keyID+"/"+secret), time.Now())
+	js, err := rec.JSON(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveArchiveWorkerState(context.Background(), js); err != nil {
+		t.Fatal(err)
+	}
+
+	c, w := backfillCtx(http.MethodGet, "/admin/api/archive/status", "alice", u.ID, "")
+	h.GetArchiveStatus(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: %d %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	for _, leak := range []string{keyID, secret} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("the archive status carries %q: %s", leak, body)
+		}
+	}
+	var got struct {
+		Data status.Status `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	st := got.Data
+	if len(st.NeedsAttention) != 1 || st.NeedsAttention[0].Seq != 2 || !st.NeedsAttention[0].HoldsGate ||
+		st.Config.AccessKeyID != "…wxyz" || st.Worker == nil || len(st.Worker.Stages) != 1 ||
+		!strings.Contains(st.Worker.Stages[0].Error, "[redacted]") || st.OverrideMaxHours != database.ArchiveGateOverrideMaxHours {
+		t.Fatalf("status: %+v", st)
+	}
+}
+
+// TestArchiveAlertThresholdSettings: the archive alert thresholds are
+// accepted from 0 to 720 (blank = default) and refused otherwise.
+func TestArchiveAlertThresholdSettings(t *testing.T) {
+	h, db, u := profileTestHandler(t, "alice", auth.RoleAdmin, "s3cret-pw")
+	post := func(key, value string) int {
+		c, rec := backfillCtx(http.MethodPost, "/admin/api/settings", "alice", u.ID, `[{"key":"`+key+`","value":"`+value+`"}]`)
+		h.UpdateSettings(c)
+		return rec.Code
+	}
+	for _, key := range []string{status.LagHoursSyslogKey, status.LagHoursFlowsKey, status.LagHoursCountersKey,
+		status.SealOverdueDaysKey, status.HeldHoursKey, status.UnsettledHoursKey} {
+		for value, want := range map[string]int{"0": 200, "720": 200, "": 200, "721": 400, "-1": 400, "2.5": 400, "x": 400} {
+			if code := post(key, value); code != want {
+				t.Errorf("%s=%q: %d, want %d", key, value, code, want)
+			}
+		}
+		if code := post(key, "12"); code != 200 || db.GetIntSetting(key, -1) != 12 {
+			t.Errorf("%s=12 not stored: %d %d", key, code, db.GetIntSetting(key, -1))
+		}
+	}
+}
+
+// TestAlertGlobalDefaults_ArchiveThresholds: the Alerting page reads every
+// archive threshold with its default, and a stored value replaces it.
+func TestAlertGlobalDefaults_ArchiveThresholds(t *testing.T) {
+	h, db, _ := profileTestHandler(t, "alice", auth.RoleAdmin, "s3cret-pw")
+	if err := db.UpsertSetting(&models.SystemSetting{Key: status.HeldHoursKey, Value: "9"}); err != nil {
+		t.Fatal(err)
+	}
+	g := h.alertGlobalDefaults(db)
+	for key, def := range status.ThresholdDefaults {
+		want := def
+		if key == status.HeldHoursKey {
+			want = 9
+		}
+		if g[key] != want {
+			t.Errorf("%s = %v, want %d", key, g[key], want)
+		}
 	}
 }

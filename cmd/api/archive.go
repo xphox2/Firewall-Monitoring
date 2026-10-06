@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"firewall-mon/internal/archive/s3"
+	"firewall-mon/internal/archive/status"
 	"firewall-mon/internal/archive/worker"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
@@ -26,6 +28,7 @@ import (
 //	archive --override syslog|flows|all --clear [--reason "<why>"]  re-engage it now
 //	archive --reset-chunk <id> --reason "<why>"                     needs_attention → pending
 //	archive --gate-status                                           overrides + parked chunks
+//	archive --status [--json]                                       the whole archive (as GET /admin/api/archive/status)
 //	archive --verify-month <stream> <YYYY-MM>                       re-check a sealed month from the bucket
 //
 // Like reset-auth and normalize-backfill it connects straight to the database
@@ -48,7 +51,7 @@ func runArchiveCmd(args []string) int {
 		fmt.Fprintf(os.Stderr, "archive: configuration error: %v\n", err)
 		return 1
 	}
-	return archiveCmd(args, os.Stdout, os.Stderr, func() (archiveStore, error) {
+	return archiveCmd(args, os.Stdout, os.Stderr, cfg, func() (archiveStore, error) {
 		db, err := database.Connect(cfg)
 		if err != nil {
 			return nil, err
@@ -68,13 +71,15 @@ type archiveStore interface {
 	ResetArchiveChunk(ctx context.Context, id uint, note string, at time.Time) (*models.ArchiveChunk, error)
 	SaveAuditLog(entry *models.AuditLog) error
 	Close() error
+	// --status reads what the status API reads.
+	status.Store
 }
 
 // archiveCmdReasonMax matches the API's bound on the reason.
 const archiveCmdReasonMax = 500
 
 // archiveCmd is the testable core of runArchiveCmd.
-func archiveCmd(args []string, stdout, stderr io.Writer, open func() (archiveStore, error), openBucket func() (worker.MonthReader, error)) int {
+func archiveCmd(args []string, stdout, stderr io.Writer, cfg *config.Config, open func() (archiveStore, error), openBucket func() (worker.MonthReader, error)) int {
 	fs := flag.NewFlagSet("archive", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	override := fs.String("override", "", "release the retention gate of a stream: syslog, flows or all")
@@ -82,13 +87,16 @@ func archiveCmd(args []string, stdout, stderr io.Writer, open func() (archiveSto
 	clearOv := fs.Bool("clear", false, "with --override: re-engage the gate now")
 	resetChunk := fs.Uint("reset-chunk", 0, "put a chunk parked in needs_attention back to pending (re-exported on the worker's next pass)")
 	reason := fs.String("reason", "", "why (required to release the gate or reset a chunk; recorded in the audit log)")
-	status := fs.Bool("gate-status", false, "print each stream's override and the chunks in needs_attention")
+	gateStatus := fs.Bool("gate-status", false, "print each stream's override and the chunks in needs_attention")
+	fullStatus := fs.Bool("status", false, "print the whole archive: per table V, lag, chunks, waits; per stream the months; gates, parked chunks, the worker's last failures")
+	asJSON := fs.Bool("json", false, "with --status: print the JSON of GET /admin/api/archive/status")
 	verifyMonth := fs.String("verify-month", "", "re-check a sealed month from the bucket alone: --verify-month <stream> <YYYY-MM> (read-only)")
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "usage: fwmon-api archive --override syslog|flows|all --for 6h --reason \"<why>\"")
 		fmt.Fprintln(stderr, "       fwmon-api archive --override syslog|flows|all --clear [--reason \"<why>\"]")
 		fmt.Fprintln(stderr, "       fwmon-api archive --reset-chunk <id> --reason \"<why>\"")
 		fmt.Fprintln(stderr, "       fwmon-api archive --gate-status")
+		fmt.Fprintln(stderr, "       fwmon-api archive --status [--json]")
 		fmt.Fprintln(stderr, "       fwmon-api archive --verify-month syslog|sflow|netflow|sflow-counters <YYYY-MM>")
 		fs.PrintDefaults()
 	}
@@ -96,7 +104,7 @@ func archiveCmd(args []string, stdout, stderr io.Writer, open func() (archiveSto
 		return 2
 	}
 	modes := 0
-	for _, m := range []bool{*override != "", *resetChunk != 0, *status, *verifyMonth != ""} {
+	for _, m := range []bool{*override != "", *resetChunk != 0, *gateStatus, *fullStatus, *verifyMonth != ""} {
 		if m {
 			modes++
 		}
@@ -117,6 +125,12 @@ func archiveCmd(args []string, stdout, stderr io.Writer, open func() (archiveSto
 	}
 	if modes != 1 || fs.NArg() > 0 {
 		return usage("")
+	}
+	if *asJSON && !*fullStatus {
+		return usage("--json goes with --status")
+	}
+	if *fullStatus && (*reason != "" || *clearOv || *dur != 0) {
+		return usage("--status takes no other option but --json")
 	}
 	if len(why) > archiveCmdReasonMax {
 		return usage(fmt.Sprintf("--reason must be at most %d characters", archiveCmdReasonMax))
@@ -157,7 +171,24 @@ func archiveCmd(args []string, stdout, stderr io.Writer, open func() (archiveSto
 	now := time.Now().UTC()
 
 	switch {
-	case *status:
+	case *fullStatus:
+		st, err := status.Build(context.Background(), db, cfg, time.Now())
+		if err != nil {
+			fmt.Fprintf(stderr, "archive: status: %v\n", err)
+			return 1
+		}
+		if *asJSON {
+			enc := json.NewEncoder(stdout)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(st); err != nil {
+				fmt.Fprintf(stderr, "archive: status: %v\n", err)
+				return 1
+			}
+			return 0
+		}
+		printArchiveStatus(stdout, st)
+		return 0
+	case *gateStatus:
 		for _, s := range database.ArchiveGateStreams {
 			if until, active := db.ArchiveGateOverride(s, now); active {
 				fmt.Fprintf(stdout, "%-7s gate RELEASED until %s\n", s, until.UTC().Format(time.RFC3339))
@@ -252,4 +283,151 @@ func verifyMonthCmd(stream, month string, stdout, stderr io.Writer, openBucket f
 	}
 	fmt.Fprintf(stdout, "FAILED: %d problem(s)\n", len(rep.Problems))
 	return 1
+}
+
+// printArchiveStatus writes st as text (--status).
+func printArchiveStatus(w io.Writer, st *status.Status) {
+	ts := func(t *time.Time) string {
+		if t == nil {
+			return "never"
+		}
+		return t.UTC().Format(time.RFC3339)
+	}
+	dur := func(sec float64) string {
+		d := time.Duration(sec * float64(time.Second))
+		if d >= 48*time.Hour {
+			return fmt.Sprintf("%.1f days", d.Hours()/24)
+		}
+		return fmt.Sprintf("%.1f h", d.Hours())
+	}
+	gib := func(b uint64) string { return fmt.Sprintf("%.1f GiB", float64(b)/(1<<30)) }
+	onOff := func(b bool) string {
+		if b {
+			return "on"
+		}
+		return "off"
+	}
+	c := st.Config
+	fmt.Fprintf(w, "raw archive at %s: syslog %s, flows %s\n", st.GeneratedAt.Format(time.RFC3339), onOff(c.SyslogEnabled), onOff(c.FlowsEnabled))
+	if st.Enabled {
+		lock := "no Object Lock"
+		if c.ObjectLockDays > 0 {
+			lock = fmt.Sprintf("Object Lock %s %d days", c.ObjectLockMode, c.ObjectLockDays)
+		}
+		fmt.Fprintf(w, "  bucket %s prefix %s at %s (region %s, key %s), %s; seal grace %d h (%s)\n",
+			c.Bucket, c.Prefix, c.Endpoint, c.Region, c.AccessKeyID, lock, c.SealGraceHours, c.SealReverify)
+	}
+	if wk := st.Worker; wk == nil && st.WorkerError != "" {
+		fmt.Fprintf(w, "worker: state unreadable: %s\n", st.WorkerError)
+	} else if wk == nil {
+		fmt.Fprintln(w, "worker: no state recorded (the poller's archive worker has not run)")
+	} else {
+		stale := ""
+		if wk.Stale {
+			stale = " — STALE: no archive worker is writing its state (poller down or wedged)"
+		}
+		pre := "preflight passed"
+		if !wk.PreflightOK {
+			pre = "PREFLIGHT NOT PASSED (nothing is archived)"
+		}
+		fmt.Fprintf(w, "worker: %s, seen %s (%s ago)%s; %s\n", wk.Runner, wk.SeenAt.Format(time.RFC3339), dur(wk.AgeSeconds), stale, pre)
+		switch {
+		case wk.Staging.Error != "":
+			fmt.Fprintf(w, "  staging %s: free space unknown: %s\n", wk.Staging.Dir, wk.Staging.Error)
+		case wk.Staging.FreeBytes != nil:
+			low := ""
+			if *wk.Staging.FreeBytes < wk.Staging.MinFreeBytes {
+				low = " — BELOW THE FLOOR: no chunk is exported"
+			}
+			fmt.Fprintf(w, "  staging %s: %s free (floor %s)%s\n", wk.Staging.Dir, gib(*wk.Staging.FreeBytes), gib(wk.Staging.MinFreeBytes), low)
+		}
+		for _, e := range wk.Stages {
+			fmt.Fprintf(w, "  last %s failure %s (%d since the worker started): %s\n", e.Stage, e.At.Format(time.RFC3339), e.Count, e.Error)
+		}
+	}
+	fmt.Fprintln(w, "gates:")
+	for _, g := range st.Gates {
+		switch {
+		case g.OverrideActive:
+			fmt.Fprintf(w, "  %-7s RELEASED by an override until %s: rows are deleted whether or not they are archived\n", g.Stream, ts(g.OverrideUntil))
+		case g.Gated:
+			fmt.Fprintf(w, "  %-7s engaged: deletes take only verified rows\n", g.Stream)
+		default:
+			fmt.Fprintf(w, "  %-7s archiving disabled: deletes are not gated\n", g.Stream)
+		}
+	}
+	fmt.Fprintln(w, "tables:")
+	for _, t := range st.Tables {
+		if !t.Enabled && !t.HasChunks {
+			continue
+		}
+		lag := "no chunk yet"
+		if t.LagSeconds != nil {
+			lag = "lag " + dur(*t.LagSeconds)
+		}
+		fmt.Fprintf(w, "  %s (%s): verified through id %d (%s), %s\n", t.Table, onOff(t.Enabled), t.VerifiedThroughID, ts(t.VerifiedThroughEnd), lag)
+		var counts []string
+		for _, s := range status.ChunkStatuses {
+			if n := t.Chunks[s]; n > 0 {
+				counts = append(counts, fmt.Sprintf("%s %d", s, n))
+			}
+		}
+		if len(counts) == 0 {
+			counts = []string{"none"}
+		}
+		fmt.Fprintf(w, "    chunks: %s; last verified %s", strings.Join(counts, ", "), ts(t.LastVerifiedAt))
+		if t.LastMarkAt != nil {
+			fmt.Fprintf(w, "; last id mark %s", ts(t.LastMarkAt))
+		}
+		fmt.Fprintln(w)
+		if u := t.Unsettled; u != nil {
+			fmt.Fprintf(w, "    waiting: %s for %s: %s\n", u.Reason, dur(u.ForSeconds), u.Detail)
+		}
+		if r := t.Retention; r != nil && r.HeldSeconds > 0 {
+			fmt.Fprintf(w, "    retention %s: the gate holds unarchived rows up to %s past the cutoff %s\n", r.Window, dur(r.HeldSeconds), r.Cutoff.Format(time.RFC3339))
+		}
+	}
+	fmt.Fprintln(w, "streams:")
+	for _, s := range st.Streams {
+		if !s.Enabled && len(s.Months) == 0 {
+			continue
+		}
+		line := fmt.Sprintf("  %s: last sealed %s", s.Stream, ts(s.LastSealedAt))
+		if s.OldestUnsealed != "" {
+			line += fmt.Sprintf("; %s is due and NOT sealed (%.1f days past its seal time)", s.OldestUnsealed, s.UnsealedDays)
+		}
+		fmt.Fprintln(w, line)
+		for _, m := range s.Months {
+			var flags []string
+			if m.Partial {
+				flags = append(flags, "PARTIAL")
+			}
+			if len(m.Degraded) > 0 {
+				flags = append(flags, fmt.Sprintf("%d gate event(s)", len(m.Degraded)))
+			}
+			if m.Status == models.ArchiveMonthSealed {
+				flags = append(flags, fmt.Sprintf("%d chunks, %d rows, %s, sealed %s", m.ChunkCount, m.RowCount, gib(uint64(max(0, m.ObjectBytes))), ts(m.SealedAt)))
+			} else if m.Due {
+				flags = append(flags, "due")
+			}
+			if m.Error != "" {
+				flags = append(flags, m.Error)
+			}
+			fmt.Fprintf(w, "    %s %s %s\n", m.Month, m.Status, strings.Join(flags, "; "))
+		}
+	}
+	if len(st.NeedsAttention) == 0 {
+		fmt.Fprintln(w, "no chunk needs attention")
+	}
+	for _, p := range st.NeedsAttention {
+		holds := "does not hold the gate"
+		if p.HoldsGate {
+			holds = "HOLDS its table's deletes"
+		}
+		fmt.Fprintf(w, "needs attention: chunk %d %s seq %d (%d, %d] %s, %d mismatches, %s: %s\n",
+			p.ID, p.Table, p.Seq, p.IDLo, p.IDHi, p.PeriodStart.Format(time.RFC3339), p.Mismatches, holds, p.Error)
+	}
+	for _, p := range st.Problems {
+		fmt.Fprintf(w, "PROBLEM reading the status: %s\n", p)
+	}
 }
