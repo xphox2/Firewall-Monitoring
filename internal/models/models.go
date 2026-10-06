@@ -91,6 +91,19 @@ const (
 	AlertTypeFlowRuleMatch AlertType = "FLOW_RULE_MATCH"
 )
 
+// The raw archive's alerts (archive plan PR 8; internal/archive/status),
+// device-less like SERVER_DISK_HIGH: a stream's verified archive lags, a chunk
+// is parked in needs_attention, a closed month stays unsealed, the retention
+// gate holds raw rows past their window while the database volume grows, or
+// the next chunk's export has waited for hours (an open writer).
+const (
+	AlertTypeArchiveLag            AlertType = "ARCHIVE_LAG"
+	AlertTypeArchiveNeedsAttention AlertType = "ARCHIVE_NEEDS_ATTENTION"
+	AlertTypeArchiveSealOverdue    AlertType = "ARCHIVE_SEAL_OVERDUE"
+	AlertTypeRetentionHeld         AlertType = "RETENTION_HELD"
+	AlertTypeArchiveUnsettledLong  AlertType = "ARCHIVE_UNSETTLED_LONG"
+)
+
 // Severity is the typed enum of alert severities. Underlying values match the
 // historical strings ("info" | "warning" | "critical"); arbitrary strings
 // remain representable via conversion so no value is lost on scan.

@@ -18,6 +18,7 @@ import (
 
 	"firewall-mon/internal/archive/export"
 	"firewall-mon/internal/archive/s3"
+	"firewall-mon/internal/archive/status"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/metrics"
@@ -362,12 +363,7 @@ func ptrVal(p *int64) any {
 }
 
 // sealGrace is ARCHIVE_SEAL_GRACE_HOURS (48 when unset).
-func (w *Worker) sealGrace() time.Duration {
-	if w.cfg.SealGraceHours <= 0 {
-		return 48 * time.Hour
-	}
-	return time.Duration(w.cfg.SealGraceHours) * time.Hour
-}
+func (w *Worker) sealGrace() time.Duration { return w.cfg.SealGrace() }
 
 // sealDue seals every month that is due, per stream oldest first; a month
 // that cannot be sealed stops its stream's later months until it is.
@@ -384,7 +380,7 @@ func (w *Worker) sealDue(ctx context.Context) {
 				var err error
 				if months, err = w.db.ArchiveChunkMonths(ctx, t); err != nil {
 					if ctx.Err() == nil {
-						metrics.IncArchiveError("seal")
+						w.fail("seal", err)
 						w.logf("seal-"+t, "months of %s: %v", t, err)
 					}
 					return
@@ -393,7 +389,7 @@ func (w *Worker) sealDue(ctx context.Context) {
 			sealed, err := w.db.ArchiveSealedMonths(ctx, s)
 			if err != nil {
 				if ctx.Err() == nil {
-					metrics.IncArchiveError("seal")
+					w.fail("seal", err)
 					w.logf("seal-"+s, "sealed months of %s: %v", s, err)
 				}
 				continue
@@ -440,13 +436,7 @@ func (w *Worker) sealDue(ctx context.Context) {
 // month (the oldest due month that is not sealed; "" for none) is past its
 // seal time, the 1st of the next month + the grace.
 func (w *Worker) setUnsealedDays(stream, month string, now time.Time) {
-	days := 0.0
-	if month != "" {
-		if _, end, err := monthBounds(month); err == nil {
-			days = max(0, now.Sub(end.Add(w.sealGrace())).Hours()/24)
-		}
-	}
-	metrics.SetArchiveMonthUnsealedDays(stream, days)
+	metrics.SetArchiveMonthUnsealedDays(stream, status.UnsealedDays(month, w.sealGrace(), now))
 }
 
 // sealFailed records why stream's month was not sealed and returns the
@@ -461,13 +451,13 @@ func (w *Worker) sealFailed(ctx context.Context, stream, month string, err error
 	if errors.As(err, &r) {
 		reason = r.reason
 	} else {
-		metrics.IncArchiveError("seal")
+		w.fail("seal", fmt.Errorf("month %s of %s: %w", month, stream, err))
 	}
 	w.sealFailures[stream]++
 	w.cooldown["seal-"+stream] = w.now().Add(database.ArchiveRetryBackoff(w.sealFailures[stream]))
 	w.logf("seal-"+stream, "month %s of %s is not sealed (%s): %v", month, stream, reason, err)
 	if rerr := w.db.RefuseArchiveMonth(ctx, stream, month, err.Error(), w.now()); rerr != nil && ctx.Err() == nil {
-		metrics.IncArchiveError("db")
+		w.fail("db", rerr)
 		log.Printf("archive: record why month %s of %s is not sealed: %v", month, stream, rerr)
 	}
 	return reason

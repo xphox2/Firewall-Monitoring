@@ -86,6 +86,9 @@ func (p *Poller) checkServerHealth() {
 		return
 	}
 	vols, dataOK := p.collectServerVolumes()
+	// The raw archive's alerts ride the same tick (archivealerts.go), after
+	// this tick's metrics sample is recorded.
+	defer p.checkArchiveAlerts(vols, dataOK)
 	if len(vols) == 0 {
 		log.Printf("server health: no volume could be probed; the server is UNMONITORED")
 		return

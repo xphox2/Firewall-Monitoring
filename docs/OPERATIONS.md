@@ -566,8 +566,9 @@ night; flows always run.
 A chunk whose read-back or count check fails three times is parked with
 status `needs_attention` and no longer retried (every retry writes another
 Object Lock-retained copy). Watch `fwmon_archive_chunks{status="needs_attention"}`
-and `fwmon_archive_needs_attention_total` on the poller's `/metrics`; the
-chunk's `error` column in `archive_chunks` says what differed.
+and `fwmon_archive_needs_attention_total` on the poller's `/metrics` (since
+0.11.308 the `ARCHIVE_NEEDS_ATTENTION` alert fires on it); the chunk's
+`error` column in `archive_chunks` says what differed.
 
 ## Raw archive: the retention gate
 
@@ -626,6 +627,7 @@ required and recorded:
 docker exec <container> fwmon-api archive --override flows --for 6h --reason "bucket outage, disk at 92%"
 docker exec <container> fwmon-api archive --override flows --clear          # re-engage now
 docker exec <container> fwmon-api archive --gate-status                     # overrides + parked chunks
+docker exec <container> fwmon-api archive --status                          # the whole archive (0.11.308)
 ```
 
 or `POST /admin/api/archive/override` (`{stream, hours: 1..24, reason,
@@ -951,7 +953,9 @@ object is re-checked and never overwritten (`conflict`).
 stream's oldest closed month that is not sealed is past its seal time (the 1st
 + the grace); 0 when every due month is sealed. A refusal for a day or two
 after the grace is normal (a syslog backlog still being verified), so
-`seal_blocked` alone is noisy; e.g. alert when `month_unsealed_days > 3`.
+`seal_blocked` alone is noisy. Since 0.11.308 the built-in
+`ARCHIVE_SEAL_OVERDUE` alert does this (default: more than 3 days; see
+[status and alerts](#raw-archive-status-and-alerts)).
 
 **The first archived month is PARTIAL.** The month the archive of a table
 began in (its first chunk starts at id 0) is sealed with `"partial": true`,
@@ -1054,6 +1058,89 @@ they follow the verified chunks.
   `archive --verify-month <stream> <YYYY-MM>`, then put the row back:
   `UPDATE archive_chunks SET status = 'verified', error = '' WHERE id = <id>;`
   (its objects were left verified).
+
+## Raw archive: status and alerts
+
+From 0.11.308 the archive's whole state is in one place:
+
+- **Settings → Retention → Raw Archive** (admins): per table the verified-through
+  id V and its period end, the lag, the chunks by status, why the next chunk
+  waits (and for how long), how far past its window the gate holds unarchived
+  rows; per stream the month folders (open, due, sealed, `seal_failed`,
+  partial, gate events); the chunks parked in `needs_attention`, each with a
+  **Reset** (reason + password + 2FA code, like the purge); the worker's last
+  failure per stage and the staging directory's free space; and a red banner,
+  with **Re-engage now**, while a stream's gate is released by an override.
+- `docker exec <container> fwmon-api archive --status` prints the same
+  (`--status --json` the API's JSON), and `GET /admin/api/archive/status`
+  serves it (admin-only). The configuration shows the key id's last four
+  characters only; the secret never appears.
+
+The worker's own state (why a chunk waits, last failures, staging space,
+preflight) is written by the poller to the system setting
+`archive_worker_state` about once a minute while it holds the archive lock.
+"Stale" means it has not written for 15 minutes: no poller is running the
+archive worker (down, wedged, or archiving disabled in its environment).
+
+**Alerts.** The poller evaluates five alerts on its 5-minute server-health
+tick, device-less like `SERVER_DISK_HIGH` (they show as *Firewall-Mon
+server*). Each has a seeded event rule (*Default: Archive …*, *Default:
+Retention held …*) with a 6 h re-notify cooldown, recovers with a recovery
+notification, and is tuned on the **Alerting** page (global defaults; 0 turns
+one off, blank uses the default):
+
+| alert | per | fires when | default |
+|---|---|---|---|
+| `ARCHIVE_LAG` | table (sflow and netflow share `flow_samples`: one alert names both) | the table's verified data is further behind than the threshold. **Daily tables (syslog, sflow-counters) must stay above it for an hour**: their day is cut 2 h after midnight UTC and then exported, so their lag passes 26 h briefly every day. An enabled table that has cut **no chunk at all** (typically a bucket that never passes the preflight) fires once that has lasted longer than the threshold — the gate holds every raw row of its table meanwhile | syslog 26 h, sflow/netflow 3 h, sflow-counters 26 h |
+| `ARCHIVE_NEEDS_ATTENTION` | table | a chunk is parked in `needs_attention` | always on |
+| `ARCHIVE_SEAL_OVERDUE` | stream | the oldest closed month is still not sealed this many days after its seal time (`fwmon_archive_month_unsealed_days`) | 3 days |
+| `RETENTION_HELD` (critical) | table | the gate is on and holds unarchived rows more than this far past the table's window (syslog: its shortest severity window; raw flows: the rollup's 1 h; counters: `RETENTION_FLOW_DAYS`) **and** the database volume is growing (free space below the sample 1–3 h earlier; counted as growing when the volume cannot be measured). The growth only fires it: once active it stays until the hold clears, whatever the free space does meanwhile | 6 h |
+| `ARCHIVE_UNSETTLED_LONG` | table | the next chunk has waited this long for an open writing transaction, an unattached partition leaf, or a `statement_timeout` (needs a fresh worker state; a stale one leaves the alert as it is) | 6 h |
+
+Settings keys: `archive_lag_alert_hours_syslog`, `archive_lag_alert_hours_flows`,
+`archive_lag_alert_hours_counters`, `archive_seal_overdue_alert_days`,
+`retention_held_alert_hours`, `archive_unsettled_alert_hours` (0–720).
+While the status cannot be read whole (a database error, including the gate
+override settings), no archive alert fires or resolves.
+
+### Runbook
+
+- **`ARCHIVE_LAG`** — open the Raw Archive card. *Last failures* names the
+  stage: `preflight` / `upload` / `verify` / `manifest` (the bucket: endpoint,
+  key, bucket policy, Object Lock settings, a proxy), `read` / `db` (the
+  database), `stage` (the staging directory: below its 2 GiB floor, or not
+  writable). A *Waiting* entry points at `ARCHIVE_UNSETTLED_LONG` below; a
+  parked chunk at `ARCHIVE_NEEDS_ATTENTION`. A stale worker: check the poller
+  is running and logs `archive: worker started` (`docker logs`). Nothing is lost while the archive lags; raw rows are kept
+  instead (watch `RETENTION_HELD`). For flows, held raw rows are not rolled up
+  until archived, so flow pages get slower, not wrong.
+- **`ARCHIVE_NEEDS_ATTENTION`** — the chunk's error says what differed (see
+  [A chunk stuck in `needs_attention`](#a-chunk-stuck-in-needs_attention));
+  fix the cause, then **Reset** it on the card or
+  `fwmon-api archive --reset-chunk <id> --reason "…"`. *holds deletes* means
+  its table's raw deletes wait for it. A parked chunk of a sealed month cannot
+  be reset (see [Recovering a month that cannot be sealed](#recovering-a-month-that-cannot-be-sealed)).
+- **`ARCHIVE_SEAL_OVERDUE`** — the month's error (card, `--status`, or
+  `archive_months.error`) and `fwmon_archive_seal_blocked{reason}` say why; see
+  [Recovering a month that cannot be sealed](#recovering-a-month-that-cannot-be-sealed).
+  `incomplete` usually clears by itself once the month's last chunks verify.
+  Deletes are not affected.
+- **`RETENTION_HELD`** — the database is growing because the archive is
+  behind. Fix the archive first (`ARCHIVE_LAG`). If the disk will not last
+  until it catches up, release the stream's gate for a few hours — rows
+  deleted meanwhile may never reach the archive, and the months they belong
+  to are sealed PARTIAL:
+  `fwmon-api archive --override syslog --for 6h --reason "disk at 90%, bucket outage"`.
+  `SERVER_DISK_HIGH` still pages at the free-space floor.
+- **`ARCHIVE_UNSETTLED_LONG`** — by reason: `open_writer`: a transaction
+  older than the chunk's cut is still open; the detail names its session (pid,
+  application, state, start) when visible — end it (`SELECT
+  pg_terminate_backend(<pid>)` after checking what it is), commonly an
+  `idle in transaction` client. `unattached_leaf`: a partition leaf is being
+  moved (see [the retention gate](#raw-archive-the-retention-gate)); if it
+  persists, the next partition pass failed to attach it — check the poller log.
+  `no_statement_timeout`: set `DB_STATEMENT_TIMEOUT` (the archive cannot
+  settle a cut without one).
 
 ## Host disk housekeeping
 

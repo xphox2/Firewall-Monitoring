@@ -40,6 +40,16 @@ func deviceEventType(at models.AlertType) string {
 		return "probe_data_truncated"
 	case models.AlertTypeServerDiskHigh:
 		return "server_disk_high"
+	case models.AlertTypeArchiveLag:
+		return "archive_lag"
+	case models.AlertTypeArchiveNeedsAttention:
+		return "archive_needs_attention"
+	case models.AlertTypeArchiveSealOverdue:
+		return "archive_seal_overdue"
+	case models.AlertTypeRetentionHeld:
+		return "retention_held"
+	case models.AlertTypeArchiveUnsettledLong:
+		return "archive_unsettled_long"
 	}
 	return ""
 }

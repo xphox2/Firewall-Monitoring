@@ -8,6 +8,7 @@ import (
 
 	"firewall-mon/internal/alerts"
 	"firewall-mon/internal/api/response"
+	"firewall-mon/internal/archive/status"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
@@ -403,13 +404,24 @@ func (h *Handler) alertGlobalDefaults(db database.Store) gin.H {
 		"server_disk_threshold":     85,
 		"server_disk_free_floor_gb": 5,
 	}
-	var settings []models.SystemSetting
-	db.Gorm().Where(`"key" IN ?`, []string{
+	keys := []string{
 		"cpu_threshold", "memory_threshold", "disk_threshold", "session_threshold",
 		"spike_alert_enabled", "spike_stddev_threshold", "spike_min_duration_minutes",
 		"spike_min_throughput_mbps", "telemetry_stale_minutes",
 		"server_disk_threshold", "server_disk_free_floor_gb",
-	}).Find(&settings)
+	}
+	// The raw archive's alert thresholds (archive/status), integers. Named
+	// here (not ranged over status.ThresholdDefaults) so the alerting-page
+	// contract test can see every key it posts is returned.
+	archiveKeys := map[string]bool{}
+	for _, k := range []string{"archive_lag_alert_hours_syslog", "archive_lag_alert_hours_flows", "archive_lag_alert_hours_counters",
+		"archive_seal_overdue_alert_days", "retention_held_alert_hours", "archive_unsettled_alert_hours"} {
+		g[k] = status.ThresholdDefaults[k]
+		keys = append(keys, k)
+		archiveKeys[k] = true
+	}
+	var settings []models.SystemSetting
+	db.Gorm().Where(`"key" IN ?`, keys).Find(&settings)
 	for _, s := range settings {
 		if s.Value == "" {
 			continue
@@ -427,6 +439,10 @@ func (h *Handler) alertGlobalDefaults(db database.Store) gin.H {
 			}
 		case "spike_alert_enabled":
 			g[s.Key] = s.Value == "true"
+		default:
+			if v, err := strconv.Atoi(s.Value); err == nil && archiveKeys[s.Key] && v >= 0 && v <= status.ThresholdMax {
+				g[s.Key] = v
+			}
 		}
 	}
 	return g

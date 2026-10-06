@@ -1953,6 +1953,12 @@ func batchInsertRollups(tx *gorm.DB, rows []rollupRow, intervalType, bucketFmt s
 	return nil
 }
 
+// FlowRollupRawAge is how old a raw flow sample must be before the rollup
+// consumes it (summarises it into a 5m bucket and deletes the raw row): the
+// effective raw retention of flow_samples. The archive status reads it to
+// tell when its gate holds raw flows past it.
+const FlowRollupRawAge = time.Hour
+
 // RunFlowRollupCycle aggregates raw flow samples into rollup buckets for scalability.
 // Called every 5 minutes by the poller:
 //  1. Raw flows older than 1h → 5m rollups
@@ -1962,7 +1968,7 @@ func (d *Database) RunFlowRollupCycle() {
 	work := false
 
 	// Step 1: raw flows > 1h old → 5m rollups
-	cutoff1h := time.Now().Add(-1 * time.Hour)
+	cutoff1h := time.Now().Add(-FlowRollupRawAge)
 	if d.aggregateFlowsToRollup(cutoff1h, "5m") {
 		work = true
 	}

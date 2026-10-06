@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"firewall-mon/internal/api/response"
+	"firewall-mon/internal/archive/status"
+	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
@@ -33,7 +35,11 @@ import (
 //     gate would hold its table's deletes forever.
 //
 // GET /admin/api/archive/override reports each stream's state and the parked
-// chunks. The CLI twin is `fwmon-api archive` (cmd/api/archive.go).
+// chunks, and GET /admin/api/archive/status (archive plan PR 8) the whole
+// archive: per table V, lag, chunk counts and wait reason, per stream the
+// month table, the gates, the parked chunks, the worker's last failures and
+// staging space, the configuration without its secret. The CLI twin is
+// `fwmon-api archive` (cmd/api/archive.go).
 
 // archiveReasonMax bounds the operator's free-text reason.
 const archiveReasonMax = 500
@@ -93,6 +99,26 @@ func (h *Handler) GetArchiveGate(c *gin.Context) {
 		"needs_attention": parked,
 		"max_hours":       database.ArchiveGateOverrideMaxHours,
 	}})
+}
+
+// GetArchiveStatus reports the raw archive's state (status.Build).
+// Admin-only (adminOnlyRoutes): it names the bucket, the parked chunks'
+// errors and the sessions holding a chunk's export. GET /admin/api/archive/status.
+func (h *Handler) GetArchiveStatus(c *gin.Context) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+	cfg := h.config
+	if cfg == nil {
+		cfg = &config.Config{}
+	}
+	st, err := status.Build(c.Request.Context(), db, cfg, time.Now())
+	if err != nil {
+		httputil.InternalError(c, "Failed to read the archive status", err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": st})
 }
 
 // SetArchiveGateOverride releases (hours 1..24) or re-engages (hours 0) the

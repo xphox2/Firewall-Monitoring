@@ -38,7 +38,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.307"
+const ServerVersion = "0.11.308"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -955,8 +955,11 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			// reset re-exports into the bucket — admin-only, status included.
 			"/admin/api/archive/override":         true,
 			"/admin/api/archive/chunks/:id/reset": true,
-			"/admin/api/sites/:id/event-profile":  true,
-			"/admin/api/event-config/effective":   true,
+			// The archive status (PR 8) names the bucket, the parked chunks'
+			// errors and the database sessions holding an export.
+			"/admin/api/archive/status":          true,
+			"/admin/api/sites/:id/event-profile": true,
+			"/admin/api/event-config/effective":  true,
 			// Suggests a suppress/customize rule from an alert (rule creation is
 			// admin-only, and the syslog path reads raw log content) — admin-only.
 			"/admin/api/alerts/:id/suggested-rule": true,
@@ -1175,6 +1178,9 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		// parked in needs_attention. Admin-only (adminOnlyRoutes); both
 		// re-verify the caller's password (+ TOTP), so login-rate-limited.
 		admin.GET("/api/archive/override", handler.GetArchiveGate)
+		// The whole archive's state (archive plan PR 8): the Retention page
+		// card and `fwmon-api archive --status`. Admin-only (adminOnlyRoutes).
+		admin.GET("/api/archive/status", handler.GetArchiveStatus)
 		admin.POST("/api/archive/override", middleware.LoginRateLimiter(), handler.SetArchiveGateOverride)
 		admin.POST("/api/archive/chunks/:id/reset", middleware.LoginRateLimiter(), handler.ResetArchiveChunk)
 

@@ -175,28 +175,38 @@ func (g archiveGateState) capCutoff(cutoff time.Time) time.Time {
 // was not written by the override route — is ignored with a WARNING: the gate
 // stays on.
 func (d *Database) archiveGateOverrideUntil(stream string, now time.Time) (until time.Time, active bool) {
-	// A Pluck, not GetSettingValue: the key is normally absent, and First's
-	// "record not found" would log an error line on every gated pass.
+	until, active, err := d.ArchiveGateOverrideState(stream, now)
+	if err != nil {
+		log.Printf("archive gate: %v (deletes of %s stay gated)", err, stream)
+		return time.Time{}, false
+	}
+	return until, active
+}
+
+// ArchiveGateOverrideState is ArchiveGateOverride that also reports a failed
+// read (the gate fails closed on it; the archive status must not show it as
+// "not overridden").
+func (d *Database) ArchiveGateOverrideState(stream string, now time.Time) (until time.Time, active bool, err error) {
+	// A Pluck, not GetSettingValue: the key is normally absent.
 	var vals []string
 	if err := d.db.Model(&models.SystemSetting{}).Where("\"key\" = ?", ArchiveGateOverrideKey(stream)).Limit(1).Pluck("value", &vals).Error; err != nil {
-		log.Printf("archive gate: read %s: %v (deletes of %s stay gated)", ArchiveGateOverrideKey(stream), err, stream)
-		return time.Time{}, false
+		return time.Time{}, false, fmt.Errorf("read %s: %w", ArchiveGateOverrideKey(stream), err)
 	}
 	if len(vals) == 0 || strings.TrimSpace(vals[0]) == "" {
-		return time.Time{}, false
+		return time.Time{}, false, nil
 	}
 	v := vals[0]
-	until, err := time.Parse(time.RFC3339, strings.TrimSpace(v))
-	if err != nil {
+	until, perr := time.Parse(time.RFC3339, strings.TrimSpace(v))
+	if perr != nil {
 		log.Printf("WARNING: archive gate: %s = %q is not an RFC 3339 time; ignored, deletes of %s stay gated", ArchiveGateOverrideKey(stream), v, stream)
-		return time.Time{}, false
+		return time.Time{}, false, nil
 	}
 	if until.After(now.Add(ArchiveGateOverrideMaxHours*time.Hour + time.Minute)) {
 		log.Printf("WARNING: archive gate: %s ends %s, more than %d h from now; ignored, deletes of %s stay gated",
 			ArchiveGateOverrideKey(stream), until.UTC().Format(time.RFC3339), ArchiveGateOverrideMaxHours, stream)
-		return time.Time{}, false
+		return time.Time{}, false, nil
 	}
-	return until, now.Before(until)
+	return until, now.Before(until), nil
 }
 
 // archiveGate resolves the gate of table's raw deletes now. Off when the

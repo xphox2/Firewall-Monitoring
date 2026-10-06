@@ -23,6 +23,7 @@ const (
 	FamilyFlowTelemetry = "Flow Telemetry"
 	FamilyFlowSecurity  = "Flow Security"
 	FamilyCustomRules   = "Custom Rules"
+	FamilyArchive       = "Raw Archive"
 )
 
 // AllAlertTypes returns every togglable alert type, grouped by family in
@@ -91,6 +92,13 @@ func AllAlertTypes() []AlertTypeInfo {
 		{AlertTypeSFlowDenyStorm, FamilyFlowSecurity, "Deny storm from one source (consolidates into the SFLOW_SECURITY card; toggling THIS type off drops deny-storm detections before consolidation)"},
 		{AlertTypeSFlowDenyStormVictim, FamilyFlowSecurity, "Deny storm aimed at one victim"},
 		{AlertTypeSFlowDeniedThenAllowed, FamilyFlowSecurity, "Denied traffic later allowed (possible policy gap)"},
+
+		// Raw Archive (the Firewall-Mon server itself, no device)
+		{AlertTypeArchiveLag, FamilyArchive, "A raw archive stream's verified data is further behind than its threshold"},
+		{AlertTypeArchiveNeedsAttention, FamilyArchive, "An archive chunk is parked in needs_attention (no longer retried; holds its table's deletes)"},
+		{AlertTypeArchiveSealOverdue, FamilyArchive, "A closed month of a raw archive stream is not sealed long after its seal time"},
+		{AlertTypeRetentionHeld, FamilyArchive, "The retention gate holds unarchived raw rows past their window while the database volume grows"},
+		{AlertTypeArchiveUnsettledLong, FamilyArchive, "An archive table's next chunk has waited for hours (an open writer, an unattached partition leaf, no statement_timeout)"},
 
 		// Custom Rules
 		{AlertTypeLogRuleMatch, FamilyCustomRules, "Default type emitted by custom syslog rules (toggling Off mutes rules that emit it)"},

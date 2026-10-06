@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -10,7 +11,9 @@ import (
 	"time"
 
 	"firewall-mon/internal/archive/s3"
+	"firewall-mon/internal/archive/status"
 	"firewall-mon/internal/archive/worker"
+	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/models"
 )
@@ -29,7 +32,7 @@ func TestArchiveCmd(t *testing.T) {
 	open := func() (archiveStore, error) { return keepOpenArchive{db}, nil }
 	run := func(args ...string) (int, string, string) {
 		var out, errb bytes.Buffer
-		code := archiveCmd(args, &out, &errb, open, func() (worker.MonthReader, error) { return nil, errors.New("no bucket in this test") })
+		code := archiveCmd(args, &out, &errb, &config.Config{}, open, func() (worker.MonthReader, error) { return nil, errors.New("no bucket in this test") })
 		return code, out.String(), errb.String()
 	}
 	audits := func(action string) int64 {
@@ -129,7 +132,7 @@ func TestArchiveCmd_VerifyMonth(t *testing.T) {
 	bucket := &monthBucket{key: "syslog/v2/2026-10/_MONTH.json", body: []byte(`{"kind":"fwmon-archive-month","manifest_version":1,"stream":"syslog","month":"2026-10","chunks":[]}`)}
 	run := func(b *monthBucket, args ...string) (int, string, string) {
 		var out, errb bytes.Buffer
-		code := archiveCmd(args, &out, &errb, noDB, func() (worker.MonthReader, error) {
+		code := archiveCmd(args, &out, &errb, &config.Config{}, noDB, func() (worker.MonthReader, error) {
 			if b == nil {
 				return nil, errors.New("ARCHIVE_S3_ENDPOINT is required")
 			}
@@ -156,5 +159,77 @@ func TestArchiveCmd_VerifyMonth(t *testing.T) {
 	code, out, _ := run(bucket, "--verify-month", "syslog", "2026-10")
 	if code != 1 || !strings.Contains(out, "PROBLEM:") || !strings.Contains(out, "FAILED:") || strings.Contains(out, "OK:") {
 		t.Fatalf("bad manifest: %d %q", code, out)
+	}
+}
+
+// TestArchiveCmd_Status: --status prints the archive (the parked chunk and
+// whether it holds its table's deletes, the released gate, the months, the
+// worker's last failure) and --status --json the API's JSON; --json alone and
+// --status with another option are usage errors. Neither credential is
+// printed.
+func TestArchiveCmd_Status(t *testing.T) {
+	db := database.NewDatabaseForTesting(t)
+	const keyID, secret = "keyid-test-qrst", "secret-test-value-never-printed"
+	cfg := &config.Config{}
+	cfg.Archive = config.ArchiveConfig{FlowsEnabled: true, Endpoint: "https://s3.example.com", Region: "us-test-1",
+		Bucket: "example-bucket", Prefix: "fwmon-test", AccessKeyID: keyID, SecretAccessKey: config.Secret(secret), StagingDir: "/tmp/x"}
+	run := func(args ...string) (int, string, string) {
+		var out, errb bytes.Buffer
+		code := archiveCmd(args, &out, &errb, cfg, func() (archiveStore, error) { return keepOpenArchive{db}, nil },
+			func() (worker.MonthReader, error) { return nil, errors.New("no bucket in this test") })
+		return code, out.String(), errb.String()
+	}
+	for _, args := range [][]string{{"--json"}, {"--status", "--reason", "r"}, {"--status", "--gate-status"}, {"--status", "extra"}} {
+		if code, _, _ := run(args...); code != 2 {
+			t.Fatalf("args %v: exit %d, want 2 (usage)", args, code)
+		}
+	}
+
+	hour := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	for _, c := range []models.ArchiveChunk{
+		{SourceTable: "flow_samples", Seq: 1, IDLo: 0, IDHi: 10, PeriodStart: hour, PeriodEnd: hour.Add(time.Hour), Month: "2026-09", Status: models.ArchiveChunkVerified},
+		{SourceTable: "flow_samples", Seq: 2, IDLo: 10, IDHi: 20, PeriodStart: hour.Add(time.Hour), PeriodEnd: hour.Add(2 * time.Hour), Month: "2026-09",
+			Status: models.ArchiveChunkNeedsAttention, Mismatches: 3, Error: "count check shortfall"},
+	} {
+		if err := db.Gorm().Create(&c).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := status.NewRecorder("fw-example-02-9", "/tmp/x", 2<<30, secret, keyID)
+	rec.Failed("verify", errors.New("GET with "+secret+" failed"), time.Now())
+	js, err := rec.JSON(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveArchiveWorkerState(context.Background(), js); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetArchiveGateOverride(database.ArchiveGateSyslog, time.Now().Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, errb := run("--status")
+	if code != 0 {
+		t.Fatalf("--status: %d %q", code, errb)
+	}
+	for _, want := range []string{"syslog off, flows on", "key …qrst", "syslog  RELEASED by an override", "flows   engaged",
+		"flow_samples (on): verified through id 10", "needs attention: chunk", "HOLDS its table's deletes: count check shortfall",
+		"last verify failure", "[redacted]", "2026-09 open due"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--status lacks %q:\n%s", want, out)
+		}
+	}
+	code, jsOut, errb := run("--status", "--json")
+	if code != 0 {
+		t.Fatalf("--status --json: %d %q", code, errb)
+	}
+	var st status.Status
+	if err := json.Unmarshal([]byte(jsOut), &st); err != nil || len(st.NeedsAttention) != 1 || !st.NeedsAttention[0].HoldsGate {
+		t.Fatalf("--json: %v %s", err, jsOut)
+	}
+	for _, leak := range []string{keyID, secret} {
+		if strings.Contains(out+jsOut, leak) {
+			t.Fatalf("--status printed %q", leak)
+		}
 	}
 }

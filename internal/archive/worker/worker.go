@@ -46,6 +46,7 @@ import (
 
 	"firewall-mon/internal/archive/export"
 	"firewall-mon/internal/archive/s3"
+	"firewall-mon/internal/archive/status"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/metrics"
@@ -123,6 +124,10 @@ type Worker struct {
 	}
 	logMu   sync.Mutex
 	lastLog map[string]string
+	// rt is the runtime state the database does not hold (wait reasons, the
+	// last failure of each stage, preflight, staging space), written to the
+	// database for the status API and the alerts (saveRuntime).
+	rt *status.Recorder
 
 	// Test hooks (nil in production): called after the step named, with the
 	// pass context; an error is returned from the step as if it had failed.
@@ -165,6 +170,7 @@ func newWorker(db *database.Database, store Store, cfg config.ArchiveConfig) (*W
 	host, _ := os.Hostname()
 	w.runner = fmt.Sprintf("%s-%d", host, os.Getpid())
 	w.staging = cfg.StagingDir
+	w.rt = status.NewRecorder(w.runner, w.staging, stagingMinFree, cfg.SecretAccessKey.Reveal(), cfg.AccessKeyID)
 	if w.staging == "" {
 		// Config.Validate requires it; a temp-directory default would land
 		// in a container's writable layer, often the database's disk.
@@ -209,6 +215,46 @@ func (w *Worker) clearLog(key string) {
 	w.logMu.Unlock()
 }
 
+// fail counts a failure at stage (fwmon_archive_errors_total) and records it
+// as the stage's last failure.
+func (w *Worker) fail(stage string, err error) {
+	metrics.IncArchiveError(stage)
+	w.rt.Failed(stage, err, w.now())
+}
+
+// unsettled sets why table's next chunk waits (fwmon_archive_unsettled and
+// the runtime state; "" = it does not).
+func (w *Worker) unsettled(table, reason string, err error) {
+	metrics.SetArchiveUnsettled(table, reason)
+	detail := ""
+	if err != nil {
+		detail = err.Error()
+	}
+	w.rt.SetUnsettled(table, reason, detail, w.now())
+}
+
+// saveRuntime writes the runtime state, with the staging directory's free
+// space measured now, to the database (database.ArchiveWorkerStateKey). It
+// runs at the end of every tick and every minute of a long pass, so the
+// status shows the snapshot stale only when the worker stopped writing.
+func (w *Worker) saveRuntime(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
+	w.rt.SetStagingFree(stagingFree(ctx, w.staging))
+	js, err := w.rt.JSON(w.now())
+	if err == nil {
+		err = w.db.SaveArchiveWorkerState(ctx, js)
+	}
+	if err != nil {
+		if ctx.Err() == nil {
+			w.logf("runtime", "record the worker state: %v", err)
+		}
+		return
+	}
+	w.clearLog("runtime")
+}
+
 // Tick does the archive's work that is due: under the archive lock it checks
 // the bucket once (Preflight) and takes the due id marks; every passEvery it
 // also plans and exports the due chunks (see pass). Errors are logged and
@@ -223,7 +269,7 @@ func (w *Worker) Tick(ctx context.Context) {
 	}
 	release, acquired, err := w.db.AcquireArchiveLock()
 	if err != nil {
-		metrics.IncArchiveError("lock")
+		w.fail("lock", err)
 		w.logf("lock", "advisory lock probe failed: %v", err)
 		return
 	}
@@ -231,17 +277,19 @@ func (w *Worker) Tick(ctx context.Context) {
 		return
 	}
 	defer release()
+	defer w.saveRuntime(ctx)
 	w.clearLog("lock")
 
 	if !w.preflight {
 		if err := w.store.Preflight(ctx); err != nil {
 			if ctx.Err() == nil {
-				metrics.IncArchiveError("preflight")
+				w.fail("preflight", err)
 				w.logf("preflight", "bucket preflight failed (nothing is archived until it passes): %v", err)
 			}
 			return
 		}
 		w.preflight = true
+		w.rt.SetPreflight(true)
 		w.clearLog("preflight")
 		log.Printf("archive: bucket preflight passed; archiving %v", w.tables)
 	}
@@ -258,7 +306,7 @@ func (w *Worker) takeMarks(ctx context.Context) {
 	for _, t := range w.marks {
 		if _, err := w.db.TakeArchiveIDMarks(ctx, t, w.now()); err != nil {
 			if ctx.Err() == nil {
-				metrics.IncArchiveError("mark")
+				w.fail("mark", err)
 				w.logf("mark-"+t, "id marks of %s: %v", t, err)
 			}
 			continue
@@ -286,6 +334,7 @@ func (w *Worker) pass(ctx context.Context) {
 				return
 			case <-t.C:
 				w.takeMarks(markCtx)
+				w.saveRuntime(markCtx)
 			}
 		}
 	}()
@@ -354,17 +403,17 @@ func (w *Worker) plan(ctx context.Context, table string) bool {
 				return false
 			}
 			if errors.Is(err, database.ErrArchiveNoStatementTimeout) {
-				metrics.SetArchiveUnsettled(table, "no_statement_timeout")
+				w.unsettled(table, "no_statement_timeout", err)
 				w.logf("plan-"+table, "%v", err)
 				return false
 			}
 			if errors.Is(err, database.ErrArchiveLeafMove) {
-				metrics.SetArchiveUnsettled(table, "unattached_leaf")
+				w.unsettled(table, "unattached_leaf", err)
 				w.logf("plan-"+table, "%s waits: %v", table, err)
 				return false
 			}
 			// Already planned chunks can still be worked.
-			metrics.IncArchiveError("plan")
+			w.fail("plan", err)
 			w.logf("plan-"+table, "plan %s: %v", table, err)
 			return true
 		}
@@ -431,13 +480,13 @@ func (w *Worker) workOne(ctx context.Context, table string) progress {
 	c, err := w.db.NextArchiveChunk(ctx, table, now)
 	if err != nil {
 		if ctx.Err() == nil {
-			metrics.IncArchiveError("db")
+			w.fail("db", err)
 			w.logf("next-"+table, "%v", err)
 		}
 		return progressNone
 	}
 	if c == nil {
-		metrics.SetArchiveUnsettled(table, "")
+		w.unsettled(table, "", nil)
 		return progressNone
 	}
 	if c.Status != models.ArchiveChunkVerifying {
@@ -450,29 +499,29 @@ func (w *Worker) workOne(ctx context.Context, table string) progress {
 			var un *database.ArchiveUnsettledError
 			switch {
 			case errors.As(err, &un) && un.SettleLeft > 0:
-				metrics.SetArchiveUnsettled(table, "settling")
+				w.unsettled(table, "settling", err)
 			case errors.As(err, &un):
-				metrics.SetArchiveUnsettled(table, "open_writer")
+				w.unsettled(table, "open_writer", fmt.Errorf("chunk %d: %w", c.Seq, err))
 				w.logf("settle-"+table, "%s chunk %d waits: %v", table, c.Seq, err)
 			case errors.Is(err, database.ErrArchiveNoStatementTimeout):
-				metrics.SetArchiveUnsettled(table, "no_statement_timeout")
+				w.unsettled(table, "no_statement_timeout", err)
 				w.logf("settle-"+table, "%v", err)
 			case errors.Is(err, database.ErrArchiveLeafMove):
-				metrics.SetArchiveUnsettled(table, "unattached_leaf")
+				w.unsettled(table, "unattached_leaf", err)
 				w.logf("settle-"+table, "%s chunk %d waits: %v", table, c.Seq, err)
 			default:
-				metrics.IncArchiveError("settle")
+				w.fail("settle", err)
 				w.logf("settle-"+table, "%s chunk %d: settle check: %v", table, c.Seq, err)
 			}
 			return progressNone
 		}
 		w.clearLog("settle-" + table)
 	}
-	metrics.SetArchiveUnsettled(table, "")
+	w.unsettled(table, "", nil)
 
 	if err := w.db.ClaimArchiveChunk(ctx, c, w.runner); err != nil {
 		if ctx.Err() == nil {
-			metrics.IncArchiveError("db")
+			w.fail("db", err)
 			w.logf("claim-"+table, "%s chunk %d: claim: %v", table, c.Seq, err)
 		}
 		return progressNone
@@ -489,9 +538,9 @@ func (w *Worker) workOne(ctx context.Context, table string) progress {
 	if errors.Is(err, errSealedWrite) {
 		// A chunk of a sealed month is not verified (only by hand can that
 		// be): no retry may write it, and the folder must not change.
-		metrics.IncArchiveError("sealed")
+		w.fail("sealed", fmt.Errorf("%s chunk %d: %w", table, c.Seq, err))
 		if perr := w.db.ParkArchiveChunk(ctx, c, err.Error(), w.now()); perr != nil {
-			metrics.IncArchiveError("db")
+			w.fail("db", perr)
 			log.Printf("archive: %s chunk %d: park: %v", table, c.Seq, perr)
 		} else {
 			metrics.IncArchiveNeedsAttention(table)
@@ -504,7 +553,7 @@ func (w *Worker) workOne(ctx context.Context, table string) progress {
 		// moving rows through a standalone leaf: a wait, not a failure.
 		// The chunk keeps its state — an exporting one is exported again,
 		// a verifying one read back again — once the move is over.
-		metrics.SetArchiveUnsettled(table, "unattached_leaf")
+		w.unsettled(table, "unattached_leaf", err)
 		w.logf("leaf-"+table, "%s chunk %d waits: %v", table, c.Seq, err)
 		return progressNone
 	}
@@ -514,7 +563,7 @@ func (w *Worker) workOne(ctx context.Context, table string) progress {
 	if errors.As(err, &se) {
 		stage = se.stage
 	}
-	metrics.IncArchiveError(stage)
+	w.fail(stage, fmt.Errorf("%s chunk %d: %w", table, c.Seq, err))
 	at := w.now()
 	var ferr error
 	switch {
@@ -544,7 +593,7 @@ func (w *Worker) workOne(ctx context.Context, table string) progress {
 		}
 	}
 	if ferr != nil {
-		metrics.IncArchiveError("db")
+		w.fail("db", ferr)
 		log.Printf("archive: %s chunk %d: record the failure: %v", table, c.Seq, ferr)
 	}
 	return progressFailed

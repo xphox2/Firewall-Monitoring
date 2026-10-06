@@ -606,14 +606,32 @@ func defaultCooldownForType(alertType models.AlertType) int {
 	if strings.HasPrefix(string(alertType), "SFLOW_") {
 		return 15 // >= runFlowDetectionCycle's 15-minute window
 	}
+	switch alertType {
+	case models.AlertTypeArchiveLag, models.AlertTypeArchiveNeedsAttention, models.AlertTypeArchiveSealOverdue,
+		models.AlertTypeRetentionHeld, models.AlertTypeArchiveUnsettledLong:
+		// Raw archive conditions move over hours and days, evaluated every 5
+		// minutes: a persistent one re-notifies every 6 h, not every tick. The
+		// seeded rules carry it too (the policy-level 5 minutes would
+		// otherwise shadow this).
+		return archiveAlertCooldownMinutes
+	}
 	return 5
 }
+
+// archiveAlertCooldownMinutes is the raw archive alerts' re-notify interval.
+const archiveAlertCooldownMinutes = 360
 
 func defaultSeverityForType(alertType models.AlertType) models.Severity {
 	switch alertType {
 	case "DISK_HIGH", "INTERFACE_DOWN", "VPN_TUNNEL_DOWN", "DEVICE_OFFLINE",
 		"SYSLOG_EMERGENCY", "SYSLOG_CRITICAL", "SSH_HOST_KEY_CHANGED",
 		"SERVER_DISK_HIGH":
+		return "critical"
+	case models.AlertTypeRetentionHeld:
+		// The gate is keeping raw rows past their window and the database
+		// volume is growing: left alone it ends in SERVER_DISK_HIGH. The other
+		// archive alerts (lag, parked chunk, unsealed month, a long wait) are
+		// warnings — nothing is lost while they last.
 		return "critical"
 	case "SYSLOG_ALERT":
 		return "warning"
