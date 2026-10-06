@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"firewall-mon/internal/alerts"
+	archiveworker "firewall-mon/internal/archive/worker"
 	"firewall-mon/internal/classify"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
@@ -491,6 +492,34 @@ func (p *Poller) Start() error {
 		})
 	} else if p.db != nil {
 		log.Println("normalize-backfill: worker disabled (NORMALIZE_ENABLED=false)")
+	}
+
+	// Raw archive (archive plan PR 4): exports, uploads and verifies the
+	// enabled streams to the S3-compatible bucket, under its OWN advisory lock
+	// (worker.Tick) — never the shared work lock, which an export of a syslog
+	// day (minutes) would hold. Off the select loop like the backfill; on
+	// shutdown a chunk caught mid-way stays in its state and the next start
+	// resumes it. Nothing starts with ARCHIVE_SYSLOG_ENABLED and
+	// ARCHIVE_FLOWS_ENABLED both off, and no delete waits on the archive yet.
+	if p.db != nil && p.cfg.Archive.Enabled() {
+		if aw, err := archiveworker.New(p.db, p.cfg.Archive); err != nil {
+			log.Printf("archive: worker not started: %v", err)
+		} else {
+			log.Printf("archive: worker started for %v", aw.Tables())
+			logging.SafeGo("archive", func() {
+				aw.Tick(backfillCtx)
+				t := time.NewTicker(archiveworker.TickInterval)
+				defer t.Stop()
+				for {
+					select {
+					case <-backfillCtx.Done():
+						return
+					case <-t.C:
+						aw.Tick(backfillCtx)
+					}
+				}
+			})
+		}
 	}
 
 	// Run the sFlow detection engine every 5 minutes, over a recent window of

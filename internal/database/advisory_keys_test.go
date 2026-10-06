@@ -27,6 +27,7 @@ func TestAdvisoryLockKeysDistinct(t *testing.T) {
 		"devicePurgeLockKey":       devicePurgeLockKey,
 		"migrationLockKey":         migrationLockKey,
 		"normalizeBackfillLockKey": normalizeBackfillLockKey,
+		"archiveLockKey":           archiveLockKey,
 	}
 	seen := make(map[int64]string, len(keys))
 	for name, k := range keys {

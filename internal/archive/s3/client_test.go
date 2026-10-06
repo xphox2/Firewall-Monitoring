@@ -77,10 +77,10 @@ func certPool(srv *httptest.Server) *x509.CertPool {
 	return p
 }
 
-func withRoots(p *x509.CertPool) option     { return func(s *settings) { s.rootCAs = p } }
-func withPartSize(n int64) option           { return func(s *settings) { s.partSize = n } }
-func withAttempts(n int) option             { return func(s *settings) { s.maxAttempts = n } }
-func withNow(f func() time.Time) option     { return func(s *settings) { s.now = f } }
+func withRoots(p *x509.CertPool) Option     { return func(s *settings) { s.rootCAs = p } }
+func withPartSize(n int64) Option           { return func(s *settings) { s.partSize = n } }
+func withAttempts(n int) Option             { return func(s *settings) { s.maxAttempts = n } }
+func withNow(f func() time.Time) Option     { return func(s *settings) { s.now = f } }
 func fixedNow(t time.Time) func() time.Time { return func() time.Time { return t } }
 
 func newFakeClient(t *testing.T, cfg func(*config.ArchiveConfig)) (*Client, *s3test.Server) {

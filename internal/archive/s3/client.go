@@ -93,13 +93,25 @@ type settings struct {
 	maxAttempts int // 0 = the SDK default (3 attempts with backoff)
 }
 
-type option func(*settings)
+// Option is a construction knob. Production passes none; tests use them to
+// reach an in-process fake (internal/archive/s3/s3test).
+type Option func(*settings)
+
+// WithRootCAs trusts pool for the endpoint's TLS certificate (a test server's
+// self-signed one) instead of the system roots.
+func WithRootCAs(pool *x509.CertPool) Option { return func(s *settings) { s.rootCAs = pool } }
+
+// WithPartSize sets the multipart part size (at least 5 MiB; default 16 MiB).
+func WithPartSize(n int64) Option { return func(s *settings) { s.partSize = n } }
+
+// WithMaxAttempts sets the SDK's attempts per request (0 = its default, 3).
+func WithMaxAttempts(n int) Option { return func(s *settings) { s.maxAttempts = n } }
 
 // New builds a client from the archive configuration. It validates the S3
 // keys (config.ArchiveConfig.ValidateS3) and refuses an endpoint whose host is
 // a literal loopback / private / link-local address unless
 // ARCHIVE_ALLOW_PRIVATE_ENDPOINT is set. It makes no network call.
-func New(cfg config.ArchiveConfig, opts ...option) (*Client, error) {
+func New(cfg config.ArchiveConfig, opts ...Option) (*Client, error) {
 	s := settings{partSize: DefaultPartSize, now: time.Now}
 	for _, o := range opts {
 		o(&s)

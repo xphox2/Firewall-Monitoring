@@ -8,8 +8,8 @@ import "time"
 // exported to one or more objects (archive_objects), and the objects of one
 // stream and UTC month are sealed into archive_months. archive_id_marks are the
 // per-boundary max(id) marks the flow tables are cut by (they have no ingest
-// column the cut could binary-search). Nothing writes these tables
-// automatically yet: the archive worker is a later release.
+// column the cut could binary-search). The archive worker
+// (internal/archive/worker, poller) writes them while a stream is enabled.
 
 // Archive chunk statuses (ArchiveChunk.Status).
 const (
@@ -20,6 +20,17 @@ const (
 	ArchiveChunkVerified   = "verified"
 	ArchiveChunkFailed     = "failed"
 	ArchiveChunkSuperseded = "superseded"
+)
+
+// Archive object statuses (ArchiveObject.Status): recorded after the export
+// (pending), uploaded with the service's ETag / version (uploaded), read back
+// and counted with the rest of its chunk (verified), or replaced by a later
+// export of the same chunk (superseded — never verified, kept as history).
+const (
+	ArchiveObjectPending    = "pending"
+	ArchiveObjectUploaded   = "uploaded"
+	ArchiveObjectVerified   = "verified"
+	ArchiveObjectSuperseded = "superseded"
 )
 
 // ArchiveChunk is one contiguous id range of a source table. Chunks of a table

@@ -6,9 +6,11 @@ import (
 	"log/slog"
 	"net"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ArchiveConfig is the raw syslog / flow archive to S3-compatible object
@@ -20,10 +22,9 @@ import (
 // With both streams disabled (the default) nothing here is validated or used,
 // so an install that does not set ARCHIVE_* behaves exactly as before.
 //
-// This release ships the configuration, its validation and the S3 client
-// (internal/archive/s3) only. No archive worker runs yet and no delete is
-// gated: enabling a stream validates the configuration at startup and does
-// nothing else until the worker ships.
+// An enabled stream is exported, uploaded and verified by the poller's
+// archive worker (internal/archive/worker). No delete is gated on it yet:
+// retention runs exactly as without the archive.
 type ArchiveConfig struct {
 	SyslogEnabled bool // ARCHIVE_SYSLOG_ENABLED (default false)
 	FlowsEnabled  bool // ARCHIVE_FLOWS_ENABLED (default false): sflow, netflow and sflow-counters
@@ -44,6 +45,17 @@ type ArchiveConfig struct {
 	// MinAgeHours is how long after a syslog day / counter day ends before its
 	// chunk may be exported (flows use a fixed 5 minutes).
 	MinAgeHours int // ARCHIVE_MIN_AGE_HOURS (default 2)
+
+	// Read pacing of an export, rows per second (100-100000):
+	// syslog_messages, and flow_samples / flow_if_counters.
+	SyslogRateRowsPerSec int // ARCHIVE_SYSLOG_RATE_ROWS_PER_SEC (default 5000)
+	FlowRateRowsPerSec   int // ARCHIVE_FLOW_RATE_ROWS_PER_SEC (default 20000)
+	// Window "HH:MM-HH:MM" (server local time, may wrap midnight): syslog
+	// chunks start only inside it. Empty = any time. Flows always run.
+	Window string // ARCHIVE_WINDOW (default empty)
+	// StagingDir holds each chunk's compressed objects between export and
+	// upload (absolute path; empty = <os temp dir>/fwmon-archive).
+	StagingDir string // ARCHIVE_STAGING_DIR (default empty)
 
 	// Lab / self-hosted escape hatches (MinIO, Garage, SeaweedFS on a LAN).
 	AllowHTTP            bool // ARCHIVE_ALLOW_HTTP (default false)
@@ -141,7 +153,52 @@ func (a ArchiveConfig) Validate() error {
 	if a.MinAgeHours < 1 || a.MinAgeHours > 168 {
 		return fmt.Errorf("ARCHIVE_MIN_AGE_HOURS must be 1-168, got %d", a.MinAgeHours)
 	}
+	for _, r := range []struct {
+		key string
+		val int
+	}{{"ARCHIVE_SYSLOG_RATE_ROWS_PER_SEC", a.SyslogRateRowsPerSec}, {"ARCHIVE_FLOW_RATE_ROWS_PER_SEC", a.FlowRateRowsPerSec}} {
+		if r.val < 100 || r.val > 100000 {
+			return fmt.Errorf("%s must be 100-100000, got %d", r.key, r.val)
+		}
+	}
+	if _, _, _, err := a.WindowMinutes(); err != nil {
+		return err
+	}
+	if a.StagingDir != "" && !filepath.IsAbs(a.StagingDir) {
+		return fmt.Errorf("ARCHIVE_STAGING_DIR must be an absolute path, got %q", a.StagingDir)
+	}
 	return nil
+}
+
+// WindowMinutes parses ARCHIVE_WINDOW ("HH:MM-HH:MM") into minutes since
+// local midnight; start > end wraps past midnight. ok is false when the window
+// is empty (no restriction).
+func (a ArchiveConfig) WindowMinutes() (start, end int, ok bool, err error) {
+	w := strings.TrimSpace(a.Window)
+	if w == "" {
+		return 0, 0, false, nil
+	}
+	from, to, found := strings.Cut(w, "-")
+	if !found {
+		return 0, 0, false, fmt.Errorf("ARCHIVE_WINDOW %q: want HH:MM-HH:MM", w)
+	}
+	hm := func(p string) (int, error) {
+		t, err := time.Parse("15:04", strings.TrimSpace(p))
+		if err != nil {
+			return 0, fmt.Errorf("ARCHIVE_WINDOW %q: want HH:MM-HH:MM", w)
+		}
+		return t.Hour()*60 + t.Minute(), nil
+	}
+	if start, err = hm(from); err != nil {
+		return 0, 0, false, err
+	}
+	if end, err = hm(to); err != nil {
+		return 0, 0, false, err
+	}
+	if start == end {
+		return 0, 0, false, fmt.Errorf("ARCHIVE_WINDOW %q: start equals end", w)
+	}
+	return start, end, true, nil
 }
 
 // ValidateS3 checks the keys the S3 client needs, whether or not a stream is
