@@ -30,6 +30,9 @@ import (
 //	archive --gate-status                                           overrides + parked chunks
 //	archive --status [--json]                                       the whole archive (as GET /admin/api/archive/status)
 //	archive --verify-month <stream> <YYYY-MM>                       re-check a sealed month from the bucket
+//	archive --restore <stream> --from <day> --to <day> [...]        restore archived days to a staging table
+//	archive --restores                                              list the restores
+//	archive --cancel-restore <id> | --resume-restore <id> | --drop-restore <id>
 //
 // Like reset-auth and normalize-backfill it connects straight to the database
 // with the server's environment (`docker exec <container> fwmon-api archive
@@ -38,6 +41,11 @@ import (
 // password prompt would add nothing — while the API routes re-verify the
 // operator's password (+ TOTP). Every change writes an audit_logs row (actor
 // "cli") with the reason.
+//
+// --restore (archive plan PR 9) queues a restore to a staging table
+// (restore_<id>_<table>; see archive_restore.go): the poller's restore worker
+// downloads, verifies and stages the rows. It, --resume-restore and
+// --drop-restore are audit-logged like the API's re-authenticated routes.
 //
 // --verify-month (archive plan PR 7) needs no database: it reads the month's
 // _MONTH.json and every chunk.json and object it pins from the bucket
@@ -73,6 +81,8 @@ type archiveStore interface {
 	Close() error
 	// --status reads what the status API reads.
 	status.Store
+	// --restore and the restore job commands.
+	database.ArchiveRestoreStore
 }
 
 // archiveCmdReasonMax matches the API's bound on the reason.
@@ -91,6 +101,8 @@ func archiveCmd(args []string, stdout, stderr io.Writer, cfg *config.Config, ope
 	fullStatus := fs.Bool("status", false, "print the whole archive: per table V, lag, chunks, waits; per stream the months; gates, parked chunks, the worker's last failures")
 	asJSON := fs.Bool("json", false, "with --status: print the JSON of GET /admin/api/archive/status")
 	verifyMonth := fs.String("verify-month", "", "re-check a sealed month from the bucket alone: --verify-month <stream> <YYYY-MM> (read-only)")
+	var ro restoreOpts
+	ro.register(fs)
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "usage: fwmon-api archive --override syslog|flows|all --for 6h --reason \"<why>\"")
 		fmt.Fprintln(stderr, "       fwmon-api archive --override syslog|flows|all --clear [--reason \"<why>\"]")
@@ -98,13 +110,16 @@ func archiveCmd(args []string, stdout, stderr io.Writer, cfg *config.Config, ope
 		fmt.Fprintln(stderr, "       fwmon-api archive --gate-status")
 		fmt.Fprintln(stderr, "       fwmon-api archive --status [--json]")
 		fmt.Fprintln(stderr, "       fwmon-api archive --verify-month syslog|sflow|netflow|sflow-counters <YYYY-MM>")
+		fmt.Fprintln(stderr, "       fwmon-api archive --restore syslog|sflow|netflow|sflow-counters --from <YYYY-MM-DD> --to <YYYY-MM-DD>")
+		fmt.Fprintln(stderr, "             [--device <id>] [--renormalize [--replace]] [--from-bucket] [--force] [--rate <rows/s>] [--ttl-days <n>]")
+		fmt.Fprintln(stderr, "       fwmon-api archive --restores | --cancel-restore <id> | --resume-restore <id> | --drop-restore <id>")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	modes := 0
-	for _, m := range []bool{*override != "", *resetChunk != 0, *gateStatus, *fullStatus, *verifyMonth != ""} {
+	for _, m := range []bool{*override != "", *resetChunk != 0, *gateStatus, *fullStatus, *verifyMonth != "", ro.mode()} {
 		if m {
 			modes++
 		}
@@ -125,6 +140,16 @@ func archiveCmd(args []string, stdout, stderr io.Writer, cfg *config.Config, ope
 	}
 	if modes != 1 || fs.NArg() > 0 {
 		return usage("")
+	}
+	if ro.mode() {
+		if *reason != "" || *clearOv || *dur != 0 || *asJSON {
+			return usage("the restore commands take no --reason, --for, --clear or --json")
+		}
+		if msg := ro.check(); msg != "" {
+			return usage(msg)
+		}
+	} else if msg := ro.stray(); msg != "" {
+		return usage(msg)
 	}
 	if *asJSON && !*fullStatus {
 		return usage("--json goes with --status")
@@ -171,6 +196,8 @@ func archiveCmd(args []string, stdout, stderr io.Writer, cfg *config.Config, ope
 	now := time.Now().UTC()
 
 	switch {
+	case ro.mode():
+		return ro.run(db, cfg, audit, stdout, stderr)
 	case *fullStatus:
 		st, err := status.Build(context.Background(), db, cfg, time.Now())
 		if err != nil {

@@ -746,14 +746,33 @@ type NormalizeBackfillJob struct {
 	// the raw rows that already had a normalized row (the live ingest's, or an
 	// earlier run's) and were not written again; RowsUnparsed the rows no
 	// mapper could turn into an Event (nothing is stored for those).
-	RowsWritten  int64      `json:"rows_written"`
-	RowsSkipped  int64      `json:"rows_skipped"`
-	RowsUnparsed int64      `json:"rows_unparsed"`
-	Error        string     `json:"error" gorm:"type:text"`
-	StartedAt    *time.Time `json:"started_at"`
-	FinishedAt   *time.Time `json:"finished_at"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	RowsWritten  int64 `json:"rows_written"`
+	RowsSkipped  int64 `json:"rows_skipped"`
+	RowsUnparsed int64 `json:"rows_unparsed"`
+	// SourceTable (migration v78): the raw rows come from an archive restore's
+	// staging table (restore_<n>_syslog_messages) instead of syslog_messages;
+	// empty = syslog_messages. Such a job has no ingest-watermark bound and no
+	// 30-day limit (the rows are history), and skips the rows of a device that
+	// no longer exists. RestoreJobID names the restore. Replace: rewrite the
+	// net_events / sec_events rows a raw row already has (delete + insert in
+	// the batch transaction) instead of skipping it — re-parsing a day after a
+	// parser fix. RowsReplaced counts the raw rows whose earlier normalized
+	// rows were deleted; RowsOutOfRetention the network-class rows older than
+	// the oldest net_events leaf (nothing written; sec_events take theirs).
+	SourceTable        string `json:"source_table,omitempty" gorm:"size:64;not null;default:''"`
+	RestoreJobID       *uint  `json:"restore_job_id,omitempty"`
+	Replace            bool   `json:"replace" gorm:"column:replace_existing;not null;default:false"`
+	RowsReplaced       int64  `json:"rows_replaced"`
+	RowsOutOfRetention int64  `json:"rows_out_of_retention"`
+	// RowsKept (replace mode): raw rows that had normalized rows but whose
+	// re-parse writes nothing (unparsed, or out of the target table's
+	// retention): their earlier rows are KEPT, not deleted.
+	RowsKept   int64      `json:"rows_kept"`
+	Error      string     `json:"error" gorm:"type:text"`
+	StartedAt  *time.Time `json:"started_at"`
+	FinishedAt *time.Time `json:"finished_at"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
 }
 
 // TableName pins the table name so the migration and the worker's raw SQL

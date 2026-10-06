@@ -250,15 +250,21 @@ func (d *Database) EstimateNormalizeBackfill(since, until time.Time) (NormalizeB
 		est.Rows = *rows
 	}
 	est.Bytes = est.Rows * normalizeBackfillBytesPerRow
-	// The newest recent server_metrics sample that could see the data volume
-	// (the Retention page's source); only its free figure is needed here.
+	est.FreeBytes, est.FreeKnown = d.recentDataDiskFree()
+	est.Enough = !est.FreeKnown || est.FreeBytes >= 2*est.Bytes
+	return est, nil
+}
+
+// recentDataDiskFree is the database volume's free space from the newest
+// server_metrics sample of the last normalizeBackfillMetricMaxAge that could
+// see it (the Retention page's source); known=false without one.
+func (d *Database) recentDataDiskFree() (free int64, known bool) {
 	var m models.ServerMetric
 	if err := d.db.Where("data_disk_free_bytes IS NOT NULL AND timestamp >= ?", time.Now().Add(-normalizeBackfillMetricMaxAge)).
 		Order("timestamp DESC").First(&m).Error; err == nil && m.DataDiskFreeBytes != nil {
-		est.FreeBytes, est.FreeKnown = int64(*m.DataDiskFreeBytes), true
+		return int64(*m.DataDiskFreeBytes), true
 	}
-	est.Enough = !est.FreeKnown || est.FreeBytes >= 2*est.Bytes
-	return est, nil
+	return 0, false
 }
 
 // NormalizeBackfillRemaining is the part of a job's window still to be
@@ -548,7 +554,7 @@ func (d *Database) finishBackfillJob(jobID uint, runner, status string, cause er
 		if res.RowsAffected != 1 {
 			return errBackfillJobLost
 		}
-		if job.RowsWritten == 0 {
+		if job.RowsWritten == 0 && job.RowsReplaced == 0 {
 			return nil
 		}
 		day := utcDay(job.Since).AddDate(0, 0, -1)
@@ -688,11 +694,28 @@ func backfillPace(rows, ratePerSec int, elapsed time.Duration) time.Duration {
 
 // backfillRange is one syslog_messages relation to walk and the half-open
 // [lo, hi) slice of the job window it holds; isDefault marks a DEFAULT child
-// (no bound of its own: it is walked over the whole window, first).
+// (no bound of its own: it is walked over the whole window, first). staging
+// marks an archive restore's staging table (job.SourceTable): history, so the
+// page has no ingest-watermark bound.
 type backfillRange struct {
 	table     string
 	lo, hi    time.Time
 	isDefault bool
+	staging   bool
+}
+
+// restoreBackfillRanges is the one range of a job over an archive restore's
+// staging table (SourceTable): the whole window, after checking the name is a
+// syslog staging table (it is spliced into FROM) that exists.
+func (d *Database) restoreBackfillRanges(job *models.NormalizeBackfillJob) ([]backfillRange, error) {
+	t := job.SourceTable
+	if !IsArchiveRestoreTable(t) || !strings.HasSuffix(t, "_syslog_messages") {
+		return nil, fmt.Errorf("backfill: %q is not an archive restore's syslog staging table", t)
+	}
+	if !d.db.Migrator().HasTable(t) {
+		return nil, fmt.Errorf("backfill: the staging table %s does not exist (dropped?); restore the days again", t)
+	}
+	return []backfillRange{{table: t, lo: job.Since, hi: job.Until, staging: true}}, nil
 }
 
 // safeRelName is the shape every relation name read from pg_inherits must
@@ -801,8 +824,13 @@ func (d *Database) leafHasUsableIndex(table string, deviceScoped bool) (bool, er
 // (exclusive), oldest first. Separate so the plan test EXPLAINs the exact
 // statement the run executes.
 func backfillPageQuery(tx *gorm.DB, r backfillRange, cursorTs time.Time, cursorID int64, until time.Time, deviceID *uint, limit int) *gorm.DB {
-	q := tx.Table(r.table).
-		Where("timestamp >= ? AND (timestamp > ? OR id > ?) AND timestamp < ? AND created_at < ?", cursorTs, cursorTs, cursorID, r.hi, until)
+	q := tx.Table(r.table)
+	if r.staging {
+		// Restored history: every row of the window, whenever it was received.
+		q = q.Where("timestamp >= ? AND (timestamp > ? OR id > ?) AND timestamp < ?", cursorTs, cursorTs, cursorID, r.hi)
+	} else {
+		q = q.Where("timestamp >= ? AND (timestamp > ? OR id > ?) AND timestamp < ? AND created_at < ?", cursorTs, cursorTs, cursorID, r.hi, until)
+	}
 	if deviceID != nil {
 		q = q.Where("device_id = ?", *deviceID)
 	}
@@ -887,13 +915,25 @@ func (d *Database) fetchBackfillBatch(ctx context.Context, r backfillRange, curs
 // backfillProgress is what one committed batch records on the job row:
 // the cursor (last raw row of the batch) and the running totals.
 type backfillProgress struct {
-	partition string
-	cursorTs  time.Time
-	cursorID  int64
-	scanned   int64
-	written   int64
-	skipped   int64
-	unparsed  int64
+	partition      string
+	cursorTs       time.Time
+	cursorID       int64
+	scanned        int64
+	written        int64
+	skipped        int64
+	unparsed       int64
+	replaced       int64
+	outOfRetention int64
+	kept           int64
+}
+
+// backfillDelete is a replace-mode batch's delete: the net_events /
+// sec_events rows of these raw ids, read in the batch's [lo, hi] ts range
+// (normalized ts == raw ts) and the job's device — the dedup probe's bounds.
+type backfillDelete struct {
+	lo, hi   time.Time
+	ids      []int64
+	deviceID *uint
 }
 
 // commitBackfillBatch writes the batch's typed rows, its fw_rules catalog
@@ -901,10 +941,21 @@ type backfillProgress struct {
 // progress UPDATE is guarded on the job still being running / cancelling AND
 // on this run's owner token; zero rows affected rolls the batch back and
 // reports errBackfillJobLost.
-func (d *Database) commitBackfillBatch(ctx context.Context, jobID uint, runner string, batch int, nets []models.NetEvent, secs []models.SecEvent, rules []models.FwRule, p backfillProgress) error {
+func (d *Database) commitBackfillBatch(ctx context.Context, jobID uint, runner string, batch int, del *backfillDelete, nets []models.NetEvent, secs []models.SecEvent, rules []models.FwRule, p backfillProgress) error {
 	now := time.Now()
 	if d.pgxPool == nil {
 		return d.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if del != nil {
+				for _, m := range []interface{}{&models.NetEvent{}, &models.SecEvent{}} {
+					q := tx.Where("ts >= ? AND ts <= ? AND raw_id IN ?", del.lo, del.hi, del.ids)
+					if del.deviceID != nil {
+						q = q.Where("device_id = ?", *del.deviceID)
+					}
+					if err := q.Delete(m).Error; err != nil {
+						return fmt.Errorf("replace: delete the earlier %T rows: %w", m, err)
+					}
+				}
+			}
 			if err := insertInChunks(tx, "net_events", nets); err != nil {
 				return err
 			}
@@ -924,7 +975,7 @@ func (d *Database) commitBackfillBatch(ctx context.Context, jobID uint, runner s
 				Updates(map[string]interface{}{
 					"current_partition": p.partition, "cursor_ts": p.cursorTs, "cursor_id": p.cursorID,
 					"rows_scanned": p.scanned, "rows_written": p.written, "rows_skipped": p.skipped, "rows_unparsed": p.unparsed,
-					"updated_at": now,
+					"rows_replaced": p.replaced, "rows_out_of_retention": p.outOfRetention, "rows_kept": p.kept, "updated_at": now,
 				})
 			if res.Error != nil {
 				return res.Error
@@ -942,6 +993,19 @@ func (d *Database) commitBackfillBatch(ctx context.Context, jobID uint, runner s
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = '120s'"); err != nil {
 		return err
+	}
+	if del != nil {
+		for _, table := range []string{"net_events", "sec_events"} {
+			sql := "DELETE FROM " + table + " WHERE ts >= $1 AND ts <= $2 AND raw_id = ANY($3)"
+			args := []any{del.lo, del.hi, del.ids}
+			if del.deviceID != nil {
+				sql += " AND device_id = $4"
+				args = append(args, int64(*del.deviceID))
+			}
+			if _, err := tx.Exec(ctx, sql, args...); err != nil {
+				return fmt.Errorf("replace: delete the earlier %s rows: %w", table, err)
+			}
+		}
 	}
 	if len(nets) > 0 {
 		rows := make([][]any, len(nets))
@@ -979,10 +1043,11 @@ func (d *Database) commitBackfillBatch(ctx context.Context, jobID uint, runner s
 	}
 	tag, err := tx.Exec(ctx, `UPDATE normalize_backfill_jobs
 		SET current_partition = $1, cursor_ts = $2, cursor_id = $3,
-		    rows_scanned = $4, rows_written = $5, rows_skipped = $6, rows_unparsed = $7, updated_at = $8
+		    rows_scanned = $4, rows_written = $5, rows_skipped = $6, rows_unparsed = $7, updated_at = $8,
+		    rows_replaced = $13, rows_out_of_retention = $14, rows_kept = $15
 		WHERE id = $9 AND runner_id = $10 AND status IN ($11, $12)`,
 		p.partition, p.cursorTs, p.cursorID, p.scanned, p.written, p.skipped, p.unparsed, now,
-		int64(jobID), runner, NormalizeBackfillStatusRunning, NormalizeBackfillStatusCancelling)
+		int64(jobID), runner, NormalizeBackfillStatusRunning, NormalizeBackfillStatusCancelling, p.replaced, p.outOfRetention, p.kept)
 	if err != nil {
 		return fmt.Errorf("record batch progress: %w", err)
 	}
@@ -1013,6 +1078,47 @@ func (d *Database) deviceVendors() (map[uint]string, error) {
 		if v := strings.ToLower(strings.TrimSpace(r.Vendor)); v != "" {
 			m[r.ID] = v
 		}
+	}
+	return m, nil
+}
+
+// secEventFloors are the sec_events retention cutoffs at now, as
+// CleanupOldData applies them: every class but config_change older than
+// RETENTION_SEC_EVENT_DAYS, config_change older than
+// RETENTION_SEC_CONFIG_CHANGE_DAYS (zero time = kept forever / no floor).
+func (d *Database) secEventFloors(now time.Time) (other, configChange time.Time) {
+	if d.secEventRetentionDays > 0 {
+		other = now.AddDate(0, 0, -d.secEventRetentionDays)
+	}
+	if d.secConfigChangeRetentDays > 0 {
+		configChange = now.AddDate(0, 0, -d.secConfigChangeRetentDays)
+	}
+	return other, configChange
+}
+
+// restoredOutOfRetention reports whether a re-parsed restored row is older
+// than its target table's retention: the net_events floor (the oldest day
+// leaf) for the network class, the sec_events cutoff of its class otherwise.
+func restoredOutOfRetention(ev *normalize.Event, ts, netFloor, secFloor, cfgFloor time.Time) bool {
+	switch ev.Class {
+	case normalize.ClassNetwork:
+		return ts.Before(netFloor)
+	case normalize.ClassConfigChange:
+		return !cfgFloor.IsZero() && ts.Before(cfgFloor)
+	}
+	return !secFloor.IsZero() && ts.Before(secFloor)
+}
+
+// deviceIDSet is the set of every device id still in devices (retired
+// included; a purged device's row is gone).
+func (d *Database) deviceIDSet() (map[uint]bool, error) {
+	var ids []uint
+	if err := d.db.Model(&models.Device{}).Pluck("id", &ids).Error; err != nil {
+		return nil, fmt.Errorf("load device ids: %w", err)
+	}
+	m := make(map[uint]bool, len(ids))
+	for _, id := range ids {
+		m[id] = true
 	}
 	return m, nil
 }
@@ -1119,7 +1225,15 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint, runner 
 	if err != nil {
 		return d.finishBackfillJob(jobID, runner, NormalizeBackfillStatusFailed, err)
 	}
-	ranges, err := d.backfillRanges(job.Since, job.Until)
+	var ranges []backfillRange
+	var devices map[uint]bool // history jobs: the devices that still exist
+	if job.SourceTable != "" {
+		if ranges, err = d.restoreBackfillRanges(job); err == nil {
+			devices, err = d.deviceIDSet()
+		}
+	} else {
+		ranges, err = d.backfillRanges(job.Since, job.Until)
+	}
 	if err != nil {
 		return d.finishBackfillJob(jobID, runner, NormalizeBackfillStatusFailed, err)
 	}
@@ -1172,10 +1286,11 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint, runner 
 	progress := backfillProgress{
 		partition: job.CurrentPartition, cursorTs: cursorTs, cursorID: cursorID,
 		scanned: job.RowsScanned, written: job.RowsWritten, skipped: job.RowsSkipped, unparsed: job.RowsUnparsed,
+		replaced: job.RowsReplaced, outOfRetention: job.RowsOutOfRetention, kept: job.RowsKept,
 	}
 	observed := map[observedKey]*observedAcc{}
 	batch := 0
-	floorWarned := false
+	floorWarned, goneWarned := false, false
 	checked := -1 // the range index whose index set has been verified
 	finish := func(status string, cause error) error {
 		flushObserved(d, observed)
@@ -1269,6 +1384,7 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint, runner 
 		}
 
 		floor := d.netEventFloor(time.Now())
+		secFloor, cfgFloor := d.secEventFloors(time.Now())
 		var (
 			nets  = make([]models.NetEvent, 0, len(rows))
 			secs  []models.SecEvent
@@ -1278,14 +1394,28 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint, runner 
 			// rolled-back batch (counted again when it is redone) adds nothing.
 			batchObs = map[observedKey]*observedAcc{}
 		)
+		var del *backfillDelete
 		for i := range rows {
 			msg := &rows[i]
 			progress.scanned++
-			if _, dup := existing[int64(msg.ID)]; dup {
+			_, had := existing[int64(msg.ID)]
+			if had && !job.Replace {
 				progress.skipped++
 				continue
 			}
-			if msg.Timestamp.Before(floor) {
+			if job.SourceTable != "" {
+				// Restored history. A device purged since must not get
+				// normalized rows back; the retention floors apply per
+				// target table below.
+				if !devices[msg.DeviceID] {
+					progress.skipped++
+					if !goneWarned {
+						goneWarned = true
+						log.Printf("normalize-backfill: job %d: skipping rows of device(s) that no longer exist (e.g. device %d)", jobID, msg.DeviceID)
+					}
+					continue
+				}
+			} else if msg.Timestamp.Before(floor) {
 				// Its day's leaf is gone (a job running across the retention
 				// boundary); the row would land in net_events_default.
 				progress.skipped++
@@ -1302,7 +1432,29 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint, runner 
 			ev, out := normalizeStored(vendor, msg)
 			if out.Kind != normalize.OutcomeOK {
 				progress.unparsed++
+				if had {
+					progress.kept++ // nothing to replace them with: keep the earlier rows
+				}
 				continue
+			}
+			if job.SourceTable != "" && restoredOutOfRetention(&ev, msg.Timestamp, floor, secFloor, cfgFloor) {
+				// Below the target table's retention: a net_events row would
+				// land in net_events_default and be trimmed, a sec_events row
+				// be deleted by the next cleanup.
+				progress.outOfRetention++
+				if had {
+					progress.kept++
+				}
+				continue
+			}
+			if had {
+				// Replace: the raw row's earlier normalized rows go, in the
+				// batch transaction, and the re-parse's take their place.
+				if del == nil {
+					del = &backfillDelete{lo: rows[0].Timestamp.UTC(), hi: rows[len(rows)-1].Timestamp.UTC(), deviceID: job.DeviceID}
+				}
+				del.ids = append(del.ids, int64(msg.ID))
+				progress.replaced++
 			}
 			rawID := int64(msg.ID)
 			if ev.Class == normalize.ClassNetwork {
@@ -1311,7 +1463,9 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint, runner 
 				secs = append(secs, SecEventFromEvent(&ev, rawID, msg.Timestamp))
 			}
 			progress.written++
-			if msg.DeviceID == 0 {
+			if msg.DeviceID == 0 || had {
+				// had: a replaced row was counted in device_field_observed
+				// when it was first normalized.
 				continue
 			}
 			if p := ev.Present(); p != 0 {
@@ -1336,7 +1490,7 @@ func (d *Database) RunNormalizeBackfill(ctx context.Context, jobID uint, runner 
 		}
 		last := rows[len(rows)-1]
 		progress.partition, progress.cursorTs, progress.cursorID = r.table, last.Timestamp, int64(last.ID)
-		if err := d.commitBackfillBatch(ctx, jobID, runner, batch+1, nets, secs, rules, progress); err != nil {
+		if err := d.commitBackfillBatch(ctx, jobID, runner, batch+1, del, nets, secs, rules, progress); err != nil {
 			if ctx.Err() != nil {
 				flushObserved(d, observed)
 				return d.backfillInterrupted(jobID, runner, ctx.Err())

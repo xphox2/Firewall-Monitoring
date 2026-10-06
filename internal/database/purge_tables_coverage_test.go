@@ -33,6 +33,9 @@ var purgeCoveredElsewhere = map[string]string{
 	// object holds. The object stays in the bucket after a purge, so its row
 	// is the record of it — never purged.
 	"archive_objects": "archive manifest",
+	// Archive restore jobs (v78): device_id is an optional FILTER on the rows
+	// restored, not a row owner; terminal rows are the audit trail.
+	"archive_restore_jobs": "audit trail",
 }
 
 // deviceKeyedTables reflects over the given model lists and returns, per table

@@ -53,6 +53,7 @@ type Store interface {
 	NormalizeBackfillStore
 	ArchiveGateStore
 	ArchiveStatusStore
+	ArchiveRestoreStore
 
 	// Gorm exposes the raw *gorm.DB for handlers that build ad-hoc queries
 	// (partial updates, one-off lookups). Unchanged escape hatch.
@@ -111,6 +112,19 @@ type ArchiveStatusStore interface {
 	ArchiveWorkerState(ctx context.Context) (value string, ok bool, err error)
 	ArchiveGateOverrideState(stream string, now time.Time) (until time.Time, active bool, err error)
 	SyslogRetentionWindows(ret config.RetentionConfig) [SyslogSeverityCount]SyslogWindow
+}
+
+// ArchiveRestoreStore covers the archive restore queue (archive plan PR 9,
+// archive_restore.go). The worker runs on the poller's concrete *Database.
+type ArchiveRestoreStore interface {
+	PlanArchiveRestore(ctx context.Context, req ArchiveRestoreRequest) (*ArchiveRestorePlan, error)
+	CreateArchiveRestoreJob(ctx context.Context, p *ArchiveRestorePlan, now time.Time) (*models.ArchiveRestoreJob, error)
+	GetArchiveRestoreJob(id uint) (*models.ArchiveRestoreJob, error)
+	ListArchiveRestoreJobs(limit int) ([]models.ArchiveRestoreJob, error)
+	ArchiveRestoreTableBytes(ctx context.Context, name string) int64
+	CancelArchiveRestoreJob(id uint) (status string, applied bool, err error)
+	ResumeArchiveRestoreJob(id uint) (bool, error)
+	DropArchiveRestore(ctx context.Context, id uint, now time.Time) (*models.ArchiveRestoreJob, error)
 }
 
 // NormalizeBackfillStore covers the one-time normalized-event backfill queue

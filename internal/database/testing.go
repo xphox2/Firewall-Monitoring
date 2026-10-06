@@ -113,6 +113,9 @@ var testModels = []interface{}{
 	&models.ArchiveIDMark{},
 	// v77: intervals the archive gate was released or the stream disabled.
 	&models.ArchiveGateEvent{},
+	// v78: archive restores to staging tables.
+	&models.ArchiveRestoreJob{},
+	&models.ArchiveRestoreObject{},
 }
 
 // NewDatabaseForTesting creates an in-memory SQLite Database for use in tests.
@@ -181,4 +184,14 @@ func NewDatabaseForTesting(t interface {
 // is build-tagged !production alongside NewDatabaseForTesting.
 func (d *Database) SetEncryptionKeyForTesting(secret string) {
 	d.encKeys = keyChain{current: deriveKey(secret)}
+}
+
+// SetArchiveRestoreBatchForTesting sets the restore load batch size (lines
+// per transaction) and the hook run inside every load transaction before its
+// progress update (an error rolls the batch back), until the test ends — for
+// the restore worker's tests in another package.
+func SetArchiveRestoreBatchForTesting(t interface{ Cleanup(func()) }, size int, hook func(obj *models.ArchiveRestoreObject, cursor int64) error) {
+	os, oh := archiveRestoreBatchSize, archiveRestoreTxHook
+	archiveRestoreBatchSize, archiveRestoreTxHook = size, hook
+	t.Cleanup(func() { archiveRestoreBatchSize, archiveRestoreTxHook = os, oh })
 }

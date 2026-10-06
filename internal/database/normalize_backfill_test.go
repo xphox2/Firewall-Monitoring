@@ -805,7 +805,7 @@ func TestNormalizeBackfill_OwnerTokenGuardsCommit(t *testing.T) {
 	m := f.rows[1]
 	nets := []models.NetEvent{{Ts: m.Timestamp, DeviceID: dev.ID, RawID: ptrInt64(int64(m.ID)), RawTS: &m.Timestamp}}
 	p := backfillProgress{partition: "syslog_messages", cursorTs: m.Timestamp, cursorID: int64(m.ID), scanned: 2, written: 1}
-	if err := d.commitBackfillBatch(context.Background(), job.ID, "runner-a", 1, nets, nil, nil, p); !errors.Is(err, errBackfillJobLost) {
+	if err := d.commitBackfillBatch(context.Background(), job.ID, "runner-a", 1, nil, nets, nil, nil, p); !errors.Is(err, errBackfillJobLost) {
 		t.Fatalf("stale runner's commit: %v, want errBackfillJobLost", err)
 	}
 	if n, _, _ := bfCounts(t, d); n != 0 {
@@ -815,7 +815,7 @@ func TestNormalizeBackfill_OwnerTokenGuardsCommit(t *testing.T) {
 		t.Fatalf("job after the refused commit: %+v", got)
 	}
 	// The owner commits.
-	if err := d.commitBackfillBatch(context.Background(), job.ID, "runner-b", 1, nets, nil, nil, p); err != nil {
+	if err := d.commitBackfillBatch(context.Background(), job.ID, "runner-b", 1, nil, nets, nil, nil, p); err != nil {
 		t.Fatalf("owner's commit: %v", err)
 	}
 	// And the stale runner cannot finish the job either.

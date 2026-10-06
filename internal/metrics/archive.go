@@ -162,3 +162,39 @@ func SetArchiveUnsettled(table, reason string) {
 // IncArchiveNeedsAttention counts one chunk of table parked after repeated
 // mismatches.
 func IncArchiveNeedsAttention(table string) { archiveNeedsAttention.WithLabelValues(table).Inc() }
+
+// Restore to staging (archive plan PR 9).
+var (
+	archiveRestoreJobs = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "fwmon", Subsystem: "archive", Name: "restore_jobs",
+		Help: "Archive restore jobs by status (pending, running, cancelling, loaded, done, failed, cancelled, dropped), as of the restore worker's last tick.",
+	}, []string{"status"})
+	archiveRestoreRows = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "fwmon", Subsystem: "archive", Name: "restore_rows_total",
+		Help: "Rows this process loaded into restore staging tables, per source table.",
+	}, []string{"table"})
+	archiveRestoreRefused = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "fwmon", Subsystem: "archive", Name: "restore_refused_total",
+		Help: "Downloaded objects a restore refused because they did not match the manifest (stored or decompressed sha256, rows, ids, row format), per stream.",
+	}, []string{"stream"})
+)
+
+// ArchiveRestoreStatuses are the status label values of fwmon_archive_restore_jobs.
+var ArchiveRestoreStatuses = []string{"pending", "running", "cancelling", "loaded", "done", "failed", "cancelled", "dropped"}
+
+func init() {
+	prometheus.MustRegister(archiveRestoreJobs, archiveRestoreRows, archiveRestoreRefused)
+}
+
+// SetArchiveRestoreJobs sets the restore job count of a status.
+func SetArchiveRestoreJobs(status string, n int64) {
+	archiveRestoreJobs.WithLabelValues(status).Set(float64(n))
+}
+
+// AddArchiveRestoreRows counts rows staged from table.
+func AddArchiveRestoreRows(table string, n int) {
+	archiveRestoreRows.WithLabelValues(table).Add(float64(n))
+}
+
+// IncArchiveRestoreRefused counts one refused download of stream.
+func IncArchiveRestoreRefused(stream string) { archiveRestoreRefused.WithLabelValues(stream).Inc() }
