@@ -319,7 +319,9 @@ type ArchiveProgress struct {
 // previous one's id_hi.
 //
 // archiveSealedChunkCounts: a chunk parked in needs_attention whose month is
-// sealed for every stream of its table counts as verified. The seal recorded
+// sealed for every stream of its table, and whose id range lies inside the
+// (first_id, last_id] every one of those streams recorded at the seal, counts
+// as verified (the run's seq and id continuity still apply to it). The seal recorded
 // the month only after every one of its chunks was verified (read back in
 // full and count-matched against the table) and every object and chunk.json
 // was re-checked in the bucket; _MONTH.json pins those object versions under
@@ -328,7 +330,9 @@ type ArchiveProgress struct {
 // month can only leave verified by an edit of the database, and the worker
 // refuses it before the attempt changes any object row (it is then parked);
 // so its rows are exactly what the sealed month holds, and deleting them is as
-// safe as for any verified chunk. Any other status still ends the run. The first chunk that is not verified (pending,
+// safe as for any verified chunk. The range check keeps a row whose month or
+// id_hi was edited from carrying V past rows the seal never covered. Any other
+// status still ends the run. The first chunk that is not verified (pending,
 // exporting, uploading, verifying, failed, needs_attention, superseded) or
 // that leaves a gap ends the run. The retention gate deletes only rows at or
 // below it (archive_gate.go), so it reads every chunk of the table — a few
@@ -361,7 +365,7 @@ func (d *Database) ArchiveTableProgress(ctx context.Context, table string) (Arch
 	var prevSeq, prevHi int64
 	var maxTs time.Time
 	tsKnown := true
-	var sealed map[string]bool // months sealed for every stream of the table, read on first need
+	var sealed map[string]archiveSealedRange // months sealed for every stream of the table, read on first need
 	for _, c := range cs {
 		ok := c.Status == models.ArchiveChunkVerified
 		if !ok && c.Status == models.ArchiveChunkNeedsAttention {
@@ -373,7 +377,8 @@ func (d *Database) ArchiveTableProgress(ctx context.Context, table string) (Arch
 					return p, err
 				}
 			}
-			ok = sealed[c.Month]
+			r, isSealed := sealed[c.Month]
+			ok = isSealed && r.contains(c.IDLo, c.IDHi)
 		}
 		if !ok || c.Seq != prevSeq+1 || c.IDLo != prevHi || c.IDHi < c.IDLo {
 			break

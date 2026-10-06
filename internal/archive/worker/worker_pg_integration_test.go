@@ -307,7 +307,7 @@ func TestWorker_PG_LeafMoveDuringExport(t *testing.T) {
 // archive's first, from its 10th) is exported day by day and sealed PARTIAL
 // with its _MONTH.json written, read back and recorded; --verify-month
 // passes on it from the bucket alone; the previous month, when it is due,
-// seals as a full month joined to it.
+// seals joined to it — partial too, since the archive began after it started.
 func TestWorker_PG_MonthSeal(t *testing.T) {
 	d := database.NewIntegrationDB(t)
 	if err := d.EnsurePartitions(); err != nil {
@@ -388,8 +388,10 @@ func TestWorker_PG_MonthSeal(t *testing.T) {
 			t.Fatal(err)
 		}
 		if pm != nil && pm.Status == models.ArchiveMonthSealed {
-			if pm.Partial || *pm.FirstID != *m.LastID {
-				t.Fatalf("%s: %+v, want full from id %d", prevMonth, pm, *m.LastID)
+			// The archive began (its first chunk verified) during this test,
+			// after the previous month started: partial, before_archive.
+			if !pm.Partial || !strings.Contains(pm.PartialNote, "before_archive") || *pm.FirstID != *m.LastID {
+				t.Fatalf("%s: %+v, want partial (the archive began after it started) from id %d", prevMonth, pm, *m.LastID)
 			}
 			break
 		}

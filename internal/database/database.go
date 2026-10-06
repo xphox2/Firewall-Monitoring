@@ -73,6 +73,9 @@ type Database struct {
 	// them (ARCHIVE_SYSLOG_ENABLED / ARCHIVE_FLOWS_ENABLED): their raw deletes
 	// wait for the archive (archive_gate.go). The zero value gates nothing.
 	archiveGateCfg ArchiveGateConfig
+	// archiveHold: disabled streams whose "disabled" interval could not be
+	// recorded at the poller start; their deletes stay gated (archive_gate.go).
+	archiveHold *archiveHoldState
 }
 
 func (d *Database) Gorm() *gorm.DB {
@@ -237,7 +240,7 @@ func Connect(cfg *config.Config) (*Database, error) {
 		}
 	}
 
-	d := &Database{db: db, encKeys: keyChain{current: encKey, legacy: legacyKeys}, dialect: dial,
+	d := &Database{db: db, encKeys: keyChain{current: encKey, legacy: legacyKeys}, dialect: dial, archiveHold: &archiveHoldState{},
 		// The daily net_events leaves are created as far back as retention
 		// reaches (partitionLookbackDays), so EnsurePartitions needs the window
 		// CleanupOldData will use — recorded here once, from the same config.

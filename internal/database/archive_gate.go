@@ -205,7 +205,7 @@ func (d *Database) archiveGateOverrideUntil(stream string, now time.Time) (until
 // derived the gate stays on with V = 0, so nothing is deleted (fail closed).
 func (d *Database) archiveGate(ctx context.Context, table string) archiveGateState {
 	stream := archiveGateStream(table)
-	if stream == "" || !d.archiveGateCfg.enabled(stream) {
+	if !d.archiveGateActive(stream) {
 		return archiveGateState{}
 	}
 	if until, active := d.archiveGateOverrideUntil(stream, archiveGateClock()); active {
@@ -256,7 +256,7 @@ func archiveReleasedWarning(stream, table string, until time.Time) {
 // is disabled, so those statements are never touched.
 func (d *Database) archiveGateFn(table string) func() archiveGateState {
 	stream := archiveGateStream(table)
-	if stream == "" || !d.archiveGateCfg.enabled(stream) {
+	if !d.archiveGateActive(stream) {
 		return nil
 	}
 	return func() archiveGateState { return d.archiveGate(context.Background(), table) }
@@ -289,17 +289,27 @@ func (d *Database) SetArchiveGateOverride(stream string, until time.Time) error 
 		val = until.UTC().Format(time.RFC3339)
 	}
 	now := archiveGateClock().UTC()
-	if err := d.endArchiveGateEvents(d.db, stream, models.ArchiveGateEventOverride, now); err != nil {
-		return err
-	}
-	if !until.IsZero() && until.After(now) {
-		u := until.UTC()
-		if err := d.db.Create(&models.ArchiveGateEvent{Stream: stream, Kind: models.ArchiveGateEventOverride, From: now, To: &u}).Error; err != nil {
-			return fmt.Errorf("archive gate: record the override of %s: %w", stream, err)
+	// One transaction: an override is never active without its interval
+	// recorded, nor recorded without being set.
+	return d.db.Transaction(func(tx *gorm.DB) error {
+		if err := d.endArchiveGateEvents(tx, stream, models.ArchiveGateEventOverride, now); err != nil {
+			return err
 		}
-	}
-	return d.UpsertSetting(&models.SystemSetting{Key: ArchiveGateOverrideKey(stream), Value: val, Type: "string", Category: "archive",
-		Label: "Archive retention gate released until (set only by the re-authenticated override)"})
+		if !until.IsZero() && until.After(now) {
+			u := until.UTC()
+			if err := tx.Create(&models.ArchiveGateEvent{Stream: stream, Kind: models.ArchiveGateEventOverride, From: now, To: &u}).Error; err != nil {
+				return fmt.Errorf("archive gate: record the override of %s: %w", stream, err)
+			}
+		}
+		key := ArchiveGateOverrideKey(stream)
+		existing := models.SystemSetting{Key: key}
+		if err := tx.FirstOrCreate(&existing, models.SystemSetting{Key: key}).Error; err != nil {
+			return fmt.Errorf("upsert setting %q: %w", key, err)
+		}
+		existing.Value, existing.Type, existing.Category = val, "string", "archive"
+		existing.Label = "Archive retention gate released until (set only by the re-authenticated override)"
+		return tx.Save(&existing).Error
+	})
 }
 
 // endArchiveGateEvents ends stream's events of kind that are still running
@@ -317,34 +327,113 @@ func (d *Database) endArchiveGateEvents(tx *gorm.DB, stream, kind string, now ti
 // its open "disabled" interval; a disabled stream whose tables already have
 // chunks (the archive had begun) opens one unless one is open. Deletes run in
 // the poller, so its start is exactly when the switch takes effect.
+//
+// A disabled stream whose interval cannot be recorded is HELD: its deletes
+// stay gated (as if it were enabled) until the record succeeds — retried by
+// the delete paths at most once a minute, with the poller's start as the
+// interval's start — so no row is deleted ungated without the seal knowing.
+// An enabled stream whose open interval cannot be ended is only logged: the
+// interval stays open, which marks months partial (the safe direction).
 func (d *Database) RecordArchiveGateState(ctx context.Context) error {
 	now := archiveGateClock().UTC()
+	var errs []error
 	for _, stream := range ArchiveGateStreams {
-		tx := d.db.WithContext(ctx)
 		if d.archiveGateCfg.enabled(stream) {
-			if err := d.endArchiveGateEvents(tx, stream, models.ArchiveGateEventDisabled, now); err != nil {
-				return err
+			if err := d.endArchiveGateEvents(d.db.WithContext(ctx), stream, models.ArchiveGateEventDisabled, now); err != nil {
+				log.Printf("ERROR: archive gate: %v (the open \"disabled\" interval of %s stays open: its months are sealed partial)", err, stream)
+				errs = append(errs, err)
 			}
 			continue
 		}
-		var chunks, open int64
-		if err := tx.Model(&models.ArchiveChunk{}).Where("table_name IN ?", archiveGateTables(stream)).Count(&chunks).Error; err != nil {
-			return err
-		}
-		if chunks == 0 {
-			continue
-		}
-		if err := tx.Model(&models.ArchiveGateEvent{}).Where("stream = ? AND kind = ? AND to_ts IS NULL", stream, models.ArchiveGateEventDisabled).
-			Count(&open).Error; err != nil {
-			return err
-		}
-		if open == 0 {
-			if err := tx.Create(&models.ArchiveGateEvent{Stream: stream, Kind: models.ArchiveGateEventDisabled, From: now}).Error; err != nil {
-				return fmt.Errorf("archive gate: record that %s is disabled: %w", stream, err)
-			}
+		if err := d.recordArchiveDisabled(ctx, stream, now); err != nil {
+			d.archiveHold.set(stream, now)
+			log.Printf("ERROR: archive gate: %v — the deletes of %s stay GATED although its archiving is disabled, until it is recorded (retried every minute)", err, stream)
+			errs = append(errs, err)
 		}
 	}
+	return errors.Join(errs...)
+}
+
+// recordArchiveDisabled opens stream's "disabled" interval at from, unless
+// one is open or the stream has no chunk (the archive never began).
+func (d *Database) recordArchiveDisabled(ctx context.Context, stream string, from time.Time) error {
+	tx := d.db.WithContext(ctx)
+	var chunks, open int64
+	if err := tx.Model(&models.ArchiveChunk{}).Where("table_name IN ?", archiveGateTables(stream)).Count(&chunks).Error; err != nil {
+		return fmt.Errorf("record that %s is disabled: %w", stream, err)
+	}
+	if chunks == 0 {
+		return nil
+	}
+	if err := tx.Model(&models.ArchiveGateEvent{}).Where("stream = ? AND kind = ? AND to_ts IS NULL", stream, models.ArchiveGateEventDisabled).
+		Count(&open).Error; err != nil {
+		return fmt.Errorf("record that %s is disabled: %w", stream, err)
+	}
+	if open > 0 {
+		return nil
+	}
+	if err := tx.Create(&models.ArchiveGateEvent{Stream: stream, Kind: models.ArchiveGateEventDisabled, From: from}).Error; err != nil {
+		return fmt.Errorf("record that %s is disabled: %w", stream, err)
+	}
 	return nil
+}
+
+// archiveHoldState is the disabled streams whose "disabled" interval is not
+// recorded yet (stream → the poller's start), and when it was last tried.
+type archiveHoldState struct {
+	mu      sync.Mutex
+	pending map[string]time.Time
+	tried   map[string]time.Time
+}
+
+func (h *archiveHoldState) set(stream string, from time.Time) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.pending == nil {
+		h.pending, h.tried = map[string]time.Time{}, map[string]time.Time{}
+	}
+	h.pending[stream] = from
+	h.tried[stream] = archiveGateClock()
+}
+
+// archiveHoldRetry is how often a held stream's record is retried.
+const archiveHoldRetry = time.Minute
+
+// archiveGateHeld reports whether disabled stream's deletes must stay gated
+// because its "disabled" interval is not recorded yet; it retries the record
+// (at most once a minute) and releases the hold once it succeeds.
+func (d *Database) archiveGateHeld(stream string) bool {
+	h := d.archiveHold
+	if h == nil {
+		return false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	from, ok := h.pending[stream]
+	if !ok {
+		return false
+	}
+	now := archiveGateClock()
+	if now.Sub(h.tried[stream]) < archiveHoldRetry {
+		return true
+	}
+	h.tried[stream] = now
+	if err := d.recordArchiveDisabled(context.Background(), stream, from); err != nil {
+		log.Printf("ERROR: archive gate: %v — the deletes of %s stay GATED", err, stream)
+		return true
+	}
+	delete(h.pending, stream)
+	log.Printf("archive gate: recorded that %s is disabled since %s; its deletes are no longer gated", stream, from.UTC().Format(time.RFC3339))
+	return false
+}
+
+// archiveGateActive reports whether stream's deletes go through the gate: its
+// archiving is enabled, or it is held (archiveGateHeld).
+func (d *Database) archiveGateActive(stream string) bool {
+	return stream != "" && (d.archiveGateCfg.enabled(stream) || d.archiveGateHeld(stream))
 }
 
 // ArchiveGateEventsOverlapping returns the events of gate stream that overlap

@@ -36,8 +36,10 @@ func (h *harness) tickAt(t time.Time) {
 }
 
 // syslogMonths seeds two rows a day (devices 1 and 2) from 5 September to
-// 31 October 2026 and records migration v74 on 6 October: September is
-// schema v1, October v2 — the production shape.
+// 31 October 2026 and records migration v74 on 1 October: September is
+// schema v1, October v2 — the production shape. The archive begins on 6
+// September 03:00 (one pass verifies 5 September), so October starts after
+// it and can be a full month.
 func syslogMonths(t *testing.T, h *harness) []int64 {
 	t.Helper()
 	if err := h.db.Gorm().Exec(`CREATE TABLE schema_migrations (version integer primary key, name text, app_version text, applied_at datetime)`).Error; err != nil {
@@ -50,7 +52,9 @@ func syslogMonths(t *testing.T, h *harness) []int64 {
 	for d := day(9, 5, 9, 0); d.Before(day(11, 1, 0, 0)); d = d.AddDate(0, 0, 1) {
 		created = append(created, d, d.Add(6*time.Hour))
 	}
-	return seedSyslog(t, h.db, created...)
+	ids := seedSyslog(t, h.db, created...)
+	h.tickAt(day(9, 6, 3, 0))
+	return ids
 }
 
 // noBackoff ends every seal backoff (a test changing the month between
@@ -679,9 +683,10 @@ func TestSeal_DegradedIntervalsMarkPartial(t *testing.T) {
 	}
 	h.tickAt(day(10, 3, 0, 0))
 	sep, _ := h.monthManifestOf(h.month(export.StreamSyslog, "2026-09"))
-	if !sep.Partial || len(sep.Degraded) != 1 || sep.Degraded[0] != (degradedInterval{Kind: models.ArchiveGateEventOverride, From: "2026-09-30T22:00:00Z", To: "2026-10-01T02:00:00Z"}) ||
-		!strings.Contains(sep.PartialNote, "began in this month") || !strings.Contains(sep.PartialNote, "did not wait for the archive") {
-		t.Fatalf("September (first month, one interval): %+v", sep)
+	if !sep.Partial || len(sep.Degraded) != 2 || sep.Degraded[0] != (degradedInterval{Kind: degradedBeforeArchive, From: "2026-09-01T00:00:00Z", To: "2026-09-06T03:00:00Z"}) ||
+		sep.Degraded[1] != (degradedInterval{Kind: models.ArchiveGateEventOverride, From: "2026-09-30T22:00:00Z", To: "2026-10-01T02:00:00Z"}) ||
+		!strings.Contains(sep.PartialNote, "began in this month") || !strings.Contains(sep.PartialNote, "may not have waited for the archive") {
+		t.Fatalf("September (first month, before the archive, one override): %+v", sep)
 	}
 	h.tickAt(day(11, 3, 0, 0))
 	oct := h.month(export.StreamSyslog, "2026-10")
@@ -692,7 +697,7 @@ func TestSeal_DegradedIntervalsMarkPartial(t *testing.T) {
 		{Kind: models.ArchiveGateEventDisabled, From: "2026-10-30T12:00:00Z", To: "2026-11-03T00:00:00Z"},
 	}
 	if !oct.Partial || !om.Partial || len(om.Degraded) != len(want) || om.Degraded[0] != want[0] || om.Degraded[1] != want[1] || om.Degraded[2] != want[2] ||
-		!strings.Contains(om.PartialNote, "did not wait for the archive") || strings.Contains(om.PartialNote, "began in this month") {
+		!strings.Contains(om.PartialNote, "may not have waited for the archive") || strings.Contains(om.PartialNote, "began in this month") {
 		t.Fatalf("October: row partial %v, manifest %+v", oct.Partial, om)
 	}
 	if rep := h.verifyMonth(export.StreamSyslog, "2026-10"); !rep.OK() || !rep.Partial {
@@ -829,4 +834,37 @@ func (r hidingReader) GetBytes(ctx context.Context, rel, version string, limit i
 		return nil, s3.ObjectInfo{}, s3.ErrNotFound
 	}
 	return r.MonthReader.GetBytes(ctx, rel, version, limit)
+}
+
+// TestSeal_UnrecordedBeforeV77: when the archive began before migration v77
+// (archive_gate_events) was applied, a disabled period before v77 could have
+// gone unrecorded, so every month whose archiving overlaps that time is
+// partial with an "unrecorded" interval; when v77 came first, nothing is
+// added.
+func TestSeal_UnrecordedBeforeV77(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		applied time.Time
+		want    []degradedInterval // October's
+	}{
+		{"v77 after the archive began", day(10, 20, 0, 0), []degradedInterval{{Kind: degradedUnrecorded, From: "2026-10-01T00:00:00Z", To: "2026-10-20T00:00:00Z"}}},
+		{"v77 before the archive began", day(9, 1, 0, 0), nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, day(10, 2, 22, 0), func(c *config.ArchiveConfig) { c.FlowsEnabled = false })
+			syslogMonths(t, h)
+			if err := h.db.Gorm().Create(&models.SchemaMigration{Version: 77, Name: "archive_gate_events", AppVersion: "0.11.307", AppliedAt: tc.applied}).Error; err != nil {
+				t.Fatal(err)
+			}
+			h.tickAt(day(10, 3, 0, 0))
+			h.tickAt(day(11, 3, 0, 0))
+			om, _ := h.monthManifestOf(h.month(export.StreamSyslog, "2026-10"))
+			if om.Partial != (len(tc.want) > 0) || len(om.Degraded) != len(tc.want) || (len(tc.want) > 0 && om.Degraded[0] != tc.want[0]) {
+				t.Fatalf("October: partial %v, degraded %+v; want %+v", om.Partial, om.Degraded, tc.want)
+			}
+			if rep := h.verifyMonth(export.StreamSyslog, "2026-10"); !rep.OK() {
+				t.Fatalf("verify-month: %v", rep.Problems)
+			}
+		})
+	}
 }

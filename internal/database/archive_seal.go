@@ -213,23 +213,84 @@ func (d *Database) archiveChunkMonthSealed(ctx context.Context, c *models.Archiv
 	return n == int64(len(streams)), nil
 }
 
+// archiveSealedRange is the id range (lo, hi] a month is sealed with for
+// every stream of a table: the intersection of the streams' recorded
+// (first_id, last_id].
+type archiveSealedRange struct{ lo, hi int64 }
+
+// contains reports whether chunk range (lo, hi] lies inside r.
+func (r archiveSealedRange) contains(lo, hi int64) bool { return lo >= r.lo && hi <= r.hi && lo <= hi }
+
 // archiveSealedTableMonths returns the months sealed for every stream table
-// is exported to.
-func (d *Database) archiveSealedTableMonths(ctx context.Context, table string) (map[string]bool, error) {
+// is exported to, with the id range they were sealed with.
+func (d *Database) archiveSealedTableMonths(ctx context.Context, table string) (map[string]archiveSealedRange, error) {
 	streams := export.StreamsOf(table)
-	var rows []struct {
-		Month string
-		N     int64
-	}
-	if err := d.db.WithContext(ctx).Model(&models.ArchiveMonth{}).Select("month, count(*) AS n").
-		Where("stream IN ? AND status = ?", streams, models.ArchiveMonthSealed).Group("month").Scan(&rows).Error; err != nil {
+	var rows []models.ArchiveMonth
+	if err := d.db.WithContext(ctx).Where("stream IN ? AND status = ?", streams, models.ArchiveMonthSealed).Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	out := map[string]bool{}
-	for _, r := range rows {
-		if r.N == int64(len(streams)) {
-			out[r.Month] = true
+	type acc struct {
+		n      int
+		r      archiveSealedRange
+		broken bool
+	}
+	by := map[string]*acc{}
+	for _, m := range rows {
+		a := by[m.Month]
+		if a == nil {
+			a = &acc{r: archiveSealedRange{lo: -1 << 62, hi: 1 << 62}}
+			by[m.Month] = a
+		}
+		a.n++
+		if m.FirstID == nil || m.LastID == nil {
+			a.broken = true
+			continue
+		}
+		a.r.lo, a.r.hi = max(a.r.lo, *m.FirstID), min(a.r.hi, *m.LastID)
+	}
+	out := map[string]archiveSealedRange{}
+	for month, a := range by {
+		if a.n == len(streams) && !a.broken {
+			out[month] = a.r
 		}
 	}
 	return out, nil
+}
+
+// ArchiveTableBegan returns when table's archive began: the earliest
+// verification of any of its chunks (its stream was enabled no later, and
+// until then the gate deleted nothing — V was 0). ok is false while none is
+// verified.
+func (d *Database) ArchiveTableBegan(ctx context.Context, table string) (time.Time, bool, error) {
+	var ts []time.Time
+	if err := d.db.WithContext(ctx).Model(&models.ArchiveChunk{}).Where("table_name = ? AND verified_at IS NOT NULL", table).
+		Order("verified_at").Limit(1).Pluck("verified_at", &ts).Error; err != nil {
+		return time.Time{}, false, err
+	}
+	if len(ts) == 0 {
+		return time.Time{}, false, nil
+	}
+	return ts[0].UTC(), true, nil
+}
+
+// archiveGateEventsMigration is the migration that created
+// archive_gate_events.
+const archiveGateEventsMigration = 77
+
+// ArchiveGateRecordedSince returns when migration v77 was applied here: from
+// then on every override and disabled period is in archive_gate_events. ok is
+// false when this database has no record of it (a test schema without
+// schema_migrations).
+func (d *Database) ArchiveGateRecordedSince(ctx context.Context) (time.Time, bool, error) {
+	if !d.db.Migrator().HasTable(&models.SchemaMigration{}) {
+		return time.Time{}, false, nil
+	}
+	var m []models.SchemaMigration
+	if err := d.db.WithContext(ctx).Where("version = ?", archiveGateEventsMigration).Limit(1).Find(&m).Error; err != nil {
+		return time.Time{}, false, err
+	}
+	if len(m) == 0 {
+		return time.Time{}, false, nil
+	}
+	return m[0].AppliedAt.UTC(), true, nil
 }

@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -2265,10 +2266,85 @@ func (d *Database) migrateArchiveChunkRetryCounters() error {
 // migrateArchiveGateEvents (v77) creates archive_gate_events (archive plan PR
 // 7 review): the intervals a stream's raw deletes did not wait for the
 // archive (an override, or archiving disabled), so a month whose archiving
-// overlaps one is sealed partial. A new, empty table; AutoMigrate is
-// idempotent.
+// overlaps one is sealed partial. The overrides made before it (0.11.304+)
+// are rebuilt from their audit rows (backfillArchiveGateOverrides). Disabled
+// periods before it cannot be rebuilt; the seal treats them conservatively
+// (worker/seal.go, "unrecorded"). AutoMigrate and the backfill are idempotent.
 func (d *Database) migrateArchiveGateEvents() error {
-	return d.db.AutoMigrate(&models.ArchiveGateEvent{})
+	if err := d.db.AutoMigrate(&models.ArchiveGateEvent{}); err != nil {
+		return err
+	}
+	return d.db.Transaction(backfillArchiveGateOverrides)
+}
+
+// archiveOverrideAuditRe parses an archive_gate_override audit target, as the
+// CLI and the API write it: "stream=<s> until=<RFC 3339> reason=..." or
+// "stream=<s> re-engaged reason=...".
+var archiveOverrideAuditRe = regexp.MustCompile(`^stream=(syslog|flows) (?:until=(\S+)|re-engaged)(?: |$)`)
+
+// backfillArchiveGateOverrides rebuilds the override intervals from the
+// archive_gate_override audit rows written before archive_gate_events
+// existed: a release at t until u is [t, u); a later release or re-engage of
+// the same stream at t' ends it at t' if earlier. Only rows older than the
+// first recorded override event are used, and an interval already present
+// (same stream and start) is not added again, so a re-run adds nothing.
+func backfillArchiveGateOverrides(tx *gorm.DB) error {
+	q := tx.Model(&models.AuditLog{}).Where("action = ?", "archive_gate_override")
+	var first []models.ArchiveGateEvent
+	if err := tx.Where("kind = ?", models.ArchiveGateEventOverride).Order("created_at").Limit(1).Find(&first).Error; err != nil {
+		return err
+	}
+	if len(first) > 0 {
+		q = q.Where("created_at < ?", first[0].CreatedAt)
+	}
+	var rows []models.AuditLog
+	if err := q.Order("created_at, id").Find(&rows).Error; err != nil {
+		return fmt.Errorf("archive gate events: read the override audit rows: %w", err)
+	}
+	var evs []*models.ArchiveGateEvent
+	open := map[string]*models.ArchiveGateEvent{}
+	for _, r := range rows {
+		m := archiveOverrideAuditRe.FindStringSubmatch(r.Target)
+		if m == nil {
+			log.Printf("archive gate events: audit row %d (%q) is not an override target; skipped", r.ID, r.Target)
+			continue
+		}
+		at := r.CreatedAt.UTC()
+		if e := open[m[1]]; e != nil && e.To.After(at) {
+			t := at
+			e.To = &t
+		}
+		delete(open, m[1])
+		if m[2] == "" {
+			continue
+		}
+		until, err := time.Parse(time.RFC3339, m[2])
+		if err != nil || !until.After(at) {
+			continue
+		}
+		u := until.UTC()
+		e := &models.ArchiveGateEvent{Stream: m[1], Kind: models.ArchiveGateEventOverride, From: at, To: &u}
+		evs = append(evs, e)
+		open[m[1]] = e
+	}
+	added := 0
+	for _, e := range evs {
+		var n int64
+		if err := tx.Model(&models.ArchiveGateEvent{}).Where("stream = ? AND kind = ? AND from_ts = ?", e.Stream, e.Kind, e.From).Count(&n).Error; err != nil {
+			return err
+		}
+		if n > 0 {
+			continue
+		}
+		if err := tx.Create(e).Error; err != nil {
+			return fmt.Errorf("archive gate events: record a past override of %s: %w", e.Stream, err)
+		}
+		added++
+	}
+	if added > 0 {
+		log.Printf("archive gate events: rebuilt %d past override interval(s) from the audit log", added)
+	}
+	return nil
 }
 
 // v74's lock bounds. Package vars so the PostgreSQL test can shrink them.

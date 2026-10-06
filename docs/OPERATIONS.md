@@ -970,8 +970,27 @@ chunks is recorded in `archive_gate_events` (migration v77; an enabled start
 ends the open `disabled` interval). A month whose archiving — from its first
 day to the verification of its last chunk — overlaps such an interval is
 sealed with `"partial": true` and the intervals in `"degraded"`
-(`{kind, from, to}`, clamped to that window). Overrides made before 0.11.307
-were not recorded this way (the audit log has them).
+(`{kind, from, to}`, clamped to that window). If an interval cannot be
+recorded at the poller's start, that disabled stream's deletes stay **gated**
+(logged as an ERROR) until the record succeeds — retried every minute, from
+the start time — so nothing is deleted ungated without the seal knowing.
+
+Two more kinds are conservative, because the past cannot be reconstructed:
+
+- `before_archive`: from the month's start to when the table's archive began
+  (its first chunk verified). Before that nothing waited for the archive —
+  retention, and the severity 6/7 aggregation after 7 days, may have removed
+  rows of the month. So the month the archive is enabled in is partial
+  whatever day it is enabled on; on production, if it is enabled in October,
+  **November is the first full month** (and October is partial even if its
+  backlog is complete — its first days' severity 6/7 rows may already have
+  been summarised).
+- `unrecorded`: if the archive began before migration v77 was applied, a
+  disabled period before v77 would not have been recorded, so the time from
+  the archive's start (or the month's start) to v77 is listed. v77 rebuilds
+  the overrides made before it from their `archive_gate_override` audit rows;
+  disabled periods have no such record. On an install that enables the
+  archive with this release, v77 comes first and nothing is listed.
 
 The seal is the month-level completeness proof, **not a delete gate**: raw
 rows are deleted as soon as their chunk is verified (the retention gate
@@ -1025,7 +1044,9 @@ they follow the verified chunks.
   stays unsealed — re-exporting a verified chunk is not supported.
 - **A parked chunk of a SEALED month** (`fwmon_archive_sealed_write_refused_total`
   rose; only possible after the database was edited). It does not hold the
-  retention gate: the month was sealed only after every one of its chunks was
+  retention gate when its id range lies inside the `(first_id, last_id]`
+  recorded for that month (for every stream of its table; otherwise it does):
+  the month was sealed only after every one of its chunks was
   verified and re-checked, `_MONTH.json` pins those objects under Object
   Lock, and the worker refuses the chunk before it changes anything. The A-5
   reset refuses it (`fwmon-api archive --reset-chunk` and the API answer that

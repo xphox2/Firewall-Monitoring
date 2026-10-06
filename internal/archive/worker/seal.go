@@ -94,15 +94,24 @@ type monthManifest struct {
 	RawBytes         int64            `json:"raw_bytes"`
 	ObjectBytes      int64            `json:"object_bytes"`
 	MsgDayHistogram  map[string]int64 `json:"msg_day_histogram"`
-	// Degraded lists the intervals the stream's raw deletes did not wait for
-	// the archive (an override, or archiving disabled) while rows of this
-	// month were not all archived — clamped to [month start, the month's last
-	// chunk verification]. A month with any is partial.
+	// Degraded lists the intervals the stream's raw deletes did not (or may
+	// not) wait for the archive while rows of this month were not all
+	// archived — before the archive began, an unrecorded time before
+	// 0.11.307, an override, archiving disabled — clamped to [month start,
+	// the month's last chunk verification]. A month with any is partial.
 	Degraded         []degradedInterval `json:"degraded,omitempty"`
 	MonthDigestInput string             `json:"month_digest_input"`
 	MonthDigest      string             `json:"month_digest"`
 	Chunks           []monthChunk       `json:"chunks"`
 }
+
+// Kinds of a "degraded" interval besides the gate events' (override,
+// disabled): before the table's archive began, and a time before 0.11.307 in
+// which a disabled period would not have been recorded.
+const (
+	degradedBeforeArchive = "before_archive"
+	degradedUnrecorded    = "unrecorded"
+)
 
 // degradedInterval is one entry of _MONTH.json's "degraded".
 type degradedInterval struct {
@@ -135,11 +144,45 @@ func (w *Worker) degradedIntervals(ctx context.Context, table, month string, cs 
 	if !done.After(start) {
 		return nil, nil
 	}
+	var out []degradedInterval
+	clampTo := func(t time.Time) time.Time {
+		if t.After(done) {
+			return done
+		}
+		return t
+	}
+	// Before the archive of the table began (its first chunk verified; the
+	// stream was enabled no later), nothing waited for it: rows of the month
+	// deleted then — by retention, or by the severity 6/7 aggregation after
+	// 7 days — are not in the archive.
+	began, ok, err := w.db.ArchiveTableBegan(ctx, table)
+	if err != nil {
+		return nil, err
+	}
+	if ok && start.Before(began) {
+		out = append(out, degradedInterval{Kind: degradedBeforeArchive, From: rfc3339(start), To: rfc3339(clampTo(began))})
+	}
+	// Before archive_gate_events existed (migration v77) a disabled period
+	// was not recorded (overrides were, in the audit log, and are rebuilt):
+	// if the archive had begun by then, the time from then (or the month's
+	// start) to v77 is unaccounted for.
+	since, ok2, err := w.db.ArchiveGateRecordedSince(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if ok && ok2 && began.Before(since) && start.Before(since) {
+		from := start
+		if from.Before(began) {
+			from = began
+		}
+		if from.Before(done) {
+			out = append(out, degradedInterval{Kind: degradedUnrecorded, From: rfc3339(from), To: rfc3339(clampTo(since))})
+		}
+	}
 	evs, err := w.db.ArchiveGateEventsOverlapping(ctx, database.ArchiveGateStreamOfTable(table), start, done)
 	if err != nil {
 		return nil, err
 	}
-	var out []degradedInterval
 	for _, e := range evs {
 		from, to := e.From.UTC(), done
 		if from.Before(start) {
@@ -528,7 +571,7 @@ func (w *Worker) sealMonth(ctx context.Context, table, stream, month string) err
 			table, m.PeriodStart, row))
 	}
 	if len(degraded) > 0 {
-		notes = append(notes, fmt.Sprintf("raw deletes did not wait for the archive during %d interval(s) listed in \"degraded\" (an operator override or archiving disabled) while rows of this month were not all archived yet: rows deleted then are not in the archive",
+		notes = append(notes, fmt.Sprintf("raw deletes may not have waited for the archive during %d interval(s) listed in \"degraded\" (before_archive: before the archive began; unrecorded: before 0.11.307, when a disabled period was not recorded; override; disabled) while rows of this month were not all archived yet: rows deleted then are not in the archive",
 			len(degraded)))
 	}
 	m.PartialNote = strings.Join(notes, "; ")
