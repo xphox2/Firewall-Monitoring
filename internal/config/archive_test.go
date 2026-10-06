@@ -150,11 +150,10 @@ func TestArchiveConfig_RejectsInvalid(t *testing.T) {
 		{"endpoint port", "ARCHIVE_S3_ENDPOINT", "https://s3.example.com:0", "port"},
 		{"region case", "ARCHIVE_S3_REGION", "US-East-005", "ARCHIVE_S3_REGION"},
 		{"region chars", "ARCHIVE_S3_REGION", "us_east", "ARCHIVE_S3_REGION"},
-		{"bucket case", "ARCHIVE_S3_BUCKET", "Example-Bucket", "ARCHIVE_S3_BUCKET"},
 		{"bucket short", "ARCHIVE_S3_BUCKET", "ab", "ARCHIVE_S3_BUCKET"},
 		{"bucket dots", "ARCHIVE_S3_BUCKET", "a..b", "ARCHIVE_S3_BUCKET"},
 		{"bucket ip", "ARCHIVE_S3_BUCKET", "192.0.2.10", "ARCHIVE_S3_BUCKET"},
-		{"bucket dash", "ARCHIVE_S3_BUCKET", "bucket-", "ARCHIVE_S3_BUCKET"},
+		{"bucket slash", "ARCHIVE_S3_BUCKET", "example/bucket", "ARCHIVE_S3_BUCKET"},
 		{"prefix leading slash", "ARCHIVE_S3_PREFIX", "/fwmon", "ARCHIVE_S3_PREFIX"},
 		{"prefix trailing slash", "ARCHIVE_S3_PREFIX", "fwmon/", "ARCHIVE_S3_PREFIX"},
 		{"prefix dotdot", "ARCHIVE_S3_PREFIX", "fwmon/../x", "ARCHIVE_S3_PREFIX"},
@@ -293,5 +292,61 @@ func TestArchiveConfig_SecretNeverRendered(t *testing.T) {
 	}
 	if got := fmt.Sprint(Secret("")); got != "" {
 		t.Errorf("Sprint(empty secret) = %q, want empty", got)
+	}
+}
+
+// TestValidBucketName: the bucket rule accepts every name a supported service
+// documents (B2's mixed case and leading '-', legacy AWS '_' and 255
+// characters) and refuses what could address something else.
+func TestValidBucketName(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ok   bool
+	}{
+		{"Firewall-Mon", true},   // B2, as its console shows it
+		{"firewall-mon", true},   // the same B2 bucket, as S3 tools spell it
+		{"FIREWALL-MON", true},   // any case of it
+		{"example-bucket", true}, // AWS / R2 / Wasabi / MinIO / Spaces
+		{"abc", true},
+		{"example.bucket.v2", true},      // dots (AWS, B2)
+		{"--Photos--", true},             // B2 allows a leading / trailing '-'
+		{"Legacy_Bucket_2017", true},     // AWS us-east-1 before 2018-03-01
+		{strings.Repeat("a", 255), true}, // legacy AWS maximum
+		{"ab", false},
+		{strings.Repeat("a", 256), false},
+		{"", false},
+		{"192.0.2.10", false},
+		{"2001:db8::1", false},
+		{"a..b", false},
+		{"..", false},
+		{"...", false},
+		{".bucket", false},
+		{"bucket.", false},
+		{"_bucket", false},
+		{"bucket_", false},
+		{"example/bucket", false},
+		{"../etc", false},
+		{"example bucket", false},
+		{" example-bucket", false},
+		{"example-bucket\n", false},
+		{"example\\bucket", false},
+		{"alice@example.com", false},
+		{"https://example.com", false},
+		{"arn:aws:s3:::example-bucket", false},
+		{"example%2Fbucket", false},
+		{"example?bucket", false},
+		{"example#bucket", false},
+		{"exämple-bucket", false},
+	} {
+		if got := validBucketName(tc.name); got != tc.ok {
+			t.Errorf("validBucketName(%q) = %v, want %v", tc.name, got, tc.ok)
+		}
+	}
+	// And through Validate, with the operator's B2 spelling.
+	env := validArchiveEnv()
+	env["ARCHIVE_S3_BUCKET"] = "Firewall-Mon"
+	setArchiveEnv(t, env)
+	if err := Load().Archive.Validate(); err != nil {
+		t.Errorf("ARCHIVE_S3_BUCKET=Firewall-Mon: %v", err)
 	}
 }

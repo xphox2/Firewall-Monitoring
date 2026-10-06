@@ -592,6 +592,22 @@ func (c *Client) Preflight(ctx context.Context) error {
 	return nil
 }
 
+// PrefixHasObjects reports whether the bucket lists at least one object under
+// the prefix: whether the bucket, as this client names it, holds the
+// archive's objects (the admin save's check of a bucket name whose case
+// changed, config.SameBucket).
+func (c *Client) PrefixHasObjects(ctx context.Context) (bool, error) {
+	out, err := c.api.ListObjectsV2(ctx, &awss3.ListObjectsV2Input{
+		Bucket:  aws.String(c.bucket),
+		Prefix:  aws.String(c.prefix + "/"),
+		MaxKeys: aws.Int32(1),
+	})
+	if err != nil {
+		return false, c.wrap("list", c.prefix+"/", err)
+	}
+	return len(out.Contents) > 0, nil
+}
+
 // redactedError masks the secret in an error's text while keeping the chain
 // for errors.Is / errors.As.
 type redactedError struct {

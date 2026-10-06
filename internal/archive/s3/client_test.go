@@ -604,3 +604,69 @@ func TestVersions(t *testing.T) {
 		}
 	}
 }
+
+// TestClient_NonDNSBucketIsPathStyle: a bucket name that is not a DNS label
+// (B2's "Example-Bucket", a legacy "example_bucket") is sent path-style even
+// with ARCHIVE_S3_PATH_STYLE=false — the SDK falls back to it — so no bucket
+// name config.validBucketName accepts depends on virtual-hosted addressing.
+// The request URL is read from the error of a host that never resolves
+// (.invalid); the control, a DNS-valid name, goes virtual-hosted.
+func TestClient_NonDNSBucketIsPathStyle(t *testing.T) {
+	const host = "s3.example.invalid"
+	for _, tc := range []struct{ bucket, want string }{
+		{"Example-Bucket", "https://" + host + "/Example-Bucket/?"},
+		{"Legacy_Bucket", "https://" + host + "/Legacy_Bucket/?"},
+		{"example.bucket", "https://" + host + "/example.bucket/?"},
+		{testBucket, "https://" + testBucket + "." + host + "/?"}, // control
+	} {
+		c := testConfig("https://" + host)
+		c.Bucket, c.PathStyle, c.ObjectLockDays, c.ObjectLockMode, c.AllowPrivateEndpoint = tc.bucket, false, 0, "", false
+		cl, err := New(c, withAttempts(1))
+		if err != nil {
+			t.Fatalf("New(%s): %v", tc.bucket, err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		err = cl.Preflight(ctx)
+		cancel()
+		if err == nil || !strings.Contains(err.Error(), `"`+tc.want) {
+			t.Errorf("bucket %s, path style off: Preflight = %v, want a request to %s…", tc.bucket, err, tc.want)
+		}
+	}
+}
+
+// TestPrefixHasObjects: false on an empty prefix, true once an object is
+// under it, and the bucket re-cased finds the same objects on B2 (names in
+// any case) but not on a service that matches names exactly.
+func TestPrefixHasObjects(t *testing.T) {
+	ctx := context.Background()
+	cl, srv := newFakeClient(t, func(c *config.ArchiveConfig) { c.ObjectLockDays, c.ObjectLockMode = 0, "" })
+	if has, err := cl.PrefixHasObjects(ctx); err != nil || has {
+		t.Fatalf("empty prefix: %v %v", has, err)
+	}
+	body := []byte("x")
+	if _, err := cl.Put(ctx, "a.txt", bytes.NewReader(body), int64(len(body)), nil); err != nil {
+		t.Fatal(err)
+	}
+	if has, err := cl.PrefixHasObjects(ctx); err != nil || !has {
+		t.Fatalf("after a put: %v %v", has, err)
+	}
+	c := testConfig(srv.URL)
+	c.Bucket, c.ObjectLockDays, c.ObjectLockMode = "Example-Bucket", 0, ""
+	re, err := New(c, withRoots(certPool(srv.Server)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if has, err := re.PrefixHasObjects(ctx); err != nil || !has {
+		t.Fatalf("re-cased bucket on B2: %v %v, want the same objects", has, err)
+	}
+	exact := s3test.NewB2Strict(t, testBucket, s3test.WithCaseSensitiveBucket())
+	c = testConfig(exact.URL)
+	c.Bucket, c.ObjectLockDays, c.ObjectLockMode = "Example-Bucket", 0, ""
+	ex, err := New(c, withRoots(certPool(exact.Server)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if has, err := ex.PrefixHasObjects(ctx); err == nil && has {
+		t.Fatalf("re-cased bucket on a case-sensitive service listed objects")
+	}
+}

@@ -179,7 +179,9 @@ const ArchiveLocationKey = "archive_location"
 // chunk the record follows loc; once chunks exist it is kept (an install from
 // before 0.11.310 records loc on its first check). mismatch: chunks exist and
 // were recorded at recorded, not at loc — the environment changed under them
-// (the admin form refuses such a change).
+// (the admin form refuses such a change). The bucket is compared ignoring
+// case (config.SameLocationText): "Firewall-Mon" is the bucket recorded as
+// "firewall-mon", and the record is not rewritten.
 func (d *Database) CheckArchiveLocation(ctx context.Context, loc string) (recorded string, mismatch bool, err error) {
 	has, err := d.ArchiveHasChunks(ctx)
 	if err != nil {
@@ -190,7 +192,7 @@ func (d *Database) CheckArchiveLocation(ctx context.Context, loc string) (record
 		return "", false, fmt.Errorf("read %s: %w", ArchiveLocationKey, err)
 	}
 	if has && len(rows) > 0 {
-		return rows[0].Value, rows[0].Value != loc, nil
+		return rows[0].Value, !config.SameLocationText(rows[0].Value, loc), nil
 	}
 	if len(rows) > 0 && rows[0].Value == loc {
 		return loc, false, nil
