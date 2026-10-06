@@ -23,7 +23,9 @@ jobs:
   build-test:
     name: Build & Test
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Above the test step's own -timeout=20m (plus tidy/vet/build), so a slow
+    # runner fails on a real hang there, not on this cap mid-run.
+    timeout-minutes: 25
     steps:
       - name: Check out
         uses: actions/checkout@v5

@@ -20,6 +20,18 @@ regexes = [
   '''^pendKey := "lc01-pending-key"$''',
 ]
 
+# Archive S3 secret-redaction fixtures as first committed (0.11.300, before they
+# became low-entropy "not-a-real-secret-…" strings): one synthetic value, exact,
+# in the two test files only. History is never rewritten, so the scan of that
+# commit needs this entry.
+[[allowlists]]
+description = "Archive S3 test fixture secret (first version)"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^internal/(?:config/archive|archive/s3/client)_test\.go$''']
+regexTarget = "match"
+regexes = ['''^(?:archiveTestSecret|testSecret) = "TESTSECRETdoNotLeak0123456789abcdefABCDEF"$''']
+
 # OPNsense config fixture: the uuid attribute of a preSharedKey element is an
 # identifier, not key material (the <Key> child is checked as usual).
 [[allowlists]]

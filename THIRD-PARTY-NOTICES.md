@@ -127,6 +127,8 @@ IP Geolocation by DB-IP. Used for the default free country/ASN enrichment tier; 
 
 | Package | Version | License |
 |---|---|---|
+| [github.com/aws/aws-sdk-go-v2](https://github.com/aws/aws-sdk-go-v2) (core, `credentials`, `service/s3` and the internal modules they pull in) | v1.47.1 / v1.20.6 / v1.114.0 | Apache-2.0 |
+| [github.com/aws/smithy-go](https://github.com/aws/smithy-go) | v1.28.2 | Apache-2.0 |
 | [github.com/gin-gonic/gin](https://github.com/gin-gonic/gin) | v1.10.1 | MIT |
 | [github.com/glebarez/sqlite](https://github.com/glebarez/sqlite) | v1.11.0 | MIT |
 | [github.com/golang-jwt/jwt/v5](https://github.com/golang-jwt/jwt) | v5.2.2 | MIT |
@@ -144,6 +146,12 @@ IP Geolocation by DB-IP. Used for the default free country/ASN enrichment tier; 
 | [golang.org/x/time](https://pkg.go.dev/golang.org/x/time) | v0.5.0 | BSD-3-Clause |
 | [gorm.io/driver/postgres](https://gorm.io/) | v1.6.0 | MIT |
 | [gorm.io/gorm](https://gorm.io/) | v1.31.1 | MIT |
+
+Test-only (imported by `_test.go` files and the `internal/archive/s3/s3test` test-support package; not linked into any shipped binary):
+
+| Package | Version | License |
+|---|---|---|
+| [github.com/johannesboyne/gofakes3](https://github.com/johannesboyne/gofakes3) | v1.2.0 | MIT |
 
 ### Indirect dependencies
 
@@ -175,7 +183,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-Applies to: Chart.js, @kurkle/color, chartjs-plugin-zoom, uPlot, Cytoscape.js, cytoscape-fcose, cose-base, Gridstack.js, Tailwind CSS, gin, glebarez/sqlite, golang-jwt, jackc/pgx/v5, wcharczuk/go-chart, gorm.
+Applies to: Chart.js, @kurkle/color, chartjs-plugin-zoom, uPlot, Cytoscape.js, cytoscape-fcose, cose-base, Gridstack.js, Tailwind CSS, gin, glebarez/sqlite, golang-jwt, jackc/pgx/v5, wcharczuk/go-chart, gorm, gofakes3 (test-only).
 
 ### BSD-2-Clause
 
@@ -241,7 +249,7 @@ Applies to: thoj/go-ircevent, golang.org/x/crypto, golang.org/x/net, golang.org/
 
 Full text: https://www.apache.org/licenses/LICENSE-2.0.txt
 
-Applies to: layout-base (including the embedded JAMA SVD routine), prometheus/client_golang, and the `go.opentelemetry.io/otel*` modules (otel, otel/sdk, otel/trace, and the OTLP HTTP trace exporter).
+Applies to: layout-base (including the embedded JAMA SVD routine), prometheus/client_golang, the `go.opentelemetry.io/otel*` modules (otel, otel/sdk, otel/trace, and the OTLP HTTP trace exporter), and aws-sdk-go-v2 / smithy-go (their NOTICE text is reproduced in `NOTICE`).
 
 ### SIL Open Font License 1.1
 
