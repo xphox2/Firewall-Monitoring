@@ -507,6 +507,11 @@ func (p *Poller) Start() error {
 	// lines say so, and warn when a stream with chunks has been disabled.
 	if p.db != nil {
 		p.db.LogArchiveGateState(backfillCtx)
+		// Record when a stream's deletes stop (or resume) waiting for the
+		// archive, so the month seal marks the months it affects partial.
+		if err := p.db.RecordArchiveGateState(backfillCtx); err != nil {
+			log.Printf("archive gate: record the enabled / disabled state: %v", err)
+		}
 	}
 	if p.db != nil && p.cfg.Archive.Enabled() {
 		if aw, err := archiveworker.New(p.db, p.cfg.Archive); err != nil {

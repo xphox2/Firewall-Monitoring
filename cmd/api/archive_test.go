@@ -2,10 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
 
+	"firewall-mon/internal/archive/s3"
+	"firewall-mon/internal/archive/worker"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/models"
 )
@@ -24,7 +29,7 @@ func TestArchiveCmd(t *testing.T) {
 	open := func() (archiveStore, error) { return keepOpenArchive{db}, nil }
 	run := func(args ...string) (int, string, string) {
 		var out, errb bytes.Buffer
-		code := archiveCmd(args, &out, &errb, open)
+		code := archiveCmd(args, &out, &errb, open, func() (worker.MonthReader, error) { return nil, errors.New("no bucket in this test") })
 		return code, out.String(), errb.String()
 	}
 	audits := func(action string) int64 {
@@ -93,5 +98,63 @@ func TestArchiveCmd(t *testing.T) {
 	}
 	if code, _, errb := run("--reset-chunk", "1", "--reason", "again"); code != 1 || !strings.Contains(errb, "not needs_attention") {
 		t.Fatalf("second reset: %d %q", code, errb)
+	}
+}
+
+// monthBucket is a read-only bucket holding one object (a _MONTH.json).
+type monthBucket struct {
+	key  string
+	body []byte
+	gets int
+}
+
+func (b *monthBucket) Key(rel string) (string, error) { return "fwmon-test/" + rel, nil }
+func (b *monthBucket) GetBytes(_ context.Context, rel, _ string, _ int64) ([]byte, s3.ObjectInfo, error) {
+	b.gets++
+	if rel != b.key {
+		return nil, s3.ObjectInfo{}, s3.ErrNotFound
+	}
+	return b.body, s3.ObjectInfo{Key: "fwmon-test/" + rel, Size: int64(len(b.body))}, nil
+}
+func (b *monthBucket) Versions(context.Context, string) (int, error) { return 1, nil }
+func (b *monthBucket) VerifyFull(context.Context, s3.PutResult, io.Writer) error {
+	return errors.New("not expected")
+}
+
+// TestArchiveCmd_VerifyMonth: --verify-month takes exactly a stream and a
+// month and needs no database; an unsealed month and a manifest that does
+// not check out exit 1 with the reasons printed.
+func TestArchiveCmd_VerifyMonth(t *testing.T) {
+	noDB := func() (archiveStore, error) { t.Fatal("--verify-month opened the database"); return nil, nil }
+	bucket := &monthBucket{key: "syslog/v2/2026-10/_MONTH.json", body: []byte(`{"kind":"fwmon-archive-month","manifest_version":1,"stream":"syslog","month":"2026-10","chunks":[]}`)}
+	run := func(b *monthBucket, args ...string) (int, string, string) {
+		var out, errb bytes.Buffer
+		code := archiveCmd(args, &out, &errb, noDB, func() (worker.MonthReader, error) {
+			if b == nil {
+				return nil, errors.New("ARCHIVE_S3_ENDPOINT is required")
+			}
+			return b, nil
+		})
+		return code, out.String(), errb.String()
+	}
+	for _, args := range [][]string{
+		{"--verify-month", "syslog"},
+		{"--verify-month", "syslog", "2026-10", "extra"},
+		{"--verify-month", "syslog", "--gate-status", "2026-10"},
+		{"--verify-month", "syslog", "--reason", "r", "2026-10"},
+	} {
+		if code, _, _ := run(bucket, args...); code != 2 {
+			t.Fatalf("args %v: exit %d, want 2", args, code)
+		}
+	}
+	if code, _, errb := run(nil, "--verify-month", "syslog", "2026-10"); code != 1 || !strings.Contains(errb, "ARCHIVE_S3_ENDPOINT") {
+		t.Fatalf("no bucket config: %d %q", code, errb)
+	}
+	if code, _, errb := run(bucket, "--verify-month", "syslog", "2026-09"); code != 1 || !strings.Contains(errb, "not sealed") {
+		t.Fatalf("unsealed month: %d %q", code, errb)
+	}
+	code, out, _ := run(bucket, "--verify-month", "syslog", "2026-10")
+	if code != 1 || !strings.Contains(out, "PROBLEM:") || !strings.Contains(out, "FAILED:") || strings.Contains(out, "OK:") {
+		t.Fatalf("bad manifest: %d %q", code, out)
 	}
 }

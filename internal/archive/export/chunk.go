@@ -84,6 +84,31 @@ func ObjectRel(id ObjectID, schema int, periodStart time.Time, hourly bool) stri
 // verified; "objects": [] for a stream with no rows in the period).
 const ChunkManifestName = "chunk.json"
 
+// MonthManifestName is the month seal manifest's name in a stream's month
+// folder: written once, last, when the month is sealed; nothing is written
+// into the folder after it.
+const MonthManifestName = "_MONTH.json"
+
+// MonthFolderRel is a stream's month folder below the prefix:
+// <stream>/v<schema>/<YYYY-MM>.
+func MonthFolderRel(stream string, schema int, month string) string {
+	return fmt.Sprintf("%s/v%d/%s", stream, schema, month)
+}
+
+// SchemasOf lists the schema versions a stream's folders may have, newest
+// first.
+func SchemasOf(stream string) []int {
+	switch stream {
+	case StreamSyslog:
+		return []int{SyslogSchemaV2, SyslogSchemaV1}
+	case StreamSFlow, StreamNetFlow:
+		return []int{FlowSchemaV1}
+	case StreamSFlowCounters:
+		return []int{CounterSchemaV1}
+	}
+	return nil
+}
+
 // FolderRel is a chunk's folder of one stream below the prefix:
 // <stream>/v<schema>/<YYYY-MM>/<YYYY-MM-DD>[THH], from the UTC period start.
 func FolderRel(stream string, schema int, periodStart time.Time, hourly bool) string {
@@ -92,7 +117,7 @@ func FolderRel(stream string, schema int, periodStart time.Time, hourly bool) st
 	if hourly {
 		folder = p.Format("2006-01-02T15")
 	}
-	return fmt.Sprintf("%s/v%d/%s/%s", stream, schema, MonthOf(p), folder)
+	return MonthFolderRel(stream, schema, MonthOf(p)) + "/" + folder
 }
 
 // ChunkResult describes one exported chunk: its objects (sorted by stream,

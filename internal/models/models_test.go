@@ -54,7 +54,7 @@ func allTablers() []tabler {
 		// v72 normalized event tables; v73 the backfill job queue; v75 the
 		// archive manifest.
 		NetEvent{}, SecEvent{}, NetEventRollup{}, FwRule{}, DeviceFieldObserved{}, NormalizeBackfillJob{},
-		ArchiveChunk{}, ArchiveObject{}, ArchiveMonth{}, ArchiveIDMark{},
+		ArchiveChunk{}, ArchiveObject{}, ArchiveMonth{}, ArchiveIDMark{}, ArchiveGateEvent{},
 	}
 }
 

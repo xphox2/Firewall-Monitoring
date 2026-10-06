@@ -42,7 +42,7 @@ var (
 	}, []string{"stream"})
 	archiveErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "fwmon", Subsystem: "archive", Name: "errors_total",
-		Help: "Archive failures by stage (lock, preflight, mark, plan, settle, stage, read, upload, verify, count, manifest, db).",
+		Help: "Archive failures by stage (lock, preflight, mark, plan, settle, stage, read, upload, verify, count, manifest, db, seal, sealed).",
 	}, []string{"stage"})
 	archiveLastSuccess = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "fwmon", Subsystem: "archive", Name: "last_success_timestamp_seconds",
@@ -58,13 +58,62 @@ var (
 	}, []string{"table", "reason"})
 )
 
+// Month seal (archive plan PR 7).
+var (
+	archiveMonthsSealed = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "fwmon", Subsystem: "archive", Name: "months_sealed_total",
+		Help: "Months this process sealed (_MONTH.json written, read back and recorded), per stream.",
+	}, []string{"stream"})
+	archiveSealBlocked = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "fwmon", Subsystem: "archive", Name: "seal_blocked",
+		Help: "1 while the stream's oldest month that is due to be sealed is not, by reason: incomplete (chunks of the month not all cut and verified yet), needs_attention (a chunk of it is parked), gap (seq, id or period discontinuity, or the month does not join the previous sealed one), objects (an object of it is not verified or not of the month), reverify (an object or chunk manifest in the bucket no longer matches), conflict (a different _MONTH.json is already stored), bucket (the service or the database failed; retried).",
+	}, []string{"stream", "reason"})
+	archiveMonthUnsealedDays = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "fwmon", Subsystem: "archive", Name: "month_unsealed_days",
+		Help: "Days the stream's oldest closed month that is not sealed is past its seal time (the 1st of the next month + ARCHIVE_SEAL_GRACE_HOURS); 0 when every due month is sealed. Alert on it rather than on fwmon_archive_seal_blocked, which is normal for a few passes after the grace.",
+	}, []string{"stream"})
+	archiveSealedWrites = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "fwmon", Subsystem: "archive", Name: "sealed_write_refused_total",
+		Help: "Object writes the worker refused because they targeted a sealed month's folder (never expected: the chunk is parked in needs_attention), per stream.",
+	}, []string{"stream"})
+)
+
+// ArchiveSealReasons are the reason label values of fwmon_archive_seal_blocked.
+var ArchiveSealReasons = []string{"incomplete", "needs_attention", "gap", "objects", "reverify", "conflict", "bucket"}
+
+// IncArchiveMonthSealed counts one month of stream sealed.
+func IncArchiveMonthSealed(stream string) { archiveMonthsSealed.WithLabelValues(stream).Inc() }
+
+// SetArchiveSealBlocked sets why stream's due month is not sealed (1 for
+// reason, 0 for the others); "" clears every reason.
+func SetArchiveSealBlocked(stream, reason string) {
+	for _, r := range ArchiveSealReasons {
+		v := 0.0
+		if r == reason {
+			v = 1
+		}
+		archiveSealBlocked.WithLabelValues(stream, r).Set(v)
+	}
+}
+
+// SetArchiveMonthUnsealedDays sets how many days stream's oldest due,
+// unsealed month is past its seal time.
+func SetArchiveMonthUnsealedDays(stream string, days float64) {
+	archiveMonthUnsealedDays.WithLabelValues(stream).Set(days)
+}
+
+// IncArchiveSealedWrite counts one refused write into a sealed month of
+// stream.
+func IncArchiveSealedWrite(stream string) { archiveSealedWrites.WithLabelValues(stream).Inc() }
+
 // ArchiveUnsettledReasons are the reason label values of
 // fwmon_archive_unsettled.
 var ArchiveUnsettledReasons = []string{"settling", "open_writer", "no_statement_timeout", "unattached_leaf"}
 
 func init() {
 	prometheus.MustRegister(archiveLag, archiveVerifiedThrough, archiveChunks, archiveRows, archiveObjects,
-		archiveObjectBytes, archiveRawBytes, archiveErrors, archiveLastSuccess, archiveUnsettled, archiveNeedsAttention)
+		archiveObjectBytes, archiveRawBytes, archiveErrors, archiveLastSuccess, archiveUnsettled, archiveNeedsAttention,
+		archiveMonthsSealed, archiveSealBlocked, archiveSealedWrites, archiveMonthUnsealedDays)
 }
 
 // SetArchiveLag sets a stream's lag.

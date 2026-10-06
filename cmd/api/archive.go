@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"firewall-mon/internal/archive/s3"
+	"firewall-mon/internal/archive/worker"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/models"
@@ -24,6 +26,7 @@ import (
 //	archive --override syslog|flows|all --clear [--reason "<why>"]  re-engage it now
 //	archive --reset-chunk <id> --reason "<why>"                     needs_attention → pending
 //	archive --gate-status                                           overrides + parked chunks
+//	archive --verify-month <stream> <YYYY-MM>                       re-check a sealed month from the bucket
 //
 // Like reset-auth and normalize-backfill it connects straight to the database
 // with the server's environment (`docker exec <container> fwmon-api archive
@@ -32,6 +35,11 @@ import (
 // password prompt would add nothing — while the API routes re-verify the
 // operator's password (+ TOTP). Every change writes an audit_logs row (actor
 // "cli") with the reason.
+//
+// --verify-month (archive plan PR 7) needs no database: it reads the month's
+// _MONTH.json and every chunk.json and object it pins from the bucket
+// (ARCHIVE_S3_* keys) and re-checks them all (worker.VerifyMonth). It only
+// reads; its exit code is 0 when every check passed, 1 otherwise.
 //
 // Returns the process exit code.
 func runArchiveCmd(args []string) int {
@@ -46,6 +54,8 @@ func runArchiveCmd(args []string) int {
 			return nil, err
 		}
 		return db, nil
+	}, func() (worker.MonthReader, error) {
+		return s3.New(cfg.Archive)
 	})
 }
 
@@ -64,7 +74,7 @@ type archiveStore interface {
 const archiveCmdReasonMax = 500
 
 // archiveCmd is the testable core of runArchiveCmd.
-func archiveCmd(args []string, stdout, stderr io.Writer, open func() (archiveStore, error)) int {
+func archiveCmd(args []string, stdout, stderr io.Writer, open func() (archiveStore, error), openBucket func() (worker.MonthReader, error)) int {
 	fs := flag.NewFlagSet("archive", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	override := fs.String("override", "", "release the retention gate of a stream: syslog, flows or all")
@@ -73,18 +83,20 @@ func archiveCmd(args []string, stdout, stderr io.Writer, open func() (archiveSto
 	resetChunk := fs.Uint("reset-chunk", 0, "put a chunk parked in needs_attention back to pending (re-exported on the worker's next pass)")
 	reason := fs.String("reason", "", "why (required to release the gate or reset a chunk; recorded in the audit log)")
 	status := fs.Bool("gate-status", false, "print each stream's override and the chunks in needs_attention")
+	verifyMonth := fs.String("verify-month", "", "re-check a sealed month from the bucket alone: --verify-month <stream> <YYYY-MM> (read-only)")
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "usage: fwmon-api archive --override syslog|flows|all --for 6h --reason \"<why>\"")
 		fmt.Fprintln(stderr, "       fwmon-api archive --override syslog|flows|all --clear [--reason \"<why>\"]")
 		fmt.Fprintln(stderr, "       fwmon-api archive --reset-chunk <id> --reason \"<why>\"")
 		fmt.Fprintln(stderr, "       fwmon-api archive --gate-status")
+		fmt.Fprintln(stderr, "       fwmon-api archive --verify-month syslog|sflow|netflow|sflow-counters <YYYY-MM>")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	modes := 0
-	for _, m := range []bool{*override != "", *resetChunk != 0, *status} {
+	for _, m := range []bool{*override != "", *resetChunk != 0, *status, *verifyMonth != ""} {
 		if m {
 			modes++
 		}
@@ -96,6 +108,12 @@ func archiveCmd(args []string, stdout, stderr io.Writer, open func() (archiveSto
 		}
 		fs.Usage()
 		return 2
+	}
+	if *verifyMonth != "" {
+		if modes != 1 || fs.NArg() != 1 || *reason != "" || *clearOv || *dur != 0 {
+			return usage("--verify-month takes a stream and a month, and nothing else")
+		}
+		return verifyMonthCmd(*verifyMonth, fs.Arg(0), stdout, stderr, openBucket)
 	}
 	if modes != 1 || fs.NArg() > 0 {
 		return usage("")
@@ -191,9 +209,12 @@ func archiveCmd(args []string, stdout, stderr io.Writer, open func() (archiveSto
 		return 1
 	}
 	if _, err := db.ResetArchiveChunk(context.Background(), c.ID, "reset for re-export from the CLI: "+why, time.Now()); err != nil {
-		if errors.Is(err, database.ErrArchiveChunkNotParked) {
+		switch {
+		case errors.Is(err, database.ErrArchiveChunkSealed):
+			fmt.Fprintf(stderr, "archive: chunk %d (%s %s): %v\n", c.ID, c.SourceTable, c.Month, err)
+		case errors.Is(err, database.ErrArchiveChunkNotParked):
 			fmt.Fprintf(stderr, "archive: chunk %d is %s, not %s\n", c.ID, c.Status, models.ArchiveChunkNeedsAttention)
-		} else {
+		default:
 			fmt.Fprintf(stderr, "archive: reset: %v\n", err)
 		}
 		return 1
@@ -201,4 +222,34 @@ func archiveCmd(args []string, stdout, stderr io.Writer, open func() (archiveSto
 	audit("archive_chunk_reset", fmt.Sprintf("chunk_id=%d table=%s seq=%d mismatches=%d reason=%q", c.ID, c.SourceTable, c.Seq, c.Mismatches, why))
 	fmt.Fprintf(stdout, "chunk %d (%s seq %d) is pending again: the archive worker exports it on its next pass\n", c.ID, c.SourceTable, c.Seq)
 	return 0
+}
+
+// verifyMonthCmd runs --verify-month and prints its report.
+func verifyMonthCmd(stream, month string, stdout, stderr io.Writer, openBucket func() (worker.MonthReader, error)) int {
+	store, err := openBucket()
+	if err != nil {
+		fmt.Fprintf(stderr, "archive: bucket: %v\n", err)
+		return 1
+	}
+	rep, err := worker.VerifyMonth(context.Background(), store, stream, month, stdout)
+	if err != nil {
+		fmt.Fprintf(stderr, "archive: verify-month: %v\n", err)
+		return 1
+	}
+	kind := "full month"
+	if rep.Partial {
+		kind = "PARTIAL month: " + rep.PartialNote
+	}
+	fmt.Fprintf(stdout, "%s %s (schema v%d, %s)\n", rep.Stream, rep.Month, rep.SchemaVersion, rep.ManifestKey)
+	fmt.Fprintf(stdout, "  %s\n  ids (%d, %d], %d chunks, %d objects, %d rows, %d bytes stored\n  month digest %s\n",
+		kind, rep.FirstID, rep.LastID, rep.Chunks, rep.Objects, rep.Rows, rep.Bytes, rep.Digest)
+	if rep.OK() {
+		fmt.Fprintln(stdout, "OK: every object, chunk manifest and the month manifest match")
+		return 0
+	}
+	for _, p := range rep.Problems {
+		fmt.Fprintf(stdout, "PROBLEM: %s\n", p)
+	}
+	fmt.Fprintf(stdout, "FAILED: %d problem(s)\n", len(rep.Problems))
+	return 1
 }

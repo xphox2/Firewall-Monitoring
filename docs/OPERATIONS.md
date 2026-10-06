@@ -910,6 +910,151 @@ window stays as it is. Leaving the old key in place is harmless (it is
 ignored and named in the NOTICE) but misleading to the next reader. One month
 against 30 days is at most one extra day of raw syslog at peak.
 
+## Raw archive: the monthly seal
+
+From 0.11.307 the archive worker closes each stream's month folder
+(`<prefix>/<stream>/v<schema>/<YYYY-MM>/`) once the month is over: at the
+first pass at or after the 1st of the next month, 00:00 UTC, plus
+`ARCHIVE_SEAL_GRACE_HOURS` (default 48, 6–168). Months seal oldest first, per
+stream (`syslog`, `sflow`, `netflow`, `sflow-counters`):
+
+1. **Completeness** (database): every chunk cut for the month is `verified`;
+   their seq, id ranges and periods are gapless; the last one ends exactly at
+   the 1st of the next month; the first continues the previous month's last
+   chunk, and that month is sealed with that id as its `last_id`.
+2. **Re-verification** (bucket): every object of the month is HEADed (size,
+   ETag, Object Lock) — `ARCHIVE_SEAL_REVERIFY=full` also reads each one back
+   and re-hashes it — and every `chunk.json` must be byte for byte the one the
+   database describes.
+3. **`_MONTH.json`**: the chunk list with every object's key, version id,
+   `sha256_object`, `sha256_content` and row count, each `chunk.json`'s
+   version and hash, the totals, the message-day histogram and the month
+   digest (how it is computed is written into the file). It is uploaded with
+   Object Lock, read back, and only then is the month recorded `sealed` in
+   `archive_months`. After that the worker refuses any write into the folder
+   (a chunk of a sealed month being worked again — only possible by editing
+   the database — is parked `needs_attention`, and
+   `fwmon_archive_sealed_write_refused_total` counts it; see the recovery
+   steps below).
+
+**An incomplete month is never sealed.** It is recorded `seal_failed` with
+the reason in `archive_months.error`, `fwmon_archive_seal_blocked{stream,reason}`
+says which (`incomplete`, `needs_attention`, `gap`, `objects`, `reverify`,
+`conflict`, `bucket`), the later months of the stream wait behind it, and the
+stream is tried again after a backoff (1, 5, 30 minutes, then every 2 hours —
+a refusal that persists is not re-verified, or with `full` re-downloaded,
+every pass). A `_MONTH.json` the archive did not write is found before any
+object is re-checked and never overwritten (`conflict`).
+`fwmon_archive_months_sealed_total{stream}` counts the seals.
+
+**Alert on `fwmon_archive_month_unsealed_days{stream}`**, the days the
+stream's oldest closed month that is not sealed is past its seal time (the 1st
++ the grace); 0 when every due month is sealed. A refusal for a day or two
+after the grace is normal (a syslog backlog still being verified), so
+`seal_blocked` alone is noisy; e.g. alert when `month_unsealed_days > 3`.
+
+**The first archived month is PARTIAL.** The month the archive of a table
+began in (its first chunk starts at id 0) is sealed with `"partial": true`,
+`first_row_id` (the first archived row) and a note: rows ingested before the
+archive began were deleted by retention first, and the archive cannot list
+them. On production that is September 2026 for syslog (its first chunk is the
+oldest ingest day still on the server) and the enabling month for the flow
+streams (raw flows live about an hour).
+
+**A month the gate did not fully protect is PARTIAL too.** Rows deleted while
+a stream's gate was released (an override) or its archiving was disabled
+never reach the archive and vanish from both sides of the chunk's count
+check, so nothing else could tell. Every override (`archive --override`, the
+API route) and every poller start with a disabled stream that already has
+chunks is recorded in `archive_gate_events` (migration v77; an enabled start
+ends the open `disabled` interval). A month whose archiving — from its first
+day to the verification of its last chunk — overlaps such an interval is
+sealed with `"partial": true` and the intervals in `"degraded"`
+(`{kind, from, to}`, clamped to that window). If an interval cannot be
+recorded at the poller's start, that disabled stream's deletes stay **gated**
+(logged as an ERROR) until the record succeeds — retried every minute, from
+the start time — so nothing is deleted ungated without the seal knowing.
+
+Two more kinds are conservative, because the past cannot be reconstructed:
+
+- `before_archive`: from the month's start to when the table's archive began
+  (its first chunk verified). Before that nothing waited for the archive —
+  retention, and the severity 6/7 aggregation after 7 days, may have removed
+  rows of the month. So the month the archive is enabled in is partial
+  whatever day it is enabled on; on production, if it is enabled in October,
+  **November is the first full month** (and October is partial even if its
+  backlog is complete — its first days' severity 6/7 rows may already have
+  been summarised).
+- `unrecorded`: if the archive began before migration v77 was applied, a
+  disabled period before v77 would not have been recorded, so the time from
+  the archive's start (or the month's start) to v77 is listed. v77 rebuilds
+  the overrides made before it from their `archive_gate_override` audit rows;
+  disabled periods have no such record. On an install that enables the
+  archive with this release, v77 comes first and nothing is listed.
+
+The seal is the month-level completeness proof, **not a delete gate**: raw
+rows are deleted as soon as their chunk is verified (the retention gate
+above).
+
+**Checking a sealed month** — from the bucket alone, no database needed:
+
+```
+docker exec <container> fwmon-api archive --verify-month syslog 2026-09
+```
+
+It downloads `_MONTH.json` (its ETag and the sha256 recorded at the seal),
+re-derives the chain, the totals and the month digest, downloads every
+`chunk.json` and every object by the version the manifest pins, and checks the
+stored bytes, the decompressed content hash, the row counts and that every
+line is JSON with an id inside its chunk. It only reads (GET requests) and
+prints one line per chunk and a summary; the exit code is 0 only when every
+check passed. Expect it to read the whole month (about 9–21 GB of syslog);
+on Backblaze B2 downloads up to three times the stored volume a month are
+free. It also fails when `_MONTH.json` has more than one stored version (the
+seal writes it once), when the month does not join the sealed months beside
+it (the previous one's `last_id` is this one's `first_id`, and it must exist
+unless this is the archive's first month), or when `partial` does not match
+(true exactly for the first month — from id 0, seq 1 — or a degraded one).
+
+### Recovering a month that cannot be sealed
+
+A month that stays refused holds back every later seal of its stream (each
+month proves it joins the previous one) — the deletes are not affected,
+they follow the verified chunks.
+
+- **`conflict`: a `_MONTH.json` the archive did not write.** Download it and
+  find out where it came from (another install writing to the same
+  `ARCHIVE_S3_PREFIX` is the usual cause — give each install its own prefix).
+  The archive's key cannot delete, by design. With Object Lock GOVERNANCE, an
+  administrator key with `deleteFiles` and `bypassGovernance` (B2) or
+  `s3:BypassGovernanceRetention` (AWS) can delete that file's versions; the
+  next pass after the backoff seals the month. Under COMPLIANCE nobody can
+  remove it before its retain-until date: the month stays unsealed (its
+  chunks are still archived and verified individually) and, until then, so
+  do the stream's later months — `month_unsealed_days` keeps rising and its
+  alert should be acknowledged with that reason.
+- **`reverify`: a stored object or `chunk.json` changed.** Objects are
+  checked by the version the archive wrote (`archive_objects.version_id`),
+  which Object Lock keeps; a `chunk.json` is checked by its latest version.
+  Something else wrote into the prefix: find and stop it, then make the
+  archive's version the latest again (copy that version over the key with an
+  administrator key); the next pass after the backoff seals the month. If the
+  archive's own version is gone (only possible with a key that bypasses the
+  lock, or on a bucket without versioning), the month cannot be proven and
+  stays unsealed — re-exporting a verified chunk is not supported.
+- **A parked chunk of a SEALED month** (`fwmon_archive_sealed_write_refused_total`
+  rose; only possible after the database was edited). It does not hold the
+  retention gate when its id range lies inside the `(first_id, last_id]`
+  recorded for that month (for every stream of its table; otherwise it does):
+  the month was sealed only after every one of its chunks was
+  verified and re-checked, `_MONTH.json` pins those objects under Object
+  Lock, and the worker refuses the chunk before it changes anything. The A-5
+  reset refuses it (`fwmon-api archive --reset-chunk` and the API answer that
+  the chunk belongs to a sealed month). Confirm the month with
+  `archive --verify-month <stream> <YYYY-MM>`, then put the row back:
+  `UPDATE archive_chunks SET status = 'verified', error = '' WHERE id = <id>;`
+  (its objects were left verified).
+
 ## Host disk housekeeping
 
 The section above is about the **database volume**. This one is about the **root filesystem**, which

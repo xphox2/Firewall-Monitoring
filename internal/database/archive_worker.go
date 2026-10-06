@@ -316,7 +316,23 @@ type ArchiveProgress struct {
 // ArchiveTableProgress derives V for table — never stored: the id_hi of the
 // last chunk of the run that starts at seq 1 with id_lo 0 and continues while
 // every chunk is verified, its seq is the previous one's + 1 and its id_lo the
-// previous one's id_hi. The first chunk that is not verified (pending,
+// previous one's id_hi.
+//
+// archiveSealedChunkCounts: a chunk parked in needs_attention whose month is
+// sealed for every stream of its table, and whose id range lies inside the
+// (first_id, last_id] every one of those streams recorded at the seal, counts
+// as verified (the run's seq and id continuity still apply to it). The seal recorded
+// the month only after every one of its chunks was verified (read back in
+// full and count-matched against the table) and every object and chunk.json
+// was re-checked in the bucket; _MONTH.json pins those object versions under
+// Object Lock. Ids are never reused and the range was settled before the
+// count, so no row of the chunk's range can appear later. A chunk of a sealed
+// month can only leave verified by an edit of the database, and the worker
+// refuses it before the attempt changes any object row (it is then parked);
+// so its rows are exactly what the sealed month holds, and deleting them is as
+// safe as for any verified chunk. The range check keeps a row whose month or
+// id_hi was edited from carrying V past rows the seal never covered. Any other
+// status still ends the run. The first chunk that is not verified (pending,
 // exporting, uploading, verifying, failed, needs_attention, superseded) or
 // that leaves a gap ends the run. The retention gate deletes only rows at or
 // below it (archive_gate.go), so it reads every chunk of the table — a few
@@ -328,6 +344,7 @@ func (d *Database) ArchiveTableProgress(ctx context.Context, table string) (Arch
 		Seq         int64
 		IDLo        int64
 		IDHi        int64
+		Month       string
 		Status      string
 		PeriodStart time.Time
 		PeriodEnd   time.Time
@@ -335,7 +352,7 @@ func (d *Database) ArchiveTableProgress(ctx context.Context, table string) (Arch
 		MaxTs       *time.Time
 	}
 	if err := d.db.WithContext(ctx).Model(&models.ArchiveChunk{}).
-		Select("seq, id_lo, id_hi, status, period_start, period_end, row_count, max_ts").
+		Select("seq, id_lo, id_hi, month, status, period_start, period_end, row_count, max_ts").
 		Where("table_name = ?", table).Order("seq").Scan(&cs).Error; err != nil {
 		return p, err
 	}
@@ -348,8 +365,22 @@ func (d *Database) ArchiveTableProgress(ctx context.Context, table string) (Arch
 	var prevSeq, prevHi int64
 	var maxTs time.Time
 	tsKnown := true
+	var sealed map[string]archiveSealedRange // months sealed for every stream of the table, read on first need
 	for _, c := range cs {
-		if c.Status != models.ArchiveChunkVerified || c.Seq != prevSeq+1 || c.IDLo != prevHi || c.IDHi < c.IDLo {
+		ok := c.Status == models.ArchiveChunkVerified
+		if !ok && c.Status == models.ArchiveChunkNeedsAttention {
+			// A parked chunk of a SEALED month does not hold the run (see
+			// archiveSealedChunkCounts).
+			if sealed == nil {
+				var err error
+				if sealed, err = d.archiveSealedTableMonths(ctx, table); err != nil {
+					return p, err
+				}
+			}
+			r, isSealed := sealed[c.Month]
+			ok = isSealed && r.contains(c.IDLo, c.IDHi)
+		}
+		if !ok || c.Seq != prevSeq+1 || c.IDLo != prevHi || c.IDHi < c.IDLo {
 			break
 		}
 		prevSeq, prevHi = c.Seq, c.IDHi
