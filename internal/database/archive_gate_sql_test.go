@@ -23,12 +23,16 @@ import (
 // from pre-gate code: ARCHIVE_GATE_GOLDEN_PRINT=1 prints the capture.
 //
 // Limits of this guard: it runs on SQLite, so it compares SQL text only — not
-// the bound values (a disabled gate adds none: archiveGateFn is nil, andID and
-// the caps are never called) — and it never reaches the PostgreSQL-only
-// partition DROP. That path is unchanged when disabled by construction:
-// dropPartitionsOlderThanGated with a nil gate takes the pre-gate branch
-// (execCronDDL's `DROP TABLE IF EXISTS`, no max(id) probe, no LOCK), and
-// TestArchiveGate_Flows_PG / _Syslog_PG exercise the gated branch.
+// the bound values (a disabled gate adds none: archiveGate is the zero state,
+// andID returns the predicate untouched and the caps leave the watermark) —
+// and it never reaches the PostgreSQL-only partition DROP. That path is
+// unchanged when disabled by construction: dropPartitionsOlderThanGated with
+// the gate off takes the pre-gate branch (execCronDDL's `DROP TABLE IF
+// EXISTS`, no max(id) probe, no LOCK), and TestArchiveGate_Flows_PG /
+// _Syslog_PG exercise the gated branch. Since A-10 the gate also resolves the
+// two stream switches from system_settings (the admin page's values, cached
+// for 30 s in a running process): a read of system_settings, outside what
+// this guard captures, never of the raw or archive tables.
 var archiveGateDisabledGolden = []string{
 	"DELETE FROM `flow_if_counters` WHERE id IN (SELECT `id` FROM `flow_if_counters` WHERE timestamp < ? LIMIT 10000)",
 	"DELETE FROM `flow_samples` WHERE id IN (SELECT `id` FROM `flow_samples` WHERE timestamp < ? ORDER BY timestamp LIMIT 10000)",

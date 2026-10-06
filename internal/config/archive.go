@@ -14,8 +14,11 @@ import (
 )
 
 // ArchiveConfig is the raw syslog / flow archive to S3-compatible object
-// storage (ARCHIVE_* env; archive plan PR 2). It is read from the environment
-// or CONFIG_FILE only, never from the admin UI.
+// storage (ARCHIVE_* env; archive plan PR 2). Load reads it from the
+// environment or CONFIG_FILE; since A-10 every key can also be set on the
+// admin Retention page, which wins over the environment (WithSettings,
+// archive_fields.go; resolved by database.ResolveArchiveConfig). The
+// environment is the default.
 //
 // Every connection key is REQUIRED once either stream is enabled, and none has
 // a default: the project names no storage service, bucket or region in code.
@@ -79,6 +82,9 @@ type ArchiveConfig struct {
 	// silently falling back to a default: "ARCHIVE_OBJECT_LOCK_DAYS=400d"
 	// must not quietly mean "no Object Lock".
 	invalid []string
+	// envSet lists the ARCHIVE_* keys the environment set (EnvSet): the
+	// admin form shows whether a value is the environment's or the default.
+	envSet map[string]bool
 }
 
 // MaxArchiveObjectLockDays is the longest Object Lock retention accepted:
@@ -178,6 +184,20 @@ func (a ArchiveConfig) Validate() error {
 	if err := a.ValidateS3(); err != nil {
 		return err
 	}
+	if err := a.validateSchedule(); err != nil {
+		return err
+	}
+	switch {
+	case a.StagingDir == "":
+		return fmt.Errorf("archive is enabled but ARCHIVE_STAGING_DIR is empty: set it to an absolute directory on a volume with room for a day of compressed syslog (there is no default)")
+	case !filepath.IsAbs(a.StagingDir):
+		return fmt.Errorf("ARCHIVE_STAGING_DIR must be an absolute path, got %q", a.StagingDir)
+	}
+	return nil
+}
+
+// validateSchedule checks the export pacing, seal and window keys.
+func (a ArchiveConfig) validateSchedule() error {
 	if a.MinAgeHours < 1 || a.MinAgeHours > 168 {
 		return fmt.Errorf("ARCHIVE_MIN_AGE_HOURS must be 1-168, got %d", a.MinAgeHours)
 	}
@@ -197,12 +217,6 @@ func (a ArchiveConfig) Validate() error {
 	}
 	if _, _, _, err := a.WindowMinutes(); err != nil {
 		return err
-	}
-	switch {
-	case a.StagingDir == "":
-		return fmt.Errorf("archive is enabled but ARCHIVE_STAGING_DIR is empty: set it to an absolute directory on a volume with room for a day of compressed syslog (there is no default)")
-	case !filepath.IsAbs(a.StagingDir):
-		return fmt.Errorf("ARCHIVE_STAGING_DIR must be an absolute path, got %q", a.StagingDir)
 	}
 	return nil
 }

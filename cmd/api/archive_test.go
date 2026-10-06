@@ -320,3 +320,15 @@ func TestArchiveCmd_Restore(t *testing.T) {
 		}
 	}
 }
+
+// TestStripArchiveEnvOnly: --env-only is taken out of the arguments the
+// command's flag set parses (which would refuse it) and reported.
+func TestStripArchiveEnvOnly(t *testing.T) {
+	got, envOnly := stripArchiveEnvOnly([]string{"--env-only", "--verify-month", "syslog", "2026-09"})
+	if !envOnly || len(got) != 3 || got[0] != "--verify-month" {
+		t.Fatalf("got %v %v", got, envOnly)
+	}
+	if got, envOnly := stripArchiveEnvOnly([]string{"--status"}); envOnly || len(got) != 1 {
+		t.Fatalf("got %v %v", got, envOnly)
+	}
+}

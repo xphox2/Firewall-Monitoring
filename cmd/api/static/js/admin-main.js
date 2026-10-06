@@ -2613,7 +2613,8 @@
     // next chunk waits; per stream the month folders; the gate overrides; the
     // chunks parked in needs_attention, each with a Reset (re-authenticated
     // like the purge); the worker's last failures. Read-only otherwise: the
-    // archive is configured by ARCHIVE_* env, never from the UI.
+    // archive is configured in the Raw Archive Settings card below it
+    // (admin-archive-settings.js, A-10), with the ARCHIVE_* env as defaults.
     var archiveFaint = 'color:var(--fwmon-text-faint);';
 
     function archiveDur(sec) {
@@ -2648,7 +2649,7 @@
                 '<button type="button" class="btn sm secondary" data-action="archive-reengage" data-min-role="admin" data-stream="' + escapeHtml(g.stream) + '">Re-engage now</button></div>';
         });
         if (!st.enabled && !(st.tables || []).some(function (t) { return t.has_chunks; })) {
-            return html + '<p style="' + archiveFaint + 'font-size:0.85rem;">Archiving is off. Set <code>ARCHIVE_SYSLOG_ENABLED</code> / <code>ARCHIVE_FLOWS_ENABLED</code> and the <code>ARCHIVE_S3_*</code> keys (see docs/OPERATIONS.md).</p>';
+            return html + '<p style="' + archiveFaint + 'font-size:0.85rem;">Archiving is off. Configure it in Raw Archive Settings below (or the <code>ARCHIVE_*</code> environment keys; see docs/OPERATIONS.md).</p>';
         }
         var c = st.config || {};
         html += '<p style="font-size:0.85rem;margin:0 0 6px;">Bucket <code>' + escapeHtml(c.bucket || '') + '</code> prefix <code>' + escapeHtml(c.prefix || '') + '</code>' +
@@ -2908,6 +2909,7 @@
             // default (shown as the placeholder); a value overrides it live.
             renderRetentionSettings(settings);
             renderArchiveStatus();
+            if (window.FwmonArchiveSettings) FwmonArchiveSettings.render({ onSaved: renderArchiveStatus });
 
             document.getElementById('settings-detection').innerHTML = [
                 { key: 'detect_port_scan_ports', label: 'Port scan — distinct dst ports', def: '100', step: '1' },

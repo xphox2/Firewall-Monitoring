@@ -232,6 +232,7 @@
     <script defer src="/static/js/admin-common.js"></script>
     <script defer src="/static/js/admin-users.js"></script>
     <script defer src="/static/js/admin-settings.js"></script>
+    <script defer src="/static/js/admin-archive-settings.js"></script>
     <script defer src="/static/js/admin-profile.js"></script>
     <script defer src="/static/js/admin-reports.js"></script>
     <script defer src="/static/js/admin-threatintel.js"></script>
@@ -1438,8 +1439,13 @@
             </div>
             <div class="card" data-min-role="admin">
                 <div class="card-header"><h2>Raw Archive</h2><button type="button" class="btn sm secondary" data-action="archive-refresh">Refresh</button></div>
-                <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">Raw syslog and flows exported to object storage, read back and verified, then sealed per month. While a stream is archived its raw rows are deleted only once verified, so a stuck archive holds them past the windows above. Configured by the <code>ARCHIVE_*</code> environment keys; <code>fwmon-api archive --status</code> prints the same.</p>
+                <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">Raw syslog and flows exported to object storage, read back and verified, then sealed per month. While a stream is archived its raw rows are deleted only once verified, so a stuck archive holds them past the windows above. Configured in Raw Archive Settings below (the <code>ARCHIVE_*</code> environment keys are the defaults); <code>fwmon-api archive --status</code> prints the same.</p>
                 <div id="settings-archive" aria-live="polite"></div>
+            </div>
+            <div class="card" data-min-role="admin">
+                <div class="card-header"><h2>Raw Archive Settings</h2></div>
+                <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">Each value set here wins over its <code>ARCHIVE_*</code> environment key, which stays the default: the badge beside a field says where its value comes from, and <em>Revert to env default</em> removes the value set here. Test connection checks the bucket with the form&rsquo;s values without saving. Saving asks for your password (and 2FA code) and is applied by the poller within a minute, without a restart. Step by step: docs/OPERATIONS.md, &ldquo;Raw archive: setting it up from the admin panel&rdquo;.</p>
+                <div id="settings-archive-config"></div>
             </div>
             </section>
             <!-- Sticky save bar: hidden until FwmonSettingsUI counts unsaved

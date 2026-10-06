@@ -58,16 +58,21 @@ type archiveRestoreView struct {
 	StagingBytes int64 `json:"staging_bytes"`
 }
 
-// archiveRestoreReady reports why this API's configuration cannot restore
-// ("" when it can): the poller runs the restore with the same ARCHIVE_* keys.
-func (h *Handler) archiveRestoreReady() string {
+// archiveRestoreReady reports why the archive configuration in effect (the
+// environment with the admin page's settings applied) cannot restore ("" when
+// it can): the poller runs the restore with the same configuration.
+func (h *Handler) archiveRestoreReady(c *gin.Context, db database.Store) string {
 	if h.config == nil {
 		return "no configuration"
 	}
-	if err := h.config.Archive.ValidateS3(); err != nil {
+	res, err := db.ResolveArchiveConfig(c.Request.Context(), h.config.Archive)
+	if err != nil {
+		return "the archive settings cannot be read: " + err.Error()
+	}
+	if err := res.Config.ValidateS3(); err != nil {
 		return "the archive bucket is not configured: " + err.Error()
 	}
-	if !filepath.IsAbs(h.config.Archive.StagingDir) {
+	if !filepath.IsAbs(res.Config.StagingDir) {
 		return "ARCHIVE_STAGING_DIR is not set (an absolute directory for the downloads)"
 	}
 	return ""
@@ -107,7 +112,7 @@ func (h *Handler) StartArchiveRestore(c *gin.Context) {
 	if !httputil.RequireDB(c, db) {
 		return
 	}
-	if why := h.archiveRestoreReady(); why != "" {
+	if why := h.archiveRestoreReady(c, db); why != "" {
 		c.JSON(http.StatusConflict, response.Error(why))
 		return
 	}

@@ -9,8 +9,9 @@
 // It deletes nothing (the retention gate, database/archive_gate.go, lets the
 // deletes take only what it verified) and, after each pass, seals the months
 // that are due (seal.go): a sealed month's folder is never written again.
-// With ARCHIVE_SYSLOG_ENABLED and ARCHIVE_FLOWS_ENABLED both off the poller
-// does not start it.
+// With ARCHIVE_SYSLOG_ENABLED and ARCHIVE_FLOWS_ENABLED both off (the
+// environment with the admin page's settings applied) the poller's Reloader
+// does not build it (reload.go).
 //
 // Exclusion: a tick runs under the archive's own advisory lock
 // (database.AcquireArchiveLock), never the shared poller work lock, so an
@@ -79,6 +80,10 @@ const (
 // chunk is exported (a day of syslog is ~0.3-0.7 GB compressed). A variable
 // so tests can raise it.
 var stagingMinFree uint64 = 2 << 30
+
+// StagingMinFree is that floor: the admin page refuses to enable a stream on
+// a staging directory with less free space.
+func StagingMinFree() uint64 { return stagingMinFree }
 
 // stagingFree reports the free bytes of dir's filesystem; a variable so tests
 // can stand in for it.

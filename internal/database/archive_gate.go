@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"firewall-mon/internal/archive/export"
+	"firewall-mon/internal/config"
 	"firewall-mon/internal/models"
 
 	"gorm.io/gorm"
@@ -76,8 +77,9 @@ func ParseArchiveGateStreams(name string) ([]string, error) {
 }
 
 // ArchiveGateConfig is which gate streams' archiving is enabled
-// (ARCHIVE_SYSLOG_ENABLED / ARCHIVE_FLOWS_ENABLED). Connect sets it from the
-// configuration; the zero value gates nothing.
+// (ARCHIVE_SYSLOG_ENABLED / ARCHIVE_FLOWS_ENABLED). Connect sets the
+// environment's as the default; the admin settings override it
+// (archiveGateConfig). The zero value gates nothing.
 type ArchiveGateConfig struct {
 	Syslog bool
 	Flows  bool
@@ -262,11 +264,13 @@ func archiveReleasedWarning(stream, table string, until time.Time) {
 }
 
 // archiveGateFn is archiveGate of table as a function the delete loops call
-// before every batch / leaf; nil when the table is not archived or its stream
-// is disabled, so those statements are never touched.
+// before every batch / leaf; nil when the table is not archived. A stream's
+// switch is resolved again before every batch (archiveGateConfig, cached
+// briefly), so a stream enabled from the admin page while a long retention
+// pass runs gates that pass's next batch; while it is off the gate is the zero
+// state and the statements are untouched.
 func (d *Database) archiveGateFn(table string) func() archiveGateState {
-	stream := archiveGateStream(table)
-	if !d.archiveGateActive(stream) {
+	if archiveGateStream(table) == "" {
 		return nil
 	}
 	return func() archiveGateState { return d.archiveGate(context.Background(), table) }
@@ -346,9 +350,21 @@ func (d *Database) endArchiveGateEvents(tx *gorm.DB, stream, kind string, now ti
 // interval stays open, which marks months partial (the safe direction).
 func (d *Database) RecordArchiveGateState(ctx context.Context) error {
 	now := archiveGateClock().UTC()
+	cfg, err := d.readArchiveGateConfig(ctx)
+	if err != nil {
+		// Unknown switches: the gate fails closed (archiveGateConfig) and
+		// the transitions are recorded once a read succeeds.
+		return fmt.Errorf("archive gate: %w", err)
+	}
+	if c := d.archiveGateCache; c != nil {
+		c.mu.Lock()
+		c.cfg, c.at, c.ok = cfg, archiveGateClock(), true
+		c.observed, c.seeded = cfg, true
+		c.mu.Unlock()
+	}
 	var errs []error
 	for _, stream := range ArchiveGateStreams {
-		if d.archiveGateCfg.enabled(stream) {
+		if cfg.enabled(stream) {
 			if err := d.endArchiveGateEvents(d.db.WithContext(ctx), stream, models.ArchiveGateEventDisabled, now); err != nil {
 				log.Printf("ERROR: archive gate: %v (the open \"disabled\" interval of %s stays open: its months are sealed partial)", err, stream)
 				errs = append(errs, err)
@@ -367,7 +383,12 @@ func (d *Database) RecordArchiveGateState(ctx context.Context) error {
 // recordArchiveDisabled opens stream's "disabled" interval at from, unless
 // one is open or the stream has no chunk (the archive never began).
 func (d *Database) recordArchiveDisabled(ctx context.Context, stream string, from time.Time) error {
-	tx := d.db.WithContext(ctx)
+	return recordArchiveDisabledTx(d.db.WithContext(ctx), stream, from)
+}
+
+// recordArchiveDisabledTx is recordArchiveDisabled in tx (the admin save
+// records it in the transaction that turns the stream off).
+func recordArchiveDisabledTx(tx *gorm.DB, stream string, from time.Time) error {
 	var chunks, open int64
 	if err := tx.Model(&models.ArchiveChunk{}).Where("table_name IN ?", archiveGateTables(stream)).Count(&chunks).Error; err != nil {
 		return fmt.Errorf("record that %s is disabled: %w", stream, err)
@@ -443,7 +464,125 @@ func (d *Database) archiveGateHeld(stream string) bool {
 // archiveGateActive reports whether stream's deletes go through the gate: its
 // archiving is enabled, or it is held (archiveGateHeld).
 func (d *Database) archiveGateActive(stream string) bool {
-	return stream != "" && (d.archiveGateCfg.enabled(stream) || d.archiveGateHeld(stream))
+	return stream != "" && (d.archiveGateConfig().enabled(stream) || d.archiveGateHeld(stream))
+}
+
+// archiveGateCacheTTL is how long a resolved pair of stream switches is
+// reused. The gate is consulted before every delete batch; the switches only
+// change when an admin saves the archive settings, and this bounds how long
+// the poller takes to notice (the save itself records a disabled interval at
+// once; enabling only ever holds rows longer).
+const archiveGateCacheTTL = 30 * time.Second
+
+// archiveGateCacheState is the resolved stream switches (shared by pointer
+// with every WithContext copy) and the switches the gate last acted on, so a
+// change made on the admin page at runtime is recorded the way the poller's
+// start records one (RecordArchiveGateState). nil (a Database{} literal, the
+// test harness) resolves on every call and records no transition.
+type archiveGateCacheState struct {
+	mu  sync.Mutex
+	cfg ArchiveGateConfig
+	at  time.Time
+	ok  bool
+	// observed: the switches the transitions were last recorded for;
+	// seeded once RecordArchiveGateState (or a first read) set it.
+	observed ArchiveGateConfig
+	seeded   bool
+}
+
+// readArchiveGateConfig resolves the two stream switches now: the admin
+// setting when stored, else the environment's (archiveGateCfg). A stored
+// switch that does not parse counts as ON for the gate (its deletes wait: the
+// safe direction; the worker refuses the same value, so nothing is archived
+// until it is fixed).
+func (d *Database) readArchiveGateConfig(ctx context.Context) (ArchiveGateConfig, error) {
+	cfg := d.archiveGateCfg
+	var fields []config.ArchiveField
+	for _, env := range []string{"ARCHIVE_SYSLOG_ENABLED", "ARCHIVE_FLOWS_ENABLED"} {
+		f, _ := config.ArchiveFieldByEnv(env)
+		fields = append(fields, f)
+	}
+	vals, _, err := d.archiveSettingValues(ctx, fields)
+	if err != nil {
+		return cfg, err
+	}
+	for _, f := range fields {
+		raw, ok := vals[f.Env]
+		if !ok {
+			continue
+		}
+		v, set, perr := config.ParseArchiveValue(f, raw)
+		if !set && perr == nil {
+			continue
+		}
+		on := perr != nil || v == "true"
+		if perr != nil {
+			log.Printf("WARNING: archive gate: %v (stored on the admin page); its deletes stay gated until it is fixed", perr)
+		}
+		if f.Env == "ARCHIVE_SYSLOG_ENABLED" {
+			cfg.Syslog = on
+		} else {
+			cfg.Flows = on
+		}
+	}
+	return cfg, nil
+}
+
+// archiveGateConfig returns the stream switches in effect, re-resolved at
+// most every archiveGateCacheTTL. When the switches differ from the ones last
+// acted on it records the change before returning — a stream turned on ends
+// its open "disabled" interval, a stream turned off opens one (or is held,
+// archiveGateHeld, until that succeeds) — so a delete is never ungated
+// without the seal knowing. A failed read keeps the last switches, or before
+// any read gates both streams (fails closed).
+func (d *Database) archiveGateConfig() ArchiveGateConfig {
+	c := d.archiveGateCache
+	now := archiveGateClock()
+	if c != nil {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.ok && !now.Before(c.at) && now.Sub(c.at) < archiveGateCacheTTL {
+			return c.cfg
+		}
+	}
+	cfg, err := d.readArchiveGateConfig(context.Background())
+	if err != nil {
+		log.Printf("archive gate: %v (deletes of the archived tables wait until it can be read)", err)
+		if c != nil && c.ok {
+			return c.cfg
+		}
+		return ArchiveGateConfig{Syslog: true, Flows: true}
+	}
+	if c == nil {
+		return cfg
+	}
+	if c.seeded {
+		for _, stream := range ArchiveGateStreams {
+			if cfg.enabled(stream) != c.observed.enabled(stream) {
+				d.recordArchiveGateSwitch(stream, cfg.enabled(stream), now.UTC())
+			}
+		}
+	}
+	c.cfg, c.at, c.ok = cfg, now, true
+	c.observed, c.seeded = cfg, true
+	return cfg
+}
+
+// recordArchiveGateSwitch records a stream switched on or off while the
+// process runs, as RecordArchiveGateState does at the poller's start.
+func (d *Database) recordArchiveGateSwitch(stream string, enabled bool, now time.Time) {
+	if enabled {
+		log.Printf("archive gate: archiving of %s switched on: its deletes wait for the archive from now on", stream)
+		if err := d.endArchiveGateEvents(d.db, stream, models.ArchiveGateEventDisabled, now); err != nil {
+			log.Printf("ERROR: archive gate: %v (the open \"disabled\" interval of %s stays open: its months are sealed partial)", err, stream)
+		}
+		return
+	}
+	log.Printf("WARNING: archiving of %s switched off: its retention, aggregation and rollup deletes are no longer gated on the archive", stream)
+	if err := d.recordArchiveDisabled(context.Background(), stream, now); err != nil {
+		d.archiveHold.set(stream, now)
+		log.Printf("ERROR: archive gate: %v — the deletes of %s stay GATED until it is recorded (retried every minute)", err, stream)
+	}
 }
 
 // ArchiveGateEventsOverlapping returns the events of gate stream that overlap
@@ -539,7 +678,7 @@ func (d *Database) LogArchiveGateState(ctx context.Context) {
 				continue
 			}
 			switch {
-			case d.archiveGateCfg.enabled(stream):
+			case d.archiveGateConfig().enabled(stream):
 				log.Printf("archive gate: deletes of %s wait for the archive (verified through id %d)", table, p.VerifiedThroughID)
 			case p.Chunks:
 				log.Printf("WARNING: archiving of %s is disabled but archive_chunks has chunks of %s: its retention, aggregation and rollup deletes are NOT gated on the archive any more",

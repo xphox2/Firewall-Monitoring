@@ -54,6 +54,7 @@ type Store interface {
 	ArchiveGateStore
 	ArchiveStatusStore
 	ArchiveRestoreStore
+	ArchiveSettingsStore
 
 	// Gorm exposes the raw *gorm.DB for handlers that build ad-hoc queries
 	// (partial updates, one-off lookups). Unchanged escape hatch.
@@ -125,6 +126,16 @@ type ArchiveRestoreStore interface {
 	CancelArchiveRestoreJob(id uint) (status string, applied bool, err error)
 	ResumeArchiveRestoreJob(id uint) (bool, error)
 	DropArchiveRestore(ctx context.Context, id uint, now time.Time) (*models.ArchiveRestoreJob, error)
+}
+
+// ArchiveSettingsStore covers the raw archive's admin-UI settings (A-10,
+// archive_settings.go): the configuration resolved over the environment, and
+// the re-authenticated save.
+type ArchiveSettingsStore interface {
+	ResolveArchiveConfig(ctx context.Context, env config.ArchiveConfig) (ArchiveResolution, error)
+	ArchiveHasChunks(ctx context.Context) (bool, error)
+	CanEncryptSettings() bool
+	SaveArchiveSettings(ctx context.Context, set map[string]string, revert []string, disabled []string, now time.Time) error
 }
 
 // NormalizeBackfillStore covers the one-time normalized-event backfill queue

@@ -254,6 +254,9 @@ var SecretSettingKeys = map[string]bool{
 	"webhook_secret":        true,
 	"pagerduty_routing_key": true,
 	"opsgenie_api_key":      true,
+	// The raw archive's bucket secret (A-10). Written only by the
+	// re-authenticated archive settings route, never by the settings page.
+	ArchiveSecretSettingKey: true,
 }
 
 // migrateEncryptSecrets encrypts any plaintext SNMP credentials in the database.

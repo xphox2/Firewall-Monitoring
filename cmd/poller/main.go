@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -500,12 +499,17 @@ func (p *Poller) Start() error {
 	// (worker.Tick) — never the shared work lock, which an export of a syslog
 	// day (minutes) would hold. Off the select loop like the backfill; on
 	// shutdown a chunk caught mid-way stays in its state and the next start
-	// resumes it. Nothing starts with ARCHIVE_SYSLOG_ENABLED and
-	// ARCHIVE_FLOWS_ENABLED both off. While a stream is enabled its raw
-	// deletes (retention, the severity 6/7 aggregation, the flow rollup) take
-	// only rows this worker has verified — the retention gate, which the
-	// database reads from the same config (archive_gate.go); the startup
-	// lines say so, and warn when a stream with chunks has been disabled.
+	// resumes it. While a stream is enabled its raw deletes (retention, the
+	// severity 6/7 aggregation, the flow rollup) take only rows this worker
+	// has verified — the retention gate (archive_gate.go); the startup lines
+	// say so, and warn when a stream with chunks has been disabled.
+	//
+	// A-10: the configuration is the ARCHIVE_* environment with the admin
+	// page's settings applied, and it may change while the poller runs. The
+	// reloaders resolve it every tick and rebuild their worker when it
+	// changed (worker/reload.go); the gate re-reads the stream switches
+	// itself. With both streams off and no admin setting the archive worker
+	// does nothing but that one settings read a minute.
 	if p.db != nil {
 		p.db.LogArchiveGateState(backfillCtx)
 		// Record when a stream's deletes stop (or resume) waiting for the
@@ -513,50 +517,40 @@ func (p *Poller) Start() error {
 		if err := p.db.RecordArchiveGateState(backfillCtx); err != nil {
 			log.Printf("archive gate: record the enabled / disabled state: %v", err)
 		}
-	}
-	if p.db != nil && p.cfg.Archive.Enabled() {
-		if aw, err := archiveworker.New(p.db, p.cfg.Archive); err != nil {
-			log.Printf("archive: worker not started: %v", err)
-		} else {
-			log.Printf("archive: worker started for %v", aw.Tables())
-			logging.SafeGo("archive", func() {
-				aw.Tick(backfillCtx)
-				t := time.NewTicker(archiveworker.TickInterval)
-				defer t.Stop()
-				for {
-					select {
-					case <-backfillCtx.Done():
-						return
-					case <-t.C:
-						aw.Tick(backfillCtx)
-					}
+		aw := archiveworker.NewReloader(p.db, p.cfg.Archive)
+		logging.SafeGo("archive", func() {
+			aw.Tick(backfillCtx)
+			t := time.NewTicker(archiveworker.TickInterval)
+			defer t.Stop()
+			for {
+				select {
+				case <-backfillCtx.Done():
+					return
+				case <-t.C:
+					aw.Tick(backfillCtx)
 				}
-			})
-		}
-	}
+			}
+		})
 
-	// Archive restores to staging tables (archive plan PR 9): the jobs the
-	// admin API / `fwmon-api archive --restore` queue, run one at a time under
-	// the restore worker's own advisory lock. It needs the bucket keys and the
-	// staging directory, not an enabled stream: an operator who turned the
-	// archive off can still restore what it holds.
-	if p.db != nil && p.cfg.Archive.ValidateS3() == nil && filepath.IsAbs(p.cfg.Archive.StagingDir) {
-		if rw, err := archiveworker.NewRestoreWorker(p.db, p.cfg.Archive); err != nil {
-			log.Printf("archive restore: worker not started: %v", err)
-		} else {
-			logging.SafeGo("archive-restore", func() {
-				t := time.NewTicker(archiveworker.RestoreTickInterval)
-				defer t.Stop()
-				for {
-					select {
-					case <-backfillCtx.Done():
-						return
-					case <-t.C:
-						rw.Tick(backfillCtx)
-					}
+		// Archive restores to staging tables (archive plan PR 9): the jobs
+		// the admin API / `fwmon-api archive --restore` queue, run one at a
+		// time under the restore worker's own advisory lock. It needs the
+		// bucket keys and the staging directory, not an enabled stream: an
+		// operator who turned the archive off can still restore what it
+		// holds.
+		rw := archiveworker.NewRestoreReloader(p.db, p.cfg.Archive)
+		logging.SafeGo("archive-restore", func() {
+			t := time.NewTicker(archiveworker.RestoreTickInterval)
+			defer t.Stop()
+			for {
+				select {
+				case <-backfillCtx.Done():
+					return
+				case <-t.C:
+					rw.Tick(backfillCtx)
 				}
-			})
-		}
+			}
+		})
 	}
 
 	// Run the sFlow detection engine every 5 minutes, over a recent window of

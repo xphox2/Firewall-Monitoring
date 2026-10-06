@@ -131,3 +131,53 @@
         border-bottom-color: var(--fwmon-accent);
     }
 }
+
+/* Raw Archive Settings (A-10, admin-archive-settings.js): one fieldset per
+   section, Advanced collapsed. Tokens only, so both themes work. */
+.archive-settings-section {
+    border: 1px solid var(--fwmon-border);
+    border-radius: var(--fwmon-radius);
+    padding: 10px 14px 14px;
+    margin: 0 0 14px;
+    min-width: 0;
+}
+.archive-settings-section > legend,
+.archive-settings-section > summary {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--fwmon-text-dim);
+    padding: 0 4px;
+}
+.archive-settings-section > summary {
+    cursor: pointer;
+    list-style: revert;
+}
+.archive-settings-section > summary:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--fwmon-accent-bg);
+    border-radius: var(--fwmon-radius-sm);
+}
+.archive-setting code { font-size: 0.72rem; color: var(--fwmon-text-faint); overflow-wrap: anywhere; }
+.archive-setting-source {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+}
+.archive-setting-source .field-hint { margin-top: 0; }
+.archive-settings-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+}
+.archive-settings-result { margin-top: 10px; font-size: 0.85rem; }
+.archive-settings-result p { margin: 0 0 4px; overflow-wrap: anywhere; }
+.archive-settings-result.is-ok { color: var(--fwmon-sig-ok); }
+.archive-settings-result.is-bad,
+.archive-settings-problem { color: var(--fwmon-sig-crit); }
+.archive-settings-problem { font-size: 0.85rem; overflow-wrap: anywhere; }
+@media (max-width: 720px) {
+    .archive-settings-actions .btn { width: 100%; }
+}
