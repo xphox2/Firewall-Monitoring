@@ -33,6 +33,7 @@ import (
 //	archive --restore <stream> --from <day> --to <day> [...]        restore archived days to a staging table
 //	archive --restores                                              list the restores
 //	archive --cancel-restore <id> | --resume-restore <id> | --drop-restore <id>
+//	archive --env-only <any of the above>                            ignore the admin page's archive settings
 //
 // Like reset-auth and normalize-backfill it connects straight to the database
 // with the server's environment (`docker exec <container> fwmon-api archive
@@ -52,12 +53,20 @@ import (
 // (ARCHIVE_S3_* keys) and re-checks them all (worker.VerifyMonth). It only
 // reads; its exit code is 0 when every check passed, 1 otherwise.
 //
+// Every subcommand uses the archive configuration in effect: the ARCHIVE_*
+// environment with the admin page's settings applied (A-10), read once from
+// the database at start (resolveArchiveForCLI), unless --env-only is given.
+//
 // Returns the process exit code.
 func runArchiveCmd(args []string) int {
 	cfg := config.Load()
 	if err := cfg.Validate(); err != nil {
 		fmt.Fprintf(os.Stderr, "archive: configuration error: %v\n", err)
 		return 1
+	}
+	args, envOnly := stripArchiveEnvOnly(args)
+	if !envOnly {
+		cfg = resolveArchiveForCLI(cfg, os.Stderr)
 	}
 	return archiveCmd(args, os.Stdout, os.Stderr, cfg, func() (archiveStore, error) {
 		db, err := database.Connect(cfg)
@@ -68,6 +77,43 @@ func runArchiveCmd(args []string) int {
 	}, func() (worker.MonthReader, error) {
 		return s3.New(cfg.Archive)
 	})
+}
+
+// resolveArchiveForCLI applies the admin page's archive settings (A-10) to
+// cfg, as the poller and the API do. When the database cannot be reached the
+// environment's settings are used, with a note: --verify-month needs only the
+// bucket.
+func resolveArchiveForCLI(cfg *config.Config, stderr io.Writer) *config.Config {
+	db, err := database.Connect(cfg)
+	if err != nil {
+		fmt.Fprintf(stderr, "archive: note: database unreachable (%v); using the ARCHIVE_* environment only, not the admin page's settings\n", err)
+		return cfg
+	}
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	res, err := db.ResolveArchiveConfig(ctx, cfg.Archive)
+	if err != nil {
+		fmt.Fprintf(stderr, "archive: note: %v; using the ARCHIVE_* environment only\n", err)
+		return cfg
+	}
+	return cfg.WithArchive(res.Config)
+}
+
+// stripArchiveEnvOnly removes --env-only from args: the command then uses the
+// ARCHIVE_* environment as given, without the admin page's settings (to
+// check a bucket other than the one in effect, e.g. while moving the archive).
+func stripArchiveEnvOnly(args []string) ([]string, bool) {
+	out := make([]string, 0, len(args))
+	found := false
+	for _, a := range args {
+		if a == "--env-only" || a == "-env-only" {
+			found = true
+			continue
+		}
+		out = append(out, a)
+	}
+	return out, found
 }
 
 // archiveStore is the slice of *database.Database the command needs.

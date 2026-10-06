@@ -43,7 +43,13 @@ func (p *Poller) checkArchiveAlerts(vols []alerts.ServerVolume, dataOK bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	now := time.Now()
-	st, err := status.Build(ctx, p.db, p.cfg, now)
+	// The configuration in effect: the environment with the admin page's
+	// archive settings applied (A-10).
+	res, err := p.db.ResolveArchiveConfig(ctx, p.cfg.Archive)
+	var st *status.Status
+	if err == nil {
+		st, err = status.Build(ctx, p.db, p.cfg.WithArchive(res.Config), now)
+	}
 	if err == nil && len(st.Problems) > 0 {
 		err = fmt.Errorf("%s", strings.Join(st.Problems, "; "))
 	}

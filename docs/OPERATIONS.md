@@ -535,9 +535,134 @@ retire → confirm the replacement works → purge the old one.
 
 ---
 
+## Raw archive: setting it up from the admin panel
+
+From 0.11.310 every `ARCHIVE_*` key can be set on **Settings → Retention →
+Raw Archive Settings** (admins only). A value saved there wins over the
+environment, and the environment (or `CONFIG_FILE`) stays the default it
+falls back to:
+
+- each field shows where its value comes from: **set here**, **environment**
+  or **default** (built in);
+- **Revert to env default** removes the value saved here, so the
+  environment's applies again (for the secret: **Clear**);
+- an install that never saves the form behaves exactly as an env-only one;
+- the values are checked by the same rules as the environment (a value the
+  startup check would refuse is refused on save).
+
+The **secret access key** is write-only: it is stored encrypted with the
+server's encryption key (like the SMTP password), never returned by any API
+(the form shows "set (key ID ends in …XXXX)": the last four characters of
+the key **ID**, never of the secret), and never written to the audit log. If the server's encryption key
+changes without the old one kept in `ENCRYPTION_KEY_HISTORY`, the stored
+secret can no longer be decrypted: the form says so, an enabled archive stops
+(the status card's "Last failures" shows a `config` entry) until it is
+entered again.
+
+Saving asks for your password (and 2FA code) and is audit-logged as
+`archive_settings_update` with the names of the fields changed, never their
+values. The poller applies a save **without a restart**: its archive and
+restore workers re-read the configuration every tick (a minute; 15 s for
+restores) and rebuild themselves when it changed — with a fresh bucket
+preflight — and the retention gate re-reads the two stream switches at most
+every 30 seconds.
+
+Step by step, for Backblaze B2 (any S3-compatible service works the same way;
+the names below are placeholders):
+
+1. **Bucket with Object Lock.** Create a private bucket with Object Lock
+   (file lock) enabled — it can only be turned on at creation in most
+   services. With the B2 CLI:
+   `b2 bucket create --file-lock-enabled example-bucket allPrivate`. Add the
+   lifecycle rules from the security notes (hide after 730 days, delete one
+   day after hiding, cancel unfinished large files after 7 days); never
+   shorter than the lock.
+2. **A restricted application key.** Limited to the bucket and the prefix,
+   with only the capabilities the archive needs and **no** `deleteFiles` or
+   `bypassGovernance`:
+   `b2 key create --bucket example-bucket --name-prefix fwmon/site-a/ fwmon-archive listFiles,readFiles,writeFiles,readFileRetentions,writeFileRetentions,readBucketRetentions`
+   (`readBucketRetentions` lets the preflight confirm Object Lock is on).
+   Note the key ID and the application key: the latter is shown once.
+3. **A staging volume.** The worker writes each chunk to the staging
+   directory before it uploads it; it needs at least 2 GiB free (see "the
+   staging directory" below for the Docker volume). The directory must exist
+   and be writable by the server before a stream can be enabled.
+4. **Connection.** Enter the endpoint (`https://s3.<region>.backblazeb2.com`),
+   the region (`<region>`), the bucket, the prefix (`fwmon/site-a`), the key ID
+   and the secret. Leave path-style on.
+5. **Object Lock.** Mode `GOVERNANCE`, days `400` (or your policy; 0 turns
+   the per-object retention off).
+6. **Test connection.** Runs the bucket preflight with the form's values
+   without saving: it lists under the prefix and, with Object Lock days set,
+   checks that the bucket has Object Lock enabled; it also checks the saved
+   staging directory (a path typed into the form is checked when you save).
+   It uses the stored secret unless you typed a new one — but only with the
+   saved endpoint and key ID: to test another endpoint or key ID, type the
+   secret in too. It uses the **saved** Advanced flags: to test a private or
+   `http://` endpoint, save those flags first.
+7. **Enable the streams** (syslog, flows) and Save. Enabling runs the same
+   preflight and the staging check on the server; a failure refuses the save
+   and nothing is stored. The status card above shows the worker's progress
+   within a few minutes.
+
+**Switching a stream off** from the form records the start of a "disabled"
+interval at once (as the poller's start does): the stream's raw rows are
+deleted without waiting for the archive again, and every month the interval
+touches is sealed **partial**. The form warns before it saves.
+
+**Endpoint, bucket and prefix are fixed once the archive holds a chunk**: the
+manifest in the database names every object by them. The poller records that
+location (`system_settings.archive_location`) and logs a WARNING at the
+worker's start when the configuration names another one (a change made in
+the environment). Changing any of them
+from the form is refused (HTTP 409) with a pointer to the next section. Other
+fields (credentials, Object Lock days, pacing, the window, the streams) can
+change at any time.
+
+## Raw archive: moving the bucket
+
+There is no in-place move. The manifest in the database (`archive_chunks`,
+`archive_objects`, `archive_months`) records every object's key, **version
+id** and checksums at its location, and each sealed month pins them in its
+`_MONTH.json`. A copy into another bucket gets new version ids, so the
+manifest cannot simply be pointed at it. What does not need a move:
+
+- **Rotating the key**: create a new restricted key for the same bucket and
+  prefix, enter its ID and secret, Test connection, Save. Allowed at any time.
+- **Changing Object Lock days, pacing, the window or the streams**: allowed
+  at any time.
+
+To change provider, bucket or prefix anyway, the archive starts afresh at the
+new location and the old bucket stays the record of what it already holds.
+This is a manual procedure and is **not exercised by the test suite**: take a
+database backup first (`pg_dump`), and do it in a quiet hour.
+
+1. Wait for no restore to be running or queued (`fwmon-api archive
+   --restores`); drop the ones you no longer need.
+2. Switch both streams off (form or environment). Their deletes stop waiting
+   for the archive and a "disabled" interval opens, so the months from now on
+   are sealed partial. Leave the old bucket and its key untouched; its
+   Object Lock keeps it.
+3. Stop the poller, then clear the manifest in one transaction:
+   `BEGIN; TRUNCATE archive_objects, archive_chunks, archive_months, archive_id_marks; DELETE FROM system_settings WHERE "key" = 'archive_worker_state'; COMMIT;`
+   The gate events (`archive_gate_events`) are kept: they still mark the
+   affected months partial. Do not truncate anything else.
+4. Set the new location: in the form (it is no longer refused: the manifest
+   is empty), or in the environment. Test connection, then switch the
+   streams back on and start the poller. The archive now behaves as on its
+   first enable: it archives every raw row still in the database into the
+   new location (its deletes wait for that, as on a first enable — plan the
+   staging space and time for the backlog, see the staging directory below).
+5. The old bucket's sealed months stay checkable from the bucket alone:
+   `fwmon-api archive --env-only --verify-month <stream> <YYYY-MM>` with the
+   `ARCHIVE_S3_*` environment of that one command pointed at the old bucket
+   (`--env-only` ignores the admin page's settings). Restores from the old
+   bucket are no longer possible through the manifest.
+
 ## Raw archive: the staging directory
 
-When `ARCHIVE_SYSLOG_ENABLED` or `ARCHIVE_FLOWS_ENABLED` is on (v0.11.302+),
+When `ARCHIVE_SYSLOG_ENABLED` or `ARCHIVE_FLOWS_ENABLED` is on (v0.11.302+;
+in the environment or, since 0.11.310, on the admin panel),
 the poller's archive worker writes each chunk's compressed objects to
 `ARCHIVE_STAGING_DIR` between the export and the upload (a day of syslog is
 roughly 0.3–0.7 GB compressed), and deletes them once the chunk is uploaded.

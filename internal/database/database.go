@@ -75,13 +75,18 @@ type Database struct {
 	// settle window is derived from it.
 	statementTimeout time.Duration
 
-	// archiveGateCfg is which archive streams are enabled, as Connect read
-	// them (ARCHIVE_SYSLOG_ENABLED / ARCHIVE_FLOWS_ENABLED): their raw deletes
-	// wait for the archive (archive_gate.go). The zero value gates nothing.
+	// archiveGateCfg is which archive streams the environment enables, as
+	// Connect read them (ARCHIVE_SYSLOG_ENABLED / ARCHIVE_FLOWS_ENABLED): the
+	// default the admin settings override (archiveGateConfig). An enabled
+	// stream's raw deletes wait for the archive (archive_gate.go). The zero
+	// value gates nothing.
 	archiveGateCfg ArchiveGateConfig
 	// archiveHold: disabled streams whose "disabled" interval could not be
 	// recorded at the poller start; their deletes stay gated (archive_gate.go).
 	archiveHold *archiveHoldState
+	// archiveGateCache: the stream switches resolved with the admin settings
+	// (archiveGateConfig), shared by every WithContext copy.
+	archiveGateCache *archiveGateCacheState
 }
 
 func (d *Database) Gorm() *gorm.DB {
@@ -246,7 +251,7 @@ func Connect(cfg *config.Config) (*Database, error) {
 		}
 	}
 
-	d := &Database{db: db, encKeys: keyChain{current: encKey, legacy: legacyKeys}, dialect: dial, archiveHold: &archiveHoldState{},
+	d := &Database{db: db, encKeys: keyChain{current: encKey, legacy: legacyKeys}, dialect: dial, archiveHold: &archiveHoldState{}, archiveGateCache: &archiveGateCacheState{},
 		// The daily net_events leaves are created as far back as retention
 		// reaches (partitionLookbackDays), so EnsurePartitions needs the window
 		// CleanupOldData will use — recorded here once, from the same config.

@@ -200,18 +200,18 @@ func TestArchiveGateHold(t *testing.T) {
 	if err := d.RecordArchiveGateState(context.Background()); err == nil {
 		t.Fatal("recording without the table succeeded")
 	}
-	if d.archiveGateFn(export.TableFlows) == nil || !d.archiveGate(context.Background(), export.TableFlows).on {
+	if !d.archiveGate(context.Background(), export.TableFlows).on {
 		t.Fatal("a disabled stream whose interval is not recorded is deleted ungated")
 	}
 	if err := d.db.AutoMigrate(&models.ArchiveGateEvent{}); err != nil {
 		t.Fatal(err)
 	}
 	clock = start.Add(30 * time.Second)
-	if d.archiveGateFn(export.TableFlows) == nil {
+	if !d.archiveGateActive(ArchiveGateFlows) {
 		t.Fatal("released before the retry interval")
 	}
 	clock = start.Add(2 * time.Minute)
-	if d.archiveGateFn(export.TableFlows) != nil {
+	if d.archiveGateActive(ArchiveGateFlows) || d.archiveGateFn(export.TableFlows)().on {
 		t.Fatal("still held after the record succeeded")
 	}
 	var evs []models.ArchiveGateEvent

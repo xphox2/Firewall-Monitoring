@@ -48,6 +48,9 @@ func settingsSecretFixtures(t *testing.T) map[string]string {
 		"webhook_secret":        "real-webhook-signing-secret",
 		"pagerduty_routing_key": "real-pd-routing-key",
 		"opsgenie_api_key":      "real-og-api-key",
+		// Written only by the re-authenticated archive settings route
+		// (settingsSecretOwnRoute); still masked on read like the others.
+		"archive_s3_secret_access_key": "fake-archive-secret",
 	}
 	for k := range settingsSecretKeys {
 		if _, ok := fixtures[k]; !ok {
@@ -119,6 +122,12 @@ func TestUpdateSettings_MaskedSecretsNotWrittenBack_LC37(t *testing.T) {
 	}
 }
 
+// settingsSecretOwnRoute lists the secret keys the settings page must NOT
+// write: each has its own re-authenticated route (the raw archive's secret,
+// handlers_archive_settings.go), and UpdateSettings ignoring them is part of
+// that route's step-up.
+var settingsSecretOwnRoute = map[string]bool{"archive_s3_secret_access_key": true}
+
 // TestUpdateSettings_SecretsEncryptedAtRest_LC38 pins the encrypted-at-rest
 // contract for EVERY secret key: pre-fix, EncryptField was only reachable
 // from inside the smtp_password switch case, so the T2 incident-channel
@@ -140,6 +149,12 @@ func TestUpdateSettings_SecretsEncryptedAtRest_LC38(t *testing.T) {
 
 	for k, v := range real {
 		var row models.SystemSetting
+		if settingsSecretOwnRoute[k] {
+			if n := db.Gorm().Where("\"key\" = ?", k).Find(&[]models.SystemSetting{}).RowsAffected; n != 0 {
+				t.Errorf("%s was written by POST /settings; only its own re-authenticated route may write it", k)
+			}
+			continue
+		}
 		if err := db.Gorm().Where("\"key\" = ?", k).First(&row).Error; err != nil {
 			t.Fatalf("reload %s: %v", k, err)
 		}

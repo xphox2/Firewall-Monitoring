@@ -716,6 +716,7 @@ func loadArchiveConfig() ArchiveConfig {
 		a.SealReverify = SealReverifyHead
 	}
 	a.invalid = bad
+	a.envSet = archiveEnvSet()
 	return a
 }
 

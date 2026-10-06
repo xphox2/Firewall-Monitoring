@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -38,7 +39,8 @@ import (
 // chunks, and GET /admin/api/archive/status (archive plan PR 8) the whole
 // archive: per table V, lag, chunk counts and wait reason, per stream the
 // month table, the gates, the parked chunks, the worker's last failures and
-// staging space, the configuration without its secret. The CLI twin is
+// staging space, the configuration without its secret. The configuration is
+// set on the same page since A-10 (handlers_archive_settings.go). The CLI twin is
 // `fwmon-api archive` (cmd/api/archive.go).
 
 // archiveReasonMax bounds the operator's free-text reason.
@@ -58,21 +60,19 @@ type archiveOverrideRequest struct {
 // archiveGateStatus is one stream's gate as the API reports it.
 type archiveGateStatus struct {
 	Stream string `json:"stream"`
-	// Enabled: the stream's archiving is on, so its deletes are gated
-	// (as configured for this API process; the poller reads the same env).
+	// Enabled: the stream's archiving is on, so its deletes are gated (the
+	// environment with the admin page's settings applied, as the poller
+	// resolves it).
 	Enabled        bool       `json:"enabled"`
 	OverrideActive bool       `json:"override_active"`
 	OverrideUntil  *time.Time `json:"override_until,omitempty"`
 }
 
-func (h *Handler) archiveGateStatuses(db database.Store, now time.Time) []archiveGateStatus {
+func (h *Handler) archiveGateStatuses(c *gin.Context, db database.Store, now time.Time) []archiveGateStatus {
 	out := make([]archiveGateStatus, 0, len(database.ArchiveGateStreams))
+	cfg := h.resolvedArchive(c, db)
 	for _, s := range database.ArchiveGateStreams {
-		st := archiveGateStatus{Stream: s}
-		if h.config != nil {
-			st.Enabled = (s == database.ArchiveGateSyslog && h.config.Archive.SyslogEnabled) ||
-				(s == database.ArchiveGateFlows && h.config.Archive.FlowsEnabled)
-		}
+		st := archiveGateStatus{Stream: s, Enabled: database.ArchiveStreamEnabled(cfg, s)}
 		if until, active := db.ArchiveGateOverride(s, now); active {
 			u := until.UTC()
 			st.OverrideActive, st.OverrideUntil = true, &u
@@ -95,7 +95,7 @@ func (h *Handler) GetArchiveGate(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{
-		"streams":         h.archiveGateStatuses(db, time.Now()),
+		"streams":         h.archiveGateStatuses(c, db, time.Now()),
 		"needs_attention": parked,
 		"max_hours":       database.ArchiveGateOverrideMaxHours,
 	}})
@@ -113,7 +113,12 @@ func (h *Handler) GetArchiveStatus(c *gin.Context) {
 	if cfg == nil {
 		cfg = &config.Config{}
 	}
-	st, err := status.Build(c.Request.Context(), db, cfg, time.Now())
+	res, err := db.ResolveArchiveConfig(c.Request.Context(), cfg.Archive)
+	if err != nil {
+		httputil.InternalError(c, "Failed to read the archive settings", err)
+		return
+	}
+	st, err := status.Build(c.Request.Context(), db, cfg.WithArchive(res.Config), time.Now())
 	if err != nil {
 		httputil.InternalError(c, "Failed to read the archive status", err)
 		return
@@ -181,7 +186,7 @@ func (h *Handler) SetArchiveGateOverride(c *gin.Context) {
 		}
 		purgeAuditLog(c, db, username, userID, "archive_gate_override", target, http.StatusOK)
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": h.archiveGateStatuses(db, time.Now())})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": h.archiveGateStatuses(c, db, time.Now())})
 }
 
 // archiveChunkResetRequest is the body of POST /admin/api/archive/chunks/:id/reset.
@@ -246,4 +251,19 @@ func (h *Handler) ResetArchiveChunk(c *gin.Context) {
 		fmt.Sprintf("chunk_id=%d table=%s seq=%d mismatches=%d reason=%q", chunk.ID, chunk.SourceTable, chunk.Seq, chunk.Mismatches, reason),
 		http.StatusOK)
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": reset})
+}
+
+// resolvedArchive is the archive configuration in effect: the environment
+// with the admin page's settings applied. When the settings cannot be read it
+// is the environment's, which the caller only displays.
+func (h *Handler) resolvedArchive(c *gin.Context, db database.Store) config.ArchiveConfig {
+	var env config.ArchiveConfig
+	if h.config != nil {
+		env = h.config.Archive
+	}
+	res, err := db.ResolveArchiveConfig(c.Request.Context(), env)
+	if err != nil {
+		log.Printf("archive: read the archive settings: %v", err)
+	}
+	return res.Config
 }

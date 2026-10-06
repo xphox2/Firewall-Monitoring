@@ -38,7 +38,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.309"
+const ServerVersion = "0.11.310"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -958,6 +958,10 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			// The archive status (PR 8) names the bucket, the parked chunks'
 			// errors and the database sessions holding an export.
 			"/admin/api/archive/status": true,
+			// The archive settings (A-10) carry the bucket keys (the secret
+			// is write-only); test connects to the bucket — admin-only.
+			"/admin/api/archive/settings":      true,
+			"/admin/api/archive/settings/test": true,
 			// Restores to staging (PR 9) download archived raw logs into the
 			// database; a drop deletes the staged copy — admin-only, list included.
 			"/admin/api/archive/restores":            true,
@@ -1189,6 +1193,13 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/archive/status", handler.GetArchiveStatus)
 		admin.POST("/api/archive/override", middleware.LoginRateLimiter(), handler.SetArchiveGateOverride)
 		admin.POST("/api/archive/chunks/:id/reset", middleware.LoginRateLimiter(), handler.ResetArchiveChunk)
+		// The archive settings (A-10): the admin form over the ARCHIVE_*
+		// environment. Admin-only (adminOnlyRoutes); the save re-verifies the
+		// caller's password (+ TOTP), so it is login-rate-limited; test runs
+		// the bucket preflight with the form's values and saves nothing.
+		admin.GET("/api/archive/settings", handler.GetArchiveSettings)
+		admin.POST("/api/archive/settings", middleware.LoginRateLimiter(), handler.SaveArchiveSettings)
+		admin.POST("/api/archive/settings/test", handler.TestArchiveSettings)
 		// Restore to staging (archive plan PR 9): the poller's restore worker
 		// runs the jobs. Admin-only (adminOnlyRoutes); queue, resume and drop
 		// re-verify the caller's password (+ TOTP), so login-rate-limited.
