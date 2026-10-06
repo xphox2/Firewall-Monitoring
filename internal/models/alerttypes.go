@@ -99,6 +99,7 @@ func AllAlertTypes() []AlertTypeInfo {
 		{AlertTypeArchiveSealOverdue, FamilyArchive, "A closed month of a raw archive stream is not sealed long after its seal time"},
 		{AlertTypeRetentionHeld, FamilyArchive, "The retention gate holds unarchived raw rows past their window while the database volume grows"},
 		{AlertTypeArchiveUnsettledLong, FamilyArchive, "An archive table's next chunk has waited for hours (an open writer, an unattached partition leaf, no statement_timeout)"},
+		{AlertTypeArchiveGateUnreadable, FamilyArchive, "The retention gate has not been able to read the archive's stream switches for 15 minutes (it holds deletes meanwhile)"},
 
 		// Custom Rules
 		{AlertTypeLogRuleMatch, FamilyCustomRules, "Default type emitted by custom syslog rules (toggling Off mutes rules that emit it)"},

@@ -41,8 +41,10 @@ import (
 //   - POST /admin/api/archive/settings: save. Checks in order, the cheap ones
 //     before the step-up: the body and every value (400, the same
 //     validation as the environment: config.ValidateDraft / Validate); a
-//     change of the objects' location once a chunk exists (409; a bucket
-//     name that differs only in case is the same location, config.SameBucket);
+//     change of the objects' location away from where the chunks were
+//     written once a chunk exists (409; judged against the recorded
+//     system_settings.archive_location when there is one; a bucket name
+//     that differs only in case is the same location, config.SameBucket);
 //     then the caller's password + TOTP (403); then the staging directory of
 //     an enabled stream (422), when a stream is switched on or the
 //     connection of an enabled stream changes the bucket preflight (422),
@@ -514,25 +516,41 @@ func (h *Handler) SaveArchiveSettings(c *gin.Context) {
 		c.JSON(http.StatusConflict, response.Error("This server has no encryption key, so the secret access key cannot be stored encrypted; set it in the environment instead"))
 		return
 	}
-	// A bucket name that changes only in case is the same location
-	// (config.SameBucket); with chunks it is accepted once the bucket under
-	// the new spelling lists the archive's objects (below, after the step-up).
-	recaseBucket := false
+	// Once the archive holds chunks the location is locked to where they
+	// were written: the poller's record (system_settings.archive_location)
+	// when there is one — so a change of the environment under the archive
+	// cannot block the change back to it — else the configuration in
+	// effect. A bucket name that differs only in case is the same location
+	// (config.SameBucket, config.SameLocationText); spelled otherwise than
+	// the record it is accepted once the bucket under the new spelling lists
+	// the archive's objects (below, after the step-up).
+	recaseBucket, recordedBucket := false, d.before.Bucket
 	if bucketRecased := d.before.Bucket != d.after.Bucket; !d.before.SameLocation(d.after) || bucketRecased {
 		locked, err := db.ArchiveHasChunks(ctx)
 		if err != nil {
 			httputil.InternalError(c, "Failed to read the archive manifest", err)
 			return
 		}
-		if locked && !d.before.SameLocation(d.after) {
-			msg := "The archive already holds chunks at " + archiveLocation(d.before) +
-				": the endpoint, bucket and prefix cannot change here, or the manifest would point at objects that are not there. " +
-				"See docs/OPERATIONS.md, \"Raw archive: moving the bucket\", for the manual migration."
-			logArchiveSettingsRefusal("save", http.StatusConflict, msg)
-			c.JSON(http.StatusConflict, response.Error(msg))
-			return
+		if locked {
+			ref := archiveLocation(d.before)
+			if rec, ok, err := db.ArchiveRecordedLocation(ctx); err != nil {
+				httputil.InternalError(c, "Failed to read the archive's recorded location", err)
+				return
+			} else if ok {
+				ref = rec
+			}
+			if !config.SameLocationText(ref, archiveLocation(d.after)) {
+				msg := "The archive already holds chunks at " + ref +
+					": the endpoint, bucket and prefix cannot change here, or the manifest would point at objects that are not there. " +
+					"See docs/OPERATIONS.md, \"Raw archive: moving the bucket\", for the manual migration."
+				logArchiveSettingsRefusal("save", http.StatusConflict, msg)
+				c.JSON(http.StatusConflict, response.Error(msg))
+				return
+			}
+			if ref != archiveLocation(d.after) {
+				recaseBucket, recordedBucket = true, config.LocationBucket(ref)
+			}
 		}
-		recaseBucket = locked
 	}
 	enabling := d.switched(true)
 	username, userID, ok := h.reauthCaller(c, db, req.Password, req.TOTPCode)
@@ -554,7 +572,7 @@ func (h *Handler) SaveArchiveSettings(c *gin.Context) {
 		}
 	}
 	if recaseBucket {
-		if err := archiveObjectsVisible(ctx, d.after, d.before.Bucket); err != nil {
+		if err := archiveObjectsVisible(ctx, d.after, recordedBucket); err != nil {
 			refuseArchiveSave(c, "Not saved: the archive's objects are not visible under the new spelling of the bucket: "+err.Error())
 			return
 		}

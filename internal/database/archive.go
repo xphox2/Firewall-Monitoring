@@ -524,6 +524,10 @@ type ArchiveReadOptions struct {
 	// RowsPerSec paces the reads (ARCHIVE_SYSLOG_RATE_ROWS_PER_SEC /
 	// ARCHIVE_FLOW_RATE_ROWS_PER_SEC); 0 = unpaced.
 	RowsPerSec int
+	// Progress, when set, is called after every page with the rows read so
+	// far and the last id read (no database call of its own: the caller
+	// throttles what it does with it).
+	Progress func(rows, lastID int64)
 }
 
 // archiveSleep waits between paced pages; a variable so tests can record the
@@ -555,6 +559,7 @@ func archiveWalk[T any](ctx context.Context, d *Database, c *models.ArchiveChunk
 	if size <= 0 {
 		size = archivePageSize
 	}
+	var read int64
 	for cursor := c.IDLo; cursor < c.IDHi; {
 		start := time.Now()
 		var page []T
@@ -570,6 +575,9 @@ func archiveWalk[T any](ctx context.Context, d *Database, c *models.ArchiveChunk
 			return err
 		}
 		cursor = idOf(&page[len(page)-1])
+		if read += int64(len(page)); opts.Progress != nil {
+			opts.Progress(read, cursor)
+		}
 		if len(page) < size {
 			return nil
 		}

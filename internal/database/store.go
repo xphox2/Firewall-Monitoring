@@ -112,6 +112,11 @@ type ArchiveStatusStore interface {
 	ArchiveGateEventsOverlapping(ctx context.Context, stream string, from, to time.Time) ([]models.ArchiveGateEvent, error)
 	ArchiveWorkerState(ctx context.Context) (value string, ok bool, err error)
 	ArchiveGateOverrideState(stream string, now time.Time) (until time.Time, active bool, err error)
+	ArchiveBacklogs(ctx context.Context) (map[string]ArchiveBacklog, error)
+	RecentArchiveChunks(ctx context.Context, table string, limit int) ([]ArchiveChunkSummary, error)
+	ArchiveChunksWithStatus(ctx context.Context, status string, limit int) ([]ArchiveChunkSummary, error)
+	ArchiveVerifiedTotals(ctx context.Context) ([]ArchiveMonthTotal, error)
+	ArchiveGateHealthRecord(ctx context.Context) (*ArchiveGateHealth, error)
 	SyslogRetentionWindows(ret config.RetentionConfig) [SyslogSeverityCount]SyslogWindow
 }
 
@@ -134,6 +139,7 @@ type ArchiveRestoreStore interface {
 type ArchiveSettingsStore interface {
 	ResolveArchiveConfig(ctx context.Context, env config.ArchiveConfig) (ArchiveResolution, error)
 	ArchiveHasChunks(ctx context.Context) (bool, error)
+	ArchiveRecordedLocation(ctx context.Context) (loc string, ok bool, err error)
 	CanEncryptSettings() bool
 	SaveArchiveSettings(ctx context.Context, set map[string]string, revert []string, disabled []string, now time.Time) error
 }

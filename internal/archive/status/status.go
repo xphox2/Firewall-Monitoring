@@ -36,6 +36,11 @@ type Store interface {
 	ArchiveTableTimes(ctx context.Context, table string) (database.ArchiveTableTimes, error)
 	ArchiveGateEventsOverlapping(ctx context.Context, stream string, from, to time.Time) ([]models.ArchiveGateEvent, error)
 	ArchiveWorkerState(ctx context.Context) (value string, ok bool, err error)
+	ArchiveBacklogs(ctx context.Context) (map[string]database.ArchiveBacklog, error)
+	RecentArchiveChunks(ctx context.Context, table string, limit int) ([]database.ArchiveChunkSummary, error)
+	ArchiveChunksWithStatus(ctx context.Context, status string, limit int) ([]database.ArchiveChunkSummary, error)
+	ArchiveVerifiedTotals(ctx context.Context) ([]database.ArchiveMonthTotal, error)
+	ArchiveGateHealthRecord(ctx context.Context) (*database.ArchiveGateHealth, error)
 	SyslogRetentionWindows(ret config.RetentionConfig) [database.SyslogSeverityCount]database.SyslogWindow
 }
 
@@ -47,6 +52,13 @@ const monthsShown = 13
 
 // parkedShown bounds the needs_attention list.
 const parkedShown = 100
+
+// recentShown bounds the recently verified chunks (overall, and per table
+// for the throughput estimate); retryingShown the failed chunks listed.
+const (
+	recentShown   = 10
+	retryingShown = 20
+)
 
 // Status is the whole picture.
 type Status struct {
@@ -60,6 +72,14 @@ type Status struct {
 	Tables         []TableView   `json:"tables"`
 	Streams        []StreamView  `json:"streams"`
 	NeedsAttention []ParkedChunk `json:"needs_attention"`
+	// Recent: the newest verified chunks of every table, newest first.
+	Recent []ChunkView `json:"recent"`
+	// Retrying: chunks whose last attempt failed, waiting for their retry
+	// (RetryAt).
+	Retrying []ChunkView `json:"retrying"`
+	// GateRead: the retention gate (in the poller) cannot read the stream
+	// switches (nil while it can, or when the poller's record is stale).
+	GateRead *GateReadView `json:"gate_read,omitempty"`
 	// OverrideMaxHours is the longest gate override accepted.
 	OverrideMaxHours int `json:"override_max_hours"`
 	// Problems lists the manifest reads that failed (the rest is still
@@ -99,6 +119,88 @@ type WorkerView struct {
 	PreflightOK bool        `json:"preflight_ok"`
 	Staging     Staging     `json:"staging"`
 	Stages      []StageView `json:"stages"`
+	// LastPassAt / NextPassAt: the worker's last pass and when it runs the
+	// next (sooner when a waiting chunk becomes exportable).
+	LastPassAt *time.Time `json:"last_pass_at,omitempty"`
+	NextPassAt *time.Time `json:"next_pass_at,omitempty"`
+	// Activity: the chunk being worked when the snapshot was written (nil
+	// between chunks, and while the snapshot is stale).
+	Activity *ActivityView `json:"activity,omitempty"`
+}
+
+// ActivityView is the worker's current chunk with its elapsed times and,
+// where it can be told, the fraction of the stage done (0..1).
+type ActivityView struct {
+	Activity
+	ElapsedSeconds      float64  `json:"elapsed_seconds"`
+	StageElapsedSeconds float64  `json:"stage_elapsed_seconds"`
+	Fraction            *float64 `json:"fraction,omitempty"`
+}
+
+// GateReadView: since when the retention gate has failed to read the
+// archive's stream switches, and what it does meanwhile (HoldingAll: both
+// streams' deletes wait; otherwise it keeps the switches it read last).
+type GateReadView struct {
+	FailingSince time.Time `json:"failing_since"`
+	ForSeconds   float64   `json:"for_seconds"`
+	Error        string    `json:"error"`
+	HoldingAll   bool      `json:"holding_all"`
+	SeenAt       time.Time `json:"seen_at"`
+}
+
+// ChunkView is one chunk in the recent or retrying list.
+type ChunkView struct {
+	ID          uint       `json:"id"`
+	Table       string     `json:"table"`
+	Seq         int64      `json:"seq"`
+	PeriodStart time.Time  `json:"period_start"`
+	PeriodEnd   time.Time  `json:"period_end"`
+	Month       string     `json:"month"`
+	Status      string     `json:"status"`
+	Rows        int64      `json:"rows"`
+	Objects     int64      `json:"objects"`
+	ObjectBytes int64      `json:"object_bytes"`
+	RawBytes    int64      `json:"raw_bytes"`
+	Attempts    int        `json:"attempts"`
+	StartedAt   *time.Time `json:"started_at,omitempty"`
+	VerifiedAt  *time.Time `json:"verified_at,omitempty"`
+	// DurationSeconds: from the last attempt's start to verified.
+	DurationSeconds *float64 `json:"duration_seconds,omitempty"`
+	Error           string   `json:"error,omitempty"`
+	// RetryAt: when a failed chunk is attempted again (it is picked up by
+	// the first pass from then).
+	RetryAt *time.Time `json:"retry_at,omitempty"`
+}
+
+// BacklogView is how much of a table's planned work is left and when it
+// should be done.
+type BacklogView struct {
+	// Chunks planned; Verified of them; Remaining the rest.
+	Chunks    int64 `json:"chunks"`
+	Verified  int64 `json:"verified"`
+	Remaining int64 `json:"remaining"`
+	// OldestRemaining: the period start of the oldest chunk not verified.
+	OldestRemaining *time.Time `json:"oldest_remaining,omitempty"`
+	// RemainingRows: the id span of the remaining chunks, an upper bound of
+	// their rows.
+	RemainingRows int64 `json:"remaining_rows"`
+	// RateRowsPerSec: rows verified per second of work over the table's
+	// recently verified chunks (nil: none timed yet); ETASeconds the
+	// remaining rows at that rate (nil without a rate, or when caught up).
+	RateRowsPerSec *float64 `json:"rate_rows_per_sec,omitempty"`
+	ETASeconds     *float64 `json:"eta_seconds,omitempty"`
+	// State: caught_up (nothing left), current (one chunk left: the newest
+	// period, the steady state), catching_up (more).
+	State string `json:"state"`
+}
+
+// NextSealView is the next month of a stream to seal and when it is due.
+type NextSealView struct {
+	Month string    `json:"month"`
+	DueAt time.Time `json:"due_at"`
+	// Due: the seal time has passed; the worker seals it after its next
+	// pass once every chunk of the month is verified.
+	Due bool `json:"due"`
 }
 
 // StageView is one stage's last failure.
@@ -140,6 +242,8 @@ type TableView struct {
 	LastMarkAt     *time.Time       `json:"last_mark_at,omitempty"`
 	// Unsettled: why the next chunk waits (from the worker's snapshot).
 	Unsettled *UnsettledView `json:"unsettled,omitempty"`
+	// Backlog: the planned work left and its estimate.
+	Backlog *BacklogView `json:"backlog,omitempty"`
 	// Retention: the table's raw delete cutoff and how far past it the gate
 	// holds unarchived rows (nil when its rows are kept forever).
 	Retention *RetentionView `json:"retention,omitempty"`
@@ -151,6 +255,11 @@ type UnsettledView struct {
 	Since      *time.Time `json:"since,omitempty"`
 	ForSeconds float64    `json:"for_seconds"`
 	Detail     string     `json:"detail,omitempty"`
+	// Until / LeftSeconds: when a settling chunk's window ends and how long
+	// that is from now (0 once passed: the worker exports it on its next
+	// tick).
+	Until       *time.Time `json:"until,omitempty"`
+	LeftSeconds *float64   `json:"left_seconds,omitempty"`
 }
 
 // RetentionView: rows older than Cutoff are past the table's window (the
@@ -176,6 +285,14 @@ type StreamView struct {
 	UnsealedDays   float64     `json:"unsealed_days"`
 	LastSealedAt   *time.Time  `json:"last_sealed_at,omitempty"`
 	Months         []MonthView `json:"months"`
+	// Archived*: what the bucket holds verified for the stream (every
+	// month, not only the ones listed).
+	ArchivedObjects     int64 `json:"archived_objects"`
+	ArchivedRows        int64 `json:"archived_rows"`
+	ArchivedObjectBytes int64 `json:"archived_object_bytes"`
+	ArchivedRawBytes    int64 `json:"archived_raw_bytes"`
+	// NextSeal: the oldest month not sealed yet (nil: none).
+	NextSeal *NextSealView `json:"next_seal,omitempty"`
 }
 
 // MonthView is one month folder of a stream.
@@ -195,8 +312,13 @@ type MonthView struct {
 	ChunkCount  int64          `json:"chunk_count"`
 	RowCount    int64          `json:"row_count"`
 	ObjectBytes int64          `json:"object_bytes"`
-	SealedAt    *time.Time     `json:"sealed_at,omitempty"`
-	Error       string         `json:"error,omitempty"`
+	// Archived*: the verified objects of the month so far (before the
+	// seal too; RowCount / ObjectBytes are the seal's totals).
+	ArchivedObjects     int64      `json:"archived_objects"`
+	ArchivedRows        int64      `json:"archived_rows"`
+	ArchivedObjectBytes int64      `json:"archived_object_bytes"`
+	SealedAt            *time.Time `json:"sealed_at,omitempty"`
+	Error               string     `json:"error,omitempty"`
 }
 
 // DegradedView is one gate event.
@@ -324,7 +446,8 @@ func Build(ctx context.Context, db Store, cfg *config.Config, now time.Time) (*S
 	now = now.UTC()
 	a := cfg.Archive
 	st := &Status{GeneratedAt: now, Enabled: a.Enabled(), Config: configView(a), Tables: []TableView{}, Streams: []StreamView{},
-		NeedsAttention: []ParkedChunk{}, Gates: []GateView{}, OverrideMaxHours: database.ArchiveGateOverrideMaxHours}
+		NeedsAttention: []ParkedChunk{}, Recent: []ChunkView{}, Retrying: []ChunkView{}, Gates: []GateView{},
+		OverrideMaxHours: database.ArchiveGateOverrideMaxHours}
 	problem := func(what string, err error) {
 		st.Problems = append(st.Problems, what+": "+err.Error())
 	}
@@ -345,7 +468,16 @@ func Build(ctx context.Context, db Store, cfg *config.Config, now time.Time) (*S
 			wv.Stages = append(wv.Stages, StageView{Stage: stage, At: e.At, Error: e.Error, Count: e.Count})
 		}
 		sort.Slice(wv.Stages, func(i, j int) bool { return wv.Stages[i].At.After(wv.Stages[j].At) })
+		wv.LastPassAt, wv.NextPassAt = rt.LastPassAt, rt.NextPassAt
+		if a := rt.Activity; a != nil && !wv.Stale {
+			wv.Activity = activityView(*a, now)
+		}
 		st.Worker = wv
+	}
+	if h, err := db.ArchiveGateHealthRecord(ctx); err != nil {
+		problem("retention gate state", err)
+	} else {
+		st.GateRead = gateReadView(h, now)
 	}
 
 	gated := map[string]bool{}
@@ -367,6 +499,11 @@ func Build(ctx context.Context, db Store, cfg *config.Config, now time.Time) (*S
 	if err != nil {
 		problem("chunk counts", err)
 	}
+	backlogs, backlogErr := db.ArchiveBacklogs(ctx)
+	if backlogErr != nil {
+		problem("backlog", backlogErr)
+	}
+	var allRecent []database.ArchiveChunkSummary
 	progress := map[string]database.ArchiveProgress{}
 	lag := map[string]*float64{}
 	for _, t := range Tables {
@@ -405,14 +542,67 @@ func Build(ctx context.Context, db Store, cfg *config.Config, now time.Time) (*S
 		}
 		if rt != nil {
 			if u, ok := rt.Tables[t]; ok && u.Reason != "" {
-				uv := &UnsettledView{Reason: u.Reason, Since: u.Since, Detail: u.Detail}
+				uv := &UnsettledView{Reason: u.Reason, Since: u.Since, Detail: u.Detail, Until: u.Until}
 				if u.Since != nil {
 					uv.ForSeconds = max(0, now.Sub(*u.Since).Seconds())
+				}
+				if u.Until != nil {
+					left := max(0, u.Until.Sub(now).Seconds())
+					uv.LeftSeconds = &left
 				}
 				tv.Unsettled = uv
 			}
 		}
+		if tv.HasChunks {
+			recent, err := db.RecentArchiveChunks(ctx, t, recentShown)
+			if err != nil {
+				problem("recent chunks of "+t, err)
+			}
+			allRecent = append(allRecent, recent...)
+			if backlogErr == nil {
+				tv.Backlog = backlogView(tv.Chunks, backlogs[t], recent, failedOrParked(tv.Chunks))
+			}
+		}
 		st.Tables = append(st.Tables, tv)
+	}
+	sort.SliceStable(allRecent, func(i, j int) bool { return allRecent[i].Chunk.VerifiedAt.After(*allRecent[j].Chunk.VerifiedAt) })
+	for i, r := range allRecent {
+		if i == recentShown {
+			break
+		}
+		st.Recent = append(st.Recent, chunkView(r))
+	}
+	// The snapshot is written at most every ProgressEvery: a chunk it shows
+	// in progress may be verified since. Do not show it as current then.
+	if w := st.Worker; w != nil && w.Activity != nil {
+		for _, r := range allRecent {
+			if r.Chunk.ID == w.Activity.ChunkID {
+				w.Activity = nil
+				break
+			}
+		}
+	}
+	if failed, err := db.ArchiveChunksWithStatus(ctx, models.ArchiveChunkFailed, retryingShown); err != nil {
+		problem("failed chunks", err)
+	} else {
+		for _, f := range failed {
+			cv := chunkView(f)
+			at := f.Chunk.UpdatedAt.Add(database.ArchiveRetryBackoff(f.Chunk.Attempts)).UTC()
+			cv.RetryAt = &at
+			st.Retrying = append(st.Retrying, cv)
+		}
+	}
+	totals, err := db.ArchiveVerifiedTotals(ctx)
+	if err != nil {
+		problem("archived totals", err)
+	}
+	monthTotals := map[string]database.ArchiveMonthTotal{} // stream + "/" + month
+	streamTotals := map[string]database.ArchiveMonthTotal{}
+	for _, m := range totals {
+		monthTotals[m.Stream+"/"+m.Month] = m
+		s := streamTotals[m.Stream]
+		s.Objects, s.Rows, s.ObjectBytes, s.RawBytes = s.Objects+m.Objects, s.Rows+m.Rows, s.ObjectBytes+m.ObjectBytes, s.RawBytes+m.RawBytes
+		streamTotals[m.Stream] = s
 	}
 
 	grace := a.SealGrace()
@@ -427,6 +617,9 @@ func Build(ctx context.Context, db Store, cfg *config.Config, now time.Time) (*S
 				return nil, err
 			}
 			sv := StreamView{Stream: s, Table: t, Enabled: tableEnabled(a, t), LagSeconds: lag[t], Months: []MonthView{}}
+			if tot, ok := streamTotals[s]; ok {
+				sv.ArchivedObjects, sv.ArchivedRows, sv.ArchivedObjectBytes, sv.ArchivedRawBytes = tot.Objects, tot.Rows, tot.ObjectBytes, tot.RawBytes
+			}
 			rows, err := db.ArchiveMonthRows(ctx, s)
 			if err != nil {
 				problem("month rows of "+s, err)
@@ -461,6 +654,15 @@ func Build(ctx context.Context, db Store, cfg *config.Config, now time.Time) (*S
 				}
 			}
 			sv.UnsealedDays = UnsealedDays(sv.OldestUnsealed, grace, now)
+			for _, m := range months { // the oldest month not sealed: the next seal
+				if r, ok := byMonth[m]; ok && r.Status == models.ArchiveMonthSealed {
+					continue
+				}
+				if end, err := monthEnd(m); err == nil {
+					sv.NextSeal = &NextSealView{Month: m, DueAt: end.Add(grace), Due: m < due}
+				}
+				break
+			}
 			if len(list) > monthsShown {
 				list = list[len(list)-monthsShown:]
 			}
@@ -475,6 +677,9 @@ func Build(ctx context.Context, db Store, cfg *config.Config, now time.Time) (*S
 			for i := len(list) - 1; i >= 0; i-- { // newest first
 				m := list[i]
 				mv := MonthView{Month: m, Status: models.ArchiveMonthOpen, Due: m < due}
+				if tot, ok := monthTotals[s+"/"+m]; ok {
+					mv.ArchivedObjects, mv.ArchivedRows, mv.ArchivedObjectBytes = tot.Objects, tot.Rows, tot.ObjectBytes
+				}
 				if r, ok := byMonth[m]; ok {
 					mv.Status, mv.Partial, mv.PartialNote = r.Status, r.Partial, r.PartialNote
 					mv.ChunkCount, mv.RowCount, mv.ObjectBytes, mv.Error = r.ChunkCount, r.RowCount, r.ObjectBytes, r.Error
@@ -516,4 +721,101 @@ func Build(ctx context.Context, db Store, cfg *config.Config, now time.Time) (*S
 		st.NeedsAttention = append(st.NeedsAttention, pc)
 	}
 	return st, ctx.Err()
+}
+
+// activityView is a's view at now.
+func activityView(a Activity, now time.Time) *ActivityView {
+	v := &ActivityView{Activity: a, ElapsedSeconds: max(0, now.Sub(a.StartedAt).Seconds())}
+	if !a.StageStartedAt.IsZero() {
+		v.StageElapsedSeconds = max(0, now.Sub(a.StageStartedAt).Seconds())
+	}
+	var f float64
+	switch {
+	case a.Stage == "export" && a.IDSpan > 0:
+		f = float64(a.IDsDone) / float64(a.IDSpan)
+	case (a.Stage == "upload" || a.Stage == "verify") && a.BytesTotal > 0:
+		f = float64(a.BytesDone) / float64(a.BytesTotal)
+	case (a.Stage == "upload" || a.Stage == "verify") && a.ObjectsTotal > 0:
+		f = float64(a.ObjectsDone) / float64(a.ObjectsTotal)
+	default:
+		return v
+	}
+	f = min(1, max(0, f))
+	v.Fraction = &f
+	return v
+}
+
+// gateReadView is the poller's record of the gate's switch reads as the
+// status shows it: nil while the reads succeed, or when the record is older
+// than StaleAfter (the poller is not writing it: nothing is known).
+func gateReadView(h *database.ArchiveGateHealth, now time.Time) *GateReadView {
+	if h == nil || h.FailingSince == nil || now.Sub(h.SeenAt) > StaleAfter {
+		return nil
+	}
+	return &GateReadView{FailingSince: h.FailingSince.UTC(), ForSeconds: max(0, now.Sub(*h.FailingSince).Seconds()),
+		Error: h.Error, HoldingAll: h.HoldingAll, SeenAt: h.SeenAt.UTC()}
+}
+
+// failedOrParked counts a table's chunks in failed or needs_attention.
+func failedOrParked(chunks map[string]int64) int64 {
+	return chunks[models.ArchiveChunkFailed] + chunks[models.ArchiveChunkNeedsAttention]
+}
+
+// backlogView is a table's backlog: counts from its chunk statuses, the rest
+// from its unverified chunks (b) and the throughput of its recently verified
+// ones (recent: rows over the time from each one's last attempt start to its
+// verification).
+func backlogView(counts map[string]int64, b database.ArchiveBacklog, recent []database.ArchiveChunkSummary, stuck int64) *BacklogView {
+	v := &BacklogView{Verified: counts[models.ArchiveChunkVerified], Remaining: b.Chunks, OldestRemaining: b.OldestPeriod, RemainingRows: b.IDSpan}
+	v.Chunks = v.Verified + v.Remaining
+	var rows int64
+	var secs float64
+	for _, r := range recent {
+		c := r.Chunk
+		if c.StartedAt == nil || c.VerifiedAt == nil {
+			continue
+		}
+		if d := c.VerifiedAt.Sub(*c.StartedAt).Seconds(); d > 0 {
+			rows += c.RowCount
+			secs += d
+		}
+	}
+	if secs > 0 && rows > 0 {
+		rate := float64(rows) / secs
+		v.RateRowsPerSec = &rate
+	}
+	switch {
+	case v.Remaining == 0:
+		v.State = "caught_up"
+	case v.Remaining == 1 && stuck == 0:
+		v.State = "current"
+	default:
+		v.State = "catching_up"
+	}
+	if v.Remaining > 0 && v.RateRowsPerSec != nil {
+		eta := float64(v.RemainingRows) / *v.RateRowsPerSec
+		v.ETASeconds = &eta
+	}
+	return v
+}
+
+// chunkView is r for the recent and retrying lists.
+func chunkView(r database.ArchiveChunkSummary) ChunkView {
+	c := r.Chunk
+	v := ChunkView{ID: c.ID, Table: c.SourceTable, Seq: c.Seq, PeriodStart: c.PeriodStart.UTC(), PeriodEnd: c.PeriodEnd.UTC(), Month: c.Month,
+		Status: c.Status, Rows: c.RowCount, Objects: r.Objects, ObjectBytes: r.ObjectBytes, RawBytes: r.RawBytes, Attempts: c.Attempts,
+		Error: c.Error}
+	if c.StartedAt != nil {
+		t := c.StartedAt.UTC()
+		v.StartedAt = &t
+	}
+	if c.VerifiedAt != nil {
+		t := c.VerifiedAt.UTC()
+		v.VerifiedAt = &t
+		if v.StartedAt != nil {
+			d := max(0, t.Sub(*v.StartedAt).Seconds())
+			v.DurationSeconds = &d
+		}
+	}
+	return v
 }

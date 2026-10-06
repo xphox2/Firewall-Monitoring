@@ -414,9 +414,32 @@ func printArchiveStatus(w io.Writer, st *status.Status) {
 			}
 			fmt.Fprintf(w, "  staging %s: %s free (floor %s)%s\n", wk.Staging.Dir, gib(*wk.Staging.FreeBytes), gib(wk.Staging.MinFreeBytes), low)
 		}
+		if a := wk.Activity; a != nil {
+			line := fmt.Sprintf("  working: %s chunk %d (%s), %s for %s", a.Table, a.Seq, a.PeriodStart.Format(time.RFC3339), a.Stage, dur(a.StageElapsedSeconds))
+			switch {
+			case a.Stage == "export":
+				line += fmt.Sprintf(", %d rows read", a.RowsDone)
+			case a.ObjectsTotal > 0:
+				line += fmt.Sprintf(", %d of %d objects", a.ObjectsDone, a.ObjectsTotal)
+			}
+			if a.Fraction != nil {
+				line += fmt.Sprintf(" (%.0f%%)", *a.Fraction*100)
+			}
+			fmt.Fprintln(w, line)
+		}
+		if wk.NextPassAt != nil {
+			fmt.Fprintf(w, "  last pass %s; next %s\n", ts(wk.LastPassAt), ts(wk.NextPassAt))
+		}
 		for _, e := range wk.Stages {
 			fmt.Fprintf(w, "  last %s failure %s (%d since the worker started): %s\n", e.Stage, e.At.Format(time.RFC3339), e.Count, e.Error)
 		}
+	}
+	if g := st.GateRead; g != nil {
+		what := "keeps the switches it read last"
+		if g.HoldingAll {
+			what = "HOLDS every archived table's deletes"
+		}
+		fmt.Fprintf(w, "retention gate: CANNOT READ the stream switches for %s (since %s); it %s: %s\n", dur(g.ForSeconds), g.FailingSince.Format(time.RFC3339), what, g.Error)
 	}
 	fmt.Fprintln(w, "gates:")
 	for _, g := range st.Gates {
@@ -453,8 +476,25 @@ func printArchiveStatus(w io.Writer, st *status.Status) {
 			fmt.Fprintf(w, "; last id mark %s", ts(t.LastMarkAt))
 		}
 		fmt.Fprintln(w)
+		if b := t.Backlog; b != nil {
+			line := fmt.Sprintf("    backlog: %d of %d chunks verified", b.Verified, b.Chunks)
+			if b.Remaining > 0 {
+				line += fmt.Sprintf(", %d left from %s (up to %d rows)", b.Remaining, ts(b.OldestRemaining), b.RemainingRows)
+			}
+			if b.RateRowsPerSec != nil {
+				line += fmt.Sprintf("; %.0f rows/s", *b.RateRowsPerSec)
+			}
+			if b.ETASeconds != nil {
+				line += "; about " + dur(*b.ETASeconds) + " of work left"
+			}
+			fmt.Fprintln(w, line)
+		}
 		if u := t.Unsettled; u != nil {
-			fmt.Fprintf(w, "    waiting: %s for %s: %s\n", u.Reason, dur(u.ForSeconds), u.Detail)
+			left := ""
+			if u.LeftSeconds != nil {
+				left = fmt.Sprintf(" (%s left)", dur(*u.LeftSeconds))
+			}
+			fmt.Fprintf(w, "    waiting: %s for %s%s: %s\n", u.Reason, dur(u.ForSeconds), left, u.Detail)
 		}
 		if r := t.Retention; r != nil && r.HeldSeconds > 0 {
 			fmt.Fprintf(w, "    retention %s: the gate holds unarchived rows up to %s past the cutoff %s\n", r.Window, dur(r.HeldSeconds), r.Cutoff.Format(time.RFC3339))

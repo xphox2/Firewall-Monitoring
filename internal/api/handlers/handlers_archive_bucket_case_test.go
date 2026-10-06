@@ -178,3 +178,51 @@ func TestArchiveSettings_ProviderErrorSurfaced(t *testing.T) {
 		t.Fatalf("log %q, want the 400 and its reason", l)
 	}
 }
+
+// TestSaveArchiveSettings_LockFollowsRecordedLocation: the location lock
+// judges a change against where the chunks were recorded as written
+// (system_settings.archive_location), not against the configuration in
+// effect. The environment's prefix changed under the archive: changing it
+// back to the recorded one on the form passes the lock (and is saved), any
+// other prefix is refused naming the recorded location. A bucket spelled
+// exactly as recorded needs no listing even when the environment re-cased it.
+func TestSaveArchiveSettings_LockFollowsRecordedLocation(t *testing.T) {
+	ctx := context.Background()
+	f := archSettingsSetup(t)
+	seedArchived(t, f)
+	recorded := f.h.config.Archive.Location()
+	if rec, mismatch, err := f.db.CheckArchiveLocation(ctx, recorded); err != nil || mismatch || rec != recorded {
+		t.Fatalf("record the location: %q %v %v", rec, mismatch, err)
+	}
+	f.h.config.Archive.Prefix = "fwmon-drift" // the environment changed under the archive
+
+	if rec := f.save(`{"set":{"ARCHIVE_S3_PREFIX":"` + archPrefix + `"},"password":"WRONG"}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("back to the recorded prefix: %d %s, want 403 (past the location lock)", rec.Code, rec.Body.String())
+	}
+	rec := f.save(`{"set":{"ARCHIVE_S3_PREFIX":"fwmon-other"},"password":"WRONG"}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "/"+archBucket+"/"+archPrefix+"/") {
+		t.Fatalf("a third prefix: %d %s, want 409 naming the recorded location", rec.Code, rec.Body.String())
+	}
+	if rec := f.save(`{"set":{"ARCHIVE_S3_PREFIX":"` + archPrefix + `"},"password":"s3cret-pw"}`); rec.Code != http.StatusOK {
+		t.Fatalf("back to the recorded prefix: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := f.resolved(t).Prefix; got != archPrefix {
+		t.Fatalf("stored prefix %q, want %q", got, archPrefix)
+	}
+
+	// The environment re-cased the bucket; the form names it as recorded:
+	// the same place, spelled as the chunks were written — no listing.
+	f.h.config.Archive.Bucket = "EXAMPLE-BUCKET"
+	lists := f.srv.Count(s3test.OpListObjects)
+	if rec := f.save(`{"set":{"ARCHIVE_S3_BUCKET":"` + archBucket + `"},"password":"s3cret-pw"}`); rec.Code != http.StatusOK {
+		t.Fatalf("bucket as recorded: %d %s", rec.Code, rec.Body.String())
+	}
+	if n := f.srv.Count(s3test.OpListObjects); n != lists {
+		t.Fatalf("the bucket spelled as recorded was listed (%d → %d)", lists, n)
+	}
+	// Spelled otherwise than the record: listed, and the record's spelling
+	// is the one the refusal would keep.
+	if rec := f.save(`{"set":{"ARCHIVE_S3_BUCKET":"Example-Bucket"},"password":"s3cret-pw"}`); rec.Code != http.StatusOK || f.srv.Count(s3test.OpListObjects) <= lists {
+		t.Fatalf("re-cased against the record: %d %s, lists %d → %d", rec.Code, rec.Body.String(), lists, f.srv.Count(s3test.OpListObjects))
+	}
+}

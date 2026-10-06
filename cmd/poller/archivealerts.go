@@ -14,7 +14,9 @@ import (
 // The raw archive's alerts (archive plan PR 8): ARCHIVE_LAG,
 // ARCHIVE_NEEDS_ATTENTION, ARCHIVE_SEAL_OVERDUE, RETENTION_HELD and
 // ARCHIVE_UNSETTLED_LONG, evaluated on the server-health tick from the same
-// status the admin API shows (status.Build / Evaluator.Conditions) and fired
+// status the admin API shows (status.Build / Evaluator.Conditions), and
+// ARCHIVE_GATE_UNREADABLE from this process's retention gate itself
+// (status.GateReadCondition) — all fired
 // or resolved through the alert engine's device-less path, like
 // SERVER_DISK_HIGH: policy, event rules (seeded with a 6 h cooldown),
 // maintenance windows, the cross-restart cooldown backstop and recovery
@@ -31,6 +33,9 @@ const (
 	archiveDiskAgoMax = 3 * time.Hour
 )
 
+// archiveAlertClock is the alert tick's clock (tests move it forward).
+var archiveAlertClock = time.Now
+
 // archiveAlertLog rate-limits the "status unreadable" line.
 var archiveAlertLog struct{ last time.Time }
 
@@ -42,7 +47,18 @@ func (p *Poller) checkArchiveAlerts(vols []alerts.ServerVolume, dataOK bool) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	now := time.Now()
+	now := archiveAlertClock()
+	// ARCHIVE_GATE_UNREADABLE first, from the gate in this process: it holds
+	// deletes even where the archive was never enabled, and a database that
+	// fails its read may fail the status below too. The record lets the
+	// status card (another process) show it.
+	gate := p.db.ArchiveGateReadHealth(now)
+	if err := p.db.SaveArchiveGateHealth(ctx, gate); err != nil {
+		log.Printf("archive alerts: record the retention gate state: %v", err)
+	}
+	gc := status.GateReadCondition(gate, now)
+	p.alertManager.CheckServerConditions([]alerts.ServerCondition{{Type: gc.Type, Key: gc.Key(), Metric: gc.Metric(), Breached: gc.Breached,
+		Message: gc.Message, Recovery: gc.Recovery, Fields: gc.Fields}})
 	// The configuration in effect: the environment with the admin page's
 	// archive settings applied (A-10).
 	res, err := p.db.ResolveArchiveConfig(ctx, p.cfg.Archive)

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"firewall-mon/internal/archive/export"
+	"firewall-mon/internal/database"
 	"firewall-mon/internal/models"
 )
 
@@ -97,6 +98,35 @@ func ReadThresholds(stored map[string]string) Thresholds {
 // falls back to ~2 h when the chunk is verified. The hourly flow streams peak
 // at about 1 h, far below their 3 h.
 const DailySustain = time.Hour
+
+// GateUnreadableAfter is how long the retention gate's reads of the stream
+// switches may keep failing before ARCHIVE_GATE_UNREADABLE fires: a brief
+// database hiccup is retried every few seconds and resolves itself.
+const GateUnreadableAfter = 15 * time.Minute
+
+// GateReadCondition is ARCHIVE_GATE_UNREADABLE from the gate's own record of
+// its reads (database.ArchiveGateReadHealth, in the poller that runs the
+// deletes): breached while they have failed for longer than
+// GateUnreadableAfter. Unlike the other archive alerts it does not need the
+// status: a database that fails the gate's read may fail Build too.
+func GateReadCondition(h database.ArchiveGateHealth, now time.Time) Condition {
+	c := Condition{Type: models.AlertTypeArchiveGateUnreadable, Label: "switches", Known: true, Fields: map[string]string{},
+		Recovery: "The retention gate reads the archive's stream switches again"}
+	if h.FailingSince == nil {
+		return c
+	}
+	failing := now.Sub(*h.FailingSince)
+	c.Breached = failing > GateUnreadableAfter
+	what := "it keeps the stream switches it read last, so a change saved on the admin page is not applied"
+	c.Fields["holding"] = "last"
+	if h.HoldingAll {
+		what = "it holds the retention, aggregation and rollup deletes of every archived table until a read succeeds"
+		c.Fields["holding"] = "all"
+	}
+	c.Message = fmt.Sprintf("The archive's retention gate has not been able to read the stream switches for %s (since %s): %s; %s",
+		hours(failing), h.FailingSince.UTC().Format(time.RFC3339), what, h.Error)
+	return c
+}
 
 // unsettledWaits are the wait reasons ARCHIVE_UNSETTLED_LONG watches;
 // "settling" is the normal short window after every cut.

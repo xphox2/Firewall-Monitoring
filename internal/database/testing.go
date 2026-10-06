@@ -195,3 +195,11 @@ func SetArchiveRestoreBatchForTesting(t interface{ Cleanup(func()) }, size int, 
 	archiveRestoreBatchSize, archiveRestoreTxHook = size, hook
 	t.Cleanup(func() { archiveRestoreBatchSize, archiveRestoreTxHook = os, oh })
 }
+
+// EnableArchiveGateCacheForTesting gives d the retention gate's switch cache
+// the production constructor installs (NewDatabaseForTesting leaves it nil:
+// every gate call reads the switches and records nothing), so tests in other
+// packages can exercise ArchiveGateReadHealth.
+func (d *Database) EnableArchiveGateCacheForTesting() {
+	d.archiveGateCache = &archiveGateCacheState{}
+}
