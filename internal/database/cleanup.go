@@ -1069,12 +1069,20 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	// (SyslogRetentionWindows); every cutoff below is taken from one instant.
 	syslogNow := time.Now()
 	sevWindows := d.SyslogRetentionWindows(ret)
+	// Months mode with a Retention-page window still in force: say so on every
+	// daily pass, or the operator who set RETENTION_SYSLOG_MONTHS=1 never learns
+	// that an old page setting (say 7 days for severity 5) still decides.
+	if over := syslogMonthsOverridden(ret, sevWindows); len(over) > 0 {
+		log.Printf("WARNING: cleanup: %s, not RETENTION_SYSLOG_MONTHS=%d (a window set on the Retention page takes precedence; clear it there to follow the months)",
+			strings.Join(over, ", "), ret.SyslogMonths)
+	}
 
 	// LC-23: partition-drop fast path for syslog_messages, the table that
 	// dominates prod DB size. A partition may only be dropped once EVERY
 	// severity inside it has expired, so syslogDropCutoff returns !ok — never
-	// drop — if any severity is kept forever, else the oldest cutoff. Straddling and newer partitions still
-	// rely on the per-severity DELETEs below for exact retention.
+	// drop — if any severity is kept forever, else the oldest cutoff.
+	// Straddling and newer partitions still rely on the per-severity DELETEs
+	// below for exact retention.
 	//
 	// With syslog archiving enabled, both the drop and the DELETEs take only
 	// rows the archive has verified (id <= V; archive_gate.go). The gate is

@@ -1,6 +1,9 @@
 package database
 
 import (
+	"bytes"
+	"log"
+	"strings"
 	"testing"
 	"time"
 
@@ -198,5 +201,71 @@ func TestSyslogRetentionMonths_CleanupAndAggregation(t *testing.T) {
 	d.Gorm().Model(&models.SyslogSummary{}).Where("severity = ?", 6).Count(&summaries)
 	if summaries == 0 {
 		t.Error("the 40-day-old severity 6 row was deleted without a summary")
+	}
+}
+
+// With months on, a Retention-page window that still decides a severity is
+// named on every daily pass, with its effective window; months off (or no
+// page window) logs nothing of the kind.
+func TestSyslogRetentionMonths_CleanupWarnsAboutPageWindows(t *testing.T) {
+	capture := func(d *Database, ret config.RetentionConfig) string {
+		t.Helper()
+		var buf bytes.Buffer
+		prev := log.Writer()
+		log.SetOutput(&buf)
+		defer log.SetOutput(prev)
+		if err := d.CleanupOldData(ret); err != nil {
+			t.Fatal(err)
+		}
+		return buf.String()
+	}
+	const marker = "not RETENTION_SYSLOG_MONTHS="
+
+	d := NewDatabaseForTesting(t)
+	if out := capture(d, monthsLike()); strings.Contains(out, marker) {
+		t.Errorf("no page window set, yet: %s", out)
+	}
+	setRetention(t, d, SyslogRetentionKey(5), "7")
+	setRetention(t, d, SyslogRetentionKey(0), "0")
+	out := capture(d, monthsLike())
+	var line string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, marker) {
+			line = l
+		}
+	}
+	for _, want := range []string{"WARNING", "severity 0 uses Retention-page keep-forever (0)", "severity 5 uses Retention-page 7d", "not RETENTION_SYSLOG_MONTHS=1"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("warning %q lacks %q", line, want)
+		}
+	}
+	if strings.Contains(line, "severity 4") {
+		t.Errorf("warning %q names severity 4, which follows the months", line)
+	}
+	if out := capture(d, prodLike()); strings.Contains(out, marker) {
+		t.Errorf("months off, yet: %s", out)
+	}
+
+	// The page DEFAULT overrides every severity.
+	d2 := NewDatabaseForTesting(t)
+	setRetention(t, d2, SyslogRetentionDefaultKey, "45")
+	if out := capture(d2, monthsLike()); !strings.Contains(out, "severity 3 uses Retention-page 45d") {
+		t.Errorf("default page window not named: %s", out)
+	}
+}
+
+// The volume report labels a month window in months (the page renders
+// "1 month") and keeps the days it spans for the projection.
+func TestSyslogRetentionMonths_VolumeReport(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	setRetention(t, d, SyslogRetentionKey(5), "7")
+	rep := d.SyslogVolume(monthsLike())
+	for _, v := range rep.Severities {
+		switch {
+		case v.Severity == 5 && (v.Months != 0 || v.Days != 7):
+			t.Errorf("severity 5: months %d days %d, want the 7-day page window", v.Months, v.Days)
+		case v.Severity != 5 && (v.Months != 1 || v.Days < 28 || v.Days > 31 || v.Forever):
+			t.Errorf("severity %d: months %d days %d forever %v, want 1 month spanning 28-31 days", v.Severity, v.Months, v.Days, v.Forever)
+		}
 	}
 }

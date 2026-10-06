@@ -885,7 +885,10 @@ would have kept only to 3 March). It replaces `RETENTION_SYSLOG_CRITICAL_DAYS`,
 `RETENTION_SYSLOG_INFO_DAYS` and `RETENTION_SYSLOG_DAYS`, which are ignored
 while it is set; the API and the poller log a startup NOTICE naming them with their
 values. A malformed or out-of-range value refuses to start. Windows set on the
-Retention page (per severity or the default) still take precedence.
+Retention page (per severity or the default) still take precedence; while one
+does, every daily cleanup logs a WARNING naming the severity and its window
+(`severity 5 uses Retention-page 7d, not RETENTION_SYSLOG_MONTHS=1 …`) — clear
+the page setting to follow the months.
 
 - The daily cleanup and the 5-minute severity 6/7 aggregation use the month
   cutoff; severities 6-7 stay raw for the month and are then summarised.

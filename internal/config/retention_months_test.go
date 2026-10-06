@@ -42,7 +42,8 @@ func TestSyslogMonths_ParseAndValidate(t *testing.T) {
 }
 
 // The startup NOTICE names the env windows months replaces, with their values,
-// and says the Retention page still wins; nothing is logged when it is off.
+// and says the Retention page still wins; nothing is logged when it is off,
+// and Validate (run by every CLI subcommand too) never logs it.
 func TestSyslogMonths_StartupNotice(t *testing.T) {
 	var buf bytes.Buffer
 	prev := log.Writer()
@@ -50,9 +51,10 @@ func TestSyslogMonths_StartupNotice(t *testing.T) {
 	defer log.SetOutput(prev)
 
 	r := RetentionConfig{SyslogMonths: 1, SyslogCriticalDays: 30, SyslogInfoDays: 7}
-	if err := r.validateSyslogMonths(); err != nil {
-		t.Fatal(err)
+	if err := r.validateSyslogMonths(); err != nil || buf.Len() != 0 {
+		t.Fatalf("validate: err %v, logged %q — the NOTICE belongs to the daemons' startup only", err, buf.String())
 	}
+	r.LogSyslogMonthsNotice()
 	out := buf.String()
 	for _, want := range []string{"NOTICE: RETENTION_SYSLOG_MONTHS=1", "RETENTION_SYSLOG_CRITICAL_DAYS=30",
 		"RETENTION_SYSLOG_INFO_DAYS=7", "RETENTION_SYSLOG_DAYS=0", "are ignored", "Retention page"} {
@@ -61,7 +63,8 @@ func TestSyslogMonths_StartupNotice(t *testing.T) {
 		}
 	}
 	buf.Reset()
-	if err := (&RetentionConfig{SyslogCriticalDays: 30}).validateSyslogMonths(); err != nil || buf.Len() != 0 {
-		t.Errorf("months off: err %v, logged %q", err, buf.String())
+	(&RetentionConfig{SyslogCriticalDays: 30}).LogSyslogMonthsNotice()
+	if buf.Len() != 0 {
+		t.Errorf("months off: logged %q", buf.String())
 	}
 }

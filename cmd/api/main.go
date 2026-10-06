@@ -110,6 +110,7 @@ func main() {
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("Configuration error: %v", err)
 	}
+	cfg.Retention.LogSyslogMonthsNotice()
 	database.AppVersion = ServerVersion // AUDIT-044: stamp schema_migrations rows
 
 	// AUDIT-150: OpenTelemetry tracing. OFF unless OTEL_TRACES_ENABLED=true, in

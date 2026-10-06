@@ -245,3 +245,25 @@ func syslogDropCutoff(windows []SyslogWindow, now time.Time) (cutoff time.Time, 
 	}
 	return cutoff, ok
 }
+
+// syslogMonthsOverridden names, while RETENTION_SYSLOG_MONTHS is on, every
+// severity whose window is NOT the month window — with months on, the only
+// source of any other window is a Retention-page setting (per severity or the
+// default) — as "severity 5 uses Retention-page 7d". Empty when months is off.
+func syslogMonthsOverridden(ret config.RetentionConfig, windows [SyslogSeverityCount]SyslogWindow) []string {
+	if ret.SyslogMonths <= 0 {
+		return nil
+	}
+	var out []string
+	for sev, w := range windows {
+		switch {
+		case w.Months > 0:
+			continue
+		case w.Forever():
+			out = append(out, fmt.Sprintf("severity %d uses Retention-page keep-forever (0)", sev))
+		default:
+			out = append(out, fmt.Sprintf("severity %d uses Retention-page %s", sev, w))
+		}
+	}
+	return out
+}

@@ -26,8 +26,11 @@ type SyslogSeverityVolume struct {
 	Severity int    `json:"severity"`
 	Name     string `json:"name"`
 
-	// Days is the resolved effective window: 0 means keep forever.
+	// Days is the resolved effective window: 0 means keep forever. A
+	// calendar-month window (RETENTION_SYSLOG_MONTHS) reports the days it
+	// spans today (28-31 per month), used for the projection, and Months.
 	Days      int  `json:"days"`
+	Months    int  `json:"months,omitempty"`
 	Forever   bool `json:"forever"`
 	Inherited bool `json:"inherited"` // no per-severity override set
 
@@ -111,7 +114,8 @@ var syslogSeverityNames = [SyslogSeverityCount]string{
 // estimate of what it costs, so an operator can see which severity is actually
 // drowning them before choosing a window.
 func (d *Database) SyslogVolume(ret config.RetentionConfig) SyslogVolumeReport {
-	days := d.SyslogRetentionDays(ret)
+	windows := d.SyslogRetentionWindows(ret)
+	now := time.Now()
 	defaultDays := d.GetIntSetting(SyslogRetentionDefaultKey, syslogRetentionInherit)
 
 	out := SyslogVolumeReport{}
@@ -124,7 +128,7 @@ func (d *Database) SyslogVolume(ret config.RetentionConfig) SyslogVolumeReport {
 
 	avgWidth := d.syslogAvgRowWidth()
 
-	rate, hours := d.SyslogIngestRate(time.Now())
+	rate, hours := d.SyslogIngestRate(now)
 	out.RateHours = hours
 
 	// On-disk cost per row. The catalog figure includes indexes and TOAST
@@ -151,8 +155,9 @@ func (d *Database) SyslogVolume(ret config.RetentionConfig) SyslogVolumeReport {
 		v := SyslogSeverityVolume{
 			Severity:  sev,
 			Name:      syslogSeverityNames[sev],
-			Days:      days[sev],
-			Forever:   days[sev] <= 0,
+			Days:      windows[sev].spanDays(now),
+			Months:    windows[sev].Months,
+			Forever:   windows[sev].Forever(),
 			Inherited: override == syslogRetentionInherit,
 		}
 		if f, present := freqs[sev]; present && ok {

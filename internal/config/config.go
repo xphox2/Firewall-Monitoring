@@ -318,8 +318,7 @@ const maxSyslogMonths = 120
 
 // validateSyslogMonths refuses a malformed or out-of-range
 // RETENTION_SYSLOG_MONTHS (a typo must not silently fall back to the day
-// windows) and, when it is on, logs a NOTICE naming the env windows it
-// replaces with their current values.
+// windows).
 func (r *RetentionConfig) validateSyslogMonths() error {
 	if r.syslogMonthsInvalid != "" {
 		return fmt.Errorf("%s", r.syslogMonthsInvalid)
@@ -327,6 +326,14 @@ func (r *RetentionConfig) validateSyslogMonths() error {
 	if r.SyslogMonths < 0 || r.SyslogMonths > maxSyslogMonths {
 		return fmt.Errorf("RETENTION_SYSLOG_MONTHS must be 0-%d, got %d", maxSyslogMonths, r.SyslogMonths)
 	}
+	return nil
+}
+
+// LogSyslogMonthsNotice logs, when RETENTION_SYSLOG_MONTHS is on, a NOTICE
+// naming the env windows it replaces with their current values. Called once
+// by the long-running daemons (fwmon-api serve, the poller), not by every
+// Validate (the CLI subcommands validate too).
+func (r *RetentionConfig) LogSyslogMonthsNotice() {
 	if r.SyslogMonths > 0 {
 		log.Printf("NOTICE: RETENTION_SYSLOG_MONTHS=%d — raw syslog of every severity is kept %d calendar month(s) "+
 			"(cutoff: the same UTC time %d month(s) earlier, clamped to that month's last day); "+
@@ -334,7 +341,6 @@ func (r *RetentionConfig) validateSyslogMonths() error {
 			"Windows set on the Retention page (per severity or default) still take precedence.",
 			r.SyslogMonths, r.SyslogMonths, r.SyslogMonths, r.SyslogCriticalDays, r.SyslogInfoDays, r.SyslogDays)
 	}
-	return nil
 }
 
 // NetEventWindow is the net_events retention in days: NetEventDays when

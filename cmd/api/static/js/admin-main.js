@@ -2491,7 +2491,9 @@
             // legitimately ends an inherited keep-forever; that has to be
             // visible when it is chosen, not discovered when the data is gone.
             function fmtWindow(v) {
-                var txt = v.forever ? 'kept forever' : v.days + ' days';
+                var txt = v.forever ? 'kept forever'
+                    : v.months ? v.months + (v.months === 1 ? ' month' : ' months')
+                    : v.days + ' days';
                 if (v.inherited) txt += ' <span style="color:var(--fwmon-text-faint);">(inherited)</span>';
                 return txt;
             }
