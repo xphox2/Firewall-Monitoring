@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strconv"
@@ -323,7 +324,13 @@ func (d *Database) selectNetEventRollupPairs(tx *gorm.DB, start, end time.Time) 
 // discipline on Postgres (120 s statement_timeout over the DSN's 30 s, 5 s
 // lock_timeout) — one hour of net_events per statement, never the day.
 func (d *Database) boundedRead(fn func(tx *gorm.DB) error) error {
-	return d.db.Transaction(func(tx *gorm.DB) error {
+	return d.boundedReadContext(context.Background(), fn)
+}
+
+// boundedReadContext is boundedRead under ctx (cancelling ctx cancels the
+// running statement).
+func (d *Database) boundedReadContext(ctx context.Context, fn func(tx *gorm.DB) error) error {
+	return d.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if d.dialect.IsPostgres() {
 			if err := tx.Exec("SET LOCAL lock_timeout = '5s'").Error; err != nil {
 				return err

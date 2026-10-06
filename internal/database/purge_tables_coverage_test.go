@@ -29,6 +29,10 @@ var purgeCoveredElsewhere = map[string]string{
 	// The backfill queue (v73): device_id is an optional FILTER on the raw
 	// rows to walk, not a row owner; terminal rows are the audit trail.
 	"normalize_backfill_jobs": "audit trail",
+	// The archive manifest (v75): device_id names the device whose syslog an
+	// object holds. The object stays in the bucket after a purge, so its row
+	// is the record of it — never purged.
+	"archive_objects": "archive manifest",
 }
 
 // deviceKeyedTables reflects over the given model lists and returns, per table

@@ -124,6 +124,7 @@ var registeredMigrations = []migration{
 	{version: 72, name: "normalized_event_tables", run: (*Database).migrateNormalizedEventTables},
 	{version: 73, name: "normalize_backfill_jobs", run: (*Database).migrateNormalizeBackfillJobs},
 	{version: 74, name: "syslog_format_column", run: (*Database).migrateSyslogFormatColumn},
+	{version: 75, name: "archive_manifest_tables", run: (*Database).migrateArchiveManifestTables},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

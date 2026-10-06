@@ -79,18 +79,23 @@ func TestPartitionLookbackDays(t *testing.T) {
 	}
 }
 
-// TestRegisteredMigrations_V74IsLast pins the version numbers the plans and
+// TestRegisteredMigrations_V75IsLast pins the version numbers the plans and
 // CHANGELOG cite.
-func TestRegisteredMigrations_V74IsLast(t *testing.T) {
-	last := registeredMigrations[len(registeredMigrations)-1]
-	if last.version != 74 || last.name != "syslog_format_column" {
-		t.Fatalf("last migration = {%d %q}, want {74 syslog_format_column}", last.version, last.name)
+func TestRegisteredMigrations_V75IsLast(t *testing.T) {
+	want := []struct {
+		version int
+		name    string
+	}{
+		{75, "archive_manifest_tables"},
+		{74, "syslog_format_column"},
+		{73, "normalize_backfill_jobs"},
+		{72, "normalized_event_tables"},
 	}
-	if m := registeredMigrations[len(registeredMigrations)-2]; m.version != 73 || m.name != "normalize_backfill_jobs" {
-		t.Fatalf("migration before last = {%d %q}, want {73 normalize_backfill_jobs}", m.version, m.name)
-	}
-	if m := registeredMigrations[len(registeredMigrations)-3]; m.version != 72 || m.name != "normalized_event_tables" {
-		t.Fatalf("migration two before last = {%d %q}, want {72 normalized_event_tables}", m.version, m.name)
+	for i, w := range want {
+		m := registeredMigrations[len(registeredMigrations)-1-i]
+		if m.version != w.version || m.name != w.name {
+			t.Fatalf("migration %d from the end = {%d %q}, want {%d %q}", i, m.version, m.name, w.version, w.name)
+		}
 	}
 }
 
