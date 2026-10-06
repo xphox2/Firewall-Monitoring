@@ -1,6 +1,17 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.299] - 2026-10-06
+
+### Fixed — the S-5 Postgres tests failed around UTC midnight (test clock assumptions; no production change)
+
+- **`TestNormalizeBackfill_PG` failed just after 00:00 UTC** ("closed day …: rollup hits 8553 … net_events rows 8562"). Root cause: the test called every day before today "closed" and demanded exact hits for it, but the rollup keeps yesterday open by design until its last hour is foldable (00:15, the 15-minute fold lag) and the close lag has passed (02:00) — the fixture's rows in yesterday's 23:00 hour were simply not folded yet. The rollup was right; the test now takes "closed" from the `net_event_rollup_closed_day` cursor, pins its clock to 00:01:30 UTC today so the boundary is exercised on every run, and walks it explicitly: at 00:01:30 yesterday is open with its last hour unfolded, at 00:15 every row is folded but the day is still open, at 02:00 it is closed exactly.
+- **`TestNormalizeBackfill_PG_DeviceScoped` failed at 23:59 UTC** (reproduced at 23:59:00 and 23:59:30 with an injected clock, passes at 00:00:30 and 00:05). The fixture window then started 30 s before a midnight, so its first daily `net_events` leaf held ~35 rows; the planner correctly seq-scanned that one-page leaf (cost ~5.5) and the "no costed Seq Scan" plan check failed. A fixture artefact, not a plan defect: the test's clock is now pinned to noon UTC yesterday so every leaf holds at least half a day.
+
+### Tests
+
+- `runRollupMidnightScenario` (SQLite `TestNetEventRollup_MidnightBoundary_SQLite`, Postgres `TestNormalizedTables_PG/RollupMidnightBoundary`): an injected clock at 23:59:30, 00:00:30, 00:05, 00:15, 00:20, 01:59:59, 02:00 and 02:05 over rows on the boundary (the day's last microsecond, exactly midnight, a late arrival for the already folded 23:00 hour) — the day stays open until 02:00, then closes with every row exactly once (the late row counted, the midnight row only in the next day), the running day is never closed, and a backfill rewind re-closes the day exactly. Mutation-checked against the production code: dropping the close lag, the fold lag or the rewind, or reading past midnight in the close, each fails it.
+
 ## [0.11.298] - 2026-10-05
 
 ### Added — the collector's syslog `format` hint is stored (archive plan PR 1; migration v74)

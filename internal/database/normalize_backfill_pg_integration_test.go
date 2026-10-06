@@ -40,7 +40,13 @@ func TestNormalizeBackfill_PG(t *testing.T) {
 	if err := d.db.Create(dev).Error; err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now().UTC().Truncate(time.Second)
+	// The clock is pinned to 00:01:30 UTC today, the instant this test was
+	// seen failing when it ran on the wall clock: yesterday's last hour holds
+	// fixture rows but is not yet foldable (15-min lag) and yesterday is not
+	// closable before 02:00 (close lag), so the rollup check below must take
+	// "closed" from the cursor, never from "before today". Pinned, the
+	// boundary is exercised on every run instead of only just after midnight.
+	now := utcDay(time.Now()).Add(90 * time.Second)
 	const n = 30000
 	f := seedBackfillRows(t, d, dev.ID, now.Add(-72*time.Hour), 71*time.Hour, n)
 	until := now.Add(-30 * time.Minute)
@@ -249,45 +255,77 @@ func TestNormalizeBackfill_PG(t *testing.T) {
 	if _, ok := d.GetSettingValue(netEventRollupRewindKey); ok {
 		t.Fatal("rewind marker not consumed")
 	}
-	// Run the cycle until the backfilled days are closed again; the rollup
-	// hits must equal the net_events rows of each closed day.
-	for i := 0; i < 20; i++ {
-		if _, _, err := d.runNetEventRollupCycle(now); err != nil {
-			t.Fatal(err)
-		}
-	}
+	// Run the cycle until the backfilled days are closed again. A day is
+	// closed when the closed-day cursor says so — the rollup keeps a day open
+	// until its last hour is folded (15 min past midnight) and the close lag
+	// has passed (02:00) — and a closed day's hits must equal its net_events
+	// rows exactly; an open day's folds never exceed them.
 	type dayCount struct {
 		Day   time.Time
 		Hits  int64
 		Exact bool
 	}
-	var rolled []dayCount
-	if err := d.db.Raw("SELECT day, SUM(hits) AS hits, BOOL_AND(distinct_src_exact) AS exact FROM net_event_rollups GROUP BY day ORDER BY day").Scan(&rolled).Error; err != nil {
-		t.Fatal(err)
-	}
-	if len(rolled) < 3 {
-		t.Fatalf("rollup days after the rewind: %+v, want the three fixture days and the open one", rolled)
-	}
-	closedDays := 0
-	for _, r := range rolled {
-		day := r.Day.UTC()
-		var raw int64
-		d.db.Model(&models.NetEvent{}).Where("ts >= ? AND ts < ?", day, day.AddDate(0, 0, 1)).Count(&raw)
-		if !day.Before(utcDay(now)) {
-			// The current UTC day is still open: folds only, never more than the rows.
-			if r.Hits > raw {
-				t.Fatalf("open day %s: rollup hits %d exceed its %d rows", day.Format("2006-01-02"), r.Hits, raw)
+	checkRolled := func(at time.Time) (closedThrough time.Time, rolled map[string]dayCount) {
+		t.Helper()
+		for i := 0; i < 20; i++ {
+			if _, _, err := d.runNetEventRollupCycle(at); err != nil {
+				t.Fatal(err)
 			}
-			continue
 		}
-		closedDays++
-		if r.Hits != raw || !r.Exact {
-			closed, _ := d.GetSettingValue(netEventRollupClosedDayKey)
-			t.Fatalf("closed day %s: rollup hits %d (exact=%v), net_events rows %d (double counted or missed); closed_day=%s", day.Format("2006-01-02"), r.Hits, r.Exact, raw, closed)
+		closedThrough, ok, err := d.netEventRollupClosedDay()
+		if err != nil || !ok {
+			t.Fatalf("at %s: closed-day cursor %v %v", at.Format(time.RFC3339), ok, err)
 		}
+		var rows []dayCount
+		if err := d.db.Raw("SELECT day, SUM(hits) AS hits, BOOL_AND(distinct_src_exact) AS exact FROM net_event_rollups GROUP BY day ORDER BY day").Scan(&rows).Error; err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) < 3 {
+			t.Fatalf("rollup days after the rewind: %+v, want the three fixture days", rows)
+		}
+		rolled = map[string]dayCount{}
+		for _, r := range rows {
+			day := r.Day.UTC()
+			r.Day = day
+			rolled[day.Format("2006-01-02")] = r
+			var raw int64
+			d.db.Model(&models.NetEvent{}).Where("ts >= ? AND ts < ?", day, day.AddDate(0, 0, 1)).Count(&raw)
+			if day.After(closedThrough) {
+				if r.Hits > raw {
+					t.Fatalf("at %s: open day %s: rollup hits %d exceed its %d rows", at.Format(time.RFC3339), day.Format("2006-01-02"), r.Hits, raw)
+				}
+				continue
+			}
+			if r.Hits != raw || !r.Exact {
+				t.Fatalf("at %s: closed day %s: rollup hits %d (exact=%v), net_events rows %d (double counted or missed); closed_day=%s",
+					at.Format(time.RFC3339), day.Format("2006-01-02"), r.Hits, r.Exact, raw, closedThrough.Format("2006-01-02"))
+			}
+		}
+		return closedThrough, rolled
 	}
-	if closedDays < 2 {
-		t.Fatalf("only %d complete fixture days were re-closed after the rewind", closedDays)
+	// Yesterday's raw rows, for the boundary walk below.
+	yesterday := utcDay(now).AddDate(0, 0, -1)
+	var rawYesterday int64
+	d.db.Model(&models.NetEvent{}).Where("ts >= ? AND ts < ?", yesterday, utcDay(now)).Count(&rawYesterday)
+	// 00:01:30: the two older fixture days are re-closed; yesterday is open,
+	// its 23:00 hour (fixture rows up to 23:01:30) not folded yet.
+	closedThrough, rolled := checkRolled(now)
+	if !closedThrough.Equal(yesterday.AddDate(0, 0, -1)) {
+		t.Fatalf("at 00:01:30 closed through %s, want %s", closedThrough.Format("2006-01-02"), yesterday.AddDate(0, 0, -1).Format("2006-01-02"))
+	}
+	if y := rolled[yesterday.Format("2006-01-02")]; y.Hits >= rawYesterday || y.Exact {
+		t.Fatalf("at 00:01:30 yesterday: hits %d exact=%v of %d rows; want its last hour unfolded and the day open", y.Hits, y.Exact, rawYesterday)
+	}
+	// 00:15: the last hour is folded — every row counted — but the day is
+	// still open (approximate distinct_src) until the close lag passes.
+	closedThrough, rolled = checkRolled(utcDay(now).Add(15 * time.Minute))
+	if y := rolled[yesterday.Format("2006-01-02")]; closedThrough.Equal(yesterday) || y.Hits != rawYesterday || y.Exact {
+		t.Fatalf("at 00:15 yesterday: hits %d exact=%v of %d rows, closed through %s; want every row folded and the day open",
+			y.Hits, y.Exact, rawYesterday, closedThrough.Format("2006-01-02"))
+	}
+	// 02:00: yesterday closes exactly.
+	if closedThrough, _ = checkRolled(utcDay(now).Add(2 * time.Hour)); !closedThrough.Equal(yesterday) {
+		t.Fatalf("at 02:00 closed through %s, want yesterday %s", closedThrough.Format("2006-01-02"), yesterday.Format("2006-01-02"))
 	}
 
 	// A second job over the same window writes nothing.
@@ -461,7 +499,14 @@ func TestNormalizeBackfill_PG_DeviceScoped(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	now := time.Now().UTC().Truncate(time.Second)
+	// The clock is pinned to noon UTC yesterday so the fixture's daily
+	// net_events leaves each hold at least half a day. On the wall clock,
+	// a run at 23:59:30 started the window 30 s before a midnight: the first
+	// leaf held ~35 dense rows, the planner rightly seq-scanned that one-page
+	// leaf, and the "no costed Seq Scan" plan check failed — a fixture
+	// artefact, not a plan defect (the probe still used (device_id, ts) on
+	// every other leaf).
+	now := utcDay(time.Now()).Add(-12 * time.Hour)
 	start, span := now.Add(-72*time.Hour), 71*time.Hour
 	f := seedBackfillRows(t, d, sparse.ID, start, span, 1500)
 	const denseRows = 300000
