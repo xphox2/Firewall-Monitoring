@@ -150,7 +150,7 @@ jobs:
   integration-postgres:
     name: Integration (PostgreSQL)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     # AUDIT-118: the default Build & Test job runs on SQLite; production is
     # Postgres. This job runs the build-tagged (//go:build integration) suite
     # against a real Postgres so the Postgres-only paths get exercised on every
@@ -194,7 +194,25 @@ jobs:
         # in TestPostgresIntegration/PopulatedTableSkipped). One binary at a time =
         # one owner of the shared schema at a time. Any NEW integration-tagged
         # package must be appended here AND keep -p 1.
-        run: go test -tags=integration -p 1 -count=1 -timeout=5m ./internal/database/... ./internal/api/handlers/... ./cmd/poller/... ./internal/archive/...
+        #
+        # -timeout is per package binary: ./internal/database/... alone takes
+        # 200-290 s on a hosted runner, so the old 5m killed it at random (PR
+        # #312: started 05:37:00, killed at 05:41:59). The script runs
+        # `go test -tags=integration -p 1 -count=1 -timeout=15m -json`, keeps the
+        # full stream in integration.json (uploaded below) and prints a summary
+        # naming every failing package and test — a timeout's "panic: test
+        # timed out" and the tests running then included — which the job log
+        # (truncated past a few MB of GORM output) used to lose.
+        run: .github/scripts/integration-tests.sh ./internal/database/... ./internal/api/handlers/... ./cmd/poller/... ./internal/archive/...
+
+      - name: Upload integration test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-json
+          path: integration.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   vuln-scan:
     name: govulncheck

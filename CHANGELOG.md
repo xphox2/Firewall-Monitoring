@@ -77,6 +77,11 @@ All notable changes to this project are documented in this file.
 - `TestArchiveTableProgress_ParkedChunkOfSealedMonth` gains a chunk beyond the sealed `last_id` (holds V). `TestBackfillArchiveGateOverrides` (release, re-engage, an extended release, garbage, a row already recorded by 0.11.307, a re-run), `TestArchiveGateHold` (gated while unrecorded, still held inside the retry minute, released and recorded from the start after it), `TestSetArchiveGateOverride_OneTransaction`, `TestSeal_UnrecordedBeforeV77` (v77 after / before the archive began), `before_archive` in `TestSeal_DegradedIntervalsMarkPartial`; the syslog fixture now begins the archive on 6 September so October can be full; the PostgreSQL month-seal test expects the previous month partial (the archive began during the test).
 - Mutation-checked: no range containment, no backfill, the backfill not ending a release early, no `before_archive`, no `unrecorded`, no hold, no retry, the override outside a transaction each fail a test.
 
+### CI — integration job timeout and failure summary
+
+- **The PostgreSQL integration job failed on PR #312 by timeout, not by a test.** `-timeout` applies per package binary, and `./internal/database/...` alone takes 200-290 s on a hosted runner (289.8 s on master's last green run), so the old `-timeout=5m` killed it at random: in the failed run the package started at 05:37:00 and its output was flushed, killed, at 05:41:59. The job log was truncated in the middle of that package's GORM output, so the `panic: test timed out` never showed. Locally the same invocation passes in 150-175 s; a 60 s limit reproduces the kill.
+- The job now runs `.github/scripts/integration-tests.sh`: `go test -tags=integration -p 1 -count=1 -timeout=15m -json` (still one package binary at a time against the one database), the full stream kept in `integration.json` (uploaded as the `integration-test-json` artifact) and a short summary printed to the log and the step summary: every package's result and time, every failed test, and only the lines that matter — the failed tests' assertions, panics, and a timeout's "running tests" list. Job limit 30 min (was 15). `make test-integration` uses `-timeout=15m` too.
+
 ## [0.11.306] - 2026-10-06
 
 ### Added — `RETENTION_SYSLOG_MONTHS`: raw syslog kept a rolling calendar month (archive plan PR 6)

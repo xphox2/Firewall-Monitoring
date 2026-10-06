@@ -59,7 +59,8 @@ test-integration: ## Run the Postgres integration suite (AUDIT-118; needs TEST_P
 	# -p 1: both packages reset the SAME TEST_PG_DSN schema (DROP SCHEMA public
 	# CASCADE) in NewIntegrationDB, so they must not run concurrently — one binary
 	# at a time keeps a single owner of the shared database. See ci.yml.
-	$(GO) test -tags=integration -p 1 -count=1 -timeout=5m ./internal/database/... ./internal/api/handlers/...
+	# -timeout is per package; ./internal/database/... alone takes minutes.
+	$(GO) test -tags=integration -p 1 -count=1 -timeout=15m ./internal/database/... ./internal/api/handlers/...
 
 .PHONY: bench-ingest
 bench-ingest: ## Run the Postgres ingestion benchmarks (needs TEST_PG_DSN)

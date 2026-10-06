@@ -92,3 +92,6 @@ docs/audit-archive/
 *.sql
 *.pcap
 /*.txt
+
+# go test -json output of .github/scripts/integration-tests.sh
+integration.json
