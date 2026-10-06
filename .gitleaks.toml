@@ -20,7 +20,7 @@ regexes = [
   '''^pendKey := "lc01-pending-key"$''',
 ]
 
-# Archive S3 secret-redaction fixtures as first committed (0.11.299, before they
+# Archive S3 secret-redaction fixtures as first committed (0.11.300, before they
 # became low-entropy "not-a-real-secret-…" strings): one synthetic value, exact,
 # in the two test files only. History is never rewritten, so the scan of that
 # commit needs this entry.
