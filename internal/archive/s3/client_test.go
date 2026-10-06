@@ -79,6 +79,7 @@ func certPool(srv *httptest.Server) *x509.CertPool {
 
 func withRoots(p *x509.CertPool) option     { return func(s *settings) { s.rootCAs = p } }
 func withPartSize(n int64) option           { return func(s *settings) { s.partSize = n } }
+func withAttempts(n int) option             { return func(s *settings) { s.maxAttempts = n } }
 func withNow(f func() time.Time) option     { return func(s *settings) { s.now = f } }
 func fixedNow(t time.Time) func() time.Time { return func() time.Time { return t } }
 
@@ -329,6 +330,9 @@ func TestVerifyFull_DetectsHashMismatch(t *testing.T) {
 func TestNew_PrivateEndpointPinned(t *testing.T) {
 	srv := s3test.NewB2Strict(t, testBucket)
 	roots := withRoots(certPool(srv.Server))
+	// One attempt: the refused dial is retryable, and three attempts with
+	// backoff only made this test slow. The assertions are unchanged.
+	once := withAttempts(1)
 
 	cfg := testConfig(srv.URL)
 	cfg.AllowPrivateEndpoint = false
@@ -337,7 +341,7 @@ func TestNew_PrivateEndpointPinned(t *testing.T) {
 	}
 
 	cfg.Endpoint = strings.Replace(srv.URL, "127.0.0.1", "localhost", 1)
-	cl, err := New(cfg, roots)
+	cl, err := New(cfg, roots, once)
 	if err != nil {
 		t.Fatalf("New(localhost): %v", err)
 	}

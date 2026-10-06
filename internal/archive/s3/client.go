@@ -87,9 +87,10 @@ type Client struct {
 
 // settings are construction knobs the tests use.
 type settings struct {
-	rootCAs  *x509.CertPool
-	partSize int64
-	now      func() time.Time
+	rootCAs     *x509.CertPool
+	partSize    int64
+	now         func() time.Time
+	maxAttempts int // 0 = the SDK default (3 attempts with backoff)
 }
 
 type option func(*settings)
@@ -145,6 +146,7 @@ func New(cfg config.ArchiveConfig, opts ...option) (*Client, error) {
 		ClientLogMode:              0,
 		// Never send "Expect: 100-continue" (the SDK does above 2 MiB).
 		ContinueHeaderThresholdBytes: -1,
+		RetryMaxAttempts:             s.maxAttempts,
 		DisableS3ExpressSessionAuth:  aws.Bool(true),
 	})
 
