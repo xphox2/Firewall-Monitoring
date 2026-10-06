@@ -209,9 +209,12 @@ func archiveCmd(args []string, stdout, stderr io.Writer, open func() (archiveSto
 		return 1
 	}
 	if _, err := db.ResetArchiveChunk(context.Background(), c.ID, "reset for re-export from the CLI: "+why, time.Now()); err != nil {
-		if errors.Is(err, database.ErrArchiveChunkNotParked) {
+		switch {
+		case errors.Is(err, database.ErrArchiveChunkSealed):
+			fmt.Fprintf(stderr, "archive: chunk %d (%s %s): %v\n", c.ID, c.SourceTable, c.Month, err)
+		case errors.Is(err, database.ErrArchiveChunkNotParked):
 			fmt.Fprintf(stderr, "archive: chunk %d is %s, not %s\n", c.ID, c.Status, models.ArchiveChunkNeedsAttention)
-		} else {
+		default:
 			fmt.Fprintf(stderr, "archive: reset: %v\n", err)
 		}
 		return 1

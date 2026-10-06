@@ -275,8 +275,11 @@ func archivePartitionMaxID(tx *gorm.DB, leaf string) (int64, error) {
 var errArchivePartitionHeld = errors.New("archive gate: partition holds rows above the verified-through id")
 
 // SetArchiveGateOverride releases the gate of stream until until (UTC), or
-// re-engages it now when until is zero. It only writes the setting; the
-// caller validates the bound and writes the audit row.
+// re-engages it now when until is zero. It writes the setting and records the
+// interval in archive_gate_events (a release ends any earlier one now and
+// starts a new one ending at until; re-engaging ends the open one now), so the
+// month seal can tell which months' rows may have been deleted unarchived.
+// The caller validates the bound and writes the audit row.
 func (d *Database) SetArchiveGateOverride(stream string, until time.Time) error {
 	if archiveGateTables(stream) == nil {
 		return fmt.Errorf("archive gate: unknown stream %q", stream)
@@ -285,9 +288,77 @@ func (d *Database) SetArchiveGateOverride(stream string, until time.Time) error 
 	if !until.IsZero() {
 		val = until.UTC().Format(time.RFC3339)
 	}
+	now := archiveGateClock().UTC()
+	if err := d.endArchiveGateEvents(d.db, stream, models.ArchiveGateEventOverride, now); err != nil {
+		return err
+	}
+	if !until.IsZero() && until.After(now) {
+		u := until.UTC()
+		if err := d.db.Create(&models.ArchiveGateEvent{Stream: stream, Kind: models.ArchiveGateEventOverride, From: now, To: &u}).Error; err != nil {
+			return fmt.Errorf("archive gate: record the override of %s: %w", stream, err)
+		}
+	}
 	return d.UpsertSetting(&models.SystemSetting{Key: ArchiveGateOverrideKey(stream), Value: val, Type: "string", Category: "archive",
 		Label: "Archive retention gate released until (set only by the re-authenticated override)"})
 }
+
+// endArchiveGateEvents ends stream's events of kind that are still running
+// at now (open, or ending later) at now.
+func (d *Database) endArchiveGateEvents(tx *gorm.DB, stream, kind string, now time.Time) error {
+	if err := tx.Model(&models.ArchiveGateEvent{}).Where("stream = ? AND kind = ? AND (to_ts IS NULL OR to_ts > ?)", stream, kind, now).
+		Update("to_ts", now).Error; err != nil {
+		return fmt.Errorf("archive gate: end the %s events of %s: %w", kind, stream, err)
+	}
+	return nil
+}
+
+// RecordArchiveGateState records, at the poller's start, whether each gate
+// stream's deletes wait for the archive from now on: an enabled stream ends
+// its open "disabled" interval; a disabled stream whose tables already have
+// chunks (the archive had begun) opens one unless one is open. Deletes run in
+// the poller, so its start is exactly when the switch takes effect.
+func (d *Database) RecordArchiveGateState(ctx context.Context) error {
+	now := archiveGateClock().UTC()
+	for _, stream := range ArchiveGateStreams {
+		tx := d.db.WithContext(ctx)
+		if d.archiveGateCfg.enabled(stream) {
+			if err := d.endArchiveGateEvents(tx, stream, models.ArchiveGateEventDisabled, now); err != nil {
+				return err
+			}
+			continue
+		}
+		var chunks, open int64
+		if err := tx.Model(&models.ArchiveChunk{}).Where("table_name IN ?", archiveGateTables(stream)).Count(&chunks).Error; err != nil {
+			return err
+		}
+		if chunks == 0 {
+			continue
+		}
+		if err := tx.Model(&models.ArchiveGateEvent{}).Where("stream = ? AND kind = ? AND to_ts IS NULL", stream, models.ArchiveGateEventDisabled).
+			Count(&open).Error; err != nil {
+			return err
+		}
+		if open == 0 {
+			if err := tx.Create(&models.ArchiveGateEvent{Stream: stream, Kind: models.ArchiveGateEventDisabled, From: now}).Error; err != nil {
+				return fmt.Errorf("archive gate: record that %s is disabled: %w", stream, err)
+			}
+		}
+	}
+	return nil
+}
+
+// ArchiveGateEventsOverlapping returns the events of gate stream that overlap
+// [from, to), oldest first.
+func (d *Database) ArchiveGateEventsOverlapping(ctx context.Context, stream string, from, to time.Time) ([]models.ArchiveGateEvent, error) {
+	var evs []models.ArchiveGateEvent
+	err := d.db.WithContext(ctx).Where("stream = ? AND from_ts < ? AND (to_ts IS NULL OR to_ts > ?)", stream, to, from).
+		Order("from_ts, id").Find(&evs).Error
+	return evs, err
+}
+
+// ArchiveGateStreamOfTable is the gate stream of a raw table ("" when the
+// table is not archived).
+func ArchiveGateStreamOfTable(table string) string { return archiveGateStream(table) }
 
 // ArchiveGateOverride reports stream's override at now: the end instant, and
 // whether it is active.
@@ -297,6 +368,11 @@ func (d *Database) ArchiveGateOverride(stream string, now time.Time) (until time
 
 // ErrArchiveChunkNotParked: the chunk to reset is not in needs_attention.
 var ErrArchiveChunkNotParked = errors.New("archive: the chunk is not in needs_attention")
+
+// ErrArchiveChunkSealed: the chunk to reset belongs to a sealed month. Its
+// folder takes no further write, so a re-export could only be refused and
+// parked again; see docs/OPERATIONS.md "Raw archive: the monthly seal".
+var ErrArchiveChunkSealed = errors.New("archive: the chunk belongs to a sealed month, whose folder is never written again; it does not hold the retention gate (see docs/OPERATIONS.md, the monthly seal)")
 
 // GetArchiveChunk loads one chunk by id (gorm.ErrRecordNotFound when absent).
 func (d *Database) GetArchiveChunk(id uint) (*models.ArchiveChunk, error) {
@@ -320,11 +396,20 @@ func (d *Database) ListArchiveChunksNeedingAttention(limit int) ([]models.Archiv
 // verify counters cleared, and the worker exports it again on its next pass
 // (its earlier objects were superseded when it was parked; Object Lock keeps
 // them). A compare-and-set on the status: any other status is
-// ErrArchiveChunkNotParked, an unknown id gorm.ErrRecordNotFound. Attempts
-// are kept (history).
+// ErrArchiveChunkNotParked, an unknown id gorm.ErrRecordNotFound, a chunk of
+// a sealed month ErrArchiveChunkSealed. Attempts are kept (history).
 func (d *Database) ResetArchiveChunk(ctx context.Context, id uint, note string, at time.Time) (*models.ArchiveChunk, error) {
 	if len(note) > archiveErrorMax {
 		note = note[:archiveErrorMax]
+	}
+	c, err := d.GetArchiveChunk(id)
+	if err != nil {
+		return nil, err
+	}
+	if sealed, err := d.archiveChunkMonthSealed(ctx, c); err != nil {
+		return nil, err
+	} else if sealed {
+		return c, ErrArchiveChunkSealed
 	}
 	res := d.db.WithContext(ctx).Model(&models.ArchiveChunk{}).
 		Where("id = ? AND status = ?", id, models.ArchiveChunkNeedsAttention).
@@ -333,8 +418,7 @@ func (d *Database) ResetArchiveChunk(ctx context.Context, id uint, note string, 
 	if res.Error != nil {
 		return nil, res.Error
 	}
-	c, err := d.GetArchiveChunk(id)
-	if err != nil {
+	if c, err = d.GetArchiveChunk(id); err != nil {
 		return nil, err
 	}
 	if res.RowsAffected != 1 {

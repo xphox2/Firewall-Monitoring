@@ -586,3 +586,21 @@ func TestGetBytes(t *testing.T) {
 		t.Errorf("GetBytes wrote %d objects", n-puts)
 	}
 }
+
+// TestVersions: one version per write of exactly that key (a key that merely
+// shares the prefix is not counted), none for a missing key.
+func TestVersions(t *testing.T) {
+	cl, _ := newFakeClient(t, nil)
+	ctx := context.Background()
+	data := []byte("x\n")
+	for _, rel := range []string{"m/_MONTH.json", "m/_MONTH.json.bak", "m/_MONTH.json"} {
+		if _, err := cl.Put(ctx, rel, bytes.NewReader(data), int64(len(data)), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for rel, want := range map[string]int{"m/_MONTH.json": 2, "m/_MONTH.json.bak": 1, "m/absent.json": 0} {
+		if n, err := cl.Versions(ctx, rel); err != nil || n != want {
+			t.Errorf("Versions(%s) = %d, %v; want %d", rel, n, err, want)
+		}
+	}
+}

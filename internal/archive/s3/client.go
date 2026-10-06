@@ -532,6 +532,38 @@ func (c *Client) GetBytes(ctx context.Context, rel, versionID string, limit int6
 	return body, info, nil
 }
 
+// Versions counts the stored versions and delete markers of exactly rel
+// (ListObjectVersions; an unversioned bucket reports its one object as one
+// version). 0 when there is none.
+func (c *Client) Versions(ctx context.Context, rel string) (int, error) {
+	key, err := c.Key(rel)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	in := &awss3.ListObjectVersionsInput{Bucket: aws.String(c.bucket), Prefix: aws.String(key)}
+	for {
+		out, err := c.api.ListObjectVersions(ctx, in)
+		if err != nil {
+			return 0, c.wrap("list versions of", key, err)
+		}
+		for _, v := range out.Versions {
+			if aws.ToString(v.Key) == key {
+				n++
+			}
+		}
+		for _, m := range out.DeleteMarkers {
+			if aws.ToString(m.Key) == key {
+				n++
+			}
+		}
+		if !aws.ToBool(out.IsTruncated) {
+			return n, nil
+		}
+		in.KeyMarker, in.VersionIdMarker = out.NextKeyMarker, out.NextVersionIdMarker
+	}
+}
+
 // Preflight lists at most one key under the prefix, which proves the
 // credentials, bucket and prefix scope work without writing anything. When
 // ARCHIVE_OBJECT_LOCK_DAYS > 0 it also reads the bucket's Object Lock

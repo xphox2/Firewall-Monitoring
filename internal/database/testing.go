@@ -111,6 +111,8 @@ var testModels = []interface{}{
 	&models.ArchiveObject{},
 	&models.ArchiveMonth{},
 	&models.ArchiveIDMark{},
+	// v77: intervals the archive gate was released or the stream disabled.
+	&models.ArchiveGateEvent{},
 }
 
 // NewDatabaseForTesting creates an in-memory SQLite Database for use in tests.

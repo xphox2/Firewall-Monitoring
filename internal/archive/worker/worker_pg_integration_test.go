@@ -347,8 +347,16 @@ func TestWorker_PG_MonthSeal(t *testing.T) {
 	firstMonth, prevMonth := export.MonthOf(first), export.MonthOf(prev)
 	deadline := time.Now().Add(60 * time.Second)
 	var m *models.ArchiveMonth
+	// The loop drives passes back to back: end the seal backoff a refusal
+	// (the month still incomplete while its days settle) would start.
+	noBackoff := func() {
+		for k := range w.cooldown {
+			delete(w.cooldown, k)
+		}
+	}
 	for {
 		w.lastPass = time.Time{}
+		noBackoff()
 		w.Tick(context.Background())
 		if m, err = d.ArchiveMonthState(context.Background(), export.StreamSyslog, firstMonth); err != nil {
 			t.Fatal(err)
@@ -373,6 +381,7 @@ func TestWorker_PG_MonthSeal(t *testing.T) {
 	}
 	for {
 		w.lastPass = time.Time{}
+		noBackoff()
 		w.Tick(context.Background())
 		pm, err := d.ArchiveMonthState(context.Background(), export.StreamSyslog, prevMonth)
 		if err != nil {

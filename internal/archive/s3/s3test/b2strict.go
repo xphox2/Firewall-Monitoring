@@ -23,7 +23,10 @@
 //     ("<md5 of part md5s>-<n>") as B2 and S3 do (gofakes3 reports the MD5
 //     of the whole body);
 //   - DeleteObject / DeleteObjects are 403 AccessDenied and counted: the
-//     archive's key has no deleteFiles and the app never deletes.
+//     archive's key has no deleteFiles and the app never deletes;
+//   - ListObjectVersions is answered by the wrapper: one version per
+//     successful write of a key, as a versioned bucket (B2 always is) lists
+//     them (the memory backend itself is unversioned).
 //
 // Fail lets a test inject an error response for chosen requests, and
 // SetMutateGet a read-back that differs from what was stored.
@@ -39,6 +42,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -61,6 +65,7 @@ const (
 	OpHeadObject     Op = "HeadObject"
 	OpGetObject      Op = "GetObject"
 	OpListObjects    Op = "ListObjects"
+	OpListVersions   Op = "ListObjectVersions"
 	OpGetLockConfig  Op = "GetObjectLockConfiguration"
 	OpDeleteObject   Op = "DeleteObject"
 	OpDeleteObjects  Op = "DeleteObjects"
@@ -102,6 +107,7 @@ type Server struct {
 	reqs       []Request
 	lock       map[string]Retention
 	etags      map[string]string        // multipart composite ETag by key
+	versions   map[string]int           // successful writes per key (ListObjectVersions)
 	partSizes  map[string]map[int]int64 // uploadId -> part number -> bytes
 }
 
@@ -134,6 +140,7 @@ func NewB2Strict(t testing.TB, bucket string, opts ...Option) *Server {
 		objectLock: true,
 		lock:       map[string]Retention{},
 		etags:      map[string]string{},
+		versions:   map[string]int{},
 		partSizes:  map[string]map[int]int64{},
 	}
 	for _, o := range opts {
@@ -216,6 +223,8 @@ func classify(r *http.Request, bucket string) (Op, string) {
 		return OpHeadObject, key
 	case r.Method == http.MethodGet && key != "":
 		return OpGetObject, key
+	case r.Method == http.MethodGet && key == "" && q.Has("versions"):
+		return OpListVersions, key
 	case r.Method == http.MethodGet && key == "" && q.Has("object-lock"):
 		return OpGetLockConfig, key
 	case r.Method == http.MethodGet && key == "":
@@ -324,6 +333,14 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?><ObjectLockConfiguration><ObjectLockEnabled>Enabled</ObjectLockEnabled></ObjectLockConfiguration>`)
 		return
 	}
+	if op == OpListVersions {
+		// The memory backend is unversioned; answer from the writes seen, as
+		// a versioned bucket (B2) would list them: one version per write.
+		s.record(op, key, r, http.StatusOK)
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = io.WriteString(w, s.listVersions(r.URL.Query().Get("prefix")))
+		return
+	}
 	if op == OpDeleteObject || op == OpDeleteObjects {
 		s.record(op, key, r, http.StatusForbidden)
 		writeError(w, http.StatusForbidden, "AccessDenied", "The archive key has no deleteFiles capability.")
@@ -377,6 +394,7 @@ func (s *Server) after(op Op, key string, r *http.Request, h http.Header, body [
 		}
 		if op == OpPutObject {
 			delete(s.etags, key)
+			s.versions[key]++
 		}
 	case OpUploadPart:
 		id := r.URL.Query().Get("uploadId")
@@ -393,6 +411,7 @@ func (s *Server) after(op Op, key string, r *http.Request, h http.Header, body [
 		if xml.Unmarshal(body, &res) == nil && res.ETag != "" {
 			s.etags[key] = res.ETag
 		}
+		s.versions[key]++
 	case OpHeadObject, OpGetObject:
 		// The bucket is unversioned (WithoutVersioning): PUT answers without
 		// a version id, but the memory backend's HEAD / GET still report its
@@ -407,4 +426,29 @@ func (s *Server) after(op Op, key string, r *http.Request, h http.Header, body [
 			h.Set("X-Amz-Object-Lock-Retain-Until-Date", l.RetainUntil.Format(time.RFC3339))
 		}
 	}
+}
+
+// listVersions renders a ListVersionsResult of every key under prefix, one
+// version per successful write (synthetic ids v1..vN, the last latest).
+func (s *Server) listVersions(prefix string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	keys := make([]string, 0, len(s.versions))
+	for k := range s.versions {
+		if strings.HasPrefix(k, prefix) {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	fmt.Fprintf(&b, `<?xml version="1.0" encoding="UTF-8"?><ListVersionsResult><Name>%s</Name><Prefix>%s</Prefix><IsTruncated>false</IsTruncated>`,
+		xmlEscape(s.Bucket), xmlEscape(prefix))
+	for _, k := range keys {
+		n := s.versions[k]
+		for i := n; i >= 1; i-- {
+			fmt.Fprintf(&b, `<Version><Key>%s</Key><VersionId>v%d</VersionId><IsLatest>%t</IsLatest></Version>`, xmlEscape(k), i, i == n)
+		}
+	}
+	b.WriteString(`</ListVersionsResult>`)
+	return b.String()
 }

@@ -3,10 +3,12 @@ package worker
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/md5" // #nosec G501 -- test computes an S3 ETag
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -17,6 +19,7 @@ import (
 	"firewall-mon/internal/archive/s3"
 	"firewall-mon/internal/archive/s3/s3test"
 	"firewall-mon/internal/config"
+	"firewall-mon/internal/database"
 	"firewall-mon/internal/models"
 )
 
@@ -50,6 +53,14 @@ func syslogMonths(t *testing.T, h *harness) []int64 {
 	return seedSyslog(t, h.db, created...)
 }
 
+// noBackoff ends every seal backoff (a test changing the month between
+// passes that are closer than the backoff).
+func (h *harness) noBackoff() {
+	for k := range h.w.cooldown {
+		delete(h.w.cooldown, k)
+	}
+}
+
 func (h *harness) month(stream, month string) *models.ArchiveMonth {
 	h.t.Helper()
 	m, err := h.db.ArchiveMonthState(ctx, stream, month)
@@ -81,7 +92,7 @@ func (h *harness) verifyMonth(stream, month string) *MonthReport {
 		h.t.Fatalf("VerifyMonth %s %s: %v", stream, month, err)
 	}
 	for _, r := range h.srv.Requests()[puts:] {
-		if r.Op != s3test.OpGetObject {
+		if r.Op != s3test.OpGetObject && r.Op != s3test.OpListVersions {
 			h.t.Fatalf("VerifyMonth sent %s %s: it must only read", r.Op, r.Key)
 		}
 	}
@@ -201,6 +212,7 @@ func TestSeal_IncompleteMonthNeverSealed(t *testing.T) {
 		{"seq gap", sealGap, "does not continue", map[string]any{"seq": mid.Seq + 1000}},
 	} {
 		set(mid.ID, c.fields)
+		h.noBackoff()
 		h.tickAt(day(10, 3, 1, 0))
 		m := h.month(export.StreamSyslog, "2026-09")
 		if m == nil || m.Status != models.ArchiveMonthSealFailed || !strings.Contains(m.Error, c.msg) || m.SealedAt != nil {
@@ -227,7 +239,12 @@ func TestSeal_IncompleteMonthNeverSealed(t *testing.T) {
 	if m := h.month(export.StreamSyslog, "2026-10"); m != nil {
 		t.Fatalf("October evaluated while September is not sealed: %+v", m)
 	}
+	// September is 31 days past its seal time (3 Oct 00:00).
+	if got := metricValue(t, `fwmon_archive_month_unsealed_days{stream="syslog"}`); got != 31 {
+		t.Fatalf("month_unsealed_days %v, want 31", got)
+	}
 	set(last.ID, map[string]any{"period_end": day(10, 1, 0, 0)})
+	h.noBackoff()
 	h.tickAt(day(11, 3, 0, 10))
 	for _, month := range []string{"2026-09", "2026-10"} {
 		if m := h.month(export.StreamSyslog, month); m == nil || m.Status != models.ArchiveMonthSealed || m.Error != "" {
@@ -236,6 +253,9 @@ func TestSeal_IncompleteMonthNeverSealed(t *testing.T) {
 	}
 	if blocked(sealIncomplete) != 0 || blocked(sealGap) != 0 {
 		t.Fatal("seal_blocked still set after the seal")
+	}
+	if got := metricValue(t, `fwmon_archive_month_unsealed_days{stream="syslog"}`); got != 0 {
+		t.Fatalf("month_unsealed_days %v after the seals, want 0", got)
 	}
 }
 
@@ -426,6 +446,16 @@ func TestSeal_WriteIntoSealedMonthRefused(t *testing.T) {
 			t.Fatalf("object %s of the sealed month is %s: the refused attempt changed it", o.ObjectKey, o.Status)
 		}
 	}
+	// The parked chunk of the sealed month does not hold the gate, and the
+	// A-5 reset refuses it (a re-export could only be refused again).
+	cs := h.chunks(export.TableSyslog)
+	p, err := h.db.ArchiveTableProgress(ctx, export.TableSyslog)
+	if err != nil || p.VerifiedThroughID != cs[len(cs)-1].IDHi {
+		t.Fatalf("V = %d (%v), want %d: the parked chunk of the sealed month holds the gate", p.VerifiedThroughID, err, cs[len(cs)-1].IDHi)
+	}
+	if _, err := h.db.ResetArchiveChunk(ctx, c.ID, "r", time.Now()); !errors.Is(err, database.ErrArchiveChunkSealed) {
+		t.Fatalf("reset of the parked chunk of a sealed month: %v", err)
+	}
 
 	// The guard itself: a key outside any month folder, and a sealed one.
 	if _, err := h.w.put(ctx, "syslog/v1/notamonth", bytes.NewReader(nil), 0, nil); err == nil {
@@ -581,7 +611,7 @@ func TestVerifyMonth_DetectsTampering(t *testing.T) {
 	}
 	rep := h.verifyMonth(export.StreamSyslog, "2026-09")
 	all := strings.Join(rep.Problems, "\n")
-	if rep.OK() || !strings.Contains(all, "recorded at the seal") || !strings.Contains(all, "totals") {
+	if rep.OK() || !strings.Contains(all, "recorded at the seal") || !strings.Contains(all, "totals") || !strings.Contains(all, "has 2 versions") {
 		t.Fatalf("edited _MONTH.json: %v", rep.Problems)
 	}
 }
@@ -623,4 +653,180 @@ func TestVerifyMonth_ForgedObjectCaughtByContent(t *testing.T) {
 	if all := strings.Join(rep.Problems, "\n"); rep.OK() || !strings.Contains(all, "decompressed sha256 differs") {
 		t.Fatalf("forged object: %v", rep.Problems)
 	}
+}
+
+// TestSeal_DegradedIntervalsMarkPartial: an override or a disabled interval
+// that overlaps a month's archiving (its start to its last chunk's
+// verification) is listed in its _MONTH.json, clamped to that window, and
+// makes the month partial — also a month that is not the archive's first;
+// one after it does not. --verify-month accepts the result.
+func TestSeal_DegradedIntervalsMarkPartial(t *testing.T) {
+	h := newHarness(t, day(10, 2, 22, 0), func(c *config.ArchiveConfig) { c.FlowsEnabled = false })
+	syslogMonths(t, h)
+	ev := func(kind string, from time.Time, to *time.Time) {
+		if err := h.db.Gorm().Create(&models.ArchiveGateEvent{Stream: database.ArchiveGateSyslog, Kind: kind, From: from, To: to}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	at := func(t time.Time) *time.Time { return &t }
+	ev(models.ArchiveGateEventOverride, day(9, 30, 22, 0), at(day(10, 1, 2, 0))) // across the month boundary
+	ev(models.ArchiveGateEventOverride, day(10, 15, 9, 0), at(day(10, 15, 15, 0)))
+	ev(models.ArchiveGateEventDisabled, day(10, 30, 12, 0), nil)                // still open: clamped to October's verification
+	ev(models.ArchiveGateEventOverride, day(11, 3, 6, 0), at(day(11, 3, 8, 0))) // after October was archived
+	if err := h.db.Gorm().Create(&models.ArchiveGateEvent{Stream: database.ArchiveGateFlows, Kind: models.ArchiveGateEventOverride,
+		From: day(10, 10, 0, 0), To: at(day(10, 11, 0, 0))}).Error; err != nil { // another gate stream
+		t.Fatal(err)
+	}
+	h.tickAt(day(10, 3, 0, 0))
+	sep, _ := h.monthManifestOf(h.month(export.StreamSyslog, "2026-09"))
+	if !sep.Partial || len(sep.Degraded) != 1 || sep.Degraded[0] != (degradedInterval{Kind: models.ArchiveGateEventOverride, From: "2026-09-30T22:00:00Z", To: "2026-10-01T02:00:00Z"}) ||
+		!strings.Contains(sep.PartialNote, "began in this month") || !strings.Contains(sep.PartialNote, "did not wait for the archive") {
+		t.Fatalf("September (first month, one interval): %+v", sep)
+	}
+	h.tickAt(day(11, 3, 0, 0))
+	oct := h.month(export.StreamSyslog, "2026-10")
+	om, _ := h.monthManifestOf(oct)
+	want := []degradedInterval{
+		{Kind: models.ArchiveGateEventOverride, From: "2026-10-01T00:00:00Z", To: "2026-10-01T02:00:00Z"}, // clamped to the month
+		{Kind: models.ArchiveGateEventOverride, From: "2026-10-15T09:00:00Z", To: "2026-10-15T15:00:00Z"},
+		{Kind: models.ArchiveGateEventDisabled, From: "2026-10-30T12:00:00Z", To: "2026-11-03T00:00:00Z"},
+	}
+	if !oct.Partial || !om.Partial || len(om.Degraded) != len(want) || om.Degraded[0] != want[0] || om.Degraded[1] != want[1] || om.Degraded[2] != want[2] ||
+		!strings.Contains(om.PartialNote, "did not wait for the archive") || strings.Contains(om.PartialNote, "began in this month") {
+		t.Fatalf("October: row partial %v, manifest %+v", oct.Partial, om)
+	}
+	if rep := h.verifyMonth(export.StreamSyslog, "2026-10"); !rep.OK() || !rep.Partial {
+		t.Fatalf("verify-month October: %+v", rep)
+	}
+}
+
+// TestSeal_RefusalBacksOffAndConflictFirst: a _MONTH.json the archive did not
+// write is refused before any object is re-checked, and the refused month is
+// not looked at again until its backoff has passed.
+func TestSeal_RefusalBacksOffAndConflictFirst(t *testing.T) {
+	h := newHarness(t, day(10, 2, 22, 0), func(c *config.ArchiveConfig) { c.FlowsEnabled = false; c.SealReverify = config.SealReverifyFull })
+	syslogMonths(t, h)
+	h.tickAt(day(10, 2, 23, 0))
+	rel := export.MonthFolderRel(export.StreamSyslog, export.SyslogSchemaV1, "2026-09") + "/" + export.MonthManifestName
+	planted := []byte(`{"kind":"fwmon-archive-month"}` + "\n")
+	if _, err := h.store.Put(ctx, rel, bytes.NewReader(planted), int64(len(planted)), nil); err != nil {
+		t.Fatal(err)
+	}
+	dataReads := func(from int) int {
+		n := 0
+		for _, r := range h.srv.Requests()[from:] {
+			if (r.Op == s3test.OpHeadObject || r.Op == s3test.OpGetObject) && !strings.HasSuffix(r.Key, export.MonthManifestName) {
+				n++
+			}
+		}
+		return n
+	}
+	from := len(h.srv.Requests())
+	h.tickAt(day(10, 3, 0, 0))
+	if m := h.month(export.StreamSyslog, "2026-09"); m == nil || m.Status != models.ArchiveMonthSealFailed || !strings.Contains(m.Error, "conflict") {
+		t.Fatalf("September over a planted manifest: %+v", m)
+	}
+	if n := dataReads(from); n != 0 {
+		t.Fatalf("%d object / chunk.json reads before the conflict was found", n)
+	}
+	from = len(h.srv.Requests())
+	h.tickAt(day(10, 3, 0, 0).Add(30 * time.Second)) // inside the 1-minute backoff
+	if n := len(h.srv.Requests()) - from; n != 0 {
+		t.Fatalf("%d requests inside the backoff", n)
+	}
+	h.tickAt(day(10, 3, 0, 2))
+	h.tickAt(day(10, 3, 0, 4)) // the second backoff is 5 minutes
+	conflicts := 0
+	for _, r := range h.srv.Requests()[from:] {
+		if r.Op == s3test.OpHeadObject && strings.HasSuffix(r.Key, rel) {
+			conflicts++
+		}
+	}
+	if conflicts != 1 {
+		t.Fatalf("%d conflict checks in 4 minutes, want 1 (backoff 1 then 5 minutes)", conflicts)
+	}
+}
+
+// TestChunkManifest_FrozenFormat pins chunk.json byte for byte: the seal
+// rebuilds every stored chunk.json from the database and requires the same
+// bytes, so its format can never change within a schema version (a change
+// needs a new manifest_version and a seal that knows both).
+func TestChunkManifest_FrozenFormat(t *testing.T) {
+	late := int64(1500)
+	dev := uint(7)
+	start := day(10, 4, 13, 0)
+	lo, hi := start.Add(time.Minute), start.Add(50*time.Minute)
+	hist := `{"2026-10-04":3}`
+	c := &models.ArchiveChunk{SourceTable: export.TableFlows, Seq: 12, IDLo: 100, IDHi: 104, PeriodStart: start, PeriodEnd: start.Add(time.Hour),
+		Month: "2026-10", MarkLateByMs: &late}
+	objs := []models.ArchiveObject{
+		{Stream: export.StreamSFlow, ObjectKey: "p/sflow/v1/2026-10/2026-10-04T13/flows.ndjson.gz", SchemaVersion: 1, Compression: "gzip",
+			RowCount: 3, RawBytes: 900, ObjectBytes: 200, Sha256Content: strings.Repeat("a", 64), Sha256Object: strings.Repeat("b", 64),
+			ETag: strings.Repeat("c", 32), VersionID: "4_z00example", MinID: 101, MaxID: 104, MinTs: &lo, MaxTs: &hi, MsgDayHistogram: &hist},
+		{Stream: export.StreamNetFlow, ObjectKey: "p/netflow/v1/2026-10/2026-10-04T13/flows.ndjson.gz", SchemaVersion: 1, Compression: "gzip",
+			RowCount: 1, RawBytes: 300, ObjectBytes: 90, DeviceID: &dev},
+	}
+	body, err := chunkManifestJSON(c, export.StreamSFlow, 1, objs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(body)
+	const want = "cbf591aaf0a57d640d2e5e20531a5600d4924f216e50a1960a138ec7270f6cca"
+	if got := hex.EncodeToString(sum[:]); got != want {
+		t.Fatalf("chunk.json changed (sha256 %s, pinned %s):\n%s", got, want, body)
+	}
+}
+
+// TestVerifyMonth_NeighboursAndPartial: --verify-month checks that a month
+// joins the sealed months beside it and that only the archive's first month
+// (from id 0, seq 1) or a degraded one is partial.
+func TestVerifyMonth_NeighboursAndPartial(t *testing.T) {
+	h := newHarness(t, day(10, 2, 22, 0), func(c *config.ArchiveConfig) { c.FlowsEnabled = false })
+	syslogMonths(t, h)
+	h.tickAt(day(10, 3, 0, 0))
+	h.tickAt(day(11, 3, 0, 0))
+	for _, m := range []string{"2026-09", "2026-10"} {
+		if rep := h.verifyMonth(export.StreamSyslog, m); !rep.OK() {
+			t.Fatalf("%s: %v", m, rep.Problems)
+		}
+	}
+	// September's manifest missing: October (not from id 0) cannot be joined.
+	hide := hidingReader{MonthReader: h.store.(*s3.Client), hide: "syslog/v1/2026-09/" + export.MonthManifestName}
+	if rep, err := VerifyMonth(ctx, hide, export.StreamSyslog, "2026-10", nil); err != nil || rep.OK() ||
+		!strings.Contains(strings.Join(rep.Problems, "\n"), "previous month 2026-09 has no") {
+		t.Fatalf("October without a sealed September: %+v %v", rep, err)
+	}
+	nov := []byte(`{"first_id": 5, "last_id": 9, "chunks": [{"seq": 99}]}` + "\n")
+	if _, err := h.store.Put(ctx, "syslog/v2/2026-11/_MONTH.json", bytes.NewReader(nov), int64(len(nov)), nil); err != nil {
+		t.Fatal(err)
+	}
+	if rep := h.verifyMonth(export.StreamSyslog, "2026-10"); rep.OK() || !strings.Contains(strings.Join(rep.Problems, "\n"), "next month 2026-11 does not start") {
+		t.Fatalf("October beside a November that does not join: %v", rep.Problems)
+	}
+
+	// September (the first month) re-stored as not partial.
+	sep := h.month(export.StreamSyslog, "2026-09")
+	_, body := h.monthManifestOf(sep)
+	edited := bytes.Replace(body, []byte(`"partial": true`), []byte(`"partial": false`), 1)
+	sum := sha256.Sum256(edited)
+	if _, err := h.store.Put(ctx, strings.TrimPrefix(sep.ManifestKey, testPrefix+"/"), bytes.NewReader(edited), int64(len(edited)),
+		map[string]string{monthManifestShaMeta: hex.EncodeToString(sum[:])}); err != nil {
+		t.Fatal(err)
+	}
+	if rep := h.verifyMonth(export.StreamSyslog, "2026-09"); rep.OK() || !strings.Contains(strings.Join(rep.Problems, "\n"), "partial is false") {
+		t.Fatalf("first month not partial: %v", rep.Problems)
+	}
+}
+
+// hidingReader is a bucket in which one key does not exist.
+type hidingReader struct {
+	MonthReader
+	hide string
+}
+
+func (r hidingReader) GetBytes(ctx context.Context, rel, version string, limit int64) ([]byte, s3.ObjectInfo, error) {
+	if rel == r.hide {
+		return nil, s3.ObjectInfo{}, s3.ErrNotFound
+	}
+	return r.MonthReader.GetBytes(ctx, rel, version, limit)
 }

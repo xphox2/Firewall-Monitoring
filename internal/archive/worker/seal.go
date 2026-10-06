@@ -94,9 +94,63 @@ type monthManifest struct {
 	RawBytes         int64            `json:"raw_bytes"`
 	ObjectBytes      int64            `json:"object_bytes"`
 	MsgDayHistogram  map[string]int64 `json:"msg_day_histogram"`
-	MonthDigestInput string           `json:"month_digest_input"`
-	MonthDigest      string           `json:"month_digest"`
-	Chunks           []monthChunk     `json:"chunks"`
+	// Degraded lists the intervals the stream's raw deletes did not wait for
+	// the archive (an override, or archiving disabled) while rows of this
+	// month were not all archived — clamped to [month start, the month's last
+	// chunk verification]. A month with any is partial.
+	Degraded         []degradedInterval `json:"degraded,omitempty"`
+	MonthDigestInput string             `json:"month_digest_input"`
+	MonthDigest      string             `json:"month_digest"`
+	Chunks           []monthChunk       `json:"chunks"`
+}
+
+// degradedInterval is one entry of _MONTH.json's "degraded".
+type degradedInterval struct {
+	Kind string `json:"kind"`
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// monthManifestShaMeta is the object metadata key the seal stores
+// _MONTH.json's own sha256 under.
+const monthManifestShaMeta = "fwmon-archive-sha256-content"
+
+// degradedIntervals returns the gate events of table's gate stream that
+// overlap the month's archiving: from the month's start (its first row can be
+// no older by ingest time) to the verification of its last chunk (after it,
+// every row of the month is archived). Each is clamped to that window, so
+// the list — and _MONTH.json — does not change when an interval is ended
+// later.
+func (w *Worker) degradedIntervals(ctx context.Context, table, month string, cs []models.ArchiveChunk) ([]degradedInterval, error) {
+	start, _, err := monthBounds(month)
+	if err != nil {
+		return nil, err
+	}
+	var done time.Time
+	for _, c := range cs {
+		if c.VerifiedAt != nil && c.VerifiedAt.After(done) {
+			done = c.VerifiedAt.UTC()
+		}
+	}
+	if !done.After(start) {
+		return nil, nil
+	}
+	evs, err := w.db.ArchiveGateEventsOverlapping(ctx, database.ArchiveGateStreamOfTable(table), start, done)
+	if err != nil {
+		return nil, err
+	}
+	var out []degradedInterval
+	for _, e := range evs {
+		from, to := e.From.UTC(), done
+		if from.Before(start) {
+			from = start
+		}
+		if e.To != nil && e.To.Before(to) {
+			to = e.To.UTC()
+		}
+		out = append(out, degradedInterval{Kind: e.Kind, From: rfc3339(from), To: rfc3339(to)})
+	}
+	return out, nil
 }
 
 // monthChunk is one chunk of the month: its range and period, its chunk.json
@@ -275,15 +329,13 @@ func (w *Worker) sealGrace() time.Duration {
 // sealDue seals every month that is due, per stream oldest first; a month
 // that cannot be sealed stops its stream's later months until it is.
 func (w *Worker) sealDue(ctx context.Context) {
-	due := export.MonthOf(w.now().Add(-w.sealGrace())) // months before it are due
+	now := w.now()
+	due := export.MonthOf(now.Add(-w.sealGrace())) // months before it are due
 	for _, t := range w.tables {
 		var months []string
 		for _, s := range export.StreamsOf(t) {
 			if ctx.Err() != nil {
 				return
-			}
-			if until, ok := w.cooldown["seal-"+s]; ok && w.now().Before(until) {
-				continue
 			}
 			if months == nil {
 				var err error
@@ -303,7 +355,21 @@ func (w *Worker) sealDue(ctx context.Context) {
 				}
 				continue
 			}
-			blocked := ""
+			oldest := ""
+			for _, m := range months {
+				if m >= due {
+					break
+				}
+				if !sealed[m] {
+					oldest = m
+					break
+				}
+			}
+			if until, ok := w.cooldown["seal-"+s]; ok && now.Before(until) {
+				w.setUnsealedDays(s, oldest, now) // after a refusal or a failure: its backoff
+				continue
+			}
+			blocked, stuck := "", ""
 			for _, m := range months {
 				if m >= due || ctx.Err() != nil {
 					break
@@ -315,31 +381,47 @@ func (w *Worker) sealDue(ctx context.Context) {
 					if ctx.Err() != nil {
 						return
 					}
-					blocked = w.sealFailed(ctx, s, m, err)
+					blocked, stuck = w.sealFailed(ctx, s, m, err), m
 					break
 				}
 				w.clearLog("seal-" + s)
 				delete(w.sealFailures, s)
 			}
 			metrics.SetArchiveSealBlocked(s, blocked)
+			w.setUnsealedDays(s, stuck, now)
 		}
 	}
 }
 
+// setUnsealedDays sets fwmon_archive_month_unsealed_days of stream: how far
+// month (the oldest due month that is not sealed; "" for none) is past its
+// seal time, the 1st of the next month + the grace.
+func (w *Worker) setUnsealedDays(stream, month string, now time.Time) {
+	days := 0.0
+	if month != "" {
+		if _, end, err := monthBounds(month); err == nil {
+			days = max(0, now.Sub(end.Add(w.sealGrace())).Hours()/24)
+		}
+	}
+	metrics.SetArchiveMonthUnsealedDays(stream, days)
+}
+
 // sealFailed records why stream's month was not sealed and returns the
-// reason label.
+// reason label. The stream then rests for the chunks' retry backoff (1, 5,
+// 30 minutes, then every 2 hours), refusal or failure alike: a month refused
+// for a reason that persists (a conflicting _MONTH.json, a changed object) must
+// not be re-verified — with ARCHIVE_SEAL_REVERIFY=full, re-downloaded — on
+// every pass.
 func (w *Worker) sealFailed(ctx context.Context, stream, month string, err error) string {
 	reason := sealBucket
 	var r *sealRefusal
 	if errors.As(err, &r) {
 		reason = r.reason
 	} else {
-		// The service or the database failed: try this stream again after a
-		// backoff instead of re-reading the month every pass.
 		metrics.IncArchiveError("seal")
-		w.sealFailures[stream]++
-		w.cooldown["seal-"+stream] = w.now().Add(database.ArchiveRetryBackoff(w.sealFailures[stream]))
 	}
+	w.sealFailures[stream]++
+	w.cooldown["seal-"+stream] = w.now().Add(database.ArchiveRetryBackoff(w.sealFailures[stream]))
 	w.logf("seal-"+stream, "month %s of %s is not sealed (%s): %v", month, stream, reason, err)
 	if rerr := w.db.RefuseArchiveMonth(ctx, stream, month, err.Error(), w.now()); rerr != nil && ctx.Err() == nil {
 		metrics.IncArchiveError("db")
@@ -376,7 +458,7 @@ func (w *Worker) sealMonth(ctx context.Context, table, stream, month string) err
 	if err != nil {
 		return err
 	}
-	partial, err := checkMonth(stream, month, schema, cs, prev, prevMonth, objs)
+	first, err := checkMonth(stream, month, schema, cs, prev, prevMonth, objs)
 	if err != nil {
 		return err
 	}
@@ -386,12 +468,33 @@ func (w *Worker) sealMonth(ctx context.Context, table, stream, month string) err
 	if err != nil {
 		return err
 	}
+	rel := folderRel + "/" + export.MonthManifestName
+	// A _MONTH.json this worker did not record writing (its sha256, stored
+	// with it, is not the one of this month's last seal attempt) is a
+	// conflict: refuse before any re-verification work.
+	if info, err := w.store.Head(ctx, rel, ""); err == nil {
+		st, err := w.db.ArchiveMonthState(ctx, stream, month)
+		if err != nil {
+			return err
+		}
+		if st == nil || st.ManifestSha256 == "" || info.Metadata[monthManifestShaMeta] != st.ManifestSha256 {
+			return refuse(sealConflict, "a %s this archive did not write is already stored (%d bytes, ETag %s): it is never overwritten", rel, info.Size, info.ETag)
+		}
+	} else if !errors.Is(err, s3.ErrNotFound) {
+		return err
+	}
+	degraded, err := w.degradedIntervals(ctx, table, month, cs)
+	if err != nil {
+		return err
+	}
+	partial := first || len(degraded) > 0
 	last := cs[len(cs)-1]
 	m := monthManifest{
 		Kind: MonthManifestKind, ManifestVersion: 1, Stream: stream, Month: month, Table: table, SchemaVersion: schema,
 		Compression: export.Compression, Partial: partial, FirstID: cs[0].IDLo, LastID: last.IDHi,
 		PeriodStart: rfc3339(cs[0].PeriodStart), PeriodEnd: rfc3339(last.PeriodEnd), BoundaryLateByMs: last.MarkLateByMs,
 		ChunkCount: len(cs), MsgDayHistogram: map[string]int64{}, MonthDigestInput: monthDigestInput, Chunks: make([]monthChunk, 0, len(cs)),
+		Degraded: degraded,
 	}
 	full := w.cfg.SealReverify == config.SealReverifyFull
 	for i := range cs {
@@ -415,14 +518,20 @@ func (w *Worker) sealMonth(ctx context.Context, table, stream, month string) err
 		}
 		m.Chunks = append(m.Chunks, mc)
 	}
-	if partial {
-		first := "no row of this stream"
+	var notes []string
+	if first {
+		row := "no row of this stream"
 		if m.FirstRowID != nil {
-			first = "id " + strconv.FormatInt(*m.FirstRowID, 10) + " as its first row"
+			row = "id " + strconv.FormatInt(*m.FirstRowID, 10) + " as its first row"
 		}
-		m.PartialNote = fmt.Sprintf("the archive of %s began in this month: its first chunk starts at %s (ingest time) with %s; rows ingested before were deleted by retention before archiving began, or never existed",
-			table, m.PeriodStart, first)
+		notes = append(notes, fmt.Sprintf("the archive of %s began in this month: its first chunk starts at %s (ingest time) with %s; rows ingested before were deleted by retention before archiving began, or never existed",
+			table, m.PeriodStart, row))
 	}
+	if len(degraded) > 0 {
+		notes = append(notes, fmt.Sprintf("raw deletes did not wait for the archive during %d interval(s) listed in \"degraded\" (an operator override or archiving disabled) while rows of this month were not all archived yet: rows deleted then are not in the archive",
+			len(degraded)))
+	}
+	m.PartialNote = strings.Join(notes, "; ")
 	if m.MonthDigest, err = monthDigest(folderKey, m.Chunks); err != nil {
 		return refuse(sealObjects, "%v", err)
 	}
@@ -433,7 +542,6 @@ func (w *Worker) sealMonth(ctx context.Context, table, stream, month string) err
 	body = append(body, '\n')
 	sha := sha256.Sum256(body)
 	shaHex := hex.EncodeToString(sha[:])
-	rel := folderRel + "/" + export.MonthManifestName
 	key, err := w.store.Key(rel)
 	if err != nil {
 		return err
@@ -555,7 +663,7 @@ func (w *Worker) putMonthManifest(ctx context.Context, rel string, body []byte, 
 	}
 	put, err := w.put(ctx, rel, bytes.NewReader(body), int64(len(body)), map[string]string{
 		"fwmon-archive-schema": strconv.Itoa(schema), "fwmon-archive-stream": stream,
-		"fwmon-archive-sha256-content": shaHex,
+		monthManifestShaMeta: shaHex,
 	})
 	if err != nil {
 		return err

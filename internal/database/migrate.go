@@ -102,6 +102,8 @@ var baselineModels = []interface{}{
 	&models.ArchiveObject{},
 	&models.ArchiveMonth{},
 	&models.ArchiveIDMark{},
+	// v77: intervals the archive gate was released or the stream disabled.
+	&models.ArchiveGateEvent{},
 }
 
 // migrateBaseline is the v1 "baseline" migration (AUDIT-044): it brings an empty
@@ -2258,6 +2260,15 @@ func (d *Database) migrateArchiveManifestTables() error {
 // AutoMigrate is idempotent.
 func (d *Database) migrateArchiveChunkRetryCounters() error {
 	return d.db.AutoMigrate(&models.ArchiveChunk{})
+}
+
+// migrateArchiveGateEvents (v77) creates archive_gate_events (archive plan PR
+// 7 review): the intervals a stream's raw deletes did not wait for the
+// archive (an override, or archiving disabled), so a month whose archiving
+// overlaps one is sealed partial. A new, empty table; AutoMigrate is
+// idempotent.
+func (d *Database) migrateArchiveGateEvents() error {
+	return d.db.AutoMigrate(&models.ArchiveGateEvent{})
 }
 
 // v74's lock bounds. Package vars so the PostgreSQL test can shrink them.

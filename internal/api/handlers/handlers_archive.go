@@ -209,7 +209,7 @@ func (h *Handler) ResetArchiveChunk(c *gin.Context) {
 	}
 	reset, err := db.ResetArchiveChunk(c.Request.Context(), chunk.ID, "reset for re-export by "+username+": "+reason, time.Now())
 	if err != nil {
-		if errors.Is(err, database.ErrArchiveChunkNotParked) {
+		if errors.Is(err, database.ErrArchiveChunkNotParked) || errors.Is(err, database.ErrArchiveChunkSealed) {
 			c.JSON(http.StatusConflict, response.Error(err.Error()))
 			return
 		}

@@ -26,6 +26,7 @@ import (
 type MonthReader interface {
 	Key(rel string) (string, error)
 	GetBytes(ctx context.Context, rel, versionID string, limit int64) ([]byte, s3.ObjectInfo, error)
+	Versions(ctx context.Context, rel string) (int, error)
 	VerifyFull(ctx context.Context, want s3.PutResult, w io.Writer) error
 }
 
@@ -59,8 +60,10 @@ var monthArgRe = regexp.MustCompile(`^[0-9]{4}-(0[1-9]|1[0-2])$`)
 
 // VerifyMonth checks a sealed month from the bucket alone (no database):
 // it downloads stream's _MONTH.json for month (checking its ETag and the
-// sha256 recorded with it), re-derives the chain (seq, ids and periods
-// gapless, covering the month), the totals and the month digest, downloads
+// sha256 recorded with it, and that it has one version), re-derives the
+// chain (seq, ids and periods gapless, covering the month, joined to the
+// sealed months beside it; partial exactly for the archive's first month or a
+// degraded one), the totals and the month digest, downloads
 // every chunk.json the manifest pins (by version, hash checked, its content
 // matching the month manifest's entry) and every object (by version: stored
 // bytes against sha256_object, decompressed bytes against sha256_content,
@@ -107,6 +110,13 @@ func VerifyMonth(ctx context.Context, store MonthReader, stream, month string, p
 		return nil, fmt.Errorf("no %s for %s %s in the bucket: the month is not sealed", export.MonthManifestName, stream, month)
 	}
 	rep.ManifestKey = info.Key
+	// The seal writes _MONTH.json exactly once: another version means it was
+	// written over (the GET above read the latest).
+	if n, err := store.Versions(ctx, folderRel+"/"+export.MonthManifestName); err != nil {
+		rep.fail("%s: cannot list its versions: %v", info.Key, err)
+	} else if n != 1 {
+		rep.fail("%s has %d versions; the seal writes it once", info.Key, n)
+	}
 	sum, sha := md5.Sum(body), sha256.Sum256(body) // #nosec G401 -- the S3 ETag of a single-part object
 	if info.ETag != hex.EncodeToString(sum[:]) {
 		rep.fail("%s: ETag %s is not the MD5 of the bytes read (%x)", info.Key, info.ETag, sum)
@@ -192,6 +202,16 @@ func VerifyMonth(ctx context.Context, store MonthReader, stream, month string, p
 	if !maps.Equal(hist, m.MsgDayHistogram) {
 		rep.fail("msg_day_histogram is not the sum of the objects'")
 	}
+	// Partial: the archive's first month (from id 0, seq 1), or one with
+	// degraded intervals; nothing else.
+	firstMonth := m.FirstID == 0
+	if len(m.Chunks) > 0 && firstMonth && m.Chunks[0].Seq != 1 {
+		rep.fail("the month starts at id 0 but its first chunk is seq %d, not 1", m.Chunks[0].Seq)
+	}
+	if m.Partial != (firstMonth || len(m.Degraded) > 0) {
+		rep.fail("partial is %t, but the month starts at id %d with %d degraded interval(s)", m.Partial, m.FirstID, len(m.Degraded))
+	}
+	verifyNeighbours(ctx, store, stream, month, &m, rep)
 	if digest, err := monthDigest(folderKey, m.Chunks); err != nil {
 		rep.fail("%v", err)
 	} else if digest != m.MonthDigest {
@@ -284,4 +304,59 @@ func parseRFC3339Pair(a, b string) (time.Time, time.Time, error) {
 	}
 	y, err := time.Parse(time.RFC3339Nano, b)
 	return x, y, err
+}
+
+// neighbour is what VerifyMonth reads of an adjacent month's _MONTH.json.
+type neighbour struct {
+	FirstID int64 `json:"first_id"`
+	LastID  int64 `json:"last_id"`
+	Chunks  []struct {
+		Seq int64 `json:"seq"`
+	} `json:"chunks"`
+}
+
+// readNeighbour downloads stream's sealed _MONTH.json of month, if any.
+func readNeighbour(ctx context.Context, store MonthReader, stream, month string) (*neighbour, error) {
+	for _, sv := range export.SchemasOf(stream) {
+		b, _, err := store.GetBytes(ctx, export.MonthFolderRel(stream, sv, month)+"/"+export.MonthManifestName, "", manifestLimit)
+		if errors.Is(err, s3.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		var n neighbour
+		if err := json.Unmarshal(b, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
+	}
+	return nil, nil
+}
+
+// verifyNeighbours checks that the month joins the sealed months beside it:
+// the previous one ends where it starts (it must exist unless this is the
+// archive's first month), the next one, when sealed, starts where it ends.
+func verifyNeighbours(ctx context.Context, store MonthReader, stream, month string, m *monthManifest, rep *MonthReport) {
+	start, end, err := monthBounds(month)
+	if err != nil || len(m.Chunks) == 0 {
+		return
+	}
+	prevMonth, nextMonth := export.MonthOf(start.AddDate(0, -1, 0)), export.MonthOf(end)
+	prev, err := readNeighbour(ctx, store, stream, prevMonth)
+	switch {
+	case err != nil:
+		rep.fail("previous month %s: %v", prevMonth, err)
+	case prev == nil && m.FirstID != 0:
+		rep.fail("the month starts after id %d, but the previous month %s has no %s", m.FirstID, prevMonth, export.MonthManifestName)
+	case prev != nil && (prev.LastID != m.FirstID || len(prev.Chunks) == 0 || prev.Chunks[len(prev.Chunks)-1].Seq+1 != m.Chunks[0].Seq):
+		rep.fail("the previous month %s does not end where this one starts (its last id %d, this first id %d)", prevMonth, prev.LastID, m.FirstID)
+	}
+	next, err := readNeighbour(ctx, store, stream, nextMonth)
+	switch {
+	case err != nil:
+		rep.fail("next month %s: %v", nextMonth, err)
+	case next != nil && (next.FirstID != m.LastID || len(next.Chunks) == 0 || next.Chunks[0].Seq != m.Chunks[len(m.Chunks)-1].Seq+1):
+		rep.fail("the next month %s does not start where this one ends (its first id %d, this last id %d)", nextMonth, next.FirstID, m.LastID)
+	}
 }

@@ -128,6 +128,7 @@ var registeredMigrations = []migration{
 	{version: 74, name: "syslog_format_column", run: (*Database).migrateSyslogFormatColumn},
 	{version: 75, name: "archive_manifest_tables", run: (*Database).migrateArchiveManifestTables},
 	{version: 76, name: "archive_chunk_retry_counters", run: (*Database).migrateArchiveChunkRetryCounters},
+	{version: 77, name: "archive_gate_events", run: (*Database).migrateArchiveGateEvents},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

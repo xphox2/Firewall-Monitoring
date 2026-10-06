@@ -116,6 +116,7 @@ func (b *monthBucket) GetBytes(_ context.Context, rel, _ string, _ int64) ([]byt
 	}
 	return b.body, s3.ObjectInfo{Key: "fwmon-test/" + rel, Size: int64(len(b.body))}, nil
 }
+func (b *monthBucket) Versions(context.Context, string) (int, error) { return 1, nil }
 func (b *monthBucket) VerifyFull(context.Context, s3.PutResult, io.Writer) error {
 	return errors.New("not expected")
 }

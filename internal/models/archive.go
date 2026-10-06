@@ -175,6 +175,30 @@ type ArchiveMonth struct {
 
 func (ArchiveMonth) TableName() string { return "archive_months" }
 
+// Archive gate event kinds (ArchiveGateEvent.Kind).
+const (
+	ArchiveGateEventOverride = "override"
+	ArchiveGateEventDisabled = "disabled"
+)
+
+// ArchiveGateEvent is an interval during which a gate stream's raw deletes
+// did not wait for the archive (migration v77): an operator override, or the
+// stream's archiving disabled while archive_chunks had chunks of it. Rows
+// deleted then may never have reached the archive and are missing from both
+// sides of the count check, so a month whose archiving overlaps one is sealed
+// partial with the interval listed. To is nil while it lasts.
+type ArchiveGateEvent struct {
+	ID uint `json:"id" gorm:"primaryKey"`
+	// Stream is the gate stream: syslog or flows.
+	Stream    string     `json:"stream" gorm:"size:16;not null;index"`
+	Kind      string     `json:"kind" gorm:"size:16;not null"`
+	From      time.Time  `json:"from" gorm:"column:from_ts;not null"`
+	To        *time.Time `json:"to" gorm:"column:to_ts"`
+	CreatedAt time.Time  `json:"created_at"`
+}
+
+func (ArchiveGateEvent) TableName() string { return "archive_gate_events" }
+
 // ArchiveIDMark records max(id) of a source table at one UTC cut boundary,
 // taken on the first archive tick at or after it (TakenAt, database clock). The
 // flow tables' chunk for [b-1 period, b) ends at the mark of b.

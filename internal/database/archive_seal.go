@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"firewall-mon/internal/archive/export"
 	"firewall-mon/internal/models"
 
 	"gorm.io/gorm"
@@ -195,4 +196,40 @@ func (d *Database) ParkArchiveChunk(ctx context.Context, c *models.ArchiveChunk,
 		msg = msg[:archiveErrorMax]
 	}
 	return casChunk(d.db.WithContext(ctx), c, map[string]interface{}{"status": models.ArchiveChunkNeedsAttention, "error": msg, "updated_at": at})
+}
+
+// archiveChunkMonthSealed reports whether c's month is sealed for every
+// stream c's table is exported to.
+func (d *Database) archiveChunkMonthSealed(ctx context.Context, c *models.ArchiveChunk) (bool, error) {
+	streams := export.StreamsOf(c.SourceTable)
+	if len(streams) == 0 {
+		return false, nil
+	}
+	var n int64
+	if err := d.db.WithContext(ctx).Model(&models.ArchiveMonth{}).
+		Where("stream IN ? AND month = ? AND status = ?", streams, c.Month, models.ArchiveMonthSealed).Count(&n).Error; err != nil {
+		return false, err
+	}
+	return n == int64(len(streams)), nil
+}
+
+// archiveSealedTableMonths returns the months sealed for every stream table
+// is exported to.
+func (d *Database) archiveSealedTableMonths(ctx context.Context, table string) (map[string]bool, error) {
+	streams := export.StreamsOf(table)
+	var rows []struct {
+		Month string
+		N     int64
+	}
+	if err := d.db.WithContext(ctx).Model(&models.ArchiveMonth{}).Select("month, count(*) AS n").
+		Where("stream IN ? AND status = ?", streams, models.ArchiveMonthSealed).Group("month").Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, r := range rows {
+		if r.N == int64(len(streams)) {
+			out[r.Month] = true
+		}
+	}
+	return out, nil
 }

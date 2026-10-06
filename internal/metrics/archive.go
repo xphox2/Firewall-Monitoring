@@ -68,6 +68,10 @@ var (
 		Namespace: "fwmon", Subsystem: "archive", Name: "seal_blocked",
 		Help: "1 while the stream's oldest month that is due to be sealed is not, by reason: incomplete (chunks of the month not all cut and verified yet), needs_attention (a chunk of it is parked), gap (seq, id or period discontinuity, or the month does not join the previous sealed one), objects (an object of it is not verified or not of the month), reverify (an object or chunk manifest in the bucket no longer matches), conflict (a different _MONTH.json is already stored), bucket (the service or the database failed; retried).",
 	}, []string{"stream", "reason"})
+	archiveMonthUnsealedDays = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "fwmon", Subsystem: "archive", Name: "month_unsealed_days",
+		Help: "Days the stream's oldest closed month that is not sealed is past its seal time (the 1st of the next month + ARCHIVE_SEAL_GRACE_HOURS); 0 when every due month is sealed. Alert on it rather than on fwmon_archive_seal_blocked, which is normal for a few passes after the grace.",
+	}, []string{"stream"})
 	archiveSealedWrites = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "fwmon", Subsystem: "archive", Name: "sealed_write_refused_total",
 		Help: "Object writes the worker refused because they targeted a sealed month's folder (never expected: the chunk is parked in needs_attention), per stream.",
@@ -92,6 +96,12 @@ func SetArchiveSealBlocked(stream, reason string) {
 	}
 }
 
+// SetArchiveMonthUnsealedDays sets how many days stream's oldest due,
+// unsealed month is past its seal time.
+func SetArchiveMonthUnsealedDays(stream string, days float64) {
+	archiveMonthUnsealedDays.WithLabelValues(stream).Set(days)
+}
+
 // IncArchiveSealedWrite counts one refused write into a sealed month of
 // stream.
 func IncArchiveSealedWrite(stream string) { archiveSealedWrites.WithLabelValues(stream).Inc() }
@@ -103,7 +113,7 @@ var ArchiveUnsettledReasons = []string{"settling", "open_writer", "no_statement_
 func init() {
 	prometheus.MustRegister(archiveLag, archiveVerifiedThrough, archiveChunks, archiveRows, archiveObjects,
 		archiveObjectBytes, archiveRawBytes, archiveErrors, archiveLastSuccess, archiveUnsettled, archiveNeedsAttention,
-		archiveMonthsSealed, archiveSealBlocked, archiveSealedWrites)
+		archiveMonthsSealed, archiveSealBlocked, archiveSealedWrites, archiveMonthUnsealedDays)
 }
 
 // SetArchiveLag sets a stream's lag.

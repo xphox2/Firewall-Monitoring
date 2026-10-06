@@ -79,13 +79,14 @@ func TestPartitionLookbackDays(t *testing.T) {
 	}
 }
 
-// TestRegisteredMigrations_V76IsLast pins the version numbers the plans and
+// TestRegisteredMigrations_V77IsLast pins the version numbers the plans and
 // CHANGELOG cite.
-func TestRegisteredMigrations_V76IsLast(t *testing.T) {
+func TestRegisteredMigrations_V77IsLast(t *testing.T) {
 	want := []struct {
 		version int
 		name    string
 	}{
+		{77, "archive_gate_events"},
 		{76, "archive_chunk_retry_counters"},
 		{75, "archive_manifest_tables"},
 		{74, "syslog_format_column"},
