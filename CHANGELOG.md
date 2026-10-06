@@ -1,6 +1,22 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.311] - 2026-10-06
+
+### Fixed — archive bucket names in either case
+
+- **The archive settings refused a bucket name with upper case** ("not a valid bucket name (3-63 of a-z 0-9 . -, …)"): the bucket rule was the current AWS one, stricter than Backblaze B2, whose console shows a bucket in the case it was created with ("Firewall-Mon") and whose names "are not case sensitive". `ARCHIVE_S3_BUCKET` (environment and form) now accepts the union of what the supported services document — B2 (upper and lower case, a leading or trailing `-`), AWS S3 including legacy us-east-1 names (`_`, up to 255 characters), Cloudflare R2, Wasabi, MinIO, DigitalOcean Spaces: 3-255 of `A-Z a-z 0-9 . _ -`, starting and ending with a letter, digit or `-`. It still refuses what could address something else: `/`, `\`, whitespace, `%`, `?`, `#`, `@`, `:` (a path, a URL, an `arn:`), `..`, a leading or trailing `.` or `_`, an IP address. The service checks its own rules at the preflight. A name that is not a DNS label is always requested path-style (the SDK falls back to it even with `ARCHIVE_S3_PATH_STYLE=false`), so no accepted name depends on virtual-hosted addressing.
+- **A bucket name that changes only in case is not a location move** (`config.SameBucket`): the form's location lock (409) and the poller's location check (`system_settings.archive_location`) compare bucket names ignoring case — the prefix still exactly, it is part of every key — so an archive recorded at `…/example-bucket/fwmon/` can be re-entered as `Example-Bucket` without a 409 or a startup WARNING; the recorded location and the object keys are not changed. While the archive holds chunks such a change is saved only after a listing under the prefix finds the archive's objects under the new spelling (`s3.Client.PrefixHasObjects`): on a service that matches names exactly (legacy AWS, MinIO) it is another bucket and the save is refused (422).
+- **Why a save or Test connection failed is shown and logged**: a request the storage service refuses now reads "the storage service answered `<Code>`: `<Message>` (…)" in the form, and every refused save (400 / 409 / 422) and failed Test connection is logged at WARNING with its reason (`WARNING: archive settings: save refused (HTTP 422): …`) — before, the server log showed only the status. The secret is masked in both. The form no longer prints "Not saved: Not saved: …".
+- `docs/OPERATIONS.md`: bucket name case, and where a refusal's reason is.
+
+### Tests
+
+- `TestValidBucketName` (table: `Firewall-Mon`, `firewall-mon`, `--Photos--`, a legacy `_` name, 255 characters accepted; too short / long, IPv4 / IPv6, `..`, leading / trailing `.` or `_`, `/`, spaces, newline, `\`, `@`, a URL, an ARN, `%`, `?`, `#`, non-ASCII refused), `TestArchiveConfig_RejectsInvalid` (bucket rows updated), `TestArchiveConfig_SameLocation` (bucket case same, prefix case not), `TestSameLocationText`, `TestCheckArchiveLocation` (a re-cased bucket with chunks: no mismatch, the record kept; a re-cased prefix: mismatch).
+- S3 client: `TestClient_NonDNSBucketIsPathStyle` (mixed case, `_` and `.` names path-style with path style off; a DNS-valid control goes virtual-hosted), `TestPrefixHasObjects` (the B2-strict fake now resolves the bucket name in any case, as B2 does; `s3test.WithCaseSensitiveBucket` matches exactly).
+- Handlers: `TestSaveArchiveSettings_MixedCaseBucket` (enable with `Example-Bucket`), `_BucketCaseWhileLocked` (past the 409 to the step-up, saved after the listing; another bucket and a re-cased prefix still 409), `_BucketCaseNotVisible` (case-sensitive service: 422 with `NoSuchBucket`, logged, nothing stored), `TestArchiveSettings_ProviderErrorSurfaced` (`AccessDenied` in Test connection and the save's 422, both logged; a 400 logged with its reason; no secret).
+- Mutation-checked: the old bucket regex, a case-sensitive `SameBucket`, the exact-match location check, no listing for a re-cased bucket, no service answer in the message, no WARNING log — each fails a test.
+
 ## [0.11.310] - 2026-10-06
 
 ### Added — raw archive settings in the admin UI (A-10)

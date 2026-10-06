@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"sort"
@@ -18,6 +19,7 @@ import (
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 
+	"github.com/aws/smithy-go"
 	"github.com/gin-gonic/gin"
 	"github.com/shirou/gopsutil/v4/disk"
 )
@@ -39,13 +41,20 @@ import (
 //   - POST /admin/api/archive/settings: save. Checks in order, the cheap ones
 //     before the step-up: the body and every value (400, the same
 //     validation as the environment: config.ValidateDraft / Validate); a
-//     change of the objects' location once a chunk exists (409); then the
-//     caller's password + TOTP (403); then the staging directory of an
-//     enabled stream (422) and, when a stream is switched on or the
-//     connection of an enabled stream changes, the bucket preflight (422).
+//     change of the objects' location once a chunk exists (409; a bucket
+//     name that differs only in case is the same location, config.SameBucket);
+//     then the caller's password + TOTP (403); then the staging directory of
+//     an enabled stream (422), when a stream is switched on or the
+//     connection of an enabled stream changes the bucket preflight (422),
+//     and for a bucket re-cased while the archive holds chunks a listing
+//     that must find the archive's objects under the new spelling (422).
 //     One transaction stores the values (the secret encrypted) and opens the
 //     disabled interval of every stream switched off. Audited with the field
 //     names only.
+//
+// Every refusal of a save or a Test connection is logged at WARNING with its
+// reason (the response's text: a validation message, the storage service's
+// answer, the staging check), which the HTTP log alone does not show.
 //
 // The poller picks a save up without a restart: its workers resolve the
 // configuration every tick, the retention gate within 30 s.
@@ -303,8 +312,31 @@ func (d *archiveDraft) connectionChanged() bool {
 }
 
 // archivePreflight connects with a and runs the bucket preflight. The error
-// text never carries the secret.
+// text never carries the secret; when the storage service refused a request
+// it starts with the service's own answer (its error code and message).
 func archivePreflight(ctx context.Context, a config.ArchiveConfig) error {
+	return archiveBucketCall(ctx, a, func(ctx context.Context, c *s3.Client) error { return c.Preflight(ctx) })
+}
+
+// archiveObjectsVisible checks that the bucket, as a names it, lists the
+// archive's objects under the prefix: a bucket name whose case changed while
+// the archive holds chunks (config.SameBucket) is accepted only when it does,
+// since a service that matches names case-sensitively (a legacy AWS
+// us-east-1 or a MinIO bucket) would see another bucket, or none.
+func archiveObjectsVisible(ctx context.Context, a config.ArchiveConfig, recorded string) error {
+	return archiveBucketCall(ctx, a, func(ctx context.Context, c *s3.Client) error {
+		has, err := c.PrefixHasObjects(ctx)
+		if err == nil && !has {
+			err = fmt.Errorf("bucket %q lists no object under %s/, so this service does not treat it as the bucket %q that holds the archive's chunks; keep %q",
+				a.Bucket, a.Prefix, recorded, recorded)
+		}
+		return err
+	})
+}
+
+// archiveBucketCall connects with a and runs call, the secret masked in the
+// error.
+func archiveBucketCall(ctx context.Context, a config.ArchiveConfig, call func(context.Context, *s3.Client) error) error {
 	var opts []s3.Option
 	if archiveS3Options != nil {
 		opts = archiveS3Options()
@@ -313,16 +345,29 @@ func archivePreflight(ctx context.Context, a config.ArchiveConfig) error {
 	if err == nil {
 		ctx, cancel := context.WithTimeout(ctx, archivePreflightTimeout)
 		defer cancel()
-		err = client.Preflight(ctx)
+		err = call(ctx, client)
 	}
 	if err == nil {
 		return nil
 	}
 	msg := err.Error()
+	var api smithy.APIError
+	if errors.As(err, &api) {
+		msg = fmt.Sprintf("the storage service answered %s: %s (%s)", api.ErrorCode(), api.ErrorMessage(), msg)
+	}
 	if s := a.SecretAccessKey.Reveal(); s != "" {
 		msg = strings.ReplaceAll(msg, s, config.RedactedSecret)
 	}
 	return errors.New(msg)
+}
+
+// logArchiveSettingsRefusal logs why the archive form's save or Test
+// connection was refused, at WARNING: the HTTP log shows only the status, and
+// the reason (a validation message, the storage service's answer, the
+// staging check) is what the operator needs. msg is the text the response
+// carries, which never holds the secret.
+func logArchiveSettingsRefusal(op string, status int, msg string) {
+	log.Printf("WARNING: archive settings: %s refused (HTTP %d): %s", op, status, msg)
 }
 
 // archiveStagingCheck checks an enabled stream's staging directory: it
@@ -373,6 +418,7 @@ func (h *Handler) TestArchiveSettings(c *gin.Context) {
 	if err != nil {
 		var bad errArchiveDraft
 		if errors.As(err, &bad) {
+			logArchiveSettingsRefusal("Test connection", http.StatusOK, bad.msg)
 			c.JSON(http.StatusOK, response.Success(gin.H{"ok": false, "message": bad.msg}))
 			return
 		}
@@ -396,11 +442,13 @@ func (h *Handler) TestArchiveSettings(c *gin.Context) {
 	}
 	a := d.after
 	if err := a.ValidateS3(); err != nil {
+		logArchiveSettingsRefusal("Test connection", http.StatusOK, err.Error())
 		c.JSON(http.StatusOK, response.Success(gin.H{"ok": false, "message": err.Error()}))
 		return
 	}
 	out := gin.H{"ok": true}
 	if err := archivePreflight(c.Request.Context(), a); err != nil {
+		logArchiveSettingsRefusal("Test connection", http.StatusOK, "the bucket preflight failed: "+err.Error())
 		out["ok"], out["message"] = false, err.Error()
 	} else if a.ObjectLockDays > 0 {
 		out["message"] = fmt.Sprintf("Listed %s/%s/ and the bucket has Object Lock enabled (%s %d days will be applied).", a.Bucket, a.Prefix, a.LockMode(), a.ObjectLockDays)
@@ -415,6 +463,7 @@ func (h *Handler) TestArchiveSettings(c *gin.Context) {
 		out["staging"] = "Staging directory " + a.StagingDir + " is checked when you save."
 	default:
 		if err := archiveStagingCheck(c.Request.Context(), a.StagingDir); err != nil {
+			logArchiveSettingsRefusal("Test connection (staging directory)", http.StatusOK, err.Error())
 			out["staging"] = err.Error()
 		} else {
 			out["staging"] = "Staging directory " + a.StagingDir + " is writable with enough free space."
@@ -454,6 +503,7 @@ func (h *Handler) SaveArchiveSettings(c *gin.Context) {
 	if err != nil {
 		var bad errArchiveDraft
 		if errors.As(err, &bad) {
+			logArchiveSettingsRefusal("save", http.StatusBadRequest, bad.msg)
 			c.JSON(http.StatusBadRequest, response.Error(bad.msg))
 			return
 		}
@@ -464,18 +514,25 @@ func (h *Handler) SaveArchiveSettings(c *gin.Context) {
 		c.JSON(http.StatusConflict, response.Error("This server has no encryption key, so the secret access key cannot be stored encrypted; set it in the environment instead"))
 		return
 	}
-	if !d.before.SameLocation(d.after) {
+	// A bucket name that changes only in case is the same location
+	// (config.SameBucket); with chunks it is accepted once the bucket under
+	// the new spelling lists the archive's objects (below, after the step-up).
+	recaseBucket := false
+	if bucketRecased := d.before.Bucket != d.after.Bucket; !d.before.SameLocation(d.after) || bucketRecased {
 		locked, err := db.ArchiveHasChunks(ctx)
 		if err != nil {
 			httputil.InternalError(c, "Failed to read the archive manifest", err)
 			return
 		}
-		if locked {
-			c.JSON(http.StatusConflict, response.Error("The archive already holds chunks at "+archiveLocation(d.before)+
-				": the endpoint, bucket and prefix cannot change here, or the manifest would point at objects that are not there. "+
-				"See docs/OPERATIONS.md, \"Raw archive: moving the bucket\", for the manual migration."))
+		if locked && !d.before.SameLocation(d.after) {
+			msg := "The archive already holds chunks at " + archiveLocation(d.before) +
+				": the endpoint, bucket and prefix cannot change here, or the manifest would point at objects that are not there. " +
+				"See docs/OPERATIONS.md, \"Raw archive: moving the bucket\", for the manual migration."
+			logArchiveSettingsRefusal("save", http.StatusConflict, msg)
+			c.JSON(http.StatusConflict, response.Error(msg))
 			return
 		}
+		recaseBucket = locked
 	}
 	enabling := d.switched(true)
 	username, userID, ok := h.reauthCaller(c, db, req.Password, req.TOTPCode)
@@ -486,13 +543,19 @@ func (h *Handler) SaveArchiveSettings(c *gin.Context) {
 	// re-authenticated caller.
 	if d.after.Enabled() && (len(enabling) > 0 || d.before.StagingDir != d.after.StagingDir) {
 		if err := archiveStagingCheck(ctx, d.after.StagingDir); err != nil {
-			c.JSON(http.StatusUnprocessableEntity, response.Error("Not saved: "+err.Error()))
+			refuseArchiveSave(c, "Not saved: "+err.Error())
 			return
 		}
 	}
 	if d.after.Enabled() && (len(enabling) > 0 || d.connectionChanged()) {
 		if err := archivePreflight(ctx, d.after); err != nil {
-			c.JSON(http.StatusUnprocessableEntity, response.Error("Not saved: the bucket preflight failed: "+err.Error()))
+			refuseArchiveSave(c, "Not saved: the bucket preflight failed: "+err.Error())
+			return
+		}
+	}
+	if recaseBucket {
+		if err := archiveObjectsVisible(ctx, d.after, d.before.Bucket); err != nil {
+			refuseArchiveSave(c, "Not saved: the archive's objects are not visible under the new spelling of the bucket: "+err.Error())
 			return
 		}
 	}
@@ -522,6 +585,13 @@ func (h *Handler) SaveArchiveSettings(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, response.Success(gin.H{"settings": v, "warnings": warnings,
 		"message": "Saved. The poller applies it within a minute, without a restart."}))
+}
+
+// refuseArchiveSave answers a save refused after the step-up (422) and logs
+// why.
+func refuseArchiveSave(c *gin.Context, msg string) {
+	logArchiveSettingsRefusal("save", http.StatusUnprocessableEntity, msg)
+	c.JSON(http.StatusUnprocessableEntity, response.Error(msg))
 }
 
 // archiveLocation is "<endpoint>/<bucket>/<prefix>/" for messages.

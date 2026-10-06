@@ -619,6 +619,25 @@ from the form is refused (HTTP 409) with a pointer to the next section. Other
 fields (credentials, Object Lock days, pacing, the window, the streams) can
 change at any time.
 
+**The bucket name may be in either case** (since 0.11.311): enter it as the
+storage service's console shows it — Backblaze B2 keeps the case a bucket was
+created with ("Firewall-Mon") and resolves its name in any case, through its
+S3 API too. A name that changes **only in case** is not a move: the poller's
+location check and the form compare bucket names ignoring case (the prefix
+is part of every object key, so its case still counts), and the recorded
+location keeps the spelling it was first written with. Once the archive holds
+chunks, the form saves such a change only after a listing under the prefix
+finds the archive's objects under the new spelling — on a service that
+matches names exactly (a legacy AWS us-east-1 bucket, MinIO) the re-cased
+name is another bucket, and the save is refused with the service's answer.
+A name that is not a DNS label (upper case, `_`, `.`) is always sent
+path-style, whatever `ARCHIVE_S3_PATH_STYLE` says.
+
+**Why a save or Test connection failed** is in the form's message — for a
+bucket preflight, the storage service's own error code and message — and in
+the server log, as `WARNING: archive settings: save refused (HTTP 422): …`
+(or `Test connection refused`); the secret is never in either.
+
 ## Raw archive: moving the bucket
 
 There is no in-place move. The manifest in the database (`archive_chunks`,

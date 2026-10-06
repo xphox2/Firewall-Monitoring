@@ -256,9 +256,42 @@ func (a ArchiveConfig) s3Complete() bool {
 
 // SameLocation reports whether a and b write their objects to the same place:
 // the same endpoint (scheme and host, compared as Validate canonicalizes it),
-// bucket and prefix.
+// bucket (SameBucket: case-insensitive) and prefix (case-sensitive: it is
+// part of every object key).
 func (a ArchiveConfig) SameLocation(b ArchiveConfig) bool {
-	return canonicalEndpoint(a) == canonicalEndpoint(b) && a.Bucket == b.Bucket && a.Prefix == b.Prefix
+	return canonicalEndpoint(a) == canonicalEndpoint(b) && SameBucket(a.Bucket, b.Bucket) && a.Prefix == b.Prefix
+}
+
+// SameLocationText compares two Location strings as SameLocation compares
+// configurations: the bucket — the path segment after the endpoint — ignoring
+// case, everything else exactly. A recorded location is kept as first written
+// ("…/firewall-mon/…"); a configuration naming the bucket "Firewall-Mon" is
+// still at it.
+func SameLocationText(a, b string) bool {
+	ea, ba, pa, okA := splitLocation(a)
+	eb, bb, pb, okB := splitLocation(b)
+	if !okA || !okB {
+		return a == b
+	}
+	return ea == eb && SameBucket(ba, bb) && pa == pb
+}
+
+// splitLocation splits "<scheme>://<host>/<bucket>/<prefix>/" into its
+// endpoint, bucket and the rest.
+func splitLocation(loc string) (endpoint, bucket, rest string, ok bool) {
+	scheme, after, found := strings.Cut(loc, "://")
+	if !found {
+		return "", "", "", false
+	}
+	host, path, found := strings.Cut(after, "/")
+	if !found {
+		return "", "", "", false
+	}
+	bucket, rest, found = strings.Cut(path, "/")
+	if !found || bucket == "" {
+		return "", "", "", false
+	}
+	return scheme + "://" + host, bucket, rest, true
 }
 
 // Location is "<endpoint>/<bucket>/<prefix>/", the endpoint as

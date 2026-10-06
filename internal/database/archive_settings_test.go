@@ -284,4 +284,17 @@ func TestCheckArchiveLocation(t *testing.T) {
 	if rec, mismatch, err := d.CheckArchiveLocation(ctx, b); err != nil || !mismatch || rec != a {
 		t.Fatalf("moved with chunks: %q %v %v, want a mismatch against %s", rec, mismatch, err, a)
 	}
+	// The bucket re-cased ("Example-Bucket", as B2's console shows it) is the
+	// same location, and the record keeps the spelling it was written with.
+	const recased = "https://s3.example.com/Example-Bucket/fwmon/"
+	if rec, mismatch, err := d.CheckArchiveLocation(ctx, recased); err != nil || mismatch || rec != a {
+		t.Fatalf("re-cased bucket with chunks: %q %v %v, want no mismatch and the record %s kept", rec, mismatch, err, a)
+	}
+	if rec, _, _ := d.CheckArchiveLocation(ctx, a); rec != a {
+		t.Fatalf("record after the re-cased check = %q, want %s unchanged", rec, a)
+	}
+	// The prefix is part of every key: its case is a move.
+	if _, mismatch, err := d.CheckArchiveLocation(ctx, "https://s3.example.com/example-bucket/FWMON/"); err != nil || !mismatch {
+		t.Fatalf("re-cased prefix with chunks: %v %v, want a mismatch", mismatch, err)
+	}
 }

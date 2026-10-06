@@ -143,7 +143,9 @@ func (s Secret) LogValue() slog.Value { return slog.StringValue(s.masked()) }
 
 var (
 	archiveRegionRe = regexp.MustCompile(`^[a-z0-9-]{2,32}$`)
-	archiveBucketRe = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`)
+	// archiveBucketRe is the union of the bucket names the services the
+	// archive supports accept (see validBucketName), not one service's rule.
+	archiveBucketRe = regexp.MustCompile(`^[A-Za-z0-9-][A-Za-z0-9._-]{1,253}[A-Za-z0-9-]$`)
 	// archiveKeyPathRe is the shape of ARCHIVE_S3_PREFIX and of every object
 	// key path below it: slash-separated segments of [A-Za-z0-9._-]. "." and
 	// ".." segments are rejected separately (ValidArchiveKeyPath).
@@ -278,7 +280,7 @@ func (a ArchiveConfig) ValidateS3() error {
 		return fmt.Errorf("ARCHIVE_S3_REGION must match %s, got %q", archiveRegionRe, a.Region)
 	}
 	if !validBucketName(a.Bucket) {
-		return fmt.Errorf("ARCHIVE_S3_BUCKET %q is not a valid bucket name (3-63 of a-z 0-9 . -, starting and ending with a letter or digit, no '..', not an IP address)", a.Bucket)
+		return fmt.Errorf("ARCHIVE_S3_BUCKET %q is not a valid bucket name: 3-255 of A-Z a-z 0-9 . _ -, starting and ending with a letter, digit or '-', no '..', not an IP address (the storage service checks its own rules when you Test connection)", a.Bucket)
 	}
 	if !ValidArchiveKeyPath(a.Prefix) {
 		return fmt.Errorf("ARCHIVE_S3_PREFIX %q must be slash-separated segments of A-Z a-z 0-9 . _ - with no leading or trailing slash and no '.' or '..' segment", a.Prefix)
@@ -341,10 +343,43 @@ func (a ArchiveConfig) EndpointURL() (*url.URL, error) {
 	return u, nil
 }
 
+// validBucketName is a safety check, not any one service's naming rule: the
+// service rejects a name it does not accept, and the preflight (Test
+// connection, the save) shows its answer. It accepts every name the services
+// the archive supports document (checked 2026-10-06):
+//
+//   - Backblaze B2: 6-63 of upper- and lower-case letters, digits, '-' and
+//     '.'; may start or end with '-'; "not case sensitive, even though they
+//     can include upper-case letters" — its console shows the name as
+//     created ("Firewall-Mon"), its S3 API resolves any case of it;
+//   - AWS S3: 3-63 of a-z 0-9 . -; buckets created in us-east-1 before
+//     2018-03-01 may be up to 255 characters with upper case and '_';
+//   - Cloudflare R2, DigitalOcean Spaces: 3-63 of a-z 0-9 -; Wasabi and
+//     MinIO: the current AWS rule (MinIO's client also takes the legacy one).
+//
+// What it refuses is what could address something other than a bucket, or
+// what no supported service documents: anything outside [A-Za-z0-9._-] ('/',
+// '\', whitespace, '%', '?', '#', '@', ':' — a path, a URL or an "arn:"),
+// '..', a leading or trailing '.' or '_' ("." and ".." are path segments),
+// fewer than 3 or more than 255 characters, and an IP address.
+//
+// A name that is not a valid DNS label (upper case, '_', '.', longer than 63)
+// is always sent path-style ("https://<endpoint>/<bucket>/<key>"): the AWS SDK
+// falls back to it even with ARCHIVE_S3_PATH_STYLE=false
+// (TestClient_NonDNSBucketIsPathStyle), so no name accepted here depends on
+// virtual-hosted addressing.
 func validBucketName(b string) bool {
-	if !archiveBucketRe.MatchString(b) || strings.Contains(b, "..") ||
-		strings.Contains(b, ".-") || strings.Contains(b, "-.") {
+	if !archiveBucketRe.MatchString(b) || strings.Contains(b, "..") {
 		return false
 	}
 	return net.ParseIP(b) == nil
 }
+
+// SameBucket reports whether a and b name the same bucket. The comparison
+// ignores case: Backblaze B2 resolves bucket names case-insensitively, and
+// every other service the archive supports allows only lower-case names, so
+// two spellings that differ only in case are the same bucket wherever both
+// are valid. (A legacy AWS us-east-1 bucket or a MinIO bucket with upper case
+// is the exception: the admin save checks that the archive's objects are
+// visible under the new spelling before it accepts such a change.)
+func SameBucket(a, b string) bool { return strings.EqualFold(a, b) }

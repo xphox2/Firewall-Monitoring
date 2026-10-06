@@ -144,9 +144,41 @@ func TestArchiveConfig_SameLocation(t *testing.T) {
 		"endpoint":       {ArchiveConfig{Endpoint: "https://s3.example.net", Bucket: "example-bucket", Prefix: "fwmon"}, false},
 		"bucket":         {ArchiveConfig{Endpoint: "https://s3.example.com", Bucket: "example-bucket-2", Prefix: "fwmon"}, false},
 		"prefix":         {ArchiveConfig{Endpoint: "https://s3.example.com", Bucket: "example-bucket", Prefix: "fwmon/b"}, false},
+		// B2 resolves bucket names in any case: a re-cased name is the same
+		// bucket. The prefix is part of every key: its case matters.
+		"bucket case": {ArchiveConfig{Endpoint: "https://s3.example.com", Bucket: "Example-Bucket", Prefix: "fwmon"}, true},
+		"prefix case": {ArchiveConfig{Endpoint: "https://s3.example.com", Bucket: "example-bucket", Prefix: "FWMON"}, false},
 	} {
 		if got := a.SameLocation(tc.b); got != tc.same {
 			t.Errorf("%s: SameLocation = %v", name, got)
 		}
+	}
+}
+
+// TestSameLocationText: a recorded location string compares as SameLocation
+// does — the bucket segment in any case, the endpoint and prefix exactly.
+func TestSameLocationText(t *testing.T) {
+	const rec = "https://s3.us-west-002.example.com/firewall-mon/fwmon/"
+	for loc, same := range map[string]bool{
+		rec: true,
+		"https://s3.us-west-002.example.com/Firewall-Mon/fwmon/":   true,
+		"https://s3.us-west-002.example.com/FIREWALL-MON/fwmon/":   true,
+		"https://s3.us-west-002.example.com/firewall-mon/FWMON/":   false,
+		"https://s3.us-west-002.example.com/firewall-mon2/fwmon/":  false,
+		"https://s3.us-west-002.example.net/firewall-mon/fwmon/":   false,
+		"http://s3.us-west-002.example.com/firewall-mon/fwmon/":    false,
+		"https://s3.us-west-002.example.com/firewall-mon/fwmon/b/": false,
+		"not a location": false,
+	} {
+		if got := SameLocationText(rec, loc); got != same {
+			t.Errorf("SameLocationText(%s, %s) = %v, want %v", rec, loc, got, same)
+		}
+	}
+	// Built from configurations, the strings agree with SameLocation.
+	a := ArchiveConfig{Endpoint: "https://s3.example.com", Bucket: "firewall-mon", Prefix: "fwmon"}
+	b := a
+	b.Bucket = "Firewall-Mon"
+	if !SameLocationText(a.Location(), b.Location()) || !a.SameLocation(b) {
+		t.Errorf("re-cased bucket: %s vs %s not the same location", a.Location(), b.Location())
 	}
 }

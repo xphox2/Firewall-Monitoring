@@ -26,7 +26,10 @@
 //     archive's key has no deleteFiles and the app never deletes;
 //   - ListObjectVersions is answered by the wrapper: one version per
 //     successful write of a key, as a versioned bucket (B2 always is) lists
-//     them (the memory backend itself is unversioned).
+//     them (the memory backend itself is unversioned);
+//   - the bucket name in the path matches in any case ("Example-Bucket" is
+//     "example-bucket"): B2 bucket names "are not case sensitive"
+//     (WithCaseSensitiveBucket turns it off, as AWS and MinIO match).
 //
 // Fail lets a test inject an error response for chosen requests, and
 // SetMutateGet a read-back that differs from what was stored.
@@ -103,6 +106,7 @@ type Server struct {
 
 	inner      http.Handler
 	objectLock bool // bucket created with Object Lock enabled
+	caseExact  bool // WithCaseSensitiveBucket
 	mu         sync.Mutex
 	reqs       []Request
 	lock       map[string]Retention
@@ -120,6 +124,10 @@ type Option func(*Server)
 // WithoutObjectLock creates the bucket without Object Lock: lock headers are
 // refused and GetObjectLockConfiguration reports none.
 func WithoutObjectLock() Option { return func(s *Server) { s.objectLock = false } }
+
+// WithCaseSensitiveBucket matches the bucket name in a request exactly, as
+// AWS S3 and MinIO do, instead of in any case as B2 does.
+func WithCaseSensitiveBucket() Option { return func(s *Server) { s.caseExact = true } }
 
 // NewB2Strict starts a server with one empty bucket (Object Lock enabled
 // unless WithoutObjectLock). It is closed when the test ends.
@@ -309,6 +317,18 @@ func (s *Server) check(op Op, r *http.Request, body []byte) (int, string, string
 }
 
 func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
+	if !s.caseExact {
+		// B2 resolves the bucket name case-insensitively: pass the request
+		// on under the name the bucket was created with.
+		seg, rest, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
+		if seg != s.Bucket && strings.EqualFold(seg, s.Bucket) {
+			p := "/" + s.Bucket
+			if strings.Contains(strings.TrimPrefix(r.URL.Path, "/"), "/") {
+				p += "/" + rest
+			}
+			r.URL.Path, r.URL.RawPath = p, ""
+		}
+	}
 	op, key := classify(r, s.Bucket)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {

@@ -242,7 +242,8 @@
                 if (onSaved) onSaved();
             });
         }).catch(function (e) {
-            showResult(false, ['Not saved: ' + ((e && e.message) || e)]);
+            var msg = String((e && e.message) || e);
+            showResult(false, [/^Not saved:/.test(msg) ? msg : 'Not saved: ' + msg]);
         });
     }
 
