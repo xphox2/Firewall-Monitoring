@@ -137,3 +137,85 @@ func TestWorker_PG(t *testing.T) {
 		t.Fatalf("flow objects %+v", objs)
 	}
 }
+
+// TestWorker_PG_TwoWorkers: two pollers' workers ticking at the same time on
+// one database archive every chunk exactly once — the advisory lock lets one
+// in at a time and the other's tick returns — so no object or manifest is
+// uploaded twice.
+func TestWorker_PG_TwoWorkers(t *testing.T) {
+	d := database.NewIntegrationDB(t)
+	database.SetArchiveSettleForTesting(t, 200*time.Millisecond, 100*time.Millisecond)
+	if err := d.EnsurePartitions(); err != nil {
+		t.Fatal(err)
+	}
+	srv := s3test.NewB2Strict(t, testBucket)
+	cfg := testConfig(srv, t.TempDir())
+	cfg.FlowsEnabled = false
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	orig := stagingFree
+	stagingFree = func(context.Context, string) (uint64, error) { return 1 << 40, nil }
+	t.Cleanup(func() { stagingFree = orig })
+	var ws [2]*Worker
+	for i := range ws {
+		client, err := s3.New(cfg, s3.WithRootCAs(pool), s3.WithMaxAttempts(1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := cfg
+		c.StagingDir = t.TempDir()
+		if ws[i], err = newWorker(d, client, c); err != nil {
+			t.Fatal(err)
+		}
+		ws[i].runner = "worker-" + string(rune('a'+i))
+	}
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	for i, c := range []time.Time{today.AddDate(0, 0, -3).Add(9 * time.Hour), today.AddDate(0, 0, -2).Add(9 * time.Hour), today.AddDate(0, 0, -2).Add(10 * time.Hour)} {
+		m := models.SyslogMessage{Timestamp: c, DeviceID: uint(1 + i%2), ProbeID: 1, Hostname: "fw-example-01",
+			Message: "srcip=192.0.2.10 dstip=198.51.100.7", Severity: 5, CreatedAt: c}
+		if err := d.Gorm().Create(&m).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		done := make(chan struct{}, 2)
+		for _, w := range ws {
+			w.lastPass = time.Time{}
+			go func() { w.Tick(context.Background()); done <- struct{}{} }()
+		}
+		<-done
+		<-done
+		var open, all int64
+		d.Gorm().Model(&models.ArchiveChunk{}).Where("status <> ?", models.ArchiveChunkVerified).Count(&open)
+		d.Gorm().Model(&models.ArchiveChunk{}).Count(&all)
+		if all >= 2 && open == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("not verified within 30 s: %d of %d open", open, all)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	puts := map[string]int{}
+	for _, r := range srv.Requests() {
+		if r.Op == s3test.OpPutObject {
+			puts[r.Key]++
+		}
+	}
+	if len(puts) == 0 {
+		t.Fatal("nothing was uploaded")
+	}
+	for k, n := range puts {
+		if n != 1 {
+			t.Errorf("%s uploaded %d times", k, n)
+		}
+	}
+	var attempts []int
+	d.Gorm().Model(&models.ArchiveChunk{}).Order("seq").Pluck("attempts", &attempts)
+	for i, a := range attempts {
+		if a != 1 {
+			t.Errorf("chunk %d exported %d times", i+1, a)
+		}
+	}
+}

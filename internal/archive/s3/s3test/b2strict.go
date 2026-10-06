@@ -394,6 +394,11 @@ func (s *Server) after(op Op, key string, r *http.Request, h http.Header, body [
 			s.etags[key] = res.ETag
 		}
 	case OpHeadObject, OpGetObject:
+		// The bucket is unversioned (WithoutVersioning): PUT answers without
+		// a version id, but the memory backend's HEAD / GET still report its
+		// internal one, which a GET by that version then refuses (501).
+		// Report none, as an unversioned service does.
+		h.Del("X-Amz-Version-Id")
 		if etag, ok := s.etags[key]; ok {
 			h.Set("ETag", etag)
 		}

@@ -54,6 +54,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/logging"
 
 	"firewall-mon/internal/config"
@@ -361,7 +362,7 @@ type ObjectInfo struct {
 }
 
 // Head returns an object's metadata. A non-empty versionID addresses that
-// version.
+// version. An object that does not exist is ErrNotFound.
 func (c *Client) Head(ctx context.Context, rel, versionID string) (ObjectInfo, error) {
 	key, err := c.Key(rel)
 	if err != nil {
@@ -373,7 +374,7 @@ func (c *Client) Head(ctx context.Context, rel, versionID string) (ObjectInfo, e
 	}
 	out, err := c.api.HeadObject(ctx, in)
 	if err != nil {
-		return ObjectInfo{}, c.wrap("head", key, err)
+		return ObjectInfo{}, notFound(c.wrap("head", key, err))
 	}
 	info := ObjectInfo{
 		Key:       key,
@@ -389,26 +390,63 @@ func (c *Client) Head(ctx context.Context, rel, versionID string) (ObjectInfo, e
 	return info, nil
 }
 
+// ErrMismatch marks a verify failure where the service answered and the
+// stored object is not what was uploaded (missing, or another size, ETag,
+// lock or hash). Any other verify error — a network or service failure — says
+// nothing about the object and is worth retrying as it is.
+var ErrMismatch = errors.New("stored object does not match the upload")
+
+// mismatch wraps a verify finding in ErrMismatch.
+func mismatch(format string, args ...any) error {
+	return fmt.Errorf("%w: "+format, append([]any{ErrMismatch}, args...)...)
+}
+
+// ErrNotFound marks an error where the service says the object (or the
+// version) does not exist.
+var ErrNotFound = errors.New("object not found")
+
+// notFound wraps err in ErrNotFound when the service says the object does
+// not exist.
+func notFound(err error) error {
+	var api smithy.APIError
+	if errors.As(err, &api) {
+		switch api.ErrorCode() {
+		case "NotFound", "NoSuchKey", "NoSuchVersion":
+			return fmt.Errorf("%w: %w", ErrNotFound, err)
+		}
+	}
+	return err
+}
+
+// missing turns a not-found error of a verify into a mismatch: the upload is
+// gone.
+func missing(err error) error {
+	if errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("%w: missing: %w", ErrMismatch, err)
+	}
+	return err
+}
+
 // VerifyHead checks the stored object against want with one HEAD: size and
 // ETag, plus the Object Lock mode and retain-until when the service reports
 // them (B2 does when the key may read file retentions).
 func (c *Client) VerifyHead(ctx context.Context, want PutResult) error {
 	info, err := c.Head(ctx, want.Rel, want.VersionID)
 	if err != nil {
-		return err
+		return missing(err)
 	}
 	switch {
 	case info.Size != want.Size:
-		return fmt.Errorf("archive s3: verify %s: size %d, want %d", want.Key, info.Size, want.Size)
+		return mismatch("archive s3: verify %s: size %d, want %d", want.Key, info.Size, want.Size)
 	case info.ETag != want.ETag:
-		return fmt.Errorf("archive s3: verify %s: ETag %q, want %q", want.Key, info.ETag, want.ETag)
+		return mismatch("archive s3: verify %s: ETag %q, want %q", want.Key, info.ETag, want.ETag)
 	}
 	if c.lockDays > 0 {
 		if info.LockMode != "" && info.LockMode != string(c.lockMode) {
-			return fmt.Errorf("archive s3: verify %s: Object Lock mode %q, want %q", want.Key, info.LockMode, c.lockMode)
+			return mismatch("archive s3: verify %s: Object Lock mode %q, want %q", want.Key, info.LockMode, c.lockMode)
 		}
 		if !info.RetainUntil.IsZero() && info.RetainUntil.Before(want.RetainUntil) {
-			return fmt.Errorf("archive s3: verify %s: Object Lock retain-until %s, want at least %s",
+			return mismatch("archive s3: verify %s: Object Lock retain-until %s, want at least %s",
 				want.Key, info.RetainUntil.Format(time.RFC3339), want.RetainUntil.Format(time.RFC3339))
 		}
 	}
@@ -431,11 +469,11 @@ func (c *Client) VerifyFull(ctx context.Context, want PutResult, w io.Writer) er
 	}
 	out, err := c.api.GetObject(ctx, in)
 	if err != nil {
-		return c.wrap("get", key, err)
+		return missing(notFound(c.wrap("get", key, err)))
 	}
 	defer out.Body.Close()
 	if etag := trimETag(aws.ToString(out.ETag)); etag != "" && etag != want.ETag {
-		return fmt.Errorf("archive s3: verify %s: GET ETag %q, want %q", want.Key, etag, want.ETag)
+		return mismatch("archive s3: verify %s: GET ETag %q, want %q", want.Key, etag, want.ETag)
 	}
 	h := sha256.New()
 	dst := io.Writer(h)
@@ -447,10 +485,10 @@ func (c *Client) VerifyFull(ctx context.Context, want PutResult, w io.Writer) er
 		return c.wrap("read back", want.Key, err)
 	}
 	if n != want.Size {
-		return fmt.Errorf("archive s3: verify %s: read %d bytes, want %d", want.Key, n, want.Size)
+		return mismatch("archive s3: verify %s: read %d bytes, want %d", want.Key, n, want.Size)
 	}
 	if got := hex.EncodeToString(h.Sum(nil)); got != want.SHA256 {
-		return fmt.Errorf("archive s3: verify %s: sha256 %s, want %s", want.Key, got, want.SHA256)
+		return mismatch("archive s3: verify %s: sha256 %s, want %s", want.Key, got, want.SHA256)
 	}
 	return nil
 }

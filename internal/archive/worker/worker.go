@@ -26,6 +26,9 @@ package worker
 import (
 	"bytes"
 	"context"
+	"crypto/md5" // #nosec G501 -- the S3 ETag of a single-part object
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -52,6 +55,7 @@ import (
 type Store interface {
 	Key(rel string) (string, error)
 	Put(ctx context.Context, rel string, body io.ReaderAt, size int64, meta map[string]string) (s3.PutResult, error)
+	Head(ctx context.Context, rel, versionID string) (s3.ObjectInfo, error)
 	VerifyHead(ctx context.Context, want s3.PutResult) error
 	VerifyFull(ctx context.Context, want s3.PutResult, w io.Writer) error
 	Preflight(ctx context.Context) error
@@ -122,6 +126,7 @@ type Worker struct {
 	afterUploaded func(ctx context.Context, c *models.ArchiveChunk) error
 	beforeCount   func(ctx context.Context, c *models.ArchiveChunk) error
 	beforeVerify  func(ctx context.Context, c *models.ArchiveChunk) error
+	beforeMark    func(ctx context.Context, c *models.ArchiveChunk) error
 }
 
 // New builds the worker for the enabled streams of cfg over db, with the S3
@@ -156,7 +161,9 @@ func newWorker(db *database.Database, store Store, cfg config.ArchiveConfig) (*W
 	w.runner = fmt.Sprintf("%s-%d", host, os.Getpid())
 	w.staging = cfg.StagingDir
 	if w.staging == "" {
-		w.staging = filepath.Join(os.TempDir(), "fwmon-archive")
+		// Config.Validate requires it; a temp-directory default would land
+		// in a container's writable layer, often the database's disk.
+		return nil, errors.New("archive: ARCHIVE_STAGING_DIR is required")
 	}
 	if err := os.MkdirAll(w.staging, 0o700); err != nil {
 		return nil, fmt.Errorf("archive: staging directory %s: %w", w.staging, err)
@@ -313,13 +320,14 @@ func (w *Worker) pass(ctx context.Context) {
 	}
 }
 
-// inWindow reports whether ARCHIVE_WINDOW (server local time) allows a syslog
-// chunk to start at t.
+// inWindow reports whether ARCHIVE_WINDOW (UTC) allows a syslog chunk to
+// start at t.
 func (w *Worker) inWindow(t time.Time) bool {
 	if !w.window.on {
 		return true
 	}
-	m := t.Local().Hour()*60 + t.Local().Minute()
+	t = t.UTC()
+	m := t.Hour()*60 + t.Minute()
 	if w.window.start < w.window.end {
 		return m >= w.window.start && m < w.window.end
 	}
@@ -371,6 +379,17 @@ type stageError struct {
 
 func (e *stageError) Error() string { return e.stage + ": " + e.err.Error() }
 func (e *stageError) Unwrap() error { return e.err }
+
+// errMismatch marks a finding that the archived copy is not the table's
+// range (read-back content, count verdict, staged bytes): the only failures
+// after an upload that re-export the chunk.
+var errMismatch = errors.New("archive mismatch")
+
+func mismatchErr(stage string, err error) error {
+	return &stageError{stage: stage, err: fmt.Errorf("%w: %w", errMismatch, err)}
+}
+
+func isMismatch(err error) bool { return errors.Is(err, errMismatch) || errors.Is(err, s3.ErrMismatch) }
 
 func stageErr(stage string, err error) error {
 	if err == nil {
@@ -434,6 +453,13 @@ func (w *Worker) workOne(ctx context.Context, table string) progress {
 	}
 	metrics.SetArchiveUnsettled(table, "")
 
+	if err := w.db.ClaimArchiveChunk(ctx, c, w.runner); err != nil {
+		if ctx.Err() == nil {
+			metrics.IncArchiveError("db")
+			w.logf("claim-"+table, "%s chunk %d: claim: %v", table, c.Seq, err)
+		}
+		return progressNone
+	}
 	err = w.process(ctx, c)
 	if err == nil {
 		delete(w.cooldown, table)
@@ -449,14 +475,37 @@ func (w *Worker) workOne(ctx context.Context, table string) progress {
 		stage = se.stage
 	}
 	metrics.IncArchiveError(stage)
-	log.Printf("archive: %s chunk %d (attempt %d) failed at %v", table, c.Seq, c.Attempts, err)
 	at := w.now()
-	if ferr := w.db.FailArchiveChunk(ctx, c, err.Error(), at); ferr != nil {
+	var ferr error
+	switch {
+	case isMismatch(err):
+		// The archived copy is wrong: re-export, a bounded number of times.
+		var parked bool
+		parked, ferr = w.db.RecordArchiveMismatch(ctx, c, err.Error(), at)
+		if parked {
+			metrics.IncArchiveNeedsAttention(table)
+			log.Printf("archive: %s chunk %d NEEDS ATTENTION: %d exports did not match; it is no longer retried (last: %v)", table, c.Seq, c.Mismatches, err)
+		} else {
+			log.Printf("archive: %s chunk %d (attempt %d) mismatch, re-exported after its backoff: %v", table, c.Seq, c.Attempts, err)
+		}
+	case c.Status == models.ArchiveChunkVerifying:
+		// Uploaded, and nothing found wrong: read it back again later
+		// instead of writing another Object Lock-retained copy.
+		ferr = w.db.DeferArchiveVerify(ctx, c, err.Error(), at)
+		log.Printf("archive: %s chunk %d verification failed (%d in a row), retried after its backoff: %v", table, c.Seq, c.VerifyFailures, err)
+		if bucketStage(stage) {
+			w.cooldown[table] = at.Add(database.ArchiveRetryBackoff(c.VerifyFailures))
+		}
+	default:
+		log.Printf("archive: %s chunk %d (attempt %d) failed at %v", table, c.Seq, c.Attempts, err)
+		ferr = w.db.FailArchiveChunk(ctx, c, err.Error(), at)
+		if bucketStage(stage) {
+			w.cooldown[table] = at.Add(database.ArchiveRetryBackoff(c.Attempts))
+		}
+	}
+	if ferr != nil {
 		metrics.IncArchiveError("db")
 		log.Printf("archive: %s chunk %d: record the failure: %v", table, c.Seq, ferr)
-	}
-	if bucketStage(stage) {
-		w.cooldown[table] = at.Add(database.ArchiveRetryBackoff(c.Attempts))
 	}
 	return progressFailed
 }
@@ -519,16 +568,19 @@ func (w *Worker) rate(table string) int {
 // exportUpload exports c into its staging directory and uploads every object,
 // leaving the chunk in verifying.
 func (w *Worker) exportUpload(ctx context.Context, c *models.ArchiveChunk) error {
-	if free, err := stagingFree(ctx, w.staging); err == nil && free < stagingMinFree {
+	free, err := stagingFree(ctx, w.staging)
+	switch {
+	case err != nil:
+		return stageErr("stage", fmt.Errorf("free space of the staging directory %s unknown: %w", w.staging, err))
+	case free < stagingMinFree:
 		return stageErr("stage", fmt.Errorf("staging directory %s has %d MiB free, below the %d MiB floor", w.staging, free>>20, stagingMinFree>>20))
-	} else if err != nil {
-		w.logf("stagingfree", "free space of %s unknown (%v); exporting anyway", w.staging, err)
 	}
 	schema, err := w.schemaFor(ctx, c)
 	if err != nil {
 		return stageErr("db", err)
 	}
-	if err := w.db.BeginArchiveChunkExport(ctx, c, w.runner, w.now()); err != nil {
+	reuse, err := w.db.BeginArchiveChunkExport(ctx, c, w.runner, w.now())
+	if err != nil {
 		return stageErr("db", err)
 	}
 	dir := filepath.Join(w.staging, "chunk-"+strconv.FormatUint(uint64(c.ID), 10))
@@ -612,13 +664,22 @@ func (w *Worker) exportUpload(ctx context.Context, c *models.ArchiveChunk) error
 			"fwmon-archive-sha256-content": obj.Sha256Content,
 			"fwmon-archive-rows":           strconv.FormatInt(obj.RowCount, 10),
 		}
+		if old, ok := reuse[obj.ObjectKey]; ok && old.Sha256Object == obj.Sha256Object && old.ObjectBytes == obj.ObjectBytes && old.ETag != "" {
+			// An earlier attempt uploaded these exact bytes (and its copy
+			// never failed a read-back): do not write another retained
+			// copy; the read-back below verifies the one there.
+			if err := w.db.MarkArchiveObjectUploaded(ctx, obj, old.ETag, old.VersionID, old.PartCount, old.LockUntil, w.now()); err != nil {
+				return stageErr("db", err)
+			}
+			continue
+		}
 		put, err := w.store.Put(ctx, rel, f, obj.ObjectBytes, meta)
 		if err != nil {
 			return stageErr("upload", err)
 		}
 		if put.SHA256 != obj.Sha256Object {
 			// The staged file is not the bytes the exporter hashed.
-			return stageErr("stage", fmt.Errorf("staged %s hashed %s at upload, the export wrote %s", rel, put.SHA256, obj.Sha256Object))
+			return mismatchErr("stage", fmt.Errorf("staged %s hashed %s at upload, the export wrote %s", rel, put.SHA256, obj.Sha256Object))
 		}
 		if w.afterPut != nil {
 			if err := w.afterPut(ctx, c, obj); err != nil {
@@ -678,7 +739,7 @@ func (w *Worker) verify(ctx context.Context, c *models.ArchiveChunk) error {
 	for i := range objs {
 		o := &objs[i]
 		if o.Status != models.ArchiveObjectUploaded {
-			return stageErr("verify", fmt.Errorf("object %s is %s, not uploaded", o.ObjectKey, o.Status))
+			return mismatchErr("verify", fmt.Errorf("object %s is %s, not uploaded", o.ObjectKey, o.Status))
 		}
 		want, err := w.putResult(o)
 		if err != nil {
@@ -694,7 +755,7 @@ func (w *Worker) verify(ctx context.Context, c *models.ArchiveChunk) error {
 			return stageErr("verify", verr)
 		}
 		if cerr != nil {
-			return stageErr("verify", fmt.Errorf("%s: %w", o.ObjectKey, cerr))
+			return mismatchErr("verify", fmt.Errorf("%s: %w", o.ObjectKey, cerr))
 		}
 		got.Rows += chk.rows
 		got.IDSum += chk.idSum
@@ -710,7 +771,7 @@ func (w *Worker) verify(ctx context.Context, c *models.ArchiveChunk) error {
 		return stageErr("db", err)
 	}
 	if !cnt.Verifiable() {
-		return stageErr("count", fmt.Errorf("count check %s: the table holds %d rows (id sum %d) in (%d, %d], the bucket %d (id sum %d)",
+		return mismatchErr("count", fmt.Errorf("count check %s: the table holds %d rows (id sum %d) in (%d, %d], the bucket %d (id sum %d)",
 			cnt.Verdict, cnt.Rows, cnt.IDSum, c.IDLo, c.IDHi, cnt.ExportedRows, cnt.ExportedIDSum))
 	}
 	schema, err := w.schemaFor(ctx, c)
@@ -720,6 +781,11 @@ func (w *Worker) verify(ctx context.Context, c *models.ArchiveChunk) error {
 	for _, stream := range export.StreamsOf(c.SourceTable) {
 		if err := w.putManifest(ctx, c, stream, schema, objs); err != nil {
 			return stageErr("manifest", err)
+		}
+	}
+	if w.beforeMark != nil {
+		if err := w.beforeMark(ctx, c); err != nil {
+			return stageErr("db", err)
 		}
 	}
 	at := w.now()
@@ -744,6 +810,17 @@ func (w *Worker) putManifest(ctx context.Context, c *models.ArchiveChunk, stream
 		return err
 	}
 	rel := export.FolderRel(stream, schema, c.PeriodStart, hourly(c.SourceTable)) + "/" + export.ChunkManifestName
+	// A verification resumed after a crash or a transient failure may find
+	// this exact manifest already stored: read that one back instead of
+	// writing another retained copy.
+	sum := md5.Sum(body) // #nosec G401 -- the S3 ETag of a single-part object
+	if info, err := w.store.Head(ctx, rel, ""); err == nil && info.Size == int64(len(body)) && info.ETag == hex.EncodeToString(sum[:]) {
+		sha := sha256.Sum256(body)
+		return w.store.VerifyFull(ctx, s3.PutResult{Rel: rel, Key: info.Key, Size: info.Size, SHA256: hex.EncodeToString(sha[:]),
+			ETag: info.ETag, VersionID: info.VersionID}, nil)
+	} else if err != nil && !errors.Is(err, s3.ErrNotFound) {
+		return err
+	}
 	put, err := w.store.Put(ctx, rel, bytes.NewReader(body), int64(len(body)), map[string]string{
 		"fwmon-archive-schema": strconv.Itoa(schema), "fwmon-archive-stream": stream,
 	})
@@ -764,7 +841,7 @@ func (w *Worker) publishProgress(ctx context.Context) {
 	now := w.now()
 	for _, t := range w.tables {
 		for _, s := range []string{models.ArchiveChunkPending, models.ArchiveChunkExporting, models.ArchiveChunkUploading,
-			models.ArchiveChunkVerifying, models.ArchiveChunkVerified, models.ArchiveChunkFailed} {
+			models.ArchiveChunkVerifying, models.ArchiveChunkVerified, models.ArchiveChunkFailed, models.ArchiveChunkNeedsAttention} {
 			metrics.SetArchiveChunks(t, s, counts[t][s])
 		}
 		p, err := w.db.ArchiveTableProgress(ctx, t)

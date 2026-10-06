@@ -48,6 +48,10 @@ var (
 		Namespace: "fwmon", Subsystem: "archive", Name: "last_success_timestamp_seconds",
 		Help: "Unix time this process last verified a chunk of the stream.",
 	}, []string{"stream"})
+	archiveNeedsAttention = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "fwmon", Subsystem: "archive", Name: "needs_attention_total",
+		Help: "Chunks parked by this process after repeated mismatches (no longer retried; fwmon_archive_chunks{status=\"needs_attention\"} counts those parked now).",
+	}, []string{"table"})
 	archiveUnsettled = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "fwmon", Subsystem: "archive", Name: "unsettled",
 		Help: "1 while the table's next chunk waits to be exported, by reason: settling (the settle window after the cut), open_writer (a writing transaction older than the cut), no_statement_timeout (statement_timeout 0: nothing can be settled).",
@@ -60,7 +64,7 @@ var ArchiveUnsettledReasons = []string{"settling", "open_writer", "no_statement_
 
 func init() {
 	prometheus.MustRegister(archiveLag, archiveVerifiedThrough, archiveChunks, archiveRows, archiveObjects,
-		archiveObjectBytes, archiveRawBytes, archiveErrors, archiveLastSuccess, archiveUnsettled)
+		archiveObjectBytes, archiveRawBytes, archiveErrors, archiveLastSuccess, archiveUnsettled, archiveNeedsAttention)
 }
 
 // SetArchiveLag sets a stream's lag.
@@ -105,3 +109,7 @@ func SetArchiveUnsettled(table, reason string) {
 		archiveUnsettled.WithLabelValues(table, r).Set(v)
 	}
 }
+
+// IncArchiveNeedsAttention counts one chunk of table parked after repeated
+// mismatches.
+func IncArchiveNeedsAttention(table string) { archiveNeedsAttention.WithLabelValues(table).Inc() }

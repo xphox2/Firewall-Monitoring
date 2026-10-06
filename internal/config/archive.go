@@ -50,12 +50,14 @@ type ArchiveConfig struct {
 	// syslog_messages, and flow_samples / flow_if_counters.
 	SyslogRateRowsPerSec int // ARCHIVE_SYSLOG_RATE_ROWS_PER_SEC (default 5000)
 	FlowRateRowsPerSec   int // ARCHIVE_FLOW_RATE_ROWS_PER_SEC (default 20000)
-	// Window "HH:MM-HH:MM" (server local time, may wrap midnight): syslog
-	// chunks start only inside it. Empty = any time. Flows always run.
+	// Window "HH:MM-HH:MM" (UTC, may wrap midnight): syslog chunks start
+	// only inside it. Empty = any time. Flows always run.
 	Window string // ARCHIVE_WINDOW (default empty)
 	// StagingDir holds each chunk's compressed objects between export and
-	// upload (absolute path; empty = <os temp dir>/fwmon-archive).
-	StagingDir string // ARCHIVE_STAGING_DIR (default empty)
+	// upload: an absolute path, REQUIRED once a stream is enabled (no
+	// default — a temp directory would sit in a container's writable layer,
+	// often on the database's disk).
+	StagingDir string // ARCHIVE_STAGING_DIR
 
 	// Lab / self-hosted escape hatches (MinIO, Garage, SeaweedFS on a LAN).
 	AllowHTTP            bool // ARCHIVE_ALLOW_HTTP (default false)
@@ -164,14 +166,17 @@ func (a ArchiveConfig) Validate() error {
 	if _, _, _, err := a.WindowMinutes(); err != nil {
 		return err
 	}
-	if a.StagingDir != "" && !filepath.IsAbs(a.StagingDir) {
+	switch {
+	case a.StagingDir == "":
+		return fmt.Errorf("archive is enabled but ARCHIVE_STAGING_DIR is empty: set it to an absolute directory on a volume with room for a day of compressed syslog (there is no default)")
+	case !filepath.IsAbs(a.StagingDir):
 		return fmt.Errorf("ARCHIVE_STAGING_DIR must be an absolute path, got %q", a.StagingDir)
 	}
 	return nil
 }
 
-// WindowMinutes parses ARCHIVE_WINDOW ("HH:MM-HH:MM") into minutes since
-// local midnight; start > end wraps past midnight. ok is false when the window
+// WindowMinutes parses ARCHIVE_WINDOW ("HH:MM-HH:MM", UTC) into minutes
+// since UTC midnight; start > end wraps past midnight. ok is false when the window
 // is empty (no restriction).
 func (a ArchiveConfig) WindowMinutes() (start, end int, ok bool, err error) {
 	w := strings.TrimSpace(a.Window)

@@ -57,7 +57,7 @@ func TestNextArchiveChunk_OrderAndBackoff(t *testing.T) {
 		t.Fatalf("next is seq %d, want 2", s)
 	}
 	c := cs[1]
-	if err := d.BeginArchiveChunkExport(archiveCtx, &c, "runner-a", now); err != nil {
+	if _, err := d.BeginArchiveChunkExport(archiveCtx, &c, "runner-a", now); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.FailArchiveChunk(archiveCtx, &c, "upload: boom", now); err != nil {
@@ -70,7 +70,7 @@ func TestNextArchiveChunk_OrderAndBackoff(t *testing.T) {
 		t.Fatalf("after the backoff next is seq %d, want 2", s)
 	}
 	// Second failure: 5 minutes.
-	if err := d.BeginArchiveChunkExport(archiveCtx, &c, "runner-a", now); err != nil {
+	if _, err := d.BeginArchiveChunkExport(archiveCtx, &c, "runner-a", now); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.FailArchiveChunk(archiveCtx, &c, strings.Repeat("x", 3000), now); err != nil {
@@ -96,11 +96,14 @@ func TestArchiveChunkStateMachine(t *testing.T) {
 	at := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 	ts := func(h int) *time.Time { v := time.Date(2026, 10, 1, h, 0, 0, 0, time.UTC); return &v }
 	hist := func(s string) *string { return &s }
+	var lastReuse map[string]models.ArchiveObject
 	attempt := func() []models.ArchiveObject {
 		t.Helper()
-		if err := d.BeginArchiveChunkExport(archiveCtx, &c, "runner-a", at); err != nil {
+		reuse, err := d.BeginArchiveChunkExport(archiveCtx, &c, "runner-a", at)
+		if err != nil {
 			t.Fatal(err)
 		}
+		lastReuse = reuse
 		dev1, dev2 := uint(1), uint(2)
 		objs := []models.ArchiveObject{
 			{ChunkID: c.ID, Stream: "syslog", DeviceID: &dev1, ObjectKey: "p/a", SchemaVersion: 2, Compression: "gzip", RowCount: 3,
@@ -121,6 +124,9 @@ func TestArchiveChunkStateMachine(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := attempt() // a re-export: the first attempt's objects are superseded
+	if len(lastReuse) != 1 || lastReuse["p/a"].ETag != "etag-a" {
+		t.Fatalf("reusable uploads of the first attempt: %v, want only p/a", lastReuse)
+	}
 	var n int64
 	d.db.Model(&models.ArchiveObject{}).Where("chunk_id = ? AND status = ?", c.ID, models.ArchiveObjectSuperseded).Count(&n)
 	if n != 2 || c.Attempts != 2 {
@@ -184,5 +190,90 @@ func TestArchiveTableProgress(t *testing.T) {
 	counts, err := d.ArchiveChunkStatusCounts(archiveCtx)
 	if err != nil || counts[export.TableCounters][models.ArchiveChunkVerified] != 3 || counts[export.TableCounters][models.ArchiveChunkFailed] != 1 {
 		t.Fatalf("counts %v %v", counts, err)
+	}
+}
+
+// TestArchiveMismatchCapAndVerifyBackoff: a mismatch supersedes the objects
+// it found (none is reusable by the next export) and fails the chunk, the
+// third parks it in needs_attention, which NextArchiveChunk never returns; a
+// transient verification failure keeps the chunk in verifying behind its own
+// backoff; a stale copy of a chunk (another runner claimed it) cannot write.
+func TestArchiveMismatchCapAndVerifyBackoff(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	cs := seedArchiveChunks(t, d, export.TableSyslog, models.ArchiveChunkPending, models.ArchiveChunkPending)
+	c := cs[0]
+	at := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	next := func(now time.Time) int64 {
+		t.Helper()
+		n, err := d.NextArchiveChunk(archiveCtx, export.TableSyslog, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n == nil {
+			return 0
+		}
+		return n.Seq
+	}
+	for i := 1; i <= models.ArchiveMaxMismatches; i++ {
+		if _, err := d.BeginArchiveChunkExport(archiveCtx, &c, "runner-a", at); err != nil {
+			t.Fatal(err)
+		}
+		o := models.ArchiveObject{ChunkID: c.ID, Stream: "syslog", ObjectKey: "p/a", SchemaVersion: 2, Compression: "gzip", Status: models.ArchiveObjectPending}
+		if err := d.RecordArchiveExport(archiveCtx, &c, []models.ArchiveObject{o}, at); err != nil {
+			t.Fatal(err)
+		}
+		objs, _ := d.ArchiveChunkObjects(archiveCtx, c.ID)
+		if err := d.MarkArchiveObjectUploaded(archiveCtx, &objs[0], "etag", "", 0, nil, at); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.SetArchiveChunkStatus(archiveCtx, &c, models.ArchiveChunkVerifying, at); err != nil {
+			t.Fatal(err)
+		}
+		parked, err := d.RecordArchiveMismatch(archiveCtx, &c, "count check late_commit", at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if parked != (i == models.ArchiveMaxMismatches) || c.Mismatches != i {
+			t.Fatalf("mismatch %d: parked %v, mismatches %d", i, parked, c.Mismatches)
+		}
+		if open, _ := d.ArchiveChunkObjects(archiveCtx, c.ID); len(open) != 0 {
+			t.Fatalf("mismatch %d left %d objects that the next export could reuse", i, len(open))
+		}
+	}
+	if c.Status != models.ArchiveChunkNeedsAttention {
+		t.Fatalf("after %d mismatches: %s", models.ArchiveMaxMismatches, c.Status)
+	}
+	if s := next(at.Add(24 * time.Hour)); s != 2 {
+		t.Fatalf("next is seq %d, want 2 (seq 1 needs attention)", s)
+	}
+
+	v := cs[1]
+	if _, err := d.BeginArchiveChunkExport(archiveCtx, &v, "runner-a", at); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.RecordArchiveExport(archiveCtx, &v, nil, at); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetArchiveChunkStatus(archiveCtx, &v, models.ArchiveChunkVerifying, at); err != nil {
+		t.Fatal(err)
+	}
+	stale := v
+	if err := d.ClaimArchiveChunk(archiveCtx, &v, "runner-b"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.FailArchiveChunk(archiveCtx, &stale, "stale worker", at); err == nil {
+		t.Fatal("a stale worker failed a chunk another runner claimed")
+	}
+	if err := d.DeferArchiveVerify(archiveCtx, &v, "get: 500", at); err != nil {
+		t.Fatal(err)
+	}
+	if v.Status != models.ArchiveChunkVerifying || v.VerifyFailures != 1 || v.Attempts != 1 {
+		t.Fatalf("after a transient verify failure: %s verify_failures %d attempts %d", v.Status, v.VerifyFailures, v.Attempts)
+	}
+	if s := next(at.Add(59 * time.Second)); s != 0 {
+		t.Fatalf("verifying chunk returned inside its backoff (seq %d)", s)
+	}
+	if s := next(at.Add(time.Minute)); s != 2 {
+		t.Fatalf("after the backoff next is %d, want 2", s)
 	}
 }

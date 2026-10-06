@@ -20,11 +20,18 @@ import (
 //
 //	pending / failed / exporting / uploading → (re-)export: the chunk's earlier
 //	    objects are superseded, the range is exported again (same id range,
-//	    same bytes, same keys) and uploaded;
+//	    same bytes, same keys) and uploaded — except an object an earlier
+//	    attempt already uploaded with identical bytes, which is not sent again;
 //	verifying → every uploaded object is read back again; nothing re-uploaded.
+//	    A transient failure (the service or the database) leaves the chunk in
+//	    verifying, retried with backoff; only a mismatch (content or count)
+//	    re-exports, at most models.ArchiveMaxMismatches times before the chunk
+//	    is parked in needs_attention.
 //
 // Only a read-back that matches and a count check of "match" make a chunk
-// verified, in one transaction with its objects.
+// verified, in one transaction with its objects. Every status change is a
+// compare-and-set on (status, attempts, runner_id), so a worker holding a
+// stale copy of a chunk cannot overwrite another's progress.
 
 // archiveLockKey is the advisory-lock key the poller's archive worker holds
 // for a tick: one worker cluster-wide takes id marks, plans, exports and
@@ -57,9 +64,11 @@ func ArchiveRetryBackoff(attempts int) time.Duration {
 const archiveWorkScan = 500
 
 // NextArchiveChunk returns the oldest chunk of table there is work for at now:
-// the lowest seq that is not verified, skipping a failed chunk until its
-// backoff (from its last failure, updated_at) has passed — later chunks may
-// still proceed. nil when there is none.
+// the lowest seq that is not verified, skipping a chunk that needs attention,
+// a failed chunk until its backoff (by attempts, from its last failure,
+// updated_at) has passed and a verifying chunk after a transient failure
+// until its backoff (by verify_failures) has — later chunks may still
+// proceed. nil when there is none.
 func (d *Database) NextArchiveChunk(ctx context.Context, table string, now time.Time) (*models.ArchiveChunk, error) {
 	var cs []models.ArchiveChunk
 	if err := d.db.WithContext(ctx).Where("table_name = ? AND status NOT IN ?", table,
@@ -69,7 +78,12 @@ func (d *Database) NextArchiveChunk(ctx context.Context, table string, now time.
 	}
 	for i := range cs {
 		c := cs[i]
-		if c.Status == models.ArchiveChunkFailed && now.Before(c.UpdatedAt.Add(ArchiveRetryBackoff(c.Attempts))) {
+		switch {
+		case c.Status == models.ArchiveChunkNeedsAttention:
+			continue
+		case c.Status == models.ArchiveChunkFailed && now.Before(c.UpdatedAt.Add(ArchiveRetryBackoff(c.Attempts))):
+			continue
+		case c.Status == models.ArchiveChunkVerifying && c.VerifyFailures > 0 && now.Before(c.UpdatedAt.Add(ArchiveRetryBackoff(c.VerifyFailures))):
 			continue
 		}
 		return &c, nil
@@ -81,9 +95,11 @@ func (d *Database) NextArchiveChunk(ctx context.Context, table string, now time.
 // status (another writer; with the advisory lock held, a bug).
 var errArchiveChunkMoved = errors.New("archive: chunk status changed underneath the worker")
 
-// casChunk updates chunk c from its current status, refreshing c.
+// casChunk updates chunk c from the state the caller read (status, attempts
+// and runner), refreshing c.
 func casChunk(tx *gorm.DB, c *models.ArchiveChunk, set map[string]interface{}) error {
-	res := tx.Model(&models.ArchiveChunk{}).Where("id = ? AND status = ?", c.ID, c.Status).Updates(set)
+	res := tx.Model(&models.ArchiveChunk{}).Where("id = ? AND status = ? AND attempts = ? AND runner_id = ?",
+		c.ID, c.Status, c.Attempts, c.RunnerID).Updates(set)
 	if res.Error != nil {
 		return res.Error
 	}
@@ -93,20 +109,47 @@ func casChunk(tx *gorm.DB, c *models.ArchiveChunk, set map[string]interface{}) e
 	return tx.Where("id = ?", c.ID).First(c).Error
 }
 
+// ClaimArchiveChunk records runner as the worker of c (status unchanged), so
+// a stale worker's later write to c fails its compare-and-set.
+func (d *Database) ClaimArchiveChunk(ctx context.Context, c *models.ArchiveChunk, runner string) error {
+	if c.RunnerID == runner {
+		return nil
+	}
+	return casChunk(d.db.WithContext(ctx), c, map[string]interface{}{"runner_id": runner})
+}
+
 // BeginArchiveChunkExport starts an export attempt of c: every object of an
 // earlier attempt that is not already superseded becomes superseded (it was
 // never verified), and the chunk moves to exporting with one more attempt.
-func (d *Database) BeginArchiveChunkExport(ctx context.Context, c *models.ArchiveChunk, runner string, at time.Time) error {
-	return d.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+// It returns the earlier attempt's objects that were uploaded (status
+// uploaded at that point), by key: an object of the new export with the same
+// key and stored bytes is already in the bucket and need not be sent again —
+// the read-back verifies it like any other. A mismatch supersedes the
+// objects it found (RecordArchiveMismatch), so a copy that failed its
+// read-back is never reused.
+func (d *Database) BeginArchiveChunkExport(ctx context.Context, c *models.ArchiveChunk, runner string, at time.Time) (map[string]models.ArchiveObject, error) {
+	reuse := map[string]models.ArchiveObject{}
+	err := d.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var up []models.ArchiveObject
+		if err := tx.Where("chunk_id = ? AND status = ?", c.ID, models.ArchiveObjectUploaded).Find(&up).Error; err != nil {
+			return err
+		}
+		for _, o := range up {
+			reuse[o.ObjectKey] = o
+		}
 		if err := tx.Model(&models.ArchiveObject{}).Where("chunk_id = ? AND status <> ?", c.ID, models.ArchiveObjectSuperseded).
 			Updates(map[string]interface{}{"status": models.ArchiveObjectSuperseded, "updated_at": at}).Error; err != nil {
 			return fmt.Errorf("archive: supersede the objects of chunk %d: %w", c.ID, err)
 		}
 		return casChunk(tx, c, map[string]interface{}{
 			"status": models.ArchiveChunkExporting, "attempts": c.Attempts + 1, "runner_id": runner,
-			"started_at": at, "error": "", "updated_at": at,
+			"started_at": at, "error": "", "verify_failures": 0, "updated_at": at,
 		})
 	})
+	if err != nil {
+		return nil, err
+	}
+	return reuse, nil
 }
 
 // RecordArchiveExport stores the objects an export wrote (status pending, as
@@ -162,6 +205,40 @@ func (d *Database) FailArchiveChunk(ctx context.Context, c *models.ArchiveChunk,
 	return casChunk(d.db.WithContext(ctx), c, map[string]interface{}{"status": models.ArchiveChunkFailed, "error": msg, "updated_at": at})
 }
 
+// RecordArchiveMismatch records an attempt whose read-back content or count
+// did not match: the objects found are superseded (never reused), the
+// mismatch counted, and the chunk is failed (re-exported after its backoff)
+// or, at models.ArchiveMaxMismatches, parked in needs_attention. It reports
+// whether the chunk was parked.
+func (d *Database) RecordArchiveMismatch(ctx context.Context, c *models.ArchiveChunk, msg string, at time.Time) (parked bool, err error) {
+	if len(msg) > archiveErrorMax {
+		msg = msg[:archiveErrorMax]
+	}
+	status := models.ArchiveChunkFailed
+	if c.Mismatches+1 >= models.ArchiveMaxMismatches {
+		status = models.ArchiveChunkNeedsAttention
+	}
+	err = d.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&models.ArchiveObject{}).Where("chunk_id = ? AND status <> ?", c.ID, models.ArchiveObjectSuperseded).
+			Updates(map[string]interface{}{"status": models.ArchiveObjectSuperseded, "updated_at": at}).Error; err != nil {
+			return err
+		}
+		return casChunk(tx, c, map[string]interface{}{"status": status, "mismatches": c.Mismatches + 1,
+			"verify_failures": 0, "error": msg, "updated_at": at})
+	})
+	return status == models.ArchiveChunkNeedsAttention && err == nil, err
+}
+
+// DeferArchiveVerify records a transient verification failure of c (the
+// service or the database failed, nothing was found wrong): c stays in
+// verifying and is read back again after ArchiveRetryBackoff(verify_failures).
+func (d *Database) DeferArchiveVerify(ctx context.Context, c *models.ArchiveChunk, msg string, at time.Time) error {
+	if len(msg) > archiveErrorMax {
+		msg = msg[:archiveErrorMax]
+	}
+	return casChunk(d.db.WithContext(ctx), c, map[string]interface{}{"verify_failures": c.VerifyFailures + 1, "error": msg, "updated_at": at})
+}
+
 // MarkArchiveChunkVerified marks c and its (non-superseded) objects verified
 // in one transaction and stores the chunk's totals: rows, message-time bounds
 // and day histogram summed over the objects. The caller has read every object
@@ -210,7 +287,7 @@ func (d *Database) MarkArchiveChunkVerified(ctx context.Context, c *models.Archi
 			}
 		}
 		return casChunk(tx, c, map[string]interface{}{
-			"status": models.ArchiveChunkVerified, "verified_at": at, "error": "", "updated_at": at,
+			"status": models.ArchiveChunkVerified, "verified_at": at, "error": "", "verify_failures": 0, "updated_at": at,
 			"row_count": rows, "min_ts": minTs, "max_ts": maxTs, "msg_day_histogram": hs,
 		})
 	})

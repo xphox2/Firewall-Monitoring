@@ -20,7 +20,15 @@ const (
 	ArchiveChunkVerified   = "verified"
 	ArchiveChunkFailed     = "failed"
 	ArchiveChunkSuperseded = "superseded"
+	// ArchiveChunkNeedsAttention: the chunk's read-back or count did not match
+	// ArchiveMaxMismatches times in a row; the worker no longer retries it on
+	// its own (each re-export writes another Object Lock-retained copy).
+	ArchiveChunkNeedsAttention = "needs_attention"
 )
+
+// ArchiveMaxMismatches is how many exports of one chunk may end in a
+// mismatch (read-back content or count check) before it needs attention.
+const ArchiveMaxMismatches = 3
 
 // Archive object statuses (ArchiveObject.Status): recorded after the export
 // (pending), uploaded with the service's ETag / version (uploaded), read back
@@ -71,14 +79,20 @@ type ArchiveChunk struct {
 	MaxTs    *time.Time `json:"max_ts"`
 	// MsgDayHistogram is {"YYYY-MM-DD": rows} by message (sample) UTC day, so a
 	// restore of a message day finds the chunks that hold it.
-	MsgDayHistogram *string    `json:"msg_day_histogram" gorm:"type:jsonb"`
-	Attempts        int        `json:"attempts"`
-	Error           string     `json:"error" gorm:"type:text"`
-	RunnerID        string     `json:"runner_id"`
-	StartedAt       *time.Time `json:"started_at"`
-	VerifiedAt      *time.Time `json:"verified_at"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	MsgDayHistogram *string `json:"msg_day_histogram" gorm:"type:jsonb"`
+	Attempts        int     `json:"attempts"`
+	// Mismatches: exports whose read-back content or count check did not
+	// match (each one led to a re-export). VerifyFailures: consecutive
+	// verifications that failed for a transient reason (the service or the
+	// database), retried with backoff without re-exporting. Migration v76.
+	Mismatches     int        `json:"mismatches" gorm:"not null;default:0"`
+	VerifyFailures int        `json:"verify_failures" gorm:"not null;default:0"`
+	Error          string     `json:"error" gorm:"type:text"`
+	RunnerID       string     `json:"runner_id"`
+	StartedAt      *time.Time `json:"started_at"`
+	VerifiedAt     *time.Time `json:"verified_at"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 func (ArchiveChunk) TableName() string { return "archive_chunks" }

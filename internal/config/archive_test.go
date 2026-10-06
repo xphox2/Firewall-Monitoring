@@ -41,6 +41,7 @@ func validArchiveEnv() map[string]string {
 		"ARCHIVE_S3_SECRET_ACCESS_KEY": archiveTestSecret,
 		"ARCHIVE_OBJECT_LOCK_DAYS":     "400",
 		"ARCHIVE_OBJECT_LOCK_MODE":     "governance",
+		"ARCHIVE_STAGING_DIR":          "/var/lib/fwmon/archive-staging",
 	}
 }
 
@@ -116,6 +117,13 @@ func TestArchiveConfig_RequiredWhenEnabled(t *testing.T) {
 		if err := Load().Archive.Validate(); err == nil || !strings.Contains(err.Error(), k) {
 			t.Errorf("without %s: Validate = %v", k, err)
 		}
+	}
+	// The staging directory is required too (no temp-directory default).
+	env := validArchiveEnv()
+	delete(env, "ARCHIVE_STAGING_DIR")
+	setArchiveEnv(t, env)
+	if err := Load().Archive.Validate(); err == nil || !strings.Contains(err.Error(), "ARCHIVE_STAGING_DIR") {
+		t.Errorf("without ARCHIVE_STAGING_DIR: Validate = %v", err)
 	}
 	// Config.Validate (the startup gate) surfaces it.
 	setArchiveEnv(t, map[string]string{"ARCHIVE_SYSLOG_ENABLED": "true"})

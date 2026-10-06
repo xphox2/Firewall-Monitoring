@@ -379,8 +379,9 @@ func TestWorker_FlowsSplitAndEmptyStream(t *testing.T) {
 
 // TestWorker_UploadFailureRetriesWithBackoff: a 503 on one object's PUT fails
 // the attempt (never verified, no chunk.json); the chunk waits out its
-// backoff, then a new attempt supersedes the first attempt's objects,
-// uploads the same keys again and verifies.
+// backoff, then a new attempt supersedes the first attempt's objects and
+// verifies — sending only the object that never arrived: the one already
+// uploaded with the same bytes is not written (and retained) twice.
 func TestWorker_UploadFailureRetriesWithBackoff(t *testing.T) {
 	h := newHarness(t, day(10, 5, 11, 50), func(c *config.ArchiveConfig) { c.FlowsEnabled = false })
 	seedSyslog(t, h.db, day(10, 4, 1, 0), day(10, 4, 2, 0), day(10, 4, 3, 0))
@@ -430,8 +431,11 @@ func TestWorker_UploadFailureRetriesWithBackoff(t *testing.T) {
 	if verified != 2 || superseded != 2 {
 		t.Fatalf("%d verified, %d superseded objects; want 2 and 2", verified, superseded)
 	}
-	if n := h.puts(`/device-1\.ndjson\.gz$`); n != 2 {
-		t.Fatalf("device-1 PUT %d times, want 2 (same key, both attempts)", n)
+	if n := h.puts(`/device-1\.ndjson\.gz$`); n != 1 {
+		t.Fatalf("device-1 PUT %d times, want 1 (the first attempt's upload is reused)", n)
+	}
+	if n := h.puts(`/device-2\.ndjson\.gz$`); n != 2 {
+		t.Fatalf("device-2 PUT %d times, want 2 (refused, then sent)", n)
 	}
 }
 
@@ -770,13 +774,12 @@ func TestWorker_StagingCleanupAndFloor(t *testing.T) {
 	}
 }
 
-// TestWorker_WindowHoldsSyslogOnly: outside ARCHIVE_WINDOW no syslog chunk is
-// started, while flows run; inside it the syslog day is archived.
+// TestWorker_WindowHoldsSyslogOnly: outside ARCHIVE_WINDOW (UTC, whatever the
+// server's zone) no syslog chunk is started, while flows run; inside it the
+// syslog day is archived.
 func TestWorker_WindowHoldsSyslogOnly(t *testing.T) {
 	start := day(10, 5, 10, 20)
-	local := start.Add(passEvery).Local()
-	hh := (local.Hour() + 2) % 24
-	window := strconv.Itoa(hh) + ":00-" + strconv.Itoa((hh+1)%24) + ":00"
+	window := "12:00-13:00" // UTC; the first tick is at 10:30 UTC
 	h := newHarness(t, start, func(c *config.ArchiveConfig) { c.Window = window })
 	seedSyslog(t, h.db, day(10, 4, 1, 0))
 	f := models.FlowSample{Timestamp: day(10, 5, 9, 0), DeviceID: 7, SrcAddr: "192.0.2.10", DstAddr: "198.51.100.7"}
@@ -825,5 +828,126 @@ func TestWorker_SyslogSchemaByMonth(t *testing.T) {
 				t.Fatalf("%s: format field present=%v in schema v%d", c.Month, hasFormat, want)
 			}
 		}
+	}
+}
+
+// TestWorker_TransientReadBackRetriesVerifyOnly: a 500 on the read-back says
+// nothing about the stored object, so the chunk stays uploaded and verifying
+// — no second data PUT, no new retained copy — and is read back again after
+// its backoff.
+func TestWorker_TransientReadBackRetriesVerifyOnly(t *testing.T) {
+	h := newHarness(t, day(10, 5, 11, 50), func(c *config.ArchiveConfig) { c.FlowsEnabled = false })
+	seedSyslog(t, h.db, day(10, 4, 1, 0), day(10, 4, 2, 0))
+	h.srv.SetFail(func(op s3test.Op, _ *http.Request) (int, string) {
+		if op == s3test.OpGetObject {
+			return http.StatusInternalServerError, "InternalError"
+		}
+		return 0, ""
+	})
+	h.tick(ctx)
+	c := h.chunks(export.TableSyslog)[0]
+	if c.Status != models.ArchiveChunkVerifying || c.VerifyFailures != 1 || c.Attempts != 1 || c.Mismatches != 0 {
+		t.Fatalf("after a GET 500: %s verify_failures %d attempts %d mismatches %d", c.Status, c.VerifyFailures, c.Attempts, c.Mismatches)
+	}
+	h.srv.SetFail(nil)
+	h.clk.add(30 * time.Second)
+	h.w.pass(ctx)
+	if c := h.chunks(export.TableSyslog)[0]; c.Status != models.ArchiveChunkVerifying {
+		t.Fatalf("re-verified inside the backoff: %s", c.Status)
+	}
+	h.clk.add(time.Minute)
+	h.w.pass(ctx)
+	c = h.chunks(export.TableSyslog)[0]
+	if c.Status != models.ArchiveChunkVerified || c.Attempts != 1 {
+		t.Fatalf("after the backoff: %s attempts %d", c.Status, c.Attempts)
+	}
+	if n := h.puts(`\.ndjson\.gz$`); n != 2 {
+		t.Fatalf("%d data PUTs, want 2 (one per object, never re-sent)", n)
+	}
+}
+
+// TestWorker_ResumedVerifyKeepsStoredManifest: the chunk.json is in the
+// bucket when the final database update fails; the retry finds the identical
+// manifest there and reads it back instead of writing it again.
+func TestWorker_ResumedVerifyKeepsStoredManifest(t *testing.T) {
+	h := newHarness(t, day(10, 5, 11, 50), func(c *config.ArchiveConfig) { c.FlowsEnabled = false })
+	seedSyslog(t, h.db, day(10, 4, 1, 0))
+	failed := false
+	h.w.beforeMark = func(context.Context, *models.ArchiveChunk) error {
+		if failed {
+			return nil
+		}
+		failed = true
+		return errors.New("database went away")
+	}
+	h.tick(ctx)
+	if c := h.chunks(export.TableSyslog)[0]; c.Status != models.ArchiveChunkVerifying || c.VerifyFailures != 1 {
+		t.Fatalf("after the failed mark: %s verify_failures %d", c.Status, c.VerifyFailures)
+	}
+	h.clk.add(2 * time.Minute)
+	h.w.pass(ctx)
+	if c := h.chunks(export.TableSyslog)[0]; c.Status != models.ArchiveChunkVerified {
+		t.Fatalf("after the retry: %s", c.Status)
+	}
+	if n, d := h.puts(`chunk\.json$`), h.puts(`\.ndjson\.gz$`); n != 1 || d != 1 {
+		t.Fatalf("%d chunk.json and %d data PUTs, want 1 and 1", n, d)
+	}
+}
+
+// TestWorker_RepeatedMismatchStopsAtCap: a chunk whose read-back never
+// matches is exported ArchiveMaxMismatches times, then parked in
+// needs_attention (metric and log) and left alone: no further export, PUT or
+// read-back of it.
+func TestWorker_RepeatedMismatchStopsAtCap(t *testing.T) {
+	h := newHarness(t, day(10, 5, 11, 50), func(c *config.ArchiveConfig) { c.FlowsEnabled = false })
+	seedSyslog(t, h.db, day(10, 4, 1, 0))
+	h.srv.SetMutateGet(func(key string, b []byte) []byte {
+		if strings.HasSuffix(key, ".ndjson.gz") {
+			b[len(b)/2] ^= 0x01
+		}
+		return b
+	})
+	before := metricValue(t, `fwmon_archive_needs_attention_total{table="syslog_messages"}`)
+	for range 6 {
+		h.tick(ctx)
+	}
+	c := h.chunks(export.TableSyslog)[0]
+	if c.Status != models.ArchiveChunkNeedsAttention || c.Attempts != models.ArchiveMaxMismatches || c.Mismatches != models.ArchiveMaxMismatches {
+		t.Fatalf("after repeated mismatches: %s attempts %d mismatches %d", c.Status, c.Attempts, c.Mismatches)
+	}
+	if n := h.puts(`\.ndjson\.gz$`); n != models.ArchiveMaxMismatches {
+		t.Fatalf("%d data PUTs, want %d (one per export, then none)", n, models.ArchiveMaxMismatches)
+	}
+	if d := metricValue(t, `fwmon_archive_needs_attention_total{table="syslog_messages"}`) - before; d != 1 {
+		t.Fatalf("needs_attention_total grew by %v", d)
+	}
+	if v := metricValue(t, `fwmon_archive_chunks{status="needs_attention",table="syslog_messages"}`); v != 1 {
+		t.Fatalf("chunks{needs_attention} = %v", v)
+	}
+	n := len(h.srv.Requests())
+	h.clk.add(48 * time.Hour)
+	h.tick(ctx)
+	for _, r := range h.srv.Requests()[n:] {
+		if strings.Contains(r.Key, "/2026-10-04/") {
+			t.Fatalf("a parked chunk was touched: %s %s", r.Op, r.Key)
+		}
+	}
+}
+
+// TestWorker_StagingRequiredAndProbed: no staging directory, no worker; a
+// failed free-space probe refuses the export instead of writing blind.
+func TestWorker_StagingRequiredAndProbed(t *testing.T) {
+	h := newHarness(t, day(10, 5, 11, 50), func(c *config.ArchiveConfig) { c.FlowsEnabled = false })
+	cfg := h.cfg
+	cfg.StagingDir = ""
+	if _, err := newWorker(h.db, h.store, cfg); err == nil || !strings.Contains(err.Error(), "ARCHIVE_STAGING_DIR") {
+		t.Fatalf("worker without a staging directory: %v", err)
+	}
+	seedSyslog(t, h.db, day(10, 4, 1, 0))
+	stagingFree = func(context.Context, string) (uint64, error) { return 0, errors.New("statfs: permission denied") }
+	h.tick(ctx)
+	c := h.chunks(export.TableSyslog)[0]
+	if c.Status != models.ArchiveChunkFailed || !strings.Contains(c.Error, "unknown") || h.puts(`.`) != 0 {
+		t.Fatalf("free space unknown: %s %q, %d PUTs", c.Status, c.Error, h.puts(`.`))
 	}
 }

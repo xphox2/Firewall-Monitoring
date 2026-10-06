@@ -533,6 +533,40 @@ retire → confirm the replacement works → purge the old one.
 
 ---
 
+## Raw archive: the staging directory
+
+When `ARCHIVE_SYSLOG_ENABLED` or `ARCHIVE_FLOWS_ENABLED` is on (v0.11.302+),
+the poller's archive worker writes each chunk's compressed objects to
+`ARCHIVE_STAGING_DIR` between the export and the upload (a day of syslog is
+roughly 0.3–0.7 GB compressed), and deletes them once the chunk is uploaded.
+The key is **required** — there is no default: a temp directory inside the
+container would land in its writable layer, usually on the same disk as the
+PostgreSQL data. A chunk is not exported while the directory has less than
+2 GiB free, or when its free space cannot be read.
+
+Mount a dedicated volume, ideally on a different disk from `/data`, and point
+the key at it. With the bundled `docker-compose.yml`, add to the
+`firewall-mon` service:
+
+```yaml
+    environment:
+      - ARCHIVE_STAGING_DIR=/archive-staging
+    volumes:
+      - ${ARCHIVE_STAGING_HOST_DIR:-./archive-staging}:/archive-staging
+```
+
+The worker only ever removes `chunk-<n>` entries from that directory (left
+over by an interrupted run, on the next start), so a shared directory is safe,
+but a dedicated one is easier to watch. `ARCHIVE_WINDOW` (`HH:MM-HH:MM`,
+**UTC**) confines syslog exports to a time of day, e.g. a first backlog to the
+night; flows always run.
+
+A chunk whose read-back or count check fails three times is parked with
+status `needs_attention` and no longer retried (every retry writes another
+Object Lock-retained copy). Watch `fwmon_archive_chunks{status="needs_attention"}`
+and `fwmon_archive_needs_attention_total` on the poller's `/metrics`; the
+chunk's `error` column in `archive_chunks` says what differed.
+
 ## Backfilling the normalized tables (one-time, 30 days)
 
 The normalized tables (`net_events`, `sec_events`, `fw_rules`,

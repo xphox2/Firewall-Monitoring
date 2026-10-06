@@ -10,7 +10,7 @@
 > is a sibling repo, [Firewall-Collector](https://github.com/xphox2/Firewall-Collector).
 
 [![CI](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml/badge.svg)](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.11.302-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.11.303-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.26.8+-00ADD8)](go.mod)
 [![Status](https://img.shields.io/badge/status-alpha-orange)](#project-status)
@@ -405,8 +405,8 @@ The most important ones:
 | `RETENTION_*_DAYS` | varies | Per-table data retention (see [DATA-RETENTION.md](docs/DATA-RETENTION.md)) |
 | `ARCHIVE_SYSLOG_ENABLED` / `ARCHIVE_FLOWS_ENABLED` + `ARCHIVE_S3_*`, `ARCHIVE_OBJECT_LOCK_*`, `ARCHIVE_MIN_AGE_HOURS` | `false` / _(no defaults — required when enabled)_ | Raw syslog / flow archive to any S3-compatible bucket. An enabled stream is exported, uploaded, read back and verified by the poller's archive worker (since 0.11.302); **no delete waits on the archive yet**, so retention is unchanged. Endpoint, region, bucket, prefix, key id and secret are required once a stream is enabled; the secret is never logged. See [config.env.example](config.env.example). |
 | `ARCHIVE_SYSLOG_RATE_ROWS_PER_SEC` / `ARCHIVE_FLOW_RATE_ROWS_PER_SEC` | `5000` / `20000` | Read pacing of an archive export (100-100000 rows/s): syslog, and flow samples + counters. |
-| `ARCHIVE_WINDOW` | _(empty — any time)_ | `HH:MM-HH:MM` (server local time, may wrap midnight): syslog archive chunks start only inside it, e.g. to keep a backlog to the night. Flows always run. |
-| `ARCHIVE_STAGING_DIR` | _(empty — `<temp dir>/fwmon-archive`)_ | Absolute directory for each chunk's compressed objects between export and upload (needs 2 GiB free; in Docker, mount a volume). Only `chunk-<n>` entries in it are ever removed. |
+| `ARCHIVE_WINDOW` | _(empty — any time)_ | `HH:MM-HH:MM` in **UTC** (may wrap midnight): syslog archive chunks start only inside it, e.g. to keep a backlog to the night. Flows always run. |
+| `ARCHIVE_STAGING_DIR` | _(no default — required when archiving)_ | Absolute directory for each chunk's compressed objects between export and upload: mount a dedicated volume, not the container's writable layer (see [OPERATIONS.md](docs/OPERATIONS.md#raw-archive-the-staging-directory)). Needs 2 GiB free; only `chunk-<n>` entries in it are ever removed. |
 | `TRUSTED_PROXIES` | _(empty — trust no proxy)_ | Your reverse proxy's single, pinned IP (never a whole Docker subnet); its `X-Forwarded-For` then sets the client IP for lockout, rate limits and audit logs. See [docs/OPERATIONS.md](docs/OPERATIONS.md#behind-a-reverse-proxy-trusted_proxies). Behind Cloudflare as well, append its published ranges — see OPERATIONS.md. Its `X-Forwarded-Proto: https` also marks a request as HTTPS-arrived (Secure cookies, HSTS) when `COOKIE_SECURE` is unset. |
 | `METRICS_TOKEN` | _(empty — loopback only)_ | Prometheus `GET /metrics` on the API port. Unset: served to loopback peers only, 404 for everyone else. Set (e.g. `openssl rand -hex 32`): a remote scraper sends `Authorization: Bearer <token>`; anything else is 401. See [docs/monitoring/README.md](docs/monitoring/README.md). |
 | `COOKIE_SECURE` | _(unset — per request)_ | Unset: session cookies are `Secure` when the request arrived over HTTPS (in-process TLS, or a `TRUSTED_PROXIES` peer sending `X-Forwarded-Proto: https`); plain-HTTP direct logins keep working. `true`/`false` overrides that rule. |
