@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -16,7 +17,8 @@ var archiveKeys = []string{
 	"ARCHIVE_S3_BUCKET", "ARCHIVE_S3_PREFIX", "ARCHIVE_S3_ACCESS_KEY_ID", "ARCHIVE_S3_SECRET_ACCESS_KEY",
 	"ARCHIVE_S3_PATH_STYLE", "ARCHIVE_OBJECT_LOCK_DAYS", "ARCHIVE_OBJECT_LOCK_MODE", "ARCHIVE_MIN_AGE_HOURS",
 	"ARCHIVE_ALLOW_HTTP", "ARCHIVE_ALLOW_PRIVATE_ENDPOINT", "ARCHIVE_SYSLOG_RATE_ROWS_PER_SEC",
-	"ARCHIVE_FLOW_RATE_ROWS_PER_SEC", "ARCHIVE_WINDOW", "ARCHIVE_STAGING_DIR",
+	"ARCHIVE_FLOW_RATE_ROWS_PER_SEC", "ARCHIVE_WINDOW", "ARCHIVE_STAGING_DIR", "ARCHIVE_SEAL_GRACE_HOURS",
+	"ARCHIVE_SEAL_REVERIFY",
 }
 
 // setArchiveEnv clears every ARCHIVE_* key, then sets kv.
@@ -58,7 +60,8 @@ func TestArchiveConfig_DefaultsNameNoService(t *testing.T) {
 		t.Errorf("connection keys have defaults: %+v", a)
 	}
 	if !a.PathStyle || a.MinAgeHours != 2 || a.ObjectLockDays != 0 || a.AllowHTTP || a.AllowPrivateEndpoint ||
-		a.SyslogRateRowsPerSec != 5000 || a.FlowRateRowsPerSec != 20000 || a.Window != "" || a.StagingDir != "" {
+		a.SyslogRateRowsPerSec != 5000 || a.FlowRateRowsPerSec != 20000 || a.Window != "" || a.StagingDir != "" ||
+		a.SealGraceHours != 48 || a.SealReverify != SealReverifyHead {
 		t.Errorf("defaults = %+v", a)
 	}
 	if err := a.Validate(); err != nil {
@@ -176,6 +179,10 @@ func TestArchiveConfig_RejectsInvalid(t *testing.T) {
 		{"window hour", "ARCHIVE_WINDOW", "25:00-06:00", "ARCHIVE_WINDOW"},
 		{"window empty span", "ARCHIVE_WINDOW", "06:00-06:00", "ARCHIVE_WINDOW"},
 		{"staging relative", "ARCHIVE_STAGING_DIR", "data/archive", "ARCHIVE_STAGING_DIR"},
+		{"seal grace low", "ARCHIVE_SEAL_GRACE_HOURS", "5", "ARCHIVE_SEAL_GRACE_HOURS"},
+		{"seal grace high", "ARCHIVE_SEAL_GRACE_HOURS", "169", "ARCHIVE_SEAL_GRACE_HOURS"},
+		{"seal grace malformed", "ARCHIVE_SEAL_GRACE_HOURS", "48h", "ARCHIVE_SEAL_GRACE_HOURS"},
+		{"seal reverify bad", "ARCHIVE_SEAL_REVERIFY", "none", "ARCHIVE_SEAL_REVERIFY"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -223,6 +230,15 @@ func TestArchiveConfig_RejectsInvalid(t *testing.T) {
 		t.Errorf("edge pacing: %v %+v", a.Validate(), a)
 	} else if s, e, ok, err := a.WindowMinutes(); err != nil || !ok || s != 22*60 || e != 6*60 {
 		t.Errorf("window 22:00-06:00 = %d-%d %v %v", s, e, ok, err)
+	}
+	// Seal grace at its edges, and a full re-verify (any case).
+	for _, g := range []string{"6", "168"} {
+		env = validArchiveEnv()
+		env["ARCHIVE_SEAL_GRACE_HOURS"], env["ARCHIVE_SEAL_REVERIFY"] = g, "FULL"
+		setArchiveEnv(t, env)
+		if a := Load().Archive; a.Validate() != nil || a.SealReverify != SealReverifyFull || strconv.Itoa(a.SealGraceHours) != g {
+			t.Errorf("seal grace %s: %v %+v", g, a.Validate(), a)
+		}
 	}
 	// http is accepted with the escape hatch.
 	env = validArchiveEnv()

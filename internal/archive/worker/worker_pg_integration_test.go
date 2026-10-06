@@ -302,3 +302,91 @@ func TestWorker_PG_LeafMoveDuringExport(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 	}
 }
+
+// TestWorker_PG_MonthSeal: on PostgreSQL, the month two months back (the
+// archive's first, from its 10th) is exported day by day and sealed PARTIAL
+// with its _MONTH.json written, read back and recorded; --verify-month
+// passes on it from the bucket alone; the previous month, when it is due,
+// seals as a full month joined to it.
+func TestWorker_PG_MonthSeal(t *testing.T) {
+	d := database.NewIntegrationDB(t)
+	if err := d.EnsurePartitions(); err != nil {
+		t.Fatal(err)
+	}
+	database.SetArchiveSettleForTesting(t, 200*time.Millisecond, 100*time.Millisecond)
+	srv := s3test.NewB2Strict(t, testBucket)
+	cfg := testConfig(srv, t.TempDir())
+	cfg.FlowsEnabled = false
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	client, err := s3.New(cfg, s3.WithRootCAs(pool), s3.WithMaxAttempts(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := stagingFree
+	stagingFree = func(context.Context, string) (uint64, error) { return 1 << 40, nil }
+	t.Cleanup(func() { stagingFree = orig })
+	w, err := newWorker(d, client, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wall := time.Now().UTC()
+	thisMonth := time.Date(wall.Year(), wall.Month(), 1, 0, 0, 0, 0, time.UTC)
+	first, prev := thisMonth.AddDate(0, -2, 0), thisMonth.AddDate(0, -1, 0)
+	var rows int64
+	for at := first.AddDate(0, 0, 9).Add(8 * time.Hour); at.Before(prev.AddDate(0, 0, 3)); at = at.Add(12 * time.Hour) {
+		m := models.SyslogMessage{Timestamp: at, DeviceID: uint(1 + rows%2), ProbeID: 1, Hostname: "fw-example-01",
+			Message: "srcip=192.0.2.10 dstip=198.51.100.7", Severity: 5, CreatedAt: at}
+		if err := d.Gorm().Create(&m).Error; err != nil {
+			t.Fatal(err)
+		}
+		if at.Before(prev) {
+			rows++
+		}
+	}
+	firstMonth, prevMonth := export.MonthOf(first), export.MonthOf(prev)
+	deadline := time.Now().Add(60 * time.Second)
+	var m *models.ArchiveMonth
+	for {
+		w.lastPass = time.Time{}
+		w.Tick(context.Background())
+		if m, err = d.ArchiveMonthState(context.Background(), export.StreamSyslog, firstMonth); err != nil {
+			t.Fatal(err)
+		}
+		if m != nil && m.Status == models.ArchiveMonthSealed {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s not sealed within 60 s: %+v", firstMonth, m)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if !m.Partial || m.RowCount != rows || *m.FirstID != 0 || m.ChunkCount != int64(prev.Sub(first.AddDate(0, 0, 9)).Hours()/24) {
+		t.Fatalf("%s: %+v, want partial, %d rows", firstMonth, m, rows)
+	}
+	rep, err := VerifyMonth(context.Background(), client, export.StreamSyslog, firstMonth, nil)
+	if err != nil || !rep.OK() || rep.Rows != rows || rep.Digest != m.MonthDigest {
+		t.Fatalf("verify-month %s: %+v %v", firstMonth, rep, err)
+	}
+	if wall.Before(thisMonth.Add(48 * time.Hour)) {
+		return // the previous month is not due yet
+	}
+	for {
+		w.lastPass = time.Time{}
+		w.Tick(context.Background())
+		pm, err := d.ArchiveMonthState(context.Background(), export.StreamSyslog, prevMonth)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pm != nil && pm.Status == models.ArchiveMonthSealed {
+			if pm.Partial || *pm.FirstID != *m.LastID {
+				t.Fatalf("%s: %+v, want full from id %d", prevMonth, pm, *m.LastID)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s not sealed within 60 s: %+v", prevMonth, pm)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}

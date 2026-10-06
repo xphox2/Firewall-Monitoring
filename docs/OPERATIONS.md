@@ -910,6 +910,69 @@ window stays as it is. Leaving the old key in place is harmless (it is
 ignored and named in the NOTICE) but misleading to the next reader. One month
 against 30 days is at most one extra day of raw syslog at peak.
 
+## Raw archive: the monthly seal
+
+From 0.11.307 the archive worker closes each stream's month folder
+(`<prefix>/<stream>/v<schema>/<YYYY-MM>/`) once the month is over: at the
+first pass at or after the 1st of the next month, 00:00 UTC, plus
+`ARCHIVE_SEAL_GRACE_HOURS` (default 48, 6–168). Months seal oldest first, per
+stream (`syslog`, `sflow`, `netflow`, `sflow-counters`):
+
+1. **Completeness** (database): every chunk cut for the month is `verified`;
+   their seq, id ranges and periods are gapless; the last one ends exactly at
+   the 1st of the next month; the first continues the previous month's last
+   chunk, and that month is sealed with that id as its `last_id`.
+2. **Re-verification** (bucket): every object of the month is HEADed (size,
+   ETag, Object Lock) — `ARCHIVE_SEAL_REVERIFY=full` also reads each one back
+   and re-hashes it — and every `chunk.json` must be byte for byte the one the
+   database describes.
+3. **`_MONTH.json`**: the chunk list with every object's key, version id,
+   `sha256_object`, `sha256_content` and row count, each `chunk.json`'s
+   version and hash, the totals, the message-day histogram and the month
+   digest (how it is computed is written into the file). It is uploaded with
+   Object Lock, read back, and only then is the month recorded `sealed` in
+   `archive_months`. After that the worker refuses any write into the folder
+   (a chunk of a sealed month being worked again — only possible by editing
+   the database — is parked `needs_attention`, and
+   `fwmon_archive_sealed_write_refused_total` counts it).
+
+**An incomplete month is never sealed.** It is recorded `seal_failed` with
+the reason in `archive_months.error`, `fwmon_archive_seal_blocked{stream,reason}`
+says which (`incomplete`, `needs_attention`, `gap`, `objects`, `reverify`,
+`conflict`, `bucket`), the later months of the stream wait behind it, and the
+next pass (every 10 minutes; after a bucket failure, after a backoff) tries
+again. A different `_MONTH.json` already in the folder is never overwritten
+(`conflict`). `fwmon_archive_months_sealed_total{stream}` counts the seals.
+
+**The first archived month is PARTIAL.** The month the archive of a table
+began in (its first chunk starts at id 0) is sealed with `"partial": true`,
+`first_row_id` (the first archived row) and a note: rows ingested before the
+archive began were deleted by retention first, and the archive cannot list
+them. On production that is September 2026 for syslog (its first chunk is the
+oldest ingest day still on the server) and the enabling month for the flow
+streams (raw flows live about an hour). Rows deleted under a gate override
+are not detectable at the seal and do not mark a month partial.
+
+The seal is the month-level completeness proof, **not a delete gate**: raw
+rows are deleted as soon as their chunk is verified (the retention gate
+above).
+
+**Checking a sealed month** — from the bucket alone, no database needed:
+
+```
+docker exec <container> fwmon-api archive --verify-month syslog 2026-09
+```
+
+It downloads `_MONTH.json` (its ETag and the sha256 recorded at the seal),
+re-derives the chain, the totals and the month digest, downloads every
+`chunk.json` and every object by the version the manifest pins, and checks the
+stored bytes, the decompressed content hash, the row counts and that every
+line is JSON with an id inside its chunk. It only reads (GET requests) and
+prints one line per chunk and a summary; the exit code is 0 only when every
+check passed. Expect it to read the whole month (about 9–21 GB of syslog);
+on Backblaze B2 downloads up to three times the stored volume a month are
+free.
+
 ## Host disk housekeeping
 
 The section above is about the **database volume**. This one is about the **root filesystem**, which

@@ -558,3 +558,31 @@ func TestVerify_ClassifiesMismatch(t *testing.T) {
 		t.Errorf("GET 500: %v, want a non-mismatch error", err)
 	}
 }
+
+// TestGetBytes: a small object comes back whole with its metadata and Object
+// Lock state; one above the limit is refused; a missing key is ErrNotFound;
+// nothing is written.
+func TestGetBytes(t *testing.T) {
+	cl, srv := newFakeClient(t, nil)
+	ctx := context.Background()
+	data := []byte(`{"kind":"example"}` + "\n")
+	if _, err := cl.Put(ctx, "x/m.json", bytes.NewReader(data), int64(len(data)), map[string]string{"fwmon-archive-stream": "syslog"}); err != nil {
+		t.Fatal(err)
+	}
+	puts := srv.Count(s3test.OpPutObject)
+	got, info, err := cl.GetBytes(ctx, "x/m.json", "", 1<<10)
+	sum := md5.Sum(data) // #nosec G401 -- expected ETag
+	if err != nil || !bytes.Equal(got, data) || info.Size != int64(len(data)) || info.ETag != hex.EncodeToString(sum[:]) ||
+		info.Metadata["fwmon-archive-stream"] != "syslog" || info.LockMode != "GOVERNANCE" {
+		t.Fatalf("GetBytes = %q %+v %v", got, info, err)
+	}
+	if _, _, err := cl.GetBytes(ctx, "x/m.json", "", int64(len(data)-1)); err == nil || !strings.Contains(err.Error(), "larger than") {
+		t.Errorf("over the limit: %v", err)
+	}
+	if _, _, err := cl.GetBytes(ctx, "x/absent.json", "", 1<<10); !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing: %v, want ErrNotFound", err)
+	}
+	if n := srv.Count(s3test.OpPutObject); n != puts {
+		t.Errorf("GetBytes wrote %d objects", n-puts)
+	}
+}

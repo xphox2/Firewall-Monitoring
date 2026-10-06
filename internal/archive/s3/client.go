@@ -493,6 +493,45 @@ func (c *Client) VerifyFull(ctx context.Context, want PutResult, w io.Writer) er
 	return nil
 }
 
+// GetBytes downloads a small object whole (a manifest whose hash is not known
+// in advance): at most limit bytes, else an error. A non-empty versionID
+// addresses that version; an object that does not exist is ErrNotFound. It
+// returns the GET's metadata with the body.
+func (c *Client) GetBytes(ctx context.Context, rel, versionID string, limit int64) ([]byte, ObjectInfo, error) {
+	key, err := c.Key(rel)
+	if err != nil {
+		return nil, ObjectInfo{}, err
+	}
+	in := &awss3.GetObjectInput{Bucket: aws.String(c.bucket), Key: aws.String(key)}
+	if versionID != "" {
+		in.VersionId = aws.String(versionID)
+	}
+	out, err := c.api.GetObject(ctx, in)
+	if err != nil {
+		return nil, ObjectInfo{}, notFound(c.wrap("get", key, err))
+	}
+	defer out.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(out.Body, limit+1))
+	if err != nil {
+		return nil, ObjectInfo{}, c.wrap("read", key, err)
+	}
+	if int64(len(body)) > limit {
+		return nil, ObjectInfo{}, fmt.Errorf("archive s3: %s is larger than %d bytes", key, limit)
+	}
+	info := ObjectInfo{
+		Key:       key,
+		Size:      int64(len(body)),
+		ETag:      trimETag(aws.ToString(out.ETag)),
+		VersionID: aws.ToString(out.VersionId),
+		LockMode:  string(out.ObjectLockMode),
+		Metadata:  out.Metadata,
+	}
+	if out.ObjectLockRetainUntilDate != nil {
+		info.RetainUntil = out.ObjectLockRetainUntilDate.UTC()
+	}
+	return body, info, nil
+}
+
 // Preflight lists at most one key under the prefix, which proves the
 // credentials, bucket and prefix scope work without writing anything. When
 // ARCHIVE_OBJECT_LOCK_DAYS > 0 it also reads the bucket's Object Lock

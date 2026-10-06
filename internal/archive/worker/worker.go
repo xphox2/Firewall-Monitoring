@@ -6,10 +6,11 @@
 // count of "match" — marks the chunk verified, after writing a chunk.json
 // manifest into each of its stream folders.
 //
-// It deletes nothing: no delete is gated on the archive yet (that is the next
-// release), no month is sealed and there is no UI. With
-// ARCHIVE_SYSLOG_ENABLED and ARCHIVE_FLOWS_ENABLED both off the poller does
-// not start it.
+// It deletes nothing (the retention gate, database/archive_gate.go, lets the
+// deletes take only what it verified) and, after each pass, seals the months
+// that are due (seal.go): a sealed month's folder is never written again.
+// With ARCHIVE_SYSLOG_ENABLED and ARCHIVE_FLOWS_ENABLED both off the poller
+// does not start it.
 //
 // Exclusion: a tick runs under the archive's own advisory lock
 // (database.AcquireArchiveLock), never the shared poller work lock, so an
@@ -109,11 +110,14 @@ type Worker struct {
 	now    func() time.Time
 	runner string
 
-	running    atomic.Bool
-	preflight  bool
-	lastPass   time.Time
-	cooldown   map[string]time.Time // table → no new chunk before (after a bucket failure)
-	formatOnce struct {
+	running   atomic.Bool
+	preflight bool
+	lastPass  time.Time
+	cooldown  map[string]time.Time // table (or "seal-"+stream) → no new attempt before (after a bucket failure)
+	// sealFailures counts a stream's consecutive seal attempts the service or
+	// the database failed (their backoff).
+	sealFailures map[string]int
+	formatOnce   struct {
 		done  bool
 		month string // first month of syslog schema v2 ("" = every month)
 	}
@@ -144,7 +148,7 @@ func New(db *database.Database, cfg config.ArchiveConfig, opts ...s3.Option) (*W
 func newWorker(db *database.Database, store Store, cfg config.ArchiveConfig) (*Worker, error) {
 	w := &Worker{
 		db: db, store: store, cfg: cfg, now: time.Now,
-		cooldown: map[string]time.Time{}, lastLog: map[string]string{},
+		cooldown: map[string]time.Time{}, sealFailures: map[string]int{}, lastLog: map[string]string{},
 	}
 	if cfg.FlowsEnabled {
 		w.tables = append(w.tables, export.TableFlows, export.TableCounters)
@@ -264,9 +268,10 @@ func (w *Worker) takeMarks(ctx context.Context) {
 }
 
 // pass plans and works chunks until none of the enabled tables has a chunk
-// that can make progress now. Tables take turns one chunk at a time, flows
-// first, so a long syslog backlog does not hold the hourly flow chunks back
-// by more than one syslog chunk. Marks keep being taken while it runs.
+// that can make progress now, then seals the months that are due. Tables take
+// turns one chunk at a time, flows first, so a long syslog backlog does not
+// hold the hourly flow chunks back by more than one syslog chunk. Marks keep
+// being taken while it runs.
 func (w *Worker) pass(ctx context.Context) {
 	markCtx, stop := context.WithCancel(ctx)
 	var wg sync.WaitGroup
@@ -316,8 +321,11 @@ func (w *Worker) pass(ctx context.Context) {
 			}
 		}
 		if !progressed {
-			return
+			break
 		}
+	}
+	if ctx.Err() == nil {
+		w.sealDue(ctx)
 	}
 }
 
@@ -478,6 +486,19 @@ func (w *Worker) workOne(ctx context.Context, table string) progress {
 		// Shutdown: leave the chunk in its state; the next run resumes it.
 		return progressNone
 	}
+	if errors.Is(err, errSealedWrite) {
+		// A chunk of a sealed month is not verified (only by hand can that
+		// be): no retry may write it, and the folder must not change.
+		metrics.IncArchiveError("sealed")
+		if perr := w.db.ParkArchiveChunk(ctx, c, err.Error(), w.now()); perr != nil {
+			metrics.IncArchiveError("db")
+			log.Printf("archive: %s chunk %d: park: %v", table, c.Seq, perr)
+		} else {
+			metrics.IncArchiveNeedsAttention(table)
+		}
+		log.Printf("archive: %s chunk %d NEEDS ATTENTION: %v", table, c.Seq, err)
+		return progressFailed
+	}
 	if errors.Is(err, database.ErrArchiveLeafMove) {
 		// Partition maintenance is (or was, during this export or count)
 		// moving rows through a standalone leaf: a wait, not a failure.
@@ -531,6 +552,9 @@ func (w *Worker) workOne(ctx context.Context, table string) progress {
 
 // process runs one attempt of chunk c from its state to verified.
 func (w *Worker) process(ctx context.Context, c *models.ArchiveChunk) error {
+	if err := w.refuseSealed(ctx, c); err != nil {
+		return err
+	}
 	if c.Status != models.ArchiveChunkVerifying {
 		if err := w.exportUpload(ctx, c); err != nil {
 			return err
@@ -711,7 +735,7 @@ func (w *Worker) exportUpload(ctx context.Context, c *models.ArchiveChunk) error
 			}
 			continue
 		}
-		put, err := w.store.Put(ctx, rel, f, obj.ObjectBytes, meta)
+		put, err := w.put(ctx, rel, f, obj.ObjectBytes, meta)
 		if err != nil {
 			return stageErr("upload", err)
 		}
@@ -859,7 +883,7 @@ func (w *Worker) putManifest(ctx context.Context, c *models.ArchiveChunk, stream
 	} else if err != nil && !errors.Is(err, s3.ErrNotFound) {
 		return err
 	}
-	put, err := w.store.Put(ctx, rel, bytes.NewReader(body), int64(len(body)), map[string]string{
+	put, err := w.put(ctx, rel, bytes.NewReader(body), int64(len(body)), map[string]string{
 		"fwmon-archive-schema": strconv.Itoa(schema), "fwmon-archive-stream": stream,
 	})
 	if err != nil {

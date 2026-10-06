@@ -136,6 +136,17 @@ type ArchiveObject struct {
 
 func (ArchiveObject) TableName() string { return "archive_objects" }
 
+// Archive month statuses (ArchiveMonth.Status): open until the worker first
+// looks at the month, sealing while its _MONTH.json is written and read back,
+// sealed for good (nothing is written into the folder again), or
+// seal_failed — not sealable yet, the error says why; retried every pass.
+const (
+	ArchiveMonthOpen       = "open"
+	ArchiveMonthSealing    = "sealing"
+	ArchiveMonthSealed     = "sealed"
+	ArchiveMonthSealFailed = "seal_failed"
+)
+
 // ArchiveMonth is the seal state of one stream's month folder.
 type ArchiveMonth struct {
 	ID     uint   `json:"id" gorm:"primaryKey"`

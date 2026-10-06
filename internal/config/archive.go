@@ -49,6 +49,14 @@ type ArchiveConfig struct {
 	// chunk may be exported (flows use a fixed 5 minutes).
 	MinAgeHours int // ARCHIVE_MIN_AGE_HOURS (default 2)
 
+	// Month seal: a stream's month M is sealed (its _MONTH.json written, the
+	// folder closed to writes) at the first pass at or after the 1st of M+1
+	// 00:00 UTC + SealGraceHours. SealReverify is how the seal re-checks every
+	// object of the month first: "head" (size and ETag) or "full" (read back
+	// and re-hashed).
+	SealGraceHours int    // ARCHIVE_SEAL_GRACE_HOURS (default 48, 6-168)
+	SealReverify   string // ARCHIVE_SEAL_REVERIFY: head (default) or full
+
 	// Read pacing of an export, rows per second (100-100000):
 	// syslog_messages, and flow_samples / flow_if_counters.
 	SyslogRateRowsPerSec int // ARCHIVE_SYSLOG_RATE_ROWS_PER_SEC (default 5000)
@@ -78,6 +86,12 @@ type ArchiveConfig struct {
 // one and 3,000 days"). AWS allows longer; one
 // limit for every service keeps a config portable between them.
 const MaxArchiveObjectLockDays = 3000
+
+// ARCHIVE_SEAL_REVERIFY values.
+const (
+	SealReverifyHead = "head"
+	SealReverifyFull = "full"
+)
 
 // Enabled reports whether any archive stream is switched on.
 func (a ArchiveConfig) Enabled() bool { return a.SyslogEnabled || a.FlowsEnabled }
@@ -157,6 +171,12 @@ func (a ArchiveConfig) Validate() error {
 	}
 	if a.MinAgeHours < 1 || a.MinAgeHours > 168 {
 		return fmt.Errorf("ARCHIVE_MIN_AGE_HOURS must be 1-168, got %d", a.MinAgeHours)
+	}
+	if a.SealGraceHours < 6 || a.SealGraceHours > 168 {
+		return fmt.Errorf("ARCHIVE_SEAL_GRACE_HOURS must be 6-168, got %d", a.SealGraceHours)
+	}
+	if a.SealReverify != SealReverifyHead && a.SealReverify != SealReverifyFull {
+		return fmt.Errorf("ARCHIVE_SEAL_REVERIFY must be head or full, got %q", a.SealReverify)
 	}
 	for _, r := range []struct {
 		key string

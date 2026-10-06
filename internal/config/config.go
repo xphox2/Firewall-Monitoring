@@ -703,12 +703,17 @@ func loadArchiveConfig() ArchiveConfig {
 		ObjectLockDays:       strictIntEnv("ARCHIVE_OBJECT_LOCK_DAYS", 0, &bad),
 		ObjectLockMode:       strings.TrimSpace(getEnv("ARCHIVE_OBJECT_LOCK_MODE", "")),
 		MinAgeHours:          strictIntEnv("ARCHIVE_MIN_AGE_HOURS", 2, &bad),
+		SealGraceHours:       strictIntEnv("ARCHIVE_SEAL_GRACE_HOURS", 48, &bad),
+		SealReverify:         strings.ToLower(strings.TrimSpace(getEnv("ARCHIVE_SEAL_REVERIFY", ""))),
 		SyslogRateRowsPerSec: strictIntEnv("ARCHIVE_SYSLOG_RATE_ROWS_PER_SEC", 5000, &bad),
 		FlowRateRowsPerSec:   strictIntEnv("ARCHIVE_FLOW_RATE_ROWS_PER_SEC", 20000, &bad),
 		Window:               strings.TrimSpace(getEnv("ARCHIVE_WINDOW", "")),
 		StagingDir:           strings.TrimSpace(getEnv("ARCHIVE_STAGING_DIR", "")),
 		AllowHTTP:            strictBoolEnv("ARCHIVE_ALLOW_HTTP", false, &bad),
 		AllowPrivateEndpoint: strictBoolEnv("ARCHIVE_ALLOW_PRIVATE_ENDPOINT", false, &bad),
+	}
+	if a.SealReverify == "" {
+		a.SealReverify = SealReverifyHead
 	}
 	a.invalid = bad
 	return a
