@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -528,6 +529,30 @@ func (p *Poller) Start() error {
 						return
 					case <-t.C:
 						aw.Tick(backfillCtx)
+					}
+				}
+			})
+		}
+	}
+
+	// Archive restores to staging tables (archive plan PR 9): the jobs the
+	// admin API / `fwmon-api archive --restore` queue, run one at a time under
+	// the restore worker's own advisory lock. It needs the bucket keys and the
+	// staging directory, not an enabled stream: an operator who turned the
+	// archive off can still restore what it holds.
+	if p.db != nil && p.cfg.Archive.ValidateS3() == nil && filepath.IsAbs(p.cfg.Archive.StagingDir) {
+		if rw, err := archiveworker.NewRestoreWorker(p.db, p.cfg.Archive); err != nil {
+			log.Printf("archive restore: worker not started: %v", err)
+		} else {
+			logging.SafeGo("archive-restore", func() {
+				t := time.NewTicker(archiveworker.RestoreTickInterval)
+				defer t.Stop()
+				for {
+					select {
+					case <-backfillCtx.Done():
+						return
+					case <-t.C:
+						rw.Tick(backfillCtx)
 					}
 				}
 			})

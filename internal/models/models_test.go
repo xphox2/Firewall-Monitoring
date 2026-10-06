@@ -55,6 +55,8 @@ func allTablers() []tabler {
 		// archive manifest.
 		NetEvent{}, SecEvent{}, NetEventRollup{}, FwRule{}, DeviceFieldObserved{}, NormalizeBackfillJob{},
 		ArchiveChunk{}, ArchiveObject{}, ArchiveMonth{}, ArchiveIDMark{}, ArchiveGateEvent{},
+		// v78: archive restore jobs.
+		ArchiveRestoreJob{}, ArchiveRestoreObject{},
 	}
 }
 

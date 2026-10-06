@@ -211,3 +211,129 @@ type ArchiveIDMark struct {
 }
 
 func (ArchiveIDMark) TableName() string { return "archive_id_marks" }
+
+// Restore job statuses (ArchiveRestoreJob.Status). pending → running ⇄
+// (cancelling) → done | failed | cancelled; a syslog job with Renormalize
+// passes through loaded (rows staged, waiting for the normalized-event
+// backfill queue to take its job). failed and cancelled keep their per-object
+// cursors and can be resumed (→ pending). dropped: the staging table is gone
+// (by request or after ExpiresAt).
+const (
+	ArchiveRestorePending    = "pending"
+	ArchiveRestoreRunning    = "running"
+	ArchiveRestoreCancelling = "cancelling"
+	ArchiveRestoreLoaded     = "loaded"
+	ArchiveRestoreDone       = "done"
+	ArchiveRestoreFailed     = "failed"
+	ArchiveRestoreCancelled  = "cancelled"
+	ArchiveRestoreDropped    = "dropped"
+)
+
+// ArchiveRestoreJob restores the archived rows of one stream whose message
+// (sample) UTC day lies in [FromDay, ToDay] into a staging table of its own,
+// StagingTable (restore_<id>_<source table>: the source table's columns, the
+// original ids as primary key). Rows are never written back into
+// syslog_messages / flow_samples / flow_if_counters (operator decision: restore
+// to staging only). Migration v78. The poller's restore worker
+// (internal/archive/worker/restore.go) downloads each selected object,
+// verifies it (stored bytes, decompressed bytes, rows, id range) and loads it
+// in short batches, each committing its rows with the object's cursor.
+type ArchiveRestoreJob struct {
+	ID          uint   `json:"id" gorm:"primaryKey"`
+	RequestedBy string `json:"requested_by"`
+	// Stream is syslog, sflow, netflow or sflow-counters; SourceTable its
+	// table (the staging table's shape).
+	Stream      string `json:"stream" gorm:"size:16;not null"`
+	SourceTable string `json:"source_table" gorm:"size:32;not null"`
+	// FromDay / ToDay: the message-time UTC days restored, YYYY-MM-DD, inclusive.
+	FromDay string `json:"from_day" gorm:"size:10;not null"`
+	ToDay   string `json:"to_day" gorm:"size:10;not null"`
+	// DeviceID restricts the rows restored to one device; nil = every device.
+	// A filter, not a row owner.
+	DeviceID *uint `json:"device_id"`
+	// FromBucket: the objects are selected from the bucket's sealed months
+	// (_MONTH.json) instead of the database manifest (a database that lost
+	// it); selected by the worker on its first run.
+	FromBucket bool `json:"from_bucket" gorm:"not null;default:false"`
+	// Renormalize (syslog only): once staged, queue a normalized-event
+	// backfill over the staging table; Replace makes it rewrite the
+	// net_events / sec_events rows those raw rows already have.
+	Renormalize    bool   `json:"renormalize" gorm:"not null;default:false"`
+	Replace        bool   `json:"replace" gorm:"not null;default:false"`
+	RateRowsPerSec int    `json:"rate_rows_per_sec"`
+	StagingTable   string `json:"staging_table" gorm:"size:64"`
+	Status         string `json:"status" gorm:"size:16;not null;default:pending;index"`
+	// RunnerID is the owner token of the worker run that claimed the job;
+	// every progress write is guarded on it.
+	RunnerID string `json:"runner_id"`
+	// SelectedAt: when the objects were selected (at creation from the
+	// database manifest; on the first run from the bucket).
+	SelectedAt   *time.Time `json:"selected_at"`
+	ObjectsTotal int        `json:"objects_total"`
+	ObjectsDone  int        `json:"objects_done"`
+	// RowsEstimate: the rows of the requested days in the selected objects
+	// (their message-day histograms; for flows every device's). RowsScanned:
+	// lines read from verified objects; RowsLoaded: rows written to the
+	// staging table (the requested days and device).
+	RowsEstimate    int64 `json:"rows_estimate"`
+	RowsScanned     int64 `json:"rows_scanned"`
+	RowsLoaded      int64 `json:"rows_loaded"`
+	BytesDownloaded int64 `json:"bytes_downloaded"`
+	// BackfillJobID: the normalized-event backfill queued over the staging
+	// table (Renormalize).
+	BackfillJobID *uint `json:"backfill_job_id"`
+	// ExpiresAt: the staging table is dropped by the worker after it (a
+	// running job's never).
+	ExpiresAt time.Time `json:"expires_at"`
+	// Note: what the restore could not cover (rows of those days ingested
+	// after the archive's verified end, months not sealed in the bucket).
+	Note       string     `json:"note" gorm:"type:text"`
+	Error      string     `json:"error" gorm:"type:text"`
+	StartedAt  *time.Time `json:"started_at"`
+	FinishedAt *time.Time `json:"finished_at"`
+	DroppedAt  *time.Time `json:"dropped_at"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+}
+
+func (ArchiveRestoreJob) TableName() string { return "archive_restore_jobs" }
+
+// Restore object statuses (ArchiveRestoreObject.Status).
+const (
+	ArchiveRestoreObjectPending = "pending"
+	ArchiveRestoreObjectDone    = "done"
+)
+
+// ArchiveRestoreObject is one archived object a restore job reads: what the
+// manifest (or _MONTH.json) recorded about it — key and version, both hashes,
+// sizes, rows and its chunk's id range, the bounds the download is verified
+// against — and the job's progress through it: CursorID is the id of the last
+// line whose batch committed (lines at or below it are never loaded again).
+type ArchiveRestoreObject struct {
+	ID            uint   `json:"id" gorm:"primaryKey"`
+	JobID         uint   `json:"job_id" gorm:"not null;index"`
+	ChunkSeq      int64  `json:"chunk_seq"`
+	ChunkIDLo     int64  `json:"chunk_id_lo"`
+	ChunkIDHi     int64  `json:"chunk_id_hi"`
+	ObjectKey     string `json:"object_key" gorm:"type:text;not null"`
+	VersionID     string `json:"version_id"`
+	SchemaVersion int    `json:"schema_version"`
+	Compression   string `json:"compression" gorm:"size:8"`
+	RowCount      int64  `json:"row_count"`
+	RawBytes      int64  `json:"raw_bytes"`
+	ObjectBytes   int64  `json:"object_bytes"`
+	Sha256Content string `json:"sha256_content" gorm:"size:64"`
+	Sha256Object  string `json:"sha256_object" gorm:"size:64"`
+	ETag          string `json:"etag" gorm:"column:etag"`
+	PartCount     int    `json:"part_count"`
+	MinID         int64  `json:"min_id"`
+	MaxID         int64  `json:"max_id"`
+	// DayRows: rows of the requested days in the object (its histogram).
+	DayRows    int64      `json:"day_rows"`
+	Status     string     `json:"status" gorm:"size:16;not null;default:pending"`
+	CursorID   int64      `json:"cursor_id"`
+	RowsLoaded int64      `json:"rows_loaded"`
+	DoneAt     *time.Time `json:"done_at"`
+}
+
+func (ArchiveRestoreObject) TableName() string { return "archive_restore_objects" }

@@ -1142,6 +1142,122 @@ override settings), no archive alert fires or resolves.
   `no_statement_timeout`: set `DB_STATEMENT_TIMEOUT` (the archive cannot
   settle a cut without one).
 
+## Raw archive: restore to a staging table
+
+From 0.11.309 archived rows can be brought back — **into a staging table of
+their own, never into `syslog_messages`, `flow_samples` or
+`flow_if_counters`** (restoring there would collide with retention, the gate
+and the rollups). A restore covers one stream and a range of **message-time**
+UTC days (up to 31), optionally one device:
+
+```
+docker exec <container> fwmon-api archive --restore syslog --from 2026-10-04 --to 2026-10-04 [--device 7]
+docker exec <container> fwmon-api archive --restores                 # progress, staging tables and sizes
+docker exec <container> fwmon-api archive --cancel-restore <id>      # stops between batches, cursors kept
+docker exec <container> fwmon-api archive --resume-restore <id>      # a failed / cancelled restore continues
+docker exec <container> fwmon-api archive --drop-restore <id>        # drop the staging table now
+```
+
+or `POST /admin/api/archive/restores` (`{stream, from, to, device_id?,
+renormalize?, replace?, from_bucket?, rate_rows_per_sec?, ttl_days?,
+password, totp_code}`), `GET /admin/api/archive/restores`,
+`POST /admin/api/archive/restores/:id/cancel`, `…/:id/resume` and
+`DELETE /admin/api/archive/restores/:id` — admin-only; queue, resume and drop
+re-verify the password (+ 2FA code) and every action is audit-logged. The
+poller runs the restores (within 15 s, one at a time, under its own advisory
+lock); it needs `ARCHIVE_S3_*` and `ARCHIVE_STAGING_DIR`, not an enabled
+stream.
+
+What happens:
+
+- **Selection.** Each archived object records how many of its rows fall on
+  each message day, so the restore takes exactly the objects that hold rows
+  of the requested days — usually that day's and the next day's (a row is
+  filed under the day it was *received*), plus any a device with a skewed
+  clock spread further. It reads the database manifest (every verified
+  object, sealed month or not). `--from-bucket` selects from the bucket's
+  sealed months instead (`_MONTH.json` of the month before through the month
+  after the range, each checked against its ETag and the sha256 recorded at
+  the seal) for a database that lost its manifest; the job's note lists the
+  months it could not search. The note also says when the archive is not yet
+  verified past the requested days (later-received rows of them are then
+  still only in the live table).
+- **Disk.** Refused when the rows to stage (syslog ~1.3 KB, flows ~0.4 KB
+  per row with the indexes) would take half the database volume's free space
+  or more; the worker re-checks before it starts. Each object is downloaded
+  to `ARCHIVE_STAGING_DIR/restore-<id>/` (object size + 512 MiB free
+  required) and deleted once loaded.
+- **Verification — nothing unverified is loaded.** Every object is fetched
+  by its recorded version id and checked while it downloads: the stored bytes
+  against `sha256_object`, the decompressed bytes against `sha256_content`,
+  the byte and row counts, and every line JSON with an id inside its chunk's
+  range, in order. Only then is it decoded, and each line must re-encode to
+  exactly itself (the row format of its schema version: syslog v1 has no
+  `format`, v2 has it). A mismatch **REFUSES** the object: the job fails with
+  `REFUSED …` in its error, nothing of that object is staged, and
+  `fwmon_archive_restore_refused_total{stream}` counts it. Treat it like a
+  corrupt archive: run `fwmon-api archive --verify-month` on the month. A
+  bucket outage fails the job without `REFUSED`; resume it.
+- **Staging table.** `restore_<id>_<table>`: the live table's columns, the
+  **original ids** as primary key, indexes on `(timestamp)` and
+  `(device_id, timestamp)`. Query it with SQL, e.g.
+  `SELECT * FROM restore_12_syslog_messages WHERE device_id = 7 ORDER BY timestamp`.
+  Rows of the requested days (and device) only.
+- **Exactly once, resumable.** Rows load in batches of 5 000 lines at the
+  job's rate (default 5 000 rows/s); each batch commits with the object's
+  cursor, so a crash or restart resumes after the last committed line (the
+  job is requeued once its heartbeat is two minutes stale).
+- **Lifetime.** The staging table is dropped `--ttl-days` (default 7, max 90)
+  after the job was queued, or by `--drop-restore` — never while a
+  normalized-event backfill over it is active. Retention, the archive gate,
+  partition maintenance, the device purge and the archive itself never touch
+  a staging table.
+- **Flows** (`sflow`, `netflow`, `sflow-counters`) are staged only:
+  re-rolling them up would count them twice against `flow_rollups`. Query the
+  staging table, or point DuckDB at the bucket.
+
+`fwmon_archive_restore_jobs{status}` and `fwmon_archive_restore_rows_total{table}`
+are on the poller's `/metrics`.
+
+### Re-normalizing restored syslog
+
+`--renormalize` (syslog only) queues the [normalized-event
+backfill](#backfilling-the-normalized-tables-one-time-30-days) over the
+staging table once it is loaded (`backfill_job_id` on the restore; a restore
+waits as `loaded` while another backfill runs). Over a staging table the
+backfill takes every row of the requested days whenever it was received (no
+ingest watermark, no 30-day limit), skips rows of devices that no longer
+exist, and writes `net_events` only for days that still have a `net_events`
+leaf — older network rows are counted `rows_out_of_retention`, while
+`sec_events` (kept a year) still receive theirs. Follow it with
+`fwmon-api normalize-backfill --status`; cancel / resume it there.
+
+Without `--replace` a raw row that already has a normalized row is skipped
+(a second run writes nothing). With `--replace` the rows a raw row already has
+in `net_events` / `sec_events` are **deleted and rewritten** in the same
+batch transaction as the new ones (`rows_replaced`), so every raw row ends
+with exactly the current parser's rows, once — however often it runs or
+crashes. The net_event rollups of those days are recomputed afterwards.
+
+### Restore a parser-fixed day
+
+A parser bug wrote wrong normalized rows for 4 October; the fix is deployed.
+
+1. Check the day is archived: `fwmon-api archive --status` (the syslog table
+   verified past 5 October) — or `--verify-month syslog 2026-10` for a
+   sealed month.
+2. `fwmon-api archive --restore syslog --from 2026-10-04 --to 2026-10-04 --renormalize --replace`
+   (add `--device <id>` if only one device was affected).
+3. `fwmon-api archive --restores` until the restore is `done` with a
+   `backfill job`, then `fwmon-api normalize-backfill --status` until that is
+   `done`: `rows_replaced` is the raw rows whose earlier normalized rows were
+   replaced.
+4. Spot-check a few events on the dashboards, then
+   `fwmon-api archive --drop-restore <id>` (or let its TTL drop it).
+
+The live `syslog_messages` rows of that day, if still there, are not touched;
+the normalized rows are keyed by the raw row's id, which the restore keeps.
+
 ## Host disk housekeeping
 
 The section above is about the **database volume**. This one is about the **root filesystem**, which

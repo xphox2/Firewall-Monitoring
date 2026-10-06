@@ -233,3 +233,86 @@ func TestArchiveCmd_Status(t *testing.T) {
 		}
 	}
 }
+
+// TestArchiveCmd_Restore: the restore options are usage-checked; --restore
+// refuses without the bucket keys, queues a manifest restore (audited) and
+// prints its objects; --restores lists it; cancel, resume and drop follow
+// the job's states and are audited.
+func TestArchiveCmd_Restore(t *testing.T) {
+	db := database.NewDatabaseForTesting(t)
+	c := models.ArchiveChunk{SourceTable: "syslog_messages", Seq: 1, IDLo: 0, IDHi: 10, PeriodStart: time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC),
+		PeriodEnd: time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC), Month: "2026-10", Status: models.ArchiveChunkVerified}
+	if err := db.Gorm().Create(&c).Error; err != nil {
+		t.Fatal(err)
+	}
+	hist := `{"2026-10-02":3}`
+	lo := c.PeriodStart
+	if err := db.Gorm().Create(&models.ArchiveObject{ChunkID: c.ID, Stream: "syslog", ObjectKey: "fwmon-test/syslog/v2/2026-10/2026-10-02/device-1.ndjson.gz",
+		SchemaVersion: 2, RowCount: 3, MinTs: &lo, MaxTs: &lo, MsgDayHistogram: &hist, Status: models.ArchiveObjectVerified}).Error; err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{}
+	open := func() (archiveStore, error) { return keepOpenArchive{db}, nil }
+	run := func(args ...string) (int, string, string) {
+		var out, errb bytes.Buffer
+		code := archiveCmd(args, &out, &errb, cfg, open, func() (worker.MonthReader, error) { return nil, errors.New("no bucket in this test") })
+		return code, out.String(), errb.String()
+	}
+	for _, args := range [][]string{
+		{"--restore", "syslog"},
+		{"--restore", "syslog", "--from", "2026-10-02"},
+		{"--from", "2026-10-02", "--to", "2026-10-02"},
+		{"--restores", "--device", "1"},
+		{"--restore", "syslog", "--from", "2026-10-02", "--to", "2026-10-02", "--status"},
+		{"--restore", "syslog", "--from", "2026-10-02", "--to", "2026-10-02", "--reason", "x"},
+		{"--cancel-restore", "1", "--drop-restore", "1"},
+	} {
+		if code, _, _ := run(args...); code != 2 {
+			t.Fatalf("args %v: exit %d, want 2 (usage)", args, code)
+		}
+	}
+	if code, _, errb := run("--restore", "syslog", "--from", "2026-10-02", "--to", "2026-10-02"); code != 1 || !strings.Contains(errb, "not configured") {
+		t.Fatalf("without bucket keys: %d %q", code, errb)
+	}
+	cfg.Archive = config.ArchiveConfig{Endpoint: "https://s3.example.com", Region: "us-east-005", Bucket: "example-bucket", Prefix: "fwmon-test",
+		AccessKeyID: "005exampleKeyID", SecretAccessKey: config.Secret("not-a-real-secret-fixture"), StagingDir: t.TempDir()}
+	if code, _, errb := run("--restore", "sflow", "--from", "2026-10-02", "--to", "2026-10-02", "--renormalize"); code != 1 || !strings.Contains(errb, "only syslog") {
+		t.Fatalf("flow renormalize: %d %q", code, errb)
+	}
+	if code, _, errb := run("--restore", "syslog", "--from", "2026-10-05", "--to", "2026-10-05"); code != 1 || !strings.Contains(errb, "no verified archive object") {
+		t.Fatalf("nothing archived: %d %q", code, errb)
+	}
+	code, out, errb := run("--restore", "syslog", "--from", "2026-10-02", "--to", "2026-10-02", "--renormalize", "--replace", "--ttl-days", "3")
+	if code != 0 || !strings.Contains(out, "restore 1 queued") || !strings.Contains(out, "restore_1_syslog_messages") || !strings.Contains(out, "1 objects, ~3 rows") {
+		t.Fatalf("queue: %d %q %q", code, out, errb)
+	}
+	j, err := db.GetArchiveRestoreJob(1)
+	if err != nil || j.RequestedBy != "cli" || !j.Replace || j.ExpiresAt.After(time.Now().Add(73*time.Hour)) {
+		t.Fatalf("job %+v %v", j, err)
+	}
+	if code, out, _ := run("--restores"); code != 0 || !strings.Contains(out, "restore 1 pending: syslog 2026-10-02..2026-10-02") || !strings.Contains(out, "renormalize (replace)") {
+		t.Fatalf("list: %d %q", code, out)
+	}
+	if code, _, errb := run("--drop-restore", "1"); code != 1 || !strings.Contains(errb, "pending") {
+		t.Fatalf("drop of a pending restore: %d %q", code, errb)
+	}
+	if code, _, _ := run("--resume-restore", "1"); code != 1 {
+		t.Fatal("resume of a pending restore succeeded")
+	}
+	if code, out, _ := run("--cancel-restore", "1"); code != 0 || !strings.Contains(out, "cancelled") {
+		t.Fatalf("cancel: %d %q", code, out)
+	}
+	if code, out, _ := run("--drop-restore", "1"); code != 0 || !strings.Contains(out, "dropped") {
+		t.Fatalf("drop: %d %q", code, out)
+	}
+	if code, _, errb := run("--cancel-restore", "9"); code != 1 || !strings.Contains(errb, "not found") {
+		t.Fatalf("unknown: %d %q", code, errb)
+	}
+	for _, a := range []string{"archive_restore", "archive_restore_cancel", "archive_restore_drop"} {
+		var n int64
+		db.Gorm().Model(&models.AuditLog{}).Where("action = ? AND actor = ?", a, "cli").Count(&n)
+		if n != 1 {
+			t.Errorf("%s audit rows %d", a, n)
+		}
+	}
+}

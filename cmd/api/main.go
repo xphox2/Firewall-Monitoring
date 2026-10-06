@@ -38,7 +38,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.308"
+const ServerVersion = "0.11.309"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -957,9 +957,15 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			"/admin/api/archive/chunks/:id/reset": true,
 			// The archive status (PR 8) names the bucket, the parked chunks'
 			// errors and the database sessions holding an export.
-			"/admin/api/archive/status":          true,
-			"/admin/api/sites/:id/event-profile": true,
-			"/admin/api/event-config/effective":  true,
+			"/admin/api/archive/status": true,
+			// Restores to staging (PR 9) download archived raw logs into the
+			// database; a drop deletes the staged copy — admin-only, list included.
+			"/admin/api/archive/restores":            true,
+			"/admin/api/archive/restores/:id":        true,
+			"/admin/api/archive/restores/:id/cancel": true,
+			"/admin/api/archive/restores/:id/resume": true,
+			"/admin/api/sites/:id/event-profile":     true,
+			"/admin/api/event-config/effective":      true,
 			// Suggests a suppress/customize rule from an alert (rule creation is
 			// admin-only, and the syslog path reads raw log content) — admin-only.
 			"/admin/api/alerts/:id/suggested-rule": true,
@@ -1183,6 +1189,14 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/archive/status", handler.GetArchiveStatus)
 		admin.POST("/api/archive/override", middleware.LoginRateLimiter(), handler.SetArchiveGateOverride)
 		admin.POST("/api/archive/chunks/:id/reset", middleware.LoginRateLimiter(), handler.ResetArchiveChunk)
+		// Restore to staging (archive plan PR 9): the poller's restore worker
+		// runs the jobs. Admin-only (adminOnlyRoutes); queue, resume and drop
+		// re-verify the caller's password (+ TOTP), so login-rate-limited.
+		admin.GET("/api/archive/restores", handler.ListArchiveRestores)
+		admin.POST("/api/archive/restores", middleware.LoginRateLimiter(), handler.StartArchiveRestore)
+		admin.POST("/api/archive/restores/:id/cancel", handler.CancelArchiveRestore)
+		admin.POST("/api/archive/restores/:id/resume", middleware.LoginRateLimiter(), handler.ResumeArchiveRestore)
+		admin.DELETE("/api/archive/restores/:id", middleware.LoginRateLimiter(), handler.DropArchiveRestore)
 
 		admin.POST("/api/alerts/:id/acknowledge", handler.AcknowledgeAlert)
 		admin.POST("/api/alerts/:id/snooze", handler.SnoozeAlert)

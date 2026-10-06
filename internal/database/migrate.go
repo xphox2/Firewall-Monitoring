@@ -105,6 +105,9 @@ var baselineModels = []interface{}{
 	&models.ArchiveIDMark{},
 	// v77: intervals the archive gate was released or the stream disabled.
 	&models.ArchiveGateEvent{},
+	// v78: archive restores to staging tables.
+	&models.ArchiveRestoreJob{},
+	&models.ArchiveRestoreObject{},
 }
 
 // migrateBaseline is the v1 "baseline" migration (AUDIT-044): it brings an empty
@@ -2275,6 +2278,18 @@ func (d *Database) migrateArchiveGateEvents() error {
 		return err
 	}
 	return d.db.Transaction(backfillArchiveGateOverrides)
+}
+
+// migrateArchiveRestoreJobs (v78) creates archive_restore_jobs and
+// archive_restore_objects (archive plan PR 9: restore to staging) and adds
+// normalize_backfill_jobs.source_table / restore_job_id / replace_existing /
+// rows_replaced / rows_out_of_retention (a backfill over a restore's staging
+// table, optionally replacing the normalized rows a raw row already has). New
+// small tables and NOT NULL DEFAULT columns on a small table (metadata-only on
+// PostgreSQL >= 11); AutoMigrate is idempotent. The staging tables themselves
+// are created per job by the restore worker, never here.
+func (d *Database) migrateArchiveRestoreJobs() error {
+	return d.db.AutoMigrate(&models.ArchiveRestoreJob{}, &models.ArchiveRestoreObject{}, &models.NormalizeBackfillJob{})
 }
 
 // archiveOverrideAuditRe parses an archive_gate_override audit target, as the
