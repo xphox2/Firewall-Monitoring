@@ -133,20 +133,20 @@ func TestSyslogRetention_NegativeFallsBackRatherThanGoingNegative(t *testing.T) 
 }
 
 func TestSyslogRetention_WindowGroupsCollapseAndOmitForever(t *testing.T) {
-	var days [SyslogSeverityCount]int
-	for i := range days {
-		days[i] = 30
+	var windows [SyslogSeverityCount]SyslogWindow
+	for i := range windows {
+		windows[i] = SyslogWindow{Days: 30}
 	}
-	days[5] = 7
-	days[0] = 0 // forever
+	windows[5] = SyslogWindow{Days: 7}
+	windows[0] = SyslogWindow{} // forever
 
-	groups := syslogWindowGroups(days)
+	groups := syslogWindowGroups(windows)
 	if len(groups) != 2 {
 		t.Fatalf("got %d groups, want 2 (30 and 7) — severities sharing a window must "+
 			"collapse into one delete", len(groups))
 	}
-	if len(groups[7]) != 1 || groups[7][0] != 5 {
-		t.Errorf("the 7-day group = %v, want [5]", groups[7])
+	if g := groups[SyslogWindow{Days: 7}]; len(g) != 1 || g[0] != 5 {
+		t.Errorf("the 7-day group = %v, want [5]", g)
 	}
 	for _, sevs := range groups {
 		for _, s := range sevs {
@@ -157,13 +157,15 @@ func TestSyslogRetention_WindowGroupsCollapseAndOmitForever(t *testing.T) {
 	}
 }
 
-func TestSyslogRetention_MaxWindowIsZeroIfAnySeverityIsForever(t *testing.T) {
-	if got := syslogMaxWindow([]int{30, 7, 90}); got != 90 {
-		t.Errorf("max = %d, want 90", got)
+func TestSyslogRetention_DropCutoffIsNoneIfAnySeverityIsForever(t *testing.T) {
+	now := time.Date(2026, 3, 31, 12, 0, 0, 0, time.UTC)
+	got, ok := syslogDropCutoff([]SyslogWindow{{Days: 30}, {Days: 7}, {Days: 90}}, now)
+	if want := now.AddDate(0, 0, -90); !ok || !got.Equal(want) {
+		t.Errorf("drop cutoff = %s (%v), want %s — now minus the longest window", got, ok, want)
 	}
-	if got := syslogMaxWindow([]int{30, 0, 90}); got != 0 {
-		t.Errorf("max = %d, want 0 — one keep-forever severity pins every partition, because "+
-			"dropping it would take that severity's rows with it", got)
+	if _, ok := syslogDropCutoff([]SyslogWindow{{Days: 30}, {}, {Days: 90}}, now); ok {
+		t.Error("a drop cutoff with a keep-forever severity — one keep-forever severity pins every " +
+			"partition, because dropping it would take that severity's rows with it")
 	}
 }
 

@@ -39,16 +39,19 @@ func (d *Database) RunSyslogAggregationCycle(retention config.RetentionConfig) e
 	// transaction. Severity partitions the rows disjointly, so no row can be
 	// claimed by two passes and each pass keeps the same summarise-then-delete
 	// atomicity the single pass had.
-	sevDays := d.SyslogRetentionDays(retention)
+	sevWindows := d.SyslogRetentionWindows(retention)
+	now := time.Now()
 	for sev := aggregatedSeverityFloor; sev < SyslogSeverityCount; sev++ {
-		// 0 means keep forever, so this severity is never summarised OR deleted
-		// and simply stays raw. Skipping the pass is the correct reading rather
-		// than summarise-but-do-not-delete: every reader unions raw and summary
-		// counts, so keeping both would double-count.
-		if sevDays[sev] <= 0 {
+		// Forever (a 0-day window) means this severity is never summarised OR
+		// deleted and simply stays raw. Skipping the pass is the correct reading
+		// rather than summarise-but-do-not-delete: every reader unions raw and
+		// summary counts, so keeping both would double-count.
+		if sevWindows[sev].Forever() {
 			continue
 		}
-		cutoff := time.Now().AddDate(0, 0, -sevDays[sev])
+		// With RETENTION_SYSLOG_MONTHS this is the month cutoff: severities
+		// 6-7 stay raw for the month, then are summarised.
+		cutoff := sevWindows[sev].Cutoff(now)
 		if done, err := d.aggregateSyslogToSummary(cutoff, sev, "1h"); err != nil {
 			lastErr = err
 			log.Printf("Syslog aggregation: step 1 error (severity %d): %v", sev, err)

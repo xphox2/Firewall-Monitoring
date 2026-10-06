@@ -1,6 +1,23 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.306] - 2026-10-06
+
+### Added — `RETENTION_SYSLOG_MONTHS`: raw syslog kept a rolling calendar month (archive plan PR 6)
+
+- **New env `RETENTION_SYSLOG_MONTHS`** (0-120, default 0 = off). When above 0, raw syslog of **every** severity is kept N calendar months, replacing `RETENTION_SYSLOG_CRITICAL_DAYS`, `RETENTION_SYSLOG_INFO_DAYS` and `RETENTION_SYSLOG_DAYS`, which are then ignored; the API and the poller log a startup NOTICE naming them with their values. It is parsed strictly: a malformed or out-of-range value refuses to start instead of silently falling back to the day windows.
+- **The cutoff is the same instant N months earlier on the UTC calendar, clamped to that month's last day** (`monthsAgo`). Go's `AddDate(0, -1, 0)` normalises "31 February" to 3 March and would keep only 28 days on 31 March; clamped, one month is 28-31 whole days, never less than a calendar month (31 Mar → 28 Feb, or 29 Feb in a leap year; 31 Dec → 30 Nov; 15 Jan → 15 Dec of the year before). No DST shift: the hour is the UTC hour.
+- **Precedence**: the severity's own Retention-page window, then the page's default window, then months, then the legacy two-band env model — an operator's explicit window still wins. A stored negative value falls back to months like an unset one.
+- **Retention now works on per-severity windows (`SyslogWindow`: days or months) and cutoffs instead of day counts**: the daily cleanup groups severities by window and takes every cutoff from one instant, the severity 6/7 aggregation uses the month cutoff (those severities stay raw for the month, then are summarised), and the partition-drop bound is the oldest cutoff (none if any severity is kept forever) — a monthly `syslog_messages` leaf drops once its whole month is older than the cutoff (October's leaf on 1 December). With archiving enabled every one of these deletes still takes only `id <= V` and a leaf drops only when its `max(id) <= V` (0.11.304's gate, unchanged).
+- **Off (the default) is unchanged**: day windows give exactly `now.AddDate(0, 0, -days)` as before, the drop bound is now minus the longest window, and the delete SQL is the 0.11.303 golden (`TestArchiveGate_DisabledSQLUnchanged`). The Retention page's volume report shows a month window as the days it spans today.
+- **Docs**: `docs/OPERATIONS.md` "Raw archive: one calendar month of raw syslog" — including the production step: a compose that sets `RETENTION_SYSLOG_CRITICAL_DAYS=30` replaces it with `RETENTION_SYSLOG_MONTHS=1` in the same deploy that enables `ARCHIVE_SYSLOG_ENABLED`, not before. `docs/DATA-RETENTION.md`, README, FEATURES and the env example. The example `docker-compose.yml` is unchanged.
+
+### Tests
+
+- `TestMonthsAgo_Table`: 31 Mar, 30 Mar, leap-year 31 Mar and 29 Feb − 12 months, 31 May, 31 Dec, the year boundary (one and two months), the 1st at midnight, 120 months, a +02:00 input on 31 Mar (UTC calendar decides) and a New York input across DST (the UTC hour is kept). `TestMonthsAgo_EveryDay`: every day of 2023-2026 in the process's zone gives 28-31 whole days, the previous UTC month, never after `AddDate`'s result, the clamped day. `TestSyslogWindow_DaysModeCutoffUnchanged`, `TestSyslogRetentionMonths_OverridesEnvDays`, `_SettingsStillWin`, `_CleanupAndAggregation` (a 40-day-old critical row is deleted although critical days are 0, severity 6 at 20 days stays raw, at 40 days is summarised), `TestSyslogMonths_ParseAndValidate`, `_StartupNotice`. PostgreSQL lane: `TestSyslogRetentionMonths_PartitionDrop_PG` — monthly leaves M-3..M-1 with the gate on: months off with critical kept forever drops nothing; months on drops M-3 (max id ≤ V), holds M-2 (expired, above V), keeps M-1 (holds the cutoff); once V covers everything M-2 drops, nothing older than the cutoff remains and severity 6 inside the month is still raw.
+- The database and config packages pass under `TZ=UTC`, `America/New_York`, `Pacific/Auckland` and `Australia/Lord_Howe`.
+- Mutation-checked: `AddDate` instead of the clamp, the local calendar instead of UTC, months ignored, months beating the Retention-page settings, the aggregation on the 7-day window, lenient parsing, no range check, the newest instead of the oldest drop cutoff, the partition drop ignoring months, and no NOTICE each fail a test.
+
 ## [0.11.305] - 2026-10-06
 
 ### Fixed — retention gate review: rows moved through a standalone partition leaf, gate re-read per batch (archive plan PR 5 review)

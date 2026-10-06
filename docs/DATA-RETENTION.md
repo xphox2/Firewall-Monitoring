@@ -24,6 +24,15 @@ cutoff is resolved by `RetentionConfig.Days(perType)`:
   forever** (severity 0-5 syslog is never auto-deleted unless you set a
   positive value). This is the historical cause of `syslog_messages` bloat;
   set it to e.g. `30` in production.
+- **Calendar months for raw syslog (0.11.306):** `RETENTION_SYSLOG_MONTHS=N`
+  (0-120, default 0 = off) keeps raw syslog of **every** severity for N
+  calendar months and replaces `RETENTION_SYSLOG_CRITICAL_DAYS`,
+  `RETENTION_SYSLOG_INFO_DAYS` and `RETENTION_SYSLOG_DAYS`, which are then
+  ignored (a startup NOTICE names them). The cutoff is the same UTC time N
+  months earlier, clamped to that month's last day: on 31 March one month
+  keeps back to 28 (29) February, so a month is 28-31 days and never less
+  than a calendar month. See [Syslog retention](#syslog-retention) for the
+  precedence.
 
 High-volume time-series tables are monthly range-partitioned (AUDIT-028/146),
 so cleanup drops whole old partitions where it can (instant space reclaim) and
@@ -32,7 +41,10 @@ partition-drop fast path also applies to `syslog_messages`: a monthly
 partition whose entire range is older than **both** syslog windows (the max
 of the critical and informational retention) is dropped wholesale; if any
 severity class is kept forever (`RETENTION_SYSLOG_CRITICAL_DAYS=0`), syslog
-partitions are never dropped and only the severity-scoped deletes run.
+partitions are never dropped and only the severity-scoped deletes run. With
+`RETENTION_SYSLOG_MONTHS=1` a monthly leaf is dropped once its whole month is
+older than the cutoff (October's leaf on 1 December) and, with the raw archive
+enabled, only once its `max(id)` is at or below the archive's verified id.
 
 ## Retention by table
 
@@ -57,6 +69,7 @@ partitions are never dropped and only the severity-scoped deletes run.
 | Flow agent sample-drop windows (ages on `window_start`) | `flow_agent_drops` | `RETENTION_AGENT_DROPS_DAYS` | 30 | No |
 | SNMP traps | `trap_events` | `RETENTION_TRAP_DAYS` | 0 → 90 | Source IP may identify a site |
 | Ping results | `ping_results` | `RETENTION_PING_DAYS` | 0 → 90 | No |
+| Syslog (all severities, when set) | `syslog_messages` | `RETENTION_SYSLOG_MONTHS` (calendar months; replaces the three day knobs) | 0 = off | **Yes** — usernames, URLs, auth events |
 | Syslog (severity 6-7, info) | `syslog_messages` | `RETENTION_SYSLOG_INFO_DAYS` | 7 | **Yes** — usernames, URLs, auth events |
 | Syslog (severity 0-5, critical) | `syslog_messages` | `RETENTION_SYSLOG_CRITICAL_DAYS` | **0 = forever** | **Yes** — set a positive value in prod |
 | Syslog summaries | `syslog_summaries` | `RETENTION_SYSLOG_INFO_DAYS` | 7 | Aggregated, low PII |
@@ -267,6 +280,14 @@ hour (the rollup cycle aggregates them in hour windows once they are older than 
 > configurable boundary) still applies as the fallback for any severity that has
 > not been given a window, so an operator who changes nothing keeps exactly the
 > retention they have today.
+>
+> Precedence, highest first: the severity's own window on the Retention page,
+> then the page's default window, then `RETENTION_SYSLOG_MONTHS` when it is
+> above 0 (one calendar-month window for every severity), then the two-band
+> env model. A window set on the page therefore still wins over months. In
+> months mode severities 6-7 stay raw for the month as well and are summarised
+> into `syslog_summaries` only after it (instead of after 7 days): under 2 GB a
+> month more on a fleet where severity 5 dominates.
 >
 > Two things worth knowing before shortening a window on a large table. The first
 > cleanup afterwards deletes everything that just fell outside it — on a fleet
