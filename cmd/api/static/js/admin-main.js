@@ -2675,7 +2675,7 @@
             var wait = t.unsettled ? escapeHtml(archiveLabel(t.unsettled.reason)) + ' for ' + archiveDur(t.unsettled.for_seconds) : '&mdash;';
             var held = t.retention && t.retention.held_seconds > 0
                 ? '<span style="color:var(--fwmon-sig-warn);">' + archiveDur(t.retention.held_seconds) + ' past ' + escapeHtml(t.retention.window) + '</span>' : '&mdash;';
-            return '<tr><td><strong>' + escapeHtml(t.table) + '</strong>' + (t.enabled ? '' : ' ' + archiveBadge('disabled', 'disabled')) + '</td>' +
+            return '<tr><td><strong>' + escapeHtml(t.table) + '</strong>' + (t.enabled ? '' : ' <span style="' + archiveFaint + 'font-size:0.78rem;">(archiving off)</span>') + '</td>' +
                 '<td>' + formatNum(t.verified_through_id) + '<div style="' + archiveFaint + 'font-size:0.78rem;">' + archiveWhen(t.verified_through_end) + '</div></td>' +
                 '<td>' + archiveDur(t.lag_seconds) + '</td><td style="font-size:0.82rem;">' + chunks + '</td>' +
                 '<td style="font-size:0.82rem;" title="' + escapeHtml(t.unsettled ? t.unsettled.detail || '' : '') + '">' + wait + '</td>' +

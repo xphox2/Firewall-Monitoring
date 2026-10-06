@@ -270,8 +270,8 @@ func defaultEventRules() []models.EventRule {
 		// Gen 7: the raw archive (archive plan PR 8). Explicit 6 h cooldowns for
 		// the same reason as the server disk rule: the Default policy's 5
 		// minutes would otherwise re-notify a day-long lag on every 5-minute
-		// evaluation. Matchable fields: stream / table, gate_stream.
-		{Name: "Default: Archive lag", Description: "A raw archive stream's verified data is further behind than its threshold (Alerting: archive lag hours — syslog 26, flows 3, counters 26). The daily streams must stay over it for an hour (their chunk is cut 2 h after midnight). Scope with stream (syslog, sflow, netflow, sflow-counters).",
+		// evaluation. Matchable fields: table, stream, gate_stream.
+		{Name: "Default: Archive lag", Description: "A raw archive stream's verified data is further behind than its threshold (Alerting: archive lag hours — syslog 26, flows 3, counters 26). The daily tables must stay over it for an hour (their chunk is cut 2 h after midnight). One alert per table (sflow and netflow share flow_samples); scope with table (syslog_messages, flow_samples, flow_if_counters).",
 			Enabled: true, Priority: 200, Source: "device", Action: "alert",
 			AlertType: models.AlertTypeArchiveLag, SeedVersion: seedVerArchive,
 			CooldownMinutes: func() *int { v := 360; return &v }(),

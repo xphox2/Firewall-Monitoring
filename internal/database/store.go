@@ -109,6 +109,7 @@ type ArchiveStatusStore interface {
 	ArchiveTableTimes(ctx context.Context, table string) (ArchiveTableTimes, error)
 	ArchiveGateEventsOverlapping(ctx context.Context, stream string, from, to time.Time) ([]models.ArchiveGateEvent, error)
 	ArchiveWorkerState(ctx context.Context) (value string, ok bool, err error)
+	ArchiveGateOverrideState(stream string, now time.Time) (until time.Time, active bool, err error)
 	SyslogRetentionWindows(ret config.RetentionConfig) [SyslogSeverityCount]SyslogWindow
 }
 

@@ -1091,17 +1091,17 @@ one off, blank uses the default):
 
 | alert | per | fires when | default |
 |---|---|---|---|
-| `ARCHIVE_LAG` | stream | the stream's verified data is further behind than the threshold. **Daily streams (syslog, sflow-counters) must stay above it for an hour**: their day is cut 2 h after midnight UTC and then exported, so their lag passes 26 h briefly every day. An enabled stream that has cut **no chunk at all** (typically a bucket that never passes the preflight) fires once that has lasted longer than the threshold — the gate holds every raw row of its table meanwhile | syslog 26 h, sflow/netflow 3 h, sflow-counters 26 h |
+| `ARCHIVE_LAG` | table (sflow and netflow share `flow_samples`: one alert names both) | the table's verified data is further behind than the threshold. **Daily tables (syslog, sflow-counters) must stay above it for an hour**: their day is cut 2 h after midnight UTC and then exported, so their lag passes 26 h briefly every day. An enabled table that has cut **no chunk at all** (typically a bucket that never passes the preflight) fires once that has lasted longer than the threshold — the gate holds every raw row of its table meanwhile | syslog 26 h, sflow/netflow 3 h, sflow-counters 26 h |
 | `ARCHIVE_NEEDS_ATTENTION` | table | a chunk is parked in `needs_attention` | always on |
 | `ARCHIVE_SEAL_OVERDUE` | stream | the oldest closed month is still not sealed this many days after its seal time (`fwmon_archive_month_unsealed_days`) | 3 days |
-| `RETENTION_HELD` (critical) | table | the gate is on and holds unarchived rows more than this far past the table's window (syslog: its shortest severity window; raw flows: the rollup's 1 h; counters: `RETENTION_FLOW_DAYS`) **and** the database volume is growing (free space below the sample 1–3 h earlier; counted as growing when the volume cannot be measured) | 6 h |
+| `RETENTION_HELD` (critical) | table | the gate is on and holds unarchived rows more than this far past the table's window (syslog: its shortest severity window; raw flows: the rollup's 1 h; counters: `RETENTION_FLOW_DAYS`) **and** the database volume is growing (free space below the sample 1–3 h earlier; counted as growing when the volume cannot be measured). The growth only fires it: once active it stays until the hold clears, whatever the free space does meanwhile | 6 h |
 | `ARCHIVE_UNSETTLED_LONG` | table | the next chunk has waited this long for an open writing transaction, an unattached partition leaf, or a `statement_timeout` (needs a fresh worker state; a stale one leaves the alert as it is) | 6 h |
 
 Settings keys: `archive_lag_alert_hours_syslog`, `archive_lag_alert_hours_flows`,
 `archive_lag_alert_hours_counters`, `archive_seal_overdue_alert_days`,
 `retention_held_alert_hours`, `archive_unsettled_alert_hours` (0–720).
-While the status cannot be read whole (a database error), no archive alert
-fires or resolves.
+While the status cannot be read whole (a database error, including the gate
+override settings), no archive alert fires or resolves.
 
 ### Runbook
 

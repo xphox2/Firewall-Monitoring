@@ -27,7 +27,7 @@ import (
 // Store is the slice of the database the status reads (database.Store and
 // *database.Database satisfy it).
 type Store interface {
-	ArchiveGateOverride(stream string, now time.Time) (until time.Time, active bool)
+	ArchiveGateOverrideState(stream string, now time.Time) (until time.Time, active bool, err error)
 	ListArchiveChunksNeedingAttention(limit int) ([]models.ArchiveChunk, error)
 	ArchiveTableProgress(ctx context.Context, table string) (database.ArchiveProgress, error)
 	ArchiveChunkStatusCounts(ctx context.Context) (map[string]map[string]int64, error)
@@ -351,7 +351,10 @@ func Build(ctx context.Context, db Store, cfg *config.Config, now time.Time) (*S
 	gated := map[string]bool{}
 	for _, s := range database.ArchiveGateStreams {
 		g := GateView{Stream: s, Enabled: GateEnabled(a, s)}
-		if until, active := db.ArchiveGateOverride(s, now); active {
+		until, active, err := db.ArchiveGateOverrideState(s, now)
+		if err != nil {
+			problem("gate override of "+s, err)
+		} else if active {
 			u := until.UTC()
 			g.OverrideActive, g.OverrideUntil = true, &u
 		}

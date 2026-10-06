@@ -246,15 +246,25 @@ func TestConditions(t *testing.T) {
 
 	cs := e.Conditions(build(t, db, cfg, at), th, growing)
 	// Syslog lag 36 h > 26 h, but a daily stream must stay over it an hour.
-	if c := conditionOf(t, cs, models.AlertTypeArchiveLag, export.StreamSyslog); c.Breached || !c.Known {
+	if c := conditionOf(t, cs, models.AlertTypeArchiveLag, export.TableSyslog); c.Breached || !c.Known {
 		t.Fatalf("syslog lag fired at once: %+v", c)
 	}
 	// Flows 4 h > 3 h: an hourly stream fires at once.
-	if c := conditionOf(t, cs, models.AlertTypeArchiveLag, export.StreamSFlow); !c.Breached || !strings.Contains(c.Message, "4.0 h behind") {
+	if c := conditionOf(t, cs, models.AlertTypeArchiveLag, export.TableFlows); !c.Breached || !strings.Contains(c.Message, "4.0 h behind") ||
+		!strings.Contains(c.Message, "sflow and netflow") {
 		t.Fatalf("sflow lag: %+v", c)
 	}
+	lags := 0
+	for _, c := range cs {
+		if c.Type == models.AlertTypeArchiveLag {
+			lags++
+		}
+	}
+	if lags != 3 {
+		t.Fatalf("%d ARCHIVE_LAG conditions, want one per table (sflow and netflow share flow_samples)", lags)
+	}
 	// Counters: 12 h < 26 h.
-	if c := conditionOf(t, cs, models.AlertTypeArchiveLag, export.StreamSFlowCounters); c.Breached {
+	if c := conditionOf(t, cs, models.AlertTypeArchiveLag, export.TableCounters); c.Breached {
 		t.Fatalf("counters lag fired: %+v", c)
 	}
 	if c := conditionOf(t, cs, models.AlertTypeArchiveNeedsAttention, export.TableSyslog); !c.Breached || !strings.Contains(c.Message, "1 hold its raw deletes") {
@@ -276,7 +286,7 @@ func TestConditions(t *testing.T) {
 
 	// An hour later the syslog lag (now 37 h) has stayed over 26 h: it fires.
 	cs = e.Conditions(build(t, db, cfg, at.Add(time.Hour)), th, growing)
-	if c := conditionOf(t, cs, models.AlertTypeArchiveLag, export.StreamSyslog); !c.Breached {
+	if c := conditionOf(t, cs, models.AlertTypeArchiveLag, export.TableSyslog); !c.Breached {
 		t.Fatalf("syslog lag did not fire after the sustain: %+v", c)
 	}
 
@@ -422,19 +432,83 @@ func TestConditions_NoChunkYet(t *testing.T) {
 	cfg := testConfig(true, false)
 	th := ReadThresholds(nil)
 	e := NewEvaluator()
-	if c := conditionOf(t, e.Conditions(build(t, db, cfg, at), th, DiskTrend{}), models.AlertTypeArchiveLag, export.StreamSyslog); c.Breached || !c.Known {
+	if c := conditionOf(t, e.Conditions(build(t, db, cfg, at), th, DiskTrend{}), models.AlertTypeArchiveLag, export.TableSyslog); c.Breached || !c.Known {
 		t.Fatalf("fired at first sight: %+v", c)
 	}
-	c := conditionOf(t, e.Conditions(build(t, db, cfg, at.Add(27*time.Hour)), th, DiskTrend{}), models.AlertTypeArchiveLag, export.StreamSyslog)
+	c := conditionOf(t, e.Conditions(build(t, db, cfg, at.Add(27*time.Hour)), th, DiskTrend{}), models.AlertTypeArchiveLag, export.TableSyslog)
 	if !c.Breached || !strings.Contains(c.Message, "cut no chunk") || !strings.Contains(c.Message, "403 Forbidden") {
 		t.Fatalf("no chunk for 27 h: %+v", c)
 	}
 	// Flows are disabled: never.
-	if c := conditionOf(t, e.Conditions(build(t, db, cfg, at.Add(28*time.Hour)), th, DiskTrend{}), models.AlertTypeArchiveLag, export.StreamSFlow); c.Breached {
+	if c := conditionOf(t, e.Conditions(build(t, db, cfg, at.Add(28*time.Hour)), th, DiskTrend{}), models.AlertTypeArchiveLag, export.TableFlows); c.Breached {
 		t.Fatalf("disabled stream fired: %+v", c)
 	}
 	chunk(t, db, export.TableSyslog, 1, 0, 10, at.Add(26*time.Hour), 24*time.Hour, models.ArchiveChunkVerified)
-	if c := conditionOf(t, e.Conditions(build(t, db, cfg, at.Add(28*time.Hour)), th, DiskTrend{}), models.AlertTypeArchiveLag, export.StreamSyslog); c.Breached {
+	if c := conditionOf(t, e.Conditions(build(t, db, cfg, at.Add(28*time.Hour)), th, DiskTrend{}), models.AlertTypeArchiveLag, export.TableSyslog); c.Breached {
 		t.Fatalf("still firing after the first chunk: %+v", c)
+	}
+}
+
+// TestConditions_RetentionHeldStaysWhileHeld: the disk trend only fires
+// RETENTION_HELD; once active it stays through a moment of free space rising
+// (a partition drop, WAL recycling) and resolves only when the hold clears.
+func TestConditions_RetentionHeldStaysWhileHeld(t *testing.T) {
+	db := database.NewDatabaseForTesting(t)
+	seed(t, db)
+	cfg := testConfig(true, true)
+	th := ReadThresholds(nil)
+	th.Held = 2 * time.Hour // flows are held 3 h past the rollup age
+	e := NewEvaluator()
+	held := func(disk DiskTrend) bool {
+		return conditionOf(t, e.Conditions(build(t, db, cfg, at), th, disk), models.AlertTypeRetentionHeld, export.TableFlows).Breached
+	}
+	growing, shrinking := DiskTrend{Known: true, Growing: true}, DiskTrend{Known: true}
+	if held(shrinking) {
+		t.Fatal("fired while the disk shrinks")
+	}
+	if !held(growing) {
+		t.Fatal("did not fire while the disk grows")
+	}
+	if !held(shrinking) {
+		t.Fatal("a free-space rise resolved an active hold")
+	}
+	if !held(growing) {
+		t.Fatal("not breached after growing again")
+	}
+	// The archive catches up: resolved, and a shrinking disk does not re-fire.
+	if err := db.Gorm().Model(&models.ArchiveChunk{}).Where("table_name = ?", export.TableFlows).Update("status", models.ArchiveChunkVerified).Error; err != nil {
+		t.Fatal(err)
+	}
+	if held(growing) {
+		t.Fatal("still breached once the hold cleared")
+	}
+	if err := db.Gorm().Model(&models.ArchiveChunk{}).Where("table_name = ? AND seq = 2", export.TableFlows).Update("status", models.ArchiveChunkPending).Error; err != nil {
+		t.Fatal(err)
+	}
+	if held(shrinking) {
+		t.Fatal("re-fired on a shrinking disk after it resolved")
+	}
+}
+
+// TestBuild_OverrideReadFailure: a gate override that cannot be read is a
+// problem (the alerts are then not evaluated), not "not overridden".
+func TestBuild_OverrideReadFailure(t *testing.T) {
+	db := database.NewDatabaseForTesting(t)
+	seed(t, db)
+	if err := db.Gorm().Exec("ALTER TABLE system_settings RENAME TO system_settings_away").Error; err != nil {
+		t.Fatal(err)
+	}
+	st, err := Build(context.Background(), db, testConfig(true, true), at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, p := range st.Problems {
+		if strings.HasPrefix(p, "gate override of syslog") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("override read failure not reported: %v", st.Problems)
 	}
 }

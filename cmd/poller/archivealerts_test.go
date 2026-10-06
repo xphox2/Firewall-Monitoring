@@ -110,3 +110,46 @@ func TestArchiveDiskTrend(t *testing.T) {
 		t.Fatalf("data volume not measured, yet known: %+v", tr)
 	}
 }
+
+// TestCheckArchiveAlerts_RetentionHeldThroughFreeSpaceRise: RETENTION_HELD
+// fires while the database volume grows, and a later rise of its free space
+// (growing → not growing → growing) neither resolves it nor sends a second
+// notice: one open row, no recovery companion.
+func TestCheckArchiveAlerts_RetentionHeldThroughFreeSpaceRise(t *testing.T) {
+	p, db := newTestPoller(t)
+	p.alertManager = alerts.NewAlertManager(p.cfg, notifier.NewNotifier(p.cfg), db)
+	p.cfg.Archive.FlowsEnabled = true
+	if err := db.UpsertSetting(&models.SystemSetting{Key: "retention_held_alert_hours", Value: "2"}); err != nil {
+		t.Fatal(err)
+	}
+	// flow_samples verified through 5 h ago: held 4 h past the 1 h rollup age.
+	start := time.Now().UTC().Truncate(time.Hour).Add(-6 * time.Hour)
+	for i, c := range []models.ArchiveChunk{
+		{SourceTable: "flow_samples", Seq: 1, IDLo: 0, IDHi: 10, PeriodStart: start, PeriodEnd: start.Add(time.Hour), Month: start.Format("2006-01"), Status: models.ArchiveChunkVerified},
+		{SourceTable: "flow_if_counters", Seq: 1, IDLo: 0, IDHi: 10, PeriodStart: start, PeriodEnd: start.Add(time.Hour), Month: start.Format("2006-01"), Status: models.ArchiveChunkVerified},
+	} {
+		if err := db.Gorm().Create(&c).Error; err != nil {
+			t.Fatal(i, err)
+		}
+	}
+	old := uint64(100) << 30
+	if err := db.SaveServerMetric(&models.ServerMetric{Timestamp: time.Now().Add(-2 * time.Hour), DataDiskFreeBytes: &old}); err != nil {
+		t.Fatal(err)
+	}
+	data := func(freeGiB uint64) []alerts.ServerVolume {
+		return []alerts.ServerVolume{{Label: "data", Volume: serverhealth.Volume{Path: "/data", FreeBytes: freeGiB << 30}}}
+	}
+	const metric = "retention_held_flow_samples"
+	for i, free := range []uint64{90, 110, 90} {
+		p.checkArchiveAlerts(data(free), true)
+		if got := openArchiveAlerts(t, p, models.AlertTypeRetentionHeld, metric); got != 1 {
+			t.Fatalf("step %d (%d GiB free): %d open RETENTION_HELD rows, want 1", i, free, got)
+		}
+	}
+	var rows, companions int64
+	db.Gorm().Model(&models.Alert{}).Where("alert_type = ? AND metric_name = ?", models.AlertTypeRetentionHeld, metric).Count(&rows)
+	db.Gorm().Model(&models.Alert{}).Where("alert_type = ?", models.AlertTypeRetentionHeld+"_RESOLVED").Count(&companions)
+	if rows != 1 || companions != 0 {
+		t.Fatalf("%d rows and %d recovery companions, want 1 and 0", rows, companions)
+	}
+}
