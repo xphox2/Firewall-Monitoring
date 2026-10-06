@@ -500,7 +500,14 @@ func (p *Poller) Start() error {
 	// day (minutes) would hold. Off the select loop like the backfill; on
 	// shutdown a chunk caught mid-way stays in its state and the next start
 	// resumes it. Nothing starts with ARCHIVE_SYSLOG_ENABLED and
-	// ARCHIVE_FLOWS_ENABLED both off, and no delete waits on the archive yet.
+	// ARCHIVE_FLOWS_ENABLED both off. While a stream is enabled its raw
+	// deletes (retention, the severity 6/7 aggregation, the flow rollup) take
+	// only rows this worker has verified — the retention gate, which the
+	// database reads from the same config (archive_gate.go); the startup
+	// lines say so, and warn when a stream with chunks has been disabled.
+	if p.db != nil {
+		p.db.LogArchiveGateState(backfillCtx)
+	}
 	if p.db != nil && p.cfg.Archive.Enabled() {
 		if aw, err := archiveworker.New(p.db, p.cfg.Archive); err != nil {
 			log.Printf("archive: worker not started: %v", err)

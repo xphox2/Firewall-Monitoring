@@ -117,7 +117,13 @@ partitions.
   `DROP TABLE interface_stats; ALTER TABLE interface_stats_old RENAME TO interface_stats;`
 - **After** the drop: restore from the backup taken in the first step.
 
-Repeat for each table named in the warning. `syslog_messages` has dual
-critical/info retention; it is safe to partition, but the app keeps using
-severity-scoped `DELETE` for it (it never drops whole `syslog_messages`
-partitions), so converting it is optional and only helps insert/scan locality.
+Repeat for each table named in the warning. `syslog_messages` keeps a
+retention window per severity; it is safe to partition. Once converted, the
+daily retention pass drops a whole monthly `syslog_messages` partition when
+every severity's window has passed it (LC-23) — never while any severity is
+kept forever — and trims the rest with severity-scoped batched `DELETE`s. With
+syslog archiving enabled (0.11.304+), a partition is dropped only when every
+row in it is in a verified archive chunk (its `max(id)` is at or below the
+archive's verified-through id); a held partition is kept and only its archived
+rows are row-deleted. Converting it is optional: it helps insert/scan locality
+and makes expiry a cheap DROP instead of a long DELETE.

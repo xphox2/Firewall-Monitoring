@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"time"
@@ -162,6 +163,16 @@ func (d *Database) aggregateSyslogToSummary(cutoff time.Time, severity int, inte
 		log.Printf("Syslog aggregation: %v (will retry next cycle)", err)
 		return false, err
 	}
+	// Archive retention gate: with syslog archiving enabled the watermark is
+	// capped at V, the archive's verified-through id (archive_gate.go). Every
+	// read and delete below is already `id <= watermark`, so rows the archive
+	// has not verified are neither summarised nor deleted: they stay raw (and
+	// counted, readers union raw and summaries) until a later cycle after V
+	// has passed them. The cutoff is capped too, just past the newest message
+	// time the archive has verified (PostgreSQL), so the walk does not read
+	// the held rows. Disabled, the watermark and the SQL are unchanged.
+	gate := d.archiveGate(context.Background(), "syslog_messages")
+	watermark, cutoff = gate.capWatermark(watermark), gate.capCutoff(cutoff)
 	if watermark == 0 {
 		return false, nil
 	}

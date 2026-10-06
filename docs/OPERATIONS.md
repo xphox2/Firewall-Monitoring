@@ -567,6 +567,100 @@ Object Lock-retained copy). Watch `fwmon_archive_chunks{status="needs_attention"
 and `fwmon_archive_needs_attention_total` on the poller's `/metrics`; the
 chunk's `error` column in `archive_chunks` says what differed.
 
+## Raw archive: the retention gate
+
+From 0.11.304, while `ARCHIVE_SYSLOG_ENABLED` (or `ARCHIVE_FLOWS_ENABLED`) is
+on, a raw row of that stream is deleted only after the archive has verified
+it. For each table the poller derives **V**, the `id_hi` of the last chunk in
+the run of `verified` chunks that starts at seq 1 with no gap
+(`fwmon_archive_verified_through_id{table}`); every delete path takes only
+rows with `id <= V`:
+
+| path | gated as |
+|---|---|
+| `syslog_messages` retention (daily batched DELETE) | `AND id <= V` |
+| `syslog_messages` / `flow_samples` monthly partition DROP | only when the leaf's `max(id) <= V` (checked again inside the DROP's lock); a held leaf is kept and its archived rows are row-deleted |
+| severity 6/7 aggregation (every 5 min) | watermark capped at V: held rows are neither summarised nor deleted |
+| flow rollup (every 5 min) | watermark capped at V: held raw flows are neither rolled up nor deleted (flow pages union raw rows and rollups, so they stay counted) |
+| `flow_samples` / `flow_if_counters` retention | `AND id <= V` |
+| device purge | **not gated** |
+
+On PostgreSQL the gated statements also carry the newest message time of the
+verified chunks (`timestamp <= …`), which every row at or below V satisfies
+anyway; it lets the planner skip the held rows instead of walking them.
+
+**Partition maintenance.** When the daily partition pass finds rows of a
+month (or day) still in a table's DEFAULT child, it moves them into a new leaf
+that stays a standalone table until the move is done — and until the next
+pass if the attach fails. Rows in it cannot be seen through the parent, so
+while any unattached `<table>_YYYYMM[DD]` table exists the archive worker does
+not cut, export or count that table
+(`fwmon_archive_unsettled{reason="unattached_leaf"}`), an export or a count
+during which a move started is discarded and simply retried later (never a
+mismatch, so it cannot park a chunk), and the gate deletes nothing of the
+table. A
+leftover standalone table with such a name (a manual rescue, say) holds the
+table the same way until it is attached or renamed.
+
+A chunk that is pending, exporting, uploading, verifying, failed or
+`needs_attention` stops V, and so does a gap. Normally V trails ingest by
+about a day for syslog and counters and by 10–20 minutes for flows, far less
+than the windows, so nothing is held. When the archive lags (bucket down,
+credentials revoked, a parked chunk) the tables grow past their window
+instead: syslog by its daily volume, raw flows by about 160 000 rows an hour.
+The poller logs at startup which tables are gated, and warns when a stream is
+disabled although `archive_chunks` has chunks of it (its deletes are then
+ungated again, exactly as before the archive). There is **no automatic
+bypass** when the disk fills: `SERVER_DISK_HIGH` pages at the free-space floor.
+
+### Releasing the gate (time-limited override)
+
+If the archive cannot catch up before the disk runs out, an admin can release
+one stream's gate (`syslog`, `flows` or `all`) for at most 24 hours. Rows
+deleted while it is released may never reach the archive, so the reason is
+required and recorded:
+
+```
+docker exec <container> fwmon-api archive --override flows --for 6h --reason "bucket outage, disk at 92%"
+docker exec <container> fwmon-api archive --override flows --clear          # re-engage now
+docker exec <container> fwmon-api archive --gate-status                     # overrides + parked chunks
+```
+
+or `POST /admin/api/archive/override` (`{stream, hours: 1..24, reason,
+password, totp_code}`; admin-only, re-authenticated like the purge;
+`hours: 0` re-engages without a password) and `GET /admin/api/archive/override`.
+The override is the system setting `archive_gate_override_until_<stream>`, an
+end time: it expires on its own (a value more than 24 h ahead is ignored), the
+settings page cannot write it, every change is an `audit_logs` row
+(`archive_gate_override`, actor `cli` for the command line), and the poller
+logs a WARNING (at most once a minute per table) while deletes run ungated
+under it. The gate is re-read before every retention batch and every partition
+drop, so an override that ends or is cleared mid-pass stops the ungated
+deletes at the next batch. The CLI needs the
+server's database credentials (like `reset-auth`), which is its
+authentication; the API route re-verifies the operator's password and TOTP.
+
+### A chunk stuck in `needs_attention`
+
+A chunk whose read-back or count check failed three times is parked in
+`needs_attention` and never retried on its own — and it stops V, so its
+table's deletes stay held until someone acts. Find out why from its `error`
+(`fwmon-api archive --gate-status` lists the parked chunks), fix the cause
+(bucket policy, Object Lock settings, a proxy rewriting bodies, …), then put
+it back in the queue:
+
+```
+docker exec <container> fwmon-api archive --reset-chunk <id> --reason "bucket policy fixed"
+```
+
+or `POST /admin/api/archive/chunks/:id/reset` (`{reason, password,
+totp_code}`; admin-only, re-authenticated). The chunk returns to `pending`
+with its mismatch and verify counters cleared; the worker exports, uploads and
+verifies it again on its next pass (up to three more mismatches before it is
+parked again; each attempt writes another Object Lock-retained copy). Only a
+`needs_attention` chunk can be reset, and every reset is an `audit_logs` row
+(`archive_chunk_reset`).
+
 ## Backfilling the normalized tables (one-time, 30 days)
 
 The normalized tables (`net_events`, `sec_events`, `fw_rules`,

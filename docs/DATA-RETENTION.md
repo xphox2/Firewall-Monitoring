@@ -102,6 +102,16 @@ or its recompute failed three cycles running;
 `fwmon_net_event_rollup_day_skips_total` counts the latter). Raw syslog
 retention is unchanged by any of this.
 
+**Raw archive retention gate (0.11.304).** With `ARCHIVE_SYSLOG_ENABLED` /
+`ARCHIVE_FLOWS_ENABLED` on, the windows above still decide *when* a raw
+`syslog_messages`, `flow_samples` or `flow_if_counters` row may go, but it is
+only deleted (by retention, by a partition drop, by the severity 6/7
+aggregation or by the flow rollup) once the archive has verified the chunk
+holding it. A lagging archive therefore makes these tables grow past their
+window instead of losing data; `SERVER_DISK_HIGH` pages before the disk fills,
+and the operator's escapes are in [OPERATIONS.md](OPERATIONS.md#raw-archive-the-retention-gate).
+With archiving disabled nothing changes. The device purge is not gated.
+
 ### Tables that are NOT auto-pruned
 
 - **`config_revisions`** — firewall config-backup history is kept **forever by

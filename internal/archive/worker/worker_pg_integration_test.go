@@ -219,3 +219,86 @@ func TestWorker_PG_TwoWorkers(t *testing.T) {
 		}
 	}
 }
+
+// TestWorker_PG_LeafMoveDuringExport: a partition move recorded while a
+// chunk is being exported (its rows may be missing from the export) makes the
+// attempt wait — nothing uploaded, no mismatch counted — and the next pass
+// exports and verifies the chunk.
+func TestWorker_PG_LeafMoveDuringExport(t *testing.T) {
+	d := database.NewIntegrationDB(t)
+	if err := d.EnsurePartitions(); err != nil {
+		t.Fatal(err)
+	}
+	srv := s3test.NewB2Strict(t, testBucket)
+	cfg := testConfig(srv, t.TempDir())
+	cfg.FlowsEnabled = false
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	client, err := s3.New(cfg, s3.WithRootCAs(pool), s3.WithMaxAttempts(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := stagingFree
+	stagingFree = func(context.Context, string) (uint64, error) { return 1 << 40, nil }
+	t.Cleanup(func() { stagingFree = orig })
+	w, err := newWorker(d, client, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	database.SetArchiveSettleForTesting(t, 200*time.Millisecond, 100*time.Millisecond)
+	wall := time.Now().UTC()
+	day := wall.Truncate(24*time.Hour).AddDate(0, 0, -2).Add(9 * time.Hour)
+	for i := 0; i < 3; i++ {
+		m := models.SyslogMessage{Timestamp: day.Add(time.Duration(i) * time.Minute), DeviceID: 1, ProbeID: 1, Hostname: "fw-example-01",
+			Message: "srcip=192.0.2.10 dstip=198.51.100.7", Severity: 5, CreatedAt: day.Add(time.Duration(i) * time.Minute)}
+		if err := d.Gorm().Create(&m).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	moves := 0
+	w.afterExport = func(context.Context, *models.ArchiveChunk) error {
+		if moves == 0 {
+			database.BumpArchiveLeafMoveEpochForTesting(t, d, export.TableSyslog)
+		}
+		moves++
+		return nil
+	}
+	tick := func() []models.ArchiveChunk {
+		w.lastPass = time.Time{}
+		w.Tick(context.Background())
+		var cs []models.ArchiveChunk
+		d.Gorm().Where("table_name = ?", export.TableSyslog).Order("seq").Find(&cs)
+		return cs
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for moves == 0 {
+		tick()
+		if time.Now().After(deadline) {
+			t.Fatal("no export within 30 s")
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	var c models.ArchiveChunk
+	d.Gorm().Where("table_name = ?", export.TableSyslog).Order("seq").First(&c)
+	var objs int64
+	d.Gorm().Model(&models.ArchiveObject{}).Where("chunk_id = ?", c.ID).Count(&objs)
+	if c.Status == models.ArchiveChunkVerified || c.Mismatches != 0 || objs != 0 || srv.Count(s3test.OpPutObject) != 0 {
+		t.Fatalf("after a move during the export: %+v, %d objects, %d PUTs; want unverified, no mismatch, nothing recorded or uploaded", c, objs, srv.Count(s3test.OpPutObject))
+	}
+	if metricValue(t, `fwmon_archive_unsettled{reason="unattached_leaf",table="syslog_messages"}`) != 1 {
+		t.Fatal("the unsettled metric does not say unattached_leaf")
+	}
+	for {
+		cs := tick()
+		if len(cs) > 0 && cs[0].Status == models.ArchiveChunkVerified {
+			if cs[0].Mismatches != 0 {
+				t.Fatalf("verified with %d mismatches counted", cs[0].Mismatches)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("not verified after the move: %+v", cs)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}

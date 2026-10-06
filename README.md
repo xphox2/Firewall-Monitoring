@@ -10,7 +10,7 @@
 > is a sibling repo, [Firewall-Collector](https://github.com/xphox2/Firewall-Collector).
 
 [![CI](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml/badge.svg)](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.11.303-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.11.305-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.26.8+-00ADD8)](go.mod)
 [![Status](https://img.shields.io/badge/status-alpha-orange)](#project-status)
@@ -403,7 +403,7 @@ The most important ones:
 | `SLACK_WEBHOOK_URL` / `DISCORD_WEBHOOK_URL` | _(empty)_ | Chat alerting |
 | `DB_TYPE` / `DB_HOST` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` | `postgres` (prod) | Database connection (SQLite is used for tests) |
 | `RETENTION_*_DAYS` | varies | Per-table data retention (see [DATA-RETENTION.md](docs/DATA-RETENTION.md)) |
-| `ARCHIVE_SYSLOG_ENABLED` / `ARCHIVE_FLOWS_ENABLED` + `ARCHIVE_S3_*`, `ARCHIVE_OBJECT_LOCK_*`, `ARCHIVE_MIN_AGE_HOURS` | `false` / _(no defaults — required when enabled)_ | Raw syslog / flow archive to any S3-compatible bucket. An enabled stream is exported, uploaded, read back and verified by the poller's archive worker (since 0.11.302); **no delete waits on the archive yet**, so retention is unchanged. Endpoint, region, bucket, prefix, key id and secret are required once a stream is enabled; the secret is never logged. See [config.env.example](config.env.example). |
+| `ARCHIVE_SYSLOG_ENABLED` / `ARCHIVE_FLOWS_ENABLED` + `ARCHIVE_S3_*`, `ARCHIVE_OBJECT_LOCK_*`, `ARCHIVE_MIN_AGE_HOURS` | `false` / _(no defaults — required when enabled)_ | Raw syslog / flow archive to any S3-compatible bucket. An enabled stream is exported, uploaded, read back and verified by the poller's archive worker (since 0.11.302), and since 0.11.304 its raw deletes (retention, the severity 6/7 aggregation, the flow rollup) **wait for that verification** — see [OPERATIONS.md](docs/OPERATIONS.md#raw-archive-the-retention-gate) for the gate and its time-limited override. Endpoint, region, bucket, prefix, key id and secret are required once a stream is enabled; the secret is never logged. See [config.env.example](config.env.example). |
 | `ARCHIVE_SYSLOG_RATE_ROWS_PER_SEC` / `ARCHIVE_FLOW_RATE_ROWS_PER_SEC` | `5000` / `20000` | Read pacing of an archive export (100-100000 rows/s): syslog, and flow samples + counters. |
 | `ARCHIVE_WINDOW` | _(empty — any time)_ | `HH:MM-HH:MM` in **UTC** (may wrap midnight): syslog archive chunks start only inside it, e.g. to keep a backlog to the night. Flows always run. |
 | `ARCHIVE_STAGING_DIR` | _(no default — required when archiving)_ | Absolute directory for each chunk's compressed objects between export and upload: mount a dedicated volume, not the container's writable layer (see [OPERATIONS.md](docs/OPERATIONS.md#raw-archive-the-staging-directory)). Needs 2 GiB free; only `chunk-<n>` entries in it are ever removed. |

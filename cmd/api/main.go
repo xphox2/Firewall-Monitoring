@@ -38,7 +38,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.303"
+const ServerVersion = "0.11.305"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -101,6 +101,8 @@ func main() {
 			os.Exit(runResetAuthCmd(os.Args[2:]))
 		case "normalize-backfill":
 			os.Exit(runNormalizeBackfillCmd(os.Args[2:]))
+		case "archive":
+			os.Exit(runArchiveCmd(os.Args[2:]))
 		}
 	}
 
@@ -947,8 +949,13 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			"/admin/api/normalize/backfill/status": true,
 			"/admin/api/normalize/backfill/cancel": true,
 			"/admin/api/normalize/backfill/resume": true,
-			"/admin/api/sites/:id/event-profile":   true,
-			"/admin/api/event-config/effective":    true,
+			// Raw archive retention gate (archive plan PR 5): releasing a
+			// stream's gate lets unarchived raw rows be deleted, and a chunk
+			// reset re-exports into the bucket — admin-only, status included.
+			"/admin/api/archive/override":         true,
+			"/admin/api/archive/chunks/:id/reset": true,
+			"/admin/api/sites/:id/event-profile":  true,
+			"/admin/api/event-config/effective":   true,
 			// Suggests a suppress/customize rule from an alert (rule creation is
 			// admin-only, and the syslog path reads raw log content) — admin-only.
 			"/admin/api/alerts/:id/suggested-rule": true,
@@ -1162,6 +1169,13 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/normalize/backfill/status", handler.GetNormalizeBackfill)
 		admin.POST("/api/normalize/backfill/cancel", handler.CancelNormalizeBackfill)
 		admin.POST("/api/normalize/backfill/resume", middleware.LoginRateLimiter(), handler.ResumeNormalizeBackfill)
+		// Raw archive retention gate escapes (archive plan PR 5): the
+		// time-limited override of a stream's gate and the reset of a chunk
+		// parked in needs_attention. Admin-only (adminOnlyRoutes); both
+		// re-verify the caller's password (+ TOTP), so login-rate-limited.
+		admin.GET("/api/archive/override", handler.GetArchiveGate)
+		admin.POST("/api/archive/override", middleware.LoginRateLimiter(), handler.SetArchiveGateOverride)
+		admin.POST("/api/archive/chunks/:id/reset", middleware.LoginRateLimiter(), handler.ResetArchiveChunk)
 
 		admin.POST("/api/alerts/:id/acknowledge", handler.AcknowledgeAlert)
 		admin.POST("/api/alerts/:id/snooze", handler.SnoozeAlert)

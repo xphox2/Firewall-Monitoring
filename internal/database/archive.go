@@ -228,6 +228,9 @@ func (d *Database) ArchiveChunkSettled(ctx context.Context, c *models.ArchiveChu
 	if err != nil {
 		return err
 	}
+	if _, err := d.archiveLeafsClear(ctx, c.SourceTable); err != nil {
+		return err
+	}
 	s, err := d.archiveSnapshot(ctx)
 	if err != nil {
 		return fmt.Errorf("archive: snapshot: %w", err)
@@ -422,6 +425,9 @@ func (d *Database) PlanNextArchiveChunk(ctx context.Context, table string, now t
 		if _, err := d.archiveSettle(ctx); err != nil {
 			return nil, err
 		}
+	}
+	if _, err := d.archiveLeafsClear(ctx, table); err != nil {
+		return nil, err
 	}
 	var last []models.ArchiveChunk
 	if err := d.db.WithContext(ctx).Where("table_name = ?", table).Order("seq DESC").Limit(1).Find(&last).Error; err != nil {
@@ -645,11 +651,27 @@ func (d *Database) CheckArchiveChunkCount(ctx context.Context, c *models.Archive
 	if err != nil {
 		return ArchiveCountCheck{}, err
 	}
+	// No count while partition maintenance is moving rows through a
+	// standalone leaf (archive_gate.go): before, no unattached leaf; after,
+	// still none and the same move epoch — so no move ran during the count,
+	// and every row of the range was visible to it.
+	before, err := d.archiveLeafsClear(ctx, t.name)
+	if err != nil {
+		return ArchiveCountCheck{}, err
+	}
 	var r struct{ N, S, H int64 }
 	if err := d.boundedReadContext(ctx, func(tx *gorm.DB) error {
 		return archiveCountQuery(tx, t.name, c.IDLo, c.IDHi).Scan(&r).Error
 	}); err != nil {
 		return ArchiveCountCheck{}, fmt.Errorf("archive: count %s (%d, %d]: %w", t.name, c.IDLo, c.IDHi, err)
+	}
+	if archiveCountHook != nil {
+		archiveCountHook()
+	}
+	if after, err := d.archiveLeafsClear(ctx, t.name); err != nil {
+		return ArchiveCountCheck{}, err
+	} else if after.epoch != before.epoch {
+		return ArchiveCountCheck{}, fmt.Errorf("%w: a move started during the count of %s (%d, %d]", ErrArchiveLeafMove, t.name, c.IDLo, c.IDHi)
 	}
 	chk := ArchiveCountCheck{Rows: r.N, IDSum: r.S, IDHash: r.H, ExportedRows: res.Rows, ExportedIDSum: res.IDSum, ExportedIDHash: res.IDHash}
 	switch {
@@ -662,6 +684,11 @@ func (d *Database) CheckArchiveChunkCount(ctx context.Context, c *models.Archive
 	}
 	return chk, nil
 }
+
+// archiveCountHook, when non-nil, runs between the count and the leaf re-check
+// of CheckArchiveChunkCount (test seam: a leaf move starting there). Never set
+// in production.
+var archiveCountHook func()
 
 // archiveCountQuery counts the range (lo, hi] of table and sums its ids and
 // their hash terms (a primary-key range; both sums stay far below 2^63 for a
