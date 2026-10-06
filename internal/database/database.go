@@ -68,6 +68,11 @@ type Database struct {
 	// pools (0: not set by the DSN, the server default applies). The archive's
 	// settle window is derived from it.
 	statementTimeout time.Duration
+
+	// archiveGateCfg is which archive streams are enabled, as Connect read
+	// them (ARCHIVE_SYSLOG_ENABLED / ARCHIVE_FLOWS_ENABLED): their raw deletes
+	// wait for the archive (archive_gate.go). The zero value gates nothing.
+	archiveGateCfg ArchiveGateConfig
 }
 
 func (d *Database) Gorm() *gorm.DB {
@@ -237,7 +242,8 @@ func Connect(cfg *config.Config) (*Database, error) {
 		// reaches (partitionLookbackDays), so EnsurePartitions needs the window
 		// CleanupOldData will use — recorded here once, from the same config.
 		netEventRetentionDays: cfg.Retention.NetEventWindow(),
-		statementTimeout:      cfg.Database.StatementTimeout}
+		statementTimeout:      cfg.Database.StatementTimeout,
+		archiveGateCfg:        ArchiveGateConfig{Syslog: cfg.Archive.SyslogEnabled, Flows: cfg.Archive.FlowsEnabled}}
 
 	// Initialize the pgx pool alongside GORM. pgxpool gives us direct access
 	// to the Postgres COPY protocol for bulk inserts (SaveFlowSamples on the

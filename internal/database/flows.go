@@ -2091,6 +2091,22 @@ func (d *Database) aggregateFlowsToRollup(cutoff time.Time, intervalType string)
 		log.Printf("Flow rollup: watermark: %v (will retry next cycle)", err)
 		return false
 	}
+	// Archive retention gate: with flow archiving enabled the watermark is
+	// capped at V, the archive's verified-through id of flow_samples
+	// (archive_gate.go). The reads and the consume-delete below are all
+	// `id <= watermark`, so raw rows the archive has not verified are neither
+	// rolled up nor deleted; flow readers union raw rows with rollups, so they
+	// stay counted, once, and a later cycle rolls them up after V has passed
+	// them. Disabled, the watermark and the SQL are unchanged.
+	// The cutoff is capped too, just past the newest sample time the archive
+	// has verified (PostgreSQL), so the walk does not read the held rows. It
+	// is deliberately NOT truncated to a whole bucket again: that would hold
+	// the verified rows of the bucket holding that time until a later chunk
+	// moves it, i.e. forever if the flows stop. The bucket it splits gets a
+	// second rollup row a cycle later (summed by every reader), at most once
+	// per verified chunk, and only while the gate binds.
+	gate := d.archiveGate(context.Background(), "flow_samples")
+	watermark, cutoff = gate.capWatermark(watermark), gate.capCutoff(cutoff)
 	if watermark == 0 {
 		return false
 	}

@@ -23,8 +23,11 @@ import (
 // so an install that does not set ARCHIVE_* behaves exactly as before.
 //
 // An enabled stream is exported, uploaded and verified by the poller's
-// archive worker (internal/archive/worker). No delete is gated on it yet:
-// retention runs exactly as without the archive.
+// archive worker (internal/archive/worker), and its raw deletes wait for that
+// verification: retention, the severity 6/7 aggregation and the flow rollup
+// only take rows at or below the verified-through id (the retention gate,
+// internal/database/archive_gate.go). A disabled stream deletes exactly as
+// without the archive.
 type ArchiveConfig struct {
 	SyslogEnabled bool // ARCHIVE_SYSLOG_ENABLED (default false)
 	FlowsEnabled  bool // ARCHIVE_FLOWS_ENABLED (default false): sflow, netflow and sflow-counters

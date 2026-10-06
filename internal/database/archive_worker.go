@@ -299,44 +299,71 @@ type ArchiveProgress struct {
 	Chunks bool
 	// VerifiedThroughID is V: the id_hi of the last chunk of the gapless run
 	// of verified chunks from seq 1 (0 when the first chunk is not verified).
+	// The retention gate deletes no raw row above it.
 	VerifiedThroughID int64
 	// VerifiedThroughEnd is that chunk's period end; nil when none.
 	VerifiedThroughEnd *time.Time
+	// VerifiedMaxTs is the latest message (sample) time of any row in the
+	// run (the chunks' max_ts): every row at or below V has a timestamp at
+	// or before it — rows are immutable and the count check proved the
+	// range complete. nil when the run holds no row, or a chunk of it with
+	// rows has no max_ts (no bound is then known).
+	VerifiedMaxTs *time.Time
 	// FirstStart is the first chunk's period start (nil without chunks).
 	FirstStart *time.Time
 }
 
-// ArchiveTableProgress derives V for table — never stored: the chunk just
-// before the lowest seq that is not verified (or the newest chunk when all
-// are).
+// ArchiveTableProgress derives V for table — never stored: the id_hi of the
+// last chunk of the run that starts at seq 1 with id_lo 0 and continues while
+// every chunk is verified, its seq is the previous one's + 1 and its id_lo the
+// previous one's id_hi. The first chunk that is not verified (pending,
+// exporting, uploading, verifying, failed, needs_attention, superseded) or
+// that leaves a gap ends the run. The retention gate deletes only rows at or
+// below it (archive_gate.go), so it reads every chunk of the table — a few
+// hundred syslog days, 24 flow hours a day — rather than trust the planner's
+// contiguity.
 func (d *Database) ArchiveTableProgress(ctx context.Context, table string) (ArchiveProgress, error) {
 	var p ArchiveProgress
-	db := d.db.WithContext(ctx)
-	var first []models.ArchiveChunk
-	if err := db.Where("table_name = ?", table).Order("seq").Limit(1).Find(&first).Error; err != nil {
+	var cs []struct {
+		Seq         int64
+		IDLo        int64
+		IDHi        int64
+		Status      string
+		PeriodStart time.Time
+		PeriodEnd   time.Time
+		RowCount    int64
+		MaxTs       *time.Time
+	}
+	if err := d.db.WithContext(ctx).Model(&models.ArchiveChunk{}).
+		Select("seq, id_lo, id_hi, status, period_start, period_end, row_count, max_ts").
+		Where("table_name = ?", table).Order("seq").Scan(&cs).Error; err != nil {
 		return p, err
 	}
-	if len(first) == 0 {
+	if len(cs) == 0 {
 		return p, nil
 	}
 	p.Chunks = true
-	start := first[0].PeriodStart.UTC()
+	start := cs[0].PeriodStart.UTC()
 	p.FirstStart = &start
-	var open []models.ArchiveChunk
-	if err := db.Where("table_name = ? AND status <> ?", table, models.ArchiveChunkVerified).Order("seq").Limit(1).Find(&open).Error; err != nil {
-		return p, err
+	var prevSeq, prevHi int64
+	var maxTs time.Time
+	tsKnown := true
+	for _, c := range cs {
+		if c.Status != models.ArchiveChunkVerified || c.Seq != prevSeq+1 || c.IDLo != prevHi || c.IDHi < c.IDLo {
+			break
+		}
+		prevSeq, prevHi = c.Seq, c.IDHi
+		end := c.PeriodEnd.UTC()
+		p.VerifiedThroughID, p.VerifiedThroughEnd = c.IDHi, &end
+		switch {
+		case c.MaxTs != nil && c.MaxTs.After(maxTs):
+			maxTs = c.MaxTs.UTC()
+		case c.MaxTs == nil && c.RowCount > 0:
+			tsKnown = false
+		}
 	}
-	q := db.Where("table_name = ?", table)
-	if len(open) > 0 {
-		q = q.Where("seq < ?", open[0].Seq)
-	}
-	var last []models.ArchiveChunk
-	if err := q.Order("seq DESC").Limit(1).Find(&last).Error; err != nil {
-		return p, err
-	}
-	if len(last) > 0 {
-		end := last[0].PeriodEnd.UTC()
-		p.VerifiedThroughID, p.VerifiedThroughEnd = last[0].IDHi, &end
+	if tsKnown && !maxTs.IsZero() {
+		p.VerifiedMaxTs = &maxTs
 	}
 	return p, nil
 }

@@ -252,16 +252,7 @@ func (d *Database) batchedDeleteOlderThanOn(model interface{}, timeColumn, order
 					return e
 				}
 			}
-			sub := tx.Model(model).Select("id").Where(timeColumn+" < ?", cutoff)
-			if extraWhere != "" {
-				sub = sub.Where(extraWhere, args...)
-			}
-			// orderBy is empty or a compile-time literal from this package; see
-			// cleanupOrderBy for why it is not always set.
-			if orderBy != "" {
-				sub = sub.Order(orderBy)
-			}
-			sub = sub.Limit(batchSize)
+			sub := retentionBatchQuery(tx, model, timeColumn, orderBy, cutoff, extraWhere, args, batchSize)
 			res := tx.Where("id IN (?)", sub).Delete(model)
 			affected = res.RowsAffected
 			return res.Error
@@ -307,6 +298,23 @@ func (d *Database) batchedDeleteOlderThanOn(model interface{}, timeColumn, order
 		}
 		time.Sleep(batchDeleteInterSleep)
 	}
+}
+
+// retentionBatchQuery is the id subquery of one retention batch: the rows of
+// model older than cutoff (on timeColumn) matching extraWhere, in orderBy
+// order, at most batch of them. Separate so the PostgreSQL plan tests EXPLAIN
+// the exact statement.
+func retentionBatchQuery(tx *gorm.DB, model interface{}, timeColumn, orderBy string, cutoff time.Time, extraWhere string, args []interface{}, batch int) *gorm.DB {
+	sub := tx.Model(model).Select("id").Where(timeColumn+" < ?", cutoff)
+	if extraWhere != "" {
+		sub = sub.Where(extraWhere, args...)
+	}
+	// orderBy is empty or a compile-time literal from this package; see
+	// cleanupOrderBy for why it is not always set.
+	if orderBy != "" {
+		sub = sub.Order(orderBy)
+	}
+	return sub.Limit(batch)
 }
 
 // Batch-loop tunables shared by batchedDeleteWhere (device purge) and
@@ -516,6 +524,19 @@ func sleepCtx(ctx context.Context, dur time.Duration) bool {
 // Any other DROP error returns (zero, true, err) and the caller falls through
 // to the parent-wide batched DELETE, as before.
 func (d *Database) dropPartitionsOlderThan(table string, cutoff time.Time) (floor time.Time, handled bool, err error) {
+	return d.dropPartitionsOlderThanGated(table, cutoff, archiveGateState{})
+}
+
+// dropPartitionsOlderThanGated is dropPartitionsOlderThan under the archive's
+// retention gate (archive_gate.go). With the gate on, an expired leaf is
+// dropped only if its max(id) is at or below V — checked first without a lock
+// (a held leaf costs no ACCESS EXCLUSIVE), then again inside the DROP's
+// transaction with the parent locked as the DROP locks it, so no row above V
+// can arrive in between (a collector replay with old timestamps routes into an
+// old leaf). A held leaf is kept and logged; it sets no floor, so the caller's
+// row DELETE (which ANDs `id <= V` too) still trims its archived rows. Off, it
+// is exactly dropPartitionsOlderThan.
+func (d *Database) dropPartitionsOlderThanGated(table string, cutoff time.Time, gate archiveGateState) (floor time.Time, handled bool, err error) {
 	if !d.dialect.IsPostgres() {
 		return time.Time{}, false, nil
 	}
@@ -560,7 +581,19 @@ func (d *Database) dropPartitionsOlderThan(table string, cutoff time.Time) (floo
 	// pg_inherits has no inherent order.
 	sort.Slice(expired, func(i, j int) bool { return expired[i].upper.Before(expired[j].upper) })
 	for i, ch := range expired {
-		dropErr := d.dropPartitionWithLockRetry(ch.Name)
+		if gate.on {
+			maxID, perr := archivePartitionMaxID(d.db, ch.Name)
+			if perr != nil || maxID > gate.v {
+				log.Printf("cleanup: partition %s kept: archive gate (max id %d, verified through %d, err %v); its archived rows are row-deleted",
+					ch.Name, maxID, gate.v, perr)
+				continue
+			}
+		}
+		dropErr := d.dropPartitionWithLockRetry(table, ch.Name, gate)
+		if errors.Is(dropErr, errArchivePartitionHeld) {
+			log.Printf("cleanup: partition %s kept: a row above the archive's verified-through id %d arrived before the drop", ch.Name, gate.v)
+			continue
+		}
 		if dropErr == nil {
 			log.Printf("cleanup: dropped old partition %s (range entirely before %s)", ch.Name, cutoff.Format("2006-01-02"))
 			continue
@@ -578,20 +611,54 @@ func (d *Database) dropPartitionsOlderThan(table string, cutoff time.Time) (floo
 	return time.Time{}, true, nil
 }
 
-// dropPartitionWithLockRetry drops one leaf under cronDDLLockTimeout, retrying a
-// 55P03 dropLockRetries times. The returned error is the last attempt's.
-func (d *Database) dropPartitionWithLockRetry(name string) error {
+// dropPartitionWithLockRetry drops one leaf of parent under cronDDLLockTimeout,
+// retrying a 55P03 dropLockRetries times. The returned error is the last
+// attempt's. With the archive gate on, each attempt is dropArchivedPartition.
+func (d *Database) dropPartitionWithLockRetry(parent, name string, gate archiveGateState) error {
 	var err error
 	for attempt := 0; attempt <= dropLockRetries; attempt++ {
 		if attempt > 0 {
 			time.Sleep(batchDeleteLockRetrySleep)
 		}
-		err = d.execCronDDL(fmt.Sprintf(`DROP TABLE IF EXISTS %s`, name))
+		if gate.on {
+			err = d.dropArchivedPartition(parent, name, gate.v)
+		} else {
+			err = d.execCronDDL(fmt.Sprintf(`DROP TABLE IF EXISTS %s`, name))
+		}
 		if err == nil || sqlState(err) != "55P03" {
 			return err
 		}
 	}
 	return err
+}
+
+// dropArchivedPartition is execCronDDL's DROP of leaf with the gate's check
+// inside the same transaction: the parent is locked ACCESS EXCLUSIVE first
+// (ONLY the parent — the lock the DROP takes on it anyway, under the same
+// lock_timeout; inserts reach a leaf through the parent, so none can land in
+// leaf meanwhile), then leaf's max(id) must be <= v, else
+// errArchivePartitionHeld and nothing is dropped. parent and leaf are relation
+// names from this package and pg_inherits, never input.
+func (d *Database) dropArchivedPartition(parent, leaf string, v int64) error {
+	return d.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SET LOCAL statement_timeout = 0").Error; err != nil {
+			return fmt.Errorf("lift statement_timeout: %w", err)
+		}
+		if err := tx.Exec(fmt.Sprintf("SET LOCAL lock_timeout = '%dms'", cronDDLLockTimeout.Milliseconds())).Error; err != nil {
+			return fmt.Errorf("set lock_timeout: %w", err)
+		}
+		if err := tx.Exec(fmt.Sprintf("LOCK TABLE ONLY %s IN ACCESS EXCLUSIVE MODE", parent)).Error; err != nil {
+			return err
+		}
+		maxID, err := archivePartitionMaxID(tx, leaf)
+		if err != nil {
+			return err
+		}
+		if maxID > v {
+			return errArchivePartitionHeld
+		}
+		return tx.Exec(fmt.Sprintf(`DROP TABLE IF EXISTS %s`, leaf)).Error
+	})
 }
 
 // andFloor ANDs `timestamp >= floor` onto a batched-delete predicate, to keep
@@ -904,11 +971,18 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		// Drop errors are non-fatal — fall through to the batched DELETE, which
 		// also trims the straddling/current partition's rows for exact retention.
 		// A lock-timed-out drop returns a floor instead; see andFloor.
-		floor, _, err := d.dropPartitionsOlderThan(e.name, cutoff)
+		//
+		// flow_samples and flow_if_counters are archived: while their stream
+		// is enabled the drop and the DELETE take only rows the archive has
+		// verified (archiveGate; every other table, and a disabled stream,
+		// gets the zero gate and the unchanged statements).
+		gate := d.archiveGate(context.Background(), e.name)
+		floor, _, err := d.dropPartitionsOlderThanGated(e.name, cutoff, gate)
 		if err != nil {
 			log.Printf("cleanup: drop-old-partitions warning for %s: %v", e.name, err)
 		}
 		where, args := andFloor("", nil, floor)
+		where, args = gate.andID(where, args)
 		if err := d.batchedDeleteOlderThanWhere(e.model, e.name, cutoff, where, args...); err != nil {
 			errs = append(errs, fmt.Errorf("failed to cleanup %s: %w", e.name, err))
 		}
@@ -973,11 +1047,17 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	// severity inside it has expired, so syslogMaxWindow returns 0 — never drop —
 	// if any severity is kept forever. Straddling and newer partitions still
 	// rely on the per-severity DELETEs below for exact retention.
+	//
+	// With syslog archiving enabled, both the drop and the DELETEs take only
+	// rows the archive has verified (id <= V; archive_gate.go). V is read
+	// once for the whole syslog pass: it only ever grows, so an older V is
+	// merely conservative.
+	syslogGate := d.archiveGate(context.Background(), "syslog_messages")
 	var syslogFloor time.Time
 	if dropDays := syslogMaxWindow(sevDays[:]); dropDays > 0 {
 		dropCutoff := time.Now().AddDate(0, 0, -dropDays)
 		var err error
-		if syslogFloor, _, err = d.dropPartitionsOlderThan("syslog_messages", dropCutoff); err != nil {
+		if syslogFloor, _, err = d.dropPartitionsOlderThanGated("syslog_messages", dropCutoff, syslogGate); err != nil {
 			log.Printf("cleanup: drop-old-partitions warning for syslog_messages: %v", err)
 		}
 	}
@@ -988,6 +1068,7 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	for days, severities := range syslogWindowGroups(sevDays) {
 		cutoff := time.Now().AddDate(0, 0, -days)
 		where, args := andFloor("severity IN ?", []interface{}{severities}, syslogFloor)
+		where, args = syslogGate.andID(where, args)
 		if err := d.batchedDeleteOlderThanWhere(&models.SyslogMessage{}, "syslog_messages", cutoff,
 			where, args...); err != nil {
 			errs = append(errs, fmt.Errorf("failed to cleanup syslog_message (severities %v, %dd): %w",

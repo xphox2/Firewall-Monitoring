@@ -51,6 +51,7 @@ type Store interface {
 	IPSecStore
 	DevicePurgeStore
 	NormalizeBackfillStore
+	ArchiveGateStore
 
 	// Gorm exposes the raw *gorm.DB for handlers that build ad-hoc queries
 	// (partial updates, one-off lookups). Unchanged escape hatch.
@@ -83,6 +84,17 @@ type DevicePurgeStore interface {
 	CancelDevicePurgeJob(id uint) (status string, applied bool, err error)
 	EstimateDevicePurge(deviceID uint) (*DevicePurgeEstimate, error)
 	ListIPSecTunnelsForDevice(deviceID uint) ([]models.IPSecTunnel, error)
+}
+
+// ArchiveGateStore covers the operator escapes of the raw archive's retention
+// gate (archive_gate.go): the time-limited override of a stream's gate and the
+// reset of a chunk parked in needs_attention.
+type ArchiveGateStore interface {
+	SetArchiveGateOverride(stream string, until time.Time) error
+	ArchiveGateOverride(stream string, now time.Time) (until time.Time, active bool)
+	GetArchiveChunk(id uint) (*models.ArchiveChunk, error)
+	ListArchiveChunksNeedingAttention(limit int) ([]models.ArchiveChunk, error)
+	ResetArchiveChunk(ctx context.Context, id uint, note string, at time.Time) (*models.ArchiveChunk, error)
 }
 
 // NormalizeBackfillStore covers the one-time normalized-event backfill queue
