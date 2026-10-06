@@ -473,3 +473,40 @@ func TestArchivePeriodStart(t *testing.T) {
 		}
 	}
 }
+
+// TestArchivePlan_RefusesImplausibleFirstRow: the first syslog chunk starts at
+// the ingest day of the oldest row; a created_at far older than any retention
+// (a forged stamp from before 0.11.300) or in the future is refused instead of
+// planning a chunk per day back to it (or never).
+func TestArchivePlan_RefusesImplausibleFirstRow(t *testing.T) {
+	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	for _, c := range []struct {
+		name    string
+		created time.Time
+		ok      bool
+	}{
+		{"forged past", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), false},
+		{"future", now.Add(48 * time.Hour), false},
+		{"a month ago", now.AddDate(0, -1, 0), true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			d := NewDatabaseForTesting(t)
+			seedArchiveSyslog(t, d, []time.Time{c.created, now.Add(-24 * time.Hour)})
+			chunk, err := d.PlanNextArchiveChunk(archiveCtx, export.TableSyslog, now, 0)
+			if c.ok {
+				if err != nil || chunk == nil {
+					t.Fatalf("plan = %v, %v; want the first chunk", chunk, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "not planning from it") || chunk != nil {
+				t.Fatalf("plan = %+v, %v; want a refusal", chunk, err)
+			}
+			var n int64
+			d.db.Model(&models.ArchiveChunk{}).Count(&n)
+			if n != 0 {
+				t.Fatalf("%d chunks recorded", n)
+			}
+		})
+	}
+}

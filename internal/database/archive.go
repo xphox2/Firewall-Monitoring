@@ -59,11 +59,19 @@ func archiveTableOf(name string) (archiveTable, error) {
 	return t, nil
 }
 
-// archiveCommitSlack: how long after an instant a transaction that started
-// before it may still hold uncommitted rows the cut must include. Ids are
-// assigned at INSERT but become visible at COMMIT, so a transaction open across
-// the cut could still add ids at or below id_hi.
-const archiveCommitSlack = 60 * time.Second
+// archiveMarkSettle: how long after a mark (database clock) its chunk may be
+// cut. A transaction reserves an id (nextval) a moment before its first
+// INSERT gives it a transaction id; a snapshot taken this long after the mark
+// is certain to include the xid of every transaction that reserved an id at
+// or below it.
+const archiveMarkSettle = time.Second
+
+// archiveMaxFirstAge bounds how far back the first syslog chunk may start. The
+// oldest row's created_at should be the retention edge (about a month); one
+// older than this is a forged or broken stamp (before 0.11.300 a probe body
+// could set it), and planning would otherwise cut one chunk per day back to
+// it. A variable so a test can shrink it.
+var archiveMaxFirstAge = 400 * 24 * time.Hour
 
 // archivePageSize is the keyset page of an export read.
 const archivePageSize = 5000
@@ -77,61 +85,62 @@ func archivePeriodStart(t time.Time, period time.Duration) time.Time {
 	return t.Truncate(period)
 }
 
-// ArchiveLateCommitError: client transactions of this database that started
-// before Instant are still open, so rows at or below a cut taken there may not
-// be visible yet. The cut waits (the next tick retries). Hidden counts sessions
-// whose transaction start this role cannot read (another role, without
-// pg_read_all_stats): they cannot be ruled out, so they block too.
-type ArchiveLateCommitError struct {
-	Instant time.Time
-	Open    int64
-	Oldest  *time.Time
-	Hidden  int64
+// ArchiveUnsettledError: a transaction that may still commit rows into the
+// chunk's id range is open — one whose transaction id was assigned before the
+// chunk was cut (GuardXmax) is still running (Xmin is the oldest running xid).
+// The export waits; a later attempt retries. Read-only transactions (a
+// pg_dump, a report) never hold a transaction id and never block.
+type ArchiveUnsettledError struct {
+	GuardXmax int64
+	Xmin      int64
 }
 
-func (e *ArchiveLateCommitError) Error() string {
-	msg := fmt.Sprintf("archive: %d transaction(s) open since before %s", e.Open, e.Instant.UTC().Format(time.RFC3339))
-	if e.Oldest != nil {
-		msg += fmt.Sprintf(" (oldest started %s)", e.Oldest.UTC().Format(time.RFC3339))
-	}
-	if e.Hidden > 0 {
-		msg += fmt.Sprintf("; %d session(s) of another role are invisible to this one — grant it pg_read_all_stats", e.Hidden)
-	}
-	return msg
+func (e *ArchiveUnsettledError) Error() string {
+	return fmt.Sprintf("archive: a writing transaction older than the cut is still open (oldest running xid %d, cut at xid %d)", e.Xmin, e.GuardXmax)
 }
 
-// archiveLateCommitGuard returns *ArchiveLateCommitError while any other
-// client backend of this database has a transaction that started before
-// instant (pg_stat_activity, a catalog read). Background workers (autovacuum,
-// replication) never insert rows and are ignored. SQLite has no concurrent
-// writer in tests: always clear.
-func (d *Database) archiveLateCommitGuard(ctx context.Context, instant time.Time) error {
-	if !d.dialect.IsPostgres() {
+// archiveSnapshot is the xmin / xmax of a fresh snapshot (pg_current_snapshot)
+// and the database clock. Every transaction id below xmax had been assigned
+// when it was taken; every one below xmin has finished. Transaction ids are
+// assigned only to transactions that write, whatever their role, so this sees
+// every writer and nothing else. xid8 (64-bit, no wraparound) fits a bigint.
+type archiveSnapshot struct {
+	Xmin, Xmax int64
+	At         time.Time
+}
+
+func (d *Database) archiveSnapshot(ctx context.Context) (archiveSnapshot, error) {
+	var s archiveSnapshot
+	err := d.db.WithContext(ctx).Raw(`SELECT pg_snapshot_xmin(s)::text::bigint AS xmin, pg_snapshot_xmax(s)::text::bigint AS xmax,
+		clock_timestamp() AS at FROM pg_current_snapshot() AS s`).Scan(&s).Error
+	return s, err
+}
+
+// ArchiveChunkSettled returns *ArchiveUnsettledError while a transaction that
+// was assigned its id before c was cut is still running: such a transaction
+// may hold rows at or below id_hi that are not visible yet. Clear once the
+// oldest running transaction id is at or above the cut's (guard_xmax). Always
+// clear on SQLite (no concurrent writer in tests) and for a chunk without a
+// guard.
+func (d *Database) ArchiveChunkSettled(ctx context.Context, c *models.ArchiveChunk) error {
+	if !d.dialect.IsPostgres() || c.GuardXmax == nil {
 		return nil
 	}
-	var r struct {
-		Open   int64
-		Oldest *time.Time
-		Hidden int64
+	s, err := d.archiveSnapshot(ctx)
+	if err != nil {
+		return fmt.Errorf("archive: snapshot: %w", err)
 	}
-	if err := d.db.WithContext(ctx).Raw(`SELECT
-			count(*) FILTER (WHERE xact_start < ?) AS open,
-			min(xact_start) FILTER (WHERE xact_start < ?) AS oldest,
-			count(*) FILTER (WHERE state IS NULL) AS hidden
-		FROM pg_stat_activity
-		WHERE datname = current_database() AND backend_type = 'client backend' AND pid <> pg_backend_pid()`,
-		instant, instant).Scan(&r).Error; err != nil {
-		return fmt.Errorf("archive: late-commit guard: %w", err)
-	}
-	if r.Open > 0 || r.Hidden > 0 {
-		return &ArchiveLateCommitError{Instant: instant, Open: r.Open, Oldest: r.Oldest, Hidden: r.Hidden}
+	if s.Xmin < *c.GuardXmax {
+		return &ArchiveUnsettledError{GuardXmax: *c.GuardXmax, Xmin: s.Xmin}
 	}
 	return nil
 }
 
 // archiveMaxID is the table's unfiltered max(id) — a single backward probe of
 // the primary key, cheap at any size (syslog_agg.go explains why only the
-// unfiltered form is) — with the database clock at the read on PostgreSQL.
+// unfiltered form is) — with the database clock at the read on PostgreSQL. It
+// runs on a pooled connection under the DSN's 30 s statement_timeout, ample
+// for one descent.
 func (d *Database) archiveMaxID(ctx context.Context, t archiveTable) (int64, time.Time, error) {
 	var r struct {
 		MaxID   int64
@@ -152,6 +161,12 @@ func (d *Database) archiveMaxID(ctx context.Context, t archiveTable) (int64, tim
 // database clock. A boundary missed while the poller was down gets the same
 // late mark, so the outage's rows land in the earliest open chunk. Returns how
 // many marks were added. Idempotent per boundary.
+//
+// The archive worker calls it under its own advisory lock, so one caller
+// reads the newest mark and inserts the next ones at a time. Two concurrent
+// callers could not corrupt anything — the (table_name, boundary_ts) key and
+// ON CONFLICT DO NOTHING keep the first mark of a boundary — but the loser's
+// marks would be dropped silently, so the lock is relied on.
 func (d *Database) TakeArchiveIDMarks(ctx context.Context, table string, now time.Time) (int, error) {
 	t, err := archiveTableOf(table)
 	if err != nil {
@@ -253,8 +268,25 @@ func (d *Database) archiveSyslogCut(ctx context.Context, lo int64, end time.Time
 // PlanNextArchiveChunk cuts the next chunk of table if it is due at now and
 // records it (status pending). It returns nil, nil when nothing is due: no row
 // yet, the period not yet minAge old, or (flow tables) its closing mark not
-// yet taken. While a transaction that could still commit rows into the range
-// is open it returns *ArchiveLateCommitError and records nothing.
+// yet taken (or taken less than archiveMarkSettle ago).
+//
+// The cut is recorded with guard_xmax, the xmax of a snapshot taken after it:
+// a transaction that may still commit rows at or below id_hi had its
+// transaction id by then, so ArchiveChunkSettled holds the export until every
+// such transaction has finished. Planning itself never waits on other
+// sessions: a row created before the boundary that commits after the search
+// simply has an id above id_hi and lands in the next chunk (still exactly one).
+// The one window this leaves — an id reserved by nextval in the microseconds
+// before its transaction got an xid, while a later id committed and was read
+// as the cut — is what the post-export count check (late_commit) catches.
+//
+// Clocks: now and created_at are the application's clock; marks' taken_at is
+// the database's. They are compared only to the hour-scale minimum ages, so
+// a skew of seconds between the two is harmless.
+//
+// The archive worker calls this under its advisory lock, one caller at a
+// time; a concurrent caller would fail on the (table_name, seq) and
+// (table_name, period_start) unique keys rather than record an overlap.
 //
 // minAge applies to syslog and counters (ARCHIVE_MIN_AGE_HOURS; 0 = the 2 h
 // default); flows always use 5 minutes, because the rollup deletes raw flows
@@ -296,7 +328,14 @@ func (d *Database) PlanNextArchiveChunk(ctx context.Context, table string, now t
 		if len(row) == 0 {
 			return nil, nil
 		}
-		next.PeriodStart = archivePeriodStart(row[0].CreatedAt, t.period)
+		first := row[0].CreatedAt
+		if first.After(now.Add(time.Hour)) || first.Before(now.Add(-archiveMaxFirstAge)) {
+			// Refuse rather than plan a chunk per day back to a forged stamp
+			// (or wait forever for a future one); the operator decides.
+			return nil, fmt.Errorf("archive: the oldest syslog row (id %d) has created_at %s, outside [now - %s, now]: not planning from it",
+				row[0].ID, first.UTC().Format(time.RFC3339), archiveMaxFirstAge)
+		}
+		next.PeriodStart = archivePeriodStart(first, t.period)
 	}
 	next.PeriodEnd = next.PeriodStart.Add(t.period)
 	next.Month = export.MonthOf(next.PeriodStart)
@@ -304,6 +343,7 @@ func (d *Database) PlanNextArchiveChunk(ctx context.Context, table string, now t
 		return nil, nil
 	}
 
+	var markTakenAt time.Time
 	if t.byMark {
 		var mark []models.ArchiveIDMark
 		if err := d.db.WithContext(ctx).Where("table_name = ? AND boundary_ts = ?", table, next.PeriodEnd).Limit(1).Find(&mark).Error; err != nil {
@@ -316,23 +356,22 @@ func (d *Database) PlanNextArchiveChunk(ctx context.Context, table string, now t
 		if m.MaxID < next.IDLo {
 			return nil, fmt.Errorf("archive: %s mark at %s (max id %d) is below the previous chunk's end %d", table, next.PeriodEnd.Format(time.RFC3339), m.MaxID, next.IDLo)
 		}
-		// Every id up to the mark was assigned before it was taken: a
-		// transaction that started after TakenAt can only hold higher ids.
-		if err := d.archiveLateCommitGuard(ctx, m.TakenAt.Add(archiveCommitSlack)); err != nil {
-			return nil, err
-		}
 		late := m.TakenAt.Sub(next.PeriodEnd).Milliseconds()
-		next.IDHi, next.MarkLateByMs = m.MaxID, &late
-	} else {
-		// A row created before the day's end was inserted by a transaction
-		// that started within the slack of it; once none older is open, every
-		// such row is visible to the search.
-		if err := d.archiveLateCommitGuard(ctx, next.PeriodEnd.Add(archiveCommitSlack)); err != nil {
-			return nil, err
+		next.IDHi, next.MarkLateByMs, markTakenAt = m.MaxID, &late, m.TakenAt
+	} else if next.IDHi, err = d.archiveSyslogCut(ctx, next.IDLo, next.PeriodEnd); err != nil {
+		return nil, err
+	}
+	if d.dialect.IsPostgres() {
+		snap, err := d.archiveSnapshot(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("archive: snapshot after the %s cut: %w", table, err)
 		}
-		if next.IDHi, err = d.archiveSyslogCut(ctx, next.IDLo, next.PeriodEnd); err != nil {
-			return nil, err
+		// Every id up to a mark was reserved before it was taken; the guard
+		// snapshot must come after their xids were assigned.
+		if t.byMark && snap.At.Before(markTakenAt.Add(archiveMarkSettle)) {
+			return nil, nil
 		}
+		next.GuardXmax = &snap.Xmax
 	}
 	if err := d.db.WithContext(ctx).Create(&next).Error; err != nil {
 		return nil, fmt.Errorf("archive: record %s chunk %d: %w", table, next.Seq, err)
@@ -407,9 +446,14 @@ func archiveWalk[T any](ctx context.Context, d *Database, c *models.ArchiveChunk
 
 // ExportArchiveChunk reads chunk c's rows in id order and writes them through
 // an export.ChunkWriter of the given schema version to the objects open
-// returns. Nothing is recorded: the result is the caller's to store.
+// returns. Nothing is recorded: the result is the caller's to store. It
+// returns *ArchiveUnsettledError, reading nothing, while a writer older than
+// the cut is still open (ArchiveChunkSettled).
 func (d *Database) ExportArchiveChunk(ctx context.Context, c *models.ArchiveChunk, schema int, opts ArchiveReadOptions, open export.OpenFunc) (*export.ChunkResult, error) {
 	if _, err := archiveTableOf(c.SourceTable); err != nil {
+		return nil, err
+	}
+	if err := d.ArchiveChunkSettled(ctx, c); err != nil {
 		return nil, err
 	}
 	w, err := export.NewChunkWriter(c.SourceTable, schema, open)

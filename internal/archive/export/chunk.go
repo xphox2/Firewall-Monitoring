@@ -92,6 +92,13 @@ type ChunkResult struct {
 }
 
 // ChunkWriter routes one chunk's rows, in id order, to its objects.
+//
+// Memory: every object is open until Close, and each holds a gzip (flate)
+// writer at the default level — about 0.8 MiB. A syslog chunk opens one per
+// device that logged that day (6 on the reference fleet: ~5 MiB; 100 devices:
+// ~80 MiB); a flow chunk at most two, a counter chunk one. Objects are not
+// closed and reopened to bound this: a gzip stream cannot be resumed, and
+// splitting an object would change its bytes and hash.
 type ChunkWriter struct {
 	table   string
 	schema  int

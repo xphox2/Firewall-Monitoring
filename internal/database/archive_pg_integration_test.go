@@ -22,6 +22,7 @@ import (
 	"firewall-mon/internal/archive/export"
 	"firewall-mon/internal/models"
 
+	"github.com/jackc/pgx/v5"
 	"gorm.io/gorm"
 )
 
@@ -260,6 +261,7 @@ func TestArchiveFlows_PG(t *testing.T) {
 			if err := d.db.Exec("VACUUM ANALYZE flow_samples").Error; err != nil {
 				t.Fatal(err)
 			}
+			time.Sleep(archiveMarkSettle) // the last mark must settle before its chunk is cut
 			chunks := planAll(t, d, export.TableFlows, h0.Add(3*time.Hour+10*time.Minute))
 			if len(chunks) != 3 {
 				t.Fatalf("%d flow chunks, want 3", len(chunks))
@@ -303,6 +305,7 @@ func TestArchiveFlows_PG(t *testing.T) {
 		if err := d.db.Exec("VACUUM ANALYZE flow_if_counters").Error; err != nil {
 			t.Fatal(err)
 		}
+		time.Sleep(archiveMarkSettle)
 		chunks := planAll(t, d, export.TableCounters, day.Add(3*time.Hour))
 		if len(chunks) != 1 || chunks[0].IDHi != 200000 {
 			t.Fatalf("counter chunks %+v", chunks)
@@ -315,12 +318,13 @@ func TestArchiveFlows_PG(t *testing.T) {
 	})
 }
 
-// TestArchiveLateCommitGuard_PG: while another session of the same role holds
-// a transaction that inserted a row into the range, the cut is refused (its
-// xact_start is visible: one role for every component); once it commits the
-// cut is taken and the export holds the row. Same for a flow chunk cut at a
-// mark taken while the transaction was open.
-func TestArchiveLateCommitGuard_PG(t *testing.T) {
+// TestArchiveSettleGuard_PG: the export of a chunk waits for every WRITING
+// transaction that may hold rows in its range — one that inserted a row
+// before the cut and is still open — and for nothing else: a long read-only
+// REPEATABLE READ transaction (what pg_dump holds for hours) opened before
+// everything never blocks. Syslog and a flow chunk cut at a mark taken while
+// the writer was open; the flow chunk is not cut until its mark has settled.
+func TestArchiveSettleGuard_PG(t *testing.T) {
 	d := NewIntegrationDB(t)
 	if err := d.EnsurePartitions(); err != nil {
 		t.Fatal(err)
@@ -328,84 +332,96 @@ func TestArchiveLateCommitGuard_PG(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 
-	conn, err := d.pgxPool.Acquire(ctx)
+	// The pg_dump-like reader, open across the whole test.
+	rconn, err := d.pgxPool.Acquire(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Release()
-	tx, err := conn.Begin(ctx)
+	defer rconn.Release()
+	rtx, err := rconn.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	var heldID int64
-	if err := tx.QueryRow(ctx, `INSERT INTO syslog_messages ("timestamp", device_id, message, severity, created_at)
+	defer func() { _ = rtx.Rollback(ctx) }()
+	var seen int64
+	if err := rtx.QueryRow(ctx, `SELECT count(*) FROM syslog_messages`).Scan(&seen); err != nil {
+		t.Fatal(err)
+	}
+
+	// The writer: one syslog row and one flow row, uncommitted.
+	wconn, err := d.pgxPool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer wconn.Release()
+	wtx, err := wconn.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = wtx.Rollback(ctx) }()
+	var heldID, heldFlow int64
+	if err := wtx.QueryRow(ctx, `INSERT INTO syslog_messages ("timestamp", device_id, message, severity, created_at)
 		VALUES (now(), 1, 'held srcip=192.0.2.9', 5, now()) RETURNING id`).Scan(&heldID); err != nil {
+		t.Fatal(err)
+	}
+	if err := wtx.QueryRow(ctx, `INSERT INTO flow_samples ("timestamp", device_id, src_addr, dst_addr, flow_source, created_at)
+		VALUES (now(), 1, '192.0.2.9', '198.51.100.9', 1, now()) RETURNING id`).Scan(&heldFlow); err != nil {
 		t.Fatal(err)
 	}
 	// Later rows commit first, with higher ids.
 	archiveSeedSyslog(t, d, now.Add(-time.Second), time.Second, 50)
+	archiveSeedFlows(t, d, now, 10)
 
 	tomorrow := archivePeriodStart(now, 24*time.Hour).Add(27 * time.Hour)
-	_, err = d.PlanNextArchiveChunk(ctx, export.TableSyslog, tomorrow, 0)
-	var lc *ArchiveLateCommitError
-	if !errors.As(err, &lc) || lc.Open < 1 || lc.Oldest == nil || lc.Hidden != 0 {
-		t.Fatalf("plan with a held transaction = %v (%+v), want ArchiveLateCommitError with the open transaction visible", err, lc)
+	sys, err := d.PlanNextArchiveChunk(ctx, export.TableSyslog, tomorrow, 0)
+	if err != nil || sys == nil || sys.GuardXmax == nil || heldID > sys.IDHi {
+		t.Fatalf("syslog plan with a writer open = %+v, %v: want a chunk (with a guard) covering id %d", sys, err, heldID)
 	}
-	var n int64
-	d.db.Model(&models.ArchiveChunk{}).Count(&n)
-	if n != 0 {
-		t.Fatal("a chunk was recorded while the guard refused")
-	}
-
-	// The flow side: a mark taken while a flow insert is open.
-	var heldFlow int64
-	if err := tx.QueryRow(ctx, `INSERT INTO flow_samples ("timestamp", device_id, src_addr, dst_addr, flow_source, created_at)
-		VALUES (now(), 1, '192.0.2.9', '198.51.100.9', 1, now()) RETURNING id`).Scan(&heldFlow); err != nil {
-		t.Fatal(err)
-	}
-	archiveSeedFlows(t, d, now, 10)
 	hour := archivePeriodStart(now, time.Hour)
-	if _, err := d.TakeArchiveIDMarks(ctx, export.TableFlows, hour); err != nil {
-		t.Fatal(err)
+	for _, b := range []time.Time{hour, hour.Add(time.Hour)} {
+		if _, err := d.TakeArchiveIDMarks(ctx, export.TableFlows, b); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if _, err := d.TakeArchiveIDMarks(ctx, export.TableFlows, hour.Add(time.Hour)); err != nil {
-		t.Fatal(err)
+	if c, err := d.PlanNextArchiveChunk(ctx, export.TableFlows, hour.Add(2*time.Hour), 0); err != nil || c != nil {
+		t.Fatalf("flow chunk cut %v after its mark (%v): want it to wait %s", c, err, archiveMarkSettle)
 	}
-	if _, err := d.PlanNextArchiveChunk(ctx, export.TableFlows, hour.Add(2*time.Hour), 0); !errors.As(err, &lc) {
-		t.Fatalf("flow plan with a held transaction = %v", err)
+	time.Sleep(archiveMarkSettle + 100*time.Millisecond)
+	flow, err := d.PlanNextArchiveChunk(ctx, export.TableFlows, hour.Add(2*time.Hour), 0)
+	if err != nil || flow == nil || flow.GuardXmax == nil || heldFlow > flow.IDHi {
+		t.Fatalf("flow plan = %+v, %v: want a chunk covering id %d", flow, err, heldFlow)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
+	exportOf := func(c *models.ArchiveChunk, schema int) (*export.ChunkResult, error) {
+		return d.ExportArchiveChunk(ctx, c, schema, ArchiveReadOptions{}, archiveMemOpen(map[export.ObjectID]*bytes.Buffer{}))
+	}
+	var un *ArchiveUnsettledError
+	for _, c := range []struct {
+		c      *models.ArchiveChunk
+		schema int
+	}{{sys, export.SyslogSchemaV2}, {flow, export.FlowSchemaV1}} {
+		if _, err := exportOf(c.c, c.schema); !errors.As(err, &un) || un.Xmin >= un.GuardXmax {
+			t.Fatalf("%s export with the writer open = %v, want ArchiveUnsettledError", c.c.SourceTable, err)
+		}
+	}
+
+	if err := wtx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// The reader is still open: it must not block.
 	for _, c := range []struct {
-		table string
-		held  int64
-	}{{export.TableSyslog, heldID}, {export.TableFlows, heldFlow}} {
-		var chunks []models.ArchiveChunk
-		at := tomorrow
-		if c.table == export.TableFlows {
-			at = hour.Add(2 * time.Hour)
+		c      *models.ArchiveChunk
+		schema int
+	}{{sys, export.SyslogSchemaV2}, {flow, export.FlowSchemaV1}} {
+		res, err := exportOf(c.c, c.schema)
+		if err != nil {
+			t.Fatalf("%s export after the commit, with a read-only transaction open: %v", c.c.SourceTable, err)
 		}
-		chunks = planAll(t, d, c.table, at)
-		found := false
-		for i := range chunks {
-			if c.held <= chunks[i].IDLo || c.held > chunks[i].IDHi {
-				continue
-			}
-			res, err := d.ExportArchiveChunk(ctx, &chunks[i], map[string]int{export.TableSyslog: export.SyslogSchemaV2, export.TableFlows: export.FlowSchemaV1}[c.table],
-				ArchiveReadOptions{}, archiveMemOpen(map[export.ObjectID]*bytes.Buffer{}))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got, v, _ := d.CheckArchiveChunkCount(ctx, &chunks[i], res.Rows); v != ArchiveCountMatch {
-				t.Fatalf("%s: export of %d rows vs %d in the table (%s)", c.table, res.Rows, got, v)
-			}
-			found = true
+		if got, v, _ := d.CheckArchiveChunkCount(ctx, c.c, res.Rows); v != ArchiveCountMatch {
+			t.Fatalf("%s: export of %d rows vs %d in the table (%s)", c.c.SourceTable, res.Rows, got, v)
 		}
-		if !found {
-			t.Fatalf("%s: the committed row %d is in no chunk: %+v", c.table, c.held, chunks)
-		}
+	}
+	if err := rtx.QueryRow(ctx, `SELECT count(*) FROM syslog_messages`).Scan(&seen); err != nil || seen != 0 {
+		t.Fatalf("the reader's snapshot moved (%d, %v): it was not the long transaction this test needs", seen, err)
 	}
 }
