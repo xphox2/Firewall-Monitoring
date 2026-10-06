@@ -97,6 +97,11 @@ var baselineModels = []interface{}{
 	&models.DeviceFieldObserved{},
 	// v73: the normalized-event backfill job queue (S-5).
 	&models.NormalizeBackfillJob{},
+	// v75: the raw archive's manifest (chunks, objects, months, id marks).
+	&models.ArchiveChunk{},
+	&models.ArchiveObject{},
+	&models.ArchiveMonth{},
+	&models.ArchiveIDMark{},
 }
 
 // migrateBaseline is the v1 "baseline" migration (AUDIT-044): it brings an empty
@@ -2226,6 +2231,15 @@ func (d *Database) migrateDevicePurgeJobs() error {
 // S-5; v0.11.297). Same shape as v65: a small AutoMigrate, idempotent.
 func (d *Database) migrateNormalizeBackfillJobs() error {
 	return d.db.AutoMigrate(&models.NormalizeBackfillJob{})
+}
+
+// migrateArchiveManifestTables (v75) creates the raw archive's manifest:
+// archive_chunks, archive_objects, archive_months and archive_id_marks (archive
+// plan PR 3). New, small tables only — nothing touches syslog_messages or the
+// flow tables, so there is no lock to wait for. AutoMigrate is idempotent: a
+// fresh install (the baseline already built them) is a no-op.
+func (d *Database) migrateArchiveManifestTables() error {
+	return d.db.AutoMigrate(&models.ArchiveChunk{}, &models.ArchiveObject{}, &models.ArchiveMonth{}, &models.ArchiveIDMark{})
 }
 
 // v74's lock bounds. Package vars so the PostgreSQL test can shrink them.

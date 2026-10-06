@@ -183,6 +183,9 @@ func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 		}
 		messages[i].Timestamp = clampIngestTimestamp(messages[i].Timestamp, now)
 		messages[i].ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
+		// created_at is the server's ingest stamp (the archive cuts chunks by
+		// it): zero it so GORM stamps it, whatever the body sent.
+		messages[i].CreatedAt = time.Time{}
 		if messages[i].DeviceID == 0 && messages[i].SourceIP != "" {
 			if devID := ipToDevice[messages[i].SourceIP]; devID > 0 {
 				messages[i].DeviceID = devID
@@ -391,6 +394,9 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 		samples[i].ProbeID = probe.ID
 		samples[i].Timestamp = clampIngestTimestamp(samples[i].Timestamp, now)
 		samples[i].ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
+		// created_at is the server's ingest stamp (the archive cuts chunks by
+		// it): zero it so GORM stamps it, whatever the body sent.
+		samples[i].CreatedAt = time.Time{}
 		if samples[i].DeviceID == 0 && samples[i].SamplerAddress != "" {
 			if devID := ipToDevice[samples[i].SamplerAddress]; devID > 0 {
 				samples[i].DeviceID = devID
@@ -535,6 +541,9 @@ func (h *Handler) ReceiveFlowCounterSamples(c *gin.Context) {
 		counters[i].ProbeID = probe.ID
 		counters[i].Timestamp = clampIngestTimestamp(counters[i].Timestamp, now)
 		counters[i].ID = 0 // AUDIT T7: server-assigned PK; ignore any client-supplied id
+		// created_at is the server's ingest stamp (the archive cuts chunks by
+		// it): zero it so GORM stamps it, whatever the body sent.
+		counters[i].CreatedAt = time.Time{}
 		if counters[i].DeviceID == 0 && counters[i].SamplerAddress != "" {
 			if devID := ipToDevice[counters[i].SamplerAddress]; devID > 0 {
 				counters[i].DeviceID = devID

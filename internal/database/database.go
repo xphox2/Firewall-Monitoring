@@ -63,6 +63,11 @@ type Database struct {
 	// daily net_events leaves reach exactly as far back as retention does. 0
 	// (the SQLite harness) falls back to defaultNetEventLookbackDays.
 	netEventRetentionDays int
+
+	// statementTimeout is DB_STATEMENT_TIMEOUT as Connect applied it to both
+	// pools (0: not set by the DSN, the server default applies). The archive's
+	// settle window is derived from it.
+	statementTimeout time.Duration
 }
 
 func (d *Database) Gorm() *gorm.DB {
@@ -231,7 +236,8 @@ func Connect(cfg *config.Config) (*Database, error) {
 		// The daily net_events leaves are created as far back as retention
 		// reaches (partitionLookbackDays), so EnsurePartitions needs the window
 		// CleanupOldData will use — recorded here once, from the same config.
-		netEventRetentionDays: cfg.Retention.NetEventWindow()}
+		netEventRetentionDays: cfg.Retention.NetEventWindow(),
+		statementTimeout:      cfg.Database.StatementTimeout}
 
 	// Initialize the pgx pool alongside GORM. pgxpool gives us direct access
 	// to the Postgres COPY protocol for bulk inserts (SaveFlowSamples on the

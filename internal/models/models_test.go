@@ -51,8 +51,10 @@ func allTablers() []tabler {
 		WebAuthnCredential{},
 		ThreatIntel{}, ThreatFeedStatus{}, FlowSourceSuppression{}, FlowInterfaceCounter{},
 		AgentDrops{}, FlowDetection{},
-		// v72 normalized event tables; v73 the backfill job queue.
+		// v72 normalized event tables; v73 the backfill job queue; v75 the
+		// archive manifest.
 		NetEvent{}, SecEvent{}, NetEventRollup{}, FwRule{}, DeviceFieldObserved{}, NormalizeBackfillJob{},
+		ArchiveChunk{}, ArchiveObject{}, ArchiveMonth{}, ArchiveIDMark{},
 	}
 }
 

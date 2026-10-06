@@ -2,6 +2,8 @@ package database
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"log"
 	"time"
@@ -124,6 +126,7 @@ var registeredMigrations = []migration{
 	{version: 72, name: "normalized_event_tables", run: (*Database).migrateNormalizedEventTables},
 	{version: 73, name: "normalize_backfill_jobs", run: (*Database).migrateNormalizeBackfillJobs},
 	{version: 74, name: "syslog_format_column", run: (*Database).migrateSyslogFormatColumn},
+	{version: 75, name: "archive_manifest_tables", run: (*Database).migrateArchiveManifestTables},
 }
 
 // RunMigrations applies every registered migration not yet recorded in
@@ -205,20 +208,38 @@ func (d *Database) acquireMigrationLock() (func(), error) {
 	// THIS dedicated lock connection so the blocking acquire can wait as long as
 	// needed. Only this connection is affected; the migrations themselves run on
 	// other pooled connections and keep their timeout.
+	//
+	// The SET is session-level, so the connection must not go back to the
+	// pool with it: every release path restores the DSN's timeout first
+	// (releaseUntimedConn), or the pool would keep one connection without a
+	// statement_timeout until the pool retires it (up to 5 minutes).
 	if _, err := conn.ExecContext(ctx, "SET statement_timeout = 0"); err != nil {
-		conn.Close()
+		releaseUntimedConn(ctx, conn)
 		return nil, fmt.Errorf("lift statement_timeout on migration-lock connection: %w", err)
 	}
 	if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_lock($1)", migrationLockKey); err != nil {
-		conn.Close()
+		releaseUntimedConn(ctx, conn)
 		return nil, err
 	}
 	return func() {
 		if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", migrationLockKey); err != nil {
 			log.Printf("migrate: advisory unlock failed (%v); it releases on connection close", err)
 		}
-		conn.Close() // returns the connection to the pool (lock already released)
+		releaseUntimedConn(ctx, conn) // lock already released
 	}, nil
+}
+
+// releaseUntimedConn returns a pinned connection whose statement_timeout was
+// lifted with a session-level SET: RESET restores the value the session
+// started with (the DSN's options), then the connection goes back to the
+// pool. If the RESET fails the connection is discarded instead (a bad-conn
+// close), never pooled without its timeout.
+func releaseUntimedConn(ctx context.Context, conn *sql.Conn) {
+	if _, err := conn.ExecContext(ctx, "RESET statement_timeout"); err != nil {
+		log.Printf("migrate: reset statement_timeout on the migration-lock connection failed (%v); discarding it", err)
+		_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+	}
+	_ = conn.Close()
 }
 
 // PrintMigrationStatus logs the applied migrations and any pending registered

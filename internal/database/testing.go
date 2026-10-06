@@ -106,6 +106,11 @@ var testModels = []interface{}{
 	&models.DeviceFieldObserved{},
 	// v73: the normalized-event backfill job queue.
 	&models.NormalizeBackfillJob{},
+	// v75: the raw archive's manifest.
+	&models.ArchiveChunk{},
+	&models.ArchiveObject{},
+	&models.ArchiveMonth{},
+	&models.ArchiveIDMark{},
 }
 
 // NewDatabaseForTesting creates an in-memory SQLite Database for use in tests.
