@@ -349,19 +349,30 @@ func (d *Database) endArchiveGateEvents(tx *gorm.DB, stream, kind string, now ti
 // An enabled stream whose open interval cannot be ended is only logged: the
 // interval stays open, which marks months partial (the safe direction).
 func (d *Database) RecordArchiveGateState(ctx context.Context) error {
-	now := archiveGateClock().UTC()
 	cfg, err := d.readArchiveGateConfig(ctx)
 	if err != nil {
-		// Unknown switches: the gate fails closed (archiveGateConfig) and
-		// the transitions are recorded once a read succeeds.
+		// Unknown switches: both streams stay gated until a read succeeds,
+		// and that read records the start then (archiveGateConfig) — even if
+		// an earlier read (LogArchiveGateState) already filled the cache.
+		if c := d.archiveGateCache; c != nil {
+			c.mu.Lock()
+			c.startupPending, c.ok = true, false
+			c.mu.Unlock()
+		}
 		return fmt.Errorf("archive gate: %w", err)
 	}
 	if c := d.archiveGateCache; c != nil {
 		c.mu.Lock()
 		c.cfg, c.at, c.ok = cfg, archiveGateClock(), true
-		c.observed, c.seeded = cfg, true
+		c.observed, c.seeded, c.startupPending = cfg, true, false
 		c.mu.Unlock()
 	}
+	return d.recordArchiveGateStartup(ctx, cfg, archiveGateClock().UTC())
+}
+
+// recordArchiveGateStartup is RecordArchiveGateState's recording for the
+// switches cfg at now.
+func (d *Database) recordArchiveGateStartup(ctx context.Context, cfg ArchiveGateConfig, now time.Time) error {
 	var errs []error
 	for _, stream := range ArchiveGateStreams {
 		if cfg.enabled(stream) {
@@ -488,6 +499,12 @@ type archiveGateCacheState struct {
 	// seeded once RecordArchiveGateState (or a first read) set it.
 	observed ArchiveGateConfig
 	seeded   bool
+	// startupPending: RecordArchiveGateState could not read the switches;
+	// both streams stay gated until a read succeeds and records the start.
+	startupPending bool
+	// failedAt: the last failed read (retried after archiveGateRetry);
+	// lastErrLog rate-limits its log line.
+	failedAt, lastErrLog time.Time
 }
 
 // readArchiveGateConfig resolves the two stream switches now: the admin
@@ -544,19 +561,37 @@ func (d *Database) archiveGateConfig() ArchiveGateConfig {
 		if c.ok && !now.Before(c.at) && now.Sub(c.at) < archiveGateCacheTTL {
 			return c.cfg
 		}
+		// A failed read is retried at most every archiveGateRetry, not
+		// before every delete batch.
+		if !c.failedAt.IsZero() && !now.Before(c.failedAt) && now.Sub(c.failedAt) < archiveGateRetry {
+			return c.failedResult()
+		}
 	}
 	cfg, err := d.readArchiveGateConfig(context.Background())
 	if err != nil {
-		log.Printf("archive gate: %v (deletes of the archived tables wait until it can be read)", err)
-		if c != nil && c.ok {
-			return c.cfg
+		if c == nil {
+			log.Printf("archive gate: %v (deletes of the archived tables wait until it can be read)", err)
+			return ArchiveGateConfig{Syslog: true, Flows: true}
 		}
-		return ArchiveGateConfig{Syslog: true, Flows: true}
+		if c.failedAt.IsZero() || now.Sub(c.lastErrLog) >= time.Minute {
+			c.lastErrLog = now
+			log.Printf("archive gate: %v (deletes of the archived tables wait until it can be read)", err)
+		}
+		c.failedAt = now
+		return c.failedResult()
 	}
 	if c == nil {
 		return cfg
 	}
-	if c.seeded {
+	c.failedAt = time.Time{}
+	switch {
+	case c.startupPending:
+		// The poller's start could not read the switches: record it now.
+		if err := d.recordArchiveGateStartup(context.Background(), cfg, now.UTC()); err != nil {
+			log.Printf("archive gate: record the start: %v", err)
+		}
+		c.startupPending = false
+	case c.seeded:
 		for _, stream := range ArchiveGateStreams {
 			if cfg.enabled(stream) != c.observed.enabled(stream) {
 				d.recordArchiveGateSwitch(stream, cfg.enabled(stream), now.UTC())
@@ -566,6 +601,19 @@ func (d *Database) archiveGateConfig() ArchiveGateConfig {
 	c.cfg, c.at, c.ok = cfg, now, true
 	c.observed, c.seeded = cfg, true
 	return cfg
+}
+
+// archiveGateRetry is how soon a failed read of the switches is retried.
+const archiveGateRetry = 5 * time.Second
+
+// failedResult is what the gate uses while the switches cannot be read: the
+// last switches read, or — before any read, or while the poller's start is
+// still unrecorded — both streams gated.
+func (c *archiveGateCacheState) failedResult() ArchiveGateConfig {
+	if c.ok && !c.startupPending {
+		return c.cfg
+	}
+	return ArchiveGateConfig{Syslog: true, Flows: true}
 }
 
 // recordArchiveGateSwitch records a stream switched on or off while the

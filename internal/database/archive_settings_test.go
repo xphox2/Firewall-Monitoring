@@ -227,3 +227,61 @@ func TestArchiveGate_SwitchReadFailsClosed(t *testing.T) {
 		t.Fatal("RecordArchiveGateState succeeded without its switches")
 	}
 }
+
+// TestArchiveGate_StartupReadFailureHolds: the poller's start cannot read the
+// switches (after the startup log line already cached them): both streams stay
+// gated, and the first successful read records the start — the disabled
+// interval of a disabled stream with chunks opens before its deletes are
+// ungated.
+func TestArchiveGate_StartupReadFailureHolds(t *testing.T) {
+	ctx := context.Background()
+	d, clock := archiveSwitchFixture(t)
+	seedGateChunks(t, d, export.TableFlows, gateChunk{1, 0, 10, models.ArchiveChunkVerified})
+	d.LogArchiveGateState(ctx) // caches "both off" (the environment's)
+	if err := d.db.Migrator().DropTable(&models.SystemSetting{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.RecordArchiveGateState(ctx); err == nil {
+		t.Fatal("RecordArchiveGateState succeeded without its switches")
+	}
+	if !d.archiveGate(ctx, export.TableFlows).on {
+		t.Fatal("flows ungated although the start was not recorded")
+	}
+	*clock = clock.Add(archiveGateCacheTTL + time.Second)
+	if !d.archiveGate(ctx, export.TableFlows).on {
+		t.Fatal("flows ungated while the switches still cannot be read")
+	}
+	if err := d.db.AutoMigrate(&models.SystemSetting{}); err != nil {
+		t.Fatal(err)
+	}
+	*clock = clock.Add(archiveGateRetry + time.Second)
+	if d.archiveGate(ctx, export.TableFlows).on {
+		t.Fatal("still gated after the switches could be read")
+	}
+	var evs []models.ArchiveGateEvent
+	d.db.Where("stream = ? AND kind = ? AND to_ts IS NULL", ArchiveGateFlows, models.ArchiveGateEventDisabled).Find(&evs)
+	if len(evs) != 1 {
+		t.Fatalf("disabled intervals of flows %+v, want one open before its deletes were ungated", evs)
+	}
+}
+
+// TestCheckArchiveLocation: the recorded location follows the configuration
+// while the archive is empty, and is fixed once it holds a chunk: a later
+// location is reported as a mismatch.
+func TestCheckArchiveLocation(t *testing.T) {
+	ctx := context.Background()
+	d := NewDatabaseForTesting(t)
+	const a, b = "https://s3.example.com/example-bucket/fwmon/", "https://s3.example.net/example-bucket/fwmon/"
+	for _, loc := range []string{a, b, a} {
+		if rec, mismatch, err := d.CheckArchiveLocation(ctx, loc); err != nil || mismatch || rec != loc {
+			t.Fatalf("empty archive at %s: %q %v %v", loc, rec, mismatch, err)
+		}
+	}
+	seedGateChunks(t, d, export.TableSyslog, gateChunk{1, 0, 10, models.ArchiveChunkVerified})
+	if _, mismatch, err := d.CheckArchiveLocation(ctx, a); err != nil || mismatch {
+		t.Fatalf("same location with chunks: %v %v", mismatch, err)
+	}
+	if rec, mismatch, err := d.CheckArchiveLocation(ctx, b); err != nil || !mismatch || rec != a {
+		t.Fatalf("moved with chunks: %q %v %v, want a mismatch against %s", rec, mismatch, err, a)
+	}
+}

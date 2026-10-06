@@ -552,8 +552,8 @@ falls back to:
 
 The **secret access key** is write-only: it is stored encrypted with the
 server's encryption key (like the SMTP password), never returned by any API
-(the form shows "set — ends in …XXXX", the last four characters of the key
-**ID**), and never written to the audit log. If the server's encryption key
+(the form shows "set (key ID ends in …XXXX)": the last four characters of
+the key **ID**, never of the secret), and never written to the audit log. If the server's encryption key
 changes without the old one kept in `ENCRYPTION_KEY_HISTORY`, the stored
 secret can no longer be decrypted: the form says so, an enabled archive stops
 (the status card's "Last failures" shows a `config` entry) until it is
@@ -594,10 +594,12 @@ the names below are placeholders):
    the per-object retention off).
 6. **Test connection.** Runs the bucket preflight with the form's values
    without saving: it lists under the prefix and, with Object Lock days set,
-   checks that the bucket has Object Lock enabled; it also checks the staging
-   directory. It uses the stored secret unless you typed a new one, and it uses
-   the **saved** Advanced flags: to test a private or `http://` endpoint, save
-   those flags first.
+   checks that the bucket has Object Lock enabled; it also checks the saved
+   staging directory (a path typed into the form is checked when you save).
+   It uses the stored secret unless you typed a new one — but only with the
+   saved endpoint and key ID: to test another endpoint or key ID, type the
+   secret in too. It uses the **saved** Advanced flags: to test a private or
+   `http://` endpoint, save those flags first.
 7. **Enable the streams** (syslog, flows) and Save. Enabling runs the same
    preflight and the staging check on the server; a failure refuses the save
    and nothing is stored. The status card above shows the worker's progress
@@ -609,7 +611,10 @@ deleted without waiting for the archive again, and every month the interval
 touches is sealed **partial**. The form warns before it saves.
 
 **Endpoint, bucket and prefix are fixed once the archive holds a chunk**: the
-manifest in the database names every object by them. Changing any of them
+manifest in the database names every object by them. The poller records that
+location (`system_settings.archive_location`) and logs a WARNING at the
+worker's start when the configuration names another one (a change made in
+the environment). Changing any of them
 from the form is refused (HTTP 409) with a pointer to the next section. Other
 fields (credentials, Object Lock days, pacing, the window, the streams) can
 change at any time.

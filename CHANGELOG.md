@@ -21,6 +21,17 @@ All notable changes to this project are documented in this file.
 - The settings-secret regressions (LC-37/38) cover the new key: masked on read, and never written by `POST /admin/api/settings`.
 - Mutation-checked: the gate's switch resolved once per pass (the pre-A-10 `archiveGateFn`), the admin switch ignored by the gate, no runtime transition record, unreadable switches not failing closed, the secret stored plaintext, no location lock, no preflight on enable, no disabled interval on save, the step-up before the cheap checks, Test connection honouring the form's Advanced flags, the secret dropped from `SecretSettingKeys`, a reloader that never rebuilds, admin values not applied, a bad switch not refused while the archive is off — each fails a test.
 
+### Changed — A-10 review
+
+- **The poller's start could not read the stream switches**: both streams now stay gated until a read succeeds, and that read records the start (the disabled interval of a disabled stream with chunks opens before its deletes are ungated). Before, a switch cached by the startup log line was used without the start ever being recorded. A failed read of the switches is retried every 5 s (not before every batch) and logged at most once a minute.
+- **Test connection no longer sends the stored secret to a new place**: testing another endpoint or key ID than the saved ones needs the secret typed into the form. A staging path typed into the form is no longer probed by Test connection, and the save probes the staging directory only after the password + TOTP step-up.
+- **The archive's location is recorded** (`system_settings.archive_location`, endpoint/bucket/prefix): it follows the configuration while the archive is empty and is fixed once it holds a chunk; the worker logs a WARNING at its start when the configuration names another location (an environment change the form would refuse).
+- The form names no storage service (neutral examples), and the secret's hint reads "key ID ends in …XXXX".
+
+### Tests — A-10 review
+
+- `TestArchiveGate_StartupReadFailureHolds` (cache filled by the startup log line, then the start's read fails: gated until the switches read, then the interval recorded before the deletes are ungated), `TestCheckArchiveLocation`; `TestTestArchiveSettings` (another endpoint or key ID refused with the stored secret, accepted with it typed in; a typed staging path not probed); `TestSaveArchiveSettings_ChecksInOrder` and `_EnableNeedsStagingRoom` (the staging probe after the step-up). Mutation-checked: no startup hold, the deferred start not recorded, the stored secret used for a new endpoint, the staging probe before the step-up, the location record overwritten while chunks exist — each fails a test.
+
 ## [0.11.309] - 2026-10-06
 
 ### Added — raw archive restore to staging, re-normalize in replace mode (archive plan PR 9)

@@ -33,13 +33,15 @@ import (
 //   - POST /admin/api/archive/settings/test: Test connection — the bucket
 //     preflight (list under the prefix, Object Lock check) with the form's
 //     values, nothing saved. The secret is the stored one unless the form
-//     replaces it; it is never echoed.
+//     replaces it — and it must be typed in to test another endpoint or
+//     key ID; it is never echoed. A staging directory typed into the form
+//     is probed only by the save.
 //   - POST /admin/api/archive/settings: save. Checks in order, the cheap ones
 //     before the step-up: the body and every value (400, the same
 //     validation as the environment: config.ValidateDraft / Validate); a
-//     change of the objects' location once a chunk exists (409); the
-//     staging directory of an enabled stream (422); then the caller's
-//     password + TOTP (403); then, when a stream is switched on or the
+//     change of the objects' location once a chunk exists (409); then the
+//     caller's password + TOTP (403); then the staging directory of an
+//     enabled stream (422) and, when a stream is switched on or the
 //     connection of an enabled stream changes, the bucket preflight (422).
 //     One transaction stores the values (the secret encrypted) and opens the
 //     disabled interval of every stream switched off. Audited with the field
@@ -382,6 +384,16 @@ func (h *Handler) TestArchiveSettings(c *gin.Context) {
 			"message": "Save the Advanced settings first: Test connection uses the saved ARCHIVE_ALLOW_HTTP / ARCHIVE_ALLOW_PRIVATE_ENDPOINT"}))
 		return
 	}
+	// The stored secret is only ever sent to the saved endpoint under the
+	// saved key ID: testing another endpoint or key ID needs the secret typed
+	// into the form (an admin session alone must not make the server sign
+	// requests to an arbitrary host with it).
+	_, typed := d.set["ARCHIVE_S3_SECRET_ACCESS_KEY"]
+	if !typed && (canonicalArchiveEndpoint(d.after) != canonicalArchiveEndpoint(d.before) || d.after.AccessKeyID != d.before.AccessKeyID) {
+		c.JSON(http.StatusOK, response.Success(gin.H{"ok": false,
+			"message": "Enter the secret access key to test a different endpoint or key ID: the stored secret is only used with the saved ones"}))
+		return
+	}
 	a := d.after
 	if err := a.ValidateS3(); err != nil {
 		c.JSON(http.StatusOK, response.Success(gin.H{"ok": false, "message": err.Error()}))
@@ -395,7 +407,13 @@ func (h *Handler) TestArchiveSettings(c *gin.Context) {
 	} else {
 		out["message"] = fmt.Sprintf("Listed %s/%s/. Object Lock is off (ARCHIVE_OBJECT_LOCK_DAYS 0): not checked.", a.Bucket, a.Prefix)
 	}
-	if a.StagingDir != "" {
+	switch {
+	case a.StagingDir == "":
+	case a.StagingDir != d.before.StagingDir:
+		// Probing a path typed into the form (stat, a test file) is left to
+		// the re-authenticated save.
+		out["staging"] = "Staging directory " + a.StagingDir + " is checked when you save."
+	default:
 		if err := archiveStagingCheck(c.Request.Context(), a.StagingDir); err != nil {
 			out["staging"] = err.Error()
 		} else {
@@ -460,15 +478,17 @@ func (h *Handler) SaveArchiveSettings(c *gin.Context) {
 		}
 	}
 	enabling := d.switched(true)
+	username, userID, ok := h.reauthCaller(c, db, req.Password, req.TOTPCode)
+	if !ok {
+		return
+	}
+	// The staging probe (stat, a test file in the directory) runs only for a
+	// re-authenticated caller.
 	if d.after.Enabled() && (len(enabling) > 0 || d.before.StagingDir != d.after.StagingDir) {
 		if err := archiveStagingCheck(ctx, d.after.StagingDir); err != nil {
 			c.JSON(http.StatusUnprocessableEntity, response.Error("Not saved: "+err.Error()))
 			return
 		}
-	}
-	username, userID, ok := h.reauthCaller(c, db, req.Password, req.TOTPCode)
-	if !ok {
-		return
 	}
 	if d.after.Enabled() && (len(enabling) > 0 || d.connectionChanged()) {
 		if err := archivePreflight(ctx, d.after); err != nil {
@@ -505,10 +525,9 @@ func (h *Handler) SaveArchiveSettings(c *gin.Context) {
 }
 
 // archiveLocation is "<endpoint>/<bucket>/<prefix>/" for messages.
-func archiveLocation(a config.ArchiveConfig) string {
-	ep := a.Endpoint
-	if u, err := a.EndpointURL(); err == nil {
-		ep = u.Scheme + "://" + u.Host
-	}
-	return ep + "/" + a.Bucket + "/" + a.Prefix + "/"
+func archiveLocation(a config.ArchiveConfig) string { return a.Location() }
+
+// canonicalArchiveEndpoint is a's endpoint as the location compares it.
+func canonicalArchiveEndpoint(a config.ArchiveConfig) string {
+	return config.ArchiveConfig{Endpoint: a.Endpoint, AllowHTTP: true}.Location()
 }

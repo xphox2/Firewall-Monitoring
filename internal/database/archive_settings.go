@@ -169,3 +169,37 @@ func ArchiveStreamEnabled(a config.ArchiveConfig, stream string) bool {
 	}
 	return false
 }
+
+// ArchiveLocationKey is the system_settings key holding the location
+// (config.ArchiveConfig.Location) the archive's chunks were written to.
+const ArchiveLocationKey = "archive_location"
+
+// CheckArchiveLocation compares loc, the location the worker is about to
+// write to, with the one recorded for the archive's chunks. While there is no
+// chunk the record follows loc; once chunks exist it is kept (an install from
+// before 0.11.310 records loc on its first check). mismatch: chunks exist and
+// were recorded at recorded, not at loc — the environment changed under them
+// (the admin form refuses such a change).
+func (d *Database) CheckArchiveLocation(ctx context.Context, loc string) (recorded string, mismatch bool, err error) {
+	has, err := d.ArchiveHasChunks(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	var rows []models.SystemSetting
+	if err := d.db.WithContext(ctx).Where("\"key\" = ?", ArchiveLocationKey).Limit(1).Find(&rows).Error; err != nil {
+		return "", false, fmt.Errorf("read %s: %w", ArchiveLocationKey, err)
+	}
+	if has && len(rows) > 0 {
+		return rows[0].Value, rows[0].Value != loc, nil
+	}
+	if len(rows) > 0 && rows[0].Value == loc {
+		return loc, false, nil
+	}
+	row := models.SystemSetting{Key: ArchiveLocationKey}
+	if err := d.db.WithContext(ctx).FirstOrCreate(&row, models.SystemSetting{Key: ArchiveLocationKey}).Error; err != nil {
+		return "", false, fmt.Errorf("record %s: %w", ArchiveLocationKey, err)
+	}
+	row.Value, row.Type, row.Category = loc, "string", "archive"
+	row.Label = "Raw archive: where its chunks are written (endpoint/bucket/prefix)"
+	return loc, false, d.db.WithContext(ctx).Save(&row).Error
+}

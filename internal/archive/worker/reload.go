@@ -130,6 +130,7 @@ func NewReloader(db *database.Database, env config.ArchiveConfig, opts ...s3.Opt
 			return true, cfg.Validate()
 		},
 		build: func(cfg config.ArchiveConfig) (*Worker, error) {
+			warnArchiveLocation(db, cfg)
 			w, err := New(db, cfg, opts...)
 			if err == nil {
 				log.Printf("archive: worker for %v", w.Tables())
@@ -188,5 +189,21 @@ func recordConfigProblem(ctx context.Context, db *database.Database, cfg config.
 	}
 	if jerr != nil {
 		log.Printf("archive: record the configuration problem: %v", jerr)
+	}
+}
+
+// warnArchiveLocation logs a WARNING when the archive's chunks were written
+// to another location (endpoint, bucket, prefix) than the configuration now
+// names — a change made in the environment, which the admin form refuses:
+// the manifest's objects are not where the worker will write and read.
+func warnArchiveLocation(db *database.Database, cfg config.ArchiveConfig) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	recorded, mismatch, err := db.CheckArchiveLocation(ctx, cfg.Location())
+	switch {
+	case err != nil:
+		log.Printf("archive: check the archive's location: %v", err)
+	case mismatch:
+		log.Printf("WARNING: archive: its chunks were written to %s but the configuration now names %s; restores and seals of the earlier months will fail (docs/OPERATIONS.md, \"Raw archive: moving the bucket\")", recorded, cfg.Location())
 	}
 }

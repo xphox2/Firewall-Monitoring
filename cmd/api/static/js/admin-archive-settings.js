@@ -7,7 +7,8 @@
 // password (+ 2FA code) and is audit-logged with the field names only.
 //
 // The secret access key is write-only: the server never returns it; the form
-// shows whether it is set and the key ID's last four characters.
+// shows whether it is set and the key ID's (not the secret's) last four
+// characters.
 //
 // CSP: no inline handlers — one click and one input listener on the card,
 // dispatching on data-arch-action. Exposed as window.FwmonArchiveSettings;
@@ -31,8 +32,8 @@
         ARCHIVE_SYSLOG_ENABLED: ['Archive raw syslog', ''],
         ARCHIVE_FLOWS_ENABLED: ['Archive flows', 'sFlow, NetFlow and the sFlow interface counters.'],
         ARCHIVE_STAGING_DIR: ['Staging directory', 'Absolute path on a volume with at least 2 GiB free (a day of compressed syslog). In Docker, a mounted volume.'],
-        ARCHIVE_S3_ENDPOINT: ['Endpoint', 'https://host only, no path. Example: https://s3.us-east-005.backblazeb2.com'],
-        ARCHIVE_S3_REGION: ['Region', 'Example: us-east-005'],
+        ARCHIVE_S3_ENDPOINT: ['Endpoint', 'https://host only, no path, e.g. https://s3.example.com (your provider documents its S3 endpoint).'],
+        ARCHIVE_S3_REGION: ['Region', 'The bucket’s region as the provider names it, e.g. region-1.'],
         ARCHIVE_S3_BUCKET: ['Bucket', ''],
         ARCHIVE_S3_PREFIX: ['Prefix', 'Every object key starts with it, e.g. fwmon/site-a'],
         ARCHIVE_S3_PATH_STYLE: ['Path-style addressing', 'On for B2 and MinIO.'],
@@ -95,7 +96,7 @@
             }).join('') + '</select>';
         }
         if (f.kind === 'secret') {
-            var ph = f.set ? 'set — ends in ' + (f.hint || '…') + '; type to replace' : 'not set';
+            var ph = f.set ? 'set (key ID ends in ' + (f.hint || '…') + '); type to replace' : 'not set';
             return '<input type="password" id="' + id + '" data-arch-key="' + f.key + '" value="" autocomplete="new-password" placeholder="' + esc(ph) + '">';
         }
         var type = f.kind === 'int' ? 'number' : 'text';

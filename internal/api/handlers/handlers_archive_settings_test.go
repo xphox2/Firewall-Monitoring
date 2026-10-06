@@ -216,28 +216,29 @@ func (e *net403) Error() string { return "403 Forbidden for credential " + e.sec
 
 // TestSaveArchiveSettings_ChecksInOrder walks the save's checks: the body
 // and values (400) and a location change once chunks exist (409) are refused
-// before the step-up, even with a wrong password; enabling with a bad staging
-// directory (422) too; then the password (403) and the 2FA code; then the
-// preflight of an enabled stream (422, nothing stored); then the save, which
-// is audited by field name.
+// before the step-up, even with a wrong password; then the password (403)
+// and the 2FA code; then the staging directory probe (422, only for a
+// re-authenticated caller) and the preflight of an enabled stream (422,
+// nothing stored); then the save, which is audited by field name.
 func TestSaveArchiveSettings_ChecksInOrder(t *testing.T) {
 	f := archSettingsSetup(t)
 	for body, want := range map[string]int{
 		`not json`: http.StatusBadRequest,
 		`{}`:       http.StatusBadRequest,
-		`{"set":{"ARCHIVE_NOT_A_KEY":"1"},"password":"WRONG"}`:                                                                               http.StatusBadRequest,
-		`{"set":{"ARCHIVE_MIN_AGE_HOURS":"0"},"password":"WRONG"}`:                                                                           http.StatusBadRequest,
-		`{"set":{"ARCHIVE_MIN_AGE_HOURS":"two"},"password":"WRONG"}`:                                                                         http.StatusBadRequest,
-		`{"set":{"ARCHIVE_SYSLOG_ENABLED":"maybe"},"password":"WRONG"}`:                                                                      http.StatusBadRequest,
-		`{"set":{"ARCHIVE_SYSLOG_ENABLED":""},"password":"WRONG"}`:                                                                           http.StatusBadRequest,
-		`{"set":{"ARCHIVE_S3_SECRET_ACCESS_KEY":"********"},"password":"WRONG"}`:                                                             http.StatusBadRequest,
-		`{"set":{"ARCHIVE_S3_SECRET_ACCESS_KEY":""},"password":"WRONG"}`:                                                                     http.StatusBadRequest,
-		`{"set":{"ARCHIVE_S3_BUCKET":"x"},"revert":["ARCHIVE_S3_BUCKET"],"password":"WRONG"}`:                                                http.StatusBadRequest,
-		`{"set":{"ARCHIVE_S3_ENDPOINT":"https://user:pw@s3.example.com"},"password":"WRONG"}`:                                                http.StatusBadRequest,
-		`{"set":{"ARCHIVE_FLOWS_ENABLED":"true","ARCHIVE_STAGING_DIR":"rel"},"password":"WRONG"}`:                                            http.StatusBadRequest,
-		`{"set":{"ARCHIVE_SYSLOG_ENABLED":"true","ARCHIVE_STAGING_DIR":"` + filepath.Join(t.TempDir(), "missing") + `"},"password":"WRONG"}`: http.StatusUnprocessableEntity,
-		`{"set":{"ARCHIVE_WINDOW":"01:00-05:00"},"password":"WRONG"}`:                                                                        http.StatusForbidden,
-		`{"set":{"ARCHIVE_WINDOW":"01:00-05:00"}}`:                                                                                           http.StatusForbidden,
+		`{"set":{"ARCHIVE_NOT_A_KEY":"1"},"password":"WRONG"}`:                                                                                   http.StatusBadRequest,
+		`{"set":{"ARCHIVE_MIN_AGE_HOURS":"0"},"password":"WRONG"}`:                                                                               http.StatusBadRequest,
+		`{"set":{"ARCHIVE_MIN_AGE_HOURS":"two"},"password":"WRONG"}`:                                                                             http.StatusBadRequest,
+		`{"set":{"ARCHIVE_SYSLOG_ENABLED":"maybe"},"password":"WRONG"}`:                                                                          http.StatusBadRequest,
+		`{"set":{"ARCHIVE_SYSLOG_ENABLED":""},"password":"WRONG"}`:                                                                               http.StatusBadRequest,
+		`{"set":{"ARCHIVE_S3_SECRET_ACCESS_KEY":"********"},"password":"WRONG"}`:                                                                 http.StatusBadRequest,
+		`{"set":{"ARCHIVE_S3_SECRET_ACCESS_KEY":""},"password":"WRONG"}`:                                                                         http.StatusBadRequest,
+		`{"set":{"ARCHIVE_S3_BUCKET":"x"},"revert":["ARCHIVE_S3_BUCKET"],"password":"WRONG"}`:                                                    http.StatusBadRequest,
+		`{"set":{"ARCHIVE_S3_ENDPOINT":"https://user:pw@s3.example.com"},"password":"WRONG"}`:                                                    http.StatusBadRequest,
+		`{"set":{"ARCHIVE_FLOWS_ENABLED":"true","ARCHIVE_STAGING_DIR":"rel"},"password":"WRONG"}`:                                                http.StatusBadRequest,
+		`{"set":{"ARCHIVE_SYSLOG_ENABLED":"true","ARCHIVE_STAGING_DIR":"` + filepath.Join(t.TempDir(), "missing") + `"},"password":"WRONG"}`:     http.StatusForbidden,
+		`{"set":{"ARCHIVE_SYSLOG_ENABLED":"true","ARCHIVE_STAGING_DIR":"` + filepath.Join(t.TempDir(), "missing") + `"},"password":"s3cret-pw"}`: http.StatusUnprocessableEntity,
+		`{"set":{"ARCHIVE_WINDOW":"01:00-05:00"},"password":"WRONG"}`:                                                                            http.StatusForbidden,
+		`{"set":{"ARCHIVE_WINDOW":"01:00-05:00"}}`:                                                                                               http.StatusForbidden,
 	} {
 		if rec := f.save(body); rec.Code != want {
 			t.Errorf("%s: %d %s, want %d", body, rec.Code, rec.Body.String(), want)
@@ -321,11 +322,14 @@ func TestSaveArchiveSettings_ChecksInOrder(t *testing.T) {
 
 // TestSaveArchiveSettings_EnableNeedsStagingRoom: the staging directory of an
 // enabled stream must have the worker's free-space floor (422 before the
-// step-up).
+// step-up; probed only after it).
 func TestSaveArchiveSettings_EnableNeedsStagingRoom(t *testing.T) {
 	f := archSettingsSetup(t)
 	archiveStagingFree = func(context.Context, string) (uint64, error) { return 1 << 20, nil }
-	rec := f.save(`{"set":{"ARCHIVE_FLOWS_ENABLED":"true"},"password":"WRONG"}`)
+	if rec := f.save(`{"set":{"ARCHIVE_FLOWS_ENABLED":"true"},"password":"WRONG"}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("the staging probe ran before the step-up: %d %s", rec.Code, rec.Body.String())
+	}
+	rec := f.save(`{"set":{"ARCHIVE_FLOWS_ENABLED":"true"},"password":"s3cret-pw"}`)
 	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "free") {
 		t.Fatalf("enable on a full staging volume: %d %s", rec.Code, rec.Body.String())
 	}
@@ -369,6 +373,23 @@ func TestTestArchiveSettings(t *testing.T) {
 	}
 	if r := test(f, `{"set":{"ARCHIVE_ALLOW_HTTP":"true"}}`); r["ok"] != false || !strings.Contains(r["message"].(string), "Advanced") {
 		t.Fatalf("widening the Advanced flags: %v", r)
+	}
+	// The stored secret only goes to the saved endpoint and key ID.
+	for _, body := range []string{
+		`{"set":{"ARCHIVE_S3_ENDPOINT":"https://s3.example.net"}}`,
+		`{"set":{"ARCHIVE_S3_ACCESS_KEY_ID":"005otherKeyID"}}`,
+	} {
+		if r := test(f, body); r["ok"] != false || !strings.Contains(r["message"].(string), "Enter the secret access key") {
+			t.Fatalf("%s with the stored secret: %v", body, r)
+		}
+	}
+	if r := test(f, `{"set":{"ARCHIVE_S3_ACCESS_KEY_ID":"005otherKeyID","ARCHIVE_S3_SECRET_ACCESS_KEY":"`+archUISecret+`"}}`); r["ok"] != true {
+		t.Fatalf("another key ID with its secret typed in: %v", r)
+	}
+	// A staging path typed into the form is not probed.
+	probe := filepath.Join(t.TempDir(), "typed")
+	if r := test(f, `{"set":{"ARCHIVE_STAGING_DIR":"`+probe+`"}}`); !strings.Contains(r["staging"].(string), "checked when you save") {
+		t.Fatalf("a typed staging path: %v", r)
 	}
 	if res, _ := f.db.ResolveArchiveConfig(context.Background(), f.h.config.Archive); len(res.UI) != 0 {
 		t.Fatalf("Test connection stored %v", res.UI)

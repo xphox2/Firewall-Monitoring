@@ -261,6 +261,12 @@ func (a ArchiveConfig) SameLocation(b ArchiveConfig) bool {
 	return canonicalEndpoint(a) == canonicalEndpoint(b) && a.Bucket == b.Bucket && a.Prefix == b.Prefix
 }
 
+// Location is "<endpoint>/<bucket>/<prefix>/", the endpoint as
+// canonicalEndpoint gives it: where the archive's objects are.
+func (a ArchiveConfig) Location() string {
+	return canonicalEndpoint(a) + "/" + a.Bucket + "/" + a.Prefix + "/"
+}
+
 func canonicalEndpoint(a ArchiveConfig) string {
 	if u, err := a.EndpointURL(); err == nil {
 		return strings.ToLower(u.Scheme + "://" + u.Host)
