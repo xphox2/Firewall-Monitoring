@@ -114,9 +114,8 @@ var (
 	archiveSettleMargin = 5 * time.Second
 )
 
-// archiveWriterStatementTimeout is the statement_timeout the writers run under:
-// this session's setting, which comes from the same DSN options as the GORM and
-// pgx pools that ingest. A variable so a test can stand in for it.
+// archiveWriterStatementTimeout is this session's statement_timeout as the
+// server reports it. A variable so a test can stand in for it.
 var archiveWriterStatementTimeout = func(ctx context.Context, d *Database) (time.Duration, error) {
 	var ms int64
 	if err := d.db.WithContext(ctx).Raw(`SELECT setting::bigint FROM pg_settings WHERE name = 'statement_timeout'`).Scan(&ms).Error; err != nil {
@@ -130,16 +129,21 @@ var archiveWriterStatementTimeout = func(ctx context.Context, d *Database) (time
 // complete.
 var ErrArchiveNoStatementTimeout = errors.New("archive: statement_timeout is 0 (unlimited): a COPY could hold reserved ids indefinitely, so no chunk can be settled — set DB_STATEMENT_TIMEOUT")
 
-// archiveSettle is the settle window, or ErrArchiveNoStatementTimeout.
+// archiveSettle is the settle window, or ErrArchiveNoStatementTimeout. The
+// writers (the GORM and pgx pools) run under DB_STATEMENT_TIMEOUT when it is
+// set — Connect puts it in both pools' startup options — and under the server
+// default when it is not, which is what this session observes then. The
+// window covers the larger of the two: max(1 min, max(observed, configured) +
+// 5 s). Unbounded writers (configured 0 and a server default of 0) refuse.
 func (d *Database) archiveSettle(ctx context.Context) (time.Duration, error) {
-	st, err := archiveWriterStatementTimeout(ctx, d)
+	observed, err := archiveWriterStatementTimeout(ctx, d)
 	if err != nil {
 		return 0, fmt.Errorf("archive: read statement_timeout: %w", err)
 	}
-	if st <= 0 {
+	if d.statementTimeout <= 0 && observed <= 0 {
 		return 0, ErrArchiveNoStatementTimeout
 	}
-	return max(archiveSettleFloor, st+archiveSettleMargin), nil
+	return max(archiveSettleFloor, max(observed, d.statementTimeout)+archiveSettleMargin), nil
 }
 
 // ArchiveXidHolder is the session holding the oldest running transaction id,
@@ -194,7 +198,7 @@ type archiveSnapshot struct {
 func (d *Database) archiveSnapshot(ctx context.Context) (archiveSnapshot, error) {
 	var s archiveSnapshot
 	err := d.db.WithContext(ctx).Raw(`SELECT pg_snapshot_xmin(s)::text::bigint AS xmin, pg_snapshot_xmax(s)::text::bigint AS xmax,
-		clock_timestamp() AS at FROM pg_current_snapshot() AS s`).Scan(&s).Error
+		statement_timestamp() AS at FROM pg_current_snapshot() AS s`).Scan(&s).Error
 	return s, err
 }
 
@@ -266,7 +270,7 @@ func (d *Database) archiveMaxID(ctx context.Context, t archiveTable) (int64, tim
 	}
 	// t.name comes from archiveTables, never from input.
 	if d.dialect.IsPostgres() {
-		err := d.db.WithContext(ctx).Raw(fmt.Sprintf(`SELECT COALESCE(max(id), 0) AS max_id, clock_timestamp() AS taken_at FROM %s`, t.name)).Scan(&r).Error
+		err := d.db.WithContext(ctx).Raw(fmt.Sprintf(`SELECT COALESCE(max(id), 0) AS max_id, statement_timestamp() AS taken_at FROM %s`, t.name)).Scan(&r).Error
 		return r.MaxID, r.TakenAt.UTC(), err
 	}
 	err := d.db.WithContext(ctx).Raw(fmt.Sprintf(`SELECT COALESCE(max(id), 0) AS max_id FROM %s`, t.name)).Scan(&r).Error
@@ -612,27 +616,28 @@ const (
 	// ArchiveCountLateCommit: rows the export did not see are in the range
 	// (more rows, or as many with other ids) — a commit after the read.
 	ArchiveCountLateCommit = "late_commit"
-	// ArchiveCountShortfall: fewer rows and a smaller id sum, consistent with
-	// deletions only (a device purge, which is not gated). The re-export
-	// records the purge; a late commit hidden by a larger purge is also
-	// caught then, because the re-export must match.
+	// ArchiveCountShortfall: fewer rows and a smaller id sum — what deletions
+	// (a device purge, which is not gated) look like, though a late commit
+	// beside a larger purge can look the same. Harmless: like every verdict
+	// but match it means a re-export, which must then match.
 	ArchiveCountShortfall = "shortfall"
 )
 
 // ArchiveCountCheck is a chunk's id range as the table holds it now, against
 // what an export wrote.
 type ArchiveCountCheck struct {
-	Rows, IDSum                 int64
-	ExportedRows, ExportedIDSum int64
-	Verdict                     string
+	Rows, IDSum, IDHash                         int64
+	ExportedRows, ExportedIDSum, ExportedIDHash int64
+	Verdict                                     string
 }
 
 // Verifiable reports whether the export may be marked verified.
 func (c ArchiveCountCheck) Verifiable() bool { return c.Verdict == ArchiveCountMatch }
 
-// CheckArchiveChunkCount recounts c's id range in its table — row count and
-// sum of ids, so one late row replacing one purged row is not a match either
-// — and compares it with the export's result. A verdict other than
+// CheckArchiveChunkCount recounts c's id range in its table — row count, sum
+// of ids and a sum of per-id hashes (export.IDHashTerm), so neither one late
+// row replacing one purged row nor a coincidental pair of such swaps is a
+// match — and compares it with the export's result. A verdict other than
 // ArchiveCountMatch is information for the caller, not an error. One
 // index-only range scan under boundedRead.
 func (d *Database) CheckArchiveChunkCount(ctx context.Context, c *models.ArchiveChunk, res *export.ChunkResult) (ArchiveCountCheck, error) {
@@ -640,15 +645,15 @@ func (d *Database) CheckArchiveChunkCount(ctx context.Context, c *models.Archive
 	if err != nil {
 		return ArchiveCountCheck{}, err
 	}
-	var r struct{ N, S int64 }
+	var r struct{ N, S, H int64 }
 	if err := d.boundedReadContext(ctx, func(tx *gorm.DB) error {
 		return archiveCountQuery(tx, t.name, c.IDLo, c.IDHi).Scan(&r).Error
 	}); err != nil {
 		return ArchiveCountCheck{}, fmt.Errorf("archive: count %s (%d, %d]: %w", t.name, c.IDLo, c.IDHi, err)
 	}
-	chk := ArchiveCountCheck{Rows: r.N, IDSum: r.S, ExportedRows: res.Rows, ExportedIDSum: res.IDSum}
+	chk := ArchiveCountCheck{Rows: r.N, IDSum: r.S, IDHash: r.H, ExportedRows: res.Rows, ExportedIDSum: res.IDSum, ExportedIDHash: res.IDHash}
 	switch {
-	case chk.Rows == chk.ExportedRows && chk.IDSum == chk.ExportedIDSum:
+	case chk.Rows == chk.ExportedRows && chk.IDSum == chk.ExportedIDSum && chk.IDHash == chk.ExportedIDHash:
 		chk.Verdict = ArchiveCountMatch
 	case chk.Rows < chk.ExportedRows && chk.IDSum < chk.ExportedIDSum:
 		chk.Verdict = ArchiveCountShortfall
@@ -658,9 +663,11 @@ func (d *Database) CheckArchiveChunkCount(ctx context.Context, c *models.Archive
 	return chk, nil
 }
 
-// archiveCountQuery counts and sums the ids of the range (lo, hi] of table (a
-// primary-key range; an id sum over a day is far below 2^63). Separate so the
+// archiveCountQuery counts the range (lo, hi] of table and sums its ids and
+// their hash terms (a primary-key range; both sums stay far below 2^63 for a
+// day's rows). Separate so the
 // plan test EXPLAINs it.
 func archiveCountQuery(tx *gorm.DB, table string, lo, hi int64) *gorm.DB {
-	return tx.Table(table).Select("count(*) AS n, CAST(COALESCE(sum(id), 0) AS BIGINT) AS s").Where("id > ? AND id <= ?", lo, hi)
+	return tx.Table(table).Select("count(*) AS n, CAST(COALESCE(sum(id), 0) AS BIGINT) AS s, CAST(COALESCE(sum("+export.IDHashSQL+"), 0) AS BIGINT) AS h").
+		Where("id > ? AND id <= ?", lo, hi)
 }

@@ -86,6 +86,7 @@ type ChunkResult struct {
 	Objects []ObjectResult
 	Rows    int64
 	IDSum   int64
+	IDHash  int64
 	// MinTs / MaxTs / MsgDays over every object (message time, UTC); zero
 	// times when the chunk is empty.
 	MinTs, MaxTs time.Time
@@ -249,6 +250,7 @@ func (c *ChunkWriter) Close() (*ChunkResult, error) {
 		}
 		res.Rows += o.Rows
 		res.IDSum += o.IDSum
+		res.IDHash += o.IDHash
 		for d, n := range o.MsgDays {
 			res.MsgDays[d] += n
 		}

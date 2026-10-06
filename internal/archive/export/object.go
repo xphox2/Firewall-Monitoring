@@ -41,9 +41,9 @@ type ObjectResult struct {
 	Sha256Content string
 	Sha256Object  string
 	MinID, MaxID  int64
-	// IDSum is the sum of the row ids: with Rows, what the count check
-	// compares against the table.
-	IDSum int64
+	// IDSum / IDHash: the sum of the row ids and of their IDHashTerm — with
+	// Rows, what the count check compares against the table.
+	IDSum, IDHash int64
 	// MinTs / MaxTs / MsgDays are by message (sample) time, UTC.
 	MinTs, MaxTs time.Time
 	MsgDays      map[string]int64
@@ -113,6 +113,7 @@ func (o *objectWriter) write(id int64, ts time.Time, line []byte) error {
 	}
 	o.res.MaxID = id
 	o.res.IDSum += id
+	o.res.IDHash += IDHashTerm(id)
 	if ts.Before(o.res.MinTs) {
 		o.res.MinTs = ts
 	}
@@ -132,4 +133,25 @@ func (o *objectWriter) close() (ObjectResult, error) {
 	o.res.Sha256Content = hex.EncodeToString(o.content.Sum(nil))
 	o.res.Sha256Object = hex.EncodeToString(o.out.h.Sum(nil))
 	return o.res, nil
+}
+
+// The id hash of the count check: t = (id mod p) * k mod p, squared mod p,
+// with p = 2^31 - 1 (a prime) and k the C library's LCG multiplier. Every
+// factor is below 2^31, so every intermediate stays below 2^62: PostgreSQL
+// bigint and SQLite integer compute exactly what Go does. The square makes
+// the term non-linear — a linear term (id * k mod p) collides for swaps with
+// an equal id sum — so summed over a chunk it fingerprints the id set far
+// better than the plain sum.
+const (
+	idHashP = 2147483647
+	idHashK = 1103515245
+)
+
+// IDHashSQL is IDHashTerm over the id column, in SQL.
+const IDHashSQL = "(((id % 2147483647) * 1103515245 % 2147483647) * ((id % 2147483647) * 1103515245 % 2147483647) % 2147483647)"
+
+// IDHashTerm is one id's term of the count check's hash sum (ids are positive).
+func IDHashTerm(id int64) int64 {
+	t := (id % idHashP) * idHashK % idHashP
+	return t * t % idHashP
 }

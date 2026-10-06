@@ -6,7 +6,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
+	"math/big"
 	"math/rand"
 	"strings"
 	"sync"
@@ -471,5 +473,24 @@ func TestObjectKey_MonthAndFolder(t *testing.T) {
 	}
 	if s := StreamsOf(TableFlows); len(s) != 2 || s[0] != StreamSFlow || s[1] != StreamNetFlow {
 		t.Errorf("StreamsOf(flow_samples) = %v", s)
+	}
+}
+
+// TestIDHashSQL_MatchesTerm: the SQL text of the count check's hash uses the
+// same constants as IDHashTerm, and the term stays exact in int64 (checked
+// against math/big).
+func TestIDHashSQL_MatchesTerm(t *testing.T) {
+	tSQL := fmt.Sprintf("((id %% %d) * %d %% %d)", idHashP, idHashK, idHashP)
+	if want := fmt.Sprintf("(%s * %s %% %d)", tSQL, tSQL, idHashP); IDHashSQL != want {
+		t.Fatalf("IDHashSQL = %s, want %s", IDHashSQL, want)
+	}
+	for _, id := range []int64{1, 2, idHashP - 1, idHashP, idHashP + 1, 1 << 40, 1<<62 + 12345} {
+		got := IDHashTerm(id)
+		p := big.NewInt(idHashP)
+		tt := new(big.Int).Mod(new(big.Int).Mul(big.NewInt(id%idHashP), big.NewInt(idHashK)), p)
+		want := new(big.Int).Mod(new(big.Int).Mul(tt, tt), p).Int64()
+		if got != want || got < 0 || got >= idHashP {
+			t.Fatalf("IDHashTerm(%d) = %d, want %d", id, got, want)
+		}
 	}
 }

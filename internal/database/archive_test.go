@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -462,6 +463,22 @@ func TestArchiveExport_SyslogRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	check("a late commit beside a purge", &export.ChunkResult{Rows: 22, IDSum: idSum - ids[22]}, 21, ArchiveCountLateCommit)
+	// Same count AND same id sum, other ids: the table holds ids[2] and
+	// ids[21] where the export held id 1 and an id past the range (their sums
+	// agree). Only the hash term tells them apart.
+	now, err := d.ExportArchiveChunk(archiveCtx, &c, export.SyslogSchemaV2, ArchiveReadOptions{}, archiveMemOpen(map[export.ObjectID]*bytes.Buffer{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("re-exported", now, 21, ArchiveCountMatch)
+	x, y, u := ids[2], ids[21], int64(1)
+	v := x + y - u
+	swapped := &export.ChunkResult{Rows: now.Rows, IDSum: now.IDSum - x - y + u + v,
+		IDHash: now.IDHash - export.IDHashTerm(x) - export.IDHashTerm(y) + export.IDHashTerm(u) + export.IDHashTerm(v)}
+	if swapped.IDSum != now.IDSum {
+		t.Fatal("fixture: the swap changes the id sum")
+	}
+	check("a swap with an equal id sum", swapped, 21, ArchiveCountLateCommit)
 
 	if _, err := d.ExportArchiveChunk(archiveCtx, &models.ArchiveChunk{SourceTable: "interface_stats", IDHi: 1}, 1, ArchiveReadOptions{}, nil); err == nil {
 		t.Fatal("an unarchived table was exported")
@@ -525,5 +542,37 @@ func TestArchivePlan_RefusesImplausibleFirstRow(t *testing.T) {
 				t.Fatalf("%d chunks recorded", n)
 			}
 		})
+	}
+}
+
+// TestArchiveSettle_Window: the settle window covers the larger of the
+// configured DB_STATEMENT_TIMEOUT and the session's observed value, plus 5 s,
+// and at least a minute; both unset (0) is refused.
+func TestArchiveSettle_Window(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	orig := archiveWriterStatementTimeout
+	t.Cleanup(func() { archiveWriterStatementTimeout = orig })
+	for _, c := range []struct {
+		configured, observed, want time.Duration
+		refused                    bool
+	}{
+		{30 * time.Second, 30 * time.Second, time.Minute, false},
+		{90 * time.Second, 0, 95 * time.Second, false}, // a connection that lost its timeout
+		{0, 90 * time.Second, 95 * time.Second, false}, // server default
+		{30 * time.Second, 120 * time.Second, 125 * time.Second, false},
+		{0, 0, 0, true},
+	} {
+		d.statementTimeout = c.configured
+		archiveWriterStatementTimeout = func(context.Context, *Database) (time.Duration, error) { return c.observed, nil }
+		got, err := d.archiveSettle(archiveCtx)
+		if c.refused {
+			if !errors.Is(err, ErrArchiveNoStatementTimeout) {
+				t.Errorf("configured %s observed %s: %s, %v; want refused", c.configured, c.observed, got, err)
+			}
+			continue
+		}
+		if err != nil || got != c.want {
+			t.Errorf("configured %s observed %s: %s, %v; want %s", c.configured, c.observed, got, err, c.want)
+		}
 	}
 }
