@@ -1,6 +1,22 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.305] - 2026-10-06
+
+### Fixed — retention gate review: rows moved through a standalone partition leaf, gate re-read per batch (archive plan PR 5 review)
+
+- **Rows invisible during a partition move could be verified away.** When EnsurePartitions finds a month's (net_events: a day's) rows in the DEFAULT child, `ensureLeaf` moves them in committed batches into a leaf that stays a standalone table until the attach — and until the next pass if the attach fails. Through the parent those rows are invisible, so an export and a count check run meanwhile agreed without them, the chunk could be verified, and after the attach the gate would have deleted them unarchived (the cron's lock is not the archive's). Now, per table:
+  - while any unattached `<table>_YYYYMM` / `<table>_YYYYMMDD` table exists (pg_class, not in pg_inherits), `PlanNextArchiveChunk`, `ArchiveChunkSettled` and `CheckArchiveChunkCount` return `ErrArchiveLeafMove` — a wait, never a mismatch (the worker shows `fwmon_archive_unsettled{reason="unattached_leaf"}`; a chunk in `verifying` is retried with backoff);
+  - `ensureLeaf` bumps a per-table move epoch (`archive_leaf_move_epoch_<table>` in `system_settings`) before it moves anything, and a failure to record it stops the move; the count check reads the epoch before and after its count and refuses when it changed, so a move that starts and even finishes during a count is caught;
+  - the gate holds every row of the table (V = 0) while an unattached leaf exists.
+- **The gate is re-read before every retention batch and every partition drop**, not once per pass: an override that ends or is cleared mid-pass now stops ungated deletes at the next batch, and a V that advanced applies at once. The RELEASED warning is rate-limited to once a minute per table accordingly. Disabled streams still never call it (the SQL golden is unchanged).
+- `TestArchiveGate_DisabledSQLUnchanged` now states its limits (SQL text on SQLite; the PostgreSQL DROP path is unchanged when disabled by construction and exercised gated by the PG lane).
+
+### Tests
+
+- `TestArchiveGate_UnattachedLeaf_PG`: 2 000 rows of an old month in the DEFAULT child, 700 moved into an unattached leaf — the gate holds (V = 0) and retention deletes nothing, plan / export / count return `ErrArchiveLeafMove`, a count during which the leaf is attached is refused, a count during which a move starts is refused, and after the attach the gate and a matching count resume. `TestNormalizedTables_PG` asserts the real `ensureLeaf` bumps the epoch and that its standalone leaf is reported unattached mid-move. `TestArchiveGate_ReReadPerBatch`: an override ending during batch 1 leaves the rest gated (4 of 20 rows deleted).
+- Mutation-checked: ignoring unattached leaves, the gate not checking them, dropping the epoch re-check, `ensureLeaf` not bumping the epoch, the count not refusing up front, and reading the gate once per pass each fail a test.
+
 ## [0.11.304] - 2026-10-06
 
 ### Added — raw archive retention gate: no raw row is deleted before the archive has verified it (archive plan PR 5)

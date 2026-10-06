@@ -60,7 +60,7 @@ var (
 
 // ArchiveUnsettledReasons are the reason label values of
 // fwmon_archive_unsettled.
-var ArchiveUnsettledReasons = []string{"settling", "open_writer", "no_statement_timeout"}
+var ArchiveUnsettledReasons = []string{"settling", "open_writer", "no_statement_timeout", "unattached_leaf"}
 
 func init() {
 	prometheus.MustRegister(archiveLag, archiveVerifiedThrough, archiveChunks, archiveRows, archiveObjects,

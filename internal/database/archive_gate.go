@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"firewall-mon/internal/archive/export"
@@ -207,10 +208,13 @@ func (d *Database) archiveGate(ctx context.Context, table string) archiveGateSta
 	if stream == "" || !d.archiveGateCfg.enabled(stream) {
 		return archiveGateState{}
 	}
-	if until, active := d.archiveGateOverrideUntil(stream, time.Now()); active {
-		log.Printf("WARNING: archive gate of %s RELEASED by an operator override until %s: rows of %s are deleted whether or not they are archived",
-			stream, until.UTC().Format(time.RFC3339), table)
+	if until, active := d.archiveGateOverrideUntil(stream, archiveGateClock()); active {
+		archiveReleasedWarning(stream, table, until)
 		return archiveGateState{}
+	}
+	if _, err := d.archiveLeafsClear(ctx, table); err != nil {
+		log.Printf("archive gate: %s: %v (nothing of it is deleted this time)", table, err)
+		return archiveGateState{on: true}
 	}
 	p, err := d.ArchiveTableProgress(ctx, table)
 	if err != nil {
@@ -222,6 +226,40 @@ func (d *Database) archiveGate(ctx context.Context, table string) archiveGateSta
 		g.tmax = *p.VerifiedMaxTs
 	}
 	return g
+}
+
+// archiveGateClock is the gate's clock for override expiry; a variable so a
+// test can let an override expire in the middle of a pass.
+var archiveGateClock = time.Now
+
+// archiveReleasedLog rate-limits the RELEASED warning: the gate is re-read
+// before every retention batch, so one line per table a minute is plenty.
+var archiveReleasedLog = struct {
+	sync.Mutex
+	last map[string]time.Time
+}{last: map[string]time.Time{}}
+
+func archiveReleasedWarning(stream, table string, until time.Time) {
+	archiveReleasedLog.Lock()
+	defer archiveReleasedLog.Unlock()
+	now := time.Now()
+	if t, ok := archiveReleasedLog.last[table]; ok && now.Sub(t) < time.Minute {
+		return
+	}
+	archiveReleasedLog.last[table] = now
+	log.Printf("WARNING: archive gate of %s RELEASED by an operator override until %s: rows of %s are deleted whether or not they are archived",
+		stream, until.UTC().Format(time.RFC3339), table)
+}
+
+// archiveGateFn is archiveGate of table as a function the delete loops call
+// before every batch / leaf; nil when the table is not archived or its stream
+// is disabled, so those statements are never touched.
+func (d *Database) archiveGateFn(table string) func() archiveGateState {
+	stream := archiveGateStream(table)
+	if stream == "" || !d.archiveGateCfg.enabled(stream) {
+		return nil
+	}
+	return func() archiveGateState { return d.archiveGate(context.Background(), table) }
 }
 
 // archivePartitionMaxID is max(id) of one leaf — a backward walk of its
@@ -329,4 +367,84 @@ func (d *Database) LogArchiveGateState(ctx context.Context) {
 			log.Printf("WARNING: archive gate of %s is released by an operator override until %s", stream, until.UTC().Format(time.RFC3339))
 		}
 	}
+}
+
+// Unattached leaves (partition maintenance racing the archive).
+//
+// When the DEFAULT child already holds rows for a leaf EnsurePartitions is
+// about to create, ensureLeaf creates the leaf as a STANDALONE table, moves
+// those rows into it in committed batches and only then attaches it — and a
+// failed attach leaves them there until the next pass. Meanwhile the rows are
+// invisible to every read through the parent: an export would miss them and,
+// worse, a count check run then would agree with that export, so a chunk could
+// be verified without them and, once the leaf is attached, the gate would
+// delete them unarchived. So, per table, while any unattached leaf exists or a
+// move started during a count:
+//   - the worker does not cut, export or verify (ErrArchiveLeafMove — a
+//     transient wait, never a mismatch);
+//   - CheckArchiveChunkCount reads the move epoch before and after its count
+//     and refuses when it moved (a move that began and ended in between);
+//   - the gate holds every row of the table (V = 0).
+
+// ErrArchiveLeafMove: partition maintenance is moving rows of the table
+// through a standalone leaf, so its rows cannot all be seen through the
+// parent right now.
+var ErrArchiveLeafMove = errors.New("archive: a partition leaf of the table is not attached (rows are being moved out of the DEFAULT child)")
+
+// archiveLeafMovePrefix + table is the system_settings counter ensureLeaf
+// increments before it starts moving rows into a standalone leaf.
+const archiveLeafMovePrefix = "archive_leaf_move_epoch_"
+
+// archiveLeafState is the table's move epoch and its unattached leaves.
+type archiveLeafState struct {
+	epoch      int64
+	unattached []string
+}
+
+// archiveLeafStateOf reads it (PostgreSQL only; zero elsewhere). A leaf is a
+// table named <table>_YYYYMM or <table>_YYYYMMDD; one that pg_inherits does
+// not list as a partition is unattached.
+func (d *Database) archiveLeafStateOf(ctx context.Context, table string) (archiveLeafState, error) {
+	var s archiveLeafState
+	if !d.dialect.IsPostgres() {
+		return s, nil
+	}
+	db := d.db.WithContext(ctx)
+	if err := db.Raw(`SELECT c.relname FROM pg_class c
+		WHERE c.relkind IN ('r', 'p') AND c.relnamespace = current_schema()::regnamespace
+		  AND c.relname ~ ('^' || ? || '_[0-9]{6}([0-9]{2})?$')
+		  AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid)
+		ORDER BY c.relname`, table).Scan(&s.unattached).Error; err != nil {
+		return s, fmt.Errorf("archive: unattached leaves of %s: %w", table, err)
+	}
+	var vals []string
+	if err := db.Model(&models.SystemSetting{}).Where("\"key\" = ?", archiveLeafMovePrefix+table).Limit(1).Pluck("value", &vals).Error; err != nil {
+		return s, fmt.Errorf("archive: leaf move epoch of %s: %w", table, err)
+	}
+	if len(vals) > 0 {
+		fmt.Sscan(vals[0], &s.epoch) //nolint:errcheck // unparseable reads as 0; only a change matters
+	}
+	return s, nil
+}
+
+// archiveLeafsClear returns ErrArchiveLeafMove (naming the leaves) while table
+// has an unattached leaf.
+func (d *Database) archiveLeafsClear(ctx context.Context, table string) (archiveLeafState, error) {
+	s, err := d.archiveLeafStateOf(ctx, table)
+	if err != nil {
+		return s, err
+	}
+	if len(s.unattached) > 0 {
+		return s, fmt.Errorf("%w: %s", ErrArchiveLeafMove, strings.Join(s.unattached, ", "))
+	}
+	return s, nil
+}
+
+// bumpArchiveLeafMoveEpoch is called by ensureLeaf before it moves any row
+// into a standalone leaf of table; an error stops the move (fail closed).
+func (d *Database) bumpArchiveLeafMoveEpoch(table string) error {
+	return d.db.Exec(`INSERT INTO system_settings ("key", value, type, category, label, updated_at)
+		VALUES (?, '1', 'int', 'archive', 'Partition leaf moves started (the raw archive pauses while one runs)', now())
+		ON CONFLICT ("key") DO UPDATE SET value = (COALESCE(NULLIF(system_settings.value, ''), '0')::bigint + 1)::text, updated_at = now()`,
+		archiveLeafMovePrefix+table).Error
 }

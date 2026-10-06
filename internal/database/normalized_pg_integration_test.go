@@ -6,6 +6,7 @@
 package database
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strings"
@@ -299,6 +300,12 @@ func TestNormalizedTables_PG(t *testing.T) {
 				return
 			}
 			attempts++
+			// The raw archive's view of the move (archive_gate.go): the
+			// epoch was bumped before it began, and the standalone leaf is
+			// reported unattached until the attach.
+			if st, err := d.archiveLeafStateOf(context.Background(), "net_events"); err != nil || st.epoch < 1 || !contains(st.unattached, leaf) {
+				t.Errorf("archive leaf state during the move: %+v %v, want epoch >= 1 and %s unattached", st, err, leaf)
+			}
 			if attempt != 1 {
 				return // the second round must find the default drained
 			}

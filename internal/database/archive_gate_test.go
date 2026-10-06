@@ -342,3 +342,37 @@ func TestParseArchiveGateStreams(t *testing.T) {
 		}
 	}
 }
+
+// TestArchiveGate_ReReadPerBatch: an override that ends in the middle of a
+// retention pass stops the ungated deletes at the next batch — the gate is
+// read before every batch, not once per pass.
+func TestArchiveGate_ReReadPerBatch(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	d.archiveGateCfg = ArchiveGateConfig{Syslog: true}
+	gateFixture(t, d)
+	start := time.Now()
+	if err := d.SetArchiveGateOverride(ArchiveGateSyslog, start.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	origBatch, origSleep, origClock := cleanupDeleteBatchSize, batchDeleteInterSleep, archiveGateClock
+	cleanupDeleteBatchSize, batchDeleteInterSleep = 4, 0
+	clock := start
+	archiveGateClock = func() time.Time { return clock }
+	calls := 0
+	cleanupBatchHook = func(int) error {
+		calls++
+		if calls == 1 {
+			clock = start.Add(2 * time.Hour) // the override ends during batch 1
+		}
+		return nil
+	}
+	t.Cleanup(func() {
+		cleanupDeleteBatchSize, batchDeleteInterSleep, archiveGateClock, cleanupBatchHook = origBatch, origSleep, origClock, nil
+	})
+	if err := d.batchedDeleteOlderThanGated(&models.SyslogMessage{}, "syslog_messages", time.Now(), d.archiveGateFn("syslog_messages"), ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := gateIDs(t, d, "syslog_messages"); !sameIDs(got, idRange(5, 20)) {
+		t.Fatalf("syslog ids %v after the override ended mid-pass, want 5..20 (one released batch of 4, then gated with V = 0)", got)
+	}
+}

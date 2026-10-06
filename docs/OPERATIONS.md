@@ -589,6 +589,17 @@ On PostgreSQL the gated statements also carry the newest message time of the
 verified chunks (`timestamp <= …`), which every row at or below V satisfies
 anyway; it lets the planner skip the held rows instead of walking them.
 
+**Partition maintenance.** When the daily partition pass finds rows of a
+month (or day) still in a table's DEFAULT child, it moves them into a new leaf
+that stays a standalone table until the move is done — and until the next
+pass if the attach fails. Rows in it cannot be seen through the parent, so
+while any unattached `<table>_YYYYMM[DD]` table exists the archive worker does
+not cut, export or count that table
+(`fwmon_archive_unsettled{reason="unattached_leaf"}`), a count during which a
+move started is discarded, and the gate deletes nothing of the table. A
+leftover standalone table with such a name (a manual rescue, say) holds the
+table the same way until it is attached or renamed.
+
 A chunk that is pending, exporting, uploading, verifying, failed or
 `needs_attention` stops V, and so does a gap. Normally V trails ingest by
 about a day for syslog and counters and by 10–20 minutes for flows, far less
@@ -620,8 +631,10 @@ The override is the system setting `archive_gate_override_until_<stream>`, an
 end time: it expires on its own (a value more than 24 h ahead is ignored), the
 settings page cannot write it, every change is an `audit_logs` row
 (`archive_gate_override`, actor `cli` for the command line), and the poller
-logs a WARNING on every delete pass that runs ungated under it. A pass already running when the
-override ends finishes its current statement group ungated. The CLI needs the
+logs a WARNING (at most once a minute per table) while deletes run ungated
+under it. The gate is re-read before every retention batch and every partition
+drop, so an override that ends or is cleared mid-pass stops the ungated
+deletes at the next batch. The CLI needs the
 server's database credentials (like `reset-auth`), which is its
 authentication; the API route re-verifies the operator's password and TOTP.
 

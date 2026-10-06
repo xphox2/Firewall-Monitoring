@@ -232,12 +232,33 @@ func (d *Database) batchedDeleteOlderThanWhere(model interface{}, table string, 
 // — where before it returned in seconds having done nothing. The ordered
 // subquery above makes those timeouts rare.
 func (d *Database) batchedDeleteOlderThanOn(model interface{}, timeColumn, orderBy string, cutoff time.Time, extraWhere string, args ...interface{}) error {
+	return d.batchedDeleteOlderThanPred(model, timeColumn, orderBy, cutoff, func() (string, []interface{}) { return extraWhere, args })
+}
+
+// batchedDeleteOlderThanGated is batchedDeleteOlderThanWhere for an archived
+// table: before every batch it re-reads the archive gate (gateFn; nil = off)
+// and ANDs `id <= V` onto extraWhere, so a V that moved, or an override that
+// ended or was cleared, applies from the next batch. Off, the statement is
+// byte-identical to batchedDeleteOlderThanWhere's.
+func (d *Database) batchedDeleteOlderThanGated(model interface{}, table string, cutoff time.Time, gateFn func() archiveGateState, extraWhere string, args ...interface{}) error {
+	return d.batchedDeleteOlderThanPred(model, "timestamp", cleanupOrderBy(table, "timestamp"), cutoff, func() (string, []interface{}) {
+		if gateFn == nil {
+			return extraWhere, args
+		}
+		return gateFn().andID(extraWhere, args)
+	})
+}
+
+// batchedDeleteOlderThanPred is the loop of batchedDeleteOlderThanOn with the
+// extra predicate produced by pred before every batch attempt.
+func (d *Database) batchedDeleteOlderThanPred(model interface{}, timeColumn, orderBy string, cutoff time.Time, pred func() (string, []interface{})) error {
 	batchSize := cleanupDeleteBatchSize
 	lockRetries := 0
 	fullBatches := 0 // consecutive full batches since the last halving
 	grewBack := false
 	for {
 		var affected int64
+		extraWhere, args := pred()
 		err := d.db.Transaction(func(tx *gorm.DB) error {
 			if cleanupBatchHook != nil {
 				if e := cleanupBatchHook(batchSize); e != nil {
@@ -524,7 +545,7 @@ func sleepCtx(ctx context.Context, dur time.Duration) bool {
 // Any other DROP error returns (zero, true, err) and the caller falls through
 // to the parent-wide batched DELETE, as before.
 func (d *Database) dropPartitionsOlderThan(table string, cutoff time.Time) (floor time.Time, handled bool, err error) {
-	return d.dropPartitionsOlderThanGated(table, cutoff, archiveGateState{})
+	return d.dropPartitionsOlderThanGated(table, cutoff, nil)
 }
 
 // dropPartitionsOlderThanGated is dropPartitionsOlderThan under the archive's
@@ -534,9 +555,10 @@ func (d *Database) dropPartitionsOlderThan(table string, cutoff time.Time) (floo
 // transaction with the parent locked as the DROP locks it, so no row above V
 // can arrive in between (a collector replay with old timestamps routes into an
 // old leaf). A held leaf is kept and logged; it sets no floor, so the caller's
-// row DELETE (which ANDs `id <= V` too) still trims its archived rows. Off, it
-// is exactly dropPartitionsOlderThan.
-func (d *Database) dropPartitionsOlderThanGated(table string, cutoff time.Time, gate archiveGateState) (floor time.Time, handled bool, err error) {
+// row DELETE (which ANDs `id <= V` too) still trims its archived rows. gate is
+// re-read before every leaf (an override can end, V can move); nil, or a gate
+// that is off, is exactly dropPartitionsOlderThan.
+func (d *Database) dropPartitionsOlderThanGated(table string, cutoff time.Time, gateFn func() archiveGateState) (floor time.Time, handled bool, err error) {
 	if !d.dialect.IsPostgres() {
 		return time.Time{}, false, nil
 	}
@@ -581,6 +603,10 @@ func (d *Database) dropPartitionsOlderThanGated(table string, cutoff time.Time, 
 	// pg_inherits has no inherent order.
 	sort.Slice(expired, func(i, j int) bool { return expired[i].upper.Before(expired[j].upper) })
 	for i, ch := range expired {
+		var gate archiveGateState
+		if gateFn != nil {
+			gate = gateFn()
+		}
 		if gate.on {
 			maxID, perr := archivePartitionMaxID(d.db, ch.Name)
 			if perr != nil || maxID > gate.v {
@@ -976,14 +1002,13 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		// is enabled the drop and the DELETE take only rows the archive has
 		// verified (archiveGate; every other table, and a disabled stream,
 		// gets the zero gate and the unchanged statements).
-		gate := d.archiveGate(context.Background(), e.name)
+		gate := d.archiveGateFn(e.name)
 		floor, _, err := d.dropPartitionsOlderThanGated(e.name, cutoff, gate)
 		if err != nil {
 			log.Printf("cleanup: drop-old-partitions warning for %s: %v", e.name, err)
 		}
 		where, args := andFloor("", nil, floor)
-		where, args = gate.andID(where, args)
-		if err := d.batchedDeleteOlderThanWhere(e.model, e.name, cutoff, where, args...); err != nil {
+		if err := d.batchedDeleteOlderThanGated(e.model, e.name, cutoff, gate, where, args...); err != nil {
 			errs = append(errs, fmt.Errorf("failed to cleanup %s: %w", e.name, err))
 		}
 	}
@@ -1049,10 +1074,10 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	// rely on the per-severity DELETEs below for exact retention.
 	//
 	// With syslog archiving enabled, both the drop and the DELETEs take only
-	// rows the archive has verified (id <= V; archive_gate.go). V is read
-	// once for the whole syslog pass: it only ever grows, so an older V is
-	// merely conservative.
-	syslogGate := d.archiveGate(context.Background(), "syslog_messages")
+	// rows the archive has verified (id <= V; archive_gate.go). The gate is
+	// re-read before every leaf and every batch, so an override that ends or
+	// is cleared mid-pass stops the ungated deletes at the next batch.
+	syslogGate := d.archiveGateFn("syslog_messages")
 	var syslogFloor time.Time
 	if dropDays := syslogMaxWindow(sevDays[:]); dropDays > 0 {
 		dropCutoff := time.Now().AddDate(0, 0, -dropDays)
@@ -1068,8 +1093,7 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	for days, severities := range syslogWindowGroups(sevDays) {
 		cutoff := time.Now().AddDate(0, 0, -days)
 		where, args := andFloor("severity IN ?", []interface{}{severities}, syslogFloor)
-		where, args = syslogGate.andID(where, args)
-		if err := d.batchedDeleteOlderThanWhere(&models.SyslogMessage{}, "syslog_messages", cutoff,
+		if err := d.batchedDeleteOlderThanGated(&models.SyslogMessage{}, "syslog_messages", cutoff, syslogGate,
 			where, args...); err != nil {
 			errs = append(errs, fmt.Errorf("failed to cleanup syslog_message (severities %v, %dd): %w",
 				severities, days, err))

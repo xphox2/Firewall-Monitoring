@@ -21,6 +21,14 @@ import (
 // exactly these — no added predicate, no read of the archive's tables or of
 // the override setting — whatever the archive manifest holds. Regenerate only
 // from pre-gate code: ARCHIVE_GATE_GOLDEN_PRINT=1 prints the capture.
+//
+// Limits of this guard: it runs on SQLite, so it compares SQL text only — not
+// the bound values (a disabled gate adds none: archiveGateFn is nil, andID and
+// the caps are never called) — and it never reaches the PostgreSQL-only
+// partition DROP. That path is unchanged when disabled by construction:
+// dropPartitionsOlderThanGated with a nil gate takes the pre-gate branch
+// (execCronDDL's `DROP TABLE IF EXISTS`, no max(id) probe, no LOCK), and
+// TestArchiveGate_Flows_PG / _Syslog_PG exercise the gated branch.
 var archiveGateDisabledGolden = []string{
 	"DELETE FROM `flow_if_counters` WHERE id IN (SELECT `id` FROM `flow_if_counters` WHERE timestamp < ? LIMIT 10000)",
 	"DELETE FROM `flow_samples` WHERE id IN (SELECT `id` FROM `flow_samples` WHERE timestamp < ? ORDER BY timestamp LIMIT 10000)",

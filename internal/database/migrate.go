@@ -885,6 +885,14 @@ func (d *Database) ensureLeaf(def partitionDef, w partitionWindow, startStr, end
 		log.Printf("Created partition: %s", w.name)
 		return nil
 	}
+	// The raw archive must not count or verify this table while rows sit in
+	// the standalone leaf (invisible through the parent): the leaf's
+	// existence holds it, and this epoch catches a move that starts and ends
+	// inside one of its counts (archive_gate.go). Bumped before anything
+	// moves; a failure stops the move.
+	if err := d.bumpArchiveLeafMoveEpoch(def.tableName); err != nil {
+		return fmt.Errorf("record the leaf move for the archive: %w", err)
+	}
 	if !exists {
 		log.Printf("WARNING: %s already holds rows for [%s, %s); creating %s as a standalone table, moving them, then attaching it",
 			def_, startStr, endStr, w.name)

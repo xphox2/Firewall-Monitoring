@@ -402,3 +402,106 @@ func TestArchiveGate_Flows_PG(t *testing.T) {
 		t.Fatalf("%d counter rows at or below V left, want 0", n)
 	}
 }
+
+// TestArchiveGate_UnattachedLeaf_PG: partition maintenance found rows of an
+// old month in the DEFAULT child and has moved part of them into a standalone
+// leaf that is not attached yet (an interrupted ensureLeaf). Those rows are
+// invisible through the parent, so while the leaf exists the worker must not
+// cut, export or count the table, the gate must hold every row, and a move
+// that starts during a count must fail that count. Once attached, all resume.
+func TestArchiveGate_UnattachedLeaf_PG(t *testing.T) {
+	d := NewIntegrationDB(t)
+	if err := d.EnsurePartitions(); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	d.archiveGateCfg = ArchiveGateConfig{Syslog: true}
+	now := time.Now().UTC()
+	m := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -4, 0)
+	gatePGSeedSyslog(t, d, m.Add(time.Hour), m.Add(10*24*time.Hour), 2000) // no leaf: the DEFAULT child
+	if n := gatePGCount(t, d, "SELECT count(*) FROM syslog_messages_default"); n != 2000 {
+		t.Fatalf("%d rows in the DEFAULT child, want 2000", n)
+	}
+	var v int64
+	d.db.Raw("SELECT max(id) FROM syslog_messages").Scan(&v)
+	gatePGVerified(t, d, export.TableSyslog, v)
+	if g := d.archiveGate(ctx, export.TableSyslog); !g.on || g.v != v {
+		t.Fatalf("gate before the move: %+v", g)
+	}
+	chunk := models.ArchiveChunk{SourceTable: export.TableSyslog, IDLo: 0, IDHi: v}
+
+	// ensureLeaf's first steps, interrupted after one batch of the move.
+	leaf := fmt.Sprintf("syslog_messages_%s", m.Format("200601"))
+	if err := d.bumpArchiveLeafMoveEpoch("syslog_messages"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.db.Exec(fmt.Sprintf(`CREATE TABLE %s (LIKE syslog_messages INCLUDING DEFAULTS)`, leaf)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := d.db.Exec(defaultMoveStmt("syslog_messages_default", leaf, "timestamp", true), m, m.AddDate(0, 1, 0), 700).Error; err != nil {
+		t.Fatal(err)
+	}
+	if n := gatePGCount(t, d, "SELECT count(*) FROM syslog_messages"); n != 1300 {
+		t.Fatalf("%d rows visible through the parent, want 1300 (700 sit in the standalone leaf)", n)
+	}
+
+	if g := d.archiveGate(ctx, export.TableSyslog); !g.on || g.v != 0 {
+		t.Fatalf("gate with an unattached leaf: %+v, want on with V = 0 (hold everything)", g)
+	}
+	if err := d.CleanupOldData(config.RetentionConfig{DefaultDays: 30, SyslogCriticalDays: 30, SyslogInfoDays: 7, FlowDays: 30}); err != nil {
+		t.Fatal(err)
+	}
+	if n := gatePGCount(t, d, "SELECT count(*) FROM syslog_messages"); n != 1300 {
+		t.Fatalf("retention deleted %d rows while a leaf was unattached", 1300-n)
+	}
+	if _, err := d.CheckArchiveChunkCount(ctx, &chunk, &export.ChunkResult{Rows: 1300}); !errors.Is(err, ErrArchiveLeafMove) {
+		t.Fatalf("count with an unattached leaf: %v, want ErrArchiveLeafMove", err)
+	}
+	archiveFastSettle(t, 100*time.Millisecond, 100*time.Millisecond)
+	if _, err := d.PlanNextArchiveChunk(ctx, export.TableSyslog, now, 0); !errors.Is(err, ErrArchiveLeafMove) {
+		t.Fatalf("plan with an unattached leaf: %v, want ErrArchiveLeafMove", err)
+	}
+	if err := d.ArchiveChunkSettled(ctx, &models.ArchiveChunk{SourceTable: export.TableSyslog, CutAt: now.Add(-time.Hour)}); !errors.Is(err, ErrArchiveLeafMove) {
+		t.Fatalf("export check with an unattached leaf: %v, want ErrArchiveLeafMove", err)
+	}
+
+	// The move finishes and the leaf is attached: everything resumes.
+	if err := d.db.Exec(defaultMoveStmt("syslog_messages_default", leaf, "timestamp", false), m, m.AddDate(0, 1, 0)).Error; err != nil {
+		t.Fatal(err)
+	}
+	// The attach lands while a count runs: that count planned the parent
+	// without the leaf, so it must be refused (by the check before it).
+	archiveCountHook = func() {
+		if err := d.db.Exec(fmt.Sprintf(`ALTER TABLE syslog_messages ATTACH PARTITION %s FOR VALUES FROM ('%s') TO ('%s')`, leaf,
+			m.Format("2006-01-02 15:04:05-07"), m.AddDate(0, 1, 0).Format("2006-01-02 15:04:05-07"))).Error; err != nil {
+			t.Error(err)
+		}
+	}
+	if _, err := d.CheckArchiveChunkCount(ctx, &chunk, &export.ChunkResult{Rows: 1300}); !errors.Is(err, ErrArchiveLeafMove) {
+		t.Fatalf("count started with the leaf unattached: %v, want ErrArchiveLeafMove", err)
+	}
+	archiveCountHook = nil
+	if err := d.db.Exec(fmt.Sprintf(`ALTER TABLE syslog_messages ATTACH PARTITION %s FOR VALUES FROM ('%s') TO ('%s')`, leaf,
+		m.Format("2006-01-02 15:04:05-07"), m.AddDate(0, 1, 0).Format("2006-01-02 15:04:05-07"))).Error; err != nil {
+		t.Fatal(err)
+	}
+	if g := d.archiveGate(ctx, export.TableSyslog); !g.on || g.v != v {
+		t.Fatalf("gate after the attach: %+v, want V %d", g, v)
+	}
+	res := &export.ChunkResult{}
+	d.db.Raw(`SELECT count(*) AS rows, COALESCE(sum(id), 0) AS id_sum, COALESCE(sum(` + export.IDHashSQL + `), 0) AS id_hash FROM syslog_messages`).Scan(res)
+	if chk, err := d.CheckArchiveChunkCount(ctx, &chunk, res); err != nil || !chk.Verifiable() {
+		t.Fatalf("count after the attach: %+v %v", chk, err)
+	}
+
+	// A move that starts (and ends) while the count runs fails the count.
+	archiveCountHook = func() {
+		if err := d.bumpArchiveLeafMoveEpoch("syslog_messages"); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { archiveCountHook = nil })
+	if _, err := d.CheckArchiveChunkCount(ctx, &chunk, res); !errors.Is(err, ErrArchiveLeafMove) {
+		t.Fatalf("count with a move during it: %v, want ErrArchiveLeafMove", err)
+	}
+}

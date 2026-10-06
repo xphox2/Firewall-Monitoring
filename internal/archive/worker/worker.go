@@ -349,6 +349,11 @@ func (w *Worker) plan(ctx context.Context, table string) bool {
 				w.logf("plan-"+table, "%v", err)
 				return false
 			}
+			if errors.Is(err, database.ErrArchiveLeafMove) {
+				metrics.SetArchiveUnsettled(table, "unattached_leaf")
+				w.logf("plan-"+table, "%s waits: %v", table, err)
+				return false
+			}
 			// Already planned chunks can still be worked.
 			metrics.IncArchiveError("plan")
 			w.logf("plan-"+table, "plan %s: %v", table, err)
@@ -443,6 +448,9 @@ func (w *Worker) workOne(ctx context.Context, table string) progress {
 			case errors.Is(err, database.ErrArchiveNoStatementTimeout):
 				metrics.SetArchiveUnsettled(table, "no_statement_timeout")
 				w.logf("settle-"+table, "%v", err)
+			case errors.Is(err, database.ErrArchiveLeafMove):
+				metrics.SetArchiveUnsettled(table, "unattached_leaf")
+				w.logf("settle-"+table, "%s chunk %d waits: %v", table, c.Seq, err)
 			default:
 				metrics.IncArchiveError("settle")
 				w.logf("settle-"+table, "%s chunk %d: settle check: %v", table, c.Seq, err)
