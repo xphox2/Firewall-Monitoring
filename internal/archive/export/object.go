@@ -41,6 +41,9 @@ type ObjectResult struct {
 	Sha256Content string
 	Sha256Object  string
 	MinID, MaxID  int64
+	// IDSum is the sum of the row ids: with Rows, what the count check
+	// compares against the table.
+	IDSum int64
 	// MinTs / MaxTs / MsgDays are by message (sample) time, UTC.
 	MinTs, MaxTs time.Time
 	MsgDays      map[string]int64
@@ -109,6 +112,7 @@ func (o *objectWriter) write(id int64, ts time.Time, line []byte) error {
 		o.res.MinID, o.res.MinTs, o.res.MaxTs = id, ts, ts
 	}
 	o.res.MaxID = id
+	o.res.IDSum += id
 	if ts.Before(o.res.MinTs) {
 		o.res.MinTs = ts
 	}

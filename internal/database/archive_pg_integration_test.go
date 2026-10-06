@@ -15,6 +15,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -77,6 +80,34 @@ func heapPages(t *testing.T, d *Database, table string) int64 {
 
 func dryRun(d *Database) *gorm.DB { return d.db.Session(&gorm.Session{DryRun: true}) }
 
+// archiveFastSettle stands in a writer statement_timeout for the test (the
+// integration DSN runs without one, which the archive refuses) and shrinks the
+// settle window to timeout + margin.
+func archiveFastSettle(t *testing.T, timeout, margin time.Duration) {
+	t.Helper()
+	ot, of, om := archiveWriterStatementTimeout, archiveSettleFloor, archiveSettleMargin
+	archiveWriterStatementTimeout = func(context.Context, *Database) (time.Duration, error) { return timeout, nil }
+	archiveSettleFloor, archiveSettleMargin = 0, margin
+	t.Cleanup(func() { archiveWriterStatementTimeout, archiveSettleFloor, archiveSettleMargin = ot, of, om })
+}
+
+// waitSettled polls ArchiveChunkSettled until it clears (or fails the test).
+func waitSettled(t *testing.T, d *Database, c *models.ArchiveChunk, within time.Duration) time.Time {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for {
+		err := d.ArchiveChunkSettled(context.Background(), c)
+		if err == nil {
+			return time.Now()
+		}
+		var un *ArchiveUnsettledError
+		if !errors.As(err, &un) || time.Now().After(deadline) {
+			t.Fatalf("chunk %d not settled: %v", c.Seq, err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 // archiveSeedSyslog inserts n rows whose created_at runs evenly from base over
 // span (ids rise with created_at), message times 30 s earlier.
 func archiveSeedSyslog(t *testing.T, d *Database, base time.Time, span time.Duration, n int) {
@@ -103,6 +134,7 @@ func archiveSeedSyslog(t *testing.T, d *Database, base time.Time, span time.Dura
 // is the same in both shapes and on a re-export.
 func TestArchiveSyslog_PG(t *testing.T) {
 	d := NewIntegrationDB(t)
+	archiveFastSettle(t, 100*time.Millisecond, 100*time.Millisecond)
 	if !pgIsPartitioned(t, d, "syslog_messages") {
 		t.Fatal("syslog_messages is not partitioned on the fresh-install path")
 	}
@@ -179,6 +211,7 @@ func TestArchiveSyslog_PG(t *testing.T) {
 			}
 
 			// Export the middle day twice; the page size must not matter.
+			waitSettled(t, d, &mid, 10*time.Second)
 			exp := func(page int) *export.ChunkResult {
 				res, err := d.ExportArchiveChunk(ctx, &mid, export.SyslogSchemaV2, ArchiveReadOptions{PageSize: page}, archiveMemOpen(map[export.ObjectID]*bytes.Buffer{}))
 				if err != nil {
@@ -201,8 +234,8 @@ func TestArchiveSyslog_PG(t *testing.T) {
 				sum.WriteString(a.Objects[i].Sha256Content)
 			}
 			hashes[shape] = sum.String()
-			if n, v, err := d.CheckArchiveChunkCount(ctx, &mid, a.Rows); err != nil || v != ArchiveCountMatch {
-				t.Fatalf("count check %d %s %v", n, v, err)
+			if chk, err := d.CheckArchiveChunkCount(ctx, &mid, a); err != nil || !chk.Verifiable() {
+				t.Fatalf("count check %+v %v", chk, err)
 			}
 		})
 	}
@@ -229,6 +262,7 @@ func archiveSeedFlows(t *testing.T, d *Database, ts time.Time, n int) {
 // counters: daily marks and a plain-table page plan.
 func TestArchiveFlows_PG(t *testing.T) {
 	d := NewIntegrationDB(t)
+	archiveFastSettle(t, 100*time.Millisecond, 100*time.Millisecond)
 	if err := d.EnsurePartitions(); err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +295,6 @@ func TestArchiveFlows_PG(t *testing.T) {
 			if err := d.db.Exec("VACUUM ANALYZE flow_samples").Error; err != nil {
 				t.Fatal(err)
 			}
-			time.Sleep(archiveMarkSettle) // the last mark must settle before its chunk is cut
 			chunks := planAll(t, d, export.TableFlows, h0.Add(3*time.Hour+10*time.Minute))
 			if len(chunks) != 3 {
 				t.Fatalf("%d flow chunks, want 3", len(chunks))
@@ -279,6 +312,7 @@ func TestArchiveFlows_PG(t *testing.T) {
 			if page > pages/20 || maxb > 40 {
 				t.Errorf("%s: page %d / max %d buffers over the limit (table %d pages)", shape, page, maxb, pages)
 			}
+			waitSettled(t, d, &mid, 10*time.Second)
 			start := time.Now()
 			res, err := d.ExportArchiveChunk(ctx, &mid, export.FlowSchemaV1, ArchiveReadOptions{}, archiveMemOpen(map[export.ObjectID]*bytes.Buffer{}))
 			if err != nil {
@@ -305,7 +339,6 @@ func TestArchiveFlows_PG(t *testing.T) {
 		if err := d.db.Exec("VACUUM ANALYZE flow_if_counters").Error; err != nil {
 			t.Fatal(err)
 		}
-		time.Sleep(archiveMarkSettle)
 		chunks := planAll(t, d, export.TableCounters, day.Add(3*time.Hour))
 		if len(chunks) != 1 || chunks[0].IDHi != 200000 {
 			t.Fatalf("counter chunks %+v", chunks)
@@ -322,13 +355,14 @@ func TestArchiveFlows_PG(t *testing.T) {
 // transaction that may hold rows in its range — one that inserted a row
 // before the cut and is still open — and for nothing else: a long read-only
 // REPEATABLE READ transaction (what pg_dump holds for hours) opened before
-// everything never blocks. Syslog and a flow chunk cut at a mark taken while
-// the writer was open; the flow chunk is not cut until its mark has settled.
+// everything never blocks. Syslog, and a flow chunk cut at a mark taken while
+// the writer was open.
 func TestArchiveSettleGuard_PG(t *testing.T) {
 	d := NewIntegrationDB(t)
 	if err := d.EnsurePartitions(); err != nil {
 		t.Fatal(err)
 	}
+	archiveFastSettle(t, 200*time.Millisecond, 100*time.Millisecond)
 	ctx := context.Background()
 	now := time.Now().UTC()
 
@@ -368,14 +402,29 @@ func TestArchiveSettleGuard_PG(t *testing.T) {
 		VALUES (now(), 1, '192.0.2.9', '198.51.100.9', 1, now()) RETURNING id`).Scan(&heldFlow); err != nil {
 		t.Fatal(err)
 	}
+	// A younger writer (its xid after the first one's), open too: the holder
+	// named must be the OLDEST.
+	yconn, err := d.pgxPool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer yconn.Release()
+	ytx, err := yconn.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ytx.Rollback(ctx) }()
+	if _, err := ytx.Exec(ctx, `INSERT INTO system_settings (key, value, type) VALUES ('archive_test_younger_writer', '1', 'string')`); err != nil {
+		t.Fatal(err)
+	}
 	// Later rows commit first, with higher ids.
 	archiveSeedSyslog(t, d, now.Add(-time.Second), time.Second, 50)
 	archiveSeedFlows(t, d, now, 10)
 
 	tomorrow := archivePeriodStart(now, 24*time.Hour).Add(27 * time.Hour)
 	sys, err := d.PlanNextArchiveChunk(ctx, export.TableSyslog, tomorrow, 0)
-	if err != nil || sys == nil || sys.GuardXmax == nil || heldID > sys.IDHi {
-		t.Fatalf("syslog plan with a writer open = %+v, %v: want a chunk (with a guard) covering id %d", sys, err, heldID)
+	if err != nil || sys == nil || heldID > sys.IDHi || sys.GuardXmax != nil {
+		t.Fatalf("syslog plan with a writer open = %+v, %v: want a chunk covering id %d, guard not yet taken", sys, err, heldID)
 	}
 	hour := archivePeriodStart(now, time.Hour)
 	for _, b := range []time.Time{hour, hour.Add(time.Hour)} {
@@ -383,12 +432,8 @@ func TestArchiveSettleGuard_PG(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if c, err := d.PlanNextArchiveChunk(ctx, export.TableFlows, hour.Add(2*time.Hour), 0); err != nil || c != nil {
-		t.Fatalf("flow chunk cut %v after its mark (%v): want it to wait %s", c, err, archiveMarkSettle)
-	}
-	time.Sleep(archiveMarkSettle + 100*time.Millisecond)
 	flow, err := d.PlanNextArchiveChunk(ctx, export.TableFlows, hour.Add(2*time.Hour), 0)
-	if err != nil || flow == nil || flow.GuardXmax == nil || heldFlow > flow.IDHi {
+	if err != nil || flow == nil || heldFlow > flow.IDHi {
 		t.Fatalf("flow plan = %+v, %v: want a chunk covering id %d", flow, err, heldFlow)
 	}
 
@@ -396,16 +441,29 @@ func TestArchiveSettleGuard_PG(t *testing.T) {
 		return d.ExportArchiveChunk(ctx, c, schema, ArchiveReadOptions{}, archiveMemOpen(map[export.ObjectID]*bytes.Buffer{}))
 	}
 	var un *ArchiveUnsettledError
+	// Inside the settle window: refused without a guard.
+	if _, err := exportOf(sys, export.SyslogSchemaV2); !errors.As(err, &un) || un.SettleLeft <= 0 {
+		t.Fatalf("export inside the settle window = %v, want SettleLeft", err)
+	}
+	time.Sleep(400 * time.Millisecond)
 	for _, c := range []struct {
 		c      *models.ArchiveChunk
 		schema int
 	}{{sys, export.SyslogSchemaV2}, {flow, export.FlowSchemaV1}} {
-		if _, err := exportOf(c.c, c.schema); !errors.As(err, &un) || un.Xmin >= un.GuardXmax {
-			t.Fatalf("%s export with the writer open = %v, want ArchiveUnsettledError", c.c.SourceTable, err)
+		_, err := exportOf(c.c, c.schema)
+		if !errors.As(err, &un) || un.SettleLeft > 0 || un.Xmin >= un.GuardXmax || c.c.GuardXmax == nil {
+			t.Fatalf("%s export with the writer open = %v, want ArchiveUnsettledError on the writer", c.c.SourceTable, err)
+		}
+		if un.Holder == nil || un.Holder.PID != int64(wconn.Conn().PgConn().PID()) || un.Holder.State != "idle in transaction" {
+			t.Fatalf("%s: holder %+v, want the writer's pid %d idle in transaction", c.c.SourceTable, un.Holder, wconn.Conn().PgConn().PID())
 		}
 	}
+	t.Logf("unsettled: %v", un)
 
 	if err := wtx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := ytx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
 	// The reader is still open: it must not block.
@@ -417,11 +475,122 @@ func TestArchiveSettleGuard_PG(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s export after the commit, with a read-only transaction open: %v", c.c.SourceTable, err)
 		}
-		if got, v, _ := d.CheckArchiveChunkCount(ctx, c.c, res.Rows); v != ArchiveCountMatch {
-			t.Fatalf("%s: export of %d rows vs %d in the table (%s)", c.c.SourceTable, res.Rows, got, v)
+		if chk, _ := d.CheckArchiveChunkCount(ctx, c.c, res); !chk.Verifiable() {
+			t.Fatalf("%s: %+v", c.c.SourceTable, chk)
 		}
 	}
 	if err := rtx.QueryRow(ctx, `SELECT count(*) FROM syslog_messages`).Scan(&seen); err != nil || seen != 0 {
 		t.Fatalf("the reader's snapshot moved (%d, %v): it was not the long transaction this test needs", seen, err)
+	}
+}
+
+// TestArchiveSettle_StalledCopy_PG: a pgx-style COPY into flow_samples that has
+// reserved ids (nextval, between two of the sequence's WAL logs) but stalls
+// before its first flush has no transaction id yet — a guard snapshot taken then would not wait for it. The chunk cut at
+// a mark taken during the stall must not settle until statement_timeout (+
+// margin) after the cut, by which time the COPY has an xid, failed or
+// committed; here it commits after 1.5 s (longer than the old 1 s settle) and
+// the export holds its rows.
+func TestArchiveSettle_StalledCopy_PG(t *testing.T) {
+	d := NewIntegrationDB(t)
+	if err := d.EnsurePartitions(); err != nil {
+		t.Fatal(err)
+	}
+	const stmtTimeout = 2 * time.Second
+	archiveFastSettle(t, stmtTimeout, 500*time.Millisecond)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	conn, err := d.pgxPool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, fmt.Sprintf("SET statement_timeout = '%dms'", stmtTimeout.Milliseconds())); err != nil {
+		t.Fatal(err)
+	}
+	// nextval WAL-logs (and so takes an xid) once per 32 values; one call in
+	// its own transaction first leaves the next 31 unlogged, which is the
+	// common case the COPY below hits: ids reserved, no xid.
+	if err := d.db.Exec(`SELECT nextval(pg_get_serial_sequence('flow_samples', 'id'))`).Error; err != nil {
+		t.Fatal(err)
+	}
+	pr, pw := io.Pipe()
+	copyDone := make(chan error, 1)
+	go func() {
+		_, err := conn.Conn().PgConn().CopyFrom(ctx, pr, `COPY flow_samples ("timestamp", device_id, src_addr, dst_addr, flow_source, created_at) FROM STDIN`)
+		copyDone <- err
+	}()
+	ts := now.Format(time.RFC3339Nano)
+	for i := 0; i < 5; i++ {
+		if _, err := fmt.Fprintf(pw, "%s\t1\t192.0.2.%d\t198.51.100.7\t0\t%s\n", ts, 10+i, ts); err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(300 * time.Millisecond) // the server has parsed the rows: ids reserved, no xid
+	var st struct {
+		Xid   *string
+		Query string
+	}
+	if err := d.db.Raw(`SELECT backend_xid::text AS xid, query FROM pg_stat_activity WHERE pid = ?`, conn.Conn().PgConn().PID()).Scan(&st).Error; err != nil ||
+		st.Xid != nil || !strings.HasPrefix(st.Query, "COPY") {
+		t.Fatalf("the stalled COPY: %+v (%v): want it running without an xid — the fixture does not reproduce the gap", st, err)
+	}
+	archiveSeedFlows(t, d, now, 10) // committed, higher ids
+	hour := archivePeriodStart(now, time.Hour)
+	for _, b := range []time.Time{hour, hour.Add(time.Hour)} {
+		if _, err := d.TakeArchiveIDMarks(ctx, export.TableFlows, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	chunk, err := d.PlanNextArchiveChunk(ctx, export.TableFlows, hour.Add(2*time.Hour), 0)
+	if err != nil || chunk == nil {
+		t.Fatalf("plan: %+v %v", chunk, err)
+	}
+	cut := time.Now()
+	// The COPY finishes 1.5 s after the cut, inside its statement_timeout.
+	go func() {
+		time.Sleep(1500 * time.Millisecond)
+		_ = pw.Close()
+	}()
+	settled := waitSettled(t, d, chunk, 10*time.Second)
+	if err := <-copyDone; err != nil {
+		t.Fatalf("COPY: %v", err)
+	}
+	t.Logf("settled %s after the cut", settled.Sub(cut).Round(10*time.Millisecond))
+	res, err := d.ExportArchiveChunk(ctx, chunk, export.FlowSchemaV1, ArchiveReadOptions{}, archiveMemOpen(map[export.ObjectID]*bytes.Buffer{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chk, err := d.CheckArchiveChunkCount(ctx, chunk, res)
+	if err != nil || !chk.Verifiable() || res.Rows != 15 {
+		t.Fatalf("export of %d rows; table now %+v (%v): the stalled COPY's rows were missed", res.Rows, chk, err)
+	}
+}
+
+// TestArchiveSettle_StatementTimeout_PG: the settle window comes from the
+// session's statement_timeout (the DSN's): max(1 min, timeout + 5 s); none
+// (0) refuses planning and exports.
+func TestArchiveSettle_StatementTimeout_PG(t *testing.T) {
+	d := NewIntegrationDB(t) // the integration DSN sets no statement_timeout
+	ctx := context.Background()
+	if _, err := d.PlanNextArchiveChunk(ctx, export.TableSyslog, time.Now(), 0); !errors.Is(err, ErrArchiveNoStatementTimeout) {
+		t.Fatalf("plan with statement_timeout 0 = %v", err)
+	}
+	if err := d.ArchiveChunkSettled(ctx, &models.ArchiveChunk{CutAt: time.Now().Add(-time.Hour)}); !errors.Is(err, ErrArchiveNoStatementTimeout) {
+		t.Fatalf("settle with statement_timeout 0 = %v", err)
+	}
+	for _, c := range []struct{ timeout, want time.Duration }{{30 * time.Second, time.Minute}, {90 * time.Second, 95 * time.Second}} {
+		cfg := integrationCfgFromDSN(t, os.Getenv("TEST_PG_DSN"))
+		cfg.Database.StatementTimeout = c.timeout
+		d2, err := Connect(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := d2.archiveSettle(ctx)
+		_ = d2.Close()
+		if err != nil || got != c.want {
+			t.Fatalf("statement_timeout %s: settle %s (%v), want %s", c.timeout, got, err, c.want)
+		}
 	}
 }

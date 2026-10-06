@@ -426,25 +426,42 @@ func TestArchiveExport_SyslogRoundTrip(t *testing.T) {
 		}
 	}
 
-	n, verdict, err := d.CheckArchiveChunkCount(archiveCtx, &c, res.Rows)
-	if err != nil || n != 23 || verdict != ArchiveCountMatch {
-		t.Fatalf("count %d %s %v", n, verdict, err)
+	var idSum int64
+	for _, id := range ids {
+		idSum += id
 	}
-	if err := d.db.Exec("DELETE FROM syslog_messages WHERE id = ?", ids[5]).Error; err != nil {
+	if res.IDSum != idSum {
+		t.Fatalf("exported id sum %d, want %d", res.IDSum, idSum)
+	}
+	check := func(label string, exported *export.ChunkResult, rows int64, verdict string) {
+		t.Helper()
+		chk, err := d.CheckArchiveChunkCount(archiveCtx, &c, exported)
+		if err != nil || chk.Rows != rows || chk.Verdict != verdict || chk.Verifiable() != (verdict == ArchiveCountMatch) {
+			t.Fatalf("%s: %+v %v; want %d rows, %s", label, chk, err, rows, verdict)
+		}
+	}
+	check("as exported", res, 23, ArchiveCountMatch)
+	if err := d.db.Exec("DELETE FROM syslog_messages WHERE id = ?", ids[6]).Error; err != nil {
 		t.Fatal(err)
 	}
-	if n, verdict, _ = d.CheckArchiveChunkCount(archiveCtx, &c, res.Rows); n != 22 || verdict != ArchiveCountShortfall {
-		t.Fatalf("after a purge: %d %s", n, verdict)
-	}
-	// A row the export did not see (it committed after the read): an export
-	// of 22 rows against 23 in the table.
-	late := models.SyslogMessage{ID: uint(ids[5]), Timestamp: start, DeviceID: 1, CreatedAt: start}
-	if err := d.db.Create(&late).Error; err != nil {
+	check("after a purge", res, 22, ArchiveCountShortfall)
+	// The export missed ids[5] (it committed after the read) and ids[6] was
+	// purged since: as many rows as exported, other ids. A count-only check
+	// calls that a match.
+	missed := &export.ChunkResult{Rows: 22, IDSum: idSum - ids[5]}
+	check("a late commit hidden by a purge", missed, 22, ArchiveCountLateCommit)
+	// More rows than exported.
+	if err := d.db.Create(&models.SyslogMessage{ID: uint(ids[6]), Timestamp: start, DeviceID: 1, CreatedAt: start}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if n, verdict, _ = d.CheckArchiveChunkCount(archiveCtx, &c, 22); n != 23 || verdict != ArchiveCountLateCommit {
-		t.Fatalf("after a late commit: %d %s", n, verdict)
+	check("a late commit", missed, 23, ArchiveCountLateCommit)
+	// Fewer rows than exported, yet a row the export never saw: the export
+	// missed the newest row, and the two oldest were purged since. A
+	// count-only "fewer = purge" would call it a shortfall.
+	if err := d.db.Exec("DELETE FROM syslog_messages WHERE id IN (?, ?)", ids[0], ids[1]).Error; err != nil {
+		t.Fatal(err)
 	}
+	check("a late commit beside a purge", &export.ChunkResult{Rows: 22, IDSum: idSum - ids[22]}, 21, ArchiveCountLateCommit)
 
 	if _, err := d.ExportArchiveChunk(archiveCtx, &models.ArchiveChunk{SourceTable: "interface_stats", IDHi: 1}, 1, ArchiveReadOptions{}, nil); err == nil {
 		t.Fatal("an unarchived table was exported")

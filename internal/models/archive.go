@@ -45,9 +45,13 @@ type ArchiveChunk struct {
 	// (flow tables only; NULL for syslog). Rows that arrived in that time are
 	// in this chunk.
 	MarkLateByMs *int64 `json:"mark_late_by_ms"`
-	// GuardXmax is the xmax of a snapshot taken after the cut: no export
-	// until every transaction id below it has finished (any of them may hold
-	// rows in the range). NULL off PostgreSQL.
+	// CutAt is the instant the cut was fixed (the mark's taken_at, or the end
+	// of the syslog search; database clock on PostgreSQL).
+	CutAt time.Time `json:"cut_at"`
+	// GuardXmax is the xmax of a snapshot taken once the cut has settled
+	// (CutAt + statement_timeout + margin): no export until every transaction
+	// id below it has finished (any of them may hold rows in the range). NULL
+	// until then, and off PostgreSQL.
 	GuardXmax *int64 `json:"guard_xmax"`
 	Status    string `json:"status" gorm:"size:16;not null;default:pending;index"`
 	// RowCount and the message-time bounds/histogram are filled by the export.
