@@ -613,6 +613,116 @@ func TestNetEventRollup_SQLite(t *testing.T) {
 	runRollupScenario(t, NewDatabaseForTesting(t))
 }
 
+// runRollupMidnightScenario walks the rollup across one UTC midnight with an
+// injected clock, at the instants the S-5 Postgres test was seen failing
+// (23:59:30, 00:00:30, 00:05) and the ones the design turns on (00:15 =
+// the day's last hour is foldable, 02:00 = the close lag has passed). Rows
+// sit on the boundary itself: the day's last microsecond, exactly midnight
+// (the NEXT day's only), and a late arrival for the day's last hour after
+// that hour was folded. The day must stay open until 02:00, then close with
+// every row exactly once; a backfill rewind re-closes it exactly. Shared
+// with the Postgres integration test.
+func runRollupMidnightScenario(t *testing.T, d *Database) {
+	t.Helper()
+	day := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
+	next := day.AddDate(0, 0, 1)
+	rule := "u:a"
+	ev := func(ts time.Time) models.NetEvent {
+		src := "192.0.2.1"
+		return models.NetEvent{Ts: ts, DeviceID: 1, Activity: int16(normalize.ActivityTraffic), Action: int16(normalize.ActionAllow), RuleKey: &rule, SrcIP: &src}
+	}
+	if err := d.SaveNetEvents([]models.NetEvent{
+		ev(day.Add(30 * time.Minute)),
+		ev(day.Add(23 * time.Hour)),
+		ev(next.Add(-time.Microsecond)), // the day's last instant
+		ev(next),                        // exactly midnight: the next day's
+		ev(next.Add(4 * time.Minute)),
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// rolled sums one day's rollup rows: hits, and whether every row is exact.
+	rolled := func(dd time.Time) (hits int64, exact bool) {
+		var rows []models.NetEventRollup
+		if err := d.db.Find(&rows).Error; err != nil {
+			t.Fatal(err)
+		}
+		exact = true
+		for _, r := range rows {
+			if r.Day.UTC().Equal(dd) {
+				hits += r.Hits
+				exact = exact && r.DistinctSrcExact
+			}
+		}
+		return hits, exact
+	}
+	step := func(at time.Time, wantDay int64, wantClosed bool, wantNext int64) {
+		t.Helper()
+		if _, _, err := d.runNetEventRollupCycle(at); err != nil {
+			t.Fatalf("cycle at %s: %v", at.Format(time.RFC3339), err)
+		}
+		closed, ok, err := d.netEventRollupClosedDay()
+		if err != nil {
+			t.Fatal(err)
+		}
+		isClosed := ok && !closed.Before(day)
+		hits, exact := rolled(day)
+		if hits != wantDay || isClosed != wantClosed || (wantClosed && !exact) {
+			t.Fatalf("at %s: day %s hits=%d exact=%v closed=%v (cursor %s); want hits=%d closed=%v",
+				at.Format(time.RFC3339), day.Format("2006-01-02"), hits, exact, isClosed, closed.Format("2006-01-02"), wantDay, wantClosed)
+		}
+		if ok && !closed.Before(next) {
+			t.Fatalf("at %s: the next day %s was closed while it is still running", at.Format(time.RFC3339), next.Format("2006-01-02"))
+		}
+		if nh, nexact := rolled(next); nh != wantNext || (nh > 0 && nexact) {
+			t.Fatalf("at %s: next day hits=%d exact=%v; want %d, open", at.Format(time.RFC3339), nh, nexact, wantNext)
+		}
+	}
+	// Before 00:15 the day's last hour is inside the fold lag: only 00:30 is
+	// rolled up, the day is open, the midnight row is nobody's yet.
+	step(next.Add(-30*time.Second), 1, false, 0)
+	step(next.Add(30*time.Second), 1, false, 0)
+	step(next.Add(5*time.Minute), 1, false, 0)
+	// 00:15: hour 23 is folded (both its rows, not the midnight one); the day
+	// stays open for the close lag.
+	step(next.Add(15*time.Minute), 3, false, 0)
+	if wm, ok, _ := d.netEventRollupWatermark(); !ok || !wm.Equal(next) {
+		t.Fatalf("watermark at 00:15 = %v %v, want %s", wm, ok, next.Format(time.RFC3339))
+	}
+	// A collector replaying its backlog: a row for the already folded hour 23.
+	// The fold never sees it (the watermark is past it); the day close must.
+	if err := d.SaveNetEvents([]models.NetEvent{ev(next.Add(-2 * time.Second))}); err != nil {
+		t.Fatal(err)
+	}
+	step(next.Add(20*time.Minute), 3, false, 0)
+	// 01:59:59: the next day's hour 00 is folded; the day is one second short
+	// of its close lag.
+	step(next.Add(2*time.Hour-time.Second), 3, false, 2)
+	// 02:00: closed exactly — the late row counted, the midnight row not.
+	step(next.Add(2*time.Hour), 4, true, 2)
+	if c, _, _ := d.netEventRollupClosedDay(); !c.Equal(day) {
+		t.Fatalf("closed-day cursor = %s, want %s", c.Format("2006-01-02"), day.Format("2006-01-02"))
+	}
+	// A backfill writes one more row into the closed day and queues its
+	// rewind: the next cycle re-closes the day exactly and leaves the running
+	// day alone.
+	if err := d.SaveNetEvents([]models.NetEvent{ev(day.Add(12 * time.Hour))}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.setSetting(d.db, netEventRollupRewindKey, day.AddDate(0, 0, -1).Format("2006-01-02")); err != nil {
+		t.Fatal(err)
+	}
+	step(next.Add(2*time.Hour+5*time.Minute), 5, true, 2)
+	if _, ok := d.GetSettingValue(netEventRollupRewindKey); ok {
+		t.Fatal("rewind marker not consumed")
+	}
+}
+
+// TestNetEventRollup_MidnightBoundary_SQLite runs the midnight scenario on
+// the SQLite lane.
+func TestNetEventRollup_MidnightBoundary_SQLite(t *testing.T) {
+	runRollupMidnightScenario(t, NewDatabaseForTesting(t))
+}
+
 // TestNetEventRollup_CloseGiveUp: a day whose exact recompute fails three
 // cycles running is skipped — its hour-fold rows stay (distinct_src a lower
 // bound, exact = false), the closed-day cursor moves past it and the failure

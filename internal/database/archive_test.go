@@ -493,7 +493,7 @@ func TestArchivePeriodStart(t *testing.T) {
 
 // TestArchivePlan_RefusesImplausibleFirstRow: the first syslog chunk starts at
 // the ingest day of the oldest row; a created_at far older than any retention
-// (a forged stamp from before 0.11.300) or in the future is refused instead of
+// (a forged stamp from before 0.11.301) or in the future is refused instead of
 // planning a chunk per day back to it (or never).
 func TestArchivePlan_RefusesImplausibleFirstRow(t *testing.T) {
 	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)

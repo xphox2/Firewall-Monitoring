@@ -388,6 +388,15 @@ func TestNormalizedTables_PG(t *testing.T) {
 		runRollupScenario(t, d)
 	})
 
+	t.Run("RollupMidnightBoundary", func(t *testing.T) {
+		if err := d.Gorm().Exec(`TRUNCATE net_events, net_event_rollups`).Error; err != nil {
+			t.Fatal(err)
+		}
+		d.Gorm().Exec(`DELETE FROM system_settings WHERE "key" IN (?, ?, ?, ?)`, netEventRollupWatermarkKey, netEventRollupClosedDayKey,
+			netEventRollupCloseFailuresKey, netEventRollupRewindKey)
+		runRollupMidnightScenario(t, d)
+	})
+
 	t.Run("V72ConvertsAnEmptyPlainTableLeftBehind", func(t *testing.T) {
 		if err := d.Gorm().Exec(`DROP TABLE net_events`).Error; err != nil {
 			t.Fatal(err)

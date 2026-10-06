@@ -62,7 +62,7 @@ func archiveTableOf(name string) (archiveTable, error) {
 
 // archiveMaxFirstAge bounds how far back the first syslog chunk may start. The
 // oldest row's created_at should be the retention edge (about a month); one
-// older than this is a forged or broken stamp (before 0.11.300 a probe body
+// older than this is a forged or broken stamp (before 0.11.301 a probe body
 // could set it), and planning would otherwise cut one chunk per day back to
 // it. A variable so a test can shrink it.
 var archiveMaxFirstAge = 400 * 24 * time.Hour
