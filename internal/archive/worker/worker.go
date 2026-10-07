@@ -68,11 +68,14 @@ type Store interface {
 // tick (and every markEvery during a long pass), chunks are planned and
 // exported every passEvery — and on the first tick after a waiting chunk
 // becomes exportable (recheckWaits), so a settle window of a minute costs
-// about a minute, not a pass interval.
+// about a minute, not a pass interval. A pass runs as long as some table has
+// work (hours through a syslog backlog); between two chunks it plans again,
+// at most every replanEvery, each table it ran out of work for (pass).
 const (
 	TickInterval = time.Minute
 	passEvery    = 10 * time.Minute
 	markEvery    = time.Minute
+	replanEvery  = time.Minute
 	// planBatch bounds the chunks planned per table per round (a long syslog
 	// backlog is planned over several rounds).
 	planBatch = 64
@@ -368,22 +371,24 @@ func (w *Worker) recheckWaits(ctx context.Context, now time.Time) bool {
 	return false
 }
 
-// nextPass is when Tick next runs a pass: passEvery after the last one, or
-// the tick after the earliest wait recheckWaits will check (it runs the pass
-// only if that chunk can then be exported).
+// nextPass is when Tick next runs a pass: passEvery after the last one
+// started, or the tick after the earliest wait recheckWaits will check (it
+// runs the pass only if that chunk can then be exported). After a pass that
+// ran longer than passEvery it is now: the next tick runs one.
 func (w *Worker) nextPass() time.Time {
+	now := w.now()
 	next := w.lastPass.Add(passEvery)
 	for _, t := range w.tables {
 		if from, ok := w.waits[t]; ok {
 			if from.IsZero() {
-				from = w.now()
+				from = now
 			}
 			if from.Before(next) {
 				next = from
 			}
 		}
 	}
-	return next
+	return later(next, now)
 }
 
 // saveRuntime writes the runtime state, with the staging directory's free
@@ -452,7 +457,7 @@ func (w *Worker) Tick(ctx context.Context) {
 		return
 	}
 	w.lastPass = w.now()
-	w.rt.SetPasses(w.lastPass, w.lastPass.Add(passEvery)) // while it runs
+	w.rt.PassStarted(w.lastPass)
 	w.pass(ctx)
 	w.rt.SetPasses(w.lastPass, w.nextPass())
 }
@@ -473,9 +478,18 @@ func (w *Worker) takeMarks(ctx context.Context) {
 
 // pass plans and works chunks until none of the enabled tables has a chunk
 // that can make progress now, then seals the months that are due. Tables take
-// turns one chunk at a time, flows first, so a long syslog backlog does not
-// hold the hourly flow chunks back by more than one syslog chunk. Marks keep
-// being taken while it runs.
+// turns one chunk at a time, flows first. Marks keep being taken while it
+// runs, and a table that ran out of work — nothing planned, its next chunk
+// settling or held by a writer, a chunk failed (retried after its backoff) or
+// a bucket failure's cooldown — is planned and worked again between two
+// chunks of the others once replanEvery has passed (and the window, backoff
+// or cooldown has ended). So a pass that spends hours on a syslog backlog
+// holds the hourly flow chunks (and the daily counter chunks) back by at most
+// one syslog chunk, not by the whole backlog: the rollup deletes raw flows
+// after about an hour, and the retention gate holds them until verified. A
+// table whose settle check or database read failed, or that cannot be cut
+// (no statement_timeout, a leaf being moved, outside ARCHIVE_WINDOW), waits
+// for the next pass, as before.
 func (w *Worker) pass(ctx context.Context) {
 	markCtx, stop := context.WithCancel(ctx)
 	var wg sync.WaitGroup
@@ -502,9 +516,17 @@ func (w *Worker) pass(ctx context.Context) {
 		}
 	}()
 
-	skip := map[string]bool{} // tables done for this pass
+	skip := map[string]bool{}       // tables done for now
+	again := map[string]time.Time{} // skipped tables planned again from then on
 	for ctx.Err() == nil {
 		progressed := false
+		now := w.now()
+		for t, at := range again {
+			if !now.Before(at) {
+				delete(again, t)
+				delete(skip, t)
+			}
+		}
 		for _, t := range w.tables {
 			if skip[t] || ctx.Err() != nil {
 				continue
@@ -517,12 +539,35 @@ func (w *Worker) pass(ctx context.Context) {
 				skip[t] = true
 				continue
 			}
-			if w.workOne(ctx, t) == progressMade {
+			switch w.workOne(ctx, t) {
+			case progressMade:
 				progressed = true
-			} else {
-				// Nothing workable, waiting, or failed (retried after its
-				// backoff): the table is done for this pass.
+			case progressIdle:
+				// Nothing planned yet: plan again once a mark or the end of
+				// a period may have made a chunk due.
 				skip[t] = true
+				again[t] = w.now().Add(replanEvery)
+			case progressFailed:
+				// The failed chunk is retried after its backoff
+				// (NextArchiveChunk passes over it until then, and the
+				// table's later chunks may proceed); after a bucket failure
+				// the table rests until its cooldown ends.
+				skip[t] = true
+				again[t] = later(w.cooldown[t], w.now().Add(replanEvery))
+			default:
+				// Waiting. A chunk settling or held by a writer (settleWait)
+				// is checked again once its window has ended, a table resting
+				// after a bucket failure once its cooldown has, never sooner
+				// than replanEvery. Anything else — a failed settle check, a
+				// database error, a leaf being moved — waits for the next
+				// pass (a database in trouble is not polled every minute).
+				skip[t] = true
+				now := w.now()
+				if from, ok := w.waits[t]; ok {
+					again[t] = later(from, now.Add(replanEvery))
+				} else if until, ok := w.cooldown[t]; ok && now.Before(until) {
+					again[t] = later(until, now.Add(replanEvery))
+				}
 			}
 		}
 		if !progressed {
@@ -582,12 +627,22 @@ func (w *Worker) plan(ctx context.Context, table string) bool {
 	return true
 }
 
+// later is the later of a and b.
+func later(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
+}
+
 type progress int
 
 const (
 	progressNone progress = iota
 	progressMade
 	progressFailed
+	// progressIdle: the table has no planned chunk to work.
+	progressIdle
 )
 
 // stageError is a failed step of a chunk attempt; stage labels the metric.
@@ -643,7 +698,7 @@ func (w *Worker) workOne(ctx context.Context, table string) progress {
 	}
 	if c == nil {
 		w.unsettled(table, "", nil)
-		return progressNone
+		return progressIdle
 	}
 	if c.Status != models.ArchiveChunkVerifying {
 		// Exporting needs the cut settled; checking first keeps a chunk that

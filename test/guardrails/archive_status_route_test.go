@@ -86,6 +86,9 @@ func TestArchiveStatusCardScript(t *testing.T) {
 		`data-action="archive-reset-chunk"`,
 		`role="status"`,
 		"if (lastHtml[s[0]] !== s[1]) {",
+		// A pass runs for hours through a backlog: between two chunks the
+		// card says so instead of "Idle" with a long-past next pass.
+		"(a || w.pass_running)",
 	} {
 		if !strings.Contains(js, sub) {
 			t.Errorf("admin-archive-status.js is missing %q", sub)

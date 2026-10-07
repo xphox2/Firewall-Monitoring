@@ -194,6 +194,8 @@
                 html += settling.map(function (t) {
                     return '<div><strong>' + esc(t.table) + '</strong>: ' + esc(t.unsettled.detail || 'the cut is settling') + ' &mdash; exported once it has, ' + liveUntil(t.unsettled.until) + '</div>';
                 }).join('');
+            } else if (w && w.pass_running) {
+                html += '<div style="font-weight:600;">Planning the next chunk</div>';
             } else if (w && !w.stale) {
                 html += '<div style="font-weight:600;">Idle</div>';
             } else {
@@ -204,7 +206,7 @@
                     esc(label(t.unsettled.reason)) + ' for ' + dur(t.unsettled.for_seconds) + '</div>';
             });
         }
-        if (w && a && w.last_pass_at) {
+        if (w && (a || w.pass_running) && w.last_pass_at) {
             html += '<div style="' + small + faint + 'margin-top:4px;">Pass running since ' + when(w.last_pass_at) + '</div>';
         } else if (w && w.next_pass_at) {
             html += '<div style="' + small + faint + 'margin-top:4px;">Last pass ' + when(w.last_pass_at) + '; next ' + liveUntil(w.next_pass_at) + '</div>';

@@ -25,9 +25,13 @@ type Runtime struct {
 	Stages      map[string]StageError   `json:"stages,omitempty"`
 	// LastPassAt / NextPassAt: when the worker last planned and worked
 	// chunks, and when it will next (sooner when a settling chunk's window
-	// ends first). nil until the first pass.
-	LastPassAt *time.Time `json:"last_pass_at,omitempty"`
-	NextPassAt *time.Time `json:"next_pass_at,omitempty"`
+	// ends first). nil until the first pass. While a pass runs PassRunning
+	// is set, LastPassAt is its start and NextPassAt is nil: a pass lasts as
+	// long as there is work (hours through a syslog backlog), re-planning
+	// the tables it ran out of at most every minute, so no next pass is due.
+	LastPassAt  *time.Time `json:"last_pass_at,omitempty"`
+	NextPassAt  *time.Time `json:"next_pass_at,omitempty"`
+	PassRunning bool       `json:"pass_running,omitempty"`
 	// Activity is the chunk being worked right now (nil between chunks).
 	Activity *Activity `json:"activity,omitempty"`
 }
@@ -166,12 +170,22 @@ func (r *Recorder) SetWait(table, reason, detail string, until *time.Time, now t
 	r.rt.Tables[table] = cur
 }
 
-// SetPasses records when the last pass ran and when the next one is due.
+// SetPasses records when the last pass ran and when the next one is due (no
+// pass is running).
 func (r *Recorder) SetPasses(last, next time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	l, n := last.UTC(), next.UTC()
-	r.rt.LastPassAt, r.rt.NextPassAt = &l, &n
+	r.rt.LastPassAt, r.rt.NextPassAt, r.rt.PassRunning = &l, &n, false
+}
+
+// PassStarted records that a pass began at at and is running (no next pass
+// until it ends: SetPasses).
+func (r *Recorder) PassStarted(at time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	l := at.UTC()
+	r.rt.LastPassAt, r.rt.NextPassAt, r.rt.PassRunning = &l, nil, true
 }
 
 // StartActivity records that chunk work began on a (nil: none).
