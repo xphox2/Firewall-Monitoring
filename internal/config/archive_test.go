@@ -18,8 +18,13 @@ var archiveKeys = []string{
 	"ARCHIVE_S3_PATH_STYLE", "ARCHIVE_OBJECT_LOCK_DAYS", "ARCHIVE_OBJECT_LOCK_MODE", "ARCHIVE_MIN_AGE_HOURS",
 	"ARCHIVE_ALLOW_HTTP", "ARCHIVE_ALLOW_PRIVATE_ENDPOINT", "ARCHIVE_SYSLOG_RATE_ROWS_PER_SEC",
 	"ARCHIVE_FLOW_RATE_ROWS_PER_SEC", "ARCHIVE_WINDOW", "ARCHIVE_STAGING_DIR", "ARCHIVE_SEAL_GRACE_HOURS",
-	"ARCHIVE_SEAL_REVERIFY",
+	"ARCHIVE_SEAL_REVERIFY", "ARCHIVE_TARGET", "ARCHIVE_LOCAL_DIR", "ARCHIVE_ALLOWED_ROOT",
 }
+
+// archiveEnvOnlyKeys are the ARCHIVE_* keys deliberately absent from the
+// admin form: ARCHIVE_ALLOWED_ROOT bounds the directories the form may
+// choose, so the form must not be able to widen it.
+var archiveEnvOnlyKeys = map[string]bool{"ARCHIVE_ALLOWED_ROOT": true}
 
 // setArchiveEnv clears every ARCHIVE_* key, then sets kv.
 func setArchiveEnv(t *testing.T, kv map[string]string) {

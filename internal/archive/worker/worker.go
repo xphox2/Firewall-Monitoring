@@ -46,21 +46,24 @@ import (
 	"github.com/shirou/gopsutil/v4/disk"
 
 	"firewall-mon/internal/archive/export"
+	"firewall-mon/internal/archive/objstore"
 	"firewall-mon/internal/archive/s3"
 	"firewall-mon/internal/archive/status"
+	"firewall-mon/internal/archive/target"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/metrics"
 	"firewall-mon/internal/models"
 )
 
-// Store is the bucket as the worker uses it; *s3.Client implements it.
+// Store is the target as the worker uses it; every objstore.Store (the S3
+// bucket, a local directory) implements it.
 type Store interface {
 	Key(rel string) (string, error)
-	Put(ctx context.Context, rel string, body io.ReaderAt, size int64, meta map[string]string) (s3.PutResult, error)
-	Head(ctx context.Context, rel, versionID string) (s3.ObjectInfo, error)
-	VerifyHead(ctx context.Context, want s3.PutResult) error
-	VerifyFull(ctx context.Context, want s3.PutResult, w io.Writer) error
+	Put(ctx context.Context, rel string, body io.ReaderAt, size int64, meta map[string]string) (objstore.PutResult, error)
+	Head(ctx context.Context, rel, versionID string) (objstore.ObjectInfo, error)
+	VerifyHead(ctx context.Context, want objstore.PutResult) error
+	VerifyFull(ctx context.Context, want objstore.PutResult, w io.Writer) error
 	Preflight(ctx context.Context) error
 }
 
@@ -168,11 +171,11 @@ type Worker struct {
 	beforeMark    func(ctx context.Context, c *models.ArchiveChunk) error
 }
 
-// New builds the worker for the enabled streams of cfg over db, with the S3
-// client from cfg. It prepares the staging directory (removing chunk
+// New builds the worker for the enabled streams of cfg over db, with the
+// target of cfg (target.Open: the S3 bucket or a local directory). It prepares the staging directory (removing chunk
 // directories a previous run left behind) and makes no network call.
 func New(db *database.Database, cfg config.ArchiveConfig, opts ...s3.Option) (*Worker, error) {
-	client, err := s3.New(cfg, opts...)
+	client, err := target.Open(cfg, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -187,6 +190,17 @@ func newWorker(db *database.Database, store Store, cfg config.ArchiveConfig) (*W
 		waits:          map[string]time.Time{},
 	}
 	w.settled = db.ArchiveChunkSettled
+	// A local target writes this install's id into its marker and refuses a
+	// directory another install initialised.
+	if s, ok := store.(interface{ SetInstallID(string) }); ok {
+		ictx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		id, err := db.ArchiveInstallID(ictx)
+		cancel()
+		if err != nil {
+			return nil, fmt.Errorf("archive: this install's archive id: %w", err)
+		}
+		s.SetInstallID(id)
+	}
 	if cfg.FlowsEnabled {
 		w.tables = append(w.tables, export.TableFlows, export.TableCounters)
 		w.marks = append(w.marks, export.TableFlows, export.TableCounters)
@@ -223,6 +237,36 @@ func newWorker(db *database.Database, store Store, cfg config.ArchiveConfig) (*W
 		}
 	}
 	return w, nil
+}
+
+// preflightTarget runs the target's preflight. A target that was never
+// written to (a local directory without its marker, objstore.ErrUninitialized)
+// is initialised only while the archive holds no chunk: with chunks recorded
+// the marker's absence means the directory is not the one they were written
+// to — usually a share that is not mounted, whose empty mount point must not
+// receive the archive — and the worker waits (the retention gate keeps every
+// unarchived row).
+func (w *Worker) preflightTarget(ctx context.Context) error {
+	err := w.store.Preflight(ctx)
+	if !errors.Is(err, objstore.ErrUninitialized) {
+		return err
+	}
+	init, ok := w.store.(objstore.Initializer)
+	if !ok {
+		return err
+	}
+	has, herr := w.db.ArchiveHasChunks(ctx)
+	if herr != nil {
+		return fmt.Errorf("%w (and whether the archive holds chunks is unknown: %w)", err, herr)
+	}
+	if has {
+		return fmt.Errorf("%w; the archive holds chunks, so the target is not initialised again: mount the share (or partition) holding them, see docs/OPERATIONS.md \"Raw archive: a local or network-share target\"", err)
+	}
+	if ierr := init.Init(ctx); ierr != nil {
+		return ierr
+	}
+	log.Printf("archive: initialised the archive target (first use)")
+	return w.store.Preflight(ctx)
 }
 
 // Tables returns the source tables the worker archives, in pass order.
@@ -449,17 +493,17 @@ func (w *Worker) Tick(ctx context.Context) {
 	w.clearLog("lock")
 
 	if !w.preflight {
-		if err := w.store.Preflight(ctx); err != nil {
+		if err := w.preflightTarget(ctx); err != nil {
 			if ctx.Err() == nil {
 				w.fail("preflight", err)
-				w.logf("preflight", "bucket preflight failed (nothing is archived until it passes): %v", err)
+				w.logf("preflight", "target preflight failed (nothing is archived until it passes): %v", err)
 			}
 			return
 		}
 		w.preflight = true
 		w.rt.SetPreflight(true)
 		w.clearLog("preflight")
-		log.Printf("archive: bucket preflight passed; archiving %v", w.tables)
+		log.Printf("archive: target preflight passed; archiving %v", w.tables)
 	}
 	w.takeMarks(ctx)
 	if now := w.now(); !w.lastPass.IsZero() && now.Sub(w.lastPass) < passEvery && !w.recheckWaits(ctx, now) {
@@ -681,7 +725,9 @@ func mismatchErr(stage string, err error) error {
 	return &stageError{stage: stage, err: fmt.Errorf("%w: %w", errMismatch, err)}
 }
 
-func isMismatch(err error) bool { return errors.Is(err, errMismatch) || errors.Is(err, s3.ErrMismatch) }
+func isMismatch(err error) bool {
+	return errors.Is(err, errMismatch) || errors.Is(err, objstore.ErrMismatch)
+}
 
 func stageErr(stage string, err error) error {
 	if err == nil {
@@ -1065,12 +1111,12 @@ func (w *Worker) exportUpload(ctx context.Context, c *models.ArchiveChunk) error
 }
 
 // putResult is what the verify helpers compare a stored object against.
-func (w *Worker) putResult(o *models.ArchiveObject) (s3.PutResult, error) {
+func (w *Worker) putResult(o *models.ArchiveObject) (objstore.PutResult, error) {
 	rel, err := w.rel(o.ObjectKey)
 	if err != nil {
-		return s3.PutResult{}, err
+		return objstore.PutResult{}, err
 	}
-	r := s3.PutResult{Rel: rel, Key: o.ObjectKey, Size: o.ObjectBytes, SHA256: o.Sha256Object, ETag: o.ETag, Parts: o.PartCount, VersionID: o.VersionID}
+	r := objstore.PutResult{Rel: rel, Key: o.ObjectKey, Size: o.ObjectBytes, SHA256: o.Sha256Object, ETag: o.ETag, Parts: o.PartCount, VersionID: o.VersionID}
 	if o.LockUntil != nil {
 		r.RetainUntil = o.LockUntil.UTC()
 	}
@@ -1186,9 +1232,12 @@ func (w *Worker) putManifest(ctx context.Context, c *models.ArchiveChunk, stream
 	sum := md5.Sum(body) // #nosec G401 -- the S3 ETag of a single-part object
 	if info, err := w.store.Head(ctx, rel, ""); err == nil && info.Size == int64(len(body)) && info.ETag == hex.EncodeToString(sum[:]) {
 		sha := sha256.Sum256(body)
-		return w.store.VerifyFull(ctx, s3.PutResult{Rel: rel, Key: info.Key, Size: info.Size, SHA256: hex.EncodeToString(sha[:]),
+		return w.store.VerifyFull(ctx, objstore.PutResult{Rel: rel, Key: info.Key, Size: info.Size, SHA256: hex.EncodeToString(sha[:]),
 			ETag: info.ETag, VersionID: info.VersionID}, nil)
-	} else if err != nil && !errors.Is(err, s3.ErrNotFound) {
+	} else if err != nil && !errors.Is(err, objstore.ErrNotFound) && !errors.Is(err, objstore.ErrMismatch) {
+		// A stored copy that cannot be shown to be this manifest (a
+		// mismatch, e.g. an unreadable local sidecar) is superseded by a
+		// new version below; any other error is the target's.
 		return err
 	}
 	put, err := w.put(ctx, rel, bytes.NewReader(body), int64(len(body)), map[string]string{

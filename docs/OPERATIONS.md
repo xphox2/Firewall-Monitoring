@@ -666,6 +666,11 @@ manifest cannot simply be pointed at it. What does not need a move:
 - **Changing Object Lock days, pacing, the window or the streams**: allowed
   at any time.
 
+The same holds for switching `ARCHIVE_TARGET` between `s3` and `local`, or
+changing a local target's directory or prefix from the admin page (moving a
+local target's data while keeping its container path needs no fresh start;
+see "Raw archive: a local or network-share target").
+
 To change provider, bucket or prefix anyway, the archive starts afresh at the
 new location and the old bucket stays the record of what it already holds.
 This is a manual procedure and is **not exercised by the test suite**: take a
@@ -693,6 +698,210 @@ database backup first (`pg_dump`), and do it in a quiet hour.
    (`--env-only` ignores the admin page's settings). Restores from the old
    bucket are no longer possible through the manifest.
 
+## Raw archive: a local or network-share target
+
+From 0.11.315 the archive can be written to a **directory** instead of an
+S3 bucket: `ARCHIVE_TARGET=local` and `ARCHIVE_LOCAL_DIR`, set in the
+environment or on **Settings → Retention → Raw Archive Settings → Target**.
+The directory can be a dedicated local partition or a network share (NFS,
+SMB). **The host mounts it; the server never mounts anything** and needs no
+extra privilege or capability. Everything else is the same as with a bucket:
+the same layout below the prefix (`<ARCHIVE_LOCAL_DIR>/<prefix>/<stream>/v<schema>/<YYYY-MM>/…`,
+`chunk.json`, `_MONTH.json`), every object read back in full and hashed
+before its rows may be deleted, the monthly seal, `--verify-month` and
+restores.
+
+### 1. Mount the volume on the host
+
+Pick one directory on the host for everything the archive uses (here
+`/srv/fwmon-archive`) and mount the partition or share there. The server
+runs as **uid 100, gid 101** inside the published image (check with
+`docker exec firewall-mon id fwmon`); the archive's files must be writable by
+that uid/gid. Neutral examples for `/etc/fstab`:
+
+```fstab
+# A dedicated local partition (ext4 or xfs). nofail: the host still boots
+# without it — the archive then waits, see below.
+UUID=0000aaaa-bbbb-cccc-dddd-eeeeffff0000  /srv/fwmon-archive  ext4  defaults,noatime,nofail  0 2
+
+# An NFS export. _netdev: mount after the network; x-systemd.automount: mount
+# on first access, so a slow NAS does not hold up the boot.
+nas.example.com:/export/fwmon  /srv/fwmon-archive  nfs  rw,hard,noatime,vers=4.2,_netdev,nofail,x-systemd.automount  0 0
+
+# An SMB share. uid/gid map every file to the container user; the
+# credentials file is root-only (chmod 600) and never in this repository.
+//nas.example.com/fwmon  /srv/fwmon-archive  cifs  credentials=/root/.smb-fwmon,uid=100,gid=101,file_mode=0640,dir_mode=0750,_netdev,nofail,x-systemd.automount  0 0
+```
+
+Then create the directories and give them to the container user:
+
+```sh
+mount /srv/fwmon-archive
+mkdir -p /srv/fwmon-archive/archive /srv/fwmon-archive/staging
+chown 100:101 /srv/fwmon-archive/archive /srv/fwmon-archive/staging
+```
+
+**uid/gid on a share.** NFS maps uids as they are unless the export squashes
+them: `root_squash` (the default) only affects root, so either own the
+directories by 100:101 on the server, or export with
+`all_squash,anonuid=100,anongid=101`. SMB has no Unix owners without the
+Unix extensions: `uid=100,gid=101` on the mount makes every file appear as
+the container user's. A permission error says this in the preflight, the
+Test and the server log (`permission denied: the server runs as uid 100,
+gid 101 …`).
+
+**Durability on a share.** The archive counts an object as stored only after
+it was fsynced and read back, so the server must really store what it
+acknowledges: the **NFS export must be `sync`** (`/export/fwmon
+192.0.2.0/24(rw,sync,no_subtree_check)` — with `async` the server acknowledges
+writes it has not yet put on disk, and a NAS crash can lose objects the
+archive has verified and whose rows retention then deletes), and the **SMB
+share must honour flush** (Samba: `strict sync = yes`, the default since
+4.7; on a NAS appliance, disable any "async write" / "write cache"
+option for the share). The read-back on a network filesystem bypasses this
+client's page cache (direct I/O, or dropping the file's cached pages after
+the fsync), so it reads what the server returns, not what was just written
+into local memory.
+
+### 2. Bind it into the container under the allowed root
+
+`ARCHIVE_ALLOWED_ROOT` (default `/archive`, **environment only**) is the
+directory inside the container under which the admin page may choose the
+archive directory and the staging directory; its folder picker never leaves
+it, and a symbolic link that leads out of it is refused. It must be a bind
+mount (the Test and the save refuse a root that is not a mount point: a
+directory there would be in the container's writable layer), must not be
+`/` and must not overlap the database volume `/data`. In
+`docker-compose.override.yml` (next to `docker-compose.yml`, not tracked):
+
+```yaml
+services:
+  firewall-mon:
+    volumes:
+      - /srv/fwmon-archive:/archive
+```
+
+`docker compose up -d` applies it. With systemd automount on the host, add
+`:rslave` (`/srv/fwmon-archive:/archive:rslave`) so a share mounted after
+the container started is seen inside it.
+
+### 3. Choose it on the admin page
+
+On **Raw Archive Settings**: Target `local`, then **Browse…** beside
+*Archive directory* and pick `/archive/archive`; do the same for the
+*Staging directory* (`/archive/staging`). **Test** probes each directory and
+lists every check:
+
+- it resolves under the allowed root and is a directory;
+- a 1 MiB test file can be written, fsynced, committed under a new name
+  (Test names the method: hard link, `RENAME_NOREPLACE`, or a checked
+  rename that is not atomic), a second commit onto that name is refused, and
+  the file is read back and removed (with the write and read times);
+- free space, the filesystem type (`nfs`, `cifs`, `ext4`, `xfs`, `zfs`, …),
+  whether read-only files and directory fsync work there;
+- a **warning** when the archive, the staging directory or the database
+  volume share a filesystem (an archive on the database's disk is no separate
+  copy and fills the disk the retention protects).
+
+Saving with a stream enabled runs the same probe after your password, then
+the archive worker initialises the directory on its first pass: it creates
+`<dir>/<prefix>/` and the marker file `.fwmon-archive-target` in it, which
+carries this install's id (`system_settings.archive_install_id`, random). A
+directory whose marker carries another install's id is refused by the
+preflight and every write: **two servers must not share one archive
+directory** (give each its own directory or prefix). The worker's preflight
+also refuses, however the configuration was set (environment or admin
+page), a directory on the container's `overlay` or `tmpfs`, and one where
+neither `ARCHIVE_LOCAL_DIR` nor a directory above it up to
+`ARCHIVE_ALLOWED_ROOT` is a mount point. That applies to a bare-metal
+install too: there `ARCHIVE_ALLOWED_ROOT` (or `ARCHIVE_LOCAL_DIR`) must be
+the mount point of the archive partition or share itself, not a directory on
+the system disk.
+
+**The archive tree must be one filesystem.** Nothing may be mounted below
+`<ARCHIVE_LOCAL_DIR>/<prefix>`: an NFSv4 export with `crossmnt` children, a
+ZFS dataset or a btrfs subvolume created under it puts objects on another
+device than the marker, and every write there fails with "… a nested mount
+below the archive directory …". Mount the share or dataset at
+`ARCHIVE_LOCAL_DIR` (or above it), never inside the archive.
+
+### How it writes
+
+- **Crash-safe**: each object is written to a temporary file in its own
+  directory, fsynced, given its final name without replacing an existing
+  file, and the directory and those above it up to the prefix are fsynced.
+  A crash leaves a temporary file (removed by the next write there), never a
+  partial object. The final name is given by a hard link, which the kernel
+  (or the NFS server) refuses atomically if the name exists; where there are
+  no hard links (SMB without the Unix extensions) by `renameat2` with
+  `RENAME_NOREPLACE`, also refused atomically; and only where neither works
+  by a rename after checking that the name is free. That last one is **not
+  atomic**: it relies on the check and on a single writer per archive
+  directory (one archive worker per database, and the install id in the
+  marker). Test says which one the directory uses and warns about the last.
+- **The volume must stay the same during a write**: the device of the marker
+  is recorded when a write starts and checked again after it; a share
+  unmounted or replaced meanwhile fails the write, and the chunk is not
+  verified. Writes never create the `<dir>/<prefix>` directory itself and
+  never follow a symbolic link inside it.
+- **Never overwritten**: a second write of a key with other bytes (a chunk
+  re-exported after a mismatch) keeps the first file and writes
+  `<name>.v2`, `<name>.v3`, …; the version id the manifest records is that
+  number, so every verify reads exactly the bytes it wrote. A retry with the
+  same bytes reuses the stored file (after hashing it in full).
+- **Metadata** (the S3 headers' equivalent) is a sidecar `<name>.fwmeta`;
+  copy it with the object. An object without one still reads. A sidecar that
+  exists but cannot be parsed is a **mismatch**: the chunk error names the
+  file, the chunk is exported again as a new version with a fresh sidecar,
+  and three in a row park it in `needs_attention`. If the object itself is
+  intact (its sha256 is the manifest's `sha256_object`), the broken sidecar
+  may be removed; a `_MONTH.json`'s sidecar records the seal's sha256 and
+  must be restored from a copy instead.
+- **Read-only**: finished objects are `chmod 0444`. That only stops
+  accidents: whoever owns the files (or root on the NAS) can change them.
+  **Object Lock does not exist for a directory** — `ARCHIVE_OBJECT_LOCK_*`
+  must be empty with a local target. For real immutability use the storage:
+  ZFS snapshots on a schedule (`zfs snapshot` with a retention, or
+  sanoid/zrepl), a NAS share with WORM / immutable snapshots, or a periodic
+  copy to object storage with Object Lock. `--verify-month` detects any
+  change to a sealed month either way.
+
+### When the share is not there
+
+If the share is unmounted, unreachable or stale, the container sees the
+empty mount point (or I/O errors). The archive never writes there: every
+write needs the marker file, and once the archive holds chunks the worker
+**does not create the marker again** — its preflight fails with "… has no
+.fwmon-archive-target … the archive holds chunks …", the status card shows
+the failed preflight, and nothing is exported. A missing object is not
+counted as lost while the marker is missing. **The retention gate holds**:
+raw rows are deleted only up to what was verified, so nothing unarchived is
+deleted while the share is away; the database grows meanwhile
+(`RETENTION_HELD` warns). A share that goes away while the worker runs
+fails its writes and read-backs the same way (retried with the bucket
+backoff: 1, 5, 30 minutes, then 2 hours; never counted as a mismatch). When
+the share is back the worker retries its preflight every minute and catches
+up. A stale NFS handle (`ESTALE`) needs a remount on the host and
+a container restart.
+
+**Monitoring**: the same as for a bucket — the status card and
+`fwmon-api archive --status`, `fwmon_archive_lag_seconds`, the
+`ARCHIVE_LAG`, `ARCHIVE_NEEDS_ATTENTION` and `RETENTION_HELD` alerts. Watch
+the share's free space on the host; the staging directory's floor is
+checked by the worker (2 GiB).
+
+### Moving or switching
+
+Once the archive holds chunks the target type, the directory and the
+prefix are fixed on the admin page (409), like a bucket's endpoint. To move
+the data to another disk or NAS, keep the **container path**: copy the tree
+with the file names unchanged (`rsync -a`, sidecars included — the version
+ids are the file names, so the manifest stays valid), remount the new
+volume at the same host path or change the bind mount's host side, and run
+`fwmon-api archive --verify-month` on a sealed month. Switching between S3
+and a local target is refused with chunks present; it is the fresh start of
+"Raw archive: moving the bucket" below.
+
 ## Raw archive: the staging directory
 
 When `ARCHIVE_SYSLOG_ENABLED` or `ARCHIVE_FLOWS_ENABLED` is on (v0.11.302+;
@@ -715,6 +924,14 @@ the key at it. With the bundled `docker-compose.yml`, add to the
     volumes:
       - ${ARCHIVE_STAGING_HOST_DIR:-./archive-staging}:/archive-staging
 ```
+
+From 0.11.315 a staging directory chosen on the admin page (with
+**Browse…**) must be under `ARCHIVE_ALLOWED_ROOT` (default `/archive`); one
+set before outside it, like `/archive-staging` above, keeps working while it
+is not changed. To keep staging on another disk than the archive, bind-mount
+that disk *inside* the root as well, e.g.
+`- ${ARCHIVE_STAGING_HOST_DIR}:/archive/staging` below the archive volume's
+line — Test then shows the two on different filesystems.
 
 The worker only ever removes `chunk-<n>` entries from that directory (left
 over by an interrupted run, on the next start), so a shared directory is safe,

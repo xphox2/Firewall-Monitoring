@@ -73,6 +73,22 @@ type ArchiveConfig struct {
 	// often on the database's disk).
 	StagingDir string // ARCHIVE_STAGING_DIR
 
+	// Target is where the objects go: "s3" (S3-compatible object storage,
+	// the ARCHIVE_S3_* keys) or "local" (a directory, LocalDir: a local
+	// partition or a network share the HOST mounts and bind-mounts into the
+	// container under AllowedRoot; the application never mounts anything).
+	// The object layout below ARCHIVE_S3_PREFIX is the same for both.
+	Target string // ARCHIVE_TARGET: s3 (default) or local
+	// LocalDir is the local target's directory: an existing absolute path
+	// under AllowedRoot, outside the database volume. Objects are written to
+	// "<LocalDir>/<prefix>/<stream>/…".
+	LocalDir string // ARCHIVE_LOCAL_DIR
+	// AllowedRoot bounds every directory the admin form may choose (the
+	// local target and the staging directory) and the local target itself:
+	// a bind mount of the host's archive partition or share. Environment
+	// only; blank is DefaultArchiveAllowedRoot.
+	AllowedRoot string // ARCHIVE_ALLOWED_ROOT (default /archive)
+
 	// Lab / self-hosted escape hatches (MinIO, Garage, SeaweedFS on a LAN).
 	AllowHTTP            bool // ARCHIVE_ALLOW_HTTP (default false)
 	AllowPrivateEndpoint bool // ARCHIVE_ALLOW_PRIVATE_ENDPOINT (default false)
@@ -85,6 +101,153 @@ type ArchiveConfig struct {
 	// envSet lists the ARCHIVE_* keys the environment set (EnvSet): the
 	// admin form shows whether a value is the environment's or the default.
 	envSet map[string]bool
+}
+
+// ARCHIVE_TARGET values.
+const (
+	ArchiveTargetS3    = "s3"
+	ArchiveTargetLocal = "local"
+)
+
+// DefaultArchiveAllowedRoot is ARCHIVE_ALLOWED_ROOT when it is blank: a path
+// inside the container, where docker-compose.override.yml bind-mounts the
+// host's archive partition or share (docs/OPERATIONS.md).
+const DefaultArchiveAllowedRoot = "/archive"
+
+// ArchiveDatabaseDir is the database volume inside the container (the
+// Dockerfile's /data, PGDATA /data/pgdata). Neither the local target nor the
+// allowed root may lie in it: an archive on the database's own disk is no
+// copy, and it would fill the disk the retention is protecting. A variable
+// so tests can move it.
+var ArchiveDatabaseDir = "/data"
+
+// normalizeArchiveTarget is ARCHIVE_TARGET as read: trimmed, lower case,
+// blank = s3.
+func normalizeArchiveTarget(v string) string {
+	if v = strings.ToLower(strings.TrimSpace(v)); v == "" {
+		return ArchiveTargetS3
+	}
+	return v
+}
+
+// IsLocal reports whether the archive writes to a directory (ARCHIVE_TARGET
+// local) rather than to S3.
+func (a ArchiveConfig) IsLocal() bool { return a.Target == ArchiveTargetLocal }
+
+// TargetName is ARCHIVE_TARGET, "s3" when unset.
+func (a ArchiveConfig) TargetName() string { return normalizeArchiveTarget(a.Target) }
+
+// Root is ARCHIVE_ALLOWED_ROOT, cleaned, or DefaultArchiveAllowedRoot when
+// it is blank.
+func (a ArchiveConfig) Root() string {
+	if r := strings.TrimSpace(a.AllowedRoot); r != "" {
+		return filepath.Clean(r)
+	}
+	return DefaultArchiveAllowedRoot
+}
+
+// pathWithin reports whether p is dir or below it (both clean and absolute).
+func pathWithin(p, dir string) bool {
+	if dir == "/" {
+		return true
+	}
+	return p == dir || strings.HasPrefix(p, dir+"/")
+}
+
+// ValidateAllowedRoot checks ARCHIVE_ALLOWED_ROOT: absolute, not "/", and
+// neither inside nor containing the database volume.
+func (a ArchiveConfig) ValidateAllowedRoot() error {
+	raw := strings.TrimSpace(a.AllowedRoot)
+	root := a.Root()
+	db := filepath.Clean(ArchiveDatabaseDir)
+	switch {
+	case raw != "" && !filepath.IsAbs(raw):
+		return fmt.Errorf("ARCHIVE_ALLOWED_ROOT must be an absolute path, got %q", raw)
+	case root == "/":
+		return fmt.Errorf("ARCHIVE_ALLOWED_ROOT must not be /: name the directory the host's archive volume is bind-mounted on, e.g. %s", DefaultArchiveAllowedRoot)
+	case pathWithin(root, db) || pathWithin(db, root):
+		return fmt.Errorf("ARCHIVE_ALLOWED_ROOT %s overlaps the database volume %s: bind-mount the archive volume elsewhere", root, db)
+	}
+	return nil
+}
+
+// CheckArchivePath checks a directory chosen for the archive (the local
+// target, or a staging directory set from the admin form) by its text: an
+// absolute, clean path at or under ARCHIVE_ALLOWED_ROOT and outside the
+// database volume. key names the setting in the message. Symbolic links are
+// resolved where the directory is used (internal/archive/local), since only
+// the filesystem knows where one leads.
+func (a ArchiveConfig) CheckArchivePath(key, p string) error {
+	if err := a.ValidateAllowedRoot(); err != nil {
+		return err
+	}
+	root := a.Root()
+	switch {
+	case p == "":
+		return fmt.Errorf("%s is empty: choose a directory under %s", key, root)
+	case !filepath.IsAbs(p):
+		return fmt.Errorf("%s must be an absolute path, got %q", key, p)
+	case filepath.Clean(p) != p:
+		return fmt.Errorf("%s must be a clean path (no '..', '.', '//' or trailing '/'), got %q", key, p)
+	case !pathWithin(p, root):
+		return fmt.Errorf("%s %s is outside ARCHIVE_ALLOWED_ROOT %s: choose a directory under it (the host's archive volume is bind-mounted there)", key, p, root)
+	case pathWithin(p, filepath.Clean(ArchiveDatabaseDir)):
+		return fmt.Errorf("%s %s is on the database volume %s", key, p, ArchiveDatabaseDir)
+	}
+	return nil
+}
+
+// LocalBase is "<ARCHIVE_LOCAL_DIR>/<prefix>": the directory every object
+// of a local target is under.
+func (a ArchiveConfig) LocalBase() string {
+	return filepath.Join(a.LocalDir, filepath.FromSlash(a.Prefix))
+}
+
+// ValidateTarget checks the keys the configured target needs, whether or not
+// a stream is enabled (a restore needs them too): ValidateS3, or for a local
+// target ValidateLocal.
+func (a ArchiveConfig) ValidateTarget() error {
+	switch a.TargetName() {
+	case ArchiveTargetS3:
+		return a.ValidateS3()
+	case ArchiveTargetLocal:
+		return a.ValidateLocal()
+	}
+	return fmt.Errorf("ARCHIVE_TARGET must be s3 or local, got %q", a.Target)
+}
+
+// ValidateLocal checks a local target: ARCHIVE_LOCAL_DIR under
+// ARCHIVE_ALLOWED_ROOT (CheckArchivePath), the prefix, and no Object Lock
+// (a directory has none: immutability is the storage's — ZFS snapshots, a
+// WORM share; see docs/OPERATIONS.md).
+func (a ArchiveConfig) ValidateLocal() error {
+	if err := a.CheckArchivePath("ARCHIVE_LOCAL_DIR", a.LocalDir); err != nil {
+		return err
+	}
+	if a.Prefix == "" {
+		return fmt.Errorf("archive is enabled but ARCHIVE_S3_PREFIX is empty: the local target writes below <ARCHIVE_LOCAL_DIR>/<prefix> too (there is no default)")
+	}
+	if !ValidArchiveKeyPath(a.Prefix) {
+		return fmt.Errorf("ARCHIVE_S3_PREFIX %q must be slash-separated segments of A-Z a-z 0-9 . _ - with no leading or trailing slash and no '.' or '..' segment", a.Prefix)
+	}
+	if a.ObjectLockDays != 0 || a.ObjectLockMode != "" {
+		return fmt.Errorf("ARCHIVE_OBJECT_LOCK_DAYS / ARCHIVE_OBJECT_LOCK_MODE apply to an S3 target only; a local directory has no Object Lock: clear them and make the storage immutable instead (ZFS snapshots, a WORM share; docs/OPERATIONS.md)")
+	}
+	return nil
+}
+
+// validateStagingOverlap refuses a staging directory inside the local
+// target's object tree, or the tree inside the staging directory (the
+// workers clear their own entries from the staging directory).
+func (a ArchiveConfig) validateStagingOverlap() error {
+	if !a.IsLocal() || a.StagingDir == "" || a.LocalDir == "" || !filepath.IsAbs(a.StagingDir) {
+		return nil
+	}
+	st, base := filepath.Clean(a.StagingDir), filepath.Clean(a.LocalBase())
+	if pathWithin(st, base) || pathWithin(base, st) {
+		return fmt.Errorf("ARCHIVE_STAGING_DIR %s and the local target's directory %s must not contain each other: choose two separate directories", st, base)
+	}
+	return nil
 }
 
 // MaxArchiveObjectLockDays is the longest Object Lock retention accepted:
@@ -183,7 +346,7 @@ func (a ArchiveConfig) Validate() error {
 	if len(a.invalid) > 0 {
 		return fmt.Errorf("archive is enabled but %s", strings.Join(a.invalid, "; "))
 	}
-	if err := a.ValidateS3(); err != nil {
+	if err := a.ValidateTarget(); err != nil {
 		return err
 	}
 	if err := a.validateSchedule(); err != nil {
@@ -195,7 +358,7 @@ func (a ArchiveConfig) Validate() error {
 	case !filepath.IsAbs(a.StagingDir):
 		return fmt.Errorf("ARCHIVE_STAGING_DIR must be an absolute path, got %q", a.StagingDir)
 	}
-	return nil
+	return a.validateStagingOverlap()
 }
 
 // validateSchedule checks the export pacing, seal and window keys.

@@ -140,6 +140,7 @@ type ArchiveSettingsStore interface {
 	ResolveArchiveConfig(ctx context.Context, env config.ArchiveConfig) (ArchiveResolution, error)
 	ArchiveHasChunks(ctx context.Context) (bool, error)
 	ArchiveRecordedLocation(ctx context.Context) (loc string, ok bool, err error)
+	ArchiveInstallID(ctx context.Context) (string, error)
 	CanEncryptSettings() bool
 	SaveArchiveSettings(ctx context.Context, set map[string]string, revert []string, disabled []string, now time.Time) error
 }

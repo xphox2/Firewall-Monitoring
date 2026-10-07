@@ -89,7 +89,7 @@ func restoreFixture(t *testing.T, h *harness) (rows map[uint]models.SyslogMessag
 // newRestore builds the restore worker over the harness's database and bucket.
 func (h *harness) newRestore() *RestoreWorker {
 	h.t.Helper()
-	r, err := newRestoreWorker(h.db, h.store.(*s3.Client), h.cfg)
+	r, err := newRestoreWorker(h.db, h.store.(RestoreStore), h.cfg)
 	if err != nil {
 		h.t.Fatal(err)
 	}

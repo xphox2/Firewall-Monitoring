@@ -7,7 +7,8 @@ import (
 )
 
 // TestArchiveFields_CoverEveryKey: the admin form's field list is exactly the
-// ARCHIVE_* keys the environment reads, so no key is env-only by omission.
+// ARCHIVE_* keys the environment reads, so no key is env-only by omission
+// (only by archiveEnvOnlyKeys, with its reason).
 func TestArchiveFields_CoverEveryKey(t *testing.T) {
 	var got []string
 	for _, f := range ArchiveFields {
@@ -16,7 +17,12 @@ func TestArchiveFields_CoverEveryKey(t *testing.T) {
 			t.Errorf("%s: setting key %q", f.Env, f.Setting())
 		}
 	}
-	want := append([]string(nil), archiveKeys...)
+	var want []string
+	for _, k := range archiveKeys {
+		if !archiveEnvOnlyKeys[k] {
+			want = append(want, k)
+		}
+	}
 	sort.Strings(got)
 	sort.Strings(want)
 	if strings.Join(got, ",") != strings.Join(want, ",") {

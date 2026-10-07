@@ -17,17 +17,17 @@ import (
 	"time"
 
 	"firewall-mon/internal/archive/export"
-	"firewall-mon/internal/archive/s3"
+	"firewall-mon/internal/archive/objstore"
 	"firewall-mon/internal/models"
 )
 
-// MonthReader is the bucket as VerifyMonth reads it: no call writes.
-// *s3.Client implements it.
+// MonthReader is the target as VerifyMonth reads it: no call writes.
+// Every objstore.Store implements it (the S3 bucket, a local directory).
 type MonthReader interface {
 	Key(rel string) (string, error)
-	GetBytes(ctx context.Context, rel, versionID string, limit int64) ([]byte, s3.ObjectInfo, error)
+	GetBytes(ctx context.Context, rel, versionID string, limit int64) ([]byte, objstore.ObjectInfo, error)
 	Versions(ctx context.Context, rel string) (int, error)
-	VerifyFull(ctx context.Context, want s3.PutResult, w io.Writer) error
+	VerifyFull(ctx context.Context, want objstore.PutResult, w io.Writer) error
 }
 
 // manifestLimit bounds a downloaded manifest (a month of hourly flow chunks
@@ -89,12 +89,12 @@ func VerifyMonth(ctx context.Context, store MonthReader, stream, month string, p
 	rep := &MonthReport{Stream: stream, Month: month}
 
 	var body []byte
-	var info s3.ObjectInfo
+	var info objstore.ObjectInfo
 	var folderRel string
 	for _, sv := range schemas {
 		rel := export.MonthFolderRel(stream, sv, month) + "/" + export.MonthManifestName
 		b, in, err := store.GetBytes(ctx, rel, "", manifestLimit)
-		if errors.Is(err, s3.ErrNotFound) {
+		if errors.Is(err, objstore.ErrNotFound) {
 			continue
 		}
 		if err != nil {
@@ -268,7 +268,7 @@ func verifyMonthChunk(ctx context.Context, store MonthReader, folderKey, folderR
 			rep.fail("chunk %d: object %s is not in the month folder", c.Seq, o.Key)
 			continue
 		}
-		want := s3.PutResult{Rel: orel, Key: o.Key, Size: o.ObjectBytes, SHA256: o.Sha256Object, ETag: o.ETag, Parts: o.PartCount, VersionID: o.VersionID}
+		want := objstore.PutResult{Rel: orel, Key: o.Key, Size: o.ObjectBytes, SHA256: o.Sha256Object, ETag: o.ETag, Parts: o.PartCount, VersionID: o.VersionID}
 		chk := newContentCheck(ch, &models.ArchiveObject{ObjectKey: o.Key, Sha256Content: o.Sha256Content, RowCount: o.Rows,
 			RawBytes: o.RawBytes, MinID: o.MinID, MaxID: o.MaxID})
 		verr := store.VerifyFull(ctx, want, chk)
@@ -319,7 +319,7 @@ type neighbour struct {
 func readNeighbour(ctx context.Context, store MonthReader, stream, month string) (*neighbour, error) {
 	for _, sv := range export.SchemasOf(stream) {
 		b, _, err := store.GetBytes(ctx, export.MonthFolderRel(stream, sv, month)+"/"+export.MonthManifestName, "", manifestLimit)
-		if errors.Is(err, s3.ErrNotFound) {
+		if errors.Is(err, objstore.ErrNotFound) {
 			continue
 		}
 		if err != nil {

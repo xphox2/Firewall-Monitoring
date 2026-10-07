@@ -2,6 +2,8 @@ package database
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -10,6 +12,7 @@ import (
 	"firewall-mon/internal/models"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // The raw archive's admin-UI settings (A-10). Each ARCHIVE_* key may be
@@ -218,4 +221,33 @@ func (d *Database) CheckArchiveLocation(ctx context.Context, loc string) (record
 	row.Value, row.Type, row.Category = loc, "string", "archive"
 	row.Label = "Raw archive: where its chunks are written (endpoint/bucket/prefix)"
 	return loc, false, d.db.WithContext(ctx).Save(&row).Error
+}
+
+// ArchiveInstallIDKey is the system_settings key holding this install's
+// archive id: a random value written into a local archive target's marker
+// file, so a directory another install initialised is refused.
+const ArchiveInstallIDKey = "archive_install_id"
+
+// ArchiveInstallID returns this install's archive id, creating it (random,
+// 128 bits) on first use. Two processes asking at once agree: the insert does
+// nothing on a conflict and the stored value is read back.
+func (d *Database) ArchiveInstallID(ctx context.Context) (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	row := models.SystemSetting{Key: ArchiveInstallIDKey, Value: hex.EncodeToString(b[:]), Type: "string", Category: "archive",
+		Label: "Raw archive: this install's id, written into a local archive directory's marker"}
+	if err := d.db.WithContext(ctx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "key"}}, DoNothing: true}).Create(&row).Error; err != nil {
+		return "", fmt.Errorf("record %s: %w", ArchiveInstallIDKey, err)
+	}
+	var vals []string
+	if err := d.db.WithContext(ctx).Model(&models.SystemSetting{}).Where("\"key\" = ?", ArchiveInstallIDKey).
+		Limit(1).Pluck("value", &vals).Error; err != nil {
+		return "", fmt.Errorf("read %s: %w", ArchiveInstallIDKey, err)
+	}
+	if len(vals) == 0 || vals[0] == "" {
+		return "", fmt.Errorf("read %s: empty", ArchiveInstallIDKey)
+	}
+	return vals[0], nil
 }

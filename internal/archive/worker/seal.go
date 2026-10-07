@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"firewall-mon/internal/archive/export"
-	"firewall-mon/internal/archive/s3"
+	"firewall-mon/internal/archive/objstore"
 	"firewall-mon/internal/archive/status"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
@@ -513,7 +513,7 @@ func (w *Worker) sealMonth(ctx context.Context, table, stream, month string) err
 		if st == nil || st.ManifestSha256 == "" || info.Metadata[monthManifestShaMeta] != st.ManifestSha256 {
 			return refuse(sealConflict, "a %s this archive did not write is already stored (%d bytes, ETag %s): it is never overwritten", rel, info.Size, info.ETag)
 		}
-	} else if !errors.Is(err, s3.ErrNotFound) {
+	} else if !errors.Is(err, objstore.ErrNotFound) {
 		return err
 	}
 	degraded, err := w.degradedIntervals(ctx, table, month, cs)
@@ -624,7 +624,7 @@ func (w *Worker) sealChunk(ctx context.Context, c *models.ArchiveChunk, stream s
 	rel := export.FolderRel(stream, schema, c.PeriodStart, hourly(c.SourceTable)) + "/" + export.ChunkManifestName
 	info, err := w.store.Head(ctx, rel, "")
 	if err != nil {
-		if errors.Is(err, s3.ErrNotFound) {
+		if errors.Is(err, objstore.ErrNotFound) {
 			return monthChunk{}, refuse(sealReverify, "chunk %d: %s is missing", c.Seq, rel)
 		}
 		return monthChunk{}, err
@@ -637,7 +637,7 @@ func (w *Worker) sealChunk(ctx context.Context, c *models.ArchiveChunk, stream s
 			c.Seq, rel, info.Size, info.ETag, out.Manifest.Size, out.Manifest.ETag)
 	}
 	if full {
-		if err := w.store.VerifyFull(ctx, s3.PutResult{Rel: rel, Key: info.Key, Size: out.Manifest.Size, SHA256: out.Manifest.Sha256,
+		if err := w.store.VerifyFull(ctx, objstore.PutResult{Rel: rel, Key: info.Key, Size: out.Manifest.Size, SHA256: out.Manifest.Sha256,
 			ETag: out.Manifest.ETag, VersionID: info.VersionID}, nil); err != nil {
 			return monthChunk{}, sealVerifyErr(c, rel, err)
 		}
@@ -669,7 +669,7 @@ func (w *Worker) sealChunk(ctx context.Context, c *models.ArchiveChunk, stream s
 // sealVerifyErr is a re-verification failure: a refusal when the stored
 // object differs or is gone, the error itself when the service failed.
 func sealVerifyErr(c *models.ArchiveChunk, what string, err error) error {
-	if errors.Is(err, s3.ErrMismatch) {
+	if errors.Is(err, objstore.ErrMismatch) {
 		return refuse(sealReverify, "chunk %d: %s: %v", c.Seq, what, err)
 	}
 	return err
@@ -684,14 +684,14 @@ func (w *Worker) putMonthManifest(ctx context.Context, rel string, body []byte, 
 	info, err := w.store.Head(ctx, rel, "")
 	switch {
 	case err == nil && info.Size == int64(len(body)) && info.ETag == etag:
-		if err := w.store.VerifyFull(ctx, s3.PutResult{Rel: rel, Key: info.Key, Size: info.Size, SHA256: shaHex, ETag: etag, VersionID: info.VersionID}, nil); err != nil {
+		if err := w.store.VerifyFull(ctx, objstore.PutResult{Rel: rel, Key: info.Key, Size: info.Size, SHA256: shaHex, ETag: etag, VersionID: info.VersionID}, nil); err != nil {
 			return sealManifestErr(rel, err)
 		}
 		return nil
 	case err == nil:
 		return refuse(sealConflict, "a different %s is already stored (%d bytes, ETag %s; this seal's is %d bytes, ETag %s): it is never overwritten",
 			rel, info.Size, info.ETag, len(body), etag)
-	case !errors.Is(err, s3.ErrNotFound):
+	case !errors.Is(err, objstore.ErrNotFound):
 		return err
 	}
 	put, err := w.put(ctx, rel, bytes.NewReader(body), int64(len(body)), map[string]string{
@@ -714,7 +714,7 @@ func (w *Worker) putMonthManifest(ctx context.Context, rel string, body []byte, 
 }
 
 func sealManifestErr(rel string, err error) error {
-	if errors.Is(err, s3.ErrMismatch) {
+	if errors.Is(err, objstore.ErrMismatch) {
 		return refuse(sealReverify, "%s read back: %v", rel, err)
 	}
 	return err
@@ -748,19 +748,19 @@ func (w *Worker) refuseSealed(ctx context.Context, c *models.ArchiveChunk) error
 // put is the only way the worker writes an object: it refuses (errSealedWrite,
 // counted in fwmon_archive_sealed_write_refused_total) a key in the folder of
 // a sealed month, and any key that is not in a month folder at all.
-func (w *Worker) put(ctx context.Context, rel string, body io.ReaderAt, size int64, meta map[string]string) (s3.PutResult, error) {
+func (w *Worker) put(ctx context.Context, rel string, body io.ReaderAt, size int64, meta map[string]string) (objstore.PutResult, error) {
 	mm := monthFolderRe.FindStringSubmatch(rel)
 	if mm == nil {
-		return s3.PutResult{}, fmt.Errorf("archive: %s is not in a month folder", rel)
+		return objstore.PutResult{}, fmt.Errorf("archive: %s is not in a month folder", rel)
 	}
 	sealed, err := w.db.ArchiveMonthSealed(ctx, mm[1], mm[2])
 	if err != nil {
-		return s3.PutResult{}, fmt.Errorf("archive: is month %s of %s sealed: %w", mm[2], mm[1], err)
+		return objstore.PutResult{}, fmt.Errorf("archive: is month %s of %s sealed: %w", mm[2], mm[1], err)
 	}
 	if sealed {
 		metrics.IncArchiveSealedWrite(mm[1])
 		log.Printf("archive: REFUSED to write %s: month %s of %s is sealed", rel, mm[2], mm[1])
-		return s3.PutResult{}, fmt.Errorf("%w: %s (month %s of %s)", errSealedWrite, rel, mm[2], mm[1])
+		return objstore.PutResult{}, fmt.Errorf("%w: %s (month %s of %s)", errSealedWrite, rel, mm[2], mm[1])
 	}
 	return w.store.Put(ctx, rel, body, size, meta)
 }
