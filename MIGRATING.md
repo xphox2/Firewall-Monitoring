@@ -164,16 +164,19 @@ returns their space at once (no table rewrite, no VACUUM needed). Each
 `DROP INDEX` is its own transaction and needs a brief ACCESS EXCLUSIVE lock on
 its leaf; while it waits, inserts into that leaf (today's) wait behind it, so
 each attempt is capped at 2 s (`lock_timeout` and `statement_timeout`) and an
-index whose lock was not granted is retried every 5 s, 12 rounds (about
-1.5 minutes). The same pre-flight as v74 applies: a long reader of a leaf
+index whose lock was not granted is retried every 5 s, 12 rounds, and v80
+stops starting drops after 90 s in all — so even with every leaf held the
+processes wait on the migration lock about 1.5 minutes at most. The same pre-flight as v74 applies: a long reader of a leaf
 (`pg_dump`, an idle-in-transaction session, a running normalized-event
 backfill read of up to 120 s) only delays that leaf's drops.
 
 An index still held after the last round is **not** an error: the startup
-continues and logs `WARNING: migrate v80 drop unused net_events indexes: N of M
-not dropped ... : <names>`. A daily leaf's leftovers go with the leaf when
-retention drops it (`RETENTION_NET_EVENT_DAYS`); to reclaim the space sooner,
-drop the logged names by hand when the database is quiet:
+continues and logs `WARNING: migrate v80: N of M unused net_events index(es)
+not dropped ... : <names>`. The daily retention pass tries again (one round,
+15 s at most, logged as `cleanup: retired net_events index sweep`), and a
+daily leaf's leftovers also go with the leaf when retention drops it. To
+reclaim the space sooner, drop the logged names by hand when the database is
+quiet:
 
 ```sql
 SET lock_timeout = '2s';

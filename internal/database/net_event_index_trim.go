@@ -33,10 +33,20 @@ var (
 	// index's files at commit — milliseconds once the lock is granted.
 	netEventIndexDropLockTimeout = 2 * time.Second
 	// netEventIndexDropRounds / netEventIndexDropRetrySleep: every index whose
-	// lock was not granted is tried again in the next round, up to about
-	// 1.5 minutes in all.
+	// lock was not granted is tried again in the next round.
 	netEventIndexDropRounds     = 12
 	netEventIndexDropRetrySleep = 5 * time.Second
+	// netEventIndexDropDeadline caps v80 as a whole. The api, the poller and
+	// the trap daemon wait on the migration lock meanwhile, so ingest is down
+	// for as long as v80 runs: with every leaf held (a pg_dump across the
+	// restart) the rounds alone would be ~117 indexes x 2 s x 12 rounds,
+	// about 47 minutes. No drop starts after the deadline, so v80 ends at
+	// most one lock timeout past it.
+	netEventIndexDropDeadline = 90 * time.Second
+	// netEventIndexCronDeadline caps the daily re-sweep from the retention
+	// pass (one round, no retry sleep): it picks up what v80 left without
+	// holding the pass up.
+	netEventIndexCronDeadline = 15 * time.Second
 )
 
 // migrateDropUnusedNetEventIndexes (v80) drops the (rule_key, ts),
@@ -49,13 +59,13 @@ var (
 // One DROP INDEX per transaction, each under netEventIndexDropLockTimeout, so
 // a leaf's ACCESS EXCLUSIVE lock is held for one index at a time and never
 // queued for longer than the bound; a lock (55P03), statement-timeout (57014)
-// or deadlock (40P01) failure is retried in the next round. DROP INDEX
-// CONCURRENTLY would avoid the lock but cannot run in a transaction, so it
-// could not carry the bounds. An index still held after the last round is
-// left with a WARNING rather than failing the startup: a daily leaf's indexes
-// go with the leaf when retention drops it, and the manual statement is in
-// MIGRATING.md. Idempotent: only existing indexes are named, and a re-run
-// finds none.
+// or deadlock (40P01) failure is retried in the next round, within
+// netEventIndexDropDeadline overall. DROP INDEX CONCURRENTLY would avoid the
+// lock but cannot run in a transaction, so it could not carry the bounds. An
+// index still held at the last round or the deadline is left with a WARNING
+// rather than failing the startup: the retention pass sweeps again every day
+// (sweepRetiredNetEventIndexes), and a daily leaf's indexes go with the leaf.
+// Idempotent: only existing indexes are named, and a re-run finds none.
 func (d *Database) migrateDropUnusedNetEventIndexes() error {
 	if !d.dialect.IsPostgres() {
 		// SQLite test backend: a plain table with the GORM-named indexes.
@@ -66,12 +76,37 @@ func (d *Database) migrateDropUnusedNetEventIndexes() error {
 		}
 		return nil
 	}
+	if err := d.dropRetiredNetEventIndexes("migrate v80", netEventIndexDropDeadline, netEventIndexDropRounds); err != nil {
+		return fmt.Errorf("migrate v80: %w", err)
+	}
+	return nil
+}
+
+// sweepRetiredNetEventIndexes is v80's drop again, from the daily retention
+// pass: one round under netEventIndexCronDeadline, so an index v80 left
+// behind (a lock it was never granted — the DEFAULT child's is never dropped
+// by retention) goes on a later day without manual SQL. A failure is logged,
+// never returned: a leftover index costs space, not correctness. PostgreSQL
+// only; finds nothing (one catalog read) once the indexes are gone.
+func (d *Database) sweepRetiredNetEventIndexes() {
+	if !d.dialect.IsPostgres() {
+		return
+	}
+	if err := d.dropRetiredNetEventIndexes("cleanup: retired net_events index sweep", netEventIndexCronDeadline, 1); err != nil {
+		log.Printf("cleanup: retired net_events index sweep: %v (retried next pass)", err)
+	}
+}
+
+// dropRetiredNetEventIndexes drops the existing retired indexes in rounds
+// (see migrateDropUnusedNetEventIndexes): no DROP starts once deadline has
+// passed since the call, and at most rounds rounds run. Indexes still held
+// then are logged with a WARNING and left; only a non-lock error is returned.
+func (d *Database) dropRetiredNetEventIndexes(label string, deadline time.Duration, rounds int) error {
 	pending, err := d.netEventsRetiredIndexes()
 	if err != nil {
-		return fmt.Errorf("migrate v80: list the indexes to drop: %w", err)
+		return fmt.Errorf("list the indexes to drop: %w", err)
 	}
 	if len(pending) == 0 {
-		log.Printf("migrate v80 drop unused net_events indexes: none present")
 		return nil
 	}
 	total := len(pending)
@@ -79,7 +114,11 @@ func (d *Database) migrateDropUnusedNetEventIndexes() error {
 	var longest time.Duration
 	for round := 1; ; round++ {
 		var held []string
-		for _, name := range pending {
+		for k, name := range pending {
+			if time.Since(start) >= deadline {
+				held = append(held, pending[k:]...)
+				break
+			}
 			t0 := time.Now()
 			err := d.dropIndexBounded(name)
 			if dt := time.Since(t0); err == nil && dt > longest {
@@ -89,22 +128,22 @@ func (d *Database) migrateDropUnusedNetEventIndexes() error {
 				continue
 			}
 			if !(lockRetryable(err) || sqlState(err) == "57014") {
-				return fmt.Errorf("migrate v80: drop %s: %w", name, err)
+				return fmt.Errorf("drop %s: %w", name, err)
 			}
 			held = append(held, name)
 		}
 		if len(held) == 0 {
-			log.Printf("migrate v80 drop unused net_events indexes: dropped %d in %s (longest single drop %s)",
-				total, time.Since(start).Round(time.Millisecond), longest.Round(time.Millisecond))
+			log.Printf("%s: dropped %d unused net_events index(es) in %s (longest single drop %s)",
+				label, total, time.Since(start).Round(time.Millisecond), longest.Round(time.Millisecond))
 			return nil
 		}
-		if round >= netEventIndexDropRounds {
-			log.Printf("WARNING: migrate v80 drop unused net_events indexes: %d of %d not dropped after %d rounds (locks not granted within %s): %s — a daily leaf's go with it at retention; drop the rest by hand (MIGRATING.md, migration v80)",
-				len(held), total, round, netEventIndexDropLockTimeout, strings.Join(held, ", "))
+		if round >= rounds || time.Since(start)+netEventIndexDropRetrySleep >= deadline {
+			log.Printf("WARNING: %s: %d of %d unused net_events index(es) not dropped after %d round(s) in %s (locks not granted within %s; deadline %s): %s — the daily retention pass tries again, and a daily leaf's go with it (MIGRATING.md, migration v80)",
+				label, len(held), total, round, time.Since(start).Round(time.Millisecond), netEventIndexDropLockTimeout, deadline, namesForLog(held))
 			return nil
 		}
-		log.Printf("migrate v80 drop unused net_events indexes: %d lock(s) not granted within %s (round %d/%d); retrying in %s",
-			len(held), netEventIndexDropLockTimeout, round, netEventIndexDropRounds, netEventIndexDropRetrySleep)
+		log.Printf("%s: %d lock(s) on unused net_events indexes not granted within %s (round %d/%d); retrying in %s",
+			label, len(held), netEventIndexDropLockTimeout, round, rounds, netEventIndexDropRetrySleep)
 		time.Sleep(netEventIndexDropRetrySleep)
 		pending = held
 	}
@@ -151,4 +190,14 @@ func (d *Database) dropIndexBounded(name string) error {
 		}
 		return tx.Exec(`DROP INDEX IF EXISTS "` + strings.ReplaceAll(name, `"`, `""`) + `"`).Error
 	})
+}
+
+// namesForLog lists up to ten index names and counts the rest, so a WARNING
+// with every leaf held stays one readable line.
+func namesForLog(names []string) string {
+	const max = 10
+	if len(names) <= max {
+		return strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("%s and %d more", strings.Join(names[:max], ", "), len(names)-max)
 }

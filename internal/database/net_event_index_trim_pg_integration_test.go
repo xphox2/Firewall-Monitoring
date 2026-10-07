@@ -296,3 +296,77 @@ func TestDropUnusedNetEventIndexes_PG(t *testing.T) {
 		t.Fatalf("retired indexes after a re-run and EnsurePartitions: %v %v", got, err)
 	}
 }
+
+// TestDropUnusedNetEventIndexes_PG_DeadlineAndCronSweep: with every leaf held
+// by a reader (a pg_dump across the restart), v80 gives up at its deadline —
+// not after rounds x indexes x lock timeout, which would keep the api, the
+// poller and the trap daemon waiting on the migration lock — and leaves the
+// indexes; the daily pass's sweep, still blocked, returns within its own
+// deadline; once the reader is gone, the next EnsurePartitionsForCron drops
+// every leftover.
+func TestDropUnusedNetEventIndexes_PG_DeadlineAndCronSweep(t *testing.T) {
+	d := NewIntegrationDB(t)
+	d.netEventRetentionDays = 30
+	if err := d.EnsurePartitions(); err != nil {
+		t.Fatalf("EnsurePartitions: %v", err)
+	}
+	ctx := context.Background()
+	children := pgLeaves(t, d, "net_events")
+	for _, leaf := range children {
+		for _, c := range []struct{ suffix, cols string }{{"rule_key_ts", "rule_key, ts"}, {"src_ip_ts", "src_ip, ts"}, {"dst_ip_ts", "dst_ip, ts"}} {
+			if err := d.db.Exec(fmt.Sprintf(`CREATE INDEX idx_%s_%s ON %s (%s)`, leaf, c.suffix, leaf, c.cols)).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	want := len(children) * 3
+
+	origs := []time.Duration{netEventIndexDropLockTimeout, netEventIndexDropRetrySleep, netEventIndexDropDeadline, netEventIndexCronDeadline}
+	origRounds := netEventIndexDropRounds
+	netEventIndexDropLockTimeout, netEventIndexDropRetrySleep = 200*time.Millisecond, 100*time.Millisecond
+	netEventIndexDropDeadline, netEventIndexCronDeadline, netEventIndexDropRounds = time.Second, 500*time.Millisecond, 5
+	t.Cleanup(func() {
+		netEventIndexDropLockTimeout, netEventIndexDropRetrySleep, netEventIndexDropDeadline, netEventIndexCronDeadline = origs[0], origs[1], origs[2], origs[3]
+		netEventIndexDropRounds = origRounds
+	})
+
+	// A reader holding every leaf.
+	reader, err := d.pgxPool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reader.Rollback(ctx) }()
+	if _, err := reader.Exec(ctx, "SELECT COUNT(*) FROM net_events"); err != nil {
+		t.Fatal(err)
+	}
+
+	t0 := time.Now()
+	if err := d.migrateDropUnusedNetEventIndexes(); err != nil {
+		t.Fatalf("v80 with every leaf held: %v", err)
+	}
+	took := time.Since(t0)
+	limit := netEventIndexDropDeadline + netEventIndexDropLockTimeout + 300*time.Millisecond
+	t.Logf("v80 with all %d leaves held returned after %s (deadline %s)", len(children), took.Round(time.Millisecond), netEventIndexDropDeadline)
+	if took > limit {
+		t.Errorf("v80 with every leaf held ran %s, past its deadline %s (+ one lock timeout)", took, netEventIndexDropDeadline)
+	}
+	if got, err := d.netEventsRetiredIndexes(); err != nil || len(got) != want {
+		t.Fatalf("held indexes after v80: %d (%v), want all %d left", len(got), err, want)
+	}
+
+	t0 = time.Now()
+	d.sweepRetiredNetEventIndexes()
+	took = time.Since(t0)
+	t.Logf("cron sweep with every leaf held returned after %s (deadline %s)", took.Round(time.Millisecond), netEventIndexCronDeadline)
+	if limit := netEventIndexCronDeadline + netEventIndexDropLockTimeout + 300*time.Millisecond; took > limit {
+		t.Errorf("cron sweep with every leaf held ran %s, past its deadline %s (+ one lock timeout)", took, netEventIndexCronDeadline)
+	}
+
+	_ = reader.Rollback(ctx)
+	if err := d.EnsurePartitionsForCron(); err != nil {
+		t.Fatalf("EnsurePartitionsForCron: %v", err)
+	}
+	if got, err := d.netEventsRetiredIndexes(); err != nil || len(got) != 0 {
+		t.Fatalf("leftovers after the reader ended and a cron pass: %d (%v), want none", len(got), err)
+	}
+}
