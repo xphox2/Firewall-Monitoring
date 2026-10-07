@@ -1724,11 +1724,16 @@ const (
 // partition. ts is written in UTC: the COPY writer binds instants and the
 // GORM fallback is the SQLite test lane. Retention is partition-drop only.
 // The index tags are what partitionIndexPlan turns into the per-leaf index
-// set — (device_id, ts), (ts), (rule_key, ts), (src_ip, ts), (dst_ip, ts) —
-// so a new index belongs here, never in a hand-written DDL list (LC-19).
+// set — (device_id, ts) and (ts) — so a new index belongs here, never in a
+// hand-written DDL list (LC-19). Every reader of the table selects on ts
+// (rollup, retention, backfill probe and replace-mode delete) or on
+// (device_id, ts) (device purge, device-scoped backfill); the (rule_key, ts),
+// (src_ip, ts) and (dst_ip, ts) indexes had no reader and were dropped by
+// migration v80 (policy analytics read net_event_rollups, not the raw rows).
+// An index belongs here only together with the query that uses it.
 type NetEvent struct {
 	ID       uint      `json:"id" gorm:"primaryKey"`
-	Ts       time.Time `json:"ts" gorm:"index:idx_net_events_ts;index:idx_net_events_device_ts,priority:2;index:idx_net_events_rule_ts,priority:2;index:idx_net_events_src_ts,priority:2;index:idx_net_events_dst_ts,priority:2"`
+	Ts       time.Time `json:"ts" gorm:"index:idx_net_events_ts;index:idx_net_events_device_ts,priority:2"`
 	DeviceID uint      `json:"device_id" gorm:"index:idx_net_events_device_ts,priority:1"`
 	ProbeID  uint      `json:"probe_id"`
 
@@ -1737,9 +1742,9 @@ type NetEvent struct {
 	VendorEventID *string `json:"vendor_event_id"`
 
 	// endpoints
-	SrcIP     *string `json:"src_ip" gorm:"type:inet;index:idx_net_events_src_ts,priority:1"`
+	SrcIP     *string `json:"src_ip" gorm:"type:inet"`
 	SrcPort   *int32  `json:"src_port"`
-	DstIP     *string `json:"dst_ip" gorm:"type:inet;index:idx_net_events_dst_ts,priority:1"`
+	DstIP     *string `json:"dst_ip" gorm:"type:inet"`
 	DstPort   *int32  `json:"dst_port"`
 	Proto     *int16  `json:"proto"`
 	SrcMAC    *string `json:"src_mac" gorm:"type:macaddr"`
@@ -1753,7 +1758,7 @@ type NetEvent struct {
 	Direction *int16  `json:"direction"`
 
 	// rule (roadmap §1.3) — rule_key carries its tier prefix (u:/i:/n:/x:)
-	RuleKey   *string `json:"rule_key" gorm:"index:idx_net_events_rule_ts,priority:1"`
+	RuleKey   *string `json:"rule_key"`
 	RuleUID   *string `json:"rule_uid"`
 	RuleID    *int64  `json:"rule_id"`
 	RuleName  *string `json:"rule_name"`
