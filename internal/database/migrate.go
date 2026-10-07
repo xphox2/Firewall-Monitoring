@@ -677,8 +677,14 @@ func (d *Database) EnsurePartitions() error {
 // ingest never waits on it. The same bound covers the locked move-and-attach
 // transaction ensureLeaf uses when the DEFAULT child already holds the day's
 // rows (lockTimeout below; 0 = wait, the startup variant).
+//
+// It also re-sweeps the net_events indexes migration v80 retired, once per
+// pass under a short deadline (sweepRetiredNetEventIndexes): whatever v80
+// could not lock at startup is dropped on a later day.
 func (d *Database) EnsurePartitionsForCron() error {
-	return d.ensurePartitions(d.execCronDDL, cronDDLLockTimeout)
+	err := d.ensurePartitions(d.execCronDDL, cronDDLLockTimeout)
+	d.sweepRetiredNetEventIndexes()
+	return err
 }
 
 func (d *Database) ensurePartitions(createPartition func(sql string, args ...interface{}) error, lockTimeout time.Duration) error {
