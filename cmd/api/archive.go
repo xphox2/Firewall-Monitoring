@@ -427,7 +427,10 @@ func printArchiveStatus(w io.Writer, st *status.Status) {
 			}
 			fmt.Fprintln(w, line)
 		}
-		if wk.NextPassAt != nil {
+		switch {
+		case wk.PassRunning:
+			fmt.Fprintf(w, "  pass running since %s\n", ts(wk.LastPassAt))
+		case wk.NextPassAt != nil:
 			fmt.Fprintf(w, "  last pass %s; next %s\n", ts(wk.LastPassAt), ts(wk.NextPassAt))
 		}
 		for _, e := range wk.Stages {

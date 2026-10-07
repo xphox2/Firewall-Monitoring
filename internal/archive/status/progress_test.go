@@ -221,3 +221,34 @@ func TestBuild_GateRead(t *testing.T) {
 		t.Fatalf("reads succeed, still shown: %+v", g)
 	}
 }
+
+// TestBuild_PassRunning: while a pass runs the status says so, with its start
+// and no next pass (a pass lasts as long as there is work); after it the last
+// and next pass are shown; a stale snapshot never claims a running pass.
+func TestBuild_PassRunning(t *testing.T) {
+	db := database.NewDatabaseForTesting(t)
+	seed(t, db)
+	r := NewRecorder("fw-example-01-1", "/tmp/fwmon-archive-test", 2<<30)
+	started := at.Add(-3 * time.Hour)
+	r.PassStarted(started)
+	save := func() {
+		t.Helper()
+		js, _ := r.JSON(at)
+		if err := db.SaveArchiveWorkerState(context.Background(), js); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save()
+	wk := build(t, db, testConfig(true, true), at).Worker
+	if wk == nil || !wk.PassRunning || wk.NextPassAt != nil || wk.LastPassAt == nil || !wk.LastPassAt.Equal(started) {
+		t.Fatalf("during a pass: %+v", wk)
+	}
+	if wk := build(t, db, testConfig(true, true), at.Add(StaleAfter+time.Second)).Worker; wk == nil || !wk.Stale || wk.PassRunning {
+		t.Fatalf("stale snapshot: %+v, want no running pass", wk)
+	}
+	r.SetPasses(started, at)
+	save()
+	if wk := build(t, db, testConfig(true, true), at).Worker; wk.PassRunning || wk.NextPassAt == nil || !wk.NextPassAt.Equal(at) {
+		t.Fatalf("after the pass: %+v", wk)
+	}
+}

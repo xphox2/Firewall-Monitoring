@@ -332,3 +332,25 @@ func TestStripArchiveEnvOnly(t *testing.T) {
 		t.Fatalf("got %v %v", got, envOnly)
 	}
 }
+
+// TestPrintArchiveStatus_Passes: --status says a pass is running (with its
+// start) instead of a next pass that a long pass has left in the past, and
+// prints the last and next pass between passes.
+func TestPrintArchiveStatus_Passes(t *testing.T) {
+	started := time.Date(2026, 10, 6, 22, 41, 0, 0, time.UTC)
+	next := started.Add(3 * time.Hour)
+	for _, tc := range []struct {
+		wk   status.WorkerView
+		want string
+	}{
+		{status.WorkerView{PassRunning: true, LastPassAt: &started}, "  pass running since 2026-10-06T22:41:00Z\n"},
+		{status.WorkerView{LastPassAt: &started, NextPassAt: &next}, "  last pass 2026-10-06T22:41:00Z; next 2026-10-07T01:41:00Z\n"},
+	} {
+		var b bytes.Buffer
+		wk := tc.wk
+		printArchiveStatus(&b, &status.Status{Worker: &wk})
+		if !strings.Contains(b.String(), tc.want) || strings.Count(b.String(), "pass ") != 1 {
+			t.Fatalf("printed:\n%s\nwant the line %q", b.String(), tc.want)
+		}
+	}
+}

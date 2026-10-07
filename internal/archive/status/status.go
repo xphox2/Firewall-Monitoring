@@ -120,9 +120,12 @@ type WorkerView struct {
 	Staging     Staging     `json:"staging"`
 	Stages      []StageView `json:"stages"`
 	// LastPassAt / NextPassAt: the worker's last pass and when it runs the
-	// next (sooner when a waiting chunk becomes exportable).
-	LastPassAt *time.Time `json:"last_pass_at,omitempty"`
-	NextPassAt *time.Time `json:"next_pass_at,omitempty"`
+	// next (sooner when a waiting chunk becomes exportable). PassRunning: a
+	// pass started at LastPassAt is still running (NextPassAt nil); never
+	// set from a stale snapshot.
+	LastPassAt  *time.Time `json:"last_pass_at,omitempty"`
+	NextPassAt  *time.Time `json:"next_pass_at,omitempty"`
+	PassRunning bool       `json:"pass_running,omitempty"`
 	// Activity: the chunk being worked when the snapshot was written (nil
 	// between chunks, and while the snapshot is stale).
 	Activity *ActivityView `json:"activity,omitempty"`
@@ -466,6 +469,7 @@ func Build(ctx context.Context, db Store, cfg *config.Config, now time.Time) (*S
 		}
 		sort.Slice(wv.Stages, func(i, j int) bool { return wv.Stages[i].At.After(wv.Stages[j].At) })
 		wv.LastPassAt, wv.NextPassAt = rt.LastPassAt, rt.NextPassAt
+		wv.PassRunning = rt.PassRunning && !wv.Stale
 		if a := rt.Activity; a != nil && !wv.Stale {
 			wv.Activity = activityView(*a, now)
 		}

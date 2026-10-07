@@ -1278,6 +1278,24 @@ settling chunk again on the first tick (a minute) after the window ends, and
 a chunk held by an open writing transaction on every tick, instead of
 waiting for its next 10-minute pass; the card counts the window down.
 
+**Long passes.** A pass works chunks for as long as any table has work — a
+first syslog backlog of 30 days at about 20 minutes a day is one pass of
+about ten hours. Between two chunks it plans again, at most once a minute,
+every table it had run out of work for (nothing planned yet, its next
+chunk settling or held by a writer, a failed chunk past its backoff, a
+bucket failure's cooldown over), flows first, so each hourly flow chunk
+and daily counter chunk is verified within one syslog chunk of becoming
+due and flow lag stays near an hour. (Before 0.11.313 a pass planned each
+table only at its start: through a long backlog the flow tables got no new
+chunk, their raw rows were held by the retention gate and the flows'
+`ARCHIVE_LAG` (3 h) could fire.) A syslog chunk is not interrupted, so a
+syslog day that takes more than about two hours to export still delays
+flows past that alert: raise `ARCHIVE_SYSLOG_RATE_ROWS_PER_SEC` or confine
+syslog to `ARCHIVE_WINDOW`. A table whose settle check or database read
+failed, or that cannot be cut, waits for the next pass, as before. While a pass
+runs the card shows *Pass running since …* (and *Planning the next chunk*
+between two chunks) and `--status` prints `pass running since …`.
+
 **Alerts.** The poller evaluates six alerts on its 5-minute server-health
 tick, device-less like `SERVER_DISK_HIGH` (they show as *Firewall-Mon
 server*). Each has a seeded event rule (*Default: Archive …*, *Default:
