@@ -62,9 +62,10 @@ func TestArchiveStatusCardCSPSafe(t *testing.T) {
 }
 
 // TestArchiveStatusCardScript: the status card's renderer is loaded, writes
-// no inline handler (CSP), escapes the server's strings, and refreshes only
-// while the browser tab is visible (AdminCommon.pollWhenVisible) — admin-main
-// hands it the admin-only fetch.
+// no inline handler (CSP), escapes the server's strings, refreshes only
+// while the browser tab is visible (AdminCommon.pollWhenVisible), rewrites
+// only the sections that changed, and marks its banners role="status" —
+// admin-main hands it the admin-only fetch.
 func TestArchiveStatusCardScript(t *testing.T) {
 	html, err := os.ReadFile("../../web/admin/admin.html")
 	if err != nil {
@@ -83,10 +84,17 @@ func TestArchiveStatusCardScript(t *testing.T) {
 		"esc(e.error || '')",
 		"esc(gr.error || '')",
 		`data-action="archive-reset-chunk"`,
+		`role="status"`,
+		"if (lastHtml[s[0]] !== s[1]) {",
 	} {
 		if !strings.Contains(js, sub) {
 			t.Errorf("admin-archive-status.js is missing %q", sub)
 		}
+	}
+	// Banners are polite status regions: an alert role would be announced
+	// again on every 15 s refresh.
+	if strings.Contains(js, `role="alert"`) {
+		t.Error(`admin-archive-status.js uses role="alert" for its banners`)
 	}
 	if !strings.Contains(readJS(t, "admin-main.js"), "FwmonArchiveStatus.watch(host,") {
 		t.Error("admin-main.js does not keep the archive status current")

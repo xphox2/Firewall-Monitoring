@@ -130,6 +130,7 @@ var registeredMigrations = []migration{
 	{version: 76, name: "archive_chunk_retry_counters", run: (*Database).migrateArchiveChunkRetryCounters},
 	{version: 77, name: "archive_gate_events", run: (*Database).migrateArchiveGateEvents},
 	{version: 78, name: "archive_restore_jobs", run: (*Database).migrateArchiveRestoreJobs},
+	{version: 79, name: "archive_chunk_status_indexes", run: (*Database).migrateArchiveChunkStatusIndexes},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

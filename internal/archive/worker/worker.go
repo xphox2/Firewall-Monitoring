@@ -315,6 +315,9 @@ func (w *Worker) settleWait(table string, c *models.ArchiveChunk, err error) {
 		w.unsettled(table, "unattached_leaf", err)
 		w.logf("settle-"+table, "%s chunk %d waits: %v", table, c.Seq, err)
 	default:
+		// A failure, not a wait: the next pass retries it, not every tick
+		// (a database in trouble is not polled each minute per table).
+		delete(w.waits, table)
 		w.fail("settle", err)
 		w.logf("settle-"+table, "%s chunk %d: settle check: %v", table, c.Seq, err)
 	}

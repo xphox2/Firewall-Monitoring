@@ -3,9 +3,10 @@
 // and hands the result to render(); watch() keeps it current while the card
 // is on screen: a refetch every 15 s (paused while the browser tab is hidden
 // — AdminCommon.pollWhenVisible), and a 1 s tick that only rewrites the
-// countdown and "x ago" texts. A refetch whose page is unchanged touches
-// nothing, and the open/closed state of the card's <details> survives a
-// change, so the card does not flicker.
+// countdown and "x ago" texts. The card is a list of sections and a refetch
+// rewrites only those whose HTML changed: an unchanged banner or button keeps
+// its DOM and keyboard focus, and <details> keep their open state. Banners
+// are role="status" (polite), not alerts re-announced on every refresh.
 //
 // What it shows, top to bottom: anything that needs the operator (a released
 // gate, a gate that cannot read its switches, parked or retrying chunks, a
@@ -30,7 +31,6 @@
     var small = 'font-size:0.82rem;';
     var REFRESH_MS = 15000;
 
-    var lastHtml = null;      // the last page written into the host
     var poller = null;        // AdminCommon.pollWhenVisible handle
     var ticker = null;        // the 1 s countdown timer
 
@@ -84,7 +84,7 @@
 
     function notice(level, html) {
         var c = level === 'crit' ? 'var(--fwmon-sig-crit)' : 'var(--fwmon-sig-warn)';
-        return '<div role="alert" style="border:1px solid ' + c + ';border-left-width:4px;border-radius:6px;padding:8px 12px;margin-bottom:8px;' + small + '">' + html + '</div>';
+        return '<div role="status" style="border:1px solid ' + c + ';border-left-width:4px;border-radius:6px;padding:8px 12px;margin-bottom:8px;' + small + '">' + html + '</div>';
     }
 
     function section(title, body) {
@@ -159,9 +159,14 @@
             html += '<p style="' + small + 'margin:0 0 4px;' + faint + '">Worker ' + esc(w.runner || '') + ', state written ' + liveSince(w.seen_at) + ' ago' +
                 '. Staging <code>' + esc(stg.dir || '') + '</code>: ' + free + '.</p>';
         }
-        html += '<p style="' + small + 'margin:0 0 8px;' + faint + '">Updated <span data-arch-updated></span> ago' +
-            ', refreshed every 15 s while this page is open. <button type="button" class="btn sm secondary" data-action="archive-refresh">Refresh</button></p>';
         return html;
+    }
+
+    // controls: the refresh line. Its own section, which never changes, so
+    // a keyboard user's focus on Refresh survives every refresh.
+    function controls() {
+        return '<p style="' + small + 'margin:0 0 8px;' + faint + '">Updated <span data-arch-updated></span> ago' +
+            ', refreshed every 15 s while this page is open. <button type="button" class="btn sm secondary" data-action="archive-refresh">Refresh</button></p>';
     }
 
     function now(st) {
@@ -305,8 +310,7 @@
                 seal = 'next seal ' + esc(s.next_seal.month) + (s.next_seal.due ? ' &mdash; due since ' + when(s.next_seal.due_at) + ', sealed once its chunks are verified'
                     : ' at ' + when(s.next_seal.due_at));
             }
-            html += '<div style="' + small + 'margin-bottom:10px;"><strong>' + esc(s.stream) + '</strong> &middot; ' + AC.formatNum(s.archived_rows) + ' rows in ' +
-                AC.formatNum(s.archived_objects) + ' objects, ' + AC.formatBytes(s.archived_object_bytes) + ' stored (' + AC.formatBytes(s.archived_raw_bytes) + ' raw)' +
+            html += '<div style="' + small + 'margin-bottom:10px;"><strong>' + esc(s.stream) + '</strong> &middot; ' + AC.formatNum(s.archived_rows) + ' rows, ' + AC.formatBytes(s.archived_object_bytes) + ' stored' +
                 (s.oldest_unsealed ? ' <span style="color:var(--fwmon-sig-warn);">' + esc(s.oldest_unsealed) + ' is ' + Number(s.unsealed_days).toFixed(1) + ' days past its seal time</span>' : '') +
                 (seal ? '<div style="' + faint + '">' + seal + '</div>' : '') + '<div>' + months + '</div></div>';
         });
@@ -328,17 +332,23 @@
         return html;
     }
 
-    function page(st) {
-        var html = attention(st);
+    // sections: the card as [key, html] pairs, top to bottom. render
+    // rewrites only the sections whose HTML changed, so the banners and
+    // buttons of an unchanged section keep their DOM (and keyboard focus).
+    function sections(st) {
+        var out = [['attention', attention(st)]];
         if (!st.enabled && !(st.tables || []).some(function (t) { return t.has_chunks; })) {
-            return html + '<p style="' + faint + 'font-size:0.85rem;">Archiving is off. Configure it in Raw Archive Settings below (or the <code>ARCHIVE_*</code> environment keys; see docs/OPERATIONS.md).</p>';
+            return out.concat([['off', '<p style="' + faint + 'font-size:0.85rem;">Archiving is off. Configure it in Raw Archive Settings below (or the <code>ARCHIVE_*</code> environment keys; see docs/OPERATIONS.md).</p>']]);
         }
-        html += header(st) + now(st);
         var cards = (st.tables || []).filter(function (t) { return t.enabled || t.has_chunks; }).map(tableCard).join('');
-        html += section('Tables', '<div style="display:flex;flex-wrap:wrap;gap:10px;">' + cards + '</div>');
-        html += recent(st) + problems(st) + streams(st) + failures(st);
-        return html;
+        return out.concat([
+            ['header', header(st)], ['controls', controls()], ['now', now(st)],
+            ['tables', section('Tables', '<div style="display:flex;flex-wrap:wrap;gap:10px;">' + cards + '</div>')],
+            ['recent', recent(st)], ['problems', problems(st)], ['streams', streams(st)], ['failures', failures(st)]
+        ]);
     }
+
+    function page(st) { return sections(st).map(function (s) { return s[1]; }).join(''); }
 
     // ---- life cycle -----------------------------------------------------
 
@@ -358,21 +368,37 @@
     // render writes st into host, unless the page is unchanged; <details>
     // keep their open state.
     function render(host, st) {
-        var html = page(st || {});
-        if (html !== lastHtml || !host.innerHTML) {
-            write(host, html);
+        var secs = sections(st || {});
+        var keys = secs.map(function (s) { return s[0]; }).join(',');
+        var els = host.querySelectorAll(':scope > [data-arch-sec]');
+        // What was last written is kept on the host itself (a card rebuilt
+        // by the settings page starts afresh).
+        var last = host.fwmonArchiveLast;
+        if (!last || last.keys !== keys || els.length !== secs.length) {
+            // A different layout (archiving switched on or off): rebuild.
+            host.innerHTML = secs.map(function (s) { return '<div data-arch-sec="' + s[0] + '"></div>'; }).join('');
+            els = host.querySelectorAll(':scope > [data-arch-sec]');
+            last = host.fwmonArchiveLast = { keys: keys, html: {} };
         }
+        var lastHtml = last.html;
+        secs.forEach(function (s, i) {
+            if (lastHtml[s[0]] !== s[1]) {
+                write(els[i], s[1]);
+                lastHtml[s[0]] = s[1];
+            }
+        });
         var up = host.querySelector('[data-arch-updated]');
         if (up) up.setAttribute('data-arch-since', new Date().toISOString());
         tick(host);
     }
 
-    function write(host, html) {
+    // write replaces one section's content; its <details> keep their
+    // open/closed state.
+    function write(el, html) {
         var open = {};
-        host.querySelectorAll('details[data-arch-details]').forEach(function (d) { open[d.getAttribute('data-arch-details')] = d.open; });
-        host.innerHTML = html;
-        lastHtml = html;
-        host.querySelectorAll('details[data-arch-details]').forEach(function (d) {
+        el.querySelectorAll('details[data-arch-details]').forEach(function (d) { open[d.getAttribute('data-arch-details')] = d.open; });
+        el.innerHTML = html;
+        el.querySelectorAll('details[data-arch-details]').forEach(function (d) {
             var k = d.getAttribute('data-arch-details');
             if (k in open) d.open = open[k];
         });

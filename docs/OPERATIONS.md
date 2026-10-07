@@ -1247,11 +1247,18 @@ From 0.11.308 the archive's whole state is in one place:
   - **Waiting for a retry** (failed chunks, with the error and the retry time)
     and **Needs attention** (parked chunks, each with a **Reset**: reason +
     password + 2FA code, like the purge);
-  - **Streams and months**: per stream the verified rows, objects and bytes
-    in the bucket, the next month to seal and when it is due, and the month
+  - **Streams and months**: per stream the verified rows and bytes in the
+    bucket (a sealed month's from its seal, the others' from their verified
+    objects), the next month to seal and when it is due, and the month
     folders (pending, due, sealed, `seal_failed`, partial, gate events) with
     their archived rows and bytes;
   - the worker's last failure per stage (collapsed).
+
+  Banners are polite status regions, and a refresh rewrites only the
+  sections that changed, so a focused button keeps its focus. Every read
+  behind the card is bounded by what it shows, not by the archive's age
+  (migration v79 adds two partial indexes on `archive_chunks`; the totals
+  read only the months not sealed yet).
 - `docker exec <container> fwmon-api archive --status` prints the same
   (`--status --json` the API's JSON), and `GET /admin/api/archive/status`
   serves it (admin-only). The configuration shows the key id's last four

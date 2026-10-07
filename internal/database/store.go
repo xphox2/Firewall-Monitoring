@@ -115,7 +115,7 @@ type ArchiveStatusStore interface {
 	ArchiveBacklogs(ctx context.Context) (map[string]ArchiveBacklog, error)
 	RecentArchiveChunks(ctx context.Context, table string, limit int) ([]ArchiveChunkSummary, error)
 	ArchiveChunksWithStatus(ctx context.Context, status string, limit int) ([]ArchiveChunkSummary, error)
-	ArchiveVerifiedTotals(ctx context.Context) ([]ArchiveMonthTotal, error)
+	ArchiveVerifiedTotals(ctx context.Context, table, stream string, months []string) ([]ArchiveMonthTotal, error)
 	ArchiveGateHealthRecord(ctx context.Context) (*ArchiveGateHealth, error)
 	SyslogRetentionWindows(ret config.RetentionConfig) [SyslogSeverityCount]SyslogWindow
 }

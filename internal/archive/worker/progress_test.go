@@ -211,7 +211,8 @@ func TestWorker_ProgressWriteThrottled(t *testing.T) {
 }
 
 // TestWorker_SettleFailureIsNotRechecked: a settle check that fails (not a
-// wait) is retried by the next pass, not on every tick.
+// wait) is retried by the next pass, not on every tick — also when the chunk
+// was waiting (and so being rechecked every tick) before the failure.
 func TestWorker_SettleFailureIsNotRechecked(t *testing.T) {
 	h := newHarness(t, day(10, 5, 11, 50), func(c *config.ArchiveConfig) { c.FlowsEnabled = false })
 	seedSyslog(t, h.db, day(10, 4, 1, 0))
@@ -223,5 +224,28 @@ func TestWorker_SettleFailureIsNotRechecked(t *testing.T) {
 	h.w.Tick(ctx)
 	if checks != before {
 		t.Fatalf("a failed settle check was retried on the next tick (%d checks), want at the next pass", checks-before)
+	}
+
+	// Waiting on an open writer (checked every tick), then the check fails.
+	h2 := newHarness(t, day(10, 5, 11, 50), func(c *config.ArchiveConfig) { c.FlowsEnabled = false })
+	seedSyslog(t, h2.db, day(10, 4, 1, 0))
+	fail := false
+	checks = 0
+	h2.w.settled = func(context.Context, *models.ArchiveChunk) error {
+		checks++
+		if fail {
+			return errors.New("connection reset")
+		}
+		return &database.ArchiveUnsettledError{GuardXmax: 900, Xmin: 800}
+	}
+	h2.w.Tick(ctx) // the pass: open_writer, rechecked every tick
+	fail = true
+	h2.clk.add(TickInterval)
+	h2.w.Tick(ctx) // the recheck fails
+	h2.clk.add(TickInterval)
+	before = checks
+	h2.w.Tick(ctx)
+	if checks != before {
+		t.Fatalf("after a failed recheck the next tick checked again (%d checks), want the next pass", checks-before)
 	}
 }

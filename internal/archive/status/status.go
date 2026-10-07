@@ -39,7 +39,7 @@ type Store interface {
 	ArchiveBacklogs(ctx context.Context) (map[string]database.ArchiveBacklog, error)
 	RecentArchiveChunks(ctx context.Context, table string, limit int) ([]database.ArchiveChunkSummary, error)
 	ArchiveChunksWithStatus(ctx context.Context, status string, limit int) ([]database.ArchiveChunkSummary, error)
-	ArchiveVerifiedTotals(ctx context.Context) ([]database.ArchiveMonthTotal, error)
+	ArchiveVerifiedTotals(ctx context.Context, table, stream string, months []string) ([]database.ArchiveMonthTotal, error)
 	ArchiveGateHealthRecord(ctx context.Context) (*database.ArchiveGateHealth, error)
 	SyslogRetentionWindows(ret config.RetentionConfig) [database.SyslogSeverityCount]database.SyslogWindow
 }
@@ -285,12 +285,10 @@ type StreamView struct {
 	UnsealedDays   float64     `json:"unsealed_days"`
 	LastSealedAt   *time.Time  `json:"last_sealed_at,omitempty"`
 	Months         []MonthView `json:"months"`
-	// Archived*: what the bucket holds verified for the stream (every
-	// month, not only the ones listed).
-	ArchivedObjects     int64 `json:"archived_objects"`
+	// Archived*: what the bucket holds verified for the stream, every
+	// month (the sealed ones from their seal's totals).
 	ArchivedRows        int64 `json:"archived_rows"`
 	ArchivedObjectBytes int64 `json:"archived_object_bytes"`
-	ArchivedRawBytes    int64 `json:"archived_raw_bytes"`
 	// NextSeal: the oldest month not sealed yet (nil: none).
 	NextSeal *NextSealView `json:"next_seal,omitempty"`
 }
@@ -313,8 +311,7 @@ type MonthView struct {
 	RowCount    int64          `json:"row_count"`
 	ObjectBytes int64          `json:"object_bytes"`
 	// Archived*: the verified objects of the month so far (before the
-	// seal too; RowCount / ObjectBytes are the seal's totals).
-	ArchivedObjects     int64      `json:"archived_objects"`
+	// seal too; once sealed, the seal's RowCount / ObjectBytes).
 	ArchivedRows        int64      `json:"archived_rows"`
 	ArchivedObjectBytes int64      `json:"archived_object_bytes"`
 	SealedAt            *time.Time `json:"sealed_at,omitempty"`
@@ -592,18 +589,6 @@ func Build(ctx context.Context, db Store, cfg *config.Config, now time.Time) (*S
 			st.Retrying = append(st.Retrying, cv)
 		}
 	}
-	totals, err := db.ArchiveVerifiedTotals(ctx)
-	if err != nil {
-		problem("archived totals", err)
-	}
-	monthTotals := map[string]database.ArchiveMonthTotal{} // stream + "/" + month
-	streamTotals := map[string]database.ArchiveMonthTotal{}
-	for _, m := range totals {
-		monthTotals[m.Stream+"/"+m.Month] = m
-		s := streamTotals[m.Stream]
-		s.Objects, s.Rows, s.ObjectBytes, s.RawBytes = s.Objects+m.Objects, s.Rows+m.Rows, s.ObjectBytes+m.ObjectBytes, s.RawBytes+m.RawBytes
-		streamTotals[m.Stream] = s
-	}
 
 	grace := a.SealGrace()
 	due := export.MonthOf(now.Add(-grace)) // months before it are due
@@ -617,9 +602,6 @@ func Build(ctx context.Context, db Store, cfg *config.Config, now time.Time) (*S
 				return nil, err
 			}
 			sv := StreamView{Stream: s, Table: t, Enabled: tableEnabled(a, t), LagSeconds: lag[t], Months: []MonthView{}}
-			if tot, ok := streamTotals[s]; ok {
-				sv.ArchivedObjects, sv.ArchivedRows, sv.ArchivedObjectBytes, sv.ArchivedRawBytes = tot.Objects, tot.Rows, tot.ObjectBytes, tot.RawBytes
-			}
 			rows, err := db.ArchiveMonthRows(ctx, s)
 			if err != nil {
 				problem("month rows of "+s, err)
@@ -631,6 +613,28 @@ func Build(ctx context.Context, db Store, cfg *config.Config, now time.Time) (*S
 					v := r.SealedAt.UTC()
 					sv.LastSealedAt = &v
 				}
+			}
+			// The archived totals: a sealed month's from its seal (fixed for
+			// good), the others' from their verified objects — so the read
+			// covers a month or two, however old the archive.
+			monthTotals := map[string]database.ArchiveMonthTotal{}
+			var open []string
+			for _, m := range months {
+				if r, ok := byMonth[m]; ok && r.Status == models.ArchiveMonthSealed {
+					monthTotals[m] = database.ArchiveMonthTotal{Month: m, Rows: r.RowCount, ObjectBytes: r.ObjectBytes}
+				} else {
+					open = append(open, m)
+				}
+			}
+			if totals, err := db.ArchiveVerifiedTotals(ctx, t, s, open); err != nil {
+				problem("archived totals of "+s, err)
+			} else {
+				for _, m := range totals {
+					monthTotals[m.Month] = m
+				}
+			}
+			for _, m := range monthTotals {
+				sv.ArchivedRows, sv.ArchivedObjectBytes = sv.ArchivedRows+m.Rows, sv.ArchivedObjectBytes+m.ObjectBytes
 			}
 			all := map[string]bool{}
 			for _, m := range months {
@@ -677,8 +681,8 @@ func Build(ctx context.Context, db Store, cfg *config.Config, now time.Time) (*S
 			for i := len(list) - 1; i >= 0; i-- { // newest first
 				m := list[i]
 				mv := MonthView{Month: m, Status: models.ArchiveMonthOpen, Due: m < due}
-				if tot, ok := monthTotals[s+"/"+m]; ok {
-					mv.ArchivedObjects, mv.ArchivedRows, mv.ArchivedObjectBytes = tot.Objects, tot.Rows, tot.ObjectBytes
+				if tot, ok := monthTotals[m]; ok {
+					mv.ArchivedRows, mv.ArchivedObjectBytes = tot.Rows, tot.ObjectBytes
 				}
 				if r, ok := byMonth[m]; ok {
 					mv.Status, mv.Partial, mv.PartialNote = r.Status, r.Partial, r.PartialNote

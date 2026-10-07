@@ -2292,6 +2292,22 @@ func (d *Database) migrateArchiveRestoreJobs() error {
 	return d.db.AutoMigrate(&models.ArchiveRestoreJob{}, &models.ArchiveRestoreObject{}, &models.NormalizeBackfillJob{})
 }
 
+// migrateArchiveChunkStatusIndexes (v79) adds the two partial indexes the
+// archive status card reads through every 15 s (archive_activity.go): the
+// open chunks of a table by period, and a table's verified chunks by
+// verified_at. archive_chunks is small (a row per syslog day, per flow hour:
+// ~90 000 rows after five years), so a plain CREATE INDEX holds its lock for
+// a moment only; IF NOT EXISTS makes it idempotent. SQLite has partial
+// indexes too.
+func (d *Database) migrateArchiveChunkStatusIndexes() error {
+	for _, q := range archiveChunkIndexes {
+		if err := d.db.Exec(q).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // archiveOverrideAuditRe parses an archive_gate_override audit target, as the
 // CLI and the API write it: "stream=<s> until=<RFC 3339> reason=..." or
 // "stream=<s> re-engaged reason=...".

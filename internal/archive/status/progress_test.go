@@ -62,6 +62,17 @@ func TestBuild_SyncProgress(t *testing.T) {
 	object(t, db, c2, export.StreamSyslog, 2000, 3000)
 	object(t, db, fl, export.StreamSFlow, 30, 70)
 	object(t, db, fl, export.StreamNetFlow, 20, 30)
+	// A sealed month: its totals come from the seal (5000 rows, 7000 bytes),
+	// not from its objects (which are not read: they hold 1 row here).
+	aug := chunk(t, db, export.TableSyslog, 0, 0, 0, d(8, 28), day, models.ArchiveChunkVerified)
+	object(t, db, aug, export.StreamSyslog, 1, 1)
+	sealedAt := d(9, 3)
+	if err := db.Gorm().Create(&models.ArchiveMonth{Stream: export.StreamSyslog, Month: "2026-08", Status: models.ArchiveMonthSealed,
+		RowCount: 5000, ObjectBytes: 7000, SealedAt: &sealedAt}).Error; err != nil {
+		t.Fatal(err)
+	}
+	// A superseded chunk is no backlog (NextArchiveChunk never works one).
+	chunk(t, db, export.TableSyslog, 6, 9000, 9500, d(10, 4), day, models.ArchiveChunkSuperseded)
 
 	r := NewRecorder("fw-example-01-1", "/tmp/fwmon-archive-test", 2<<30)
 	r.SetPreflight(true)
@@ -75,7 +86,7 @@ func TestBuild_SyncProgress(t *testing.T) {
 
 	st := build(t, db, testConfig(true, true), at)
 	b := tableOf(t, st, export.TableSyslog).Backlog
-	if b == nil || b.Chunks != 5 || b.Verified != 2 || b.Remaining != 3 || b.State != "catching_up" || b.RemainingRows != 6000 ||
+	if b == nil || b.Chunks != 6 || b.Verified != 3 || b.Remaining != 3 || b.State != "catching_up" || b.RemainingRows != 6000 ||
 		b.OldestRemaining == nil || !b.OldestRemaining.Equal(d(10, 1)) {
 		t.Fatalf("syslog backlog %+v", b)
 	}
@@ -85,8 +96,8 @@ func TestBuild_SyncProgress(t *testing.T) {
 	if fb := tableOf(t, st, export.TableFlows).Backlog; fb == nil || fb.State != "caught_up" || fb.Remaining != 0 || fb.ETASeconds != nil {
 		t.Fatalf("flows backlog %+v", fb)
 	}
-	if len(st.Recent) != 3 || st.Recent[0].ID != fl.ID || st.Recent[1].ID != c2.ID || st.Recent[2].ID != c1.ID {
-		t.Fatalf("recent %+v, want flows then syslog 2, 1", st.Recent)
+	if len(st.Recent) != 4 || st.Recent[0].ID != fl.ID || st.Recent[1].ID != c2.ID || st.Recent[2].ID != c1.ID || st.Recent[3].ID != aug.ID {
+		t.Fatalf("recent %+v, want flows then syslog 2, 1, 0", st.Recent)
 	}
 	if r := st.Recent[2]; r.Objects != 2 || r.ObjectBytes != 1500 || r.RawBytes != 6000 || r.DurationSeconds == nil || *r.DurationSeconds != 10 || r.Rows != 1000 {
 		t.Fatalf("recent syslog 1 %+v", r)
@@ -96,18 +107,19 @@ func TestBuild_SyncProgress(t *testing.T) {
 		t.Fatalf("retrying %+v", st.Retrying)
 	}
 	sv := streamOf(t, st, export.StreamSyslog)
-	if sv.ArchivedObjects != 3 || sv.ArchivedRows != 3000 || sv.ArchivedObjectBytes != 4500 || sv.ArchivedRawBytes != 18000 {
+	if sv.ArchivedRows != 8000 || sv.ArchivedObjectBytes != 11500 {
 		t.Fatalf("syslog totals %+v", sv)
 	}
 	if sv.NextSeal == nil || sv.NextSeal.Month != "2026-09" || !sv.NextSeal.Due || !sv.NextSeal.DueAt.Equal(d(10, 1).Add(48*time.Hour)) {
 		t.Fatalf("syslog next seal %+v, want 2026-09 due at 3 Oct (grace 48 h)", sv.NextSeal)
 	}
 	for _, m := range sv.Months {
-		if m.Month == "2026-09" && (m.ArchivedRows != 3000 || m.ArchivedObjects != 3 || m.ArchivedObjectBytes != 4500) {
+		if m.Month == "2026-09" && (m.ArchivedRows != 3000 || m.ArchivedObjectBytes != 4500) ||
+			m.Month == "2026-08" && (m.ArchivedRows != 5000 || m.ArchivedObjectBytes != 7000) {
 			t.Fatalf("2026-09 archived %+v", m)
 		}
 	}
-	if s := streamOf(t, st, export.StreamNetFlow); s.ArchivedRows != 20 || s.ArchivedObjects != 1 {
+	if s := streamOf(t, st, export.StreamNetFlow); s.ArchivedRows != 20 || s.ArchivedObjectBytes != 30 {
 		t.Fatalf("netflow totals %+v", s)
 	}
 	w := st.Worker

@@ -2,21 +2,47 @@ package database
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"firewall-mon/internal/models"
+
+	"gorm.io/gorm"
 )
 
 // Reads behind the archive status card's progress view: how much of each
 // table's planned work is left, what was verified lately and how fast, the
 // chunks waiting on a retry, and what the bucket holds per stream and month.
 // Every one reads only the manifest tables (archive_chunks, archive_objects:
-// a row per syslog day per device, two per flow hour), never a source table.
+// a row per syslog day per device, two per flow hour), never a source table,
+// and each one's cost is bounded by what it returns, not by the archive's
+// age: the card asks every 15 s, and an archive five years old holds ~90 000
+// chunks and ~270 000 objects. The open and the recently verified chunks are
+// read through partial indexes (migration v79, archiveChunkIndexes); the
+// totals only for the months not sealed yet (a sealed month's totals are on
+// its archive_months row).
+
+// The partial indexes' predicates. The queries below use the same literal
+// text, so PostgreSQL proves the index applies whatever plan it builds.
+const (
+	archiveOpenChunks     = "status NOT IN ('verified', 'superseded')"
+	archiveVerifiedChunks = "status = 'verified'"
+)
+
+// archiveChunkIndexes are migration v79's indexes on archive_chunks.
+var archiveChunkIndexes = []string{
+	// The open chunks of a table by period: the backlog and its oldest
+	// period (a handful of rows however old the archive).
+	"CREATE INDEX IF NOT EXISTS idx_archive_chunk_open ON archive_chunks (table_name, period_start) WHERE " + archiveOpenChunks,
+	// A table's newest verified chunks, in the order the card lists them.
+	"CREATE INDEX IF NOT EXISTS idx_archive_chunk_recent ON archive_chunks (table_name, verified_at, id) WHERE " + archiveVerifiedChunks,
+}
 
 // ArchiveBacklog is a table's planned chunks that are not verified yet.
 type ArchiveBacklog struct {
 	// Chunks: not verified (pending, exporting, uploading, verifying,
-	// failed, needs_attention).
+	// failed, needs_attention; not superseded, which NextArchiveChunk
+	// never works either).
 	Chunks int64
 	// IDSpan: the sum of their id ranges (id_hi − id_lo), an upper bound of
 	// their rows (ids a rollback or a purge skipped are counted).
@@ -32,9 +58,7 @@ func (d *Database) ArchiveBacklogs(ctx context.Context) (map[string]ArchiveBackl
 		N         int64
 		Span      int64
 	}
-	if err := d.db.WithContext(ctx).Model(&models.ArchiveChunk{}).
-		Select("table_name, count(*) AS n, COALESCE(sum(id_hi - id_lo), 0) AS span").
-		Where("status <> ?", models.ArchiveChunkVerified).Group("table_name").Scan(&rows).Error; err != nil {
+	if err := archiveBacklogQuery(d.db.WithContext(ctx)).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	out := make(map[string]ArchiveBacklog, len(rows))
@@ -43,8 +67,7 @@ func (d *Database) ArchiveBacklogs(ctx context.Context) (map[string]ArchiveBackl
 		// The oldest period separately: min() of a timestamp comes back as
 		// text on SQLite.
 		var first []time.Time
-		if err := d.db.WithContext(ctx).Model(&models.ArchiveChunk{}).Where("table_name = ? AND status <> ?", r.TableName, models.ArchiveChunkVerified).
-			Order("period_start").Limit(1).Pluck("period_start", &first).Error; err != nil {
+		if err := archiveOldestOpenQuery(d.db.WithContext(ctx), r.TableName).Pluck("period_start", &first).Error; err != nil {
 			return nil, err
 		}
 		if len(first) == 1 {
@@ -56,6 +79,17 @@ func (d *Database) ArchiveBacklogs(ctx context.Context) (map[string]ArchiveBackl
 	return out, nil
 }
 
+// archiveBacklogQuery and archiveOldestOpenQuery are ArchiveBacklogs'
+// statements (the plan test EXPLAINs them): both read idx_archive_chunk_open.
+func archiveBacklogQuery(tx *gorm.DB) *gorm.DB {
+	return tx.Model(&models.ArchiveChunk{}).Select("table_name, count(*) AS n, COALESCE(sum(id_hi - id_lo), 0) AS span").
+		Where(archiveOpenChunks).Group("table_name")
+}
+
+func archiveOldestOpenQuery(tx *gorm.DB, table string) *gorm.DB {
+	return tx.Model(&models.ArchiveChunk{}).Where("table_name = ? AND "+archiveOpenChunks, table).Order("period_start").Limit(1)
+}
+
 // ArchiveChunkSummary is a chunk with the totals of its live objects.
 type ArchiveChunkSummary struct {
 	Chunk       models.ArchiveChunk
@@ -64,16 +98,12 @@ type ArchiveChunkSummary struct {
 	RawBytes    int64
 }
 
-// RecentArchiveChunks returns the newest verified chunks (of table, or of
-// every table when it is ""), newest first, with their verified objects'
-// totals.
+// RecentArchiveChunks returns table's newest verified chunks, newest first,
+// with their verified objects' totals: a backward walk of
+// idx_archive_chunk_recent, limit rows long.
 func (d *Database) RecentArchiveChunks(ctx context.Context, table string, limit int) ([]ArchiveChunkSummary, error) {
-	q := d.db.WithContext(ctx).Where("status = ? AND verified_at IS NOT NULL", models.ArchiveChunkVerified)
-	if table != "" {
-		q = q.Where("table_name = ?", table)
-	}
 	var cs []models.ArchiveChunk
-	if err := q.Order("verified_at DESC, id DESC").Limit(limit).Find(&cs).Error; err != nil {
+	if err := archiveRecentQuery(d.db.WithContext(ctx), table, limit).Find(&cs).Error; err != nil {
 		return nil, err
 	}
 	return d.summarizeArchiveChunks(ctx, cs, models.ArchiveObjectVerified)
@@ -130,26 +160,82 @@ func (d *Database) summarizeArchiveChunks(ctx context.Context, cs []models.Archi
 	return out, nil
 }
 
+// archiveRecentQuery is RecentArchiveChunks' statement (the plan test
+// EXPLAINs it).
+func archiveRecentQuery(tx *gorm.DB, table string, limit int) *gorm.DB {
+	return tx.Model(&models.ArchiveChunk{}).Where(archiveVerifiedChunks+" AND table_name = ? AND verified_at IS NOT NULL", table).
+		Order("verified_at DESC, id DESC").Limit(limit)
+}
+
 // ArchiveMonthTotal is what the bucket holds, verified, for one stream's
 // month folder.
 type ArchiveMonthTotal struct {
-	Stream      string
 	Month       string
-	Objects     int64
 	Rows        int64 `gorm:"column:row_total"`
 	ObjectBytes int64
-	RawBytes    int64
 }
 
-// ArchiveVerifiedTotals returns the verified objects' totals per stream and
-// month (the chunk's ingest month: its folder).
-func (d *Database) ArchiveVerifiedTotals(ctx context.Context) ([]ArchiveMonthTotal, error) {
-	var out []ArchiveMonthTotal
-	err := d.db.WithContext(ctx).Table("archive_objects AS o").
-		Select("o.stream AS stream, c.month AS month, count(*) AS objects, COALESCE(sum(o.row_count), 0) AS row_total, "+
-			"COALESCE(sum(o.object_bytes), 0) AS object_bytes, COALESCE(sum(o.raw_bytes), 0) AS raw_bytes").
-		Joins("JOIN archive_chunks AS c ON c.id = o.chunk_id").
-		Where("o.status = ?", models.ArchiveObjectVerified).
-		Group("o.stream, c.month").Order("o.stream, c.month").Scan(&out).Error
-	return out, err
+// ArchiveVerifiedTotals returns stream's verified objects' rows and bytes
+// for each of months (the chunks' ingest month — the UTC month of their
+// period start — is the folder); table is the stream's source table. The
+// caller asks only for the months not sealed (a sealed month's totals are on
+// its archive_months row), so the read covers a month or two, each in two
+// index range reads: the month's chunk ids by period
+// (idx_archive_chunk_period), then the objects of that id range
+// (archive_objects.chunk_id; one table's chunks of a month were planned
+// together, so the range is narrow, and chunks of other months in it are
+// left out here). Joined on the month instead, PostgreSQL prefers to scan
+// every object the archive ever wrote; an IN list of a month's 720 hourly
+// chunks costs an index descent each.
+func (d *Database) ArchiveVerifiedTotals(ctx context.Context, table, stream string, months []string) ([]ArchiveMonthTotal, error) {
+	out := []ArchiveMonthTotal{}
+	for _, m := range months {
+		from, err := time.Parse("2006-01", m)
+		if err != nil {
+			return nil, fmt.Errorf("archive totals: month %q: %w", m, err)
+		}
+		var ids []uint
+		if err := archiveMonthChunksQuery(d.db.WithContext(ctx), table, from).Pluck("id", &ids).Error; err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			continue
+		}
+		in := make(map[uint]bool, len(ids))
+		lo, hi := ids[0], ids[0]
+		for _, id := range ids {
+			in[id] = true
+			lo, hi = min(lo, id), max(hi, id)
+		}
+		var per []struct {
+			ChunkID     uint
+			Rows        int64 `gorm:"column:row_total"`
+			ObjectBytes int64
+		}
+		if err := archiveTotalsQuery(d.db.WithContext(ctx), stream, lo, hi).Scan(&per).Error; err != nil {
+			return nil, err
+		}
+		var tot ArchiveMonthTotal
+		for _, p := range per {
+			if in[p.ChunkID] { // the range may hold another month's chunks
+				tot.Rows, tot.ObjectBytes = tot.Rows+p.Rows, tot.ObjectBytes+p.ObjectBytes
+			}
+		}
+		tot.Month = m
+		out = append(out, tot)
+	}
+	return out, nil
+}
+
+// archiveMonthChunksQuery and archiveTotalsQuery are ArchiveVerifiedTotals'
+// statements (the plan test EXPLAINs them).
+func archiveMonthChunksQuery(tx *gorm.DB, table string, month time.Time) *gorm.DB {
+	return tx.Model(&models.ArchiveChunk{}).Where("table_name = ? AND period_start >= ? AND period_start < ?", table, month, month.AddDate(0, 1, 0))
+}
+
+func archiveTotalsQuery(tx *gorm.DB, stream string, lo, hi uint) *gorm.DB {
+	return tx.Model(&models.ArchiveObject{}).
+		Select("chunk_id, COALESCE(sum(row_count), 0) AS row_total, COALESCE(sum(object_bytes), 0) AS object_bytes").
+		Where("chunk_id BETWEEN ? AND ? AND stream = ? AND status = ?", lo, hi, stream, models.ArchiveObjectVerified).
+		Group("chunk_id")
 }
