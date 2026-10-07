@@ -3,11 +3,15 @@ package worker
 import (
 	"context"
 	"errors"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	"firewall-mon/internal/archive/export"
+	"firewall-mon/internal/archive/s3/s3test"
 	"firewall-mon/internal/database"
+	"firewall-mon/internal/metrics"
 	"firewall-mon/internal/models"
 )
 
@@ -74,6 +78,11 @@ func TestWorker_FlowsNotStarvedBySyslogBacklog(t *testing.T) {
 	const exportTakes = 20 * time.Minute
 	const maxLag = time.Hour + exportTakes // a closed hour waits at most its 5 min plus one syslog chunk
 	var hooks int
+	// The verified-through gauge is published between chunks (every 5 min
+	// at most), not only when the pass ends: at each syslog chunk it holds
+	// at least what the database showed at the previous one.
+	metrics.SetArchiveVerifiedThrough(export.TableFlows, 0)
+	var prevV int64
 	h.w.afterExport = func(ctx context.Context, c *models.ArchiveChunk) error {
 		if c.SourceTable != export.TableSyslog {
 			return nil
@@ -85,6 +94,14 @@ func TestWorker_FlowsNotStarvedBySyslogBacklog(t *testing.T) {
 		addCounter(t, h, now.Add(-time.Minute))
 		h.w.takeMarks(ctx) // the pass's mark ticker, in fake time
 
+		if g := metricValue(t, `fwmon_archive_verified_through_id{table="flow_samples"}`); g < float64(prevV) || (prevV > 0 && g == 0) {
+			t.Errorf("at %s the flows verified-through gauge is %v, want at least %d (published during the pass)", now.Format("01-02 15:04"), g, prevV)
+		}
+		p, err := h.db.ArchiveTableProgress(ctx, export.TableFlows)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prevV = p.VerifiedThroughID
 		if end, _ := verifiedThrough(h, export.TableFlows); now.Sub(end) > maxLag {
 			t.Errorf("at %s (syslog chunk %d) flows are verified through %s: lag %s, want at most %s",
 				now.Format("01-02 15:04"), c.Seq, end.Format("01-02 15:04"), now.Sub(end), maxLag)
@@ -237,5 +254,87 @@ func TestWorker_FailedFlowChunkRetriedInPass(t *testing.T) {
 	}
 	if fc[1].Attempts != 2 {
 		t.Fatalf("flow chunk 2: %d attempts, want 2 (failed, then retried after its backoff)", fc[1].Attempts)
+	}
+}
+
+// TestWorker_BucketFailuresBackOffPerTable: while the bucket refuses the
+// syslog objects — their upload, or their read-back — a pass that keeps
+// working a flow backlog (one chunk a fake minute, 50 in all) tries syslog
+// four times, 1, 5 and 30 minutes apart, and not again within the next 2
+// hours. A guard, not a regression test: today the failed chunk's own
+// backoff equals the table's cooldown, so the same chunk is retried with an
+// escalating count; the table's count (Worker.rest) keeps the schedule if a
+// pass ever moves on to a fresh chunk — a first attempt — instead.
+func TestWorker_BucketFailuresBackOffPerTable(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		op   s3test.Op
+	}{{"upload", s3test.OpPutObject}, {"read-back", s3test.OpGetObject}} {
+		t.Run(tc.name, func(t *testing.T) {
+			start := day(10, 10, 12, 20)
+			h := newHarness(t, start, nil)
+			var days []time.Time
+			for d := 0; d < 9; d++ {
+				days = append(days, day(10, 1+d, 12, 0))
+			}
+			seedSyslog(t, h.db, days...)
+			addFlowSample(t, h, day(10, 10, 11, 30))
+			// A flow backlog: the marks of the last 50 hours, so the pass
+			// keeps verifying one flow chunk after another.
+			for i := 50; i >= 1; i-- {
+				m := models.ArchiveIDMark{SourceTable: export.TableFlows, BoundaryTs: day(10, 10, 12, 0).Add(-time.Duration(i) * time.Hour), MaxID: 1, TakenAt: day(10, 10, 12, 0)}
+				if err := h.db.Gorm().Create(&m).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+			h.srv.SetFail(func(op s3test.Op, r *http.Request) (int, string) {
+				if op == tc.op && strings.Contains(r.URL.Path, "/syslog/") {
+					return http.StatusServiceUnavailable, "ServiceUnavailable"
+				}
+				return 0, ""
+			})
+			// An attempt of a syslog chunk reaches the bucket after its
+			// export (upload) or at its verification (a read-back retry
+			// is not exported again).
+			var attempts []time.Duration
+			at := func(c *models.ArchiveChunk) {
+				d := h.clk.now().Sub(start)
+				if n := len(attempts); n == 0 || attempts[n-1] != d {
+					attempts = append(attempts, d)
+				}
+			}
+			h.w.afterExport = func(_ context.Context, c *models.ArchiveChunk) error {
+				switch c.SourceTable {
+				case export.TableFlows:
+					h.clk.add(time.Minute)
+				case export.TableSyslog:
+					at(c)
+				}
+				return nil
+			}
+			h.w.beforeVerify = func(_ context.Context, c *models.ArchiveChunk) error {
+				if c.SourceTable == export.TableSyslog {
+					at(c)
+				}
+				return nil
+			}
+
+			h.w.Tick(ctx)
+
+			if fc := h.chunks(export.TableFlows); len(fc) < 50 {
+				t.Fatalf("%d flow chunks, want the 50-hour backlog worked", len(fc))
+			}
+			if d := h.clk.now().Sub(start); d < 50*time.Minute {
+				t.Fatalf("the pass ran %s of fake time, want at least 50 min", d)
+			}
+			if len(attempts) != 4 {
+				t.Fatalf("syslog attempts at %v into the pass, want 4 (1, 5 and 30 min apart; the next 2 h later)", attempts)
+			}
+			for i, min := range []time.Duration{time.Minute, 5 * time.Minute, 30 * time.Minute} {
+				if gap := attempts[i+1] - attempts[i]; gap < min {
+					t.Fatalf("syslog attempts at %v: attempt %d came %s after the previous, want at least %s", attempts, i+2, gap, min)
+				}
+			}
+		})
 	}
 }

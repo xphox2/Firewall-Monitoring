@@ -76,6 +76,9 @@ const (
 	passEvery    = 10 * time.Minute
 	markEvery    = time.Minute
 	replanEvery  = time.Minute
+	// publishEvery: how often a long pass publishes the progress gauges
+	// between chunks (and once when it ends).
+	publishEvery = 5 * time.Minute
 	// planBatch bounds the chunks planned per table per round (a long syslog
 	// backlog is planned over several rounds).
 	planBatch = 64
@@ -135,6 +138,12 @@ type Worker struct {
 	// goroutine only).
 	lastProgress time.Time
 	cooldown     map[string]time.Time // table (or "seal-"+stream) → no new attempt before (after a bucket failure)
+	// bucketFailures counts a table's bucket failures since its last
+	// verified chunk: its cooldown backs off on it, not only on the failed
+	// chunk's own count — should a pass move on to the table's next chunk
+	// (a first attempt) while the bucket fails, it would otherwise try the
+	// bucket every minute (passes re-admit a failed table: pass).
+	bucketFailures map[string]int
 	// sealFailures counts a stream's consecutive seal attempts the service or
 	// the database failed (their backoff).
 	sealFailures map[string]int
@@ -174,7 +183,8 @@ func newWorker(db *database.Database, store Store, cfg config.ArchiveConfig) (*W
 	w := &Worker{
 		db: db, store: store, cfg: cfg, now: time.Now,
 		cooldown: map[string]time.Time{}, sealFailures: map[string]int{}, lastLog: map[string]string{},
-		waits: map[string]time.Time{},
+		bucketFailures: map[string]int{},
+		waits:          map[string]time.Time{},
 	}
 	w.settled = db.ArchiveChunkSettled
 	if cfg.FlowsEnabled {
@@ -518,9 +528,17 @@ func (w *Worker) pass(ctx context.Context) {
 
 	skip := map[string]bool{}       // tables done for now
 	again := map[string]time.Time{} // skipped tables planned again from then on
+	published := w.now()
 	for ctx.Err() == nil {
 		progressed := false
 		now := w.now()
+		if now.Sub(published) >= publishEvery {
+			// The /metrics lag, verified-through and chunk gauges move
+			// with the chunks a long pass verifies (ARCHIVE_LAG itself
+			// reads the manifest), not only when the pass ends.
+			w.publishProgress(ctx)
+			published = now
+		}
 		for t, at := range again {
 			if !now.Before(at) {
 				delete(again, t)
@@ -682,6 +700,14 @@ func bucketStage(stage string) bool {
 	return stage == "upload" || stage == "verify" || stage == "manifest"
 }
 
+// rest sets table's cooldown after a bucket failure at at: the retry backoff
+// of the table's consecutive bucket failures or of the chunk's own (failures)
+// if higher — 1, 5, 30 minutes, then 2 hours.
+func (w *Worker) rest(table string, at time.Time, failures int) {
+	w.bucketFailures[table]++
+	w.cooldown[table] = at.Add(database.ArchiveRetryBackoff(max(failures, w.bucketFailures[table])))
+}
+
 // workOne advances the table's oldest workable chunk by one attempt.
 func (w *Worker) workOne(ctx context.Context, table string) progress {
 	now := w.now()
@@ -690,6 +716,9 @@ func (w *Worker) workOne(ctx context.Context, table string) progress {
 	}
 	c, err := w.db.NextArchiveChunk(ctx, table, now)
 	if err != nil {
+		// A database error: the table waits for the next pass (pass), also
+		// when its chunk was waiting on its cut before.
+		delete(w.waits, table)
 		if ctx.Err() == nil {
 			w.fail("db", err)
 			w.logf("next-"+table, "%v", err)
@@ -727,6 +756,7 @@ func (w *Worker) workOne(ctx context.Context, table string) progress {
 	err = w.process(ctx, c)
 	if err == nil {
 		delete(w.cooldown, table)
+		delete(w.bucketFailures, table)
 		return progressMade
 	}
 	if ctx.Err() != nil {
@@ -781,13 +811,13 @@ func (w *Worker) workOne(ctx context.Context, table string) progress {
 		ferr = w.db.DeferArchiveVerify(ctx, c, err.Error(), at)
 		log.Printf("archive: %s chunk %d verification failed (%d in a row), retried after its backoff: %v", table, c.Seq, c.VerifyFailures, err)
 		if bucketStage(stage) {
-			w.cooldown[table] = at.Add(database.ArchiveRetryBackoff(c.VerifyFailures))
+			w.rest(table, at, c.VerifyFailures)
 		}
 	default:
 		log.Printf("archive: %s chunk %d (attempt %d) failed at %v", table, c.Seq, c.Attempts, err)
 		ferr = w.db.FailArchiveChunk(ctx, c, err.Error(), at)
 		if bucketStage(stage) {
-			w.cooldown[table] = at.Add(database.ArchiveRetryBackoff(c.Attempts))
+			w.rest(table, at, c.Attempts)
 		}
 	}
 	if ferr != nil {
