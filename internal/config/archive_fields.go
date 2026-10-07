@@ -29,6 +29,7 @@ const (
 
 // Sections of the admin form an archive field belongs to.
 const (
+	ArchiveSectionTarget     = "target"
 	ArchiveSectionConnection = "connection"
 	ArchiveSectionStreams    = "streams"
 	ArchiveSectionObjectLock = "object_lock"
@@ -42,8 +43,8 @@ type ArchiveField struct {
 	Env     string
 	Kind    string
 	Section string
-	// Location: the value is part of every object's location (endpoint,
-	// bucket, prefix). Once the archive holds a chunk it cannot change from
+	// Location: the value is part of every object's location (target,
+	// local directory, endpoint, bucket, prefix). Once the archive holds a chunk it cannot change from
 	// the admin UI: the manifest's objects would point at the old place.
 	Location bool
 	// Connection: the value is used to reach the bucket (Test connection,
@@ -70,6 +71,13 @@ var ArchiveFields = []ArchiveField{
 	{Env: "ARCHIVE_STAGING_DIR", Kind: ArchiveKindString, Section: ArchiveSectionStreams,
 		get: func(a ArchiveConfig) string { return a.StagingDir },
 		set: func(a *ArchiveConfig, v string) { a.StagingDir = v }},
+
+	{Env: "ARCHIVE_TARGET", Kind: ArchiveKindString, Section: ArchiveSectionTarget, Location: true, Connection: true,
+		get: func(a ArchiveConfig) string { return a.TargetName() },
+		set: func(a *ArchiveConfig, v string) { a.Target = normalizeArchiveTarget(v) }},
+	{Env: "ARCHIVE_LOCAL_DIR", Kind: ArchiveKindString, Section: ArchiveSectionTarget, Location: true, Connection: true,
+		get: func(a ArchiveConfig) string { return a.LocalDir },
+		set: func(a *ArchiveConfig, v string) { a.LocalDir = v }},
 
 	{Env: "ARCHIVE_S3_ENDPOINT", Kind: ArchiveKindString, Section: ArchiveSectionConnection, Location: true, Connection: true,
 		get: func(a ArchiveConfig) string { return a.Endpoint },
@@ -235,10 +243,24 @@ func (a ArchiveConfig) ValidateDraft() error {
 	if a.Enabled() {
 		return a.Validate()
 	}
-	if a.s3Complete() {
-		if err := a.ValidateS3(); err != nil {
-			return err
+	switch a.TargetName() {
+	case ArchiveTargetS3:
+		if a.s3Complete() {
+			if err := a.ValidateS3(); err != nil {
+				return err
+			}
 		}
+	case ArchiveTargetLocal:
+		if a.LocalDir != "" {
+			if err := a.CheckArchivePath("ARCHIVE_LOCAL_DIR", a.LocalDir); err != nil {
+				return err
+			}
+		}
+		if a.Prefix != "" && !ValidArchiveKeyPath(a.Prefix) {
+			return fmt.Errorf("ARCHIVE_S3_PREFIX %q must be slash-separated segments of A-Z a-z 0-9 . _ - with no leading or trailing slash and no '.' or '..' segment", a.Prefix)
+		}
+	default:
+		return fmt.Errorf("ARCHIVE_TARGET must be s3 or local, got %q", a.Target)
 	}
 	if err := a.validateSchedule(); err != nil {
 		return err
@@ -246,7 +268,7 @@ func (a ArchiveConfig) ValidateDraft() error {
 	if a.StagingDir != "" && !filepath.IsAbs(a.StagingDir) {
 		return fmt.Errorf("ARCHIVE_STAGING_DIR must be an absolute path, got %q", a.StagingDir)
 	}
-	return nil
+	return a.validateStagingOverlap()
 }
 
 // s3Complete reports whether every required S3 key is set.
@@ -255,12 +277,22 @@ func (a ArchiveConfig) s3Complete() bool {
 }
 
 // SameLocation reports whether a and b write their objects to the same place:
-// the same endpoint (scheme and host, compared as Validate canonicalizes it),
-// bucket (SameBucket: case-insensitive) and prefix (case-sensitive: it is
-// part of every object key).
+// the same target type and prefix (case-sensitive: it is part of every
+// object key), and for S3 the same endpoint (scheme and host, compared as
+// Validate canonicalizes it) and bucket (SameBucket: case-insensitive), for a
+// local target the same directory (exactly: a filesystem path).
 func (a ArchiveConfig) SameLocation(b ArchiveConfig) bool {
-	return canonicalEndpoint(a) == canonicalEndpoint(b) && SameBucket(a.Bucket, b.Bucket) && a.Prefix == b.Prefix
+	if a.TargetName() != b.TargetName() || a.Prefix != b.Prefix {
+		return false
+	}
+	if a.IsLocal() {
+		return filepath.Clean(a.LocalDir) == filepath.Clean(b.LocalDir)
+	}
+	return canonicalEndpoint(a) == canonicalEndpoint(b) && SameBucket(a.Bucket, b.Bucket)
 }
+
+// localLocationScheme starts the Location of a local target.
+const localLocationScheme = "file://"
 
 // SameLocationText compares two Location strings as SameLocation compares
 // configurations: the bucket — the path segment after the endpoint — ignoring
@@ -268,6 +300,9 @@ func (a ArchiveConfig) SameLocation(b ArchiveConfig) bool {
 // ("…/firewall-mon/…"); a configuration naming the bucket "Firewall-Mon" is
 // still at it.
 func SameLocationText(a, b string) bool {
+	if strings.HasPrefix(a, localLocationScheme) || strings.HasPrefix(b, localLocationScheme) {
+		return a == b // a directory: no case folding
+	}
 	ea, ba, pa, okA := splitLocation(a)
 	eb, bb, pb, okB := splitLocation(b)
 	if !okA || !okB {
@@ -301,11 +336,18 @@ func splitLocation(loc string) (endpoint, bucket, rest string, ok bool) {
 	return scheme + "://" + host, bucket, rest, true
 }
 
-// Location is "<endpoint>/<bucket>/<prefix>/", the endpoint as
-// canonicalEndpoint gives it: where the archive's objects are.
+// Location is where the archive's objects are: "<endpoint>/<bucket>/<prefix>/"
+// for S3, the endpoint as canonicalEndpoint gives it, and
+// "file://<ARCHIVE_LOCAL_DIR>/<prefix>/" for a local target.
 func (a ArchiveConfig) Location() string {
+	if a.IsLocal() {
+		return localLocationScheme + filepath.Clean(a.LocalDir) + "/" + a.Prefix + "/"
+	}
 	return canonicalEndpoint(a) + "/" + a.Bucket + "/" + a.Prefix + "/"
 }
+
+// IsLocalLocation reports whether a Location string names a local target.
+func IsLocalLocation(loc string) bool { return strings.HasPrefix(loc, localLocationScheme) }
 
 func canonicalEndpoint(a ArchiveConfig) string {
 	if u, err := a.EndpointURL(); err == nil {

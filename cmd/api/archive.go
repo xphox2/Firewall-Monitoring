@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"firewall-mon/internal/archive/s3"
 	"firewall-mon/internal/archive/status"
+	"firewall-mon/internal/archive/target"
 	"firewall-mon/internal/archive/worker"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
@@ -49,8 +49,9 @@ import (
 // --drop-restore are audit-logged like the API's re-authenticated routes.
 //
 // --verify-month (archive plan PR 7) needs no database: it reads the month's
-// _MONTH.json and every chunk.json and object it pins from the bucket
-// (ARCHIVE_S3_* keys) and re-checks them all (worker.VerifyMonth). It only
+// _MONTH.json and every chunk.json and object it pins from the target (the
+// bucket's ARCHIVE_S3_* keys, or ARCHIVE_LOCAL_DIR for a local target) and
+// re-checks them all (worker.VerifyMonth). It only
 // reads; its exit code is 0 when every check passed, 1 otherwise.
 //
 // Every subcommand uses the archive configuration in effect: the ARCHIVE_*
@@ -75,7 +76,7 @@ func runArchiveCmd(args []string) int {
 		}
 		return db, nil
 	}, func() (worker.MonthReader, error) {
-		return s3.New(cfg.Archive)
+		return target.Open(cfg.Archive)
 	})
 }
 
@@ -382,7 +383,10 @@ func printArchiveStatus(w io.Writer, st *status.Status) {
 	}
 	c := st.Config
 	fmt.Fprintf(w, "raw archive at %s: syslog %s, flows %s\n", st.GeneratedAt.Format(time.RFC3339), onOff(c.SyslogEnabled), onOff(c.FlowsEnabled))
-	if st.Enabled {
+	if st.Enabled && c.Target == config.ArchiveTargetLocal {
+		fmt.Fprintf(w, "  local directory %s prefix %s (no Object Lock: immutability is the storage's); seal grace %d h (%s)\n",
+			c.LocalDir, c.Prefix, c.SealGraceHours, c.SealReverify)
+	} else if st.Enabled {
 		lock := "no Object Lock"
 		if c.ObjectLockDays > 0 {
 			lock = fmt.Sprintf("Object Lock %s %d days", c.ObjectLockMode, c.ObjectLockDays)

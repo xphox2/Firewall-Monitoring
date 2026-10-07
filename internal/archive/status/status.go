@@ -94,6 +94,10 @@ type Status struct {
 type ConfigView struct {
 	SyslogEnabled bool `json:"syslog_enabled"`
 	FlowsEnabled  bool `json:"flows_enabled"`
+	// Target is ARCHIVE_TARGET (s3 or local); LocalDir the local target's
+	// directory ("" for s3).
+	Target   string `json:"target"`
+	LocalDir string `json:"local_dir,omitempty"`
 	// Endpoint is scheme://host[:port] only ("" when unset or invalid).
 	Endpoint string `json:"endpoint"`
 	Region   string `json:"region"`
@@ -373,11 +377,14 @@ var ChunkStatuses = []string{models.ArchiveChunkPending, models.ArchiveChunkExpo
 
 func configView(a config.ArchiveConfig) ConfigView {
 	v := ConfigView{
-		SyslogEnabled: a.SyslogEnabled, FlowsEnabled: a.FlowsEnabled,
+		SyslogEnabled: a.SyslogEnabled, FlowsEnabled: a.FlowsEnabled, Target: a.TargetName(),
 		Region: a.Region, Bucket: a.Bucket, Prefix: a.Prefix,
 		ObjectLockDays: a.ObjectLockDays, ObjectLockMode: a.ObjectLockMode,
 		MinAgeHours: a.MinAgeHours, SealGraceHours: int(a.SealGrace() / time.Hour), SealReverify: a.SealReverify,
 		Window: a.Window, StagingDir: a.StagingDir,
+	}
+	if a.IsLocal() {
+		v.LocalDir = a.LocalDir
 	}
 	if u, err := a.EndpointURL(); err == nil && u.Host != "" {
 		v.Endpoint = u.Scheme + "://" + u.Host

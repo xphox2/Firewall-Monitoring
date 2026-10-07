@@ -22,7 +22,9 @@ import (
 	"time"
 
 	"firewall-mon/internal/archive/export"
+	"firewall-mon/internal/archive/objstore"
 	"firewall-mon/internal/archive/s3"
+	"firewall-mon/internal/archive/target"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/metrics"
@@ -52,12 +54,12 @@ import (
 //
 // It only reads the bucket (GETs).
 
-// RestoreStore is the bucket as the restore worker reads it; *s3.Client
-// implements it.
+// RestoreStore is the target as the restore worker reads it; every
+// objstore.Store implements it.
 type RestoreStore interface {
 	Key(rel string) (string, error)
-	GetBytes(ctx context.Context, rel, versionID string, limit int64) ([]byte, s3.ObjectInfo, error)
-	VerifyFull(ctx context.Context, want s3.PutResult, w io.Writer) error
+	GetBytes(ctx context.Context, rel, versionID string, limit int64) ([]byte, objstore.ObjectInfo, error)
+	VerifyFull(ctx context.Context, want objstore.PutResult, w io.Writer) error
 }
 
 // RestoreTickInterval is how often the poller calls RestoreWorker.Tick.
@@ -92,12 +94,12 @@ type RestoreWorker struct {
 	afterBatch func(job *models.ArchiveRestoreJob, obj *models.ArchiveRestoreObject) error
 }
 
-// NewRestoreWorker builds the restore worker over db with the S3 client
-// from cfg (ARCHIVE_S3_* and ARCHIVE_STAGING_DIR are required; the streams
-// need not be enabled). It clears download directories a previous run left
+// NewRestoreWorker builds the restore worker over db with the target of cfg
+// (target.Open: the ARCHIVE_S3_* keys or ARCHIVE_LOCAL_DIR, and
+// ARCHIVE_STAGING_DIR, are required; the streams need not be enabled). It clears download directories a previous run left
 // and makes no network call.
 func NewRestoreWorker(db *database.Database, cfg config.ArchiveConfig, opts ...s3.Option) (*RestoreWorker, error) {
-	client, err := s3.New(cfg, opts...)
+	client, err := target.Open(cfg, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -376,7 +378,7 @@ func (r *RestoreWorker) loadObject(ctx context.Context, job *models.ArchiveResto
 	}()
 
 	// Download and verify: nothing is decoded before every check passed.
-	want := s3.PutResult{Rel: rel, Key: obj.ObjectKey, Size: obj.ObjectBytes, SHA256: obj.Sha256Object, ETag: obj.ETag,
+	want := objstore.PutResult{Rel: rel, Key: obj.ObjectKey, Size: obj.ObjectBytes, SHA256: obj.Sha256Object, ETag: obj.ETag,
 		Parts: obj.PartCount, VersionID: obj.VersionID}
 	chk := newContentCheck(&models.ArchiveChunk{IDLo: obj.ChunkIDLo, IDHi: obj.ChunkIDHi},
 		&models.ArchiveObject{ObjectKey: obj.ObjectKey, Sha256Content: obj.Sha256Content, RowCount: obj.RowCount,
@@ -384,7 +386,7 @@ func (r *RestoreWorker) loadObject(ctx context.Context, job *models.ArchiveResto
 	verr := r.store.VerifyFull(ctx, want, io.MultiWriter(file, chk))
 	cerr := chk.finish()
 	switch {
-	case verr != nil && errors.Is(verr, s3.ErrMismatch):
+	case verr != nil && errors.Is(verr, objstore.ErrMismatch):
 		metrics.IncArchiveRestoreRefused(job.Stream)
 		return fmt.Errorf("%w %s: the stored object does not match the manifest: %v", errRestoreRefused, obj.ObjectKey, verr)
 	case verr != nil:
@@ -654,7 +656,7 @@ func readSealedMonth(ctx context.Context, store RestoreStore, stream, month stri
 	for _, sv := range export.SchemasOf(stream) {
 		rel := export.MonthFolderRel(stream, sv, month) + "/" + export.MonthManifestName
 		body, info, err := store.GetBytes(ctx, rel, "", manifestLimit)
-		if errors.Is(err, s3.ErrNotFound) {
+		if errors.Is(err, objstore.ErrNotFound) {
 			continue
 		}
 		if err != nil {

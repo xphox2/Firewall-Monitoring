@@ -69,8 +69,8 @@ func (h *Handler) archiveRestoreReady(c *gin.Context, db database.Store) string 
 	if err != nil {
 		return "the archive settings cannot be read: " + err.Error()
 	}
-	if err := res.Config.ValidateS3(); err != nil {
-		return "the archive bucket is not configured: " + err.Error()
+	if err := res.Config.ValidateTarget(); err != nil {
+		return "the archive target is not configured: " + err.Error()
 	}
 	if !filepath.IsAbs(res.Config.StagingDir) {
 		return "ARCHIVE_STAGING_DIR is not set (an absolute directory for the downloads)"

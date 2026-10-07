@@ -711,6 +711,12 @@ func loadArchiveConfig() ArchiveConfig {
 		StagingDir:           strings.TrimSpace(getEnv("ARCHIVE_STAGING_DIR", "")),
 		AllowHTTP:            strictBoolEnv("ARCHIVE_ALLOW_HTTP", false, &bad),
 		AllowPrivateEndpoint: strictBoolEnv("ARCHIVE_ALLOW_PRIVATE_ENDPOINT", false, &bad),
+		Target:               normalizeArchiveTarget(getEnv("ARCHIVE_TARGET", "")),
+		LocalDir:             strings.TrimSpace(getEnv("ARCHIVE_LOCAL_DIR", "")),
+		// Environment only: the admin form cannot widen what it may browse.
+		// Blank is the container path DefaultArchiveAllowedRoot (not a
+		// service or host default: it names no infrastructure).
+		AllowedRoot: strings.TrimSpace(getEnv("ARCHIVE_ALLOWED_ROOT", "")),
 	}
 	if a.SealReverify == "" {
 		a.SealReverify = SealReverifyHead

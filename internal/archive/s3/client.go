@@ -57,9 +57,13 @@ import (
 	"github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/logging"
 
+	"firewall-mon/internal/archive/objstore"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/httputil"
 )
+
+// *Client is an archive target.
+var _ objstore.Store = (*Client)(nil)
 
 const (
 	// DefaultPartSize is the upload part size. Objects up to this size are a
@@ -187,18 +191,10 @@ func (c *Client) Key(rel string) (string, error) {
 	return c.prefix + "/" + rel, nil
 }
 
-// PutResult describes an uploaded object. The verify helpers compare against
-// it, so callers store it (the manifest) rather than re-deriving it.
-type PutResult struct {
-	Rel         string    // key below the prefix, as passed to Put
-	Key         string    // full object key
-	Size        int64     // bytes uploaded
-	SHA256      string    // hex sha256 of the bytes uploaded (sha256_object)
-	ETag        string    // ETag without quotes: md5 hex, or "<md5 of part md5s>-<parts>"
-	Parts       int       // 0 for a single PutObject, else the multipart part count
-	VersionID   string    // as returned by the service ("" if unversioned)
-	RetainUntil time.Time // Object Lock retain-until sent (zero when lock is off)
-}
+// PutResult describes an uploaded object (objstore.PutResult). The verify
+// helpers compare against it, so callers store it (the manifest) rather than
+// re-deriving it.
+type PutResult = objstore.PutResult
 
 // Put uploads size bytes of body to rel with Content-MD5 on every request and
 // the configured Object Lock retention. body is read twice per part (hash,
@@ -350,16 +346,8 @@ func (c *Client) partRange(i int, size int64) (off, n int64) {
 
 func trimETag(s string) string { return strings.Trim(s, `"`) }
 
-// ObjectInfo is what HEAD reports about an object.
-type ObjectInfo struct {
-	Key         string
-	Size        int64
-	ETag        string // without quotes
-	VersionID   string
-	LockMode    string    // "" when the service does not report it
-	RetainUntil time.Time // zero when the service does not report it
-	Metadata    map[string]string
-}
+// ObjectInfo is what HEAD reports about an object (objstore.ObjectInfo).
+type ObjectInfo = objstore.ObjectInfo
 
 // Head returns an object's metadata. A non-empty versionID addresses that
 // version. An object that does not exist is ErrNotFound.
@@ -391,10 +379,8 @@ func (c *Client) Head(ctx context.Context, rel, versionID string) (ObjectInfo, e
 }
 
 // ErrMismatch marks a verify failure where the service answered and the
-// stored object is not what was uploaded (missing, or another size, ETag,
-// lock or hash). Any other verify error — a network or service failure — says
-// nothing about the object and is worth retrying as it is.
-var ErrMismatch = errors.New("stored object does not match the upload")
+// stored object is not what was uploaded (objstore.ErrMismatch).
+var ErrMismatch = objstore.ErrMismatch
 
 // mismatch wraps a verify finding in ErrMismatch.
 func mismatch(format string, args ...any) error {
@@ -402,8 +388,8 @@ func mismatch(format string, args ...any) error {
 }
 
 // ErrNotFound marks an error where the service says the object (or the
-// version) does not exist.
-var ErrNotFound = errors.New("object not found")
+// version) does not exist (objstore.ErrNotFound).
+var ErrNotFound = objstore.ErrNotFound
 
 // notFound wraps err in ErrNotFound when the service says the object does
 // not exist.

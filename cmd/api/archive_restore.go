@@ -180,8 +180,8 @@ func (o *restoreOpts) run(db archiveStore, cfg *config.Config, audit func(action
 		return 0
 	}
 
-	if err := cfg.Archive.ValidateS3(); err != nil {
-		return fail("the archive bucket is not configured (the poller restores with the same ARCHIVE_* keys): %v", err)
+	if err := cfg.Archive.ValidateTarget(); err != nil {
+		return fail("the archive target is not configured (the poller restores with the same ARCHIVE_* keys): %v", err)
 	}
 	if !filepath.IsAbs(cfg.Archive.StagingDir) {
 		return fail("ARCHIVE_STAGING_DIR is not set: the poller downloads the objects there")

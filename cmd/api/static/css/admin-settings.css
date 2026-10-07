@@ -178,6 +178,38 @@
 .archive-settings-result.is-bad,
 .archive-settings-problem { color: var(--fwmon-sig-crit); }
 .archive-settings-problem { font-size: 0.85rem; overflow-wrap: anywhere; }
+/* Target (0.11.315): S3-only or local-only fields are hidden by the target
+   select; the folder picker opens inline under its field. */
+.archive-setting[hidden],
+.archive-settings-section[hidden],
+.archive-folder-picker[hidden] { display: none; }
+.archive-path-row { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.archive-path-row input { flex: 1 1 auto; min-width: 0; }
+.archive-folder-picker {
+    margin-top: 6px;
+    border: 1px solid var(--fwmon-border);
+    border-radius: var(--fwmon-radius-sm);
+    padding: 8px 10px;
+    font-size: 0.8rem;
+}
+.archive-picker-head { margin-bottom: 6px; overflow-wrap: anywhere; }
+.archive-picker-list {
+    list-style: none;
+    margin: 0 0 8px;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    max-height: 14rem;
+    overflow-y: auto;
+}
+.archive-checks-title { margin: 8px 0 2px; font-weight: 600; color: var(--fwmon-text-dim); }
+.archive-checks { margin: 0 0 6px; padding-left: 1.1rem; }
+.archive-checks li { margin: 0 0 2px; overflow-wrap: anywhere; }
+.archive-checks li.is-ok { color: var(--fwmon-sig-ok); }
+.archive-checks li.is-warn { color: var(--fwmon-sig-warn); }
+.archive-checks li.is-bad { color: var(--fwmon-sig-crit); }
 @media (max-width: 720px) {
     .archive-settings-actions .btn { width: 100%; }
+    .archive-path-row { flex-wrap: wrap; }
 }

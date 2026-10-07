@@ -133,7 +133,7 @@
         if (w && w.stale) {
             html += notice('warn', '<strong>The archive worker&rsquo;s state is stale</strong>: last written ' + when(w.seen_at) + '. Is the poller running?');
         } else if (w && !w.preflight_ok) {
-            html += notice('crit', '<strong style="color:var(--fwmon-sig-crit);">The bucket preflight has not passed</strong>: nothing is archived until it does.');
+            html += notice('crit', '<strong style="color:var(--fwmon-sig-crit);">The ' + (((st.config || {}).target === 'local') ? 'archive directory&rsquo;s' : 'bucket') + ' preflight has not passed</strong>: nothing is archived until it does.');
         }
         var stg = (w && w.staging) || {};
         if (w && stg.free_bytes != null && stg.free_bytes < stg.min_free_bytes) {
@@ -145,9 +145,12 @@
 
     function header(st) {
         var c = st.config || {};
-        var html = '<p style="' + small + 'margin:0 0 4px;">Bucket <code>' + esc(c.bucket || '') + '</code> prefix <code>' + esc(c.prefix || '') + '</code>' +
-            (c.endpoint ? ' at ' + esc(c.endpoint) : '') + (c.access_key_id ? ', key ' + esc(c.access_key_id) : '') +
-            (c.object_lock_days ? ', Object Lock ' + esc(c.object_lock_mode || '') + ' ' + c.object_lock_days + ' days' : ', no Object Lock') + '.</p>';
+        var html = c.target === 'local'
+            ? '<p style="' + small + 'margin:0 0 4px;">Local directory <code>' + esc(c.local_dir || '') + '</code> prefix <code>' + esc(c.prefix || '') + '</code>' +
+                ' (no Object Lock: immutability is the storage&rsquo;s).</p>'
+            : '<p style="' + small + 'margin:0 0 4px;">Bucket <code>' + esc(c.bucket || '') + '</code> prefix <code>' + esc(c.prefix || '') + '</code>' +
+                (c.endpoint ? ' at ' + esc(c.endpoint) : '') + (c.access_key_id ? ', key ' + esc(c.access_key_id) : '') +
+                (c.object_lock_days ? ', Object Lock ' + esc(c.object_lock_mode || '') + ' ' + c.object_lock_days + ' days' : ', no Object Lock') + '.</p>';
         var w = st.worker;
         if (!w) {
             html += '<p style="' + small + 'color:var(--fwmon-sig-warn);margin:0 0 4px;">' + (st.worker_error

@@ -147,7 +147,8 @@ func NewReloader(db *database.Database, env config.ArchiveConfig, opts ...s3.Opt
 func (r *Reloader) Tick(ctx context.Context) { r.r.Tick(ctx) }
 
 // RestoreReloader is the restore worker under the resolved configuration: it
-// runs whenever the bucket keys and the staging directory are set, archiving
+// runs whenever the target (bucket keys, or the local directory) and the
+// staging directory are set, archiving
 // enabled or not. Tick it every RestoreTickInterval.
 type RestoreReloader struct{ r *reloader[*RestoreWorker] }
 
@@ -157,7 +158,7 @@ func NewRestoreReloader(db *database.Database, env config.ArchiveConfig, opts ..
 		name:    "archive restore",
 		resolve: resolver(db, env),
 		ready: func(cfg config.ArchiveConfig) (bool, error) {
-			return cfg.ValidateS3() == nil && filepath.IsAbs(cfg.StagingDir), nil
+			return cfg.ValidateTarget() == nil && filepath.IsAbs(cfg.StagingDir), nil
 		},
 		build: func(cfg config.ArchiveConfig) (*RestoreWorker, error) { return NewRestoreWorker(db, cfg, opts...) },
 	}}

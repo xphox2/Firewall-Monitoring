@@ -221,10 +221,10 @@ func preflightNote(st *Status) string {
 	case !w.PreflightOK:
 		for _, e := range w.Stages {
 			if e.Stage == "preflight" {
-				return "The bucket preflight fails: " + e.Error
+				return "The archive target's preflight fails: " + e.Error
 			}
 		}
-		return "The bucket preflight has not passed."
+		return "The archive target's preflight has not passed."
 	}
 	return "See the Raw Archive card on the Retention page."
 }

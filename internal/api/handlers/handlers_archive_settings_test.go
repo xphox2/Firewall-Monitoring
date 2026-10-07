@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"firewall-mon/internal/archive/local"
 	"firewall-mon/internal/archive/s3"
 	"firewall-mon/internal/archive/s3/s3test"
 	"firewall-mon/internal/archive/status"
@@ -38,27 +40,39 @@ type archSettingsFixture struct {
 	db  *database.Database
 	u   *models.Admin
 	srv *s3test.Server
+	// root is ARCHIVE_ALLOWED_ROOT (a temporary directory the tests treat
+	// as a mount point); the staging directory is root/staging.
+	root string
 }
 
 // archSettingsSetup: an admin (alice), an encryption key, a B2-strict fake
-// bucket the environment points at with both streams off, and a staging
-// directory with plenty of (stubbed) free space.
+// bucket the environment points at with both streams off, an allowed root
+// (a temporary directory, stubbed as a mount point) and a staging directory
+// under it with plenty of (stubbed) free space.
 func archSettingsSetup(t *testing.T, opts ...s3test.Option) *archSettingsFixture {
 	t.Helper()
 	h, db, u := profileTestHandler(t, "alice", auth.RoleAdmin, "s3cret-pw")
 	db.SetEncryptionKeyForTesting("archive-settings-handler-key")
 	srv := s3test.NewB2Strict(t, archBucket, opts...)
+	root := t.TempDir()
+	staging := filepath.Join(root, "staging")
+	if err := os.Mkdir(staging, 0o750); err != nil {
+		t.Fatal(err)
+	}
 	h.config.Archive = config.ArchiveConfig{Endpoint: srv.URL, Region: "us-east-005", Bucket: archBucket, Prefix: archPrefix,
 		AccessKeyID: archKeyID, SecretAccessKey: config.Secret(archEnvSecret), PathStyle: true, AllowPrivateEndpoint: true,
 		MinAgeHours: 2, SealGraceHours: 48, SealReverify: config.SealReverifyHead, SyslogRateRowsPerSec: 5000,
-		FlowRateRowsPerSec: 20000, StagingDir: t.TempDir()}
+		FlowRateRowsPerSec: 20000, StagingDir: staging, AllowedRoot: root}
+	origMount := local.IsMountPoint
+	local.IsMountPoint = func(dir string) (bool, error) { return dir == root, nil }
+	t.Cleanup(func() { local.IsMountPoint = origMount })
 	pool := x509.NewCertPool()
 	pool.AddCert(srv.Certificate())
 	origOpts, origFree := archiveS3Options, archiveStagingFree
 	archiveS3Options = func() []s3.Option { return []s3.Option{s3.WithRootCAs(pool)} }
 	archiveStagingFree = func(context.Context, string) (uint64, error) { return 1 << 40, nil }
 	t.Cleanup(func() { archiveS3Options, archiveStagingFree = origOpts, origFree })
-	return &archSettingsFixture{h: h, db: db, u: u, srv: srv}
+	return &archSettingsFixture{h: h, db: db, u: u, srv: srv, root: root}
 }
 
 func (f *archSettingsFixture) do(method, path, body string) *httptest.ResponseRecorder {
@@ -225,20 +239,22 @@ func TestSaveArchiveSettings_ChecksInOrder(t *testing.T) {
 	for body, want := range map[string]int{
 		`not json`: http.StatusBadRequest,
 		`{}`:       http.StatusBadRequest,
-		`{"set":{"ARCHIVE_NOT_A_KEY":"1"},"password":"WRONG"}`:                                                                                   http.StatusBadRequest,
-		`{"set":{"ARCHIVE_MIN_AGE_HOURS":"0"},"password":"WRONG"}`:                                                                               http.StatusBadRequest,
-		`{"set":{"ARCHIVE_MIN_AGE_HOURS":"two"},"password":"WRONG"}`:                                                                             http.StatusBadRequest,
-		`{"set":{"ARCHIVE_SYSLOG_ENABLED":"maybe"},"password":"WRONG"}`:                                                                          http.StatusBadRequest,
-		`{"set":{"ARCHIVE_SYSLOG_ENABLED":""},"password":"WRONG"}`:                                                                               http.StatusBadRequest,
-		`{"set":{"ARCHIVE_S3_SECRET_ACCESS_KEY":"********"},"password":"WRONG"}`:                                                                 http.StatusBadRequest,
-		`{"set":{"ARCHIVE_S3_SECRET_ACCESS_KEY":""},"password":"WRONG"}`:                                                                         http.StatusBadRequest,
-		`{"set":{"ARCHIVE_S3_BUCKET":"x"},"revert":["ARCHIVE_S3_BUCKET"],"password":"WRONG"}`:                                                    http.StatusBadRequest,
-		`{"set":{"ARCHIVE_S3_ENDPOINT":"https://user:pw@s3.example.com"},"password":"WRONG"}`:                                                    http.StatusBadRequest,
-		`{"set":{"ARCHIVE_FLOWS_ENABLED":"true","ARCHIVE_STAGING_DIR":"rel"},"password":"WRONG"}`:                                                http.StatusBadRequest,
-		`{"set":{"ARCHIVE_SYSLOG_ENABLED":"true","ARCHIVE_STAGING_DIR":"` + filepath.Join(t.TempDir(), "missing") + `"},"password":"WRONG"}`:     http.StatusForbidden,
-		`{"set":{"ARCHIVE_SYSLOG_ENABLED":"true","ARCHIVE_STAGING_DIR":"` + filepath.Join(t.TempDir(), "missing") + `"},"password":"s3cret-pw"}`: http.StatusUnprocessableEntity,
-		`{"set":{"ARCHIVE_WINDOW":"01:00-05:00"},"password":"WRONG"}`:                                                                            http.StatusForbidden,
-		`{"set":{"ARCHIVE_WINDOW":"01:00-05:00"}}`:                                                                                               http.StatusForbidden,
+		`{"set":{"ARCHIVE_NOT_A_KEY":"1"},"password":"WRONG"}`:                                                                               http.StatusBadRequest,
+		`{"set":{"ARCHIVE_MIN_AGE_HOURS":"0"},"password":"WRONG"}`:                                                                           http.StatusBadRequest,
+		`{"set":{"ARCHIVE_MIN_AGE_HOURS":"two"},"password":"WRONG"}`:                                                                         http.StatusBadRequest,
+		`{"set":{"ARCHIVE_SYSLOG_ENABLED":"maybe"},"password":"WRONG"}`:                                                                      http.StatusBadRequest,
+		`{"set":{"ARCHIVE_SYSLOG_ENABLED":""},"password":"WRONG"}`:                                                                           http.StatusBadRequest,
+		`{"set":{"ARCHIVE_S3_SECRET_ACCESS_KEY":"********"},"password":"WRONG"}`:                                                             http.StatusBadRequest,
+		`{"set":{"ARCHIVE_S3_SECRET_ACCESS_KEY":""},"password":"WRONG"}`:                                                                     http.StatusBadRequest,
+		`{"set":{"ARCHIVE_S3_BUCKET":"x"},"revert":["ARCHIVE_S3_BUCKET"],"password":"WRONG"}`:                                                http.StatusBadRequest,
+		`{"set":{"ARCHIVE_S3_ENDPOINT":"https://user:pw@s3.example.com"},"password":"WRONG"}`:                                                http.StatusBadRequest,
+		`{"set":{"ARCHIVE_FLOWS_ENABLED":"true","ARCHIVE_STAGING_DIR":"rel"},"password":"WRONG"}`:                                            http.StatusBadRequest,
+		`{"set":{"ARCHIVE_SYSLOG_ENABLED":"true","ARCHIVE_STAGING_DIR":"` + filepath.Join(f.root, "missing") + `"},"password":"WRONG"}`:      http.StatusForbidden,
+		`{"set":{"ARCHIVE_SYSLOG_ENABLED":"true","ARCHIVE_STAGING_DIR":"` + filepath.Join(f.root, "missing") + `"},"password":"s3cret-pw"}`:  http.StatusUnprocessableEntity,
+		`{"set":{"ARCHIVE_SYSLOG_ENABLED":"true","ARCHIVE_STAGING_DIR":"` + filepath.Join(t.TempDir(), "outside") + `"},"password":"WRONG"}`: http.StatusBadRequest,
+		`{"set":{"ARCHIVE_STAGING_DIR":"` + f.root + `/../outside"},"password":"WRONG"}`:                                                     http.StatusBadRequest,
+		`{"set":{"ARCHIVE_WINDOW":"01:00-05:00"},"password":"WRONG"}`:                                                                        http.StatusForbidden,
+		`{"set":{"ARCHIVE_WINDOW":"01:00-05:00"}}`:                                                                                           http.StatusForbidden,
 	} {
 		if rec := f.save(body); rec.Code != want {
 			t.Errorf("%s: %d %s, want %d", body, rec.Code, rec.Body.String(), want)
@@ -386,10 +402,28 @@ func TestTestArchiveSettings(t *testing.T) {
 	if r := test(f, `{"set":{"ARCHIVE_S3_ACCESS_KEY_ID":"005otherKeyID","ARCHIVE_S3_SECRET_ACCESS_KEY":"`+archUISecret+`"}}`); r["ok"] != true {
 		t.Fatalf("another key ID with its secret typed in: %v", r)
 	}
-	// A staging path typed into the form is not probed.
-	probe := filepath.Join(t.TempDir(), "typed")
-	if r := test(f, `{"set":{"ARCHIVE_STAGING_DIR":"`+probe+`"}}`); !strings.Contains(r["staging"].(string), "checked when you save") {
-		t.Fatalf("a typed staging path: %v", r)
+	// A staging path typed into the form is probed only under the allowed
+	// root: outside it nothing is created or written.
+	outside := filepath.Join(t.TempDir(), "typed")
+	if err := os.Mkdir(outside, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if r := test(f, `{"set":{"ARCHIVE_STAGING_DIR":"`+outside+`"}}`); !strings.Contains(r["staging"].(string), "outside ARCHIVE_ALLOWED_ROOT") {
+		t.Fatalf("a typed staging path outside the root: %v", r)
+	}
+	if ents, _ := os.ReadDir(outside); len(ents) != 0 {
+		t.Fatalf("Test connection wrote into a directory outside the root: %v", ents)
+	}
+	inside := filepath.Join(f.root, "staging-2")
+	if err := os.Mkdir(inside, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if r := test(f, `{"set":{"ARCHIVE_STAGING_DIR":"`+inside+`"}}`); !strings.Contains(r["staging"].(string), "is writable with enough free space") ||
+		r["staging_checks"] == nil {
+		t.Fatalf("a typed staging path under the root: %v", r)
+	}
+	if ents, _ := os.ReadDir(inside); len(ents) != 0 {
+		t.Fatalf("the probe left files behind: %v", ents)
 	}
 	if res, _ := f.db.ResolveArchiveConfig(context.Background(), f.h.config.Archive); len(res.UI) != 0 {
 		t.Fatalf("Test connection stored %v", res.UI)

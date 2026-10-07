@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"firewall-mon/internal/api/response"
+	"firewall-mon/internal/archive/local"
 	"firewall-mon/internal/archive/s3"
 	"firewall-mon/internal/archive/worker"
 	"firewall-mon/internal/config"
@@ -32,12 +33,17 @@ import (
 //     source (ui / env / default) and the environment's value. The secret
 //     access key is write-only: only whether it is set, and the last four
 //     characters of the KEY ID as its hint.
-//   - POST /admin/api/archive/settings/test: Test connection — the bucket
-//     preflight (list under the prefix, Object Lock check) with the form's
-//     values, nothing saved. The secret is the stored one unless the form
-//     replaces it — and it must be typed in to test another endpoint or
-//     key ID; it is never echoed. A staging directory typed into the form
-//     is probed only by the save.
+//   - POST /admin/api/archive/settings/test: Test connection — for an S3
+//     target the bucket preflight (list under the prefix, Object Lock check)
+//     with the form's values, nothing saved. The secret is the stored one
+//     unless the form replaces it — and it must be typed in to test another
+//     endpoint or key ID; it is never echoed. For a local target
+//     (ARCHIVE_TARGET=local) the directory probe and its marker
+//     (handlers_archive_local.go). Either way the staging directory is
+//     probed when it is under ARCHIVE_ALLOWED_ROOT (or unchanged), and the
+//     filesystems of target, staging and database volume compared.
+//   - GET /admin/api/archive/settings/folders: the folder picker
+//     (handlers_archive_local.go).
 //   - POST /admin/api/archive/settings: save. Checks in order, the cheap ones
 //     before the step-up: the body and every value (400, the same
 //     validation as the environment: config.ValidateDraft / Validate); a
@@ -45,8 +51,10 @@ import (
 //     written once a chunk exists (409; judged against the recorded
 //     system_settings.archive_location when there is one; a bucket name
 //     that differs only in case is the same location, config.SameBucket);
-//     then the caller's password + TOTP (403); then the staging directory of
-//     an enabled stream (422), when a stream is switched on or the
+//     a staging directory chosen outside ARCHIVE_ALLOWED_ROOT (400); then
+//     the caller's password + TOTP (403); then the probe of every directory
+//     the save chooses (a changed staging directory, a new local target;
+//     422); then the staging directory of an enabled stream (422), when a stream is switched on or the
 //     connection of an enabled stream changes the bucket preflight (422),
 //     and for a bucket re-cased while the archive holds chunks a listing
 //     that must find the archive's objects under the new spelling (422).
@@ -121,6 +129,18 @@ type archiveSettingsView struct {
 	// StagingMinFree is the free space an enabled stream's staging
 	// directory needs.
 	StagingMinFree uint64 `json:"staging_min_free"`
+	// Target is ARCHIVE_TARGET in effect (s3 or local).
+	Target string `json:"target"`
+	// AllowedRoot is ARCHIVE_ALLOWED_ROOT (environment only): the folder
+	// picker's root; AllowedRootProblem why it cannot be used.
+	AllowedRoot        string `json:"allowed_root"`
+	AllowedRootProblem string `json:"allowed_root_problem,omitempty"`
+	// StagingOutsideRoot: the staging directory in effect is outside the
+	// root (set before 0.11.315; it keeps working, a new one must be
+	// under the root).
+	StagingOutsideRoot bool `json:"staging_outside_root,omitempty"`
+	// DatabaseDir is the database volume no archive directory may be in.
+	DatabaseDir string `json:"database_dir"`
 }
 
 // archiveSettingsRequest is the body of the save and of Test connection.
@@ -171,7 +191,11 @@ func (h *Handler) archiveSettingsView(ctx context.Context, db database.Store) (*
 	}
 	a := res.Config
 	v := &archiveSettingsView{Fields: []archiveFieldView{}, LocationLocked: locked, SyslogEnabled: a.SyslogEnabled,
-		FlowsEnabled: a.FlowsEnabled, StagingMinFree: worker.StagingMinFree()}
+		FlowsEnabled: a.FlowsEnabled, StagingMinFree: worker.StagingMinFree(), Target: a.TargetName(),
+		AllowedRoot: env.Root(), AllowedRootProblem: archiveRootProblem(env), DatabaseDir: config.ArchiveDatabaseDir}
+	if a.StagingDir != "" && env.CheckArchivePath("ARCHIVE_STAGING_DIR", a.StagingDir) != nil {
+		v.StagingOutsideRoot = true
+	}
 	for _, f := range config.ArchiveFields {
 		fv := archiveFieldView{Key: f.Env, Kind: f.Kind, Section: f.Section, Location: f.Location, Connection: f.Connection,
 			Value: a.Value(f), EnvValue: env.Value(f), Source: archiveSourceDefault}
@@ -427,10 +451,32 @@ func (h *Handler) TestArchiveSettings(c *gin.Context) {
 		httputil.InternalError(c, "Failed to read the archive settings", err)
 		return
 	}
+	a := d.after
+	out := gin.H{"ok": true, "target": a.TargetName()}
+	var targetFS *local.FSInfo
+	if a.IsLocal() {
+		targetFS = testLocalTarget(c.Request.Context(), db, a, out)
+		if out["ok"] == false {
+			logArchiveSettingsRefusal("Test connection", http.StatusOK, fmt.Sprint(out["message"]))
+		}
+	} else if !h.testS3Target(c, d, out) {
+		return
+	}
+	stagingFS := testStaging(c.Request.Context(), d, out)
+	if w := archiveFSWarnings(targetFS, stagingFS); len(w) > 0 {
+		out["warnings"] = w
+	}
+	c.JSON(http.StatusOK, response.Success(out))
+}
+
+// testS3Target is Test connection for an S3 target: the bucket preflight
+// with the form's values. It fills out, or answers the request itself and
+// returns false.
+func (h *Handler) testS3Target(c *gin.Context, d *archiveDraft, out gin.H) bool {
 	if d.after.AllowHTTP != d.before.AllowHTTP || d.after.AllowPrivateEndpoint != d.before.AllowPrivateEndpoint {
 		c.JSON(http.StatusOK, response.Success(gin.H{"ok": false,
 			"message": "Save the Advanced settings first: Test connection uses the saved ARCHIVE_ALLOW_HTTP / ARCHIVE_ALLOW_PRIVATE_ENDPOINT"}))
-		return
+		return false
 	}
 	// The stored secret is only ever sent to the saved endpoint under the
 	// saved key ID: testing another endpoint or key ID needs the secret typed
@@ -440,15 +486,14 @@ func (h *Handler) TestArchiveSettings(c *gin.Context) {
 	if !typed && (canonicalArchiveEndpoint(d.after) != canonicalArchiveEndpoint(d.before) || d.after.AccessKeyID != d.before.AccessKeyID) {
 		c.JSON(http.StatusOK, response.Success(gin.H{"ok": false,
 			"message": "Enter the secret access key to test a different endpoint or key ID: the stored secret is only used with the saved ones"}))
-		return
+		return false
 	}
 	a := d.after
 	if err := a.ValidateS3(); err != nil {
 		logArchiveSettingsRefusal("Test connection", http.StatusOK, err.Error())
-		c.JSON(http.StatusOK, response.Success(gin.H{"ok": false, "message": err.Error()}))
-		return
+		out["ok"], out["message"] = false, err.Error()
+		return true
 	}
-	out := gin.H{"ok": true}
 	if err := archivePreflight(c.Request.Context(), a); err != nil {
 		logArchiveSettingsRefusal("Test connection", http.StatusOK, "the bucket preflight failed: "+err.Error())
 		out["ok"], out["message"] = false, err.Error()
@@ -457,21 +502,7 @@ func (h *Handler) TestArchiveSettings(c *gin.Context) {
 	} else {
 		out["message"] = fmt.Sprintf("Listed %s/%s/. Object Lock is off (ARCHIVE_OBJECT_LOCK_DAYS 0): not checked.", a.Bucket, a.Prefix)
 	}
-	switch {
-	case a.StagingDir == "":
-	case a.StagingDir != d.before.StagingDir:
-		// Probing a path typed into the form (stat, a test file) is left to
-		// the re-authenticated save.
-		out["staging"] = "Staging directory " + a.StagingDir + " is checked when you save."
-	default:
-		if err := archiveStagingCheck(c.Request.Context(), a.StagingDir); err != nil {
-			logArchiveSettingsRefusal("Test connection (staging directory)", http.StatusOK, err.Error())
-			out["staging"] = err.Error()
-		} else {
-			out["staging"] = "Staging directory " + a.StagingDir + " is writable with enough free space."
-		}
-	}
-	c.JSON(http.StatusOK, response.Success(out))
+	return true
 }
 
 // draftOrEffective is draft, or — for an empty request — the configuration in
@@ -543,6 +574,16 @@ func (h *Handler) SaveArchiveSettings(c *gin.Context) {
 				msg := "The archive already holds chunks at " + ref +
 					": the endpoint, bucket and prefix cannot change here, or the manifest would point at objects that are not there. " +
 					"See docs/OPERATIONS.md, \"Raw archive: moving the bucket\", for the manual migration."
+				switch {
+				case config.IsLocalLocation(ref) != d.after.IsLocal():
+					msg = "The archive already holds chunks at " + ref + ": switching ARCHIVE_TARGET to " + d.after.TargetName() +
+						" is refused, or the manifest would point at objects that are not there. Copy the archive and start afresh as " +
+						"docs/OPERATIONS.md, \"Raw archive: moving the bucket\", describes."
+				case d.after.IsLocal():
+					msg = "The archive already holds chunks at " + ref +
+						": the local directory and the prefix cannot change here, or the manifest would point at objects that are not there. " +
+						"Move the share on the host and bind-mount it at the same path instead, or see docs/OPERATIONS.md, \"Raw archive: moving the bucket\"."
+				}
 				logArchiveSettingsRefusal("save", http.StatusConflict, msg)
 				c.JSON(http.StatusConflict, response.Error(msg))
 				return
@@ -552,13 +593,26 @@ func (h *Handler) SaveArchiveSettings(c *gin.Context) {
 			}
 		}
 	}
+	// A staging directory chosen here must be under ARCHIVE_ALLOWED_ROOT
+	// (one set before 0.11.315 outside it keeps working while unchanged).
+	if d.after.StagingDir != "" && d.after.StagingDir != d.before.StagingDir {
+		if err := d.after.CheckArchivePath("ARCHIVE_STAGING_DIR", d.after.StagingDir); err != nil {
+			logArchiveSettingsRefusal("save", http.StatusBadRequest, err.Error())
+			c.JSON(http.StatusBadRequest, response.Error(err.Error()))
+			return
+		}
+	}
 	enabling := d.switched(true)
 	username, userID, ok := h.reauthCaller(c, db, req.Password, req.TOTPCode)
 	if !ok {
 		return
 	}
-	// The staging probe (stat, a test file in the directory) runs only for a
-	// re-authenticated caller.
+	// The directory probes (a test file in each chosen directory) run only
+	// for a re-authenticated caller.
+	if err := archiveDirsForSave(ctx, d); err != nil {
+		refuseArchiveSave(c, "Not saved: "+err.Error())
+		return
+	}
 	if d.after.Enabled() && (len(enabling) > 0 || d.before.StagingDir != d.after.StagingDir) {
 		if err := archiveStagingCheck(ctx, d.after.StagingDir); err != nil {
 			refuseArchiveSave(c, "Not saved: "+err.Error())
@@ -566,7 +620,12 @@ func (h *Handler) SaveArchiveSettings(c *gin.Context) {
 		}
 	}
 	if d.after.Enabled() && (len(enabling) > 0 || d.connectionChanged()) {
-		if err := archivePreflight(ctx, d.after); err != nil {
+		if d.after.IsLocal() {
+			if _, err := archiveLocalPreflight(ctx, db, d.after); err != nil {
+				refuseArchiveSave(c, "Not saved: the archive directory's preflight failed: "+err.Error())
+				return
+			}
+		} else if err := archivePreflight(ctx, d.after); err != nil {
 			refuseArchiveSave(c, "Not saved: the bucket preflight failed: "+err.Error())
 			return
 		}

@@ -38,7 +38,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.313"
+const ServerVersion = "0.11.315"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -962,6 +962,9 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			// is write-only); test connects to the bucket — admin-only.
 			"/admin/api/archive/settings":      true,
 			"/admin/api/archive/settings/test": true,
+			// The folder picker lists directories of the server's
+			// filesystem (under ARCHIVE_ALLOWED_ROOT only) — admin-only.
+			"/admin/api/archive/settings/folders": true,
 			// Restores to staging (PR 9) download archived raw logs into the
 			// database; a drop deletes the staged copy — admin-only, list included.
 			"/admin/api/archive/restores":            true,
@@ -1200,6 +1203,9 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/archive/settings", handler.GetArchiveSettings)
 		admin.POST("/api/archive/settings", middleware.LoginRateLimiter(), handler.SaveArchiveSettings)
 		admin.POST("/api/archive/settings/test", handler.TestArchiveSettings)
+		// The folder picker of a local target and the staging directory:
+		// subdirectories under ARCHIVE_ALLOWED_ROOT only (adminOnlyRoutes).
+		admin.GET("/api/archive/settings/folders", handler.ListArchiveFolders)
 		// Restore to staging (archive plan PR 9): the poller's restore worker
 		// runs the jobs. Admin-only (adminOnlyRoutes); queue, resume and drop
 		// re-verify the caller's password (+ TOTP), so login-rate-limited.
