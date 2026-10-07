@@ -1234,7 +1234,10 @@ func (w *Worker) putManifest(ctx context.Context, c *models.ArchiveChunk, stream
 		sha := sha256.Sum256(body)
 		return w.store.VerifyFull(ctx, objstore.PutResult{Rel: rel, Key: info.Key, Size: info.Size, SHA256: hex.EncodeToString(sha[:]),
 			ETag: info.ETag, VersionID: info.VersionID}, nil)
-	} else if err != nil && !errors.Is(err, objstore.ErrNotFound) {
+	} else if err != nil && !errors.Is(err, objstore.ErrNotFound) && !errors.Is(err, objstore.ErrMismatch) {
+		// A stored copy that cannot be shown to be this manifest (a
+		// mismatch, e.g. an unreadable local sidecar) is superseded by a
+		// new version below; any other error is the target's.
 		return err
 	}
 	put, err := w.put(ctx, rel, bytes.NewReader(body), int64(len(body)), map[string]string{

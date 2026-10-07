@@ -112,7 +112,7 @@ func TestReadBack_UncachedOnNetworkShare(t *testing.T) {
 	for _, typ := range []string{"nfs", "ext4"} {
 		t.Run(typ, func(t *testing.T) {
 			s, _ := newStore(t)
-			StatFS = func(string) (FSInfo, error) { return FSInfo{Type: typ, Device: 1}, nil }
+			StatFS = func(p string) (FSInfo, error) { return FSInfo{Type: typ, Device: realDev(p)}, nil }
 			orig := openUncached
 			calls := 0
 			openUncached = func(p string) (*os.File, bool, error) { calls++; return orig(p) }
@@ -332,5 +332,81 @@ func TestMarker_InstallID(t *testing.T) {
 	}
 	if !errors.Is(other.Preflight(ctx), ErrForeignMarker) || errors.Is(other.Preflight(ctx), objstore.ErrUninitialized) {
 		t.Fatal("a foreign marker must not look uninitialised (the worker would initialise over it)")
+	}
+}
+
+// TestOnNetwork_NotCachedDuringOutage: a statfs taken while the share is
+// away (no marker: the empty mount point on the host's filesystem) is not
+// kept — the read is uncached meanwhile — so once the share is back the
+// network filesystem is recognised and every read-back stays uncached.
+func TestOnNetwork_NotCachedDuringOutage(t *testing.T) {
+	cfg := testCfg(t)
+	s := openStore(t, cfg) // the marker does not exist yet: the "outage"
+	StatFS = func(p string) (FSInfo, error) { return FSInfo{Type: "ext4", Device: realDev(p)}, nil }
+	if !s.onNetwork() {
+		t.Fatal("unconfirmed: a read must be uncached")
+	}
+	StatFS = func(p string) (FSInfo, error) { return FSInfo{Type: "nfs", Device: realDev(p)}, nil }
+	if err := s.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !s.onNetwork() {
+		t.Fatal("the share is back on NFS, but the outage's answer was kept")
+	}
+	StatFS = func(p string) (FSInfo, error) { return FSInfo{Type: "ext4", Device: realDev(p)}, nil }
+	if !s.onNetwork() {
+		t.Fatal("the confirmed answer was not kept")
+	}
+	if openStore(t, cfg).onNetwork() {
+		t.Fatal("a confirmed local filesystem must read through the cache")
+	}
+}
+
+// TestPut_NestedMountNamed: a directory below the base on another
+// filesystem than the marker (a nested mount) fails the write with a message
+// that names that cause.
+func TestPut_NestedMountNamed(t *testing.T) {
+	s, _ := newStore(t)
+	marker := filepath.Join(s.base, MarkerName)
+	orig := deviceOf
+	deviceOf = func(p string) (uint64, error) {
+		d, err := orig(p)
+		if p == marker {
+			return d, err
+		}
+		return d + 1, err
+	}
+	t.Cleanup(func() { deviceOf = orig })
+	_, err := s.Put(ctx, "syslog/v2/2026-10/03/chunk.json", bytes.NewReader([]byte("x")), 1, nil)
+	if err == nil || !strings.Contains(err.Error(), "nested mount") || !strings.Contains(err.Error(), "one filesystem") {
+		t.Fatalf("Put across a nested mount = %v", err)
+	}
+}
+
+// TestCorruptSidecar_MismatchAndHeals: an unparsable sidecar is a mismatch
+// whose text names the file and what to do; the same bytes written again
+// become a new version with a fresh sidecar, which verifies.
+func TestCorruptSidecar_MismatchAndHeals(t *testing.T) {
+	s, _ := newStore(t)
+	rel := "syslog/v2/2026-10/03/device-1.ndjson.gz"
+	r := put(t, s, rel, []byte("rows\n"), nil)
+	mp := s.file(rel) + metaSuffix
+	if err := os.Chmod(mp, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mp, []byte("{torn"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, err := range map[string]error{"VerifyFull": s.VerifyFull(ctx, r, nil), "VerifyHead": s.VerifyHead(ctx, r)} {
+		if !errors.Is(err, objstore.ErrMismatch) || !strings.Contains(err.Error(), mp) || !strings.Contains(err.Error(), "may be removed") {
+			t.Errorf("%s with a corrupt sidecar = %v", name, err)
+		}
+	}
+	r2 := put(t, s, rel, []byte("rows\n"), nil)
+	if r2.VersionID != "2" {
+		t.Fatalf("the rewrite reused the copy with the corrupt sidecar (version %s)", r2.VersionID)
+	}
+	if err := s.VerifyFull(ctx, r2, nil); err != nil {
+		t.Fatal(err)
 	}
 }

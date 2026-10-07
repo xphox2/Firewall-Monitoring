@@ -103,8 +103,9 @@ type Store struct {
 	// --verify-month).
 	installID string
 
-	netOnce sync.Once
-	network bool // the directory is on a network filesystem (reads bypass the page cache)
+	netMu    sync.Mutex
+	netKnown bool // network is settled (see onNetwork)
+	network  bool // the directory is on a network filesystem (reads bypass the page cache)
 }
 
 // SetInstallID sets the install id the marker must carry (Init writes it).
@@ -193,12 +194,29 @@ func readSidecar(vp string) (*sidecar, error) {
 	defer f.Close()
 	var sc sidecar
 	if err := json.NewDecoder(io.LimitReader(f, sidecarLimit)).Decode(&sc); err != nil {
-		return nil, fmt.Errorf("archive local: sidecar %s: %w", vp+metaSuffix, err)
+		return nil, corruptSidecar(vp, err.Error())
 	}
 	if sc.Kind != sidecarKind {
-		return nil, fmt.Errorf("archive local: sidecar %s has kind %q", vp+metaSuffix, sc.Kind)
+		return nil, corruptSidecar(vp, fmt.Sprintf("kind %q", sc.Kind))
 	}
 	return &sc, nil
+}
+
+// errCorruptSidecar marks a sidecar that exists but does not parse.
+var errCorruptSidecar = errors.New("corrupt sidecar")
+
+// corruptSidecar is the error of a sidecar that exists but is not one. It is
+// a mismatch (objstore.ErrMismatch): the stored object cannot be shown to be
+// what was written, so the worker exports the chunk again — a new version
+// with a fresh sidecar — and, if that keeps failing, parks the chunk in
+// needs_attention like any other mismatch; a seal re-check refuses the month
+// with this text.
+func corruptSidecar(vp, why string) error {
+	return fmt.Errorf("%w: %w: archive local: the sidecar %s cannot be read (%s). It holds the ETag and metadata of %s, "+
+		"which the archive does not guess; the chunk is written again as a new version. Inspect the file: if %s itself is intact "+
+		"(compare its sha256 with the manifest's sha256_object) the sidecar may be removed — its ETag is then computed from the bytes — "+
+		"except for a _MONTH.json, whose sidecar records the seal's sha256 and must be restored from a copy",
+		objstore.ErrMismatch, errCorruptSidecar, vp+metaSuffix, why, vp, vp)
 }
 
 // markerPresent checks the marker: ErrUninitialized when it is missing.
@@ -264,6 +282,10 @@ func (s *Store) stillMounted(dir string, dev uint64) error {
 	if err != nil {
 		return describe("stat", dir, err)
 	}
+	if now == dev && ddev != dev {
+		return fmt.Errorf("archive local: %s is on another filesystem than the archive's marker in %s (device %d, marker %d): a nested mount below the archive directory — an NFSv4 crossmnt child export, a ZFS dataset or a btrfs subvolume under it? The whole archive tree must be one filesystem (docs/OPERATIONS.md); the write is not counted",
+			dir, s.base, ddev, now)
+	}
 	if now != dev || ddev != dev {
 		return fmt.Errorf("archive local: the archive volume changed during the write (device %d, then marker %d, directory %d): unmounted or remounted? The write is not counted", dev, now, ddev)
 	}
@@ -323,12 +345,25 @@ func (s *Store) dirs(dir string, create bool) error {
 
 // onNetwork reports whether the directory is on a network filesystem.
 func (s *Store) onNetwork() bool {
-	s.netOnce.Do(func() {
-		if fi, err := StatFS(s.dir); err == nil {
-			s.network = fi.Network()
-		}
-	})
-	return s.network
+	s.netMu.Lock()
+	defer s.netMu.Unlock()
+	if s.netKnown {
+		return s.network
+	}
+	// The answer is kept only once the marker is present on the filesystem
+	// statfs described: during an outage statfs sees the empty mount point's
+	// filesystem (the host's), and keeping "not network" then would let
+	// every later read-back come from the page cache. Until then a read is
+	// uncached, which is always correct, only slower.
+	fi, err := StatFS(s.dir)
+	if err != nil {
+		return true
+	}
+	if mdev, merr := s.markerDev(); merr == nil && mdev == fi.Device {
+		s.netKnown, s.network = true, fi.Network()
+		return s.network
+	}
+	return true
 }
 
 // openRead opens version file vp for reading: never through a symbolic
@@ -339,6 +374,8 @@ func (s *Store) openRead(vp string) (io.ReadCloser, error) {
 	if err := s.dirs(filepath.Dir(vp), false); err != nil {
 		return nil, err
 	}
+	// A directory swapped for a link between this check and the open below
+	// is not caught (accepted: it needs write access to the share itself).
 	if s.onNetwork() {
 		f, direct, err := openUncached(vp)
 		if err != nil {
@@ -573,8 +610,8 @@ func (s *Store) sameObject(ctx context.Context, vp string, size int64, shaHex st
 	}
 	sc, err := readSidecar(vp)
 	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		return false, nil // a copy without metadata is never reused
+	case errors.Is(err, fs.ErrNotExist), errors.Is(err, errCorruptSidecar):
+		return false, nil // a copy without (readable) metadata is never reused
 	case err != nil:
 		return false, err
 	case sc.SHA256 != shaHex || !maps.Equal(sc.Metadata, meta):

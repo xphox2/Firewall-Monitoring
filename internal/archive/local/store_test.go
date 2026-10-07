@@ -43,11 +43,18 @@ const testInstallID = "0123456789abcdef0123456789abcdef"
 func stubVolume(t *testing.T) {
 	t.Helper()
 	origFS, origMount := StatFS, IsMountPoint
-	StatFS = func(string) (FSInfo, error) {
-		return FSInfo{Type: "ext4", Device: 1, FreeBytes: 1 << 40, TotalBytes: 1 << 41}, nil
+	StatFS = func(p string) (FSInfo, error) {
+		return FSInfo{Type: "ext4", Device: realDev(p), FreeBytes: 1 << 40, TotalBytes: 1 << 41}, nil
 	}
 	IsMountPoint = func(string) (bool, error) { return true, nil }
 	t.Cleanup(func() { StatFS, IsMountPoint = origFS, origMount })
+}
+
+// realDev is the kernel's device of p (0 when it cannot be read): a stubbed
+// statfs that agrees with the marker's device.
+func realDev(p string) uint64 {
+	d, _ := deviceOfSys(p)
+	return d
 }
 
 // openStore is New with the test install id, on a stubbed volume.

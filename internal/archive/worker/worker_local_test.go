@@ -397,3 +397,36 @@ func TestWorker_LocalTarget_EnvOnlyVolumeChecks(t *testing.T) {
 		}
 	}
 }
+
+// TestWorker_LocalTarget_CorruptSidecarIsAMismatch: an object's sidecar
+// that cannot be read is a mismatch — counted toward needs_attention, its
+// chunk error naming the file and what to do — not a silent retry; the
+// re-export writes a new version with a fresh sidecar and verifies.
+func TestWorker_LocalTarget_CorruptSidecarIsAMismatch(t *testing.T) {
+	h := newLocalHarness(t, day(10, 5, 11, 50), func(c *config.ArchiveConfig) { c.FlowsEnabled = false })
+	seedSyslog(t, h.db, day(10, 4, 1, 0))
+	done := false
+	h.w.afterPut = func(_ context.Context, _ *models.ArchiveChunk, o *models.ArchiveObject) error {
+		if done {
+			return nil
+		}
+		done = true
+		mp := h.file(o.ObjectKey) + ".fwmeta"
+		if err := os.Chmod(mp, 0o600); err != nil {
+			return err
+		}
+		return os.WriteFile(mp, []byte("{torn"), 0o600)
+	}
+	h.tick(ctx)
+	c := h.chunks(export.TableSyslog)[0]
+	if c.Status == models.ArchiveChunkVerified || c.Mismatches != 1 || !strings.Contains(c.Error, ".fwmeta") || !strings.Contains(c.Error, "may be removed") {
+		t.Fatalf("chunk after the corrupt sidecar: %s mismatches %d error %q", c.Status, c.Mismatches, c.Error)
+	}
+	h.clk.add(3 * time.Hour)
+	h.tick(ctx)
+	c = h.chunks(export.TableSyslog)[0]
+	objs := h.objects(c.ID)
+	if c.Status != models.ArchiveChunkVerified || len(objs) == 0 || objs[len(objs)-1].VersionID != "2" {
+		t.Fatalf("after the re-export: %s, objects %+v", c.Status, objs)
+	}
+}

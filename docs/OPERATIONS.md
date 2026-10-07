@@ -811,8 +811,19 @@ directory whose marker carries another install's id is refused by the
 preflight and every write: **two servers must not share one archive
 directory** (give each its own directory or prefix). The worker's preflight
 also refuses, however the configuration was set (environment or admin
-page), a directory on the container's `overlay` or `tmpfs`, and one with no
-mount point between it and the allowed root.
+page), a directory on the container's `overlay` or `tmpfs`, and one where
+neither `ARCHIVE_LOCAL_DIR` nor a directory above it up to
+`ARCHIVE_ALLOWED_ROOT` is a mount point. That applies to a bare-metal
+install too: there `ARCHIVE_ALLOWED_ROOT` (or `ARCHIVE_LOCAL_DIR`) must be
+the mount point of the archive partition or share itself, not a directory on
+the system disk.
+
+**The archive tree must be one filesystem.** Nothing may be mounted below
+`<ARCHIVE_LOCAL_DIR>/<prefix>`: an NFSv4 export with `crossmnt` children, a
+ZFS dataset or a btrfs subvolume created under it puts objects on another
+device than the marker, and every write there fails with "… a nested mount
+below the archive directory …". Mount the share or dataset at
+`ARCHIVE_LOCAL_DIR` (or above it), never inside the archive.
 
 ### How it writes
 
@@ -839,7 +850,13 @@ mount point between it and the allowed root.
   number, so every verify reads exactly the bytes it wrote. A retry with the
   same bytes reuses the stored file (after hashing it in full).
 - **Metadata** (the S3 headers' equivalent) is a sidecar `<name>.fwmeta`;
-  copy it with the object. An object without one still reads.
+  copy it with the object. An object without one still reads. A sidecar that
+  exists but cannot be parsed is a **mismatch**: the chunk error names the
+  file, the chunk is exported again as a new version with a fresh sidecar,
+  and three in a row park it in `needs_attention`. If the object itself is
+  intact (its sha256 is the manifest's `sha256_object`), the broken sidecar
+  may be removed; a `_MONTH.json`'s sidecar records the seal's sha256 and
+  must be restored from a copy instead.
 - **Read-only**: finished objects are `chmod 0444`. That only stops
   accidents: whoever owns the files (or root on the NAS) can change them.
   **Object Lock does not exist for a directory** — `ARCHIVE_OBJECT_LOCK_*`
