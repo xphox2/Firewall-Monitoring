@@ -111,6 +111,16 @@ func (d *Database) ArchiveHasChunks(ctx context.Context) (bool, error) {
 	return len(ids) > 0, nil
 }
 
+// ArchiveTableHasChunks reports whether table has any chunk (one row of the
+// (table_name, seq) index).
+func (d *Database) ArchiveTableHasChunks(ctx context.Context, table string) (bool, error) {
+	var ids []uint
+	if err := d.db.WithContext(ctx).Model(&models.ArchiveChunk{}).Where("table_name = ?", table).Limit(1).Pluck("id", &ids).Error; err != nil {
+		return false, fmt.Errorf("read the archive manifest: %w", err)
+	}
+	return len(ids) > 0, nil
+}
+
 // CanEncryptSettings reports whether this server has an encryption key, so a
 // secret setting is stored encrypted rather than as plaintext.
 func (d *Database) CanEncryptSettings() bool { return len(d.encKeys.current) > 0 }

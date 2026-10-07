@@ -243,6 +243,9 @@ func (e *Evaluator) Conditions(st *Status, th Thresholds, disk DiskTrend) []Cond
 	defer e.mu.Unlock()
 	now := st.GeneratedAt
 	var out []Condition
+	// A stream that receives no data (sFlow switched off) neither lags nor
+	// has a seal overdue — the same rule as the health verdict (Idle).
+	idleStream, idleTable := Idle(st)
 
 	// ARCHIVE_LAG per table: sflow and netflow are cut from one flow_samples
 	// chunk and always share its lag, so one alert names both.
@@ -255,11 +258,19 @@ func (e *Evaluator) Conditions(st *Status, th Thresholds, disk DiskTrend) []Cond
 			delete(e.noChunks, t.Table)
 		}
 		if t.Enabled && t.LagSeconds == nil {
-			// No chunk yet: the lag runs from when this process first saw it.
+			// No chunk yet: the lag runs from when this process first saw it,
+			// or from when the worker did if earlier (its record survives a
+			// restart; the health verdict uses the same).
 			first, ok := e.noChunks[t.Table]
 			if !ok {
 				e.noChunks[t.Table], first = now, now
 			}
+			if w := st.Worker; w != nil {
+				if since, ok := w.NoChunkSince[t.Table]; ok && since.Before(first) {
+					first = since
+				}
+			}
+			c.Fields["no_chunk"] = "true"
 			waited := now.Sub(first)
 			c.Breached = limit > 0 && waited > limit
 			c.Message = fmt.Sprintf("Raw archive of %s (%s) is enabled but has cut no chunk for %s (threshold %s): nothing of it is archived and its raw deletes wait. %s",
@@ -272,7 +283,7 @@ func (e *Evaluator) Conditions(st *Status, th Thresholds, disk DiskTrend) []Cond
 		if t.LagSeconds != nil {
 			lag = secs(*t.LagSeconds)
 		}
-		over := t.Enabled && limit > 0 && t.LagSeconds != nil && lag > limit
+		over := t.Enabled && !idleTable[t.Table] && limit > 0 && t.LagSeconds != nil && lag > limit
 		if !over {
 			delete(e.lagAbove, t.Table)
 		} else if daily {
@@ -342,8 +353,8 @@ func (e *Evaluator) Conditions(st *Status, th Thresholds, disk DiskTrend) []Cond
 			delete(e.heldActive, t.Table)
 		}
 		if t.Retention != nil {
-			c.Message = fmt.Sprintf("The archive's retention gate holds unarchived rows of %s up to %s past their window (%s; threshold %s) and the database volume is growing (%s). Fix the archive, or release the gate for a few hours: fwmon-api archive --override %s --for 6h --reason \"...\"",
-				t.Table, hours(held), t.Retention.Window, hours(th.Held), disk.Detail, t.GateStream)
+			c.Message = fmt.Sprintf("The archive's retention gate holds unarchived rows of %s up to %s past their window (%s; threshold %s) and the database volume is growing (%s).",
+				t.Table, hours(held), t.Retention.Window, hours(th.Held), disk.Detail)
 		}
 		c.Recovery = fmt.Sprintf("The retention gate no longer holds rows of %s far past their window", t.Table)
 		out = append(out, c)
@@ -375,7 +386,7 @@ func (e *Evaluator) Conditions(st *Status, th Thresholds, disk DiskTrend) []Cond
 	for _, s := range st.Streams {
 		c := Condition{Type: models.AlertTypeArchiveSealOverdue, Label: s.Stream, Known: true,
 			Fields: map[string]string{"stream": s.Stream, "table": s.Table}}
-		c.Breached = s.Enabled && th.SealOverdueDays > 0 && s.UnsealedDays > th.SealOverdueDays
+		c.Breached = s.Enabled && !idleStream[s.Stream] && th.SealOverdueDays > 0 && s.UnsealedDays > th.SealOverdueDays
 		why := ""
 		for _, m := range s.Months {
 			if m.Month == s.OldestUnsealed && m.Error != "" {

@@ -345,7 +345,7 @@ func TestAssess_Issues(t *testing.T) {
 			if is.Severity != tc.sev {
 				t.Errorf("%s severity %s, want %s", tc.code, is.Severity, tc.sev)
 			}
-			if is.Title == "" || is.Meaning == "" || is.Action == "" || is.Action != IssueActions[tc.code] {
+			if is.Title == "" || is.Meaning == "" || is.Action == "" || is.Action != strings.ReplaceAll(IssueActions[tc.code], "<stream>", "flows") {
 				t.Errorf("%s incomplete: %+v", tc.code, is)
 			}
 			if tc.verdict != VerdictHealthy && h.Summary == "" {
@@ -536,5 +536,197 @@ func TestFingerprint(t *testing.T) {
 	b.Bucket = "example-bucket-2"
 	if b.Fingerprint() == fp {
 		t.Error("the bucket does not change the fingerprint")
+	}
+}
+
+// TestAssess_LagWithoutBacklog: a table that receives data lags with no
+// chunk left to export (its planner fails, so nothing new is cut): still an
+// archive_lag error, not HEALTHY. An idle table in the same state is neutral.
+func TestAssess_LagWithoutBacklog(t *testing.T) {
+	st := healthyStatus()
+	f := table(st, export.TableFlows)
+	f.LagSeconds = fptr(5 * 3600)
+	f.Backlog = &BacklogView{Chunks: 500, Verified: 500, Remaining: 0, State: "caught_up"}
+	h := Assess(st, defaultTh(), growing)
+	if is := issueOf(h, IssueArchiveLag); is == nil || is.Severity != SeverityError || is.Table != export.TableFlows || h.Verdict != VerdictError {
+		t.Fatalf("non-idle: %s %+v", h.Verdict, h.Issues)
+	}
+	if strings.Contains(issueOf(h, IssueArchiveLag).Title, "sflow and netflow") || !strings.Contains(issueOf(h, IssueArchiveLag).Title, "flow archive") {
+		t.Errorf("title %q", issueOf(h, IssueArchiveLag).Title)
+	}
+	stream(st, export.StreamNetFlow).RecentRows = 0 // nothing received: the table is idle
+	if h := Assess(st, defaultTh(), growing); issueOf(h, IssueArchiveLag) != nil || h.Verdict != VerdictHealthy {
+		t.Fatalf("idle: %s %+v", h.Verdict, h.Issues)
+	}
+}
+
+// TestAssess_StageFailing: a stage failing for a subject with no success in
+// between is a warning from 30 min and an error from 2 h; a streak last seen
+// over 3 h ago is over; the chunk stages of a table whose chunks wait for
+// their retry are left to chunks_retrying.
+func TestAssess_StageFailing(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		stage    string
+		since    time.Duration
+		last     time.Duration
+		retrying bool
+		want     string
+	}{
+		{"plan 10 min", "plan", 10 * time.Minute, time.Minute, false, ""},
+		{"plan 40 min", "plan", 40 * time.Minute, time.Minute, false, SeverityWarning},
+		{"plan 3 h", "plan", 3 * time.Hour, 5 * time.Minute, false, SeverityError},
+		{"plan last seen 4 h ago", "plan", 9 * time.Hour, 4 * time.Hour, false, ""},
+		{"upload 3 h, chunks retrying", "upload", 3 * time.Hour, time.Minute, true, ""},
+		{"upload 3 h, nothing retrying", "upload", 3 * time.Hour, time.Minute, false, SeverityError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := healthyStatus()
+			st.Worker.Failing = []Streak{{Stage: tc.stage, Subject: export.TableFlows, Since: at.Add(-tc.since), At: at.Add(-tc.last), Error: "archive: refused", Count: 9}}
+			if tc.retrying {
+				st.Retrying = []ChunkView{{ID: 3, Table: export.TableFlows, Error: "upload: 503"}}
+			}
+			h := Assess(st, defaultTh(), growing)
+			is := issueOf(h, IssueStageFailing)
+			if tc.want == "" {
+				if is != nil {
+					t.Fatalf("unexpected %+v", is)
+				}
+				return
+			}
+			if is == nil || is.Severity != tc.want || is.Table != export.TableFlows || is.Detail != "archive: refused" ||
+				!strings.Contains(is.Title, tc.stage) || is.Action != IssueActions[IssueStageFailing] {
+				t.Fatalf("issue %+v", is)
+			}
+			if sh := streamHealth(t, h, export.StreamNetFlow); tc.want == SeverityError && sh.State != "error" {
+				t.Errorf("netflow %s", sh.State)
+			}
+		})
+	}
+}
+
+// TestAssess_FirstChunkEscalates: a table without a chunk is a warning, and
+// an error once the worker has seen it so for longer than its lag threshold
+// (as ARCHIVE_LAG's no-chunk branch, which reads the same record).
+func TestAssess_FirstChunkEscalates(t *testing.T) {
+	for _, tc := range []struct {
+		waited time.Duration
+		want   string
+	}{{time.Hour, SeverityWarning}, {4 * time.Hour, SeverityError}} {
+		st := healthyStatus()
+		f := table(st, export.TableFlows)
+		f.HasChunks, f.Backlog, f.LagSeconds, f.VerifiedThroughEnd = false, nil, nil, nil
+		stream(st, export.StreamNetFlow).RecentChunks = 0
+		st.Worker.NoChunkSince = map[string]time.Time{export.TableFlows: at.Add(-tc.waited)}
+		h := Assess(st, defaultTh(), growing)
+		is := issueOf(h, IssueNoChunkYet)
+		if is == nil || is.Severity != tc.want || is.Since == nil {
+			t.Fatalf("waited %s: %+v", tc.waited, is)
+		}
+		// The alert agrees, from a fresh evaluator (a poller just restarted).
+		c := conditionOf(t, NewEvaluator().Conditions(st, defaultTh(), growing), models.AlertTypeArchiveLag, export.TableFlows)
+		if c.Breached != (tc.want == SeverityError) || c.Fields["issue"] != IssueNoChunkYet || c.Fields["no_chunk"] != "true" {
+			t.Errorf("waited %s: alert %+v", tc.waited, c)
+		}
+	}
+}
+
+// TestAlertsAgreeOnIdle: the alerts and the verdict apply the same idle
+// rule — a stream (table) that receives no data neither lags nor has a seal
+// overdue, in both; with data, both report it.
+func TestAlertsAgreeOnIdle(t *testing.T) {
+	for _, withData := range []bool{false, true} {
+		st := healthyStatus()
+		c := table(st, export.TableCounters)
+		c.LagSeconds = fptr(100 * 3600)
+		s := stream(st, export.StreamSFlowCounters)
+		s.OldestUnsealed, s.UnsealedDays = "2026-08", 30
+		if withData {
+			s.RecentRows = 5
+		}
+		h := Assess(st, defaultTh(), growing)
+		cs := NewEvaluator().Conditions(st, defaultTh(), growing)
+		// The lag of a daily table fires after DailySustain above the
+		// threshold: evaluate again an hour later.
+		e := NewEvaluator()
+		e.Conditions(st, defaultTh(), growing)
+		later := *st
+		later.GeneratedAt = at.Add(DailySustain)
+		cs2 := e.Conditions(&later, defaultTh(), growing)
+		lag := conditionOf(t, cs2, models.AlertTypeArchiveLag, export.TableCounters)
+		seal := conditionOf(t, cs, models.AlertTypeArchiveSealOverdue, export.StreamSFlowCounters)
+		verdictLag, verdictSeal := issueOf(h, IssueArchiveLag) != nil, issueOf(h, IssueSealOverdue) != nil
+		if lag.Breached != withData || verdictLag != withData || seal.Breached != withData || verdictSeal != withData {
+			t.Errorf("with data %v: alert lag %v seal %v, verdict lag %v seal %v", withData, lag.Breached, seal.Breached, verdictLag, verdictSeal)
+		}
+	}
+}
+
+// TestRecorderRestore: a restart keeps the failures going on and their
+// first instant; a new failure of the same stage and subject continues the
+// streak; a success ends it; a streak last seen over a day ago is dropped.
+func TestRecorderRestore(t *testing.T) {
+	prev := NewRecorder("fw-example-01-1", "/tmp/x", 1)
+	t0 := at.Add(-2 * time.Hour)
+	prev.Fail("plan", export.TableFlows, errors.New("a"), t0)
+	prev.Fail("mark", export.TableFlows, errors.New("old"), at.Add(-30*time.Hour))
+	prev.SetNoChunk(export.TableSyslog, true, t0)
+	old := prev.Snapshot(at.Add(-time.Minute))
+
+	r := NewRecorder("fw-example-01-2", "/tmp/x", 1)
+	r.Restore(&old, at)
+	r.Fail("plan", export.TableFlows, errors.New("b"), at)
+	snap := r.Snapshot(at)
+	f := snap.Failing["plan/"+export.TableFlows]
+	if !f.Since.Equal(t0) || f.Count != 2 || f.Error != "b" || snap.Stages["plan"].Since == nil || !snap.Stages["plan"].Since.Equal(t0) {
+		t.Fatalf("restored streak %+v stage %+v", f, snap.Stages["plan"])
+	}
+	if _, ok := snap.Failing["mark/"+export.TableFlows]; ok {
+		t.Error("a streak last seen 30 h ago was restored")
+	}
+	if !snap.NoChunkSince[export.TableSyslog].Equal(t0) {
+		t.Errorf("no-chunk since %v", snap.NoChunkSince)
+	}
+	r.OK("plan", export.TableFlows)
+	r.Fail("plan", export.TableFlows, errors.New("c"), at.Add(time.Minute))
+	if f := r.Snapshot(at).Failing["plan/"+export.TableFlows]; !f.Since.Equal(at.Add(time.Minute)) || f.Count != 1 {
+		t.Errorf("after a success: %+v", f)
+	}
+}
+
+// TestAssess_PreflightSinceFromStreak: the preflight's "since" is the
+// current run of failures (the streak), not the stage's first failure ever
+// recorded: a preflight that failed a day ago, passed, and fails again now
+// is a warning, not at once an error.
+func TestAssess_PreflightSinceFromStreak(t *testing.T) {
+	st := healthyStatus()
+	long := at.Add(-24 * time.Hour)
+	st.Worker.PreflightOK = false
+	st.Worker.Stages = []StageView{{Stage: "preflight", At: at, Since: &long, Error: "403 Forbidden"}}
+	st.Worker.Failing = []Streak{{Stage: "preflight", Since: at.Add(-2 * time.Minute), At: at, Error: "403 Forbidden", Count: 2}}
+	is := issueOf(Assess(st, defaultTh(), growing), IssuePreflightFailing)
+	if is == nil || is.Severity != SeverityWarning || !is.Since.Equal(at.Add(-2*time.Minute)) {
+		t.Fatalf("%+v", is)
+	}
+}
+
+// TestConditions_HeldActionSelfContained: the held-rows alert names its own
+// gate stream in the override command, once, and says where to look —
+// nothing refers to a page section "above".
+func TestConditions_HeldActionSelfContained(t *testing.T) {
+	st := healthyStatus()
+	table(st, export.TableFlows).Retention.HeldSeconds = 8 * 3600
+	c := conditionOf(t, NewEvaluator().Conditions(st, defaultTh(), growing), models.AlertTypeRetentionHeld, export.TableFlows)
+	if !c.Breached || strings.Count(c.Message, "--override") != 1 || !strings.Contains(c.Message, "--override flows --for 6h") ||
+		strings.Contains(c.Message, "<stream>") || strings.Contains(c.Message, "above") {
+		t.Fatalf("message %q", c.Message)
+	}
+	if is := issueOf(Assess(st, defaultTh(), growing), IssueRetentionHeld); is == nil || !strings.Contains(is.Action, "--override flows --for 6h") {
+		t.Errorf("the page's held-rows action: %+v", is)
+	}
+	for code, action := range IssueActions {
+		if strings.Contains(action, "above") || strings.Contains(action, "below") {
+			t.Errorf("%s's action refers to the page layout: %q", code, action)
+		}
 	}
 }

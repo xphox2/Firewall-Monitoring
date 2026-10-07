@@ -143,6 +143,10 @@ type WorkerView struct {
 	Activity *ActivityView `json:"activity,omitempty"`
 	// PreflightIssue: Runtime.PreflightIssue.
 	PreflightIssue string `json:"preflight_issue,omitempty"`
+	// Failing: the failures still going on (Runtime.Failing), oldest
+	// first; NoChunkSince: Runtime.NoChunkSince.
+	Failing      []Streak             `json:"failing,omitempty"`
+	NoChunkSince map[string]time.Time `json:"no_chunk_since,omitempty"`
 }
 
 // ActivityView is the worker's current chunk with its elapsed times and,
@@ -496,6 +500,18 @@ func Build(ctx context.Context, db Store, cfg *config.Config, now time.Time) (*S
 		}
 		if !rt.PreflightOK {
 			wv.PreflightIssue = rt.PreflightIssue
+		}
+		for _, f := range rt.Failing {
+			wv.Failing = append(wv.Failing, f)
+		}
+		sort.Slice(wv.Failing, func(i, j int) bool {
+			if !wv.Failing[i].Since.Equal(wv.Failing[j].Since) {
+				return wv.Failing[i].Since.Before(wv.Failing[j].Since)
+			}
+			return wv.Failing[i].Stage+wv.Failing[i].Subject < wv.Failing[j].Stage+wv.Failing[j].Subject
+		})
+		if len(rt.NoChunkSince) > 0 {
+			wv.NoChunkSince = rt.NoChunkSince
 		}
 		st.ConfigPending = !wv.Stale && a.Enabled() && rt.ConfigFingerprint != "" && rt.ConfigFingerprint != a.Fingerprint()
 		sort.Slice(wv.Stages, func(i, j int) bool { return wv.Stages[i].At.After(wv.Stages[j].At) })

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"firewall-mon/internal/archive/export"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/models"
@@ -34,12 +35,15 @@ import (
 //	local marker missing / another install's      -                            at once
 //	uploads or read-backs failing, chunks retry   under TargetErrorAfter       from TargetErrorAfter (1 h) since the last success
 //	other failed chunks waiting for their retry   at once                      -
+//	any other stage failing without a success     from StageWarnAfter (30 min) from StageErrorAfter (2 h); a streak last seen
+//	  (plan, mark, seal, settle, db, lock, ...)                                    over StageRecentWithin (3 h) ago is over
 //	chunk parked in needs_attention               -                            at once
 //	month not sealed past its seal time           -                            over archive_seal_overdue_alert_days (3)
 //	gate holds rows past their retention          disk known not growing       over retention_held_alert_hours (6), disk growing or unknown
-//	verified data older than the lag threshold    -                            over archive_lag_alert_hours_* (+ DailySustain for daily tables)
+//	verified data older than the lag threshold    -                            over archive_lag_alert_hours_* (+ DailySustain for daily tables);
+//	  (a table that receives data)                                                 also with no chunk left to export (a planner failing)
 //	backlog: more than one chunk left             at once                      -
-//	enabled table without a chunk yet             at once                      -
+//	enabled table without a chunk yet             at once                      over archive_lag_alert_hours_* since the worker first saw it
 //	staging directory free space                  under StagingWarnFactor x floor   under the floor (nothing is exported)
 //	gate override active (rows deleted unarchived) at once                     -
 //	gate cannot read the stream switches          under GateUnreadableAfter    from GateUnreadableAfter (15 min)
@@ -65,6 +69,13 @@ const (
 	// StagingWarnFactor: free staging space under this many times the
 	// worker's floor is a warning (under the floor nothing is exported).
 	StagingWarnFactor = 2
+	// StageWarnAfter / StageErrorAfter: a stage that keeps failing for a
+	// subject (Runtime.Failing) with no success in between. A streak whose
+	// last failure is older than StageRecentWithin is over (its subject is
+	// gone, or the stage has not run since).
+	StageWarnAfter    = 30 * time.Minute
+	StageErrorAfter   = 2 * time.Hour
+	StageRecentWithin = 3 * time.Hour
 )
 
 // Verdicts (Health.Verdict).
@@ -93,6 +104,7 @@ const (
 	IssuePreflightFailing = "preflight_failing"
 	IssueTargetFailing    = "target_failing"
 	IssueStagingFull      = "staging_full"
+	IssueStageFailing     = "stage_failing"
 	IssueNeedsAttention   = "needs_attention"
 	IssueGateUnreadable   = "gate_unreadable"
 	IssueRetentionHeld    = "retention_held"
@@ -114,7 +126,7 @@ const (
 var issueOrder = func() map[string]int {
 	m := map[string]int{}
 	for i, c := range []string{IssueWorkerNotRunning, IssueConfigInvalid, IssueMarkerMissing, IssueMarkerForeign, IssuePreflightFailing,
-		IssueTargetFailing, IssueStagingFull, IssueNeedsAttention, IssueGateUnreadable, IssueRetentionHeld, IssueArchiveLag, IssueSealOverdue,
+		IssueTargetFailing, IssueStagingFull, IssueStageFailing, IssueNeedsAttention, IssueGateUnreadable, IssueRetentionHeld, IssueArchiveLag, IssueSealOverdue,
 		IssueChunksRetrying, IssueOverrideActive, IssueStagingLow, IssueUnsettledLong, IssueBacklog, IssueNoChunkYet, IssueObjectLockOff,
 		IssueConfigPending, IssueStatusIncomplete, IssueStreamIdle, IssueMonthPartial} {
 		m[c] = i
@@ -131,23 +143,24 @@ var blocking = map[string]bool{IssueWorkerNotRunning: true, IssueConfigInvalid: 
 // card and the alerts both say it.
 var IssueActions = map[string]string{
 	IssueWorkerNotRunning: "Check that the poller is running (docker compose ps) and read its log for lines starting with \"archive:\"; the worker restarts with the poller.",
-	IssueConfigInvalid:    "Correct the setting named below in Raw Archive Settings (or its ARCHIVE_* environment key) and save; the poller applies it within a minute.",
+	IssueConfigInvalid:    "Correct the setting the error names in Raw Archive Settings (Settings → Retention) or its ARCHIVE_* environment key and save; the poller applies it within a minute.",
 	IssueMarkerMissing:    "Mount the share or partition that holds the archive at the archive directory (check the host's fstab and the container's bind mount); the worker retries every minute and catches up.",
 	IssueMarkerForeign:    "Give this server its own archive directory or prefix in Raw Archive Settings: two servers must never write one archive.",
-	IssuePreflightFailing: "Press Test connection in Raw Archive Settings and fix what it reports (endpoint, key, bucket, Object Lock, permissions, or the mount).",
-	IssueTargetFailing:    "Press Test connection in Raw Archive Settings and fix what it reports; the failed chunks are retried automatically once the target answers.",
-	IssueStagingFull:      "Free space on the staging directory's volume or choose a larger one in Raw Archive Settings.",
-	IssueNeedsAttention:   "Read the chunk's error under Needs attention, fix the cause, then press Reset to export it again.",
+	IssuePreflightFailing: "Press Test connection in Raw Archive Settings (Settings → Retention) and fix what it reports: endpoint, key, bucket, Object Lock, permissions, or the mount.",
+	IssueTargetFailing:    "Press Test connection in Raw Archive Settings (Settings → Retention) and fix what it reports; the failed chunks are retried automatically once the target answers.",
+	IssueStagingFull:      "Free space on the staging directory's volume, or choose a larger one in Raw Archive Settings (Settings → Retention).",
+	IssueStageFailing:     "Read the error (Settings → Retention → Raw Archive, or fwmon-api archive --status) and the poller's \"archive:\" log lines, and fix its cause (often the database: its connection, disk or locks); the worker retries on every pass.",
+	IssueNeedsAttention:   "Read the chunk's error (Settings → Retention → Raw Archive → Needs attention, or fwmon-api archive --status), fix the cause, then Reset the chunk to export it again.",
 	IssueGateUnreadable:   "Check the database connection and the poller's log; the gate retries every few seconds.",
-	IssueRetentionHeld:    "Fix the archive issue listed above. If the disk is about to fill, release the gate for a few hours (fwmon-api archive --override <stream> --for 6h --reason \"...\"); rows deleted then are never archived.",
-	IssueArchiveLag:       "Fix the issue listed above that stops the worker; if none is listed, read the poller's log for \"archive:\" lines.",
-	IssueSealOverdue:      "Read the month's seal error below; a seal waits for every chunk of the month to be verified, so fix parked or failing chunks first.",
+	IssueRetentionHeld:    "Get the archive moving again (Settings → Retention → Raw Archive, or fwmon-api archive --status, says why it is stuck). Only if the disk is about to fill, release the gate for a few hours: fwmon-api archive --override <stream> --for 6h --reason \"...\" (rows deleted then are never archived).",
+	IssueArchiveLag:       "Find out why no chunk is being verified (Settings → Retention → Raw Archive, or fwmon-api archive --status, and the poller's \"archive:\" log lines) and fix it; the worker then catches up on its own.",
+	IssueSealOverdue:      "Read the month's seal error (Settings → Retention → Raw Archive → Months, or fwmon-api archive --status); a month is sealed only once every chunk of it is verified, so fix parked or failing chunks first.",
 	IssueChunksRetrying:   "Nothing yet: the worker retries after 1, 5, 30 minutes, then every 2 hours. If the same error repeats, press Test connection.",
 	IssueOverrideActive:   "Re-engage the gate as soon as the emergency is over: while it is released, raw rows are deleted whether or not they are archived.",
 	IssueStagingLow:       "Free space on the staging directory's volume before it reaches the floor and exports stop.",
 	IssueUnsettledLong:    "Find the session named in the detail (pg_stat_activity) and end it, or wait for the partition maintenance to finish.",
 	IssueBacklog:          "Nothing, unless it stops shrinking: the worker catches up on its own. A long ETA can be shortened by raising the read rate in Schedule & limits.",
-	IssueNoChunkYet:       "Nothing: the first chunk is cut once its first period has closed (an hour for flows, a day plus the minimum age for syslog and counters).",
+	IssueNoChunkYet:       "Nothing at first: the first chunk is cut once its first period has closed (an hour for flows, a day plus the minimum age for syslog and counters). If it takes longer, read the poller's \"archive:\" log lines.",
 	IssueObjectLockOff:    "Turn on Object Lock for the bucket and set a retention (Bucket & Object Lock in Raw Archive Settings), so nobody holding the key can delete the archive.",
 	IssueConfigPending:    "Nothing: the poller applies saved settings within a minute. If this stays, restart the poller.",
 	IssueStatusIncomplete: "Reload in a minute; if it persists, check the database's health and the API's log.",
@@ -291,20 +304,11 @@ func Assess(st *Status, th Thresholds, disk DiskTrend) *Health {
 	for _, t := range st.Tables {
 		tables[t.Table] = t
 	}
-	idle := map[string]bool{} // stream → no rows in its table's recent chunks
-	tableIdle := map[string]bool{}
-	for _, t := range st.Tables {
-		tableIdle[t.Table] = t.HasChunks
-	}
-	for _, s := range st.Streams {
-		idle[s.Stream] = s.Enabled && tables[s.Table].HasChunks && s.RecentChunks > 0 && s.RecentRows == 0
-		if !idle[s.Stream] {
-			tableIdle[s.Table] = false
-		}
-	}
+	idle, tableIdle := Idle(st)
 
 	if st.Enabled {
 		assessWorker(st, now, add)
+		assessStages(st, now, add)
 		assessTables(st, th, disk, now, tableIdle, add)
 		assessStreams(st, th, idle, add)
 		assessGates(st, add)
@@ -442,6 +446,42 @@ func Assess(st *Status, th Thresholds, disk DiskTrend) *Health {
 	return h
 }
 
+// Idle reports which streams receive no data — enabled, their table has
+// verified chunks, and none of its RecentChunks holds a row of the stream
+// (sFlow switched off) — and which tables only hold such streams. The
+// verdict and the alerts (Evaluator.Conditions) both use it: an idle stream
+// is neutral, it neither lags nor has a seal overdue.
+func Idle(st *Status) (streams, tables map[string]bool) {
+	streams, tables = map[string]bool{}, map[string]bool{}
+	has := map[string]bool{}
+	for _, t := range st.Tables {
+		has[t.Table] = t.HasChunks
+		tables[t.Table] = t.HasChunks
+	}
+	for _, s := range st.Streams {
+		streams[s.Stream] = s.Enabled && has[s.Table] && s.RecentChunks > 0 && s.RecentRows == 0
+		if !streams[s.Stream] {
+			tables[s.Table] = false
+		}
+	}
+	return streams, tables
+}
+
+// tableLabel names a table's data in an issue: the table holds the streams
+// together, and an install may receive only one of them (NetFlow without
+// sFlow), so it is "flow", not "sflow and netflow".
+func tableLabel(table string) string {
+	switch table {
+	case export.TableSyslog:
+		return "syslog"
+	case export.TableFlows:
+		return "flow"
+	case export.TableCounters:
+		return "sFlow counter"
+	}
+	return table
+}
+
 func plural(n int) string {
 	if n == 1 {
 		return ""
@@ -518,6 +558,13 @@ func assessWorker(st *Status, now time.Time, add func(Issue)) {
 		is := Issue{Risk: nothing, Fix: &IssueFix{Kind: "test", Label: "Test connection"}}
 		if pre != nil {
 			is.Detail, is.Since = pre.Error, firstOf(*pre)
+		}
+		// The streak (since this run of failures began) wins over the
+		// stage's first failure ever recorded.
+		for _, f := range w.Failing {
+			if f.Stage == "preflight" {
+				is.Since = tptr(f.Since)
+			}
 		}
 		switch w.PreflightIssue {
 		case PreflightMarkerMissing:
@@ -601,6 +648,51 @@ func assessWorker(st *Status, now time.Time, add func(Issue)) {
 	add(is)
 }
 
+// assessStages: any other stage that keeps failing for a subject with no
+// success in between (Runtime.Failing). The preflight, the configuration and
+// the chunk stages of a table whose chunks are waiting for their retry have
+// their own issues.
+func assessStages(st *Status, now time.Time, add func(Issue)) {
+	w := st.Worker
+	if w == nil || w.Stale || w.Runner == ConfigProblemRunner {
+		return
+	}
+	retrying := map[string]bool{}
+	for _, c := range st.Retrying {
+		retrying[c.Table] = true
+	}
+	chunk := map[string]bool{}
+	for _, s := range []string{"count", "db", "manifest", "read", "settle", "stage", "upload", "verify", "sealed"} {
+		chunk[s] = true
+	}
+	for _, f := range w.Failing {
+		if f.Stage == "preflight" || f.Stage == "config" || (chunk[f.Stage] && retrying[f.Subject]) {
+			continue
+		}
+		failing := now.Sub(f.Since)
+		if now.Sub(f.At) > StageRecentWithin || failing < StageWarnAfter {
+			continue
+		}
+		what := f.Stage + " step keeps failing"
+		if f.Subject != "" {
+			what += " (" + f.Subject + ")"
+		}
+		is := Issue{Code: IssueStageFailing, Severity: SeverityWarning, Since: tptr(f.Since), Detail: f.Error,
+			Title:   "The archive's " + what,
+			Meaning: fmt.Sprintf("The worker's %s step has failed %d times over %s, with no success in between.", f.Stage, f.Count, durText(failing)),
+			Risk:    "The archive does not advance past this step; its rows stay in the database."}
+		for _, t := range Tables {
+			if f.Subject == t {
+				is.Table = t
+			}
+		}
+		if failing >= StageErrorAfter {
+			is.Severity = SeverityError
+		}
+		add(is)
+	}
+}
+
 // firstOf is when a stage began failing (its first failure counted by this
 // worker; the last one in a snapshot without it).
 func firstOf(e StageView) *time.Time {
@@ -628,7 +720,7 @@ func assessTables(st *Status, th Thresholds, disk DiskTrend, now time.Time, tabl
 		if !t.Enabled {
 			continue
 		}
-		names := strings.Join(t.Streams, " and ")
+		names := tableLabel(t.Table)
 		if ps := parked[t.Table]; len(ps) > 0 {
 			holding := 0
 			oldest := ps[0].UpdatedAt
@@ -655,7 +747,7 @@ func assessTables(st *Status, th Thresholds, disk DiskTrend, now time.Time, tabl
 				Title:   "Unarchived " + names + " rows are held past retention",
 				Meaning: fmt.Sprintf("Rows of %s up to %s older than their window (%s) are kept until the archive verifies them.", t.Table, hours(held), r.Window),
 				Risk:    "The database keeps rows it would have deleted; its volume " + disk.Detail + ".",
-				Detail:  disk.Detail}
+				Detail:  disk.Detail, Action: strings.ReplaceAll(IssueActions[IssueRetentionHeld], "<stream>", t.GateStream)}
 			if !disk.Known || disk.Growing {
 				is.Severity = SeverityError
 				is.Risk = "The database keeps rows it would have deleted and its volume is filling (" + disk.Detail + ")."
@@ -664,8 +756,10 @@ func assessTables(st *Status, th Thresholds, disk DiskTrend, now time.Time, tabl
 		}
 		// The lag: as ARCHIVE_LAG (0 turns it off), a daily table's
 		// threshold plus DailySustain (its alert waits that long above it).
-		// Only rows waiting count: an idle table's empty chunks do not.
-		if limit, daily := th.lagOf(t.Table); limit > 0 && t.LagSeconds != nil && t.Backlog != nil && t.Backlog.RemainingRows > 0 {
+		// Any table that receives data — with or without chunks left to
+		// export (a planner that keeps failing leaves none) — but not an
+		// idle one: its empty chunks hold nothing.
+		if limit, daily := th.lagOf(t.Table); limit > 0 && t.LagSeconds != nil && !tableIdle[t.Table] {
 			if daily {
 				limit += DailySustain
 			}
@@ -686,7 +780,7 @@ func assessTables(st *Status, th Thresholds, disk DiskTrend, now time.Time, tabl
 				eta = "about " + durText(secs(*b.ETASeconds)) + " of work"
 			}
 			is := Issue{Code: IssueBacklog, Severity: SeverityWarning, Table: t.Table,
-				Title:   fmt.Sprintf("Catching up on %s: %d chunks left", names, b.Remaining),
+				Title:   fmt.Sprintf("Catching up on the %s archive: %d chunks left", names, b.Remaining),
 				Meaning: fmt.Sprintf("The worker is exporting a backlog (%s).", eta),
 				Risk:    "Until it is done, the newest rows are only in the database."}
 			if b.OldestRemaining != nil {
@@ -695,10 +789,21 @@ func assessTables(st *Status, th Thresholds, disk DiskTrend, now time.Time, tabl
 			add(is)
 		}
 		if !t.HasChunks && fresh && st.Worker.PreflightOK {
-			add(Issue{Code: IssueNoChunkYet, Severity: SeverityWarning, Table: t.Table,
+			is := Issue{Code: IssueNoChunkYet, Severity: SeverityWarning, Table: t.Table,
 				Title:   "Waiting for the first " + names + " chunk",
 				Meaning: "Archiving of this table is on but no chunk has been cut yet.",
-				Risk:    "Its raw rows are kept in the database until their first chunk is verified."})
+				Risk:    "Its raw rows are kept in the database until their first chunk is verified."}
+			// As ARCHIVE_LAG's no-chunk branch: an error once it has waited
+			// longer than the table's lag threshold.
+			if since, ok := st.Worker.NoChunkSince[t.Table]; ok {
+				is.Since = tptr(since)
+				if limit, _ := th.lagOf(t.Table); limit > 0 && now.Sub(since) > limit {
+					is.Severity = SeverityError
+					is.Title = fmt.Sprintf("No %s chunk cut in %s", names, hours(now.Sub(since)))
+					is.Meaning = fmt.Sprintf("Archiving of this table has been on for %s (threshold %s) without a single chunk.", hours(now.Sub(since)), hours(limit))
+				}
+			}
+			add(is)
 		}
 		if u := t.Unsettled; u != nil && fresh && unsettledWaits[u.Reason] && th.Unsettled > 0 && u.ForSeconds > th.Unsettled.Seconds() {
 			is := Issue{Code: IssueUnsettledLong, Severity: SeverityWarning, Table: t.Table,
@@ -801,7 +906,7 @@ var issueOfAlert = map[models.AlertType]string{
 // from h with its action, so the notification says what to do.
 func annotate(c *Condition, h *Health) {
 	code := issueOfAlert[c.Type]
-	if c.Type == models.AlertTypeArchiveLag && strings.Contains(c.Message, "has cut no chunk") {
+	if c.Type == models.AlertTypeArchiveLag && c.Fields["no_chunk"] == "true" {
 		code = IssueNoChunkYet
 	}
 	if code == "" {
@@ -819,17 +924,21 @@ func annotate(c *Condition, h *Health) {
 	}
 	if h != nil && (c.Type == models.AlertTypeArchiveLag || c.Type == models.AlertTypeRetentionHeld) {
 		for _, is := range h.Issues {
-			if is.Severity == SeverityError && blocking[is.Code] {
+			if is.Severity == SeverityError && (blocking[is.Code] || (is.Code == IssueStageFailing && is.Table == c.Fields["table"])) {
 				c.Fields["cause"] = is.Code
 				c.Message += " Cause: " + is.Title + " (" + is.Code + "). Action: " + is.Action
 				return
 			}
 		}
 	}
-	if code == IssueNoChunkYet {
-		return // its message already carries the worker's state
+	c.Message += " Action: " + strings.ReplaceAll(IssueActions[code], "<stream>", gateOr(c.Fields["gate_stream"]))
+}
+
+func gateOr(s string) string {
+	if s == "" {
+		return "<stream>"
 	}
-	c.Message += " Action: " + IssueActions[code]
+	return s
 }
 
 // gateIssueAction is ARCHIVE_GATE_UNREADABLE's action (GateReadCondition has

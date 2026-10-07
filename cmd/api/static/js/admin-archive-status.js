@@ -37,6 +37,7 @@
 
     var poller = null;        // AdminCommon.pollWhenVisible handle
     var ticker = null;        // the 1 s countdown timer
+    var lastVerdict = null;   // the last data.health rendered (lastHealth)
 
     // ---- formatting -----------------------------------------------------
 
@@ -456,7 +457,10 @@
         var up = host.querySelector('[data-arch-updated]');
         if (up) up.setAttribute('data-arch-since', new Date().toISOString());
         tick(host);
-        if (st.health) document.dispatchEvent(new CustomEvent('fwmon:archive-health', { detail: st.health }));
+        if (st.health) {
+            lastVerdict = st.health;
+            document.dispatchEvent(new CustomEvent('fwmon:archive-health', { detail: st.health }));
+        }
     }
 
     // write replaces one section's content; its <details> keep their
@@ -498,5 +502,6 @@
         return '<span class="arch-pill is-' + v[0] + '">' + AC.icon(v[1]) + esc(v[2]) + '</span>';
     }
 
-    window.FwmonArchiveStatus = { render: render, watch: watch, html: page, verdictBadge: verdictBadge };
+    window.FwmonArchiveStatus = { render: render, watch: watch, html: page, verdictBadge: verdictBadge,
+        lastHealth: function () { return lastVerdict; } };
 })();

@@ -409,12 +409,23 @@
         });
     }
 
+    // test runs Test connection with the settings shown in the form,
+    // including unsaved edits (nothing is saved). Before the form has loaded
+    // it loads it first.
     function test() {
-        if (!view) return;
+        if (!view) {
+            if (!host()) { AC.showError('Raw Archive Settings are not available on this page'); return; }
+            AC.showSuccess('Loading Raw Archive Settings…');
+            bind();
+            load().then(function () { if (view) test(); }).catch(function (e) {
+                AC.showError('Raw Archive Settings could not be loaded: ' + ((e && e.message) || e));
+            });
+            return;
+        }
         var d = draft();
         var btn = host() && host().querySelector('[data-arch-action="test"]');
         if (btn) btn.disabled = true;
-        showResult('busy', ['Testing the ' + (targetNow() === 'local' ? 'archive directory' : 'connection') + ' with the values in the form (nothing is saved)…']);
+        showResult('busy', ['Testing the ' + (targetNow() === 'local' ? 'archive directory' : 'connection') + ' with the settings shown, including unsaved edits (nothing is saved)…']);
         var out = document.getElementById('archive-settings-result');
         if (out) out.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         AC.apiFetch(API_BASE + '/archive/settings/test', { method: 'POST', body: JSON.stringify(d) }).then(function (res) {
@@ -547,7 +558,9 @@
             }
             if (key) updateDirty();
         });
-        // The status card announces the verdict on every refresh.
+        // The status card announces the verdict on every refresh; the one
+        // it announced before this card was bound is taken at once.
+        if (window.FwmonArchiveStatus && FwmonArchiveStatus.lastHealth) health = FwmonArchiveStatus.lastHealth() || health;
         document.addEventListener('fwmon:archive-health', function (e) {
             health = e.detail || null;
             renderHealth();

@@ -148,6 +148,10 @@ type Worker struct {
 	// (a first attempt) while the bucket fails, it would otherwise try the
 	// bucket every minute (passes re-admit a failed table: pass).
 	bucketFailures map[string]int
+	// hasChunks: the tables known to have a chunk (noChunkCheck).
+	hasChunks map[string]bool
+	// restored: the previous snapshot's failures were carried over.
+	restored bool
 	// sealFailures counts a stream's consecutive seal attempts the service or
 	// the database failed (their backoff).
 	sealFailures map[string]int
@@ -187,8 +191,8 @@ func newWorker(db *database.Database, store Store, cfg config.ArchiveConfig) (*W
 	w := &Worker{
 		db: db, store: store, cfg: cfg, now: time.Now,
 		cooldown: map[string]time.Time{}, sealFailures: map[string]int{}, lastLog: map[string]string{},
-		bucketFailures: map[string]int{},
-		waits:          map[string]time.Time{},
+		bucketFailures: map[string]int{}, hasChunks: map[string]bool{},
+		waits: map[string]time.Time{},
 	}
 	w.settled = db.ArchiveChunkSettled
 	// A local target writes this install's id into its marker and refuses a
@@ -349,6 +353,56 @@ func (w *Worker) fail(stage string, err error) {
 	w.rt.Failed(stage, err, w.now())
 }
 
+// failOn is fail for a subject (a table, a stream, "" for the worker): the
+// failure is also a streak until okOn — the health verdict escalates one
+// that lasts (status.Assess, stage_failing).
+func (w *Worker) failOn(stage, subject string, err error) {
+	metrics.IncArchiveError(stage)
+	w.rt.Fail(stage, subject, err, w.now())
+}
+
+// okOn ends the streak of stage for subject.
+func (w *Worker) okOn(stage, subject string) { w.rt.OK(stage, subject) }
+
+// chunkStages are the stages a chunk's attempt can fail at (stageErr): a
+// verified chunk ends the table's streaks of every one.
+var chunkStages = []string{"count", "db", "manifest", "read", "settle", "stage", "upload", "verify", "sealed"}
+
+// restore carries the failures still going on, and since when, from the
+// snapshot the previous worker left (before a poller restart or a settings
+// change) into this one, once, on its first tick under the archive lock —
+// before it writes a snapshot of its own.
+func (w *Worker) restore(ctx context.Context) {
+	if w.restored {
+		return
+	}
+	w.restored = true
+	raw, ok, err := w.db.ArchiveWorkerState(ctx)
+	if err != nil || !ok {
+		return
+	}
+	if prev, err := status.ParseRuntime(raw); err == nil {
+		w.rt.Restore(prev, w.now())
+	}
+}
+
+// noChunkCheck records, for each table not yet known to have a chunk,
+// whether it has one (status.Runtime.NoChunkSince); once it has, the table is
+// not read again.
+func (w *Worker) noChunkCheck(ctx context.Context) {
+	for _, t := range w.tables {
+		if w.hasChunks[t] {
+			continue
+		}
+		has, err := w.db.ArchiveTableHasChunks(ctx, t)
+		if err != nil {
+			continue
+		}
+		w.hasChunks[t] = has
+		w.rt.SetNoChunk(t, !has, w.now())
+	}
+}
+
 // unsettled sets why table's next chunk waits (fwmon_archive_unsettled and
 // the runtime state; "" = it does not). Such a wait is checked again by the
 // next pass.
@@ -390,7 +444,7 @@ func (w *Worker) settleWait(table string, c *models.ArchiveChunk, err error) {
 		// A failure, not a wait: the next pass retries it, not every tick
 		// (a database in trouble is not polled each minute per table).
 		delete(w.waits, table)
-		w.fail("settle", err)
+		w.failOn("settle", table, err)
 		w.logf("settle-"+table, "%s chunk %d: settle check: %v", table, c.Seq, err)
 	}
 }
@@ -496,7 +550,7 @@ func (w *Worker) Tick(ctx context.Context) {
 	}
 	release, acquired, err := w.db.AcquireArchiveLock()
 	if err != nil {
-		w.fail("lock", err)
+		w.failOn("lock", "", err)
 		w.logf("lock", "advisory lock probe failed: %v", err)
 		return
 	}
@@ -504,13 +558,15 @@ func (w *Worker) Tick(ctx context.Context) {
 		return
 	}
 	defer release()
+	w.restore(ctx)
 	defer w.saveRuntime(ctx)
 	w.clearLog("lock")
+	w.okOn("lock", "")
 
 	if !w.preflight {
 		if err := w.preflightTarget(ctx); err != nil {
 			if ctx.Err() == nil {
-				w.fail("preflight", err)
+				w.failOn("preflight", "", err)
 				w.rt.SetPreflightIssue(preflightIssue(err))
 				w.logf("preflight", "target preflight failed (nothing is archived until it passes): %v", err)
 			}
@@ -518,10 +574,12 @@ func (w *Worker) Tick(ctx context.Context) {
 		}
 		w.preflight = true
 		w.rt.SetPreflight(true)
+		w.okOn("preflight", "")
 		w.clearLog("preflight")
 		log.Printf("archive: target preflight passed; archiving %v", w.tables)
 	}
 	w.takeMarks(ctx)
+	w.noChunkCheck(ctx)
 	if now := w.now(); !w.lastPass.IsZero() && now.Sub(w.lastPass) < passEvery && !w.recheckWaits(ctx, now) {
 		w.rt.SetPasses(w.lastPass, w.nextPass())
 		return
@@ -537,12 +595,13 @@ func (w *Worker) takeMarks(ctx context.Context) {
 	for _, t := range w.marks {
 		if _, err := w.db.TakeArchiveIDMarks(ctx, t, w.now()); err != nil {
 			if ctx.Err() == nil {
-				w.fail("mark", err)
+				w.failOn("mark", t, err)
 				w.logf("mark-"+t, "id marks of %s: %v", t, err)
 			}
 			continue
 		}
 		w.clearLog("mark-" + t)
+		w.okOn("mark", t)
 	}
 }
 
@@ -692,11 +751,12 @@ func (w *Worker) plan(ctx context.Context, table string) bool {
 				return false
 			}
 			// Already planned chunks can still be worked.
-			w.fail("plan", err)
+			w.failOn("plan", table, err)
 			w.logf("plan-"+table, "plan %s: %v", table, err)
 			return true
 		}
 		w.clearLog("plan-" + table)
+		w.okOn("plan", table)
 		if c == nil {
 			return true
 		}
@@ -819,6 +879,9 @@ func (w *Worker) workOne(ctx context.Context, table string) progress {
 	if err == nil {
 		delete(w.cooldown, table)
 		delete(w.bucketFailures, table)
+		for _, s := range chunkStages {
+			w.okOn(s, table)
+		}
 		return progressMade
 	}
 	if ctx.Err() != nil {
@@ -828,7 +891,7 @@ func (w *Worker) workOne(ctx context.Context, table string) progress {
 	if errors.Is(err, errSealedWrite) {
 		// A chunk of a sealed month is not verified (only by hand can that
 		// be): no retry may write it, and the folder must not change.
-		w.fail("sealed", fmt.Errorf("%s chunk %d: %w", table, c.Seq, err))
+		w.failOn("sealed", table, fmt.Errorf("%s chunk %d: %w", table, c.Seq, err))
 		if perr := w.db.ParkArchiveChunk(ctx, c, err.Error(), w.now()); perr != nil {
 			w.fail("db", perr)
 			log.Printf("archive: %s chunk %d: park: %v", table, c.Seq, perr)
@@ -853,7 +916,7 @@ func (w *Worker) workOne(ctx context.Context, table string) progress {
 	if errors.As(err, &se) {
 		stage = se.stage
 	}
-	w.fail(stage, fmt.Errorf("%s chunk %d: %w", table, c.Seq, err))
+	w.failOn(stage, table, fmt.Errorf("%s chunk %d: %w", table, c.Seq, err))
 	at := w.now()
 	var ferr error
 	switch {

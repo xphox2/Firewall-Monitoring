@@ -380,20 +380,22 @@ func (w *Worker) sealDue(ctx context.Context) {
 				var err error
 				if months, err = w.db.ArchiveChunkMonths(ctx, t); err != nil {
 					if ctx.Err() == nil {
-						w.fail("seal", err)
+						w.failOn("seal", t, err)
 						w.logf("seal-"+t, "months of %s: %v", t, err)
 					}
 					return
 				}
 			}
+			w.okOn("seal", t)
 			sealed, err := w.db.ArchiveSealedMonths(ctx, s)
 			if err != nil {
 				if ctx.Err() == nil {
-					w.fail("seal", err)
+					w.failOn("seal", s, err)
 					w.logf("seal-"+s, "sealed months of %s: %v", s, err)
 				}
 				continue
 			}
+			w.okOn("seal", s)
 			oldest := ""
 			for _, m := range months {
 				if m >= due {
@@ -425,6 +427,7 @@ func (w *Worker) sealDue(ctx context.Context) {
 				}
 				w.clearLog("seal-" + s)
 				delete(w.sealFailures, s)
+				w.okOn("seal", s+" "+m)
 			}
 			metrics.SetArchiveSealBlocked(s, blocked)
 			w.setUnsealedDays(s, stuck, now)
@@ -451,7 +454,7 @@ func (w *Worker) sealFailed(ctx context.Context, stream, month string, err error
 	if errors.As(err, &r) {
 		reason = r.reason
 	} else {
-		w.fail("seal", fmt.Errorf("month %s of %s: %w", month, stream, err))
+		w.failOn("seal", stream+" "+month, fmt.Errorf("month %s of %s: %w", month, stream, err))
 	}
 	w.sealFailures[stream]++
 	w.cooldown["seal-"+stream] = w.now().Add(database.ArchiveRetryBackoff(w.sealFailures[stream]))

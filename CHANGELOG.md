@@ -16,8 +16,21 @@ All notable changes to this project are documented in this file.
 
 - The worker's runtime snapshot records the first failure of each stage (`since`), a classified preflight failure (`preflight_issue`: a local target's missing or foreign marker) and the fingerprint of the settings it runs with (`config_fingerprint`, a hash of every `ARCHIVE_*` value but the secret): the status compares it with the settings in effect (`config_pending`). The chunk summaries the status reads add per-stream rows and bytes (the same object rows, grouped by stream as well): no new query and no scan of a data table.
 
+### Review fixes (before release)
+
+- **A lag with nothing left to export is an error, not HEALTHY**: `archive_lag` no longer needs a remaining backlog (a planner that keeps failing drains it to none while the alert pages) — it applies to every table that receives data, and never to an idle one.
+- **Any step that keeps failing is an issue** (`stage_failing`): the worker records each failure as a streak per step and table or stream (plan, mark, seal, settle, database, lock, chunk steps) that a success of that step ends; one lasting 30 min is a warning, 2 h an error, with the step, its error and an action. The chunk steps of a table whose chunks wait for their retry stay with `chunks_retrying`.
+- **Streaks survive a restart**: a new worker (poller restart, settings change) carries the previous snapshot's failures over — each stage's first failure, the streaks, since when a table has had no chunk — so "failing for 15 min / 2 h" does not start again (a failure last seen over a day earlier is dropped). The preflight's "since" is its streak.
+- **The alerts apply the same idle rule as the verdict** (`status.Idle`): an idle table does not fire `ARCHIVE_LAG`, an idle stream does not fire `ARCHIVE_SEAL_OVERDUE` — an install with sFlow off is not paged for `sflow-counters`.
+- **`first_chunk_pending` escalates** to an error once the worker has seen the table without a chunk longer than its lag threshold; `ARCHIVE_LAG`'s no-chunk branch counts from the same record (`no_chunk_since`) when it is earlier than its own first sight, and marks itself with a `no_chunk` field instead of being recognised by its text.
+- Alert actions are self-contained (where to look, what to run); the held-rows alert no longer repeats the override advice twice, and names its own gate stream in the command.
+- Issue titles say "flow" for flow_samples (it holds both sFlow and NetFlow; an install may receive only one), "sFlow counter" for flow_if_counters.
+- Status card: *Test connection* runs with the settings shown in Raw Archive Settings, including unsaved edits (so worded), and loads the form first when it has not loaded; the settings card shows the verdict the status card already has at once.
+- Object Lock set on the admin page (not the environment) is what `object_lock_off` reads: tested.
+
 ### Tests
 
+- Review fixes: `TestAssess_LagWithoutBacklog`, `TestAssess_StageFailing`, `TestAssess_FirstChunkEscalates` (with the alert from a fresh evaluator), `TestAlertsAgreeOnIdle`, `TestRecorderRestore`, `TestWorker_PlanFailureStreak` (a forged future syslog stamp the planner refuses: an error after 2 h with no backlog), `TestWorker_NoChunkSince`, the share-gone worker test across a second restart (the preflight streak keeps its start), `TestGetArchiveStatus_ObjectLockFromAdminSettings`, `TestArchiveSettingsHealthAndTest`.
 - `TestAssess_*`: every issue just under and just over its threshold, the order (cause before effect), the summary, stalled vs idle streams, disabled vs not configured, **HEALTHY only when caught up** (0 or 1 chunk left healthy, 2 and more a backlog warning, no chunk yet a warning) and **idle sFlow neutral** (an idle counters table far behind with an overdue month stays healthy; the same stream with data is an error). `TestConditions_NameIssueAndAction`, `TestRecorderStageSince`, `TestBuild_HealthInputs` (per-stream recent rows on SQLite, preflight issue, stage since, settings pending and not from a stale snapshot), `TestFingerprint`, `TestPreflightIssue`, the share-gone worker test now checks `marker_missing` and its clearing, `TestGetArchiveStatus_Health` (the API shape; a lag threshold of 0 removes the lag issue), the CLI's health lines, Test's `staging_ok`.
 
 ## [0.11.315] - 2026-10-07

@@ -110,3 +110,26 @@ func TestArchiveStatusCardScript(t *testing.T) {
 		t.Error("admin-main.js does not keep the archive status current")
 	}
 }
+
+// TestArchiveSettingsHealthAndTest (0.11.316): the settings card shows the
+// verdict the status card already rendered at once (not after the next 15 s
+// refresh), Test connection says it uses the form's values including
+// unsaved edits, and a Test asked for before the form has loaded loads it
+// instead of doing nothing.
+func TestArchiveSettingsHealthAndTest(t *testing.T) {
+	status := readJS(t, "admin-archive-status.js")
+	settings := readJS(t, "admin-archive-settings.js")
+	for _, c := range []struct{ js, sub, file string }{
+		{status, "lastHealth: function () { return lastVerdict; }", "admin-archive-status.js"},
+		{settings, "health = FwmonArchiveStatus.lastHealth() || health;", "admin-archive-settings.js"},
+		{settings, "including unsaved edits (nothing is saved)", "admin-archive-settings.js"},
+		{settings, "load().then(function () { if (view) test(); })", "admin-archive-settings.js"},
+	} {
+		if !strings.Contains(c.js, c.sub) {
+			t.Errorf("%s is missing %q", c.file, c.sub)
+		}
+	}
+	if strings.Contains(readJS(t, "admin-main.js"), "Test connection with the saved") {
+		t.Error("admin-main.js still says Test connection uses the saved settings")
+	}
+}
