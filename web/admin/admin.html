@@ -1440,7 +1440,7 @@
             </div>
             <div class="card" data-min-role="admin">
                 <div class="card-header"><h2>Raw Archive</h2><button type="button" class="btn sm secondary" data-action="archive-refresh">Refresh</button></div>
-                <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">Raw syslog and flows exported to object storage, read back and verified, then sealed per month. While a stream is archived its raw rows are deleted only once verified, so a stuck archive holds them past the windows above. Configured in Raw Archive Settings below (the <code>ARCHIVE_*</code> environment keys are the defaults); <code>fwmon-api archive --status</code> prints the same.</p>
+                <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">Is the backup working? Raw syslog and flows are exported to the archive target, read back and verified, then sealed per month; while a stream is archived its raw rows are deleted only once verified, so a stuck archive holds them in the database. The verdict below is the same the archive alerts and <code>fwmon-api archive --status</code> report.</p>
                 <div id="settings-archive" aria-live="polite"></div>
             </div>
             <div class="card" data-min-role="admin">

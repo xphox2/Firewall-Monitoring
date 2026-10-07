@@ -181,7 +181,7 @@ func recordConfigProblem(ctx context.Context, db *database.Database, cfg config.
 	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 		return
 	}
-	rec := status.NewRecorder("not running", cfg.StagingDir, stagingMinFree, cfg.SecretAccessKey.Reveal(), cfg.AccessKeyID)
+	rec := status.NewRecorder(status.ConfigProblemRunner, cfg.StagingDir, stagingMinFree, cfg.SecretAccessKey.Reveal(), cfg.AccessKeyID)
 	now := time.Now()
 	rec.Failed("config", err, now)
 	js, jerr := rec.JSON(now)

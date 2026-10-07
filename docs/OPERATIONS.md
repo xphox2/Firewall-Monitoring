@@ -1437,7 +1437,63 @@ they follow the verified chunks.
 
 ## Raw archive: status and alerts
 
-From 0.11.308 the archive's whole state is in one place:
+### The health verdict (0.11.316)
+
+The Raw Archive card opens with one verdict — **Healthy**, **Warning**,
+**Error**, or the neutral **Archiving is off** / **Not configured** — shown
+as a colour, an icon and words, with a one-line summary, the last successful
+backup, how far behind the archive is and the target. Below it, **Action
+needed** lists every error and warning, most severe first, each with what it
+means, what is at risk, what to do, since when, and a button to the control
+that does it (Test connection, the setting, Re-engage, the parked chunks).
+Information (a stream that receives no data, a month sealed partial) is under
+*Notes* and never changes the verdict. The Raw Archive Settings card shows the
+same verdict at its top.
+
+The verdict is computed once, on the server (`internal/archive/status/health.go`),
+and is the same in `GET /admin/api/archive/status` (`data.health`),
+`fwmon-api archive --status` (the `health:` line and one line per issue) and
+the archive alerts, which now carry the issue code (`issue` field) and its
+action in their message — and, for a lag or held rows caused by a stopped
+worker or an unreachable target, that cause and its action.
+
+**Healthy** means: every enabled table has chunks, at most its current period
+is left (verified up to the last closed hour or day), and no warning or error
+below holds.
+
+| issue code | severity | when | what to do |
+|---|---|---|---|
+| `worker_not_running` | error | archiving is enabled and the worker has not reported for 15 min (or never) | check the poller and its `archive:` log lines |
+| `config_invalid` | error | the poller refuses the settings in effect | correct the named setting and save |
+| `marker_missing` | error | a local target lost its marker while the archive holds chunks (share not mounted) | mount the share or partition |
+| `marker_foreign` | error | a local target belongs to another install | give this server its own directory or prefix |
+| `preflight_failing` | warning, error after 15 min | the worker's check of the target fails | Test connection, fix what it reports |
+| `target_failing` | error | uploads / read-backs have failed for 1 h with no chunk verified since | Test connection, fix what it reports |
+| `staging_full` / `staging_low` | error under the floor / warning under twice the floor (or unknown) | the staging directory's free space | free space or choose another directory |
+| `needs_attention` | error | a chunk is parked | read its error, fix the cause, Reset |
+| `gate_unreadable` | warning, error after 15 min | the retention gate cannot read the stream switches | check the database and the poller |
+| `retention_held` | error (warning when the database volume is known not to grow) | unarchived rows held past retention longer than `retention_held_alert_hours` | fix the archive; release the gate only in an emergency |
+| `archive_lag` | error | verified data older than `archive_lag_alert_hours_*` (+1 h for daily tables) while rows wait | fix the cause listed above it |
+| `seal_overdue` | error | a month not sealed `archive_seal_overdue_alert_days` after its seal time | read the seal error; fix parked or failing chunks |
+| `chunks_retrying` | warning | chunks failed and wait for their retry | nothing yet; Test connection if the error repeats |
+| `override_active` | warning | a gate is released by an override | re-engage it |
+| `unsettled_long` | warning | the next export waited longer than `archive_unsettled_alert_hours` | end the session holding it |
+| `backlog` | warning | more than one chunk left | nothing unless it stops shrinking |
+| `first_chunk_pending` | warning | an enabled table has no chunk yet | nothing: its first period must close |
+| `object_lock_off` | warning | an S3 target without Object Lock retention | turn Object Lock on |
+| `config_pending` | warning | saved settings not yet applied by the worker | nothing (within a minute); else restart the poller |
+| `status_incomplete` | warning | part of the status could not be read | reload; check the database |
+| `stream_idle` | info | a stream holds no rows in its table's last 10 verified chunks (e.g. sFlow switched off) | nothing, if expected |
+| `month_partial` | info | the newest month sealed partial | nothing to repair |
+
+An idle stream is neutral whatever else holds for it: its state is *No data
+received*, never a warning or an error. The per-stream table shows each
+stream's state, verified-through point, backlog, rows and bytes stored and the
+compression of its recent objects; on a phone each stream is a card.
+
+From 0.11.308 the archive's whole state is in one place (0.11.316 replaced
+the banners and the per-table cards below with the verdict above and the
+per-stream table; the rest is unchanged):
 
 - **Settings → Retention → Raw Archive** (admins), refreshed every 15 s while
   the page is open (paused while the browser tab is hidden), top to bottom:

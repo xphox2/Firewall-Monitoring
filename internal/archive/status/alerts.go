@@ -110,6 +110,12 @@ const GateUnreadableAfter = 15 * time.Minute
 // GateUnreadableAfter. Unlike the other archive alerts it does not need the
 // status: a database that fails the gate's read may fail Build too.
 func GateReadCondition(h database.ArchiveGateHealth, now time.Time) Condition {
+	c := gateReadCondition(h, now)
+	gateIssueAction(&c)
+	return c
+}
+
+func gateReadCondition(h database.ArchiveGateHealth, now time.Time) Condition {
 	c := Condition{Type: models.AlertTypeArchiveGateUnreadable, Label: "switches", Known: true, Fields: map[string]string{},
 		Recovery: "The retention gate reads the archive's stream switches again"}
 	if h.FailingSince == nil {
@@ -382,5 +388,10 @@ func (e *Evaluator) Conditions(st *Status, th Thresholds, disk DiskTrend) []Cond
 		out = append(out, c)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Type < out[j].Type })
+	// The same issue codes and actions as the status page's verdict.
+	h := Assess(st, th, disk)
+	for i := range out {
+		annotate(&out[i], h)
+	}
 	return out
 }

@@ -105,6 +105,12 @@
     .settings-nav-item { transition: none; }
 }
 
+/* The content column may shrink below its widest table (a grid item's
+   min-width is auto): at phone width the retention table scrolls inside
+   its own card instead of widening every card of the section (0.11.316). */
+.settings-content { min-width: 0; }
+#settings-retention { overflow-x: auto; }
+
 /* Narrow layout: nav collapses to a horizontal scroll strip above the
    content (mirrors the .tabs-nav idiom used on device-detail). */
 @media (max-width: 900px) {
@@ -157,6 +163,7 @@
     box-shadow: 0 0 0 3px var(--fwmon-accent-bg);
     border-radius: var(--fwmon-radius-sm);
 }
+.archive-settings-section > .field-hint:last-of-type { margin-bottom: 10px; }
 .archive-setting code { font-size: 0.72rem; color: var(--fwmon-text-faint); overflow-wrap: anywhere; }
 .archive-setting-source {
     display: flex;
@@ -171,11 +178,32 @@
     flex-wrap: wrap;
     gap: 8px;
     justify-content: flex-end;
+    align-items: center;
 }
+/* 0.11.316: the unsaved-change count leads the action bar. */
+.arch-settings-dirty {
+    margin-right: auto;
+    font-size: 0.8rem;
+    color: var(--fwmon-text-faint);
+}
+.arch-settings-dirty.is-dirty { color: var(--fwmon-sig-warn); font-weight: 600; }
+/* Test / Save outcome: a bordered box toned by its state; the text stays
+   the body colour (readable), the edge and the marks carry the tone. */
 .archive-settings-result { margin-top: 10px; font-size: 0.85rem; }
-.archive-settings-result p { margin: 0 0 4px; overflow-wrap: anywhere; }
-.archive-settings-result.is-ok { color: var(--fwmon-sig-ok); }
+.archive-settings-result:empty { display: none; }
+.archive-settings-result.is-ok,
 .archive-settings-result.is-bad,
+.archive-settings-result.is-busy {
+    border: 1px solid var(--fwmon-border);
+    border-left-width: 4px;
+    border-radius: var(--fwmon-radius);
+    padding: 10px 12px;
+    background: var(--fwmon-card-bg);
+}
+.archive-settings-result.is-ok { border-left-color: var(--fwmon-sig-ok); }
+.archive-settings-result.is-bad { border-left-color: var(--fwmon-sig-crit); }
+.archive-settings-result.is-busy { border-left-color: var(--fwmon-accent); color: var(--fwmon-text-faint); }
+.archive-settings-result p { margin: 0 0 4px; overflow-wrap: anywhere; }
 .archive-settings-problem { color: var(--fwmon-sig-crit); }
 .archive-settings-problem { font-size: 0.85rem; overflow-wrap: anywhere; }
 /* Target (0.11.315): S3-only or local-only fields are hidden by the target
@@ -203,13 +231,223 @@
     max-height: 14rem;
     overflow-y: auto;
 }
-.archive-checks-title { margin: 8px 0 2px; font-weight: 600; color: var(--fwmon-text-dim); }
-.archive-checks { margin: 0 0 6px; padding-left: 1.1rem; }
-.archive-checks li { margin: 0 0 2px; overflow-wrap: anywhere; }
-.archive-checks li.is-ok { color: var(--fwmon-sig-ok); }
-.archive-checks li.is-warn { color: var(--fwmon-sig-warn); }
-.archive-checks li.is-bad { color: var(--fwmon-sig-crit); }
+.archive-checks-title { margin: 8px 0 4px; font-weight: 600; color: var(--fwmon-text); }
+.archive-checks-title:first-child { margin-top: 0; }
+/* A checklist: an icon plus the word (Pass / Warning / Fail) per line. */
+.archive-checks { list-style: none; margin: 0 0 6px; padding: 0; display: grid; gap: 4px; }
+.archive-checks li {
+    display: grid;
+    grid-template-columns: 6.2rem minmax(0, 1fr);
+    gap: 8px;
+    align-items: start;
+    overflow-wrap: anywhere;
+    color: var(--fwmon-text-dim);
+}
+.archive-check-mark { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; font-size: 0.78rem; }
+.archive-check-mark svg { width: 15px; height: 15px; flex: none; }
+.archive-checks li.is-ok .archive-check-mark { color: var(--fwmon-sig-ok); }
+.archive-checks li.is-warn .archive-check-mark { color: var(--fwmon-sig-warn); }
+.archive-checks li.is-bad .archive-check-mark { color: var(--fwmon-sig-crit); }
 @media (max-width: 720px) {
     .archive-settings-actions .btn { width: 100%; }
+    .arch-settings-dirty { width: 100%; }
     .archive-path-row { flex-wrap: wrap; }
+    .archive-checks li { grid-template-columns: 1fr; gap: 0; }
+}
+
+/* ---- Raw archive status (0.11.316, admin-archive-status.js) -----------
+   The health banner, the "Action needed" list, the per-stream table and
+   the details. Tones come from the signal tokens of both themes; every
+   tone is paired with an icon and words, never colour alone. */
+.arch-banner, .arch-pill, .arch-issue, .arch-sev {
+    --arch-tone: var(--fwmon-text-faint);
+}
+[class*="arch-"].is-ok { --arch-tone: var(--fwmon-sig-ok); }
+[class*="arch-"].is-warn { --arch-tone: var(--fwmon-sig-warn); }
+[class*="arch-"].is-crit { --arch-tone: var(--fwmon-sig-crit); }
+[class*="arch-"].is-info { --arch-tone: var(--fwmon-sig-info); }
+[class*="arch-"].is-neutral { --arch-tone: var(--fwmon-text-faint); }
+
+.arch-faint { color: var(--fwmon-text-faint); font-size: 0.8rem; }
+.arch-mono { font-family: var(--fwmon-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 0.75rem; }
+.arch-break { overflow-wrap: anywhere; word-break: break-word; }
+.arch-warn-text { color: var(--fwmon-sig-warn); font-size: 0.82rem; }
+.arch-gap { margin-top: 6px; }
+.arch-empty { color: var(--fwmon-text-faint); font-size: 0.85rem; margin: 0; }
+.arch-h3 { font-size: 0.95rem; font-weight: 600; color: var(--fwmon-text); margin: 20px 0 8px; scroll-margin-top: 80px; }
+
+.arch-banner {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+    border: 1px solid color-mix(in srgb, var(--arch-tone) 45%, var(--fwmon-border));
+    border-left: 6px solid var(--arch-tone);
+    border-radius: var(--fwmon-radius);
+    background: color-mix(in srgb, var(--arch-tone) 9%, var(--fwmon-card-bg));
+    padding: 14px 16px;
+    min-width: 0;
+}
+.arch-banner-icon { color: var(--arch-tone); flex: none; line-height: 0; }
+.arch-banner-icon svg { width: 36px; height: 36px; }
+.arch-banner-main { flex: 1 1 auto; min-width: 0; }
+.arch-banner-title { font-size: 1.15rem; font-weight: 700; color: var(--fwmon-text); }
+.arch-banner-counts {
+    display: inline-block;
+    margin-left: 6px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--arch-tone);
+    vertical-align: middle;
+}
+.arch-banner-summary { margin: 4px 0 10px; color: var(--fwmon-text-dim); font-size: 0.9rem; overflow-wrap: anywhere; }
+.arch-facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 10px 18px;
+    margin: 0;
+}
+.arch-facts dt {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--fwmon-text-faint);
+}
+.arch-facts dd { margin: 2px 0 0; font-size: 0.86rem; color: var(--fwmon-text); overflow-wrap: anywhere; }
+.arch-facts code { font-size: 0.78rem; }
+.arch-controls { margin: 8px 0 0; font-size: 0.78rem; color: var(--fwmon-text-faint); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+.arch-allclear { display: flex; align-items: center; gap: 6px; margin: 14px 0 0; font-size: 0.86rem; color: var(--fwmon-sig-ok); }
+.arch-allclear svg { width: 16px; height: 16px; }
+
+.arch-issues { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.arch-issue {
+    border: 1px solid var(--fwmon-border);
+    border-left: 4px solid var(--arch-tone);
+    border-radius: var(--fwmon-radius);
+    background: var(--fwmon-card-bg);
+    padding: 10px 12px;
+    min-width: 0;
+}
+.arch-issue-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 4px; }
+.arch-issue-title { color: var(--fwmon-text); font-size: 0.92rem; }
+.arch-sev {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--arch-tone);
+    border: 1px solid color-mix(in srgb, var(--arch-tone) 50%, transparent);
+    border-radius: 999px;
+    padding: 1px 8px 1px 6px;
+}
+.arch-sev svg { width: 13px; height: 13px; }
+.arch-issue-text { margin: 2px 0; font-size: 0.85rem; color: var(--fwmon-text-dim); overflow-wrap: anywhere; }
+.arch-issue-label { font-weight: 600; color: var(--fwmon-text); }
+.arch-issue-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 8px; }
+.arch-issue-detail { font-size: 0.8rem; min-width: 0; flex: 1 1 200px; }
+.arch-issue-detail summary { cursor: pointer; color: var(--fwmon-text-faint); }
+.arch-issue-detail code { display: block; margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.75rem; }
+
+.arch-notes { margin-top: 14px; font-size: 0.85rem; }
+.arch-notes > summary { cursor: pointer; font-weight: 600; color: var(--fwmon-text-dim); margin-bottom: 8px; }
+.arch-notes > summary:focus-visible,
+.arch-issue-detail summary:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--fwmon-accent-bg); border-radius: var(--fwmon-radius-sm); }
+
+.arch-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--fwmon-text);
+    background: color-mix(in srgb, var(--arch-tone) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--arch-tone) 45%, transparent);
+    border-radius: 999px;
+    padding: 2px 10px 2px 8px;
+    white-space: nowrap;
+}
+.arch-pill svg { width: 14px; height: 14px; color: var(--arch-tone); }
+.arch-pill-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--arch-tone); flex: none; }
+
+.arch-table-wrap { overflow-x: auto; }
+.arch-table th[scope="row"] { font-weight: 600; text-align: left; color: var(--fwmon-text); text-transform: none; letter-spacing: normal; background: transparent; }
+.arch-table td, .arch-table th { font-size: 0.84rem; vertical-align: top; }
+.arch-bar { height: 6px; border-radius: 3px; background: var(--fwmon-border); overflow: hidden; margin: 4px 0; min-width: 80px; }
+.arch-bar-fill { height: 100%; background: var(--fwmon-accent); }
+
+.arch-panel {
+    border: 1px solid var(--fwmon-border);
+    border-radius: var(--fwmon-radius);
+    background: var(--fwmon-panel-bg);
+    padding: 10px 12px;
+    font-size: 0.85rem;
+}
+.arch-panel-title { font-weight: 600; color: var(--fwmon-text); }
+
+.arch-stream-months { margin-bottom: 12px; font-size: 0.85rem; }
+.arch-months {
+    list-style: none;
+    margin: 6px 0 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 8px;
+}
+.arch-month { border: 1px solid var(--fwmon-border); border-radius: var(--fwmon-radius-sm); padding: 6px 8px; min-width: 0; }
+.arch-month-head { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
+.arch-stage-list { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+
+/* Settings card header: the verdict and a link to the status. */
+.arch-settings-health {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 10px;
+    border: 1px solid var(--fwmon-border);
+    border-radius: var(--fwmon-radius);
+    background: var(--fwmon-panel-bg);
+    padding: 8px 12px;
+    margin-bottom: 14px;
+    font-size: 0.85rem;
+}
+.arch-settings-health-label { font-weight: 600; color: var(--fwmon-text-dim); }
+.arch-settings-health-summary { flex: 1 1 220px; min-width: 0; color: var(--fwmon-text-dim); overflow-wrap: anywhere; }
+
+/* Phone: a table row becomes a card, each cell labelled (data-label). */
+@media (max-width: 640px) {
+    .arch-banner { padding: 12px; gap: 10px; }
+    .arch-banner-icon svg { width: 28px; height: 28px; }
+    .arch-banner-title { font-size: 1.02rem; }
+    .arch-table-wrap { overflow-x: visible; }
+    .arch-table, .arch-table tbody, .arch-table tr, .arch-table th, .arch-table td { display: block; width: 100%; }
+    .arch-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    .arch-table tr {
+        border: 1px solid var(--fwmon-border);
+        border-radius: var(--fwmon-radius);
+        margin-bottom: 8px;
+        padding: 6px 10px;
+        background: var(--fwmon-card-bg);
+    }
+    .arch-table td, .arch-table th[scope="row"] {
+        display: grid;
+        grid-template-columns: 7.5rem minmax(0, 1fr);
+        gap: 8px;
+        border: none;
+        padding: 4px 0;
+        overflow-wrap: anywhere;
+    }
+    .arch-table td::before, .arch-table th[scope="row"]::before {
+        content: attr(data-label);
+        font-size: 0.72rem;
+        font-weight: 600;
+        color: var(--fwmon-text-faint);
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+    }
+    .arch-table td[data-label=""]::before { content: none; }
+    .arch-issue-foot .btn { width: 100%; }
 }

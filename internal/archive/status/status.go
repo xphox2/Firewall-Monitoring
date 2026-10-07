@@ -88,6 +88,14 @@ type Status struct {
 	// WorkerError: the worker's stored state could not be read (Worker is
 	// then nil, as when none was written).
 	WorkerError string `json:"worker_error,omitempty"`
+	// ConfigPending: the running worker (fresh snapshot) was built with
+	// other settings than the configuration in effect — saved on the admin
+	// page, applied by the poller on its next tick.
+	ConfigPending bool `json:"config_pending,omitempty"`
+	// Health is the overall verdict and the issues to act on (Assess). Build
+	// leaves it nil: the API and the CLI attach it (AttachHealth), the
+	// poller's alerts compute it with the live disk probe.
+	Health *Health `json:"health,omitempty"`
 }
 
 // ConfigView is the archive configuration without its secret.
@@ -133,6 +141,8 @@ type WorkerView struct {
 	// Activity: the chunk being worked when the snapshot was written (nil
 	// between chunks, and while the snapshot is stale).
 	Activity *ActivityView `json:"activity,omitempty"`
+	// PreflightIssue: Runtime.PreflightIssue.
+	PreflightIssue string `json:"preflight_issue,omitempty"`
 }
 
 // ActivityView is the worker's current chunk with its elapsed times and,
@@ -210,12 +220,14 @@ type NextSealView struct {
 	Due bool `json:"due"`
 }
 
-// StageView is one stage's last failure.
+// StageView is one stage's last failure; Since the first this worker
+// counted (nil from an older snapshot).
 type StageView struct {
-	Stage string    `json:"stage"`
-	At    time.Time `json:"at"`
-	Error string    `json:"error"`
-	Count int64     `json:"count"`
+	Stage string     `json:"stage"`
+	At    time.Time  `json:"at"`
+	Since *time.Time `json:"since,omitempty"`
+	Error string     `json:"error"`
+	Count int64      `json:"count"`
 }
 
 // GateView is one gate stream (syslog, flows): whether its deletes wait for
@@ -298,6 +310,14 @@ type StreamView struct {
 	ArchivedObjectBytes int64 `json:"archived_object_bytes"`
 	// NextSeal: the oldest month not sealed yet (nil: none).
 	NextSeal *NextSealView `json:"next_seal,omitempty"`
+	// Recent*: the stream's verified objects in its table's newest
+	// verified chunks (RecentChunks of them, at most 10): their rows, and
+	// the bytes before and after compression. RecentChunks > 0 with
+	// RecentRows 0 is a stream receiving no data (sFlow switched off).
+	RecentChunks      int   `json:"recent_chunks"`
+	RecentRows        int64 `json:"recent_rows"`
+	RecentRawBytes    int64 `json:"recent_raw_bytes"`
+	RecentObjectBytes int64 `json:"recent_object_bytes"`
 }
 
 // MonthView is one month folder of a stream.
@@ -472,8 +492,12 @@ func Build(ctx context.Context, db Store, cfg *config.Config, now time.Time) (*S
 			PreflightOK: rt.PreflightOK, Staging: rt.Staging, Stages: []StageView{}}
 		wv.Stale = now.Sub(rt.SeenAt) > StaleAfter
 		for stage, e := range rt.Stages {
-			wv.Stages = append(wv.Stages, StageView{Stage: stage, At: e.At, Error: e.Error, Count: e.Count})
+			wv.Stages = append(wv.Stages, StageView{Stage: stage, At: e.At, Since: e.Since, Error: e.Error, Count: e.Count})
 		}
+		if !rt.PreflightOK {
+			wv.PreflightIssue = rt.PreflightIssue
+		}
+		st.ConfigPending = !wv.Stale && a.Enabled() && rt.ConfigFingerprint != "" && rt.ConfigFingerprint != a.Fingerprint()
 		sort.Slice(wv.Stages, func(i, j int) bool { return wv.Stages[i].At.After(wv.Stages[j].At) })
 		wv.LastPassAt, wv.NextPassAt = rt.LastPassAt, rt.NextPassAt
 		wv.PassRunning = rt.PassRunning && !wv.Stale
@@ -512,6 +536,7 @@ func Build(ctx context.Context, db Store, cfg *config.Config, now time.Time) (*S
 		problem("backlog", backlogErr)
 	}
 	var allRecent []database.ArchiveChunkSummary
+	recentOf := map[string][]database.ArchiveChunkSummary{}
 	progress := map[string]database.ArchiveProgress{}
 	lag := map[string]*float64{}
 	for _, t := range Tables {
@@ -567,6 +592,7 @@ func Build(ctx context.Context, db Store, cfg *config.Config, now time.Time) (*S
 				problem("recent chunks of "+t, err)
 			}
 			allRecent = append(allRecent, recent...)
+			recentOf[t] = recent
 			if backlogErr == nil {
 				tv.Backlog = backlogView(tv.Chunks, backlogs[t], recent, failedOrParked(tv.Chunks))
 			}
@@ -612,7 +638,12 @@ func Build(ctx context.Context, db Store, cfg *config.Config, now time.Time) (*S
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			sv := StreamView{Stream: s, Table: t, Enabled: tableEnabled(a, t), LagSeconds: lag[t], Months: []MonthView{}}
+			sv := StreamView{Stream: s, Table: t, Enabled: tableEnabled(a, t), LagSeconds: lag[t], Months: []MonthView{},
+				RecentChunks: len(recentOf[t])}
+			for _, r := range recentOf[t] {
+				x := r.Streams[s]
+				sv.RecentRows, sv.RecentRawBytes, sv.RecentObjectBytes = sv.RecentRows+x.Rows, sv.RecentRawBytes+x.RawBytes, sv.RecentObjectBytes+x.ObjectBytes
+			}
 			rows, err := db.ArchiveMonthRows(ctx, s)
 			if err != nil {
 				problem("month rows of "+s, err)

@@ -34,7 +34,29 @@ type Runtime struct {
 	PassRunning bool       `json:"pass_running,omitempty"`
 	// Activity is the chunk being worked right now (nil between chunks).
 	Activity *Activity `json:"activity,omitempty"`
+	// PreflightIssue classifies a failing preflight the health verdict
+	// treats on its own (PreflightMarkerMissing, PreflightMarkerForeign; ""
+	// otherwise, and once the preflight passed).
+	PreflightIssue string `json:"preflight_issue,omitempty"`
+	// ConfigFingerprint is config.ArchiveConfig.Fingerprint of the
+	// configuration this worker was built with: the status compares it with
+	// the configuration in effect ("saved, not applied yet").
+	ConfigFingerprint string `json:"config_fingerprint,omitempty"`
 }
+
+// Preflight issues (Runtime.PreflightIssue).
+const (
+	// PreflightMarkerMissing: a local target without its marker while the
+	// archive holds chunks — usually a share that is not mounted.
+	PreflightMarkerMissing = "marker_missing"
+	// PreflightMarkerForeign: a local target another install initialised.
+	PreflightMarkerForeign = "marker_foreign"
+)
+
+// ConfigProblemRunner is the runner of the snapshot written when the
+// configuration in effect cannot run (no worker: its "config" stage says
+// why).
+const ConfigProblemRunner = "not running"
 
 // Activity is the chunk the worker is working and how far it got. The
 // worker updates it in memory as it goes and writes it with the rest of the
@@ -101,11 +123,13 @@ type TableRuntime struct {
 }
 
 // StageError is the last failure of one stage (the fwmon_archive_errors_total
-// stage label) and how many this worker process has counted.
+// stage label) and how many this worker process has counted; Since is the
+// first of them (nil in a snapshot written before 0.11.316).
 type StageError struct {
-	At    time.Time `json:"at"`
-	Error string    `json:"error"`
-	Count int64     `json:"count"`
+	At    time.Time  `json:"at"`
+	Since *time.Time `json:"since,omitempty"`
+	Error string     `json:"error"`
+	Count int64      `json:"count"`
 }
 
 // errorMax bounds a recorded message.
@@ -216,6 +240,10 @@ func (r *Recorder) Failed(stage string, err error, now time.Time) {
 	defer r.mu.Unlock()
 	e := r.rt.Stages[stage]
 	e.At, e.Count = now.UTC(), e.Count+1
+	if e.Since == nil {
+		first := e.At
+		e.Since = &first
+	}
 	e.Error = ""
 	if err != nil {
 		e.Error = r.clean(err.Error())
@@ -223,10 +251,29 @@ func (r *Recorder) Failed(stage string, err error, now time.Time) {
 	r.rt.Stages[stage] = e
 }
 
-// SetPreflight records whether the bucket preflight has passed.
+// SetPreflight records whether the bucket preflight has passed (passing
+// clears the preflight issue).
 func (r *Recorder) SetPreflight(ok bool) {
 	r.mu.Lock()
 	r.rt.PreflightOK = ok
+	if ok {
+		r.rt.PreflightIssue = ""
+	}
+	r.mu.Unlock()
+}
+
+// SetPreflightIssue records what kind of preflight failure is current
+// (Runtime.PreflightIssue; "" = none of the classified ones).
+func (r *Recorder) SetPreflightIssue(issue string) {
+	r.mu.Lock()
+	r.rt.PreflightIssue = issue
+	r.mu.Unlock()
+}
+
+// SetConfigFingerprint records the fingerprint of the worker's configuration.
+func (r *Recorder) SetConfigFingerprint(fp string) {
+	r.mu.Lock()
+	r.rt.ConfigFingerprint = fp
 	r.mu.Unlock()
 }
 

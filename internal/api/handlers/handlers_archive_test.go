@@ -226,6 +226,103 @@ func TestGetArchiveStatus(t *testing.T) {
 	}
 }
 
+// TestGetArchiveStatus_Health: the status carries the health verdict
+// (data.health) with its issues — code, severity, title, meaning, action —
+// and the per-stream lines; the verdict reads the stored alert thresholds
+// (a lag threshold of 0 turns the lag issue off, as it does the alert).
+func TestGetArchiveStatus_Health(t *testing.T) {
+	h, db, u := profileTestHandler(t, "alice", auth.RoleAdmin, "s3cret-pw")
+	h.config.Archive = config.ArchiveConfig{SyslogEnabled: true, Endpoint: "https://s3.example.com", Region: "us-test-1",
+		Bucket: "example-bucket", Prefix: "fwmon-test", AccessKeyID: "keyid-test-wxyz", SecretAccessKey: "secret-test-value", StagingDir: "/tmp/x"}
+	day := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -5)
+	for _, c := range []models.ArchiveChunk{
+		{SourceTable: "syslog_messages", Seq: 1, IDLo: 0, IDHi: 10, PeriodStart: day, PeriodEnd: day.AddDate(0, 0, 1), Month: day.Format("2006-01"), Status: models.ArchiveChunkVerified},
+		{SourceTable: "syslog_messages", Seq: 2, IDLo: 10, IDHi: 20, PeriodStart: day.AddDate(0, 0, 1), PeriodEnd: day.AddDate(0, 0, 2), Month: day.AddDate(0, 0, 1).Format("2006-01"),
+			Status: models.ArchiveChunkNeedsAttention, Mismatches: 3, Error: "read-back sha256 differs"},
+	} {
+		if err := db.Gorm().Create(&c).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := status.NewRecorder("fw-example-01-7", "/tmp/x", 1<<30)
+	rec.SetPreflight(true)
+	rec.SetStagingFree(10<<30, nil)
+	js, err := rec.JSON(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveArchiveWorkerState(context.Background(), js); err != nil {
+		t.Fatal(err)
+	}
+	get := func() (map[string]any, *status.Health) {
+		t.Helper()
+		c, w := backfillCtx(http.MethodGet, "/admin/api/archive/status", "alice", u.ID, "")
+		h.GetArchiveStatus(c)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status: %d %s", w.Code, w.Body.String())
+		}
+		var raw struct {
+			Data map[string]any `json:"data"`
+		}
+		var typed struct {
+			Data status.Status `json:"data"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &typed); err != nil {
+			t.Fatal(err)
+		}
+		return raw.Data, typed.Data.Health
+	}
+	raw, hl := get()
+	hm, ok := raw["health"].(map[string]any)
+	if !ok {
+		t.Fatalf("no data.health: %v", raw)
+	}
+	for _, k := range []string{"verdict", "summary", "issues", "streams", "errors", "warnings"} {
+		if _, ok := hm[k]; !ok {
+			t.Errorf("data.health has no %q", k)
+		}
+	}
+	if hl.Verdict != status.VerdictError || hl.Errors < 1 {
+		t.Fatalf("verdict %s: %+v", hl.Verdict, hl.Issues)
+	}
+	codes := map[string]status.Issue{}
+	for _, is := range hl.Issues {
+		codes[is.Code] = is
+	}
+	na, ok := codes[status.IssueNeedsAttention]
+	if !ok || na.Severity != status.SeverityError || na.Title == "" || na.Meaning == "" || na.Action != status.IssueActions[status.IssueNeedsAttention] ||
+		na.Table != "syslog_messages" || na.Fix == nil || na.Fix.Kind != "needs_attention" {
+		t.Errorf("needs_attention issue: %+v", na)
+	}
+	if _, ok := codes[status.IssueArchiveLag]; !ok {
+		t.Errorf("no archive_lag issue at the default threshold: %+v", hl.Issues)
+	}
+	if is, ok := codes[status.IssueObjectLockOff]; !ok || is.Severity != status.SeverityWarning {
+		t.Errorf("object lock off: %+v", is)
+	}
+	if hl.Issues[0].Severity != status.SeverityError {
+		t.Errorf("first issue %+v, want an error first", hl.Issues[0])
+	}
+	if len(hl.Streams) != 4 || hl.Streams[0].Stream != "syslog" || hl.Streams[0].State != "error" || hl.Streams[1].State != "off" {
+		t.Errorf("streams: %+v", hl.Streams)
+	}
+
+	if err := db.Gorm().Create(&models.SystemSetting{Key: status.LagHoursSyslogKey, Value: "0"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, hl = get(); hl == nil {
+		t.Fatal("no health")
+	}
+	for _, is := range hl.Issues {
+		if is.Code == status.IssueArchiveLag {
+			t.Errorf("archive_lag with its threshold set to 0: %+v", is)
+		}
+	}
+}
+
 // TestArchiveAlertThresholdSettings: the archive alert thresholds are
 // accepted from 0 to 720 (blank = default) and refused otherwise.
 func TestArchiveAlertThresholdSettings(t *testing.T) {

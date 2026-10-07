@@ -128,6 +128,7 @@ type archiveStore interface {
 	Close() error
 	// --status reads what the status API reads.
 	status.Store
+	status.HealthStore
 	// --restore and the restore job commands.
 	database.ArchiveRestoreStore
 }
@@ -251,6 +252,7 @@ func archiveCmd(args []string, stdout, stderr io.Writer, cfg *config.Config, ope
 			fmt.Fprintf(stderr, "archive: status: %v\n", err)
 			return 1
 		}
+		status.AttachHealth(context.Background(), st, db)
 		if *asJSON {
 			enc := json.NewEncoder(stdout)
 			enc.SetIndent("", "  ")
@@ -383,6 +385,15 @@ func printArchiveStatus(w io.Writer, st *status.Status) {
 	}
 	c := st.Config
 	fmt.Fprintf(w, "raw archive at %s: syslog %s, flows %s\n", st.GeneratedAt.Format(time.RFC3339), onOff(c.SyslogEnabled), onOff(c.FlowsEnabled))
+	if h := st.Health; h != nil {
+		fmt.Fprintf(w, "health: %s — %s\n", strings.ToUpper(strings.ReplaceAll(h.Verdict, "_", " ")), h.Summary)
+		for _, is := range h.Issues {
+			if is.Severity == status.SeverityInfo {
+				continue
+			}
+			fmt.Fprintf(w, "  %s %s: %s\n    action: %s\n", strings.ToUpper(is.Severity), is.Code, is.Title, is.Action)
+		}
+	}
 	if st.Enabled && c.Target == config.ArchiveTargetLocal {
 		fmt.Fprintf(w, "  local directory %s prefix %s (no Object Lock: immutability is the storage's); seal grace %d h (%s)\n",
 			c.LocalDir, c.Prefix, c.SealGraceHours, c.SealReverify)

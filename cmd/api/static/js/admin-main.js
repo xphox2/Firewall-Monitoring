@@ -4747,6 +4747,17 @@
         'archive-refresh': function() { renderArchiveStatus(); },
         'archive-reset-chunk': function(el) { resetArchiveChunk(parseInt(el.dataset.id, 10)); },
         'archive-reengage': function(el) { reengageArchiveGate(el.dataset.stream); },
+        // The health card's fix buttons (v0.11.316): jump to a section of
+        // the card, open a setting, or run Test connection with the saved
+        // settings.
+        'archive-jump': function(el) {
+            var t = document.getElementById(el.dataset.target);
+            if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        },
+        'archive-open-settings': function(el) { if (window.FwmonArchiveSettings) FwmonArchiveSettings.focusField(el.dataset.key || ''); },
+        'archive-test-connection': function() {
+            if (window.FwmonArchiveSettings) FwmonArchiveSettings.test();
+        },
         'test-email': function() { testEmail(); },
         'test-webhook': function(el) { testWebhook(el.dataset.type); },
         'close-device-modal': function() { closeDeviceModal(); },

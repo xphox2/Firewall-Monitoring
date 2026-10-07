@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -363,4 +365,18 @@ func (c *Config) WithArchive(a ArchiveConfig) *Config {
 	cp := *c
 	cp.Archive = a
 	return &cp
+}
+
+// Fingerprint identifies the configuration's values: a hash of every
+// ARCHIVE_* field as Value renders it — the secret access key never (Value
+// returns "" for it), so a change of the secret alone does not change it.
+// The archive worker records the fingerprint of the configuration it was
+// built with; the status compares it with the configuration in effect to
+// tell "saved on the admin page, not applied by the poller yet".
+func (a ArchiveConfig) Fingerprint() string {
+	h := sha256.New()
+	for _, f := range ArchiveFields {
+		_, _ = fmt.Fprintf(h, "%s=%s\n", f.Env, a.Value(f))
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
 }

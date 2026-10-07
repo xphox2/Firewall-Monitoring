@@ -6,6 +6,8 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -16,6 +18,7 @@ import (
 
 	"firewall-mon/internal/archive/export"
 	"firewall-mon/internal/archive/local"
+	"firewall-mon/internal/archive/objstore"
 	"firewall-mon/internal/archive/status"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
@@ -231,6 +234,11 @@ func TestWorker_LocalTarget_ShareGoneWaits(t *testing.T) {
 	if pf, ok := rt.Stages["preflight"]; rt.PreflightOK || !ok || !strings.Contains(pf.Error, "the archive holds chunks") || !strings.Contains(pf.Error, local.MarkerName) {
 		t.Fatalf("runtime state during the outage: %+v", rt)
 	}
+	// The status's health verdict tells it apart: "not mounted", not a
+	// generic preflight failure.
+	if rt.PreflightIssue != status.PreflightMarkerMissing || rt.ConfigFingerprint != h.cfg.Fingerprint() {
+		t.Fatalf("preflight issue %q, fingerprint %q", rt.PreflightIssue, rt.ConfigFingerprint)
+	}
 
 	// The share is back: the same worker passes its preflight on the next
 	// tick and verifies the waiting chunk.
@@ -245,6 +253,30 @@ func TestWorker_LocalTarget_ShareGoneWaits(t *testing.T) {
 	cs = h.chunks(export.TableSyslog)
 	if len(cs) != 3 || cs[2].Status != models.ArchiveChunkVerified {
 		t.Fatalf("after the share came back: %d chunks, last %+v", len(cs), cs[len(cs)-1])
+	}
+	raw, _, err = h.db.ArchiveWorkerState(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rt, err = status.ParseRuntime(raw); err != nil || !rt.PreflightOK || rt.PreflightIssue != "" {
+		t.Fatalf("after the share came back: %+v %v", rt, err)
+	}
+}
+
+// TestPreflightIssue: the preflight failures the health verdict names on
+// their own, through the worker's wrapping.
+func TestPreflightIssue(t *testing.T) {
+	for _, c := range []struct {
+		err  error
+		want string
+	}{
+		{fmt.Errorf("%w; the archive holds chunks, so the target is not initialised again", objstore.ErrUninitialized), status.PreflightMarkerMissing},
+		{fmt.Errorf("%w: /archive/fwmon/.fwmon-archive-target carries install id \"a\"", local.ErrForeignMarker), status.PreflightMarkerForeign},
+		{errors.New("dial tcp 192.0.2.10:443: i/o timeout"), ""},
+	} {
+		if got := preflightIssue(c.err); got != c.want {
+			t.Errorf("%v: %q, want %q", c.err, got, c.want)
+		}
 	}
 }
 

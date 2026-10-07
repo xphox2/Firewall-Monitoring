@@ -17,9 +17,19 @@
 // /archive/settings/folders (subdirectories under the allowed root only).
 // Test reports every check of the directories and the filesystem warnings.
 //
+// Layout (0.11.316): the fields are grouped as an operator thinks of them —
+// Target, Credentials, Bucket & Object Lock, Staging, Streams, Schedule &
+// limits, Advanced (GROUPS; the server's field sections are unchanged). The
+// card opens with the archive's health verdict (the status card's
+// fwmon:archive-health event) and a link to the status; the action bar
+// counts the unsaved changes and enables Save / Discard only then; Test
+// reports a checklist (target, Object Lock, each directory check, staging,
+// filesystem warnings).
+//
 // CSP: no inline handlers — one click and one input listener on the card,
-// dispatching on data-arch-action. Exposed as window.FwmonArchiveSettings;
-// admin-main.js calls render() from loadSettings (admins only).
+// dispatching on data-arch-action. Exposed as window.FwmonArchiveSettings
+// (render, test, focusField); admin-main.js calls render() from loadSettings
+// (admins only).
 (function () {
     'use strict';
 
@@ -27,14 +37,32 @@
     var API_BASE = AC.API_BASE;
     var esc = AC.escapeHtml;
 
-    var SECTIONS = [
-        { id: 'target', title: 'Target', hint: 'Where the archive is written: S3-compatible object storage, or a directory on a local partition or a network share (NFS, SMB) that the host mounts and bind-mounts under the allowed root. The server never mounts anything itself.' },
-        { id: 'connection', title: 'Connection', hint: 'Any S3-compatible service (Backblaze B2, AWS S3, MinIO). Use a key restricted to this bucket and prefix, without delete rights.' },
-        { id: 'streams', title: 'Streams', hint: 'An enabled stream is exported, uploaded, read back and verified; its raw rows are then deleted only once verified. Enabling runs the bucket preflight and checks the staging directory before it saves.' },
-        { id: 'object_lock', title: 'Object Lock', hint: 'Retention applied to every object written. The bucket must have Object Lock enabled (Test connection checks it).' },
-        { id: 'schedule', title: 'Schedule', hint: 'Pacing and the monthly seal. The defaults suit most installs.' },
-        { id: 'advanced', title: 'Advanced', hint: 'Lab and self-hosted endpoints only.' }
+    // GROUPS: the form's sections and the keys each holds, in order. A key
+    // no group names (a field added later) lands in Advanced.
+    var GROUPS = [
+        { id: 'target', title: 'Target', hint: 'Where the archive is written: S3-compatible object storage (Backblaze B2, AWS S3, MinIO), or a directory on a local partition or a network share (NFS, SMB) that the host mounts and bind-mounts under the allowed root. The server never mounts anything itself.',
+            keys: ['ARCHIVE_TARGET', 'ARCHIVE_LOCAL_DIR', 'ARCHIVE_S3_ENDPOINT', 'ARCHIVE_S3_REGION'] },
+        { id: 'credentials', title: 'Credentials', hint: 'Use an application key restricted to this bucket and prefix, without delete rights.',
+            keys: ['ARCHIVE_S3_ACCESS_KEY_ID', 'ARCHIVE_S3_SECRET_ACCESS_KEY'] },
+        { id: 'bucket', title: 'Bucket & Object Lock', localTitle: 'Layout', hint: 'The bucket and the key prefix every object is written under, and the retention applied to each object. The bucket must have Object Lock enabled for a retention (Test connection checks it).',
+            localHint: 'The subdirectory of the archive directory every object is written under.',
+            keys: ['ARCHIVE_S3_BUCKET', 'ARCHIVE_S3_PREFIX', 'ARCHIVE_S3_PATH_STYLE', 'ARCHIVE_OBJECT_LOCK_MODE', 'ARCHIVE_OBJECT_LOCK_DAYS'] },
+        { id: 'staging', title: 'Staging', hint: 'Each chunk is compressed here between its export and its upload.',
+            keys: ['ARCHIVE_STAGING_DIR'] },
+        { id: 'streams', title: 'Streams', hint: 'An enabled stream is exported, uploaded, read back and verified; its raw rows are then deleted only once verified. Enabling runs the target preflight and checks the staging directory before it saves.',
+            keys: ['ARCHIVE_SYSLOG_ENABLED', 'ARCHIVE_FLOWS_ENABLED'] },
+        { id: 'schedule', title: 'Schedule & limits', hint: 'Pacing and the monthly seal. The defaults suit most installs.',
+            keys: ['ARCHIVE_WINDOW', 'ARCHIVE_MIN_AGE_HOURS', 'ARCHIVE_SEAL_GRACE_HOURS', 'ARCHIVE_SEAL_REVERIFY', 'ARCHIVE_SYSLOG_RATE_ROWS_PER_SEC', 'ARCHIVE_FLOW_RATE_ROWS_PER_SEC'] },
+        { id: 'advanced', title: 'Advanced', hint: 'Lab and self-hosted endpoints only.', details: true,
+            keys: ['ARCHIVE_ALLOW_HTTP', 'ARCHIVE_ALLOW_PRIVATE_ENDPOINT'] }
     ];
+
+    function groupOf(key) {
+        for (var i = 0; i < GROUPS.length; i++) {
+            if (GROUPS[i].keys.indexOf(key) >= 0) return GROUPS[i].id;
+        }
+        return 'advanced';
+    }
 
     var LABELS = {
         ARCHIVE_TARGET: ['Target', 's3: object storage (the Connection section). local: a directory under the allowed root; no Object Lock — make the storage immutable instead (ZFS snapshots, a WORM share).'],
@@ -80,6 +108,7 @@
     var BROWSE = { ARCHIVE_LOCAL_DIR: true, ARCHIVE_STAGING_DIR: true };
 
     var view = null;         // the last GET
+    var health = null;       // the last verdict the status card announced
     var revert = {};         // key → true: revert to the environment on save
     var onSaved = null;      // callback after a save (refresh the status card)
     var bound = false;
@@ -132,7 +161,8 @@
         return sel ? sel.value : (view && view.target) || 's3';
     }
 
-    // applyTarget shows the fields of the selected target only.
+    // applyTarget shows the fields of the selected target only, and names
+    // the bucket section after what it still holds.
     function applyTarget() {
         var el = host();
         if (!el) return;
@@ -144,7 +174,44 @@
         el.querySelectorAll('.archive-settings-section').forEach(function (sec) {
             var shown = sec.querySelectorAll('[data-arch-field]:not([hidden])').length;
             sec.hidden = shown === 0;
+            var g = GROUPS.filter(function (x) { return x.id === sec.getAttribute('data-arch-group'); })[0];
+            if (g && g.localTitle) {
+                var t = sec.querySelector('[data-arch-group-title]'), h = sec.querySelector('[data-arch-group-hint]');
+                if (t) t.textContent = isLocal ? g.localTitle : g.title;
+                if (h) h.textContent = isLocal ? g.localHint : g.hint;
+            }
         });
+    }
+
+    // healthHtml: the archive's verdict at the top of the card, with a link
+    // to the status (the Raw Archive card above).
+    function healthHtml() {
+        if (!health || !window.FwmonArchiveStatus) {
+            return '<span class="arch-faint">Archive health: loading…</span>';
+        }
+        return '<span class="arch-settings-health-label">Archive health</span> ' + FwmonArchiveStatus.verdictBadge(health) +
+            '<span class="arch-settings-health-summary">' + esc(health.summary || '') + '</span>' +
+            '<button type="button" class="btn sm secondary" data-arch-action="show-status">View status</button>';
+    }
+
+    function renderHealth() {
+        var el = document.getElementById('arch-settings-health');
+        if (el) el.innerHTML = healthHtml();
+    }
+
+    // updateDirty counts the form's unsaved changes: the action bar says how
+    // many, and Save / Discard are enabled only then.
+    function updateDirty() {
+        var el = host();
+        if (!el || !view) return;
+        var d = draft();
+        var n = Object.keys(d.set).length + d.revert.length;
+        var msg = el.querySelector('[data-arch-dirty]');
+        if (msg) {
+            msg.textContent = n ? n + ' unsaved change' + (n === 1 ? '' : 's') : 'No unsaved changes';
+            msg.classList.toggle('is-dirty', n > 0);
+        }
+        el.querySelectorAll('[data-arch-action="save"], [data-arch-action="discard"]').forEach(function (b) { b.disabled = n === 0; });
     }
 
     function sourceHtml(f) {
@@ -177,7 +244,7 @@
     function renderForm() {
         var el = host();
         if (!el || !view) return;
-        var html = '';
+        var html = '<div class="arch-settings-health" id="arch-settings-health" role="status">' + healthHtml() + '</div>';
         if (view.problem) {
             html += '<p class="archive-settings-problem" role="alert">The configuration in effect is refused: ' + esc(view.problem) + '</p>';
         }
@@ -187,9 +254,10 @@
         if (view.allowed_root_problem) {
             html += '<p class="archive-settings-problem" role="alert">ARCHIVE_ALLOWED_ROOT cannot be used: ' + esc(view.allowed_root_problem) + '</p>';
         }
-        SECTIONS.forEach(function (s) {
-            var fields = view.fields.filter(function (f) { return f.section === s.id; });
-            var hint = '<p class="field-hint">' + esc(s.hint) + '</p>';
+        GROUPS.forEach(function (s) {
+            var fields = view.fields.filter(function (f) { return groupOf(f.key) === s.id; });
+            if (!fields.length) return;
+            var hint = '<p class="field-hint" data-arch-group-hint>' + esc(s.hint) + '</p>';
             if (s.id === 'target') {
                 hint += '<p class="field-hint">Allowed root: <code>' + esc(view.allowed_root || '') + '</code> (<code>ARCHIVE_ALLOWED_ROOT</code>, set in the environment; it must be a bind mount of the host\u2019s archive volume). Database volume: <code>' + esc(view.database_dir || '') + '</code>.</p>';
                 if (view.staging_outside_root) {
@@ -197,36 +265,65 @@
                 }
             }
             var body = hint + '<div class="settings-grid">' + fields.map(fieldHtml).join('') + '</div>';
-            if (s.id === 'advanced') {
-                html += '<details class="archive-settings-section"><summary>' + esc(s.title) + '</summary>' + body + '</details>';
+            if (s.details) {
+                html += '<details class="archive-settings-section" data-arch-group="' + s.id + '"><summary data-arch-group-title>' + esc(s.title) + '</summary>' + body + '</details>';
             } else {
-                html += '<fieldset class="archive-settings-section"><legend>' + esc(s.title) + '</legend>' + body + '</fieldset>';
+                html += '<fieldset class="archive-settings-section" data-arch-group="' + s.id + '"><legend data-arch-group-title>' + esc(s.title) + '</legend>' + body + '</fieldset>';
             }
         });
         html += '<div class="archive-settings-actions">' +
+            '<span class="arch-settings-dirty" data-arch-dirty aria-live="polite"></span>' +
             '<button type="button" class="btn secondary" data-arch-action="test">Test connection</button>' +
             '<button type="button" class="btn secondary" data-arch-action="discard">Discard</button>' +
             '<button type="button" class="btn" data-arch-action="save">Save archive settings</button></div>' +
-            '<div id="archive-settings-result" class="archive-settings-result" role="status" aria-live="polite"></div>';
+            '<div id="archive-settings-result" class="archive-settings-result" aria-live="polite"></div>';
         el.innerHTML = html;
         applyTarget();
+        updateDirty();
     }
 
-    function showResult(ok, lines, extra) {
+    // showResult writes the outcome of Test or Save: state 'ok', 'bad' or
+    // 'busy'. A failure is an alert (announced at once).
+    function showResult(state, lines, extra) {
         var el = document.getElementById('archive-settings-result');
         if (!el) return;
-        el.className = 'archive-settings-result ' + (ok ? 'is-ok' : 'is-bad');
+        el.className = 'archive-settings-result is-' + state;
+        el.setAttribute('role', state === 'bad' ? 'alert' : 'status');
         el.innerHTML = lines.filter(Boolean).map(function (l) { return '<p>' + esc(l) + '</p>'; }).join('') + (extra || '');
+    }
+
+    // CHECK_MARK: a check's state in words and an icon (never colour alone).
+    var CHECK_MARK = { ok: ['check-circle', 'Pass'], warn: ['alert-triangle', 'Warning'], bad: ['x-octagon', 'Fail'] };
+
+    function checkItem(state, name, detail) {
+        var m = CHECK_MARK[state];
+        return '<li class="is-' + state + '"><span class="archive-check-mark">' + AC.icon(m[0]) + '<span class="archive-check-word">' + m[1] + '</span></span>' +
+            '<span class="archive-check-text"><strong>' + esc(name) + '</strong>' + (detail ? ' — ' + esc(detail) : '') + '</span></li>';
     }
 
     // checksHtml lists a directory probe's checks (each server string escaped).
     function checksHtml(title, checks) {
         if (!checks || !checks.length) return '';
         return '<p class="archive-checks-title">' + esc(title) + '</p><ul class="archive-checks">' + checks.map(function (c) {
-            var cls = !c.ok ? 'is-bad' : (c.warn ? 'is-warn' : 'is-ok');
-            var mark = !c.ok ? 'FAIL' : (c.warn ? 'WARN' : 'OK');
-            return '<li class="' + cls + '"><strong>' + mark + '</strong> ' + esc(c.name) + ': ' + esc(c.detail) + '</li>';
+            return checkItem(!c.ok ? 'bad' : (c.warn ? 'warn' : 'ok'), c.name, c.detail);
         }).join('') + '</ul>';
+    }
+
+    // testHtml is Test connection's result as a checklist.
+    function testHtml(r, d) {
+        var local = r.target === 'local';
+        var items = [checkItem(r.ok ? 'ok' : 'bad', local ? 'Archive directory' : 'Bucket reachable and listable', r.message || '')];
+        if (!local && r.ok) {
+            var days = d.set.ARCHIVE_OBJECT_LOCK_DAYS != null ? d.set.ARCHIVE_OBJECT_LOCK_DAYS : (fieldByKey('ARCHIVE_OBJECT_LOCK_DAYS') || {}).value;
+            items.push(Number(days) > 0
+                ? checkItem('ok', 'Object Lock', 'enabled on the bucket; ' + days + ' days applied to every object')
+                : checkItem('warn', 'Object Lock', 'off: anyone holding the key can delete the archive'));
+        }
+        if (r.staging) items.push(checkItem(r.staging_ok === false ? 'bad' : 'ok', 'Staging directory', r.staging));
+        (r.warnings || []).forEach(function (w) { items.push(checkItem('warn', 'Filesystem', w)); });
+        return '<p class="archive-checks-title">' + (r.ok && r.staging_ok !== false ? 'Test passed' : 'Test found a problem') + '</p>' +
+            '<ul class="archive-checks">' + items.join('') + '</ul>' +
+            checksHtml('Archive directory checks', r.checks) + checksHtml('Staging directory checks', r.staging_checks);
     }
 
     // Folder picker: one open at a time, under the allowed root only (the
@@ -304,6 +401,7 @@
     }
 
     function load() {
+        closePicker();
         return AC.apiFetch(API_BASE + '/archive/settings').then(function (res) {
             view = (res && res.data) || null;
             revert = {};
@@ -312,16 +410,33 @@
     }
 
     function test() {
+        if (!view) return;
         var d = draft();
-        showResult(true, ['Testing the connection…']);
+        var btn = host() && host().querySelector('[data-arch-action="test"]');
+        if (btn) btn.disabled = true;
+        showResult('busy', ['Testing the ' + (targetNow() === 'local' ? 'archive directory' : 'connection') + ' with the values in the form (nothing is saved)…']);
+        var out = document.getElementById('archive-settings-result');
+        if (out) out.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         AC.apiFetch(API_BASE + '/archive/settings/test', { method: 'POST', body: JSON.stringify(d) }).then(function (res) {
             var r = (res && res.data) || {};
-            var what = r.target === 'local' ? 'Archive directory' : 'Connection';
-            showResult(!!r.ok, [(r.ok ? what + ' OK. ' : what + ' failed: ') + (r.message || ''), r.staging].concat(r.warnings || []),
-                checksHtml('Archive directory', r.checks) + checksHtml('Staging directory', r.staging_checks));
+            showResult(r.ok && r.staging_ok !== false ? 'ok' : 'bad', [], testHtml(r, d));
         }).catch(function (e) {
-            showResult(false, ['Test failed: ' + ((e && e.message) || e)]);
+            showResult('bad', ['Test failed: ' + ((e && e.message) || e)]);
+        }).then(function () {
+            if (btn) btn.disabled = false;
         });
+    }
+
+    // focusField scrolls to a field of the form (or the card) and focuses it.
+    function focusField(key) {
+        var el = host();
+        if (!el) return;
+        var input = key && el.querySelector('[data-arch-key="' + key + '"]');
+        var target = input ? input.closest('[data-arch-field]') : el;
+        var sec = target.closest && target.closest('details');
+        if (sec) sec.open = true;
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (input && !input.disabled) input.focus({ preventScroll: true });
     }
 
     function save() {
@@ -355,13 +470,13 @@
                 view = r.settings || view;
                 revert = {};
                 renderForm();
-                showResult(true, [r.message].concat(r.warnings || []));
+                showResult('ok', [r.message].concat(r.warnings || []));
                 AC.showSuccess('Archive settings saved');
                 if (onSaved) onSaved();
             });
         }).catch(function (e) {
             var msg = String((e && e.message) || e);
-            showResult(false, [/^Not saved:/.test(msg) ? msg : 'Not saved: ' + msg]);
+            showResult('bad', [/^Not saved:/.test(msg) ? msg : 'Not saved: ' + msg]);
         });
     }
 
@@ -410,10 +525,17 @@
             case 'test': test(); break;
             case 'save': save(); break;
             case 'discard': load(); break;
+            case 'show-status': {
+                var st = document.getElementById('settings-archive');
+                if (st) st.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                break;
             }
+            }
+            if (btn.dataset.archAction === 'revert') updateDirty();
         });
         el.addEventListener('change', function (e) {
             if (e.target && e.target.dataset && e.target.dataset.archKey === 'ARCHIVE_TARGET') applyTarget();
+            updateDirty();
         });
         // Editing a field after "revert" keeps the edit instead.
         el.addEventListener('input', function (e) {
@@ -423,6 +545,12 @@
                 var src = el.querySelector('[data-arch-field="' + key + '"] .archive-setting-source');
                 if (src) src.innerHTML = sourceHtml(fieldByKey(key));
             }
+            if (key) updateDirty();
+        });
+        // The status card announces the verdict on every refresh.
+        document.addEventListener('fwmon:archive-health', function (e) {
+            health = e.detail || null;
+            renderHealth();
         });
     }
 
@@ -440,5 +568,5 @@
         });
     }
 
-    window.FwmonArchiveSettings = { render: render };
+    window.FwmonArchiveSettings = { render: render, test: test, focusField: focusField };
 })();

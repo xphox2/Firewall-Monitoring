@@ -46,6 +46,7 @@ import (
 	"github.com/shirou/gopsutil/v4/disk"
 
 	"firewall-mon/internal/archive/export"
+	"firewall-mon/internal/archive/local"
 	"firewall-mon/internal/archive/objstore"
 	"firewall-mon/internal/archive/s3"
 	"firewall-mon/internal/archive/status"
@@ -217,6 +218,7 @@ func newWorker(db *database.Database, store Store, cfg config.ArchiveConfig) (*W
 	w.runner = fmt.Sprintf("%s-%d", host, os.Getpid())
 	w.staging = cfg.StagingDir
 	w.rt = status.NewRecorder(w.runner, w.staging, stagingMinFree, cfg.SecretAccessKey.Reveal(), cfg.AccessKeyID)
+	w.rt.SetConfigFingerprint(cfg.Fingerprint())
 	if w.staging == "" {
 		// Config.Validate requires it; a temp-directory default would land
 		// in a container's writable layer, often the database's disk.
@@ -267,6 +269,19 @@ func (w *Worker) preflightTarget(ctx context.Context) error {
 	}
 	log.Printf("archive: initialised the archive target (first use)")
 	return w.store.Preflight(ctx)
+}
+
+// preflightIssue classifies a preflight failure for the status's health
+// verdict (status.Runtime.PreflightIssue): a local target's missing or
+// foreign marker each have their own issue and action.
+func preflightIssue(err error) string {
+	switch {
+	case errors.Is(err, local.ErrForeignMarker):
+		return status.PreflightMarkerForeign
+	case errors.Is(err, objstore.ErrUninitialized):
+		return status.PreflightMarkerMissing
+	}
+	return ""
 }
 
 // Tables returns the source tables the worker archives, in pass order.
@@ -496,6 +511,7 @@ func (w *Worker) Tick(ctx context.Context) {
 		if err := w.preflightTarget(ctx); err != nil {
 			if ctx.Err() == nil {
 				w.fail("preflight", err)
+				w.rt.SetPreflightIssue(preflightIssue(err))
 				w.logf("preflight", "target preflight failed (nothing is archived until it passes): %v", err)
 			}
 			return

@@ -82,7 +82,14 @@ func TestArchiveStatusCardScript(t *testing.T) {
 		"var esc = AC.escapeHtml;",
 		"AC.pollWhenVisible(",
 		"esc(e.error || '')",
-		"esc(gr.error || '')",
+		// 0.11.316: the gate's read error and every other cause reach
+		// the card as an issue's detail (status.Assess), escaped.
+		"esc(is.detail)",
+		"esc(is.title)",
+		// The verdict is the server's (data.health), with an icon and
+		// words, not colour alone.
+		"var h = st.health || {};",
+		"AC.icon(v[1])",
 		`data-action="archive-reset-chunk"`,
 		`role="status"`,
 		"if (lastHtml[s[0]] !== s[1]) {",

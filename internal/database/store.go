@@ -118,6 +118,10 @@ type ArchiveStatusStore interface {
 	ArchiveVerifiedTotals(ctx context.Context, table, stream string, months []string) ([]ArchiveMonthTotal, error)
 	ArchiveGateHealthRecord(ctx context.Context) (*ArchiveGateHealth, error)
 	SyslogRetentionWindows(ret config.RetentionConfig) [SyslogSeverityCount]SyslogWindow
+	// The health verdict's inputs (status.AttachHealth): the alert
+	// thresholds and the database volume's free-space trend.
+	SettingValues(ctx context.Context, keys []string) (map[string]string, error)
+	ServerDataDiskFreeAt(ctx context.Context, from, to time.Time) (*uint64, error)
 }
 
 // ArchiveRestoreStore covers the archive restore queue (archive plan PR 9,
