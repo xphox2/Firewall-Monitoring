@@ -63,9 +63,14 @@ func archSettingsSetup(t *testing.T, opts ...s3test.Option) *archSettingsFixture
 		AccessKeyID: archKeyID, SecretAccessKey: config.Secret(archEnvSecret), PathStyle: true, AllowPrivateEndpoint: true,
 		MinAgeHours: 2, SealGraceHours: 48, SealReverify: config.SealReverifyHead, SyslogRateRowsPerSec: 5000,
 		FlowRateRowsPerSec: 20000, StagingDir: staging, AllowedRoot: root}
-	origMount := local.IsMountPoint
+	origMount, origFS := local.IsMountPoint, local.StatFS
 	local.IsMountPoint = func(dir string) (bool, error) { return dir == root, nil }
-	t.Cleanup(func() { local.IsMountPoint = origMount })
+	// ext4, one device: a CI runner's /tmp may be tmpfs, which the probe
+	// refuses (TestProbe_Refusals covers that).
+	local.StatFS = func(string) (local.FSInfo, error) {
+		return local.FSInfo{Type: "ext4", Device: 1, FreeBytes: 1 << 40, TotalBytes: 1 << 41}, nil
+	}
+	t.Cleanup(func() { local.IsMountPoint, local.StatFS = origMount, origFS })
 	pool := x509.NewCertPool()
 	pool.AddCert(srv.Certificate())
 	origOpts, origFree := archiveS3Options, archiveStagingFree

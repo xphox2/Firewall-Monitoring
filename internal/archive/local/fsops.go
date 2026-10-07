@@ -3,10 +3,12 @@ package local
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"syscall"
+	"unsafe"
 )
 
 // The crash-safe write: the bytes go to a temporary file in the object's own
@@ -19,39 +21,67 @@ import (
 // errExists: the final name is taken (an object is never overwritten).
 var errExists = errors.New("already exists")
 
-// linkFile is os.Link; tests replace it to take the no-hard-link path.
-var linkFile = os.Link
+// errNoReplaceUnsupported: the filesystem has no atomic no-replace rename.
+var errNoReplaceUnsupported = errors.New("no-replace rename not supported")
 
-// commitNoReplace gives tmp the name final unless final exists. It uses a hard
-// link, which the kernel refuses atomically when final exists (POSIX link(2),
-// NFS LINK), then removes tmp. Where the filesystem has no hard links (an SMB
-// share without the Unix extensions, some FUSE mounts) it falls back to
-// checking that final does not exist and renaming: an SMB rename to a name
-// that does not exist is atomic on the server (it is refused, not replaced,
-// when the name appears in between on Windows servers), and the archive
-// writes from one process at a time (the archive's advisory lock), so no
-// other archive writer can take the name between the check and the rename.
-// tmp and final are in the same directory.
-func commitNoReplace(tmp, final string) error {
-	err := linkFile(tmp, final)
+// The primitives commitNoReplace uses, variables so tests can take every
+// path: os.Link, renameat2(RENAME_NOREPLACE) (renamex_np(RENAME_EXCL) on
+// macOS).
+var (
+	linkFile        = os.Link
+	renameNoReplace = renameNoReplaceSys
+)
+
+// How commitNoReplace committed (Probe reports it).
+const (
+	commitLink          = "hard link"
+	commitRenameNoRepl  = "rename with RENAME_NOREPLACE"
+	commitCheckedRename = "checked rename (not atomic)"
+)
+
+// commitNoReplace gives tmp the name final unless final exists (errExists),
+// tmp and final in the same directory. In order:
+//
+//  1. a hard link, which the kernel (and an NFS server, LINK) refuses
+//     atomically when final exists; tmp is then removed;
+//  2. where there are no hard links (an SMB share without the Unix
+//     extensions, some FUSE mounts): renameat2(RENAME_NOREPLACE), refused
+//     atomically when final exists — on the filesystems that implement it;
+//  3. where neither is supported (EINVAL / ENOSYS / EOPNOTSUPP): an Lstat
+//     that final does not exist, then a plain rename. That is NOT atomic: a
+//     file created between the check and the rename would be replaced. The
+//     protection then rests on the check and on a single writer per archive
+//     directory — the archive's advisory lock allows one archive writer per
+//     database, and the install id in the marker refuses a directory another
+//     install initialised.
+func commitNoReplace(tmp, final string) (how string, err error) {
+	err = linkFile(tmp, final)
 	if err == nil {
 		// The object is committed; a temporary name left behind (the
 		// remove failed) is swept by the next write in the directory.
 		_ = os.Remove(tmp)
-		return nil
+		return commitLink, nil
 	}
 	if errors.Is(err, fs.ErrExist) {
-		return errExists
+		return "", errExists
 	}
 	if !linkUnsupported(err) {
-		return err
+		return "", err
+	}
+	switch err := renameNoReplace(tmp, final); {
+	case err == nil:
+		return commitRenameNoRepl, nil
+	case errors.Is(err, fs.ErrExist):
+		return "", errExists
+	case !errors.Is(err, errNoReplaceUnsupported):
+		return "", err
 	}
 	if _, err := os.Lstat(final); err == nil {
-		return errExists
+		return "", errExists
 	} else if !errors.Is(err, fs.ErrNotExist) {
-		return err
+		return "", err
 	}
-	return os.Rename(tmp, final)
+	return commitCheckedRename, os.Rename(tmp, final)
 }
 
 // linkUnsupported reports a link(2) failure that means "no hard links here".
@@ -64,7 +94,11 @@ func linkUnsupported(err error) bool {
 // unsupported is true when the filesystem refuses to fsync a directory
 // (CIFS answers EINVAL; the server's rename is then durable on its own
 // terms) — not an error.
-func syncDir(dir string) (unsupported bool, err error) {
+// syncDir is syncDirSys; a variable so tests can see which directories a
+// write makes durable.
+var syncDir = syncDirSys
+
+func syncDirSys(dir string) (unsupported bool, err error) {
 	d, err := os.Open(dir) // #nosec G304 -- a directory below the archive's configured root
 	if err != nil {
 		return false, err
@@ -140,3 +174,50 @@ func globEscape(s string) string {
 	}
 	return string(out)
 }
+
+// directReader reads an O_DIRECT descriptor through a buffer aligned to
+// 4 KiB, a multiple of the block size, as direct I/O requires on most
+// filesystems (the NFS client does not; the alignment costs nothing there).
+type directReader struct {
+	f        *os.File
+	buf      []byte
+	off, end int
+	eof      bool
+}
+
+const directAlign = 4096
+const directBuf = 1 << 20
+
+func newDirectReader(f *os.File) *directReader {
+	raw := make([]byte, directBuf+directAlign)
+	shift := 0
+	if r := int(uintptr(unsafe.Pointer(&raw[0])) % directAlign); r != 0 { // #nosec G103 -- alignment arithmetic only
+		shift = directAlign - r
+	}
+	return &directReader{f: f, buf: raw[shift : shift+directBuf]}
+}
+
+func (d *directReader) Read(p []byte) (int, error) {
+	if d.off == d.end {
+		if d.eof {
+			return 0, io.EOF
+		}
+		n, err := d.f.Read(d.buf)
+		d.off, d.end = 0, n
+		if err == io.EOF {
+			d.eof = true
+			err = nil
+		}
+		if err != nil {
+			return 0, err
+		}
+		if n == 0 {
+			return 0, io.EOF
+		}
+	}
+	n := copy(p, d.buf[d.off:d.end])
+	d.off += n
+	return n, nil
+}
+
+func (d *directReader) Close() error { return d.f.Close() }

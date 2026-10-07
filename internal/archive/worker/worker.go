@@ -190,6 +190,17 @@ func newWorker(db *database.Database, store Store, cfg config.ArchiveConfig) (*W
 		waits:          map[string]time.Time{},
 	}
 	w.settled = db.ArchiveChunkSettled
+	// A local target writes this install's id into its marker and refuses a
+	// directory another install initialised.
+	if s, ok := store.(interface{ SetInstallID(string) }); ok {
+		ictx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		id, err := db.ArchiveInstallID(ictx)
+		cancel()
+		if err != nil {
+			return nil, fmt.Errorf("archive: this install's archive id: %w", err)
+		}
+		s.SetInstallID(id)
+	}
 	if cfg.FlowsEnabled {
 		w.tables = append(w.tables, export.TableFlows, export.TableCounters)
 		w.marks = append(w.marks, export.TableFlows, export.TableCounters)

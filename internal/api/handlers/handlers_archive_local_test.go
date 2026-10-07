@@ -124,7 +124,7 @@ func TestTestArchiveSettings_LocalTarget(t *testing.T) {
 	}
 	r := test(`{"set":{` + localDraft(dir) + `}}`)
 	if r["ok"] != true || r["target"] != "local" || !strings.Contains(r["message"].(string), "initialises") || r["checks"] == nil ||
-		r["staging_checks"] == nil || !strings.Contains(strings.Join(anyStrings(r["warnings"]), " "), "same filesystem") {
+		r["staging_checks"] == nil || !strings.Contains(strings.Join(anyStrings(r["warnings"]), " "), "The archive target and the staging directory are on the same filesystem") {
 		t.Fatalf("a local directory: %v", r)
 	}
 	if ents, _ := os.ReadDir(dir); len(ents) != 0 {
@@ -213,5 +213,52 @@ func TestSaveArchiveSettings_LocalTarget(t *testing.T) {
 	}
 	if !config.IsLocalLocation(f.resolved(t).Location()) {
 		t.Fatal("the location changed")
+	}
+}
+
+// TestArchiveSettings_KeptStagingOutsideRoot: a staging directory set in the
+// environment before 0.11.315 outside the allowed root keeps working — a
+// save that leaves it, or goes back to it, is accepted — while a newly chosen
+// one must be under the root. Test never writes into it (a read-only
+// directory outside the root is reported, not probed).
+func TestArchiveSettings_KeptStagingOutsideRoot(t *testing.T) {
+	f := archSettingsSetup(t)
+	legacy := filepath.Join(t.TempDir(), "archive-staging")
+	if err := os.Mkdir(legacy, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(legacy, 0o700) })
+	f.h.config.Archive.StagingDir = legacy
+	inside := filepath.Join(f.root, "staging")
+
+	if rec := f.save(`{"set":{"ARCHIVE_WINDOW":"01:00-05:00"},"password":"s3cret-pw"}`); rec.Code != http.StatusOK {
+		t.Fatalf("a save leaving the kept staging directory: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := f.save(`{"set":{"ARCHIVE_STAGING_DIR":"` + inside + `"},"password":"s3cret-pw"}`); rec.Code != http.StatusOK {
+		t.Fatalf("choosing one under the root: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := f.save(`{"set":{"ARCHIVE_STAGING_DIR":"` + legacy + `"},"password":"s3cret-pw"}`); rec.Code != http.StatusOK {
+		t.Fatalf("back to the environment's value: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := f.save(`{"set":{"ARCHIVE_STAGING_DIR":"` + inside + `"},"password":"s3cret-pw"}`); rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	if rec := f.save(`{"revert":["ARCHIVE_STAGING_DIR"],"password":"s3cret-pw"}`); rec.Code != http.StatusOK {
+		t.Fatalf("revert to the environment's value: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := f.save(`{"set":{"ARCHIVE_STAGING_DIR":"` + t.TempDir() + `"},"password":"WRONG"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("a new directory outside the root: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec := f.do(http.MethodPost, "/admin/api/archive/settings/test", `{}`)
+	var got struct {
+		Data map[string]any `json:"data"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if msg, _ := got.Data["staging"].(string); !strings.Contains(msg, "not probed for writing") {
+		t.Fatalf("Test of the kept staging directory: %v", got.Data)
+	}
+	if !strings.Contains(rec.Body.String(), "not probed (nothing is written outside the root)") {
+		t.Fatalf("the staging checks do not say it was not probed: %s", rec.Body.String())
 	}
 }

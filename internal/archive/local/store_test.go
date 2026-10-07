@@ -34,14 +34,39 @@ func testCfg(t *testing.T) config.ArchiveConfig {
 	return config.ArchiveConfig{Target: config.ArchiveTargetLocal, LocalDir: dir, AllowedRoot: root, Prefix: testPrefix}
 }
 
-// newStore is a ready (initialised) target.
-func newStore(t *testing.T) (*Store, config.ArchiveConfig) {
+// testInstallID is the install id the tests' stores carry.
+const testInstallID = "0123456789abcdef0123456789abcdef"
+
+// stubVolume makes every directory an ext4 mount point (a temporary
+// directory is neither a mount point nor, on some CI runners, off tmpfs);
+// the tests of those checks stub them their own way.
+func stubVolume(t *testing.T) {
 	t.Helper()
-	cfg := testCfg(t)
+	origFS, origMount := StatFS, IsMountPoint
+	StatFS = func(string) (FSInfo, error) {
+		return FSInfo{Type: "ext4", Device: 1, FreeBytes: 1 << 40, TotalBytes: 1 << 41}, nil
+	}
+	IsMountPoint = func(string) (bool, error) { return true, nil }
+	t.Cleanup(func() { StatFS, IsMountPoint = origFS, origMount })
+}
+
+// openStore is New with the test install id, on a stubbed volume.
+func openStore(t *testing.T, cfg config.ArchiveConfig) *Store {
+	t.Helper()
+	stubVolume(t)
 	s, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.SetInstallID(testInstallID)
+	return s
+}
+
+// newStore is a ready (initialised) target.
+func newStore(t *testing.T) (*Store, config.ArchiveConfig) {
+	t.Helper()
+	cfg := testCfg(t)
+	s := openStore(t, cfg)
 	if err := s.Init(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +195,7 @@ func TestPut_NeverOverwrites(t *testing.T) {
 			if err := os.WriteFile(tmp, []byte("x"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if err := commitNoReplace(tmp, s.file(rel)); !errors.Is(err, errExists) {
+			if _, err := commitNoReplace(tmp, s.file(rel)); !errors.Is(err, errExists) {
 				t.Fatalf("commitNoReplace onto an object = %v, want errExists", err)
 			}
 			if got, _ := os.ReadFile(s.file(rel)); !bytes.Equal(got, a) {
@@ -245,10 +270,7 @@ func TestPut_CrashBeforeCommit(t *testing.T) {
 		t.Fatalf("Head after the crash = %v, want ErrNotFound", err)
 	}
 
-	s2, err := New(cfg) // the restarted process
-	if err != nil {
-		t.Fatal(err)
-	}
+	s2 := openStore(t, cfg) // the restarted process
 	r := put(t, s2, rel, body, nil)
 	if r.VersionID != "1" {
 		t.Fatalf("after the crash the write is version %s, want 1", r.VersionID)
@@ -273,10 +295,7 @@ func TestPut_CrashBeforeCommit(t *testing.T) {
 // ErrNotFound (so a verify does not count it as lost).
 func TestPut_RequiresTheMarker(t *testing.T) {
 	cfg := testCfg(t)
-	s, err := New(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := openStore(t, cfg)
 	if _, err := s.Put(ctx, "syslog/v2/2026-10/03/chunk.json", bytes.NewReader([]byte("x")), 1, nil); !errors.Is(err, objstore.ErrUninitialized) {
 		t.Fatalf("Put without the marker = %v", err)
 	}
@@ -390,10 +409,7 @@ func TestNew_PathEscapes(t *testing.T) {
 	}
 	c = base
 	c.LocalDir = link
-	s, err := New(c) // the text is under the root: only the filesystem knows
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := openStore(t, c) // the text is under the root: only the filesystem knows
 	if err := s.Init(ctx); err == nil || !strings.Contains(err.Error(), "outside ARCHIVE_ALLOWED_ROOT") {
 		t.Fatalf("Init through a link out of the root = %v", err)
 	}

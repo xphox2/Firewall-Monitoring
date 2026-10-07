@@ -15,9 +15,12 @@
 //     what the manifest records, so a verify of a version reads exactly the
 //     bytes that were written then;
 //   - every write is crash-safe on a local disk and on NFS/SMB: a temporary
-//     file in the same directory, fsync, a link (or, without hard links, a
-//     checked rename) to a name that does not exist, fsync of the directory
-//     (fsops.go);
+//     file in the same directory, fsync, a commit to a name that does not
+//     exist (hard link or RENAME_NOREPLACE, atomic; a checked rename, not
+//     atomic, only where neither works: commitNoReplace), fsync of the
+//     directories; the volume must be the same after the commit as before
+//     (stillMounted), and on a network share the read-back bypasses the
+//     client's page cache (openRead);
 //   - finished objects are made read-only (0444). That only stops an
 //     accident: whoever owns the files can change them back. Real
 //     immutability is the storage's — ZFS snapshots, a WORM / snapshot-
@@ -59,6 +62,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"firewall-mon/internal/archive/objstore"
@@ -93,7 +98,25 @@ type Store struct {
 	prefix string
 	base   string // dir/prefix
 	now    func() time.Time
+	// installID is this install's id (database.ArchiveInstallID): the marker
+	// must carry it ("" = not checked: a read-only user such as
+	// --verify-month).
+	installID string
+
+	netOnce sync.Once
+	network bool // the directory is on a network filesystem (reads bypass the page cache)
 }
+
+// SetInstallID sets the install id the marker must carry (Init writes it).
+func (s *Store) SetInstallID(id string) { s.installID = id }
+
+// deviceOf is the st_dev of a path; a variable so tests can simulate a
+// volume replaced under the archive (an unmount).
+var deviceOf = deviceOfSys
+
+// openUncached opens a file for a read that must come from the storage, not
+// this client's cache; a variable so tests can see it used.
+var openUncached = openUncachedSys
 
 // *Store is an archive target.
 var _ objstore.Store = (*Store)(nil)
@@ -160,9 +183,12 @@ type sidecar struct {
 const sidecarKind = "fwmon-archive-object"
 
 func readSidecar(vp string) (*sidecar, error) {
-	f, err := os.Open(vp + metaSuffix) // #nosec G304 -- a sidecar below the archive's directory
+	f, err := os.OpenFile(vp+metaSuffix, os.O_RDONLY|oNoFollow, 0) // #nosec G304 -- a sidecar below the archive's directory
 	if err != nil {
-		return nil, err
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, err
+		}
+		return nil, describe("open", vp+metaSuffix, err)
 	}
 	defer f.Close()
 	var sc sidecar
@@ -177,15 +203,153 @@ func readSidecar(vp string) (*sidecar, error) {
 
 // markerPresent checks the marker: ErrUninitialized when it is missing.
 func (s *Store) markerPresent() error {
-	_, err := os.Stat(filepath.Join(s.base, MarkerName))
+	_, err := s.markerDev()
+	return err
+}
+
+// markerDev checks the marker and returns the device it is on.
+func (s *Store) markerDev() (uint64, error) {
+	mp := filepath.Join(s.base, MarkerName)
+	_, err := os.Lstat(mp)
 	switch {
-	case err == nil:
-		return nil
 	case errors.Is(err, fs.ErrNotExist):
-		return fmt.Errorf("%w: %s has no %s: the archive was never initialised there, or the partition or share is not mounted (on the host, and bind-mounted into the container)",
+		return 0, fmt.Errorf("%w: %s has no %s: the archive was never initialised there, or the partition or share is not mounted (on the host, and bind-mounted into the container)",
 			objstore.ErrUninitialized, s.base, MarkerName)
+	case err != nil:
+		return 0, describe("stat", mp, err)
 	}
-	return describe("stat", filepath.Join(s.base, MarkerName), err)
+	dev, err := deviceOf(mp)
+	if err != nil {
+		return 0, describe("stat", mp, err)
+	}
+	return dev, nil
+}
+
+// ErrForeignMarker: the directory's marker was written by another install.
+var ErrForeignMarker = errors.New("the archive directory belongs to another install")
+
+// checkOwner reads the marker and refuses one another install wrote (two
+// servers writing one directory would each supersede the other's objects
+// and break the single-writer rule the no-replace commit relies on).
+func (s *Store) checkOwner() error {
+	if s.installID == "" {
+		return nil
+	}
+	mp := filepath.Join(s.base, MarkerName)
+	b, err := os.ReadFile(mp) // #nosec G304 -- the marker below the archive's directory
+	if err != nil {
+		return describe("read", mp, err)
+	}
+	var m marker
+	if err := json.Unmarshal(b, &m); err != nil {
+		return fmt.Errorf("archive local: %s is not a marker: %w", mp, err)
+	}
+	if m.InstallID != s.installID {
+		return fmt.Errorf("%w: %s carries install id %q, this server's is %q; two servers must not share one archive directory: give this one its own directory or prefix",
+			ErrForeignMarker, mp, m.InstallID, s.installID)
+	}
+	return nil
+}
+
+// stillMounted checks, after a write, that dir and the marker are on the
+// device the marker was on when the write began: a share unmounted (or
+// replaced) during the write fails it, so the chunk is not verified against
+// files that are not on the share.
+func (s *Store) stillMounted(dir string, dev uint64) error {
+	now, err := s.markerDev()
+	if err != nil {
+		return fmt.Errorf("archive local: the archive volume went away during the write: %w", err)
+	}
+	ddev, err := deviceOf(dir)
+	if err != nil {
+		return describe("stat", dir, err)
+	}
+	if now != dev || ddev != dev {
+		return fmt.Errorf("archive local: the archive volume changed during the write (device %d, then marker %d, directory %d): unmounted or remounted? The write is not counted", dev, now, ddev)
+	}
+	return nil
+}
+
+// dirs checks the directories from the base down to dir: each must be a real
+// directory, never a symbolic link (a link inside the archive could lead an
+// object out of it). With create, a missing one is created; the base itself
+// is never created here (Init does, once): a missing base is a volume that is
+// not there.
+func (s *Store) dirs(dir string, create bool) error {
+	bi, err := os.Stat(s.base)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			if merr := s.markerPresent(); merr != nil {
+				return merr
+			}
+		}
+		return describe("stat", s.base, err)
+	}
+	if !bi.IsDir() {
+		return fmt.Errorf("archive local: %s is not a directory", s.base)
+	}
+	rel, err := filepath.Rel(s.base, dir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("archive local: %s is not below %s", dir, s.base)
+	}
+	if rel == "." {
+		return nil
+	}
+	cur := s.base
+	for _, seg := range strings.Split(rel, string(filepath.Separator)) {
+		cur = filepath.Join(cur, seg)
+		fi, err := os.Lstat(cur)
+		switch {
+		case err == nil && fi.Mode()&fs.ModeSymlink != 0:
+			return fmt.Errorf("archive local: %s is a symbolic link: the archive's directories must be real directories", cur)
+		case err == nil && !fi.IsDir():
+			return fmt.Errorf("archive local: %s is not a directory", cur)
+		case err == nil:
+		case errors.Is(err, fs.ErrNotExist) && create:
+			if err := os.Mkdir(cur, dirMode); err != nil && !errors.Is(err, fs.ErrExist) {
+				return describe("create directory", cur, err)
+			}
+			if fi, err := os.Lstat(cur); err != nil || !fi.IsDir() || fi.Mode()&fs.ModeSymlink != 0 {
+				return fmt.Errorf("archive local: %s is not a directory after creating it", cur)
+			}
+		case errors.Is(err, fs.ErrNotExist):
+			return nil // a read of something that is not there: the caller's not-found
+		default:
+			return describe("stat", cur, err)
+		}
+	}
+	return nil
+}
+
+// onNetwork reports whether the directory is on a network filesystem.
+func (s *Store) onNetwork() bool {
+	s.netOnce.Do(func() {
+		if fi, err := StatFS(s.dir); err == nil {
+			s.network = fi.Network()
+		}
+	})
+	return s.network
+}
+
+// openRead opens version file vp for reading: never through a symbolic
+// link, and on a network filesystem bypassing this client's page cache, so
+// a read-back verifies what the server stored, not what was just written
+// into local memory (openUncached).
+func (s *Store) openRead(vp string) (io.ReadCloser, error) {
+	if err := s.dirs(filepath.Dir(vp), false); err != nil {
+		return nil, err
+	}
+	if s.onNetwork() {
+		f, direct, err := openUncached(vp)
+		if err != nil {
+			return nil, err
+		}
+		if direct {
+			return newDirectReader(f), nil
+		}
+		return f, nil
+	}
+	return os.OpenFile(vp, os.O_RDONLY|oNoFollow, 0) // #nosec G304 -- an object below the archive's directory
 }
 
 // notFound is the error of an object that does not exist: ErrNotFound when
@@ -255,7 +419,7 @@ func writeSmall(ctx context.Context, final string, body []byte) error {
 		return err
 	}
 	defer os.Remove(tmp)
-	if err := commitNoReplace(tmp, final); err != nil {
+	if _, err := commitNoReplace(tmp, final); err != nil {
 		if errors.Is(err, errExists) {
 			return errExists
 		}
@@ -275,14 +439,18 @@ func (s *Store) Put(ctx context.Context, rel string, body io.ReaderAt, size int6
 	if size < 0 {
 		return objstore.PutResult{}, fmt.Errorf("archive local: negative size %d for %s", size, key)
 	}
-	if err := s.markerPresent(); err != nil {
+	dev, err := s.markerDev()
+	if err != nil {
+		return objstore.PutResult{}, err
+	}
+	if err := s.checkOwner(); err != nil {
 		return objstore.PutResult{}, err
 	}
 	p := s.file(rel)
 	dir, name := filepath.Split(p)
 	dir = filepath.Clean(dir)
-	if err := os.MkdirAll(dir, dirMode); err != nil {
-		return objstore.PutResult{}, describe("create directory", dir, err)
+	if err := s.dirs(dir, true); err != nil {
+		return objstore.PutResult{}, err
 	}
 	sweepTemps(dir, name)
 	tmp, shaHex, md5Hex, err := writeTemp(ctx, dir, name, io.NewSectionReader(body, 0, size), size)
@@ -297,11 +465,20 @@ func (s *Store) Put(ctx context.Context, rel string, body io.ReaderAt, size int6
 		return objstore.PutResult{}, err
 	}
 	if latest > 0 {
-		same, err := sameObject(ctx, versionFile(p, latest), size, shaHex, meta)
+		same, err := s.sameObject(ctx, versionFile(p, latest), size, shaHex, meta)
 		if err != nil {
 			return objstore.PutResult{}, err
 		}
 		if same {
+			// The stored copy may be the one a crash interrupted before its
+			// directory fsync: make it durable, on the same volume, before
+			// it counts.
+			if err := syncDirs(dir, s.base); err != nil {
+				return objstore.PutResult{}, err
+			}
+			if err := s.stillMounted(dir, dev); err != nil {
+				return objstore.PutResult{}, err
+			}
 			res.VersionID = strconv.Itoa(latest)
 			return res, nil
 		}
@@ -318,7 +495,7 @@ func (s *Store) Put(ctx context.Context, rel string, body io.ReaderAt, size int6
 			return objstore.PutResult{}, err
 		}
 	}
-	if err := commitNoReplace(tmp, vp); err != nil {
+	if _, err := commitNoReplace(tmp, vp); err != nil {
 		if errors.Is(err, errExists) {
 			return objstore.PutResult{}, fmt.Errorf("archive local: %s appeared while it was being written: another writer uses this directory", vp)
 		}
@@ -328,6 +505,9 @@ func (s *Store) Put(ctx context.Context, rel string, body io.ReaderAt, size int6
 	// keeps its mount's file mode (Probe reports it).
 	_ = os.Chmod(vp, objectMode)
 	if err := syncDirs(dir, s.base); err != nil {
+		return objstore.PutResult{}, err
+	}
+	if err := s.stillMounted(dir, dev); err != nil {
 		return objstore.PutResult{}, err
 	}
 	fi, err := os.Stat(vp)
@@ -383,7 +563,7 @@ func writeSidecar(ctx context.Context, vp string, sc sidecar) error {
 // sameObject reports whether the stored version vp holds exactly size bytes
 // hashing to shaHex — read in full, not taken from its sidecar — with the
 // metadata meta.
-func sameObject(ctx context.Context, vp string, size int64, shaHex string, meta map[string]string) (bool, error) {
+func (s *Store) sameObject(ctx context.Context, vp string, size int64, shaHex string, meta map[string]string) (bool, error) {
 	fi, err := os.Stat(vp)
 	if err != nil {
 		return false, describe("stat", vp, err)
@@ -392,10 +572,15 @@ func sameObject(ctx context.Context, vp string, size int64, shaHex string, meta 
 		return false, nil
 	}
 	sc, err := readSidecar(vp)
-	if err != nil || sc.SHA256 != shaHex || !maps.Equal(sc.Metadata, meta) {
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return false, nil // a copy without metadata is never reused
+	case err != nil:
+		return false, err
+	case sc.SHA256 != shaHex || !maps.Equal(sc.Metadata, meta):
 		return false, nil
 	}
-	got, err := hashFile(ctx, vp, sha256.New(), nil)
+	got, err := s.hashFile(ctx, vp, sha256.New(), nil)
 	if err != nil {
 		return false, err
 	}
@@ -404,8 +589,8 @@ func sameObject(ctx context.Context, vp string, size int64, shaHex string, meta 
 
 // hashFile hashes the file at p, copying its bytes to w as well (nil
 // discards), and returns the hex digest.
-func hashFile(ctx context.Context, p string, h hash.Hash, w io.Writer) (string, error) {
-	f, err := os.Open(p) // #nosec G304 -- an object below the archive's directory
+func (s *Store) hashFile(ctx context.Context, p string, h hash.Hash, w io.Writer) (string, error) {
+	f, err := s.openRead(p)
 	if err != nil {
 		return "", describe("open", p, err)
 	}
@@ -461,14 +646,19 @@ func (s *Store) Head(ctx context.Context, rel, versionID string) (objstore.Objec
 		return objstore.ObjectInfo{}, describe("stat", vp, err)
 	}
 	info := objstore.ObjectInfo{Key: key, Size: fi.Size(), VersionID: strconv.Itoa(v)}
-	if sc, err := readSidecar(vp); err == nil {
+	switch sc, err := readSidecar(vp); {
+	case err == nil:
 		info.ETag, info.Metadata = sc.MD5, sc.Metadata
-	} else {
+	case errors.Is(err, fs.ErrNotExist):
 		// No sidecar (an object copied in by hand): its ETag is the MD5 of
 		// its bytes, and it has no metadata.
-		if info.ETag, err = hashFile(ctx, vp, md5.New(), nil); err != nil { // #nosec G401 -- the S3-compatible ETag
+		if info.ETag, err = s.hashFile(ctx, vp, md5.New(), nil); err != nil { // #nosec G401 -- the S3-compatible ETag
 			return objstore.ObjectInfo{}, err
 		}
+	default:
+		// A sidecar that cannot be read or parsed says nothing about the
+		// object: an error, not a guess.
+		return objstore.ObjectInfo{}, err
 	}
 	return info, nil
 }
@@ -519,10 +709,13 @@ func (s *Store) VerifyFull(ctx context.Context, want objstore.PutResult, w io.Wr
 		return missing(s.notFound(key, want.VersionID))
 	}
 	vp := versionFile(p, v)
-	if sc, err := readSidecar(vp); err == nil && want.ETag != "" && sc.MD5 != want.ETag {
+	switch sc, err := readSidecar(vp); {
+	case err == nil && want.ETag != "" && sc.MD5 != want.ETag:
 		return mismatch("archive local: verify %s: ETag %q, want %q", want.Key, sc.MD5, want.ETag)
+	case err != nil && !errors.Is(err, fs.ErrNotExist):
+		return err
 	}
-	f, err := os.Open(vp) // #nosec G304 -- an object below the archive's directory
+	f, err := s.openRead(vp)
 	if errors.Is(err, fs.ErrNotExist) {
 		return missing(s.notFound(key, want.VersionID))
 	} else if err != nil {
@@ -554,7 +747,7 @@ func (s *Store) GetBytes(ctx context.Context, rel, versionID string, limit int64
 		return nil, objstore.ObjectInfo{}, err
 	}
 	vp := versionFile(s.file(rel), mustAtoi(info.VersionID))
-	f, err := os.Open(vp) // #nosec G304 -- an object below the archive's directory
+	f, err := s.openRead(vp)
 	if err != nil {
 		return nil, objstore.ObjectInfo{}, describe("open", vp, err)
 	}
@@ -592,6 +785,9 @@ func (s *Store) Preflight(ctx context.Context) error {
 	if _, err := ResolveUnderRoot(s.root, s.dir); err != nil {
 		return err
 	}
+	if err := s.checkVolume(); err != nil {
+		return err
+	}
 	if _, err := os.Stat(s.base); err == nil {
 		if _, err := ResolveUnderRoot(s.root, s.base); err != nil {
 			return err
@@ -600,8 +796,39 @@ func (s *Store) Preflight(ctx context.Context) error {
 	if err := s.markerPresent(); err != nil {
 		return err
 	}
+	if err := s.checkOwner(); err != nil {
+		return err
+	}
 	_, err := probeWrite(ctx, s.base, 4<<10)
 	return err
+}
+
+// checkVolume refuses a directory that cannot be the host's archive volume:
+// one in the container's writable layer or memory (overlay, tmpfs), or one
+// where neither it nor any directory up to ARCHIVE_ALLOWED_ROOT is a mount
+// point (the bind mount is missing). The worker runs it before its first
+// write, whatever set the configuration (environment or admin page).
+func (s *Store) checkVolume() error {
+	fi, err := StatFS(s.dir)
+	if err != nil {
+		return fmt.Errorf("archive local: %s: filesystem unknown: %w", s.dir, err)
+	}
+	if fi.Type == "overlay" || fi.Type == "tmpfs" {
+		return fmt.Errorf("archive local: %s is on %s: the container's writable layer or memory, lost with the container; bind-mount the host's archive volume under ARCHIVE_ALLOWED_ROOT %s", s.dir, fi.Type, s.root)
+	}
+	for d := s.dir; ; d = filepath.Dir(d) {
+		mounted, err := IsMountPoint(d)
+		if err != nil {
+			return describe("check the mount of", d, err)
+		}
+		if mounted {
+			return nil
+		}
+		if d == s.root || !within(d, s.root) || filepath.Dir(d) == d {
+			break
+		}
+	}
+	return fmt.Errorf("archive local: neither %s nor a directory above it up to ARCHIVE_ALLOWED_ROOT %s is a mount point: the archive would be written into the container; bind-mount the host's archive partition or share there (docs/OPERATIONS.md)", s.dir, s.root)
 }
 
 // marker is the marker file's content.
@@ -609,6 +836,9 @@ type marker struct {
 	Kind      string `json:"kind"`
 	Prefix    string `json:"prefix"`
 	CreatedAt string `json:"created_at"`
+	// InstallID is the install that initialised the directory
+	// (database.ArchiveInstallID); another install's is refused.
+	InstallID string `json:"install_id"`
 }
 
 // Init creates "<ARCHIVE_LOCAL_DIR>/<prefix>" and its marker (a marker that
@@ -619,13 +849,20 @@ func (s *Store) Init(ctx context.Context) error {
 	if _, err := ResolveUnderRoot(s.root, s.dir); err != nil {
 		return err
 	}
+	if err := s.checkVolume(); err != nil {
+		return err
+	}
+	if s.installID == "" {
+		return errors.New("archive local: no install id: the archive directory is initialised only by the archive worker")
+	}
 	if err := os.MkdirAll(s.base, dirMode); err != nil {
 		return describe("create directory", s.base, err)
 	}
 	if _, err := ResolveUnderRoot(s.root, s.base); err != nil {
 		return err
 	}
-	body, err := json.MarshalIndent(marker{Kind: "fwmon-archive-target", Prefix: s.prefix, CreatedAt: s.now().UTC().Format(time.RFC3339)}, "", "  ")
+	body, err := json.MarshalIndent(marker{Kind: "fwmon-archive-target", Prefix: s.prefix, CreatedAt: s.now().UTC().Format(time.RFC3339),
+		InstallID: s.installID}, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -639,7 +876,7 @@ func (s *Store) Init(ctx context.Context) error {
 	if _, err := syncDir(filepath.Dir(s.base)); err != nil {
 		return describe("fsync directory", filepath.Dir(s.base), err)
 	}
-	return nil
+	return s.checkOwner()
 }
 
 // randomSuffix is a short random hex string for probe file names.

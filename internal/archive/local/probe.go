@@ -55,7 +55,8 @@ func within(p, dir string) bool {
 type probeResult struct {
 	write, read      time.Duration
 	dirSyncSupported bool
-	readOnly         bool // chmod 0444 took effect
+	readOnly         bool   // chmod 0444 took effect
+	commit           string // how the no-replace commit was done (commitNoReplace)
 }
 
 // probeWrite exercises what a write of the archive does, in dir, with n
@@ -78,9 +79,11 @@ func probeWrite(ctx context.Context, dir string, n int) (probeResult, error) {
 	}
 	res.write = time.Since(start)
 	defer os.Remove(tmp)
-	if err := commitNoReplace(tmp, final); err != nil {
-		return res, describe("rename a test file in", dir, err)
+	how, err := commitNoReplace(tmp, final)
+	if err != nil {
+		return res, describe("commit a test file in", dir, err)
 	}
+	res.commit = how
 	defer func() {
 		_ = os.Chmod(final, 0o600) // an SMB server refuses to delete a read-only file
 		_ = os.Remove(final)
@@ -90,12 +93,12 @@ func probeWrite(ctx context.Context, dir string, n int) (probeResult, error) {
 		return res, err
 	}
 	defer os.Remove(tmp2)
-	switch err := commitNoReplace(tmp2, final); {
+	switch _, err := commitNoReplace(tmp2, final); {
 	case errors.Is(err, errExists):
 	case err == nil:
 		return res, fmt.Errorf("archive local: %s: a rename replaced an existing file; the archive needs a filesystem that refuses it (hard links or an atomic rename)", dir)
 	default:
-		return res, describe("rename a test file in", dir, err)
+		return res, describe("commit a second test file in", dir, err)
 	}
 	if err := os.Chmod(final, objectMode); err == nil {
 		if fi, err := os.Stat(final); err == nil && fi.Mode().Perm()&0o222 == 0 {
@@ -189,11 +192,15 @@ func Probe(ctx context.Context, root, dir string, minFree uint64) *Report {
 		r.add(Check{Name: "write", Detail: err.Error()})
 		return r
 	}
-	w := Check{Name: "write", OK: true, Detail: fmt.Sprintf("1 MiB written and fsynced in %s, renamed without overwrite, read back in %s", ms(res.write), ms(res.read))}
+	w := Check{Name: "write", OK: true, Detail: fmt.Sprintf("1 MiB written and fsynced in %s, committed by %s, a second commit onto the same name refused, read back in %s",
+		ms(res.write), res.commit, ms(res.read))}
 	if res.write > slowWrite {
 		w.Warn, w.Detail = true, w.Detail+": slow — a day of syslog is 0.3-0.7 GB"
 	}
 	r.add(w)
+	if res.commit == commitCheckedRename {
+		r.add(Check{Name: "no-replace", OK: true, Warn: true, Detail: "neither hard links nor RENAME_NOREPLACE work here: an object is committed by a rename after checking its name is free, which is not atomic; safe only with one writer per archive directory (the install id in the marker enforces that)"})
+	}
 	if !res.dirSyncSupported {
 		r.add(Check{Name: "directory fsync", OK: true, Warn: true, Detail: "the filesystem does not fsync directories (usual on SMB): a new name's durability is the server's"})
 	}

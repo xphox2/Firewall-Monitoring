@@ -133,21 +133,19 @@ func archiveRootMounted(root string) error {
 	return nil
 }
 
-// probeArchiveDir probes dir (the local target or the staging directory).
-// root bounds it: ARCHIVE_ALLOWED_ROOT, or — for a staging directory set
-// before 0.11.315 outside it and not changed — the directory itself.
+// probeArchiveDir probes dir (the local target or the staging directory)
+// under ARCHIVE_ALLOWED_ROOT. Probes write test files, and they write only
+// under the root: a directory outside it (a staging directory set before
+// 0.11.315 and kept) is reported as not probed.
 func probeArchiveDir(ctx context.Context, a config.ArchiveConfig, dir string) archiveDirCheck {
-	root := a.Root()
-	under := a.CheckArchivePath("dir", dir) == nil
-	if !under {
-		root = dir
+	if a.CheckArchivePath("dir", dir) != nil {
+		return archiveDirCheck{report: &local.Report{Dir: dir, OK: true, Checks: []local.Check{{Name: "location", OK: true, Warn: true,
+			Detail: dir + " is outside ARCHIVE_ALLOWED_ROOT " + a.Root() + ": kept from before 0.11.315, not probed (nothing is written outside the root); choose a directory under the root to have it checked"}}}}
 	}
-	r := local.Probe(ctx, root, dir, 0)
-	if under {
-		if err := archiveRootMounted(a.Root()); err != nil {
-			r.Checks = append([]local.Check{{Name: "mount", Detail: err.Error()}}, r.Checks...)
-			r.OK = false
-		}
+	r := local.Probe(ctx, a.Root(), dir, 0)
+	if err := archiveRootMounted(a.Root()); err != nil {
+		r.Checks = append([]local.Check{{Name: "mount", Detail: err.Error()}}, r.Checks...)
+		r.OK = false
 	}
 	return archiveDirCheck{report: r}
 }
@@ -216,6 +214,11 @@ func archiveLocalPreflight(ctx context.Context, db database.Store, a config.Arch
 	if err != nil {
 		return "", err
 	}
+	id, err := db.ArchiveInstallID(ctx)
+	if err != nil {
+		return "", err
+	}
+	st.SetInstallID(id)
 	err = st.Preflight(ctx)
 	switch {
 	case err == nil:
@@ -245,11 +248,10 @@ func testStaging(ctx context.Context, d *archiveDraft, out gin.H) *local.FSInfo 
 	if a.StagingDir == "" {
 		return nil
 	}
-	if a.StagingDir != d.before.StagingDir {
-		if err := a.CheckArchivePath("ARCHIVE_STAGING_DIR", a.StagingDir); err != nil {
-			out["staging"] = err.Error()
-			return nil
-		}
+	under := a.CheckArchivePath("ARCHIVE_STAGING_DIR", a.StagingDir)
+	if d.newStaging() && under != nil {
+		out["staging"] = under.Error()
+		return nil
 	}
 	pc := probeArchiveDir(ctx, a, a.StagingDir)
 	out["staging_checks"] = pc.report.Checks
@@ -258,9 +260,13 @@ func testStaging(ctx context.Context, d *archiveDraft, out gin.H) *local.FSInfo 
 		out["staging"] = "Staging directory " + a.StagingDir + ": " + msg
 		return pc.report.FS
 	}
-	if err := archiveStagingCheck(ctx, a.StagingDir); err != nil {
+	if err := archiveStagingCheck(ctx, a.StagingDir, under == nil); err != nil {
 		logArchiveSettingsRefusal("Test connection (staging directory)", http.StatusOK, err.Error())
 		out["staging"] = err.Error()
+		return pc.report.FS
+	}
+	if under != nil {
+		out["staging"] = "Staging directory " + a.StagingDir + " (outside the allowed root, kept: not probed for writing) has enough free space."
 		return pc.report.FS
 	}
 	out["staging"] = "Staging directory " + a.StagingDir + " is writable with enough free space."
@@ -272,7 +278,7 @@ func testStaging(ctx context.Context, d *archiveDraft, out gin.H) *local.FSInfo 
 // or changed (probe; under a mounted root). The first failure is returned.
 func archiveDirsForSave(ctx context.Context, d *archiveDraft) error {
 	a := d.after
-	if a.StagingDir != "" && a.StagingDir != d.before.StagingDir {
+	if d.newStaging() {
 		if msg := probeArchiveDir(ctx, a, a.StagingDir).failed(); msg != "" {
 			return fmt.Errorf("staging directory %s: %s", a.StagingDir, msg)
 		}

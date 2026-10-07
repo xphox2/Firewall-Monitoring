@@ -750,6 +750,19 @@ the container user's. A permission error says this in the preflight, the
 Test and the server log (`permission denied: the server runs as uid 100,
 gid 101 …`).
 
+**Durability on a share.** The archive counts an object as stored only after
+it was fsynced and read back, so the server must really store what it
+acknowledges: the **NFS export must be `sync`** (`/export/fwmon
+192.0.2.0/24(rw,sync,no_subtree_check)` — with `async` the server acknowledges
+writes it has not yet put on disk, and a NAS crash can lose objects the
+archive has verified and whose rows retention then deletes), and the **SMB
+share must honour flush** (Samba: `strict sync = yes`, the default since
+4.7; on a NAS appliance, disable any "async write" / "write cache"
+option for the share). The read-back on a network filesystem bypasses this
+client's page cache (direct I/O, or dropping the file's cached pages after
+the fsync), so it reads what the server returns, not what was just written
+into local memory.
+
 ### 2. Bind it into the container under the allowed root
 
 `ARCHIVE_ALLOWED_ROOT` (default `/archive`, **environment only**) is the
@@ -780,8 +793,10 @@ On **Raw Archive Settings**: Target `local`, then **Browse…** beside
 lists every check:
 
 - it resolves under the allowed root and is a directory;
-- a 1 MiB test file can be written, fsynced, renamed without overwriting an
-  existing file, read back and removed (with the write and read times);
+- a 1 MiB test file can be written, fsynced, committed under a new name
+  (Test names the method: hard link, `RENAME_NOREPLACE`, or a checked
+  rename that is not atomic), a second commit onto that name is refused, and
+  the file is read back and removed (with the write and read times);
 - free space, the filesystem type (`nfs`, `cifs`, `ext4`, `xfs`, `zfs`, …),
   whether read-only files and directory fsync work there;
 - a **warning** when the archive, the staging directory or the database
@@ -790,16 +805,34 @@ lists every check:
 
 Saving with a stream enabled runs the same probe after your password, then
 the archive worker initialises the directory on its first pass: it creates
-`<dir>/<prefix>/` and the marker file `.fwmon-archive-target` in it.
+`<dir>/<prefix>/` and the marker file `.fwmon-archive-target` in it, which
+carries this install's id (`system_settings.archive_install_id`, random). A
+directory whose marker carries another install's id is refused by the
+preflight and every write: **two servers must not share one archive
+directory** (give each its own directory or prefix). The worker's preflight
+also refuses, however the configuration was set (environment or admin
+page), a directory on the container's `overlay` or `tmpfs`, and one with no
+mount point between it and the allowed root.
 
 ### How it writes
 
 - **Crash-safe**: each object is written to a temporary file in its own
-  directory, fsynced, given its final name with a hard link (refused
-  atomically if the name exists) — or, where there are no hard links (SMB
-  without the Unix extensions), a rename after checking the name is free —
-  and the directory is fsynced. A crash leaves a temporary file (removed by
-  the next write there), never a partial object.
+  directory, fsynced, given its final name without replacing an existing
+  file, and the directory and those above it up to the prefix are fsynced.
+  A crash leaves a temporary file (removed by the next write there), never a
+  partial object. The final name is given by a hard link, which the kernel
+  (or the NFS server) refuses atomically if the name exists; where there are
+  no hard links (SMB without the Unix extensions) by `renameat2` with
+  `RENAME_NOREPLACE`, also refused atomically; and only where neither works
+  by a rename after checking that the name is free. That last one is **not
+  atomic**: it relies on the check and on a single writer per archive
+  directory (one archive worker per database, and the install id in the
+  marker). Test says which one the directory uses and warns about the last.
+- **The volume must stay the same during a write**: the device of the marker
+  is recorded when a write starts and checked again after it; a share
+  unmounted or replaced meanwhile fails the write, and the chunk is not
+  verified. Writes never create the `<dir>/<prefix>` directory itself and
+  never follow a symbolic link inside it.
 - **Never overwritten**: a second write of a key with other bytes (a chunk
   re-exported after a mismatch) keeps the first file and writes
   `<name>.v2`, `<name>.v3`, …; the version id the manifest records is that

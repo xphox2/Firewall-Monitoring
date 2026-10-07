@@ -302,6 +302,13 @@ func (h *Handler) draft(ctx context.Context, db database.Store, req archiveSetti
 	return d, nil
 }
 
+// newStaging reports whether the draft chooses a staging directory: one
+// that is neither the one in effect nor the environment's.
+func (d *archiveDraft) newStaging() bool {
+	st := d.after.StagingDir
+	return st != "" && st != d.before.StagingDir && st != d.env.StagingDir
+}
+
 // changedKeys lists, sorted, the keys the draft changes (stored or reverted).
 func (d *archiveDraft) changedKeys() []string {
 	keys := append([]string(nil), d.revert...)
@@ -397,9 +404,10 @@ func logArchiveSettingsRefusal(op string, status int, msg string) {
 }
 
 // archiveStagingCheck checks an enabled stream's staging directory: it
-// exists, is a directory this process can write, and has the worker's free
-// space floor.
-func archiveStagingCheck(ctx context.Context, dir string) error {
+// exists, is a directory this process can write (a test file, only when
+// write: Test writes only under ARCHIVE_ALLOWED_ROOT), and has the worker's
+// free space floor.
+func archiveStagingCheck(ctx context.Context, dir string, write bool) error {
 	st, err := os.Stat(dir)
 	if err != nil {
 		return fmt.Errorf("staging directory %s: %v (create it on a volume with room for a day of compressed syslog)", dir, errors.Unwrap(err))
@@ -407,13 +415,15 @@ func archiveStagingCheck(ctx context.Context, dir string) error {
 	if !st.IsDir() {
 		return fmt.Errorf("staging directory %s is not a directory", dir)
 	}
-	f, err := os.CreateTemp(dir, ".fwmon-write-check-*")
-	if err != nil {
-		return fmt.Errorf("staging directory %s is not writable by the server: %v", dir, errors.Unwrap(err))
+	if write {
+		f, err := os.CreateTemp(dir, ".fwmon-write-check-*")
+		if err != nil {
+			return fmt.Errorf("staging directory %s is not writable by the server: %v", dir, errors.Unwrap(err))
+		}
+		name := f.Name()
+		_ = f.Close()
+		_ = os.Remove(name)
 	}
-	name := f.Name()
-	_ = f.Close()
-	_ = os.Remove(name)
 	free, err := archiveStagingFree(ctx, dir)
 	if err != nil {
 		return fmt.Errorf("staging directory %s: free space unknown: %v", dir, err)
@@ -593,9 +603,10 @@ func (h *Handler) SaveArchiveSettings(c *gin.Context) {
 			}
 		}
 	}
-	// A staging directory chosen here must be under ARCHIVE_ALLOWED_ROOT
-	// (one set before 0.11.315 outside it keeps working while unchanged).
-	if d.after.StagingDir != "" && d.after.StagingDir != d.before.StagingDir {
+	// A staging directory chosen here must be under ARCHIVE_ALLOWED_ROOT;
+	// one kept (unchanged, or back to the environment's value) may be
+	// outside it — set before 0.11.315, it keeps working.
+	if d.newStaging() {
 		if err := d.after.CheckArchivePath("ARCHIVE_STAGING_DIR", d.after.StagingDir); err != nil {
 			logArchiveSettingsRefusal("save", http.StatusBadRequest, err.Error())
 			c.JSON(http.StatusBadRequest, response.Error(err.Error()))
@@ -614,7 +625,7 @@ func (h *Handler) SaveArchiveSettings(c *gin.Context) {
 		return
 	}
 	if d.after.Enabled() && (len(enabling) > 0 || d.before.StagingDir != d.after.StagingDir) {
-		if err := archiveStagingCheck(ctx, d.after.StagingDir); err != nil {
+		if err := archiveStagingCheck(ctx, d.after.StagingDir, true); err != nil {
 			refuseArchiveSave(c, "Not saved: "+err.Error())
 			return
 		}

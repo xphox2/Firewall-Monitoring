@@ -46,6 +46,7 @@ func newLocalHarness(t *testing.T, start time.Time, mod func(*config.ArchiveConf
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("the local test configuration does not validate: %v", err)
 	}
+	stubLocalVolume(t, root)
 	st, err := local.New(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -56,6 +57,18 @@ func newLocalHarness(t *testing.T, start time.Time, mod func(*config.ArchiveConf
 	t.Cleanup(func() { stagingFree = orig })
 	h.w = h.restart()
 	return h
+}
+
+// stubLocalVolume makes root an ext4 mount point (a temporary directory is
+// neither a mount point nor, on some CI runners, off tmpfs).
+func stubLocalVolume(t *testing.T, root string) {
+	t.Helper()
+	origFS, origMount := local.StatFS, local.IsMountPoint
+	local.StatFS = func(string) (local.FSInfo, error) {
+		return local.FSInfo{Type: "ext4", Device: 1, FreeBytes: 1 << 40, TotalBytes: 1 << 41}, nil
+	}
+	local.IsMountPoint = func(d string) (bool, error) { return d == root, nil }
+	t.Cleanup(func() { local.StatFS, local.IsMountPoint = origFS, origMount })
 }
 
 // file is the path of an object key of the local target.
@@ -320,5 +333,67 @@ func TestRestore_LocalTarget(t *testing.T) {
 	h.newRestore().Tick(ctx)
 	if j := h.restoreJob(job2.ID); j.Status != models.ArchiveRestoreFailed || !strings.Contains(j.Error, "REFUSED") {
 		t.Fatalf("restore of a changed object: %+v", j)
+	}
+}
+
+// TestWorker_LocalTarget_EnvOnlyVolumeChecks: configured from the
+// environment alone (no admin page, no Test), the worker built by New still
+// refuses a local directory on the container's overlay or tmpfs, or with no
+// mount point between it and the allowed root: its preflight fails, recorded
+// for the status, and nothing is written.
+func TestWorker_LocalTarget_EnvOnlyVolumeChecks(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "archive")
+	if err := os.Mkdir(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range map[string]string{
+		"ARCHIVE_SYSLOG_ENABLED": "true", "ARCHIVE_TARGET": "local", "ARCHIVE_LOCAL_DIR": dir, "ARCHIVE_ALLOWED_ROOT": root,
+		"ARCHIVE_S3_PREFIX": testPrefix, "ARCHIVE_STAGING_DIR": t.TempDir(),
+	} {
+		t.Setenv(k, v)
+	}
+	cfg := config.Load().Archive
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	orig := stagingFree
+	stagingFree = func(context.Context, string) (uint64, error) { return 1 << 40, nil }
+	t.Cleanup(func() { stagingFree = orig })
+	db := database.NewDatabaseForTesting(t)
+	seedSyslog(t, db, day(10, 3, 1, 0))
+	origFS, origMount := local.StatFS, local.IsMountPoint
+	t.Cleanup(func() { local.StatFS, local.IsMountPoint = origFS, origMount })
+	for _, c := range []struct {
+		fs      string
+		mounted bool
+		want    string
+	}{
+		{"overlay", true, "overlay"},
+		{"tmpfs", true, "tmpfs"},
+		{"ext4", false, "mount point"},
+	} {
+		local.StatFS = func(string) (local.FSInfo, error) { return local.FSInfo{Type: c.fs, Device: 1}, nil }
+		local.IsMountPoint = func(string) (bool, error) { return c.mounted, nil }
+		w, err := New(db, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.now = func() time.Time { return day(10, 5, 12, 0) }
+		w.Tick(ctx)
+		raw, _, err := db.ArchiveWorkerState(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rt, err := status.ParseRuntime(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pf, ok := rt.Stages["preflight"]; rt.PreflightOK || !ok || !strings.Contains(pf.Error, c.want) {
+			t.Fatalf("%s mounted=%v: runtime %+v", c.fs, c.mounted, rt)
+		}
+		if ents, _ := os.ReadDir(dir); len(ents) != 0 {
+			t.Fatalf("%s mounted=%v: the worker wrote %v", c.fs, c.mounted, ents)
+		}
 	}
 }

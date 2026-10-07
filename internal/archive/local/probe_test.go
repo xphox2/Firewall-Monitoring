@@ -43,7 +43,7 @@ func TestProbe_WritableDirectory(t *testing.T) {
 	if !r.OK {
 		t.Fatalf("probe failed: %+v", r.Checks)
 	}
-	if c := checkNamed(r, "write"); c == nil || !c.OK || !strings.Contains(c.Detail, "renamed without overwrite") {
+	if c := checkNamed(r, "write"); c == nil || !c.OK || !strings.Contains(c.Detail, "a second commit onto the same name refused") {
 		t.Fatalf("write check %+v", c)
 	}
 	if c := checkNamed(r, "read-only files"); c != nil {

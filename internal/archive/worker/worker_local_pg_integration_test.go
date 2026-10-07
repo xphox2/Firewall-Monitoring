@@ -33,6 +33,7 @@ func TestWorker_PG_LocalTarget(t *testing.T) {
 	if err := os.Mkdir(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
+	stubLocalVolume(t, root)
 	cfg := config.ArchiveConfig{SyslogEnabled: true, Target: config.ArchiveTargetLocal, LocalDir: dir, AllowedRoot: root,
 		Prefix: testPrefix, MinAgeHours: 2, SyslogRateRowsPerSec: 100000, FlowRateRowsPerSec: 100000,
 		SealGraceHours: 48, SealReverify: config.SealReverifyHead, StagingDir: t.TempDir()}
