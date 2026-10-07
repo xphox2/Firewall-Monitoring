@@ -320,8 +320,11 @@ func (r *Recorder) SetNoChunk(table string, none bool, now time.Time) {
 // and count, the streaks still going on, and since when a table has had no
 // chunk — so the health verdict's escalation ("failing for 15 min, 1 h")
 // survives a restart. A failure last seen more than restoreMaxAge before now
-// is dropped. Call it before the worker records anything.
-func (r *Recorder) Restore(prev *Runtime, now time.Time) {
+// is dropped. The no-chunk instants are kept only for the tables this worker
+// archives (tables), and only from a snapshot younger than restoreMaxAge: a
+// table switched off before its first chunk and on again months later starts
+// afresh. Call it before the worker records anything.
+func (r *Recorder) Restore(prev *Runtime, now time.Time, tables []string) {
 	if prev == nil {
 		return
 	}
@@ -341,8 +344,12 @@ func (r *Recorder) Restore(prev *Runtime, now time.Time) {
 			}
 		}
 	}
+	archived := map[string]bool{}
+	for _, t := range tables {
+		archived[t] = true
+	}
 	for t, since := range prev.NoChunkSince {
-		if _, ok := r.rt.NoChunkSince[t]; !ok {
+		if _, ok := r.rt.NoChunkSince[t]; !ok && archived[t] && now.Sub(prev.SeenAt) <= restoreMaxAge {
 			r.rt.NoChunkSince[t] = since
 		}
 	}
@@ -386,10 +393,18 @@ func (r *Recorder) SetStagingFree(free uint64, err error) {
 	r.rt.Staging.FreeBytes, r.rt.Staging.Error = &free, ""
 }
 
-// Snapshot is a copy of the runtime stamped SeenAt = now.
+// Snapshot is a copy of the runtime stamped SeenAt = now. Streaks last seen
+// more than restoreMaxAge before now are dropped first (their subject is
+// gone, or the step has not run since): the map stays bounded in a worker
+// that runs for months.
 func (r *Recorder) Snapshot(now time.Time) Runtime {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	for k, f := range r.rt.Failing {
+		if now.Sub(f.At) > restoreMaxAge {
+			delete(r.rt.Failing, k)
+		}
+	}
 	out := r.rt
 	out.SeenAt = now.UTC()
 	out.Tables = make(map[string]TableRuntime, len(r.rt.Tables))

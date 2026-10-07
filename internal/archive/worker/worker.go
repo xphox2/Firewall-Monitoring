@@ -382,7 +382,7 @@ func (w *Worker) restore(ctx context.Context) {
 		return
 	}
 	if prev, err := status.ParseRuntime(raw); err == nil {
-		w.rt.Restore(prev, w.now())
+		w.rt.Restore(prev, w.now(), w.tables)
 	}
 }
 

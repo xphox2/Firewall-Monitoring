@@ -243,9 +243,6 @@ func (e *Evaluator) Conditions(st *Status, th Thresholds, disk DiskTrend) []Cond
 	defer e.mu.Unlock()
 	now := st.GeneratedAt
 	var out []Condition
-	// A stream that receives no data (sFlow switched off) neither lags nor
-	// has a seal overdue — the same rule as the health verdict (Idle).
-	idleStream, idleTable := Idle(st)
 
 	// ARCHIVE_LAG per table: sflow and netflow are cut from one flow_samples
 	// chunk and always share its lag, so one alert names both.
@@ -283,7 +280,7 @@ func (e *Evaluator) Conditions(st *Status, th Thresholds, disk DiskTrend) []Cond
 		if t.LagSeconds != nil {
 			lag = secs(*t.LagSeconds)
 		}
-		over := t.Enabled && !idleTable[t.Table] && limit > 0 && t.LagSeconds != nil && lag > limit
+		over := t.Enabled && limit > 0 && t.LagSeconds != nil && lag > limit
 		if !over {
 			delete(e.lagAbove, t.Table)
 		} else if daily {
@@ -386,7 +383,7 @@ func (e *Evaluator) Conditions(st *Status, th Thresholds, disk DiskTrend) []Cond
 	for _, s := range st.Streams {
 		c := Condition{Type: models.AlertTypeArchiveSealOverdue, Label: s.Stream, Known: true,
 			Fields: map[string]string{"stream": s.Stream, "table": s.Table}}
-		c.Breached = s.Enabled && !idleStream[s.Stream] && th.SealOverdueDays > 0 && s.UnsealedDays > th.SealOverdueDays
+		c.Breached = s.Enabled && th.SealOverdueDays > 0 && s.UnsealedDays > th.SealOverdueDays
 		why := ""
 		for _, m := range s.Months {
 			if m.Month == s.OldestUnsealed && m.Error != "" {

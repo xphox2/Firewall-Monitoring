@@ -563,3 +563,32 @@ func TestWorker_PlanFailureStreak(t *testing.T) {
 		t.Fatalf("verdict %s: %+v", hl.Verdict, hl.Issues)
 	}
 }
+
+// TestWorker_NoChunkSinceDroppedWhenNotArchived: syslog switched off before
+// its first chunk: the next worker (flows only) does not carry syslog's
+// no-chunk instant over, so switching syslog on again later starts afresh.
+func TestWorker_NoChunkSinceDroppedWhenNotArchived(t *testing.T) {
+	h := newLocalHarness(t, day(10, 5, 11, 50), func(c *config.ArchiveConfig) { c.FlowsEnabled = false })
+	h.tick(ctx)
+	read := func() *status.Runtime {
+		t.Helper()
+		raw, _, err := h.db.ArchiveWorkerState(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rt, err := status.ParseRuntime(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rt
+	}
+	if _, ok := read().NoChunkSince[export.TableSyslog]; !ok {
+		t.Fatal("no syslog no-chunk record")
+	}
+	h.cfg.SyslogEnabled, h.cfg.FlowsEnabled = false, true
+	h.restart()
+	h.tick(ctx)
+	if _, ok := read().NoChunkSince[export.TableSyslog]; ok {
+		t.Fatalf("syslog's no-chunk instant carried into a flows-only worker: %+v", read().NoChunkSince)
+	}
+}

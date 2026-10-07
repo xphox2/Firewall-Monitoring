@@ -868,3 +868,38 @@ func TestSeal_UnrecordedBeforeV77(t *testing.T) {
 		})
 	}
 }
+
+// TestSeal_IdleStreamsEmptyMonth: a stream that receives nothing for a whole
+// month (sFlow switched off: no sflow sample, no interface counter) still
+// gets its month sealed — every hour and day is an empty chunk pinned in the
+// manifest — so the health verdict and ARCHIVE_SEAL_OVERDUE need no
+// exception for idle streams.
+func TestSeal_IdleStreamsEmptyMonth(t *testing.T) {
+	h := newHarness(t, day(9, 30, 21, 30), func(c *config.ArchiveConfig) { c.SyslogEnabled = false })
+	add := func(at time.Time) { // NetFlow only
+		f := models.FlowSample{Timestamp: at, DeviceID: 7, SamplerAddress: "192.0.2.1", SrcAddr: "192.0.2.10", DstAddr: "198.51.100.7", FlowSource: 2}
+		if err := h.db.Gorm().Create(&f).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	add(day(9, 30, 21, 20))
+	for at := day(9, 30, 21, 40); at.Before(day(10, 1, 1, 0)); at = at.Add(passEvery) {
+		if at.Minute() == 30 {
+			add(at)
+		}
+		h.tickAt(at)
+	}
+	h.tickAt(day(10, 3, 0, 0))
+	for _, s := range []string{export.StreamSFlow, export.StreamSFlowCounters, export.StreamNetFlow} {
+		m := h.month(s, "2026-09")
+		if m == nil || m.Status != models.ArchiveMonthSealed {
+			t.Fatalf("%s September: %+v", s, m)
+		}
+		if rep := h.verifyMonth(s, "2026-09"); !rep.OK() {
+			t.Fatalf("verify-month %s: %+v", s, rep)
+		}
+	}
+	if sf, _ := h.monthManifestOf(h.month(export.StreamSFlow, "2026-09")); sf.Rows != 0 || sf.ChunkCount == 0 {
+		t.Fatalf("sflow September manifest %+v", sf)
+	}
+}

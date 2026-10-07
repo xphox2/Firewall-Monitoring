@@ -41,7 +41,8 @@ import (
 //	month not sealed past its seal time           -                            over archive_seal_overdue_alert_days (3)
 //	gate holds rows past their retention          disk known not growing       over retention_held_alert_hours (6), disk growing or unknown
 //	verified data older than the lag threshold    -                            over archive_lag_alert_hours_* (+ DailySustain for daily tables);
-//	  (a table that receives data)                                                 also with no chunk left to export (a planner failing)
+//	  (every table, idle or not)                                                   also with no chunk left to export (a planner failing);
+//	                                                                               folded into its cause when the verdict knows it
 //	backlog: more than one chunk left             at once                      -
 //	enabled table without a chunk yet             at once                      over archive_lag_alert_hours_* since the worker first saw it
 //	staging directory free space                  under StagingWarnFactor x floor   under the floor (nothing is exported)
@@ -51,7 +52,7 @@ import (
 //	Object Lock off on an S3 target               at once                      -
 //	settings saved, not applied by the worker     at once                      -
 //	part of the status could not be read          at once                      -
-//	stream without rows in its recent chunks      info (neutral: no data received, e.g. sFlow switched off)
+//	stream without rows in its recent chunks      info (presentation only: "No data received"; suppresses nothing)
 //	sealed month marked partial                   info
 //
 // HEALTHY is the absence of every warning and error: every enabled table has
@@ -309,7 +310,7 @@ func Assess(st *Status, th Thresholds, disk DiskTrend) *Health {
 	if st.Enabled {
 		assessWorker(st, now, add)
 		assessStages(st, now, add)
-		assessTables(st, th, disk, now, tableIdle, add)
+		assessTables(st, th, disk, now, add)
 		assessStreams(st, th, idle, add)
 		assessGates(st, add)
 		if c.Target != config.ArchiveTargetLocal && c.ObjectLockDays == 0 {
@@ -330,6 +331,7 @@ func Assess(st *Status, th Thresholds, disk DiskTrend) *Health {
 		}
 	}
 
+	h.Issues = mergeLagIntoCause(h.Issues)
 	sort.SliceStable(h.Issues, func(i, j int) bool {
 		a, b := h.Issues[i], h.Issues[j]
 		if ra, rb := sevRank(a.Severity), sevRank(b.Severity); ra != rb {
@@ -380,13 +382,14 @@ func Assess(st *Status, th Thresholds, disk DiskTrend) *Health {
 		switch {
 		case !s.Enabled || !st.Enabled:
 			sh.State, sh.Label = "off", "Off"
-		case idle[s.Stream]:
-			// Neutral whatever the table's issues: nothing of it is at risk.
-			sh.State, sh.Label = "idle", "No data received"
 		case stalled:
 			sh.State, sh.Label = "stalled", "Not being backed up"
 		case sev == SeverityError:
 			sh.State, sh.Label = "error", "Needs action"
+		case idle[s.Stream]:
+			// Presentation only: an idle stream without an error of its
+			// own (or of its table) is neutral, not "up to date".
+			sh.State, sh.Label = "idle", "No data received"
 		case !t.HasChunks:
 			sh.State, sh.Label = "pending", "Waiting for the first chunk"
 		case t.Backlog != nil && t.Backlog.State == "catching_up" && t.Backlog.RemainingRows > 0:
@@ -448,9 +451,12 @@ func Assess(st *Status, th Thresholds, disk DiskTrend) *Health {
 
 // Idle reports which streams receive no data — enabled, their table has
 // verified chunks, and none of its RecentChunks holds a row of the stream
-// (sFlow switched off) — and which tables only hold such streams. The
-// verdict and the alerts (Evaluator.Conditions) both use it: an idle stream
-// is neutral, it neither lags nor has a seal overdue.
+// (sFlow switched off) — and which tables only hold such streams. It is
+// presentation only (the "No data received" state and note): it never
+// suppresses a warning or an error. "Idle" looks back at verified chunks, so
+// it lingers while nothing verifies — data that resumes while the target
+// fails leaves the table idle — and only the lag, which applies to every
+// table, tells.
 func Idle(st *Status) (streams, tables map[string]bool) {
 	streams, tables = map[string]bool{}, map[string]bool{}
 	has := map[string]bool{}
@@ -480,6 +486,41 @@ func tableLabel(table string) string {
 		return "sFlow counter"
 	}
 	return table
+}
+
+// mergeLagIntoCause folds a table's archive_lag issue into the error that
+// causes it — a blocking error (the worker or the target) or a step failing
+// for that table — so one cause is one error: the cause's text then says how
+// far behind the table is. A lag with no such cause stays its own issue. The
+// alerts keep ARCHIVE_LAG (annotated with the cause).
+func mergeLagIntoCause(issues []Issue) []Issue {
+	merged := map[int]bool{}
+	for i, is := range issues {
+		if is.Code != IssueArchiveLag {
+			continue
+		}
+		if c := causeOf(issues, is.Table); c >= 0 {
+			issues[c].Risk = strings.TrimSpace(issues[c].Risk + " " + is.Title + ".")
+			merged[i] = true
+		}
+	}
+	out := make([]Issue, 0, len(issues))
+	for i, is := range issues {
+		if !merged[i] {
+			out = append(out, is)
+		}
+	}
+	return out
+}
+
+// causeOf is the index of the error that stops table's archive (-1: none).
+func causeOf(issues []Issue, table string) int {
+	for i, is := range issues {
+		if is.Severity == SeverityError && (blocking[is.Code] || (is.Code == IssueStageFailing && is.Table == table)) {
+			return i
+		}
+	}
+	return -1
 }
 
 func plural(n int) string {
@@ -657,9 +698,14 @@ func assessStages(st *Status, now time.Time, add func(Issue)) {
 	if w == nil || w.Stale || w.Runner == ConfigProblemRunner {
 		return
 	}
+	// Tables whose chunk failures already have an issue: waiting for a
+	// retry (chunks_retrying / target_failing) or parked (needs_attention).
 	retrying := map[string]bool{}
 	for _, c := range st.Retrying {
 		retrying[c.Table] = true
+	}
+	for _, p := range st.NeedsAttention {
+		retrying[p.Table] = true
 	}
 	chunk := map[string]bool{}
 	for _, s := range []string{"count", "db", "manifest", "read", "settle", "stage", "upload", "verify", "sealed"} {
@@ -706,7 +752,7 @@ func gib(b uint64) string { return fmt.Sprintf("%.1f GiB", float64(b)/(1<<30)) }
 
 // assessTables: per enabled table, parked chunks, rows held past retention,
 // the lag, the backlog, a first chunk still pending and a long wait.
-func assessTables(st *Status, th Thresholds, disk DiskTrend, now time.Time, tableIdle map[string]bool, add func(Issue)) {
+func assessTables(st *Status, th Thresholds, disk DiskTrend, now time.Time, add func(Issue)) {
 	gated := map[string]bool{}
 	for _, g := range st.Gates {
 		gated[g.Stream] = g.Gated
@@ -756,10 +802,12 @@ func assessTables(st *Status, th Thresholds, disk DiskTrend, now time.Time, tabl
 		}
 		// The lag: as ARCHIVE_LAG (0 turns it off), a daily table's
 		// threshold plus DailySustain (its alert waits that long above it).
-		// Any table that receives data — with or without chunks left to
-		// export (a planner that keeps failing leaves none) — but not an
-		// idle one: its empty chunks hold nothing.
-		if limit, daily := th.lagOf(t.Table); limit > 0 && t.LagSeconds != nil && !tableIdle[t.Table] {
+		// Every table, with or without chunks left to export (a planner
+		// that keeps failing leaves none), idle or not: an idle table's
+		// empty chunks are cut and verified like any other, so its lag grows
+		// only when the worker is stuck — and data may be arriving again
+		// that nothing verifies yet (the target failing).
+		if limit, daily := th.lagOf(t.Table); limit > 0 && t.LagSeconds != nil {
 			if daily {
 				limit += DailySustain
 			}
@@ -774,7 +822,7 @@ func assessTables(st *Status, th Thresholds, disk DiskTrend, now time.Time, tabl
 				add(is)
 			}
 		}
-		if b := t.Backlog; b != nil && b.State == "catching_up" && b.Remaining > 1 && b.RemainingRows > 0 && !tableIdle[t.Table] {
+		if b := t.Backlog; b != nil && b.State == "catching_up" && b.Remaining > 1 && b.RemainingRows > 0 {
 			eta := "no estimate yet"
 			if b.ETASeconds != nil {
 				eta = "about " + durText(secs(*b.ETASeconds)) + " of work"
@@ -829,8 +877,9 @@ func assessStreams(st *Status, th Thresholds, idle map[string]bool, add func(Iss
 			add(Issue{Code: IssueStreamIdle, Severity: SeverityInfo, Stream: s.Stream, Table: s.Table,
 				Title:   "No " + s.Stream + " data received",
 				Meaning: fmt.Sprintf("The last %d verified %s chunks hold no %s rows.", s.RecentChunks, s.Table, s.Stream)})
-			continue
 		}
+		// An idle stream's months seal like any other (their chunks are
+		// pinned as empty): an overdue seal is an error for it too.
 		if th.SealOverdueDays > 0 && s.UnsealedDays > th.SealOverdueDays {
 			is := Issue{Code: IssueSealOverdue, Severity: SeverityError, Stream: s.Stream, Table: s.Table,
 				Title:   fmt.Sprintf("Month %s of %s is not sealed", s.OldestUnsealed, s.Stream),

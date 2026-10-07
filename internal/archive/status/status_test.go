@@ -63,13 +63,12 @@ func seed(t *testing.T, db *database.Database) {
 	day := 24 * time.Hour
 	chunk(t, db, export.TableSyslog, 1, 0, 100, time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC), day, models.ArchiveChunkVerified)
 	chunk(t, db, export.TableSyslog, 2, 100, 200, time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC), day, models.ArchiveChunkVerified)
-	// Its newest verified day holds rows: syslog receives data, so it is
-	// not idle (status.Idle).
+	// Its newest verified day holds rows (a verified chunk with rows has
+	// its objects).
 	object(t, db, chunk(t, db, export.TableSyslog, 3, 200, 300, time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC), day, models.ArchiveChunkVerified),
 		export.StreamSyslog, 100, 2000)
 	chunk(t, db, export.TableSyslog, 4, 300, 400, time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC), day, models.ArchiveChunkNeedsAttention)
-	// Its NetFlow rows: flow_samples receives data, so it is not idle
-	// (status.Idle) and its lag counts.
+	// Its NetFlow rows (a verified chunk with rows has its objects).
 	object(t, db, chunk(t, db, export.TableFlows, 1, 0, 50, time.Date(2026, 10, 6, 7, 0, 0, 0, time.UTC), time.Hour, models.ArchiveChunkVerified),
 		export.StreamNetFlow, 50, 1000)
 	chunk(t, db, export.TableFlows, 2, 50, 60, time.Date(2026, 10, 6, 8, 0, 0, 0, time.UTC), time.Hour, models.ArchiveChunkPending)

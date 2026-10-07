@@ -1469,12 +1469,12 @@ below holds.
 | `marker_foreign` | error | a local target belongs to another install | give this server its own directory or prefix |
 | `preflight_failing` | warning, error after 15 min | the worker's check of the target fails | Test connection, fix what it reports |
 | `target_failing` | error | uploads / read-backs have failed for 1 h with no chunk verified since | Test connection, fix what it reports |
-| `stage_failing` | warning after 30 min, error after 2 h | any other step (plan, mark, seal, settle, database, lock, …) keeps failing for a table or stream with no success in between (counted across poller restarts) | read the error and the poller's `archive:` lines; fix its cause |
+| `stage_failing` | warning after 30 min, error after 2 h | any other step (plan, mark, seal, settle, database, lock, …) keeps failing for a table or stream with no success in between (counted across poller restarts; a chunk step of a table with chunks waiting for a retry or parked is left to those issues) | read the error and the poller's `archive:` lines; fix its cause |
 | `staging_full` / `staging_low` | error under the floor / warning under twice the floor (or unknown) | the staging directory's free space | free space or choose another directory |
 | `needs_attention` | error | a chunk is parked | read its error, fix the cause, Reset |
 | `gate_unreadable` | warning, error after 15 min | the retention gate cannot read the stream switches | check the database and the poller |
 | `retention_held` | error (warning when the database volume is known not to grow) | unarchived rows held past retention longer than `retention_held_alert_hours` | fix the archive; release the gate only in an emergency |
-| `archive_lag` | error | a table that receives data has verified data older than `archive_lag_alert_hours_*` (+1 h for daily tables), also with nothing left to export (a planner that keeps failing) | find out why nothing is verified (`stage_failing` or another error usually says) |
+| `archive_lag` | error (folded into its cause when one is known) | a table's verified data is older than `archive_lag_alert_hours_*` (+1 h for daily tables), also with nothing left to export (a planner that keeps failing), idle or not | find out why nothing is verified (`stage_failing` or another error usually says) |
 | `seal_overdue` | error | a month not sealed `archive_seal_overdue_alert_days` after its seal time | read the seal error; fix parked or failing chunks |
 | `chunks_retrying` | warning | chunks failed and wait for their retry | nothing yet; Test connection if the error repeats |
 | `override_active` | warning | a gate is released by an override | re-engage it |
@@ -1487,11 +1487,14 @@ below holds.
 | `stream_idle` | info | a stream holds no rows in its table's last 10 verified chunks (e.g. sFlow switched off) | nothing, if expected |
 | `month_partial` | info | the newest month sealed partial | nothing to repair |
 
-An idle stream is neutral whatever else holds for it: its state is *No data
-received*, never a warning or an error — and the alerts apply the same rule:
-an idle table does not fire `ARCHIVE_LAG` and an idle stream does not fire
-`ARCHIVE_SEAL_OVERDUE` (an install with sFlow switched off is not paged for
-its `sflow-counters` stream). The per-stream table shows each
+An idle stream that is otherwise fine shows *No data received* instead of
+*Up to date*. Idle is presentation only: its empty chunks are cut, verified
+and sealed like any other, so a lag or an overdue seal is reported for it
+(and alerted) as for any stream — with sFlow switched off, `sflow-counters`
+lags only if the worker is stuck. When a table's lag has a cause the verdict
+knows (a stopped worker, an unreachable target, a step failing for that
+table), the lag is part of that error instead of a second one;
+`ARCHIVE_LAG` names the cause. The per-stream table shows each
 stream's state, verified-through point, backlog, rows and bytes stored and the
 compression of its recent objects; on a phone each stream is a card.
 
