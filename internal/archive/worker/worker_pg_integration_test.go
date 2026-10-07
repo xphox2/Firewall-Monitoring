@@ -401,3 +401,54 @@ func TestWorker_PG_MonthSeal(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 	}
 }
+
+// TestWorker_PG_SettleRetriedOnTick: on the real settle guard, a chunk whose
+// cut is still settling at the first pass is exported by a later tick once
+// its window has ended — no pass interval in between (lastPass is never
+// reset here: the old worker waited passEvery, ten minutes).
+func TestWorker_PG_SettleRetriedOnTick(t *testing.T) {
+	d := database.NewIntegrationDB(t)
+	if err := d.EnsurePartitions(); err != nil {
+		t.Fatal(err)
+	}
+	database.SetArchiveSettleForTesting(t, 300*time.Millisecond, 100*time.Millisecond)
+	srv := s3test.NewB2Strict(t, testBucket)
+	cfg := testConfig(srv, t.TempDir())
+	cfg.FlowsEnabled = false
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	client, err := s3.New(cfg, s3.WithRootCAs(pool), s3.WithMaxAttempts(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := stagingFree
+	stagingFree = func(context.Context, string) (uint64, error) { return 1 << 40, nil }
+	t.Cleanup(func() { stagingFree = orig })
+	w, err := newWorker(d, client, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -2).Add(9 * time.Hour)
+	m := models.SyslogMessage{Timestamp: created.Add(-time.Second), DeviceID: 1, ProbeID: 1, Hostname: "fw-example-01",
+		Message: "srcip=192.0.2.10 dstip=198.51.100.7", Severity: 5, CreatedAt: created}
+	if err := d.Gorm().Create(&m).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	w.Tick(context.Background()) // plans the day; its cut settles
+	var c models.ArchiveChunk
+	if err := d.Gorm().Where("table_name = ?", export.TableSyslog).First(&c).Error; err != nil {
+		t.Fatal(err)
+	}
+	if c.Status == models.ArchiveChunkVerified {
+		t.Fatal("the chunk was verified on the pass that cut it: the settle window did not apply")
+	}
+	for i := 0; i < 20 && c.Status != models.ArchiveChunkVerified; i++ {
+		time.Sleep(250 * time.Millisecond)
+		w.Tick(context.Background())
+		d.Gorm().First(&c, c.ID)
+	}
+	if c.Status != models.ArchiveChunkVerified || c.GuardXmax == nil {
+		t.Fatalf("chunk %+v not verified by the ticks after its settle window", c)
+	}
+}

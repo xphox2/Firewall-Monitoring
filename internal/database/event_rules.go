@@ -24,8 +24,9 @@ const (
 	seedVerFullCoverage = 5 // one editable default rule per remaining alert type
 	seedVerServerHealth = 6 // the fwmon server's own volumes (SERVER_DISK_HIGH)
 	seedVerArchive      = 7 // the raw archive's alerts (ARCHIVE_*, RETENTION_HELD)
+	seedVerArchiveGate  = 8 // ARCHIVE_GATE_UNREADABLE
 
-	eventRuleSeedVersion = seedVerArchive
+	eventRuleSeedVersion = seedVerArchiveGate
 )
 
 // EnsureDefaultRules seeds the default event rules exactly once (guarded by a
@@ -296,6 +297,12 @@ func defaultEventRules() []models.EventRule {
 			AlertType: models.AlertTypeArchiveUnsettledLong, SeedVersion: seedVerArchive,
 			CooldownMinutes: func() *int { v := 360; return &v }(),
 			MatchJSON:       `{"op":"eq","field":"event_type","value":"archive_unsettled_long"}`},
+		// Gen 8: the retention gate cannot read the stream switches.
+		{Name: "Default: Archive gate cannot read its switches", Description: "The retention gate has not been able to read the archive's stream switches (system_settings) for 15 minutes. Before any successful read it holds every archived table's deletes; after one it keeps the switches it read last, so a change saved on the admin page is not applied. Matchable field: holding (all, last).",
+			Enabled: true, Priority: 200, Source: "device", Action: "alert",
+			AlertType: models.AlertTypeArchiveGateUnreadable, SeedVersion: seedVerArchiveGate,
+			CooldownMinutes: func() *int { v := 360; return &v }(),
+			MatchJSON:       `{"op":"eq","field":"event_type","value":"archive_gate_unreadable"}`},
 		{Name: "Default: Interface errors", Description: "Interface error/discard delta alert. Add an interface_name condition to mute or re-grade one noisy port.",
 			Enabled: true, Priority: 200, Source: "device", Action: "alert",
 			AlertType: models.AlertTypeInterfaceErrors, SeedVersion: seedVerFullCoverage,

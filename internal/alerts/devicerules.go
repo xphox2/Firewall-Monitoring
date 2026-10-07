@@ -50,6 +50,8 @@ func deviceEventType(at models.AlertType) string {
 		return "retention_held"
 	case models.AlertTypeArchiveUnsettledLong:
 		return "archive_unsettled_long"
+	case models.AlertTypeArchiveGateUnreadable:
+		return "archive_gate_unreadable"
 	}
 	return ""
 }

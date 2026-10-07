@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -357,6 +358,7 @@ func (d *Database) RecordArchiveGateState(ctx context.Context) error {
 		if c := d.archiveGateCache; c != nil {
 			c.mu.Lock()
 			c.startupPending, c.ok = true, false
+			c.readFailed(archiveGateClock(), err)
 			c.mu.Unlock()
 		}
 		return fmt.Errorf("archive gate: %w", err)
@@ -505,6 +507,22 @@ type archiveGateCacheState struct {
 	// failedAt: the last failed read (retried after archiveGateRetry);
 	// lastErrLog rate-limits its log line.
 	failedAt, lastErrLog time.Time
+	// failingSince: the first of the failed reads in a row (zero after a
+	// read succeeds), lastErr the latest one's error
+	// (ArchiveGateReadHealth).
+	failingSince time.Time
+	lastErr      string
+}
+
+// readFailed records a failed read of the switches at now.
+func (c *archiveGateCacheState) readFailed(now time.Time, err error) {
+	if c.failingSince.IsZero() {
+		c.failingSince = now
+	}
+	c.lastErr = err.Error()
+	if len(c.lastErr) > archiveErrorMax {
+		c.lastErr = c.lastErr[:archiveErrorMax]
+	}
 }
 
 // readArchiveGateConfig resolves the two stream switches now: the admin
@@ -578,12 +596,13 @@ func (d *Database) archiveGateConfig() ArchiveGateConfig {
 			log.Printf("archive gate: %v (deletes of the archived tables wait until it can be read)", err)
 		}
 		c.failedAt = now
+		c.readFailed(now, err)
 		return c.failedResult()
 	}
 	if c == nil {
 		return cfg
 	}
-	c.failedAt = time.Time{}
+	c.failedAt, c.failingSince, c.lastErr = time.Time{}, time.Time{}, ""
 	switch {
 	case c.startupPending:
 		// The poller's start could not read the switches: record it now.
@@ -601,6 +620,76 @@ func (d *Database) archiveGateConfig() ArchiveGateConfig {
 	c.cfg, c.at, c.ok = cfg, now, true
 	c.observed, c.seeded = cfg, true
 	return cfg
+}
+
+// ArchiveGateHealthKey is the system setting the poller records the retention
+// gate's reads of the stream switches in (JSON, ArchiveGateHealth) on its
+// server-health tick, so the status card in the API process can show a gate
+// that cannot read them.
+const ArchiveGateHealthKey = "archive_gate_health"
+
+// ArchiveGateHealth is whether the retention gate can read the archive's
+// stream switches. FailingSince: the first failed read in a row (nil while
+// they succeed); HoldingAll: meanwhile both streams' deletes wait (no read
+// has succeeded since the poller started) — otherwise the gate keeps the
+// switches it read last.
+type ArchiveGateHealth struct {
+	SeenAt       time.Time  `json:"seen_at"`
+	FailingSince *time.Time `json:"failing_since,omitempty"`
+	Error        string     `json:"error,omitempty"`
+	HoldingAll   bool       `json:"holding_all,omitempty"`
+}
+
+// ArchiveGateReadHealth reads the stream switches as the gate does (at most
+// once per archiveGateCacheTTL, or archiveGateRetry after a failure — a read
+// now, when due, keeps the answer current although no delete ran) and
+// reports whether the gate can read them. Only the process that runs the
+// deletes (the poller) has a meaningful answer.
+func (d *Database) ArchiveGateReadHealth(now time.Time) ArchiveGateHealth {
+	h := ArchiveGateHealth{SeenAt: now.UTC()}
+	c := d.archiveGateCache
+	if c == nil {
+		return h
+	}
+	d.archiveGateConfig()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.failingSince.IsZero() {
+		t := c.failingSince.UTC()
+		h.FailingSince, h.Error = &t, c.lastErr
+		h.HoldingAll = !c.ok || c.startupPending
+	}
+	return h
+}
+
+// SaveArchiveGateHealth stores the poller's record of the gate's reads.
+func (d *Database) SaveArchiveGateHealth(ctx context.Context, h ArchiveGateHealth) error {
+	js, err := json.Marshal(h)
+	if err != nil {
+		return err
+	}
+	return d.WithContext(ctx).UpsertSetting(&models.SystemSetting{
+		Key: ArchiveGateHealthKey, Value: string(js), Type: "json", Category: "archive",
+		Label: "Archive retention gate: reads of the stream switches (written by the poller)",
+	})
+}
+
+// ArchiveGateHealthRecord reads the poller's record (nil when none was
+// written, or it does not parse).
+func (d *Database) ArchiveGateHealthRecord(ctx context.Context) (*ArchiveGateHealth, error) {
+	var vals []string
+	if err := d.db.WithContext(ctx).Model(&models.SystemSetting{}).Where("\"key\" = ?", ArchiveGateHealthKey).
+		Limit(1).Pluck("value", &vals).Error; err != nil {
+		return nil, err
+	}
+	if len(vals) == 0 || strings.TrimSpace(vals[0]) == "" {
+		return nil, nil
+	}
+	var h ArchiveGateHealth
+	if err := json.Unmarshal([]byte(vals[0]), &h); err != nil {
+		return nil, nil
+	}
+	return &h, nil
 }
 
 // archiveGateRetry is how soon a failed read of the switches is retried.

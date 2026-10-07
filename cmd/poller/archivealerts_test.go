@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"firewall-mon/internal/alerts"
+	"firewall-mon/internal/archive/status"
+	"firewall-mon/internal/database"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/notifier"
 	"firewall-mon/internal/serverhealth"
@@ -151,5 +153,65 @@ func TestCheckArchiveAlerts_RetentionHeldThroughFreeSpaceRise(t *testing.T) {
 	db.Gorm().Model(&models.Alert{}).Where("alert_type = ?", models.AlertTypeRetentionHeld+"_RESOLVED").Count(&companions)
 	if rows != 1 || companions != 0 {
 		t.Fatalf("%d rows and %d recovery companions, want 1 and 0", rows, companions)
+	}
+}
+
+// TestCheckArchiveAlerts_GateUnreadable: the retention gate cannot read the
+// stream switches. The tick records it for the status card at once, fires
+// ARCHIVE_GATE_UNREADABLE once the reads have failed for longer than
+// status.GateUnreadableAfter — on an install that never archived too (the
+// gate then holds every archived table's deletes) — and resolves it when a
+// read succeeds.
+func TestCheckArchiveAlerts_GateUnreadable(t *testing.T) {
+	p, db := newTestPoller(t)
+	db.EnableArchiveGateCacheForTesting()
+	p.alertManager = alerts.NewAlertManager(p.cfg, notifier.NewNotifier(p.cfg), db)
+	start := time.Now()
+	clock := start
+	orig := archiveAlertClock
+	archiveAlertClock = func() time.Time { return clock }
+	t.Cleanup(func() { archiveAlertClock = orig })
+	const metric = "archive_gate_unreadable_switches"
+
+	if err := db.Gorm().Exec("ALTER TABLE system_settings RENAME TO system_settings_away").Error; err != nil {
+		t.Fatal(err)
+	}
+	p.checkArchiveAlerts(nil, false)
+	if got := openArchiveAlerts(t, p, models.AlertTypeArchiveGateUnreadable, metric); got != 0 {
+		t.Fatalf("fired on the first failed read: %d open", got)
+	}
+	if h := db.ArchiveGateReadHealth(start); h.FailingSince == nil || !h.HoldingAll {
+		t.Fatalf("gate health %+v, want failing and holding every stream", h)
+	}
+	clock = start.Add(status.GateUnreadableAfter + time.Minute)
+	p.checkArchiveAlerts(nil, false)
+	if got := openArchiveAlerts(t, p, models.AlertTypeArchiveGateUnreadable, metric); got != 1 {
+		t.Fatalf("after %v of failed reads: %d open alerts, want 1", status.GateUnreadableAfter+time.Minute, got)
+	}
+
+	if err := db.Gorm().Exec("ALTER TABLE system_settings_away RENAME TO system_settings").Error; err != nil {
+		t.Fatal(err)
+	}
+	waitGateRetry(t, db)
+	p.checkArchiveAlerts(nil, false)
+	if got := openArchiveAlerts(t, p, models.AlertTypeArchiveGateUnreadable, metric); got != 0 {
+		t.Fatalf("still open after the switches could be read: %d", got)
+	}
+	rec, err := db.ArchiveGateHealthRecord(context.Background())
+	if err != nil || rec == nil || rec.FailingSince != nil {
+		t.Fatalf("recorded gate health %+v %v, want healthy", rec, err)
+	}
+}
+
+// waitGateRetry waits until the gate retries its read (a failed read is
+// retried at most every few seconds).
+func waitGateRetry(t *testing.T, db *database.Database) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for db.ArchiveGateReadHealth(time.Now()).FailingSince != nil {
+		if time.Now().After(deadline) {
+			t.Fatal("the gate never read the switches again")
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
 }

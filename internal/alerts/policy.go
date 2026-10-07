@@ -608,7 +608,7 @@ func defaultCooldownForType(alertType models.AlertType) int {
 	}
 	switch alertType {
 	case models.AlertTypeArchiveLag, models.AlertTypeArchiveNeedsAttention, models.AlertTypeArchiveSealOverdue,
-		models.AlertTypeRetentionHeld, models.AlertTypeArchiveUnsettledLong:
+		models.AlertTypeRetentionHeld, models.AlertTypeArchiveUnsettledLong, models.AlertTypeArchiveGateUnreadable:
 		// Raw archive conditions move over hours and days, evaluated every 5
 		// minutes: a persistent one re-notifies every 6 h, not every tick. The
 		// seeded rules carry it too (the policy-level 5 minutes would

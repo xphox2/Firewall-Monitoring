@@ -174,6 +174,20 @@ func ArchiveStreamEnabled(a config.ArchiveConfig, stream string) bool {
 // (config.ArchiveConfig.Location) the archive's chunks were written to.
 const ArchiveLocationKey = "archive_location"
 
+// ArchiveRecordedLocation returns the location recorded for the archive's
+// chunks (ok false: none recorded yet).
+func (d *Database) ArchiveRecordedLocation(ctx context.Context) (loc string, ok bool, err error) {
+	var vals []string
+	if err := d.db.WithContext(ctx).Model(&models.SystemSetting{}).Where("\"key\" = ?", ArchiveLocationKey).
+		Limit(1).Pluck("value", &vals).Error; err != nil {
+		return "", false, fmt.Errorf("read %s: %w", ArchiveLocationKey, err)
+	}
+	if len(vals) == 0 || vals[0] == "" {
+		return "", false, nil
+	}
+	return vals[0], true, nil
+}
+
 // CheckArchiveLocation compares loc, the location the worker is about to
 // write to, with the one recorded for the archive's chunks. While there is no
 // chunk the record follows loc; once chunks exist it is kept (an install from

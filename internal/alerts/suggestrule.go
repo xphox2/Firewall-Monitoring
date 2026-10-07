@@ -433,7 +433,7 @@ func ruleSourceForAlertType(at models.AlertType) string {
 		models.AlertTypeProbeDataLag, models.AlertTypeProbeDataTruncated,
 		models.AlertTypeServerDiskHigh,
 		models.AlertTypeArchiveLag, models.AlertTypeArchiveNeedsAttention, models.AlertTypeArchiveSealOverdue,
-		models.AlertTypeRetentionHeld, models.AlertTypeArchiveUnsettledLong:
+		models.AlertTypeRetentionHeld, models.AlertTypeArchiveUnsettledLong, models.AlertTypeArchiveGateUnreadable:
 		return "device"
 	}
 	// EVERY SFLOW_* type — the consolidated security card, per-detection

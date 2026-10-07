@@ -298,3 +298,47 @@ func TestCheckArchiveLocation(t *testing.T) {
 		t.Fatalf("re-cased prefix with chunks: %v %v, want a mismatch", mismatch, err)
 	}
 }
+
+// TestArchiveGateReadHealth: the gate's record of its switch reads — failing
+// since the first failed read in a row (later failures keep that start),
+// holding both streams before any read succeeded and the last switches
+// after one, and healthy again on the first read that succeeds.
+func TestArchiveGateReadHealth(t *testing.T) {
+	d, clock := archiveSwitchFixture(t)
+	if h := d.ArchiveGateReadHealth(*clock); h.FailingSince != nil {
+		t.Fatalf("a readable gate reports %+v", h)
+	}
+	first := *clock
+	*clock = clock.Add(archiveGateCacheTTL + time.Second)
+	if err := d.db.Migrator().RenameTable("system_settings", "system_settings_away"); err != nil {
+		t.Fatal(err)
+	}
+	failedAt := *clock
+	h := d.ArchiveGateReadHealth(*clock)
+	if h.FailingSince == nil || !h.FailingSince.Equal(failedAt) || h.HoldingAll || !strings.Contains(h.Error, "system_settings") {
+		t.Fatalf("after a successful read at %v then a failure: %+v, want failing since %v keeping the last switches", first, h, failedAt)
+	}
+	*clock = clock.Add(archiveGateRetry + time.Second)
+	if h := d.ArchiveGateReadHealth(*clock); h.FailingSince == nil || !h.FailingSince.Equal(failedAt) {
+		t.Fatalf("a second failure moved the start: %+v", h)
+	}
+	if err := d.db.Migrator().RenameTable("system_settings_away", "system_settings"); err != nil {
+		t.Fatal(err)
+	}
+	*clock = clock.Add(archiveGateRetry + time.Second)
+	if h := d.ArchiveGateReadHealth(*clock); h.FailingSince != nil || h.Error != "" {
+		t.Fatalf("readable again: %+v", h)
+	}
+
+	// No read has ever succeeded (the poller's start failed): both held.
+	d2, clock2 := archiveSwitchFixture(t)
+	if err := d2.db.Migrator().DropTable(&models.SystemSetting{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d2.RecordArchiveGateState(context.Background()); err == nil {
+		t.Fatal("RecordArchiveGateState succeeded without its switches")
+	}
+	if h := d2.ArchiveGateReadHealth(*clock2); h.FailingSince == nil || !h.HoldingAll {
+		t.Fatalf("start unrecorded: %+v, want failing and holding both streams", h)
+	}
+}

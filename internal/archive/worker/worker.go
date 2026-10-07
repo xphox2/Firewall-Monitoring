@@ -66,7 +66,9 @@ type Store interface {
 
 // Cadence. The poller calls Tick every TickInterval; marks are taken on every
 // tick (and every markEvery during a long pass), chunks are planned and
-// exported every passEvery.
+// exported every passEvery — and on the first tick after a waiting chunk
+// becomes exportable (recheckWaits), so a settle window of a minute costs
+// about a minute, not a pass interval.
 const (
 	TickInterval = time.Minute
 	passEvery    = 10 * time.Minute
@@ -119,7 +121,17 @@ type Worker struct {
 	running   atomic.Bool
 	preflight bool
 	lastPass  time.Time
-	cooldown  map[string]time.Time // table (or "seal-"+stream) → no new attempt before (after a bucket failure)
+	// waits: the tables whose next chunk waits on its cut, and from when
+	// Tick checks it again between passes (recheckWaits): the end of its
+	// settle window, or — zero — every tick (an open writer).
+	waits map[string]time.Time
+	// settled is the settle check (database.ArchiveChunkSettled; tests
+	// stand in for it: it always passes on SQLite).
+	settled func(ctx context.Context, c *models.ArchiveChunk) error
+	// lastProgress: when progress last wrote the snapshot (the pass's
+	// goroutine only).
+	lastProgress time.Time
+	cooldown     map[string]time.Time // table (or "seal-"+stream) → no new attempt before (after a bucket failure)
 	// sealFailures counts a stream's consecutive seal attempts the service or
 	// the database failed (their backoff).
 	sealFailures map[string]int
@@ -159,7 +171,9 @@ func newWorker(db *database.Database, store Store, cfg config.ArchiveConfig) (*W
 	w := &Worker{
 		db: db, store: store, cfg: cfg, now: time.Now,
 		cooldown: map[string]time.Time{}, sealFailures: map[string]int{}, lastLog: map[string]string{},
+		waits: map[string]time.Time{},
 	}
+	w.settled = db.ArchiveChunkSettled
 	if cfg.FlowsEnabled {
 		w.tables = append(w.tables, export.TableFlows, export.TableCounters)
 		w.marks = append(w.marks, export.TableFlows, export.TableCounters)
@@ -220,6 +234,42 @@ func (w *Worker) clearLog(key string) {
 	w.logMu.Unlock()
 }
 
+// stageEvery is the shortest interval between two snapshot writes for a
+// stage change (a handful per chunk); progress within a stage is written at
+// most every status.ProgressEvery.
+const stageEvery = 5 * time.Second
+
+// stage records that the current chunk entered stage (Activity.Stage) and
+// writes the snapshot unless the last write is younger than stageEvery.
+func (w *Worker) stage(ctx context.Context, stage string, f func(a *status.Activity)) {
+	now := w.now().UTC()
+	w.rt.UpdateActivity(func(a *status.Activity) {
+		if a.Stage != stage {
+			a.Stage, a.StageStartedAt = stage, now
+		}
+		if f != nil {
+			f(a)
+		}
+	})
+	w.writeProgress(ctx, stageEvery)
+}
+
+// progress writes the runtime snapshot — the current chunk's progress with
+// it — when the last progress write is ProgressEvery old: called as often as
+// rows are read or objects sent, it writes at most every 15 s.
+func (w *Worker) progress(ctx context.Context) { w.writeProgress(ctx, status.ProgressEvery) }
+
+// writeProgress writes the snapshot when the last progress write is at least
+// every old.
+func (w *Worker) writeProgress(ctx context.Context, every time.Duration) {
+	now := w.now()
+	if now.Sub(w.lastProgress) < every && !now.Before(w.lastProgress) {
+		return
+	}
+	w.lastProgress = now
+	w.saveRuntime(ctx)
+}
+
 // fail counts a failure at stage (fwmon_archive_errors_total) and records it
 // as the stage's last failure.
 func (w *Worker) fail(stage string, err error) {
@@ -228,14 +278,112 @@ func (w *Worker) fail(stage string, err error) {
 }
 
 // unsettled sets why table's next chunk waits (fwmon_archive_unsettled and
-// the runtime state; "" = it does not).
+// the runtime state; "" = it does not). Such a wait is checked again by the
+// next pass.
 func (w *Worker) unsettled(table, reason string, err error) {
+	delete(w.waits, table)
 	metrics.SetArchiveUnsettled(table, reason)
 	detail := ""
 	if err != nil {
 		detail = err.Error()
 	}
 	w.rt.SetUnsettled(table, reason, detail, w.now())
+}
+
+// settleWait records why chunk c of table cannot be exported yet (err, from
+// the settle check). A cut still settling, or one waiting for an open
+// writer, is checked again on the tick after its window ends (every tick
+// for a writer: it may finish at any moment) instead of at the next pass.
+func (w *Worker) settleWait(table string, c *models.ArchiveChunk, err error) {
+	var un *database.ArchiveUnsettledError
+	switch {
+	case errors.As(err, &un) && un.SettleLeft > 0:
+		until := w.now().Add(un.SettleLeft)
+		metrics.SetArchiveUnsettled(table, "settling")
+		// The snapshot carries the end of the window, not the time left
+		// (which would be stale a minute later): the status counts down.
+		w.rt.SetWait(table, "settling", fmt.Sprintf("chunk %d: the cut is settling", c.Seq), &until, w.now())
+		w.waits[table] = until
+	case errors.As(err, &un):
+		w.unsettled(table, "open_writer", fmt.Errorf("chunk %d: %w", c.Seq, err))
+		w.waits[table] = time.Time{}
+		w.logf("settle-"+table, "%s chunk %d waits: %v", table, c.Seq, err)
+	case errors.Is(err, database.ErrArchiveNoStatementTimeout):
+		w.unsettled(table, "no_statement_timeout", err)
+		w.logf("settle-"+table, "%v", err)
+	case errors.Is(err, database.ErrArchiveLeafMove):
+		w.unsettled(table, "unattached_leaf", err)
+		w.logf("settle-"+table, "%s chunk %d waits: %v", table, c.Seq, err)
+	default:
+		// A failure, not a wait: the next pass retries it, not every tick
+		// (a database in trouble is not polled each minute per table).
+		delete(w.waits, table)
+		w.fail("settle", err)
+		w.logf("settle-"+table, "%s chunk %d: settle check: %v", table, c.Seq, err)
+	}
+}
+
+// recheckWaits runs the settle check of every table whose next chunk waits on
+// its cut and is due to be checked again (settleWait), and reports whether one
+// of them can now be exported — the tick then runs a pass at once. A chunk
+// still waiting has its wait recorded again (an open writer's holder may
+// have changed). One cheap check per waiting table per tick at most; a
+// settling chunk is not checked before its window ends.
+func (w *Worker) recheckWaits(ctx context.Context, now time.Time) bool {
+	for _, t := range w.tables {
+		from, ok := w.waits[t]
+		if !ok || now.Before(from) || ctx.Err() != nil {
+			continue
+		}
+		if t == export.TableSyslog && !w.inWindow(now) {
+			continue
+		}
+		if until, ok := w.cooldown[t]; ok && now.Before(until) {
+			continue
+		}
+		c, err := w.db.NextArchiveChunk(ctx, t, now)
+		if err != nil {
+			if ctx.Err() == nil {
+				w.fail("db", err)
+				w.logf("next-"+t, "%v", err)
+			}
+			continue
+		}
+		w.clearLog("next-" + t)
+		if c == nil {
+			w.unsettled(t, "", nil)
+			continue
+		}
+		if c.Status == models.ArchiveChunkVerifying {
+			return true
+		}
+		if err := w.settled(ctx, c); err != nil {
+			if ctx.Err() == nil {
+				w.settleWait(t, c, err)
+			}
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// nextPass is when Tick next runs a pass: passEvery after the last one, or
+// the tick after the earliest wait recheckWaits will check (it runs the pass
+// only if that chunk can then be exported).
+func (w *Worker) nextPass() time.Time {
+	next := w.lastPass.Add(passEvery)
+	for _, t := range w.tables {
+		if from, ok := w.waits[t]; ok {
+			if from.IsZero() {
+				from = w.now()
+			}
+			if from.Before(next) {
+				next = from
+			}
+		}
+	}
+	return next
 }
 
 // saveRuntime writes the runtime state, with the staging directory's free
@@ -299,11 +447,14 @@ func (w *Worker) Tick(ctx context.Context) {
 		log.Printf("archive: bucket preflight passed; archiving %v", w.tables)
 	}
 	w.takeMarks(ctx)
-	if now := w.now(); !w.lastPass.IsZero() && now.Sub(w.lastPass) < passEvery {
+	if now := w.now(); !w.lastPass.IsZero() && now.Sub(w.lastPass) < passEvery && !w.recheckWaits(ctx, now) {
+		w.rt.SetPasses(w.lastPass, w.nextPass())
 		return
 	}
 	w.lastPass = w.now()
+	w.rt.SetPasses(w.lastPass, w.lastPass.Add(passEvery)) // while it runs
 	w.pass(ctx)
+	w.rt.SetPasses(w.lastPass, w.nextPass())
 }
 
 // takeMarks records the due id marks of the flow tables.
@@ -497,27 +648,11 @@ func (w *Worker) workOne(ctx context.Context, table string) progress {
 	if c.Status != models.ArchiveChunkVerifying {
 		// Exporting needs the cut settled; checking first keeps a chunk that
 		// is merely waiting from counting an attempt.
-		if err := w.db.ArchiveChunkSettled(ctx, c); err != nil {
+		if err := w.settled(ctx, c); err != nil {
 			if ctx.Err() != nil {
 				return progressNone
 			}
-			var un *database.ArchiveUnsettledError
-			switch {
-			case errors.As(err, &un) && un.SettleLeft > 0:
-				w.unsettled(table, "settling", err)
-			case errors.As(err, &un):
-				w.unsettled(table, "open_writer", fmt.Errorf("chunk %d: %w", c.Seq, err))
-				w.logf("settle-"+table, "%s chunk %d waits: %v", table, c.Seq, err)
-			case errors.Is(err, database.ErrArchiveNoStatementTimeout):
-				w.unsettled(table, "no_statement_timeout", err)
-				w.logf("settle-"+table, "%v", err)
-			case errors.Is(err, database.ErrArchiveLeafMove):
-				w.unsettled(table, "unattached_leaf", err)
-				w.logf("settle-"+table, "%s chunk %d waits: %v", table, c.Seq, err)
-			default:
-				w.fail("settle", err)
-				w.logf("settle-"+table, "%s chunk %d: settle check: %v", table, c.Seq, err)
-			}
+			w.settleWait(table, c, err)
 			return progressNone
 		}
 		w.clearLog("settle-" + table)
@@ -531,6 +666,9 @@ func (w *Worker) workOne(ctx context.Context, table string) progress {
 		}
 		return progressNone
 	}
+	w.rt.StartActivity(&status.Activity{Table: table, ChunkID: c.ID, Seq: c.Seq, PeriodStart: c.PeriodStart.UTC(), PeriodEnd: c.PeriodEnd.UTC(),
+		Stage: "start", StartedAt: now.UTC(), StageStartedAt: now.UTC(), IDSpan: c.IDHi - c.IDLo})
+	defer w.rt.StartActivity(nil)
 	err = w.process(ctx, c)
 	if err == nil {
 		delete(w.cooldown, table)
@@ -715,7 +853,12 @@ func (w *Worker) exportUpload(ctx context.Context, c *models.ArchiveChunk) error
 	if err != nil {
 		return stageErr("settle", err)
 	}
-	res, err := w.db.ExportArchiveChunk(ctx, c, schema, database.ArchiveReadOptions{RowsPerSec: w.rate(c.SourceTable)}, open)
+	w.stage(ctx, "export", nil)
+	res, err := w.db.ExportArchiveChunk(ctx, c, schema, database.ArchiveReadOptions{RowsPerSec: w.rate(c.SourceTable),
+		Progress: func(rows, lastID int64) {
+			w.rt.UpdateActivity(func(a *status.Activity) { a.RowsDone, a.IDsDone = rows, lastID-c.IDLo })
+			w.progress(ctx)
+		}}, open)
 	if err != nil {
 		var un *database.ArchiveUnsettledError
 		if errors.As(err, &un) {
@@ -764,6 +907,18 @@ func (w *Worker) exportUpload(ctx context.Context, c *models.ArchiveChunk) error
 		return stageErr("db", err)
 	}
 
+	var total int64
+	for i := range objs {
+		total += objs[i].ObjectBytes
+	}
+	w.stage(ctx, "upload", func(a *status.Activity) {
+		a.Rows, a.RowsDone, a.IDsDone = res.Rows, res.Rows, a.IDSpan
+		a.BytesDone, a.BytesTotal, a.ObjectsDone, a.ObjectsTotal = 0, total, 0, len(objs)
+	})
+	uploaded := func(o *models.ArchiveObject) {
+		w.rt.UpdateActivity(func(a *status.Activity) { a.BytesDone += o.ObjectBytes; a.ObjectsDone++ })
+		w.progress(ctx)
+	}
 	for i, o := range res.Objects {
 		obj := &objs[i]
 		f := files[o.ID]
@@ -787,6 +942,7 @@ func (w *Worker) exportUpload(ctx context.Context, c *models.ArchiveChunk) error
 			if err := w.db.MarkArchiveObjectUploaded(ctx, obj, old.ETag, old.VersionID, old.PartCount, old.LockUntil, w.now()); err != nil {
 				return stageErr("db", err)
 			}
+			uploaded(obj)
 			continue
 		}
 		put, err := w.put(ctx, rel, f, obj.ObjectBytes, meta)
@@ -810,6 +966,7 @@ func (w *Worker) exportUpload(ctx context.Context, c *models.ArchiveChunk) error
 		if err := w.db.MarkArchiveObjectUploaded(ctx, obj, put.ETag, put.VersionID, put.Parts, lockUntil, w.now()); err != nil {
 			return stageErr("db", err)
 		}
+		uploaded(obj)
 	}
 	if w.afterUploaded != nil {
 		if err := w.afterUploaded(ctx, c); err != nil {
@@ -851,6 +1008,14 @@ func (w *Worker) verify(ctx context.Context, c *models.ArchiveChunk) error {
 	if err != nil {
 		return stageErr("db", err)
 	}
+	var total int64
+	for i := range objs {
+		total += objs[i].ObjectBytes
+	}
+	w.stage(ctx, "verify", func(a *status.Activity) {
+		a.Rows = c.RowCount
+		a.BytesDone, a.BytesTotal, a.ObjectsDone, a.ObjectsTotal = 0, total, 0, len(objs)
+	})
 	var got export.ChunkResult
 	for i := range objs {
 		o := &objs[i]
@@ -876,12 +1041,15 @@ func (w *Worker) verify(ctx context.Context, c *models.ArchiveChunk) error {
 		got.Rows += chk.rows
 		got.IDSum += chk.idSum
 		got.IDHash += chk.idHash
+		w.rt.UpdateActivity(func(a *status.Activity) { a.BytesDone += o.ObjectBytes; a.ObjectsDone++ })
+		w.progress(ctx)
 	}
 	if w.beforeCount != nil {
 		if err := w.beforeCount(ctx, c); err != nil {
 			return stageErr("count", err)
 		}
 	}
+	w.stage(ctx, "count", nil)
 	cnt, err := w.db.CheckArchiveChunkCount(ctx, c, &got)
 	if err != nil {
 		return stageErr("db", err)
@@ -894,6 +1062,7 @@ func (w *Worker) verify(ctx context.Context, c *models.ArchiveChunk) error {
 	if err != nil {
 		return stageErr("db", err)
 	}
+	w.stage(ctx, "manifest", nil)
 	for _, stream := range export.StreamsOf(c.SourceTable) {
 		if err := w.putManifest(ctx, c, stream, schema, objs); err != nil {
 			return stageErr("manifest", err)

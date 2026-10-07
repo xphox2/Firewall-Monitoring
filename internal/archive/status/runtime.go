@@ -23,7 +23,52 @@ type Runtime struct {
 	Staging     Staging                 `json:"staging"`
 	Tables      map[string]TableRuntime `json:"tables,omitempty"`
 	Stages      map[string]StageError   `json:"stages,omitempty"`
+	// LastPassAt / NextPassAt: when the worker last planned and worked
+	// chunks, and when it will next (sooner when a settling chunk's window
+	// ends first). nil until the first pass.
+	LastPassAt *time.Time `json:"last_pass_at,omitempty"`
+	NextPassAt *time.Time `json:"next_pass_at,omitempty"`
+	// Activity is the chunk being worked right now (nil between chunks).
+	Activity *Activity `json:"activity,omitempty"`
 }
+
+// Activity is the chunk the worker is working and how far it got. The
+// worker updates it in memory as it goes and writes it with the rest of the
+// snapshot at most every ProgressEvery (plus the minute's write), so the
+// status shows a long export or upload moving without a database write per
+// page.
+type Activity struct {
+	Table       string    `json:"table"`
+	ChunkID     uint      `json:"chunk_id"`
+	Seq         int64     `json:"seq"`
+	PeriodStart time.Time `json:"period_start"`
+	PeriodEnd   time.Time `json:"period_end"`
+	// Stage: start (claimed; checks before the export), export (reading
+	// the rows into the staging files), upload,
+	// verify (reading every object back), count (recounting the range in
+	// the table), manifest (the chunk.json files).
+	Stage          string    `json:"stage"`
+	StartedAt      time.Time `json:"started_at"`
+	StageStartedAt time.Time `json:"stage_started_at"`
+	// Export: RowsDone rows read so far; IDSpan the chunk's id range
+	// (id_hi − id_lo, an upper bound of its rows) and IDsDone how much of
+	// it is read — their ratio is the export's fraction.
+	RowsDone int64 `json:"rows_done"`
+	IDSpan   int64 `json:"id_span"`
+	IDsDone  int64 `json:"ids_done"`
+	// Rows: the chunk's row count once exported (0 before).
+	Rows int64 `json:"rows"`
+	// Upload and verify: bytes sent / read back of BytesTotal, objects done
+	// of ObjectsTotal.
+	BytesDone    int64 `json:"bytes_done"`
+	BytesTotal   int64 `json:"bytes_total"`
+	ObjectsDone  int   `json:"objects_done"`
+	ObjectsTotal int   `json:"objects_total"`
+}
+
+// ProgressEvery is how often the worker writes its snapshot while a chunk
+// makes progress (rows read, bytes sent or read back).
+const ProgressEvery = 15 * time.Second
 
 // StaleAfter is how old the worker's snapshot may be before it is reported
 // stale. The worker writes it every minute, also during a long pass.
@@ -41,10 +86,13 @@ type Staging struct {
 // one of the fwmon_archive_unsettled reasons (settling, open_writer,
 // no_statement_timeout, unattached_leaf), Since when it began (reset when the
 // reason changes), Detail the worker's message (for open_writer the session
-// holding the oldest running transaction, when visible).
+// holding the oldest running transaction, when visible). Until: when a
+// settling chunk's window ends — the status counts down to it, so the
+// snapshot never carries a "time left" that goes stale.
 type TableRuntime struct {
 	Reason string     `json:"reason,omitempty"`
 	Since  *time.Time `json:"since,omitempty"`
+	Until  *time.Time `json:"until,omitempty"`
 	Detail string     `json:"detail,omitempty"`
 }
 
@@ -93,6 +141,12 @@ func (r *Recorder) clean(msg string) string {
 
 // SetUnsettled records table's wait reason ("" = not waiting) and its detail.
 func (r *Recorder) SetUnsettled(table, reason, detail string, now time.Time) {
+	r.SetWait(table, reason, detail, nil, now)
+}
+
+// SetWait is SetUnsettled with the instant the wait ends, when known (a
+// settling chunk's window).
+func (r *Recorder) SetWait(table, reason, detail string, until *time.Time, now time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if reason == "" {
@@ -104,8 +158,41 @@ func (r *Recorder) SetUnsettled(table, reason, detail string, now time.Time) {
 		t := now.UTC()
 		cur.Since = &t
 	}
-	cur.Reason, cur.Detail = reason, r.clean(detail)
+	cur.Reason, cur.Detail, cur.Until = reason, r.clean(detail), nil
+	if until != nil {
+		u := until.UTC()
+		cur.Until = &u
+	}
 	r.rt.Tables[table] = cur
+}
+
+// SetPasses records when the last pass ran and when the next one is due.
+func (r *Recorder) SetPasses(last, next time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	l, n := last.UTC(), next.UTC()
+	r.rt.LastPassAt, r.rt.NextPassAt = &l, &n
+}
+
+// StartActivity records that chunk work began on a (nil: none).
+func (r *Recorder) StartActivity(a *Activity) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if a == nil {
+		r.rt.Activity = nil
+		return
+	}
+	v := *a
+	r.rt.Activity = &v
+}
+
+// UpdateActivity applies f to the current activity (a no-op when none).
+func (r *Recorder) UpdateActivity(f func(a *Activity)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.rt.Activity != nil {
+		f(r.rt.Activity)
+	}
 }
 
 // Failed records a failure of stage (err may be nil: the stage is counted
@@ -158,6 +245,10 @@ func (r *Recorder) Snapshot(now time.Time) Runtime {
 	if f := r.rt.Staging.FreeBytes; f != nil {
 		v := *f
 		out.Staging.FreeBytes = &v
+	}
+	if a := r.rt.Activity; a != nil {
+		v := *a
+		out.Activity = &v
 	}
 	return out
 }

@@ -615,9 +615,14 @@ manifest in the database names every object by them. The poller records that
 location (`system_settings.archive_location`) and logs a WARNING at the
 worker's start when the configuration names another one (a change made in
 the environment). Changing any of them
-from the form is refused (HTTP 409) with a pointer to the next section. Other
-fields (credentials, Object Lock days, pacing, the window, the streams) can
-change at any time.
+from the form is refused (HTTP 409) with a pointer to the next section. The
+form judges a change against that **recorded** location (since 0.11.312),
+not against the configuration in effect: if the environment was changed
+under the archive, saving the recorded endpoint, bucket and prefix on the
+form is accepted (it puts the archive back where its chunks are), and any
+third location is refused naming the recorded one. Other fields
+(credentials, Object Lock days, pacing, the window, the streams) can change
+at any time.
 
 **The bucket name may be in either case** (since 0.11.311): enter it as the
 storage service's console shows it — Backblaze B2 keeps the case a bucket was
@@ -630,8 +635,18 @@ chunks, the form saves such a change only after a listing under the prefix
 finds the archive's objects under the new spelling — on a service that
 matches names exactly (a legacy AWS us-east-1 bucket, MinIO) the re-cased
 name is another bucket, and the save is refused with the service's answer.
-A name that is not a DNS label (upper case, `_`, `.`) is always sent
-path-style, whatever `ARCHIVE_S3_PATH_STYLE` says.
+The listing compares with the recorded spelling: entering the bucket exactly
+as recorded needs none. A name that is not a DNS label (upper case, `_`, `.`)
+is always sent path-style, whatever `ARCHIVE_S3_PATH_STYLE` says.
+
+**A re-case in the environment is not checked.** The listing runs only for a
+save from the form. Changing only the case of `ARCHIVE_S3_BUCKET` in the
+environment is taken as the same bucket (the poller's location check ignores
+the case, so it logs no WARNING): on a service that matches names exactly
+the worker would then fail its preflight or reads with the service's
+`NoSuchBucket` (the card's *Last failure* of `preflight`, `upload` or
+`verify`). Re-case a bucket from the form, or check it with **Test
+connection** first.
 
 **Why a save or Test connection failed** is in the form's message — for a
 bucket preflight, the storage service's own error code and message — and in
@@ -1207,26 +1222,63 @@ they follow the verified chunks.
 
 From 0.11.308 the archive's whole state is in one place:
 
-- **Settings → Retention → Raw Archive** (admins): per table the verified-through
-  id V and its period end, the lag, the chunks by status, why the next chunk
-  waits (and for how long), how far past its window the gate holds unarchived
-  rows; per stream the month folders (open, due, sealed, `seal_failed`,
-  partial, gate events); the chunks parked in `needs_attention`, each with a
-  **Reset** (reason + password + 2FA code, like the purge); the worker's last
-  failure per stage and the staging directory's free space; and a red banner,
-  with **Re-engage now**, while a stream's gate is released by an override.
+- **Settings → Retention → Raw Archive** (admins), refreshed every 15 s while
+  the page is open (paused while the browser tab is hidden), top to bottom:
+  - banners for whatever needs you: a stream's gate released by an override
+    (with **Re-engage now**), a retention gate that cannot read the stream
+    switches, chunks parked in `needs_attention` or waiting for a retry, a
+    stale worker, a bucket preflight that has not passed, a staging
+    directory below its floor;
+  - **Now**: the chunk the worker is working (table, period, stage —
+    exporting with the rows read and the share of its id range, uploading /
+    reading back with objects and bytes — and how long the stage and the
+    chunk have run), or a settling chunk's countdown, or *Idle*; and when the
+    last pass ran and the next one is due;
+  - **Tables**: per table the planned chunks verified of the total (a bar),
+    the chunks left and the oldest period among them, an upper bound of their
+    rows (their id span), the rate (rows per second of work over the last ten
+    verified chunks) and the work left at that rate, *caught up* / *up to
+    date* (one chunk left: the newest) / *catching up*, the lag, why the next
+    chunk waits, how far past its window the gate holds unarchived rows. Only
+    planned chunks count: a long backlog of hourly flow chunks is planned 64
+    at a time, so its total grows while it catches up;
+  - **Recently verified**: the last ten chunks with rows, objects, size and
+    how long each took;
+  - **Waiting for a retry** (failed chunks, with the error and the retry time)
+    and **Needs attention** (parked chunks, each with a **Reset**: reason +
+    password + 2FA code, like the purge);
+  - **Streams and months**: per stream the verified rows and bytes in the
+    bucket (a sealed month's from its seal, the others' from their verified
+    objects), the next month to seal and when it is due, and the month
+    folders (pending, due, sealed, `seal_failed`, partial, gate events) with
+    their archived rows and bytes;
+  - the worker's last failure per stage (collapsed).
+
+  Banners are polite status regions, and a refresh rewrites only the
+  sections that changed, so a focused button keeps its focus. Every read
+  behind the card is bounded by what it shows, not by the archive's age
+  (migration v79 adds two partial indexes on `archive_chunks`; the totals
+  read only the months not sealed yet).
 - `docker exec <container> fwmon-api archive --status` prints the same
   (`--status --json` the API's JSON), and `GET /admin/api/archive/status`
   serves it (admin-only). The configuration shows the key id's last four
   characters only; the secret never appears.
 
 The worker's own state (why a chunk waits, last failures, staging space,
-preflight) is written by the poller to the system setting
-`archive_worker_state` about once a minute while it holds the archive lock.
-"Stale" means it has not written for 15 minutes: no poller is running the
-archive worker (down, wedged, or archiving disabled in its environment).
+preflight, the current chunk's progress, the last and next pass) is written
+by the poller to the system setting `archive_worker_state` about once a
+minute while it holds the archive lock, and every 15 s while a chunk makes
+progress. "Stale" means it has not written for 15 minutes: no poller is
+running the archive worker (down, wedged, or archiving disabled in its
+environment).
 
-**Alerts.** The poller evaluates five alerts on its 5-minute server-health
+**Settling.** Every cut waits out a settle window (`DB_STATEMENT_TIMEOUT` +
+5 s, at least a minute) before its chunk is exported. The worker checks a
+settling chunk again on the first tick (a minute) after the window ends, and
+a chunk held by an open writing transaction on every tick, instead of
+waiting for its next 10-minute pass; the card counts the window down.
+
+**Alerts.** The poller evaluates six alerts on its 5-minute server-health
 tick, device-less like `SERVER_DISK_HIGH` (they show as *Firewall-Mon
 server*). Each has a seeded event rule (*Default: Archive …*, *Default:
 Retention held …*) with a 6 h re-notify cooldown, recovers with a recovery
@@ -1240,6 +1292,7 @@ one off, blank uses the default):
 | `ARCHIVE_SEAL_OVERDUE` | stream | the oldest closed month is still not sealed this many days after its seal time (`fwmon_archive_month_unsealed_days`) | 3 days |
 | `RETENTION_HELD` (critical) | table | the gate is on and holds unarchived rows more than this far past the table's window (syslog: its shortest severity window; raw flows: the rollup's 1 h; counters: `RETENTION_FLOW_DAYS`) **and** the database volume is growing (free space below the sample 1–3 h earlier; counted as growing when the volume cannot be measured). The growth only fires it: once active it stays until the hold clears, whatever the free space does meanwhile | 6 h |
 | `ARCHIVE_UNSETTLED_LONG` | table | the next chunk has waited this long for an open writing transaction, an unattached partition leaf, or a `statement_timeout` (needs a fresh worker state; a stale one leaves the alert as it is) | 6 h |
+| `ARCHIVE_GATE_UNREADABLE` | (one) | the poller's retention gate has failed to read the archive's stream switches (`system_settings`) for longer than 15 minutes. Evaluated from the gate itself, even where the archive was never enabled, and even when the rest of the status cannot be read. Field `holding`: `all` — no read has succeeded since the poller started, so every archived table's deletes are held; `last` — the gate keeps the switches it read last, so a stream switched on or off on the admin page is not applied | 15 min (fixed) |
 
 Settings keys: `archive_lag_alert_hours_syslog`, `archive_lag_alert_hours_flows`,
 `archive_lag_alert_hours_counters`, `archive_seal_overdue_alert_days`,
@@ -1285,6 +1338,12 @@ override settings), no archive alert fires or resolves.
   persists, the next partition pass failed to attach it — check the poller log.
   `no_statement_timeout`: set `DB_STATEMENT_TIMEOUT` (the archive cannot
   settle a cut without one).
+- **`ARCHIVE_GATE_UNREADABLE`** — the message carries the database error.
+  The gate retries every few seconds and the alert recovers on the first
+  read that succeeds. Check the poller's database connection and that
+  `system_settings` is readable by its role. With `holding=all` raw rows
+  accumulate meanwhile (watch `SERVER_DISK_HIGH`); nothing is deleted
+  ungated.
 
 ## Raw archive: restore to a staging table
 

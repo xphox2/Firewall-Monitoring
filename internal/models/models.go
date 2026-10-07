@@ -95,13 +95,15 @@ const (
 // device-less like SERVER_DISK_HIGH: a stream's verified archive lags, a chunk
 // is parked in needs_attention, a closed month stays unsealed, the retention
 // gate holds raw rows past their window while the database volume grows, or
-// the next chunk's export has waited for hours (an open writer).
+// the next chunk's export has waited for hours (an open writer), or the
+// retention gate cannot read the archive's stream switches.
 const (
 	AlertTypeArchiveLag            AlertType = "ARCHIVE_LAG"
 	AlertTypeArchiveNeedsAttention AlertType = "ARCHIVE_NEEDS_ATTENTION"
 	AlertTypeArchiveSealOverdue    AlertType = "ARCHIVE_SEAL_OVERDUE"
 	AlertTypeRetentionHeld         AlertType = "RETENTION_HELD"
 	AlertTypeArchiveUnsettledLong  AlertType = "ARCHIVE_UNSETTLED_LONG"
+	AlertTypeArchiveGateUnreadable AlertType = "ARCHIVE_GATE_UNREADABLE"
 )
 
 // Severity is the typed enum of alert severities. Underlying values match the

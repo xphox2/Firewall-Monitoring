@@ -276,6 +276,13 @@ func SameLocationText(a, b string) bool {
 	return ea == eb && SameBucket(ba, bb) && pa == pb
 }
 
+// LocationBucket is the bucket of a Location string ("" when it does not
+// parse).
+func LocationBucket(loc string) string {
+	_, bucket, _, _ := splitLocation(loc)
+	return bucket
+}
+
 // splitLocation splits "<scheme>://<host>/<bucket>/<prefix>/" into its
 // endpoint, bucket and the rest.
 func splitLocation(loc string) (endpoint, bucket, rest string, ok bool) {
