@@ -40,7 +40,7 @@ import (
 //	chunk parked in needs_attention               -                            at once
 //	month not sealed past its seal time           -                            over archive_seal_overdue_alert_days (3)
 //	gate holds rows past their retention          disk known not growing       over retention_held_alert_hours (6), disk growing or unknown
-//	verified data older than the lag threshold    -                            over archive_lag_alert_hours_* (+ DailySustain for daily tables);
+//	next chunk late past its schedule (lateness)  -                            over archive_lag_alert_hours_* (3 h) late (schedule.go);
 //	  (every table, idle or not)                                                   also with no chunk left to export (a planner failing);
 //	                                                                               folded into its cause when the verdict knows it
 //	backlog: more than one chunk left             at once                      -
@@ -800,21 +800,18 @@ func assessTables(st *Status, th Thresholds, disk DiskTrend, now time.Time, add 
 			}
 			add(is)
 		}
-		// The lag: as ARCHIVE_LAG (0 turns it off), a daily table's
-		// threshold plus DailySustain (its alert waits that long above it).
-		// Every table, with or without chunks left to export (a planner
+		// The lag: as ARCHIVE_LAG (0 turns it off), judged by lateness —
+		// how far past its schedule the next chunk is (schedule.go) — and
+		// shown as the raw age. Every table, with or without chunks left to export (a planner
 		// that keeps failing leaves none), idle or not: an idle table's
 		// empty chunks are cut and verified like any other, so its lag grows
 		// only when the worker is stuck — and data may be arriving again
 		// that nothing verifies yet (the target failing).
-		if limit, daily := th.lagOf(t.Table); limit > 0 && t.LagSeconds != nil {
-			if daily {
-				limit += DailySustain
-			}
-			if lag := secs(*t.LagSeconds); lag > limit {
+		if limit := th.lagOf(t.Table); limit > 0 && t.LagSeconds != nil && t.OverdueSeconds != nil {
+			if lag, late := secs(*t.LagSeconds), secs(*t.OverdueSeconds); late > limit {
 				is := Issue{Code: IssueArchiveLag, Severity: SeverityError, Table: t.Table,
 					Title:   fmt.Sprintf("The %s archive is %s behind", names, hours(lag)),
-					Meaning: fmt.Sprintf("Its newest verified data is older than the %s threshold.", hours(limit)),
+					Meaning: fmt.Sprintf("Its next chunk is %s past its schedule (threshold %s late).", hours(late), hours(limit)),
 					Risk:    "Recent rows exist only in the database; the retention gate keeps them there until they are verified."}
 				if t.VerifiedThroughEnd != nil {
 					is.Since = tptr(*t.VerifiedThroughEnd)
@@ -845,7 +842,7 @@ func assessTables(st *Status, th Thresholds, disk DiskTrend, now time.Time, add 
 			// longer than the table's lag threshold.
 			if since, ok := st.Worker.NoChunkSince[t.Table]; ok {
 				is.Since = tptr(since)
-				if limit, _ := th.lagOf(t.Table); limit > 0 && now.Sub(since) > limit {
+				if limit := th.lagOf(t.Table); limit > 0 && t.Schedule.Overdue(since, now) > limit {
 					is.Severity = SeverityError
 					is.Title = fmt.Sprintf("No %s chunk cut in %s", names, hours(now.Sub(since)))
 					is.Meaning = fmt.Sprintf("Archiving of this table has been on for %s (threshold %s) without a single chunk.", hours(now.Sub(since)), hours(limit))

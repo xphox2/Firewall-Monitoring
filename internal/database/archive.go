@@ -52,6 +52,23 @@ var archiveTables = map[string]archiveTable{
 	export.TableCounters: {name: export.TableCounters, period: 24 * time.Hour, byMark: true, minAge: 2 * time.Hour},
 }
 
+// ArchiveSchedule is table's chunk period and how long after a period ends
+// its chunk may be cut, with ARCHIVE_MIN_AGE_HOURS minAgeHours (0 = the
+// default) applied as PlanNextArchiveChunk applies it — the archive status
+// measures lateness against it (status.Schedule). ok false for a table that
+// is not archived.
+func ArchiveSchedule(table string, minAgeHours int) (period, minAge time.Duration, ok bool) {
+	t, ok := archiveTables[table]
+	if !ok {
+		return 0, 0, false
+	}
+	minAge = t.minAge
+	if minAgeHours > 0 && !t.minAgeFixed {
+		minAge = time.Duration(minAgeHours) * time.Hour
+	}
+	return t.period, minAge, true
+}
+
 func archiveTableOf(name string) (archiveTable, error) {
 	t, ok := archiveTables[name]
 	if !ok {

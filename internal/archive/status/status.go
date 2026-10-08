@@ -270,6 +270,14 @@ type TableView struct {
 	// Retention: the table's raw delete cutoff and how far past it the gate
 	// holds unarchived rows (nil when its rows are kept forever).
 	Retention *RetentionView `json:"retention,omitempty"`
+	// Schedule: when the table's next chunk is due to be verified, and how
+	// late it is (Schedule.Overdue) — what the lag alert and the verdict
+	// judge; LagSeconds is the raw age shown to people.
+	Schedule ScheduleView `json:"schedule"`
+	// DueAt / OverdueSeconds: the schedule applied to the verified data's
+	// end (nil without chunks).
+	DueAt          *time.Time `json:"due_at,omitempty"`
+	OverdueSeconds *float64   `json:"overdue_seconds,omitempty"`
 }
 
 // UnsettledView is a table's wait reason.
@@ -560,7 +568,7 @@ func Build(ctx context.Context, db Store, cfg *config.Config, now time.Time) (*S
 			return nil, err
 		}
 		tv := TableView{Table: t, GateStream: database.ArchiveGateStreamOfTable(t), Streams: export.StreamsOf(t),
-			Enabled: tableEnabled(a, t), Chunks: map[string]int64{}}
+			Enabled: tableEnabled(a, t), Chunks: map[string]int64{}, Schedule: scheduleOf(a, t)}
 		for _, s := range ChunkStatuses {
 			tv.Chunks[s] = counts[t][s]
 		}
@@ -577,6 +585,9 @@ func Build(ctx context.Context, db Store, cfg *config.Config, now time.Time) (*S
 			}
 			l := max(0, now.Sub(since).Seconds())
 			tv.LagSeconds, lag[t] = &l, &l
+			due := tv.Schedule.DueAfter(since)
+			o := tv.Schedule.Overdue(since, now).Seconds()
+			tv.DueAt, tv.OverdueSeconds = &due, &o
 			if cutoff, window, ok := retentionOf(db, cfg.Retention, t, now); ok {
 				tv.Retention = &RetentionView{Window: window, Cutoff: cutoff.UTC()}
 				if gated[tv.GateStream] {

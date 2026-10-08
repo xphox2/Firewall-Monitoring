@@ -64,6 +64,27 @@ func healthyStatus() *Status {
 
 func defaultTh() Thresholds { return ReadThresholds(nil) }
 
+// sched fills each table's schedule (the operator's: ARCHIVE_MIN_AGE_HOURS
+// 2) and its lateness from its raw lag, as Build does — the tests set the
+// lag; the verdict and the alerts judge the lateness.
+func sched(st *Status) *Status {
+	cfg := config.ArchiveConfig{MinAgeHours: 2}
+	for i := range st.Tables {
+		t := &st.Tables[i]
+		t.Schedule = scheduleOf(cfg, t.Table)
+		t.DueAt, t.OverdueSeconds = nil, nil
+		if t.LagSeconds != nil {
+			end := st.GeneratedAt.Add(-secs(*t.LagSeconds))
+			due := t.Schedule.DueAfter(end)
+			o := t.Schedule.Overdue(end, st.GeneratedAt).Seconds()
+			t.DueAt, t.OverdueSeconds = &due, &o
+		} else if t.Schedule.PeriodSeconds == 0 {
+			t.Schedule = scheduleOf(cfg, t.Table)
+		}
+	}
+	return st
+}
+
 var growing = DiskTrend{Known: true, Growing: true, Detail: "10.0 GiB free, 11.0 GiB an hour or more ago"}
 
 func issueOf(h *Health, code string) *Issue {
@@ -158,7 +179,7 @@ func TestAssess_IdleIsPresentationOnly(t *testing.T) {
 	c.Backlog = &BacklogView{Chunks: 20, Verified: 15, Remaining: 5, RemainingRows: 0, State: "catching_up"}
 	s := stream(st, export.StreamSFlowCounters)
 	s.OldestUnsealed, s.UnsealedDays = "2026-08", 30
-	h := Assess(st, defaultTh(), growing)
+	h := Assess(sched(st), defaultTh(), growing)
 	if lag, seal := issueOf(h, IssueArchiveLag), issueOf(h, IssueSealOverdue); lag == nil || seal == nil || lag.Severity != SeverityError ||
 		seal.Severity != SeverityError || h.Verdict != VerdictError {
 		t.Fatalf("verdict %s: %+v", h.Verdict, h.Issues)
@@ -185,14 +206,14 @@ func TestAssess_DataResumesWhileTargetFails(t *testing.T) {
 	if idle, _ := Idle(st); !idle[export.StreamNetFlow] {
 		t.Fatal("fixture: netflow is not idle")
 	}
-	h := Assess(st, defaultTh(), growing)
+	h := Assess(sched(st), defaultTh(), growing)
 	if is := issueOf(h, IssueArchiveLag); is == nil || is.Severity != SeverityError || h.Verdict != VerdictError {
 		t.Fatalf("verdict %s: %+v", h.Verdict, h.Issues)
 	}
 	if sh := streamHealth(t, h, export.StreamNetFlow); sh.State != "error" {
 		t.Errorf("netflow %s, want error", sh.State)
 	}
-	if c := conditionOf(t, NewEvaluator().Conditions(st, defaultTh(), growing), models.AlertTypeArchiveLag, export.TableFlows); !c.Breached {
+	if c := conditionOf(t, NewEvaluator().Conditions(sched(st), defaultTh(), growing), models.AlertTypeArchiveLag, export.TableFlows); !c.Breached {
 		t.Errorf("ARCHIVE_LAG not breached: %+v", c)
 	}
 }
@@ -209,7 +230,7 @@ func TestAssess_HealthyOnlyWhenCaughtUp(t *testing.T) {
 		f := table(st, export.TableFlows)
 		f.Backlog = &BacklogView{Chunks: 500, Verified: 500 - tc.remaining, Remaining: tc.remaining, RemainingRows: tc.remaining * 1000,
 			State: tc.state, ETASeconds: fptr(1800)}
-		h := Assess(st, defaultTh(), growing)
+		h := Assess(sched(st), defaultTh(), growing)
 		if h.Verdict != tc.want {
 			t.Errorf("remaining %d: verdict %s, want %s (%+v)", tc.remaining, h.Verdict, tc.want, h.Issues)
 		}
@@ -230,7 +251,7 @@ func TestAssess_HealthyOnlyWhenCaughtUp(t *testing.T) {
 	f := table(st, export.TableFlows)
 	f.HasChunks, f.Backlog, f.LagSeconds, f.VerifiedThroughEnd = false, nil, nil, nil
 	stream(st, export.StreamNetFlow).RecentChunks = 0
-	h := Assess(st, defaultTh(), growing)
+	h := Assess(sched(st), defaultTh(), growing)
 	if is := issueOf(h, IssueNoChunkYet); is == nil || h.Verdict != VerdictWarning {
 		t.Errorf("no chunk: %s %+v", h.Verdict, h.Issues)
 	}
@@ -310,8 +331,10 @@ func TestAssess_Issues(t *testing.T) {
 			table(st, export.TableFlows).Retention.HeldSeconds = 7 * 3600
 			st.Gates[1].Gated, st.Gates[1].OverrideActive = false, true
 		}, nil, IssueOverrideActive, SeverityWarning, VerdictWarning},
-		{"flows lag 2.9 h", func(st *Status) { table(st, export.TableFlows).LagSeconds = fptr(2.9 * 3600) }, nil, "", "", VerdictHealthy},
-		{"flows lag 3.1 h", func(st *Status) { table(st, export.TableFlows).LagSeconds = fptr(3.1 * 3600) }, nil, IssueArchiveLag, SeverityError, VerdictError},
+		// Lateness: an hour's chunk is due 1 h 15 min after the verified
+		// data's end, so a 3 h threshold is passed at a lag of 4.25 h.
+		{"flows lag 4.2 h (2.95 h late)", func(st *Status) { table(st, export.TableFlows).LagSeconds = fptr(4.2 * 3600) }, nil, "", "", VerdictHealthy},
+		{"flows lag 4.3 h (3.05 h late)", func(st *Status) { table(st, export.TableFlows).LagSeconds = fptr(4.3 * 3600) }, nil, IssueArchiveLag, SeverityError, VerdictError},
 		{"staging under 2x floor", func(st *Status) { st.Worker.Staging.FreeBytes = u64(3 << 30) }, nil, IssueStagingLow, SeverityWarning, VerdictWarning},
 		{"staging under floor", func(st *Status) { st.Worker.Staging.FreeBytes = u64(1 << 30) }, nil, IssueStagingFull, SeverityError, VerdictError},
 		{"staging unknown", func(st *Status) {
@@ -352,7 +375,7 @@ func TestAssess_Issues(t *testing.T) {
 			if tc.disk != nil {
 				disk = *tc.disk
 			}
-			h := Assess(st, defaultTh(), disk)
+			h := Assess(sched(st), defaultTh(), disk)
 			if h.Verdict != tc.verdict {
 				t.Errorf("verdict %s, want %s: %+v", h.Verdict, tc.verdict, h.Issues)
 			}
@@ -390,10 +413,10 @@ func TestAssess_SinceAndOrder(t *testing.T) {
 	first := at.Add(-20 * time.Minute)
 	st.Worker.PreflightOK = false
 	st.Worker.Stages = []StageView{{Stage: "preflight", At: at, Since: &first, Error: "403 Forbidden"}}
-	table(st, export.TableFlows).LagSeconds = fptr(4 * 3600)
-	h := Assess(st, defaultTh(), growing)
+	table(st, export.TableFlows).LagSeconds = fptr(5 * 3600)
+	h := Assess(sched(st), defaultTh(), growing)
 	if len(h.Issues) < 1 || h.Issues[0].Code != IssuePreflightFailing || issueOf(h, IssueArchiveLag) != nil || h.Errors != 1 ||
-		!strings.Contains(h.Issues[0].Risk, "The flow archive is 4.0 h behind.") {
+		!strings.Contains(h.Issues[0].Risk, "The flow archive is 5.0 h behind.") {
 		t.Fatalf("issues: %+v", h.Issues)
 	}
 	if h.Issues[0].Since == nil || !h.Issues[0].Since.Equal(first) || h.Issues[0].Detail != "403 Forbidden" || h.Issues[0].Fix == nil || h.Issues[0].Fix.Kind != "test" {
@@ -420,7 +443,7 @@ func TestAssess_LagMergedIntoStageCause(t *testing.T) {
 		f.LagSeconds = fptr(5 * 3600)
 		f.Backlog = &BacklogView{Chunks: 500, Verified: 500, State: "caught_up"}
 		st.Worker.Failing = []Streak{{Stage: "plan", Subject: subject, Since: at.Add(-3 * time.Hour), At: at.Add(-time.Minute), Error: "refused", Count: 18}}
-		h := Assess(st, defaultTh(), growing)
+		h := Assess(sched(st), defaultTh(), growing)
 		sf, lag := issueOf(h, IssueStageFailing), issueOf(h, IssueArchiveLag)
 		if subject == export.TableFlows {
 			if sf == nil || lag != nil || h.Errors != 1 || !strings.Contains(sf.Risk, "The flow archive is 5.0 h behind.") {
@@ -444,16 +467,16 @@ func TestAssess_DisabledAndNotConfigured(t *testing.T) {
 	for i := range st.Streams {
 		st.Streams[i].Enabled = false
 	}
-	h := Assess(st, defaultTh(), growing)
+	h := Assess(sched(st), defaultTh(), growing)
 	if h.Verdict != VerdictDisabled || len(h.Issues) != 0 {
 		t.Errorf("disabled: %s %+v", h.Verdict, h.Issues)
 	}
 	st.Config.Bucket = ""
-	if h := Assess(st, defaultTh(), growing); h.Verdict != VerdictNotConfigured {
+	if h := Assess(sched(st), defaultTh(), growing); h.Verdict != VerdictNotConfigured {
 		t.Errorf("not configured: %s", h.Verdict)
 	}
 	st.Config.Target, st.Config.LocalDir = config.ArchiveTargetLocal, "/archive/fwmon"
-	if h := Assess(st, defaultTh(), growing); h.Verdict != VerdictDisabled {
+	if h := Assess(sched(st), defaultTh(), growing); h.Verdict != VerdictDisabled {
 		t.Errorf("local disabled: %s", h.Verdict)
 	}
 }
@@ -466,9 +489,9 @@ func TestConditions_NameIssueAndAction(t *testing.T) {
 	first := at.Add(-time.Hour)
 	st.Worker.PreflightOK = false
 	st.Worker.Stages = []StageView{{Stage: "preflight", At: at, Since: &first, Error: "403 Forbidden"}}
-	table(st, export.TableFlows).LagSeconds = fptr(4 * 3600)
+	table(st, export.TableFlows).LagSeconds = fptr(5 * 3600)
 	st.NeedsAttention = []ParkedChunk{{ID: 9, Table: export.TableFlows, Seq: 9, UpdatedAt: at}}
-	cs := NewEvaluator().Conditions(st, defaultTh(), growing)
+	cs := NewEvaluator().Conditions(sched(st), defaultTh(), growing)
 	lag := conditionOf(t, cs, models.AlertTypeArchiveLag, export.TableFlows)
 	if !lag.Breached || lag.Fields["issue"] != IssueArchiveLag || lag.Fields["cause"] != IssuePreflightFailing || lag.Fields["verdict"] != VerdictError {
 		t.Fatalf("lag: %+v", lag)
@@ -550,7 +573,7 @@ func TestBuild_HealthInputs(t *testing.T) {
 	if len(st.Worker.Stages) != 1 || st.Worker.Stages[0].Since == nil || !st.Worker.Stages[0].Since.Equal(at.Add(-time.Hour)) {
 		t.Errorf("stages %+v", st.Worker.Stages)
 	}
-	h := Assess(st, defaultTh(), growing)
+	h := Assess(sched(st), defaultTh(), growing)
 	if is := issueOf(h, IssueMarkerMissing); is == nil || h.Verdict != VerdictError {
 		t.Errorf("verdict %s %+v", h.Verdict, h.Issues)
 	}
@@ -600,7 +623,7 @@ func TestAssess_LagWithoutBacklog(t *testing.T) {
 	f := table(st, export.TableFlows)
 	f.LagSeconds = fptr(5 * 3600)
 	f.Backlog = &BacklogView{Chunks: 500, Verified: 500, Remaining: 0, State: "caught_up"}
-	h := Assess(st, defaultTh(), growing)
+	h := Assess(sched(st), defaultTh(), growing)
 	if is := issueOf(h, IssueArchiveLag); is == nil || is.Severity != SeverityError || is.Table != export.TableFlows || h.Verdict != VerdictError {
 		t.Fatalf("non-idle: %s %+v", h.Verdict, h.Issues)
 	}
@@ -608,7 +631,7 @@ func TestAssess_LagWithoutBacklog(t *testing.T) {
 		t.Errorf("title %q", issueOf(h, IssueArchiveLag).Title)
 	}
 	stream(st, export.StreamNetFlow).RecentRows = 0 // nothing received: the table is idle
-	if h := Assess(st, defaultTh(), growing); issueOf(h, IssueArchiveLag) == nil || h.Verdict != VerdictError {
+	if h := Assess(sched(st), defaultTh(), growing); issueOf(h, IssueArchiveLag) == nil || h.Verdict != VerdictError {
 		t.Fatalf("idle: %s %+v", h.Verdict, h.Issues)
 	}
 }
@@ -643,7 +666,7 @@ func TestAssess_StageFailing(t *testing.T) {
 			if tc.stage == "count" {
 				st.NeedsAttention = []ParkedChunk{{ID: 4, Table: export.TableFlows, Seq: 4, UpdatedAt: at}}
 			}
-			h := Assess(st, defaultTh(), growing)
+			h := Assess(sched(st), defaultTh(), growing)
 			is := issueOf(h, IssueStageFailing)
 			if tc.want == "" {
 				if is != nil {
@@ -669,19 +692,19 @@ func TestAssess_FirstChunkEscalates(t *testing.T) {
 	for _, tc := range []struct {
 		waited time.Duration
 		want   string
-	}{{time.Hour, SeverityWarning}, {4 * time.Hour, SeverityError}} {
+	}{{time.Hour, SeverityWarning}, {4 * time.Hour, SeverityWarning}, {4*time.Hour + 20*time.Minute, SeverityError}} {
 		st := healthyStatus()
 		f := table(st, export.TableFlows)
 		f.HasChunks, f.Backlog, f.LagSeconds, f.VerifiedThroughEnd = false, nil, nil, nil
 		stream(st, export.StreamNetFlow).RecentChunks = 0
 		st.Worker.NoChunkSince = map[string]time.Time{export.TableFlows: at.Add(-tc.waited)}
-		h := Assess(st, defaultTh(), growing)
+		h := Assess(sched(st), defaultTh(), growing)
 		is := issueOf(h, IssueNoChunkYet)
 		if is == nil || is.Severity != tc.want || is.Since == nil {
 			t.Fatalf("waited %s: %+v", tc.waited, is)
 		}
 		// The alert agrees, from a fresh evaluator (a poller just restarted).
-		c := conditionOf(t, NewEvaluator().Conditions(st, defaultTh(), growing), models.AlertTypeArchiveLag, export.TableFlows)
+		c := conditionOf(t, NewEvaluator().Conditions(sched(st), defaultTh(), growing), models.AlertTypeArchiveLag, export.TableFlows)
 		if c.Breached != (tc.want == SeverityError) || c.Fields["issue"] != IssueNoChunkYet || c.Fields["no_chunk"] != "true" {
 			t.Errorf("waited %s: alert %+v", tc.waited, c)
 		}
@@ -701,16 +724,9 @@ func TestAlertsAgreeOnIdle(t *testing.T) {
 		if withData {
 			s.RecentRows = 5
 		}
-		h := Assess(st, defaultTh(), growing)
-		cs := NewEvaluator().Conditions(st, defaultTh(), growing)
-		// The lag of a daily table fires after DailySustain above the
-		// threshold: evaluate again an hour later.
-		e := NewEvaluator()
-		e.Conditions(st, defaultTh(), growing)
-		later := *st
-		later.GeneratedAt = at.Add(DailySustain)
-		cs2 := e.Conditions(&later, defaultTh(), growing)
-		lag := conditionOf(t, cs2, models.AlertTypeArchiveLag, export.TableCounters)
+		h := Assess(sched(st), defaultTh(), growing)
+		cs := NewEvaluator().Conditions(sched(st), defaultTh(), growing)
+		lag := conditionOf(t, cs, models.AlertTypeArchiveLag, export.TableCounters)
 		seal := conditionOf(t, cs, models.AlertTypeArchiveSealOverdue, export.StreamSFlowCounters)
 		verdictLag, verdictSeal := issueOf(h, IssueArchiveLag) != nil, issueOf(h, IssueSealOverdue) != nil
 		if !lag.Breached || !verdictLag || !seal.Breached || !verdictSeal {
@@ -781,7 +797,7 @@ func TestAssess_PreflightSinceFromStreak(t *testing.T) {
 	st.Worker.PreflightOK = false
 	st.Worker.Stages = []StageView{{Stage: "preflight", At: at, Since: &long, Error: "403 Forbidden"}}
 	st.Worker.Failing = []Streak{{Stage: "preflight", Since: at.Add(-2 * time.Minute), At: at, Error: "403 Forbidden", Count: 2}}
-	is := issueOf(Assess(st, defaultTh(), growing), IssuePreflightFailing)
+	is := issueOf(Assess(sched(st), defaultTh(), growing), IssuePreflightFailing)
 	if is == nil || is.Severity != SeverityWarning || !is.Since.Equal(at.Add(-2*time.Minute)) {
 		t.Fatalf("%+v", is)
 	}
@@ -793,12 +809,12 @@ func TestAssess_PreflightSinceFromStreak(t *testing.T) {
 func TestConditions_HeldActionSelfContained(t *testing.T) {
 	st := healthyStatus()
 	table(st, export.TableFlows).Retention.HeldSeconds = 8 * 3600
-	c := conditionOf(t, NewEvaluator().Conditions(st, defaultTh(), growing), models.AlertTypeRetentionHeld, export.TableFlows)
+	c := conditionOf(t, NewEvaluator().Conditions(sched(st), defaultTh(), growing), models.AlertTypeRetentionHeld, export.TableFlows)
 	if !c.Breached || strings.Count(c.Message, "--override") != 1 || !strings.Contains(c.Message, "--override flows --for 6h") ||
 		strings.Contains(c.Message, "<stream>") || strings.Contains(c.Message, "above") {
 		t.Fatalf("message %q", c.Message)
 	}
-	if is := issueOf(Assess(st, defaultTh(), growing), IssueRetentionHeld); is == nil || !strings.Contains(is.Action, "--override flows --for 6h") {
+	if is := issueOf(Assess(sched(st), defaultTh(), growing), IssueRetentionHeld); is == nil || !strings.Contains(is.Action, "--override flows --for 6h") {
 		t.Errorf("the page's held-rows action: %+v", is)
 	}
 	for code, action := range IssueActions {
@@ -821,5 +837,127 @@ func TestRecorderPrunesOldStreaks(t *testing.T) {
 	}
 	if _, ok := snap.Failing["plan/"+export.TableFlows]; !ok || len(snap.Failing) != 1 {
 		t.Errorf("failing %+v", snap.Failing)
+	}
+}
+
+// prodDay is an install shaped like production with syslog on: daily
+// syslog_messages (a heavy 8 M-row day exported at 4 200 rows/s, then read
+// back) and flow_if_counters, hourly flow_samples, ARCHIVE_MIN_AGE_HOURS 2.
+// syslogEnd and countersEnd are the ends of their verified data at now;
+// flows are verified through the previous full hour.
+func prodDay(now, syslogEnd, countersEnd time.Time, flowsEnd time.Time) *Status {
+	st := healthyStatus()
+	st.GeneratedAt = now
+	st.Config.SyslogEnabled = true
+	st.Gates[0] = GateView{Stream: database.ArchiveGateSyslog, Enabled: true, Gated: true}
+	lag := func(end time.Time) *float64 { return fptr(now.Sub(end).Seconds()) }
+	sl := table(st, export.TableSyslog)
+	sl.Enabled, sl.HasChunks, sl.VerifiedThroughEnd, sl.LagSeconds = true, true, &syslogEnd, lag(syslogEnd)
+	sl.LastVerifiedAt = tp(syslogEnd.Add(2*time.Hour + 50*time.Minute))
+	sl.Backlog = &BacklogView{Chunks: 60, Verified: 59, Remaining: 1, RemainingRows: 8_000_000, State: "current"}
+	sl.Retention = &RetentionView{Window: "30d", Cutoff: now.AddDate(0, 0, -30)}
+	sy := stream(st, export.StreamSyslog)
+	sy.Enabled, sy.RecentChunks, sy.RecentRows = true, 10, 60_000_000
+	f := table(st, export.TableFlows)
+	f.VerifiedThroughEnd, f.LagSeconds = &flowsEnd, lag(flowsEnd)
+	c := table(st, export.TableCounters)
+	c.VerifiedThroughEnd, c.LagSeconds = &countersEnd, lag(countersEnd)
+	// Day D is being exported: 8 M rows at 4 200 rows/s.
+	st.Worker.Activity = &ActivityView{Activity: Activity{Table: export.TableSyslog, Stage: "export", RowsDone: 4_200 * 1800, IDSpan: 8_000_000}}
+	return st
+}
+
+// TestAssess_NormalDayIsHealthy walks a normal night with real timings:
+// syslog's day D can be cut at D+1 02:00 and a heavy day is still being
+// exported at 04:59 — HEALTHY, no ARCHIVE_LAG; at 05:30 with nothing
+// verified it is over 3 h late — an error, and the alert fires. Hourly
+// flows: 1.2 h old is on time, 4.5 h old is late. The review's cases: a
+// 26.5 h raw age is on time, 30 h is late.
+func TestAssess_NormalDayIsHealthy(t *testing.T) {
+	d := time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC) // midnight after day D (6 October)
+	dayD := d.AddDate(0, 0, -1)
+	for _, tc := range []struct {
+		at          time.Duration // after midnight
+		syslogEnd   time.Time
+		countersEnd time.Time
+		want        string
+	}{
+		{0, dayD, dayD, VerdictHealthy},
+		{2 * time.Hour, dayD, dayD, VerdictHealthy},
+		{150 * time.Minute, dayD, d, VerdictHealthy},            // counters' day verified at 02:15
+		{4 * time.Hour, dayD, d, VerdictHealthy},                // syslog's day still exporting
+		{4*time.Hour + 59*time.Minute, dayD, d, VerdictHealthy}, // still exporting: 2.8 h late
+		{5*time.Hour + 30*time.Minute, dayD, d, VerdictError},   // nothing verified: 3.3 h late
+	} {
+		now := d.Add(tc.at)
+		flowsEnd := now.Truncate(time.Hour).Add(-time.Hour)
+		st := sched(prodDay(now, tc.syslogEnd, tc.countersEnd, flowsEnd))
+		h := Assess(st, defaultTh(), growing)
+		lag := conditionOf(t, NewEvaluator().Conditions(st, defaultTh(), growing), models.AlertTypeArchiveLag, export.TableSyslog)
+		if h.Verdict != tc.want || lag.Breached != (tc.want == VerdictError) {
+			t.Errorf("%s: verdict %s (want %s), ARCHIVE_LAG %v: %+v", now.Format("15:04"), h.Verdict, tc.want, lag.Breached, h.Issues)
+		}
+		if tc.want == VerdictError {
+			if is := issueOf(h, IssueArchiveLag); is == nil || is.Table != export.TableSyslog || !strings.Contains(is.Title, "29.5 h behind") {
+				t.Errorf("05:30: %+v", h.Issues)
+			}
+		}
+	}
+	for _, tc := range []struct {
+		name  string
+		table string
+		age   time.Duration
+		late  bool
+	}{
+		{"flows 1.2 h", export.TableFlows, 72 * time.Minute, false},
+		{"flows 4.5 h", export.TableFlows, 270 * time.Minute, true},
+		{"syslog 26.5 h", export.TableSyslog, 26*time.Hour + 30*time.Minute, false},
+		{"syslog 30 h", export.TableSyslog, 30 * time.Hour, true},
+	} {
+		now := d.Add(4 * time.Hour)
+		st := prodDay(now, dayD, d, now.Truncate(time.Hour).Add(-time.Hour))
+		tv := table(st, tc.table)
+		end := now.Add(-tc.age)
+		tv.VerifiedThroughEnd, tv.LagSeconds = &end, fptr(tc.age.Seconds())
+		st = sched(st)
+		h := Assess(st, defaultTh(), growing)
+		c := conditionOf(t, NewEvaluator().Conditions(st, defaultTh(), growing), models.AlertTypeArchiveLag, tc.table)
+		got := issueOf(h, IssueArchiveLag) != nil
+		if got != tc.late || c.Breached != tc.late || (h.Verdict == VerdictError) != tc.late {
+			t.Errorf("%s: lag issue %v, alert %v, verdict %s; want late %v (%+v)", tc.name, got, c.Breached, h.Verdict, tc.late, h.Issues)
+		}
+	}
+}
+
+// TestSchedule: due = end + period + minimum age + settle slack; syslog's
+// cut waits for ARCHIVE_WINDOW to open (also across midnight); flows use
+// their fixed 5 minutes whatever ARCHIVE_MIN_AGE_HOURS says.
+func TestSchedule(t *testing.T) {
+	end := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name  string
+		cfg   config.ArchiveConfig
+		table string
+		want  time.Time
+	}{
+		{"syslog", config.ArchiveConfig{MinAgeHours: 2}, export.TableSyslog, end.Add(26*time.Hour + 10*time.Minute)},
+		{"syslog min age 4", config.ArchiveConfig{MinAgeHours: 4}, export.TableSyslog, end.Add(28*time.Hour + 10*time.Minute)},
+		{"syslog window 03-05", config.ArchiveConfig{MinAgeHours: 2, Window: "03:00-05:00"}, export.TableSyslog, end.Add(27*time.Hour + 10*time.Minute)},
+		{"syslog window 22-01", config.ArchiveConfig{MinAgeHours: 2, Window: "22:00-01:00"}, export.TableSyslog, end.Add(46*time.Hour + 10*time.Minute)},
+		{"syslog window 22-03 open after midnight", config.ArchiveConfig{MinAgeHours: 2, Window: "22:00-03:00"}, export.TableSyslog, end.Add(26*time.Hour + 10*time.Minute)},
+		{"syslog window open", config.ArchiveConfig{MinAgeHours: 2, Window: "01:00-06:00"}, export.TableSyslog, end.Add(26*time.Hour + 10*time.Minute)},
+		{"counters ignore the window", config.ArchiveConfig{MinAgeHours: 2, Window: "03:00-05:00"}, export.TableCounters, end.Add(26*time.Hour + 10*time.Minute)},
+		{"flows", config.ArchiveConfig{MinAgeHours: 4}, export.TableFlows, end.Add(time.Hour + 15*time.Minute)},
+	} {
+		s := scheduleOf(tc.cfg, tc.table)
+		if got := s.DueAfter(end); !got.Equal(tc.want) {
+			t.Errorf("%s: due %s, want %s", tc.name, got, tc.want)
+		}
+		if o := s.Overdue(end, tc.want.Add(-time.Minute)); o != 0 {
+			t.Errorf("%s: overdue %s before due", tc.name, o)
+		}
+		if o := s.Overdue(end, tc.want.Add(time.Hour)); o != time.Hour {
+			t.Errorf("%s: overdue %s an hour after due", tc.name, o)
+		}
 	}
 }

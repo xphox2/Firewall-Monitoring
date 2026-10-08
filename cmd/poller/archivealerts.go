@@ -22,8 +22,8 @@ import (
 // maintenance windows, the cross-restart cooldown backstop and recovery
 // notifications. Like the disk check it takes no advisory lock: it only reads.
 
-// archiveAlertEval remembers since when each daily stream's lag has been
-// above its threshold (status.DailySustain).
+// archiveAlertEval remembers which RETENTION_HELD alerts are active and
+// since when a table without a chunk was first seen.
 var archiveAlertEval = status.NewEvaluator()
 
 // archiveDiskWindow: RETENTION_HELD compares the database volume's free

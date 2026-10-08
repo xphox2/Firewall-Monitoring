@@ -3,6 +3,7 @@ package status
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -250,14 +251,17 @@ func TestConditions(t *testing.T) {
 	e := NewEvaluator()
 
 	cs := e.Conditions(build(t, db, cfg, at), th, growing)
-	// Syslog lag 36 h > 26 h, but a daily stream must stay over it an hour.
-	if c := conditionOf(t, cs, models.AlertTypeArchiveLag, export.TableSyslog); c.Breached || !c.Known {
-		t.Fatalf("syslog lag fired at once: %+v", c)
+	// Lateness (schedule.go): syslog verified through 5 October 00:00, its
+	// next day was due 6 October 02:10 — 9.8 h late, over 3 h: it fires.
+	if c := conditionOf(t, cs, models.AlertTypeArchiveLag, export.TableSyslog); !c.Breached || !c.Known || !strings.Contains(c.Message, "9.8 h behind schedule") ||
+		!strings.Contains(c.Message, "36.0 h ago") {
+		t.Fatalf("syslog lag: %+v", c)
 	}
-	// Flows 4 h > 3 h: an hourly stream fires at once.
-	if c := conditionOf(t, cs, models.AlertTypeArchiveLag, export.TableFlows); !c.Breached || !strings.Contains(c.Message, "4.0 h behind") ||
+	// Flows verified through 08:00 (4 h old): the next hour was due 09:15,
+	// 2.8 h late, under 3 h.
+	if c := conditionOf(t, cs, models.AlertTypeArchiveLag, export.TableFlows); c.Breached || !strings.Contains(c.Message, "2.8 h behind schedule") ||
 		!strings.Contains(c.Message, "sflow and netflow") {
-		t.Fatalf("sflow lag: %+v", c)
+		t.Fatalf("flow lag: %+v", c)
 	}
 	lags := 0
 	for _, c := range cs {
@@ -268,7 +272,8 @@ func TestConditions(t *testing.T) {
 	if lags != 3 {
 		t.Fatalf("%d ARCHIVE_LAG conditions, want one per table (sflow and netflow share flow_samples)", lags)
 	}
-	// Counters: 12 h < 26 h.
+	// Counters verified through 6 October 00:00: their next day is not due
+	// before 7 October 02:10.
 	if c := conditionOf(t, cs, models.AlertTypeArchiveLag, export.TableCounters); c.Breached {
 		t.Fatalf("counters lag fired: %+v", c)
 	}
@@ -289,10 +294,10 @@ func TestConditions(t *testing.T) {
 		t.Fatalf("held fired below its threshold: %+v", c)
 	}
 
-	// An hour later the syslog lag (now 37 h) has stayed over 26 h: it fires.
-	cs = e.Conditions(build(t, db, cfg, at.Add(time.Hour)), th, growing)
-	if c := conditionOf(t, cs, models.AlertTypeArchiveLag, export.TableSyslog); !c.Breached {
-		t.Fatalf("syslog lag did not fire after the sustain: %+v", c)
+	// Half an hour later flows are 3.3 h late: they fire.
+	cs = e.Conditions(build(t, db, cfg, at.Add(30*time.Minute)), th, growing)
+	if c := conditionOf(t, cs, models.AlertTypeArchiveLag, export.TableFlows); !c.Breached {
+		t.Fatalf("flow lag 3.3 h late: %+v", c)
 	}
 
 	// RETENTION_HELD at 2 h: fires while the disk grows (or is not
@@ -414,7 +419,8 @@ func TestReadThresholds(t *testing.T) {
 		}
 	}
 	th := ReadThresholds(stored(t, db))
-	want := Thresholds{LagSyslog: 30 * time.Hour, LagFlows: 0, LagCounters: 26 * time.Hour, SealOverdueDays: 3,
+	// Syslog's stored 30 is a pre-0.11.316 raw-age value: 30 − 25 = 5 h late.
+	want := Thresholds{LagSyslog: 5 * time.Hour, LagFlows: 0, LagCounters: 3 * time.Hour, SealOverdueDays: 3,
 		Held: 6 * time.Hour, Unsettled: 6 * time.Hour}
 	if th != want {
 		t.Fatalf("thresholds %+v, want %+v", th, want)
@@ -430,7 +436,7 @@ func TestConditions_NoChunkYet(t *testing.T) {
 	db := database.NewDatabaseForTesting(t)
 	r := NewRecorder("fw-example-01-1", "/tmp/x", 1, testSecret)
 	r.Failed("preflight", &testErr{"403 Forbidden"}, at)
-	js, _ := r.JSON(at.Add(27*time.Hour - time.Minute))
+	js, _ := r.JSON(at.Add(30*time.Hour - time.Minute))
 	if err := db.SaveArchiveWorkerState(context.Background(), js); err != nil {
 		t.Fatal(err)
 	}
@@ -440,9 +446,14 @@ func TestConditions_NoChunkYet(t *testing.T) {
 	if c := conditionOf(t, e.Conditions(build(t, db, cfg, at), th, DiskTrend{}), models.AlertTypeArchiveLag, export.TableSyslog); c.Breached || !c.Known {
 		t.Fatalf("fired at first sight: %+v", c)
 	}
-	c := conditionOf(t, e.Conditions(build(t, db, cfg, at.Add(27*time.Hour)), th, DiskTrend{}), models.AlertTypeArchiveLag, export.TableSyslog)
+	// Its first day was due 26 h 10 min after archiving began: at 27 h it
+	// is under an hour late, at 30 h 3.8 h — over 3 h.
+	if c := conditionOf(t, e.Conditions(build(t, db, cfg, at.Add(27*time.Hour)), th, DiskTrend{}), models.AlertTypeArchiveLag, export.TableSyslog); c.Breached {
+		t.Fatalf("no chunk for 27 h fired: %+v", c)
+	}
+	c := conditionOf(t, e.Conditions(build(t, db, cfg, at.Add(30*time.Hour)), th, DiskTrend{}), models.AlertTypeArchiveLag, export.TableSyslog)
 	if !c.Breached || !strings.Contains(c.Message, "cut no chunk") || !strings.Contains(c.Message, "403 Forbidden") {
-		t.Fatalf("no chunk for 27 h: %+v", c)
+		t.Fatalf("no chunk for 30 h: %+v", c)
 	}
 	// Flows are disabled: never.
 	if c := conditionOf(t, e.Conditions(build(t, db, cfg, at.Add(28*time.Hour)), th, DiskTrend{}), models.AlertTypeArchiveLag, export.TableFlows); c.Breached {
@@ -515,5 +526,37 @@ func TestBuild_OverrideReadFailure(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("override read failure not reported: %v", st.Problems)
+	}
+}
+
+// TestReadThresholds_LegacyNeverNoisier: every lag threshold an operator
+// may have saved before 0.11.316 (hours of raw age; a daily table's alert
+// also waited an hour above it) fires, read as lateness, no sooner than it
+// did: the raw age at which the new alert fires (lateness + the schedule)
+// is at least the old one. The old default 26 is the new default 3.
+func TestReadThresholds_LegacyNeverNoisier(t *testing.T) {
+	cfg := testConfig(true, true).Archive
+	for v := 1; v <= 100; v++ {
+		val := strconv.Itoa(v)
+		th := ReadThresholds(map[string]string{LagHoursSyslogKey: val, LagHoursCountersKey: val, LagHoursFlowsKey: val})
+		for _, tc := range []struct {
+			table   string
+			limit   time.Duration
+			oldFire time.Duration // raw age at which the old alert fired
+		}{
+			{export.TableSyslog, th.LagSyslog, time.Duration(v)*time.Hour + time.Hour},
+			{export.TableCounters, th.LagCounters, time.Duration(v)*time.Hour + time.Hour},
+			{export.TableFlows, th.LagFlows, time.Duration(v) * time.Hour},
+		} {
+			s := scheduleOf(cfg, tc.table)
+			end := at
+			newFire := s.DueAfter(end).Add(tc.limit).Sub(end) // raw age at which lateness passes the limit
+			if newFire < tc.oldFire {
+				t.Errorf("%s stored %d: fires at a raw age of %s, before the old %s", tc.table, v, newFire, tc.oldFire)
+			}
+		}
+	}
+	if th := ReadThresholds(map[string]string{LagHoursSyslogKey: "26", LagHoursCountersKey: "26"}); th.LagSyslog != 3*time.Hour || th.LagCounters != 3*time.Hour {
+		t.Errorf("old default 26: %+v", th)
 	}
 }
