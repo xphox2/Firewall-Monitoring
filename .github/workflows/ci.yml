@@ -68,16 +68,16 @@ jobs:
     name: Test (-race)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # AUDIT-121: the race detector is required on every package. Sharded by
-    # package (`.github/scripts/shard-tests.sh`) so the per-package cost is
-    # balanced: `internal/database` and `internal/api/handlers` alone were
-    # ~9 min each on a single runner, which made the unsharded step ~11 min.
-    # The wall clock is now the heaviest shard, and the union of the shards is
-    # every package `go list ./...` returns, so no package is skipped.
+    # AUDIT-121: the race detector is required on every test. The two packages
+    # that carry the suite — `internal/database` (691 tests) and
+    # `internal/api/handlers` (444), ~11.5 and ~9 min run sequentially — are
+    # split by TEST NAME into buckets; every other package is grouped by cost
+    # (`.github/scripts/shard-tests.sh`). The wall clock is the heaviest shard,
+    # and the union of the shards is every test, exactly once.
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     steps:
       - name: Check out
         uses: actions/checkout@v5
@@ -92,13 +92,17 @@ jobs:
 
       - name: Tests (with -race)
         run: |
-          pkgs=$(.github/scripts/shard-tests.sh ${{ matrix.shard }} 4)
-          if [ -z "$pkgs" ]; then
-            echo "::error::shard ${{ matrix.shard }} selected no packages — check the weight map in shard-tests.sh"
+          mapfile -t args < <(.github/scripts/shard-tests.sh ${{ matrix.shard }} 10)
+          if [ "${#args[@]}" -eq 0 ]; then
+            echo "::error::shard ${{ matrix.shard }} selected nothing — check the plan in shard-tests.sh"
             exit 1
           fi
-          echo "shard ${{ matrix.shard }}: $pkgs"
-          go test -race -count=1 -timeout=20m $pkgs
+          if [ "${args[0]}" = "-run" ]; then
+            echo "shard ${{ matrix.shard }}: ${args[2]} — $(printf '%s' "${args[1]}" | tr '|' '\n' | wc -l) tests"
+          else
+            echo "shard ${{ matrix.shard }}: ${args[*]}"
+          fi
+          go test -race -count=1 -timeout=20m "${args[@]}"
 
   static-analysis:
     name: staticcheck
