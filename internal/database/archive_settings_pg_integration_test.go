@@ -91,3 +91,9 @@ func TestArchiveGate_AdminSwitch_PG(t *testing.T) {
 		t.Fatalf("open disabled intervals = %d, want 1", open)
 	}
 }
+
+// TestArchiveLagMigration_PG: migration v81 on PostgreSQL (the same checks
+// as on SQLite).
+func TestArchiveLagMigration_PG(t *testing.T) {
+	testArchiveLagMigration(t, NewIntegrationDB(t))
+}

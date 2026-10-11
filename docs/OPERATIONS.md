@@ -1593,11 +1593,16 @@ one off, blank uses the default):
 | `ARCHIVE_GATE_UNREADABLE` | (one) | the poller's retention gate has failed to read the archive's stream switches (`system_settings`) for longer than 15 minutes. Evaluated from the gate itself, even where the archive was never enabled, and even when the rest of the status cannot be read. Field `holding`: `all` — no read has succeeded since the poller started, so every archived table's deletes are held; `last` — the gate keeps the switches it read last, so a stream switched on or off on the admin page is not applied | 15 min (fixed) |
 
 Settings keys: `archive_lag_alert_hours_syslog`, `archive_lag_alert_hours_flows`,
-(Since 0.11.316 the three lag keys are hours **late**, default 3. A syslog or
-counters value of 24 or more saved before — hours of age, 26 by default — is
-read as that value − 25 and at least 3, so it never alerts sooner than it
-did; smaller values and the flow value are read as hours late as they
-stand, which is always later than the same hours of age.)
+(Since 0.11.316 the three lag keys are hours **late**, default 3, read as
+stored. Migration v81 converted a syslog or counters value saved before —
+hours of age, 26 by default — once, with the minimum age in effect then
+(`ARCHIVE_MIN_AGE_HOURS`, the admin value first): ⌈value + 1 − 24 − minimum
+age − 1/6⌉ hours, at least 3, so it never alerts sooner than it did (26 → 3
+at the default 2 h); 0 stayed off, absent keys stayed absent. The flow value
+was kept: an hour's chunk is due 1 h 15 min after its data, so the same
+number of hours late is always later than that many hours of age. The
+setting `archive_lag_alert_hours_unit` = `late` records the conversion; the
+Alerting page shows the converted values.)
 `archive_lag_alert_hours_counters`, `archive_seal_overdue_alert_days`,
 `retention_held_alert_hours`, `archive_unsettled_alert_hours` (0–720).
 While the status cannot be read whole (a database error, including the gate

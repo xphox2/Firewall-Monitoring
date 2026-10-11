@@ -3,6 +3,7 @@ package status
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -419,8 +420,8 @@ func TestReadThresholds(t *testing.T) {
 		}
 	}
 	th := ReadThresholds(stored(t, db))
-	// Syslog's stored 30 is a pre-0.11.316 raw-age value: 30 − 25 = 5 h late.
-	want := Thresholds{LagSyslog: 5 * time.Hour, LagFlows: 0, LagCounters: 3 * time.Hour, SealOverdueDays: 3,
+	// Read as stored: hours late (migration v81 converted the old values once).
+	want := Thresholds{LagSyslog: 30 * time.Hour, LagFlows: 0, LagCounters: 3 * time.Hour, SealOverdueDays: 3,
 		Held: 6 * time.Hour, Unsettled: 6 * time.Hour}
 	if th != want {
 		t.Fatalf("thresholds %+v, want %+v", th, want)
@@ -529,34 +530,19 @@ func TestBuild_OverrideReadFailure(t *testing.T) {
 	}
 }
 
-// TestReadThresholds_LegacyNeverNoisier: every lag threshold an operator
-// may have saved before 0.11.316 (hours of raw age; a daily table's alert
-// also waited an hour above it) fires, read as lateness, no sooner than it
-// did: the raw age at which the new alert fires (lateness + the schedule)
-// is at least the old one. The old default 26 is the new default 3.
-func TestReadThresholds_LegacyNeverNoisier(t *testing.T) {
-	cfg := testConfig(true, true).Archive
-	for v := 1; v <= 100; v++ {
+// TestReadThresholds_Verbatim: after migration v81 the thresholds are read
+// as stored, as hours late — a value of 24 or more entered on the page is
+// honoured as is — and the migration converts the keys the status reads.
+func TestReadThresholds_Verbatim(t *testing.T) {
+	for _, v := range []int{1, 3, 24, 26, 48, 100} {
 		val := strconv.Itoa(v)
 		th := ReadThresholds(map[string]string{LagHoursSyslogKey: val, LagHoursCountersKey: val, LagHoursFlowsKey: val})
-		for _, tc := range []struct {
-			table   string
-			limit   time.Duration
-			oldFire time.Duration // raw age at which the old alert fired
-		}{
-			{export.TableSyslog, th.LagSyslog, time.Duration(v)*time.Hour + time.Hour},
-			{export.TableCounters, th.LagCounters, time.Duration(v)*time.Hour + time.Hour},
-			{export.TableFlows, th.LagFlows, time.Duration(v) * time.Hour},
-		} {
-			s := scheduleOf(cfg, tc.table)
-			end := at
-			newFire := s.DueAfter(end).Add(tc.limit).Sub(end) // raw age at which lateness passes the limit
-			if newFire < tc.oldFire {
-				t.Errorf("%s stored %d: fires at a raw age of %s, before the old %s", tc.table, v, newFire, tc.oldFire)
-			}
+		want := time.Duration(v) * time.Hour
+		if th.LagSyslog != want || th.LagCounters != want || th.LagFlows != want {
+			t.Errorf("stored %d: %+v", v, th)
 		}
 	}
-	if th := ReadThresholds(map[string]string{LagHoursSyslogKey: "26", LagHoursCountersKey: "26"}); th.LagSyslog != 3*time.Hour || th.LagCounters != 3*time.Hour {
-		t.Errorf("old default 26: %+v", th)
+	if !reflect.DeepEqual(database.ArchiveLagDailyKeys, []string{LagHoursSyslogKey, LagHoursCountersKey}) {
+		t.Errorf("the migration's keys %v are not the daily lag keys", database.ArchiveLagDailyKeys)
 	}
 }

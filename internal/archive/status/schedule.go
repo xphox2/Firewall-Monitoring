@@ -28,7 +28,7 @@ import (
 // SettleSlack is the time a cut chunk may take to settle before its export
 // starts (the settle window: statement_timeout plus a margin) — part of the
 // schedule, not lateness.
-const SettleSlack = 10 * time.Minute
+const SettleSlack = database.ArchiveScheduleSlack
 
 // ScheduleView is a table's chunk schedule.
 type ScheduleView struct {

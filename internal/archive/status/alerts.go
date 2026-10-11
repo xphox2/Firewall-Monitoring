@@ -22,9 +22,10 @@ import (
 // Thresholds are system settings (the Alerting page's global defaults; 0
 // turns one off). The lag thresholds are hours LATE — past the schedule of
 // the table's next chunk (schedule.go) — the same for daily and hourly
-// tables: 3 h by default. Before 0.11.316 they were hours of raw age (26 h
-// for the daily tables); ReadThresholds reads such a stored value so that it
-// is never noisier than it was.
+// tables: 3 h by default, read as stored. Before 0.11.316 they were hours of
+// raw age (26 h for the daily tables): migration v81
+// (database.migrateArchiveLagHoursLate) converted a stored daily value once,
+// never to alert sooner than it did.
 
 // Setting keys and defaults of the archive alert thresholds.
 const (
@@ -35,9 +36,9 @@ const (
 	HeldHoursKey        = "retention_held_alert_hours"
 	UnsettledHoursKey   = "archive_unsettled_alert_hours"
 
-	LagHoursSyslogDefault   = 3
-	LagHoursFlowsDefault    = 3
-	LagHoursCountersDefault = 3
+	LagHoursSyslogDefault   = database.ArchiveLagDefault
+	LagHoursFlowsDefault    = database.ArchiveLagDefault
+	LagHoursCountersDefault = database.ArchiveLagDefault
 	SealOverdueDaysDefault  = 3
 	HeldHoursDefault        = 6
 	UnsettledHoursDefault   = 6
@@ -71,19 +72,6 @@ func ThresholdKeys() []string {
 	return keys
 }
 
-// LegacyDailyLag: a stored lag threshold of a daily table (syslog,
-// counters) at or above this many hours is a pre-0.11.316 raw-age value
-// (default 26: the age a healthy day reaches). It is read as
-// max(the default, value − LegacyDailyOffset) hours late, which fires at a
-// raw age of at least value + 1 h — never sooner than the old alert, which
-// also waited an hour above its threshold. Smaller values, and the flow
-// threshold, are read as hours late as they stand: the same number of hours
-// late is always later than that age, so no stored value becomes noisier.
-const (
-	LegacyDailyLag    = 24
-	LegacyDailyOffset = 25
-)
-
 // ReadThresholds builds the thresholds from the stored settings (key →
 // value); a key that is absent, blank, not a whole number or outside
 // 0..ThresholdMax takes its default.
@@ -96,17 +84,10 @@ func ReadThresholds(stored map[string]string) Thresholds {
 		}
 		return n
 	}
-	daily := func(key string) int {
-		n := v(key)
-		if n >= LegacyDailyLag {
-			n = max(ThresholdDefaults[key], n-LegacyDailyOffset)
-		}
-		return n
-	}
 	return Thresholds{
-		LagSyslog:       time.Duration(daily(LagHoursSyslogKey)) * time.Hour,
+		LagSyslog:       time.Duration(v(LagHoursSyslogKey)) * time.Hour,
 		LagFlows:        time.Duration(v(LagHoursFlowsKey)) * time.Hour,
-		LagCounters:     time.Duration(daily(LagHoursCountersKey)) * time.Hour,
+		LagCounters:     time.Duration(v(LagHoursCountersKey)) * time.Hour,
 		SealOverdueDays: float64(v(SealOverdueDaysKey)),
 		Held:            time.Duration(v(HeldHoursKey)) * time.Hour,
 		Unsettled:       time.Duration(v(UnsettledHoursKey)) * time.Hour,
@@ -266,15 +247,16 @@ func (e *Evaluator) Conditions(st *Status, th Thresholds, disk DiskTrend) []Cond
 			delete(e.noChunks, t.Table)
 		}
 		if t.Enabled && t.LagSeconds == nil {
-			// No chunk yet: the lag runs from when this process first saw it,
-			// or from when the worker did if earlier (its record survives a
-			// restart; the health verdict uses the same).
+			// No chunk yet: the wait runs from when the worker first saw it
+			// (its record survives a restart) — what the health verdict
+			// counts from — or, without that record (an older worker, or
+			// none running), from when this process first saw it.
 			first, ok := e.noChunks[t.Table]
 			if !ok {
 				e.noChunks[t.Table], first = now, now
 			}
 			if w := st.Worker; w != nil {
-				if since, ok := w.NoChunkSince[t.Table]; ok && since.Before(first) {
+				if since, ok := w.NoChunkSince[t.Table]; ok {
 					first = since
 				}
 			}

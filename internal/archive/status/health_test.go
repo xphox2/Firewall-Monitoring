@@ -961,3 +961,24 @@ func TestSchedule(t *testing.T) {
 		}
 	}
 }
+
+// TestConditions_NoChunkCountsFromWorkerRecord: with the worker's record of
+// when the table first had no chunk, ARCHIVE_LAG counts from it — as the
+// verdict does — even when this process saw the table earlier (an older
+// worker without the record, a configuration since switched): both agree.
+func TestConditions_NoChunkCountsFromWorkerRecord(t *testing.T) {
+	st := healthyStatus()
+	f := table(st, export.TableFlows)
+	f.HasChunks, f.Backlog, f.LagSeconds, f.VerifiedThroughEnd = false, nil, nil, nil
+	stream(st, export.StreamNetFlow).RecentChunks = 0
+	e := NewEvaluator()
+	early := *st
+	early.GeneratedAt = at.Add(-6 * time.Hour)
+	e.Conditions(sched(&early), defaultTh(), growing) // first sight, no worker record yet
+	st.Worker.NoChunkSince = map[string]time.Time{export.TableFlows: at.Add(-time.Hour)}
+	c := conditionOf(t, e.Conditions(sched(st), defaultTh(), growing), models.AlertTypeArchiveLag, export.TableFlows)
+	is := issueOf(Assess(sched(st), defaultTh(), growing), IssueNoChunkYet)
+	if c.Breached || is == nil || is.Severity != SeverityWarning {
+		t.Fatalf("alert %+v, verdict %+v", c, is)
+	}
+}
