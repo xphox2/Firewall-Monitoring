@@ -1,6 +1,7 @@
 package database
 
 import (
+	"strings"
 	"time"
 
 	"firewall-mon/internal/models"
@@ -8,16 +9,16 @@ import (
 	"gorm.io/gorm"
 )
 
-// Readers for the v72 normalized network-event table (Phase 2, PR 1). This is
-// the first read path over net_events: the admin Events page. It lists rows
-// newest-first over a bounded time window with device/probe/site/activity/
-// action filters and paging. The filters are deliberately the ones the table's
-// existing indexes can serve — ts for the window (which prunes the daily
-// partitions on Postgres), device_id for the device/site filters — and no
-// src/dst/rule-key filter, because migration v80 dropped those three indexes
-// (net_event_index_trim.go) after their one reader moved to net_event_rollups.
-// A later PR adds those filters back together with the indexes that justify
-// them.
+// Readers for the v72 normalized network-event table (Phase 2, PR 1, extended
+// by PR 2). This is the first read path over net_events: the admin Events page.
+// It lists rows newest-first over a bounded time window with device/probe/site/
+// activity/action and src/dst/rule-key filters and paging. The filters are the
+// ones the table's indexes serve — ts for the window (which prunes the daily
+// partitions on Postgres), device_id for the device/site filters, and rule_key/
+// src_ip/dst_ip for the endpoint and rule filters. Those last three were
+// dropped by migration v80 (their one reader had moved to net_event_rollups);
+// PR 2 re-adds them (net_event_index_readd.go, migration v82) because this
+// page is their reader again.
 
 // netEventPagerCountCap bounds the Events list's "of N" count; beyond it the
 // response reports total_capped and the pager reads "10,000+". Mirrors
@@ -31,15 +32,20 @@ var netEventPagerCountCap = 10000
 // "no filter" — a device/probe/site id of 0 is never a real row (PKs start at
 // 1) — except Activity and Action, where 0 is a real value ("unknown"), so
 // those are pointers: nil means "all", a non-nil value filters equality.
-// Hours is the lookback window in hours and is always > 0 (the handler derives
-// it from httputil.ParseHours, default 24); ListNetEvents coerces a non-
-// positive Hours to 24 so the query is never unbounded.
+// SrcIP/DstIP are a bare IP or a CIDR (validated by the handler), and RuleKey
+// is an exact string; an empty string means "no filter". Hours is the lookback
+// window in hours and is always > 0 (the handler derives it from
+// httputil.ParseHours, default 24); ListNetEvents coerces a non-positive Hours
+// to 24 so the query is never unbounded.
 type NetEventFilter struct {
 	DeviceID uint
 	ProbeID  uint
 	SiteID   uint
 	Activity *int16
 	Action   *int16
+	SrcIP    string
+	DstIP    string
+	RuleKey  string
 	Hours    int
 }
 
@@ -132,6 +138,15 @@ func (d *Database) ListNetEvents(f NetEventFilter, offset, limit int) ([]NetEven
 		if f.Action != nil {
 			q = q.Where("action = ?", *f.Action)
 		}
+		if f.SrcIP != "" {
+			q = netEventAddrFilter(q, d.dialect, "src_ip", f.SrcIP)
+		}
+		if f.DstIP != "" {
+			q = netEventAddrFilter(q, d.dialect, "dst_ip", f.DstIP)
+		}
+		if f.RuleKey != "" {
+			q = q.Where("rule_key = ?", f.RuleKey)
+		}
 		return q
 	}
 
@@ -157,6 +172,46 @@ func (d *Database) ListNetEvents(f NetEventFilter, offset, limit int) ([]NetEven
 
 	d.enrichNetEventRows(rows)
 	return rows, total, totalCapped, nil
+}
+
+// netEventAddrFilter applies an IP/CIDR filter on one of the net_events inet
+// columns (src_ip / dst_ip). The value is a bare IP or a CIDR, already
+// validated by the handler, so this only picks the right predicate:
+//
+//   - Postgres: the columns are real inet. A bare IP filters on equality
+//     (src_ip = '10.0.0.5'::inet), so the (src_ip, ts) btree index serves it;
+//     a CIDR filters on the native containment operator (src_ip <<=
+//     '10.0.0.0/8'::inet), which is exact for any mask length and address
+//     family.
+//   - SQLite: inet is stored as text, so the filter falls back to the
+//     octet-aligned LIKE prefix cidrToLikePattern produces (a superset —
+//     acceptable for the dev/test lane) for a CIDR, and an exact text match for
+//     a bare IP. An IPv6 CIDR (unexpressible as a v4 prefix) becomes an exact
+//     text match and therefore matches nothing — the safe direction.
+func netEventAddrFilter(q *gorm.DB, d Dialect, column, val string) *gorm.DB {
+	val = strings.TrimSpace(val)
+	if val == "" {
+		return q
+	}
+	// "everything" means no filter, matching the flow filters' semantics.
+	if val == "0.0.0.0/0" || val == "::/0" {
+		return q
+	}
+	if d.IsPostgres() {
+		if strings.Contains(val, "/") {
+			return q.Where(column+" <<= ?::inet", val)
+		}
+		return q.Where(column+" = ?::inet", val)
+	}
+	// SQLite (text): prefix-match the octet-aligned superset; a bare IP or an
+	// unexpressible value becomes an exact text match.
+	if pattern := cidrToLikePattern(val); pattern != "" {
+		if strings.Contains(pattern, "%") {
+			return q.Where(column+" LIKE ? ESCAPE '\\'", pattern)
+		}
+		return q.Where(column+" = ?", pattern)
+	}
+	return q.Where(column+" = ?", val)
 }
 
 // enrichNetEventRows resolves each row's DeviceName and Vendor from the devices

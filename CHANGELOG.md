@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.320] - 2026-10-11
+
+### Added — the Events page gets fast `src_ip` / `dst_ip` / `rule_key` filters
+
+- The Events page (`/admin/events`) now filters by **source IP**, **destination IP** and **rule key**, beside the device/probe/site/activity/action filters shipped in 0.11.319. `src_ip` / `dst_ip` accept a bare IP or a CIDR (a malformed value is a 400, never a 500); `rule_key` is an exact string match. On PostgreSQL the address filter uses the native `inet` containment operator (`<<=`) for a CIDR and equality for a bare IP; the SQLite test lane falls back to a text prefix match.
+
+### Changed — the three `net_events` leaf indexes are back (migration v82)
+
+- Migration v80 dropped the per-leaf `(rule_key, ts)`, `(src_ip, ts)` and `(dst_ip, ts)` indexes after their one reader moved to `net_event_rollups`; the Events page is that reader again, so v82 re-adds them (the model tags declare them once more, and `EnsurePartitions` builds them on every future leaf). This is a deliberate write-amplification trade-off — three more indexes per ~5M-row daily leaf, on a production fleet about 0.9 GB a day — now justified by an index-served read path. v82 builds them on every existing leaf under the same bounded-DDL discipline v80 used for the drops (per-index `lock_timeout`, retried across rounds and a deadline, never failing startup), and any leaf it could not finish is backfilled by the daily partition pass.
+
 ## [0.11.319] - 2026-10-11
 
 ### Added — the remaining data-retention knobs are settable from the admin GUI

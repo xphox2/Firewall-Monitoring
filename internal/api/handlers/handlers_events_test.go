@@ -63,3 +63,29 @@ func TestGetNetEvents_BadNumericParams(t *testing.T) {
 		}
 	}
 }
+
+// TestGetNetEvents_BadIPParams asserts a malformed src_ip/dst_ip is rejected
+// with 400 (not a 500 from an invalid inet cast on Postgres) before it reaches
+// the query, while a valid bare IP or CIDR passes.
+func TestGetNetEvents_BadIPParams(t *testing.T) {
+	h, _ := setupTestHandler(t)
+	for _, tc := range []struct{ param, val string }{
+		{"src_ip", "not-an-ip"},
+		{"src_ip", "10.0.0.0/99"},
+		{"dst_ip", "999.999.999.999"},
+		{"dst_ip", "10.0.0.0/8/8"},
+	} {
+		c, rec := jsonReq(http.MethodGet, "/x?"+tc.param+"="+tc.val, "")
+		h.GetNetEvents(c)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("GetNetEvents(%s=%q) = %d, want 400", tc.param, tc.val, rec.Code)
+		}
+	}
+	for _, ok := range []string{"10.0.0.5", "10.0.0.0/24", "2001:db8::1"} {
+		c, rec := jsonReq(http.MethodGet, "/x?src_ip="+ok, "")
+		h.GetNetEvents(c)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GetNetEvents(src_ip=%q) = %d, want 200", ok, rec.Code)
+		}
+	}
+}

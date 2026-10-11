@@ -97,14 +97,15 @@ func TestNormalizedTables_PG(t *testing.T) {
 		if sec := pgLeaves(t, d, "sec_events"); len(sec) != 8 {
 			t.Fatalf("sec_events has %d children, want 8 (7 monthly + default): %v", len(sec), sec)
 		}
-		// Every leaf (and the default) carries the two-index plan and nothing
-		// else: no (rule_key, ts), (src_ip, ts) or (dst_ip, ts) (v80).
+		// Every leaf (and the default) carries the full five-index plan:
+		// (device_id, ts), (ts) and — since v82 — (rule_key, ts), (src_ip, ts),
+		// (dst_ip, ts).
 		for _, leaf := range []string{"net_events_" + today.Format("20060102"), "net_events_default"} {
 			idx := childNonUniqueIndexCols(t, d, leaf)
-			if len(idx) != 2 {
-				t.Errorf("%s has %d non-unique indexes, want 2: %v", leaf, len(idx), idx)
+			if len(idx) != 5 {
+				t.Errorf("%s has %d non-unique indexes, want 5: %v", leaf, len(idx), idx)
 			}
-			for _, want := range []string{"device_id,ts", "ts"} {
+			for _, want := range []string{"device_id,ts", "ts", "rule_key,ts", "src_ip,ts", "dst_ip,ts"} {
 				found := false
 				for _, cols := range idx {
 					if joinCols(cols) == want {
@@ -360,8 +361,8 @@ func TestNormalizedTables_PG(t *testing.T) {
 		if n := pgRows(t, d, leaf); n != 7 {
 			t.Fatalf("a new row for the day went elsewhere (%s holds %d)", leaf, n)
 		}
-		if idx := childNonUniqueIndexCols(t, d, leaf); len(idx) != 2 {
-			t.Fatalf("%s has %d non-unique indexes, want the 2-index plan: %v", leaf, len(idx), idx)
+		if idx := childNonUniqueIndexCols(t, d, leaf); len(idx) != 5 {
+			t.Fatalf("%s has %d non-unique indexes, want the 5-index plan: %v", leaf, len(idx), idx)
 		}
 
 		// The DEFAULT trim is batched too: 5 strays older than the window with

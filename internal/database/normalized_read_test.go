@@ -153,6 +153,57 @@ func TestListNetEvents_Filters(t *testing.T) {
 	}
 }
 
+func TestListNetEvents_EndpointAndRuleFilters(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	dev := seedNetEventDevice(t, db, "fw-1", nil)
+	now := time.Now()
+
+	srcA, srcB := "10.0.0.5", "10.0.0.6"
+	dstA := "192.168.1.10"
+	ruleA, ruleB := "u:a", "u:b"
+
+	seed := func(ts time.Time, src, dst, rule string) {
+		row := &models.NetEvent{
+			Ts: ts, DeviceID: dev.ID, ProbeID: 0, Activity: 3, Action: 1,
+			SrcIP: &src, DstIP: &dst, RuleKey: &rule,
+		}
+		if err := db.Gorm().Create(row).Error; err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	seed(now, srcA, dstA, ruleA)
+	seed(now.Add(-time.Minute), srcA, dstA, ruleB)
+	seed(now.Add(-2*time.Minute), srcB, dstA, ruleA)
+	seed(now.Add(-3*time.Minute), srcA, dstA, ruleA)
+
+	// On the SQLite lane inet is text, so a CIDR filter is an octet-aligned
+	// prefix SUPERSET (10.0.0.0/24 matches every 10.0.0.*); exact equality is
+	// the same on both lanes. Postgres uses exact containment instead (the
+	// integration test covers it).
+	cases := []struct {
+		name   string
+		filter NetEventFilter
+		want   int64
+	}{
+		{"src_ip exact", NetEventFilter{Hours: 24, SrcIP: "10.0.0.5"}, 3},
+		{"src_ip /24 superset", NetEventFilter{Hours: 24, SrcIP: "10.0.0.0/24"}, 4},
+		{"dst_ip exact", NetEventFilter{Hours: 24, DstIP: "192.168.1.10"}, 4},
+		{"dst_ip absent", NetEventFilter{Hours: 24, DstIP: "192.168.1.11"}, 0},
+		{"rule_key exact", NetEventFilter{Hours: 24, RuleKey: "u:a"}, 3},
+		{"rule_key other", NetEventFilter{Hours: 24, RuleKey: "u:b"}, 1},
+		{"src+rule", NetEventFilter{Hours: 24, SrcIP: "10.0.0.5", RuleKey: "u:a"}, 2},
+	}
+	for _, tc := range cases {
+		_, total, _, err := db.ListNetEvents(tc.filter, 0, 100)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if total != tc.want {
+			t.Fatalf("%s: total = %d, want %d", tc.name, total, tc.want)
+		}
+	}
+}
+
 func TestListNetEvents_PageBounds(t *testing.T) {
 	db := NewDatabaseForTesting(t)
 	dev := seedNetEventDevice(t, db, "fw-1", nil)
