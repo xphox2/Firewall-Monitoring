@@ -175,6 +175,13 @@ func (d *Database) buildNetEventIndexes(label string, deadline time.Duration, ro
 				break
 			}
 			if err := d.createIndexBounded(tgt); err != nil {
+				if isRelationNameConflict(err) {
+					// A sibling process's ensureLeafIndexes (a concurrent
+					// EnsurePartitionsForCron during a rolling deploy) created the
+					// index between our probe and CREATE — treat it as built.
+					built++
+					continue
+				}
 				if !lockRetryable(err) {
 					return fmt.Errorf("create %s on %s: %w", tgt.name, tgt.relation, err)
 				}

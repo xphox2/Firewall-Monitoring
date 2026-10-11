@@ -86,7 +86,7 @@ func gatePGMonthLeaf(t *testing.T, d *Database, table string, m time.Time) strin
 	if err != nil {
 		t.Fatal(err)
 	}
-	d.ensureLeafIndexes(name, plan)
+	d.ensureLeafIndexes(name, plan, time.Time{}, 0)
 	return name
 }
 
