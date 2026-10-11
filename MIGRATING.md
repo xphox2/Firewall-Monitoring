@@ -156,7 +156,7 @@ the next restart applies v74 in milliseconds. An interrupted attempt leaves
 nothing behind: the ALTER is one transaction, and until it commits the table
 is unchanged.
 
-## Database migration: server 0.11.316 (migration v81)
+## Database migration: server 0.11.317 (migration v81)
 
 v81 changes no table. The raw archive's lag alert thresholds
 (`archive_lag_alert_hours_syslog`, `_flows`, `_counters`) now mean hours

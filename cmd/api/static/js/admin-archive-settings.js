@@ -17,7 +17,7 @@
 // /archive/settings/folders (subdirectories under the allowed root only).
 // Test reports every check of the directories and the filesystem warnings.
 //
-// Layout (0.11.316): the fields are grouped as an operator thinks of them —
+// Layout (0.11.317): the fields are grouped as an operator thinks of them —
 // Target, Credentials, Bucket & Object Lock, Staging, Streams, Schedule &
 // limits, Advanced (GROUPS; the server's field sections are unchanged). The
 // card opens with the archive's health verdict (the status card's

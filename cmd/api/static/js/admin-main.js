@@ -4747,7 +4747,7 @@
         'archive-refresh': function() { renderArchiveStatus(); },
         'archive-reset-chunk': function(el) { resetArchiveChunk(parseInt(el.dataset.id, 10)); },
         'archive-reengage': function(el) { reengageArchiveGate(el.dataset.stream); },
-        // The health card's fix buttons (v0.11.316): jump to a section of
+        // The health card's fix buttons (v0.11.317): jump to a section of
         // the card, open a setting, or run Test connection with the
         // settings shown in Raw Archive Settings, including unsaved edits.
         'archive-jump': function(el) {

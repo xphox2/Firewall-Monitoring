@@ -1437,7 +1437,7 @@ they follow the verified chunks.
 
 ## Raw archive: status and alerts
 
-### The health verdict (0.11.316)
+### The health verdict (0.11.317)
 
 The Raw Archive card opens with one verdict — **Healthy**, **Warning**,
 **Error**, or the neutral **Archiving is off** / **Not configured** — shown
@@ -1498,7 +1498,7 @@ table), the lag is part of that error instead of a second one;
 stream's state, verified-through point, backlog, rows and bytes stored and the
 compression of its recent objects; on a phone each stream is a card.
 
-From 0.11.308 the archive's whole state is in one place (0.11.316 replaced
+From 0.11.308 the archive's whole state is in one place (0.11.317 replaced
 the banners and the per-table cards below with the verdict above and the
 per-stream table; the rest is unchanged):
 
@@ -1585,7 +1585,7 @@ one off, blank uses the default):
 
 | alert | per | fires when | default |
 |---|---|---|---|
-| `ARCHIVE_LAG` | table (sflow and netflow share `flow_samples`: one alert names both) | the table's next chunk is **later than the threshold past its schedule** (0.11.316): it is due at the verified data's end + the period (24 h syslog and counters, 1 h flows) + the minimum age (`ARCHIVE_MIN_AGE_HOURS` for syslog and counters, 5 min for flows) + 10 min to settle, moved to the next `ARCHIVE_WINDOW` opening for syslog. A healthy night (the day cut at 02:00, a heavy day exported until after 04:00) is on time; the age of the data is still shown. An enabled table that has cut **no chunk at all** (typically a bucket that never passes the preflight) fires once its first chunk is that late — the gate holds every raw row of its table meanwhile | 3 h late for every table |
+| `ARCHIVE_LAG` | table (sflow and netflow share `flow_samples`: one alert names both) | the table's next chunk is **later than the threshold past its schedule** (0.11.317): it is due at the verified data's end + the period (24 h syslog and counters, 1 h flows) + the minimum age (`ARCHIVE_MIN_AGE_HOURS` for syslog and counters, 5 min for flows) + 10 min to settle, moved to the next `ARCHIVE_WINDOW` opening for syslog. A healthy night (the day cut at 02:00, a heavy day exported until after 04:00) is on time; the age of the data is still shown. An enabled table that has cut **no chunk at all** (typically a bucket that never passes the preflight) fires once its first chunk is that late — the gate holds every raw row of its table meanwhile | 3 h late for every table |
 | `ARCHIVE_NEEDS_ATTENTION` | table | a chunk is parked in `needs_attention` | always on |
 | `ARCHIVE_SEAL_OVERDUE` | stream | the oldest closed month is still not sealed this many days after its seal time (`fwmon_archive_month_unsealed_days`) | 3 days |
 | `RETENTION_HELD` (critical) | table | the gate is on and holds unarchived rows more than this far past the table's window (syslog: its shortest severity window; raw flows: the rollup's 1 h; counters: `RETENTION_FLOW_DAYS`) **and** the database volume is growing (free space below the sample 1–3 h earlier; counted as growing when the volume cannot be measured). The growth only fires it: once active it stays until the hold clears, whatever the free space does meanwhile | 6 h |
@@ -1593,7 +1593,7 @@ one off, blank uses the default):
 | `ARCHIVE_GATE_UNREADABLE` | (one) | the poller's retention gate has failed to read the archive's stream switches (`system_settings`) for longer than 15 minutes. Evaluated from the gate itself, even where the archive was never enabled, and even when the rest of the status cannot be read. Field `holding`: `all` — no read has succeeded since the poller started, so every archived table's deletes are held; `last` — the gate keeps the switches it read last, so a stream switched on or off on the admin page is not applied | 15 min (fixed) |
 
 Settings keys: `archive_lag_alert_hours_syslog`, `archive_lag_alert_hours_flows`,
-(Since 0.11.316 the three lag keys are hours **late**, default 3, read as
+(Since 0.11.317 the three lag keys are hours **late**, default 3, read as
 stored. Migration v81 converted a syslog or counters value saved before —
 hours of age, 26 by default — once, with the minimum age in effect then
 (`ARCHIVE_MIN_AGE_HOURS`, the admin value first): ⌈value + 1 − 24 − minimum

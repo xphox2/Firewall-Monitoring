@@ -8,7 +8,7 @@ import (
 	"firewall-mon/internal/database"
 )
 
-// Lateness (0.11.316). A table's archive is judged by how late its next
+// Lateness (0.11.317). A table's archive is judged by how late its next
 // chunk is, not by the age of its verified data: a daily table's data is
 // 24 h old at midnight and its day can only be cut ARCHIVE_MIN_AGE_HOURS
 // later, so the raw age of a perfectly healthy syslog archive peaks past

@@ -1,7 +1,7 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
-## [0.11.316] - 2026-10-07
+## [0.11.317] - 2026-10-11
 
 ### Added — one health verdict for the raw archive, and a status page that says what to do
 

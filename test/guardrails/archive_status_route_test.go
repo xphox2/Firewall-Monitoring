@@ -82,7 +82,7 @@ func TestArchiveStatusCardScript(t *testing.T) {
 		"var esc = AC.escapeHtml;",
 		"AC.pollWhenVisible(",
 		"esc(e.error || '')",
-		// 0.11.316: the gate's read error and every other cause reach
+		// 0.11.317: the gate's read error and every other cause reach
 		// the card as an issue's detail (status.Assess), escaped.
 		"esc(is.detail)",
 		"esc(is.title)",
@@ -111,7 +111,7 @@ func TestArchiveStatusCardScript(t *testing.T) {
 	}
 }
 
-// TestArchiveSettingsHealthAndTest (0.11.316): the settings card shows the
+// TestArchiveSettingsHealthAndTest (0.11.317): the settings card shows the
 // verdict the status card already rendered at once (not after the next 15 s
 // refresh), Test connection says it uses the form's values including
 // unsaved edits, and a Test asked for before the form has loaded loads it

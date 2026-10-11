@@ -13,7 +13,7 @@ import (
 	"firewall-mon/internal/models"
 )
 
-// The raw archive's health verdict (0.11.316): one answer to "is the backup
+// The raw archive's health verdict (0.11.317): one answer to "is the backup
 // working, and if not, what must someone do", computed here only. The admin
 // status API and the CLI attach it to the Status (AttachHealth), the status
 // card draws its banner and its "Action needed" list from it, and the

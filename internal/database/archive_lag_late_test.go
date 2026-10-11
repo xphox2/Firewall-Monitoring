@@ -60,7 +60,7 @@ func setting(t *testing.T, d *Database, key string) (string, bool) {
 func testArchiveLagMigration(t *testing.T, d *Database) {
 	t.Helper()
 	// A PostgreSQL test database ran every migration (RunMigrations) on an
-	// empty table: only the marker exists. Start from a pre-0.11.316 install.
+	// empty table: only the marker exists. Start from a pre-0.11.317 install.
 	if v, ok := setting(t, d, ArchiveLagUnitKey); d.dialect.IsPostgres() && (!ok || v != "late") {
 		t.Fatalf("marker after a fresh migration: %q %v", v, ok)
 	}

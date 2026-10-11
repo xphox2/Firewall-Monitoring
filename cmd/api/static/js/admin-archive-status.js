@@ -7,7 +7,7 @@
 // rewrites only those whose HTML changed: an unchanged banner or button keeps
 // its DOM and keyboard focus, and <details> keep their open state.
 //
-// What it shows, top to bottom (v0.11.316):
+// What it shows, top to bottom (v0.11.317):
 //   1. the health banner — the server's verdict (data.health, computed once
 //      in internal/archive/status/health.go for this page, the CLI and the
 //      alerts): colour, icon AND words, the one-line summary, the last

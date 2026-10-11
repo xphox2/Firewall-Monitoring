@@ -150,7 +150,7 @@ type TableRuntime struct {
 
 // StageError is the last failure of one stage (the fwmon_archive_errors_total
 // stage label) and how many were counted; Since is the first of them (nil in
-// a snapshot written before 0.11.316). Both are kept across worker rebuilds
+// a snapshot written before 0.11.317). Both are kept across worker rebuilds
 // and poller restarts (Recorder.Restore).
 type StageError struct {
 	At    time.Time  `json:"at"`

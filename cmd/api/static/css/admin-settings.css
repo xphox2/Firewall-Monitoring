@@ -107,7 +107,7 @@
 
 /* The content column may shrink below its widest table (a grid item's
    min-width is auto): at phone width the retention table scrolls inside
-   its own card instead of widening every card of the section (0.11.316). */
+   its own card instead of widening every card of the section (0.11.317). */
 .settings-content { min-width: 0; }
 #settings-retention { overflow-x: auto; }
 
@@ -180,7 +180,7 @@
     justify-content: flex-end;
     align-items: center;
 }
-/* 0.11.316: the unsaved-change count leads the action bar. */
+/* 0.11.317: the unsaved-change count leads the action bar. */
 .arch-settings-dirty {
     margin-right: auto;
     font-size: 0.8rem;
@@ -255,7 +255,7 @@
     .archive-checks li { grid-template-columns: 1fr; gap: 0; }
 }
 
-/* ---- Raw archive status (0.11.316, admin-archive-status.js) -----------
+/* ---- Raw archive status (0.11.317, admin-archive-status.js) -----------
    The health banner, the "Action needed" list, the per-stream table and
    the details. Tones come from the signal tokens of both themes; every
    tone is paired with an icon and words, never colour alone. */

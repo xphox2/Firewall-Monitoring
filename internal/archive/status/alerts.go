@@ -22,7 +22,7 @@ import (
 // Thresholds are system settings (the Alerting page's global defaults; 0
 // turns one off). The lag thresholds are hours LATE — past the schedule of
 // the table's next chunk (schedule.go) — the same for daily and hourly
-// tables: 3 h by default, read as stored. Before 0.11.316 they were hours of
+// tables: 3 h by default, read as stored. Before 0.11.317 they were hours of
 // raw age (26 h for the daily tables): migration v81
 // (database.migrateArchiveLagHoursLate) converted a stored daily value once,
 // never to alert sooner than it did.

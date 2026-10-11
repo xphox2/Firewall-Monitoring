@@ -15,10 +15,10 @@ import (
 	"gorm.io/gorm"
 )
 
-// Migration v81 (0.11.316): the archive lag alert thresholds change meaning.
+// Migration v81 (0.11.317): the archive lag alert thresholds change meaning.
 // Before, archive_lag_alert_hours_* were hours of AGE of a table's verified
 // data (default 26 for the daily syslog and counters tables, which also had
-// to stay above it for an hour; 3 for flows). From 0.11.316 they are hours
+// to stay above it for an hour; 3 for flows). From 0.11.317 they are hours
 // LATE past the schedule of the table's next chunk (status.ScheduleView):
 // due = verified end + period + minimum age + ArchiveScheduleSlack.
 //
