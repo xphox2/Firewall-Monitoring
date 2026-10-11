@@ -146,9 +146,12 @@ days, resumable, one transaction per batch so it is exactly-once beside the
 live ingest — see docs/OPERATIONS.md) writes into droppable leaves; the `net_events_default` child
 holds only what no leaf accepted (a clock-skewed collector, or a day whose leaf
 did not exist yet) and is trimmed with the batched-delete loop. Each leaf
-carries the primary key, `(ts)` and `(device_id, ts)` only (since v0.11.314,
-migration v80, which dropped the unused `(rule_key, ts)`, `(src_ip, ts)` and
-`(dst_ip, ts)` — about 0.9 GB a day on a production fleet). If a day's
+carries the primary key, `(ts)` and `(device_id, ts)`, plus — since 0.11.320 —
+`(rule_key, ts)`, `(src_ip, ts)` and `(dst_ip, ts)` for the Events page's
+endpoint/rule filters (about 0.9 GB a day on a production fleet; migration v80
+dropped them after their one reader moved to `net_event_rollups`, and migration
+v82 re-added them now that the raw rows are read by endpoint and rule again).
+If a day's
 leaf is missing while its rows already sit in the default child, the partition
 pass creates the leaf standalone, moves the rows out in batches and attaches
 it in one locked transaction that also sweeps up any row that arrived

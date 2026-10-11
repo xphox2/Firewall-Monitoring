@@ -505,6 +505,9 @@
                     <select id="events-filter-probe"><option value="">All Probes</option></select>
                     <select id="events-filter-activity"><option value="">All Activity</option></select>
                     <select id="events-filter-action"><option value="">All Actions</option></select>
+                    <input type="text" id="events-filter-src-ip" placeholder="src IP or CIDR" autocomplete="one-time-code" spellcheck="false">
+                    <input type="text" id="events-filter-dst-ip" placeholder="dst IP or CIDR" autocomplete="one-time-code" spellcheck="false">
+                    <input type="text" id="events-filter-rule-key" placeholder="rule key" autocomplete="one-time-code" spellcheck="false">
                     <button type="button" class="btn secondary sm" id="events-clear-filters">Clear filters</button>
                 </div>
                 <div class="fwmon-load-host" id="events-load-host">

@@ -133,6 +133,7 @@ var registeredMigrations = []migration{
 	{version: 79, name: "archive_chunk_status_indexes", run: (*Database).migrateArchiveChunkStatusIndexes},
 	{version: 80, name: "drop_unused_net_events_indexes", run: (*Database).migrateDropUnusedNetEventIndexes},
 	{version: 81, name: "archive_lag_hours_late", run: (*Database).migrateArchiveLagHoursLate},
+	{version: 82, name: "readd_net_events_indexes", run: (*Database).migrateReaddNetEventIndexes},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

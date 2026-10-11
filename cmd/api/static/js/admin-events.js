@@ -23,8 +23,8 @@
     var formatBytes = AC.formatBytes;
     var apiFetch = AC.apiFetch;
 
-    var DEFAULTS = { hours: 24, site_id: '', device_id: '', probe_id: '', activity: '', action: '' };
-    var URL_KEYS = ['hours', 'site_id', 'device_id', 'probe_id', 'activity', 'action'];
+    var DEFAULTS = { hours: 24, site_id: '', device_id: '', probe_id: '', activity: '', action: '', src_ip: '', dst_ip: '', rule_key: '' };
+    var URL_KEYS = ['hours', 'site_id', 'device_id', 'probe_id', 'activity', 'action', 'src_ip', 'dst_ip', 'rule_key'];
 
     var state = Object.assign({}, DEFAULTS);
     var inited = false;
@@ -156,6 +156,9 @@
         if (state.probe_id) p.push('probe_id=' + encodeURIComponent(state.probe_id));
         if (state.activity !== '') p.push('activity=' + encodeURIComponent(state.activity));
         if (state.action !== '') p.push('action=' + encodeURIComponent(state.action));
+        if (state.src_ip) p.push('src_ip=' + encodeURIComponent(state.src_ip));
+        if (state.dst_ip) p.push('dst_ip=' + encodeURIComponent(state.dst_ip));
+        if (state.rule_key) p.push('rule_key=' + encodeURIComponent(state.rule_key));
         return '/admin/api/events?' + p.join('&');
     }
 
@@ -244,6 +247,12 @@
             { id: 'events-filter-action', key: 'action' }
         ].forEach(function(spec) { bindSelect(spec.id, spec.key); });
 
+        [
+            { id: 'events-filter-src-ip', key: 'src_ip' },
+            { id: 'events-filter-dst-ip', key: 'dst_ip' },
+            { id: 'events-filter-rule-key', key: 'rule_key' }
+        ].forEach(function(spec) { bindInput(spec.id, spec.key); });
+
         var clearBtn = document.getElementById('events-clear-filters');
         if (clearBtn) {
             clearBtn.addEventListener('click', function() {
@@ -252,6 +261,9 @@
                 state.probe_id = '';
                 state.activity = '';
                 state.action = '';
+                state.src_ip = '';
+                state.dst_ip = '';
+                state.rule_key = '';
                 applyState();
                 syncURL();
                 firstPage();
@@ -283,6 +295,33 @@
         });
     }
 
+    function bindInput(elId, stateKey) {
+        var el = document.getElementById(elId);
+        if (!el || el.__fwmonEventsBound) return;
+        el.__fwmonEventsBound = true;
+        var pending = null;
+        var commit = function() {
+            state[stateKey] = el.value.trim();
+            applyState();
+            syncURL();
+            firstPage();
+        };
+        el.addEventListener('input', function() {
+            if (pending) clearTimeout(pending);
+            pending = setTimeout(commit, 400);
+        });
+        el.addEventListener('blur', function() {
+            if (pending) { clearTimeout(pending); pending = null; }
+            commit();
+        });
+        el.addEventListener('keydown', function(ev) {
+            if (ev.key === 'Enter') {
+                if (pending) { clearTimeout(pending); pending = null; }
+                commit();
+            }
+        });
+    }
+
     function setVal(id, v) {
         var el = document.getElementById(id);
         if (el && el.value !== String(v || '')) el.value = v || '';
@@ -294,6 +333,9 @@
         setVal('events-filter-probe', state.probe_id);
         setVal('events-filter-activity', state.activity);
         setVal('events-filter-action', state.action);
+        setVal('events-filter-src-ip', state.src_ip);
+        setVal('events-filter-dst-ip', state.dst_ip);
+        setVal('events-filter-rule-key', state.rule_key);
         activatePills();
         renderChips();
     }
@@ -313,7 +355,10 @@
             { key: 'device', stateKey: 'device_id' },
             { key: 'probe', stateKey: 'probe_id' },
             { key: 'activity', stateKey: 'activity' },
-            { key: 'action', stateKey: 'action' }
+            { key: 'action', stateKey: 'action' },
+            { key: 'src_ip', stateKey: 'src_ip' },
+            { key: 'dst_ip', stateKey: 'dst_ip' },
+            { key: 'rule_key', stateKey: 'rule_key' }
         ];
         var html = '';
         for (var i = 0; i < defs.length; i++) {

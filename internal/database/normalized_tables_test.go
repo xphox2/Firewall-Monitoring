@@ -79,13 +79,14 @@ func TestPartitionLookbackDays(t *testing.T) {
 	}
 }
 
-// TestRegisteredMigrations_V81IsLast pins the version numbers the plans and
+// TestRegisteredMigrations_Tail pins the version numbers the plans and
 // CHANGELOG cite.
-func TestRegisteredMigrations_V81IsLast(t *testing.T) {
+func TestRegisteredMigrations_Tail(t *testing.T) {
 	want := []struct {
 		version int
 		name    string
 	}{
+		{82, "readd_net_events_indexes"},
 		{81, "archive_lag_hours_late"},
 		{80, "drop_unused_net_events_indexes"},
 		{79, "archive_chunk_status_indexes"},
@@ -125,8 +126,9 @@ func TestMigrateV72_Idempotent(t *testing.T) {
 		}
 	}
 	// The partition machinery knows both event tables and the LC-19 plan
-	// derives the two net_events leaf indexes from the model tags — not the
-	// (rule_key, ts), (src_ip, ts) and (dst_ip, ts) ones v80 drops.
+	// derives the five net_events leaf indexes from the model tags — the two
+	// baseline (device_id, ts) and (ts), plus the (rule_key, ts), (src_ip, ts)
+	// and (dst_ip, ts) indexes migration v82 re-adds for the Events page.
 	plan, err := partitionIndexPlan(partitionDef{"net_events", "ts"})
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +137,7 @@ func TestMigrateV72_Idempotent(t *testing.T) {
 	for _, p := range plan {
 		cols = append(cols, strings.Join(p.cols, ","))
 	}
-	want := []string{"device_id,ts", "ts"}
+	want := []string{"device_id,ts", "ts", "rule_key,ts", "src_ip,ts", "dst_ip,ts"}
 	if !reflect.DeepEqual(cols, want) {
 		t.Fatalf("net_events leaf index plan = %v, want %v", cols, want)
 	}

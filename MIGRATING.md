@@ -203,6 +203,32 @@ leaf at the next startup (its partition pass creates them `IF NOT EXISTS`):
 about 0.9 GB per retained day, and each build holds a SHARE lock on its leaf
 (inserts into today's leaf wait for that build). Check free disk space first.
 
+## Database migration: server 0.11.320 (migration v82)
+
+v82 re-creates three indexes on every `net_events` leaf —
+`idx_<leaf>_rule_key_ts`, `idx_<leaf>_src_ip_ts`, `idx_<leaf>_dst_ip_ts` — that
+v80 dropped in 0.11.314 (above). The admin Events page (0.11.319) reads
+`net_events` by source IP, destination IP and rule key, which is what makes
+those indexes worth their write amplification again (~0.9 GB a day on a
+production fleet).
+
+Each `CREATE INDEX IF NOT EXISTS` is its own transaction and takes a SHARE lock
+on its leaf (blocks writers, not readers), so each build's lock wait is capped
+at 2 s (`lock_timeout`) and an index whose lock was not granted is retried every
+5 s, 12 rounds, with v82 stopping after 90 s of *starting* new builds. A single
+build is never cut off — building an index on a 5M-row leaf takes minutes, so
+v82 lifts `statement_timeout` for the build rather than bounding it (unlike
+v80's fast drops). An index still unbuilt after the last round is **not** an
+error: startup continues and logs `WARNING: migrate v82: N of M net_events
+index(es) not built ...` — the partition pass (`EnsurePartitions`, `CREATE
+INDEX IF NOT EXISTS`) runs immediately after migrations on the same boot and
+backfills them, and repeats on every daily pass. v82 is idempotent: a re-run
+finds no missing index.
+
+This is a one-time build cost on upgrade (a retained leaf at a time, the whole
+set spread across the migration window and the partition pass) plus the ongoing
+write amplification of three more indexes per daily leaf.
+
 ## Header / field reference
 
 For operators debugging a `curl` or a probe that won't register:

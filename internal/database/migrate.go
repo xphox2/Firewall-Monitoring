@@ -678,13 +678,12 @@ func (d *Database) EnsurePartitions() error {
 // transaction ensureLeaf uses when the DEFAULT child already holds the day's
 // rows (lockTimeout below; 0 = wait, the startup variant).
 //
-// It also re-sweeps the net_events indexes migration v80 retired, once per
-// pass under a short deadline (sweepRetiredNetEventIndexes): whatever v80
-// could not lock at startup is dropped on a later day.
+// It also (re)creates the net_events leaf indexes the model's tags declare —
+// including the three migration v82 restored — on any leaf still missing them
+// (ensureLeafIndexes, CREATE INDEX IF NOT EXISTS), so an index v82 could not
+// build at startup (a held lock) is backfilled here.
 func (d *Database) EnsurePartitionsForCron() error {
-	err := d.ensurePartitions(d.execCronDDL, cronDDLLockTimeout)
-	d.sweepRetiredNetEventIndexes()
-	return err
+	return d.ensurePartitions(d.execCronDDL, cronDDLLockTimeout)
 }
 
 func (d *Database) ensurePartitions(createPartition func(sql string, args ...interface{}) error, lockTimeout time.Duration) error {
