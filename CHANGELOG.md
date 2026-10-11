@@ -10,6 +10,10 @@ All notable changes to this project are documented in this file.
 - **Why now:** the Go vulnerability database (updated 2026-10-08) flags 12 advisories against code this server compiles in on the previous pins — 11 in the standard library (`net/http`, `net/textproto`, `crypto/tls`, `html/template` and others; GO-2026-6599 … GO-2026-6617) fixed in Go 1.26.9, and one in `golang.org/x/net` v0.58.0 fixed in v0.60.0. With them, `govulncheck ./...` (CI's `vuln-scan` job) fails; with these bumps it reports **0 vulnerabilities affecting the code**.
 - No functional changes. `go mod tidy` changed only the `golang.org/x/net` line in `go.mod` and `go.sum`; README states Go 1.26.9.
 
+### Fixed — a date-sensitive PostgreSQL integration test
+
+- `TestArchiveGate_Syslog_PG` seeded 130 days of rows ending at `now`, but its fixture requires rows in the DEFAULT partition child, which holds only rows older than the first of month M-4. Early in a month 130 days reaches before M-4 (it passed through 2026-10-07); from about the 9th it no longer did, so the DEFAULT child stayed empty and the fixture check failed — on stock master too, with no code change involved. The seed now pulls its start a few days before M-4 whenever 130 days does not clear it.
+
 ## [0.11.315] - 2026-10-07
 
 ### Added — the raw archive can go to a local partition or a network share
