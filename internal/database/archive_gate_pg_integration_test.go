@@ -164,7 +164,17 @@ func TestArchiveGate_Syslog_PG(t *testing.T) {
 					}
 				}
 			}
-			gatePGSeedSyslog(t, d, now.AddDate(0, 0, -130), now, 650000)
+			// The leaves run M-4..M-1, so a row reaches the DEFAULT child only
+			// if it is older than the first of M-4. 130 days reaches before
+			// M-4 early in a month but not late in one (on the 11th, now-130d
+			// is already inside the M-4 leaf), which left the DEFAULT child
+			// empty and failed the fixture check below. Pull the start a few
+			// days before M-4 whenever 130 days does not clear it.
+			from := now.AddDate(0, 0, -130)
+			if m4 := month.AddDate(0, -4, 0); !from.Before(m4) {
+				from = m4.AddDate(0, 0, -3)
+			}
+			gatePGSeedSyslog(t, d, from, now, 650000)
 			total := gatePGCount(t, d, "SELECT count(*) FROM syslog_messages")
 
 			// V: the middle of month M-3 (older than every retention cutoff).

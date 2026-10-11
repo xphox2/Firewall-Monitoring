@@ -1,6 +1,6 @@
 module firewall-mon
 
-go 1.26.8
+go 1.26.9
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.47.1
@@ -27,7 +27,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.45.0
 	go.opentelemetry.io/otel/trace v1.45.0
 	golang.org/x/crypto v0.57.0
-	golang.org/x/net v0.58.0
+	golang.org/x/net v0.60.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/time v0.15.0
 	gorm.io/driver/postgres v1.6.0
