@@ -258,6 +258,7 @@
         audit: ['filter-audit'],
         'threat-intel': ['ti-'],
         flows: ['flows-'],
+        events: ['events-'],
         reports: ['report-'],
         // No 'connections' entry: the map side panel stays open across a page
         // change, so its loads finish into it (its host is hidden, so Esc
@@ -287,6 +288,17 @@
             case 'devices': loadDevices(); break;
             case 'connections': loadConnections(); break;
             case 'syslog': wireSyslogAnalyticsPage(); loadSyslog(); break;
+            case 'events':
+                // The Events page is owned by FwmonEvents (admin-events.js), a
+                // self-contained module like FwmonFlows: it binds its own
+                // controls, syncs filters with the URL, and renders the table.
+                if (window.FwmonEvents && window.FwmonEvents.init) {
+                    window.FwmonEvents.init();
+                } else {
+                    console.error('admin-events.js failed to load — Events page unavailable');
+                    AC.showError('Events module failed to load — try refreshing the page');
+                }
+                break;
             case 'flows':
                 // v0.10.211: the Flows tab is owned by FwmonFlows (admin-flows.js).
                 // It binds its own controls, syncs filters with the URL, and
@@ -3928,6 +3940,7 @@
         // this code, so they must NOT be mapped here (see SPA_PAGES).
         var pageMap = { 'dashboard':'dashboard', 'devices':'devices', 'connections':'connections',
             'settings':'settings', 'reports':'reports', 'syslog':'syslog', 'flows':'flows', 'noc':'noc', 'alerts':'alerts', 'traps':'traps',
+            'events':'events',
             'alerting':'alerting', 'alert-policies':'alert-policies', 'event-rules':'event-rules', 'ipsec':'ipsec', 'maintenance':'maintenance', 'audit':'audit', 'profile':'profile', 'threat-intel':'threat-intel',
             'probes':'probes', 'sites':'sites', 'irc':'irc' };
         var page = pageMap[lastSegment];
@@ -5054,6 +5067,7 @@
     // loadPageData() switch.
     var SPA_PAGES = { dashboard:1, devices:1, connections:1,
         settings:1, reports:1, syslog:1, flows:1, noc:1, alerts:1, traps:1,
+        events:1,
         alerting:1, 'alert-policies':1, 'event-rules':1, ipsec:1, maintenance:1, audit:1, 'threat-intel':1,
         probes:1, sites:1, irc:1 };
 
