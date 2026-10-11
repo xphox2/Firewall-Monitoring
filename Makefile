@@ -19,6 +19,11 @@ SHAREDIR    = $(DESTDIR)$(PREFIX)/share/firewall-mon
 BINDIR      = $(DESTDIR)$(PREFIX)/bin
 DIST_DIR   ?= dist
 
+# The Postgres integration lane's DSN (`make ci-local` / `test-integration`).
+# Any throwaway Postgres 16 — the schema is RESET, so the database name must
+# contain "test". Override for a different host, port or credentials.
+TEST_PG_DSN ?= postgres://firewall_mon:firewall_mon@localhost:5432/firewall_mon_test?sslmode=disable
+
 .PHONY: help
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' Makefile | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-15s %s\n", $$1, $$2}'
@@ -28,7 +33,7 @@ help: ## Show this help
 # true. ci.yml jobs: build-test (tidy-check, gofmt, vet, build, `go test
 # -race`), static-analysis (staticcheck, pinned), gosec (pinned + excludes),
 # vuln-scan (govulncheck, pinned). The Postgres integration job is CI-only
-# (needs a live server) — run it via `make test-integration`; every other
+# (needs a live server) — run it via `make ci-local`, which runs this target; every other
 # gate is mirrored here, including tailwind-freshness. That one is not only
 # about CSS edits: Tailwind scans the JS too, so a token like `!badge` in
 # `if (!badge)` regenerates a component class variant (v0.11.269). `test`
@@ -36,6 +41,23 @@ help: ## Show this help
 # without a C toolchain.
 qa: tidy-check fmt-check vet staticcheck gosec vuln build test test-race tailwind-check ## Run the full QA gate (same as CI)
 	@echo "QA OK (v$(VERSION))"
+
+.PHONY: ci-local
+# `qa` mirrors every ci.yml job except the Postgres integration one, which
+# needs a live server. This target appends that lane, so the WHOLE pipeline —
+# build, static analysis, race tests, tailwind freshness and the Postgres
+# integration suite — runs here, with no CI round trip. Run it before pushing;
+# CI stays the final gate.
+ci-local: ## Run the whole CI gate locally: `make qa` + the Postgres integration lane
+	@if command -v pg_isready >/dev/null 2>&1 && ! pg_isready -q -d '$(TEST_PG_DSN)'; then \
+		echo "ERROR: no Postgres reachable at TEST_PG_DSN=$(TEST_PG_DSN)"; \
+		echo "  start one: docker run --rm -d --name fwmon-it-pg -p 5432:5432 -e POSTGRES_USER=firewall_mon -e POSTGRES_PASSWORD=firewall_mon -e POSTGRES_DB=firewall_mon_test postgres:16"; \
+		exit 1; \
+	fi
+	$(MAKE) qa
+	@echo ">> Postgres integration lane (TEST_PG_DSN=$(TEST_PG_DSN))"
+	TEST_PG_DSN='$(TEST_PG_DSN)' INTEGRATION_JSON=$${INTEGRATION_JSON:-integration.json} .github/scripts/integration-tests.sh
+	@echo "CI OK (local, v$(VERSION))"
 
 .PHONY: test
 test: ## Run tests

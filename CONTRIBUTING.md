@@ -40,20 +40,23 @@ If unsure, open a [discussion](https://github.com/xphox2/Firewall-Monitoring/dis
    git checkout -b fix/audit-NNN-short-description
    ```
 2. **Make focused changes**. One PR = one logical change. If an unrelated cleanup tempts you, do it in a separate PR.
-3. **Run QA locally** *before* pushing:
+3. **Run QA locally** *before* pushing. `make ci-local` runs the entire CI gate
+   on your machine — `make qa` (gofmt, vet, staticcheck, gosec, govulncheck,
+   build, tests, `-race`, Tailwind freshness) plus the Postgres integration lane
+   that CI adds on top:
    ```bash
-   gofmt -l . | (! grep .)        # must produce no output
-   go vet ./...                    # must be clean
-   go build ./...                  # must succeed
-   go test -count=1 ./...          # must pass
-   # Optional but encouraged:
-   CGO_ENABLED=1 go test -race -count=1 ./...
+   make ci-local      # everything; needs a local Postgres 16 (see TEST_PG_DSN)
+   make qa            # the same minus the Postgres lane (no database needed)
    ```
+   The Postgres lane defaults to
+   `TEST_PG_DSN=postgres://firewall_mon:firewall_mon@localhost:5432/firewall_mon_test?sslmode=disable`
+   and **resets** that database's schema on every run, so point it at a throwaway
+   database whose name contains `test`. With no database available, run `make qa`.
 4. **Update `CHANGELOG.md`** with a new entry **at the top of the file** describing the change. Use the version pattern `[0.10.N+1] - YYYY-MM-DD`. Include the AUDIT-NNN ID if applicable.
 5. **Bump `ServerVersion`** in `cmd/api/main.go:39` to the version your CHANGELOG entry uses. (The Dockerfile uses `ARG VERSION=dev` and needs no edit — the build stamps the version in.)
 6. **If your change resolves a limitation** listed in `KNOWN-ISSUES.md`, remove that entry in the same PR.
 7. **Open the PR**. Title format: `vX.Y.Z: AUDIT-NNN - short description` or `vX.Y.Z: <area> - short description` for non-audit work.
-8. **CI** runs `go build`, `go test -race`, `gofmt -l`, `go vet`, `govulncheck` on every PR — must be green before merge.
+8. **CI** runs `go build`, `go test -race`, `gofmt -l`, `go vet`, `staticcheck`, `gosec`, `govulncheck`, the Tailwind-freshness check, gitleaks and the Postgres integration suite on every PR — must be green before merge. `make ci-local` runs the same set locally, so you can catch a failure before the CI round trip.
 9. **Squash-merge** is the default; the merge commit message becomes the canonical changelog entry on `master`.
 
 ## Commit message style
