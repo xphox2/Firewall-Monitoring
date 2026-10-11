@@ -66,9 +66,9 @@ type retentionGUIKnob struct {
 	get                            func(config.RetentionConfig) int
 }
 
-// retentionGUIKnobs is the form order of the 12 knobs. SyslogDays /
-// SyslogInfoDays / SyslogCriticalDays are omitted (already settable via the
-// per-severity syslog_retention_days_* keys) as are the summary knobs.
+// retentionGUIKnobs is the form order of the operator-tunable retention knobs.
+// SyslogDays / SyslogInfoDays / SyslogCriticalDays are omitted (already settable
+// via the per-severity syslog_retention_days_* keys) as are the summary knobs.
 var retentionGUIKnobs = []retentionGUIKnob{
 	{database.RetentionDefaultDaysKey, "RETENTION_DEFAULT_DAYS", "Default days",
 		"Fallback for every table whose own knob is blank or 0. 0 falls back to the built-in 90.", "days", 3650,
@@ -82,18 +82,60 @@ var retentionGUIKnobs = []retentionGUIKnob{
 	{database.RetentionFlowRollupDaysKey, "RETENTION_FLOW_ROLLUP_DAYS", "Flow rollups",
 		"0 = inherit RETENTION_DEFAULT_DAYS.", "days", 3650,
 		func(r config.RetentionConfig) int { return r.FlowRollupDays }},
+	{database.RetentionFlowDetectionKey, "RETENTION_FLOW_DETECTION_DAYS", "Flow detections",
+		"0 = inherit RETENTION_DEFAULT_DAYS.", "days", 3650,
+		func(r config.RetentionConfig) int { return r.FlowDetectionDays }},
+	{database.RetentionAgentDropsKey, "RETENTION_AGENT_DROPS_DAYS", "Flow agent drops",
+		"0 = inherit RETENTION_DEFAULT_DAYS.", "days", 3650,
+		func(r config.RetentionConfig) int { return r.AgentDropsDays }},
 	{database.RetentionTrapDaysKey, "RETENTION_TRAP_DAYS", "SNMP traps",
 		"0 = inherit RETENTION_DEFAULT_DAYS.", "days", 3650,
 		func(r config.RetentionConfig) int { return r.TrapDays }},
 	{database.RetentionStatusDaysKey, "RETENTION_STATUS_DAYS", "Status & telemetry",
 		"0 = inherit RETENTION_DEFAULT_DAYS.", "days", 3650,
 		func(r config.RetentionConfig) int { return r.StatusDays }},
+	{database.RetentionPingDaysKey, "RETENTION_PING_DAYS", "Ping results",
+		"0 = inherit RETENTION_DEFAULT_DAYS.", "days", 3650,
+		func(r config.RetentionConfig) int { return r.PingDays }},
 	{database.RetentionAlertDaysKey, "RETENTION_ALERT_DAYS", "Alerts",
 		"0 = inherit RETENTION_DEFAULT_DAYS.", "days", 3650,
 		func(r config.RetentionConfig) int { return r.AlertDays }},
+	{database.RetentionUnackAlertKey, "RETENTION_UNACK_ALERT_DAYS", "Unacknowledged alerts",
+		"0 = inherit RETENTION_DEFAULT_DAYS.", "days", 3650,
+		func(r config.RetentionConfig) int { return r.UnackAlertDays }},
 	{database.RetentionDeniedEventDaysKey, "RETENTION_DENIED_EVENT_DAYS", "Denied events",
 		"0 = inherit RETENTION_DEFAULT_DAYS.", "days", 3650,
 		func(r config.RetentionConfig) int { return r.DeniedEventDays }},
+	{database.RetentionInterfaceErrorsKey, "RETENTION_INTERFACE_ERRORS_DAYS", "Interface errors",
+		"0 = inherit RETENTION_DEFAULT_DAYS.", "days", 3650,
+		func(r config.RetentionConfig) int { return r.InterfaceErrorsDays }},
+	{database.RetentionProcessorStatsKey, "RETENTION_PROCESSOR_STATS_DAYS", "Processor stats",
+		"0 = inherit RETENTION_DEFAULT_DAYS.", "days", 3650,
+		func(r config.RetentionConfig) int { return r.ProcessorStatsDays }},
+	{database.RetentionProcessStatsKey, "RETENTION_PROCESS_STATS_DAYS", "Process stats",
+		"0 = inherit RETENTION_DEFAULT_DAYS.", "days", 3650,
+		func(r config.RetentionConfig) int { return r.ProcessStatsDays }},
+	{database.RetentionIRCMessageLogKey, "RETENTION_IRC_MESSAGE_LOG_DAYS", "IRC message log",
+		"0 = inherit RETENTION_DEFAULT_DAYS.", "days", 3650,
+		func(r config.RetentionConfig) int { return r.IRCMessageLogDays }},
+	{database.RetentionVPNStatusKey, "RETENTION_VPN_STATUS_DAYS", "VPN status",
+		"0 = follow RETENTION_STATUS_DAYS (their chart-sibling window).", "days", 3650,
+		func(r config.RetentionConfig) int { return r.VPNStatusDays }},
+	{database.RetentionHAStatusKey, "RETENTION_HA_STATUS_DAYS", "HA status",
+		"0 = follow RETENTION_STATUS_DAYS (their chart-sibling window).", "days", 3650,
+		func(r config.RetentionConfig) int { return r.HAStatusDays }},
+	{database.RetentionSecurityStatsKey, "RETENTION_SECURITY_STATS_DAYS", "Security stats",
+		"0 = follow RETENTION_STATUS_DAYS (their chart-sibling window).", "days", 3650,
+		func(r config.RetentionConfig) int { return r.SecurityStatsDays }},
+	{database.RetentionSDWANHealthKey, "RETENTION_SDWAN_HEALTH_DAYS", "SD-WAN health",
+		"0 = follow RETENTION_STATUS_DAYS (their chart-sibling window).", "days", 3650,
+		func(r config.RetentionConfig) int { return r.SDWANHealthDays }},
+	{database.RetentionLicenseInfoKey, "RETENTION_LICENSE_INFO_DAYS", "License info",
+		"0 = inherit RETENTION_DEFAULT_DAYS.", "days", 3650,
+		func(r config.RetentionConfig) int { return r.LicenseInfoDays }},
+	{database.RetentionIncidentKey, "RETENTION_INCIDENT_DAYS", "Resolved incidents",
+		"0 = inherit RETENTION_DEFAULT_DAYS.", "days", 3650,
+		func(r config.RetentionConfig) int { return r.IncidentDays }},
 	{database.RetentionNetEventDaysKey, "RETENTION_NET_EVENT_DAYS", "Net events",
 		"0 = 30 days (this table's floor, never RETENTION_DEFAULT_DAYS).", "days", 3650,
 		func(r config.RetentionConfig) int { return r.NetEventDays }},
@@ -302,6 +344,20 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		database.RetentionSecEventDaysKey:        true,
 		database.RetentionSecConfigChangeDaysKey: true,
 		database.RetentionNetEventRollupDaysKey:  true,
+		database.RetentionPingDaysKey:            true,
+		database.RetentionInterfaceErrorsKey:     true,
+		database.RetentionProcessorStatsKey:      true,
+		database.RetentionProcessStatsKey:        true,
+		database.RetentionIRCMessageLogKey:       true,
+		database.RetentionUnackAlertKey:          true,
+		database.RetentionFlowDetectionKey:       true,
+		database.RetentionAgentDropsKey:          true,
+		database.RetentionVPNStatusKey:           true,
+		database.RetentionHAStatusKey:            true,
+		database.RetentionSecurityStatsKey:       true,
+		database.RetentionSDWANHealthKey:         true,
+		database.RetentionLicenseInfoKey:         true,
+		database.RetentionIncidentKey:            true,
 		// How often the background refresher rebuilds the system-health
 		// composite. Clamped server-side to 15-3600s; see dashboardHealthHub.
 		"dashboard_health_refresh_seconds": true,
@@ -395,7 +451,12 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			database.RetentionFlowRollupDaysKey, database.RetentionTrapDaysKey,
 			database.RetentionStatusDaysKey, database.RetentionAlertDaysKey,
 			database.RetentionDeniedEventDaysKey, database.RetentionSecEventDaysKey,
-			database.RetentionNetEventRollupDaysKey:
+			database.RetentionNetEventRollupDaysKey, database.RetentionPingDaysKey,
+			database.RetentionInterfaceErrorsKey, database.RetentionProcessorStatsKey,
+			database.RetentionProcessStatsKey, database.RetentionIRCMessageLogKey,
+			database.RetentionUnackAlertKey, database.RetentionFlowDetectionKey,
+			database.RetentionAgentDropsKey, database.RetentionLicenseInfoKey,
+			database.RetentionIncidentKey:
 			// Three legal shapes, as with the syslog windows: blank clears the
 			// override (inherit the environment / the default); 0 inherits
 			// RETENTION_DEFAULT_DAYS (ret.Days); N keeps N days. 0 must be
@@ -406,6 +467,20 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				if err != nil || v < 0 || v > 3650 {
 					c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf(
 						"%s must be blank (inherit the environment's / the default), 0 (inherit RETENTION_DEFAULT_DAYS), or 1-3650 days", s.Key)))
+					return
+				}
+			}
+		case database.RetentionVPNStatusKey, database.RetentionHAStatusKey,
+			database.RetentionSecurityStatsKey, database.RetentionSDWANHealthKey:
+			// 0 means follow RETENTION_STATUS_DAYS (the window their chart
+			// siblings system_status/interface_stats use — statusFallback in
+			// cleanup.go), NOT RETENTION_DEFAULT_DAYS, so the message must say
+			// so rather than the generic "inherit the default".
+			if strings.TrimSpace(s.Value) != "" {
+				v, err := strconv.Atoi(strings.TrimSpace(s.Value))
+				if err != nil || v < 0 || v > 3650 {
+					c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf(
+						"%s must be blank (inherit the environment's / the default), 0 (follow RETENTION_STATUS_DAYS), or 1-3650 days", s.Key)))
 					return
 				}
 			}

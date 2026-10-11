@@ -15,13 +15,13 @@ import (
 // the form is byte-for-byte an env-only one. Read-through, never seeded: the
 // same reason as SyslogRetentionWindows (see there).
 
-// The 12 settings keys. The key is the environment variable name, lower-cased
-// (RETENTION_DEFAULT_DAYS → retention_default_days), matching how the archive
-// settings name their admin keys. SyslogDays / SyslogInfoDays /
-// SyslogCriticalDays are deliberately NOT here: they are already settable from
-// the GUI via the per-severity syslog_retention_days_* keys, and the summary
-// knobs (syslog_summary_retention_days / flow_summary_retention_days) are
-// their own SystemSettings.
+// The operator-tunable retention settings keys. The key is the environment
+// variable name, lower-cased (RETENTION_DEFAULT_DAYS → retention_default_days),
+// matching how the archive settings name their admin keys. SyslogDays /
+// SyslogInfoDays / SyslogCriticalDays are deliberately NOT here: they are
+// already settable from the GUI via the per-severity syslog_retention_days_*
+// keys, and the summary knobs (syslog_summary_retention_days /
+// flow_summary_retention_days) are their own SystemSettings.
 const (
 	RetentionDefaultDaysKey         = "retention_default_days"
 	RetentionSyslogMonthsKey        = "retention_syslog_months"
@@ -35,6 +35,22 @@ const (
 	RetentionSecEventDaysKey        = "retention_sec_event_days"
 	RetentionSecConfigChangeDaysKey = "retention_sec_config_change_days"
 	RetentionNetEventRollupDaysKey  = "retention_net_event_rollup_days"
+	// The remaining RetentionConfig knobs (AUDIT-029 / AUDIT-031 / H4 /
+	// LC-20 / LC-22 and ping_results). Same read-through pattern.
+	RetentionPingDaysKey        = "retention_ping_days"
+	RetentionInterfaceErrorsKey = "retention_interface_errors_days"
+	RetentionProcessorStatsKey  = "retention_processor_stats_days"
+	RetentionProcessStatsKey    = "retention_process_stats_days"
+	RetentionIRCMessageLogKey   = "retention_irc_message_log_days"
+	RetentionUnackAlertKey      = "retention_unack_alert_days"
+	RetentionFlowDetectionKey   = "retention_flow_detection_days"
+	RetentionAgentDropsKey      = "retention_agent_drops_days"
+	RetentionVPNStatusKey       = "retention_vpn_status_days"
+	RetentionHAStatusKey        = "retention_ha_status_days"
+	RetentionSecurityStatsKey   = "retention_security_stats_days"
+	RetentionSDWANHealthKey     = "retention_sdwan_health_days"
+	RetentionLicenseInfoKey     = "retention_license_info_days"
+	RetentionIncidentKey        = "retention_incident_days"
 )
 
 // ResolveRetention returns a copy of env with each operator-tunable retention
@@ -88,6 +104,48 @@ func (d *Database) ResolveRetention(env config.RetentionConfig) config.Retention
 	}
 	if v := d.GetIntSetting(RetentionNetEventRollupDaysKey, syslogRetentionInherit); v >= 0 {
 		out.NetEventRollupDays = v
+	}
+	if v := d.GetIntSetting(RetentionPingDaysKey, syslogRetentionInherit); v >= 0 {
+		out.PingDays = v
+	}
+	if v := d.GetIntSetting(RetentionInterfaceErrorsKey, syslogRetentionInherit); v >= 0 {
+		out.InterfaceErrorsDays = v
+	}
+	if v := d.GetIntSetting(RetentionProcessorStatsKey, syslogRetentionInherit); v >= 0 {
+		out.ProcessorStatsDays = v
+	}
+	if v := d.GetIntSetting(RetentionProcessStatsKey, syslogRetentionInherit); v >= 0 {
+		out.ProcessStatsDays = v
+	}
+	if v := d.GetIntSetting(RetentionIRCMessageLogKey, syslogRetentionInherit); v >= 0 {
+		out.IRCMessageLogDays = v
+	}
+	if v := d.GetIntSetting(RetentionUnackAlertKey, syslogRetentionInherit); v >= 0 {
+		out.UnackAlertDays = v
+	}
+	if v := d.GetIntSetting(RetentionFlowDetectionKey, syslogRetentionInherit); v >= 0 {
+		out.FlowDetectionDays = v
+	}
+	if v := d.GetIntSetting(RetentionAgentDropsKey, syslogRetentionInherit); v >= 0 {
+		out.AgentDropsDays = v
+	}
+	if v := d.GetIntSetting(RetentionVPNStatusKey, syslogRetentionInherit); v >= 0 {
+		out.VPNStatusDays = v
+	}
+	if v := d.GetIntSetting(RetentionHAStatusKey, syslogRetentionInherit); v >= 0 {
+		out.HAStatusDays = v
+	}
+	if v := d.GetIntSetting(RetentionSecurityStatsKey, syslogRetentionInherit); v >= 0 {
+		out.SecurityStatsDays = v
+	}
+	if v := d.GetIntSetting(RetentionSDWANHealthKey, syslogRetentionInherit); v >= 0 {
+		out.SDWANHealthDays = v
+	}
+	if v := d.GetIntSetting(RetentionLicenseInfoKey, syslogRetentionInherit); v >= 0 {
+		out.LicenseInfoDays = v
+	}
+	if v := d.GetIntSetting(RetentionIncidentKey, syslogRetentionInherit); v >= 0 {
+		out.IncidentDays = v
 	}
 	return out
 }

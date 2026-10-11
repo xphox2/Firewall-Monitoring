@@ -78,7 +78,18 @@ func TestListArchiveFolders(t *testing.T) {
 	if code != http.StatusOK || strings.Join(dirNames(r), ",") != "fwmon" || r["parent"] != f.root {
 		t.Fatalf("a subdirectory: %d %v", code, r)
 	}
-	for _, p := range []string{outside, f.root + "/../" + filepath.Base(outside), "relative", f.root + "x", "/"} {
+	// A clean absolute directory outside the root (a directory kept from
+	// before the root was enforced) is still refused for listing: the picker
+	// starts at the root and says why, rather than a 400.
+	for _, p := range []string{outside, f.root + "x", "/"} {
+		code, r := f.folders(t, p)
+		if code != http.StatusOK || r["ok"] != true || r["path"] != f.root || r["note"] == nil ||
+			!strings.Contains(r["note"].(string), "outside ARCHIVE_ALLOWED_ROOT") {
+			t.Errorf("path %q: %d %v, want the root + a note", p, code, r)
+		}
+	}
+	// A malformed path (relative, unclean) stays a 400.
+	for _, p := range []string{f.root + "/../" + filepath.Base(outside), "relative"} {
 		if code, r := f.folders(t, p); code != http.StatusBadRequest {
 			t.Errorf("path %q: %d %v, want 400", p, code, r)
 		}

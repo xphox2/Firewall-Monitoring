@@ -24,6 +24,20 @@ func envRetention() config.RetentionConfig {
 		SecEventDays:        365,
 		SecConfigChangeDays: 0,
 		NetEventRollupDays:  365,
+		PingDays:            15,
+		InterfaceErrorsDays: 30,
+		ProcessorStatsDays:  31,
+		ProcessStatsDays:    32,
+		IRCMessageLogDays:   7,
+		UnackAlertDays:      90,
+		FlowDetectionDays:   91,
+		AgentDropsDays:      33,
+		VPNStatusDays:       40,
+		HAStatusDays:        41,
+		SecurityStatsDays:   42,
+		SDWANHealthDays:     43,
+		LicenseInfoDays:     365,
+		IncidentDays:        44,
 	}
 }
 
@@ -32,6 +46,8 @@ func TestResolveRetention_StoredOverridesEnv(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	setRetention(t, d, RetentionDefaultDaysKey, "45")
 	setRetention(t, d, RetentionNetEventDaysKey, "14")
+	setRetention(t, d, RetentionVPNStatusKey, "21")
+	setRetention(t, d, RetentionUnackAlertKey, "120")
 
 	out := d.ResolveRetention(envRetention())
 	if out.DefaultDays != 45 {
@@ -39,6 +55,12 @@ func TestResolveRetention_StoredOverridesEnv(t *testing.T) {
 	}
 	if out.NetEventDays != 14 {
 		t.Errorf("NetEventDays = %d, want 14", out.NetEventDays)
+	}
+	if out.VPNStatusDays != 21 {
+		t.Errorf("VPNStatusDays = %d, want 21", out.VPNStatusDays)
+	}
+	if out.UnackAlertDays != 120 {
+		t.Errorf("UnackAlertDays = %d, want 120", out.UnackAlertDays)
 	}
 }
 
@@ -97,6 +119,27 @@ func TestResolveRetention_StoredZeroBeatsEnv(t *testing.T) {
 	out := d.ResolveRetention(env)
 	if out.NetEventDays != 0 || out.NetEventWindow() != 30 {
 		t.Errorf("stored 0 must override the environment, got NetEventDays=%d window=%d", out.NetEventDays, out.NetEventWindow())
+	}
+}
+
+// The LC-20 status tables (VPN / HA / security / SD-WAN health) fall back to
+// RETENTION_STATUS_DAYS, not RETENTION_DEFAULT_DAYS: a stored 0 must flow
+// through and keep that fallback (statusFallback), and a stored value must
+// override it.
+func TestResolveRetention_StatusFallbackKnobs(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	env := envRetention() // StatusDays 60, DefaultDays 90
+	for _, key := range []string{RetentionVPNStatusKey, RetentionHAStatusKey,
+		RetentionSecurityStatsKey, RetentionSDWANHealthKey} {
+		setRetention(t, d, key, "0")
+	}
+	out := d.ResolveRetention(env)
+	if out.VPNStatusDays != 0 || out.HAStatusDays != 0 || out.SecurityStatsDays != 0 || out.SDWANHealthDays != 0 {
+		t.Errorf("a stored 0 must flow through for the status-fallback knobs, got %+v", out)
+	}
+	// 0 falls back to StatusDays (60), never DefaultDays (90).
+	if got := statusFallback(out.VPNStatusDays, env.StatusDays); got != env.StatusDays {
+		t.Errorf("statusFallback(VPNStatusDays=0, statusDays) = %d, want %d (follow RETENTION_STATUS_DAYS)", got, env.StatusDays)
 	}
 }
 
