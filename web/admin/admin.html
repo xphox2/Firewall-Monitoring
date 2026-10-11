@@ -219,6 +219,11 @@
     <script defer src="/static/js/uPlot.iife.min.js"></script>
     <!-- v0.10.212: shared control primitives used by flows + syslog + alerts + traps. -->
     <script defer src="/static/js/admin-controls.js"></script>
+    <!-- Normalized-event enum vocabularies (window.FwmonEnums) and the Events
+         page module. enums.js MUST load before admin-events.js — the page
+         renders int16 activity/action labels from it. -->
+    <script defer src="/static/js/enums.js"></script>
+    <script defer src="/static/js/admin-events.js"></script>
     <script defer src="/static/js/admin-flows.js"></script>
     <script defer src="/static/js/admin-noc.js"></script>
     <!-- v0.10.214 (bundle C3): Cytoscape (~421 KB across 4 files) is now
@@ -468,6 +473,52 @@
                     </table>
                 </div>
                 <div id="syslog-pagination" style="margin-top: 12px; text-align: center;"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Events Page (Phase 2, PR 1 — normalized net_events list; see FwmonEvents in admin-events.js) -->
+        <div class="page" id="page-events">
+            <div class="fwmon-flows-header">
+                <div class="fwmon-flows-header-left">
+                    <h2 class="fwmon-flows-title">Events</h2>
+                    <div class="chart-range-pills" id="events-range-pills">
+                        <button type="button" class="chart-range-pill" data-range="1">1h</button>
+                        <button type="button" class="chart-range-pill" data-range="6">6h</button>
+                        <button type="button" class="chart-range-pill" data-range="12">12h</button>
+                        <button type="button" class="chart-range-pill active" data-range="24">24h</button>
+                        <button type="button" class="chart-range-pill" data-range="168">7d</button>
+                        <button type="button" class="chart-range-pill" data-range="720">30d</button>
+                    </div>
+                </div>
+                <div class="fwmon-flows-header-right">
+                    <div class="fwmon-chips" id="events-active-chips"></div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <h2>Network Events</h2>
+                </div>
+                <div class="filter-bar">
+                    <select id="events-filter-site"><option value="">All Sites</option></select>
+                    <select id="events-filter-device"><option value="">All Devices</option></select>
+                    <select id="events-filter-probe"><option value="">All Probes</option></select>
+                    <select id="events-filter-activity"><option value="">All Activity</option></select>
+                    <select id="events-filter-action"><option value="">All Actions</option></select>
+                    <button type="button" class="btn secondary sm" id="events-clear-filters">Clear filters</button>
+                </div>
+                <div class="fwmon-load-host" id="events-load-host">
+                    <div class="table-wrap" style="max-height: 600px;">
+                        <table id="events-table">
+                            <thead><tr>
+                                <th>Time</th><th>Device</th><th>Source → Destination</th><th>Action</th>
+                                <th>Activity</th><th>Direction</th><th>App</th><th>User</th>
+                                <th>Countries</th><th>Bytes</th><th>Threat</th>
+                            </tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                    <div id="events-pagination" style="margin-top: 12px; text-align: center;"></div>
                 </div>
             </div>
         </div>

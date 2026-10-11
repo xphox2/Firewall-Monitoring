@@ -1025,6 +1025,10 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
 
+		admin.GET("/events", func(c *gin.Context) {
+			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
+		})
+
 		admin.GET("/flows", func(c *gin.Context) {
 			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
@@ -1167,6 +1171,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 
 		admin.GET("/api/syslog", handler.GetSyslogMessages)
 		admin.GET("/api/syslog/:id", handler.GetSyslogMessage)
+		admin.GET("/api/events", handler.GetNetEvents)
 		admin.GET("/api/flows", handler.GetFlowSamples)
 
 		admin.GET("/api/devices/:id/detail", handler.GetDeviceDetail)

@@ -51,6 +51,7 @@ type Store interface {
 	IPSecStore
 	DevicePurgeStore
 	NormalizeBackfillStore
+	NetEventReadStore
 	ArchiveGateStore
 	ArchiveStatusStore
 	ArchiveRestoreStore
@@ -147,6 +148,14 @@ type ArchiveSettingsStore interface {
 	ArchiveInstallID(ctx context.Context) (string, error)
 	CanEncryptSettings() bool
 	SaveArchiveSettings(ctx context.Context, set map[string]string, revert []string, disabled []string, now time.Time) error
+}
+
+// NetEventReadStore covers the read path of the normalized network-event table
+// (Phase 2, PR 1, normalized_read.go): the Events page's filtered, ts-bounded,
+// paged list. The capped-count bool lets the handler render a "10,000+" pager
+// without ever running an exact COUNT over the full window.
+type NetEventReadStore interface {
+	ListNetEvents(f NetEventFilter, offset, limit int) ([]NetEventRow, int64, bool, error)
 }
 
 // NormalizeBackfillStore covers the one-time normalized-event backfill queue
