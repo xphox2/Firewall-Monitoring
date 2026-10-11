@@ -30,6 +30,10 @@ var syslogAggWindow = time.Hour
 // aggregation missed. That is why the per-severity window has to be honoured
 // HERE and not just in cleanup.
 func (d *Database) RunSyslogAggregationCycle(retention config.RetentionConfig) error {
+	// Resolve the operator-tunable retention knobs over the environment before
+	// reading them, so SyslogRetentionWindows below sees the stored values.
+	retention = d.ResolveRetention(retention)
+
 	work := false
 	var lastErr error
 

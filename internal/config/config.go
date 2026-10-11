@@ -311,6 +311,12 @@ type RetentionConfig struct {
 	SecEventDays        int // sec_events          (default 365)
 	SecConfigChangeDays int // sec_events class config_change (default 0 = forever)
 	NetEventRollupDays  int // net_event_rollups   (default 365)
+
+	// envSet records which RETENTION_* keys the environment (or CONFIG_FILE)
+	// set to a non-blank value at load, for the Settings → Retention page's
+	// provenance badge. Read by EnvIsSet; nil for a hand-constructed
+	// RetentionConfig (tests), which EnvIsSet treats as "nothing set".
+	envSet map[string]bool
 }
 
 // maxSyslogMonths bounds RETENTION_SYSLOG_MONTHS (ten years).
@@ -352,6 +358,40 @@ func (r *RetentionConfig) NetEventWindow() int {
 		return r.NetEventDays
 	}
 	return 30
+}
+
+// EnvIsSet reports whether the environment (or CONFIG_FILE) set envKey to a
+// non-blank value when the configuration was loaded. envKey is the uppercase
+// environment key (e.g. "RETENTION_DEFAULT_DAYS"). Nil-safe: a hand-built
+// RetentionConfig has no envSet map and reports nothing set.
+func (r RetentionConfig) EnvIsSet(envKey string) bool {
+	return r.envSet[envKey]
+}
+
+// retentionEnvSet records which RETENTION_* keys the environment set to a
+// non-blank value, mirroring archiveEnvSet. Only the 12 GUI keys are tracked
+// here; a blank value counts as unset, like every other key in this package.
+func retentionEnvSet() map[string]bool {
+	set := map[string]bool{}
+	for _, key := range []string{
+		"RETENTION_DEFAULT_DAYS",
+		"RETENTION_SYSLOG_MONTHS",
+		"RETENTION_FLOW_DAYS",
+		"RETENTION_FLOW_ROLLUP_DAYS",
+		"RETENTION_TRAP_DAYS",
+		"RETENTION_STATUS_DAYS",
+		"RETENTION_ALERT_DAYS",
+		"RETENTION_DENIED_EVENT_DAYS",
+		"RETENTION_NET_EVENT_DAYS",
+		"RETENTION_SEC_EVENT_DAYS",
+		"RETENTION_SEC_CONFIG_CHANGE_DAYS",
+		"RETENTION_NET_EVENT_ROLLUP_DAYS",
+	} {
+		if strings.TrimSpace(os.Getenv(key)) != "" {
+			set[key] = true
+		}
+	}
+	return set
 }
 
 type AuthConfig struct {
@@ -681,6 +721,7 @@ func Load() *Config {
 		Archive: loadArchiveConfig(),
 	}
 	cfg.Retention.syslogMonthsInvalid = strings.Join(retentionBad, "; ")
+	cfg.Retention.envSet = retentionEnvSet()
 	return cfg
 }
 

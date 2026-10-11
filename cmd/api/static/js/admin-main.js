@@ -2608,6 +2608,47 @@
         });
     }
 
+    // ---- Data retention (operator-tunable knobs) -------------------------
+    // One numbered input per retention knob. Each knob is a system_settings
+    // key read through over its RETENTION_* environment variable: a stored
+    // value wins, otherwise the environment, otherwise the built-in default.
+    // The badge says where each field's value comes from; leaving a field
+    // blank means "inherit" and posts a blank to clear any stored override.
+    function renderDataRetentionSettings() {
+        var host = document.getElementById('settings-data-retention');
+        if (!host) return;
+
+        AC.apiFetch(API_BASE + '/settings/retention').then(function (res) {
+            var fields = (res && res.data && res.data.fields) || [];
+            var BADGE = { ui: ['info', 'set here'], env: ['online', 'environment'], 'default': ['', 'default'] };
+
+            var rows = fields.map(function (f, i) {
+                var b = BADGE[f.source] || BADGE['default'];
+                var badge = '<span class="badge ' + b[0] + '">' + b[1] + '</span>';
+                return '<div class="setting-item" style="max-width:540px;">' +
+                    '<label for="' + f.key + '">' + (i + 1) + '. ' + escapeHtml(f.label) +
+                        ' <code>' + escapeHtml(f.env_key) + '</code> ' + badge + '</label>' +
+                    '<input type="number" name="' + f.key + '" value="' + escapeHtml(f.stored) +
+                        '" placeholder="inherit (' + escapeHtml(f.env_value) + ')" min="' + f.min +
+                        '" max="' + f.max + '" step="1">' +
+                    '<div class="field-hint">' + escapeHtml(f.hint) +
+                        ' Blank = inherit (environment: ' + escapeHtml(f.env_value) + ' ' + f.unit +
+                        '). In effect: ' + escapeHtml(f.value) + ' ' + f.unit + '.</div>' +
+                    '</div>';
+            }).join('');
+
+            host.innerHTML = rows ||
+                '<p style="color:var(--fwmon-text-faint);">No retention knobs available.</p>';
+
+            if (window.FwmonSettingsUI && FwmonSettingsUI.snapshotBaseline) {
+                FwmonSettingsUI.snapshotBaseline();
+            }
+        }).catch(function (e) {
+            fwmonLog.warn('[Settings] data-retention load failed', e);
+            host.innerHTML = '<p style="color:var(--fwmon-text-faint);">Data retention settings unavailable.</p>';
+        });
+    }
+
     // ---- Raw archive status (archive plan PR 8) ---------------------------
     // GET /archive/status (admin-only): the sync's progress (backlog, rate,
     // time left, the chunk being worked, recently verified chunks), why a
@@ -2813,6 +2854,7 @@
             // sFlow detection thresholds. Blank input = use the built-in/env
             // default (shown as the placeholder); a value overrides it live.
             renderRetentionSettings(settings);
+            renderDataRetentionSettings();
             renderArchiveStatus();
             if (window.FwmonArchiveSettings) FwmonArchiveSettings.render({ onSaved: renderArchiveStatus });
 
@@ -3610,6 +3652,12 @@
             // Blank is POSTED, not skipped — that is how a severity is re-coupled
             // to the default. Blank and "0" are different: blank inherits, 0 keeps
             // forever, and the server distinguishes them via a sentinel.
+            settings.push({ key: input.name, value: input.value.trim(), category: 'retention', type: 'string' });
+        });
+        document.querySelectorAll('#settings-data-retention input').forEach(function(input) {
+            // Same shape as the syslog retention fields: blank is POSTED so the
+            // server clears the stored override and the knob inherits its
+            // RETENTION_* environment key / the built-in default.
             settings.push({ key: input.name, value: input.value.trim(), category: 'retention', type: 'string' });
         });
 

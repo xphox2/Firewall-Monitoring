@@ -1439,6 +1439,11 @@
                 <div id="settings-retention"></div>
             </div>
             <div class="card" data-min-role="admin">
+                <div class="card-header"><h2>Data Retention</h2></div>
+                <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">Each value set here wins over its <code>RETENTION_*</code> environment key, which stays the default: the badge beside a field says where its value comes from. Leave a field blank to inherit the environment / the built-in default.</p>
+                <div id="settings-data-retention"></div>
+            </div>
+            <div class="card" data-min-role="admin">
                 <div class="card-header"><h2>Raw Archive</h2><button type="button" class="btn sm secondary" data-action="archive-refresh">Refresh</button></div>
                 <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">Is the backup working? Raw syslog and flows are exported to the archive target, read back and verified, then sealed per month; while a stream is archived its raw rows are deleted only once verified, so a stuck archive holds them in the database. The verdict below is the same the archive alerts and <code>fwmon-api archive --status</code> report.</p>
                 <div id="settings-archive" aria-live="polite"></div>

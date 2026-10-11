@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.318] - 2026-10-11
+
+### Added — data-retention knobs are settable from the admin GUI
+
+- **Settings → Retention → Data Retention** sets 12 operator-tunable data-retention knobs — `retention_default_days`, `retention_syslog_months`, `retention_flow_days`, `retention_flow_rollup_days`, `retention_trap_days`, `retention_status_days`, `retention_alert_days`, `retention_denied_event_days`, `retention_net_event_days`, `retention_sec_event_days`, `retention_sec_config_change_days` and `retention_net_event_rollup_days` — with one numbered input per knob, its `RETENTION_*` environment key, the hint stating the knob's 0-semantics, and a provenance badge (**set here** / **environment** / **default**). A value set here wins over the environment key, which stays the default; blank clears the override.
+- **Read-through, never seeded** (mirroring the per-severity syslog retention in `syslogretention.go`): `database.ResolveRetention` overlays the stored values on the environment config at read time, so an install that never saves the form keeps exactly the retention it has today — **no value or behaviour changes when no setting is stored**. A stored `0` flows through and keeps each knob's existing 0-semantics: `Days()`→`RETENTION_DEFAULT_DAYS`, `NetEventWindow()`→30, `SecConfigChangeDays`→forever, `SyslogMonths`→off. The resolution is wired into `CleanupOldData`, `RunSyslogAggregationCycle` and the poller's daily partition pass (`RefreshRetentionLookbacks`, so a widened `net_events` window creates its older daily leaves in the same pass that drops them). `GET /api/settings/retention` returns the resolved fields; validation accepts blank / 0 / 1–3650 (1–120 months for `retention_syslog_months`) and rejects negatives, out-of-range and non-integers.
+- `SyslogDays` / `SyslogInfoDays` / `SyslogCriticalDays` are deliberately NOT added (already GUI via `syslog_retention_days_*`), nor are the summary knobs. Documented in `docs/DATA-RETENTION.md` and `config.env.example`.
+
 ## [0.11.317] - 2026-10-11
 
 ### Added — one health verdict for the raw archive, and a status page that says what to do

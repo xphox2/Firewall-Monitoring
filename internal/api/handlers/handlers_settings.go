@@ -18,6 +18,7 @@ import (
 
 	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/archive/status"
+	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
@@ -53,6 +54,96 @@ func (h *Handler) GetSyslogRetention(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, response.Success(db.SyslogVolume(h.config.Retention)))
+}
+
+// retentionGUIKnob describes one operator-tunable data-retention knob for the
+// Settings → Retention page: its settings key, the RETENTION_* environment key
+// it overrides, its label, the hint stating the knob's 0-semantics, its bound
+// and unit, and how to read its value out of a RetentionConfig.
+type retentionGUIKnob struct {
+	key, envKey, label, hint, unit string
+	max                            int
+	get                            func(config.RetentionConfig) int
+}
+
+// retentionGUIKnobs is the form order of the 12 knobs. SyslogDays /
+// SyslogInfoDays / SyslogCriticalDays are omitted (already settable via the
+// per-severity syslog_retention_days_* keys) as are the summary knobs.
+var retentionGUIKnobs = []retentionGUIKnob{
+	{database.RetentionDefaultDaysKey, "RETENTION_DEFAULT_DAYS", "Default days",
+		"Fallback for every table whose own knob is blank or 0. 0 falls back to the built-in 90.", "days", 3650,
+		func(r config.RetentionConfig) int { return r.DefaultDays }},
+	{database.RetentionSyslogMonthsKey, "RETENTION_SYSLOG_MONTHS", "Syslog (calendar months)",
+		"Keep raw syslog of every severity N calendar months. 0 = off (the day windows apply).", "months", 120,
+		func(r config.RetentionConfig) int { return r.SyslogMonths }},
+	{database.RetentionFlowDaysKey, "RETENTION_FLOW_DAYS", "Flows",
+		"0 = inherit RETENTION_DEFAULT_DAYS.", "days", 3650,
+		func(r config.RetentionConfig) int { return r.FlowDays }},
+	{database.RetentionFlowRollupDaysKey, "RETENTION_FLOW_ROLLUP_DAYS", "Flow rollups",
+		"0 = inherit RETENTION_DEFAULT_DAYS.", "days", 3650,
+		func(r config.RetentionConfig) int { return r.FlowRollupDays }},
+	{database.RetentionTrapDaysKey, "RETENTION_TRAP_DAYS", "SNMP traps",
+		"0 = inherit RETENTION_DEFAULT_DAYS.", "days", 3650,
+		func(r config.RetentionConfig) int { return r.TrapDays }},
+	{database.RetentionStatusDaysKey, "RETENTION_STATUS_DAYS", "Status & telemetry",
+		"0 = inherit RETENTION_DEFAULT_DAYS.", "days", 3650,
+		func(r config.RetentionConfig) int { return r.StatusDays }},
+	{database.RetentionAlertDaysKey, "RETENTION_ALERT_DAYS", "Alerts",
+		"0 = inherit RETENTION_DEFAULT_DAYS.", "days", 3650,
+		func(r config.RetentionConfig) int { return r.AlertDays }},
+	{database.RetentionDeniedEventDaysKey, "RETENTION_DENIED_EVENT_DAYS", "Denied events",
+		"0 = inherit RETENTION_DEFAULT_DAYS.", "days", 3650,
+		func(r config.RetentionConfig) int { return r.DeniedEventDays }},
+	{database.RetentionNetEventDaysKey, "RETENTION_NET_EVENT_DAYS", "Net events",
+		"0 = 30 days (this table's floor, never RETENTION_DEFAULT_DAYS).", "days", 3650,
+		func(r config.RetentionConfig) int { return r.NetEventDays }},
+	{database.RetentionSecEventDaysKey, "RETENTION_SEC_EVENT_DAYS", "Security events",
+		"0 = inherit RETENTION_DEFAULT_DAYS.", "days", 3650,
+		func(r config.RetentionConfig) int { return r.SecEventDays }},
+	{database.RetentionSecConfigChangeDaysKey, "RETENTION_SEC_CONFIG_CHANGE_DAYS", "Config-change events",
+		"0 = keep forever (the audit trail).", "days", 3650,
+		func(r config.RetentionConfig) int { return r.SecConfigChangeDays }},
+	{database.RetentionNetEventRollupDaysKey, "RETENTION_NET_EVENT_ROLLUP_DAYS", "Net event rollups",
+		"0 = inherit RETENTION_DEFAULT_DAYS.", "days", 3650,
+		func(r config.RetentionConfig) int { return r.NetEventRollupDays }},
+}
+
+// GetRetentionSettings backs the Settings → Retention "Data Retention" card:
+// one field per operator-tunable knob with its stored value, its environment
+// value, the resolved value, and the provenance ("ui" when stored, else "env"
+// when the environment set it, else "default").
+func (h *Handler) GetRetentionSettings(c *gin.Context) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+	env := h.config.Retention
+	resolved := db.ResolveRetention(env)
+
+	fields := make([]gin.H, 0, len(retentionGUIKnobs))
+	for _, k := range retentionGUIKnobs {
+		stored, _ := db.GetSettingValue(k.key)
+		source := "default"
+		if stored != "" {
+			source = "ui"
+		} else if env.EnvIsSet(k.envKey) {
+			source = "env"
+		}
+		fields = append(fields, gin.H{
+			"key":       k.key,
+			"env_key":   k.envKey,
+			"label":     k.label,
+			"hint":      k.hint,
+			"stored":    stored,
+			"env_value": strconv.Itoa(k.get(env)),
+			"value":     strconv.Itoa(k.get(resolved)),
+			"source":    source,
+			"min":       0,
+			"max":       k.max,
+			"unit":      k.unit,
+		})
+	}
+	c.JSON(http.StatusOK, response.Success(gin.H{"fields": fields}))
 }
 
 func (h *Handler) GetSettings(c *gin.Context) {
@@ -196,6 +287,21 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		// its own prune cutoff. See SyslogSummaryRetentionDays.
 		"syslog_summary_retention_days": true,
 		"flow_summary_retention_days":   true,
+		// Operator-tunable data-retention knobs (Settings → Retention). Each
+		// stored value wins over its RETENTION_* environment key, which stays
+		// the default; blank clears the override. See database.ResolveRetention.
+		database.RetentionDefaultDaysKey:         true,
+		database.RetentionSyslogMonthsKey:        true,
+		database.RetentionFlowDaysKey:            true,
+		database.RetentionFlowRollupDaysKey:      true,
+		database.RetentionTrapDaysKey:            true,
+		database.RetentionStatusDaysKey:          true,
+		database.RetentionAlertDaysKey:           true,
+		database.RetentionDeniedEventDaysKey:     true,
+		database.RetentionNetEventDaysKey:        true,
+		database.RetentionSecEventDaysKey:        true,
+		database.RetentionSecConfigChangeDaysKey: true,
+		database.RetentionNetEventRollupDaysKey:  true,
 		// How often the background refresher rebuilds the system-health
 		// composite. Clamped server-side to 15-3600s; see dashboardHealthHub.
 		"dashboard_health_refresh_seconds": true,
@@ -282,6 +388,58 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				if err != nil || v < 0 || v > 3650 {
 					c.JSON(http.StatusBadRequest, response.Error(
 						"summary retention must be blank (inherit), 0 (keep forever), or 1-3650 days"))
+					return
+				}
+			}
+		case database.RetentionDefaultDaysKey, database.RetentionFlowDaysKey,
+			database.RetentionFlowRollupDaysKey, database.RetentionTrapDaysKey,
+			database.RetentionStatusDaysKey, database.RetentionAlertDaysKey,
+			database.RetentionDeniedEventDaysKey, database.RetentionSecEventDaysKey,
+			database.RetentionNetEventRollupDaysKey:
+			// Three legal shapes, as with the syslog windows: blank clears the
+			// override (inherit the environment / the default); 0 inherits
+			// RETENTION_DEFAULT_DAYS (ret.Days); N keeps N days. 0 must be
+			// accepted — it is how an operator says "follow the default", and
+			// rejecting it would make the field un-clearable.
+			if strings.TrimSpace(s.Value) != "" {
+				v, err := strconv.Atoi(strings.TrimSpace(s.Value))
+				if err != nil || v < 0 || v > 3650 {
+					c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf(
+						"%s must be blank (inherit the environment's / the default), 0 (inherit RETENTION_DEFAULT_DAYS), or 1-3650 days", s.Key)))
+					return
+				}
+			}
+		case database.RetentionNetEventDaysKey:
+			// 0 means 30 (this table's floor, never RETENTION_DEFAULT_DAYS —
+			// see RetentionConfig.NetEventWindow), so the message must say so
+			// rather than the generic "inherit the default".
+			if strings.TrimSpace(s.Value) != "" {
+				v, err := strconv.Atoi(strings.TrimSpace(s.Value))
+				if err != nil || v < 0 || v > 3650 {
+					c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf(
+						"%s must be blank (inherit the environment's / the default), 0 (30 days — this table's floor, never the default), or 1-3650 days", s.Key)))
+					return
+				}
+			}
+		case database.RetentionSecConfigChangeDaysKey:
+			// 0 means keep forever (the config-change audit trail), not the
+			// default.
+			if strings.TrimSpace(s.Value) != "" {
+				v, err := strconv.Atoi(strings.TrimSpace(s.Value))
+				if err != nil || v < 0 || v > 3650 {
+					c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf(
+						"%s must be blank (inherit the environment's / the default), 0 (keep forever), or 1-3650 days", s.Key)))
+					return
+				}
+			}
+		case database.RetentionSyslogMonthsKey:
+			// Blank inherits; 0 is off (the day windows apply); N is calendar
+			// months, bounded at the same 120 as RETENTION_SYSLOG_MONTHS.
+			if strings.TrimSpace(s.Value) != "" {
+				v, err := strconv.Atoi(strings.TrimSpace(s.Value))
+				if err != nil || v < 0 || v > 120 {
+					c.JSON(http.StatusBadRequest, response.Error(
+						"retention_syslog_months must be blank (inherit), 0 (off), or 1-120 calendar months"))
 					return
 				}
 			}
