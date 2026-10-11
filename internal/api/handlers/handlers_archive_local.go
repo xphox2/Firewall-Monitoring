@@ -59,11 +59,23 @@ func (h *Handler) ListArchiveFolders(c *gin.Context) {
 	if p == "" {
 		p = root
 	}
-	if err := a.CheckArchivePath("path", p); err != nil {
-		c.JSON(http.StatusBadRequest, response.Error(err.Error()))
-		return
-	}
 	out := gin.H{"ok": true, "root": root, "path": p, "dirs": []archiveFolder{}}
+	if err := a.CheckArchivePath("path", p); err != nil {
+		// A clean absolute directory that is merely outside the allowed root
+		// is the grandfathered case — a staging (or archive) directory set
+		// before the root was enforced and kept, still in use but never to be
+		// listed. Start the picker at the root and say why, instead of a 400
+		// that reads as the form itself failing. A malformed path (relative,
+		// unclean) is a hand-built URL and stays a 400.
+		if filepath.IsAbs(p) && filepath.Clean(p) == p {
+			out["note"] = fmt.Sprintf("%s is outside ARCHIVE_ALLOWED_ROOT %s: it is still in use, but the picker only lists directories under the root, so it starts there.", p, root)
+			p = root
+			out["path"] = root
+		} else {
+			c.JSON(http.StatusBadRequest, response.Error(err.Error()))
+			return
+		}
+	}
 	if p != root {
 		out["parent"] = filepath.Dir(p)
 	}

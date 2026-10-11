@@ -340,6 +340,15 @@
         picker.key = null;
     }
 
+    // underRoot reports whether p is at or below the allowed root, on a path
+    // boundary (not a bare string prefix: /archive-staging must not read as
+    // under /archive). The picker starts at the root for anything outside it.
+    function underRoot(p) {
+        var root = (view && view.allowed_root) || '';
+        if (!root || !p) return false;
+        return p === root || p.indexOf(root + '/') === 0;
+    }
+
     function openPicker(key, path) {
         if (picker.key && picker.key !== key) closePicker();
         var p = pickerEl(key);
@@ -357,6 +366,7 @@
                 html += '<p class="archive-settings-problem">' + esc(r.root) + ' is not a mount point: bind-mount the host\u2019s archive volume there first.</p>';
             }
             if (r.ok === false) html += '<p class="archive-settings-problem">' + esc(r.message || '') + '</p>';
+            if (r.note) html += '<p class="field-hint">' + esc(r.note) + '</p>';
             html += '<ul class="archive-picker-list">';
             if (r.parent) {
                 html += '<li><button type="button" class="btn sm secondary" data-arch-action="browse-into" data-path="' + esc(r.parent) + '">\u2191 Up</button></li>';
@@ -518,7 +528,7 @@
                 var inp = document.querySelector('[data-arch-key="' + btn.dataset.key + '"]');
                 var start = inp && inp.value.trim();
                 if (picker.key === btn.dataset.key) { closePicker(); break; }
-                openPicker(btn.dataset.key, start && start.indexOf((view && view.allowed_root) || '/') === 0 ? start : '');
+                openPicker(btn.dataset.key, underRoot(start) ? start : '');
                 break;
             }
             case 'browse-into': if (picker.key) openPicker(picker.key, btn.dataset.path); break;

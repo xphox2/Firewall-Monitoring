@@ -369,8 +369,8 @@ func (r RetentionConfig) EnvIsSet(envKey string) bool {
 }
 
 // retentionEnvSet records which RETENTION_* keys the environment set to a
-// non-blank value, mirroring archiveEnvSet. Only the 12 GUI keys are tracked
-// here; a blank value counts as unset, like every other key in this package.
+// non-blank value, mirroring archiveEnvSet. Only the GUI keys are tracked here;
+// a blank value counts as unset, like every other key in this package.
 func retentionEnvSet() map[string]bool {
 	set := map[string]bool{}
 	for _, key := range []string{
@@ -386,6 +386,20 @@ func retentionEnvSet() map[string]bool {
 		"RETENTION_SEC_EVENT_DAYS",
 		"RETENTION_SEC_CONFIG_CHANGE_DAYS",
 		"RETENTION_NET_EVENT_ROLLUP_DAYS",
+		"RETENTION_PING_DAYS",
+		"RETENTION_INTERFACE_ERRORS_DAYS",
+		"RETENTION_PROCESSOR_STATS_DAYS",
+		"RETENTION_PROCESS_STATS_DAYS",
+		"RETENTION_IRC_MESSAGE_LOG_DAYS",
+		"RETENTION_UNACK_ALERT_DAYS",
+		"RETENTION_FLOW_DETECTION_DAYS",
+		"RETENTION_AGENT_DROPS_DAYS",
+		"RETENTION_VPN_STATUS_DAYS",
+		"RETENTION_HA_STATUS_DAYS",
+		"RETENTION_SECURITY_STATS_DAYS",
+		"RETENTION_SDWAN_HEALTH_DAYS",
+		"RETENTION_LICENSE_INFO_DAYS",
+		"RETENTION_INCIDENT_DAYS",
 	} {
 		if strings.TrimSpace(os.Getenv(key)) != "" {
 			set[key] = true

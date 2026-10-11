@@ -1,6 +1,17 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.319] - 2026-10-11
+
+### Added — the remaining data-retention knobs are settable from the admin GUI
+
+- **Settings → Retention → Data Retention** now exposes the 14 remaining retention knobs beside the 12 shipped in 0.11.318: `retention_ping_days`, `retention_interface_errors_days`, `retention_processor_stats_days`, `retention_process_stats_days`, `retention_irc_message_log_days`, `retention_unack_alert_days`, `retention_flow_detection_days`, `retention_agent_drops_days`, `retention_vpn_status_days`, `retention_ha_status_days`, `retention_security_stats_days`, `retention_sdwan_health_days`, `retention_license_info_days` and `retention_incident_days`. Each keeps its existing 0-semantics — `vpn_status` / `ha_status` / `security_stats` / `sdwan_health` fall back to `RETENTION_STATUS_DAYS` (their chart-sibling window), the other ten to `RETENTION_DEFAULT_DAYS` — and each field's hint and the validation message say exactly that.
+- `database.ResolveRetention`, the provenance badge (`retentionEnvSet`) and the validation now cover all 26 knobs, so an environment-set value still reads **environment** and a stored value still wins.
+
+### Fixed — the archive folder picker no longer hard-fails on a grandfathered directory
+
+- **Browse…** beside the archive / staging directory returned a 400 when the current value was a clean absolute directory outside `ARCHIVE_ALLOWED_ROOT` (a staging directory set before 0.11.315 and kept). The picker now starts at the allowed root and shows an informational note naming the root and that the directory is still in use, and the boundary check that decides whether to send the current value is fixed (`/archive-staging` no longer reads as under `/archive`). Nothing outside the root is ever listed.
+
 ## [0.11.318] - 2026-10-11
 
 ### Added — data-retention knobs are settable from the admin GUI

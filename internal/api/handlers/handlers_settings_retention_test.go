@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"firewall-mon/internal/config"
@@ -10,18 +11,32 @@ import (
 	"firewall-mon/internal/models"
 )
 
-// retentionKeyList is the 12 GUI retention keys, in the same order the page
-// renders them, so the field-count and key-set assertions stay in sync with the
-// handler's retentionGUIKnobs.
+// retentionKeyList is the operator-tunable retention keys, in the same order
+// the page renders them, so the field-count and key-set assertions stay in sync
+// with the handler's retentionGUIKnobs.
 var retentionKeyList = []string{
 	database.RetentionDefaultDaysKey,
 	database.RetentionSyslogMonthsKey,
 	database.RetentionFlowDaysKey,
 	database.RetentionFlowRollupDaysKey,
+	database.RetentionFlowDetectionKey,
+	database.RetentionAgentDropsKey,
 	database.RetentionTrapDaysKey,
 	database.RetentionStatusDaysKey,
+	database.RetentionPingDaysKey,
 	database.RetentionAlertDaysKey,
+	database.RetentionUnackAlertKey,
 	database.RetentionDeniedEventDaysKey,
+	database.RetentionInterfaceErrorsKey,
+	database.RetentionProcessorStatsKey,
+	database.RetentionProcessStatsKey,
+	database.RetentionIRCMessageLogKey,
+	database.RetentionVPNStatusKey,
+	database.RetentionHAStatusKey,
+	database.RetentionSecurityStatsKey,
+	database.RetentionSDWANHealthKey,
+	database.RetentionLicenseInfoKey,
+	database.RetentionIncidentKey,
 	database.RetentionNetEventDaysKey,
 	database.RetentionSecEventDaysKey,
 	database.RetentionSecConfigChangeDaysKey,
@@ -37,7 +52,7 @@ func settingsBody(kv map[string]string) string {
 	return string(b)
 }
 
-// Blank, 0 and a concrete N are all accepted for the 12 day/knob keys.
+// Blank, 0 and a concrete N are all accepted for the day/knob keys.
 func TestUpdateSettings_RetentionKnobsAcceptBlankZeroAndN(t *testing.T) {
 	h, _ := setupTestHandler(t)
 	kv := map[string]string{}
@@ -62,7 +77,7 @@ func TestUpdateSettings_RetentionKnobsAcceptBlankZeroAndN(t *testing.T) {
 	}
 }
 
-// Out-of-range and non-integer values are rejected for the 12 keys.
+// Out-of-range and non-integer values are rejected for the knob keys.
 func TestUpdateSettings_RetentionKnobsRejectInvalid(t *testing.T) {
 	cases := []struct {
 		key, value, name string
@@ -73,6 +88,8 @@ func TestUpdateSettings_RetentionKnobsRejectInvalid(t *testing.T) {
 		{database.RetentionNetEventDaysKey, "3651", "net event above 3650"},
 		{database.RetentionSecConfigChangeDaysKey, "-1", "sec config negative"},
 		{database.RetentionSyslogMonthsKey, "121", "months above 120"},
+		{database.RetentionUnackAlertKey, "3651", "unack above 3650"},
+		{database.RetentionVPNStatusKey, "-1", "vpn status negative"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -81,6 +98,38 @@ func TestUpdateSettings_RetentionKnobsRejectInvalid(t *testing.T) {
 			h.UpdateSettings(c)
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("%s=%q: status = %d, want 400: %s", tc.key, tc.value, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// The LC-20 status tables (VPN / HA / security / SD-WAN health) name
+// RETENTION_STATUS_DAYS — not RETENTION_DEFAULT_DAYS — as their 0 fallback, so
+// the validation message must say so; the other new knobs say
+// RETENTION_DEFAULT_DAYS.
+func TestUpdateSettings_RetentionStatusFallbackMessage(t *testing.T) {
+	cases := []struct {
+		key, want string
+	}{
+		{database.RetentionVPNStatusKey, "follow RETENTION_STATUS_DAYS"},
+		{database.RetentionHAStatusKey, "follow RETENTION_STATUS_DAYS"},
+		{database.RetentionSecurityStatsKey, "follow RETENTION_STATUS_DAYS"},
+		{database.RetentionSDWANHealthKey, "follow RETENTION_STATUS_DAYS"},
+		{database.RetentionUnackAlertKey, "inherit RETENTION_DEFAULT_DAYS"},
+		{database.RetentionInterfaceErrorsKey, "inherit RETENTION_DEFAULT_DAYS"},
+		{database.RetentionLicenseInfoKey, "inherit RETENTION_DEFAULT_DAYS"},
+		{database.RetentionIncidentKey, "inherit RETENTION_DEFAULT_DAYS"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.key, func(t *testing.T) {
+			h, _ := setupTestHandler(t)
+			c, rec := jsonReq(http.MethodPost, "/api/settings", settingsBody(map[string]string{tc.key: "-1"}))
+			h.UpdateSettings(c)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("%s: status = %d, want 400: %s", tc.key, rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), tc.want) {
+				t.Errorf("%s: message %q must name its 0-semantics (%q)", tc.key, rec.Body.String(), tc.want)
 			}
 		})
 	}
@@ -130,8 +179,8 @@ func TestGetRetentionSettings_FieldsSourceStoredValue(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(body.Data.Fields) != 12 {
-		t.Fatalf("got %d fields, want 12", len(body.Data.Fields))
+	if len(body.Data.Fields) != 26 {
+		t.Fatalf("got %d fields, want 26", len(body.Data.Fields))
 	}
 	byKey := map[string]struct{ Stored, EnvValue, Value, Source string }{}
 	for _, f := range body.Data.Fields {

@@ -48,7 +48,7 @@ enabled, only once its `max(id)` is at or below the archive's verified id.
 
 ## Settings → Retention (admin GUI, 0.11.318)
 
-Twelve operator-tunable data-retention knobs are settable in **Settings →
+The operator-tunable data-retention knobs are settable in **Settings →
 Retention → Data Retention**, read through over the environment exactly like
 the per-severity syslog retention. Precedence, highest first:
 
@@ -66,10 +66,24 @@ lower-cased:
 | `retention_syslog_months` | `RETENTION_SYSLOG_MONTHS` | months | off (day windows apply) |
 | `retention_flow_days` | `RETENTION_FLOW_DAYS` | days | `RETENTION_DEFAULT_DAYS` |
 | `retention_flow_rollup_days` | `RETENTION_FLOW_ROLLUP_DAYS` | days | `RETENTION_DEFAULT_DAYS` |
+| `retention_flow_detection_days` | `RETENTION_FLOW_DETECTION_DAYS` | days | `RETENTION_DEFAULT_DAYS` |
+| `retention_agent_drops_days` | `RETENTION_AGENT_DROPS_DAYS` | days | `RETENTION_DEFAULT_DAYS` |
 | `retention_trap_days` | `RETENTION_TRAP_DAYS` | days | `RETENTION_DEFAULT_DAYS` |
 | `retention_status_days` | `RETENTION_STATUS_DAYS` | days | `RETENTION_DEFAULT_DAYS` |
+| `retention_ping_days` | `RETENTION_PING_DAYS` | days | `RETENTION_DEFAULT_DAYS` |
 | `retention_alert_days` | `RETENTION_ALERT_DAYS` | days | `RETENTION_DEFAULT_DAYS` |
+| `retention_unack_alert_days` | `RETENTION_UNACK_ALERT_DAYS` | days | `RETENTION_DEFAULT_DAYS` |
 | `retention_denied_event_days` | `RETENTION_DENIED_EVENT_DAYS` | days | `RETENTION_DEFAULT_DAYS` |
+| `retention_interface_errors_days` | `RETENTION_INTERFACE_ERRORS_DAYS` | days | `RETENTION_DEFAULT_DAYS` |
+| `retention_processor_stats_days` | `RETENTION_PROCESSOR_STATS_DAYS` | days | `RETENTION_DEFAULT_DAYS` |
+| `retention_process_stats_days` | `RETENTION_PROCESS_STATS_DAYS` | days | `RETENTION_DEFAULT_DAYS` |
+| `retention_irc_message_log_days` | `RETENTION_IRC_MESSAGE_LOG_DAYS` | days | `RETENTION_DEFAULT_DAYS` |
+| `retention_vpn_status_days` | `RETENTION_VPN_STATUS_DAYS` | days | `RETENTION_STATUS_DAYS` |
+| `retention_ha_status_days` | `RETENTION_HA_STATUS_DAYS` | days | `RETENTION_STATUS_DAYS` |
+| `retention_security_stats_days` | `RETENTION_SECURITY_STATS_DAYS` | days | `RETENTION_STATUS_DAYS` |
+| `retention_sdwan_health_days` | `RETENTION_SDWAN_HEALTH_DAYS` | days | `RETENTION_STATUS_DAYS` |
+| `retention_license_info_days` | `RETENTION_LICENSE_INFO_DAYS` | days | `RETENTION_DEFAULT_DAYS` |
+| `retention_incident_days` | `RETENTION_INCIDENT_DAYS` | days | `RETENTION_DEFAULT_DAYS` |
 | `retention_net_event_days` | `RETENTION_NET_EVENT_DAYS` | days | **30 — this table's floor, never the default** |
 | `retention_sec_event_days` | `RETENTION_SEC_EVENT_DAYS` | days | `RETENTION_DEFAULT_DAYS` |
 | `retention_sec_config_change_days` | `RETENTION_SEC_CONFIG_CHANGE_DAYS` | days | **forever** |
