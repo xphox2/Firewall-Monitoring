@@ -20,8 +20,12 @@ import (
 // recovery notifications). Each is keyed per stream or per table.
 //
 // Thresholds are system settings (the Alerting page's global defaults; 0
-// turns one off): the operator's defaults are a syslog lag of 26 h and a flow
-// lag of 3 h.
+// turns one off). The lag thresholds are hours LATE — past the schedule of
+// the table's next chunk (schedule.go) — the same for daily and hourly
+// tables: 3 h by default, read as stored. Before 0.11.317 they were hours of
+// raw age (26 h for the daily tables): migration v81
+// (database.migrateArchiveLagHoursLate) converted a stored daily value once,
+// never to alert sooner than it did.
 
 // Setting keys and defaults of the archive alert thresholds.
 const (
@@ -32,9 +36,9 @@ const (
 	HeldHoursKey        = "retention_held_alert_hours"
 	UnsettledHoursKey   = "archive_unsettled_alert_hours"
 
-	LagHoursSyslogDefault   = 26
-	LagHoursFlowsDefault    = 3
-	LagHoursCountersDefault = 26
+	LagHoursSyslogDefault   = database.ArchiveLagDefault
+	LagHoursFlowsDefault    = database.ArchiveLagDefault
+	LagHoursCountersDefault = database.ArchiveLagDefault
 	SealOverdueDaysDefault  = 3
 	HeldHoursDefault        = 6
 	UnsettledHoursDefault   = 6
@@ -90,15 +94,6 @@ func ReadThresholds(stored map[string]string) Thresholds {
 	}
 }
 
-// DailySustain is how long a daily table's lag (syslog, sflow-counters) must
-// stay above its threshold before ARCHIVE_LAG fires. Their chunk for a day is
-// cut ARCHIVE_MIN_AGE_HOURS (2) after midnight UTC and then settles, exports
-// (a day of syslog is ~11 min at 5 000 rows/s) and is read back, so the lag
-// peaks every day a little past 24 h + 2 h — just over the 26 h default — and
-// falls back to ~2 h when the chunk is verified. The hourly flow streams peak
-// at about 1 h, far below their 3 h.
-const DailySustain = time.Hour
-
 // GateUnreadableAfter is how long the retention gate's reads of the stream
 // switches may keep failing before ARCHIVE_GATE_UNREADABLE fires: a brief
 // database hiccup is retried every few seconds and resolves itself.
@@ -110,6 +105,12 @@ const GateUnreadableAfter = 15 * time.Minute
 // GateUnreadableAfter. Unlike the other archive alerts it does not need the
 // status: a database that fails the gate's read may fail Build too.
 func GateReadCondition(h database.ArchiveGateHealth, now time.Time) Condition {
+	c := gateReadCondition(h, now)
+	gateIssueAction(&c)
+	return c
+}
+
+func gateReadCondition(h database.ArchiveGateHealth, now time.Time) Condition {
 	c := Condition{Type: models.AlertTypeArchiveGateUnreadable, Label: "switches", Known: true, Fields: map[string]string{},
 		Recovery: "The retention gate reads the archive's stream switches again"}
 	if h.FailingSince == nil {
@@ -165,11 +166,8 @@ type DiskTrend struct {
 	Detail  string
 }
 
-// Evaluator turns a Status into Conditions. It remembers since when each
-// daily table's lag has been above its threshold (DailySustain); a restart
-// forgets that, which delays such an alert by at most DailySustain. It also
-// remembers which RETENTION_HELD alerts are active (the disk trend only fires
-// them).
+// Evaluator turns a Status into Conditions. It remembers which
+// RETENTION_HELD alerts are active (the disk trend only fires them).
 //
 // It also remembers since when an enabled table has had no chunk at all: a
 // bucket that never passes the preflight (wrong credentials at enabling) cuts
@@ -177,7 +175,6 @@ type DiskTrend struct {
 // the table (V = 0). ARCHIVE_LAG counts that time as the lag.
 type Evaluator struct {
 	mu       sync.Mutex
-	lagAbove map[string]time.Time
 	noChunks map[string]time.Time
 	// heldActive: tables whose RETENTION_HELD is breached (it fired, or
 	// would have but for a rule or cooldown).
@@ -186,7 +183,7 @@ type Evaluator struct {
 
 // NewEvaluator returns an Evaluator with no history.
 func NewEvaluator() *Evaluator {
-	return &Evaluator{lagAbove: map[string]time.Time{}, noChunks: map[string]time.Time{}, heldActive: map[string]bool{}}
+	return &Evaluator{noChunks: map[string]time.Time{}, heldActive: map[string]bool{}}
 }
 
 func hours(d time.Duration) string {
@@ -198,15 +195,16 @@ func hours(d time.Duration) string {
 
 func secs(s float64) time.Duration { return time.Duration(s * float64(time.Second)) }
 
-// lagOf is table's lag threshold and whether its chunks are daily.
-func (th Thresholds) lagOf(table string) (time.Duration, bool) {
+// lagOf is table's lag threshold: how late (past its schedule) its next
+// chunk may be.
+func (th Thresholds) lagOf(table string) time.Duration {
 	switch table {
 	case export.TableSyslog:
-		return th.LagSyslog, true
+		return th.LagSyslog
 	case export.TableCounters:
-		return th.LagCounters, true
+		return th.LagCounters
 	}
-	return th.LagFlows, false
+	return th.LagFlows
 }
 
 // preflightNote says what the worker's snapshot tells about a stream that
@@ -244,41 +242,46 @@ func (e *Evaluator) Conditions(st *Status, th Thresholds, disk DiskTrend) []Cond
 		names := strings.Join(t.Streams, " and ")
 		c := Condition{Type: models.AlertTypeArchiveLag, Label: t.Table, Known: true,
 			Fields: map[string]string{"table": t.Table, "stream": strings.Join(t.Streams, ","), "gate_stream": t.GateStream}}
-		limit, daily := th.lagOf(t.Table)
+		limit := th.lagOf(t.Table)
 		if !t.Enabled || t.LagSeconds != nil {
 			delete(e.noChunks, t.Table)
 		}
 		if t.Enabled && t.LagSeconds == nil {
-			// No chunk yet: the lag runs from when this process first saw it.
+			// No chunk yet: the wait runs from when the worker first saw it
+			// (its record survives a restart) — what the health verdict
+			// counts from — or, without that record (an older worker, or
+			// none running), from when this process first saw it.
 			first, ok := e.noChunks[t.Table]
 			if !ok {
 				e.noChunks[t.Table], first = now, now
 			}
+			if w := st.Worker; w != nil {
+				if since, ok := w.NoChunkSince[t.Table]; ok {
+					first = since
+				}
+			}
+			c.Fields["no_chunk"] = "true"
 			waited := now.Sub(first)
-			c.Breached = limit > 0 && waited > limit
-			c.Message = fmt.Sprintf("Raw archive of %s (%s) is enabled but has cut no chunk for %s (threshold %s): nothing of it is archived and its raw deletes wait. %s",
-				names, t.Table, hours(waited), hours(limit), preflightNote(st))
+			// Its first chunk is due one period, the minimum age and the
+			// settle window after archiving began (the same schedule).
+			late := t.Schedule.Overdue(first, now)
+			c.Breached = limit > 0 && late > limit
+			c.Message = fmt.Sprintf("Raw archive of %s (%s) is enabled but has cut no chunk for %s, %s past when its first chunk was due (threshold %s late): nothing of it is archived and its raw deletes wait. %s",
+				names, t.Table, hours(waited), hours(late), hours(limit), preflightNote(st))
 			c.Recovery = fmt.Sprintf("Raw archive of %s has cut its first chunk", names)
 			out = append(out, c)
 			continue
 		}
-		var lag time.Duration
+		var lag, late time.Duration
 		if t.LagSeconds != nil {
 			lag = secs(*t.LagSeconds)
 		}
-		over := t.Enabled && limit > 0 && t.LagSeconds != nil && lag > limit
-		if !over {
-			delete(e.lagAbove, t.Table)
-		} else if daily {
-			first, ok := e.lagAbove[t.Table]
-			if !ok {
-				e.lagAbove[t.Table], first = now, now
-			}
-			over = now.Sub(first) >= DailySustain
+		if t.OverdueSeconds != nil {
+			late = secs(*t.OverdueSeconds)
 		}
-		c.Breached = over
-		c.Message = fmt.Sprintf("Raw archive of %s (%s) is %s behind (threshold %s): its verified data ends %s",
-			names, t.Table, hours(lag), hours(limit), now.Add(-lag).Format(time.RFC3339))
+		c.Breached = t.Enabled && limit > 0 && t.OverdueSeconds != nil && late > limit
+		c.Message = fmt.Sprintf("Raw archive of %s (%s) is %s behind schedule (threshold %s late): its verified data ends %s (%s ago)",
+			names, t.Table, hours(late), hours(limit), now.Add(-lag).Format(time.RFC3339), hours(lag))
 		c.Recovery = fmt.Sprintf("Raw archive of %s caught up: %s behind", names, hours(lag))
 		out = append(out, c)
 	}
@@ -336,8 +339,8 @@ func (e *Evaluator) Conditions(st *Status, th Thresholds, disk DiskTrend) []Cond
 			delete(e.heldActive, t.Table)
 		}
 		if t.Retention != nil {
-			c.Message = fmt.Sprintf("The archive's retention gate holds unarchived rows of %s up to %s past their window (%s; threshold %s) and the database volume is growing (%s). Fix the archive, or release the gate for a few hours: fwmon-api archive --override %s --for 6h --reason \"...\"",
-				t.Table, hours(held), t.Retention.Window, hours(th.Held), disk.Detail, t.GateStream)
+			c.Message = fmt.Sprintf("The archive's retention gate holds unarchived rows of %s up to %s past their window (%s; threshold %s) and the database volume is growing (%s).",
+				t.Table, hours(held), t.Retention.Window, hours(th.Held), disk.Detail)
 		}
 		c.Recovery = fmt.Sprintf("The retention gate no longer holds rows of %s far past their window", t.Table)
 		out = append(out, c)
@@ -382,5 +385,10 @@ func (e *Evaluator) Conditions(st *Status, th Thresholds, disk DiskTrend) []Cond
 		out = append(out, c)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Type < out[j].Type })
+	// The same issue codes and actions as the status page's verdict.
+	h := Assess(st, th, disk)
+	for i := range out {
+		annotate(&out[i], h)
+	}
 	return out
 }

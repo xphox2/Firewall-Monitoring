@@ -156,6 +156,21 @@ the next restart applies v74 in milliseconds. An interrupted attempt leaves
 nothing behind: the ALTER is one transaction, and until it commits the table
 is unchanged.
 
+## Database migration: server 0.11.317 (migration v81)
+
+v81 changes no table. The raw archive's lag alert thresholds
+(`archive_lag_alert_hours_syslog`, `_flows`, `_counters`) now mean hours
+**late** past the schedule of a table's next chunk, default 3, instead of
+hours of age (default 26 for syslog and counters). v81 rewrites a stored
+syslog or counters value once, using the `ARCHIVE_MIN_AGE_HOURS` in effect
+(the admin value first, else the environment, else 2): ⌈value + 1 − 24 −
+minimum age − 1/6⌉ hours, at least 3 — it never alerts sooner than before
+(26 becomes 3 at the default). 0 stays 0, absent keys stay absent, the flow
+value is kept, and the marker setting `archive_lag_alert_hours_unit` = `late`
+is written in the same transaction, so nothing is converted twice. Each
+rewrite is logged (`migrate v81: … h of age → … h late`). Check the Alerting
+page afterwards: it shows the values in force.
+
 ## Database migration: server 0.11.314 (migration v80)
 
 v80 drops three unused indexes from every `net_events` leaf —

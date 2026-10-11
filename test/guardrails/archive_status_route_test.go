@@ -82,7 +82,14 @@ func TestArchiveStatusCardScript(t *testing.T) {
 		"var esc = AC.escapeHtml;",
 		"AC.pollWhenVisible(",
 		"esc(e.error || '')",
-		"esc(gr.error || '')",
+		// 0.11.317: the gate's read error and every other cause reach
+		// the card as an issue's detail (status.Assess), escaped.
+		"esc(is.detail)",
+		"esc(is.title)",
+		// The verdict is the server's (data.health), with an icon and
+		// words, not colour alone.
+		"var h = st.health || {};",
+		"AC.icon(v[1])",
 		`data-action="archive-reset-chunk"`,
 		`role="status"`,
 		"if (lastHtml[s[0]] !== s[1]) {",
@@ -101,5 +108,28 @@ func TestArchiveStatusCardScript(t *testing.T) {
 	}
 	if !strings.Contains(readJS(t, "admin-main.js"), "FwmonArchiveStatus.watch(host,") {
 		t.Error("admin-main.js does not keep the archive status current")
+	}
+}
+
+// TestArchiveSettingsHealthAndTest (0.11.317): the settings card shows the
+// verdict the status card already rendered at once (not after the next 15 s
+// refresh), Test connection says it uses the form's values including
+// unsaved edits, and a Test asked for before the form has loaded loads it
+// instead of doing nothing.
+func TestArchiveSettingsHealthAndTest(t *testing.T) {
+	status := readJS(t, "admin-archive-status.js")
+	settings := readJS(t, "admin-archive-settings.js")
+	for _, c := range []struct{ js, sub, file string }{
+		{status, "lastHealth: function () { return lastVerdict; }", "admin-archive-status.js"},
+		{settings, "health = FwmonArchiveStatus.lastHealth() || health;", "admin-archive-settings.js"},
+		{settings, "including unsaved edits (nothing is saved)", "admin-archive-settings.js"},
+		{settings, "load().then(function () { if (view) test(); })", "admin-archive-settings.js"},
+	} {
+		if !strings.Contains(c.js, c.sub) {
+			t.Errorf("%s is missing %q", c.file, c.sub)
+		}
+	}
+	if strings.Contains(readJS(t, "admin-main.js"), "Test connection with the saved") {
+		t.Error("admin-main.js still says Test connection uses the saved settings")
 	}
 }

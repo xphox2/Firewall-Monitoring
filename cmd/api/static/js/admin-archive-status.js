@@ -5,34 +5,39 @@
 // — AdminCommon.pollWhenVisible), and a 1 s tick that only rewrites the
 // countdown and "x ago" texts. The card is a list of sections and a refetch
 // rewrites only those whose HTML changed: an unchanged banner or button keeps
-// its DOM and keyboard focus, and <details> keep their open state. Banners
-// are role="status" (polite), not alerts re-announced on every refresh.
+// its DOM and keyboard focus, and <details> keep their open state.
 //
-// What it shows, top to bottom: anything that needs the operator (a released
-// gate, a gate that cannot read its switches, parked or retrying chunks, a
-// stale worker, a failed preflight, a full staging directory); what the
-// worker is doing now (the chunk, its stage and progress, or the settle
-// countdown, and the next pass); per table the planned work verified, what
-// is left, the rate and the time left; the recently verified chunks; the
-// chunks waiting for a retry and those parked; per stream the archived
-// totals and month folders with the next seal; the last failure of each
-// stage.
+// What it shows, top to bottom (v0.11.317):
+//   1. the health banner — the server's verdict (data.health, computed once
+//      in internal/archive/status/health.go for this page, the CLI and the
+//      alerts): colour, icon AND words, the one-line summary, the last
+//      successful backup, how far behind, the target;
+//   2. "Action needed": the errors and warnings, most severe first, each
+//      with what it means, what is at risk, what to do and a button to the
+//      setting or control that does it; then the notes (information);
+//   3. the per-stream table: state, verified through, backlog, stored,
+//      compression (a phone shows each stream as a card);
+//   4. the details: current activity, recently verified chunks, retries and
+//      parked chunks (Reset), months with their seal badges, the last
+//      failure of each stage.
+// It also tells the Raw Archive Settings card the verdict (the
+// fwmon:archive-health event) for its badge.
 //
 // CSP: no inline handlers. The buttons carry data-action (admin-main.js
-// dispatches archive-refresh / archive-reset-chunk / archive-reengage).
-// Every server string goes through escapeHtml. Styles use the theme tokens
-// (light and dark) and the existing badge / data-table / btn classes.
+// dispatches archive-refresh / archive-reset-chunk / archive-reengage /
+// archive-jump / archive-open-settings / archive-test-connection). Every
+// server string goes through escapeHtml. Styles are classes in
+// admin-settings.css on the theme tokens (light and dark).
 (function () {
     'use strict';
 
     var AC = window.AdminCommon;
     var esc = AC.escapeHtml;
-    var faint = 'color:var(--fwmon-text-faint);';
-    var small = 'font-size:0.82rem;';
     var REFRESH_MS = 15000;
 
     var poller = null;        // AdminCommon.pollWhenVisible handle
     var ticker = null;        // the 1 s countdown timer
+    var lastVerdict = null;   // the last data.health rendered (lastHealth)
 
     // ---- formatting -----------------------------------------------------
 
@@ -54,11 +59,14 @@
         return (h ? h + ':' : '') + mm + ':' + (s < 10 ? '0' : '') + s;
     }
 
-    function when(t) { return t ? esc(AC.formatDate(t)) : '<span style="' + faint + '">never</span>'; }
+    function when(t) { return t ? esc(AC.formatDate(t)) : '<span class="arch-faint">never</span>'; }
 
     function label(v) { return String(v || '').split('_').join(' '); }
 
     function badge(cls, text) { return '<span class="badge ' + cls + '">' + esc(text) + '</span>'; }
+
+    // utc: an instant as "2026-10-04 07:00 UTC" (the archive's periods are UTC).
+    function utc(t) { return t ? esc(String(t).slice(0, 16).replace('T', ' ')) + ' UTC' : '&mdash;'; }
 
     // period: a chunk's UTC day ("2026-10-04") or hour ("2026-10-04 07:00").
     function period(start, end) {
@@ -75,106 +83,186 @@
     function liveSince(since) { return '<span data-arch-since="' + esc(since) + '"></span>'; }
 
     // bar: a progress bar, fraction 0..1, with an accessible label.
-    function bar(fraction, text, color) {
+    function bar(fraction, text) {
         var pct = Math.max(0, Math.min(100, (fraction || 0) * 100));
-        return '<div role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + Math.round(pct) + '" aria-label="' + esc(text) + '"' +
-            ' style="height:8px;border-radius:4px;background:var(--fwmon-border);overflow:hidden;margin:6px 0;">' +
-            '<div style="height:100%;width:' + pct.toFixed(1) + '%;background:' + (color || 'var(--fwmon-accent)') + ';"></div></div>';
+        return '<div class="arch-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + Math.round(pct) + '" aria-label="' + esc(text) + '">' +
+            '<div class="arch-bar-fill" style="width:' + pct.toFixed(1) + '%;"></div></div>';
     }
 
-    function notice(level, html) {
-        var c = level === 'crit' ? 'var(--fwmon-sig-crit)' : 'var(--fwmon-sig-warn)';
-        return '<div role="status" style="border:1px solid ' + c + ';border-left-width:4px;border-radius:6px;padding:8px 12px;margin-bottom:8px;' + small + '">' + html + '</div>';
+    function section(title, body, id) {
+        return '<h3 class="arch-h3"' + (id ? ' id="' + id + '"' : '') + '>' + esc(title) + '</h3>' + body;
     }
 
-    function section(title, body) {
-        return '<h3 style="font-size:0.95rem;margin:18px 0 6px;">' + esc(title) + '</h3>' + body;
+    function streamName(s) {
+        return { syslog: 'Syslog', sflow: 'sFlow', netflow: 'NetFlow', 'sflow-counters': 'sFlow counters' }[s] || s;
     }
 
-    var STATE = {
-        caught_up: ['online', 'caught up'],
-        current: ['online', 'up to date'],
-        catching_up: ['warning', 'catching up']
+    // VERDICT: tone, icon, heading per health verdict. The heading carries
+    // the state in words, so colour is never the only signal.
+    var VERDICT = {
+        healthy: ['ok', 'check-circle', 'Healthy'],
+        warning: ['warn', 'alert-triangle', 'Warning — check below'],
+        error: ['crit', 'x-octagon', 'Error — action needed'],
+        disabled: ['neutral', 'pause-circle', 'Archiving is off'],
+        not_configured: ['neutral', 'minus-circle', 'Not configured']
     };
+
+    var NOTE = ['neutral', 'info-circle', 'Note'];
+    var SEVERITY = {
+        error: ['crit', 'x-octagon', 'Error'],
+        warning: ['warn', 'alert-triangle', 'Warning'],
+        info: NOTE
+    };
+
+    // STREAM_STATE: tone of each per-stream state (its text is the server's).
+    var STREAM_STATE = { ok: 'ok', catching_up: 'info', warning: 'warn', error: 'crit', stalled: 'crit', idle: 'neutral', pending: 'info', off: 'neutral' };
 
     var STAGE = { start: 'Starting', export: 'Exporting', upload: 'Uploading', verify: 'Reading back', count: 'Recounting', manifest: 'Writing chunk.json' };
 
-    // ---- sections -------------------------------------------------------
-
-    function attention(st) {
-        var html = '';
-        (st.gates || []).forEach(function (g) {
-            if (!g.override_active) return;
-            html += notice('crit', '<strong style="color:var(--fwmon-sig-crit);">Retention gate of ' + esc(g.stream) + ' RELEASED</strong> until ' + when(g.override_until) +
-                ': raw rows are deleted whether or not they are archived, and the archive alerts keep firing. ' +
-                '<button type="button" class="btn sm secondary" data-action="archive-reengage" data-min-role="admin" data-stream="' + esc(g.stream) + '">Re-engage now</button>');
-        });
-        var gr = st.gate_read;
-        if (gr) {
-            html += notice('crit', '<strong style="color:var(--fwmon-sig-crit);">The retention gate cannot read the archive&rsquo;s stream switches</strong> since ' +
-                when(gr.failing_since) + ' (' + liveSince(gr.failing_since) + '): ' +
-                (gr.holding_all ? 'every archived table&rsquo;s deletes are held until a read succeeds.' : 'it keeps the switches it read last; a change saved below is not applied yet.') +
-                ' <span style="' + faint + '">' + esc(gr.error || '') + '</span>');
-        }
-        var na = st.needs_attention || [];
-        if (na.length) {
-            var holding = na.filter(function (p) { return p.holds_gate; }).length;
-            html += notice('crit', '<strong style="color:var(--fwmon-sig-crit);">' + na.length + ' chunk' + (na.length === 1 ? ' is' : 's are') +
-                ' parked in needs attention</strong>' + (holding ? ' (' + holding + ' hold' + (holding === 1 ? 's' : '') + ' deletes)' : '') +
-                ': no longer retried until reset. See <em>Needs attention</em> below.');
-        }
-        var rt = st.retrying || [];
-        if (rt.length) {
-            html += notice('warn', '<strong style="color:var(--fwmon-sig-warn);">' + rt.length + ' chunk' + (rt.length === 1 ? '' : 's') +
-                ' failed and will be retried</strong>: ' + esc(rt[0].table) + ' ' + period(rt[0].period_start, rt[0].period_end) + ' &mdash; ' + esc(rt[0].error || '') +
-                (rt.length > 1 ? ' (and ' + (rt.length - 1) + ' more below)' : ''));
-        }
-        var w = st.worker;
-        if (w && w.stale) {
-            html += notice('warn', '<strong>The archive worker&rsquo;s state is stale</strong>: last written ' + when(w.seen_at) + '. Is the poller running?');
-        } else if (w && !w.preflight_ok) {
-            html += notice('crit', '<strong style="color:var(--fwmon-sig-crit);">The ' + (((st.config || {}).target === 'local') ? 'archive directory&rsquo;s' : 'bucket') + ' preflight has not passed</strong>: nothing is archived until it does.');
-        }
-        var stg = (w && w.staging) || {};
-        if (w && stg.free_bytes != null && stg.free_bytes < stg.min_free_bytes) {
-            html += notice('crit', 'Staging <code>' + esc(stg.dir || '') + '</code> has ' + AC.formatBytes(stg.free_bytes) +
-                ' free, below the ' + AC.formatBytes(stg.min_free_bytes) + ' floor: nothing is exported.');
-        }
-        return html;
+    function pill(tone, text) {
+        return '<span class="arch-pill is-' + tone + '"><span class="arch-pill-dot" aria-hidden="true"></span>' + esc(text) + '</span>';
     }
 
-    function header(st) {
+    // ---- 1. banner ------------------------------------------------------
+
+    function target(st) {
         var c = st.config || {};
-        var html = c.target === 'local'
-            ? '<p style="' + small + 'margin:0 0 4px;">Local directory <code>' + esc(c.local_dir || '') + '</code> prefix <code>' + esc(c.prefix || '') + '</code>' +
-                ' (no Object Lock: immutability is the storage&rsquo;s).</p>'
-            : '<p style="' + small + 'margin:0 0 4px;">Bucket <code>' + esc(c.bucket || '') + '</code> prefix <code>' + esc(c.prefix || '') + '</code>' +
-                (c.endpoint ? ' at ' + esc(c.endpoint) : '') + (c.access_key_id ? ', key ' + esc(c.access_key_id) : '') +
-                (c.object_lock_days ? ', Object Lock ' + esc(c.object_lock_mode || '') + ' ' + c.object_lock_days + ' days' : ', no Object Lock') + '.</p>';
-        var w = st.worker;
-        if (!w) {
-            html += '<p style="' + small + 'color:var(--fwmon-sig-warn);margin:0 0 4px;">' + (st.worker_error
-                ? 'The archive worker&rsquo;s state could not be read: ' + esc(st.worker_error)
-                : 'The poller&rsquo;s archive worker has not recorded any state yet.') + '</p>';
-        } else {
-            var stg = w.staging || {};
-            var free = stg.error ? 'free space unknown (' + esc(stg.error) + ')' : stg.free_bytes != null ? AC.formatBytes(stg.free_bytes) + ' free' : '';
-            html += '<p style="' + small + 'margin:0 0 4px;' + faint + '">Worker ' + esc(w.runner || '') + ', state written ' + liveSince(w.seen_at) + ' ago' +
-                '. Staging <code>' + esc(stg.dir || '') + '</code>: ' + free + '.</p>';
+        if (c.target === 'local') return 'Directory <code>' + esc(c.local_dir || '') + '</code>' + (c.prefix ? ' / <code>' + esc(c.prefix) + '</code>' : '');
+        if (!c.bucket) return '<span class="arch-faint">none</span>';
+        return 'Bucket <code>' + esc(c.bucket) + '</code>' + (c.prefix ? ' / <code>' + esc(c.prefix) + '</code>' : '') +
+            '<div class="arch-faint">' + (c.object_lock_days ? 'Object Lock ' + esc(c.object_lock_mode || '') + ' ' + c.object_lock_days + ' days' : 'no Object Lock') + '</div>';
+    }
+
+    function behind(h) {
+        if (h.verdict === 'disabled' || h.verdict === 'not_configured') return '&mdash;';
+        if (h.backlog_chunks > 0) {
+            return '<strong>' + AC.formatNum(h.backlog_chunks) + ' chunk' + (h.backlog_chunks === 1 ? '' : 's') + ' to catch up</strong>' +
+                (h.eta_seconds != null ? '<div class="arch-faint">about ' + dur(h.eta_seconds) + ' of work</div>' : '');
+        }
+        if (!h.verified_through) return '<span class="arch-faint">nothing verified yet</span>';
+        return 'Up to date<div class="arch-faint">through ' + utc(h.verified_through) + '</div>';
+    }
+
+    function banner(st) {
+        var h = st.health || {};
+        var v = VERDICT[h.verdict] || ['neutral', 'info-circle', 'Unknown'];
+        var counts = [];
+        if (h.errors) counts.push(h.errors + ' error' + (h.errors === 1 ? '' : 's'));
+        if (h.warnings) counts.push(h.warnings + ' warning' + (h.warnings === 1 ? '' : 's'));
+        var facts = [
+            ['Last successful backup', h.last_success_at ? when(h.last_success_at) + '<div class="arch-faint">' + liveSince(h.last_success_at) + ' ago</div>' : '<span class="arch-faint">none yet</span>'],
+            ['Behind', behind(h)],
+            ['Target', target(st)]
+        ];
+        return '<div class="arch-banner is-' + v[0] + '" role="status">' +
+            '<div class="arch-banner-icon">' + AC.icon(v[1]) + '</div>' +
+            '<div class="arch-banner-main"><div class="arch-banner-title">' + esc(v[2]) +
+            (counts.length ? ' <span class="arch-banner-counts">' + esc(counts.join(', ')) + '</span>' : '') + '</div>' +
+            '<p class="arch-banner-summary">' + esc(h.summary || '') + '</p>' +
+            '<dl class="arch-facts">' + facts.map(function (f) { return '<div><dt>' + esc(f[0]) + '</dt><dd>' + f[1] + '</dd></div>'; }).join('') + '</dl></div></div>';
+    }
+
+    // controls: the "updated" line (Refresh is in the card's header). Its
+    // own section, which never changes.
+    function controls() {
+        return '<p class="arch-controls">Updated <span data-arch-updated></span> ago &middot; refreshed every 15 s while this page is open</p>';
+    }
+
+    // ---- 2. action needed -----------------------------------------------
+
+    var JUMP = { needs_attention: 'arch-sec-problems', retrying: 'arch-sec-problems', months: 'arch-sec-months' };
+
+    function fixButton(f) {
+        if (!f) return '';
+        var lab = esc(f.label || 'Open');
+        switch (f.kind) {
+        case 'test': return '<button type="button" class="btn sm" data-action="archive-test-connection">' + lab + '</button>';
+        case 'settings': return '<button type="button" class="btn sm secondary" data-action="archive-open-settings" data-key="' + esc(f.target || '') + '">' + lab + '</button>';
+        case 'reengage': return '<button type="button" class="btn sm" data-action="archive-reengage" data-min-role="admin" data-stream="' + esc(f.target || '') + '">' + lab + '</button>';
+        }
+        if (JUMP[f.kind]) return '<button type="button" class="btn sm secondary" data-action="archive-jump" data-target="' + JUMP[f.kind] + '">' + lab + '</button>';
+        return '';
+    }
+
+    function issueHtml(is) {
+        var s = SEVERITY[is.severity] || NOTE;
+        var about = is.stream ? streamName(is.stream) : (is.table || '');
+        var html = '<li class="arch-issue is-' + s[0] + '">' +
+            '<div class="arch-issue-head"><span class="arch-sev is-' + s[0] + '">' + AC.icon(s[1]) + esc(s[2]) + '</span>' +
+            '<strong class="arch-issue-title">' + esc(is.title) + '</strong>' +
+            (about ? '<span class="arch-faint arch-mono">' + esc(about) + '</span>' : '') +
+            (is.since ? '<span class="arch-faint" title="' + esc(AC.formatDate(is.since)) + '">for ' + liveSince(is.since) + '</span>' : '') + '</div>' +
+            '<p class="arch-issue-text">' + esc(is.meaning || '') + '</p>';
+        if (is.risk) html += '<p class="arch-issue-text"><span class="arch-issue-label">At risk:</span> ' + esc(is.risk) + '</p>';
+        if (is.action) html += '<p class="arch-issue-text"><span class="arch-issue-label">What to do:</span> ' + esc(is.action) + '</p>';
+        var fix = fixButton(is.fix);
+        if (is.detail || fix) {
+            html += '<div class="arch-issue-foot">' + fix +
+                (is.detail ? '<details class="arch-issue-detail" data-arch-details="issue-' + esc(is.code + '-' + (is.table || '') + (is.stream || '')) + '"><summary>Details</summary><code>' + esc(is.detail) + '</code></details>' : '') +
+                '</div>';
+        }
+        return html + '</li>';
+    }
+
+    function actions(st) {
+        var issues = (st.health && st.health.issues) || [];
+        var act = issues.filter(function (i) { return i.severity !== 'info'; });
+        var notes = issues.filter(function (i) { return i.severity === 'info'; });
+        var html = '';
+        if (act.length) {
+            html += section('Action needed', '<ul class="arch-issues">' + act.map(issueHtml).join('') + '</ul>');
+        } else if (st.health && st.health.verdict === 'healthy') {
+            html += '<p class="arch-allclear">' + AC.icon('check-circle') + ' Nothing needs your attention.</p>';
+        }
+        if (notes.length) {
+            html += '<details class="arch-notes" data-arch-details="notes"><summary>Notes (' + notes.length + ')</summary>' +
+                '<ul class="arch-issues">' + notes.map(issueHtml).join('') + '</ul></details>';
         }
         return html;
     }
 
-    // controls: the refresh line. Its own section, which never changes, so
-    // a keyboard user's focus on Refresh survives every refresh.
-    function controls() {
-        return '<p style="' + small + 'margin:0 0 8px;' + faint + '">Updated <span data-arch-updated></span> ago' +
-            ', refreshed every 15 s while this page is open. <button type="button" class="btn sm secondary" data-action="archive-refresh">Refresh</button></p>';
+    // ---- 3. per-stream table --------------------------------------------
+
+    function streamsTable(st) {
+        var rows = ((st.health && st.health.streams) || []).filter(function (s) { return s.enabled || s.archived_rows > 0; });
+        if (!rows.length) return '';
+        var tables = {};
+        (st.tables || []).forEach(function (t) { tables[t.table] = t; });
+        var body = rows.map(function (s) {
+            var b = (tables[s.table] || {}).backlog;
+            var backlog = '<span class="arch-faint">&mdash;</span>';
+            if (b && s.state !== 'idle' && s.state !== 'off') {
+                if (b.state === 'catching_up' && b.remaining > 1) {
+                    backlog = '<strong>' + AC.formatNum(b.remaining) + ' chunks</strong>' +
+                        bar(b.chunks ? b.verified / b.chunks : 1, b.verified + ' of ' + b.chunks + ' chunks verified') +
+                        '<div class="arch-faint">' + (b.rate_rows_per_sec != null ? AC.formatNum(Math.round(b.rate_rows_per_sec)) + ' rows/s' : 'rate not measured yet') +
+                        (b.eta_seconds != null ? ' &middot; ~' + dur(b.eta_seconds) : '') + '</div>';
+                } else {
+                    backlog = b.remaining ? 'current period only' : 'none';
+                }
+            }
+            var ratio = s.compression_ratio != null ? s.compression_ratio.toFixed(1) + '&times;' : '<span class="arch-faint">&mdash;</span>';
+            var verified = s.verified_through
+                ? utc(s.verified_through) + (s.last_verified_at ? '<div class="arch-faint">checked ' + liveSince(s.last_verified_at) + ' ago</div>' : '')
+                : '<span class="arch-faint">not yet</span>';
+            return '<tr>' +
+                '<th scope="row" data-label="Stream">' + esc(streamName(s.stream)) + '<div class="arch-faint arch-mono">' + esc(s.table) + '</div></th>' +
+                '<td data-label="State">' + pill(STREAM_STATE[s.state] || 'neutral', s.label || label(s.state)) + '</td>' +
+                '<td data-label="Verified through">' + verified + '</td>' +
+                '<td data-label="Backlog">' + backlog + '</td>' +
+                '<td data-label="Stored">' + AC.formatNum(s.archived_rows) + ' rows<div class="arch-faint">' + AC.formatBytes(s.archived_bytes) + '</div></td>' +
+                '<td data-label="Compression">' + ratio + '</td></tr>';
+        }).join('');
+        return section('Streams', '<div class="arch-table-wrap"><table class="data-table arch-table"><thead><tr><th scope="col">Stream</th><th scope="col">State</th>' +
+            '<th scope="col">Verified through</th><th scope="col">Backlog</th><th scope="col">Stored</th><th scope="col">Compression</th></tr></thead><tbody>' +
+            body + '</tbody></table></div>');
     }
+
+    // ---- 4. details -----------------------------------------------------
 
     function now(st) {
         var w = st.worker;
-        var html = '<div style="border:1px solid var(--fwmon-border);border-radius:6px;padding:10px 12px;background:var(--fwmon-panel-bg);">';
+        var html = '<div class="arch-panel">';
         var a = w && w.activity;
         if (a) {
             var what = STAGE[a.stage] || 'Working on';
@@ -185,10 +273,10 @@
                 detail = a.objects_done + ' of ' + a.objects_total + ' objects, ' + AC.formatBytes(a.bytes_done) + ' of ' + AC.formatBytes(a.bytes_total);
             }
             var pct = a.fraction != null ? Math.round(a.fraction * 100) + '%' : '';
-            html += '<div style="font-weight:600;">' + esc(what) + ' ' + esc(a.table) + ' chunk ' + a.seq + ' &middot; ' + period(a.period_start, a.period_end) +
-                (pct ? ' <span style="' + faint + 'font-weight:400;">' + pct + '</span>' : '') + '</div>';
+            html += '<div class="arch-panel-title">' + esc(what) + ' ' + esc(a.table) + ' chunk ' + a.seq + ' &middot; ' + period(a.period_start, a.period_end) +
+                (pct ? ' <span class="arch-faint">' + pct + '</span>' : '') + '</div>';
             if (a.fraction != null) html += bar(a.fraction, what + ' ' + pct);
-            html += '<div style="' + small + faint + '">' + (detail ? esc(detail) + ' &middot; ' : '') + 'this stage ' + liveSince(a.stage_started_at || a.started_at) +
+            html += '<div class="arch-faint">' + (detail ? esc(detail) + ' &middot; ' : '') + 'this stage ' + liveSince(a.stage_started_at || a.started_at) +
                 ', chunk started ' + when(a.started_at) + ' (' + liveSince(a.started_at) + ' ago)</div>';
         } else {
             var waits = (st.tables || []).filter(function (t) { return t.unsettled; });
@@ -198,75 +286,49 @@
                     return '<div><strong>' + esc(t.table) + '</strong>: ' + esc(t.unsettled.detail || 'the cut is settling') + ' &mdash; exported once it has, ' + liveUntil(t.unsettled.until) + '</div>';
                 }).join('');
             } else if (w && w.pass_running) {
-                html += '<div style="font-weight:600;">Planning the next chunk</div>';
-            } else if (w && !w.stale) {
-                html += '<div style="font-weight:600;">Idle</div>';
+                html += '<div class="arch-panel-title">Planning the next chunk</div>';
+            } else if (w && !w.stale && w.runner !== 'not running') {
+                html += '<div class="arch-panel-title">Idle &mdash; waiting for the next period to close</div>';
             } else {
-                html += '<div style="' + faint + '">No current activity is known.</div>';
+                html += '<div class="arch-faint">No current activity is known.</div>';
             }
             waits.filter(function (t) { return t.unsettled.reason !== 'settling'; }).forEach(function (t) {
-                html += '<div style="' + small + 'color:var(--fwmon-sig-warn);" title="' + esc(t.unsettled.detail || '') + '">' + esc(t.table) + ' waits: ' +
+                html += '<div class="arch-warn-text" title="' + esc(t.unsettled.detail || '') + '">' + esc(t.table) + ' waits: ' +
                     esc(label(t.unsettled.reason)) + ' for ' + dur(t.unsettled.for_seconds) + '</div>';
             });
         }
         if (w && (a || w.pass_running) && w.last_pass_at) {
-            html += '<div style="' + small + faint + 'margin-top:4px;">Pass running since ' + when(w.last_pass_at) + '</div>';
+            html += '<div class="arch-faint arch-gap">Pass running since ' + when(w.last_pass_at) + '</div>';
         } else if (w && w.next_pass_at) {
-            html += '<div style="' + small + faint + 'margin-top:4px;">Last pass ' + when(w.last_pass_at) + '; next ' + liveUntil(w.next_pass_at) + '</div>';
+            html += '<div class="arch-faint arch-gap">Last pass ' + when(w.last_pass_at) + '; next ' + liveUntil(w.next_pass_at) + '</div>';
         }
-        return section('Now', html + '</div>');
-    }
-
-    function tableCard(t) {
-        var b = t.backlog;
-        var st = b ? STATE[b.state] || ['info', label(b.state)] : ['info', t.has_chunks ? 'no backlog' : 'no chunk yet'];
-        var html = '<div style="flex:1 1 280px;min-width:0;border:1px solid var(--fwmon-border);border-radius:6px;padding:10px 12px;background:var(--fwmon-card-bg);">' +
-            '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;"><strong style="overflow-wrap:anywhere;">' + esc(t.table) + '</strong>' +
-            (t.enabled ? badge(st[0], st[1]) : badge('', 'archiving off')) + '</div>' +
-            '<div style="' + small + faint + '">' + esc((t.streams || []).join(', ')) + '</div>';
-        if (b) {
-            var f = b.chunks ? b.verified / b.chunks : 1;
-            html += bar(f, b.verified + ' of ' + b.chunks + ' chunks verified', b.remaining ? 'var(--fwmon-accent)' : 'var(--fwmon-sig-ok)');
-            html += '<div style="' + small + '">' + AC.formatNum(b.verified) + ' of ' + AC.formatNum(b.chunks) + ' chunks verified';
-            if (b.remaining) {
-                html += ' &middot; ' + AC.formatNum(b.remaining) + ' left from ' + (b.oldest_remaining ? esc(String(b.oldest_remaining).slice(0, 10)) : '?') +
-                    ' (up to ' + AC.formatNum(b.remaining_rows) + ' rows)';
-            }
-            html += '</div><div style="' + small + faint + '">';
-            html += b.rate_rows_per_sec != null ? AC.formatNum(Math.round(b.rate_rows_per_sec)) + ' rows/s' : 'rate not measured yet';
-            if (b.eta_seconds != null) html += ' &middot; about ' + dur(b.eta_seconds) + ' of work left';
-            html += '</div>';
+        if (w) {
+            var stg = w.staging || {};
+            var free = stg.error ? 'free space unknown' : stg.free_bytes != null ? AC.formatBytes(stg.free_bytes) + ' free' : '';
+            html += '<div class="arch-faint arch-gap">Worker <span class="arch-mono">' + esc(w.runner || '') + '</span>, reported ' + liveSince(w.seen_at) + ' ago' +
+                ' &middot; staging <code>' + esc(stg.dir || '') + '</code>' + (free ? ' ' + free : '') + '</div>';
+        } else if (st.worker_error) {
+            html += '<div class="arch-warn-text arch-gap">The worker&rsquo;s state could not be read: ' + esc(st.worker_error) + '</div>';
         }
-        html += '<div style="' + small + 'margin-top:6px;">Lag ' + dur(t.lag_seconds) + ' &middot; verified through ' +
-            (t.verified_through_end ? esc(String(t.verified_through_end).slice(0, 16).replace('T', ' ')) + ' UTC' : '&mdash;') +
-            ' &middot; last verified ' + when(t.last_verified_at) + '</div>';
-        if (t.unsettled) {
-            var u = t.unsettled;
-            html += '<div style="' + small + (u.reason === 'settling' ? faint : 'color:var(--fwmon-sig-warn);') + '" title="' + esc(u.detail || '') + '">Waiting: ' +
-                esc(label(u.reason)) + ' for ' + dur(u.for_seconds) + (u.until ? ', ' + liveUntil(u.until) : '') + '</div>';
-        }
-        if (t.retention && t.retention.held_seconds > 0) {
-            html += '<div style="' + small + 'color:var(--fwmon-sig-warn);">Deletes held ' + dur(t.retention.held_seconds) + ' past ' + esc(t.retention.window) + '</div>';
-        }
-        return html + '</div>';
+        return section('Current activity', html + '</div>');
     }
 
     function chunkTable(rows, cols) {
-        return '<div style="overflow-x:auto;"><table class="data-table"><thead><tr>' + cols.map(function (c) { return '<th>' + esc(c[0]) + '</th>'; }).join('') +
+        return '<div class="arch-table-wrap"><table class="data-table arch-table"><thead><tr>' + cols.map(function (c) { return '<th scope="col">' + esc(c[0]) + '</th>'; }).join('') +
             '</tr></thead><tbody>' + rows.map(function (r) {
-                return '<tr>' + cols.map(function (c) { return '<td style="' + small + '">' + c[1](r) + '</td>'; }).join('') + '</tr>';
+                return '<tr>' + cols.map(function (c) { return '<td data-label="' + esc(c[0]) + '">' + c[1](r) + '</td>'; }).join('') + '</tr>';
             }).join('') + '</tbody></table></div>';
     }
 
     function recent(st) {
         var rs = st.recent || [];
-        if (!rs.length) return section('Recently verified', '<p style="' + faint + small + 'margin:0;">No chunk verified yet.</p>');
-        return section('Recently verified', chunkTable(rs, [
+        if (!rs.length) return section('Recent activity', '<p class="arch-empty">No chunk verified yet.</p>');
+        return section('Recent activity', chunkTable(rs, [
             ['Verified', function (r) { return when(r.verified_at); }],
-            ['Chunk', function (r) { return esc(r.table) + ' ' + r.seq + '<div style="' + faint + '">' + period(r.period_start, r.period_end) + '</div>'; }],
+            ['Chunk', function (r) { return esc(r.table) + ' ' + r.seq + '<div class="arch-faint">' + period(r.period_start, r.period_end) + '</div>'; }],
             ['Rows', function (r) { return AC.formatNum(r.rows); }],
             ['Objects', function (r) { return AC.formatNum(r.objects) + ' &middot; ' + AC.formatBytes(r.object_bytes); }],
-            ['Took', function (r) { return dur(r.duration_seconds) + (r.duration_seconds && r.rows ? '<div style="' + faint + '">' + AC.formatNum(Math.round(r.rows / Math.max(1, r.duration_seconds))) + ' rows/s</div>' : ''); }]
+            ['Took', function (r) { return dur(r.duration_seconds) + (r.duration_seconds && r.rows ? '<div class="arch-faint">' + AC.formatNum(Math.round(r.rows / Math.max(1, r.duration_seconds))) + ' rows/s</div>' : ''); }]
         ]));
     }
 
@@ -275,81 +337,79 @@
         var rt = st.retrying || [];
         if (rt.length) {
             html += section('Waiting for a retry', chunkTable(rt, [
-                ['Chunk', function (r) { return esc(r.table) + ' ' + r.seq + '<div style="' + faint + '">' + period(r.period_start, r.period_end) + '</div>'; }],
+                ['Chunk', function (r) { return esc(r.table) + ' ' + r.seq + '<div class="arch-faint">' + period(r.period_start, r.period_end) + '</div>'; }],
                 ['Attempts', function (r) { return r.attempts; }],
-                ['Retry', function (r) { return r.retry_at ? liveUntil(r.retry_at) + '<div style="' + faint + '">then on the next pass</div>' : '&mdash;'; }],
-                ['Error', function (r) { return '<span style="word-break:break-word;">' + esc(r.error || '') + '</span>'; }]
-            ]));
+                ['Retry', function (r) { return r.retry_at ? liveUntil(r.retry_at) + '<div class="arch-faint">then on the next pass</div>' : '&mdash;'; }],
+                ['Error', function (r) { return '<span class="arch-break">' + esc(r.error || '') + '</span>'; }]
+            ]), 'arch-sec-problems');
         }
         var na = st.needs_attention || [];
-        html += section('Needs attention', !na.length ? '<p style="' + faint + small + 'margin:0;">No chunk is parked.</p>' :
-            '<div style="overflow-x:auto;"><table class="data-table"><thead><tr><th>Chunk</th><th>Period</th><th>Mismatches</th><th>Error</th><th></th></tr></thead><tbody>' +
-            na.map(function (p) {
-                return '<tr><td>' + p.id + ' &middot; ' + esc(p.table) + ' seq ' + p.seq + (p.holds_gate ? ' ' + badge('offline', 'holds deletes') : '') + '</td>' +
-                    '<td style="' + small + '">' + when(p.period_start) + '</td><td>' + p.mismatches + '</td>' +
-                    '<td style="' + small + 'word-break:break-word;">' + esc(p.error || '') + '</td>' +
-                    '<td><button type="button" class="btn sm secondary" data-action="archive-reset-chunk" data-min-role="admin" data-id="' + p.id + '">Reset</button></td></tr>';
-            }).join('') + '</tbody></table></div>');
+        html += section('Needs attention', !na.length ? '<p class="arch-empty">No chunk is parked.</p>' :
+            chunkTable(na, [
+                ['Chunk', function (p) { return p.id + ' &middot; ' + esc(p.table) + ' seq ' + p.seq + (p.holds_gate ? ' ' + badge('offline', 'holds deletes') : ''); }],
+                ['Period', function (p) { return when(p.period_start); }],
+                ['Mismatches', function (p) { return p.mismatches; }],
+                ['Error', function (p) { return '<span class="arch-break">' + esc(p.error || '') + '</span>'; }],
+                ['Action', function (p) { return '<button type="button" class="btn sm secondary" data-action="archive-reset-chunk" data-min-role="admin" data-id="' + p.id + '">Reset</button>'; }]
+            ]), rt.length ? '' : 'arch-sec-problems');
         return html;
     }
 
     function monthBadge(m) {
         var cls = m.status === 'sealed' ? 'online' : m.status === 'seal_failed' ? 'offline' : m.due ? 'warning' : 'info';
-        var out = badge(cls, m.status === 'open' ? (m.due ? 'due, not sealed' : 'pending') : label(m.status));
+        var out = badge(cls, m.status === 'open' ? (m.due ? 'due, not sealed' : 'open') : label(m.status));
         if (m.partial) out += ' ' + badge('warning', 'partial');
         if (m.degraded && m.degraded.length) out += ' ' + badge('warning', m.degraded.length + ' gate event' + (m.degraded.length === 1 ? '' : 's'));
         return out;
     }
 
-    function streams(st) {
+    function months(st) {
         var html = '';
         (st.streams || []).forEach(function (s) {
             if (!s.enabled && !(s.months || []).length) return;
-            var months = (s.months || []).map(function (m) {
+            var cells = (s.months || []).map(function (m) {
                 var tip = [m.partial_note, m.error].filter(Boolean).join(' — ');
-                return '<div style="display:inline-block;margin:2px 12px 4px 0;vertical-align:top;" title="' + esc(tip) + '"><strong>' + esc(m.month) + '</strong> ' + monthBadge(m) +
-                    '<div style="' + faint + 'font-size:0.78rem;">' + AC.formatNum(m.archived_rows) + ' rows &middot; ' + AC.formatBytes(m.archived_object_bytes) + '</div></div>';
-            }).join('') || '<span style="' + faint + '">no month yet</span>';
+                return '<li class="arch-month"><div class="arch-month-head"><strong>' + esc(m.month) + '</strong> ' + monthBadge(m) + '</div>' +
+                    '<div class="arch-faint">' + AC.formatNum(m.archived_rows) + ' rows &middot; ' + AC.formatBytes(m.archived_object_bytes) + '</div>' +
+                    (tip ? '<div class="arch-faint arch-break">' + esc(tip) + '</div>' : '') + '</li>';
+            }).join('');
             var seal = '';
             if (s.next_seal) {
-                seal = 'next seal ' + esc(s.next_seal.month) + (s.next_seal.due ? ' &mdash; due since ' + when(s.next_seal.due_at) + ', sealed once its chunks are verified'
+                seal = 'Next seal ' + esc(s.next_seal.month) + (s.next_seal.due ? ' &mdash; due since ' + when(s.next_seal.due_at) + ', sealed once its chunks are verified'
                     : ' at ' + when(s.next_seal.due_at));
             }
-            html += '<div style="' + small + 'margin-bottom:10px;"><strong>' + esc(s.stream) + '</strong> &middot; ' + AC.formatNum(s.archived_rows) + ' rows, ' + AC.formatBytes(s.archived_object_bytes) + ' stored' +
-                (s.oldest_unsealed ? ' <span style="color:var(--fwmon-sig-warn);">' + esc(s.oldest_unsealed) + ' is ' + Number(s.unsealed_days).toFixed(1) + ' days past its seal time</span>' : '') +
-                (seal ? '<div style="' + faint + '">' + seal + '</div>' : '') + '<div>' + months + '</div></div>';
+            html += '<div class="arch-stream-months"><div><strong>' + esc(streamName(s.stream)) + '</strong> <span class="arch-faint">' +
+                AC.formatNum(s.archived_rows) + ' rows, ' + AC.formatBytes(s.archived_object_bytes) + ' stored</span>' +
+                (s.oldest_unsealed ? ' <span class="arch-warn-text">' + esc(s.oldest_unsealed) + ' is ' + Number(s.unsealed_days).toFixed(1) + ' days past its seal time</span>' : '') + '</div>' +
+                (seal ? '<div class="arch-faint">' + seal + '</div>' : '') +
+                (cells ? '<ul class="arch-months">' + cells + '</ul>' : '<p class="arch-empty">No month yet.</p>') + '</div>';
         });
-        return section('Streams and months', html || '<p style="' + faint + small + 'margin:0;">Nothing archived yet.</p>');
+        return section('Months', html || '<p class="arch-empty">Nothing archived yet.</p>', 'arch-sec-months');
     }
 
     function failures(st) {
         var stages = (st.worker && st.worker.stages) || [];
-        var html = '';
-        if (stages.length) {
-            html += '<details data-arch-details="failures" style="margin-top:14px;"><summary style="cursor:pointer;font-size:0.95rem;font-weight:600;">Last failure of each stage (' + stages.length + ')</summary>' +
-                '<ul style="' + small + 'margin:6px 0 0;padding-left:18px;">' + stages.map(function (e) {
-                    return '<li><strong>' + esc(e.stage) + '</strong> ' + when(e.at) + ' (' + e.count + '&times;): ' + esc(e.error || '') + '</li>';
-                }).join('') + '</ul></details>';
-        }
-        (st.problems || []).forEach(function (p) {
-            html += '<p style="color:var(--fwmon-sig-warn);' + small + '">Could not read: ' + esc(p) + '</p>';
-        });
-        return html;
+        if (!stages.length) return '';
+        return '<details class="arch-notes" data-arch-details="failures"><summary>Last failure of each stage (' + stages.length + ')</summary>' +
+            '<ul class="arch-stage-list">' + stages.map(function (e) {
+                return '<li><strong>' + esc(e.stage) + '</strong> ' + when(e.at) + ' (' + e.count + '&times;' + (e.since ? ', first ' + when(e.since) : '') + ')' +
+                    '<div class="arch-break arch-faint">' + esc(e.error || '') + '</div></li>';
+            }).join('') + '</ul></details>';
     }
 
     // sections: the card as [key, html] pairs, top to bottom. render
     // rewrites only the sections whose HTML changed, so the banners and
     // buttons of an unchanged section keep their DOM (and keyboard focus).
     function sections(st) {
-        var out = [['attention', attention(st)]];
-        if (!st.enabled && !(st.tables || []).some(function (t) { return t.has_chunks; })) {
-            return out.concat([['off', '<p style="' + faint + 'font-size:0.85rem;">Archiving is off. Configure it in Raw Archive Settings below (or the <code>ARCHIVE_*</code> environment keys; see docs/OPERATIONS.md).</p>']]);
+        var out = [['banner', banner(st)], ['controls', controls()]];
+        var used = (st.tables || []).some(function (t) { return t.has_chunks; });
+        if (!st.enabled && !used) {
+            return out.concat([['off', '<p class="arch-empty">Set the archive up in <button type="button" class="btn sm secondary" data-action="archive-open-settings">Raw Archive Settings</button> ' +
+                '(or the <code>ARCHIVE_*</code> environment keys; see docs/OPERATIONS.md).</p>']]);
         }
-        var cards = (st.tables || []).filter(function (t) { return t.enabled || t.has_chunks; }).map(tableCard).join('');
         return out.concat([
-            ['header', header(st)], ['controls', controls()], ['now', now(st)],
-            ['tables', section('Tables', '<div style="display:flex;flex-wrap:wrap;gap:10px;">' + cards + '</div>')],
-            ['recent', recent(st)], ['problems', problems(st)], ['streams', streams(st)], ['failures', failures(st)]
+            ['actions', actions(st)], ['streams', streamsTable(st)], ['now', now(st)],
+            ['recent', recent(st)], ['problems', problems(st)], ['months', months(st)], ['failures', failures(st)]
         ]);
     }
 
@@ -371,9 +431,11 @@
     }
 
     // render writes st into host, unless the page is unchanged; <details>
-    // keep their open state.
+    // keep their open state. It also tells the settings card the verdict
+    // (fwmon:archive-health).
     function render(host, st) {
-        var secs = sections(st || {});
+        st = st || {};
+        var secs = sections(st);
         var keys = secs.map(function (s) { return s[0]; }).join(',');
         var els = host.querySelectorAll(':scope > [data-arch-sec]');
         // What was last written is kept on the host itself (a card rebuilt
@@ -395,6 +457,10 @@
         var up = host.querySelector('[data-arch-updated]');
         if (up) up.setAttribute('data-arch-since', new Date().toISOString());
         tick(host);
+        if (st.health) {
+            lastVerdict = st.health;
+            document.dispatchEvent(new CustomEvent('fwmon:archive-health', { detail: st.health }));
+        }
     }
 
     // write replaces one section's content; its <details> keep their
@@ -429,5 +495,13 @@
         }
     }
 
-    window.FwmonArchiveStatus = { render: render, watch: watch, html: page };
+    // verdictBadge: the verdict as a small pill (icon + words) for the
+    // settings card.
+    function verdictBadge(h) {
+        var v = VERDICT[(h || {}).verdict] || ['neutral', 'info-circle', 'Unknown'];
+        return '<span class="arch-pill is-' + v[0] + '">' + AC.icon(v[1]) + esc(v[2]) + '</span>';
+    }
+
+    window.FwmonArchiveStatus = { render: render, watch: watch, html: page, verdictBadge: verdictBadge,
+        lastHealth: function () { return lastVerdict; } };
 })();

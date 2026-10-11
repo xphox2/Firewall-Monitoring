@@ -249,6 +249,9 @@ func testStaging(ctx context.Context, d *archiveDraft, out gin.H) *local.FSInfo 
 		return nil
 	}
 	under := a.CheckArchivePath("ARCHIVE_STAGING_DIR", a.StagingDir)
+	// staging_ok: whether the staging check passed (the page shows the
+	// result as a checklist).
+	out["staging_ok"] = false
 	if d.newStaging() && under != nil {
 		out["staging"] = under.Error()
 		return nil
@@ -265,6 +268,7 @@ func testStaging(ctx context.Context, d *archiveDraft, out gin.H) *local.FSInfo 
 		out["staging"] = err.Error()
 		return pc.report.FS
 	}
+	out["staging_ok"] = true
 	if under != nil {
 		out["staging"] = "Staging directory " + a.StagingDir + " (outside the allowed root, kept: not probed for writing) has enough free space."
 		return pc.report.FS

@@ -413,7 +413,8 @@ func TestTestArchiveSettings(t *testing.T) {
 	if err := os.Mkdir(outside, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if r := test(f, `{"set":{"ARCHIVE_STAGING_DIR":"`+outside+`"}}`); !strings.Contains(r["staging"].(string), "outside ARCHIVE_ALLOWED_ROOT") {
+	if r := test(f, `{"set":{"ARCHIVE_STAGING_DIR":"`+outside+`"}}`); !strings.Contains(r["staging"].(string), "outside ARCHIVE_ALLOWED_ROOT") ||
+		r["staging_ok"] != false {
 		t.Fatalf("a typed staging path outside the root: %v", r)
 	}
 	if ents, _ := os.ReadDir(outside); len(ents) != 0 {
@@ -424,7 +425,7 @@ func TestTestArchiveSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	if r := test(f, `{"set":{"ARCHIVE_STAGING_DIR":"`+inside+`"}}`); !strings.Contains(r["staging"].(string), "is writable with enough free space") ||
-		r["staging_checks"] == nil {
+		r["staging_checks"] == nil || r["staging_ok"] != true {
 		t.Fatalf("a typed staging path under the root: %v", r)
 	}
 	if ents, _ := os.ReadDir(inside); len(ents) != 0 {

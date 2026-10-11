@@ -1437,7 +1437,70 @@ they follow the verified chunks.
 
 ## Raw archive: status and alerts
 
-From 0.11.308 the archive's whole state is in one place:
+### The health verdict (0.11.317)
+
+The Raw Archive card opens with one verdict — **Healthy**, **Warning**,
+**Error**, or the neutral **Archiving is off** / **Not configured** — shown
+as a colour, an icon and words, with a one-line summary, the last successful
+backup, how far behind the archive is and the target. Below it, **Action
+needed** lists every error and warning, most severe first, each with what it
+means, what is at risk, what to do, since when, and a button to the control
+that does it (Test connection, the setting, Re-engage, the parked chunks).
+Information (a stream that receives no data, a month sealed partial) is under
+*Notes* and never changes the verdict. The Raw Archive Settings card shows the
+same verdict at its top.
+
+The verdict is computed once, on the server (`internal/archive/status/health.go`),
+and is the same in `GET /admin/api/archive/status` (`data.health`),
+`fwmon-api archive --status` (the `health:` line and one line per issue) and
+the archive alerts, which now carry the issue code (`issue` field) and its
+action in their message — and, for a lag or held rows caused by a stopped
+worker or an unreachable target, that cause and its action.
+
+**Healthy** means: every enabled table has chunks, at most its current period
+is left (verified up to the last closed hour or day), and no warning or error
+below holds.
+
+| issue code | severity | when | what to do |
+|---|---|---|---|
+| `worker_not_running` | error | archiving is enabled and the worker has not reported for 15 min (or never) | check the poller and its `archive:` log lines |
+| `config_invalid` | error | the poller refuses the settings in effect | correct the named setting and save |
+| `marker_missing` | error | a local target lost its marker while the archive holds chunks (share not mounted) | mount the share or partition |
+| `marker_foreign` | error | a local target belongs to another install | give this server its own directory or prefix |
+| `preflight_failing` | warning, error after 15 min | the worker's check of the target fails | Test connection, fix what it reports |
+| `target_failing` | error | uploads / read-backs have failed for 1 h with no chunk verified since | Test connection, fix what it reports |
+| `stage_failing` | warning after 30 min, error after 2 h | any other step (plan, mark, seal, settle, database, lock, …) keeps failing for a table or stream with no success in between (counted across poller restarts; a chunk step of a table with chunks waiting for a retry or parked is left to those issues) | read the error and the poller's `archive:` lines; fix its cause |
+| `staging_full` / `staging_low` | error under the floor / warning under twice the floor (or unknown) | the staging directory's free space | free space or choose another directory |
+| `needs_attention` | error | a chunk is parked | read its error, fix the cause, Reset |
+| `gate_unreadable` | warning, error after 15 min | the retention gate cannot read the stream switches | check the database and the poller |
+| `retention_held` | error (warning when the database volume is known not to grow) | unarchived rows held past retention longer than `retention_held_alert_hours` | fix the archive; release the gate only in an emergency |
+| `archive_lag` | error (folded into its cause when one is known) | a table's next chunk is more than `archive_lag_alert_hours_*` (3 h) late past its schedule (as `ARCHIVE_LAG`), also with nothing left to export (a planner that keeps failing), idle or not | find out why nothing is verified (`stage_failing` or another error usually says) |
+| `seal_overdue` | error | a month not sealed `archive_seal_overdue_alert_days` after its seal time | read the seal error; fix parked or failing chunks |
+| `chunks_retrying` | warning | chunks failed and wait for their retry | nothing yet; Test connection if the error repeats |
+| `override_active` | warning | a gate is released by an override | re-engage it |
+| `unsettled_long` | warning | the next export waited longer than `archive_unsettled_alert_hours` | end the session holding it |
+| `backlog` | warning | more than one chunk left | nothing unless it stops shrinking |
+| `first_chunk_pending` | warning; error once its first chunk is later than the lag threshold past its schedule, counted from when the worker first saw the table without a chunk (as `ARCHIVE_LAG`) | an enabled table has no chunk yet | nothing at first: its first period must close |
+| `object_lock_off` | warning | an S3 target without Object Lock retention | turn Object Lock on |
+| `config_pending` | warning | saved settings not yet applied by the worker | nothing (within a minute); else restart the poller |
+| `status_incomplete` | warning | part of the status could not be read | reload; check the database |
+| `stream_idle` | info | a stream holds no rows in its table's last 10 verified chunks (e.g. sFlow switched off) | nothing, if expected |
+| `month_partial` | info | the newest month sealed partial | nothing to repair |
+
+An idle stream that is otherwise fine shows *No data received* instead of
+*Up to date*. Idle is presentation only: its empty chunks are cut, verified
+and sealed like any other, so a lag or an overdue seal is reported for it
+(and alerted) as for any stream — with sFlow switched off, `sflow-counters`
+lags only if the worker is stuck. When a table's lag has a cause the verdict
+knows (a stopped worker, an unreachable target, a step failing for that
+table), the lag is part of that error instead of a second one;
+`ARCHIVE_LAG` names the cause. The per-stream table shows each
+stream's state, verified-through point, backlog, rows and bytes stored and the
+compression of its recent objects; on a phone each stream is a card.
+
+From 0.11.308 the archive's whole state is in one place (0.11.317 replaced
+the banners and the per-table cards below with the verdict above and the
+per-stream table; the rest is unchanged):
 
 - **Settings → Retention → Raw Archive** (admins), refreshed every 15 s while
   the page is open (paused while the browser tab is hidden), top to bottom:
@@ -1522,7 +1585,7 @@ one off, blank uses the default):
 
 | alert | per | fires when | default |
 |---|---|---|---|
-| `ARCHIVE_LAG` | table (sflow and netflow share `flow_samples`: one alert names both) | the table's verified data is further behind than the threshold. **Daily tables (syslog, sflow-counters) must stay above it for an hour**: their day is cut 2 h after midnight UTC and then exported, so their lag passes 26 h briefly every day. An enabled table that has cut **no chunk at all** (typically a bucket that never passes the preflight) fires once that has lasted longer than the threshold — the gate holds every raw row of its table meanwhile | syslog 26 h, sflow/netflow 3 h, sflow-counters 26 h |
+| `ARCHIVE_LAG` | table (sflow and netflow share `flow_samples`: one alert names both) | the table's next chunk is **later than the threshold past its schedule** (0.11.317): it is due at the verified data's end + the period (24 h syslog and counters, 1 h flows) + the minimum age (`ARCHIVE_MIN_AGE_HOURS` for syslog and counters, 5 min for flows) + 10 min to settle, moved to the next `ARCHIVE_WINDOW` opening for syslog. A healthy night (the day cut at 02:00, a heavy day exported until after 04:00) is on time; the age of the data is still shown. An enabled table that has cut **no chunk at all** (typically a bucket that never passes the preflight) fires once its first chunk is that late — the gate holds every raw row of its table meanwhile | 3 h late for every table |
 | `ARCHIVE_NEEDS_ATTENTION` | table | a chunk is parked in `needs_attention` | always on |
 | `ARCHIVE_SEAL_OVERDUE` | stream | the oldest closed month is still not sealed this many days after its seal time (`fwmon_archive_month_unsealed_days`) | 3 days |
 | `RETENTION_HELD` (critical) | table | the gate is on and holds unarchived rows more than this far past the table's window (syslog: its shortest severity window; raw flows: the rollup's 1 h; counters: `RETENTION_FLOW_DAYS`) **and** the database volume is growing (free space below the sample 1–3 h earlier; counted as growing when the volume cannot be measured). The growth only fires it: once active it stays until the hold clears, whatever the free space does meanwhile | 6 h |
@@ -1530,6 +1593,16 @@ one off, blank uses the default):
 | `ARCHIVE_GATE_UNREADABLE` | (one) | the poller's retention gate has failed to read the archive's stream switches (`system_settings`) for longer than 15 minutes. Evaluated from the gate itself, even where the archive was never enabled, and even when the rest of the status cannot be read. Field `holding`: `all` — no read has succeeded since the poller started, so every archived table's deletes are held; `last` — the gate keeps the switches it read last, so a stream switched on or off on the admin page is not applied | 15 min (fixed) |
 
 Settings keys: `archive_lag_alert_hours_syslog`, `archive_lag_alert_hours_flows`,
+(Since 0.11.317 the three lag keys are hours **late**, default 3, read as
+stored. Migration v81 converted a syslog or counters value saved before —
+hours of age, 26 by default — once, with the minimum age in effect then
+(`ARCHIVE_MIN_AGE_HOURS`, the admin value first): ⌈value + 1 − 24 − minimum
+age − 1/6⌉ hours, at least 3, so it never alerts sooner than it did (26 → 3
+at the default 2 h); 0 stayed off, absent keys stayed absent. The flow value
+was kept: an hour's chunk is due 1 h 15 min after its data, so the same
+number of hours late is always later than that many hours of age. The
+setting `archive_lag_alert_hours_unit` = `late` records the conversion; the
+Alerting page shows the converted values.)
 `archive_lag_alert_hours_counters`, `archive_seal_overdue_alert_days`,
 `retention_held_alert_hours`, `archive_unsettled_alert_hours` (0–720).
 While the status cannot be read whole (a database error, including the gate

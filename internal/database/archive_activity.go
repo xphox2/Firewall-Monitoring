@@ -90,10 +90,20 @@ func archiveOldestOpenQuery(tx *gorm.DB, table string) *gorm.DB {
 	return tx.Model(&models.ArchiveChunk{}).Where("table_name = ? AND "+archiveOpenChunks, table).Order("period_start").Limit(1)
 }
 
-// ArchiveChunkSummary is a chunk with the totals of its live objects.
+// ArchiveChunkSummary is a chunk with the totals of its live objects, in
+// all and per stream (Streams: a flow_samples chunk holds an sflow and a
+// netflow object; a stream with no object is absent).
 type ArchiveChunkSummary struct {
 	Chunk       models.ArchiveChunk
 	Objects     int64
+	ObjectBytes int64
+	RawBytes    int64
+	Streams     map[string]ArchiveStreamTotals
+}
+
+// ArchiveStreamTotals is one stream's objects of a chunk.
+type ArchiveStreamTotals struct {
+	Rows        int64
 	ObjectBytes int64
 	RawBytes    int64
 }
@@ -132,7 +142,7 @@ func (d *Database) summarizeArchiveChunks(ctx context.Context, cs []models.Archi
 		out[i].Chunk = c
 	}
 	q := d.db.WithContext(ctx).Model(&models.ArchiveObject{}).
-		Select("chunk_id, count(*) AS n, COALESCE(sum(object_bytes), 0) AS ob, COALESCE(sum(raw_bytes), 0) AS rb").
+		Select("chunk_id, stream, count(*) AS n, COALESCE(sum(object_bytes), 0) AS ob, COALESCE(sum(raw_bytes), 0) AS rb, COALESCE(sum(row_count), 0) AS rc").
 		Where("chunk_id IN ?", ids)
 	if status != "" {
 		q = q.Where("status = ?", status)
@@ -141,11 +151,13 @@ func (d *Database) summarizeArchiveChunks(ctx context.Context, cs []models.Archi
 	}
 	var sums []struct {
 		ChunkID uint
+		Stream  string
 		N       int64
 		Ob      int64
 		Rb      int64
+		Rc      int64
 	}
-	if err := q.Group("chunk_id").Scan(&sums).Error; err != nil {
+	if err := q.Group("chunk_id, stream").Scan(&sums).Error; err != nil {
 		return nil, err
 	}
 	by := make(map[uint]int, len(cs))
@@ -154,7 +166,14 @@ func (d *Database) summarizeArchiveChunks(ctx context.Context, cs []models.Archi
 	}
 	for _, s := range sums {
 		if i, ok := by[s.ChunkID]; ok {
-			out[i].Objects, out[i].ObjectBytes, out[i].RawBytes = s.N, s.Ob, s.Rb
+			o := &out[i]
+			o.Objects, o.ObjectBytes, o.RawBytes = o.Objects+s.N, o.ObjectBytes+s.Ob, o.RawBytes+s.Rb
+			if o.Streams == nil {
+				o.Streams = map[string]ArchiveStreamTotals{}
+			}
+			t := o.Streams[s.Stream]
+			t.Rows, t.ObjectBytes, t.RawBytes = t.Rows+s.Rc, t.ObjectBytes+s.Ob, t.RawBytes+s.Rb
+			o.Streams[s.Stream] = t
 		}
 	}
 	return out, nil

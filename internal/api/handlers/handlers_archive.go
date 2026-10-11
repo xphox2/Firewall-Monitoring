@@ -101,7 +101,8 @@ func (h *Handler) GetArchiveGate(c *gin.Context) {
 	}})
 }
 
-// GetArchiveStatus reports the raw archive's state (status.Build).
+// GetArchiveStatus reports the raw archive's state (status.Build) with its
+// health verdict (data.health: status.Assess).
 // Admin-only (adminOnlyRoutes): it names the bucket, the parked chunks'
 // errors and the sessions holding a chunk's export. GET /admin/api/archive/status.
 func (h *Handler) GetArchiveStatus(c *gin.Context) {
@@ -123,6 +124,9 @@ func (h *Handler) GetArchiveStatus(c *gin.Context) {
 		httputil.InternalError(c, "Failed to read the archive status", err)
 		return
 	}
+	// The verdict and the issues to act on (status.Assess), the same the
+	// archive alerts name.
+	status.AttachHealth(c.Request.Context(), st, db)
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": st})
 }
 

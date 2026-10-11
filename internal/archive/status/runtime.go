@@ -34,7 +34,55 @@ type Runtime struct {
 	PassRunning bool       `json:"pass_running,omitempty"`
 	// Activity is the chunk being worked right now (nil between chunks).
 	Activity *Activity `json:"activity,omitempty"`
+	// PreflightIssue classifies a failing preflight the health verdict
+	// treats on its own (PreflightMarkerMissing, PreflightMarkerForeign; ""
+	// otherwise, and once the preflight passed).
+	PreflightIssue string `json:"preflight_issue,omitempty"`
+	// ConfigFingerprint is config.ArchiveConfig.Fingerprint of the
+	// configuration this worker was built with: the status compares it with
+	// the configuration in effect ("saved, not applied yet").
+	ConfigFingerprint string `json:"config_fingerprint,omitempty"`
+	// Failing: the failures still going on, per stage and subject (a table
+	// or a stream): since when, the last one, how many. A success of that
+	// stage for that subject ends it (Recorder.OK). Kept across worker
+	// rebuilds and poller restarts (Recorder.Restore), so the health
+	// verdict's escalation does not start again at every restart.
+	Failing map[string]Streak `json:"failing,omitempty"`
+	// NoChunkSince: since when an archived table has had no chunk at all
+	// (kept across restarts; removed once it has one).
+	NoChunkSince map[string]time.Time `json:"no_chunk_since,omitempty"`
 }
+
+// Streak is a failure still going on: Stage (an errors label) for Subject
+// (a table, a stream, or "" for the whole worker).
+type Streak struct {
+	Stage   string    `json:"stage"`
+	Subject string    `json:"subject,omitempty"`
+	Since   time.Time `json:"since"`
+	At      time.Time `json:"at"`
+	Error   string    `json:"error"`
+	Count   int64     `json:"count"`
+}
+
+func streakKey(stage, subject string) string { return stage + "/" + subject }
+
+// restoreMaxAge bounds what Restore keeps of a previous snapshot: a failure
+// last seen longer ago than this is history, not a streak.
+const restoreMaxAge = 24 * time.Hour
+
+// Preflight issues (Runtime.PreflightIssue).
+const (
+	// PreflightMarkerMissing: a local target without its marker while the
+	// archive holds chunks — usually a share that is not mounted.
+	PreflightMarkerMissing = "marker_missing"
+	// PreflightMarkerForeign: a local target another install initialised.
+	PreflightMarkerForeign = "marker_foreign"
+)
+
+// ConfigProblemRunner is the runner of the snapshot written when the
+// configuration in effect cannot run (no worker: its "config" stage says
+// why).
+const ConfigProblemRunner = "not running"
 
 // Activity is the chunk the worker is working and how far it got. The
 // worker updates it in memory as it goes and writes it with the rest of the
@@ -101,11 +149,14 @@ type TableRuntime struct {
 }
 
 // StageError is the last failure of one stage (the fwmon_archive_errors_total
-// stage label) and how many this worker process has counted.
+// stage label) and how many were counted; Since is the first of them (nil in
+// a snapshot written before 0.11.317). Both are kept across worker rebuilds
+// and poller restarts (Recorder.Restore).
 type StageError struct {
-	At    time.Time `json:"at"`
-	Error string    `json:"error"`
-	Count int64     `json:"count"`
+	At    time.Time  `json:"at"`
+	Since *time.Time `json:"since,omitempty"`
+	Error string     `json:"error"`
+	Count int64      `json:"count"`
 }
 
 // errorMax bounds a recorded message.
@@ -124,7 +175,7 @@ type Recorder struct {
 // the service or the SDK is not trusted to leave them out.
 func NewRecorder(runner, stagingDir string, minFree uint64, redact ...string) *Recorder {
 	r := &Recorder{rt: Runtime{Runner: runner, Staging: Staging{Dir: stagingDir, MinFreeBytes: minFree},
-		Tables: map[string]TableRuntime{}, Stages: map[string]StageError{}}}
+		Tables: map[string]TableRuntime{}, Stages: map[string]StageError{}, Failing: map[string]Streak{}, NoChunkSince: map[string]time.Time{}}}
 	for _, s := range redact {
 		if s != "" {
 			r.redact = append(r.redact, s)
@@ -216,6 +267,10 @@ func (r *Recorder) Failed(stage string, err error, now time.Time) {
 	defer r.mu.Unlock()
 	e := r.rt.Stages[stage]
 	e.At, e.Count = now.UTC(), e.Count+1
+	if e.Since == nil {
+		first := e.At
+		e.Since = &first
+	}
 	e.Error = ""
 	if err != nil {
 		e.Error = r.clean(err.Error())
@@ -223,10 +278,106 @@ func (r *Recorder) Failed(stage string, err error, now time.Time) {
 	r.rt.Stages[stage] = e
 }
 
-// SetPreflight records whether the bucket preflight has passed.
+// Fail records a failure of stage for subject (a table, a stream, "" for the
+// whole worker): Failed, and the streak that lasts until OK.
+func (r *Recorder) Fail(stage, subject string, err error, now time.Time) {
+	r.Failed(stage, err, now)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	k := streakKey(stage, subject)
+	f, ok := r.rt.Failing[k]
+	if !ok {
+		f = Streak{Stage: stage, Subject: subject, Since: now.UTC()}
+	}
+	f.At, f.Count, f.Error = now.UTC(), f.Count+1, r.rt.Stages[stage].Error
+	r.rt.Failing[k] = f
+}
+
+// OK records that stage succeeded for subject: its streak ends.
+func (r *Recorder) OK(stage, subject string) {
+	r.mu.Lock()
+	delete(r.rt.Failing, streakKey(stage, subject))
+	r.mu.Unlock()
+}
+
+// SetNoChunk records whether table has no chunk at all (the earliest
+// instant is kept until it has one).
+func (r *Recorder) SetNoChunk(table string, none bool, now time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !none {
+		delete(r.rt.NoChunkSince, table)
+		return
+	}
+	if _, ok := r.rt.NoChunkSince[table]; !ok {
+		r.rt.NoChunkSince[table] = now.UTC()
+	}
+}
+
+// Restore carries the failures of a previous worker's snapshot (prev, the
+// one stored before this worker was built: a poller restart or a settings
+// change) into this one: each stage's last failure with its first (Since)
+// and count, the streaks still going on, and since when a table has had no
+// chunk — so the health verdict's escalation ("failing for 15 min, 1 h")
+// survives a restart. A failure last seen more than restoreMaxAge before now
+// is dropped. The no-chunk instants are kept only for the tables this worker
+// archives (tables), and only from a snapshot younger than restoreMaxAge: a
+// table switched off before its first chunk and on again months later starts
+// afresh. Call it before the worker records anything.
+func (r *Recorder) Restore(prev *Runtime, now time.Time, tables []string) {
+	if prev == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for k, e := range prev.Stages {
+		if now.Sub(e.At) <= restoreMaxAge {
+			if _, ok := r.rt.Stages[k]; !ok {
+				r.rt.Stages[k] = e
+			}
+		}
+	}
+	for k, f := range prev.Failing {
+		if now.Sub(f.At) <= restoreMaxAge {
+			if _, ok := r.rt.Failing[k]; !ok {
+				r.rt.Failing[k] = f
+			}
+		}
+	}
+	archived := map[string]bool{}
+	for _, t := range tables {
+		archived[t] = true
+	}
+	for t, since := range prev.NoChunkSince {
+		if _, ok := r.rt.NoChunkSince[t]; !ok && archived[t] && now.Sub(prev.SeenAt) <= restoreMaxAge {
+			r.rt.NoChunkSince[t] = since
+		}
+	}
+}
+
+// SetPreflight records whether the bucket preflight has passed (passing
+// clears the preflight issue).
 func (r *Recorder) SetPreflight(ok bool) {
 	r.mu.Lock()
 	r.rt.PreflightOK = ok
+	if ok {
+		r.rt.PreflightIssue = ""
+	}
+	r.mu.Unlock()
+}
+
+// SetPreflightIssue records what kind of preflight failure is current
+// (Runtime.PreflightIssue; "" = none of the classified ones).
+func (r *Recorder) SetPreflightIssue(issue string) {
+	r.mu.Lock()
+	r.rt.PreflightIssue = issue
+	r.mu.Unlock()
+}
+
+// SetConfigFingerprint records the fingerprint of the worker's configuration.
+func (r *Recorder) SetConfigFingerprint(fp string) {
+	r.mu.Lock()
+	r.rt.ConfigFingerprint = fp
 	r.mu.Unlock()
 }
 
@@ -242,10 +393,18 @@ func (r *Recorder) SetStagingFree(free uint64, err error) {
 	r.rt.Staging.FreeBytes, r.rt.Staging.Error = &free, ""
 }
 
-// Snapshot is a copy of the runtime stamped SeenAt = now.
+// Snapshot is a copy of the runtime stamped SeenAt = now. Streaks last seen
+// more than restoreMaxAge before now are dropped first (their subject is
+// gone, or the step has not run since): the map stays bounded in a worker
+// that runs for months.
 func (r *Recorder) Snapshot(now time.Time) Runtime {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	for k, f := range r.rt.Failing {
+		if now.Sub(f.At) > restoreMaxAge {
+			delete(r.rt.Failing, k)
+		}
+	}
 	out := r.rt
 	out.SeenAt = now.UTC()
 	out.Tables = make(map[string]TableRuntime, len(r.rt.Tables))
@@ -255,6 +414,14 @@ func (r *Recorder) Snapshot(now time.Time) Runtime {
 	out.Stages = make(map[string]StageError, len(r.rt.Stages))
 	for k, v := range r.rt.Stages {
 		out.Stages[k] = v
+	}
+	out.Failing = make(map[string]Streak, len(r.rt.Failing))
+	for k, v := range r.rt.Failing {
+		out.Failing[k] = v
+	}
+	out.NoChunkSince = make(map[string]time.Time, len(r.rt.NoChunkSince))
+	for k, v := range r.rt.NoChunkSince {
+		out.NoChunkSince[k] = v
 	}
 	if f := r.rt.Staging.FreeBytes; f != nil {
 		v := *f

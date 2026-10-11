@@ -6,6 +6,8 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -16,6 +18,7 @@ import (
 
 	"firewall-mon/internal/archive/export"
 	"firewall-mon/internal/archive/local"
+	"firewall-mon/internal/archive/objstore"
 	"firewall-mon/internal/archive/status"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
@@ -231,6 +234,30 @@ func TestWorker_LocalTarget_ShareGoneWaits(t *testing.T) {
 	if pf, ok := rt.Stages["preflight"]; rt.PreflightOK || !ok || !strings.Contains(pf.Error, "the archive holds chunks") || !strings.Contains(pf.Error, local.MarkerName) {
 		t.Fatalf("runtime state during the outage: %+v", rt)
 	}
+	// The status's health verdict tells it apart: "not mounted", not a
+	// generic preflight failure.
+	if rt.PreflightIssue != status.PreflightMarkerMissing || rt.ConfigFingerprint != h.cfg.Fingerprint() {
+		t.Fatalf("preflight issue %q, fingerprint %q", rt.PreflightIssue, rt.ConfigFingerprint)
+	}
+	// A poller restart during the outage keeps since when the preflight
+	// has failed (the verdict escalates it after 15 min): the new worker
+	// carries the streak over instead of starting it again.
+	first, ok := rt.Failing["preflight/"]
+	if !ok || first.Count < 1 {
+		t.Fatalf("no preflight streak: %+v", rt.Failing)
+	}
+	stageSince := rt.Stages["preflight"].Since
+	h.restart()
+	h.clk.add(30 * time.Minute)
+	h.tick(ctx)
+	raw, _, _ = h.db.ArchiveWorkerState(ctx)
+	if rt, err = status.ParseRuntime(raw); err != nil {
+		t.Fatal(err)
+	}
+	if f := rt.Failing["preflight/"]; !f.Since.Equal(first.Since) || f.Count != first.Count+1 || !f.At.After(first.At) ||
+		stageSince == nil || rt.Stages["preflight"].Since == nil || !rt.Stages["preflight"].Since.Equal(*stageSince) {
+		t.Fatalf("after a restart: streak %+v (before %+v), stage since %v (before %v)", f, first, rt.Stages["preflight"].Since, stageSince)
+	}
 
 	// The share is back: the same worker passes its preflight on the next
 	// tick and verifies the waiting chunk.
@@ -245,6 +272,30 @@ func TestWorker_LocalTarget_ShareGoneWaits(t *testing.T) {
 	cs = h.chunks(export.TableSyslog)
 	if len(cs) != 3 || cs[2].Status != models.ArchiveChunkVerified {
 		t.Fatalf("after the share came back: %d chunks, last %+v", len(cs), cs[len(cs)-1])
+	}
+	raw, _, err = h.db.ArchiveWorkerState(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rt, err = status.ParseRuntime(raw); err != nil || !rt.PreflightOK || rt.PreflightIssue != "" || rt.Failing["preflight/"].Count != 0 {
+		t.Fatalf("after the share came back: %+v %v", rt, err)
+	}
+}
+
+// TestPreflightIssue: the preflight failures the health verdict names on
+// their own, through the worker's wrapping.
+func TestPreflightIssue(t *testing.T) {
+	for _, c := range []struct {
+		err  error
+		want string
+	}{
+		{fmt.Errorf("%w; the archive holds chunks, so the target is not initialised again", objstore.ErrUninitialized), status.PreflightMarkerMissing},
+		{fmt.Errorf("%w: /archive/fwmon/.fwmon-archive-target carries install id \"a\"", local.ErrForeignMarker), status.PreflightMarkerForeign},
+		{errors.New("dial tcp 192.0.2.10:443: i/o timeout"), ""},
+	} {
+		if got := preflightIssue(c.err); got != c.want {
+			t.Errorf("%v: %q, want %q", c.err, got, c.want)
+		}
 	}
 }
 
@@ -428,5 +479,116 @@ func TestWorker_LocalTarget_CorruptSidecarIsAMismatch(t *testing.T) {
 	objs := h.objects(c.ID)
 	if c.Status != models.ArchiveChunkVerified || len(objs) == 0 || objs[len(objs)-1].VersionID != "2" {
 		t.Fatalf("after the re-export: %s, objects %+v", c.Status, objs)
+	}
+}
+
+// TestWorker_NoChunkSince: the worker records since when an archived table
+// has had no chunk at all (the health verdict and ARCHIVE_LAG escalate on
+// it), keeps that instant across a restart, and drops it once the table
+// has a chunk.
+func TestWorker_NoChunkSince(t *testing.T) {
+	start := day(10, 5, 11, 50)
+	h := newLocalHarness(t, start, func(c *config.ArchiveConfig) { c.FlowsEnabled = false })
+	runtime := func() *status.Runtime {
+		t.Helper()
+		raw, _, err := h.db.ArchiveWorkerState(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rt, err := status.ParseRuntime(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rt
+	}
+	h.tick(ctx) // no syslog row: nothing to cut
+	first, ok := runtime().NoChunkSince[export.TableSyslog]
+	if !ok {
+		t.Fatalf("no no-chunk record: %+v", runtime())
+	}
+	h.restart()
+	h.tick(ctx)
+	if got := runtime().NoChunkSince[export.TableSyslog]; !got.Equal(first) {
+		t.Fatalf("after a restart: %v, want %v", got, first)
+	}
+	seedSyslog(t, h.db, day(10, 3, 1, 0))
+	h.tick(ctx)
+	h.tick(ctx)
+	if len(h.chunks(export.TableSyslog)) == 0 {
+		t.Fatal("no chunk cut")
+	}
+	if _, ok := runtime().NoChunkSince[export.TableSyslog]; ok {
+		t.Fatalf("the record stays once the table has a chunk: %+v", runtime().NoChunkSince)
+	}
+}
+
+// TestWorker_PlanFailureStreak: a planner that keeps failing (here: the
+// oldest syslog row carries a forged future stamp, which PlanNextArchiveChunk
+// refuses) is a streak from its first failure, and the health verdict turns
+// it into stage_failing — an error once it has lasted 2 h — although no chunk
+// is left to export.
+func TestWorker_PlanFailureStreak(t *testing.T) {
+	start := day(10, 5, 11, 50)
+	h := newLocalHarness(t, start, func(c *config.ArchiveConfig) { c.FlowsEnabled = false })
+	seedSyslog(t, h.db, start.Add(48*time.Hour))
+	h.tick(ctx)
+	for range 15 { // 2.5 h of passes
+		h.tick(ctx)
+	}
+	raw, _, err := h.db.ArchiveWorkerState(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt, err := status.ParseRuntime(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, ok := rt.Failing["plan/"+export.TableSyslog]
+	if !ok || f.Count < 10 || h.clk.now().Sub(f.Since) < 2*time.Hour || !strings.Contains(f.Error, "outside") {
+		t.Fatalf("plan streak %+v (all %+v)", f, rt.Failing)
+	}
+	cfg := &config.Config{Archive: h.cfg}
+	st, err := status.Build(ctx, h.db, cfg, h.clk.now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	hl := status.Assess(st, status.ReadThresholds(nil), status.DiskTrend{})
+	found := false
+	for _, is := range hl.Issues {
+		if is.Code == status.IssueStageFailing && is.Table == export.TableSyslog && is.Severity == status.SeverityError {
+			found = true
+		}
+	}
+	if !found || hl.Verdict != status.VerdictError {
+		t.Fatalf("verdict %s: %+v", hl.Verdict, hl.Issues)
+	}
+}
+
+// TestWorker_NoChunkSinceDroppedWhenNotArchived: syslog switched off before
+// its first chunk: the next worker (flows only) does not carry syslog's
+// no-chunk instant over, so switching syslog on again later starts afresh.
+func TestWorker_NoChunkSinceDroppedWhenNotArchived(t *testing.T) {
+	h := newLocalHarness(t, day(10, 5, 11, 50), func(c *config.ArchiveConfig) { c.FlowsEnabled = false })
+	h.tick(ctx)
+	read := func() *status.Runtime {
+		t.Helper()
+		raw, _, err := h.db.ArchiveWorkerState(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rt, err := status.ParseRuntime(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rt
+	}
+	if _, ok := read().NoChunkSince[export.TableSyslog]; !ok {
+		t.Fatal("no syslog no-chunk record")
+	}
+	h.cfg.SyslogEnabled, h.cfg.FlowsEnabled = false, true
+	h.restart()
+	h.tick(ctx)
+	if _, ok := read().NoChunkSince[export.TableSyslog]; ok {
+		t.Fatalf("syslog's no-chunk instant carried into a flows-only worker: %+v", read().NoChunkSince)
 	}
 }

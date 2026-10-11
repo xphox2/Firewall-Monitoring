@@ -214,7 +214,8 @@ func TestArchiveCmd_Status(t *testing.T) {
 	}
 	for _, want := range []string{"syslog off, flows on", "key …qrst", "syslog  RELEASED by an override", "flows   engaged",
 		"flow_samples (on): verified through id 10", "needs attention: chunk", "HOLDS its table's deletes: count check shortfall",
-		"last verify failure", "[redacted]", "2026-09 open due"} {
+		"last verify failure", "[redacted]", "2026-09 open due",
+		"health: ERROR", "ERROR needs_attention:", "action: Read the chunk's error"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("--status lacks %q:\n%s", want, out)
 		}
@@ -224,7 +225,8 @@ func TestArchiveCmd_Status(t *testing.T) {
 		t.Fatalf("--status --json: %d %q", code, errb)
 	}
 	var st status.Status
-	if err := json.Unmarshal([]byte(jsOut), &st); err != nil || len(st.NeedsAttention) != 1 || !st.NeedsAttention[0].HoldsGate {
+	if err := json.Unmarshal([]byte(jsOut), &st); err != nil || len(st.NeedsAttention) != 1 || !st.NeedsAttention[0].HoldsGate ||
+		st.Health == nil || st.Health.Verdict != status.VerdictError {
 		t.Fatalf("--json: %v %s", err, jsOut)
 	}
 	for _, leak := range []string{keyID, secret} {
