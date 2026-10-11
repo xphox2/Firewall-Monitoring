@@ -23,9 +23,9 @@ jobs:
   build-test:
     name: Build & Test
     runs-on: ubuntu-latest
-    # Above the test step's own -timeout=20m (plus tidy/vet/build), so a slow
-    # runner fails on a real hang there, not on this cap mid-run.
-    timeout-minutes: 25
+    # Fast gate: tidiness, formatting, vet and a full build. The race suite is
+    # its own sharded job (test-race) so a slow runner cannot hold this one up.
+    timeout-minutes: 15
     steps:
       - name: Check out
         uses: actions/checkout@v5
@@ -64,22 +64,41 @@ jobs:
       - name: Build all binaries
         run: go build ./...
 
+  test-race:
+    name: Test (-race)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # AUDIT-121: the race detector is required on every package. Sharded by
+    # package (`.github/scripts/shard-tests.sh`) so the per-package cost is
+    # balanced: `internal/database` and `internal/api/handlers` alone were
+    # ~9 min each on a single runner, which made the unsharded step ~11 min.
+    # The wall clock is now the heaviest shard, and the union of the shards is
+    # every package `go list ./...` returns, so no package is skipped.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
       - name: Tests (with -race)
-        # AUDIT-121: race detector required in CI. Local runs on Windows
-        # may skip this (requires CGO + a working C toolchain); CI has
-        # both.
-        #
-        # 10m, not 5m. internal/database is 388 tests and runs ~93s locally
-        # under -race; CI runners are roughly 3x slower, which put it at ~298s
-        # against a 300s limit — a coin flip that had nothing to do with the
-        # change under test. The timeout exists to catch a HANG, and 10m (Go's
-        # own default) still does that with margin. Raising it is the honest fix
-        # here; the alternative is a gate that fails at random and teaches people
-        # to re-run rather than read.
-        # 20m: under -race on GitHub runners internal/database and
-        # internal/api/handlers each take ~9.3 minutes, so the old 10m
-        # budget left no headroom for added tests.
-        run: go test -race -count=1 -timeout=20m ./...
+        run: |
+          pkgs=$(.github/scripts/shard-tests.sh ${{ matrix.shard }} 4)
+          if [ -z "$pkgs" ]; then
+            echo "::error::shard ${{ matrix.shard }} selected no packages — check the weight map in shard-tests.sh"
+            exit 1
+          fi
+          echo "shard ${{ matrix.shard }}: $pkgs"
+          go test -race -count=1 -timeout=20m $pkgs
 
   static-analysis:
     name: staticcheck
@@ -148,9 +167,24 @@ jobs:
         run: gosec -quiet -severity medium -exclude=G115,G117,G124,G203,G304,G401,G501,G703 ./...
 
   integration-postgres:
-    name: Integration (PostgreSQL)
+    name: Integration (PostgreSQL) ${{ matrix.group }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Split into one job per package group so the suites that reset the shared
+    # schema (DROP SCHEMA public CASCADE in NewIntegrationDB) each get their
+    # own database: a job still runs its group with `-p 1` (one binary at a
+    # time), but the groups run on separate runners in parallel. Each matrix
+    # job starts its own postgres service, so they cannot collide.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: database
+            packages: ./internal/database/...
+          - group: handlers-poller
+            packages: ./internal/api/handlers/... ./cmd/poller/...
+          - group: archive
+            packages: ./internal/archive/...
     # AUDIT-118: the default Build & Test job runs on SQLite; production is
     # Postgres. This job runs the build-tagged (//go:build integration) suite
     # against a real Postgres so the Postgres-only paths get exercised on every
@@ -193,7 +227,7 @@ jobs:
         # other's in-flight migration (nondeterministic "relation ... does not exist"
         # in TestPostgresIntegration/PopulatedTableSkipped). One binary at a time =
         # one owner of the shared schema at a time. Any NEW integration-tagged
-        # package must be appended here AND keep -p 1.
+        # package must be added to a matrix group above AND keep -p 1.
         #
         # -timeout is per package binary: ./internal/database/... alone takes
         # 200-290 s on a hosted runner, so the old 5m killed it at random (PR
@@ -203,13 +237,13 @@ jobs:
         # naming every failing package and test — a timeout's "panic: test
         # timed out" and the tests running then included — which the job log
         # (truncated past a few MB of GORM output) used to lose.
-        run: .github/scripts/integration-tests.sh ./internal/database/... ./internal/api/handlers/... ./cmd/poller/... ./internal/archive/...
+        run: .github/scripts/integration-tests.sh ${{ matrix.packages }}
 
       - name: Upload integration test output
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: integration-test-json
+          name: integration-test-json-${{ matrix.group }}
           path: integration.json
           if-no-files-found: ignore
           retention-days: 14

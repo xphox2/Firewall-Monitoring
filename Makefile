@@ -30,9 +30,9 @@ help: ## Show this help
 
 .PHONY: qa
 # AUDIT-227: this MUST invoke every gate ci.yml runs so "same as CI" stays
-# true. ci.yml jobs: build-test (tidy-check, gofmt, vet, build, `go test
-# -race`), static-analysis (staticcheck, pinned), gosec (pinned + excludes),
-# vuln-scan (govulncheck, pinned). The Postgres integration job is CI-only
+# true. ci.yml jobs: build-test (tidy-check, gofmt, vet, build), test-race
+# (`go test -race`, sharded across runners), static-analysis (staticcheck,
+# pinned), gosec (pinned + excludes), vuln-scan (govulncheck, pinned). The Postgres integration job is CI-only
 # (needs a live server) — run it via `make ci-local`, which runs this target; every other
 # gate is mirrored here, including tailwind-freshness. That one is not only
 # about CSS edits: Tailwind scans the JS too, so a token like `!badge` in
