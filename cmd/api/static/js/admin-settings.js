@@ -18,7 +18,7 @@
         '#settings-notifications', '#settings-smtp',
         '#settings-reports', '#settings-detection',
         '#settings-flow-classification',
-        '#settings-retention',
+        '#settings-retention', '#settings-data-retention',
         '#display-settings'
     ];
     var TRACKED_SELECTOR = TRACKED_CONTAINERS.join(',');

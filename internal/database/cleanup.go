@@ -877,6 +877,13 @@ func flowRollupRetentionFloor(configuredDays int) int {
 }
 
 func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
+	// Resolve the operator-tunable data-retention knobs (Settings → Retention)
+	// over the environment first, so every downstream read of `ret` — ret.Days,
+	// ret.NetEventWindow, SyslogRetentionWindows(ret) and
+	// cleanupNormalizedEventTables(ret) — sees the stored values, never the raw
+	// environment config. Read-through: no value is seeded or written back.
+	ret = d.ResolveRetention(ret)
+
 	type cleanupEntry struct {
 		model interface{}
 		name  string

@@ -387,6 +387,12 @@ func (p *Poller) retentionCleanupWork() {
 		// Ensure future partitions exist (creates ahead partitions if needed).
 		// The cron variant bounds the parent-lock wait: monitoring runs
 		// alongside this pass now, and must not have its inserts queued.
+		//
+		// Re-resolve the retention lookbacks first: a widened
+		// RETENTION_NET_EVENT_DAYS (set in Settings → Retention) must create
+		// the older daily net_events leaves in the SAME pass that drops them,
+		// before EnsurePartitionsForCron reads the lookback.
+		p.db.RefreshRetentionLookbacks(p.cfg.Retention)
 		if err := p.db.EnsurePartitionsForCron(); err != nil {
 			log.Printf("Partition check error: %v", err)
 		}

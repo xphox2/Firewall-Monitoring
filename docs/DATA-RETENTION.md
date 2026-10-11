@@ -46,6 +46,39 @@ partitions are never dropped and only the severity-scoped deletes run. With
 older than the cutoff (October's leaf on 1 December) and, with the raw archive
 enabled, only once its `max(id)` is at or below the archive's verified id.
 
+## Settings → Retention (admin GUI, 0.11.318)
+
+Twelve operator-tunable data-retention knobs are settable in **Settings →
+Retention → Data Retention**, read through over the environment exactly like
+the per-severity syslog retention. Precedence, highest first:
+
+1. the value stored in `system_settings` (set on the page),
+2. the matching `RETENTION_*` environment variable,
+3. the built-in default.
+
+Nothing is seeded or written back — an install that never saves the form keeps
+exactly the retention it has today. The settings keys are the environment keys
+lower-cased:
+
+| Setting key | Env key | Unit | `0` means |
+|---|---|---|---|
+| `retention_default_days` | `RETENTION_DEFAULT_DAYS` | days | the built-in 90 |
+| `retention_syslog_months` | `RETENTION_SYSLOG_MONTHS` | months | off (day windows apply) |
+| `retention_flow_days` | `RETENTION_FLOW_DAYS` | days | `RETENTION_DEFAULT_DAYS` |
+| `retention_flow_rollup_days` | `RETENTION_FLOW_ROLLUP_DAYS` | days | `RETENTION_DEFAULT_DAYS` |
+| `retention_trap_days` | `RETENTION_TRAP_DAYS` | days | `RETENTION_DEFAULT_DAYS` |
+| `retention_status_days` | `RETENTION_STATUS_DAYS` | days | `RETENTION_DEFAULT_DAYS` |
+| `retention_alert_days` | `RETENTION_ALERT_DAYS` | days | `RETENTION_DEFAULT_DAYS` |
+| `retention_denied_event_days` | `RETENTION_DENIED_EVENT_DAYS` | days | `RETENTION_DEFAULT_DAYS` |
+| `retention_net_event_days` | `RETENTION_NET_EVENT_DAYS` | days | **30 — this table's floor, never the default** |
+| `retention_sec_event_days` | `RETENTION_SEC_EVENT_DAYS` | days | `RETENTION_DEFAULT_DAYS` |
+| `retention_sec_config_change_days` | `RETENTION_SEC_CONFIG_CHANGE_DAYS` | days | **forever** |
+| `retention_net_event_rollup_days` | `RETENTION_NET_EVENT_ROLLUP_DAYS` | days | `RETENTION_DEFAULT_DAYS` |
+
+`SyslogDays` / `SyslogInfoDays` / `SyslogCriticalDays` are deliberately not
+here — they are already settable per severity via `syslog_retention_days_*` —
+nor are the summary knobs. A blank value clears the override and inherits.
+
 ## Retention by table
 
 | Data | Table | Knob | Default | Contains PII? |

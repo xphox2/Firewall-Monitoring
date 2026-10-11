@@ -410,6 +410,10 @@ type IngestStore interface {
 	GetServerMetricWindow(from, to time.Time) ([]ServerMetricBucket, error)
 	// Retention page: resolved per-severity windows + estimated volume.
 	SyslogVolume(ret config.RetentionConfig) SyslogVolumeReport
+	// ResolveRetention overlays the operator-tunable data-retention knobs
+	// (Settings → Retention) on the environment retention config. Read-through:
+	// no value is seeded or written back.
+	ResolveRetention(env config.RetentionConfig) config.RetentionConfig
 	SaveLoadAverage(rows []models.LoadAverage) error
 	SaveSDWANHealth(health []models.SDWANHealth) error
 	SaveSecurityStats(stats []models.SecurityStats) error
