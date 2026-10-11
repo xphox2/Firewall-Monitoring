@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.316] - 2026-10-11
+
+### Security — Go toolchain 1.26.9 and golang.org/x/net v0.60.0
+
+- **The server now builds with Go 1.26.9** (was 1.26.8): the `go` directive in `go.mod` moves from 1.26.8 to 1.26.9. CI reads the version from `go.mod` (`go-version-file`) and follows automatically; the Docker builder image `golang:1.26-alpine` tracks the same minor line, so it picks the patch up.
+- **`golang.org/x/net` moves from v0.58.0 to v0.60.0.**
+- **Why now:** the Go vulnerability database (updated 2026-10-08) flags 12 advisories against code this server compiles in on the previous pins — 11 in the standard library (`net/http`, `net/textproto`, `crypto/tls`, `html/template` and others; GO-2026-6599 … GO-2026-6617) fixed in Go 1.26.9, and one in `golang.org/x/net` v0.58.0 fixed in v0.60.0. With them, `govulncheck ./...` (CI's `vuln-scan` job) fails; with these bumps it reports **0 vulnerabilities affecting the code**.
+- No functional changes. `go mod tidy` changed only the `golang.org/x/net` line in `go.mod` and `go.sum`; README states Go 1.26.9.
+
 ## [0.11.315] - 2026-10-07
 
 ### Added — the raw archive can go to a local partition or a network share
