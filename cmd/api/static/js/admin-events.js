@@ -699,6 +699,9 @@
         setVal('sec-events-filter-tunnel-name', secState.sec_tunnel_name);
         setVal('sec-events-filter-wan-name', secState.sec_wan_name);
         secRenderChips();
+        // The security analytics share the tab's device filter, so a change
+        // (or a clear) re-fetches them alongside the list.
+        loadSecStats();
     }
 
     function secRenderChips() {
@@ -756,7 +759,7 @@
         if (sec) sec.hidden = (tab !== 'security');
         syncURL();
         if (tab === 'network') firstPage();
-        else secFirstPage();
+        else { secFirstPage(); loadSecStats(); }
     }
 
     function secFirstPage() {
@@ -886,6 +889,7 @@
     // analytics are day-granular and long-term (up to 365 days), so they use a
     // fixed 30-day window and share only the device/site filters with the lists.
     var ANALYTICS_DAYS = 30;
+    var SEC_ANALYTICS_DAYS = 30;
     var analyticsCharts = {};
     var ANALYTICS_COLORS = ['#58a6ff', '#3fb950', '#d2992a', '#bc8cff', '#f85149', '#39c5cf', '#ff7b72', '#8b949e'];
 
@@ -1056,6 +1060,122 @@
     }
 
     // ----------------------------------------------------------------------
+    // Security analytics (Phase 2, PR 6 — raw sec_events, day-bucketed)
+    // ----------------------------------------------------------------------
+    // The Security tab's class-scoped analytics: per-class day trends and
+    // top-N rankings over the raw sec_events table. Day-bucketed like the
+    // rollup analytics (a fixed 30-day window), they share only the Security
+    // tab's device filter — there is no site filter on this tab, and the
+    // finding/auth/config/vpn/wan series all ride the same class-scoped query.
+    function secStatsURL() {
+        var p = ['days=' + SEC_ANALYTICS_DAYS];
+        if (secState.sec_device) p.push('device_id=' + encodeURIComponent(secState.sec_device));
+        return '/admin/api/security-events/analytics?' + p.join('&');
+    }
+
+    function loadSecStats() {
+        var host = document.getElementById('sec-events-analytics-host');
+        if (!host) return;
+        AC.chartLoad(host, function(signal) {
+            return apiFetch(secStatsURL(), { signal: signal });
+        }, { key: 'events-sec-stats', label: 'Loading analytics…', escScope: document.getElementById('page-events') }).then(function(r) {
+            if (r.superseded || r.cancelled) return;
+            if (r.error || !r.data) {
+                AC.chartNotice(host, 'Could not load analytics', { dim: false, onRetry: loadSecStats });
+                return;
+            }
+            renderSecStats(r.data.data || {});
+        });
+    }
+
+    // renderWanHealth draws one line per WAN over the day buckets, plotting the
+    // per-day average metric_value. Days missing a reading read as a gap (null)
+    // rather than zero, so a silent WAN does not draw a false baseline.
+    function renderWanHealth(rows) {
+        var days = [];
+        var seen = {};
+        var byWan = {};
+        for (var i = 0; i < rows.length; i++) {
+            if (!seen[rows[i].day]) { seen[rows[i].day] = true; days.push(rows[i].day); }
+            if (!byWan[rows[i].wan_name]) byWan[rows[i].wan_name] = {};
+            byWan[rows[i].wan_name][rows[i].day] = rows[i].avg;
+        }
+        var wans = Object.keys(byWan).sort();
+        var datasets = wans.map(function(wan, i) {
+            return {
+                label: wan,
+                data: days.map(function(day) { return byWan[wan][day] == null ? null : byWan[wan][day]; }),
+                borderColor: ANALYTICS_COLORS[i % ANALYTICS_COLORS.length],
+                backgroundColor: 'transparent',
+                fill: false,
+                tension: 0.3
+            };
+        });
+        eventsChart('sec-wan-health-chart', 'line', days, datasets);
+    }
+
+    function renderSecStats(d) {
+        // Findings trend: per-day counts, oldest-first.
+        var findings = d.findings || [];
+        eventsChart('sec-findings-trend-chart', 'line', findings.map(function(b) { return b.day; }),
+            [{ label: 'Findings', data: findings.map(function(b) { return b.count; }), borderColor: '#f85149', backgroundColor: 'rgba(248,81,73,0.12)', fill: true, tension: 0.3 }]);
+
+        // Top signatures: horizontal bars, highest count first.
+        var sigs = d.top_signatures || [];
+        eventsChart('sec-top-signatures-chart', 'bar', sigs.map(function(s) { return truncateKey(s.sig_name); }),
+            [{ label: 'Findings', data: sigs.map(function(s) { return s.count; }), backgroundColor: '#f85149', borderRadius: 3 }],
+            { indexAxis: 'y' });
+
+        // Admin logins: per-day bar trend, and top admin users as bars.
+        var logins = d.admin_logins || [];
+        eventsChart('sec-admin-logins-chart', 'bar', logins.map(function(b) { return b.day; }),
+            [{ label: 'Logins', data: logins.map(function(b) { return b.count; }), backgroundColor: '#58a6ff', borderRadius: 3 }]);
+
+        var adminUsers = d.top_admin_users || [];
+        eventsChart('sec-top-admin-users-chart', 'bar', adminUsers.map(function(c) { return truncateKey(c.key); }),
+            [{ label: 'Logins', data: adminUsers.map(function(c) { return c.count; }), backgroundColor: '#58a6ff', borderRadius: 3 }],
+            { indexAxis: 'y' });
+
+        // Config changes: per-day bar trend, and top config paths as bars.
+        var changes = d.config_changes || [];
+        eventsChart('sec-config-changes-chart', 'bar', changes.map(function(b) { return b.day; }),
+            [{ label: 'Changes', data: changes.map(function(b) { return b.count; }), backgroundColor: '#d2992a', borderRadius: 3 }]);
+
+        var paths = d.top_config_paths || [];
+        eventsChart('sec-top-config-paths-chart', 'bar', paths.map(function(c) { return truncateKey(c.key); }),
+            [{ label: 'Changes', data: paths.map(function(c) { return c.count; }), backgroundColor: '#d2992a', borderRadius: 3 }],
+            { indexAxis: 'y' });
+
+        // VPN sessions: per-day bar trend, and top tunnels as bars.
+        var vpn = d.vpn_sessions || [];
+        eventsChart('sec-vpn-sessions-chart', 'bar', vpn.map(function(b) { return b.day; }),
+            [{ label: 'Sessions', data: vpn.map(function(b) { return b.count; }), backgroundColor: '#3fb950', borderRadius: 3 }]);
+
+        var tunnels = d.top_tunnels || [];
+        eventsChart('sec-top-tunnels-chart', 'bar', tunnels.map(function(c) { return truncateKey(c.key); }),
+            [{ label: 'Sessions', data: tunnels.map(function(c) { return c.count; }), backgroundColor: '#3fb950', borderRadius: 3 }],
+            { indexAxis: 'y' });
+
+        // Top admin source IPs and top tunnel peers: doughnuts.
+        var adminSrc = d.top_admin_src_ips || [];
+        eventsChart('sec-top-admin-src-chart', 'doughnut', adminSrc.map(function(c) { return c.key; }),
+            [{ data: adminSrc.map(function(c) { return c.count; }), backgroundColor: ANALYTICS_COLORS.slice(0, adminSrc.length), borderWidth: 0 }]);
+
+        var peers = d.top_tunnel_peers || [];
+        eventsChart('sec-top-tunnel-peers-chart', 'doughnut', peers.map(function(c) { return c.key; }),
+            [{ data: peers.map(function(c) { return c.count; }), backgroundColor: ANALYTICS_COLORS.slice(0, peers.length), borderWidth: 0 }]);
+
+        // Top config admins (who changed what): horizontal bars.
+        var cfgAdmins = d.top_config_admins || [];
+        eventsChart('sec-top-config-admins-chart', 'bar', cfgAdmins.map(function(c) { return truncateKey(c.key); }),
+            [{ label: 'Changes', data: cfgAdmins.map(function(c) { return c.count; }), backgroundColor: '#bc8cff', borderRadius: 3 }],
+            { indexAxis: 'y' });
+
+        // WAN health: one line per WAN, days on the x-axis, average metric.
+        renderWanHealth(d.wan_health || []);
+    }
+
+    // ----------------------------------------------------------------------
     // Boot
     // ----------------------------------------------------------------------
     function init() {
@@ -1082,6 +1202,7 @@
         else firstPage();
         loadAnalytics();
         loadStats();
+        loadSecStats();
     }
     function getState() { return Object.assign({}, state); }
 

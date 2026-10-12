@@ -55,6 +55,7 @@ type Store interface {
 	SecEventReadStore
 	NetEventRollupReadStore
 	NetEventStatsReadStore
+	SecEventStatsReadStore
 	ArchiveGateStore
 	ArchiveStatusStore
 	ArchiveRestoreStore
@@ -188,6 +189,17 @@ type NetEventRollupReadStore interface {
 // indexes or migrations are added.
 type NetEventStatsReadStore interface {
 	NetEventStats(f NetEventStatsFilter) (*NetEventStatsResult, error)
+}
+
+// SecEventStatsReadStore covers the class-scoped analytics read path over the
+// raw sec_events table (Phase 2, PR 6, normalized_read.go): the Security tab's
+// per-class day trends and top-N rankings — findings, admin logins, config
+// changes, VPN sessions and WAN health. Every series is a `ts >= cutoff` GROUP
+// BY over a bounded window, served by the existing (class, ts) /
+// (device_id, ts) / (ts) indexes, so this reader adds no indexes or
+// migrations.
+type SecEventStatsReadStore interface {
+	SecEventStats(f SecEventStatsFilter) (*SecEventStatsResult, error)
 }
 
 // NormalizeBackfillStore covers the one-time normalized-event backfill queue

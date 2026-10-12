@@ -910,3 +910,254 @@ func TestNetEventStats_EmptySkipped(t *testing.T) {
 		t.Fatalf("nat = %+v, want empty", stats.NAT)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// sec_events — class-scoped analytics (Phase 2, PR 6)
+// ---------------------------------------------------------------------------
+
+// statF64 is a tiny pointer helper so a seed row can carry a NULL-able
+// metric_value (nil = "vendor did not supply it").
+func statF64(v float64) *float64 { return &v }
+
+// secStatRow is the seed shape for the SecEventStats tests: the class-specific
+// columns each series groups on, all pointers so nil seeds the skipped (NULL)
+// case.
+type secStatRow struct {
+	devID      uint
+	ts         time.Time
+	class      int16
+	severity   *int16
+	sigName    *string
+	adminUser  *string
+	adminSrcIP *string
+	configPath *string
+	tunnelName *string
+	tunnelPeer *string
+	wanName    *string
+	metric     *float64
+}
+
+func seedSecStatRow(t *testing.T, db *Database, r secStatRow) {
+	t.Helper()
+	row := &models.SecEvent{
+		Ts:          r.ts,
+		DeviceID:    r.devID,
+		Class:       r.class,
+		Severity:    r.severity,
+		SigName:     r.sigName,
+		AdminUser:   r.adminUser,
+		AdminSrcIP:  r.adminSrcIP,
+		ConfigPath:  r.configPath,
+		TunnelName:  r.tunnelName,
+		TunnelPeer:  r.tunnelPeer,
+		WANName:     r.wanName,
+		MetricValue: r.metric,
+	}
+	if err := db.Gorm().Create(row).Error; err != nil {
+		t.Fatalf("seed sec_event stat row: %v", err)
+	}
+}
+
+// TestSecEventStats_GroupingAndSums seeds one or two rows per class across two
+// UTC days and asserts every series' day buckets, sums and top-N ordering.
+func TestSecEventStats_GroupingAndSums(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	dev := seedNetEventDevice(t, db, "fw-1", nil)
+	day0 := utcDay(time.Now())
+	day1 := day0.AddDate(0, 0, -1)
+	sevHigh, sevLow := int16(9), int16(2)
+
+	// findings: day0 MALWARE-A twice (sev 9 and 2), day1 MALWARE-B once (sev 2).
+	seedSecStatRow(t, db, secStatRow{devID: dev.ID, ts: day0.Add(9 * time.Hour), class: secClassFinding, severity: &sevHigh, sigName: statStr("MALWARE-A")})
+	seedSecStatRow(t, db, secStatRow{devID: dev.ID, ts: day0.Add(10 * time.Hour), class: secClassFinding, severity: &sevLow, sigName: statStr("MALWARE-A")})
+	seedSecStatRow(t, db, secStatRow{devID: dev.ID, ts: day1.Add(9 * time.Hour), class: secClassFinding, severity: &sevLow, sigName: statStr("MALWARE-B")})
+
+	// auth: day0 admin-ops from 10.0.0.5 and 10.0.0.6, day1 root from 10.0.0.7.
+	seedSecStatRow(t, db, secStatRow{devID: dev.ID, ts: day0.Add(8 * time.Hour), class: secClassAuth, adminUser: statStr("admin-ops"), adminSrcIP: statStr("10.0.0.5")})
+	seedSecStatRow(t, db, secStatRow{devID: dev.ID, ts: day0.Add(9 * time.Hour), class: secClassAuth, adminUser: statStr("admin-ops"), adminSrcIP: statStr("10.0.0.6")})
+	seedSecStatRow(t, db, secStatRow{devID: dev.ID, ts: day1.Add(8 * time.Hour), class: secClassAuth, adminUser: statStr("root"), adminSrcIP: statStr("10.0.0.7")})
+
+	// config_change: day0 two paths by admin-ops, day1 one path by root.
+	seedSecStatRow(t, db, secStatRow{devID: dev.ID, ts: day0.Add(7 * time.Hour), class: secClassConfigChange, configPath: statStr("/system/global"), adminUser: statStr("admin-ops")})
+	seedSecStatRow(t, db, secStatRow{devID: dev.ID, ts: day0.Add(8 * time.Hour), class: secClassConfigChange, configPath: statStr("/system/interface"), adminUser: statStr("admin-ops")})
+	seedSecStatRow(t, db, secStatRow{devID: dev.ID, ts: day1.Add(7 * time.Hour), class: secClassConfigChange, configPath: statStr("/system/global"), adminUser: statStr("root")})
+
+	// vpn_session: day0 tunnel-east twice (peer 198.51.100.1 and 198.51.100.2), day1 tunnel-west once.
+	seedSecStatRow(t, db, secStatRow{devID: dev.ID, ts: day0.Add(6 * time.Hour), class: secClassVPNSession, tunnelName: statStr("tunnel-east"), tunnelPeer: statStr("198.51.100.1")})
+	seedSecStatRow(t, db, secStatRow{devID: dev.ID, ts: day0.Add(7 * time.Hour), class: secClassVPNSession, tunnelName: statStr("tunnel-east"), tunnelPeer: statStr("198.51.100.2")})
+	seedSecStatRow(t, db, secStatRow{devID: dev.ID, ts: day1.Add(6 * time.Hour), class: secClassVPNSession, tunnelName: statStr("tunnel-west"), tunnelPeer: statStr("203.0.113.1")})
+
+	// device_health: day0 wan1 reads 10 then 20 (avg 15, last 20), day1 wan1 reads 5.
+	seedSecStatRow(t, db, secStatRow{devID: dev.ID, ts: day0.Add(8 * time.Hour), class: secClassDeviceHealth, wanName: statStr("wan1"), metric: statF64(10)})
+	seedSecStatRow(t, db, secStatRow{devID: dev.ID, ts: day0.Add(9 * time.Hour), class: secClassDeviceHealth, wanName: statStr("wan1"), metric: statF64(20)})
+	seedSecStatRow(t, db, secStatRow{devID: dev.ID, ts: day1.Add(8 * time.Hour), class: secClassDeviceHealth, wanName: statStr("wan1"), metric: statF64(5)})
+
+	stats, err := db.SecEventStats(SecEventStatsFilter{Days: 30})
+	if err != nil {
+		t.Fatalf("SecEventStats: %v", err)
+	}
+
+	// findings trend: day1 = 1, day0 = 2, oldest-first.
+	if len(stats.Findings) != 2 {
+		t.Fatalf("findings = %d buckets, want 2: %+v", len(stats.Findings), stats.Findings)
+	}
+	if b := stats.Findings[0]; b.Day != day1.Format("2006-01-02") || b.Count != 1 {
+		t.Fatalf("findings[0] = %+v, want day1 1", b)
+	}
+	if b := stats.Findings[1]; b.Day != day0.Format("2006-01-02") || b.Count != 2 {
+		t.Fatalf("findings[1] = %+v, want day0 2", b)
+	}
+
+	// top_signatures: MALWARE-A (count 2, worst severity 9) then MALWARE-B (1, 2).
+	if len(stats.TopSignatures) != 2 {
+		t.Fatalf("top_signatures = %d, want 2: %+v", len(stats.TopSignatures), stats.TopSignatures)
+	}
+	if s := stats.TopSignatures[0]; s.SigName != "MALWARE-A" || s.Count != 2 || s.Severity != 9 {
+		t.Fatalf("top_signatures[0] = %+v, want MALWARE-A 2/9", s)
+	}
+	if s := stats.TopSignatures[1]; s.SigName != "MALWARE-B" || s.Count != 1 || s.Severity != 2 {
+		t.Fatalf("top_signatures[1] = %+v, want MALWARE-B 1/2", s)
+	}
+
+	// admin_logins trend + top admin users + top admin source IPs.
+	if len(stats.AdminLogins) != 2 || stats.AdminLogins[1].Count != 2 || stats.AdminLogins[0].Count != 1 {
+		t.Fatalf("admin_logins = %+v, want day1 1 / day0 2", stats.AdminLogins)
+	}
+	if findKeyCount(stats.TopAdminUsers, "admin-ops") != 2 || findKeyCount(stats.TopAdminUsers, "root") != 1 {
+		t.Fatalf("top_admin_users = %+v, want admin-ops 2 / root 1", stats.TopAdminUsers)
+	}
+	// Three distinct source /32s, each seen once (the count tie makes the order
+	// non-deterministic, so assert membership rather than position).
+	if findKeyCount(stats.TopAdminSrcIPs, "10.0.0.5") != 1 || findKeyCount(stats.TopAdminSrcIPs, "10.0.0.6") != 1 || findKeyCount(stats.TopAdminSrcIPs, "10.0.0.7") != 1 {
+		t.Fatalf("top_admin_src_ips = %+v, want the three distinct /32s", stats.TopAdminSrcIPs)
+	}
+
+	// config_changes trend + top config paths + top config admins.
+	if len(stats.ConfigChanges) != 2 || stats.ConfigChanges[1].Count != 2 || stats.ConfigChanges[0].Count != 1 {
+		t.Fatalf("config_changes = %+v, want day1 1 / day0 2", stats.ConfigChanges)
+	}
+	if findKeyCount(stats.TopConfigPaths, "/system/global") != 2 || findKeyCount(stats.TopConfigPaths, "/system/interface") != 1 {
+		t.Fatalf("top_config_paths = %+v, want /system/global 2 / /system/interface 1", stats.TopConfigPaths)
+	}
+	if findKeyCount(stats.TopConfigAdmins, "admin-ops") != 2 || findKeyCount(stats.TopConfigAdmins, "root") != 1 {
+		t.Fatalf("top_config_admins = %+v, want admin-ops 2 / root 1", stats.TopConfigAdmins)
+	}
+
+	// vpn_sessions trend + top tunnels + top tunnel peers.
+	if len(stats.VPNSessions) != 2 || stats.VPNSessions[1].Count != 2 || stats.VPNSessions[0].Count != 1 {
+		t.Fatalf("vpn_sessions = %+v, want day1 1 / day0 2", stats.VPNSessions)
+	}
+	if findKeyCount(stats.TopTunnels, "tunnel-east") != 2 || findKeyCount(stats.TopTunnels, "tunnel-west") != 1 {
+		t.Fatalf("top_tunnels = %+v, want tunnel-east 2 / tunnel-west 1", stats.TopTunnels)
+	}
+	if findKeyCount(stats.TopTunnelPeers, "198.51.100.1") != 1 || findKeyCount(stats.TopTunnelPeers, "198.51.100.2") != 1 || findKeyCount(stats.TopTunnelPeers, "203.0.113.1") != 1 {
+		t.Fatalf("top_tunnel_peers = %+v, want the three distinct peers", stats.TopTunnelPeers)
+	}
+
+	// wan_health: day1 (avg 5, last 5) then day0 (avg 15, last 20).
+	if len(stats.WanHealth) != 2 {
+		t.Fatalf("wan_health = %d rows, want 2: %+v", len(stats.WanHealth), stats.WanHealth)
+	}
+	if w := stats.WanHealth[0]; w.Day != day1.Format("2006-01-02") || w.WanName != "wan1" || w.Avg != 5 || w.Last != 5 {
+		t.Fatalf("wan_health[0] = %+v, want day1 wan1 5/5", w)
+	}
+	if w := stats.WanHealth[1]; w.Day != day0.Format("2006-01-02") || w.Avg != 15 || w.Last != 20 {
+		t.Fatalf("wan_health[1] = %+v, want day0 wan1 15/20 (avg of 10,20; last 20)", w)
+	}
+}
+
+// TestSecEventStats_TsBounded asserts rows older than the window are excluded:
+// a 48-hour-old finding is outside a 24 h bound.
+func TestSecEventStats_TsBounded(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	dev := seedNetEventDevice(t, db, "fw-1", nil)
+	now := time.Now()
+
+	seedSecStatRow(t, db, secStatRow{devID: dev.ID, ts: now, class: secClassFinding, sigName: statStr("RECENT")})
+	seedSecStatRow(t, db, secStatRow{devID: dev.ID, ts: now.Add(-48 * time.Hour), class: secClassFinding, sigName: statStr("OLD")})
+
+	stats, err := db.SecEventStats(SecEventStatsFilter{Hours: 24})
+	if err != nil {
+		t.Fatalf("SecEventStats: %v", err)
+	}
+	if len(stats.Findings) != 1 || stats.Findings[0].Count != 1 {
+		t.Fatalf("findings = %+v, want one bucket of 1 (the 48 h-old row is outside the 24 h window)", stats.Findings)
+	}
+	if len(stats.TopSignatures) != 1 || stats.TopSignatures[0].SigName != "RECENT" {
+		t.Fatalf("top_signatures = %+v, want only RECENT", stats.TopSignatures)
+	}
+}
+
+// TestSecEventStats_DeviceAndSiteFilter asserts the device and site filters
+// narrow every series through the (device_id, ts) index.
+func TestSecEventStats_DeviceAndSiteFilter(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	siteA := seedNetEventSite(t, db, "site-a")
+	siteB := seedNetEventSite(t, db, "site-b")
+	devA := seedNetEventDevice(t, db, "fw-a", &siteA.ID)
+	devB := seedNetEventDevice(t, db, "fw-b", &siteB.ID)
+	now := time.Now()
+
+	seedSecStatRow(t, db, secStatRow{devID: devA.ID, ts: now, class: secClassFinding, sigName: statStr("A")})
+	seedSecStatRow(t, db, secStatRow{devID: devB.ID, ts: now, class: secClassFinding, sigName: statStr("B")})
+
+	byDevice, err := db.SecEventStats(SecEventStatsFilter{Hours: 24, DeviceID: devA.ID})
+	if err != nil {
+		t.Fatalf("SecEventStats(device): %v", err)
+	}
+	if len(byDevice.TopSignatures) != 1 || byDevice.TopSignatures[0].SigName != "A" {
+		t.Fatalf("device top_signatures = %+v, want only A", byDevice.TopSignatures)
+	}
+
+	bySite, err := db.SecEventStats(SecEventStatsFilter{Hours: 24, SiteID: siteB.ID})
+	if err != nil {
+		t.Fatalf("SecEventStats(site): %v", err)
+	}
+	if len(bySite.TopSignatures) != 1 || bySite.TopSignatures[0].SigName != "B" {
+		t.Fatalf("site top_signatures = %+v, want only B", bySite.TopSignatures)
+	}
+}
+
+// TestSecEventStats_EmptySkipped asserts NULL and empty-string dimension values
+// are skipped: a row that supplies none of a class's grouped columns
+// contributes no groups (the per-day trend still counts the row).
+func TestSecEventStats_EmptySkipped(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	dev := seedNetEventDevice(t, db, "fw-1", nil)
+	now := time.Now()
+
+	// A finding with no sig_name/severity: counts in the trend but no signature.
+	seedSecStatRow(t, db, secStatRow{devID: dev.ID, ts: now, class: secClassFinding})
+	// Empty-string text columns (the "vendor supplied empty" case the queries
+	// skip) and NULL inet columns (an inet column can never hold '' in
+	// production, so NULL is the only skip case there).
+	seedSecStatRow(t, db, secStatRow{devID: dev.ID, ts: now.Add(-time.Minute), class: secClassAuth, adminUser: statStr("")})
+	seedSecStatRow(t, db, secStatRow{devID: dev.ID, ts: now.Add(-2 * time.Minute), class: secClassConfigChange, configPath: statStr(""), adminUser: statStr("")})
+	seedSecStatRow(t, db, secStatRow{devID: dev.ID, ts: now.Add(-3 * time.Minute), class: secClassVPNSession, tunnelName: statStr("")})
+	// A health row with no wan_name/metric: skipped entirely from wan_health.
+	seedSecStatRow(t, db, secStatRow{devID: dev.ID, ts: now.Add(-4 * time.Minute), class: secClassDeviceHealth})
+
+	stats, err := db.SecEventStats(SecEventStatsFilter{Hours: 24})
+	if err != nil {
+		t.Fatalf("SecEventStats: %v", err)
+	}
+
+	if len(stats.Findings) != 1 || stats.Findings[0].Count != 1 {
+		t.Fatalf("findings = %+v, want the trend to count the no-signature row", stats.Findings)
+	}
+	if len(stats.TopSignatures) != 0 {
+		t.Fatalf("top_signatures = %+v, want empty (NULL sig_name skipped)", stats.TopSignatures)
+	}
+	if len(stats.TopAdminUsers) != 0 || len(stats.TopAdminSrcIPs) != 0 {
+		t.Fatalf("top admin series = %+v / %+v, want empty", stats.TopAdminUsers, stats.TopAdminSrcIPs)
+	}
+	if len(stats.TopConfigPaths) != 0 || len(stats.TopConfigAdmins) != 0 {
+		t.Fatalf("top config series = %+v / %+v, want empty", stats.TopConfigPaths, stats.TopConfigAdmins)
+	}
+	if len(stats.TopTunnels) != 0 || len(stats.TopTunnelPeers) != 0 {
+		t.Fatalf("top vpn series = %+v / %+v, want empty", stats.TopTunnels, stats.TopTunnelPeers)
+	}
+	if len(stats.WanHealth) != 0 {
+		t.Fatalf("wan_health = %+v, want empty (no wan_name/metric)", stats.WanHealth)
+	}
+}

@@ -614,6 +614,70 @@
 
                 <!-- Security view (Phase 2, PR 3 — sec_events; columns adapt to the class filter) -->
                 <div id="events-view-security" hidden>
+                    <!-- Class-scoped analytics (Phase 2, PR 6 — raw sec_events, day-bucketed;
+                         rendered by FwmonEvents.renderSecStats in admin-events.js) -->
+                    <div class="fwmon-load-host" id="sec-events-analytics-host">
+                        <div class="chart-row">
+                            <div class="chart-card">
+                                <h3>Findings Trend</h3>
+                                <canvas id="sec-findings-trend-chart"></canvas>
+                            </div>
+                            <div class="chart-card">
+                                <h3>Top Signatures</h3>
+                                <canvas id="sec-top-signatures-chart"></canvas>
+                            </div>
+                        </div>
+                        <div class="chart-row">
+                            <div class="chart-card">
+                                <h3>Admin Logins</h3>
+                                <canvas id="sec-admin-logins-chart"></canvas>
+                            </div>
+                            <div class="chart-card">
+                                <h3>Top Admin Users</h3>
+                                <canvas id="sec-top-admin-users-chart"></canvas>
+                            </div>
+                        </div>
+                        <div class="chart-row">
+                            <div class="chart-card">
+                                <h3>Config Changes</h3>
+                                <canvas id="sec-config-changes-chart"></canvas>
+                            </div>
+                            <div class="chart-card">
+                                <h3>Top Config Paths</h3>
+                                <canvas id="sec-top-config-paths-chart"></canvas>
+                            </div>
+                        </div>
+                        <div class="chart-row">
+                            <div class="chart-card">
+                                <h3>VPN Sessions</h3>
+                                <canvas id="sec-vpn-sessions-chart"></canvas>
+                            </div>
+                            <div class="chart-card">
+                                <h3>Top Tunnels</h3>
+                                <canvas id="sec-top-tunnels-chart"></canvas>
+                            </div>
+                        </div>
+                        <div class="chart-row">
+                            <div class="chart-card">
+                                <h3>Top Admin Source IPs</h3>
+                                <canvas id="sec-top-admin-src-chart"></canvas>
+                            </div>
+                            <div class="chart-card">
+                                <h3>Top Config Admins</h3>
+                                <canvas id="sec-top-config-admins-chart"></canvas>
+                            </div>
+                        </div>
+                        <div class="chart-row">
+                            <div class="chart-card">
+                                <h3>Top Tunnel Peers</h3>
+                                <canvas id="sec-top-tunnel-peers-chart"></canvas>
+                            </div>
+                            <div class="chart-card">
+                                <h3>WAN Health</h3>
+                                <canvas id="sec-wan-health-chart"></canvas>
+                            </div>
+                        </div>
+                    </div>
                     <div class="filter-bar">
                         <select id="sec-events-filter-class"><option value="">All Classes</option></select>
                         <select id="sec-events-filter-device"><option value="">All Devices</option></select>

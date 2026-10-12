@@ -1,6 +1,13 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.325] - 2026-10-11
+
+### Added — the Security tab gets class-scoped analytics over raw `sec_events`
+
+- The Events page's **Security** tab (`/admin/events`, Security Events view) now charts **class-scoped analytics** over the raw `sec_events` table. A new viewer-accessible `GET /api/security-events/analytics` (query: `days` 1–365, `hours` 1–720, `device_id`, `site_id`) returns, per class, a day-bucketed trend and top-N rankings: **findings** (per-day counts + top signatures by `sig_name` with their worst `severity`), **admin logins** (per-day + top `admin_user` and top `admin_src_ip`), **config changes** (per-day + top `config_path` and top `admin_user`), **VPN sessions** (per-day + top `tunnel_name` and top `tunnel_peer`), and **WAN health** (per day per `wan_name`, the average and latest `metric_value`). The page renders these as "Findings trend", "Top signatures", "Admin logins", "Config changes", "VPN sessions" and "WAN health" cards.
+- `internal/database.SecEventStats` computes each series as a `ts >= cutoff` `GROUP BY`, so the table's monthly RANGE partitions prune and the existing `(class, ts)` / `(device_id, ts)` / `(ts)` indexes serve the class, window and device/site narrowing — **no new indexes or migrations**. The window is day-folding when `days` is set and hour-based when `hours` is, defaulting to 30 days; every ranking is capped at 10 entries and empty/NULL groups are skipped.
+
 ## [0.11.324] - 2026-10-11
 
 ### Added — the Events page gets short-window analytics over raw `net_events`
