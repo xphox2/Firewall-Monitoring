@@ -1,6 +1,12 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.328] - 2026-10-12
+
+### Fixed — the Events page never loaded
+
+- `admin-events.js` reads `window.AdminCommon` (`AC.escapeHtml`, `AC.apiFetch`) at load, but its `<script>` tag sat **before** `admin-common.js`, so the module threw at load and never defined `window.FwmonEvents` — the page showed "Events module failed to load" and made no API calls. Moved the tag after `admin-common.js` (and kept it after `enums.js`, before `admin-main.js`). A guardrail test pins the order so a future edit cannot silently reintroduce it.
+
 ## [0.11.327] - 2026-10-11
 
 ### Added — the Events page gets an event detail view with a "View raw syslog" forensic bridge
