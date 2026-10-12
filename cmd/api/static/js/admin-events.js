@@ -1,4 +1,4 @@
-/* admin-events.js — Events page (Phase 2, PR 1 + PR 3 + PR 4 + PR 5).
+/* admin-events.js — Events page (Phase 2, PR 1 + PR 3 + PR 4 + PR 5 + PR 6 + PR 7).
  *
  * Owns the page rendered at /admin/events: the readers of the normalized
  * net_events (Network tab, PR 1) and sec_events (Security tab, PR 3) tables. A
@@ -530,6 +530,9 @@
         // so a change there (or a clear) re-fetches them alongside the list.
         loadAnalytics();
         loadStats();
+        // The capability gate is also device-scoped: re-read the active device's
+        // verdicts (cached) so the cards hide/show as the device filter changes.
+        loadGating();
     }
 
     function activatePills() {
@@ -702,6 +705,8 @@
         // The security analytics share the tab's device filter, so a change
         // (or a clear) re-fetches them alongside the list.
         loadSecStats();
+        // Same device-scoped capability gate as the network tab's analytics.
+        loadSecGating();
     }
 
     function secRenderChips() {
@@ -899,8 +904,16 @@
     // pages; series colors are fixed hex (theme-safe) and doughnut segments are
     // borderless, matching the syslog severity chart.
     function eventsChart(canvasId, type, labels, datasets, opts) {
-        if (analyticsCharts[canvasId]) { analyticsCharts[canvasId].destroy(); }
         var canvas = document.getElementById(canvasId);
+        // The capability gate (PR 7) may have hidden this card because the
+        // active device's vendor can't supply the dimension. Destroy any chart a
+        // previous, still-ungated render drew into it and leave the hidden card
+        // empty — Chart.js on a 0-sized canvas would otherwise only warn.
+        if (canvas && canvas.offsetParent === null) {
+            if (analyticsCharts[canvasId]) { analyticsCharts[canvasId].destroy(); delete analyticsCharts[canvasId]; }
+            return;
+        }
+        if (analyticsCharts[canvasId]) { analyticsCharts[canvasId].destroy(); }
         if (!canvas || !window.Chart) return;
         var isDoughnut = type === 'doughnut' || type === 'pie';
         var options = {
@@ -1173,6 +1186,112 @@
 
         // WAN health: one line per WAN, days on the x-axis, average metric.
         renderWanHealth(d.wan_health || []);
+    }
+
+    // ----------------------------------------------------------------------
+    // Capability gating (Phase 2, PR 7 — "not available" instead of zeros)
+    // ----------------------------------------------------------------------
+    // A vendor's profile (internal/normalize/capability) says which normalized
+    // fields it can supply; GET /admin/api/devices/:id/capabilities joins that
+    // with what the device was observed sending over a 24 h window and returns a
+    // per-feature verdict. We read the active device filter's verdicts once,
+    // cache them per device, then hide/annotate the analytics cards whose
+    // dimension that device can't fully report. The capability endpoints are
+    // admin-only, so a viewer gets a 403 — we fall back to showing every section
+    // ungated (best effort) rather than blank the page or chart zeros.
+    var capCache = {};     // device_id -> { window_hours, fields, features }
+    var capDenied = false; // set once a capability call is refused (e.g. viewer)
+
+    var INACTIVE_HINT = 'No data observed in the last 24 h (feature unused / option off)';
+
+    function deviceCapabilities(deviceId) {
+        if (!deviceId || capDenied) return Promise.resolve(null);
+        if (capCache[deviceId] !== undefined) return Promise.resolve(capCache[deviceId]);
+        return apiFetch('/admin/api/devices/' + encodeURIComponent(deviceId) + '/capabilities')
+            .then(function(r) {
+                var d = (r && r.data) || null;
+                capCache[deviceId] = d;
+                return d;
+            })
+            .catch(function(err) {
+                // Admin-only endpoint: a viewer 403s here. Treat any failure as
+                // "no gating data" and stop asking — best effort, never blank.
+                capDenied = true;
+                if (window.fwmonLog) fwmonLog.warn('FwmonEvents: capability lookup unavailable, gating disabled', err);
+                return null;
+            });
+    }
+
+    // featureVerdict returns the capability API's verdict for one feature, or
+    // null when unknown (unknown → ungated, matching the backend default).
+    function featureVerdict(caps, feature) {
+        if (!caps || !caps.features) return null;
+        var f = caps.features[feature];
+        return (f && f.state) ? f : null;
+    }
+
+    // featureNote joins the notes of the fields that decided a degraded verdict
+    // (the profile's caveat, e.g. "needs `logtraffic all` on the policy").
+    function featureNote(caps, verdict) {
+        if (!caps || !caps.fields || !verdict || !verdict.fields || !verdict.fields.length) return '';
+        var notes = [];
+        for (var i = 0; i < verdict.fields.length; i++) {
+            var cell = caps.fields[verdict.fields[i]];
+            if (cell && cell.note && notes.indexOf(cell.note) === -1) notes.push(cell.note);
+        }
+        return notes.join('; ');
+    }
+
+    function gateCard(card, state, note) {
+        var hint = card.querySelector('.capability-hint');
+        if (hint) { hint.parentNode.removeChild(hint); }
+        card.hidden = (state === 'unsupported');
+        if (card.hidden || !note) return;
+        var el = document.createElement('div');
+        el.className = 'capability-hint' + (state === 'degraded' ? ' degraded' : '');
+        el.textContent = note;
+        var h3 = card.querySelector('h3');
+        card.insertBefore(el, h3 ? h3.nextSibling : card.firstChild);
+    }
+
+    // applyGating walks one analytics host's data-feature cards and hides or
+    // annotates them from the (already-resolved) capability payload. A null
+    // payload means "no gating data" — every card is shown ungated.
+    function applyGating(scopeId, caps) {
+        var scope = document.getElementById(scopeId);
+        if (!scope) return;
+        var cards = scope.querySelectorAll('.chart-card[data-feature]');
+        Array.prototype.forEach.call(cards, function(card) {
+            var verdict = featureVerdict(caps, card.getAttribute('data-feature'));
+            var state = verdict ? verdict.state : null;
+            var note = state === 'inactive' ? INACTIVE_HINT :
+                       state === 'degraded' ? featureNote(caps, verdict) : '';
+            gateCard(card, state, note);
+        });
+        // Collapse a chart-row whose cards are all hidden so the gate doesn't
+        // leave an empty grid cell where a dimension used to be.
+        Array.prototype.forEach.call(scope.querySelectorAll('.chart-row'), function(row) {
+            var any = false;
+            Array.prototype.forEach.call(row.querySelectorAll('.chart-card'), function(c) {
+                if (!c.hidden) any = true;
+            });
+            row.hidden = !any;
+        });
+    }
+
+    function loadGating() {
+        var deviceId = state.device_id;
+        deviceCapabilities(deviceId).then(function(caps) {
+            applyGating('events-analytics-host', caps);
+            applyGating('events-stats-host', caps);
+        });
+    }
+
+    function loadSecGating() {
+        var deviceId = secState.sec_device;
+        deviceCapabilities(deviceId).then(function(caps) {
+            applyGating('sec-events-analytics-host', caps);
+        });
     }
 
     // ----------------------------------------------------------------------

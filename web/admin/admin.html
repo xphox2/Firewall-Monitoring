@@ -143,9 +143,18 @@
         .stat-card.accent-blue { border-left: 3px solid var(--fwmon-accent); }
         .stat-card.accent-gray { border-left: 3px solid var(--fwmon-border-strong); }
         .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+        /* .chart-row sets display:grid, so the UA [hidden] rule can't collapse it;
+           this restores hiding for the capability gate (PR 7) that drops a row
+           when every card in it is unsupported. */
+        .chart-row[hidden] { display: none; }
         .chart-card { background: var(--fwmon-card-bg); border: 1px solid var(--fwmon-border); border-radius: var(--fwmon-radius); padding: 20px; height: 340px; box-shadow: var(--fwmon-elev-1); }
         .chart-card h3 { font-family: var(--fwmon-font-heading); font-size: 0.8rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--fwmon-text-faint); margin-bottom: 12px; }
         .chart-card canvas { max-height: 280px; }
+        /* Capability-gating hint (Phase 2, PR 7): a muted "feature unused" line or
+           an amber profile caveat injected under the card title by admin-events.js
+           when the active device can't fully supply that dimension. */
+        .capability-hint { margin: -4px 0 12px; font-size: 0.78rem; line-height: 1.4; color: var(--fwmon-text-faint); }
+        .capability-hint.degraded { color: var(--fwmon-sig-warn); }
         @media (max-width: 900px) { .chart-row { grid-template-columns: 1fr; } }
         @media (max-width: 1100px) { .stat-grid-6 { grid-template-columns: repeat(3, 1fr); } }
         @media (max-width: 600px) { .stat-grid-6 { grid-template-columns: repeat(2, 1fr); } }
@@ -500,21 +509,21 @@
                  rendered by FwmonEvents.renderAnalytics in admin-events.js) -->
             <div class="fwmon-load-host" id="events-analytics-host">
                 <div class="chart-row">
-                    <div class="chart-card">
+                    <div class="chart-card" data-feature="policy_bytes">
                         <h3>Policy Bytes</h3>
                         <canvas id="events-policy-bytes-chart"></canvas>
                     </div>
-                    <div class="chart-card">
+                    <div class="chart-card" data-feature="deny_analytics">
                         <h3>Deny Trend</h3>
                         <canvas id="events-deny-chart"></canvas>
                     </div>
                 </div>
                 <div class="chart-row">
-                    <div class="chart-card">
+                    <div class="chart-card" data-feature="policy_hits">
                         <h3>Top Rules</h3>
                         <canvas id="events-top-rules-chart"></canvas>
                     </div>
-                    <div class="chart-card">
+                    <div class="chart-card" data-feature="app_visibility">
                         <h3>App Categories</h3>
                         <canvas id="events-app-cat-chart"></canvas>
                     </div>
@@ -535,41 +544,41 @@
                  rendered by FwmonEvents.renderStats in admin-events.js) -->
             <div class="fwmon-load-host" id="events-stats-host">
                 <div class="chart-row">
-                    <div class="chart-card">
+                    <div class="chart-card" data-feature="geo">
                         <h3>Top Countries</h3>
                         <canvas id="events-geo-src-chart"></canvas>
                     </div>
-                    <div class="chart-card">
+                    <div class="chart-card" data-feature="geo">
                         <h3>Top Dest Countries</h3>
                         <canvas id="events-geo-dst-chart"></canvas>
                     </div>
                 </div>
                 <div class="chart-row">
-                    <div class="chart-card">
+                    <div class="chart-card" data-feature="user_attribution">
                         <h3>Top Users</h3>
                         <canvas id="events-users-chart"></canvas>
                     </div>
-                    <div class="chart-card">
+                    <div class="chart-card" data-feature="app_visibility">
                         <h3>Top Apps</h3>
                         <canvas id="events-apps-chart"></canvas>
                     </div>
                 </div>
                 <div class="chart-row">
-                    <div class="chart-card">
+                    <div class="chart-card" data-feature="web_categories">
                         <h3>Web Categories</h3>
                         <canvas id="events-web-cat-chart"></canvas>
                     </div>
-                    <div class="chart-card">
+                    <div class="chart-card" data-feature="dns_visibility">
                         <h3>Top DNS</h3>
                         <canvas id="events-dns-chart"></canvas>
                     </div>
                 </div>
                 <div class="chart-row">
-                    <div class="chart-card">
+                    <div class="chart-card" data-feature="nat_forensics">
                         <h3>NAT Pairs</h3>
                         <canvas id="events-nat-chart"></canvas>
                     </div>
-                    <div class="chart-card">
+                    <div class="chart-card" data-feature="identity_inventory">
                         <h3>Identity</h3>
                         <canvas id="events-identity-chart"></canvas>
                     </div>
@@ -618,61 +627,61 @@
                          rendered by FwmonEvents.renderSecStats in admin-events.js) -->
                     <div class="fwmon-load-host" id="sec-events-analytics-host">
                         <div class="chart-row">
-                            <div class="chart-card">
+                            <div class="chart-card" data-feature="utm_trends">
                                 <h3>Findings Trend</h3>
                                 <canvas id="sec-findings-trend-chart"></canvas>
                             </div>
-                            <div class="chart-card">
+                            <div class="chart-card" data-feature="utm_trends">
                                 <h3>Top Signatures</h3>
                                 <canvas id="sec-top-signatures-chart"></canvas>
                             </div>
                         </div>
                         <div class="chart-row">
-                            <div class="chart-card">
+                            <div class="chart-card" data-feature="admin_login_audit">
                                 <h3>Admin Logins</h3>
                                 <canvas id="sec-admin-logins-chart"></canvas>
                             </div>
-                            <div class="chart-card">
+                            <div class="chart-card" data-feature="admin_login_audit">
                                 <h3>Top Admin Users</h3>
                                 <canvas id="sec-top-admin-users-chart"></canvas>
                             </div>
                         </div>
                         <div class="chart-row">
-                            <div class="chart-card">
+                            <div class="chart-card" data-feature="config_audit">
                                 <h3>Config Changes</h3>
                                 <canvas id="sec-config-changes-chart"></canvas>
                             </div>
-                            <div class="chart-card">
+                            <div class="chart-card" data-feature="config_audit">
                                 <h3>Top Config Paths</h3>
                                 <canvas id="sec-top-config-paths-chart"></canvas>
                             </div>
                         </div>
                         <div class="chart-row">
-                            <div class="chart-card">
+                            <div class="chart-card" data-feature="vpn_sessions">
                                 <h3>VPN Sessions</h3>
                                 <canvas id="sec-vpn-sessions-chart"></canvas>
                             </div>
-                            <div class="chart-card">
+                            <div class="chart-card" data-feature="vpn_sessions">
                                 <h3>Top Tunnels</h3>
                                 <canvas id="sec-top-tunnels-chart"></canvas>
                             </div>
                         </div>
                         <div class="chart-row">
-                            <div class="chart-card">
+                            <div class="chart-card" data-feature="admin_login_audit">
                                 <h3>Top Admin Source IPs</h3>
                                 <canvas id="sec-top-admin-src-chart"></canvas>
                             </div>
-                            <div class="chart-card">
+                            <div class="chart-card" data-feature="config_audit">
                                 <h3>Top Config Admins</h3>
                                 <canvas id="sec-top-config-admins-chart"></canvas>
                             </div>
                         </div>
                         <div class="chart-row">
-                            <div class="chart-card">
+                            <div class="chart-card" data-feature="vpn_sessions">
                                 <h3>Top Tunnel Peers</h3>
                                 <canvas id="sec-top-tunnel-peers-chart"></canvas>
                             </div>
-                            <div class="chart-card">
+                            <div class="chart-card" data-feature="wan_health">
                                 <h3>WAN Health</h3>
                                 <canvas id="sec-wan-health-chart"></canvas>
                             </div>

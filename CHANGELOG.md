@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.326] - 2026-10-11
+
+### Added — the Events page gates analytics by the active device's vendor capability
+
+- The Events page (`/admin/events`) now reads the capability matrix already built for multi-vendor correctness and shows **"not available" instead of zeros**: when a device filter is selected, `FwmonEvents` fetches `GET /admin/api/devices/:id/capabilities` (cached per device) and hides or annotates each analytics card by its feature verdict. A dimension the vendor **cannot supply** (`unsupported`) hides its card; one it can supply but was not observed sending in the last 24 h (`inactive`) shows the card with a "No data observed in the last 24 h (feature unused / option off)" hint; one that is `degraded` (partial / config-dependent) shows the card with the profile's field caveat. Cards with no declared feature (Directions, Rulesets) stay ungated.
+- The card→feature map covers `deny_analytics` (Deny trend), `policy_bytes` (Policy bytes), `policy_hits` (Top rules), `app_visibility` (App categories / Top apps), `geo` (Top countries / Top dest countries), `user_attribution` (Top users), `web_categories` (Web categories), `dns_visibility` (Top DNS), `nat_forensics` (NAT pairs), `identity_inventory` (Identity), `utm_trends` (Findings trend / Top signatures), `admin_login_audit` (Admin logins / Top admin users / Top admin source IPs), `config_audit` (Config changes / Top config paths / Top config admins), `vpn_sessions` (VPN sessions / Top tunnels / Top tunnel peers), and `wan_health` (WAN health). `Chart` drawing skips a hidden card so Chart.js never renders into a 0-sized canvas.
+- The capability endpoints are **admin-only**, but the Events page is viewer-readable: a non-admin gets a `403` and the page falls back to showing every section **ungated** (best effort) and logs quietly rather than blanking the page. No route or role-map change — the per-device "which log options are on" matrix stays admin-only.
+
 ## [0.11.325] - 2026-10-11
 
 ### Added — the Security tab gets class-scoped analytics over raw `sec_events`
