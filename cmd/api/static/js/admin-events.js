@@ -1,4 +1,4 @@
-/* admin-events.js — Events page (Phase 2, PR 1 + PR 3).
+/* admin-events.js — Events page (Phase 2, PR 1 + PR 3 + PR 4 + PR 5).
  *
  * Owns the page rendered at /admin/events: the readers of the normalized
  * net_events (Network tab, PR 1) and sec_events (Security tab, PR 3) tables. A
@@ -526,9 +526,10 @@
         setVal('events-filter-rule-key', state.rule_key);
         activatePills();
         renderChips();
-        // The rollup analytics share the device/site filters, so a change there
-        // (or a clear) re-fetches them alongside the list.
+        // The rollup and short-window analytics share the device/site filters,
+        // so a change there (or a clear) re-fetches them alongside the list.
         loadAnalytics();
+        loadStats();
     }
 
     function activatePills() {
@@ -974,6 +975,87 @@
     }
 
     // ----------------------------------------------------------------------
+    // Short-window analytics (Phase 2, PR 5 — raw net_events, hour-granular)
+    // ----------------------------------------------------------------------
+    // The rollup analytics above are day-granular and long-term (fixed 30 days).
+    // These cover the dimensions the rollups do NOT retain (geo, identity,
+    // users, apps, web categories, DNS, NAT) and share the page-level `hours`
+    // range pills plus the device/site filters with the raw event lists.
+    function statsURL() {
+        var p = [];
+        if (state.hours && Number(state.hours) !== 24) p.push('hours=' + encodeURIComponent(state.hours));
+        if (state.site_id) p.push('site_id=' + encodeURIComponent(state.site_id));
+        if (state.device_id) p.push('device_id=' + encodeURIComponent(state.device_id));
+        return '/admin/api/events/analytics' + (p.length ? '?' + p.join('&') : '');
+    }
+
+    function loadStats() {
+        var host = document.getElementById('events-stats-host');
+        if (!host) return;
+        AC.chartLoad(host, function(signal) {
+            return apiFetch(statsURL(), { signal: signal });
+        }, { key: 'events-stats', label: 'Loading analytics…', escScope: document.getElementById('page-events') }).then(function(r) {
+            if (r.superseded || r.cancelled) return;
+            if (r.error || !r.data) {
+                AC.chartNotice(host, 'Could not load analytics', { dim: false, onRetry: loadStats });
+                return;
+            }
+            renderStats(r.data.data || {});
+        });
+    }
+
+    // truncateKey keeps a long label readable on a ranking axis (DNS names and
+    // NAT/identity pairs can be much longer than a card's tick).
+    function truncateKey(k) {
+        if (!k) return '';
+        return k.length > 24 ? k.slice(0, 23) + '…' : k;
+    }
+
+    function renderStats(d) {
+        // Top countries (source and destination): doughnuts of hits by ISO code.
+        var geoSrc = d.geo_src || [];
+        eventsChart('events-geo-src-chart', 'doughnut', geoSrc.map(function(g) { return g.country; }),
+            [{ data: geoSrc.map(function(g) { return g.hits; }), backgroundColor: ANALYTICS_COLORS.slice(0, geoSrc.length), borderWidth: 0 }]);
+
+        var geoDst = d.geo_dst || [];
+        eventsChart('events-geo-dst-chart', 'doughnut', geoDst.map(function(g) { return g.country; }),
+            [{ data: geoDst.map(function(g) { return g.hits; }), backgroundColor: ANALYTICS_COLORS.slice(0, geoDst.length), borderWidth: 0 }]);
+
+        // Top users / apps / DNS: horizontal bars of hits, highest first.
+        var users = d.users || [];
+        eventsChart('events-users-chart', 'bar', users.map(function(c) { return truncateKey(c.key); }),
+            [{ label: 'Hits', data: users.map(function(c) { return c.count; }), backgroundColor: '#58a6ff', borderRadius: 3 }],
+            { indexAxis: 'y' });
+
+        var apps = d.apps || [];
+        eventsChart('events-apps-chart', 'bar', apps.map(function(c) { return truncateKey(c.key); }),
+            [{ label: 'Hits', data: apps.map(function(c) { return c.count; }), backgroundColor: '#3fb950', borderRadius: 3 }],
+            { indexAxis: 'y' });
+
+        // Web categories: doughnut.
+        var webCats = d.web_categories || [];
+        eventsChart('events-web-cat-chart', 'doughnut', webCats.map(function(c) { return c.key === '' ? 'uncategorized' : c.key; }),
+            [{ data: webCats.map(function(c) { return c.count; }), backgroundColor: ANALYTICS_COLORS.slice(0, webCats.length), borderWidth: 0 }]);
+
+        var dns = d.dns || [];
+        eventsChart('events-dns-chart', 'bar', dns.map(function(c) { return truncateKey(c.key); }),
+            [{ label: 'Hits', data: dns.map(function(c) { return c.count; }), backgroundColor: '#d2992a', borderRadius: 3 }],
+            { indexAxis: 'y' });
+
+        // NAT pairs: "src → dst" before/after translation.
+        var nat = d.nat || [];
+        eventsChart('events-nat-chart', 'bar', nat.map(function(n) { return truncateKey(n.src_ip + ' → ' + n.dst_ip); }),
+            [{ label: 'Hits', data: nat.map(function(n) { return n.hits; }), backgroundColor: '#bc8cff', borderRadius: 3 }],
+            { indexAxis: 'y' });
+
+        // Identity: "src_ip (src_mac)", MAC omitted when the vendor supplied none.
+        var identity = d.identity || [];
+        eventsChart('events-identity-chart', 'bar', identity.map(function(x) { return truncateKey(x.src_ip + (x.src_mac ? ' (' + x.src_mac + ')' : '')); }),
+            [{ label: 'Hits', data: identity.map(function(x) { return x.hits; }), backgroundColor: '#39c5cf', borderRadius: 3 }],
+            { indexAxis: 'y' });
+    }
+
+    // ----------------------------------------------------------------------
     // Boot
     // ----------------------------------------------------------------------
     function init() {
@@ -999,6 +1081,7 @@
         if (activeTab === 'security') secFirstPage();
         else firstPage();
         loadAnalytics();
+        loadStats();
     }
     function getState() { return Object.assign({}, state); }
 

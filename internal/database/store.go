@@ -54,6 +54,7 @@ type Store interface {
 	NetEventReadStore
 	SecEventReadStore
 	NetEventRollupReadStore
+	NetEventStatsReadStore
 	ArchiveGateStore
 	ArchiveStatusStore
 	ArchiveRestoreStore
@@ -177,6 +178,16 @@ type SecEventReadStore interface {
 // indexes or migrations.
 type NetEventRollupReadStore interface {
 	NetEventRollupStats(f NetEventRollupFilter) (*NetEventRollupStatsResult, error)
+}
+
+// NetEventStatsReadStore covers the short-window analytics read path over the
+// raw net_events table (Phase 2, PR 5, normalized_read.go): the Events page's
+// geo / identity / user / app / web-category / DNS / NAT breakdowns for the
+// dimensions the rollups do not retain. Every series is a `ts >= cutoff` GROUP
+// BY over a bounded window (≤720 h), so the daily partitions prune and no
+// indexes or migrations are added.
+type NetEventStatsReadStore interface {
+	NetEventStats(f NetEventStatsFilter) (*NetEventStatsResult, error)
 }
 
 // NormalizeBackfillStore covers the one-time normalized-event backfill queue

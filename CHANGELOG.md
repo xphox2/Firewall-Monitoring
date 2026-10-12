@@ -1,6 +1,13 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.324] - 2026-10-11
+
+### Added — the Events page gets short-window analytics over raw `net_events`
+
+- The Events page (`/admin/events`) now charts **short-window analytics** over the raw `net_events` table — the dimensions the daily rollups do not retain — up to 30 days. A new viewer-accessible `GET /api/events/analytics` (query: `hours` 1–720 default 24, `device_id`, `site_id`) returns nine series: **source/destination countries** (hits and bytes in/out by ISO-3166 code), **identity** (top `src_ip`/`src_mac` pairs), **users** (`user_name`), **apps** (`app`) and **app categories** (`app_cat`), **web categories** (`web_cat`), **DNS** (top `dns_qname`), and **NAT pairs** (`nat_src_ip`/`nat_dst_ip`). The page renders these as "Top countries", "Top dest countries", "Top users", "Top apps", "App categories", "Web categories", "Top DNS", "NAT pairs" and "Identity" cards.
+- `internal/database.NetEventStats` computes each series as a `GROUP BY` over `ts >= cutoff`, so the table's daily RANGE partitions prune and the existing `(ts)` / `(device_id, ts)` indexes serve the window and the device/site narrowing — **no new indexes or migrations**. The default stays bounded at 24 h and each ranking is capped at 10 entries, so a full-window aggregate over the 30-day ceiling is never forced; empty/NULL groups are skipped.
+
 ## [0.11.323] - 2026-10-11
 
 ### Added — the Events page gets long-term analytics from `net_event_rollups`

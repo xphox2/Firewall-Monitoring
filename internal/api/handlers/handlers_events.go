@@ -227,3 +227,76 @@ func (h *Handler) GetNetEventRollups(c *gin.Context) {
 		"rulesets":       stats.Rulesets,
 	}))
 }
+
+// GetNetEventAnalytics returns the Events page's short-window analytics series
+// (Phase 2, PR 5) from the raw net_events table: the geo / identity / user /
+// app / web-category / DNS / NAT breakdowns for the dimensions the rollups do
+// not retain, over up to 720 hours (30 days, default 24). It is a read-only
+// viewer-accessible endpoint (registered beside /api/events, NOT in
+// adminOnlyRoutes) and adds no index or migration — every series groups over
+// `ts >= cutoff`, served by the existing (ts) / (device_id, ts) indexes.
+func (h *Handler) GetNetEventAnalytics(c *gin.Context) {
+	db := h.reqDB(c)
+	if db == nil {
+		c.JSON(http.StatusOK, response.Success(gin.H{
+			"geo_src":        []database.NetEventGeoStat{},
+			"geo_dst":        []database.NetEventGeoStat{},
+			"identity":       []database.NetEventIdentityStat{},
+			"users":          []database.KeyCount{},
+			"apps":           []database.KeyCount{},
+			"app_categories": []database.KeyCount{},
+			"web_categories": []database.KeyCount{},
+			"dns":            []database.KeyCount{},
+			"nat":            []database.NetEventNATStat{},
+		}))
+		return
+	}
+
+	// hours is the short-window lookback: 1..720, default 24. Reject a
+	// non-integer or out-of-range value up front (AUDIT-251 discipline — a bad
+	// value is a 400, never a 500 from binding a bogus number into a bound).
+	hours := 24
+	if raw := strings.TrimSpace(c.Query("hours")); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 720 {
+			c.JSON(http.StatusBadRequest, response.Error("Invalid hours (expected 1..720)"))
+			return
+		}
+		hours = n
+	}
+
+	// device_id / site_id must be valid uints before they are bound against the
+	// uint columns (22P02/500 on Postgres; SQLite silently matches nothing).
+	for _, name := range []string{"device_id", "site_id"} {
+		if msg := validateNumericFilter(c, name); msg != "" {
+			c.JSON(http.StatusBadRequest, response.Error(msg))
+			return
+		}
+	}
+
+	f := database.NetEventStatsFilter{Hours: hours}
+	if v, ok := httputil.ParseUintQuery(c, "device_id"); ok {
+		f.DeviceID = v
+	}
+	if v, ok := httputil.ParseUintQuery(c, "site_id"); ok {
+		f.SiteID = v
+	}
+
+	stats, err := db.NetEventStats(f)
+	if err != nil {
+		httputil.InternalError(c, "Failed to get event analytics", err)
+		return
+	}
+
+	c.JSON(http.StatusOK, response.Success(gin.H{
+		"geo_src":        stats.GeoSrc,
+		"geo_dst":        stats.GeoDst,
+		"identity":       stats.Identity,
+		"users":          stats.Users,
+		"apps":           stats.Apps,
+		"app_categories": stats.AppCategories,
+		"web_categories": stats.WebCategories,
+		"dns":            stats.DNS,
+		"nat":            stats.NAT,
+	}))
+}

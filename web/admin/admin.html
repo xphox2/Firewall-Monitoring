@@ -531,6 +531,51 @@
                 </div>
             </div>
 
+            <!-- Short-window analytics (Phase 2, PR 5 — raw net_events, hour-granular;
+                 rendered by FwmonEvents.renderStats in admin-events.js) -->
+            <div class="fwmon-load-host" id="events-stats-host">
+                <div class="chart-row">
+                    <div class="chart-card">
+                        <h3>Top Countries</h3>
+                        <canvas id="events-geo-src-chart"></canvas>
+                    </div>
+                    <div class="chart-card">
+                        <h3>Top Dest Countries</h3>
+                        <canvas id="events-geo-dst-chart"></canvas>
+                    </div>
+                </div>
+                <div class="chart-row">
+                    <div class="chart-card">
+                        <h3>Top Users</h3>
+                        <canvas id="events-users-chart"></canvas>
+                    </div>
+                    <div class="chart-card">
+                        <h3>Top Apps</h3>
+                        <canvas id="events-apps-chart"></canvas>
+                    </div>
+                </div>
+                <div class="chart-row">
+                    <div class="chart-card">
+                        <h3>Web Categories</h3>
+                        <canvas id="events-web-cat-chart"></canvas>
+                    </div>
+                    <div class="chart-card">
+                        <h3>Top DNS</h3>
+                        <canvas id="events-dns-chart"></canvas>
+                    </div>
+                </div>
+                <div class="chart-row">
+                    <div class="chart-card">
+                        <h3>NAT Pairs</h3>
+                        <canvas id="events-nat-chart"></canvas>
+                    </div>
+                    <div class="chart-card">
+                        <h3>Identity</h3>
+                        <canvas id="events-identity-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+
             <div class="card">
                 <div class="card-header fwmon-flows-data-header">
                     <div class="fwmon-flows-tabs" id="events-view-tabs" role="tablist">
