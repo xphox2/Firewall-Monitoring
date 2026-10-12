@@ -155,20 +155,24 @@ type ArchiveSettingsStore interface {
 }
 
 // NetEventReadStore covers the read path of the normalized network-event table
-// (Phase 2, PR 1, normalized_read.go): the Events page's filtered, ts-bounded,
-// paged list. The capped-count bool lets the handler render a "10,000+" pager
-// without ever running an exact COUNT over the full window.
+// (Phase 2, PR 1 + PR 8, normalized_read.go): the Events page's filtered,
+// ts-bounded, paged list plus the single-row detail getter behind a row click.
+// The capped-count bool lets the handler render a "10,000+" pager without ever
+// running an exact COUNT over the full window.
 type NetEventReadStore interface {
 	ListNetEvents(f NetEventFilter, offset, limit int) ([]NetEventRow, int64, bool, error)
+	GetNetEvent(id uint) (*NetEventRow, error)
 }
 
 // SecEventReadStore covers the read path of the normalized security-event table
-// (Phase 2, PR 3, normalized_read.go): the Security events tab's filtered,
-// ts-bounded, paged list. Same capped-count discipline as NetEventReadStore —
-// sec_events is already indexed (idx_sec_events_ts / idx_sec_events_device_ts /
-// idx_sec_events_class_ts), so this reader adds no indexes or migrations.
+// (Phase 2, PR 3 + PR 8, normalized_read.go): the Security events tab's
+// filtered, ts-bounded, paged list plus the single-row detail getter. Same
+// capped-count discipline as NetEventReadStore — sec_events is already indexed
+// (idx_sec_events_ts / idx_sec_events_device_ts / idx_sec_events_class_ts), so
+// this reader adds no indexes or migrations.
 type SecEventReadStore interface {
 	ListSecEvents(f SecEventFilter, offset, limit int) ([]SecEventRow, int64, bool, error)
+	GetSecEvent(id uint) (*SecEventRow, error)
 }
 
 // NetEventRollupReadStore covers the long-term analytics read path over

@@ -374,6 +374,42 @@
         }
 
         bindSecControls();
+        bindRowClicks();
+        bindEventModal();
+    }
+
+    // bindEventModal wires the event-detail modal's own close buttons (the modal
+    // is a static DOM element, so a delegated listener on it is enough and keeps
+    // this module self-contained, matching admin-flows.js's detection modal).
+    function bindEventModal() {
+        var modal = document.getElementById('event-detail-modal');
+        if (!modal || modal.__fwmonEventsBound) return;
+        modal.__fwmonEventsBound = true;
+        modal.addEventListener('click', function(ev) {
+            if (ev.target.closest('[data-action="close-event-detail"]')) {
+                AC.closeModal('event-detail-modal');
+            }
+        });
+    }
+
+    // bindRowClicks wires a delegated click on both event tables: a click on a
+    // row (outside any in-row device link) opens the detail modal for that
+    // event. Idempotent via the per-table __fwmonEventsRowBound guard.
+    function bindRowClicks() {
+        [
+            { id: 'events-table', kind: 'net' },
+            { id: 'sec-events-table', kind: 'sec' }
+        ].forEach(function(spec) {
+            var table = document.getElementById(spec.id);
+            if (!table || table.__fwmonEventsRowBound) return;
+            table.__fwmonEventsRowBound = true;
+            table.addEventListener('click', function(ev) {
+                if (ev.target.closest('a')) return; // in-row device links navigate
+                var tr = ev.target.closest('tr[data-evt-id]');
+                if (!tr) return;
+                showEventDetail(tr.getAttribute('data-evt-id'), spec.kind);
+            });
+        });
     }
 
     // bindSecControls wires the Security tab: the class/device/severity selects,
@@ -643,7 +679,7 @@
         var threat = r.threat_flag ? '<span class="badge critical" title="Threat-flagged event">THREAT</span>' : '';
         var direction = enumLabel('DIRECTION', r.direction);
         var app = r.app || r.app_cat || '';
-        return '<tr>' +
+        return '<tr class="events-row" data-evt-id="' + r.id + '">' +
             '<td class="td-nowrap">' + AC.formatDate(r.ts) + '</td>' +
             '<td>' + (r.device_name ? AC.deviceLink(r.device_id, r.device_name) : esc('DEV-' + r.device_id)) +
                 (r.vendor ? ' <span class="badge unknown">' + esc(r.vendor) + '</span>' : '') + '</td>' +
@@ -841,7 +877,7 @@
 
     function secRenderRow(r) {
         var cols = secColumns();
-        var html = '<tr>' +
+        var html = '<tr class="events-row" data-evt-id="' + r.id + '">' +
             '<td class="td-nowrap">' + AC.formatDate(r.ts) + '</td>' +
             '<td>' + (r.device_name ? AC.deviceLink(r.device_id, r.device_name) : esc('DEV-' + r.device_id)) +
                 (r.vendor ? ' <span class="badge unknown">' + esc(r.vendor) + '</span>' : '') + '</td>' +
@@ -1292,6 +1328,175 @@
         deviceCapabilities(deviceId).then(function(caps) {
             applyGating('sec-events-analytics-host', caps);
         });
+    }
+
+    // ----------------------------------------------------------------------
+    // Event detail (Phase 2, PR 8 — row click → full event + raw syslog bridge)
+    // ----------------------------------------------------------------------
+    // A row click fetches the single-row detail endpoint and renders every
+    // column the row carries (enums via FwmonEnums, addresses/bytes via the same
+    // formatters as the list). When the event carries raw_id, the modal also
+    // offers a "View raw syslog" link that fetches the original syslog line and
+    // renders it inline; because that raw row may already be archived or out of
+    // retention, a 404 degrades to a quiet inline note rather than an error.
+
+    // kv renders one label/value cell of the two-column detail grid. The label
+    // is escaped; the value is trusted HTML built by the formatters above.
+    function kv(label, html) {
+        if (html == null || html === '') return '';
+        return '<span style="color:var(--fwmon-text-faint);">' + esc(label) + '</span><span>' + html + '</span>';
+    }
+
+    function detailDevice(r) {
+        var dev = r.device_name ? AC.deviceLink(r.device_id, r.device_name) : esc('DEV-' + r.device_id);
+        return dev + (r.vendor ? ' <span class="badge unknown">' + esc(r.vendor) + '</span>' : '');
+    }
+
+    function netEventFields(r) {
+        var rows = [
+            kv('ID', esc(String(r.id))),
+            kv('Time', esc(AC.formatDate(r.ts))),
+            kv('Device', detailDevice(r)),
+            r.probe_id ? kv('Probe', esc(String(r.probe_id))) : '',
+            kv('Activity', esc(enumLabel('ACTIVITY', r.activity))),
+            kv('Action', actionBadge(r.action)),
+            r.direction != null ? kv('Direction', esc(enumLabel('DIRECTION', r.direction))) : '',
+            (r.src_ip || r.src_port) ? kv('Source', endpoint(r.src_ip, r.src_port)) : '',
+            (r.dst_ip || r.dst_port) ? kv('Destination', endpoint(r.dst_ip, r.dst_port)) : '',
+            r.proto != null ? kv('Protocol', esc(protoLabel(r.proto))) : '',
+            r.app ? kv('App', esc(r.app)) : '',
+            r.app_cat ? kv('App category', esc(r.app_cat)) : '',
+            r.user_name ? kv('User', esc(r.user_name)) : '',
+            (r.src_country || r.dst_country) ? kv('Countries', countries(r.src_country, r.dst_country)) : '',
+            (r.bytes_in != null || r.bytes_out != null) ? kv('Bytes', bytes(r.bytes_in, r.bytes_out)) : '',
+            r.threat_flag ? kv('Threat', '<span class="badge critical">THREAT</span>') : ''
+        ];
+        return rows.join('');
+    }
+
+    function secEventFields(r) {
+        var rows = [
+            kv('ID', esc(String(r.id))),
+            kv('Time', esc(AC.formatDate(r.ts))),
+            kv('Device', detailDevice(r)),
+            r.probe_id ? kv('Probe', esc(String(r.probe_id))) : '',
+            kv('Class', classBadge(r.class)),
+            kv('Activity', esc(enumLabel('ACTIVITY', r.activity))),
+            kv('Action', actionBadge(r.action)),
+            kv('Severity', severityBadge(r.severity)),
+            (r.src_ip || r.src_port) ? kv('Source', endpoint(r.src_ip, r.src_port)) : '',
+            (r.dst_ip || r.dst_port) ? kv('Destination', endpoint(r.dst_ip, r.dst_port)) : '',
+            r.proto != null ? kv('Protocol', esc(protoLabel(r.proto))) : '',
+            r.user_name ? kv('User', esc(r.user_name)) : '',
+            r.src_hostname ? kv('Source hostname', esc(r.src_hostname)) : '',
+            r.admin_user ? kv('Admin user', esc(r.admin_user)) : '',
+            r.admin_src_ip ? kv('Admin source IP', esc(r.admin_src_ip)) : '',
+            r.admin_method ? kv('Admin method', esc(r.admin_method)) : '',
+            r.sig_id ? kv('Signature ID', esc(r.sig_id)) : '',
+            r.sig_name ? kv('Signature', esc(r.sig_name)) : '',
+            r.threat_cat ? kv('Threat category', esc(r.threat_cat)) : '',
+            r.file_hash ? kv('File hash', esc(r.file_hash)) : '',
+            r.url_host ? kv('URL host', esc(r.url_host)) : '',
+            r.tunnel_name ? kv('Tunnel', esc(r.tunnel_name)) : '',
+            r.tunnel_type ? kv('Tunnel type', esc(r.tunnel_type)) : '',
+            r.tunnel_peer ? kv('Tunnel peer', esc(r.tunnel_peer)) : '',
+            r.config_path ? kv('Config path', esc(r.config_path)) : '',
+            r.config_obj ? kv('Config object', esc(r.config_obj)) : '',
+            r.config_old ? kv('Config old', esc(r.config_old)) : '',
+            r.config_new ? kv('Config new', esc(r.config_new)) : '',
+            r.wan_name ? kv('WAN', esc(r.wan_name)) : '',
+            r.metric_name ? kv('Metric', esc(r.metric_name)) : '',
+            r.metric_value != null ? kv('Value', esc(String(r.metric_value))) : '',
+            r.message ? kv('Message', esc(r.message)) : ''
+        ];
+        return rows.join('');
+    }
+
+    // showEventDetail fetches one event by id and opens the detail modal. A 404
+    // here means the event itself fell out of retention between the list render
+    // and the click — surfaced as a toast, not a crash.
+    function showEventDetail(id, kind) {
+        var url = (kind === 'sec' ? '/admin/api/security-events/' : '/admin/api/events/') + encodeURIComponent(id);
+        apiFetch(url).then(function(r) {
+            var evt = r && r.data;
+            if (!evt) {
+                AC.showError('Failed to load event detail');
+                return;
+            }
+            renderEventDetail(evt, kind);
+            AC.openModal('event-detail-modal');
+        }).catch(function(err) {
+            if (err && err.status === 404) {
+                AC.showError('This event is no longer available (outside retention)');
+            } else {
+                AC.showError('Failed to load event detail');
+            }
+        });
+    }
+
+    function renderEventDetail(evt, kind) {
+        var title = document.getElementById('event-detail-modal-title');
+        var body = document.getElementById('event-detail-body');
+        if (!body) return;
+        if (title) title.textContent = (kind === 'sec' ? 'Security Event' : 'Network Event') + ' #' + evt.id;
+        var fields = kind === 'sec' ? secEventFields(evt) : netEventFields(evt);
+        body.innerHTML = '<div style="display:grid;grid-template-columns:160px 1fr;row-gap:8px;column-gap:16px;align-items:baseline;">' + fields + '</div>';
+        renderRawSyslog(evt);
+    }
+
+    // renderRawSyslog builds the "View raw syslog" control when the event has a
+    // raw_id. It renders the button eagerly but fetches the line only on click,
+    // so the common case (no click) costs nothing.
+    function renderRawSyslog(evt) {
+        var host = document.getElementById('event-detail-raw');
+        if (!host) return;
+        if (evt.raw_id == null) {
+            host.innerHTML = '';
+            return;
+        }
+        host.innerHTML = '<button type="button" class="btn secondary sm" id="event-detail-raw-link">View raw syslog</button>' +
+            '<span id="event-detail-raw-result" style="margin-left:12px;"></span>';
+        document.getElementById('event-detail-raw-link').addEventListener('click', function() {
+            loadRawSyslog(evt);
+        });
+    }
+
+    // loadRawSyslog fetches the original syslog line by (id, ts) and renders it
+    // inline. The raw row is best-effort: it may already be archived or out of
+    // retention, so a 404 becomes a quiet inline note, never an error toast.
+    function loadRawSyslog(evt) {
+        var result = document.getElementById('event-detail-raw-result');
+        if (!result) return;
+        result.innerHTML = '<span style="color:var(--fwmon-text-faint);">Loading…</span>';
+        var url = '/admin/api/syslog/' + encodeURIComponent(evt.raw_id);
+        if (evt.raw_ts) url += '?ts=' + encodeURIComponent(evt.raw_ts);
+        apiFetch(url).then(function(r) {
+            var m = r && r.data;
+            if (!m) {
+                result.innerHTML = '<span style="color:var(--fwmon-text-faint);">raw line no longer available (archived or outside retention)</span>';
+                return;
+            }
+            result.innerHTML = rawSyslogHtml(m);
+        }).catch(function(err) {
+            if (err && err.status === 404) {
+                result.innerHTML = '<span style="color:var(--fwmon-text-faint);">raw line no longer available (archived or outside retention)</span>';
+            } else {
+                result.innerHTML = '<span style="color:var(--fwmon-text-faint);">raw syslog could not be loaded</span>';
+            }
+        });
+    }
+
+    // rawSyslogHtml renders the fetched syslog line: a parsed view when the
+    // FortiGate formatter is present (same as the Syslog detail modal), else the
+    // escaped raw message in a pre block.
+    function rawSyslogHtml(m) {
+        var meta = '';
+        if (m.source_ip) meta += '<div style="margin-bottom:4px;"><span style="color:var(--fwmon-text-faint);">Source:</span> <span class="mono">' + esc(m.source_ip) + '</span></div>';
+        if (m.hostname) meta += '<div style="margin-bottom:4px;"><span style="color:var(--fwmon-text-faint);">Host:</span> ' + esc(m.hostname) + '</div>';
+        var msg = (typeof window.formatFortiGateLogHtml === 'function' && m.message)
+            ? window.formatFortiGateLogHtml(m.message)
+            : '<pre style="white-space:pre-wrap;word-break:break-all;margin:0;">' + esc(m.message || '') + '</pre>';
+        return '<div style="margin-top:8px;">' + meta + msg + '</div>';
     }
 
     // ----------------------------------------------------------------------

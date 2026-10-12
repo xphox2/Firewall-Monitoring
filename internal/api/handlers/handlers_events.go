@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"net/netip"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"firewall-mon/internal/httputil"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // GetNetEvents lists normalized network events for the admin Events page. It
@@ -159,6 +161,62 @@ func (h *Handler) GetSecEvents(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response.Success(gin.H{"events": rows, "total": total, "total_capped": capped}))
+}
+
+// GetNetEvent returns one normalized network event by id (Phase 2, PR 8) — the
+// detail view behind a row click on the Events page. Like GetNetEvents it is a
+// read-only viewer-accessible endpoint (registered beside /api/events, NOT in
+// adminOnlyRoutes). A malformed id is a 400; an unknown id is a 404; the row is
+// returned directly under `data`, carrying the raw_id/raw_ts provenance the
+// "View raw syslog" link reads.
+func (h *Handler) GetNetEvent(c *gin.Context) {
+	db := h.reqDB(c)
+	if db == nil {
+		c.JSON(http.StatusNotFound, response.Error("Event not found"))
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+	row, err := db.GetNetEvent(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, response.Error("Event not found"))
+			return
+		}
+		httputil.InternalError(c, "Failed to get network event", err)
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(row))
+}
+
+// GetSecEvent returns one normalized security event by id (Phase 2, PR 8) — the
+// detail view behind a row click on the Events page's Security tab. Like
+// GetSecEvents it is a read-only viewer-accessible endpoint (registered beside
+// /api/security-events, NOT in adminOnlyRoutes). A malformed id is a 400; an
+// unknown id is a 404; the row carries the raw_id/raw_ts provenance the
+// "View raw syslog" link reads.
+func (h *Handler) GetSecEvent(c *gin.Context) {
+	db := h.reqDB(c)
+	if db == nil {
+		c.JSON(http.StatusNotFound, response.Error("Event not found"))
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+	row, err := db.GetSecEvent(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, response.Error("Event not found"))
+			return
+		}
+		httputil.InternalError(c, "Failed to get security event", err)
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(row))
 }
 
 // GetNetEventRollups returns the Events page's long-term analytics series

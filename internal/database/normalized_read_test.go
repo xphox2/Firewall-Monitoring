@@ -1,10 +1,13 @@
 package database
 
 import (
+	"errors"
 	"testing"
 	"time"
 
 	"firewall-mon/internal/models"
+
+	"gorm.io/gorm"
 )
 
 // Helpers for seeding the SQLite test lane with a minimal device/site/probe
@@ -1159,5 +1162,90 @@ func TestSecEventStats_EmptySkipped(t *testing.T) {
 	}
 	if len(stats.WanHealth) != 0 {
 		t.Fatalf("wan_health = %+v, want empty (no wan_name/metric)", stats.WanHealth)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Single-row detail getters (Phase 2, PR 8)
+// ---------------------------------------------------------------------------
+
+// TestGetNetEvent_Found seeds one net_event (with provenance) and asserts the
+// getter returns the same column set as the list — enrichment plus the
+// raw_id/raw_ts provenance the "View raw syslog" link reads.
+func TestGetNetEvent_Found(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	dev := seedNetEventDevice(t, db, "fw-1", nil)
+	ts := time.Date(2026, 10, 1, 10, 5, 0, 0, time.UTC)
+	rawID := int64(4242)
+	src := "10.0.0.5"
+	row := &models.NetEvent{Ts: ts, DeviceID: dev.ID, Activity: 3, Action: 2, SrcIP: &src, RawID: &rawID, RawTS: &ts}
+	if err := db.Gorm().Create(row).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	got, err := db.GetNetEvent(row.ID)
+	if err != nil {
+		t.Fatalf("GetNetEvent: %v", err)
+	}
+	if got.ID != row.ID || !got.Ts.Equal(ts) {
+		t.Fatalf("identity = %+v, want id %d ts %v", got, row.ID, ts)
+	}
+	if got.DeviceName != "fw-1" || got.Vendor != "fortigate" {
+		t.Fatalf("enrichment = %q/%q, want fw-1/fortigate", got.DeviceName, got.Vendor)
+	}
+	if got.Action != 2 || got.SrcIP == nil || *got.SrcIP != src {
+		t.Fatalf("columns = action %d src %v, want 2/10.0.0.5", got.Action, got.SrcIP)
+	}
+	if got.RawID == nil || *got.RawID != 4242 || got.RawTS == nil || !got.RawTS.Equal(ts) {
+		t.Fatalf("provenance = %v/%v, want 4242/%v", got.RawID, got.RawTS, ts)
+	}
+}
+
+// TestGetNetEvent_NotFound asserts an unknown id is gorm.ErrRecordNotFound (the
+// handler maps it to a 404), not a nil row.
+func TestGetNetEvent_NotFound(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	if _, err := db.GetNetEvent(999999); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("GetNetEvent(999999) err = %v, want ErrRecordNotFound", err)
+	}
+}
+
+// TestGetSecEvent_Found mirrors TestGetNetEvent_Found for sec_events: the class
+// and severity columns round-trip and the provenance is present.
+func TestGetSecEvent_Found(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	dev := seedNetEventDevice(t, db, "fw-1", nil)
+	ts := time.Date(2026, 10, 1, 10, 5, 0, 0, time.UTC)
+	rawID := int64(99)
+	sev := int16(7)
+	sig := "MALWARE-Foo"
+	row := &models.SecEvent{Ts: ts, DeviceID: dev.ID, Class: secClassFinding, Severity: &sev, SigName: &sig, RawID: &rawID, RawTS: &ts}
+	if err := db.Gorm().Create(row).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	got, err := db.GetSecEvent(row.ID)
+	if err != nil {
+		t.Fatalf("GetSecEvent: %v", err)
+	}
+	if got.ID != row.ID || !got.Ts.Equal(ts) {
+		t.Fatalf("identity = %+v, want id %d ts %v", got, row.ID, ts)
+	}
+	if got.DeviceName != "fw-1" || got.Vendor != "fortigate" {
+		t.Fatalf("enrichment = %q/%q, want fw-1/fortigate", got.DeviceName, got.Vendor)
+	}
+	if got.Class != secClassFinding || got.Severity == nil || *got.Severity != 7 || got.SigName == nil || *got.SigName != sig {
+		t.Fatalf("columns = class %d sev %v sig %v, want 2004/7/MALWARE-Foo", got.Class, got.Severity, got.SigName)
+	}
+	if got.RawID == nil || *got.RawID != 99 || got.RawTS == nil || !got.RawTS.Equal(ts) {
+		t.Fatalf("provenance = %v/%v, want 99/%v", got.RawID, got.RawTS, ts)
+	}
+}
+
+// TestGetSecEvent_NotFound asserts an unknown id is gorm.ErrRecordNotFound.
+func TestGetSecEvent_NotFound(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	if _, err := db.GetSecEvent(999999); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("GetSecEvent(999999) err = %v, want ErrRecordNotFound", err)
 	}
 }

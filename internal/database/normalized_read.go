@@ -79,18 +79,28 @@ type NetEventRow struct {
 	BytesIn    *int64    `json:"bytes_in"`
 	BytesOut   *int64    `json:"bytes_out"`
 	ThreatFlag int16     `json:"threat_flag"`
+	// RawID/RawTS are the provenance back to the syslog_messages row this event
+	// was normalized from (that PK is (id, timestamp) on partitioned installs,
+	// hence both). nil = the vendor supplied no raw line. The list renderer
+	// ignores them, but the event-detail "View raw syslog" forensic bridge
+	// (Phase 2, PR 8) needs them, and they cost one nullable bigint + timestamptz
+	// per row — cheaper than a second query path per clicked row.
+	RawID *int64     `json:"raw_id"`
+	RawTS *time.Time `json:"raw_ts"`
 	// DeviceName and Vendor are transient: enriched from the devices table, not
 	// stored on net_events.
 	DeviceName string `json:"device_name"`
 	Vendor     string `json:"vendor"`
 }
 
-// netEventSelectColumns is the explicit SELECT list behind ListNetEvents, in
-// NetEventRow field order. A hand-written list (not a GORM Select of the model)
-// so only the columns the page renders are read off the leaf.
+// netEventSelectColumns is the explicit SELECT list behind ListNetEvents and
+// GetNetEvent, in NetEventRow field order. A hand-written list (not a GORM
+// Select of the model) so only the columns the page and its detail view read
+// are fetched off the leaf. raw_id/raw_ts are included for the detail view's
+// "View raw syslog" link even though the list renderer ignores them.
 const netEventSelectColumns = "id, ts, device_id, probe_id, activity, action, direction, " +
 	"src_ip, src_port, dst_ip, dst_port, proto, app, app_cat, user_name, " +
-	"src_country, dst_country, bytes_in, bytes_out, threat_flag"
+	"src_country, dst_country, bytes_in, bytes_out, threat_flag, raw_id, raw_ts"
 
 // ListNetEvents returns a filtered, newest-first page of net_events rows plus
 // the capped count of rows matching the filter. limit is clamped to [1,500];
@@ -258,6 +268,24 @@ func (d *Database) enrichNetEventRows(rows []NetEventRow) {
 	}
 }
 
+// GetNetEvent returns one net_events row by id (gorm.ErrRecordNotFound when
+// absent), reusing the exact select list and enrichment ListNetEvents uses so
+// the detail view is the list row plus the provenance columns (raw_id/raw_ts)
+// the "View raw syslog" link needs. It is deliberately NOT ts-bounded: an id
+// lookup is a single-PK fetch, so there is no partition bound to prune against
+// and the row may legitimately be older than the list's window.
+func (d *Database) GetNetEvent(id uint) (*NetEventRow, error) {
+	var rows []NetEventRow
+	if err := d.db.Table("net_events").Select(netEventSelectColumns).Where("id = ?", id).Limit(1).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	d.enrichNetEventRows(rows)
+	return &rows[0], nil
+}
+
 // ---------------------------------------------------------------------------
 // sec_events — the security half of the Events page (Phase 2, PR 3)
 // ---------------------------------------------------------------------------
@@ -337,20 +365,29 @@ type SecEventRow struct {
 	MetricName  *string   `json:"metric_name"`
 	MetricValue *float64  `json:"metric_value"`
 	Message     *string   `json:"message"`
+	// RawID/RawTS are the provenance back to the syslog_messages row this event
+	// was normalized from (that PK is (id, timestamp) on partitioned installs,
+	// hence both). nil = the vendor supplied no raw line. The list renderer
+	// ignores them, but the event-detail "View raw syslog" forensic bridge
+	// (Phase 2, PR 8) needs them.
+	RawID *int64     `json:"raw_id"`
+	RawTS *time.Time `json:"raw_ts"`
 	// DeviceName and Vendor are transient: enriched from the devices table, not
 	// stored on sec_events.
 	DeviceName string `json:"device_name"`
 	Vendor     string `json:"vendor"`
 }
 
-// secEventSelectColumns is the explicit SELECT list behind ListSecEvents, in
-// SecEventRow field order — a hand-written list so only the columns the page
-// renders are read off the leaf (the page never touches raw_id/raw_ts/extra).
+// secEventSelectColumns is the explicit SELECT list behind ListSecEvents and
+// GetSecEvent, in SecEventRow field order — a hand-written list so only the
+// columns the page and its detail view read are fetched off the leaf.
+// raw_id/raw_ts are included for the detail view's "View raw syslog" link even
+// though the list renderer ignores them.
 const secEventSelectColumns = "id, ts, device_id, probe_id, class, activity, action, severity, " +
 	"src_ip, src_port, dst_ip, dst_port, proto, user_name, src_hostname, " +
 	"admin_user, admin_src_ip, admin_method, sig_id, sig_name, threat_cat, file_hash, url_host, " +
 	"tunnel_name, tunnel_type, tunnel_peer, config_path, config_obj, config_old, config_new, " +
-	"wan_name, metric_name, metric_value, message"
+	"wan_name, metric_name, metric_value, message, raw_id, raw_ts"
 
 // ListSecEvents returns a filtered, newest-first page of sec_events rows plus
 // the capped count of rows matching the filter. limit is clamped to [1,500];
@@ -478,6 +515,24 @@ func (d *Database) enrichSecEventRows(rows []SecEventRow) {
 			rows[i].Vendor = dv.Vendor
 		}
 	}
+}
+
+// GetSecEvent returns one sec_events row by id (gorm.ErrRecordNotFound when
+// absent), reusing the exact select list and enrichment ListSecEvents uses so
+// the detail view is the list row plus the provenance columns (raw_id/raw_ts)
+// the "View raw syslog" link needs. Not ts-bounded, for the same reason as
+// GetNetEvent: an id lookup has no partition bound to prune against, and a
+// config_change row is retained forever by default.
+func (d *Database) GetSecEvent(id uint) (*SecEventRow, error) {
+	var rows []SecEventRow
+	if err := d.db.Table("sec_events").Select(secEventSelectColumns).Where("id = ?", id).Limit(1).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	d.enrichSecEventRows(rows)
+	return &rows[0], nil
 }
 
 // ---------------------------------------------------------------------------

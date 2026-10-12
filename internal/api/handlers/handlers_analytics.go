@@ -490,8 +490,23 @@ func (h *Handler) GetSyslogMessage(c *gin.Context) {
 	if !ok {
 		return
 	}
+	q := db.Gorm().Where("id = ?", id)
+	// The syslog PK is (id, timestamp) on partitioned installs, so an id-only
+	// lookup cannot prune partitions (it rides each leaf's local (id, timestamp)
+	// index instead). The normalized-event provenance carries raw_ts — the exact
+	// timestamp of the syslog row — so an optional ?ts=<RFC3339> lets the caller
+	// name the partition and turn the per-partition index scans into one
+	// single-leaf fetch. Absent, the id-only lookup is kept as best effort.
+	if tsRaw := strings.TrimSpace(c.Query("ts")); tsRaw != "" {
+		ts, err := time.Parse(time.RFC3339Nano, tsRaw)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, response.Error("Invalid ts (expected an RFC3339 timestamp)"))
+			return
+		}
+		q = q.Where("timestamp = ?", ts)
+	}
 	var msg models.SyslogMessage
-	if err := db.Gorm().First(&msg, id).Error; err != nil {
+	if err := q.First(&msg).Error; err != nil {
 		c.JSON(http.StatusNotFound, response.Error("Syslog message not found"))
 		return
 	}

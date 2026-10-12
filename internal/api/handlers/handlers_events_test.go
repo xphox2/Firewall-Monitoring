@@ -3,10 +3,13 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
 	"firewall-mon/internal/models"
+
+	"github.com/gin-gonic/gin"
 )
 
 // TestGetNetEvents_Shape seeds one net_event and asserts the handler returns a
@@ -381,5 +384,141 @@ func TestGetSecEventAnalytics_BadParams(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("GetSecEventAnalytics(%q) = %d, want 200 (body=%s)", qs, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Event detail getters (Phase 2, PR 8)
+// ---------------------------------------------------------------------------
+
+// eventDetailIDParam sets the gin :id param on the test context.
+func eventDetailIDParam(c *gin.Context, id string) {
+	c.Params = gin.Params{{Key: "id", Value: id}}
+}
+
+// TestGetNetEvent_Shape seeds one net_event (with raw_id provenance) and asserts
+// the detail handler returns it under `data`, enriched, with raw_id intact.
+func TestGetNetEvent_Shape(t *testing.T) {
+	h, db := setupTestHandler(t)
+	dev := &models.Device{Name: "fw-1", IPAddress: "10.0.0.1", Vendor: "fortigate"}
+	if err := db.Gorm().Create(dev).Error; err != nil {
+		t.Fatalf("seed device: %v", err)
+	}
+	rawID := int64(5)
+	row := &models.NetEvent{Ts: time.Now(), DeviceID: dev.ID, Activity: 3, Action: 1, RawID: &rawID}
+	if err := db.Gorm().Create(row).Error; err != nil {
+		t.Fatalf("seed net_event: %v", err)
+	}
+
+	c, rec := jsonReq(http.MethodGet, "/x", "")
+	eventDetailIDParam(c, strconv.Itoa(int(row.ID)))
+	h.GetNetEvent(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Success bool `json:"success"`
+		Data    struct {
+			ID         uint   `json:"id"`
+			DeviceName string `json:"device_name"`
+			RawID      *int64 `json:"raw_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if !resp.Success || resp.Data.ID != row.ID {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	if resp.Data.DeviceName != "fw-1" {
+		t.Fatalf("device_name = %q, want fw-1 (enrichment must run)", resp.Data.DeviceName)
+	}
+	if resp.Data.RawID == nil || *resp.Data.RawID != 5 {
+		t.Fatalf("raw_id = %v, want 5 (provenance for the raw syslog link)", resp.Data.RawID)
+	}
+}
+
+// TestGetNetEvent_BadID asserts a malformed :id is a 400 (httputil.ParseID),
+// never a 500 from binding it against the uint PK.
+func TestGetNetEvent_BadID(t *testing.T) {
+	h, _ := setupTestHandler(t)
+	c, rec := jsonReq(http.MethodGet, "/x", "")
+	eventDetailIDParam(c, "not-a-number")
+	h.GetNetEvent(c)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("GetNetEvent(bad id) = %d, want 400", rec.Code)
+	}
+}
+
+// TestGetNetEvent_NotFound asserts an unknown :id is a 404.
+func TestGetNetEvent_NotFound(t *testing.T) {
+	h, _ := setupTestHandler(t)
+	c, rec := jsonReq(http.MethodGet, "/x", "")
+	eventDetailIDParam(c, "999999")
+	h.GetNetEvent(c)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GetNetEvent(999999) = %d, want 404 (body=%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestGetSecEvent_Shape mirrors TestGetNetEvent_Shape for the security detail.
+func TestGetSecEvent_Shape(t *testing.T) {
+	h, db := setupTestHandler(t)
+	dev := &models.Device{Name: "fw-1", IPAddress: "10.0.0.1", Vendor: "fortigate"}
+	if err := db.Gorm().Create(dev).Error; err != nil {
+		t.Fatalf("seed device: %v", err)
+	}
+	sev := int16(5)
+	row := &models.SecEvent{Ts: time.Now(), DeviceID: dev.ID, Class: 2004, Severity: &sev}
+	if err := db.Gorm().Create(row).Error; err != nil {
+		t.Fatalf("seed sec_event: %v", err)
+	}
+
+	c, rec := jsonReq(http.MethodGet, "/x", "")
+	eventDetailIDParam(c, strconv.Itoa(int(row.ID)))
+	h.GetSecEvent(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Success bool `json:"success"`
+		Data    struct {
+			ID         uint   `json:"id"`
+			Class      int16  `json:"class"`
+			DeviceName string `json:"device_name"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if !resp.Success || resp.Data.ID != row.ID || resp.Data.Class != 2004 {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	if resp.Data.DeviceName != "fw-1" {
+		t.Fatalf("device_name = %q, want fw-1 (enrichment must run)", resp.Data.DeviceName)
+	}
+}
+
+// TestGetSecEvent_BadID asserts a malformed :id is a 400.
+func TestGetSecEvent_BadID(t *testing.T) {
+	h, _ := setupTestHandler(t)
+	c, rec := jsonReq(http.MethodGet, "/x", "")
+	eventDetailIDParam(c, "not-a-number")
+	h.GetSecEvent(c)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("GetSecEvent(bad id) = %d, want 400", rec.Code)
+	}
+}
+
+// TestGetSecEvent_NotFound asserts an unknown :id is a 404.
+func TestGetSecEvent_NotFound(t *testing.T) {
+	h, _ := setupTestHandler(t)
+	c, rec := jsonReq(http.MethodGet, "/x", "")
+	eventDetailIDParam(c, "999999")
+	h.GetSecEvent(c)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GetSecEvent(999999) = %d, want 404 (body=%s)", rec.Code, rec.Body.String())
 	}
 }
