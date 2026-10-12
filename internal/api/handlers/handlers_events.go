@@ -300,3 +300,93 @@ func (h *Handler) GetNetEventAnalytics(c *gin.Context) {
 		"nat":            stats.NAT,
 	}))
 }
+
+// GetSecEventAnalytics returns the Security tab's class-scoped analytics
+// (Phase 2, PR 6) from the raw sec_events table: the per-class day trends and
+// top-N rankings for findings, admin logins, config changes, VPN sessions and
+// WAN health. The window is named in `days` (1..365) or `hours` (1..720); when
+// both are absent the store's 30-day default applies. It is a read-only
+// viewer-accessible endpoint (registered beside /api/security-events, NOT in
+// adminOnlyRoutes) and adds no index or migration — every series groups over
+// `ts >= cutoff`, served by the existing (class, ts) / (device_id, ts) / (ts)
+// indexes.
+func (h *Handler) GetSecEventAnalytics(c *gin.Context) {
+	db := h.reqDB(c)
+	if db == nil {
+		c.JSON(http.StatusOK, response.Success(gin.H{
+			"findings":          []database.SecEventDayCount{},
+			"top_signatures":    []database.SecEventFindingStat{},
+			"admin_logins":      []database.SecEventDayCount{},
+			"top_admin_users":   []database.KeyCount{},
+			"top_admin_src_ips": []database.KeyCount{},
+			"config_changes":    []database.SecEventDayCount{},
+			"top_config_paths":  []database.KeyCount{},
+			"top_config_admins": []database.KeyCount{},
+			"vpn_sessions":      []database.SecEventDayCount{},
+			"top_tunnels":       []database.KeyCount{},
+			"top_tunnel_peers":  []database.KeyCount{},
+			"wan_health":        []database.SecEventWanHealth{},
+		}))
+		return
+	}
+
+	// days (1..365) and hours (1..720) name the lookback window; a non-integer
+	// or out-of-range value is rejected up front (AUDIT-251 discipline — a bad
+	// value is a 400, never a 500 from binding a bogus number into a bound).
+	days := 0
+	if raw := strings.TrimSpace(c.Query("days")); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 365 {
+			c.JSON(http.StatusBadRequest, response.Error("Invalid days (expected 1..365)"))
+			return
+		}
+		days = n
+	}
+	hours := 0
+	if raw := strings.TrimSpace(c.Query("hours")); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 720 {
+			c.JSON(http.StatusBadRequest, response.Error("Invalid hours (expected 1..720)"))
+			return
+		}
+		hours = n
+	}
+
+	// device_id / site_id must be valid uints before they are bound against the
+	// uint columns (22P02/500 on Postgres; SQLite silently matches nothing).
+	for _, name := range []string{"device_id", "site_id"} {
+		if msg := validateNumericFilter(c, name); msg != "" {
+			c.JSON(http.StatusBadRequest, response.Error(msg))
+			return
+		}
+	}
+
+	f := database.SecEventStatsFilter{Days: days, Hours: hours}
+	if v, ok := httputil.ParseUintQuery(c, "device_id"); ok {
+		f.DeviceID = v
+	}
+	if v, ok := httputil.ParseUintQuery(c, "site_id"); ok {
+		f.SiteID = v
+	}
+
+	stats, err := db.SecEventStats(f)
+	if err != nil {
+		httputil.InternalError(c, "Failed to get security event analytics", err)
+		return
+	}
+
+	c.JSON(http.StatusOK, response.Success(gin.H{
+		"findings":          stats.Findings,
+		"top_signatures":    stats.TopSignatures,
+		"admin_logins":      stats.AdminLogins,
+		"top_admin_users":   stats.TopAdminUsers,
+		"top_admin_src_ips": stats.TopAdminSrcIPs,
+		"config_changes":    stats.ConfigChanges,
+		"top_config_paths":  stats.TopConfigPaths,
+		"top_config_admins": stats.TopConfigAdmins,
+		"vpn_sessions":      stats.VPNSessions,
+		"top_tunnels":       stats.TopTunnels,
+		"top_tunnel_peers":  stats.TopTunnelPeers,
+		"wan_health":        stats.WanHealth,
+	}))
+}

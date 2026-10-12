@@ -956,3 +956,310 @@ func (d *Database) NetEventStats(f NetEventStatsFilter) (*NetEventStatsResult, e
 
 	return res, nil
 }
+
+// ---------------------------------------------------------------------------
+// sec_events — class-scoped analytics (Phase 2, PR 6)
+// ---------------------------------------------------------------------------
+
+// The Security tab's analytics. The net_events readers (PR 4/5) group the
+// network half of the Events page; this one groups the security half, one
+// series per class over the raw sec_events table. Every class has a per-day
+// trend (the ts column bucketed to a UTC day, the same TimeBucket("day") the
+// rollup writer uses) plus top-N rankings over that class's own columns —
+// findings by signature, auth by admin user/source IP, config changes by
+// path/admin user, VPN sessions by tunnel/peer, and WAN health per day per WAN
+// with the average and latest gauge value. Each query is `ts >= cutoff`
+// bounded so the monthly RANGE partitions prune and the existing
+// (class, ts) / (device_id, ts) / (ts) indexes serve the class, window and
+// device/site narrowing — no index or migration is added. The window is
+// expressed in days (day-folding, like the rollup reader) or hours (short
+// window, like NetEventStats): Days wins when both are set.
+
+const (
+	// secEventStatsDefaultDays is the day-window SecEventStats uses when the
+	// filter names neither a day nor an hour window; secEventStatsMaxDays is
+	// the day ceiling (one year — matching the rollup reader's). The day
+	// granularity is the natural default: the trends are day-bucketed and
+	// config_change rows are retained forever.
+	secEventStatsDefaultDays = 30
+	secEventStatsMaxDays     = 365
+	// secEventStatsDefaultHours / secEventStatsMaxHours are the hour-window
+	// equivalents (default 24, ceiling 720 — the raw table's short TTL), used
+	// only when the filter names Hours but not Days.
+	secEventStatsDefaultHours = 24
+	secEventStatsMaxHours     = 720
+	// secEventStatsTopN bounds each ranking (top signatures, admin users,
+	// source IPs, config paths, config admins, tunnels, tunnel peers). The
+	// charts cannot show an unbounded ranking, and past a handful nothing is
+	// readable.
+	secEventStatsTopN = 10
+)
+
+// SecEventStatsFilter constrains a SecEventStats query. The lookback window is
+// named in Days (1..365, day-folding) or Hours (1..720); Days wins when both
+// are non-zero, and a filter with neither falls back to the 30-day default.
+// DeviceID and SiteID of 0 mean "no filter" — a device id of 0 is never a real
+// row (PKs start at 1), and a site filter narrows by the devices assigned to
+// that site (sec_events has no site_id column).
+type SecEventStatsFilter struct {
+	Days     int
+	Hours    int
+	DeviceID uint
+	SiteID   uint
+}
+
+// SecEventDayCount is one UTC day's count for a class — a point on that
+// class's trend chart. Day is "YYYY-MM-DD" (the dialect's TimeBucket("day")
+// output), so the wire form is dialect-independent and lexicographic order is
+// chronological order.
+type SecEventDayCount struct {
+	Day   string `json:"day"`
+	Count int64  `json:"count"`
+}
+
+// SecEventFindingStat is one signature's aggregate over the window — a row of
+// the "top signatures" card. Severity is the worst (max) severity seen for the
+// signature, so the card ranks by count but still surfaces how severe the
+// signature is (0 = "not stated").
+type SecEventFindingStat struct {
+	SigName  string `json:"sig_name"`
+	Severity int16  `json:"severity"`
+	Count    int64  `json:"count"`
+}
+
+// SecEventWanHealth is one WAN's health reading for one UTC day: the average
+// and latest metric_value (a gauge such as latency or loss) over the day. The
+// latest is the value at the day's newest ts — not the peak, which MAX would
+// report.
+type SecEventWanHealth struct {
+	Day     string  `json:"day"`
+	WanName string  `json:"wan_name"`
+	Avg     float64 `json:"avg"`
+	Last    float64 `json:"last"`
+}
+
+// SecEventStatsResult is the class-scoped analytics payload for the Security
+// tab. Each class contributes a day-bucketed trend (Findings, AdminLogins,
+// ConfigChanges, VPNSessions) ordered oldest-first, plus its top-N rankings
+// ordered by count descending; WanHealth is per (day, WAN) ordered by day then
+// WAN. The rankings skip empty/NULL groups and every top-N carries a LIMIT.
+type SecEventStatsResult struct {
+	Findings        []SecEventDayCount    `json:"findings"`
+	TopSignatures   []SecEventFindingStat `json:"top_signatures"`
+	AdminLogins     []SecEventDayCount    `json:"admin_logins"`
+	TopAdminUsers   []KeyCount            `json:"top_admin_users"`
+	TopAdminSrcIPs  []KeyCount            `json:"top_admin_src_ips"`
+	ConfigChanges   []SecEventDayCount    `json:"config_changes"`
+	TopConfigPaths  []KeyCount            `json:"top_config_paths"`
+	TopConfigAdmins []KeyCount            `json:"top_config_admins"`
+	VPNSessions     []SecEventDayCount    `json:"vpn_sessions"`
+	TopTunnels      []KeyCount            `json:"top_tunnels"`
+	TopTunnelPeers  []KeyCount            `json:"top_tunnel_peers"`
+	WanHealth       []SecEventWanHealth   `json:"wan_health"`
+}
+
+// secEventDayCounts runs one class's per-day trend: COUNT(*) grouped by the
+// dialect's UTC-day bucket over the `ts >= cutoff` bound, oldest-first.
+func secEventDayCounts(base func(int16) *gorm.DB, dayExpr string, class int16) ([]SecEventDayCount, error) {
+	var out []SecEventDayCount
+	if err := base(class).
+		Select(dayExpr + " AS day, COUNT(*) AS count").
+		Group("day").Order("day ASC").
+		Scan(&out).Error; err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// secEventKeyCount runs one class's key-count ranking over a free-text column
+// (admin_user / sig_name / config_path / config_obj / tunnel_name): COUNT(*)
+// grouped by the column, empty/NULL values skipped, top-N kept.
+func secEventKeyCount(base func(int16) *gorm.DB, class int16, column string) ([]KeyCount, error) {
+	var out []KeyCount
+	if err := base(class).
+		Select(column + " AS key, COUNT(*) AS count").
+		Where(column + " IS NOT NULL AND " + column + " <> ''").
+		Group(column).Order("count DESC").Limit(secEventStatsTopN).
+		Scan(&out).Error; err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// secEventInetKeyCount is secEventKeyCount for an inet column (admin_src_ip /
+// tunnel_peer): it groups through CastText so the wire shape is a plain string
+// on both dialects (the rollup reader's convention), and only NULLs are
+// skipped — an inet column never carries the empty string the text columns do.
+func (d *Database) secEventInetKeyCount(base func(int16) *gorm.DB, class int16, column string) ([]KeyCount, error) {
+	var out []KeyCount
+	if err := base(class).
+		Select(d.dialect.CastText(column) + " AS key, COUNT(*) AS count").
+		Where(column + " IS NOT NULL").
+		Group(column).Order("count DESC").Limit(secEventStatsTopN).
+		Scan(&out).Error; err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// SecEventStats computes the class-scoped series over the raw sec_events table.
+// The queries share one base filter per class (built fresh on every call, so
+// the series can never drift), and each is `ts >= cutoff` bounded so the
+// monthly partitions prune. The top-N LIMITs keep each ranking small, and the
+// bounded default (30 days) keeps the GROUP BYs cheap; the hour window is the
+// caller's explicit choice (the handler caps hours at 720).
+func (d *Database) SecEventStats(f SecEventStatsFilter) (*SecEventStatsResult, error) {
+	// Resolve the window: a day window (folds to UTC midnight, like the rollup
+	// reader) wins over an hour window, and neither names a default of 30 days.
+	var cutoff time.Time
+	if f.Days > 0 {
+		days := f.Days
+		if days > secEventStatsMaxDays {
+			days = secEventStatsMaxDays
+		}
+		cutoff = utcDay(time.Now()).AddDate(0, 0, -(days - 1))
+	} else {
+		hours := f.Hours
+		if hours <= 0 {
+			hours = secEventStatsDefaultHours
+		}
+		if hours > secEventStatsMaxHours {
+			hours = secEventStatsMaxHours
+		}
+		cutoff = time.Now().Add(-time.Duration(hours) * time.Hour)
+	}
+
+	// base rebuilds the class-scoped, ts-bounded query fresh on every call for
+	// the same reason ListNetEvents does: GORM chain methods mutate the
+	// statement in place, so a shared base would leak one series' GROUP BY into
+	// the next. The ts bound is always present (partition pruning) and the class
+	// filter rides the (class, ts) index; the device/site filters narrow through
+	// the (device_id, ts) index.
+	base := func(class int16) *gorm.DB {
+		q := d.db.Table("sec_events").Where("class = ?", class).Where("ts >= ?", cutoff)
+		if f.DeviceID != 0 {
+			q = q.Where("device_id = ?", f.DeviceID)
+		}
+		// sec_events has no site_id column; a site filter narrows by the devices
+		// assigned to that site (the IN (subquery) form ListSecEvents uses).
+		if f.SiteID != 0 {
+			q = q.Where("device_id IN (?)", d.db.Model(&models.Device{}).Where("site_id = ?", f.SiteID).Select("id"))
+		}
+		return q
+	}
+
+	day := d.dialect.TimeBucket("day", "ts")
+
+	res := &SecEventStatsResult{}
+	var err error
+
+	// findings: per-day counts and the top signatures (with their worst
+	// severity). sig_name is free text; empty/NULL is skipped by both series.
+	if res.Findings, err = secEventDayCounts(base, day, int16(normalize.ClassFinding)); err != nil {
+		return nil, fmt.Errorf("findings trend: %w", err)
+	}
+	var findings []SecEventFindingStat
+	if err := base(int16(normalize.ClassFinding)).
+		Select("sig_name, COALESCE(MAX(severity), 0) AS severity, COUNT(*) AS count").
+		Where("sig_name IS NOT NULL AND sig_name <> ''").
+		Group("sig_name").Order("count DESC").Limit(secEventStatsTopN).
+		Scan(&findings).Error; err != nil {
+		return nil, fmt.Errorf("top signatures: %w", err)
+	}
+	res.TopSignatures = findings
+
+	// admin_logins (auth): per-day counts, top admin users and top admin
+	// source IPs (admin_src_ip is inet, so it groups through CastText).
+	if res.AdminLogins, err = secEventDayCounts(base, day, int16(normalize.ClassAuth)); err != nil {
+		return nil, fmt.Errorf("admin logins trend: %w", err)
+	}
+	if res.TopAdminUsers, err = secEventKeyCount(base, int16(normalize.ClassAuth), "admin_user"); err != nil {
+		return nil, fmt.Errorf("top admin users: %w", err)
+	}
+	if res.TopAdminSrcIPs, err = d.secEventInetKeyCount(base, int16(normalize.ClassAuth), "admin_src_ip"); err != nil {
+		return nil, fmt.Errorf("top admin source IPs: %w", err)
+	}
+
+	// config_changes: per-day counts, top config paths and top admin users
+	// (who changed what).
+	if res.ConfigChanges, err = secEventDayCounts(base, day, int16(normalize.ClassConfigChange)); err != nil {
+		return nil, fmt.Errorf("config changes trend: %w", err)
+	}
+	if res.TopConfigPaths, err = secEventKeyCount(base, int16(normalize.ClassConfigChange), "config_path"); err != nil {
+		return nil, fmt.Errorf("top config paths: %w", err)
+	}
+	if res.TopConfigAdmins, err = secEventKeyCount(base, int16(normalize.ClassConfigChange), "admin_user"); err != nil {
+		return nil, fmt.Errorf("top config admins: %w", err)
+	}
+
+	// vpn_sessions: per-day counts, top tunnels and top tunnel peers
+	// (tunnel_peer is inet, so it groups through CastText).
+	if res.VPNSessions, err = secEventDayCounts(base, day, int16(normalize.ClassVPNSession)); err != nil {
+		return nil, fmt.Errorf("vpn sessions trend: %w", err)
+	}
+	if res.TopTunnels, err = secEventKeyCount(base, int16(normalize.ClassVPNSession), "tunnel_name"); err != nil {
+		return nil, fmt.Errorf("top tunnels: %w", err)
+	}
+	if res.TopTunnelPeers, err = d.secEventInetKeyCount(base, int16(normalize.ClassVPNSession), "tunnel_peer"); err != nil {
+		return nil, fmt.Errorf("top tunnel peers: %w", err)
+	}
+
+	// wan_health: per day per WAN name, the average and latest metric_value.
+	// The "latest" is the value at the day's newest ts — a window function over
+	// the raw rows (before grouping) is the only portable way to get it, since
+	// MAX(metric_value) would report the peak, not the latest reading.
+	wanInner := base(int16(normalize.ClassDeviceHealth)).
+		Select(day + " AS day, wan_name, metric_value AS v, " +
+			"FIRST_VALUE(metric_value) OVER (PARTITION BY " + day + ", wan_name ORDER BY ts DESC) AS last_v").
+		Where("wan_name IS NOT NULL AND wan_name <> ''").
+		Where("metric_value IS NOT NULL")
+	var wan []SecEventWanHealth
+	if err := d.db.Table("(?) AS t", wanInner).
+		Select("day, wan_name, AVG(v) AS avg, MAX(last_v) AS last").
+		Group("day, wan_name").Order("day ASC, wan_name ASC").
+		Scan(&wan).Error; err != nil {
+		return nil, fmt.Errorf("wan health: %w", err)
+	}
+	res.WanHealth = wan
+
+	// Normalize nil (no-rows) series to empty slices so the wire shape is []
+	// rather than null — the UI maps each series without a null guard.
+	if res.Findings == nil {
+		res.Findings = []SecEventDayCount{}
+	}
+	if res.TopSignatures == nil {
+		res.TopSignatures = []SecEventFindingStat{}
+	}
+	if res.AdminLogins == nil {
+		res.AdminLogins = []SecEventDayCount{}
+	}
+	if res.TopAdminUsers == nil {
+		res.TopAdminUsers = []KeyCount{}
+	}
+	if res.TopAdminSrcIPs == nil {
+		res.TopAdminSrcIPs = []KeyCount{}
+	}
+	if res.ConfigChanges == nil {
+		res.ConfigChanges = []SecEventDayCount{}
+	}
+	if res.TopConfigPaths == nil {
+		res.TopConfigPaths = []KeyCount{}
+	}
+	if res.TopConfigAdmins == nil {
+		res.TopConfigAdmins = []KeyCount{}
+	}
+	if res.VPNSessions == nil {
+		res.VPNSessions = []SecEventDayCount{}
+	}
+	if res.TopTunnels == nil {
+		res.TopTunnels = []KeyCount{}
+	}
+	if res.TopTunnelPeers == nil {
+		res.TopTunnelPeers = []KeyCount{}
+	}
+	if res.WanHealth == nil {
+		res.WanHealth = []SecEventWanHealth{}
+	}
+
+	return res, nil
+}

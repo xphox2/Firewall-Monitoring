@@ -295,3 +295,91 @@ func TestGetNetEventAnalytics_BadParams(t *testing.T) {
 		}
 	}
 }
+
+// TestGetSecEventAnalytics_Shape asserts the handler returns a 200 with the
+// twelve class-scoped analytics series the Security tab charts, even with no
+// rows seeded (the empty series must be [] not null).
+func TestGetSecEventAnalytics_Shape(t *testing.T) {
+	h, _ := setupTestHandler(t)
+
+	c, rec := jsonReq(http.MethodGet, "/x?days=30", "")
+	h.GetSecEventAnalytics(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Findings        []json.RawMessage `json:"findings"`
+			TopSignatures   []json.RawMessage `json:"top_signatures"`
+			AdminLogins     []json.RawMessage `json:"admin_logins"`
+			TopAdminUsers   []json.RawMessage `json:"top_admin_users"`
+			TopAdminSrcIPs  []json.RawMessage `json:"top_admin_src_ips"`
+			ConfigChanges   []json.RawMessage `json:"config_changes"`
+			TopConfigPaths  []json.RawMessage `json:"top_config_paths"`
+			TopConfigAdmins []json.RawMessage `json:"top_config_admins"`
+			VPNSessions     []json.RawMessage `json:"vpn_sessions"`
+			TopTunnels      []json.RawMessage `json:"top_tunnels"`
+			TopTunnelPeers  []json.RawMessage `json:"top_tunnel_peers"`
+			WanHealth       []json.RawMessage `json:"wan_health"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("success = false: %s", rec.Body.String())
+	}
+	for name, s := range map[string][]json.RawMessage{
+		"findings":          resp.Data.Findings,
+		"top_signatures":    resp.Data.TopSignatures,
+		"admin_logins":      resp.Data.AdminLogins,
+		"top_admin_users":   resp.Data.TopAdminUsers,
+		"top_admin_src_ips": resp.Data.TopAdminSrcIPs,
+		"config_changes":    resp.Data.ConfigChanges,
+		"top_config_paths":  resp.Data.TopConfigPaths,
+		"top_config_admins": resp.Data.TopConfigAdmins,
+		"vpn_sessions":      resp.Data.VPNSessions,
+		"top_tunnels":       resp.Data.TopTunnels,
+		"top_tunnel_peers":  resp.Data.TopTunnelPeers,
+		"wan_health":        resp.Data.WanHealth,
+	} {
+		if s == nil {
+			t.Fatalf("%s is null, want []", name)
+		}
+	}
+}
+
+// TestGetSecEventAnalytics_BadParams asserts an out-of-range or non-integer
+// days/hours and a non-numeric device_id/site_id are rejected with 400
+// (AUDIT-251 discipline: a bad value is a 400, never a 500).
+func TestGetSecEventAnalytics_BadParams(t *testing.T) {
+	h, _ := setupTestHandler(t)
+
+	for _, tc := range []struct{ name, qs string }{
+		{"days zero", "days=0"},
+		{"days too large", "days=366"},
+		{"days non-integer", "days=abc"},
+		{"hours zero", "hours=0"},
+		{"hours too large", "hours=721"},
+		{"hours non-integer", "hours=abc"},
+		{"device_id non-numeric", "device_id=not-a-number"},
+		{"site_id non-numeric", "site_id=not-a-number"},
+	} {
+		c, rec := jsonReq(http.MethodGet, "/x?"+tc.qs, "")
+		h.GetSecEventAnalytics(c)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("GetSecEventAnalytics(%s) = %d, want 400 (body=%s)", tc.name, rec.Code, rec.Body.String())
+		}
+	}
+
+	// A valid window (and the default) pass.
+	for _, qs := range []string{"", "days=1", "days=365", "hours=720", "days=30&device_id=1&site_id=2"} {
+		c, rec := jsonReq(http.MethodGet, "/x?"+qs, "")
+		h.GetSecEventAnalytics(c)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GetSecEventAnalytics(%q) = %d, want 200 (body=%s)", qs, rec.Code, rec.Body.String())
+		}
+	}
+}
