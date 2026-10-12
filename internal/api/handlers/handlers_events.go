@@ -160,3 +160,70 @@ func (h *Handler) GetSecEvents(c *gin.Context) {
 
 	c.JSON(http.StatusOK, response.Success(gin.H{"events": rows, "total": total, "total_capped": capped}))
 }
+
+// GetNetEventRollups returns the Events page's long-term analytics series
+// (Phase 2, PR 4) from net_event_rollups: top policy rules and bytes, the deny
+// trend, and the app-category / direction / ruleset breakdowns, over up to 365
+// days. It is a read-only viewer-accessible endpoint (registered beside
+// /api/events, NOT in adminOnlyRoutes) and adds no index or migration — every
+// series groups over `day >= from`, served by the rollup table's unique
+// (day, device_id, …) key.
+func (h *Handler) GetNetEventRollups(c *gin.Context) {
+	db := h.reqDB(c)
+	if db == nil {
+		c.JSON(http.StatusOK, response.Success(gin.H{
+			"policy_hits":    []database.NetEventRollupRule{},
+			"policy_bytes":   []database.NetEventRollupDay{},
+			"deny":           []database.NetEventRollupDay{},
+			"app_categories": []database.KeyCount{},
+			"directions":     []database.NetEventRollupDirection{},
+			"rulesets":       []database.KeyCount{},
+		}))
+		return
+	}
+
+	// days is the rollup window: 1..365, default 30. Reject a non-integer or
+	// out-of-range value up front (AUDIT-251 discipline — a bad value is a 400,
+	// never a 500 from binding a bogus number into a LIMIT/bound).
+	days := 30
+	if raw := strings.TrimSpace(c.Query("days")); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 365 {
+			c.JSON(http.StatusBadRequest, response.Error("Invalid days (expected 1..365)"))
+			return
+		}
+		days = n
+	}
+
+	// device_id / site_id must be valid uints before they are bound against the
+	// uint columns (22P02/500 on Postgres; SQLite silently matches nothing).
+	for _, name := range []string{"device_id", "site_id"} {
+		if msg := validateNumericFilter(c, name); msg != "" {
+			c.JSON(http.StatusBadRequest, response.Error(msg))
+			return
+		}
+	}
+
+	f := database.NetEventRollupFilter{Days: days}
+	if v, ok := httputil.ParseUintQuery(c, "device_id"); ok {
+		f.DeviceID = v
+	}
+	if v, ok := httputil.ParseUintQuery(c, "site_id"); ok {
+		f.SiteID = v
+	}
+
+	stats, err := db.NetEventRollupStats(f)
+	if err != nil {
+		httputil.InternalError(c, "Failed to get event rollup analytics", err)
+		return
+	}
+
+	c.JSON(http.StatusOK, response.Success(gin.H{
+		"policy_hits":    stats.PolicyHits,
+		"policy_bytes":   stats.PolicyBytes,
+		"deny":           stats.Deny,
+		"app_categories": stats.AppCategories,
+		"directions":     stats.Directions,
+		"rulesets":       stats.Rulesets,
+	}))
+}
