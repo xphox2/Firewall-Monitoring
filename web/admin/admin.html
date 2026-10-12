@@ -228,11 +228,8 @@
     <script defer src="/static/js/uPlot.iife.min.js"></script>
     <!-- v0.10.212: shared control primitives used by flows + syslog + alerts + traps. -->
     <script defer src="/static/js/admin-controls.js"></script>
-    <!-- Normalized-event enum vocabularies (window.FwmonEnums) and the Events
-         page module. enums.js MUST load before admin-events.js — the page
-         renders int16 activity/action labels from it. -->
+    <!-- Normalized-event enum vocabularies (window.FwmonEnums). -->
     <script defer src="/static/js/enums.js"></script>
-    <script defer src="/static/js/admin-events.js"></script>
     <script defer src="/static/js/admin-flows.js"></script>
     <script defer src="/static/js/admin-noc.js"></script>
     <!-- v0.10.214 (bundle C3): Cytoscape (~421 KB across 4 files) is now
@@ -244,6 +241,11 @@
          All six are now injected on demand. -->
     <script defer src="/static/js/fwmon-passkey.js"></script>
     <script defer src="/static/js/admin-common.js"></script>
+    <!-- The Events page module reads window.AdminCommon at load (AC.escapeHtml
+         etc.), so it MUST come after admin-common.js (and after enums.js
+         above); it also must precede admin-main.js, which calls
+         FwmonEvents.init() when the page is shown. -->
+    <script defer src="/static/js/admin-events.js"></script>
     <script defer src="/static/js/admin-users.js"></script>
     <script defer src="/static/js/admin-settings.js"></script>
     <script defer src="/static/js/admin-archive-settings.js"></script>
