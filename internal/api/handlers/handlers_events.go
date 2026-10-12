@@ -106,3 +106,57 @@ func parseInt16Query(c *gin.Context, name string) *int16 {
 	n := int16(v) // #nosec G109 -- v is guarded to the int16 range immediately above
 	return &n
 }
+
+// GetSecEvents lists normalized security events for the admin Events page's
+// Security tab (Phase 2, PR 3). It is the first reader of sec_events — the
+// non-network half of the Events page — and, like GetNetEvents, a read-only
+// viewer-accessible endpoint (registered beside /api/events, NOT in
+// adminOnlyRoutes). Filters are time (hours), device/probe, the
+// class/activity/action/severity enum columns, and substring filters on
+// admin_user / sig_name / tunnel_name / wan_name. sec_events is already indexed
+// (idx_sec_events_ts, idx_sec_events_device_ts, idx_sec_events_class_ts), so
+// this reader adds no index or migration.
+func (h *Handler) GetSecEvents(c *gin.Context) {
+	db := h.reqDB(c)
+	if db == nil {
+		c.JSON(http.StatusOK, response.Success(gin.H{"events": []database.SecEventRow{}, "total": 0, "total_capped": false}))
+		return
+	}
+
+	// AUDIT-251: reject non-numeric numeric filters before binding them against
+	// the uint/smallint columns (22P02/500 on Postgres; SQLite silently matches
+	// nothing). class/activity/action/severity are non-negative smallint enums,
+	// so the shared uint validator covers them too.
+	for _, name := range []string{"device_id", "probe_id", "class", "activity", "action", "severity"} {
+		if msg := validateNumericFilter(c, name); msg != "" {
+			c.JSON(http.StatusBadRequest, response.Error(msg))
+			return
+		}
+	}
+
+	limit, offset := httputil.ParsePagination(c)
+
+	f := database.SecEventFilter{Hours: httputil.ParseHours(c)}
+	if v, ok := httputil.ParseUintQuery(c, "device_id"); ok {
+		f.DeviceID = v
+	}
+	if v, ok := httputil.ParseUintQuery(c, "probe_id"); ok {
+		f.ProbeID = v
+	}
+	f.Class = parseInt16Query(c, "class")
+	f.Activity = parseInt16Query(c, "activity")
+	f.Action = parseInt16Query(c, "action")
+	f.Severity = parseInt16Query(c, "severity")
+	f.AdminUser = strings.TrimSpace(c.Query("admin_user"))
+	f.SigName = strings.TrimSpace(c.Query("sig_name"))
+	f.TunnelName = strings.TrimSpace(c.Query("tunnel_name"))
+	f.WanName = strings.TrimSpace(c.Query("wan_name"))
+
+	rows, total, capped, err := db.ListSecEvents(f, offset, limit)
+	if err != nil {
+		httputil.InternalError(c, "Failed to get security events", err)
+		return
+	}
+
+	c.JSON(http.StatusOK, response.Success(gin.H{"events": rows, "total": total, "total_capped": capped}))
+}

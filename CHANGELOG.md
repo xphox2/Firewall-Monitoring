@@ -1,6 +1,13 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.322] - 2026-10-11
+
+### Added — the Events page lists security events (findings, auth, config changes, VPN sessions, device health)
+
+- The Events page (`/admin/events`) now has a **Security Events** tab beside the Network Events tab (0.11.319). It is the first reader of the normalized `sec_events` table — findings, admin/login auth, config changes, VPN sessions and WAN/device health — served by the new viewer-accessible `GET /api/security-events`. The table's columns adapt to the class filter: finding shows signature / threat category / file hash, auth shows admin user / admin source IP / method, config_change shows config path / object, vpn_session shows tunnel name / peer, and device_health shows WAN name / metric (with no class selected it falls back to activity / action / message). Filters are time (shared range pills), device, class, severity (0–10), and substring matches on admin user / signature name / tunnel name / WAN name.
+- `internal/database.ListSecEvents` reuses the `ListNetEvents` idioms: the query is always `ts`-bounded so Postgres prunes partitions, the count stops at 10,000+1 (the pager reads "10,000+"), and the filters live in one `apply()` closure so the count and list never leak OFFSET into each other. No indexes or migrations are added — `sec_events` is already indexed (`idx_sec_events_ts`, `idx_sec_events_device_ts`, `idx_sec_events_class_ts`).
+
 ## [0.11.321] - 2026-10-11
 
 ### Fixed — the boot-time index backfill no longer blocks startup; concurrent `CREATE INDEX` is tolerated

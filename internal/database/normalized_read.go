@@ -255,3 +255,225 @@ func (d *Database) enrichNetEventRows(rows []NetEventRow) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// sec_events — the security half of the Events page (Phase 2, PR 3)
+// ---------------------------------------------------------------------------
+
+// secEventPagerCountCap bounds the Security events list's "of N" count; beyond
+// it the response reports total_capped and the pager reads "10,000+". Mirrors
+// netEventPagerCountCap and is a separate package var (not shared) so the
+// SQLite test can shrink each list's cap independently — seeding 10,001 rows
+// twice would be pointlessly slow.
+var secEventPagerCountCap = 10000
+
+// SecEventFilter constrains a ListSecEvents query. Zero-value fields are
+// "no filter" — a device/probe id of 0 is never a real row (PKs start at 1) —
+// except Class, Activity, Action and Severity, where the model's default (0 /
+// NULL) is a real value, so those are pointers: nil means "all", a non-nil
+// value filters equality. AdminUser / SigName / TunnelName / WanName are
+// substrings (see secEventTextFilter) — an exact match on a
+// free-text name is rarely what the operator wants, and none of these columns
+// is indexed to serve one anyway. Hours is the lookback window and is always
+// > 0; ListSecEvents coerces a non-positive Hours to 24 so the query is never
+// unbounded.
+type SecEventFilter struct {
+	DeviceID   uint
+	ProbeID    uint
+	Class      *int16
+	Activity   *int16
+	Action     *int16
+	Severity   *int16
+	AdminUser  string
+	SigName    string
+	TunnelName string
+	WanName    string
+	Hours      int
+}
+
+// SecEventRow is the wire shape of one sec_events row for the Security events
+// page: the columns the class-conditional table renderer needs, plus the device
+// name and vendor resolved post-load (see enrichSecEventRows). It is NOT the
+// full GORM model — but unlike NetEventRow (one class, one column set) the
+// Security page spans every class, so the row carries the UNION of the
+// class-specific fields (finding/auth/config_change/vpn_session/device_health)
+// and omits only the provenance columns nothing on this page renders. The NULL
+// discipline matches models.SecEvent: a pointer is nil exactly when the vendor
+// did not supply the field.
+type SecEventRow struct {
+	ID          uint      `json:"id"`
+	Ts          time.Time `json:"ts"`
+	DeviceID    uint      `json:"device_id"`
+	ProbeID     uint      `json:"probe_id"`
+	Class       int16     `json:"class"`
+	Activity    int16     `json:"activity"`
+	Action      int16     `json:"action"`
+	Severity    *int16    `json:"severity"`
+	SrcIP       *string   `json:"src_ip"`
+	SrcPort     *int32    `json:"src_port"`
+	DstIP       *string   `json:"dst_ip"`
+	DstPort     *int32    `json:"dst_port"`
+	Proto       *int16    `json:"proto"`
+	UserName    *string   `json:"user_name"`
+	SrcHostname *string   `json:"src_hostname"`
+	AdminUser   *string   `json:"admin_user"`
+	AdminSrcIP  *string   `json:"admin_src_ip"`
+	AdminMethod *string   `json:"admin_method"`
+	SigID       *string   `json:"sig_id"`
+	SigName     *string   `json:"sig_name"`
+	ThreatCat   *string   `json:"threat_cat"`
+	FileHash    *string   `json:"file_hash"`
+	URLHost     *string   `json:"url_host"`
+	TunnelName  *string   `json:"tunnel_name"`
+	TunnelType  *string   `json:"tunnel_type"`
+	TunnelPeer  *string   `json:"tunnel_peer"`
+	ConfigPath  *string   `json:"config_path"`
+	ConfigObj   *string   `json:"config_obj"`
+	ConfigOld   *string   `json:"config_old"`
+	ConfigNew   *string   `json:"config_new"`
+	WANName     *string   `json:"wan_name"`
+	MetricName  *string   `json:"metric_name"`
+	MetricValue *float64  `json:"metric_value"`
+	Message     *string   `json:"message"`
+	// DeviceName and Vendor are transient: enriched from the devices table, not
+	// stored on sec_events.
+	DeviceName string `json:"device_name"`
+	Vendor     string `json:"vendor"`
+}
+
+// secEventSelectColumns is the explicit SELECT list behind ListSecEvents, in
+// SecEventRow field order — a hand-written list so only the columns the page
+// renders are read off the leaf (the page never touches raw_id/raw_ts/extra).
+const secEventSelectColumns = "id, ts, device_id, probe_id, class, activity, action, severity, " +
+	"src_ip, src_port, dst_ip, dst_port, proto, user_name, src_hostname, " +
+	"admin_user, admin_src_ip, admin_method, sig_id, sig_name, threat_cat, file_hash, url_host, " +
+	"tunnel_name, tunnel_type, tunnel_peer, config_path, config_obj, config_old, config_new, " +
+	"wan_name, metric_name, metric_value, message"
+
+// ListSecEvents returns a filtered, newest-first page of sec_events rows plus
+// the capped count of rows matching the filter. limit is clamped to [1,500];
+// offset is clamped to >= 0. The query is always ts-bounded (partition pruning)
+// and the count stops at secEventPagerCountCap+1 via the subquery idiom — the
+// same reasons as ListNetEvents, and the same apply()-closure so the count and
+// the list never leak OFFSET into each other.
+func (d *Database) ListSecEvents(f SecEventFilter, offset, limit int) ([]SecEventRow, int64, bool, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	hours := f.Hours
+	if hours <= 0 {
+		hours = 24
+	}
+	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+
+	// apply rebuilds the filtered query fresh on every call, for the same
+	// reason as ListNetEvents: GORM chain methods mutate the statement in place,
+	// so a shared base would leak ORDER/LIMIT/OFFSET into the count subquery.
+	apply := func() *gorm.DB {
+		q := d.db.Table("sec_events").Where("ts >= ?", cutoff)
+		if f.DeviceID != 0 {
+			q = q.Where("device_id = ?", f.DeviceID)
+		}
+		if f.ProbeID != 0 {
+			q = q.Where("probe_id = ?", f.ProbeID)
+		}
+		if f.Class != nil {
+			q = q.Where("class = ?", *f.Class)
+		}
+		if f.Activity != nil {
+			q = q.Where("activity = ?", *f.Activity)
+		}
+		if f.Action != nil {
+			q = q.Where("action = ?", *f.Action)
+		}
+		if f.Severity != nil {
+			q = q.Where("severity = ?", *f.Severity)
+		}
+		q = secEventTextFilter(q, "admin_user", f.AdminUser)
+		q = secEventTextFilter(q, "sig_name", f.SigName)
+		q = secEventTextFilter(q, "tunnel_name", f.TunnelName)
+		q = secEventTextFilter(q, "wan_name", f.WanName)
+		return q
+	}
+
+	var rows []SecEventRow
+	if err := apply().Select(secEventSelectColumns).Order("ts DESC").Limit(limit).Offset(offset).Scan(&rows).Error; err != nil {
+		return nil, 0, false, err
+	}
+
+	// The count stops at secEventPagerCountCap+1 via a real subquery (GORM's
+	// Count on a query carrying a Limit still counts every row). No ORDER BY
+	// inside the subquery — an unordered LIMIT can stop at the first match.
+	capped := apply().Select("1").Limit(secEventPagerCountCap + 1)
+	var total int64
+	if err := d.db.Table("(?) AS t", capped).Count(&total).Error; err != nil {
+		return nil, 0, false, err
+	}
+	totalCapped := total > int64(secEventPagerCountCap)
+	if totalCapped {
+		total = int64(secEventPagerCountCap)
+	}
+
+	d.enrichSecEventRows(rows)
+	return rows, total, totalCapped, nil
+}
+
+// secEventTextFilter applies a substring filter on one of the sec_events
+// free-text columns (admin_user / sig_name / tunnel_name / wan_name). The value
+// is a name the operator types, so a substring with the wildcards escaped
+// (mirroring the syslog search filter) is far more useful than an exact match.
+// None of these columns is indexed, so there is no index to lose by matching
+// with LIKE.
+func secEventTextFilter(q *gorm.DB, column, val string) *gorm.DB {
+	val = strings.TrimSpace(val)
+	if val == "" {
+		return q
+	}
+	escaped := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(val)
+	return q.Where(column+" LIKE ? ESCAPE '\\'", "%"+escaped+"%")
+}
+
+// enrichSecEventRows resolves each row's DeviceName and Vendor from the devices
+// table in one batched query (no N+1), mirroring enrichNetEventRows. Unknown
+// device ids are left with an empty name/vendor — sec_events may hold rows for
+// a device retired (but not purged) since.
+func (d *Database) enrichSecEventRows(rows []SecEventRow) {
+	if len(rows) == 0 {
+		return
+	}
+	idset := make(map[uint]struct{}, len(rows))
+	for _, r := range rows {
+		if r.DeviceID != 0 {
+			idset[r.DeviceID] = struct{}{}
+		}
+	}
+	ids := make([]uint, 0, len(idset))
+	for id := range idset {
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return
+	}
+	var devs []struct {
+		ID     uint
+		Name   string
+		Vendor string
+	}
+	if err := d.db.Model(&models.Device{}).Where("id IN ?", ids).Select("id, name, vendor").Scan(&devs).Error; err != nil {
+		return // enrichment is best-effort: a device lookup failure must not drop the page
+	}
+	type devNameVendor struct{ Name, Vendor string }
+	byID := make(map[uint]devNameVendor, len(devs))
+	for _, dv := range devs {
+		byID[dv.ID] = devNameVendor{dv.Name, dv.Vendor}
+	}
+	for i := range rows {
+		if dv, ok := byID[rows[i].DeviceID]; ok {
+			rows[i].DeviceName = dv.Name
+			rows[i].Vendor = dv.Vendor
+		}
+	}
+}

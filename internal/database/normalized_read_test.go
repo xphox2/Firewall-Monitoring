@@ -257,3 +257,220 @@ func TestListNetEvents_CountCapped(t *testing.T) {
 		t.Fatalf("capped total = %d, want %d", total, netEventPagerCountCap)
 	}
 }
+
+// sec class ids from internal/normalize/enums.go (mirrored in
+// cmd/api/static/js/enums.js). Literal here so the test does not import the
+// normalize package.
+const (
+	secClassFinding      = int16(2004)
+	secClassAuth         = int16(3002)
+	secClassConfigChange = int16(5019)
+	secClassVPNSession   = int16(4014)
+	secClassDeviceHealth = int16(5001)
+)
+
+// seedSecEventRow inserts one sec_events row with the given identity/class and
+// an optional severity. Pointer columns are left nil unless the caller seeds
+// them inline, which is the "vendor did not supply it" case the read path must
+// tolerate.
+func seedSecEventRow(t *testing.T, db *Database, devID, probeID uint, ts time.Time, class int16, severity *int16) {
+	t.Helper()
+	row := &models.SecEvent{Ts: ts, DeviceID: devID, ProbeID: probeID, Class: class, Severity: severity}
+	if err := db.Gorm().Create(row).Error; err != nil {
+		t.Fatalf("seed sec_event: %v", err)
+	}
+}
+
+func TestListSecEvents_OrdersNewestFirst(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	dev := seedNetEventDevice(t, db, "fw-1", nil)
+	now := time.Now()
+	sev := int16(7)
+	for i := 0; i < 5; i++ {
+		seedSecEventRow(t, db, dev.ID, 0, now.Add(-time.Duration(i)*time.Minute), secClassFinding, &sev)
+	}
+
+	rows, total, capped, err := db.ListSecEvents(SecEventFilter{Hours: 24}, 0, 100)
+	if err != nil {
+		t.Fatalf("ListSecEvents: %v", err)
+	}
+	if capped {
+		t.Fatalf("capped = true for 5 rows")
+	}
+	if total != 5 {
+		t.Fatalf("total = %d, want 5", total)
+	}
+	if len(rows) != 5 {
+		t.Fatalf("len(rows) = %d, want 5", len(rows))
+	}
+	for i := 1; i < len(rows); i++ {
+		if rows[i-1].Ts.Before(rows[i].Ts) {
+			t.Fatalf("rows not ordered newest-first at index %d (%v before %v)", i, rows[i-1].Ts, rows[i].Ts)
+		}
+	}
+	// Enrichment resolved the device name/vendor, and the class/severity columns
+	// round-tripped through the explicit SELECT.
+	if rows[0].DeviceName != "fw-1" || rows[0].Vendor != "fortigate" {
+		t.Fatalf("enrichment = %q/%q, want fw-1/fortigate", rows[0].DeviceName, rows[0].Vendor)
+	}
+	if rows[0].Class != secClassFinding || rows[0].Severity == nil || *rows[0].Severity != 7 {
+		t.Fatalf("row class/severity = %d/%v, want 2004/7", rows[0].Class, rows[0].Severity)
+	}
+}
+
+func TestListSecEvents_TsBounded(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	dev := seedNetEventDevice(t, db, "fw-1", nil)
+	now := time.Now()
+	seedSecEventRow(t, db, dev.ID, 0, now.Add(-1*time.Hour), secClassAuth, nil)  // inside 24h
+	seedSecEventRow(t, db, dev.ID, 0, now.Add(-48*time.Hour), secClassAuth, nil) // outside 24h
+
+	rows, total, _, err := db.ListSecEvents(SecEventFilter{Hours: 24}, 0, 100)
+	if err != nil {
+		t.Fatalf("ListSecEvents: %v", err)
+	}
+	if total != 1 || len(rows) != 1 {
+		t.Fatalf("24h window = %d rows (total %d), want 1: the older row must be excluded by ts >= cutoff", len(rows), total)
+	}
+
+	rows72, total72, _, err := db.ListSecEvents(SecEventFilter{Hours: 72}, 0, 100)
+	if err != nil {
+		t.Fatalf("ListSecEvents 72h: %v", err)
+	}
+	if total72 != 2 || len(rows72) != 2 {
+		t.Fatalf("72h window = %d rows (total %d), want 2", len(rows72), total72)
+	}
+}
+
+func TestListSecEvents_Filters(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	devA := seedNetEventDevice(t, db, "fw-a", nil)
+	devB := seedNetEventDevice(t, db, "fw-b", nil)
+	probe1 := seedNetEventProbe(t, db, "probe-1")
+	probe2 := seedNetEventProbe(t, db, "probe-2")
+	now := time.Now()
+	sevHigh, sevLow := int16(9), int16(2)
+
+	// devA/probe1: finding severity 9; auth severity 2.
+	seedSecEventRow(t, db, devA.ID, probe1.ID, now, secClassFinding, &sevHigh)
+	seedSecEventRow(t, db, devA.ID, probe1.ID, now.Add(-time.Minute), secClassAuth, &sevLow)
+	// devB/probe2: finding severity 9.
+	seedSecEventRow(t, db, devB.ID, probe2.ID, now.Add(-2*time.Minute), secClassFinding, &sevHigh)
+
+	class := secClassFinding
+	activity := int16(0)
+
+	cases := []struct {
+		name   string
+		filter SecEventFilter
+		want   int64
+	}{
+		{"device", SecEventFilter{Hours: 24, DeviceID: devA.ID}, 2},
+		{"probe", SecEventFilter{Hours: 24, ProbeID: probe2.ID}, 1},
+		{"class", SecEventFilter{Hours: 24, Class: &class}, 2},
+		{"severity", SecEventFilter{Hours: 24, Severity: &sevHigh}, 2},
+		{"severity low", SecEventFilter{Hours: 24, Severity: &sevLow}, 1},
+		{"activity 0 (real value)", SecEventFilter{Hours: 24, Activity: &activity}, 3},
+		{"device+class", SecEventFilter{Hours: 24, DeviceID: devA.ID, Class: &class}, 1},
+	}
+	for _, tc := range cases {
+		_, total, _, err := db.ListSecEvents(tc.filter, 0, 100)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if total != tc.want {
+			t.Fatalf("%s: total = %d, want %d", tc.name, total, tc.want)
+		}
+	}
+}
+
+func TestListSecEvents_TextFilters(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	dev := seedNetEventDevice(t, db, "fw-1", nil)
+	now := time.Now()
+
+	seed := func(ts time.Time, class int16, adminUser, sigName, tunnelName, wanName *string) {
+		row := &models.SecEvent{Ts: ts, DeviceID: dev.ID, Class: class, AdminUser: adminUser, SigName: sigName, TunnelName: tunnelName, WANName: wanName}
+		if err := db.Gorm().Create(row).Error; err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	admin := "admin-ops"
+	sig := "MALWARE-Foo.ABC"
+	tunnel := "tunnel-east"
+	wan := "wan1"
+
+	seed(now, secClassAuth, &admin, nil, nil, nil)
+	seed(now.Add(-time.Minute), secClassFinding, nil, &sig, nil, nil)
+	seed(now.Add(-2*time.Minute), secClassVPNSession, nil, nil, &tunnel, nil)
+	seed(now.Add(-3*time.Minute), secClassDeviceHealth, nil, nil, nil, &wan)
+
+	cases := []struct {
+		name   string
+		filter SecEventFilter
+		want   int64
+	}{
+		{"admin_user substring", SecEventFilter{Hours: 24, AdminUser: "adm"}, 1},
+		{"admin_user absent", SecEventFilter{Hours: 24, AdminUser: "nobody"}, 0},
+		{"sig_name substring", SecEventFilter{Hours: 24, SigName: "MALWARE"}, 1},
+		{"sig_name absent", SecEventFilter{Hours: 24, SigName: "exploit"}, 0},
+		{"tunnel_name substring", SecEventFilter{Hours: 24, TunnelName: "east"}, 1},
+		{"wan_name substring", SecEventFilter{Hours: 24, WanName: "wan1"}, 1},
+	}
+	for _, tc := range cases {
+		_, total, _, err := db.ListSecEvents(tc.filter, 0, 100)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if total != tc.want {
+			t.Fatalf("%s: total = %d, want %d", tc.name, total, tc.want)
+		}
+	}
+}
+
+func TestListSecEvents_PageBounds(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	dev := seedNetEventDevice(t, db, "fw-1", nil)
+	now := time.Now()
+	for i := 0; i < 10; i++ {
+		seedSecEventRow(t, db, dev.ID, 0, now.Add(-time.Duration(i)*time.Minute), secClassFinding, nil)
+	}
+
+	rows, total, _, err := db.ListSecEvents(SecEventFilter{Hours: 24}, 3, 4)
+	if err != nil {
+		t.Fatalf("ListSecEvents: %v", err)
+	}
+	if total != 10 {
+		t.Fatalf("total = %d, want 10 (offset/limit must not affect the count)", total)
+	}
+	if len(rows) != 4 {
+		t.Fatalf("page len = %d, want 4", len(rows))
+	}
+	if rows[0].Ts.Before(rows[3].Ts) {
+		t.Fatalf("page not ordered newest-first")
+	}
+}
+
+func TestListSecEvents_CountCapped(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	old := secEventPagerCountCap
+	secEventPagerCountCap = 10
+	t.Cleanup(func() { secEventPagerCountCap = old })
+
+	dev := seedNetEventDevice(t, db, "fw-1", nil)
+	now := time.Now()
+	for i := 0; i < 15; i++ {
+		seedSecEventRow(t, db, dev.ID, 0, now.Add(-time.Duration(i)*time.Minute), secClassFinding, nil)
+	}
+
+	_, total, capped, err := db.ListSecEvents(SecEventFilter{Hours: 24}, 0, 100)
+	if err != nil {
+		t.Fatalf("ListSecEvents: %v", err)
+	}
+	if !capped {
+		t.Fatalf("capped = false with 15 rows over a 10-row cap")
+	}
+	if total != int64(secEventPagerCountCap) {
+		t.Fatalf("capped total = %d, want %d", total, secEventPagerCountCap)
+	}
+}
