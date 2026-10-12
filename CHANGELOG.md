@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.321] - 2026-10-11
+
+### Fixed — the boot-time index backfill no longer blocks startup; concurrent `CREATE INDEX` is tolerated
+
+- The v0.11.320 deploy showed migration v82's 90-second deadline building only ~11 of 117 `net_events` leaf indexes, then `EnsurePartitions` backfilled the remaining ~106 synchronously at boot — blocking the HTTP server for ~11 minutes (API unreachable, container `unhealthy`), while the api and poller processes racing to `CREATE INDEX IF NOT EXISTS` produced repeated `duplicate key value violates unique constraint "pg_class_relname_nsp_index" (SQLSTATE 23505)`. Two changes:
+- **Index creation is race-safe.** `ensureLeafIndexes` (and v82's `createIndexBounded` path) now treat a `23505` on the catalog's `pg_class_relname_nsp_index` as *success* — a sibling process created (or is creating) the same index — and log it at INFO, not as an ERROR/warning. Any other error still warns. Scoped to that exact constraint name so a genuine unique violation on data is never mistaken for it.
+- **Boot no longer blocks on the missing-index backfill.** `EnsurePartitions` at startup still creates the partitions inserts need (synchronous, fast) and still builds leaf indexes promptly for leaves it *creates* this pass (empty, instant), but it no longer backfills missing indexes on *pre-existing* leaves. That catch-up moved entirely to the daily `EnsurePartitionsForCron` pass, bounded by `cronIndexBackfillDeadline` (90s) per run and resumed across passes — the same bounded-DDL discipline v82 uses — so a large backlog is built eventually without blocking startup or hammering the DB. The split with v82 (migration-time net_events backfill vs. cron-time general backfill) is documented on `ensurePartitions`.
+
 ## [0.11.320] - 2026-10-11
 
 ### Added — the Events page gets fast `src_ip` / `dst_ip` / `rule_key` filters

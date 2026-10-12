@@ -656,8 +656,15 @@ func (d *Database) execCronDDL(sql string, args ...interface{}) error {
 // Partitions are created for the current month + 6 months ahead.
 // This is safe for existing servers - it only creates new partitions, never modifies existing data.
 // Startup variant; the retention cron calls EnsurePartitionsForCron.
+//
+// Since the v0.11.321 index-backfill fix, the startup variant builds leaf
+// indexes ONLY for leaves it creates this pass (empty, fast) — it does NOT
+// spend minutes backfilling missing indexes on PRE-EXISTING leaves before the
+// HTTP server listens. That catch-up is the cron pass's job
+// (EnsurePartitionsForCron, bounded by cronIndexBackfillDeadline per run,
+// resuming across daily passes). See ensurePartitions for the split with v82.
 func (d *Database) EnsurePartitions() error {
-	return d.ensurePartitions(d.execMaintenanceDDL, 0)
+	return d.ensurePartitions(d.execMaintenanceDDL, 0, 0)
 }
 
 // EnsurePartitionsForCron is EnsurePartitions for the daily retention pass: the
@@ -682,11 +689,43 @@ func (d *Database) EnsurePartitions() error {
 // including the three migration v82 restored — on any leaf still missing them
 // (ensureLeafIndexes, CREATE INDEX IF NOT EXISTS), so an index v82 could not
 // build at startup (a held lock) is backfilled here.
+//
+// The index backfill on PRE-EXISTING leaves is bounded by
+// cronIndexBackfillDeadline per run (the same bounded-DDL discipline v82 uses):
+// once the deadline passes, the remaining missing indexes are left for the next
+// daily pass (idempotent — ensureLeafIndexes skips indexes already present). A
+// large backlog is therefore built across passes without blocking startup or
+// hammering the DB in one tight run.
 func (d *Database) EnsurePartitionsForCron() error {
-	return d.ensurePartitions(d.execCronDDL, cronDDLLockTimeout)
+	return d.ensurePartitions(d.execCronDDL, cronDDLLockTimeout, cronIndexBackfillDeadline)
 }
 
-func (d *Database) ensurePartitions(createPartition func(sql string, args ...interface{}) error, lockTimeout time.Duration) error {
+// cronIndexBackfillDeadline bounds the time the daily retention pass spends
+// backfilling missing leaf indexes on PRE-EXISTING leaves (a pass-wide budget
+// shared across every leaf, not per leaf). Package var so the PostgreSQL
+// integration tests can shrink it. The boot path passes 0 (no backfill) — the
+// startup variant builds indexes only for leaves it creates this pass, and
+// leaves the pre-existing-leave catch-up entirely to the cron pass.
+var cronIndexBackfillDeadline = 90 * time.Second
+
+// ensurePartitions creates/attaches the leaves each partitioned table needs and
+// ensures their per-leaf indexes exist. createPartition and lockTimeout bound the
+// parent-lock DDL (execMaintenanceDDL at startup, execCronDDL on the cron).
+// backfillDeadline controls the index backfill on PRE-EXISTING leaves:
+//   - 0 (startup): no backfill — a pre-existing leaf's missing indexes are left
+//     for the cron pass, so boot never blocks on a large backlog;
+//   - > 0 (cron): backfill, but stop once backfillDeadline has elapsed since the
+//     pass began (shared across every leaf, resumed next pass).
+//
+// New leaves (created or attached this pass) ALWAYS get their indexes
+// synchronously in both modes — they are empty, so the build is instant, and a
+// new leaf must be usable as soon as ingest starts routing to it.
+//
+// Split with v82: v82 (migrateReaddNetEventIndexes) builds the three re-added
+// net_events leaf indexes at migration time under its own 90s deadline; this
+// pass backfills whatever it could not (and any other missing leaf index) on
+// later passes, so neither duplicates the other's work.
+func (d *Database) ensurePartitions(createPartition func(sql string, args ...interface{}) error, lockTimeout time.Duration, backfillDeadline time.Duration) error {
 	if !d.dialect.IsPostgres() {
 		return nil // Partitioning is PostgreSQL-only
 	}
@@ -794,14 +833,23 @@ func (d *Database) ensurePartitions(createPartition func(sql string, args ...int
 	// every backdated row that lands there was read by full scan: retention's
 	// timestamp-bounded DELETE and the device purge's (device_id, timestamp)
 	// batch subquery both seq-scanned + sorted the default on every batch.
+	//
+	// Its indexes are built here unconditionally (unbounded): there are only
+	// nine of them (one per partitioned table), they are empty on a fresh
+	// install (v51 creates the default bare, v82 then adds its three net_events
+	// indexes, and this loop adds the baseline plan), and on an existing install
+	// they are a no-op. The expensive unbounded case is the DAILY/MONTHLY leaves
+	// below, not the default child, so the default stays on the boot path.
 	for _, def := range partitioned {
-		d.ensureLeafIndexes(def.tableName+"_default", indexPlans[def.tableName])
+		d.ensureLeafIndexes(def.tableName+"_default", indexPlans[def.tableName], time.Time{}, 0)
 	}
 
 	// Create the leaves each table needs: current month + 6 ahead for the
 	// monthly tables, lookback..today+7 days for the daily ones
 	// (partitionWindows).
 	now := time.Now()
+	backfillStart := now
+	backfillExhausted := false
 	for _, def := range partitioned {
 		for _, w := range partitionWindows(def, now, d.partitionLookbackDays(def)) {
 			// Render the RANGE bounds with an EXPLICIT UTC offset (not a bare date) so
@@ -815,7 +863,8 @@ func (d *Database) ensurePartitions(createPartition func(sql string, args ...int
 			endStr := w.end.Format("2006-01-02 15:04:05-07:00")
 
 			partitionName := w.name
-			if err := d.ensureLeaf(def, w, startStr, endStr, createPartition, lockTimeout); err != nil {
+			created, err := d.ensureLeaf(def, w, startStr, endStr, createPartition, lockTimeout)
+			if err != nil {
 				log.Printf("Partition creation warning for %s: %v", partitionName, err)
 				continue
 			}
@@ -823,11 +872,22 @@ func (d *Database) ensurePartitions(createPartition func(sql string, args ...int
 			// Ensure the per-partition indexes exist. LC-19: the list is derived
 			// from the model's gorm index tags (see partitionIndexPlan) — the
 			// previous hard-coded list here had drifted and dropped the AUDIT-034
-			// flow_samples src/dst indexes on fresh installs. This runs for
-			// pre-existing partitions too (IF NOT EXISTS makes it a cheap no-op
-			// when the index is present), so a partition created while an index
-			// was missing from the old list is backfilled on the next startup.
-			d.ensureLeafIndexes(partitionName, indexPlans[def.tableName])
+			// flow_samples src/dst indexes on fresh installs.
+			if created {
+				// New (empty) leaf: build its indexes now — ingest starts routing
+				// to it immediately, and the build on an empty leaf is instant.
+				d.ensureLeafIndexes(partitionName, indexPlans[def.tableName], time.Time{}, 0)
+				continue
+			}
+			// Pre-existing leaf: its missing indexes are backfilled on the cron
+			// pass only (bounded by backfillDeadline, resumed across passes),
+			// never at startup — a large backlog here is exactly what blocked
+			// boot for ~11 minutes before v0.11.321.
+			if backfillDeadline > 0 && !backfillExhausted {
+				if !d.ensureLeafIndexes(partitionName, indexPlans[def.tableName], backfillStart, backfillDeadline) {
+					backfillExhausted = true
+				}
+			}
 		}
 	}
 
@@ -864,19 +924,23 @@ func (d *Database) ensurePartitions(createPartition func(sql string, args ...int
 // (the DELETE and INSERT share a transaction) and never lost (the standalone
 // table keeps it). Rows are unreadable through the parent only between their
 // move and the attach — they were strays in the default to begin with.
+//
+// Returns whether the leaf was CREATED (or attached) by this call — false when
+// it was already attached. The caller uses it to build a new leaf's indexes
+// promptly while leaving a pre-existing leaf's index backfill to the cron pass.
 func (d *Database) ensureLeaf(def partitionDef, w partitionWindow, startStr, endStr string,
-	createPartition func(sql string, args ...interface{}) error, lockTimeout time.Duration) error {
+	createPartition func(sql string, args ...interface{}) error, lockTimeout time.Duration) (bool, error) {
 	var attached bool
 	if err := d.db.Raw(`SELECT EXISTS (SELECT 1 FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid WHERE c.relname = ?)`,
 		w.name).Scan(&attached).Error; err != nil {
-		return fmt.Errorf("attached probe: %w", err)
+		return false, fmt.Errorf("attached probe: %w", err)
 	}
 	if attached {
-		return nil
+		return false, nil
 	}
 	var exists bool
 	if err := d.db.Raw(`SELECT to_regclass(?) IS NOT NULL`, w.name).Scan(&exists).Error; err != nil {
-		return fmt.Errorf("exists probe: %w", err)
+		return false, fmt.Errorf("exists probe: %w", err)
 	}
 	def_ := def.tableName + "_default"
 	var strays bool
@@ -891,10 +955,10 @@ func (d *Database) ensureLeaf(def partitionDef, w partitionWindow, startStr, end
 		if err := createPartition(fmt.Sprintf(`
 					CREATE TABLE %s PARTITION OF %s
 					FOR VALUES FROM ('%s') TO ('%s')`, w.name, def.tableName, startStr, endStr)); err != nil {
-			return err
+			return false, err
 		}
 		log.Printf("Created partition: %s", w.name)
-		return nil
+		return true, nil
 	}
 	// The raw archive must not count or verify this table while rows sit in
 	// the standalone leaf (invisible through the parent): the leaf's
@@ -902,13 +966,13 @@ func (d *Database) ensureLeaf(def partitionDef, w partitionWindow, startStr, end
 	// inside one of its counts (archive_gate.go). Bumped before anything
 	// moves; a failure stops the move.
 	if err := d.bumpArchiveLeafMoveEpoch(def.tableName); err != nil {
-		return fmt.Errorf("record the leaf move for the archive: %w", err)
+		return false, fmt.Errorf("record the leaf move for the archive: %w", err)
 	}
 	if !exists {
 		log.Printf("WARNING: %s already holds rows for [%s, %s); creating %s as a standalone table, moving them, then attaching it",
 			def_, startStr, endStr, w.name)
 		if err := d.execMaintenanceDDL(fmt.Sprintf(`CREATE TABLE %s (LIKE %s INCLUDING DEFAULTS)`, w.name, def.tableName)); err != nil {
-			return fmt.Errorf("create standalone leaf: %w", err)
+			return false, fmt.Errorf("create standalone leaf: %w", err)
 		}
 	} else {
 		log.Printf("WARNING: %s exists but is not attached to %s (an interrupted earlier pass); resuming the move from %s and the attach",
@@ -931,7 +995,7 @@ func (d *Database) ensureLeaf(def partitionDef, w partitionWindow, startStr, end
 	// instead of building them). No contention — the leaf is still standalone.
 	// Done before the move so the PK also rejects a duplicate id early.
 	if err := d.prepareLeafForAttach(def, w, startStr, endStr); err != nil {
-		return fmt.Errorf("prepare %s for attach: %w", w.name, err)
+		return false, fmt.Errorf("prepare %s for attach: %w", w.name, err)
 	}
 	var moved, remainder int64
 	for attempt := 1; ; attempt++ {
@@ -940,7 +1004,7 @@ func (d *Database) ensureLeaf(def partitionDef, w partitionWindow, startStr, end
 		n, err := d.moveDefaultRowsIntoLeaf(def_, w.name, def.column, w.start, w.end)
 		moved += n
 		if err != nil {
-			return fmt.Errorf("move rows from %s: %w", def_, err)
+			return false, fmt.Errorf("move rows from %s: %w", def_, err)
 		}
 		if leafAttachHook != nil {
 			leafAttachHook(w.name, attempt) // test seam: rows for this day arrive now
@@ -959,7 +1023,7 @@ func (d *Database) ensureLeaf(def partitionDef, w partitionWindow, startStr, end
 		remainder, err = d.attachLeafLocked(def, w, startStr, endStr, lockTimeout)
 		if errors.Is(err, errLeafRemainderTooLarge) {
 			if attempt >= leafAttachMaxAttempts {
-				return fmt.Errorf("attach: the default kept receiving more than %d rows for [%s, %s) between the batched move and the lock on %d attempts (%d row(s) moved so far, kept in the standalone leaf; retried next pass)",
+				return false, fmt.Errorf("attach: the default kept receiving more than %d rows for [%s, %s) between the batched move and the lock on %d attempts (%d row(s) moved so far, kept in the standalone leaf; retried next pass)",
 					leafAttachRemainderCap, startStr, endStr, attempt, moved)
 			}
 			log.Printf("Partition %s: more than %d rows arrived in %s for [%s, %s) since the batched move; moving them unlocked first (attempt %d/%d)",
@@ -967,12 +1031,12 @@ func (d *Database) ensureLeaf(def partitionDef, w partitionWindow, startStr, end
 			continue
 		}
 		if err != nil {
-			return fmt.Errorf("attach (%d row(s) moved out of %s and kept in the standalone leaf; retried next pass): %w", moved, def_, err)
+			return false, fmt.Errorf("attach (%d row(s) moved out of %s and kept in the standalone leaf; retried next pass): %w", moved, def_, err)
 		}
 		break
 	}
 	log.Printf("Created partition: %s (attached after moving %d+%d row(s) out of %s)", w.name, moved, remainder, def_)
-	return nil
+	return true, nil
 }
 
 // leafAttachHook, when non-nil, runs on every attempt between the batched move
@@ -1163,18 +1227,40 @@ func (d *Database) attachLeafLocked(def partitionDef, w partitionWindow, startSt
 // from the plan. Column names are quoted — interface_stats has an "index"
 // column, which is a reserved word. Errors are logged, never returned: a
 // missing leaf index is a per-query slowdown, not a reason to fail startup.
-func (d *Database) ensureLeafIndexes(leaf string, plan []partitionIndex) {
+//
+// backfillDeadline bounds the time spent here (0 = unbounded, used for a NEW
+// leaf that must be indexed promptly). When backfillDeadline > 0 and it has
+// elapsed since backfillStart, the remaining indexes are left for the next
+// pass and the call returns false so the caller can stop the pass-wide
+// backfill. A 23505 on pg_class_relname_nsp_index (a sibling process created
+// the same index concurrently) is treated as success and logged at INFO, not
+// as a warning.
+func (d *Database) ensureLeafIndexes(leaf string, plan []partitionIndex, backfillStart time.Time, backfillDeadline time.Duration) bool {
 	for _, idx := range plan {
+		if backfillDeadline > 0 && time.Since(backfillStart) >= backfillDeadline {
+			log.Printf("Partition index backfill: %s deadline reached on %s; the remaining missing index(es) are left for the next pass",
+				backfillDeadline, leaf)
+			return false
+		}
 		quoted := make([]string, len(idx.cols))
 		for i, c := range idx.cols {
 			quoted[i] = `"` + c + `"`
 		}
-		createIdxSQL := fmt.Sprintf("CREATE INDEX IF NOT EXISTS idx_%s_%s ON %s (%s)",
-			leaf, idx.suffix, leaf, strings.Join(quoted, ", "))
+		idxName := fmt.Sprintf("idx_%s_%s", leaf, idx.suffix)
+		createIdxSQL := fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s (%s)",
+			idxName, leaf, strings.Join(quoted, ", "))
 		if err := d.execMaintenanceDDL(createIdxSQL); err != nil {
+			if isRelationNameConflict(err) {
+				// A sibling process created (or is creating) the index between our
+				// IF NOT EXISTS check and the CREATE — the index exists (or will),
+				// so this is success, not an error.
+				log.Printf("Index %s already exists (created by a concurrent process); skipping", idxName)
+				continue
+			}
 			log.Printf("Index creation warning on %s: %v", leaf, err)
 		}
 	}
+	return true
 }
 
 // migratePartitionDefaultPartitions is the v51 migration (AUDIT D2): create a

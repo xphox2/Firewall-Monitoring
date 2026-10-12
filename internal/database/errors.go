@@ -42,3 +42,24 @@ func sqlState(err error) string {
 	}
 	return ""
 }
+
+// isRelationNameConflict reports whether err is the PostgreSQL 23505 raised when
+// two processes race to CREATE the same catalog relation under the same name
+// (e.g. a leaf index in ensureLeafIndexes): `CREATE INDEX IF NOT EXISTS` checks
+// the catalog before creating, but that check is not serialized against a
+// sibling's create, so the loser fails on pg_class_relname_nsp_index — the
+// catalog's unique index over relation names — rather than being caught by the
+// IF NOT EXISTS guard. It means a sibling process already created (or is
+// creating) the relation, so the caller treats the CREATE as success. Scoped to
+// that exact constraint name so a genuine 23505 on a data index (a unique
+// constraint over rows) is never mistaken for it.
+func isRelationNameConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	return pgErr.Code == "23505" && pgErr.ConstraintName == "pg_class_relname_nsp_index"
+}
