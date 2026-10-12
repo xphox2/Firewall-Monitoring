@@ -1,6 +1,13 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.323] - 2026-10-11
+
+### Added — the Events page gets long-term analytics from `net_event_rollups`
+
+- The Events page (`/admin/events`) now charts **long-term analytics** over the daily `net_event_rollups` table — the counts-only history the rollup exists for, up to 365 days. A new viewer-accessible `GET /api/events/rollups` (query: `days` 1–365 default 30, `device_id`, `site_id`) returns six series: **top rules** (top rule keys by hits, with bytes in/out), **policy bytes** (per-day bytes across every action), the **deny trend** (per-day hits/bytes where the action is deny or reject), and **app-category / direction / ruleset** breakdowns (hits by each). The page renders these as "Policy bytes", "Deny trend", "Top rules", "App categories", "Directions" and "Rulesets" cards, labelling directions through the existing `enums.js` vocabulary.
+- `internal/database.NetEventRollupStats` computes each series as a `GROUP BY` over `day >= from`, so the rollup table's unique `(day, device_id, …)` key serves both the day scan and the device/site narrowing — **no new indexes or migrations**. The deny series uses the `deny` (2) and `reject` (3) action values from `internal/normalize/enums.go`.
+
 ## [0.11.322] - 2026-10-11
 
 ### Added — the Events page lists security events (findings, auth, config changes, VPN sessions, device health)

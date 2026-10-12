@@ -495,6 +495,42 @@
                     <div class="fwmon-chips" id="events-active-chips"></div>
                 </div>
             </div>
+
+            <!-- Rollup analytics (Phase 2, PR 4 — long-term counts from net_event_rollups;
+                 rendered by FwmonEvents.renderAnalytics in admin-events.js) -->
+            <div class="fwmon-load-host" id="events-analytics-host">
+                <div class="chart-row">
+                    <div class="chart-card">
+                        <h3>Policy Bytes</h3>
+                        <canvas id="events-policy-bytes-chart"></canvas>
+                    </div>
+                    <div class="chart-card">
+                        <h3>Deny Trend</h3>
+                        <canvas id="events-deny-chart"></canvas>
+                    </div>
+                </div>
+                <div class="chart-row">
+                    <div class="chart-card">
+                        <h3>Top Rules</h3>
+                        <canvas id="events-top-rules-chart"></canvas>
+                    </div>
+                    <div class="chart-card">
+                        <h3>App Categories</h3>
+                        <canvas id="events-app-cat-chart"></canvas>
+                    </div>
+                </div>
+                <div class="chart-row">
+                    <div class="chart-card">
+                        <h3>Directions</h3>
+                        <canvas id="events-direction-chart"></canvas>
+                    </div>
+                    <div class="chart-card">
+                        <h3>Rulesets</h3>
+                        <canvas id="events-ruleset-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+
             <div class="card">
                 <div class="card-header fwmon-flows-data-header">
                     <div class="fwmon-flows-tabs" id="events-view-tabs" role="tablist">

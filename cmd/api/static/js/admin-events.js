@@ -526,6 +526,9 @@
         setVal('events-filter-rule-key', state.rule_key);
         activatePills();
         renderChips();
+        // The rollup analytics share the device/site filters, so a change there
+        // (or a clear) re-fetches them alongside the list.
+        loadAnalytics();
     }
 
     function activatePills() {
@@ -876,6 +879,101 @@
     }
 
     // ----------------------------------------------------------------------
+    // Rollup analytics (Phase 2, PR 4 — net_event_rollups, day-granular)
+    // ----------------------------------------------------------------------
+    // The page-level range pills drive the raw event lists (hours); the rollup
+    // analytics are day-granular and long-term (up to 365 days), so they use a
+    // fixed 30-day window and share only the device/site filters with the lists.
+    var ANALYTICS_DAYS = 30;
+    var analyticsCharts = {};
+    var ANALYTICS_COLORS = ['#58a6ff', '#3fb950', '#d2992a', '#bc8cff', '#f85149', '#39c5cf', '#ff7b72', '#8b949e'];
+
+    // eventsChart is a minimal local Chart.js helper — admin-main.js's
+    // createChart is module-private, so this module carries its own. It destroys
+    // a previous instance and applies the same doughnut cutout as the other
+    // pages; series colors are fixed hex (theme-safe) and doughnut segments are
+    // borderless, matching the syslog severity chart.
+    function eventsChart(canvasId, type, labels, datasets, opts) {
+        if (analyticsCharts[canvasId]) { analyticsCharts[canvasId].destroy(); }
+        var canvas = document.getElementById(canvasId);
+        if (!canvas || !window.Chart) return;
+        var isDoughnut = type === 'doughnut' || type === 'pie';
+        var options = {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { position: isDoughnut ? 'bottom' : 'top' } },
+            scales: isDoughnut ? {} : { x: { ticks: { maxRotation: 0, maxTicksLimit: 8 } }, y: { beginAtZero: true } }
+        };
+        if (isDoughnut) options.cutout = '75%';
+        analyticsCharts[canvasId] = new window.Chart(canvas, {
+            type: type, data: { labels: labels, datasets: datasets }, options: Object.assign({}, options, opts || {})
+        });
+    }
+
+    function analyticsURL() {
+        var p = ['days=' + ANALYTICS_DAYS];
+        if (state.site_id) p.push('site_id=' + encodeURIComponent(state.site_id));
+        if (state.device_id) p.push('device_id=' + encodeURIComponent(state.device_id));
+        return '/admin/api/events/rollups?' + p.join('&');
+    }
+
+    function loadAnalytics() {
+        var host = document.getElementById('events-analytics-host');
+        if (!host) return;
+        AC.chartLoad(host, function(signal) {
+            return apiFetch(analyticsURL(), { signal: signal });
+        }, { key: 'events-analytics', label: 'Loading analytics…', escScope: document.getElementById('page-events') }).then(function(r) {
+            if (r.superseded || r.cancelled) return;
+            if (r.error || !r.data) {
+                AC.chartNotice(host, 'Could not load analytics', { dim: false, onRetry: loadAnalytics });
+                return;
+            }
+            renderAnalytics(r.data.data || {});
+        });
+    }
+
+    // truncateRuleKey keeps a long rule key readable on the "top rules" axis.
+    function truncateRuleKey(k) {
+        if (!k) return '';
+        return k.length > 26 ? k.slice(0, 25) + '…' : k;
+    }
+
+    function renderAnalytics(d) {
+        // Policy bytes: one line per direction of bytes, per day.
+        var pb = d.policy_bytes || [];
+        eventsChart('events-policy-bytes-chart', 'line', pb.map(function(b) { return b.day; }), [
+            { label: 'In', data: pb.map(function(b) { return b.bytes_in; }), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.12)', fill: true, tension: 0.3 },
+            { label: 'Out', data: pb.map(function(b) { return b.bytes_out; }), borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.12)', fill: true, tension: 0.3 }
+        ]);
+
+        // Deny trend: denied hits per day.
+        var deny = d.deny || [];
+        eventsChart('events-deny-chart', 'bar', deny.map(function(b) { return b.day; }),
+            [{ label: 'Denied', data: deny.map(function(b) { return b.hits; }), backgroundColor: '#f85149', borderRadius: 3 }]);
+
+        // Top rules: horizontal bars, highest hits first.
+        var rules = d.policy_hits || [];
+        eventsChart('events-top-rules-chart', 'bar', rules.map(function(r) { return truncateRuleKey(r.rule_key); }),
+            [{ label: 'Hits', data: rules.map(function(r) { return r.hits; }), backgroundColor: '#58a6ff', borderRadius: 3 }],
+            { indexAxis: 'y' });
+
+        // App categories: doughnut; the '' sentinel reads as "uncategorized".
+        var appCats = d.app_categories || [];
+        eventsChart('events-app-cat-chart', 'doughnut', appCats.map(function(c) { return c.key === '' ? 'uncategorized' : c.key; }),
+            [{ data: appCats.map(function(c) { return c.count; }), backgroundColor: ANALYTICS_COLORS.slice(0, appCats.length), borderWidth: 0 }]);
+
+        // Directions: doughnut labelled through the DIRECTION enum.
+        var dirs = d.directions || [];
+        eventsChart('events-direction-chart', 'doughnut', dirs.map(function(x) { return enumLabel('DIRECTION', x.direction); }),
+            [{ data: dirs.map(function(x) { return x.hits; }), backgroundColor: ANALYTICS_COLORS.slice(0, dirs.length), borderWidth: 0 }]);
+
+        // Rulesets: doughnut; the '' sentinel reads as "root".
+        var rulesets = d.rulesets || [];
+        eventsChart('events-ruleset-chart', 'doughnut', rulesets.map(function(c) { return c.key === '' ? 'root' : c.key; }),
+            [{ data: rulesets.map(function(c) { return c.count; }), backgroundColor: ANALYTICS_COLORS.slice(0, rulesets.length), borderWidth: 0 }]);
+    }
+
+    // ----------------------------------------------------------------------
     // Boot
     // ----------------------------------------------------------------------
     function init() {
@@ -900,6 +998,7 @@
     function refresh() {
         if (activeTab === 'security') secFirstPage();
         else firstPage();
+        loadAnalytics();
     }
     function getState() { return Object.assign({}, state); }
 

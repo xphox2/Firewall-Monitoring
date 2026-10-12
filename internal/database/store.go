@@ -53,6 +53,7 @@ type Store interface {
 	NormalizeBackfillStore
 	NetEventReadStore
 	SecEventReadStore
+	NetEventRollupReadStore
 	ArchiveGateStore
 	ArchiveStatusStore
 	ArchiveRestoreStore
@@ -166,6 +167,16 @@ type NetEventReadStore interface {
 // idx_sec_events_class_ts), so this reader adds no indexes or migrations.
 type SecEventReadStore interface {
 	ListSecEvents(f SecEventFilter, offset, limit int) ([]SecEventRow, int64, bool, error)
+}
+
+// NetEventRollupReadStore covers the long-term analytics read path over
+// net_event_rollups (Phase 2, PR 4, normalized_read.go): the Events page's
+// counts-only history — policy hits/bytes, deny, app category, direction and
+// ruleset series. Every series groups over `day >= from` and is served entirely
+// by the rollup table's unique (day, device_id, …) key, so this reader adds no
+// indexes or migrations.
+type NetEventRollupReadStore interface {
+	NetEventRollupStats(f NetEventRollupFilter) (*NetEventRollupStatsResult, error)
 }
 
 // NormalizeBackfillStore covers the one-time normalized-event backfill queue

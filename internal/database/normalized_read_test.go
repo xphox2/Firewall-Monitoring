@@ -474,3 +474,174 @@ func TestListSecEvents_CountCapped(t *testing.T) {
 		t.Fatalf("capped total = %d, want %d", total, secEventPagerCountCap)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// net_event_rollups analytics (Phase 2, PR 4)
+// ---------------------------------------------------------------------------
+
+// Rollup action/direction literals: allow=1, deny=2, reject=3; inbound=1,
+// outbound=2 (internal/normalize/enums.go — literal here so this test does not
+// import the normalize package, matching the sec-event class literals above).
+func seedRollupRow(t *testing.T, db *Database, day time.Time, devID uint, ruleKey string, action, direction int16, appCat, ruleset string, hits, bytesIn, bytesOut int64) {
+	t.Helper()
+	row := &models.NetEventRollup{
+		Day: day, DeviceID: devID, RuleKey: ruleKey, Action: action, Direction: direction,
+		AppCat: appCat, Ruleset: ruleset, Hits: hits, BytesIn: bytesIn, BytesOut: bytesOut,
+	}
+	if err := db.Gorm().Create(row).Error; err != nil {
+		t.Fatalf("seed rollup row: %v", err)
+	}
+}
+
+// TestNetEventRollupStats_GroupingAndSums seeds a small rollup across two days
+// and two devices and asserts every series' sums and grouping.
+func TestNetEventRollupStats_GroupingAndSums(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	day0 := utcDay(time.Now())
+	day1 := day0.AddDate(0, 0, -1)
+
+	// Device 1, day0.
+	seedRollupRow(t, db, day0, 1, "u:a", 1, 2, "Web", "root", 100, 1000, 2000) // allow
+	seedRollupRow(t, db, day0, 1, "u:b", 2, 1, "Mail", "root", 30, 300, 600)   // deny
+	seedRollupRow(t, db, day0, 1, "u:b", 3, 1, "Mail", "root", 20, 200, 400)   // reject
+	// Device 1, day1.
+	seedRollupRow(t, db, day1, 1, "u:a", 1, 2, "Web", "root", 50, 500, 1000)  // allow
+	seedRollupRow(t, db, day1, 1, "u:c", 2, 1, "Mail", "guest", 10, 100, 200) // deny
+	// Device 2, day0.
+	seedRollupRow(t, db, day0, 2, "u:a", 1, 2, "Web", "root", 5, 50, 100) // allow
+
+	stats, err := db.NetEventRollupStats(NetEventRollupFilter{Days: 30})
+	if err != nil {
+		t.Fatalf("NetEventRollupStats: %v", err)
+	}
+
+	// policy_hits: top rules by SUM(hits) across the window, '' excluded.
+	// u:a = 100+50+5 = 155; u:b = 30+20 = 50; u:c = 10.
+	if len(stats.PolicyHits) != 3 {
+		t.Fatalf("policy_hits = %d rows, want 3: %+v", len(stats.PolicyHits), stats.PolicyHits)
+	}
+	if r := stats.PolicyHits[0]; r.RuleKey != "u:a" || r.Hits != 155 || r.BytesIn != 1550 || r.BytesOut != 3100 {
+		t.Fatalf("policy_hits[0] = %+v, want u:a 155/1550/3100", r)
+	}
+	if r := stats.PolicyHits[1]; r.RuleKey != "u:b" || r.Hits != 50 || r.BytesIn != 500 || r.BytesOut != 1000 {
+		t.Fatalf("policy_hits[1] = %+v, want u:b 50/500/1000", r)
+	}
+	if r := stats.PolicyHits[2]; r.RuleKey != "u:c" || r.Hits != 10 {
+		t.Fatalf("policy_hits[2] = %+v, want u:c 10", r)
+	}
+
+	// policy_bytes: per-day bytes across every action, oldest-first.
+	if len(stats.PolicyBytes) != 2 {
+		t.Fatalf("policy_bytes = %d buckets, want 2: %+v", len(stats.PolicyBytes), stats.PolicyBytes)
+	}
+	if b := stats.PolicyBytes[0]; b.Day != day1.Format("2006-01-02") || b.Hits != 60 || b.BytesIn != 600 || b.BytesOut != 1200 {
+		t.Fatalf("policy_bytes[0] = %+v, want day1 60/600/1200", b)
+	}
+	if b := stats.PolicyBytes[1]; b.Day != day0.Format("2006-01-02") || b.Hits != 155 || b.BytesIn != 1550 || b.BytesOut != 3100 {
+		t.Fatalf("policy_bytes[1] = %+v, want day0 155/1550/3100", b)
+	}
+
+	// deny: only deny/reject actions, per day.
+	if len(stats.Deny) != 2 {
+		t.Fatalf("deny = %d buckets, want 2: %+v", len(stats.Deny), stats.Deny)
+	}
+	if b := stats.Deny[0]; b.Day != day1.Format("2006-01-02") || b.Hits != 10 || b.BytesIn != 100 || b.BytesOut != 200 {
+		t.Fatalf("deny[0] = %+v, want day1 10/100/200", b)
+	}
+	if b := stats.Deny[1]; b.Day != day0.Format("2006-01-02") || b.Hits != 50 || b.BytesIn != 500 || b.BytesOut != 1000 {
+		t.Fatalf("deny[1] = %+v, want day0 50/500/1000 (deny 30 + reject 20)", b)
+	}
+
+	// app_categories: SUM(hits) by app_cat, count desc.
+	if len(stats.AppCategories) != 2 {
+		t.Fatalf("app_categories = %d, want 2: %+v", len(stats.AppCategories), stats.AppCategories)
+	}
+	if c := stats.AppCategories[0]; c.Key != "Web" || c.Count != 155 {
+		t.Fatalf("app_categories[0] = %+v, want Web 155", c)
+	}
+	if c := stats.AppCategories[1]; c.Key != "Mail" || c.Count != 60 {
+		t.Fatalf("app_categories[1] = %+v, want Mail 60", c)
+	}
+
+	// directions: SUM(hits) by direction, id asc (inbound=1 before outbound=2).
+	if len(stats.Directions) != 2 {
+		t.Fatalf("directions = %d, want 2: %+v", len(stats.Directions), stats.Directions)
+	}
+	if d := stats.Directions[0]; d.Direction != 1 || d.Hits != 60 {
+		t.Fatalf("directions[0] = %+v, want inbound 60", d)
+	}
+	if d := stats.Directions[1]; d.Direction != 2 || d.Hits != 155 {
+		t.Fatalf("directions[1] = %+v, want outbound 155", d)
+	}
+
+	// rulesets: SUM(hits) by ruleset, count desc.
+	if len(stats.Rulesets) != 2 {
+		t.Fatalf("rulesets = %d, want 2: %+v", len(stats.Rulesets), stats.Rulesets)
+	}
+	if c := stats.Rulesets[0]; c.Key != "root" || c.Count != 205 {
+		t.Fatalf("rulesets[0] = %+v, want root 205", c)
+	}
+	if c := stats.Rulesets[1]; c.Key != "guest" || c.Count != 10 {
+		t.Fatalf("rulesets[1] = %+v, want guest 10", c)
+	}
+}
+
+// TestNetEventRollupStats_DayFilter asserts rows older than the window are
+// excluded: a 40-day-old row is outside the default 30-day bound.
+func TestNetEventRollupStats_DayFilter(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	day0 := utcDay(time.Now())
+	old := day0.AddDate(0, 0, -40)
+
+	seedRollupRow(t, db, day0, 1, "u:new", 1, 2, "Web", "root", 5, 50, 100)
+	seedRollupRow(t, db, old, 1, "u:old", 1, 2, "Web", "root", 999, 999, 999)
+
+	stats, err := db.NetEventRollupStats(NetEventRollupFilter{Days: 30})
+	if err != nil {
+		t.Fatalf("NetEventRollupStats: %v", err)
+	}
+	if len(stats.PolicyHits) != 1 || stats.PolicyHits[0].RuleKey != "u:new" {
+		t.Fatalf("policy_hits = %+v, want only u:new (u:old is outside the window)", stats.PolicyHits)
+	}
+	if len(stats.PolicyBytes) != 1 || stats.PolicyBytes[0].Day != day0.Format("2006-01-02") {
+		t.Fatalf("policy_bytes = %+v, want only day0", stats.PolicyBytes)
+	}
+}
+
+// TestNetEventRollupStats_DeviceAndSiteFilter asserts the device and site
+// filters narrow the series through the (day, device_id, …) key prefix.
+func TestNetEventRollupStats_DeviceAndSiteFilter(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	siteA := seedNetEventSite(t, db, "site-a")
+	siteB := seedNetEventSite(t, db, "site-b")
+	devA := seedNetEventDevice(t, db, "fw-a", &siteA.ID)
+	devB := seedNetEventDevice(t, db, "fw-b", &siteB.ID)
+	day0 := utcDay(time.Now())
+
+	seedRollupRow(t, db, day0, devA.ID, "u:a", 1, 2, "Web", "root", 10, 100, 200)
+	seedRollupRow(t, db, day0, devB.ID, "u:a", 1, 2, "Web", "root", 7, 70, 140)
+
+	all, err := db.NetEventRollupStats(NetEventRollupFilter{Days: 30})
+	if err != nil {
+		t.Fatalf("NetEventRollupStats(all): %v", err)
+	}
+	if len(all.PolicyHits) != 1 || all.PolicyHits[0].Hits != 17 {
+		t.Fatalf("all policy_hits = %+v, want u:a 17 (both devices)", all.PolicyHits)
+	}
+
+	byDevice, err := db.NetEventRollupStats(NetEventRollupFilter{Days: 30, DeviceID: devA.ID})
+	if err != nil {
+		t.Fatalf("NetEventRollupStats(device): %v", err)
+	}
+	if len(byDevice.PolicyHits) != 1 || byDevice.PolicyHits[0].Hits != 10 {
+		t.Fatalf("device policy_hits = %+v, want u:a 10 (device A only)", byDevice.PolicyHits)
+	}
+
+	bySite, err := db.NetEventRollupStats(NetEventRollupFilter{Days: 30, SiteID: siteA.ID})
+	if err != nil {
+		t.Fatalf("NetEventRollupStats(site): %v", err)
+	}
+	if len(bySite.PolicyHits) != 1 || bySite.PolicyHits[0].Hits != 10 {
+		t.Fatalf("site policy_hits = %+v, want u:a 10 (site A only)", bySite.PolicyHits)
+	}
+}

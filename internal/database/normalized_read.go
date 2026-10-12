@@ -1,10 +1,12 @@
 package database
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
 	"firewall-mon/internal/models"
+	"firewall-mon/internal/normalize"
 
 	"gorm.io/gorm"
 )
@@ -476,4 +478,235 @@ func (d *Database) enrichSecEventRows(rows []SecEventRow) {
 			rows[i].Vendor = dv.Vendor
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// net_event_rollups — the Events page's long-term analytics (Phase 2, PR 4)
+// ---------------------------------------------------------------------------
+
+// The rollup table exists for counts-only history: raw net_events keep a short
+// TTL, so a window past that TTL can only be answered from net_event_rollups,
+// whose (day, device_id, rule_key, action, direction, app_cat, ruleset) unique
+// key already carries the daily hits/bytes/distinct_src. Every series below is
+// therefore a GROUP BY over `day >= from` — the unique key's (day, device_id, …)
+// prefix serves both the day scan and the device/site narrowing — and no new
+// index or migration is added.
+
+const (
+	// netEventRollupStatsDefaultDays is the lookback NetEventRollupStats uses
+	// when the filter does not name a window; netEventRollupStatsMaxDays is the
+	// ceiling (one year — the rollup retention window).
+	netEventRollupStatsDefaultDays = 30
+	netEventRollupStatsMaxDays     = 365
+	// netEventRollupTopRules bounds the "top rules" card. The chart cannot show
+	// an unbounded ranking, and past a handful of rules nothing is readable.
+	netEventRollupTopRules = 10
+)
+
+// NetEventRollupFilter constrains a NetEventRollupStats query. Days is the
+// lookback window in UTC days (coerced to [1,365]; default 30). DeviceID and
+// SiteID of 0 mean "no filter" — a device id of 0 is never a real row (PKs
+// start at 1), and a site filter narrows by the devices assigned to that site
+// (net_event_rollups has no site_id column).
+type NetEventRollupFilter struct {
+	Days     int
+	DeviceID uint
+	SiteID   uint
+}
+
+// NetEventRollupRule is one policy rule's aggregate over the window — the
+// "top rules" card's rows. The empty rule_key (the rollup's "no rule reported"
+// sentinel) is excluded by the query: "top rules" names real rules.
+type NetEventRollupRule struct {
+	RuleKey  string `json:"rule_key"`
+	Hits     int64  `json:"hits"`
+	BytesIn  int64  `json:"bytes_in"`
+	BytesOut int64  `json:"bytes_out"`
+}
+
+// NetEventRollupDay is one UTC day's aggregate — a point on the policy-bytes
+// and deny-trend charts. Day is "YYYY-MM-DD" (the rollup's day column is a UTC
+// midnight, so bucketing it to a day is a no-op).
+type NetEventRollupDay struct {
+	Day      string `json:"day"`
+	Hits     int64  `json:"hits"`
+	BytesIn  int64  `json:"bytes_in"`
+	BytesOut int64  `json:"bytes_out"`
+}
+
+// NetEventRollupDirection is one direction's SUM(hits) over the window. The
+// int16 is the raw rollup direction so the UI labels it via enums.js DIRECTION.
+type NetEventRollupDirection struct {
+	Direction int16 `json:"direction"`
+	Hits      int64 `json:"hits"`
+}
+
+// NetEventRollupStatsResult is the long-term analytics payload for the Events
+// page: policy hits (top rules) and bytes, the deny trend, and the app-category
+// / direction / ruleset breakdowns. The day-bucketed series (PolicyBytes and
+// Deny) are ordered oldest-first; the breakdowns are ordered by count
+// descending (directions by id) for direct charting.
+type NetEventRollupStatsResult struct {
+	PolicyHits    []NetEventRollupRule      `json:"policy_hits"`
+	PolicyBytes   []NetEventRollupDay       `json:"policy_bytes"`
+	Deny          []NetEventRollupDay       `json:"deny"`
+	AppCategories []KeyCount                `json:"app_categories"`
+	Directions    []NetEventRollupDirection `json:"directions"`
+	Rulesets      []KeyCount                `json:"rulesets"`
+}
+
+// rollupByteSums is the shared SELECT tail for the rule and day-bucketed
+// series: SUMs cast to BIGINT because Postgres sums bigint into numeric (the
+// same cast the rollup writer uses).
+const rollupByteSums = "CAST(SUM(hits) AS BIGINT) AS hits, " +
+	"CAST(SUM(bytes_in) AS BIGINT) AS bytes_in, CAST(SUM(bytes_out) AS BIGINT) AS bytes_out"
+
+// netEventRollupDayRow is the scan shape of one day-bucketed series. Day is the
+// rollup's day column (a UTC midnight timestamp); the exported NetEventRollupDay
+// renders it as "YYYY-MM-DD" so the wire form is dialect-independent.
+type netEventRollupDayRow struct {
+	Day      time.Time
+	Hits     int64
+	BytesIn  int64
+	BytesOut int64
+}
+
+// toDays maps the day-bucketed scan rows to the wire shape, oldest-first (the
+// query already orders by day).
+func toDays(rows []netEventRollupDayRow) []NetEventRollupDay {
+	out := make([]NetEventRollupDay, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, NetEventRollupDay{
+			Day:      r.Day.UTC().Format("2006-01-02"),
+			Hits:     r.Hits,
+			BytesIn:  r.BytesIn,
+			BytesOut: r.BytesOut,
+		})
+	}
+	return out
+}
+
+// NetEventRollupStats computes the six grouped series over the window. The six
+// queries share one base filter (built once, so the series can never drift),
+// and each rides the rollup table's unique key prefix — no new index.
+func (d *Database) NetEventRollupStats(f NetEventRollupFilter) (*NetEventRollupStatsResult, error) {
+	days := f.Days
+	if days <= 0 {
+		days = netEventRollupStatsDefaultDays
+	}
+	if days > netEventRollupStatsMaxDays {
+		days = netEventRollupStatsMaxDays
+	}
+	// The window starts at the UTC midnight of (days-1) days ago, so a 30-day
+	// window covers exactly 30 distinct day buckets (today plus the 29 before).
+	from := utcDay(time.Now()).AddDate(0, 0, -(days - 1))
+
+	// base rebuilds the filtered query fresh on every call for the same reason
+	// ListNetEvents does: GORM chain methods mutate the statement in place, so a
+	// shared base would leak one series' GROUP BY into the next. The day bound
+	// is always present (partition/index pruning); the device/site filters
+	// narrow through the same key prefix.
+	base := func() *gorm.DB {
+		q := d.db.Table("net_event_rollups").Where("day >= ?", from)
+		if f.DeviceID != 0 {
+			q = q.Where("device_id = ?", f.DeviceID)
+		}
+		// net_event_rollups has no site_id column; a site filter narrows by the
+		// devices assigned to that site (the IN (subquery) form ListNetEvents
+		// uses), so the (day, device_id, …) prefix still serves the day scan.
+		if f.SiteID != 0 {
+			q = q.Where("device_id IN (?)", d.db.Model(&models.Device{}).Where("site_id = ?", f.SiteID).Select("id"))
+		}
+		return q
+	}
+
+	res := &NetEventRollupStatsResult{}
+
+	// policy_hits: the top rules by SUM(hits) with their bytes, over the whole
+	// window (a ranking, not a time series). The empty rule_key sentinel is
+	// excluded so "top rules" names real rules.
+	if err := base().
+		Select("rule_key, " + rollupByteSums).
+		Where("rule_key <> ''").
+		Group("rule_key").Order("hits DESC").Limit(netEventRollupTopRules).
+		Scan(&res.PolicyHits).Error; err != nil {
+		return nil, fmt.Errorf("policy hits: %w", err)
+	}
+
+	// policy_bytes: the bytes carried per day across every action — the whole
+	// reason the rollup exists, served day-by-day for the trend chart. Grouping
+	// by the day column (already a UTC midnight) gives one row per day, riding
+	// the unique key's leading column.
+	var policyBytes []netEventRollupDayRow
+	if err := base().
+		Select("day, " + rollupByteSums).
+		Group("day").Order("day ASC").
+		Scan(&policyBytes).Error; err != nil {
+		return nil, fmt.Errorf("policy bytes: %w", err)
+	}
+	res.PolicyBytes = toDays(policyBytes)
+
+	// deny: the hits/bytes denied per day, where action is one of the two deny
+	// verdicts (deny and deny-with-reset). The action column is part of the
+	// unique key, so `action IN (2,3)` filters on an indexed column.
+	var deny []netEventRollupDayRow
+	if err := base().
+		Where("action IN ?", []int16{int16(normalize.ActionDeny), int16(normalize.ActionReject)}).
+		Select("day, " + rollupByteSums).
+		Group("day").Order("day ASC").
+		Scan(&deny).Error; err != nil {
+		return nil, fmt.Errorf("deny: %w", err)
+	}
+	res.Deny = toDays(deny)
+
+	// app_categories: SUM(hits) by application category. app_cat is a vendor
+	// string in the unique key, so this groups on an indexed column; the empty
+	// string ("not reported") is kept and the UI labels it "uncategorized".
+	if err := base().
+		Select("app_cat AS key, CAST(SUM(hits) AS BIGINT) AS count").
+		Group("app_cat").Order("count DESC").
+		Scan(&res.AppCategories).Error; err != nil {
+		return nil, fmt.Errorf("app categories: %w", err)
+	}
+
+	// directions: SUM(hits) by direction (an indexed key column), ordered by id
+	// so the legend is stable.
+	if err := base().
+		Select("direction, CAST(SUM(hits) AS BIGINT) AS hits").
+		Group("direction").Order("direction ASC").
+		Scan(&res.Directions).Error; err != nil {
+		return nil, fmt.Errorf("directions: %w", err)
+	}
+
+	// rulesets: SUM(hits) by ruleset (an indexed key column; '' is the "root"
+	// / no-ruleset sentinel).
+	if err := base().
+		Select("ruleset AS key, CAST(SUM(hits) AS BIGINT) AS count").
+		Group("ruleset").Order("count DESC").
+		Scan(&res.Rulesets).Error; err != nil {
+		return nil, fmt.Errorf("rulesets: %w", err)
+	}
+
+	// Normalize nil (no-rows) series to empty slices so the wire shape is []
+	// rather than null — the UI maps each series without a null guard.
+	if res.PolicyHits == nil {
+		res.PolicyHits = []NetEventRollupRule{}
+	}
+	if res.PolicyBytes == nil {
+		res.PolicyBytes = []NetEventRollupDay{}
+	}
+	if res.Deny == nil {
+		res.Deny = []NetEventRollupDay{}
+	}
+	if res.AppCategories == nil {
+		res.AppCategories = []KeyCount{}
+	}
+	if res.Directions == nil {
+		res.Directions = []NetEventRollupDirection{}
+	}
+	if res.Rulesets == nil {
+		res.Rulesets = []KeyCount{}
+	}
+
+	return res, nil
 }
