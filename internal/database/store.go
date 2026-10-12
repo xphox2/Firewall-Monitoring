@@ -52,6 +52,7 @@ type Store interface {
 	DevicePurgeStore
 	NormalizeBackfillStore
 	NetEventReadStore
+	SecEventReadStore
 	ArchiveGateStore
 	ArchiveStatusStore
 	ArchiveRestoreStore
@@ -156,6 +157,15 @@ type ArchiveSettingsStore interface {
 // without ever running an exact COUNT over the full window.
 type NetEventReadStore interface {
 	ListNetEvents(f NetEventFilter, offset, limit int) ([]NetEventRow, int64, bool, error)
+}
+
+// SecEventReadStore covers the read path of the normalized security-event table
+// (Phase 2, PR 3, normalized_read.go): the Security events tab's filtered,
+// ts-bounded, paged list. Same capped-count discipline as NetEventReadStore —
+// sec_events is already indexed (idx_sec_events_ts / idx_sec_events_device_ts /
+// idx_sec_events_class_ts), so this reader adds no indexes or migrations.
+type SecEventReadStore interface {
+	ListSecEvents(f SecEventFilter, offset, limit int) ([]SecEventRow, int64, bool, error)
 }
 
 // NormalizeBackfillStore covers the one-time normalized-event backfill queue

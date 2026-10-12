@@ -1,12 +1,21 @@
-/* admin-events.js — Events page (Phase 2, PR 1).
+/* admin-events.js — Events page (Phase 2, PR 1 + PR 3).
  *
- * Owns the page rendered at /admin/events: the first reader of the normalized
- * net_events table. A self-contained module in the FwmonFlows style — it binds
- * its own controls, keeps its filter state in the URL (replaceState), and
- * renders the newest-first event table with paging. admin-main.js only wires
- * the `case 'events'` in loadPageData and the `events-` load-key prefix.
+ * Owns the page rendered at /admin/events: the readers of the normalized
+ * net_events (Network tab, PR 1) and sec_events (Security tab, PR 3) tables. A
+ * self-contained module in the FwmonFlows style — it binds its own controls,
+ * keeps its filter state in the URL (replaceState), and renders the
+ * newest-first event tables with paging. admin-main.js only wires the
+ * `case 'events'` in loadPageData and the `events-` load-key prefix.
  *
- * The int16 activity/action/direction columns are rendered as labels via
+ * The two tabs share the time range (the page-level range pills) but otherwise
+ * keep independent filter state: the Network tab filters by the net_events
+ * columns, the Security tab by class plus its class-conditional columns. The
+ * Security table's columns adapt to the class filter (finding → signature/threat/
+ * hash, auth → admin user/source/method, config_change → path/object,
+ * vpn_session → tunnel/peer, device_health → WAN/metric), falling back to
+ * activity/action/message when no class is selected.
+ *
+ * The int16 activity/action/class columns are rendered as labels via
  * window.FwmonEnums (enums.js), the JS mirror of internal/normalize/enums.go —
  * kept in lockstep by TestEnumsJSMirror.
  *
@@ -40,6 +49,30 @@
     // Backing lists for the filter selects (id -> object), loaded lazily once
     // and cached for the session.
     var devices = [], probes = [], sites = [];
+
+    // Security tab state (Phase 2, PR 3). The Security tab shares the network
+    // tab's `state.hours` (the page-level range pills) but keeps its own filter
+    // state and paging, so a class filter never bleeds into the Network tab.
+    var SEC_URL_KEYS = ['sec_class', 'sec_device', 'sec_severity', 'sec_admin_user', 'sec_sig_name', 'sec_tunnel_name', 'sec_wan_name'];
+    var secState = { sec_class: '', sec_device: '', sec_severity: '', sec_admin_user: '', sec_sig_name: '', sec_tunnel_name: '', sec_wan_name: '' };
+    var secOffset = 0;
+    var secTotal = 0;
+    var secTotalCapped = false;
+    var SEC_PAGE_SIZE = 50;
+    var activeTab = 'network'; // 'network' | 'security'
+
+    // Class-conditional columns for the Security table. The keys are the class
+    // ids from FwmonEnums.CLASS; each entry is a [field, header] pair rendered
+    // after the common Time/Device/Class/Severity columns. A missing/blank class
+    // falls back to the generic activity/action/message set.
+    var SEC_COLUMNS = {
+        '2004': [['sig_name', 'Signature'], ['threat_cat', 'Threat cat'], ['file_hash', 'File hash']],           // finding
+        '3002': [['admin_user', 'Admin user'], ['admin_src_ip', 'Admin src IP'], ['admin_method', 'Method']],    // auth
+        '5019': [['config_path', 'Config path'], ['config_obj', 'Object']],                                      // config_change
+        '4014': [['tunnel_name', 'Tunnel name'], ['tunnel_peer', 'Peer']],                                       // vpn_session
+        '5001': [['wan_name', 'WAN name'], ['metric_name', 'Metric'], ['metric_value', 'Value']]                 // device_health
+    };
+    var SEC_COLUMNS_ALL = [['activity', 'Activity'], ['action', 'Action'], ['message', 'Message']];
 
     // Common IANA protocol numbers, display-only. The table stores proto as a
     // smallint and there is no PROTO enum in FwmonEnums, so anything unlisted
@@ -126,6 +159,13 @@
                     state[k] = v;
                 }
             });
+            SEC_URL_KEYS.forEach(function(k) {
+                var v = url.searchParams.get(k);
+                if (v == null || v === '') return;
+                secState[k] = v;
+            });
+            var tab = url.searchParams.get('events_tab');
+            if (tab === 'network' || tab === 'security') activeTab = tab;
         } catch (e) { /* old browsers — fall back to defaults */ }
     }
 
@@ -140,6 +180,18 @@
                     url.searchParams.set(k, String(v));
                 }
             });
+            SEC_URL_KEYS.forEach(function(k) {
+                if (secState[k] === '' || secState[k] == null) {
+                    url.searchParams.delete(k);
+                } else {
+                    url.searchParams.set(k, String(secState[k]));
+                }
+            });
+            if (activeTab !== 'network') {
+                url.searchParams.set('events_tab', activeTab);
+            } else {
+                url.searchParams.delete('events_tab');
+            }
             window.history.replaceState(null, '', url.toString());
         } catch (e) { /* swallow */ }
     }
@@ -160,6 +212,22 @@
         if (state.dst_ip) p.push('dst_ip=' + encodeURIComponent(state.dst_ip));
         if (state.rule_key) p.push('rule_key=' + encodeURIComponent(state.rule_key));
         return '/admin/api/events?' + p.join('&');
+    }
+
+    // secEventsURL builds the Security tab's query. It shares `state.hours` (the
+    // page-level range pills) but sends only the sec_events filter columns.
+    function secEventsURL(limit, off) {
+        var p = ['limit=' + limit];
+        if (off > 0) p.push('offset=' + off);
+        if (state.hours && Number(state.hours) !== 24) p.push('hours=' + encodeURIComponent(state.hours));
+        if (secState.sec_class) p.push('class=' + encodeURIComponent(secState.sec_class));
+        if (secState.sec_device) p.push('device_id=' + encodeURIComponent(secState.sec_device));
+        if (secState.sec_severity !== '') p.push('severity=' + encodeURIComponent(secState.sec_severity));
+        if (secState.sec_admin_user) p.push('admin_user=' + encodeURIComponent(secState.sec_admin_user));
+        if (secState.sec_sig_name) p.push('sig_name=' + encodeURIComponent(secState.sec_sig_name));
+        if (secState.sec_tunnel_name) p.push('tunnel_name=' + encodeURIComponent(secState.sec_tunnel_name));
+        if (secState.sec_wan_name) p.push('wan_name=' + encodeURIComponent(secState.sec_wan_name));
+        return '/admin/api/security-events?' + p.join('&');
     }
 
     // ----------------------------------------------------------------------
@@ -217,6 +285,27 @@
         populateListSelect('events-filter-site', sites, 'name', 'All Sites');
         populateEnumSelect('events-filter-activity', 'ACTIVITY', 'All Activity');
         populateEnumSelect('events-filter-action', 'ACTION', 'All Actions');
+        populateListSelect('sec-events-filter-device', devices, 'name', 'All Devices');
+        populateSecClassSelect();
+    }
+
+    // populateSecClassSelect fills the Security tab's class dropdown from
+    // FwmonEnums.CLASS, skipping 'network' — those events live on the Network
+    // tab, so offering it here would only ever return an empty table.
+    function populateSecClassSelect() {
+        var sel = document.getElementById('sec-events-filter-class');
+        if (!sel) return;
+        var m = window.FwmonEnums && window.FwmonEnums['CLASS'];
+        if (!m) return;
+        var current = sel.value;
+        var keys = Object.keys(m).sort();
+        var html = '<option value="">All Classes</option>';
+        for (var i = 0; i < keys.length; i++) {
+            if (keys[i] === 'network') continue;
+            html += '<option value="' + m[keys[i]] + '">' + esc(keys[i]) + '</option>';
+        }
+        sel.innerHTML = html;
+        sel.value = current;
     }
 
     // ----------------------------------------------------------------------
@@ -233,8 +322,10 @@
                 if (isFinite(h)) {
                     state.hours = h;
                     applyState();
+                    secApplyState();
                     syncURL();
-                    firstPage();
+                    if (activeTab === 'security') secFirstPage();
+                    else firstPage();
                 }
             });
         }
@@ -281,6 +372,103 @@
                 else if (dir === 'prev') prevPage();
             });
         }
+
+        bindSecControls();
+    }
+
+    // bindSecControls wires the Security tab: the class/device/severity selects,
+    // the four text inputs, the clear button and the pagination. It is idempotent
+    // via the same __fwmonEventsBound guard as the network controls.
+    function bindSecControls() {
+        var viewTabs = document.getElementById('events-view-tabs');
+        if (viewTabs && !viewTabs.__fwmonEventsBound) {
+            viewTabs.__fwmonEventsBound = true;
+            viewTabs.addEventListener('click', function(ev) {
+                var btn = ev.target && ev.target.closest && ev.target.closest('.fwmon-flows-tab');
+                if (!btn) return;
+                setActiveTab(btn.getAttribute('data-events-tab'));
+            });
+        }
+
+        [
+            { id: 'sec-events-filter-class', key: 'sec_class' },
+            { id: 'sec-events-filter-device', key: 'sec_device' },
+            { id: 'sec-events-filter-severity', key: 'sec_severity' }
+        ].forEach(function(spec) { bindSecSelect(spec.id, spec.key); });
+
+        [
+            { id: 'sec-events-filter-admin-user', key: 'sec_admin_user' },
+            { id: 'sec-events-filter-sig-name', key: 'sec_sig_name' },
+            { id: 'sec-events-filter-tunnel-name', key: 'sec_tunnel_name' },
+            { id: 'sec-events-filter-wan-name', key: 'sec_wan_name' }
+        ].forEach(function(spec) { bindSecInput(spec.id, spec.key); });
+
+        var clearBtn = document.getElementById('sec-events-clear-filters');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', function() {
+                secState.sec_class = '';
+                secState.sec_device = '';
+                secState.sec_severity = '';
+                secState.sec_admin_user = '';
+                secState.sec_sig_name = '';
+                secState.sec_tunnel_name = '';
+                secState.sec_wan_name = '';
+                secApplyState();
+                syncURL();
+                secFirstPage();
+            });
+        }
+
+        var pag = document.getElementById('sec-events-pagination');
+        if (pag && !pag.__fwmonEventsBound) {
+            pag.__fwmonEventsBound = true;
+            pag.addEventListener('click', function(ev) {
+                var btn = ev.target && ev.target.closest && ev.target.closest('[data-sec-events-page]');
+                if (!btn || btn.disabled) return;
+                var dir = btn.getAttribute('data-sec-events-page');
+                if (dir === 'next') secNextPage();
+                else if (dir === 'prev') secPrevPage();
+            });
+        }
+    }
+
+    function bindSecSelect(elId, stateKey) {
+        var el = document.getElementById(elId);
+        if (!el || el.__fwmonEventsBound) return;
+        el.__fwmonEventsBound = true;
+        el.addEventListener('change', function() {
+            secState[stateKey] = el.value || '';
+            secApplyState();
+            syncURL();
+            secFirstPage();
+        });
+    }
+
+    function bindSecInput(elId, stateKey) {
+        var el = document.getElementById(elId);
+        if (!el || el.__fwmonEventsBound) return;
+        el.__fwmonEventsBound = true;
+        var pending = null;
+        var commit = function() {
+            secState[stateKey] = el.value.trim();
+            secApplyState();
+            syncURL();
+            secFirstPage();
+        };
+        el.addEventListener('input', function() {
+            if (pending) clearTimeout(pending);
+            pending = setTimeout(commit, 400);
+        });
+        el.addEventListener('blur', function() {
+            if (pending) { clearTimeout(pending); pending = null; }
+            commit();
+        });
+        el.addEventListener('keydown', function(ev) {
+            if (ev.key === 'Enter') {
+                if (pending) { clearTimeout(pending); pending = null; }
+                commit();
+            }
+        });
     }
 
     function bindSelect(elId, stateKey) {
@@ -488,25 +676,231 @@
     }
 
     // ----------------------------------------------------------------------
+    // Security tab: apply state, chips, tab switch, loading, rendering
+    // ----------------------------------------------------------------------
+    function secChipLabel(stateKey) {
+        switch (stateKey) {
+            case 'sec_class': return enumLabel('CLASS', secState.sec_class);
+            case 'sec_device': return listLabel(devices, secState.sec_device);
+            default: return secState[stateKey];
+        }
+    }
+
+    function secApplyState() {
+        setVal('sec-events-filter-class', secState.sec_class);
+        setVal('sec-events-filter-device', secState.sec_device);
+        setVal('sec-events-filter-severity', secState.sec_severity);
+        setVal('sec-events-filter-admin-user', secState.sec_admin_user);
+        setVal('sec-events-filter-sig-name', secState.sec_sig_name);
+        setVal('sec-events-filter-tunnel-name', secState.sec_tunnel_name);
+        setVal('sec-events-filter-wan-name', secState.sec_wan_name);
+        secRenderChips();
+    }
+
+    function secRenderChips() {
+        var host = document.getElementById('sec-events-active-chips');
+        if (!host) return;
+        var defs = [
+            { key: 'class', stateKey: 'sec_class' },
+            { key: 'device', stateKey: 'sec_device' },
+            { key: 'severity', stateKey: 'sec_severity' },
+            { key: 'admin_user', stateKey: 'sec_admin_user' },
+            { key: 'sig_name', stateKey: 'sec_sig_name' },
+            { key: 'tunnel', stateKey: 'sec_tunnel_name' },
+            { key: 'wan', stateKey: 'sec_wan_name' }
+        ];
+        var html = '';
+        for (var i = 0; i < defs.length; i++) {
+            var v = secState[defs[i].stateKey];
+            if (v === '' || v == null) continue;
+            html += '<span class="fwmon-chip" data-statekey="' + esc(defs[i].stateKey) + '">' +
+                '<span class="fwmon-chip-key">' + esc(defs[i].key) + '</span>' +
+                '<span class="fwmon-chip-val">' + esc(secChipLabel(defs[i].stateKey)) + '</span>' +
+                '<button type="button" class="fwmon-chip-clear" aria-label="Clear filter">×</button></span>';
+        }
+        host.innerHTML = html;
+        if (!html) return;
+        var clears = host.querySelectorAll('.fwmon-chip-clear');
+        for (var j = 0; j < clears.length; j++) {
+            clears[j].addEventListener('click', function(ev) {
+                var chip = ev.target.closest('.fwmon-chip');
+                if (!chip) return;
+                var k = chip.getAttribute('data-statekey');
+                if (k) {
+                    secState[k] = '';
+                    secApplyState();
+                    syncURL();
+                    secFirstPage();
+                }
+            });
+        }
+    }
+
+    // setActiveTab switches between the Network and Security views: toggles the
+    // tab buttons, shows/hides the two view divs, persists the choice and loads
+    // the newly active tab's first page.
+    function setActiveTab(tab) {
+        if (tab !== 'network' && tab !== 'security') tab = 'network';
+        activeTab = tab;
+        var tabs = document.querySelectorAll('#events-view-tabs .fwmon-flows-tab');
+        for (var i = 0; i < tabs.length; i++) {
+            tabs[i].classList.toggle('active', tabs[i].getAttribute('data-events-tab') === tab);
+        }
+        var net = document.getElementById('events-view-network');
+        var sec = document.getElementById('events-view-security');
+        if (net) net.hidden = (tab !== 'network');
+        if (sec) sec.hidden = (tab !== 'security');
+        syncURL();
+        if (tab === 'network') firstPage();
+        else secFirstPage();
+    }
+
+    function secFirstPage() {
+        secOffset = 0;
+        secLoad(0);
+    }
+
+    function secNextPage() {
+        secLoad(secOffset);
+    }
+
+    function secPrevPage() {
+        secLoad(Math.max(0, secOffset - 2 * SEC_PAGE_SIZE));
+    }
+
+    function secLoad(targetOffset) {
+        var host = document.getElementById('sec-events-load-host');
+        // Same chartLoad discipline as the network tab: a fast paging/filter
+        // click supersedes a stale load, and leaving the page cancels it (the
+        // 'events-' prefix in PAGE_LOAD_KEYS.events covers both keys).
+        AC.chartLoad(host, function(signal) {
+            return ensureLists().then(function() {
+                return apiFetch(secEventsURL(SEC_PAGE_SIZE, targetOffset), { signal: signal });
+            });
+        }, { key: 'events-sec-list', label: 'Loading security events…', escScope: document.getElementById('page-events') }).then(function(r) {
+            if (r.superseded) return;
+            if (r.cancelled) return;
+            if (r.error || !r.data) {
+                if (window.fwmonLog) fwmonLog.error('FwmonEvents: sec fetch failed', r.error);
+                AC.chartNotice(host, 'Could not load security events', { dim: false, onRetry: function() { secLoad(targetOffset); } });
+                return;
+            }
+            var payload = r.data.data || {};
+            secOffset = targetOffset + (payload.events || []).length;
+            secRender(payload);
+        });
+    }
+
+    function secColumns() {
+        return SEC_COLUMNS[secState.sec_class] || SEC_COLUMNS_ALL;
+    }
+
+    function classBadge(v) {
+        if (!v) return '<span class="badge unknown">unknown</span>';
+        return '<span class="badge info">' + esc(enumLabel('CLASS', v)) + '</span>';
+    }
+
+    function severityBadge(v) {
+        if (v == null || v === '') return '—';
+        var cls = 'info';
+        if (v >= 7) cls = 'critical';
+        else if (v >= 4) cls = 'warning';
+        return '<span class="badge ' + cls + '">' + esc(String(v)) + '</span>';
+    }
+
+    function secCell(key, r) {
+        var v = r[key];
+        switch (key) {
+            case 'activity': return esc(enumLabel('ACTIVITY', r.activity));
+            case 'action': return actionBadge(r.action);
+            case 'metric_value': return v == null ? '—' : esc(String(v));
+            default: return v == null || v === '' ? '—' : esc(String(v));
+        }
+    }
+
+    function secRenderHeader() {
+        var cols = secColumns();
+        var html = '<tr><th>Time</th><th>Device</th><th>Class</th><th>Severity</th>';
+        for (var i = 0; i < cols.length; i++) html += '<th>' + esc(cols[i][1]) + '</th>';
+        html += '</tr>';
+        var head = document.querySelector('#sec-events-table thead');
+        if (head) head.innerHTML = html;
+    }
+
+    function secRenderRow(r) {
+        var cols = secColumns();
+        var html = '<tr>' +
+            '<td class="td-nowrap">' + AC.formatDate(r.ts) + '</td>' +
+            '<td>' + (r.device_name ? AC.deviceLink(r.device_id, r.device_name) : esc('DEV-' + r.device_id)) +
+                (r.vendor ? ' <span class="badge unknown">' + esc(r.vendor) + '</span>' : '') + '</td>' +
+            '<td>' + classBadge(r.class) + '</td>' +
+            '<td>' + severityBadge(r.severity) + '</td>';
+        for (var i = 0; i < cols.length; i++) html += '<td>' + secCell(cols[i][0], r) + '</td>';
+        return html + '</tr>';
+    }
+
+    function secRender(payload) {
+        var rows = payload.events || [];
+        secTotal = payload.total || 0;
+        secTotalCapped = !!(payload.total_capped);
+        secRenderHeader();
+        var tbody = document.querySelector('#sec-events-table tbody');
+        if (!tbody) return;
+        if (rows.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No security events in this range</td></tr>';
+            document.getElementById('sec-events-pagination').innerHTML = '';
+            return;
+        }
+        tbody.innerHTML = rows.map(secRenderRow).join('');
+        secUpdatePagination(rows.length);
+    }
+
+    function secUpdatePagination(count) {
+        var container = document.getElementById('sec-events-pagination');
+        if (!container) return;
+        if (secTotal === 0) {
+            container.innerHTML = '';
+            return;
+        }
+        var more = secTotalCapped ? '+' : '';
+        var from = secOffset - count + 1;
+        var to = secOffset;
+        var currentPage = Math.floor(secOffset / SEC_PAGE_SIZE) + 1;
+        var totalPages = Math.max(1, Math.ceil(secTotal / SEC_PAGE_SIZE));
+        var atEnd = secTotalCapped ? count < SEC_PAGE_SIZE : secOffset >= secTotal;
+        container.innerHTML =
+            '<span style="color:var(--fwmon-text-faint);">Showing ' + from + '-' + to + ' of ' + secTotal.toLocaleString() + more + ' matching filters &nbsp;|&nbsp; </span>' +
+            '<button type="button" class="btn secondary sm" data-sec-events-page="prev"' + (secOffset <= 0 ? ' disabled' : '') + '>Prev</button> ' +
+            '<span style="color:var(--fwmon-text-faint);">Page ' + currentPage + ' of ' + totalPages.toLocaleString() + more + ' &nbsp;</span>' +
+            '<button type="button" class="btn secondary sm" data-sec-events-page="next"' + (atEnd ? ' disabled' : '') + '>Next</button>';
+    }
+
+    // ----------------------------------------------------------------------
     // Boot
     // ----------------------------------------------------------------------
     function init() {
         if (inited) {
             // Re-init is a no-op other than re-reading the URL (the user may
-            // have navigated back to the tab). Force a first-page reload.
+            // have navigated back to the tab). Force a first-page reload of the
+            // active tab.
             stateFromURL();
             applyState();
-            firstPage();
+            secApplyState();
+            setActiveTab(activeTab);
             return;
         }
         inited = true;
         stateFromURL();
         bindControls();
         applyState();
-        firstPage();
+        secApplyState();
+        setActiveTab(activeTab);
     }
 
-    function refresh() { firstPage(); }
+    function refresh() {
+        if (activeTab === 'security') secFirstPage();
+        else firstPage();
+    }
     function getState() { return Object.assign({}, state); }
 
     window.FwmonEvents = {

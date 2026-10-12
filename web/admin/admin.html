@@ -477,7 +477,7 @@
             </div>
         </div>
 
-        <!-- Events Page (Phase 2, PR 1 — normalized net_events list; see FwmonEvents in admin-events.js) -->
+        <!-- Events Page (Phase 2, PR 1 + PR 3 — normalized net_events + sec_events; see FwmonEvents in admin-events.js) -->
         <div class="page" id="page-events">
             <div class="fwmon-flows-header">
                 <div class="fwmon-flows-header-left">
@@ -496,32 +496,67 @@
                 </div>
             </div>
             <div class="card">
-                <div class="card-header">
-                    <h2>Network Events</h2>
-                </div>
-                <div class="filter-bar">
-                    <select id="events-filter-site"><option value="">All Sites</option></select>
-                    <select id="events-filter-device"><option value="">All Devices</option></select>
-                    <select id="events-filter-probe"><option value="">All Probes</option></select>
-                    <select id="events-filter-activity"><option value="">All Activity</option></select>
-                    <select id="events-filter-action"><option value="">All Actions</option></select>
-                    <input type="text" id="events-filter-src-ip" placeholder="src IP or CIDR" autocomplete="one-time-code" spellcheck="false">
-                    <input type="text" id="events-filter-dst-ip" placeholder="dst IP or CIDR" autocomplete="one-time-code" spellcheck="false">
-                    <input type="text" id="events-filter-rule-key" placeholder="rule key" autocomplete="one-time-code" spellcheck="false">
-                    <button type="button" class="btn secondary sm" id="events-clear-filters">Clear filters</button>
-                </div>
-                <div class="fwmon-load-host" id="events-load-host">
-                    <div class="table-wrap" style="max-height: 600px;">
-                        <table id="events-table">
-                            <thead><tr>
-                                <th>Time</th><th>Device</th><th>Source → Destination</th><th>Action</th>
-                                <th>Activity</th><th>Direction</th><th>App</th><th>User</th>
-                                <th>Countries</th><th>Bytes</th><th>Threat</th>
-                            </tr></thead>
-                            <tbody></tbody>
-                        </table>
+                <div class="card-header fwmon-flows-data-header">
+                    <div class="fwmon-flows-tabs" id="events-view-tabs" role="tablist">
+                        <button type="button" class="fwmon-flows-tab active" data-events-tab="network" role="tab">Network Events</button>
+                        <button type="button" class="fwmon-flows-tab" data-events-tab="security" role="tab">Security Events</button>
                     </div>
-                    <div id="events-pagination" style="margin-top: 12px; text-align: center;"></div>
+                </div>
+
+                <!-- Network view (Phase 2, PR 1 — net_events) -->
+                <div id="events-view-network">
+                    <div class="filter-bar">
+                        <select id="events-filter-site"><option value="">All Sites</option></select>
+                        <select id="events-filter-device"><option value="">All Devices</option></select>
+                        <select id="events-filter-probe"><option value="">All Probes</option></select>
+                        <select id="events-filter-activity"><option value="">All Activity</option></select>
+                        <select id="events-filter-action"><option value="">All Actions</option></select>
+                        <input type="text" id="events-filter-src-ip" placeholder="src IP or CIDR" autocomplete="one-time-code" spellcheck="false">
+                        <input type="text" id="events-filter-dst-ip" placeholder="dst IP or CIDR" autocomplete="one-time-code" spellcheck="false">
+                        <input type="text" id="events-filter-rule-key" placeholder="rule key" autocomplete="one-time-code" spellcheck="false">
+                        <button type="button" class="btn secondary sm" id="events-clear-filters">Clear filters</button>
+                    </div>
+                    <div class="fwmon-load-host" id="events-load-host">
+                        <div class="table-wrap" style="max-height: 600px;">
+                            <table id="events-table">
+                                <thead><tr>
+                                    <th>Time</th><th>Device</th><th>Source → Destination</th><th>Action</th>
+                                    <th>Activity</th><th>Direction</th><th>App</th><th>User</th>
+                                    <th>Countries</th><th>Bytes</th><th>Threat</th>
+                                </tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                        <div id="events-pagination" style="margin-top: 12px; text-align: center;"></div>
+                    </div>
+                </div>
+
+                <!-- Security view (Phase 2, PR 3 — sec_events; columns adapt to the class filter) -->
+                <div id="events-view-security" hidden>
+                    <div class="filter-bar">
+                        <select id="sec-events-filter-class"><option value="">All Classes</option></select>
+                        <select id="sec-events-filter-device"><option value="">All Devices</option></select>
+                        <select id="sec-events-filter-severity">
+                            <option value="">All Severities</option>
+                            <option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+                            <option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option><option value="9">9</option><option value="10">10</option>
+                        </select>
+                        <input type="text" id="sec-events-filter-admin-user" placeholder="admin user" autocomplete="one-time-code" spellcheck="false">
+                        <input type="text" id="sec-events-filter-sig-name" placeholder="signature name" autocomplete="one-time-code" spellcheck="false">
+                        <input type="text" id="sec-events-filter-tunnel-name" placeholder="tunnel name" autocomplete="one-time-code" spellcheck="false">
+                        <input type="text" id="sec-events-filter-wan-name" placeholder="WAN name" autocomplete="one-time-code" spellcheck="false">
+                        <button type="button" class="btn secondary sm" id="sec-events-clear-filters">Clear filters</button>
+                    </div>
+                    <div class="fwmon-chips" id="sec-events-active-chips" style="margin: 8px 16px 0;"></div>
+                    <div class="fwmon-load-host" id="sec-events-load-host">
+                        <div class="table-wrap" style="max-height: 600px;">
+                            <table id="sec-events-table">
+                                <thead></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                        <div id="sec-events-pagination" style="margin-top: 12px; text-align: center;"></div>
+                    </div>
                 </div>
             </div>
         </div>

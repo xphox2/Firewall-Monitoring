@@ -89,3 +89,53 @@ func TestGetNetEvents_BadIPParams(t *testing.T) {
 		}
 	}
 }
+
+// TestGetSecEvents_Shape seeds one sec_event and asserts the handler returns a
+// 200 with the events/total/total_capped envelope the Security tab reads.
+func TestGetSecEvents_Shape(t *testing.T) {
+	h, db := setupTestHandler(t)
+	dev := &models.Device{Name: "fw-1", IPAddress: "10.0.0.1", Vendor: "fortigate"}
+	if err := db.Gorm().Create(dev).Error; err != nil {
+		t.Fatalf("seed device: %v", err)
+	}
+	sev := int16(5)
+	row := &models.SecEvent{Ts: time.Now(), DeviceID: dev.ID, Class: 2004, Severity: &sev}
+	if err := db.Gorm().Create(row).Error; err != nil {
+		t.Fatalf("seed sec_event: %v", err)
+	}
+
+	c, rec := jsonReq(http.MethodGet, "/x?hours=24&class=2004", "")
+	h.GetSecEvents(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Events      []models.SecEvent `json:"events"`
+			Total       int64             `json:"total"`
+			TotalCapped bool              `json:"total_capped"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if !resp.Success || resp.Data.Total != 1 || len(resp.Data.Events) != 1 {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+}
+
+// TestGetSecEvents_BadNumericParams asserts non-numeric numeric filters are
+// rejected with 400 before being bound against uint/smallint columns (AUDIT-251
+// / 22P02).
+func TestGetSecEvents_BadNumericParams(t *testing.T) {
+	h, _ := setupTestHandler(t)
+	for _, param := range []string{"device_id", "probe_id", "class", "activity", "action", "severity"} {
+		c, rec := jsonReq(http.MethodGet, "/x?"+param+"=not-a-number", "")
+		h.GetSecEvents(c)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("GetSecEvents(%s=not-a-number) = %d, want 400", param, rec.Code)
+		}
+	}
+}
