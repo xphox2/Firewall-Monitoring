@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.327] - 2026-10-11
+
+### Added — the Events page gets an event detail view with a "View raw syslog" forensic bridge
+
+- Clicking a row on the Events page (`/admin/events`, both the Network and Security tabs) now opens a **detail modal** showing the full normalized event — every column, formatted (enums via `FwmonEnums`, addresses as `src:port → dst:port`, bytes as `↓ in / ↑ out`). It is served by two new viewer-accessible single-row endpoints, `GET /api/events/:id` and `GET /api/security-events/:id` (a malformed id is a `400`, an unknown id a `404`), backed by `internal/database.GetNetEvent` / `GetSecEvent`, which reuse the exact list SELECT + enrichment so the detail is byte-for-byte the list row.
+- When a normalized event carries a `raw_id`, the detail modal shows a **"View raw syslog"** link that fetches the original syslog line and renders it inline. The link passes both `raw_id` and `raw_ts` as `GET /api/syslog/:id?ts=<RFC3339>`, which names the syslog partition so the lookup on a partitioned install prunes to one leaf (the syslog PK is `(id, timestamp)`). `GetSyslogMessage` now accepts that optional `ts` and falls back to an id-only lookup when it is absent. Because the raw row may already be archived or out of retention, a missing line degrades gracefully to an inline **"raw line no longer available (archived or outside retention)"** note — never an error.
+- `NetEventRow` / `SecEventRow` now carry `raw_id` / `raw_ts` (nullable provenance columns) so the detail view and the raw-syslog link share the list's single SELECT; the list renderer ignores them and the two extra columns cost one nullable bigint + timestamptz per row. No migrations or indexes are added.
+
 ## [0.11.326] - 2026-10-11
 
 ### Added — the Events page gates analytics by the active device's vendor capability
