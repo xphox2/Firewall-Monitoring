@@ -215,3 +215,83 @@ func TestGetNetEventRollups_BadParams(t *testing.T) {
 		}
 	}
 }
+
+// TestGetNetEventAnalytics_Shape asserts the handler returns a 200 with the
+// nine short-window analytics series the Events page charts, even with no rows
+// seeded (the empty series must be [] not null).
+func TestGetNetEventAnalytics_Shape(t *testing.T) {
+	h, _ := setupTestHandler(t)
+
+	c, rec := jsonReq(http.MethodGet, "/x?hours=24", "")
+	h.GetNetEventAnalytics(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Success bool `json:"success"`
+		Data    struct {
+			GeoSrc        []json.RawMessage `json:"geo_src"`
+			GeoDst        []json.RawMessage `json:"geo_dst"`
+			Identity      []json.RawMessage `json:"identity"`
+			Users         []json.RawMessage `json:"users"`
+			Apps          []json.RawMessage `json:"apps"`
+			AppCategories []json.RawMessage `json:"app_categories"`
+			WebCategories []json.RawMessage `json:"web_categories"`
+			DNS           []json.RawMessage `json:"dns"`
+			NAT           []json.RawMessage `json:"nat"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("success = false: %s", rec.Body.String())
+	}
+	for name, s := range map[string][]json.RawMessage{
+		"geo_src":        resp.Data.GeoSrc,
+		"geo_dst":        resp.Data.GeoDst,
+		"identity":       resp.Data.Identity,
+		"users":          resp.Data.Users,
+		"apps":           resp.Data.Apps,
+		"app_categories": resp.Data.AppCategories,
+		"web_categories": resp.Data.WebCategories,
+		"dns":            resp.Data.DNS,
+		"nat":            resp.Data.NAT,
+	} {
+		if s == nil {
+			t.Fatalf("%s is null, want []", name)
+		}
+	}
+}
+
+// TestGetNetEventAnalytics_BadParams asserts an out-of-range or non-integer
+// hours and a non-numeric device_id/site_id are rejected with 400 (AUDIT-251
+// discipline: a bad value is a 400, never a 500).
+func TestGetNetEventAnalytics_BadParams(t *testing.T) {
+	h, _ := setupTestHandler(t)
+
+	for _, tc := range []struct{ name, qs string }{
+		{"hours zero", "hours=0"},
+		{"hours too large", "hours=721"},
+		{"hours negative", "hours=-1"},
+		{"hours non-integer", "hours=abc"},
+		{"device_id non-numeric", "device_id=not-a-number"},
+		{"site_id non-numeric", "site_id=not-a-number"},
+	} {
+		c, rec := jsonReq(http.MethodGet, "/x?"+tc.qs, "")
+		h.GetNetEventAnalytics(c)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("GetNetEventAnalytics(%s) = %d, want 400 (body=%s)", tc.name, rec.Code, rec.Body.String())
+		}
+	}
+
+	// A valid hours value (and the default) pass.
+	for _, qs := range []string{"", "hours=1", "hours=720", "hours=24&device_id=1&site_id=2"} {
+		c, rec := jsonReq(http.MethodGet, "/x?"+qs, "")
+		h.GetNetEventAnalytics(c)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GetNetEventAnalytics(%q) = %d, want 200 (body=%s)", qs, rec.Code, rec.Body.String())
+		}
+	}
+}

@@ -645,3 +645,268 @@ func TestNetEventRollupStats_DeviceAndSiteFilter(t *testing.T) {
 		t.Fatalf("site policy_hits = %+v, want u:a 10 (site A only)", bySite.PolicyHits)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// net_events — short-window analytics (Phase 2, PR 5)
+// ---------------------------------------------------------------------------
+
+// statStr / statI64 are tiny pointer helpers so a seed row can carry a
+// NULL-able dimension column (nil = "vendor did not supply it").
+func statStr(s string) *string { return &s }
+func statI64(v int64) *int64   { return &v }
+
+// statRow is the seed shape for the NetEventStats tests: the dimension columns
+// the series group on, all pointers so nil seeds the skipped (NULL) case.
+type statRow struct {
+	devID                          uint
+	ts                             time.Time
+	srcCountry, dstCountry         *string
+	srcIP, srcMAC                  *string
+	user, app, appCat, webCat, dns *string
+	natSrc, natDst                 *string
+	bytesIn, bytesOut              *int64
+}
+
+func seedNetEventStatRow(t *testing.T, db *Database, r statRow) {
+	t.Helper()
+	row := &models.NetEvent{
+		Ts:         r.ts,
+		DeviceID:   r.devID,
+		Activity:   3,
+		Action:     1,
+		SrcCountry: r.srcCountry,
+		DstCountry: r.dstCountry,
+		SrcIP:      r.srcIP,
+		SrcMAC:     r.srcMAC,
+		UserName:   r.user,
+		App:        r.app,
+		AppCat:     r.appCat,
+		WebCat:     r.webCat,
+		DNSQName:   r.dns,
+		NatSrcIP:   r.natSrc,
+		NatDstIP:   r.natDst,
+		BytesIn:    r.bytesIn,
+		BytesOut:   r.bytesOut,
+	}
+	if err := db.Gorm().Create(row).Error; err != nil {
+		t.Fatalf("seed net_event stat row: %v", err)
+	}
+}
+
+// findKeyCount returns the count for a key in a KeyCount series, or 0 when the
+// key is absent (the series is ordered by count desc, so absent means below the
+// top-N cut or skipped).
+func findKeyCount(series []KeyCount, key string) int64 {
+	for _, c := range series {
+		if c.Key == key {
+			return c.Count
+		}
+	}
+	return 0
+}
+
+// TestNetEventStats_GroupingAndSums seeds a handful of rows and asserts every
+// series' grouping and sums: two rows for one (device, identity, user, app,
+// web, dns, nat) tuple and one for a second, so each count and the geo bytes
+// are exercised.
+func TestNetEventStats_GroupingAndSums(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	dev := seedNetEventDevice(t, db, "fw-1", nil)
+	now := time.Now()
+
+	seedNetEventStatRow(t, db, statRow{
+		devID: dev.ID, ts: now,
+		srcCountry: statStr("US"), dstCountry: statStr("CA"),
+		srcIP: statStr("10.0.0.1"), srcMAC: statStr("aa:bb:cc:dd:ee:01"),
+		user: statStr("alice"), app: statStr("web"), appCat: statStr("Web"), webCat: statStr("Shopping"), dns: statStr("example.com"),
+		natSrc: statStr("10.0.0.1"), natDst: statStr("1.2.3.4"),
+		bytesIn: statI64(100), bytesOut: statI64(200),
+	})
+	seedNetEventStatRow(t, db, statRow{
+		devID: dev.ID, ts: now.Add(-time.Minute),
+		srcCountry: statStr("US"), dstCountry: statStr("CA"),
+		srcIP: statStr("10.0.0.1"), srcMAC: statStr("aa:bb:cc:dd:ee:01"),
+		user: statStr("alice"), app: statStr("web"), appCat: statStr("Web"), webCat: statStr("Shopping"), dns: statStr("example.com"),
+		natSrc: statStr("10.0.0.1"), natDst: statStr("1.2.3.4"),
+		bytesIn: statI64(100), bytesOut: statI64(200),
+	})
+	seedNetEventStatRow(t, db, statRow{
+		devID: dev.ID, ts: now.Add(-2 * time.Minute),
+		srcCountry: statStr("US"), dstCountry: statStr("GB"),
+		srcIP: statStr("10.0.0.2"), srcMAC: statStr("aa:bb:cc:dd:ee:02"),
+		user: statStr("bob"), app: statStr("mail"), appCat: statStr("Mail"), webCat: statStr("News"), dns: statStr("example.net"),
+		natSrc: statStr("10.0.0.2"), natDst: statStr("5.6.7.8"),
+		bytesIn: statI64(300), bytesOut: statI64(400),
+	})
+
+	stats, err := db.NetEventStats(NetEventStatsFilter{Hours: 24})
+	if err != nil {
+		t.Fatalf("NetEventStats: %v", err)
+	}
+
+	// geo_src: US=3 with bytes 500/800 (the two 100/200 rows plus 300/400).
+	if len(stats.GeoSrc) != 1 {
+		t.Fatalf("geo_src = %d rows, want 1: %+v", len(stats.GeoSrc), stats.GeoSrc)
+	}
+	if g := stats.GeoSrc[0]; g.Country != "US" || g.Hits != 3 || g.BytesIn != 500 || g.BytesOut != 800 {
+		t.Fatalf("geo_src[0] = %+v, want US 3/500/800", g)
+	}
+
+	// geo_dst: CA=2, GB=1 (ordered hits desc).
+	if len(stats.GeoDst) != 2 {
+		t.Fatalf("geo_dst = %d rows, want 2: %+v", len(stats.GeoDst), stats.GeoDst)
+	}
+	if g := stats.GeoDst[0]; g.Country != "CA" || g.Hits != 2 {
+		t.Fatalf("geo_dst[0] = %+v, want CA 2", g)
+	}
+	if g := stats.GeoDst[1]; g.Country != "GB" || g.Hits != 1 {
+		t.Fatalf("geo_dst[1] = %+v, want GB 1", g)
+	}
+
+	// identity: (10.0.0.1, aa:..01)=2 then (10.0.0.2, aa:..02)=1.
+	if len(stats.Identity) != 2 {
+		t.Fatalf("identity = %d rows, want 2: %+v", len(stats.Identity), stats.Identity)
+	}
+	if id := stats.Identity[0]; id.SrcIP != "10.0.0.1" || id.SrcMAC != "aa:bb:cc:dd:ee:01" || id.Hits != 2 {
+		t.Fatalf("identity[0] = %+v, want 10.0.0.1/aa:..01 2", id)
+	}
+	if id := stats.Identity[1]; id.SrcIP != "10.0.0.2" || id.Hits != 1 {
+		t.Fatalf("identity[1] = %+v, want 10.0.0.2 1", id)
+	}
+
+	if findKeyCount(stats.Users, "alice") != 2 || findKeyCount(stats.Users, "bob") != 1 {
+		t.Fatalf("users = %+v, want alice 2 / bob 1", stats.Users)
+	}
+	if findKeyCount(stats.Apps, "web") != 2 || findKeyCount(stats.Apps, "mail") != 1 {
+		t.Fatalf("apps = %+v, want web 2 / mail 1", stats.Apps)
+	}
+	if findKeyCount(stats.AppCategories, "Web") != 2 || findKeyCount(stats.AppCategories, "Mail") != 1 {
+		t.Fatalf("app_categories = %+v, want Web 2 / Mail 1", stats.AppCategories)
+	}
+	if findKeyCount(stats.WebCategories, "Shopping") != 2 || findKeyCount(stats.WebCategories, "News") != 1 {
+		t.Fatalf("web_categories = %+v, want Shopping 2 / News 1", stats.WebCategories)
+	}
+	if findKeyCount(stats.DNS, "example.com") != 2 || findKeyCount(stats.DNS, "example.net") != 1 {
+		t.Fatalf("dns = %+v, want example.com 2 / example.net 1", stats.DNS)
+	}
+
+	// nat: (10.0.0.1 → 1.2.3.4)=2 then (10.0.0.2 → 5.6.7.8)=1.
+	if len(stats.NAT) != 2 {
+		t.Fatalf("nat = %d rows, want 2: %+v", len(stats.NAT), stats.NAT)
+	}
+	if n := stats.NAT[0]; n.SrcIP != "10.0.0.1" || n.DstIP != "1.2.3.4" || n.Hits != 2 {
+		t.Fatalf("nat[0] = %+v, want 10.0.0.1 → 1.2.3.4 2", n)
+	}
+	if n := stats.NAT[1]; n.SrcIP != "10.0.0.2" || n.DstIP != "5.6.7.8" || n.Hits != 1 {
+		t.Fatalf("nat[1] = %+v, want 10.0.0.2 → 5.6.7.8 1", n)
+	}
+}
+
+// TestNetEventStats_TsBounded asserts rows older than the window are excluded:
+// a 48-hour-old row is outside the default 24 h bound.
+func TestNetEventStats_TsBounded(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	dev := seedNetEventDevice(t, db, "fw-1", nil)
+	now := time.Now()
+
+	seedNetEventStatRow(t, db, statRow{devID: dev.ID, ts: now, srcCountry: statStr("US"), user: statStr("alice"), srcIP: statStr("10.0.0.1"), natSrc: statStr("10.0.0.1")})
+	seedNetEventStatRow(t, db, statRow{devID: dev.ID, ts: now.Add(-48 * time.Hour), srcCountry: statStr("DE"), user: statStr("eve"), srcIP: statStr("10.0.0.9"), natSrc: statStr("10.0.0.9")})
+
+	stats, err := db.NetEventStats(NetEventStatsFilter{Hours: 24})
+	if err != nil {
+		t.Fatalf("NetEventStats: %v", err)
+	}
+	if len(stats.GeoSrc) != 1 || stats.GeoSrc[0].Country != "US" {
+		t.Fatalf("geo_src = %+v, want only US (DE is outside the 24 h window)", stats.GeoSrc)
+	}
+	if len(stats.Users) != 1 || stats.Users[0].Key != "alice" {
+		t.Fatalf("users = %+v, want only alice", stats.Users)
+	}
+	if len(stats.Identity) != 1 || stats.Identity[0].SrcIP != "10.0.0.1" {
+		t.Fatalf("identity = %+v, want only 10.0.0.1", stats.Identity)
+	}
+	if len(stats.NAT) != 1 || stats.NAT[0].SrcIP != "10.0.0.1" {
+		t.Fatalf("nat = %+v, want only 10.0.0.1", stats.NAT)
+	}
+}
+
+// TestNetEventStats_DeviceAndSiteFilter asserts the device and site filters
+// narrow every series through the (device_id, ts) index.
+func TestNetEventStats_DeviceAndSiteFilter(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	siteA := seedNetEventSite(t, db, "site-a")
+	siteB := seedNetEventSite(t, db, "site-b")
+	devA := seedNetEventDevice(t, db, "fw-a", &siteA.ID)
+	devB := seedNetEventDevice(t, db, "fw-b", &siteB.ID)
+	now := time.Now()
+
+	seedNetEventStatRow(t, db, statRow{devID: devA.ID, ts: now, srcCountry: statStr("US"), user: statStr("alice"), srcIP: statStr("10.0.0.1"), natSrc: statStr("10.0.0.1")})
+	seedNetEventStatRow(t, db, statRow{devID: devB.ID, ts: now, srcCountry: statStr("GB"), user: statStr("bob"), srcIP: statStr("10.0.0.2"), natSrc: statStr("10.0.0.2")})
+
+	byDevice, err := db.NetEventStats(NetEventStatsFilter{Hours: 24, DeviceID: devA.ID})
+	if err != nil {
+		t.Fatalf("NetEventStats(device): %v", err)
+	}
+	if len(byDevice.GeoSrc) != 1 || byDevice.GeoSrc[0].Country != "US" {
+		t.Fatalf("device geo_src = %+v, want only US", byDevice.GeoSrc)
+	}
+	if len(byDevice.Users) != 1 || byDevice.Users[0].Key != "alice" {
+		t.Fatalf("device users = %+v, want only alice", byDevice.Users)
+	}
+
+	bySite, err := db.NetEventStats(NetEventStatsFilter{Hours: 24, SiteID: siteB.ID})
+	if err != nil {
+		t.Fatalf("NetEventStats(site): %v", err)
+	}
+	if len(bySite.GeoSrc) != 1 || bySite.GeoSrc[0].Country != "GB" {
+		t.Fatalf("site geo_src = %+v, want only GB", bySite.GeoSrc)
+	}
+	if len(bySite.Users) != 1 || bySite.Users[0].Key != "bob" {
+		t.Fatalf("site users = %+v, want only bob", bySite.Users)
+	}
+}
+
+// TestNetEventStats_EmptySkipped asserts NULL and empty-string dimension values
+// are skipped: a row that supplies none of the grouped columns contributes no
+// groups, and a row whose src_ip/nat_src_ip is NULL contributes no identity/NAT
+// pair. A present src_ip with a NULL src_mac reads back as an empty MAC.
+func TestNetEventStats_EmptySkipped(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	dev := seedNetEventDevice(t, db, "fw-1", nil)
+	now := time.Now()
+
+	// Nothing supplied: every grouped column is NULL.
+	seedNetEventStatRow(t, db, statRow{devID: dev.ID, ts: now})
+	// Empty strings: the "vendor supplied empty" case the queries skip.
+	seedNetEventStatRow(t, db, statRow{
+		devID: dev.ID, ts: now.Add(-time.Minute),
+		srcCountry: statStr(""), dstCountry: statStr(""),
+		user: statStr(""), app: statStr(""), appCat: statStr(""), webCat: statStr(""), dns: statStr(""),
+	})
+	// src_ip present with no MAC: an identity whose MAC reads back as ''.
+	seedNetEventStatRow(t, db, statRow{devID: dev.ID, ts: now.Add(-2 * time.Minute), srcIP: statStr("10.0.0.7")})
+
+	stats, err := db.NetEventStats(NetEventStatsFilter{Hours: 24})
+	if err != nil {
+		t.Fatalf("NetEventStats: %v", err)
+	}
+
+	if len(stats.GeoSrc) != 0 {
+		t.Fatalf("geo_src = %+v, want empty (NULL and '' codes skipped)", stats.GeoSrc)
+	}
+	if len(stats.GeoDst) != 0 {
+		t.Fatalf("geo_dst = %+v, want empty", stats.GeoDst)
+	}
+	if len(stats.Users) != 0 || len(stats.Apps) != 0 || len(stats.AppCategories) != 0 || len(stats.WebCategories) != 0 || len(stats.DNS) != 0 {
+		t.Fatalf("key-count series not empty: users=%+v apps=%+v app_categories=%+v web_categories=%+v dns=%+v",
+			stats.Users, stats.Apps, stats.AppCategories, stats.WebCategories, stats.DNS)
+	}
+	// Only the row with a src_ip (and no MAC) yields an identity; its MAC is ''.
+	if len(stats.Identity) != 1 || stats.Identity[0].SrcIP != "10.0.0.7" || stats.Identity[0].SrcMAC != "" || stats.Identity[0].Hits != 1 {
+		t.Fatalf("identity = %+v, want exactly [10.0.0.7 '' 1]", stats.Identity)
+	}
+	// No row supplied a nat_src_ip, so no NAT pair.
+	if len(stats.NAT) != 0 {
+		t.Fatalf("nat = %+v, want empty", stats.NAT)
+	}
+}

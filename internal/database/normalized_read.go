@@ -710,3 +710,249 @@ func (d *Database) NetEventRollupStats(f NetEventRollupFilter) (*NetEventRollupS
 
 	return res, nil
 }
+
+// ---------------------------------------------------------------------------
+// net_events — short-window analytics (Phase 2, PR 5)
+// ---------------------------------------------------------------------------
+
+// The rollups (PR 4) retain counts keyed by rule/action/direction/app_cat/
+// ruleset, so anything not in that key — geo (src/dst country), identity
+// (IP↔MAC), the specific user/app/web-category/DNS-name, and NAT pairs — has no
+// long-term home. This reader answers those dimensions directly over the raw
+// net_events table, which keeps a short TTL, so the window is capped at 720
+// hours (30 days) and defaults to 24. Every series is a `ts >= cutoff` GROUP BY
+// (the table is RANGE-partitioned on ts by DAY, so the bound prunes daily
+// partitions) with a LIMIT on each ranking, and empty/NULL groups are skipped.
+// No index or migration is added: the ts bound is served by the existing
+// (ts) and (device_id, ts) leaf indexes, and none of the grouped columns is
+// worth an index for a 24 h dashboard read.
+
+const (
+	// netEventStatsDefaultHours is the lookback NetEventStats uses when the
+	// filter does not name a window; netEventStatsMaxHours is the ceiling (30
+	// days — the raw table's retention). Beyond a day the GROUP BYs grow with
+	// the row count, so the default stays bounded and the handler never asks
+	// for more than the ceiling.
+	netEventStatsDefaultHours = 24
+	netEventStatsMaxHours     = 720
+	// netEventStatsTopN bounds each ranking card (users, apps, web categories,
+	// DNS, NAT pairs, identity). The charts cannot show an unbounded ranking,
+	// and past a handful of entries nothing is readable.
+	netEventStatsTopN = 10
+)
+
+// NetEventStatsFilter constrains a NetEventStats query. Hours is the lookback
+// window in hours (coerced to [1,720]; default 24). DeviceID and SiteID of 0
+// mean "no filter" — a device id of 0 is never a real row (PKs start at 1), and
+// a site filter narrows by the devices assigned to that site (net_events has no
+// site_id column).
+type NetEventStatsFilter struct {
+	Hours    int
+	DeviceID uint
+	SiteID   uint
+}
+
+// NetEventGeoStat is one country's aggregate over the window (the "top
+// countries" cards): the hit count plus the bytes it carried. Country is the
+// ISO-3166 alpha-2 code stored in the char(2) column; the empty/NULL code is
+// excluded by the query.
+type NetEventGeoStat struct {
+	Country  string `json:"country"`
+	Hits     int64  `json:"hits"`
+	BytesIn  int64  `json:"bytes_in"`
+	BytesOut int64  `json:"bytes_out"`
+}
+
+// NetEventIdentityStat is one source (IP, MAC) pair's hit count — the "who is
+// on the network" card. SrcMAC may be empty (the vendor did not report it) but
+// SrcIP is always present: the query skips rows with no src_ip.
+type NetEventIdentityStat struct {
+	SrcIP  string `json:"src_ip"`
+	SrcMAC string `json:"src_mac"`
+	Hits   int64  `json:"hits"`
+}
+
+// NetEventNATStat is one NAT (src, dst) pair's hit count — the translated
+// flows, "src before translation → dst after translation". DstIP may be empty
+// when the vendor reported only the translated source.
+type NetEventNATStat struct {
+	SrcIP string `json:"src_ip"`
+	DstIP string `json:"dst_ip"`
+	Hits  int64  `json:"hits"`
+}
+
+// NetEventStatsResult is the short-window analytics payload for the Events
+// page: the grouped series the rollups do not retain. The ranking series
+// (Identity, Users, Apps, AppCategories, WebCategories, DNS, NAT) are ordered
+// by count descending for direct charting; the geo cards are ordered the same
+// way.
+type NetEventStatsResult struct {
+	GeoSrc        []NetEventGeoStat      `json:"geo_src"`
+	GeoDst        []NetEventGeoStat      `json:"geo_dst"`
+	Identity      []NetEventIdentityStat `json:"identity"`
+	Users         []KeyCount             `json:"users"`
+	Apps          []KeyCount             `json:"apps"`
+	AppCategories []KeyCount             `json:"app_categories"`
+	WebCategories []KeyCount             `json:"web_categories"`
+	DNS           []KeyCount             `json:"dns"`
+	NAT           []NetEventNATStat      `json:"nat"`
+}
+
+// netEventStatByteSums is the shared SELECT tail for the geo series: SUMs cast
+// to BIGINT because Postgres sums bigint into numeric (the same cast the
+// rollup reader uses).
+const netEventStatByteSums = "CAST(COALESCE(SUM(bytes_in), 0) AS BIGINT) AS bytes_in, " +
+	"CAST(COALESCE(SUM(bytes_out), 0) AS BIGINT) AS bytes_out"
+
+// netEventStatKeyCount runs one key-count ranking over the shared base filter:
+// COUNT(*) grouped by the named text column, empty/NULL values skipped, top-N
+// kept. The five key-count series (users, apps, app_categories, web_categories,
+// dns) are identical modulo the column, so one helper keeps them from drifting.
+func netEventStatKeyCount(base func() *gorm.DB, column, label string) ([]KeyCount, error) {
+	var out []KeyCount
+	if err := base().
+		Select(column + " AS key, COUNT(*) AS count").
+		Where(column + " IS NOT NULL AND " + column + " <> ''").
+		Group(column).Order("count DESC").Limit(netEventStatsTopN).
+		Scan(&out).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", label, err)
+	}
+	return out, nil
+}
+
+// NetEventStats computes the short-window series over the raw net_events table.
+// The queries share one base filter (built once, so the series can never
+// drift), and each is `ts >= cutoff` bounded so the daily partitions prune. The
+// top-N LIMITs keep each ranking small, and the bounded default (24 h) keeps
+// the GROUP BYs cheap: the 30-day ceiling is the raw table's retention, and a
+// call over it is the caller's explicit choice (the handler caps hours at 720).
+func (d *Database) NetEventStats(f NetEventStatsFilter) (*NetEventStatsResult, error) {
+	hours := f.Hours
+	if hours <= 0 {
+		hours = netEventStatsDefaultHours
+	}
+	if hours > netEventStatsMaxHours {
+		hours = netEventStatsMaxHours
+	}
+	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+
+	// base rebuilds the filtered query fresh on every call for the same reason
+	// ListNetEvents does: GORM chain methods mutate the statement in place, so a
+	// shared base would leak one series' GROUP BY into the next. The ts bound is
+	// always present (partition/index pruning); the device/site filters narrow
+	// through the (device_id, ts) index.
+	base := func() *gorm.DB {
+		q := d.db.Table("net_events").Where("ts >= ?", cutoff)
+		if f.DeviceID != 0 {
+			q = q.Where("device_id = ?", f.DeviceID)
+		}
+		// net_events has no site_id column; a site filter narrows by the devices
+		// assigned to that site (the IN (subquery) form ListNetEvents uses).
+		if f.SiteID != 0 {
+			q = q.Where("device_id IN (?)", d.db.Model(&models.Device{}).Where("site_id = ?", f.SiteID).Select("id"))
+		}
+		return q
+	}
+
+	res := &NetEventStatsResult{}
+
+	// geo_src / geo_dst: hits and bytes by country, ordered by hits. No LIMIT —
+	// there are at most ~250 ISO-3166 codes, far fewer than the ranking cards'
+	// budget, so capping them would only hide a long tail of small countries.
+	var geoSrc []NetEventGeoStat
+	if err := base().
+		Select("src_country AS country, COUNT(*) AS hits, " + netEventStatByteSums).
+		Where("src_country IS NOT NULL AND src_country <> ''").
+		Group("src_country").Order("hits DESC").
+		Scan(&geoSrc).Error; err != nil {
+		return nil, fmt.Errorf("geo_src: %w", err)
+	}
+	res.GeoSrc = geoSrc
+
+	var geoDst []NetEventGeoStat
+	if err := base().
+		Select("dst_country AS country, COUNT(*) AS hits, " + netEventStatByteSums).
+		Where("dst_country IS NOT NULL AND dst_country <> ''").
+		Group("dst_country").Order("hits DESC").
+		Scan(&geoDst).Error; err != nil {
+		return nil, fmt.Errorf("geo_dst: %w", err)
+	}
+	res.GeoDst = geoDst
+
+	// identity: the top (src_ip, src_mac) pairs by hits. src_ip is an inet
+	// column on Postgres, so it is grouped through CastText (the rollup reader's
+	// convention) and only rows with a source IP are kept; a missing MAC reads
+	// as '' (an identity without a vendor-supplied MAC is still an identity).
+	var identity []NetEventIdentityStat
+	if err := base().
+		Select(d.dialect.CastText("src_ip") + " AS src_ip, COALESCE(" + d.dialect.CastText("src_mac") + ", '') AS src_mac, COUNT(*) AS hits").
+		Where("src_ip IS NOT NULL").
+		Group("src_ip, src_mac").Order("hits DESC").Limit(netEventStatsTopN).
+		Scan(&identity).Error; err != nil {
+		return nil, fmt.Errorf("identity: %w", err)
+	}
+	res.Identity = identity
+
+	var err error
+	if res.Users, err = netEventStatKeyCount(base, "user_name", "users"); err != nil {
+		return nil, err
+	}
+	if res.Apps, err = netEventStatKeyCount(base, "app", "apps"); err != nil {
+		return nil, err
+	}
+	if res.AppCategories, err = netEventStatKeyCount(base, "app_cat", "app_categories"); err != nil {
+		return nil, err
+	}
+	if res.WebCategories, err = netEventStatKeyCount(base, "web_cat", "web_categories"); err != nil {
+		return nil, err
+	}
+	if res.DNS, err = netEventStatKeyCount(base, "dns_qname", "dns"); err != nil {
+		return nil, err
+	}
+
+	// nat: the top (nat_src_ip, nat_dst_ip) translated-flow pairs by hits. The
+	// NAT columns are inet too, so the same CastText grouping keeps the wire
+	// shape a plain string on both dialects; only rows with a translated source
+	// are kept.
+	var nat []NetEventNATStat
+	if err := base().
+		Select(d.dialect.CastText("nat_src_ip") + " AS src_ip, COALESCE(" + d.dialect.CastText("nat_dst_ip") + ", '') AS dst_ip, COUNT(*) AS hits").
+		Where("nat_src_ip IS NOT NULL").
+		Group("nat_src_ip, nat_dst_ip").Order("hits DESC").Limit(netEventStatsTopN).
+		Scan(&nat).Error; err != nil {
+		return nil, fmt.Errorf("nat: %w", err)
+	}
+	res.NAT = nat
+
+	// Normalize nil (no-rows) series to empty slices so the wire shape is []
+	// rather than null — the UI maps each series without a null guard.
+	if res.GeoSrc == nil {
+		res.GeoSrc = []NetEventGeoStat{}
+	}
+	if res.GeoDst == nil {
+		res.GeoDst = []NetEventGeoStat{}
+	}
+	if res.Identity == nil {
+		res.Identity = []NetEventIdentityStat{}
+	}
+	if res.Users == nil {
+		res.Users = []KeyCount{}
+	}
+	if res.Apps == nil {
+		res.Apps = []KeyCount{}
+	}
+	if res.AppCategories == nil {
+		res.AppCategories = []KeyCount{}
+	}
+	if res.WebCategories == nil {
+		res.WebCategories = []KeyCount{}
+	}
+	if res.DNS == nil {
+		res.DNS = []KeyCount{}
+	}
+	if res.NAT == nil {
+		res.NAT = []NetEventNATStat{}
+	}
+
+	return res, nil
+}
