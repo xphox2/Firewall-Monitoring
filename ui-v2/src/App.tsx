@@ -28,12 +28,14 @@ const queryClient = new QueryClient({
   },
 });
 
+const BASENAME = __FWMON_BASE__;
+
 export function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <ToastProvider>
-          <BrowserRouter basename="/admin/v2">
+          <BrowserRouter basename={BASENAME}>
             <Routes>
               <Route element={<AppShell />}>
                 {/* 1. Monitor */}

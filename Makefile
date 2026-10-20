@@ -39,7 +39,7 @@ help: ## Show this help
 # `if (!badge)` regenerates a component class variant (v0.11.269). `test`
 # (non-race) is kept alongside `test-race` so the gate still runs on hosts
 # without a C toolchain.
-qa: tidy-check fmt-check vet staticcheck gosec vuln build test test-race tailwind-check ## Run the full QA gate (same as CI)
+qa: tidy-check fmt-check vet staticcheck gosec vuln build test test-race tailwind-check ui-v2-check ## Run the full QA gate (same as CI)
 	@echo "QA OK (v$(VERSION))"
 
 .PHONY: ci-local
@@ -114,8 +114,12 @@ ui-v2/node_modules: ui-v2/package.json ui-v2/package-lock.json
 	@touch ui-v2/node_modules
 
 .PHONY: ui-v2
-ui-v2: ui-v2/node_modules ## Typecheck and compile the V2 React/TypeScript admin UI into cmd/api/static/v2
-	cd ui-v2 && npm run build
+ui-v2: ui-v2/node_modules ## Typecheck, test and compile the V2 React/TypeScript admin UI into cmd/api/static/v2
+	cd ui-v2 && npm test && npm run build
+
+.PHONY: ui-v2-check
+ui-v2-check: ui-v2 ## Fail if the committed cmd/api/static/v2 bundle is stale (CI ui-v2-freshness)
+	@git diff --quiet -- cmd/api/static/v2 || { echo "cmd/api/static/v2 is stale: commit the regenerated bundle (or run 'make ui-v2')"; exit 1; }
 
 .PHONY: build
 build: tailwind ## Build all binaries into ./bin (reproducible, canonical fwmon-* names)
