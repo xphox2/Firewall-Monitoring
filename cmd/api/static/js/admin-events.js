@@ -996,26 +996,35 @@
     }
 
     function renderAnalytics(d) {
-        // Policy bytes: one line per direction of bytes, per day. FortiGate
-        // "accept" records repeat cumulative session counters, so ingest only
-        // stores bytes on records that end a session; a day's figure is what
-        // closed that day. A retrofit marker (policy_bytes_from) starts the
-        // series at the first day rebuilt from corrected data.
-        var pb = d.policy_bytes || [];
-        var pbHint = document.getElementById('events-policy-bytes-hint');
-        if (pbHint) {
-            pbHint.textContent = 'per day · bytes at session close' +
-                (d.policy_bytes_from ? ' · repaired from ' + d.policy_bytes_from : '');
-        }
-        eventsChart('events-policy-bytes-chart', 'line', pb.map(function(b) { return b.day; }), [
-            { label: 'In', data: pb.map(function(b) { return b.bytes_in; }), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.12)', fill: true, tension: 0.3 },
-            { label: 'Out', data: pb.map(function(b) { return b.bytes_out; }), borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.12)', fill: true, tension: 0.3 }
-        ]);
+        // Policy bytes / Deny are day-granular rollups. For a sub-day range the
+        // rollup has exactly one bucket, which a line chart draws as a lone dot
+        // at the edge, so renderStats owns those two cards there and draws them
+        // from the raw hourly series. Everything below this block is a ranking,
+        // not a time series, and stays on the daily window.
+        if (rangeDays() > 1) {
+            // Policy bytes: one line per direction of bytes, per day. FortiGate
+            // "accept" records repeat cumulative session counters, so ingest
+            // only stores bytes on records that end a session; a day's figure is
+            // what closed that day. A retrofit marker (policy_bytes_from) starts
+            // the series at the first day rebuilt from corrected data.
+            var pb = d.policy_bytes || [];
+            var pbHint = document.getElementById('events-policy-bytes-hint');
+            if (pbHint) {
+                pbHint.textContent = 'per day · bytes at session close' +
+                    (d.policy_bytes_from ? ' · repaired from ' + d.policy_bytes_from : '');
+            }
+            eventsChart('events-policy-bytes-chart', 'line', pb.map(function(b) { return b.day; }), [
+                { label: 'In', data: pb.map(function(b) { return b.bytes_in; }), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.12)', fill: true, tension: 0.3 },
+                { label: 'Out', data: pb.map(function(b) { return b.bytes_out; }), borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.12)', fill: true, tension: 0.3 }
+            ]);
 
-        // Deny trend: denied hits per day.
-        var deny = d.deny || [];
-        eventsChart('events-deny-chart', 'bar', deny.map(function(b) { return b.day; }),
-            [{ label: 'Denied', data: deny.map(function(b) { return b.hits; }), backgroundColor: '#f85149', borderRadius: 3 }]);
+            // Deny trend: denied hits per day.
+            var deny = d.deny || [];
+            var denyHint = document.getElementById('events-deny-hint');
+            if (denyHint) denyHint.textContent = 'per day · denied sessions';
+            eventsChart('events-deny-chart', 'bar', deny.map(function(b) { return b.day; }),
+                [{ label: 'Denied', data: deny.map(function(b) { return b.hits; }), backgroundColor: '#f85149', borderRadius: 3 }]);
+        }
 
         // Top rules: horizontal bars, highest hits first.
         var rules = d.policy_hits || [];
@@ -1094,6 +1103,26 @@
     }
 
     function renderStats(d) {
+        // Sub-day ranges: Policy Bytes and Deny come from the raw hourly series
+        // (the daily rollup has one bucket, which a line chart draws as a lone
+        // dot). renderAnalytics skips those two cards for the same ranges, so
+        // the two responses cannot overwrite each other.
+        if (rangeDays() <= 1) {
+            var pbh = d.policy_bytes_hourly || [];
+            var pbHint = document.getElementById('events-policy-bytes-hint');
+            if (pbHint) pbHint.textContent = 'per hour · bytes at session close';
+            eventsChart('events-policy-bytes-chart', 'line', pbh.map(function(b) { return b.hour.slice(5); }), [
+                { label: 'In', data: pbh.map(function(b) { return b.bytes_in; }), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.12)', fill: true, tension: 0.3 },
+                { label: 'Out', data: pbh.map(function(b) { return b.bytes_out; }), borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.12)', fill: true, tension: 0.3 }
+            ]);
+
+            var dh = d.deny_hourly || [];
+            var denyHint = document.getElementById('events-deny-hint');
+            if (denyHint) denyHint.textContent = 'per hour · denied sessions';
+            eventsChart('events-deny-chart', 'bar', dh.map(function(b) { return b.hour.slice(5); }),
+                [{ label: 'Denied', data: dh.map(function(b) { return b.hits; }), backgroundColor: '#f85149', borderRadius: 3 }]);
+        }
+
         // Top countries (source and destination): doughnuts of hits by ISO code.
         var geoSrc = d.geo_src || [];
         eventsChart('events-geo-src-chart', 'doughnut', geoSrc.map(function(g) { return g.country; }),

@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.331] - 2026-10-20
+
+### Fixed — Policy Bytes and Deny showed a single dot for 1h / 6h / 12h / 24h
+
+- The range pills map a sub-day range to a one-day window of the **daily** rollup, so those two time-series cards received exactly one bucket. A one-point line chart renders as a lone dot at the edge of an otherwise empty plot, which is why the cards looked blank while every ranking card had data.
+- `GET /admin/api/events/analytics` now also returns `policy_bytes_hourly` and `deny_hourly`: the same totals bucketed by hour from `net_events`, computed in the same bounded-concurrency fan-out as the other short-window series. For ranges up to 24 h the Events page draws Policy Bytes and Deny from the hourly series; 7d/30d keep the day-granular rollup series. The card hints read "per hour" or "per day" accordingly.
+- The two renders are mutually exclusive (`renderAnalytics` skips Policy Bytes/Deny when the range is sub-day), so the analytic and rollup responses cannot overwrite each other regardless of which arrives first.
+
+### Tests
+
+- `TestNetEventStats_GroupingAndSums` now seeds a denied row and asserts the hourly policy-bytes and deny totals; the handler shape test covers both new arrays.
+
 ## [0.11.330] - 2026-10-20
 
 ### Fixed — the Events page range pills did not change most of the page

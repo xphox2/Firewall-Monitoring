@@ -248,7 +248,7 @@ func TestGetNetEventRollups_BadParams(t *testing.T) {
 }
 
 // TestGetNetEventAnalytics_Shape asserts the handler returns a 200 with the
-// nine short-window analytics series the Events page charts, even with no rows
+// short-window analytics series the Events page charts, even with no rows
 // seeded (the empty series must be [] not null).
 func TestGetNetEventAnalytics_Shape(t *testing.T) {
 	h, _ := setupTestHandler(t)
@@ -262,15 +262,17 @@ func TestGetNetEventAnalytics_Shape(t *testing.T) {
 	var resp struct {
 		Success bool `json:"success"`
 		Data    struct {
-			GeoSrc        []json.RawMessage `json:"geo_src"`
-			GeoDst        []json.RawMessage `json:"geo_dst"`
-			Identity      []json.RawMessage `json:"identity"`
-			Users         []json.RawMessage `json:"users"`
-			Apps          []json.RawMessage `json:"apps"`
-			AppCategories []json.RawMessage `json:"app_categories"`
-			WebCategories []json.RawMessage `json:"web_categories"`
-			DNS           []json.RawMessage `json:"dns"`
-			NAT           []json.RawMessage `json:"nat"`
+			GeoSrc            []json.RawMessage `json:"geo_src"`
+			GeoDst            []json.RawMessage `json:"geo_dst"`
+			Identity          []json.RawMessage `json:"identity"`
+			Users             []json.RawMessage `json:"users"`
+			Apps              []json.RawMessage `json:"apps"`
+			AppCategories     []json.RawMessage `json:"app_categories"`
+			WebCategories     []json.RawMessage `json:"web_categories"`
+			DNS               []json.RawMessage `json:"dns"`
+			NAT               []json.RawMessage `json:"nat"`
+			PolicyBytesHourly []json.RawMessage `json:"policy_bytes_hourly"`
+			DenyHourly        []json.RawMessage `json:"deny_hourly"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
@@ -280,15 +282,17 @@ func TestGetNetEventAnalytics_Shape(t *testing.T) {
 		t.Fatalf("success = false: %s", rec.Body.String())
 	}
 	for name, s := range map[string][]json.RawMessage{
-		"geo_src":        resp.Data.GeoSrc,
-		"geo_dst":        resp.Data.GeoDst,
-		"identity":       resp.Data.Identity,
-		"users":          resp.Data.Users,
-		"apps":           resp.Data.Apps,
-		"app_categories": resp.Data.AppCategories,
-		"web_categories": resp.Data.WebCategories,
-		"dns":            resp.Data.DNS,
-		"nat":            resp.Data.NAT,
+		"geo_src":             resp.Data.GeoSrc,
+		"geo_dst":             resp.Data.GeoDst,
+		"identity":            resp.Data.Identity,
+		"users":               resp.Data.Users,
+		"apps":                resp.Data.Apps,
+		"app_categories":      resp.Data.AppCategories,
+		"web_categories":      resp.Data.WebCategories,
+		"dns":                 resp.Data.DNS,
+		"nat":                 resp.Data.NAT,
+		"policy_bytes_hourly": resp.Data.PolicyBytesHourly,
+		"deny_hourly":         resp.Data.DenyHourly,
 	} {
 		if s == nil {
 			t.Fatalf("%s is null, want []", name)

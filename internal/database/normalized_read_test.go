@@ -704,6 +704,7 @@ func statI64(v int64) *int64   { return &v }
 type statRow struct {
 	devID                          uint
 	ts                             time.Time
+	action                         int16
 	srcCountry, dstCountry         *string
 	srcIP, srcMAC                  *string
 	user, app, appCat, webCat, dns *string
@@ -713,11 +714,15 @@ type statRow struct {
 
 func seedNetEventStatRow(t *testing.T, db *Database, r statRow) {
 	t.Helper()
+	action := r.action
+	if action == 0 {
+		action = 1 // allow, the common case in these fixtures
+	}
 	row := &models.NetEvent{
 		Ts:         r.ts,
 		DeviceID:   r.devID,
 		Activity:   3,
-		Action:     1,
+		Action:     action,
 		SrcCountry: r.srcCountry,
 		DstCountry: r.dstCountry,
 		SrcIP:      r.srcIP,
@@ -782,6 +787,14 @@ func TestNetEventStats_GroupingAndSums(t *testing.T) {
 		natSrc: statStr("10.0.0.2"), natDst: statStr("5.6.7.8"),
 		bytesIn: statI64(300), bytesOut: statI64(400),
 	})
+	// A denied row in the same window feeds DenyHourly (and the hourly totals).
+	seedNetEventStatRow(t, db, statRow{
+		devID: dev.ID, ts: now.Add(-3 * time.Minute), action: 2,
+		bytesIn: statI64(10), bytesOut: statI64(20),
+	})
+	// A row two hours back pins the bucketing itself: it must land in a second,
+	// distinct hour label (a collapsed/constant bucket would merge it).
+	seedNetEventStatRow(t, db, statRow{devID: dev.ID, ts: now.Add(-2 * time.Hour)})
 
 	stats, err := db.NetEventStats(NetEventStatsFilter{Hours: 24})
 	if err != nil {
@@ -843,6 +856,29 @@ func TestNetEventStats_GroupingAndSums(t *testing.T) {
 	}
 	if n := stats.NAT[1]; n.SrcIP != "10.0.0.2" || n.DstIP != "5.6.7.8" || n.Hits != 1 {
 		t.Fatalf("nat[1] = %+v, want 10.0.0.2 → 5.6.7.8 1", n)
+	}
+
+	// Hourly policy bytes: all five rows (across at least two hour buckets),
+	// 5 hits / 510 in / 820 out. The labels must be non-empty and distinct.
+	var hourHits, hourIn, hourOut int64
+	seenHours := map[string]bool{}
+	for _, h := range stats.PolicyBytesHourly {
+		if h.Hour == "" || seenHours[h.Hour] {
+			t.Fatalf("policy_bytes_hourly has an empty or duplicate hour label: %+v", stats.PolicyBytesHourly)
+		}
+		seenHours[h.Hour] = true
+		hourHits += h.Hits
+		hourIn += h.BytesIn
+		hourOut += h.BytesOut
+	}
+	if len(stats.PolicyBytesHourly) < 2 || hourHits != 5 || hourIn != 510 || hourOut != 820 {
+		t.Fatalf("policy_bytes_hourly = %+v (totals %d/%d/%d), want >=2 buckets / 5 hits / 510 in / 820 out",
+			stats.PolicyBytesHourly, hourHits, hourIn, hourOut)
+	}
+	// Deny hourly: only the denied row.
+	if len(stats.DenyHourly) != 1 || stats.DenyHourly[0].Hits != 1 ||
+		stats.DenyHourly[0].BytesIn != 10 || stats.DenyHourly[0].BytesOut != 20 {
+		t.Fatalf("deny_hourly = %+v, want one bucket with the 10/20 deny row", stats.DenyHourly)
 	}
 }
 
@@ -1288,5 +1324,27 @@ func TestGetSecEvent_NotFound(t *testing.T) {
 	db := NewDatabaseForTesting(t)
 	if _, err := db.GetSecEvent(999999); !errors.Is(err, gorm.ErrRecordNotFound) {
 		t.Fatalf("GetSecEvent(999999) err = %v, want ErrRecordNotFound", err)
+	}
+}
+
+// TestNetEventRollupStats_SingleDay: the sub-day range pills map to days=1;
+// today's rollup rows must still produce every series.
+func TestNetEventRollupStats_SingleDay(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	today := utcDay(time.Now())
+	seedRollupRow(t, db, today, 1, "u:a", 1, 2, "Web", "root", 100, 1000, 2000)
+	seedRollupRow(t, db, today, 1, "u:b", 2, 1, "Mail", "root", 30, 300, 600)
+
+	stats, err := db.NetEventRollupStats(NetEventRollupFilter{Days: 1})
+	if err != nil {
+		t.Fatalf("NetEventRollupStats(days=1): %v", err)
+	}
+	if len(stats.PolicyBytes) != 1 || stats.PolicyBytes[0].Hits != 130 {
+		t.Fatalf("policy_bytes = %+v, want one bucket with 130 hits", stats.PolicyBytes)
+	}
+	if len(stats.PolicyHits) != 2 || len(stats.Deny) != 1 || len(stats.AppCategories) != 2 ||
+		len(stats.Directions) != 2 || len(stats.Rulesets) != 1 {
+		t.Fatalf("series: hits=%d deny=%d app=%d dir=%d rulesets=%d, want 2/1/2/2/1",
+			len(stats.PolicyHits), len(stats.Deny), len(stats.AppCategories), len(stats.Directions), len(stats.Rulesets))
 	}
 }

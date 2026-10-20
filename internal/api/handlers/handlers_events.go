@@ -300,15 +300,17 @@ func (h *Handler) GetNetEventAnalytics(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
 		c.JSON(http.StatusOK, response.Success(gin.H{
-			"geo_src":        []database.NetEventGeoStat{},
-			"geo_dst":        []database.NetEventGeoStat{},
-			"identity":       []database.NetEventIdentityStat{},
-			"users":          []database.KeyCount{},
-			"apps":           []database.KeyCount{},
-			"app_categories": []database.KeyCount{},
-			"web_categories": []database.KeyCount{},
-			"dns":            []database.KeyCount{},
-			"nat":            []database.NetEventNATStat{},
+			"geo_src":             []database.NetEventGeoStat{},
+			"geo_dst":             []database.NetEventGeoStat{},
+			"identity":            []database.NetEventIdentityStat{},
+			"users":               []database.KeyCount{},
+			"apps":                []database.KeyCount{},
+			"app_categories":      []database.KeyCount{},
+			"web_categories":      []database.KeyCount{},
+			"dns":                 []database.KeyCount{},
+			"nat":                 []database.NetEventNATStat{},
+			"policy_bytes_hourly": []database.NetEventHourStat{},
+			"deny_hourly":         []database.NetEventHourStat{},
 		}))
 		return
 	}
@@ -358,15 +360,17 @@ func (h *Handler) GetNetEventAnalytics(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response.Success(gin.H{
-		"geo_src":        stats.GeoSrc,
-		"geo_dst":        stats.GeoDst,
-		"identity":       stats.Identity,
-		"users":          stats.Users,
-		"apps":           stats.Apps,
-		"app_categories": stats.AppCategories,
-		"web_categories": stats.WebCategories,
-		"dns":            stats.DNS,
-		"nat":            stats.NAT,
+		"geo_src":             stats.GeoSrc,
+		"geo_dst":             stats.GeoDst,
+		"identity":            stats.Identity,
+		"users":               stats.Users,
+		"apps":                stats.Apps,
+		"app_categories":      stats.AppCategories,
+		"web_categories":      stats.WebCategories,
+		"dns":                 stats.DNS,
+		"nat":                 stats.NAT,
+		"policy_bytes_hourly": stats.PolicyBytesHourly,
+		"deny_hourly":         stats.DenyHourly,
 	}))
 }
 

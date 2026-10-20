@@ -898,6 +898,23 @@ type NetEventStatsResult struct {
 	WebCategories []KeyCount             `json:"web_categories"`
 	DNS           []KeyCount             `json:"dns"`
 	NAT           []NetEventNATStat      `json:"nat"`
+
+	// PolicyBytesHourly / DenyHourly give the sub-day range pills a real
+	// trend: the day-granular rollup has exactly one bucket for 1h..24h, which
+	// renders as a single dot on a line chart. These are the same totals
+	// bucketed by hour from the raw table, so the Policy Bytes and Deny cards
+	// can stay hour-precise for the ranges where the rollup cannot.
+	PolicyBytesHourly []NetEventHourStat `json:"policy_bytes_hourly"`
+	DenyHourly        []NetEventHourStat `json:"deny_hourly"`
+}
+
+// NetEventHourStat is one hour-bucketed row of the raw analytics: hits and
+// bytes for all traffic, or for the deny/reject verdicts on DenyHourly.
+type NetEventHourStat struct {
+	Hour     string `json:"hour"`
+	Hits     int64  `json:"hits"`
+	BytesIn  int64  `json:"bytes_in"`
+	BytesOut int64  `json:"bytes_out"`
 }
 
 // netEventStatByteSums is the shared SELECT tail for the geo series: SUMs cast
@@ -958,7 +975,7 @@ func (d *Database) NetEventStats(f NetEventStatsFilter) (*NetEventStatsResult, e
 
 	res := &NetEventStatsResult{}
 
-	// The nine series run with bounded concurrency. Sequentially they cost
+	// The eleven series run with bounded concurrency. Sequentially they cost
 	// ~60 s on a 7-day production window (each is its own partition-pruned
 	// scan); four at a time keeps the wait inside the response timeout without
 	// letting one page load drain the connection pool — the same bound the
@@ -969,17 +986,19 @@ func (d *Database) NetEventStats(f NetEventStatsFilter) (*NetEventStatsResult, e
 	// there are at most ~250 ISO-3166 codes, far fewer than the ranking cards'
 	// budget, so capping them would only hide a long tail of small countries.
 	var (
-		geoSrc   []NetEventGeoStat
-		geoDst   []NetEventGeoStat
-		identity []NetEventIdentityStat
-		users    []KeyCount
-		apps     []KeyCount
-		appCats  []KeyCount
-		webCats  []KeyCount
-		dns      []KeyCount
-		nat      []NetEventNATStat
-		firstErr error
-		errOnce  sync.Once
+		geoSrc       []NetEventGeoStat
+		geoDst       []NetEventGeoStat
+		identity     []NetEventIdentityStat
+		users        []KeyCount
+		apps         []KeyCount
+		appCats      []KeyCount
+		webCats      []KeyCount
+		dns          []KeyCount
+		nat          []NetEventNATStat
+		policyHourly []NetEventHourStat
+		denyHourly   []NetEventHourStat
+		firstErr     error
+		errOnce      sync.Once
 	)
 	jobs := []func() error{
 		func() error {
@@ -1056,6 +1075,36 @@ func (d *Database) NetEventStats(f NetEventStatsFilter) (*NetEventStatsResult, e
 			}
 			return nil
 		},
+		func() error {
+			// Only the sub-day range pills consume these hourly series; a
+			// long-window caller would pay two extra raw scans for a chart it
+			// never renders. The UI never asks for them above 24 h.
+			if hours > 24 {
+				return nil
+			}
+			bucket := d.dialect.TimeBucket("hour", "ts")
+			if err := base().
+				Select(bucket + " AS hour, CAST(COUNT(*) AS BIGINT) AS hits, " + netEventStatByteSums).
+				Group(bucket).Order("hour ASC").
+				Scan(&policyHourly).Error; err != nil {
+				return fmt.Errorf("policy_bytes_hourly: %w", err)
+			}
+			return nil
+		},
+		func() error {
+			if hours > 24 {
+				return nil
+			}
+			bucket := d.dialect.TimeBucket("hour", "ts")
+			if err := base().
+				Select(bucket+" AS hour, CAST(COUNT(*) AS BIGINT) AS hits, "+netEventStatByteSums).
+				Where("action IN ?", []int16{int16(normalize.ActionDeny), int16(normalize.ActionReject)}).
+				Group(bucket).Order("hour ASC").
+				Scan(&denyHourly).Error; err != nil {
+				return fmt.Errorf("deny_hourly: %w", err)
+			}
+			return nil
+		},
 	}
 	sem := make(chan struct{}, 4)
 	var wg sync.WaitGroup
@@ -1083,6 +1132,8 @@ func (d *Database) NetEventStats(f NetEventStatsFilter) (*NetEventStatsResult, e
 	res.WebCategories = webCats
 	res.DNS = dns
 	res.NAT = nat
+	res.PolicyBytesHourly = policyHourly
+	res.DenyHourly = denyHourly
 
 	// Normalize nil (no-rows) series to empty slices so the wire shape is []
 	// rather than null — the UI maps each series without a null guard.
@@ -1112,6 +1163,12 @@ func (d *Database) NetEventStats(f NetEventStatsFilter) (*NetEventStatsResult, e
 	}
 	if res.NAT == nil {
 		res.NAT = []NetEventNATStat{}
+	}
+	if res.PolicyBytesHourly == nil {
+		res.PolicyBytesHourly = []NetEventHourStat{}
+	}
+	if res.DenyHourly == nil {
+		res.DenyHourly = []NetEventHourStat{}
 	}
 
 	return res, nil
