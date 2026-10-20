@@ -311,7 +311,7 @@ export function ConfigDiffDrawer({
                       <span
                         className={cn(
                           'rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase',
-                          SEV_STYLE[(change.risk?.severity as string) ?? 'info'] ?? SEV_STYLE.info,
+                          SEV_STYLE[(change.risk?.severity as string) ?? 'info'] ?? SEV_STYLE['info'],
                         )}
                       >
                         {change.risk?.severity ?? 'info'}
@@ -373,7 +373,7 @@ export function ConfigDiffDrawer({
                         key={idx}
                         className={cn(
                           'flex items-start gap-2 whitespace-pre-wrap break-all px-2 py-0.5 font-mono text-[11px]',
-                          LINE_STYLE[row.op] ?? LINE_STYLE.equal,
+                          LINE_STYLE[row.op] ?? LINE_STYLE['equal'],
                         )}
                       >
                         <span className="w-10 shrink-0 select-none text-right text-text-faint">
