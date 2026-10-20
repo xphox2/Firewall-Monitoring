@@ -37,7 +37,6 @@ interface AdminUser {
   email?: string;
   display_name?: string;
   totp_enabled: boolean;
-  passkey_count?: number;
   must_change_password?: boolean;
   last_login_at?: string;
   created_at?: string;
@@ -55,16 +54,17 @@ interface APITokenRow {
 
 interface AuditLogEntry {
   id: number;
-  timestamp: string;
+  // models.AuditLog wire names. `timestamp`/`status_code`/`path` do not exist,
+  // so every row showed a blank time and a red "undefined" status.
+  created_at: string;
   actor: string;
-  role: string;
-  action: string;
-  resource: string;
+  actor_id: number;
   method: string;
-  path: string;
-  status_code: number;
+  action: string;
+  target: string;
+  status: number;
   ip_address: string;
-  details?: string;
+  user_agent: string;
 }
 
 interface PasskeyEntry {
@@ -266,11 +266,6 @@ function UsersRbacSubTab() {
             >
               {row.original.totp_enabled ? 'TOTP Active' : 'No TOTP'}
             </span>
-            {(row.original.passkey_count ?? 0) > 0 && (
-              <span className="rounded bg-accent/15 px-2 py-0.5 text-[10px] font-semibold text-accent">
-                {row.original.passkey_count} Passkey
-              </span>
-            )}
           </div>
         ),
       },
@@ -1185,11 +1180,11 @@ function AuditLogSubTab() {
   const columns = useMemo<ColumnDef<AuditLogEntry, unknown>[]>(
     () => [
       {
-        accessorKey: 'timestamp',
+        accessorKey: 'created_at',
         header: 'When',
         cell: ({ row }) => (
           <span className="font-mono text-xs text-text-dim">
-            {formatRelativeTime(row.original.timestamp)}
+            {formatRelativeTime(row.original.created_at)}
           </span>
         ),
       },
@@ -1197,14 +1192,7 @@ function AuditLogSubTab() {
         accessorKey: 'actor',
         header: 'Actor',
         cell: ({ row }) => (
-          <div>
-            <span className="font-semibold text-text">{row.original.actor}</span>
-            {row.original.role && (
-              <span className="ml-1.5 rounded bg-bg-panel px-1.5 py-0.5 text-[10px] uppercase text-text-dim">
-                {row.original.role}
-              </span>
-            )}
-          </div>
+          <span className="font-semibold text-text">{row.original.actor}</span>
         ),
       },
       {
@@ -1213,7 +1201,9 @@ function AuditLogSubTab() {
         cell: ({ row }) => (
           <div className="font-mono text-xs">
             <span className="font-semibold text-accent">{row.original.method}</span>{' '}
-            <span className="text-text">{row.original.path || row.original.action}</span>
+            <span className="text-text" title={row.original.action}>
+              {row.original.target || row.original.action}
+            </span>
           </div>
         ),
       },
@@ -1223,18 +1213,18 @@ function AuditLogSubTab() {
         cell: ({ row }) => <span className="font-mono text-xs text-text-dim">{row.original.ip_address}</span>,
       },
       {
-        accessorKey: 'status_code',
+        accessorKey: 'status',
         header: 'Status',
         cell: ({ row }) => (
           <span
             className={cn(
               'rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold',
-              row.original.status_code < 400
+              row.original.status < 400
                 ? 'bg-sig-ok/15 text-sig-ok'
                 : 'bg-sig-crit/15 text-sig-crit'
             )}
           >
-            {row.original.status_code}
+            {row.original.status}
           </span>
         ),
       },
@@ -1271,11 +1261,11 @@ function AuditLogSubTab() {
             <div className="flex items-center justify-between">
               <span className="font-semibold text-xs text-text">{entry.actor}</span>
               <span className="font-mono text-[11px] text-text-dim">
-                {formatRelativeTime(entry.timestamp)}
+                {formatRelativeTime(entry.created_at)}
               </span>
             </div>
             <div className="font-mono text-xs text-accent">
-              {entry.method} {entry.path || entry.action}
+              {entry.method} {entry.target || entry.action}
             </div>
           </div>
         )}
@@ -1287,7 +1277,9 @@ function AuditLogSubTab() {
           if (!open) setSelectedEntry(null);
         }}
         title="Audit Log Event Inspector"
-        subtitle={selectedEntry ? `${selectedEntry.method} ${selectedEntry.path}` : undefined}
+        subtitle={
+          selectedEntry ? `${selectedEntry.method} ${selectedEntry.target || selectedEntry.action}` : undefined
+        }
       >
         {selectedEntry && (
           <div className="space-y-3 text-xs">
@@ -1302,21 +1294,20 @@ function AuditLogSubTab() {
               </div>
               <div>
                 <div className="text-text-faint">Timestamp</div>
-                <div className="font-mono text-text">{selectedEntry.timestamp}</div>
+                <div className="font-mono text-text">{selectedEntry.created_at}</div>
               </div>
               <div>
                 <div className="text-text-faint">HTTP Status</div>
-                <div className="font-mono text-text">{selectedEntry.status_code}</div>
+                <div className="font-mono text-text">{selectedEntry.status}</div>
               </div>
             </div>
-            {selectedEntry.details && (
-              <div>
-                <div className="text-xs font-semibold text-text-dim mb-1">Recorded Details</div>
-                <pre className="rounded-lg border border-border bg-bg-panel p-3 font-mono text-[11px] text-text overflow-x-auto whitespace-pre-wrap">
-                  {selectedEntry.details}
-                </pre>
-              </div>
-            )}
+            <div>
+              <div className="text-xs font-semibold text-text-dim mb-1">Route & User Agent</div>
+              <pre className="rounded-lg border border-border bg-bg-panel p-3 font-mono text-[11px] text-text overflow-x-auto whitespace-pre-wrap">
+                {selectedEntry.action}
+                {selectedEntry.user_agent ? `\n${selectedEntry.user_agent}` : ''}
+              </pre>
+            </div>
           </div>
         )}
       </SlideOverDrawer>
@@ -1335,12 +1326,15 @@ function MyProfileSubTab() {
     queryFn: () => apiFetch<MeResponse>('/admin/api/me'),
   });
 
-  const { data: passkeysList } = useQuery({
+  const { data: passkeysRes } = useQuery({
     queryKey: ['my-passkeys'],
-    queryFn: () => apiFetch<PasskeyEntry[]>('/admin/api/passkeys'),
+    // ListPasskeys returns {passkeys, notices, max}; typing it as an array made
+    // passkeys.map throw and blank this tab.
+    queryFn: () =>
+      apiFetch<{ passkeys?: PasskeyEntry[]; max?: number }>('/admin/api/passkeys'),
   });
 
-  const passkeys = passkeysList ?? [];
+  const passkeys = passkeysRes?.passkeys ?? [];
 
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');

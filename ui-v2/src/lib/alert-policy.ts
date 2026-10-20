@@ -26,7 +26,7 @@ export interface AlertPolicy {
   rules?: Array<{
     alert_type: string;
     enabled: boolean;
-    min_severity?: string;
+    severity?: string;
   }>;
 }
 

@@ -59,7 +59,7 @@ interface EventRule {
   description?: string;
   enabled: boolean;
   priority: number;
-  vendor?: string;
+  vendor_scope?: string;
   action: 'alert' | 'suppress' | 'customize';
   alert_type?: string;
   severity?: string;
@@ -1074,7 +1074,7 @@ export function AlertingWorkspace() {
                           </span>
                         </td>
                         <td className="px-3 py-2.5 font-mono text-text-faint">
-                          {r.vendor || 'any'}
+                          {r.vendor_scope || 'any'}
                         </td>
                         <td className="px-4 py-2.5 text-right">
                           <button
@@ -1450,7 +1450,7 @@ export function AlertingWorkspace() {
                               : 'bg-sig-crit/15 text-sig-crit',
                           )}
                         >
-                          {r.enabled ? `Enabled (${r.min_severity || 'any'})` : 'Muted'}
+                          {r.enabled ? `Enabled (${r.severity || 'any'})` : 'Muted'}
                         </span>
                       </div>
                     ))}

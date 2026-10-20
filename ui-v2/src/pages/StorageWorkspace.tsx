@@ -428,7 +428,11 @@ export function StorageWorkspace() {
   const [testingArchive, setTestingArchive] = useState(false);
   const [testResult, setTestResult] = useState<{
     ok: boolean;
-    summary?: string;
+    // TestArchiveSettings answers with `message` (the refusal/failure reason)
+    // and `warnings`; `checks` only exists on the local-target path. Reading
+    // `summary` hid every S3 preflight failure.
+    message?: string;
+    warnings?: string[];
     checks?: Array<{ name: string; ok: boolean; detail?: string }>;
   } | null>(null);
   const [folderPickerKey, setFolderPickerKey] = useState<string | null>(null);
@@ -488,7 +492,8 @@ export function StorageWorkspace() {
       }
       const res = await apiFetch<{
         ok: boolean;
-        summary?: string;
+        message?: string;
+        warnings?: string[];
         checks?: Array<{ name: string; ok: boolean; detail?: string }>;
       }>('/admin/api/archive/settings/test', {
         method: 'POST',
@@ -498,9 +503,9 @@ export function StorageWorkspace() {
       });
       setTestResult(res);
       if (res.ok) {
-        toast.success('Archive target preflight passed', res.summary || 'All checks succeeded.');
+        toast.success('Archive target preflight passed', res.message || 'All checks succeeded.');
       } else {
-        toast.warning('Archive target preflight reported issues', res.summary || 'Check details below.');
+        toast.warning('Archive target preflight reported issues', res.message || 'Check details below.');
       }
     } catch (err) {
       toast.error(
@@ -1395,8 +1400,15 @@ export function StorageWorkspace() {
                 <ShieldCheck
                   className={cn('h-4 w-4', testResult.ok ? 'text-sig-ok' : 'text-sig-warn')}
                 />
-                <span>{testResult.summary || 'Preflight Check Results'}</span>
+                <span>{testResult.message || 'Preflight Check Results'}</span>
               </div>
+              {testResult.warnings && testResult.warnings.length > 0 && (
+                <ul className="space-y-1 text-xs text-sig-warn pl-6 list-disc">
+                  {testResult.warnings.map((w, idx) => (
+                    <li key={idx}>{w}</li>
+                  ))}
+                </ul>
+              )}
               {testResult.checks && testResult.checks.length > 0 && (
                 <ul className="space-y-1 text-xs text-text-dim pl-6 list-disc">
                   {testResult.checks.map((c, idx) => (

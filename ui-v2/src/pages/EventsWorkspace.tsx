@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useSearchParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -76,6 +76,38 @@ function windowToHours(w: TimeWindow): number {
     case '30d':
       return 720;
   }
+}
+
+// GetNetEvents only accepts a full IP or CIDR (validIPOrCIDR); a partial
+// prefix like "10.0" returns 400 and blanks the stream. Keep this at least as
+// strict as netip: no empty prefix, no leading zeros, no malformed IPv6.
+function isIpOrCidr(value: string): boolean {
+  if (!value) return false;
+  const parts = value.split('/');
+  if (parts.length > 2) return false;
+  const addr = parts[0] ?? '';
+  const prefix = parts[1];
+
+  const v4 = (() => {
+    const octets = addr.split('.');
+    return (
+      octets.length === 4 &&
+      octets.every((o) => /^(0|[1-9]\d{0,2})$/.test(o) && Number(o) <= 255)
+    );
+  })();
+
+  const v6 = (() => {
+    if (!addr.includes(':')) return false;
+    if (!/^[0-9a-fA-F:]+$/.test(addr)) return false;
+    if ((addr.match(/::/g) || []).length > 1) return false;
+    const groups = addr.split(':').filter((g) => g !== '');
+    return addr.includes('::') ? groups.length <= 7 : groups.length === 8;
+  })();
+
+  if (!v4 && !v6) return false;
+  if (prefix === undefined) return true;
+  if (!/^(0|[1-9]\d{0,2})$/.test(prefix)) return false;
+  return Number(prefix) <= (v4 ? 32 : 128);
 }
 
 function formatNetAction(raw: number | string | undefined): { label: string; isDeny: boolean } {
@@ -206,12 +238,19 @@ function EventStreamSubTab({ windowRange }: { windowRange: TimeWindow }) {
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
   const hours = windowToHours(windowRange);
 
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchQuery), 350);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+  const srcFilter = isIpOrCidr(debouncedSearch.trim()) ? debouncedSearch.trim() : '';
+
   const { data: eventsRes, isLoading } = useQuery({
-    queryKey: ['net-events', hours, actionFilter, searchQuery],
+    queryKey: ['net-events', hours, actionFilter, srcFilter],
     queryFn: () => {
       const params = new URLSearchParams({ hours: String(hours), limit: '100' });
       if (actionFilter) params.set('action', actionFilter);
-      if (searchQuery.trim()) params.set('src_ip', searchQuery.trim());
+      if (srcFilter) params.set('src_ip', srcFilter);
       return apiFetch<any>(`/admin/api/events?${params.toString()}`);
     },
     refetchInterval: 15_000,
@@ -339,7 +378,7 @@ function EventStreamSubTab({ windowRange }: { windowRange: TimeWindow }) {
             type="search"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Filter by source IP prefix..."
+            placeholder="Filter by exact source IP or CIDR..."
             className="w-full rounded border border-border bg-bg-panel pl-8 pr-3 py-1 text-xs font-mono text-text focus:border-accent focus:outline-none"
           />
         </div>

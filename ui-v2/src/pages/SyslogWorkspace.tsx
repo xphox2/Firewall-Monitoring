@@ -11,7 +11,7 @@ interface SyslogRow {
   id: number;
   timestamp: string;
   device_id?: number;
-  device_name?: string;
+  hostname?: string;
   source_ip?: string;
   severity: number;
   facility?: number;
@@ -86,11 +86,11 @@ export function SyslogWorkspace() {
         },
       },
       {
-        accessorKey: 'device_name',
+        accessorKey: 'hostname',
         header: 'Source',
         cell: ({ row }) => (
           <span className="font-mono text-xs text-text">
-            {row.original.device_name || row.original.source_ip || `Dev #${row.original.device_id ?? '?'}`}
+            {row.original.hostname || row.original.source_ip || `Dev #${row.original.device_id ?? '?'}`}
           </span>
         ),
       },
@@ -159,7 +159,7 @@ export function SyslogWorkspace() {
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <span className="font-mono text-xs font-semibold text-accent">
-                {msg.device_name || msg.source_ip}
+                {msg.hostname || msg.source_ip}
               </span>
               <span className="font-mono text-[11px] text-text-dim">
                 {formatRelativeTime(msg.timestamp)}

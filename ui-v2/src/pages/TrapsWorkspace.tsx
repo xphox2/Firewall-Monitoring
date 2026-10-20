@@ -11,7 +11,6 @@ interface TrapRow {
   id: number;
   timestamp: string;
   device_id?: number;
-  device_name?: string;
   source_ip?: string;
   trap_oid: string;
   trap_type?: string;
@@ -39,7 +38,7 @@ export function TrapsWorkspace() {
   const needle = searchQuery.trim().toLowerCase();
   const traps = needle
     ? allTraps.filter((t) =>
-        [t.trap_oid, t.trap_type, t.device_name, t.source_ip, t.severity]
+        [t.trap_oid, t.trap_type, t.source_ip, t.severity]
           .filter(Boolean)
           .some((v) => String(v).toLowerCase().includes(needle)),
       )
@@ -57,11 +56,11 @@ export function TrapsWorkspace() {
         ),
       },
       {
-        accessorKey: 'device_name',
+        accessorKey: 'source_ip',
         header: 'Source Device',
         cell: ({ row }) => (
           <span className="font-mono text-xs text-text">
-            {row.original.device_name || row.original.source_ip || `Dev #${row.original.device_id ?? '?'}`}
+            {row.original.source_ip || `Dev #${row.original.device_id ?? '?'}`}
           </span>
         ),
       },
