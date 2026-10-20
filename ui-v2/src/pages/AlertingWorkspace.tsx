@@ -20,7 +20,12 @@ import { cn } from '@/lib/utils';
 import { StickySaveBar } from '@/components/ui/sticky-save-bar';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { ClassicFallback } from '@/components/ui/classic-fallback';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useToast } from '@/components/ui/toast';
+import {
+  EventRuleDrawer,
+  type EventRuleRecord,
+} from '@/components/alerting/event-rule-drawer';
 
 type AlertingTab = 'thresholds' | 'event-rules' | 'notification-profiles' | 'effective';
 
@@ -54,18 +59,7 @@ interface EventRuleProfile {
   disabled_count?: number;
 }
 
-interface EventRule {
-  id: number;
-  name: string;
-  description?: string;
-  enabled: boolean;
-  priority: number;
-  vendor_scope?: string;
-  action: 'alert' | 'suppress' | 'customize';
-  alert_type?: string;
-  severity?: string;
-  match_pattern?: string;
-}
+type EventRule = EventRuleRecord;
 
 // Structured metadata for the 27 sFlow & Deny Anomaly Detection keys
 interface DetectorKnobMeta {
@@ -374,7 +368,10 @@ export function AlertingWorkspace() {
   const { data: policies = [], refetch: refetchPolicies } = useQuery({
     queryKey: ['alert-policies'],
     queryFn: () => apiFetch<AlertPolicy[]>('/admin/api/alert-policies'),
-    enabled: activeTab === 'notification-profiles' || activeTab === 'effective',
+    enabled:
+      activeTab === 'notification-profiles' ||
+      activeTab === 'effective' ||
+      activeTab === 'event-rules',
   });
 
   const { data: eventProfiles = [] } = useQuery({
@@ -391,9 +388,56 @@ export function AlertingWorkspace() {
 
   const { data: devices = [] } = useQuery({
     queryKey: ['devices-list'],
-    queryFn: () => apiFetch<Array<{ id: number; name: string; site_id?: number }>>('/admin/api/devices'),
-    enabled: activeTab === 'effective',
+    queryFn: () =>
+      apiFetch<Array<{ id: number; name: string; site_id?: number; retired_at?: string | null }>>(
+        '/admin/api/devices',
+      ),
+    enabled: activeTab === 'effective' || activeTab === 'event-rules',
   });
+
+  const { data: sites = [] } = useQuery({
+    queryKey: ['sites-list'],
+    queryFn: () => apiFetch<Array<{ id: number; name: string }>>('/admin/api/sites'),
+    enabled: activeTab === 'event-rules',
+  });
+
+  const [ruleDrawerOpen, setRuleDrawerOpen] = useState(false);
+  const [editingRule, setEditingRule] = useState<EventRuleRecord | null>(null);
+  const [ruleToDelete, setRuleToDelete] = useState<EventRuleRecord | null>(null);
+  const [ruleToDisable, setRuleToDisable] = useState<EventRuleRecord | null>(null);
+
+  const deleteRule = async (rule: EventRuleRecord) => {
+    try {
+      await apiFetch(`/admin/api/event-rules/${rule.id}`, { method: 'DELETE' });
+      toast.success('Event rule deleted');
+      setRuleToDelete(null);
+      refetchEventRules();
+    } catch (err) {
+      toast.error('Delete failed', err instanceof ApiError ? err.message : 'Error');
+    }
+  };
+
+  const setRuleEnabled = async (rule: EventRuleRecord, enabled: boolean) => {
+    try {
+      await apiFetch(`/admin/api/event-rules/${rule.id}`, {
+        method: 'PUT',
+        body: { ...rule, enabled },
+      });
+      refetchEventRules();
+    } catch (err) {
+      toast.error('Could not update rule', err instanceof ApiError ? err.message : 'Error');
+    }
+  };
+
+  const toggleRule = (rule: EventRuleRecord) => {
+    // Disabling a shipped default is asked twice elsewhere in the console; it
+    // can stop baseline alerting, so make it explicit here too.
+    if (rule.enabled && (rule.seed_version ?? 0) > 0) {
+      setRuleToDisable(rule);
+      return;
+    }
+    void setRuleEnabled(rule, !rule.enabled);
+  };
 
   // =========================================================================
   // SUB-TAB 1: Unified Global Thresholds + 27 Detection Knobs State
@@ -979,10 +1023,10 @@ export function AlertingWorkspace() {
       {activeTab === 'event-rules' && (
         <div className="space-y-6">
           <ClassicFallback
-            title="Rule and profile authoring is not in the preview yet"
-            description="The preview can list, test and enable/disable existing rules. Creating or editing rules (AND/OR conditions, dampening, priority, expiry), managing profiles and assigning them to sites/devices is still in the classic console."
+            title="Profile management is not in the preview yet"
+            description="Event rules can now be created, edited, previewed and deleted here. Creating/cloning event-rule profiles, editing their per-alert-type On/Off/Inherit matrix and assigning them to sites or devices is still in the classic console."
             href="/admin/event-rules"
-            label="Open the rule builder"
+            label="Open profile management"
           />
           {/* Event Rule Profiles */}
           <section className="rounded-lg border border-border bg-bg-card overflow-hidden">
@@ -1037,14 +1081,29 @@ export function AlertingWorkspace() {
                   Vendor-aware suppress, alert, and severity customization rules evaluated in priority order.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setTesterOpen(true)}
-                className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-semibold text-accent hover:border-accent"
-              >
-                <FlaskConical className="h-3.5 w-3.5" />
-                <span>Test Sample Syslog</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setTesterOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-semibold text-accent hover:border-accent"
+                >
+                  <FlaskConical className="h-3.5 w-3.5" />
+                  <span>Test Sample Syslog</span>
+                </button>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingRule(null);
+                      setRuleDrawerOpen(true);
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    New Rule
+                  </button>
+                )}
+              </div>
             </div>
 
             {eventRules.length === 0 ? (
@@ -1061,6 +1120,7 @@ export function AlertingWorkspace() {
                       <th className="px-3 py-2.5">Action</th>
                       <th className="px-3 py-2.5">Vendor</th>
                       <th className="px-4 py-2.5 text-right">Status</th>
+                      <th className="px-3 py-2.5 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/60">
@@ -1086,13 +1146,9 @@ export function AlertingWorkspace() {
                         <td className="px-4 py-2.5 text-right">
                           <button
                             type="button"
-                            onClick={async () => {
-                              await apiFetch(`/admin/api/event-rules/${r.id}`, {
-                                method: 'PUT',
-                                body: { ...r, enabled: !r.enabled },
-                              });
-                              refetchEventRules();
-                            }}
+                            disabled={!isAdmin}
+                            title={isAdmin ? 'Toggle this rule' : 'Admin role required'}
+                            onClick={() => toggleRule(r)}
                             className={cn(
                               'rounded px-2 py-0.5 font-mono text-[10px] font-semibold uppercase',
                               r.enabled
@@ -1102,6 +1158,31 @@ export function AlertingWorkspace() {
                           >
                             {r.enabled ? 'Enabled' : 'Disabled'}
                           </button>
+                        </td>
+                        <td className="px-3 py-2.5 text-right">
+                          <div className="inline-flex items-center gap-1">
+                            <button
+                              type="button"
+                              disabled={!isAdmin}
+                              onClick={() => {
+                                setEditingRule(r);
+                                setRuleDrawerOpen(true);
+                              }}
+                              aria-label={`Edit ${r.name}`}
+                              className="rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text disabled:opacity-40"
+                            >
+                              <Edit3 className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!isAdmin}
+                              onClick={() => setRuleToDelete(r)}
+                              aria-label={`Delete ${r.name}`}
+                              className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit disabled:opacity-40"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -1524,6 +1605,48 @@ export function AlertingWorkspace() {
           )}
         </section>
       )}
+
+      <EventRuleDrawer
+        open={ruleDrawerOpen}
+        onOpenChange={setRuleDrawerOpen}
+        rule={editingRule}
+        profiles={eventProfiles as Array<{ id: number; name: string }>}
+        devices={devices}
+        sites={sites}
+        policies={policies}
+        onSaved={() => {
+          refetchEventRules();
+          setEditingRule(null);
+        }}
+      />
+
+      <ConfirmDialog
+        open={!!ruleToDelete}
+        onOpenChange={(open) => {
+          if (!open) setRuleToDelete(null);
+        }}
+        title={`Delete rule ${ruleToDelete?.name ?? ''}?`}
+        description="The rule stops matching immediately and is removed permanently."
+        confirmLabel="Delete rule"
+        destructive
+        onConfirm={() => ruleToDelete && void deleteRule(ruleToDelete)}
+      />
+
+      <ConfirmDialog
+        open={!!ruleToDisable}
+        onOpenChange={(open) => {
+          if (!open) setRuleToDisable(null);
+        }}
+        title={`Disable shipped rule ${ruleToDisable?.name ?? ''}?`}
+        description="This is a shipped default rule. Disabling it may stop baseline alerting for the events it covers."
+        confirmLabel="Disable rule"
+        destructive
+        onConfirm={() => {
+          if (!ruleToDisable) return;
+          void setRuleEnabled(ruleToDisable, false);
+          setRuleToDisable(null);
+        }}
+      />
     </div>
   );
 }

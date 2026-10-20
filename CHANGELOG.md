@@ -1,6 +1,19 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.335] - 2026-10-20
+
+### Added — Event rule authoring in the Admin UI V2 preview
+
+- The V2 console can now **create, edit and delete** event rules from `/admin/v2/configuration/alerting?tab=event-rules`; previously it could only list and toggle the ones authored in the classic console.
+- **Condition builder**: flat AND/OR rows over any extracted field (`eq`, `neq`, `contains`, `not_contains`, `regex`, `in`, `gt`, `lt`, `exists`), plus an advanced mode that round-trips arbitrary nested `match_json` trees verbatim. In-list values containing commas are preserved exactly.
+- **Scope and layering**: profile layer, vendor, device, site, notification policy, alert type/severity, group-by, cooldown and temporary-rule expiry (hours).
+- **Source-specific dampening**: state (`min_up_seconds`, `daily_cap`), metric (`static`/`zscore`, threshold, clear threshold, z-score K) and spike (std-dev K, sustained minutes, throughput floor) — emitting pointer-typed `0` values only when the operator sets them, so "inherit" and "disable" stay distinct.
+- **Preview** runs the expression being edited against up to 200 recent syslog messages with the live vendor resolution, showing scanned/matched/rate and sample lines.
+- Destructive paths are gated: delete confirms, disabling a shipped default confirms, and rule authoring is admin-only.
+- The pure conversion layer (match tree, dampening, payload) lives in `ui-v2/src/lib/event-rule.ts` with 23 unit tests; the suite is now 41 tests.
+- `docs/V2-PARITY.md` notes this as the first completed parity workstream; event-rule **profile** management (create/clone, toggle matrix, assignments) remains classic-only.
+
 ## [0.11.334] - 2026-10-20
 
 ### Changed — Admin UI V2 is now explicitly a preview
