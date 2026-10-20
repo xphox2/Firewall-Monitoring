@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/netip"
@@ -344,6 +345,14 @@ func (h *Handler) GetNetEventAnalytics(c *gin.Context) {
 
 	stats, err := db.NetEventStats(f)
 	if err != nil {
+		// A range click supersedes the previous request, so the client hangs up
+		// on the one in flight. That is not a server failure: answer with the
+		// conventional 499 and keep it out of the error log, otherwise every
+		// pill press records a 500.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			c.AbortWithStatus(499)
+			return
+		}
 		httputil.InternalError(c, "Failed to get event analytics", err)
 		return
 	}

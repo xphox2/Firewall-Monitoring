@@ -926,11 +926,14 @@
     // ----------------------------------------------------------------------
     // Rollup analytics (Phase 2, PR 4 — net_event_rollups, day-granular)
     // ----------------------------------------------------------------------
-    // The page-level range pills drive the raw event lists (hours); the rollup
-    // analytics are day-granular and long-term (up to 365 days), so they use a
-    // fixed 30-day window and share only the device/site filters with the lists.
-    var ANALYTICS_DAYS = 30;
-    var SEC_ANALYTICS_DAYS = 30;
+    // The page-level range pills drive every surface. The event lists and the
+    // raw short-window cards take `hours`; the rollup cards are day-granular,
+    // so their window is the pill range in whole days (a sub-day range looks at
+    // today), capped at the rollup retention.
+    function rangeDays() {
+        var h = Number(state.hours) || 24;
+        return Math.max(1, Math.min(365, Math.ceil(h / 24)));
+    }
     var analyticsCharts = {};
     var ANALYTICS_COLORS = ['#58a6ff', '#3fb950', '#d2992a', '#bc8cff', '#f85149', '#39c5cf', '#ff7b72', '#8b949e'];
 
@@ -965,7 +968,7 @@
     }
 
     function analyticsURL() {
-        var p = ['days=' + ANALYTICS_DAYS];
+        var p = ['days=' + rangeDays()];
         if (state.site_id) p.push('site_id=' + encodeURIComponent(state.site_id));
         if (state.device_id) p.push('device_id=' + encodeURIComponent(state.device_id));
         return '/admin/api/events/rollups?' + p.join('&');
@@ -1039,10 +1042,11 @@
     // ----------------------------------------------------------------------
     // Short-window analytics (Phase 2, PR 5 — raw net_events, hour-granular)
     // ----------------------------------------------------------------------
-    // The rollup analytics above are day-granular and long-term (fixed 30 days).
-    // These cover the dimensions the rollups do NOT retain (geo, identity,
-    // users, apps, web categories, DNS, NAT) and share the page-level `hours`
-    // range pills plus the device/site filters with the raw event lists.
+    // The rollup analytics above are day-granular, so their window follows the
+    // range pills in whole days. These cover the dimensions the rollups do NOT
+    // retain (geo, identity, users, apps, web categories, DNS, NAT) and share
+    // the page-level `hours` range pills plus the device/site filters with the
+    // raw event lists.
     function statsURL() {
         var p = [];
         if (state.hours && Number(state.hours) !== 24) p.push('hours=' + encodeURIComponent(state.hours));
@@ -1054,6 +1058,22 @@
     function loadStats() {
         var host = document.getElementById('events-stats-host');
         if (!host) return;
+        // Nine partition-pruned scans over the raw table cost about a minute on
+        // a 7-day production window, and the response must fit in 30 s. The
+        // range still drives the list and the day-granular rollups above, so
+        // for a multi-day range say where those dimensions went instead of
+        // issuing a request that cannot come back in time.
+        var note = document.getElementById('events-stats-note');
+        if (rangeDays() > 1) {
+            host.hidden = true;
+            if (note) {
+                note.hidden = false;
+                note.textContent = 'Raw event dimensions (geo, users, apps, web, DNS, NAT) are available for ranges up to 24 h; the 7/30-day cards above use the daily rollups.';
+            }
+            return;
+        }
+        host.hidden = false;
+        if (note) note.hidden = true;
         AC.chartLoad(host, function(signal) {
             return apiFetch(statsURL(), { signal: signal });
         }, { key: 'events-stats', label: 'Loading analytics…', escScope: document.getElementById('page-events') }).then(function(r) {
@@ -1122,11 +1142,12 @@
     // ----------------------------------------------------------------------
     // The Security tab's class-scoped analytics: per-class day trends and
     // top-N rankings over the raw sec_events table. Day-bucketed like the
-    // rollup analytics (a fixed 30-day window), they share only the Security
-    // tab's device filter — there is no site filter on this tab, and the
-    // finding/auth/config/vpn/wan series all ride the same class-scoped query.
+    // rollup analytics, so the window follows the range pills in whole days;
+    // they share the Security tab's device filter — there is no site filter on
+    // this tab, and the finding/auth/config/vpn/wan series all ride the same
+    // class-scoped query.
     function secStatsURL() {
-        var p = ['days=' + SEC_ANALYTICS_DAYS];
+        var p = ['days=' + rangeDays()];
         if (secState.sec_device) p.push('device_id=' + encodeURIComponent(secState.sec_device));
         return '/admin/api/security-events/analytics?' + p.join('&');
     }

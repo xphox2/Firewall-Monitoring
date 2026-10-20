@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"testing"
 	"time"
@@ -191,6 +193,26 @@ func TestGetNetEventRollups_Shape(t *testing.T) {
 	// the UI never shows a "repaired from" date.
 	if resp.Data.PolicyBytesFrom != "" {
 		t.Fatalf("policy_bytes_from = %q, want empty without a marker", resp.Data.PolicyBytesFrom)
+	}
+}
+
+// TestGetNetEventAnalytics_ClientCancel: changing the range aborts the
+// analytics request in flight, so the handler sees context.Canceled. That must
+// answer 499 (not a logged 500) — the page already ignores the reply.
+func TestGetNetEventAnalytics_ClientCancel(t *testing.T) {
+	h, _ := setupTestHandler(t)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	req := httptest.NewRequest(http.MethodGet, "/x?hours=24", nil)
+	ctx, cancel := context.WithCancel(req.Context())
+	cancel()
+	c.Request = req.WithContext(ctx)
+
+	h.GetNetEventAnalytics(c)
+
+	if rec.Code != 499 {
+		t.Fatalf("status = %d, want 499 (body=%s)", rec.Code, rec.Body.String())
 	}
 }
 
