@@ -478,11 +478,11 @@ export function StorageWorkspace() {
     setTestingArchive(true);
     setTestResult(null);
     try {
-      const values: Record<string, string> = {};
+      const set: Record<string, string> = {};
       for (const f of archiveSettings?.fields || []) {
         const val = getArchVal(f.key);
         if (f.kind === 'secret' && !val) continue;
-        values[f.key] = val;
+        set[f.key] = val;
       }
       const res = await apiFetch<{
         ok: boolean;
@@ -490,7 +490,9 @@ export function StorageWorkspace() {
         checks?: Array<{ name: string; ok: boolean; detail?: string }>;
       }>('/admin/api/archive/settings/test', {
         method: 'POST',
-        body: { values, revert: Object.keys(archReverts).filter((k) => archReverts[k]) },
+        // The handler binds `set`, not `values`. With the wrong key the test
+        // silently preflighted the SAVED config instead of the typed one.
+        body: { set, revert: Object.keys(archReverts).filter((k) => archReverts[k]) },
       });
       setTestResult(res);
       if (res.ok) {
@@ -517,16 +519,16 @@ export function StorageWorkspace() {
       } requires admin password verification.`,
       confirmLabel: 'Verify & Save Archive Config',
       action: async (creds) => {
-        const values: Record<string, string> = {};
+        const set: Record<string, string> = {};
         for (const k of dirtyArchiveKeys) {
           if (!archReverts[k]) {
-            values[k] = getArchVal(k);
+            set[k] = getArchVal(k);
           }
         }
         await apiFetch('/admin/api/archive/settings', {
           method: 'POST',
           body: {
-            values,
+            set,
             revert: Object.keys(archReverts).filter((k) => archReverts[k]),
             password: creds.password,
             totp_code: creds.totp_code,

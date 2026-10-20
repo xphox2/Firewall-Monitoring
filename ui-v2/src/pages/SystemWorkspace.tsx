@@ -155,27 +155,32 @@ function UsersRbacSubTab() {
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [newUsername, setNewUsername] = useState('');
-  const [newPassword, setNewPassword] = useState('');
   const [newRole, setNewRole] = useState<'admin' | 'operator' | 'viewer'>('operator');
-  const [newEmail, setNewEmail] = useState('');
+  // The backend generates the temporary password and returns it exactly once;
+  // there is no reset-password UI, so losing it here meant creating an account
+  // nobody could ever sign in to.
+  const [createdCred, setCreatedCred] = useState<{ username: string; password: string } | null>(
+    null,
+  );
 
   const createUserMutation = useMutation({
     mutationFn: async () =>
-      apiFetch('/admin/api/users', {
+      apiFetch<{ user?: { username?: string }; temp_password?: string }>('/admin/api/users', {
         method: 'POST',
         body: {
           username: newUsername.trim(),
-          password: newPassword,
           role: newRole,
-          email: newEmail.trim(),
         },
       }),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      setCreatedCred({
+        username: data?.user?.username ?? newUsername.trim(),
+        password: data?.temp_password ?? '',
+      });
       toast({ title: 'User created', variant: 'success' });
       setDrawerOpen(false);
       setNewUsername('');
-      setNewPassword('');
-      setNewEmail('');
+      setNewRole('operator');
       queryClient.invalidateQueries({ queryKey: ['admin-users'] });
     },
     onError: (err: Error) => {
@@ -349,7 +354,7 @@ function UsersRbacSubTab() {
             </button>
             <button
               type="button"
-              disabled={!newUsername.trim() || newPassword.length < 8 || createUserMutation.isPending}
+              disabled={!newUsername.trim() || createUserMutation.isPending}
               onClick={() => createUserMutation.mutate()}
               className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
             >
@@ -370,17 +375,6 @@ function UsersRbacSubTab() {
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">
-              Initial Password (min 8 chars)
-            </label>
-            <input
-              type="password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
-            />
-          </div>
-          <div>
             <label className="block text-xs font-medium text-text-dim mb-1">RBAC Role</label>
             <select
               value={newRole}
@@ -392,17 +386,64 @@ function UsersRbacSubTab() {
               <option value="admin">Admin (Full Control)</option>
             </select>
           </div>
-          <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">Email (optional)</label>
-            <input
-              type="email"
-              value={newEmail}
-              onChange={(e) => setNewEmail(e.target.value)}
-              placeholder="jdoe@example.com"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
-            />
-          </div>
+          <p className="text-[11px] leading-relaxed text-text-dim">
+            The server generates a temporary password and shows it once after the account is
+            created. The account is forced to rotate it at first login.
+          </p>
         </div>
+      </SlideOverDrawer>
+
+      <SlideOverDrawer
+        open={!!createdCred}
+        onOpenChange={(open) => {
+          if (!open) setCreatedCred(null);
+        }}
+        title="Account created"
+        subtitle="Copy the temporary password now — it is not stored in plaintext and cannot be shown again."
+        footer={
+          <button
+            type="button"
+            onClick={() => setCreatedCred(null)}
+            className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+          >
+            I have copied it
+          </button>
+        }
+      >
+        {createdCred && (
+          <div className="space-y-3">
+            <div>
+              <span className="block text-xs font-medium text-text-dim">Username</span>
+              <span className="font-mono text-sm text-text">{createdCred.username}</span>
+            </div>
+            <div>
+              <span className="block text-xs font-medium text-text-dim">Temporary password</span>
+              <div className="mt-1 flex items-center gap-2">
+                <code className="flex-1 break-all rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text">
+                  {createdCred.password || '(server returned no password)'}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void navigator.clipboard
+                      ?.writeText(createdCred.password)
+                      .then(() => toast({ title: 'Password copied', variant: 'success' }))
+                      .catch(() =>
+                        toast({
+                          title: 'Copy failed',
+                          description: 'Select the password and copy it manually.',
+                          variant: 'error',
+                        }),
+                      );
+                  }}
+                  className="rounded-md border border-border px-2.5 py-2 text-xs text-text-dim hover:text-text"
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </SlideOverDrawer>
     </div>
   );
@@ -1303,10 +1344,21 @@ function MyProfileSubTab() {
     mutationFn: async () =>
       apiFetch('/admin/api/settings/password', {
         method: 'POST',
-        body: { current_password: currentPassword, new_password: newPassword },
+        body: {
+          current_password: currentPassword,
+          new_password: newPassword,
+          // The handler treats an ABSENT remove_passkeys as TRUE. A routine
+          // password rotation must not silently delete every registered
+          // passkey, so be explicit rather than relying on the default.
+          remove_passkeys: false,
+        },
       }),
     onSuccess: () => {
-      toast({ title: 'Password updated', variant: 'success' });
+      toast({
+        title: 'Password updated',
+        description: 'Your passkeys were kept.',
+        variant: 'success',
+      });
       setCurrentPassword('');
       setNewPassword('');
     },

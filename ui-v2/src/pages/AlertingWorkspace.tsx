@@ -47,15 +47,26 @@ interface AlertPolicy {
   name: string;
   description?: string;
   is_default?: boolean;
-  email_enabled?: boolean;
-  slack_enabled?: boolean;
-  discord_enabled?: boolean;
-  teams_enabled?: boolean;
-  webhook_enabled?: boolean;
-  pagerduty_enabled?: boolean;
-  opsgenie_enabled?: boolean;
+  // Wire fields match models.AlertPolicy exactly. The previous *_enabled names
+  // were never bound by the handler, and because UpdateAlertPolicy binds a
+  // fresh struct and Save()s every column, sending them silently disabled all
+  // channels and erased the webhook URLs on the next edit.
+  notify_email?: boolean;
+  notify_slack?: boolean;
+  notify_discord?: boolean;
+  notify_teams?: boolean;
+  notify_webhook?: boolean;
+  notify_pagerduty?: boolean;
+  notify_opsgenie?: boolean;
   email_recipients?: string;
+  slack_webhook_url?: string;
+  discord_webhook_url?: string;
+  webhook_url?: string;
   cooldown_minutes?: number;
+  escalation_enabled?: boolean;
+  escalation_minutes?: number;
+  escalation_repeat?: number;
+  escalation_steps?: string;
   rules?: Array<{
     alert_type: string;
     enabled: boolean;
@@ -537,12 +548,12 @@ export function AlertingWorkspace() {
       setPolicyName(pol.name || '');
       setPolicyDesc(pol.description || '');
       setPolicyCooldown(String(pol.cooldown_minutes ?? 15));
-      setPolicyEmail(!!pol.email_enabled);
-      setPolicySlack(!!pol.slack_enabled);
-      setPolicyDiscord(!!pol.discord_enabled);
-      setPolicyTeams(!!pol.teams_enabled);
-      setPolicyWebhook(!!pol.webhook_enabled);
-      setPolicyPagerduty(!!pol.pagerduty_enabled);
+      setPolicyEmail(!!pol.notify_email);
+      setPolicySlack(!!pol.notify_slack);
+      setPolicyDiscord(!!pol.notify_discord);
+      setPolicyTeams(!!pol.notify_teams);
+      setPolicyWebhook(!!pol.notify_webhook);
+      setPolicyPagerduty(!!pol.notify_pagerduty);
       setPolicyRecipients(pol.email_recipients || '');
     } else {
       setEditingPolicy({ id: 0, name: '' });
@@ -568,17 +579,38 @@ export function AlertingWorkspace() {
     }
     setSavingPolicy(true);
     try {
+      // `|| 15` turned a deliberate 0 (no cooldown) into 15; only fall back
+      // when the field is genuinely empty or non-numeric.
+      const cooldownRaw = Number(policyCooldown);
+      const cooldown =
+        policyCooldown.trim() !== '' && Number.isFinite(cooldownRaw) && cooldownRaw >= 0
+          ? cooldownRaw
+          : 15;
+      // Round-trip every column: UpdateAlertPolicy binds a fresh struct and
+      // Save()s all of them, so anything omitted here is written back as its
+      // zero value (the exact way the webhook URLs and escalation config were
+      // being erased). The read path masks secrets with "********"; sending the
+      // mask back is what triggers the handler's preserve-on-write restore.
       const body = {
         name: policyName.trim(),
         description: policyDesc.trim(),
-        cooldown_minutes: Number(policyCooldown) || 15,
-        email_enabled: policyEmail,
-        slack_enabled: policySlack,
-        discord_enabled: policyDiscord,
-        teams_enabled: policyTeams,
-        webhook_enabled: policyWebhook,
-        pagerduty_enabled: policyPagerduty,
+        cooldown_minutes: cooldown,
+        notify_email: policyEmail,
+        notify_slack: policySlack,
+        notify_discord: policyDiscord,
+        notify_teams: policyTeams,
+        notify_webhook: policyWebhook,
+        notify_pagerduty: policyPagerduty,
+        notify_opsgenie: editingPolicy.notify_opsgenie ?? false,
         email_recipients: policyRecipients.trim(),
+        slack_webhook_url: editingPolicy.slack_webhook_url ?? '',
+        discord_webhook_url: editingPolicy.discord_webhook_url ?? '',
+        webhook_url: editingPolicy.webhook_url ?? '',
+        escalation_enabled: editingPolicy.escalation_enabled ?? false,
+        escalation_minutes: editingPolicy.escalation_minutes ?? 30,
+        escalation_repeat: editingPolicy.escalation_repeat ?? 3,
+        escalation_steps: editingPolicy.escalation_steps ?? '',
+        is_default: editingPolicy.is_default ?? false,
       };
       if (editingPolicy.id === 0) {
         await apiFetch('/admin/api/alert-policies', { method: 'POST', body });
@@ -1204,13 +1236,13 @@ export function AlertingWorkspace() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {policies.map((pol) => {
               const activeChannels = [
-                pol.email_enabled && 'Email',
-                pol.slack_enabled && 'Slack',
-                pol.discord_enabled && 'Discord',
-                pol.teams_enabled && 'Teams',
-                pol.webhook_enabled && 'Webhook',
-                pol.pagerduty_enabled && 'PagerDuty',
-                pol.opsgenie_enabled && 'Opsgenie',
+                pol.notify_email && 'Email',
+                pol.notify_slack && 'Slack',
+                pol.notify_discord && 'Discord',
+                pol.notify_teams && 'Teams',
+                pol.notify_webhook && 'Webhook',
+                pol.notify_pagerduty && 'PagerDuty',
+                pol.notify_opsgenie && 'Opsgenie',
               ].filter(Boolean);
 
               return (
