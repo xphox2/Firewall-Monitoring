@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.330] - 2026-10-20
+
+### Fixed — the Events page range pills did not change most of the page
+
+- The `1h / 6h / 12h / 24h / 7d / 30d` pills drove the event lists and the raw short-window cards, but the six **rollup** cards (Policy Bytes, Deny Trend, Top Rules, App Categories, Directions, Rulesets) were hard-wired to 30 days, so pressing a pill appeared to do nothing. They now follow the range in whole days: sub-day ranges look at today, 7d and 30d map straight through. The Security tab's class analytics follows the same rule (it was fixed at 30 days too).
+- The nine raw short-window series (geo, identity, users, apps, app categories, web categories, DNS, NAT) ran **sequentially** — about 60 s on a 7-day production window, past the 30 s response timeout, so a 7d/30d click ended in "Could not load analytics". They now run four at a time (the same bound the Flows page uses), and a range beyond 24 h hides those cards with a one-line explanation instead of issuing a request that cannot finish; the rollup cards above carry the long-range view.
+- A range click cancels the analytics request that was in flight, which the server logged as a **500 `context canceled`** on every press. A client cancellation is now answered `499` and kept out of the error log.
+
 ## [0.11.329] - 2026-10-20
 
 ### Fixed — Policy Bytes was counting the same traffic hundreds of times

@@ -3,6 +3,7 @@ package database
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"firewall-mon/internal/models"
@@ -957,72 +958,130 @@ func (d *Database) NetEventStats(f NetEventStatsFilter) (*NetEventStatsResult, e
 
 	res := &NetEventStatsResult{}
 
+	// The nine series run with bounded concurrency. Sequentially they cost
+	// ~60 s on a 7-day production window (each is its own partition-pruned
+	// scan); four at a time keeps the wait inside the response timeout without
+	// letting one page load drain the connection pool — the same bound the
+	// Flows page uses. Each goroutine writes only its own slice, and `res` is
+	// assembled on this goroutine after the wait, so nothing is shared.
+	//
 	// geo_src / geo_dst: hits and bytes by country, ordered by hits. No LIMIT —
 	// there are at most ~250 ISO-3166 codes, far fewer than the ranking cards'
 	// budget, so capping them would only hide a long tail of small countries.
-	var geoSrc []NetEventGeoStat
-	if err := base().
-		Select("src_country AS country, COUNT(*) AS hits, " + netEventStatByteSums).
-		Where("src_country IS NOT NULL AND src_country <> ''").
-		Group("src_country").Order("hits DESC").
-		Scan(&geoSrc).Error; err != nil {
-		return nil, fmt.Errorf("geo_src: %w", err)
+	var (
+		geoSrc   []NetEventGeoStat
+		geoDst   []NetEventGeoStat
+		identity []NetEventIdentityStat
+		users    []KeyCount
+		apps     []KeyCount
+		appCats  []KeyCount
+		webCats  []KeyCount
+		dns      []KeyCount
+		nat      []NetEventNATStat
+		firstErr error
+		errOnce  sync.Once
+	)
+	jobs := []func() error{
+		func() error {
+			if err := base().
+				Select("src_country AS country, COUNT(*) AS hits, " + netEventStatByteSums).
+				Where("src_country IS NOT NULL AND src_country <> ''").
+				Group("src_country").Order("hits DESC").
+				Scan(&geoSrc).Error; err != nil {
+				return fmt.Errorf("geo_src: %w", err)
+			}
+			return nil
+		},
+		func() error {
+			if err := base().
+				Select("dst_country AS country, COUNT(*) AS hits, " + netEventStatByteSums).
+				Where("dst_country IS NOT NULL AND dst_country <> ''").
+				Group("dst_country").Order("hits DESC").
+				Scan(&geoDst).Error; err != nil {
+				return fmt.Errorf("geo_dst: %w", err)
+			}
+			return nil
+		},
+		func() error {
+			// identity: the top (src_ip, src_mac) pairs by hits. src_ip is an
+			// inet column on Postgres, so it is grouped through CastText (the
+			// rollup reader's convention) and only rows with a source IP are
+			// kept; a missing MAC reads as '' (an identity without a
+			// vendor-supplied MAC is still an identity).
+			if err := base().
+				Select(d.dialect.CastText("src_ip") + " AS src_ip, COALESCE(" + d.dialect.CastText("src_mac") + ", '') AS src_mac, COUNT(*) AS hits").
+				Where("src_ip IS NOT NULL").
+				Group("src_ip, src_mac").Order("hits DESC").Limit(netEventStatsTopN).
+				Scan(&identity).Error; err != nil {
+				return fmt.Errorf("identity: %w", err)
+			}
+			return nil
+		},
+		func() error {
+			var err error
+			users, err = netEventStatKeyCount(base, "user_name", "users")
+			return err
+		},
+		func() error {
+			var err error
+			apps, err = netEventStatKeyCount(base, "app", "apps")
+			return err
+		},
+		func() error {
+			var err error
+			appCats, err = netEventStatKeyCount(base, "app_cat", "app_categories")
+			return err
+		},
+		func() error {
+			var err error
+			webCats, err = netEventStatKeyCount(base, "web_cat", "web_categories")
+			return err
+		},
+		func() error {
+			var err error
+			dns, err = netEventStatKeyCount(base, "dns_qname", "dns")
+			return err
+		},
+		func() error {
+			// nat: the top (nat_src_ip, nat_dst_ip) translated-flow pairs by
+			// hits. The NAT columns are inet too, so the same CastText
+			// grouping keeps the wire shape a plain string on both dialects;
+			// only rows with a translated source are kept.
+			if err := base().
+				Select(d.dialect.CastText("nat_src_ip") + " AS src_ip, COALESCE(" + d.dialect.CastText("nat_dst_ip") + ", '') AS dst_ip, COUNT(*) AS hits").
+				Where("nat_src_ip IS NOT NULL").
+				Group("nat_src_ip, nat_dst_ip").Order("hits DESC").Limit(netEventStatsTopN).
+				Scan(&nat).Error; err != nil {
+				return fmt.Errorf("nat: %w", err)
+			}
+			return nil
+		},
+	}
+	sem := make(chan struct{}, 4)
+	var wg sync.WaitGroup
+	for _, run := range jobs {
+		wg.Add(1)
+		go func(run func() error) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if err := run(); err != nil {
+				errOnce.Do(func() { firstErr = err })
+			}
+		}(run)
+	}
+	wg.Wait()
+	if firstErr != nil {
+		return nil, firstErr
 	}
 	res.GeoSrc = geoSrc
-
-	var geoDst []NetEventGeoStat
-	if err := base().
-		Select("dst_country AS country, COUNT(*) AS hits, " + netEventStatByteSums).
-		Where("dst_country IS NOT NULL AND dst_country <> ''").
-		Group("dst_country").Order("hits DESC").
-		Scan(&geoDst).Error; err != nil {
-		return nil, fmt.Errorf("geo_dst: %w", err)
-	}
 	res.GeoDst = geoDst
-
-	// identity: the top (src_ip, src_mac) pairs by hits. src_ip is an inet
-	// column on Postgres, so it is grouped through CastText (the rollup reader's
-	// convention) and only rows with a source IP are kept; a missing MAC reads
-	// as '' (an identity without a vendor-supplied MAC is still an identity).
-	var identity []NetEventIdentityStat
-	if err := base().
-		Select(d.dialect.CastText("src_ip") + " AS src_ip, COALESCE(" + d.dialect.CastText("src_mac") + ", '') AS src_mac, COUNT(*) AS hits").
-		Where("src_ip IS NOT NULL").
-		Group("src_ip, src_mac").Order("hits DESC").Limit(netEventStatsTopN).
-		Scan(&identity).Error; err != nil {
-		return nil, fmt.Errorf("identity: %w", err)
-	}
 	res.Identity = identity
-
-	var err error
-	if res.Users, err = netEventStatKeyCount(base, "user_name", "users"); err != nil {
-		return nil, err
-	}
-	if res.Apps, err = netEventStatKeyCount(base, "app", "apps"); err != nil {
-		return nil, err
-	}
-	if res.AppCategories, err = netEventStatKeyCount(base, "app_cat", "app_categories"); err != nil {
-		return nil, err
-	}
-	if res.WebCategories, err = netEventStatKeyCount(base, "web_cat", "web_categories"); err != nil {
-		return nil, err
-	}
-	if res.DNS, err = netEventStatKeyCount(base, "dns_qname", "dns"); err != nil {
-		return nil, err
-	}
-
-	// nat: the top (nat_src_ip, nat_dst_ip) translated-flow pairs by hits. The
-	// NAT columns are inet too, so the same CastText grouping keeps the wire
-	// shape a plain string on both dialects; only rows with a translated source
-	// are kept.
-	var nat []NetEventNATStat
-	if err := base().
-		Select(d.dialect.CastText("nat_src_ip") + " AS src_ip, COALESCE(" + d.dialect.CastText("nat_dst_ip") + ", '') AS dst_ip, COUNT(*) AS hits").
-		Where("nat_src_ip IS NOT NULL").
-		Group("nat_src_ip, nat_dst_ip").Order("hits DESC").Limit(netEventStatsTopN).
-		Scan(&nat).Error; err != nil {
-		return nil, fmt.Errorf("nat: %w", err)
-	}
+	res.Users = users
+	res.Apps = apps
+	res.AppCategories = appCats
+	res.WebCategories = webCats
+	res.DNS = dns
 	res.NAT = nat
 
 	// Normalize nil (no-rows) series to empty slices so the wire shape is []
